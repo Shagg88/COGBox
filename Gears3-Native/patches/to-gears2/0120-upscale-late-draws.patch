@@ -1,0 +1,66 @@
+--- a/src/layer0_xenos/renderer/shadow_renderer.cpp
++++ b/src/layer0_xenos/renderer/shadow_renderer.cpp
+@@ -609,6 +609,11 @@
+                      "draws whose vertex shader does not read c0-c3, 2 = also draws with other c0-c3, 3 = as 2, and the scene "
+                      "depth is any depth target at the same EDRAM base, scale and MSAA (Gears 3 job 060: ch8 draws into "
+                      "D24FS8 pitch 1280 and D24S8 pitch 1360 at base 0)");
++REXCVAR_DEFINE_BOOL(gow2_upscale_jitter_late, false, "Gears2",
++                    "Diagnostic (Gears 3 job 120): also jitter the camera draws into the scene depth that come AFTER the "
++                    "scene colour resolve that ran the upscaler. Gears 3 ch8 cutscenes: whole character triangles lose "
++                    "their lighting under DLSS / FSR; [G] later lighting passes drawn unjittered fail the depth-equal test "
++                    "against the jittered depth. The count is always logged ('camera draws after the upscale')");
+ REXCVAR_DEFINE_INT32(gow2_upscale_scene_formats, 1, "Gears2",
+                      "Which colour target formats count as the scene for DLSS / FSR / XeSS: 1 = 16-bit float (Gears 2's lit "
+                      "scene), 2 = 10:10:10:2 UNORM (Gears 3's), 3 = both. Gears 2 keeps 1: in a ch05 cutscene a "
+@@ -3411,6 +3416,7 @@
+     }
+     up_camera_move_ = REXCVAR_GET(gow2_upscale_camera_move);
+     up_dejitter_depth_ = REXCVAR_GET(gow2_upscale_dejitter_depth);
++    up_jitter_late_ = REXCVAR_GET(gow2_upscale_jitter_late);
+     {
+       const int32_t ob = REXCVAR_GET(gow2_upscale_object_constants), cr = REXCVAR_GET(gow2_upscale_camera_constant);
+       up_object_base_ = ob > 0 && ob <= 252 ? uint32_t(ob) : 5u;
+@@ -3498,6 +3504,23 @@
+   uint32_t up_scene_formats_ = 1;
+   uint32_t up_jitter_scope_ = 0;         // --gow2_upscale_jitter_scope
+   uint64_t up_jittered_scope_ = 0;       // draws jittered only because of the scope (log window)
++  bool up_jitter_late_ = false;          // --gow2_upscale_jitter_late (Gears 3 job 120)
++  uint64_t up_late_draws_ = 0;           // camera draws into the scene depth after the upscale (log window)
++  // Gears 3 job 120: a camera draw (same c0-c3 as the frame's first scene draw) into the scene depth after the scene
++  // colour resolve that ran the upscaler - drawn unjittered, it can fail UE3's depth-equal test against the jittered
++  // depth. Counted always; jittered with --gow2_upscale_jitter_late.
++  void UpscaleLateDraw(const uint32_t* r, const rr::PipelineState& ps, const rr::RenderTarget* depth,
++                       rr::ViewportState& v) {
++    if (!up_camera_ || !depth || !(depth->key == up_depth_key_) || ps.viewport.xy_divided_by_w ||
++        ps.viewport.clip_disabled)
++      return;
++    if (std::memcmp(&r[kRegFloatConstVs], up_vp_, sizeof(up_vp_)) != 0) return;
++    ++up_late_draws_;
++    if (up_jitter_late_ && up_last_ok_) {
++      v.x += up_jitter_.x;
++      v.y += up_jitter_.y;
++    }
++  }
+   uint32_t up_depth_scale_ = 1;          // the scene depth target's resolution scale (scope 3)
+   // The frame's scene depth: the first camera draw's depth target, or with --gow2_upscale_jitter_scope=3 any depth target
+   // at the same EDRAM base, scale and MSAA (another pitch / depth format aliasing the same EDRAM: Gears 3 job 060).
+@@ -3686,7 +3709,10 @@
+                                       : std::string()) +
+                       (up_jitter_scope_ ? std::format(", jitter scope {}: {:.0f} more draws/frame", up_jitter_scope_,
+                                                       double(up_jittered_scope_) / log_every_)
+-                                        : std::string()));
++                                        : std::string()) +
++                      std::format(", camera draws after the upscale {:.1f}/frame ({})", double(up_late_draws_) / log_every_,
++                                  up_jitter_late_ ? "jittered" : "not jittered"));
++      up_late_draws_ = 0;
+       up_jittered_scope_ = 0;
+       up_camera_frames_ = 0;
+       up_dejittered_ = 0;
+@@ -4979,6 +5005,7 @@
+     rr::ViewportState v = ps.viewport;
+     rr::NdcForBottomLeftOrigin(v);  // D3D12: +Y up in NDC
+     if (upscaler_ && !up_scene_done_) UpscaleJitter(r, vsg, ps, target, depth_writes, v);  // notes/64
++    else if (upscaler_) UpscaleLateDraw(r, ps, target, v);  // Gears 3 job 120
+     const bool remap24 = float24_remap_ && target && (target->key.storage_class & 1);
+     if (needs_ps && psg->writes_depth) {
+       v.z_min = 0.0f;  // the shader's depth output is halved instead (system flag 64)

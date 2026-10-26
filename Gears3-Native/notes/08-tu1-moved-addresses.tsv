@@ -1,0 +1,198 @@
+old	new	shift	status	score	old_instr	new_instr	source
+0x82DB80F0	0x82DB95A8	+0x14b8	exact	1.00	3D608206 lis r11, -0x7dfa	3D608206 lis r11, -0x7dfa	gow3_manifest.toml:17
+0x82DCE010	0x82DCF418	+0x1408	exact	1.00	81030000 lwz r8, 0(r3)	81030000 lwz r8, 0(r3)	gow3_manifest.toml:18
+0x822A3D68	0x822A3DC0	+0x58	CHECK close (shift unlike neighbours)	0.75	81630000 lwz r11, 0(r3)	81630000 lwz r11, 0(r3)	gow3_manifest.toml:28
+0x822BE928	0x822BE2E8	-0x640	exact	1.00	81040000 lwz r8, 0(r4)	81040000 lwz r8, 0(r4)	gow3_manifest.toml:29
+0x822CDF50	0x822CDA98	-0x4b8	close	0.97	3D60833D lis r11, -0x7cc3	3D60833D lis r11, -0x7cc3	gow3_manifest.toml:30
+0x822DC840	0x822DC388	-0x4b8	close	0.97	81640018 lwz r11, 0x18(r4)	81640018 lwz r11, 0x18(r4)	gow3_manifest.toml:31
+0x823560C0	0x82356590	+0x4d0	exact	1.00	2F040000 cmpwi cr6, r4, 0	2F040000 cmpwi cr6, r4, 0	gow3_manifest.toml:32
+0x823565B0	0x82356A80	+0x4d0	exact	1.00	816301D8 lwz r11, 0x1d8(r3)	816301D8 lwz r11, 0x1d8(r3)	gow3_manifest.toml:33
+0x823824A0	0x82382848	+0x3a8	exact	1.00	81630000 lwz r11, 0(r3)	81630000 lwz r11, 0(r3)	gow3_manifest.toml:34
+0x823824B0	0x82382858	+0x3a8	exact	1.00	81630000 lwz r11, 0(r3)	81630000 lwz r11, 0(r3)	gow3_manifest.toml:35
+0x823824C0	0x82382868	+0x3a8	exact	1.00	81630000 lwz r11, 0(r3)	81630000 lwz r11, 0(r3)	gow3_manifest.toml:36
+0x823824D0	0x82382878	+0x3a8	exact	1.00	81630000 lwz r11, 0(r3)	81630000 lwz r11, 0(r3)	gow3_manifest.toml:37
+0x823824E0	0x82382888	+0x3a8	exact	1.00	81630000 lwz r11, 0(r3)	81630000 lwz r11, 0(r3)	gow3_manifest.toml:38
+0x8238C058	0x8238C7E8	+0x790	exact	1.00	3D608344 lis r11, -0x7cbc	3D608344 lis r11, -0x7cbc	gow3_manifest.toml:39
+0x8238C4A0	0x8238CBF0	+0x750	exact	1.00	3D608344 lis r11, -0x7cbc	3D608344 lis r11, -0x7cbc	gow3_manifest.toml:40
+0x8239D7A0	0x8239DD10	+0x570	exact	1.00	81630000 lwz r11, 0(r3)	81630000 lwz r11, 0(r3)	gow3_manifest.toml:41
+0x823B4428	0x823B4938	+0x510	exact	1.00	81630000 lwz r11, 0(r3)	81630000 lwz r11, 0(r3)	gow3_manifest.toml:42
+0x823B4438	0x823B4948	+0x510	exact	1.00	81630028 lwz r11, 0x28(r3)	81630028 lwz r11, 0x28(r3)	gow3_manifest.toml:43
+0x82444780	-	-	not found	0.72	3863FE3C addi r3, r3, -0x1c4	0x8244C820,0x824449A8	gow3_manifest.toml:44
+0x82444790	-	-	ambiguous	0.84	3863FFBC addi r3, r3, -0x44	0x8244C830,0x824449B8	gow3_manifest.toml:45
+0x8244C360	0x824DFD78	+0x93a18	CHECK close (instruction differs) (shift unlike neighbours)	0.91	3863FFBC addi r3, r3, -0x44	91640018 stw r11, 0x18(r4)	gow3_manifest.toml:46
+0x82458520	0x82458948	+0x428	close	0.97	816300CC lwz r11, 0xcc(r3)	816300CC lwz r11, 0xcc(r3)	gow3_manifest.toml:47
+0x82466E48	0x82467280	+0x438	exact	1.00	81630114 lwz r11, 0x114(r3)	81630114 lwz r11, 0x114(r3)	gow3_manifest.toml:48
+0x824AD4A8	0x824AD718	+0x270	exact	1.00	81430028 lwz r10, 0x28(r3)	81430028 lwz r10, 0x28(r3)	gow3_manifest.toml:49
+0x824B8CF0	0x824B8D38	+0x48	exact	1.00	81830000 lwz r12, 0(r3)	81830000 lwz r12, 0(r3)	gow3_manifest.toml:50
+0x824B8D00	0x824B8D48	+0x48	exact	1.00	3863FE3C addi r3, r3, -0x1c4	3863FE3C addi r3, r3, -0x1c4	gow3_manifest.toml:51
+0x824BAA48	0x824BAA90	+0x48	exact	1.00	3D608344 lis r11, -0x7cbc	3D608344 lis r11, -0x7cbc	gow3_manifest.toml:52
+0x8265B260	0x8265C0A0	+0xe40	exact	1.00	3D608343 lis r11, -0x7cbd	3D608343 lis r11, -0x7cbd	gow3_manifest.toml:53
+0x8271C710	-	-	not found	0.59	81630000 lwz r11, 0(r3)	0x82DE37C8,0x82D9C558,0x826A8CE8	gow3_manifest.toml:54
+0x82873B58	0x82874998	+0xe40	exact	1.00	81430090 lwz r10, 0x90(r3)	81430090 lwz r10, 0x90(r3)	gow3_manifest.toml:55
+0x82896C58	0x82897498	+0x840	CHECK close (instruction differs)	0.91	3863FF70 addi r3, r3, -0x90	3863FDAC addi r3, r3, -0x254	gow3_manifest.toml:56
+0x829025F8	0x82902E00	+0x808	exact	1.00	80E3007C lwz r7, 0x7c(r3)	80E3007C lwz r7, 0x7c(r3)	gow3_manifest.toml:57
+0x82995328	0x82996000	+0xcd8	exact	1.00	80630004 lwz r3, 4(r3)	80630004 lwz r3, 4(r3)	gow3_manifest.toml:58
+0x82995348	0x82996020	+0xcd8	close	0.91	80630004 lwz r3, 4(r3)	80630004 lwz r3, 4(r3)	gow3_manifest.toml:59
+0x829953D8	0x82996128	+0xd50	CHECK close (shift unlike neighbours)	0.81	80630004 lwz r3, 4(r3)	80630004 lwz r3, 4(r3)	gow3_manifest.toml:60
+0x829953F0	0x82996140	+0xd50	CHECK close (shift unlike neighbours)	0.84	80630004 lwz r3, 4(r3)	80630004 lwz r3, 4(r3)	gow3_manifest.toml:61
+0x8299D138	0x8299DF88	+0xe50	exact	1.00	3863FFE0 addi r3, r3, -0x20	3863FFE0 addi r3, r3, -0x20	gow3_manifest.toml:62
+0x829AD8B8	0x829AE7A0	+0xee8	exact	1.00	3D40820D lis r10, -0x7df3	3D40820D lis r10, -0x7df3	gow3_manifest.toml:63
+0x829DD1C0	0x829DE340	+0x1180	exact	1.00	3863FE14 addi r3, r3, -0x1ec	3863FE14 addi r3, r3, -0x1ec	gow3_manifest.toml:64
+0x82A3A100	0x82A3B6B8	+0x15b8	CHECK close (shift unlike neighbours)	0.81	3863E970 addi r3, r3, -0x1690	3863E970 addi r3, r3, -0x1690	gow3_manifest.toml:65
+0x82A55758	0x82A56D50	+0x15f8	exact	1.00	3D608341 lis r11, -0x7cbf	3D608341 lis r11, -0x7cbf	gow3_manifest.toml:66
+0x82B14930	0x82B16028	+0x16f8	exact	1.00	3863FFF8 addi r3, r3, -8	3863FFF8 addi r3, r3, -8	gow3_manifest.toml:67
+0x82B1BAA0	0x82B1CFE8	+0x1548	close	0.81	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:68
+0x82B1BAB0	0x82B1CFF8	+0x1548	close	0.94	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:69
+0x82B1BAB8	0x82B1D000	+0x1548	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:70
+0x82B1BAC0	0x82B1D008	+0x1548	exact	1.00	81630028 lwz r11, 0x28(r3)	81630028 lwz r11, 0x28(r3)	gow3_manifest.toml:71
+0x82B1BB18	0x82B1D060	+0x1548	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:72
+0x82B21EF0	0x82B23778	+0x1888	close	0.81	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:73
+0x82B21EF8	0x82B23780	+0x1888	close	0.81	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:74
+0x82B21F08	0x82B23790	+0x1888	close	0.94	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:75
+0x82B21F10	0x82B23798	+0x1888	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:76
+0x82B21F18	0x82B237A0	+0x1888	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:77
+0x82B21F20	0x82B237A8	+0x1888	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:78
+0x82B21F28	0x82B237B0	+0x1888	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:79
+0x82B21F30	0x82B237B8	+0x1888	exact	1.00	81630090 lwz r11, 0x90(r3)	81630090 lwz r11, 0x90(r3)	gow3_manifest.toml:80
+0x82B222A0	0x82B23B40	+0x18a0	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:81
+0x82B222B0	0x82B23B50	+0x18a0	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:82
+0x82B222B8	0x82B23B58	+0x18a0	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:83
+0x82B222C0	0x82B23B60	+0x18a0	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:84
+0x82B222C8	0x82B23B68	+0x18a0	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:85
+0x82B222D0	0x82B23B70	+0x18a0	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:86
+0x82B222D8	0x82B23B78	+0x18a0	exact	1.00	7C6B1B78 mr r11, r3	7C6B1B78 mr r11, r3	gow3_manifest.toml:87
+0x82B229E0	0x82B24258	+0x1878	CHECK close (shift unlike neighbours)	0.81	3863FFE0 addi r3, r3, -0x20	3863FFE0 addi r3, r3, -0x20	gow3_manifest.toml:88
+0x82B22EC8	0x82B24738	+0x1870	CHECK close (shift unlike neighbours)	0.75	3863FFDC addi r3, r3, -0x24	3863FFDC addi r3, r3, -0x24	gow3_manifest.toml:89
+0x82B25748	0x82B27060	+0x1918	exact	1.00	A1630028 lhz r11, 0x28(r3)	A1630028 lhz r11, 0x28(r3)	gow3_manifest.toml:90
+0x82B259D8	0x82B272E8	+0x1910	close	0.75	3863FFE0 addi r3, r3, -0x20	3863FFE0 addi r3, r3, -0x20	gow3_manifest.toml:91
+0x82B26D60	0x82B28670	+0x1910	exact	1.00	81630048 lwz r11, 0x48(r3)	81630048 lwz r11, 0x48(r3)	gow3_manifest.toml:92
+0x82B27A08	0x82B29490	+0x1a88	exact	1.00	3863FFF0 addi r3, r3, -0x10	3863FFF0 addi r3, r3, -0x10	gow3_manifest.toml:93
+0x82B45770	0x82B472C8	+0x1b58	exact	1.00	3863FFFC addi r3, r3, -4	3863FFFC addi r3, r3, -4	gow3_manifest.toml:94
+0x82B6D1E8	0x82B6ED00	+0x1b18	exact	1.00	81630004 lwz r11, 4(r3)	81630004 lwz r11, 4(r3)	gow3_manifest.toml:95
+0x82B6D200	0x82B6ED18	+0x1b18	exact	1.00	81630004 lwz r11, 4(r3)	81630004 lwz r11, 4(r3)	gow3_manifest.toml:96
+0x82B82BA8	0x82B84A80	+0x1ed8	exact	1.00	816300B0 lwz r11, 0xb0(r3)	816300B0 lwz r11, 0xb0(r3)	gow3_manifest.toml:97
+0x82B82BC8	0x82B84AA0	+0x1ed8	exact	1.00	816300B0 lwz r11, 0xb0(r3)	816300B0 lwz r11, 0xb0(r3)	gow3_manifest.toml:98
+0x82B82C10	0x82B84AE8	+0x1ed8	exact	1.00	816300B0 lwz r11, 0xb0(r3)	816300B0 lwz r11, 0xb0(r3)	gow3_manifest.toml:99
+0x82B82C30	0x82B84B08	+0x1ed8	exact	1.00	806300A4 lwz r3, 0xa4(r3)	806300A4 lwz r3, 0xa4(r3)	gow3_manifest.toml:100
+0x82B8C670	-	-	not found	0.62	81630000 lwz r11, 0(r3)	0x82B8E500	gow3_manifest.toml:101
+0x82B8C680	0x82B8E510	+0x1e90	CHECK close (shift unlike neighbours)	0.75	8163005C lwz r11, 0x5c(r3)	8163005C lwz r11, 0x5c(r3)	gow3_manifest.toml:102
+0x82BA6268	0x82BA8060	+0x1df8	exact	1.00	81630024 lwz r11, 0x24(r3)	81630024 lwz r11, 0x24(r3)	gow3_manifest.toml:103
+0x82BA6280	0x82BA8078	+0x1df8	exact	1.00	81630024 lwz r11, 0x24(r3)	81630024 lwz r11, 0x24(r3)	gow3_manifest.toml:104
+0x82BA6298	0x82BA8090	+0x1df8	exact	1.00	81630024 lwz r11, 0x24(r3)	81630024 lwz r11, 0x24(r3)	gow3_manifest.toml:105
+0x82BA62B0	0x82BA80A8	+0x1df8	exact	1.00	81630024 lwz r11, 0x24(r3)	81630024 lwz r11, 0x24(r3)	gow3_manifest.toml:106
+0x82BA62C8	0x82BA80C0	+0x1df8	exact	1.00	81630024 lwz r11, 0x24(r3)	81630024 lwz r11, 0x24(r3)	gow3_manifest.toml:107
+0x82BA62E0	0x82BA80D8	+0x1df8	exact	1.00	81630024 lwz r11, 0x24(r3)	81630024 lwz r11, 0x24(r3)	gow3_manifest.toml:108
+0x82BA62F8	0x82BA80F0	+0x1df8	exact	1.00	81630024 lwz r11, 0x24(r3)	81630024 lwz r11, 0x24(r3)	gow3_manifest.toml:109
+0x82BA6310	0x82BA8108	+0x1df8	exact	1.00	81630024 lwz r11, 0x24(r3)	81630024 lwz r11, 0x24(r3)	gow3_manifest.toml:110
+0x82BC6870	0x82BC8720	+0x1eb0	close	0.81	3863FFF4 addi r3, r3, -0xc	3863FFF4 addi r3, r3, -0xc	gow3_manifest.toml:111
+0x82BC9D98	0x82BCBC48	+0x1eb0	exact	1.00	81630000 lwz r11, 0(r3)	81630000 lwz r11, 0(r3)	gow3_manifest.toml:112
+0x82BFC6A0	0x82BFE4F0	+0x1e50	CHECK close (shift unlike neighbours)	0.81	81630034 lwz r11, 0x34(r3)	81630034 lwz r11, 0x34(r3)	gow3_manifest.toml:113
+0x82C0AD80	0x82C0CB70	+0x1df0	exact	1.00	8163001C lwz r11, 0x1c(r3)	8163001C lwz r11, 0x1c(r3)	gow3_manifest.toml:114
+0x82C0AE40	0x82C0CC30	+0x1df0	exact	1.00	8163001C lwz r11, 0x1c(r3)	8163001C lwz r11, 0x1c(r3)	gow3_manifest.toml:115
+0x82C0AE58	0x82C0CC48	+0x1df0	exact	1.00	8163001C lwz r11, 0x1c(r3)	8163001C lwz r11, 0x1c(r3)	gow3_manifest.toml:116
+0x82C2AF68	0x82C2C900	+0x1998	exact	1.00	81630018 lwz r11, 0x18(r3)	81630018 lwz r11, 0x18(r3)	gow3_manifest.toml:117
+0x82C2AFA0	0x82C2C938	+0x1998	exact	1.00	80630004 lwz r3, 4(r3)	80630004 lwz r3, 4(r3)	gow3_manifest.toml:118
+0x82C2B000	0x82C2C998	+0x1998	exact	1.00	81630004 lwz r11, 4(r3)	81630004 lwz r11, 4(r3)	gow3_manifest.toml:119
+0x82C38260	0x82C39CD8	+0x1a78	exact	1.00	3863FF88 addi r3, r3, -0x78	3863FF88 addi r3, r3, -0x78	gow3_manifest.toml:120
+0x82C690A0	0x82C6AA60	+0x19c0	exact	1.00	81650000 lwz r11, 0(r5)	81650000 lwz r11, 0(r5)	gow3_manifest.toml:121
+0x82C797E8	0x82C7B350	+0x1b68	exact	1.00	81640014 lwz r11, 0x14(r4)	81640014 lwz r11, 0x14(r4)	gow3_manifest.toml:122
+0x82C79B60	0x82C7B6C8	+0x1b68	exact	1.00	548B05EF rlwinm. r11, r4, 0, 0x17, 0x17	548B05EF rlwinm. r11, r4, 0, 0x17, 0x17	gow3_manifest.toml:123
+0x82D055B0	0x82D06FC8	+0x1a18	exact	1.00	2F080121 cmpwi cr6, r8, 0x121	2F080121 cmpwi cr6, r8, 0x121	gow3_manifest.toml:124
+0x82D05710	0x82D07128	+0x1a18	exact	1.00	89630014 lbz r11, 0x14(r3)	89630014 lbz r11, 0x14(r3)	gow3_manifest.toml:125
+0x82D057A8	0x82D071C0	+0x1a18	exact	1.00	2F050121 cmpwi cr6, r5, 0x121	2F050121 cmpwi cr6, r5, 0x121	gow3_manifest.toml:126
+0x82D37178	0x82D38CD8	+0x1b60	exact	1.00	80630004 lwz r3, 4(r3)	80630004 lwz r3, 4(r3)	gow3_manifest.toml:127
+0x82D37198	0x82D38CF8	+0x1b60	exact	1.00	3D60833D lis r11, -0x7cc3	3D60833D lis r11, -0x7cc3	gow3_manifest.toml:128
+0x82D6BBB8	0x82D6D030	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:129
+0x82D6BC18	0x82D6D090	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:130
+0x82D6BC48	0x82D6D0C0	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:131
+0x82D6BC98	0x82D6D110	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:132
+0x82D6BCA0	0x82D6D118	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:133
+0x82D6BCA8	0x82D6D120	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:134
+0x82D6BCB0	0x82D6D128	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:135
+0x82D6BCC0	0x82D6D138	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:136
+0x82D6BCD0	0x82D6D148	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:137
+0x82D6BCE0	0x82D6D158	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:138
+0x82D6BCF0	0x82D6D168	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:139
+0x82D6BD00	0x82D6D178	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:140
+0x82D6BD10	0x82D6D188	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:141
+0x82D6BD20	0x82D6D198	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:142
+0x82D6BD30	0x82D6D1A8	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:143
+0x82D6BD70	0x82D6D1E8	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:144
+0x82D6BD78	0x82D6D1F0	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:145
+0x82D6BD80	0x82D6D1F8	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:146
+0x82D6BD88	0x82D6D200	+0x1478	exact	1.00	4801E4B8 b 0x82d8a240	4801E4E8 b 0x82d8b6e8	gow3_manifest.toml:147
+0x82D6BDB0	0x82D6D228	+0x1478	exact	1.00	7CE63B78 mr r6, r7	7CE63B78 mr r6, r7	gow3_manifest.toml:148
+0x82D6BE00	0x82D6D278	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:149
+0x82D6BE18	0x82D6D290	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:150
+0x82D6BE50	0x82D6D2C8	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:151
+0x82D6BE80	0x82D6D2F8	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:152
+0x82D6BE98	0x82D6D310	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:153
+0x82D6BEB0	0x82D6D328	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:154
+0x82D6BEE8	0x82D6D360	+0x1478	exact	1.00	7CAB2B78 mr r11, r5	7CAB2B78 mr r11, r5	gow3_manifest.toml:155
+0x82D6BF00	0x82D6D378	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:156
+0x82D6BFB0	0x82D6D428	+0x1478	exact	1.00	7C832378 mr r3, r4	7C832378 mr r3, r4	gow3_manifest.toml:157
+0x82DAB1B0	0x82DAC720	+0x1570	exact	1.00	89630014 lbz r11, 0x14(r3)	89630014 lbz r11, 0x14(r3)	gow3_manifest.toml:158
+0x82DB0860	0x82DB1D18	+0x14b8	exact	1.00	4E800020 blr	4E800020 blr	gow3_manifest.toml:159
+0x82DF5C28	-	-	ambiguous	1.00	90830024 stw r4, 0x24(r3)	0x82E05F40,0x82E03428,0x82E02660,0x82E00540,0x82DFF3F8	gow3_manifest.toml:160
+0x82DF9828	-	-	ambiguous	1.00	90830024 stw r4, 0x24(r3)	0x82E05F40,0x82E03428,0x82E02660,0x82E00540,0x82DFF3F8	gow3_manifest.toml:161
+0x82DFB0C8	-	-	ambiguous	1.00	90830024 stw r4, 0x24(r3)	0x82E05F40,0x82E03428,0x82E02660,0x82E00540,0x82DFF3F8	gow3_manifest.toml:162
+0x82DFC5B8	-	-	ambiguous	1.00	90830024 stw r4, 0x24(r3)	0x82E05F40,0x82E03428,0x82E02660,0x82E00540,0x82DFF3F8	gow3_manifest.toml:163
+0x82DFD2B8	-	-	ambiguous	1.00	90830024 stw r4, 0x24(r3)	0x82E05F40,0x82E03428,0x82E02660,0x82E00540,0x82DFF3F8	gow3_manifest.toml:164
+0x82DFE1C8	0x82DFF3F8	+0x1230	shifted	1.00	90830024 stw r4, 0x24(r3)	90830024 stw r4, 0x24(r3)	gow3_manifest.toml:165
+0x82DFF310	0x82E00540	+0x1230	shifted	1.00	90830024 stw r4, 0x24(r3)	90830024 stw r4, 0x24(r3)	gow3_manifest.toml:166
+0x82E01430	0x82E02660	+0x1230	shifted	1.00	90830024 stw r4, 0x24(r3)	90830024 stw r4, 0x24(r3)	gow3_manifest.toml:167
+0x82E021F8	0x82E03428	+0x1230	shifted	1.00	90830024 stw r4, 0x24(r3)	90830024 stw r4, 0x24(r3)	gow3_manifest.toml:168
+0x82E04D10	0x82E05F40	+0x1230	shifted	1.00	90830024 stw r4, 0x24(r3)	90830024 stw r4, 0x24(r3)	gow3_manifest.toml:169
+0x82E10418	0x82E115D8	+0x11c0	exact	1.00	38630304 addi r3, r3, 0x304	38630304 addi r3, r3, 0x304	gow3_manifest.toml:170
+0x82E10A60	0x82E11C20	+0x11c0	exact	1.00	81630174 lwz r11, 0x174(r3)	81630174 lwz r11, 0x174(r3)	gow3_manifest.toml:171
+0x82E305D0	0x82E317A0	+0x11d0	close	0.94	3863FFA4 addi r3, r3, -0x5c	3863FFA4 addi r3, r3, -0x5c	gow3_manifest.toml:172
+0x82E305D8	0x82E317A8	+0x11d0	close	0.97	3863FFA4 addi r3, r3, -0x5c	3863FFA4 addi r3, r3, -0x5c	gow3_manifest.toml:173
+0x82E305E0	0x82E317B0	+0x11d0	exact	1.00	81630148 lwz r11, 0x148(r3)	81630148 lwz r11, 0x148(r3)	gow3_manifest.toml:174
+0x82E30A50	0x82E31C20	+0x11d0	exact	1.00	81630028 lwz r11, 0x28(r3)	81630028 lwz r11, 0x28(r3)	gow3_manifest.toml:175
+0x82E30A68	0x82E31C38	+0x11d0	exact	1.00	81630028 lwz r11, 0x28(r3)	81630028 lwz r11, 0x28(r3)	gow3_manifest.toml:176
+0x82E30A80	0x82E31C50	+0x11d0	exact	1.00	81630028 lwz r11, 0x28(r3)	81630028 lwz r11, 0x28(r3)	gow3_manifest.toml:177
+0x82E30A98	0x82E31C68	+0x11d0	exact	1.00	81630028 lwz r11, 0x28(r3)	81630028 lwz r11, 0x28(r3)	gow3_manifest.toml:178
+0x82E30AB0	0x82E31C80	+0x11d0	exact	1.00	80630128 lwz r3, 0x128(r3)	80630128 lwz r3, 0x128(r3)	gow3_manifest.toml:179
+0x82E32E48	0x82E34018	+0x11d0	exact	1.00	4E800020 blr	4E800020 blr	gow3_manifest.toml:180
+0x82E503A8	0x82E51568	+0x11c0	exact	1.00	54AB063E clrlwi r11, r5, 0x18	54AB063E clrlwi r11, r5, 0x18	gow3_manifest.toml:181
+0x82E59CE8	0x82E5AFA0	+0x12b8	exact	1.00	C0030030 lfs f0, 0x30(r3)	C0030030 lfs f0, 0x30(r3)	gow3_manifest.toml:182
+0x82E5BB58	-	-	not found	0.44	81630020 lwz r11, 0x20(r3)	0x82E5CE20	gow3_manifest.toml:183
+0x82E7B5F0	0x82E7C760	+0x1170	exact	1.00	4E800020 blr	4E800020 blr	gow3_manifest.toml:184
+0x82E7D858	0x82E7E9C8	+0x1170	exact	1.00	81630148 lwz r11, 0x148(r3)	81630148 lwz r11, 0x148(r3)	gow3_manifest.toml:185
+0x82E7D8B8	0x82E7EA28	+0x1170	exact	1.00	81630154 lwz r11, 0x154(r3)	81630154 lwz r11, 0x154(r3)	gow3_manifest.toml:186
+0x82E80F18	0x82E82088	+0x1170	exact	1.00	81630158 lwz r11, 0x158(r3)	81630158 lwz r11, 0x158(r3)	gow3_manifest.toml:187
+0x82E85440	0x82E865A8	+0x1168	exact	1.00	3964004F addi r11, r4, 0x4f	3964004F addi r11, r4, 0x4f	gow3_manifest.toml:188
+0x82E85460	0x82E865C8	+0x1168	exact	1.00	81640000 lwz r11, 0(r4)	81640000 lwz r11, 0(r4)	gow3_manifest.toml:189
+0x82E855A8	0x82E86710	+0x1168	exact	1.00	81640000 lwz r11, 0(r4)	81640000 lwz r11, 0(r4)	gow3_manifest.toml:190
+0x82E855D8	0x82E86740	+0x1168	exact	1.00	81640000 lwz r11, 0(r4)	81640000 lwz r11, 0(r4)	gow3_manifest.toml:191
+0x82E85608	0x82E86770	+0x1168	exact	1.00	81630000 lwz r11, 0(r3)	81630000 lwz r11, 0(r3)	gow3_manifest.toml:192
+0x82EAE778	0x82EAF8E0	+0x1168	exact	1.00	38600000 li r3, 0	38600000 li r3, 0	gow3_manifest.toml:193
+0x82ED6230	0x82ED7940	+0x1710	exact	1.00	39200009 li r9, 9	39200009 li r9, 9	gow3_manifest.toml:194
+0x82EDD390	0x82EDEA90	+0x1700	exact	1.00	80630038 lwz r3, 0x38(r3)	80630038 lwz r3, 0x38(r3)	gow3_manifest.toml:195
+0x82EDD398	0x82EDEA98	+0x1700	exact	1.00	80630038 lwz r3, 0x38(r3)	80630038 lwz r3, 0x38(r3)	gow3_manifest.toml:196
+0x82EDD3A0	0x82EDEAA0	+0x1700	exact	1.00	80630034 lwz r3, 0x34(r3)	80630034 lwz r3, 0x34(r3)	gow3_manifest.toml:197
+0x823D4F78	0x823D5388	+0x410	close	0.75	2B030000 cmplwi cr6, r3, 0	2B030000 cmplwi cr6, r3, 0	gow3_manifest.toml:204
+0x828C6C60	0x828C7158	+0x4f8	exact	1.00	81830000 lwz r12, 0(r3)	81830000 lwz r12, 0(r3)	gow3_manifest.toml:205
+0x829552C8	0x82956010	+0xd48	exact	1.00	8063000C lwz r3, 0xc(r3)	8063000C lwz r3, 0xc(r3)	gow3_manifest.toml:206
+0x82C27230	0x82C28BC8	+0x1998	close	0.97	3D60833B lis r11, -0x7cc5	3D60833B lis r11, -0x7cc5	gow3_manifest.toml:207
+0x82D680C0	0x82D69538	+0x1478	exact	1.00	3D60833D lis r11, -0x7cc3	3D60833D lis r11, -0x7cc3	gow3_manifest.toml:208
+0x82D680F0	0x82D69568	+0x1478	close	0.97	7C641B78 mr r4, r3	7C641B78 mr r4, r3	gow3_manifest.toml:209
+0x82E306B0	0x82E31880	+0x11d0	exact	1.00	81630000 lwz r11, 0(r3)	81630000 lwz r11, 0(r3)	gow3_manifest.toml:210
+0x82FDCF18	-	-	not found	0.66	4E800420 bctr	0x82FDEB18	gow3_manifest.toml:217
+0x82FDCF48	0x82FDEB48	+0x1c00	close	0.75	7CF530AE lbzx r7, r21, r6	7CF530AE lbzx r7, r21, r6	gow3_manifest.toml:219
+0x82FDCF64	0x82FDEB64	+0x1c00	close	0.97	7FD530AE lbzx r30, r21, r6	7FD530AE lbzx r30, r21, r6	gow3_manifest.toml:219
+0x82FDD0E4	0x82FDECE4	+0x1c00	exact	1.00	7FD530AE lbzx r30, r21, r6	7FD530AE lbzx r30, r21, r6	gow3_manifest.toml:219
+0x82FDD264	0x82FDEE64	+0x1c00	exact	1.00	7FD530AE lbzx r30, r21, r6	7FD530AE lbzx r30, r21, r6	gow3_manifest.toml:219
+0x82FDD3E4	0x82FDEFE4	+0x1c00	exact	1.00	7FD530AE lbzx r30, r21, r6	7FD530AE lbzx r30, r21, r6	gow3_manifest.toml:219
+0x82FDD564	0x82FDF164	+0x1c00	exact	1.00	7FD530AE lbzx r30, r21, r6	7FD530AE lbzx r30, r21, r6	gow3_manifest.toml:219
+0x82FDD6E4	0x82FDF2E4	+0x1c00	exact	1.00	7FD530AE lbzx r30, r21, r6	7FD530AE lbzx r30, r21, r6	gow3_manifest.toml:219
+0x82FDD864	0x82FDF464	+0x1c00	exact	1.00	7FD530AE lbzx r30, r21, r6	7FD530AE lbzx r30, r21, r6	gow3_manifest.toml:219
+0x82FDD9E4	0x82FDF5E4	+0x1c00	exact	1.00	3BA90400 addi r29, r9, 0x400	3BA90400 addi r29, r9, 0x400	gow3_manifest.toml:219
+0x82FDDBB0	0x82FDF7B0	+0x1c00	exact	1.00	3BA90400 addi r29, r9, 0x400	3BA90400 addi r29, r9, 0x400	gow3_manifest.toml:219
+0x82FDDD7C	0x82FDF97C	+0x1c00	exact	1.00	3BA90400 addi r29, r9, 0x400	3BA90400 addi r29, r9, 0x400	gow3_manifest.toml:219
+0x82969614	0x8296A3C4	+0xdb0	close	0.97	80BE0344 lwz r5, 0x344(r30)	80BE0344 lwz r5, 0x344(r30)	gow3_manifest.toml:223
+0x82961994	0x829626DC	+0xd48	exact	1.00	7FC4F378 mr r4, r30	7FC4F378 mr r4, r30	gow3_manifest.toml:230
+0x82AF98EC	0x82AFB44C	+0x1b60	exact	1.00	7C210B78 mr r1, r1	7C210B78 mr r1, r1	gow3_manifest.toml:237
+0x82AF991C	0x82AFB47C	+0x1b60	exact	1.00	7C421378 mr r2, r2	7C421378 mr r2, r2	gow3_manifest.toml:240
+0x834290D8	-	-	ambiguous	1.00	00000000 	0x82000020,0x82000024,0x82000028,0x8200002C,0x82000030	game_patches.cpp:109
+0x834290EC	-	-	ambiguous	1.00	00000000 	0x82000020,0x82000024,0x82000028,0x8200002C,0x82000030	game_patches.cpp:109

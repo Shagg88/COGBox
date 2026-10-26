@@ -1,0 +1,27 @@
+diff --git a/src/system/user_module.cpp b/src/system/user_module.cpp
+index 171546f..c3334be 100644
+--- a/src/system/user_module.cpp
++++ b/src/system/user_module.cpp
+@@ -104,6 +104,22 @@ X_STATUS UserModule::LoadFromFile(const std::string_view path) {
+ 
+   // Search for sibling XEX patch file
+   auto patch_entry = kernel_state_->file_system()->ResolvePath(path_ + "p");
++  // Gears2-Native SDK patch 31: otherwise the title update's patch on update: (a title update folder mounted with
++  // --update_data_root), so the base game folder stays usable without the update. Only for an .xex (not the .xexp
++  // itself) and only when update: is mounted, so nothing is looked up (or logged) otherwise.
++  // (Not rex::string::utf8_ends_with_case: it steps back one character too many and never matches a 4-character suffix.)
++  const bool is_xex = path_.size() >= 4 && path_[path_.size() - 4] == '.' &&
++                      (path_[path_.size() - 3] | 0x20) == 'x' && (path_[path_.size() - 2] | 0x20) == 'e' &&
++                      (path_[path_.size() - 1] | 0x20) == 'x';
++  std::string update_target;
++  if (!patch_entry && is_xex &&
++      kernel_state_->file_system()->FindSymbolicLink("update:", update_target)) {
++    const auto slash = path_.find_last_of("\\/");
++    const std::string file = slash == std::string::npos ? std::string(path_) : std::string(path_.substr(slash + 1));
++    patch_entry = kernel_state_->file_system()->ResolvePath("update:\\" + file + "p");
++    REXSYS_INFO("UserModule: {} has no patch next to it; update: is mounted ({}) - update:\\{}p {}", path_,
++                update_target, file, patch_entry ? "found, applying it" : "not found");
++  }
+   if (patch_entry) {
+     auto patch_path = patch_entry->absolute_path();
+ 

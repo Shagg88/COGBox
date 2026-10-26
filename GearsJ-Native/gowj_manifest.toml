@@ -1,0 +1,280 @@
+# GearsJ-Native recompiler manifest (rexglue 0.10). Started from `rexglue init` (job 002b, 2026-10-24).
+# Release: disc 0.0.0.3 (media 3528321A) + Title Update 4 (notes/01, notes/03). The codegen applies default.xexp itself.
+# Hints are added only when the recompiler or the running game reports a problem; each says where it came from.
+
+[project]
+name = "gowj"
+sdk_version = "0.10.0"
+game_root = "game/tu4/patched"   # default.xex + default.xexp (job 001; Gears 2's TU6 layout, its notes/63)
+
+[entrypoint]
+file_path = "game/tu4/patched/default.xex"
+out_directory_path = "generated/default"
+includes = []
+# Gears 2's measured codegen option (its notes/60, job 223: cr_as_local -10% frame time). non_volatile_as_local stays
+# off for the first boots (unwinding and setjmp read those registers from the context); try it once Judgment plays.
+cr_as_local = true
+
+[entrypoint.functions]
+# Job 002b codegen: "UnresolvedCall ... b <target> - target not in any function" (branches used as tail calls into
+# code no function claims). The same three addresses were the first three of OverkillLabs3's base-disc hints, mapped to
+# TU4 by tools/remap.py (notes/04).
+0x82E468F0 = {}   # from 0x82E5E238
+0x82E8ADF0 = {}   # from 0x82E8AF5C
+0x82EA0C80 = {}   # from 0x82EA5854
+
+# Job 004 first boot (both renderers): "[FATAL] Call to invalid or unregistered function at guest address 0x82C0F600".
+# Batch 1 (2026-10-24, notes/04): entries that BOTH our own scan (tools/funcscan.py: pointed to from data or built with
+# lis+addi, never a pdata/bl start) AND OverkillLabs3's base-disc hint list mapped to TU4 (tools/remap.py, OK matches)
+# name. 270 agree; 111 of them sit next to an 'mr r8,r8' SEH marker (Gears 3's rule: a split at an SEH resume point
+# broke its codegen) and are left out until the boot loop asks for one. 159 below, 0x82C0F600 among them.
+# Job 005: two of the 159 (0x830B3B70, 0x830B54B4) were jump-table ADDRESSES, not functions; they split two Bink
+# functions and job 005 died at 'Unresolved branch from 0x830B571C to 0x830B573C'. Removed (157 left); the tables are
+# described below instead.
+0x822C3438 = {}   # ptr; reference base 0x822C3458
+0x822D1C50 = {}   # ptr; reference base 0x822D1D18
+0x822D35F8 = {}   # ptr; reference base 0x822D3688
+0x822E1F08 = {}   # ptr; reference base 0x822E1F98
+0x8235DE80 = {}   # ptr; reference base 0x8235DFB8
+0x8235E370 = {}   # ptr; reference base 0x8235E498
+0x8238D1B0 = {}   # ptr; reference base 0x8238D158
+0x8238D1C0 = {}   # ptr; reference base 0x8238D168
+0x8238D1D0 = {}   # ptr; reference base 0x8238D178
+0x8238D1E0 = {}   # ptr; reference base 0x8238D188
+0x82398398 = {}   # ptr; reference base 0x823983A8
+0x823A9E40 = {}   # ptr; reference base 0x823A9F90
+0x823C0980 = {}   # ptr; reference base 0x823C0B40
+0x823C0990 = {}   # ptr; reference base 0x823C0B50
+0x823E12A8 = {}   # lisaddi; reference base 0x823E16A8
+0x8245B210 = {}   # ptr; reference base 0x8245B660
+0x8245DD80 = {}   # lisaddi; reference base 0x8245DE40
+0x82463110 = {}   # ptr; reference base 0x82462F98
+0x8246ECC0 = {}   # ptr; reference base 0x8246EC08
+0x82475040 = {}   # ptr; reference base 0x82474F88
+0x8247D220 = {}   # ptr; reference base 0x8247D168
+0x824CA750 = {}   # ptr; reference base 0x824CA490
+0x824D5EF8 = {}   # ptr; reference base 0x824D5AB0
+0x824D7C50 = {}   # ptr; reference base 0x824D79A0
+0x8266E9B8 = {}   # ptr; reference base 0x8266E638
+0x8267E488 = {}   # ptr; reference base 0x8267E110
+0x828A0808 = {}   # ptr; reference base 0x8289FE08
+0x828F50D0 = {}   # ptr; reference base 0x828F3E98
+0x82932D50 = {}   # ptr; reference base 0x829317E8
+0x829CE440 = {}   # ptr; reference base 0x829CCF00
+0x829CE460 = {}   # ptr; reference base 0x829CCF20
+0x829CE520 = {}   # ptr; reference base 0x829CCFE0
+0x829CE568 = {}   # ptr; reference base 0x829CD028
+0x829D6A18 = {}   # ptr; reference base 0x829D5468
+0x829F1948 = {}   # ptr; reference base 0x829F0408
+0x829FE978 = {}   # ptr; reference base 0x829FD3F0
+0x82AC4430 = {}   # ptr; reference base 0x82AC2440
+0x82B01B98 = {}   # ptr; reference base 0x82AFF970
+0x82C02FB0 = {}   # ptr; reference base 0x82C001D0
+0x82C0A138 = {}   # ptr; reference base 0x82C073A0
+0x82C0A140 = {}   # ptr; reference base 0x82C073A8
+0x82C0A160 = {}   # ptr; reference base 0x82C073C0
+0x82C0A168 = {}   # ptr; reference base 0x82C073C8
+0x82C0A170 = {}   # ptr; reference base 0x82C073D0
+0x82C0A1C8 = {}   # ptr; reference base 0x82C07428
+0x82C0F5D8 = {}   # ptr; reference base 0x82C0CC20
+0x82C0F5F0 = {}   # ptr; reference base 0x82C0CC48
+0x82C0F5F8 = {}   # ptr; reference base 0x82C0CC50
+0x82C0F600 = {}   # ptr; reference base 0x82C0CC58
+0x82C109D0 = {}   # ptr; reference base 0x82C0E000
+0x82C109D8 = {}   # ptr; reference base 0x82C0E008
+0x82C109E0 = {}   # ptr; reference base 0x82C0E010
+0x82C109E8 = {}   # ptr; reference base 0x82C0E018
+0x82C109F0 = {}   # ptr; reference base 0x82C0E020
+0x82C13F80 = {}   # ptr; reference base 0x82C11668
+0x82C156D8 = {}   # ptr; reference base 0x82C12C70
+0x82C164F0 = {}   # ptr; reference base 0x82C13998
+0x82C34208 = {}   # ptr; reference base 0x82C316A8
+0x82C34218 = {}   # ptr; reference base 0x82C316B8
+0x82C35A78 = {}   # ptr; reference base 0x82C32EC8
+0x82C35A90 = {}   # ptr; reference base 0x82C32EE0
+0x82C73310 = {}   # ptr; reference base 0x82C70DC0
+0x82C73330 = {}   # ptr; reference base 0x82C70DE0
+0x82C73378 = {}   # ptr; reference base 0x82C70E28
+0x82C73398 = {}   # ptr; reference base 0x82C70E48
+0x82C96A30 = {}   # ptr; reference base 0x82C945D8
+0x82C96A48 = {}   # ptr; reference base 0x82C945F0
+0x82C96A60 = {}   # ptr; reference base 0x82C94608
+0x82C96A78 = {}   # ptr; reference base 0x82C94620
+0x82C96A90 = {}   # ptr; reference base 0x82C94638
+0x82C96AA8 = {}   # ptr; reference base 0x82C94650
+0x82C96AC0 = {}   # ptr; reference base 0x82C94668
+0x82C96AD8 = {}   # ptr; reference base 0x82C94680
+0x82CB7178 = {}   # ptr; reference base 0x82CB48B0
+0x82CBA698 = {}   # ptr; reference base 0x82CB7DD0
+0x82CFC1D8 = {}   # ptr; reference base 0x82CF9480
+0x82CFC298 = {}   # ptr; reference base 0x82CF9540
+0x82CFC2B0 = {}   # ptr; reference base 0x82CF9558
+0x82D1C1B8 = {}   # ptr; reference base 0x82D19170
+0x82D1C1F0 = {}   # ptr; reference base 0x82D191A8
+0x82D1C250 = {}   # ptr; reference base 0x82D19208
+0x82D29940 = {}   # ptr; reference base 0x82D26610
+0x82D6AE58 = {}   # ptr; reference base 0x82D68220
+0x82D6B1D0 = {}   # ptr; reference base 0x82D68598
+0x82DDC548 = {}   # ptr; reference base 0x82DD9A28
+0x82DDC6A8 = {}   # ptr; reference base 0x82DD9B88
+0x82DDC740 = {}   # ptr; reference base 0x82DD9C20
+0x82E096F0 = {}   # ptr; reference base 0x82E06E70
+0x82E09710 = {}   # ptr; reference base 0x82E06E90
+0x82E3A558 = {}   # lisaddi; reference base 0x82E380D0
+0x82E3E030 = {}   # ptr; reference base 0x82E3BBA8
+0x82E3E090 = {}   # ptr; reference base 0x82E3BC08
+0x82E3E0C0 = {}   # ptr; reference base 0x82E3BC38
+0x82E3E110 = {}   # ptr; reference base 0x82E3BC88
+0x82E3E118 = {}   # ptr; reference base 0x82E3BC90
+0x82E3E120 = {}   # ptr; reference base 0x82E3BC98
+0x82E3E128 = {}   # ptr; reference base 0x82E3BCA0
+0x82E3E138 = {}   # ptr; reference base 0x82E3BCB0
+0x82E3E148 = {}   # ptr; reference base 0x82E3BCC0
+0x82E3E158 = {}   # ptr; reference base 0x82E3BCD0
+0x82E3E168 = {}   # ptr; reference base 0x82E3BCE0
+0x82E3E178 = {}   # ptr; reference base 0x82E3BCF0
+0x82E3E188 = {}   # ptr; reference base 0x82E3BD00
+0x82E3E198 = {}   # ptr; reference base 0x82E3BD10
+0x82E3E1A8 = {}   # ptr; reference base 0x82E3BD20
+0x82E3E1E8 = {}   # ptr; reference base 0x82E3BD60
+0x82E3E1F0 = {}   # ptr; reference base 0x82E3BD68
+0x82E3E1F8 = {}   # ptr; reference base 0x82E3BD70
+0x82E3E200 = {}   # ptr; reference base 0x82E3BD78
+0x82E3E228 = {}   # ptr; reference base 0x82E3BDA0
+0x82E3E278 = {}   # ptr; reference base 0x82E3BDF0
+0x82E3E290 = {}   # ptr; reference base 0x82E3BE08
+0x82E3E2C8 = {}   # ptr; reference base 0x82E3BE40
+0x82E3E2F8 = {}   # ptr; reference base 0x82E3BE70
+0x82E3E310 = {}   # ptr; reference base 0x82E3BE88
+0x82E3E328 = {}   # ptr; reference base 0x82E3BEA0
+0x82E3E360 = {}   # ptr; reference base 0x82E3BED8
+0x82E3E378 = {}   # ptr; reference base 0x82E3BEF0
+0x82E3E428 = {}   # ptr; reference base 0x82E3BFA0
+0x82E7DCD8 = {}   # ptr; reference base 0x82E7BAE8
+0x82E83490 = {}   # ptr; reference base 0x82E81278
+0x82EC8730 = {}   # ptr; reference base 0x82EC6560
+0x82ECC320 = {}   # ptr; reference base 0x82ECA150
+0x82ECDBF0 = {}   # ptr; reference base 0x82ECBA20
+0x82ECF158 = {}   # ptr; reference base 0x82ECCF40
+0x82ECFE80 = {}   # ptr; reference base 0x82ECDC68
+0x82ED0D70 = {}   # ptr; reference base 0x82ECEB58
+0x82ED1EE0 = {}   # ptr; reference base 0x82ECFCC8
+0x82ED4028 = {}   # ptr; reference base 0x82ED1E58
+0x82ED4E18 = {}   # ptr; reference base 0x82ED2C48
+0x82ED7958 = {}   # ptr; reference base 0x82ED5788
+0x82EE3040 = {}   # ptr; reference base 0x82EE0E70
+0x82EE3688 = {}   # ptr; reference base 0x82EE14B8
+0x82F03AA8 = {}   # ptr; reference base 0x82F01690
+0x82F03AC0 = {}   # ptr; reference base 0x82F016A8
+0x82F03AD8 = {}   # ptr; reference base 0x82F016C0
+0x82F03AF0 = {}   # ptr; reference base 0x82F016D8
+0x82F03B08 = {}   # ptr; reference base 0x82F016F0
+0x82F05DC0 = {}   # ptr; reference base 0x82F03AA0
+0x82F23640 = {}   # ptr; reference base 0x82F21200
+0x82F2D0D8 = {}   # ptr; reference base 0x82F2ABD0
+0x82F2EF40 = {}   # ptr; reference base 0x82F2CA38
+0x82F41108 = {}   # ptr; reference base 0x82F3EB70
+0x82F4ED38 = {}   # ptr; reference base 0x82F4C578
+0x82F50FB8 = {}   # ptr; reference base 0x82F4E7F8
+0x82F51018 = {}   # ptr; reference base 0x82F4E858
+0x82F54640 = {}   # ptr; reference base 0x82F51F40
+0x82F58B78 = {}   # ptr; reference base 0x82F56488
+0x82F58B98 = {}   # ptr; reference base 0x82F564A8
+0x82F58CE0 = {}   # ptr; reference base 0x82F565F0
+0x82F58D10 = {}   # ptr; reference base 0x82F56620
+0x82F58D40 = {}   # ptr; reference base 0x82F56650
+0x82F82470 = {}   # ptr; reference base 0x82F7FD80
+0x82FAA668 = {}   # ptr; reference base 0x82FA7A68
+0x82FB1838 = {}   # ptr; reference base 0x82FAEC18
+0x82FB1840 = {}   # ptr; reference base 0x82FAEC20
+0x82FB1848 = {}   # ptr; reference base 0x82FAEC28
+
+# Batch 2 (job 006: past the Bink movie, then "[FATAL] Call to invalid or unregistered function at guest address
+# 0x82C11620"). tools/scan_vtables.py (Gears 2's, D5) against the codegen's own function list (59,587 starts,
+# generated/default/gowj_init.cpp) and the SDK's loaded image (job 005 dump): 23 vtable/callback-table entries the
+# codegen doesn't know, 0x82C11620 among them.
+0x823987A0 = {}   # 1 table ref(s), first at 0x820A1E4C; inside sub_82398780 (+0x20); first word 3D608356
+0x82418988 = {}   # 13 table ref(s), first at 0x8209EF3C; inside sub_82418978 (+0x10); first word 4BEF86D0
+0x8257E560 = {}   # 2 table ref(s), first at 0x82111728; inside sub_8257E0E8 (+0x478); first word 3863003C
+0x828BE720 = {}   # 1 table ref(s), first at 0x8216CBC8; inside sub_828BE718 (+0x8); first word 3863FDAC
+0x828F0C80 = {}   # 4 table ref(s), first at 0x82170E40; inside sub_828F0C60 (+0x20); first word 816301F8
+0x82C0A150 = {}   # 5 table ref(s), first at 0x82000CF0; inside sub_82C0A148 (+0x8); first word 3863FFFC
+0x82C0A158 = {}   # 5 table ref(s), first at 0x82000D08; inside sub_82C0A148 (+0x10); first word 3863FFFC
+0x82C0F5E8 = {}   # 5 table ref(s), first at 0x82000D1C; inside sub_82C0F5E0 (+0x8); first word 3863FFFC
+0x82C109B8 = {}   # 1 table ref(s), first at 0x82001174; inside sub_82C109B0 (+0x8); first word 3863FFFC
+0x82C109C8 = {}   # 2 table ref(s), first at 0x82001098; inside sub_82C109C0 (+0x8); first word 3863FFFC
+0x82C11130 = {}   # 1 table ref(s), first at 0x820011C8; inside sub_82C11128 (+0x8); first word 3863FFE0
+0x82C11620 = {}   # 1 table ref(s), first at 0x820011BC; inside sub_82C11618 (+0x8); first word 3863FFDC
+0x82C33C90 = {}   # 3 table ref(s), first at 0x820060D4; inside sub_82C33C88 (+0x8); first word 3863FFFC
+0x82C5DB80 = {}   # 1 table ref(s), first at 0x82022554; inside sub_82C5DB68 (+0x18); first word 81630004
+0x82C5DB98 = {}   # 1 table ref(s), first at 0x82022558; inside sub_82C5DB68 (+0x30); first word 81630004
+0x82C7CE88 = {}   # 7 table ref(s), first at 0x82023A4C; inside sub_82C7CE78 (+0x10); first word 81630000
+0x82C7CE98 = {}   # 1 table ref(s), first at 0x820239A0; inside sub_82C7CE78 (+0x20); first word 3863FFF4
+0x82CCEFD0 = {}   # 1 table ref(s), first at 0x820292A0; inside sub_82CCEFC0 (+0x10); first word 81650000
+0x82CED918 = {}   # 1 table ref(s), first at 0x8202A21C; inside sub_82CED910 (+0x8); first word 81630034
+0x82E7FA08 = {}   # 1 table ref(s), first at 0x82047DB0; inside sub_82E7F9F8 (+0x10); first word 8163FFDC
+0x82F035C0 = {}   # 1 table ref(s), first at 0x820634E0; inside sub_82F035B8 (+0x8); first word 3863FFA4
+0x82F035C8 = {}   # 1 table ref(s), first at 0x820634EC; inside sub_82F035B8 (+0x10); first word 3863FFA4
+0x82F035D0 = {}   # 20 table ref(s), first at 0x82063580; inside sub_82F035B8 (+0x18); first word 3D608200
+# Callbacks built in code with lis+addi far from where they are built, after a function end, not known to the codegen
+# (our funcscan lis evidence; 115 more sit right after their own lis - handler addresses inside a function - left out).
+0x828EED60 = {}   # built with lis+addi at 0x828E7688; previous word ends a function
+0x829866B8 = {}   # built with lis+addi at 0x82985644; previous word ends a function
+0x82E3A528 = {}   # built with lis+addi at 0x82E3CDDC; previous word ends a function
+0x82F036F0 = {}   # built with lis+addi at 0x82F04FC4; previous word ends a function
+
+# Jump tables in the Bink video (BINK) and RAD code sections, found by our own scan of the TU4 image (lis/addi table,
+# lwzx, mtctr, bctr; entries read from the table). Gears 3 needed the same kind by hand (its job 014: detection found
+# 4 of 11 entries); 0x830B2718 is that very table (Gears 3's 0x82FDCF18 + 0xD5800).
+
+[[entrypoint.switch_tables]]
+address = 0x830A9754
+register = 11
+labels = [0x830A9780, 0x830A9818, 0x830AA3BC, 0x830AA89C, 0x830AAA50, 0x830AAB2C, 0x830AABE0, 0x830AAC58, 0x830AAD74, 0x830AB094]
+
+[[entrypoint.switch_tables]]
+address = 0x830B2718
+register = 7
+labels = [0x830B2748, 0x830B2764, 0x830B28E4, 0x830B2A64, 0x830B2BE4, 0x830B2D64, 0x830B2EE4, 0x830B3064, 0x830B31E4, 0x830B33B0, 0x830B357C]
+
+[[entrypoint.switch_tables]]
+address = 0x830B3B6C
+register = 31
+labels = [0x830B3B9C, 0x830B3BD8, 0x830B3DC8, 0x830B3FB8, 0x830B41A8, 0x830B4398, 0x830B4588, 0x830B4778, 0x830B4968, 0x830B4BA4, 0x830B4DE0]
+
+[[entrypoint.switch_tables]]
+address = 0x830B54B0
+register = 31
+labels = [0x830B54E0, 0x830B5530, 0x830B56F0, 0x830B58B0, 0x830B5A70, 0x830B5C30, 0x830B5DF0, 0x830B5FB0, 0x830B6170, 0x830B637C, 0x830B6588]
+
+[[entrypoint.switch_tables]]
+address = 0x830BF780
+register = 11
+labels = [0x830BF7E0, 0x830BF7E8, 0x830BF7F0, 0x830BF7F8, 0x830BF800, 0x830BF854, 0x830BF854, 0x830BF854, 0x830BF854, 0x830BF854, 0x830BF854, 0x830BF854, 0x830BF854, 0x830BF854, 0x830BF854, 0x830BF854, 0x830BF854, 0x830BF854, 0x830BF808, 0x830BF818, 0x830BF820, 0x830BF830, 0x830BF840]
+
+# ---- Game patches (src/layer3_gowj/game_patches.cpp, copied from Gears 3's and moved to Judgment's sites; notes/05.
+# Shagg 10:11: no hack patches - settings go through the game's own ini; hooks only restore what recompiling removed
+# or read timings. Each site read in disassembly beside Gears 3's - same instructions and registers) ----
+
+# --gowj_patch_query_poll_yield (default 3): the render thread's GPU query wait loop head (`mr r4,r30`; the loop calls
+# 0x82BE44F0 until done). Gears 3 0x82961994, Gears 2 0x828075BC.
+[[entrypoint.midasm_hook]]
+address = 0x829933B4
+name = "GowjQueryPollYield"
+registers = []
+
+# --gowj_patch_gpu_wait (default 1): the D3D library's GPU-wait step (sub_82BE36C0): at the cctpl `mr r1,r1` sleep until
+# our GPU side writes guest memory, then jump to the cctpm `mr r2,r2`. Gears 3 0x82AF98EC -> 0x82AF991C.
+[[entrypoint.midasm_hook]]
+address = 0x82BE36D4
+name = "GowjGpuWaitStep"
+registers = []
+jump_address_on_true = 0x82BE3704
+
+# --gowj_tick_log (read-only timing; the frame limit itself is an ini edit): after GetMaxTickRate's
+# `lfs f1,0x4CC(r3)` (MaxSmoothedFrameRate). Gears 3 0x8253D9B0.
+[[entrypoint.midasm_hook]]
+address = 0x8255E220
+name = "GowjMaxTickRate"
+registers = ["f1"]
+after_instruction = true

@@ -1,0 +1,110 @@
+diff --git a/include/rex/frame_hooks.h b/include/rex/frame_hooks.h
+new file mode 100644
+index 0000000..07e6ac2
+--- /dev/null
++++ b/include/rex/frame_hooks.h
+@@ -0,0 +1,25 @@
++// Gears2-Native SDK patch 35: frame-timing hooks for latency tools (NVIDIA Reflex, AMD Anti-Lag 2). The game layer sets
++// them once at start-up; every one is optional (null = nothing happens) and is called on the thread named below.
++#pragma once
++
++#include <atomic>
++
++namespace rex {
++
++using FrameHook = void (*)();
++
++struct FrameHooks {
++  std::atomic<FrameHook> guest_swap{nullptr};     // guest thread, end of VdSwap: one game frame handed to the GPU
++  std::atomic<FrameHook> input_read{nullptr};     // guest thread, XamInputGetState for a game pad
++  std::atomic<FrameHook> present_begin{nullptr};  // presenter thread, just before IDXGISwapChain::Present
++  std::atomic<FrameHook> present_end{nullptr};    // presenter thread, just after it
++};
++
++// One shared set, defined in the SDK runtime (xboxkrnl_video.cpp).
++FrameHooks& GetFrameHooks();
++
++inline void CallFrameHook(const std::atomic<FrameHook>& hook) {
++  if (FrameHook fn = hook.load(std::memory_order_acquire)) fn();
++}
++
++}  // namespace rex
+diff --git a/src/kernel/xam/xam_input.cpp b/src/kernel/xam/xam_input.cpp
+index 80c3634..5073f0f 100644
+--- a/src/kernel/xam/xam_input.cpp
++++ b/src/kernel/xam/xam_input.cpp
+@@ -9,6 +9,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <rex/frame_hooks.h>  // SDK patch 35
+ #include <rex/input/input.h>
+ #include <rex/input/input_system.h>
+ #include <rex/kernel/xam/private.h>
+@@ -112,6 +113,7 @@ u32 XamInputGetState_entry(u32 user_index, u32 flags, ppc_ptr_t<X_INPUT_STATE> i
+   }
+ 
+   auto* is = input_system();
++  if (input_state) rex::CallFrameHook(rex::GetFrameHooks().input_read);  // SDK patch 35
+   return is->GetState(actual_user_index, input_state);
+ }
+ 
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_video.cpp b/src/kernel/xboxkrnl/xboxkrnl_video.cpp
+index bc679b7..80cad60 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_video.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_video.cpp
+@@ -18,6 +18,7 @@
+ 
+ #include <rex/chrono/clock.h>
+ #include <rex/cvar.h>
++#include <rex/frame_hooks.h>  // SDK patch 35
+ #include <rex/graphics/pipeline/texture/info.h>
+ #include <rex/graphics/register_file.h>
+ #include <rex/graphics/video_mode_util.h>
+@@ -63,6 +64,13 @@ void WarnNoGpuEmulation(const char* export_name, std::atomic<bool>& warned) {
+ }
+ }  // namespace
+ 
++namespace rex {
++FrameHooks& GetFrameHooks() {  // SDK patch 35
++  static FrameHooks hooks;
++  return hooks;
++}
++}  // namespace rex
++
+ namespace rex::kernel::xboxkrnl {
+ using namespace rex::system;
+ 
+@@ -506,6 +514,8 @@ void VdSwap_entry(mapped_void buffer_ptr,      // ptr into primary ringbuffer
+   for (uint32_t i = offset; i < 64; i++) {
+     dwords[i] = xenos::MakePacketType2();
+   }
++  // SDK patch 35: the game frame is handed over; a latency tool may hold the guest here before its next frame starts.
++  rex::CallFrameHook(rex::GetFrameHooks().guest_swap);
+ }
+ 
+ void RegisterVideoExports(rex::runtime::ExportResolver* export_resolver,
+diff --git a/src/ui/d3d12/d3d12_presenter.cpp b/src/ui/d3d12/d3d12_presenter.cpp
+index 45733fc..074d946 100644
+--- a/src/ui/d3d12/d3d12_presenter.cpp
++++ b/src/ui/d3d12/d3d12_presenter.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include <rex/assert.h>
+ #include <rex/cvar.h>
++#include <rex/frame_hooks.h>  // SDK patch 35
+ #include <rex/logging.h>
+ #include <rex/math.h>
+ #include <rex/ui/d3d12/d3d12_presenter.h>
+@@ -1203,9 +1204,11 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+   // fullscreen is ever used in, the allow tearing flag must not be passed in
+   // fullscreen, but DXGI fullscreen is largely unneeded with the flip
+   // presentation model used in Direct3D 12).
++  rex::CallFrameHook(rex::GetFrameHooks().present_begin);  // SDK patch 35
+   HRESULT present_result = paint_context_.swap_chain->Present(
+       0, DXGI_PRESENT_RESTART |
+              (paint_context_.swap_chain_allows_tearing ? DXGI_PRESENT_ALLOW_TEARING : 0));
++  rex::CallFrameHook(rex::GetFrameHooks().present_end);  // SDK patch 35
+   // Even if presentation has failed, work might have been enqueued anyway
+   // internally before the failure according to Jesse Natalie from the DirectX
+   // Discord server.

@@ -1,0 +1,7 @@
+# Gears2-Native: SDK third-party pins we move ahead of the SDK (notes/30, D17/P9). One line per submodule: path tag.
+# Applied by job 046 after the job-045 baseline; re-applied on every SDK update until the SDK itself catches up.
+thirdparty/sdl3 release-3.4.18
+thirdparty/imgui v1.93.0
+thirdparty/vulkan-memory-allocator v3.4.0
+thirdparty/tracy v0.14.1
+thirdparty/catch2 v3.16.1

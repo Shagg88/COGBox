@@ -1,0 +1,13 @@
+# Gears2-Native: never commit game files or anything made from them.
+game/*
+!game/README.txt
+*.iso
+*.xex
+*.xexp
+generated/
+out/
+build/
+third_party/*
+!third_party/README.txt
+jobs/*
+!jobs/README.txt

@@ -1,0 +1,69 @@
+diff --git a/include/rex/graphics/draw_observer.h b/include/rex/graphics/draw_observer.h
+index c1b6ec3..3875cdd 100644
+--- a/include/rex/graphics/draw_observer.h
++++ b/include/rex/graphics/draw_observer.h
+@@ -65,6 +65,14 @@ class DrawObserver {
+                             uint64_t frame) {}
+ };
+ 
++// Gears2-Native SDK patch 18 (takeover T1): an observer wrote guest memory itself (our renderer's front buffer) from
++// inside an observer callback, on the GPU worker thread. This tells the GPU emulation the physical range changed
++// (SharedMemory::MemoryInvalidationCallback, exact range): its shared memory and texture cache reload it from guest
++// memory at the next use - e.g. the swap that follows OnSwap. No-op until a command processor registers the handler.
++void NotifyGuestRangeWrittenByObserver(uint32_t physical_address, uint32_t length);
++using GuestRangeWrittenHandler = void (*)(void* context, uint32_t physical_address, uint32_t length);
++void SetGuestRangeWrittenHandler(GuestRangeWrittenHandler handler, void* context);
++
+ void SetDrawObserver(DrawObserver* observer);
+ DrawObserver* GetDrawObserver();
+ 
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index 394b2f0..ee2cd2f 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -989,6 +989,13 @@ bool D3D12CommandProcessor::SetupContext() {
+     REXGPU_ERROR("Failed to initialize shared memory");
+     return false;
+   }
++  // Gears2-Native SDK patch 18: observers that write guest memory themselves (takeover T1) invalidate it here.
++  SetGuestRangeWrittenHandler(
++      [](void* context, uint32_t physical_address, uint32_t length) {
++        auto* self = static_cast<D3D12CommandProcessor*>(context);
++        if (self->shared_memory_) self->shared_memory_->MemoryInvalidationCallback(physical_address, length, true);
++      },
++      this);
+ 
+   // Initialize the render target cache before configuring binding - need to
+   // know if using rasterizer-ordered views for the bindless root signature.
+@@ -1686,6 +1693,7 @@ bool D3D12CommandProcessor::SetupContext() {
+ }
+ 
+ void D3D12CommandProcessor::ShutdownContext() {
++  SetGuestRangeWrittenHandler(nullptr, nullptr);  // Gears2-Native SDK patch 18
+   AwaitAllQueueOperationsCompletion();
+   InvalidateAllVertexBufferResidency();
+   ShutdownOcclusionQueryResources();
+diff --git a/src/system/draw_observer.cpp b/src/system/draw_observer.cpp
+index 53d9d70..3e9ec0d 100644
+--- a/src/system/draw_observer.cpp
++++ b/src/system/draw_observer.cpp
+@@ -8,8 +8,19 @@
+ namespace rex::graphics {
+ namespace {
+ std::atomic<DrawObserver*> g_draw_observer{nullptr};
++// SDK patch 18: set and cleared on the GPU worker thread's setup/shutdown, read on the same thread.
++GuestRangeWrittenHandler g_range_handler = nullptr;
++void* g_range_context = nullptr;
+ }  // namespace
+ 
++void SetGuestRangeWrittenHandler(GuestRangeWrittenHandler handler, void* context) {
++  g_range_handler = handler;
++  g_range_context = context;
++}
++void NotifyGuestRangeWrittenByObserver(uint32_t physical_address, uint32_t length) {
++  if (g_range_handler) g_range_handler(g_range_context, physical_address, length);
++}
++
+ void SetDrawObserver(DrawObserver* observer) { g_draw_observer.store(observer, std::memory_order_release); }
+ DrawObserver* GetDrawObserver() { return g_draw_observer.load(std::memory_order_acquire); }
+ 

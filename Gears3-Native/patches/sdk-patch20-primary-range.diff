@@ -1,0 +1,33 @@
+diff --git a/include/rex/graphics/draw_observer.h b/include/rex/graphics/draw_observer.h
+index 3875cdd..d1f4168 100644
+--- a/include/rex/graphics/draw_observer.h
++++ b/include/rex/graphics/draw_observer.h
+@@ -51,6 +51,11 @@ class DrawObserver {
+   // see which fetch constants the draw actually uses (Shader::vertex_bindings / texture_bindings; empty until the
+   // shader has been analysed, which happens at its first draw). Called on the GPU worker thread.
+   virtual void OnDrawShaders(const Shader* vertex_shader, const Shader* pixel_shader) {}
++  // Gears2-Native SDK patch 20 (Stage 5B): a primary ring range is about to be executed: dwords [read_index,
++  // write_index) of the ring at ring_physical (ring_dwords long, wrapping). An observer with its own PM4 processor
++  // parses the same range (before the SDK runs it). Called on the GPU worker thread.
++  virtual void OnPrimaryRange(uint32_t ring_physical, uint32_t ring_dwords, uint32_t read_index,
++                              uint32_t write_index) {}
+   // Before the swap is handed to the presenter. Called on the GPU worker thread.
+   virtual void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t width, uint32_t height) = 0;
+   // Optional per-swap readback of the final frame (SDK patch 3, D3D12 backend): the presenter's guest-output image
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 7767e5d..513b974 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -697,6 +697,12 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t wr
+     trace_writer_.WritePrimaryBufferStart(start_ptr, write_index - read_index);
+   }
+ 
++  // Gears2-Native SDK patch 20: let the draw observer parse the same range first (Stage 5B).
++  if (DrawObserver* observer = GetDrawObserver()) {
++    observer->OnPrimaryRange(primary_buffer_ptr_ & 0x1FFFFFFF, primary_buffer_size_ / sizeof(uint32_t), read_index,
++                             write_index);
++  }
++
+   // Execute commands!
+   memory::RingBuffer reader(memory_->TranslatePhysical(primary_buffer_ptr_), primary_buffer_size_);
+   reader.set_read_offset(read_index * sizeof(uint32_t));

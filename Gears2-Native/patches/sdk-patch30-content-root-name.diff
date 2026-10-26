@@ -1,0 +1,16 @@
+diff --git a/src/kernel/xam/xam_content.cpp b/src/kernel/xam/xam_content.cpp
+index 1fb1e16..bb0add2 100644
+--- a/src/kernel/xam/xam_content.cpp
++++ b/src/kernel/xam/xam_content.cpp
+@@ -141,7 +141,10 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
+     *disposition_ptr = 0;
+   }
+ 
+-  auto run = [content_manager, xuid, root_name = root_name.value(), flags, content_data,
++  // Gears2-Native SDK patch 30 (found by the Gears 3 port): own a copy of the root name. value() is a string_view into
++  // guest memory, and this completion runs later on the dispatch thread - by then the title may have reused the buffer
++  // (garbage root name -> 'Invalid UTF-8' from the symlink path). Canary's lpstring_t::value() returns a std::string.
++  auto run = [content_manager, xuid, root_name = std::string(root_name.value()), flags, content_data,
+               disposition_ptr,
+               license_mask_ptr](uint32_t& extended_error, uint32_t& length) -> X_RESULT {
+     X_RESULT result = X_ERROR_INVALID_PARAMETER;

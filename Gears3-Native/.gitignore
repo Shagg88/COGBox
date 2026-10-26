@@ -1,0 +1,13 @@
+# Never commit game files or anything derived from them (Gears 2 rule R3).
+game/
+out/
+build/
+generated/
+third_party/
+*.iso
+*.xex
+*.xexp
+*.bin
+TU_*
+ucode/
+shaders.pack

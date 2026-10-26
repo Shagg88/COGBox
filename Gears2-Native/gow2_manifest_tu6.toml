@@ -1,0 +1,471 @@
+# Gears2-Native recompiler manifest for TITLE UPDATE 6 (0.0.6.5), notes/63. Made from gow2_manifest.toml (the disc,
+# 0.0.0.5) by mapping every address with tools/tu_remap.py (job 241 image dumps) and checking each hook site's
+# instructions; built with tools\build.ps1 -Tu6. Function hints the matcher could not place are commented out and
+# re-found by the scanners after the first codegen.
+# Gears2-Native recompiler manifest (rexglue). Started from `rexglue init` output (job 007).
+# Hints below are added only when the recompiler or the running game reports a problem; each one says where it came from.
+
+[project]
+name = "gow2"
+sdk_version = "0.10.0"
+game_root = "game/tu6/patched"   # TU6 (notes/63): default.xex + default.xexp; the codegen applies the patch
+
+[entrypoint]
+file_path = "game/tu6/patched/default.xex"
+out_directory_path = "generated/tu6"
+includes = []
+# CPU step 2 (notes/60, jobs 219-225; job 223: non_argument_as_local crashes at boot, cr_as_local -10%, the rest ~0): keep these PowerPC registers in host locals inside each function instead of the
+# shared context in memory, so the compiler can hold them in host registers. The XenonRecomp-family options; the
+# riskier two (skip_lr, non_volatile_as_local: unwinding and setjmp read them from the context) stay off for now.
+skip_msr = false
+ctr_as_local = false
+xer_as_local = false
+reserved_as_local = false
+cr_as_local = true   # job 223: alone ch10 12.47 vs 13.82 ms (-10%); job 225 checks it (shots, 2x, capped)
+non_argument_as_local = false
+
+# Function entry hints: code the automatic discovery misses.
+[entrypoint.functions]
+# Job 007 codegen: "UnresolvedCall 0x82D0C758 from 0x82D19250: b 0x82D0C758 - target not in any function"
+# (a branch used as a tail call into code no function claims).
+0x82D26640 = {}  # TU6: base 0x82D0C758
+
+# Catch funclets that end in a call to sub_82CD54A0 (does not return), followed by 2 data words. Discovery runs on into
+# the next funclet and emits gotos to labels it doesn't own ("use of undeclared label", job 009). Each 'end' is the next
+# funclet's start (its 'addi r31,r12,...' prologue), found by tools/find_hints.py and checked in the generated code.
+0x82AFAFB8 = { end = 0x82AFB054 }   # TU6 (job 243 compile: undeclared label; catch funclet starts with addi r31,r12 as on the disc) - base: 0x82AE14C8 = { end = 0x82AE1564 }
+0x82AFB054 = {}   # TU6 (job 243 compile: undeclared label; catch funclet starts with addi r31,r12 as on the disc) - base: 0x82AE1564 = {}
+0x82B09B3C = { end = 0x82B09BD8 }   # TU6 (job 243 compile: undeclared label; catch funclet starts with addi r31,r12 as on the disc) - base: 0x82AEFF8C = { end = 0x82AF0028 }
+0x82B09BD8 = {}   # TU6 (job 243 compile: undeclared label; catch funclet starts with addi r31,r12 as on the disc) - base: 0x82AF0028 = {}
+0x82B0F77C = { end = 0x82B0F818 }   # TU6 (job 243 compile: undeclared label; catch funclet starts with addi r31,r12 as on the disc) - base: 0x82AFC28C = { end = 0x82AFC328 }
+0x82B0F818 = {}   # TU6 (job 243 compile: undeclared label; catch funclet starts with addi r31,r12 as on the disc) - base: 0x82AFC328 = {}
+0x82B170A4 = { end = 0x82B17140 }   # TU6 (job 243 compile: undeclared label; catch funclet starts with addi r31,r12 as on the disc) - base: 0x82AFCE0C = { end = 0x82AFCEA8 }
+0x82B17140 = {}   # TU6 (job 243 compile: undeclared label; catch funclet starts with addi r31,r12 as on the disc) - base: 0x82AFCEA8 = {}
+0x82B1B5F0 = { end = 0x82B1B68C }   # TU6 (job 243 compile: undeclared label; catch funclet starts with addi r31,r12 as on the disc) - base: 0x82B01290 = { end = 0x82B0132C }
+0x82B1B68C = {}   # TU6 (job 243 compile: undeclared label; catch funclet starts with addi r31,r12 as on the disc) - base: 0x82B0132C = {}
+
+# Tail chunks: code a function reaches with a plain 'b' that discovery doesn't attach to it. Codegen warns
+# "Unresolved b target T from S" (jobs 008/010); the parent is the function containing S (tools/find_hints.py).
+0x82B9AC20 = { parent = 0x82B9A7C0 }  # TU6: base 0x82B3EB88 / parent 0x82B3E728 (job 243 codegen: "Unresolved b target 0x82B9AC20 from 0x82B9AB58"; same code +0x5C098, prologue at the parent and blr before the chunk checked)
+0x82B7CCB4 = { parent = 0x82B64840 }  # TU6: base 0x82B64C9C
+0x82BA6B4C = { parent = 0x82B8D260 }  # TU6: base 0x82B8D6BC
+
+# Found by running the game: "[FATAL] Call to invalid or unregistered function at guest address ..." (an indirect call,
+# e.g. through a vtable, to code discovery never saw as a function entry).
+0x823747B0 = {}   # job 011 boot test, 1 s after start  # TU6: base 0x82362E98
+0x82AE1100 = {}   # job 012 boot test: inside sub_82AC6FAC (+0x14)  # TU6: base 0x82AC6FC0
+0x82265648 = {}   # 20261020-150547: inside sub_82255460 (+0x30)  # TU6: base 0x82255490
+0x822FBD68 = {}   # 20261020-150916: inside sub_822EB770 (+0x10)  # TU6: base 0x822EB780
+0x82D58250 = {}   # 20261020-151253: inside sub_82D3D578 (+0x50)  # TU6: base 0x82D3D5C8
+0x82DB72A8 = {}   # 20261020-151609: inside sub_82D9C498 (+0x8)  # TU6: base 0x82D9C4A0
+0x82274F58 = {}   # 20261020-151847: inside sub_82264D78 (+0x28)  # TU6: base 0x82264DA0
+0x829795E0 = {}   # 20261020-152126: inside sub_8295F738 (+0x8)  # TU6: base 0x8295F740
+0x82DB6320 = {}   # 20261020-152413: inside sub_82D9B508 (+0x8)  # TU6: base 0x82D9B510
+0x82752C78 = {}   # 20261020-152706: inside sub_8274BFC0 (+0x28)  # TU6: base 0x8274BFE8
+0x82EB8518 = {}   # 20261020-153001: inside sub_82E9D7F0 (+0x18)  # TU6: base 0x82E9D808
+0x82DB6CD8 = {}   # 20261020-153254: inside sub_82D9BEC8 (+0x8)  # TU6: base 0x82D9BED0
+0x82651678 = {}   # 20261020-153549: inside sub_8264CF48 (+0x30)  # TU6: base 0x8264CF78
+
+# Function-pointer table scan (tools/scan_vtables.py on the loaded image, job 014): targets in vtable/callback tables
+# that weren't function starts. Mostly this-adjusting thunks (addi r3,r3,-N). Low risk: a start inside a function makes
+# the first part continue into the second, so behaviour is unchanged even if one is a false positive.
+0x823908D0 = {}   # 33 table ref(s), first at 0x820CAA30; inside sub_8238DC10 (+0x10); first word C0040294  # TU6: base 0x8238DC20
+0x82493960 = {}   # 2 table ref(s), first at 0x8210A870; inside sub_82465060 (+0xD8); first word 81630228  # TU6: base 0x82465138
+0x824F8350 = {}   # 27 table ref(s), first at 0x820CACA4; inside sub_824F3690 (+0x10); first word 81630270  # TU6: base 0x824F36A0
+0x825EB920 = {}   # 1 table ref(s), first at 0x82133E28; inside sub_825E75E8 (+0x1C0); first word 3D60825F  # TU6: base 0x825E77A8
+0x82648D08 = {}   # 2 table ref(s), first at 0x8213E540; inside sub_82644628 (+0x18); first word 806301A8  # TU6: base 0x82644640
+0x826DEFE8 = {}   # 2 table ref(s), first at 0x82142348; inside sub_826D8890 (+0xD0); first word 2B040000  # TU6: base 0x826D8960
+0x827E4F68 = {}   # 1 table ref(s), first at 0x8216E0E0; inside sub_827DE430 (+0x10); first word 3863FFA0  # TU6: base 0x827DE440
+0x82815E60 = {}   # 1 table ref(s), first at 0x821760AC; inside sub_82805FC8 (+0x2E0); first word 3863FFFC  # TU6: base 0x828062A8
+0x8284F048 = {}   # 1 table ref(s), first at 0x8217B788; inside sub_8283DB60 (+0x20); first word 80630004  # TU6: base 0x8283DB80
+0x8284F068 = {}   # 1 table ref(s), first at 0x8217B78C; inside sub_8283DB60 (+0x40); first word 80630004  # TU6: base 0x8283DBA0
+0x8284F128 = {}   # 2 table ref(s), first at 0x82132B6C; inside sub_8283DC18 (+0x18); first word 80630004  # TU6: base 0x8283DC30
+0x8284F170 = {}   # 2 table ref(s), first at 0x82132B80; inside sub_8283DC60 (+0x18); first word 80630004  # TU6: base 0x8283DC78
+0x82967068 = {}   # 1 table ref(s), first at 0x821CC2DC; inside sub_8294D458 (+0xD0); first word 3D60821D  # TU6: base 0x8294D528
+0x82968320 = {}   # 26 table ref(s), first at 0x82043DA8; inside sub_8294EA50 (+0x20); first word 81630000  # TU6: base 0x8294EA70
+0x82968340 = {}   # 26 table ref(s), first at 0x82043DB0; inside sub_8294EA50 (+0x40); first word 81630000  # TU6: base 0x8294EA90
+0x82976AE0 = {}   # 5 table ref(s), first at 0x821CD120; inside sub_8295C750 (+0x48); first word 8943003C  # TU6: base 0x8295C798
+0x82976B28 = {}   # 5 table ref(s), first at 0x821CD114; inside sub_8295C7BC (+0x24); first word 8943003C  # TU6: base 0x8295C7E0
+0x829795D0 = {}   # 1 table ref(s), first at 0x821CD658; inside sub_8295F728 (+0x8); first word 3863FFF0  # TU6: base 0x8295F730
+0x829795F0 = {}   # 1 table ref(s), first at 0x821CD630; inside sub_8295F748 (+0x8); first word 3863FFF0  # TU6: base 0x8295F750
+0x82979928 = {}   # TU6 only (job 242 codegen: "b 0x82979928 from 0x82979634 - target not in any function"): a this-adjusting thunk (addi r3,r3,4; b 0x82971750) right after another thunk; reached only by a tail branch
+0x8297C828 = {}   # 1 table ref(s), first at 0x821CD724; inside sub_82962880 (+0x8); first word 3863FFF0  # TU6: base 0x82962888
+0x8297C830 = {}   # 2 table ref(s), first at 0x821CD628; inside sub_82962880 (+0x10); first word 3863FFF0  # TU6: base 0x82962890
+0x8297C858 = {}   # 1 table ref(s), first at 0x821CD750; inside sub_829628B0 (+0x8); first word 3863FFF0  # TU6: base 0x829628B8
+0x8297C868 = {}   # 1 table ref(s), first at 0x821CD720; inside sub_829628C0 (+0x8); first word 3863FFF0  # TU6: base 0x829628C8
+0x82A14FD8 = {}   # 9 table ref(s), first at 0x82006874; inside sub_829FAE70 (+0x10); first word 81630000  # TU6: base 0x829FAE80
+0x82A150E0 = {}   # 3 table ref(s), first at 0x82006A44; inside sub_829FAF60 (+0x28); first word 81630000  # TU6: base 0x829FAF88
+0x82A15108 = {}   # 3 table ref(s), first at 0x82006A48; inside sub_829FAF60 (+0x50); first word 81630000  # TU6: base 0x829FAFB0
+0x82A15130 = {}   # 3 table ref(s), first at 0x82006A4C; inside sub_829FAF60 (+0x78); first word 81630000  # TU6: base 0x829FAFD8
+0x82A15158 = {}   # 3 table ref(s), first at 0x82006A50; inside sub_829FAF60 (+0xA0); first word 81630000  # TU6: base 0x829FB000
+0x82A6B400 = {}   # 3 table ref(s), first at 0x82029034; inside sub_82A504F8 (+0xA90); first word 80C40004  # TU6: base 0x82A50F88
+0x82AE0F28 = {}   # 1 table ref(s), first at 0x82034B20; inside sub_82AC6D60 (+0x88); first word 2F080121  # TU6: base 0x82AC6DE8
+0x82AE1078 = {}   # 1 table ref(s), first at 0x82034B2C; inside sub_82AC6F24 (+0x14); first word 89630018  # TU6: base 0x82AC6F38
+0x82B50350 = {}   # 1 table ref(s), first at 0x8204612C; inside sub_82B36D60 (+0x8); first word 3863FFFC  # TU6: base 0x82B36D68
+0x82B57F60 = {}   # 1 table ref(s), first at 0x820479A8; inside sub_82B3F4F0 (+0x8); first word 3863FFE8  # TU6: base 0x82B3F4F8
+0x82B57F68 = {}   # 1 table ref(s), first at 0x820478D4; inside sub_82B3F4F0 (+0x10); first word 3863FFEC  # TU6: base 0x82B3F500
+0x82B57F70 = {}   # 1 table ref(s), first at 0x8204799C; inside sub_82B3F4F0 (+0x18); first word 3863FFE4  # TU6: base 0x82B3F508
+0x82B57F78 = {}   # 1 table ref(s), first at 0x820478EC; inside sub_82B3F4F0 (+0x20); first word 3863FFF4  # TU6: base 0x82B3F510
+0x82B57F88 = {}   # 1 table ref(s), first at 0x820479DC; inside sub_82B3F518 (+0x8); first word 3863FFF8  # TU6: base 0x82B3F520
+0x82B57FE0 = {}   # 2 table ref(s), first at 0x8204680C; inside sub_82B3F570 (+0x8); first word 3863FFF8  # TU6: base 0x82B3F578
+0x82B58070 = {}   # 1 table ref(s), first at 0x820478D8; inside sub_82B3F600 (+0x8); first word 3863FFEC  # TU6: base 0x82B3F608
+0x82B58088 = {}   # 1 table ref(s), first at 0x82047950; inside sub_82B3F618 (+0x8); first word 3863FFF4  # TU6: base 0x82B3F620
+0x82B70490 = {}   # 1 table ref(s), first at 0x8204B850; inside sub_82B58B40 (+0x8); first word 3863FFEC  # TU6: base 0x82B58B48
+0x82B704E8 = {}   # 1 table ref(s), first at 0x8204B44C; inside sub_82B58B98 (+0x8); first word 3863FFEC  # TU6: base 0x82B58BA0
+0x82B70500 = {}   # 1 table ref(s), first at 0x8204B190; inside sub_82B58BB0 (+0x8); first word 3863FFEC  # TU6: base 0x82B58BB8
+0x82B70508 = {}   # 1 table ref(s), first at 0x8204ACD8; inside sub_82B58BB0 (+0x10); first word 3863FFEC  # TU6: base 0x82B58BC0
+0x82B70510 = {}   # 1 table ref(s), first at 0x8204AC00; inside sub_82B58BB0 (+0x18); first word 3863FFF4  # TU6: base 0x82B58BC8
+0x82B70518 = {}   # 1 table ref(s), first at 0x8204BB58; inside sub_82B58BB0 (+0x20); first word 3863FFF4  # TU6: base 0x82B58BD0
+0x82B70528 = {}   # 1 table ref(s), first at 0x8204BBD4; inside sub_82B58BD8 (+0x8); first word 3863FFF4  # TU6: base 0x82B58BE0
+0x82B70530 = {}   # 1 table ref(s), first at 0x8204B9DC; inside sub_82B58BD8 (+0x10); first word 3863FFF4  # TU6: base 0x82B58BE8
+0x82B70550 = {}   # 1 table ref(s), first at 0x8204B6F4; inside sub_82B58C00 (+0x8); first word 3863FFF4  # TU6: base 0x82B58C08
+0x82B70558 = {}   # 1 table ref(s), first at 0x8204A4FC; inside sub_82B58C00 (+0x10); first word 3863FFFC  # TU6: base 0x82B58C10
+0x82B70568 = {}   # 1 table ref(s), first at 0x8204A2F8; inside sub_82B58C18 (+0x8); first word 3863FFF4  # TU6: base 0x82B58C20
+0x82B70570 = {}   # 1 table ref(s), first at 0x8204B194; inside sub_82B58C18 (+0x10); first word 3863FFEC  # TU6: base 0x82B58C28
+0x82BB1568 = {}   # 1 table ref(s), first at 0x82054FBC; inside sub_82B97ED0 (+0x8); first word 3863FFF4  # TU6: base 0x82B97ED8
+0x82BB9C48 = {}   # 1 table ref(s), first at 0x82056F9C; inside sub_82B9F9E0 (+0x8); first word 3863FFFC  # TU6: base 0x82B9F9E8
+0x82C93C60 = {}   # 1 table ref(s), first at 0x82060954; inside sub_82C79980 (+0x50); first word 81630010  # TU6: base 0x82C799D0
+0x82CDC728 = {}   # 13 table ref(s), first at 0x82065344; inside sub_82CC25C0 (+0xC8); first word 7C6B1B78  # TU6: base 0x82CC2688
+0x82CF25E0 = {}   # 1 table ref(s), first at 0x8206E56C; inside sub_82CD85F0 (+0x20); first word 80630004  # TU6: base 0x82CD8610
+0x82D1A9E8 = {}   # 1 table ref(s), first at 0x8206F5B8; inside sub_82D00AE0 (+0x10); first word 7C832378  # TU6: base 0x82D00AF0
+0x82D1AA48 = {}   # 1 table ref(s), first at 0x8206F5D8; inside sub_82D00B40 (+0x10); first word 7C832378  # TU6: base 0x82D00B50
+0x82D1AA78 = {}   # 1 table ref(s), first at 0x8206F5E8; inside sub_82D00B78 (+0x8); first word 7C832378  # TU6: base 0x82D00B80
+0x82D1AAA0 = {}   # 1 table ref(s), first at 0x8206F610; inside sub_82D00BA0 (+0x8); first word 7C832378  # TU6: base 0x82D00BA8
+0x82D1AAA8 = {}   # 1 table ref(s), first at 0x8206F614; inside sub_82D00BA0 (+0x10); first word 7C832378  # TU6: base 0x82D00BB0
+0x82D1AAB0 = {}   # 1 table ref(s), first at 0x8206F618; inside sub_82D00BA0 (+0x18); first word 7C832378  # TU6: base 0x82D00BB8
+0x82D1AAC0 = {}   # 1 table ref(s), first at 0x8206F61C; inside sub_82D00BA0 (+0x28); first word 7C832378  # TU6: base 0x82D00BC8
+0x82D1AAD0 = {}   # 1 table ref(s), first at 0x8206F620; inside sub_82D00BA0 (+0x38); first word 7C832378  # TU6: base 0x82D00BD8
+0x82D1AAE0 = {}   # 1 table ref(s), first at 0x8206F624; inside sub_82D00BA0 (+0x48); first word 7C832378  # TU6: base 0x82D00BE8
+0x82D1AAF0 = {}   # 1 table ref(s), first at 0x8206F628; inside sub_82D00BA0 (+0x58); first word 7C832378  # TU6: base 0x82D00BF8
+0x82D1AB00 = {}   # 1 table ref(s), first at 0x8206F62C; inside sub_82D00BA0 (+0x68); first word 7C832378  # TU6: base 0x82D00C08
+0x82D1AB10 = {}   # 1 table ref(s), first at 0x8206F630; inside sub_82D00BA0 (+0x78); first word 7C832378  # TU6: base 0x82D00C18
+0x82D1AB20 = {}   # 1 table ref(s), first at 0x8206F634; inside sub_82D00BA0 (+0x88); first word 7C832378  # TU6: base 0x82D00C28
+0x82D1AB30 = {}   # 1 table ref(s), first at 0x8206F638; inside sub_82D00BA0 (+0x98); first word 7C832378  # TU6: base 0x82D00C38
+0x82D1AB70 = {}   # 1 table ref(s), first at 0x8206F64C; inside sub_82D00C70 (+0x8); first word 7C832378  # TU6: base 0x82D00C78
+0x82D1AB78 = {}   # 1 table ref(s), first at 0x8206F650; inside sub_82D00C70 (+0x10); first word 7C832378  # TU6: base 0x82D00C80
+0x82D1AB80 = {}   # 1 table ref(s), first at 0x8206F654; inside sub_82D00C70 (+0x18); first word 7C832378  # TU6: base 0x82D00C88
+0x82D1AB88 = {}   # 1 table ref(s), first at 0x8206F658; inside sub_82D00C70 (+0x20); first word 480171E0  # TU6: base 0x82D00C90
+0x82D1ABB0 = {}   # 1 table ref(s), first at 0x8206F66C; inside sub_82D00CB0 (+0x8); first word 7CE63B78  # TU6: base 0x82D00CB8
+0x82D1AC00 = {}   # 1 table ref(s), first at 0x8206F67C; inside sub_82D00CE8 (+0x20); first word 7C832378  # TU6: base 0x82D00D08
+0x82D1AC18 = {}   # 1 table ref(s), first at 0x8206F680; inside sub_82D00CE8 (+0x38); first word 7C832378  # TU6: base 0x82D00D20
+0x82D1AC50 = {}   # 1 table ref(s), first at 0x8206F688; inside sub_82D00D40 (+0x18); first word 7C832378  # TU6: base 0x82D00D58
+0x82D1AC80 = {}   # 1 table ref(s), first at 0x8206F690; inside sub_82D00D70 (+0x18); first word 7C832378  # TU6: base 0x82D00D88
+0x82D1AC98 = {}   # 1 table ref(s), first at 0x8206F694; inside sub_82D00D70 (+0x30); first word 7C832378  # TU6: base 0x82D00DA0
+0x82D1ACB0 = {}   # 1 table ref(s), first at 0x8206F698; inside sub_82D00D70 (+0x48); first word 7C832378  # TU6: base 0x82D00DB8
+0x82D1ACE8 = {}   # 1 table ref(s), first at 0x8206F6A0; inside sub_82D00DD8 (+0x18); first word 7CAB2B78  # TU6: base 0x82D00DF0
+0x82D1AD00 = {}   # 1 table ref(s), first at 0x8206F6A4; inside sub_82D00DD8 (+0x30); first word 7C832378  # TU6: base 0x82D00E08
+0x82D1ADB0 = {}   # 1 table ref(s), first at 0x8206F6B8; inside sub_82D00E98 (+0x20); first word 7C832378  # TU6: base 0x82D00EB8
+0x82D20CA8 = {}   # 1 table ref(s), first at 0x82070154; inside sub_82D06E18 (+0x8); first word 3863FF40  # TU6: base 0x82D06E20
+0x82DB6CE0 = {}   # 1 table ref(s), first at 0x8207D5C0; inside sub_82D9BED0 (+0x8); first word 2B030000  # TU6: base 0x82D9BED8
+0x82DDC0E8 = {}   # 9 table ref(s), first at 0x8207E5D4; inside sub_82DC1568 (+0x18); first word 81630038  # TU6: base 0x82DC1580
+0x82DDC100 = {}   # 9 table ref(s), first at 0x8207E5E0; inside sub_82DC1568 (+0x30); first word 81630038  # TU6: base 0x82DC1598
+0x82DDC118 = {}   # 9 table ref(s), first at 0x8207E5D8; inside sub_82DC1568 (+0x48); first word 81630038  # TU6: base 0x82DC15B0
+0x82DDC130 = {}   # 9 table ref(s), first at 0x8207E5DC; inside sub_82DC1568 (+0x60); first word 81630038  # TU6: base 0x82DC15C8
+0x82DFD040 = {}   # 1 table ref(s), first at 0x82081474; inside sub_82DE2460 (+0x30); first word 54AB063E  # TU6: base 0x82DE2490
+0x82E0CA40 = {}   # 11 table ref(s), first at 0x82081E7C; inside sub_82DF1EF8 (+0x18); first word C0030030  # TU6: base 0x82DF1F10
+0x82E0D1C0 = {}   # 11 table ref(s), first at 0x82081E98; inside sub_82DF2670 (+0x10); first word 81630020  # TU6: base 0x82DF2680
+0x82E37FE8 = {}   # 1 table ref(s), first at 0x82083624; inside sub_82E1D490 (+0x10); first word 3863FFFC  # TU6: base 0x82E1D4A0
+0x82E415F8 = {}   # 1 table ref(s), first at 0x820845E0; inside sub_82E26B10 (+0x38); first word 81630140  # TU6: base 0x82E26B48
+0x82E41658 = {}   # 1 table ref(s), first at 0x820845E8; inside sub_82E26B70 (+0x38); first word 8163014C  # TU6: base 0x82E26BA8
+0x82E488B0 = {}   # 1 table ref(s), first at 0x82084E60; inside sub_82E2DD40 (+0x20); first word 3964004D  # TU6: base 0x82E2DD60
+0x82E488D0 = {}   # 1 table ref(s), first at 0x82084E64; inside sub_82E2DD40 (+0x40); first word 81240000  # TU6: base 0x82E2DD80
+0x82E48A20 = {}   # 1 table ref(s), first at 0x82084E7C; inside sub_82E2DEA0 (+0x30); first word 81640000  # TU6: base 0x82E2DED0
+0x82E48A50 = {}   # 1 table ref(s), first at 0x82084E80; inside sub_82E2DEA0 (+0x60); first word 81640000  # TU6: base 0x82E2DF00
+0x82E48A80 = {}   # 1 table ref(s), first at 0x82084DE0; inside sub_82E2DEA0 (+0x90); first word 81630000  # TU6: base 0x82E2DF30
+0x82E8B688 = {}   # 3 table ref(s), first at 0x82085840; inside sub_82E70B58 (+0x30); first word 7C8B2378  # TU6: base 0x82E70B88
+0x82E8B6C0 = {}   # 3 table ref(s), first at 0x82085848; inside sub_82E70B58 (+0x68); first word C00400F4  # TU6: base 0x82E70BC0
+0x82EB8508 = {}   # 1 table ref(s), first at 0x82086560; inside sub_82E9D7F0 (+0x8); first word 80630038  # TU6: base 0x82E9D7F8
+0x82EB8510 = {}   # 1 table ref(s), first at 0x82086564; inside sub_82E9D7F0 (+0x10); first word 80630038  # TU6: base 0x82E9D800
+0x82C14638 = {}   # 20261020-155705: inside sub_82BFA358 (+0x168)  # TU6: base 0x82BFA4C0
+
+# lis+addi scan (Gears 3 tip, 2026-10-22): code addresses built in code and passed to a call or stored, in gaps no
+# function claims (no code generated there). Small vtable-call thunks and setters; found from the generated code, not
+# yet seen called. tools/scan_lis_addi.py, notes/62.
+0x82832618 = {}   # after sub_82822990, stored; first: lwz r3, 0xc(r3)  # TU6: base 0x828229B8
+0x82A15608 = {}   # after sub_829FB430, arg-to-call; first: lwz r12, 0(r3)  # TU6: base 0x829FB4B0
+0x82A15618 = {}   # after sub_829FB430, arg-to-call; first: lwz r12, 0(r3)  # TU6: base 0x829FB4C0
+0x82A15628 = {}   # after sub_829FB430, arg-to-call; first: lwz r12, 0(r3)  # TU6: base 0x829FB4D0
+0x82A15638 = {}   # after sub_829FB430, arg-to-call; first: lwz r12, 0(r3)  # TU6: base 0x829FB4E0
+0x82A82E50 = {}   # after sub_82A68BB8, stored; first: lwz r10, 0(r3)  # TU6: base 0x82A68CD0
+0x82BC7F80 = {}   # after sub_82BADC68, overwritten; first: lis r11, -0x7dfa  # TU6: base 0x82BADC78
+0x82BC7F90 = {}   # after sub_82BADC68, overwritten; first: lis r11, -0x7dfa  # TU6: base 0x82BADC88
+0x82D58220 = {}   # after sub_82D3D578, stored; first: lis r11, -0x7cf1  # TU6: base 0x82D3D598
+0x82DDB8F8 = {}   # after sub_82DC0D80, stored; first: lwz r11, 0(r3)  # TU6: base 0x82DC0D90
+
+# Untiled rendering (roadmap P3, user's black-shading observation 2026-10-20 22:24). 0x82806A44 is the
+# 'stw r11,0x2EA4(r6)' that sets the engine's tiling flag (0x83122EA4, GUseTilingMode) to 1 during startup; the community
+# "black shading" fix for emulators stops that store. The hook runs before the store and clears r11 when
+# --gow2_untiled is on (src/layer3_gow2/untiled.cpp). r11 is overwritten a few instructions later, so nothing else changes.
+
+# ---- TU6 (job 243): function hints re-found on the TU6 build itself -----------------------------------------------
+# 66 of the disc hints could not be placed by matching code (notes/63). After the first TU6 codegen:
+# - tools/scan_vtables.py --tu6 --init=generated/tu6/gow2_init.cpp: these 72. Its rules found all 162 disc vtable hints
+#   blind (base image, --ignore-manifest) and confirm all 106 mapped TU6 vtable hints, so the same rules are used here.
+# - lis/addi callbacks (an image-based version of scan_lis_addi.py): 0x82A155B8-F8 (disc 0x82A155A8-F8 group: lwz r12,0(r3));
+#   0x82A155A8 and 0x823738C0 are already found by the TU6 codegen.
+# - Disc 0x82ADBEF0 (sweep hint, job 027): both TU6 copies of that function (0x82AF5CD0, 0x82ED0908) are already found.
+0x82232AF0 = {}   # 1 table ref(s), first at 0x82095394; inside sub_82232AE0 (+0x10); first word 3D60821D   # TU6 scan
+0x823738B8 = {}   # 3 table ref(s), first at 0x820C2F04; inside sub_823738B0 (+0x8); first word 3863FF70   # TU6 scan
+0x823738D0 = {}   # 3 table ref(s), first at 0x820C2F34; inside sub_823738C0 (+0x10); first word 3863FF70   # TU6 scan
+0x823738E0 = {}   # 1 table ref(s), first at 0x820C30B4; inside sub_823738D8 (+0x8); first word 3863FFBC   # TU6 scan
+0x825F1628 = {}   # 9 table ref(s), first at 0x821374AC; inside sub_825F14A0 (+0x188); first word 8123004C   # TU6 scan
+0x82629528 = {}   # 1 table ref(s), first at 0x82139BE8; inside sub_82629518 (+0x10); first word 81630008   # TU6 scan
+0x8284FAF8 = {}   # 1 table ref(s), first at 0x8217DB30; inside sub_8284FAE8 (+0x10); first word 3863FFFC   # TU6 scan
+0x829682A0 = {}   # 27 table ref(s), first at 0x82043FE0; inside sub_82968280 (+0x20); first word 81630000   # TU6 scan
+0x829682C0 = {}   # 27 table ref(s), first at 0x82043FE4; inside sub_82968280 (+0x40); first word 81630000   # TU6 scan
+0x829682E0 = {}   # 27 table ref(s), first at 0x82043FE8; inside sub_82968280 (+0x60); first word 81630000   # TU6 scan
+0x82970C38 = {}   # 2 table ref(s), first at 0x821D1D44; inside sub_82970C30 (+0x8); first word 8963009C   # TU6 scan
+0x82975250 = {}   # 1 table ref(s), first at 0x821D1DD8; inside sub_82975248 (+0x8); first word 39600002   # TU6 scan
+0x829795E8 = {}   # 1 table ref(s), first at 0x821D20B8; inside sub_829795E0 (+0x8); first word 3863FFF0   # TU6 scan
+0x82979600 = {}   # 2 table ref(s), first at 0x821D20A0; inside sub_829795F8 (+0x8); first word 3863FFF0   # TU6 scan
+0x82979608 = {}   # 2 table ref(s), first at 0x821D20DC; inside sub_829795F8 (+0x10); first word 3863FFF0   # TU6 scan
+0x82979610 = {}   # 1 table ref(s), first at 0x821D2090; inside sub_829795F8 (+0x18); first word 3863FFF0   # TU6 scan
+0x82979620 = {}   # 2 table ref(s), first at 0x821D20B4; inside sub_82979618 (+0x8); first word 3863FFF0   # TU6 scan
+0x82979628 = {}   # 1 table ref(s), first at 0x821D20D0; inside sub_82979618 (+0x10); first word 3863FFF0   # TU6 scan
+0x829796D0 = {}   # 5 table ref(s), first at 0x821D1CAC; inside sub_829796B8 (+0x18); first word 8163000C   # TU6 scan
+0x8297C800 = {}   # 1 table ref(s), first at 0x821D21A4; inside sub_8297C7F8 (+0x8); first word 3863FFF0   # TU6 scan
+0x8297C838 = {}   # 2 table ref(s), first at 0x821D20B0; inside sub_8297C830 (+0x8); first word 3863FFF0   # TU6 scan
+0x82A15580 = {}   # 2 table ref(s), first at 0x82006A94; inside sub_82A15560 (+0x20); first word 81630000   # TU6 scan
+0x82A155A0 = {}   # 2 table ref(s), first at 0x820068A8; inside sub_82A15560 (+0x40); first word 483ACEA0   # TU6 scan
+0x82B4C340 = {}   # 1 table ref(s), first at 0x82043FBC; inside sub_82B4C338 (+0x8); first word 3863FFE4   # TU6 scan
+0x82B4C350 = {}   # 1 table ref(s), first at 0x82044198; inside sub_82B4C348 (+0x8); first word 3863FFF8   # TU6 scan
+0x82B4C358 = {}   # 1 table ref(s), first at 0x82043FC4; inside sub_82B4C348 (+0x10); first word 3863FFF4   # TU6 scan
+0x82B4C360 = {}   # 1 table ref(s), first at 0x820438A8; inside sub_82B4C348 (+0x18); first word 3863FFF4   # TU6 scan
+0x82B4C368 = {}   # 1 table ref(s), first at 0x82043FD4; inside sub_82B4C348 (+0x20); first word 3863FFF8   # TU6 scan
+0x82B57DE0 = {}   # 1 table ref(s), first at 0x82047368; inside sub_82B57DD8 (+0x8); first word 3863FFF8   # TU6 scan
+0x82B5C6A0 = {}   # 1 table ref(s), first at 0x82049198; inside sub_82B5C698 (+0x8); first word 3863FFF8   # TU6 scan
+0x82B5C6A8 = {}   # 1 table ref(s), first at 0x820490F8; inside sub_82B5C698 (+0x10); first word 3863FFF8   # TU6 scan
+0x82B5C6B0 = {}   # 1 table ref(s), first at 0x82048FE0; inside sub_82B5C698 (+0x18); first word 3863FFF8   # TU6 scan
+0x82B5C6B8 = {}   # 1 table ref(s), first at 0x82048EA0; inside sub_82B5C698 (+0x20); first word 3863FFF8   # TU6 scan
+0x82B5C6C0 = {}   # 1 table ref(s), first at 0x82048E54; inside sub_82B5C698 (+0x28); first word 3863FFF8   # TU6 scan
+0x82B5C6D0 = {}   # 1 table ref(s), first at 0x82048EEC; inside sub_82B5C6C8 (+0x8); first word 3863FFF0   # TU6 scan
+0x82B5C6D8 = {}   # 1 table ref(s), first at 0x8204919C; inside sub_82B5C6C8 (+0x10); first word 3863FFF8   # TU6 scan
+0x82B70440 = {}   # 1 table ref(s), first at 0x8204B878; inside sub_82B70438 (+0x8); first word 3863FFEC   # TU6 scan
+0x82B70458 = {}   # 1 table ref(s), first at 0x8204BAA4; inside sub_82B70450 (+0x8); first word 3863FFF4   # TU6 scan
+0x82B70468 = {}   # 1 table ref(s), first at 0x8204B4E0; inside sub_82B70460 (+0x8); first word 3863FFF4   # TU6 scan
+0x82B70470 = {}   # 1 table ref(s), first at 0x8204A1C8; inside sub_82B70460 (+0x10); first word 3863FFE8   # TU6 scan
+0x82B70478 = {}   # 1 table ref(s), first at 0x8204A214; inside sub_82B70460 (+0x18); first word 3863FFEC   # TU6 scan
+0x82B70480 = {}   # 1 table ref(s), first at 0x8204A9BC; inside sub_82B70460 (+0x20); first word 3863FFF4   # TU6 scan
+0x82B704A8 = {}   # 1 table ref(s), first at 0x8204B1FC; inside sub_82B704A0 (+0x8); first word 3863FFEC   # TU6 scan
+0x82B704C0 = {}   # 1 table ref(s), first at 0x8204B888; inside sub_82B704B8 (+0x8); first word 3863FFF4   # TU6 scan
+0x82B704C8 = {}   # 1 table ref(s), first at 0x8204B4CC; inside sub_82B704B8 (+0x10); first word 3863FFEC   # TU6 scan
+0x82B704D0 = {}   # 1 table ref(s), first at 0x8204A9A8; inside sub_82B704B8 (+0x18); first word 3863FFEC   # TU6 scan
+0x82B704F0 = {}   # 1 table ref(s), first at 0x8204A218; inside sub_82B704E8 (+0x8); first word 3863FFEC   # TU6 scan
+0x82B70520 = {}   # 1 table ref(s), first at 0x8204AB14; inside sub_82B70518 (+0x8); first word 3863FFF4   # TU6 scan
+0x82B70538 = {}   # 1 table ref(s), first at 0x8204BAA0; inside sub_82B70530 (+0x8); first word 3863FFF4   # TU6 scan
+0x82B70540 = {}   # 1 table ref(s), first at 0x8204B88C; inside sub_82B70530 (+0x10); first word 3863FFF4   # TU6 scan
+0x82B70560 = {}   # 1 table ref(s), first at 0x8204B464; inside sub_82B70558 (+0x8); first word 3863FFFC   # TU6 scan
+0x82B70578 = {}   # 1 table ref(s), first at 0x8204B09C; inside sub_82B70570 (+0x8); first word 3863FFEC   # TU6 scan
+0x82B8E9F0 = {}   # 1 table ref(s), first at 0x8204FA90; inside sub_82B8E9E8 (+0x8); first word 3863FFF4   # TU6 scan
+0x82B8EA08 = {}   # 1 table ref(s), first at 0x8204FA7C; inside sub_82B8EA00 (+0x8); first word 3863FFEC   # TU6 scan
+0x82B8EA20 = {}   # 2 table ref(s), first at 0x8204F6FC; inside sub_82B8EA18 (+0x8); first word 3863FFF4   # TU6 scan
+0x82B8EA28 = {}   # 4 table ref(s), first at 0x8204F6E8; inside sub_82B8EA18 (+0x10); first word 3863FFEC   # TU6 scan
+0x82B8EA30 = {}   # 1 table ref(s), first at 0x8204FA8C; inside sub_82B8EA18 (+0x18); first word 3863FFF4   # TU6 scan
+0x82B93A48 = {}   # 1 table ref(s), first at 0x82050170; inside sub_82B93A40 (+0x8); first word 3863FFEC   # TU6 scan
+0x82B93A50 = {}   # 1 table ref(s), first at 0x82050188; inside sub_82B93A40 (+0x10); first word 3863FFF4   # TU6 scan
+0x82BA8178 = {}   # 2 table ref(s), first at 0x8204AE18; inside sub_82BA8170 (+0x8); first word 3863FF20   # TU6 scan
+0x82BA8180 = {}   # 1 table ref(s), first at 0x820531E8; inside sub_82BA8170 (+0x10); first word 3863FFEC   # TU6 scan
+0x82BA8188 = {}   # 1 table ref(s), first at 0x8205362C; inside sub_82BA8170 (+0x18); first word 3863FFF4   # TU6 scan
+0x82BADF90 = {}   # 4 table ref(s), first at 0x8204F6EC; inside sub_82BADF88 (+0x8); first word 3863FFEC   # TU6 scan
+0x82BADFA8 = {}   # 1 table ref(s), first at 0x82053F44; inside sub_82BADFA0 (+0x8); first word 3863FFF4   # TU6 scan
+0x82BADFB0 = {}   # 1 table ref(s), first at 0x82053DE8; inside sub_82BADFA0 (+0x10); first word 3863FFF0   # TU6 scan
+0x82BADFB8 = {}   # 1 table ref(s), first at 0x82053F38; inside sub_82BADFA0 (+0x18); first word 3863FFF0   # TU6 scan
+0x82C93C10 = {}   # 2 table ref(s), first at 0x8206095C; inside sub_82C93BE0 (+0x30); first word 54AA063E   # TU6 scan
+0x82CC79D0 = {}   # 2 table ref(s), first at 0x82064EF0; inside sub_82CC79C0 (+0x10); first word 81630004   # TU6 scan
+0x82DD81D8 = {}   # 1 table ref(s), first at 0x8207E038; inside sub_82DD81D0 (+0x8); first word 3863FF88   # TU6 scan
+0x82DD81E0 = {}   # 1 table ref(s), first at 0x8207E1C4; inside sub_82DD81D0 (+0x10); first word 3863FFFC   # TU6 scan
+0x82DD81F0 = {}   # 20 table ref(s), first at 0x8207E0D8; inside sub_82DD81E8 (+0x8); first word 3D608200   # TU6 scan
+0x82E46440 = {}   # 1 table ref(s), first at 0x82084BC0; inside sub_82E46408 (+0x38); first word 81630150   # TU6 scan
+0x82A155B8 = {}   # after sub_82A155A8 (+0x10), arg-to-call, built at 0x82A1E6FC; first word 81830000   # TU6 scan (callback)
+0x82A155C8 = {}   # after sub_82A155A8 (+0x20), arg-to-call, built at 0x82A1EEF4; first word 81830000   # TU6 scan (callback)
+0x82A155D8 = {}   # after sub_82A155A8 (+0x30), arg-to-call, built at 0x82A1E9AC; first word 81830000   # TU6 scan (callback)
+0x82A155E8 = {}   # after sub_82A155A8 (+0x40), arg-to-call, built at 0x82A1ED24; first word 81830000   # TU6 scan (callback)
+0x82A155F8 = {}   # after sub_82A155A8 (+0x50), arg-to-call, built at 0x82A1E534; first word 81830000   # TU6 scan (callback)
+
+[[entrypoint.midasm_hook]]
+address = 0x828165FC  # TU6: base 0x82806A44
+name = "Gow2UntiledHook"
+registers = ["r11"]
+
+# D28 kept game patches (src/layer3_gow2/game_patches.cpp; all off by default). Sites disassembled first (notes/40).
+[[entrypoint.midasm_hook]]
+address = 0x8281E3B4  # TU6: base 0x8280E7FC
+name = "Gow2PatchAniso16"
+registers = ["r5"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x82AC3384  # TU6: base 0x82AA8904
+name = "Gow2PatchCoalescedResult"
+registers = ["r3"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x828089C0  # TU6: base 0x827F9148
+name = "Gow2PatchCoalescedSkip"
+registers = []
+return_on_true = true
+
+# Canary "Texture Streaming Fix" (boma), as two switches (off by default), plus a defrag log (notes/51, jobs 150-153).
+# 0x8280D534 `lwz r4,80(r1)`: the ini PoolSize (MB) in the pool setup 8280D4C8, read after the GConfig call returns.
+[[entrypoint.midasm_hook]]
+address = 0x8281D0E4  # TU6: base 0x8280D534
+name = "Gow2PatchTexturePoolSize"
+registers = ["r4"]
+after_instruction = true
+
+# 0x8280DDC8: RHIGetTextureMemoryStats, a leaf (first instruction `lis r10,-31980`): return 0 before it.
+[[entrypoint.midasm_hook]]
+address = 0x8281D978  # TU6: base 0x8280DDC8
+name = "Gow2PatchTextureStatsOff"
+registers = ["r3"]
+return_on_true = true
+
+# 0x829783A8: the render thread's D3D query poll (GetData), called in a loop by sub_82807588 (job 178).
+[[entrypoint.midasm_hook]]
+address = 0x82992348  # TU6: base 0x829783A8
+name = "Gow2QueryPollYield"
+registers = []
+
+# 0x824A2E94: `lfs f1,1284(r3)` in the engine's GetMaxTickRate (sub_824A2E78) - the frame-rate limit (Stage 7.4).
+[[entrypoint.midasm_hook]]
+address = 0x824A2FA4  # TU6: base 0x824A2E94
+name = "Gow2MaxTickRate"
+registers = ["f1"]
+after_instruction = true
+
+# Stage 7.5 --gow2_ultrawide (game_patches.cpp; Canary "21:9 Ultrawide Aspect Ratio Support", boma and TudorHorse).
+# 0x8252D73C `lfs f0,1032(r7)`: the field-of-view factor (sub_8252D1B8).
+[[entrypoint.midasm_hook]]
+address = 0x825324B4  # TU6: base 0x8252D73C
+name = "Gow2UltrawideFov"
+registers = ["f0"]
+after_instruction = true
+
+# Job 231 (notes/60): 0x828075BC `li r6,1`, the head of sub_82807588's retry loop (UE3's wait for one query's
+# answer). On (--gow2_patch_query_wait=1): each retry sleeps until our GPU side writes guest memory.
+[[entrypoint.midasm_hook]]
+address = 0x82817124  # TU6: base 0x828075BC
+name = "Gow2QueryWaitStep"
+registers = []
+
+# Job 225 (notes/60): the cctpl at 0x829776A0 in sub_82977688 (one step of the XDK's GPU wait). On: skip the (empty)
+# delay loop to the cctpm at 0x829776CC after sleeping until our GPU side writes a fence / the read pointer.
+[[entrypoint.midasm_hook]]
+address = 0x82991640  # TU6: base 0x829776A0
+name = "Gow2GpuWaitStep"
+registers = []
+jump_address_on_true = 0x8299166C  # TU6: base 0x829776CC
+
+# 0x8252D608 `beq cr6,0x8252D69C` (same function): taken when on - ConstrainAspectRatio off.
+[[entrypoint.midasm_hook]]
+address = 0x82532380  # TU6: base 0x8252D608
+name = "Gow2UltrawideNoConstrain"
+registers = []
+jump_address_on_true = 0x82532414  # TU6: base 0x8252D69C
+
+# 0x82806B10 `li r11,720`: the scene buffer height (sub_82806A80); f13 holds the aspect factor there.
+[[entrypoint.midasm_hook]]
+address = 0x828166C8  # TU6: base 0x82806B10
+name = "Gow2UltrawideSceneHeight"
+registers = ["r11", "f13"]
+after_instruction = true
+
+# 0x826E3728 `bctrl`: the UI scene viewport's height getter (sub_826E36C0); its result in r3.
+[[entrypoint.midasm_hook]]
+address = 0x826E9BF8  # TU6: base 0x826E3728
+name = "Gow2UltrawideUiHeight"
+registers = ["r3"]
+after_instruction = true
+
+# 0x828307A0: first instruction (`mflr r12`) of the function that crashes in Horde (notes/58, jobs 206-208).
+[[entrypoint.midasm_hook]]
+address = 0x82840960  # TU6: base 0x828307A0
+name = "Gow2HordeGuard"
+registers = ["r3", "r4"]
+return_on_true = true
+
+# 0x8280D848: the texture pool defragmenter's first instruction (`mflr r12`).
+[[entrypoint.midasm_hook]]
+address = 0x8281D3F8  # TU6: base 0x8280D848
+name = "Gow2NoteTextureDefrag"
+registers = []
+
+# Stage 1 groundwork: watch the game's resource calls (src/layer1_xdk7645/d3d_watch.cpp, --gow2_d3d_watch). Each hook
+# runs at the function's first instruction (all verified to be prologues, mflr r12) and only reads r3-r6.
+[[entrypoint.midasm_hook]]
+address = 0x829BABD8  # TU6: base 0x829A0C40
+name = "Gow2WatchXGSetTextureHeaderEx"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x829BAD10  # TU6: base 0x829A0D78
+name = "Gow2WatchXGSetCubeTextureHeaderEx"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x829BA070  # TU6: base 0x829A00D8
+name = "Gow2WatchXGSetVertexBufferHeader"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x829BA108  # TU6: base 0x829A0170
+name = "Gow2WatchXGSetIndexBufferHeader"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x829BADF0  # TU6: base 0x829A0E58
+name = "Gow2WatchXGOffsetResourceAddress"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x829BAD88  # TU6: base 0x829A0DF0
+name = "Gow2WatchXGOffsetBaseTextureAddress"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x829905A0  # TU6: base 0x82976600
+name = "Gow2WatchLockCore"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x82990860  # TU6: base 0x829768C0
+name = "Gow2WatchUnlock"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x825A0D10  # TU6: base 0x8259CE00
+name = "Gow2WatchInlineUnlockA"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x827C5DC8  # TU6: base 0x827BF6F0
+name = "Gow2WatchInlineUnlockB"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x8281CD00  # TU6: base 0x8280D150
+name = "Gow2WatchPoolDefrag"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x8281AC58  # TU6: base 0x8280B0C0
+name = "Gow2WatchMipRealloc"
+registers = ["r3", "r4", "r5", "r6"]
+
+[[entrypoint.midasm_hook]]
+address = 0x82818F28  # TU6: base 0x828093B8
+name = "Gow2WatchDeferredFree"
+registers = ["r3", "r4", "r5", "r6"]
+
+
+# Patch 0066 (see gow2_manifest.toml): the same two sites, matched in the TU6 image (code checked by disassembly).
+[[entrypoint.midasm_hook]]
+address = 0x82819790  # TU6: base 0x82809BBC
+name = "Gow2ShaderCreatedPixel"
+registers = ["r6", "r27"]
+
+[[entrypoint.midasm_hook]]
+address = 0x82819594  # TU6: base 0x82809A20
+name = "Gow2ShaderCreatedVertex"
+registers = ["r4", "r28"]

@@ -1,0 +1,3186 @@
+diff --git a/include/rex/chrono/clock.h b/include/rex/chrono/clock.h
+index c19caea..ac448e9 100644
+--- a/include/rex/chrono/clock.h
++++ b/include/rex/chrono/clock.h
+@@ -79,6 +79,13 @@ class Clock {
+   // Sets the system time of the guest.
+   static void SetGuestSystemTime(uint64_t system_time);
+ 
++  // Gears2-Native SDK patch 4 (deterministic guest clock for repeatable test runs). With --clock_fixed_step_fps=N the
++  // guest clock stops following host time: it advances by exactly 1/N s at every VdSwap, and guest system time starts
++  // at a fixed date. A watchdog advances it one step if no swap arrives within --clock_fixed_watchdog_ms of host time,
++  // so guest code that spins on the clock can't hang; each watchdog step is counted (a run with steps isn't exact).
++  static void AdvanceGuestFixedStep();
++  static uint64_t fixed_step_watchdog_steps();
++
+   // Scales a time duration in milliseconds, from guest time.
+   static uint32_t ScaleGuestDurationMillis(uint32_t guest_ms);
+   // Scales a time duration in 100ns ticks like FILETIME, from guest time.
+diff --git a/include/rex/graphics/command_processor.h b/include/rex/graphics/command_processor.h
+index da8e432..491c96a 100644
+--- a/include/rex/graphics/command_processor.h
++++ b/include/rex/graphics/command_processor.h
+@@ -22,6 +22,7 @@
+ #include <vector>
+ 
+ #include <rex/graphics/register_file.h>
++#include <rex/graphics/trace_writer.h>
+ #include <rex/graphics/registers.h>
+ #include <rex/graphics/xenos.h>
+ #include <rex/memory.h>
+@@ -38,6 +39,7 @@ namespace rex::graphics {
+ 
+ class GraphicsSystem;
+ class Shader;
++struct GpuServices;  // Gears2-Native SDK patch 21 (draw_observer.h)
+ 
+ enum class ReadbackResolveMode {
+   kDisabled,
+@@ -129,6 +131,18 @@ class CommandProcessor {
+   bool Save(::rex::stream::ByteStream* stream);
+   bool Restore(::rex::stream::ByteStream* stream);
+ 
++  // SDK patch 6 (Gears2-Native): GPU trace playback, ported from Xenia Canary's trace player
++  // (BSD-3-Clause). With --trace_gpu_replay=<file.xtr> the command processor plays that trace
++  // --trace_gpu_replay_count times on its own thread instead of reading the guest ring buffer
++  // (the app keeps the guest suspended), so the same frame is rendered again from identical input.
++  void RestoreRegisters(uint32_t first_register, const uint32_t* register_values,
++                        uint32_t register_count, bool execute_callbacks);
++  void RestoreGammaRamp(const reg::DC_LUT_30_COLOR* new_gamma_ramp_256_entry_table,
++                        const reg::DC_LUT_PWL_DATA* new_gamma_ramp_pwl_rgb,
++                        uint32_t new_gamma_ramp_rw_component);
++  virtual void RestoreEdramSnapshot(const void* snapshot) {}
++  virtual void TracePlaybackWroteMemory(uint32_t base_ptr, uint32_t length) {}
++
+  protected:
+   struct IndexBufferInfo {
+     xenos::IndexFormat format = xenos::IndexFormat::kInt16;
+@@ -139,6 +153,8 @@ class CommandProcessor {
+   };
+ 
+   void WorkerThreadMain();
++  // SDK patch 6: plays a whole trace once; returns false on a malformed file.
++  bool PlayTrace(const uint8_t* trace_data, size_t trace_size);
+   virtual bool SetupContext() = 0;
+   virtual void ShutdownContext() = 0;
+ 
+@@ -167,6 +183,9 @@ class CommandProcessor {
+ 
+   virtual void MakeCoherent();
+   virtual void PrepareForWait();
++  // SDK patch 5: called when a frame trace starts; writes the register file and gamma ramps
++  // (backends add EDRAM and GPU-written memory).
++  virtual void InitializeTrace();
+   virtual void ReturnFromWait();
+ 
+   uint32_t ExecutePrimaryBuffer(uint32_t start_index, uint32_t end_index);
+@@ -244,6 +263,8 @@ class CommandProcessor {
+   std::vector<uint32_t> me_bin_;
+ 
+   uint32_t counter_ = 0;
++  std::unique_ptr<GpuServices> gpu_services_;  // Gears2-Native SDK patch 21
++  std::vector<uint32_t> external_packet_;      // SDK patch 21: the packet being run for the observer
+ 
+   uint32_t primary_buffer_ptr_ = 0;
+   uint32_t primary_buffer_size_ = 0;
+@@ -281,6 +302,13 @@ class CommandProcessor {
+   reg::DC_LUT_30_COLOR gamma_ramp_256_entry_table_[256] = {};
+   reg::DC_LUT_PWL_DATA gamma_ramp_pwl_rgb_[128][3] = {};
+   uint32_t gamma_ramp_rw_component_ = 0;
++
++ protected:
++  // SDK patch 5 (Gears2-Native): GPU frame traces (--trace_gpu_frames, --trace_gpu_prefix).
++  TraceWriter& trace_writer_ = GetTraceWriter();
++  std::vector<uint32_t> trace_frame_numbers_;
++  uint32_t trace_swap_count_ = 0;
++  bool trace_single_frame_ = false;
+ };
+ 
+ }  // namespace rex::graphics
+diff --git a/include/rex/graphics/d3d12/command_processor.h b/include/rex/graphics/d3d12/command_processor.h
+index 96d362b..27d3e13 100644
+--- a/include/rex/graphics/d3d12/command_processor.h
++++ b/include/rex/graphics/d3d12/command_processor.h
+@@ -218,6 +218,11 @@ class D3D12CommandProcessor : public CommandProcessor {
+   bool IssueDraw(xenos::PrimitiveType primitive_type, uint32_t index_count,
+                  IndexBufferInfo* index_buffer_info, bool major_mode_explicit) override;
+   bool IssueCopy() override;
++  // SDK patch 5: frame traces - EDRAM snapshot and GPU-written memory at trace start.
++  void InitializeTrace() override;
++  // SDK patch 6: trace playback.
++  void TracePlaybackWroteMemory(uint32_t base_ptr, uint32_t length) override;
++  void RestoreEdramSnapshot(const void* snapshot) override;
+ 
+  private:
+   static constexpr uint32_t kQueueFrames = 3;
+@@ -405,8 +410,9 @@ class D3D12CommandProcessor : public CommandProcessor {
+   bool InitializeOcclusionQueryResources();
+   void ShutdownOcclusionQueryResources();
+   bool BeginGuestOcclusionQuery(uint32_t sample_count_address);
+-  bool EndGuestOcclusionQuery(uint32_t sample_count_address,
+-                              xenos::xe_gpu_depth_sample_counts* sample_counts);
++  // Gears2-Native SDK patch 15: returns the (normalized) count instead of writing it, so the ZPD handler can tell the
++  // draw observer what it wrote; segments_out = host queries summed (> 1 only with occlusion_query_no_fake).
++  bool EndGuestOcclusionQuery(uint32_t sample_count_address, uint64_t& samples_out, uint32_t& segments_out);
+   bool AcquireOcclusionQueryIndex(uint32_t& host_index_out);
+   void DisableHostOcclusionQueries();
+   uint64_t NormalizeOcclusionSamples(uint64_t samples) const;
+@@ -658,6 +664,12 @@ class D3D12CommandProcessor : public CommandProcessor {
+     uint32_t sample_count_address = 0;
+     uint32_t host_index = UINT32_MAX;
+     bool valid = false;
++    // Gears2-Native SDK patch 15 (occlusion_query_no_fake only): a submission that ends inside a guest query closes and
++    // resolves the host query as a segment and BeginSubmission opens the next one, instead of dropping the query.
++    static constexpr uint32_t kMaxSegments = 32;
++    bool open = false;  // host_index has a BeginQuery in the open submission
++    uint32_t segment_count = 0;
++    uint32_t segments[kMaxSegments] = {};
+   } active_occlusion_query_;
+   struct VertexBufferState {
+     uint32_t address = UINT32_MAX;
+@@ -760,6 +772,23 @@ class D3D12CommandProcessor : public CommandProcessor {
+ 
+   // Temporary storage for memexport stream constants used in the draw.
+   std::vector<draw_util::MemExportRange> memexport_ranges_;
++
++  // Gears2-Native SDK patch 3: per-swap readback of the guest output for the draw observer (notes/33). A ring of
++  // persistently mapped READBACK buffers, delivered once the GPU has finished the submission that filled them.
++  struct FrameReadbackSlot {
++    Microsoft::WRL::ComPtr<ID3D12Resource> buffer;
++    uint8_t* mapped = nullptr;
++    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
++    uint64_t submission = 0;
++    uint64_t frame = 0;
++    uint32_t width = 0, height = 0;
++    bool pending = false;
++  };
++  std::array<FrameReadbackSlot, 3> frame_readback_;
++  uint32_t frame_readback_next_ = 0;
++  uint64_t frame_readback_counter_ = 0;
++  void DeliverFrameReadbacks();
++  void QueueFrameReadback(ID3D12Resource* guest_output);
+ };
+ 
+ }  // namespace rex::graphics::d3d12
+diff --git a/include/rex/graphics/d3d12/render_target_cache.h b/include/rex/graphics/d3d12/render_target_cache.h
+index cd7693a..18916f6 100644
+--- a/include/rex/graphics/d3d12/render_target_cache.h
++++ b/include/rex/graphics/d3d12/render_target_cache.h
+@@ -54,6 +54,12 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+   void CompletedSubmissionUpdated();
+   void BeginSubmission();
+ 
++  // SDK patch 5 (frame traces): EDRAM snapshot at trace start (not with resolution scaling).
++  bool InitializeTraceSubmitDownloads();
++  void InitializeTraceCompleteDownloads();
++  // SDK patch 6 (trace playback): loads a trace's EDRAM snapshot (not with resolution scaling).
++  void RestoreEdramSnapshot(const void* snapshot);
++
+   Path GetPath() const override { return path_; }
+ 
+   bool Update(bool is_rasterization_done, reg::RB_DEPTHCONTROL normalized_depth_control,
+@@ -151,6 +157,10 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+   //  copied to a different buffer - the same range may have ROV-owned color and
+   //  host float32 depth at the same time).
+   ID3D12Resource* edram_buffer_ = nullptr;
++  // SDK patch 5: readback buffer for the EDRAM snapshot at trace start.
++  ID3D12Resource* edram_snapshot_download_buffer_ = nullptr;
++  // SDK patch 6: upload buffers for restoring a trace's EDRAM snapshot.
++  std::unique_ptr<ui::d3d12::D3D12UploadBufferPool> edram_snapshot_restore_pool_;
+   D3D12_RESOURCE_STATES edram_buffer_state_;
+   EdramBufferModificationStatus edram_buffer_modification_status_ =
+       EdramBufferModificationStatus::kUnmodified;
+diff --git a/include/rex/graphics/d3d12/shared_memory.h b/include/rex/graphics/d3d12/shared_memory.h
+index 5100818..1edb0ad 100644
+--- a/include/rex/graphics/d3d12/shared_memory.h
++++ b/include/rex/graphics/d3d12/shared_memory.h
+@@ -40,6 +40,11 @@ class D3D12SharedMemory : public SharedMemory {
+   void CompletedSubmissionUpdated();
+   void BeginSubmission();
+ 
++  // SDK patch 5 (frame traces): copy the GPU-written ranges to a readback buffer when a trace
++  // starts, then write them into the trace once the copy has completed.
++  bool InitializeTraceSubmitDownloads();
++  void InitializeTraceCompleteDownloads();
++
+   // RequestRange may transition the buffer to copy destination - call it before
+   // UseForReading or UseForWriting.
+ 
+@@ -84,6 +89,10 @@ class D3D12SharedMemory : public SharedMemory {
+  private:
+   D3D12CommandProcessor& command_processor_;
+ 
++  // SDK patch 5: readback buffer for the GPU-written ranges at trace start.
++  ID3D12Resource* trace_download_buffer_ = nullptr;
++  void ResetTraceDownload();
++
+   // The 512 MB tiled buffer.
+   ID3D12Resource* buffer_ = nullptr;
+   D3D12_GPU_VIRTUAL_ADDRESS buffer_gpu_address_ = 0;
+diff --git a/include/rex/graphics/draw_observer.h b/include/rex/graphics/draw_observer.h
+new file mode 100644
+index 0000000..965efef
+--- /dev/null
++++ b/include/rex/graphics/draw_observer.h
+@@ -0,0 +1,109 @@
++/**
++ * Gears2-Native SDK patch 2 (notes/32): an optional observer of the guest GPU command stream.
++ * The command processor (in the GPU plugin) calls it on its worker thread just before every draw reaches the backend -
++ * including EDRAM copies/resolves, which arrive as draws with edram_mode == kCopy - and just before every swap.
++ * The registry lives in rexruntime so the app and the runtime-loaded plugin share it. One observer per process; set it
++ * before the guest starts and leave it until shutdown. When none is set, the cost is one atomic load per draw.
++ */
++#pragma once
++
++#include <functional>
++
++#include <cstdint>
++
++#include <rex/graphics/xenos.h>
++
++namespace rex::graphics {
++
++class RegisterFile;
++class Shader;
++
++struct ObservedIndexBuffer {
++  xenos::IndexFormat format;
++  xenos::Endian endianness;
++  uint32_t count;
++  uint32_t guest_base;
++  uint64_t length;
++};
++
++// Gears2-Native SDK patch 15 (Stage 4, notes/46): one PM4 EVENT_WRITE_ZPD, i.e. one occlusion-query report write.
++enum class ZpdAnswer : uint8_t {
++  kNone,         // nothing written (query_occlusion_fake_sample_count < 0)
++  kBegin,        // a begin report (the D3D12 host path leaves it as it is, unless occlusion_query_no_fake)
++  kHost,         // end: the real host sample count
++  kFake,         // end: query_occlusion_fake_sample_count (host queries off, or the host path fell back)
++  kNoRealCount,  // end, occlusion_query_no_fake: no real count could be had; 1 was written
++};
++struct ObservedZpd {
++  uint32_t report_address;  // RB_SAMPLE_COUNT_ADDR (guest physical)
++  bool is_end;              // the report held D3D's pending marker (0xFFFFFEED in ZPass or ZFail) when the packet ran
++  ZpdAnswer answer;
++  uint64_t samples;         // what was written into ZPass_A / Total_A for an end (after resolution scaling), else 0
++  uint32_t host_segments;   // host queries summed for this end (> 1 when submissions split it; occlusion_query_no_fake)
++};
++
++class DrawObserver {
++ public:
++  virtual ~DrawObserver() = default;
++  // `regs` holds the complete state for this draw (ALU/fetch constants, render state). `index_buffer` is null for
++  // auto-indexed draws. Called on the GPU worker thread.
++  virtual void OnDraw(const RegisterFile& regs, xenos::PrimitiveType primitive, uint32_t index_count,
++                      const ObservedIndexBuffer* index_buffer, bool major_mode_explicit) = 0;
++  // Gears2-Native (Stage 1): the active shaders for the draw that follows (OnDraw comes right after), so observers can
++  // see which fetch constants the draw actually uses (Shader::vertex_bindings / texture_bindings; empty until the
++  // shader has been analysed, which happens at its first draw). Called on the GPU worker thread.
++  virtual void OnDrawShaders(const Shader* vertex_shader, const Shader* pixel_shader) {}
++  // Gears2-Native SDK patch 20 (Stage 5B): a primary ring range is about to be executed: dwords [read_index,
++  // write_index) of the ring at ring_physical (ring_dwords long, wrapping). An observer with its own PM4 processor
++  // parses the same range (before the SDK runs it). Called on the GPU worker thread.
++  virtual void OnPrimaryRange(uint32_t ring_physical, uint32_t ring_dwords, uint32_t read_index,
++                              uint32_t write_index) {}
++  // Before the swap is handed to the presenter. Called on the GPU worker thread.
++  virtual void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t width, uint32_t height) = 0;
++  // Optional per-swap readback of the final frame (SDK patch 3, D3D12 backend): the presenter's guest-output image
++  // after the game's gamma ramp (and FXAA if enabled), before window scaling and overlays. R10G10B10A2_UNORM pixels,
++  // `row_pitch` bytes per row. Delivered on the GPU thread 1-2 swaps after the frame (no stall); copy what you need and
++  // return quickly. `frame` counts swaps since the readback started.
++  // Gears2-Native SDK patch 15: every EVENT_WRITE_ZPD, in stream order with OnDraw, after the report has been written
++  // (read its final lanes from guest memory). Called on the GPU worker thread.
++  virtual void OnZpd(const RegisterFile& regs, const ObservedZpd& zpd) {}
++  virtual bool WantsFrameImages() const { return false; }
++  virtual void OnFrameImage(const uint8_t* rgb10a2, uint32_t width, uint32_t height, uint32_t row_pitch,
++                            uint64_t frame) {}
++};
++
++// Gears2-Native SDK patch 18 (takeover T1): an observer wrote guest memory itself (our renderer's front buffer) from
++// inside an observer callback, on the GPU worker thread. This tells the GPU emulation the physical range changed
++// (SharedMemory::MemoryInvalidationCallback, exact range): its shared memory and texture cache reload it from guest
++// memory at the next use - e.g. the swap that follows OnSwap. No-op until a command processor registers the handler.
++void NotifyGuestRangeWrittenByObserver(uint32_t physical_address, uint32_t length);
++using GuestRangeWrittenHandler = void (*)(void* context, uint32_t physical_address, uint32_t length);
++void SetGuestRangeWrittenHandler(GuestRangeWrittenHandler handler, void* context);
++
++// Gears2-Native SDK patch 21 (Stage 5B phase 2): with --gpu_external_pm4 the SDK does not parse the primary ring
++// itself; the draw observer's own PM4 processor does (OnPrimaryRange), using these services for what still lives in
++// the SDK: the register file with its side effects (gamma LUT, scratch write-back, coherency), and single packets it
++// hands back for the SDK to run as usual - draws (observer + IssueDraw), shader loads (the SDK's Shader objects),
++// ZPD (query reports), XE_SWAP (present) and INTERRUPT (the title's callback). Valid on the GPU worker thread only.
++struct GpuServices {
++  std::function<void(uint32_t index, uint32_t value)> write_register;
++  std::function<uint32_t(uint32_t index)> read_register;
++  std::function<void(const uint32_t* big_endian_dwords, uint32_t dword_count)> execute_packet;  // one packet
++  std::function<uint32_t()> counter;   // the vblank/swap counter EVENT_WRITE_SHD writes (bit 31 of the initiator)
++  std::function<bool()> running;       // false once the GPU worker is shutting down (leave any wait loop)
++  std::function<void()> make_coherent; // what WAIT_REG_MEM on COHER_STATUS_HOST does
++  std::function<bool()> vsync;         // --vsync (WAIT_REG_MEM sleeps when on, yields when off)
++  // Gears2-Native SDK patch 22 (5B phase 3): the register file itself, so an external processor that runs draws
++  // and shader loads itself can hand the observers the same RegisterFile the SDK would.
++  std::function<const RegisterFile*()> register_file;
++  // Gears2-Native SDK patch 23 (5C-2): an external processor that runs XE_SWAP itself (and presents its own image)
++  // calls this once per swap for the SDK's own swap bookkeeping: the profiler frame flip and the swap counter.
++  std::function<void()> swap_done;
++};
++GpuServices* GetGpuServices();
++void SetGpuServices(GpuServices* services);
++
++void SetDrawObserver(DrawObserver* observer);
++DrawObserver* GetDrawObserver();
++
++}  // namespace rex::graphics
+diff --git a/include/rex/graphics/pipeline/render_target/cache.h b/include/rex/graphics/pipeline/render_target/cache.h
+index 3bbd52e..c00b37e 100644
+--- a/include/rex/graphics/pipeline/render_target/cache.h
++++ b/include/rex/graphics/pipeline/render_target/cache.h
+@@ -548,6 +548,12 @@ class RenderTargetCache {
+   // EDRAM memory are committed with a memory barrier.
+   void PixelShaderInterlockFullEdramBarrierPlaced();
+ 
++  // SDK patch 6 (Gears2-Native, from Xenia Canary): for restoring a trace's EDRAM snapshot with host
++  // render targets - a 1280-sample-wide render target covering all of EDRAM, made the owner of every
++  // tile (contents not transferred, they're replaced). Null if it doesn't fit the host limits.
++  RenderTarget* PrepareFullEdram1280xRenderTargetForSnapshotRestoration(
++      xenos::ColorRenderTargetFormat color_format);
++
+  private:
+   const RegisterFile& register_file_;
+   uint32_t draw_resolution_scale_x_;
+diff --git a/include/rex/graphics/pipeline/shader/interpreter.h b/include/rex/graphics/pipeline/shader/interpreter.h
+index 3e4fe7c..b27a52a 100644
+--- a/include/rex/graphics/pipeline/shader/interpreter.h
++++ b/include/rex/graphics/pipeline/shader/interpreter.h
+@@ -12,6 +12,7 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <cmath>
+ #include <cstddef>
+ #include <cstdint>
+ 
+@@ -27,7 +28,49 @@ namespace rex::graphics {
+ class ShaderInterpreter {
+  public:
+   ShaderInterpreter(const RegisterFile& register_file, const memory::Memory& memory)
+-      : register_file_(register_file), memory_(memory) {}
++      : register_file_(register_file), memory_(&memory) {}
++  // Gears2-Native SDK patch 8 (test oracle, notes/41): an interpreter over a plain block of guest physical memory, for
++  // tools that have no guest memory system. Vertex fetch reads physical_membase + address.
++  ShaderInterpreter(const RegisterFile& register_file, const uint8_t* physical_membase)
++      : register_file_(register_file), physical_membase_override_(physical_membase) {}
++
++  // Gears2-Native SDK patch 8: optional texture fetch. Without a sink the interpreter behaves as before (texture fetch
++  // results read as zeros). With one, tfetch* asks the sink for the 4 filtered components (the sink gets the raw,
++  // unswizzled source register and the instruction, and does the addressing itself), setTex* ops change nothing, and
++  // the other texture queries still read as zeros.
++  class TextureFetchSink {
++   public:
++    virtual ~TextureFetchSink() = default;
++    virtual void FetchTexture(const ucode::TextureFetchInstruction& instr, const float* source_register,
++                              float* result) = 0;
++  };
++  TextureFetchSink* GetTextureFetchSink() const { return texture_fetch_sink_; }
++  void SetTextureFetchSink(TextureFetchSink* sink) { texture_fetch_sink_ = sink; }
++  // Gears2-Native SDK patch 9: bias for the transcendental results (exp, log, logc, rcp*, rsq*, sqrt, sin, cos), so a
++  // test can bracket a GPU's approximations: 0 exact (default), +1 / -1 move each result by 2^-21 relative (and log by
++  // a further 2^-21 absolute) up / down - about the precision of GPU hardware transcendentals and of Canary's 21-bit
++  // rounding. 2 and above: each result moved up or down pseudo-randomly (the value seeds the sequence).
++  // Gears2-Native SDK patch 11: operand denormal flushing (on by default, as the hardware). Off only to compare with a
++  // GPU that cannot flush (Mesa lavapipe ignores DenormFlushToZero); process-wide.
++  static void SetFlushDenormals(bool flush) { flush_denormals_ = flush; }
++  void SetTranscendentalBias(int bias) {
++    transcendental_bias_ = bias;
++    transcendental_counter_ = 0;
++  }
++
++  // Gears2-Native SDK patch 8 (oracle observations, all reset by Execute):
++  // - killed(): a kill instruction's condition held (the interpreter still does not stop - like demote-to-helper).
++  // - hit_step_limit(): Execute stopped after kMaxControlFlowSteps control flow instructions (malformed shader guard).
++  // - a0-relative float constant reads: lowest and highest index (address + a0, before the range check) and count.
++  static constexpr uint32_t kMaxControlFlowSteps = 65536;
++  bool killed() const { return killed_; }
++  bool hit_step_limit() const { return hit_step_limit_; }
++  uint32_t a0_relative_reads() const { return a0_relative_reads_; }
++  int32_t a0_relative_index_min() const { return a0_relative_index_min_; }
++  int32_t a0_relative_index_max() const { return a0_relative_index_max_; }
++  // Gears2-Native SDK patch 14 (oracle input envelope): the largest finite magnitude among the ALU results of the last
++  // Execute (vector and scalar, before _sat). Tells a test which cases ran values near the float range limit.
++  float max_abs_result() const { return max_abs_result_; }
+ 
+   class ExportSink {
+    public:
+@@ -80,22 +123,27 @@ class ShaderInterpreter {
+     void Reset() { std::memset(this, 0, sizeof(*this)); }
+ 
+     int32_t GetLoopAddress() const {
+-      assert_true(loop_stack_depth && loop_stack_depth < 4);
+-      if (!loop_stack_depth || loop_stack_depth >= 4) {
++      // Gears2-Native SDK patch 7: the innermost loop's constant and iterator are at [depth - 1] (as kLoopEnd reads
++      // them); this read [depth], an unset slot. Same in Xenia Canary f42147a5b - upstream candidate.
++      assert_true(loop_stack_depth && loop_stack_depth <= 4);
++      if (!loop_stack_depth || loop_stack_depth > 4) {
+         return 0;
+       }
+-      xenos::LoopConstant loop_constant = loop_constants[loop_stack_depth];
++      xenos::LoopConstant loop_constant = loop_constants[loop_stack_depth - 1];
+       // Clamp to the real range specified in the IPR2015-00325 sequencer
+       // specification.
+       // https://portal.unifiedpatents.com/ptab/case/IPR2015-00325
+       return std::min(INT32_C(256),
+-                      std::max(INT32_C(-256), int32_t(int32_t(loop_iterators[loop_stack_depth]) *
++                      std::max(INT32_C(-256), int32_t(int32_t(loop_iterators[loop_stack_depth - 1]) *
+                                                           loop_constant.step +
+                                                       loop_constant.start)));
+     }
+   };
+ 
+   static float FlushDenormal(float value) {
++    if (!flush_denormals_) {  // Gears2-Native SDK patch 11
++      return value;
++    }
+     uint32_t bits = *reinterpret_cast<const uint32_t*>(&value);
+     bits &= (bits & UINT32_C(0x7F800000)) ? ~UINT32_C(0) : (UINT32_C(1) << 31);
+     return *reinterpret_cast<const float*>(&bits);
+@@ -119,7 +167,24 @@ class ShaderInterpreter {
+   void ExecuteVertexFetchInstruction(ucode::VertexFetchInstruction instr);
+ 
+   const RegisterFile& register_file_;
+-  const memory::Memory& memory_;
++  const memory::Memory* memory_ = nullptr;
++  // Gears2-Native SDK patch 8.
++  const uint8_t* physical_membase_override_ = nullptr;
++  TextureFetchSink* texture_fetch_sink_ = nullptr;
++  static inline bool flush_denormals_ = true;  // Gears2-Native SDK patch 11
++  int transcendental_bias_ = 0;  // Gears2-Native SDK patch 9
++  mutable uint32_t transcendental_counter_ = 0;
++  float BiasTranscendental(float value, bool absolute_too) const;
++  bool killed_ = false;
++  bool hit_step_limit_ = false;
++  mutable uint32_t a0_relative_reads_ = 0;
++  mutable int32_t a0_relative_index_min_ = 0;
++  mutable int32_t a0_relative_index_max_ = 0;
++  float max_abs_result_ = 0.0f;  // Gears2-Native SDK patch 14
++  void NoteResultMagnitude(float value) {
++    const float m = std::fabs(value);
++    if (std::isfinite(m) && m > max_abs_result_) max_abs_result_ = m;
++  }
+ 
+   ExportSink* export_sink_ = nullptr;
+ 
+diff --git a/include/rex/graphics/shared_memory.h b/include/rex/graphics/shared_memory.h
+index 4d85a2b..6baebfd 100644
+--- a/include/rex/graphics/shared_memory.h
++++ b/include/rex/graphics/shared_memory.h
+@@ -95,6 +95,16 @@ class SharedMemory {
+   // regions in those pages.
+   void RangeWrittenByGpu(uint32_t start, uint32_t length);
+ 
++  // SDK patch 5 (frame traces, from Xenia Canary): invalidates the whole CPU->GPU copy so every
++  // range the traced frame reads is uploaded again (and recorded), and collects the ranges whose
++  // current data was written by the GPU - they are downloaded and written into the trace.
++  void PrepareForTraceDownload();
++  void ReleaseTraceDownloadRanges();
++  const std::vector<std::pair<uint32_t, uint32_t>>& trace_download_ranges() const {
++    return trace_download_ranges_;
++  }
++  uint32_t trace_download_page_count() const { return trace_download_page_count_; }
++
+  protected:
+   SharedMemory(memory::Memory& memory);
+   // Call in implementation-specific initialization.
+@@ -154,6 +164,9 @@ class SharedMemory {
+   uint32_t host_gpu_memory_sparse_allocations_ = 0;
+   uint32_t host_gpu_memory_sparse_used_bytes_ = 0;
+ 
++  std::vector<std::pair<uint32_t, uint32_t>> trace_download_ranges_;
++  uint32_t trace_download_page_count_ = 0;
++
+   void* memory_invalidation_callback_handle_ = nullptr;
+   void* memory_data_provider_handle_ = nullptr;
+ 
+diff --git a/include/rex/graphics/trace_protocol.h b/include/rex/graphics/trace_protocol.h
+new file mode 100644
+index 0000000..a609d8b
+--- /dev/null
++++ b/include/rex/graphics/trace_protocol.h
+@@ -0,0 +1,175 @@
++/**
++ ******************************************************************************
++ * Xenia : Xbox 360 Emulator Research Project                                 *
++ ******************************************************************************
++ * Copyright 2020 Ben Vanik. All rights reserved.                             *
++ * Released under the BSD license - see LICENSE in the root for more details. *
++ ******************************************************************************
++ *
++ * Gears2-Native SDK patch 5: GPU frame traces. Ported from Xenia Canary
++ * (src/xenia/gpu/trace_protocol.h, BSD-3-Clause); file format unchanged (version 1),
++ * so traces stay readable by Xenia Canary / Edge tools.
++ */
++
++#pragma once
++
++#include <cstdint>
++
++namespace rex::graphics {
++
++// Trace file extension.
++static constexpr char kTraceExtension[] = "xtr";
++
++// Any byte changes to the files should bump this version.
++// Only builds with matching versions will work.
++// Other changes besides the file format may require bumps, such as
++// anything that changes what is recorded into the files (new GPU
++// command processor commands, etc).
++constexpr uint32_t kTraceFormatVersion = 1;
++
++// Trace file header identifying information about the trace.
++// This must be positioned at the start of the file and must only occur once.
++struct TraceHeader {
++  // Must be the first 4 bytes of the file.
++  // Set to kTraceFormatVersion.
++  uint32_t version;
++
++  // SHA1 of the commit used to record the trace.
++  char build_commit_sha[40];
++
++  // Title ID of game that was being recorded.
++  // May be 0 if not generated from a game or the ID could not be retrieved.
++  uint32_t title_id;
++};
++
++// Tags each command in the trace file stream as one of the *Command types.
++// Each command has this value as its first dword.
++enum class TraceCommandType : uint32_t {
++  kPrimaryBufferStart,
++  kPrimaryBufferEnd,
++  kIndirectBufferStart,
++  kIndirectBufferEnd,
++  kPacketStart,
++  kPacketEnd,
++  kMemoryRead,
++  kMemoryWrite,
++  kEdramSnapshot,
++  kEvent,
++  kRegisters,
++  kGammaRamp,
++};
++
++struct PrimaryBufferStartCommand {
++  TraceCommandType type;
++  uint32_t base_ptr;
++  uint32_t count;
++};
++
++struct PrimaryBufferEndCommand {
++  TraceCommandType type;
++};
++
++struct IndirectBufferStartCommand {
++  TraceCommandType type;
++  uint32_t base_ptr;
++  uint32_t count;
++};
++
++struct IndirectBufferEndCommand {
++  TraceCommandType type;
++};
++
++struct PacketStartCommand {
++  TraceCommandType type;
++  uint32_t base_ptr;
++  uint32_t count;
++};
++
++struct PacketEndCommand {
++  TraceCommandType type;
++};
++
++// The compression format used for memory read/write buffers.
++// Note that not every memory read/write will have compressed data
++// (as it's silly to compress 4 byte buffers).
++enum class MemoryEncodingFormat {
++  // Data is in its raw form. encoded_length == decoded_length.
++  kNone,
++  // Data is compressed with third_party/snappy.
++  kSnappy,
++};
++
++// Represents the GPU reading or writing data from or to memory.
++// Used for both TraceCommandType::kMemoryRead and kMemoryWrite.
++struct MemoryCommand {
++  TraceCommandType type;
++
++  // Base physical memory pointer this read starts at.
++  uint32_t base_ptr;
++  // Encoding format of the data in the trace file.
++  MemoryEncodingFormat encoding_format;
++  // Number of bytes the data occupies in the trace file in its encoded form.
++  uint32_t encoded_length;
++  // Number of bytes the data occupies in memory after decoding.
++  // Note that if no encoding is used this will equal encoded_length.
++  uint32_t decoded_length;
++};
++
++// Represents a full 10 MB snapshot of EDRAM contents, for trace initialization
++// (since replaying the trace will reconstruct its state at any point later) as
++// a sequence of tiles with row-major samples (2x multisampling as 1x2 samples,
++// 4x as 2x2 samples).
++struct EdramSnapshotCommand {
++  TraceCommandType type;
++  // Encoding format of the data in the trace file.
++  MemoryEncodingFormat encoding_format;
++  // Number of bytes the data occupies in the trace file in its encoded form.
++  uint32_t encoded_length;
++};
++
++// Represents a GPU event of EventCommand::Type.
++struct EventCommand {
++  TraceCommandType type;
++
++  // Identifies the event that occurred.
++  enum class Type {
++    kSwap,
++  };
++  Type event_type;
++};
++
++// Represents a range of registers.
++struct RegistersCommand {
++  TraceCommandType type;
++
++  uint32_t first_register;
++  uint32_t register_count;
++  // Whether to set the registers via WriteRegister, which may have side
++  // effects, rather than by copying them directly to the register file.
++  bool execute_callbacks;
++
++  // Encoding format of the values in the trace file.
++  MemoryEncodingFormat encoding_format;
++  // Number of bytes the values occupy in the trace file in their encoded form.
++  // If no encoding is used, this will be sizeof(uint32_t) * register_count.
++  uint32_t encoded_length;
++};
++
++// Represents a gamma ramp - encoded 256 DC_LUT_30_COLOR values and 128
++// interleaved RGB DC_LUT_PWL_DATA values.
++// Assuming that all other gamma ramp state is saved as plain registers.
++struct GammaRampCommand {
++  TraceCommandType type;
++
++  // The component index (0 = red, 1 = green, 2 = blue) for the next
++  // DC_LUT_SEQ_COLOR or DC_LUT_PWL_DATA read or write.
++  uint8_t rw_component;
++
++  // Encoding format of the ramps in the trace file.
++  MemoryEncodingFormat encoding_format;
++  // Number of bytes the ramps occupy in the trace file in their encoded form.
++  // If no encoding is used, this will be sizeof(uint32_t) * (256 + 3 * 128).
++  uint32_t encoded_length;
++};
++
++}  // namespace rex::graphics
+diff --git a/include/rex/graphics/trace_writer.h b/include/rex/graphics/trace_writer.h
+new file mode 100644
+index 0000000..347e22c
+--- /dev/null
++++ b/include/rex/graphics/trace_writer.h
+@@ -0,0 +1,76 @@
++/**
++ ******************************************************************************
++ * Xenia : Xbox 360 Emulator Research Project                                 *
++ ******************************************************************************
++ * Copyright 2020 Ben Vanik. All rights reserved.                             *
++ * Released under the BSD license - see LICENSE in the root for more details. *
++ ******************************************************************************
++ *
++ * Gears2-Native SDK patch 5: GPU frame traces. Ported from Xenia Canary
++ * (src/xenia/gpu/trace_writer.h, BSD-3-Clause). Differences: always compiled in (every call
++ * returns at once when no trace is open), uncompressed blocks only (format-compatible:
++ * MemoryEncodingFormat::kNone), and guest memory reached through memory::Memory.
++ */
++
++#pragma once
++
++#include <cstdint>
++#include <cstdio>
++#include <filesystem>
++#include <set>
++
++#include <rex/graphics/registers.h>
++#include <rex/graphics/trace_protocol.h>
++
++namespace rex::memory {
++class Memory;
++}
++
++namespace rex::graphics {
++
++class TraceWriter {
++ public:
++  TraceWriter() = default;
++  ~TraceWriter() { Close(); }
++
++  void set_memory(memory::Memory* memory) { memory_ = memory; }
++  bool is_open() const { return file_ != nullptr; }
++
++  bool Open(const std::filesystem::path& path, uint32_t title_id);
++  void Flush();
++  void Close();
++
++  void WritePrimaryBufferStart(uint32_t base_ptr, uint32_t count);
++  void WritePrimaryBufferEnd();
++  void WriteIndirectBufferStart(uint32_t base_ptr, uint32_t count);
++  void WriteIndirectBufferEnd();
++  void WritePacketStart(uint32_t base_ptr, uint32_t count);
++  void WritePacketEnd();
++  void WriteMemoryRead(uint32_t base_ptr, size_t length, const void* host_ptr = nullptr);
++  void WriteMemoryWrite(uint32_t base_ptr, size_t length, const void* host_ptr = nullptr);
++  void WriteEdramSnapshot(const void* snapshot);
++  void WriteEvent(EventCommand::Type event_type);
++  void WriteRegisters(uint32_t first_register, const uint32_t* register_values,
++                      uint32_t register_count, bool execute_callbacks_on_play);
++  void WriteGammaRamp(const reg::DC_LUT_30_COLOR* gamma_ramp_256_entry_table,
++                      const reg::DC_LUT_PWL_DATA* gamma_ramp_pwl_rgb,
++                      uint32_t gamma_ramp_rw_component);
++
++  // Bytes written to the open trace so far (for logging).
++  uint64_t bytes_written() const { return bytes_written_; }
++
++ private:
++  void WriteMemoryCommand(TraceCommandType type, uint32_t base_ptr, size_t length,
++                          const void* host_ptr);
++  void Put(const void* data, size_t size);
++
++  memory::Memory* memory_ = nullptr;
++  FILE* file_ = nullptr;
++  uint64_t bytes_written_ = 0;
++};
++
++// The process has one GPU command processor, so one trace writer, shared by the command processor,
++// shared memory, primitive processor and render target cache.
++TraceWriter& GetTraceWriter();
++
++}  // namespace rex::graphics
+diff --git a/include/rex/input/input_system.h b/include/rex/input/input_system.h
+index 0c27eed..80c3fa3 100644
+--- a/include/rex/input/input_system.h
++++ b/include/rex/input/input_system.h
+@@ -27,6 +27,8 @@ namespace rex::ui {
+ class Window;
+ }
+ 
++#include <mutex>
++
+ namespace rex::input {
+ 
+ class InputSystem : public system::IInputSystem {
+@@ -83,6 +85,9 @@ class InputSystem : public system::IInputSystem {
+ 
+   rex::ui::Window* window_ = nullptr;
+ 
++  // Guest threads call the XInput entry points concurrently; device lists and per-user state are shared.
++  // Recursive: public entry points call each other (GetState -> GetStateForUI -> RefreshDevices).
++  mutable std::recursive_mutex mutex_;
+   std::vector<std::unique_ptr<InputDriver>> drivers_;
+ 
+   std::unique_ptr<DeviceAssignment> assignment_;
+diff --git a/src/core/clock.cpp b/src/core/clock.cpp
+index ae72b7a..e3e47fc 100644
+--- a/src/core/clock.cpp
++++ b/src/core/clock.cpp
+@@ -22,6 +22,12 @@ REXCVAR_DEFINE_BOOL(clock_no_scaling, false, "Clock",
+ 
+ REXCVAR_DEFINE_BOOL(clock_source_raw, false, "Clock", "Use raw clock source without scaling");
+ 
++// SDK patch 4 (Gears2-Native): deterministic guest clock for repeatable test runs.
++REXCVAR_DEFINE_INT32(clock_fixed_step_fps, 0, "Clock",
++                     "Test mode: guest time advances exactly 1/N s per VdSwap instead of following host time (0 = off)");
++REXCVAR_DEFINE_INT32(clock_fixed_watchdog_ms, 250, "Clock",
++                     "Test mode: advance one step if no VdSwap arrives within this many host ms");
++
+ namespace rex::chrono {
+ 
+ // Time scalar applied to all time operations.
+@@ -61,11 +67,38 @@ void RecomputeGuestTickScalar() {
+   guest_tick_ratio_ = frac;
+ }
+ 
++// SDK patch 4: deterministic clock state (guarded by tick_mutex_).
++uint64_t fixed_last_host_tick_ = 0;
++uint64_t fixed_watchdog_steps_ = 0;
++// 2008-11-07 00:00 UTC as FILETIME, the guest date in deterministic mode.
++constexpr uint64_t kFixedSystemTimeBase = 128704896000000000ull;
++
++inline bool FixedStepMode() { return REXCVAR_GET(clock_fixed_step_fps) > 0; }
++
++uint64_t FixedStepTicks() {
++  return guest_tick_frequency_ / static_cast<uint64_t>(REXCVAR_GET(clock_fixed_step_fps));
++}
++
+ // Update the guest timer for all threads.
+ // Return a copy of the value so locking is reduced.
+ uint64_t UpdateGuestClock() {
+   uint64_t host_tick_count = Clock::QueryHostTickCount();
+ 
++  if (FixedStepMode()) {
++    std::lock_guard<std::mutex> lock(tick_mutex_);
++    if (fixed_last_host_tick_ == 0) {
++      fixed_last_host_tick_ = host_tick_count;
++    }
++    const uint64_t limit = Clock::QueryHostTickFrequency() *
++                           static_cast<uint64_t>(std::max(1, REXCVAR_GET(clock_fixed_watchdog_ms))) / 1000;
++    if (host_tick_count - fixed_last_host_tick_ > limit) {
++      last_guest_tick_count_ += FixedStepTicks();
++      fixed_last_host_tick_ = host_tick_count;
++      ++fixed_watchdog_steps_;
++    }
++    return last_guest_tick_count_;
++  }
++
+   if (REXCVAR_GET(clock_no_scaling)) {
+     // Nothing to update, calculate on the fly
+     return host_tick_count * guest_tick_ratio_.first / guest_tick_ratio_.second;
+@@ -161,6 +194,9 @@ uint64_t Clock::QueryGuestTickCount() {
+ }
+ 
+ uint64_t Clock::QueryGuestSystemTime() {
++  if (FixedStepMode()) {
++    return kFixedSystemTimeBase + QueryGuestSystemTimeOffset();
++  }
+   if (REXCVAR_GET(clock_no_scaling)) {
+     return Clock::QueryHostSystemTime();
+   }
+@@ -174,7 +210,24 @@ uint32_t Clock::QueryGuestUptimeMillis() {
+                                                   std::numeric_limits<uint32_t>::max()));
+ }
+ 
++void Clock::AdvanceGuestFixedStep() {
++  if (!FixedStepMode()) {
++    return;
++  }
++  std::lock_guard<std::mutex> lock(tick_mutex_);
++  last_guest_tick_count_ += FixedStepTicks();
++  fixed_last_host_tick_ = Clock::QueryHostTickCount();
++}
++
++uint64_t Clock::fixed_step_watchdog_steps() {
++  std::lock_guard<std::mutex> lock(tick_mutex_);
++  return fixed_watchdog_steps_;
++}
++
+ void Clock::SetGuestSystemTime(uint64_t system_time) {
++  if (FixedStepMode()) {
++    return;  // the guest date is fixed in deterministic mode
++  }
+   if (REXCVAR_GET(clock_no_scaling)) {
+     // Time is fixed to host time.
+     return;
+diff --git a/src/graphics/CMakeLists.txt b/src/graphics/CMakeLists.txt
+index da7ae1a..f5d3381 100644
+--- a/src/graphics/CMakeLists.txt
++++ b/src/graphics/CMakeLists.txt
+@@ -18,6 +18,7 @@ set(REXGPU_XENOS_SOURCES
+     # GPU system
+     graphics_system.cpp
+     command_processor.cpp
++    trace_writer.cpp
+     util/draw_extent_estimator.cpp
+     util/draw.cpp
+     packet_disassembler.cpp
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index a744375..78ce931 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -12,8 +12,10 @@
+ #include <algorithm>
+ #include <cinttypes>
+ #include <cmath>
++#include <cstdio>
+ #include <cstring>
+ #include <string_view>
++#include <vector>
+ 
+ #include <fmt/format.h>
+ 
+@@ -22,6 +24,7 @@
+ #include <rex/perf/counter.h>
+ #include <rex/chrono/clock.h>
+ #include <rex/graphics/command_processor.h>
++#include <rex/graphics/draw_observer.h>
+ #include <rex/graphics/flags.h>
+ #include <rex/graphics/graphics_system.h>
+ #include <rex/graphics/pipeline/texture/info.h>
+@@ -36,6 +39,19 @@
+ #include <rex/system/user_module.h>
+ 
+ REXCVAR_DEFINE_BOOL(vsync, true, "GPU", "Enable vertical sync");
++// Gears2-Native SDK patch 21 (Stage 5B phase 2).
++REXCVAR_DEFINE_BOOL(gpu_external_pm4, false, "GPU",
++                    "Gears2-Native: the draw observer's own PM4 processor parses the ring (OnPrimaryRange); the SDK "
++                    "only runs the single packets it hands back (GpuServices)");
++
++// SDK patch 5 (Gears2-Native): single-frame GPU traces in the Xenia .xtr format.
++REXCVAR_DEFINE_STRING(trace_gpu_frames, "", "GPU",
++                      "Comma list of frame numbers (counted by swaps) to record as GPU traces");
++REXCVAR_DEFINE_STRING(trace_gpu_prefix, "", "GPU", "Folder for --trace_gpu_frames traces");
++// SDK patch 6 (Gears2-Native): trace playback.
++REXCVAR_DEFINE_STRING(trace_gpu_replay, "", "GPU",
++                      "Play this .xtr trace instead of the guest's command stream (guest must be held)");
++REXCVAR_DEFINE_INT32(trace_gpu_replay_count, 4, "GPU", "How many times --trace_gpu_replay plays the trace");
+ 
+ REXCVAR_DEFINE_BOOL(clear_memory_page_state, true, "GPU",
+                     "Refresh page-valid state from GPU-written memory at frame end. "
+@@ -135,6 +151,23 @@ bool CommandProcessor::Initialize() {
+     }
+   }
+ 
++  // SDK patch 5: frame traces.
++  trace_writer_.set_memory(memory_);
++  {
++    const std::string frames = REXCVAR_GET(trace_gpu_frames);
++    size_t pos = 0;
++    while (pos < frames.size()) {
++      size_t end = frames.find(',', pos);
++      if (end == std::string::npos) end = frames.size();
++      const std::string item = frames.substr(pos, end - pos);
++      if (!item.empty()) trace_frame_numbers_.push_back(uint32_t(std::stoul(item)));
++      pos = end + 1;
++    }
++    if (!trace_frame_numbers_.empty()) {
++      REXGPU_INFO("trace_gpu_frames: {} frame(s) requested", trace_frame_numbers_.size());
++    }
++  }
++
+   worker_running_ = true;
+   worker_thread_ = system::object_ref<system::XHostThread>(
+       new system::XHostThread(kernel_state_, 128 * 1024, 0, [this]() {
+@@ -203,6 +236,43 @@ void CommandProcessor::WorkerThreadMain() {
+     return;
+   }
+ 
++  // SDK patch 6: trace playback mode. The guest ring buffer is never read in this mode.
++  if (const std::string replay = REXCVAR_GET(trace_gpu_replay); !replay.empty()) {
++    std::vector<uint8_t> data;
++    if (FILE* f = std::fopen(replay.c_str(), "rb")) {
++      std::fseek(f, 0, SEEK_END);
++      data.resize(size_t(std::ftell(f)));
++      std::fseek(f, 0, SEEK_SET);
++      data.resize(std::fread(data.data(), 1, data.size(), f));
++      std::fclose(f);
++    }
++    const int count = std::max(1, REXCVAR_GET(trace_gpu_replay_count));
++    if (data.size() < sizeof(TraceHeader) ||
++        reinterpret_cast<const TraceHeader*>(data.data())->version != kTraceFormatVersion) {
++      REXGPU_ERROR("trace_gpu_replay: cannot read {} ({} bytes)", replay, data.size());
++    } else {
++      REXGPU_INFO("trace_gpu_replay: playing {} ({} bytes) {} time(s)", replay, data.size(), count);
++      for (int i = 0; i < count && worker_running_; ++i) {
++        ClearCaches();
++        if (!PlayTrace(data.data() + sizeof(TraceHeader), data.size() - sizeof(TraceHeader))) {
++          REXGPU_ERROR("trace_gpu_replay: malformed trace, stopped in play {}", i + 1);
++          break;
++        }
++        REXGPU_INFO("trace_gpu_replay: play {} done", i + 1);
++      }
++    }
++    while (worker_running_) {
++      while (!pending_fns_.empty()) {
++        auto fn = std::move(pending_fns_.front());
++        pending_fns_.pop();
++        fn();
++      }
++      rex::thread::Wait(write_ptr_index_event_.get(), true, std::chrono::milliseconds(20));
++    }
++    ShutdownContext();
++    return;
++  }
++
+   while (worker_running_) {
+     while (!pending_fns_.empty()) {
+       auto fn = std::move(pending_fns_.front());
+@@ -608,13 +678,62 @@ void CommandProcessor::MakeCoherent() {
+   regs_volatile[XE_GPU_REG_COHER_STATUS_HOST] = 0;
+ }
+ 
+-void CommandProcessor::PrepareForWait() {}
++void CommandProcessor::PrepareForWait() { trace_writer_.Flush(); }
++
++void CommandProcessor::InitializeTrace() {
++  // The initial register values, loaded directly into the register file on playback (all
++  // registers, including those with side effects, are saved).
++  trace_writer_.WriteRegisters(0, reinterpret_cast<const uint32_t*>(register_file_->values),
++                               RegisterFile::kRegisterCount, false);
++  trace_writer_.WriteGammaRamp(gamma_ramp_256_entry_table(), gamma_ramp_pwl_rgb(),
++                               gamma_ramp_rw_component_);
++}
+ 
+ void CommandProcessor::ReturnFromWait() {}
+ 
+ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t write_index) {
+   SCOPE_profile_cpu_f("gpu");
+ 
++  // SDK patch 5: trace record of the primary buffer range.
++  {
++    uint32_t start_ptr = primary_buffer_ptr_ + read_index * sizeof(uint32_t);
++    start_ptr = (primary_buffer_ptr_ & ~0x1FFFFFFF) | (start_ptr & 0x1FFFFFFF);
++    trace_writer_.WritePrimaryBufferStart(start_ptr, write_index - read_index);
++  }
++
++  // Gears2-Native SDK patch 20: let the draw observer parse the same range first (Stage 5B).
++  if (DrawObserver* observer = GetDrawObserver()) {
++    if (!gpu_services_) {  // SDK patch 21: the services the observer's processor uses in external mode
++      gpu_services_ = std::make_unique<GpuServices>();
++      gpu_services_->write_register = [this](uint32_t i, uint32_t v) { WriteRegister(i, v); };
++      gpu_services_->read_register = [this](uint32_t i) { return ReadRegisterValue(i); };
++      gpu_services_->execute_packet = [this](const uint32_t* dwords, uint32_t count) {
++        if (!count) return;
++        external_packet_.assign(dwords, dwords + count);
++        memory::RingBuffer reader(reinterpret_cast<uint8_t*>(external_packet_.data()), count * sizeof(uint32_t));
++        reader.set_write_offset(count * sizeof(uint32_t));
++        ExecutePacket(&reader);
++      };
++      gpu_services_->counter = [this]() { return counter_; };
++      gpu_services_->running = [this]() { return bool(worker_running_); };
++      gpu_services_->make_coherent = [this]() { MakeCoherent(); };
++      gpu_services_->vsync = []() { return bool(REXCVAR_GET(vsync)); };
++      gpu_services_->register_file = [this]() -> const RegisterFile* { return register_file_; };  // SDK patch 22
++      gpu_services_->swap_done = [this]() {  // SDK patch 23: what ExecutePacketType3_XE_SWAP does besides presenting
++        rex::perf::Profiler::Flip();
++        ++counter_;
++      };
++      SetGpuServices(gpu_services_.get());
++    }
++    observer->OnPrimaryRange(primary_buffer_ptr_ & 0x1FFFFFFF, primary_buffer_size_ / sizeof(uint32_t), read_index,
++                             write_index);
++    if (REXCVAR_GET(gpu_external_pm4)) {  // SDK patch 21: the observer's processor ran the range
++      OnPrimaryBufferEnd();
++      trace_writer_.WritePrimaryBufferEnd();
++      return write_index;
++    }
++  }
++
+   // Execute commands!
+   memory::RingBuffer reader(memory_->TranslatePhysical(primary_buffer_ptr_), primary_buffer_size_);
+   reader.set_read_offset(read_index * sizeof(uint32_t));
+@@ -630,11 +749,17 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t wr
+ 
+   OnPrimaryBufferEnd();
+ 
++  trace_writer_.WritePrimaryBufferEnd();
+   return write_index;
+ }
+ 
+ void CommandProcessor::ExecuteIndirectBuffer(uint32_t ptr, uint32_t count) {
+   SCOPE_profile_cpu_f("gpu");
++  trace_writer_.WriteIndirectBufferStart(ptr, count * sizeof(uint32_t));
++  if (count == 0) {
++    trace_writer_.WriteIndirectBufferEnd();
++    return;
++  }
+ 
+   // Execute commands!
+   memory::RingBuffer reader(memory_->TranslatePhysical(ptr), count * sizeof(uint32_t));
+@@ -647,6 +772,7 @@ void CommandProcessor::ExecuteIndirectBuffer(uint32_t ptr, uint32_t count) {
+       break;
+     }
+   } while (reader.read_count());
++  trace_writer_.WriteIndirectBufferEnd();
+ }
+ 
+ void CommandProcessor::ExecutePacket(uint32_t ptr, uint32_t count) {
+@@ -700,6 +826,7 @@ bool CommandProcessor::ExecutePacketType0(memory::RingBuffer* reader, uint32_t p
+     return false;
+   }
+ 
++  trace_writer_.WritePacketStart(uint32_t(reader->read_ptr() - 4), 1 + count);
+   uint32_t base_index = (packet & 0x7FFF);
+   uint32_t write_one_reg = (packet >> 15) & 0x1;
+   for (uint32_t m = 0; m < count; m++) {
+@@ -707,6 +834,7 @@ bool CommandProcessor::ExecutePacketType0(memory::RingBuffer* reader, uint32_t p
+     uint32_t target_index = write_one_reg ? base_index : base_index + m;
+     WriteRegister(target_index, reg_data);
+   }
++  trace_writer_.WritePacketEnd();
+ 
+   return true;
+ }
+@@ -714,18 +842,22 @@ bool CommandProcessor::ExecutePacketType0(memory::RingBuffer* reader, uint32_t p
+ bool CommandProcessor::ExecutePacketType1(memory::RingBuffer* reader, uint32_t packet) {
+   // Type-1 packet.
+   // Contains two registers of data. Type-0 should be more common.
++  trace_writer_.WritePacketStart(uint32_t(reader->read_ptr() - 4), 3);
+   uint32_t reg_index_1 = packet & 0x7FF;
+   uint32_t reg_index_2 = (packet >> 11) & 0x7FF;
+   uint32_t reg_data_1 = reader->ReadAndSwap<uint32_t>();
+   uint32_t reg_data_2 = reader->ReadAndSwap<uint32_t>();
+   WriteRegister(reg_index_1, reg_data_1);
+   WriteRegister(reg_index_2, reg_data_2);
++  trace_writer_.WritePacketEnd();
+   return true;
+ }
+ 
+ bool CommandProcessor::ExecutePacketType2(memory::RingBuffer* reader, uint32_t packet) {
+   // Type-2 packet.
+   // No-op. Do nothing.
++  trace_writer_.WritePacketStart(uint32_t(reader->read_ptr() - 4), 1);
++  trace_writer_.WritePacketEnd();
+   return true;
+ }
+ 
+@@ -741,6 +873,13 @@ bool CommandProcessor::ExecutePacketType3(memory::RingBuffer* reader, uint32_t p
+     return false;
+   }
+ 
++  // SDK patch 5: to handle nesting when tracing, indirect buffers record only their header.
++  if (opcode == PM4_INDIRECT_BUFFER || opcode == PM4_INDIRECT_BUFFER_PFD) {
++    trace_writer_.WritePacketStart(uint32_t(reader->read_ptr() - 4), 2);
++  } else {
++    trace_writer_.WritePacketStart(uint32_t(reader->read_ptr() - 4), 1 + count);
++  }
++
+   // & 1 == predicate - when set, we do bin check to see if we should execute
+   // the packet. Only type 3 packets are affected.
+   // We also skip predicated swaps, as they are never valid (probably?).
+@@ -748,6 +887,7 @@ bool CommandProcessor::ExecutePacketType3(memory::RingBuffer* reader, uint32_t p
+     bool any_pass = (bin_select_ & bin_mask_) != 0;
+     if (!any_pass || opcode == PM4_XE_SWAP) {
+       reader->AdvanceRead(count * sizeof(uint32_t));
++      trace_writer_.WritePacketEnd();
+       return true;
+     }
+   }
+@@ -886,6 +1026,39 @@ bool CommandProcessor::ExecutePacketType3(memory::RingBuffer* reader, uint32_t p
+       break;
+   }
+ 
++  trace_writer_.WritePacketEnd();
++  // SDK patch 5: frame trace boundaries. A trace covers one frame: it ends at the swap after it
++  // and starts right after the swap before it. Frame N = the frame ending with the N-th swap.
++  if (opcode == PM4_XE_SWAP) {
++    if (trace_writer_.is_open()) {
++      trace_writer_.WriteEvent(EventCommand::Type::kSwap);
++      trace_writer_.Flush();
++      if (trace_single_frame_) {
++        REXGPU_INFO("trace_gpu_frames: frame {} done, {} bytes", trace_swap_count_,
++                    trace_writer_.bytes_written());
++        trace_single_frame_ = false;
++        trace_writer_.Close();
++      }
++    }
++    ++trace_swap_count_;
++    if (!trace_writer_.is_open() &&
++        std::find(trace_frame_numbers_.cbegin(), trace_frame_numbers_.cend(),
++                  trace_swap_count_ + 1) != trace_frame_numbers_.cend()) {
++      const uint32_t title_id = kernel_state_ ? kernel_state_->title_id() : 0;
++      std::filesystem::path dir = REXCVAR_GET(trace_gpu_prefix);
++      if (dir.empty()) dir = "traces";
++      const auto path = dir / fmt::format("{:08X}_{}.xtr", title_id, trace_swap_count_ + 1);
++      if (trace_writer_.Open(path, title_id)) {
++        trace_single_frame_ = true;
++        REXGPU_INFO("trace_gpu_frames: recording frame {} to {}", trace_swap_count_ + 1,
++                    path.string());
++        InitializeTrace();
++      } else {
++        REXGPU_ERROR("trace_gpu_frames: cannot open {}", path.string());
++      }
++    }
++  }
++
+   assert_true(reader->read_offset() ==
+               (data_start_offset + (count * sizeof(uint32_t))) % reader->capacity());
+   return result;
+@@ -958,6 +1131,10 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(memory::RingBuffer* reader, ui
+   uint32_t frontbuffer_height = reader->ReadAndSwap<uint32_t>();
+   reader->AdvanceRead((count - 4) * sizeof(uint32_t));
+ 
++  // Gears2-Native SDK patch 2: draw observer (include/rex/graphics/draw_observer.h).
++  if (DrawObserver* observer = GetDrawObserver()) {
++    observer->OnSwap(*register_file_, frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
++  }
+   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height);
+ 
+   ++counter_;
+@@ -993,6 +1170,7 @@ bool CommandProcessor::ExecutePacketType3_WAIT_REG_MEM(memory::RingBuffer* reade
+   do {
+     uint32_t value = 0;
+     if (is_memory) {
++      trace_writer_.WriteMemoryRead(CpuToGpu(poll_reg_addr & ~uint32_t(0x3)), sizeof(uint32_t));
+       value =
+           *reinterpret_cast<uint32_t*>(memory_->TranslatePhysical(poll_reg_addr & ~uint32_t(0x3)));
+       value = xenos::GpuSwap(value, static_cast<xenos::Endian>(poll_reg_addr & 0x3));
+@@ -1095,6 +1273,7 @@ bool CommandProcessor::ExecutePacketType3_REG_TO_MEM(memory::RingBuffer* reader,
+   mem_addr &= ~0x3;
+   reg_val = GpuSwap(reg_val, endianness);
+   memory::store(memory_->TranslatePhysical(mem_addr), reg_val);
++  trace_writer_.WriteMemoryWrite(CpuToGpu(mem_addr), 4);
+ 
+   return true;
+ }
+@@ -1109,6 +1288,7 @@ bool CommandProcessor::ExecutePacketType3_MEM_WRITE(memory::RingBuffer* reader,
+     auto addr = write_addr & ~0x3;
+     write_data = GpuSwap(write_data, endianness);
+     memory::store(memory_->TranslatePhysical(addr), write_data);
++    trace_writer_.WriteMemoryWrite(CpuToGpu(addr), 4);
+     write_addr += 4;
+   }
+ 
+@@ -1129,6 +1309,7 @@ bool CommandProcessor::ExecutePacketType3_COND_WRITE(memory::RingBuffer* reader,
+     // Memory.
+     auto endianness = static_cast<xenos::Endian>(poll_reg_addr & 0x3);
+     poll_reg_addr &= ~0x3;
++    trace_writer_.WriteMemoryRead(CpuToGpu(poll_reg_addr), 4);
+     value = memory::load<uint32_t>(memory_->TranslatePhysical(poll_reg_addr));
+     value = GpuSwap(value, endianness);
+   } else {
+@@ -1170,6 +1351,7 @@ bool CommandProcessor::ExecutePacketType3_COND_WRITE(memory::RingBuffer* reader,
+       write_reg_addr &= ~0x3;
+       write_data = GpuSwap(write_data, endianness);
+       memory::store(memory_->TranslatePhysical(write_reg_addr), write_data);
++      trace_writer_.WriteMemoryWrite(CpuToGpu(write_reg_addr), 4);
+     } else {
+       // Register.
+       WriteRegister(write_reg_addr, write_data);
+@@ -1215,6 +1397,7 @@ bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_SHD(memory::RingBuffer* re
+   address &= ~0x3;
+   data_value = GpuSwap(data_value, endianness);
+   memory::store(memory_->TranslatePhysical(address), data_value);
++  trace_writer_.WriteMemoryWrite(CpuToGpu(address), 4);
+   return true;
+ }
+ 
+@@ -1243,6 +1426,7 @@ bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_EXT(memory::RingBuffer* re
+   assert_true(endianness == xenos::Endian::k8in16);
+   memory::copy_and_swap_16_unaligned(memory_->TranslatePhysical(address), extents,
+                                      rex::countof(extents));
++  trace_writer_.WriteMemoryWrite(CpuToGpu(address), sizeof(extents));
+   return true;
+ }
+ 
+@@ -1259,6 +1443,9 @@ bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffer* re
+   // This command is send on query begin and end.
+   // As a workaround report some fixed amount of passed samples.
+   auto fake_sample_count = REXCVAR_GET(query_occlusion_fake_sample_count);
++  // Gears2-Native SDK patch 15: tell the draw observer about every ZPD.
++  const uint32_t zpd_address = register_file_->values[XE_GPU_REG_RB_SAMPLE_COUNT_ADDR];
++  DrawObserver* zpd_observer = GetDrawObserver();
+   if (fake_sample_count >= 0) {
+     auto* pSampleCounts = memory_->TranslatePhysical<xe_gpu_depth_sample_counts*>(
+         register_file_->values[XE_GPU_REG_RB_SAMPLE_COUNT_ADDR]);
+@@ -1277,6 +1464,18 @@ bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffer* re
+       pSampleCounts->ZPass_A = fake_sample_count;
+       pSampleCounts->Total_A = fake_sample_count;
+     }
++    if (zpd_observer) {
++      const bool is_end = is_end_via_z_pass || is_end_via_z_fail;
++      zpd_observer->OnZpd(*register_file_,
++                          ObservedZpd{zpd_address, is_end, is_end ? ZpdAnswer::kFake : ZpdAnswer::kBegin,
++                                      is_end ? uint64_t(fake_sample_count) : 0, 0});
++    }
++  } else if (zpd_observer) {
++    // Nothing is written; still say whether the report was an end (it holds D3D's marker).
++    const auto* counts = memory_->TranslatePhysical<const xe_gpu_depth_sample_counts*>(zpd_address);
++    const bool is_end = counts && (counts->ZPass_A == kQueryFinished || counts->ZPass_B == kQueryFinished ||
++                                   counts->ZFail_A == kQueryFinished || counts->ZFail_B == kQueryFinished);
++    zpd_observer->OnZpd(*register_file_, ObservedZpd{zpd_address, is_end, ZpdAnswer::kNone, 0, 0});
+   }
+ 
+   return true;
+@@ -1378,6 +1577,14 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader, uint32
+ 
+       bool major_mode_explicit =
+           xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode, vgt_draw_initiator.prim_type);
++      // Gears2-Native SDK patch 2: draw observer (include/rex/graphics/draw_observer.h).
++      if (DrawObserver* observer = GetDrawObserver()) {
++        ObservedIndexBuffer observed{index_buffer_info.format, index_buffer_info.endianness, index_buffer_info.count,
++                                     index_buffer_info.guest_base, uint64_t(index_buffer_info.length)};
++        observer->OnDrawShaders(active_vertex_shader_, active_pixel_shader_);
++        observer->OnDraw(*register_file_, vgt_draw_initiator.prim_type, vgt_draw_initiator.num_indices,
++                         is_indexed ? &observed : nullptr, major_mode_explicit);
++      }
+       draw_succeeded = IssueDraw(vgt_draw_initiator.prim_type, vgt_draw_initiator.num_indices,
+                                  is_indexed ? &index_buffer_info : nullptr, major_mode_explicit);
+       if (!draw_succeeded) {
+@@ -1480,6 +1687,9 @@ bool CommandProcessor::ExecutePacketType3_LOAD_ALU_CONSTANT(memory::RingBuffer*
+   size_dwords &= 0xFFF;
+   uint32_t type = (offset_type >> 16) & 0xFF;
+   uint32_t* xlat_address = memory_->TranslatePhysical<uint32_t*>(address);
++  if (type <= 4) {
++    trace_writer_.WriteMemoryRead(CpuToGpu(address), size_dwords * 4);
++  }
+   switch (type) {
+     case 0:  // ALU
+       WriteALURangeFromMem(index, xlat_address, size_dwords);
+@@ -1523,6 +1733,7 @@ bool CommandProcessor::ExecutePacketType3_IM_LOAD(memory::RingBuffer* reader, ui
+   uint32_t start = start_size >> 16;
+   uint32_t size_dwords = start_size & 0xFFFF;  // dwords
+   assert_true(start == 0);
++  trace_writer_.WriteMemoryRead(CpuToGpu(addr), size_dwords * 4);
+ 
+   auto shader =
+       LoadShader(shader_type, addr, memory_->TranslatePhysical<uint32_t*>(addr), size_dwords);
+@@ -1611,4 +1822,146 @@ bool CommandProcessor::ExecutePacketType3_VIZ_QUERY(memory::RingBuffer* reader,
+   return true;
+ }
+ 
++// SDK patch 6 (Gears2-Native): trace playback, ported from Xenia Canary command_processor.cc and
++// trace_player.cc (BSD-3-Clause). Uncompressed traces only (what patch 5 writes).
++void CommandProcessor::RestoreRegisters(uint32_t first_register, const uint32_t* register_values,
++                                        uint32_t register_count, bool execute_callbacks) {
++  if (first_register > RegisterFile::kRegisterCount ||
++      RegisterFile::kRegisterCount - first_register < register_count) {
++    REXGPU_WARN("RestoreRegisters out of bounds (0x{:X} registers from 0x{:X})", register_count,
++                first_register);
++    if (first_register > RegisterFile::kRegisterCount) {
++      return;
++    }
++    register_count = std::min(uint32_t(RegisterFile::kRegisterCount) - first_register,
++                              register_count);
++  }
++  if (execute_callbacks) {
++    for (uint32_t i = 0; i < register_count; ++i) {
++      WriteRegister(first_register + i, register_values[i]);
++    }
++  } else {
++    std::memcpy(register_file_->values + first_register, register_values,
++                sizeof(uint32_t) * register_count);
++  }
++}
++
++void CommandProcessor::RestoreGammaRamp(const reg::DC_LUT_30_COLOR* new_gamma_ramp_256_entry_table,
++                                        const reg::DC_LUT_PWL_DATA* new_gamma_ramp_pwl_rgb,
++                                        uint32_t new_gamma_ramp_rw_component) {
++  std::memcpy(gamma_ramp_256_entry_table_, new_gamma_ramp_256_entry_table,
++              sizeof(reg::DC_LUT_30_COLOR) * 256);
++  std::memcpy(gamma_ramp_pwl_rgb_, new_gamma_ramp_pwl_rgb, sizeof(reg::DC_LUT_PWL_DATA) * 3 * 128);
++  gamma_ramp_rw_component_ = new_gamma_ramp_rw_component;
++  OnGammaRamp256EntryTableValueWritten();
++  OnGammaRampPWLValueWritten();
++}
++
++bool CommandProcessor::PlayTrace(const uint8_t* trace_data, size_t trace_size) {
++  const uint8_t* p = trace_data;
++  const uint8_t* end = trace_data + trace_size;
++  const PacketStartCommand* pending_packet = nullptr;
++  auto need = [&](size_t n) { return size_t(end - p) >= n; };
++  while (p < end) {
++    if (!need(4)) return false;
++    auto type = static_cast<TraceCommandType>(*reinterpret_cast<const uint32_t*>(p));
++    switch (type) {
++      case TraceCommandType::kPrimaryBufferStart:
++      case TraceCommandType::kIndirectBufferStart: {
++        if (!need(sizeof(PrimaryBufferStartCommand))) return false;
++        auto cmd = reinterpret_cast<const PrimaryBufferStartCommand*>(p);
++        p += sizeof(*cmd) + size_t(cmd->count) * 4;
++        break;
++      }
++      case TraceCommandType::kPrimaryBufferEnd:
++      case TraceCommandType::kIndirectBufferEnd:
++        p += sizeof(PrimaryBufferEndCommand);
++        break;
++      case TraceCommandType::kPacketStart: {
++        if (!need(sizeof(PacketStartCommand))) return false;
++        auto cmd = reinterpret_cast<const PacketStartCommand*>(p);
++        p += sizeof(*cmd);
++        if (!need(size_t(cmd->count) * 4)) return false;
++        std::memcpy(memory_->TranslatePhysical(cmd->base_ptr), p, size_t(cmd->count) * 4);
++        p += size_t(cmd->count) * 4;
++        pending_packet = cmd;
++        break;
++      }
++      case TraceCommandType::kPacketEnd: {
++        p += sizeof(PacketEndCommand);
++        if (pending_packet) {
++          ExecutePacket(pending_packet->base_ptr, pending_packet->count);
++          pending_packet = nullptr;
++        }
++        break;
++      }
++      case TraceCommandType::kMemoryRead: {
++        if (!need(sizeof(MemoryCommand))) return false;
++        auto cmd = reinterpret_cast<const MemoryCommand*>(p);
++        p += sizeof(*cmd);
++        if (cmd->encoding_format != MemoryEncodingFormat::kNone || !need(cmd->encoded_length)) {
++          return false;
++        }
++        std::memcpy(memory_->TranslatePhysical(cmd->base_ptr), p, cmd->decoded_length);
++        p += cmd->encoded_length;
++        TracePlaybackWroteMemory(cmd->base_ptr, cmd->decoded_length);
++        break;
++      }
++      case TraceCommandType::kMemoryWrite: {
++        if (!need(sizeof(MemoryCommand))) return false;
++        auto cmd = reinterpret_cast<const MemoryCommand*>(p);
++        // The command processor repeats the same write when the packet executes.
++        p += sizeof(*cmd) + cmd->encoded_length;
++        break;
++      }
++      case TraceCommandType::kEdramSnapshot: {
++        if (!need(sizeof(EdramSnapshotCommand))) return false;
++        auto cmd = reinterpret_cast<const EdramSnapshotCommand*>(p);
++        p += sizeof(*cmd);
++        if (cmd->encoding_format != MemoryEncodingFormat::kNone || !need(cmd->encoded_length)) {
++          return false;
++        }
++        RestoreEdramSnapshot(p);
++        p += cmd->encoded_length;
++        break;
++      }
++      case TraceCommandType::kEvent:
++        p += sizeof(EventCommand);
++        break;
++      case TraceCommandType::kRegisters: {
++        if (!need(sizeof(RegistersCommand))) return false;
++        auto cmd = reinterpret_cast<const RegistersCommand*>(p);
++        p += sizeof(*cmd);
++        if (cmd->encoding_format != MemoryEncodingFormat::kNone || !need(cmd->encoded_length)) {
++          return false;
++        }
++        std::vector<uint32_t> values(cmd->register_count);
++        std::memcpy(values.data(), p, sizeof(uint32_t) * cmd->register_count);
++        p += cmd->encoded_length;
++        RestoreRegisters(cmd->first_register, values.data(), cmd->register_count,
++                         cmd->execute_callbacks);
++        break;
++      }
++      case TraceCommandType::kGammaRamp: {
++        if (!need(sizeof(GammaRampCommand))) return false;
++        auto cmd = reinterpret_cast<const GammaRampCommand*>(p);
++        p += sizeof(*cmd);
++        if (cmd->encoding_format != MemoryEncodingFormat::kNone || !need(cmd->encoded_length)) {
++          return false;
++        }
++        std::vector<uint32_t> ramps(256 + 3 * 128);
++        std::memcpy(ramps.data(), p, sizeof(uint32_t) * ramps.size());
++        p += cmd->encoded_length;
++        RestoreGammaRamp(reinterpret_cast<const reg::DC_LUT_30_COLOR*>(ramps.data()),
++                         reinterpret_cast<const reg::DC_LUT_PWL_DATA*>(ramps.data() + 256),
++                         cmd->rw_component);
++        break;
++      }
++      default:
++        return false;
++    }
++  }
++  return true;
++}
++
+ }  // namespace rex::graphics
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index 19874a5..66e5662 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -20,6 +20,7 @@
+ #include <rex/dbg.h>
+ #include <rex/perf/counter.h>
+ #include <rex/graphics/d3d12/command_processor.h>
++#include <rex/graphics/draw_observer.h>
+ #include <rex/graphics/d3d12/graphics_system.h>
+ #include <rex/graphics/d3d12/shader.h>
+ #include <rex/graphics/flags.h>
+@@ -34,6 +35,11 @@
+ 
+ REXCVAR_DEFINE_BOOL(d3d12_bindless, true, "GPU/D3D12", "Use bindless resources where available")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++// Gears2-Native SDK patch 19 (takeover T3): the emulator stops drawing. Draw and copy (resolve/clear) packets are still
++// parsed, their state tracked and shown to the draw observer, and their shaders analysed, but nothing is drawn or
++// resolved here; swaps are still presented (from guest memory, where an observer can put its own image).
++REXCVAR_DEFINE_BOOL(gpu_skip_draws, false, "GPU/D3D12",
++                    "Gears2-Native: do not execute draws or resolves (an external renderer does the work)");
+ 
+ REXCVAR_DEFINE_BOOL(d3d12_readback_memexport, false, "GPU/D3D12",
+                     "Read data written by memory export in shaders on the CPU")
+@@ -47,6 +53,13 @@ REXCVAR_DEFINE_BOOL(d3d12_submit_on_primary_buffer_end, true, "GPU/D3D12",
+                     "Submit command list when PM4 primary buffer ends")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++// Gears2-Native SDK patch 15 (Stage 4, notes/46): real host counts only. Off by default (stock behaviour). When on:
++// a host query survives a submission ending inside it (segments are summed), a begin/end that doesn't match the
++// active query doesn't turn host queries off for the session, a begin report is zeroed (so end - begin is this
++// query's count) and, when no real count can be had, 1 is written instead of query_occlusion_fake_sample_count.
++REXCVAR_DEFINE_BOOL(occlusion_query_no_fake, false, "GPU/D3D12",
++                    "Occlusion queries: never fall back to the fake sample count (developer comparison runs)");
++
+ namespace rex::graphics::d3d12 {
+ 
+ // Generated with `xb buildshaders`.
+@@ -164,25 +177,50 @@ bool D3D12CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffe
+   uint32_t sample_count_addr = register_file_->values[XE_GPU_REG_RB_SAMPLE_COUNT_ADDR];
+   auto* sample_counts =
+       memory_->TranslatePhysical<xenos::xe_gpu_depth_sample_counts*>(sample_count_addr);
++  // Gears2-Native SDK patch 15: the draw observer hears about every ZPD; occlusion_query_no_fake keeps real counts.
++  const bool no_fake = REXCVAR_GET(occlusion_query_no_fake);
++  DrawObserver* zpd_observer = GetDrawObserver();
++  auto notify = [this, zpd_observer, sample_count_addr](bool end, ZpdAnswer answer, uint64_t samples,
++                                                         uint32_t segments) {
++    if (zpd_observer) {
++      zpd_observer->OnZpd(*register_file_, ObservedZpd{sample_count_addr, end, answer, samples, segments});
++    }
++  };
+   if (!sample_counts) {
+-    DisableHostOcclusionQueries();
++    if (!no_fake) {
++      DisableHostOcclusionQueries();
++    }
++    notify(false, ZpdAnswer::kNone, 0, 0);
+     return true;
+   }
+ 
+-  auto write_fallback_result = [sample_counts, kQueryFinished]() -> bool {
+-    auto fake_sample_count = REXCVAR_GET(query_occlusion_fake_sample_count);
+-    if (fake_sample_count < 0) {
+-      return true;
+-    }
++  auto write_fallback_result = [this, sample_counts, no_fake, &notify]() -> bool {
+     bool is_end_via_z_pass =
+         sample_counts->ZPass_A == kQueryFinished || sample_counts->ZPass_B == kQueryFinished;
+     bool is_end_via_z_fail =
+         sample_counts->ZFail_A == kQueryFinished || sample_counts->ZFail_B == kQueryFinished;
++    const bool end = is_end_via_z_pass || is_end_via_z_fail;
++    if (no_fake) {
++      if (end) {
++        WriteGuestOcclusionResult(sample_counts, 1);
++        notify(true, ZpdAnswer::kNoRealCount, 1, 0);
++      } else {
++        std::memset(sample_counts, 0, sizeof(xenos::xe_gpu_depth_sample_counts));
++        notify(false, ZpdAnswer::kBegin, 0, 0);
++      }
++      return true;
++    }
++    auto fake_sample_count = REXCVAR_GET(query_occlusion_fake_sample_count);
++    if (fake_sample_count < 0) {
++      notify(end, ZpdAnswer::kNone, 0, 0);
++      return true;
++    }
+     std::memset(sample_counts, 0, sizeof(xenos::xe_gpu_depth_sample_counts));
+-    if (is_end_via_z_pass || is_end_via_z_fail) {
++    if (end) {
+       sample_counts->ZPass_A = fake_sample_count;
+       sample_counts->Total_A = fake_sample_count;
+     }
++    notify(end, end ? ZpdAnswer::kFake : ZpdAnswer::kBegin, end ? uint64_t(fake_sample_count) : 0, 0);
+     return true;
+   };
+ 
+@@ -193,6 +231,14 @@ bool D3D12CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffe
+   bool is_end = is_end_via_z_pass || is_end_via_z_fail;
+ 
+   if (!is_end) {
++    if (no_fake && active_occlusion_query_.valid) {
++      // A begin with a query still open (its end never came): drop the old one and keep host queries on.
++      if (active_occlusion_query_.open && occlusion_query_heap_ && submission_open_) {
++        deferred_command_list_.D3DEndQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
++                                           active_occlusion_query_.host_index);
++      }
++      active_occlusion_query_ = {};
++    }
+     if (active_occlusion_query_.valid &&
+         active_occlusion_query_.sample_count_address != sample_count_addr) {
+       DisableHostOcclusionQueries();
+@@ -201,19 +247,37 @@ bool D3D12CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffe
+     if (!BeginGuestOcclusionQuery(sample_count_addr)) {
+       return write_fallback_result();
+     }
++    if (no_fake) {
++      // The end report gets this query's own count, so the begin snapshot must be 0 for end - begin.
++      std::memset(sample_counts, 0, sizeof(xenos::xe_gpu_depth_sample_counts));
++    }
++    notify(false, ZpdAnswer::kBegin, 0, 0);
+     return true;
+   }
+ 
+   if (!active_occlusion_query_.valid ||
+       active_occlusion_query_.sample_count_address != sample_count_addr) {
+-    DisableHostOcclusionQueries();
++    if (!no_fake) {
++      DisableHostOcclusionQueries();
++    } else {
++      // Not this query's end: close the open host query (an unclosed BeginQuery would break the command list).
++      if (active_occlusion_query_.valid && active_occlusion_query_.open && occlusion_query_heap_ &&
++          submission_open_) {
++        deferred_command_list_.D3DEndQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
++                                           active_occlusion_query_.host_index);
++      }
++      active_occlusion_query_ = {};
++    }
+     return write_fallback_result();
+   }
+ 
+-  if (!EndGuestOcclusionQuery(sample_count_addr, sample_counts)) {
++  uint64_t samples = 0;
++  uint32_t segments = 0;
++  if (!EndGuestOcclusionQuery(sample_count_addr, samples, segments)) {
+     return write_fallback_result();
+   }
+-
++  WriteGuestOcclusionResult(sample_counts, samples);
++  notify(true, ZpdAnswer::kHost, samples, segments);
+   return true;
+ }
+ 
+@@ -930,6 +994,13 @@ bool D3D12CommandProcessor::SetupContext() {
+     REXGPU_ERROR("Failed to initialize shared memory");
+     return false;
+   }
++  // Gears2-Native SDK patch 18: observers that write guest memory themselves (takeover T1) invalidate it here.
++  SetGuestRangeWrittenHandler(
++      [](void* context, uint32_t physical_address, uint32_t length) {
++        auto* self = static_cast<D3D12CommandProcessor*>(context);
++        if (self->shared_memory_) self->shared_memory_->MemoryInvalidationCallback(physical_address, length, true);
++      },
++      this);
+ 
+   // Initialize the render target cache before configuring binding - need to
+   // know if using rasterizer-ordered views for the bindless root signature.
+@@ -1627,6 +1698,7 @@ bool D3D12CommandProcessor::SetupContext() {
+ }
+ 
+ void D3D12CommandProcessor::ShutdownContext() {
++  SetGuestRangeWrittenHandler(nullptr, nullptr);  // Gears2-Native SDK patch 18
+   AwaitAllQueueOperationsCompletion();
+   InvalidateAllVertexBufferResidency();
+   ShutdownOcclusionQueryResources();
+@@ -1905,6 +1977,9 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbu
+     return;
+   }
+ 
++  // Gears2-Native SDK patch 3: hand finished frame readbacks to the draw observer.
++  DeliverFrameReadbacks();
++
+   // In case the swap command is the only one in the frame.
+   if (!BeginSubmission(true)) {
+     REXGPU_ERROR("IssueSwap: BeginSubmission failed");
+@@ -2243,6 +2318,9 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbu
+                                 apply_gamma_dest_initial_state);
+         }
+ 
++        // Gears2-Native SDK patch 3: copy the finished guest output into the readback ring.
++        QueueFrameReadback(guest_output_resource);
++
+         // Need to submit all the commands before giving the image back to the
+         // presenter so it can submit its own commands for displaying it to the
+         // queue.
+@@ -2256,6 +2334,94 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbu
+   EndSubmission(true);
+ }
+ 
++// Gears2-Native SDK patch 3: per-swap readback of the guest output (notes/33). Never waits on the GPU: a slot is only
++// reused or delivered once GetCompletedSubmission() has passed the submission that filled it.
++void D3D12CommandProcessor::QueueFrameReadback(ID3D12Resource* guest_output) {
++  DrawObserver* observer = GetDrawObserver();
++  if (!observer || !observer->WantsFrameImages() || !guest_output) {
++    return;
++  }
++  FrameReadbackSlot& slot = frame_readback_[frame_readback_next_ % frame_readback_.size()];
++  if (slot.pending) {
++    return;  // GPU still busy with this slot (or not delivered yet): skip this frame rather than stall.
++  }
++  D3D12_RESOURCE_DESC desc = guest_output->GetDesc();
++  ID3D12Device* device = GetD3D12Provider().GetDevice();
++  D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
++  UINT64 total_bytes = 0;
++  device->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr, &total_bytes);
++  if (!slot.buffer || slot.width != uint32_t(desc.Width) || slot.height != desc.Height) {
++    slot.buffer.Reset();
++    slot.mapped = nullptr;
++    D3D12_HEAP_PROPERTIES heap = {};
++    heap.Type = D3D12_HEAP_TYPE_READBACK;
++    D3D12_RESOURCE_DESC buffer_desc = {};
++    buffer_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++    buffer_desc.Width = total_bytes;
++    buffer_desc.Height = 1;
++    buffer_desc.DepthOrArraySize = 1;
++    buffer_desc.MipLevels = 1;
++    buffer_desc.SampleDesc.Count = 1;
++    buffer_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++    if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer_desc,
++                                               D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
++                                               IID_PPV_ARGS(&slot.buffer)))) {
++      REXGPU_ERROR("Frame readback: failed to create a {}-byte readback buffer", total_bytes);
++      return;
++    }
++    D3D12_RANGE no_read = {0, 0};
++    void* mapped = nullptr;
++    if (FAILED(slot.buffer->Map(0, &no_read, &mapped))) {
++      slot.buffer.Reset();
++      return;
++    }
++    slot.mapped = static_cast<uint8_t*>(mapped);
++    slot.width = uint32_t(desc.Width);
++    slot.height = desc.Height;
++  }
++  slot.footprint = footprint;
++  PushTransitionBarrier(guest_output, ui::d3d12::D3D12Presenter::kGuestOutputInternalState,
++                        D3D12_RESOURCE_STATE_COPY_SOURCE);
++  SubmitBarriers();
++  D3D12_TEXTURE_COPY_LOCATION dst = {};
++  dst.pResource = slot.buffer.Get();
++  dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++  dst.PlacedFootprint = footprint;
++  D3D12_TEXTURE_COPY_LOCATION src = {};
++  src.pResource = guest_output;
++  src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++  src.SubresourceIndex = 0;
++  deferred_command_list_.D3DCopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
++  PushTransitionBarrier(guest_output, D3D12_RESOURCE_STATE_COPY_SOURCE,
++                        ui::d3d12::D3D12Presenter::kGuestOutputInternalState);
++  slot.submission = submission_current_;
++  slot.frame = frame_readback_counter_++;
++  slot.pending = true;
++  ++frame_readback_next_;
++}
++
++void D3D12CommandProcessor::DeliverFrameReadbacks() {
++  DrawObserver* observer = GetDrawObserver();
++  // Deliver in frame order.
++  for (;;) {
++    FrameReadbackSlot* oldest = nullptr;
++    for (FrameReadbackSlot& slot : frame_readback_) {
++      if (slot.pending && slot.submission <= GetCompletedSubmission() &&
++          (!oldest || slot.frame < oldest->frame)) {
++        oldest = &slot;
++      }
++    }
++    if (!oldest) {
++      return;
++    }
++    if (observer && oldest->mapped) {
++      observer->OnFrameImage(oldest->mapped + oldest->footprint.Offset, oldest->width, oldest->height,
++                             oldest->footprint.Footprint.RowPitch, oldest->frame);
++    }
++    oldest->pending = false;
++  }
++}
++
+ void D3D12CommandProcessor::OnPrimaryBufferEnd() {
+   if (REXCVAR_GET(d3d12_submit_on_primary_buffer_end) && submission_open_ &&
+       CanEndSubmissionImmediately()) {
+@@ -2279,6 +2445,14 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+   const RegisterFile& regs = *register_file_;
+ 
+   xenos::EdramMode edram_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
++  if (REXCVAR_GET(gpu_skip_draws)) {  // Gears2-Native SDK patch 19
++    if (edram_mode != xenos::EdramMode::kCopy) {
++      // Keep the shader analysis the draw observer reads (bindings) for the next draws with these shaders.
++      if (auto* vs = static_cast<D3D12Shader*>(active_vertex_shader())) pipeline_cache_->AnalyzeShaderUcode(*vs);
++      if (auto* ps = static_cast<D3D12Shader*>(active_pixel_shader())) pipeline_cache_->AnalyzeShaderUcode(*ps);
++    }
++    return true;
++  }
+   if (edram_mode == xenos::EdramMode::kCopy) {
+     // Special copy handling.
+     return IssueCopy();
+@@ -2870,6 +3044,47 @@ bool D3D12CommandProcessor::IssueDraw_MemexportReadbackFastPath(uint32_t total_s
+   return true;
+ }
+ 
++// SDK patch 6 (Gears2-Native): trace playback, ported from Xenia Canary d3d12_command_processor.cc.
++void D3D12CommandProcessor::TracePlaybackWroteMemory(uint32_t base_ptr, uint32_t length) {
++  shared_memory_->MemoryInvalidationCallback(base_ptr, length, true);
++  primitive_processor_->MemoryInvalidationCallback(base_ptr, length, true);
++}
++
++void D3D12CommandProcessor::RestoreEdramSnapshot(const void* snapshot) {
++  // Starting a new frame because descriptors may be needed.
++  if (!BeginSubmission(true)) {
++    return;
++  }
++  render_target_cache_->RestoreEdramSnapshot(snapshot);
++}
++
++// SDK patch 5 (Gears2-Native): frame traces, ported from Xenia Canary d3d12_command_processor.cc.
++void D3D12CommandProcessor::InitializeTrace() {
++  CommandProcessor::InitializeTrace();
++  if (!BeginSubmission(false)) {
++    return;
++  }
++  // Gears2-Native: caches above the shared memory (host textures, vertex buffer residency) skip their memory requests
++  // while they believe the data is resident, so those reads never reach the trace (job 050: replayed frame nearly black,
++  // most texture pages missing from the trace). Empty them once the GPU is idle, so the traced frame requests - and the
++  // trace records - everything it reads.
++  AwaitAllQueueOperationsCompletion();
++  texture_cache_->ClearCache();
++  InvalidateAllVertexBufferResidency();
++  bool render_target_cache_submitted = render_target_cache_->InitializeTraceSubmitDownloads();
++  bool shared_memory_submitted = shared_memory_->InitializeTraceSubmitDownloads();
++  if (!render_target_cache_submitted && !shared_memory_submitted) {
++    return;
++  }
++  AwaitAllQueueOperationsCompletion();
++  if (render_target_cache_submitted) {
++    render_target_cache_->InitializeTraceCompleteDownloads();
++  }
++  if (shared_memory_submitted) {
++    shared_memory_->InitializeTraceCompleteDownloads();
++  }
++}
++
+ bool D3D12CommandProcessor::IssueCopy() {
+ #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
+   SCOPE_profile_cpu_f("gpu");
+@@ -3327,6 +3542,16 @@ bool D3D12CommandProcessor::BeginSubmission(bool is_guest_command) {
+     primitive_processor_->BeginSubmission();
+ 
+     texture_cache_->BeginSubmission(submission_current_);
++
++    // Gears2-Native SDK patch 15 (occlusion_query_no_fake): continue a guest query split by the last submission end.
++    if (active_occlusion_query_.valid && !active_occlusion_query_.open && occlusion_query_heap_) {
++      uint32_t index = 0;
++      if (AcquireOcclusionQueryIndex(index)) {
++        deferred_command_list_.D3DBeginQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION, index);
++        active_occlusion_query_.host_index = index;
++        active_occlusion_query_.open = true;
++      }
++    }
+   }
+ 
+   if (is_opening_frame) {
+@@ -3402,10 +3627,23 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
+   if (submission_open_) {
+     assert_false(scratch_buffer_used_);
+ 
+-    if (active_occlusion_query_.valid && occlusion_query_heap_) {
++    if (active_occlusion_query_.valid && active_occlusion_query_.open && occlusion_query_heap_) {
+       deferred_command_list_.D3DEndQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
+                                          active_occlusion_query_.host_index);
+-      active_occlusion_query_ = {};
++      // Gears2-Native SDK patch 15: with occlusion_query_no_fake, keep the guest query and resolve this part as a
++      // segment (BeginSubmission opens the next); stock behaviour drops the query, which then turns host queries off
++      // for the session at its end ZPD (the job 113 "every answer is the fake count" result).
++      if (REXCVAR_GET(occlusion_query_no_fake) && occlusion_query_readback_ &&
++          active_occlusion_query_.segment_count < ActiveOcclusionQuery::kMaxSegments) {
++        const uint32_t index = active_occlusion_query_.host_index;
++        deferred_command_list_.D3DResolveQueryData(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
++                                                   index, 1, occlusion_query_readback_.Get(),
++                                                   sizeof(uint64_t) * index);
++        active_occlusion_query_.segments[active_occlusion_query_.segment_count++] = index;
++        active_occlusion_query_.open = false;
++      } else {
++        active_occlusion_query_ = {};
++      }
+     }
+ 
+     pipeline_cache_->EndSubmission();
+@@ -4875,7 +5113,7 @@ bool D3D12CommandProcessor::AcquireOcclusionQueryIndex(uint32_t& host_index_out)
+ }
+ 
+ void D3D12CommandProcessor::DisableHostOcclusionQueries() {
+-  if (active_occlusion_query_.valid && occlusion_query_heap_) {
++  if (active_occlusion_query_.valid && active_occlusion_query_.open && occlusion_query_heap_) {
+     uint32_t host_index = active_occlusion_query_.host_index;
+     // Clear before EndSubmission to prevent the EndSubmission safety net from issuing a second
+     // EndQuery for the same index.
+@@ -4916,28 +5154,38 @@ bool D3D12CommandProcessor::BeginGuestOcclusionQuery(uint32_t sample_count_addre
+   active_occlusion_query_.sample_count_address = sample_count_address;
+   active_occlusion_query_.host_index = host_index;
+   active_occlusion_query_.valid = true;
++  active_occlusion_query_.open = true;  // Gears2-Native SDK patch 15
++  active_occlusion_query_.segment_count = 0;
+   return true;
+ }
+ 
+-bool D3D12CommandProcessor::EndGuestOcclusionQuery(
+-    uint32_t sample_count_address, xenos::xe_gpu_depth_sample_counts* sample_counts) {
++bool D3D12CommandProcessor::EndGuestOcclusionQuery(uint32_t sample_count_address,
++                                                    uint64_t& samples_out, uint32_t& segments_out) {
+   if (!REXCVAR_GET(occlusion_query_enable) || !occlusion_query_resources_available_ ||
+       !active_occlusion_query_.valid || !occlusion_query_heap_ || !occlusion_query_readback_) {
+     return false;
+   }
+ 
+-  uint32_t host_index = active_occlusion_query_.host_index;
++  // Gears2-Native SDK patch 15: earlier segments (occlusion_query_no_fake) were already resolved when their
++  // submission ended; the open one, if any, is ended and resolved here.
++  const ActiveOcclusionQuery query = active_occlusion_query_;
+   active_occlusion_query_ = {};
+ 
+   if (!BeginSubmission(true)) {
+     return false;
+   }
+ 
+-  deferred_command_list_.D3DEndQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
+-                                     host_index);
+-  deferred_command_list_.D3DResolveQueryData(
+-      occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION, host_index, 1,
+-      occlusion_query_readback_.Get(), sizeof(uint64_t) * host_index);
++  uint32_t segments[ActiveOcclusionQuery::kMaxSegments + 1];
++  uint32_t segment_count = query.segment_count;
++  std::memcpy(segments, query.segments, sizeof(uint32_t) * segment_count);
++  if (query.open) {
++    deferred_command_list_.D3DEndQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
++                                       query.host_index);
++    deferred_command_list_.D3DResolveQueryData(
++        occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION, query.host_index, 1,
++        occlusion_query_readback_.Get(), sizeof(uint64_t) * query.host_index);
++    segments[segment_count++] = query.host_index;
++  }
+ 
+   if (!EndSubmission(false)) {
+     return false;
+@@ -4952,9 +5200,12 @@ bool D3D12CommandProcessor::EndGuestOcclusionQuery(
+     return false;
+   }
+ 
+-  uint64_t samples = occlusion_query_readback_mapping_[host_index];
+-  samples = NormalizeOcclusionSamples(samples);
+-  WriteGuestOcclusionResult(sample_counts, samples);
++  uint64_t samples = 0;
++  for (uint32_t i = 0; i < segment_count; ++i) {
++    samples += occlusion_query_readback_mapping_[segments[i]];
++  }
++  samples_out = NormalizeOcclusionSamples(samples);
++  segments_out = segment_count;
+   return true;
+ }
+ 
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index dd321a5..590fdba 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -37,6 +37,7 @@
+ #include <rex/string.h>
+ #include <rex/ui/d3d12/d3d12_provider.h>
+ #include <rex/ui/d3d12/d3d12_util.h>
++#include <rex/graphics/trace_writer.h>
+ 
+ REXCVAR_DEFINE_BOOL(native_stencil_value_output_d3d12_intel, false, "GPU/D3D12",
+                     "Native stencil value output for Intel D3D12");
+@@ -960,6 +961,8 @@ bool D3D12RenderTargetCache::Initialize() {
+ }
+ 
+ void D3D12RenderTargetCache::Shutdown(bool from_destructor) {
++  ui::d3d12::util::ReleaseAndNull(edram_snapshot_download_buffer_);
++  edram_snapshot_restore_pool_.reset();
+   ui::d3d12::util::ReleaseAndNull(resolve_rov_clear_64bpp_pipeline_);
+   ui::d3d12::util::ReleaseAndNull(resolve_rov_clear_32bpp_pipeline_);
+   ui::d3d12::util::ReleaseAndNull(resolve_rov_clear_root_signature_);
+@@ -5796,4 +5799,160 @@ bool D3D12RenderTargetCache::DumpRenderTargets(uint32_t dump_base, uint32_t dump
+   return all_pipelines_available;
+ }
+ 
++// SDK patch 5 (Gears2-Native): frame traces, ported from Xenia Canary d3d12_render_target_cache.cc
++// (BSD-3-Clause).
++bool D3D12RenderTargetCache::InitializeTraceSubmitDownloads() {
++  if (IsDrawResolutionScaled()) {
++    // No 1:1 mapping.
++    return false;
++  }
++  if (!edram_snapshot_download_buffer_) {
++    D3D12_RESOURCE_DESC desc;
++    ui::d3d12::util::FillBufferResourceDesc(desc, xenos::kEdramSizeBytes, D3D12_RESOURCE_FLAG_NONE);
++    const ui::d3d12::D3D12Provider& provider = command_processor_.GetD3D12Provider();
++    if (FAILED(provider.GetDevice()->CreateCommittedResource(
++            &ui::d3d12::util::kHeapPropertiesReadback, provider.GetHeapFlagCreateNotZeroed(), &desc,
++            D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
++            IID_PPV_ARGS(&edram_snapshot_download_buffer_)))) {
++      REXGPU_ERROR("D3D12RenderTargetCache: failed to create an EDRAM snapshot download buffer");
++      return false;
++    }
++  }
++  if (GetPath() == Path::kHostRenderTargets) {
++    // Dump all host render targets to edram_buffer_.
++    DumpRenderTargets(0, xenos::kEdramTileCount, 1, xenos::kEdramTileCount);
++  }
++  TransitionEdramBuffer(D3D12_RESOURCE_STATE_COPY_SOURCE);
++  command_processor_.SubmitBarriers();
++  command_processor_.GetDeferredCommandList().D3DCopyBufferRegion(
++      edram_snapshot_download_buffer_, 0, edram_buffer_, 0, xenos::kEdramSizeBytes);
++  return true;
++}
++
++void D3D12RenderTargetCache::InitializeTraceCompleteDownloads() {
++  if (!edram_snapshot_download_buffer_) {
++    return;
++  }
++  void* download_mapping;
++  if (SUCCEEDED(edram_snapshot_download_buffer_->Map(0, nullptr, &download_mapping))) {
++    GetTraceWriter().WriteEdramSnapshot(download_mapping);
++    D3D12_RANGE download_write_range = {};
++    edram_snapshot_download_buffer_->Unmap(0, &download_write_range);
++  } else {
++    REXGPU_ERROR("D3D12RenderTargetCache: failed to map the EDRAM snapshot download buffer");
++  }
++  ui::d3d12::util::ReleaseAndNull(edram_snapshot_download_buffer_);
++}
++
++// SDK patch 6 (Gears2-Native): trace playback, ported from Xenia Canary d3d12_render_target_cache.cc (BSD-3-Clause).
++void D3D12RenderTargetCache::RestoreEdramSnapshot(const void* snapshot) {
++  if (IsDrawResolutionScaled()) {
++    // No 1:1 mapping.
++    return;
++  }
++
++  // Create the buffer - will be used for copying to either a 32-bit 1280x2048
++  // render target or the EDRAM buffer.
++  const ui::d3d12::D3D12Provider& provider =
++      command_processor_.GetD3D12Provider();
++  if (!edram_snapshot_restore_pool_) {
++    edram_snapshot_restore_pool_ =
++        std::make_unique<ui::d3d12::D3D12UploadBufferPool>(
++            provider, xenos::kEdramSizeBytes);
++  }
++  ID3D12Resource* upload_buffer;
++  size_t upload_buffer_offset;
++  void* upload_buffer_mapping = edram_snapshot_restore_pool_->Request(
++      command_processor_.GetCurrentSubmission(), xenos::kEdramSizeBytes, 1,
++      &upload_buffer, &upload_buffer_offset, nullptr);
++  if (!upload_buffer_mapping) {
++    REXGPU_ERROR(
++        "D3D12RenderTargetCache: Failed to get a buffer for restoring a EDRAM "
++        "snapshot");
++    return;
++  }
++
++  DeferredCommandList& command_list =
++      command_processor_.GetDeferredCommandList();
++
++  switch (GetPath()) {
++    case Path::kHostRenderTargets: {
++      // k_32_FLOAT because it's unambiguous (not effected by something like
++      // DXGI_FORMAT_R8G8B8A8 vs. DXGI_FORMAT_B8G8R8A8).
++      D3D12RenderTarget* full_edram_render_target =
++          static_cast<D3D12RenderTarget*>(
++              PrepareFullEdram1280xRenderTargetForSnapshotRestoration(
++                  xenos::ColorRenderTargetFormat::k_32_FLOAT));
++      if (!full_edram_render_target) {
++        return;
++      }
++      D3D12_TEXTURE_COPY_LOCATION copy_source_location;
++      copy_source_location.pResource = upload_buffer;
++      copy_source_location.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++      UINT64 copy_total_bytes;
++      D3D12_RESOURCE_DESC full_edram_render_target_desc =
++          full_edram_render_target->resource()->GetDesc();
++      provider.GetDevice()->GetCopyableFootprints(
++          &full_edram_render_target_desc, 0, 1, 0,
++          &copy_source_location.PlacedFootprint, nullptr, nullptr,
++          &copy_total_bytes);
++      // 1280 width * sizeof(uint32_t) is aligned to
++      // D3D12_TEXTURE_DATA_PITCH_ALIGNMENT (256).
++      assert_true(copy_total_bytes <= xenos::kEdramSizeBytes);
++      assert_false(full_edram_render_target->key().Is64bpp());
++      uint32_t pitch_tiles =
++          full_edram_render_target->key().pitch_tiles_at_32bpp;
++      uint32_t tile_rows = xenos::kEdramTileCount / pitch_tiles;
++      assert_true(pitch_tiles * tile_rows == xenos::kEdramTileCount);
++      const uint8_t* snapshot_sample_row =
++          reinterpret_cast<const uint8_t*>(snapshot);
++      for (uint32_t y_tile = 0; y_tile < tile_rows; ++y_tile) {
++        uint8_t* upload_buffer_tile_row_origin =
++            reinterpret_cast<uint8_t*>(upload_buffer_mapping) +
++            copy_source_location.PlacedFootprint.Offset +
++            xenos::kEdramTileHeightSamples * y_tile *
++                copy_source_location.PlacedFootprint.Footprint.RowPitch;
++        for (uint32_t x_tile = 0; x_tile < pitch_tiles; ++x_tile) {
++          uint8_t* upload_buffer_sample_row =
++              upload_buffer_tile_row_origin +
++              sizeof(uint32_t) * xenos::kEdramTileWidthSamples * x_tile;
++          for (uint32_t sample_row = 0;
++               sample_row < xenos::kEdramTileHeightSamples; ++sample_row) {
++            std::memcpy(upload_buffer_sample_row, snapshot_sample_row,
++                        sizeof(uint32_t) * xenos::kEdramTileWidthSamples);
++            snapshot_sample_row +=
++                sizeof(uint32_t) * xenos::kEdramTileWidthSamples;
++            upload_buffer_sample_row +=
++                copy_source_location.PlacedFootprint.Footprint.RowPitch;
++          }
++        }
++      }
++      command_processor_.PushTransitionBarrier(
++          full_edram_render_target->resource(),
++          full_edram_render_target->SetResourceState(
++              D3D12_RESOURCE_STATE_COPY_DEST),
++          D3D12_RESOURCE_STATE_COPY_DEST);
++      command_processor_.SubmitBarriers();
++      D3D12_TEXTURE_COPY_LOCATION copy_dest_location;
++      copy_dest_location.pResource = full_edram_render_target->resource();
++      copy_dest_location.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++      copy_dest_location.SubresourceIndex = 0;
++      command_list.D3DCopyTextureRegion(&copy_dest_location, 0, 0, 0,
++                                        &copy_source_location, nullptr);
++    } break;
++
++    case Path::kPixelShaderInterlock: {
++      std::memcpy(upload_buffer_mapping, snapshot, xenos::kEdramSizeBytes);
++      TransitionEdramBuffer(D3D12_RESOURCE_STATE_COPY_DEST);
++      command_processor_.SubmitBarriers();
++      command_list.D3DCopyBufferRegion(edram_buffer_, 0, upload_buffer,
++                                       UINT64(upload_buffer_offset),
++                                       xenos::kEdramSizeBytes);
++    } break;
++
++    default:
++      break;
++  }
++}
++
+ }  // namespace rex::graphics::d3d12
+diff --git a/src/graphics/d3d12/shared_memory.cpp b/src/graphics/d3d12/shared_memory.cpp
+index a5c97a0..99e4724 100644
+--- a/src/graphics/d3d12/shared_memory.cpp
++++ b/src/graphics/d3d12/shared_memory.cpp
+@@ -17,6 +17,7 @@
+ #include <rex/cvar.h>
+ #include <rex/graphics/d3d12/command_processor.h>
+ #include <rex/graphics/d3d12/shared_memory.h>
++#include <rex/graphics/trace_writer.h>
+ #include <rex/logging.h>
+ #include <rex/math.h>
+ #include <rex/ui/d3d12/d3d12_util.h>
+@@ -142,6 +143,7 @@ bool D3D12SharedMemory::Initialize() {
+ }
+ 
+ void D3D12SharedMemory::Shutdown(bool from_destructor) {
++  ResetTraceDownload();
+   upload_buffer_pool_.reset();
+ 
+   ui::d3d12::util::ReleaseAndNull(buffer_descriptor_heap_);
+@@ -312,6 +314,9 @@ bool D3D12SharedMemory::UploadRanges(
+   for (auto upload_range : upload_page_ranges) {
+     uint32_t upload_range_start = upload_range.first;
+     uint32_t upload_range_length = upload_range.second;
++    // SDK patch 5: everything the GPU reads from guest memory passes through here.
++    GetTraceWriter().WriteMemoryRead(upload_range_start << page_size_log2(),
++                                     upload_range_length << page_size_log2());
+     while (upload_range_length != 0) {
+       ID3D12Resource* upload_buffer;
+       size_t upload_buffer_offset, upload_buffer_size;
+@@ -338,4 +343,66 @@ bool D3D12SharedMemory::UploadRanges(
+   return true;
+ }
+ 
++// SDK patch 5 (Gears2-Native): frame traces, ported from Xenia Canary d3d12_shared_memory.cc
++// (BSD-3-Clause), with the download offset advanced per range (Canary rewrites the first range).
++void D3D12SharedMemory::ResetTraceDownload() {
++  ui::d3d12::util::ReleaseAndNull(trace_download_buffer_);
++  ReleaseTraceDownloadRanges();
++}
++
++bool D3D12SharedMemory::InitializeTraceSubmitDownloads() {
++  ResetTraceDownload();
++  PrepareForTraceDownload();
++  uint32_t download_page_count = trace_download_page_count();
++  if (!download_page_count) {
++    return false;
++  }
++  D3D12_RESOURCE_DESC download_buffer_desc;
++  ui::d3d12::util::FillBufferResourceDesc(download_buffer_desc,
++                                          uint64_t(download_page_count) << page_size_log2(),
++                                          D3D12_RESOURCE_FLAG_NONE);
++  const ui::d3d12::D3D12Provider& provider = command_processor_.GetD3D12Provider();
++  ID3D12Device* device = provider.GetDevice();
++  if (FAILED(device->CreateCommittedResource(
++          &ui::d3d12::util::kHeapPropertiesReadback, provider.GetHeapFlagCreateNotZeroed(),
++          &download_buffer_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
++          IID_PPV_ARGS(&trace_download_buffer_)))) {
++    REXGPU_ERROR("Shared memory: failed to create a {} KB download buffer for frame tracing",
++                 (uint64_t(download_page_count) << page_size_log2()) >> 10);
++    ResetTraceDownload();
++    return false;
++  }
++  auto& command_list = command_processor_.GetDeferredCommandList();
++  UseAsCopySource();
++  command_processor_.SubmitBarriers();
++  uint64_t download_buffer_offset = 0;
++  for (const auto& download_range : trace_download_ranges()) {
++    command_list.D3DCopyBufferRegion(trace_download_buffer_, download_buffer_offset, buffer_,
++                                     download_range.first, download_range.second);
++    download_buffer_offset += download_range.second;
++  }
++  return true;
++}
++
++void D3D12SharedMemory::InitializeTraceCompleteDownloads() {
++  if (!trace_download_buffer_) {
++    return;
++  }
++  void* download_mapping;
++  if (SUCCEEDED(trace_download_buffer_->Map(0, nullptr, &download_mapping))) {
++    uint64_t download_buffer_offset = 0;
++    for (const auto& download_range : trace_download_ranges()) {
++      GetTraceWriter().WriteMemoryRead(
++          download_range.first, download_range.second,
++          reinterpret_cast<const uint8_t*>(download_mapping) + download_buffer_offset);
++      download_buffer_offset += download_range.second;
++    }
++    D3D12_RANGE download_write_range = {};
++    trace_download_buffer_->Unmap(0, &download_write_range);
++  } else {
++    REXGPU_ERROR("Shared memory: failed to map the frame-trace download buffer");
++  }
++  ResetTraceDownload();
++}
++
+ }  // namespace rex::graphics::d3d12
+diff --git a/src/graphics/pipeline/render_target/cache.cpp b/src/graphics/pipeline/render_target/cache.cpp
+index 953c5fd..b9d7f7d 100644
+--- a/src/graphics/pipeline/render_target/cache.cpp
++++ b/src/graphics/pipeline/render_target/cache.cpp
+@@ -1385,4 +1385,48 @@ void RenderTargetCache::ChangeOwnership(RenderTargetKey dest, uint32_t start_til
+   }
+ }
+ 
++// SDK patch 6 (Gears2-Native): ported from Xenia Canary render_target_cache.cc (BSD-3-Clause).
++RenderTargetCache::RenderTarget* RenderTargetCache::PrepareFullEdram1280xRenderTargetForSnapshotRestoration(
++    xenos::ColorRenderTargetFormat color_format) {
++  assert_true(GetPath() == Path::kHostRenderTargets);
++  constexpr uint32_t kPitchTilesAt32bpp = 16;
++  constexpr uint32_t kWidth =
++      kPitchTilesAt32bpp * xenos::kEdramTileWidthSamples;
++  if (kWidth * draw_resolution_scale_x() > GetMaxRenderTargetWidth()) {
++    return nullptr;
++  }
++  // Same render target height is used for 32bpp and 64bpp to allow mixing them.
++  constexpr uint32_t kHeightTileRows =
++      xenos::kEdramTileCount / kPitchTilesAt32bpp;
++  static_assert(
++      kPitchTilesAt32bpp * kHeightTileRows == xenos::kEdramTileCount,
++      "Using width of the render target for EDRAM snapshot restoration that is "
++      "expected to result in the last row being fully utilized.");
++  constexpr uint32_t kHeight = kHeightTileRows * xenos::kEdramTileHeightSamples;
++  static_assert(
++      kHeight <= xenos::kTexture2DCubeMaxWidthHeight,
++      "Using width of the render target for EDRAM snapshot restoration that is "
++      "expect to fully cover the EDRAM without exceeding the maximum guest "
++      "render target height.");
++  if (kHeight * draw_resolution_scale_y() > GetMaxRenderTargetHeight()) {
++    return nullptr;
++  }
++  RenderTargetKey render_target_key;
++  render_target_key.pitch_tiles_at_32bpp = kPitchTilesAt32bpp;
++  render_target_key.resource_format =
++      uint32_t(GetColorResourceFormat(color_format));
++  RenderTarget* render_target = GetOrCreateRenderTarget(render_target_key);
++  if (!render_target) {
++    return nullptr;
++  }
++  // Change ownership, but don't transfer the contents - they will be replaced
++  // anyway.
++  ownership_ranges_.clear();
++  ownership_ranges_.emplace(
++      std::piecewise_construct, std::forward_as_tuple(uint32_t(0)),
++      std::forward_as_tuple(xenos::kEdramTileCount, render_target_key,
++                            RenderTargetKey(), RenderTargetKey()));
++  return render_target;
++}
++
+ }  // namespace rex::graphics
+diff --git a/src/graphics/pipeline/shader/interpreter.cpp b/src/graphics/pipeline/shader/interpreter.cpp
+index cc726b7..20b074e 100644
+--- a/src/graphics/pipeline/shader/interpreter.cpp
++++ b/src/graphics/pipeline/shader/interpreter.cpp
+@@ -22,9 +22,25 @@
+ 
+ namespace rex::graphics {
+ 
++namespace {
++// Gears2-Native SDK patch 12: a * b + c with the product rounded first (never contracted to an FMA, whatever the
++// compiler's -ffp-contract default), as the translated shaders compute it.
++float UnfusedMulAdd(float a, float b, float c) {
++  volatile float product = a * b;
++  return product + c;
++}
++}  // namespace
++
+ void ShaderInterpreter::Execute() {
+   // For more consistency between invocations in case of a malformed shader.
+   state_.Reset();
++  killed_ = false;
++  hit_step_limit_ = false;
++  max_abs_result_ = 0.0f;  // Gears2-Native SDK patch 14
++  a0_relative_reads_ = 0;
++  a0_relative_index_min_ = 0;
++  a0_relative_index_max_ = 0;
++  uint32_t control_flow_steps = 0;
+ 
+   const uint32_t* bool_constants = &register_file_[XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031];
+ 
+@@ -32,6 +48,11 @@ void ShaderInterpreter::Execute() {
+   uint32_t cf_index_next = 1;
+   for (uint32_t cf_index = 0; !exec_ended; cf_index = cf_index_next) {
+     cf_index_next = cf_index + 1;
++    // Gears2-Native SDK patch 8: guard against malformed control flow (the HLSL translator has the same limit).
++    if (++control_flow_steps > kMaxControlFlowSteps) {
++      hit_step_limit_ = true;
++      break;
++    }
+ 
+     const uint32_t* cf_pair = &ucode_[3 * (cf_index >> 1)];
+     ucode::ControlFlowInstruction cf_instr;
+@@ -95,6 +116,29 @@ void ShaderInterpreter::Execute() {
+             }
+             if (fetch_instr.opcode() == ucode::FetchOpcode::kVertexFetch) {
+               ExecuteVertexFetchInstruction(fetch_instr.vertex_fetch());
++            } else if (texture_fetch_sink_) {
++              // Gears2-Native SDK patch 8: texture fetch through the sink.
++              const ucode::TextureFetchInstruction& tfetch = fetch_instr.texture_fetch();
++              switch (fetch_instr.opcode()) {
++                case ucode::FetchOpcode::kTextureFetch: {
++                  float source[4];
++                  std::memcpy(source, GetTempRegister(fetch_instr.src(), fetch_instr.is_src_relative()),
++                              sizeof(source));
++                  float result[4] = {};
++                  texture_fetch_sink_->FetchTexture(tfetch, source, result);
++                  StoreFetchResult(fetch_instr.dest(), fetch_instr.is_dest_relative(), fetch_instr.dest_swizzle(),
++                                   result);
++                } break;
++                case ucode::FetchOpcode::kSetTextureLod:
++                case ucode::FetchOpcode::kSetTextureGradientsHorz:
++                case ucode::FetchOpcode::kSetTextureGradientsVert:
++                  break;
++                default: {
++                  float zero_result[4] = {};
++                  StoreFetchResult(fetch_instr.dest(), fetch_instr.is_dest_relative(), fetch_instr.dest_swizzle(),
++                                   zero_result);
++                } break;
++              }
+             } else {
+               // Not supporting texture fetching (very complex).
+               float zero_result[4] = {};
+@@ -119,8 +163,11 @@ void ShaderInterpreter::Execute() {
+       case ucode::ControlFlowOpcode::kLoopStart: {
+         ucode::ControlFlowLoopStartInstruction cf_loop_start =
+             *reinterpret_cast<const ucode::ControlFlowLoopStartInstruction*>(&cf_instr);
++        // Gears2-Native SDK patch 7: the depth was incremented here and again below (so nested loops read the wrong
++        // constant and a zero-trip loop left the depth one too high); now incremented once, after the slot is filled.
++        // Same bug in Xenia Canary f42147a5b - upstream candidate.
+         assert_true(state_.loop_stack_depth < 4);
+-        if (++state_.loop_stack_depth > 4) {
++        if (state_.loop_stack_depth >= 4) {
+           cf_index_next = cf_loop_start.address();
+           continue;
+         }
+@@ -233,11 +280,42 @@ void ShaderInterpreter::Execute() {
+   }
+ }
+ 
++// Gears2-Native SDK patch 9: see SetTranscendentalBias.
++float ShaderInterpreter::BiasTranscendental(float value, bool absolute_too) const {
++  if (!transcendental_bias_ || !std::isfinite(value)) {
++    return value;
++  }
++  const float rel = 1.0f / 2097152.0f;  // 2^-21
++  float sign = transcendental_bias_ > 0 ? 1.0f : -1.0f;
++  if (transcendental_bias_ >= 2) {
++    // A pseudo-random direction per result (seeded by the bias value), so errors can also fail to cancel.
++    uint32_t h = (uint32_t(transcendental_bias_) * 0x9E3779B9u) ^ (transcendental_counter_++ * 0x85EBCA6Bu);
++    h ^= h >> 13;
++    h *= 0xC2B2AE35u;
++    h ^= h >> 16;
++    sign = (h & 1) ? 1.0f : -1.0f;
++  }
++  float biased = value + sign * std::abs(value) * rel;
++  if (absolute_too) {
++    biased += sign * rel;
++  }
++  return biased;
++}
++
+ const std::array<float, 4> ShaderInterpreter::GetFloatConstant(uint32_t address, bool is_relative,
+                                                                bool relative_address_is_a0) const {
+   int32_t index = int32_t(address);
+   if (is_relative) {
+     index += relative_address_is_a0 ? state_.address_register : state_.GetLoopAddress();
++    if (relative_address_is_a0) {
++      // Gears2-Native SDK patch 8: record the a0-relative index range for the oracle.
++      if (!a0_relative_reads_++) {
++        a0_relative_index_min_ = a0_relative_index_max_ = index;
++      } else {
++        a0_relative_index_min_ = std::min(a0_relative_index_min_, index);
++        a0_relative_index_max_ = std::max(a0_relative_index_max_, index);
++      }
++    }
+   }
+   if (index < 0) {
+     return std::array<float, 4>();
+@@ -513,6 +591,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+                                  vector_operands[0][1] == vector_operands[1][1] ||
+                                  vector_operands[0][2] == vector_operands[1][2] ||
+                                  vector_operands[0][3] == vector_operands[1][3]);
++        killed_ |= vector_result[0] != 0.0f;  // Gears2-Native SDK patch 8
+         replicate_vector_result_x = true;
+       } break;
+       case ucode::AluVectorOpcode::kKillGt: {
+@@ -520,6 +599,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+                                  std::isgreater(vector_operands[0][1], vector_operands[1][1]) ||
+                                  std::isgreater(vector_operands[0][2], vector_operands[1][2]) ||
+                                  std::isgreater(vector_operands[0][3], vector_operands[1][3]));
++        killed_ |= vector_result[0] != 0.0f;  // Gears2-Native SDK patch 8
+         replicate_vector_result_x = true;
+       } break;
+       case ucode::AluVectorOpcode::kKillGe: {
+@@ -528,6 +608,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+                   std::isgreaterequal(vector_operands[0][1], vector_operands[1][1]) ||
+                   std::isgreaterequal(vector_operands[0][2], vector_operands[1][2]) ||
+                   std::isgreaterequal(vector_operands[0][3], vector_operands[1][3]));
++        killed_ |= vector_result[0] != 0.0f;  // Gears2-Native SDK patch 8
+         replicate_vector_result_x = true;
+       } break;
+       case ucode::AluVectorOpcode::kKillNe: {
+@@ -535,6 +616,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+                                  vector_operands[0][1] != vector_operands[1][1] ||
+                                  vector_operands[0][2] != vector_operands[1][2] ||
+                                  vector_operands[0][3] != vector_operands[1][3]);
++        killed_ |= vector_result[0] != 0.0f;  // Gears2-Native SDK patch 8
+         replicate_vector_result_x = true;
+       } break;
+       case ucode::AluVectorOpcode::kDst: {
+@@ -624,6 +706,10 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+       scalar_operands[i] = scalar_operand;
+     }
+   }
++  // Gears2-Native SDK patch 13: the previous scalar result is an operand too (adds_prev, muls_prev, muls_prev2,
++  // subs_prev, retain_prev) and is flushed like the others: an unflushed denormal ps gave muls_prev a finite product
++  // where a flushing GPU (and Xenos, which has no denormals) gives +0 (job 091, vs-74FBEA8090E8C2BD and others).
++  state_.previous_scalar = FlushDenormal(state_.previous_scalar);
+   switch (scalar_opcode) {
+     case ucode::AluScalarOpcode::kAdds:
+     case ucode::AluScalarOpcode::kAddsc0:
+@@ -690,19 +776,19 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+       state_.previous_scalar = std::floor(scalar_operands[0]);
+     } break;
+     case ucode::AluScalarOpcode::kExp: {
+-      state_.previous_scalar = std::exp2(scalar_operands[0]);
++      state_.previous_scalar = BiasTranscendental(std::exp2(scalar_operands[0]), false);
+     } break;
+     case ucode::AluScalarOpcode::kLogc: {
+-      state_.previous_scalar = std::log2(scalar_operands[0]);
++      state_.previous_scalar = BiasTranscendental(std::log2(scalar_operands[0]), true);
+       if (state_.previous_scalar == -INFINITY) {
+         state_.previous_scalar = -FLT_MAX;
+       }
+     } break;
+     case ucode::AluScalarOpcode::kLog: {
+-      state_.previous_scalar = std::log2(scalar_operands[0]);
++      state_.previous_scalar = BiasTranscendental(std::log2(scalar_operands[0]), true);
+     } break;
+     case ucode::AluScalarOpcode::kRcpc: {
+-      state_.previous_scalar = 1.0f / scalar_operands[0];
++      state_.previous_scalar = BiasTranscendental(1.0f / scalar_operands[0], false);
+       if (state_.previous_scalar == -INFINITY) {
+         state_.previous_scalar = -FLT_MAX;
+       } else if (state_.previous_scalar == INFINITY) {
+@@ -710,7 +796,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+       }
+     } break;
+     case ucode::AluScalarOpcode::kRcpf: {
+-      state_.previous_scalar = 1.0f / scalar_operands[0];
++      state_.previous_scalar = BiasTranscendental(1.0f / scalar_operands[0], false);
+       if (state_.previous_scalar == -INFINITY) {
+         state_.previous_scalar = -0.0f;
+       } else if (state_.previous_scalar == INFINITY) {
+@@ -718,10 +804,10 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+       }
+     } break;
+     case ucode::AluScalarOpcode::kRcp: {
+-      state_.previous_scalar = 1.0f / scalar_operands[0];
++      state_.previous_scalar = BiasTranscendental(1.0f / scalar_operands[0], false);
+     } break;
+     case ucode::AluScalarOpcode::kRsqc: {
+-      state_.previous_scalar = 1.0f / std::sqrt(scalar_operands[0]);
++      state_.previous_scalar = BiasTranscendental(1.0f / std::sqrt(scalar_operands[0]), false);
+       if (state_.previous_scalar == -INFINITY) {
+         state_.previous_scalar = -FLT_MAX;
+       } else if (state_.previous_scalar == INFINITY) {
+@@ -729,7 +815,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+       }
+     } break;
+     case ucode::AluScalarOpcode::kRsqf: {
+-      state_.previous_scalar = 1.0f / std::sqrt(scalar_operands[0]);
++      state_.previous_scalar = BiasTranscendental(1.0f / std::sqrt(scalar_operands[0]), false);
+       if (state_.previous_scalar == -INFINITY) {
+         state_.previous_scalar = -0.0f;
+       } else if (state_.previous_scalar == INFINITY) {
+@@ -737,7 +823,7 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+       }
+     } break;
+     case ucode::AluScalarOpcode::kRsq: {
+-      state_.previous_scalar = 1.0f / std::sqrt(scalar_operands[0]);
++      state_.previous_scalar = BiasTranscendental(1.0f / std::sqrt(scalar_operands[0]), false);
+     } break;
+     case ucode::AluScalarOpcode::kMaxAs: {
+       state_.address_register =
+@@ -799,27 +885,32 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+     // only for vertex shaders.
+     case ucode::AluScalarOpcode::kKillsEq: {
+       state_.previous_scalar = float(scalar_operands[0] == 0.0f);
++      killed_ |= state_.previous_scalar != 0.0f;  // Gears2-Native SDK patch 8
+     } break;
+     case ucode::AluScalarOpcode::kKillsGt: {
+       state_.previous_scalar = float(std::isgreater(scalar_operands[0], 0.0f));
++      killed_ |= state_.previous_scalar != 0.0f;  // Gears2-Native SDK patch 8
+     } break;
+     case ucode::AluScalarOpcode::kKillsGe: {
+       state_.previous_scalar = float(std::isgreaterequal(scalar_operands[0], 0.0f));
++      killed_ |= state_.previous_scalar != 0.0f;  // Gears2-Native SDK patch 8
+     } break;
+     case ucode::AluScalarOpcode::kKillsNe: {
+       state_.previous_scalar = float(scalar_operands[0] != 0.0f);
++      killed_ |= state_.previous_scalar != 0.0f;  // Gears2-Native SDK patch 8
+     } break;
+     case ucode::AluScalarOpcode::kKillsOne: {
+       state_.previous_scalar = float(scalar_operands[0] == 1.0f);
++      killed_ |= state_.previous_scalar != 0.0f;  // Gears2-Native SDK patch 8
+     } break;
+     case ucode::AluScalarOpcode::kSqrt: {
+-      state_.previous_scalar = std::sqrt(scalar_operands[0]);
++      state_.previous_scalar = BiasTranscendental(std::sqrt(scalar_operands[0]), false);
+     } break;
+     case ucode::AluScalarOpcode::kSin: {
+-      state_.previous_scalar = std::sin(scalar_operands[0]);
++      state_.previous_scalar = BiasTranscendental(std::sin(scalar_operands[0]), false);
+     } break;
+     case ucode::AluScalarOpcode::kCos: {
+-      state_.previous_scalar = std::cos(scalar_operands[0]);
++      state_.previous_scalar = BiasTranscendental(std::cos(scalar_operands[0]), false);
+     } break;
+     case ucode::AluScalarOpcode::kRetainPrev: {
+     } break;
+@@ -828,6 +919,13 @@ void ShaderInterpreter::ExecuteAluInstruction(ucode::AluInstruction instr) {
+     }
+   }
+ 
++  // Gears2-Native SDK patch 14.
++  for (uint32_t i = 0; i < 4; ++i) {
++    if (vector_result_write_mask & (UINT32_C(1) << i)) {
++      NoteResultMagnitude(vector_result[i]);
++    }
++  }
++  NoteResultMagnitude(state_.previous_scalar);
+   if (instr.vector_clamp()) {
+     for (uint32_t i = 0; i < 4; ++i) {
+       vector_result[i] = rex::saturate(vector_result[i]);
+@@ -929,9 +1027,23 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
+ 
+   if (!instr.is_mini_fetch()) {
+     // Get the part of the address that depends on vfetch_full data.
+-    uint32_t vertex_index = uint32_t(
++    // Gears2-Native SDK patch 10: a defined float-to-integer conversion (the plain cast is undefined behaviour for
++    // NaN and out-of-range values, and x86 compilers disagree): NaN -> 0, then saturated to the int32 range (as
++    // D3D's ftoi), then taken as unsigned - the same rule as the Gears2-Native translator's xe_ftoi.
++    float vertex_index_float =
+         std::floor(GetTempRegister(instr.src(), instr.is_src_relative())[instr.src_swizzle()] +
+-                   (instr.is_index_rounded() ? 0.5f : 0.0f)));
++                   (instr.is_index_rounded() ? 0.5f : 0.0f));
++    int32_t vertex_index_int;
++    if (std::isnan(vertex_index_float)) {
++      vertex_index_int = 0;
++    } else if (vertex_index_float >= 2147483648.0f) {
++      vertex_index_int = INT32_MAX;
++    } else if (vertex_index_float <= -2147483648.0f) {
++      vertex_index_int = INT32_MIN;
++    } else {
++      vertex_index_int = int32_t(vertex_index_float);
++    }
++    uint32_t vertex_index = uint32_t(vertex_index_int);
+     state_.vfetch_address_dwords = instr.stride() * vertex_index + fetch_constant.address;
+   }
+ 
+@@ -949,7 +1061,9 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
+       xenos::GetVertexFormatNeededWords(instr.data_format(), used_result_components);
+   if (needed_dwords) {
+     uint32_t data[4] = {};
+-    const uint32_t* memory_dwords = reinterpret_cast<const uint32_t*>(memory_.physical_membase());
++    // Gears2-Native SDK patch 8: a test harness may give a plain block of guest physical memory instead of Memory.
++    const uint32_t* memory_dwords = reinterpret_cast<const uint32_t*>(
++        physical_membase_override_ ? physical_membase_override_ : memory_->physical_membase());
+     uint32_t buffer_end_dwords = fetch_constant.address + fetch_constant.size;
+     uint32_t dword_0_address_dwords =
+         uint32_t(int32_t(state_.vfetch_address_dwords) + instr.offset());
+@@ -967,7 +1081,9 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
+     }
+ 
+     uint32_t packed_components = 0b0000;
+-    uint32_t packed_widths[4], packed_offsets[4];
++    // Gears2-Native SDK patch 7: offsets zero-initialised (offset 0 of every format, and offset 2 of k_16_16_16_16, were
++    // never set) - same bug in Xenia Canary f42147a5b, upstream candidate.
++    uint32_t packed_widths[4] = {}, packed_offsets[4] = {};
+     uint32_t packed_dwords[] = {data[0], data[0]};
+     switch (instr.data_format()) {
+       case xenos::VertexFormat::k_8_8_8_8: {
+@@ -1037,11 +1153,12 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
+           if (instr.is_normalized()) {
+             if (instr.signed_rf_mode() == xenos::SignedRepeatingFractionMode::kNoZero) {
+               for (uint32_t i = 0; i < 4; ++i) {
+-                result[i] = (result[i] + 0.5f) / 2147483647.5f;
++                // Gears2-Native SDK patch 12: multiply by the float reciprocal, unfused (as Canary's GPU translators).
++                result[i] = UnfusedMulAdd(result[i], 1.0f / 2147483647.5f, 0.5f / 2147483647.5f);
+               }
+             } else {
+               for (uint32_t i = 0; i < 4; ++i) {
+-                result[i] /= 2147483647.0f;
++                result[i] *= 1.0f / 2147483647.0f;  // Gears2-Native SDK patch 12
+                 // No need to clamp to -1 if signed - the smallest value will be
+                 // -2^23 / 2^23 due to rounding.
+               }
+@@ -1053,7 +1170,7 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
+           }
+           if (instr.is_normalized()) {
+             for (uint32_t i = 0; i < 4; ++i) {
+-              result[i] /= 4294967295.0f;
++              result[i] *= 1.0f / 4294967295.0f;  // Gears2-Native SDK patch 12
+             }
+           }
+         }
+@@ -1089,15 +1206,18 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
+               if (!(packed_components & (UINT32_C(1) << i))) {
+                 continue;
+               }
+-              result[i] = (result[i] + 0.5f) * 2.0f / float((UINT32_C(1) << packed_widths[i]) - 1);
++              // Gears2-Native SDK patch 12: v * 2/(2^n-1) + 1/(2^n-1), unfused (Canary's MAd constants).
++              const float zero = 1.0f / float((UINT32_C(1) << packed_widths[i]) - 1);
++              result[i] = UnfusedMulAdd(result[i], 2.0f * zero, zero);
+             }
+           } else {
+             for (uint32_t i = 0; i < 4; ++i) {
+               if (!(packed_components & (UINT32_C(1) << i))) {
+                 continue;
+               }
+-              result[i] =
+-                  std::max(-1.0f, result[i] / float((UINT32_C(1) << (packed_widths[i] - 1)) - 1));
++              // Gears2-Native SDK patch 12: multiply by the float reciprocal (Canary), then clamp to -1.
++              result[i] = std::max(
++                  -1.0f, result[i] * (1.0f / float((UINT32_C(1) << (packed_widths[i] - 1)) - 1)));
+             }
+           }
+         }
+@@ -1107,14 +1227,15 @@ void ShaderInterpreter::ExecuteVertexFetchInstruction(ucode::VertexFetchInstruct
+             continue;
+           }
+           uint32_t packed_width = packed_widths[i];
+-          result[i] = float(packed_dwords[i >> 1] & ((UINT32_C(1) << packed_widths[i]) - 1));
++          // Gears2-Native SDK patch 7: shift by the component's offset (the unsigned path read every component from bit 0).
++          result[i] = float((packed_dwords[i >> 1] >> packed_offsets[i]) & ((UINT32_C(1) << packed_widths[i]) - 1));
+         }
+         if (instr.is_normalized()) {
+           for (uint32_t i = 0; i < 4; ++i) {
+             if (!(packed_components & (UINT32_C(1) << i))) {
+               continue;
+             }
+-            result[i] /= float((UINT32_C(1) << packed_widths[i]) - 1);
++            result[i] *= 1.0f / float((UINT32_C(1) << packed_widths[i]) - 1);  // Gears2-Native SDK patch 12
+           }
+         }
+       }
+diff --git a/src/graphics/primitive_processor.cpp b/src/graphics/primitive_processor.cpp
+index d49e9c3..41beda8 100644
+--- a/src/graphics/primitive_processor.cpp
++++ b/src/graphics/primitive_processor.cpp
+@@ -22,6 +22,7 @@
+ #include <rex/graphics/primitive_processor.h>
+ #include <rex/graphics/register_file.h>
+ #include <rex/graphics/registers.h>
++#include <rex/graphics/trace_writer.h>
+ #include <rex/graphics/xenos.h>
+ #include <rex/logging.h>
+ #include <rex/math.h>
+@@ -638,6 +639,8 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
+       // performed during conversion here. Also doing the endian swap here for
+       // hosts not supporting 32-bit indices because indirection is only used
+       // for the shared memory buffer.
++      // SDK patch 5: recorded irrespective of the cache lookup (cache behavior depends on state).
++      GetTraceWriter().WriteMemoryRead(guest_index_base, guest_index_buffer_needed_bytes);
+       CacheTransaction cache_transaction(
+           *this, CacheKey(guest_index_base, guest_draw_vertex_count, guest_index_format,
+                           guest_index_endian, guest_primitive_reset_enabled, guest_primitive_type));
+@@ -779,6 +782,8 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
+             // Example of 16-bit reset index replacement: 415607D4.
+             // Not specifying the primitive type in the cache key because not
+             // replacing it, only the reset index in a type-independent way.
++            // SDK patch 5: recorded irrespective of the cache lookup (cache behavior depends on state).
++            GetTraceWriter().WriteMemoryRead(guest_index_base, guest_index_buffer_needed_bytes);
+             CacheTransaction cache_transaction(
+                 *this, CacheKey(guest_index_base, guest_draw_vertex_count, guest_index_format,
+                                 guest_index_endian, guest_primitive_reset_enabled));
+@@ -825,6 +830,8 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
+           // pre-swapping and pre-masking is done here.
+           // Not specifying the primitive type in the cache key because not
+           // replacing it, only the reset index in a type-independent way.
++          // SDK patch 5: recorded irrespective of the cache lookup (cache behavior depends on state).
++          GetTraceWriter().WriteMemoryRead(guest_index_base, guest_index_buffer_needed_bytes);
+           CacheTransaction cache_transaction(
+               *this, CacheKey(guest_index_base, guest_draw_vertex_count, guest_index_format,
+                               guest_index_endian, guest_primitive_reset_enabled));
+@@ -878,6 +885,8 @@ bool PrimitiveProcessor::Process(ProcessingResult& result_out) {
+           guest_index_format == xenos::IndexFormat::kInt32 && !full_32bit_vertex_indices_used_ &&
+           host_vertex_shader_type != Shader::HostVertexShaderType::kVertex) {
+         // No primitive-type conversion, just index normalization.
++        // SDK patch 5: recorded irrespective of the cache lookup (cache behavior depends on state).
++        GetTraceWriter().WriteMemoryRead(guest_index_base, guest_index_buffer_needed_bytes);
+         CacheTransaction cache_transaction(
+             *this, CacheKey(guest_index_base, guest_draw_vertex_count, guest_index_format,
+                             guest_index_endian, guest_primitive_reset_enabled,
+diff --git a/src/graphics/shared_memory.cpp b/src/graphics/shared_memory.cpp
+index ec0df7c..2b319ef 100644
+--- a/src/graphics/shared_memory.cpp
++++ b/src/graphics/shared_memory.cpp
+@@ -575,4 +575,106 @@ bool SharedMemory::EnsureHostGpuMemoryAllocated(uint32_t start, uint32_t length)
+   return true;
+ }
+ 
++// SDK patch 5 (Gears2-Native): frame traces, ported from Xenia Canary shared_memory.cc (BSD-3-Clause).
++void SharedMemory::PrepareForTraceDownload() {
++  ReleaseTraceDownloadRanges();
++  assert_true(trace_download_ranges_.empty());
++  assert_true(trace_download_page_count_ == 0);
++
++  // Invalidate the entire memory CPU->GPU memory copy so all the history
++  // doesn't have to be written into every frame trace, and collect the list of
++  // ranges with data modified on the GPU.
++
++  uint32_t fire_watches_range_start = UINT32_MAX;
++  uint32_t gpu_written_range_start = UINT32_MAX;
++  auto global_lock = global_critical_region_.Acquire();
++  for (uint32_t i = 0; i < num_system_page_flags_; ++i) {
++    // SystemPageFlagsBlock& page_flags_block = system_page_flags_[i];
++    uint64_t previously_valid_block = system_page_flags_valid_[i];
++    uint64_t gpu_written_block = system_page_flags_valid_and_gpu_written_[i];
++    system_page_flags_valid_[i] = gpu_written_block;
++
++    // Fire watches on the invalidated pages.
++    uint64_t fire_watches_block = previously_valid_block & ~gpu_written_block;
++    uint64_t fire_watches_break_block = ~fire_watches_block;
++    while (true) {
++      uint32_t fire_watches_block_page;
++      if (!rex::bit_scan_forward(fire_watches_range_start == UINT32_MAX
++                                    ? fire_watches_block
++                                    : fire_watches_break_block,
++                                &fire_watches_block_page)) {
++        break;
++      }
++      uint32_t fire_watches_page = (i << 6) + fire_watches_block_page;
++      if (fire_watches_range_start == UINT32_MAX) {
++        fire_watches_range_start = fire_watches_page;
++      } else {
++        FireWatches(fire_watches_range_start, fire_watches_page - 1, false);
++        fire_watches_range_start = UINT32_MAX;
++      }
++      uint64_t fire_watches_block_mask =
++          ~((uint64_t(1) << fire_watches_block_page) - 1);
++      fire_watches_block &= fire_watches_block_mask;
++      fire_watches_break_block &= fire_watches_block_mask;
++    }
++
++    // Add to the GPU-written ranges.
++    uint64_t gpu_written_break_block = ~gpu_written_block;
++    while (true) {
++      uint32_t gpu_written_block_page;
++      if (!rex::bit_scan_forward(gpu_written_range_start == UINT32_MAX
++                                    ? gpu_written_block
++                                    : gpu_written_break_block,
++                                &gpu_written_block_page)) {
++        break;
++      }
++      uint32_t gpu_written_page = (i << 6) + gpu_written_block_page;
++      if (gpu_written_range_start == UINT32_MAX) {
++        gpu_written_range_start = gpu_written_page;
++      } else {
++        uint32_t gpu_written_range_length =
++            gpu_written_page - gpu_written_range_start;
++        // Call EnsureHostGpuMemoryAllocated in case the page was marked as
++        // GPU-written not as a result to an actual write to the shared memory
++        // buffer, but, for instance, by resolving with resolution scaling (to a
++        // separate buffer).
++        if (EnsureHostGpuMemoryAllocated(
++                gpu_written_range_start << page_size_log2_,
++                gpu_written_range_length << page_size_log2_)) {
++          trace_download_ranges_.push_back(
++              std::make_pair(gpu_written_range_start << page_size_log2_,
++                             gpu_written_range_length << page_size_log2_));
++          trace_download_page_count_ += gpu_written_range_length;
++        }
++        gpu_written_range_start = UINT32_MAX;
++      }
++      uint64_t gpu_written_block_mask =
++          ~((uint64_t(1) << gpu_written_block_page) - 1);
++      gpu_written_block &= gpu_written_block_mask;
++      gpu_written_break_block &= gpu_written_block_mask;
++    }
++  }
++  uint32_t page_count = kBufferSize >> page_size_log2_;
++  if (fire_watches_range_start != UINT32_MAX) {
++    FireWatches(fire_watches_range_start, page_count - 1, false);
++  }
++  if (gpu_written_range_start != UINT32_MAX) {
++    uint32_t gpu_written_range_length = page_count - gpu_written_range_start;
++    if (EnsureHostGpuMemoryAllocated(
++            gpu_written_range_start << page_size_log2_,
++            gpu_written_range_length << page_size_log2_)) {
++      trace_download_ranges_.push_back(
++          std::make_pair(gpu_written_range_start << page_size_log2_,
++                         gpu_written_range_length << page_size_log2_));
++      trace_download_page_count_ += gpu_written_range_length;
++    }
++  }
++}
++
++void SharedMemory::ReleaseTraceDownloadRanges() {
++  trace_download_ranges_.clear();
++  trace_download_ranges_.shrink_to_fit();
++  trace_download_page_count_ = 0;
++}
++
+ }  // namespace rex::graphics
+diff --git a/src/graphics/trace_writer.cpp b/src/graphics/trace_writer.cpp
+new file mode 100644
+index 0000000..7e4b3ca
+--- /dev/null
++++ b/src/graphics/trace_writer.cpp
+@@ -0,0 +1,180 @@
++/**
++ ******************************************************************************
++ * Xenia : Xbox 360 Emulator Research Project                                 *
++ ******************************************************************************
++ * Copyright 2020 Ben Vanik. All rights reserved.                             *
++ * Released under the BSD license - see LICENSE in the root for more details. *
++ ******************************************************************************
++ *
++ * Gears2-Native SDK patch 5: GPU frame traces. Ported from Xenia Canary
++ * (src/xenia/gpu/trace_writer.cc, BSD-3-Clause); uncompressed blocks only.
++ */
++
++#include <rex/graphics/trace_writer.h>
++
++#include <cstring>
++
++#include <rex/graphics/xenos.h>
++#include <rex/memory.h>
++
++namespace rex::graphics {
++
++TraceWriter& GetTraceWriter() {
++  static TraceWriter writer;
++  return writer;
++}
++
++bool TraceWriter::Open(const std::filesystem::path& path, uint32_t title_id) {
++  Close();
++  auto canonical_path = std::filesystem::absolute(path);
++  if (canonical_path.has_parent_path()) {
++    std::error_code ec;
++    std::filesystem::create_directories(canonical_path.parent_path(), ec);
++  }
++#if defined(_WIN32)
++  file_ = _wfopen(canonical_path.c_str(), L"wb");
++#else
++  file_ = std::fopen(canonical_path.c_str(), "wb");
++#endif
++  if (!file_) {
++    return false;
++  }
++  bytes_written_ = 0;
++  // Header first; must be at the top of the file.
++  TraceHeader header = {};
++  header.version = kTraceFormatVersion;
++  std::memset(header.build_commit_sha, '0', sizeof(header.build_commit_sha));
++  static const char kTag[] = "rexglue-gears2native";
++  std::memcpy(header.build_commit_sha, kTag, sizeof(kTag) - 1);
++  header.title_id = title_id;
++  Put(&header, sizeof(header));
++  return true;
++}
++
++void TraceWriter::Flush() {
++  if (file_) {
++    std::fflush(file_);
++  }
++}
++
++void TraceWriter::Close() {
++  if (file_) {
++    std::fflush(file_);
++    std::fclose(file_);
++    file_ = nullptr;
++  }
++}
++
++void TraceWriter::Put(const void* data, size_t size) {
++  std::fwrite(data, 1, size, file_);
++  bytes_written_ += size;
++}
++
++void TraceWriter::WritePrimaryBufferStart(uint32_t base_ptr, uint32_t count) {
++  if (!file_) return;
++  PrimaryBufferStartCommand cmd = {TraceCommandType::kPrimaryBufferStart, base_ptr, 0};
++  Put(&cmd, sizeof(cmd));
++}
++
++void TraceWriter::WritePrimaryBufferEnd() {
++  if (!file_) return;
++  PrimaryBufferEndCommand cmd = {TraceCommandType::kPrimaryBufferEnd};
++  Put(&cmd, sizeof(cmd));
++}
++
++void TraceWriter::WriteIndirectBufferStart(uint32_t base_ptr, uint32_t count) {
++  if (!file_) return;
++  IndirectBufferStartCommand cmd = {TraceCommandType::kIndirectBufferStart, base_ptr, 0};
++  Put(&cmd, sizeof(cmd));
++}
++
++void TraceWriter::WriteIndirectBufferEnd() {
++  if (!file_) return;
++  IndirectBufferEndCommand cmd = {TraceCommandType::kIndirectBufferEnd};
++  Put(&cmd, sizeof(cmd));
++}
++
++void TraceWriter::WritePacketStart(uint32_t base_ptr, uint32_t count) {
++  if (!file_) return;
++  PacketStartCommand cmd = {TraceCommandType::kPacketStart, base_ptr, count};
++  Put(&cmd, sizeof(cmd));
++  Put(memory_->TranslatePhysical(base_ptr), size_t(count) * 4);
++}
++
++void TraceWriter::WritePacketEnd() {
++  if (!file_) return;
++  PacketEndCommand cmd = {TraceCommandType::kPacketEnd};
++  Put(&cmd, sizeof(cmd));
++}
++
++void TraceWriter::WriteMemoryRead(uint32_t base_ptr, size_t length, const void* host_ptr) {
++  if (!file_) return;
++  WriteMemoryCommand(TraceCommandType::kMemoryRead, base_ptr, length, host_ptr);
++}
++
++void TraceWriter::WriteMemoryWrite(uint32_t base_ptr, size_t length, const void* host_ptr) {
++  if (!file_) return;
++  WriteMemoryCommand(TraceCommandType::kMemoryWrite, base_ptr, length, host_ptr);
++}
++
++void TraceWriter::WriteMemoryCommand(TraceCommandType type, uint32_t base_ptr, size_t length,
++                                     const void* host_ptr) {
++  MemoryCommand cmd = {};
++  cmd.type = type;
++  cmd.base_ptr = base_ptr;
++  cmd.encoding_format = MemoryEncodingFormat::kNone;
++  cmd.encoded_length = cmd.decoded_length = static_cast<uint32_t>(length);
++  if (!host_ptr) {
++    host_ptr = memory_->TranslatePhysical(base_ptr);
++  }
++  Put(&cmd, sizeof(cmd));
++  Put(host_ptr, cmd.decoded_length);
++}
++
++void TraceWriter::WriteEdramSnapshot(const void* snapshot) {
++  if (!file_) return;
++  EdramSnapshotCommand cmd = {};
++  cmd.type = TraceCommandType::kEdramSnapshot;
++  cmd.encoding_format = MemoryEncodingFormat::kNone;
++  cmd.encoded_length = xenos::kEdramSizeBytes;
++  Put(&cmd, sizeof(cmd));
++  Put(snapshot, xenos::kEdramSizeBytes);
++}
++
++void TraceWriter::WriteEvent(EventCommand::Type event_type) {
++  if (!file_) return;
++  EventCommand cmd = {TraceCommandType::kEvent, event_type};
++  Put(&cmd, sizeof(cmd));
++}
++
++void TraceWriter::WriteRegisters(uint32_t first_register, const uint32_t* register_values,
++                                 uint32_t register_count, bool execute_callbacks_on_play) {
++  if (!file_) return;
++  RegistersCommand cmd = {};
++  cmd.type = TraceCommandType::kRegisters;
++  cmd.first_register = first_register;
++  cmd.register_count = register_count;
++  cmd.execute_callbacks = execute_callbacks_on_play;
++  cmd.encoding_format = MemoryEncodingFormat::kNone;
++  cmd.encoded_length = uint32_t(sizeof(uint32_t) * register_count);
++  Put(&cmd, sizeof(cmd));
++  Put(register_values, cmd.encoded_length);
++}
++
++void TraceWriter::WriteGammaRamp(const reg::DC_LUT_30_COLOR* gamma_ramp_256_entry_table,
++                                 const reg::DC_LUT_PWL_DATA* gamma_ramp_pwl_rgb,
++                                 uint32_t gamma_ramp_rw_component) {
++  if (!file_) return;
++  GammaRampCommand cmd = {};
++  cmd.type = TraceCommandType::kGammaRamp;
++  cmd.rw_component = uint8_t(gamma_ramp_rw_component);
++  constexpr uint32_t k256 = sizeof(reg::DC_LUT_30_COLOR) * 256;
++  constexpr uint32_t kPwl = sizeof(reg::DC_LUT_PWL_DATA) * 3 * 128;
++  cmd.encoding_format = MemoryEncodingFormat::kNone;
++  cmd.encoded_length = k256 + kPwl;
++  Put(&cmd, sizeof(cmd));
++  Put(gamma_ramp_256_entry_table, k256);
++  Put(gamma_ramp_pwl_rgb, kPwl);
++}
++
++}  // namespace rex::graphics
+diff --git a/src/graphics/util/draw.cpp b/src/graphics/util/draw.cpp
+index 305380e..33f259b 100644
+--- a/src/graphics/util/draw.cpp
++++ b/src/graphics/util/draw.cpp
+@@ -15,6 +15,7 @@
+ #include <rex/assert.h>
+ #include <rex/cvar.h>
+ #include <rex/graphics/flags.h>
++#include <rex/graphics/trace_writer.h>
+ #include <rex/graphics/pipeline/texture/cache.h>
+ #include <rex/graphics/pipeline/texture/info.h>
+ #include <rex/graphics/pipeline/texture/util.h>
+@@ -793,6 +794,8 @@ bool GetResolveInfo(const RegisterFile& regs, const memory::Memory& memory,
+     assert_always();
+     return false;
+   }
++  // SDK patch 5: frame traces record the resolve rectangle's vertices.
++  GetTraceWriter().WriteMemoryRead(fetch.address * sizeof(uint32_t), fetch.size * sizeof(uint32_t));
+   const float* vertices_guest =
+       reinterpret_cast<const float*>(memory.TranslatePhysical(fetch.address * sizeof(uint32_t)));
+   // Most vertices have a negative half-pixel offset applied, which we reverse.
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+index 40740ee..95f5f59 100644
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -69,6 +69,7 @@ void InputSystem::Shutdown() {
+ }
+ 
+ void InputSystem::AddDriver(std::unique_ptr<InputDriver> driver) {
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
+   drivers_.push_back(std::move(driver));
+ }
+ 
+@@ -86,6 +87,7 @@ void InputSystem::SetActiveCallback(std::function<bool()> callback) {
+ }
+ 
+ void InputSystem::SetDeviceAssignment(std::unique_ptr<DeviceAssignment> assignment) {
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
+   assignment_ = std::move(assignment);
+   if (assignment_) {
+     assignment_->OnDevicesChanged(devices_);
+@@ -93,6 +95,7 @@ void InputSystem::SetDeviceAssignment(std::unique_ptr<DeviceAssignment> assignme
+ }
+ 
+ void InputSystem::RefreshDevices() {
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
+   std::vector<DeviceInfo> seen;
+   std::vector<InputDriver*> owners;
+   std::vector<DeviceInfo> enumerated;
+@@ -218,6 +221,7 @@ DeviceId InputSystem::ChooseDeviceForUser(uint32_t user_index) const {
+ 
+ X_RESULT InputSystem::GetCapabilities(uint32_t user_index, uint32_t flags,
+                                       X_INPUT_CAPABILITIES* out_caps) {
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
+   SCOPE_profile_cpu_f("hid");
+   if (!out_caps || !assignment_) {
+     return X_ERROR_DEVICE_NOT_CONNECTED;
+@@ -233,6 +237,7 @@ X_RESULT InputSystem::GetCapabilities(uint32_t user_index, uint32_t flags,
+ }
+ 
+ void InputSystem::UpdateConnectedUser(uint32_t user_index, bool connected) {
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
+   if (user_index >= kMaxGuestUsers || connected_users_.test(user_index) == connected) {
+     return;
+   }
+@@ -270,6 +275,7 @@ void InputSystem::UpdateConnectedUser(uint32_t user_index, bool connected) {
+ }
+ 
+ X_RESULT InputSystem::GetState(uint32_t user_index, X_INPUT_STATE* out_state) {
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
+   SCOPE_profile_cpu_f("hid");
+ 
+   // A dialog owns the controller.
+@@ -294,6 +300,7 @@ X_RESULT InputSystem::GetState(uint32_t user_index, X_INPUT_STATE* out_state) {
+ }
+ 
+ X_RESULT InputSystem::GetStateForUI(uint32_t user_index, X_INPUT_STATE* out_state) {
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
+   SCOPE_profile_cpu_f("hid");
+   if (!assignment_) {
+     return X_ERROR_DEVICE_NOT_CONNECTED;
+@@ -416,6 +423,7 @@ X_INPUT_VIBRATION InputSystem::ModifyVibrationLevel(const X_INPUT_VIBRATION* vib
+ }
+ 
+ X_RESULT InputSystem::SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration) {
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
+   SCOPE_profile_cpu_f("hid");
+   if (!assignment_ || !vibration) {
+     return X_ERROR_DEVICE_NOT_CONNECTED;
+@@ -461,6 +469,7 @@ X_RESULT InputSystem::SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration
+ 
+ X_RESULT InputSystem::GetKeystroke(uint32_t user_index, uint32_t flags,
+                                    X_INPUT_KEYSTROKE* out_keystroke) {
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
+   SCOPE_profile_cpu_f("hid");
+   if (!assignment_) {
+     return X_ERROR_DEVICE_NOT_CONNECTED;
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_video.cpp b/src/kernel/xboxkrnl/xboxkrnl_video.cpp
+index 642f7ff..bc679b7 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_video.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_video.cpp
+@@ -16,6 +16,7 @@
+ #include <atomic>
+ #include <string>
+ 
++#include <rex/chrono/clock.h>
+ #include <rex/cvar.h>
+ #include <rex/graphics/pipeline/texture/info.h>
+ #include <rex/graphics/register_file.h>
+@@ -423,6 +424,15 @@ void VdSwap_entry(mapped_void buffer_ptr,      // ptr into primary ringbuffer
+                   mapped_u32 frontbuffer_ptr,  // ptr to frontbuffer address
+                   mapped_u32 texture_format_ptr, mapped_u32 color_space_ptr, mapped_u32 width,
+                   mapped_u32 height) {
++  // SDK patch 4: in deterministic-clock mode guest time advances exactly one step per swap (no-op otherwise).
++  rex::chrono::Clock::AdvanceGuestFixedStep();
++  {
++    static uint64_t swaps = 0, reported = 0;
++    if ((++swaps % 300) == 0) {
++      const uint64_t w = rex::chrono::Clock::fixed_step_watchdog_steps();
++      if (w != reported) { REXKRNL_INFO("clock_fixed_step: {} watchdog step(s) after {} swaps", w, swaps); reported = w; }
++    }
++  }
+   // All of these parameters are REQUIRED.
+   assert(buffer_ptr);
+   assert(fetch_ptr);
+diff --git a/src/system/CMakeLists.txt b/src/system/CMakeLists.txt
+index 05979a3..50b7e04 100644
+--- a/src/system/CMakeLists.txt
++++ b/src/system/CMakeLists.txt
+@@ -1,5 +1,6 @@
+ set(REXSYSTEM_SOURCES
+     runtime.cpp
++    draw_observer.cpp
+     embedded_metadata.cpp
+     achievement_manager.cpp
+     achievements.cpp
+diff --git a/src/system/draw_observer.cpp b/src/system/draw_observer.cpp
+new file mode 100644
+index 0000000..e0764ca
+--- /dev/null
++++ b/src/system/draw_observer.cpp
+@@ -0,0 +1,33 @@
++/**
++ * Gears2-Native SDK patch 2: process-wide draw observer registry (see include/rex/graphics/draw_observer.h).
++ */
++#include <atomic>
++
++#include <rex/graphics/draw_observer.h>
++
++namespace rex::graphics {
++namespace {
++std::atomic<DrawObserver*> g_draw_observer{nullptr};
++// SDK patch 18: set and cleared on the GPU worker thread's setup/shutdown, read on the same thread.
++GuestRangeWrittenHandler g_range_handler = nullptr;
++void* g_range_context = nullptr;
++}  // namespace
++
++namespace {
++GpuServices* g_gpu_services = nullptr;  // SDK patch 21: set by the command processor at setup
++}  // namespace
++GpuServices* GetGpuServices() { return g_gpu_services; }
++void SetGpuServices(GpuServices* services) { g_gpu_services = services; }
++
++void SetGuestRangeWrittenHandler(GuestRangeWrittenHandler handler, void* context) {
++  g_range_handler = handler;
++  g_range_context = context;
++}
++void NotifyGuestRangeWrittenByObserver(uint32_t physical_address, uint32_t length) {
++  if (g_range_handler) g_range_handler(g_range_context, physical_address, length);
++}
++
++void SetDrawObserver(DrawObserver* observer) { g_draw_observer.store(observer, std::memory_order_release); }
++DrawObserver* GetDrawObserver() { return g_draw_observer.load(std::memory_order_acquire); }
++
++}  // namespace rex::graphics

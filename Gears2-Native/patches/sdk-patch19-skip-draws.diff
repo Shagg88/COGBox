@@ -1,0 +1,31 @@
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index ee2cd2f..66e5662 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -35,6 +35,11 @@
+ 
+ REXCVAR_DEFINE_BOOL(d3d12_bindless, true, "GPU/D3D12", "Use bindless resources where available")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++// Gears2-Native SDK patch 19 (takeover T3): the emulator stops drawing. Draw and copy (resolve/clear) packets are still
++// parsed, their state tracked and shown to the draw observer, and their shaders analysed, but nothing is drawn or
++// resolved here; swaps are still presented (from guest memory, where an observer can put its own image).
++REXCVAR_DEFINE_BOOL(gpu_skip_draws, false, "GPU/D3D12",
++                    "Gears2-Native: do not execute draws or resolves (an external renderer does the work)");
+ 
+ REXCVAR_DEFINE_BOOL(d3d12_readback_memexport, false, "GPU/D3D12",
+                     "Read data written by memory export in shaders on the CPU")
+@@ -2440,6 +2445,14 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+   const RegisterFile& regs = *register_file_;
+ 
+   xenos::EdramMode edram_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
++  if (REXCVAR_GET(gpu_skip_draws)) {  // Gears2-Native SDK patch 19
++    if (edram_mode != xenos::EdramMode::kCopy) {
++      // Keep the shader analysis the draw observer reads (bindings) for the next draws with these shaders.
++      if (auto* vs = static_cast<D3D12Shader*>(active_vertex_shader())) pipeline_cache_->AnalyzeShaderUcode(*vs);
++      if (auto* ps = static_cast<D3D12Shader*>(active_pixel_shader())) pipeline_cache_->AnalyzeShaderUcode(*ps);
++    }
++    return true;
++  }
+   if (edram_mode == xenos::EdramMode::kCopy) {
+     // Special copy handling.
+     return IssueCopy();

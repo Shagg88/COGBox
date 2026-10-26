@@ -1,0 +1,105 @@
+--- a/src/layer0_xenos/renderer/shadow_renderer.cpp
++++ b/src/layer0_xenos/renderer/shadow_renderer.cpp
+@@ -239,6 +239,13 @@
+                     "written it (job 041: Gears 3 moves DXT textures with memexport copies, and DXT textures load from "
+                     "guest memory, so without this they keep the old bytes - pale blue skin). The reference emulators' "
+                     "readback_memexport");
++// Gears 3 patch 0018 (notes/15, ch22 black squad in takeover; the Canary way): a CPU-path texture load over pages our
++// GPU wrote (resolve / memexport into the mirror) first copies those pages from the mirror into guest memory.
++REXCVAR_DEFINE_BOOL(gow2_renderer_cpu_loads_from_mirror, true, "Gears2",
++                    "Before a CPU-path texture load (DXT/BC and other CPU-untiled formats) reads pages our resolves or "
++                    "exports wrote into the GPU mirror, read those pages back into guest memory, so the texture gets the "
++                    "bytes the GPU wrote (as Xenia Canary, which loads every texture from its GPU copy). false = the CPU "
++                    "load reads guest memory as it is (stale in takeover)");
+ REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_through, false, "Gears2",
+                     "Job 047: a resolve into memory that a cached texture is loaded from (same base, pitch and bytes "
+                     "per texel, single level) also writes that texture, the same way the GPU untile would load it, so "
+@@ -822,8 +829,12 @@
+       REXLOG_INFO("gow2_texture_probe: {} base(s), frames {}-{}", bases.size(), first, last);
+       textures_->SetProbe(std::move(bases), first, last, REXCVAR_GET(gow2_renderer_texture_probe_dir));
+     }
+-    if (memexport_readback_)  // job 042: moved textures load their new bytes, not the old ones for a frame
+-      textures_->SetBeforeCpuLoadOfGpuPages([this](uint32_t start, uint32_t length) { FlushExportReadbacksFor(start, length); });
++    cpu_loads_from_mirror_ = REXCVAR_GET(gow2_renderer_cpu_loads_from_mirror);  // patch 0018
++    if (memexport_readback_ || cpu_loads_from_mirror_)  // job 042: moved textures load their new bytes, not the old ones
++      textures_->SetBeforeCpuLoadOfGpuPages([this](uint32_t start, uint32_t length) {
++        if (memexport_readback_) FlushExportReadbacksFor(start, length);
++        if (cpu_loads_from_mirror_) CopyGpuPagesToGuest(start, length);  // patch 0018
++      });
+     if (const int stale = REXCVAR_GET(gow2_renderer_texture_stale_log); stale > 0) {
+       textures_->SetStaleReloadReport(uint32_t(stale), [this](const rr::TextureCache::StaleReload& s) { ReportStale(s); });
+       REXLOG_INFO("gow2_renderer: texture stale-reload log on: textures unchanged for {} frames that get new bytes",
+@@ -5093,6 +5104,51 @@
+     PollExportReadbacks();
+   }
+ 
++  // Patch 0018: the GPU-current page runs of [start, start + length) go from the mirror into guest memory before a
++  // CPU-path texture load reads them. The GPU work recorded so far (the resolve / export that wrote them) is finished
++  // first. Both copies then hold the same bytes, so the pages stay GPU-current (the physical-mapping copy raises no
++  // watch callback - see the job 041 note at PollExportReadbacks).
++  void CopyGpuPagesToGuest(uint32_t start, uint32_t length) {
++    if (!length) return;
++    constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
++    const uint32_t first = (start & 0x1FFFFFFFu) >> kShift;
++    const uint32_t last = uint32_t(std::min<uint64_t>(((uint64_t(start & 0x1FFFFFFFu) + length - 1) >> kShift),
++                                                      rr::GuestWatch::kPages - 1));
++    struct Run {
++      gpu::ReadbackHandle handle;
++      uint32_t base, size;
++    };
++    std::vector<Run> runs;
++    for (uint32_t p = first; p <= last;) {
++      if (!watch_->GpuCurrent(p)) {
++        ++p;
++        continue;
++      }
++      uint32_t q = p;
++      while (q + 1 <= last && watch_->GpuCurrent(q + 1)) ++q;
++      const uint32_t base = p << kShift, size = (q - p + 1) << kShift;
++      if (const gpu::ReadbackHandle h = backend_->ReadbackGuest(base, size)) runs.push_back({h, base, size});
++      else ++mirror_copy_stats_.failed;
++      p = q + 1;
++    }
++    if (runs.empty()) return;
++    backend_->WaitForFence(backend_->Submit());
++    for (const Run& run : runs) {
++      uint32_t pitch = 0;
++      const uint8_t* data = backend_->ReadbackData(run.handle, pitch);
++      uint8_t* dst = data ? memory_->TranslatePhysical<uint8_t*>(run.base) : nullptr;
++      if (dst) {
++        std::memcpy(dst, data, run.size);
++        ++mirror_copy_stats_.runs;
++        mirror_copy_stats_.bytes += run.size;
++      } else {
++        ++mirror_copy_stats_.failed;
++      }
++      backend_->ReleaseReadback(run.handle);
++    }
++    ++mirror_copy_stats_.loads;
++  }
++
+   void PollExportReadbacks() {
+     while (!export_readbacks_.empty()) {
+       const ExportReadback& e = export_readbacks_.front();
+@@ -6447,6 +6503,10 @@
+       REXLOG_INFO("gow2_renderer: export pending mirror: vertex ranges read from exports {}, page checks that kept the "
+                   "mirror because a readback was still in flight {}",
+                   stats_.vertex_from_exports, stats_.vertex_pages_kept_pending);
++    if (mirror_copy_stats_.loads || mirror_copy_stats_.failed)  // patch 0018 (totals since start)
++      REXLOG_INFO("gow2_renderer: CPU-path loads fed from the mirror: {} loads, {} page runs ({:.2f} MB), {} failed",
++                  mirror_copy_stats_.loads, mirror_copy_stats_.runs, double(mirror_copy_stats_.bytes) / 1048576.0,
++                  mirror_copy_stats_.failed);
+     if (stats_.memexport_draws || stats_.memexport_only_draws) {  // notes/11 (this summary's frames)
+       REXLOG_INFO("gow2_renderer: memexport: draws {} (export-only {}, pixel-shader exports {}), ranges marked {} ({:.2f} "
+                   "MB), vertex ranges read from exports {}, readbacks into guest memory {} ({:.2f} MB, {} failed, {} "
+@@ -6783,6 +6843,10 @@
+     uint32_t base = 0, size = 0;
+   };
+   std::deque<ExportReadback> export_readbacks_;
++  bool cpu_loads_from_mirror_ = false;  // patch 0018
++  struct {
++    uint64_t loads = 0, runs = 0, bytes = 0, failed = 0;
++  } mirror_copy_stats_;  // patch 0018 (totals since start)
+   uint32_t memexport_logged_ = 0;
+   std::unordered_set<uint64_t> memexport_vs_seen_;   // patch 0012: export vertex shaders logged once each
+   std::unordered_set<uint64_t> export_reader_seen_;  // patch 0012: (vs hash, slot) pairs reading export ranges

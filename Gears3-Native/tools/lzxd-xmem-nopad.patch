@@ -1,0 +1,21 @@
+--- /root/ext/rexglue/thirdparty/libmspack/libmspack/mspack/lzxd.c	2026-10-21 20:52:03.421557652 -0700
++++ lzxd.c	2026-10-21 21:43:51.119744507 -0700
+@@ -14,6 +14,8 @@
+ 
+ #include <system.h>
+ #include <lzx.h>
++/* XMemCompress (Xbox 360) writes no pad byte after an odd-length uncompressed block. */
++int lzxd_xmem_no_pad = 1;
+ 
+ /* Microsoft's LZX document (in cab-sdk.exe) and their implementation
+  * of the com.ms.util.cab Java package do not concur.
+@@ -466,7 +468,8 @@
+       /* initialise new block, if one is needed */
+       if (lzx->block_remaining == 0) {
+         /* realign if previous block was an odd-sized UNCOMPRESSED block */
+-        if ((lzx->block_type == LZX_BLOCKTYPE_UNCOMPRESSED) &&
++        if (!lzxd_xmem_no_pad &&
++            (lzx->block_type == LZX_BLOCKTYPE_UNCOMPRESSED) &&
+             (lzx->block_length & 1))
+         {
+           READ_IF_NEEDED;

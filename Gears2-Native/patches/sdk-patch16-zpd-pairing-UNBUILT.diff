@@ -1,0 +1,132 @@
+diff --git a/include/rex/graphics/d3d12/command_processor.h b/include/rex/graphics/d3d12/command_processor.h
+index 27d3e13..47ba8e3 100644
+--- a/include/rex/graphics/d3d12/command_processor.h
++++ b/include/rex/graphics/d3d12/command_processor.h
+@@ -660,6 +660,10 @@ class D3D12CommandProcessor : public CommandProcessor {
+   uint64_t* occlusion_query_readback_mapping_ = nullptr;
+   uint32_t occlusion_query_cursor_ = 0;
+   bool occlusion_query_resources_available_ = false;
++  // Gears2-Native SDK patch 16: why host queries are (un)available, for the start-up line, and a once-only log of the
++  // first begin/end pairing failure (the reason host queries were turned off).
++  const char* occlusion_query_status_ = "not initialised";
++  bool occlusion_query_pairing_logged_ = false;
+   struct ActiveOcclusionQuery {
+     uint32_t sample_count_address = 0;
+     uint32_t host_index = UINT32_MAX;
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index 394b2f0..c8f394b 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -55,6 +55,14 @@ REXCVAR_DEFINE_BOOL(d3d12_submit_on_primary_buffer_end, true, "GPU/D3D12",
+ REXCVAR_DEFINE_BOOL(occlusion_query_no_fake, false, "GPU/D3D12",
+                     "Occlusion queries: never fall back to the fake sample count (developer comparison runs)");
+ 
++// Gears2-Native SDK patch 16 (job 117, notes/46 section 0c): the host path pairs an end ZPD with the active query only if
++// both use the same report address. XDK 7645's D3D (Gears of War 2) writes each query's BEGIN report at block+32 and
++// its END report at block+0, so every end "mismatches": the first one turns host queries off for the session and every
++// answer is the fake count. With this on (or with occlusion_query_no_fake), an end ZPD closes the active query whatever
++// its address. Off by default: on, it brings real culling and one blocking GPU round trip per query (200-280 a frame).
++REXCVAR_DEFINE_BOOL(occlusion_query_end_any_address, false, "GPU/D3D12",
++                    "Occlusion queries: an end ZPD closes the active query even at a different report address");
++
+ namespace rex::graphics::d3d12 {
+ 
+ // Generated with `xb buildshaders`.
+@@ -236,6 +244,13 @@ bool D3D12CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffe
+     }
+     if (active_occlusion_query_.valid &&
+         active_occlusion_query_.sample_count_address != sample_count_addr) {
++      if (!occlusion_query_pairing_logged_) {  // Gears2-Native SDK patch 16
++        occlusion_query_pairing_logged_ = true;
++        REXGPU_WARN(
++            "D3D12CommandProcessor: occlusion query begin ZPD at {:08X} while the query begun at {:08X} is still "
++            "open; host queries are now off for the session (fake counts)",
++            sample_count_addr, active_occlusion_query_.sample_count_address);
++      }
+       DisableHostOcclusionQueries();
+       return write_fallback_result();
+     }
+@@ -250,8 +265,25 @@ bool D3D12CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffe
+     return true;
+   }
+ 
++  // Gears2-Native SDK patch 16: optionally pair the end with the active query by order, not by address.
++  const bool end_any_address = no_fake || REXCVAR_GET(occlusion_query_end_any_address);
+   if (!active_occlusion_query_.valid ||
+-      active_occlusion_query_.sample_count_address != sample_count_addr) {
++      (!end_any_address && active_occlusion_query_.sample_count_address != sample_count_addr)) {
++    if (!occlusion_query_pairing_logged_) {
++      occlusion_query_pairing_logged_ = true;
++      if (active_occlusion_query_.valid) {
++        REXGPU_WARN(
++            "D3D12CommandProcessor: occlusion query end ZPD at {:08X}, but the active query began at {:08X}; {}",
++            sample_count_addr, active_occlusion_query_.sample_count_address,
++            no_fake ? "answering 1 (occlusion_query_no_fake)"
++                    : "host queries are now off for the session (fake counts); "
++                      "--occlusion_query_end_any_address pairs by order");
++      } else {
++        REXGPU_WARN("D3D12CommandProcessor: occlusion query end ZPD at {:08X} with no active host query; {}",
++                    sample_count_addr,
++                    no_fake ? "answering 1 (occlusion_query_no_fake)" : "host queries are now off for the session");
++      }
++    }
+     if (!no_fake) {
+       DisableHostOcclusionQueries();
+     } else {
+@@ -1678,6 +1710,18 @@ bool D3D12CommandProcessor::SetupContext() {
+   }
+ 
+   occlusion_query_resources_available_ = InitializeOcclusionQueryResources();
++  // Gears2-Native SDK patch 16: one line saying whether ZPD occlusion queries get real host counts.
++  REXGPU_INFO(
++      "D3D12CommandProcessor: host occlusion queries {} | occlusion_query_enable={} end_any_address={} no_fake={} "
++      "fake count {}{}",
++      occlusion_query_status_, REXCVAR_GET(occlusion_query_enable),
++      REXCVAR_GET(occlusion_query_end_any_address), REXCVAR_GET(occlusion_query_no_fake),
++      REXCVAR_GET(query_occlusion_fake_sample_count),
++      !REXCVAR_GET(occlusion_query_enable) ? " -> every answer is the fake count"
++      : (!REXCVAR_GET(occlusion_query_end_any_address) && !REXCVAR_GET(occlusion_query_no_fake))
++          ? " -> begin/end paired by address (a D3D with separate begin/end reports falls back to fake at its "
++            "first query)"
++          : "");
+ 
+   // Just not to expose uninitialized memory.
+   std::memset(&system_constants_, 0, sizeof(system_constants_));
+@@ -5029,6 +5073,7 @@ bool D3D12CommandProcessor::InitializeOcclusionQueryResources() {
+ 
+   ID3D12Device* device = GetD3D12Provider().GetDevice();
+   if (!device) {
++    occlusion_query_status_ = "no D3D12 device";  // Gears2-Native SDK patch 16
+     return false;
+   }
+ 
+@@ -5039,6 +5084,7 @@ bool D3D12CommandProcessor::InitializeOcclusionQueryResources() {
+   if (FAILED(device->CreateQueryHeap(&heap_desc, IID_PPV_ARGS(&occlusion_query_heap_)))) {
+     REXGPU_WARN(
+         "D3D12CommandProcessor: Failed to create occlusion query heap, using fake sample counts");
++    occlusion_query_status_ = "query heap creation failed";
+     return false;
+   }
+ 
+@@ -5053,6 +5099,7 @@ bool D3D12CommandProcessor::InitializeOcclusionQueryResources() {
+         "D3D12CommandProcessor: Failed to allocate occlusion query readback buffer, using fake "
+         "sample counts");
+     occlusion_query_heap_.Reset();
++    occlusion_query_status_ = "readback buffer creation failed";
+     return false;
+   }
+ 
+@@ -5064,11 +5111,13 @@ bool D3D12CommandProcessor::InitializeOcclusionQueryResources() {
+         "counts");
+     occlusion_query_readback_.Reset();
+     occlusion_query_heap_.Reset();
++    occlusion_query_status_ = "readback buffer map failed";
+     return false;
+   }
+ 
+   occlusion_query_readback_mapping_ = reinterpret_cast<uint64_t*>(mapping);
+   occlusion_query_resources_available_ = true;
++  occlusion_query_status_ = "available";
+   return true;
+ }
+ 

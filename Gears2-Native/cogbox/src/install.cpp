@@ -1,0 +1,313 @@
+// COGBox - "Add your copy": whatever the player has (a disc image, a Games on Demand copy, an extracted folder, a title
+// update package) is recognised, matched to one of the three games, checked, and turned into the folders the ports
+// read. Unpacking runs on a worker thread into a "...partial" folder that is renamed into place only when it is
+// complete, so a cancel or a failure never leaves a half copy where the game looks for it.
+#include "app.h"
+#include "theme.h"
+#include "x360fs.h"
+
+#include <windows.h>
+#include <cstdio>
+#include <algorithm>
+
+namespace {
+struct Plan {
+    std::string source;          // what the player chose (UTF-8)
+    x360fs::SourceKind kind = x360fs::SourceKind::Unknown;
+    std::wstring resolved;       // what x360fs resolved it to
+    int game = -1;
+    bool update = false;         // a title update (goes to game\update)
+    std::string finalDir;        // where it ends up
+    std::string partialDir;      // where it is unpacked first
+    bool inPlace = false;        // an extracted folder used where it is
+};
+Plan g_plan;
+}
+
+static uint64_t free_space(const std::string &dir)
+{
+    std::string d = dir;
+    while (!d.empty() && !dir_exists(d)) { size_t s = d.find_last_of('\\'); if (s == std::string::npos) break; d = d.substr(0, s); }
+    ULARGE_INTEGER freeBytes;
+    if (!GetDiskFreeSpaceExW(widen(d).c_str(), &freeBytes, nullptr, nullptr)) return ~0ull;
+    return freeBytes.QuadPart;
+}
+
+// Moving a folder aside (when the player replaces a copy COGBox made, the old one is removed after the new one is
+// in place - the player asked for the replacement).
+static bool remove_tree(const std::wstring &dir)
+{
+    DWORD at = GetFileAttributesW(dir.c_str());
+    if (at == INVALID_FILE_ATTRIBUTES) return false;
+    if (at & FILE_ATTRIBUTE_REPARSE_POINT) return RemoveDirectoryW(dir.c_str()) != 0;   // a link: only the link goes, never what it points at
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (f != INVALID_HANDLE_VALUE) {
+        do {
+            std::wstring n = fd.cFileName;
+            if (n == L"." || n == L"..") continue;
+            std::wstring p = dir + L"\\" + n;
+            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) remove_tree(p);
+            else { SetFileAttributesW(p.c_str(), FILE_ATTRIBUTE_NORMAL); DeleteFileW(p.c_str()); }
+        } while (FindNextFileW(f, &fd));
+        FindClose(f);
+    }
+    return RemoveDirectoryW(dir.c_str()) != 0;
+}
+
+static int game_of_xex(const x360fs::XexInfo &xi, const std::string &xexPath)
+{
+    int g = game_by_title_id(xi.title_id);
+    if (g >= 0 || xexPath.empty()) return g;
+    std::string h = x360fs::sha1_file(widen(xexPath));
+    for (int i = 0; i < G_COUNT; i++) if (h == game_def(i).xex.sha1) return i;
+    return -1;
+}
+
+static const char *kind_text(x360fs::SourceKind k)
+{
+    switch (k) {
+    case x360fs::SourceKind::DiscImage: return "Unpacking the disc image";
+    case x360fs::SourceKind::GodContainer: return "Unpacking the Games on Demand copy";
+    case x360fs::SourceKind::StfsPackage: return "Unpacking the title update";
+    case x360fs::SourceKind::ExtractedFolder: return "Checking the folder";
+    default: return "Reading";
+    }
+}
+
+static void worker(App *ap)
+{
+    App &a = *ap;
+    InstallJob &j = a.job;
+    Plan p = g_plan;
+    auto progress = [&](uint64_t done, uint64_t total, const std::string &cur) {
+        j.done = done; j.total = total;
+        std::lock_guard<std::mutex> l(j.m);
+        j.current = cur;
+    };
+    std::string err;
+    bool ok = true;
+    if (!p.inPlace) {
+        std::wstring part = widen(p.partialDir);
+        if (dir_exists(p.partialDir)) remove_tree(part);   // a partial copy from an earlier, interrupted try
+        make_dirs(p.partialDir);
+        switch (p.kind) {
+        case x360fs::SourceKind::DiscImage: ok = x360fs::extract_disc(p.resolved, part, progress, &j.cancel, err); break;
+        case x360fs::SourceKind::GodContainer: ok = x360fs::extract_god(p.resolved, part, progress, &j.cancel, err); break;
+        case x360fs::SourceKind::StfsPackage: ok = x360fs::extract_stfs(p.resolved, part, progress, &j.cancel, err, true); break;
+        default: ok = false; err = "This isn't something COGBox can unpack.";
+        }
+        if (ok && !file_exists(join(p.partialDir, p.update ? "default.xexp" : "default.xex"))) {
+            ok = false;
+            err = p.update ? "The package didn't hold a default.xexp - is it the title update?" : "The copy didn't hold a default.xex.";
+        }
+        if (!ok) {
+            remove_tree(part);   // only COGBox's own half copy
+            std::lock_guard<std::mutex> l(j.m);
+            j.error = err;
+            j.state = j.cancel ? 4 : 3;
+            return;
+        }
+        // into place: the old copy (COGBox's own) out of the way first, removed once the new one is there
+        std::wstring fin = widen(p.finalDir), old = fin + L".old-" + widen(now_stamp());
+        bool hadOld = dir_exists(p.finalDir);
+        if (hadOld && !MoveFileExW(fin.c_str(), old.c_str(), 0)) {
+            std::lock_guard<std::mutex> l(j.m);
+            j.error = "The old copy couldn't be moved aside - is the game running, or a file from it open?";
+            j.state = 3;
+            return;
+        }
+        if (!MoveFileExW(part.c_str(), fin.c_str(), 0)) {
+            if (hadOld) MoveFileExW(old.c_str(), fin.c_str(), 0);
+            std::lock_guard<std::mutex> l(j.m);
+            j.error = "The unpacked copy couldn't be moved into place.";
+            j.state = 3;
+            return;
+        }
+        if (hadOld) remove_tree(old);
+    }
+    // the fingerprint, against what the ports are made for
+    const GameDef &d = game_def(p.game);
+    std::string file = join(p.finalDir, p.update ? "default.xexp" : "default.xex");
+    std::string h = x360fs::sha1_file(widen(file));
+    bool match = h == (p.update ? d.xexp.sha1 : d.xex.sha1);
+    std::lock_guard<std::mutex> l(j.m);
+    if (p.update)
+        j.result = match ? std::string(d.updateName) + " for " + d.name + " is added and checked." :
+                           std::string("This title update for ") + d.name + " isn't " + d.updateName + ", the one the port is made for. It was added, but the game may not start; the disc version can be chosen on the Gameplay tab.";
+    else
+        j.result = match ? std::string(d.name) + " is added and checked - ready to play." :
+                           std::string("This copy of ") + d.name + " is a different release from the one the ports are made for (the US disc). It was added; it may not start or may misbehave.";
+    j.state = 2;
+}
+
+static void begin(App &a)
+{
+    InstallJob &j = a.job;
+    if (j.state.load() == 1) return;   // one at a time
+    if (j.th.joinable()) j.th.join();
+    j.cancel = false; j.done = 0; j.total = 0;
+    {
+        std::lock_guard<std::mutex> l(j.m);
+        j.what = std::string(kind_text(g_plan.kind)) + " - " + game_def(g_plan.game).name;
+        j.current.clear(); j.error.clear(); j.result.clear();
+    }
+    j.game = g_plan.game;
+    j.state = 1;
+    j.th = std::thread(worker, &a);
+}
+
+void install_start(App &a, const std::string &path, int forGame)
+{
+    if (a.job.state.load() == 1 || a.modal.open) return;
+    if (a.run.proc) { set_message(a, "Close the game first.", true); return; }
+    Plan p;
+    p.source = path;
+    std::filesystem::path res;
+    p.kind = x360fs::detect(widen(path), &res);
+    p.resolved = res.wstring();
+    std::string resolved = narrow(p.resolved);
+    std::string err;
+    switch (p.kind) {
+    case x360fs::SourceKind::ExtractedFolder: {
+        x360fs::XexInfo xi;
+        std::string xex = join(resolved, "default.xex");
+        x360fs::read_xex_info(widen(xex), xi);
+        p.game = game_of_xex(xi, xex);
+        p.inPlace = true;
+        p.finalDir = resolved;
+        break;
+    }
+    case x360fs::SourceKind::DiscImage: {
+        x360fs::XexInfo xi;
+        if (!x360fs::disc_xex_info(p.resolved, xi)) { set_message(a, "This disc image has no default.xex - it isn't an Xbox 360 game disc (or is damaged).", true); return; }
+        p.game = game_by_title_id(xi.title_id);
+        break;
+    }
+    case x360fs::SourceKind::GodContainer:
+    case x360fs::SourceKind::StfsPackage: {
+        x360fs::PackageInfo pi;
+        if (!x360fs::read_package_info(p.resolved, pi, err)) { set_message(a, err, true); return; }
+        p.game = game_by_title_id(pi.title_id);
+        if (p.kind == x360fs::SourceKind::StfsPackage) {
+            if (!pi.is_title_update()) {
+                set_message(a, "This package isn't a title update (" + (pi.display_name.empty() ? std::string("content type ") + std::to_string(pi.content_type) : pi.display_name) +
+                                   "). Downloadable content isn't supported yet.", true);
+                return;
+            }
+            p.update = true;
+        }
+        break;
+    }
+    default:
+        set_message(a, "COGBox doesn't recognise this. Choose a disc image (.iso), a Games on Demand file or folder, "
+                       "a title update package, or a folder holding default.xex.", true);
+        return;
+    }
+    if (p.game < 0) {
+        set_message(a, "This is an Xbox 360 game, but not Gears of War 2, 3 or Judgment.", true);
+        return;
+    }
+    if (forGame >= 0 && forGame != p.game)
+        set_message(a, std::string("That's ") + game_def(p.game).name + ", not " + game_def(forGame).name + " - adding it there.", false);
+    const GameDef &d = game_def(p.game);
+    if (p.inPlace) {
+        // nothing to unpack: remember the folder; the check runs on the worker
+        g_plan = p;
+        begin(a);
+        return;
+    }
+    p.finalDir = p.update ? game_default_update_dir(p.game) : game_default_data_dir(p.game);
+    p.partialDir = p.finalDir + ".partial";
+    // room for it (the files plus a little)
+    uint64_t need = 0;
+    if (!p.update) {
+        std::vector<x360fs::Entry> list;
+        bool listed = p.kind == x360fs::SourceKind::DiscImage ? x360fs::list_disc(p.resolved, list, err) : x360fs::list_god(p.resolved, list, err);
+        if (!listed) { set_message(a, err, true); return; }
+        for (auto &e : list) need += e.size;
+        uint64_t have = free_space(game_root(p.game));
+        if (have != ~0ull && have < need + (256ull << 20)) {
+            set_message(a, "Not enough free space: unpacking " + std::string(d.name) + " needs " + human_bytes(need) + ", and the drive with the COGBox folder has " +
+                               human_bytes(have) + ". Free some space, or extract it elsewhere and add that folder.", true);
+            return;
+        }
+    }
+    g_plan = p;
+    if (dir_exists(p.finalDir)) {
+        ask(a, "replace", p.game, p.update ? "Replace the title update" : "Replace your copy",
+            std::string("COGBox already has ") + (p.update ? std::string(d.updateName) : std::string("a copy of ") + d.name) +
+                ". Replace it with this one? The old one is removed once the new one is unpacked and in place." +
+                (need ? "\n\nUnpacking needs " + human_bytes(need) + " of space." : ""),
+            { "Replace", "Cancel" });
+        return;
+    }
+    begin(a);
+}
+
+void install_confirmed(App &a) { begin(a); }
+
+void install_poll(App &a)
+{
+    InstallJob &j = a.job;
+    int s = j.state.load();
+    if (s < 2) return;
+    if (j.th.joinable()) j.th.join();
+    std::lock_guard<std::mutex> l(j.m);
+    if (s == 2) {
+        if (g_plan.update) game_set_update(a.ini, g_plan.game, g_plan.finalDir);
+        else game_set_data(a.ini, g_plan.game, g_plan.finalDir, g_plan.inPlace);
+        a.ini.save();
+        refresh_games(a, true);
+        // the page's values again from the store, so Version follows the newly added update (unless the page has unsaved changes)
+        if (!a.dirty[g_plan.game]) { a.cur[g_plan.game] = a.store.view((gs::Game)g_plan.game, a.env[g_plan.game]); env_refresh(a, g_plan.game); }
+        a.front = g_plan.game;
+        bool good = j.result.find("checked") != std::string::npos;
+        set_message(a, j.result, !good);
+        // a game without its title update: say where it comes from
+        const GameDef &d = game_def(g_plan.game);
+        if (!g_plan.update && a.st[g_plan.game].updateDir.empty() && d.updateNeeded)
+            ask(a, "info", g_plan.game, std::string(d.name) + " is added",
+                j.result + "\n\nNext, add " + d.updateName + " (the last update, which the main port build is made for). It's on a console that "
+                "has played the game online, in Content\\0000000000000000\\" + [&] { char b[12]; snprintf(b, sizeof b, "%08X", d.titleId); return std::string(b); }() +
+                "\\000B0000. Without it, the disc version is started.", { "OK" });
+    } else if (s == 3) set_message(a, "Couldn't add it: " + j.error, true);
+    else set_message(a, "Cancelled - nothing was changed.", false);
+    j.state = 0;
+}
+
+void install_draw(App &a, ImVec2 size)
+{
+    InstallJob &j = a.job;
+    if (j.state.load() != 1) return;
+    ImDrawList *dl = ImGui::GetWindowDrawList();   // the main window's: under the box below, over everything else
+    dl->AddRectFilled(ImVec2(0, 0), size, IM_COL32(0, 0, 0, 170));
+    float w = std::min(size.x - S(60), S(620)), h = S(200);
+    ImVec2 p0((size.x - w) * 0.5f, (size.y - h) * 0.5f), p1(p0.x + w, p0.y + h);
+    ImGui::SetNextWindowPos(p0);
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    ImGui::Begin("##install", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    ImDrawList *wl = ImGui::GetWindowDrawList();
+    th_plate(wl, p0, p1, S(14), false);
+    std::string what, cur;
+    { std::lock_guard<std::mutex> l(j.m); what = j.what; cur = j.current; }
+    ImGui::SetCursorScreenPos(ImVec2(p0.x + S(26), p0.y + S(22)));
+    th_heading(what.c_str(), p1.x - S(26));
+    uint64_t done = j.done, total = j.total;
+    float frac = total ? (float)((double)done / total) : 0.0f;
+    char ov[64];
+    if (total) snprintf(ov, sizeof ov, "%s of %s", human_bytes(done).c_str(), human_bytes(total).c_str());
+    else snprintf(ov, sizeof ov, "Starting...");
+    ImGui::SetCursorScreenPos(ImVec2(p0.x + S(26), p0.y + S(70)));
+    ImGui::ProgressBar(frac, ImVec2(w - S(52), S(24)), ov);
+    ImGui::SetCursorScreenPos(ImVec2(p0.x + S(26), p0.y + S(104)));
+    ImGui::PushFont(F_SMALL, F_SMALL->LegacySize);
+    ImGui::PushStyleColor(ImGuiCol_Text, col::dim);
+    if (cur.size() > 70) cur = "..." + cur.substr(cur.size() - 67);
+    ImGui::TextUnformatted(cur.c_str());
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+    ImGui::SetCursorScreenPos(ImVec2(p1.x - S(26) - S(130), p1.y - S(56)));
+    if (th_button("CANCEL", ImVec2(S(130), S(36)), !j.cancel, F_HEAD) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) j.cancel = true;
+    ImGui::End();
+}

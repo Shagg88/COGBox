@@ -1,0 +1,93 @@
+diff --git a/include/rex/ui/vulkan/device.h b/include/rex/ui/vulkan/device.h
+index 947817f..c4fd374 100644
+--- a/include/rex/ui/vulkan/device.h
++++ b/include/rex/ui/vulkan/device.h
+@@ -44,7 +44,8 @@ class VulkanDevice {
+   // designed to use"
+   // "The patch version number specified in apiVersion is ignored when creating
+   // an instance object"
+-  static constexpr uint32_t kHighestUsedApiMinorVersion = VK_MAKE_API_VERSION(0, 1, 3, 0);
++  // Gears2-Native SDK patch 33: 1.4 (our renderer's Vulkan backend runs on this device and uses 1.4 where present).
++  static constexpr uint32_t kHighestUsedApiMinorVersion = VK_MAKE_API_VERSION(0, 1, 4, 0);
+ 
+   struct Properties {
+     // Vulkan 1.0
+@@ -110,6 +111,10 @@ class VulkanDevice {
+     bool shaderCullDistance = false;
+     bool sparseBinding = false;
+     bool sparseResidencyBuffer = false;
++    // Gears2-Native SDK patch 33 (with gpu emulation, where supported).
++    bool textureCompressionBC = false;
++    bool shaderImageGatherExtended = false;
++    bool shaderStorageImageWriteWithoutFormat = false;
+ 
+     // VK_KHR_sampler_mirror_clamp_to_edge (#15, promoted to 1.2)
+ 
+@@ -154,6 +159,11 @@ class VulkanDevice {
+     // VK_KHR_dynamic_rendering (#55, promoted to 1.3)
+ 
+     bool dynamicRendering = false;
++    // Gears2-Native SDK patch 33: what our renderer's Vulkan backend needs on this device (enabled when supported).
++    bool timelineSemaphore = false;
++    bool synchronization2 = false;
++    bool pushDescriptor = false;
++    bool maintenance5 = false;
+ 
+     // VK_EXT_non_seamless_cube_map (#423)
+ 
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+index 8197bb4..67dda3c 100644
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -308,6 +308,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+   VulkanFeatures<VkPhysicalDeviceVulkan13Features,
+                  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES>
+       features_1_3;
++  // Gears2-Native SDK patch 33.
++  VulkanFeatures<VkPhysicalDeviceVulkan14Features,
++                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES>
++      features_1_4;
+   VulkanFeatures<VkPhysicalDevicePortabilitySubsetFeaturesKHR,
+                  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR>
+       features_KHR_portability_subset;
+@@ -340,6 +344,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+     if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
+       features_1_2.Link(supported_features_2, device_create_info);
+     }
++    if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 4, 0)) {  // Gears2-Native SDK patch 33
++      features_1_4.Link(supported_features_2, device_create_info);
++    }
+     if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0)) {
+       features_1_3.Link(supported_features_2, device_create_info);
+     } else {
+@@ -643,6 +650,10 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+     XE_UI_VULKAN_FEATURE(shaderCullDistance)
+     XE_UI_VULKAN_FEATURE(sparseBinding)
+     XE_UI_VULKAN_FEATURE(sparseResidencyBuffer)
++    // Gears2-Native SDK patch 33: used by our renderer's Vulkan backend on this device.
++    XE_UI_VULKAN_FEATURE(textureCompressionBC)
++    XE_UI_VULKAN_FEATURE(shaderImageGatherExtended)
++    XE_UI_VULKAN_FEATURE(shaderStorageImageWriteWithoutFormat)
+   }
+ 
+   if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 2, 0)) {
+@@ -651,6 +662,7 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+       XE_UI_VULKAN_FEATURE_2(features_1_2, uniformBufferStandardLayout);
+       XE_UI_VULKAN_FEATURE_2(features_1_2, scalarBlockLayout);
+     }
++    XE_UI_VULKAN_FEATURE_2(features_1_2, timelineSemaphore);  // Gears2-Native SDK patch 33
+   } else {
+     if (ext_1_2_KHR_sampler_mirror_clamp_to_edge) {
+       XE_UI_VULKAN_FEATURE_IMPLIED(samplerMirrorClampToEdge)
+@@ -662,6 +674,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+       XE_UI_VULKAN_FEATURE_2(features_1_3, shaderDemoteToHelperInvocation);
+       XE_UI_VULKAN_FEATURE_2(features_1_3, dynamicRendering);
+     }
++    XE_UI_VULKAN_FEATURE_2(features_1_3, synchronization2);  // Gears2-Native SDK patch 33
++    if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 4, 0)) {  // Gears2-Native SDK patch 33
++      XE_UI_VULKAN_FEATURE_2(features_1_4, pushDescriptor);
++      XE_UI_VULKAN_FEATURE_2(features_1_4, maintenance5);
++    }
+   } else {
+     if (ext_1_3_KHR_dynamic_rendering) {
+       if (with_gpu_emulation) {

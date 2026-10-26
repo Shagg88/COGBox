@@ -1,0 +1,284 @@
+# Gears2-Native: every game-specific address the build relies on (base image, TU0). Generated 2026-10-22 for the
+# TU6 move (notes/63). kind | address | where | note
+hook | 0x82806A44 | manifest | Gow2UntiledHook regs ["r11"]
+hook | 0x8280E7FC | manifest | Gow2PatchAniso16 regs ["r5"]
+hook | 0x82AA8904 | manifest | Gow2PatchCoalescedResult regs ["r3"]
+hook | 0x827F9148 | manifest | Gow2PatchCoalescedSkip regs []
+hook | 0x8280D534 | manifest | Gow2PatchTexturePoolSize regs ["r4"]
+hook | 0x8280DDC8 | manifest | Gow2PatchTextureStatsOff regs ["r3"]
+hook | 0x829783A8 | manifest | Gow2QueryPollYield regs []
+hook | 0x824A2E94 | manifest | Gow2MaxTickRate regs ["f1"]
+hook | 0x8252D73C | manifest | Gow2UltrawideFov regs ["f0"]
+hook | 0x828075BC | manifest | Gow2QueryWaitStep regs []
+hook | 0x829776A0 | manifest | Gow2GpuWaitStep regs []
+hook-target | 0x829776CC | manifest | Gow2GpuWaitStep jump_address_on_true
+hook | 0x8252D608 | manifest | Gow2UltrawideNoConstrain regs []
+hook-target | 0x8252D69C | manifest | Gow2UltrawideNoConstrain jump_address_on_true
+hook | 0x82806B10 | manifest | Gow2UltrawideSceneHeight regs ["r11", "f13"]
+hook | 0x826E3728 | manifest | Gow2UltrawideUiHeight regs ["r3"]
+hook | 0x828307A0 | manifest | Gow2HordeGuard regs ["r3", "r4"]
+hook | 0x8280D848 | manifest | Gow2NoteTextureDefrag regs []
+hook | 0x829A0C40 | manifest | Gow2WatchXGSetTextureHeaderEx regs ["r3", "r4", "r5", "r6"]
+hook | 0x829A0D78 | manifest | Gow2WatchXGSetCubeTextureHeaderEx regs ["r3", "r4", "r5", "r6"]
+hook | 0x829A00D8 | manifest | Gow2WatchXGSetVertexBufferHeader regs ["r3", "r4", "r5", "r6"]
+hook | 0x829A0170 | manifest | Gow2WatchXGSetIndexBufferHeader regs ["r3", "r4", "r5", "r6"]
+hook | 0x829A0E58 | manifest | Gow2WatchXGOffsetResourceAddress regs ["r3", "r4", "r5", "r6"]
+hook | 0x829A0DF0 | manifest | Gow2WatchXGOffsetBaseTextureAddress regs ["r3", "r4", "r5", "r6"]
+hook | 0x82976600 | manifest | Gow2WatchLockCore regs ["r3", "r4", "r5", "r6"]
+hook | 0x829768C0 | manifest | Gow2WatchUnlock regs ["r3", "r4", "r5", "r6"]
+hook | 0x8259CE00 | manifest | Gow2WatchInlineUnlockA regs ["r3", "r4", "r5", "r6"]
+hook | 0x827BF6F0 | manifest | Gow2WatchInlineUnlockB regs ["r3", "r4", "r5", "r6"]
+hook | 0x8280D150 | manifest | Gow2WatchPoolDefrag regs ["r3", "r4", "r5", "r6"]
+hook | 0x8280B0C0 | manifest | Gow2WatchMipRealloc regs ["r3", "r4", "r5", "r6"]
+hook | 0x828093B8 | manifest | Gow2WatchDeferredFree regs ["r3", "r4", "r5", "r6"]
+hint | 0x82D0C758 | manifest |
+hint | 0x82AE14C8 | manifest | end 0x82AE1564
+hint | 0x82AE1564 | manifest |
+hint | 0x82AEFF8C | manifest | end 0x82AF0028
+hint | 0x82AF0028 | manifest |
+hint | 0x82AFC28C | manifest | end 0x82AFC328
+hint | 0x82AFC328 | manifest |
+hint | 0x82AFCE0C | manifest | end 0x82AFCEA8
+hint | 0x82AFCEA8 | manifest |
+hint | 0x82B01290 | manifest | end 0x82B0132C
+hint | 0x82B0132C | manifest |
+hint | 0x82B3EB88 | manifest |
+hint | 0x82B64C9C | manifest |
+hint | 0x82B8D6BC | manifest |
+hint | 0x82362E98 | manifest |
+hint | 0x82AC6FC0 | manifest |
+hint | 0x8295A7C8 | manifest |
+hint | 0x82255490 | manifest |
+hint | 0x822EB780 | manifest |
+hint | 0x82D3D5C8 | manifest |
+hint | 0x82D9C4A0 | manifest |
+hint | 0x82264DA0 | manifest |
+hint | 0x8295F740 | manifest |
+hint | 0x82D9B510 | manifest |
+hint | 0x8274BFE8 | manifest |
+hint | 0x82E9D808 | manifest |
+hint | 0x82D9BED0 | manifest |
+hint | 0x8264CF78 | manifest |
+hint | 0x82222B88 | manifest |
+hint | 0x82361F88 | manifest |
+hint | 0x82361F98 | manifest |
+hint | 0x8238DC20 | manifest |
+hint | 0x823DF128 | manifest |
+hint | 0x82460BC0 | manifest |
+hint | 0x82465138 | manifest |
+hint | 0x824F36A0 | manifest |
+hint | 0x825E77A8 | manifest |
+hint | 0x825ED088 | manifest |
+hint | 0x82624DF8 | manifest |
+hint | 0x82644640 | manifest |
+hint | 0x826D8960 | manifest |
+hint | 0x827A1F70 | manifest |
+hint | 0x827DE440 | manifest |
+hint | 0x828062A8 | manifest |
+hint | 0x8283DB80 | manifest |
+hint | 0x8283DBA0 | manifest |
+hint | 0x8283DC30 | manifest |
+hint | 0x8283DC78 | manifest |
+hint | 0x8283DE78 | manifest |
+hint | 0x8294D528 | manifest |
+hint | 0x8294E9F0 | manifest |
+hint | 0x8294EA10 | manifest |
+hint | 0x8294EA30 | manifest |
+hint | 0x8294EA70 | manifest |
+hint | 0x8294EA90 | manifest |
+hint | 0x8295C798 | manifest |
+hint | 0x8295C7E0 | manifest |
+hint | 0x8295F730 | manifest |
+hint | 0x8295F750 | manifest |
+hint | 0x8295F770 | manifest |
+hint | 0x8295F780 | manifest |
+hint | 0x8295F788 | manifest |
+hint | 0x8295F7A0 | manifest |
+hint | 0x82962888 | manifest |
+hint | 0x82962890 | manifest |
+hint | 0x829628B8 | manifest |
+hint | 0x829628C8 | manifest |
+hint | 0x829FAE80 | manifest |
+hint | 0x829FAF88 | manifest |
+hint | 0x829FAFB0 | manifest |
+hint | 0x829FAFD8 | manifest |
+hint | 0x829FB000 | manifest |
+hint | 0x829FB430 | manifest |
+hint | 0x82A50F88 | manifest |
+hint | 0x82AC6DE8 | manifest |
+hint | 0x82AC6F38 | manifest |
+hint | 0x82B32480 | manifest |
+hint | 0x82B32498 | manifest |
+hint | 0x82B324A0 | manifest |
+hint | 0x82B324A8 | manifest |
+hint | 0x82B36D68 | manifest |
+hint | 0x82B3F378 | manifest |
+hint | 0x82B3F4F8 | manifest |
+hint | 0x82B3F500 | manifest |
+hint | 0x82B3F508 | manifest |
+hint | 0x82B3F510 | manifest |
+hint | 0x82B3F520 | manifest |
+hint | 0x82B3F578 | manifest |
+hint | 0x82B3F608 | manifest |
+hint | 0x82B3F620 | manifest |
+hint | 0x82B42BF8 | manifest |
+hint | 0x82B42C00 | manifest |
+hint | 0x82B42C08 | manifest |
+hint | 0x82B42C10 | manifest |
+hint | 0x82B42C18 | manifest |
+hint | 0x82B42C28 | manifest |
+hint | 0x82B42C30 | manifest |
+hint | 0x82B58AF8 | manifest |
+hint | 0x82B58B10 | manifest |
+hint | 0x82B58B20 | manifest |
+hint | 0x82B58B28 | manifest |
+hint | 0x82B58B30 | manifest |
+hint | 0x82B58B38 | manifest |
+hint | 0x82B58B48 | manifest |
+hint | 0x82B58B70 | manifest |
+hint | 0x82B58B78 | manifest |
+hint | 0x82B58B80 | manifest |
+hint | 0x82B58BA0 | manifest |
+hint | 0x82B58BB8 | manifest |
+hint | 0x82B58BC0 | manifest |
+hint | 0x82B58BC8 | manifest |
+hint | 0x82B58BD0 | manifest |
+hint | 0x82B58BE0 | manifest |
+hint | 0x82B58BE8 | manifest |
+hint | 0x82B58C08 | manifest |
+hint | 0x82B58C10 | manifest |
+hint | 0x82B58C20 | manifest |
+hint | 0x82B58C28 | manifest |
+hint | 0x82B74BA0 | manifest |
+hint | 0x82B74BC8 | manifest |
+hint | 0x82B74BD0 | manifest |
+hint | 0x82B74BE8 | manifest |
+hint | 0x82B74C00 | manifest |
+hint | 0x82B79C00 | manifest |
+hint | 0x82B79C08 | manifest |
+hint | 0x82B8ECC0 | manifest |
+hint | 0x82B8ECC8 | manifest |
+hint | 0x82B94980 | manifest |
+hint | 0x82B94990 | manifest |
+hint | 0x82B94998 | manifest |
+hint | 0x82B949A0 | manifest |
+hint | 0x82B97ED8 | manifest |
+hint | 0x82B9F9E8 | manifest |
+hint | 0x82C799D0 | manifest |
+hint | 0x82CC2688 | manifest |
+hint | 0x82CD8610 | manifest |
+hint | 0x82D00AF0 | manifest |
+hint | 0x82D00B50 | manifest |
+hint | 0x82D00B80 | manifest |
+hint | 0x82D00BA8 | manifest |
+hint | 0x82D00BB0 | manifest |
+hint | 0x82D00BB8 | manifest |
+hint | 0x82D00BC8 | manifest |
+hint | 0x82D00BD8 | manifest |
+hint | 0x82D00BE8 | manifest |
+hint | 0x82D00BF8 | manifest |
+hint | 0x82D00C08 | manifest |
+hint | 0x82D00C18 | manifest |
+hint | 0x82D00C28 | manifest |
+hint | 0x82D00C38 | manifest |
+hint | 0x82D00C78 | manifest |
+hint | 0x82D00C80 | manifest |
+hint | 0x82D00C88 | manifest |
+hint | 0x82D00C90 | manifest |
+hint | 0x82D00CB8 | manifest |
+hint | 0x82D00D08 | manifest |
+hint | 0x82D00D20 | manifest |
+hint | 0x82D00D58 | manifest |
+hint | 0x82D00D88 | manifest |
+hint | 0x82D00DA0 | manifest |
+hint | 0x82D00DB8 | manifest |
+hint | 0x82D00DF0 | manifest |
+hint | 0x82D00E08 | manifest |
+hint | 0x82D00EB8 | manifest |
+hint | 0x82D06E20 | manifest |
+hint | 0x82D9BED8 | manifest |
+hint | 0x82DBD670 | manifest |
+hint | 0x82DBD678 | manifest |
+hint | 0x82DBD688 | manifest |
+hint | 0x82DC1580 | manifest |
+hint | 0x82DC1598 | manifest |
+hint | 0x82DC15B0 | manifest |
+hint | 0x82DC15C8 | manifest |
+hint | 0x82DE2490 | manifest |
+hint | 0x82DF1F10 | manifest |
+hint | 0x82DF2680 | manifest |
+hint | 0x82DFFD70 | manifest |
+hint | 0x82E1D4A0 | manifest |
+hint | 0x82E26B48 | manifest |
+hint | 0x82E26BA8 | manifest |
+hint | 0x82E2B990 | manifest |
+hint | 0x82E2DD60 | manifest |
+hint | 0x82E2DD80 | manifest |
+hint | 0x82E2DED0 | manifest |
+hint | 0x82E2DF00 | manifest |
+hint | 0x82E2DF30 | manifest |
+hint | 0x82E70B88 | manifest |
+hint | 0x82E70BC0 | manifest |
+hint | 0x82E9D7F8 | manifest |
+hint | 0x82E9D800 | manifest |
+hint | 0x82BFA4C0 | manifest |
+hint | 0x82ADBEF0 | manifest |
+hint | 0x82361F78 | manifest |
+hint | 0x828229B8 | manifest |
+hint | 0x829FB450 | manifest |
+hint | 0x829FB460 | manifest |
+hint | 0x829FB470 | manifest |
+hint | 0x829FB480 | manifest |
+hint | 0x829FB490 | manifest |
+hint | 0x829FB4A0 | manifest |
+hint | 0x829FB4B0 | manifest |
+hint | 0x829FB4C0 | manifest |
+hint | 0x829FB4D0 | manifest |
+hint | 0x829FB4E0 | manifest |
+hint | 0x82A68CD0 | manifest |
+hint | 0x82BADC78 | manifest |
+hint | 0x82BADC88 | manifest |
+hint | 0x82D3D598 | manifest |
+hint | 0x82DC0D90 | manifest |
+hint | 0x82B32490 | manifest |
+code | 0x82176A80 | src/gow2_launch.cpp:2 | // data (sub_8280F0B0 reads XamLoaderGetLaunchData; prefix string at 0x82176A80, job 021). So
+code | 0x8280F0B0 | src/gow2_launch.cpp:2 | // data (sub_8280F0B0 reads XamLoaderGetLaunchData; prefix string at 0x82176A80, job 021). So
+code | 0x82176A80 | src/layer2_ue3/launch_command_line.cpp:2 | // launch data (in Gears 2: sub_8280F0B0 reads XamLoaderGetLaunchData; prefix string at 0x82176A80, job 021). 
+code | 0x8280F0B0 | src/layer2_ue3/launch_command_line.cpp:2 | // launch data (in Gears 2: sub_8280F0B0 reads XamLoaderGetLaunchData; prefix string at 0x82176A80, job 021). 
+code | 0x8280E7FC | src/layer3_gow2/game_patches.cpp:4 | //  - --gow2_patch_aniso16: 0x8280E7FC `lwz r5,0x198(r30)` (the anisotropy setting) -> after it, r5 = 16.
+code | 0x827F9148 | src/layer3_gow2/game_patches.cpp:5 | //  - --gow2_patch_skip_coalesced_check: 0x82AA8904 `li r3,1` -> after it, r3 = 0; and 0x827F9148 (function en
+code | 0x82AA8904 | src/layer3_gow2/game_patches.cpp:5 | //  - --gow2_patch_skip_coalesced_check: 0x82AA8904 `li r3,1` -> after it, r3 = 0; and 0x827F9148 (function en
+code | 0x83123468 | src/layer3_gow2/game_patches.cpp:7 | //  - --gow2_patch_show_fps: sets the two engine flags at 0x83123468 / 0x83123470 (FPS and frame time) to 1 at
+code | 0x83123470 | src/layer3_gow2/game_patches.cpp:7 | //  - --gow2_patch_show_fps: sets the two engine flags at 0x83123468 / 0x83123470 (FPS and frame time) to 1 at
+code | 0x8280D534 | src/layer3_gow2/game_patches.cpp:8 | //  - --gow2_patch_texture_pool_mb (Canary "Texture Streaming Fix" part 1, boma; Canary uses 196): 0x8280D534
+code | 0x8252D73C | src/layer3_gow2/game_patches.cpp:16 | //      0x8252D73C `lfs f0,1032(r7)` (the field-of-view factor) -> after it, f0 = 0.0106355;
+code | 0x8252D608 | src/layer3_gow2/game_patches.cpp:17 | //      0x8252D608 `beq cr6,0x8252D69C` -> always taken (ConstrainAspectRatio off);
+code | 0x8252D69C | src/layer3_gow2/game_patches.cpp:17 | //      0x8252D608 `beq cr6,0x8252D69C` -> always taken (ConstrainAspectRatio off);
+code | 0x82806B10 | src/layer3_gow2/game_patches.cpp:18 | //      0x82806B10 `li r11,720` (the scene buffer height after the video-mode query) -> after it, r11 = 550;
+code | 0x826E3728 | src/layer3_gow2/game_patches.cpp:19 | //      0x826E3728 `bctrl` (the UI scene viewport's height getter) -> after it, r3 = 564 (the patch replaces t
+code | 0x821D0B28 | src/layer3_gow2/game_patches.cpp:20 | //      the .rdata float at 0x821D0B28 (the widescreen aspect used at 0x82806B04) -> 2.33333, written at load.
+code | 0x82806B04 | src/layer3_gow2/game_patches.cpp:20 | //      the .rdata float at 0x821D0B28 (the widescreen aspect used at 0x82806B04) -> 2.33333, written at load.
+code | 0x82977688 | src/layer3_gow2/game_patches.cpp:51 | "Jobs 225/227 (notes/60), default on since job 227: the XDK's wait-for-the-GPU step (sub_82977688) - 0 as the 
+code | 0x82807588 | src/layer3_gow2/game_patches.cpp:55 | "Jobs 231/232 (notes/60): sub_82807588 (UE3's block-until-a-query-has-its-answer) polls ONE query in "
+code | 0x829783A8 | src/layer3_gow2/game_patches.cpp:116 | // Job 178: the title's render thread polls the GPU (a D3D query's GetData, sub_829783A8, called in a loop by
+code | 0x82807588 | src/layer3_gow2/game_patches.cpp:117 | // sub_82807588) flat out - ~45% of a core in the call alone. 1: a short pause per poll (frees the core's othe
+code | 0x82807588 | src/layer3_gow2/game_patches.cpp:131 | // Job 231 (notes/60): sub_82807588 is UE3's wait for one query's answer: GetData(query, out, 4, 0) once, then
+code | 0x828075BC | src/layer3_gow2/game_patches.cpp:132 | // GetData(..., FLUSH) in a loop (0x828075BC-0x828075D8) until it returns 0, timing the stall into a global co
+code | 0x828075D8 | src/layer3_gow2/game_patches.cpp:132 | // GetData(..., FLUSH) in a loop (0x828075BC-0x828075D8) until it returns 0, timing the stall into a global co
+code | 0x828075BC | src/layer3_gow2/game_patches.cpp:135 | // GPU side writes - so the retry can sleep on XenosNotifyGuestWrite. The hook sits on the loop head (0x828075
+code | 0x82977688 | src/layer3_gow2/game_patches.cpp:153 | // Job 225 (notes/60): sub_82977688 is one step of the XDK's wait for the GPU (sub_8298C2A0 calls it until the
+code | 0x8298C2A0 | src/layer3_gow2/game_patches.cpp:153 | // Job 225 (notes/60): sub_82977688 is one step of the XDK's wait for the GPU (sub_8298C2A0 calls it until the
+code | 0x829776A0 | src/layer3_gow2/game_patches.cpp:156 | // also when the frame rate is capped. The hook sits on the cctpl at 0x829776A0 and, when on, replaces the del
+code | 0x829776CC | src/layer3_gow2/game_patches.cpp:157 | // (jump to the cctpm at 0x829776CC): the first 64 steps of a wait just pause (short waits stay fast), after t
+code | 0x824A2E78 | src/layer3_gow2/game_patches.cpp:169 | // Stage 7.4 (notes/56): sub_824A2E78 is the engine's GetMaxTickRate: with frame-rate smoothing on it loads
+code | 0x824A2E94 | src/layer3_gow2/game_patches.cpp:170 | // MaxSmoothedFrameRate (`lfs f1,1284(r3)` at 0x824A2E94) and returns it; this hook runs after that load. The 
+code | 0x82826EC8 | src/layer3_gow2/game_patches.cpp:209 | // a null pointer in sub_828307A0 (`lwz r11,4(r4)` then `lwz r9,4(r11)`), called from sub_82826EC8 with r4 = t
+code | 0x828307A0 | src/layer3_gow2/game_patches.cpp:209 | // a null pointer in sub_828307A0 (`lwz r11,4(r4)` then `lwz r9,4(r11)`), called from sub_82826EC8 with r4 = t
+code | 0x828307A0 | src/layer3_gow2/game_patches.cpp:214 | "Test only: sub_828307A0 returns at once when its second argument's +4 pointer is null (Horde crash, "
+code | 0x828307A0 | src/layer3_gow2/game_patches.cpp:238 | REXLOG_INFO("gow2_horde_guard: #{} at swap {}: sub_828307A0(r3 {:08X} vtable {:08X}, r4 {:08X}) - r4+4 is not 
+code | 0x83123468 | src/layer3_gow2/game_patches.cpp:287 | for (uint32_t addr : {0x83123468u, 0x83123470u}) {
+code | 0x83123470 | src/layer3_gow2/game_patches.cpp:287 | for (uint32_t addr : {0x83123468u, 0x83123470u}) {
+code | 0x821D0B28 | src/layer3_gow2/game_patches.cpp:293 | Gow2WriteGuestFloat(runtime, 0x821D0B28u, 2.33333f, "gow2_ultrawide: widescreen aspect");
+code | 0x82806A44 | src/layer3_gow2/untiled.cpp:2 | // at 0x82806A44 calls this just before the game stores 1 into its tiling flag (0x83122EA4) at startup; cleari
+code | 0x83122EA4 | src/layer3_gow2/untiled.cpp:2 | // at 0x82806A44 calls this just before the game stores 1 into its tiling flag (0x83122EA4) at startup; cleari
+code | 0x83122EA4 | src/layer3_gow2/untiled.cpp:14 | REXLOG_INFO("gow2_untiled: tiling flag cleared at startup (0x83122EA4 = 0)");

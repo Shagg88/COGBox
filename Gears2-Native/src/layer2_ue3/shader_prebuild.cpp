@@ -1,0 +1,342 @@
+// Layer 2 (Unreal Engine 3, both games): patch 0068 - shaders built while the game loads an area (Shagg: "if it's able
+// to build behind the actual loading screen"). Our code (MIT).
+//
+// The renderer meets an area's shaders at its first draws: on a first visit ~350 new pipelines at 15-35 ms each in
+// the driver (job 358), which the 0063 hold covers with a 2-3 s pause. But the shaders are in the game's own files,
+// and the game opens those files seconds before the first draw. So when the game opens a package (SDK patch 32's
+// file-open observer), a background thread here reads the same file from disk, unpacks it and finds the shader
+// containers, and hands each pixel shader's microcode to the renderer, which translates it exactly as a draw would
+// and has the driver compile it in a warm-only pipeline (layer 0, xenos/dev_tools.h XenosPrebuildPixelShader). The
+// driver keeps each compiled stage (job 362c [V]), so the real pipelines later cost ~0.1 ms. Nothing is written to
+// disk and nothing ships: every player's own game files are the source.
+//
+// Package layout (UE3 on the 360; found with the Gears 3 chat, jobs 365 / 366 and its jobs 004 / 006):
+// - Compressed chunks: tag 0x9E2A83C1, block size (a power of two, 0x20000 here), compressed and uncompressed totals,
+//   then per block [compressed size][uncompressed size], then the blocks. Each block is XMemCompress-framed LZX
+//   (frames "FF uu uu cc cc" or "cc cc"; window 128 KB). Found by scanning for the tag with its totals checked, so the
+//   per-game package summary layout does not matter.
+// - Shader containers: magic 0x102A1100 (pixel) / 0x102A1101 (vertex), [1] offset to the microcode, [2] its size.
+//   Gears 2: each container follows a TArray count (offset + size). Gears 3: inside SeekFreeShaderCache, in inner
+//   XMemCompress blocks ([u32 uncompressed][u32 compressed] then frames), packed back to back.
+// - Hash key: XXH3-64 of the big-endian microcode, the same key as the renderer's.
+// Pixel shaders only: the XDK patches vertex shaders at bind, so 0 of 218 drawn vertex shaders match the files (job 367
+// [V]); ~70% of drawn pixel shaders do.
+// LZX: the SDK's own lzx_decompress (libmspack, as for XEX images). It lacks the "no pad after an odd uncompressed
+// block" fix the Gears 3 chat's tool has, so the few blocks that need it are skipped (fewer shaders, nothing wrong).
+#include <ue3/shader_prebuild.h>
+
+#include <xenos/dev_tools.h>
+
+#include <rex/cvar.h>
+#include <rex/filesystem/vfs.h>
+#include <rex/hash.h>
+#include <rex/logging/macros.h>
+#include <rex/system/lzx.h>
+
+#include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <cstring>
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <unordered_set>
+#include <vector>
+
+REXCVAR_DEFINE_BOOL(ue3_shader_prebuild, false, "Gears2",
+                    "Patch 0068: when the game opens a package, read its pixel shaders from the file and have our "
+                    "renderer build them before their first draw (needs SDK patch 32 and the DXBC shader path). "
+                    "Patch 0069: off by default until it measurably shortens first-visit holds (job 368b: 97% of a "
+                    "cold area's new pixel shaders were in the opened packages, but ~10,000 were offered per load, so "
+                    "most were not built in time, and building them doubled a cold ch10's frame time)");
+
+namespace {
+
+uint32_t Be32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
+uint32_t Be16(const uint8_t* p) { return uint32_t(p[0]) << 8 | p[1]; }
+
+// One XMemCompress-framed LZX block into out (out.size() bytes). True = decoded.
+bool Lzx(const uint8_t* in, size_t n, uint8_t* out, size_t out_size, std::vector<uint8_t>& scratch) {
+  scratch.clear();
+  size_t p = 0;
+  while (p + 2 <= n) {
+    size_t csz;
+    if (in[p] == 0xFF) {
+      if (p + 5 > n) break;
+      csz = Be16(in + p + 3);
+      p += 5;
+    } else {
+      csz = Be16(in + p);
+      p += 2;
+    }
+    if (!csz || p + csz > n) break;
+    scratch.insert(scratch.end(), in + p, in + p + csz);
+    p += csz;
+  }
+  if (scratch.empty()) return false;
+  return lzx_decompress(scratch.data(), scratch.size(), out, out_size, 0x20000, nullptr, 0) == 0;
+}
+
+// The frames of an XMemCompress stream of `c` bytes add up exactly to `c` input bytes and `u` output bytes (a frame
+// "FF uu uu cc cc" gives its output size, a plain "cc cc" frame is 32 KB). A cheap test before trying to decode.
+bool FramesFit(const uint8_t* in, size_t c, size_t u) {
+  size_t p = 0, out = 0;
+  while (p < c && out < u) {
+    size_t csz, usz;
+    if (in[p] == 0xFF) {
+      if (p + 5 > c) return false;
+      usz = Be16(in + p + 1);
+      csz = Be16(in + p + 3);
+      p += 5;
+    } else {
+      if (p + 2 > c) return false;
+      usz = 0x8000;
+      csz = Be16(in + p);
+      p += 2;
+    }
+    if (!csz || !usz || p + csz > c) return false;
+    p += csz;
+    out += std::min(usz, u - out);
+  }
+  return out == u && c - p <= 16;  // a few bytes may follow the last frame (9 seen in Gears 3)
+}
+
+struct ScanResult {
+  uint32_t chunks = 0, failed_chunks = 0, nested = 0, pixel = 0, vertex = 0, new_pixel = 0;
+  uint32_t offered[2] = {};  // pixel shaders handed over per variant (see Containers)
+};
+
+class PackageScanner {
+ public:
+  explicit PackageScanner(std::unordered_set<uint64_t>& seen) : seen_(seen) {}
+  // Which variants to hand over (Containers); both by default.
+  void SetVariants(bool whole, bool code_only) {
+    offer_[0] = whole;
+    offer_[1] = code_only;
+  }
+  ScanResult Scan(const std::vector<uint8_t>& b) {
+    r_ = {};
+    std::vector<uint8_t> all;
+    const size_t n = b.size();
+    for (size_t i = 0; i + 24 <= n; ++i) {
+      if (b[i] != 0x9E || b[i + 1] != 0x2A || b[i + 2] != 0x83 || b[i + 3] != 0xC1) continue;
+      const uint32_t bsz = Be32(&b[i + 4]), tc = Be32(&b[i + 8]), tu = Be32(&b[i + 12]);
+      if (bsz < 0x8000 || bsz > 0x100000 || (bsz & (bsz - 1)) || !tu || tu > 0x10000000u || !tc || tc > n) continue;
+      const uint32_t nb = (tu + bsz - 1) / bsz;
+      if (i + 16 + size_t(nb) * 8 > n) continue;
+      const uint8_t* blk = &b[i + 16];
+      const uint8_t* data = blk + size_t(nb) * 8;
+      uint64_t sumc = 0, sumu = 0;
+      for (uint32_t k = 0; k < nb; ++k) {
+        sumc += Be32(blk + k * 8);
+        sumu += Be32(blk + k * 8 + 4);
+      }
+      if (sumc != tc || sumu != tu || size_t(data - b.data()) + tc > n) continue;
+      const size_t base = all.size();
+      all.resize(base + tu);
+      size_t w = 0;
+      bool ok = true;
+      for (uint32_t k = 0; k < nb; ++k) {
+        const uint32_t cs = Be32(blk + k * 8), us = Be32(blk + k * 8 + 4);
+        // Each block is compressed on its own, so a block that fails to decode is zeros and the next ones still count.
+        if (w + us > tu) {
+          ok = false;
+          break;
+        }
+        if (!Lzx(data, cs, &all[base + w], us, scratch_)) {
+          ok = false;
+          std::memset(&all[base + w], 0, us);
+        }
+        data += cs;
+        w += us;
+      }
+      ++r_.chunks;
+      if (!ok) ++r_.failed_chunks;
+      i = size_t(data - b.data()) - 1;
+    }
+    if (r_.chunks) {
+      Containers(all.data(), all.size(), false);
+      Nested(all.data(), all.size());
+    } else {
+      Containers(b.data(), n, false);  // not a compressed package (the global shader cache)
+    }
+    return r_;
+  }
+
+ private:
+  // One pixel shader record. Its microcode region is [literal constants][code]: the header word before the first
+  // 0x1000xx00 word is the code size and the one before that the constants' size (they add up to the region's size).
+  // Which part a draw shows the GPU differs by game [V, 2026-10-23 against the drawn records]: Gears 2 mostly the
+  // whole region (Hospital_03: 187 whole vs 16 code-only), Gears 3 the code only (5 vs 120). Both are handed over
+  // until the renderer has seen which one this game draws (Ue3: XenosPrebuildVariantHits).
+  void Add(bool vertex, const uint8_t* rec, uint32_t off, uint32_t size) {
+    if (vertex) {
+      ++r_.vertex;
+      return;
+    }
+    ++r_.pixel;
+    const uint8_t* region = rec + off;
+    Offer(0, region, size);
+    for (uint32_t w = 3; w + 1 < off / 4; ++w) {
+      if ((Be32(rec + w * 4) & 0xFFFF00FFu) != 0x10000000u) continue;
+      const uint32_t consts = Be32(rec + (w - 2) * 4), code = Be32(rec + (w - 1) * 4);
+      if (consts && !(consts & 3) && code && consts + code == size) Offer(1, region + consts, code);
+      break;
+    }
+  }
+  void Offer(uint32_t variant, const uint8_t* code, uint32_t size) {
+    if (!offer_[variant] || !seen_.insert(XXH3_64bits(code, size)).second) return;
+    ++r_.new_pixel;
+    ++r_.offered[variant];
+    XenosPrebuildPixelShader(code, size, variant);
+  }
+  // Shader containers in a buffer. loose = packed back to back (no TArray count before each).
+  uint32_t Containers(const uint8_t* a, size_t n, bool loose) {
+    uint32_t count = 0;
+    for (size_t i = loose ? 0 : 4; i + 12 <= n; ++i) {
+      if (a[i] != 0x10 || a[i + 1] != 0x2A || a[i + 2] != 0x11 || a[i + 3] > 1) continue;
+      const uint32_t off = Be32(a + i + 4), sz = Be32(a + i + 8);
+      if (!sz || sz > 262144 || (sz & 3) || off < 12 || off > 65536 || i + off + sz > n) continue;
+      bool ok = false;
+      if (i >= 4) {
+        const uint32_t cbe = Be32(a + i - 4);
+        const uint32_t cle = uint32_t(a[i - 4]) | uint32_t(a[i - 3]) << 8 | uint32_t(a[i - 2]) << 16 |
+                             uint32_t(a[i - 1]) << 24;
+        ok = off + sz == cbe || off + sz == cle;
+      }
+      if (!ok && loose) {
+        const size_t e = i + off + sz;
+        ok = e + 4 > n || (a[e] == 0x10 && a[e + 1] == 0x2A && a[e + 2] == 0x11);
+      }
+      if (!ok) continue;
+      Add(a[i + 3] != 0, a + i, off, sz);
+      ++count;
+    }
+    return count;
+  }
+  // Gears 3: LZX blocks inside the decompressed package ([u32 U][u32 C] then frames).
+  void Nested(const uint8_t* b, size_t n) {
+    std::vector<uint8_t> out;
+    for (size_t i = 12; i + 5 <= n; ++i) {
+      if (b[i] != 0xFF && (b[i - 12] | b[i - 11])) continue;
+      const uint32_t U = Be32(b + i - 8), C = Be32(b + i - 4);
+      if (U < 64 || U > 0x1000000u || C < 8 || C > U + 1024 || i + C > n) continue;
+      const uint32_t first = U < 0x8000 ? U : 0x8000;
+      if (b[i] == 0xFF) {
+        if (Be16(b + i + 1) != first || Be16(b + i + 3) + 5 > C) continue;
+      } else {
+        const uint32_t cs = Be16(b + i);
+        if (U < 0x8000 || !cs || cs + 2 > C) continue;
+      }
+      if (!FramesFit(b + i, C, U)) continue;
+      out.resize(U);
+      if (Lzx(b + i, C, out.data(), U, scratch_) && Containers(out.data(), U, true)) {
+        ++r_.nested;
+        i += C - 1;
+      }
+    }
+  }
+  std::unordered_set<uint64_t>& seen_;
+  bool offer_[2] = {true, true};
+  std::vector<uint8_t> scratch_;
+  ScanResult r_;
+};
+
+#ifdef REX_FILESYSTEM_FILE_OPEN_OBSERVER
+struct Prebuild {
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::deque<std::filesystem::path> queue;
+  std::unordered_set<std::string> opened;  // lower-case file names already queued (each package once per session)
+  std::thread thread;
+  std::unordered_set<uint64_t> seen;  // reader thread: pixel shader hashes already handed over
+};
+Prebuild* g_prebuild = nullptr;  // never destroyed (the thread runs until the process exits)
+
+std::string Lower(std::string s) {
+  for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
+  return s;
+}
+
+// The opening thread (the game's loader): copy the path and return.
+void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host_path) {
+  (void)guest_path;
+  if (!host_path || !g_prebuild) return;
+  const std::string name = Lower(host_path->filename().string());
+  const bool package = name.size() > 4 && name.ends_with(".xxx");
+  const bool global_cache = name.ends_with(".bin") && name.find("shadercache") != std::string::npos;
+  if (!package && !global_cache) return;
+  {
+    std::lock_guard<std::mutex> lock(g_prebuild->mutex);
+    if (!g_prebuild->opened.insert(name).second) return;
+    g_prebuild->queue.push_back(*host_path);
+  }
+  g_prebuild->cv.notify_one();
+}
+
+void ReaderThread() {
+  PackageScanner scanner(g_prebuild->seen);
+  uint64_t files = 0, pixel = 0, fresh = 0;
+  for (;;) {
+    std::filesystem::path path;
+    {
+      std::unique_lock<std::mutex> lock(g_prebuild->mutex);
+      g_prebuild->cv.wait(lock, [] { return !g_prebuild->queue.empty(); });
+      path = std::move(g_prebuild->queue.front());
+      g_prebuild->queue.pop_front();
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    std::vector<uint8_t> data;
+    {
+      std::ifstream f(path, std::ios::binary);
+      if (!f) continue;
+      f.seekg(0, std::ios::end);
+      const std::streamoff size = f.tellg();
+      if (size <= 0 || size > (std::streamoff(1) << 31)) continue;
+      data.resize(size_t(size));
+      f.seekg(0, std::ios::beg);
+      if (!f.read(reinterpret_cast<char*>(data.data()), size)) continue;
+    }
+    // Once enough new draws have used prebuilt shaders, stop offering a variant this game never draws (under 5%).
+    const uint64_t h0 = XenosPrebuildVariantHits(0), h1 = XenosPrebuildVariantHits(1), hn = h0 + h1;
+    scanner.SetVariants(hn < 32 || h0 * 20 >= hn, hn < 32 || h1 * 20 >= hn);
+    const ScanResult r = scanner.Scan(data);
+    ++files;
+    pixel += r.pixel;
+    fresh += r.new_pixel;
+    if (r.pixel || r.failed_chunks)
+      REXLOG_INFO("ue3_shader_prebuild: {}: {:.1f} MB, {} chunk(s) ({} with an unreadable block), {} inner block(s), "
+                  "{} pixel / {} vertex shader(s), {} new pixel shader(s) handed to the renderer (whole {} / code "
+                  "only {}), {:.0f} ms | {} file(s) read, {} handed over in all | draws so far used prebuilt whole "
+                  "{} / code only {}",
+                  path.filename().string(), double(data.size()) / 1048576.0, r.chunks, r.failed_chunks, r.nested,
+                  r.pixel, r.vertex, r.new_pixel, r.offered[0], r.offered[1],
+                  std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(), files,
+                  fresh, h0, h1);
+  }
+}
+#endif
+
+}  // namespace
+
+void Ue3InstallShaderPrebuildIfRequested() {
+  if (!REXCVAR_GET(ue3_shader_prebuild)) return;
+  if (!XenosPrebuildWanted()) {
+    REXLOG_INFO("ue3_shader_prebuild: off - our renderer is not running the DXBC shader path");
+    return;
+  }
+#ifdef REX_FILESYSTEM_FILE_OPEN_OBSERVER
+  g_prebuild = new Prebuild();
+  g_prebuild->thread = std::thread(ReaderThread);
+  rex::filesystem::SetFileOpenObserver(&OnFileOpened);
+  REXLOG_INFO("ue3_shader_prebuild: on - packages the game opens are read for their pixel shaders (patch 0068)");
+#else
+  REXLOG_WARN("ue3_shader_prebuild: this SDK has no file-open observer (SDK patch 32); nothing is prebuilt");
+#endif
+}

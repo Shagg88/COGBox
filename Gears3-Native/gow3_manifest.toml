@@ -1,0 +1,297 @@
+# Gears3-Native recompiler manifest (rexglue). Started from `rexglue init` output (2026-10-21).
+# Hints are added only when the recompiler or the running game reports a problem; each says where it came from.
+
+[project]
+name = "gow3"
+sdk_version = "0.10.0"
+game_root = "game/extracted"
+
+[entrypoint]
+file_path = "game/extracted/default.xex"
+out_directory_path = "generated/default"
+includes = []
+
+[entrypoint.functions]
+# Codegen run 1 (2026-10-21): "UnresolvedCall ... b <target> - target not in any function" - branches used as tail
+# calls into code no function claims. Same fix as Gears 2's first hint (0x82D0C758).
+0x82DB80F0 = {}   # from 0x82DB825C
+0x82DCE010 = {}   # from 0x82DD2B34
+
+# Function-pointer table scan (tools/scan_vtables.py, from Gears 2's job 014, plus a Gears 3 rule for tables of tiny
+# methods), run on the codegen image dump, 2026-10-22. Job 007's first boot died on one of these:
+# "[FATAL] Call to invalid or unregistered function at guest address 0x82B21F30" (a vtable entry at 0x82001040 that
+# discovery had merged into sub_82B21F00). Every entry below follows a function-ending b / bctr. Gears 2's note: low
+# risk - a start inside a function makes the first part continue into the second, so behaviour is unchanged even if
+# one is a false positive. Left out: 4 entries of exception scope tables (0x8224ADA0/A8, 0x8224AF40/50) that point to
+# resume points inside SEH functions marked by 'mr r8,r8' - a split there gave codegen an unresolved branch
+# (0x82CD7074 -> 0x82CD6FD0). The scanner now skips such targets.
+0x822A3D68 = {}   # 8 table ref(s), first at 0x820CECE4; inside sub_822A3D58 (+0x10); first word 81630000
+0x822BE928 = {}   # 1 table ref(s), first at 0x8217A2F8; inside sub_822BE900 (+0x28); first word 81040000
+0x822CDF50 = {}   # 1 table ref(s), first at 0x83399BE0; inside sub_822CDF20 (+0x30); first word 3D60833D
+0x822DC840 = {}   # 1 table ref(s), first at 0x83399FC8; inside sub_822DC818 (+0x28); first word 81640018
+0x823560C0 = {}   # 18 table ref(s), first at 0x820DEDBC; inside sub_823560B0 (+0x10); first word 2F040000
+0x823565B0 = {}   # 11 table ref(s), first at 0x820E0B18; inside sub_823565A0 (+0x10); first word 816301D8
+0x823824A0 = {}   # 2 table ref(s), first at 0x820EDFBC; inside sub_82382490 (+0x10); first word 81630000
+0x823824B0 = {}   # 8 table ref(s), first at 0x820EDFC0; inside sub_82382490 (+0x20); first word 81630000
+0x823824C0 = {}   # 1 table ref(s), first at 0x820EDFCC; inside sub_82382490 (+0x30); first word 81630000
+0x823824D0 = {}   # 30 table ref(s), first at 0x820EDFC4; inside sub_82382490 (+0x40); first word 81630000
+0x823824E0 = {}   # 7 table ref(s), first at 0x820EDFC8; inside sub_82382490 (+0x50); first word 81630000
+0x8238C058 = {}   # 1 table ref(s), first at 0x820EAA1C; inside sub_8238C038 (+0x20); first word 3D608344
+0x8238C4A0 = {}   # 1 table ref(s), first at 0x820EAA6C; inside sub_8238C480 (+0x20); first word 3D608344
+0x8239D7A0 = {}   # 1 table ref(s), first at 0x820F1DE4; inside sub_8239D790 (+0x10); first word 81630000
+0x823B4428 = {}   # 7 table ref(s), first at 0x820F130C; inside sub_823B4418 (+0x10); first word 81630000
+0x823B4438 = {}   # 3 table ref(s), first at 0x820F1310; inside sub_823B4418 (+0x20); first word 81630028
+0x82444780 = {}   # 1 table ref(s), first at 0x82113324; inside sub_82444778 (+0x8); first word 3863FE3C
+0x82444790 = {}   # 2 table ref(s), first at 0x82112EC4; inside sub_82444788 (+0x8); first word 3863FFBC
+0x8244C360 = {}   # 1 table ref(s), first at 0x82113AFC; inside sub_8244C358 (+0x8); first word 3863FFBC
+0x82458520 = {}   # 11 table ref(s), first at 0x82124178; inside sub_824584F8 (+0x28); first word 816300CC
+0x82466E48 = {}   # 3 table ref(s), first at 0x82124E1C; inside sub_82466DA8 (+0xA0); first word 81630114
+0x824AD4A8 = {}   # 4 table ref(s), first at 0x821328FC; inside sub_824AD458 (+0x50); first word 81430028
+0x824B8CF0 = {}   # 1 table ref(s), first at 0x83398BAC; inside sub_824B8CE0 (+0x10); first word 81830000
+0x824B8D00 = {}   # 1 table ref(s), first at 0x821323C4; inside sub_824B8CE0 (+0x20); first word 3863FE3C
+0x824BAA48 = {}   # 1 table ref(s), first at 0x820E77E4; inside sub_824BA9D0 (+0x78); first word 3D608344
+0x8265B260 = {}   # 1 table ref(s), first at 0x8216B15C; inside sub_8265B1C8 (+0x98); first word 3D608343
+0x8271C710 = {}   # 3 table ref(s), first at 0x82068D78; inside sub_8271C700 (+0x10); first word 81630000
+0x82873B58 = {}   # 1 table ref(s), first at 0x821A9238; inside sub_82873B50 (+0x8); first word 81430090
+0x82896C58 = {}   # 3 table ref(s), first at 0x821AD324; inside sub_82896C50 (+0x8); first word 3863FF70
+0x829025F8 = {}   # 1 table ref(s), first at 0x821C212C; inside sub_82902408 (+0x1F0); first word 80E3007C
+0x82995328 = {}   # 1 table ref(s), first at 0x821D0190; inside sub_82995308 (+0x20); first word 80630004
+0x82995348 = {}   # 1 table ref(s), first at 0x821D0194; inside sub_82995308 (+0x40); first word 80630004
+0x829953D8 = {}   # 1 table ref(s), first at 0x821D01B4; inside sub_829953C0 (+0x18); first word 80630004
+0x829953F0 = {}   # 1 table ref(s), first at 0x821D01BC; inside sub_829953C0 (+0x30); first word 80630004
+0x8299D138 = {}   # 1 table ref(s), first at 0x82021F80; inside sub_8299D130 (+0x8); first word 3863FFE0
+0x829AD8B8 = {}   # 1 table ref(s), first at 0x821DFA00; inside sub_829AD7F0 (+0xC8); first word 3D40820D
+0x829DD1C0 = {}   # 1 table ref(s), first at 0x821D74D0; inside sub_829DD1B0 (+0x10); first word 3863FE14
+0x82A3A100 = {}   # 6 table ref(s), first at 0x82214340; inside sub_82A3A0F8 (+0x8); first word 3863E970
+0x82A55758 = {}   # 1 table ref(s), first at 0x82226140; inside sub_82A555E0 (+0x178); first word 3D608341
+0x82B14930 = {}   # 1 table ref(s), first at 0x82000B8C; inside sub_82B14928 (+0x8); first word 3863FFF8
+0x82B1BAA0 = {}   # 1 table ref(s), first at 0x82000CB4; inside sub_82B1BA98 (+0x8); first word 3863FFFC
+0x82B1BAB0 = {}   # 5 table ref(s), first at 0x82000C94; inside sub_82B1BAA8 (+0x8); first word 3863FFFC
+0x82B1BAB8 = {}   # 5 table ref(s), first at 0x82000CB0; inside sub_82B1BAA8 (+0x10); first word 3863FFFC
+0x82B1BAC0 = {}   # 3 table ref(s), first at 0x82000CD0; inside sub_82B1BAA8 (+0x18); first word 81630028
+0x82B1BB18 = {}   # 3 table ref(s), first at 0x82000C68; inside sub_82B1BAA8 (+0x70); first word 3863FFFC
+0x82B21EF0 = {}   # 5 table ref(s), first at 0x82000C74; inside sub_82B21EE8 (+0x8); first word 3863FFFC
+0x82B21EF8 = {}   # 1 table ref(s), first at 0x82001024; inside sub_82B21EE8 (+0x10); first word 3863FFFC
+0x82B21F08 = {}   # 2 table ref(s), first at 0x82001008; inside sub_82B21F00 (+0x8); first word 3863FFFC
+0x82B21F10 = {}   # 5 table ref(s), first at 0x82000C70; inside sub_82B21F00 (+0x10); first word 3863FFFC
+0x82B21F18 = {}   # 5 table ref(s), first at 0x82000C84; inside sub_82B21F00 (+0x18); first word 3863FFFC
+0x82B21F20 = {}   # 5 table ref(s), first at 0x82000C80; inside sub_82B21F00 (+0x20); first word 3863FFFC
+0x82B21F28 = {}   # 5 table ref(s), first at 0x82000CA8; inside sub_82B21F00 (+0x28); first word 3863FFFC
+0x82B21F30 = {}   # 1 table ref(s), first at 0x82001040; inside sub_82B21F00 (+0x30); first word 81630090
+0x82B222A0 = {}   # 1 table ref(s), first at 0x820010EC; inside sub_82B22298 (+0x8); first word 3863FFFC
+0x82B222B0 = {}   # 5 table ref(s), first at 0x82000C88; inside sub_82B222A8 (+0x8); first word 3863FFFC
+0x82B222B8 = {}   # 2 table ref(s), first at 0x82000FD8; inside sub_82B222A8 (+0x10); first word 3863FFFC
+0x82B222C0 = {}   # 5 table ref(s), first at 0x82000CA4; inside sub_82B222A8 (+0x18); first word 3863FFFC
+0x82B222C8 = {}   # 5 table ref(s), first at 0x82000CAC; inside sub_82B222A8 (+0x20); first word 3863FFFC
+0x82B222D0 = {}   # 5 table ref(s), first at 0x82000C78; inside sub_82B222A8 (+0x28); first word 3863FFFC
+0x82B222D8 = {}   # 1 table ref(s), first at 0x82001108; inside sub_82B222A8 (+0x30); first word 7C6B1B78
+0x82B229E0 = {}   # 1 table ref(s), first at 0x8200113C; inside sub_82B229D8 (+0x8); first word 3863FFE0
+0x82B22EC8 = {}   # 1 table ref(s), first at 0x82001130; inside sub_82B22EC0 (+0x8); first word 3863FFDC
+0x82B25748 = {}   # 1 table ref(s), first at 0x820012F4; inside sub_82B25690 (+0xB8); first word A1630028
+0x82B259D8 = {}   # 1 table ref(s), first at 0x820012B4; inside sub_82B259D0 (+0x8); first word 3863FFE0
+0x82B26D60 = {}   # 1 table ref(s), first at 0x8200140C; inside sub_82B26D48 (+0x18); first word 81630048
+0x82B27A08 = {}   # 1 table ref(s), first at 0x820013A4; inside sub_82B27A00 (+0x8); first word 3863FFF0
+0x82B45770 = {}   # 2 table ref(s), first at 0x82006054; inside sub_82B45760 (+0x10); first word 3863FFFC
+0x82B6D1E8 = {}   # 1 table ref(s), first at 0x82022464; inside sub_82B6D1D0 (+0x18); first word 81630004
+0x82B6D200 = {}   # 1 table ref(s), first at 0x82022468; inside sub_82B6D1D0 (+0x30); first word 81630004
+0x82B82BA8 = {}   # 1 table ref(s), first at 0x82022F70; inside sub_82B82B88 (+0x20); first word 816300B0
+0x82B82BC8 = {}   # 1 table ref(s), first at 0x82022F74; inside sub_82B82B88 (+0x40); first word 816300B0
+0x82B82C10 = {}   # 1 table ref(s), first at 0x82022F7C; inside sub_82B82BF0 (+0x20); first word 816300B0
+0x82B82C30 = {}   # 1 table ref(s), first at 0x82022F90; inside sub_82B82BF0 (+0x40); first word 806300A4
+0x82B8C670 = {}   # 7 table ref(s), first at 0x82023804; inside sub_82B8C660 (+0x10); first word 81630000
+0x82B8C680 = {}   # 7 table ref(s), first at 0x82023768; inside sub_82B8C660 (+0x20); first word 8163005C
+0x82BA6268 = {}   # 1 table ref(s), first at 0x820244B0; inside sub_82BA6250 (+0x18); first word 81630024
+0x82BA6280 = {}   # 1 table ref(s), first at 0x82024498; inside sub_82BA6250 (+0x30); first word 81630024
+0x82BA6298 = {}   # 1 table ref(s), first at 0x820244B4; inside sub_82BA6250 (+0x48); first word 81630024
+0x82BA62B0 = {}   # 1 table ref(s), first at 0x8202449C; inside sub_82BA6250 (+0x60); first word 81630024
+0x82BA62C8 = {}   # 1 table ref(s), first at 0x820244A0; inside sub_82BA6250 (+0x78); first word 81630024
+0x82BA62E0 = {}   # 1 table ref(s), first at 0x820244A4; inside sub_82BA6250 (+0x90); first word 81630024
+0x82BA62F8 = {}   # 1 table ref(s), first at 0x820244A8; inside sub_82BA6250 (+0xA8); first word 81630024
+0x82BA6310 = {}   # 1 table ref(s), first at 0x820244AC; inside sub_82BA6250 (+0xC0); first word 81630024
+0x82BC6870 = {}   # 1 table ref(s), first at 0x820286BC; inside sub_82BC6868 (+0x8); first word 3863FFF4
+0x82BC9D98 = {}   # 1 table ref(s), first at 0x82028C34; inside sub_82BC9D80 (+0x18); first word 81630000
+0x82BFC6A0 = {}   # 1 table ref(s), first at 0x82029D04; inside sub_82BFC698 (+0x8); first word 81630034
+0x82C0AD80 = {}   # 1 table ref(s), first at 0x8202AB8C; inside sub_82C0AD68 (+0x18); first word 8163001C
+0x82C0AE40 = {}   # 1 table ref(s), first at 0x8202AB94; inside sub_82C0AE28 (+0x18); first word 8163001C
+0x82C0AE58 = {}   # 1 table ref(s), first at 0x8202AB98; inside sub_82C0AE28 (+0x30); first word 8163001C
+0x82C2AF68 = {}   # 1 table ref(s), first at 0x8202BFA4; inside sub_82C2AF00 (+0x68); first word 81630018
+0x82C2AFA0 = {}   # 1 table ref(s), first at 0x8202BFBC; inside sub_82C2AF90 (+0x10); first word 80630004
+0x82C2B000 = {}   # 1 table ref(s), first at 0x8202BFAC; inside sub_82C2AFE8 (+0x18); first word 81630004
+0x82C38260 = {}   # 1 table ref(s), first at 0x8202D098; inside sub_82C38258 (+0x8); first word 3863FF88
+0x82C690A0 = {}   # 1 table ref(s), first at 0x82030A4C; inside sub_82C69098 (+0x8); first word 81650000
+0x82C797E8 = {}   # 1 table ref(s), first at 0x82030CA8; inside sub_82C797C8 (+0x20); first word 81640014
+0x82C79B60 = {}   # 1 table ref(s), first at 0x82030CB4; inside sub_82C79B48 (+0x18); first word 548B05EF
+0x82D055B0 = {}   # 1 table ref(s), first at 0x8203F120; inside sub_82D05518 (+0x98); first word 2F080121
+0x82D05710 = {}   # 1 table ref(s), first at 0x8203F12C; inside sub_82D056FC (+0x14); first word 89630014
+0x82D057A8 = {}   # 1 table ref(s), first at 0x8203F128; inside sub_82D05794 (+0x14); first word 2F050121
+0x82D37178 = {}   # 1 table ref(s), first at 0x82060390; inside sub_82D37158 (+0x20); first word 80630004
+0x82D37198 = {}   # 1 table ref(s), first at 0x8206039C; inside sub_82D37158 (+0x40); first word 3D60833D
+0x82D6BBB8 = {}   # 1 table ref(s), first at 0x82063138; inside sub_82D6BBA8 (+0x10); first word 7C832378
+0x82D6BC18 = {}   # 1 table ref(s), first at 0x82063158; inside sub_82D6BC08 (+0x10); first word 7C832378
+0x82D6BC48 = {}   # 1 table ref(s), first at 0x82063168; inside sub_82D6BC40 (+0x8); first word 7C832378
+0x82D6BC98 = {}   # 1 table ref(s), first at 0x8206318C; inside sub_82D6BC90 (+0x8); first word 7C832378
+0x82D6BCA0 = {}   # 1 table ref(s), first at 0x82063190; inside sub_82D6BC90 (+0x10); first word 7C832378
+0x82D6BCA8 = {}   # 1 table ref(s), first at 0x82063194; inside sub_82D6BC90 (+0x18); first word 7C832378
+0x82D6BCB0 = {}   # 1 table ref(s), first at 0x82063198; inside sub_82D6BC90 (+0x20); first word 7C832378
+0x82D6BCC0 = {}   # 1 table ref(s), first at 0x8206319C; inside sub_82D6BC90 (+0x30); first word 7C832378
+0x82D6BCD0 = {}   # 1 table ref(s), first at 0x820631A0; inside sub_82D6BC90 (+0x40); first word 7C832378
+0x82D6BCE0 = {}   # 1 table ref(s), first at 0x820631A4; inside sub_82D6BC90 (+0x50); first word 7C832378
+0x82D6BCF0 = {}   # 1 table ref(s), first at 0x820631A8; inside sub_82D6BC90 (+0x60); first word 7C832378
+0x82D6BD00 = {}   # 1 table ref(s), first at 0x820631AC; inside sub_82D6BC90 (+0x70); first word 7C832378
+0x82D6BD10 = {}   # 1 table ref(s), first at 0x820631B0; inside sub_82D6BC90 (+0x80); first word 7C832378
+0x82D6BD20 = {}   # 1 table ref(s), first at 0x820631B4; inside sub_82D6BC90 (+0x90); first word 7C832378
+0x82D6BD30 = {}   # 1 table ref(s), first at 0x820631B8; inside sub_82D6BC90 (+0xA0); first word 7C832378
+0x82D6BD70 = {}   # 1 table ref(s), first at 0x820631CC; inside sub_82D6BD68 (+0x8); first word 7C832378
+0x82D6BD78 = {}   # 1 table ref(s), first at 0x820631D0; inside sub_82D6BD68 (+0x10); first word 7C832378
+0x82D6BD80 = {}   # 1 table ref(s), first at 0x820631D4; inside sub_82D6BD68 (+0x18); first word 7C832378
+0x82D6BD88 = {}   # 1 table ref(s), first at 0x820631D8; inside sub_82D6BD68 (+0x20); first word 4801E4B8
+0x82D6BDB0 = {}   # 1 table ref(s), first at 0x820631EC; inside sub_82D6BDA8 (+0x8); first word 7CE63B78
+0x82D6BE00 = {}   # 1 table ref(s), first at 0x820631FC; inside sub_82D6BDE0 (+0x20); first word 7C832378
+0x82D6BE18 = {}   # 1 table ref(s), first at 0x82063200; inside sub_82D6BDE0 (+0x38); first word 7C832378
+0x82D6BE50 = {}   # 1 table ref(s), first at 0x82063208; inside sub_82D6BE38 (+0x18); first word 7C832378
+0x82D6BE80 = {}   # 1 table ref(s), first at 0x82063210; inside sub_82D6BE68 (+0x18); first word 7C832378
+0x82D6BE98 = {}   # 1 table ref(s), first at 0x82063214; inside sub_82D6BE68 (+0x30); first word 7C832378
+0x82D6BEB0 = {}   # 1 table ref(s), first at 0x82063218; inside sub_82D6BE68 (+0x48); first word 7C832378
+0x82D6BEE8 = {}   # 1 table ref(s), first at 0x82063220; inside sub_82D6BED0 (+0x18); first word 7CAB2B78
+0x82D6BF00 = {}   # 1 table ref(s), first at 0x82063224; inside sub_82D6BED0 (+0x30); first word 7C832378
+0x82D6BFB0 = {}   # 1 table ref(s), first at 0x82063238; inside sub_82D6BF90 (+0x20); first word 7C832378
+0x82DAB1B0 = {}   # 1 table ref(s), first at 0x82068868; inside sub_82DAB1A0 (+0x10); first word 89630014
+0x82DB0860 = {}   # 1 table ref(s), first at 0x82084414; inside sub_82DB0850 (+0x10); first word 4E800020
+0x82DF5C28 = {}   # 1 table ref(s), first at 0x8207A0F4; inside sub_82DF5C20 (+0x8); first word 90830024
+0x82DF9828 = {}   # 1 table ref(s), first at 0x8207AA74; inside sub_82DF9820 (+0x8); first word 90830024
+0x82DFB0C8 = {}   # 1 table ref(s), first at 0x8207B1E4; inside sub_82DFB0C0 (+0x8); first word 90830024
+0x82DFC5B8 = {}   # 1 table ref(s), first at 0x8207B7EC; inside sub_82DFC5B0 (+0x8); first word 90830024
+0x82DFD2B8 = {}   # 1 table ref(s), first at 0x8207BE8C; inside sub_82DFD2B0 (+0x8); first word 90830024
+0x82DFE1C8 = {}   # 1 table ref(s), first at 0x8207C524; inside sub_82DFE1C0 (+0x8); first word 90830024
+0x82DFF310 = {}   # 1 table ref(s), first at 0x8207D014; inside sub_82DFF308 (+0x8); first word 90830024
+0x82E01430 = {}   # 1 table ref(s), first at 0x8207D6A4; inside sub_82E01428 (+0x8); first word 90830024
+0x82E021F8 = {}   # 1 table ref(s), first at 0x8207E4CC; inside sub_82E021F0 (+0x8); first word 90830024
+0x82E04D10 = {}   # 1 table ref(s), first at 0x8207EB8C; inside sub_82E04D08 (+0x8); first word 90830024
+0x82E10418 = {}   # 1 table ref(s), first at 0x82083674; inside sub_82E10410 (+0x8); first word 38630304
+0x82E10A60 = {}   # 1 table ref(s), first at 0x82083688; inside sub_82E10A58 (+0x8); first word 81630174
+0x82E305D0 = {}   # 1 table ref(s), first at 0x82084498; inside sub_82E305C8 (+0x8); first word 3863FFA4
+0x82E305D8 = {}   # 1 table ref(s), first at 0x820844A4; inside sub_82E305C8 (+0x10); first word 3863FFA4
+0x82E305E0 = {}   # 1 table ref(s), first at 0x82084618; inside sub_82E305C8 (+0x18); first word 81630148
+0x82E30A50 = {}   # 9 table ref(s), first at 0x82084A04; inside sub_82E30A38 (+0x18); first word 81630028
+0x82E30A68 = {}   # 9 table ref(s), first at 0x82084A10; inside sub_82E30A38 (+0x30); first word 81630028
+0x82E30A80 = {}   # 9 table ref(s), first at 0x82084A08; inside sub_82E30A38 (+0x48); first word 81630028
+0x82E30A98 = {}   # 9 table ref(s), first at 0x82084A0C; inside sub_82E30A38 (+0x60); first word 81630028
+0x82E30AB0 = {}   # 9 table ref(s), first at 0x82084990; inside sub_82E30A38 (+0x78); first word 80630128
+0x82E32E48 = {}   # 1 table ref(s), first at 0x82084D50; inside sub_82E32E20 (+0x28); first word 4E800020
+0x82E503A8 = {}   # 1 table ref(s), first at 0x8208D748; inside sub_82E50378 (+0x30); first word 54AB063E
+0x82E59CE8 = {}   # 11 table ref(s), first at 0x8208E624; inside sub_82E59CD0 (+0x18); first word C0030030
+0x82E5BB58 = {}   # 11 table ref(s), first at 0x8208E650; inside sub_82E5BB48 (+0x10); first word 81630020
+0x82E7B5F0 = {}   # 1 table ref(s), first at 0x82090FEC; inside sub_82E7B5E0 (+0x10); first word 4E800020
+0x82E7D858 = {}   # 1 table ref(s), first at 0x82091508; inside sub_82E7D820 (+0x38); first word 81630148
+0x82E7D8B8 = {}   # 1 table ref(s), first at 0x82091510; inside sub_82E7D880 (+0x38); first word 81630154
+0x82E80F18 = {}   # 1 table ref(s), first at 0x82091B18; inside sub_82E80EE0 (+0x38); first word 81630158
+0x82E85440 = {}   # 1 table ref(s), first at 0x82091DD0; inside sub_82E85420 (+0x20); first word 3964004F
+0x82E85460 = {}   # 1 table ref(s), first at 0x82091DD4; inside sub_82E85420 (+0x40); first word 81640000
+0x82E855A8 = {}   # 1 table ref(s), first at 0x82091DEC; inside sub_82E85578 (+0x30); first word 81640000
+0x82E855D8 = {}   # 1 table ref(s), first at 0x82091DF0; inside sub_82E85578 (+0x60); first word 81640000
+0x82E85608 = {}   # 1 table ref(s), first at 0x82091D50; inside sub_82E85578 (+0x90); first word 81630000
+0x82EAE778 = {}   # 1 table ref(s), first at 0x82093670; inside sub_82EAE768 (+0x10); first word 38600000
+0x82ED6230 = {}   # 3 table ref(s), first at 0x82093AE8; inside sub_82ED6200 (+0x30); first word 39200009
+0x82EDD390 = {}   # 1 table ref(s), first at 0x82094280; inside sub_82EDD388 (+0x8); first word 80630038
+0x82EDD398 = {}   # 1 table ref(s), first at 0x82094284; inside sub_82EDD388 (+0x10); first word 80630038
+0x82EDD3A0 = {}   # 1 table ref(s), first at 0x82094290; inside sub_82EDD388 (+0x18); first word 80630034
+
+# Code addresses built in registers (lis + addi) and passed on as callbacks - not in any table, so the vtable scan
+# can't see them. Job 009's boot died on the first: "[FATAL] Call to invalid or unregistered function at guest address
+# 0x823D4F78" (built at 0x823D4D78). Scan 2026-10-22: every lis/addi pair in the code whose result is an aligned code
+# address that is not a known start, follows a function-ending instruction, and lies outside the referencing
+# function (SEH resume points excluded): these 7, all right after a bctr thunk.
+0x823D4F78 = {}
+0x828C6C60 = {}
+0x829552C8 = {}
+0x82C27230 = {}
+0x82D680C0 = {}
+0x82D680F0 = {}
+0x82E306B0 = {}
+
+# Jump table the automatic detection cut short (job 012: both boots died with 0xC000001D at gow3.exe+0x4D7FA29 =
+# the "Switch case out of range" __builtin_trap in sub_82FDCE28; symbolized by job 013). The bctr at 0x82FDCF18 indexes
+# the table at 0x82FDCF1C with r7 = a 3-bit value (0-7) or a 2-bit value + 7 (7-10): 11 entries, detection found 4.
+# A scan of all 108 lis/addi-addressed switches in the generated code found no other short table.
+[[entrypoint.switch_tables]]
+address = 0x82FDCF18
+register = 7
+labels = [0x82FDCF48, 0x82FDCF64, 0x82FDD0E4, 0x82FDD264, 0x82FDD3E4, 0x82FDD564, 0x82FDD6E4, 0x82FDD864, 0x82FDD9E4, 0x82FDDBB0, 0x82FDDD7C]
+
+# Game patches (src/layer3_gow3/game_patches.cpp; all off by default). Sites checked in our disassembly (notes/03).
+# Diagnostics for the black characters (notes/15): Canary Performance A (Sowa_95), base-disc sites checked [V].
+[[entrypoint.midasm_hook]]
+address = 0x8236C990
+name = "Gow3NoLightEnvShadows"
+registers = ["r9"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x827CE810
+name = "Gow3NoDynamicShadows"
+registers = ["r11"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x82969614
+name = "Gow3PatchAniso16"
+registers = ["r5"]
+after_instruction = true
+
+# The render thread's GPU query wait loop head (`mr r4,r30` at 0x82961994; the loop calls 0x82AFA708 until done).
+[[entrypoint.midasm_hook]]
+address = 0x82961994
+name = "Gow3QueryPollYield"
+registers = []
+
+# Gears 2 jobs 225/227: the cctpl at 0x82AF98EC in sub_82AF98D8 (one step of the D3D library's GPU wait). On (default):
+# skip the empty delay loop to the cctpm at 0x82AF991C after sleeping until our GPU side writes a fence / the read pointer.
+[[entrypoint.midasm_hook]]
+address = 0x82AF98EC
+name = "Gow3GpuWaitStep"
+registers = []
+jump_address_on_true = 0x82AF991C
+
+# The engine's frame-rate limit (--gow3_max_fps; settings override after the MaxSmoothedFrameRate load, game_patches.cpp).
+[[entrypoint.midasm_hook]]
+address = 0x8253D9B0
+name = "Gow3MaxTickRate"
+registers = ["f1"]
+after_instruction = true
+
+# --gow3_ultrawide (job 052; Canary's 21:9 patch by boma, as hooks - game_patches.cpp).
+[[entrypoint.midasm_hook]]
+address = 0x8261BEF0
+name = "Gow3UltrawideFov"
+registers = ["f0", "f31"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x8261BE60
+name = "Gow3UltrawideNoConstrain"
+registers = []
+jump_address_on_true = 0x8261BEF0
+
+[[entrypoint.midasm_hook]]
+address = 0x82960C78
+name = "Gow3UltrawideSceneHeight"
+registers = ["r11"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x827C583C
+name = "Gow3UltrawideSizeCheck"
+registers = ["r30"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x82BC9D84
+name = "Gow3UltrawideVideo"
+registers = ["r4"]
+jump_address_on_true = 0x82BC9D88
+
+# --gow3_texture_pool_mb (game_patches.cpp): after `slwi r11,r26,20` in the texture pool setup (notes/03, notes/07).
+[[entrypoint.midasm_hook]]
+address = 0x829678C0
+name = "Gow3TexturePoolSize"
+registers = ["r11", "r26"]

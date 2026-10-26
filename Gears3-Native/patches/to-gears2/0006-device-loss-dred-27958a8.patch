@@ -1,0 +1,200 @@
+# 0006 - device-loss diagnostics: D3D12 DRED breadcrumbs + page faults (Gears 3 chat, 2026-10-23; base 27958a8)
+# Why: Gears 3 lost the device TWICE tonight at the same spot (Act 1, CNV Sovereign, ~1 min after the SICKBAY
+# corridor, ~6 min in): Gears2-Native play log gears3-20261023-002508 (0x887A0007) and Gears3-Native play log
+# 20261023-004506 (0x887A0005), with 100-180 ms GPU frames in the ~20 s before. The log said nothing about why.
+#   --gow2_gpu_dred=true  (gpu_system.cpp) EnableDeviceLossDiagnostics() before the provider creates the device:
+#                         ID3D12DeviceRemovedExtendedDataSettings, breadcrumbs + page faults FORCED_ON (release runtime,
+#                         Windows 10 1903+, no debug layer). Small GPU cost; false = as before.
+#   D3D12Backend::IsLost -> ReportDeviceLoss() once: GetDeviceRemovedReason in words, every unfinished command list
+#                         (done / total ops, the D3D12_AUTO_BREADCRUMB_OP numbers around the stop), the page-fault GPU
+#                         VA with the live / recently freed allocations there (our textures already carry debug names).
+#   The renderer's command list is named "gow2 renderer list".
+# Checked: the new code compiles against current DirectX-Headers d3d12.h (SDL's copy) in a focused TU; Windows syntax
+# check of gpu_system.cpp unchanged apart from known header noise. Not built or run. Independent of 0004 / 0005.
+diff -ruN a/src/layer0_xenos/gpu_system.cpp b/src/layer0_xenos/gpu_system.cpp
+--- a/src/layer0_xenos/gpu_system.cpp	2026-10-23 00:51:03.647446628 -0700
++++ b/src/layer0_xenos/gpu_system.cpp	2026-10-23 00:51:03.674723439 -0700
+@@ -26,6 +26,7 @@
+ #include <rex/ui/d3d12/d3d12_provider.h>
+ #include <rex/ui/presenter.h>
+ #include <rex/ui/windowed_app_context.h>
++#include <xenos/renderer/gpu.h>
+ 
+ #include <algorithm>
+ #include <atomic>
+@@ -38,6 +39,10 @@
+                       "Stage 6: ours (default since 6C, job 142: our own graphics system - the SDK's GPU plugin is not "
+                       "loaded; presets --gow2_renderer=takeover --gow2_pm4_execute --gow2_pm4_own_draws --gow2_pm4_own_zpd "
+                       "--gow2_present=ours) | sdk (--gpu_plugin, the SDK's GPU emulation: the reference for comparisons)");
++REXCVAR_DEFINE_BOOL(gow2_gpu_dred, true, "Gears2",
++                    "Patch 0006: D3D12 DRED (breadcrumbs + page faults) on our device, so a lost device (TDR / hang) logs "
++                    "which GPU work was running and any faulting address (Gears 3 2026-10-23: device lost 6 min into the "
++                    "Sovereign prologue with no reason in the log). Small GPU cost; off = as before");
+ REXCVAR_DEFINE_BOOL(gow2_gpu_vsync, true, "Gears2",
+                     "Stage 6, --gow2_gpu=ours: vblank at the video mode's refresh rate (as the SDK's --vsync); off: "
+                     "1000 Hz, and WAIT_REG_MEM yields instead of sleeping");
+@@ -61,8 +66,18 @@
+   }
+   ~OurGpuSystem() override { Shutdown(); }
+ 
++  // Patch 0006: before the provider creates the device (DRED settings apply to devices created afterwards).
++  void EnableDred() {
++    if (dred_tried_ || provider_ || !REXCVAR_GET(gow2_gpu_dred)) return;
++    dred_tried_ = true;
++    const bool on = xenos::renderer::gpu::EnableDeviceLossDiagnostics();
++    REXLOG_INFO("gow2_gpu: device-loss diagnostics (DRED breadcrumbs + page faults) {}", on ? "on" : "not available");
++  }
++  bool dred_tried_ = false;
++
+   X_STATUS SetupPresentation(rex::ui::WindowedAppContext* app_context) override {
+     if (presenter_) return X_STATUS_SUCCESS;
++    EnableDred();
+     if (!provider_) {
+       provider_ = rex::ui::d3d12::D3D12Provider::Create();
+       if (!provider_) {
+@@ -91,6 +106,7 @@
+     dispatcher_ = function_dispatcher;
+     kernel_state_ = kernel_state;
+     memory_ = function_dispatcher->memory();
++    EnableDred();
+     if (!provider_) {
+       provider_ = rex::ui::d3d12::D3D12Provider::Create();
+       if (!provider_) return X_STATUS_UNSUCCESSFUL;
+diff -ruN a/src/layer0_xenos/include/xenos/renderer/gpu.h b/src/layer0_xenos/include/xenos/renderer/gpu.h
+--- a/src/layer0_xenos/include/xenos/renderer/gpu.h	2026-10-23 00:51:03.635050664 -0700
++++ b/src/layer0_xenos/include/xenos/renderer/gpu.h	2026-10-23 00:51:03.672660852 -0700
+@@ -422,5 +422,9 @@
+ 
+ // Null on platforms without D3D12.
+ std::unique_ptr<Backend> CreateD3D12Backend();
++// Patch 0006 (Gears 3, 2026-10-23): D3D12 DRED (auto-breadcrumbs + page-fault reporting) for every device created
++// after this call - call it before the presenter's device exists. Works on the release runtime (Windows 10 1903+), no
++// debug layer. Returns false where unavailable. When a device is lost, the backend then logs what the GPU was doing.
++bool EnableDeviceLossDiagnostics();
+ 
+ }  // namespace xenos::renderer::gpu
+diff -ruN a/src/layer0_xenos/renderer/d3d12_backend.cpp b/src/layer0_xenos/renderer/d3d12_backend.cpp
+--- a/src/layer0_xenos/renderer/d3d12_backend.cpp	2026-10-23 00:51:03.616663185 -0700
++++ b/src/layer0_xenos/renderer/d3d12_backend.cpp	2026-10-23 00:51:03.674287510 -0700
+@@ -51,6 +51,7 @@
+ 
+ namespace xenos::renderer::gpu {
+ std::unique_ptr<Backend> CreateD3D12Backend() { return nullptr; }
++bool EnableDeviceLossDiagnostics() { return false; }
+ }  // namespace xenos::renderer::gpu
+ 
+ #else
+@@ -1325,10 +1326,81 @@
+         lost_reason_ = Hr("device", r);
+       }
+     }
++    if (lost_ && !loss_reported_ && device_) ReportDeviceLoss();
+     if (reason) *reason = lost_reason_;
+     return lost_ || !ready_;
+   }
+ 
++  // Patch 0006: once, when the loss is first seen - the removal reason and, with DRED on (EnableDeviceLossDiagnostics),
++  // the command lists the GPU had not finished (their last completed operation and the ones around it) and the GPU
++  // virtual address of a page fault with the allocations at / near it (our textures carry debug names).
++  void ReportDeviceLoss() {
++    loss_reported_ = true;
++    const HRESULT why = device_->GetDeviceRemovedReason();
++    const char* name = why == DXGI_ERROR_DEVICE_HUNG             ? "DEVICE_HUNG (the GPU stopped making progress - "
++                                                                   "a very long or endless shader / wait)"
++                       : why == DXGI_ERROR_DEVICE_REMOVED        ? "DEVICE_REMOVED (driver update / adapter removed)"
++                       : why == DXGI_ERROR_DEVICE_RESET          ? "DEVICE_RESET (bad command or timeout - TDR)"
++                       : why == DXGI_ERROR_DRIVER_INTERNAL_ERROR ? "DRIVER_INTERNAL_ERROR"
++                       : why == DXGI_ERROR_INVALID_CALL          ? "INVALID_CALL (an invalid command reached the GPU)"
++                       : why == S_OK                             ? "S_OK (device not removed?)"
++                                                                 : "other";
++    REXLOG_ERROR("gow2_renderer: DEVICE LOST: removed reason 0x{:08X} = {}; first failure seen: {}",
++                 static_cast<uint32_t>(why), name, lost_reason_);
++    ID3D12DeviceRemovedExtendedData* dred = nullptr;
++    if (FAILED(device_->QueryInterface(IID_PPV_ARGS(&dred))) || !dred) {
++      REXLOG_ERROR("gow2_renderer: DEVICE LOST: no DRED data (not enabled before the device was created, or Windows "
++                   "older than 1903)");
++      return;
++    }
++    D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT crumbs{};
++    if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput(&crumbs))) {
++      uint32_t nodes = 0, unfinished = 0;
++      for (const D3D12_AUTO_BREADCRUMB_NODE* n = crumbs.pHeadAutoBreadcrumbNode; n && nodes < 4096;
++           n = n->pNext, ++nodes) {
++        const uint32_t count = n->BreadcrumbCount;
++        const uint32_t done = n->pLastBreadcrumbValue ? *n->pLastBreadcrumbValue : 0;
++        if (done >= count) continue;  // this list finished on the GPU
++        if (++unfinished > 6) continue;
++        std::string ops;
++        const uint32_t from = done >= 4 ? done - 4 : 0, to = std::min(count, done + 4);
++        for (uint32_t i = from; n->pCommandHistory && i < to; ++i) {
++          if (!ops.empty()) ops += ' ';
++          ops += (i == done ? "[" : "") + std::to_string(int(n->pCommandHistory[i])) + (i == done ? "]" : "");
++        }
++        auto narrow = [](const wchar_t* w) {
++          std::string s;
++          for (; w && *w && s.size() < 80; ++w) s += char(*w < 128 ? *w : '?');
++          return s;
++        };
++        REXLOG_ERROR("gow2_renderer: DEVICE LOST: unfinished command list '{}' on queue '{}': {} of {} operations done; "
++                     "ops around the stop (D3D12_AUTO_BREADCRUMB_OP numbers, [next]): {}",
++                     narrow(n->pCommandListDebugNameW), narrow(n->pCommandQueueDebugNameW), done, count, ops);
++      }
++      REXLOG_ERROR("gow2_renderer: DEVICE LOST: DRED breadcrumbs: {} command list(s) recorded, {} unfinished", nodes,
++                   unfinished);
++    }
++    D3D12_DRED_PAGE_FAULT_OUTPUT fault{};
++    if (SUCCEEDED(dred->GetPageFaultAllocationOutput(&fault))) {
++      auto list = [](const D3D12_DRED_ALLOCATION_NODE* a) {
++        std::string s;
++        for (uint32_t i = 0; a && i < 8; a = a->pNext, ++i) {
++          if (!s.empty()) s += ", ";
++          const wchar_t* w = a->ObjectNameW;
++          std::string n;
++          for (; w && *w && n.size() < 60; ++w) n += char(*w < 128 ? *w : '?');
++          s += (n.empty() ? std::string("(unnamed)") : n) + " type " + std::to_string(int(a->AllocationType));
++        }
++        return s.empty() ? std::string("none") : s;
++      };
++      REXLOG_ERROR("gow2_renderer: DEVICE LOST: page fault at GPU VA 0x{:016X}; live allocations there: {}; recently "
++                   "freed there: {}",
++                   static_cast<uint64_t>(fault.PageFaultVA), list(fault.pHeadExistingAllocationNode),
++                   list(fault.pHeadRecentFreedAllocationNode));
++    }
++    dred->Release();
++  }
++
+   // ---- resources ----
+   TextureHandle CreateTexture(const TextureDesc& desc) override {
+     if (!ready_ || lost_) return 0;
+@@ -2562,6 +2634,7 @@
+         lost_reason_ = Hr("CreateCommandList", hr);
+         return false;
+       }
++      real_list_->SetName(L"gow2 renderer list");  // patch 0006: names the DRED breadcrumb output
+       proxy_.Start(real_list_, queue_, threaded_recording_);
+       if (threaded_recording_) REXLOG_INFO("gow2_renderer: command recording on its own thread (threaded_recording)");
+     } else if (FAILED(hr = list_->Reset(current_allocator_, nullptr))) {  // also resets the allocator
+@@ -3471,6 +3544,7 @@
+   BackendOptions options_;
+   std::string description_;
+   bool ready_ = false, lost_ = false;
++  bool loss_reported_ = false;  // patch 0006
+   std::string lost_reason_;
+   ID3D12Device* device_ = nullptr;
+   ID3D12InfoQueue* info_queue_ = nullptr;
+@@ -3764,6 +3838,15 @@
+ 
+ std::unique_ptr<Backend> CreateD3D12Backend() { return std::make_unique<D3D12Backend>(); }
+ 
++bool EnableDeviceLossDiagnostics() {
++  ID3D12DeviceRemovedExtendedDataSettings* s = nullptr;
++  if (FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(&s))) || !s) return false;
++  s->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
++  s->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
++  s->Release();
++  return true;
++}
++
+ }  // namespace xenos::renderer::gpu
+ 
+ #endif  // _WIN32

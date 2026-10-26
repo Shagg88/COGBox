@@ -1,0 +1,11 @@
+hash,feature,note
+ps-0354AF5BA0F333D1,max4_order,"max4 uses rexglue's >= priority; the hardware order is unresolved (notes/38)"
+ps-0354AF5BA0F333D1,tex_offset_mip0,"fetch offset applied in mip-0 texels (Canary's way; hardware formula unknown)"
+ps-10C6A179AEBEB417,max4_order,"max4 uses rexglue's >= priority; the hardware order is unresolved (notes/38)"
+ps-80E3B687AC894882,tex_offset_mip0,"fetch offset applied in mip-0 texels (Canary's way; hardware formula unknown)"
+ps-9E098197F6FAC270,tex_offset_mip0,"fetch offset applied in mip-0 texels (Canary's way; hardware formula unknown)"
+ps-C84DBBA59A174733,tex_offset_mip0,"fetch offset applied in mip-0 texels (Canary's way; hardware formula unknown)"
+ps-EC83435F85E56F90,max4_order,"max4 uses rexglue's >= priority; the hardware order is unresolved (notes/38)"
+vs-3AAB2C89B66705F3,tex_offset_mip0,"fetch offset applied in mip-0 texels (Canary's way; hardware formula unknown)"
+vs-4BEB77E25080DE20,tex_offset_mip0,"fetch offset applied in mip-0 texels (Canary's way; hardware formula unknown)"
+vs-6006AA67EF067311,tex_offset_mip0,"fetch offset applied in mip-0 texels (Canary's way; hardware formula unknown)"

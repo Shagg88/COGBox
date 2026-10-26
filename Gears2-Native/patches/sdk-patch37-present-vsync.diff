@@ -1,0 +1,41 @@
+diff --git a/src/ui/d3d12/d3d12_presenter.cpp b/src/ui/d3d12/d3d12_presenter.cpp
+index 5d4aecc..e540a40 100644
+--- a/src/ui/d3d12/d3d12_presenter.cpp
++++ b/src/ui/d3d12/d3d12_presenter.cpp
+@@ -39,6 +39,12 @@ REXCVAR_DEFINE_INT32(d3d12_max_frame_latency, 1, "UI/D3D12",
+                      "Gears2-Native SDK patch 34: the most frames queued for presentation (DXGI frame latency waitable "
+                      "object; each paint first waits until the queue has room, up to 100 ms). 1 = lowest latency. 0 = as "
+                      "before (no waitable object, DXGI's default of 3)");
++// Gears2-Native SDK patch 37 (Shagg 10:05 "yes we can add vsync"): wait for the display's refresh at each present.
++REXCVAR_DEFINE_BOOL(d3d12_present_vsync, false, "UI/D3D12",
++                    "Gears2-Native SDK patch 37: true = each present waits for the display's next refresh (sync interval "
++                    "1, never tearing; with G-Sync / FreeSync the display follows the frame rate below its refresh "
++                    "rate). false = as before: present at once (sync interval 0), tearing allowed where the swap chain "
++                    "supports it. Read at every present");
+ 
+ namespace rex::ui::d3d12 {
+ 
+@@ -1219,7 +1225,7 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+     ui_submission_tracker_.NextSubmission();
+   }
+   paint_context_.paint_submission_tracker.NextSubmission();
+-  // Present as soon as possible, without waiting for vsync (the host refresh
++  // Present as soon as possible, without waiting for vsync (SDK patch 37: unless --d3d12_present_vsync) (the host refresh
+   // rate may be something like 144 Hz, which is not a multiple of the common
+   // 30 Hz or 60 Hz guest refresh rate), and allowing dropping outdated queued
+   // frames for lower latency. Also, if possible, allowing tearing to use
+@@ -1232,9 +1238,12 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+     if (!gate(guest_output_resource.Get(), provider_.GetDirectQueue(), fg_rect)) return PaintResult::kNotPresented;
+   }
+   rex::CallFrameHook(rex::GetFrameHooks().present_begin);  // SDK patch 35
++  // SDK patch 37: --d3d12_present_vsync. ALLOW_TEARING is only valid with sync interval 0.
++  const bool present_vsync = REXCVAR_GET(d3d12_present_vsync);
+   HRESULT present_result = paint_context_.swap_chain->Present(
+-      0, DXGI_PRESENT_RESTART |
+-             (paint_context_.swap_chain_allows_tearing ? DXGI_PRESENT_ALLOW_TEARING : 0));
++      present_vsync ? 1 : 0,
++      DXGI_PRESENT_RESTART |
++          (!present_vsync && paint_context_.swap_chain_allows_tearing ? DXGI_PRESENT_ALLOW_TEARING : 0));
+   rex::CallFrameHook(rex::GetFrameHooks().present_end);  // SDK patch 35
+   g_latency_turn_held.store(false, std::memory_order_relaxed);  // SDK patch 36: the Present gives the turn back
+   // Even if presentation has failed, work might have been enqueued anyway

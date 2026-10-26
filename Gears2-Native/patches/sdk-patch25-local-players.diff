@@ -1,0 +1,245 @@
+diff --git a/src/kernel/xam/xam_user.cpp b/src/kernel/xam/xam_user.cpp
+--- a/src/kernel/xam/xam_user.cpp
++++ b/src/kernel/xam/xam_user.cpp
+@@ -29,6 +29,10 @@
+ #include <rex/system/xtypes.h>
+ 
+ REXCVAR_DEFINE_UINT32(user_language, 1, "Kernel", "User's language ID");
++// Gears2-Native SDK patch 25: local players 2-4. User 0 is the profile as before; users 1-3 (when --local_players
++// asks for them) are signed-in offline profiles "Player 2".."Player 4" with their own XUIDs, so a second controller
++// can drop into split-screen co-op. Their profile settings read as the defaults and writes are accepted but not kept.
++REXCVAR_DEFINE_UINT32(local_players, 1, "Kernel", "Signed-in local profiles, 1-4 (players 2-4: offline profiles)");
+ 
+ namespace rex {
+ namespace kernel {
+@@ -36,6 +40,20 @@
+ using namespace rex::system;
+ using namespace rex::system::xam;
+ 
++uint32_t LocalPlayers() {
++  const uint32_t n = REXCVAR_GET(local_players);
++  return n < 1 ? 1 : (n > 4 ? 4 : n);
++}
++uint32_t LocalPlayersSignedInMask() { return (1u << LocalPlayers()) - 1; }
++static bool UserSignedIn(uint32_t user_index) { return user_index < LocalPlayers(); }
++static uint64_t UserXuid(uint32_t user_index) {
++  return REX_KERNEL_STATE()->user_profile()->xuid() + user_index;
++}
++static std::string UserName(uint32_t user_index) {
++  if (!user_index) return REX_KERNEL_STATE()->user_profile()->name();
++  return "Player " + std::to_string(user_index + 1);
++}
++
+ i32 XamUserGetXUID_entry(u32 user_index, u32 type_mask, mapped_u64 xuid_ptr) {
+   assert_true(type_mask == 1 || type_mask == 2 || type_mask == 3 || type_mask == 4 ||
+               type_mask == 7);
+@@ -45,16 +63,16 @@
+   uint32_t result = X_E_NO_SUCH_USER;
+   uint64_t xuid = 0;
+   if (user_index < 4) {
+-    if (user_index == 0) {
++    if (UserSignedIn(user_index)) {
+       const auto& user_profile = REX_KERNEL_STATE()->user_profile();
+       auto type = user_profile->type() & type_mask;
+       if (type & (2 | 4)) {
+         // maybe online profile?
+-        xuid = user_profile->xuid();
++        xuid = UserXuid(user_index);
+         result = X_E_SUCCESS;
+       } else if (type & 1) {
+         // maybe offline profile?
+-        xuid = user_profile->xuid();
++        xuid = UserXuid(user_index);
+         result = X_E_SUCCESS;
+       }
+     }
+@@ -68,7 +86,7 @@
+ u32 XamUserGetSigninState_entry(u32 user_index) {
+   uint32_t signin_state = 0;
+   if (user_index < 4) {
+-    if (user_index == 0) {
++    if (UserSignedIn(user_index)) {
+       const auto& user_profile = REX_KERNEL_STATE()->user_profile();
+       signin_state = user_profile->signin_state();
+     }
+@@ -92,14 +110,14 @@
+   }
+ 
+   std::memset(info, 0, sizeof(X_USER_SIGNIN_INFO));
+-  if (user_index) {
++  if (!UserSignedIn(user_index)) {
+     return X_E_NO_SUCH_USER;
+   }
+ 
+   const auto& user_profile = REX_KERNEL_STATE()->user_profile();
+-  info->xuid = user_profile->xuid();
++  info->xuid = UserXuid(user_index);
+   info->signin_state = user_profile->signin_state();
+-  rex::string::copy_truncating(info->name, user_profile->name(), rex::countof(info->name));
++  rex::string::copy_truncating(info->name, UserName(user_index), rex::countof(info->name));
+   return X_E_SUCCESS;
+ }
+ 
+@@ -108,12 +126,11 @@
+     return X_E_INVALIDARG;
+   }
+ 
+-  if (user_index) {
++  if (!UserSignedIn(user_index)) {
+     return X_E_NO_SUCH_USER;
+   }
+ 
+-  const auto& user_profile = REX_KERNEL_STATE()->user_profile();
+-  const auto& user_name = user_profile->name();
++  const auto user_name = UserName(user_index);
+   rex::string::copy_truncating(buffer, user_name, std::min(buffer_len, uint32_t(16)));
+   return X_E_SUCCESS;
+ }
+@@ -123,7 +140,7 @@
+     return X_E_INVALIDARG;
+   }
+ 
+-  if (user_index) {
++  if (!UserSignedIn(user_index)) {
+     return X_E_NO_SUCH_USER;
+   }
+ 
+@@ -131,8 +148,7 @@
+     return X_E_INVALIDARG;
+   }
+ 
+-  const auto& user_profile = REX_KERNEL_STATE()->user_profile();
+-  auto user_name = rex::string::to_utf16(user_profile->name());
++  auto user_name = rex::string::to_utf16(UserName(user_index));
+   rex::string::copy_and_swap_truncating(buffer, user_name, std::min(buffer_len, uint32_t(16)));
+   return X_E_SUCCESS;
+ }
+@@ -155,8 +171,7 @@
+     assert_true(xuid_count == 1);
+     assert_not_null(xuids);
+     // TODO(gibbed): allow proper lookup of arbitrary XUIDs
+-    const auto& user_profile = REX_KERNEL_STATE()->user_profile();
+-    assert_true(static_cast<uint64_t>(xuids[0]) == user_profile->xuid());
++    assert_true(static_cast<uint64_t>(xuids[0]) - REX_KERNEL_STATE()->user_profile()->xuid() < LocalPlayers());
+     // TODO(gibbed): we assert here, but in case a title passes xuid_count > 1
+     // until it's implemented for release builds...
+     xuid_count = 1;
+@@ -211,8 +226,8 @@
+   // Title ID = 0 means us.
+   // 0xfffe07d1 = profile?
+ 
+-  if (!xuids && user_index) {
+-    // Only support user 0.
++  if (!xuids && !UserSignedIn(user_index)) {
++    // Only signed-in local users (patch 25).
+     if (overlapped) {
+       REX_KERNEL_STATE()->CompleteOverlappedImmediate(
+           REX_KERNEL_MEMORY()->HostToGuestVirtual(overlapped), X_ERROR_NO_SUCH_USER);
+@@ -264,7 +279,7 @@
+     std::memset(out_setting, 0, sizeof(X_USER_PROFILE_SETTING));
+     out_setting->from = !setting || !setting->is_set ? 0 : setting->is_title_specific() ? 2 : 1;
+     if (xuids) {
+-      out_setting->xuid = user_profile->xuid();
++      out_setting->xuid = static_cast<uint64_t>(xuids[0]);
+     } else {
+       out_setting->user_index = static_cast<uint32_t>(user_index);
+     }
+@@ -309,13 +324,13 @@
+   }
+ 
+   if (user_index) {
+-    // Only support user 0.
++    // Users 1-3 (patch 25): accepted, not kept.
++    const X_RESULT r = UserSignedIn(user_index) ? X_ERROR_SUCCESS : X_ERROR_NO_SUCH_USER;
+     if (overlapped) {
+-      REX_KERNEL_STATE()->CompleteOverlappedImmediate(overlapped.guest_address(),
+-                                                      X_ERROR_NO_SUCH_USER);
++      REX_KERNEL_STATE()->CompleteOverlappedImmediate(overlapped.guest_address(), r);
+       return X_ERROR_IO_PENDING;
+     }
+-    return X_ERROR_NO_SUCH_USER;
++    return r;
+   }
+ 
+   // Update and save settings.
+@@ -377,7 +392,7 @@
+       return X_ERROR_INVALID_PARAMETER;
+     }
+ 
+-    if (user_index) {
++    if (!UserSignedIn(user_index)) {
+       return X_ERROR_NO_SUCH_USER;
+     }
+   }
+@@ -388,7 +403,7 @@
+ }
+ 
+ u32 XamUserContentRestrictionGetFlags_entry(u32 user_index, mapped_u32 out_flags) {
+-  if (user_index) {
++  if (!UserSignedIn(user_index)) {
+     return X_ERROR_NO_SUCH_USER;
+   }
+ 
+@@ -399,7 +414,7 @@
+ 
+ u32 XamUserContentRestrictionGetRating_entry(u32 user_index, u32 unk1, mapped_u32 out_unk2,
+                                              mapped_u32 out_unk3) {
+-  if (user_index) {
++  if (!UserSignedIn(user_index)) {
+     return X_ERROR_NO_SUCH_USER;
+   }
+ 
+@@ -430,7 +445,7 @@
+   if (user_index >= 4) {
+     return X_ERROR_INVALID_PARAMETER;
+   }
+-  if (user_index) {
++  if (!UserSignedIn(user_index)) {
+     return X_ERROR_NO_SUCH_USER;
+   }
+   return 6 /* 6 appears to be Gold */;
+@@ -444,7 +459,7 @@
+   if (user_index >= 4) {
+     result = X_ERROR_INVALID_PARAMETER;
+   } else {
+-    if (user_index == 0) {
++    if (UserSignedIn(user_index)) {
+       const auto& user_profile = REX_KERNEL_STATE()->user_profile();
+       if (user_profile->signin_state() == 0) {
+         result = X_ERROR_NOT_LOGGED_ON;
+@@ -481,7 +496,7 @@
+   // To fix game modes that display a 4 profile signin UI (even if playing
+   // alone):
+   // XN_SYS_SIGNINCHANGED
+-  REX_KERNEL_STATE()->BroadcastNotification(0x0000000A, 1);
++  REX_KERNEL_STATE()->BroadcastNotification(0x0000000A, LocalPlayersSignedInMask());
+   // Games seem to sit and loop until we trigger this notification:
+   // XN_SYS_UI (off)
+   REX_KERNEL_STATE()->BroadcastNotification(0x00000009, 0);
+diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
+--- a/src/system/kernel_state.cpp
++++ b/src/system/kernel_state.cpp
+@@ -43,6 +43,10 @@
+ #include <rex/system/xthread.h>
+ #include <rex/system/xtimer.h>
+ 
++namespace rex::kernel::xam {
++uint32_t LocalPlayersSignedInMask();  // xam_user.cpp (Gears2-Native SDK patch 25)
++}  // namespace rex::kernel::xam
++
+ namespace rex::system {
+ 
+ constexpr uint32_t kDeferredOverlappedDelayMillis = 100;
+@@ -1096,9 +1100,9 @@
+     // XN_SYS_UI (on, off)
+     listener->EnqueueNotification(0x00000009, 1);
+     listener->EnqueueNotification(0x00000009, 0);
+-    // XN_SYS_SIGNINCHANGED x2
+-    listener->EnqueueNotification(0x0000000A, 1);
+-    listener->EnqueueNotification(0x0000000A, 1);
++    // XN_SYS_SIGNINCHANGED x2 (the mask of signed-in local users: Gears2-Native SDK patch 25)
++    listener->EnqueueNotification(0x0000000A, rex::kernel::xam::LocalPlayersSignedInMask());
++    listener->EnqueueNotification(0x0000000A, rex::kernel::xam::LocalPlayersSignedInMask());
+     // XN_SYS_INPUTDEVICESCHANGED x2
+     listener->EnqueueNotification(0x00000012, 0);
+     listener->EnqueueNotification(0x00000012, 0);

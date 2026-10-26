@@ -1,0 +1,346 @@
+diff --git a/include/rex/graphics/d3d12/command_processor.h b/include/rex/graphics/d3d12/command_processor.h
+index 3dc380f..27d3e13 100644
+--- a/include/rex/graphics/d3d12/command_processor.h
++++ b/include/rex/graphics/d3d12/command_processor.h
+@@ -410,8 +410,9 @@ class D3D12CommandProcessor : public CommandProcessor {
+   bool InitializeOcclusionQueryResources();
+   void ShutdownOcclusionQueryResources();
+   bool BeginGuestOcclusionQuery(uint32_t sample_count_address);
+-  bool EndGuestOcclusionQuery(uint32_t sample_count_address,
+-                              xenos::xe_gpu_depth_sample_counts* sample_counts);
++  // Gears2-Native SDK patch 15: returns the (normalized) count instead of writing it, so the ZPD handler can tell the
++  // draw observer what it wrote; segments_out = host queries summed (> 1 only with occlusion_query_no_fake).
++  bool EndGuestOcclusionQuery(uint32_t sample_count_address, uint64_t& samples_out, uint32_t& segments_out);
+   bool AcquireOcclusionQueryIndex(uint32_t& host_index_out);
+   void DisableHostOcclusionQueries();
+   uint64_t NormalizeOcclusionSamples(uint64_t samples) const;
+@@ -663,6 +664,12 @@ class D3D12CommandProcessor : public CommandProcessor {
+     uint32_t sample_count_address = 0;
+     uint32_t host_index = UINT32_MAX;
+     bool valid = false;
++    // Gears2-Native SDK patch 15 (occlusion_query_no_fake only): a submission that ends inside a guest query closes and
++    // resolves the host query as a segment and BeginSubmission opens the next one, instead of dropping the query.
++    static constexpr uint32_t kMaxSegments = 32;
++    bool open = false;  // host_index has a BeginQuery in the open submission
++    uint32_t segment_count = 0;
++    uint32_t segments[kMaxSegments] = {};
+   } active_occlusion_query_;
+   struct VertexBufferState {
+     uint32_t address = UINT32_MAX;
+diff --git a/include/rex/graphics/draw_observer.h b/include/rex/graphics/draw_observer.h
+index 93bdb04..c1b6ec3 100644
+--- a/include/rex/graphics/draw_observer.h
++++ b/include/rex/graphics/draw_observer.h
+@@ -24,6 +24,22 @@ struct ObservedIndexBuffer {
+   uint64_t length;
+ };
+ 
++// Gears2-Native SDK patch 15 (Stage 4, notes/46): one PM4 EVENT_WRITE_ZPD, i.e. one occlusion-query report write.
++enum class ZpdAnswer : uint8_t {
++  kNone,         // nothing written (query_occlusion_fake_sample_count < 0)
++  kBegin,        // a begin report (the D3D12 host path leaves it as it is, unless occlusion_query_no_fake)
++  kHost,         // end: the real host sample count
++  kFake,         // end: query_occlusion_fake_sample_count (host queries off, or the host path fell back)
++  kNoRealCount,  // end, occlusion_query_no_fake: no real count could be had; 1 was written
++};
++struct ObservedZpd {
++  uint32_t report_address;  // RB_SAMPLE_COUNT_ADDR (guest physical)
++  bool is_end;              // the report held D3D's pending marker (0xFFFFFEED in ZPass or ZFail) when the packet ran
++  ZpdAnswer answer;
++  uint64_t samples;         // what was written into ZPass_A / Total_A for an end (after resolution scaling), else 0
++  uint32_t host_segments;   // host queries summed for this end (> 1 when submissions split it; occlusion_query_no_fake)
++};
++
+ class DrawObserver {
+  public:
+   virtual ~DrawObserver() = default;
+@@ -41,6 +57,9 @@ class DrawObserver {
+   // after the game's gamma ramp (and FXAA if enabled), before window scaling and overlays. R10G10B10A2_UNORM pixels,
+   // `row_pitch` bytes per row. Delivered on the GPU thread 1-2 swaps after the frame (no stall); copy what you need and
+   // return quickly. `frame` counts swaps since the readback started.
++  // Gears2-Native SDK patch 15: every EVENT_WRITE_ZPD, in stream order with OnDraw, after the report has been written
++  // (read its final lanes from guest memory). Called on the GPU worker thread.
++  virtual void OnZpd(const RegisterFile& regs, const ObservedZpd& zpd) {}
+   virtual bool WantsFrameImages() const { return false; }
+   virtual void OnFrameImage(const uint8_t* rgb10a2, uint32_t width, uint32_t height, uint32_t row_pitch,
+                             uint64_t frame) {}
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 495e661..7767e5d 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -1406,6 +1406,9 @@ bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffer* re
+   // This command is send on query begin and end.
+   // As a workaround report some fixed amount of passed samples.
+   auto fake_sample_count = REXCVAR_GET(query_occlusion_fake_sample_count);
++  // Gears2-Native SDK patch 15: tell the draw observer about every ZPD.
++  const uint32_t zpd_address = register_file_->values[XE_GPU_REG_RB_SAMPLE_COUNT_ADDR];
++  DrawObserver* zpd_observer = GetDrawObserver();
+   if (fake_sample_count >= 0) {
+     auto* pSampleCounts = memory_->TranslatePhysical<xe_gpu_depth_sample_counts*>(
+         register_file_->values[XE_GPU_REG_RB_SAMPLE_COUNT_ADDR]);
+@@ -1424,6 +1427,18 @@ bool CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffer* re
+       pSampleCounts->ZPass_A = fake_sample_count;
+       pSampleCounts->Total_A = fake_sample_count;
+     }
++    if (zpd_observer) {
++      const bool is_end = is_end_via_z_pass || is_end_via_z_fail;
++      zpd_observer->OnZpd(*register_file_,
++                          ObservedZpd{zpd_address, is_end, is_end ? ZpdAnswer::kFake : ZpdAnswer::kBegin,
++                                      is_end ? uint64_t(fake_sample_count) : 0, 0});
++    }
++  } else if (zpd_observer) {
++    // Nothing is written; still say whether the report was an end (it holds D3D's marker).
++    const auto* counts = memory_->TranslatePhysical<const xe_gpu_depth_sample_counts*>(zpd_address);
++    const bool is_end = counts && (counts->ZPass_A == kQueryFinished || counts->ZPass_B == kQueryFinished ||
++                                   counts->ZFail_A == kQueryFinished || counts->ZFail_B == kQueryFinished);
++    zpd_observer->OnZpd(*register_file_, ObservedZpd{zpd_address, is_end, ZpdAnswer::kNone, 0, 0});
+   }
+ 
+   return true;
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index 5e7ab2b..394b2f0 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -48,6 +48,13 @@ REXCVAR_DEFINE_BOOL(d3d12_submit_on_primary_buffer_end, true, "GPU/D3D12",
+                     "Submit command list when PM4 primary buffer ends")
+     .lifecycle(rex::cvar::Lifecycle::kHotReload);
+ 
++// Gears2-Native SDK patch 15 (Stage 4, notes/46): real host counts only. Off by default (stock behaviour). When on:
++// a host query survives a submission ending inside it (segments are summed), a begin/end that doesn't match the
++// active query doesn't turn host queries off for the session, a begin report is zeroed (so end - begin is this
++// query's count) and, when no real count can be had, 1 is written instead of query_occlusion_fake_sample_count.
++REXCVAR_DEFINE_BOOL(occlusion_query_no_fake, false, "GPU/D3D12",
++                    "Occlusion queries: never fall back to the fake sample count (developer comparison runs)");
++
+ namespace rex::graphics::d3d12 {
+ 
+ // Generated with `xb buildshaders`.
+@@ -165,25 +172,50 @@ bool D3D12CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffe
+   uint32_t sample_count_addr = register_file_->values[XE_GPU_REG_RB_SAMPLE_COUNT_ADDR];
+   auto* sample_counts =
+       memory_->TranslatePhysical<xenos::xe_gpu_depth_sample_counts*>(sample_count_addr);
++  // Gears2-Native SDK patch 15: the draw observer hears about every ZPD; occlusion_query_no_fake keeps real counts.
++  const bool no_fake = REXCVAR_GET(occlusion_query_no_fake);
++  DrawObserver* zpd_observer = GetDrawObserver();
++  auto notify = [this, zpd_observer, sample_count_addr](bool end, ZpdAnswer answer, uint64_t samples,
++                                                         uint32_t segments) {
++    if (zpd_observer) {
++      zpd_observer->OnZpd(*register_file_, ObservedZpd{sample_count_addr, end, answer, samples, segments});
++    }
++  };
+   if (!sample_counts) {
+-    DisableHostOcclusionQueries();
++    if (!no_fake) {
++      DisableHostOcclusionQueries();
++    }
++    notify(false, ZpdAnswer::kNone, 0, 0);
+     return true;
+   }
+ 
+-  auto write_fallback_result = [sample_counts, kQueryFinished]() -> bool {
+-    auto fake_sample_count = REXCVAR_GET(query_occlusion_fake_sample_count);
+-    if (fake_sample_count < 0) {
+-      return true;
+-    }
++  auto write_fallback_result = [this, sample_counts, no_fake, &notify]() -> bool {
+     bool is_end_via_z_pass =
+         sample_counts->ZPass_A == kQueryFinished || sample_counts->ZPass_B == kQueryFinished;
+     bool is_end_via_z_fail =
+         sample_counts->ZFail_A == kQueryFinished || sample_counts->ZFail_B == kQueryFinished;
++    const bool end = is_end_via_z_pass || is_end_via_z_fail;
++    if (no_fake) {
++      if (end) {
++        WriteGuestOcclusionResult(sample_counts, 1);
++        notify(true, ZpdAnswer::kNoRealCount, 1, 0);
++      } else {
++        std::memset(sample_counts, 0, sizeof(xenos::xe_gpu_depth_sample_counts));
++        notify(false, ZpdAnswer::kBegin, 0, 0);
++      }
++      return true;
++    }
++    auto fake_sample_count = REXCVAR_GET(query_occlusion_fake_sample_count);
++    if (fake_sample_count < 0) {
++      notify(end, ZpdAnswer::kNone, 0, 0);
++      return true;
++    }
+     std::memset(sample_counts, 0, sizeof(xenos::xe_gpu_depth_sample_counts));
+-    if (is_end_via_z_pass || is_end_via_z_fail) {
++    if (end) {
+       sample_counts->ZPass_A = fake_sample_count;
+       sample_counts->Total_A = fake_sample_count;
+     }
++    notify(end, end ? ZpdAnswer::kFake : ZpdAnswer::kBegin, end ? uint64_t(fake_sample_count) : 0, 0);
+     return true;
+   };
+ 
+@@ -194,6 +226,14 @@ bool D3D12CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffe
+   bool is_end = is_end_via_z_pass || is_end_via_z_fail;
+ 
+   if (!is_end) {
++    if (no_fake && active_occlusion_query_.valid) {
++      // A begin with a query still open (its end never came): drop the old one and keep host queries on.
++      if (active_occlusion_query_.open && occlusion_query_heap_ && submission_open_) {
++        deferred_command_list_.D3DEndQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
++                                           active_occlusion_query_.host_index);
++      }
++      active_occlusion_query_ = {};
++    }
+     if (active_occlusion_query_.valid &&
+         active_occlusion_query_.sample_count_address != sample_count_addr) {
+       DisableHostOcclusionQueries();
+@@ -202,19 +242,37 @@ bool D3D12CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffe
+     if (!BeginGuestOcclusionQuery(sample_count_addr)) {
+       return write_fallback_result();
+     }
++    if (no_fake) {
++      // The end report gets this query's own count, so the begin snapshot must be 0 for end - begin.
++      std::memset(sample_counts, 0, sizeof(xenos::xe_gpu_depth_sample_counts));
++    }
++    notify(false, ZpdAnswer::kBegin, 0, 0);
+     return true;
+   }
+ 
+   if (!active_occlusion_query_.valid ||
+       active_occlusion_query_.sample_count_address != sample_count_addr) {
+-    DisableHostOcclusionQueries();
++    if (!no_fake) {
++      DisableHostOcclusionQueries();
++    } else {
++      // Not this query's end: close the open host query (an unclosed BeginQuery would break the command list).
++      if (active_occlusion_query_.valid && active_occlusion_query_.open && occlusion_query_heap_ &&
++          submission_open_) {
++        deferred_command_list_.D3DEndQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
++                                           active_occlusion_query_.host_index);
++      }
++      active_occlusion_query_ = {};
++    }
+     return write_fallback_result();
+   }
+ 
+-  if (!EndGuestOcclusionQuery(sample_count_addr, sample_counts)) {
++  uint64_t samples = 0;
++  uint32_t segments = 0;
++  if (!EndGuestOcclusionQuery(sample_count_addr, samples, segments)) {
+     return write_fallback_result();
+   }
+-
++  WriteGuestOcclusionResult(sample_counts, samples);
++  notify(true, ZpdAnswer::kHost, samples, segments);
+   return true;
+ }
+ 
+@@ -3463,6 +3521,16 @@ bool D3D12CommandProcessor::BeginSubmission(bool is_guest_command) {
+     primitive_processor_->BeginSubmission();
+ 
+     texture_cache_->BeginSubmission(submission_current_);
++
++    // Gears2-Native SDK patch 15 (occlusion_query_no_fake): continue a guest query split by the last submission end.
++    if (active_occlusion_query_.valid && !active_occlusion_query_.open && occlusion_query_heap_) {
++      uint32_t index = 0;
++      if (AcquireOcclusionQueryIndex(index)) {
++        deferred_command_list_.D3DBeginQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION, index);
++        active_occlusion_query_.host_index = index;
++        active_occlusion_query_.open = true;
++      }
++    }
+   }
+ 
+   if (is_opening_frame) {
+@@ -3538,10 +3606,23 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
+   if (submission_open_) {
+     assert_false(scratch_buffer_used_);
+ 
+-    if (active_occlusion_query_.valid && occlusion_query_heap_) {
++    if (active_occlusion_query_.valid && active_occlusion_query_.open && occlusion_query_heap_) {
+       deferred_command_list_.D3DEndQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
+                                          active_occlusion_query_.host_index);
+-      active_occlusion_query_ = {};
++      // Gears2-Native SDK patch 15: with occlusion_query_no_fake, keep the guest query and resolve this part as a
++      // segment (BeginSubmission opens the next); stock behaviour drops the query, which then turns host queries off
++      // for the session at its end ZPD (the job 113 "every answer is the fake count" result).
++      if (REXCVAR_GET(occlusion_query_no_fake) && occlusion_query_readback_ &&
++          active_occlusion_query_.segment_count < ActiveOcclusionQuery::kMaxSegments) {
++        const uint32_t index = active_occlusion_query_.host_index;
++        deferred_command_list_.D3DResolveQueryData(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
++                                                   index, 1, occlusion_query_readback_.Get(),
++                                                   sizeof(uint64_t) * index);
++        active_occlusion_query_.segments[active_occlusion_query_.segment_count++] = index;
++        active_occlusion_query_.open = false;
++      } else {
++        active_occlusion_query_ = {};
++      }
+     }
+ 
+     pipeline_cache_->EndSubmission();
+@@ -5011,7 +5092,7 @@ bool D3D12CommandProcessor::AcquireOcclusionQueryIndex(uint32_t& host_index_out)
+ }
+ 
+ void D3D12CommandProcessor::DisableHostOcclusionQueries() {
+-  if (active_occlusion_query_.valid && occlusion_query_heap_) {
++  if (active_occlusion_query_.valid && active_occlusion_query_.open && occlusion_query_heap_) {
+     uint32_t host_index = active_occlusion_query_.host_index;
+     // Clear before EndSubmission to prevent the EndSubmission safety net from issuing a second
+     // EndQuery for the same index.
+@@ -5052,28 +5133,38 @@ bool D3D12CommandProcessor::BeginGuestOcclusionQuery(uint32_t sample_count_addre
+   active_occlusion_query_.sample_count_address = sample_count_address;
+   active_occlusion_query_.host_index = host_index;
+   active_occlusion_query_.valid = true;
++  active_occlusion_query_.open = true;  // Gears2-Native SDK patch 15
++  active_occlusion_query_.segment_count = 0;
+   return true;
+ }
+ 
+-bool D3D12CommandProcessor::EndGuestOcclusionQuery(
+-    uint32_t sample_count_address, xenos::xe_gpu_depth_sample_counts* sample_counts) {
++bool D3D12CommandProcessor::EndGuestOcclusionQuery(uint32_t sample_count_address,
++                                                    uint64_t& samples_out, uint32_t& segments_out) {
+   if (!REXCVAR_GET(occlusion_query_enable) || !occlusion_query_resources_available_ ||
+       !active_occlusion_query_.valid || !occlusion_query_heap_ || !occlusion_query_readback_) {
+     return false;
+   }
+ 
+-  uint32_t host_index = active_occlusion_query_.host_index;
++  // Gears2-Native SDK patch 15: earlier segments (occlusion_query_no_fake) were already resolved when their
++  // submission ended; the open one, if any, is ended and resolved here.
++  const ActiveOcclusionQuery query = active_occlusion_query_;
+   active_occlusion_query_ = {};
+ 
+   if (!BeginSubmission(true)) {
+     return false;
+   }
+ 
+-  deferred_command_list_.D3DEndQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
+-                                     host_index);
+-  deferred_command_list_.D3DResolveQueryData(
+-      occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION, host_index, 1,
+-      occlusion_query_readback_.Get(), sizeof(uint64_t) * host_index);
++  uint32_t segments[ActiveOcclusionQuery::kMaxSegments + 1];
++  uint32_t segment_count = query.segment_count;
++  std::memcpy(segments, query.segments, sizeof(uint32_t) * segment_count);
++  if (query.open) {
++    deferred_command_list_.D3DEndQuery(occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION,
++                                       query.host_index);
++    deferred_command_list_.D3DResolveQueryData(
++        occlusion_query_heap_.Get(), D3D12_QUERY_TYPE_OCCLUSION, query.host_index, 1,
++        occlusion_query_readback_.Get(), sizeof(uint64_t) * query.host_index);
++    segments[segment_count++] = query.host_index;
++  }
+ 
+   if (!EndSubmission(false)) {
+     return false;
+@@ -5088,9 +5179,12 @@ bool D3D12CommandProcessor::EndGuestOcclusionQuery(
+     return false;
+   }
+ 
+-  uint64_t samples = occlusion_query_readback_mapping_[host_index];
+-  samples = NormalizeOcclusionSamples(samples);
+-  WriteGuestOcclusionResult(sample_counts, samples);
++  uint64_t samples = 0;
++  for (uint32_t i = 0; i < segment_count; ++i) {
++    samples += occlusion_query_readback_mapping_[segments[i]];
++  }
++  samples_out = NormalizeOcclusionSamples(samples);
++  segments_out = segment_count;
+   return true;
+ }
+ 

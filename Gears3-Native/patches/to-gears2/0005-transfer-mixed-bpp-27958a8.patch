@@ -1,0 +1,189 @@
+# 0005 - EDRAM ownership transfers between 32bpp and 64bpp targets (Gears 3 chat, 2026-10-23; base Gears2-Native 27958a8)
+# Suspect for Gears 3's ch22 black squad + black ground (Gears 2 chat's 00:37 lead, confirmed in Shagg's play log
+# 20261023-003356): ~476 colour tiles a frame are "unknown (colour)" = never transferred, incl. the per-object shadow
+# depth D24S8 base 1440 pitch 1120 reusing tiles of k_16_16_16_16 base 1624 pitch 640/400.
+# Switch: --gow2_renderer_transfer_mixed_bpp (default false = no change). On:
+#   - depth target <- 64bpp colour: depth sample at 32bpp column u (after the 40-sample colour/depth swap) = half (u & 1)
+#     of source pixel u >> 1 (kTransferPs t2.w);
+#   - colour words between 32bpp and 64bpp colour targets, and depth -> 64bpp colour (kWordTransferPs t2.y): 32 -> 64
+#     takes source columns 2u, 2u+1; 64 -> 32 takes half (u & 1) of pixel u >> 1 (Canary d3d12_render_target_cache.cc
+#     ~3214-3235, ~3403);
+#   - four more transfer self-tests at the first swap (8888 <-> 16_16_16_16(_FLOAT), and via D24S8).
+# Checked: DXC compiles all four shader variants; index math checked against an EDRAM model (python, 0 mismatches over
+# c32/c64/d32 sources and c32/c64/d32 destinations); Windows syntax check. NOT built or run. MSAA sources: not covered.
+# Applies on 27958a8 with or without 0004.
+diff -ruN a/src/layer0_xenos/renderer/builtin_shaders.h b/src/layer0_xenos/renderer/builtin_shaders.h
+--- a/src/layer0_xenos/renderer/builtin_shaders.h	2026-10-23 00:42:34.996674818 -0700
++++ b/src/layer0_xenos/renderer/builtin_shaders.h	2026-10-23 00:42:35.032217475 -0700
+@@ -213,6 +213,10 @@
+ Texture2D<float4> xe_src_colour : register(t2, space0);
+ // upl-n108: t2.z = 1: read the colour source through its UINT bits view (t3) instead.
+ Texture2D<uint4> xe_src_colour_bits : register(t3, space0);
++// Gears 3 2026-10-23 (patch 0005): t2.w = 1: the colour source is 64bpp (40-pixel tiles, two dwords per pixel). The
++// depth sample at 32bpp column u (after the colour/depth half swap) is half (u & 1) of source pixel u >> 1 (Canary
++// d3d12_render_target_cache.cc: "the 32bpp destination sample is one half of the 64bpp source sample at
++// u = u_32bpp >> 1"; the colour/depth column swap by 40 samples = 20 pixels of the 64bpp source).
+ 
+ uint XeFloat32To20e4(uint f32u32) {
+   f32u32 = min((f32u32 <= 0x7FFFFFFFu) ? f32u32 : 0u, 0x3FFFFFF8u);
+@@ -252,12 +256,16 @@
+   uint rel = (tile + 2048u - t0.z) % 2048u;
+   // Depth source: the sample at EDRAM column sx is its pixel with the halves swapped back; colour: no swap.
+   uint qx = t2.x != 0u ? sx : (sx >= 40u ? sx - 40u : sx + 40u);
+-  uint2 q = uint2((rel % t0.w) * 80u + qx, (rel / t0.w) * 16u + sy) * rss + ssub;
++  bool src64 = t2.x != 0u && t2.w != 0u;
++  uint src_tw = src64 ? 40u : 80u;
++  if (src64) qx = sx >> 1u;
++  uint2 q = uint2((rel % t0.w) * src_tw + qx, (rel / t0.w) * 16u + sy) * rss + ssub;
+   float d = 0.0;
+   uint stencil = 0u, colour_word = 0u;
+   [branch] if (t2.x != 0u) {
+-    colour_word = (t2.z != 0u) ? XeBitsToGuestWords(xe_src_colour_bits.Load(int3(q, 0)), t2.y).x
+-                               : XeHostToGuestWords(xe_src_colour.Load(int3(q, 0)), t2.y).x;
++    uint2 cw = (t2.z != 0u) ? XeBitsToGuestWords(xe_src_colour_bits.Load(int3(q, 0)), t2.y)
++                            : XeHostToGuestWords(xe_src_colour.Load(int3(q, 0)), t2.y);
++    colour_word = (src64 && (sx & 1u) != 0u) ? cw.y : cw.x;
+     stencil = colour_word & 0xFFu;
+   } else {
+     d = xe_src_depth.Load(int3(q, 0));
+@@ -440,6 +448,9 @@
+ //   t0 = dest base, dest pitch tiles, source base, source pitch tiles
+ //   t1.x tile width in pixels (80 at 32bpp, 40 at 64bpp), t1.y source kind (0 colour, 1 depth), t1.z source format
+ //        (colour: ColorRenderTargetFormat; depth: bit 0 20e4, bit 1 remapped by 0.5), t1.w dest format
++//   t2.y = 1 (patch 0005): the colour source is 64bpp. Source and destination may now differ in bits per sample
++//        (Canary: 32 -> 64bpp takes source pixels 2u and 2u + 1; 64 -> 32bpp takes half (u & 1) of pixel u >> 1;
++//        the colour/depth swap is 40 32bpp samples).
+ constexpr const char* kWordTransferPs = R"(
+ cbuffer XeTransfer : register(b0, space0) { uint4 t0; uint4 t1; uint4 t2; uint4 t3; };
+ Texture2D<float> xe_src_depth : register(t0, space0);
+@@ -476,18 +487,29 @@
+   uint sx = p.x % tw, sy = p.y % 16u;
+   uint tile = (t0.x + (p.y / 16u) * t0.y + p.x / tw) % 2048u;
+   uint rel = (tile + 2048u - t0.z) % 2048u;
+-  // Colour <-> depth: the source sample at this EDRAM position is in the other half of the tile.
+-  uint half_w = tw / 2u;
+-  uint qx = (t1.y != 0u) ? (sx >= half_w ? sx - half_w : sx + half_w) : sx;
+-  int3 q = int3(int(((rel % t0.w) * tw + qx) * rss + ssub.x), int(((rel / t0.w) * 16u + sy) * rss + ssub.y), 0);
+-  uint2 w;
+-  if (t1.y != 0u) {
+-    w = uint2((XeD24FromHost(xe_src_depth.Load(q), t1.z) << 8u) | (xe_src_stencil.Load(q).y & 0xFFu), 0u);
+-  } else if (t2.x != 0u) {
+-    w = XeBitsToGuestWords(xe_src_colour_bits.Load(q), t1.z);
+-  } else {
+-    w = XeHostToGuestWords(xe_src_colour.Load(q), t1.z);
++  bool dst64 = tw == 40u;
++  bool src64 = t1.y == 0u && t2.y != 0u;
++  uint src_tw = src64 ? 40u : 80u;
++  // The destination pixel's dword column(s) in the tile row; each dword -> its source pixel (and half).
++  uint words[2] = {0u, 0u};
++  [unroll] for (uint k = 0u; k < 2u; ++k) {
++    if (k == 1u && !dst64) break;
++    uint col = dst64 ? sx * 2u + k : sx;  // 0..79
++    // Colour <-> depth: the source sample at this EDRAM position is in the other half of the tile (40 samples).
++    if (t1.y != 0u) col = col >= 40u ? col - 40u : col + 40u;
++    uint qx = src64 ? (col >> 1u) : col;
++    int3 q = int3(int(((rel % t0.w) * src_tw + qx) * rss + ssub.x), int(((rel / t0.w) * 16u + sy) * rss + ssub.y), 0);
++    uint2 sw;
++    if (t1.y != 0u) {
++      sw = uint2((XeD24FromHost(xe_src_depth.Load(q), t1.z) << 8u) | (xe_src_stencil.Load(q).y & 0xFFu), 0u);
++    } else if (t2.x != 0u) {
++      sw = XeBitsToGuestWords(xe_src_colour_bits.Load(q), t1.z);
++    } else {
++      sw = XeHostToGuestWords(xe_src_colour.Load(q), t1.z);
++    }
++    words[k] = (src64 && (col & 1u) != 0u) ? sw.y : sw.x;
+   }
++  uint2 w = uint2(words[0], words[1]);
+ #ifdef XE_BITS_OUT
+   return XeGuestWordsToBits(w, t1.w);
+ #else
+diff -ruN a/src/layer0_xenos/renderer/shadow_renderer.cpp b/src/layer0_xenos/renderer/shadow_renderer.cpp
+--- a/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 00:42:34.984674818 -0700
++++ b/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 00:44:32.132476630 -0700
+@@ -150,6 +150,12 @@
+                       "Gears 3 job 037: with async pipelines, each frame may wait up to this many ms in total for new "
+                       "pipeline states instead of skipping their draws (a skipped draw leaves the previous content - "
+                       "Gears 3 ch17's random blue/rainbow skin, job 034). 0 = never wait (skip, as before)");
++REXCVAR_DEFINE_BOOL(gow2_renderer_transfer_mixed_bpp, false, "Gears2",
++                    "Patch 0005 (Gears 3 2026-10-23): EDRAM ownership transfers between 32bpp and 64bpp targets - a "
++                    "64bpp colour target's tiles into a depth target, and colour words between 32bpp and 64bpp colour "
++                    "targets (Canary's sample mapping). Off = those tiles stay as the host texture last held them "
++                    "('unknown ... colour' in the summary; Gears 3 ch22: ~476 tiles a frame, incl. the per-object "
++                    "shadow depth)");
+ REXCVAR_DEFINE_BOOL(gow2_renderer_memexport, false, "Gears2",
+                     "Gears 3 (notes/11): run vertex shaders that memexport - their eA/eM writes go to the guest-memory "
+                     "mirror (u0), export-only draws (no rasterization) run as point lists with no targets, the written "
+@@ -766,6 +772,8 @@
+     if (res_scale_ > 1) compare_every_ = 0;  // comparisons read our targets at guest pixel positions
+     alias_log_limit_ = std::max(0, REXCVAR_GET(gow2_renderer_log_aliases));
+     float24_remap_ = REXCVAR_GET(gow2_renderer_float24_remap);
++    transfer_mixed_bpp_ = REXCVAR_GET(gow2_renderer_transfer_mixed_bpp);
++    if (transfer_mixed_bpp_) REXLOG_INFO("gow2_renderer: EDRAM transfers between 32bpp and 64bpp targets on (patch 0005)");
+     draw_colour_ = REXCVAR_GET(gow2_renderer_colour);
+     clamp_next_base_ = REXCVAR_GET(gow2_renderer_clamp_next_base);
+     {
+@@ -4198,9 +4206,10 @@
+       const bool word_ok =
+           o && o->texture && o->key.msaa == 0 && t.key.msaa == 0 && word_transfer_ps_ && transfer_vs_ &&
+           (rr::IsDepthClass(o->key.storage_class)
+-               ? !rr::RenderTargetCache::Is64bpp(t)
++               ? (transfer_mixed_bpp_ || !rr::RenderTargetCache::Is64bpp(t))
+                : rr::ColorHostFormat(o->key.storage_class) != gpu::Format::kUnknown &&
+-                     rr::RenderTargetCache::Is64bpp(*o) == rr::RenderTargetCache::Is64bpp(t));
++                     (transfer_mixed_bpp_ ||
++                      rr::RenderTargetCache::Is64bpp(*o) == rr::RenderTargetCache::Is64bpp(t)));
+       if (word_ok) GpuCat(5);
+       if (word_ok && WordTransfer(*o, t, run.rect)) {
+         stats_.xfer_px[1] += run_area;
+@@ -4272,7 +4281,9 @@
+     const uint32_t tile_w = rr::RenderTargetCache::Is64bpp(dst) ? 40u : 80u;
+     uint32_t c[16] = {dst.key.base_tiles, dst.pitch_tiles, src.key.base_tiles, src.pitch_tiles,
+                       tile_w, from_depth ? 1u : 0u, from_depth ? DepthFlags(src.key.storage_class) : src.key.storage_class,
+-                      dst.key.storage_class, src_bits ? 1u : 0u, 0u, 0u, 0u, dst.scale, src.scale};
++                      dst.key.storage_class, src_bits ? 1u : 0u,
++                      (!from_depth && rr::RenderTargetCache::Is64bpp(src)) ? 1u : 0u,  // patch 0005: t2.y
++                      0u, 0u, dst.scale, src.scale};
+     backend_->SetPipeline(it->second);
+     backend_->SetConstants(gpu::ShaderStage::kPixel, gpu::kCbSystem, c, sizeof(c));
+     backend_->Draw(3);
+@@ -4420,7 +4431,7 @@
+       float origin = 0.0f;
+       PartScope transfer_part(*this, kPartTransfer);
+       const bool colour_source = o && !rr::IsDepthClass(o->key.storage_class) && o->texture &&
+-                                 !rr::RenderTargetCache::Is64bpp(*o) &&
++                                 (!rr::RenderTargetCache::Is64bpp(*o) || transfer_mixed_bpp_) &&
+                                  rr::ColorHostFormat(o->key.storage_class) != gpu::Format::kUnknown;
+       if (o && (rr::IsDepthClass(o->key.storage_class) || colour_source) && o->texture && o->key.msaa == 0 &&
+           t.key.msaa == 0 && transfer_vs_ && transfer_ps_) {
+@@ -4609,7 +4620,8 @@
+     uint32_t c[16] = {dst.key.base_tiles, dst.pitch_tiles, src.key.base_tiles, src.pitch_tiles,
+                       from_colour ? 0u : DepthFlags(src.key.storage_class),
+                       dest_float ? DepthFlags(dst.key.storage_class) : 0u, 0u, 0u,
+-                      from_colour ? 1u : 0u, from_colour ? src.key.storage_class : 0u, src_bits ? 1u : 0u, 0u,
++                      from_colour ? 1u : 0u, from_colour ? src.key.storage_class : 0u, src_bits ? 1u : 0u,
++                      (from_colour && rr::RenderTargetCache::Is64bpp(src)) ? 1u : 0u,  // patch 0005: t2.w
+                       dst.scale, src.scale};
+     // Job 179: --gow2_renderer_stencil_transfer_bits=1 runs bit passes only for the stencil bits the title ever sets
+     // or tests (draws, clears, read masks so far); the others stay 0 from the clear above. Without SV_StencilRef
+@@ -4709,6 +4721,13 @@
+                  // (unorm) view of the 7e3 scene - a storage class the test never covered.
+                  {"8888 -> 2_10_10_10 -> 8888", {c2101010}},
+                  {"8888 -> 7e3 -> 2_10_10_10 -> 7e3 -> 8888", {c7e3, c2101010, c7e3}}};
++    if (transfer_mixed_bpp_) {  // patch 0005: 32bpp <-> 64bpp through the EDRAM words (64bpp scratch: tile 0 = x < 40)
++      const uint32_t c16x4 = rr::ColorStorageClass(5), c16x4f = rr::ColorStorageClass(7);
++      selftest_.push_back({"8888 -> 16_16_16_16 -> 8888 (patch 0005)", {c16x4}});
++      selftest_.push_back({"8888 -> 16_16_16_16_FLOAT -> 8888 (patch 0005)", {c16x4f}});
++      selftest_.push_back({"8888 -> 16_16_16_16 -> D24S8 -> 8888 (patch 0005, ch22 shadow)", {c16x4, d24}});
++      selftest_.push_back({"8888 -> D24S8 -> 16_16_16_16_FLOAT -> 8888 (patch 0005)", {d24, c16x4f}});
++    }
+     const std::vector<uint32_t> words = SelfTestWords();
+     rr::RenderTarget source = MakeScratchTarget(c8888);
+     if (!source.texture) return;
+@@ -6335,6 +6354,7 @@
+   std::vector<rr::TileSource> tile_sources_;
+   std::vector<rr::TileSource> alt_sources_;
+   bool canary_ownership_ = false;
++  bool transfer_mixed_bpp_ = false;  // --gow2_renderer_transfer_mixed_bpp (patch 0005)
+   bool float24_remap_ = true;  // --gow2_renderer_float24_remap
+   bool draw_colour_ = true;    // --gow2_renderer_colour
+   bool clamp_next_base_ = true;  // --gow2_renderer_clamp_next_base

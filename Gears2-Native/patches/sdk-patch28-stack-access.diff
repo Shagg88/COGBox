@@ -1,0 +1,128 @@
+diff --git a/resources/templates/codegen/pch_h.inja b/resources/templates/codegen/pch_h.inja
+--- a/resources/templates/codegen/pch_h.inja
++++ b/resources/templates/codegen/pch_h.inja
+@@ -144,6 +144,17 @@
+ #define REX_STORE_U32(x, y) (*(volatile u32*)(base + (u32)(x) + REX_PHYS_HOST_OFFSET(x)) = __builtin_bswap32(y))
+ #define REX_STORE_U64(x, y) (*(volatile u64*)(base + (u32)(x) + REX_PHYS_HOST_OFFSET(x)) = __builtin_bswap64(y))
+ 
++// Gears2-Native SDK patch 28: accesses based on the stack pointer (r1) - stack frames, register saves - never reach
++// the 0xE0000000+ physical views, so they skip the REX_PHYS_HOST_OFFSET compare (about a third of all loads/stores).
++#define REX_SLOAD_U8(x) (*(volatile u8*)(base + (u32)(x)))
++#define REX_SLOAD_U16(x) __builtin_bswap16(*(volatile u16*)(base + (u32)(x)))
++#define REX_SLOAD_U32(x) __builtin_bswap32(*(volatile u32*)(base + (u32)(x)))
++#define REX_SLOAD_U64(x) __builtin_bswap64(*(volatile u64*)(base + (u32)(x)))
++#define REX_SSTORE_U8(x, y)  (*(volatile u8*)(base + (u32)(x)) = (y))
++#define REX_SSTORE_U16(x, y) (*(volatile u16*)(base + (u32)(x)) = __builtin_bswap16(y))
++#define REX_SSTORE_U32(x, y) (*(volatile u32*)(base + (u32)(x)) = __builtin_bswap32(y))
++#define REX_SSTORE_U64(x, y) (*(volatile u64*)(base + (u32)(x)) = __builtin_bswap64(y))
++
+ #define REX_MEMORY_SIZE 0x100000000ull
+ 
+ //=============================================================================
+diff --git a/src/codegen/builders/context.cpp b/src/codegen/builders/context.cpp
+--- a/src/codegen/builders/context.cpp
++++ b/src/codegen/builders/context.cpp
+@@ -499,6 +499,10 @@
+       snprintf(mm_macro, sizeof(mm_macro), "REX_MM_LOAD_%s", load_macro + 9);
+       macro = mm_macro;
+     }
++  } else if (insn.operands[2] == 1 && strncmp(load_macro, "REX_LOAD_", 9) == 0) {
++    // Gears2-Native SDK patch 28: stack-pointer based - no physical-view offset check.
++    snprintf(mm_macro, sizeof(mm_macro), "REX_SLOAD_%s", load_macro + 9);
++    macro = mm_macro;
+   }
+ 
+   print("\t{}.{} = {}(", r(insn.operands[0]), dest_type, macro);
+@@ -539,6 +543,10 @@
+       snprintf(mm_macro, sizeof(mm_macro), "REX_MM_STORE_%s", store_macro + 10);
+       macro = mm_macro;
+     }
++  } else if (insn.operands[2] == 1 && strncmp(store_macro, "REX_STORE_", 10) == 0) {
++    // Gears2-Native SDK patch 28: stack-pointer based - no physical-view offset check.
++    snprintf(mm_macro, sizeof(mm_macro), "REX_SSTORE_%s", store_macro + 10);
++    macro = mm_macro;
+   }
+ 
+   print("\t{}(", macro);
+diff --git a/src/codegen/builders/helpers.h b/src/codegen/builders/helpers.h
+--- a/src/codegen/builders/helpers.h
++++ b/src/codegen/builders/helpers.h
+@@ -14,6 +14,7 @@
+ #include "builder_context.h"
+ 
+ #include <cstring>
++#include <string_view>
+ 
+ #include <rex/codegen/function_scanner.h>
+ #include <rex/logging.h>
+@@ -185,8 +186,11 @@
+   // EA = displacement + rA
+   ctx.println("\t{} = {} + {}.u32;", ctx.ea(), static_cast<int32_t>(ctx.insn.operands[1]),
+               ctx.r(ctx.insn.operands[2]));
+-  // rD = MEM[EA]
+-  ctx.println("\t{}.u64 = {}({});", ctx.r(ctx.insn.operands[0]), load_macro, ctx.ea());
++  // rD = MEM[EA] (Gears2-Native SDK patch 28: r1-based -> no physical-view offset check)
++  if (ctx.insn.operands[2] == 1 && std::string_view(load_macro).starts_with("REX_LOAD_"))
++    ctx.println("\t{}.u64 = REX_SLOAD_{}({});", ctx.r(ctx.insn.operands[0]), load_macro + 9, ctx.ea());
++  else
++    ctx.println("\t{}.u64 = {}({});", ctx.r(ctx.insn.operands[0]), load_macro, ctx.ea());
+   // rA = EA (update)
+   ctx.println("\t{}.u32 = {};", ctx.r(ctx.insn.operands[2]), ctx.ea());
+ }
+@@ -221,8 +225,11 @@
+   // EA = displacement + rA
+   ctx.println("\t{} = {} + {}.u32;", ctx.ea(), static_cast<int32_t>(ctx.insn.operands[1]),
+               ctx.r(ctx.insn.operands[2]));
+-  // MEM[EA] = rS
+-  ctx.println("\t{}({}, {}.{});", store_macro, ctx.ea(), ctx.r(ctx.insn.operands[0]), field);
++  // MEM[EA] = rS (Gears2-Native SDK patch 28: r1-based, e.g. stwu r1 - no physical-view offset check)
++  if (ctx.insn.operands[2] == 1 && std::string_view(store_macro).starts_with("REX_STORE_"))
++    ctx.println("\tREX_SSTORE_{}({}, {}.{});", store_macro + 10, ctx.ea(), ctx.r(ctx.insn.operands[0]), field);
++  else
++    ctx.println("\t{}({}, {}.{});", store_macro, ctx.ea(), ctx.r(ctx.insn.operands[0]), field);
+   // rA = EA (update)
+   ctx.println("\t{}.u32 = {};", ctx.r(ctx.insn.operands[2]), ctx.ea());
+ }
+diff --git a/src/codegen/builders/memory.cpp b/src/codegen/builders/memory.cpp
+--- a/src/codegen/builders/memory.cpp
++++ b/src/codegen/builders/memory.cpp
+@@ -221,7 +221,8 @@
+ 
+ bool build_lfd(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+-  ctx.print("\t{}.u64 = REX_LOAD_U64(", ctx.f(ctx.insn.operands[0]));
++  ctx.print("\t{}.u64 = {}(", ctx.f(ctx.insn.operands[0]),
++            ctx.insn.operands[2] == 1 ? "REX_SLOAD_U64" : "REX_LOAD_U64");  // SDK patch 28
+   if (ctx.insn.operands[2] != 0)
+     ctx.print("{}.u32 + ", ctx.r(ctx.insn.operands[2]));
+   ctx.println("{});", static_cast<int32_t>(ctx.insn.operands[1]));
+@@ -239,7 +240,8 @@
+ 
+ bool build_lfs(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+-  ctx.print("\t{}.u32 = REX_LOAD_U32(", ctx.temp());
++  ctx.print("\t{}.u32 = {}(", ctx.temp(),
++            ctx.insn.operands[2] == 1 ? "REX_SLOAD_U32" : "REX_LOAD_U32");  // SDK patch 28
+   if (ctx.insn.operands[2] != 0)
+     ctx.print("{}.u32 + ", ctx.r(ctx.insn.operands[2]));
+   ctx.println("{});", static_cast<int32_t>(ctx.insn.operands[1]));
+@@ -448,7 +450,8 @@
+ 
+ bool build_stfd(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+-  ctx.print("{}", ctx.mmio_check_d_form() ? "\tREX_MM_STORE_U64(" : "\tREX_STORE_U64(");
++  ctx.print("{}", ctx.mmio_check_d_form() ? "\tREX_MM_STORE_U64("
++                  : ctx.insn.operands[2] == 1 ? "\tREX_SSTORE_U64(" : "\tREX_STORE_U64(");  // SDK patch 28
+   if (ctx.insn.operands[2] != 0)
+     ctx.print("{}.u32 + ", ctx.r(ctx.insn.operands[2]));
+   ctx.println("{}, {}.u64);", static_cast<int32_t>(ctx.insn.operands[1]),
+@@ -487,7 +490,8 @@
+ bool build_stfs(BuilderContext& ctx) {
+   ctx.emit_set_flush_mode(false);
+   ctx.println("\t{}.f32 = float({}.f64);", ctx.temp(), ctx.f(ctx.insn.operands[0]));
+-  ctx.print("{}", ctx.mmio_check_d_form() ? "\tREX_MM_STORE_U32(" : "\tREX_STORE_U32(");
++  ctx.print("{}", ctx.mmio_check_d_form() ? "\tREX_MM_STORE_U32("
++                  : ctx.insn.operands[2] == 1 ? "\tREX_SSTORE_U32(" : "\tREX_STORE_U32(");  // SDK patch 28
+   if (ctx.insn.operands[2] != 0)
+     ctx.print("{}.u32 + ", ctx.r(ctx.insn.operands[2]));
+   ctx.println("{}, {}.u32);", static_cast<int32_t>(ctx.insn.operands[1]), ctx.temp());

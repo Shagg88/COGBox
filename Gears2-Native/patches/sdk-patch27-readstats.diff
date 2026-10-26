@@ -1,0 +1,30 @@
+diff --git a/src/kernel/xam/apps/xgi_app.cpp b/src/kernel/xam/apps/xgi_app.cpp
+--- a/src/kernel/xam/apps/xgi_app.cpp
++++ b/src/kernel/xam/apps/xgi_app.cpp
+@@ -330,6 +330,26 @@
+       REXKRNL_DEBUG("XUserReadStats({}, {}, {:08X}, {}, {:08X}, {}, {:08X})", title_id, xuids_count,
+                     xuids_ptr, specs_count, specs_ptr, results_size, results_ptr);
+ 
++      // Gears2-Native SDK patch 27: fill the results with one empty view per requested view (no leaderboard rows),
++      // as an offline title sees no stats. The title sizes the buffer itself (8 + views * 16 + rows ...) and only
++      // sends this message with room for it; before this patch the buffer was left as allocated, so a title that
++      // reads XUSER_STATS_READ_RESULTS.pViews (Gears of War 2's Horde at the first wave) read through null.
++      // XUSER_STATS_READ_RESULTS { dwNumViews; pViews } then XUSER_STATS_VIEW { dwViewId; dwTotalViewRows;
++      // dwNumRows; pRows } per view; XUSER_STATS_SPEC is 136 bytes with dwViewId first.
++      if (results_ptr && results_size >= 8 + 16 * specs_count) {
++        uint8_t* results = memory_->TranslateVirtual(results_ptr);
++        const uint8_t* specs = specs_ptr ? memory_->TranslateVirtual(specs_ptr) : nullptr;
++        memory::store_and_swap<uint32_t>(results + 0, specs_count);
++        memory::store_and_swap<uint32_t>(results + 4, specs_count ? results_ptr + 8 : 0);
++        for (uint32_t i = 0; i < specs_count; ++i) {
++          uint8_t* view = results + 8 + 16 * i;
++          const uint32_t view_id = specs ? memory::load_and_swap<uint32_t>(specs + 136 * i) : 0;
++          memory::store_and_swap<uint32_t>(view + 0, view_id);
++          memory::store_and_swap<uint32_t>(view + 4, 0);   // dwTotalViewRows
++          memory::store_and_swap<uint32_t>(view + 8, 0);   // dwNumRows
++          memory::store_and_swap<uint32_t>(view + 12, 0);  // pRows
++        }
++      }
+       return X_E_SUCCESS;
+     }
+     case 0x000B0025: {
