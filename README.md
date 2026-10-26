@@ -21,13 +21,15 @@ the ports what an emulator can't easily offer:
 - **Any resolution** - 1x to 4x the original (up to 5K) or matched to your monitor, with real extra detail, not a
   stretched picture.
 - **Anti-aliasing and upscaling** - SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS, including upscaling modes for weaker GPUs.
-- **High frame rates** - the 30 fps limit lifted, vsync with a cap matched to your monitor, AMD FSR frame generation.
+- **High frame rates** - the 30 fps limit lifted, vsync with a cap matched to your monitor, AMD FSR frame
+  generation (highly experimental for now).
 - **Smooth play** - shaders are built on your PC and kept, pipelines are made in the background, and a texture that
   isn't ready yet shows a moment later instead of freezing the game.
 - **Lower input lag** - one frame in flight, NVIDIA Reflex / AMD Anti-Lag 2 where your GPU has them.
 - **HDR10**, **ultrawide 21:9**, **16x anisotropic filtering**, field of view, and the games' own motion blur, depth of
   field and lens flares as switches.
 - **Split-screen** (Gears 2), **keyboard and mouse**, **title updates**, **chapter select**.
+- **In-game menu** - Back + Start (or F1) during play: change settings, restart to apply them, or quit.
 
 ## The games
 
@@ -48,7 +50,7 @@ Other hardware hasn't been tried yet - please report what you find.
   onto the window. COGBox recognises the game, unpacks it next to itself and checks it is the right release.
 - A settings page per game with every option explained (rest the mouse on an option for its description).
 - Play time, plain-English messages when a game closes unexpectedly, one-click problem reports, save backups.
-- Updates itself from this page's releases.
+- Updates itself from this page's releases: an **UPDATE TO ...** button appears when a new version is out.
 
 ---
 
@@ -73,8 +75,12 @@ Other hardware hasn't been tried yet - please report what you find.
 4. Turn to a game and press **ADD YOUR COPY** (or drop the file on the window). Then add the title update the same way.
 5. Press **PLAY**. **SETTINGS** has the graphics, frame rate, controls and gameplay options.
 
-**Controls in COGBox:** LB / RB (or the arrow keys, the mouse wheel) turn the carousel; the D-pad moves between the
-buttons and A presses one; X opens settings, Y gets box art, B / Esc goes back. On a settings page LB / RB change tab.
+**Controls in COGBox:** the D-pad (or the arrow keys, the mouse wheel) turns the carousel; LB / RB choose Play or
+Settings and A presses it; X opens settings, Y gets box art. On a settings page LB / RB change tab, D-pad down past the
+last option reaches Library / Save / Play, and B jumps to Library.
+
+**In the game:** Back + Start (or F1) opens the in-game menu - the same settings, **Resume**, **Restart to apply** and
+**Quit game**. Most settings take effect when the game restarts; Restart to apply does that for you.
 
 **Updating:** use the update button on any game's About tab, or unzip a new release over the old folder. Your games,
 saves and settings are not in the zip, so they are kept.
