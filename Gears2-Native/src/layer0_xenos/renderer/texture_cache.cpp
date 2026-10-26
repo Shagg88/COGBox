@@ -857,6 +857,16 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   max_level = std::min(max_level, tx::Log2Floor(std::max(std::max(w, h), dim == 2 ? d : 1u)));
   const tx::GuestLayout layout = tx::GetGuestLayout(gd, pitch_div_32, w, h, d, tiled, format, packed, true, max_level);
   const uint32_t mips = layout.max_level + 1;
+  {  // Outside review: a fetch constant whose base or mip range runs past the 512 MB guest memory would be hashed and
+    // read out of bounds below - refuse it (the texture is skipped) instead.
+    constexpr uint64_t kGuestBytes = 512ull << 20;
+    const uint64_t mip_at = layout.packed_level == 0 && (mip_base || tail_at_base) ? base : mip_base;
+    if (uint64_t(base) + std::max(layout.base.level_data_extent_bytes, 1u) > kGuestBytes ||
+        (mips > 1 && mip_at + std::max(layout.mips_total_extent_bytes, 1u) > kGuestBytes)) {
+      e.failure = "texture range past the end of guest memory";
+      return;
+    }
+  }
   const uint32_t layers = gd == tx::Dimension::k3D ? 1 : layout.array_size;
   const bool host_3d = host_kind == 2;
   // GPU path: raw 2D textures (one layer) in a format with typed UAV stores (D3D11-class hardware guarantees these).

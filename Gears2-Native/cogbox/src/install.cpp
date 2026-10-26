@@ -118,9 +118,11 @@ static void worker(App *ap)
             return;
         }
         if (!MoveFileExW(part.c_str(), fin.c_str(), 0)) {
-            if (hadOld) MoveFileExW(old.c_str(), fin.c_str(), 0);
+            // outside review: say so if the old copy can't go back, and where it is
+            bool restored = !hadOld || MoveFileExW(old.c_str(), fin.c_str(), 0);
             std::lock_guard<std::mutex> l(j.m);
-            j.error = "The unpacked copy couldn't be moved into place.";
+            j.error = restored ? "The unpacked copy couldn't be moved into place." :
+                                 "The unpacked copy couldn't be moved into place, and the old copy couldn't be put back - it is safe in " + narrow(old) + " (rename it to " + p.finalDir + " to use it again).";
             j.state = 3;
             return;
         }

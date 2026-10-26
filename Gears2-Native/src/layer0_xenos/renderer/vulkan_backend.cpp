@@ -382,14 +382,25 @@ class VulkanBackend final : public Backend {
     t.vk_view_formats = ii.pNext ? view_format_count : 1;
     t.memory = AllocateImage(t.image);
     if (!t.memory) { vk_.vkDestroyImage(device_, t.image, nullptr); Fail("texture memory"); return 0; }
-    vk_.vkBindImageMemory(device_, t.image, t.memory, 0);
+    // Outside review: check the bind and the attachment view, so a texture is never marked live without them.
+    if ((r = vk_.vkBindImageMemory(device_, t.image, t.memory, 0)) != VK_SUCCESS) {
+      vk_.vkDestroyImage(device_, t.image, nullptr);
+      vk_.vkFreeMemory(device_, t.memory, nullptr);
+      Fail(VkErr("vkBindImageMemory", r));
+      return 0;
+    }
     if (d.usage & (kUsageRenderTarget | kUsageDepthStencil)) {
       VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
       vi.image = t.image;
       vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
       vi.format = fmt;
       vi.subresourceRange = {t.aspect, 0, 1, 0, 1};
-      vk_.vkCreateImageView(device_, &vi, nullptr, &t.attachment_view);
+      if ((r = vk_.vkCreateImageView(device_, &vi, nullptr, &t.attachment_view)) != VK_SUCCESS) {
+        vk_.vkDestroyImage(device_, t.image, nullptr);
+        vk_.vkFreeMemory(device_, t.memory, nullptr);
+        Fail(VkErr("vkCreateImageView", r));
+        return 0;
+      }
     }
     t.live = true;
     TextureHandle h = 0;
@@ -1141,6 +1152,7 @@ class VulkanBackend final : public Backend {
       v.texture = th;
       v.plane = uint8_t(b.srv_plane[i]);
       imgs[binding] = {VK_NULL_HANDLE, SampledView(th, v, ViewDimension::k2D), VK_IMAGE_LAYOUT_GENERAL};
+      if (!imgs[binding].imageView) { NotDone("Dispatch: image view creation failed"); return; }  // outside review
       wr.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, 0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &imgs[binding], nullptr, nullptr});
     }
     for (uint32_t u = 0; u < 2; ++u) {
@@ -1156,6 +1168,7 @@ class VulkanBackend final : public Backend {
       const TextureHandle th = u == 0 ? b.uav_texture : b.uav2_texture;
       if (!Valid(th)) { NotDone("Dispatch with a null storage image"); return; }
       imgs[binding] = {VK_NULL_HANDLE, StorageView(th, u == 0 ? b.uav_mip : 0), VK_IMAGE_LAYOUT_GENERAL};
+      if (!imgs[binding].imageView) { NotDone("Dispatch: storage view creation failed"); return; }  // outside review
       wr.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &imgs[binding], nullptr, nullptr});
     }
     vk_.vkUpdateDescriptorSets(device_, uint32_t(wr.size()), wr.data(), 0, nullptr);
@@ -1462,8 +1475,10 @@ class VulkanBackend final : public Backend {
     if (vk_.vkCreatePipelineCache(device_, &ci, nullptr, &pipeline_cache_vk_) != VK_SUCCESS && !initial.empty()) {
       ci.initialDataSize = 0;  // unusable data: start empty
       ci.pInitialData = nullptr;
-      vk_.vkCreatePipelineCache(device_, &ci, nullptr, &pipeline_cache_vk_);
+      if (vk_.vkCreatePipelineCache(device_, &ci, nullptr, &pipeline_cache_vk_) != VK_SUCCESS)
+        pipeline_cache_vk_ = VK_NULL_HANDLE;  // outside review: Vulkan allows no cache - pipelines are just not cached
     }
+    if (!pipeline_cache_vk_) REXLOG_WARN("gow2_renderer: Vulkan pipeline cache couldn't be created - running without one");
     if (!cache_path_.empty())
       REXLOG_INFO("gow2_renderer: Vulkan pipeline cache {} ({} KB loaded)", cache_path_, (initial.size() + 1023) / 1024);
     cache_saved_at_ = std::chrono::steady_clock::now();
@@ -1691,7 +1706,10 @@ class VulkanBackend final : public Backend {
       vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
       vi.format = bf;
       vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-      vk_.vkCreateImageView(device_, &vi, nullptr, &t.bits_view);
+      if (vk_.vkCreateImageView(device_, &vi, nullptr, &t.bits_view) != VK_SUCCESS) {
+        t.bits_view = VK_NULL_HANDLE;
+        return t.attachment_view;  // outside review: no bits view - the plain attachment view, never a null one
+      }
     }
     return t.bits_view;
   }
@@ -1887,13 +1905,19 @@ class VulkanBackend final : public Backend {
     n.vk_view_formats = view_format_count;
     n.memory = AllocateImage(n.image);
     if (!n.memory) { vk_.vkDestroyImage(device_, n.image, nullptr); t.can_promote = false; return false; }
-    vk_.vkBindImageMemory(device_, n.image, n.memory, 0);
     VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     vi.image = n.image;
     vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vi.format = n.format;
     vi.subresourceRange = {n.aspect, 0, 1, 0, 1};
-    vk_.vkCreateImageView(device_, &vi, nullptr, &n.attachment_view);
+    // Outside review: the old image stays live unless the replacement is fully ready.
+    if (vk_.vkBindImageMemory(device_, n.image, n.memory, 0) != VK_SUCCESS ||
+        vk_.vkCreateImageView(device_, &vi, nullptr, &n.attachment_view) != VK_SUCCESS) {
+      vk_.vkDestroyImage(device_, n.image, nullptr);
+      vk_.vkFreeMemory(device_, n.memory, nullptr);
+      t.can_promote = false;
+      return false;
+    }
     EndPass(0);
     Transition(t, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     Transition(n, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -1981,7 +2005,10 @@ class VulkanBackend final : public Backend {
     si.borderColor = d.border == 1 ? VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE : d.border == 2 ? VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK
                                                                                          : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     VkSampler smp = VK_NULL_HANDLE;
-    vk_.vkCreateSampler(device_, &si, nullptr, &smp);
+    if (vk_.vkCreateSampler(device_, &si, nullptr, &smp) != VK_SUCCESS) {  // outside review: never cache a null
+      REXLOG_WARN("gow2_renderer: Vulkan sampler creation failed");
+      return VK_NULL_HANDLE;
+    }
     sampler_objects_[key] = smp;
     return smp;
   }
@@ -2047,6 +2074,9 @@ class VulkanBackend final : public Backend {
       TextureHandle th = v.texture;
       if (!Valid(th) || ViewDimensionOf(textures_[th]) != want) th = defaults_[v.zero || Valid(v.texture) ? 1 : 0][uint32_t(want)];
       VkImageView view = SampledView(th, th == v.texture ? v : TextureView{}, want);
+      // Outside review: a view the driver refused - the default texture instead, and no set (draw skipped) if even that fails.
+      if (!view) view = SampledView(defaults_[1][uint32_t(want)], TextureView{}, want);
+      if (!view) return VK_NULL_HANDLE;
       ii[i] = {VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
     }
     VkDescriptorBufferInfo bi[3] = {{guest_.buffer, 0, VK_WHOLE_SIZE}, {ring_.buffer, 0, VK_WHOLE_SIZE}, {guest_.buffer, 0, VK_WHOLE_SIZE}};
@@ -2072,6 +2102,7 @@ class VulkanBackend final : public Backend {
         sampler_memo_desc_[i] = samplers_[i];
       }
       smp[i] = sampler_memo_[i];
+      if (!smp[i]) return VK_NULL_HANDLE;  // outside review: no sampler - skip the draw, never write a null descriptor
       h = (h ^ uint64_t(reinterpret_cast<uintptr_t>(smp[i]))) * 0x100000001B3ull;
     }
     auto it = sampler_sets_.find(h);
@@ -2542,7 +2573,12 @@ class VulkanBackend final : public Backend {
     vk_.vkGetBufferMemoryRequirements(device_, out.buffer, &mr);
     out.memory = Allocate(mr, need, prefer);
     if (!out.memory) { vk_.vkDestroyBuffer(device_, out.buffer, nullptr); out = {}; return false; }
-    vk_.vkBindBufferMemory(device_, out.buffer, out.memory, 0);
+    if (vk_.vkBindBufferMemory(device_, out.buffer, out.memory, 0) != VK_SUCCESS) {  // outside review
+      vk_.vkDestroyBuffer(device_, out.buffer, nullptr);
+      vk_.vkFreeMemory(device_, out.memory, nullptr);
+      out = {};
+      return false;
+    }
     out.size = size;
     if (map) {
       void* p = nullptr;

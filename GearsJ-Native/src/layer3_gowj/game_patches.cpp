@@ -248,7 +248,9 @@ void GowjAddBuiltInIniEdits() {
 // XPhysicalAlloc. Its "virtual" allocations (0x00000000-0x7EFFFFFF) are separate host memory in the SDK and do NOT count
 // against those 512 MB (on the console they did). The gauge logs both, plus the lowest free physical memory seen, so the
 // pool can be sized from a measurement. It starts when the pool is set up and stops at shutdown.
-REXCVAR_DEFINE_INT32(gowj_memory_log_seconds, 10, "Judgment",
+REXCVAR_DEFINE_INT32(gowj_memory_log_seconds, 0,  // off for players (outside review: the gauge thread could
+                     // read the kernel during shutdown); 10 is the old diagnostic value
+                      "Judgment",
                      "Log the game's memory use every N seconds (physical = the 512 MB the GPU sees; virtual = "
                      "the game's other memory). 0 = off");
 
@@ -281,7 +283,7 @@ void StartMemoryGauge() {
     uint32_t lowest_free_mb = UINT32_MAX;
     for (;;) {
       // Wake every 100 ms to notice shutdown, so the kernel state is never read after it is gone.
-      for (int32_t i = 0; i < secs * 10; ++i) {
+      for (int64_t i = 0; i < int64_t(secs) * 10; ++i) {  // 64-bit: a huge interval can't wrap
         if (g_memory_gauge_stop.load()) return;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
       }

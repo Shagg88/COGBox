@@ -200,29 +200,65 @@ std::string report_anonymise(const std::string &text)
         replace_all_ci(s, "/home/" + u, "/home/%USERNAME%");   // Wine shows Linux paths as Z:\home\name
         replace_all_ci(s, "\\home\\" + u, "\\home\\%USERNAME%");
     }
-    return s;
+    // Outside review: a name with non-English letters - the logs are UTF-8, the A calls above give the ANSI form.
+    for (const wchar_t *var : { L"USERNAME", L"COMPUTERNAME" }) {
+        wchar_t w[256] = L"";
+        GetEnvironmentVariableW(var, w, 256);
+        char u8[1024] = "";
+        WideCharToMultiByte(CP_UTF8, 0, w, -1, u8, sizeof u8, NULL, NULL);
+        if (strlen(u8) >= 3) replace_all_ci(s, u8, var[0] == L'U' ? "%USERNAME%" : "%COMPUTERNAME%");
+    }
+    // Outside review: other folder paths (another drive, a games folder) say where the player keeps things. Keep only
+    // the last part (a file or folder name and what follows it): C:\Games\Gears 2\default.xex -> <path>\default.xex.
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size();) {
+        auto drive_at = [&](size_t k) {
+            return k + 2 < s.size() && isalpha((unsigned char)s[k]) && s[k + 1] == ':' && (s[k + 2] == '\\' || s[k + 2] == '/') &&
+                   (k == 0 || !isalnum((unsigned char)s[k - 1]));
+        };
+        if (!drive_at(i)) { out += s[i++]; continue; }
+        size_t end = i + 3;
+        while (end < s.size() && s[end] != '\r' && s[end] != '\n' && s[end] != '"' && s[end] != '\'' && !drive_at(end)) end++;
+        size_t last = i + 2;
+        for (size_t k = i + 2; k < end; k++) if (s[k] == '\\' || s[k] == '/') last = k;
+        out += "<path>";
+        i = last;   // the separator and the name after it are kept
+    }
+    return out;
 }
 
 // A crash dump can't have its length changed: the user and PC names are overwritten with x's of the same length,
 // in both the 8-bit and the UTF-16 forms (as Gears2-Native's launcher does).
+// Outside review: also names with non-English letters - each name is searched as UTF-16 (as written, lower and upper
+// case), UTF-8 and the ANSI code page, ASCII letters matched in any case.
+static void blank_pattern(std::string &data, const std::string &pat, size_t unit)
+{
+    const size_t len = pat.size();
+    if (len < 3 * unit) return;
+    for (size_t i = 0; i + len <= data.size(); i++) {
+        size_t j = 0;
+        for (; j < len; j++)
+            if (tolower((unsigned char)data[i + j]) != tolower((unsigned char)pat[j])) break;
+        if (j == len) {
+            for (j = 0; j < len; j++) data[i + j] = (unit == 2 && (j & 1)) ? 0 : 'x';
+            i += len - 1;
+        }
+    }
+}
+
 static void blank_binary(std::string &data)
 {
-    char user[256] = "", pc[256] = "";
-    GetEnvironmentVariableA("USERNAME", user, sizeof user);
-    GetEnvironmentVariableA("COMPUTERNAME", pc, sizeof pc);
-    for (const char *w : { user, pc }) {
-        size_t n = strlen(w);
-        if (n < 3) continue;
-        for (int wide = 0; wide < 2; wide++) {
-            size_t step = wide ? 2 : 1, len = n * step;
-            for (size_t i = 0; i + len <= data.size(); i++) {
-                size_t j = 0;
-                for (; j < n; j++) {
-                    char c = data[i + j * step];
-                    if (tolower((unsigned char)c) != tolower((unsigned char)w[j]) || (wide && data[i + j * step + 1] != 0)) break;
-                }
-                if (j == n) { for (j = 0; j < n; j++) data[i + j * step] = 'x'; i += len - 1; }
-            }
+    for (const wchar_t *var : { L"USERNAME", L"COMPUTERNAME" }) {
+        wchar_t w[256] = L"";
+        if (!GetEnvironmentVariableW(var, w, 256) || wcslen(w) < 3) continue;
+        std::wstring forms[3] = { w, w, w };
+        CharLowerBuffW(&forms[1][0], (DWORD)forms[1].size());
+        CharUpperBuffW(&forms[2][0], (DWORD)forms[2].size());
+        for (const std::wstring &f : forms) blank_pattern(data, std::string((const char *)f.data(), f.size() * 2), 2);
+        for (UINT cp : { (UINT)CP_UTF8, (UINT)CP_ACP }) {
+            char b[1024] = "";
+            if (WideCharToMultiByte(cp, 0, w, -1, b, sizeof b, NULL, NULL)) blank_pattern(data, b, 1);
         }
     }
 }

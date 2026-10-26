@@ -268,8 +268,10 @@ bool EnsureFrameGeneration(const XenosFgFrame& f) {
 bool Prepare(const XenosFgFrame& f, uint32_t flags) {
   PrepareList& l = g_lists[g_list_index % g_lists.size()];
   if (l.fence_value && g_fence->GetCompletedValue() < l.fence_value) {
-    g_fence->SetEventOnCompletion(l.fence_value, g_fence_event);
-    WaitForSingleObject(g_fence_event, INFINITE);
+    // Outside review: a bounded wait - if the GPU is lost this list never completes; skip generation, don't hang.
+    if (FAILED(g_fence->SetEventOnCompletion(l.fence_value, g_fence_event)) ||
+        WaitForSingleObject(g_fence_event, 2000) != WAIT_OBJECT_0)
+      return false;
   }
   if (FAILED(l.allocator->Reset()) || FAILED(g_list->Reset(l.allocator, nullptr))) return false;
   ffxDispatchDescFrameGenerationPrepareV2 p{};
@@ -298,7 +300,11 @@ bool Prepare(const XenosFgFrame& f, uint32_t flags) {
   ID3D12CommandList* lists[] = {g_list};
   g_queue->ExecuteCommandLists(1, lists);
   l.fence_value = ++g_fence_value;
-  g_queue->Signal(g_fence, l.fence_value);
+  if (FAILED(g_queue->Signal(g_fence, l.fence_value))) {  // never wait later on a value that was never signalled
+    l.fence_value = 0;
+    --g_fence_value;
+    return false;
+  }
   ++g_list_index;
   return true;
 }

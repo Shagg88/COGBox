@@ -83,7 +83,9 @@ REXCVAR_DEFINE_INT32(gow2_max_fps, 0, "Gears2",
 // 23 Oct 21:24): the SDK gives the title 512 MB of "physical" memory (everything the GPU reads: textures, the texture
 // pool, vertex buffers); "virtual" allocations are separate host memory and do not count against it. Logs both and the
 // lowest free physical memory seen, so the texture pool (196 MB) can be sized from a measurement. Starts with the pool.
-REXCVAR_DEFINE_INT32(gow2_memory_log_seconds, 10, "Gears2",
+REXCVAR_DEFINE_INT32(gow2_memory_log_seconds, 0,  // off for players (outside review: the gauge thread could
+                     // read the kernel during shutdown); 10 is the old diagnostic value
+                      "Gears2",
                      "Log the game's memory use every N seconds (physical = the 512 MB the GPU sees; virtual = the "
                      "game's other memory; lowest free physical so far). 0 = off");
 static void Gow2StartMemoryGauge() {
