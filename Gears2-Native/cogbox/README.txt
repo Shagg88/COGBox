@@ -41,9 +41,14 @@ Getting started
 5. Press PLAY. SETTINGS opens the game's page, which has graphics, frame rate, controls and more.
    Every setting has a short description.
 
-Controller: LB / RB turn the carousel, the D-pad moves between the buttons, A presses one,
-X opens the settings, Y gets box art, B goes back. On a settings page LB / RB change tab.
+Controller: the D-pad turns the carousel, LB / RB choose Play or Settings, A presses it,
+X opens the settings, Y gets box art. On a settings page LB / RB change tab, D-pad down past
+the last option reaches Library / Save / Play, and B jumps to Library.
 Keyboard: the arrow keys turn it, Enter plays, Esc goes back.
+
+In the game: Back + Start (or F1) opens the in-game menu - the same settings, Resume,
+Restart to apply and Quit game. Most settings take effect when the game restarts; Restart to
+apply does that for you.
 
 
 Where things are
@@ -58,7 +63,7 @@ Everything stays inside the COGBox folder:
   covers\               put your own box art here as gears2.png, gears3.png and judgment.png
                         (or .jpg). Without them, COGBox draws its own covers.
 
-To update, use the button on any game's About tab, or unzip a new release over the folder. Your
+To update, use the UPDATE TO button on the main screen (or the one on any game's About tab), or unzip a new release over the folder. Your
 games, saves and settings are not in the zip, so they are kept.
 
 
