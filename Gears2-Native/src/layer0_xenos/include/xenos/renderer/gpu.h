@@ -267,7 +267,7 @@ struct BackendOptions {
   // logical processors (Canary's default), 0 = the old count (a quarter, at most 4), N = N (at most the processors).
   int pipeline_threads = -1;
   // Patch 0162: the workers' Windows thread priority (-2 lowest, -1 below normal, 0 normal).
-  int pipeline_thread_priority = -1;
+  int pipeline_thread_priority = 0;  // job 518: normal by default, as Canary / Edge
   uint32_t warm_workers = 3;  // patch 0069: workers allowed on warm-only pipelines at once (WarmPixelShader)
   // Patch 0056: seconds between periodic library saves while it grows (was 60; a quit lost minutes of pipelines).
   int pipeline_save_seconds = 15;

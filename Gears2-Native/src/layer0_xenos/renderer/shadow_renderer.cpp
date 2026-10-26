@@ -128,7 +128,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_pipeline_load_async, true, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_pipeline_threads, -1, "Gears2",
                      "Patch 0056 (Canary d3d12_pipeline_creation_threads): pipeline worker threads; -1 = 75% of the "
                      "logical processors (Canary's default), 0 = the old count (a quarter, at most 4), N = N");
-REXCVAR_DEFINE_INT32(gow2_renderer_pipeline_thread_priority, -1, "Gears2",
+REXCVAR_DEFINE_INT32(gow2_renderer_pipeline_thread_priority, 0, "Gears2",  // job 518: normal again, as Canary / Edge (below normal: textures took too long)
                      "Patch 0162: Windows priority of the pipeline worker threads: -1 = below normal (default; the game, "
                      "its renderer and the audio keep their CPU time during a burst of first-visit builds - Shagg's "
                      "Gears 2 audio crackled while 12 normal-priority workers filled 16 logical processors), 0 = normal, "
