@@ -391,7 +391,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_tex_num_format, true, "Gears2",
                     "Patch 0040 (Canary d119505 / 2ddc5ef / 6a45452 / 0c843ef): texture fetches of fixed-point formats "
                     "follow Canary - integer num_format restores the guest integer, unsigned-biased decodes as offset "
                     "binary, unsigned normalised rounds to 16 fractional bits. Changes the generated shaders. false = as before");
-REXCVAR_DEFINE_DOUBLE(gow2_renderer_standin_wait_ms, 1000.0, "Gears2",
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_standin_wait_ms, 10.0, "Gears2",  // job 519: was 1000 - waits of 585 / 810 ms on a frame (Gears 3 hitches)
                       "Patch 0045 (Edge de8e606 / 8a4d405 / Edge HEAD GetPipelineStandInWaitReason): a draw whose skipping "
                       "would leave a hole that stays - a small render target (at most 160 pixels wide: generated data), "
                       "pixel-shader memexport, a new memexport vertex shader, or a new vertex shader drawing to a target "
