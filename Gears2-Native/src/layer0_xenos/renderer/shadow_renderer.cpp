@@ -365,7 +365,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_canary_decode, true, "Gears2",
                     "Patch 0037/0041 (Canary 92ada8e, fbdb1f2): co-issued scalar operand read as W/Z and two-coordinate "
                     "tfetch1D (the second coordinate used since patch 0087, DXBC back end, only when the fetch constant "
                     "is not 1D - Canary 7cd4794). On by default again since 0043. Changes the generated shaders");
-REXCVAR_DEFINE_STRING(gow2_renderer_shader_backend, "hlsl", "Gears2",
+REXCVAR_DEFINE_STRING(gow2_renderer_shader_backend, "dxbc", "Gears2",  // job 520: DXBC for all three (COGBox never passed it; Judgment set it itself)
                       "Overhaul option B: hlsl = guest shaders go HLSL -> DXC as before (120-230 ms each, compile threads, "
                       "shader cache); dxbc = translated straight to DXBC, ready in under a millisecond (D3D12 only; no "
                       "compile threads or shader cache needed). A shader the DXBC translator cannot do takes the HLSL path");
