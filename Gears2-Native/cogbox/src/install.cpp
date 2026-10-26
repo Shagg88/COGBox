@@ -219,6 +219,16 @@ void install_start(App &a, const std::string &path, int forGame)
     }
     p.finalDir = p.update ? game_default_update_dir(p.game) : game_default_data_dir(p.game);
     p.partialDir = p.finalDir + ".partial";
+    // the file chosen must not live inside the folder it's about to replace (review 6)
+    {
+        auto lower = [](std::string s) { for (char &c : s) c = (char)tolower((unsigned char)c); return s; };
+        std::string src = lower(narrow(p.resolved));
+        for (const std::string &d : { p.finalDir, p.partialDir })
+            if (src.compare(0, d.size() + 1, lower(d) + "\\") == 0) {
+                set_message(a, "That file is inside the folder COGBox unpacks the game into - move it somewhere else first, then add it.", true);
+                return;
+            }
+    }
     // room for it (the files plus a little)
     uint64_t need = 0;
     if (!p.update) {

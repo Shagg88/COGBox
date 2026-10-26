@@ -127,7 +127,7 @@ if ($un -and $un.Length -ge 3) {
     if ($n) { [IO.File]::WriteAllBytes($f.FullName, $b); Write-Host "  user name replaced $n time(s) in $($f.FullName.Substring($stage.Length + 1))" }
   }
   # the check: the name must be gone from every file in the package
-  $left = @(Get-ChildItem -LiteralPath $stage -Recurse -File | Where-Object { $t = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($_.FullName)); $u = [Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($_.FullName)); $t -match [regex]::Escape($un) -or $u -match [regex]::Escape($un) -or $t -match [regex]::Escape($env:COMPUTERNAME) })
+  $left = @(Get-ChildItem -LiteralPath $stage -Recurse -File | Where-Object { $t = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($_.FullName)); $u = [Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($_.FullName)); $t -match [regex]::Escape($un) -or $u -match [regex]::Escape($un) -or $t -match [regex]::Escape($env:COMPUTERNAME) -or $u -match [regex]::Escape($env:COMPUTERNAME) })   # -match ignores case; both names in both encodings
   if ($left.Count) { $left | ForEach-Object { Write-Host "PROBLEM: the user or PC name is still in $($_.FullName)" }; Write-Host 'RESULT: FAIL'; exit 1 }
   Write-Host '  check: no user name or PC name left in any file of the package'
 }
@@ -146,6 +146,6 @@ $zh = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
 Set-Content "$zip.sha256" "$zh  $name.zip"
 $mb = [Math]::Round((Get-Item $zip).Length / 1MB)
 Write-Host "zip: $zip ($mb MB), SHA-256 $zh"
-if ($mb -ge 2000) { Write-Host 'PROBLEM: over GitHub''s 2 GB limit for one release file'; Write-Host 'RESULT: FAIL'; exit 1 }
+if ($mb -ge 2000) { Remove-Item -LiteralPath $zip, "$zip.sha256" -ErrorAction SilentlyContinue; Write-Host 'PROBLEM: over GitHub''s 2 GB limit for one release file (zip removed)'; Write-Host 'RESULT: FAIL'; exit 1 }
 Write-Host 'RESULT: PASS'
 # END-OF-JOB

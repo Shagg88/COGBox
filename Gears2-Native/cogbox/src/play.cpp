@@ -283,7 +283,7 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
     HANDLE f = FindFirstFileW(widen(join(session, "*")).c_str(), &fd);
     if (f != INVALID_HANDLE_VALUE) {
         do {
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            if (fd.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) continue;   // no links (review 15)
             std::string n = narrow(fd.cFileName), lo = n;
             for (char &c : lo) c = (char)tolower((unsigned char)c);
             bool text = lo.size() > 4 && (lo.rfind(".txt") == lo.size() - 4 || lo.rfind(".log") == lo.size() - 4 || lo.rfind(".toml") == lo.size() - 5);

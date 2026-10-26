@@ -208,7 +208,8 @@ static bool protected_path(std::string rel)
     static const char *top[] = { "cogbox.ini", "settings.ini", "extra-args.txt", "covers\\" };
     for (const char *t : top) if (rel.compare(0, strlen(t), t) == 0) return true;
     static const char *inner[] = { "\\game\\", "\\user\\", "\\logs\\", "\\shadercache\\" };
-    for (const char *t : inner) if (rel.find(t) != std::string::npos) return true;
+    std::string withRoot = "\\" + rel;   // a game, user, logs or shadercache folder at the top counts too (review 13)
+    for (const char *t : inner) if (withRoot.find(t) != std::string::npos) return true;
     return false;
 }
 
@@ -282,6 +283,10 @@ static bool install(const std::string &version)
         if (names[i] == "CogBox.exe") has_root_exe = true;
     }
     size_t strip = one_top && !has_root_exe ? top.size() : 0;
+    // an update must hold the launcher itself (review 12): otherwise nothing is replaced and it says so
+    bool has_launcher = false;
+    for (auto &nm : names) if (nm.size() >= strip && nm.substr(strip) == "CogBox.exe") has_launcher = true;
+    if (!has_launcher) { mz_zip_reader_end(&ar); DeleteFileW(zipPath.c_str()); return fail("The update doesn't hold CogBox.exe - nothing was changed."); }
 
     struct Done { std::wstring target; bool had_old; };
     std::vector<Done> done;
@@ -315,13 +320,12 @@ static bool install(const std::string &version)
             ok = fail("Couldn't replace " + rel + " (is a game still running?).");
             break;
         }
+        done.push_back({target, had});   // from here on the undo puts the old one back (review 2)
         if (!MoveFileExW(fresh.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-            if (had) MoveFileExW((target + L".old-cogbox").c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING);
             DeleteFileW(fresh.c_str());
             ok = fail("Couldn't replace " + rel + ".");
             break;
         }
-        done.push_back({target, had});
         InterlockedExchange(&g_ipermille, (LONG)((i + 1) * 1000ull / count));
     }
     mz_zip_reader_end(&ar);
@@ -364,6 +368,7 @@ static void tidy(const std::wstring &dir, int depth)
         std::wstring n = fd.cFileName;
         if (n == L"." || n == L"..") continue;
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;   // never follow a link out of the folder (review 10)
             if (depth < 3 && n != L"game" && n != L"user" && n != L"logs" && n != L"shadercache") tidy(dir + L"\\" + n, depth + 1);
         } else if (n.size() > 11 && (n.compare(n.size() - 11, 11, L".old-cogbox") == 0 || n.compare(n.size() - 11, 11, L".new-cogbox") == 0)) {
             DeleteFileW((dir + L"\\" + n).c_str());

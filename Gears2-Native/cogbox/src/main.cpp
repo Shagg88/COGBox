@@ -65,6 +65,7 @@ static bool zip_folder(const std::string &dir, const std::string &zipPath, std::
             std::string n = narrow(fd.cFileName);
             if (n == "." || n == "..") continue;
             std::string r = rel.empty() ? n : rel + "\\" + n;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;   // links aren't followed into the backup (review 11)
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { stack.push_back(r); continue; }
             std::string data;
             if (!read_file(join(dir, r), data, 1u << 30)) { ok = false; err = "couldn't read " + r; break; }
