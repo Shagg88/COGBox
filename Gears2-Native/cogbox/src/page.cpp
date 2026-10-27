@@ -439,6 +439,30 @@ static void about_tab(App &a, int g)
     }
     if (busy || running) ImGui::EndDisabled();
 
+    // 0.2.0: downloadable content from the player's own console (Content\0000000000000000\<title ID>\00000002)
+    ImGui::Dummy(ImVec2(0, S(8)));
+    th_heading("DOWNLOADABLE CONTENT", g_rowX1);
+    const std::vector<DlcItem> &dl = dlc_list(g);
+    if (dl.empty()) lamp_line(0, "None added. Map packs and other add-ons from your console can be added here, one package at a time.");
+    for (size_t i = 0; i < dl.size(); i++) {
+        ImGui::PushID((int)i + 7000);
+        lamp_line(1, dl[i].title + (dl[i].title != dl[i].name ? "  (" + dl[i].name + ")" : ""));
+        ImGui::SameLine();
+        if (busy || running) ImGui::BeginDisabled();
+        if (small_button("Remove")) dlc_remove_ask(a, g, dl[i]);
+        if (busy || running) ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+    if (busy || running) ImGui::BeginDisabled();
+    if (small_button("Add downloadable content...")) {
+        char tid[16];
+        snprintf(tid, sizeof tid, "%08X", d.titleId);
+        std::wstring t = L"Choose a downloadable content package (from your console's Content\\0000000000000000\\" + widen(tid) + L"\\00000002 folder)";
+        std::string p = pick_file(t.c_str(), L"All files\0*.*\0");
+        if (!p.empty()) install_start(a, p, g);
+    }
+    if (busy || running) ImGui::EndDisabled();
+
     ImGui::Dummy(ImVec2(0, S(8)));
     th_heading("FOLDERS", g_rowX1);
     if (small_button("Saves")) { make_dirs(game_user_dir(g)); shell_open(game_user_dir(g)); }
@@ -559,7 +583,7 @@ static std::string summary(App &a, int g)
     if (!fps.empty()) s += "   |   " + fps + (fps == "Unlimited" ? "" : " fps");
     if (!aa.empty() && aa != "Off") s += "   |   " + aa;
     if (!pr.empty()) s += "   |   " + pr;
-    return s;
+    return tr(s);   // 0.2.0
 }
 
 void page_draw(App &a, ImVec2 size)
@@ -579,7 +603,7 @@ void page_draw(App &a, ImVec2 size)
     dl->AddText(F_TITLE, FS(F_TITLE), ImVec2(p0.x + S(112), p0.y + S(22)), U(col::text), d.name);
     std::string sub = a.st[g].ready == R_READY ? (a.st[g].useUpdate ? std::string(d.updateName) : "Disc version") : "Not ready to play";
     if (a.st[g].playSeconds > 0) sub += "   |   " + human_duration(a.st[g].playSeconds) + " played";
-    dl->AddText(F_BODY, FS(F_BODY), ImVec2(p0.x + S(114), p0.y + S(22) + FS(F_TITLE) + S(2)), U(col::dim), sub.c_str());
+    dl->AddText(F_BODY, FS(F_BODY), ImVec2(p0.x + S(114), p0.y + S(22) + FS(F_TITLE) + S(2)), U(col::dim), tr(sub).c_str());
     {
         struct L { int s; const char *t; } lamps[3] = {
             { a.st[g].dataDir.empty() ? 3 : a.st[g].xexMatch ? 1 : 2, "Game" },
@@ -587,6 +611,7 @@ void page_draw(App &a, ImVec2 size)
             { a.padConnected ? 1 : 0, "Controller" } };
         float x = p1.x - S(24);
         for (int i = 2; i >= 0; i--) {
+            lamps[i].t = tr(lamps[i].t);   // 0.2.0
             float tw = F_SMALL->CalcTextSizeA(FS(F_SMALL), FLT_MAX, 0, lamps[i].t).x;
             x -= tw;
             dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(x, p0.y + S(28)), U(col::dim), lamps[i].t);

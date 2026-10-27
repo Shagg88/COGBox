@@ -323,7 +323,7 @@ void front_draw(App &a, ImVec2 size)
         ImVec2 m(S(26), S(20));
         th_cog(dl, ImVec2(m.x + S(16), m.y + S(18)), S(16), 10, (float)now * 0.15f, U(col::redHi), U(ImVec4(0.03f, 0.03f, 0.035f, 1)));
         dl->AddText(F_TITLE, FS(F_TITLE), ImVec2(m.x + S(42), m.y), U(col::text), "COGBOX");
-        dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(m.x + S(44), m.y + FS(F_TITLE) + S(2)), U(col::dim), "Gears of War native PC ports  -  launcher " COGBOX_VERSION);
+        dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(m.x + S(44), m.y + FS(F_TITLE) + S(2)), U(col::dim), (tr(std::string("Gears of War native PC ports  -  launcher")) + " " COGBOX_VERSION).c_str());
     }
 
     // the boxes, farthest first

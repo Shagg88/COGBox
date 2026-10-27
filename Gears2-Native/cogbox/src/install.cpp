@@ -9,6 +9,8 @@
 #include <windows.h>
 #include <cstdio>
 #include <algorithm>
+#include <cstring>
+#include <filesystem>
 
 namespace {
 struct Plan {
@@ -20,6 +22,11 @@ struct Plan {
     std::string finalDir;        // where it ends up
     std::string partialDir;      // where it is unpacked first
     bool inPlace = false;        // an extracted folder used where it is
+    bool dlc = false;            // 0.2.0: downloadable content (goes to user\0000000000000000\<title>\00000002\<name>)
+    std::string dlcName;         // its folder name there (the package's own file name, at most 42 characters)
+    std::string dlcTitle;        // its display name
+    std::string headerFile;      // the runtime's content header: user\0000000000000000\<title>\Headers\00000002\<name>.header
+    std::vector<uint8_t> header; // what goes in it (XCONTENT_AGGREGATE_DATA + the licence mask)
 };
 Plan g_plan;
 }
@@ -69,10 +76,26 @@ static const char *kind_text(x360fs::SourceKind k)
     switch (k) {
     case x360fs::SourceKind::DiscImage: return "Unpacking the disc image";
     case x360fs::SourceKind::GodContainer: return "Unpacking the Games on Demand copy";
-    case x360fs::SourceKind::StfsPackage: return "Unpacking the title update";
+    case x360fs::SourceKind::StfsPackage: return g_plan.dlc ? "Unpacking the downloadable content" : "Unpacking the title update";
     case x360fs::SourceKind::ExtractedFolder: return "Checking the folder";
     default: return "Reading";
     }
+}
+
+static bool dir_has_files(const std::string &dir)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((widen(dir) + L"\\*").c_str(), &fd);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    bool any = false;
+    do {
+        std::wstring n = fd.cFileName;
+        if (n == L"." || n == L"..") continue;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) any = dir_has_files(narrow(widen(dir) + L"\\" + n));
+        else any = true;
+    } while (!any && FindNextFileW(f, &fd));
+    FindClose(f);
+    return any;
 }
 
 static void worker(App *ap)
@@ -97,7 +120,8 @@ static void worker(App *ap)
         case x360fs::SourceKind::StfsPackage: ok = x360fs::extract_stfs(p.resolved, part, progress, &j.cancel, err, true); break;
         default: ok = false; err = "This isn't something COGBox can unpack.";
         }
-        if (ok && !file_exists(join(p.partialDir, p.update ? "default.xexp" : "default.xex"))) {
+        if (ok && p.dlc && !dir_has_files(p.partialDir)) { ok = false; err = "The package was empty."; }
+        if (ok && !p.dlc && !file_exists(join(p.partialDir, p.update ? "default.xexp" : "default.xex"))) {
             ok = false;
             err = p.update ? "The package didn't hold a default.xexp - is it the title update?" : "The copy didn't hold a default.xex.";
         }
@@ -128,6 +152,20 @@ static void worker(App *ap)
         }
         if (hadOld) remove_tree(old);
     }
+    if (p.dlc) {
+        // the content header the runtime reads (ContentManager::ReadContentHeaderFile / LoadPackageLicenseMask)
+        std::string hd = p.headerFile.substr(0, p.headerFile.find_last_of('\\'));
+        make_dirs(hd);
+        FILE *f = _wfopen(widen(p.headerFile).c_str(), L"wb");
+        bool wrote = f && fwrite(p.header.data(), 1, p.header.size(), f) == p.header.size();
+        if (f) fclose(f);
+        std::lock_guard<std::mutex> l(j.m);
+        if (!wrote) { j.error = "The content was unpacked, but its header file couldn't be written to " + p.headerFile + "."; j.state = 3; return; }
+        j.result = (p.dlcTitle.empty() ? std::string("The downloadable content") : "\"" + p.dlcTitle + "\"") + " is added to " + game_def(p.game).name +
+                   ". The game finds it the next time it starts.";
+        j.state = 2;
+        return;
+    }
     // the fingerprint, against what the ports are made for
     const GameDef &d = game_def(p.game);
     std::string file = join(p.finalDir, p.update ? "default.xexp" : "default.xex");
@@ -157,6 +195,46 @@ static void begin(App &a)
     j.game = g_plan.game;
     j.state = 1;
     j.th = std::thread(worker, &a);
+}
+
+static void put_be(std::vector<uint8_t> &b, size_t at, uint64_t v, int bytes)
+{
+    for (int i = 0; i < bytes; i++) b[at + i] = uint8_t(v >> (8 * (bytes - 1 - i)));
+}
+static void write_title_id(std::vector<uint8_t> &h, uint32_t tid) { if (h.size() >= 0x144) put_be(h, 0x140, tid, 4); }
+
+// 0.2.0: downloadable content. Builds the runtime's content header (rexglue's XCONTENT_AGGREGATE_DATA, 0x148 bytes,
+// big-endian: device id 1 = HDD, content type 2, display name (128 UTF-16BE), file name (42 + 2), xuid 0, title id),
+// then the licence mask as the SDK's own InstallContent computes it (the bits of every licence entry with flags set).
+static bool dlc_plan(Plan &p, const x360fs::PackageInfo &pi, std::string &err)
+{
+    p.dlc = true;
+    p.dlcTitle = pi.display_name;
+    std::string base = narrow(std::filesystem::path(p.resolved).filename().wstring()), name;
+    for (char c : base) if (isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.') name += c;
+    if (name.size() > 42) name = name.substr(0, 42);
+    if (name.empty() || name == "." || name == "..") { err = "This package's file name can't be used - rename it (letters and digits) and add it again."; return false; }
+    p.dlcName = name;
+    uint8_t h[0x611] = {};
+    FILE *f = _wfopen(p.resolved.c_str(), L"rb");
+    size_t n = f ? fread(h, 1, sizeof h, f) : 0;
+    if (f) fclose(f);
+    if (n < sizeof h) { err = "This package couldn't be read."; return false; }
+    std::vector<uint8_t> &o = p.header;
+    o.assign(0x148 + 4, 0);
+    put_be(o, 0x0, 1, 4);                                  // DummyDeviceId::HDD
+    put_be(o, 0x4, x360fs::kContentMarketplace, 4);
+    std::memcpy(&o[0x8], h + 0x411, 0xFE);                 // display name, first locale (UTF-16BE), last char kept 0
+    std::memcpy(&o[0x108], name.data(), name.size());
+    uint32_t mask = 0;
+    for (int i = 0; i < 16; i++) {
+        const uint8_t *e = h + 0x22C + i * 0x10;           // licence id (8), bits (4), flags (4)
+        uint32_t bits = (uint32_t(e[8]) << 24) | (uint32_t(e[9]) << 16) | (uint32_t(e[10]) << 8) | e[11];
+        uint32_t flags = (uint32_t(e[12]) << 24) | (uint32_t(e[13]) << 16) | (uint32_t(e[14]) << 8) | e[15];
+        if (flags) mask |= bits;
+    }
+    std::memcpy(&o[0x148], &mask, 4);                      // host order, as the SDK writes it
+    return true;
 }
 
 void install_start(App &a, const std::string &path, int forGame)
@@ -192,12 +270,14 @@ void install_start(App &a, const std::string &path, int forGame)
         if (!x360fs::read_package_info(p.resolved, pi, err)) { set_message(a, err, true); return; }
         p.game = game_by_title_id(pi.title_id);
         if (p.kind == x360fs::SourceKind::StfsPackage) {
-            if (!pi.is_title_update()) {
-                set_message(a, "This package isn't a title update (" + (pi.display_name.empty() ? std::string("content type ") + std::to_string(pi.content_type) : pi.display_name) +
-                                   "). Downloadable content isn't supported yet.", true);
+            if (pi.content_type == x360fs::kContentMarketplace) {
+                if (!dlc_plan(p, pi, err)) { set_message(a, err, true); return; }
+            } else if (!pi.is_title_update()) {
+                set_message(a, "This package isn't a title update or downloadable content (" + (pi.display_name.empty() ? std::string("content type ") + std::to_string(pi.content_type) : pi.display_name) +
+                                   ").", true);
                 return;
-            }
-            p.update = true;
+            } else
+                p.update = true;
         }
         break;
     }
@@ -219,7 +299,15 @@ void install_start(App &a, const std::string &path, int forGame)
         begin(a);
         return;
     }
-    p.finalDir = p.update ? game_default_update_dir(p.game) : game_default_data_dir(p.game);
+    if (p.dlc) {
+        char tid[16];
+        snprintf(tid, sizeof tid, "%08X", game_def(p.game).titleId);
+        std::string root = join(join(game_user_dir(p.game), "0000000000000000"), tid);
+        p.finalDir = join(join(root, "00000002"), p.dlcName);
+        p.headerFile = join(join(join(root, "Headers"), "00000002"), p.dlcName + ".header");
+        write_title_id(p.header, game_def(p.game).titleId);
+    } else
+        p.finalDir = p.update ? game_default_update_dir(p.game) : game_default_data_dir(p.game);
     p.partialDir = p.finalDir + ".partial";
     // the file chosen must not live inside the folder it's about to replace (review 6)
     {
@@ -247,8 +335,8 @@ void install_start(App &a, const std::string &path, int forGame)
     }
     g_plan = p;
     if (dir_exists(p.finalDir)) {
-        ask(a, "replace", p.game, p.update ? "Replace the title update" : "Replace your copy",
-            std::string("COGBox already has ") + (p.update ? std::string(d.updateName) : std::string("a copy of ") + d.name) +
+        ask(a, "replace", p.game, p.dlc ? "Replace the downloadable content" : p.update ? "Replace the title update" : "Replace your copy",
+            std::string("COGBox already has ") + (p.dlc ? "this downloadable content for " + std::string(d.name) : p.update ? std::string(d.updateName) : std::string("a copy of ") + d.name) +
                 ". Replace it with this one? The old one is removed once the new one is unpacked and in place." +
                 (need ? "\n\nUnpacking needs " + human_bytes(need) + " of space." : ""),
             { "Replace", "Cancel" });
@@ -322,4 +410,79 @@ void install_draw(App &a, ImVec2 size)
     ImGui::SetCursorScreenPos(ImVec2(p1.x - S(26) - S(130), p1.y - S(56)));
     if (th_button("CANCEL", ImVec2(S(130), S(36)), !j.cancel, F_HEAD) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) j.cancel = true;
     ImGui::End();
+}
+
+// ---- 0.2.0: the downloadable content list (About tab) ------------------------------------------------------
+namespace {
+std::vector<DlcItem> g_dlc[G_COUNT];
+DWORD g_dlcAt[G_COUNT] = {};
+int g_dlcJobSeen = -1;
+DlcItem g_dlcRemove;
+int g_dlcRemoveGame = -1;
+
+std::string dlc_root(int g)
+{
+    char tid[16];
+    snprintf(tid, sizeof tid, "%08X", game_def(g).titleId);
+    return join(join(game_user_dir(g), "0000000000000000"), tid);
+}
+}  // namespace
+
+const std::vector<DlcItem> &dlc_list(int g)
+{
+    DWORD now = GetTickCount();
+    if (g_dlcAt[g] && now - g_dlcAt[g] < 3000) return g_dlc[g];
+    g_dlcAt[g] = now ? now : 1;
+    std::vector<DlcItem> out;
+    std::string root = dlc_root(g), dir = join(root, "00000002");
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((widen(dir) + L"\\*").c_str(), &fd);
+    if (f != INVALID_HANDLE_VALUE) {
+        do {
+            std::wstring n = fd.cFileName;
+            if (n == L"." || n == L".." || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            std::string name = narrow(n);
+            if (name.find(".partial") != std::string::npos || name.find(".old-") != std::string::npos) continue;
+            DlcItem it;
+            it.name = name;
+            it.dir = join(dir, name);
+            it.header = join(join(join(root, "Headers"), "00000002"), name + ".header");
+            uint8_t h[0x108] = {};
+            if (FILE *hf = _wfopen(widen(it.header).c_str(), L"rb")) {
+                if (fread(h, 1, sizeof h, hf) == sizeof h) {
+                    std::wstring w;
+                    for (int i = 0; i < 127; i++) { wchar_t c = wchar_t((h[8 + 2 * i] << 8) | h[9 + 2 * i]); if (!c) break; w += c; }
+                    it.title = narrow(w);
+                }
+                fclose(hf);
+            }
+            if (it.title.empty()) it.title = name;
+            out.push_back(it);
+        } while (FindNextFileW(f, &fd));
+        FindClose(f);
+    }
+    g_dlc[g] = out;
+    return g_dlc[g];
+}
+
+static void dlc_refresh() { for (DWORD &t : g_dlcAt) t = 0; }
+
+void dlc_remove_ask(App &a, int g, const DlcItem &item)
+{
+    g_dlcRemove = item;
+    g_dlcRemoveGame = g;
+    ask(a, "dlcremove", g, "Remove downloadable content",
+        "Remove \"" + item.title + "\" from " + game_def(g).name + "? Only COGBox's unpacked copy is removed - your own package file is not touched.",
+        { "Remove", "Cancel" });
+}
+
+void dlc_remove_confirmed(App &a)
+{
+    if (g_dlcRemoveGame < 0) return;
+    if (a.run.proc) { set_message(a, "Close the game first.", true); return; }
+    bool ok = remove_tree(widen(g_dlcRemove.dir));
+    DeleteFileW(widen(g_dlcRemove.header).c_str());
+    set_message(a, ok ? "\"" + g_dlcRemove.title + "\" is removed." : "It couldn't be removed completely - is a file from it open?", !ok);
+    g_dlcRemoveGame = -1;
+    dlc_refresh();
 }

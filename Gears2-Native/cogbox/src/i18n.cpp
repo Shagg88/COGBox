@@ -5,6 +5,9 @@
 #include <windows.h>
 #include <unordered_map>
 #include <deque>
+#include <algorithm>
+#include <cctype>
+#include <vector>
 
 namespace {
 std::unordered_map<std::string, std::string> g_map;   // English -> translation
@@ -25,6 +28,52 @@ std::string trim(const std::string &s)
 {
     size_t a = s.find_first_not_of(" \t\r"), b = s.find_last_not_of(" \t\r");
     return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+}
+}  // namespace
+
+namespace {
+// 0.2.0: pieces of messages built at run time ("Desktop shortcut: " + a game name). When a whole line has no
+// translation, the known pieces in it are replaced, longest first, only where they start and end at a word edge.
+std::unordered_map<std::string, std::vector<const std::string *>> g_pieces;   // first 3 bytes -> keys, longest first
+std::unordered_map<std::string, std::string> g_strCache;
+
+bool word_char(unsigned char c) { return isalnum(c) || c >= 0x80; }
+
+void build_pieces()
+{
+    g_pieces.clear();
+    for (auto &kv : g_map) {
+        const std::string &k = kv.first;
+        if (k.size() < 4) continue;
+        g_pieces[k.substr(0, 3)].push_back(&kv.first);
+    }
+    for (auto &kv : g_pieces)
+        std::sort(kv.second.begin(), kv.second.end(), [](const std::string *a, const std::string *b) { return a->size() > b->size(); });
+}
+
+std::string replace_pieces(const std::string &text)
+{
+    std::string out;
+    size_t i = 0;
+    bool any = false;
+    while (i < text.size()) {
+        bool hit = false;
+        if (i + 3 <= text.size() && (i == 0 || !word_char((unsigned char)text[i - 1]) || !word_char((unsigned char)text[i]))) {
+            auto it = g_pieces.find(text.substr(i, 3));
+            if (it != g_pieces.end())
+                for (const std::string *k : it->second) {
+                    size_t n = k->size();
+                    if (text.compare(i, n, *k) != 0) continue;
+                    if (i + n < text.size() && word_char((unsigned char)text[i + n]) && word_char((unsigned char)(*k)[n - 1])) continue;
+                    out += g_map[*k];
+                    i += n;
+                    hit = any = true;
+                    break;
+                }
+        }
+        if (!hit) out += text[i++];
+    }
+    return any ? out : text;
 }
 }  // namespace
 
@@ -62,6 +111,8 @@ void i18n_load(const std::string &choice)
 {
     g_map.clear();
     g_out.clear();
+    g_strCache.clear();
+    g_pieces.clear();
     g_code = choice == "auto" || choice.empty() ? i18n_auto_code() : choice;
     if (g_code == "en") return;
     std::string text;
@@ -80,6 +131,7 @@ void i18n_load(const std::string &choice)
         std::string en = unescape(trim(t.substr(0, eq))), tx = unescape(trim(t.substr(eq + 3)));
         if (!en.empty() && !tx.empty()) g_map[en] = tx;
     }
+    build_pieces();
 }
 
 std::string i18n_current() { return g_code; }
@@ -87,11 +139,22 @@ std::string i18n_current() { return g_code; }
 std::string tr(const std::string &english)
 {
     if (g_map.empty()) return english;
+    auto c = g_strCache.find(english);
+    if (c != g_strCache.end()) return c->second;
     size_t hid = english.find("##");
     std::string text = hid == std::string::npos ? english : english.substr(0, hid);
+    std::string done;
     auto it = g_map.find(text);
-    if (it == g_map.end()) return english;
-    return hid == std::string::npos ? it->second : it->second + english.substr(hid);
+    if (it != g_map.end()) done = it->second;
+    else {
+        size_t a = text.find_first_not_of(" "), b = text.find_last_not_of(" ");
+        auto t2 = a == std::string::npos ? g_map.end() : g_map.find(text.substr(a, b - a + 1));
+        done = t2 != g_map.end() ? text.substr(0, a) + t2->second + text.substr(b + 1) : replace_pieces(text);
+    }
+    if (hid != std::string::npos) done += english.substr(hid);
+    if (g_strCache.size() > 4000) g_strCache.clear();
+    g_strCache[english] = done;
+    return done;
 }
 
 const char *tr(const char *english)

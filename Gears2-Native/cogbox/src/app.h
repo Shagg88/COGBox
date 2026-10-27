@@ -127,6 +127,11 @@ std::vector<std::string> monitor_choices();   // page.cpp: "Default (main screen
 // install.cpp
 void install_start(App &a, const std::string &path, int forGame);
 void install_confirmed(App &a);      // the "replace" question answered yes
+// 0.2.0: downloadable content COGBox added (user\0000000000000000\<title>\00000002\<name>)
+struct DlcItem { std::string name, title, dir, header; };
+const std::vector<DlcItem> &dlc_list(int game);          // cached; refreshed after an add or remove
+void dlc_remove_ask(App &a, int game, const DlcItem &item);
+void dlc_remove_confirmed(App &a);   // the "dlcremove" question answered yes
 void install_poll(App &a);
 void install_draw(App &a, ImVec2 size);
 // play.cpp

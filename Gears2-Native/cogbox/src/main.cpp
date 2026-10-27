@@ -116,6 +116,7 @@ static void answered(App &a)
         a.ini.save();
     }
     else if (m.tag == "replace" && m.answer == 0) install_confirmed(a);
+    else if (m.tag == "dlcremove" && m.answer == 0) dlc_remove_confirmed(a);   // 0.2.0
     else if (m.tag == "backup" && m.answer == 0) {
         std::string zip = join(desktop_dir(), std::string("CogBox-saves-") + d.dir + "-" + now_stamp() + ".zip"), err;
         if (zip_folder(game_user_dir(g), zip, err))
