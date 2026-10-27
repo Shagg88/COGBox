@@ -217,9 +217,10 @@ Build a game: `<game folder>\tools\build.ps1` (Gears 2 TU6: `-Config Release -Tu
 
 COGBox and the ports' own code are under the **MIT licence** ([`LICENSE`](LICENSE)).
 
-Also used, each under its own licence: Xenia / Canary / Edge (BSD-3), the rexglue SDK, SDL3 (zlib), Dear ImGui (MIT),
-SMAA (MIT), xxHash (BSD-2), miniz (MIT), stb (MIT), the DirectX Shader Compiler, the Vulkan Headers, AMD FidelityFX
-and Anti-Lag 2, NVIDIA DLSS and Reflex, Intel XeSS, and the Anton / Barlow fonts (SIL OFL).
-Full texts are in [`THIRD_PARTY_NOTICES.md`](Gears2-Native/THIRD_PARTY_NOTICES.md) and the release's `licenses` folder.
+Also used, each under its own licence: Xenia / Canary / Edge (BSD-3), the rexglue SDK (BSD-style), FFmpeg (LGPL-2.1+,
+for the game movies), SDL3 (zlib), Dear ImGui (MIT), SMAA (MIT), xxHash (BSD-2), miniz (MIT), stb (MIT), the DirectX
+Shader Compiler, the Vulkan Headers, AMD FidelityFX and Anti-Lag 2, NVIDIA DLSS and Reflex, Intel XeSS, and the
+Anton / Barlow fonts (SIL OFL). Full texts are in [`THIRD_PARTY_NOTICES.md`](Gears2-Native/THIRD_PARTY_NOTICES.md)
+and the release's `licenses` folder.
 
 No game content is included. "Gears of War" and "Xbox" are trademarks of Microsoft; this is an unofficial fan project.
