@@ -6,8 +6,7 @@
 // game_patches.cpp (Shagg's own project, D5) and moved to Judgment's addresses, each one read in disassembly next to
 // Gears 3's site (notes/05: same instructions, same registers). Kept from Gears 3: 16x anisotropic, the frame-rate limit
 // and tick log, trilinear / fast mip fade ini edits (Judgment's own TEXTUREGROUP values), the texture pool hook and
-// memory gauge, the two GPU-wait sleeps. Left out until Judgment's sites are found: the ultrawide hooks and Gears 3's
-// shadow diagnostics. Community patch authors (boma, Sowa_95, illusion) are credited in the option descriptions.
+// memory gauge, the two GPU-wait sleeps. The ultrawide hooks (0.2.0) are at the end of the file. Left out: Gears 3's shadow diagnostics. Community patch authors (boma, Sowa_95, illusion) are credited in the option descriptions.
 // Not needed: Gears 2's "Black Shading Fix" - Judgment stores 0 to its tiling flag itself at 0x8299257C, like Gears 3.
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
@@ -364,4 +363,74 @@ bool GowjGpuWaitStep() {  // jump_address_on_true: skip the empty delay loop to 
   thread_local WaitStreak streak;
   SleepStep(streak, 64);
   return true;
+}
+
+// ---- 0.2.0: 21:9 ultrawide (Canary "21:9 Aspect Ratio Ultrawide Patch" for TU4, author boma) ------------------------
+// Each site read in our generated code (job 538); the patch's instruction changes reproduced as hooks:
+//   0x82640514 `beq cr6,0x82640588` -> always taken (ConstrainAspectRatio off)
+//   0x82640588 `lfs f0,1628(r27)` (the field-of-view factor) -> f0 = 0.010975 (the patch's code cave)
+//   0x82992664 `li r11,720` (the scene buffer height, stored to the screen-height global) -> 550
+//   0x82369E30 `bne cr6,0x82369e3c` -> always taken (the vignette: its texture can't be rescaled)
+//   0x827F1DD4 `lwz r30,-10976(r9)` (SceneRenderTargets reads that global) -> 720, so the targets keep their size
+//   0x82CBA684 `stw r4,136(r3)` (Scaleform's scale mode) -> replaced by `li r4,1` (the store is skipped)
+//   the .rdata floats 0x82082C30 / 0x82083350 (post-process scale, 16:9 = 1.7778) -> 2.3273, written at load.
+// The front buffer becomes 1280x550 (x the resolution scale) and is shown at its own shape (--gow2_present_frame_aspect).
+REXCVAR_DEFINE_BOOL(gowj_ultrawide, false, "Judgment",
+                    "21:9 ultrawide (Canary patch by boma): a 1280x550 picture (x the resolution scale) with a wider view; "
+                    "fills a 21:9 window or monitor, letterboxed in others");
+
+namespace {
+template <typename T> void LogOnce(bool& done, const char* what, T before, T after) {
+  if (done) return;
+  done = true;
+  REXLOG_INFO("gowj_ultrawide: {} {} -> {}", what, before, after);
+}
+}  // namespace
+
+bool GowjUltrawideNoConstrain() { return REXCVAR_GET(gowj_ultrawide); }  // jump_address_on_true 0x82640588
+void GowjUltrawideFov(PPCRegister& f0) {
+  if (!REXCVAR_GET(gowj_ultrawide)) return;
+  static bool l = false;
+  LogOnce(l, "field-of-view factor", f0.f64, double(0.010975f));
+  f0.f64 = double(0.010975f);
+}
+void GowjUltrawideSceneHeight(PPCRegister& r11) {
+  if (!REXCVAR_GET(gowj_ultrawide)) return;
+  static bool l = false;
+  LogOnce(l, "scene buffer height", uint32_t(r11.u32), 550u);
+  r11.u64 = 550;
+}
+bool GowjUltrawideNoVignette() { return REXCVAR_GET(gowj_ultrawide); }  // jump_address_on_true 0x82369E3C
+void GowjUltrawideTargetHeight(PPCRegister& r30) {
+  if (!REXCVAR_GET(gowj_ultrawide)) return;
+  static bool l = false;
+  LogOnce(l, "render target height", uint32_t(r30.u32), 720u);
+  r30.u64 = 720;
+}
+bool GowjUltrawideUiScale(PPCRegister& r4) {  // jump_address_on_true 0x82CBA688: the store is skipped, r4 = 1
+  if (!REXCVAR_GET(gowj_ultrawide)) return false;
+  static bool l = false;
+  LogOnce(l, "Scaleform scale mode", uint32_t(r4.u32), 1u);
+  r4.u64 = 1;
+  return true;
+}
+
+void GowjApplyUltrawideIfRequested(rex::Runtime* runtime) {
+  if (!REXCVAR_GET(gowj_ultrawide) || !runtime || !runtime->memory()) return;
+  for (uint32_t addr : {0x82082C30u, 0x82083350u}) {
+    uint8_t* p = runtime->memory()->TranslateVirtual<uint8_t*>(addr);
+    const float value = 2.3273f;
+    uint32_t bits = 0, old_bits = 0;
+    std::memcpy(&bits, &value, 4);
+    for (int i = 0; i < 4; ++i) old_bits = (old_bits << 8) | p[i];
+    float old_value;
+    std::memcpy(&old_value, &old_bits, 4);
+    DWORD old_protect = 0;
+    const bool lifted = VirtualProtect(p, 4, PAGE_READWRITE, &old_protect) != 0;
+    for (int i = 0; i < 4; ++i) p[i] = uint8_t(bits >> (24 - 8 * i));
+    if (lifted) VirtualProtect(p, 4, old_protect, &old_protect);
+    REXLOG_INFO("gowj_ultrawide: aspect float {:08X} {} -> {}", addr, old_value, value);
+  }
+  const bool a = rex::cvar::SetFlagByName("gow2_present_frame_aspect", "true");
+  REXLOG_INFO("gowj_ultrawide: present at the front buffer's own shape {}", a);
 }

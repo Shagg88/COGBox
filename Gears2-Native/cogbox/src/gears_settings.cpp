@@ -153,10 +153,11 @@ std::vector<Option> make_options(Game g) {
                "are off. If something looks wrong, make a problem report and send it to us.", 0));
     // Render resolution: no PS1 tooltip; text from 59-how-to-play's Picture table.
     add(choice("Resolution", "Render resolution", Tab::Graphics, PG,
-               { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)" }, 0,
+               { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)", "1080p" }, 0,
                "How much detail the game draws: 1x = 1280x720 as on the console, 2x = 2560x1440, 3x = 3840x2160 (4K), "
                "4x = 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, "
-               "resampled to its exact size.", 340), "", "", true);
+               "resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for "
+               "weaker graphics cards; softer than real detail.", 340), "", "", true);
     add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS" }, 0,
                "SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX12 GPU. DLSS: the same on "
                "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.", 346), "", "", true);
@@ -310,8 +311,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
             return no(not_yet(2, f == "start" ? "its chapter list is coming" : "needs its chapter list"));
     } else if (f == "gamefps") {
         if (g == Game::Judgment) return no(not_yet(2, "game's own counter"));
-    } else if (f == "ultrawide") {
-        if (g == Game::Judgment) return no(not_yet(2));
+    } else if (f == "ultrawide") {   // 0.2.0: Judgment too (--gowj_ultrawide, a new build)
+        if (g == Game::Judgment && !cap_exe(env, "gowj_ultrawide")) return no(not_yet(2));
     } else if (f == "cheats" || f == "mutators") {
         if (g != Game::Gears3) return no(not_yet(gi));
         if (ver == Version::TitleUpdate && env.update_ready)
@@ -609,7 +610,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 837-842: render resolution ("Match my monitor" = scale 0 + native size; counts as 2x below)
     int scale = s.i("Resolution") + 1;
-    if (scale >= 5) { a.push_back("--gow2_renderer_resolution_scale=0"); a.push_back("--gow2_present_native_size=true"); scale = 2; }
+    if (scale == 6) {   // 0.2.0 "1080p": 720p drawn, upscaled to the window (Lanczos) and sharpened (RCAS)
+        a.insert(a.end(), { "--gow2_renderer_resolution_scale=1", "--gow2_present_native_size=true",
+                            "--gow2_present_upscale_filter=lanczos", "--gow2_present_sharpen=0.5" });
+        scale = 1;
+    } else if (scale >= 5) { a.push_back("--gow2_renderer_resolution_scale=0"); a.push_back("--gow2_present_native_size=true"); scale = 2; }
     else a.push_back("--gow2_renderer_resolution_scale=" + std::to_string(scale));
     // PS1 843-849: Gears 3's threshold, memexport, aspect
     if (isG3) {
@@ -704,7 +709,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
     }
     // PS1 899: ultrawide
-    if (on("Ultrawide")) a.push_back(isG3 ? "--gow3_ultrawide=true" : "--gow2_ultrawide=true");
+    if (on("Ultrawide")) a.push_back(isG3 ? "--gow3_ultrawide=true" : g == Game::Judgment ? "--gowj_ultrawide=true" : "--gow2_ultrawide=true");
     // PS1 900: HDR
     if (s.b("HDR")) {
         a.push_back("--present_hdr=true");

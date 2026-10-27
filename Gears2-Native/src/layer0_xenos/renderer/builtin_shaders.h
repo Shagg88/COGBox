@@ -855,10 +855,43 @@ float XeWeight(int i, uint o, float s) {
   const float c = (float(o) + 0.5) * s - 0.5;
   return max(0.0, 1.0 - abs(float(i) - c));
 }
+// 0.2.0: enlarging with Lanczos (c1.x = 1): 4 x 4 taps (a = 2) in linear light, clamped to the four nearest source
+// pixels so edges don't ring; shrinking keeps the box filter above.
+float XeLanczos(float x) {
+  x = abs(x);
+  if (x < 1e-5) return 1.0;
+  if (x >= 2.0) return 0.0;
+  const float px = 3.14159265 * x;
+  return 2.0 * sin(px) * sin(px * 0.5) / (px * px);
+}
+float3 XeLanczosAt(uint2 o, float2 s) {
+  const float2 c = (float2(o) + 0.5) * s - 0.5;
+  const int2 b = int2(floor(c));
+  float3 acc = float3(0.0, 0.0, 0.0);
+  float wsum = 0.0;
+  float3 mn = float3(1e9, 1e9, 1e9), mx = float3(-1e9, -1e9, -1e9);
+  for (int y = -1; y <= 2; ++y) {
+    const float wy = XeLanczos(float(b.y + y) - c.y);
+    for (int x = -1; x <= 2; ++x) {
+      const float3 v = XeRgb(XeLoad(b + int2(x, y)));
+      const float w = wy * XeLanczos(float(b.x + x) - c.x);
+      acc += w * v;
+      wsum += w;
+      if (x >= 0 && x <= 1 && y >= 0 && y <= 1) { mn = min(mn, v); mx = max(mx, v); }
+    }
+  }
+  return clamp(acc / max(wsum, 1e-6), mn, mx);
+}
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
   if (id.x >= c0.z || id.y >= c0.w) return;
   const float2 s = float2(c0.xy) / float2(c0.zw);  // source pixels per output pixel
+  if (c1.x == 1u && s.x < 1.0 && s.y < 1.0) {
+    const float3 l = XeLanczosAt(id.xy, s);
+    const uint3 ql = uint3(clamp(floor(XeToEncoded(saturate(l)) * 1023.0 + 0.5), 0.0, 1023.0));
+    xe_out[id.xy] = ql.x | (ql.y << 10u) | (ql.z << 20u) | (XeLoad(int2((float2(id.xy) + 0.5) * s)) & 0xC0000000u);
+    return;
+  }
   int fx, nx, fy, ny;
   XeSpan(id.x, s.x, fx, nx);
   XeSpan(id.y, s.y, fy, ny);

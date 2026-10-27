@@ -278,3 +278,41 @@ address = 0x8255E220
 name = "GowjMaxTickRate"
 registers = ["f1"]
 after_instruction = true
+
+# 0.2.0 --gowj_ultrawide (game_patches.cpp; Canary "21:9 Aspect Ratio Ultrawide Patch" for TU4, boma). Sites read in
+# our generated code (job 538).
+[[entrypoint.midasm_hook]]
+address = 0x82640514  # `beq cr6,0x82640588` (ConstrainAspectRatio)
+name = "GowjUltrawideNoConstrain"
+registers = []
+jump_address_on_true = 0x82640588
+
+[[entrypoint.midasm_hook]]
+address = 0x82640588  # `lfs f0,1628(r27)`: the field-of-view factor
+name = "GowjUltrawideFov"
+registers = ["f0"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x82992664  # `li r11,720`: the scene buffer height
+name = "GowjUltrawideSceneHeight"
+registers = ["r11"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x82369E30  # `bne cr6,0x82369e3c`: the vignette
+name = "GowjUltrawideNoVignette"
+registers = []
+jump_address_on_true = 0x82369E3C
+
+[[entrypoint.midasm_hook]]
+address = 0x827F1DD4  # `lwz r30,-10976(r9)`: SceneRenderTargets' screen height
+name = "GowjUltrawideTargetHeight"
+registers = ["r30"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x82CBA684  # `stw r4,136(r3)`: Scaleform's scale mode (the patch: `li r4,1` in its place)
+name = "GowjUltrawideUiScale"
+registers = ["r4"]
+jump_address_on_true = 0x82CBA688

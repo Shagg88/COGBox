@@ -575,6 +575,12 @@ REXCVAR_DEFINE_BOOL(gow2_present_native_size, false, "Gears2",
                     "\"Match my monitor\" (Shagg 23 Oct): the presented image is resampled to the window's exact size "
                     "(box filter shrinking, bilinear enlarging), so it is shown 1:1 with no stretch by the presenter; "
                     "the game's shape is kept (bars only where the window's shape differs). Needs --gow2_present=ours");
+REXCVAR_DEFINE_STRING(gow2_present_upscale_filter, "bilinear", "Gears2",
+                      "0.2.0: how \"Match my monitor\" enlarges the image when the window is bigger than the game's: "
+                      "bilinear (as before) or lanczos (sharper; clamped to the nearest source pixels, so no ringing)");
+REXCVAR_DEFINE_DOUBLE(gow2_present_sharpen, 0.0, "Gears2",
+                      "0.2.0: contrast-adaptive sharpening (RCAS, kSharpenCs) of the image as shown, after it is resized "
+                      "to the window - 0 = off, 1 = full");
 REXCVAR_DEFINE_INT32(gow2_renderer_resolution_scale_threshold, 1120, "Gears2",
                      "Gears 3 (notes/53b): with a resolution scale, render targets whose surface pitch is at or below "
                      "this many pixels stay at 1x - the downscaled post-process chains (bloom, blur, depth of field), "
@@ -1618,6 +1624,13 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           present_resample_ = rs ? backend_->CreateComputePipeline(rs) : 0;
           REXLOG_INFO("gow2_present: native size on - the image is resampled to the window's size{}",
                       present_resample_ ? "" : " - RESAMPLE SHADER MISSING (shown as before)");
+          present_lanczos_ = REXCVAR_GET(gow2_present_upscale_filter) == "lanczos";
+        }
+        if (present_ours_ && REXCVAR_GET(gow2_present_sharpen) > 0.0) {   // 0.2.0
+          const gpu::ShaderHandle sh = cache_->GetBuiltin("sharpen_cs", rr::builtin::kSharpenCs, gpu::ShaderStage::kCompute);
+          present_sharpen_ = sh ? backend_->CreateComputePipeline(sh) : 0;
+          REXLOG_INFO("gow2_present: sharpening {:.2f}{}{}", REXCVAR_GET(gow2_present_sharpen),
+                      present_lanczos_ ? ", lanczos enlarging" : "", present_sharpen_ ? "" : " - SHADER MISSING (off)");
         }
       }
       if (present_shadow_ || present_ours_) {
@@ -2579,7 +2592,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           b.constants[1] = h;
           b.constants[2] = ow;
           b.constants[3] = oh;
-          b.constant_count = 4;
+          b.constants[4] = present_lanczos_ ? 1u : 0u;   // 0.2.0: c1.x = filter for enlarging
+          b.constant_count = 8;
           b.srv[0] = present_out_;
           b.uav_texture = present_scaled_;
           backend_->Dispatch(present_resample_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
@@ -2590,6 +2604,31 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ow = w;
           oh = h;
         }
+      }
+    }
+    if (present_sharpen_) {   // 0.2.0: RCAS on the image as shown (after the resize to the window)
+      if (!present_sharp_ || present_sharp_w_ != ow || present_sharp_h_ != oh) {
+        if (present_sharp_) backend_->DestroyTexture(present_sharp_);
+        gpu::TextureDesc sd;
+        sd.width = ow;
+        sd.height = oh;
+        sd.format = gpu::Format::kR32Uint;
+        sd.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+        sd.debug_name = "present sharpened (RGB10A2 words)";
+        present_sharp_ = backend_->CreateTexture(sd);
+        present_sharp_w_ = ow;
+        present_sharp_h_ = oh;
+      }
+      if (present_sharp_) {
+        gpu::ComputeBindings b;
+        b.constants[0] = ow;
+        b.constants[1] = oh;
+        b.constants[4] = std::bit_cast<uint32_t>(float(std::clamp(REXCVAR_GET(gow2_present_sharpen), 0.0, 1.0)));
+        b.constant_count = 8;
+        b.srv[0] = out_tex;
+        b.uav_texture = present_sharp_;
+        backend_->Dispatch(present_sharpen_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
+        out_tex = present_sharp_;
       }
     }
     if (hdr_ && hdr_encode_) {  // Stage 7.3: PQ / BT.2020 for the HDR10 swap chain (SDK patch 24)
@@ -2734,6 +2773,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // "Match my monitor": the resample pass and the image at the window's size.
   gpu::PipelineHandle present_resample_ = 0;
   gpu::TextureHandle present_scaled_ = 0;
+  gpu::PipelineHandle present_sharpen_ = 0;   // 0.2.0: RCAS after the resize
+  gpu::TextureHandle present_sharp_ = 0;
+  uint32_t present_sharp_w_ = 0, present_sharp_h_ = 0;
+  bool present_lanczos_ = false;
   uint32_t present_scaled_w_ = 0, present_scaled_h_ = 0;
   bool present_native_logged_ = false;
   // ---- Stage 7.2: SMAA on the presented image (smaa/smaa_passes.h, notes/54) ----
