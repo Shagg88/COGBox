@@ -61,6 +61,7 @@ struct Environment {
     std::string monitor_device;
     bool has_avx2 = true;           // PS1 207-210 GearsCpu.HasAvx2
     bool wine = false;              // job 523: Wine / Proton (Linux, Steam Deck)
+    std::map<std::string, std::string> keys;   // 0.2.0: the player's own keyboard keys, cvar -> key (CogBox.ini [Keys])
     // PS1 960-961: the lines of out\extra-args.txt (raw; empty = no file). Trimmed, '#' lines skipped, {LOG} = log_dir.
     std::vector<std::string> extra_args_lines;
     Capability cap;
@@ -150,6 +151,10 @@ public:
 private:
     void migrate();
 };
+
+// 0.2.0: the keyboard keys for keyboard-and-mouse play - each controller input, what it does in Gears, its default.
+struct KeyAction { const char *cvar; const char *pad; const char *what; const char *def; };
+const std::vector<KeyAction> &key_actions();
 
 // PS1 788-961 (Play): the game's command-line arguments, in the PS1's order. `ver` is the chosen version (see
 // effective_version); `notes`, if given, gets the "launcher: ..." lines the PS1 adds to args.txt.

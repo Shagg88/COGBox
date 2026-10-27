@@ -237,6 +237,12 @@ std::vector<Option> make_options(Game g) {
     add(make("LevelSelect", "Level select menu (experimental)", Tab::Gameplay, Kind::Bool, SH, 0,
              "The game's own hidden level-select menu (Judgment). Its list has no text yet: Down moves, A loads (entry 1 Sera "
              "University ... 17 Aftermath 5).", 329), "levelsel");
+    // 0.2.0 (GitHub #4): the game's own language - the runtime's user_language (Xbox language IDs, issue #4's table)
+    add(choice("Lang", "Game language", Tab::Gameplay, PG,
+               { "Default (English)", "English", "Japanese", "German", "French", "Spanish", "Italian", "Korean", "Chinese",
+                 "Portuguese", "Polish", "Russian" }, 0,
+               "The language of the game's own text and voices. Only the languages on your copy of the game are there - "
+               "the others fall back to English. Takes effect when the game starts.", 0));
     add(make("Mute", "Mute when the game is not the active window", Tab::Gameplay, Kind::Bool, SH, 0,
              "Silences the game while another window is in front; the sound comes back when you click back into the game.", 386),
         "mute");   // the only sound option, so it lives here (no Audio tab)
@@ -331,6 +337,30 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_rt(env, "d3d12_present_vsync")) return no(not_yet(gi, "needs its next build (SDK patch 37)"));
     }
     return Availability();
+}
+
+const std::vector<KeyAction> &key_actions()
+{
+    // The Gears layout COGBox has always sent (PS1 930-937), now one row each so the player can change them.
+    static const std::vector<KeyAction> v = {
+        { "keybind_right_trigger", "RT", "Fire", "LMB" },
+        { "keybind_left_trigger", "LT", "Aim", "RMB" },
+        { "keybind_a", "A", "Cover / roadie run / evade", "Space" },
+        { "keybind_b", "B", "Melee / chainsaw", "F" },
+        { "keybind_x", "X", "Use / pick up", "E" },
+        { "keybind_y", "Y", "Look at / point of interest", "Q" },
+        { "keybind_right_shoulder", "RB", "Reload (active reload)", "R" },
+        { "keybind_left_shoulder", "LB", "Tactical display", "Tab" },
+        { "keybind_dpad_left", "D-pad left", "Weapon (left)", "1" },
+        { "keybind_dpad_right", "D-pad right", "Weapon (right)", "2" },
+        { "keybind_dpad_up", "D-pad up", "Weapon (up)", "3" },
+        { "keybind_dpad_down", "D-pad down", "Grenades", "4" },
+        { "keybind_rstick_press", "Right stick click", "Zoom", "MMB,Z" },
+        { "keybind_lstick_press", "Left stick click", "Left stick click", "C" },
+        { "keybind_start", "Start", "Pause menu", "Escape,Return" },
+        { "keybind_back", "Back", "Back / scores", "Backspace" },
+    };
+    return v;
 }
 
 Availability available(const Option& o, Game g, Version ver, const Settings& s, const Environment& env) {
@@ -709,6 +739,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 926-928: mute, monitor, players
     if (on("Mute")) a.push_back(std::string("--") + k_procNames[gi] + "_mute_unfocused=true");
+    {   // 0.2.0 (#4): game language - Xbox language IDs (1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian,
+        // 7 Korean, 8 Chinese, 9 Portuguese, 11 Polish, 12 Russian)
+        static const int ids[12] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12 };
+        const int l = std::max(0, std::min(11, s.i("Lang")));
+        if (l > 0) a.push_back("--user_language=" + std::to_string(ids[l]));
+    }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
     // PS1 929: FPS counter
@@ -720,11 +756,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 930-937: keyboard and mouse with the Gears layout
     if (s.b("Mnk")) {
-        a.insert(a.end(), { "--mnk_mode=true", "--mnk_mouse=true", "--mnk_sensitivity=" + fmt_double(s.f("Sens")),
-            "--keybind_right_trigger=LMB", "--keybind_left_trigger=RMB", "--keybind_a=Space", "--keybind_b=F", "--keybind_x=E",
-            "--keybind_y=Q", "--keybind_right_shoulder=R", "--keybind_left_shoulder=Tab", "--keybind_dpad_left=1",
-            "--keybind_dpad_right=2", "--keybind_dpad_up=3", "--keybind_dpad_down=4", "--keybind_rstick_press=MMB,Z",
-            "--keybind_lstick_press=C", "--keybind_start=Escape,Return", "--keybind_back=Backspace" });
+        a.insert(a.end(), { "--mnk_mode=true", "--mnk_mouse=true", "--mnk_sensitivity=" + fmt_double(s.f("Sens")) });
+        for (const KeyAction &k : key_actions()) {   // 0.2.0: the Gears layout, or the player's own keys (Controls tab)
+            auto it = env.keys.find(k.cvar);
+            const std::string v = it != env.keys.end() && !it->second.empty() ? it->second : k.def;
+            a.push_back(std::string("--") + k.cvar + "=" + v);
+        }
     }
     // PS1 940-958 (launcher patches 0155 / 0158): frame rate; with vsync a cap at or above the refresh rate becomes 3
     // under it (half the refresh minus 2 with frame generation)

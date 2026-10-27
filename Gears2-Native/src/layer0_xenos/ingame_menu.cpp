@@ -18,6 +18,7 @@
 #include <rex/ui/window.h>
 #include <rex/ui/windowed_app_context.h>
 #include <imgui.h>
+#include <imgui_internal.h>   // 0.2.0: ShadeVertsLinearColorGradientKeepAlpha
 
 #include <windows.h>
 #include <Xinput.h>
@@ -155,6 +156,7 @@ MenuFile g_file;
 
 void RequestOpenOnUIThread();
 void ScheduleDrop();
+void BlockGameInput(bool on);   // 0.2.0, below
 
 // Job 523: the controller through the game's own input system (SDL: Xbox, PlayStation, Switch and Steam Deck pads), as
 // the game itself reads it; plain XInput only when there is none.
@@ -235,16 +237,35 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f * scale, 16.0f * scale));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f * scale, 5.0f * scale));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f * scale, 8.0f * scale));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f * scale);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.06f, 0.07f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.24f, 0.27f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.14f, 0.14f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_NavHighlight, ImVec4(0.95f, 0.30f, 0.25f, 1.0f));
+    // 0.2.0 (Shagg 27 Oct 10:51): the COGBox / Gears look - gunmetal, crimson, sharp cut corners, rivets
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));   // the plate is drawn below
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.22f, 0.25f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.62f, 0.10f, 0.08f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.78f, 0.13f, 0.10f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_NavHighlight, ImVec4(0.96f, 0.26f, 0.20f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.09f, 0.10f, 0.11f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.16f, 0.17f, 0.19f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.20f, 0.21f, 0.23f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.42f, 0.44f, 0.47f, 0.55f));
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.92f, 0.20f, 0.16f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrab, ImVec4(0.72f, 0.12f, 0.10f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_SliderGrabActive, ImVec4(0.92f, 0.20f, 0.16f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.62f, 0.10f, 0.08f, 0.55f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.62f, 0.10f, 0.08f, 0.80f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.78f, 0.13f, 0.10f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.72f, 0.12f, 0.10f, 0.75f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.07f, 0.075f, 0.085f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.90f, 0.90f, 0.88f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(0.55f, 0.56f, 0.57f, 1.0f));
     if (first_frame_) ImGui::SetNextWindowFocus();
     if (ImGui::Begin("##cogbox_menu", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                          ImGuiWindowFlags_NoCollapse)) {
+      DrawPlate(scale);   // 0.2.0
 #if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 19200
       ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.35f * scale);
 #else
@@ -256,14 +277,15 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
 #endif
     }
     ImGui::End();
-    ImGui::PopStyleColor(5);
-    ImGui::PopStyleVar(4);
+    ImGui::PopStyleColor(19);
+    ImGui::PopStyleVar(7);
     first_frame_ = false;
     // Closing: the game gets its input back at once; the dialog is dropped by one deferred call on the UI thread
     // (not from inside its own Draw).
     if (done_ && !close_scheduled_) {
       close_scheduled_ = true;
       g_open.store(false);
+      BlockGameInput(false);   // 0.2.0
       ScheduleDrop();
     }
   }
@@ -323,13 +345,54 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     REXLOG_INFO("cogbox_menu: {} with {} change(s)", restart ? "restart" : "quit", Changes());
     done_ = true;
     if (rex::ui::Window* w = g_window) {
+      // 0.2.0: while the game is still the window in front, let COGBox come to the front when it closes - Windows only
+      // lets the program in front hand that permission on (COGBox's own attempt only flashed its taskbar button).
+      AllowSetForegroundWindow(ASFW_ANY);
       w->app_context().CallInUIThreadDeferred([w] { w->RequestClose(); });
     }
   }
 
+  // 0.2.0: the window's plate - a dark gunmetal gradient with cut corners, a crimson edge along the top, rivets
+  static void Chamfer(ImDrawList* dl, ImVec2 a, ImVec2 b, float c) {
+    dl->PathLineTo(ImVec2(a.x + c, a.y)); dl->PathLineTo(ImVec2(b.x - c, a.y)); dl->PathLineTo(ImVec2(b.x, a.y + c));
+    dl->PathLineTo(ImVec2(b.x, b.y - c)); dl->PathLineTo(ImVec2(b.x - c, b.y)); dl->PathLineTo(ImVec2(a.x + c, b.y));
+    dl->PathLineTo(ImVec2(a.x, b.y - c)); dl->PathLineTo(ImVec2(a.x, a.y + c));
+  }
+  void DrawPlate(float scale) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 a = ImGui::GetWindowPos(), b(a.x + ImGui::GetWindowWidth(), a.y + ImGui::GetWindowHeight());
+    const float c = 18.0f * scale;
+    dl->PushClipRectFullScreen();
+    Chamfer(dl, ImVec2(a.x + 4 * scale, a.y + 6 * scale), ImVec2(b.x + 4 * scale, b.y + 6 * scale), c);
+    dl->PathFillConvex(IM_COL32(0, 0, 0, 150));                       // shadow
+    const int v0 = dl->VtxBuffer.Size;
+    Chamfer(dl, a, b, c);
+    dl->PathFillConvex(IM_COL32_WHITE);
+    ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl, v0, dl->VtxBuffer.Size, a, ImVec2(a.x, b.y), IM_COL32(40, 43, 48, 244),
+                                                  IM_COL32(14, 15, 17, 244));
+    Chamfer(dl, a, b, c);
+    dl->PathStroke(IM_COL32(110, 114, 120, 170), ImDrawFlags_Closed, 1.5f * scale);
+    dl->AddLine(ImVec2(a.x + c, a.y + 1.5f * scale), ImVec2(b.x - c, a.y + 1.5f * scale), IM_COL32(200, 34, 26, 255), 3.0f * scale);
+    for (ImVec2 r : {ImVec2(a.x + c * 0.9f, a.y + c * 0.9f), ImVec2(b.x - c * 0.9f, a.y + c * 0.9f),
+                     ImVec2(a.x + c * 0.9f, b.y - c * 0.9f), ImVec2(b.x - c * 0.9f, b.y - c * 0.9f)}) {
+      dl->AddCircleFilled(r, 3.6f * scale, IM_COL32(70, 73, 78, 255));
+      dl->AddCircleFilled(ImVec2(r.x - 1.0f * scale, r.y - 1.0f * scale), 1.6f * scale, IM_COL32(160, 164, 170, 255));
+    }
+    dl->PopClipRect();
+  }
+
   void DrawContents(float scale) {
-    const std::string title = "COGBox  -  " + (g_file.game.empty() ? std::string("Game menu") : g_file.game);
-    ImGui::TextUnformatted(title.c_str());
+    // 0.2.0: a crimson bar, the title in capitals, the game's name dimmer
+    {
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      const ImVec2 p = ImGui::GetCursorScreenPos();
+      const float th = ImGui::GetTextLineHeight();
+      dl->AddRectFilled(ImVec2(p.x, p.y + th * 0.12f), ImVec2(p.x + 5.0f * scale, p.y + th * 0.92f), IM_COL32(200, 34, 26, 255));
+      ImGui::SetCursorScreenPos(ImVec2(p.x + 14.0f * scale, p.y));
+    }
+    ImGui::TextUnformatted("COGBOX");
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", (g_file.game.empty() ? std::string("GAME MENU") : g_file.game).c_str());
     ImGui::SameLine();
     ImGui::TextDisabled(REXCVAR_GET(cogbox_menu_ps) ? "   L1 / R1: tabs   Cross: change   Circle: back to the game"   // job 523
                                                     : "   LB / RB: tabs   A: change   B: back to the game");
@@ -343,7 +406,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
       for (int i = 0; i < int(g_file.tabs.size()); ++i) {
         if (i) ImGui::SameLine();
         const bool sel = i == tab_;
-        if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.12f, 0.12f, 1.0f));
+        if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.10f, 0.08f, 1.0f));
         if (ImGui::Button((g_file.tabs[size_t(i)] + "##tab").c_str(), ImVec2(tw, 0))) tab_ = i;
         if (sel) ImGui::PopStyleColor();
       }
@@ -411,7 +474,9 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     else ImGui::TextDisabled("Settings take effect when the game restarts.");
     const float bw = (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3.0f;
     if (first_frame_) ImGui::SetKeyboardFocusHere();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.10f, 0.08f, 1.0f));   // 0.2.0: Resume is the crimson main button
     if (ImGui::Button("Resume", ImVec2(bw, 0))) done_ = true;
+    ImGui::PopStyleColor();
     ImGui::SameLine();
     if (!n || g_file.restart_path.empty()) ImGui::BeginDisabled();
     if (ImGui::Button(n ? ("Restart to apply (" + std::to_string(n) + ")").c_str() : "Restart to apply", ImVec2(bw, 0))) Finish(true);
@@ -432,9 +497,23 @@ std::unique_ptr<InGameMenu> g_menu;
 
 // The UI thread owns the dialog: made on request, dropped by one deferred call once it says it's done. (Not a deferred
 // call that queues itself again: the SDK runs newly queued calls in the same pass, so that would never return.)
+// 0.2.0 (Shagg 27 Oct 10:51): while the menu is open the game must get no controller / keyboard / mouse input at all.
+// The SDK's UI input blocker does exactly that (GetState gives the game nothing), and when it is removed, buttons still
+// held stay hidden from the game until released - so the press that closes the menu isn't also a press in the game.
+// The menu itself reads through GetStateForUI, which the blocker doesn't stop. (The driver "active" callback used
+// before could be replaced by the SDK's own, which let input through.)
+std::atomic<bool> g_blocking{false};
+void BlockGameInput(bool on) {
+  if (!g_input || g_blocking.load() == on) return;
+  g_blocking.store(on);
+  if (on) g_input->AddUIInputBlocker();
+  else g_input->RemoveUIInputBlocker();
+}
+
 void OpenNow() {
   if (g_menu || !g_drawer) return;
   g_open.store(true);
+  BlockGameInput(true);
   g_menu = std::make_unique<InGameMenu>(g_drawer);
   REXLOG_INFO("cogbox_menu: opened");
 }
@@ -457,8 +536,7 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* windo
   // While the menu is open the game gets no controller / keyboard / mouse input.
   if (runtime) {
     if (auto* input = static_cast<rex::input::InputSystem*>(runtime->input_system())) {
-      input->SetActiveCallback([] { return !g_open.load(); });
-      g_input = input;   // job 523
+      g_input = input;   // job 523; 0.2.0: blocking is BlockGameInput (the UI input blocker), not an active callback
     }
   }
   rex::ui::RegisterBind("bind_cogbox_menu", "F1", "COGBox in-game menu", [] {
@@ -471,10 +549,12 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* windo
 }
 
 void XenosShutdownInGameMenu() {
+  AllowSetForegroundWindow(ASFW_ANY);   // 0.2.0: any other way out too (window closed, the game's own quit)
   g_stop.store(true);
   if (g_poller.joinable()) g_poller.join();
   g_menu.reset();
   g_open.store(false);
+  BlockGameInput(false);   // 0.2.0
   rex::ui::UnregisterBind("bind_cogbox_menu");
   g_drawer = nullptr;
   g_window = nullptr;

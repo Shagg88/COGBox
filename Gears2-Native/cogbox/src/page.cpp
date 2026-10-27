@@ -6,6 +6,9 @@
 #include "imgui_internal.h"
 
 #include <windows.h>
+#include <shlobj.h>     // 0.2.0: desktop shortcuts
+#include <shobjidl.h>
+#include <objbase.h>
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
@@ -74,6 +77,11 @@ void env_refresh(App &a, int g)
     if (ids) SDL_free(ids);
     e.has_avx2 = a.hasAvx2;
     e.wine = a.wine;   // job 523
+    e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab), shared by the three games
+    for (const gs::KeyAction &k : gs::key_actions()) {
+        std::string v = a.ini.get("Keys", k.cvar);
+        if (!v.empty()) e.keys[k.cvar] = v;
+    }
     e.extra_args_lines.clear();
     std::string extra;
     if (read_file(join(exe_dir(), "extra-args.txt"), extra, 1 << 20)) {
@@ -155,6 +163,95 @@ std::vector<std::string> monitor_choices()
 }
 
 // One option: its label, its control, its description (the reason first when greyed).
+// ---- 0.2.0: keyboard keys (Controls tab) -----------------------------------------------------------------------------
+// The SDK's key names (rexglue ui/keybinds.cpp) for the keys Dear ImGui reports.
+static const char *sdk_key_name(ImGuiKey k)
+{
+    static char one[2];
+    if (k >= ImGuiKey_A && k <= ImGuiKey_Z) { one[0] = char('A' + (k - ImGuiKey_A)); one[1] = 0; return one; }
+    if (k >= ImGuiKey_0 && k <= ImGuiKey_9) { one[0] = char('0' + (k - ImGuiKey_0)); one[1] = 0; return one; }
+    static char fk[8];
+    if (k >= ImGuiKey_F1 && k <= ImGuiKey_F24) { snprintf(fk, sizeof fk, "F%d", 1 + (k - ImGuiKey_F1)); return fk; }
+    static char np[10];
+    if (k >= ImGuiKey_Keypad0 && k <= ImGuiKey_Keypad9) { snprintf(np, sizeof np, "Numpad%d", k - ImGuiKey_Keypad0); return np; }
+    switch (k) {
+    case ImGuiKey_Space: return "Space"; case ImGuiKey_Enter: return "Return"; case ImGuiKey_KeypadEnter: return "NumpadEnter";
+    case ImGuiKey_Tab: return "Tab"; case ImGuiKey_Backspace: return "Backspace"; case ImGuiKey_Delete: return "Delete";
+    case ImGuiKey_Insert: return "Insert"; case ImGuiKey_Home: return "Home"; case ImGuiKey_End: return "End";
+    case ImGuiKey_PageUp: return "PageUp"; case ImGuiKey_PageDown: return "PageDown";
+    case ImGuiKey_LeftArrow: return "Left"; case ImGuiKey_RightArrow: return "Right"; case ImGuiKey_UpArrow: return "Up"; case ImGuiKey_DownArrow: return "Down";
+    case ImGuiKey_LeftShift: case ImGuiKey_RightShift: return "Shift";
+    case ImGuiKey_LeftCtrl: case ImGuiKey_RightCtrl: return "Control";
+    case ImGuiKey_LeftAlt: case ImGuiKey_RightAlt: return "Alt";
+    case ImGuiKey_Apostrophe: return "Quote"; case ImGuiKey_Comma: return "Comma"; case ImGuiKey_Minus: return "Minus";
+    case ImGuiKey_Period: return "Period"; case ImGuiKey_Slash: return "Slash"; case ImGuiKey_Semicolon: return "Semicolon";
+    case ImGuiKey_Equal: return "Plus"; case ImGuiKey_LeftBracket: return "LBracket"; case ImGuiKey_Backslash: return "Backslash";
+    case ImGuiKey_RightBracket: return "RBracket"; case ImGuiKey_GraveAccent: return "Backtick"; case ImGuiKey_CapsLock: return "CapsLock";
+    case ImGuiKey_KeypadAdd: return "NumpadPlus"; case ImGuiKey_KeypadSubtract: return "NumpadMinus";
+    case ImGuiKey_KeypadMultiply: return "NumpadStar"; case ImGuiKey_KeypadDivide: return "NumpadSlash";
+    default: return nullptr;
+    }
+}
+
+static std::string key_shown(const std::string &v)   // "MMB,Z" -> "Middle mouse / Z"
+{
+    std::string out, tok;
+    auto add = [&](std::string t) {
+        if (t == "LMB") t = "Left mouse"; else if (t == "RMB") t = "Right mouse"; else if (t == "MMB") t = "Middle mouse";
+        else if (t == "Return") t = "Enter";
+        if (!t.empty()) out += (out.empty() ? "" : " / ") + t;
+    };
+    for (char c : v) { if (c == ',') { add(tok); tok.clear(); } else tok += c; }
+    add(tok);
+    return out;
+}
+
+static void keys_section(App &a)
+{
+    static int capture = -1, captureFrame = 0;
+    const auto &acts = gs::key_actions();
+    ImGui::Dummy(ImVec2(0, S(6)));
+    th_heading("KEYBOARD KEYS", g_rowX1);
+    row_desc("Used when Keyboard and mouse is on, in all three games. Choose an action, then press its new key or mouse "
+             "button (Esc cancels).");
+    auto set_all = [&](const char *cvar, const std::string &v) {
+        a.ini.set("Keys", cvar, v);
+        a.ini.save();
+        for (int g = 0; g < G_COUNT; g++) env_refresh(a, g);
+    };
+    const bool capturing = capture >= 0;
+    if (capturing) ImGui::BeginDisabled();   // while waiting for a key, Space / Enter mustn't press a button
+    for (int i = 0; i < (int)acts.size(); i++) {
+        const gs::KeyAction &k = acts[i];
+        ImGui::PushID(k.cvar);
+        std::string label = std::string(pad_name(a, k.pad)) + "  -  " + k.what;
+        row_label(label.c_str(), "", true);
+        std::string cur = a.ini.get("Keys", k.cvar);
+        if (cur.empty()) cur = k.def;
+        std::string shown = capture == i ? std::string("Press a key...") : key_shown(cur);
+        if (th_button((shown + "##k").c_str(), ImVec2(g_ctrlW, T(26)), true, F_BODY, capture == i)) { capture = i; captureFrame = ImGui::GetFrameCount(); }
+        ImGui::PopID();
+    }
+    if (capturing) ImGui::EndDisabled();
+    ImGui::Dummy(ImVec2(0, S(4)));
+    if (th_button("Reset keys to the Gears layout", ImVec2(F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, "Reset keys to the Gears layout").x + S(28), T(26)), true, F_BODY)) {
+        for (const gs::KeyAction &k : acts) a.ini.set("Keys", k.cvar, "");
+        set_all(acts[0].cvar, "");
+        capture = -1;
+    }
+    // the press that sets the key: a frame after the click that chose the row, so that click isn't taken as the key
+    if (capture >= 0 && ImGui::GetFrameCount() > captureFrame + 1) {
+        const char *name = nullptr;
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) { capture = -1; return; }
+        if (ImGui::IsMouseClicked(0)) name = "LMB";
+        else if (ImGui::IsMouseClicked(1)) name = "RMB";
+        else if (ImGui::IsMouseClicked(2)) name = "MMB";
+        for (int k = ImGuiKey_NamedKey_BEGIN; !name && k < ImGuiKey_NamedKey_END; k++)
+            if (ImGui::IsKeyPressed((ImGuiKey)k, false)) name = sdk_key_name((ImGuiKey)k);
+        if (name) { set_all(acts[capture].cvar, name); capture = -1; }
+    }
+}
+
 static void option_row(App &a, int g, const gs::Option &o)
 {
     gs::Game G = (gs::Game)g;
@@ -249,6 +346,37 @@ static void lamp_line(int state, const std::string &text)
     ImGui::PopTextWrapPos();
 }
 
+// 0.2.0: a shortcut on the player's desktop to CogBox.exe with these arguments (an existing one of the same name is replaced)
+static bool make_shortcut(const std::string &name, const std::string &args, const std::string &desc, std::string &err)
+{
+    wchar_t desk[MAX_PATH] = L"";
+    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_DESKTOPDIRECTORY, nullptr, 0, desk))) { err = "no desktop folder"; return false; }
+    const HRESULT ci = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IShellLinkW *sl = nullptr;
+    bool ok = SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (void **)&sl));
+    if (ok) {
+        wchar_t exe[MAX_PATH] = L"";
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        sl->SetPath(exe);
+        sl->SetArguments(widen(args).c_str());
+        sl->SetWorkingDirectory(widen(exe_dir()).c_str());
+        sl->SetDescription(widen(desc).c_str());
+        sl->SetIconLocation(exe, 0);
+        IPersistFile *pf = nullptr;
+        ok = SUCCEEDED(sl->QueryInterface(IID_IPersistFile, (void **)&pf));
+        if (ok) {
+            std::string safe = name;
+            for (char &c : safe) if (strchr("\\/:*?\"<>|", c)) c = '-';
+            ok = SUCCEEDED(pf->Save((std::wstring(desk) + L"\\" + widen(safe) + L".lnk").c_str(), TRUE));
+            pf->Release();
+        }
+        sl->Release();
+    }
+    if (SUCCEEDED(ci)) CoUninitialize();
+    if (!ok) err = "Windows refused it";
+    return ok;
+}
+
 static bool small_button(const char *label) { return th_button(label, ImVec2(F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, label).x + S(28), T(26)), true, F_BODY); }
 
 static bool any_files(const std::string &dir)
@@ -340,6 +468,25 @@ static void about_tab(App &a, int g)
     if (small_button("Reset settings to defaults...")) ask(a, "reset", g, "Reset to defaults", "Put every setting of every game back to its default? Your saves are not touched.", { "Reset", "Cancel" });
 
     ImGui::Dummy(ImVec2(0, S(8)));
+    // 0.2.0: desktop shortcuts - COGBox itself, and this game (it opens COGBox and starts the game; COGBox's settings and
+    // fixes still apply). Windows doesn't let programs pin to the taskbar: right-click a shortcut, "Pin to taskbar".
+    th_heading("SHORTCUTS", g_rowX1);
+    if (small_button("Desktop shortcut: COGBox")) {
+        std::string err;
+        if (make_shortcut("COGBox", "", "Gears of War native PC ports - launcher", err)) set_message(a, "A COGBox shortcut is on your desktop.", false);
+        else set_message(a, "The shortcut couldn't be made: " + err, true);
+    }
+    ImGui::SameLine();
+    {
+        const std::string label = std::string("Desktop shortcut: ") + d.name;
+        if (small_button(label.c_str())) {
+            std::string err;
+            if (make_shortcut(d.name, std::string("--play ") + d.key, std::string("Play ") + d.name + " through COGBox", err))
+                set_message(a, std::string("A ") + d.name + " shortcut is on your desktop.", false);
+            else set_message(a, "The shortcut couldn't be made: " + err, true);
+        }
+    }
+    row_desc("To pin one to the taskbar or Start, right-click the shortcut and choose Pin (Windows doesn't let programs do that themselves).");
     th_heading("COGBOX", g_rowX1);
     std::string newer = update_newer();
     if (!newer.empty()) {
@@ -482,6 +629,7 @@ void page_draw(App &a, ImVec2 size)
             shown++;
         }
         if (!shown) row_desc("Nothing to set here yet.");
+        if (want == gs::Tab::Controls) keys_section(a);   // 0.2.0
     } else about_tab(a, g);
     ImGui::PopFont();
     ImGui::EndChild();

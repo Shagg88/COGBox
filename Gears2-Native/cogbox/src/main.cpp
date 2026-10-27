@@ -37,6 +37,8 @@ void ask(App &a, const std::string &tag, int game, const std::string &title, con
     a.modal.buttons = std::move(buttons);
     a.modal.answer = -1;
     a.modal.data = data;
+    a.modal.check.clear();   // 0.2.0: no checkbox unless the asker adds one
+    a.modal.checked = false;
 }
 
 void refresh_games(App &a, bool hash)
@@ -94,6 +96,11 @@ static void answered(App &a)
     const GameDef &d = game_def(g < 0 ? 0 : g);
     if (m.tag == "crash") play_answer(a, m);
     else if (m.tag == "quit" && m.answer == 0) a.quit = true;   // job 526
+    else if (m.tag == "tunotice") {   // 0.2.0: the title-update notice - shown again after the next COGBox update unless ticked
+        if (m.checked) a.ini.seti("Notices", "TitleUpdatesNever", 1);
+        a.ini.set("Notices", "TitleUpdatesSeen", COGBOX_VERSION);
+        a.ini.save();
+    }
     else if (m.tag == "replace" && m.answer == 0) install_confirmed(a);
     else if (m.tag == "backup" && m.answer == 0) {
         std::string zip = join(desktop_dir(), std::string("CogBox-saves-") + d.dir + "-" + now_stamp() + ".zip"), err;
@@ -134,6 +141,7 @@ static void draw_modal(App &a, ImVec2 size)
         ImGui::PushTextWrapPos(w - S(28));
         ImGui::TextUnformatted(m.text.c_str());
         ImGui::PopTextWrapPos();
+        if (!m.check.empty()) { ImGui::Dummy(ImVec2(0, S(6))); ImGui::Checkbox(m.check.c_str(), &m.checked); }   // 0.2.0
         ImGui::Dummy(ImVec2(0, S(10)));
         float bw = 0;
         for (auto &b : m.buttons) bw += ImGui::CalcTextSize(b.c_str()).x + S(44) + S(12);
@@ -157,6 +165,7 @@ static void draw_modal(App &a, ImVec2 size)
 
 // ---- the whole window ------------------------------------------------------------------------------------------------
 // ---- job 523: the window - zoom with its size, and borderless (our own title strip) ------------------------------
+static std::string g_playArg;       // 0.2.0: --play <game key> from a game's desktop shortcut
 static float g_ui0 = 1.0f;          // g_ui at the starting window size
 static int g_w0 = 1, g_h0 = 1;      // the starting window size
 static App *g_app = nullptr;
@@ -372,6 +381,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         int argc = 0;
         wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         if (argv && argc >= 2 && wcscmp(argv[1], L"--x360test") == 0) return x360test(argc, argv);
+        // 0.2.0: a game's desktop shortcut starts COGBox with --play <gears2 | gears3 | judgment>
+        if (argv && argc >= 3 && wcscmp(argv[1], L"--play") == 0) g_playArg = narrow(argv[2]);
         if (argv) LocalFree(argv);
     }
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
@@ -461,7 +472,25 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 "Judgment\\port ...). Some unzip tools flatten folders - KDE's Ark does.\n\nUnzip the release again keeping its "
                 "folders: Windows' Extract All, 7-Zip, or 'unzip' on Linux.", { "OK" });
     }
+    // 0.2.0: the recommended title updates - on COGBox's first start and after each COGBox update, unless turned off
+    if (!a.modal.open && !a.ini.geti("Notices", "TitleUpdatesNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION &&
+        !getenv("COGBOX_SHOT")) {
+        ask(a, "tunotice", -1, "Recommended game updates",
+            "COGBox's most-tested builds use these title updates:\n\n"
+            "    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4 (required for now)\n\n"
+            "They give the best compatibility and performance. Add each one from your own console (ADD UPDATE, or the game's "
+            "About tab) - COGBox doesn't include game or update files.", { "Continue" });
+        a.modal.check = "Don't show this again";
+    }
     if (getenv("COGBOX_GETART")) art_download_start();   // test switch
+    // 0.2.0: started from a game's desktop shortcut - play it straight away when it's ready, else show its box
+    if (!g_playArg.empty()) {
+        for (int g = 0; g < G_COUNT; g++) {
+            if (g_playArg != game_def(g).key) continue;
+            a.front = g; a.carPos = (float)g;
+            if (a.st[g].ready == R_READY && !a.modal.open) play_start(a, g);
+        }
+    }
     refresh_pads(a);
     update_tidy();
     if (a.ini.geti("Updates", "Check", 1) && !getenv("COGBOX_SHOT")) update_check_start(COGBOX_VERSION);
@@ -473,6 +502,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             if (e.type == SDL_EVENT_QUIT) a.quit = true;
             if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && e.window.windowID == SDL_GetWindowID(win)) a.quit = true;
             if (e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED) refresh_pads(a);
+            // 0.2.0: the hints follow the device used last (stick movement past half way counts, small drift doesn't)
+            if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && abs(e.gaxis.value) > 16000)) a.lastPad = true;
+            if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_WHEEL) a.lastPad = false;
             if (e.type == SDL_EVENT_DROP_FILE && e.drop.data) a.dropped.push_back(e.drop.data);
             if (e.type == SDL_EVENT_WINDOW_FOCUS_GAINED && !a.run.proc) { refresh_games(a, false); covers_load(a); }
         }

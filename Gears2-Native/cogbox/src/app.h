@@ -55,6 +55,8 @@ struct Modal {                       // one message box at a time, drawn by main
     std::string tag;                    // who asked ("crash", "replace" ...)
     int game = -1;
     std::string data;                   // anything the asker needs back (a path)
+    std::string check;                  // 0.2.0: a checkbox under the text when not empty ("Don't show this again")
+    bool checked = false;
 };
 
 struct App {
@@ -91,6 +93,7 @@ struct App {
     std::vector<std::string> gpus;    // graphics cards (DXGI)
     bool hasAvx2 = true;
     bool padConnected = false;
+    bool lastPad = true;              // 0.2.0: the last input came from a controller (hints follow it), else keyboard / mouse
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
     bool borderless = false;          // job 523: no title bar (COGBox draws its own minimise / maximise / close)
     bool fullscreen = false;          // job 523: COGBox fills the screen (F11, or LT + RT together)
