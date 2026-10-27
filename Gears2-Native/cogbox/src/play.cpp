@@ -210,6 +210,24 @@ void play_poll(App &a)
     if (a.fullscreen) SDL_SetWindowFullscreen(a.win, true);
     else if (a.playWasMax) SDL_MaximizeWindow(a.win);
     SDL_RaiseWindow(a.win);
+    // job 528 (Shagg 20:57): Windows won't let a background program take the front (it only flashes its taskbar
+    // button), and the game that was in front has just closed. A tap of Alt counts as this program's own input, and
+    // joining the foreground thread's input for a moment lets SetForegroundWindow through - the usual workaround.
+    if (HWND h = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(a.win), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) {
+        const DWORD me = GetCurrentThreadId();
+        const HWND fgw = GetForegroundWindow();
+        const DWORD fg = fgw ? GetWindowThreadProcessId(fgw, nullptr) : 0;
+        if (fg && fg != me) AttachThreadInput(me, fg, TRUE);
+        INPUT in[2] = {};
+        in[0].type = in[1].type = INPUT_KEYBOARD;
+        in[0].ki.wVk = in[1].ki.wVk = VK_MENU;
+        in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(2, in, sizeof(INPUT));
+        SetForegroundWindow(h);
+        BringWindowToTop(h);
+        SetFocus(h);
+        if (fg && fg != me) AttachThreadInput(me, fg, FALSE);
+    }
 
     std::vector<std::string> crash = crash_files(a.run.logDir);
     append_line(join(a.run.logDir, "args.txt"), "launcher: the game ended after " + std::to_string(secs) + " s, exit code " +
