@@ -145,6 +145,12 @@ std::vector<Option> make_options(Game g) {
     add(choice("Preset", "Quality preset", Tab::Graphics, PG, { "Original (as on the console)", "High", "Ultra", "Custom" }, 3,
                "Sets the graphics boxes in one go. Original = the game as on the console. Change any box afterwards and the "
                "preset shows Custom.", 316));
+    // Job 521 (Shagg 19:02): Vulkan opened for testing - the play exes have the full Vulkan renderer.
+    add(choice("Api", "Graphics API", Tab::Graphics, PG, { "DirectX 12 (recommended)", "Vulkan (experimental)" }, 0,
+               "Experimental - Vulkan is here so players can test it and send us their logs. DirectX 12 is the tested "
+               "renderer; on Vulkan, Gears 3 is known to look darker in places and show some black patches.\n"
+               "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
+               "are off. If something looks wrong, make a problem report and send it to us.", 0));
     // Render resolution: no PS1 tooltip; text from 59-how-to-play's Picture table.
     add(choice("Resolution", "Render resolution", Tab::Graphics, PG,
                { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)" }, 0,
@@ -332,7 +338,8 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     if (o.id == "Exclusive") on = s.b("Fullscreen");                                  // PS1 333
     else if (o.id == "WindowSize") on = !s.b("Fullscreen");                           // PS1 333
     else if (o.id == "PaperWhite" || o.id == "Peak") on = s.b("HDR");                 // PS1 366
-    else if (o.id == "SceneMode") on = s.i("AAMode") >= 2;                            // PS1 352, 473
+    else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("Api") == 0;        // PS1 352, 473; job 521
+    else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
     a.ok = on;
     return a;
@@ -590,6 +597,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (aa >= 2 && aa <= 4 && !cap_file(env, need[aa])) {
             notes.push_back(std::string("launcher: ") + k_aaNames[aa] + " is not available for this game / build - SMAA instead"); aa = 1;
         }
+        if (s.i("Api") == 1) {   // job 521: Vulkan (experimental); the upscalers are DirectX 12 only
+            a.push_back("--gow2_renderer_api=vulkan");
+            if (aa >= 2) { notes.push_back(std::string("launcher: Vulkan - ") + k_aaNames[aa] + " is DirectX 12 only, SMAA instead"); aa = 1; }
+        }
         switch (aa) {
         case 1: a.push_back("--gow2_present_aa=smaa"); break;
         case 2: a.push_back("--gow2_upscaler=fsr"); break;
@@ -605,7 +616,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (aa >= 2 && avail("SceneMode") && m > 0 && m < 4) a.push_back(modes[m]);
     }
     // PS1 857 (0146 / 0147): frame generation
-    const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1;
+    const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0;   // job 521: DirectX 12 only
     if (fgOn) a.push_back("--gow2_frame_generation=fsr");
     // PS1 858: 16x anisotropic
     if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : "--gowj_aniso16=true");
@@ -683,8 +694,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         const std::string gpu = gpu_main(env);
         if (s.b("LowLag")) {
             a.push_back("--gow2_renderer_frames_in_flight=1");
-            if (icase_search(gpu, "NVIDIA|GeForce|Quadro") && cap_exe(env, "gow2_reflex")) a.push_back("--gow2_reflex=true");
-            if (icase_search(gpu, "AMD|Radeon") && cap_exe(env, "gow2_antilag2")) a.push_back("--gow2_antilag2=true");
+            const bool dx = s.i("Api") == 0;   // job 521: Reflex / Anti-Lag 2 are DirectX 12 here
+            if (dx && icase_search(gpu, "NVIDIA|GeForce|Quadro") && cap_exe(env, "gow2_reflex")) a.push_back("--gow2_reflex=true");
+            if (dx && icase_search(gpu, "AMD|Radeon") && cap_exe(env, "gow2_antilag2")) a.push_back("--gow2_antilag2=true");
         } else {
             if (cap_exe(env, "gow2_renderer_frames_in_flight")) a.push_back("--gow2_renderer_frames_in_flight=2");
             if (cap_rt(env, "d3d12_max_frame_latency")) a.push_back("--d3d12_max_frame_latency=0");
