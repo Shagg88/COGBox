@@ -281,6 +281,7 @@ Fov = 视野
 Field of view (%) = 视野(%)
 Mnk = 键鼠
 Keyboard and mouse (Gears layout) = 键盘和鼠标(Gears 布局)
+Keyboard and mouse (Gears layout, experimental) = 键盘和鼠标(Gears 布局，实验性)
 WASD move, mouse look, left click fire, right click aim, Space cover/roll, F melee, E use, Q look at, R reload, Tab Tac/Com, 1-4 weapons, middle click / Z zoom, C left-stick click, Esc / Enter pause, Backspace back. A controller still works. = WASD 移动,鼠标视角,左键开火,右键瞄准,Space 掩体/翻滚,F 近战,E 使用,Q 查看,R 换弹,Tab 战术/通讯,1-4 武器,中键 / Z 缩放,C 左摇杆按下,Esc / Enter 暂停,Backspace 返回。手柄仍可使用。
 Sens = 灵敏度
 Mouse sensitivity = 鼠标灵敏度

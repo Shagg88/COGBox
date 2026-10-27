@@ -198,7 +198,7 @@ std::vector<Option> make_options(Game g) {
                "100 = the original. Widens (or narrows) every camera view by this much.", 374), "", "", true);
 
     // ---- Controls ------------------------------------------------------------------------------------------------
-    add(make("Mnk", "Keyboard and mouse (Gears layout)", Tab::Controls, Kind::Bool, SH, 0,
+    add(make("Mnk", "Keyboard and mouse (Gears layout, experimental)", Tab::Controls, Kind::Bool, SH, 0,
              "WASD move, mouse look, left click fire, right click aim, Space cover/roll, F melee, E use, Q look at, R reload, "
              "Tab Tac/Com, 1-4 weapons, middle click / Z zoom, C left-stick click, Esc / Enter pause, Backspace back. A "
              "controller still works.", 378));

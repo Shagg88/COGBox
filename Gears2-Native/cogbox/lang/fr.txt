@@ -281,6 +281,7 @@ Fov = FOV
 Field of view (%) = Champ de vision (%)
 Mnk = Mnk
 Keyboard and mouse (Gears layout) = Clavier et souris (disposition Gears)
+Keyboard and mouse (Gears layout, experimental) = Clavier et souris (disposition Gears, expérimental)
 WASD move, mouse look, left click fire, right click aim, Space cover/roll, F melee, E use, Q look at, R reload, Tab Tac/Com, 1-4 weapons, middle click / Z zoom, C left-stick click, Esc / Enter pause, Backspace back. A controller still works. = WASD déplacement, souris pour regarder, clic gauche tirer, clic droit viser, Space couvert/roulade, F corps à corps, E utiliser, Q regarder, R recharger, Tab Tac/Com, 1-4 armes, clic milieu / Z zoom, C clic du stick gauche, Esc / Enter pause, Backspace retour. Une manette fonctionne toujours.
 Sens = Sensib.
 Mouse sensitivity = Sensibilité de la souris

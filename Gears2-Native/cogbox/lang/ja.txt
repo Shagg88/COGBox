@@ -281,6 +281,7 @@ Fov = Fov
 Field of view (%) = 視野角（%）
 Mnk = Mnk
 Keyboard and mouse (Gears layout) = キーボードとマウス（Gears配置）
+Keyboard and mouse (Gears layout, experimental) = キーボードとマウス（Gears配置、試験的）
 WASD move, mouse look, left click fire, right click aim, Space cover/roll, F melee, E use, Q look at, R reload, Tab Tac/Com, 1-4 weapons, middle click / Z zoom, C left-stick click, Esc / Enter pause, Backspace back. A controller still works. = WASDで移動、マウスで視点、左クリックで発射、右クリックで照準、Spaceでカバー/ロール、Fで近接、Eで使用、Qで注目、Rでリロード、TabでTac/Com、1-4で武器、中クリック / Zでズーム、Cで左スティック押し込み、Esc / Enterでポーズ、Backspaceで戻る。コントローラーも引き続き使えます。
 Sens = Sens
 Mouse sensitivity = マウス感度
