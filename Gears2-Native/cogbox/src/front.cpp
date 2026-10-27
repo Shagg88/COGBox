@@ -463,4 +463,12 @@ void front_draw(App &a, ImVec2 size)
     const char *hint = a.padConnected ? padHint.c_str()
                                       : "Arrows / wheel: turn      Enter: play      F11: fullscreen      Esc: quit      drop a disc image or folder on the window to add it";
     centred(F_SMALL, FS(F_SMALL), col::faint, hint, size.y - FS(F_SMALL) - S(10));
+    {   // job 529 (Shagg 21:17): the maker's mark, bottom right, just above the hint line
+        const char *mark = "Made by Shagg";
+        ImVec2 ms = F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, mark);
+        ImVec2 mp(size.x - ms.x - S(24), size.y - FS(F_SMALL) - ms.y - S(18));
+        ImDrawList *wl = ImGui::GetWindowDrawList();
+        wl->AddText(F_BOLD, FS(F_BOLD), ImVec2(mp.x + S(1), mp.y + S(1)), U(col::shadow, 0.8f), mark);
+        wl->AddText(F_BOLD, FS(F_BOLD), mp, U(col::dim, 0.85f), mark);
+    }
 }
