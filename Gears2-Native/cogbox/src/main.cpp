@@ -140,7 +140,7 @@ static void answered(App &a)
 // has "Don't show this again". One at a time: answering one shows the next.
 void startup_notices(App &a)
 {
-    if (a.modal.open || getenv("COGBOX_SHOT")) return;
+    if (a.modal.open || (getenv("COGBOX_SHOT") && !getenv("COGBOX_SHOT_NOTICES"))) return;
     if (!a.ini.geti("Notices", "LanguageNever", 0) && a.ini.get("Notices", "LanguageSeen") != COGBOX_VERSION) {
         ask(a, "langpick", -1, "Language", "Choose COGBox's language. You can change it any time on a game's About tab.", { "Continue" });
         a.modal.list.push_back(std::string("Automatic (") + tr("Windows' language") + ")");
@@ -355,7 +355,7 @@ static void refresh_pads(App &a)
 }
 
 // Test switches (all off for players): COGBOX_SHOT=<file.bmp> saves the window after COGBOX_SHOT_FRAMES frames (90)
-// and exits; COGBOX_PAGE=<game>[:<tab>] opens on a page; COGBOX_FRONT=<game> turns the carousel there.
+// and exits (COGBOX_SHOT_NOTICES=1 keeps the startup questions); COGBOX_PAGE=<game>[:<tab>] opens on a page; COGBOX_FRONT=<game> turns the carousel there.
 static void test_shot(App &a)
 {
     const char *shot = getenv("COGBOX_SHOT");
