@@ -1,6 +1,8 @@
 # Gears of War Native - PC ports of Gears of War 2, Gears of War 3 and Gears of War: Judgment
 
-**Fully Playable** with a FEW hiccups.  If you come across any PLEASE upload a log and I'll try to get to it!
+**PLEASE FOR NOW MAKE SURE TO USE THE LATEST TITLE UPDATE FOR EACH GAME**
+
+**Fully Playable** with a FEW hiccups. If you come across any PLEASE upload a log and I'll try to get to it!
 
 Hello all, I'm Shagg and I'm building a launcher for **native Windows versions** of three(eventually four) Xbox 360 games, built by static recompilation,
 with a launcher called **COGBox** that sets up your own copy of each game and starts it.  These games were one of my favorite franchises so this
