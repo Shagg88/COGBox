@@ -16,7 +16,7 @@
 #include "gears_settings.h"
 #include "util.h"
 
-#define COGBOX_VERSION "0.1.0"
+#define COGBOX_VERSION "0.2.0"
 #define COGBOX_NAME "COGBox"
 
 namespace gs = cogbox::gears;
@@ -57,6 +57,8 @@ struct Modal {                       // one message box at a time, drawn by main
     std::string data;                   // anything the asker needs back (a path)
     std::string check;                  // 0.2.0: a checkbox under the text when not empty ("Don't show this again")
     bool checked = false;
+    std::vector<std::string> list;      // 0.2.0: a list to choose from (the language prompt); listSel = the choice
+    int listSel = 0;
 };
 
 struct App {

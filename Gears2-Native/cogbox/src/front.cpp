@@ -3,6 +3,7 @@
 // cover, its spine and its reflection on the floor bend together.
 #include "app.h"
 #include "theme.h"
+#include "i18n.h"   // 0.2.0
 #include "update.h"
 #include "imgui_internal.h"
 #define STB_IMAGE_IMPLEMENTATION
@@ -385,7 +386,7 @@ void front_draw(App &a, ImVec2 size)
     case R_NEED_UPDATE: line = std::string("Needs ") + gd.updateName + " - add it from your console or its package file"; break;
     case R_NO_PORT: line = "Not in this release of COGBox yet"; break;
     }
-    y += centred(F_BODY, FS(F_BODY), st.ready == R_READY ? col::dim : col::amber, line, y) + S(14);
+    y += centred(F_BODY, FS(F_BODY), st.ready == R_READY ? col::dim : col::amber, tr(line), y) + S(14);   // 0.2.0
 
     float bw = T(140), bh = T(36), gap = S(14);
     bool running = a.run.proc != nullptr, busy = a.job.state.load() == 1;
@@ -469,11 +470,11 @@ void front_draw(App &a, ImVec2 size)
         }
     }
     // the hint line
-    std::string padHint = std::string("D-pad: choose a game      ") + pad_name(a, "LB") + " / " + pad_name(a, "RB") + ": Play or Settings      " +
-                          pad_name(a, "A") + ": press      " + pad_name(a, "X") + ": settings      " + pad_name(a, "Y") + ": box art      " +
-                          pad_name(a, "LT") + " + " + pad_name(a, "RT") + ": fullscreen      " + pad_name(a, "Start") + ": quit";   // job 523 / 525 / 526
+    std::string padHint = std::string(tr("D-pad: choose a game")) + "      " + pad_name(a, "LB") + " / " + pad_name(a, "RB") + ": " + tr("Play or Settings") + "      " +
+                          pad_name(a, "A") + ": " + tr("press") + "      " + pad_name(a, "X") + ": " + tr("settings") + "      " + pad_name(a, "Y") + ": " + tr("box art") + "      " +
+                          pad_name(a, "LT") + " + " + pad_name(a, "RT") + ": " + tr("fullscreen") + "      " + pad_name(a, "Start") + ": " + tr("quit");   // job 523 / 525 / 526; 0.2.0 tr
     const char *hint = a.padConnected && a.lastPad ? padHint.c_str()   // 0.2.0: the device used last
-                                      : "Arrows / wheel: turn      Enter: play      F11: fullscreen      Esc: quit      drop a disc image or folder on the window to add it";
+                                      : tr("Arrows / wheel: turn      Enter: play      F11: fullscreen      Esc: quit      drop a disc image or folder on the window to add it");
     centred(F_SMALL, FS(F_SMALL), col::faint, hint, size.y - FS(F_SMALL) - S(10));
     {   // job 529 (Shagg 21:17): the maker's mark, bottom right, just above the hint line
         const char *mark = "Made by Shagg";

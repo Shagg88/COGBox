@@ -5,6 +5,7 @@
 // Lord of the Rings games): C++17, Dear ImGui on SDL3, cross-compiled with MinGW.
 #include "app.h"
 #include "theme.h"
+#include "i18n.h"   // 0.2.0
 #include "update.h"
 #include "report.h"
 #include "imgui_impl_sdl3.h"
@@ -21,7 +22,7 @@
 
 void set_message(App &a, const std::string &m, bool bad)
 {
-    a.message = m;
+    a.message = tr(m);   // 0.2.0
     a.messageBad = bad;
     a.messageAt = ImGui::GetTime();
 }
@@ -32,13 +33,16 @@ void ask(App &a, const std::string &tag, int game, const std::string &title, con
     a.modal.open = true;
     a.modal.tag = tag;
     a.modal.game = game;
-    a.modal.title = title;
-    a.modal.text = text;
+    a.modal.title = tr(title);   // 0.2.0: translated
+    a.modal.text = tr(text);
+    for (std::string &b : buttons) b = tr(b);
     a.modal.buttons = std::move(buttons);
     a.modal.answer = -1;
     a.modal.data = data;
     a.modal.check.clear();   // 0.2.0: no checkbox unless the asker adds one
     a.modal.checked = false;
+    a.modal.list.clear();
+    a.modal.listSel = 0;
 }
 
 void refresh_games(App &a, bool hash)
@@ -88,6 +92,7 @@ static bool zip_folder(const std::string &dir, const std::string &zipPath, std::
     return ok;
 }
 
+void startup_notices(App &a);   // 0.2.0, below
 static void answered(App &a)
 {
     Modal m = a.modal;      // a copy: the answer may ask a new question
@@ -96,6 +101,15 @@ static void answered(App &a)
     const GameDef &d = game_def(g < 0 ? 0 : g);
     if (m.tag == "crash") play_answer(a, m);
     else if (m.tag == "quit" && m.answer == 0) a.quit = true;   // job 526
+    else if (m.tag == "langpick") {   // 0.2.0: the language prompt - Automatic, then languages()
+        const auto &L = languages();
+        const std::string code = m.listSel <= 0 ? std::string("auto") : L[size_t(std::min<int>(m.listSel - 1, (int)L.size() - 1))].code;
+        a.ini.set("Launcher", "Language", code);
+        if (m.checked) a.ini.seti("Notices", "LanguageNever", 1);
+        a.ini.set("Notices", "LanguageSeen", COGBOX_VERSION);
+        a.ini.save();
+        i18n_load(code);
+    }
     else if (m.tag == "tunotice") {   // 0.2.0: the title-update notice - shown again after the next COGBox update unless ticked
         if (m.checked) a.ini.seti("Notices", "TitleUpdatesNever", 1);
         a.ini.set("Notices", "TitleUpdatesSeen", COGBOX_VERSION);
@@ -119,6 +133,32 @@ static void answered(App &a)
         settings_save(a);
         set_message(a, "Every setting is back to its default.", false);
     }
+    startup_notices(a);   // 0.2.0: the next start-up notice, if any
+}
+
+// 0.2.0: on COGBox's first start and after each COGBox update - the language prompt, then the title-update notice; each
+// has "Don't show this again". One at a time: answering one shows the next.
+void startup_notices(App &a)
+{
+    if (a.modal.open || getenv("COGBOX_SHOT")) return;
+    if (!a.ini.geti("Notices", "LanguageNever", 0) && a.ini.get("Notices", "LanguageSeen") != COGBOX_VERSION) {
+        ask(a, "langpick", -1, "Language", "Choose COGBox's language. You can change it any time on a game's About tab.", { "Continue" });
+        a.modal.list.push_back(std::string("Automatic (") + tr("Windows' language") + ")");
+        for (const Language &l : languages()) a.modal.list.push_back(l.name);
+        const std::string cur = a.ini.get("Launcher", "Language");
+        a.modal.listSel = 0;
+        for (size_t i = 0; i < languages().size(); i++) if (languages()[i].code == cur) a.modal.listSel = int(i) + 1;
+        a.modal.check = "Don't show this again";
+        return;
+    }
+    if (!a.ini.geti("Notices", "TitleUpdatesNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION) {
+        ask(a, "tunotice", -1, "Recommended game updates",
+            "COGBox's most-tested builds use these title updates:\n\n"
+            "    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4 (required for now)\n\n"
+            "They give the best compatibility and performance. Add each one from your own console (ADD UPDATE, or the game's "
+            "About tab) - COGBox doesn't include game or update files.", { "Continue" });
+        a.modal.check = "Don't show this again";
+    }
 }
 
 static void draw_modal(App &a, ImVec2 size)
@@ -141,7 +181,17 @@ static void draw_modal(App &a, ImVec2 size)
         ImGui::PushTextWrapPos(w - S(28));
         ImGui::TextUnformatted(m.text.c_str());
         ImGui::PopTextWrapPos();
-        if (!m.check.empty()) { ImGui::Dummy(ImVec2(0, S(6))); ImGui::Checkbox(m.check.c_str(), &m.checked); }   // 0.2.0
+        if (!m.list.empty()) {   // 0.2.0: the language prompt's list
+            ImGui::Dummy(ImVec2(0, S(6)));
+            if (ImGui::BeginListBox("##list", ImVec2(-FLT_MIN, std::min(S(330), ImGui::GetTextLineHeightWithSpacing() * (m.list.size() + 0.4f))))) {
+                for (int i = 0; i < (int)m.list.size(); i++) {
+                    if (ImGui::Selectable(m.list[i].c_str(), m.listSel == i)) m.listSel = i;
+                    if (m.listSel == i && ImGui::IsWindowAppearing()) { ImGui::SetItemDefaultFocus(); ImGui::SetKeyboardFocusHere(-1); }
+                }
+                ImGui::EndListBox();
+            }
+        }
+        if (!m.check.empty()) { ImGui::Dummy(ImVec2(0, S(6))); ImGui::Checkbox(tr(m.check).c_str(), &m.checked); }   // 0.2.0
         ImGui::Dummy(ImVec2(0, S(10)));
         float bw = 0;
         for (auto &b : m.buttons) bw += ImGui::CalcTextSize(b.c_str()).x + S(44) + S(12);
@@ -151,7 +201,7 @@ static void draw_modal(App &a, ImVec2 size)
             const std::string &b = m.buttons[i];
             ImVec2 bs(ImGui::CalcTextSize(b.c_str()).x + S(44), S(38));
             bool hit = i == 0 ? th_button_red(b.c_str(), bs, true, F_BOLD) : th_button(b.c_str(), bs, true, F_BOLD);
-            if (i == 0 && ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
+            if (i == 0 && ImGui::IsWindowAppearing() && m.list.empty()) ImGui::SetKeyboardFocusHere(-1);
             if (hit) m.answer = (int)i;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) m.answer = (int)m.buttons.size() - 1;
@@ -422,6 +472,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     a.win = win;
     a.ren = ren;
     a.ini.load(join(exe_dir(), "CogBox.ini"));
+    i18n_load(a.ini.get("Launcher", "Language").empty() ? "auto" : a.ini.get("Launcher", "Language"));   // 0.2.0
     a.ini.path = join(exe_dir(), "CogBox.ini");
     // job 523: Wine / Proton (Linux, Steam Deck) - ntdll has wine_get_version there
     a.wine = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
@@ -472,16 +523,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 "Judgment\\port ...). Some unzip tools flatten folders - KDE's Ark does.\n\nUnzip the release again keeping its "
                 "folders: Windows' Extract All, 7-Zip, or 'unzip' on Linux.", { "OK" });
     }
-    // 0.2.0: the recommended title updates - on COGBox's first start and after each COGBox update, unless turned off
-    if (!a.modal.open && !a.ini.geti("Notices", "TitleUpdatesNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION &&
-        !getenv("COGBOX_SHOT")) {
-        ask(a, "tunotice", -1, "Recommended game updates",
-            "COGBox's most-tested builds use these title updates:\n\n"
-            "    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4 (required for now)\n\n"
-            "They give the best compatibility and performance. Add each one from your own console (ADD UPDATE, or the game's "
-            "About tab) - COGBox doesn't include game or update files.", { "Continue" });
-        a.modal.check = "Don't show this again";
-    }
+    startup_notices(a);   // 0.2.0: the language prompt, then the title-update notice
     if (getenv("COGBOX_GETART")) art_download_start();   // test switch
     // 0.2.0: started from a game's desktop shortcut - play it straight away when it's ready, else show its box
     if (!g_playArg.empty()) {

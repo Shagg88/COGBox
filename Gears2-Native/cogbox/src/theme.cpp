@@ -1,5 +1,8 @@
 // COGBox - the look (see theme.h)
 #include "theme.h"
+#include "i18n.h"   // 0.2.0
+#include <windows.h>
+#include <string>
 #include "imgui_internal.h"
 #include "gen/font_title.h"
 #include "gen/font_head.h"
@@ -40,12 +43,39 @@ void theme_fonts(ImGuiIO &io)
     fc.FontDataOwnedByAtlas = false;
     fc.OversampleH = 2;
     static const ImWchar ranges[] = { 0x0020, 0x024F, 0x2000, 0x206F, 0x20AC, 0x20AC, 0x2122, 0x2122, 0x2190, 0x21FF, 0 };
+    // 0.2.0: Windows' own fonts merged into each font for the translations COGBox's fonts don't cover - Cyrillic (Segoe
+    // UI), Chinese (Microsoft YaHei), Japanese (Yu Gothic), Korean (Malgun Gothic). Loaded from the PC (nothing shipped);
+    // glyphs are made only when used. Missing files (Wine without them) are skipped.
+    std::string fontsDir;
+    {
+        wchar_t win[MAX_PATH] = L"";
+        GetWindowsDirectoryW(win, MAX_PATH);
+        char path[MAX_PATH * 3] = "";
+        WideCharToMultiByte(CP_UTF8, 0, win, -1, path, sizeof path, nullptr, nullptr);
+        fontsDir = std::string(path) + "\\Fonts\\";
+    }
+    auto merge = [&](float size) {
+        for (const char *f : { "segoeui.ttf", "msyh.ttc", "YuGothR.ttc", "malgun.ttf" }) {
+            const std::string p = fontsDir + f;
+            if (GetFileAttributesA(p.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+            ImFontConfig mc;
+            mc.MergeMode = true;
+            mc.OversampleH = 1;
+            io.Fonts->AddFontFromFileTTF(p.c_str(), size, &mc);
+        }
+    };
     F_BODY  = io.Fonts->AddFontFromMemoryTTF((void *)font_body_data, sizeof font_body_data, T(18), &fc, ranges);
+    merge(T(18));
     F_BOLD  = io.Fonts->AddFontFromMemoryTTF((void *)font_bodyb_data, sizeof font_bodyb_data, T(18), &fc, ranges);
+    merge(T(18));
     F_SMALL = io.Fonts->AddFontFromMemoryTTF((void *)font_body_data, sizeof font_body_data, T(16.5f), &fc, ranges);
+    merge(T(16.5f));
     F_HEAD  = io.Fonts->AddFontFromMemoryTTF((void *)font_head_data, sizeof font_head_data, T(22), &fc, ranges);
+    merge(T(22));
     F_TITLE = io.Fonts->AddFontFromMemoryTTF((void *)font_title_data, sizeof font_title_data, T(34), &fc, ranges);
+    merge(T(34));
     F_HUGE  = io.Fonts->AddFontFromMemoryTTF((void *)font_title_data, sizeof font_title_data, T(64), &fc, ranges);
+    merge(T(64));
     io.FontDefault = F_BODY;
     ImGui::GetStyle().FontSizeBase = F_BODY->LegacySize;
 }
@@ -169,6 +199,7 @@ void th_cog(ImDrawList *dl, ImVec2 c, float r, int teeth, float ang, ImU32 colr,
 
 void th_heading(const char *text, float x1)
 {
+    text = tr(text);   // 0.2.0
     ImDrawList *dl = ImGui::GetWindowDrawList();
     ImGui::PushFont(F_HEAD, FS(F_HEAD));
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -183,6 +214,7 @@ void th_heading(const char *text, float x1)
 
 static bool chamfer_button(const char *label, ImVec2 size, bool enabled, ImFont *font, bool red, bool selected)
 {
+    label = tr(label);   // 0.2.0
     ImGui::PushID(label);
     if (!enabled) ImGui::BeginDisabled();
     ImVec2 a = ImGui::GetCursorScreenPos();
@@ -219,6 +251,7 @@ bool th_button(const char *label, ImVec2 size, bool enabled, ImFont *font, bool 
 
 bool th_tab(const char *label, bool selected, ImVec2 size)
 {
+    label = tr(label);   // 0.2.0
     ImGui::PushID(label);
     ImVec2 a = ImGui::GetCursorScreenPos();
     bool clicked = ImGui::InvisibleButton("##t", size);

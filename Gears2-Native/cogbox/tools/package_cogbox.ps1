@@ -64,6 +64,9 @@ New-Item -ItemType Directory -Force $Out | Out-Null
 # ---- Copy -----------------------------------------------------------------------------------------------------------
 Copy-Item (Join-Path $launcher 'CogBox.exe'), (Join-Path $launcher 'SDL3.dll') $stage
 Copy-Item (Join-Path $cogbox 'README.txt') $stage
+# Launcher translations (0.2.0): cogbox\lang\<code>.txt -> lang\ beside CogBox.exe.
+$langSrc = Join-Path $cogbox 'lang'
+if (Test-Path $langSrc) { $langDst = Join-Path $stage 'lang'; New-Item -ItemType Directory -Force $langDst | Out-Null; Copy-Item (Join-Path $langSrc '*.txt') $langDst } else { throw 'cogbox\lang is missing' }
 Copy-Item (Join-Path (Split-Path -Parent $cogbox) 'LICENSE') (Join-Path $stage 'LICENSE.txt')
 $lic = Join-Path $stage 'licenses'; New-Item -ItemType Directory -Force $lic | Out-Null
 Copy-Item (Join-Path $cogbox 'licenses\*') $lic

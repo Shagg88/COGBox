@@ -2,6 +2,7 @@
 // option list, so a new option there shows up here), the About tab, and a bar with Library, a summary, Save and Play.
 #include "app.h"
 #include "theme.h"
+#include "i18n.h"   // 0.2.0
 #include "update.h"
 #include "imgui_internal.h"
 
@@ -129,6 +130,7 @@ static const float k_rowText = 1.1f;    // the rows' text, bigger than the body 
 
 static void row_label(const char *label, const std::string &desc, bool enabled)
 {
+    label = tr(label);   // 0.2.0
     ImGui::AlignTextToFramePadding();
     ImGui::PushStyleColor(ImGuiCol_Text, enabled ? col::text : col::faint);
     ImGui::TextUnformatted(label);
@@ -140,10 +142,11 @@ static void row_label(const char *label, const std::string &desc, bool enabled)
 static void row_desc(const std::string &desc)
 {
     if (desc.empty()) return;
+    const std::string shown = tr(desc);   // 0.2.0
     ImGui::PushFont(F_SMALL, FS(F_SMALL) * k_rowText);
     ImGui::PushStyleColor(ImGuiCol_Text, col::dim);
     ImGui::PushTextWrapPos(g_rowX1);
-    ImGui::TextUnformatted(desc.c_str());
+    ImGui::TextUnformatted(shown.c_str());
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
     ImGui::PopFont();
@@ -257,7 +260,7 @@ static void option_row(App &a, int g, const gs::Option &o)
     gs::Game G = (gs::Game)g;
     gs::Version ver = gs::effective_version(G, a.cur[g], a.env[g]);
     gs::Availability av = gs::available(o, G, ver, a.cur[g], a.env[g]);
-    std::string tip = gs::tooltip_for(o, G, av, a.env[g]);
+    std::string tip = tr(gs::tooltip_for(o, G, av, a.env[g]));   // 0.2.0
     ImGui::PushID(o.id.c_str());
     ImVec2 rowA = ImGui::GetCursorScreenPos();
     row_label(o.label.c_str(), "", av.ok);
@@ -275,11 +278,14 @@ static void option_row(App &a, int g, const gs::Option &o)
     case gs::Kind::Choice: {
         std::vector<std::string> items = o.id == "Monitor" ? monitor_choices() : o.choices;
         int idx = std::max(0, std::min((int)items.size() - 1, (int)v));
+        for (std::string &it : items) it = tr(it);   // 0.2.0
         if (ImGui::BeginCombo("##v", items.empty() ? "" : items[idx].c_str())) {
             for (int i = 0; i < (int)items.size(); i++) {
                 gs::Availability ca = gs::choice_available(o, G, i);
                 if (!ca.ok) ImGui::BeginDisabled();
+                ImGui::PushID(i);   // translations can make two choices read the same
                 if (ImGui::Selectable(items[i].c_str(), i == idx)) { nv = i; changed = true; }
+                ImGui::PopID();
                 if (!ca.ok) { ImGui::EndDisabled(); if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ca.why.empty()) ImGui::SetTooltip("%s", ca.why.c_str()); }
                 if (i == idx) ImGui::SetItemDefaultFocus();
             }
@@ -335,8 +341,9 @@ static void option_row(App &a, int g, const gs::Option &o)
 }
 
 // ---- the About tab ---------------------------------------------------------------------------------------------------
-static void lamp_line(int state, const std::string &text)
+static void lamp_line(int state, const std::string &text_en)
 {
+    const std::string text = tr(text_en);   // 0.2.0
     ImVec2 p = ImGui::GetCursorScreenPos();
     float h = ImGui::GetTextLineHeight();
     th_lamp(ImGui::GetWindowDrawList(), ImVec2(p.x + S(6), p.y + h * 0.55f), S(4.5f), state);
@@ -377,7 +384,7 @@ static bool make_shortcut(const std::string &name, const std::string &args, cons
     return ok;
 }
 
-static bool small_button(const char *label) { return th_button(label, ImVec2(F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, label).x + S(28), T(26)), true, F_BODY); }
+static bool small_button(const char *label_en) { const char *label = tr(label_en); return th_button(label, ImVec2(F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, label).x + S(28), T(26)), true, F_BODY); }
 
 static bool any_files(const std::string &dir)
 {
@@ -505,13 +512,30 @@ static void about_tab(App &a, int g)
         }
     } else if (!a.ini.geti("Updates", "Check", 1)) lamp_line(0, "COGBox " COGBOX_VERSION " - checking for updates is off.");
     else lamp_line(update_checked() ? 1 : 0, update_checked() ? "COGBox " COGBOX_VERSION " - the latest (or GitHub couldn't be reached)." : "COGBox " COGBOX_VERSION " - checking for updates...");
+    {   // 0.2.0: COGBox's language
+        const auto &L = languages();
+        const std::string cur = a.ini.get("Launcher", "Language").empty() ? "auto" : a.ini.get("Launcher", "Language");
+        std::string shown = std::string(tr("Automatic")) + " (" + tr("Windows' language") + ")";
+        for (const Language &l : L) if (l.code == cur) shown = l.name;
+        row_label("Language", "", true);
+        ImGui::SetNextItemWidth(g_ctrlW);
+        if (ImGui::BeginCombo("##lang", shown.c_str())) {
+            if (ImGui::Selectable((std::string(tr("Automatic")) + " (" + tr("Windows' language") + ")").c_str(), cur == "auto")) {
+                a.ini.set("Launcher", "Language", "auto"); a.ini.save(); i18n_load("auto");
+            }
+            for (const Language &l : L)
+                if (ImGui::Selectable(l.name.c_str(), cur == l.code)) { a.ini.set("Launcher", "Language", l.code); a.ini.save(); i18n_load(l.code); }
+            ImGui::EndCombo();
+        }
+        row_desc("Translations are written by the project; corrections are welcome on GitHub (the lang folder).");
+    }
     bool fs = a.fullscreen;   // job 523
-    if (ImGui::Checkbox("Fullscreen (F11, or LT + RT together)", &fs)) set_fullscreen(a, fs);
+    if (ImGui::Checkbox(tr("Fullscreen (F11, or LT + RT together)"), &fs)) set_fullscreen(a, fs);
     bool bl = a.borderless;   // job 523
-    if (ImGui::Checkbox("Borderless window (no title bar)", &bl)) set_borderless(a, bl);
+    if (ImGui::Checkbox(tr("Borderless window (no title bar)"), &bl)) set_borderless(a, bl);
     row_desc("COGBox draws its own minimise, maximise and close buttons in the top-right corner; drag the strip beside them to move the window.");
     bool chk = a.ini.geti("Updates", "Check", 1) != 0;
-    if (ImGui::Checkbox("Check GitHub for a newer COGBox at start", &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
+    if (ImGui::Checkbox(tr("Check GitHub for a newer COGBox at start"), &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
     row_desc("Only the release page's address is asked for; nothing about you or this PC is sent.");
 }
 
