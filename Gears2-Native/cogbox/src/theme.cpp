@@ -185,7 +185,7 @@ static bool chamfer_button(const char *label, ImVec2 size, bool enabled, ImFont 
     ImGui::PushID(label);
     if (!enabled) ImGui::BeginDisabled();
     ImVec2 a = ImGui::GetCursorScreenPos();
-    bool clicked = ImGui::InvisibleButton("##b", size);
+    bool clicked = ImGui::InvisibleButton("##b", size, ImGuiButtonFlags_EnableNav);   // job 522: reachable by controller / keyboard (off by default since Dear ImGui 1.90)
     bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive(), focused = (ImGui::IsItemFocused() && GImGui->NavCursorVisible) || selected;
     if (!enabled) ImGui::EndDisabled();
     ImVec2 b(a.x + size.x, a.y + size.y);
