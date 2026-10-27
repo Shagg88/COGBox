@@ -567,6 +567,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
               "--gow2_shader_cache_dir=" + q(env.shader_cache_dir) };
         if (useUpdate) a.push_back("--update_data_root=" + q(env.update_data_root));
     }
+    if (env.wine) notes.push_back("launcher: running under Wine / Proton");   // job 523
     // PS1 832-836: start at a chapter
     const int chapter = s.i("Start") - 1;
     if (avail("Start") && chapter >= 0) {
@@ -678,7 +679,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         a.push_back("--gow2_hdr_peak=" + std::to_string(s.i("Peak")));
     }
     // PS1 901-902: fullscreen / window size
-    if (s.b("Fullscreen")) { a.push_back("--fullscreen=true"); if (s.b("Exclusive")) a.push_back("--fullscreen_exclusive=true"); }
+    // job 523: under Wine / Proton the compositor (gamescope on a Steam Deck) owns the screen - no exclusive fullscreen
+    if (s.b("Fullscreen")) { a.push_back("--fullscreen=true"); if (s.b("Exclusive") && !env.wine) a.push_back("--fullscreen_exclusive=true"); }
     else {
         int w = std::max(0, std::min(5, s.i("WindowSize")));
         if (w > 0) { a.push_back("--window_width=" + std::to_string(k_winSizes[w][0])); a.push_back("--window_height=" + std::to_string(k_winSizes[w][1])); }
@@ -694,7 +696,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         const std::string gpu = gpu_main(env);
         if (s.b("LowLag")) {
             a.push_back("--gow2_renderer_frames_in_flight=1");
-            const bool dx = s.i("Api") == 0;   // job 521: Reflex / Anti-Lag 2 are DirectX 12 here
+            const bool dx = s.i("Api") == 0 && !env.wine;   // job 521: Reflex / Anti-Lag 2 are DirectX 12 here; job 523: not under Wine
             if (dx && icase_search(gpu, "NVIDIA|GeForce|Quadro") && cap_exe(env, "gow2_reflex")) a.push_back("--gow2_reflex=true");
             if (dx && icase_search(gpu, "AMD|Radeon") && cap_exe(env, "gow2_antilag2")) a.push_back("--gow2_antilag2=true");
         } else {

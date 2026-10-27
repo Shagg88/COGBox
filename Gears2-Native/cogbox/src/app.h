@@ -91,10 +91,18 @@ struct App {
     std::vector<std::string> gpus;    // graphics cards (DXGI)
     bool hasAvx2 = true;
     bool padConnected = false;
+    bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
+    bool borderless = false;          // job 523: no title bar (COGBox draws its own minimise / maximise / close)
+    bool fullscreen = false;          // job 523: COGBox fills the screen (F11, or LT + RT together)
+    bool wine = false;                // job 523: running under Wine / Proton (Linux, Steam Deck)
     std::vector<std::string> dropped; // files dropped on the window, handled next frame
 };
 
 void set_message(App &a, const std::string &m, bool bad = false);
+// Job 523: a controller button's name for the connected pad - "A" on Xbox, "Cross" on PlayStation (A B X Y LB RB Back Start).
+const char *pad_name(const App &a, const char *xbox);
+void set_borderless(App &a, bool on);   // job 523: saved in CogBox.ini [Window] Borderless
+void set_fullscreen(App &a, bool on);   // job 523: saved in CogBox.ini [Window] Fullscreen
 void ask(App &a, const std::string &tag, int game, const std::string &title, const std::string &text,
          std::vector<std::string> buttons, const std::string &data = "");
 

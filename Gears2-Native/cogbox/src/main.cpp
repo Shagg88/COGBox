@@ -16,6 +16,7 @@
 #include <shellapi.h>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <algorithm>
 
 void set_message(App &a, const std::string &m, bool bad)
@@ -154,6 +155,66 @@ static void draw_modal(App &a, ImVec2 size)
 }
 
 // ---- the whole window ------------------------------------------------------------------------------------------------
+// ---- job 523: the window - zoom with its size, and borderless (our own title strip) ------------------------------
+static float g_ui0 = 1.0f;          // g_ui at the starting window size
+static int g_w0 = 1, g_h0 = 1;      // the starting window size
+static App *g_app = nullptr;
+static bool g_dragTop = false;      // last frame: the mouse is over the title strip's empty part
+
+static SDL_HitTestResult window_hit(SDL_Window *w, const SDL_Point *p, void *)
+{
+    if (!g_app || !g_app->borderless) return SDL_HITTEST_NORMAL;
+    if (SDL_GetWindowFlags(w) & SDL_WINDOW_MAXIMIZED) return g_dragTop && p->y < (int)S(20) ? SDL_HITTEST_DRAGGABLE : SDL_HITTEST_NORMAL;
+    int W = 0, H = 0;
+    SDL_GetWindowSize(w, &W, &H);
+    const int e = std::max(4, (int)(6 * g_ui0));
+    const bool l = p->x < e, r = p->x >= W - e, t = p->y < e, b = p->y >= H - e;
+    if (t && l) return SDL_HITTEST_RESIZE_TOPLEFT;
+    if (t && r) return SDL_HITTEST_RESIZE_TOPRIGHT;
+    if (b && l) return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+    if (b && r) return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+    if (t) return SDL_HITTEST_RESIZE_TOP;
+    if (b) return SDL_HITTEST_RESIZE_BOTTOM;
+    if (l) return SDL_HITTEST_RESIZE_LEFT;
+    if (r) return SDL_HITTEST_RESIZE_RIGHT;
+    return g_dragTop && p->y < (int)S(20) ? SDL_HITTEST_DRAGGABLE : SDL_HITTEST_NORMAL;
+}
+
+void set_borderless(App &a, bool on)
+{
+    a.borderless = on;
+    SDL_SetWindowBordered(a.win, !on);
+    a.ini.seti("Window", "Borderless", on ? 1 : 0);
+    a.ini.save();
+}
+
+void set_fullscreen(App &a, bool on)
+{
+    a.fullscreen = on;
+    SDL_SetWindowFullscreen(a.win, on);   // SDL3: borderless, the size of the desktop
+    a.ini.seti("Window", "Fullscreen", on ? 1 : 0);
+    a.ini.save();
+}
+
+// Minimise / maximise / close in the top-right corner when there is no title bar; the strip left of them moves the window.
+static void draw_window_buttons(App &a, ImVec2 size)
+{
+    if (!a.borderless || a.fullscreen) { g_dragTop = false; return; }
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+    const float bw = S(34), bh = S(18), y = S(1);
+    float x = size.x - S(4) - 3 * bw - 2 * S(3);
+    const bool maxed = (SDL_GetWindowFlags(a.win) & SDL_WINDOW_MAXIMIZED) != 0;
+    ImGui::SetCursorScreenPos(ImVec2(x, y));
+    if (th_button("_##wmin", ImVec2(bw, bh), true, F_SMALL)) SDL_MinimizeWindow(a.win);
+    ImGui::SetCursorScreenPos(ImVec2(x + bw + S(3), y));
+    if (th_button(maxed ? "[-]##wmax" : "[ ]##wmax", ImVec2(bw, bh), true, F_SMALL)) { if (maxed) SDL_RestoreWindow(a.win); else SDL_MaximizeWindow(a.win); }
+    ImGui::SetCursorScreenPos(ImVec2(x + 2 * (bw + S(3)), y));
+    if (th_button_red("X##wclose", ImVec2(bw, bh), true, F_SMALL)) a.quit = true;
+    ImGui::PopItemFlag();
+    const ImVec2 m = ImGui::GetIO().MousePos;
+    g_dragTop = m.y >= 0 && m.y < S(20) && m.x < x - S(4) && !ImGui::IsAnyItemHovered() && !a.modal.open;
+}
+
 static void draw_ui(App &a, ImVec2 size)
 {
     double now = ImGui::GetTime();
@@ -189,23 +250,33 @@ static void draw_ui(App &a, ImVec2 size)
     if (!a.message.empty() && now - a.messageAt < 12) {
         float al = (float)std::min(1.0, (12 - (now - a.messageAt)) / 1.5);
         ImDrawList *fg = ImGui::GetForegroundDrawList();
-        ImVec2 ts = F_BODY->CalcTextSizeA(F_BODY->LegacySize, size.x - S(120), size.x - S(120), a.message.c_str());
+        ImVec2 ts = F_BODY->CalcTextSizeA(FS(F_BODY), size.x - S(120), size.x - S(120), a.message.c_str());
         float top = a.screen == SCR_FRONT ? S(84) : S(4);   // above the boxes / over the page's frame, never over buttons
         ImVec2 p0((size.x - ts.x) * 0.5f - S(18), top), p1(p0.x + ts.x + S(36), p0.y + ts.y + S(18));
         th_plate_fill(fg, p0, p1, S(8), U(ImVec4(0.05f, 0.05f, 0.06f, 0.94f), al));
         fg->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p0.x + S(4), p1.y), U(a.messageBad ? col::bad : col::good, al));
-        fg->AddText(F_BODY, F_BODY->LegacySize, ImVec2(p0.x + S(18), p0.y + S(9)), U(col::text, al), a.message.c_str(), nullptr, size.x - S(120));
+        fg->AddText(F_BODY, FS(F_BODY), ImVec2(p0.x + S(18), p0.y + S(9)), U(col::text, al), a.message.c_str(), nullptr, size.x - S(120));
     }
     // a newer COGBox: one line in the corner (installed from the About tab)
     std::string newer = update_newer();
     if (!newer.empty() && a.screen == SCR_FRONT) {
         std::string t = "COGBox " + newer + " is out - see any game's About tab";
-        ImVec2 ts = F_SMALL->CalcTextSizeA(F_SMALL->LegacySize, FLT_MAX, 0, t.c_str());
-        ImGui::GetWindowDrawList()->AddText(F_SMALL, F_SMALL->LegacySize, ImVec2(size.x - ts.x - S(24), S(24)), U(col::amber), t.c_str());
+        ImVec2 ts = F_SMALL->CalcTextSizeA(FS(F_SMALL), FLT_MAX, 0, t.c_str());
+        ImGui::GetWindowDrawList()->AddText(F_SMALL, FS(F_SMALL), ImVec2(size.x - ts.x - S(24), S(24)), U(col::amber), t.c_str());
     }
     install_draw(a, size);
     draw_modal(a, size);
+    draw_window_buttons(a, size);   // job 523
     ImGui::End();
+}
+
+const char *pad_name(const App &a, const char *x)
+{
+    if (!a.padPs) return x;
+    static const char *const map[][2] = { { "A", "Cross" }, { "B", "Circle" }, { "X", "Square" }, { "Y", "Triangle" },
+                                          { "LB", "L1" }, { "RB", "R1" }, { "LT", "L2" }, { "RT", "R2" }, { "Back", "Share" }, { "Start", "Options" } };
+    for (auto &m : map) if (strcmp(m[0], x) == 0) return m[1];
+    return x;
 }
 
 static void refresh_pads(App &a)
@@ -213,6 +284,13 @@ static void refresh_pads(App &a)
     int n = 0;
     SDL_JoystickID *ids = SDL_GetGamepads(&n);
     a.padConnected = n > 0;
+    if (getenv("COGBOX_PADPS")) { a.padConnected = true; }   // test switch: shows the PlayStation names
+    a.padPs = false;   // job 523: the first PlayStation pad switches the button names
+    for (int i = 0; i < n; i++) {
+        SDL_GamepadType t = SDL_GetGamepadTypeForID(ids[i]);
+        if (t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5) { a.padPs = true; break; }
+    }
+    if (getenv("COGBOX_PADPS")) a.padPs = true;
     if (ids) SDL_free(ids);
 }
 
@@ -316,6 +394,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (!ren) { MessageBoxA(nullptr, SDL_GetError(), COGBOX_NAME, MB_ICONERROR); return 1; }
     SDL_SetRenderVSync(ren, 1);
     SDL_SetWindowMinimumSize(win, (int)(1100 * g_ui), (int)(700 * g_ui));
+    g_ui0 = g_ui; g_w0 = std::max(1, ww); g_h0 = std::max(1, wh);   // job 523: the zoom's starting point
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -332,6 +411,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     a.ren = ren;
     a.ini.load(join(exe_dir(), "CogBox.ini"));
     a.ini.path = join(exe_dir(), "CogBox.ini");
+    // job 523: Wine / Proton (Linux, Steam Deck) - ntdll has wine_get_version there
+    a.wine = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
+    {
+        // a small screen (Steam Deck 1280x800) starts borderless and maximised the first time; then the player's choice
+        const bool small = dm && dm->w <= 1280 && dm->h <= 800;
+        g_app = &a;
+        SDL_SetWindowHitTest(win, window_hit, nullptr);
+        if (a.ini.geti("Window", "Borderless", small ? 1 : 0)) { a.borderless = true; SDL_SetWindowBordered(win, false); }
+        if (small) SDL_MaximizeWindow(win);
+        if (a.ini.geti("Window", "Fullscreen", 0)) { a.fullscreen = true; SDL_SetWindowFullscreen(win, true); }
+    }
+    if (const char *t = getenv("COGBOX_WINDOW")) { int w = 0, h = 0; if (sscanf(t, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) SDL_SetWindowSize(win, w, h); }   // test switch
+    if (getenv("COGBOX_BORDERLESS")) { a.borderless = true; SDL_SetWindowBordered(win, false); }   // test switch (not saved)
     a.gpus = report_gpu_names();
     a.hasAvx2 = cpu_has_avx2();
     refresh_games(a, true);
@@ -394,9 +486,27 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         else io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
         if (frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         else io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        {   // job 523: everything grows with the window (1x at the starting size, at most 2x)
+            int W = 0, H = 0;
+            SDL_GetWindowSize(win, &W, &H);
+            float z = std::max(1.0f, std::min(2.0f, std::min((float)W / g_w0, (float)H / g_h0)));
+            if (fabsf(z - g_zoom) > 0.005f) {
+                g_zoom = z;
+                g_ui = g_ui0 * z;
+                theme_style();
+                ImGui::GetStyle().FontSizeBase = F_BODY->LegacySize * z;
+            }
+        }
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
+        {   // job 523 (Shagg 20:29): F11, or both triggers together, switch fullscreen from any screen
+            static bool triggersWere = false;
+            const bool triggers = ImGui::IsKeyDown(ImGuiKey_GamepadL2) && ImGui::IsKeyDown(ImGuiKey_GamepadR2);
+            if (!a.run.proc && SDL_GetKeyboardFocus() &&
+                (ImGui::IsKeyPressed(ImGuiKey_F11, false) || (triggers && !triggersWere))) set_fullscreen(a, !a.fullscreen);
+            triggersWere = triggers;
+        }
         draw_ui(a, io.DisplaySize);
         ImGui::Render();
         SDL_SetRenderDrawColor(ren, 8, 8, 10, 255);

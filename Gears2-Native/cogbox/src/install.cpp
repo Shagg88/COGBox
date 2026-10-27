@@ -313,7 +313,7 @@ void install_draw(App &a, ImVec2 size)
     ImGui::SetCursorScreenPos(ImVec2(p0.x + S(26), p0.y + S(70)));
     ImGui::ProgressBar(frac, ImVec2(w - S(52), S(24)), ov);
     ImGui::SetCursorScreenPos(ImVec2(p0.x + S(26), p0.y + S(104)));
-    ImGui::PushFont(F_SMALL, F_SMALL->LegacySize);
+    ImGui::PushFont(F_SMALL, FS(F_SMALL));
     ImGui::PushStyleColor(ImGuiCol_Text, col::dim);
     if (cur.size() > 70) cur = "..." + cur.substr(cur.size() - 67);
     ImGui::TextUnformatted(cur.c_str());

@@ -73,6 +73,7 @@ void env_refresh(App &a, int g)
     e.monitor_device = dn ? dn : "";
     if (ids) SDL_free(ids);
     e.has_avx2 = a.hasAvx2;
+    e.wine = a.wine;   // job 523
     e.extra_args_lines.clear();
     std::string extra;
     if (read_file(join(exe_dir(), "extra-args.txt"), extra, 1 << 20)) {
@@ -131,7 +132,7 @@ static void row_label(const char *label, const std::string &desc, bool enabled)
 static void row_desc(const std::string &desc)
 {
     if (desc.empty()) return;
-    ImGui::PushFont(F_SMALL, F_SMALL->LegacySize * k_rowText);
+    ImGui::PushFont(F_SMALL, FS(F_SMALL) * k_rowText);
     ImGui::PushStyleColor(ImGuiCol_Text, col::dim);
     ImGui::PushTextWrapPos(g_rowX1);
     ImGui::TextUnformatted(desc.c_str());
@@ -248,7 +249,7 @@ static void lamp_line(int state, const std::string &text)
     ImGui::PopTextWrapPos();
 }
 
-static bool small_button(const char *label) { return th_button(label, ImVec2(F_BODY->CalcTextSizeA(F_BODY->LegacySize, FLT_MAX, 0, label).x + S(28), T(26)), true, F_BODY); }
+static bool small_button(const char *label) { return th_button(label, ImVec2(F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, label).x + S(28), T(26)), true, F_BODY); }
 
 static bool any_files(const std::string &dir)
 {
@@ -353,6 +354,11 @@ static void about_tab(App &a, int g)
         }
     } else if (!a.ini.geti("Updates", "Check", 1)) lamp_line(0, "COGBox " COGBOX_VERSION " - checking for updates is off.");
     else lamp_line(update_checked() ? 1 : 0, update_checked() ? "COGBox " COGBOX_VERSION " - the latest (or GitHub couldn't be reached)." : "COGBox " COGBOX_VERSION " - checking for updates...");
+    bool fs = a.fullscreen;   // job 523
+    if (ImGui::Checkbox("Fullscreen (F11, or LT + RT together)", &fs)) set_fullscreen(a, fs);
+    bool bl = a.borderless;   // job 523
+    if (ImGui::Checkbox("Borderless window (no title bar)", &bl)) set_borderless(a, bl);
+    row_desc("COGBox draws its own minimise, maximise and close buttons in the top-right corner; drag the strip beside them to move the window.");
     bool chk = a.ini.geti("Updates", "Check", 1) != 0;
     if (ImGui::Checkbox("Check GitHub for a newer COGBox at start", &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
     row_desc("Only the release page's address is asked for; nothing about you or this PC is sent.");
@@ -393,12 +399,12 @@ void page_draw(App &a, ImVec2 size)
     th_plate_fill(dl, ImVec2(p0.x + S(6), p0.y + S(6)), ImVec2(p1.x - S(6), p1.y - S(6)), S(14), U(ImVec4(0.02f, 0.025f, 0.03f, 0.30f)));
 
     // header: the box, the name, the lamps
-    float hh = std::max(S(108), S(22) + F_TITLE->LegacySize + F_BODY->LegacySize + S(16));
+    float hh = std::max(S(108), S(22) + FS(F_TITLE) + FS(F_BODY) + S(16));
     draw_box(a, g, ImVec2(p0.x + S(60), p0.y + S(64)), S(92), -12, 1.0f, false);
-    dl->AddText(F_TITLE, F_TITLE->LegacySize, ImVec2(p0.x + S(112), p0.y + S(22)), U(col::text), d.name);
+    dl->AddText(F_TITLE, FS(F_TITLE), ImVec2(p0.x + S(112), p0.y + S(22)), U(col::text), d.name);
     std::string sub = a.st[g].ready == R_READY ? (a.st[g].useUpdate ? std::string(d.updateName) : "Disc version") : "Not ready to play";
     if (a.st[g].playSeconds > 0) sub += "   |   " + human_duration(a.st[g].playSeconds) + " played";
-    dl->AddText(F_BODY, F_BODY->LegacySize, ImVec2(p0.x + S(114), p0.y + S(22) + F_TITLE->LegacySize + S(2)), U(col::dim), sub.c_str());
+    dl->AddText(F_BODY, FS(F_BODY), ImVec2(p0.x + S(114), p0.y + S(22) + FS(F_TITLE) + S(2)), U(col::dim), sub.c_str());
     {
         struct L { int s; const char *t; } lamps[3] = {
             { a.st[g].dataDir.empty() ? 3 : a.st[g].xexMatch ? 1 : 2, "Game" },
@@ -406,10 +412,10 @@ void page_draw(App &a, ImVec2 size)
             { a.padConnected ? 1 : 0, "Controller" } };
         float x = p1.x - S(24);
         for (int i = 2; i >= 0; i--) {
-            float tw = F_SMALL->CalcTextSizeA(F_SMALL->LegacySize, FLT_MAX, 0, lamps[i].t).x;
+            float tw = F_SMALL->CalcTextSizeA(FS(F_SMALL), FLT_MAX, 0, lamps[i].t).x;
             x -= tw;
-            dl->AddText(F_SMALL, F_SMALL->LegacySize, ImVec2(x, p0.y + S(28)), U(col::dim), lamps[i].t);
-            th_lamp(dl, ImVec2(x - S(10), p0.y + S(28) + F_SMALL->LegacySize * 0.55f), S(4.5f), lamps[i].s);
+            dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(x, p0.y + S(28)), U(col::dim), lamps[i].t);
+            th_lamp(dl, ImVec2(x - S(10), p0.y + S(28) + FS(F_SMALL) * 0.55f), S(4.5f), lamps[i].s);
             x -= S(30);
         }
     }
@@ -459,7 +465,7 @@ void page_draw(App &a, ImVec2 size)
     ImVec2 c0(p0.x + S(30), ty + tabH + S(10)), c1(p1.x - S(24), p1.y - barH - S(8));
     ImGui::SetCursorScreenPos(c0);
     ImGui::BeginChild("rows", ImVec2(c1.x - c0.x, c1.y - c0.y), ImGuiChildFlags_NavFlattened);
-    ImGui::PushFont(F_BODY, F_BODY->LegacySize * k_rowText);
+    ImGui::PushFont(F_BODY, FS(F_BODY) * k_rowText);
     g_ctrlW = T(300);
     g_labelW = std::min(S(500), (c1.x - c0.x) - g_ctrlW - S(40));
     g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(16);
@@ -489,9 +495,9 @@ void page_draw(App &a, ImVec2 size)
         a.zoomTo = SCR_FRONT; a.zoomStart = ImGui::GetTime();
     }
     std::string sm = summary(a, g);
-    ImVec2 ss = F_SMALL->CalcTextSizeA(F_SMALL->LegacySize, FLT_MAX, 0, sm.c_str());
+    ImVec2 ss = F_SMALL->CalcTextSizeA(FS(F_SMALL), FLT_MAX, 0, sm.c_str());
     float midL = p0.x + S(170), midR = p1.x - S(310);
-    if (ss.x < midR - midL) dl->AddText(F_SMALL, F_SMALL->LegacySize, ImVec2(midL + (midR - midL - ss.x) * 0.5f, by + S(24)), U(col::dim), sm.c_str());
+    if (ss.x < midR - midL) dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(midL + (midR - midL - ss.x) * 0.5f, by + S(24)), U(col::dim), sm.c_str());
     bool anyDirty = std::any_of(a.dirty, a.dirty + G_COUNT, [](bool x) { return x; });
     ImGui::SetCursorScreenPos(ImVec2(p1.x - S(24) - S(280), by + S(12)));
     if (th_button(anyDirty ? "SAVE *" : "SAVE", ImVec2(S(130), S(40)), true, F_HEAD, a.barSel == 1) || (barA && a.barSel == 1)) { if (settings_save(a)) set_message(a, "Saved.", false); }

@@ -138,6 +138,7 @@ void play_start(App &a, int g)
     if (a.env[g].cap.exe_has && a.env[g].cap.exe_has("cogbox_menu")) {   // ports with the in-game menu (patch 0163)
         write_menu_file(a, g, ver, logDir);
         args.push_back("--cogbox_menu=\"" + join(logDir, "menu.txt") + "\"");
+        if (a.padPs && a.env[g].cap.exe_has("Circle: back to the game")) args.push_back("--cogbox_menu_ps=true");   // job 523: PlayStation names in the in-game menu
     }
     std::string argText;
     for (auto &s : args) argText += s + "\r\n";

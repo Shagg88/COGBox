@@ -11,6 +11,7 @@
 #include <algorithm>
 
 float g_ui = 1.0f;
+float g_zoom = 1.0f;
 ImFont *F_BODY, *F_BOLD, *F_SMALL, *F_HEAD, *F_TITLE, *F_HUGE;
 
 static ImVec4 rgb(int r, int g, int b, float a = 1.0f) { return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, a); }
@@ -169,7 +170,7 @@ void th_cog(ImDrawList *dl, ImVec2 c, float r, int teeth, float ang, ImU32 colr,
 void th_heading(const char *text, float x1)
 {
     ImDrawList *dl = ImGui::GetWindowDrawList();
-    ImGui::PushFont(F_HEAD, F_HEAD->LegacySize);
+    ImGui::PushFont(F_HEAD, FS(F_HEAD));
     ImVec2 p = ImGui::GetCursorScreenPos();
     float h = ImGui::GetTextLineHeight();
     dl->AddRectFilled(ImVec2(p.x, p.y + h * 0.18f), ImVec2(p.x + S(4), p.y + h * 0.86f), U(col::redHi));
@@ -202,7 +203,7 @@ static bool chamfer_button(const char *label, ImVec2 size, bool enabled, ImFont 
     dl->PathStroke(U(focused ? col::text : red ? ImVec4(1, 0.45f, 0.4f, 1) : col::edge, (focused ? 0.95f : 0.6f) * al), ImDrawFlags_Closed, S(focused ? 2.0f : 1.0f));
     dl->AddLine(ImVec2(a.x + c, a.y + S(1)), ImVec2(b.x - c, a.y + S(1)), IM_COL32(255, 255, 255, (int)(50 * al)), S(1));
     ImFont *f = font ? font : F_BOLD;
-    ImGui::PushFont(f, f->LegacySize);
+    ImGui::PushFont(f, FS(f));
     const char *end = ImGui::FindRenderedTextEnd(label);
     ImVec2 ts = ImGui::CalcTextSize(label, end);
     ImVec2 tp(a.x + (size.x - ts.x) * 0.5f, a.y + (size.y - ts.y) * 0.5f + (held ? S(1) : 0));
@@ -234,7 +235,7 @@ bool th_tab(const char *label, bool selected, ImVec2 size)
     dl->PathFillConvex(U(selected ? col::steelHi : hov ? col::steel : ImVec4(0.09f, 0.10f, 0.11f, 0.9f)));
     if (selected) dl->AddRectFilled(ImVec2(a.x + c, a.y), ImVec2(b.x - c, a.y + S(3)), U(col::redHi));
     if (focused) dl->AddRect(a, b, U(col::text, 0.8f), 0, 0, S(1.5f));
-    ImGui::PushFont(F_HEAD, F_HEAD->LegacySize * 0.86f);
+    ImGui::PushFont(F_HEAD, FS(F_HEAD) * 0.86f);
     ImVec2 ts = ImGui::CalcTextSize(label);
     dl->AddText(ImVec2(a.x + (size.x - ts.x) * 0.5f, a.y + (size.y - ts.y) * 0.5f + S(1)), U(selected ? col::text : col::dim), label);
     ImGui::PopFont();

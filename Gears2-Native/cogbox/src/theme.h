@@ -3,7 +3,11 @@
 #pragma once
 #include "imgui.h"
 
-extern float g_ui;   // the display's scale (1 = 96 dpi)
+extern float g_ui;   // the display's scale (1 = 96 dpi) times g_zoom
+// Job 523 (Shagg 20:07): the whole launcher grows with a bigger window. g_zoom = window size / its starting size (1-2);
+// g_ui is the starting scale times it, and text sizes go through FS() (the fonts are loaded once, at zoom 1).
+extern float g_zoom;
+inline float FS(const ImFont *f) { return f->LegacySize * g_zoom; }
 inline float S(float v) { return v * g_ui; }
 // All text is this much bigger than the layout scale (Shagg 22:09: "text still needs to be bigger. ALL TEXT"); sizes that
 // hold text use T() so they grow with it.

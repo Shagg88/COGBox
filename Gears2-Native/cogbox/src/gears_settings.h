@@ -60,6 +60,7 @@ struct Environment {
     int refresh_hz = 0;
     std::string monitor_device;
     bool has_avx2 = true;           // PS1 207-210 GearsCpu.HasAvx2
+    bool wine = false;              // job 523: Wine / Proton (Linux, Steam Deck)
     // PS1 960-961: the lines of out\extra-args.txt (raw; empty = no file). Trimmed, '#' lines skipped, {LOG} = log_dir.
     std::vector<std::string> extra_args_lines;
     Capability cap;

@@ -11,7 +11,7 @@ NO GAME FILES ARE INCLUDED. You need your own copy of each game.
 
 What you need
 -------------
-- Windows 10 or 11, 64-bit.
+- Windows 10 or 11, 64-bit - or Linux / Steam Deck through Proton (see below, experimental).
 - A CPU with AVX2 (Intel Haswell / AMD Ryzen or newer, about 2013 on).
 - A graphics card with Direct3D 12.
 - Your own copy of the game, in one of these forms:
@@ -45,10 +45,35 @@ Controller: the D-pad turns the carousel, LB / RB choose Play or Settings, A pre
 X opens the settings, Y gets box art. On a settings page LB / RB change tab, D-pad down past
 the last option reaches Library / Save / Play, and B jumps to Library.
 Keyboard: the arrow keys turn it, Enter plays, Esc goes back.
+PlayStation controllers work too; COGBox then shows Cross / Circle / Square / Triangle, L1 / R1
+instead of A / B / X / Y, LB / RB.
 
-In the game: Back + Start (or F1) opens the in-game menu - the same settings, Resume,
+In the game: Back + Start (Share + Options on PlayStation, or F1) opens the in-game menu - the same settings, Resume,
 Restart to apply and Quit game. Most settings take effect when the game restarts; Restart to
 apply does that for you.
+
+
+Graphics API: DirectX 12 is the default and the tested renderer. Vulkan (experimental) is on each
+game's Graphics tab for testing; FSR / DLSS / XeSS and frame generation are DirectX 12 only. If
+something looks wrong on Vulkan, please send a problem report.
+
+Fullscreen: F11, or both triggers (LT + RT) together on a controller, from any screen.
+The window: COGBox grows with its window. "Borderless window" on any game's About tab hides the
+title bar; COGBox then has its own minimise / maximise / close buttons in the top-right corner.
+
+
+Linux and Steam Deck (Proton) - experimental
+---------------------------------------------
+1. Unzip COGBox somewhere in your home folder.
+2. In Steam: Add a Game > Add a Non-Steam Game > browse to CogBox.exe.
+3. The game's Properties > Compatibility > "Force the use of a specific Steam Play compatibility
+   tool": Proton Experimental (or a recent Proton / GE-Proton).
+4. Start it from Steam. On a small screen like the Steam Deck's, COGBox starts maximised and
+   borderless. Add your copy as on Windows.
+Under Proton COGBox skips exclusive fullscreen, Reflex and Anti-Lag (the compositor owns the
+screen). Both DirectX 12 (through vkd3d-proton) and Vulkan can be tried - Vulkan may be the faster
+one there. Steam Input should present the controller as a standard gamepad. Problem reports
+from Linux help a lot.
 
 
 Where things are

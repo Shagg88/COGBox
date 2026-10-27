@@ -40,6 +40,7 @@ REXCVAR_DEFINE_STRING(cogbox_menu, "", "Gears2",
                       "COGBox's in-game menu: the file COGBox writes with this game's settings (Back + Start or F1 opens "
                       "the menu; without a file it offers Resume and Quit game only)");
 REXCVAR_DEFINE_BOOL(cogbox_menu_enabled, true, "Gears2", "COGBox's in-game menu (Back + Start or F1) on or off");
+REXCVAR_DEFINE_BOOL(cogbox_menu_ps, false, "Gears2", "Job 523: show PlayStation button names in the in-game menu (COGBox sets it for a PlayStation pad)");
 REXCVAR_DEFINE_BOOL(cogbox_menu_open_at_start, false, "Gears2",
                     "Test switch: open the in-game menu as soon as the window exists");
 
@@ -155,21 +156,41 @@ MenuFile g_file;
 void RequestOpenOnUIThread();
 void ScheduleDrop();
 
+// Job 523: the controller through the game's own input system (SDL: Xbox, PlayStation, Switch and Steam Deck pads), as
+// the game itself reads it; plain XInput only when there is none.
+rex::input::InputSystem* g_input = nullptr;
+
 void PollPads() {
   HMODULE xi = LoadLibraryW(L"xinput1_4.dll");
   if (!xi) xi = LoadLibraryW(L"xinput9_1_0.dll");
   auto get = xi ? reinterpret_cast<XInputGetStateFn>(GetProcAddress(xi, "XInputGetState")) : nullptr;
-  if (!get) {
-    REXLOG_WARN("cogbox_menu: XInput not found - the menu opens with F1 only");
+  if (!get && !g_input) {
+    REXLOG_WARN("cogbox_menu: no controller input found - the menu opens with F1 only");
     return;
   }
   bool combo_was = false;
   while (!g_stop.load()) {
     XINPUT_GAMEPAD pad = {};
     bool connected = false;
-    for (DWORD i = 0; i < 4 && !connected; ++i) {
-      XINPUT_STATE s = {};
-      if (get(i, &s) == ERROR_SUCCESS) { pad = s.Gamepad; connected = true; }
+    if (g_input) {
+      for (uint32_t i = 0; i < 4 && !connected; ++i) {
+        rex::input::X_INPUT_STATE st = {};
+        if (g_input->GetStateForUI(i, &st) == rex::X_RESULT(0)) {   // X_ERROR_SUCCESS
+          pad.wButtons = static_cast<uint16_t>(st.gamepad.buttons);   // the same bit layout as XInput
+          pad.bLeftTrigger = st.gamepad.left_trigger;
+          pad.bRightTrigger = st.gamepad.right_trigger;
+          pad.sThumbLX = static_cast<int16_t>(st.gamepad.thumb_lx);
+          pad.sThumbLY = static_cast<int16_t>(st.gamepad.thumb_ly);
+          pad.sThumbRX = static_cast<int16_t>(st.gamepad.thumb_rx);
+          pad.sThumbRY = static_cast<int16_t>(st.gamepad.thumb_ry);
+          connected = true;
+        }
+      }
+    } else {
+      for (DWORD i = 0; i < 4 && !connected; ++i) {
+        XINPUT_STATE s = {};
+        if (get(i, &s) == ERROR_SUCCESS) { pad = s.Gamepad; connected = true; }
+      }
     }
     {
       std::lock_guard<std::mutex> l(g_pad_mutex);
@@ -310,7 +331,8 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     const std::string title = "COGBox  -  " + (g_file.game.empty() ? std::string("Game menu") : g_file.game);
     ImGui::TextUnformatted(title.c_str());
     ImGui::SameLine();
-    ImGui::TextDisabled("   LB / RB: tabs   A: change   B: back to the game");
+    ImGui::TextDisabled(REXCVAR_GET(cogbox_menu_ps) ? "   L1 / R1: tabs   Cross: change   Circle: back to the game"   // job 523
+                                                    : "   LB / RB: tabs   A: change   B: back to the game");
     ImGui::Separator();
     const float bar_h = ImGui::GetFrameHeightWithSpacing() * 2.6f;
     const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -434,8 +456,10 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* windo
   g_file = LoadMenuFile(REXCVAR_GET(cogbox_menu));
   // While the menu is open the game gets no controller / keyboard / mouse input.
   if (runtime) {
-    if (auto* input = static_cast<rex::input::InputSystem*>(runtime->input_system()))
+    if (auto* input = static_cast<rex::input::InputSystem*>(runtime->input_system())) {
       input->SetActiveCallback([] { return !g_open.load(); });
+      g_input = input;   // job 523
+    }
   }
   rex::ui::RegisterBind("bind_cogbox_menu", "F1", "COGBox in-game menu", [] {
     if (!g_open.load()) OpenNow();
@@ -454,4 +478,5 @@ void XenosShutdownInGameMenu() {
   rex::ui::UnregisterBind("bind_cogbox_menu");
   g_drawer = nullptr;
   g_window = nullptr;
+  g_input = nullptr;
 }

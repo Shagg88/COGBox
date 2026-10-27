@@ -321,13 +321,13 @@ void front_draw(App &a, ImVec2 size)
     {
         ImVec2 m(S(26), S(20));
         th_cog(dl, ImVec2(m.x + S(16), m.y + S(18)), S(16), 10, (float)now * 0.15f, U(col::redHi), U(ImVec4(0.03f, 0.03f, 0.035f, 1)));
-        dl->AddText(F_TITLE, F_TITLE->LegacySize, ImVec2(m.x + S(42), m.y), U(col::text), "COGBOX");
-        dl->AddText(F_SMALL, F_SMALL->LegacySize, ImVec2(m.x + S(44), m.y + F_TITLE->LegacySize + S(2)), U(col::dim), "Gears of War native PC ports  -  launcher " COGBOX_VERSION);
+        dl->AddText(F_TITLE, FS(F_TITLE), ImVec2(m.x + S(42), m.y), U(col::text), "COGBOX");
+        dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(m.x + S(44), m.y + FS(F_TITLE) + S(2)), U(col::dim), "Gears of War native PC ports  -  launcher " COGBOX_VERSION);
     }
 
     // the boxes, farthest first
     // the box gives up height to the bigger text under it (name, status line, buttons, hint line)
-    float under = F_HEAD->LegacySize * 1.25f + F_BODY->LegacySize + T(36) + F_SMALL->LegacySize + S(60);
+    float under = FS(F_HEAD) * 1.25f + FS(F_BODY) + T(36) + FS(F_SMALL) + S(60);
     float H = std::min(std::min(size.y * 0.56f, size.y - under - S(100)), size.x * 0.33f / kCoverAspect);
     float cx = size.x * 0.5f, cy = S(90) + H * 0.5f, spacing = H * kCoverAspect * 1.25f;
     int order[G_COUNT];
@@ -371,7 +371,7 @@ void front_draw(App &a, ImVec2 size)
         dl->AddText(f, fs, ImVec2(cx - ts.x * 0.5f, yy), U(c), t.c_str());
         return ts.y;
     };
-    y += centred(F_HEAD, F_HEAD->LegacySize * 1.25f, col::text, gd.name, y) + S(2);
+    y += centred(F_HEAD, FS(F_HEAD) * 1.25f, col::text, gd.name, y) + S(2);
     std::string line;
     switch (st.ready) {
     case R_READY:
@@ -385,7 +385,7 @@ void front_draw(App &a, ImVec2 size)
     case R_NEED_UPDATE: line = std::string("Needs ") + gd.updateName + " - add it from your console or its package file"; break;
     case R_NO_PORT: line = "Not in this release of COGBox yet"; break;
     }
-    y += centred(F_BODY, F_BODY->LegacySize, st.ready == R_READY ? col::dim : col::amber, line, y) + S(14);
+    y += centred(F_BODY, FS(F_BODY), st.ready == R_READY ? col::dim : col::amber, line, y) + S(14);
 
     float bw = T(140), bh = T(36), gap = S(14);
     bool running = a.run.proc != nullptr, busy = a.job.state.load() == 1;
@@ -432,7 +432,7 @@ void front_draw(App &a, ImVec2 size)
         const char *lbl = "GET BOX ART";
         bool any = false;
         for (int i = 0; i < G_COUNT; i++) any |= a.cover[i].tex != nullptr;
-        ImVec2 bs(F_BOLD->CalcTextSizeA(F_BOLD->LegacySize, FLT_MAX, 0, any ? "UPDATE ART" : lbl).x + S(36), T(28));
+        ImVec2 bs(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, any ? "UPDATE ART" : lbl).x + S(36), T(28));
         artW = bs.x;
         ImGui::SetCursorScreenPos(ImVec2(size.x - bs.x - S(24), S(22)));
         if (th_button(any ? "UPDATE ART" : lbl, bs, true, F_BOLD) || (nav && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))) {
@@ -449,7 +449,7 @@ void front_draw(App &a, ImVec2 size)
         if (newer.empty() && getenv("COGBOX_SHOW_UPDATE")) newer = getenv("COGBOX_SHOW_UPDATE");
         if (!newer.empty() && st.ready != R_NO_PORT) {
             std::string lbl = "UPDATE TO " + newer;
-            ImVec2 us(F_BOLD->CalcTextSizeA(F_BOLD->LegacySize, FLT_MAX, 0, lbl.c_str()).x + S(36), T(28));
+            ImVec2 us(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, lbl.c_str()).x + S(36), T(28));
             ImGui::SetCursorScreenPos(ImVec2(size.x - artW - S(24) - S(12) - us.x, S(22)));
             if (th_button_red(lbl.c_str(), us, true, F_BOLD)) { a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 4; a.barSel = -1; }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
@@ -457,7 +457,10 @@ void front_draw(App &a, ImVec2 size)
         }
     }
     // the hint line
-    const char *hint = a.padConnected ? "D-pad: choose a game      LB / RB: Play or Settings      A: press      X: settings      Y: box art"
-                                      : "Arrows / wheel: turn      Enter: play      drop a disc image or folder on the window to add it";
-    centred(F_SMALL, F_SMALL->LegacySize, col::faint, hint, size.y - F_SMALL->LegacySize - S(10));
+    std::string padHint = std::string("D-pad: choose a game      ") + pad_name(a, "LB") + " / " + pad_name(a, "RB") + ": Play or Settings      " +
+                          pad_name(a, "A") + ": press      " + pad_name(a, "X") + ": settings      " + pad_name(a, "Y") + ": box art      " +
+                          pad_name(a, "LT") + " + " + pad_name(a, "RT") + ": fullscreen";   // job 523 / 525
+    const char *hint = a.padConnected ? padHint.c_str()
+                                      : "Arrows / wheel: turn      Enter: play      F11: fullscreen      drop a disc image or folder on the window to add it";
+    centred(F_SMALL, FS(F_SMALL), col::faint, hint, size.y - FS(F_SMALL) - S(10));
 }
