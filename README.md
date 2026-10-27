@@ -1,7 +1,11 @@
 # Gears of War Native - PC ports of Gears of War 2, Gears of War 3 and Gears of War: Judgment
 
-Fan-made **native Windows versions** of three Xbox 360 games, built by static recompilation, with a launcher called
-**COGBox** that sets up your own copy of each game and starts it.
+**Fully Playable** with a FEW hiccups.  If you come across any PLEASE upload a log and I'll try to get to it!
+
+Hello all, I'm Shagg and I'm building a launcher for **native Windows versions** of three(eventually four) Xbox 360 games, built by static recompilation,
+with a launcher called **COGBox** that sets up your own copy of each game and starts it.  These games were one of my favorite franchises so this
+project is near and dear to my heart.  Gears of War 1 is currently not a priority because there's about 5 versions (it feels like) that are available
+natively to PC.
 
 **[Download the latest release](https://github.com/Shagg88/COGBox/releases/latest)** · You need your own copy of
 each game. No game files are included or ever will be.
@@ -15,7 +19,7 @@ each game. No game files are included or ever will be.
 
 The games' original Xbox 360 code is translated ahead of time into C++ and compiled into ordinary Windows programs -
 no emulator interprets the game while you play. The parts the console's hardware did are supplied by our code,
-most importantly **our own renderer**, which draws every frame on Direct3D 12 (Vulkan is in progress). That gives
+most importantly **our own renderer**, which draws every frame on Direct3D 12 (or Vulkan, experimental). That gives
 the ports what an emulator can't easily offer:
 
 - **Any resolution** - 1x to 4x the original (up to 5K) or matched to your monitor, with real extra detail, not a
@@ -23,13 +27,17 @@ the ports what an emulator can't easily offer:
 - **Anti-aliasing and upscaling** - SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS, including upscaling modes for weaker GPUs.
 - **High frame rates** - the 30 fps limit lifted, vsync with a cap matched to your monitor, AMD FSR frame
   generation (highly experimental for now).
-- **Smooth play** - shaders are built on your PC and kept, pipelines are made in the background, and a texture that
-  isn't ready yet shows a moment later instead of freezing the game.
+- **Smooth play** - the games' shaders are translated straight to Direct3D 12 shader code in under a millisecond each
+  (as Xenia Canary does), kept on your PC, and pipelines are made in the background - a new area shows a moment
+  later instead of freezing the game.
+- **Vulkan (experimental)** - a choice on each game's Graphics tab, for testing; close to Direct3D 12 already.
 - **Lower input lag** - one frame in flight, NVIDIA Reflex / AMD Anti-Lag 2 where your GPU has them.
 - **HDR10**, **ultrawide 21:9**, **16x anisotropic filtering**, field of view, and the games' own motion blur, depth of
   field and lens flares as switches.
-- **Split-screen** (Gears 2), **keyboard and mouse**, **title updates**, **chapter select**.
-- **In-game menu** - Back + Start (or F1) during play: change settings, restart to apply them, or quit.
+- **Split-screen** (Gears 2), **keyboard and mouse**, **Xbox and PlayStation controllers**, **title updates**,
+  **chapter select**.
+- **In-game menu** - Back + Start (Share + Options on PlayStation, or F1) during play: change settings, restart to
+  apply them, or quit.
 
 ## The games
 
@@ -51,12 +59,14 @@ Other hardware hasn't been tried yet - please report what you find.
 - A settings page per game with every option explained (rest the mouse on an option for its description).
 - Play time, plain-English messages when a game closes unexpectedly, one-click problem reports, save backups.
 - Updates itself from this page's releases: an **UPDATE TO ...** button appears when a new version is out.
+- Works fully with a controller - Xbox or PlayStation (its button names switch to Cross / Circle / Square / Triangle).
+- Grows with its window, and has a **borderless** option (its own minimise / maximise / close).
 
 ---
 
 ## What you need
 
-- **Windows 10 or 11, 64-bit.**
+- **Windows 10 or 11, 64-bit** - or **Linux / Steam Deck through Proton** (experimental, see below).
 - **A CPU with AVX2** (Intel Haswell / AMD Ryzen or newer - roughly 2013 on).
 - **A DirectX 12 graphics card.**
 - **Your own copy of the game**, as a disc image (.iso) of the disc, a Games on Demand copy from your console, or a
@@ -79,8 +89,19 @@ Other hardware hasn't been tried yet - please report what you find.
 Settings and A presses it; X opens settings, Y gets box art. On a settings page LB / RB change tab, D-pad down past the
 last option reaches Library / Save / Play, and B jumps to Library.
 
-**In the game:** Back + Start (or F1) opens the in-game menu - the same settings, **Resume**, **Restart to apply** and
+**PlayStation controllers** work too - COGBox shows Cross / Circle / Square / Triangle and L1 / R1 instead.
+
+**In the game:** Back + Start (Share + Options on PlayStation, or F1) opens the in-game menu - the same settings, **Resume**, **Restart to apply** and
 **Quit game**. Most settings take effect when the game restarts; Restart to apply does that for you.
+
+**Graphics API:** Direct3D 12 is the default and the tested renderer. **Vulkan (experimental)** is on each game's
+Graphics tab - FSR / DLSS / XeSS and frame generation are Direct3D 12 only. Problem reports from Vulkan help a lot.
+
+**Linux and Steam Deck (experimental):** unzip COGBox in your home folder, add `CogBox.exe` to Steam as a non-Steam
+game, and in its Properties > Compatibility force **Proton Experimental** (or a recent Proton / GE-Proton). On a small
+screen like the Deck's, COGBox starts maximised and borderless. Under Proton it skips exclusive fullscreen, Reflex and
+Anti-Lag. Both Direct3D 12 (through vkd3d-proton) and Vulkan can be tried. Untested on real hardware yet - reports
+very welcome.
 
 **Updating:** use the update button on any game's About tab, or unzip a new release over the old folder. Your games,
 saves and settings are not in the zip, so they are kept.
@@ -116,12 +137,16 @@ saves and settings are not in the zip, so they are kept.
 ## What's coming
 
 Plans, not promises:
-
-- **Vulkan as a choice and later the default** - for AMD / Intel cards, and a step towards Linux and Steam Deck.
+- **Gamer Tag Login**
+- **Mod and Texture Pack Loader**
+- **Mac, Linux, Steamdeck** - Linux and Steam Deck through Proton are in as experimental now; tested support next.
+- **Online Co-Op** - Hopefully.
+- **Vulkan as the default** - it's already a choice (experimental); next: matching Direct3D 12 everywhere, then default.
+- **Better frame generation** - an OptiScaler-style frame generation to replace today's experimental AMD FSR one.
 - **Background art read from your own copy of each game** inside COGBox.
-- **Multi-core rendering** (the next step of the speed work) and fewer first-visit hitches.
+- **Multi-core rendering** (the next step of the speed work) and shaders built at the main menu, for no first-visit hitches.
 - **DLSS Frame Generation and DLSS 4/5 features** through NVIDIA Streamline on the cards that support them.
-- **Controller remapping and an accessibility section** in COGBox.
+- **More controllers (Switch and others), button remapping and an accessibility section** in COGBox.
 - **Achievements**, kept locally.
 - More of the Gears series.
 
