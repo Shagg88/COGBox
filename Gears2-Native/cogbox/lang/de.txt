@@ -285,6 +285,7 @@ Keyboard and mouse (Gears layout, experimental) = Tastatur und Maus (Gears-Layou
 WASD move, mouse look, left click fire, right click aim, Space cover/roll, F melee, E use, Q look at, R reload, Tab Tac/Com, 1-4 weapons, middle click / Z zoom, C left-stick click, Esc / Enter pause, Backspace back. A controller still works. = WASD bewegen, Maus umsehen, Linksklick feuern, Rechtsklick zielen, Leertaste Deckung/Rolle, F Nahkampf, E benutzen, Q ansehen, R nachladen, Tab Tac/Com, 1-4 Waffen, Mittelklick / Z Zoom, C linker Stick-Klick, Esc / Enter Pause, Rücktaste zurück. Ein Controller funktioniert weiterhin.
 Sens = Empf.
 Mouse sensitivity = Mausempfindlichkeit
+How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = Wie schnell die Maus die Kamera dreht. 0,5 ist ein guter Startwert; für eine Maus mit hoher DPI niedriger, für eine mit niedriger DPI höher.
 Extra stick dead zone = Zusätzliche Stick-Totzone
 Game's own = Eigene des Spiels
 Vibration = Vibration

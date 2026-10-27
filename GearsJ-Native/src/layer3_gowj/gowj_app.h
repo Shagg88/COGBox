@@ -8,6 +8,7 @@
 #include <rex/audio/flags.h>
 #include <rex/cvar.h>
 #include <rex/rex_app.h>
+#include "mouse_look.h"
 #include <rex/ui/window.h>
 
 #include <ue3/config_bundle.h>
@@ -48,6 +49,7 @@ class GowjApp : public rex::ReXApp {
     XenosLatencyInstall();  // Gears 2 patch 0135: Reflex / Anti-Lag 2 (only with --gow2_reflex and when the build has it)
   }
   void OnPostSetup() override {
+    CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
     GowjAddBuiltInIniEdits();  // before the bundle is edited
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config

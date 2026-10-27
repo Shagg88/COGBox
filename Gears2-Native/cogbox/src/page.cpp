@@ -304,12 +304,15 @@ static void option_row(App &a, int g, const gs::Option &o)
         break;
     }
     case gs::Kind::Float: {
-        float fv = (float)v;
-        char fmt[16];
-        snprintf(fmt, sizeof fmt, "%%.%df", std::max(0, o.decimals));
-        if (ImGui::SliderFloat("##v", &fv, (float)o.min, (float)o.max, fmt)) {
-            double st = o.step > 0 ? o.step : 0.1;
-            nv = o.min + std::round((fv - o.min) / st) * st; changed = true;
+        // 0.2.1 (Shagg 16:41): moves in the option's own steps (0.05 for the mouse), with the mouse, keys and pad -
+        // an integer slider over the steps, showing the value
+        const double st = o.step > 0 ? o.step : 0.1;
+        const int steps = std::max(1, (int)std::lround((o.max - o.min) / st));
+        int k = std::max(0, std::min(steps, (int)std::lround((v - o.min) / st)));
+        char fmt[24];
+        snprintf(fmt, sizeof fmt, "%.*f", std::max(0, o.decimals), o.min + k * st);
+        if (ImGui::SliderInt("##v", &k, 0, steps, fmt)) {
+            nv = o.min + std::max(0, std::min(steps, k)) * st; changed = true;
         }
         break;
     }

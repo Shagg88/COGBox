@@ -198,15 +198,17 @@ std::vector<Option> make_options(Game g) {
                "100 = the original. Widens (or narrows) every camera view by this much.", 374), "", "", true);
 
     // ---- Controls ------------------------------------------------------------------------------------------------
-    add(make("Mnk", "Keyboard and mouse (Gears layout, experimental)", Tab::Controls, Kind::Bool, SH, 0,
+    add(make("Mnk", "Keyboard and mouse (Gears layout)", Tab::Controls, Kind::Bool, SH, 0,
              "WASD move, mouse look, left click fire, right click aim, Space cover/roll, F melee, E use, Q look at, R reload, "
              "Tab Tac/Com, 1-4 weapons, middle click / Z zoom, C left-stick click, Esc / Enter pause, Backspace back. A "
              "controller still works.", 378));
     // 0.2.0 (GitHub #2): up to 20 (was 5) - the mouse drives the right stick, so slow moves sat inside the game's stick
     // dead zone at 5. True mouse look (no stick limits) is planned.
-    add(number("Sens", "Mouse sensitivity", Tab::Controls, Kind::Float, SH, 0.1, 20, 0.1, 1.0,
-               "How fast the mouse turns the camera (up to 20). The mouse is passed to the game as its right stick, so the "
-               "fastest turn is the stick's fastest turn; true mouse look is planned.", 381, 2));
+    // 0.2.1: native mouse look - the value is the multiplier on the mouse counts (Shagg 15:59: 1.0 far too fast, 0.5
+    // better at 1600 DPI); the old right-stick way gets twice it (its old default 1.0 at 0.5)
+    add(number("Sens", "Mouse sensitivity", Tab::Controls, Kind::Float, SH, 0.05, 2, 0.05, 0.5,
+               "How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a "
+               "low-DPI one.", 381, 2));
     add(choice("DeadZone", "Extra stick dead zone", Tab::Controls, SH, { "Game's own", "5%", "10%", "15%", "20%", "25%" }, 0,
                "Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added.", 382));
     add(make("Vibration", "Controller vibration", Tab::Controls, Kind::Bool, SH, 1, "The controller's rumble.", 383));   // no PS1 tooltip
@@ -587,7 +589,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     auto on = [&](const char* id) { return avail(id) && s.b(id); };   // PS1 796: a greyed box is never sent
     const bool useUpdate = exe_for_update(g, ver, env);
     // 0.2.0 mouse look (below): needs SDK patch 38 in the exe and the config edits' text replace ("~=")
-    const bool mouseLook = s.b("Mnk") && cap_exe(env, "pad_look_scale") &&
+    // 0.2.1: native mouse look (the engine's own PC mouse axes, ue3_mouse_look in the exe) replaces 0.2.0's boosted
+    // right stick; the old way stays for exes without it
+    const bool nativeMouse = s.b("Mnk") && cap_exe(env, "ue3_mouse_look");
+    const bool mouseLook = !nativeMouse && s.b("Mnk") && cap_exe(env, "pad_look_scale") &&
                            !(g == Game::Gears2 && !useUpdate && !env.g2_disc_ini_edits);
 
     // PS1 800-823: data roots, log, crash folder, renderer, shader cache, title update
@@ -798,7 +803,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // 0.2.0 mouse look: with the look binding boosted (above), the mouse is scaled down by the same factor and a
         // controller gets the game's own dead zone back (SDK patch 38)
         const double boost = mouseLook ? 4.0 : 1.0;
-        a.insert(a.end(), { "--mnk_mode=true", "--mnk_mouse=true", "--mnk_sensitivity=" + fmt_double(s.f("Sens") / boost) });
+        a.insert(a.end(), { "--mnk_mode=true", "--mnk_mouse=true", "--mnk_sensitivity=" + fmt_double(s.f("Sens") * 2.0 / boost) });
+        if (nativeMouse) a.insert(a.end(), { "--ue3_mouse_look=true", "--ue3_mouse_scale=" + fmt_double(s.f("Sens")) });
         if (mouseLook) {
             a.push_back("--pad_look_scale=0.25");
             a.push_back(std::string("--pad_look_deadzone=") + (g == Game::Gears2 ? "0.3" : isG3 ? "0" : "0.2"));

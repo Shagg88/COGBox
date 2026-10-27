@@ -123,6 +123,7 @@ set(GOW2_SOURCES
     src/layer3_gow2/main.cpp
     src/layer3_gow2/untiled.cpp
     src/layer3_gow2/game_patches.cpp
+    src/layer3_gow2/mouse_look.cpp
 )
 if(WIN32)
     add_executable(gow2 WIN32 ${GOW2_SOURCES})

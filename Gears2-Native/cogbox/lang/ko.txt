@@ -285,6 +285,7 @@ Keyboard and mouse (Gears layout, experimental) = 키보드와 마우스 (Gears 
 WASD move, mouse look, left click fire, right click aim, Space cover/roll, F melee, E use, Q look at, R reload, Tab Tac/Com, 1-4 weapons, middle click / Z zoom, C left-stick click, Esc / Enter pause, Backspace back. A controller still works. = WASD 이동, 마우스로 시점, 왼쪽 클릭 사격, 오른쪽 클릭 조준, Space 엄폐/구르기, F 근접, E 사용, Q 바라보기, R 재장전, Tab 택/컴, 1-4 무기, 가운데 클릭 / Z 확대, C 왼쪽 스틱 클릭, Esc / Enter 일시 정지, Backspace 뒤로. 컨트롤러도 계속 사용할 수 있어요.
 Sens = Sens
 Mouse sensitivity = 마우스 감도
+How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = 마우스로 카메라를 돌리는 속도입니다. 0.5로 시작해 보세요. DPI가 높은 마우스는 낮추고, DPI가 낮은 마우스는 높이세요.
 Extra stick dead zone = 추가 스틱 데드존
 Game's own = 게임 자체
 Vibration = 진동

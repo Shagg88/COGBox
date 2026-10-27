@@ -5,6 +5,7 @@
 #pragma once
 
 #include <rex/rex_app.h>
+#include "mouse_look.h"
 #include <rex/audio/flags.h>
 #include <rex/cvar.h>
 
@@ -44,6 +45,7 @@ class Gow2App : public rex::ReXApp {
   }
   // The runtime (and its input system) exists; the game hasn't started.
   void OnPostSetup() override {
+    CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (notes/64): before the game reads its config
     XenosInstallDrawStatsIfRequested();

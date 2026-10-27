@@ -285,6 +285,7 @@ Keyboard and mouse (Gears layout, experimental) = Клавиатура и мыш
 WASD move, mouse look, left click fire, right click aim, Space cover/roll, F melee, E use, Q look at, R reload, Tab Tac/Com, 1-4 weapons, middle click / Z zoom, C left-stick click, Esc / Enter pause, Backspace back. A controller still works. = WASD движение, мышь обзор, левый клик огонь, правый клик прицел, Space укрытие/кувырок, F ближний бой, E использовать, Q осмотреть, R перезарядка, Tab тактика, 1-4 оружие, средний клик / Z зум, C нажатие левого стика, Esc / Enter пауза, Backspace назад. Контроллер тоже работает.
 Sens = Чувств.
 Mouse sensitivity = Чувствительность мыши
+How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a low-DPI one. = Насколько быстро мышь поворачивает камеру. Для начала подойдёт 0,5; уменьшите для мыши с высоким DPI, увеличьте для мыши с низким DPI.
 Extra stick dead zone = Дополнительная мёртвая зона стика
 Game's own = Встроенная в игру
 Vibration = Вибрация

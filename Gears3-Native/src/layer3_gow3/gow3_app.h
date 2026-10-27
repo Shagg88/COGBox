@@ -7,6 +7,7 @@
 #include <rex/audio/flags.h>
 #include <rex/cvar.h>
 #include <rex/rex_app.h>
+#include "mouse_look.h"
 #include <rex/ui/window.h>
 
 #include <ue3/config_bundle.h>
@@ -42,6 +43,7 @@ class Gow3App : public rex::ReXApp {
     XenosLatencyInstall();  // NVIDIA Reflex / AMD Anti-Lag 2 when --gow2_reflex / --gow2_antilag2 (Gears 2 patches 0135/0136)
   }
   void OnPostSetup() override {
+    CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
     Gow3AddBuiltInIniEdits();  // before the bundle is edited
     Gow3InstallExtras();       // its package patches too
