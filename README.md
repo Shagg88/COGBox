@@ -150,6 +150,32 @@ Plans, not promises:
 - **Achievements**, kept locally.
 - More of the Gears series.
 
+## Thank you
+
+This project stands on the work of many open-source projects and their communities. Thank you to:
+
+- **[Xenia](https://xenia.jp)** - Ben Vanik and the Xenia contributors, and the **Xenia Canary** and **Xenia Edge** forks.
+  Their open code and years of research into the Xbox 360 made this possible; much of our renderer's exact behaviour,
+  its texture and resolve rules, and the fast shader translation follow their work.
+- **rexglue SDK** - the static-recompilation toolchain and runtime the ports are built
+  with (Xenia-derived).
+- **[SDL3](https://libsdl.org)** - windows, controllers (Xbox, PlayStation and more) and input, in the games and COGBox.
+- **[Dear ImGui](https://github.com/ocornut/imgui)** - the COGBox launcher and the in-game menu.
+- **[SMAA](https://github.com/iryoku/smaa)** - Jorge Jimenez and co-authors, the anti-aliasing.
+- **[xxHash](https://github.com/Cyan4973/xxHash)**, **[miniz](https://github.com/richgel999/miniz)** and
+  **[stb](https://github.com/nothings/stb)** - fast hashing, zip files and images.
+- **[DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler)** and the
+  **[Vulkan Headers](https://github.com/KhronosGroup/Vulkan-Headers)** - Microsoft and the Khronos Group.
+- **AMD FidelityFX (FSR)**, **NVIDIA DLSS** and **Intel XeSS** - the upscalers, under their vendors' own licences.
+- **[Xenia Manager](https://github.com/xenia-manager)** and its **[x360db](https://github.com/xenia-manager/x360db)**
+  archive - the box art and backgrounds COGBox downloads.
+- The **Gears community patches** - ultrawide by boma and TudorHorse, ported here as switches.
+- **[NVIDIA FLIP](https://github.com/NVlabs/flip)** - the picture comparisons in our test runs.
+- The **Anton** and **Barlow** fonts (SIL Open Font License).
+
+Every licence is in `THIRD_PARTY_NOTICES.md` and in the release's `licenses` folder. If we've missed anyone, please
+open an issue and we'll add them.
+
 ## How it's made
 
 - Static recompilation with the rexglue SDK toolchain (a Xenia-derived runtime), clang 23.
