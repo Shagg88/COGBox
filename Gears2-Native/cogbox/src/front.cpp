@@ -459,8 +459,8 @@ void front_draw(App &a, ImVec2 size)
     // the hint line
     std::string padHint = std::string("D-pad: choose a game      ") + pad_name(a, "LB") + " / " + pad_name(a, "RB") + ": Play or Settings      " +
                           pad_name(a, "A") + ": press      " + pad_name(a, "X") + ": settings      " + pad_name(a, "Y") + ": box art      " +
-                          pad_name(a, "LT") + " + " + pad_name(a, "RT") + ": fullscreen";   // job 523 / 525
+                          pad_name(a, "LT") + " + " + pad_name(a, "RT") + ": fullscreen      " + pad_name(a, "Start") + ": quit";   // job 523 / 525 / 526
     const char *hint = a.padConnected ? padHint.c_str()
-                                      : "Arrows / wheel: turn      Enter: play      F11: fullscreen      drop a disc image or folder on the window to add it";
+                                      : "Arrows / wheel: turn      Enter: play      F11: fullscreen      Esc: quit      drop a disc image or folder on the window to add it";
     centred(F_SMALL, FS(F_SMALL), col::faint, hint, size.y - FS(F_SMALL) - S(10));
 }

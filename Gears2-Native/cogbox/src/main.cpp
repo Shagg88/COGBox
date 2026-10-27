@@ -93,6 +93,7 @@ static void answered(App &a)
     int g = m.game;
     const GameDef &d = game_def(g < 0 ? 0 : g);
     if (m.tag == "crash") play_answer(a, m);
+    else if (m.tag == "quit" && m.answer == 0) a.quit = true;   // job 526
     else if (m.tag == "replace" && m.answer == 0) install_confirmed(a);
     else if (m.tag == "backup" && m.answer == 0) {
         std::string zip = join(desktop_dir(), std::string("CogBox-saves-") + d.dir + "-" + now_stamp() + ".zip"), err;
@@ -507,7 +508,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 (ImGui::IsKeyPressed(ImGuiKey_F11, false) || (triggers && !triggersWere))) set_fullscreen(a, !a.fullscreen);
             triggersWere = triggers;
         }
+        const bool quitAskable = !a.run.proc && SDL_GetKeyboardFocus() && a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
+                                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.job.state.load() != 1;
         draw_ui(a, io.DisplaySize);
+        // job 526: Start (Options) or Esc on the library screen asks to close COGBox (asked after this frame's drawing, so
+        // the same Esc doesn't also answer it)
+        if (quitAskable && !a.modal.open && (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
+            ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
         ImGui::Render();
         SDL_SetRenderDrawColor(ren, 8, 8, 10, 255);
         SDL_RenderClear(ren);

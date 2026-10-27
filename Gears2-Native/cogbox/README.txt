@@ -45,6 +45,7 @@ Controller: the D-pad turns the carousel, LB / RB choose Play or Settings, A pre
 X opens the settings, Y gets box art. On a settings page LB / RB change tab, D-pad down past
 the last option reaches Library / Save / Play, and B jumps to Library.
 Keyboard: the arrow keys turn it, Enter plays, Esc goes back.
+To close COGBox with a controller: Start on the library screen (Esc on the keyboard) asks to quit.
 PlayStation controllers work too; COGBox then shows Cross / Circle / Square / Triangle, L1 / R1
 instead of A / B / X / Y, LB / RB.
 

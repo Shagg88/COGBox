@@ -187,6 +187,7 @@ void play_start(App &a, int g)
     a.run.logDir = logDir;
     a.ini.seti("LastPlayed", d.key, a.run.started);
     a.ini.save();
+    a.playWasMax = (SDL_GetWindowFlags(a.win) & SDL_WINDOW_MAXIMIZED) != 0;   // job 526
     SDL_MinimizeWindow(a.win);
 }
 
@@ -204,7 +205,10 @@ void play_poll(App &a)
     if (secs >= 20) a.ini.seti("PlayTime", d.key, a.ini.geti64("PlayTime", d.key, 0) + secs);
     a.ini.save();
     refresh_games(a, false);
+    // job 526 (Shagg 20:46): back to the window as it was - fullscreen, maximised (borderless) or its normal size
     SDL_RestoreWindow(a.win);
+    if (a.fullscreen) SDL_SetWindowFullscreen(a.win, true);
+    else if (a.playWasMax) SDL_MaximizeWindow(a.win);
     SDL_RaiseWindow(a.win);
 
     std::vector<std::string> crash = crash_files(a.run.logDir);
