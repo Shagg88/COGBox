@@ -60,6 +60,7 @@ void env_refresh(App &a, int g)
     e.update_data_root = safe(st.updateDir);
     e.user_data_root = game_user_dir(g);
     e.shader_cache_dir = game_shader_dir(g);
+    e.mods = mods_enabled_paths(a, g);   // 0.2.0
     e.update_ready = !st.updateDir.empty() && (game_def(g).updateNeeded ? !st.portExeTu.empty() : true);
     e.g2_disc_ini_edits = g == G_GEARS2 && !st.portExeDisc.empty() && file_has(st.portExeDisc, "~=");
     e.gpus = a.gpus;
@@ -462,6 +463,49 @@ static void about_tab(App &a, int g)
         if (!p.empty()) install_start(a, p, g);
     }
     if (busy || running) ImGui::EndDisabled();
+
+    // 0.2.0: mods - <Game>\mods\<mod>\, laid out like the game's data folder; a later one wins
+    ImGui::Dummy(ImVec2(0, S(8)));
+    th_heading("MODS", g_rowX1);
+    {
+        static std::vector<ModItem> ml[G_COUNT];
+        static Uint64 mlAt[G_COUNT] = {};
+        if (!mlAt[g] || SDL_GetTicks() - mlAt[g] > 2000) { ml[g] = mods_list(a, g); mlAt[g] = SDL_GetTicks(); }
+        if (ml[g].empty()) lamp_line(0, "No mods. Add a mod's .zip, or put its folder in this game's mods folder - laid out like the game's own files (GearGame\\...).");
+        bool changed = false;
+        for (size_t i = 0; i < ml[g].size(); i++) {
+            const ModItem &m = ml[g][i];
+            ImGui::PushID((int)i + 8000);
+            if (running) ImGui::BeginDisabled();
+            bool on = m.enabled;
+            if (ImGui::Checkbox("##on", &on)) { mods_set_enabled(a, g, (int)i, on); changed = true; }
+            ImGui::SameLine();
+            std::string line = m.name + (m.version.empty() ? "" : "  " + m.version) + (m.author.empty() ? "" : "  -  " + m.author);
+            ImGui::TextUnformatted(line.c_str());
+            if (!m.description.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.description.c_str());
+            ImGui::SameLine();
+            if (i > 0 && small_button("Up")) { mods_move(a, g, (int)i, -1); changed = true; }
+            if (i > 0) ImGui::SameLine();
+            if (i + 1 < ml[g].size() && small_button("Down")) { mods_move(a, g, (int)i, 1); changed = true; }
+            if (running) ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+        if (!ml[g].empty()) row_desc("Ticked mods are used, top to bottom - where two change the same file, the lower one wins. Changes apply the next time the game starts.");
+        if (running) ImGui::BeginDisabled();
+        if (small_button("Add a mod (.zip)...")) {
+            std::string p = pick_file(L"Choose a mod's .zip", L"Zip files\0*.zip\0All files\0*.*\0");
+            std::string err;
+            if (!p.empty()) {
+                if (mods_add_zip(a, g, p, err)) set_message(a, "The mod is added and ticked.", false);
+                else set_message(a, err, true);
+                changed = true;
+            }
+        }
+        if (running) ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (small_button("Mods folder")) { make_dirs(mods_dir(g)); shell_open(mods_dir(g)); }
+        if (changed) { mlAt[g] = 0; env_refresh(a, g); }
+    }
 
     ImGui::Dummy(ImVec2(0, S(8)));
     th_heading("FOLDERS", g_rowX1);

@@ -132,6 +132,14 @@ struct DlcItem { std::string name, title, dir, header; };
 const std::vector<DlcItem> &dlc_list(int game);          // cached; refreshed after an add or remove
 void dlc_remove_ask(App &a, int game, const DlcItem &item);
 void dlc_remove_confirmed(App &a);   // the "dlcremove" question answered yes
+// 0.2.0: mods (mods.cpp) - <Game>\mods\<mod>\, laid out like the game's data folder
+struct ModItem { std::string folder, path, name, version, author, description; bool enabled = false; };
+std::string mods_dir(int game);
+std::vector<ModItem> mods_list(App &a, int game);         // in load order
+void mods_set_enabled(App &a, int game, int index, bool on);
+void mods_move(App &a, int game, int index, int dir);      // -1 up (earlier), +1 down (later, wins)
+std::vector<std::string> mods_enabled_paths(App &a, int game);
+bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err);
 void install_poll(App &a);
 void install_draw(App &a, ImVec2 size);
 // play.cpp

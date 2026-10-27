@@ -763,6 +763,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back(std::string("--") + k.cvar + "=" + v);
         }
     }
+    // 0.2.0: mods - the enabled ones in load order (layer 2's --ue3_mods folder overlay)
+    if (!env.mods.empty()) {
+        std::string j;
+        for (const std::string &m : env.mods) j += (j.empty() ? "" : ";") + m;
+        a.push_back("--ue3_mods=" + q(j));
+    }
     // PS1 940-958 (launcher patches 0155 / 0158): frame rate; with vsync a cap at or above the refresh rate becomes 3
     // under it (half the refresh minus 2 with frame generation)
     {
