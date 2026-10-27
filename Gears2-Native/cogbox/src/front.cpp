@@ -469,6 +469,24 @@ void front_draw(App &a, ImVec2 size)
                 "folder. We're working on getting the disc version to run too.", { "OK" });
         }
     }
+    // 0.2.0 (Shagg 12:33): Gears 2 / 3 added without their Title Update 6 - once per session per game, until "Don't
+    // show this again" (CogBox.ini [Notices] TuRecommendNever_<game>)
+    {
+        static bool told[G_COUNT] = {};
+        for (int g : { (int)G_GEARS2, (int)G_GEARS3 }) {
+            const GameState &st = a.st[g];
+            if (told[g] || a.front != g || a.carPos != (float)g || a.modal.open || a.zoomTo != SCR_FRONT) continue;
+            if (st.dataDir.empty() || !st.updateDir.empty()) continue;
+            if (a.ini.geti("Notices", std::string("TuRecommendNever_") + game_def(g).key, 0)) { told[g] = true; continue; }
+            told[g] = true;
+            ask(a, "turec", g, "Title Update 6 recommended",
+                std::string(game_def(g).name) + " runs without its title update, but Title Update 6 is highly recommended: "
+                "it's the build COGBox's ports are made and tested for, with the best performance and compatibility.\n\n"
+                "Add it with ADD UPDATE: the update package from your console's Content\\0000000000000000\\" +
+                (g == G_GEARS2 ? "4D53082D" : "4D5308AB") + "\\000B0000 folder.", { "OK" });
+            a.modal.check = "Don't show this again";
+        }
+    }
     // the hint line
     std::string padHint = std::string(tr("D-pad: choose a game")) + "      " + pad_name(a, "LB") + " / " + pad_name(a, "RB") + ": " + tr("Play or Settings") + "      " +
                           pad_name(a, "A") + ": " + tr("press") + "      " + pad_name(a, "X") + ": " + tr("settings") + "      " + pad_name(a, "Y") + ": " + tr("box art") + "      " +

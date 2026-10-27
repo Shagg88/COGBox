@@ -115,6 +115,9 @@ static void answered(App &a)
         a.ini.set("Notices", "TitleUpdatesSeen", COGBOX_VERSION);
         a.ini.save();
     }
+    else if (m.tag == "turec") {   // 0.2.0: Gears 2 / 3 without Title Update 6
+        if (m.checked && g >= 0) { a.ini.seti("Notices", std::string("TuRecommendNever_") + game_def(g).key, 1); a.ini.save(); }
+    }
     else if (m.tag == "replace" && m.answer == 0) install_confirmed(a);
     else if (m.tag == "dlcremove" && m.answer == 0) dlc_remove_confirmed(a);   // 0.2.0
     else if (m.tag == "backup" && m.answer == 0) {
