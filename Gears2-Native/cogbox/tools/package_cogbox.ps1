@@ -78,7 +78,15 @@ foreach ($sdk in $sdks) {
   $found = @(Get-ChildItem -LiteralPath $dir -File -Recurse -Depth 2 -ErrorAction SilentlyContinue |
              Where-Object { $_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE)' -or $_.Name -match '^license\.(md|txt)$' -or $_.Name -match 'license.*\.(md|txt|rtf|pdf)$' })
   if (-not $found.Count) { Write-Host "note: no licence file found in $sdk - add it by hand" }
-  foreach ($f in $found) { Copy-Item $f.FullName (Join-Path $lic "$sdk-$($f.Name)") -Force }
+  # job 530: each SDK in its own folder, keeping the path inside it - many files are just "LICENSE", and a flat folder let
+  # them overwrite each other (and hid which bundled library a licence belongs to)
+  foreach ($f in $found) {
+    $rel = $f.FullName.Substring($dir.Length).TrimStart('\')
+    $dst = Join-Path (Join-Path $lic $sdk) $rel
+    New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
+    Copy-Item $f.FullName $dst -Force
+    if ((Get-Content -LiteralPath $f.FullName -TotalCount 5 -ErrorAction SilentlyContinue) -match 'GNU (LESSER |LIBRARY )?GENERAL PUBLIC LICENSE') { Write-Host "  licence note: GPL-family text: $sdk\$rel" }
+  }
 }
 # The upscaler and shader-compiler DLLs that are byte-identical in every build go in once, in shared\ (Shagg 20:27,
 # option 1); COGBox puts that folder on each game's PATH and passes --gow2_dxc_dir. Checked in job 487 (all three games
