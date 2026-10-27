@@ -323,7 +323,9 @@ void install_start(App &a, const std::string &path, int forGame)
     uint64_t need = 0;
     if (!p.update) {
         std::vector<x360fs::Entry> list;
-        bool listed = p.kind == x360fs::SourceKind::DiscImage ? x360fs::list_disc(p.resolved, list, err) : x360fs::list_god(p.resolved, list, err);
+        // 0.2.0: downloadable content is a package (STFS), not a Games on Demand copy - each kind is measured by its own reader
+        bool listed = p.kind == x360fs::SourceKind::DiscImage ? x360fs::list_disc(p.resolved, list, err) :
+                      p.kind == x360fs::SourceKind::StfsPackage ? x360fs::list_stfs(p.resolved, list, err) : x360fs::list_god(p.resolved, list, err);
         if (!listed) { set_message(a, err, true); return; }
         for (auto &e : list) need += e.size;
         uint64_t have = free_space(game_root(p.game));
