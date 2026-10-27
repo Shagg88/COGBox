@@ -357,7 +357,9 @@ void install_poll(App &a)
     if (j.th.joinable()) j.th.join();
     std::lock_guard<std::mutex> l(j.m);
     if (s == 2) {
-        if (g_plan.update) game_set_update(a.ini, g_plan.game, g_plan.finalDir);
+        // 0.2.0: downloadable content is not the game's copy or update - its folder is never remembered as either
+        if (g_plan.dlc) {}
+        else if (g_plan.update) game_set_update(a.ini, g_plan.game, g_plan.finalDir);
         else game_set_data(a.ini, g_plan.game, g_plan.finalDir, g_plan.inPlace);
         a.ini.save();
         refresh_games(a, true);
@@ -368,7 +370,7 @@ void install_poll(App &a)
         set_message(a, j.result, !good);
         // a game without its title update: say where it comes from
         const GameDef &d = game_def(g_plan.game);
-        if (!g_plan.update && a.st[g_plan.game].updateDir.empty() && d.updateNeeded)
+        if (!g_plan.update && !g_plan.dlc && a.st[g_plan.game].updateDir.empty() && d.updateNeeded)
             ask(a, "info", g_plan.game, std::string(d.name) + " is added",
                 j.result + "\n\nNext, add " + d.updateName + " (the last update, which the main port build is made for). It's on a console that "
                 "has played the game online, in Content\\0000000000000000\\" + [&] { char b[12]; snprintf(b, sizeof b, "%08X", d.titleId); return std::string(b); }() +

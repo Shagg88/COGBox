@@ -93,7 +93,9 @@ void game_refresh(int g, Ini &ini, GameState &st, bool hash)
     std::string data = ini.get(d.key, "GameFolder");
     st.dataOwn = ini.geti(d.key, "OwnFolder", 0) != 0;
     bool remembered = !data.empty();
-    if (data.empty() && file_exists(join(game_default_data_dir(g), "default.xex"))) data = game_default_data_dir(g);
+    // 0.2.0: also when the remembered folder holds no game (0.2.0's first DLC fix saved the DLC's folder there) but
+    // COGBox's own unpacked copy is in place
+    if ((data.empty() || !file_exists(join(data, "default.xex"))) && file_exists(join(game_default_data_dir(g), "default.xex"))) data = game_default_data_dir(g);
     st.dataDir = file_exists(join(data, "default.xex")) ? data : "";
     std::string upd = ini.get(d.key, "UpdateFolder");
     if (upd.empty()) upd = game_default_update_dir(g);
