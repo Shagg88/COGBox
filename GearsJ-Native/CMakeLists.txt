@@ -87,6 +87,18 @@ else()
 endif()
 target_include_directories(gowj PRIVATE src/layer3_gowj)
 target_link_libraries(gowj PRIVATE gn_layer2_ue3)
+# 0.2.0 (GitHub #9): DirectX 12 Agility SDK - D3D12Core.dll in <exe>\D3D12\, chosen by agility.cpp's exports, so
+# Shader Model 6.6 works on Windows 10's older Direct3D 12 runtime too.
+set(GN_AGILITY_DIR ${GN_LAYER0_HOME}/third_party/agility-sdk)
+if(WIN32 AND EXISTS ${GN_AGILITY_DIR}/build/native/bin/x64/D3D12Core.dll)
+    target_sources(gowj PRIVATE ${GN_LAYER0_DIR}/agility/agility.cpp)
+    add_custom_command(TARGET gowj POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:gowj>/D3D12
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${GN_AGILITY_DIR}/build/native/bin/x64/D3D12Core.dll $<TARGET_FILE_DIR:gowj>/D3D12
+        COMMENT "Copying the Agility SDK's D3D12Core.dll to D3D12\\ next to gowj.exe")
+else()
+    message(WARNING "gowj: no Agility SDK in third_party/agility-sdk - Windows 10 can't run the D3D12 renderer")
+endif()
 # GPU_PLUGINS xenos: the SDK's Xenos GPU emulation, the reference our renderer is compared with (developer builds).
 rexglue_setup_target(gowj GPU_PLUGINS xenos)
 add_custom_command(TARGET gowj POST_BUILD

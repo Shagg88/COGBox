@@ -24,6 +24,7 @@ static const char *exit_meaning(DWORD code)
     case 0x887A0006: return "the graphics card stopped responding (0x887A0006)";
     case 0x887A0007: return "the graphics driver was reset (0x887A0007)";
     case 1: return "it ended with an error, or was ended from outside (Task Manager)";
+    case 0xE0C0B009: return "its renderer couldn't start (the game said why) - try the other Graphics API (Vulkan / DirectX 12) on the Graphics tab, and update Windows and the graphics driver";   // 0.2.0 (#9)
     }
     return nullptr;
 }
@@ -235,6 +236,16 @@ void play_poll(App &a)
     bool restart = apply_menu_changes(a, g, a.run.logDir);
     if (known && code == 0 && crash.empty()) {
         if (restart) { append_line(join(a.run.logDir, "args.txt"), "launcher: restarting the game (in-game menu)"); play_start(a, g); }
+        return;
+    }
+    // 0.2.0 (GitHub #6): the game closed because FSR crashed inside the graphics driver - FSR off for this game (SMAA)
+    if (known && code == 0xE0C0B00Au) {
+        a.cur[g].set("AAMode", 1);
+        a.dirty[g] = true;
+        settings_save(a);
+        ask(a, "info", g, "FSR turned off",
+            std::string(d.name) + " closed because AMD FSR crashed inside the graphics driver. COGBox has switched its "
+            "anti-aliasing to SMAA. A newer graphics driver may fix FSR - you can turn it back on in the Graphics tab.", { "OK" });
         return;
     }
     std::string what;

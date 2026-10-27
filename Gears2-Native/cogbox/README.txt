@@ -31,6 +31,8 @@ Getting started
 ---------------
 1. Unzip the whole folder somewhere you can write to, for example C:\Games\COGBox. Program Files
    won't work, because Windows protects it.
+   Keep the folders when unzipping (Windows' Extract All, 7-Zip, or "unzip" on Linux). Some tools,
+   such as KDE's Ark, flatten them - COGBox then can't find the games.
 2. Start CogBox.exe. The programs aren't code-signed, so the first time Windows may show "Windows
    protected your PC": choose "More info", then "Run anyway".
 3. Turn to a game and press ADD YOUR COPY. Choose your disc image, Games on Demand file, or

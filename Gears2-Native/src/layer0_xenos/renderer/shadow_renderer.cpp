@@ -32,6 +32,9 @@
 #include <xenos/colour_formats.h>
 #include <xenos/renderer/colour_hlsl.h>
 
+#ifdef _WIN32
+void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend.cpp (0.2.0, #9)
+#endif
 #include "builtin_shaders.h"
 #include "smaa/smaa_area_tex.h"
 #include "xenos/renderer/upscaler.h"
@@ -1156,6 +1159,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     if (!backend_->Init(options, error)) {
       REXLOG_ERROR("gow2_renderer: device init failed: {}; staying off", error);
       backend_.reset();
+#ifdef _WIN32
+      XenosRendererFatal(error, REXCVAR_GET(gow2_renderer_api) == "vulkan");   // 0.2.0 (#9): never a blind game
+#endif
       return false;
     }
     const std::filesystem::path dxc_dir(REXCVAR_GET(gow2_dxc_dir));

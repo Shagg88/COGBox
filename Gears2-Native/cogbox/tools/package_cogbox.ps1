@@ -28,7 +28,7 @@ $ports = @(
 # Licences: CogBox's own (fonts, Dear ImGui, SDL3, miniz, stb), each project's LICENSE and THIRD_PARTY_NOTICES.md, and
 # the licence files found at the top of each SDK whose code or DLLs ship.
 $projects = @('Gears2-Native', 'Gears3-Native', 'GearsJ-Native')
-$sdks = @('rexglue-sdk', 'dlss-sdk', 'fidelityfx-sdk', 'xess-sdk', 'dxc-1.9.2607', 'antilag2-sdk', 'nvapi', 'streamline-sdk')
+$sdks = @('rexglue-sdk', 'dlss-sdk', 'fidelityfx-sdk', 'xess-sdk', 'dxc-1.9.2607', 'antilag2-sdk', 'nvapi', 'streamline-sdk', 'agility-sdk')
 
 # ---- Checks first ---------------------------------------------------------------------------------------------------
 $problems = @()
@@ -40,6 +40,7 @@ if (-not $Version) {
 }
 foreach ($p in $ports) {
   if (-not (Test-Path (Join-Path $p.from $p.exe))) { $problems += "missing port: $($p.from)\$($p.exe)" }
+  if (-not (Test-Path (Join-Path $p.from 'D3D12\D3D12Core.dll'))) { $problems += "no D3D12\D3D12Core.dll beside $($p.from)\$($p.exe) (Agility SDK, 0.2.0)" }
   foreach ($f in $needDlls) { if (-not (Test-Path (Join-Path $p.from $f))) { $problems += "missing next to $($p.to): $($p.from)\$f" } }
   if (-not @(Get-ChildItem -LiteralPath $p.from -Filter 'rexruntime*.dll' -File -ErrorAction SilentlyContinue).Count) { $problems += "no rexruntime*.dll in $($p.from)" }
 }
@@ -103,6 +104,9 @@ foreach ($p in $ports) {
   $dst = Join-Path $stage $p.to; New-Item -ItemType Directory -Force $dst | Out-Null
   Copy-Item (Join-Path $p.from $p.exe) $dst
   Get-ChildItem -LiteralPath $p.from -Filter *.dll -File | Where-Object { $sharedNames -notcontains $_.Name } | ForEach-Object { Copy-Item $_.FullName $dst }
+  # 0.2.0 (#9): the Agility SDK's D3D12Core.dll in D3D12\ beside each game (the exe's D3D12SDKPath points there)
+  $ag = Join-Path $p.from 'D3D12\D3D12Core.dll'
+  New-Item -ItemType Directory -Force (Join-Path $dst 'D3D12') | Out-Null; Copy-Item $ag (Join-Path $dst 'D3D12')
 }
 
 # ---- Your Windows user name out of the programs (Shagg 20:19 "1. Yes"). The compiler writes source folders such as

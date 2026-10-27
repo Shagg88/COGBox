@@ -456,6 +456,18 @@ void front_draw(App &a, ImVec2 size)
                 ImGui::SetTooltip("COGBox %s is out (this is " COGBOX_VERSION "). Opens the About tab, where Update downloads and installs it.", newer.c_str());
         }
     }
+    // 0.2.0 (GitHub #1): once per session, when the carousel stops on Judgment and it has no Title Update 4
+    {
+        static bool toldTu4 = false;
+        if (!toldTu4 && a.front == G_JUDGMENT && a.carPos == (float)G_JUDGMENT && a.st[G_JUDGMENT].ready == R_NEED_UPDATE &&
+            !a.modal.open && a.zoomTo == SCR_FRONT) {
+            toldTu4 = true;
+            ask(a, "info", G_JUDGMENT, "Title Update 4 needed",
+                "Gears of War: Judgment needs Title Update 4 for now - the disc version crashes at startup in this release.\n\n"
+                "Add it with ADD UPDATE: the update package from your console's Content\\0000000000000000\\4D530A26\\000B0000 "
+                "folder. We're working on getting the disc version to run too.", { "OK" });
+        }
+    }
     // the hint line
     std::string padHint = std::string("D-pad: choose a game      ") + pad_name(a, "LB") + " / " + pad_name(a, "RB") + ": Play or Settings      " +
                           pad_name(a, "A") + ": press      " + pad_name(a, "X") + ": settings      " + pad_name(a, "Y") + ": box art      " +

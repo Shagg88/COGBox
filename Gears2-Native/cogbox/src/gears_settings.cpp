@@ -202,8 +202,11 @@ std::vector<Option> make_options(Game g) {
              "WASD move, mouse look, left click fire, right click aim, Space cover/roll, F melee, E use, Q look at, R reload, "
              "Tab Tac/Com, 1-4 weapons, middle click / Z zoom, C left-stick click, Esc / Enter pause, Backspace back. A "
              "controller still works.", 378));
-    add(number("Sens", "Mouse sensitivity", Tab::Controls, Kind::Float, SH, 0.1, 5, 0.1, 1.0,
-               "How fast the mouse turns the camera.", 381, 2));
+    // 0.2.0 (GitHub #2): up to 20 (was 5) - the mouse drives the right stick, so slow moves sat inside the game's stick
+    // dead zone at 5. True mouse look (no stick limits) is planned.
+    add(number("Sens", "Mouse sensitivity", Tab::Controls, Kind::Float, SH, 0.1, 20, 0.1, 1.0,
+               "How fast the mouse turns the camera (up to 20). The mouse is passed to the game as its right stick, so the "
+               "fastest turn is the stick's fastest turn; true mouse look is planned.", 381, 2));
     add(choice("DeadZone", "Extra stick dead zone", Tab::Controls, SH, { "Game's own", "5%", "10%", "15%", "20%", "25%" }, 0,
                "Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added.", 382));
     add(make("Vibration", "Controller vibration", Tab::Controls, Kind::Bool, SH, 1, "The controller's rumble.", 383));   // no PS1 tooltip

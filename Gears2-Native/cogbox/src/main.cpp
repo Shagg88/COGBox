@@ -449,6 +449,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         a.screen = a.zoomTo = SCR_PAGE;
     }
     covers_load(a);
+    // 0.2.0 (GitHub #3 / #7): some unzip tools (KDE's Ark) flatten the release's folders; the ports are then "missing"
+    {
+        bool noPort = false;
+        for (int g = 0; g < G_COUNT; g++) noPort |= a.st[g].ready == R_NO_PORT;
+        bool flat = false;
+        for (const char *n : { "gow2.exe", "gow3.exe", "gowj.exe" }) flat |= file_exists(join(exe_dir(), n));
+        if (noPort && flat)
+            ask(a, "info", -1, "Unzipped without its folders",
+                "The game programs are directly beside CogBox.exe instead of in their folders (Gears2\\port-tu6, Gears3\\port-tu6, "
+                "Judgment\\port ...). Some unzip tools flatten folders - KDE's Ark does.\n\nUnzip the release again keeping its "
+                "folders: Windows' Extract All, 7-Zip, or 'unzip' on Linux.", { "OK" });
+    }
     if (getenv("COGBOX_GETART")) art_download_start();   // test switch
     refresh_pads(a);
     update_tidy();

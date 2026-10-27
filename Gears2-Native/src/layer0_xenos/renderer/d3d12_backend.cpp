@@ -1202,12 +1202,33 @@ class D3D12Backend final : public Backend {
       hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device_));
       if (FAILED(hr)) { error = Hr("D3D12CreateDevice", hr); return false; }
     }
+    // 0.2.0 (#9): which Direct3D 12 runtime is loaded - the Agility SDK copy in <exe>\D3D12\ (D3D12SDKVersion export,
+    // agility.cpp) or Windows' own; Windows 10's own runtime doesn't know Shader Model 6.6 at all.
+    std::string runtime = "Windows' own";
+    if (HMODULE core = GetModuleHandleW(L"D3D12Core.dll")) {
+      wchar_t p[MAX_PATH] = L"";
+      GetModuleFileNameW(core, p, MAX_PATH);
+      if (wcsstr(p, L"\\D3D12\\D3D12Core.dll")) runtime = "Agility SDK (bundled)";
+    }
     D3D12_FEATURE_DATA_SHADER_MODEL sm{D3D_SHADER_MODEL_6_6};
-    if (FAILED(device_->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm))) ||
-        sm.HighestShaderModel < D3D_SHADER_MODEL_6_6) {
-      error = "device lacks Shader Model 6.6";
+    const HRESULT smhr = device_->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm));
+    if (FAILED(smhr) || sm.HighestShaderModel < D3D_SHADER_MODEL_6_6) {
+      // Microsoft's advice: an older runtime rejects a model it doesn't know - ask again with lower ones
+      unsigned highest = FAILED(smhr) ? 0u : unsigned(sm.HighestShaderModel);
+      for (D3D_SHADER_MODEL m : {D3D_SHADER_MODEL_6_5, D3D_SHADER_MODEL_6_4, D3D_SHADER_MODEL_6_3, D3D_SHADER_MODEL_6_2,
+                                 D3D_SHADER_MODEL_6_1, D3D_SHADER_MODEL_6_0, D3D_SHADER_MODEL_5_1}) {
+        if (highest) break;
+        D3D12_FEATURE_DATA_SHADER_MODEL t{m};
+        if (SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &t, sizeof(t)))) highest = unsigned(t.HighestShaderModel);
+      }
+      char b[256];
+      std::snprintf(b, sizeof b, "Shader Model 6.6 is not available (query 0x%08X, highest %u.%u, Direct3D 12 runtime: %s)",
+                    unsigned(smhr), highest >> 4, highest & 15u, runtime.c_str());
+      error = b;
       return false;
     }
+    REXLOG_INFO("gow2_renderer: Direct3D 12 runtime: {}; Shader Model {}.{}", runtime, unsigned(sm.HighestShaderModel) >> 4,
+                unsigned(sm.HighestShaderModel) & 15u);
     {
       D3D12_FEATURE_DATA_D3D12_OPTIONS o{};
       stencil_ref_export_ = SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &o, sizeof(o))) &&
@@ -4602,5 +4623,19 @@ bool EnableDeviceLossDiagnostics() {
 }
 
 }  // namespace xenos::renderer::gpu
+
+// Global scope: shadow_renderer.cpp calls it.
+// 0.2.0 (#9): the renderer couldn't start - say so and close, instead of a black window with sound and input.
+void XenosRendererFatal(const std::string& why, bool vulkan) {
+  REXLOG_ERROR("gow2_renderer: can't start the renderer: {}", why);
+  std::string m = "The game's renderer couldn't start, so the game will close instead of showing a black screen.\n\n" + why +
+                  (vulkan ? "\n\nTry Graphics API: DirectX 12 on the game's Graphics tab in COGBox, and update the graphics driver."
+                          : "\n\nTry Graphics API: Vulkan on the game's Graphics tab in COGBox, and update Windows and the graphics "
+                            "driver.");
+  std::wstring w(m.size() + 1, L'\0');
+  w.resize(size_t(MultiByteToWideChar(CP_UTF8, 0, m.c_str(), -1, w.data(), int(w.size()))) - 1);
+  MessageBoxW(nullptr, w.c_str(), L"COGBox - renderer", MB_ICONERROR | MB_OK | MB_TOPMOST);
+  ExitProcess(0xE0C0B009u);   // COGBox explains this code too
+}
 
 #endif  // _WIN32

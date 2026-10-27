@@ -274,11 +274,15 @@ static void about_tab(App &a, int g)
                   (st.xexMatch ? "  -  the release the ports are made for" : st.xexKnown ? "  -  a different release: it may not start or may misbehave" : "  -  not checked yet"));
     }
     if (st.updateDir.empty())
-        lamp_line(d.updateNeeded ? 2 : 0, std::string(d.updateName) + ": not added" + (d.updateNeeded ? " - the disc version runs instead" : " (optional)"));
+        lamp_line(d.updateNeeded || g == G_JUDGMENT ? 2 : 0, std::string(d.updateName) + ": not added" +
+                  (g == G_JUDGMENT ? " - required for now (the disc version crashes at start)"   // 0.2.0 (#1)
+                   : d.updateNeeded ? " - the disc version runs instead" : " (optional)"));
     else
         lamp_line(st.xexpMatch ? 1 : 2, std::string(d.updateName) + ": " + st.updateDir + (st.xexpMatch ? "" : "  -  a different update than the ports expect"));
     std::string exe = st.exe();
-    lamp_line(exe.empty() ? 3 : 1, exe.empty() ? "The port program is missing from this COGBox folder - unzip the release again." : "Port: " + exe);
+    // 0.2.0 (#3 / #7): name the file that is missing, so a screenshot says what's wrong
+    lamp_line(exe.empty() ? 3 : 1, exe.empty() ? std::string("The port program is missing: expected ") + join(join(game_root(g), *d.portTu ? d.portTu : d.portDisc), d.exeName) +
+                                                     " - unzip the release again, keeping its folders." : "Port: " + exe);
     ImGui::Dummy(ImVec2(0, S(4)));
     bool busy = a.job.state.load() == 1, running = a.run.proc != nullptr;
     if (busy || running) ImGui::BeginDisabled();

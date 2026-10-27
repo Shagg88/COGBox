@@ -23,6 +23,7 @@
 
 #include <format>
 #include <string>
+#include <vector>
 
 namespace xenos::renderer::upscale {
 namespace {
@@ -37,10 +38,33 @@ void FfxMessage(uint32_t type, const wchar_t* message) {
   else REXLOG_INFO("upscale: FSR: {}", m);
 }
 
+// 0.2.0 (GitHub #6): an RX 6800 crashed inside AMD's driver (amdxc64.dll) during an FSR dispatch, the graphics card
+// lost. The dispatch runs under a structured-exception guard: if it faults, the game says so and closes with a code
+// COGBox knows, and COGBox turns FSR off for that game (SMAA instead) - instead of a bare crash.
+ffxReturnCode_t GuardedDispatch(PfnFfxDispatch dispatch, ffxContext* context, ffxDispatchDescHeader* desc, bool* faulted) {
+  __try {
+    return dispatch(context, desc);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    *faulted = true;
+    return FFX_API_RETURN_ERROR;
+  }
+}
+
+void FsrFatal() {
+  REXLOG_ERROR("upscale: FSR crashed inside the graphics driver - closing; COGBox turns FSR off for this game");
+  MessageBoxW(nullptr,
+              L"AMD FSR crashed inside the graphics driver, so the game will close.\n\nCOGBox will switch this game to SMAA "
+              L"(no upscaler). Updating the graphics driver may let FSR work again - you can turn it back on in the game's "
+              L"Graphics tab.",
+              L"COGBox - FSR", MB_ICONWARNING | MB_OK | MB_TOPMOST);
+  ExitProcess(0xE0C0B00Au);   // COGBox: turn FSR off for this game
+}
+
 class FsrUpscaler final : public Upscaler {
  public:
   ~FsrUpscaler() override {
     if (context_ && fn_.DestroyContext) fn_.DestroyContext(&context_, nullptr);
+    for (Retired& r : retired_) if (fn_.DestroyContext) fn_.DestroyContext(&r.context, nullptr);   // shutdown: the GPU is idle
     context_ = nullptr;
     if (module_) FreeLibrary(module_);
   }
@@ -65,7 +89,10 @@ class FsrUpscaler final : public Upscaler {
     if (!backend.BeginNative(&dev, &list)) return Fail("the backend gives no native D3D12 access");
     backend.EndNative();  // creation needs only the device
     if (context_) {
-      fn_.DestroyContext(&context_, nullptr);
+      // 0.2.0 (#6): FSR's rule - its context may only go once the GPU has finished the work that uses it (a new render
+      // size, e.g. the resolution-scale threshold, re-creates it mid-game). Retire it and destroy it 8 frames later,
+      // past every frame that can still be in flight.
+      retired_.push_back({context_, 8});
       context_ = nullptr;
     }
     ffxCreateBackendDX12Desc be{};
@@ -95,6 +122,12 @@ class FsrUpscaler final : public Upscaler {
   }
 
   bool Evaluate(gpu::Backend& backend, const FrameInputs& in) override {
+    for (size_t i = 0; i < retired_.size();) {   // 0.2.0 (#6)
+      if (--retired_[i].frames_left <= 0) {
+        fn_.DestroyContext(&retired_[i].context, nullptr);
+        retired_.erase(retired_.begin() + ptrdiff_t(i));
+      } else ++i;
+    }
     if (!context_ || failed_) return false;
     void* dev = nullptr;
     void* list = nullptr;
@@ -127,7 +160,9 @@ class FsrUpscaler final : public Upscaler {
       d.cameraFovAngleVertical = in.vertical_fov;
       d.viewSpaceToMetersFactor = 0.01f;  // Unreal units are centimetres
       d.flags = 0;
-      const ffxReturnCode_t r = fn_.Dispatch(&context_, &d.header);
+      bool faulted = false;
+      const ffxReturnCode_t r = GuardedDispatch(fn_.Dispatch, &context_, &d.header, &faulted);
+      if (faulted) FsrFatal();
       ok = r == FFX_API_RETURN_OK;
       if (!ok && !eval_error_logged_) {
         eval_error_logged_ = true;
@@ -148,6 +183,8 @@ class FsrUpscaler final : public Upscaler {
 
   HMODULE module_ = nullptr;
   ffxFunctions fn_{};
+  struct Retired { ffxContext context; int frames_left; };
+  std::vector<Retired> retired_;   // 0.2.0 (#6): old contexts the GPU may still be using
   ffxContext context_ = nullptr;
   bool failed_ = false, hdr_ = false, infinite_ = false, eval_error_logged_ = false;
   uint32_t rw_ = 0, rh_ = 0, ow_ = 0, oh_ = 0;

@@ -88,6 +88,18 @@ else()
 endif()
 target_include_directories(gow3 PRIVATE src/layer3_gow3)
 target_link_libraries(gow3 PRIVATE gn_layer2_ue3)
+# 0.2.0 (GitHub #9): DirectX 12 Agility SDK - D3D12Core.dll in <exe>\D3D12\, chosen by agility.cpp's exports, so
+# Shader Model 6.6 works on Windows 10's older Direct3D 12 runtime too.
+set(GN_AGILITY_DIR ${GN_LAYER0_HOME}/third_party/agility-sdk)
+if(WIN32 AND EXISTS ${GN_AGILITY_DIR}/build/native/bin/x64/D3D12Core.dll)
+    target_sources(gow3 PRIVATE ${GN_LAYER0_DIR}/agility/agility.cpp)
+    add_custom_command(TARGET gow3 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:gow3>/D3D12
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${GN_AGILITY_DIR}/build/native/bin/x64/D3D12Core.dll $<TARGET_FILE_DIR:gow3>/D3D12
+        COMMENT "Copying the Agility SDK's D3D12Core.dll to D3D12\\ next to gow3.exe")
+else()
+    message(WARNING "gow3: no Agility SDK in third_party/agility-sdk - Windows 10 can't run the D3D12 renderer")
+endif()
 # Title Update 6 build (notes/24, tools\build.ps1 -Tu6): layer 3 picks the TU6 data addresses (gow3_addresses.h).
 if(GN_GAME_VERSION STREQUAL "tu6")
     target_compile_definitions(gow3 PRIVATE GOW3_TU6=1)
