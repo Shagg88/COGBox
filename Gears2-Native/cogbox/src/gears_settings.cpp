@@ -49,7 +49,7 @@ const char* const k_mapsGJ[18] = { "SP_00_Museum_P", "SP_01_University_P", "SP_0
 const char* const k_aaNames[5] = { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS" };   // PS1 150
 const int k_fpsCaps[4] = { 0, 60, 120, -1 };                                                 // PS1 159
 const char* const k_drawScale[3] = { "1", "1.5", "2" };                                      // PS1 163
-const char* const k_shakeValue[3] = { "", "0.8", "1.0" };                                    // PS1 167
+const char* const k_shakeValue[3] = { "", "*=0.5", "=0" };   // 0.2.0 (#12): the factor scales the shake - Less halves the game's own, Off is 0                                    // PS1 167
 const int k_poolMb[4] = { 0, -1, 256, 320 };                                                 // PS1 171
 const int k_winSizes[6][2] = { { 0, 0 }, { 1280, 720 }, { 1600, 900 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 } };   // PS1 174
 const double k_deadValue[6] = { 0, 0.05, 0.10, 0.15, 0.20, 0.25 };                          // PS1 177
@@ -154,8 +154,8 @@ std::vector<Option> make_options(Game g) {
     // Render resolution: no PS1 tooltip; text from 59-how-to-play's Picture table.
     add(choice("Resolution", "Render resolution", Tab::Graphics, PG,
                { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)", "1080p" }, 0,
-               "How much detail the game draws: 1x = 1280x720 as on the console, 2x = 2560x1440, 3x = 3840x2160 (4K), "
-               "4x = 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, "
+               "How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), "
+               "4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, "
                "resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for "
                "weaker graphics cards; softer than real detail.", 340), "", "", true);
     add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS" }, 0,
@@ -193,8 +193,7 @@ std::vector<Option> make_options(Game g) {
     add(make("LensFlares", "Lens flares", Tab::Graphics, Kind::Bool, PG, 1, "Light flares from bright lights (the game's own setting).", 372),
         "", "", true);
     add(choice("Shake", "Camera shake (roadie run)", Tab::Graphics, PG, { "Original", "Less", "Off" }, 0,
-               "The camera shake while roadie-running. Less / Off are not yet checked by eye in every game - if Off looks "
-               "stronger, tell Claude.", 373), "", "", true);
+               "The camera shake while roadie-running. Less halves the game's own shake; Off removes it.", 373), "", "", true);
     add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 5, 100,
                "100 = the original. Widens (or narrows) every camera view by this much.", 374), "", "", true);
 
@@ -240,10 +239,13 @@ std::vector<Option> make_options(Game g) {
              "University ... 17 Aftermath 5).", 329), "levelsel");
     // 0.2.0 (GitHub #4): the game's own language - the runtime's user_language (Xbox language IDs, issue #4's table)
     add(choice("Lang", "Game language", Tab::Gameplay, PG,
-               { "Default (English)", "English", "Japanese", "German", "French", "Spanish", "Italian", "Korean", "Chinese",
-                 "Portuguese", "Polish", "Russian" }, 0,
-               "The language of the game's own text and voices. Only the languages on your copy of the game are there - "
-               "the others fall back to English. Takes effect when the game starts.", 0));
+               { "Default (English)", "English (US)", "English (UK)", "French", "German", "Italian", "Spanish (Spain)",
+                 "Spanish (Latin America)", "Portuguese (Brazil)", "Polish", "Russian", "Czech", "Hungarian", "Dutch",
+                 "Danish", "Finnish", "Norwegian", "Swedish", "Japanese", "Korean", "Chinese (Traditional)",
+                 "Chinese (Simplified)" }, 0,
+               "The language of the game's own text and voices - every language the US and European releases have. Only "
+               "the languages on your copy of the game are there; the others fall back to English. European copies have "
+               "the most. Takes effect when the game starts.", 0));
     add(make("Mute", "Mute when the game is not the active window", Tab::Gameplay, Kind::Bool, SH, 0,
              "Silences the game while another window is in front; the sound comes back when you click back into the game.", 386),
         "mute");   // the only sound option, so it lives here (no Audio tab)
@@ -584,6 +586,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     auto avail = [&](const char* id) { const Option* o = find_option(g, id); return o && available(*o, g, ver, s, env).ok; };
     auto on = [&](const char* id) { return avail(id) && s.b(id); };   // PS1 796: a greyed box is never sent
     const bool useUpdate = exe_for_update(g, ver, env);
+    // 0.2.0 mouse look (below): needs SDK patch 38 in the exe and the config edits' text replace ("~=")
+    const bool mouseLook = s.b("Mnk") && cap_exe(env, "pad_look_scale") &&
+                           !(g == Game::Gears2 && !useUpdate && !env.g2_disc_ini_edits);
 
     // PS1 800-823: data roots, log, crash folder, renderer, shader cache, title update
     if (g == Game::Gears2) {
@@ -697,11 +702,32 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         int sh = std::max(0, std::min(2, s.i("Shake")));
         if (sh > 0) {   // PS1 889-896
             std::string v = k_shakeValue[sh];
-            if (g == Game::Gears2) ini.push_back("GearCamera.ini|GearGame.GearCamMod_CameraBone|RoadieRunShakyCamDampeningFactor=" + v);
-            else if (isG3) { for (const char* pf : { "GearPawn.ini", "GearPawnMP.ini" }) ini.push_back(std::string(pf) + "|GearGame.GearPawn|RoadieRunShakyCamDampeningFactor=" + v); }
-            else { for (const char* pf : { "GearPawn.ini", "GearPawnMP.ini", "GearPawnFFA.ini" }) ini.push_back(std::string(pf) + "|GearGame.GearPawn|RoadieRunShakyCamDampeningFactor=" + v); }
+            if (g == Game::Gears2) ini.push_back("GearCamera.ini|GearGame.GearCamMod_CameraBone|RoadieRunShakyCamDampeningFactor" + v);
+            else if (isG3) { for (const char* pf : { "GearPawn.ini", "GearPawnMP.ini" }) ini.push_back(std::string(pf) + "|GearGame.GearPawn|RoadieRunShakyCamDampeningFactor" + v); }
+            else { for (const char* pf : { "GearPawn.ini", "GearPawnMP.ini", "GearPawnFFA.ini" }) ini.push_back(std::string(pf) + "|GearGame.GearPawn|RoadieRunShakyCamDampeningFactor" + v); }
         }
         if (g == Game::Gears2 && on("Trilinear")) ini.push_back(ei + "|SystemSettings|~=MipFilter=point>MipFilter=linear");   // PS1 897
+        // 0.2.0 mouse look (GitHub #2): the mouse reaches the game as the right stick. The game's look binding has a dead
+        // zone (Gears 2 30 %, Judgment 20 %) that swallows small mouse movements, and its Speed caps the turn rate at a
+        // full stick. With keyboard and mouse on, the binding gets no dead zone and k_lookBoost x the speed; the mouse is
+        // scaled down by the same factor (same feel, 4x the ceiling) and a controller used alongside gets both undone by
+        // the SDK (patch 38: pad_look_scale / pad_look_deadzone). Each game's own binding text, from its Coalesced_int.
+        if (mouseLook) {
+            const std::string fi = "GearInput.ini|Engine.PlayerInput|~=";
+            if (g == Game::Gears2) {
+                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.3>Axis aTurn Speed=4.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=0.75 DeadZone=0.3>Axis aLookup Speed=3.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=-0.75 DeadZone=0.3>Axis aLookup Speed=-3.0 DeadZone=0.0");
+            } else if (isG3) {
+                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.0>Axis aTurn Speed=4.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=1.0 DeadZone=0.0>Axis aLookup Speed=4.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=-0.75 DeadZone=0.3>Axis aLookup Speed=-3.0 DeadZone=0.0");
+            } else {
+                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.2>Axis aTurn Speed=4.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=1.0 DeadZone=0.2>Axis aLookup Speed=4.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=-1.0 DeadZone=0.2>Axis aLookup Speed=-4.0 DeadZone=0.0");
+            }
+        }
         if (!ini.empty()) {
             std::string j;
             for (size_t i = 0; i < ini.size(); ++i) j += (i ? ";" : "") + ini[i];
@@ -744,11 +770,19 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 926-928: mute, monitor, players
     if (on("Mute")) a.push_back(std::string("--") + k_procNames[gi] + "_mute_unfocused=true");
-    {   // 0.2.0 (#4): game language - Xbox language IDs (1 English, 2 Japanese, 3 German, 4 French, 5 Spanish, 6 Italian,
-        // 7 Korean, 8 Chinese, 9 Portuguese, 11 Polish, 12 Russian)
-        static const int ids[12] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12 };
-        const int l = std::max(0, std::min(11, s.i("Lang")));
-        if (l > 0) a.push_back("--user_language=" + std::to_string(ids[l]));
+    {   // 0.2.0 (#4, Shagg 12:55: every language the US and European releases use): the console's language AND country.
+        // UE3 picks the game's language files from both - Spain vs Latin American Spanish by country, and the languages
+        // the Xbox had no system language for (Czech, Hungarian, Danish, Finnish) from English + that country.
+        // Xbox language IDs: 1 en, 2 ja, 3 de, 4 fr, 5 es, 6 it, 7 ko, 8 zh-Hant, 9 pt, 11 pl, 12 ru, 13 sv, 15 nb, 16 nl,
+        // 17 zh-Hans. Country IDs (the SDK's user_country table): 13 BR, 20 CN, 23 CZ, 24 DE, 25 DK, 31 ES, 32 FI, 34 FR,
+        // 35 GB, 42 HU, 50 IT, 53 JP, 56 KR, 71 MX, 74 NL, 75 NO, 82 PL, 88 RU, 90 SE, 101 TW, 103 US.
+        static const int lang[22] = { 0, 1, 1, 4, 3, 6, 5, 5, 9, 11, 12, 1, 1, 16, 1, 1, 15, 13, 2, 7, 8, 17 };
+        static const int country[22] = { 0, 103, 35, 34, 24, 50, 31, 71, 13, 82, 88, 23, 42, 74, 25, 32, 75, 90, 53, 56, 101, 20 };
+        const int l = std::max(0, std::min(21, s.i("Lang")));
+        if (l > 0) {
+            a.push_back("--user_language=" + std::to_string(lang[l]));
+            a.push_back("--user_country=" + std::to_string(country[l]));
+        }
     }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
@@ -761,7 +795,14 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 930-937: keyboard and mouse with the Gears layout
     if (s.b("Mnk")) {
-        a.insert(a.end(), { "--mnk_mode=true", "--mnk_mouse=true", "--mnk_sensitivity=" + fmt_double(s.f("Sens")) });
+        // 0.2.0 mouse look: with the look binding boosted (above), the mouse is scaled down by the same factor and a
+        // controller gets the game's own dead zone back (SDK patch 38)
+        const double boost = mouseLook ? 4.0 : 1.0;
+        a.insert(a.end(), { "--mnk_mode=true", "--mnk_mouse=true", "--mnk_sensitivity=" + fmt_double(s.f("Sens") / boost) });
+        if (mouseLook) {
+            a.push_back("--pad_look_scale=0.25");
+            a.push_back(std::string("--pad_look_deadzone=") + (g == Game::Gears2 ? "0.3" : isG3 ? "0" : "0.2"));
+        }
         for (const KeyAction &k : key_actions()) {   // 0.2.0: the Gears layout, or the player's own keys (Controls tab)
             auto it = env.keys.find(k.cvar);
             const std::string v = it != env.keys.end() && !it->second.empty() ? it->second : k.def;

@@ -126,7 +126,7 @@ void i18n_load(const std::string &choice)
         if (!line.empty() && (unsigned char)line[0] == 0xEF) line = line.substr(3);   // UTF-8 BOM
         std::string t = trim(line);
         if (t.empty() || t[0] == '#') continue;
-        size_t eq = t.find(" = ");
+        size_t eq = t.rfind(" = ");   // the last one: English text may hold " = " itself, translations never do
         if (eq == std::string::npos) continue;
         std::string en = unescape(trim(t.substr(0, eq))), tx = unescape(trim(t.substr(eq + 3)));
         if (!en.empty() && !tx.empty()) g_map[en] = tx;

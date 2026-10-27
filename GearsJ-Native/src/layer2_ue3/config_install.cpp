@@ -29,6 +29,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <stdexcept>
 #include <sstream>
 #include <memory>
 #include <set>
@@ -470,7 +471,14 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
   std::map<std::string, std::filesystem::path> mods = CollectMods(&modDirs);
   struct ModsAtEnd {
     rex::Runtime* rt; std::map<std::string, std::filesystem::path>* files; std::map<std::string, std::filesystem::path>* dirs;
-    ~ModsAtEnd() { if (!files->empty()) InstallModOverlay(rt, *files, *dirs); }
+    ~ModsAtEnd() {   // a destructor must not throw: a file-system error here would end the game at start-up
+      if (files->empty()) return;
+      try {
+        InstallModOverlay(rt, *files, *dirs);
+      } catch (const std::exception& e) {
+        REXLOG_WARN("ue3_mods: the mods could not be set up ({}) - the game reads its own files", e.what());
+      }
+    }
   } modsAtEnd{runtime, &mods, &modDirs};
   const std::string spec = REXCVAR_GET(ue3_ini_edits);
   if (spec.empty() || !runtime || !runtime->file_system()) return;
@@ -512,8 +520,16 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
   int written = 0, hashed = 0;
   std::vector<std::pair<std::string, std::pair<uint64_t, std::string>>> new_entries;  // bundle -> size, MD5
   for (const std::string& n : names) {
-    std::ifstream in(src_dir / n, std::ios::binary);
+    // 0.2.0: a mod's own copy of the bundle, if one has it, is the one edited; the start-up hash table still names the
+    // game's original
+    const auto modCopy = mods.find(RelKey(rel + "\\" + n));
+    std::ifstream in(modCopy != mods.end() ? modCopy->second : src_dir / n, std::ios::binary);
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+    std::vector<uint8_t> original;
+    if (modCopy != mods.end()) {
+      std::ifstream gin(src_dir / n, std::ios::binary);
+      original.assign(std::istreambuf_iterator<char>(gin), {});
+    }
     ue3::ConfigBundle bundle;
     std::string perr;
     if (!ue3::ParseConfigBundle(bytes, bundle, &perr)) {
@@ -539,7 +555,8 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
     }
     if (changed == 0) REXLOG_WARN("ue3_ini_edits: {}: no edit matched anything", n);
     new_entries.push_back({n, {edited.size(), ue3::Md5Hex(edited.data(), edited.size())}});
-    const int table = UpdateHashTable(runtime, n, ue3::Sha1(bytes.data(), bytes.size()),
+    const std::vector<uint8_t>& before = original.empty() ? bytes : original;
+    const int table = UpdateHashTable(runtime, n, ue3::Sha1(before.data(), before.size()),
                                       ue3::Sha1(edited.data(), edited.size()));
     if (table > 0) ++hashed;
     else if (table == 0 && !with_toc && log_this)

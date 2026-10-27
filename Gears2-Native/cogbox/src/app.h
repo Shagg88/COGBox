@@ -127,6 +127,8 @@ std::vector<std::string> monitor_choices();   // page.cpp: "Default (main screen
 // install.cpp
 void install_start(App &a, const std::string &path, int forGame);
 void install_confirmed(App &a);      // the "replace" question answered yes
+bool drop_is_game_or_update(const std::string &folder);          // 0.2.0: a dropped folder COGBox adds as a copy / update
+std::vector<std::string> dlc_packages_in(const std::string &folder);   // 0.2.0: DLC packages in a dropped folder (3 levels)
 // 0.2.0: downloadable content COGBox added (user\0000000000000000\<title>\00000002\<name>)
 struct DlcItem { std::string name, title, dir, header; };
 const std::vector<DlcItem> &dlc_list(int game);          // cached; refreshed after an add or remove
@@ -136,8 +138,8 @@ void dlc_remove_confirmed(App &a);   // the "dlcremove" question answered yes
 struct ModItem { std::string folder, path, name, version, author, description; bool enabled = false; };
 std::string mods_dir(int game);
 std::vector<ModItem> mods_list(App &a, int game);         // in load order
-void mods_set_enabled(App &a, int game, int index, bool on);
-void mods_move(App &a, int game, int index, int dir);      // -1 up (earlier), +1 down (later, wins)
+void mods_set_enabled(App &a, int game, const std::string &folder, bool on);
+void mods_move(App &a, int game, const std::string &folder, int dir);   // -1 up (earlier), +1 down (later, wins)
 std::vector<std::string> mods_enabled_paths(App &a, int game);
 bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err);
 void install_poll(App &a);

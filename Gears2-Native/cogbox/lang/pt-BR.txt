@@ -712,3 +712,50 @@ The report couldn't be written to = Não foi possível gravar o relatório em
 SAVE = SAVE
 not added = não adicionado
 Disc = Disco
+
+# 0.2.0 - mods, Title Update 6 notice, game languages
+No mods. Add a mod's .zip, or put its folder in this game's mods folder - laid out like the game's own files (GearGame\...). = Nenhum mod. Adicione o .zip de um mod, ou coloque a pasta dele na pasta de mods deste jogo, organizada como os arquivos do próprio jogo (GearGame\...).
+Ticked mods are used, top to bottom - where two change the same file, the lower one wins. Changes apply the next time the game starts. = Os mods marcados são usados de cima para baixo; se dois alteram o mesmo arquivo, o de baixo vence. As alterações valem na próxima vez que o jogo iniciar.
+Add a mod (.zip)... = Adicionar um mod (.zip)...
+Choose a mod's .zip = Escolha o .zip de um mod
+The mod is added and ticked. = O mod foi adicionado e marcado.
+Mods folder = Pasta de mods
+The camera shake while roadie-running. Less halves the game's own shake; Off removes it. = O tremor da câmera ao correr no modo roadie. Menos reduz à metade o tremor original do jogo; Desligado o remove.
+Title Update 6 recommended = Title Update 6 recomendado
+runs without its title update, but Title Update 6 is highly recommended: it's the build COGBox's ports are made and tested for, with the best performance and compatibility.\n\nAdd it with ADD UPDATE: the update package from your console's Content\0000000000000000\ = roda sem a atualização de título, mas o Title Update 6 é altamente recomendado: é a versão para a qual os ports do COGBox são feitos e testados, com o melhor desempenho e compatibilidade.\n\nAdicione-o com ADICIONAR ATUALIZAÇÃO: o pacote de atualização da pasta do seu console Content\0000000000000000\
+\000B0000 folder. = \000B0000 (pasta).
+Mods = Mods
+This file isn't a zip COGBox can read. = Este arquivo não é um zip que o COGBox consiga ler.
+The zip is empty or too large. = O zip está vazio ou grande demais.
+The zip is damaged. = O zip está danificado.
+The zip has a file with an unsafe path ( = O zip tem um arquivo com um caminho inseguro (
+) - not added. = ) - não adicionado.
+The zip unpacks to more than 8 GB - not added. = O zip descompacta para mais de 8 GB - não adicionado.
+A mod named " = Já existe um mod chamado "
+" is already there - remove or rename it first. = " - remova-o ou renomeie-o primeiro.
+Couldn't unpack = Não foi possível descompactar
+The unpacked mod couldn't be moved into place. = Não foi possível mover o mod descompactado para o lugar.
+MODS = MODS
+The window's size when not fullscreen. Default = the game's own. = O tamanho da janela quando não está em tela cheia. Padrão: o do próprio jogo.
+Which screen the game uses. Default = the main screen. = Qual tela o jogo usa. Padrão: a tela principal.
+Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen follows the game below its refresh rate. The frame rate is capped a little under your screen's refresh rate (half of it with frame generation), which keeps the extra input lag small. Off = frames are shown at once (lowest lag, may tear). = Cada quadro espera a próxima atualização da sua tela, então a imagem nunca rasga. Com G-Sync / FreeSync a tela acompanha o jogo abaixo da taxa de atualização. A taxa de quadros é limitada um pouco abaixo da taxa de atualização da sua tela (metade dela com geração de quadros), o que mantém pequeno o atraso de entrada. Desligado: os quadros aparecem na hora (menor atraso, pode rasgar).
+Sets the graphics boxes in one go. Original = the game as on the console. Change any box afterwards and the preset shows Custom. = Define todas as opções de gráficos de uma vez. Original: o jogo como no console. Se você mudar qualquer opção depois, a predefinição passa a Personalizado.
+How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = Quanto detalhe o jogo desenha: 1x: 1280x720 como no console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Detalhe real, não uma ampliação. Ajustar ao meu monitor: a menor escala que cobre a tela, reamostrada para o tamanho exato dela. 1080p: desenhado em 720p e ampliado para a tela com nitidez, rápido, para placas de vídeo mais fracas; mais suave que o detalhe real.
+The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = O pool de streaming de texturas. Maior: menos texturas borradas esperando ficar nítidas. Os tamanhos maiores deixam menos memória para o resto do jogo.
+100 = the original. Widens (or narrows) every camera view by this much. = 100: o original. Amplia (ou reduz) cada visão da câmera nessa medida.
+Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = Somada à zona morta do próprio jogo, para analógicos gastos que ficam derivando. Do jogo: nada é somado.
+The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = O idioma dos textos e das vozes do jogo, todos os idiomas das versões dos EUA e da Europa. Só há os idiomas da sua cópia do jogo; os outros voltam para o inglês. As cópias europeias têm mais. Vale ao iniciar o jogo.
+English (US) = Inglês (EUA)
+English (UK) = Inglês (Reino Unido)
+Spanish (Spain) = Espanhol (Espanha)
+Spanish (Latin America) = Espanhol (América Latina)
+Portuguese (Brazil) = Português (Brasil)
+Czech = Tcheco
+Hungarian = Húngaro
+Dutch = Holandês
+Danish = Dinamarquês
+Finnish = Finlandês
+Norwegian = Norueguês
+Swedish = Sueco
+Chinese (Traditional) = Chinês (tradicional)
+Chinese (Simplified) = Chinês (simplificado)

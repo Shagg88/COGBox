@@ -560,11 +560,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         case 3: set_message(a, "The box art couldn't be downloaded - check the internet connection.", true); break;
         }
         install_poll(a);
-        if (!a.dropped.empty() && (a.modal.open || a.job.state.load() == 1)) { a.dropped.clear(); set_message(a, "Finish the question or the unpacking first, then drop it again.", true); }
-        if (!a.dropped.empty()) {
+        // 0.2.0 (Shagg 13:18): everything dropped is handled, one after another - several DLC packages, or a folder of
+        // them (a console's ...\<title ID>\00000002, or the title folder), are each added in turn. A folder that isn't a
+        // game copy or a title update is searched for DLC packages.
+        if (!a.dropped.empty() && !a.modal.open && a.job.state.load() != 1) {
             std::string p = a.dropped.front();
-            a.dropped.clear();
-            install_start(a, p, -1);
+            a.dropped.erase(a.dropped.begin());
+            std::vector<std::string> dlc;
+            if (dir_exists(p) && !drop_is_game_or_update(p) && !(dlc = dlc_packages_in(p)).empty()) {
+                a.dropped.insert(a.dropped.begin(), dlc.begin(), dlc.end());
+                set_message(a, std::to_string(dlc.size()) + (dlc.size() == 1 ? " downloadable content package found - adding it." : " downloadable content packages found - adding them one by one."), false);
+            } else
+                install_start(a, p, -1);
         }
         if (a.run.proc && (SDL_GetWindowFlags(win) & SDL_WINDOW_MINIMIZED)) { SDL_Delay(100); continue; }   // a game is playing
         if (SDL_GetWindowFlags(win) & SDL_WINDOW_MINIMIZED) { SDL_Delay(50); continue; }

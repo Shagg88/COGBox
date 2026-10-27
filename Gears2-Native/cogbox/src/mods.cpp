@@ -108,17 +108,18 @@ static void store(App &a, int g, const std::vector<ModItem> &v)
     a.ini.save();
 }
 
-void mods_set_enabled(App &a, int g, int i, bool on)
+void mods_set_enabled(App &a, int g, const std::string &folder, bool on)
 {
     std::vector<ModItem> v = mods_list(a, g);
-    if (i < 0 || i >= (int)v.size()) return;
-    v[i].enabled = on;
+    for (ModItem &m : v) if (m.folder == folder) m.enabled = on;
     store(a, g, v);
 }
 
-void mods_move(App &a, int g, int i, int dir)
+void mods_move(App &a, int g, const std::string &folder, int dir)
 {
     std::vector<ModItem> v = mods_list(a, g);
+    int i = -1;
+    for (size_t k = 0; k < v.size(); k++) if (v[k].folder == folder) i = (int)k;
     int j = i + dir;
     if (i < 0 || j < 0 || i >= (int)v.size() || j >= (int)v.size()) return;
     std::swap(v[i], v[j]);
@@ -134,16 +135,37 @@ std::vector<std::string> mods_enabled_paths(App &a, int g)
 
 // A mod in a .zip: unpacked into mods\<zip name>\ (a single top folder in the zip that isn't one of the game's own
 // folders is taken as the mod's folder). Only plain relative paths are accepted; programs are left out.
+// a folder COGBox made itself (the unpacking of a mod), removed with everything in it
+static void remove_dir_tree(const std::wstring &dir)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (f != INVALID_HANDLE_VALUE) {
+        do {
+            std::wstring n = fd.cFileName;
+            if (n == L"." || n == L"..") continue;
+            std::wstring p = dir + L"\\" + n;
+            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && !(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) remove_dir_tree(p);
+            else if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) RemoveDirectoryW(p.c_str());
+            else { SetFileAttributesW(p.c_str(), FILE_ATTRIBUTE_NORMAL); DeleteFileW(p.c_str()); }
+        } while (FindNextFileW(f, &fd));
+        FindClose(f);
+    }
+    RemoveDirectoryW(dir.c_str());
+}
+
 bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
 {
     mz_zip_archive z;
     memset(&z, 0, sizeof z);
+    std::wstring tempCopy;   // miniz takes a narrow path: a non-ASCII one is read from a copy in the COGBox folder
+    struct TempGone { std::wstring &p; ~TempGone() { if (!p.empty()) DeleteFileW(p.c_str()); } } tempGone{tempCopy};
     if (!mz_zip_reader_init_file(&z, zipPath.c_str(), 0)) {
-        // miniz takes a narrow path: copy a non-ASCII one to a temporary file first
-        wchar_t tmp[MAX_PATH], tf[MAX_PATH];
-        GetTempPathW(MAX_PATH, tmp);
-        GetTempFileNameW(tmp, L"cbm", 0, tf);
-        if (!CopyFileW(widen(zipPath).c_str(), tf, FALSE) || !mz_zip_reader_init_file(&z, narrow(tf).c_str(), 0)) { err = "This file isn't a zip COGBox can read."; return false; }
+        tempCopy = widen(join(exe_dir(), "mod-import.tmp"));   // the COGBox folder: ASCII-safe as far as COGBox runs at all
+        if (!CopyFileW(widen(zipPath).c_str(), tempCopy.c_str(), FALSE) || !mz_zip_reader_init_file(&z, narrow(tempCopy).c_str(), 0)) {
+            err = "This file isn't a zip COGBox can read.";
+            return false;
+        }
     }
     const int n = (int)mz_zip_reader_get_num_files(&z);
     if (n <= 0 || n > 50000) { mz_zip_reader_end(&z); err = "The zip is empty or too large."; return false; }
@@ -176,6 +198,7 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
     std::string dest = join(mods_dir(g), name);
     if (dir_exists(dest)) { mz_zip_reader_end(&z); err = "A mod named \"" + name + "\" is already there - remove or rename it first."; return false; }
     std::string part = dest + ".partial";
+    remove_dir_tree(widen(part));   // what an earlier, failed try left
     make_dirs(part);
     bool ok = true;
     for (int i = 0; i < n && ok; i++) {
@@ -198,7 +221,7 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
     }
     mz_zip_reader_end(&z);
     if (ok && !MoveFileExW(widen(part).c_str(), widen(dest).c_str(), 0)) { ok = false; err = "The unpacked mod couldn't be moved into place."; }
-    if (!ok) return false;
+    if (!ok) { remove_dir_tree(widen(part)); return false; }
     // new mods start enabled, last in the order
     std::vector<ModItem> v = mods_list(a, g);
     for (ModItem &m : v) if (m.folder == name) m.enabled = true;

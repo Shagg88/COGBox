@@ -712,3 +712,50 @@ The report couldn't be written to = No se pudo escribir el informe en
 SAVE = GUARDADO
 not added = no añadido
 Disc = Disco
+
+# 0.2.0 - mods, Title Update 6 notice, game languages
+No mods. Add a mod's .zip, or put its folder in this game's mods folder - laid out like the game's own files (GearGame\...). = No hay mods. Añade el .zip de un mod, o pon su carpeta en la carpeta de mods de este juego, con la misma estructura que los archivos del propio juego (GearGame\...).
+Ticked mods are used, top to bottom - where two change the same file, the lower one wins. Changes apply the next time the game starts. = Los mods marcados se usan de arriba abajo; si dos cambian el mismo archivo, gana el de más abajo. Los cambios se aplican la próxima vez que se inicie el juego.
+Add a mod (.zip)... = Añadir un mod (.zip)...
+Choose a mod's .zip = Elige el .zip de un mod
+The mod is added and ticked. = El mod se ha añadido y marcado.
+Mods folder = Carpeta de mods
+The camera shake while roadie-running. Less halves the game's own shake; Off removes it. = El temblor de la cámara al correr en modo roadie. Menos reduce a la mitad el temblor original del juego; No lo elimina.
+Title Update 6 recommended = Se recomienda Title Update 6
+runs without its title update, but Title Update 6 is highly recommended: it's the build COGBox's ports are made and tested for, with the best performance and compatibility.\n\nAdd it with ADD UPDATE: the update package from your console's Content\0000000000000000\ = funciona sin su actualización de título, pero se recomienda encarecidamente Title Update 6: es la versión para la que se crean y prueban los ports de COGBox, con el mejor rendimiento y compatibilidad.\n\nAñádela con AÑADIR ACTUALIZACIÓN: el paquete de actualización de la carpeta de tu consola Content\0000000000000000\
+\000B0000 folder. = \000B0000 (carpeta).
+Mods = Mods
+This file isn't a zip COGBox can read. = Este archivo no es un zip que COGBox pueda leer.
+The zip is empty or too large. = El zip está vacío o es demasiado grande.
+The zip is damaged. = El zip está dañado.
+The zip has a file with an unsafe path ( = El zip contiene un archivo con una ruta no segura (
+) - not added. = ) - no se ha añadido.
+The zip unpacks to more than 8 GB - not added. = El zip se descomprime en más de 8 GB - no se ha añadido.
+A mod named " = El mod "
+" is already there - remove or rename it first. = " ya existe: elimínalo o cámbiale el nombre primero.
+Couldn't unpack = No se pudo descomprimir
+The unpacked mod couldn't be moved into place. = No se pudo mover el mod descomprimido a su sitio.
+MODS = MODS
+The window's size when not fullscreen. Default = the game's own. = Tamaño de la ventana cuando no está en pantalla completa. Predeterminado: el propio del juego.
+Which screen the game uses. Default = the main screen. = Qué pantalla usa el juego. Predeterminado: la pantalla principal.
+Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen follows the game below its refresh rate. The frame rate is capped a little under your screen's refresh rate (half of it with frame generation), which keeps the extra input lag small. Off = frames are shown at once (lowest lag, may tear). = Cada fotograma espera a la siguiente actualización de tu pantalla, así la imagen nunca se rompe. Con G-Sync / FreeSync la pantalla sigue al juego por debajo de su frecuencia de actualización. La tasa de fotogramas se limita un poco por debajo de la frecuencia de tu pantalla (la mitad con generación de fotogramas), lo que mantiene bajo el retardo de entrada. No: los fotogramas se muestran al instante (menor retardo, puede haber desgarros).
+Sets the graphics boxes in one go. Original = the game as on the console. Change any box afterwards and the preset shows Custom. = Ajusta todas las opciones gráficas de una vez. Original: el juego como en la consola. Si cambias cualquier opción después, el preajuste pasa a Personalizado.
+How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = Cuánto detalle dibuja el juego. 1x: 1280x720 como en la consola, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Detalle real, no un escalado. Ajustar a mi monitor: la escala más pequeña que cubre la pantalla, reescalada a su tamaño exacto. 1080p: se dibuja a 720p y se escala a la pantalla con nitidez; rápido, para tarjetas gráficas más modestas; más suave que el detalle real.
+The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = La reserva de streaming de texturas. Más grande: menos texturas borrosas esperando a afinarse. Los tamaños mayores dejan menos memoria para el resto del juego.
+100 = the original. Widens (or narrows) every camera view by this much. = 100: el original. Amplía (o reduce) cada vista de cámara en esta medida.
+Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = Se suma a la zona muerta propia del juego, para mandos con palancas desgastadas que se desvían. Propio del juego: no se añade nada.
+The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = El idioma de los textos y las voces del propio juego: todos los idiomas de las ediciones de EE. UU. y Europa. Solo están los idiomas de tu copia del juego; los demás vuelven al inglés. Las copias europeas tienen más. Se aplica al iniciar el juego.
+English (US) = Inglés (EE. UU.)
+English (UK) = Inglés (Reino Unido)
+Spanish (Spain) = Español (España)
+Spanish (Latin America) = Español (Latinoamérica)
+Portuguese (Brazil) = Portugués (Brasil)
+Czech = Checo
+Hungarian = Húngaro
+Dutch = Neerlandés
+Danish = Danés
+Finnish = Finés
+Norwegian = Noruego
+Swedish = Sueco
+Chinese (Traditional) = Chino (tradicional)
+Chinese (Simplified) = Chino (simplificado)

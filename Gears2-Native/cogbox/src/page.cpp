@@ -478,15 +478,15 @@ static void about_tab(App &a, int g)
             ImGui::PushID((int)i + 8000);
             if (running) ImGui::BeginDisabled();
             bool on = m.enabled;
-            if (ImGui::Checkbox("##on", &on)) { mods_set_enabled(a, g, (int)i, on); changed = true; }
+            if (ImGui::Checkbox("##on", &on)) { mods_set_enabled(a, g, m.folder, on); changed = true; }
             ImGui::SameLine();
             std::string line = m.name + (m.version.empty() ? "" : "  " + m.version) + (m.author.empty() ? "" : "  -  " + m.author);
             ImGui::TextUnformatted(line.c_str());
             if (!m.description.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.description.c_str());
             ImGui::SameLine();
-            if (i > 0 && small_button("Up")) { mods_move(a, g, (int)i, -1); changed = true; }
+            if (i > 0 && small_button("Up")) { mods_move(a, g, m.folder, -1); changed = true; }
             if (i > 0) ImGui::SameLine();
-            if (i + 1 < ml[g].size() && small_button("Down")) { mods_move(a, g, (int)i, 1); changed = true; }
+            if (i + 1 < ml[g].size() && small_button("Down")) { mods_move(a, g, m.folder, 1); changed = true; }
             if (running) ImGui::EndDisabled();
             ImGui::PopID();
         }

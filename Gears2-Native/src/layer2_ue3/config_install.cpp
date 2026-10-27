@@ -26,6 +26,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <stdexcept>
 #include <sstream>
 #include <memory>
 #include <set>
@@ -468,7 +469,14 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
   std::map<std::string, fs::path> mods = CollectMods(&modDirs);
   struct ModsAtEnd {
     rex::Runtime* rt; std::map<std::string, fs::path>* files; std::map<std::string, fs::path>* dirs;
-    ~ModsAtEnd() { if (!files->empty()) InstallModOverlay(rt, *files, *dirs); }
+    ~ModsAtEnd() {   // a destructor must not throw: a file-system error here would end the game at start-up
+      if (files->empty()) return;
+      try {
+        InstallModOverlay(rt, *files, *dirs);
+      } catch (const std::exception& e) {
+        REXLOG_WARN("ue3_mods: the mods could not be set up ({}) - the game reads its own files", e.what());
+      }
+    }
   } modsAtEnd{runtime, &mods, &modDirs};
   const std::string spec = REXCVAR_GET(ue3_ini_edits);
   if (spec.empty()) return;

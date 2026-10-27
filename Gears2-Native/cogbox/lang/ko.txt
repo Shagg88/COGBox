@@ -712,3 +712,50 @@ The report couldn't be written to = 보고서를 쓸 수 없었습니다:
 SAVE = 저장
 not added = 추가되지 않음
 Disc = 디스크
+
+# 0.2.0 - mods, Title Update 6 notice, game languages
+No mods. Add a mod's .zip, or put its folder in this game's mods folder - laid out like the game's own files (GearGame\...). = 모드가 없어요. 모드의 .zip을 추가하거나, 모드 폴더를 이 게임의 모드 폴더에 넣어 주세요. 게임 자체 파일과 같은 구조여야 해요 (GearGame\...).
+Ticked mods are used, top to bottom - where two change the same file, the lower one wins. Changes apply the next time the game starts. = 체크한 모드는 위에서 아래 순서로 사용되며, 두 모드가 같은 파일을 바꾸면 아래쪽 모드가 적용돼요. 변경 사항은 다음에 게임을 시작할 때 적용돼요.
+Add a mod (.zip)... = 모드 추가 (.zip)...
+Choose a mod's .zip = 모드의 .zip 선택
+The mod is added and ticked. = 모드를 추가하고 체크했어요.
+Mods folder = 모드 폴더
+The camera shake while roadie-running. Less halves the game's own shake; Off removes it. = 로디 달리기 중 카메라 흔들림이에요. 적게는 게임 기본 흔들림을 절반으로 줄이고, 끔은 흔들림을 없애요.
+Title Update 6 recommended = Title Update 6 권장
+runs without its title update, but Title Update 6 is highly recommended: it's the build COGBox's ports are made and tested for, with the best performance and compatibility.\n\nAdd it with ADD UPDATE: the update package from your console's Content\0000000000000000\ = 은(는) 타이틀 업데이트 없이도 실행되지만 Title Update 6을 강력히 권장해요. COGBox 포트는 이 빌드에 맞춰 만들고 테스트하므로 성능과 호환성이 가장 좋아요.\n\n업데이트 추가로 추가하세요. 콘솔의 폴더 Content\0000000000000000\
+\000B0000 folder. = \000B0000 안에 있는 업데이트 패키지예요.
+Mods = 모드
+This file isn't a zip COGBox can read. = 이 파일은 COGBox가 읽을 수 있는 zip이 아니에요.
+The zip is empty or too large. = zip이 비어 있거나 너무 커요.
+The zip is damaged. = zip이 손상됐어요.
+The zip has a file with an unsafe path ( = zip에 안전하지 않은 경로의 파일이 있어요 (
+) - not added. = ) - 추가하지 않았어요.
+The zip unpacks to more than 8 GB - not added. = zip의 압축을 풀면 8 GB가 넘어요 - 추가하지 않았어요.
+A mod named " = "
+" is already there - remove or rename it first. = " 이름의 모드가 이미 있어요. 먼저 삭제하거나 이름을 바꿔 주세요.
+Couldn't unpack = 압축을 풀 수 없어요:
+The unpacked mod couldn't be moved into place. = 압축을 푼 모드를 제자리로 옮길 수 없었어요.
+MODS = 모드
+The window's size when not fullscreen. Default = the game's own. = 전체 화면이 아닐 때의 창 크기입니다. 기본값: 게임 자체 크기.
+Which screen the game uses. Default = the main screen. = 게임이 사용할 화면입니다. 기본값: 주 화면.
+Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen follows the game below its refresh rate. The frame rate is capped a little under your screen's refresh rate (half of it with frame generation), which keeps the extra input lag small. Off = frames are shown at once (lowest lag, may tear). = 각 프레임이 화면의 다음 주사율 갱신을 기다리므로 화면이 찢어지지 않습니다. G-Sync / FreeSync를 쓰면 화면이 주사율 아래에서 게임을 따라갑니다. 프레임 레이트는 화면 주사율보다 약간 낮게 제한되며(프레임 생성 시에는 절반), 추가 입력 지연을 작게 유지합니다. 끔: 프레임이 즉시 표시됩니다(지연 최소, 화면 찢김이 생길 수 있음).
+Sets the graphics boxes in one go. Original = the game as on the console. Change any box afterwards and the preset shows Custom. = 그래픽 항목을 한 번에 설정합니다. 원본: 콘솔과 같은 게임. 이후 항목을 하나라도 바꾸면 프리셋이 사용자 지정으로 표시됩니다.
+How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = 게임이 그리는 디테일의 정도입니다. 1x: 콘솔과 같은 1280x720, 2x: 2560x1440, 3x: 3840x2160(4K), 4x: 5120x2880. 업스케일이 아닌 실제 디테일입니다. 내 모니터에 맞춤: 화면을 덮는 가장 작은 배율로 그린 뒤 화면의 정확한 크기로 리샘플링합니다. 1080p: 720p로 그린 뒤 선명도를 높여 화면에 업스케일합니다. 빠르며 성능이 낮은 그래픽 카드에 적합하지만 실제 디테일보다 부드럽습니다.
+The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = 텍스처 스트리밍 풀입니다. 클수록 선명해지기를 기다리는 흐릿한 텍스처가 줄어듭니다. 크기가 클수록 게임의 나머지 부분에 쓸 메모리가 줄어듭니다.
+100 = the original. Widens (or narrows) every camera view by this much. = 100: 원본. 모든 카메라 시야를 이 값만큼 넓히거나 좁힙니다.
+Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = 게임 자체의 데드존 위에 더해집니다. 드리프트가 생기는 낡은 스틱용입니다. 게임 자체: 아무것도 더하지 않습니다.
+The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = 게임 자체 텍스트와 음성의 언어입니다. 미국판과 유럽판이 지원하는 모든 언어를 선택할 수 있습니다. 사용 중인 게임 사본에 들어 있는 언어만 표시되며, 나머지는 영어로 대체됩니다. 유럽판 사본에 언어가 가장 많습니다. 게임을 시작할 때 적용됩니다.
+English (US) = 영어(미국)
+English (UK) = 영어(영국)
+Spanish (Spain) = 스페인어(스페인)
+Spanish (Latin America) = 스페인어(중남미)
+Portuguese (Brazil) = 포르투갈어(브라질)
+Czech = 체코어
+Hungarian = 헝가리어
+Dutch = 네덜란드어
+Danish = 덴마크어
+Finnish = 핀란드어
+Norwegian = 노르웨이어
+Swedish = 스웨덴어
+Chinese (Traditional) = 중국어(번체)
+Chinese (Simplified) = 중국어(간체)

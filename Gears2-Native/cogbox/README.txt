@@ -20,7 +20,8 @@ What you need
     * a folder with the disc's files (default.xex and the rest) that you already extracted.
 - For Gears of War 2 and 3: the last title update (Title Update 6) is recommended - it is the
   default and the fastest build. Without it, COGBox starts the disc version; you can also pick
-  the disc version on a game's Gameplay tab. Judgment's Title Update 4 is optional.
+  the disc version on a game's Gameplay tab. Judgment needs its Title Update 4 for now (its disc
+  version crashes at start in this release).
   The update is a file on a console that has played the game online, in
       Content\0000000000000000\<title ID>\000B0000\
   (Gears 2: 4D53082D, Gears 3: 4D5308AB, Judgment: 4D530A26).
@@ -64,6 +65,12 @@ Fullscreen: F11, or both triggers (LT + RT) together on a controller, from any s
 The window: COGBox grows with its window. "Borderless window" on any game's About tab hides the
 title bar; COGBox then has its own minimise / maximise / close buttons in the top-right corner.
 
+COGBox's language: asked on first start (or Automatic, Windows' language); change it on any game's
+About tab. The game's own language: a game's Gameplay tab - every language of the US and European
+releases is there; the ones on your copy of the game work, the others fall back to English.
+Keyboard and mouse: every key can be changed on a game's Controls tab.
+DLC and mods: a game's About tab (Downloadable content, Mods).
+
 
 Linux and Steam Deck (Proton) - experimental
 ---------------------------------------------
@@ -88,6 +95,10 @@ Everything stays inside the COGBox folder:
   <Game>\user\          saves
   <Game>\logs\          one folder per play: the log, the arguments used, any crash report
   <Game>\shadercache\   shaders built while playing, kept so the next play doesn't stutter
+  <Game>\mods\          mods: one folder each, laid out like the game's own files (GearGame\...);
+                        tick them on the game's About tab, or add a mod's .zip there
+  <Game>\user\0000000000000000\   downloadable content you added on the About tab
+  lang\                 COGBox's own translations
   covers\               put your own box art here as gears2.png, gears3.png and judgment.png
                         (or .jpg). Without them, COGBox draws its own covers.
 

@@ -23,7 +23,7 @@ most importantly **our own renderer**, which draws every frame on Direct3D 12 (o
 the ports what an emulator can't easily offer:
 
 - **Any resolution** - 1x to 4x the original (up to 5K) or matched to your monitor, with real extra detail, not a
-  stretched picture.
+  stretched picture - and a fast **1080p** mode (720p drawn, upscaled and sharpened) for weaker graphics cards.
 - **Anti-aliasing and upscaling** - SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS, including upscaling modes for weaker GPUs.
 - **High frame rates** - the 30 fps limit lifted, vsync with a cap matched to your monitor, AMD FSR frame
   generation (highly experimental for now).
@@ -32,10 +32,12 @@ the ports what an emulator can't easily offer:
   later instead of freezing the game.
 - **Vulkan (experimental)** - a choice on each game's Graphics tab, for testing; close to Direct3D 12 already.
 - **Lower input lag** - one frame in flight, NVIDIA Reflex / AMD Anti-Lag 2 where your GPU has them.
-- **HDR10**, **ultrawide 21:9**, **16x anisotropic filtering**, field of view, and the games' own motion blur, depth of
+- **HDR10**, **ultrawide 21:9** (all three games), **16x anisotropic filtering**, field of view, and the games' own motion blur, depth of
   field and lens flares as switches.
-- **Split-screen** (Gears 2), **keyboard and mouse**, **Xbox and PlayStation controllers**, **title updates**,
-  **chapter select**.
+- **Split-screen** (Gears 2), **keyboard and mouse** (mouse look without the stick's speed limit, keys you can change),
+  **Xbox and PlayStation controllers**, **title updates**, **chapter select**.
+- **DLC and mods** - add DLC packages from your console and mods as .zip files on each game's About tab.
+- **Every game language** the US and European releases have (21), chosen per game - the ones on your copy work.
 - **In-game menu** - Back + Start (Share + Options on PlayStation, or F1) during play: change settings, restart to
   apply them, or quit.
 
@@ -45,7 +47,7 @@ the ports what an emulator can't easily offer:
 |---|---|---|
 | Gears of War 2 | US disc (0.0.0.5) + Title Update 6 | Every chapter plays in testing; Title Update 6 is the default and fastest build |
 | Gears of War 3 | Disc + Title Update 6 | Playable; Title Update 6 is the default |
-| Gears of War: Judgment | Disc + Title Update 4 | Playable |
+| Gears of War: Judgment | Disc + Title Update 4 (required for now) | Playable |
 
 "In testing" means on the developer's PC (an RTX 3080 Ti) and scripted test runs through the chapters.
 Other hardware hasn't been tried yet - please report what you find.
@@ -61,6 +63,14 @@ Other hardware hasn't been tried yet - please report what you find.
 - Updates itself from this page's releases: an **UPDATE TO ...** button appears when a new version is out.
 - Works fully with a controller - Xbox or PlayStation (its button names switch to Cross / Circle / Square / Triangle).
 - Grows with its window, and has a **borderless** option (its own minimise / maximise / close).
+- **In 11 languages**: English, Spanish, French, German, Italian, Portuguese (Brazil), Polish, Russian, Japanese,
+  Chinese (Simplified) and Korean - asked on first start, changeable on any game's About tab.
+- **DLC** (Downloadable content on the About tab): add the packages from your console's
+  `Content\0000000000000000\<title ID>\00000002` folder; remove them there too.
+- **Mods** (Mods on the About tab): add a mod's .zip or drop its folder into the game's `mods` folder, tick it, set the
+  order. A mod is laid out like the game's own files (`GearGame\...`) and replaces or adds files without changing your
+  copy; programs are never taken from a mod.
+- **Desktop shortcuts** for COGBox and each game.
 
 ---
 
@@ -138,7 +148,7 @@ saves and settings are not in the zip, so they are kept.
 
 Plans, not promises:
 - **Gamer Tag Login**
-- **Mod and Texture Pack Loader**
+- **Texture packs** - a texture dumper and replacement packs (mods and DLC are in since 0.2.0).
 - **Mac, Linux, Steamdeck** - Linux and Steam Deck through Proton are in as experimental now; tested support next.
 - **Online Co-Op** - Hopefully.
 - **Vulkan as the default** - it's already a choice (experimental); next: matching Direct3D 12 everywhere, then default.
@@ -146,7 +156,8 @@ Plans, not promises:
 - **Background art read from your own copy of each game** inside COGBox.
 - **Multi-core rendering** (the next step of the speed work) and shaders built at the main menu, for no first-visit hitches.
 - **DLSS Frame Generation and DLSS 4/5 features** through NVIDIA Streamline on the cards that support them.
-- **More controllers (Switch and others), button remapping and an accessibility section** in COGBox.
+- **More controllers (Switch and others) and an accessibility section** in COGBox.
+- **Split-screen across two monitors**, and the European releases at full speed.
 - **Achievements**, kept locally.
 - More of the Gears series.
 
@@ -169,7 +180,8 @@ This project stands on the work of many open-source projects and their communiti
 - **AMD FidelityFX (FSR)**, **NVIDIA DLSS** and **Intel XeSS** - the upscalers, under their vendors' own licences.
 - **[Xenia Manager](https://github.com/xenia-manager)** and its **[x360db](https://github.com/xenia-manager/x360db)**
   archive - the box art and backgrounds COGBox downloads.
-- The **Gears community patches** - ultrawide by boma and TudorHorse, ported here as switches.
+- The **Gears community patches** - ultrawide by boma and TudorHorse (Gears 2, 3 and Judgment), ported here as switches.
+- **Microsoft DirectX 12 Agility SDK** - the DirectX 12 runtime the ports bring along (so Windows 10 works too).
 - **[NVIDIA FLIP](https://github.com/NVlabs/flip)** - the picture comparisons in our test runs.
 - The **Anton** and **Barlow** fonts (SIL Open Font License).
 

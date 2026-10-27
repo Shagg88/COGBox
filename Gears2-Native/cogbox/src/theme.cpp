@@ -1,5 +1,7 @@
 // COGBox - the look (see theme.h)
 #include "theme.h"
+#include "util.h"
+#include <vector>
 #include "i18n.h"   // 0.2.0
 #include <windows.h>
 #include <string>
@@ -54,14 +56,21 @@ void theme_fonts(ImGuiIO &io)
         WideCharToMultiByte(CP_UTF8, 0, win, -1, path, sizeof path, nullptr, nullptr);
         fontsDir = std::string(path) + "\\Fonts\\";
     }
-    auto merge = [&](float size) {
+    // Each file is read once and shared by the six fonts (ImGui would otherwise keep a copy per font - the Chinese
+    // one alone is ~20 MB); the buffers stay for the life of COGBox, as the atlas reads them when glyphs are made.
+    static std::vector<std::vector<char>> files;
+    if (files.empty())
         for (const char *f : { "segoeui.ttf", "msyh.ttc", "YuGothR.ttc", "malgun.ttf" }) {
-            const std::string p = fontsDir + f;
-            if (GetFileAttributesA(p.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+            std::string data;
+            if (read_file(fontsDir + f, data, 64u << 20) && !data.empty()) files.emplace_back(data.begin(), data.end());
+        }
+    auto merge = [&](float size) {
+        for (std::vector<char> &data : files) {
             ImFontConfig mc;
             mc.MergeMode = true;
             mc.OversampleH = 1;
-            io.Fonts->AddFontFromFileTTF(p.c_str(), size, &mc);
+            mc.FontDataOwnedByAtlas = false;
+            io.Fonts->AddFontFromMemoryTTF(data.data(), (int)data.size(), size, &mc);
         }
     };
     F_BODY  = io.Fonts->AddFontFromMemoryTTF((void *)font_body_data, sizeof font_body_data, T(18), &fc, ranges);

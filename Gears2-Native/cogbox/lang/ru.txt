@@ -712,3 +712,50 @@ The report couldn't be written to = Не удалось записать отч�
 SAVE = СОХРАНИТЬ
 not added = не добавлено
 Disc = Диск
+
+# 0.2.0 - mods, Title Update 6 notice, game languages
+No mods. Add a mod's .zip, or put its folder in this game's mods folder - laid out like the game's own files (GearGame\...). = Модов нет. Добавь .zip мода или положи его папку в папку модов этой игры, с той же структурой, что и у файлов самой игры (GearGame\...).
+Ticked mods are used, top to bottom - where two change the same file, the lower one wins. Changes apply the next time the game starts. = Отмеченные моды применяются сверху вниз; если два мода меняют один файл, побеждает нижний. Изменения вступят в силу при следующем запуске игры.
+Add a mod (.zip)... = Добавить мод (.zip)...
+Choose a mod's .zip = Выбери .zip мода
+The mod is added and ticked. = Мод добавлен и отмечен.
+Mods folder = Папка модов
+The camera shake while roadie-running. Less halves the game's own shake; Off removes it. = Тряска камеры при беге roadie. «Меньше» уменьшает родную тряску игры вдвое; «Выкл.» убирает её.
+Title Update 6 recommended = Рекомендуется Title Update 6
+runs without its title update, but Title Update 6 is highly recommended: it's the build COGBox's ports are made and tested for, with the best performance and compatibility.\n\nAdd it with ADD UPDATE: the update package from your console's Content\0000000000000000\ = работает и без обновления, но Title Update 6 настоятельно рекомендуется: именно под эту сборку делаются и тестируются порты COGBox, с лучшей производительностью и совместимостью.\n\nДобавь его кнопкой ДОБАВИТЬ ОБНОВЛЕНИЕ: пакет обновления из папки консоли Content\0000000000000000\
+\000B0000 folder. = \000B0000 (папка).
+Mods = Моды
+This file isn't a zip COGBox can read. = Этот файл не является zip-архивом, который COGBox может прочитать.
+The zip is empty or too large. = Zip-архив пуст или слишком велик.
+The zip is damaged. = Zip-архив повреждён.
+The zip has a file with an unsafe path ( = В zip-архиве есть файл с небезопасным путём (
+) - not added. = ) - не добавлено.
+The zip unpacks to more than 8 GB - not added. = Zip-архив распаковывается больше чем в 8 GB - не добавлено.
+A mod named " = Мод с именем "
+" is already there - remove or rename it first. = " уже есть - сначала удали или переименуй его.
+Couldn't unpack = Не удалось распаковать
+The unpacked mod couldn't be moved into place. = Не удалось переместить распакованный мод на место.
+MODS = МОДЫ
+The window's size when not fullscreen. Default = the game's own. = Размер окна вне полноэкранного режима. По умолчанию: собственный размер игры.
+Which screen the game uses. Default = the main screen. = Какой экран использует игра. По умолчанию: основной экран.
+Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen follows the game below its refresh rate. The frame rate is capped a little under your screen's refresh rate (half of it with frame generation), which keeps the extra input lag small. Off = frames are shown at once (lowest lag, may tear). = Каждый кадр ждёт следующего обновления экрана, поэтому изображение никогда не рвётся. С G-Sync / FreeSync экран следует за игрой ниже своей частоты обновления. Частота кадров ограничена чуть ниже частоты обновления экрана (вдвое меньше при генерации кадров), что сохраняет небольшую задержку ввода. Выкл.: кадры показываются сразу (минимальная задержка, возможны разрывы).
+Sets the graphics boxes in one go. Original = the game as on the console. Change any box afterwards and the preset shows Custom. = Настраивает все графические параметры сразу. Оригинал: игра как на консоли. Если после этого изменить любой параметр, предустановка покажет «Пользовательская».
+How much detail the game draws: 1x: 1280x720 as on the console, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for weaker graphics cards; softer than real detail. = Сколько деталей рисует игра: 1x: 1280x720 как на консоли, 2x: 2560x1440, 3x: 3840x2160 (4K), 4x: 5120x2880. Реальная детализация, а не масштабирование. По моему монитору: наименьший масштаб, покрывающий экран, с передискретизацией до его точного размера. 1080p: рисуется в 720p и масштабируется до экрана с повышением резкости, быстро, для слабых видеокарт; мягче реальной детализации.
+The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory for the rest of the game. = Пул потоковой загрузки текстур. Больше: меньше размытых текстур, ждущих чёткости. Большие размеры оставляют меньше памяти остальной игре.
+100 = the original. Widens (or narrows) every camera view by this much. = 100: оригинал. Расширяет (или сужает) каждый обзор камеры на это значение.
+Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added. = Добавляется к собственной мёртвой зоне игры, для изношенных стиков, которые дрейфуют. Как в игре: ничего не добавляется.
+The language of the game's own text and voices - every language the US and European releases have. Only the languages on your copy of the game are there; the others fall back to English. European copies have the most. Takes effect when the game starts. = Язык текста и голосов игры, все языки американской и европейской версий. Доступны только языки вашей копии игры; остальные заменяются английским. В европейских копиях их больше всего. Применяется при запуске игры.
+English (US) = Английский (США)
+English (UK) = Английский (Великобритания)
+Spanish (Spain) = Испанский (Испания)
+Spanish (Latin America) = Испанский (Латинская Америка)
+Portuguese (Brazil) = Португальский (Бразилия)
+Czech = Чешский
+Hungarian = Венгерский
+Dutch = Нидерландский
+Danish = Датский
+Finnish = Финский
+Norwegian = Норвежский
+Swedish = Шведский
+Chinese (Traditional) = Китайский (традиционный)
+Chinese (Simplified) = Китайский (упрощённый)

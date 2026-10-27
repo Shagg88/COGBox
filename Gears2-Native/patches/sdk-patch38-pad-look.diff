@@ -1,0 +1,59 @@
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -39,6 +39,16 @@
+ REXCVAR_DEFINE_DOUBLE(right_stick_deadzone_percentage, 0.0, "Input",
+                       "Deadzone applied to the right stick, as a fraction of its range")
+     .range(0.0, 1.0);
++// COGBox SDK patch 38 (0.2.0, mouse look): with keyboard and mouse on, the game's look binding loses its dead zone and
++// gets a higher speed, so the mouse (folded into the right stick) is neither swallowed nor capped. A controller used
++// alongside gets that change undone here, before the devices are merged: its right stick is scaled by pad_look_scale
++// after a per-axis dead zone of pad_look_deadzone (the game's own, now off in its binding). The mouse is untouched.
++REXCVAR_DEFINE_DOUBLE(pad_look_scale, 1.0, "Input",
++                      "Right-stick scale for controllers only (not the keyboard-and-mouse device), COGBox patch 38")
++    .range(0.0, 1.0);
++REXCVAR_DEFINE_DOUBLE(pad_look_deadzone, 0.0, "Input",
++                      "Per-axis right-stick dead zone for controllers only, as a fraction, COGBox patch 38")
++    .range(0.0, 0.9);
+ namespace rex::input {
+ 
+ namespace {
+@@ -322,6 +332,16 @@
+       continue;
+     }
+     active_devices_.Observe(user_index, id, state.gamepad);
++    // Patch 38: a controller's right stick, undoing the mouse-look binding change (see the cvars above).
++    if (REXCVAR_GET(pad_look_scale) < 1.0 && !dynamic_cast<mnk::MnkInputDriver*>(driver)) {
++      const double scale = REXCVAR_GET(pad_look_scale), dz = REXCVAR_GET(pad_look_deadzone);
++      auto look = [&](auto& axis) {   // the guest fields are big-endian (be<int16_t>)
++        const double v = double(int16_t(axis)) / 32767.0;
++        axis = std::abs(v) < dz ? int16_t(0) : static_cast<int16_t>(std::lround(std::clamp(v * scale, -1.0, 1.0) * 32767.0));
++      };
++      look(state.gamepad.thumb_rx);
++      look(state.gamepad.thumb_ry);
++    }
+     if (!any) {
+       merged = state;
+       any = true;
+--- a/src/kernel/xam/xam_net.cpp
++++ b/src/kernel/xam/xam_net.cpp
+@@ -728,6 +728,20 @@
+ 
+   N_XSOCKADDR_IN native_name(name);
+   X_STATUS status = socket->Bind(&native_name, namelen);
++  // COGBox SDK patch 38 (GitHub #11 / #3, "error initializing network layer" under Proton): the game binds the
++  // console's own ports (1000 for system link, 3074). Below 1024 Linux refuses that without administrator rights, and
++  // another program may hold 3074 on any OS. Nothing local depends on the exact port, so a refused bind is retried
++  // with a port the system picks.
++  if (XFAILED(status) && uint16_t(native_name.sin_port) != 0) {
++    const uint16_t wanted = native_name.sin_port;
++    N_XSOCKADDR_IN any_port = native_name;
++    any_port.sin_port = 0;
++    status = socket->Bind(&any_port, namelen);
++    static int logged = 0;
++    if (logged++ < 8)
++      REXKRNL_WARN("NetDll_bind: port {} refused by the host; {}", wanted,
++                   XFAILED(status) ? "any port refused too" : "bound to a port the system chose");
++  }
+   if (XFAILED(status)) {
+     XThread::SetLastError(xboxkrnl::xeRtlNtStatusToDosError(status));
+     return -1;

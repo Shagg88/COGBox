@@ -224,7 +224,7 @@ static bool dlc_plan(Plan &p, const x360fs::PackageInfo &pi, std::string &err)
     o.assign(0x148 + 4, 0);
     put_be(o, 0x0, 1, 4);                                  // DummyDeviceId::HDD
     put_be(o, 0x4, x360fs::kContentMarketplace, 4);
-    std::memcpy(&o[0x8], h + 0x411, 0xFE);                 // display name, first locale (UTF-16BE), last char kept 0
+    std::memcpy(&o[0x8], h + 0x411, 0x7E);                 // display name: the first locale's 0x80 bytes (UTF-16BE), last char kept 0
     std::memcpy(&o[0x108], name.data(), name.size());
     uint32_t mask = 0;
     for (int i = 0; i < 16; i++) {
@@ -485,4 +485,30 @@ void dlc_remove_confirmed(App &a)
     set_message(a, ok ? "\"" + g_dlcRemove.title + "\" is removed." : "It couldn't be removed completely - is a file from it open?", !ok);
     g_dlcRemoveGame = -1;
     dlc_refresh();
+}
+
+// ---- 0.2.0: folders of downloadable content dropped on the window ---------------------------------------------------
+bool drop_is_game_or_update(const std::string &folder)
+{
+    std::filesystem::path res;
+    return x360fs::detect(widen(folder), &res) != x360fs::SourceKind::Unknown;
+}
+
+std::vector<std::string> dlc_packages_in(const std::string &folder)
+{
+    std::vector<std::string> out;
+    std::error_code ec;
+    namespace fs = std::filesystem;
+    for (auto it = fs::recursive_directory_iterator(widen(folder), fs::directory_options::skip_permission_denied, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (it.depth() > 3) { it.disable_recursion_pending(); continue; }
+        if (!it->is_regular_file(ec) || it->file_size(ec) < 0xA000) continue;
+        x360fs::PackageInfo pi;
+        std::string err;
+        if (x360fs::read_package_info(it->path(), pi, err) && pi.content_type == x360fs::kContentMarketplace && game_by_title_id(pi.title_id) >= 0)
+            out.push_back(narrow(it->path().wstring()));
+        if (out.size() >= 200) break;
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }

@@ -425,10 +425,17 @@ void GowjApplyUltrawideIfRequested(rex::Runtime* runtime) {
     for (int i = 0; i < 4; ++i) old_bits = (old_bits << 8) | p[i];
     float old_value;
     std::memcpy(&old_value, &old_bits, 4);
+    if (std::fabs(old_value - 16.0f / 9.0f) > 0.001f) {   // not the TU4 image these addresses are from: leave it alone
+      REXLOG_WARN("gowj_ultrawide: aspect float {:08X} is {}, not 16:9 - not changed", addr, old_value);
+      continue;
+    }
     DWORD old_protect = 0;
-    const bool lifted = VirtualProtect(p, 4, PAGE_READWRITE, &old_protect) != 0;
+    if (!VirtualProtect(p, 4, PAGE_READWRITE, &old_protect)) {
+      REXLOG_WARN("gowj_ultrawide: aspect float {:08X} could not be unlocked - not changed", addr);
+      continue;
+    }
     for (int i = 0; i < 4; ++i) p[i] = uint8_t(bits >> (24 - 8 * i));
-    if (lifted) VirtualProtect(p, 4, old_protect, &old_protect);
+    VirtualProtect(p, 4, old_protect, &old_protect);
     REXLOG_INFO("gowj_ultrawide: aspect float {:08X} {} -> {}", addr, old_value, value);
   }
   const bool a = rex::cvar::SetFlagByName("gow2_present_frame_aspect", "true");
