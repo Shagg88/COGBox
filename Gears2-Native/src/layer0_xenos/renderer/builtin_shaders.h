@@ -99,6 +99,20 @@ uint2 XeChunkCoord(uint i) { return uint2(i % XE_CHUNK_WIDTH, i / XE_CHUNK_WIDTH
 //          false), else D24S8 (unorm24, round to nearest even)
 //   c1.w, c2.xy  de-jitter for the upscalers (see main); c3.xy resolution scale / scaled destination
 constexpr const char* kDepthResolveCs = R"(
+// 0.2.2 (GitHub #27, AMD): AMD keeps a D24 depth target as 32-bit float, so the exact value written for n,
+// (n + (n >> 23)) * 2^-24, can read back as a tie in d * 0xFFFFFF and round to n - 1 (the transfer self-test: 7FFFFF03 ->
+// 7FFFFE03 on RX 6800 / 7800 XT). Of r - 1, r, r + 1 the one whose exact encoding is the value read wins; real 24-bit
+// depth (NVIDIA) reads n / 0xFFFFFF, which gives r itself.
+uint XeUnorm24(float d) {
+  precise float ds = saturate(d);
+  precise float scaled = ds * 16777215.0;
+  uint r = min(uint(round(scaled)), 0xFFFFFFu);
+  if (float(r + (r >> 23u)) * (1.0 / 16777216.0) == ds) return r;
+  if (r > 0u && float((r - 1u) + ((r - 1u) >> 23u)) * (1.0 / 16777216.0) == ds) return r - 1u;
+  if (r < 0xFFFFFFu && float((r + 1u) + ((r + 1u) >> 23u)) * (1.0 / 16777216.0) == ds) return r + 1u;
+  return r;
+}
+
 Texture2D<float> xe_depth : register(t0);
 Texture2D<uint2> xe_stencil : register(t1);
 RWTexture2D<uint> xe_dest : register(u0);
@@ -163,7 +177,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     d24 = XeFloat32To20e4(asuint(guest), false);
   } else {
     precise float scaled = saturate(d) * 16777215.0;
-    d24 = min(uint(round(scaled)), 0xFFFFFFu);
+    d24 = XeUnorm24(d);
   }
   if (full && (c3.z & 0x80000000u) != 0u) {  // job 238: fused - straight into the scaled-memory window
     uint i = XeChunkIndex(id.xy, rs, c1.xy, c2.z, c2.w, c3.z & 0xFFFFu, (c3.w >> 4u) & 7u);
@@ -209,6 +223,20 @@ float4 main(uint id : SV_VertexID) : SV_Position {
 }
 )";
 constexpr const char* kTransferPs = R"(
+// 0.2.2 (GitHub #27, AMD): AMD keeps a D24 depth target as 32-bit float, so the exact value written for n,
+// (n + (n >> 23)) * 2^-24, can read back as a tie in d * 0xFFFFFF and round to n - 1 (the transfer self-test: 7FFFFF03 ->
+// 7FFFFE03 on RX 6800 / 7800 XT). Of r - 1, r, r + 1 the one whose exact encoding is the value read wins; real 24-bit
+// depth (NVIDIA) reads n / 0xFFFFFF, which gives r itself.
+uint XeUnorm24(float d) {
+  precise float ds = saturate(d);
+  precise float scaled = ds * 16777215.0;
+  uint r = min(uint(round(scaled)), 0xFFFFFFu);
+  if (float(r + (r >> 23u)) * (1.0 / 16777216.0) == ds) return r;
+  if (r > 0u && float((r - 1u) + ((r - 1u) >> 23u)) * (1.0 / 16777216.0) == ds) return r - 1u;
+  if (r < 0xFFFFFFu && float((r + 1u) + ((r + 1u) >> 23u)) * (1.0 / 16777216.0) == ds) return r + 1u;
+  return r;
+}
+
 cbuffer XeTransfer : register(b0, space0) { uint4 t0; uint4 t1; uint4 t2; uint4 t3; };
 Texture2D<float> xe_src_depth : register(t0, space0);
 Texture2D<uint2> xe_src_stencil : register(t1, space0);
@@ -284,7 +312,7 @@ void main(float4 pos : SV_Position, out float o_depth : SV_Depth) {
   // full_float24_in_0_to_1 remap), so the whole 20e4 range [0, 2) survives a round trip through it.
   precise float guest = (t1.x & 2u) ? d * 2.0 : d;
   uint d24 = (t2.x != 0u) ? (colour_word >> 8u)
-             : (t1.x & 1u) ? XeFloat32To20e4(asuint(guest)) : min(uint(round(scaled)), 0xFFFFFFu);
+             : (t1.x & 1u) ? XeFloat32To20e4(asuint(guest)) : XeUnorm24(d);
 #ifdef XE_STENCIL_REF
   o_stencil = stencil;
 #else
@@ -505,6 +533,20 @@ uint main(float4 pos : SV_Position) : SV_Target0 {
 //        (Canary: 32 -> 64bpp takes source pixels 2u and 2u + 1; 64 -> 32bpp takes half (u & 1) of pixel u >> 1;
 //        the colour/depth swap is 40 32bpp samples).
 constexpr const char* kWordTransferPs = R"(
+// 0.2.2 (GitHub #27, AMD): AMD keeps a D24 depth target as 32-bit float, so the exact value written for n,
+// (n + (n >> 23)) * 2^-24, can read back as a tie in d * 0xFFFFFF and round to n - 1 (the transfer self-test: 7FFFFF03 ->
+// 7FFFFE03 on RX 6800 / 7800 XT). Of r - 1, r, r + 1 the one whose exact encoding is the value read wins; real 24-bit
+// depth (NVIDIA) reads n / 0xFFFFFF, which gives r itself.
+uint XeUnorm24(float d) {
+  precise float ds = saturate(d);
+  precise float scaled = ds * 16777215.0;
+  uint r = min(uint(round(scaled)), 0xFFFFFFu);
+  if (float(r + (r >> 23u)) * (1.0 / 16777216.0) == ds) return r;
+  if (r > 0u && float((r - 1u) + ((r - 1u) >> 23u)) * (1.0 / 16777216.0) == ds) return r - 1u;
+  if (r < 0xFFFFFFu && float((r + 1u) + ((r + 1u) >> 23u)) * (1.0 / 16777216.0) == ds) return r + 1u;
+  return r;
+}
+
 cbuffer XeTransfer : register(b0, space0) { uint4 t0; uint4 t1; uint4 t2; uint4 t3; };
 Texture2D<float> xe_src_depth : register(t0, space0);
 Texture2D<uint2> xe_src_stencil : register(t1, space0);
@@ -515,7 +557,7 @@ Texture2D<uint4> xe_src_colour_bits : register(t3, space0);
 uint XeD24FromHost(float d, uint flags) {
   if ((flags & 1u) == 0u) {
     precise float scaled = saturate(d) * 16777215.0;
-    return min(uint(round(scaled)), 0xFFFFFFu);
+    return XeUnorm24(d);
   }
   precise float guest = (flags & 2u) ? d * 2.0 : d;
   uint f32u32 = asuint(guest);
