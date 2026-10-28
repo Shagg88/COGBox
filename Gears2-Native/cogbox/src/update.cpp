@@ -302,6 +302,7 @@ static bool install(const std::string &version)
         std::string rel = names[i].substr(std::min(strip, names[i].size()));
         if (rel.empty() || rel.find("..") != std::string::npos || rel[0] == '/' || rel.find(':') != std::string::npos) continue;
         for (char &ch : rel) if (ch == '/') ch = '\\';
+        if (rel.back() == '\\') continue;   // 0.2.0: a folder entry (Windows zips name them with \, not /)
         if (protected_path(rel)) continue;
         std::wstring target = g_exe_dir + L"\\" + wide(rel), fresh = target + L".new-cogbox";
         make_dirs_for(target);

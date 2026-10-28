@@ -1,4 +1,4 @@
-# CogBox: assemble the player zip (CogBox-<version>.zip + .sha256) from the launcher and the three ports' builds.
+﻿# CogBox: assemble the player zip (CogBox-<version>.zip + .sha256) from the launcher and the three ports' builds.
 # Run on the PC: pwsh -File cogbox\tools\package_cogbox.ps1 [-Version 0.1.0] [-Out <folder>] [-WhatIf]
 # The zip and its .sha256 land in COGBox-Project\releases\<version>\; the
 # unzipped working copy is built in Gears2-Native\out\pack\. A new build of the same version replaces the old files.
@@ -156,7 +156,17 @@ foreach ($f in @(Get-ChildItem -LiteralPath $stage -Recurse -File | Where-Object
   $sums += "$h  $($f.FullName.Substring($stage.Length + 1))"
 }
 Set-Content (Join-Path $stage 'SHA256SUMS.txt') $sums
-Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
+# 0.2.0 (job 583): files only, names with / - Compress-Archive also wrote folder entries named with \ ("licenses\fidelityfx-sdk\"),
+# which 0.1.0's updater took for files and could not replace ("Couldn't replace licenses\fidelityfx-sdk\"), and \ names
+# are not folders to unzip tools on Linux / the Steam Deck
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+$zfs = [IO.File]::Open($zip, [IO.FileMode]::CreateNew)
+$za = New-Object IO.Compression.ZipArchive($zfs, [IO.Compression.ZipArchiveMode]::Create)
+foreach ($f in (Get-ChildItem -LiteralPath $stage -Recurse -File | Sort-Object FullName)) {
+  $rel = $f.FullName.Substring($stage.TrimEnd('\').Length + 1).Replace('\', '/')
+  [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($za, $f.FullName, $rel, [IO.Compression.CompressionLevel]::Optimal)
+}
+$za.Dispose(); $zfs.Dispose()
 $zh = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
 Set-Content "$zip.sha256" "$zh  $name.zip"
 $mb = [Math]::Round((Get-Item $zip).Length / 1MB)
