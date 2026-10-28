@@ -281,7 +281,11 @@ static void option_row(App &a, int g, const gs::Option &o)
         int idx = std::max(0, std::min((int)items.size() - 1, (int)v));
         for (std::string &it : items) it = tr(it);   // 0.2.0
         if (ImGui::BeginCombo("##v", items.empty() ? "" : items[idx].c_str())) {
-            for (int i = 0; i < (int)items.size(); i++) {
+            // 0.2.1: Render resolution lists 1080p in size order; the saved value is still the original index
+            std::vector<int> ord;
+            for (int i = 0; i < (int)items.size(); i++) ord.push_back(i);
+            if (o.id == "Resolution" && items.size() == 6) ord = { 0, 5, 1, 2, 3, 4 };
+            for (int i : ord) {
                 gs::Availability ca = gs::choice_available(o, G, i);
                 if (!ca.ok) ImGui::BeginDisabled();
                 ImGui::PushID(i);   // translations can make two choices read the same

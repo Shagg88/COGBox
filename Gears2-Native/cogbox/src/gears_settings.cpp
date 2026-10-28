@@ -134,7 +134,7 @@ std::vector<Option> make_options(Game g) {
     // Frame rate limit: no PS1 tooltip; text from 59-how-to-play ("The game itself asks for 30 fps").
     add(choice("Fps", "Frame rate limit", Tab::Display, PG, { "30 (original)", "60", "120", "Unlimited" }, 0,
                "The game itself asks for 30 frames per second, as on the console. 60 / 120 lift the limit to that; Unlimited "
-               "removes it.", 341), "", "", true);
+               "removes it. With V-Sync on, the limit stays just under your monitor's refresh rate.", 341), "", "", true);
     add(choice("FpsMode", "FPS counter", Tab::Display, OWN, { "Off", "Bar at the top", "Bar at the bottom", "Game's own (column)" }, 0,
                "Bar: one line (FPS, frame time, slowest frame) drawn by the port itself, nothing in the game changed. Game's own: "
                "the game's built-in FPS / frame-time column.", 336));
@@ -819,6 +819,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             const std::string v = it != env.keys.end() && !it->second.empty() ? it->second : k.def;
             a.push_back(std::string("--") + k.cvar + "=" + v);
         }
+        // 0.2.1 (quick win): move with WASD and the arrow keys alike; the arrows used to turn the camera (the mouse does)
+        for (const char* m : { "keybind_lstick_up=W,Up", "keybind_lstick_down=S,Down", "keybind_lstick_left=A,Left", "keybind_lstick_right=D,Right",
+                               "keybind_rstick_up=None", "keybind_rstick_down=None", "keybind_rstick_left=None", "keybind_rstick_right=None" })
+            a.push_back(std::string("--") + m);
     }
     // 0.2.0: mods - the enabled ones in load order (layer 2's --ue3_mods folder overlay)
     if (!env.mods.empty()) {
