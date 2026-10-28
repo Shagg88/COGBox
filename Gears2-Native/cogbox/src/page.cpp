@@ -576,7 +576,7 @@ static void about_tab(App &a, int g)
         float p = 0; std::string err;
         int s = update_install_state(&p, &err);
         if (s == 1 || s == 2) ImGui::ProgressBar(p, ImVec2(g_rowX1 - ImGui::GetCursorScreenPos().x, 0), s == 1 ? "Downloading..." : "Unpacking...");
-        else if (s == 3) { if (small_button("Restart COGBox")) { if (update_restart()) a.quit = true; } }
+        else if (s == 3) { static bool rs = false; if (!rs) { rs = true; if (update_restart()) a.quit = true; } else if (small_button("Restart COGBox")) { if (update_restart()) a.quit = true; } }   // 0.2.2: by itself
         else {
             if (s == -1) lamp_line(3, err);
             if (small_button("Update")) {

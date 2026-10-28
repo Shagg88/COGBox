@@ -449,12 +449,28 @@ void front_draw(App &a, ImVec2 size)
         std::string newer = update_newer();
         if (newer.empty() && getenv("COGBOX_SHOW_UPDATE")) newer = getenv("COGBOX_SHOW_UPDATE");
         if (!newer.empty() && st.ready != R_NO_PORT) {
-            std::string lbl = "UPDATE TO " + newer;
+            // 0.2.2 (Shagg): one click updates - downloads, unpacks and restarts COGBox by itself
+            float prog = 0; std::string uerr;
+            const int us_state = update_install_state(&prog, &uerr);
+            static bool restarting = false;
+            if (us_state == 3 && !restarting) { restarting = true; if (update_restart()) a.quit = true; }
+            char pct[16];
+            snprintf(pct, sizeof pct, "%d%%", int(prog * 100.0f + 0.5f));
+            std::string lbl = us_state == 1 ? tr("DOWNLOADING") + std::string(" ") + pct
+                            : us_state == 2 ? tr("INSTALLING") + std::string("...")
+                            : us_state == 3 ? tr("RESTARTING") + std::string("...")
+                                            : tr("UPDATE TO") + std::string(" ") + newer;
             ImVec2 us(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, lbl.c_str()).x + S(36), T(28));
             ImGui::SetCursorScreenPos(ImVec2(size.x - artW - S(24) - S(12) - us.x, S(22)));
-            if (th_button_red(lbl.c_str(), us, true, F_BOLD)) { a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 4; a.barSel = -1; }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                ImGui::SetTooltip("COGBox %s is out (this is " COGBOX_VERSION "). Opens the About tab, where Update downloads and installs it.", newer.c_str());
+            const bool idle = us_state != 1 && us_state != 2 && us_state != 3;
+            if (th_button_red(lbl.c_str(), us, idle, F_BOLD) && idle) {
+                if (a.run.proc) set_message(a, "Close the game first, then update.", true);
+                else { update_install_start(newer); set_message(a, "Updating COGBox - it restarts by itself when done.", false); }
+            }
+            if (us_state == -1 && !uerr.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", (tr("The update failed:") + std::string(" ") + uerr).c_str());
+            else if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip("%s", (std::string("COGBox ") + newer + " " + tr("is out. Click to download and install it; COGBox restarts by itself.")).c_str());
         }
     }
     // 0.2.0 (GitHub #1): once per session, when the carousel stops on Judgment and it has no Title Update 4
@@ -501,5 +517,11 @@ void front_draw(App &a, ImVec2 size)
         ImDrawList *wl = ImGui::GetWindowDrawList();
         wl->AddText(F_BOLD, FS(F_BOLD), ImVec2(mp.x + S(1), mp.y + S(1)), U(col::shadow, 0.8f), mark);
         wl->AddText(F_BOLD, FS(F_BOLD), mp, U(col::dim, 0.85f), mark);
+        // 0.2.2 (Shagg): the version, just above the mark
+        const char *ver = "v" COGBOX_VERSION;
+        ImVec2 vs = F_SMALL->CalcTextSizeA(FS(F_SMALL), FLT_MAX, 0, ver);
+        ImVec2 vp(size.x - vs.x - S(24), mp.y - vs.y - S(2));
+        wl->AddText(F_SMALL, FS(F_SMALL), ImVec2(vp.x + S(1), vp.y + S(1)), U(col::shadow, 0.8f), ver);
+        wl->AddText(F_SMALL, FS(F_SMALL), vp, U(col::faint, 0.9f), ver);
     }
 }
