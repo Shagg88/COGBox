@@ -20,9 +20,9 @@ $cogbox = Split-Path -Parent (Split-Path -Parent $PSCommandPath)                
 $needDlls = @('dxcompiler.dll', 'dxil.dll')   # plus a rexruntime*.dll, checked below
 $ports = @(
   @{ to = 'Gears2\port-tu6';  from = "$docs\Gears2-Native\build\Release-tu6";       exe = 'gow2.exe' },
-  @{ to = 'Gears2\port-disc'; from = "$docs\Gears2-Native\build\RelWithDebInfo";    exe = 'gow2.exe' },
-  @{ to = 'Gears3\port-tu6';  from = "$docs\Gears3-Native\build\RelWithDebInfo-tu6"; exe = 'gow3.exe' },
-  @{ to = 'Gears3\port-disc'; from = "$docs\Gears3-Native\build\RelWithDebInfo";    exe = 'gow3.exe' },
+  @{ to = 'Gears2\port-disc'; from = "$docs\Gears2-Native\build\Release";           exe = 'gow2.exe' },   # 0.2.2: Release (no Tracy)
+  @{ to = 'Gears3\port-tu6';  from = "$docs\Gears3-Native\build\Release-tu6";       exe = 'gow3.exe' },
+  @{ to = 'Gears3\port-disc'; from = "$docs\Gears3-Native\build\Release";           exe = 'gow3.exe' },
   @{ to = 'Judgment\port';    from = "$docs\GearsJ-Native\build\Release";           exe = 'gowj.exe' }
 )
 # Licences: CogBox's own (fonts, Dear ImGui, SDL3, miniz, stb), each project's LICENSE and THIRD_PARTY_NOTICES.md, and
@@ -43,6 +43,18 @@ foreach ($p in $ports) {
   if (-not (Test-Path (Join-Path $p.from 'D3D12\D3D12Core.dll'))) { $problems += "no D3D12\D3D12Core.dll beside $($p.from)\$($p.exe) (Agility SDK, 0.2.0)" }
   foreach ($f in $needDlls) { if (-not (Test-Path (Join-Path $p.from $f))) { $problems += "missing next to $($p.to): $($p.from)\$f" } }
   if (-not @(Get-ChildItem -LiteralPath $p.from -Filter 'rexruntime*.dll' -File -ErrorAction SilentlyContinue).Count) { $problems += "no rexruntime*.dll in $($p.from)" }
+}
+# 0.2.2 (Shagg: developer tools never ship): no profiler, debug runtime, symbols or test program in any port folder, and
+# no shipped program may load Tracy (TracyClient*.dll opens a network port; antivirus flags it, GitHub #24).
+$deny = '^(TracyClient.*\.dll|rexruntimerd\.dll|rexgpu-.*rd\.dll|.*\.pdb|.*\.ilk|.*\.exp|.*\.lib|gn_tests\.exe|.*\.pre.*|.*\.old-.*|.*\.bak)$'
+foreach ($p in $ports) {
+  if (-not (Test-Path $p.from)) { continue }
+  foreach ($f in @(Get-ChildItem -LiteralPath $p.from -File -Filter *.dll -ErrorAction SilentlyContinue)) {
+    if ($f.Name -match $deny) { $problems += "developer file would ship: $($p.from)\$($f.Name)" }
+  }
+  foreach ($f in @(Get-ChildItem -LiteralPath $p.from -File -Filter *.dll -ErrorAction SilentlyContinue) + @(Get-Item -LiteralPath (Join-Path $p.from $p.exe) -ErrorAction SilentlyContinue)) {
+    if ($f -and [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($f.FullName)).Contains('TracyClient')) { $problems += "loads Tracy: $($f.FullName)" }
+  }
 }
 if ($problems.Count) { $problems | ForEach-Object { Write-Host "PROBLEM: $_" }; Write-Host 'RESULT: FAIL (nothing written)'; exit 1 }
 
@@ -80,7 +92,10 @@ foreach ($sdk in $sdks) {
   $dir = "$docs\Gears2-Native\third_party\$sdk"
   if (-not (Test-Path $dir)) { Write-Host "note: SDK folder not found: $sdk"; continue }
   $found = @(Get-ChildItem -LiteralPath $dir -File -Recurse -Depth 2 -ErrorAction SilentlyContinue |
-             Where-Object { $_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE)' -or $_.Name -match '^license\.(md|txt)$' -or $_.Name -match 'license.*\.(md|txt|rtf|pdf)$' })
+             Where-Object { $_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE)' -or $_.Name -match '^license\.(md|txt)$' -or $_.Name -match 'license.*\.(md|txt|rtf|pdf)$' } |
+             # 0.2.2: only licences, and only of what ships - not a licence checker's config, the test framework, the
+             # build tools or the profiler (none of them is in the zip)
+             Where-Object { $_.Extension -ne '.cfg' -and $_.FullName -notmatch '\\thirdparty\\(catch2|tracy)\\' -and $_.FullName -notmatch '\\tools\\binutils\\' })
   if (-not $found.Count) { Write-Host "note: no licence file found in $sdk - add it by hand" }
   # job 530: each SDK in its own folder, keeping the path inside it - many files are just "LICENSE", and a flat folder let
   # them overwrite each other (and hid which bundled library a licence belongs to)
