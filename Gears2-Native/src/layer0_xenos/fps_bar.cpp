@@ -31,6 +31,9 @@ namespace {
 class FpsBar final : public rex::ui::ImGuiDialog {
  public:
   FpsBar(rex::ui::ImGuiDrawer* drawer, bool top) : ImGuiDialog(drawer), top_(top) {}
+  // 0.2.1 (patch 42): the bar is redrawn with each game frame anyway; asking for more made NVIDIA / RTSS count the
+  // presenter's extra repaints (monitor rate) instead of the game's frames.
+  bool WantsContinuousPaint() const override { return false; }
 
  protected:
   void OnDraw(ImGuiIO& io) override {
