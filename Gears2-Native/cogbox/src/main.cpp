@@ -321,13 +321,8 @@ static void draw_ui(App &a, ImVec2 size)
         fg->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p0.x + S(4), p1.y), U(a.messageBad ? col::bad : col::good, al));
         fg->AddText(F_BODY, FS(F_BODY), ImVec2(p0.x + S(18), p0.y + S(9)), U(col::text, al), a.message.c_str(), nullptr, size.x - S(120));
     }
-    // a newer COGBox: one line in the corner (installed from the About tab)
-    std::string newer = update_newer();
-    if (!newer.empty() && a.screen == SCR_FRONT) {
-        std::string t = "COGBox " + newer + " is out - see any game's About tab";
-        ImVec2 ts = F_SMALL->CalcTextSizeA(FS(F_SMALL), FLT_MAX, 0, t.c_str());
-        ImGui::GetWindowDrawList()->AddText(F_SMALL, FS(F_SMALL), ImVec2(size.x - ts.x - S(24), S(24)), U(col::amber), t.c_str());
-    }
+    // 0.2.2: the old "COGBox x is out - see any game's About tab" corner line is gone - it was drawn over the UPDATE TO
+    // button, which now installs the update itself (front.cpp)
     install_draw(a, size);
     draw_modal(a, size);
     draw_window_buttons(a, size);   // job 523
