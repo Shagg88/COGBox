@@ -373,6 +373,12 @@ static void tidy(const std::wstring &dir, int depth)
             if (depth < 3 && n != L"game" && n != L"user" && n != L"logs" && n != L"shadercache") tidy(dir + L"\\" + n, depth + 1);
         } else if (n.size() > 11 && (n.compare(n.size() - 11, 11, L".old-cogbox") == 0 || n.compare(n.size() - 11, 11, L".new-cogbox") == 0)) {
             DeleteFileW((dir + L"\\" + n).c_str());
+        } else if ((_wcsicmp(n.c_str(), L"TracyClientrd.dll") == 0 || _wcsicmp(n.c_str(), L"TracyClient.dll") == 0 ||
+                    _wcsicmp(n.c_str(), L"rexruntimerd.dll") == 0 || _wcsicmp(n.c_str(), L"rexgpu-xenosrd.dll") == 0) &&
+                   GetFileAttributesW((dir + L"\\rexruntime.dll").c_str()) != INVALID_FILE_ATTRIBUTES) {
+            // 0.2.2 (GitHub #24): the debug-info runtime and the Tracy profiler older releases shipped beside a game - unused
+            // once that folder holds the Release runtime (rexruntime.dll), and flagged by antivirus; gone at the next start
+            DeleteFileW((dir + L"\\" + n).c_str());
         }
     } while (FindNextFileW(f, &fd));
     FindClose(f);
