@@ -176,6 +176,33 @@ static void replace_all_ci(std::string &s, const std::string &from, const std::s
     s.swap(out);
 }
 
+// 0.2.2: names Windows gives by default - they say nothing about the player, and as words they appear in our own text
+static bool generic_name(const std::string &n)
+{
+    static const char *g[] = { "user", "users", "admin", "administrator", "owner", "guest", "default", "public", "player", "pc" };
+    for (const char *x : g) if (_stricmp(n.c_str(), x) == 0) return true;
+    return false;
+}
+// replace_all_ci for a whole word: not inside a longer word (letters / digits either side) and not inside a %NAME%
+static void replace_word_ci(std::string &s, const std::string &from, const std::string &to)
+{
+    if (from.empty()) return;
+    auto lower = [](std::string x) { for (char &c : x) c = (char)tolower((unsigned char)c); return x; };
+    const std::string ls = lower(s), lf = lower(from);
+    std::string out;
+    size_t at = 0, pos;
+    while ((pos = ls.find(lf, at)) != std::string::npos) {
+        const size_t end = pos + lf.size();
+        const bool word = (pos == 0 || !isalnum((unsigned char)s[pos - 1])) && (end >= s.size() || !isalnum((unsigned char)s[end]));
+        const bool inPlaceholder = (pos > 0 && s[pos - 1] == '%') || (end < s.size() && s[end] == '%');
+        out.append(s, at, pos - at);
+        out += (word && !inPlaceholder) ? to : s.substr(pos, lf.size());
+        at = end;
+    }
+    out.append(s, at, std::string::npos);
+    s.swap(out);
+}
+
 std::string report_anonymise(const std::string &text)
 {
     std::string s = text;
@@ -206,7 +233,10 @@ std::string report_anonymise(const std::string &text)
         GetEnvironmentVariableW(var, w, 256);
         char u8[1024] = "";
         WideCharToMultiByte(CP_UTF8, 0, w, -1, u8, sizeof u8, NULL, NULL);
-        if (strlen(u8) >= 3) replace_all_ci(s, u8, var[0] == L'U' ? "%USERNAME%" : "%COMPUTERNAME%");
+        // 0.2.2: whole words only, outside the %...% placeholders already written, and not for the generic Windows names
+        // ("User", "Admin" ...) that identify nobody - a player called "User" got "%%USERNAME%PROFILE%" and
+        // "Your Windows %USERNAME% name" in the report
+        if (strlen(u8) >= 3 && !generic_name(u8)) replace_word_ci(s, u8, var[0] == L'U' ? "%USERNAME%" : "%COMPUTERNAME%");
     }
     // Outside review: other folder paths (another drive, a games folder) say where the player keeps things. Keep only
     // the last part (a file or folder name and what follows it): C:\Games\Gears 2\default.xex -> <path>\default.xex.
