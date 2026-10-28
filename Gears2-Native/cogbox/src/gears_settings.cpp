@@ -158,7 +158,7 @@ std::vector<Option> make_options(Game g) {
                "4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, "
                "resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for "
                "weaker graphics cards; softer than real detail.", 340), "", "", true);
-    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS" }, 0,
+    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA", "FSR (highly experimental)", "DLSS (NVIDIA RTX, highly experimental)", "XeSS (highly experimental)" }, 0,
                "SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX12 GPU. DLSS: the same on "
                "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.", 346), "", "", true);
     add(choice("SceneMode", "Scene resolution", Tab::Graphics, SH,

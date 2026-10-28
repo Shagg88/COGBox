@@ -765,3 +765,6 @@ Saved in COGBox's reports folder:  = 已保存到 COGBox 的报告文件夹：
 The game is already running. = 游戏已在运行。
 Wait until the copy is finished. = 请等待复制完成。
 Add your copy of the game first (Add your copy... above). = 请先添加你的游戏副本（上方的“添加你的副本...”）。
+FSR (highly experimental) = FSR (高度实验性)
+DLSS (NVIDIA RTX, highly experimental) = DLSS (NVIDIA RTX、高度实验性)
+XeSS (highly experimental) = XeSS (高度实验性)

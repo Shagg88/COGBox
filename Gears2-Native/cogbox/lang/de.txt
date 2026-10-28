@@ -765,3 +765,6 @@ Saved in COGBox's reports folder:  = Im Berichte-Ordner von COGBox gespeichert:
 The game is already running. = Das Spiel läuft bereits.
 Wait until the copy is finished. = Warte, bis das Kopieren fertig ist.
 Add your copy of the game first (Add your copy... above). = Füge zuerst deine Kopie des Spiels hinzu (Deine Kopie hinzufügen... oben).
+FSR (highly experimental) = FSR (sehr experimentell)
+DLSS (NVIDIA RTX, highly experimental) = DLSS (NVIDIA RTX, sehr experimentell)
+XeSS (highly experimental) = XeSS (sehr experimentell)

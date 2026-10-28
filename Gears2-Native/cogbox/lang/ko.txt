@@ -765,3 +765,6 @@ Saved in COGBox's reports folder:  = COGBox 보고서 폴더에 저장됨:
 The game is already running. = 게임이 이미 실행 중입니다.
 Wait until the copy is finished. = 복사가 끝날 때까지 기다리세요.
 Add your copy of the game first (Add your copy... above). = 먼저 게임 사본을 추가하세요(위의 '사본 추가...').
+FSR (highly experimental) = FSR (매우 실험적)
+DLSS (NVIDIA RTX, highly experimental) = DLSS (NVIDIA RTX, 매우 실험적)
+XeSS (highly experimental) = XeSS (매우 실험적)

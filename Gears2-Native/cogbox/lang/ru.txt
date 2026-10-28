@@ -765,3 +765,6 @@ Saved in COGBox's reports folder:  = Сохранено в папке отчёт
 The game is already running. = Игра уже запущена.
 Wait until the copy is finished. = Дождитесь окончания копирования.
 Add your copy of the game first (Add your copy... above). = Сначала добавьте свою копию игры (кнопка «Добавить свою копию...» выше).
+FSR (highly experimental) = FSR (очень экспериментально)
+DLSS (NVIDIA RTX, highly experimental) = DLSS (NVIDIA RTX, очень экспериментально)
+XeSS (highly experimental) = XeSS (очень экспериментально)
