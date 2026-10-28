@@ -542,7 +542,7 @@ static void about_tab(App &a, int g)
         if (s.empty()) set_message(a, std::string("No play of ") + d.name + " yet - play once, then make the report.", false);
         else {
             std::string zip, err;
-            if (make_report(a, g, s, "", zip, err)) { set_message(a, "Saved on your desktop: " + zip.substr(zip.find_last_of('\\') + 1), false); }
+            if (make_report(a, g, s, "", zip, err)) { set_message(a, std::string(a.wine ? "Saved in COGBox's reports folder: " : "Saved on your desktop: ") + zip.substr(zip.find_last_of('\\') + 1), false); if (a.wine) shell_open(zip.substr(0, zip.find_last_of('\\'))); }
             else set_message(a, "Couldn't make the report: " + err, true);
         }
     }
@@ -758,6 +758,15 @@ void page_draw(App &a, ImVec2 size)
     if (th_button_red("PLAY", ImVec2(S(130), S(40)), ready, F_HEAD, a.barSel == 2) || (ready && ((barA && a.barSel == 2) || ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false)))) {
         settings_save(a);
         play_start(a, g);
+    }
+    // 0.2.1: say why PLAY is greyed
+    if (!ready && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        const GameDef &gd = game_def(g);
+        std::string why = a.run.proc ? "The game is already running." : a.job.state.load() == 1 ? "Wait until the copy is finished." :
+                          a.st[g].ready == R_NEED_UPDATE ? std::string("Needs ") + gd.updateName + " - add it from your console or its package file" :
+                          a.st[g].ready == R_COPY_MISSING ? "Your copy isn't where it was - is its drive connected?" :
+                          a.st[g].ready == R_NO_PORT ? "Not in this release of COGBox yet" : "Add your copy of the game first (Add your copy... above).";
+        ImGui::SetTooltip("%s", tr(why).c_str());
     }
     ImGui::PopItemFlag();
 }

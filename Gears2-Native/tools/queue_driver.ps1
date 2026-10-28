@@ -26,6 +26,9 @@ while ($true) {
   Write-Host "$(Get-Date -Format s) start $($next.Name)"
   & powershell -NoProfile -ExecutionPolicy Bypass -File $next.FullName *>&1 | Out-File -LiteralPath $log -Encoding utf8
   $secs = [int]((Get-Date) - $t).TotalSeconds
+  # 0.2.1: a job that hit PowerShell errors is not a clean PASS, whatever it printed
+  $errs = @(Select-String -LiteralPath $log -Pattern 'FullyQualifiedErrorId' -SimpleMatch -ErrorAction SilentlyContinue).Count
+  if ($errs) { Add-Content -LiteralPath $log -Value "== QUEUE: WARNING - $errs PowerShell error(s) above; treat this job as FAILED until checked" -Encoding utf8; Write-Host "  $($next.Name): $errs PowerShell error(s)" }
   Add-Content -LiteralPath $log -Value "== QUEUE: finished $(Get-Date -Format s) after $secs s, exit $LASTEXITCODE" -Encoding utf8
   Move-Item -LiteralPath $next.FullName -Destination (Join-Path $q ("done\" + $next.Name)) -Force
   Write-Host "$(Get-Date -Format s) done  $($next.Name) ($secs s)"

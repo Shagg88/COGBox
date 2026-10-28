@@ -271,8 +271,8 @@ void play_answer(App &a, const Modal &m)
     if (m.answer == 0) {
         std::string zip, err;
         if (make_report(a, m.game, dir, what, zip, err)) {
-            set_message(a, "Saved on your desktop: " + zip.substr(zip.find_last_of('\\') + 1) + " - attach it to a GitHub issue.", false);
-            shell_open(desktop_dir());
+            set_message(a, std::string(a.wine ? "Saved in COGBox's reports folder: " : "Saved on your desktop: ") + zip.substr(zip.find_last_of('\\') + 1) + " - attach it to a GitHub issue.", false);
+            shell_open(zip.substr(0, zip.find_last_of('\\')));
         } else set_message(a, "Couldn't make the report: " + err, true);
     } else if (m.answer == 1) shell_open(dir);
 }
@@ -336,6 +336,9 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
            cached_sha1(a.ini, join(st.updateDir, "default.xexp")) + ")") + "\r\n";
     sys += "\r\nMade by COGBox at " + now_stamp() + ". Your Windows user name and PC name are replaced (x's in crash dumps).\r\n";
     std::string name = std::string("CogBox-report-") + d.dir + "-" + now_stamp() + ".zip";
-    zip = join(desktop_dir(), name);
+    // 0.2.1: under Proton / Wine the "desktop" is hidden inside the game's prefix - use COGBox's own reports folder
+    std::string dir = a.wine ? join(exe_dir(), "reports") : desktop_dir();
+    if (a.wine) make_dirs(dir);
+    zip = join(dir, name);
     return report_write(files, sys, zip, err);
 }
