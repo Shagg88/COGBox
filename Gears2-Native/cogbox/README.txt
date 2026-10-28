@@ -81,9 +81,9 @@ Linux and Steam Deck (Proton) - experimental
 4. Start it from Steam. On a small screen like the Steam Deck's, COGBox starts maximised and
    borderless. Add your copy as on Windows.
 Under Proton COGBox skips exclusive fullscreen, Reflex and Anti-Lag (the compositor owns the
-screen). Both DirectX 12 (through vkd3d-proton) and Vulkan can be tried - Vulkan may be the faster
-one there. Steam Input should present the controller as a standard gamepad. Problem reports
-from Linux help a lot.
+screen). The games use Vulkan there by themselves (DirectX 12 does not start under Proton yet).
+Steam Input should present the controller as a standard gamepad. Problem reports from Linux
+help a lot: "Make a problem report" saves them in COGBox's reports folder (and opens it).
 
 
 Where things are
