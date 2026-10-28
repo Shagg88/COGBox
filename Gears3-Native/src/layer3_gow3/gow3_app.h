@@ -8,6 +8,11 @@
 #include <rex/cvar.h>
 #include <rex/rex_app.h>
 #include "mouse_look.h"
+
+namespace rex::ui {
+class WindowedAppContext;
+}
+void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp (0.2.1)
 #include <rex/ui/window.h>
 
 #include <ue3/config_bundle.h>
@@ -101,6 +106,7 @@ class Gow3App : public rex::ReXApp {
       xenos::display::SetWindow(w->GetNativeWindowHandle());
       xenos::display::SetSurfaceSize(w->GetActualPhysicalWidth(), w->GetActualPhysicalHeight());
     }
+    if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
     XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }

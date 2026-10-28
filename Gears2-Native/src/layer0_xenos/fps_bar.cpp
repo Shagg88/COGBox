@@ -8,6 +8,7 @@
 #include <rex/cvar.h>
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/imgui_drawer.h>
+#include <rex/ui/windowed_app_context.h>
 
 #include <imgui.h>
 
@@ -98,9 +99,25 @@ std::atomic<uint64_t> g_jobs_left{0}, g_jobs_ever{0};
 std::atomic<bool> g_hold_active{false};
 std::atomic<uint32_t> g_hold_total{0}, g_hold_left{0};
 
+// 0.2.1 (GitHub #18 / #23: NVIDIA and RTSS read about 3x the game's fps): an ImGuiDrawer with any dialog registered
+// asks the presenter for a repaint every UI tick, so this note - registered all the time though it draws nothing
+// while no shaders are building - kept the presenter repainting at the monitor's rate (180 Hz on Shagg's PC), and the
+// overlays counted those repaints as frames (the 0054 achievement-toast problem again). Now it is only on the drawer
+// while the renderer has pipeline work or holds a frame: it leaves when idle and is added back on the UI thread.
 class ShaderNote final : public rex::ui::ImGuiDialog {
  public:
-  explicit ShaderNote(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {}
+  ShaderNote(rex::ui::ImGuiDrawer* drawer, rex::ui::WindowedAppContext* ui)
+      : ImGuiDialog(drawer), ui_(ui), alive_(std::make_shared<bool>(true)) {
+    if (ui_) imgui_drawer()->RemoveDialog(this);  // nothing to show yet (without the UI thread it stays, as before)
+  }
+  ~ShaderNote() override { *alive_ = false; }
+  // Any thread: work is queued or a frame is held - be on the drawer.
+  void Wake() {
+    if (!ui_ || attached_.exchange(true)) return;
+    ui_->CallInUIThread([this, alive = alive_] {
+      if (*alive) imgui_drawer()->AddDialog(this);  // no-op if already added
+    });
+  }
 
  protected:
   void OnDraw(ImGuiIO& io) override {
@@ -115,6 +132,10 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
     if (!left) {
       batch_base_ = ever;
       busy_since_ = {};
+      if (ui_) {  // idle: off the drawer until there is work again (safe during drawing - the SDK defers it)
+        attached_.store(false);
+        imgui_drawer()->RemoveDialog(this);
+      }
       return;
     }
     if (!busy_since_.time_since_epoch().count()) busy_since_ = now;
@@ -183,9 +204,14 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
   }
   uint64_t batch_base_ = 0;
   std::chrono::steady_clock::time_point busy_since_{};
+  rex::ui::WindowedAppContext* ui_ = nullptr;
+  std::shared_ptr<bool> alive_;     // read and written on the UI thread only
+  std::atomic<bool> attached_{true};  // as made: registered by the base until the constructor removes it
 };
 
 std::unique_ptr<ShaderNote> g_note;
+std::atomic<ShaderNote*> g_note_live{nullptr};
+rex::ui::WindowedAppContext* g_ui = nullptr;
 
 }  // namespace
 
@@ -193,15 +219,25 @@ void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_
   g_hold_total.store(pipelines_total, std::memory_order_relaxed);
   g_hold_left.store(pipelines_left, std::memory_order_relaxed);
   g_hold_active.store(active, std::memory_order_release);
+  if (active)
+    if (ShaderNote* n = g_note_live.load(std::memory_order_acquire)) n->Wake();
 }
 
 void XenosSetShaderJobs(uint64_t left, uint64_t ever_queued) {
   g_jobs_left.store(left, std::memory_order_relaxed);
   g_jobs_ever.store(ever_queued, std::memory_order_relaxed);
+  if (left)
+    if (ShaderNote* n = g_note_live.load(std::memory_order_acquire)) n->Wake();
 }
 
+// 0.2.1: the UI thread for the shader note (each game's OnCreateDialogs, before XenosCreateFpsBarIfRequested).
+void XenosSetUiContext(rex::ui::WindowedAppContext* ui) { g_ui = ui; }
+
 void XenosCreateFpsBarIfRequested(rex::ui::ImGuiDrawer* drawer) {
-  if (drawer && REXCVAR_GET(gow2_shader_note)) g_note = std::make_unique<ShaderNote>(drawer);  // patch 0062
+  if (drawer && REXCVAR_GET(gow2_shader_note)) {  // patch 0062
+    g_note = std::make_unique<ShaderNote>(drawer, g_ui);
+    g_note_live.store(g_note.get(), std::memory_order_release);
+  }
   const std::string where = REXCVAR_GET(gow2_fps_bar);
   if (!drawer || (where != "top" && where != "bottom")) return;
   XenosEnsureObserverHub();  // the swap count (with the SDK's GPU plugin it comes from the hub's observer)
@@ -210,5 +246,6 @@ void XenosCreateFpsBarIfRequested(rex::ui::ImGuiDrawer* drawer) {
 
 void XenosDestroyFpsBar() {
   g_bar.reset();
+  g_note_live.store(nullptr, std::memory_order_release);
   g_note.reset();  // patch 0062
 }

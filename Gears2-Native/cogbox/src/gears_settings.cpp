@@ -646,7 +646,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (aa >= 2 && aa <= 4 && !cap_file(env, need[aa])) {
             notes.push_back(std::string("launcher: ") + k_aaNames[aa] + " is not available for this game / build - SMAA instead"); aa = 1;
         }
-        if (s.i("Api") == 1) {   // job 521: Vulkan (experimental); the upscalers are DirectX 12 only
+        // 0.2.1 (GitHub #15, #3, #11): under Proton / Wine (Steam Deck, SteamOS, Linux) DirectX 12 ends the game a few
+        // seconds in (exit code 3, right after the renderer starts, every game); Vulkan gets in game there - so there
+        // it is always Vulkan, and the log says so
+        const bool vk = s.i("Api") == 1 || env.wine;
+        if (env.wine && s.i("Api") != 1) notes.push_back("launcher: Proton / Wine - Vulkan instead of DirectX 12 (DirectX 12 does not start there yet)");
+        if (vk) {   // job 521: Vulkan (experimental); the upscalers are DirectX 12 only
             a.push_back("--gow2_renderer_api=vulkan");
             if (aa >= 2) { notes.push_back(std::string("launcher: Vulkan - ") + k_aaNames[aa] + " is DirectX 12 only, SMAA instead"); aa = 1; }
         }
@@ -665,7 +670,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (aa >= 2 && avail("SceneMode") && m > 0 && m < 4) a.push_back(modes[m]);
     }
     // PS1 857 (0146 / 0147): frame generation
-    const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0;   // job 521: DirectX 12 only
+    const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0 && !env.wine;   // job 521: DirectX 12 only
     if (fgOn) a.push_back("--gow2_frame_generation=fsr");
     // PS1 858: 16x anisotropic
     if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : "--gowj_aniso16=true");
