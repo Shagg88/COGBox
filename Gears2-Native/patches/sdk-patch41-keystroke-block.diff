@@ -1,0 +1,22 @@
+--- a/src/input/input_system.cpp	2026-10-27 23:37:14.238120366 -0700
++++ b/src/input/input_system.cpp	2026-10-27 23:37:14.261486391 -0700
+@@ -499,6 +499,19 @@
+   std::vector<DeviceId> ids;
+   assignment_->DevicesForUser(user_index, ids);
+ 
++  // Patch 41: a dialog (COGBox's in-game menu, a system dialog) owns the controller and keyboard - the game's own
++  // menus read key presses here, not through GetState, so they are blocked too. Presses made meanwhile are dropped.
++  if (ui_input_blockers_.load() > 0) {
++    for (DeviceId id : ids) {
++      if (auto* driver = DriverForDevice(id)) {
++        X_INPUT_KEYSTROKE drop = {};
++        for (int n = 0; n < 64 && driver->GetDeviceKeystroke(id, 0, &drop) == X_ERROR_SUCCESS; n++) {
++        }
++      }
++    }
++    return X_ERROR_EMPTY;
++  }
++
+   bool any_connected = false;
+   for (DeviceId id : ids) {
+     auto* driver = DriverForDevice(id);
