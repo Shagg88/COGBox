@@ -1,0 +1,59 @@
+--- a/src/input/input_system.cpp	2026-10-27 23:46:31.357171461 -0700
++++ b/src/input/input_system.cpp	2026-10-27 23:46:31.374761132 -0700
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <cmath>
+ #include <cstring>
+ 
+@@ -32,6 +33,9 @@
+ REXCVAR_DEFINE_BOOL(guide_button, false, "Input", "Enable guide button pass-through");
+ 
+ REXCVAR_DEFINE_BOOL(vibration, true, "Input", "Enable controller vibration");
++REXCVAR_DEFINE_BOOL(menu_combo_guard, true, "Input",
++                    "Patch 43: Back + Start together (COGBox's in-game menu) never reach the game; Back or Start alone "
++                    "reaches it 0.12 s late (a quick tap is still delivered)");
+ 
+ REXCVAR_DEFINE_DOUBLE(left_stick_deadzone_percentage, 0.0, "Input",
+                       "Deadzone applied to the left stick, as a fraction of its range")
+@@ -306,6 +310,38 @@
+     out_state->gamepad.buttons = static_cast<uint16_t>(buttons & ~consumed_buttons_[user_index]);
+   }
+ 
++  // Patch 43: the menu combo. Back and Start are held back from the game for a moment, so pressing both opens COGBox's
++  // menu without the game also seeing Start (pause) or Back; one of them alone goes through after the delay, and a tap
++  // shorter than that is replayed for a few reads after it is let go.
++  if (result == X_ERROR_SUCCESS && out_state && user_index < kMaxGuestUsers && REXCVAR_GET(menu_combo_guard)) {
++    struct Guard {
++      uint16_t pending = 0, passed = 0, replay = 0;
++      std::chrono::steady_clock::time_point since{}, replay_until{};
++    };
++    static Guard guards[kMaxGuestUsers];
++    constexpr uint16_t kBackStart = 0x0030;  // XINPUT_GAMEPAD_START 0x10, XINPUT_GAMEPAD_BACK 0x20
++    Guard& g = guards[user_index];
++    const auto now = std::chrono::steady_clock::now();
++    uint16_t b = static_cast<uint16_t>(out_state->gamepad.buttons);
++    const uint16_t bs = b & kBackStart;
++    if (bs == kBackStart) {
++      consumed_buttons_[user_index] |= kBackStart;  // masked until both are let go
++      g.pending = g.replay = 0;
++      b &= ~kBackStart;
++    } else if (bs) {
++      if (!(g.passed & bs) && !(g.pending & bs)) { g.pending = bs; g.since = now; }
++      if (g.pending && now - g.since < std::chrono::milliseconds(120)) b &= ~bs;
++      else { g.passed |= bs; g.pending = 0; }
++    } else {
++      if (g.pending) { g.replay = g.pending; g.replay_until = now + std::chrono::milliseconds(80); g.pending = 0; }
++      g.passed = 0;
++    }
++    if (g.replay) {
++      if (now < g.replay_until) b |= g.replay; else g.replay = 0;
++    }
++    out_state->gamepad.buttons = b;
++  }
++
+   return result;
+ }
+ 
