@@ -198,7 +198,11 @@ REXCVAR_DEFINE_STRING(gow2_renderer_recipe_pack, "", "Gears2",
                       "package reader (with --ue3_shader_prebuild) hands over the shaders of every package the game "
                       "opens; the listed ones come from the player's own files (vertex shaders rebuilt and checked "
                       "against their fingerprint), are translated, and each recorded pipeline is built as soon as both "
-                      "its shaders are ready, as the start-up backlog is (patch 0058). Empty (default) = off");
+                      "its shaders are ready, as the start-up backlog is (patch 0058). Job 612c: a chapter's list "
+                      "starts when half of its marker pixel shaders have been found. Empty (default) = off");
+REXCVAR_DEFINE_INT32(gow2_renderer_recipe_pack_jobs, 6, "Gears2",
+                     "Job 612c: the recipe pack queues more pipelines only while fewer than this many pipeline jobs "
+                     "are in flight (612 queued thousands at once and starved the game's own threads). 1-64");
 REXCVAR_DEFINE_BOOL(gow2_renderer_shader_prebuild, false, "Gears2",
                     "Patch 0132: off by default (its warm-only builds took pipeline workers from the draws' own pipelines). Patch 0068 (Shagg: shaders built behind the loading screen, both games): when the game opens a "
                     "package, its pixel shaders (found by layer 2 in the file itself) are translated like a draw's and "
@@ -7303,6 +7307,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     for (size_t i = 0; i < rcp_records_.size(); ++i)
       std::memcpy(&rcp_records_[i], rcp_.records[i].data(), sizeof(PipelineRecord));
     rcp_state_.assign(rcp_records_.size(), 0);
+    rcp_active_.assign(rcp_records_.size(), 0);
     for (uint32_t i = 0; i < uint32_t(rcp_records_.size()); ++i) {
       const PipelineRecord& r = rcp_records_[i];
       rcp_by_vs_[r.vs_hash].push_back(i);
@@ -7311,54 +7316,104 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         rcp_ps_.insert(r.ps_hash);
       }
     }
+    for (uint32_t c = 0; c < uint32_t(rcp_.chapters.size()); ++c)
+      for (uint64_t h : rcp_.chapters[c].triggers) rcp_triggers_[h].push_back(c);
+    rcp_ch_found_.assign(rcp_.chapters.size(), 0);
+    rcp_ch_on_.assign(rcp_.chapters.size(), 0);
     rcp_vs_found_ = std::make_unique<std::atomic<uint8_t>[]>(std::max<size_t>(1, rcp_.vertex.size()));
     rcp_on_ = true;
-    REXLOG_INFO("gow2_renderer: chapter recipe pack: {} pipelines, {} vertex shaders to rebuild, {} pixel shaders to "
-                "find, from {} (notes/78 C3)",
-                rcp_records_.size(), rcp_.vertex.size(), rcp_ps_.size(), path);
+    REXLOG_INFO("gow2_renderer: chapter recipe pack: {} pipelines in {} chapter lists, {} vertex shaders to rebuild, {} "
+                "pixel shaders to find, from {} (notes/78 C3); at most {} pipeline jobs in flight for it",
+                rcp_records_.size(), rcp_.chapters.size(), rcp_.vertex.size(), rcp_ps_.size(), path,
+                std::max(1, REXCVAR_GET(gow2_renderer_recipe_pack_jobs)));
   }
-  void DrainRecipePack() {  // recording thread, once per frame
-    {
-      std::lock_guard<std::mutex> lock(rcp_mutex_);
-      while (!rcp_in_.empty()) {
-        rcp_todo_.push_back(std::move(rcp_in_.front()));
-        rcp_in_.pop_front();
+  // Job 612c: a chapter's list starts once enough of its marker pixel shaders (ones no other chapter uses) have come
+  // out of the packages being opened - 612 built every chapter's recipes whose shaders were in the shared packages
+  // (~3,300 pipelines for Gears 2 ch1, which needs ~416) and starved the game's threads for ~40 s.
+  void StartRecipeChapter(uint32_t c) {
+    rcp_ch_on_[c] = 1;
+    ++rcp_n_.chapters_on;
+    const xenos::recipes::Chapter& ch = rcp_.chapters[c];
+    uint32_t added = 0;
+    for (uint32_t i : ch.records) {
+      if (rcp_active_[i]) continue;
+      rcp_active_[i] = 1;
+      ++added;
+      if (rcp_state_[i] == 0) {
+        rcp_state_[i] = 1;
+        rcp_need_.push_back(i);
       }
     }
-    // Translation runs on this thread (as the start-up warm-up's does): a few shaders and ~4 ms a frame at most, so a
-    // loading screen keeps moving; the driver work goes to the pipeline workers.
-    const auto t0 = std::chrono::steady_clock::now();
-    uint32_t made = 0;
-    while (!rcp_todo_.empty() && (made < 2 || MsSince(t0) < 4.0)) {
-      RcpShader s = std::move(rcp_todo_.front());
-      rcp_todo_.pop_front();
-      ++made;
-      const auto& index = s.vertex ? rcp_by_vs_ : rcp_by_ps_;
-      const auto it = index.find(s.hash);
-      if (it == index.end()) continue;
-      if (s.vertex) {
-        ++rcp_n_.vs_rebuilt;
-        std::set<uint32_t> tess;
-        for (uint32_t i : it->second) tess.insert(rcp_records_[i].tess_n);
-        for (uint32_t t : tess) cache_->Get(s.hash, s.dwords.data(), s.dwords.size(), true, t);
-      } else {
-        ++rcp_n_.ps_found;
-        cache_->Get(s.hash, s.dwords.data(), s.dwords.size(), false);
+    REXLOG_INFO("gow2_renderer: chapter recipe pack: list '{}' started at frame {} ({} of {} marker shaders found) - {} "
+                "pipelines, {} new to build",
+                ch.name, frame_, rcp_ch_found_[c], ch.triggers.size(), ch.records.size(), added);
+  }
+  // The shader (from the reader) into the shader cache, if it is not there yet. true = translated now.
+  bool EnsureRecipeShader(uint64_t hash, bool vertex, uint32_t tess) {
+    if (cache_->Find(hash, vertex, tess)) return false;
+    const auto& parked = rcp_parked_[vertex ? 1 : 0];
+    const auto it = parked.find(hash);
+    if (it == parked.end()) return false;  // not found in a package yet
+    cache_->Get(hash, it->second.data(), it->second.size(), vertex, tess);
+    return true;
+  }
+  void DrainRecipePack() {  // recording thread, once per frame
+    std::deque<RcpShader> in;
+    {
+      std::lock_guard<std::mutex> lock(rcp_mutex_);
+      in.swap(rcp_in_);
+    }
+    // 1. Shaders from the packages: parked (not translated until a started list needs them); pixel shaders count
+    // towards the chapters they mark; records already started that were waiting for this shader are looked at again.
+    for (RcpShader& s : in) {
+      const uint64_t h = s.hash;
+      const bool vertex = s.vertex;
+      if (vertex) ++rcp_n_.vs_rebuilt;
+      else ++rcp_n_.ps_found;
+      rcp_parked_[vertex ? 1 : 0].emplace(h, std::move(s.dwords));
+      if (!vertex) {
+        const auto t = rcp_triggers_.find(h);
+        if (t != rcp_triggers_.end()) {
+          for (uint32_t c : t->second) {
+            const xenos::recipes::Chapter& ch = rcp_.chapters[c];
+            if (!rcp_ch_on_[c] && uint64_t(++rcp_ch_found_[c]) * 100 >= uint64_t(ch.percent) * ch.triggers.size())
+              StartRecipeChapter(c);
+          }
+        }
       }
+      const auto& index = vertex ? rcp_by_vs_ : rcp_by_ps_;
+      const auto it = index.find(h);
+      if (it == index.end()) continue;
       for (uint32_t i : it->second) {
-        if (rcp_state_[i] == 0) {
+        if (rcp_active_[i] && rcp_state_[i] == 3) {
           rcp_state_[i] = 1;
-          rcp_waiting_.push_back(i);
+          rcp_need_.push_back(i);
         }
       }
     }
-    // Recorded pipelines whose shaders are both ready: queued as the start-up backlog is (patch 0058). A shader the
-    // game drew itself counts too. One still missing keeps its pipeline waiting (a later package may bring it).
-    if (!rcp_waiting_.empty() && (made || (frame_ & 7) == 0)) {
+    // 2. Started records: their shaders translated on this thread (as the start-up warm-up's), ~4 ms a frame at most.
+    const auto t0 = std::chrono::steady_clock::now();
+    uint32_t made = 0;
+    while (!rcp_need_.empty() && (made < 2 || MsSince(t0) < 4.0)) {
+      const uint32_t i = rcp_need_.front();
+      rcp_need_.pop_front();
+      if (rcp_state_[i] != 1) continue;
+      const PipelineRecord& r = rcp_records_[i];
+      made += EnsureRecipeShader(r.vs_hash, true, r.tess_n) ? 1 : 0;
+      if (r.flags & 1) made += EnsureRecipeShader(r.ps_hash, false, 0) ? 1 : 0;
+      rcp_state_[i] = 3;
+      rcp_waiting_.push_back(i);
+    }
+    // 3. Records whose shaders are both ready: queued as the start-up backlog is (patch 0058), while fewer than
+    // gow2_renderer_recipe_pack_jobs pipeline jobs are in flight (the draws' own jobs go first). A shader the game drew
+    // itself counts too; one still missing keeps the record waiting (a later package may bring it).
+    if (!rcp_waiting_.empty()) {
+      const uint64_t cap = uint64_t(std::max(1, REXCVAR_GET(gow2_renderer_recipe_pack_jobs)));
       bool backlog = false;
       size_t keep = 0;
       for (size_t k = 0; k < rcp_waiting_.size(); ++k) {
         const uint32_t i = rcp_waiting_[k];
+        if (rcp_state_[i] != 3) continue;  // moved back to the need queue (a shader arrived) or done
         const PipelineRecord& r = rcp_records_[i];
         const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
         const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
@@ -7367,7 +7422,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ++rcp_n_.failed;
           continue;
         }
-        if (!vsg || !vsg->ready() || ((r.flags & 1) && (!psg || !psg->ready()))) {
+        if (!vsg || !vsg->ready() || ((r.flags & 1) && (!psg || !psg->ready())) ||
+            backend_->PipelineJobsLeft() >= cap) {
           rcp_waiting_[keep++] = i;
           continue;
         }
@@ -7398,11 +7454,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       rcp_logged_done_ = done;
       rcp_logged_found_ = rcp_n_.vs_rebuilt + rcp_n_.ps_found;
       REXLOG_INFO("gow2_renderer: chapter recipe pack (frame {}): vertex shaders rebuilt {} of {} ({} offered), pixel "
-                  "shaders found {} of {}, pipelines queued {} + already made {} of {} ({} waiting for a shader, {} "
-                  "failed, {} no GS), {} shaders still to translate",
+                  "shaders found {} of {}, pipelines queued {} + already made {} of {} ({} waiting for a shader or a "
+                  "free job, {} failed, {} no GS), {} chapter lists started, {} records still to translate",
                   frame_, rcp_n_.vs_rebuilt, rcp_.vertex.size(), rcp_vs_offered_.load(std::memory_order_relaxed),
                   rcp_n_.ps_found, rcp_ps_.size(), rcp_n_.queued, rcp_n_.known, rcp_records_.size(),
-                  rcp_waiting_.size(), rcp_n_.failed, rcp_n_.no_gs, rcp_todo_.size());
+                  rcp_waiting_.size(), rcp_n_.failed, rcp_n_.no_gs, rcp_n_.chapters_on, rcp_need_.size());
     }
   }
   std::atomic<bool> rcp_on_{false};  // set once in Init, before layer 2's reader starts
@@ -7410,16 +7466,22 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::vector<PipelineRecord> rcp_records_;
   std::unordered_map<uint64_t, std::vector<uint32_t>> rcp_by_vs_, rcp_by_ps_;  // fingerprint -> records
   std::unordered_set<uint64_t> rcp_ps_;                                         // pixel fingerprints needed
+  std::unordered_map<uint64_t, std::vector<uint32_t>> rcp_triggers_;            // marker pixel fingerprint -> chapters
   std::unique_ptr<std::atomic<uint8_t>[]> rcp_vs_found_;                        // per rcp_.vertex entry
   std::atomic<uint64_t> rcp_vs_offered_{0};
   std::mutex rcp_mutex_;
   std::unordered_set<uint64_t> rcp_ps_found_;  // under rcp_mutex_
   std::deque<RcpShader> rcp_in_;               // under rcp_mutex_ (from the reader)
-  std::deque<RcpShader> rcp_todo_;             // recording thread
-  std::vector<uint8_t> rcp_state_;             // recording thread: 0 untouched, 1 waiting, 2 done
-  std::vector<uint32_t> rcp_waiting_;          // recording thread
+  // Recording thread from here on.
+  std::unordered_map<uint64_t, std::vector<uint32_t>> rcp_parked_[2];  // [pixel, vertex]: fingerprint -> host dwords
+  std::vector<uint32_t> rcp_ch_found_;  // marker shaders found per chapter
+  std::vector<uint8_t> rcp_ch_on_;      // chapter list started
+  std::vector<uint8_t> rcp_active_;     // record in a started list
+  std::vector<uint8_t> rcp_state_;      // 0 untouched, 1 to translate, 3 waiting, 2 done
+  std::deque<uint32_t> rcp_need_;
+  std::vector<uint32_t> rcp_waiting_;
   struct {
-    uint64_t vs_rebuilt = 0, ps_found = 0, queued = 0, known = 0, failed = 0, no_gs = 0;
+    uint64_t vs_rebuilt = 0, ps_found = 0, queued = 0, known = 0, failed = 0, no_gs = 0, chapters_on = 0;
   } rcp_n_;
   uint64_t rcp_logged_frame_ = 0, rcp_logged_done_ = 0, rcp_logged_found_ = 0;
 

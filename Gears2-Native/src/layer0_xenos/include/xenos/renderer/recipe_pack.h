@@ -1,7 +1,8 @@
 // Chapter recipe packs (notes/78, C3): the pipelines a chapter opening needs, built from the player's own game files
 // while the chapter loads. A pack (work\tools\make_recipe_packs.ps1) holds pipeline records (shader fingerprints +
 // pipeline state) and, per vertex shader, only the dwords the console fills in when the shader is bound (control flow
-// and fetch instructions: buffer slot, offset, stride, format) plus 4 probe positions. A vertex shader in a package is
+// and fetch instructions: buffer slot, offset, stride, format) plus 4 probe positions, and (v2) per recorded chapter
+// its records and the pixel shaders that mark its packages. A vertex shader in a package is
 // the code part (the tail) of its record; with the recipe's dwords written over it, it must hash to the recipe's
 // fingerprint or it is not used. Pixel shaders are used as the files hold them. No whole shader is in a pack.
 // Header-only so tools can run the same matching. Our code (MIT).
@@ -55,10 +56,18 @@ inline uint32_t ProbeHash(const uint8_t* be_code, const std::vector<uint32_t>& p
   return h;
 }
 
+struct Chapter {  // v2 (job 612c): one recorded chapter opening
+  std::string name;
+  std::vector<uint32_t> records;   // indices in Pack::records, recorded (first-draw) order
+  uint32_t percent = 50;           // the list starts once this share of `triggers` has been found
+  std::vector<uint64_t> triggers;  // pixel fingerprints that mark this chapter's packages
+};
+
 struct Pack {
   static constexpr size_t kRecordBytes = 144;  // the renderer's PipelineRecord (patch 0058's pipelines.list)
   std::vector<std::array<uint8_t, kRecordBytes>> records;
   std::vector<VertexFix> vertex;
+  std::vector<Chapter> chapters;
   std::unordered_map<uint32_t, std::vector<uint32_t>> by_dwords;  // length -> indices in `vertex`
   std::vector<uint32_t> lengths;                                  // ascending
 
@@ -71,8 +80,10 @@ struct Pack {
       p += 4;
       return true;
     };
-    if (b.size() < 16 || std::memcmp(b.data(), "GNRCP001", 8) != 0) {
-      err = "not a recipe pack (GNRCP001)";
+    if (b.size() < 16 || std::memcmp(b.data(), "GNRCP002", 8) != 0) {
+      err = b.size() >= 8 && std::memcmp(b.data(), "GNRCP001", 8) == 0
+                ? "an older recipe pack (GNRCP001, no chapter lists) - make it again with make_recipe_packs.ps1"
+                : "not a recipe pack (GNRCP002)";
       return false;
     }
     p = 8;
@@ -119,6 +130,42 @@ struct Pack {
         return false;
       }
       by_dwords[v.dwords].push_back(i);
+    }
+    uint32_t nch = 0;
+    if (!u32(nch) || nch > 4096) {
+      err = "bad chapter count";
+      return false;
+    }
+    chapters.resize(nch);
+    for (uint32_t c = 0; c < nch; ++c) {
+      Chapter& ch = chapters[c];
+      uint32_t nl = 0, nr = 0, nt = 0;
+      if (!u32(nl) || nl > 256 || p + nl > b.size()) {
+        err = "bad chapter name " + std::to_string(c);
+        return false;
+      }
+      ch.name.assign(reinterpret_cast<const char*>(&b[p]), nl);
+      p += nl;
+      if (!u32(nr) || nr > nrec) {
+        err = "bad chapter records " + std::to_string(c);
+        return false;
+      }
+      ch.records.resize(nr);
+      for (uint32_t& r : ch.records) {
+        if (!u32(r) || r >= nrec) {
+          err = "bad chapter record " + std::to_string(c);
+          return false;
+        }
+      }
+      if (!u32(ch.percent) || ch.percent > 100 || !u32(nt) || nt > 1000000 || p + size_t(nt) * 8 > b.size()) {
+        err = "bad chapter triggers " + std::to_string(c);
+        return false;
+      }
+      ch.triggers.resize(nt);
+      for (uint64_t& h : ch.triggers) {
+        std::memcpy(&h, &b[p], 8);
+        p += 8;
+      }
     }
     if (p != b.size()) {
       err = "trailing bytes";

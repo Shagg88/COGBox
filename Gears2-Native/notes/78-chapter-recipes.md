@@ -85,8 +85,15 @@ Analysis of Gears 2 ch1 (78 vertex shaders its recipes use, 29 packages + Global
   vertex record too; listed shaders go into the shader cache (`ShaderCache::Get`, as a draw's) at up to ~4 ms a frame,
   and each recorded pipeline is queued (start-up backlog priority, patch 0058) once both its shaders are ready - no
   warm template, no waiting for the first draw. Log: "chapter recipe pack (frame N): ..." every 300 frames.
-- Not yet: picking one chapter's list (all of a game's records load; a pipeline is only built when the packages
-  bring its shaders), player settings other than the recording's (MSAA / upscaler / HDR change the recorded states),
+- Job 612 run 1 [V] (Gears 2 ch1, cold): skipped draws 191,268 (A) -> 11,296 (C), but C stuttered for ~40 s (p99
+  134 / 171 ms in frames 1-1200 vs 50 / 150 ms for A): every chapter's recipes whose shaders were in the shared
+  packages were built, ~3,300 pipelines where ch1 needs 416, on all 12 workers.
+- Job 612c: pack v2 has per-chapter lists; a list starts once half of its marker pixel shaders (ones no other chapter
+  uses; 9 in 10 of all its pixel shaders if it has under 8) have been found, so shared packages cannot start one.
+  Checked offline on ch1's own 17 packages in load order: ch1 starts after the 8th, ch2 (same Hospital map) after the
+  11th, nothing else - 643 pipelines. Recipe pipelines are queued only while fewer than
+  --gow2_renderer_recipe_pack_jobs (6) pipeline jobs are in flight. Shaders are parked until a started list needs them.
+- Not yet: player settings other than the recording's (MSAA / upscaler / HDR change the recorded states),
   SteamOS.
 
 ## Other projects (29 Oct, read-only check)
