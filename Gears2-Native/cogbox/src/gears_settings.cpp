@@ -109,12 +109,13 @@ std::vector<Option> make_options(Game g) {
     const Scope SH = Scope::Shared, PG = Scope::PerGame, OWN = Scope::GameOwn;
 
     // ---- Display -------------------------------------------------------------------------------------------------
-    // Fullscreen has no PS1 tooltip; text from 59-how-to-play ("Borderless fullscreen").
-    add(make("Fullscreen", "Fullscreen (borderless)", Tab::Display, Kind::Bool, PG, 0,
-             "A borderless window that covers the whole screen.", 330));
-    add(make("Exclusive", "Exclusive fullscreen instead", Tab::Display, Kind::Bool, PG, 0,
-             "Real fullscreen mode instead of a borderless window (lower latency on some PCs; alt-tab is slower).", 331),
-        "", "Fullscreen");
+    // Shagg 29 Oct 14:06: one display mode box (windowed / borderless / exclusive). The id stays "Fullscreen" so saved
+    // settings keep working: 0 and 1 mean what they did; the old "Exclusive" box becomes 2 (Store::view).
+    add(choice("Fullscreen", "Display mode", Tab::Display, PG,
+               { "Windowed", "Borderless fullscreen", "Exclusive fullscreen" }, 0,
+               "Windowed: a normal window (set its size below). Borderless fullscreen: a window without borders that covers "
+               "the whole screen (quick alt-tab). Exclusive fullscreen: real fullscreen mode (lower latency on some PCs; "
+               "alt-tab is slower; on Steam Deck / Linux this is borderless).", 330));
     add(choice("WindowSize", "Window size", Tab::Display, PG,
                { "Default", "1280 x 720", "1600 x 900", "1920 x 1080", "2560 x 1440", "3840 x 2160" }, 0,
                "The window's size when not fullscreen. Default = the game's own.", 332), "", "!Fullscreen");
@@ -387,8 +388,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     if (!o.feature.empty()) a = can(g, o.feature, ver, env);
     if (!a.ok) return a;
     bool on = true;
-    if (o.id == "Exclusive") on = s.b("Fullscreen");                                  // PS1 333
-    else if (o.id == "WindowSize") on = !s.b("Fullscreen");                           // PS1 333
+    if (o.id == "WindowSize") on = s.i("Fullscreen") == 0;                             // PS1 333: windowed only
     else if (o.id == "PaperWhite" || o.id == "Peak") on = s.b("HDR");                 // PS1 366
     else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("Api") == 0;        // PS1 352, 473; job 521
     else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
@@ -413,6 +413,9 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
     }
     if (g == Game::Judgment && o.id == "FpsMode") return not_yet(2, "game's own counter") + " " + base;   // PS1 476
     if (g == Game::Judgment && o.id == "Players") return "Untested in Judgment. " + base;                 // PS1 477
+    if (g == Game::Judgment && o.id == "Fps")   // GitHub #38: as on Xenia Canary, unlimited can leave a loading screen endless
+        return base + "\nJudgment: Unlimited can leave the loading screen after some chapters (Monroe Commons) running for "
+                      "ever. 60 is the recommended limit.";
     if (!a.why.empty()) return trim(a.why + " " + base);                                                  // PS1 415
     return base;
 }
@@ -497,6 +500,10 @@ Settings Store::view(Game g, const Environment& env) const {
         else if (o.scope == Scope::PerGame && per[gi].count(o.id)) src = &per[gi];   // PS1 429: else the top-level value
         auto it = src->find(o.id);
         if (it != src->end()) x = it->second;
+        if (o.id == "Fullscreen" && x == 1.0) {   // 29 Oct: the old "Exclusive fullscreen instead" box (same scope rules)
+            const auto ex = src->find("Exclusive");
+            if (ex != src->end() && ex->second != 0.0) x = 2.0;
+        }
         s.set(o.id, clamp_value(o, x, &env));   // PS1 300 / 431 / 437-438 clamping
     }
     s.set("Version", static_cast<int>(effective_version(g, s, env)));   // PS1 459
@@ -776,7 +783,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 901-902: fullscreen / window size
     // job 523: under Wine / Proton the compositor (gamescope on a Steam Deck) owns the screen - no exclusive fullscreen
-    if (s.b("Fullscreen")) { a.push_back("--fullscreen=true"); if (s.b("Exclusive") && !env.wine) a.push_back("--fullscreen_exclusive=true"); }
+    if (s.i("Fullscreen") >= 1) { a.push_back("--fullscreen=true"); if (s.i("Fullscreen") == 2 && !env.wine) a.push_back("--fullscreen_exclusive=true"); }
     else {
         int w = std::max(0, std::min(5, s.i("WindowSize")));
         if (w > 0) { a.push_back("--window_width=" + std::to_string(k_winSizes[w][0])); a.push_back("--window_height=" + std::to_string(k_winSizes[w][1])); }
