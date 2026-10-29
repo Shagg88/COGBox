@@ -29,6 +29,7 @@
 #include <xenos/renderer/shader_cache.h>
 #include <xenos/renderer/texture_cache.h>
 #include <xenos/renderer/queries.h>
+#include <xenos/renderer/recipe_pack.h>
 #include <xenos/colour_formats.h>
 #include <xenos/renderer/colour_hlsl.h>
 
@@ -191,6 +192,13 @@ REXCVAR_DEFINE_STRING(gow2_renderer_shader_recipes, "", "Gears2",
                       "draws' own XXH3 key - no game data) recorded from chapter openings. Set = patch 0068's package "
                       "reader runs (with --ue3_shader_prebuild) and builds ONLY the listed shaders, from the player's own "
                       "game files, while a chapter loads. Empty (default) = off");
+REXCVAR_DEFINE_STRING(gow2_renderer_recipe_pack, "", "Gears2",
+                      "Chapter recipe pack (notes/78, C3): a .rcp file (work\\tools\\make_recipe_packs.ps1) of recorded "
+                      "chapter-opening pipelines plus the layout dwords of their vertex shaders. Set = patch 0068's "
+                      "package reader (with --ue3_shader_prebuild) hands over the shaders of every package the game "
+                      "opens; the listed ones come from the player's own files (vertex shaders rebuilt and checked "
+                      "against their fingerprint), are translated, and each recorded pipeline is built as soon as both "
+                      "its shaders are ready, as the start-up backlog is (patch 0058). Empty (default) = off");
 REXCVAR_DEFINE_BOOL(gow2_renderer_shader_prebuild, false, "Gears2",
                     "Patch 0132: off by default (its warm-only builds took pipeline workers from the draws' own pipelines). Patch 0068 (Shagg: shaders built behind the loading screen, both games): when the game opens a "
                     "package, its pixel shaders (found by layer 2 in the file itself) are translated like a draw's and "
@@ -2265,6 +2273,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
  public:
   bool PrebuildWanted() const { return prebuild_on_; }
   void OnPrebuildPixelShader(const void* be_ucode, uint32_t size, uint32_t variant) {  // any thread (layer 2's reader)
+    if (rcp_on_) {  // notes/78 C3: the recipe pack decides (the 0068 warm-only path is not used with it)
+      OfferRecipePixel(be_ucode, size);
+      return;
+    }
     if (!prebuild_on_ || !be_ucode || !size || size > 256u * 1024u || (size & 3)) return;
     PrebuildItem it;
     if (!recipe_ps_.empty()) {  // notes/78: only shaders in the recipe list (the set is read-only after Init)
@@ -2288,8 +2300,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     std::vector<uint8_t> bytes;  // big-endian microcode
   };
   void StartPrebuild() {  // Init, after the shader cache is set up
-    LoadRecipes();  // notes/78
-    prebuild_on_ = (REXCVAR_GET(gow2_renderer_shader_prebuild) || !recipe_ps_.empty()) && cache_ && cache_->Dxbc();
+    LoadRecipes();     // notes/78
+    LoadRecipePack();  // notes/78 C3
+    prebuild_on_ = (REXCVAR_GET(gow2_renderer_shader_prebuild) || !recipe_ps_.empty() || rcp_on_) && cache_ && cache_->Dxbc();
     if (!prebuild_on_) {
       if (!recipe_ps_.empty()) REXLOG_INFO("gow2_renderer: chapter recipes not used - our renderer is not on the DXBC path");
       return;
@@ -2301,6 +2314,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
   void DrainPrebuild() {  // recording thread, once per frame
     if (!prebuild_on_) return;
+    if (rcp_on_) {  // notes/78 C3
+      DrainRecipePack();
+      return;
+    }
     std::deque<PrebuildItem> in;
     {
       std::lock_guard<std::mutex> lock(prebuild_in_mutex_);
@@ -7215,6 +7232,197 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ++stats_.pipelines_recorded;
   }
 
+  // ---- notes/78 C3: chapter recipe pack (Shagg 29 Oct: "ship whatever test B showed") ----
+  // B (recorded pipelines + the chapter's own recorded shaders) left almost no skipped draws; this builds the same
+  // pipelines with the shaders taken from the player's files as the game opens each package (patch 0068's reader):
+  // pixel shaders as stored, vertex shaders rebuilt from the recipe's layout dwords (xenos/renderer/recipe_pack.h) and
+  // used only when they hash to the recipe's fingerprint. Each shader goes into the shader cache as a draw's would
+  // (ShaderCache::Get), and each recorded pipeline is queued once both its shaders are ready.
+ public:
+  void OfferRecipePixel(const void* be_ucode, uint32_t size) {  // any thread (layer 2's reader)
+    if (!be_ucode || !size || size > 256u * 1024u || (size & 3)) return;
+    const uint64_t h = XXH3_64bits(be_ucode, size);  // the draws' key
+    if (!rcp_ps_.count(h)) return;                    // read-only after Init
+    RcpShader s;
+    s.hash = h;
+    s.vertex = false;
+    RcpToHost(static_cast<const uint8_t*>(be_ucode), size, s.dwords);
+    std::lock_guard<std::mutex> lock(rcp_mutex_);
+    if (!rcp_ps_found_.insert(h).second) return;
+    rcp_in_.push_back(std::move(s));
+  }
+  void OnPrebuildVertexShader(const void* be_ucode, uint32_t size) {  // any thread (layer 2's reader)
+    if (!rcp_on_ || !be_ucode || !size || size > 256u * 1024u || (size & 3)) return;
+    rcp_vs_offered_.fetch_add(1, std::memory_order_relaxed);
+    thread_local std::vector<uint8_t> scratch;
+    rcp_.MatchVertex(
+        static_cast<const uint8_t*>(be_ucode), size / 4, scratch,
+        [this](uint32_t id) { return rcp_vs_found_[id].load(std::memory_order_relaxed) != 0; },
+        [this](const xenos::recipes::VertexFix& v, const std::vector<uint8_t>& bytes) {
+          if (rcp_vs_found_[v.id].exchange(1)) return;
+          RcpShader s;
+          s.hash = v.hash;
+          s.vertex = true;
+          RcpToHost(bytes.data(), uint32_t(bytes.size()), s.dwords);
+          std::lock_guard<std::mutex> lock(rcp_mutex_);
+          rcp_in_.push_back(std::move(s));
+        });
+  }
+
+ private:
+  struct RcpShader {
+    uint64_t hash = 0;
+    bool vertex = false;
+    std::vector<uint32_t> dwords;  // host order, as ShaderCache::Get takes them
+  };
+  static void RcpToHost(const uint8_t* be, uint32_t size, std::vector<uint32_t>& out) {
+    out.resize(size / 4);
+    for (size_t i = 0; i < out.size(); ++i) out[i] = xenos::recipes::LoadBe32(be + i * 4);
+  }
+  void LoadRecipePack() {  // Init (StartPrebuild), before layer 2's reader starts
+    const std::string path = REXCVAR_GET(gow2_renderer_recipe_pack);
+    if (path.empty()) return;
+    if (!cache_ || !cache_->Dxbc()) {
+      REXLOG_INFO("gow2_renderer: chapter recipe pack not used - our renderer is not on the DXBC path");
+      return;
+    }
+    static_assert(sizeof(PipelineRecord) == xenos::recipes::Pack::kRecordBytes, "recipe records are PipelineRecords");
+    std::vector<uint8_t> b;
+    {
+      std::ifstream f{std::filesystem::path(path), std::ios::binary};  // braces: see LoadRecipes
+      if (f) b.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    std::string err;
+    if (b.empty()) err = "could not be read";
+    if (!err.empty() || !rcp_.Parse(b, err)) {
+      REXLOG_WARN("gow2_renderer: chapter recipe pack {}: {} - off", path, err);
+      rcp_ = {};
+      return;
+    }
+    rcp_records_.resize(rcp_.records.size());
+    for (size_t i = 0; i < rcp_records_.size(); ++i)
+      std::memcpy(&rcp_records_[i], rcp_.records[i].data(), sizeof(PipelineRecord));
+    rcp_state_.assign(rcp_records_.size(), 0);
+    for (uint32_t i = 0; i < uint32_t(rcp_records_.size()); ++i) {
+      const PipelineRecord& r = rcp_records_[i];
+      rcp_by_vs_[r.vs_hash].push_back(i);
+      if (r.flags & 1) {
+        rcp_by_ps_[r.ps_hash].push_back(i);
+        rcp_ps_.insert(r.ps_hash);
+      }
+    }
+    rcp_vs_found_ = std::make_unique<std::atomic<uint8_t>[]>(std::max<size_t>(1, rcp_.vertex.size()));
+    rcp_on_ = true;
+    REXLOG_INFO("gow2_renderer: chapter recipe pack: {} pipelines, {} vertex shaders to rebuild, {} pixel shaders to "
+                "find, from {} (notes/78 C3)",
+                rcp_records_.size(), rcp_.vertex.size(), rcp_ps_.size(), path);
+  }
+  void DrainRecipePack() {  // recording thread, once per frame
+    {
+      std::lock_guard<std::mutex> lock(rcp_mutex_);
+      while (!rcp_in_.empty()) {
+        rcp_todo_.push_back(std::move(rcp_in_.front()));
+        rcp_in_.pop_front();
+      }
+    }
+    // Translation runs on this thread (as the start-up warm-up's does): a few shaders and ~4 ms a frame at most, so a
+    // loading screen keeps moving; the driver work goes to the pipeline workers.
+    const auto t0 = std::chrono::steady_clock::now();
+    uint32_t made = 0;
+    while (!rcp_todo_.empty() && (made < 2 || MsSince(t0) < 4.0)) {
+      RcpShader s = std::move(rcp_todo_.front());
+      rcp_todo_.pop_front();
+      ++made;
+      const auto& index = s.vertex ? rcp_by_vs_ : rcp_by_ps_;
+      const auto it = index.find(s.hash);
+      if (it == index.end()) continue;
+      if (s.vertex) {
+        ++rcp_n_.vs_rebuilt;
+        std::set<uint32_t> tess;
+        for (uint32_t i : it->second) tess.insert(rcp_records_[i].tess_n);
+        for (uint32_t t : tess) cache_->Get(s.hash, s.dwords.data(), s.dwords.size(), true, t);
+      } else {
+        ++rcp_n_.ps_found;
+        cache_->Get(s.hash, s.dwords.data(), s.dwords.size(), false);
+      }
+      for (uint32_t i : it->second) {
+        if (rcp_state_[i] == 0) {
+          rcp_state_[i] = 1;
+          rcp_waiting_.push_back(i);
+        }
+      }
+    }
+    // Recorded pipelines whose shaders are both ready: queued as the start-up backlog is (patch 0058). A shader the
+    // game drew itself counts too. One still missing keeps its pipeline waiting (a later package may bring it).
+    if (!rcp_waiting_.empty() && (made || (frame_ & 7) == 0)) {
+      bool backlog = false;
+      size_t keep = 0;
+      for (size_t k = 0; k < rcp_waiting_.size(); ++k) {
+        const uint32_t i = rcp_waiting_[k];
+        const PipelineRecord& r = rcp_records_[i];
+        const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
+        const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
+        if ((vsg && vsg->state == rr::ShaderState::kFailed) || (psg && psg->state == rr::ShaderState::kFailed)) {
+          rcp_state_[i] = 2;
+          ++rcp_n_.failed;
+          continue;
+        }
+        if (!vsg || !vsg->ready() || ((r.flags & 1) && (!psg || !psg->ready()))) {
+          rcp_waiting_[keep++] = i;
+          continue;
+        }
+        rcp_state_[i] = 2;
+        gpu::GraphicsPipelineDesc d = r.desc;
+        d.vs = vsg->handle;
+        d.ps = psg ? psg->handle : 0;
+        d.gs = (r.flags & 2) ? (vsg->dxbc ? rect_gs_dxbc_ : rect_gs_) : 0;
+        if ((r.flags & 2) && !d.gs) {
+          ++rcp_n_.no_gs;
+          continue;
+        }
+        if (!backlog) {
+          backend_->SetPipelineBacklog(true);
+          backlog = true;
+        }
+        const uint64_t m = backend_->PipelineMisses();
+        backend_->GetGraphicsPipeline(d, true, nullptr);
+        if (backend_->PipelineMisses() != m) ++rcp_n_.queued;
+        else ++rcp_n_.known;
+      }
+      rcp_waiting_.resize(keep);
+      if (backlog) backend_->SetPipelineBacklog(false);
+    }
+    const uint64_t done = rcp_n_.queued + rcp_n_.known;
+    if (frame_ >= rcp_logged_frame_ + 300 && (done != rcp_logged_done_ || rcp_n_.vs_rebuilt + rcp_n_.ps_found != rcp_logged_found_)) {
+      rcp_logged_frame_ = frame_;
+      rcp_logged_done_ = done;
+      rcp_logged_found_ = rcp_n_.vs_rebuilt + rcp_n_.ps_found;
+      REXLOG_INFO("gow2_renderer: chapter recipe pack (frame {}): vertex shaders rebuilt {} of {} ({} offered), pixel "
+                  "shaders found {} of {}, pipelines queued {} + already made {} of {} ({} waiting for a shader, {} "
+                  "failed, {} no GS), {} shaders still to translate",
+                  frame_, rcp_n_.vs_rebuilt, rcp_.vertex.size(), rcp_vs_offered_.load(std::memory_order_relaxed),
+                  rcp_n_.ps_found, rcp_ps_.size(), rcp_n_.queued, rcp_n_.known, rcp_records_.size(),
+                  rcp_waiting_.size(), rcp_n_.failed, rcp_n_.no_gs, rcp_todo_.size());
+    }
+  }
+  std::atomic<bool> rcp_on_{false};  // set once in Init, before layer 2's reader starts
+  xenos::recipes::Pack rcp_;         // read-only after Init
+  std::vector<PipelineRecord> rcp_records_;
+  std::unordered_map<uint64_t, std::vector<uint32_t>> rcp_by_vs_, rcp_by_ps_;  // fingerprint -> records
+  std::unordered_set<uint64_t> rcp_ps_;                                         // pixel fingerprints needed
+  std::unique_ptr<std::atomic<uint8_t>[]> rcp_vs_found_;                        // per rcp_.vertex entry
+  std::atomic<uint64_t> rcp_vs_offered_{0};
+  std::mutex rcp_mutex_;
+  std::unordered_set<uint64_t> rcp_ps_found_;  // under rcp_mutex_
+  std::deque<RcpShader> rcp_in_;               // under rcp_mutex_ (from the reader)
+  std::deque<RcpShader> rcp_todo_;             // recording thread
+  std::vector<uint8_t> rcp_state_;             // recording thread: 0 untouched, 1 waiting, 2 done
+  std::vector<uint32_t> rcp_waiting_;          // recording thread
+  struct {
+    uint64_t vs_rebuilt = 0, ps_found = 0, queued = 0, known = 0, failed = 0, no_gs = 0;
+  } rcp_n_;
+  uint64_t rcp_logged_frame_ = 0, rcp_logged_done_ = 0, rcp_logged_found_ = 0;
+
   // Patch 0051 (Gears 3 13:31: a no-cache start froze 22 s - 192 shaders compiled one after another on the draw
   // thread, ~170 ms each, while the compile threads sat idle): before a draw waits for its shader, the shaders of the
   // draws already queued behind it (the rest of this frame, as far as the PM4 processor has got) are looked up, so
@@ -9076,6 +9284,9 @@ ShadowRenderer* g_release_target = nullptr;  // job 171: set once at install, li
 bool XenosPrebuildWanted() { return g_release_target && g_release_target->PrebuildWanted(); }  // patch 0068
 void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant) {     // patch 0068
   if (g_release_target) g_release_target->OnPrebuildPixelShader(be_ucode, size_bytes, variant);
+}
+void XenosPrebuildVertexShader(const void* be_ucode, uint32_t size_bytes) {  // notes/78 C3
+  if (g_release_target) g_release_target->OnPrebuildVertexShader(be_ucode, size_bytes);
 }
 uint64_t XenosPrebuildVariantHits(uint32_t variant) {                                           // patch 0068
   return g_release_target ? g_release_target->PrebuildVariantHits(variant) : 0;

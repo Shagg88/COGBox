@@ -178,6 +178,8 @@ class PackageScanner {
   void Add(bool vertex, const uint8_t* rec, uint32_t off, uint32_t size) {
     if (vertex) {
       ++r_.vertex;
+      // notes/78 C3: the renderer rebuilds recipe vertex shaders from these (a no-op without a recipe pack).
+      if (seen_.insert(XXH3_64bits(rec + off, size) ^ 0x5653ull).second) XenosPrebuildVertexShader(rec + off, size);
       return;
     }
     ++r_.pixel;

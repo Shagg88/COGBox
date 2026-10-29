@@ -1,6 +1,6 @@
 # 78 - Chapter-opening "recipe packs" (shader pipelines prepared behind the loading screen)
 
-Status: idea backed by measurements, not built yet. Order: after the open GitHub issues and the SteamOS / CrossOver
+Status: C3 (the recipe pack, below) built in job 612; A/C test pending. Earlier status: idea backed by measurements. Order: after the open GitHub issues and the SteamOS / CrossOver
 D3D12 test build (notes/76, notes/77). Marks: [V] measured, [G] guess.
 
 ## The idea (Shagg, 29 Oct)
@@ -42,7 +42,8 @@ Playing in order, only ~40% of a chapter's opening pixel shaders are new (Gears 
 9,660); some chapters are 4-6% new.
 
 ## Limits to design around
-- Vertex shaders are patched by the XDK at bind, so their bytes in the files never match (job 367): prepare **pixel
+- (Superseded by C3 below: the drawn vertex shaders ARE in the files, as the code part of a record with its layout
+  dwords filled in.) Vertex shaders are patched by the XDK at bind, so their bytes in the files never match (job 367): prepare **pixel
   shaders** (warm-only build, patch 0068); the driver keeps the stage, so the real pipeline later costs ~0.1 ms instead
   of 15-35 ms (job 362c). About 70% of drawn pixel shaders are in the package data [G from earlier notes].
 - Player settings (MSAA, upscaler, HDR) change render-target formats / sample counts in the recipes; pixel-shader
@@ -58,3 +59,37 @@ Playing in order, only ~40% of a chapter's opening pixel shaders are new (Gears 
 2. Match recipe pixel-shader fingerprints against the shaders found in the opened packages; translate and warm-build
    them on spare workers within a budget, stop when the load ends.
 3. Measure: same chapter openings on a cleared cache, with and without, using skipped draws and the frame log.
+
+## Tests 29 Oct [V]
+- Best case B (recorded pipelines + the chapter's own recorded shaders, not shippable): Gears 2 ch1 skipped draws
+  218,664 -> 7, ch5 107,245 -> 1,867.
+- Real C (pixel fingerprints only, warm-only builds, job 611b): Gears 2 ch1 206,549 -> 81,497; Shagg saw no
+  difference. 526 shaders built; the warm template only exists after the first draw, so most of the load was missed.
+
+## C3: the recipe pack (job 612) - B rebuilt from the player's files
+Analysis of Gears 2 ch1 (78 vertex shaders its recipes use, 29 packages + GlobalShaderCache) [V]:
+- None of the 78 is in the files as is; every one is the **code part (tail)** of a vertex record, differing in 2-62
+  dwords. 98% of those are fetch instructions (vertex buffer slot, offset, stride, format filled in at bind); the
+  rest are ALU exports the console turns off (`C80F8000 00D0D000 E2000000` -> `C8000000 00000000 02000000`),
+  presumably outputs the paired pixel shader does not read.
+- Rule: a recipe vertex shader = the file record's tail with its control-flow dwords, fetch instructions, ALU exports
+  and write-nothing ALU instructions taken from the recipe (42% of its dwords for ch1). With the real matching code
+  (`xenos/renderer/recipe_pack.h`), **76 of 78** rebuild bit-exactly; the 2 others are probably in packages not in that
+  copy. Every rebuild is checked against the recipe fingerprint, so a wrong one is never used.
+- Pixel shaders: 168 of ch1's 306 recipe pixel shaders were in the 29 packages of that copy (the game reads all of
+  them; the run logs give the real count).
+- Pack (`work\tools\make_recipe_packs.ps1` from a recording -> `work\recipes\recipes-<game>.rcp`): all chapters'
+  pipeline records + per vertex shader those dwords and 4 probe positions (FNV-1a), so most file records are ruled out
+  without a full rebuild.
+- Game side (`--gow2_renderer_recipe_pack=<rcp>` with `--ue3_shader_prebuild=true`): the reader hands over every
+  vertex record too; listed shaders go into the shader cache (`ShaderCache::Get`, as a draw's) at up to ~4 ms a frame,
+  and each recorded pipeline is queued (start-up backlog priority, patch 0058) once both its shaders are ready - no
+  warm template, no waiting for the first draw. Log: "chapter recipe pack (frame N): ..." every 300 frames.
+- Not yet: picking one chapter's list (all of a game's records load; a pipeline is only built when the packages
+  bring its shaders), player settings other than the recording's (MSAA / upscaler / HDR change the recorded states),
+  SteamOS.
+
+## Other projects (29 Oct, read-only check)
+santiquiroz's 7,662 skipped draws came from one short, deliberately cold scene (213 pipelines in ~12 s), not a whole
+run; our chapter openings need 106-435 (median 260), so the work is the same size. We make fewer shader variants per
+microcode hash than they do. Their real difference is ROV on NVIDIA (fewer pipeline states); not worth porting for this.
