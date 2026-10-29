@@ -144,6 +144,7 @@ void Gow2NoteTextureDefrag() {
 struct Gow2WaitStreak {
   uint64_t last_qpc = 0;
   uint32_t count = 0;
+  uint32_t write_seq = 0;
 };
 static void Gow2SleepStep(Gow2WaitStreak& w, uint32_t quick_steps = 64) {
   static const uint64_t freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return uint64_t(f.QuadPart); }();
@@ -153,8 +154,11 @@ static void Gow2SleepStep(Gow2WaitStreak& w, uint32_t quick_steps = 64) {
   if (++w.count <= quick_steps) {
     for (int i = 0; i < 32; ++i) _mm_pause();
   } else {
-    XenosWaitGuestWrite(XenosGuestWriteSeq(), 1);
+    // This sequence was sampled before the guest's preceding completion check.
+    // Sampling here can miss a completion between that check and this wait.
+    XenosWaitGuestWrite(w.write_seq, 1);
   }
+  w.write_seq = XenosGuestWriteSeq();
   QueryPerformanceCounter(&now);
   w.last_qpc = uint64_t(now.QuadPart);
 }
@@ -180,6 +184,8 @@ void Gow2QueryPollYield() {
 // of this loop is a real wait on the same query, whose answer (a sample-count report or a fence / read pointer) our
 // GPU side writes - so the retry can sleep on XenosNotifyGuestWrite. The hook sits on the loop head (0x828075BC).
 void Gow2QueryWaitStep() {
+  thread_local XenosWaitClock fl_clock;  // the frame log times this wait in every mode (also the spinning ones)
+  XenosFrameWaitStep fl_step(kXenosWaitGameQuery, fl_clock);
   const int32_t mode = REXCVAR_GET(gow2_patch_query_wait);
   if (mode == 0) return;
   // Job 232: uncapped (vsync off and no frame limit) the sleep cost ~2% in job 231; capped it saves ~0.3 of a core.
@@ -204,6 +210,8 @@ void Gow2QueryWaitStep() {
 // step sleeps until our GPU side writes guest memory (fences, the read pointer - XenosNotifyGuestWrite) or 1 ms. The
 // rest of the step (the GPU-hang check, the read-pointer test in the caller) runs as before.
 bool Gow2GpuWaitStep() {
+  thread_local XenosWaitClock fl_clock;  // the frame log times this wait, patched or not
+  XenosFrameWaitStep fl_step(kXenosWaitGameGpu, fl_clock);
   if (REXCVAR_GET(gow2_patch_gpu_wait) != 1) return false;
   static std::atomic<bool> logged{false};
   if (!logged.exchange(true)) REXLOG_INFO("gow2_patch_gpu_wait: on - the GPU wait sleeps instead of spinning");

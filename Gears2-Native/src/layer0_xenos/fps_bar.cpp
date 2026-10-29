@@ -111,7 +111,12 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
  public:
   ShaderNote(rex::ui::ImGuiDrawer* drawer, rex::ui::WindowedAppContext* ui)
       : ImGuiDialog(drawer), ui_(ui), alive_(std::make_shared<bool>(true)) {
-    if (ui_) imgui_drawer()->RemoveDialog(this);  // nothing to show yet (without the UI thread it stays, as before)
+    // PR #43 (legoliamneeson): also mark it off the drawer here - with attached_ still true, Wake() returned at once
+    // and the note (and the "Loading shaders" hold indicator) never came back after this removal.
+    if (ui_) {
+      imgui_drawer()->RemoveDialog(this);  // nothing to show yet (without the UI thread it stays, as before)
+      attached_.store(false);
+    }
   }
   ~ShaderNote() override { *alive_ = false; }
   // Any thread: work is queued or a frame is held - be on the drawer.
@@ -138,6 +143,8 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
       if (ui_) {  // idle: off the drawer until there is work again (safe during drawing - the SDK defers it)
         attached_.store(false);
         imgui_drawer()->RemoveDialog(this);
+        // PR #43: work (or a hold) that arrived while leaving saw attached_ still true and did not wake us: re-add.
+        if (g_jobs_left.load(std::memory_order_relaxed) || g_hold_active.load(std::memory_order_acquire)) Wake();
       }
       return;
     }

@@ -1871,6 +1871,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
 
+  // Frame log (PR #43, legoliamneeson): name a slow step of the swap (20 ms or more) while the frame log is on.
+  template<class F> void FrameStep(const char* site, F&& work) {
+    const uint64_t start = __rdtsc();
+    work();
+    const double ms = double(__rdtsc() - start) * MsPerTick();
+    if (ms >= 20.0 && XenosFrameLogOn())
+      REXLOG_INFO("gow2_renderer: frame {} slow step {}: {:.1f} ms", frame_, site, ms);
+  }
   void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t fb_width, uint32_t fb_height) override {
     if (!backend_) return;
 #if defined(GN_PGO_GEN)
@@ -1911,9 +1919,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // many were ever queued (both games; no game data).
     XenosSetShaderJobs(backend_->PipelineJobsLeft(), backend_->Stats().pipelines_async);
     if (upscale_probe_ && frame_ % upscale_probe_ == 0) LogProbeFrame();
-    UpscaleEndFrame();
-    if (textures_) textures_->EndFrame(frame_);
-    EvictDestinations();  // patch 0032
+    FrameStep("upscaler end frame", [&] { UpscaleEndFrame(); });
+    if (textures_) FrameStep("texture end frame", [&] { textures_->EndFrame(frame_); });
+    FrameStep("destination eviction", [&] { EvictDestinations(); });  // patch 0032
     std::string lost;
     if (backend_->IsLost(&lost)) {
       if (!lost_logged_) REXLOG_ERROR("gow2_renderer: our device is lost ({}); shadow renderer stopped", lost);
@@ -1922,27 +1930,34 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (!selftest_started_) StartTransferSelfTest();
     DecideLoadHold();  // patch 0063
-    if (display_ours_) RequestDisplay(regs, frontbuffer_ptr & 0x1FFFFFFFu, fb_width, fb_height);
+    if (display_ours_) FrameStep("present image", [&] { RequestDisplay(regs, frontbuffer_ptr & 0x1FFFFFFFu, fb_width, fb_height); });
     if (!export_ranges_.empty()) IssueExportReadbacks();  // patch 0042: this frame's merged export readbacks
-    frame_fences_.push_back(backend_->Submit());
+    FrameStep("submit", [&] { frame_fences_.push_back(backend_->Submit()); });
     XenosLatencyFrameSubmitted();  // patch 0135: Reflex RENDERSUBMIT_END
-    backend_->NextFrame();
+    FrameStep("next frame", [&] { backend_->NextFrame(); });
     while (frame_fences_.size() > frames_in_flight_) {  // patch 0133: at most this many frames queued on our device
       backend_->WaitForFence(frame_fences_.front());
       frame_fences_.pop_front();
     }
-    if (queries_mode_ != QueriesMode::kOff) PollOcclusion();  // upl-s4c
-    if (hold_this_frame_) HoldForPipelines();  // patch 0063
+    if (queries_mode_ != QueriesMode::kOff) FrameStep("occlusion results", [&] { PollOcclusion(); });  // upl-s4c
+    double fl_hold_ms = 0.0;  // frame log
+    if (hold_this_frame_) {
+      const auto th = std::chrono::steady_clock::now();
+      HoldForPipelines();  // patch 0063
+      fl_hold_ms = MsSince(th);
+    }
     hold_descs_.clear();
     hold_keys_.clear();
     if (display_ours_ && !present_ours_) ShowDisplay(frontbuffer_ptr & 0x1FFFFFFFu);
-    if (present_ours_) DeliverFrameImages();
+    if (present_ours_) FrameStep("deliver image", [&] { DeliverFrameImages(); });
     {
       PartScope ps(*this, kPartCompare);
       EndTraceFrame();
       FlushTraces(false);
       CheckTransferSelfTest();
     }
+    const double fl_pipe_wait_ms = pipeline_wait_ms_frame_;  // frame log: this frame's, before the reset below
+    const uint32_t fl_draws = uint32_t(draw_index_), fl_skipped = uint32_t(pending_this_frame_);
     draw_index_ = 0;
     copy_index_ = 0;
     occ_lines_ = 0;
@@ -1961,6 +1976,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     cpu_ms_ = 0;
     cpu_sum_ += ms;
     cpu_max_ = std::max(cpu_max_, ms);
+    if (XenosFrameLogOn()) FrameLogRecord(ms, fl_hold_ms, fl_pipe_wait_ms, fl_draws, fl_skipped);  // before 0010
     ReportHitch(ms);  // patch 0010
     if (frame_ % uint64_t(log_every_) == 0) {
       if (depth_alias_drop_ || memexport_)  // patches 0024 / 0025
@@ -4278,6 +4294,45 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }();
     return ratio;
   }
+  // Frame log (frame_log.cpp, PR #43): this frame's renderer side - busy time and its waits, the biggest CPU part (this
+  // frame's part ticks, read before ReportHitch moves the mark and the summary clears them), new pipelines / shaders.
+  void FrameLogRecord(double ms, double hold_ms, double pipe_wait_ms, uint32_t draws, uint32_t skipped) {
+    const gpu::BackendStats& bs = backend_->Stats();
+    const rr::ShaderCacheStats& cs = cache_->Stats();
+    XenosRenderedFrame f;
+    f.cpu_ms = ms;
+    f.gpu_wait_ms = std::max(0.0, bs.fence_wait_ms - fl_prev_.fence_wait_ms);
+    f.hold_ms = hold_ms;
+    f.pipeline_wait_ms = pipe_wait_ms;
+    f.gpu_ms = std::max(0.0, bs.gpu_ms - fl_prev_.gpu_ms);
+    if (part_level_ > 0) {
+      uint32_t top = kPartCount;
+      double top_ms = 0.0;
+      for (uint32_t i = 0; i < kPartCount; ++i) {
+        const double pm = double(part_ticks_[i] - hitch_ticks_[i]) * MsPerTick();
+        if (pm > top_ms) {
+          top_ms = pm;
+          top = i;
+        }
+      }
+      if (top < kPartCount) {
+        f.top_part = kPartNames[top];
+        f.top_part_ms = top_ms;
+      }
+    }
+    f.draws = draws;
+    f.skipped_draws = skipped;
+    f.pipelines_new = uint32_t(bs.pipelines - fl_prev_.pipelines);
+    f.shaders_new = uint32_t(cs.translated - fl_prev_.translated);
+    f.upload_mb = double(bs.upload_bytes - fl_prev_.upload_bytes) / 1048576.0;
+    fl_prev_ = FrameLogPrev{bs.fence_wait_ms, bs.gpu_ms, bs.pipelines, cs.translated, bs.upload_bytes};
+    XenosFrameRendered(f);
+  }
+  struct FrameLogPrev {
+    double fence_wait_ms = 0.0, gpu_ms = 0.0;
+    uint64_t pipelines = 0, translated = 0, upload_bytes = 0;
+  };
+  FrameLogPrev fl_prev_;
   // Patch 0010: one line for a frame over --gow2_hitch_report_ms - its biggest CPU parts and what happened in it.
   void ReportHitch(double ms) {
     const double limit = REXCVAR_GET(gow2_hitch_report_ms);

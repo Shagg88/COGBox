@@ -190,3 +190,46 @@ XenosConstGenerations XenosConstGens();
 // An EVENT_WRITE_ZPD our processor ran (report already written): every hub observer gets OnZpd, as from the SDK.
 void XenosDispatchOurZpd(const rex::graphics::RegisterFile& regs, uint32_t report_address, bool is_end,
                          uint8_t answer, uint64_t samples);
+
+// Frame log (frame_log.cpp; --gow2_frame_log, on by default): every frame's time and what it went on. Writes a
+// summary line every --gow2_frame_log_every frames
+// (mean, p50/p95/p99, max, 1% low, frame-to-frame jitter, spikes by cause), one line per spike and, with
+// --gow2_frame_log_csv, <log name>-frames.csv next to the log file (one row per frame). The game frame is
+// measured on the GPU thread (swap to swap as the game hands them over), the shown frame on our renderer thread; the
+// waits below are charged to the game frame they happened in.
+enum XenosWaitKind : uint32_t {
+  kXenosWaitGameGpu = 0,  // a game thread in the D3D library's wait for the GPU (read pointer / fence)
+  kXenosWaitGameQuery,    // a game thread in UE3's wait for one GPU query's answer
+  kXenosWaitPm4,          // the GPU thread at a WAIT_REG_MEM (the command ring stops until it matches)
+  kXenosWaitRenderer,     // the GPU thread at a swap, waiting for our renderer thread to catch up
+  kXenosWaitCount
+};
+// One step of a game's wait loop (call XenosFrameWaitBegin at the top of the step, XenosFrameWaitEnd at its end, or
+// use XenosFrameWaitStep): the time from one step to the next counts when the next one starts within 200 us of the
+// previous one's end; a longer gap starts a new wait.
+struct XenosWaitClock {
+  uint64_t begin = 0, end = 0;
+};
+void XenosFrameWaitBegin(uint32_t kind, XenosWaitClock& clock);
+void XenosFrameWaitEnd(XenosWaitClock& clock);
+struct XenosFrameWaitStep {
+  XenosFrameWaitStep(uint32_t kind, XenosWaitClock& clock) : clock_(clock) { XenosFrameWaitBegin(kind, clock); }
+  ~XenosFrameWaitStep() { XenosFrameWaitEnd(clock_); }
+  XenosWaitClock& clock_;
+};
+bool XenosFrameLogOn();
+void XenosFrameAddWait(uint32_t kind, double ms, uint32_t waits = 1);  // a wait measured by its caller
+void XenosFrameGuestSwap();  // GPU thread: the game handed over a frame (its swap)
+// Our renderer thread, at the end of each swap: what that frame cost on our side.
+struct XenosRenderedFrame {
+  double cpu_ms = 0;            // renderer thread busy on the frame (includes the three waits below)
+  double gpu_wait_ms = 0;       // of which waiting for our GPU (fences: frames in flight, readbacks)
+  double hold_ms = 0;           // of which a shader / pipeline hold (load hold, compile step)
+  double pipeline_wait_ms = 0;  // of which draws waiting for their new pipelines
+  double gpu_ms = 0;            // GPU time of our command lists that finished since the previous frame
+  const char* top_part = "";    // biggest renderer CPU part (--gow2_renderer_cpu_split >= 1), "" when not measured
+  double top_part_ms = 0;
+  uint32_t draws = 0, skipped_draws = 0, pipelines_new = 0, shaders_new = 0;
+  double upload_mb = 0;
+};
+void XenosFrameRendered(const XenosRenderedFrame& frame);
