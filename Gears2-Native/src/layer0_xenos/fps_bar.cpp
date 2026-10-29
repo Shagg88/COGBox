@@ -101,6 +101,11 @@ std::atomic<uint64_t> g_jobs_left{0}, g_jobs_ever{0};
 // over the last picture, bottom right; N = the held frame's pipelines already built.
 std::atomic<bool> g_hold_active{false};
 std::atomic<uint32_t> g_hold_total{0}, g_hold_left{0};
+std::atomic<bool> g_hold_compiling{false};  // prebuild v2: the compile step is part of this hold
+// Prebuild v2 indicator (XenosSetPrebuildProgress, from the prebuild thread - it runs on while a load presents nothing):
+// the package shaders still to compile, how many were ever taken in, and whether the game is loading now.
+std::atomic<uint64_t> g_pre_left{0}, g_pre_ever{0};
+std::atomic<bool> g_pre_loading{false};
 
 // 0.2.1 (GitHub #18 / #23: NVIDIA and RTSS read about 3x the game's fps): an ImGuiDrawer with any dialog registered
 // asks the presenter for a repaint every UI tick, so this note - registered all the time though it draws nothing
@@ -130,9 +135,27 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
       DrawHold(io, now);
       return;
     }
+    // Prebuild v2 indicator: a load's package shaders compiling - the spinner, bottom right (the game may present
+    // nothing for seconds meanwhile). Shown after 300 ms of work so a handful of shaders never flash it.
+    const uint64_t pre_left = g_pre_left.load(std::memory_order_relaxed);
+    const uint64_t pre_ever = g_pre_ever.load(std::memory_order_relaxed);
+    if (!pre_left) {
+      pre_base_ = pre_ever;
+      pre_since_ = {};
+    } else if (g_pre_loading.load(std::memory_order_relaxed)) {
+      if (!pre_since_.time_since_epoch().count()) pre_since_ = now;
+      if (now - pre_since_ >= std::chrono::milliseconds(300)) {
+        const uint64_t total = std::max(pre_left, pre_ever > pre_base_ ? pre_ever - pre_base_ : pre_left);
+        const int pct = int(std::min<uint64_t>(99, (total - pre_left) * 100 / total));
+        char text[96];
+        std::snprintf(text, sizeof(text), "Compiling shaders %d%%  (%llu left)", pct, (unsigned long long)pre_left);
+        DrawSpinnerNote(io, now, text);
+        return;
+      }
+    }
     const uint64_t left = g_jobs_left.load(std::memory_order_relaxed);
     const uint64_t ever = g_jobs_ever.load(std::memory_order_relaxed);
-    if (!left) {
+    if (!left && !(pre_left && g_pre_loading.load(std::memory_order_relaxed))) {
       batch_base_ = ever;
       busy_since_ = {};
       if (ui_) {  // idle: off the drawer until there is work again (safe during drawing - the SDK defers it)
@@ -141,6 +164,7 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
       }
       return;
     }
+    if (!left) return;  // only prebuild leftovers during play: the spinner above is for loads
     if (!busy_since_.time_since_epoch().count()) busy_since_ = now;
     if (now - busy_since_ < std::chrono::seconds(1)) return;
     const uint64_t total = ever > batch_base_ ? ever - batch_base_ : left;
@@ -176,8 +200,15 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
     const uint32_t total = g_hold_total.load(std::memory_order_relaxed);
     const uint32_t left = g_hold_left.load(std::memory_order_relaxed);
     const int pct = total ? int(std::min<uint32_t>(99, (total - std::min(left, total)) * 100u / total)) : 0;
-    char text[64];
-    std::snprintf(text, sizeof(text), "Loading shaders %d%%", pct);
+    char text[80];
+    if (g_hold_compiling.load(std::memory_order_relaxed))  // prebuild v2: the opened packages' shaders, all of them
+      std::snprintf(text, sizeof(text), "Compiling shaders %d%%  (%u left)", pct, left);
+    else
+      std::snprintf(text, sizeof(text), "Loading shaders %d%%", pct);
+    DrawSpinnerNote(io, now, text);
+  }
+  // The spinning arc and a line of text, bottom right (the hold and the prebuild's compile indicator).
+  void DrawSpinnerNote(ImGuiIO& io, std::chrono::steady_clock::time_point now, const char* text) {
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
     const ImVec2 ts = ImGui::CalcTextSize(text);
     const float r = 9.0f * scale, pad = 10.0f * scale;
@@ -207,6 +238,8 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
   }
   uint64_t batch_base_ = 0;
   std::chrono::steady_clock::time_point busy_since_{};
+  uint64_t pre_base_ = 0;                             // prebuild v2: the compile indicator's batch start
+  std::chrono::steady_clock::time_point pre_since_{};
   rex::ui::WindowedAppContext* ui_ = nullptr;
   std::shared_ptr<bool> alive_;     // read and written on the UI thread only
   std::atomic<bool> attached_{true};  // as made: registered by the base until the constructor removes it
@@ -218,11 +251,20 @@ rex::ui::WindowedAppContext* g_ui = nullptr;
 
 }  // namespace
 
-void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_left) {  // patch 0067
+void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_left, bool compiling) {  // patch 0067
+  g_hold_compiling.store(compiling, std::memory_order_relaxed);
   g_hold_total.store(pipelines_total, std::memory_order_relaxed);
   g_hold_left.store(pipelines_left, std::memory_order_relaxed);
   g_hold_active.store(active, std::memory_order_release);
   if (active)
+    if (ShaderNote* n = g_note_live.load(std::memory_order_acquire)) n->Wake();
+}
+
+void XenosSetPrebuildProgress(uint64_t left, uint64_t ever_taken, bool loading) {  // prebuild v2 indicator
+  g_pre_left.store(left, std::memory_order_relaxed);
+  g_pre_ever.store(ever_taken, std::memory_order_relaxed);
+  g_pre_loading.store(loading, std::memory_order_relaxed);
+  if (left && loading)
     if (ShaderNote* n = g_note_live.load(std::memory_order_acquire)) n->Wake();
 }
 

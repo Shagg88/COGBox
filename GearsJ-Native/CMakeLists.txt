@@ -72,6 +72,11 @@ rexglue_apply_target_settings(gn_layer0_xenos)
 add_library(gn_layer2_ue3 STATIC src/layer2_ue3/launch_command_line.cpp src/layer2_ue3/config_bundle.cpp
             src/layer2_ue3/config_install.cpp)
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
+# Prebuild v2: Gears 2's shader prebuild at package open (layer 2, game-free UE3 code; Gears 2 patch 0068), built from
+# GN_LAYER0_HOME like layer 0. Its own header folder only for that file, so Judgment's ue3/ headers keep winning.
+target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp)
+set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp PROPERTIES
+    INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer0_xenos)
 rexglue_apply_target_settings(gn_layer2_ue3)
 

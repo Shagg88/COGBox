@@ -52,9 +52,12 @@
 REXCVAR_DEFINE_BOOL(ue3_shader_prebuild, false, "Gears2",
                     "Patch 0068: when the game opens a package, read its pixel shaders from the file and have our "
                     "renderer build them before their first draw (needs SDK patch 32 and the DXBC shader path). "
-                    "Patch 0069: off by default until it measurably shortens first-visit holds (job 368b: 97% of a "
-                    "cold area's new pixel shaders were in the opened packages, but ~10,000 were offered per load, so "
-                    "most were not built in time, and building them doubled a cold ch10's frame time)");
+                    "Patch 0069 had it off (job 368b: 97% of a cold area's new pixel shaders were in the opened "
+                    "packages, but ~10,000 were offered per load, so most were not built in time, and building them "
+                    "doubled a cold ch10's frame time). Prebuild v2: a switch (COGBox: Graphics > Build shaders from "
+                    "the game's files, which sets this and --gow2_renderer_shader_prebuild together) - the renderer now "
+                    "takes them in off its own thread, even while the game loads, builds most while loading and only "
+                    "a trickle during play, at the lowest priority (gow2_renderer_shader_prebuild_*)");
 
 namespace {
 
@@ -191,10 +194,12 @@ class PackageScanner {
     }
   }
   void Offer(uint32_t variant, const uint8_t* code, uint32_t size) {
-    if (!offer_[variant] || !seen_.insert(XXH3_64bits(code, size)).second) return;
+    if (!offer_[variant]) return;
+    const uint64_t h = XXH3_64bits(code, size);  // the renderer's key for this shader
+    if (!seen_.insert(h).second) return;
     ++r_.new_pixel;
     ++r_.offered[variant];
-    XenosPrebuildPixelShader(code, size, variant);
+    XenosPrebuildPixelShader(code, size, variant, h);  // prebuild v2: with the hash, so the renderer doesn't redo it
   }
   // Shader containers in a buffer. loose = packed back to back (no TArray count before each).
   uint32_t Containers(const uint8_t* a, size_t n, bool loose) {
@@ -328,7 +333,8 @@ void ReaderThread() {
 void Ue3InstallShaderPrebuildIfRequested() {
   if (!REXCVAR_GET(ue3_shader_prebuild)) return;
   if (!XenosPrebuildWanted()) {
-    REXLOG_INFO("ue3_shader_prebuild: off - our renderer is not running the DXBC shader path");
+    REXLOG_INFO("ue3_shader_prebuild: off - our renderer is not running the DXBC shader path on D3D12, or "
+                "--gow2_renderer_shader_prebuild is off");
     return;
   }
 #ifdef REX_FILESYSTEM_FILE_OPEN_OBSERVER

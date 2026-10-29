@@ -101,7 +101,7 @@ struct Option {
 };
 
 // The options for a game (the same list for every game - Shagg's rule, PS1 4-5 - with that game's chapter list and
-// defaults). 39 options; see options_count_by_tab() in the test.
+// defaults). 40 options; see options_count_by_tab() in the test.
 const std::vector<Option>& options(Game g);
 const Option* find_option(Game g, const std::string& id);
 const char* tab_name(Tab t);

@@ -724,6 +724,7 @@ class Pm4Execute final : public DrawObserver {
                         ahead);
           }
           env.own_swap = [this, rf, done = s->swap_done, ahead](uint32_t fb, uint32_t w, uint32_t h) {
+            FrameLogSwap();  // the frame log's game frame ends here (its GPU-thread waits first)
             if (g_pipe) {  // job 173: the renderer thread presents; we wait for it (a swap is a frame boundary)
               PipeChanges();
               if (ahead) {  // patch 0148: the renderer calls done() itself once it presented
@@ -767,6 +768,25 @@ class Pm4Execute final : public DrawObserver {
   }
 
  public:
+  // Frame log (frame_log.cpp): this thread's waits since the previous swap (WAIT_REG_MEM spins, and waiting at swaps
+  // for our renderer thread), then the game frame itself. GPU thread.
+  void FrameLogSwap() {
+    if (!XenosFrameLogOn()) return;
+    if (proc_) {
+      const pm::Stats& s = proc_->GetStats();
+      XenosFrameAddWait(kXenosWaitPm4, s.wait_ms - fl_pm4_ms_, uint32_t(s.waits_spun - fl_pm4_waits_));
+      fl_pm4_ms_ = s.wait_ms;
+      fl_pm4_waits_ = s.waits_spun;
+    }
+    if (g_pipe) {
+      const RenderPipe::Stats& p = g_pipe->GetStats();
+      const double behind = p.swap_sync_ms + p.swap_wait_ms;
+      XenosFrameAddWait(kXenosWaitRenderer, behind - fl_behind_ms_, uint32_t(p.swap_waits - fl_behind_waits_));
+      fl_behind_ms_ = behind;
+      fl_behind_waits_ = p.swap_waits;
+    }
+    XenosFrameGuestSwap();
+  }
   // Job 173: the register changes since the previous item go into the pipe (GPU thread).
   void PipeChanges() {
     changed_.clear();
@@ -781,6 +801,8 @@ class Pm4Execute final : public DrawObserver {
   bool swap_ahead_ = false;  // patch 0148: set before the processor exists
   std::unique_ptr<pm::Processor> proc_;
   std::vector<uint32_t> changed_;
+  double fl_pm4_ms_ = 0.0, fl_behind_ms_ = 0.0;  // frame log: the totals at the previous swap
+  uint64_t fl_pm4_waits_ = 0, fl_behind_waits_ = 0;
 };
 
 }  // namespace

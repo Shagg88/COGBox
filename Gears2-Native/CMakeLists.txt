@@ -50,6 +50,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/gpu_system.cpp
     src/layer0_xenos/frame_capture.cpp
     src/layer0_xenos/observer_hub.cpp
+    src/layer0_xenos/frame_log.cpp
     src/layer0_xenos/image_dump.cpp
     src/layer0_xenos/script_pad.cpp
     src/layer0_xenos/fps_bar.cpp

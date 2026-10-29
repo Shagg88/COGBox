@@ -269,6 +269,10 @@ struct BackendOptions {
   // Patch 0162: the workers' Windows thread priority (-2 lowest, -1 below normal, 0 normal).
   int pipeline_thread_priority = 0;  // job 518: normal by default, as Canary / Edge
   uint32_t warm_workers = 3;  // patch 0069: workers allowed on warm-only pipelines at once (WarmPixelShader)
+  // Prebuild v2: a worker's Windows thread priority while it builds a warm-only pipeline (-2 lowest, -1 below normal,
+  // 0 normal); back to pipeline_thread_priority after. Speculative builds then yield the CPU to the game, the renderer,
+  // the audio and the draws' own pipelines instead of competing with them.
+  int warm_thread_priority = -2;
   // Patch 0056: seconds between periodic library saves while it grows (was 60; a quit lost minutes of pipelines).
   int pipeline_save_seconds = 15;
   // Patch 0017 (stutter): sampled-only textures (no render-target / depth use, no MSAA) up to 16 MB are placed in
@@ -444,6 +448,9 @@ class Backend {
   virtual bool SetWarmTemplate(const GraphicsPipelineDesc& d) { (void)d; return false; }
   virtual bool WarmPixelShader(std::vector<uint8_t>&& ps_bytecode) { (void)ps_bytecode; return false; }
   virtual uint64_t WarmJobsLeft() { return 0; }
+  // Prebuild v2 (any thread): how many workers may be on warm-only pipelines from now on; 0 = none (queued warm jobs
+  // wait). The renderer raises it while the game loads and lowers it during play.
+  virtual void SetWarmWorkers(uint32_t n) { (void)n; }
   virtual void SavePipelinesNow() {}
   virtual PipelineHandle CreateComputePipeline(ShaderHandle cs) = 0;
 

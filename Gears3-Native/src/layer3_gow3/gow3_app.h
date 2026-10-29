@@ -24,6 +24,10 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 
 #include <rex/system/interfaces/graphics.h>
 
+// Prebuild v2: Gears 2's layer 2 shader prebuild (Gears2-Native/src/layer2_ue3/shader_prebuild.cpp, built into this
+// game's layer 2 from GN_LAYER0_HOME): reads each package the game opens for its pixel shaders. After the renderer.
+void Ue3InstallShaderPrebuildIfRequested();
+
 void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime);
 void Gow3AddBuiltInIniEdits();  // game_patches.cpp: --gow3_trilinear, --gow3_fast_mip_fade
 void Gow3StopMemoryGauge();     // game_patches.cpp: --gow3_memory_log_seconds stops before the kernel goes away
@@ -87,7 +91,11 @@ class Gow3App : public rex::ReXApp {
     //    per frame into the scene depth AFTER the scene colour resolve that runs the upscaler (later lighting passes);
     //    unjittered, whole character triangles lost their lighting under DLSS / FSR. Jittered, the frames are clean.
     game_default("gow2_upscale_jitter_late", "true");
+    //  - the shader prebuild (prebuild v2): Gears 3's draws use the code after each record's literal constants (Gears 2
+    //    notes/69: 120 code-only vs 5 whole of 359 drawn), so only that variant is built - half the compile step.
+    game_default("gow2_renderer_shader_prebuild_variant", "code");
     XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull});
+    Ue3InstallShaderPrebuildIfRequested();  // prebuild v2: after the renderer (it asks whether the renderer wants them)
     XenosInstallQueryLogIfRequested(runtime(), {});
     XenosInstallStateCoverageIfRequested();
     XenosInstallPm4ShadowIfRequested(runtime());

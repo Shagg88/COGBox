@@ -428,6 +428,8 @@ void SleepStep(WaitStreak& w, uint32_t quick_steps) {
 }  // namespace
 
 void Gow3QueryPollYield() {
+  thread_local XenosWaitClock fl_clock;  // the frame log times this wait in every mode (also the spinning ones)
+  XenosFrameWaitStep fl_step(kXenosWaitGameQuery, fl_clock);
   switch (REXCVAR_GET(gow3_patch_query_poll_yield)) {
     case 1:
       Pause32();
@@ -449,6 +451,8 @@ void Gow3QueryPollYield() {
 }
 
 bool Gow3GpuWaitStep() {  // jump_address_on_true: skip the empty delay loop to the cctpm
+  thread_local XenosWaitClock fl_clock;  // the frame log times this wait, patched or not
+  XenosFrameWaitStep fl_step(kXenosWaitGameGpu, fl_clock);
   if (REXCVAR_GET(gow3_patch_gpu_wait) != 1) return false;
   GOW3_LOG_ONCE("gow3_patch_gpu_wait: on - the GPU wait sleeps instead of spinning");
   thread_local WaitStreak streak;

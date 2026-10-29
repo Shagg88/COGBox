@@ -139,6 +139,12 @@ class ShaderCache {
     const auto it = map.find(key);
     return it == map.end() ? nullptr : it->second.get();
   }
+  // Prebuild v2: every guest shader hash this cache holds for one stage (drawn, from the start-up warm-up, precreated) -
+  // the keys Find looks up. Caller's thread only, like Find.
+  template <class F>
+  void ForEachKnown(bool is_vertex, F&& f) const {
+    for (const auto& kv : shaders_[is_vertex ? 1 : 0]) f(kv.first);
+  }
   // Finishes compiles that are done (creates the backend shaders). Call often on the caller's thread.
   void Poll();
   size_t PendingCount() const { return in_flight_; }

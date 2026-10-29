@@ -4250,6 +4250,16 @@ class D3D12Backend final : public Backend {
         }
       } busy_done{this, job->target ? &jobs_busy_ : &warm_busy_};
       if (!job->target) {  // patch 0068: warm-only - put the pixel shader through the driver, keep nothing
+        // Prebuild v2: a speculative build runs at its own (lower) priority, so it takes CPU time only the game, the
+        // renderer, the audio and the draws' own pipelines leave free; the worker's priority is restored after.
+        const int base_prio = std::clamp(options_.pipeline_thread_priority, -2, 0);
+        const int warm_prio = std::clamp(options_.warm_thread_priority, -2, 0);
+        struct PrioScope {
+          int from, to;
+          static int Win(int p) { return p == 0 ? THREAD_PRIORITY_NORMAL : p == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST; }
+          PrioScope(int f, int t) : from(f), to(t) { if (to != from) SetThreadPriority(GetCurrentThread(), Win(to)); }
+          ~PrioScope() { if (to != from) SetThreadPriority(GetCurrentThread(), Win(from)); }
+        } prio_scope{base_prio, warm_prio};
         const auto w0 = std::chrono::steady_clock::now();
         ID3D12PipelineState* warm = nullptr;
         const HRESULT whr = device_->CreateGraphicsPipelineState(&job->desc, IID_PPV_ARGS(&warm));
@@ -4524,7 +4534,8 @@ class D3D12Backend final : public Backend {
   // Patch 0068 (gpu.h SetWarmTemplate / WarmPixelShader): warm-only pipelines.
   std::deque<std::unique_ptr<PipelineJob>> warm_jobs_;  // under job_mutex_
   uint64_t warm_busy_ = 0;                              // under job_mutex_
-  uint64_t warm_workers_ = 3;                           // patch 0069 (SetWarmTemplate)
+  uint64_t warm_workers_ = 3;                           // patch 0069 (SetWarmTemplate); prebuild v2: SetWarmWorkers
+  bool warm_workers_set_ = false;                       // prebuild v2: SetWarmWorkers was called (under job_mutex_)
   D3D12_GRAPHICS_PIPELINE_STATE_DESC warm_pd_{};        // written once, before warm_ready_
   std::shared_ptr<const std::vector<uint8_t>> warm_vs_;
   std::atomic<bool> warm_ready_{false};
@@ -4533,7 +4544,7 @@ class D3D12Backend final : public Backend {
     if (warm_ready_.load(std::memory_order_acquire)) return true;
     {
       std::lock_guard<std::mutex> lock(job_mutex_);
-      warm_workers_ = std::max<uint64_t>(1, options_.warm_workers);  // patch 0069
+      if (!warm_workers_set_) warm_workers_ = std::max<uint64_t>(1, options_.warm_workers);  // patch 0069 (v2: unless set)
     }
     if (!ready_ || lost_ || !d.vs || d.vs >= shaders_.size() || !shaders_[d.vs].code || d.gs) return false;
     if (!StartPipelineWorkers()) return false;
@@ -4569,6 +4580,16 @@ class D3D12Backend final : public Backend {
   uint64_t WarmJobsLeft() override {
     std::lock_guard<std::mutex> lock(job_mutex_);
     return warm_jobs_.size() + warm_busy_;
+  }
+  void SetWarmWorkers(uint32_t n) override {  // prebuild v2: the renderer's load / play setting (0 = paused)
+    bool more = false;
+    {
+      std::lock_guard<std::mutex> lock(job_mutex_);
+      more = n > warm_workers_;
+      warm_workers_ = n;
+      warm_workers_set_ = true;
+    }
+    if (more) job_cv_.notify_all();  // idle workers may take the waiting warm jobs now
   }
   std::mutex job_mutex_;
   std::condition_variable job_cv_;

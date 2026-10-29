@@ -68,20 +68,28 @@ void XenosShutdownInGameMenu();
 void XenosSetShaderJobs(uint64_t left, uint64_t ever_queued);
 // Patch 0067: while the renderer holds a frame back (the game paused behind it) an animated "Loading shaders N%"
 // indicator is drawn over the last picture; the renderer reports the held frame's pipelines and how many are left.
-void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_left);
+// Prebuild v2: `compiling` = the hold waits for the prebuild's compile step too - "Compiling shaders N% (M left)".
+void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_left, bool compiling = false);
+// Prebuild v2 indicator: the package shaders the prebuild still has to compile and how many it ever took in, reported
+// by the prebuild thread itself every ~100 ms (it keeps running while the game loads without presenting, when no swap
+// would update the note). loading = the game is loading (no swap for 250 ms, a package opened in the last 5 s, or the
+// load window): the note then shows a spinner and "Compiling shaders N% (M left)" so a long load never looks frozen.
+void XenosSetPrebuildProgress(uint64_t left, uint64_t ever_taken, bool loading);
 // Patch 0066: a game's shader-creation hook (layer 3) reports each shader the game creates - its microcode's guest
 // address and size in bytes - so the renderer can translate it and have the driver build it before the first draw.
 // Any thread; no-op unless our renderer runs (--gow2_renderer_shader_precreate, default on).
 void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t size_bytes);
 // Patch 0068: a pixel shader found in a package the game just opened (layer 2 reads the file) - its microcode as stored
 // (big-endian dwords) - to translate like a draw's and put through the driver before its first draw. Any thread;
-// copies the bytes. XenosPrebuildWanted: false unless our renderer runs the DXBC path with
-// --gow2_renderer_shader_prebuild (default on), so layer 2 reads nothing otherwise.
+// copies the bytes. XenosPrebuildWanted: false unless our renderer runs the DXBC path on D3D12 with
+// --gow2_renderer_shader_prebuild (default on), so layer 2 reads nothing otherwise. `ucode_hash` (prebuild v2): XXH3-64
+// of exactly these bytes - the draws' key - when the caller has it (layer 2 does), so the renderer need not hash again;
+// 0 = the renderer hashes them.
 // `variant` says which part of the game's shader record this is (layer 2: 0 = the whole microcode region, 1 = the code
 // after its literal-constant block); XenosPrebuildVariantHits(v) = new draw pipelines so far whose pixel shader was a
 // prebuilt one of that variant, so layer 2 can stop offering a variant a game never draws.
 bool XenosPrebuildWanted();
-void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant);
+void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant, uint64_t ucode_hash = 0);
 uint64_t XenosPrebuildVariantHits(uint32_t variant);
 // --gow2_frame_times=N: every N swaps log swap interval (mean/p99/max) and the observer callbacks' own time per frame.
 void XenosInstallFrameTimesIfRequested();
@@ -190,3 +198,46 @@ XenosConstGenerations XenosConstGens();
 // An EVENT_WRITE_ZPD our processor ran (report already written): every hub observer gets OnZpd, as from the SDK.
 void XenosDispatchOurZpd(const rex::graphics::RegisterFile& regs, uint32_t report_address, bool is_end,
                          uint8_t answer, uint64_t samples);
+
+// Frame log (frame_log.cpp; --gow2_frame_log, on by default): every frame's time and what it went on. Writes a
+// summary line every --gow2_frame_log_every frames
+// (mean, p50/p95/p99, max, 1% low, frame-to-frame jitter, spikes by cause), one line per spike and, with
+// --gow2_frame_log_csv, <log name>-frames.csv next to the log file (one row per frame). The game frame is
+// measured on the GPU thread (swap to swap as the game hands them over), the shown frame on our renderer thread; the
+// waits below are charged to the game frame they happened in.
+enum XenosWaitKind : uint32_t {
+  kXenosWaitGameGpu = 0,  // a game thread in the D3D library's wait for the GPU (read pointer / fence)
+  kXenosWaitGameQuery,    // a game thread in UE3's wait for one GPU query's answer
+  kXenosWaitPm4,          // the GPU thread at a WAIT_REG_MEM (the command ring stops until it matches)
+  kXenosWaitRenderer,     // the GPU thread at a swap, waiting for our renderer thread to catch up
+  kXenosWaitCount
+};
+// One step of a game's wait loop (call XenosFrameWaitBegin at the top of the step, XenosFrameWaitEnd at its end, or
+// use XenosFrameWaitStep): the time from one step to the next counts when the next one starts within 200 us of the
+// previous one's end; a longer gap starts a new wait.
+struct XenosWaitClock {
+  uint64_t begin = 0, end = 0;
+};
+void XenosFrameWaitBegin(uint32_t kind, XenosWaitClock& clock);
+void XenosFrameWaitEnd(XenosWaitClock& clock);
+struct XenosFrameWaitStep {
+  XenosFrameWaitStep(uint32_t kind, XenosWaitClock& clock) : clock_(clock) { XenosFrameWaitBegin(kind, clock); }
+  ~XenosFrameWaitStep() { XenosFrameWaitEnd(clock_); }
+  XenosWaitClock& clock_;
+};
+bool XenosFrameLogOn();
+void XenosFrameAddWait(uint32_t kind, double ms, uint32_t waits = 1);  // a wait measured by its caller
+void XenosFrameGuestSwap();  // GPU thread: the game handed over a frame (its swap)
+// Our renderer thread, at the end of each swap: what that frame cost on our side.
+struct XenosRenderedFrame {
+  double cpu_ms = 0;            // renderer thread busy on the frame (includes the three waits below)
+  double gpu_wait_ms = 0;       // of which waiting for our GPU (fences: frames in flight, readbacks)
+  double hold_ms = 0;           // of which a shader / pipeline hold (load hold, compile step)
+  double pipeline_wait_ms = 0;  // of which draws waiting for their new pipelines
+  double gpu_ms = 0;            // GPU time of our command lists that finished since the previous frame
+  const char* top_part = "";    // biggest renderer CPU part (--gow2_renderer_cpu_split >= 1), "" when not measured
+  double top_part_ms = 0;
+  uint32_t draws = 0, skipped_draws = 0, pipelines_new = 0, shaders_new = 0;
+  double upload_mb = 0;
+};
+void XenosFrameRendered(const XenosRenderedFrame& frame);
