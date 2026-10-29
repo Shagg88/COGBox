@@ -1,0 +1,729 @@
+diff --git a/Gears2-Native/CMakeLists.txt b/Gears2-Native/CMakeLists.txt
+index dec70ce..2604797 100644
+--- a/Gears2-Native/CMakeLists.txt
++++ b/Gears2-Native/CMakeLists.txt
+@@ -50,6 +50,7 @@ add_library(gn_layer0_xenos STATIC
+     src/layer0_xenos/gpu_system.cpp
+     src/layer0_xenos/frame_capture.cpp
+     src/layer0_xenos/observer_hub.cpp
++    src/layer0_xenos/frame_log.cpp
+     src/layer0_xenos/image_dump.cpp
+     src/layer0_xenos/script_pad.cpp
+     src/layer0_xenos/fps_bar.cpp
+diff --git a/Gears2-Native/src/layer0_xenos/frame_log.cpp b/Gears2-Native/src/layer0_xenos/frame_log.cpp
+new file mode 100644
+index 0000000..b528f94
+--- /dev/null
++++ b/Gears2-Native/src/layer0_xenos/frame_log.cpp
+@@ -0,0 +1,422 @@
++// Layer 0 (game-free): the frame log (--gow2_frame_log, on by default). Records every frame's time and what it went on,
++// for all three games:
++//   - with --gow2_frame_log_csv, <log name>-frames.csv next to the log file (--log_file; else
++//     --gow2_crash_dir\frames.csv): one row per frame;
++//   - every --gow2_frame_log_every frames a summary line (frame time mean / p50 / p95 / p99 / max, 1% and 0.1% low,
++//     frame-to-frame jitter, spikes by cause, and where the average frame went);
++//   - one line per spike (up to --gow2_frame_log_spike_lines per summary window) with its full breakdown.
++//
++// Two clocks are compared. The game frame is measured on the GPU thread, swap to swap as the game hands frames over
++// (XenosFrameGuestSwap, pm4_shadow.cpp); the shown frame on our renderer thread at the end of each swap it runs
++// (XenosFrameRendered, shadow_renderer.cpp). Each shown frame is paired with the oldest game frame not yet shown
++// (swaps run in order). Waits made
++// outside the renderer are charged to the game frame they happened in: the game's own waits for the GPU and for query
++// answers (layer 3 hooks, XenosFrameWaitBegin / End), the GPU thread's WAIT_REG_MEM spins and its waits at a swap for
++// our renderer thread (pm4_shadow.cpp).
++//
++// The cause of a frame is decided like this: when our renderer thread was busy for at least half of the frame, the
++// biggest of its parts (shader hold, draws waiting for new pipelines, waiting for our GPU, its own CPU work - with the
++// biggest CPU part when --gow2_renderer_cpu_split >= 1); otherwise the renderer sat waiting for the game's next frame,
++// and the cause is the biggest part of that game frame (the game waiting for the GPU, for a query, the GPU thread at a
++// WAIT_REG_MEM, the GPU thread waiting for our renderer, or the rest: the game's own CPU work).
++// Our code (MIT).
++#include <xenos/dev_tools.h>
++
++#include <rex/cvar.h>
++#include <rex/logging/macros.h>
++
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#include <windows.h>
++
++#include <algorithm>
++#include <atomic>
++#include <cmath>
++#include <condition_variable>
++#include <deque>
++#include <cstdio>
++#include <filesystem>
++#include <format>
++#include <fstream>
++#include <map>
++#include <mutex>
++#include <string>
++#include <thread>
++#include <vector>
++
++REXCVAR_DEFINE_BOOL(gow2_frame_log, true, "Gears2",
++                    "Frame log: every frame's time and its cause - <log name>-frames.csv next to the log, a summary "
++                    "line every --gow2_frame_log_every frames and a line per spike (all three games)");
++REXCVAR_DEFINE_INT32(gow2_frame_log_every, 600, "Gears2", "Frame log: frames per summary line (0 = no summary lines)");
++REXCVAR_DEFINE_DOUBLE(gow2_frame_log_spike_ms, 0.0, "Gears2",
++                      "Frame log: a frame longer than this is a spike (0 = automatic: over 1.5x the running average "
++                      "frame time and at least 4 ms over it)");
++REXCVAR_DEFINE_INT32(gow2_frame_log_spike_lines, 12, "Gears2",
++                     "Frame log: spike lines per summary window (the rest are counted in the summary; 0 = none)");
++REXCVAR_DEFINE_BOOL(gow2_frame_log_csv, false, "Gears2",
++                    "Frame log: also write the per-frame CSV file (~200 bytes a frame: ~45 MB an hour at 60 fps)");
++REXCVAR_DECLARE(std::string, gow2_crash_dir);  // crash_report.cpp
++
++namespace {
++
++uint64_t Qpc() {
++  LARGE_INTEGER t;
++  QueryPerformanceCounter(&t);
++  return uint64_t(t.QuadPart);
++}
++uint64_t QpcFreq() {
++  static const uint64_t f = [] {
++    LARGE_INTEGER v;
++    QueryPerformanceFrequency(&v);
++    return uint64_t(v.QuadPart);
++  }();
++  return f;
++}
++double TicksToMs(uint64_t ticks) { return double(ticks) * 1000.0 / double(QpcFreq()); }
++
++// Waits, charged as they happen (any thread); the GPU thread takes the difference at each game swap.
++std::atomic<uint64_t> g_wait_ticks[kXenosWaitCount] = {};
++std::atomic<uint64_t> g_wait_count[kXenosWaitCount] = {};
++
++constexpr const char* kWaitNames[kXenosWaitCount] = {"game-gpu-wait", "game-query-wait", "gpu-thread-wait",
++                                                     "renderer-behind"};
++
++struct GuestFrame {
++  uint64_t index = UINT64_MAX;
++  uint64_t t = 0;   // QPC at its swap
++  double ms = 0.0;  // swap to swap
++  double wait_ms[kXenosWaitCount] = {};
++  uint32_t waits[kXenosWaitCount] = {};
++};
++
++class FrameLog {
++ public:
++  // GPU thread.
++  void GuestSwap() {
++    const uint64_t now = Qpc();
++    std::lock_guard<std::mutex> lock(ring_mutex_);
++    // Swaps run in order, so the renderer's next swap is the oldest game frame it has not taken yet. More than a few
++    // waiting means swaps that never reach our renderer (it is off, lost or not presenting): drop the oldest.
++    while (pending_.size() >= kPendingMax) pending_.pop_front();
++    GuestFrame& g = pending_.emplace_back();
++    g.index = guest_n_++;
++    g.t = now;
++    g.ms = guest_last_ ? TicksToMs(now - guest_last_) : 0.0;
++    guest_last_ = now;
++    for (uint32_t k = 0; k < kXenosWaitCount; ++k) {
++      const uint64_t t = g_wait_ticks[k].load(std::memory_order_relaxed);
++      const uint64_t n = g_wait_count[k].load(std::memory_order_relaxed);
++      g.wait_ms[k] = TicksToMs(t - guest_ticks_[k]);
++      g.waits[k] = uint32_t(n - guest_count_[k]);
++      guest_ticks_[k] = t;
++      guest_count_[k] = n;
++    }
++  }
++
++  // Our renderer thread.
++  void Rendered(const XenosRenderedFrame& f) {
++    const uint64_t now = Qpc();
++    const uint64_t i = render_n_++;
++    const double frame_ms = render_last_ ? TicksToMs(now - render_last_) : 0.0;
++    render_last_ = now;
++    if (!t0_) t0_ = now;
++    GuestFrame g;
++    bool have_guest = false;
++    {
++      std::lock_guard<std::mutex> lock(ring_mutex_);
++      if (!pending_.empty()) {
++        g = pending_.front();
++        pending_.pop_front();
++        have_guest = true;
++      }
++    }
++    if (frame_ms <= 0.0) return;  // the first frame has no interval
++
++    // ---- cause ----
++    const double rend_other = std::max(0.0, f.cpu_ms - f.gpu_wait_ms - f.hold_ms - f.pipeline_wait_ms);
++    std::string cause;
++    double cause_ms = 0.0;
++    auto consider = [&](const char* name, double ms) {
++      if (ms > cause_ms) {
++        cause_ms = ms;
++        cause = name;
++      }
++    };
++    double game_cpu = 0.0;
++    if (have_guest) {
++      double waited = 0.0;
++      for (uint32_t k = 0; k < kXenosWaitCount; ++k) waited += g.wait_ms[k];
++      game_cpu = std::max(0.0, g.ms - waited);
++    }
++    if (f.cpu_ms >= 0.5 * frame_ms || !have_guest) {
++      consider("shader-hold", f.hold_ms);
++      consider("pipeline-wait", f.pipeline_wait_ms);
++      consider("gpu-bound", f.gpu_wait_ms);
++      consider("renderer-cpu", rend_other);
++      if (cause == "renderer-cpu" && f.top_part && *f.top_part) cause = std::string("renderer-cpu:") + f.top_part;
++    } else {
++      for (uint32_t k = 0; k < kXenosWaitCount; ++k) consider(kWaitNames[k], g.wait_ms[k]);
++      consider("game-cpu", game_cpu);
++    }
++    if (cause.empty()) cause = "unknown";
++
++    // ---- spike ----
++    const double fixed = REXCVAR_GET(gow2_frame_log_spike_ms);
++    const bool stall = frame_ms >= kStallMs;  // a load or a pause, not pacing: counted apart
++    bool spike = false;
++    if (!stall) {
++      if (fixed > 0.0) spike = frame_ms > fixed;
++      else spike = warm_ >= 30 && frame_ms > std::max(avg_ * 1.5, avg_ + 4.0);
++      if (!spike) {
++        avg_ = warm_ ? avg_ * 0.95 + frame_ms * 0.05 : frame_ms;
++        ++warm_;
++      }
++    }
++
++    // ---- CSV row ----
++    if (csv_ && !csv_failed_.load(std::memory_order_relaxed)) {
++      if (!csv_started_) StartCsv();
++      csv_buf_ += std::format(
++          "{},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{},{:.3f},{},"
++          "{:.3f},{},{:.3f},{},{},{},{},{},{:.2f},{},{}\n",
++          i, TicksToMs(now - t0_) / 1000.0, frame_ms, have_guest ? g.ms : 0.0,
++          have_guest ? TicksToMs(now - g.t) : 0.0, f.cpu_ms, rend_other, f.top_part ? f.top_part : "", f.top_part_ms,
++          f.gpu_wait_ms, f.hold_ms, f.pipeline_wait_ms, f.gpu_ms, g.wait_ms[kXenosWaitGameGpu],
++          g.waits[kXenosWaitGameGpu], g.wait_ms[kXenosWaitGameQuery], g.waits[kXenosWaitGameQuery],
++          g.wait_ms[kXenosWaitPm4], g.waits[kXenosWaitPm4], g.wait_ms[kXenosWaitRenderer], f.draws, f.skipped_draws,
++          f.pipelines_new, f.shaders_new, have_guest ? 1 : 0, f.upload_mb, stall ? 2 : spike ? 1 : 0, cause);
++      if (++csv_rows_ % 30 == 0) FlushCsv();
++    }
++
++    // ---- window ----
++    if (stall) {
++      ++w_.stalls;
++      w_.stall_ms += frame_ms;
++    } else {
++      w_.frame.push_back(frame_ms);
++      if (have_guest) w_.game.push_back(g.ms);
++      if (prev_ms_ > 0.0) {
++        w_.jitter += std::abs(frame_ms - prev_ms_);
++        ++w_.jitter_n;
++      }
++      w_.rend_cpu += rend_other;
++      w_.gpu_wait += f.gpu_wait_ms;
++      w_.hold += f.hold_ms;
++      w_.pipe_wait += f.pipeline_wait_ms;
++      w_.gpu += f.gpu_ms;
++      w_.game_cpu += game_cpu;
++      for (uint32_t k = 0; k < kXenosWaitCount; ++k) {
++        w_.wait[k] += g.wait_ms[k];
++        w_.waits[k] += g.waits[k];
++      }
++      ++w_.causes[cause];
++    }
++    prev_ms_ = stall ? 0.0 : frame_ms;
++    if (spike) {
++      ++w_.spikes[cause];
++      ++w_.spike_n;
++      if (w_.spike_lines < uint32_t(std::max(0, REXCVAR_GET(gow2_frame_log_spike_lines)))) {
++        ++w_.spike_lines;
++        REXLOG_INFO(
++            "gow2_frame_log: SPIKE frame {}: {:.1f} ms (running average {:.1f}) - cause {} {:.1f} ms | game frame "
++            "{} | renderer {:.1f} ms busy: own CPU {:.1f}{}, waiting for our GPU {:.1f}, shader hold {:.1f}, draws "
++            "waiting for pipelines {:.1f} | our GPU {:.1f} ms | {} draws ({} skipped, shaders pending), new pipelines "
++            "{}, new shaders {}, uploads {:.1f} MB",
++            i, frame_ms, avg_, cause, cause_ms,
++            have_guest ? std::format("{:.1f} ms: game GPU waits {:.1f} ms ({}), query waits {:.1f} ms ({}), GPU "
++                                     "thread WAIT_REG_MEM {:.1f} ms ({}), GPU thread waiting for renderer {:.1f} ms, "
++                                     "rest (game CPU) {:.1f} ms, frame shown {:.1f} ms after the game's swap",
++                                     g.ms, g.wait_ms[0], g.waits[0], g.wait_ms[1], g.waits[1], g.wait_ms[2], g.waits[2],
++                                     g.wait_ms[3], game_cpu, TicksToMs(now - g.t))
++                       : std::string("not measured"),
++            f.cpu_ms, rend_other,
++            f.top_part && *f.top_part ? std::format(" (most in {} {:.1f})", f.top_part, f.top_part_ms) : std::string(),
++            f.gpu_wait_ms, f.hold_ms, f.pipeline_wait_ms, f.gpu_ms, f.draws, f.skipped_draws, f.pipelines_new,
++            f.shaders_new, f.upload_mb);
++      }
++    }
++    const int every = REXCVAR_GET(gow2_frame_log_every);
++    if (every > 0 && w_.frame.size() + w_.stalls >= size_t(every)) Summary(i);
++  }
++
++ private:
++  static constexpr size_t kPendingMax = 8;
++  static constexpr double kStallMs = 250.0;
++
++  struct Window {
++    std::vector<double> frame, game;
++    double jitter = 0.0;
++    uint64_t jitter_n = 0;
++    double rend_cpu = 0, gpu_wait = 0, hold = 0, pipe_wait = 0, gpu = 0, game_cpu = 0;
++    double wait[kXenosWaitCount] = {};
++    uint64_t waits[kXenosWaitCount] = {};
++    std::map<std::string, uint32_t> causes, spikes;
++    uint32_t spike_n = 0, spike_lines = 0, stalls = 0;
++    double stall_ms = 0.0;
++  };
++
++  void Summary(uint64_t last) {
++    Window& w = w_;
++    const size_t n = w.frame.size();
++    if (n) {
++      std::vector<double> s = w.frame;
++      std::sort(s.begin(), s.end());
++      auto pct = [&](double p) { return s[std::min(s.size() - 1, size_t(p * double(s.size() - 1) + 0.5))]; };
++      double sum = 0.0;
++      for (double v : s) sum += v;
++      const double mean = sum / double(n);
++      auto low = [&](double share) {  // average of the slowest share of frames, as fps
++        const size_t k = std::max<size_t>(1, size_t(double(n) * share));
++        double t = 0.0;
++        for (size_t j = 0; j < k; ++j) t += s[n - 1 - j];
++        return 1000.0 / (t / double(k));
++      };
++      double game_mean = 0.0;
++      for (double v : w.game) game_mean += v;
++      if (!w.game.empty()) game_mean /= double(w.game.size());
++      auto list = [](const std::map<std::string, uint32_t>& m) {
++        std::vector<std::pair<uint32_t, std::string>> v;
++        for (const auto& [k, c] : m) v.push_back({c, k});
++        std::sort(v.rbegin(), v.rend());
++        std::string t;
++        for (size_t j = 0; j < v.size() && j < 6; ++j) t += std::format("{}{} {}", j ? ", " : "", v[j].second, v[j].first);
++        return t.empty() ? std::string("none") : t;
++      };
++      const double d = double(n);
++      REXLOG_INFO(
++          "gow2_frame_log: frames {}-{}: frame time mean {:.2f} ms ({:.1f} fps), p50 {:.2f}, p95 {:.2f}, p99 {:.2f}, "
++          "max {:.2f} | 1% low {:.1f} fps, 0.1% low {:.1f} fps | jitter (frame-to-frame change) {:.2f} ms | spikes {}: "
++          "{} | per frame: game {:.2f} ms (own CPU {:.2f}, GPU waits {:.2f} ms x{:.1f}, query waits {:.2f} ms x{:.1f}, GPU "
++          "thread WAIT_REG_MEM {:.2f} ms x{:.1f}, GPU thread waiting for renderer {:.2f} ms), renderer own CPU {:.2f} "
++          "ms, waiting for our GPU {:.2f} ms, shader holds {:.2f} ms, pipeline waits {:.2f} ms, our GPU {:.2f} ms | "
++          "frames by cause: {}{}",
++          last + 1 - n - w.stalls, last, mean, 1000.0 / mean, pct(0.50), pct(0.95), pct(0.99), s.back(), low(0.01),
++          low(0.001), w.jitter_n ? w.jitter / double(w.jitter_n) : 0.0, w.spike_n, list(w.spikes), game_mean,
++          w.game_cpu / d, w.wait[0] / d, double(w.waits[0]) / d, w.wait[1] / d, double(w.waits[1]) / d, w.wait[2] / d,
++          double(w.waits[2]) / d, w.wait[3] / d, w.rend_cpu / d, w.gpu_wait / d, w.hold / d, w.pipe_wait / d,
++          w.gpu / d, list(w.causes),
++          w.stalls ? std::format(" | stalls over {:.0f} ms (loads, pauses; not in the numbers above): {} ({:.1f} s)",
++                                 kStallMs, w.stalls, w.stall_ms / 1000.0)
++                   : std::string());
++      if (w.spike_n > w.spike_lines)
++        REXLOG_INFO("gow2_frame_log: {} more spike(s) in frames {}-{} not listed (--gow2_frame_log_spike_lines); all "
++                    "are in the CSV", w.spike_n - w.spike_lines, last + 1 - n - w.stalls, last);
++    }
++    w_ = Window{};
++  }
++
++  // ---- CSV: written by its own thread, so the renderer thread never waits for the disk ----
++  void StartCsv() {
++    csv_started_ = true;
++    std::filesystem::path path;
++    const std::string log = rex::cvar::Query<std::string>("log_file");
++    if (!log.empty()) {
++      const std::filesystem::path lp(log);
++      path = lp.parent_path() / (lp.stem().string() + "-frames.csv");
++    } else {
++      const std::string dir = REXCVAR_GET(gow2_crash_dir);
++      path = dir.empty() ? std::filesystem::path("frames.csv") : std::filesystem::path(dir) / "frames.csv";
++    }
++    REXLOG_INFO("gow2_frame_log: per-frame CSV {} (frame times, cause per frame; stall=2 / spike=1 in the spike "
++                "column)", path.string());
++    csv_buf_ =
++        "frame,time_s,frame_ms,game_frame_ms,shown_after_game_swap_ms,renderer_busy_ms,renderer_own_cpu_ms,"
++        "renderer_top_part,renderer_top_part_ms,renderer_gpu_wait_ms,shader_hold_ms,pipeline_wait_ms,our_gpu_ms,"
++        "game_gpu_wait_ms,game_gpu_waits,game_query_wait_ms,game_query_waits,gpu_thread_wait_reg_mem_ms,"
++        "gpu_thread_wait_reg_mem_waits,gpu_thread_waiting_for_renderer_ms,draws,skipped_draws,new_pipelines,"
++        "new_shaders,game_frame_matched,upload_mb,spike,cause\n";
++    std::thread([this, path] { CsvThread(path); }).detach();  // lives as long as the process (never destroyed)
++  }
++  void FlushCsv() {
++    {
++      std::lock_guard<std::mutex> lock(csv_mutex_);
++      if (csv_out_.size() > (64u << 20)) return;  // the writer is stuck: drop rather than grow without end
++      csv_out_ += csv_buf_;
++    }
++    csv_buf_.clear();
++    csv_cv_.notify_one();
++  }
++  void CsvThread(std::filesystem::path path) {
++    std::ofstream f(path, std::ios::binary | std::ios::trunc);
++    if (!f) {
++      REXLOG_ERROR("gow2_frame_log: cannot write {}; no CSV this session", path.string());
++      csv_failed_.store(true, std::memory_order_relaxed);
++      return;
++    }
++    std::string chunk;
++    for (;;) {
++      {
++        std::unique_lock<std::mutex> lock(csv_mutex_);
++        csv_cv_.wait(lock, [this] { return !csv_out_.empty(); });
++        chunk.swap(csv_out_);
++      }
++      f.write(chunk.data(), std::streamsize(chunk.size()));
++      f.flush();  // a crash or a closed window loses at most the last ~30 frames
++      chunk.clear();
++    }
++  }
++
++  // Guest side (GPU thread), under ring_mutex_.
++  std::mutex ring_mutex_;
++  std::deque<GuestFrame> pending_;
++  uint64_t guest_n_ = 0, guest_last_ = 0;
++  uint64_t guest_ticks_[kXenosWaitCount] = {}, guest_count_[kXenosWaitCount] = {};
++  // Renderer side (renderer thread only).
++  uint64_t render_n_ = 0, render_last_ = 0, t0_ = 0;
++  double avg_ = 0.0, prev_ms_ = 0.0;
++  uint64_t warm_ = 0;
++  Window w_;
++  bool csv_ = REXCVAR_GET(gow2_frame_log_csv), csv_started_ = false;
++  uint64_t csv_rows_ = 0;
++  std::string csv_buf_;
++  std::mutex csv_mutex_;
++  std::condition_variable csv_cv_;
++  std::string csv_out_;
++  std::atomic<bool> csv_failed_{false};
++};
++
++FrameLog& Log() {
++  static FrameLog* log = new FrameLog();  // never destroyed: the CSV thread may still run at exit
++  return *log;
++}
++
++}  // namespace
++
++bool XenosFrameLogOn() { return REXCVAR_GET(gow2_frame_log); }
++
++void XenosFrameWaitBegin(uint32_t kind, XenosWaitClock& clock) {
++  if (kind >= kXenosWaitCount || !REXCVAR_GET(gow2_frame_log)) return;
++  const uint64_t now = Qpc();
++  // The same wait goes on when this step starts within 200 us of the previous step's end: the whole time since that
++  // step began is waiting. A longer gap is a new wait.
++  if (clock.end && now >= clock.end && now - clock.end < QpcFreq() / 5000)
++    g_wait_ticks[kind].fetch_add(now - clock.begin, std::memory_order_relaxed);
++  else
++    g_wait_count[kind].fetch_add(1, std::memory_order_relaxed);
++  clock.begin = now;
++}
++
++void XenosFrameWaitEnd(XenosWaitClock& clock) {
++  if (!REXCVAR_GET(gow2_frame_log)) return;
++  clock.end = Qpc();
++}
++
++void XenosFrameAddWait(uint32_t kind, double ms, uint32_t waits) {
++  if (kind >= kXenosWaitCount || !REXCVAR_GET(gow2_frame_log)) return;
++  if (ms > 0.0) g_wait_ticks[kind].fetch_add(uint64_t(ms * double(QpcFreq()) / 1000.0), std::memory_order_relaxed);
++  if (waits) g_wait_count[kind].fetch_add(waits, std::memory_order_relaxed);
++}
++
++void XenosFrameGuestSwap() {
++  if (!REXCVAR_GET(gow2_frame_log)) return;
++  Log().GuestSwap();
++}
++
++void XenosFrameRendered(const XenosRenderedFrame& frame) {
++  if (!REXCVAR_GET(gow2_frame_log)) return;
++  Log().Rendered(frame);
++}
+diff --git a/Gears2-Native/src/layer0_xenos/include/xenos/dev_tools.h b/Gears2-Native/src/layer0_xenos/include/xenos/dev_tools.h
+index 64e6211..fc29b8a 100644
+--- a/Gears2-Native/src/layer0_xenos/include/xenos/dev_tools.h
++++ b/Gears2-Native/src/layer0_xenos/include/xenos/dev_tools.h
+@@ -198,3 +198,46 @@ XenosConstGenerations XenosConstGens();
+ // An EVENT_WRITE_ZPD our processor ran (report already written): every hub observer gets OnZpd, as from the SDK.
+ void XenosDispatchOurZpd(const rex::graphics::RegisterFile& regs, uint32_t report_address, bool is_end,
+                          uint8_t answer, uint64_t samples);
++
++// Frame log (frame_log.cpp; --gow2_frame_log, on by default): every frame's time and what it went on. Writes a
++// summary line every --gow2_frame_log_every frames
++// (mean, p50/p95/p99, max, 1% low, frame-to-frame jitter, spikes by cause), one line per spike and, with
++// --gow2_frame_log_csv, <log name>-frames.csv next to the log file (one row per frame). The game frame is
++// measured on the GPU thread (swap to swap as the game hands them over), the shown frame on our renderer thread; the
++// waits below are charged to the game frame they happened in.
++enum XenosWaitKind : uint32_t {
++  kXenosWaitGameGpu = 0,  // a game thread in the D3D library's wait for the GPU (read pointer / fence)
++  kXenosWaitGameQuery,    // a game thread in UE3's wait for one GPU query's answer
++  kXenosWaitPm4,          // the GPU thread at a WAIT_REG_MEM (the command ring stops until it matches)
++  kXenosWaitRenderer,     // the GPU thread at a swap, waiting for our renderer thread to catch up
++  kXenosWaitCount
++};
++// One step of a game's wait loop (call XenosFrameWaitBegin at the top of the step, XenosFrameWaitEnd at its end, or
++// use XenosFrameWaitStep): the time from one step to the next counts when the next one starts within 200 us of the
++// previous one's end; a longer gap starts a new wait.
++struct XenosWaitClock {
++  uint64_t begin = 0, end = 0;
++};
++void XenosFrameWaitBegin(uint32_t kind, XenosWaitClock& clock);
++void XenosFrameWaitEnd(XenosWaitClock& clock);
++struct XenosFrameWaitStep {
++  XenosFrameWaitStep(uint32_t kind, XenosWaitClock& clock) : clock_(clock) { XenosFrameWaitBegin(kind, clock); }
++  ~XenosFrameWaitStep() { XenosFrameWaitEnd(clock_); }
++  XenosWaitClock& clock_;
++};
++bool XenosFrameLogOn();
++void XenosFrameAddWait(uint32_t kind, double ms, uint32_t waits = 1);  // a wait measured by its caller
++void XenosFrameGuestSwap();  // GPU thread: the game handed over a frame (its swap)
++// Our renderer thread, at the end of each swap: what that frame cost on our side.
++struct XenosRenderedFrame {
++  double cpu_ms = 0;            // renderer thread busy on the frame (includes the three waits below)
++  double gpu_wait_ms = 0;       // of which waiting for our GPU (fences: frames in flight, readbacks)
++  double hold_ms = 0;           // of which a shader / pipeline hold (load hold, compile step)
++  double pipeline_wait_ms = 0;  // of which draws waiting for their new pipelines
++  double gpu_ms = 0;            // GPU time of our command lists that finished since the previous frame
++  const char* top_part = "";    // biggest renderer CPU part (--gow2_renderer_cpu_split >= 1), "" when not measured
++  double top_part_ms = 0;
++  uint32_t draws = 0, skipped_draws = 0, pipelines_new = 0, shaders_new = 0;
++  double upload_mb = 0;
++};
++void XenosFrameRendered(const XenosRenderedFrame& frame);
+diff --git a/Gears2-Native/src/layer0_xenos/include/xenos/pm4.h b/Gears2-Native/src/layer0_xenos/include/xenos/pm4.h
+index 1d66e2b..dc75f9b 100644
+--- a/Gears2-Native/src/layer0_xenos/include/xenos/pm4.h
++++ b/Gears2-Native/src/layer0_xenos/include/xenos/pm4.h
+@@ -139,6 +139,8 @@ struct Stats {
+   uint64_t shader_loads_cached = 0;  // job 172: IM_LOADs whose bytes matched the cache
+   // Phase 2: packets handed back to the host, memory words we wrote, wait loops and the iterations they spun.
+   uint64_t handed_back = 0, memory_writes_done = 0, wait_loops = 0, wait_spins = 0;
++  uint64_t waits_spun = 0;  // frame log: wait loops that had to spin at all, and the time they took
++  double wait_ms = 0.0;
+   uint64_t zpds = 0, zpd_ends = 0;
+   uint64_t releases = 0;  // Environment::release calls
+   uint64_t deferred_writes = 0, release_reads = 0, release_waits = 0;  // job 173  // EVENT_WRITE_ZPD we ran ourselves (own_zpd), and how many were ends
+diff --git a/Gears2-Native/src/layer0_xenos/pm4.cpp b/Gears2-Native/src/layer0_xenos/pm4.cpp
+index dcad4d9..9ca0bed 100644
+--- a/Gears2-Native/src/layer0_xenos/pm4.cpp
++++ b/Gears2-Native/src/layer0_xenos/pm4.cpp
+@@ -296,6 +296,7 @@ bool Processor::Type3(Reader& r, uint32_t packet, uint32_t depth) {  // ExecuteP
+       const uint32_t info = r.Next(), poll = r.Next(), ref = r.Next(), mask = r.Next(), wait = r.Next();
+       ++stats_.wait_loops;
+       bool released = false;
++      std::chrono::steady_clock::time_point spun_since{};  // frame log: timed only once it has to spin
+       for (;;) {
+         uint32_t value;
+         if (info & 0x10) {
+@@ -305,6 +306,7 @@ bool Processor::Type3(Reader& r, uint32_t packet, uint32_t depth) {  // ExecuteP
+           value = ReadReg(poll);
+         }
+         if (Compare(info, value, ref, mask)) break;
++        if (spun_since == std::chrono::steady_clock::time_point{}) spun_since = std::chrono::steady_clock::now();
+         if (env_.defer_write && !released) {  // job 173: what it waits for may be queued for the renderer thread
+           released = true;
+           ++stats_.release_waits;
+@@ -318,6 +320,10 @@ bool Processor::Type3(Reader& r, uint32_t packet, uint32_t depth) {  // ExecuteP
+         else
+           std::this_thread::yield();
+       }
++      if (spun_since != std::chrono::steady_clock::time_point{}) {
++        ++stats_.waits_spun;
++        stats_.wait_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - spun_since).count();
++      }
+       return finish();
+     }
+     case kRegRmw: {  // ExecutePacketType3_REG_RMW
+diff --git a/Gears2-Native/src/layer0_xenos/pm4_shadow.cpp b/Gears2-Native/src/layer0_xenos/pm4_shadow.cpp
+index f9b7400..11f020f 100644
+--- a/Gears2-Native/src/layer0_xenos/pm4_shadow.cpp
++++ b/Gears2-Native/src/layer0_xenos/pm4_shadow.cpp
+@@ -724,6 +724,7 @@ class Pm4Execute final : public DrawObserver {
+                         ahead);
+           }
+           env.own_swap = [this, rf, done = s->swap_done, ahead](uint32_t fb, uint32_t w, uint32_t h) {
++            FrameLogSwap();  // the frame log's game frame ends here (its GPU-thread waits first)
+             if (g_pipe) {  // job 173: the renderer thread presents; we wait for it (a swap is a frame boundary)
+               PipeChanges();
+               if (ahead) {  // patch 0148: the renderer calls done() itself once it presented
+@@ -767,6 +768,25 @@ class Pm4Execute final : public DrawObserver {
+   }
+ 
+  public:
++  // Frame log (frame_log.cpp): this thread's waits since the previous swap (WAIT_REG_MEM spins, and waiting at swaps
++  // for our renderer thread), then the game frame itself. GPU thread.
++  void FrameLogSwap() {
++    if (!XenosFrameLogOn()) return;
++    if (proc_) {
++      const pm::Stats& s = proc_->GetStats();
++      XenosFrameAddWait(kXenosWaitPm4, s.wait_ms - fl_pm4_ms_, uint32_t(s.waits_spun - fl_pm4_waits_));
++      fl_pm4_ms_ = s.wait_ms;
++      fl_pm4_waits_ = s.waits_spun;
++    }
++    if (g_pipe) {
++      const RenderPipe::Stats& p = g_pipe->GetStats();
++      const double behind = p.swap_sync_ms + p.swap_wait_ms;
++      XenosFrameAddWait(kXenosWaitRenderer, behind - fl_behind_ms_, uint32_t(p.swap_waits - fl_behind_waits_));
++      fl_behind_ms_ = behind;
++      fl_behind_waits_ = p.swap_waits;
++    }
++    XenosFrameGuestSwap();
++  }
+   // Job 173: the register changes since the previous item go into the pipe (GPU thread).
+   void PipeChanges() {
+     changed_.clear();
+@@ -781,6 +801,8 @@ class Pm4Execute final : public DrawObserver {
+   bool swap_ahead_ = false;  // patch 0148: set before the processor exists
+   std::unique_ptr<pm::Processor> proc_;
+   std::vector<uint32_t> changed_;
++  double fl_pm4_ms_ = 0.0, fl_behind_ms_ = 0.0;  // frame log: the totals at the previous swap
++  uint64_t fl_pm4_waits_ = 0, fl_behind_waits_ = 0;
+ };
+ 
+ }  // namespace
+diff --git a/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp b/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp
+index 5653593..d3f7924 100644
+--- a/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp
++++ b/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp
+@@ -1964,7 +1964,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+       frame_fences_.pop_front();
+     }
+     if (queries_mode_ != QueriesMode::kOff) PollOcclusion();  // upl-s4c
+-    if (hold_this_frame_) HoldForPipelines();  // patch 0063
++    double fl_hold_ms = 0.0;  // frame log
++    if (hold_this_frame_) {
++      const auto th = std::chrono::steady_clock::now();
++      HoldForPipelines();  // patch 0063
++      fl_hold_ms = MsSince(th);
++    }
+     hold_descs_.clear();
+     hold_keys_.clear();
+     if (display_ours_ && !present_ours_) ShowDisplay(frontbuffer_ptr & 0x1FFFFFFFu);
+@@ -1975,6 +1980,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+       FlushTraces(false);
+       CheckTransferSelfTest();
+     }
++    const double fl_pipe_wait_ms = pipeline_wait_ms_frame_;  // frame log: this frame's, before the reset below
++    const uint32_t fl_draws = uint32_t(draw_index_), fl_skipped = uint32_t(pending_this_frame_);
+     draw_index_ = 0;
+     copy_index_ = 0;
+     occ_lines_ = 0;
+@@ -1993,6 +2000,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+     cpu_ms_ = 0;
+     cpu_sum_ += ms;
+     cpu_max_ = std::max(cpu_max_, ms);
++    if (XenosFrameLogOn()) FrameLogRecord(ms, fl_hold_ms, fl_pipe_wait_ms, fl_draws, fl_skipped);  // before 0010
+     ReportHitch(ms);  // patch 0010
+     if (frame_ % uint64_t(log_every_) == 0) {
+       if (depth_alias_drop_ || memexport_)  // patches 0024 / 0025
+@@ -4484,6 +4492,45 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+     }();
+     return ratio;
+   }
++  // Frame log (frame_log.cpp): this frame's renderer side - busy time and its waits, the biggest CPU part (this frame's
++  // part ticks, read before ReportHitch moves the mark and the summary clears them), new pipelines / shaders, uploads.
++  void FrameLogRecord(double ms, double hold_ms, double pipe_wait_ms, uint32_t draws, uint32_t skipped) {
++    const gpu::BackendStats& bs = backend_->Stats();
++    const rr::ShaderCacheStats& cs = cache_->Stats();
++    XenosRenderedFrame f;
++    f.cpu_ms = ms;
++    f.gpu_wait_ms = std::max(0.0, bs.fence_wait_ms - fl_prev_.fence_wait_ms);
++    f.hold_ms = hold_ms;
++    f.pipeline_wait_ms = pipe_wait_ms;
++    f.gpu_ms = std::max(0.0, bs.gpu_ms - fl_prev_.gpu_ms);
++    if (part_level_ > 0) {
++      uint32_t top = kPartCount;
++      double top_ms = 0.0;
++      for (uint32_t i = 0; i < kPartCount; ++i) {
++        const double pm = double(part_ticks_[i] - hitch_ticks_[i]) * MsPerTick();
++        if (pm > top_ms) {
++          top_ms = pm;
++          top = i;
++        }
++      }
++      if (top < kPartCount) {
++        f.top_part = kPartNames[top];
++        f.top_part_ms = top_ms;
++      }
++    }
++    f.draws = draws;
++    f.skipped_draws = skipped;
++    f.pipelines_new = uint32_t(bs.pipelines - fl_prev_.pipelines);
++    f.shaders_new = uint32_t(cs.translated - fl_prev_.translated);
++    f.upload_mb = double(bs.upload_bytes - fl_prev_.upload_bytes) / 1048576.0;
++    fl_prev_ = FrameLogPrev{bs.fence_wait_ms, bs.gpu_ms, bs.pipelines, cs.translated, bs.upload_bytes};
++    XenosFrameRendered(f);
++  }
++  struct FrameLogPrev {
++    double fence_wait_ms = 0.0, gpu_ms = 0.0;
++    uint64_t pipelines = 0, translated = 0, upload_bytes = 0;
++  };
++  FrameLogPrev fl_prev_;
+   // Patch 0010: one line for a frame over --gow2_hitch_report_ms - its biggest CPU parts and what happened in it.
+   void ReportHitch(double ms) {
+     const double limit = REXCVAR_GET(gow2_hitch_report_ms);
+diff --git a/Gears2-Native/src/layer3_gow2/game_patches.cpp b/Gears2-Native/src/layer3_gow2/game_patches.cpp
+index 85bf9af..110bce8 100644
+--- a/Gears2-Native/src/layer3_gow2/game_patches.cpp
++++ b/Gears2-Native/src/layer3_gow2/game_patches.cpp
+@@ -180,6 +180,8 @@ void Gow2QueryPollYield() {
+ // of this loop is a real wait on the same query, whose answer (a sample-count report or a fence / read pointer) our
+ // GPU side writes - so the retry can sleep on XenosNotifyGuestWrite. The hook sits on the loop head (0x828075BC).
+ void Gow2QueryWaitStep() {
++  thread_local XenosWaitClock fl_clock;  // the frame log times this wait in every mode (also the spinning ones)
++  XenosFrameWaitStep fl_step(kXenosWaitGameQuery, fl_clock);
+   const int32_t mode = REXCVAR_GET(gow2_patch_query_wait);
+   if (mode == 0) return;
+   // Job 232: uncapped (vsync off and no frame limit) the sleep cost ~2% in job 231; capped it saves ~0.3 of a core.
+@@ -204,6 +206,8 @@ void Gow2QueryWaitStep() {
+ // step sleeps until our GPU side writes guest memory (fences, the read pointer - XenosNotifyGuestWrite) or 1 ms. The
+ // rest of the step (the GPU-hang check, the read-pointer test in the caller) runs as before.
+ bool Gow2GpuWaitStep() {
++  thread_local XenosWaitClock fl_clock;  // the frame log times this wait, patched or not
++  XenosFrameWaitStep fl_step(kXenosWaitGameGpu, fl_clock);
+   if (REXCVAR_GET(gow2_patch_gpu_wait) != 1) return false;
+   static std::atomic<bool> logged{false};
+   if (!logged.exchange(true)) REXLOG_INFO("gow2_patch_gpu_wait: on - the GPU wait sleeps instead of spinning");
+diff --git a/Gears3-Native/src/layer3_gow3/game_patches.cpp b/Gears3-Native/src/layer3_gow3/game_patches.cpp
+index f809458..7c64d10 100644
+--- a/Gears3-Native/src/layer3_gow3/game_patches.cpp
++++ b/Gears3-Native/src/layer3_gow3/game_patches.cpp
+@@ -428,6 +428,8 @@ void SleepStep(WaitStreak& w, uint32_t quick_steps) {
+ }  // namespace
+ 
+ void Gow3QueryPollYield() {
++  thread_local XenosWaitClock fl_clock;  // the frame log times this wait in every mode (also the spinning ones)
++  XenosFrameWaitStep fl_step(kXenosWaitGameQuery, fl_clock);
+   switch (REXCVAR_GET(gow3_patch_query_poll_yield)) {
+     case 1:
+       Pause32();
+@@ -449,6 +451,8 @@ void Gow3QueryPollYield() {
+ }
+ 
+ bool Gow3GpuWaitStep() {  // jump_address_on_true: skip the empty delay loop to the cctpm
++  thread_local XenosWaitClock fl_clock;  // the frame log times this wait, patched or not
++  XenosFrameWaitStep fl_step(kXenosWaitGameGpu, fl_clock);
+   if (REXCVAR_GET(gow3_patch_gpu_wait) != 1) return false;
+   GOW3_LOG_ONCE("gow3_patch_gpu_wait: on - the GPU wait sleeps instead of spinning");
+   thread_local WaitStreak streak;
+diff --git a/GearsJ-Native/src/layer3_gowj/game_patches.cpp b/GearsJ-Native/src/layer3_gowj/game_patches.cpp
+index 1bb97a5..8227bd6 100644
+--- a/GearsJ-Native/src/layer3_gowj/game_patches.cpp
++++ b/GearsJ-Native/src/layer3_gowj/game_patches.cpp
+@@ -337,6 +337,8 @@ void SleepStep(WaitStreak& w, uint32_t quick_steps) {
+ }  // namespace
+ 
+ void GowjQueryPollYield() {
++  thread_local XenosWaitClock fl_clock;  // the frame log times this wait in every mode (also the spinning ones)
++  XenosFrameWaitStep fl_step(kXenosWaitGameQuery, fl_clock);
+   switch (REXCVAR_GET(gowj_patch_query_poll_yield)) {
+     case 1:
+       Pause32();
+@@ -358,6 +360,8 @@ void GowjQueryPollYield() {
+ }
+ 
+ bool GowjGpuWaitStep() {  // jump_address_on_true: skip the empty delay loop to the cctpm
++  thread_local XenosWaitClock fl_clock;  // the frame log times this wait, patched or not
++  XenosFrameWaitStep fl_step(kXenosWaitGameGpu, fl_clock);
+   if (REXCVAR_GET(gowj_patch_gpu_wait) != 1) return false;
+   GOWJ_LOG_ONCE("gowj_patch_gpu_wait: on - the GPU wait sleeps instead of spinning");
+   thread_local WaitStreak streak;

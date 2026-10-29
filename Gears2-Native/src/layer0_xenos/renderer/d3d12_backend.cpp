@@ -10,6 +10,9 @@
 // Device creation follows tools/gn_shader_oracle_d3d12.cpp (works on the RTX 3080 Ti, Shader Model 6.6, job 088).
 // Our code (MIT).
 #include <xenos/renderer/gpu.h>
+#include <xenos/renderer/mapped_file.h>
+#include <xenos/renderer/warm_source_cache.h>
+#include <xenos/renderer/warm_stage_store.h>
 
 #include <cstring>
 
@@ -87,6 +90,7 @@ bool EnableDeviceLossDiagnostics() { return false; }
 #include <map>
 #include <deque>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace xenos::renderer::gpu {
@@ -1902,7 +1906,7 @@ class D3D12Backend final : public Backend {
     // Patch 0010: with pipeline_load_async, an asynchronous request leaves the library load to the worker.
     if (pipeline_library_ && !(async && options_.pipeline_load_async && StartPipelineWorkers())) {
       ID3D12PipelineState* loaded = nullptr;
-      if (SUCCEEDED(pipeline_library_->LoadGraphicsPipeline(library_name.c_str(), &pd, IID_PPV_ARGS(&loaded)))) {
+      if (SUCCEEDED(LoadLibraryPipeline(library_name, pd, &loaded))) {
         Pipeline& slot = pipelines_.emplace_back();
         slot.pso = loaded;
         slot.topology = p.topology;
@@ -2986,6 +2990,10 @@ class D3D12Backend final : public Backend {
     if (pipeline_library_) {
       if (pipeline_library_dirty_.load()) SavePipelineLibrary();
       SafeRelease(pipeline_library_);
+    }
+    if (warm_pipeline_library_) {
+      if (warm_library_dirty_.load()) SavePipelineLibrary(false, true);
+      SafeRelease(warm_pipeline_library_);
     }
     for (Pipeline& p : pipelines_) SafeRelease(p.pso);
     for (IndexBuffer& b : index_buffers_) SafeRelease(b.resource);
@@ -4246,14 +4254,15 @@ class D3D12Backend final : public Backend {
             std::lock_guard<std::mutex> l(b->job_mutex_);
             --*counter;
           }
-          if (counter == &b->warm_busy_) b->job_cv_.notify_one();  // patch 0069: a warm slot is free again
+          if (counter == &b->warm_busy_) { b->job_cv_.notify_one(); b->warm_capacity_cv_.notify_all(); }  // patch 0069: a warm slot is free again
         }
       } busy_done{this, job->target ? &jobs_busy_ : &warm_busy_};
-      if (!job->target) {  // patch 0068: warm-only - put the pixel shader through the driver, keep nothing
+      if (!job->target) {  // warm-only: load or create the stage pipeline, persist it, then release the PSO
         // Prebuild v2: a speculative build runs at its own (lower) priority, so it takes CPU time only the game, the
         // renderer, the audio and the draws' own pipelines leave free; the worker's priority is restored after.
         const int base_prio = std::clamp(options_.pipeline_thread_priority, -2, 0);
-        const int warm_prio = std::clamp(options_.warm_thread_priority, -2, 0);
+        const int warm_prio = warm_startup_.load(std::memory_order_relaxed) ? base_prio
+                              : std::clamp(options_.warm_thread_priority, -2, 0);
         struct PrioScope {
           int from, to;
           static int Win(int p) { return p == 0 ? THREAD_PRIORITY_NORMAL : p == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST; }
@@ -4262,11 +4271,35 @@ class D3D12Backend final : public Backend {
         } prio_scope{base_prio, warm_prio};
         const auto w0 = std::chrono::steady_clock::now();
         ID3D12PipelineState* warm = nullptr;
-        const HRESULT whr = device_->CreateGraphicsPipelineState(&job->desc, IID_PPV_ARGS(&warm));
+        HRESULT whr = E_FAIL;
+        const std::wstring& name = job->library_name;
+        whr = LoadLibraryPipeline(name, job->desc, &warm, true);
+        bool persisted = SUCCEEDED(whr);
+        if (SUCCEEDED(whr)) warm_loaded_.fetch_add(1, std::memory_order_relaxed);
+        if (FAILED(whr)) {
+          whr = device_->CreateGraphicsPipelineState(&job->desc, IID_PPV_ARGS(&warm));
+          if (SUCCEEDED(whr)) {
+            ID3DBlob* blob = nullptr;
+            if (SUCCEEDED(warm->GetCachedBlob(&blob))) {
+              persisted = warm_stages_.Put(name, blob->GetBufferPointer(), blob->GetBufferSize());
+              blob->Release();
+            }
+            if (!persisted && warm_save_failed_.fetch_add(1) < 4)
+              REXLOG_WARN("gow2_renderer: could not save compiled stage; startup will retry it next launch");
+          }
+        }
         warm_us_.fetch_add(uint64_t(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - w0).count()),
                            std::memory_order_relaxed);
         if (SUCCEEDED(whr)) {
           warm->Release();
+          {
+            std::lock_guard<std::mutex> lock(job_mutex_);
+            warm_success_names_.insert(name);
+            if (auto it = warm_source_pending_.find(name); it != warm_source_pending_.end()) {
+              if (persisted) for (const auto& key : it->second) warm_sources_.Remember(key, name);
+              warm_source_pending_.erase(it);
+            }
+          }
           warmed_.fetch_add(1, std::memory_order_relaxed);
         } else if (warm_failed_.fetch_add(1, std::memory_order_relaxed) < 4) {
           REXLOG_WARN("gow2_renderer: {} (warm-only pipeline, patch 0068)", Hr("CreateGraphicsPipelineState", whr));
@@ -4278,12 +4311,13 @@ class D3D12Backend final : public Backend {
       // Patch 0010: a pipeline already saved loads from the library here, off the recording thread. Each pipeline has
       // one job, so no two threads load the same one (the one case the library does not synchronise itself).
       if (pipeline_library_ && options_.pipeline_load_async && !job->library_name.empty() &&
-          SUCCEEDED(pipeline_library_->LoadGraphicsPipeline(job->library_name.c_str(), &job->desc, IID_PPV_ARGS(&pso)))) {
+          SUCCEEDED(LoadLibraryPipeline(job->library_name, job->desc, &pso))) {
         p.pso = pso;
         loaded_async_.fetch_add(1, std::memory_order_relaxed);
         p.ready.store(true, std::memory_order_release);
         continue;
       }
+      SeedWarmStages(*job);
       const auto t0 = std::chrono::steady_clock::now();
       const HRESULT hr = device_->CreateGraphicsPipelineState(&job->desc, IID_PPV_ARGS(&pso));
       {  // patch 0057: how long the driver takes per new pipeline, and for how much bytecode
@@ -4325,38 +4359,48 @@ class D3D12Backend final : public Backend {
   // pipeline_library_blob_. Names: XXH3-128 of the root signature, the shader bytecode and the fixed-function state of
   // the description (pointers zeroed), so the same pipeline gets the same name in every run of the same build.
   void OpenPipelineLibrary() {
+    LoadPipelineLibrary(std::filesystem::path(options_.pipeline_library_path), pipeline_library_, pipeline_library_blob_);
+    pipeline_library_saved_at_ = std::chrono::steady_clock::now();
+  }
+  void LoadPipelineLibrary(const std::filesystem::path& path, ID3D12PipelineLibrary1*& library,
+                           std::vector<uint8_t>& blob, cogbox::io::MappedFile* mapped = nullptr,
+                           std::atomic<bool>* existing_valid = nullptr) {
     ID3D12Device1* device1 = nullptr;
     if (FAILED(device_->QueryInterface(IID_PPV_ARGS(&device1)))) {
       REXLOG_WARN("gow2_renderer: saved pipelines: the device has no ID3D12Device1; off");
       return;
     }
     std::error_code ec;
-    const std::filesystem::path path(options_.pipeline_library_path);
     std::filesystem::create_directories(path.parent_path(), ec);
-    {
-      std::ifstream f(path, std::ios::binary);
-      if (f) pipeline_library_blob_.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    const void* data = nullptr;
+    size_t had = 0;
+    if (mapped && mapped->Open(path)) { data = mapped->Data(); had = mapped->Size(); }
+    else if (!mapped) {
+      std::ifstream f(path, std::ios::binary | std::ios::ate);
+      if (f && f.tellg() > 0) {
+        blob.resize(size_t(f.tellg())); f.seekg(0);
+        if (f.read(reinterpret_cast<char*>(blob.data()), std::streamsize(blob.size()))) {
+          data = blob.data(); had = blob.size();
+        } else blob.clear();
+      }
     }
-    HRESULT hr = E_FAIL;
-    if (!pipeline_library_blob_.empty())
-      hr = device1->CreatePipelineLibrary(pipeline_library_blob_.data(), pipeline_library_blob_.size(),
-                                          IID_PPV_ARGS(&pipeline_library_));
-    const size_t had = pipeline_library_blob_.size();
+    HRESULT hr = had ? device1->CreatePipelineLibrary(data, had, IID_PPV_ARGS(&library)) : E_FAIL;
+    if (existing_valid) *existing_valid = had && SUCCEEDED(hr);
     if (FAILED(hr)) {  // no file yet, another driver / GPU (DRIVER_VERSION_MISMATCH, ADAPTER_NOT_FOUND) or damaged
       if (had) REXLOG_INFO("gow2_renderer: saved pipelines: {} not usable ({:08X}) - starting a new library",
                            path.string(), uint32_t(hr));
-      pipeline_library_blob_.clear();
-      hr = device1->CreatePipelineLibrary(nullptr, 0, IID_PPV_ARGS(&pipeline_library_));
+      blob.clear();
+      if (mapped) mapped->Reset();
+      hr = device1->CreatePipelineLibrary(nullptr, 0, IID_PPV_ARGS(&library));
     }
     device1->Release();
     if (FAILED(hr)) {
       REXLOG_WARN("gow2_renderer: saved pipelines: CreatePipelineLibrary failed ({:08X}); off", uint32_t(hr));
-      pipeline_library_ = nullptr;
+      library = nullptr;
       return;
     }
-    pipeline_library_saved_at_ = std::chrono::steady_clock::now();
     REXLOG_INFO("gow2_renderer: saved pipelines: {} ({} KB loaded)", path.string(),
-                pipeline_library_blob_.empty() ? 0 : had / 1024);
+                SUCCEEDED(hr) ? had / 1024 : 0);
   }
   std::wstring PipelineLibraryName(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& pd) const {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC fixed = pd;  // value copy; pointer members cleared below (padding stays zero:
@@ -4380,52 +4424,138 @@ class D3D12Backend final : public Backend {
     swprintf(name, 40, L"gp%016llx%016llx", (unsigned long long)h.high64, (unsigned long long)h.low64);
     return name;
   }
-  void StorePipeline(const std::wstring& name, ID3D12PipelineState* pso) {
-    if (!pipeline_library_ || name.empty() || !pso) return;
-    std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
-    const HRESULT hr = pipeline_library_->StorePipeline(name.c_str(), pso);
-    if (SUCCEEDED(hr)) {  // E_INVALIDARG = the name is already there (two creations of one pipeline): fine
-      ++stats_.pipelines_stored;
-      pipeline_library_dirty_.store(true, std::memory_order_relaxed);
+  void SeedWarmStages(const PipelineJob& job) {
+    if (!warm_ready_.load(std::memory_order_acquire) || !warm_sources_.Size()) return;
+    {
+      std::lock_guard<std::mutex> lock(warm_lifecycle_mutex_);
+      if (!warm_pipeline_library_ && warm_library_valid_)
+        LoadPipelineLibrary(WarmLibraryPath(), warm_pipeline_library_, warm_library_blob_, &warm_library_map_);
+    }
+    if (!warm_pipeline_library_) return;
+    for (bool vertex : {true, false}) {
+      const auto& code = job.code[vertex ? 0 : 1];
+      if (!code || code->empty()) continue;
+      auto pd = warm_pd_;
+      if (vertex) {
+        pd.VS = {code->data(), code->size()}; pd.PS = {}; pd.NumRenderTargets = 0;
+        for (auto& format : pd.RTVFormats) format = DXGI_FORMAT_UNKNOWN;
+      } else pd.PS = {code->data(), code->size()};
+      const auto name = PipelineLibraryName(pd);
+      if (!warm_sources_.HasPipeline(name)) continue;
+      // Another live pipeline may need this same stage. Wait off the render
+      // thread until its restore finishes instead of racing into a cold compile.
+      std::lock_guard<std::mutex> seed_lock(warm_seed_mutexes_[std::hash<std::wstring>{}(name) % warm_seed_mutexes_.size()]);
+      {
+        std::lock_guard<std::mutex> lock(job_mutex_);
+        if (live_seeded_.count(name)) continue;
+      }
+      ID3D12PipelineState* stage = nullptr;
+      if (SUCCEEDED(LoadLibraryPipeline(name, pd, &stage, true))) {
+        stage->Release();
+        std::lock_guard<std::mutex> lock(job_mutex_);
+        live_seeded_.insert(name);
+      }
+    }
+  }
+  HRESULT LoadLibraryPipeline(const std::wstring& name, const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc,
+                              ID3D12PipelineState** out, bool warm = false) {
+    if (warm) {
+      std::vector<uint8_t> bytes;
+      if (warm_stages_.Get(name, bytes)) {
+        auto cached = desc;
+        cached.CachedPSO = {bytes.data(), bytes.size()};
+        const HRESULT hr = device_->CreateGraphicsPipelineState(&cached, IID_PPV_ARGS(out));
+        if (SUCCEEDED(hr)) return hr;
+      }
+    }
+    ID3D12PipelineLibrary1* library = warm ? warm_pipeline_library_ : pipeline_library_;
+    if (!library || name.empty()) return E_FAIL;
+    // D3D12 requires synchronization for loads of the same PSO. Striped locks retain parallel
+    // loading for unrelated keys and never make a live lookup wait for cache serialization.
+    std::lock_guard<std::mutex> lock(pipeline_load_mutexes_[std::hash<std::wstring>{}(name) % pipeline_load_mutexes_.size()]);
+    return library->LoadGraphicsPipeline(name.c_str(), &desc, IID_PPV_ARGS(out));
+  }
+  void StorePipeline(const std::wstring& name, ID3D12PipelineState* pso, bool warm = false) {
+    ID3D12PipelineLibrary1* library = warm ? warm_pipeline_library_ : pipeline_library_;
+    if (!library || name.empty() || !pso) return;
+    std::lock_guard<std::mutex> lock(warm ? warm_library_mutex_ : pipeline_library_mutex_);
+    const HRESULT hr = library->StorePipeline(name.c_str(), pso);
+    if (SUCCEEDED(hr)) {
+      if (!warm) stored_pipelines_.fetch_add(1, std::memory_order_relaxed);
+      else warm_library_valid_ = false;
+      (warm ? warm_library_dirty_ : pipeline_library_dirty_).store(true, std::memory_order_relaxed);
     }
   }
   // Patch 0010: also called on the background saver thread (on_recording_thread = false): then it leaves the stats and
   // the save time to the recording thread and reports success by its result.
-  bool SavePipelineLibrary(bool on_recording_thread = true) {
+  bool SavePipelineLibrary(bool on_recording_thread = true, bool warm = false) {
+    ID3D12PipelineLibrary1* library = warm ? warm_pipeline_library_ : pipeline_library_;
+    auto& dirty = warm ? warm_library_dirty_ : pipeline_library_dirty_;
     std::vector<uint8_t> out;
     {
       // Only the snapshot is taken under the lock (workers store new pipelines meanwhile); the file is written after.
-      std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
+      std::lock_guard<std::mutex> lock(warm ? warm_library_mutex_ : pipeline_library_mutex_);
       if (on_recording_thread) pipeline_library_saved_at_ = std::chrono::steady_clock::now();
-      if (!pipeline_library_ || !pipeline_library_dirty_.exchange(false)) return false;
-      const SIZE_T size = pipeline_library_->GetSerializedSize();
+      if (!library || !dirty.exchange(false)) return false;
+      const SIZE_T size = library->GetSerializedSize();
       out.resize(size);
-      if (!size || FAILED(pipeline_library_->Serialize(out.data(), size))) {
+      if (!size || FAILED(library->Serialize(out.data(), size))) {
         REXLOG_WARN("gow2_renderer: saved pipelines: Serialize failed ({} bytes)", size_t(size));
+        dirty.store(true);
         return false;
       }
     }
-    const std::filesystem::path path(options_.pipeline_library_path);
+    if (warm) {
+      SafeRelease(warm_pipeline_library_);
+      warm_library_map_.Reset();
+      std::vector<uint8_t>().swap(warm_library_blob_);
+    }
+    const std::filesystem::path path = warm ? WarmLibraryPath() : std::filesystem::path(options_.pipeline_library_path);
     std::filesystem::path tmp = path;
     tmp += L".tmp";
     {
       std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
       f.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
-      if (!f) return false;
+      if (!f) { dirty.store(true); REXLOG_WARN("gow2_renderer: could not write shader pipeline cache {}", tmp.string()); return false; }
     }
     std::error_code ec;
     std::filesystem::rename(tmp, path, ec);  // whole file or nothing: a crash mid-write leaves the old one
     if (ec) {
+      REXLOG_WARN("gow2_renderer: could not replace shader pipeline cache {}: {}", path.string(), ec.message());
       std::filesystem::remove(tmp, ec);
+      dirty.store(true);
       return false;
     }
     if (on_recording_thread) ++stats_.pipeline_library_saves;
+    if (warm) warm_library_valid_ = true;
     return true;
   }
+  cogbox::shader_cache::WarmSourceCache warm_sources_;
+  cogbox::shader_cache::WarmStageStore warm_stages_;
+  bool WarmSourceStamp(cogbox::shader_cache::LibraryStamp& stamp) const {
+    return cogbox::shader_cache::WarmSourceCache::Stamp(WarmLibraryPath(), warm_source_identity_, stamp) &&
+           warm_stages_.Stamp(stamp);
+  }
+  std::string warm_source_identity_;
+  std::atomic<bool> warm_library_valid_{false};
+  std::atomic<uint64_t> warm_source_hits_{0};
+  std::atomic<uint64_t> warm_save_failed_{0};
+  std::mutex warm_lifecycle_mutex_;
+  std::unordered_set<std::wstring> warm_success_names_, live_seeded_;
+  std::unordered_map<std::wstring, std::vector<cogbox::shader_cache::SourceKey>> warm_source_pending_;
+  std::filesystem::path WarmLibraryPath() const { return options_.pipeline_library_path + ".prebuild"; }
+  ID3D12PipelineLibrary1* warm_pipeline_library_ = nullptr;
+  cogbox::io::MappedFile warm_library_map_;
+  std::vector<uint8_t> warm_library_blob_;  // retained for the library's entire lifetime
+  std::mutex warm_library_mutex_;
+  std::atomic<bool> warm_library_dirty_{false};
+  std::array<std::mutex, 64> pipeline_load_mutexes_;
+  std::array<std::mutex, 64> warm_seed_mutexes_;
   ID3D12PipelineLibrary1* pipeline_library_ = nullptr;
   std::vector<uint8_t> pipeline_library_blob_;
   std::mutex pipeline_library_mutex_;
   std::atomic<bool> pipeline_library_dirty_{false};
+  std::atomic<uint64_t> stored_pipelines_{0};
   std::chrono::steady_clock::time_point pipeline_library_saved_at_{};
   // Patch 0010: background saves and asynchronous library loads.
   std::thread saver_;
@@ -4447,12 +4577,14 @@ class D3D12Backend final : public Backend {
     return q;
   }
   void RefreshWorkerStats() {  // patch 0057 (moved here by 0061: also for the prepare-only report)
+    stats_.pipelines_stored = stored_pipelines_.load(std::memory_order_relaxed);
     stats_.pipelines_loaded_async = loaded_async_.load(std::memory_order_relaxed);
     stats_.pipelines_built_async = built_async_.load(std::memory_order_relaxed);
     stats_.pipeline_async_ms = double(async_us_.load(std::memory_order_relaxed)) / 1000.0;
     stats_.pipeline_async_max_ms = double(async_max_us_.load(std::memory_order_relaxed)) / 1000.0;
     stats_.pipeline_async_bytes = async_bytes_.load(std::memory_order_relaxed);
     stats_.pipelines_warmed = warmed_.load(std::memory_order_relaxed);  // patch 0068
+    stats_.pipelines_warm_loaded = warm_loaded_.load(std::memory_order_relaxed);
     stats_.pipelines_warm_failed = warm_failed_.load(std::memory_order_relaxed);
     stats_.pipeline_warm_ms = double(warm_us_.load(std::memory_order_relaxed)) / 1000.0;
     for (uint32_t i = 0; i < kPipelineClasses; ++i)
@@ -4468,6 +4600,13 @@ class D3D12Backend final : public Backend {
     RefreshWorkerStats();
     if (saver_.joinable()) saver_.join();
     if (pipeline_library_ && pipeline_library_dirty_.load()) SavePipelineLibrary();
+    if (warm_pipeline_library_ && warm_library_dirty_.load()) SavePipelineLibrary(false, true);
+    if (warm_library_valid_ && !warm_source_identity_.empty()) {
+      cogbox::shader_cache::LibraryStamp stamp;
+      if (WarmSourceStamp(stamp) &&
+          !warm_sources_.Save(WarmLibraryPath().wstring() + L".sources", stamp))
+        REXLOG_WARN("gow2_renderer: could not save the compiled source inventory");
+    }
   }
   void SetPipelineBacklog(bool on) override { pipeline_backlog_ = on; }
   bool PipelinePending(const GraphicsPipelineDesc& d) override {  // patch 0063 (the renderer's load hold)
@@ -4533,13 +4672,16 @@ class D3D12Backend final : public Backend {
   }
   // Patch 0068 (gpu.h SetWarmTemplate / WarmPixelShader): warm-only pipelines.
   std::deque<std::unique_ptr<PipelineJob>> warm_jobs_;  // under job_mutex_
+  std::unordered_set<std::wstring> warm_seen_;  // identical final bytecode/state needs only one driver build
+  std::condition_variable warm_capacity_cv_;
+  std::atomic<bool> warm_startup_{false};
   uint64_t warm_busy_ = 0;                              // under job_mutex_
   uint64_t warm_workers_ = 3;                           // patch 0069 (SetWarmTemplate); prebuild v2: SetWarmWorkers
   bool warm_workers_set_ = false;                       // prebuild v2: SetWarmWorkers was called (under job_mutex_)
   D3D12_GRAPHICS_PIPELINE_STATE_DESC warm_pd_{};        // written once, before warm_ready_
   std::shared_ptr<const std::vector<uint8_t>> warm_vs_;
   std::atomic<bool> warm_ready_{false};
-  std::atomic<uint64_t> warmed_{0}, warm_failed_{0}, warm_us_{0};
+  std::atomic<uint64_t> warmed_{0}, warm_failed_{0}, warm_us_{0}, warm_loaded_{0};
   bool SetWarmTemplate(const GraphicsPipelineDesc& d) override {
     if (warm_ready_.load(std::memory_order_acquire)) return true;
     {
@@ -4547,6 +4689,8 @@ class D3D12Backend final : public Backend {
       if (!warm_workers_set_) warm_workers_ = std::max<uint64_t>(1, options_.warm_workers);  // patch 0069 (v2: unless set)
     }
     if (!ready_ || lost_ || !d.vs || d.vs >= shaders_.size() || !shaders_[d.vs].code || d.gs) return false;
+    if (!options_.pipeline_library_path.empty())
+      LoadPipelineLibrary(WarmLibraryPath(), warm_pipeline_library_, warm_library_blob_, &warm_library_map_, &warm_library_valid_);
     if (!StartPipelineWorkers()) return false;
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
     D3D_PRIMITIVE_TOPOLOGY topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
@@ -4562,16 +4706,38 @@ class D3D12Backend final : public Backend {
                 d.color_count);
     return true;
   }
-  bool WarmPixelShader(std::vector<uint8_t>&& ps_bytecode) override {
+  bool WarmPixelShader(std::vector<uint8_t>&& ps_bytecode, uint64_t source_hash = 0) override {
     if (!warm_ready_.load(std::memory_order_acquire) || ps_bytecode.empty()) return false;
     auto job = std::make_unique<PipelineJob>();
     job->desc = warm_pd_;
     job->code[0] = warm_vs_;
     job->code[1] = std::make_shared<const std::vector<uint8_t>>(std::move(ps_bytecode));
     job->desc.PS = {job->code[1]->data(), job->code[1]->size()};
+    return QueueWarmPipeline(std::move(job), source_hash, false);
+  }
+  bool WarmVertexShader(std::vector<uint8_t>&& bytecode, uint64_t source_hash = 0) override {
+    if (!warm_ready_.load(std::memory_order_acquire) || bytecode.empty()) return false;
+    auto job = std::make_unique<PipelineJob>();
+    job->desc = warm_pd_;
+    job->code[0] = std::make_shared<const std::vector<uint8_t>>(std::move(bytecode));
+    job->desc.VS = {job->code[0]->data(), job->code[0]->size()};
+    job->desc.PS = {};
+    job->desc.NumRenderTargets = 0;
+    for (auto& format : job->desc.RTVFormats) format = DXGI_FORMAT_UNKNOWN;
+    return QueueWarmPipeline(std::move(job), source_hash, true);
+  }
+  bool QueueWarmPipeline(std::unique_ptr<PipelineJob> job, uint64_t source_hash, bool vertex) {
+    job->library_name = PipelineLibraryName(job->desc);
     {
       std::lock_guard<std::mutex> lock(job_mutex_);
       if (stop_workers_) return false;
+      const bool saved = warm_sources_.HasPipeline(job->library_name);
+      if (saved || warm_success_names_.count(job->library_name)) {
+        if (source_hash && saved) warm_sources_.Remember({source_hash, vertex}, job->library_name);
+        return true;
+      }
+      if (source_hash) warm_source_pending_[job->library_name].push_back({source_hash, vertex});
+      if (!warm_seen_.insert(job->library_name).second) return true;
       warm_jobs_.push_back(std::move(job));
     }
     job_cv_.notify_one();
@@ -4581,7 +4747,54 @@ class D3D12Backend final : public Backend {
     std::lock_guard<std::mutex> lock(job_mutex_);
     return warm_jobs_.size() + warm_busy_;
   }
+  void ConfigureWarmSourceCache(const std::string& identity) override {
+    if (options_.pipeline_library_path.empty()) return;
+    const auto name = PipelineLibraryName(warm_pd_);
+    warm_source_identity_ = identity + std::string(name.begin(), name.end());
+    const bool compatible = warm_library_valid_.load();
+    // Save an empty driver/adapter validation anchor before the first compile. The
+    // individual stage blobs are streamed to disk and their PSOs immediately released.
+    if (!compatible && warm_pipeline_library_) {
+      warm_library_dirty_ = true;
+      if (SavePipelineLibrary(false, true))
+        LoadPipelineLibrary(WarmLibraryPath(), warm_pipeline_library_, warm_library_blob_, &warm_library_map_, &warm_library_valid_);
+    }
+    if (!warm_stages_.Open(WarmLibraryPath().wstring() + L".stages", compatible))
+      REXLOG_WARN("gow2_renderer: compiled stage store unavailable; shaders remain available through live compilation");
+    cogbox::shader_cache::LibraryStamp stamp;
+    const bool loaded = warm_library_valid_ &&
+        WarmSourceStamp(stamp) &&
+        warm_sources_.Load(WarmLibraryPath().wstring() + L".sources", stamp);
+    REXLOG_INFO("gow2_renderer: compiled source inventory: {} ({} sources)", loaded ? "valid" : "will rebuild", warm_sources_.Size());
+  }
+  bool WarmSourceCached(bool vertex, uint64_t hash) override {
+    if (!warm_sources_.Contains({hash, vertex})) return false;
+    warm_source_hits_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+  }
+  uint64_t WarmSourcesReused() const override { return warm_source_hits_.load(std::memory_order_relaxed); }
+  void WaitWarmCapacity(uint64_t capacity) override {
+    std::unique_lock<std::mutex> lock(job_mutex_);
+    warm_capacity_cv_.wait_for(lock, std::chrono::milliseconds(25), [this, capacity] {
+      return stop_workers_ || warm_jobs_.size() + warm_busy_ < capacity;
+    });
+  }
+  void ReleaseWarmupCache() override {
+    // Called after the startup barrier: no job may still read the library's backing memory.
+    if (WarmJobsLeft()) return;
+    REXLOG_INFO("gow2_renderer: streamed stage cache: {} pipelines, {} save failures", warm_stages_.Size(), warm_save_failed_.load());
+    if (warm_source_hits_.load() && warm_pipeline_library_) {
+      REXLOG_INFO("gow2_renderer: compiled shader inventory reused {}; mapped driver library retained for on-demand stages",
+                  warm_source_hits_.load());
+      return;
+    }
+    SafeRelease(warm_pipeline_library_);
+    warm_library_map_.Reset();
+    std::vector<uint8_t>().swap(warm_library_blob_);
+    REXLOG_INFO("gow2_renderer: startup driver library released before gameplay");
+  }
   void SetWarmWorkers(uint32_t n) override {  // prebuild v2: the renderer's load / play setting (0 = paused)
+    warm_startup_.store(n >= 1024u, std::memory_order_relaxed);
     bool more = false;
     {
       std::lock_guard<std::mutex> lock(job_mutex_);

@@ -202,6 +202,7 @@ class ShaderCache {
   }
   void SetDxbcSalt(uint32_t salt) { dxbc_salt_ = salt; }  // patch 0063: test only (--gow2_renderer_dxbc_salt)
   bool Dxbc() const { return dxbc_; }
+  std::string PrebuildIdentity() const;
   std::string CompilerDescription() const;
 
  private:

@@ -98,6 +98,8 @@ elseif(MSVC)
     target_compile_options(gn_layer0_xenos PRIVATE /fp:precise)
 endif()
 rexglue_apply_target_settings(gn_layer0_xenos)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/shader_cache_identity.cmake")
+cogbox_shader_cache_identity(gn_layer0_xenos "${CMAKE_CURRENT_SOURCE_DIR}/src/layer0_xenos")
 
 # Layer 1: D3D library version profile (XDK 7645). Stage 1 code starts here (resource-call watch).
 add_library(gn_layer1_xdk7645 STATIC
@@ -114,6 +116,7 @@ add_library(gn_layer2_ue3 STATIC
     src/layer2_ue3/config_bundle.cpp
     src/layer2_ue3/config_install.cpp
     src/layer2_ue3/shader_prebuild.cpp
+    src/layer2_ue3/lzx.cpp
 )
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer1_xdk7645)
@@ -343,7 +346,11 @@ if(GN_BUILD_TESTS)
         src/layer0_xenos/display_gamma.cpp
         tests/layer0_hlsl_compact_test.cpp
         tests/layer0_upscaler_test.cpp
+        tests/layer0_shader_progress_test.cpp
+        tests/layer0_shader_io_test.cpp
         tests/layer2_config_bundle_test.cpp
+        tests/layer2_shader_prebuild_test.cpp
+        src/layer2_ue3/lzx.cpp
         src/layer2_ue3/config_bundle.cpp
         src/layer0_xenos/renderer/upscaler.cpp
         src/layer0_xenos/hlsl.cpp

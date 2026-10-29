@@ -64,7 +64,7 @@ class Gow2App : public rex::ReXApp {
     XenosInstallShaderDumpIfRequested();
     XenosInstallShaderWatchIfRequested();
     XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull});
-    Ue3InstallShaderPrebuildIfRequested();  // patch 0068: after the renderer (it asks whether the renderer wants them)
+    Ue3InstallShaderPrebuildIfRequested(runtime());  // patch 0068: after the renderer (it asks whether the renderer wants them)
     XenosInstallQueryLogIfRequested(runtime(), {-32});
     XenosInstallStateCoverageIfRequested();
     XenosInstallPm4ShadowIfRequested(runtime());
@@ -78,7 +78,7 @@ class Gow2App : public rex::ReXApp {
   // Everything is set up and the game is about to start.
   void OnPreLaunchModule() override { Ue3SetLaunchCommandLineIfRequested(); }
   // The game's main thread exists but hasn't run yet.
-  void OnPostLaunchModule(rex::system::XThread* thread) override { XenosHoldGuestIfRequested(thread); }
+  void OnPostLaunchModule(rex::system::XThread* thread) override { Ue3HoldForShaderPrebuild(thread); XenosHoldGuestIfRequested(thread); }
 
   // Patch 0054: the achievement toast attaches the overlay drawer only while a toast shows (the SDK's kept the
   // presenter repainting at the monitor's rate all the time - the NVIDIA overlay counted those as frames).

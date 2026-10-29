@@ -1,6 +1,7 @@
 ﻿// Layer 0 (Xbox 360 GPU core and game-free tooling). Nothing here may include layer 1-3 headers.
 // Developer tools that work for any 360 title: crash report, scripted gamepad, image dump.
 #pragma once
+#include <xenos/renderer/shader_progress.h>
 
 #include <cstdint>
 
@@ -75,20 +76,19 @@ void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_
 // would update the note). loading = the game is loading (no swap for 250 ms, a package opened in the last 5 s, or the
 // load window): the note then shows a spinner and "Compiling shaders N% (M left)" so a long load never looks frozen.
 void XenosSetPrebuildProgress(uint64_t left, uint64_t ever_taken, bool loading);
+void XenosSetShaderScanProgress(bool active, uint64_t scanned, uint64_t total);
+void XenosSetShaderStartupPhase(cogbox::shader_progress::ShaderPreparationPhase phase);
 // Patch 0066: a game's shader-creation hook (layer 3) reports each shader the game creates - its microcode's guest
 // address and size in bytes - so the renderer can translate it and have the driver build it before the first draw.
 // Any thread; no-op unless our renderer runs (--gow2_renderer_shader_precreate, default on).
 void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t size_bytes);
-// Patch 0068: a pixel shader found in a package the game just opened (layer 2 reads the file) - its microcode as stored
-// (big-endian dwords) - to translate like a draw's and put through the driver before its first draw. Any thread;
-// copies the bytes. XenosPrebuildWanted: false unless our renderer runs the DXBC path on D3D12 with
-// --gow2_renderer_shader_prebuild (default on), so layer 2 reads nothing otherwise. `ucode_hash` (prebuild v2): XXH3-64
-// of exactly these bytes - the draws' key - when the caller has it (layer 2 does), so the renderer need not hash again;
-// 0 = the renderer hashes them.
-// `variant` says which part of the game's shader record this is (layer 2: 0 = the whole microcode region, 1 = the code
-// after its literal-constant block); XenosPrebuildVariantHits(v) = new draw pipelines so far whose pixel shader was a
-// prebuilt one of that variant, so layer 2 can stop offering a variant a game never draws.
+// Package shaders, as big-endian microcode. Intake copies bytes and deduplicates by stage and
+// hash; the worker translates with the normal renderer options. Both stored variants are retained.
+// The startup barrier includes queued translations and driver jobs. Variant hit counts are diagnostic only.
 bool XenosPrebuildWanted();
+void XenosPrebuildShader(bool vertex, const void* be_ucode, uint32_t size_bytes, uint32_t variant, uint64_t hash);
+void XenosBeginStartupPrebuild();
+bool XenosFinishStartupPrebuild();  // false while queued translations / driver builds remain
 void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant, uint64_t ucode_hash = 0);
 uint64_t XenosPrebuildVariantHits(uint32_t variant);
 // --gow2_frame_times=N: every N swaps log swap interval (mean/p99/max) and the observer callbacks' own time per frame.

@@ -1,0 +1,342 @@
+diff --git a/Gears2-Native/cogbox/src/gears_settings.cpp b/Gears2-Native/cogbox/src/gears_settings.cpp
+index 7aa55f9..98fa04c 100644
+--- a/Gears2-Native/cogbox/src/gears_settings.cpp
++++ b/Gears2-Native/cogbox/src/gears_settings.cpp
+@@ -172,11 +172,12 @@ std::vector<Option> make_options(Game g) {
+                "input lag. Works best when the game already runs at 60 fps or more. Any DirectX 12 graphics card.\nEarly version: "
+                "the HUD and characters' own movement can smear a little in the in-between frames.", 356), "framegen");
+     // Prebuild v2 (fork): the shader prebuild from the game's own files, one switch for all three games.
+-    add(make("ShaderPrebuild", "Build shaders from the game's files (experimental)", Tab::Graphics, Kind::Bool, SH, 0,
+-             "While an area loads, reads its shaders straight from your copy of the game and builds them in the background, "
+-             "so its first moments stutter less. Builds mostly while the game loads and only a little during play, at the "
+-             "lowest priority. Uses some extra CPU while loading. DirectX 12 only. Off = shaders are built when first drawn, "
+-             "as before.", 0), "shaderprebuild");
++    add(make("ShaderPrebuild", "Compile shaders while loading (experimental)", Tab::Graphics, Kind::Bool, SH, 0,
++             "Compiles each area's shaders before it starts: while an area loads, its shaders are read straight from your copy "
++             "of the game and built on every CPU core, with \"Compiling shaders N%\" on the loading screen, so play starts "
++             "without shader pop-in. The first load of each area takes longer (up to a minute or so the first time); later "
++             "loads are much quicker. A few shaders the game only makes while playing still build then. DirectX 12 only. "
++             "Off = shaders are built when first drawn and pop in, as before.", 0), "shaderprebuild");
+     // Aniso: no PS1 tooltip; text from 59-how-to-play ("16x anisotropic filtering").
+     add(make("Aniso", "Sharper textures (16x anisotropic)", Tab::Graphics, Kind::Bool, OWN, g == Game::Gears2 ? 1 : 0,
+              "16x anisotropic filtering: textures seen at an angle (floors, walls) stay sharp.", 357), "aniso", "", true);
+@@ -345,7 +346,7 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
+     } else if (f == "mute") {
+         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
+     } else if (f == "shaderprebuild") {   // prebuild v2: its play / load worker switch is new with it
+-        if (!cap_exe(env, "gow2_renderer_shader_prebuild_play_workers")) return no(not_yet(gi, "needs its next build"));
++        if (!cap_exe(env, "gow2_renderer_shader_prebuild_hold_max_ms")) return no(not_yet(gi, "needs its next build"));
+     } else if (f == "vsync") {   // launcher patch 0155
+         if (!cap_rt(env, "d3d12_present_vsync")) return no(not_yet(gi, "needs its next build (SDK patch 37)"));
+     }
+@@ -687,6 +688,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
+         const std::string pb = fmt_bool(s.b("ShaderPrebuild"));
+         a.push_back("--gow2_renderer_shader_prebuild=" + pb);
+         a.push_back("--ue3_shader_prebuild=" + pb);
++        // the compile step: the load hold keeps the loading picture up until the area's shaders are built
++        if (s.b("ShaderPrebuild")) {
++            a.push_back("--gow2_renderer_load_hold=true");
++            a.push_back("--gow2_renderer_shader_prebuild_hold=true");
++        }
+     }
+     // PS1 858: 16x anisotropic
+     if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : "--gowj_aniso16=true");
+diff --git a/Gears2-Native/src/layer0_xenos/fps_bar.cpp b/Gears2-Native/src/layer0_xenos/fps_bar.cpp
+index 07d1bc7..fa7ed0d 100644
+--- a/Gears2-Native/src/layer0_xenos/fps_bar.cpp
++++ b/Gears2-Native/src/layer0_xenos/fps_bar.cpp
+@@ -101,6 +101,7 @@ std::atomic<uint64_t> g_jobs_left{0}, g_jobs_ever{0};
+ // over the last picture, bottom right; N = the held frame's pipelines already built.
+ std::atomic<bool> g_hold_active{false};
+ std::atomic<uint32_t> g_hold_total{0}, g_hold_left{0};
++std::atomic<bool> g_hold_compiling{false};  // prebuild v2: the compile step is part of this hold
+ 
+ // 0.2.1 (GitHub #18 / #23: NVIDIA and RTSS read about 3x the game's fps): an ImGuiDrawer with any dialog registered
+ // asks the presenter for a repaint every UI tick, so this note - registered all the time though it draws nothing
+@@ -176,8 +177,11 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
+     const uint32_t total = g_hold_total.load(std::memory_order_relaxed);
+     const uint32_t left = g_hold_left.load(std::memory_order_relaxed);
+     const int pct = total ? int(std::min<uint32_t>(99, (total - std::min(left, total)) * 100u / total)) : 0;
+-    char text[64];
+-    std::snprintf(text, sizeof(text), "Loading shaders %d%%", pct);
++    char text[80];
++    if (g_hold_compiling.load(std::memory_order_relaxed))  // prebuild v2: the opened packages' shaders, all of them
++      std::snprintf(text, sizeof(text), "Compiling shaders %d%%  (%u left)", pct, left);
++    else
++      std::snprintf(text, sizeof(text), "Loading shaders %d%%", pct);
+     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
+     const ImVec2 ts = ImGui::CalcTextSize(text);
+     const float r = 9.0f * scale, pad = 10.0f * scale;
+@@ -218,7 +222,8 @@ rex::ui::WindowedAppContext* g_ui = nullptr;
+ 
+ }  // namespace
+ 
+-void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_left) {  // patch 0067
++void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_left, bool compiling) {  // patch 0067
++  g_hold_compiling.store(compiling, std::memory_order_relaxed);
+   g_hold_total.store(pipelines_total, std::memory_order_relaxed);
+   g_hold_left.store(pipelines_left, std::memory_order_relaxed);
+   g_hold_active.store(active, std::memory_order_release);
+diff --git a/Gears2-Native/src/layer0_xenos/include/xenos/dev_tools.h b/Gears2-Native/src/layer0_xenos/include/xenos/dev_tools.h
+index fedbbe2..40d723f 100644
+--- a/Gears2-Native/src/layer0_xenos/include/xenos/dev_tools.h
++++ b/Gears2-Native/src/layer0_xenos/include/xenos/dev_tools.h
+@@ -68,7 +68,8 @@ void XenosShutdownInGameMenu();
+ void XenosSetShaderJobs(uint64_t left, uint64_t ever_queued);
+ // Patch 0067: while the renderer holds a frame back (the game paused behind it) an animated "Loading shaders N%"
+ // indicator is drawn over the last picture; the renderer reports the held frame's pipelines and how many are left.
+-void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_left);
++// Prebuild v2: `compiling` = the hold waits for the prebuild's compile step too - "Compiling shaders N% (M left)".
++void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_left, bool compiling = false);
+ // Patch 0066: a game's shader-creation hook (layer 3) reports each shader the game creates - its microcode's guest
+ // address and size in bytes - so the renderer can translate it and have the driver build it before the first draw.
+ // Any thread; no-op unless our renderer runs (--gow2_renderer_shader_precreate, default on).
+diff --git a/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp b/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp
+index 653e76b..384be94 100644
+--- a/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp
++++ b/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp
+@@ -206,6 +206,18 @@ REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_workers, -1, "Gears2",
+ REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_play_workers, 1, "Gears2",
+                     "Prebuild v2: the same during play (outside a load): 1 (default) keeps building areas the game "
+                     "streams in while playing at a trickle; 0 = warm-only builds only while loading");
++REXCVAR_DEFINE_BOOL(gow2_renderer_shader_prebuild_hold, false, "Gears2",
++                    "Prebuild v2 compile step (with --gow2_renderer_load_hold): a load hold also waits until every pixel "
++                    "shader the opened packages brought is built (on all pipeline workers, the game paused behind the "
++                    "loading picture, 'Compiling shaders N%' shown), instead of letting the rest build during play. Up to "
++                    "gow2_renderer_shader_prebuild_hold_max_ms per load");
++REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_hold_max_ms, 120000, "Gears2",
++                     "Prebuild v2: the longest the compile step may hold one load in all (ms); then play starts and the "
++                     "rest builds in the background");
++REXCVAR_DEFINE_STRING(gow2_renderer_shader_prebuild_variant, "auto", "Gears2",
++                      "Prebuild v2: which part of each package shader record to build - auto (both until 32 draws show "
++                      "which this game uses, patch 0069; remembered in prebuild-variants.txt) | whole | code (the code "
++                      "after the literal constants: Gears 3, notes/69). One variant halves the work");
+ REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_priority, -2, "Gears2",
+                     "Prebuild v2: Windows priority of a pipeline worker while it builds a warm-only pipeline: -2 = "
+                     "lowest (default), -1 = below normal, 0 = the workers' own (gow2_renderer_pipeline_thread_priority)");
+@@ -1927,7 +1939,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+     if (prebuild_on_) GovernWarmWorkers();
+     // Patch 0062: the on-screen "Building shaders" note (fps_bar.cpp) - pipelines still queued or being built, and how
+     // many were ever queued (both games; no game data).
+-    XenosSetShaderJobs(backend_->PipelineJobsLeft(), backend_->Stats().pipelines_async);
++    // Prebuild v2: and the shaders the prebuild still has to build, so a background compile shows too.
++    XenosSetShaderJobs(backend_->PipelineJobsLeft() + (prebuild_on_ ? PrebuildLeft() : 0),
++                       backend_->Stats().pipelines_async + (prebuild_on_ ? prebuild_accepted_.load() : 0));
+     if (upscale_probe_ && frame_ % upscale_probe_ == 0) LogProbeFrame();
+     UpscaleEndFrame();
+     if (textures_) textures_->EndFrame(frame_);
+@@ -2110,12 +2124,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+     if (!last_swap_end_.time_since_epoch().count() || now - last_swap_end_ > std::chrono::seconds(1)) {
+       load_window_until_ = now + std::chrono::seconds(20);  // a load (or the first frame)
+       hold_left_ms_ = double(REXCVAR_GET(gow2_renderer_load_hold_max_ms));
++      prebuild_hold_left_ms_ = double(std::max(0, REXCVAR_GET(gow2_renderer_shader_prebuild_hold_max_ms)));  // v2
+     }
+     const bool scene = pending_this_frame_ >= 200 && uint64_t(pending_this_frame_) * 2 >= draw_index_;
+     // Prebuild v2: a new scene opens the load window even with the hold off (the prebuild uses the window too).
+     if (scene && now >= load_window_until_ && (prebuild_on_ || REXCVAR_GET(gow2_renderer_load_hold))) {
+       load_window_until_ = now + std::chrono::seconds(20);  // a new scene mid-play: a window and budget of its own
+       hold_left_ms_ = double(REXCVAR_GET(gow2_renderer_load_hold_max_ms));
++      prebuild_hold_left_ms_ = double(std::max(0, REXCVAR_GET(gow2_renderer_shader_prebuild_hold_max_ms)));  // v2
+     }
+     load_until_ns_.store(load_window_until_.time_since_epoch().count(), std::memory_order_relaxed);  // prebuild v2
+     if (!REXCVAR_GET(gow2_renderer_load_hold) || !present_ours_ || hold_descs_.empty()) return;
+@@ -2126,7 +2142,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+     const int32_t play_n = REXCVAR_GET(gow2_renderer_play_hold_draws);
+     hold_in_window_ = now < load_window_until_;
+     if (hold_in_window_) {
+-      hold_this_frame_ = hold_left_ms_ > 0.0 && (pending_this_frame_ >= load_n || scene);
++      // Prebuild v2 compile step: a frame after a load is also held while the opened packages' shaders build.
++      hold_this_frame_ = (hold_left_ms_ > 0.0 || PrebuildHoldNow()) && (pending_this_frame_ >= load_n || scene);
+       hold_cap_ms_ = hold_left_ms_;
+     } else {
+       hold_this_frame_ = play_n > 0 && pending_this_frame_ >= uint32_t(play_n);
+@@ -2135,28 +2152,55 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+   }
+   void HoldForPipelines() {
+     const auto t0 = std::chrono::steady_clock::now();
++    // Prebuild v2 compile step: in a load's window, the hold also waits for the opened packages' pixel shaders, with
++    // every pipeline worker on them (GovernWarmWorkers) - the game is paused behind the loading picture anyway.
++    const bool with_prebuild = hold_in_window_ && PrebuildHoldNow();
++    uint64_t pre_left0 = 0, pre_acc0 = 0, pre_left = 0;
++    if (with_prebuild) {
++      prebuild_holding_.store(true, std::memory_order_relaxed);
++      GovernWarmWorkers();
++      pre_left0 = PrebuildLeft();
++      pre_acc0 = prebuild_accepted_.load(std::memory_order_relaxed);
++    }
+     size_t left = 0;
++    double pipes_ms = -1.0;  // when the held frame's own pipelines were done (the load-hold budget pays only for that)
+     for (bool shown = false;;) {
+       left = 0;
+       for (const gpu::GraphicsPipelineDesc& d : hold_descs_) left += backend_->PipelinePending(d) ? 1 : 0;
+-      if (!left || MsSince(t0) >= hold_cap_ms_) break;
++      const double ms = MsSince(t0);
++      const bool pipes_done = !left || ms >= hold_cap_ms_;
++      if (pipes_done && pipes_ms < 0.0) pipes_ms = ms;
++      pre_left = with_prebuild ? PrebuildLeft() : 0;
++      if (pipes_done && (!pre_left || ms >= prebuild_hold_left_ms_)) break;
+       // Patch 0067: the animated "Loading shaders N%" indicator (fps_bar.cpp) once the hold lasts over 100 ms - a short
+-      // one would only flash it.
+-      if (shown || MsSince(t0) >= 100.0) {
+-        XenosSetLoadHold(true, uint32_t(hold_descs_.size()), uint32_t(left));
++      // one would only flash it. v2: "Compiling shaders N% (M left)" while the compile step counts.
++      if (shown || ms >= 100.0) {
++        const uint64_t pre_total = pre_left0 + (prebuild_accepted_.load(std::memory_order_relaxed) - pre_acc0);
++        const uint64_t total = uint64_t(hold_descs_.size()) + pre_total, all_left = uint64_t(left) + pre_left;
++        XenosSetLoadHold(true, uint32_t(std::min<uint64_t>(total, UINT32_MAX)),
++                         uint32_t(std::min<uint64_t>(all_left, UINT32_MAX)), with_prebuild && pre_left > 0);
+         shown = true;
+       }
+       std::this_thread::sleep_for(std::chrono::milliseconds(2));
+     }
+     XenosSetLoadHold(false, 0, 0);
+     const double ms = MsSince(t0);
+-    if (hold_in_window_) hold_left_ms_ -= ms;
++    if (with_prebuild) {
++      prebuild_holding_.store(false, std::memory_order_relaxed);
++      GovernWarmWorkers();
++      prebuild_hold_left_ms_ -= ms;
++    }
++    if (hold_in_window_) hold_left_ms_ -= pipes_ms < 0.0 ? ms : pipes_ms;
+     ++stats_.load_holds;
+     REXLOG_INFO("gow2_renderer: {} hold (patch 0063): frame {} not shown ({} of {} draws pending, {} pipelines) - "
+-                "waited {:.0f} ms, {}; hold time left for this load {:.0f} ms",
++                "waited {:.0f} ms, {}; hold time left for this load {:.0f} ms{}",
+                 hold_in_window_ ? "load" : "play", frame_, pending_this_frame_, draw_index_, hold_descs_.size(), ms,
+                 left ? fmt::format("{} still not ready", left) : std::string("all ready"),
+-                std::max(0.0, hold_left_ms_));
++                std::max(0.0, hold_left_ms_),
++                with_prebuild ? fmt::format(" | compile step (prebuild v2): {} package shaders at the start, {} left, "
++                                            "{:.0f} ms of its budget left", pre_left0, pre_left,
++                                            std::max(0.0, prebuild_hold_left_ms_))
++                              : std::string());
+   }
+ 
+   // ---- Patch 0066: shaders the game creates while loading (Shagg 19:09-19:23: "build behind the loading screen").
+@@ -2281,8 +2325,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+     PrebuildItem it;
+     it.hash = hash;
+     it.variant = uint8_t(variant & 1);
+-    it.bytes.assign(static_cast<const uint8_t*>(be_ucode), static_cast<const uint8_t*>(be_ucode) + size);
+     prebuild_offered_.fetch_add(1, std::memory_order_relaxed);
++    last_offer_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
++    if (prebuild_variant_force_ >= 0 && it.variant != prebuild_variant_force_) {  // compile step: one variant only
++      prebuild_variant_skipped_.fetch_add(1, std::memory_order_relaxed);
++      return;
++    }
++    it.bytes.assign(static_cast<const uint8_t*>(be_ucode), static_cast<const uint8_t*>(be_ucode) + size);
+     {
+       std::lock_guard<std::mutex> lock(prebuild_mutex_);
+       if (!prebuild_seen_.insert(hash).second) return;  // offered before (another package)
+@@ -2291,10 +2340,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+         prebuild_overflow_.fetch_add(1, std::memory_order_relaxed);
+       }
+       prebuild_queue_.push_back(std::move(it));
++      prebuild_accepted_.fetch_add(1, std::memory_order_relaxed);
+     }
+     prebuild_cv_.notify_one();
+   }
+-  uint64_t PrebuildVariantHits(uint32_t v) const { return prebuild_variant_hits_[v & 1].load(std::memory_order_relaxed); }
++  // Layer 2 asks this to choose which variants to offer (0069); a forced variant (compile step) answers for itself.
++  uint64_t PrebuildVariantHits(uint32_t v) const {
++    if (prebuild_variant_force_ >= 0) return int(v & 1) == prebuild_variant_force_ ? (1ull << 40) : 0;
++    return prebuild_variant_hits_[v & 1].load(std::memory_order_relaxed);
++  }
+ 
+  private:
+   static constexpr size_t kPrebuildQueueMax = 60000;  // ~2-3 KB each: well under 200 MB even when full
+@@ -2314,6 +2368,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+     LoadVariantCounts();  // patch 0069
+     warm_load_workers_ = PrebuildLoadWorkers();
+     warm_play_workers_ = uint32_t(std::max(0, REXCVAR_GET(gow2_renderer_shader_prebuild_play_workers)));
++    {  // compile step: one variant when the game says which (Gears 3: code) or it is set
++      const std::string v = REXCVAR_GET(gow2_renderer_shader_prebuild_variant);
++      prebuild_variant_force_ = v == "whole" ? 0 : v == "code" ? 1 : -1;
++    }
++    prebuild_hold_on_ = REXCVAR_GET(gow2_renderer_shader_prebuild_hold) && REXCVAR_GET(gow2_renderer_load_hold);
++    prebuild_hold_left_ms_ = double(std::max(0, REXCVAR_GET(gow2_renderer_shader_prebuild_hold_max_ms)));
+     {  // v2: what the shader cache already holds (the start-up warm-up's recorded shaders) needs no warm-only build
+       std::lock_guard<std::mutex> lock(prebuild_mutex_);
+       cache_->ForEachKnown(false, [this](uint64_t h) { prebuild_known_ps_.insert(h); });
+@@ -2321,10 +2381,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+     GovernWarmWorkers();
+     prebuild_thread_ = std::thread([this] { PrebuildThread(); });  // lives as long as the renderer (never destroyed)
+     REXLOG_INFO("gow2_renderer: shader prebuild at package open on (patch 0068, v2): {} known pixel shaders skipped, "
+-                "warm-only builds on {} worker(s) while loading / {} during play at priority {}, up to {} queued",
++                "warm-only builds on {} worker(s) while loading / {} during play at priority {}, up to {} queued; "
++                "variant {}; compile step at loads {}",
+                 prebuild_known_ps_.size(), warm_load_workers_, warm_play_workers_,
+                 std::clamp(REXCVAR_GET(gow2_renderer_shader_prebuild_priority), -2, 0),
+-                std::max(1, REXCVAR_GET(gow2_renderer_shader_prebuild_queue)));
++                std::max(1, REXCVAR_GET(gow2_renderer_shader_prebuild_queue)),
++                prebuild_variant_force_ == 0 ? "whole" : prebuild_variant_force_ == 1 ? "code only" : "auto",
++                prebuild_hold_on_ ? fmt::format("on (up to {} ms per load)", prebuild_hold_left_ms_)
++                                  : std::string(REXCVAR_GET(gow2_renderer_shader_prebuild_hold)
++                                                    ? "off (needs --gow2_renderer_load_hold)" : "off"));
+   }
+   // v2: loading = no swap for 250 ms (the game is loading without presenting) or within the load window (DecideLoadHold:
+   // the 20 s after a load or a new scene). Any thread; tells the backend only when the count changes.
+@@ -2332,8 +2397,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+     const int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
+     const int64_t last = last_swap_ns_.load(std::memory_order_relaxed);
+     const int64_t stall = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::milliseconds(250)).count();
+-    const bool loading = !last || now - last > stall || now < load_until_ns_.load(std::memory_order_relaxed);
+-    const uint32_t want = loading ? warm_load_workers_ : warm_play_workers_;
++    const int64_t recent = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::seconds(5)).count();
++    // v2 fix (Gears 3 log, 16:39: its loading screen keeps presenting, so neither test above saw the map load and the
++    // prebuild ran on 1 worker): a package opened in the last 5 s is a load too.
++    const bool loading = !last || now - last > stall || now < load_until_ns_.load(std::memory_order_relaxed) ||
++                         now - last_offer_ns_.load(std::memory_order_relaxed) < recent;
++    // Compile step: the game waits behind the hold, so every pipeline worker may build (the backend caps it).
++    const uint32_t want = prebuild_holding_.load(std::memory_order_relaxed) ? 1024u
++                          : loading                                         ? warm_load_workers_
++                                                                            : warm_play_workers_;
+     std::lock_guard<std::mutex> lock(warm_govern_mutex_);
+     if (want == warm_workers_now_) return;
+     warm_workers_now_ = want;
+@@ -2432,6 +2504,31 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+   uint32_t warm_workers_now_ = UINT32_MAX;  // under warm_govern_mutex_
+   uint64_t warm_govern_changes_ = 0;        // under warm_govern_mutex_
+   std::atomic<int64_t> last_swap_ns_{0}, load_until_ns_{0};  // steady_clock ticks
++  // Compile step (prebuild v2): progress counts, the forced variant, the per-load budget, and whether a hold waits now.
++  std::atomic<int64_t> last_offer_ns_{0};
++  std::atomic<uint64_t> prebuild_accepted_{0}, prebuild_variant_skipped_{0};
++  int prebuild_variant_force_ = -1;  // -1 auto, 0 whole, 1 code only (StartPrebuild; read by any thread after)
++  bool prebuild_hold_on_ = false;
++  double prebuild_hold_left_ms_ = 0.0;  // recording thread
++  std::atomic<bool> prebuild_holding_{false};
++  // Shaders still to do: taken in but not yet through the prebuild thread, plus the warm-only jobs at the workers.
++  uint64_t PrebuildLeft() {
++    const uint64_t acc = prebuild_accepted_.load(std::memory_order_relaxed);
++    const uint64_t done = prebuild_known_.load(std::memory_order_relaxed) + prebuild_dropped_.load(std::memory_order_relaxed) +
++                          prebuild_untranslated_.load(std::memory_order_relaxed) +
++                          prebuild_queued_.load(std::memory_order_relaxed) + prebuild_overflow_.load(std::memory_order_relaxed);
++    return (acc > done ? acc - done : 0) + backend_->WarmJobsLeft();
++  }
++  // Hold for the compile step only while it can make progress (the warm-only template exists) and for a load that is
++  // happening (a package opened in the last 30 s) - a mid-play scene never waits for old packages' leftovers.
++  bool PrebuildHoldNow() {
++    if (!prebuild_on_ || !prebuild_hold_on_ || prebuild_hold_left_ms_ <= 0.0) return false;
++    if (!warm_template_set_.load(std::memory_order_acquire)) return false;
++    const int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
++    const int64_t window = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::seconds(30)).count();
++    if (now - last_offer_ns_.load(std::memory_order_relaxed) > window) return false;
++    return PrebuildLeft() > 0;
++  }
+   uint64_t prebuild_logged_offered_ = 0, prebuild_logged_new_ps_ = 0;
+   // Patch 0069: totals for the whole session (stats_ is cleared every log window, so 0068's line showed one window).
+   // v2: only the recording thread's two counts are here; the rest are the atomics above.
+diff --git a/Gears3-Native/src/layer3_gow3/gow3_app.h b/Gears3-Native/src/layer3_gow3/gow3_app.h
+index 893f61c..6d421a2 100644
+--- a/Gears3-Native/src/layer3_gow3/gow3_app.h
++++ b/Gears3-Native/src/layer3_gow3/gow3_app.h
+@@ -91,6 +91,9 @@ class Gow3App : public rex::ReXApp {
+     //    per frame into the scene depth AFTER the scene colour resolve that runs the upscaler (later lighting passes);
+     //    unjittered, whole character triangles lost their lighting under DLSS / FSR. Jittered, the frames are clean.
+     game_default("gow2_upscale_jitter_late", "true");
++    //  - the shader prebuild (prebuild v2): Gears 3's draws use the code after each record's literal constants (Gears 2
++    //    notes/69: 120 code-only vs 5 whole of 359 drawn), so only that variant is built - half the compile step.
++    game_default("gow2_renderer_shader_prebuild_variant", "code");
+     XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull});
+     Ue3InstallShaderPrebuildIfRequested();  // prebuild v2: after the renderer (it asks whether the renderer wants them)
+     XenosInstallQueryLogIfRequested(runtime(), {});

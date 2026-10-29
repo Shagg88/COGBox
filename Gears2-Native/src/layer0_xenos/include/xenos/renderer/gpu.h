@@ -377,7 +377,7 @@ struct BackendStats {
   // Patch 0062: start-up backlog jobs moved to the front because a draw (or a waiting user) needed them now.
   uint64_t pipelines_promoted = 0;
   // Patch 0068: warm-only pipelines (WarmPixelShader) built and released, failed, and the driver's ms for them.
-  uint64_t pipelines_warmed = 0, pipelines_warm_failed = 0;
+  uint64_t pipelines_warmed = 0, pipelines_warm_failed = 0, pipelines_warm_loaded = 0;
   double pipeline_warm_ms = 0.0;
   uint64_t sampler_heap_switches = 0;  // patch 0034: a full sampler heap swapped for a free one instead of waiting
   uint64_t sampler_table_hits = 0;                         // upl-n109: sampler sets found in the heap's cache
@@ -446,8 +446,14 @@ class Backend {
   // workers after every pipeline a draw is waiting for and before the start-up backlog. WarmJobsLeft: queued + being
   // built. All false / 0 on a backend without it.
   virtual bool SetWarmTemplate(const GraphicsPipelineDesc& d) { (void)d; return false; }
-  virtual bool WarmPixelShader(std::vector<uint8_t>&& ps_bytecode) { (void)ps_bytecode; return false; }
+  virtual bool WarmPixelShader(std::vector<uint8_t>&& ps_bytecode, uint64_t source_hash = 0) { (void)ps_bytecode; (void)source_hash; return false; }
+  virtual bool WarmVertexShader(std::vector<uint8_t>&& bytecode, uint64_t source_hash = 0) { (void)bytecode; (void)source_hash; return false; }
   virtual uint64_t WarmJobsLeft() { return 0; }
+  virtual void WaitWarmCapacity(uint64_t capacity) { (void)capacity; }
+  virtual void ReleaseWarmupCache() {}
+  virtual void ConfigureWarmSourceCache(const std::string& identity) { (void)identity; }
+  virtual bool WarmSourceCached(bool vertex, uint64_t hash) { (void)vertex; (void)hash; return false; }
+  virtual uint64_t WarmSourcesReused() const { return 0; }
   // Prebuild v2 (any thread): how many workers may be on warm-only pipelines from now on; 0 = none (queued warm jobs
   // wait). The renderer raises it while the game loads and lowers it during play.
   virtual void SetWarmWorkers(uint32_t n) { (void)n; }

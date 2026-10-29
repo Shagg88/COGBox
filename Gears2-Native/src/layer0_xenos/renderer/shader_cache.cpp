@@ -884,6 +884,13 @@ hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_qu
   options.dxbc_salt = dxbc_salt_;  // patch 0063: test only, 0 = unchanged
   return options;
 }
+std::string ShaderCache::PrebuildIdentity() const {
+  const bool flags[] = {compact_float_constants_, tex_sign_by_swizzle_, canary_r21_, canary_decode_,
+      mulsc_toward_zero_, f16_nan_zero_, spirv_precise_, ps_refactoring_, tex_num_format_, tex_post_constants_,
+      vertex_index_clamp_, dxbc_, dxbc_slim_, dxbc_canary_maths_};
+  const uint64_t hash = Fnv1a64(&dxbc_salt_, sizeof(dxbc_salt_), Fnv1a64(flags, sizeof(flags)));
+  return std::string(COGBOX_SHADER_TRANSLATOR_ID) + fmt::format("-{:016x}", hash);
+}
 bool ShaderCache::TranslateDxbcOnly(const uint32_t* dwords, size_t dword_count, bool is_vertex,
                                     std::vector<uint8_t>& out) {
   if (!dxbc_ || backend_.GetShaderIL() != gpu::ShaderIL::kDxil || !dwords || !dword_count) return false;

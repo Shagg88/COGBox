@@ -172,12 +172,11 @@ std::vector<Option> make_options(Game g) {
                "input lag. Works best when the game already runs at 60 fps or more. Any DirectX 12 graphics card.\nEarly version: "
                "the HUD and characters' own movement can smear a little in the in-between frames.", 356), "framegen");
     // Prebuild v2 (fork): the shader prebuild from the game's own files, one switch for all three games.
-    add(make("ShaderPrebuild", "Compile shaders while loading (experimental)", Tab::Graphics, Kind::Bool, SH, 0,
-             "Compiles each area's shaders before it starts: while an area loads, its shaders are read straight from your copy "
-             "of the game and built on every CPU core, with \"Compiling shaders N%\" on the loading screen, so play starts "
-             "without shader pop-in. The first load of each area takes longer (up to a minute or so the first time); later "
-             "loads are much quicker. A few shaders the game only makes while playing still build then. DirectX 12 only. "
-             "Off = shaders are built when first drawn and pop in, as before.", 0), "shaderprebuild");
+    add(make("ShaderPrebuild", "Compile all shaders at launch", Tab::Graphics, Kind::Bool, SH, 1,
+             "Scans your installed game, title update, DLC and enabled mods before the game starts. Prepares both shader "
+             "stages and all stored variants, reusing compiled pipelines on later launches. The first launch can take "
+             "several minutes. A progress indicator stays responsive. Shaders generated or patched during play still "
+             "use the normal renderer fallback. DirectX 12 only.", 0), "shaderprebuild");
     // Aniso: no PS1 tooltip; text from 59-how-to-play ("16x anisotropic filtering").
     add(make("Aniso", "Sharper textures (16x anisotropic)", Tab::Graphics, Kind::Bool, OWN, g == Game::Gears2 ? 1 : 0,
              "16x anisotropic filtering: textures seen at an angle (floors, walls) stay sharp.", 357), "aniso", "", true);
@@ -345,8 +344,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll")) return no(not_yet(gi, "this build has no AMD frame generation files"));
     } else if (f == "mute") {
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
-    } else if (f == "shaderprebuild") {   // prebuild v2: its play / load worker switch is new with it
-        if (!cap_exe(env, "gow2_renderer_shader_prebuild_hold_max_ms")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "shaderprebuild") {
+        if (!cap_exe(env, "ue3_shader_prebuild_startup")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "vsync") {   // launcher patch 0155
         if (!cap_rt(env, "d3d12_present_vsync")) return no(not_yet(gi, "needs its next build (SDK patch 37)"));
     }
@@ -691,7 +690,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // the compile step: the load hold keeps the loading picture up until the area's shaders are built
         if (s.b("ShaderPrebuild")) {
             a.push_back("--gow2_renderer_load_hold=true");
-            a.push_back("--gow2_renderer_shader_prebuild_hold=true");
+            a.push_back("--ue3_shader_prebuild_startup=true");
+            a.push_back("--gow2_renderer_shader_prebuild_hold=false");
         }
     }
     // PS1 858: 16x anisotropic

@@ -144,6 +144,7 @@ void Gow2NoteTextureDefrag() {
 struct Gow2WaitStreak {
   uint64_t last_qpc = 0;
   uint32_t count = 0;
+  uint32_t write_seq = 0;
 };
 static void Gow2SleepStep(Gow2WaitStreak& w, uint32_t quick_steps = 64) {
   static const uint64_t freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return uint64_t(f.QuadPart); }();
@@ -153,8 +154,11 @@ static void Gow2SleepStep(Gow2WaitStreak& w, uint32_t quick_steps = 64) {
   if (++w.count <= quick_steps) {
     for (int i = 0; i < 32; ++i) _mm_pause();
   } else {
-    XenosWaitGuestWrite(XenosGuestWriteSeq(), 1);
+    // This sequence was sampled before the guest's preceding completion check.
+    // Sampling here can miss a completion between that check and this wait.
+    XenosWaitGuestWrite(w.write_seq, 1);
   }
+  w.write_seq = XenosGuestWriteSeq();
   QueryPerformanceCounter(&now);
   w.last_qpc = uint64_t(now.QuadPart);
 }

@@ -8,6 +8,7 @@
 // extra (lines split by |), and any option id (the setting's value).
 #include "../src/gears_settings.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -184,6 +185,25 @@ std::string random_case(std::mt19937& r) {
 
 int summary() {
     int fails = 0;
+    // All games use the startup barrier, and old builds never receive an unsupported startup flag.
+    for (int g = 0; g < 3; ++g) {
+        Environment e;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        Store store;
+        Settings settings = store.view(static_cast<Game>(g), e);
+        settings.set("ShaderPrebuild", 1);
+        auto args = build_args(static_cast<Game>(g), Version::Disc, settings, e);
+        auto has = [&](const std::string& value) { return std::find(args.begin(), args.end(), value) != args.end(); };
+        if (!has("--ue3_shader_prebuild_startup=true") || has("--gow2_renderer_shader_prebuild_hold=true")) {
+            std::cout << "FAIL startup shader flags for game " << g << "\n"; ++fails;
+        }
+        settings.set("ShaderPrebuild", 0);
+        args = build_args(static_cast<Game>(g), Version::Disc, settings, e);
+        if (has("--ue3_shader_prebuild_startup=true") || !has("--ue3_shader_prebuild=false")) {
+            std::cout << "FAIL shader toggle off for game " << g << "\n"; ++fails;
+        }
+    }
     const char* gn[3] = { "Gears 2", "Gears 3", "Judgment" };
     for (int g = 0; g < 3; ++g) {
         std::map<std::string, int> per;

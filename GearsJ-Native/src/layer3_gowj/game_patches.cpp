@@ -321,12 +321,14 @@ void Pause32() {
 struct WaitStreak {
   uint64_t last_qpc = 0;
   uint32_t count = 0;
+  uint32_t write_seq = 0;
 };
 void SleepStep(WaitStreak& w, uint32_t quick_steps) {
 #ifdef _WIN32
   if (QpcNow() - w.last_qpc > QpcFrequency() / 5000) w.count = 0;
   if (++w.count <= quick_steps) Pause32();
-  else XenosWaitGuestWrite(XenosGuestWriteSeq(), 1);
+  else XenosWaitGuestWrite(w.write_seq, 1);  // sampled before the preceding guest completion check
+  w.write_seq = XenosGuestWriteSeq();
   w.last_qpc = QpcNow();
 #else
   (void)w;
