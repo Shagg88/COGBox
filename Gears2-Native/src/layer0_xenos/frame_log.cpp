@@ -1,4 +1,4 @@
-// Layer 0 (game-free): the frame log (--gow2_frame_log, on by default). Records every frame's time and what it went on,
+// Layer 0 (game-free): the frame log (--gow2_frame_log, off by default: a developer tool, Shagg 28 Oct). Records every frame's time and what it went on,
 // for all three games:
 //   - with --gow2_frame_log_csv, <log name>-frames.csv next to the log file (--log_file; else
 //     --gow2_crash_dir\frames.csv): one row per frame;
@@ -48,7 +48,7 @@
 #include <thread>
 #include <vector>
 
-REXCVAR_DEFINE_BOOL(gow2_frame_log, true, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_frame_log, false, "Gears2",
                     "Frame log: every frame's time and its cause - <log name>-frames.csv next to the log, a summary "
                     "line every --gow2_frame_log_every frames and a line per spike (all three games)");
 REXCVAR_DEFINE_INT32(gow2_frame_log_every, 600, "Gears2", "Frame log: frames per summary line (0 = no summary lines)");

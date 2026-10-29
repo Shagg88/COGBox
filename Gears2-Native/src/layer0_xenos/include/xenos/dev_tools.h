@@ -191,7 +191,7 @@ XenosConstGenerations XenosConstGens();
 void XenosDispatchOurZpd(const rex::graphics::RegisterFile& regs, uint32_t report_address, bool is_end,
                          uint8_t answer, uint64_t samples);
 
-// Frame log (frame_log.cpp; --gow2_frame_log, on by default): every frame's time and what it went on. Writes a
+// Frame log (frame_log.cpp; --gow2_frame_log, off by default): every frame's time and what it went on. Writes a
 // summary line every --gow2_frame_log_every frames
 // (mean, p50/p95/p99, max, 1% low, frame-to-frame jitter, spikes by cause), one line per spike and, with
 // --gow2_frame_log_csv, <log name>-frames.csv next to the log file (one row per frame). The game frame is
