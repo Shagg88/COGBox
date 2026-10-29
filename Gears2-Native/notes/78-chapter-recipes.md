@@ -126,3 +126,17 @@ Skipped draws A / C (two tries each): Gears 2 ch1 119,541 / 181,351 -> 92 / 120;
   known race: a report re-marked pending before its ZPD reaches the render thread could get the previous answer).
   Not taken: early stage restore (needs PR's warm stage store), compile-all-at-launch (planned as an opt-in later),
   the 0 -> 3 ms pipeline wait default.
+
+## Job 617 (combined: what was queued as 615, 616, 617 and 614)
+- The package reader runs at the lowest thread priority, and the pack translates 1 ms a frame while frames already
+  miss draws, 8 ms on a loading screen / menu, 4 ms otherwise (Gears 3 ch11 jumped straight into play: C ~5,000
+  skipped draws worse than A in the first 10 s, before the pack had queued anything).
+- The pack keeps building while the game hitches or pauses (Shagg): pm4_shadow's consumer, with nothing queued by the
+  game, gives it ~2 ms slices until nothing more can be done right now. Without a pack the wait is unchanged.
+- Recipe packs made again from the overnight recording plus every run of today's tests
+  (work\tools\merge_recipe_recordings.ps1): the new pad (BACK twice, LT, 360 spins) reaches parts the recording didn't.
+- Test results of 612c's A/C run, Gears 3 [V]: ch0 43,397 / 42,030 -> 41,377 / 37,727 (the game draws from frame 1);
+  ch6 17,440 / 17,596 -> 10,848 / 9,276; ch11 17,736 / 23,546 -> 19,538 / 28,152 (worse in the first 10 s only);
+  ch14 18,028 / 15,893 -> 4,657 / 4,779; ch16 80,507 / 65,655 -> 17,191 / 16,743; ch18 22,360 / 21,011 -> 10,766 /
+  9,612. Over 1,000 Gears 3 vertex shaders rebuilt exactly in every chapter. Gears 2 ch27 neither better nor worse
+  (its packages open at the unpause, with no head start).

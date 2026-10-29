@@ -174,6 +174,10 @@ bool XenosRendererPresents();
 // outstanding query results (the guest may be spinning on one and cannot send the next frame); true = some still out.
 bool XenosRendererStrictQueries();
 bool XenosPollRendererIdle();
+// Job 617: with a chapter recipe pack, the renderer thread does pack work in ~2 ms slices while it waits for the game,
+// so a hitch or a long pause doesn't stop it. XenosRendererRecipeIdle: true = call again after a short wait.
+bool XenosRendererRecipePackOn();
+bool XenosRendererRecipeIdle();
 // Job 171: our renderer finishes every guest-memory copy it deferred (to its copy threads) - called before the title's
 // CPU can learn the GPU got past them. No-op without our renderer or without copy threads.
 void XenosRendererRelease();

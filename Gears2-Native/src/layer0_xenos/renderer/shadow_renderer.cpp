@@ -7512,7 +7512,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     cache_->Get(hash, it->second.data(), it->second.size(), vertex, tess);
     return true;
   }
-  void DrainRecipePack() {  // recording thread, once per frame
+  // Recording thread: once per frame, and (job 617, idle = true) in short slices while the thread waits for the game -
+  // a hitch or a long pause no longer stops the pack (Shagg 12:56: "it needs to keep going even if the game is
+  // stuttering or having long pauses"). Returns true while it can still make progress right now.
+  bool DrainRecipePack(bool idle = false) {
+    uint64_t cap_blocked = 0;
+    const uint64_t done_before = rcp_n_.queued + rcp_n_.known;
     std::deque<RcpShader> in;
     {
       std::lock_guard<std::mutex> lock(rcp_mutex_);
@@ -7547,9 +7552,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     // 2. Started records: their shaders translated on this thread (as the start-up warm-up's), ~4 ms a frame at most.
+    // Job 615 (Gears 3 ch11: C ~5,000 more skipped draws than A in the first 10 s, with nothing queued yet): the budget
+    // follows the frame - 1 ms while it is already missing draws (they translate what they need themselves), 8 ms on
+    // a loading screen or menu (under 64 draws), 4 ms otherwise.
+    // Job 617: in an idle slice 2 ms at most, so a frame the game sends meanwhile waits that long at most.
+    const double translate_budget_ms = idle ? 2.0 : pending_this_frame_ >= 32 ? 1.0 : draw_index_ < 64 ? 8.0 : 4.0;
     const auto t0 = std::chrono::steady_clock::now();
     uint32_t made = 0;
-    while (!rcp_need_.empty() && (made < 2 || MsSince(t0) < 4.0)) {
+    while (!rcp_need_.empty() && (made < 2 || MsSince(t0) < translate_budget_ms)) {
       const uint32_t i = rcp_need_.front();
       rcp_need_.pop_front();
       if (rcp_state_[i] != 1) continue;
@@ -7565,11 +7575,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!rcp_waiting_.empty()) {
       // Job 613: full speed while nothing much is drawn (a loading screen, a menu) or the frame is already missing
       // draws (the burst the pack is there to end); the low limit only during clean play.
-      const bool burst = draw_index_ < 64 || pending_this_frame_ >= 32;
+      const bool burst = idle || draw_index_ < 64 || pending_this_frame_ >= 32;  // 617: idle = the game is not drawing
       // Job 613 (Shagg 11:12, "99% (6 left)" all chapter): after ~5 s of frames with no skipped draws the pack stops
       // queueing (play is clean; the rest are areas or chapter lists this visit may never reach) until the next
       // loading screen, menu or burst - it no longer keeps workers busy for minutes.
-      rcp_clean_frames_ = pending_this_frame_ ? 0 : rcp_clean_frames_ + 1;
+      if (!idle) rcp_clean_frames_ = pending_this_frame_ ? 0 : rcp_clean_frames_ + 1;
       // Never in the first ~60 s after a chapter list starts (Shagg 11:26: a cutscene plays at a clean frame rate, and
       // it is the time the pack needs).
       const bool paused = !burst && rcp_clean_frames_ >= 150 && frame_ >= rcp_list_started_frame_ + 1800;
@@ -7579,6 +7589,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       bool backlog = false;
       size_t keep = 0;
       for (size_t k = 0; k < rcp_waiting_.size(); ++k) {
+        if (cap_blocked) {  // 617: no job free - the rest waits for the next slice or frame, unscanned
+          rcp_waiting_[keep++] = rcp_waiting_[k];
+          continue;
+        }
         const uint32_t i = rcp_waiting_[k];
         if (rcp_state_[i] != 3) continue;  // moved back to the need queue (a shader arrived) or done
         const PipelineRecord& r = rcp_records_[i];
@@ -7589,8 +7603,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ++rcp_n_.failed;
           continue;
         }
-        if (!vsg || !vsg->ready() || ((r.flags & 1) && (!psg || !psg->ready())) ||
-            backend_->PipelineJobsLeft() >= cap) {
+        const bool shaders_ready = vsg && vsg->ready() && (!(r.flags & 1) || (psg && psg->ready()));
+        if (!shaders_ready || backend_->PipelineJobsLeft() >= cap) {
+          if (shaders_ready && cap) ++cap_blocked;  // 617: ready, only waiting for a free job
           rcp_waiting_[keep++] = i;
           continue;
         }
@@ -7615,6 +7630,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       rcp_waiting_.resize(keep);
       if (backlog) backend_->SetPipelineBacklog(false);
     }
+    if (idle) return !rcp_need_.empty() || made || cap_blocked || rcp_n_.queued + rcp_n_.known != done_before;
     const uint64_t done = rcp_n_.queued + rcp_n_.known;
     if (frame_ >= rcp_logged_frame_ + 300 && (done != rcp_logged_done_ || rcp_n_.vs_rebuilt + rcp_n_.ps_found != rcp_logged_found_)) {
       rcp_logged_frame_ = frame_;
@@ -7622,12 +7638,28 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       rcp_logged_found_ = rcp_n_.vs_rebuilt + rcp_n_.ps_found;
       REXLOG_INFO("gow2_renderer: chapter recipe pack (frame {}): vertex shaders rebuilt {} of {} ({} offered), pixel "
                   "shaders found {} of {}, pipelines queued {} + already made {} of {} ({} waiting for a shader or a "
-                  "free job, {} failed, {} no GS), {} chapter lists started, {} records still to translate",
+                  "free job, {} failed, {} no GS), {} chapter lists started, {} records still to translate, {} idle slices",
                   frame_, rcp_n_.vs_rebuilt, rcp_.vertex.size(), rcp_vs_offered_.load(std::memory_order_relaxed),
                   rcp_n_.ps_found, rcp_ps_.size(), rcp_n_.queued, rcp_n_.known, rcp_records_.size(),
-                  rcp_waiting_.size(), rcp_n_.failed, rcp_n_.no_gs, rcp_n_.chapters_on, rcp_need_.size());
+                  rcp_waiting_.size(), rcp_n_.failed, rcp_n_.no_gs, rcp_n_.chapters_on, rcp_need_.size(), rcp_n_.idle_slices);
     }
+    return !rcp_need_.empty() || cap_blocked;
   }
+
+ public:
+  // Job 617: the recording thread, with nothing queued by the game (pm4_shadow's consumer): one short slice of pack
+  // work. True = more can be done right now (the caller waits ~2 ms and comes back); false = wait for the game as usual.
+  bool RecipeIdleWork() {
+    if (!rcp_on_) return false;
+    const uint64_t t0 = __rdtsc();
+    const bool more = DrainRecipePack(true);
+    cpu_ms_ += double(__rdtsc() - t0) * MsPerTick();
+    ++rcp_n_.idle_slices;
+    return more;
+  }
+  bool RecipePackOn() const { return rcp_on_.load(std::memory_order_relaxed); }
+
+ private:
   std::atomic<bool> rcp_on_{false};  // set once in Init, before layer 2's reader starts
   xenos::recipes::Pack rcp_;         // read-only after Init
   std::vector<PipelineRecord> rcp_records_;
@@ -7649,6 +7681,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::vector<uint32_t> rcp_waiting_;
   struct {
     uint64_t vs_rebuilt = 0, ps_found = 0, queued = 0, known = 0, failed = 0, no_gs = 0, chapters_on = 0;
+    uint64_t idle_slices = 0;  // job 617
   } rcp_n_;
   uint64_t rcp_logged_frame_ = 0, rcp_logged_done_ = 0, rcp_logged_found_ = 0;
   uint32_t rcp_clean_frames_ = 0;  // job 613: frames in a row with no skipped draw
@@ -9552,6 +9585,8 @@ void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t si
 bool XenosRendererPresents() { return g_renderer_presents; }
 bool XenosRendererStrictQueries() { return g_release_target && g_release_target->StrictQueries(); }  // PR #43
 bool XenosPollRendererIdle() { return g_release_target && g_release_target->PollGpuIdle(); }          // PR #43
+bool XenosRendererRecipePackOn() { return g_release_target && g_release_target->RecipePackOn(); }    // job 617
+bool XenosRendererRecipeIdle() { return g_release_target && g_release_target->RecipeIdleWork(); }    // job 617
 void XenosRendererRelease() {
   if (g_release_target) g_release_target->ReleaseToGuest();
 }

@@ -420,6 +420,13 @@ class RenderPipe {
             pending_gpu_results = XenosPollRendererIdle();
             lock.lock();
           }
+          // Job 617: a chapter recipe pack keeps building while the game hitches or pauses (one ~2 ms slice per wake;
+          // the game's next block waits that long at most). Without a pack, the wait is as before.
+          if (XenosRendererRecipePackOn() && queue_.empty()) {
+            lock.unlock();
+            if (XenosRendererRecipeIdle()) pending_gpu_results = true;
+            lock.lock();
+          }
           ++stats_.consumer_sleeps;
           consumer_sleeping_ = true;
           if (pending_gpu_results) cv_.wait_for(lock, std::chrono::milliseconds(1), [&] { return !queue_.empty(); });

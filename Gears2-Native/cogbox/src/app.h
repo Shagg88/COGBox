@@ -147,7 +147,8 @@ void install_draw(App &a, ImVec2 size);
 // play.cpp
 void play_start(App &a, int g);
 void play_poll(App &a);
-void play_answer(App &a, const Modal &m);   // the "crash" question answered
+void play_answer(App &a, const Modal &m);
+void auto_settings_apply(App &a, int g);    // Shagg 29 Oct: the "Detect best settings" answer (page.cpp)   // the "crash" question answered
 bool make_report(App &a, int g, const std::string &sessionDir, const std::string &what, std::string &zip, std::string &err);
 std::string newest_session(int g);
 // main.cpp

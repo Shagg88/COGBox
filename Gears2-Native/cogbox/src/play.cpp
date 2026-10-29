@@ -157,25 +157,31 @@ void play_start(App &a, int g)
     std::wstring cmd = L"\"" + widen(exe) + L"\"";
     for (auto &s : args) cmd += L" " + widen(s);
     std::wstring envBlock;   // this process's environment with PATH = shared;PATH (empty = inherit as is)
-    if (useShared) {
+    // Proton / Wine: vkd3d-proton (DirectX 12 there) writes its own errors to vkd3d.log in the session folder, so a
+    // problem report carries them (a player's own VKD3D_LOG_FILE wins).
+    const bool vkd3dLog = a.env[g].wine;
+    const bool newEnv = useShared || vkd3dLog;
+    if (newEnv) {
         wchar_t *e = GetEnvironmentStringsW();
-        bool hadPath = false;
+        bool hadPath = false, hadVkd3d = false;
         for (wchar_t *v = e; v && *v; v += wcslen(v) + 1) {
             std::wstring kv = v;
-            if (_wcsnicmp(kv.c_str(), L"PATH=", 5) == 0) { kv = L"Path=" + widen(shared) + L";" + kv.substr(5); hadPath = true; }
+            if (useShared && _wcsnicmp(kv.c_str(), L"PATH=", 5) == 0) { kv = L"Path=" + widen(shared) + L";" + kv.substr(5); hadPath = true; }
+            if (_wcsnicmp(kv.c_str(), L"VKD3D_LOG_FILE=", 15) == 0) hadVkd3d = true;
             envBlock += kv;
             envBlock.push_back(L'\0');
         }
         if (e) FreeEnvironmentStringsW(e);
-        if (!hadPath) { envBlock += L"Path=" + widen(shared); envBlock.push_back(L'\0'); }
+        if (useShared && !hadPath) { envBlock += L"Path=" + widen(shared); envBlock.push_back(L'\0'); }
+        if (vkd3dLog && !hadVkd3d) { envBlock += L"VKD3D_LOG_FILE=" + widen(join(logDir, "vkd3d.log")); envBlock.push_back(L'\0'); }
         envBlock.push_back(L'\0');
     }
     std::wstring dir = widen(exe.substr(0, exe.find_last_of('\\')));
     STARTUPINFOW si = {};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi = {};
-    if (!CreateProcessW(widen(exe).c_str(), &cmd[0], nullptr, nullptr, FALSE, useShared ? CREATE_UNICODE_ENVIRONMENT : 0,
-                        useShared ? (LPVOID)envBlock.data() : nullptr, dir.c_str(), &si, &pi)) {
+    if (!CreateProcessW(widen(exe).c_str(), &cmd[0], nullptr, nullptr, FALSE, newEnv ? CREATE_UNICODE_ENVIRONMENT : 0,
+                        newEnv ? (LPVOID)envBlock.data() : nullptr, dir.c_str(), &si, &pi)) {
         DWORD e = GetLastError();
         append_line(join(logDir, "args.txt"), "launcher: not started, Windows error " + std::to_string(e));
         set_message(a, std::string(d.name) + " couldn't be started (Windows error " + std::to_string(e) + ").", true);

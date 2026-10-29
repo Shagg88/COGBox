@@ -379,7 +379,7 @@ void front_draw(App &a, ImVec2 size)
         line = st.useUpdate ? std::string(gd.updateName) : "Disc version";
         if (st.playSeconds > 0) line += "   |   " + human_duration(st.playSeconds) + " played";
         if (st.lastPlayed > 0) line += ", " + last_played_text(st.lastPlayed);
-        if (st.xexKnown && !st.xexMatch) line += "   |   a different release of the game";
+        if (st.xexKnown && !st.xexMatch) line += "   |   an untested version of the game";
         break;
     case R_NO_COPY: line = gd.tagline; break;
     case R_COPY_MISSING: line = "Your copy isn't where it was - is its drive connected?"; break;

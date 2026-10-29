@@ -103,9 +103,13 @@ void game_refresh(int g, Ini &ini, GameState &st, bool hash)
 
     if (hash) {
         st.xexKnown = !st.dataDir.empty();
-        st.xexMatch = st.xexKnown && cached_sha1(ini, join(st.dataDir, "default.xex")) == d.xex.sha1;
+        const std::string hx = st.xexKnown ? cached_sha1(ini, join(st.dataDir, "default.xex")) : std::string();
+        st.xexMatch = st.xexKnown && hx == d.xex.sha1;
+        st.xexConfirmed = st.xexKnown && !st.xexMatch && !hx.empty() && ini.get(d.key, "WorksXex") == hx;
         st.xexpKnown = !st.updateDir.empty();
-        st.xexpMatch = st.xexpKnown && cached_sha1(ini, join(st.updateDir, "default.xexp")) == d.xexp.sha1;
+        const std::string hp = st.xexpKnown ? cached_sha1(ini, join(st.updateDir, "default.xexp")) : std::string();
+        st.xexpMatch = st.xexpKnown && hp == d.xexp.sha1;
+        st.xexpConfirmed = st.xexpKnown && !st.xexpMatch && !hp.empty() && ini.get(d.key, "WorksXexp") == hp;
     }
     st.playSeconds = ini.geti64("PlayTime", d.key, 0);
     st.lastPlayed = ini.geti64("LastPlayed", d.key, 0);

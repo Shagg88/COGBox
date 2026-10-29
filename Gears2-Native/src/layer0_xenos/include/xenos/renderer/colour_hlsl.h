@@ -233,40 +233,40 @@ uint XeDestBytesPerPixel(uint f) {
 }
 // Encode to the destination texture format. 32bpp results are in .x.
 uint2 XeEncodeDest(float4 p, uint f, uint nf, bool canary) {
-  switch (f) {
-    case 6u: case 14u: case 50u:  // 8_8_8_8, 8_8_8_8_A, 8_8_8_8_AS_16_16_16_16
-      return uint2(XePackFixed(p.r, 8u, nf, canary) | (XePackFixed(p.g, 8u, nf, canary) << 8u) |
-                   (XePackFixed(p.b, 8u, nf, canary) << 16u) | (XePackFixed(p.a, 8u, nf, canary) << 24u), 0u);
-    case 7u: case 54u:  // 2_10_10_10
-      return uint2(XePackFixed(p.r, 10u, nf, canary) | (XePackFixed(p.g, 10u, nf, canary) << 10u) |
-                   (XePackFixed(p.b, 10u, nf, canary) << 20u) | (XePackFixed(p.a, 2u, nf, canary) << 30u), 0u);
-    case 16u: case 55u:  // 10_11_11: R 11, G 11, B 10
-      return uint2(XePackFixed(p.r, 11u, nf, canary) | (XePackFixed(p.g, 11u, nf, canary) << 11u) |
-                   (XePackFixed(p.b, 10u, nf, canary) << 22u), 0u);
-    case 17u: case 56u:  // 11_11_10: R 10, G 11, B 11
-      return uint2(XePackFixed(p.r, 10u, nf, canary) | (XePackFixed(p.g, 11u, nf, canary) << 10u) |
-                   (XePackFixed(p.b, 11u, nf, canary) << 21u), 0u);
-    case 13u:  // 16_16_EDRAM: no SDK case (raw R)
-      if (!canary) return uint2(asuint(p.r), 0u);
-      return uint2(XePackFixed(p.r, 16u, nf, true) | (XePackFixed(p.g, 16u, nf, true) << 16u), 0u);
-    case 25u:  // 16_16
-      return uint2(XePackFixed(p.r, 16u, nf, canary) | (XePackFixed(p.g, 16u, nf, canary) << 16u), 0u);
-    case 31u:  // 16_16_FLOAT
-      return uint2(f32tof16(p.r) | (f32tof16(p.g) << 16u), 0u);
-    case 21u:  // 16_16_16_16_EDRAM: no SDK case (raw RG)
-      if (!canary) return asuint(p.rg);
-      return uint2(XePackFixed(p.r, 16u, nf, true) | (XePackFixed(p.g, 16u, nf, true) << 16u),
-                   XePackFixed(p.b, 16u, nf, true) | (XePackFixed(p.a, 16u, nf, true) << 16u));
-    case 26u:  // 16_16_16_16
-      return uint2(XePackFixed(p.r, 16u, nf, canary) | (XePackFixed(p.g, 16u, nf, canary) << 16u),
-                   XePackFixed(p.b, 16u, nf, canary) | (XePackFixed(p.a, 16u, nf, canary) << 16u));
-    case 32u:  // 16_16_16_16_FLOAT
-      return uint2(f32tof16(p.r) | (f32tof16(p.g) << 16u), f32tof16(p.b) | (f32tof16(p.a) << 16u));
-    case 37u:  // 32_32_FLOAT
-      return asuint(p.rg);
-    default:  // 32_FLOAT
-      return uint2(asuint(p.r), 0u);
+  // If-chain, not a switch (Steam Deck / Proton): DXC merges the cases' tails and vkd3d-proton's dxil-spirv then
+  // writes SPIR-V that breaks the structured control-flow rules - the colour resolve shaders failed or ended the game.
+  uint2 r = uint2(asuint(p.r), 0u);  // 32_FLOAT (the default)
+  if (f == 6u || f == 14u || f == 50u) {  // 8_8_8_8, 8_8_8_8_A, 8_8_8_8_AS_16_16_16_16
+    r = uint2(XePackFixed(p.r, 8u, nf, canary) | (XePackFixed(p.g, 8u, nf, canary) << 8u) |
+                 (XePackFixed(p.b, 8u, nf, canary) << 16u) | (XePackFixed(p.a, 8u, nf, canary) << 24u), 0u);
+  } else if (f == 7u || f == 54u) {  // 2_10_10_10
+    r = uint2(XePackFixed(p.r, 10u, nf, canary) | (XePackFixed(p.g, 10u, nf, canary) << 10u) |
+                 (XePackFixed(p.b, 10u, nf, canary) << 20u) | (XePackFixed(p.a, 2u, nf, canary) << 30u), 0u);
+  } else if (f == 16u || f == 55u) {  // 10_11_11: R 11, G 11, B 10
+    r = uint2(XePackFixed(p.r, 11u, nf, canary) | (XePackFixed(p.g, 11u, nf, canary) << 11u) |
+                 (XePackFixed(p.b, 10u, nf, canary) << 22u), 0u);
+  } else if (f == 17u || f == 56u) {  // 11_11_10: R 10, G 11, B 11
+    r = uint2(XePackFixed(p.r, 10u, nf, canary) | (XePackFixed(p.g, 11u, nf, canary) << 10u) |
+                 (XePackFixed(p.b, 11u, nf, canary) << 21u), 0u);
+  } else if (f == 13u) {  // 16_16_EDRAM: no SDK case (raw R)
+    r = canary ? uint2(XePackFixed(p.r, 16u, nf, true) | (XePackFixed(p.g, 16u, nf, true) << 16u), 0u) : uint2(asuint(p.r), 0u);
+  } else if (f == 25u) {  // 16_16
+    r = uint2(XePackFixed(p.r, 16u, nf, canary) | (XePackFixed(p.g, 16u, nf, canary) << 16u), 0u);
+  } else if (f == 31u) {  // 16_16_FLOAT
+    r = uint2(f32tof16(p.r) | (f32tof16(p.g) << 16u), 0u);
+  } else if (f == 21u) {  // 16_16_16_16_EDRAM: no SDK case (raw RG)
+    r = canary ? uint2(XePackFixed(p.r, 16u, nf, true) | (XePackFixed(p.g, 16u, nf, true) << 16u),
+                       XePackFixed(p.b, 16u, nf, true) | (XePackFixed(p.a, 16u, nf, true) << 16u))
+               : asuint(p.rg);
+  } else if (f == 26u) {  // 16_16_16_16
+    r = uint2(XePackFixed(p.r, 16u, nf, canary) | (XePackFixed(p.g, 16u, nf, canary) << 16u),
+                 XePackFixed(p.b, 16u, nf, canary) | (XePackFixed(p.a, 16u, nf, canary) << 16u));
+  } else if (f == 32u) {  // 16_16_16_16_FLOAT
+    r = uint2(f32tof16(p.r) | (f32tof16(p.g) << 16u), f32tof16(p.b) | (f32tof16(p.a) << 16u));
+  } else if (f == 37u) {  // 32_32_FLOAT
+    r = asuint(p.rg);
   }
+  return r;
 }
 // endian: 0 none, 1 8in16, 2 8in32, 3 16in32, 4 8in64 (64bpp only).
 uint XeEndianSwap32(uint v, uint e) {

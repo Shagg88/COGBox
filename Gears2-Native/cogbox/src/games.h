@@ -56,6 +56,8 @@ struct GameState {
     bool dataOwn = false;      // the player's own folder (pointed at), not one COGBox made
     bool xexKnown = false, xexMatch = false;   // checked against the fingerprint (cached by size + time)
     bool xexpKnown = false, xexpMatch = false;
+    // Shagg 29 Oct: an untested version the player said works ("This version works") - remembered by its fingerprint
+    bool xexConfirmed = false, xexpConfirmed = false;
     std::string portExeTu, portExeDisc;        // full paths when present
     Readiness ready = R_NO_PORT;
     bool useUpdate = false;    // Play starts the updated game

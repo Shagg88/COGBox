@@ -151,6 +151,11 @@ std::vector<Option> make_options(Game g) {
                "renderer; on Vulkan, Gears 3 is known to look darker in places and show some black patches.\n"
                "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
                "are off. If something looks wrong, make a problem report and send it to us.", 0));
+    // Shagg 13:16: Vulkan is no longer forced under Proton / Wine - this box lets Steam Deck / Linux / CrossOver
+    // players run DirectX 12 there (off = Vulkan, which is known to get in game there).
+    add(make("WineD3D12", "DirectX 12 on Proton / Wine (testing)", Tab::Graphics, Kind::Bool, PG, 0,
+             "Steam Deck, Linux and Mac (CrossOver) only. Off = Vulkan, which gets in game there. On = DirectX 12 (vkd3d-proton "
+             "or D3DMetal), being tested - if the game closes or looks wrong, make a problem report and send it to us.", 0));
     // Render resolution: no PS1 tooltip; text from 59-how-to-play's Picture table.
     add(choice("Resolution", "Render resolution", Tab::Graphics, PG,
                { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)", "1080p" }, 0,
@@ -389,6 +394,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
     else if (o.id == "RealOcclusion" && (s.i("Api") != 0 || env.wine)) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // PR #43
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
+    else if (o.id == "WineD3D12") on = env.wine && s.i("Api") == 0;                   // Shagg 13:16
     a.ok = on;
     return a;
 }
@@ -659,8 +665,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // 0.2.1 (GitHub #15, #3, #11): under Proton / Wine (Steam Deck, SteamOS, Linux) DirectX 12 ends the game a few
         // seconds in (exit code 3, right after the renderer starts, every game); Vulkan gets in game there - so there
         // it is always Vulkan, and the log says so
-        const bool vk = s.i("Api") == 1 || env.wine;
-        if (env.wine && s.i("Api") != 1) notes.push_back("launcher: Proton / Wine - Vulkan instead of DirectX 12 (DirectX 12 does not start there yet)");
+        // Shagg 13:16: no longer forced - Vulkan by default there, DirectX 12 when "DirectX 12 on Proton / Wine" is on
+        const bool wineDx = env.wine && s.i("Api") == 0 && s.b("WineD3D12");
+        const bool vk = s.i("Api") == 1 || (env.wine && !wineDx);
+        if (env.wine && s.i("Api") != 1) notes.push_back(wineDx ? "launcher: Proton / Wine - DirectX 12 (testing, chosen in the launcher)"
+                                                               : "launcher: Proton / Wine - Vulkan (DirectX 12 there is a testing box in Graphics)");
         if (vk) {   // job 521: Vulkan (experimental); the upscalers are DirectX 12 only
             a.push_back("--gow2_renderer_api=vulkan");
             if (aa >= 2) { notes.push_back(std::string("launcher: Vulkan - ") + k_aaNames[aa] + " is DirectX 12 only, SMAA instead"); aa = 1; }

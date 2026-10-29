@@ -49,6 +49,15 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 #include <utility>
 #include <unordered_set>
 #include <vector>
@@ -321,6 +330,12 @@ void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host
 }
 
 void ReaderThread() {
+#ifdef _WIN32
+  // Job 615: the reader decompresses every package the game opens while the game loads it too - at the lowest
+  // priority it only takes CPU time the game, the renderer and the pipeline workers leave free (Gears 3 ch11's
+  // opening was ~5,000 skipped draws worse with it on).
+  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+#endif
   PackageScanner scanner(g_prebuild->seen);
   uint64_t files = 0, pixel = 0, fresh = 0;
   for (;;) {

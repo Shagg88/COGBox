@@ -27,6 +27,10 @@ struct Plan {
     std::string dlcTitle;        // its display name
     std::string headerFile;      // the runtime's content header: user\0000000000000000\<title>\Headers\00000002\<name>.header
     std::vector<uint8_t> header; // what goes in it (XCONTENT_AGGREGATE_DATA + the licence mask)
+    // Shagg 29 Oct: a version COGBox has no title ID for (e.g. a Japanese or other regional release, its update or
+    // DLC) is added to the game whose page it was added from, as untested, instead of being refused.
+    uint32_t titleId = 0;        // the title ID it carries
+    bool untested = false;       // added although COGBox doesn't know that title ID
 };
 Plan g_plan;
 }
@@ -162,7 +166,8 @@ static void worker(App *ap)
         std::lock_guard<std::mutex> l(j.m);
         if (!wrote) { j.error = "The content was unpacked, but its header file couldn't be written to " + p.headerFile + "."; j.state = 3; return; }
         j.result = (p.dlcTitle.empty() ? std::string("The downloadable content") : "\"" + p.dlcTitle + "\"") + " is added to " + game_def(p.game).name +
-                   ". The game finds it the next time it starts.";
+                   ". The game finds it the next time it starts." +
+                   (p.untested ? " It is for a version COGBox hasn't been tested with, so you may experience problems." : "");
         j.state = 2;
         return;
     }
@@ -172,12 +177,15 @@ static void worker(App *ap)
     std::string h = x360fs::sha1_file(widen(file));
     bool match = h == (p.update ? d.xexp.sha1 : d.xex.sha1);
     std::lock_guard<std::mutex> l(j.m);
+    // Shagg 29 Oct: a version or update COGBox wasn't made for is added with a warning, never refused.
     if (p.update)
         j.result = match ? std::string(d.updateName) + " for " + d.name + " is added and checked." :
-                           std::string("This title update for ") + d.name + " isn't " + d.updateName + ", the one the port is made for. It was added, but the game may not start; the disc version can be chosen on the Gameplay tab.";
+                           std::string("This title update for ") + d.name + " hasn't been tested with COGBox (the port is made for " + d.updateName +
+                           "). It was added - it may work, but you may experience problems. If the game won't start, choose the disc version on the Gameplay tab.";
     else
         j.result = match ? std::string(d.name) + " is added and checked - ready to play." :
-                           std::string("This copy of ") + d.name + " is a different release from the one the ports are made for (the US disc). It was added; it may not start or may misbehave.";
+                           std::string("This version of ") + d.name + " hasn't been tested with COGBox (the ports are made for the US release). "
+                           "It was added - it may work, but you may experience problems.";
     j.state = 2;
 }
 
@@ -254,6 +262,7 @@ void install_start(App &a, const std::string &path, int forGame)
         std::string xex = join(resolved, "default.xex");
         x360fs::read_xex_info(widen(xex), xi);
         p.game = game_of_xex(xi, xex);
+        p.titleId = xi.title_id;
         p.inPlace = true;
         p.finalDir = resolved;
         break;
@@ -262,6 +271,7 @@ void install_start(App &a, const std::string &path, int forGame)
         x360fs::XexInfo xi;
         if (!x360fs::disc_xex_info(p.resolved, xi)) { set_message(a, "This disc image has no default.xex - it isn't an Xbox 360 game disc (or is damaged).", true); return; }
         p.game = game_by_title_id(xi.title_id);
+        p.titleId = xi.title_id;
         break;
     }
     case x360fs::SourceKind::GodContainer:
@@ -269,6 +279,7 @@ void install_start(App &a, const std::string &path, int forGame)
         x360fs::PackageInfo pi;
         if (!x360fs::read_package_info(p.resolved, pi, err)) { set_message(a, err, true); return; }
         p.game = game_by_title_id(pi.title_id);
+        p.titleId = pi.title_id;
         if (p.kind == x360fs::SourceKind::StfsPackage) {
             if (pi.content_type == x360fs::kContentMarketplace) {
                 if (!dlc_plan(p, pi, err)) { set_message(a, err, true); return; }
@@ -287,8 +298,18 @@ void install_start(App &a, const std::string &path, int forGame)
         return;
     }
     if (p.game < 0) {
-        set_message(a, "This is an Xbox 360 game, but not Gears of War 2, 3 or Judgment.", true);
-        return;
+        // Shagg 29 Oct: regional releases (Japanese, European ...) carry other title IDs and some players run them
+        // fine - from a game's own page it is added to that game, as untested; only a drop on the main window, which
+        // names no game, still asks for the game's page.
+        char tid[16];
+        snprintf(tid, sizeof tid, "%08X", p.titleId);
+        if (forGame < 0) {
+            set_message(a, std::string("COGBox doesn't know this version (title ID ") + tid + "). If it is a regional release of "
+                           "Gears of War 2, 3 or Judgment, add it from that game's page - it will be added as an untested version.", true);
+            return;
+        }
+        p.game = forGame;
+        p.untested = true;
     }
     if (forGame >= 0 && forGame != p.game)
         set_message(a, std::string("That's ") + game_def(p.game).name + ", not " + game_def(forGame).name + " - adding it there.", false);

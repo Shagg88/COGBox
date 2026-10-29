@@ -119,6 +119,7 @@ static void answered(App &a)
         if (m.checked && g >= 0) { a.ini.seti("Notices", std::string("TuRecommendNever_") + game_def(g).key, 1); a.ini.save(); }
     }
     else if (m.tag == "replace" && m.answer == 0) install_confirmed(a);
+    else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
     else if (m.tag == "dlcremove" && m.answer == 0) dlc_remove_confirmed(a);   // 0.2.0
     else if (m.tag == "backup" && m.answer == 0) {
         std::string zip = join(desktop_dir(), std::string("CogBox-saves-") + d.dir + "-" + now_stamp() + ".zip"), err;

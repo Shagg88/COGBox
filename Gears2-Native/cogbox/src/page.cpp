@@ -10,6 +10,7 @@
 #include <shlobj.h>     // 0.2.0: desktop shortcuts
 #include <shobjidl.h>
 #include <objbase.h>
+#include <dxgi.h>
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
@@ -405,6 +406,123 @@ static bool any_files(const std::string &dir)
     return any;
 }
 
+// Shagg 29 Oct: "This version works" - the player says an untested game version or title update runs fine. Remembered
+// by its fingerprint (no more warning for that exact file), and a pre-filled GitHub issue opens in the browser so the
+// player can tell the developer by submitting it. Nothing is sent by COGBox itself.
+static std::string url_encode(const std::string &s)
+{
+    static const char *hex = "0123456789ABCDEF";
+    std::string o;
+    for (unsigned char c : s) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += char(c);
+        else { o += '%'; o += hex[c >> 4]; o += hex[c & 15]; }
+    }
+    return o;
+}
+
+static void confirm_works(App &a, int g, bool update)
+{
+    const GameDef &d = game_def(g);
+    GameState &st = a.st[g];
+    const std::string file = update ? join(st.updateDir, "default.xexp") : join(st.dataDir, "default.xex");
+    const std::string h = cached_sha1(a.ini, file);
+    if (h.empty()) { set_message(a, "The file couldn't be read - nothing was changed.", true); return; }
+    a.ini.set(d.key, update ? "WorksXexp" : "WorksXex", h);
+    a.ini.save();
+    if (update) st.xexpConfirmed = true; else st.xexConfirmed = true;
+    const std::string what = update ? std::string(d.updateName) + " (a different title update)" : std::string("a different game version");
+    const std::string title = std::string("Version works: ") + d.name + " - " + (update ? "title update" : "game version") + " " + h.substr(0, 12);
+    const std::string body = std::string("This version runs for me in COGBox ") + COGBOX_VERSION + ".\n\nGame: " + d.name + "\nWhat: " + what +
+                             "\nFile: " + (update ? "default.xexp" : "default.xex") + "\nSHA-1: " + h + "\nSize: " + std::to_string(file_size(file)) +
+                             " bytes\n\nWhere it came from (region, disc / Games on Demand / update), and anything that didn't work:\n";
+    shell_open("https://github.com/Shagg88/COGBox/issues/new?title=" + url_encode(title) + "&body=" + url_encode(body));
+    set_message(a, "Thanks - this version won't be flagged again. A GitHub page opened with its details: submit it to let the developer know.", false);
+}
+
+// Shagg 29 Oct: "Detect best settings" (Graphics tab) - the main graphics card's name and video memory (DXGI), the
+// screen's size and refresh rate, and Wine / Proton decide a tier; the changes are listed and applied only on Apply.
+// SMAA for every tier (the anti-aliasing that works well today). Gameplay and controls are not touched.
+struct AutoPlan { std::string gpu; unsigned vramMB = 0; int tier = 0; std::vector<std::pair<std::string, int>> set; std::string text; };
+
+static void main_gpu_memory(std::string &name, unsigned &mb)
+{
+    name.clear(); mb = 0;
+    HMODULE dx = LoadLibraryA("dxgi.dll");
+    if (!dx) return;
+    typedef HRESULT(WINAPI * CreateFn)(REFIID, void **);
+    CreateFn create = (CreateFn)(void *)GetProcAddress(dx, "CreateDXGIFactory1");
+    IDXGIFactory1 *fac = nullptr;
+    if (create && SUCCEEDED(create(__uuidof(IDXGIFactory1), (void **)&fac))) {
+        IDXGIAdapter1 *ad = nullptr;
+        for (UINT i = 0; fac->EnumAdapters1(i, &ad) != DXGI_ERROR_NOT_FOUND && i < 8; i++) {
+            DXGI_ADAPTER_DESC1 d;
+            if (SUCCEEDED(ad->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+                unsigned m = (unsigned)(d.DedicatedVideoMemory >> 20);
+                if (m > mb) {   // the card with the most video memory is the one the game picks
+                    mb = m;
+                    int n = WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, nullptr, 0, nullptr, nullptr);
+                    std::string s(n > 0 ? n - 1 : 0, '\0');
+                    if (n > 1) WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, &s[0], n, nullptr, nullptr);
+                    name = s;
+                }
+            }
+            ad->Release();
+        }
+        fac->Release();
+    }
+    FreeLibrary(dx);
+}
+
+static AutoPlan auto_plan(App &a, int g)
+{
+    AutoPlan p;
+    main_gpu_memory(p.gpu, p.vramMB);
+    std::string n = p.gpu;
+    for (char &c : n) c = (char)tolower((unsigned char)c);
+    const bool integrated = n.find("uhd") != std::string::npos || n.find("iris") != std::string::npos ||
+                            n.find("radeon(tm) graphics") != std::string::npos || n.find("radeon graphics") != std::string::npos ||
+                            n.find("vangogh") != std::string::npos || n.find("custom gpu 0405") != std::string::npos || p.vramMB < 2048;
+    const bool modern = n.find("rtx 30") != std::string::npos || n.find("rtx 40") != std::string::npos || n.find("rtx 50") != std::string::npos ||
+                        n.find("rx 6") != std::string::npos || n.find("rx 7") != std::string::npos || n.find("rx 9") != std::string::npos ||
+                        n.find("arc") != std::string::npos;
+    const bool deck = a.env[g].wine && (integrated || n.find("amd custom") != std::string::npos);
+    p.tier = integrated || deck ? 0 : (p.vramMB >= 10240 || (p.vramMB >= 8000 && modern)) ? 2 : p.vramMB >= 5800 ? 1 : 0;
+    const int hz = a.env[g].refresh_hz;
+    const int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
+    // Render resolution: 0 = 1x, 1 = 2x, 4 = match my monitor, 5 = 1080p (720p upscaled)
+    int res = p.tier == 2 ? 4 : p.tier == 1 ? (sh <= 1440 ? 4 : 1) : (sw >= 1920 ? 5 : 0);
+    // Frame rate limit: 0 = 30, 1 = 60, 2 = 120
+    int fps = p.tier == 2 ? (hz >= 115 ? 2 : 1) : p.tier == 1 ? (hz >= 115 ? 2 : 1) : (deck ? 0 : 1);
+    if (p.tier == 1 && res == 4 && sh > 1080) fps = 1;   // mid cards at native 1440p: 60
+    int pool = p.vramMB >= 8000 ? 2 : 1;                   // Large (256 MB) / Standard
+    p.set = { { "AAMode", 1 }, { "Resolution", res }, { "Fps", fps }, { "Vsync", 1 }, { "Pool", pool },
+              { "Aniso", p.tier >= 1 ? 1 : 0 }, { "Trilinear", 1 }, { "FrameGen", 0 }, { "Preset", 3 } };
+    if (!a.env[g].wine) p.set.push_back({ "Api", 0 });     // DirectX 12; under Wine / Proton the API is left as it is
+    if (gs::find_option((gs::Game)g, "RealOcclusion")) p.set.push_back({ "RealOcclusion", 0 });
+    static const char *tierName[] = { "entry level / integrated / Steam Deck", "mid range", "high end" };
+    static const char *resName[] = { "1x - 720p", "2x - 1440p", "3x - 4K", "4x - 5K", "Match my monitor (native)", "1080p (720p upscaled)" };
+    static const char *fpsName[] = { "30", "60", "120", "Unlimited" };
+    char b[160];
+    snprintf(b, sizeof b, "Found: %s (%u MB video memory), screen %dx%d at %d Hz%s - %s.\n\n", p.gpu.empty() ? "an unknown graphics card" : p.gpu.c_str(),
+             p.vramMB, sw, sh, hz, a.env[g].wine ? ", Wine / Proton" : "", tierName[p.tier]);
+    p.text = b;
+    p.text += std::string("Render resolution: ") + resName[res] + "\nAnti-aliasing: SMAA\nFrame rate limit: " + fpsName[fps] +
+              "\nVsync: on\nTexture memory: " + (pool == 2 ? "Large (256 MB)" : "Standard") + "\nSharper textures (16x anisotropic): " +
+              (p.tier >= 1 ? "on" : "off") + "\nSmooth texture detail steps (trilinear): on\nFrame generation: off" +
+              (a.env[g].wine ? "" : "\nGraphics API: DirectX 12") + "\n\nGameplay and controls are not changed. Apply?";
+    return p;
+}
+
+void auto_settings_apply(App &a, int g)
+{
+    if (g < 0 || g >= G_COUNT) return;
+    AutoPlan p = auto_plan(a, g);
+    for (const auto &kv : p.set)
+        if (gs::find_option((gs::Game)g, kv.first)) a.cur[g].set(kv.first, kv.second);
+    a.dirty[g] = true;
+    set_message(a, "Settings detected and applied. Change any of them as you like.", false);
+}
+
 static void about_tab(App &a, int g)
 {
     const GameDef &d = game_def(g);
@@ -412,16 +530,31 @@ static void about_tab(App &a, int g)
     th_heading("YOUR COPY", g_rowX1);
     if (st.dataDir.empty()) lamp_line(3, "Not added yet. Use Add your copy below (a disc image, a Games on Demand copy, or an extracted folder).");
     else {
-        lamp_line(st.xexMatch ? 1 : st.xexKnown ? 2 : 0,
+        lamp_line(st.xexMatch || st.xexConfirmed ? 1 : st.xexKnown ? 2 : 0,
                   std::string("Game files: ") + st.dataDir + (st.dataOwn ? "  (your own folder)" : "") +
-                  (st.xexMatch ? "  -  the release the ports are made for" : st.xexKnown ? "  -  a different release: it may not start or may misbehave" : "  -  not checked yet"));
+                  (st.xexMatch ? "  -  the release the ports are made for"
+                   : st.xexConfirmed ? "  -  an untested version you confirmed works"
+                   : st.xexKnown ? "  -  an untested version: it may work, but you may experience problems" : "  -  not checked yet"));
+        if (st.xexKnown && !st.xexMatch && !st.xexConfirmed) {
+            ImGui::PushID("works_xex");
+            if (small_button("This version works")) confirm_works(a, g, false);
+            ImGui::PopID();
+        }
     }
     if (st.updateDir.empty())
         lamp_line(d.updateNeeded || g == G_JUDGMENT ? 2 : 0, std::string(d.updateName) + ": not added" +
                   (g == G_JUDGMENT ? " - required for now (the disc version crashes at start)"   // 0.2.0 (#1)
                    : d.updateNeeded ? " - the disc version runs instead" : " (optional)"));
     else
-        lamp_line(st.xexpMatch ? 1 : 2, std::string(d.updateName) + ": " + st.updateDir + (st.xexpMatch ? "" : "  -  a different update than the ports expect"));
+    {
+        lamp_line(st.xexpMatch || st.xexpConfirmed ? 1 : 2, std::string(d.updateName) + ": " + st.updateDir +
+                  (st.xexpMatch ? "" : st.xexpConfirmed ? "  -  an untested update you confirmed works" : "  -  an untested update: it may work, but you may experience problems"));
+        if (!st.xexpMatch && !st.xexpConfirmed) {
+            ImGui::PushID("works_xexp");
+            if (small_button("This update works")) confirm_works(a, g, true);
+            ImGui::PopID();
+        }
+    }
     std::string exe = st.exe();
     // 0.2.0 (#3 / #7): name the file that is missing, so a screenshot says what's wrong
     lamp_line(exe.empty() ? 3 : 1, exe.empty() ? std::string("The port program is missing: expected ") + join(join(game_root(g), *d.portTu ? d.portTu : d.portDisc), d.exeName) +
@@ -723,8 +856,16 @@ void page_draw(App &a, ImVec2 size)
     if (a.tab < k_tabCount - 1) {
         gs::Tab want = (gs::Tab)a.tab;
         int shown = 0;
+        if (want == gs::Tab::Graphics) {   // Shagg 29 Oct
+            if (small_button("Detect best settings")) {
+                AutoPlan p = auto_plan(a, g);
+                ask(a, "autoset", g, "Detect best settings", p.text, { "Apply", "Cancel" });
+            }
+            ImGui::Dummy(ImVec2(0, S(4)));
+        }
         for (const gs::Option &o : gs::options((gs::Game)g)) {
             if (o.tab != want) continue;
+            if (o.id == "WineD3D12" && !a.env[g].wine) continue;   // Shagg 13:16: Proton / Wine only
             option_row(a, g, o);
             shown++;
         }
