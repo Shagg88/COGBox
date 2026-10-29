@@ -160,6 +160,7 @@ void XenosDispatchOurDraw(const rex::graphics::RegisterFile& regs, uint32_t prim
 // Stage 5C-2: an XE_SWAP our processor ran: every hub observer gets OnSwap, as from the SDK.
 void XenosDispatchOurSwap(const rex::graphics::RegisterFile& regs, uint32_t frontbuffer, uint32_t width,
                           uint32_t height);
+void* XenosRendererIdleEvent();
 // Stage 5C-2: whether any hub observer wants frame images (frame shots), and our presented image for them (in place
 // of the SDK's patch-3 readback, which needs the SDK's swap).
 bool XenosFrameImagesWanted();

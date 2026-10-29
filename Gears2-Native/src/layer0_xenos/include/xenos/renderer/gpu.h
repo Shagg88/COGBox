@@ -206,6 +206,10 @@ struct ComputeBindings {
   // Patch 0021 (Canary texture_cache, D36): u0 = the backend's scratch raw buffer (RWByteAddressBuffer), sized and laid
   // out by Backend::PrepareScratchFor for one texture subresource, instead of uav_texture.
   bool scratch_u0 = false;
+  // Batched texture loads (BackendOptions::batch_texture_loads; D3D12): no UAV barrier after this dispatch - uav_texture
+  // is a texture load's own target, whose next use transitions it (a transition waits for the writes); writing the same
+  // mip as a UAV again first gets the barrier.
+  bool defer_uav_barrier = false;
 };
 
 // Notes/68 stage V3: the Vulkan backend on someone else's device (the SDK's Vulkan provider, which the presenter uses), so
@@ -279,6 +283,11 @@ struct BackendOptions {
   // shared 64 MB heaps instead of each getting its own committed allocation. Job 299: CreateCommittedResource was 157
   // of the 208 ms that 376 new textures cost at the ch10 level start (~0.4 ms each).
   bool placed_textures = false;
+  // Batched texture loads (--gow2_renderer_texture_batch, D3D12): BC loads share the scratch buffer (each subresource in
+  // its own 512-byte-aligned region) and their copies are recorded together before the next other command, so the
+  // scratch buffer changes state once per batch instead of twice per mip level; texture untile dispatches skip their
+  // UAV barrier (ComputeBindings::defer_uav_barrier).
+  bool batch_texture_loads = false;
   // Patch 0150 (deep-dive review): persistent index buffers (CreateIndexBuffer) live in GPU memory, copied once from an
   // upload buffer, instead of an upload-heap buffer the GPU reads over the bus at every draw (D3D12 only).
   bool index_buffers_in_vram = false;
@@ -357,6 +366,7 @@ struct BackendStats {
   uint64_t vk_pass_end[10] = {};  // patch 0089 (Vulkan): why render passes ended (vulkan_backend.cpp EndPass)
   uint64_t fence_waits = 0;      // WaitForFence calls that really blocked
   double fence_wait_ms = 0.0;    // CPU time blocked in them (our GPU behind, ring full, readbacks)
+  double recording_wait_ms = 0.0;  // elapsed time waiting for the command-recording worker, not CPU execution
   uint64_t texture_tables_reused = 0, state_calls_skipped = 0;
   uint64_t descriptors_allocated = 0, descriptor_ring_waits = 0;
   // Blocking waits by site (upl-n108): 0 renderer (frame pacing, comparisons), 1 readback release, 2 sampler table,
@@ -367,6 +377,8 @@ struct BackendStats {
   uint64_t barrier_calls = 0, barriers = 0;  // job 045: ResourceBarrier calls / barriers recorded (updated at Submit)
   uint64_t barrier_batches = 0, barriers_merged = 0;  // job 046: batches emitted, transitions merged away
   uint64_t pipelines_async = 0, pipelines_pending_draws = 0, sampler_tables_written = 0;
+  uint64_t pipeline_memo_hits = 0;
+  uint64_t scratch_batches = 0, uav_barriers_deferred = 0;  // batched texture loads: copy batches, barriers left out  // GetGraphicsPipeline answered from its one-entry memo (same as the last draw)
   uint64_t pipelines_loaded = 0, pipelines_stored = 0, pipeline_library_saves = 0;  // saved pipelines (notes/64)
   uint64_t pipelines_loaded_async = 0;  // patch 0010: of pipelines_loaded, loaded by a pipeline worker
   // Patch 0057: pipelines the workers created (not loaded): count, CPU ms in CreateGraphicsPipelineState (all workers
@@ -560,6 +572,9 @@ class Backend {
   virtual void EndOcclusionQuery(OcclusionHandle query) = 0;
   // True once every part has completed on our GPU; *samples = the sum. Never waits.
   virtual bool GetOcclusionResult(OcclusionHandle query, uint64_t* samples) = 0;
+  // Optional native completion event for an ended, submitted query. The backend
+  // owns it; the renderer may wait alongside its work event without polling.
+  virtual void* OcclusionCompletionEvent(OcclusionHandle query) { return nullptr; }
   // The slots come back once our GPU is past them (no wait).
   virtual void ReleaseOcclusionQuery(OcclusionHandle query) = 0;
 

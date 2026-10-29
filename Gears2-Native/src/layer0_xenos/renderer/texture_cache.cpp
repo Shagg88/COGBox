@@ -18,13 +18,82 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 REXCVAR_DEFINE_DOUBLE(gow2_texture_phase_log_ms, 0.0, "Gears2",
                       "Diagnostic (job 299): log a frame whose texture loads took longer than this many ms, split into "
                       "phases - page watch arming, page hashing, host texture creation, GPU-path copy + untile, CPU-path "
                       "untile, CPU-path upload. 0 = off");
 
+// Job 620 (GitHub #41 - keyboard button prompts): replace a guest texture by the XXH3 of its base-level guest bytes.
+REXCVAR_DEFINE_STRING(gow2_texture_replace_dir, "", "Gears2",
+                      "Folder of replacement textures (job 620): <hash16>_<level>.bin = that level's host-format data "
+                      "(BC blocks, rows top to bottom) for the guest texture whose base-level guest bytes have that XXH3. "
+                      "Same size and format as the original; such textures load on the CPU path. Empty = off");
+REXCVAR_DEFINE_STRING(gow2_texture_dump_dir, "", "Gears2",
+                      "Developer (job 620): write each new 2D block-compressed texture (one layer) of a size in "
+                      "--gow2_texture_dump_sizes as <dir>/tex-<hash16>-f<fmt>-<w>x<h>.bin (level 0, host-format blocks) - "
+                      "to find texture atlases such as button prompts. Empty = off");
+REXCVAR_DEFINE_STRING(gow2_texture_dump_sizes, "128x128,256x256,512x512,1024x1024,512x256,256x512,1024x512,512x1024",
+                      "Gears2", "Sizes --gow2_texture_dump_dir writes (WxH, comma-separated)");
+
 namespace {
+// Job 620: texture replacement / dump state (one TextureCache per process).
+struct TexSwap {
+  bool init = false;
+  std::string replace_dir, dump_dir;
+  std::unordered_set<uint64_t> replace;     // hashes with replacement files
+  std::unordered_set<uint32_t> dump_sizes;  // w << 16 | h
+  std::unordered_set<uint64_t> dumped;
+  uint32_t dump_count = 0, replaced = 0;
+  void Init() {
+    if (init) return;
+    init = true;
+    replace_dir = REXCVAR_GET(gow2_texture_replace_dir);
+    dump_dir = REXCVAR_GET(gow2_texture_dump_dir);
+    std::error_code ec;
+    if (!replace_dir.empty()) {
+      for (const auto& f : std::filesystem::directory_iterator(std::filesystem::path(replace_dir), ec)) {
+        const std::string n = f.path().filename().string();
+        if (n.size() >= 18 && n[16] == '_' && f.path().extension() == ".bin") {
+          char* end = nullptr;
+          const uint64_t h = std::strtoull(n.substr(0, 16).c_str(), &end, 16);
+          if (end && *end == 0) replace.insert(h);
+        }
+      }
+      REXLOG_INFO("gow2_texture_replace: {} replaced texture(s) in {}", replace.size(), replace_dir);
+    }
+    if (!dump_dir.empty()) {
+      std::filesystem::create_directories(std::filesystem::path(dump_dir), ec);
+      const std::string sizes = REXCVAR_GET(gow2_texture_dump_sizes);
+      size_t p = 0;
+      while (p < sizes.size()) {
+        size_t q = sizes.find(',', p);
+        if (q == std::string::npos) q = sizes.size();
+        unsigned w = 0, h = 0;
+        if (std::sscanf(sizes.substr(p, q - p).c_str(), "%ux%u", &w, &h) == 2) dump_sizes.insert((w << 16) | h);
+        p = q + 1;
+      }
+      REXLOG_INFO("gow2_texture_dump: block-compressed textures of {} size(s) to {}", dump_sizes.size(), dump_dir);
+    }
+  }
+  bool On() const { return !replace.empty() || !dump_sizes.empty(); }
+  bool ReadLevel(uint64_t h, uint32_t level, std::vector<uint8_t>& out) const {
+    char leaf[40];
+    std::snprintf(leaf, sizeof(leaf), "%016llX_%u.bin", static_cast<unsigned long long>(h), level);
+    std::ifstream f{std::filesystem::path(replace_dir) / leaf, std::ios::binary};
+    if (!f) return false;
+    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+  }
+} g_swap;
+
 // Job 299 diagnostic: where the recording thread's texture-load time goes (job 295: untiling on worker threads saved
 // only 7% of the 214-228 ms ch10 level-start texture time, so the untile loop is not the main cost).
 struct TexturePhases {
@@ -325,7 +394,15 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
     sc.stand_ins = stand_ins - stand_ins_before;
     sc.bound = uint32_t(stats_.bound - bound_before);
   }
+  RunGpuJobs();  // batched loads: every slot's uploads are recorded; now their untile work
   return stand_ins;
+}
+
+void TextureCache::RunGpuJobs() {
+  if (gpu_jobs_.empty()) return;
+  PhaseScope load(g_phase.load), gpu(g_phase.gpu);  // job 299: still counted as GPU-path load time
+  for (const std::function<void()>& job : gpu_jobs_) job();
+  gpu_jobs_.clear();
 }
 
 TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind, uint64_t frame) {
@@ -869,6 +946,17 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   }
   const uint32_t layers = gd == tx::Dimension::k3D ? 1 : layout.array_size;
   const bool host_3d = host_kind == 2;
+  // Job 620: replacement / dump candidates (2D, one layer, block-compressed) are hashed and kept on the CPU path.
+  g_swap.Init();
+  uint64_t swap_hash = 0;
+  bool swap_replace = false, swap_dump = false;
+  if (g_swap.On() && hf.block_compressed && gd == tx::Dimension::k2DOrStacked && layers == 1 && host_kind == 0) {
+    swap_hash = XXH3_64bits(guest_ + base, std::max(layout.base.level_data_extent_bytes, 1u));
+    swap_replace = g_swap.replace.count(swap_hash) != 0;
+    swap_dump = !g_swap.dump_sizes.empty() && g_swap.dump_sizes.count((w << 16) | h) && g_swap.dump_count < 2000 &&
+                g_swap.dumped.insert(swap_hash).second;
+  }
+  const bool swap_cpu = swap_replace || swap_dump;
   // GPU path: raw 2D textures (one layer) in a format with typed UAV stores (D3D11-class hardware guarantees these).
   // Takeover T3: 24:8 depth textures (shadow maps, scene depth - resolve destinations) also load on the GPU, from the
   // guest-memory mirror where our resolves put them (codes 14/15: the CPU path's kDepthUnorm / kDepthFloat).
@@ -882,7 +970,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   const bool stacked_3d = untile3d_ && gd == tx::Dimension::k2DOrStacked && host_kind == 2 && layers >= 1;
   // Patch 0026: true 3D textures fetched as 3D, in a format with a GPU load code, untiled on the GPU (untile_volume_).
   const bool volume = untile_volume_ && gd == tx::Dimension::k3D && host_kind == 2;
-  const bool gpu = untile_ && (hf.convert == Convert::kCopy || depth_convert) && !hf.block_compressed && gpu_code &&
+  const bool gpu = !swap_cpu && untile_ && (hf.convert == Convert::kCopy || depth_convert) && !hf.block_compressed && gpu_code &&
                    ((gd == tx::Dimension::k2DOrStacked && ((layers == 1 && host_kind == 0) || stacked_3d)) || volume) &&
                    fb.block_width == 1 && fb.block_height == 1;
   // Patch 0021 (Canary texture_cache, D36): BC1-5 textures load on the GPU too, from the mirror (where our resolves and
@@ -891,7 +979,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   // Patch 0025: also 32bpp raw-copy cube textures (8888, 2_10_10_10, 16_16, 32_FLOAT ... faces), which the typed-UAV
   // path above never took (one layer only), so their faces no longer load from guest CPU memory either.
   const bool gpu_blocks =
-      !gpu && untile_blocks_ && hf.convert == Convert::kCopy && gd != tx::Dimension::k3D && !host_3d &&
+      !gpu && !swap_cpu && untile_blocks_ && hf.convert == Convert::kCopy && gd != tx::Dimension::k3D && !host_3d &&
       ((hf.block_compressed && (bpb == 8 || bpb == 16) &&
         ((layers == 1 && host_kind == 0) || (host_kind == 1 && layers == 6))) ||
        (!hf.block_compressed && bpb == 4 && fb.block_width == 1 && fb.block_height == 1 && host_kind == 1 &&
@@ -1004,6 +1092,11 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       }
       flush(last + 1);
     }
+    // The untile work for this texture: now, or (batched loads) at the end of this Bind, after its other uploads.
+    const gpu::TextureHandle tex = e.texture;
+    const tx::FormatBlock block = fb;
+    auto untile = [=, this]() {
+    const tx::FormatBlock& fb = block;
     for (uint32_t level = 0; level < host_mips; ++level) {
       const bool in_tail = layout.packed_level != UINT32_MAX && level >= layout.packed_level;
       const uint32_t storage_level = in_tail ? layout.packed_level : level;
@@ -1017,7 +1110,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         const uint32_t bw = (lw + fb.block_width - 1) / fb.block_width, bh = (lh + fb.block_height - 1) / fb.block_height;
         for (uint32_t u = 0; u < layers; ++u) {
           uint32_t row_pitch = 0, rows = 0;
-          if (!backend_.PrepareScratchFor(e.texture, level, u, row_pitch, rows) || row_pitch < (bw << bpb_log2)) {
+          if (!backend_.PrepareScratchFor(tex, level, u, row_pitch, rows) || row_pitch < (bw << bpb_log2)) {
             ++stats_.gpu_block_failures;
             continue;
           }
@@ -1037,7 +1130,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
           bb.scratch_u0 = true;
           backend_.SetGpuCategory(3);
           backend_.Dispatch(untile_blocks_, bb, (bw + 7) / 8, (std::min(bh, rows) + 7) / 8, 1);
-          backend_.CopyScratchToTexture(e.texture, level, u);
+          backend_.CopyScratchToTexture(tex, level, u);
           ++stats_.gpu_block_subresources;
         }
         continue;
@@ -1055,8 +1148,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       b.constants[9] = gpu_code;
       b.constant_count = 12;
       b.guest_t3 = true;
-      b.uav_texture = e.texture;
+      b.uav_texture = tex;
       b.uav_mip = level;
+      b.defer_uav_barrier = batch_loads_;  // the texture's next use (sampling: a transition) waits for the write
       backend_.SetGpuCategory(3);  // job 177: texture loads (the next draw part sets draws again)
       if (volume) {  // patch 0026: one dispatch per level, z from the packed-tail offset
         const uint32_t ld = std::max(d >> level, 1u);
@@ -1083,6 +1177,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       }
       backend_.Dispatch(untile_, b, (lw + 7) / 8, (lh + 7) / 8, 1);
     }
+    };
+    if (batch_loads_) gpu_jobs_.push_back(std::move(untile));
+    else untile();
     if (gpu_blocks) ++stats_.gpu_block_loads;
     ++stats_.gpu_loads;
     ++stats_.uploads;
@@ -1231,6 +1328,22 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
               case Convert::kNone: break;
             }
           }
+        }
+      }
+      if (swap_dump && level == 0 && u == 0) {  // job 620: level 0 as host-format blocks
+        char leaf[96];
+        std::snprintf(leaf, sizeof(leaf), "tex-%016llX-f%u-%ux%u.bin", static_cast<unsigned long long>(swap_hash), format,
+                      w, h);
+        std::ofstream f{std::filesystem::path(g_swap.dump_dir) / leaf, std::ios::binary};
+        f.write(reinterpret_cast<const char*>(scratch_.data()), std::streamsize(scratch_.size()));
+        ++g_swap.dump_count;
+      }
+      if (swap_replace && u == 0) {  // job 620: this level from the replacement file, when its size matches
+        std::vector<uint8_t> rep;
+        if (g_swap.ReadLevel(swap_hash, level, rep) && rep.size() == scratch_.size()) {
+          scratch_.swap(rep);
+          if (level == 0 && ++g_swap.replaced <= 20)
+            REXLOG_INFO("gow2_texture_replace: {:016X} ({}x{} format {}) replaced", swap_hash, w, h, format);
         }
       }
       {

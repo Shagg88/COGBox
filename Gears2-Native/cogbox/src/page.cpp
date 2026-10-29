@@ -257,6 +257,26 @@ static void keys_section(App &a)
     }
 }
 
+// Job 620 (GitHub #45): a game language whose text isn't on the player's copy can't be chosen - the game would fall
+// back to English (the US Judgment disc has 11 languages, not German, Italian, Spanish (Spain), Russian, Portuguese
+// or Japanese). Decided by the copy's Coalesced_<code>.bin; a code we don't know, or an unknown folder, stays allowed.
+static bool lang_on_copy(App &a, int g, int idx)
+{
+    static const char *code[22] = { "", "INT", "INT", "FRA", "DEU", "ITA", "ESN", "ESM", "PTB", "POL", "RUS", "CZE", "HUN",
+                                    "DUT", "DAN", "FIN", "NOR", "", "JPN", "KOR", "", "CHN" };
+    if (idx <= 0 || idx >= 22 || !code[idx][0]) return true;
+    const std::string &root = a.env[g].game_data_root;
+    if (root.empty()) return true;
+    bool any = false;
+    for (const char *sub : { "\\GearGame\\CookedXenon\\", "\\GearGame\\CookedXbox360\\" }) {
+        const std::string dir = root + sub;
+        if (GetFileAttributesW(widen(dir + "Coalesced_INT.bin").c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+        any = true;
+        if (GetFileAttributesW(widen(dir + "Coalesced_" + code[idx] + ".bin").c_str()) != INVALID_FILE_ATTRIBUTES) return true;
+    }
+    return !any;   // no Coalesced_INT.bin found: not a layout we know, allow
+}
+
 static void option_row(App &a, int g, const gs::Option &o)
 {
     gs::Game G = (gs::Game)g;
@@ -288,6 +308,10 @@ static void option_row(App &a, int g, const gs::Option &o)
             if (o.id == "Resolution" && items.size() == 6) ord = { 0, 5, 1, 2, 3, 4 };
             for (int i : ord) {
                 gs::Availability ca = gs::choice_available(o, G, i);
+                if (ca.ok && o.id == "Lang" && !lang_on_copy(a, g, i)) {   // job 620 (#45)
+                    ca.ok = false;
+                    ca.why = "Not on your copy of the game - it would show English. Copies from other regions have other languages.";
+                }
                 if (!ca.ok) ImGui::BeginDisabled();
                 ImGui::PushID(i);   // translations can make two choices read the same
                 if (ImGui::Selectable(items[i].c_str(), i == idx)) { nv = i; changed = true; }

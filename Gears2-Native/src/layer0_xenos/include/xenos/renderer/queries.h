@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -40,6 +41,23 @@ inline constexpr uint32_t kEventZpassDone = 21;
 // gives the value below.
 inline constexpr uint32_t kPendingMarkerLE = 0xEDFEFFFFu;
 inline constexpr uint32_t kReportBytes = 32;
+
+// Resolve only ended slots, once per contiguous run, at submission. Resolving
+// each query between proxy draws forces the GPU to finish its count before it
+// can process the next proxy. Slot allocation can wrap or skip held slots.
+template<class Resolve>
+void ResolveEndedRuns(std::span<const uint32_t> slots, Resolve&& resolve) {
+  size_t i = 0;
+  while (i < slots.size()) {
+    const uint32_t first = slots[i++];
+    uint32_t count = 1;
+    while (i < slots.size() && uint64_t(slots[i]) == uint64_t(first) + count) {
+      ++i;
+      ++count;
+    }
+    resolve(first, count);
+  }
+}
 
 // One report as it sits in guest memory (8 little-endian dwords).
 struct SampleCounts {

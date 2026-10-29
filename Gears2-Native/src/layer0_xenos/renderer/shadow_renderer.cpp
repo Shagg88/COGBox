@@ -36,6 +36,13 @@
 #include <xenos/renderer/colour_hlsl.h>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend.cpp (0.2.0, #9)
 #endif
 #include "builtin_shaders.h"
@@ -228,6 +235,11 @@ REXCVAR_DEFINE_INT32(gow2_renderer_shader_precreate_ms, 6, "Gears2",
                     "waits for the next frame");
 REXCVAR_DEFINE_INT32(gow2_renderer_play_hold_max_ms, 1000, "Gears2",
                     "Patch 0064: the longest one mid-play hold may wait (ms); then the frame is shown as it is");
+REXCVAR_DEFINE_BOOL(gow2_renderer_texture_batch, false, "Gears2",
+                    "Off until tested (job 620, PR #43 a8b8abd - not run by its author yet). Batched texture loads (D3D12; 2026-10-29, the Gears 2 level-start freeze: ~4,900 BC mip loads in one "
+                    "frame, each a compute pass, a copy and a GPU wait on one scratch buffer): a draw's texture uploads "
+                    "go first, then their untile passes, and the BC copies are recorded together - the GPU waits once "
+                    "per draw instead of twice per mip level. false = the old one-at-a-time loads");
 REXCVAR_DEFINE_BOOL(gow2_renderer_placed_textures, true, "Gears2",
                     "Patch 0017 (stutter): guest textures (sampled only, up to 16 MB) are placed in shared 64 MB heaps "
                     "instead of one committed allocation each - job 299: creating 376 textures took 157 of the 208 ms "
@@ -1122,6 +1134,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     options.warm_thread_priority = std::clamp(REXCVAR_GET(gow2_renderer_shader_prebuild_priority), -2, 0);  // PR #43
     options.debug_layer = REXCVAR_GET(gow2_renderer_debug);
     options.placed_textures = REXCVAR_GET(gow2_renderer_placed_textures);  // patch 0017
+    options.batch_texture_loads = REXCVAR_GET(gow2_renderer_texture_batch) && !vulkan;  // 2026-10-29
     options.index_buffers_in_vram = REXCVAR_GET(gow2_renderer_index_buffers_vram);  // patch 0150
     {  // patch 0087
       const std::string m = REXCVAR_GET(gow2_renderer_vulkan_compressible_targets);
@@ -1366,6 +1379,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     textures_->SetMismatchZero(REXCVAR_GET(gow2_renderer_texture_mismatch_zero));
     textures_->SetScaledMissLog(REXCVAR_GET(gow2_renderer_scaled_miss_log));
     textures_->SetPackedTailAtBase(REXCVAR_GET(gow2_renderer_packed_tail_at_base));  // patch 0087
+    textures_->SetBatchLoads(REXCVAR_GET(gow2_renderer_texture_batch) && REXCVAR_GET(gow2_renderer_api) != "vulkan");  // 2026-10-29 (D3D12)
     textures_->SetLoadLogFrame(uint64_t(std::max(REXCVAR_GET(gow2_renderer_texture_load_log), 0)));
     if (const std::string list = REXCVAR_GET(gow2_renderer_texture_probe); !list.empty()) {  // job 284
       std::vector<uint32_t> bases;
@@ -1782,7 +1796,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (queries_mode_ == QueriesMode::kStrict) {
       // PR #43 (legoliamneeson): a closed batch of queries gets its own submission (at most 4 extra per frame) so the
       // guest waiting on them does not wait for the rest of the frame's GPU work; results are polled every 32 draws.
-      if (occ_need_submit_ && !occ_open_.open && occ_closed_in_batch_ >= 16 && occ_batches_this_frame_ < 4) {
+      if (occ_need_submit_ && !occ_open_.open && occ_closed_in_batch_ && occ_batches_this_frame_ < 4) {
         backend_->SubmitEarly();
         occ_need_submit_ = false;
         occ_closed_in_batch_ = 0;
@@ -1992,6 +2006,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // PR #43 strict queries: the renderer thread's idle poll (pm4_shadow RenderPipe::Run, nothing queued). Submits the
   // queued queries once (a batch, never one GPU wait per query) and lands what it can; true = some still out.
   bool StrictQueries() const { return queries_mode_ == QueriesMode::kStrict; }
+  void* IdleGpuEvent() {
+    return StrictQueries() && !occ_pending_.empty()
+        ? backend_->OcclusionCompletionEvent(occ_pending_.front().handle) : nullptr;
+  }
   bool PollGpuIdle() {
     if (!StrictQueries() || !backend_ || occ_pending_.empty()) return false;
     const uint64_t t0 = __rdtsc();
@@ -2009,12 +2027,29 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   template<class F> void FrameStep(const char* site, F&& work) {
     const uint64_t start = __rdtsc();
     work();
-    const double ms = double(__rdtsc() - start) * MsPerTick();
+    const uint64_t ticks = __rdtsc() - start;
+    const double ms = double(ticks) * MsPerTick();
+    if (XenosFrameLogOn()) {
+      for (auto& step : frame_steps_) {
+        if (!step.site) step.site = site;
+        if (step.site == site) { step.ticks += ticks; break; }
+      }
+    }
     if (ms >= 20.0 && XenosFrameLogOn())
       REXLOG_INFO("gow2_renderer: frame {} slow step {}: {:.1f} ms", frame_, site, ms);
   }
+  static uint64_t ThreadCpuTicks() {
+#ifdef _WIN32
+    FILETIME created, exited, kernel, user;
+    if (GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user))
+      return (uint64_t(kernel.dwHighDateTime) << 32 | kernel.dwLowDateTime) +
+             (uint64_t(user.dwHighDateTime) << 32 | user.dwLowDateTime);
+#endif
+    return 0;
+  }
   void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t fb_width, uint32_t fb_height) override {
     if (!backend_) return;
+    if (!thread_cpu_base_) thread_cpu_base_ = ThreadCpuTicks();
 #if defined(GN_PGO_GEN)
     {  // patch 0159: the training run is ended from outside (no normal exit), so the counters are written here
       static uint32_t pgo_swaps = 0;
@@ -2129,9 +2164,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (textures_ && REXCVAR_GET(gow2_renderer_gpu_block_textures)) {  // patch 0021
         const rr::TextureCacheStats& ts = textures_->Stats();
         REXLOG_INFO("gow2_renderer: patch 0021 frames {}-{}: BC textures loaded on the GPU {} ({} subresources, {} "
-                    "failed) | 3D textures on the GPU {} (0026) | CPU-path loads {} | scratch copies so far {}",
+                    "failed) | 3D textures on the GPU {} (0026) | CPU-path loads {} | scratch copies so far {} (batched loads: in "
+                    "{} batches, untile barriers left out {})",
                     frame_ + 1 - uint64_t(log_every_), frame_, ts.gpu_block_loads, ts.gpu_block_subresources,
-                    ts.gpu_block_failures, ts.gpu_volume_loads, ts.cpu_loads, backend_->Stats().scratch_texture_copies);
+                    ts.gpu_block_failures, ts.gpu_volume_loads, ts.cpu_loads, backend_->Stats().scratch_texture_copies,
+                    backend_->Stats().scratch_batches, backend_->Stats().uav_barriers_deferred);
       }
       if (submit_draws_) {  // patch 0138
         const uint64_t es = backend_->Stats().early_submits;
@@ -8794,7 +8831,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "({:.2f} Mpx/frame) + passes {:.1f}/frame, fill-bounded ownership draws {:.1f}/frame (multi-rect {:.1f}), float-constant uploads skipped by generation {:.0f}/frame, compacted {:.0f}/frame ({:.2f} KB/frame not uploaded) | of which blocked "
                   "on our GPU {:.3f} ({} waits) | texture tables reused {} | state calls skipped {} | constant uploads "
                   "skipped {} | ownership fast path {} | transfer runs {} | alternate rule {} | descriptors {} (ring waits {}) | "
-                  "pipelines {} | upload-ring waits {}",
+                  "pipelines {} (same as the previous draw {}) | upload-ring waits {}",
                   frame_ - uint64_t(log_every_) + 1, frame_, split, total / log_every_,
                   (bs.gpu_ms - gpu_ms_base_) / log_every_, bs.gpu_lists_timed - gpu_lists_base_,
                   (bs.gpu_cat_ms[0] - gpu_cat_base_[0]) / log_every_,
@@ -8815,8 +8852,24 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   (bs.fence_wait_ms - gpu_wait_base_ms_) / log_every_, bs.fence_waits, bs.texture_tables_reused,
                   bs.state_calls_skipped, bs.constant_uploads_skipped, rts_->FastHits(), stats_.transfer_passes,
                   alt_mode_ == 2 ? "always" : "off", bs.descriptors_allocated,
-                  bs.descriptor_ring_waits, bs.pipelines, bs.ring_waits);
+                  bs.descriptor_ring_waits, bs.pipelines, bs.pipeline_memo_hits, bs.ring_waits);
       gpu_wait_base_ms_ = bs.fence_wait_ms;
+      if (XenosFrameLogOn()) {
+        std::string steps;
+        for (auto& step : frame_steps_) {
+          if (step.site) steps += std::format("{}{} {:.3f}", steps.empty() ? "" : ", ", step.site,
+                                              double(step.ticks) * MsPerTick() / log_every_);
+          step.ticks = 0;
+        }
+        const uint64_t cpu = ThreadCpuTicks();
+        REXLOG_INFO("gow2_renderer: frames {}-{}: frame steps (elapsed ms/frame, includes waits): {} | render thread "
+                    "CPU {:.3f} ms/frame (OS thread time, includes idle polling; excludes recording/copy workers) | "
+                    "waiting for command recorder {:.3f} ms/frame (included in elapsed CPU split)",
+                    frame_ - uint64_t(log_every_) + 1, frame_, steps,
+                    cpu >= thread_cpu_base_ ? double(cpu - thread_cpu_base_) / 10000.0 / log_every_ : 0.0,
+                    (bs.recording_wait_ms - detail_base_.recording_wait_ms) / log_every_);
+        thread_cpu_base_ = cpu;
+      }
       gpu_ms_base_ = bs.gpu_ms;
       std::copy(std::begin(bs.gpu_cat_ms), std::end(bs.gpu_cat_ms), gpu_cat_base_);
       if (gpu_by_target_) {  // job 234: the targets whose draws took the most GPU time this window
@@ -9369,6 +9422,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   double cpu_ms_ = 0, cpu_sum_ = 0, cpu_max_ = 0;
   double part_ms_[kPartCount] = {};  // since the last summary (filled from part_ticks_ when it is logged)
   uint64_t part_ticks_[kPartCount] = {};
+  struct FrameStepCounter { const char* site = nullptr; uint64_t ticks = 0; };
+  std::array<FrameStepCounter, 24> frame_steps_{};
+  uint64_t thread_cpu_base_ = 0;
   Part part_cur_ = kPartOther;
   uint64_t part_mark_ = 0;
   bool parts_on_ = false;
@@ -9587,6 +9643,7 @@ bool XenosRendererStrictQueries() { return g_release_target && g_release_target-
 bool XenosPollRendererIdle() { return g_release_target && g_release_target->PollGpuIdle(); }          // PR #43
 bool XenosRendererRecipePackOn() { return g_release_target && g_release_target->RecipePackOn(); }    // job 617
 bool XenosRendererRecipeIdle() { return g_release_target && g_release_target->RecipeIdleWork(); }    // job 617
+void* XenosRendererIdleEvent() { return g_release_target ? g_release_target->IdleGpuEvent() : nullptr; }
 void XenosRendererRelease() {
   if (g_release_target) g_release_target->ReleaseToGuest();
 }

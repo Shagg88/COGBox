@@ -204,10 +204,13 @@ std::vector<Option> make_options(Game g) {
                "100 = the original. Widens (or narrows) every camera view by this much.", 374), "", "", true);
     // PR #43 (legoliamneeson): strict occlusion queries (--gow2_renderer_queries=strict), off by default in every game.
     // Per game, Gears 3 and Judgment only (where it was tried: walls hiding light flares); not in the preset.
-    add(make("RealOcclusion", "Real occlusion (experimental)", Tab::Graphics, Kind::Bool, PG, 0,
-             "Experimental. The game asks the graphics card whether things like light flares are hidden behind walls; "
-             "on means it waits for the card's real answer instead of always being told \"visible\", so flares and "
-             "hidden objects behind walls disappear as on the console. It can cost some frame rate. DirectX 12 only. "
+    // Job 620 (PR #43 bbb7cee: batched result copies, early submits, wake on GPU completion - Judgment Museum 93 fps
+    // with it vs 94 off, Gears 3 Gridlock steadier): on by default in Gears 3 and Judgment, where light showed through
+    // walls (GitHub #30, #41). Gears 2 keeps it off by default, as in the PR.
+    add(make("RealOcclusion", "Real occlusion", Tab::Graphics, Kind::Bool, PG, g == Game::Gears2 ? 0 : 1,
+             "The game asks the graphics card whether things like light flares are hidden behind walls; on means it "
+             "waits for the card's real answer instead of always being told \"visible\", so flares and hidden objects "
+             "behind walls disappear as on the console, and fewer hidden things are drawn. DirectX 12 only. "
              "Off = everything counts as visible, as before.", 0), "realocclusion");
 
     // ---- Controls ------------------------------------------------------------------------------------------------

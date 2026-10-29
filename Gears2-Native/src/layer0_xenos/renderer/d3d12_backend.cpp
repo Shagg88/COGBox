@@ -11,6 +11,7 @@
 // Our code (MIT).
 #include <xenos/renderer/gpu.h>
 
+#include <xenos/renderer/queries.h>
 #include <cstring>
 
 namespace xenos::renderer::gpu {
@@ -307,6 +308,8 @@ struct Texture {
   std::vector<std::pair<uint64_t, int32_t>> views;  // texture views by key -> CPU heap slot
   int32_t heap = -1;  // patch 0017: placed in tex_heaps_[heap] at heap_offset (heap_size bytes); -1 = committed
   uint64_t heap_offset = 0, heap_size = 0;
+  bool scratch_pending = false;  // batched texture loads: a scratch copy into it is queued (FlushScratchCopies)
+  uint64_t uav_unbarriered = 0;  // batched texture loads: mips written as a UAV with the barrier left out (bit = mip)
 };
 
 struct Pipeline {
@@ -583,7 +586,10 @@ class CommandListProxy {
     if (!threaded_) return;
     Flush();
     std::unique_lock<std::mutex> lock(mutex_);
+    if (ready_.empty() && !busy_) return;
+    const auto start = std::chrono::steady_clock::now();
     idle_cv_.wait(lock, [this] { return ready_.empty() && !busy_; });
+    recording_wait_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
   }
 
   // ---- lifecycle ----
@@ -700,6 +706,7 @@ class CommandListProxy {
     Pod(x); Pod(y); Pod(z);
   }
   uint64_t barrier_calls = 0, barriers = 0;  // job 045: barrier counts (each call can stall the GPU pipeline)
+  double recording_wait_ms = 0.0;  // caller thread only
   uint64_t barrier_batches = 0, barriers_merged = 0;  // job 046: emitted batches, transitions merged away
   // Job 046: barriers are queued and emitted as ONE ResourceBarrier call right before the next command of any kind,
   // so consecutive barriers (render targets, textures, the guest buffer) cost one GPU sync instead of one each. A
@@ -1693,6 +1700,7 @@ class D3D12Backend final : public Backend {
   }
   void DestroyTexture(TextureHandle h) override {
     if (h == 0 || h >= textures_.size() || !textures_[h].resource) return;
+    if (textures_[h].scratch_pending) FlushScratchCopies();  // batched texture loads: before its copy can't happen
     // Job 188: with threaded recording, encoded calls still name this texture's CPU descriptors (RTV/DSV are read when
     // the recording thread replays OMSetRenderTargets / clears). Freed now, a texture created next would reuse those
     // slots before the replay and the old calls would hit the new texture - the transfer self-test chains read 0 from
@@ -1872,6 +1880,12 @@ class D3D12Backend final : public Backend {
   PipelineHandle GetGraphicsPipeline(const GraphicsPipelineDesc& d, bool async, bool* pending) override {
     if (pending) *pending = false;
     if (!ready_ || lost_) return 0;
+    // Consecutive draws very often use the same pipeline: the last ready one is answered from here, without hashing
+    // the description and looking it up (pipelines are never destroyed, and a ready one stays ready).
+    if (last_pipeline_ && d == last_pipeline_desc_) {
+      ++stats_.pipeline_memo_hits;
+      return last_pipeline_;
+    }
     const uint64_t key = HashPipelineDesc(d);
     auto it = pipeline_cache_.find(key);
     if (it != pipeline_cache_.end()) {
@@ -1879,7 +1893,12 @@ class D3D12Backend final : public Backend {
         if (!(desc == d)) continue;
         if (!handle) return 0;
         Pipeline& p = pipelines_[handle];
-        if (p.ready.load(std::memory_order_acquire)) return p.failed.load() ? 0 : handle;
+        if (p.ready.load(std::memory_order_acquire)) {
+          if (p.failed.load()) return 0;
+          last_pipeline_desc_ = d;
+          last_pipeline_ = handle;
+          return handle;
+        }
         if (!pipeline_backlog_ && (pending || !async)) PromoteBacklogJob(handle, p);  // patch 0062
         if (async) {
           if (pending) {
@@ -1988,7 +2007,7 @@ class D3D12Backend final : public Backend {
 
   // ---- guest memory ----
   void UploadGuestMemory(uint32_t guest_physical, const void* data, uint32_t size) override {
-    if (!Recording() || !size) return;
+    if (!OpenList() || !size) return;  // batched texture loads: touches neither the scratch buffer nor a texture
     guest_physical &= 0x1FFFFFFFu;
     if (uint64_t(guest_physical) + size > options_.guest_memory_bytes) size = uint32_t(options_.guest_memory_bytes - guest_physical);
     uint64_t offset;
@@ -2317,6 +2336,8 @@ class D3D12Backend final : public Backend {
                    uint32_t sampler_count) override {
     view_count = std::clamp<uint32_t>(view_count, 1u, kTextureSrvCount);
     sampler_count = std::clamp<uint32_t>(sampler_count, 1u, kSamplerCount);
+    // Batched texture loads: the queued copies first - the table reuse below reads the textures' states.
+    if (!scratch_copies_.empty()) FlushScratchCopies();
     if (!views96 && !samplers32) {
       if (textures_custom_) {
         textures_custom_ = false;
@@ -2393,7 +2414,13 @@ class D3D12Backend final : public Backend {
 
   // ---- compute ----
   void Dispatch(PipelineHandle p, const ComputeBindings& b, uint32_t gx, uint32_t gy, uint32_t gz) override {
-    if (!Recording() || !p || p >= pipelines_.size() || !pipelines_[p].compute || !gx || !gy || !gz) return;
+    // Batched texture loads: a texture load's dispatch keeps the queued copies queued - it reads the guest-memory
+    // mirror and writes its own scratch region or its own (not queued) texture.
+    const bool scratch_batch = options_.batch_texture_loads && b.scratch_u0;
+    const bool load_batch = scratch_batch || (options_.batch_texture_loads && b.defer_uav_barrier);
+    if (!(load_batch ? OpenList() : Recording()) || !p || p >= pipelines_.size() || !pipelines_[p].compute || !gx ||
+        !gy || !gz)
+      return;
     const uint32_t base = AllocShaderDescriptors(kComputeSrvCount + 2);
     if (base == UINT32_MAX) return;
     D3D12_CPU_DESCRIPTOR_HANDLE cpu = shader_heap_->GetCPUDescriptorHandleForHeapStart();
@@ -2428,11 +2455,22 @@ class D3D12Backend final : public Backend {
                                  : -1;
     if (b.scratch_u0 && scratch_uav_ >= 0 && scratch_) {  // patch 0021
       TransitionScratch(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-      device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(scratch_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+      if (scratch_batch) {  // a raw view starting at this subresource's region (the shader addresses from 0)
+        D3D12_UNORDERED_ACCESS_VIEW_DESC u{};
+        u.Format = DXGI_FORMAT_R32_TYPELESS;
+        u.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        u.Buffer.FirstElement = scratch_fp_.Offset / 4;
+        u.Buffer.NumElements = UINT((scratch_size_ - scratch_fp_.Offset) / 4);
+        u.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+        device_->CreateUnorderedAccessView(scratch_, nullptr, &u, udst);
+      } else {
+        device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(scratch_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+      }
     } else if (b.guest_u0 && guest_uav_ >= 0) {
       TransitionGuest(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
       device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(guest_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     } else if (uav_slot >= 0) {
+      UavBarrierIfWritten(textures_[b.uav_texture], b.uav_mip);
       Transition(textures_[b.uav_texture], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
       device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(uav_slot), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     } else {
@@ -2445,6 +2483,7 @@ class D3D12Backend final : public Backend {
     D3D12_CPU_DESCRIPTOR_HANDLE udst2{cpu.ptr + SIZE_T(base + kComputeSrvCount + 1) * view_increment_};
     const int32_t uav2_slot = ValidTexture(b.uav2_texture) ? UavSlot(textures_[b.uav2_texture], 0) : -1;
     if (uav2_slot >= 0) {
+      UavBarrierIfWritten(textures_[b.uav2_texture], 0);
       Transition(textures_[b.uav2_texture], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
       device_->CopyDescriptorsSimple(1, udst2, view_heap_.Handle(uav2_slot), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     } else {
@@ -2469,6 +2508,9 @@ class D3D12Backend final : public Backend {
       u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
       u.UAV.pResource = guest_;
       list_->ResourceBarrier(1, &u);
+    } else if (ValidTexture(b.uav_texture) && options_.batch_texture_loads && b.defer_uav_barrier) {
+      textures_[b.uav_texture].uav_unbarriered |= 1ull << std::min<uint32_t>(b.uav_mip, 63);
+      ++stats_.uav_barriers_deferred;
     } else if (ValidTexture(b.uav_texture)) {
       D3D12_RESOURCE_BARRIER u{};
       u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
@@ -2549,6 +2591,25 @@ class D3D12Backend final : public Backend {
     occ_free_handles_.push_back(h);
   }
 
+  void* OcclusionCompletionEvent(OcclusionHandle h) override {
+    if (!h || h >= occ_queries_.size() || lost_) return nullptr;
+    const OcclusionQuery& q = occ_queries_[h];
+    if (!q.in_use || !q.ended || q.broken || !q.parts) return nullptr;
+    uint64_t value = 0;
+    for (uint32_t i = 0; i < q.parts; ++i) {
+      const uint64_t f = occ_slot_fence_[q.slot[i]];
+      if (!f) return nullptr;
+      value = std::max(value, f);
+    }
+    if (!occ_event_) occ_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!occ_event_) return nullptr;
+    if (value != occ_event_fence_) {
+      if (FAILED(fence_->SetEventOnCompletion(value, occ_event_))) return nullptr;
+      occ_event_fence_ = value;
+    }
+    return occ_event_;
+  }
+
   // ---- readback ----
   ReadbackHandle ReadbackTexture(TextureHandle h, const Rect& region) override {
     if (!Recording() || !ValidTexture(h) || region.empty()) return 0;
@@ -2603,7 +2664,8 @@ class D3D12Backend final : public Backend {
   // ---- patch 0021: scratch buffer for GPU loads into BCn textures (Canary loads every texture on the GPU) ----
   bool PrepareScratchFor(TextureHandle h, uint32_t mip, uint32_t layer, uint32_t& row_pitch, uint32_t& rows) override {
     row_pitch = rows = 0;
-    if (!Recording() || !ValidTexture(h)) return false;
+    const bool batch = options_.batch_texture_loads;
+    if (!(batch ? OpenList() : Recording()) || !ValidTexture(h)) return false;
     Texture& t = textures_[h];
     D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
     if (mip >= rd.MipLevels || layer >= rd.DepthOrArraySize) return false;
@@ -2613,11 +2675,22 @@ class D3D12Backend final : public Backend {
     UINT64 row_size = 0, total = 0;
     device_->GetCopyableFootprints(&rd, sub, 1, 0, &fp, &num_rows, &row_size, &total);
     if (!total || fp.Footprint.Depth != 1) return false;
+    // Batched texture loads: this subresource's region follows the queued ones; when it doesn't fit, they are copied
+    // out first and the buffer starts over (the next load's transition to UAV waits for those copies).
+    UINT64 at = 0;
+    if (batch) {
+      at = (scratch_head_ + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1) & ~UINT64(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1);
+      if (scratch_ && at + total > scratch_size_) {
+        FlushScratchCopies();
+        at = 0;
+      }
+    }
     if (total > scratch_size_) {
       if (scratch_) deferred_releases_.push_back({scratch_, next_fence_});  // the open list may still use it
       scratch_ = nullptr;
       scratch_size_ = 0;
-      const UINT64 size = std::max<UINT64>((total + 0xFFFFF) & ~UINT64(0xFFFFF), 4ull << 20);
+      // Batched: room for a burst of loads (a level start loads hundreds of BC textures in one frame).
+      const UINT64 size = std::max<UINT64>((total + 0xFFFFF) & ~UINT64(0xFFFFF), batch ? 32ull << 20 : 4ull << 20);
       std::string error;
       if (!CreateBuffer(size, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                         D3D12_RESOURCE_STATE_COMMON, &scratch_, error)) {
@@ -2637,18 +2710,25 @@ class D3D12Backend final : public Backend {
       device_->CreateUnorderedAccessView(scratch_, nullptr, &u, view_heap_.Handle(scratch_uav_));
     }
     scratch_fp_ = fp;
-    scratch_fp_.Offset = 0;
+    scratch_fp_.Offset = at;
     scratch_sub_ = sub;
+    scratch_head_ = at + total;
     row_pitch = fp.Footprint.RowPitch;
     rows = num_rows;
     return true;
   }
   void CopyScratchToTexture(TextureHandle h, uint32_t mip, uint32_t layer) override {
-    if (!Recording() || !ValidTexture(h) || !scratch_) return;
+    const bool batch = options_.batch_texture_loads;
+    if (!(batch ? OpenList() : Recording()) || !ValidTexture(h) || !scratch_) return;
     Texture& t = textures_[h];
     D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
     const UINT sub = mip + layer * rd.MipLevels;
     if (sub != scratch_sub_) return;  // PrepareScratchFor was for another subresource
+    if (batch) {  // queued: recorded with the others by FlushScratchCopies
+      scratch_copies_.push_back({h, t.serial, sub, scratch_fp_});
+      t.scratch_pending = true;
+      return;
+    }
     TransitionScratch(D3D12_RESOURCE_STATE_COPY_SOURCE);
     Transition(t, D3D12_RESOURCE_STATE_COPY_DEST);
     D3D12_TEXTURE_COPY_LOCATION dl{};
@@ -2662,6 +2742,51 @@ class D3D12Backend final : public Backend {
     TsCat();
     list_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
     ++stats_.scratch_texture_copies;
+  }
+  // Batched texture loads: records the queued scratch copies - the scratch buffer's one transition, every target's
+  // transition (consecutive barriers: the proxy sends them as one batch), then the copies.
+  void FlushScratchCopies() {
+    if (scratch_copies_.empty()) return;
+    std::vector<ScratchCopy> copies;
+    copies.swap(scratch_copies_);
+    scratch_head_ = 0;
+    for (const ScratchCopy& c : copies)  // first: Transition below must not flush again
+      if (ValidTexture(c.texture) && textures_[c.texture].serial == c.serial) textures_[c.texture].scratch_pending = false;
+    if (list_open_ && !lost_ && scratch_) {
+      const uint8_t category = gpu_cat_pending_;  // job 177: timed as texture loads, whatever comes next
+      gpu_cat_pending_ = 3;
+      TransitionScratch(D3D12_RESOURCE_STATE_COPY_SOURCE);
+      for (const ScratchCopy& c : copies)
+        if (ValidTexture(c.texture) && textures_[c.texture].serial == c.serial)
+          Transition(textures_[c.texture], D3D12_RESOURCE_STATE_COPY_DEST);
+      for (const ScratchCopy& c : copies) {
+        if (!ValidTexture(c.texture) || textures_[c.texture].serial != c.serial) continue;
+        D3D12_TEXTURE_COPY_LOCATION dl{};
+        dl.pResource = textures_[c.texture].resource;
+        dl.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dl.SubresourceIndex = c.subresource;
+        D3D12_TEXTURE_COPY_LOCATION sl{};
+        sl.pResource = scratch_;
+        sl.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        sl.PlacedFootprint = c.footprint;
+        TsCat();
+        list_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
+        ++stats_.scratch_texture_copies;
+      }
+      ++stats_.scratch_batches;
+      gpu_cat_pending_ = category;
+    }
+    copies.clear();
+    if (scratch_copies_.empty()) scratch_copies_.swap(copies);  // keep the capacity
+  }
+  // Batched texture loads: a mip written as a UAV with its barrier left out gets it before it is written again.
+  void UavBarrierIfWritten(Texture& t, uint32_t mip) {
+    if (!(t.uav_unbarriered & (1ull << std::min<uint32_t>(mip, 63)))) return;
+    D3D12_RESOURCE_BARRIER u{};
+    u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    u.UAV.pResource = t.resource;
+    list_->ResourceBarrier(1, &u);
+    t.uav_unbarriered = 0;  // a UAV barrier covers the whole resource
   }
   void TransitionScratch(D3D12_RESOURCE_STATES state) {
     if (!scratch_ || scratch_state_ == state) return;
@@ -2764,10 +2889,14 @@ class D3D12Backend final : public Backend {
       }
     }
     if (!list_open_) return last_submitted_;
+    FlushScratchCopies();  // batched texture loads: they belong to this list
     if (occ_open_ && occ_open_in_list_) {  // upl-s4c: a query spanning this Submit continues in the next list
       CloseOcclusionPart();
       occ_open_in_list_ = false;
     }
+    queries::ResolveEndedRuns(occ_slots_in_list_, [this](uint32_t first, uint32_t count) {
+      list_->ResolveQueryData(occ_heap_, D3D12_QUERY_TYPE_OCCLUSION, first, count, occ_readback_, UINT64(first) * 8);
+    });
     if (ts_open_ && ts_cur_.count) {
       TsEmit(0xFE);  // end mark
       const uint32_t first = ts_cur_.first, n = ts_cur_.count;
@@ -2798,6 +2927,7 @@ class D3D12Backend final : public Backend {
     // work being in the queue when Submit returns), then pick up any failure it saw. Patch 0138: an early (mid-frame)
     // submit does not wait - the recording thread submits lists in order, and the frame's last Submit drains.
     if (drain) list_->Drain(); else list_->Kick();
+    stats_.recording_wait_ms = proxy_.recording_wait_ms;
     if (FAILED(list_->Error()) && !lost_) {
       lost_ = true;
       lost_reason_ = Hr(list_->ErrorWhat() ? list_->ErrorWhat() : "command recording", list_->Error());
@@ -2996,6 +3126,7 @@ class D3D12Backend final : public Backend {
     SafeRelease(occ_heap_);  // upl-s4c
     SafeRelease(occ_readback_);
     occ_mapped_ = nullptr;
+    if (occ_event_) { CloseHandle(occ_event_); occ_event_ = nullptr; }
     for (auto& a : allocators_) SafeRelease(a.allocator);
     allocators_.clear();
     SafeRelease(current_allocator_);
@@ -3027,7 +3158,14 @@ class D3D12Backend final : public Backend {
   bool ValidTexture(TextureHandle h) const { return h && h < textures_.size() && textures_[h].resource; }
 
   // Opens the command list if needed (binding heaps and root signatures). False when the device is unusable.
+  // Batched texture loads: every recording call but the texture-load ones (OpenList) first records the queued scratch
+  // copies, so nothing can read a texture before its copy.
   bool Recording() {
+    if (!OpenList()) return false;
+    if (!scratch_copies_.empty()) FlushScratchCopies();
+    return true;
+  }
+  bool OpenList() {
     if (!ready_ || lost_) return false;
     if (list_open_) return true;
     // An allocator whose submission has completed, or a new one.
@@ -3248,7 +3386,6 @@ class D3D12Backend final : public Backend {
     OcclusionQuery& q = occ_queries_[occ_open_];
     const uint32_t s = q.slot[q.parts - 1];
     list_->EndQuery(occ_heap_, D3D12_QUERY_TYPE_OCCLUSION, s);
-    list_->ResolveQueryData(occ_heap_, D3D12_QUERY_TYPE_OCCLUSION, s, 1, occ_readback_, UINT64(s) * 8);
     occ_slots_in_list_.push_back(s);
   }
   void ContinueOcclusionQuery() {
@@ -3732,7 +3869,9 @@ class D3D12Backend final : public Backend {
   }
 
   void Transition(Texture& t, D3D12_RESOURCE_STATES state) {
+    if (t.scratch_pending) FlushScratchCopies();  // batched texture loads: its queued copy goes first
     if (t.state == state) return;
+    t.uav_unbarriered = 0;  // a transition out of UAV state waits for those writes
     // Patch 0089 (Canary d3d12_render_target_cache.cc): MSAA depth drawn with programmable sample positions is
     // decompressed in place before anything but depth writing reads it.
     if (positions_ever_ && t.dsv >= 0 && t.desc.samples > 1 && t.state == D3D12_RESOURCE_STATE_DEPTH_WRITE &&
@@ -4076,6 +4215,8 @@ class D3D12Backend final : public Backend {
   ID3D12CommandQueue* queue_ = nullptr;
   ID3D12Fence* fence_ = nullptr;
   HANDLE fence_event_ = nullptr;
+  HANDLE occ_event_ = nullptr;
+  uint64_t occ_event_fence_ = 0;
   uint64_t next_fence_ = 1, last_submitted_ = 0;
   ID3D12GraphicsCommandList* real_list_ = nullptr;
   CommandListProxy proxy_;
@@ -4186,6 +4327,17 @@ class D3D12Backend final : public Backend {
   D3D12_RESOURCE_STATES scratch_state_ = D3D12_RESOURCE_STATE_COMMON;
   D3D12_PLACED_SUBRESOURCE_FOOTPRINT scratch_fp_{};
   UINT scratch_sub_ = UINT_MAX;
+  // Batched texture loads: the next free byte of the scratch buffer and the copies queued out of it.
+  struct ScratchCopy {
+    TextureHandle texture = 0;
+    uint64_t serial = 0;
+    UINT subresource = 0;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+  };
+  UINT64 scratch_head_ = 0;
+  std::vector<ScratchCopy> scratch_copies_;
+  GraphicsPipelineDesc last_pipeline_desc_;  // GetGraphicsPipeline's one-entry memo (renderer thread only)
+  PipelineHandle last_pipeline_ = 0;
   int32_t null_views_[3] = {-1, -1, -1};
   uint64_t lost_checked_ms_ = 0;  // IsLost: last GetDeviceRemovedReason
   uint64_t completed_ = 0;        // Retire: last fence value read  // view_heap_ slots of null 2D / cube / 3D views (TextureView::zero)
