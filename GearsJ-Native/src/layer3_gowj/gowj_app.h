@@ -96,6 +96,11 @@ class GowjApp : public rex::ReXApp {
     game_default("gow2_upscale_scene_formats", "3");
     game_default("gow2_renderer_memexport", "true");
     game_default("gow2_renderer_resolution_scale_threshold", "1120");
+    // As in Gears 3, complete each query with its actual GPU result so walls
+    // occlude light flares and hidden geometry. Preserve explicit overrides.
+    if (XenosOurGpuSystem() && rex::cvar::GetFlagByName("gow2_renderer_api") == "d3d12" &&
+        rex::cvar::GetFlagByName("gow2_pm4_split") == "true")
+      game_default("gow2_renderer_queries", "strict");
     //  - first-visit freezes: the DXBC shader path (shaders ready at once; HLSL spent 221 s of compiler time on University's
     //    first visit, job 017). Holding / waiting for pipelines is layer 0's call: since Gears 2 patch 0132 (Shagg 21:46-22:07,
     //    "brief pop-in", stutter rules lifted) layer 0 defaults to never waiting on the driver - a draw whose pipeline is
