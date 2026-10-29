@@ -43,7 +43,7 @@ October 28–29, 2026. This summarizes the changes made in this chat, rather tha
 
 - Replaced fake-visible answers with each query's actual GPU visibility result. Walls can now hide light flares and objects behind them.
 - Guarded query results against reused report addresses and kept unfinished draws from incorrectly hiding objects.
-- Batched query submissions and returned results earlier, avoiding the initial performance penalty from waiting for the rest of a frame's GPU work.
+- Batched query submissions and returned results earlier. A later performance investigation found additional overhead in the Museum: results are now copied in contiguous batches, small completed query batches also submit early, and Windows GPU completion events replace routine 1 ms idle polling.
 - Gears 3: installed and checked in Gridlock Horde.
 - Judgment: installed and checked in Baird's Testimony/Museum opening, the Academy street and an Aftermath interior. The opening movie was skipped only in isolated test settings.
 
@@ -52,7 +52,8 @@ October 28–29, 2026. This summarizes the changes made in this chat, rather tha
 - Added clearer timing for presentation, submission, frame throttling, texture work, readbacks and occlusion results. Some previously unexplained game-CPU time is now attributed to the renderer work that caused it.
 - Aligned captured frame labels with game swaps and scripted input.
 - Reviewed recent logs for all three games and separated shader holds, streaming/texture bursts, renderer work, GPU waits and game-CPU pauses.
-- Built all five game configurations across this work. The latest shared suite passed **138 tests / 818,000 assertions**; launcher setting checks also passed.
+- Added per-step frame timings, command-recorder wait time and OS render-thread CPU time. The existing CPU split is elapsed time and includes waits; it is not a direct measurement of CPU execution.
+- Built all five game configurations across this work. After the frame-pacing revision, the shared suite passed **139 tests / 818,002 assertions**; earlier launcher setting checks also passed.
 
 ## Measured results on this PC
 

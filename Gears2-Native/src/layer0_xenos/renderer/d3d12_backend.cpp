@@ -11,6 +11,7 @@
 // Our code (MIT).
 #include <xenos/renderer/gpu.h>
 #include <xenos/renderer/mapped_file.h>
+#include <xenos/renderer/queries.h>
 #include <xenos/renderer/warm_source_cache.h>
 #include <xenos/renderer/warm_stage_store.h>
 
@@ -588,7 +589,10 @@ class CommandListProxy {
     if (!threaded_) return;
     Flush();
     std::unique_lock<std::mutex> lock(mutex_);
+    if (ready_.empty() && !busy_) return;
+    const auto start = std::chrono::steady_clock::now();
     idle_cv_.wait(lock, [this] { return ready_.empty() && !busy_; });
+    recording_wait_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
   }
 
   // ---- lifecycle ----
@@ -705,6 +709,7 @@ class CommandListProxy {
     Pod(x); Pod(y); Pod(z);
   }
   uint64_t barrier_calls = 0, barriers = 0;  // job 045: barrier counts (each call can stall the GPU pipeline)
+  double recording_wait_ms = 0.0;  // caller thread only
   uint64_t barrier_batches = 0, barriers_merged = 0;  // job 046: emitted batches, transitions merged away
   // Job 046: barriers are queued and emitted as ONE ResourceBarrier call right before the next command of any kind,
   // so consecutive barriers (render targets, textures, the guest buffer) cost one GPU sync instead of one each. A
@@ -2554,6 +2559,25 @@ class D3D12Backend final : public Backend {
     occ_free_handles_.push_back(h);
   }
 
+  void* OcclusionCompletionEvent(OcclusionHandle h) override {
+    if (!h || h >= occ_queries_.size() || lost_) return nullptr;
+    const OcclusionQuery& q = occ_queries_[h];
+    if (!q.in_use || !q.ended || q.broken || !q.parts) return nullptr;
+    uint64_t value = 0;
+    for (uint32_t i = 0; i < q.parts; ++i) {
+      const uint64_t f = occ_slot_fence_[q.slot[i]];
+      if (!f) return nullptr;
+      value = std::max(value, f);
+    }
+    if (!occ_event_) occ_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!occ_event_) return nullptr;
+    if (value != occ_event_fence_) {
+      if (FAILED(fence_->SetEventOnCompletion(value, occ_event_))) return nullptr;
+      occ_event_fence_ = value;
+    }
+    return occ_event_;
+  }
+
   // ---- readback ----
   ReadbackHandle ReadbackTexture(TextureHandle h, const Rect& region) override {
     if (!Recording() || !ValidTexture(h) || region.empty()) return 0;
@@ -2773,6 +2797,9 @@ class D3D12Backend final : public Backend {
       CloseOcclusionPart();
       occ_open_in_list_ = false;
     }
+    queries::ResolveEndedRuns(occ_slots_in_list_, [this](uint32_t first, uint32_t count) {
+      list_->ResolveQueryData(occ_heap_, D3D12_QUERY_TYPE_OCCLUSION, first, count, occ_readback_, UINT64(first) * 8);
+    });
     if (ts_open_ && ts_cur_.count) {
       TsEmit(0xFE);  // end mark
       const uint32_t first = ts_cur_.first, n = ts_cur_.count;
@@ -2803,6 +2830,7 @@ class D3D12Backend final : public Backend {
     // work being in the queue when Submit returns), then pick up any failure it saw. Patch 0138: an early (mid-frame)
     // submit does not wait - the recording thread submits lists in order, and the frame's last Submit drains.
     if (drain) list_->Drain(); else list_->Kick();
+    stats_.recording_wait_ms = proxy_.recording_wait_ms;
     if (FAILED(list_->Error()) && !lost_) {
       lost_ = true;
       lost_reason_ = Hr(list_->ErrorWhat() ? list_->ErrorWhat() : "command recording", list_->Error());
@@ -3006,6 +3034,7 @@ class D3D12Backend final : public Backend {
     SafeRelease(occ_heap_);  // upl-s4c
     SafeRelease(occ_readback_);
     occ_mapped_ = nullptr;
+    if (occ_event_) { CloseHandle(occ_event_); occ_event_ = nullptr; }
     for (auto& a : allocators_) SafeRelease(a.allocator);
     allocators_.clear();
     SafeRelease(current_allocator_);
@@ -3258,7 +3287,6 @@ class D3D12Backend final : public Backend {
     OcclusionQuery& q = occ_queries_[occ_open_];
     const uint32_t s = q.slot[q.parts - 1];
     list_->EndQuery(occ_heap_, D3D12_QUERY_TYPE_OCCLUSION, s);
-    list_->ResolveQueryData(occ_heap_, D3D12_QUERY_TYPE_OCCLUSION, s, 1, occ_readback_, UINT64(s) * 8);
     occ_slots_in_list_.push_back(s);
   }
   void ContinueOcclusionQuery() {
@@ -4086,6 +4114,8 @@ class D3D12Backend final : public Backend {
   ID3D12CommandQueue* queue_ = nullptr;
   ID3D12Fence* fence_ = nullptr;
   HANDLE fence_event_ = nullptr;
+  HANDLE occ_event_ = nullptr;
+  uint64_t occ_event_fence_ = 0;
   uint64_t next_fence_ = 1, last_submitted_ = 0;
   ID3D12GraphicsCommandList* real_list_ = nullptr;
   CommandListProxy proxy_;

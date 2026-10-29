@@ -160,6 +160,7 @@ class XenosUcodeSink {
 // Render-thread idle work: submit/poll outstanding real query results even when
 // the guest is waiting for a query and cannot submit the next frame.
 bool XenosPollRendererIdle();
+void* XenosRendererIdleEvent();
 bool XenosRendererStrictQueries();
 // A draw/copy our processor ran: every hub observer gets OnDrawUcode (sinks) or OnDrawShaders(nullptr, nullptr),
 // then OnDraw - the same order the SDK used.

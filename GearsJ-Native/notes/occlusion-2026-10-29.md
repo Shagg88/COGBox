@@ -28,3 +28,7 @@ Judgment Release built successfully and `git diff --check` passed. The shared qu
 The updated normal executable was used for the final smoke test. Test processes have finished. Existing user saves and normal movie settings were not changed; the previous executable and isolated logs/captures are retained under `work/judgment-occlusion/`.
 
 Broader camera positions and campaign encounters remain untested, and the Aftermath check still contained hitches. This is an occlusion update, not a claim that all Judgment stuttering or pop-in is eliminated.
+
+## Subsequent frame-pacing investigation
+
+Uncapped Museum tests later exposed overhead hidden by these capped checks: approximately 78 FPS with that real-query implementation versus 94 FPS with queries disabled. The revised shared path batches result copies, submits small completed query batches before later draws and wakes on actual GPU completion. The first revised Museum comparison measured approximately 93 FPS while retaining real visibility counts. See the frame-pacing regression report for matched settings, repeat measurements and remaining limitations.

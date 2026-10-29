@@ -357,6 +357,7 @@ struct BackendStats {
   uint64_t vk_pass_end[10] = {};  // patch 0089 (Vulkan): why render passes ended (vulkan_backend.cpp EndPass)
   uint64_t fence_waits = 0;      // WaitForFence calls that really blocked
   double fence_wait_ms = 0.0;    // CPU time blocked in them (our GPU behind, ring full, readbacks)
+  double recording_wait_ms = 0.0;  // elapsed time waiting for the command-recording worker, not CPU execution
   uint64_t texture_tables_reused = 0, state_calls_skipped = 0;
   uint64_t descriptors_allocated = 0, descriptor_ring_waits = 0;
   // Blocking waits by site (upl-n108): 0 renderer (frame pacing, comparisons), 1 readback release, 2 sampler table,
@@ -574,6 +575,9 @@ class Backend {
   virtual void EndOcclusionQuery(OcclusionHandle query) = 0;
   // True once every part has completed on our GPU; *samples = the sum. Never waits.
   virtual bool GetOcclusionResult(OcclusionHandle query, uint64_t* samples) = 0;
+  // Optional native completion event for an ended, submitted query. The backend
+  // owns it; the renderer may wait alongside its work event without polling.
+  virtual void* OcclusionCompletionEvent(OcclusionHandle query) { return nullptr; }
   // The slots come back once our GPU is past them (no wait).
   virtual void ReleaseOcclusionQuery(OcclusionHandle query) = 0;
 

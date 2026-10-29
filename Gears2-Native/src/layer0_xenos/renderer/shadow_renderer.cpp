@@ -35,6 +35,7 @@
 #include <xenos/renderer/colour_hlsl.h>
 
 #ifdef _WIN32
+#include <windows.h>
 void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend.cpp (0.2.0, #9)
 #endif
 #include "builtin_shaders.h"
@@ -1766,7 +1767,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       // Query data is useful before the post-processing/present work after it.
       // Give a completed query batch its own fence instead of making UE3 wait
       // for every remaining GPU command in the frame. Bound extra submissions.
-      if (occ_need_submit_ && !occ_open_.open && occ_closed_in_batch_ >= 16 && occ_batches_this_frame_ < 4) {
+      if (occ_need_submit_ && !occ_open_.open && occ_closed_in_batch_ && occ_batches_this_frame_ < 4) {
         backend_->SubmitEarly();
         occ_need_submit_ = false;
         occ_closed_in_batch_ = 0;
@@ -1970,6 +1971,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
 
   bool StrictQueries() const { return queries_mode_ == QueriesMode::kStrict; }
+  void* IdleGpuEvent() {
+    return StrictQueries() && !occ_pending_.empty()
+        ? backend_->OcclusionCompletionEvent(occ_pending_.front().handle) : nullptr;
+  }
   bool PollGpuIdle() {
     if (!StrictQueries() || occ_pending_.empty()) return false;
     const uint64_t t0 = __rdtsc();
@@ -1986,12 +1991,29 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   template<class F> void FrameStep(const char* site, F&& work) {
     const uint64_t start = __rdtsc();
     work();
-    const double ms = double(__rdtsc() - start) * MsPerTick();
+    const uint64_t ticks = __rdtsc() - start;
+    const double ms = double(ticks) * MsPerTick();
+    if (XenosFrameLogOn()) {
+      for (auto& step : frame_steps_) {
+        if (!step.site) step.site = site;
+        if (step.site == site) { step.ticks += ticks; break; }
+      }
+    }
     if (ms >= 20.0 && XenosFrameLogOn())
       REXLOG_INFO("gow2_renderer: frame {} slow step {}: {:.1f} ms", frame_, site, ms);
   }
+  static uint64_t ThreadCpuTicks() {
+#ifdef _WIN32
+    FILETIME created, exited, kernel, user;
+    if (GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user))
+      return (uint64_t(kernel.dwHighDateTime) << 32 | kernel.dwLowDateTime) +
+             (uint64_t(user.dwHighDateTime) << 32 | user.dwLowDateTime);
+#endif
+    return 0;
+  }
   void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t fb_width, uint32_t fb_height) override {
     if (!backend_) return;
+    if (!thread_cpu_base_) thread_cpu_base_ = ThreadCpuTicks();
 #if defined(GN_PGO_GEN)
     {  // patch 0159: the training run is ended from outside (no normal exit), so the counters are written here
       static uint32_t pgo_swaps = 0;
@@ -8585,6 +8607,22 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   alt_mode_ == 2 ? "always" : "off", bs.descriptors_allocated,
                   bs.descriptor_ring_waits, bs.pipelines, bs.ring_waits);
       gpu_wait_base_ms_ = bs.fence_wait_ms;
+      if (XenosFrameLogOn()) {
+        std::string steps;
+        for (auto& step : frame_steps_) {
+          if (step.site) steps += std::format("{}{} {:.3f}", steps.empty() ? "" : ", ", step.site,
+                                              double(step.ticks) * MsPerTick() / log_every_);
+          step.ticks = 0;
+        }
+        const uint64_t cpu = ThreadCpuTicks();
+        REXLOG_INFO("gow2_renderer: frames {}-{}: frame steps (elapsed ms/frame, includes waits): {} | render thread "
+                    "CPU {:.3f} ms/frame (OS thread time, includes idle polling; excludes recording/copy workers) | "
+                    "waiting for command recorder {:.3f} ms/frame (included in elapsed CPU split)",
+                    frame_ - uint64_t(log_every_) + 1, frame_, steps,
+                    cpu >= thread_cpu_base_ ? double(cpu - thread_cpu_base_) / 10000.0 / log_every_ : 0.0,
+                    (bs.recording_wait_ms - detail_base_.recording_wait_ms) / log_every_);
+        thread_cpu_base_ = cpu;
+      }
       gpu_ms_base_ = bs.gpu_ms;
       std::copy(std::begin(bs.gpu_cat_ms), std::end(bs.gpu_cat_ms), gpu_cat_base_);
       if (gpu_by_target_) {  // job 234: the targets whose draws took the most GPU time this window
@@ -9146,6 +9184,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   double cpu_ms_ = 0, cpu_sum_ = 0, cpu_max_ = 0;
   double part_ms_[kPartCount] = {};  // since the last summary (filled from part_ticks_ when it is logged)
   uint64_t part_ticks_[kPartCount] = {};
+  struct FrameStepCounter { const char* site = nullptr; uint64_t ticks = 0; };
+  std::array<FrameStepCounter, 24> frame_steps_{};
+  uint64_t thread_cpu_base_ = 0;
   Part part_cur_ = kPartOther;
   uint64_t part_mark_ = 0;
   bool parts_on_ = false;
@@ -9364,6 +9405,7 @@ void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t si
 bool XenosRendererPresents() { return g_renderer_presents; }
 bool XenosRendererStrictQueries() { return g_release_target && g_release_target->StrictQueries(); }
 bool XenosPollRendererIdle() { return g_release_target && g_release_target->PollGpuIdle(); }
+void* XenosRendererIdleEvent() { return g_release_target ? g_release_target->IdleGpuEvent() : nullptr; }
 void XenosRendererRelease() {
   if (g_release_target) g_release_target->ReleaseToGuest();
 }

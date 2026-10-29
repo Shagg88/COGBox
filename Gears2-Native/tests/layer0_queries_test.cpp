@@ -200,3 +200,14 @@ TEST_CASE("queries: old strict results cannot overwrite a reissued report", "[qu
   REQUIRE(!pending.Complete(0x200, reused, bytes, 0));  // Guest cleared/reused the buffer.
   REQUIRE(!pending.Complete(0x200, reused, nullptr, 0));
 }
+
+TEST_CASE("queries: deferred resolves cover ended slots without including gaps or wrapping", "[queries]") {
+  std::vector<std::pair<uint32_t, uint32_t>> runs;
+  auto resolve = [&](uint32_t first, uint32_t count) { runs.emplace_back(first, count); };
+  q::ResolveEndedRuns({}, resolve);
+  REQUIRE(runs.empty());
+  const uint32_t slots[] = {65534, 65535, 0, 1, 4, 6, 7, 8};
+  q::ResolveEndedRuns(slots, resolve);
+  const std::vector<std::pair<uint32_t, uint32_t>> expected = {{65534, 2}, {0, 2}, {4, 1}, {6, 3}};
+  REQUIRE(runs == expected);
+}

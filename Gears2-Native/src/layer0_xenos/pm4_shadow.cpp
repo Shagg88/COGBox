@@ -394,7 +394,12 @@ class RenderPipe {
       queued_.store(uint32_t(queue_.size()), std::memory_order_release);
       wake = consumer_sleeping_;
     }
-    if (wake) cv_.notify_one();
+    if (wake) {
+#ifdef _WIN32
+      if (work_event_) SetEvent(work_event_);
+#endif
+      cv_.notify_one();
+    }
     current_ = NewBlock();
   }
 
@@ -417,8 +422,24 @@ class RenderPipe {
           lock.lock();
           ++stats_.consumer_sleeps;
           consumer_sleeping_ = true;
-          if (pending_gpu_results) cv_.wait_for(lock, std::chrono::milliseconds(1), [&] { return !queue_.empty(); });
-          else cv_.wait(lock, [&] { return !queue_.empty(); });
+          bool waited_on_event = false;
+#ifdef _WIN32
+          if (pending_gpu_results && work_event_ && queue_.empty()) {
+            if (HANDLE gpu_event = static_cast<HANDLE>(XenosRendererIdleEvent())) {
+              const HANDLE events[] = {work_event_, gpu_event};
+              lock.unlock();
+              // Wake for queued commands or the actual GPU completion. The
+              // timeout retains query/device-failure recovery without spinning.
+              WaitForMultipleObjects(2, events, FALSE, 100);
+              lock.lock();
+              waited_on_event = true;
+            }
+          }
+#endif
+          if (!waited_on_event) {
+            if (pending_gpu_results) cv_.wait_for(lock, std::chrono::milliseconds(1), [&] { return !queue_.empty(); });
+            else cv_.wait(lock, [&] { return !queue_.empty(); });
+          }
           consumer_sleeping_ = false;
           if (queue_.empty()) continue;
         }
@@ -558,6 +579,9 @@ class RenderPipe {
   const Block* running_block_ = nullptr;  // patch 0051: renderer thread only
   size_t running_item_ = 0;
   Stats stats_;  // producer-side counters (consumer_sleeps / writes: consumer; read for the log only)
+#ifdef _WIN32
+  HANDLE work_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);  // pipe lives until process exit
+#endif
   std::thread thread_;  // never joined: the pipe lives until the process exits
 };
 RenderPipe* g_pipe = nullptr;  // set once, on the GPU thread, before the first item
