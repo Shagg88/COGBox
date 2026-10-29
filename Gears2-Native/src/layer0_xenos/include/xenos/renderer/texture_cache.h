@@ -76,6 +76,11 @@ class TextureCache {
   // Patch 0021 (Canary texture_cache): BC1-5 textures (2D, arrays, cubes) also load on the GPU from the mirror through
   // this pipeline (builtin kUntileBlocksCs) and the backend's scratch buffer. 0 = CPU path, as before.
   void SetGpuUntileBlocks(gpu::PipelineHandle untile_blocks) { untile_blocks_ = untile_blocks; }
+  // Batched texture loads (--gow2_renderer_texture_batch): a GPU-path load's untile dispatches (and BC scratch copies)
+  // are recorded at the end of the draw's Bind, after every upload that Bind made, instead of between them - so the
+  // guest-memory mirror changes state once per draw instead of twice per texture, and the backend can batch the scratch
+  // copies (notes/texture-batching-2026-10-29.md).
+  void SetBatchLoads(bool on) { batch_loads_ = on; }
   // Patch 0026: true 3D textures (32/64/128bpp raw-copy formats) untiled on the GPU into a 3D host texture.
   void SetGpuUntileVolume(gpu::PipelineHandle untile_volume) { untile_volume_ = untile_volume; }
   void ResetCounters();
@@ -260,6 +265,9 @@ class TextureCache {
   gpu::PipelineHandle untile_ = 0;
   gpu::PipelineHandle untile3d_ = 0;
   gpu::PipelineHandle untile_blocks_ = 0;  // patch 0021
+  bool batch_loads_ = false;
+  std::vector<std::function<void()>> gpu_jobs_;  // batched loads: this Bind's untile work, run at its end
+  void RunGpuJobs();
   gpu::PipelineHandle untile_volume_ = 0;  // patch 0026
   uint64_t cap_bytes_ = 0;
   bool always_reload_ = false;

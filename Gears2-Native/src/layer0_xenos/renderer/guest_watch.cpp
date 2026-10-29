@@ -156,10 +156,19 @@ void GuestWatch::Bump(uint32_t address, uint32_t length) {
   if (!length) return;
   const uint32_t first = address >> kPageShift;
   const uint32_t last = uint32_t(std::min<uint64_t>((uint64_t(address) + length - 1) >> kPageShift, kPages - 1));
-  for (uint32_t p = first; p <= last; ++p) {
-    versions_[p].fetch_add(1, std::memory_order_relaxed);
-    blocks_[p >> kBlockShift].fetch_add(1, std::memory_order_relaxed);
-    supers_[p >> kSuperShift].fetch_add(1, std::memory_order_relaxed);
+  for (uint32_t p = first; p <= last; ++p) versions_[p].fetch_add(1, std::memory_order_relaxed);
+  // A 256 KB block's (4 MB super-block's) counter is the sum of its page versions, so it goes up by the number of its
+  // pages bumped here: one add per block instead of one per page (a 4 MB widening: 1024 + 16 + 1 adds, was 3072).
+  // Readers see the same final sums; mid-update they could already see a page ahead of its block before, too.
+  for (uint32_t p = first; p <= last;) {
+    const uint32_t end = std::min(last + 1, ((p >> kBlockShift) + 1) << kBlockShift);
+    blocks_[p >> kBlockShift].fetch_add(end - p, std::memory_order_relaxed);
+    p = end;
+  }
+  for (uint32_t p = first; p <= last;) {
+    const uint32_t end = std::min(last + 1, ((p >> kSuperShift) + 1) << kSuperShift);
+    supers_[p >> kSuperShift].fetch_add(end - p, std::memory_order_relaxed);
+    p = end;
   }
   epoch_.fetch_add(1, std::memory_order_release);
 }

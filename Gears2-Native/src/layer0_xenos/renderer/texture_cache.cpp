@@ -325,7 +325,15 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
     sc.stand_ins = stand_ins - stand_ins_before;
     sc.bound = uint32_t(stats_.bound - bound_before);
   }
+  RunGpuJobs();  // batched loads: every slot's uploads are recorded; now their untile work
   return stand_ins;
+}
+
+void TextureCache::RunGpuJobs() {
+  if (gpu_jobs_.empty()) return;
+  PhaseScope load(g_phase.load), gpu(g_phase.gpu);  // job 299: still counted as GPU-path load time
+  for (const std::function<void()>& job : gpu_jobs_) job();
+  gpu_jobs_.clear();
 }
 
 TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind, uint64_t frame) {
@@ -1004,6 +1012,11 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       }
       flush(last + 1);
     }
+    // The untile work for this texture: now, or (batched loads) at the end of this Bind, after its other uploads.
+    const gpu::TextureHandle tex = e.texture;
+    const tx::FormatBlock block = fb;
+    auto untile = [=, this]() {
+    const tx::FormatBlock& fb = block;
     for (uint32_t level = 0; level < host_mips; ++level) {
       const bool in_tail = layout.packed_level != UINT32_MAX && level >= layout.packed_level;
       const uint32_t storage_level = in_tail ? layout.packed_level : level;
@@ -1017,7 +1030,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         const uint32_t bw = (lw + fb.block_width - 1) / fb.block_width, bh = (lh + fb.block_height - 1) / fb.block_height;
         for (uint32_t u = 0; u < layers; ++u) {
           uint32_t row_pitch = 0, rows = 0;
-          if (!backend_.PrepareScratchFor(e.texture, level, u, row_pitch, rows) || row_pitch < (bw << bpb_log2)) {
+          if (!backend_.PrepareScratchFor(tex, level, u, row_pitch, rows) || row_pitch < (bw << bpb_log2)) {
             ++stats_.gpu_block_failures;
             continue;
           }
@@ -1037,7 +1050,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
           bb.scratch_u0 = true;
           backend_.SetGpuCategory(3);
           backend_.Dispatch(untile_blocks_, bb, (bw + 7) / 8, (std::min(bh, rows) + 7) / 8, 1);
-          backend_.CopyScratchToTexture(e.texture, level, u);
+          backend_.CopyScratchToTexture(tex, level, u);
           ++stats_.gpu_block_subresources;
         }
         continue;
@@ -1055,8 +1068,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       b.constants[9] = gpu_code;
       b.constant_count = 12;
       b.guest_t3 = true;
-      b.uav_texture = e.texture;
+      b.uav_texture = tex;
       b.uav_mip = level;
+      b.defer_uav_barrier = batch_loads_;  // the texture's next use (sampling: a transition) waits for the write
       backend_.SetGpuCategory(3);  // job 177: texture loads (the next draw part sets draws again)
       if (volume) {  // patch 0026: one dispatch per level, z from the packed-tail offset
         const uint32_t ld = std::max(d >> level, 1u);
@@ -1083,6 +1097,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       }
       backend_.Dispatch(untile_, b, (lw + 7) / 8, (lh + 7) / 8, 1);
     }
+    };
+    if (batch_loads_) gpu_jobs_.push_back(std::move(untile));
+    else untile();
     if (gpu_blocks) ++stats_.gpu_block_loads;
     ++stats_.gpu_loads;
     ++stats_.uploads;

@@ -216,6 +216,11 @@ REXCVAR_DEFINE_INT32(gow2_renderer_shader_precreate_ms, 6, "Gears2",
                     "waits for the next frame");
 REXCVAR_DEFINE_INT32(gow2_renderer_play_hold_max_ms, 1000, "Gears2",
                     "Patch 0064: the longest one mid-play hold may wait (ms); then the frame is shown as it is");
+REXCVAR_DEFINE_BOOL(gow2_renderer_texture_batch, true, "Gears2",
+                    "Batched texture loads (D3D12; 2026-10-29, the Gears 2 level-start freeze: ~4,900 BC mip loads in one "
+                    "frame, each a compute pass, a copy and a GPU wait on one scratch buffer): a draw's texture uploads "
+                    "go first, then their untile passes, and the BC copies are recorded together - the GPU waits once "
+                    "per draw instead of twice per mip level. false = the old one-at-a-time loads");
 REXCVAR_DEFINE_BOOL(gow2_renderer_placed_textures, true, "Gears2",
                     "Patch 0017 (stutter): guest textures (sampled only, up to 16 MB) are placed in shared 64 MB heaps "
                     "instead of one committed allocation each - job 299: creating 376 textures took 157 of the 208 ms "
@@ -1107,6 +1112,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     options.warm_thread_priority = std::clamp(REXCVAR_GET(gow2_renderer_shader_prebuild_priority), -2, 0);  // v2
     options.debug_layer = REXCVAR_GET(gow2_renderer_debug);
     options.placed_textures = REXCVAR_GET(gow2_renderer_placed_textures);  // patch 0017
+    options.batch_texture_loads = REXCVAR_GET(gow2_renderer_texture_batch) && !vulkan;  // 2026-10-29
     options.index_buffers_in_vram = REXCVAR_GET(gow2_renderer_index_buffers_vram);  // patch 0150
     {  // patch 0087
       const std::string m = REXCVAR_GET(gow2_renderer_vulkan_compressible_targets);
@@ -1351,6 +1357,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     textures_->SetMismatchZero(REXCVAR_GET(gow2_renderer_texture_mismatch_zero));
     textures_->SetScaledMissLog(REXCVAR_GET(gow2_renderer_scaled_miss_log));
     textures_->SetPackedTailAtBase(REXCVAR_GET(gow2_renderer_packed_tail_at_base));  // patch 0087
+    textures_->SetBatchLoads(REXCVAR_GET(gow2_renderer_texture_batch) && !api_vulkan_);  // 2026-10-29 (D3D12)
     textures_->SetLoadLogFrame(uint64_t(std::max(REXCVAR_GET(gow2_renderer_texture_load_log), 0)));
     if (const std::string list = REXCVAR_GET(gow2_renderer_texture_probe); !list.empty()) {  // job 284
       std::vector<uint32_t> bases;
@@ -2128,9 +2135,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (textures_ && REXCVAR_GET(gow2_renderer_gpu_block_textures)) {  // patch 0021
         const rr::TextureCacheStats& ts = textures_->Stats();
         REXLOG_INFO("gow2_renderer: patch 0021 frames {}-{}: BC textures loaded on the GPU {} ({} subresources, {} "
-                    "failed) | 3D textures on the GPU {} (0026) | CPU-path loads {} | scratch copies so far {}",
+                    "failed) | 3D textures on the GPU {} (0026) | CPU-path loads {} | scratch copies so far {} (batched loads: in "
+                    "{} batches, untile barriers left out {})",
                     frame_ + 1 - uint64_t(log_every_), frame_, ts.gpu_block_loads, ts.gpu_block_subresources,
-                    ts.gpu_block_failures, ts.gpu_volume_loads, ts.cpu_loads, backend_->Stats().scratch_texture_copies);
+                    ts.gpu_block_failures, ts.gpu_volume_loads, ts.cpu_loads, backend_->Stats().scratch_texture_copies,
+                    backend_->Stats().scratch_batches, backend_->Stats().uav_barriers_deferred);
       }
       if (submit_draws_) {  // patch 0138
         const uint64_t es = backend_->Stats().early_submits;
@@ -8584,7 +8593,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "({:.2f} Mpx/frame) + passes {:.1f}/frame, fill-bounded ownership draws {:.1f}/frame (multi-rect {:.1f}), float-constant uploads skipped by generation {:.0f}/frame, compacted {:.0f}/frame ({:.2f} KB/frame not uploaded) | of which blocked "
                   "on our GPU {:.3f} ({} waits) | texture tables reused {} | state calls skipped {} | constant uploads "
                   "skipped {} | ownership fast path {} | transfer runs {} | alternate rule {} | descriptors {} (ring waits {}) | "
-                  "pipelines {} | upload-ring waits {}",
+                  "pipelines {} (same as the previous draw {}) | upload-ring waits {}",
                   frame_ - uint64_t(log_every_) + 1, frame_, split, total / log_every_,
                   (bs.gpu_ms - gpu_ms_base_) / log_every_, bs.gpu_lists_timed - gpu_lists_base_,
                   (bs.gpu_cat_ms[0] - gpu_cat_base_[0]) / log_every_,
@@ -8605,7 +8614,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   (bs.fence_wait_ms - gpu_wait_base_ms_) / log_every_, bs.fence_waits, bs.texture_tables_reused,
                   bs.state_calls_skipped, bs.constant_uploads_skipped, rts_->FastHits(), stats_.transfer_passes,
                   alt_mode_ == 2 ? "always" : "off", bs.descriptors_allocated,
-                  bs.descriptor_ring_waits, bs.pipelines, bs.ring_waits);
+                  bs.descriptor_ring_waits, bs.pipelines, bs.pipeline_memo_hits, bs.ring_waits);
       gpu_wait_base_ms_ = bs.fence_wait_ms;
       if (XenosFrameLogOn()) {
         std::string steps;
