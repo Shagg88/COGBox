@@ -269,6 +269,10 @@ struct BackendOptions {
   // Patch 0162: the workers' Windows thread priority (-2 lowest, -1 below normal, 0 normal).
   int pipeline_thread_priority = 0;  // job 518: normal by default, as Canary / Edge
   uint32_t warm_workers = 3;  // patch 0069: workers allowed on warm-only pipelines at once (WarmPixelShader)
+  // PR #43 (legoliamneeson): a worker's Windows priority while it builds a warm-only pipeline (-2 lowest, -1 below
+  // normal, 0 normal), back to pipeline_thread_priority after - speculative builds take only CPU time the game, the
+  // renderer, the audio and the draws' own pipelines leave free.
+  int warm_thread_priority = -2;
   // Patch 0056: seconds between periodic library saves while it grows (was 60; a quit lost minutes of pipelines).
   int pipeline_save_seconds = 15;
   // Patch 0017 (stutter): sampled-only textures (no render-target / depth use, no MSAA) up to 16 MB are placed in

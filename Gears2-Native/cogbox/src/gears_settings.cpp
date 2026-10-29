@@ -196,6 +196,13 @@ std::vector<Option> make_options(Game g) {
                "The camera shake while roadie-running. Less halves the game's own shake; Off removes it.", 373), "", "", true);
     add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 5, 100,
                "100 = the original. Widens (or narrows) every camera view by this much.", 374), "", "", true);
+    // PR #43 (legoliamneeson): strict occlusion queries (--gow2_renderer_queries=strict), off by default in every game.
+    // Per game, Gears 3 and Judgment only (where it was tried: walls hiding light flares); not in the preset.
+    add(make("RealOcclusion", "Real occlusion (experimental)", Tab::Graphics, Kind::Bool, PG, 0,
+             "Experimental. The game asks the graphics card whether things like light flares are hidden behind walls; "
+             "on means it waits for the card's real answer instead of always being told \"visible\", so flares and "
+             "hidden objects behind walls disappear as on the console. It can cost some frame rate. DirectX 12 only. "
+             "Off = everything counts as visible, as before.", 0), "realocclusion");
 
     // ---- Controls ------------------------------------------------------------------------------------------------
     add(make("Mnk", "Keyboard and mouse (Gears layout)", Tab::Controls, Kind::Bool, SH, 0,
@@ -338,6 +345,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll")) return no(not_yet(gi, "this build has no AMD frame generation files"));
     } else if (f == "mute") {
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "realocclusion") {   // PR #43: tried in Gears 3 and Judgment only
+        if (g == Game::Gears2) return no(not_yet(0, "tried in Gears 3 and Judgment so far"));
     } else if (f == "vsync") {   // launcher patch 0155
         if (!cap_rt(env, "d3d12_present_vsync")) return no(not_yet(gi, "needs its next build (SDK patch 37)"));
     }
@@ -378,6 +387,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "PaperWhite" || o.id == "Peak") on = s.b("HDR");                 // PS1 366
     else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("Api") == 0;        // PS1 352, 473; job 521
     else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
+    else if (o.id == "RealOcclusion" && (s.i("Api") != 0 || env.wine)) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // PR #43
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
     a.ok = on;
     return a;
@@ -672,6 +682,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PS1 857 (0146 / 0147): frame generation
     const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0 && !env.wine;   // job 521: DirectX 12 only
     if (fgOn) a.push_back("--gow2_frame_generation=fsr");
+    // PR #43: real (strict) occlusion queries - sent only when on (the exe's default is off; an exe without "strict"
+    // warns and keeps them off)
+    if (on("RealOcclusion")) a.push_back("--gow2_renderer_queries=strict");
     // PS1 858: 16x anisotropic
     if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : "--gowj_aniso16=true");
     // PS1 860-864: texture pool (-1 = the port's own default; Judgment then 200)

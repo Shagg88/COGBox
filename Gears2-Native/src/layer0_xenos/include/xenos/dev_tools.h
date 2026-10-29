@@ -168,6 +168,12 @@ void XenosDispatchFrameImage(const uint8_t* rgb10a2, uint32_t width, uint32_t he
 // Stage 5C-2: true once our renderer presents its own image (--gow2_present=ours on the presenter's device); our PM4
 // processor then runs XE_SWAP itself.
 bool XenosRendererPresents();
+// PR #43 (legoliamneeson), strict occlusion queries (--gow2_renderer_queries=strict, off by default): true once our
+// renderer answers each end report with its own GPU result; pm4_shadow then leaves the end's pending marker for it
+// instead of writing the fake count. XenosPollRendererIdle: the renderer thread, with nothing queued, submits and polls
+// outstanding query results (the guest may be spinning on one and cannot send the next frame); true = some still out.
+bool XenosRendererStrictQueries();
+bool XenosPollRendererIdle();
 // Job 171: our renderer finishes every guest-memory copy it deferred (to its copy threads) - called before the title's
 // CPU can learn the GPU got past them. No-op without our renderer or without copy threads.
 void XenosRendererRelease();

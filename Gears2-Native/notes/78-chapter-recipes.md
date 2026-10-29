@@ -100,3 +100,29 @@ Analysis of Gears 2 ch1 (78 vertex shaders its recipes use, 29 packages + Global
 santiquiroz's 7,662 skipped draws came from one short, deliberately cold scene (213 pipelines in ~12 s), not a whole
 run; our chapter openings need 106-435 (median 260), so the work is the same size. We make fewer shader variants per
 microcode hash than they do. Their real difference is ROV on NVIDIA (fewer pipeline states); not worth porting for this.
+
+## Job 612c A/C test (29 Oct 10:36-, direct chapter starts, cold) [V]
+Skipped draws A / C (two tries each): Gears 2 ch1 119,541 / 181,351 -> 92 / 120; ch5 89,457 / 94,066 -> 52,685 /
+52,547; ch10 420,086 / 442,100 -> 120,516 / 192,283; ch17 105,724 / 86,130 -> 31,390 / 15,827; ch26 72,139 / 98,708
+-> 4,307 / 4,296.
+- What decides it is the time before control (Shagg): ch1 (long intro) and ch26 (cutscene) were built in time;
+  ch5/10/17 start paused (the script's first A ~10 s) and drop straight into play - nearly all their remaining skips
+  are in the 10-20 s after the unpause, 0 after (e.g. ch10 C1: 2,299 / 118,045 / 0 / 0 per 300 frames). At 6 jobs the
+  pack had ~135-200 of ~700-800 pipelines after 10 s.
+- ch10 C1 looked worse than A1 at 30 s (black surfaces, "Building shaders 99% (6 left)") with 0 skipped draws in that
+  window - not understood yet; C built 708 pipelines vs A's 534 (a second list, ch28, and areas this route never
+  reached). Hence job 613's pause rule and 5 s screenshots / frame CSV.
+- These runs start chapters directly (no main menu, no real loading screen); a real play session is the next check.
+
+## Job 613
+- Recipe pack: up to 64 jobs while the frame is a loading screen / menu (under 64 draws) or already missing draws (32+
+  skipped); 6 otherwise; queueing pauses after ~150 clean frames, never within 1,800 frames of a list starting (a
+  cutscene plays clean and is build time).
+- PR #43 (legoliamneeson), ported by hand: the reader's LZX decoder (prebuild_lzx.cpp; Gears 2's 47 files: same 28,053
+  pixel / 8,747 vertex records as libmspack, failed chunks 3 -> 1, 4,675 blocks identical), gaps between chunks scanned,
+  unreadable files flagged; resolve-texture reuse (with a stored scaled size and failed creations cached);
+  background pipelines.list writer (+ error count); lowest priority for warm-only builds; FrameStep timing; strict
+  occlusion queries as a launcher option (Real occlusion (experimental), default off, Gears 3 / Judgment, DirectX 12;
+  known race: a report re-marked pending before its ZPD reaches the render thread could get the previous answer).
+  Not taken: early stage restore (needs PR's warm stage store), compile-all-at-launch (planned as an opt-in later),
+  the 0 -> 3 ms pipeline wait default.

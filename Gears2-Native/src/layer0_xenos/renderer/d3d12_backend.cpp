@@ -4250,6 +4250,14 @@ class D3D12Backend final : public Backend {
         }
       } busy_done{this, job->target ? &jobs_busy_ : &warm_busy_};
       if (!job->target) {  // patch 0068: warm-only - put the pixel shader through the driver, keep nothing
+        // PR #43 (legoliamneeson): at the warm-only priority for this build only (StartPipelineWorkers set the
+        // worker's own), restored whichever way the job ends.
+        struct PrioScope {
+          int from, to;
+          static int Win(int p) { return p == 0 ? THREAD_PRIORITY_NORMAL : p == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST; }
+          PrioScope(int f, int t) : from(f), to(t) { if (to != from) SetThreadPriority(GetCurrentThread(), Win(to)); }
+          ~PrioScope() { if (to != from) SetThreadPriority(GetCurrentThread(), Win(from)); }
+        } prio_scope{std::clamp(options_.pipeline_thread_priority, -2, 0), std::clamp(options_.warm_thread_priority, -2, 0)};
         const auto w0 = std::chrono::steady_clock::now();
         ID3D12PipelineState* warm = nullptr;
         const HRESULT whr = device_->CreateGraphicsPipelineState(&job->desc, IID_PPV_ARGS(&warm));

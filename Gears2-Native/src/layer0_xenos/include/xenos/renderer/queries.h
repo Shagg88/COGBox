@@ -78,6 +78,29 @@ struct SampleCounts {
 };
 static_assert(sizeof(SampleCounts) == kReportBytes, "report is 8 dwords");
 
+// Strict queries (PR #43, legoliamneeson; --gow2_renderer_queries=strict): an end report is answered only with the
+// count of the query issued for it - never a result left over from an older query that reused the same report address.
+// Issue at the end ZPD (renderer thread), Complete when that query's GPU result lands: false (nothing written) when a
+// later issuance replaced this one or the report is no longer pending (the guest moved on).
+// Known plausible race, guard still to come: Issue only sees reissues the render thread has processed. If the guest
+// re-marks a report pending and its next ZPD is still queued for the render thread when the previous issuance's
+// result lands, the report is pending again and the sequence still matches, so that re-issue gets the previous answer.
+class DeferredReports {
+ public:
+  uint64_t Issue(uint32_t address) { return issued_[address] = ++sequence_; }
+  bool Complete(uint32_t address, uint64_t sequence, uint8_t* report, uint64_t samples) {
+    const auto it = issued_.find(address);
+    if (it == issued_.end() || it->second != sequence || !report || !SampleCounts::Read(report).Pending()) return false;
+    SampleCounts::WriteAnswer(report, samples, false);
+    issued_.erase(it);
+    return true;
+  }
+
+ private:
+  std::unordered_map<uint32_t, uint64_t> issued_;
+  uint64_t sequence_ = 0;
+};
+
 // Where one query's two reports are relative to each other, from the D3D library (layer 1). For XDK 7645 (Gears 2) the
 // end report sits 32 bytes before the begin report (notes/46 section 2: Issue 82978120 / the ZPD writer 82993080 / the
 // poll 829783A8). 0 = not known: the tracker then lists report addresses without pairing them.

@@ -412,10 +412,20 @@ class RenderPipe {
         for (int i = 0; i < kSpin && !queued_.load(std::memory_order_acquire); ++i) _mm_pause();
         std::unique_lock<std::mutex> lock(mutex_);
         if (queue_.empty()) {
+          // PR #43 (legoliamneeson), strict queries only: with results still out, poll them every ~1 ms while idle -
+          // the guest may be waiting on one and send nothing until it lands. Otherwise (the default) wait as before.
+          bool pending_gpu_results = false;
+          if (XenosRendererStrictQueries()) {
+            lock.unlock();
+            pending_gpu_results = XenosPollRendererIdle();
+            lock.lock();
+          }
           ++stats_.consumer_sleeps;
           consumer_sleeping_ = true;
-          cv_.wait(lock, [&] { return !queue_.empty(); });
+          if (pending_gpu_results) cv_.wait_for(lock, std::chrono::milliseconds(1), [&] { return !queue_.empty(); });
+          else cv_.wait(lock, [&] { return !queue_.empty(); });
           consumer_sleeping_ = false;
+          if (queue_.empty()) continue;  // timed out: poll again
         }
         b = std::move(queue_.front());
         queue_.pop_front();
@@ -680,7 +690,13 @@ class Pm4Execute final : public DrawObserver {
             uint8_t* p = report ? memory->TranslatePhysical<uint8_t*>(report) : nullptr;
             auto answer = rex::graphics::ZpdAnswer::kNone;
             uint64_t samples = 0;
-            if (fake >= 0 && p) {
+            if (p && XenosRendererStrictQueries()) {
+              // PR #43 (legoliamneeson), strict queries: leave the end's pending marker until the renderer writes this
+              // query's GPU result - a fake visible count here races the renderer and UE3 reads it first. A begin
+              // is still cleared (our answer is the query's own count).
+              if (!is_end) std::memset(p, 0, 32);
+              answer = is_end ? rex::graphics::ZpdAnswer::kNone : rex::graphics::ZpdAnswer::kBegin;
+            } else if (fake >= 0 && p) {  // the default: as before
               std::memset(p, 0, 32);
               if (is_end) {
                 const uint32_t v = uint32_t(fake);

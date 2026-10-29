@@ -21,17 +21,20 @@
 // - Hash key: XXH3-64 of the big-endian microcode, the same key as the renderer's.
 // Pixel shaders only: the XDK patches vertex shaders at bind, so 0 of 218 drawn vertex shaders match the files (job 367
 // [V]); ~70% of drawn pixel shaders do.
-// LZX: the SDK's own lzx_decompress (libmspack, as for XEX images). It lacks the "no pad after an odd uncompressed
-// block" fix the Gears 3 chat's tool has, so the few blocks that need it are skipped (fewer shaders, nothing wrong).
+// LZX: decoder from PR #43 (legoliamneeson), ue3/prebuild_lzx.h, in place of the SDK's lzx_decompress (libmspack),
+// which lacks the "no pad after an odd uncompressed block" fix, so the blocks that needed it were skipped. It tries the
+// XMemCompress form first and the CAB-style pad only as a second attempt; the log line counts what each fix added.
+// Also from PR #43: the bytes between and around compressed chunks are scanned for containers too, and a fully
+// compressed file of which no chunk decoded is logged as unreadable instead of passing as a package without shaders.
 #include <ue3/shader_prebuild.h>
 
+#include <ue3/prebuild_lzx.h>
 #include <xenos/dev_tools.h>
 
 #include <rex/cvar.h>
 #include <rex/filesystem/vfs.h>
 #include <rex/hash.h>
 #include <rex/logging/macros.h>
-#include <rex/system/lzx.h>
 
 #include <algorithm>
 #include <cctype>
@@ -46,6 +49,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <unordered_set>
 #include <vector>
 
@@ -61,8 +65,9 @@ namespace {
 uint32_t Be32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
 uint32_t Be16(const uint8_t* p) { return uint32_t(p[0]) << 8 | p[1]; }
 
-// One XMemCompress-framed LZX block into out (out.size() bytes). True = decoded.
-bool Lzx(const uint8_t* in, size_t n, uint8_t* out, size_t out_size, std::vector<uint8_t>& scratch) {
+// One XMemCompress-framed LZX block into out (out_size bytes). True = decoded; *padded = only with the CAB-style pad.
+bool Lzx(const uint8_t* in, size_t n, uint8_t* out, size_t out_size, std::vector<uint8_t>& scratch, bool* padded) {
+  *padded = false;
   scratch.clear();
   size_t p = 0;
   while (p + 2 <= n) {
@@ -80,7 +85,7 @@ bool Lzx(const uint8_t* in, size_t n, uint8_t* out, size_t out_size, std::vector
     p += csz;
   }
   if (scratch.empty()) return false;
-  return lzx_decompress(scratch.data(), scratch.size(), out, out_size, 0x20000, nullptr, 0) == 0;
+  return ue3::prebuild::PrebuildLzxDecode(scratch.data(), scratch.size(), out, out_size, 17, padded);
 }
 
 // The frames of an XMemCompress stream of `c` bytes add up exactly to `c` input bytes and `u` output bytes (a frame
@@ -110,6 +115,10 @@ bool FramesFit(const uint8_t* in, size_t c, size_t u) {
 struct ScanResult {
   uint32_t chunks = 0, failed_chunks = 0, nested = 0, pixel = 0, vertex = 0, new_pixel = 0;
   uint32_t offered[2] = {};  // pixel shaders handed over per variant (see Containers)
+  // What PR #43's parts added: blocks / whole chunks / inner blocks decoded only by the padded second attempt, and
+  // shader records (pixel + vertex) found in the bytes outside the compressed chunks of a compressed package.
+  uint32_t padded_blocks = 0, padded_chunks = 0, padded_nested = 0, gap_records = 0;
+  bool unreadable = false;  // starts like a fully compressed file, but no chunk decoded
 };
 
 class PackageScanner {
@@ -123,6 +132,8 @@ class PackageScanner {
   ScanResult Scan(const std::vector<uint8_t>& b) {
     r_ = {};
     std::vector<uint8_t> all;
+    std::vector<std::pair<size_t, size_t>> regions;  // [begin, end) of each compressed chunk in b
+    uint32_t decoded_chunks = 0;
     const size_t n = b.size();
     for (size_t i = 0; i + 24 <= n; ++i) {
       if (b[i] != 0x9E || b[i + 1] != 0x2A || b[i + 2] != 0x83 || b[i + 3] != 0xC1) continue;
@@ -141,15 +152,23 @@ class PackageScanner {
       const size_t base = all.size();
       all.resize(base + tu);
       size_t w = 0;
-      bool ok = true;
+      bool ok = true, any = false, padded = false;
       for (uint32_t k = 0; k < nb; ++k) {
         const uint32_t cs = Be32(blk + k * 8), us = Be32(blk + k * 8 + 4);
         // Each block is compressed on its own, so a block that fails to decode is zeros and the next ones still count.
-        if (w + us > tu) {
+        // A block never unpacks to more than the chunk's block size (the decoder's output-size check).
+        if (w + us > tu || us > bsz) {
           ok = false;
           break;
         }
-        if (!Lzx(data, cs, &all[base + w], us, scratch_)) {
+        bool pad = false;
+        if (Lzx(data, cs, &all[base + w], us, scratch_, &pad)) {
+          any = true;
+          if (pad) {
+            padded = true;
+            ++r_.padded_blocks;
+          }
+        } else {
           ok = false;
           std::memset(&all[base + w], 0, us);
         }
@@ -158,13 +177,30 @@ class PackageScanner {
       }
       ++r_.chunks;
       if (!ok) ++r_.failed_chunks;
+      if (ok && padded) ++r_.padded_chunks;  // fully decoded only thanks to the second attempt
+      if (any) ++decoded_chunks;
+      regions.emplace_back(i, size_t(data - b.data()));
       i = size_t(data - b.data()) - 1;
     }
     if (r_.chunks) {
       Containers(all.data(), all.size(), false);
       Nested(all.data(), all.size());
-    } else {
-      Containers(b.data(), n, false);  // not a compressed package (the global shader cache)
+    }
+    // The bytes outside the compressed chunks: the whole file when it has none (the global shader cache), else the
+    // package summary and anything stored between or after the chunks (PR #43).
+    const uint32_t before_gaps = r_.pixel + r_.vertex;
+    size_t raw = 0;
+    regions.emplace_back(n, n);
+    for (const auto& [begin, end] : regions) {
+      if (begin > raw) Containers(b.data() + raw, begin - raw, false);
+      raw = end;
+    }
+    if (r_.chunks) r_.gap_records = r_.pixel + r_.vertex - before_gaps;
+    // A fully compressed file (the chunk tag at 0 followed by a power-of-two block size; an uncompressed package has
+    // its version there) of which no chunk decoded is unreadable, not a package without shaders (PR #43).
+    if (n >= 8 && Be32(b.data()) == 0x9E2A83C1u) {
+      const uint32_t block = Be32(b.data() + 4);
+      if (block >= 0x8000 && block <= 0x100000 && !(block & (block - 1)) && !decoded_chunks) r_.unreadable = true;
     }
     return r_;
   }
@@ -238,8 +274,10 @@ class PackageScanner {
       }
       if (!FramesFit(b + i, C, U)) continue;
       out.resize(U);
-      if (Lzx(b + i, C, out.data(), U, scratch_) && Containers(out.data(), U, true)) {
+      bool pad = false;
+      if (Lzx(b + i, C, out.data(), U, scratch_, &pad) && Containers(out.data(), U, true)) {
         ++r_.nested;
+        if (pad) ++r_.padded_nested;
         i += C - 1;
       }
     }
@@ -312,13 +350,19 @@ void ReaderThread() {
     ++files;
     pixel += r.pixel;
     fresh += r.new_pixel;
+    if (r.unreadable)
+      REXLOG_WARN("ue3_shader_prebuild: {}: {:.1f} MB, a fully compressed file of which none of its {} chunk(s) "
+                  "decoded - unreadable, no shaders taken from it",
+                  path.filename().string(), double(data.size()) / 1048576.0, r.chunks);
     if (r.pixel || r.failed_chunks)
-      REXLOG_INFO("ue3_shader_prebuild: {}: {:.1f} MB, {} chunk(s) ({} with an unreadable block), {} inner block(s), "
-                  "{} pixel / {} vertex shader(s), {} new pixel shader(s) handed to the renderer (whole {} / code "
-                  "only {}), {:.0f} ms | {} file(s) read, {} handed over in all | draws so far used prebuilt whole "
-                  "{} / code only {}",
-                  path.filename().string(), double(data.size()) / 1048576.0, r.chunks, r.failed_chunks, r.nested,
-                  r.pixel, r.vertex, r.new_pixel, r.offered[0], r.offered[1],
+      REXLOG_INFO("ue3_shader_prebuild: {}: {:.1f} MB, {} chunk(s) ({} with an unreadable block, {} decoded only "
+                  "with the padding retry: {} block(s)), {} inner block(s) ({} with the padding retry), {} pixel / "
+                  "{} vertex shader(s) ({} of them outside the compressed chunks), {} new pixel shader(s) handed to "
+                  "the renderer (whole {} / code only {}), {:.0f} ms | {} file(s) read, {} handed over in all | "
+                  "draws so far used prebuilt whole {} / code only {}",
+                  path.filename().string(), double(data.size()) / 1048576.0, r.chunks, r.failed_chunks,
+                  r.padded_chunks, r.padded_blocks, r.nested, r.padded_nested, r.pixel, r.vertex, r.gap_records,
+                  r.new_pixel, r.offered[0], r.offered[1],
                   std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(), files,
                   fresh, h0, h1);
   }
