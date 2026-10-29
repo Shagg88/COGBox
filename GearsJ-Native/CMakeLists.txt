@@ -74,6 +74,12 @@ add_library(gn_layer2_ue3 STATIC src/layer2_ue3/launch_command_line.cpp src/laye
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer0_xenos)
 rexglue_apply_target_settings(gn_layer2_ue3)
+# notes/78 chapter recipes: Gears 2's package shader reader (patch 0068, game-free UE3 code that already reads Gears 3's
+# package layout), built from GN_LAYER0_HOME like layer 0. Only that file gets Gears 2's layer 2 include folder, so this
+# game's own ue3/ headers are not shadowed.
+target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp)
+set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp PROPERTIES
+    INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 
 # Layer 3: Gears of War: Judgment (the executable).
 set(GOWJ_SOURCES

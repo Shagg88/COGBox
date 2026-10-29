@@ -87,6 +87,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <cstdlib>
 #include <fstream>
 #include <unordered_set>
 #include <vector>
@@ -185,6 +186,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_shader_precreate, true, "Gears2",
                     "hook in each game's own shader-creation code) are translated at once and built by the driver in "
                     "a guessed pipeline in the background, before their first draw. Job 362c [V]: the driver keeps "
                     "each shader stage, so the real pipelines later cost ~0.1 ms instead of 15-35 ms. DXBC path only");
+REXCVAR_DEFINE_STRING(gow2_renderer_shader_recipes, "", "Gears2",
+                      "Chapter recipes (notes/78): a text file of pixel-shader fingerprints (16 hex digits a line, the "
+                      "draws' own XXH3 key - no game data) recorded from chapter openings. Set = patch 0068's package "
+                      "reader runs (with --ue3_shader_prebuild) and builds ONLY the listed shaders, from the player's own "
+                      "game files, while a chapter loads. Empty (default) = off");
 REXCVAR_DEFINE_BOOL(gow2_renderer_shader_prebuild, false, "Gears2",
                     "Patch 0132: off by default (its warm-only builds took pipeline workers from the draws' own pipelines). Patch 0068 (Shagg: shaders built behind the loading screen, both games): when the game opens a "
                     "package, its pixel shaders (found by layer 2 in the file itself) are translated like a draw's and "
@@ -2261,6 +2267,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void OnPrebuildPixelShader(const void* be_ucode, uint32_t size, uint32_t variant) {  // any thread (layer 2's reader)
     if (!prebuild_on_ || !be_ucode || !size || size > 256u * 1024u || (size & 3)) return;
     PrebuildItem it;
+    if (!recipe_ps_.empty()) {  // notes/78: only shaders in the recipe list (the set is read-only after Init)
+      it.hash = XXH3_64bits(be_ucode, size);  // the same key as the draws' shaders
+      if (!recipe_ps_.count(it.hash)) {
+        prebuild_not_recipe_.fetch_add(1, std::memory_order_relaxed);
+        return;
+      }
+    }
     it.variant = uint8_t(variant & 1);
     it.bytes.assign(static_cast<const uint8_t*>(be_ucode), static_cast<const uint8_t*>(be_ucode) + size);
     std::lock_guard<std::mutex> lock(prebuild_in_mutex_);
@@ -2275,8 +2288,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     std::vector<uint8_t> bytes;  // big-endian microcode
   };
   void StartPrebuild() {  // Init, after the shader cache is set up
-    prebuild_on_ = REXCVAR_GET(gow2_renderer_shader_prebuild) && cache_ && cache_->Dxbc();
-    if (!prebuild_on_) return;
+    LoadRecipes();  // notes/78
+    prebuild_on_ = (REXCVAR_GET(gow2_renderer_shader_prebuild) || !recipe_ps_.empty()) && cache_ && cache_->Dxbc();
+    if (!prebuild_on_) {
+      if (!recipe_ps_.empty()) REXLOG_INFO("gow2_renderer: chapter recipes not used - our renderer is not on the DXBC path");
+      return;
+    }
     LoadVariantCounts();  // patch 0069
     prebuild_thread_ = std::thread([this] { PrebuildThread(); });  // lives as long as the renderer (never destroyed)
     REXLOG_INFO("gow2_renderer: shader prebuild at package open on (patch 0068), up to {} warm-only pipelines queued",
@@ -2293,7 +2310,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     std::vector<PrebuildItem> out;
     for (auto& b : in) {
       ++pb_.prebuild_offered;
-      const uint64_t h = XXH3_64bits(b.bytes.data(), b.bytes.size());  // the same key as the draws' shaders
+      const uint64_t h = b.hash ? b.hash : XXH3_64bits(b.bytes.data(), b.bytes.size());  // the draws' key
       if (!prebuild_seen_.insert(h).second) continue;      // offered before (another package)
       if (cache_->Find(h, false)) {  // already drawn (or recorded): also tells which variant this game draws (0069)
         ++pb_.prebuild_known;
@@ -2334,7 +2351,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         dwords[i] = std::byteswap(v);
       }
       // Patch 0069: a variant this game is now known not to draw is dropped here too (queued before it was known).
-      {
+      // Not with chapter recipes: only fingerprints the draws used get this far, whatever their variant.
+      if (recipe_ps_.empty()) {
         const uint64_t h0 = prebuild_variant_hits_[0].load(std::memory_order_relaxed);
         const uint64_t h1 = prebuild_variant_hits_[1].load(std::memory_order_relaxed);
         const uint64_t hv = item.variant ? h1 : h0;
@@ -2353,6 +2371,30 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
   bool prebuild_on_ = false;
+  // notes/78: chapter recipes - the pixel-shader fingerprints to build (written once in Init, then only read).
+  std::unordered_set<uint64_t> recipe_ps_;
+  std::atomic<uint64_t> prebuild_not_recipe_{0};
+  void LoadRecipes() {
+    const std::string path = REXCVAR_GET(gow2_renderer_shader_recipes);
+    if (path.empty()) return;
+    std::ifstream f{std::filesystem::path(path)};  // braces: a ( ) here would declare a function
+    if (!f) {
+      REXLOG_WARN("gow2_renderer: chapter recipes: {} could not be opened - off", path);
+      return;
+    }
+    std::string line;
+    uint64_t bad = 0;
+    while (std::getline(f, line)) {
+      while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+      if (line.empty() || line[0] == '#') continue;
+      char* end = nullptr;
+      const uint64_t h = std::strtoull(line.c_str(), &end, 16);
+      if (h && end && *end == 0) recipe_ps_.insert(h);
+      else ++bad;
+    }
+    REXLOG_INFO("gow2_renderer: chapter recipes: {} pixel-shader fingerprints from {}{} (notes/78)", recipe_ps_.size(),
+                path, bad ? fmt::format(", {} unreadable line(s) skipped", bad) : std::string());
+  }
   std::atomic<bool> warm_template_set_{false};
   std::unordered_set<uint64_t> prebuild_seen_;            // recording thread: every hash offered
   std::unordered_map<uint64_t, uint8_t> prebuild_queued_hashes_;  // recording thread: sent to be built -> variant
@@ -8438,13 +8480,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         REXLOG_INFO("gow2_renderer: frames {}-{}: shader prebuild (patch 0068): {} pixel shaders from opened packages, {} "
                     "already known, {} queued, {} sent to the driver, {} not translatable, {} dropped (variant), {} "
                     "waiting | warm-only pipelines built {} ({:.0f} ms in the driver), failed {} | new draw pipelines "
-                    "with a pixel shader {}, its shader prebuilt {} | variants drawn: whole {} / code only {} (totals "
-                    "so far)",
+                    "with a pixel shader {}, its shader prebuilt {} | variants drawn: whole {} / code only {} | not in "
+                    "the chapter recipes {} (totals so far)",
                     frame_ - uint64_t(log_every_) + 1, frame_, pb_.prebuild_offered, pb_.prebuild_known,
                     pb_.prebuild_queued, prebuild_sent_.load(), prebuild_untranslated_.load(), prebuild_dropped_.load(),
                     PrebuildWaiting(), bs.pipelines_warmed, bs.pipeline_warm_ms, bs.pipelines_warm_failed,
                     pb_.new_ps_pipelines, pb_.new_ps_prebuilt, prebuild_variant_hits_[0].load(),
-                    prebuild_variant_hits_[1].load());
+                    prebuild_variant_hits_[1].load(), prebuild_not_recipe_.load());
         SaveVariantCounts();  // patch 0069
         prebuild_logged_offered_ = pb_.prebuild_offered;
         prebuild_logged_new_ps_ = pb_.new_ps_pipelines;
