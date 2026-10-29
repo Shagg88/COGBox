@@ -13,6 +13,7 @@
 // draws are skipped and counted. Our code (MIT).
 #include <xenos/dev_tools.h>
 #include <xenos/renderer/async_file_appender.h>
+#include <xenos/renderer/resolve_reuse.h>
 #include <xenos/dxbc_gen.h>
 #include <xenos/dxbc_spirv.h>
 #include <xenos/display_size.h>
@@ -186,6 +187,9 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_shader_precreate, true, "Gears2",
                     "hook in each game's own shader-creation code) are translated at once and built by the driver in "
                     "a guessed pipeline in the background, before their first draw. Job 362c [V]: the driver keeps "
                     "each shader stage, so the real pipelines later cost ~0.1 ms instead of 15-35 ms. DXBC path only");
+REXCVAR_DEFINE_BOOL(gow2_renderer_stage_prefetch, true, "Gears2",
+                    "Restore compiled stage-cache entries on background workers when UE3 creates its shaders, "
+                    "before the first draw using a new pipeline combination; live draws retain priority");
 REXCVAR_DEFINE_BOOL(gow2_renderer_shader_prebuild, true, "Gears2",
                     "Prepare all package vertex/pixel shaders and both stored variants at startup (D3D12 DXBC). "
                     "Stage bytecode and driver pipeline keys match the normal renderer; dynamic variants retain live fallback");
@@ -459,6 +463,9 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_gpu_load_stacked_3d, true, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_other_bpp, true, "Gears2",
                     "Patch 0030 (Canary resolve_full_8/16/128bpp): colour resolves into 8, 16 and 128 bpp destinations "
                     "and 64/128-bit endian swaps are written (false = skipped as before, the pages keep old bytes)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_reuse, true, "Gears2",
+                    "Reuse matching resolve scratch textures unused for four frames when guest addresses change; "
+                    "reduces resource creation, destruction and video-memory pressure while streaming");
 REXCVAR_DEFINE_INT32(gow2_renderer_dest_evict_frames, 600, "Gears2",
                      "Patch 0032: resolve destination textures (1x and scaled) not used for this many frames are freed "
                      "(0 = never, the old behaviour: they piled up and over-filled video memory in long Gears 3 runs)");
@@ -806,7 +813,8 @@ REXCVAR_DEFINE_INT32(gow2_shader_threads, 0, "Gears2",
                      "Shader compile threads for our renderer (0 = logical processors minus 2, at least 1)");
 // Stage 4 (upl-s4c, notes/46 section 4): our own occlusion counts. Needs SDK patch 15 (DrawObserver::OnZpd).
 REXCVAR_DEFINE_STRING(gow2_renderer_queries, "off", "Gears2",
-                      "Occlusion queries: off | shadow (run our host queries and log our counts, write nothing) | "
+                      "Occlusion queries: strict (defer completion until this query's GPU result; own split GPU) | "
+                      "off | shadow (run our host queries and log our counts, write nothing) | "
                       "answer (also write our answers into the game's query reports: the last real count for that "
                       "report, 1 if none; corrected when our count lands)");
 REXCVAR_DEFINE_INT32(gow2_renderer_queries_min, 0, "Gears2",
@@ -1013,7 +1021,7 @@ struct FrameStats {
            lookaheads = 0, lookahead_draws = 0, lookahead_queued = 0,  // patch 0051
            pipelines_recorded = 0,  // patch 0058
            load_holds = 0,  // patch 0063: frames held back until their pipelines were built
-           created_seen = 0, created_known = 0, created_translated = 0, created_guessed = 0,  // patch 0066
+           created_seen = 0, created_known = 0, created_translated = 0, created_guessed = 0, created_prefetched = 0,
            new_draw_pipelines = 0, new_vs_from_load = 0, new_ps_from_load = 0,                // patch 0066
            prebuild_offered = 0, prebuild_known = 0, prebuild_queued = 0,                     // patch 0068
            new_ps_pipelines = 0, new_ps_prebuilt = 0,                                         // patch 0068
@@ -1373,14 +1381,23 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     log_every_ = std::max(1, REXCVAR_GET(gow2_renderer_log_every));
     {  // occlusion queries (upl-s4c)
       const std::string q = REXCVAR_GET(gow2_renderer_queries);
-      queries_mode_ = q == "answer" ? QueriesMode::kAnswer : q == "shadow" ? QueriesMode::kShadow : QueriesMode::kOff;
+      queries_mode_ = q == "strict" ? QueriesMode::kStrict : q == "answer" ? QueriesMode::kAnswer :
+                      q == "shadow" ? QueriesMode::kShadow : QueriesMode::kOff;
+      if (queries_mode_ == QueriesMode::kStrict &&
+          (!XenosOurGpuSystem() || rex::cvar::GetFlagByName("gow2_pm4_split") != "true")) {
+        REXLOG_WARN("gow2_renderer: strict queries require our split GPU; keeping fake visible answers");
+        queries_mode_ = QueriesMode::kOff;
+      }
       if (!q.empty() && q != "off" && queries_mode_ == QueriesMode::kOff)
-        REXLOG_WARN("gow2_renderer: unknown --gow2_renderer_queries '{}' (off | shadow | answer); queries off", q);
+        REXLOG_WARN("gow2_renderer: unavailable --gow2_renderer_queries '{}' (off | shadow | answer | strict); queries off", q);
       queries_min_ = uint64_t(std::max(0, REXCVAR_GET(gow2_renderer_queries_min)));
       queries_correct_ = REXCVAR_GET(gow2_renderer_queries_correct);
       occ_answers_.SetHiddenAfter(uint32_t(std::max(1, REXCVAR_GET(gow2_renderer_queries_hidden_after))));
       queries_log_ = std::max(0, REXCVAR_GET(gow2_renderer_queries_log));
-      if (queries_mode_ != QueriesMode::kOff)
+      if (queries_mode_ == QueriesMode::kStrict)
+        REXLOG_INFO("gow2_renderer: occlusion queries STRICT (this issuance's actual GPU result; batched submission, "
+                    "idle polling; incomplete draws fall back to visible)");
+      else if (queries_mode_ != QueriesMode::kOff)
         REXLOG_INFO("gow2_renderer: occlusion queries {} (immediate answer = last count for the report, else 1; "
                     "minimum {}; correction {})",
                     queries_mode_ == QueriesMode::kAnswer ? "ANSWERED BY US" : "shadow (counted, not written)",
@@ -1745,6 +1762,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!backend_ || backend_->IsLost()) return;
     const uint64_t t0 = __rdtsc();
     fill_.valid = false;  // job 185
+    if (queries_mode_ == QueriesMode::kStrict) {
+      // Query data is useful before the post-processing/present work after it.
+      // Give a completed query batch its own fence instead of making UE3 wait
+      // for every remaining GPU command in the frame. Bound extra submissions.
+      if (occ_need_submit_ && !occ_open_.open && occ_closed_in_batch_ >= 16 && occ_batches_this_frame_ < 4) {
+        backend_->SubmitEarly();
+        occ_need_submit_ = false;
+        occ_closed_in_batch_ = 0;
+        ++occ_batches_this_frame_;
+      }
+      if (!occ_pending_.empty() && (draw_index_ & 31u) == 0) PollOcclusion();
+    }
     BeginParts();
     {
       PartScope ps(*this, kPartPoll);
@@ -1775,7 +1804,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void OnZpd(const RegisterFile&, const rex::graphics::ObservedZpd& zpd) override {
     if (queries_mode_ == QueriesMode::kOff || !backend_ || backend_->IsLost()) return;
     const uint64_t t0 = __rdtsc();
-    const bool answer = queries_mode_ == QueriesMode::kAnswer;
+    const bool strict = queries_mode_ == QueriesMode::kStrict;
+    const bool answer = queries_mode_ == QueriesMode::kAnswer || strict;
+    if (strict) PollOcclusion();
     uint8_t* report = zpd.report_address ? memory_->TranslatePhysical<uint8_t*>(zpd.report_address) : nullptr;
     if (!zpd.is_end) {
       if (occ_open_.open) {  // the previous query never got its end
@@ -1806,6 +1837,33 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++occ_stats_.ours;
       if (!complete) ++occ_stats_.incomplete;
     }
+    if (strict) {
+      const uint64_t sequence = occ_deferred_.Issue(zpd.report_address);
+      if (complete) {
+        PendingOcclusion pending;
+        pending.end_address = zpd.report_address;
+        pending.handle = q.handle;
+        pending.frame = frame_;
+        pending.sequence = sequence;
+        pending.complete = true;
+        pending.draws = uint32_t(attempted);
+        pending.scale = q.scale ? q.scale : res_scale_;
+        pending.queued_at = std::chrono::steady_clock::now();
+        occ_pending_.push_back(pending);
+        occ_need_submit_ = true;
+        ++occ_closed_in_batch_;
+      } else {
+        // A missing draw or failed query must not incorrectly hide an object.
+        if (occ_deferred_.Complete(zpd.report_address, sequence, report, 1)) {
+          ++occ_stats_.answered;
+          ++occ_stats_.fallback;
+          XenosNotifyGuestWrite();
+        }
+        if (q.handle) backend_->ReleaseOcclusionQuery(q.handle);
+      }
+      cpu_ms_ += double(__rdtsc() - t0) * MsPerTick();
+      return;
+    }
     bool from_cache = false;
     const uint64_t estimate =
         occ_answers_.Estimate(rr::queries::AnswerCache::Key(zpd.report_address, uint32_t(attempted)), 1, queries_min_,
@@ -1830,6 +1888,35 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Our counts that have landed (never waits): learn them and, when answering, correct reports still holding our
   // estimate.
   void PollOcclusion() {
+    if (queries_mode_ == QueriesMode::kStrict) {
+      while (!occ_pending_.empty()) {
+        const PendingOcclusion& p = occ_pending_.front();
+        uint64_t samples = 0;
+        const bool ready = !backend_->IsLost() && backend_->GetOcclusionResult(p.handle, &samples);
+        if (!ready && !backend_->IsLost() &&
+            std::chrono::steady_clock::now() - p.queued_at < std::chrono::seconds(2)) break;
+        if (ready) {
+          samples = rr::queries::AnswerCache::ToGuestSamples(samples, p.scale * p.scale);
+          ++occ_stats_.results;
+          if (!samples) ++occ_stats_.zero;
+          occ_stats_.samples += samples;
+          occ_stats_.latency_frames += frame_ - p.frame;
+        } else {
+          samples = 1;  // Device/query failure: preserve visibility and release the guest wait.
+          ++occ_stats_.dropped;
+          ++occ_stats_.fallback;
+        }
+        auto* report = memory_->TranslatePhysical<uint8_t*>(p.end_address);
+        if (occ_deferred_.Complete(p.end_address, p.sequence, report, samples)) {
+          ++occ_stats_.answered;
+          if (!samples) ++occ_stats_.answered_hidden;
+          XenosNotifyGuestWrite();
+        } else ++occ_stats_.too_late;
+        backend_->ReleaseOcclusionQuery(p.handle);
+        occ_pending_.pop_front();
+      }
+      return;
+    }
     const bool answer = queries_mode_ == QueriesMode::kAnswer;
     while (!occ_pending_.empty()) {
       PendingOcclusion& p = occ_pending_.front();
@@ -1882,6 +1969,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
 
+  bool StrictQueries() const { return queries_mode_ == QueriesMode::kStrict; }
+  bool PollGpuIdle() {
+    if (!StrictQueries() || occ_pending_.empty()) return false;
+    const uint64_t t0 = __rdtsc();
+    if (occ_need_submit_ && !backend_->IsLost()) {
+      backend_->SubmitEarly();  // Batch all queued query resolves; never one GPU wait per query.
+      occ_need_submit_ = false;
+      occ_closed_in_batch_ = 0;
+    }
+    PollOcclusion();
+    cpu_ms_ += double(__rdtsc() - t0) * MsPerTick();
+    return !occ_pending_.empty();
+  }
+
   template<class F> void FrameStep(const char* site, F&& work) {
     const uint64_t start = __rdtsc();
     work();
@@ -1901,16 +2002,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
 #endif
-    if (!vertex_log_.empty()) RecheckDrawVertices();  // job 304
-    PollExportReadbacks();  // job 041
-    if (!through_checks_.empty()) PollThroughChecks();  // job 047
-    if (!resolve_readback_retire_.empty()) RetireResolveReadbacks();  // patch 0020
     part_level_ = std::clamp(REXCVAR_GET(gow2_renderer_cpu_split), 0, 2);  // patch 0153
     if (part_level_ == 2 && part_level_prev_ != 2 && backend_) part_upload_mark_ = backend_->Stats().upload_bytes;
     part_level_prev_ = part_level_;
     const uint64_t t0 = __rdtsc();
     BeginParts();
     PartScope frame_scope(*this, kPartFrame);
+    if (!vertex_log_.empty()) FrameStep("vertex recheck", [&] { RecheckDrawVertices(); });
+    FrameStep("export readback results", [&] { PollExportReadbacks(); });
+    if (!through_checks_.empty()) FrameStep("through checks", [&] { PollThroughChecks(); });
+    if (!resolve_readback_retire_.empty()) FrameStep("resolve readback retirement", [&] { RetireResolveReadbacks(); });
     {
       PartScope ps(*this, kPartPoll);
       cache_->Poll();
@@ -1945,14 +2046,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!selftest_started_) StartTransferSelfTest();
     DecideLoadHold();  // patch 0063
     if (display_ours_) FrameStep("present image", [&] { RequestDisplay(regs, frontbuffer_ptr & 0x1FFFFFFFu, fb_width, fb_height); });
-    if (!export_ranges_.empty()) IssueExportReadbacks();  // patch 0042: this frame's merged export readbacks
+    if (!export_ranges_.empty()) FrameStep("export readback copies", [&] { IssueExportReadbacks(); });
     FrameStep("submit", [&] { frame_fences_.push_back(backend_->Submit()); });
+    occ_need_submit_ = false;
+    occ_closed_in_batch_ = 0;
+    occ_batches_this_frame_ = 0;
     XenosLatencyFrameSubmitted();  // patch 0135: Reflex RENDERSUBMIT_END
     FrameStep("next frame", [&] { backend_->NextFrame(); });
-    while (frame_fences_.size() > frames_in_flight_) {  // patch 0133: at most this many frames queued on our device
-      backend_->WaitForFence(frame_fences_.front());
-      frame_fences_.pop_front();
-    }
+    FrameStep("frame throttle", [&] {
+      while (frame_fences_.size() > frames_in_flight_) {
+        backend_->WaitForFence(frame_fences_.front());
+        frame_fences_.pop_front();
+      }
+    });
     if (queries_mode_ != QueriesMode::kOff) FrameStep("occlusion results", [&] { PollOcclusion(); });  // upl-s4c
     double fl_hold_ms = 0.0;  // frame log
     if (hold_this_frame_) {
@@ -2046,10 +2152,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           uint64_t vram_used = 0, vram_budget = 0;
           const bool vram = backend_->VideoMemory(&vram_used, &vram_budget);
           REXLOG_INFO("gow2_renderer: patch 0032 frames {}-{}: resolve destinations {} ({:.1f} MB), scaled {} "
-                      "({:.1f} MB); freed {} ({:.1f} MB) by age {}, by budget {} (video memory pressure {}x) (this range){}",
+                      "({:.1f} MB); freed {} ({:.1f} MB) by age {}, by budget {} (video memory pressure {}x); reused {} "
+                      "unscaled / {} scaled (this range){}",
                       frame_ + 1 - uint64_t(log_every_), frame_, destinations_.size(), double(one_bytes) / 1048576.0,
                       scaled_dests_.size(), double(scaled_bytes) / 1048576.0, dest_evict_.count,
                       double(dest_evict_.bytes) / 1048576.0, dest_evict_.by_age, dest_evict_.by_budget, dest_evict_.pressure_events,
+                      dest_evict_.reused_one, dest_evict_.reused_scaled,
                       vram ? fmt::format(" | video memory used {:.0f} MB of budget {:.0f} MB{}",
                                          double(vram_used) / 1048576.0, double(vram_budget) / 1048576.0,
                                          vram_used > vram_budget ? " - OVER BUDGET (the driver pages: slow)" : "")
@@ -2218,8 +2326,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const uint64_t h = XXH3_64bits(c.bytes.data(), c.bytes.size());  // the same key as the draws' shaders
       created_hashes_.insert(h);
       if (prebuild_on_ && !c.is_vertex) PrebuildMarkKnown(h);  // prebuild v2: built here, not again from a package
-      if (cache_->Find(h, c.is_vertex)) {
+      if (const auto* known = cache_->Find(h, c.is_vertex)) {
         ++stats_.created_known;
+        if (known->ready() && known->handle && REXCVAR_GET(gow2_renderer_stage_prefetch) &&
+            backend_->PrefetchShaderStage(known->handle)) ++stats_.created_prefetched;
       } else {
         dwords.resize(c.bytes.size() / 4);
         for (size_t i = 0; i < dwords.size(); ++i) {
@@ -2230,6 +2340,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         const rr::GuestShader& g = cache_->Get(h, dwords.data(), dwords.size(), c.is_vertex);
         if (g.ready() && g.handle) {
           ++stats_.created_translated;
+          if (REXCVAR_GET(gow2_renderer_stage_prefetch) && backend_->PrefetchShaderStage(g.handle)) {
+            ++stats_.created_prefetched;
+            if (MsSince(t0) >= budget) break;
+            continue;
+          }
           gpu::ShaderHandle& partner_slot = c.is_vertex ? guess_vs_ : guess_ps_;  // the first of a stage pairs others
           if (!partner_slot) partner_slot = g.handle;
           guess_waiting_.push_back({c.is_vertex, g.handle});
@@ -2807,7 +2922,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (XenosFrameImagesWanted()) {
         PresentImage img;
         img.readback = backend_->ReadbackTexture(present_out_, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
-        img.frame = ours_image_index_++;
+        img.frame = XenosSwapCount();  // align captures with frame-timed controller input, including skipped presents
         img.width = w;
         img.height = h;
         if (img.readback) ours_images_.push_back(img);
@@ -2857,7 +2972,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (XenosFrameImagesWanted()) {  // frame shots: our presented image, read back (the SDK makes none now)
       PresentImage img;
       img.readback = backend_->ReadbackTexture(present_out_, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
-      img.frame = ours_image_index_++;
+      img.frame = XenosSwapCount();
       img.width = w;
       img.height = h;
       if (img.readback) ours_images_.push_back(img);
@@ -3053,7 +3168,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     return true;
   }
   std::deque<PresentImage> ours_images_;
-  uint64_t ours_image_index_ = 0;
   OursStats ours_stats_;
 
  public:
@@ -3195,8 +3309,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       it->second.last_used = frame_;
       return it->second.texture ? &it->second : nullptr;
     }
-    ScaledDest& d = scaled_dests_[key];
-    d.last_used = frame_;
     if (uint64_t(w) * res_scale_ * words > 16384 || uint64_t(h) * res_scale_ > 16384) return nullptr;
     gpu::TextureDesc td;
     td.width = w * res_scale_ * words;
@@ -3204,8 +3316,24 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     td.format = gpu::Format::kR32Uint;
     td.usage = gpu::kUsageStorage | gpu::kUsageSampled | (resolve_draws_ ? gpu::kUsageRenderTarget : 0u);  // 0119
     td.debug_name = "gow2 scaled resolve destination";
-    d.texture = backend_->CreateTexture(td);
-    if (!d.texture) return nullptr;
+    gpu::TextureHandle texture = 0;
+    if (REXCVAR_GET(gow2_renderer_resolve_reuse)) {
+      auto reuse = cogbox::renderer::ReusableResolve(scaled_dests_, frame_, td.width, td.height,
+          [&](const ScaledDest& value) {
+            if (front_bases_.count(value.base)) return std::pair<uint32_t,uint32_t>{0,0};
+            return std::pair{value.pitch * res_scale_ * value.words, value.height * res_scale_};
+          });
+      if (reuse != scaled_dests_.end()) {
+        texture = reuse->second.texture;
+        scaled_dests_.erase(reuse);
+        ++dest_evict_.reused_scaled;
+      }
+    }
+    if (!texture) texture = backend_->CreateTexture(td);
+    if (!texture) return nullptr;
+    ScaledDest& d = scaled_dests_[key];
+    d.texture = texture;
+    d.last_used = frame_;
     d.base = info.dest_base;
     d.pitch = w;
     d.height = h;
@@ -5133,6 +5261,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t edram_mode = Bits(r[rr::reg::RB_MODECONTROL], 0, 3);
     const rr::GuestShader* psg =
         ps_.dwords ? &cache_->Get(ps_hash, ps_.dwords, ps_.count, false) : nullptr;
+    // Shared by all titles, including shader construction paths without a UE3
+    // notification hook. Hide stage-cache I/O behind vertex/texture preparation.
+    // The backend checks each handle once; live pipeline work retains priority.
+    if (REXCVAR_GET(gow2_renderer_stage_prefetch)) {
+      if (vsg.ready() && vsg.handle) backend_->PrefetchShaderStage(vsg.handle);
+      if (psg && psg->ready() && psg->handle) backend_->PrefetchShaderStage(psg->handle);
+    }
 
     // Patch 0025 (Canary render_target_cache.cc Update, 9da693480; Gears 3 review 01-g): a depth target at the same
     // guest EDRAM base as a colour target this draw writes is not bound - the colour target owns those tiles - unless
@@ -7797,8 +7932,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     d.format = gpu::Format::kR32Uint;
     d.usage = gpu::kUsageStorage | gpu::kUsageSampled | (resolve_draws_ ? gpu::kUsageRenderTarget : 0u);  // 0119
     d.debug_name = "gow2 resolve destination";
-    const gpu::TextureHandle t = backend_->CreateTexture(d);
-    if (t) destinations_.emplace(key, DestEntry{t, frame_, uint64_t(d.width) * d.height * 4});
+    gpu::TextureHandle t = 0;
+    if (REXCVAR_GET(gow2_renderer_resolve_reuse)) {
+      auto reuse = cogbox::renderer::ReusableResolve(destinations_, frame_, d.width, d.height,
+          [&](const DestEntry& value) {
+            if (front_bases_.count(value.base)) return std::pair<uint32_t,uint32_t>{0,0};
+            return std::pair{value.width, value.height};
+          });
+      if (reuse != destinations_.end()) {
+        t = reuse->second.texture;
+        destinations_.erase(reuse);
+        ++dest_evict_.reused_one;
+      }
+    }
+    if (!t) t = backend_->CreateTexture(d);
+    if (t) destinations_.emplace(key, DestEntry{t, frame_, uint64_t(d.width) * d.height * 4, d.width, d.height, info.dest_base});
     return t;
   }
 
@@ -7810,9 +7958,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   struct DestEntry {
     gpu::TextureHandle texture = 0;
     uint64_t last_used = 0, bytes = 0;
+    uint32_t width = 0, height = 0, base = 0;
   };
   struct DestEvictStats {
     uint64_t count = 0, bytes = 0, by_age = 0, by_budget = 0, pressure_events = 0;  // pressure: patch 0033
+    uint64_t reused_one = 0, reused_scaled = 0;
   };
   DestEvictStats dest_evict_;
   // Patch 0149 (deep-dive review): the watched vertex ranges and converted index buffers (with their persistent GPU
@@ -8605,13 +8755,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (stats_.created_seen != created_logged_.created_seen ||
           stats_.new_draw_pipelines != created_logged_.new_draw_pipelines) {
         REXLOG_INFO("gow2_renderer: frames {}-{}: shaders the game created (patch 0066): {} seen, {} already known, {} "
-                    "translated, {} guessed pipelines queued, {} waiting | new draw pipelines {}: VS made at load {}, "
+                    "translated, {} guessed pipelines queued, {} cached stage prefetch requests, {} waiting | new draw pipelines {}: VS made at load {}, "
                     "PS made at load {} (totals so far)",
                     frame_ - uint64_t(log_every_) + 1, frame_, stats_.created_seen, stats_.created_known,
-                    stats_.created_translated, stats_.created_guessed, CreatedQueued(), stats_.new_draw_pipelines,
+                    stats_.created_translated, stats_.created_guessed, stats_.created_prefetched, CreatedQueued(), stats_.new_draw_pipelines,
                     stats_.new_vs_from_load, stats_.new_ps_from_load);
         created_logged_ = stats_;
       }
+      if (bs.cached_stage_prefetches != detail_base_.cached_stage_prefetches ||
+          bs.cached_stage_restores != detail_base_.cached_stage_restores)
+        REXLOG_INFO("gow2_renderer: frames {}-{}: cached stages: {} prefetched, {} restored off-thread in {:.1f} ms (totals)",
+                    frame_ - uint64_t(log_every_) + 1, frame_, bs.cached_stage_prefetches,
+                    bs.cached_stage_restores, bs.cached_stage_restore_ms);
       detail_base_ = bs;
       drawn_base_ = stats_.drawn;
     }
@@ -8642,7 +8797,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "{:.1f}, after {:.2f} frames; corrected {}, too late {}, estimate visibility wrong {}, dropped {} | "
                   "SDK answers: fake {}, host {} | draws {:.1f}/frame | backend: segments {} refused {} | reports known {} | "
                   "answered hidden {}, WRONGLY hidden {} (visible objects skipped), zeros not yet trusted {}",
-                  queries_mode_ == QueriesMode::kAnswer ? "answer" : "shadow", frame_ - uint64_t(log_every_) + 1, frame_,
+                  queries_mode_ == QueriesMode::kStrict ? "strict" : queries_mode_ == QueriesMode::kAnswer ? "answer" : "shadow", frame_ - uint64_t(log_every_) + 1, frame_,
                   o.ends, double(o.ends) / log_every_, o.ours, o.incomplete, o.refused, o.unended, o.proxies, o.answered,
                   o.from_cache, o.fallback, o.results, o.zero, o.results ? 100.0 * double(o.zero) / double(o.results) : 0.0,
                   o.results ? double(o.samples) / double(o.results) : 0.0,
@@ -9142,7 +9297,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   double gpu_cat_base_[8] = {};
   bool lost_logged_ = false;
   // ---- occlusion queries (Stage 4, upl-s4c) ----
-  enum class QueriesMode { kOff, kShadow, kAnswer };
+  enum class QueriesMode { kOff, kShadow, kAnswer, kStrict };
   QueriesMode queries_mode_ = QueriesMode::kOff;
   uint64_t queries_min_ = 0;
   bool queries_correct_ = true;
@@ -9163,9 +9318,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint32_t draws = 0;
     bool log = false, from_cache = false;
     uint32_t scale = 1;  // patch 0141: host pixels per guest pixel of the draws it counted
+    std::chrono::steady_clock::time_point queued_at{};
   };
   std::deque<PendingOcclusion> occ_pending_;
   rr::queries::AnswerCache occ_answers_;
+  rr::queries::DeferredReports occ_deferred_;
+  bool occ_need_submit_ = false;
+  uint32_t occ_closed_in_batch_ = 0, occ_batches_this_frame_ = 0;
   struct OcclusionStats {
     uint64_t ends = 0, ours = 0, incomplete = 0, refused = 0, unended = 0, answered = 0, from_cache = 0, fallback = 0,
              results = 0, zero = 0, samples = 0, latency_frames = 0, corrected = 0, too_late = 0,
@@ -9203,6 +9362,8 @@ void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t si
 }
 
 bool XenosRendererPresents() { return g_renderer_presents; }
+bool XenosRendererStrictQueries() { return g_release_target && g_release_target->StrictQueries(); }
+bool XenosPollRendererIdle() { return g_release_target && g_release_target->PollGpuIdle(); }
 void XenosRendererRelease() {
   if (g_release_target) g_release_target->ReleaseToGuest();
 }

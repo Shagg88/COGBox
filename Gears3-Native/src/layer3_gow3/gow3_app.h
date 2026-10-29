@@ -85,6 +85,11 @@ class Gow3App : public rex::ReXApp {
     game_default("gow2_upscale_camera_constant", "5");
     game_default("gow2_renderer_memexport", "true");
     game_default("gow2_renderer_resolution_scale_threshold", "1120");
+    // Real per-issuance answers cull hidden geometry and lens flares. Explicit
+    // renderer-query settings remain available for comparisons.
+    if (XenosOurGpuSystem() && rex::cvar::GetFlagByName("gow2_renderer_api") == "d3d12" &&
+        rex::cvar::GetFlagByName("gow2_pm4_split") == "true")
+      game_default("gow2_renderer_queries", "strict");
     //  - the upscalers' scene colour: Gears 3's lit scene is 10:10:10:2 UNORM (job 055), not 16-bit float as Gears 2's
     //    (the shared renderer's default, 1, would never find it).
     game_default("gow2_upscale_scene_formats", "2");

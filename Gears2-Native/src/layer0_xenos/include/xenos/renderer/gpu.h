@@ -379,6 +379,8 @@ struct BackendStats {
   // Patch 0068: warm-only pipelines (WarmPixelShader) built and released, failed, and the driver's ms for them.
   uint64_t pipelines_warmed = 0, pipelines_warm_failed = 0, pipelines_warm_loaded = 0;
   double pipeline_warm_ms = 0.0;
+  uint64_t cached_stage_prefetches = 0, cached_stage_restores = 0;
+  double cached_stage_restore_ms = 0.0;
   uint64_t sampler_heap_switches = 0;  // patch 0034: a full sampler heap swapped for a free one instead of waiting
   uint64_t sampler_table_hits = 0;                         // upl-n109: sampler sets found in the heap's cache
   uint64_t texture_table_hits = 0, texture_table_misses = 0;  // upl-n109: texture descriptor tables reused / written
@@ -448,6 +450,9 @@ class Backend {
   virtual bool SetWarmTemplate(const GraphicsPipelineDesc& d) { (void)d; return false; }
   virtual bool WarmPixelShader(std::vector<uint8_t>&& ps_bytecode, uint64_t source_hash = 0) { (void)ps_bytecode; (void)source_hash; return false; }
   virtual bool WarmVertexShader(std::vector<uint8_t>&& bytecode, uint64_t source_hash = 0) { (void)bytecode; (void)source_hash; return false; }
+  // Recording thread: restore a known cached stage on a background worker while
+  // the engine loads its asset, before a draw needs a new state combination.
+  virtual bool PrefetchShaderStage(ShaderHandle shader) { (void)shader; return false; }
   virtual uint64_t WarmJobsLeft() { return 0; }
   virtual void WaitWarmCapacity(uint64_t capacity) { (void)capacity; }
   virtual void ReleaseWarmupCache() {}

@@ -43,7 +43,9 @@ The stage-store mechanism uses the cached pipeline blobs supported by [Direct3D 
 
 A 60-second Gears 3 diagnostic launched `SP_Nightmare_P`. After its first 300 frames, 5,100 logged frames had a 12.644 ms 99th percentile, a 28.426 ms maximum, no frames over 50 ms and no skipped draws. A 1.522-second initial level-loading pause remained, attributed by the frame log to game CPU work. This is a short map/cinematic check, not proof that every campaign encounter is stutter-free.
 
-The prepared Gears 2 diagnostic launched `SP_Hospital_P` with normal whole-game startup enabled. After frame 1,200 it recorded 4,170 frames: 99th percentile 9.184 ms, maximum 9.409 ms, 0 frames over 50 ms, and 0 skipped draws. Initial level streaming and GPU waits are separate from shader preparation. The earlier startup-disabled diagnostic had CPU and texture-loading spikes while background package scanning was allowed, so it is not a normal-startup comparison.
+Correction from the subsequent stutter investigation: the Gears 2 diagnostic used ue3_launch, but Gears 2 requires gow2_launch. Its numbers below describe a title-screen check, not the requested hospital map. Do not treat them as campaign gameplay validation.
+
+The earlier Gears 2 diagnostic attempted to launch `SP_Hospital_P` with normal whole-game startup enabled. After frame 1,200 it recorded 4,170 frames: 99th percentile 9.184 ms, maximum 9.409 ms, 0 frames over 50 ms, and 0 skipped draws. Initial level streaming and GPU waits are separate from shader preparation. The earlier startup-disabled diagnostic had CPU and texture-loading spikes while background package scanning was allowed, so it is not a normal-startup comparison.
 
 Frame diagnostics now name slow presentation, submission, next-frame, texture-finalization, eviction and occlusion-result steps. Remaining engine asset loading, texture streaming, GPU scheduling or display stalls must be assessed from their own evidence. No claim is made that all CPU stalls or all blurry-to-sharp texture transitions are eliminated. The game's memory-limited texture pool was not raised further without evidence that it is safe.
 

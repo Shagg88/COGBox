@@ -412,10 +412,15 @@ class RenderPipe {
         for (int i = 0; i < kSpin && !queued_.load(std::memory_order_acquire); ++i) _mm_pause();
         std::unique_lock<std::mutex> lock(mutex_);
         if (queue_.empty()) {
+          lock.unlock();
+          const bool pending_gpu_results = XenosPollRendererIdle();
+          lock.lock();
           ++stats_.consumer_sleeps;
           consumer_sleeping_ = true;
-          cv_.wait(lock, [&] { return !queue_.empty(); });
+          if (pending_gpu_results) cv_.wait_for(lock, std::chrono::milliseconds(1), [&] { return !queue_.empty(); });
+          else cv_.wait(lock, [&] { return !queue_.empty(); });
           consumer_sleeping_ = false;
+          if (queue_.empty()) continue;
         }
         b = std::move(queue_.front());
         queue_.pop_front();
@@ -680,7 +685,13 @@ class Pm4Execute final : public DrawObserver {
             uint8_t* p = report ? memory->TranslatePhysical<uint8_t*>(report) : nullptr;
             auto answer = rex::graphics::ZpdAnswer::kNone;
             uint64_t samples = 0;
-            if (fake >= 0 && p) {
+            if (XenosRendererStrictQueries() && p) {
+              // Leave the end's pending marker intact until its actual GPU
+              // result arrives. Publishing a fake visible result here races the
+              // renderer and lets UE3 consume it before it can be corrected.
+              if (!is_end) std::memset(p, 0, 32);
+              answer = is_end ? rex::graphics::ZpdAnswer::kNone : rex::graphics::ZpdAnswer::kBegin;
+            } else if (fake >= 0 && p) {
               std::memset(p, 0, 32);
               if (is_end) {
                 const uint32_t v = uint32_t(fake);

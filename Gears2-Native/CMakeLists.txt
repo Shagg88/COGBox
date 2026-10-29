@@ -348,6 +348,7 @@ if(GN_BUILD_TESTS)
         tests/layer0_upscaler_test.cpp
         tests/layer0_shader_progress_test.cpp
         tests/layer0_shader_io_test.cpp
+        tests/layer0_resolve_reuse_test.cpp
         tests/layer2_config_bundle_test.cpp
         tests/layer2_shader_prebuild_test.cpp
         src/layer2_ue3/lzx.cpp

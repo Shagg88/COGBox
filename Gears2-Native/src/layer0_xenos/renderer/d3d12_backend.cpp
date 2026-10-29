@@ -332,6 +332,7 @@ struct PipelineJob {
   std::shared_ptr<const std::vector<uint8_t>> code[3];
   std::wstring library_name;  // saved pipelines: stored under this name once created (empty = library off)
   uint8_t priority = 0;       // patch 0057: which queue (PipelinePriority)
+  bool stage_prefetch = false;
 };
 // Patch 0057 (Canary pipeline_util.h CalculatePipelinePriority, refined): the order the workers take new pipelines.
 // 4 = writes colour target 0 and depth (opaque scene geometry: characters, walls, ground), 3 = writes colour target 0
@@ -2878,6 +2879,7 @@ class D3D12Backend final : public Backend {
   struct Shader {
     ShaderStage stage = ShaderStage::kVertex;
     std::shared_ptr<const std::vector<uint8_t>> code;  // patch 0058: shared with pipeline jobs
+    uint8_t prefetch_status = 0;  // recording-thread only: 0 unchecked, 1 unavailable, 2 cached
   };
   struct FencedAllocator {
     ID3D12CommandAllocator* allocator;
@@ -4269,6 +4271,10 @@ class D3D12Backend final : public Backend {
           PrioScope(int f, int t) : from(f), to(t) { if (to != from) SetThreadPriority(GetCurrentThread(), Win(to)); }
           ~PrioScope() { if (to != from) SetThreadPriority(GetCurrentThread(), Win(from)); }
         } prio_scope{base_prio, warm_prio};
+        if (job->stage_prefetch) {
+          SeedWarmStages(*job);
+          continue;
+        }
         const auto w0 = std::chrono::steady_clock::now();
         ID3D12PipelineState* warm = nullptr;
         HRESULT whr = E_FAIL;
@@ -4450,8 +4456,11 @@ class D3D12Backend final : public Backend {
         if (live_seeded_.count(name)) continue;
       }
       ID3D12PipelineState* stage = nullptr;
+      const auto restored_at = std::chrono::steady_clock::now();
       if (SUCCEEDED(LoadLibraryPipeline(name, pd, &stage, true))) {
         stage->Release();
+        stage_restores_.fetch_add(1, std::memory_order_relaxed);
+        stage_restore_us_.fetch_add(uint64_t(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now() - restored_at).count()), std::memory_order_relaxed);
         std::lock_guard<std::mutex> lock(job_mutex_);
         live_seeded_.insert(name);
       }
@@ -4540,8 +4549,10 @@ class D3D12Backend final : public Backend {
   std::atomic<bool> warm_library_valid_{false};
   std::atomic<uint64_t> warm_source_hits_{0};
   std::atomic<uint64_t> warm_save_failed_{0};
+  std::atomic<uint64_t> stage_prefetches_{0}, stage_restores_{0}, stage_restore_us_{0};
   std::mutex warm_lifecycle_mutex_;
   std::unordered_set<std::wstring> warm_success_names_, live_seeded_;
+  std::unordered_set<std::wstring> stage_prefetch_seen_;
   std::unordered_map<std::wstring, std::vector<cogbox::shader_cache::SourceKey>> warm_source_pending_;
   std::filesystem::path WarmLibraryPath() const { return options_.pipeline_library_path + ".prebuild"; }
   ID3D12PipelineLibrary1* warm_pipeline_library_ = nullptr;
@@ -4577,6 +4588,9 @@ class D3D12Backend final : public Backend {
     return q;
   }
   void RefreshWorkerStats() {  // patch 0057 (moved here by 0061: also for the prepare-only report)
+    stats_.cached_stage_prefetches = stage_prefetches_.load(std::memory_order_relaxed);
+    stats_.cached_stage_restores = stage_restores_.load(std::memory_order_relaxed);
+    stats_.cached_stage_restore_ms = double(stage_restore_us_.load(std::memory_order_relaxed)) / 1000.0;
     stats_.pipelines_stored = stored_pipelines_.load(std::memory_order_relaxed);
     stats_.pipelines_loaded_async = loaded_async_.load(std::memory_order_relaxed);
     stats_.pipelines_built_async = built_async_.load(std::memory_order_relaxed);
@@ -4714,6 +4728,38 @@ class D3D12Backend final : public Backend {
     job->code[1] = std::make_shared<const std::vector<uint8_t>>(std::move(ps_bytecode));
     job->desc.PS = {job->code[1]->data(), job->code[1]->size()};
     return QueueWarmPipeline(std::move(job), source_hash, false);
+  }
+  bool PrefetchShaderStage(ShaderHandle shader) override {
+    if (!warm_ready_.load(std::memory_order_acquire) || !shader || shader >= shaders_.size() || !shaders_[shader].code)
+      return false;
+    auto& source = shaders_[shader];
+    if (source.prefetch_status) return source.prefetch_status == 2;
+    source.prefetch_status = 1;
+    const bool vertex = shaders_[shader].stage == ShaderStage::kVertex;
+    if (!vertex && shaders_[shader].stage != ShaderStage::kPixel) return false;
+    auto job = std::make_unique<PipelineJob>();
+    auto pd = warm_pd_;
+    job->code[vertex ? 0 : 1] = shaders_[shader].code;
+    if (vertex) {
+      pd.VS = {job->code[0]->data(), job->code[0]->size()}; pd.PS = {}; pd.NumRenderTargets = 0;
+      for (auto& format : pd.RTVFormats) format = DXGI_FORMAT_UNKNOWN;
+    } else pd.PS = {job->code[1]->data(), job->code[1]->size()};
+    const auto name = PipelineLibraryName(pd);
+    if (!warm_sources_.HasPipeline(name)) return false;
+    source.prefetch_status = 2;
+    job->stage_prefetch = true;
+    {
+      std::lock_guard<std::mutex> lock(job_mutex_);
+      if (stop_workers_) return false;
+      if (live_seeded_.count(name) || stage_prefetch_seen_.count(name)) return true;
+      // Optional prefetch is bounded. A draw still restores any stage not queued here.
+      if (warm_jobs_.size() >= 256) return true;
+      stage_prefetch_seen_.insert(name);
+      stage_prefetches_.fetch_add(1, std::memory_order_relaxed);
+      warm_jobs_.push_front(std::move(job));
+    }
+    job_cv_.notify_one();
+    return true;
   }
   bool WarmVertexShader(std::vector<uint8_t>&& bytecode, uint64_t source_hash = 0) override {
     if (!warm_ready_.load(std::memory_order_acquire) || bytecode.empty()) return false;

@@ -78,6 +78,23 @@ struct SampleCounts {
 };
 static_assert(sizeof(SampleCounts) == kReportBytes, "report is 8 dwords");
 
+// Strict answers belong to this issuance, never to a cached result from an older
+// object which happened to reuse the same query-report address.
+class DeferredReports {
+ public:
+  uint64_t Issue(uint32_t address) { return issued_[address] = ++sequence_; }
+  bool Complete(uint32_t address, uint64_t sequence, uint8_t* report, uint64_t samples) {
+    const auto it = issued_.find(address);
+    if (it == issued_.end() || it->second != sequence || !SampleCounts::Read(report).Pending()) return false;
+    SampleCounts::WriteAnswer(report, samples, false);
+    issued_.erase(it);
+    return true;
+  }
+ private:
+  std::unordered_map<uint32_t, uint64_t> issued_;
+  uint64_t sequence_ = 0;
+};
+
 // Where one query's two reports are relative to each other, from the D3D library (layer 1). For XDK 7645 (Gears 2) the
 // end report sits 32 bytes before the begin report (notes/46 section 2: Issue 82978120 / the ZPD writer 82993080 / the
 // poll 829783A8). 0 = not known: the tracker then lists report addresses without pairing them.
