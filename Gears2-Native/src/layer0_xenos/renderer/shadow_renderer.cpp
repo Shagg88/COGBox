@@ -154,10 +154,21 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_slim, true, "Gears2",
                     "Patch 0060 (DXBC back end): smaller DXBC with the same values - ALU operands used in place, no "
                     "one-pass loop where nothing breaks out of it, branch-free pixel prologue. The driver's pipeline "
                     "build time grows with the DXBC size (job 355: 2.4 ms per KB on an RTX 3080 Ti)");
-REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_canary_maths, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_canary_maths, true, "Gears2",  // job 634: on (was off)
                     "Patch 0060 (DXBC back end): Canary's max / min (SM3 a >= b ? a : b) and result clamps (_sat) "
-                    "instead of the exact FTZ / total-order / NaN emulation - ~20% smaller DXBC; tiny value "
-                    "differences at -0 / NaN / denormals, as in Canary");
+                    "instead of the exact FTZ / total-order / NaN emulation - ~17% smaller DXBC. Job 634 ran both forms "
+                    "of all 3,423 shaders of a Judgment run on the same inputs: the same values everywhere but a "
+                    "denormal passed through instead of flushed (0x00000001 for 0) in 7 vertex shaders");
+REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_affine, true, "Gears2",
+                    "Job 634 (DXBC back end, with --gow2_renderer_tex_post_constants): the texture-fetch "
+                    "post-processing as multiply-adds and selects on per-slot constants the renderer works out from the "
+                    "fetch constant - ~45 instructions a fetch instead of ~100 (the driver's pipeline build time grows "
+                    "with the DXBC size). The same values bit for bit (job 634: 367M CPU cases, and all 3,423 shaders "
+                    "of a Judgment run interpreted on the same inputs). false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_mul_min_abs, true, "Gears2",
+                    "Job 634 (DXBC back end): the legacy multiply's zero rule (0 * anything = 0) in four instructions "
+                    "(min(|x|, |y|) != 0) instead of five - the same bits (9M operand pairs, and all 3,423 shaders of "
+                    "a Judgment run interpreted). false = as before");
 REXCVAR_DEFINE_INT32(gow2_renderer_dxbc_salt, 0, "Gears2",
                     "Patch 0063, TEST ONLY (first-visit measurements): non-zero = every DXBC shader carries one dead "
                     "instruction with this value, so its bytes - and the graphics driver's own cache key - are new and "
@@ -1266,6 +1277,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     tex_post_constants_ = REXCVAR_GET(gow2_renderer_tex_num_format) && REXCVAR_GET(gow2_renderer_tex_post_constants);
     tex_sign_swizzle_ = REXCVAR_GET(gow2_renderer_tex_sign_swizzle);
     cache_->SetTexPostConstants(tex_post_constants_);  // patch 0105
+    tex_post_affine_ = tex_post_constants_ && REXCVAR_GET(gow2_renderer_tex_post_affine);  // job 634
+    cache_->SetTexPostAffine(tex_post_affine_);
+    cache_->SetMulMinAbs(REXCVAR_GET(gow2_renderer_dxbc_mul_min_abs));  // job 634
     cache_->SetVertexIndexClamp(REXCVAR_GET(gow2_renderer_vertex_index_clamp));  // patch 0028
     {
       const std::string be = REXCVAR_GET(gow2_renderer_shader_backend);
@@ -5962,9 +5976,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       UploadVertexData(r, *psg);
     textures_part.Switch(kPartConstants);
     if (d.ps)
-      backend_->SetConstantsBoth(gpu::kCbFetch, fetch_, FetchUploadBytes());
+      backend_->SetConstantsBoth(gpu::kCbFetch, fetch_,
+                                 FetchUploadBytes(vsg.texture_slots | (needs_ps && psg ? psg->texture_slots : 0u)));
     else
-      backend_->SetConstants(gpu::ShaderStage::kVertex, gpu::kCbFetch, fetch_, FetchUploadBytes());
+      backend_->SetConstants(gpu::ShaderStage::kVertex, gpu::kCbFetch, fetch_, FetchUploadBytes(vsg.texture_slots));
 
     // Indices.
     textures_part.Switch(kPartIndex);
@@ -7144,7 +7159,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     std::memcpy(fetch_, &r[kRegFetchConst], 192 * 4);
     UploadVertexData(r, vsg);
-    backend_->SetConstants(gpu::ShaderStage::kVertex, gpu::kCbFetch, fetch_, FetchUploadBytes());
+    backend_->SetConstants(gpu::ShaderStage::kVertex, gpu::kCbFetch, fetch_, FetchUploadBytes(vsg.texture_slots));
     bool indexed = false;
     indices_.clear();
     index_ptr_ = &indices_;
@@ -9268,13 +9283,32 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t submit_draws_ = 0, draws_since_submit_ = 0;  // patch 0138
   uint64_t early_prev_ = 0;  // patch 0138
   bool use_textures_ = true, upload_watch_ = true, vertex_direct_ = true, float_constants_trim_ = true;
-  uint32_t fetch_[256] = {};  // this draw's fetch constants as the shaders see them (vertex_direct_ rewrites some)
+  // this draw's fetch constants as the shaders see them (vertex_direct_ rewrites some), then the texture post-processing
+  // constants (patch 0105: 2 dwords per slot; job 634 tex_post_affine: kTexPostAffineVectors vectors per slot)
+  uint32_t fetch_[192 + 32 * xenos::hlsl::kTexPostAffineVectors * 4] = {};
   // Patch 0105: with --gow2_renderer_tex_post_constants, fetch_[192 + 2k] / [193 + 2k] = TexPostConstants of slot k.
   bool tex_post_constants_ = false, tex_sign_swizzle_ = false;
-  uint32_t FetchUploadBytes() {
+  bool tex_post_affine_ = false;  // job 634
+  uint32_t affine_key_[32][6] = {};  // job 634: the fetch dwords each slot's affine constants were worked out from
+  bool affine_valid_[32] = {};
+  // slots: the fetch slots the draw's shaders read (GuestShader::texture_slots) - job 634 works out and uploads the
+  // affine constants only up to the highest one (8 vectors a slot; most draws use the first few).
+  uint32_t FetchUploadBytes(uint32_t slots = ~0u) {
     if (!tex_post_constants_) return 192 * 4;
-    for (uint32_t k = 0; k < 32; ++k) xenos::hlsl::TexPostConstants(&fetch_[6 * k], tex_sign_swizzle_, &fetch_[192 + 2 * k]);
-    return 256 * 4;
+    if (!tex_post_affine_) {
+      for (uint32_t k = 0; k < 32; ++k) xenos::hlsl::TexPostConstants(&fetch_[6 * k], tex_sign_swizzle_, &fetch_[192 + 2 * k]);
+      return 256 * 4;
+    }
+    if (!slots) return 192 * 4;
+    constexpr uint32_t kDw = xenos::hlsl::kTexPostAffineVectors * 4;
+    const uint32_t top = 31u - uint32_t(std::countl_zero(slots));
+    for (uint32_t k = 0; k <= top; ++k) {
+      if (affine_valid_[k] && std::memcmp(affine_key_[k], &fetch_[6 * k], 24) == 0) continue;
+      std::memcpy(affine_key_[k], &fetch_[6 * k], 24);
+      affine_valid_[k] = true;
+      xenos::hlsl::TexPostAffine(&fetch_[6 * k], tex_sign_swizzle_, &fetch_[192 + kDw * k]);
+    }
+    return (192 + kDw * (top + 1)) * 4;
   }
   RunScratch depth_runs_, colour_runs_;  // BuildRuns scratch (PrepareDepthTarget / PrepareColourTarget)
   bool lookahead_shaders_ = true;  // patch 0051

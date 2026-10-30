@@ -184,6 +184,8 @@ class ShaderCache {
   static void SetSpirvFiles(const std::string& dump_dir, const std::string& override_dir);  // patch 0099
   void SetTexNumFormat(bool on) { tex_num_format_ = on; }  // patch 0040
   void SetTexPostConstants(bool on) { tex_post_constants_ = on; }  // patch 0105
+  void SetTexPostAffine(bool on) { tex_post_affine_ = on; }        // job 634
+  void SetMulMinAbs(bool on) { mul_min_abs_ = on; }                // job 634
   void SetVertexIndexClamp(bool on) { vertex_index_clamp_ = on; }    // patch 0028
   // --gow2_renderer_shader_backend=dxbc: guest shaders are translated straight to DXBC (D3D12 only). Set once,
   // before the first Get.
@@ -248,6 +250,7 @@ class ShaderCache {
   bool ps_refactoring_ = false;  // patch 0095
   bool tex_num_format_ = false;  // patch 0040
   bool tex_post_constants_ = false;  // patch 0105
+  bool tex_post_affine_ = false, mul_min_abs_ = false;  // job 634
   bool vertex_index_clamp_ = false;   // patch 0028
   bool dxbc_ = false;
   bool dxbc_slim_ = false, dxbc_canary_maths_ = false;  // patch 0060

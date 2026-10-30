@@ -878,6 +878,8 @@ hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_qu
   options.ps_refactoring_allowed = ps_refactoring_;       // patch 0095
   options.tex_num_format = tex_num_format_;  // patch 0040
   options.tex_post_constants = tex_post_constants_;  // patch 0105
+  options.tex_post_affine = tex_post_affine_;        // job 634
+  options.dxbc_mul_min_abs = mul_min_abs_;           // job 634
   options.vertex_index_clamp = vertex_index_clamp_;    // patch 0028
   options.dxbc_direct_operands = options.dxbc_loop_only_if_needed = options.dxbc_slim_prologue = dxbc_slim_;  // 0060
   options.dxbc_canary_minmax = dxbc_canary_maths_;                                                           // 0060

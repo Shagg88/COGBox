@@ -107,6 +107,8 @@ constexpr uint32_t kOpBreakC = 3, kOpIShR = 42, kOpResInfo = 61, kOpSample = 69,
 
 // Constant buffer range IDs equal their registers (b0-b3).
 constexpr uint32_t kCbSystem = 0, kCbFloat = 1, kCbBoolLoop = 2, kCbFetch = 3;
+// Job 634: the tex_post_affine constants, after the 48 fetch-constant vectors (xenos::hlsl::TexPostAffine).
+constexpr uint32_t kTexAffineBase = 48, kTexAffineVec = xenos::hlsl::kTexPostAffineVectors;
 
 // Bits of float constants used as immediates.
 constexpr uint32_t kOneBits = 0x3F800000u;
@@ -278,8 +280,18 @@ struct Gen {
   // xe_mul / xe_mul1: the legacy product (+0 when either factor is +-0).
   void Mul(uint32_t d, const Src& x, const Src& y, uint32_t mask) {
     Scope sc(*this);
-    const uint32_t pr = Push(), z = Push(), z2 = Push();
+    const uint32_t pr = Push(), z = Push();
     a.OpMul(R(pr, mask), x, y);
+    if (opt.dxbc_mul_min_abs) {
+      // Job 634: four instructions instead of five - min(|x|, |y|) is 0 exactly when x or y is (a NaN factor gives the
+      // other one; both NaN gives NaN, which is not 0), and the product AND (that min != 0) is +0 or the product. The
+      // same bits as the eq / eq / or / movc form (checked on the CPU over 9M operand pairs, job 634).
+      a.OpMin(R(z, mask), x.Abs(), y.Abs());
+      a.OpNE(R(z, mask), S(z), LF(0.0f));
+      a.OpAnd(R(d, mask), S(pr), S(z));
+      return;
+    }
+    const uint32_t z2 = Push();
     a.OpEq(R(z, mask), x, LF(0.0f));
     a.OpEq(R(z2, mask), y, LF(0.0f));
     a.OpOr(R(z, mask), S(z), S(z2));
@@ -1398,8 +1410,62 @@ struct Gen {
     a.OpEndSwitch();
   }
 
+  // Job 634 (opt.tex_post_affine): xe_tex_post from per-slot constants the renderer works out from the fetch constant
+  // (xenos::hlsl::TexPostAffine - its layout is described there): every mode becomes a multiply-add with constants and a
+  // select per step, ~45 instructions a fetch instead of ~100 (the driver's pipeline build time follows the DXBC
+  // size). The same values bit for bit as the tex_post_constants path (checked on the CPU over 367M cases, job 634).
+  void TexPostAffine(uint32_t v, uint32_t slot) {
+    Scope sc(*this);
+    const uint32_t base = kTexAffineBase + slot * kTexAffineVec;
+    const uint32_t f = Push(), c = Push(), g = Push(), t = Push(), q = Push(), y = Push();
+    a.OpMov(R(f), Cb(kCbFetch, base));                     // the step masks of the four components
+    // Gamma (s == 3).
+    Degamma(g, S(v), kXYZW);
+    a.OpAnd(R(c), S(f), LU(1));
+    a.OpMovC(R(v), S(c), S(g), S(v));
+    // Unsigned biased (s == 2): (v * A1 + B1) / D1 - (v * (2h - 1) - h) / (h - 1), or v * 2 - 1 (A1 2, B1 -1, D1 1).
+    a.OpMul(R(t), S(v), Cb(kCbFetch, base + 1));
+    a.OpAdd(R(t), S(t), Cb(kCbFetch, base + 2));
+    a.OpDiv(R(t), S(t), Cb(kCbFetch, base + 3));
+    a.OpAnd(R(c), S(f), LU(2));
+    a.OpMovC(R(v), S(c), S(t), S(v));
+    // Fixed point, not integer: the point-sampled 4-6 bit decode n * (e + 1) / (e * e), n = round(v * (e - 1)), with
+    // P = e - 1 (step 16); then 16 fractional bits (step 32, sg == 0) or the clamp to -1 (step 64, sg == 2).
+    a.OpMul(R(q), S(v), Cb(kCbFetch, base + 6));
+    a.OpRoundNE(R(q), S(q));
+    a.OpAdd(R(t), Cb(kCbFetch, base + 6), LF(2.0f));       // e + 1
+    a.OpMul(R(q), S(q), S(t));
+    a.OpAdd(R(t), Cb(kCbFetch, base + 6), LF(1.0f));       // e
+    a.OpMul(R(t), S(t), S(t));                             // e * e
+    a.OpDiv(R(q), S(q), S(t));
+    a.OpAnd(R(c), S(f), LU(16));
+    a.OpMovC(R(q), S(c), S(q), S(v));
+    a.OpMul(R(y), S(q), LF(65536.0f));
+    a.OpRoundNE(R(y), S(y));
+    a.OpDiv(R(y), S(y), LF(65536.0f));
+    a.OpMax(R(t), S(v), LF(-1.0f));
+    a.OpAnd(R(c), S(f), LU(32));
+    a.OpMovC(R(v), S(c), S(y), S(v));
+    a.OpAnd(R(c), S(f), LU(64));
+    a.OpMovC(R(v), S(c), S(t), S(v));
+    // Integer num_format (step 4): v * A2 + B2, rounded when point sampled (step 8).
+    a.OpMul(R(t), S(v), Cb(kCbFetch, base + 4));
+    a.OpAdd(R(t), S(t), Cb(kCbFetch, base + 5));
+    a.OpRoundNE(R(q), S(t));
+    a.OpAnd(R(c), S(f), LU(8));
+    a.OpMovC(R(t), S(c), S(q), S(t));
+    a.OpAnd(R(c), S(f), LU(4));
+    a.OpMovC(R(v), S(c), S(t), S(v));
+    // Exponent adjust: 2^((int(dw3 << 13)) >> 26).
+    a.OpMul(R(v), S(v), Cb(kCbFetch, base + 7));
+  }
+
   // xe_tex_post(v, slot) in place on temp v.
   void TexPost(uint32_t v, uint32_t slot) {
+    if (opt.tex_post_affine && opt.tex_num_format && opt.tex_post_constants) {  // job 634
+      TexPostAffine(v, slot);
+      return;
+    }
     Scope sc(*this);
     const uint32_t D = Push(), sw = Push(), s = Push(), t = Push(), u = Push(), c = Push();
     const bool tpc = opt.tex_num_format && opt.tex_post_constants;  // patch 0105
@@ -2786,7 +2852,10 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
                         g.constants_relative ? dx::ConstantBufferAccessPattern::kDynamicIndexed
                                              : dx::ConstantBufferAccessPattern::kImmediateIndexed);
   d.OpDclConstantBuffer(Src::CB(Src::Dcl, kCbBoolLoop, 2, 2), 10);
-  d.OpDclConstantBuffer(Src::CB(Src::Dcl, kCbFetch, 3, 3), options.tex_num_format && options.tex_post_constants ? 64 : 48);  // 0105: + 32 slots x 2 dwords
+  d.OpDclConstantBuffer(Src::CB(Src::Dcl, kCbFetch, 3, 3),
+                       !(options.tex_num_format && options.tex_post_constants) ? 48
+                       : options.tex_post_affine ? kTexAffineBase + 32 * kTexAffineVec  // job 634
+                                                 : 64);  // 0105: + 32 slots x 2 dwords
   for (uint32_t i = 0; i < g.samplers.size(); ++i)
     d.OpDclSampler(Src::S(Src::Dcl, i, g.samplers[i], g.samplers[i]));
   for (uint32_t i = 0; i < g.srvs.size(); ++i) {
@@ -3079,6 +3148,58 @@ void TexPostConstants(const uint32_t* f, bool sign_by_swizzle, uint32_t out[2]) 
     const uint32_t wd = car ? w : 0;
     out[0] |= (s[c] | sg << 2) << (4 * c);
     out[1] |= wd << (8 * c);
+  }
+}
+
+// Job 634: the tex_post_affine constants of one slot (dxbc_gen TexPostAffine), from TexPostConstants' two dwords.
+void TexPostAffine(const uint32_t* f, bool sign_by_swizzle, uint32_t out[kTexPostAffineVectors * 4]) {
+  uint32_t D[2];
+  TexPostConstants(f, sign_by_swizzle, D);
+  const bool fixed = (D[0] >> 16) & 1, integer = (D[0] >> 17) & 1, pt = (D[0] >> 18) & 1;
+  const int32_t k = int32_t(f[3] << 13) >> 26;
+  const float m = std::ldexp(1.0f, k);
+  auto put = [&](uint32_t vec, uint32_t c, float x) { std::memcpy(&out[vec * 4 + c], &x, 4); };
+  for (uint32_t c = 0; c < 4; ++c) {
+    const uint32_t s = (D[0] >> (4 * c)) & 3, sg = (D[0] >> (4 * c + 2)) & 3, wd = (D[1] >> (8 * c)) & 255;
+    uint32_t fl = 0;
+    float a1 = 2.0f, b1 = -1.0f, d1 = 1.0f, a2 = 1.0f, b2 = 0.0f, p = 1.0f;
+    if (s == 3) fl |= 1;
+    if (s == 2) {
+      fl |= 2;
+      if (wd >= 2) {  // the same float operations as the per-pixel form, so the same values
+        const float h = float(1u << (wd - 1));
+        a1 = h * 2.0f - 1.0f;
+        b1 = -h;
+        d1 = h - 1.0f;
+      }
+    }
+    if (fixed && !integer) {
+      if (sg == 0) {
+        fl |= 32;
+        if (wd) {
+          fl |= 16;
+          p = float(1u << wd) - 1.0f;
+        }
+      }
+      if (sg == 2) fl |= 64;
+    }
+    if (fixed && integer) {
+      fl |= 4;
+      if (pt) fl |= 8;
+      uint32_t w = wd ? wd : 1;
+      if (sg == 1 || sg == 2) w -= 1;
+      const float h = float((1u << (w & 31)) - 1u);
+      a2 = std::max(h, 0.5f);
+      b2 = std::min(h, 0.5f) - 0.5f;
+    }
+    out[c] = fl;
+    put(1, c, a1);
+    put(2, c, b1);
+    put(3, c, d1);
+    put(4, c, a2);
+    put(5, c, b2);
+    put(6, c, p);
+    put(7, c, m);
   }
 }
 }  // namespace xenos::hlsl

@@ -1364,7 +1364,9 @@ class VulkanBackend final : public Backend {
  private:
   // ---- stage V2: binding layout, shaders, pipelines, descriptors, passes ----
   static constexpr uint32_t kCbCount = 4;        // b0-b3 per stage
-  static constexpr uint32_t kCbRange = 4096;     // the window of each dynamic uniform buffer (b1 = 256 float4)
+  // The window of each dynamic uniform buffer (b1 = 256 float4; job 634: 8 KB - the fetch buffer with the
+  // tex_post_affine constants of all 32 slots is 4,864 bytes).
+  static constexpr uint32_t kCbRange = 8192;
   static constexpr uint32_t kViewBindings = 96;  // t0-t95
   static constexpr uint64_t kRingReserved = 4096;  // ring bytes [0, 4096): zeros, the unset constant buffers
 

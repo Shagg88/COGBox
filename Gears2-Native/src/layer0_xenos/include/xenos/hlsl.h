@@ -81,6 +81,11 @@ struct HlslOptions {
   // xenos::TexPostConstants) instead of being worked out per pixel (a 25-way format switch and ~40 integer ops per
   // fetch). Same results.
   bool tex_post_constants = false;
+  // Job 634 (DXBC back end, with tex_post_constants): the post-processing as multiply-adds and selects on per-slot
+  // constants (TexPostAffine below) - ~45 instructions a fetch instead of ~100, the same values bit for bit.
+  bool tex_post_affine = false;
+  // Job 634 (DXBC back end): the legacy multiply's zero rule as min(|x|, |y|) != 0 (four instructions, same bits).
+  bool dxbc_mul_min_abs = false;
 };
 
 // Patch 0105: the two dwords per fetch slot that tex_post_constants shaders read (fetch = the slot's 6 fetch-constant
@@ -88,6 +93,13 @@ struct HlslOptions {
 // 4c+2..4c+3 signed mode; bit 16 fixed, 17 integer, 18 point sampled. dw1: per component c bits 8c..8c+7 the fixed width
 // that carries (0 = none).
 void TexPostConstants(const uint32_t* fetch, bool sign_by_swizzle, uint32_t out[2]);
+// Job 634 (tex_post_affine): kTexPostAffineVectors float4s per fetch slot, after the 48 fetch-constant vectors (slot k
+// at vector 48 + 8k). Vector 0: per component the steps as bits - 1 gamma, 2 unsigned biased, 4 integer, 8 integer
+// rounding (point sampled), 16 point-sampled 4-6 bit decode, 32 16 fractional bits, 64 clamp to -1. Vectors 1-3: the
+// biased decode's A1, B1, D1 ((v * A1 + B1) / D1); 4-5: the integer A2, B2 (v * A2 + B2); 6: P (= e - 1 of the 4-6
+// bit decode); 7: the exponent adjust 2^k in every component.
+inline constexpr uint32_t kTexPostAffineVectors = 8;
+void TexPostAffine(const uint32_t* fetch, bool sign_by_swizzle, uint32_t out[kTexPostAffineVectors * 4]);
 
 // Smallest unread gap worth compacting (16 registers = 256 bytes, the constant-buffer upload granularity).
 inline constexpr uint32_t kCompactMinGap = 16;
