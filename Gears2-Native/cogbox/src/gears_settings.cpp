@@ -639,6 +639,8 @@ std::string Store::save_ini() const {
 }
 
 // ---- The command line (PS1 788-961) ---------------------------------------------------------------------------------
+PromptComposer g_prompt_composer = nullptr;   // job 661: set by keycaps.cpp
+
 std::vector<std::string> build_args(Game g, Version ver, const Settings& s, const Environment& env, std::vector<std::string>* notesOut) {
     const int gi = static_cast<int>(g);
     const bool isG3 = g == Game::Gears3, isGJ = g == Game::Judgment;
@@ -892,9 +894,25 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back(std::string("--") + k.cvar + "=" + v);
         }
         // Job 629 (GitHub #41): keyboard button prompts - our key caps drawn over the game's controller-button sheet.
-        // Made for the Gears layout, so only with the default keys (the player's own keys keep the controller prompts).
-        if (defaultKeys && !env.prompt_dir.empty() && cap_exe(env, "gow2_texture_overlay_dir"))
-            a.push_back("--gow2_texture_overlay_dir=" + q(env.prompt_dir));
+        // Job 661: drawn by the launcher at 4x for whatever keys are set (keycaps.cpp).
+        if (!env.prompt_dir.empty() && cap_exe(env, "gow2_texture_overlay_dir")) {
+            // Job 661 (Shagg 30 Oct: "make those prompts higher resolution"): the launcher draws the key caps itself, 4x the
+            // sheet's size and for the player's own keys too (job 660); without it, the shipped default-key overlays.
+            std::string dir;
+            if (g_prompt_composer) {
+                std::map<std::string, std::string> keys;
+                for (const KeyAction &k : key_actions()) {
+                    auto it = env.keys.find(k.cvar);
+                    keys[k.cvar] = it != env.keys.end() && !it->second.empty() ? it->second : k.def;
+                }
+                static const char* const kGameDir[] = { "gears2", "gears3", "judgment" };
+                dir = g_prompt_composer(env.prompt_dir, kGameDir[static_cast<int>(g) % 3], keys);
+                notes.push_back(dir.empty() ? "launcher: key caps could not be drawn - the shipped ones"
+                                            : "launcher: key caps drawn (4x) in " + dir);
+            }
+            if (dir.empty() && defaultKeys) dir = env.prompt_dir;
+            if (!dir.empty()) a.push_back("--gow2_texture_overlay_dir=" + q(dir));
+        }
         // 0.2.1 (quick win): move with WASD and the arrow keys alike; the arrows used to turn the camera (the mouse does)
         for (const char* m : { "keybind_lstick_up=W,Up", "keybind_lstick_down=S,Down", "keybind_lstick_left=A,Left", "keybind_lstick_right=D,Right",
                                "keybind_rstick_up=None", "keybind_rstick_down=None", "keybind_rstick_left=None", "keybind_rstick_right=None" })

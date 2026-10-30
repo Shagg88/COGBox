@@ -45,7 +45,9 @@ REXCVAR_DEFINE_STRING(gow2_texture_replace_dir, "", "Gears2",
 REXCVAR_DEFINE_STRING(gow2_texture_overlay_dir, "", "Gears2",
                       "Folder of texture overlays (job 629, keyboard button prompts): <hash16>.overlay = 'COGBOXOV', width, "
                       "height (two little-endian uint32) and width x height RGBA bytes drawn over that DXT5 texture on the "
-                      "player's own copy (alpha 0 keeps the game's pixel, 1 clears it, 2+ draws ours). Empty = off");
+                      "player's own copy (alpha 0 keeps the game's pixel, 1 clears it, 2+ draws ours). Job 661: an overlay 2-8 "
+                      "times the texture's size makes the host texture that much bigger (the game's texels upscaled, ours "
+                      "drawn at full detail). Empty = off");
 REXCVAR_DEFINE_STRING(gow2_texture_dump_dir, "", "Gears2",
                       "Developer (job 620; 628: any format): write each new 2D texture (one layer) of a size in "
                       "--gow2_texture_dump_sizes as <dir>/tex-<hash16>-f<fmt>-<w>x<h>.bin (level 0, host-format data: "
@@ -315,6 +317,64 @@ void ApplyOverlay(std::vector<uint8_t>& level_data, const std::vector<uint8_t>& 
     }
   static int logged = 0;
   if (level == 0 && logged++ < 8) REXLOG_INFO("gow2_texture_overlay: {:016X} ({}x{}) - our key caps drawn in", hash, lw, lh);
+}
+
+
+// Job 661 (Shagg 30 Oct: "make those prompts higher resolution. They look awful and blocky"): an overlay an integer
+// 2-8 times the guest texture's size (the same factor across and down) makes the host texture that much bigger.
+uint32_t OverlayScale(const std::vector<uint8_t>& ov, uint32_t w, uint32_t h) {
+  uint32_t ow = 0, oh = 0;
+  std::memcpy(&ow, ov.data(), 4);
+  std::memcpy(&oh, ov.data() + 4, 4);
+  if (w == 0 || h == 0 || ow % w || oh % h) return 1;
+  const uint32_t s = ow / w;
+  return s >= 2 && s <= 8 && oh / h == s ? s : 1;
+}
+
+// Job 661: one DXT5 level (host BC3 blocks in `src`, lw x lh texels, `row_bytes` apart) made `big_w` x `big_h`: the
+// game's texels upscaled (bilinear, edges clamped), then the overlay drawn in at that size when there is one (overlay
+// texel at x << level, as ApplyOverlay), re-encoded. `out` gets the rows of blocks, ((big_w + 3) / 4) * 16 bytes apart.
+void ScaleBc3Level(const std::vector<uint8_t>& src, uint32_t lw, uint32_t lh, uint32_t row_bytes, uint32_t big_w,
+                   uint32_t big_h, const std::vector<uint8_t>* ov, uint32_t level, std::vector<uint8_t>& out) {
+  const uint32_t bw = (lw + 3) / 4, bh = (lh + 3) / 4;
+  std::vector<uint8_t> img(size_t(bw) * 4 * bh * 4 * 4, 0);
+  const uint32_t iw = bw * 4;
+  uint8_t t[64];
+  for (uint32_t by = 0; by < bh; ++by)
+    for (uint32_t bx = 0; bx < bw; ++bx) {
+      if (size_t(by) * row_bytes + bx * 16 + 16 > src.size()) continue;
+      DecodeBc3(src.data() + size_t(by) * row_bytes + bx * 16, t);
+      for (uint32_t i = 0; i < 16; ++i) std::memcpy(&img[(size_t(by * 4 + (i >> 2)) * iw + bx * 4 + (i & 3)) * 4], t + 4 * i, 4);
+    }
+  uint32_t ow = 0, oh = 0;
+  const uint8_t* opx = nullptr;
+  if (ov) { std::memcpy(&ow, ov->data(), 4); std::memcpy(&oh, ov->data() + 4, 4); opx = ov->data() + 8; }
+  const uint32_t obw = (big_w + 3) / 4, obh = (big_h + 3) / 4;
+  out.assign(size_t(obw) * 16 * obh, 0);
+  const float fx = float(lw) / float(big_w), fy = float(lh) / float(big_h);
+  for (uint32_t by = 0; by < obh; ++by)
+    for (uint32_t bx = 0; bx < obw; ++bx) {
+      for (uint32_t i = 0; i < 16; ++i) {
+        const uint32_t x = std::min(bx * 4 + (i & 3), big_w - 1), y = std::min(by * 4 + (i >> 2), big_h - 1);
+        const float sx = std::clamp((float(x) + 0.5f) * fx - 0.5f, 0.0f, float(lw - 1));
+        const float sy = std::clamp((float(y) + 0.5f) * fy - 0.5f, 0.0f, float(lh - 1));
+        const uint32_t x0 = uint32_t(sx), y0 = uint32_t(sy), x1 = std::min(x0 + 1, lw - 1), y1 = std::min(y0 + 1, lh - 1);
+        const float ax = sx - float(x0), ay = sy - float(y0);
+        for (uint32_t ch = 0; ch < 4; ++ch) {
+          const float a = img[(size_t(y0) * iw + x0) * 4 + ch], b = img[(size_t(y0) * iw + x1) * 4 + ch];
+          const float c2 = img[(size_t(y1) * iw + x0) * 4 + ch], d = img[(size_t(y1) * iw + x1) * 4 + ch];
+          const float v = (a * (1 - ax) + b * ax) * (1 - ay) + (c2 * (1 - ax) + d * ax) * ay;
+          t[4 * i + ch] = uint8_t(std::clamp(v + 0.5f, 0.0f, 255.0f));
+        }
+        if (opx) {
+          const uint32_t ox = std::min(ow - 1, (x << level) + ((1u << level) >> 1)), oy = std::min(oh - 1, (y << level) + ((1u << level) >> 1));
+          const uint8_t* o = opx + (size_t(oy) * ow + ox) * 4;
+          if (o[3] == 1) { t[4 * i] = t[4 * i + 1] = t[4 * i + 2] = t[4 * i + 3] = 0; }
+          else if (o[3] >= 2) std::memcpy(t + 4 * i, o, 4);
+        }
+      }
+      stb_compress_dxt_block(out.data() + (size_t(by) * obw + bx) * 16, t, 1, STB_DXT_HIGHQUAL);
+    }
 }
 
 }  // namespace
@@ -1047,7 +1107,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     swap_dump = !g_swap.dump_dir.empty() && g_swap.Dumps(w, h) && g_swap.dump_count < 4000 &&
                 g_swap.dumped.insert(swap_hash).second;
   }
-  const bool swap_cpu = swap_replace || swap_dump || swap_overlay;
+  // job 661: a host texture made bigger for an overlay always reloads on the CPU path (the GPU loads write guest size)
+  const bool swap_cpu = swap_replace || swap_dump || swap_overlay || (e.texture && e.ov_scale > 1);
+  const uint32_t ov_scale = swap_overlay ? OverlayScale(*swap_overlay, w, h) : 1u;  // job 661
   // GPU path: raw 2D textures (one layer) in a format with typed UAV stores (D3D11-class hardware guarantees these).
   // Takeover T3: 24:8 depth textures (shadow maps, scene depth - resolve destinations) also load on the GPU, from the
   // guest-memory mirror where our resolves put them (codes 14/15: the CPU path's kDepthUnorm / kDepthFloat).
@@ -1081,8 +1143,8 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     td.dimension = host_kind == 1 ? gpu::TextureDimension::kCube
                    : host_3d      ? gpu::TextureDimension::k3D
                                   : gpu::TextureDimension::k2D;
-    td.width = w;
-    td.height = h;
+    td.width = w * ov_scale;   // job 661: x1 except for a texture with a bigger overlay
+    td.height = h * ov_scale;
     td.depth_or_layers = host_3d ? (gd == tx::Dimension::k3D ? d : layers) : (host_kind == 1 ? 6 : 1);
     td.mips = host_3d && gd != tx::Dimension::k3D ? 1 : mips;  // a stacked texture viewed as 3D: base level only
     td.format = hf.format;
@@ -1099,9 +1161,10 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     }
     e.format = hf.format;
     e.gpu_storage = gpu;
+    e.ov_scale = ov_scale;
     uint64_t bytes = 0;
     for (uint32_t m = 0; m < td.mips; ++m)
-      bytes += uint64_t(std::max(w >> m, 1u)) * std::max(h >> m, 1u) * td.depth_or_layers * hf.host_bytes /
+      bytes += uint64_t(std::max(td.width >> m, 1u)) * std::max(td.height >> m, 1u) * td.depth_or_layers * hf.host_bytes /
                (uint64_t(fb.block_width) * fb.block_height);
     e.host_bytes = bytes;
   }
@@ -1429,7 +1492,20 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         f.write(reinterpret_cast<const char*>(scratch_.data()), std::streamsize(scratch_.size()));
         ++g_swap.dump_count;
       }
-      if (swap_overlay && u == 0) ApplyOverlay(scratch_, *swap_overlay, level, lw, lh, row_bytes, swap_hash);  // job 629
+      uint32_t up_row_bytes = row_bytes, up_rows = host_h;  // job 661: a bigger host texture gets bigger levels
+      if (e.ov_scale > 1 && hf.block_compressed && bpb == 16 && !host_3d && u == 0) {
+        const uint32_t big_w = std::max((w * e.ov_scale) >> level, 1u), big_h = std::max((h * e.ov_scale) >> level, 1u);
+        std::vector<uint8_t> big;
+        ScaleBc3Level(scratch_, lw, lh, row_bytes, big_w, big_h, ov_scale == e.ov_scale ? swap_overlay : nullptr, level, big);
+        scratch_.swap(big);
+        up_row_bytes = ((big_w + 3) / 4) * 16;
+        up_rows = (big_h + 3) / 4;
+        static int logged_big = 0;
+        if (level == 0 && logged_big++ < 8)
+          REXLOG_INFO("gow2_texture_overlay: {:016X} ({}x{}) drawn at {}x{} - our key caps at full detail", swap_hash, w, h, big_w, big_h);
+      } else if (swap_overlay && u == 0) {
+        ApplyOverlay(scratch_, *swap_overlay, level, lw, lh, row_bytes, swap_hash);  // job 629
+      }
       if (swap_replace && u == 0) {  // job 620: this level from the replacement file, when its size matches
         std::vector<uint8_t> rep;
         if (g_swap.ReadLevel(swap_hash, level, rep) && rep.size() == scratch_.size()) {
@@ -1440,7 +1516,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       }
       {
         const auto up_t0 = std::chrono::steady_clock::now();
-        backend_.UploadTexture(e.texture, level, host_3d ? 0 : u, scratch_.data(), row_bytes, host_h, slices);
+        backend_.UploadTexture(e.texture, level, host_3d ? 0 : u, scratch_.data(), up_row_bytes, up_rows, slices);
         cpu_upload += PhaseMs(up_t0);  // job 299
       }
       stats_.upload_bytes += scratch_.size();

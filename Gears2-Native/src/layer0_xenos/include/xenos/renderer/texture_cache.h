@@ -186,6 +186,7 @@ class TextureCache {
     std::string failure;  // non-empty: this guest texture can't be represented (stand-in)
     bool dimension_mismatch = false;  // the failure is a fetch-dimension mismatch (zero view, see SetMismatchZero)
     bool gpu_storage = false;  // created with UAV access: loads go through the GPU untile
+    uint32_t ov_scale = 1;     // job 661: an overlay N times the guest size made the host texture N times bigger
     // GPU path: the page versions of [base] and [mip] last copied to the GPU's guest-memory mirror, so a reload copies
     // only the 4 KB pages written since (upl-n107).
     std::vector<uint32_t> copied_pages[2];

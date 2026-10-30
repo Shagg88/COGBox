@@ -159,6 +159,11 @@ private:
 // 0.2.0: the keyboard keys for keyboard-and-mouse play - each controller input, what it does in Gears, its default.
 struct KeyAction { const char *cvar; const char *pad; const char *what; const char *def; };
 const std::vector<KeyAction> &key_actions();
+// Job 661: draws the keyboard button prompts (key caps over each game's controller-button sheet, 4x the sheet's size) for
+// these keys (cvar -> "Key[,Key2]") into <promptDir>\hires-<game>; returns that folder or "" (keycaps.cpp sets it).
+using PromptComposer = std::string (*)(const std::string &promptDir, const std::string &game,
+                                       const std::map<std::string, std::string> &keys);
+extern PromptComposer g_prompt_composer;
 
 // PS1 788-961 (Play): the game's command-line arguments, in the PS1's order. `ver` is the chosen version (see
 // effective_version); `notes`, if given, gets the "launcher: ..." lines the PS1 adds to args.txt.
