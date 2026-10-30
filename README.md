@@ -231,6 +231,10 @@ Build a game: `<game folder>\tools\build.ps1` (Gears 2 TU6: `-Config Release -Tu
 
 COGBox and the ports' own code are under the **MIT licence** ([`LICENSE`](LICENSE)).
 
+**Using our code?** You're welcome to. If you use COGBox's code in your own project, please credit
+**"COGBox by Shagg"** and link to <https://github.com/Shagg88/COGBox> in your readme or credits. (The MIT licence
+already asks you to keep the copyright notice in copies of the code.)
+
 Also used, each under its own licence: Xenia / Canary / Edge (BSD-3), the rexglue SDK (BSD-style), FFmpeg (LGPL-2.1+,
 for the game movies), SDL3 (zlib), Dear ImGui (MIT), SMAA (MIT), xxHash (BSD-2), miniz (MIT), stb (MIT), the DirectX
 Shader Compiler, the Vulkan Headers, AMD FidelityFX and Anti-Lag 2, NVIDIA DLSS and Reflex, Intel XeSS, and the
