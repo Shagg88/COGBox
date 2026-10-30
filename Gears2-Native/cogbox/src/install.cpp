@@ -176,7 +176,8 @@ static void worker(App *ap)
     const GameDef &d = game_def(p.game);
     std::string file = join(p.finalDir, p.update ? "default.xexp" : "default.xex");
     std::string h = x360fs::sha1_file(widen(file));
-    bool match = p.update ? h == d.xexp.sha1 : xex_is_tested(d, h, x360fs::xex_code_sha1(widen(file)));   // job 647
+    const std::string code = x360fs::xex_code_sha1(widen(file));   // jobs 647 / 648: region discs and their updates
+    bool match = p.update ? xexp_is_tested(d, h, code) : xex_is_tested(d, h, code);
     std::lock_guard<std::mutex> l(j.m);
     // Shagg 29 Oct: a version or update COGBox wasn't made for is added with a warning, never refused.
     if (p.update)

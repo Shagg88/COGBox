@@ -86,3 +86,4 @@ void game_set_update(Ini &ini, int g, const std::string &updateDir);
 std::string cached_sha1(Ini &ini, const std::string &path);
 std::string cached_code_sha1(Ini &ini, const std::string &path);   // job 647
 bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code);
+bool xexp_is_tested(const GameDef &d, const std::string &full, const std::string &code);   // job 648
