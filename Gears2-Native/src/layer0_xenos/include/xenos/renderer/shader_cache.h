@@ -189,7 +189,8 @@ class ShaderCache {
   // Job 636: the leaner DXBC forms (xenos::hlsl::HlslOptions dxbc_structured_jumps ... dxbc_coalesce_moves).
   struct Lean {
     bool structured_jumps = false, mul_movc = false, short_r21 = false, short_swap = false, short_degamma = false,
-         coalesce_moves = false;
+         coalesce_moves = false, dead_stores = false;  // dead_stores: job 637
+    bool vertex_words = false, fold_modifiers = false, merge_movs = false;  // job 638
   };
   void SetLean(const Lean& l) { lean_ = l; }
   void SetVertexIndexClamp(bool on) { vertex_index_clamp_ = on; }    // patch 0028

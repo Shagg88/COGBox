@@ -886,6 +886,10 @@ hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_qu
   options.dxbc_short_swap = lean_.short_swap;
   options.dxbc_short_degamma = lean_.short_degamma;
   options.dxbc_coalesce_moves = lean_.coalesce_moves;
+  options.dxbc_dead_stores = lean_.dead_stores;  // job 637
+  options.dxbc_vertex_words_vector = lean_.vertex_words;  // job 638
+  options.dxbc_fold_modifiers = lean_.fold_modifiers;
+  options.dxbc_merge_movs = lean_.merge_movs;
   options.vertex_index_clamp = vertex_index_clamp_;    // patch 0028
   options.dxbc_direct_operands = options.dxbc_loop_only_if_needed = options.dxbc_slim_prologue = dxbc_slim_;  // 0060
   options.dxbc_canary_minmax = dxbc_canary_maths_;                                                           // 0060

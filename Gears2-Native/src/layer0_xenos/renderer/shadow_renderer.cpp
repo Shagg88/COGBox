@@ -186,6 +186,20 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_coalesce_moves, true, "Gears2",
                     "Job 636 (DXBC back end): an instruction into a scratch temp followed by its move to the destination "
                     "writes the destination itself when the temp is not read again (a pass on the finished code). "
                     "false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_dead_stores, true, "Gears2",
+                    "Job 637 (DXBC back end, with --gow2_renderer_dxbc_coalesce_moves): instructions whose temp result is "
+                    "never read (initial zeros overwritten before use, unused components) are dropped. Same outputs on "
+                    "all 3,423 shaders of a Judgment run (10 random input sets each). false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_vertex_words, true, "Gears2",
+                    "Job 638 (DXBC back end): a vertex fetch's words addressed, range-tested and byte-swapped together "
+                    "(one ring / memory choice per fetch). Same outputs (job 638). false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_fold_modifiers, true, "Gears2",
+                    "Job 638 (DXBC back end): an operand's abs / negate applied as it is read (no mov first). The same "
+                    "bits. false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_merge_movs, true, "Gears2",
+                    "Job 638 (DXBC back end, with --gow2_renderer_dxbc_coalesce_moves): consecutive one-component movs "
+                    "between two registers merged (then folded), a temp's mov onto itself dropped, and a copy of a copy "
+                    "read from the original. Same outputs (job 638). false = as before");
 REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_mul_min_abs, true, "Gears2",
                     "Job 634 (DXBC back end): the legacy multiply's zero rule (0 * anything = 0) in four instructions "
                     "(min(|x|, |y|) != 0) instead of five - the same bits (9M operand pairs, and all 3,423 shaders of "
@@ -1309,6 +1323,10 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       lean.short_swap = REXCVAR_GET(gow2_renderer_dxbc_short_swap);
       lean.short_degamma = REXCVAR_GET(gow2_renderer_dxbc_short_degamma);
       lean.coalesce_moves = REXCVAR_GET(gow2_renderer_dxbc_coalesce_moves);
+      lean.dead_stores = REXCVAR_GET(gow2_renderer_dxbc_dead_stores);  // job 637
+      lean.vertex_words = REXCVAR_GET(gow2_renderer_dxbc_vertex_words);  // job 638
+      lean.fold_modifiers = REXCVAR_GET(gow2_renderer_dxbc_fold_modifiers);
+      lean.merge_movs = REXCVAR_GET(gow2_renderer_dxbc_merge_movs);
       cache_->SetLean(lean);
     }
     cache_->SetVertexIndexClamp(REXCVAR_GET(gow2_renderer_vertex_index_clamp));  // patch 0028

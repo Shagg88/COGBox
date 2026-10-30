@@ -570,6 +570,21 @@ struct Gen {
   }
   // abs() / -() of an operand as the bit operations DXIL's fabs / fneg are: a `mov` with DXBC source modifiers may
   // flush a denormal on some implementations (vkd3d + lavapipe did: -|denormal| came out +0, not -0).
+  // Job 637 (opt.dxbc_fold_modifiers): the read and its abs / negate in one or two bit operations straight from the
+  // source (and / xor on the source itself) instead of a mov first - the same bits.
+  void ModifiedRead(uint32_t d, uint32_t mask, const Src& src, const Operand& op) {
+    if (!opt.dxbc_fold_modifiers || (!op.absolute && !op.negate)) {
+      a.OpMov(R(d, mask), src);
+      SignModifiers(d, mask, op);
+      return;
+    }
+    if (op.absolute) {
+      a.OpAnd(R(d, mask), src, LU(0x7FFFFFFFu));
+      if (op.negate) a.OpXOr(R(d, mask), S(d), LU(0x80000000u));
+    } else {
+      a.OpXOr(R(d, mask), src, LU(0x80000000u));
+    }
+  }
   void SignModifiers(uint32_t d, uint32_t mask, const Operand& op) {
     if (op.absolute) a.OpAnd(R(d, mask), S(d), LU(0x7FFFFFFFu));
     if (op.negate) a.OpXOr(R(d, mask), S(d), LU(0x80000000u));
@@ -598,14 +613,12 @@ struct Gen {
         rel = Push();
         RelRegIndex(rel, op.index);
       }
-      a.OpMov(R(d, mask), RegSrc(op.index, rel, swz));
-      SignModifiers(d, mask, op);
+      ModifiedRead(d, mask, RegSrc(op.index, rel, swz), op);
       return;
     }
     NoteConstant(op);
     if (op.addressing == Addressing::kAbsolute) {
-      a.OpMov(R(d, mask), Cb(kCbFloat, ConstantSlot(op.index), swz));
-      SignModifiers(d, mask, op);
+      ModifiedRead(d, mask, Cb(kCbFloat, ConstantSlot(op.index), swz), op);
       return;
     }
     // xe_c_read(index + a0 / aL): 0 outside [0, 256). The index is clamped before the read (a root constant buffer view
@@ -1376,11 +1389,48 @@ struct Gen {
         default: words = 1; break;
       }
       a.OpMov(R(vw), LU(0));
+      if (opt.dxbc_vertex_words_vector) {
+        // Job 637: the words of one fetch together - their addresses, the range test and the byte swap as vector
+        // instructions, the ring / memory choice once; only the loads stay per word. Each word is still 0 when out of
+        // range (loaded, then masked: a load outside the buffer reads 0 anyway) and swapped as before.
+        Scope ws(*this);
+        const uint32_t m = (1u << words) - 1u, t = Push(), r = Push(), u = Push();
+        const uint32_t o = uint32_t(f.offset);
+        a.OpIAdd(R(dw, m), S1(Misc(), 1), LU4(o, o + 1, o + 2, o + 3));
+        a.OpUShR(R(t, kX), S1(fc, 0), LU(2));                  // base
+        a.OpUBFE(R(t, kY), LU(24), LU(2), S1(fc, 1));          // size
+        a.OpUGE(R(r, m), S(dw), S1(t, 0));
+        a.OpIAdd(R(u, m), S(dw), -S1(t, 0));
+        a.OpULT(R(u, m), S(u), S1(t, 1));
+        a.OpAnd(R(r, m), S(r), S(u));
+        // ring = (fdw1 bit 31) && (fdw0 & 3) == 3
+        a.OpAnd(R(t, kZ), S1(fc, 0), LU(3));
+        a.OpIEq(R(t, kZ), S1(t, 2), LU(3));
+        a.OpAnd(R(t, kW), S1(fc, 1), LU(0x80000000u));
+        a.OpAnd(R(t, kZ), S1(t, 2), S1(t, 3));
+        a.OpIf(true, S1(t, 2));
+        for (uint32_t i = 0; i < words; ++i) {
+          a.OpIShL(R(u, kX), S1(dw, i), LU(2));
+          a.OpLdRaw(R(vw, 1u << i), S1(u, 0), Tex(97, SrvBinding::Kind::kRaw).Swizzle(Src::kXXXX));
+        }
+        a.OpElse();
+        for (uint32_t i = 0; i < words; ++i) {
+          a.OpAnd(R(u, kX), S1(dw, i), LU(0x07FFFFFFu));
+          a.OpIShL(R(u, kX), S1(u, 0), LU(2));
+          if (memexport_final) a.OpLdRaw(R(vw, 1u << i), S1(u, 0), Uav().Swizzle(Src::kXXXX));
+          else a.OpLdRaw(R(vw, 1u << i), S1(u, 0), Tex(96, SrvBinding::Kind::kRaw).Swizzle(Src::kXXXX));
+        }
+        a.OpEndIf();
+        a.OpMovC(R(vw, m), S(r), S(vw), LU(0));
+        a.OpAnd(R(t, kX), S1(fc, 1), LU(3));
+        Swap(vw, S(vw), S1(t, 0), m);
+      } else {
       for (uint32_t i = 0; i < words; ++i) {
         const uint32_t w = Push();
         a.OpIAdd(R(dw, kX), S1(Misc(), 1), LU(uint32_t(f.offset + int32_t(i))));
         VertexWord(w, dw, fc);
         a.OpMov(R(vw, 1u << i), S1(w, 0));
+      }
       }
       const bool sg = f.is_signed, nm = !f.is_integer, nz = f.signed_rf_mode;
       const Src wx = S1(vw, 0), wy = S1(vw, 1), wz = S1(vw, 2), ww = S1(vw, 3);
@@ -2749,15 +2799,37 @@ struct Gen {
 // the components I wrote of t is read again before it is overwritten (a forward scan; leaving the block through a loop
 // end, continue or break counts as read), I writes D.m itself and the mov goes. The same values: only who holds them.
 namespace coalesce {
-struct Op {
-  size_t at = 0, len = 0;     // whole operand tokens [at, at + len)
-  uint32_t type = 0, mask = 0xF, sel = 0, comps = 0, dim = 0;
-  bool mod = false, rel = false;
-  uint32_t index0 = 0;
-  uint32_t read_comps = 0xF;  // components a read of it can touch (from the swizzle / select)
+// A fixed-capacity list (no heap allocation: this pass runs on the drawing thread for every new shader).
+template <class T, size_t N>
+struct Small {
+  T a[N];  // left uninitialised: only [0, n) is ever read
+  size_t n = 0;
+  bool overflow = false;
+  void push_back(const T& x) {
+    if (n < N) a[n++] = x;
+    else overflow = true;
+  }
+  size_t size() const { return n; }
+  bool empty() const { return n == 0; }
+  const T& operator[](size_t i) const { return a[i]; }
+  T& back() { return a[n - 1]; }
+  const T* begin() const { return a; }
+  const T* end() const { return a + n; }
 };
-inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, std::vector<Op>* nested) {
+struct Op {  // no member defaults (cheap to hold in arrays): ParseOp sets every field
+  size_t at, len;       // whole operand tokens [at, at + len)
+  uint32_t type, mask, sel, comps, dim;
+  bool mod, rel;
+  uint32_t index0;
+  uint32_t read_comps;  // components a read of it can touch (from the swizzle / select)
+};
+inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, Small<Op, 4>* nested) {
   o.at = p;
+  o.len = 0;
+  o.mask = 0xF;
+  o.read_comps = 0xF;
+  o.mod = o.rel = false;
+  o.index0 = 0;
   const uint32_t t = c[p++];
   o.comps = t & 3;
   o.sel = (t >> 2) & 3;
@@ -2809,10 +2881,13 @@ struct Ins {
   size_t at = 0, len = 0, ops_at = 0;
   uint32_t op = 0;
   bool sat = false, ext = false;
-  std::vector<Op> ops, rel_ops;  // rel_ops: operands inside relative indices (always reads)
+  Small<Op, 8> ops;
+  Small<Op, 4> rel_ops;  // operands inside relative indices (always reads)
 };
 inline bool ParseIns(const std::vector<uint32_t>& c, size_t p, Ins& in) {
-  in = {};
+  in.ops.n = in.rel_ops.n = 0;
+  in.ops.overflow = in.rel_ops.overflow = false;
+  in.ops_at = 0;
   in.at = p;
   const uint32_t t = c[p];
   in.op = t & 0x7FF;
@@ -2833,7 +2908,7 @@ inline bool ParseIns(const std::vector<uint32_t>& c, size_t p, Ins& in) {
     q = ParseOp(c, q, o, &in.rel_ops);
     in.ops.push_back(o);
   }
-  return q == p + in.len;
+  return q == p + in.len && !in.ops.overflow && !in.rel_ops.overflow;
 }
 // Opcodes that write their first operand and work per component (or replicate one value): the ones I may be.
 inline bool PerComponent(uint32_t op) {
@@ -2866,14 +2941,160 @@ inline bool FlowOut(uint32_t op) {  // leaves the block backwards / sideways: en
 // components the swizzle can pick for the components the instruction writes (per-component ops) or all it names;
 // writes kill components for the rest of their block (an if / else part); after an endif the state from before the
 // if returns (a kill on one path only does not count). Leaving a loop or switch, continue or break: read.
+// Job 637: which instructions LiveAfter has to look at for a temp - those naming it (read, write or relative index)
+// and the flow-control ones - so a scan skips everything else (translation runs on the drawing thread).
+struct TouchIndex {
+  std::vector<std::vector<uint32_t>> by_temp;
+  std::vector<uint32_t> flow;
+  void Build(const std::vector<Ins>& v) {
+    by_temp.clear();
+    flow.clear();
+    for (uint32_t i = 0; i < uint32_t(v.size()); ++i) {
+      const Ins& in = v[i];
+      switch (in.op) {
+        case 31: case 18: case 21: case 48: case 76: case 22: case 23: case 7: case 8: case 2: case 3: case 6:
+        case 10: case 62:
+          flow.push_back(i);
+          break;
+        default: break;
+      }
+      auto note = [&](const Op& o) {
+        if (o.type != 0 || o.dim != 1) return;
+        if (o.index0 >= by_temp.size()) by_temp.resize(o.index0 + 1);
+        auto& l = by_temp[o.index0];
+        if (l.empty() || l.back() != i) l.push_back(i);
+      };
+      for (const Op& o : in.ops) note(o);
+      for (const Op& o : in.rel_ops) note(o);
+    }
+  }
+};
+inline thread_local const TouchIndex* g_touch = nullptr;
+inline bool LiveAfterScan(const std::vector<Ins>& v, const std::vector<uint32_t>& c, size_t k, uint32_t t, uint32_t live);
+// Job 637: backward liveness of every temp component after every instruction, for programs with no loop or switch
+// (all but a handful once forward jumps are if / else): at an endif both parts start from what is live after it, at
+// the if the two are joined (a component written on one path only stays live). With a loop or switch, the forward
+// scan above is used instead. Same answers where both apply, in one pass instead of one scan per question.
+struct Liveness {
+  bool ok = false;
+  uint32_t temps = 0;
+  std::vector<uint8_t> after;  // [instruction * temps + temp] = live components after it
+  uint8_t At(size_t i, uint32_t t) const { return t < temps ? after[i * temps + t] : 0; }
+  void Build(const std::vector<Ins>& v, const std::vector<uint32_t>& c) {
+    ok = false;
+    temps = 0;
+    for (const Ins& in : v) {
+      if (in.op == 48 || in.op == 76 || in.op == 22 || in.op == 23 || in.op == 7 || in.op == 2 || in.op == 3 ||
+          in.op == 6 || in.op == 10 || in.op == 4 || in.op == 5 || in.op == 44)
+        return;  // loops, switches, calls, labels: the forward scan
+      for (const Op& o : in.ops)
+        if (o.type == 0 && o.dim == 1) temps = std::max(temps, o.index0 + 1);
+      for (const Op& o : in.rel_ops)
+        if (o.type == 0 && o.dim == 1) temps = std::max(temps, o.index0 + 1);
+    }
+    after.assign(v.size() * size_t(temps), 0);
+    std::vector<uint8_t> live(temps, 0);
+    struct Frame {
+      std::vector<uint8_t> at_end, else_start;
+      bool has_else = false;
+    };
+    std::vector<Frame> frames;
+    for (size_t ii = v.size(); ii-- > 0;) {
+      const Ins& in = v[ii];
+      if (temps) std::memcpy(&after[ii * temps], live.data(), temps);
+      if (in.op == 53) continue;
+      if (in.op == 21) {  // endif: both parts start from here
+        frames.push_back({live, {}, false});
+        continue;
+      }
+      if (in.op == 18) {  // else: the else part is done; the then part starts again from the endif's state
+        if (frames.empty()) return;
+        frames.back().else_start = live;
+        frames.back().has_else = true;
+        live = frames.back().at_end;
+        continue;
+      }
+      if (in.op == 62) std::fill(live.begin(), live.end(), 0);  // ret: nothing after it runs
+      if (in.op == 31) {  // if: join the then part with the else part (or the path that skips the block)
+        if (frames.empty()) return;
+        const std::vector<uint8_t>& other = frames.back().has_else ? frames.back().else_start : frames.back().at_end;
+        for (uint32_t t = 0; t < temps; ++t) live[t] |= other[t];
+        frames.pop_back();
+      }
+      // Kills, then reads (the instruction reads its sources before it writes).
+      const uint32_t nd = DestCount(in.op);
+      for (uint32_t j = 0; j < nd && j < in.ops.size(); ++j) {
+        const Op& o = in.ops[j];
+        if (o.type == 0 && !o.rel && o.dim == 1 && o.index0 < temps) live[o.index0] &= uint8_t(~o.mask);
+      }
+      uint32_t dmask = 0xF;
+      if (nd == 1 && !in.ops.empty() && PerComponent(in.op) && in.op != 15 && in.op != 16 && in.op != 17)
+        dmask = in.ops[0].comps == 2 && in.ops[0].sel == 0 ? in.ops[0].mask : (in.ops[0].comps == 1 ? 1u : 0xFu);
+      for (const Op& o : in.rel_ops)
+        if (o.type == 0 && o.index0 < temps) live[o.index0] |= uint8_t(o.read_comps);
+      for (size_t j = nd; j < in.ops.size(); ++j) {
+        const Op& o = in.ops[j];
+        if (o.type != 0 || o.dim != 1 || o.index0 >= temps) continue;
+        if (o.rel) {
+          live[o.index0] = 0xF;
+          continue;
+        }
+        uint32_t rc = o.read_comps;
+        if (dmask != 0xF && o.comps == 2 && o.sel == 1) {
+          const uint32_t cd = (c[o.at] >> 4) & 0xFF;
+          rc = 0;
+          for (int q = 0; q < 4; ++q)
+            if ((dmask >> q) & 1) rc |= 1u << ((cd >> (2 * q)) & 3);
+        }
+        live[o.index0] |= uint8_t(rc);
+      }
+    }
+    ok = frames.empty();
+  }
+};
+inline thread_local const Liveness* g_live = nullptr;
 inline bool LiveAfter(const std::vector<Ins>& v, const std::vector<uint32_t>& c, size_t k, uint32_t t, uint32_t live) {
-  std::vector<uint32_t> st{live};       // live set per open block
-  std::vector<uint8_t> kind{0};          // 0 base, 1 if, 2 loop / switch
-  std::vector<uint32_t> at_if{live};     // the live set when the block opened (for else / endif)
-  for (size_t i = k + 1; i < v.size(); ++i) {
+  if (g_live && g_live->ok) return (g_live->At(k, t) & live) != 0;
+  return LiveAfterScan(v, c, k, t, live);
+}
+inline bool LiveAfterScan(const std::vector<Ins>& v, const std::vector<uint32_t>& c, size_t k, uint32_t t, uint32_t live) {
+  // Per open block: the live set, its kind (0 base, 1 if, 2 loop / switch, 3 the other part of an outer if) and the
+  // live set when it opened. Deeper than 32: say live (conservative).
+  struct Stack {
+    uint32_t v[33];
+    size_t n = 0;
+    bool push_back(uint32_t x) { if (n >= 33) return false; v[n++] = x; return true; }
+    void pop_back() { --n; }
+    uint32_t& back() { return v[n - 1]; }
+    size_t size() const { return n; }
+    uint32_t operator[](size_t i) const { return v[i]; }
+  } st, kind, at_if;
+  st.push_back(live);
+  kind.push_back(0);
+  at_if.push_back(live);
+  // The instructions to look at: those naming t and the flow-control ones, in order (all of them without an index).
+  static const std::vector<uint32_t> kNone;
+  const std::vector<uint32_t>& lt = g_touch && t < g_touch->by_temp.size() ? g_touch->by_temp[t] : kNone;
+  const std::vector<uint32_t>& lf = g_touch ? g_touch->flow : kNone;
+  size_t pt = g_touch ? size_t(std::upper_bound(lt.begin(), lt.end(), uint32_t(k)) - lt.begin()) : 0;
+  size_t pf = g_touch ? size_t(std::upper_bound(lf.begin(), lf.end(), uint32_t(k)) - lf.begin()) : 0;
+  size_t seq = k + 1;
+  for (;;) {
+    size_t i;
+    if (g_touch) {
+      const size_t a1 = pt < lt.size() ? lt[pt] : SIZE_MAX, b1 = pf < lf.size() ? lf[pf] : SIZE_MAX;
+      if (a1 == SIZE_MAX && b1 == SIZE_MAX) break;
+      i = std::min(a1, b1);
+      if (a1 == i) ++pt;
+      if (b1 == i) ++pf;
+    } else {
+      if (seq >= v.size()) break;
+      i = seq++;
+    }
     const Ins& in = v[i];
     if (in.op == 53) continue;
     uint32_t& L = st.back();
+    const uint32_t cur = L;  // a copy: pushing onto st below may move its storage (L would dangle)
     const uint32_t nd = DestCount(in.op);
     uint32_t dmask = 0xF;
     if (nd == 1 && !in.ops.empty() && PerComponent(in.op) && in.op != 15 && in.op != 16 && in.op != 17)
@@ -2895,15 +3116,23 @@ inline bool LiveAfter(const std::vector<Ins>& v, const std::vector<uint32_t>& c,
     }
     switch (in.op) {
       case 31:  // if
-        st.push_back(L);
+        if (!st.push_back(cur)) return true;
         kind.push_back(1);
-        at_if.push_back(L);
+        at_if.push_back(cur);
         continue;
       case 18:  // else: back to the state at the if
-        if (kind.back() == 1) st.back() = at_if.back();
+        if (kind.back() == 1) {
+          st.back() = at_if.back();
+        } else if (kind.back() != 3) {
+          // The else of an if that opened before the write: that part does not run after it - its writes must not
+          // count as kills (reads still count, conservatively) until the endif.
+          if (!st.push_back(cur)) return true;
+          kind.push_back(3);
+          at_if.push_back(cur);
+        }
         continue;
       case 21:  // endif
-        if (kind.size() > 1 && kind.back() == 1) {
+        if (kind.size() > 1 && (kind.back() == 1 || kind.back() == 3)) {
           st.pop_back();
           kind.pop_back();
           at_if.pop_back();
@@ -2911,9 +3140,9 @@ inline bool LiveAfter(const std::vector<Ins>& v, const std::vector<uint32_t>& c,
         }
         continue;
       case 48: case 76:  // loop, switch: inside, kills do not count afterwards and the code may repeat
-        st.push_back(L);
+        if (!st.push_back(cur)) return true;
         kind.push_back(2);
-        at_if.push_back(L);
+        at_if.push_back(cur);
         continue;
       case 22: case 23:  // endloop / endswitch
         if (kind.size() > 1 && kind.back() == 2) {
@@ -2941,22 +3170,167 @@ inline bool LiveAfter(const std::vector<Ins>& v, const std::vector<uint32_t>& c,
   }
   return false;  // the end of the shader: temps are not outputs
 }
-inline uint32_t Run(std::vector<uint32_t>& c) {
+// Job 637: consecutive single-component movs between the same two registers (`mov r2.x, r32.x` `mov r2.y, r32.y` ...)
+// as one masked mov with a swizzle, so the coalescing above can then fold it into the instruction that made r32. Only
+// plain temps / outputs with immediate indices and no modifiers; when source and destination are the same register,
+// only if each component reads itself (otherwise a later mov would read an updated component).
+inline uint32_t MergeComponentMovs(std::vector<uint32_t>& c) {
+  std::vector<Ins> v;
+  v.reserve(c.size() / 6);
+  for (size_t p = 0; p < c.size();) {
+    v.emplace_back();
+    if (!ParseIns(c, p, v.back())) return 0;
+    p += v.back().len;
+  }
+  auto simple = [&](const Ins& in, uint32_t& dmask, uint32_t& dtype, uint32_t& dreg, uint32_t& sreg, uint32_t& scomp) {
+    if (in.op != 54 || in.sat || in.ext || in.ops.size() != 2) return false;
+    const Op& d = in.ops[0];
+    const Op& sr = in.ops[1];
+    if (d.mod || d.rel || d.comps != 2 || d.sel != 0 || d.dim != 1 || (d.type != 0 && d.type != 2)) return false;
+    if (sr.mod || sr.rel || sr.type != 0 || sr.dim != 1 || sr.comps != 2) return false;
+    if (std::popcount(d.mask) != 1) return false;
+    const uint32_t dc = uint32_t(std::countr_zero(d.mask));
+    const uint32_t st = c[sr.at], sel = (st >> 2) & 3, cd = (st >> 4) & 0xFF;
+    if (sel == 2) scomp = cd & 3;
+    else if (sel == 1) scomp = (cd >> (2 * dc)) & 3;
+    else return false;
+    dmask = d.mask; dtype = d.type; dreg = d.index0; sreg = sr.index0;
+    return true;
+  };
+  std::vector<uint32_t> out;
+  out.reserve(c.size());
+  uint32_t merged = 0;
+  for (size_t i = 0; i < v.size();) {
+    uint32_t m0, t0, d0, s0, c0;
+    if (!simple(v[i], m0, t0, d0, s0, c0)) {
+      out.insert(out.end(), c.begin() + v[i].at, c.begin() + v[i].at + v[i].len);
+      ++i;
+      continue;
+    }
+    uint32_t mask = m0, sw[4] = {0, 1, 2, 3};
+    sw[std::countr_zero(m0)] = c0;
+    bool same = t0 == 0 && d0 == s0;
+    bool ok_same = !same || c0 == uint32_t(std::countr_zero(m0));
+    size_t j = i + 1;
+    while (j < v.size()) {
+      uint32_t m, t, d, sr, cc;
+      if (!simple(v[j], m, t, d, sr, cc) || t != t0 || d != d0 || sr != s0 || (m & mask)) break;
+      // A later mov must not read a component an earlier one of the group wrote (same register only).
+      if (same && cc != uint32_t(std::countr_zero(m))) break;
+      mask |= m;
+      sw[std::countr_zero(m)] = cc;
+      ++j;
+    }
+    if (j - i < 2 || !ok_same) {
+      out.insert(out.end(), c.begin() + v[i].at, c.begin() + v[i].at + v[i].len);
+      ++i;
+      continue;
+    }
+    // mov dst.mask, src.swizzle: opcode, the first mov's destination with the union mask, its source with the swizzle.
+    const Ins& f = v[i];
+    std::vector<uint32_t> ni(c.begin() + f.at, c.begin() + f.at + f.len);
+    const size_t dpos = f.ops[0].at - f.at, spos = f.ops[1].at - f.at;
+    ni[dpos] = (ni[dpos] & ~(0xFu << 4)) | (mask << 4);
+    uint32_t swz = 0;
+    for (int q = 0; q < 4; ++q) swz |= (((mask >> q) & 1) ? sw[q] : uint32_t(q)) << (2 * q);
+    ni[spos] = (ni[spos] & ~((3u << 2) | (0xFFu << 4))) | (1u << 2) | (swz << 4);
+    out.insert(out.end(), ni.begin(), ni.end());
+    merged += uint32_t(j - i - 1);
+    i = j;
+  }
+  c.swap(out);
+  return merged;
+}
+inline uint32_t Run(std::vector<uint32_t>& c, bool dead_stores) {
   uint32_t removed = 0;
-  for (int pass = 0; pass < 4; ++pass) {
+  for (int pass = 0; pass < 8; ++pass) {
     std::vector<Ins> v;
+    v.reserve(c.size() / 6);
     for (size_t p = 0; p < c.size();) {
-      Ins in;
-      if (!ParseIns(c, p, in)) return removed;  // something we don't parse: leave the code as it is
-      v.push_back(std::move(in));
+      v.emplace_back();
+      if (!ParseIns(c, p, v.back())) return removed;  // something we don't parse: leave the code as it is
       p += v.back().len;
     }
+    TouchIndex touch;  // job 637
+    touch.Build(v);
+    Liveness liveness;
+    liveness.Build(v, c);
+    struct LiveScope {
+      LiveScope(const Liveness* l) { g_live = l; }
+      ~LiveScope() { g_live = nullptr; }
+    } live_scope(&liveness);
+    struct TouchScope {
+      TouchScope(const TouchIndex* t) { g_touch = t; }
+      ~TouchScope() { g_touch = nullptr; }
+    } touch_scope(&touch);
     std::vector<uint32_t> out;
     out.reserve(c.size());
     uint32_t here = 0;
     for (size_t i = 0; i < v.size(); ++i) {
       const Ins& I = v[i];
       bool fused = false;
+      // Job 637: a mov of a temp onto itself with each component reading itself does nothing.
+      if (I.op == 54 && !I.sat && !I.ext && I.ops.size() == 2) {
+        const Op& d = I.ops[0];
+        const Op& sr = I.ops[1];
+        if (d.type == 0 && sr.type == 0 && !d.rel && !sr.rel && !d.mod && !sr.mod && d.dim == 1 && sr.dim == 1 &&
+            d.index0 == sr.index0 && d.comps == 2 && d.sel == 0 && sr.comps == 2) {
+          const uint32_t st = c[sr.at], sel = (st >> 2) & 3, cd = (st >> 4) & 0xFF;
+          bool ident = true;
+          for (int q = 0; q < 4; ++q) {
+            if (!((d.mask >> q) & 1)) continue;
+            const uint32_t from = sel == 1 ? (cd >> (2 * q)) & 3 : sel == 2 ? (cd & 3) : uint32_t(q);
+            if (from != uint32_t(q)) ident = false;
+          }
+          if (ident) {
+            ++here;
+            continue;
+          }
+        }
+      }
+      // Job 637: `mov t.m, s` then `mov D, t.swizzle` with t not read again: one `mov D, s.(composed swizzle)`.
+      if (i + 1 < v.size() && I.op == 54 && !I.sat && !I.ext && I.ops.size() == 2 && v[i + 1].op == 54 &&
+          !v[i + 1].sat && !v[i + 1].ext && v[i + 1].ops.size() == 2) {
+        const Ins& J = v[i + 1];
+        const Op& id = I.ops[0];
+        const Op& is = I.ops[1];
+        const Op& jd = J.ops[0];
+        const Op& js = J.ops[1];
+        const bool src_ok = !is.mod && !is.rel && (is.type == 0 || is.type == 8 || is.type == 1) && is.comps == 2;
+        if (src_ok && id.type == 0 && !id.rel && id.dim == 1 && id.comps == 2 && id.sel == 0 && !id.mod &&
+            js.type == 0 && !js.rel && js.dim == 1 && js.index0 == id.index0 && !js.mod && js.comps == 2 &&
+            !jd.mod && !jd.rel && jd.comps == 2 && jd.sel == 0 && (jd.type == 0 || jd.type == 2) && jd.dim == 1 &&
+            !(is.type == 0 && jd.type == 0 && is.index0 == jd.index0)) {
+          const uint32_t ist = c[is.at], isel = (ist >> 2) & 3, icd = (ist >> 4) & 0xFF;
+          const uint32_t jst = c[js.at], jsel = (jst >> 2) & 3, jcd = (jst >> 4) & 0xFF;
+          auto from_i = [&](uint32_t k) { return isel == 1 ? (icd >> (2 * k)) & 3 : isel == 2 ? (icd & 3) : k; };
+          bool ok = isel != 0 && jsel != 0;
+          uint32_t swz = 0;
+          for (uint32_t q = 0; q < 4 && ok; ++q) {
+            const uint32_t k = jsel == 1 ? (jcd >> (2 * q)) & 3 : (jcd & 3);  // the t component J's lane q reads
+            if ((jd.mask >> q) & 1) {
+              if (!((id.mask >> k) & 1)) ok = false;  // J reads a component I did not write
+              swz |= from_i(k) << (2 * q);
+            } else {
+              swz |= q << (2 * q);
+            }
+          }
+          if (ok && !LiveAfter(v, c, i + 1, id.index0, id.mask)) {
+            // J's opcode and destination, then I's source with the composed swizzle.
+            std::vector<uint32_t> ni;
+            ni.push_back(c[J.at]);
+            ni.insert(ni.end(), c.begin() + jd.at, c.begin() + jd.at + jd.len);
+            const size_t sp = ni.size();
+            ni.insert(ni.end(), c.begin() + is.at, c.begin() + is.at + is.len);
+            ni[sp] = (ni[sp] & ~((3u << 2) | (0xFFu << 4))) | (1u << 2) | (swz << 4);
+            ni[0] = (ni[0] & ~(0x7Fu << 24)) | (uint32_t(ni.size()) << 24);
+            out.insert(out.end(), ni.begin(), ni.end());
+            ++i;
+            ++here;
+            continue;
+          }
+        }
+      }
       if (i + 1 < v.size() && PerComponent(I.op) && !I.ext && !I.ops.empty()) {
         const Ins& J = v[i + 1];
         const Op& id = I.ops[0];
@@ -3000,7 +3374,19 @@ inline uint32_t Run(std::vector<uint32_t>& c) {
           }
         }
       }
-      if (!fused) out.insert(out.end(), c.begin() + I.at, c.begin() + I.at + I.len);
+      if (!fused) {
+        // Dead store (job 636): a side-effect-free instruction whose temp result is never read again (an initial
+        // zero overwritten before use, an unused component's maths) is dropped.
+        if (dead_stores && DestCount(I.op) == 1 && I.op != 77 && !I.ext && !I.ops.empty() && !I.sat) {
+          const Op& id = I.ops[0];
+          if (id.type == 0 && !id.rel && id.dim == 1 && id.comps == 2 && id.sel == 0 && id.mask &&
+              !LiveAfter(v, c, i, id.index0, id.mask)) {
+            ++here;
+            continue;
+          }
+        }
+        out.insert(out.end(), c.begin() + I.at, c.begin() + I.at + I.len);
+      }
     }
     c.swap(out);
     removed += here;
@@ -3250,7 +3636,13 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
     return out;
   }
   if (options.dxbc_coalesce_moves) {  // job 634
-    const uint32_t removed = coalesce::Run(g.code);
+    uint32_t removed = 0;
+    for (int round = 0; round < (options.dxbc_merge_movs ? 2 : 1); ++round) {  // job 637: merging opens new folds
+      const uint32_t merged = options.dxbc_merge_movs ? coalesce::MergeComponentMovs(g.code) : 0;
+      const uint32_t r = coalesce::Run(g.code, options.dxbc_dead_stores);
+      removed += merged + r;
+      if (!merged && round) break;
+    }
     g.stat.instruction_count -= std::min(g.stat.instruction_count, removed);
     if (g.stat.mov_instruction_count >= removed) g.stat.mov_instruction_count -= removed;
   }

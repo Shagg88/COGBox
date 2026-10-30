@@ -98,6 +98,14 @@ struct HlslOptions {
   // Job 634 (DXBC back end): an op into a scratch temp followed by its move to the destination writes the
   // destination directly when the temp is not read again (a peephole pass on the finished code).
   bool dxbc_coalesce_moves = false;
+  // Job 636 (with dxbc_coalesce_moves): drop instructions whose temp result is never read (dead stores).
+  bool dxbc_dead_stores = false;
+  // Job 637 (DXBC back end): a vertex fetch's words addressed, range-tested and swapped together.
+  bool dxbc_vertex_words_vector = false;
+  // Job 637 (DXBC back end): an operand's abs / negate applied while reading it (no mov first).
+  bool dxbc_fold_modifiers = false;
+  // Job 637 (with dxbc_coalesce_moves): consecutive one-component movs between two registers merged into one.
+  bool dxbc_merge_movs = false;
 };
 
 // Patch 0105: the two dwords per fetch slot that tex_post_constants shaders read (fetch = the slot's 6 fetch-constant
