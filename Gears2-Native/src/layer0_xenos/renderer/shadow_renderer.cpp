@@ -5256,6 +5256,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t edram_mode = Bits(r[rr::reg::RB_MODECONTROL], 0, 3);
     const rr::GuestShader* psg =
         ps_.dwords ? &cache_->Get(ps_hash, ps_.dwords, ps_.count, false) : nullptr;
+    if (rcp_on_ && ps_.dwords && ps_hash != rcp_last_ps_) MarkRecipeChapterHot(ps_hash);  // job 634
 
     // Patch 0025 (Canary render_target_cache.cc Update, 9da693480; Gears 3 review 01-g): a depth target at the same
     // guest EDRAM base as a colour target this draw writes is not bound - the colour target owns those tiles - unless
@@ -7533,6 +7534,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       for (uint64_t h : rcp_.chapters[c].triggers) rcp_triggers_[h].push_back(c);
     rcp_ch_found_.assign(rcp_.chapters.size(), 0);
     rcp_ch_on_.assign(rcp_.chapters.size(), 0);
+    rcp_ch_hot_.assign(rcp_.chapters.size(), 0);  // job 634
+    rcp_rec_hot_.assign(rcp_records_.size(), 0);
     rcp_vs_found_ = std::make_unique<std::atomic<uint8_t>[]>(std::max<size_t>(1, rcp_.vertex.size()));
     rcp_on_ = true;
     REXLOG_INFO("gow2_renderer: chapter recipe pack: {} pipelines in {} chapter lists, {} vertex shaders to rebuild, {} "
@@ -7647,6 +7650,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                                               : REXCVAR_GET(gow2_renderer_recipe_pack_jobs), 1, 64));
       bool backlog = false;
       size_t keep = 0;
+      if (rcp_hot_chapters_)  // job 634: the area being played first
+        std::stable_partition(rcp_waiting_.begin(), rcp_waiting_.end(), [&](uint32_t i) { return rcp_rec_hot_[i] != 0; });
       for (size_t k = 0; k < rcp_waiting_.size(); ++k) {
         if (cap_blocked) {  // 617: no job free - the rest waits for the next slice or frame, unscanned
           rcp_waiting_[keep++] = rcp_waiting_[k];
@@ -7738,11 +7743,35 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::vector<uint8_t> rcp_state_;      // 0 untouched, 1 to translate, 3 waiting, 2 done
   std::deque<uint32_t> rcp_need_;
   std::vector<uint32_t> rcp_waiting_;
+  // Job 634 (Shagg 20:03, "it didn't even make it below 5000"): the start-up reader finds nearly every chapter's
+  // marker shaders, so 16 lists started and the area being played waited behind the rest of the game. A chapter whose
+  // marker pixel shader the game itself DRAWS is "hot": its records are queued before every other list's, and the
+  // shader note counts only those while any are hot (the rest still build afterwards, in the background).
+  uint64_t rcp_last_ps_ = 0;
+  std::unordered_set<uint64_t> rcp_drawn_ps_;
+  std::vector<uint8_t> rcp_ch_hot_, rcp_rec_hot_;
+  uint64_t rcp_hot_chapters_ = 0;
+  void MarkRecipeChapterHot(uint64_t h) {
+    rcp_last_ps_ = h;
+    if (!rcp_drawn_ps_.insert(h).second) return;
+    const auto t = rcp_triggers_.find(h);
+    if (t == rcp_triggers_.end()) return;
+    for (uint32_t c : t->second) {
+      if (rcp_ch_hot_[c]) continue;
+      rcp_ch_hot_[c] = 1;
+      ++rcp_hot_chapters_;
+      if (!rcp_ch_on_[c]) StartRecipeChapter(c);
+      for (uint32_t i : rcp_.chapters[c].records) rcp_rec_hot_[i] = 1;
+      REXLOG_INFO("gow2_renderer: chapter recipe pack: list {} is being played (frame {}) - its {} records go first",
+                  rcp_.chapters[c].name, frame_, rcp_.chapters[c].records.size());
+    }
+  }
   uint64_t rcp_ready_left_ = 0;  // job 633: for the shader note
   uint64_t CountReadyRecipes() {
     uint64_t n = 0;
     for (const uint32_t i : rcp_waiting_) {
       if (rcp_state_[i] != 3) continue;
+      if (rcp_hot_chapters_ && !rcp_rec_hot_[i]) continue;  // job 634: only the area being played, while one is
       const PipelineRecord& r = rcp_records_[i];
       const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
       if (!vsg || !vsg->ready()) continue;
