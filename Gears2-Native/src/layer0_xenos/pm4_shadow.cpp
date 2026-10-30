@@ -487,7 +487,7 @@ class RenderPipe {
 
  private:
   void RunBlock(const Block& b) {
-    COGBOX_TRACY_SCOPE("Execute renderer batch");
+    COGBOX_TRACY_DETAIL_SCOPE("Execute renderer batch");
     RegisterFile& regs = Shadow();
     uint32_t c = 0;
     running_block_ = &b;  // patch 0051
@@ -883,7 +883,7 @@ void XenosNotifyGuestWrite() {
 }
 
 void XenosWaitGuestWrite(uint32_t seen, uint32_t timeout_ms) {
-  COGBOX_TRACY_SCOPE("Guest completion wait");
+  COGBOX_TRACY_DETAIL_SCOPE("Guest completion wait");
   if (g_guest_write_seq.load(std::memory_order_acquire) != seen) return;
   WaitOnAddress(&g_guest_write_seq, &seen, sizeof(seen), timeout_ms);  // returns early on any write; spurious wakes ok
 }

@@ -252,6 +252,7 @@ struct BackendOptions {
   // Null: our own device and queue.
   void* external_device = nullptr;
   void* external_queue = nullptr;
+  bool separate_present_queue = false;  // D3D12 experiment: private render queue, GPU-fenced SDK image handoff
   const VulkanExternal* vulkan_external = nullptr;  // notes/68 V3 (Vulkan backend only)
   // Command-list calls replayed by a recording thread (notes/52 section 10) instead of on the caller's thread.
   bool threaded_recording = false;
@@ -437,6 +438,11 @@ class Backend {
   // backend may retain its views/reference until the final GPU submission completes.
   virtual TextureHandle ImportTexture(void* native_resource, Format format, uint32_t state_now) = 0;
   virtual void ReleaseImport(TextureHandle texture, uint32_t final_state) = 0;
+  // Acquire an SDK-owned image before importing it, then submit its writes and
+  // make them visible on the presenter's queue before the refresh callback returns.
+  // The shared-queue path needs no acquire operation.
+  virtual bool AcquirePresenterImage() { return true; }
+  virtual bool SubmitPresenterImage() { Submit(); return !IsLost(); }
   // Notes/68 V3: our packed present words (an R32 uint texture: R, G, B in 10 bits each, as kPresentUnpackCs reads
   // them) drawn into someone else's image - the presenter's guest output, which can't be a storage image on Vulkan.
   // Recorded into the current command list (the caller submits). false = not supported / failed (D3D12: not used;

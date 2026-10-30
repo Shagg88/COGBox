@@ -1301,13 +1301,22 @@ class D3D12Backend final : public Backend {
     threaded_recording_ = options.threaded_recording;
     copies_.Start(options.copy_threads, &stats_);
     if (options.copy_threads) description_ += ", " + std::to_string(std::min<uint32_t>(options.copy_threads, 16)) + " copy threads";
-    if (options.external_queue) {  // Stage 5C-2: the presenter's direct queue (its work and ours stay in order)
+    if (options.external_queue && !options.separate_present_queue) {
       queue_ = static_cast<ID3D12CommandQueue*>(options.external_queue);
       queue_->AddRef();
       description_ += ", SHARED device and queue (the presenter's)";
     } else {
       D3D12_COMMAND_QUEUE_DESC qd{D3D12_COMMAND_LIST_TYPE_DIRECT, 0, D3D12_COMMAND_QUEUE_FLAG_NONE, 0};
       if (FAILED(hr = device_->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue_)))) { error = Hr("CreateCommandQueue", hr); return false; }
+      if (options.external_queue) {
+        presenter_queue_ = static_cast<ID3D12CommandQueue*>(options.external_queue);
+        presenter_queue_->AddRef();
+        if (FAILED(hr = device_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&presenter_fence_)))) {
+          error = Hr("CreateFence(presentation handoff)", hr);
+          return false;
+        }
+        description_ += ", separate render queue (GPU-fenced presentation)";
+      }
     }
     if (FAILED(hr = device_->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)))) { error = Hr("CreateFence", hr); return false; }
     fence_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -2945,6 +2954,27 @@ class D3D12Backend final : public Backend {
   void FlushCopies() override { copies_.Flush(); }
 
   uint64_t Submit() override { return SubmitImpl(true); }
+  bool AcquirePresenterImage() override {
+    if (!presenter_queue_) return !lost_;
+    COGBOX_TRACY_SCOPE("Acquire presenter image across queues");
+    // Submit earlier rendering before inserting the ownership wait. Query work
+    // must not be held behind the presentation dependency for the final image.
+    Submit();
+    if (lost_) return false;
+    const uint64_t value = ++presenter_fence_value_;
+    if (!CheckHandoff(presenter_queue_->Signal(presenter_fence_, value), "Signal(presenter acquire)")) return false;
+    return CheckHandoff(queue_->Wait(presenter_fence_, value), "Wait(presenter acquire)");
+  }
+  bool SubmitPresenterImage() override {
+    if (!presenter_queue_) { Submit(); return !lost_; }
+    COGBOX_TRACY_SCOPE("Submit presenter image across queues");
+    const uint64_t value = Submit();  // Drain ensures Execute + Signal have actually been issued.
+    if (lost_) return false;
+    if (!CheckHandoff(presenter_queue_->Wait(fence_, value), "Wait(presenter release)")) return false;
+    // Retire the external queue's reference to our fence before destroying it.
+    const uint64_t retired = ++presenter_fence_value_;
+    return CheckHandoff(presenter_queue_->Signal(presenter_fence_, retired), "Signal(presenter release)");
+  }
   uint64_t SubmitEarly() override {  // patch 0138
     ++stats_.early_submits;
     return SubmitImpl(false);
@@ -3092,6 +3122,13 @@ class D3D12Backend final : public Backend {
   const BackendStats& Stats() const override { return stats_; }
 
  private:
+  bool CheckHandoff(HRESULT hr, const char* operation) {
+    if (SUCCEEDED(hr)) return true;
+    lost_ = true;
+    lost_reason_ = Hr(operation, hr);
+    REXLOG_ERROR("gow2_renderer: {}", lost_reason_);
+    return false;
+  }
   bool stencil_ref_export_ = false;
   uint32_t wait_site_ = 0;  // which call site the current WaitForFence belongs to (0 = called by the renderer)
   struct Shader {
@@ -3196,6 +3233,10 @@ class D3D12Backend final : public Backend {
     if (fence_ && queue_ && !lost_) {
       if (list_open_) Submit();
       WaitForFence(last_submitted_);
+      if (presenter_fence_ && presenter_fence_->GetCompletedValue() < presenter_fence_value_) {
+        if (SUCCEEDED(presenter_fence_->SetEventOnCompletion(presenter_fence_value_, fence_event_)))
+          WaitForSingleObject(fence_event_, 10000);
+      }
     }
     proxy_.Stop();  // the recording thread is idle after the last Submit; nothing may reach it after this
     copies_.Stop();
@@ -3245,6 +3286,8 @@ class D3D12Backend final : public Backend {
     SafeRelease(graphics_root_);
     SafeRelease(compute_root_);
     SafeRelease(info_queue_);
+    SafeRelease(presenter_fence_);
+    SafeRelease(presenter_queue_);
     SafeRelease(fence_);
     SafeRelease(queue_);
     SafeRelease(device_);
@@ -4331,6 +4374,9 @@ class D3D12Backend final : public Backend {
   uint32_t info_messages_logged_ = 0;
   ID3D12CommandQueue* queue_ = nullptr;
   ID3D12Fence* fence_ = nullptr;
+  ID3D12CommandQueue* presenter_queue_ = nullptr;
+  ID3D12Fence* presenter_fence_ = nullptr;
+  uint64_t presenter_fence_value_ = 0;
   HANDLE fence_event_ = nullptr;
   HANDLE occ_event_ = nullptr;
   uint64_t occ_event_fence_ = 0;

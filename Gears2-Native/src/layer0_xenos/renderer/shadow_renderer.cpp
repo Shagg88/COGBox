@@ -658,6 +658,9 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_index_reuse, true, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_threaded_recording, true, "Gears2",
                     "Replay our D3D12 command-list calls on a recording thread instead of the GPU worker thread "
                     "(notes/52 section 10)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_separate_queue, false, "Gears2",
+                    "Experimental D3D12 render queue separate from SDK presentation, with GPU-fenced image ownership. "
+                    "Off by default; unavailable with frame generation. Restart required");
 REXCVAR_DEFINE_BOOL(gow2_renderer_gpu_upload, false, "Gears2",
                     "Use CPU-writable video memory for the D3D12 upload ring when supported; avoids repeated GPU "
                     "reads from system memory. Falls back to ordinary upload memory if unavailable");
@@ -1209,6 +1212,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       } else {
         options.external_device = provider->GetDevice();
         options.external_queue = provider->GetDirectQueue();
+        options.separate_present_queue = REXCVAR_GET(gow2_renderer_separate_queue) && !XenosFrameGenerationWanted();
         presenter_ = presenter;
         XenosLatencySetDevice(options.external_device);  // patch 0135: Reflex works on the presenting device
       }
@@ -3045,6 +3049,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 #endif
           auto& c = static_cast<rex::ui::d3d12::D3D12Presenter::D3D12GuestOutputRefreshContext&>(context);
           context.SetIs8bpc(table);  // as the SDK: 8bpc for the 256-entry table path without FXAA
+          if (!backend_->AcquirePresenterImage()) return false;
           const gpu::TextureHandle out = backend_->ImportTexture(
               c.resource_uav_capable(), gpu::Format::kR10G10B10A2Unorm,
               uint32_t(rex::ui::d3d12::D3D12Presenter::kGuestOutputInternalState));
@@ -3058,9 +3063,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           backend_->Dispatch(present_unpack_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
           backend_->ReleaseImport(out, uint32_t(rex::ui::d3d12::D3D12Presenter::kGuestOutputInternalState));
           if (fg_wanted_) FgHandOver(c.resource_uav_capable());  // patch 0147: before the Submit that carries the copies
-          backend_->Submit();
-          wrote = true;
-          return true;
+          wrote = backend_->SubmitPresenterImage();
+          return wrote;
         });
     if (refreshed && wrote) ++ours_stats_.presented; else ++ours_stats_.refresh_failed;
     const int check_every = REXCVAR_GET(gow2_present_check_every);

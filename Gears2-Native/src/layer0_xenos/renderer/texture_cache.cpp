@@ -862,7 +862,7 @@ void TextureCache::EndFrame(uint64_t frame) {
 }
 
 void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
-  COGBOX_TRACY_SCOPE("Load guest texture");
+  COGBOX_TRACY_DETAIL_SCOPE("Load guest texture");
   PhaseScope phase_load(g_phase.load);  // job 299
   ++g_phase.loads;
   const uint32_t format = Bits(tf[1], 0, 6), endian = Bits(tf[1], 6, 2);
