@@ -47,7 +47,10 @@ const char* const k_mapsGJ[18] = { "SP_00_Museum_P", "SP_01_University_P", "SP_0
     "SP_05_CourthouseBoss_P", "SPE_E1_P", "SPE_E2_P", "SPE_E2oilrig_P", "SPE_E3_P", "SPE_E3_Outro_P", "SPE_E4_P", "SPE_E5_P" };
 
 const char* const k_aaNames[5] = { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS" };   // PS1 150
-const int k_fpsCaps[4] = { 0, 60, 120, -1 };                                                 // PS1 159
+// Job 638 (Shagg: "90 144 165 and maybe 45 for the Steam Deck"): saved as "FrameCap", in order; the old "Fps" (30 /
+// 60 / 120 / Unlimited) is read once and moved over (Store::load_ini).
+const int k_fpsCaps[8] = { 0, 45, 60, 90, 120, 144, 165, -1 };                               // PS1 159
+const int k_fpsCapCount = 8;
 const char* const k_drawScale[3] = { "1", "1.5", "2" };                                      // PS1 163
 const char* const k_shakeValue[3] = { "", "*=0.5", "=0" };   // 0.2.0 (#12): the factor scales the shake - Less halves the game's own, Off is 0                                    // PS1 167
 const int k_poolMb[4] = { 0, -1, 256, 320 };                                                 // PS1 171
@@ -133,7 +136,8 @@ std::vector<Option> make_options(Game g) {
              "of it with frame generation), which keeps the extra input lag small. Off = frames are shown at once (lowest lag, "
              "may tear).", 344), "vsync");
     // Frame rate limit: no PS1 tooltip; text from 59-how-to-play ("The game itself asks for 30 fps").
-    add(choice("Fps", "Frame rate limit", Tab::Display, PG, { "30 (original)", "60", "120", "Unlimited" }, 0,
+    add(choice("FrameCap", "Frame rate limit", Tab::Display, PG,
+               { "30 (original)", "45", "60", "90", "120", "144", "165", "Unlimited" }, 0,
                "The game itself asks for 30 frames per second, as on the console. 60 / 120 lift the limit to that; Unlimited "
                "removes it. With V-Sync on, the limit stays just under your monitor's refresh rate.", 341), "", "", true);
     add(choice("FpsMode", "FPS counter", Tab::Display, OWN, { "Off", "Bar at the top", "Bar at the bottom", "Game's own (column)" }, 0,
@@ -416,7 +420,7 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
     }
     if (g == Game::Judgment && o.id == "FpsMode") return not_yet(2, "game's own counter") + " " + base;   // PS1 476
     if (g == Game::Judgment && o.id == "Players") return "Untested in Judgment. " + base;                 // PS1 477
-    if (g == Game::Judgment && o.id == "Fps")   // GitHub #38: as on Xenia Canary, unlimited can leave a loading screen endless
+    if (g == Game::Judgment && o.id == "FrameCap")   // GitHub #38: as on Xenia Canary, unlimited can leave a loading screen endless
         return base + "\nJudgment: Unlimited can leave the loading screen after some chapters (Monroe Commons) running for "
                       "ever. 60 is the recommended limit.";
     if (!a.why.empty()) return trim(a.why + " " + base);                                                  // PS1 415
@@ -439,12 +443,12 @@ void apply_preset(Settings& s, int p) {
     struct P { int res, fps, aa; bool aniso, tri, mip; int pool, draw; bool blur, dof, flare; int shake, fov; };
     static const P v[3] = {        // PS1 579-581
         { 0, 0, 0, false, false, false, 0, 0, true, true, true, 0, 100 },
-        { 1, 1, 1, true, true, true, 1, 1, true, true, true, 0, 100 },
-        { 4, 2, 1, true, true, true, 2, 2, true, true, true, 0, 100 },
+        { 1, 2, 1, true, true, true, 1, 1, true, true, true, 0, 100 },   // fps: FrameCap indices (2 = 60, 4 = 120)
+        { 4, 4, 1, true, true, true, 2, 2, true, true, true, 0, 100 },
     };
     const P& x = v[p];
     s.set("Preset", p);
-    s.set("Resolution", x.res); s.set("Fps", x.fps); s.set("AAMode", x.aa); s.set("Aniso", x.aniso);
+    s.set("Resolution", x.res); s.set("FrameCap", x.fps); s.set("AAMode", x.aa); s.set("Aniso", x.aniso);
     s.set("Trilinear", x.tri); s.set("MipFade", x.mip); s.set("Pool", x.pool); s.set("DrawDist", x.draw);
     s.set("MotionBlur", x.blur); s.set("DoF", x.dof); s.set("LensFlares", x.flare); s.set("Shake", x.shake); s.set("Fov", x.fov);
 }
@@ -534,6 +538,12 @@ void Store::commit(Game g, const Settings& s, const Environment& env) {   // PS1
     top["AA"] = s.i("AAMode") == 1 ? 1 : 0;   // PS1 764
 }
 
+// Job 638: the old "Fps" index (0 = 30, 1 = 60, 2 = 120, 3 = Unlimited) as a FrameCap index.
+static double old_fps_to_cap(double x) {
+    static const int map[4] = { 0, 2, 4, 7 };
+    return map[std::max(0, std::min(3, static_cast<int>(x)))];
+}
+
 bool Store::load_ini(const std::string& text) {
     reset();
     top["AAMode"] = -1; own[0]["FpsMode"] = -1; own[1]["FpsMode"] = -1;   // worked out again after reading
@@ -566,6 +576,11 @@ bool Store::load_ini(const std::string& text) {
         int gsec = section == "Gears2" ? 0 : section == "Gears3" ? 1 : section == "Judgment" ? 2 : -1;
         if (gsec < 0) {
             if (key == "Game") { last_game = std::max(0, std::min(2, static_cast<int>(x))); any = true; continue; }
+            if (key == "Fps") {   // job 638: the old 4-step frame rate limit (the shared value)
+                top["FrameCap"] = old_fps_to_cap(x);
+                any = true;
+                continue;
+            }
             bool done = false;
             for (const Legacy& l : legacy) if (key == l.key) { own[l.game][l.id] = x; done = true; }
             if (key == "AA" || key == "ShowFps" || key == "G3ShowFps") { top[key] = x; done = true; }
@@ -573,6 +588,11 @@ bool Store::load_ini(const std::string& text) {
             if (!done && o && o->scope != Scope::GameOwn) { top[key] = x; done = true; }
             any = any || done;
         } else {
+            if (key == "Fps") {   // job 638: the old 4-step frame rate limit of this game
+                per[gsec]["FrameCap"] = old_fps_to_cap(x);
+                any = true;
+                continue;
+            }
             const Option* o = find_option(static_cast<Game>(gsec), key);
             if (!o || o->scope == Scope::Shared) continue;
             if (o->scope == Scope::GameOwn) own[gsec][key] = x; else per[gsec][key] = x;
@@ -880,7 +900,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PS1 940-958 (launcher patches 0155 / 0158): frame rate; with vsync a cap at or above the refresh rate becomes 3
     // under it (half the refresh minus 2 with frame generation)
     {
-        const int fps = std::max(0, std::min(3, s.i("Fps")));
+        const int fps = std::max(0, std::min(k_fpsCapCount - 1, s.i("FrameCap")));
         int cap = k_fpsCaps[fps];
         const bool vsync = on("Vsync");
         if (vsync && fps >= 1) {
@@ -895,9 +915,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (g == Game::Gears2 && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gow2_max_fps=" + std::to_string(cap)); }
         if (isG3 && fps > 0) {
             a.push_back("--gow2_gpu_vsync=false");
-            if (cap != k_fpsCaps[fps]) a.push_back("--gow3_max_fps=" + std::to_string(cap));
-            else if (fps == 2) a.push_back("--gow3_max_fps=120");
-            else if (fps == 3) a.push_back("--gow3_max_fps=-1");
+            // 60 is Gears 3's own setting (no switch); every other limit is passed as it is (vsync may have lowered it).
+            if (cap != k_fpsCaps[fps] || cap != 60) a.push_back("--gow3_max_fps=" + std::to_string(cap));
         }
         if (isGJ && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gowj_max_fps=" + std::to_string(cap)); }
     }

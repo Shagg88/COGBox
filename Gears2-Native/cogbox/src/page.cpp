@@ -521,17 +521,17 @@ static AutoPlan auto_plan(App &a, int g)
     const int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     // Render resolution: 0 = 1x, 1 = 2x, 4 = match my monitor, 5 = 1080p (720p upscaled)
     int res = p.tier == 2 ? 4 : p.tier == 1 ? (sh <= 1440 ? 4 : 1) : (sw >= 1920 ? 5 : 0);
-    // Frame rate limit: 0 = 30, 1 = 60, 2 = 120
-    int fps = p.tier == 2 ? (hz >= 115 ? 2 : 1) : p.tier == 1 ? (hz >= 115 ? 2 : 1) : (deck ? 0 : 1);
-    if (p.tier == 1 && res == 4 && sh > 1080) fps = 1;   // mid cards at native 1440p: 60
+    // Frame rate limit (FrameCap indices): 0 = 30, 1 = 45, 2 = 60, 4 = 120. Job 638: the Steam Deck gets 45.
+    int fps = p.tier == 2 ? (hz >= 115 ? 4 : 2) : p.tier == 1 ? (hz >= 115 ? 4 : 2) : (deck ? 1 : 2);
+    if (p.tier == 1 && res == 4 && sh > 1080) fps = 2;   // mid cards at native 1440p: 60
     int pool = p.vramMB >= 8000 ? 2 : 1;                   // Large (256 MB) / Standard
-    p.set = { { "AAMode", 1 }, { "Resolution", res }, { "Fps", fps }, { "Vsync", 1 }, { "Pool", pool },
+    p.set = { { "AAMode", 1 }, { "Resolution", res }, { "FrameCap", fps }, { "Vsync", 1 }, { "Pool", pool },
               { "Aniso", p.tier >= 1 ? 1 : 0 }, { "Trilinear", 1 }, { "FrameGen", 0 }, { "Preset", 3 } };
     if (!a.env[g].wine) p.set.push_back({ "Api", 0 });     // DirectX 12; under Wine / Proton the API is left as it is
     if (gs::find_option((gs::Game)g, "RealOcclusion")) p.set.push_back({ "RealOcclusion", 0 });
     static const char *tierName[] = { "entry level / integrated / Steam Deck", "mid range", "high end" };
     static const char *resName[] = { "1x - 720p", "2x - 1440p", "3x - 4K", "4x - 5K", "Match my monitor (native)", "1080p (720p upscaled)" };
-    static const char *fpsName[] = { "30", "60", "120", "Unlimited" };
+    static const char *fpsName[] = { "30", "45", "60", "90", "120", "144", "165", "Unlimited" };
     char b[160];
     snprintf(b, sizeof b, "Found: %s (%u MB video memory), screen %dx%d at %d Hz%s - %s.\n\n", p.gpu.empty() ? "an unknown graphics card" : p.gpu.c_str(),
              p.vramMB, sw, sh, hz, a.env[g].wine ? ", Wine / Proton" : "", tierName[p.tier]);
@@ -793,7 +793,7 @@ static std::string summary(App &a, int g)
         return par == std::string::npos ? s : s.substr(0, par);
     };
     std::string s = choice_text("Resolution");
-    std::string fps = choice_text("Fps"), pr = choice_text("Preset"), aa = choice_text("AAMode");
+    std::string fps = choice_text("FrameCap"), pr = choice_text("Preset"), aa = choice_text("AAMode");
     if (!fps.empty()) s += "   |   " + fps + (fps == "Unlimited" ? "" : " fps");
     if (!aa.empty() && aa != "Off") s += "   |   " + aa;
     if (!pr.empty()) s += "   |   " + pr;
