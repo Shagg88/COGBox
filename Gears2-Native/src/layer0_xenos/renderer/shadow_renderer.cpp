@@ -461,6 +461,12 @@ REXCVAR_DEFINE_DOUBLE(gow2_renderer_depth_pipeline_wait_ms, 3.0, "Gears2",
                       "blocks for that frame, worse than a late object): a draw with no colour target that tests or writes "
                       "depth / stencil may wait this many ms per frame in total for its pipeline to come off a worker "
                       "(never built on the frame); past that it is skipped like any other. 0 = off");
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_fullscreen_wait_ms, 50.0, "Gears2",
+                      "Job 621 (Shagg 15:33: a white frame during a fast 360 turn, cold shader cache): a full-screen pass "
+                      "(a rectangle or a quad drawn to a colour target - post effects such as motion blur that only run "
+                      "while turning) waits for its shaders and creates its pipeline on the spot, up to this many ms per "
+                      "frame in total, instead of being skipped - a skipped one leaves its target holding old or empty data "
+                      "that the final picture then shows. 0 = off (skip while compiling, as before)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_standin_new_vs, false, "Gears2",
                     "Patch 0132: also treat 'new vertex shader drawing to a target not drawn in the last 4 frames' as a "
                     "stand-in wait (0045's broad case). Off by default: Shagg's 21:34 session spent 1.8 s in 34 such "
@@ -2147,6 +2153,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     depth_wait_left_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_depth_pipeline_wait_ms));  // patch 0132
     shader_wait_left_ms_ = shader_wait_budget_ms_;
     standin_wait_left_ms_ = standin_wait_budget_ms_;  // patch 0045
+    fullscreen_wait_left_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_fullscreen_wait_ms));  // job 621
     last_copy_draw_ = 0;
     drawn_since_copy_ = 0;
     EndParts();
@@ -5540,16 +5547,23 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
     // Patch 0045 (Edge): would skipping this draw while its shaders / pipeline compile leave a hole that stays?
     const char* standin_wait = nullptr;
+    // Job 621: a full-screen pass (rectangle list or a quad, to a colour target) has its own budget.
+    double* standin_left = &standin_wait_left_ms_;
     if (standin_wait_budget_ms_ > 0.0) {
       const bool has_target = colour_count != 0 || depth_bound;
       standin_wait = StandInWaitReason(colour_count ? colour_keys[0] : key, has_target, vsg, psg);
-      if (standin_wait && standin_wait_left_ms_ > 0.0) {
+      if (!standin_wait && colour_count != 0 && !ib && (prim == 0x08 || index_count <= 6) &&
+          fullscreen_wait_left_ms_ > 0.0) {
+        standin_wait = "full-screen pass";
+        standin_left = &fullscreen_wait_left_ms_;
+      }
+      if (standin_wait && *standin_left > 0.0) {
         const auto t0 = std::chrono::steady_clock::now();
-        if (vsg.state == rr::ShaderState::kPending) cache_->WaitReady(vsg, standin_wait_left_ms_);
-        const double left = standin_wait_left_ms_ - MsSince(t0);
+        if (vsg.state == rr::ShaderState::kPending) cache_->WaitReady(vsg, *standin_left);
+        const double left = *standin_left - MsSince(t0);
         if (psg && psg->state == rr::ShaderState::kPending && left > 0.0) cache_->WaitReady(*psg, left);
         const double ms = MsSince(t0);
-        standin_wait_left_ms_ -= ms;
+        *standin_left -= ms;
         ++stats_.standin_waits;
         stats_.standin_wait_ms += ms;
         ++standin_reasons_[standin_wait];
@@ -5792,7 +5806,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (standin_sync) {  // patch 0045
       const double ms = MsSince(pso_t0);
-      standin_wait_left_ms_ -= ms;
+      *standin_left -= ms;
       stats_.standin_wait_ms += ms;
     }
     if (pipeline_pending) {
@@ -9130,6 +9144,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Patch 0045 (Edge stand-in waits): the budget, what is left of it this frame, why draws waited (this summary), and
   // per render target the frame it was last drawn in and the one before (Edge draw_target_last_frames_).
   double standin_wait_budget_ms_ = 0.0, standin_wait_left_ms_ = 0.0;
+  double fullscreen_wait_left_ms_ = 0.0;  // job 621
   std::map<std::string, uint64_t> standin_reasons_;
   std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> standin_target_frames_;
   double shader_wait_left_ms_ = 0.0;    // what is left of it this frame
