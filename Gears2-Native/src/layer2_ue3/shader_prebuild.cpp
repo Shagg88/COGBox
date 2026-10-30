@@ -317,6 +317,7 @@ struct Prebuild {
   std::condition_variable cv;
   std::deque<std::filesystem::path> queue;
   std::unordered_set<std::string> opened;  // lower-case file names already queued (each package once per session)
+  std::unordered_set<std::string> waiting;  // job 666: ... of those, the ones still in `queue` (not taken by a reader)
   std::thread thread;
   std::filesystem::path shader_files;      // job 632: <shader cache>\prebuild-files.txt - packages that held shaders
   std::unordered_set<std::string> known;   // ... their lower-case names (read at start, added to as found)
@@ -349,6 +350,8 @@ void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host
     std::lock_guard<std::mutex> lock(g_prebuild->mutex);
     if (!g_prebuild->opened.insert(name).second) {
       // Job 630: queued at start-up and not read yet - the game wants it now, so it goes to the front.
+      // Job 666: only looked for when it is still waiting (a package read already costs nothing here).
+      if (!g_prebuild->waiting.count(name)) return;
       auto& q = g_prebuild->queue;
       for (auto it = q.begin(); it != q.end(); ++it)
         if (Lower(it->filename().string()) == name) {
@@ -359,6 +362,7 @@ void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host
         }
       return;
     }
+    g_prebuild->waiting.insert(name);
     g_prebuild->queue.push_front(*host_path);   // job 630: what the game opens now comes before the start-up list
   }
   g_prebuild->cv.notify_one();
@@ -380,6 +384,7 @@ void ReaderThread() {
       g_prebuild->cv.wait(lock, [] { return !g_prebuild->queue.empty(); });
       path = std::move(g_prebuild->queue.front());
       g_prebuild->queue.pop_front();
+      g_prebuild->waiting.erase(Lower(path.filename().string()));   // job 666
       ++g_prebuild->busy;  // job 641: counted with the pop, so no other reader sees an empty queue and nobody busy
     }
     const auto t0 = std::chrono::steady_clock::now();
@@ -452,6 +457,9 @@ void ReaderThread() {
 void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*)) {
 #ifdef REX_FILESYSTEM_FILE_OPEN_OBSERVER
   g_chain.store(listener);
+  // Job 666: either order works - while this reader isn't on, its observer still passes every open to the game's
+  // listener (OnFileOpened tells the chain first, then returns without g_prebuild); when it goes on it sets the same one.
+  rex::filesystem::SetFileOpenObserver(&OnFileOpened);
 #else
   (void)listener;
 #endif
@@ -522,6 +530,7 @@ void Ue3InstallShaderPrebuildIfRequested() {
         for (const auto* list : {&caches, &packages})
           for (const auto& [path, size] : *list)
             if (g_prebuild->opened.insert(Lower(path.filename().string())).second) {
+              g_prebuild->waiting.insert(Lower(path.filename().string()));   // job 666
               g_prebuild->queue.push_back(path);
               bytes += size;
               ++queued;

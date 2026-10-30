@@ -246,7 +246,7 @@ static void prepare_section(App &a, int g)
                  (unsigned long long)total, int(f * 100.0f), (unsigned long long)(secs / 60), (unsigned long long)(secs % 60));
         ImGui::ProgressBar(f, ImVec2(g_rowX1 - ImGui::GetCursorScreenPos().x, T(26)), total ? line : "starting the game...");
         ImGui::Dummy(ImVec2(0, S(4)));
-        if (small_button("Stop preparing")) TerminateProcess(a.run.proc, 1);
+        if (small_button("Stop preparing")) TerminateProcess(a.run.proc, 0xC0B05709);   // job 666: stopped on purpose (play_poll)
     } else {
         const bool ok = supported && a.st[g].ready == R_READY && !a.run.proc && a.job.state.load() != 1;
         if (!ok) ImGui::BeginDisabled();
@@ -571,11 +571,11 @@ static AutoPlan auto_plan(App &a, int g)
     p.set = { { "AAMode", 1 }, { "Resolution", res }, { "FrameCap", fps }, { "Vsync", 1 }, { "Pool", pool },
               { "Aniso", p.tier >= 1 ? 1 : 0 }, { "Trilinear", 1 }, { "FrameGen", 0 }, { "Preset", 3 } };
     if (!a.env[g].wine) p.set.push_back({ "Api", 0 });     // DirectX 12; under Wine / Proton the API is left as it is
-    if (gs::find_option((gs::Game)g, "RealOcclusion")) p.set.push_back({ "RealOcclusion", 0 });
+    if (const auto *ro = gs::find_option((gs::Game)g, "RealOcclusion")) p.set.push_back({ "RealOcclusion", (int)ro->def });   // job 666: the game's default (on in Gears 3 / Judgment)
     static const char *tierName[] = { "entry level / integrated / Steam Deck", "mid range", "high end" };
     static const char *resName[] = { "1x - 720p", "2x - 1440p", "3x - 4K", "4x - 5K", "Match my monitor (native)", "1080p (720p upscaled)" };
     static const char *fpsName[] = { "30", "45", "60", "90", "120", "144", "165", "Unlimited" };
-    char b[160];
+    char b[512];
     snprintf(b, sizeof b, "Found: %s (%u MB video memory), screen %dx%d at %d Hz%s - %s.\n\n", p.gpu.empty() ? "an unknown graphics card" : p.gpu.c_str(),
              p.vramMB, sw, sh, hz, a.env[g].wine ? ", Wine / Proton" : "", tierName[p.tier]);
     p.text = b;

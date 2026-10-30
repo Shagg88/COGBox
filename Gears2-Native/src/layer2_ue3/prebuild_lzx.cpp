@@ -146,7 +146,7 @@ bool ReadLengths(BitReader& in, std::vector<uint8_t>& lens, int first, int last)
       while (y-- > 0 && x < last) lens[x++] = 0;
     } else if (z == 19) {
       int y = int(in.Read(1)) + 4;
-      if (!pre.Decode(in, &z)) return false;
+      if (!pre.Decode(in, &z) || z > 16) return false;   // job 666: a length code, not another run
       int v = lens[x] - z;
       if (v < 0) v += 17;
       while (y-- > 0 && x < last) lens[x++] = uint8_t(v);
@@ -278,6 +278,7 @@ bool DecodeLzx(const uint8_t* in_data, size_t in_len, uint8_t* dest, size_t out_
           return false;
         for (int i = 0; i < length; ++i, ++pos) out[pos] = out[pos - offset];
       }
+      if (pos > run_end) return false;   // job 666: a match ran past its block (libmspack: "overrun")
       block_remaining -= uint32_t(run);
     }
     // Each 32 KB frame ends on a 16-bit boundary of the input.

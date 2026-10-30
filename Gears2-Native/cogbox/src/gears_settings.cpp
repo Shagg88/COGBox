@@ -585,6 +585,11 @@ bool Store::load_ini(const std::string& text) {
                 any = true;
                 continue;
             }
+            if (key == "Exclusive") {   // job 666: 0.2.2's "Exclusive fullscreen instead" box, read by Store::view
+                top["Exclusive"] = x;
+                any = true;
+                continue;
+            }
             if (key == "Fps") {   // job 638: the old 4-step frame rate limit (the shared value)
                 top["FrameCap"] = old_fps_to_cap(x);
                 any = true;
@@ -599,6 +604,11 @@ bool Store::load_ini(const std::string& text) {
         } else {
             if (key == "WineD3D12") {   // job 643: the old box of this game
                 per[gsec]["WineApi"] = x != 0 ? 2 : 0;
+                any = true;
+                continue;
+            }
+            if (key == "Exclusive") {   // job 666: the old box of this game
+                per[gsec]["Exclusive"] = x;
                 any = true;
                 continue;
             }
@@ -858,7 +868,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // Xbox language IDs: 1 en, 2 ja, 3 de, 4 fr, 5 es, 6 it, 7 ko, 8 zh-Hant, 9 pt, 11 pl, 12 ru, 13 sv, 15 nb, 16 nl,
         // 17 zh-Hans. Country IDs (the SDK's user_country table): 13 BR, 20 CN, 23 CZ, 24 DE, 25 DK, 31 ES, 32 FI, 34 FR,
         // 35 GB, 42 HU, 50 IT, 53 JP, 56 KR, 71 MX, 74 NL, 75 NO, 82 PL, 88 RU, 90 SE, 101 TW, 103 US.
-        static const int lang[22] = { 0, 1, 1, 4, 3, 6, 5, 5, 9, 11, 12, 1, 1, 16, 1, 1, 15, 13, 2, 7, 8, 17 };
+        static const int lang[22] = { 0, 1, 1, 4, 3, 6, 5, 5, 9, 11, 12, 1, 1, 16, 1, 1, 15, 13, 2, 7, 8, 10 };   // job 666: Chinese = 10 (job 664)
         static const int country[22] = { 0, 103, 35, 34, 24, 50, 31, 71, 13, 82, 88, 23, 42, 74, 25, 32, 75, 90, 53, 56, 101, 20 };
         const int l = std::max(0, std::min(21, s.i("Lang")));
         if (l > 0) {

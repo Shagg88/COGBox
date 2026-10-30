@@ -16,7 +16,7 @@
 #include "gears_settings.h"
 #include "util.h"
 
-#define COGBOX_VERSION "0.2.2"
+#define COGBOX_VERSION "0.2.5"
 #define COGBOX_NAME "COGBox"
 
 namespace gs = cogbox::gears;

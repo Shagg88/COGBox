@@ -443,7 +443,6 @@ void install_draw(App &a, ImVec2 size)
 namespace {
 std::vector<DlcItem> g_dlc[G_COUNT];
 DWORD g_dlcAt[G_COUNT] = {};
-int g_dlcJobSeen = -1;
 DlcItem g_dlcRemove;
 int g_dlcRemoveGame = -1;
 

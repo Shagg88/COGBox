@@ -1122,7 +1122,14 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     swap_replace = g_swap.replace.count(swap_hash) != 0;
     if (format == 20) {  // k_DXT4_5 -> host BC3
       const auto ov = g_swap.overlay.find(swap_hash);
-      if (ov != g_swap.overlay.end()) swap_overlay = &ov->second;
+      if (ov != g_swap.overlay.end() && ov->second.size() >= 8) {
+        // Job 666: only an overlay made for this size (1x, or the same whole 2-8x across and down).
+        uint32_t ow = 0, oh = 0;
+        std::memcpy(&ow, ov->second.data(), 4);
+        std::memcpy(&oh, ov->second.data() + 4, 4);
+        const uint32_t k = w ? ow / w : 0;
+        if (k >= 1 && k <= 8 && ow == w * k && oh == h * k) swap_overlay = &ov->second;
+      }
     }
     swap_dump = !g_swap.dump_dir.empty() && g_swap.Dumps(w, h) && g_swap.dump_count < 4000 &&
                 g_swap.dumped.insert(swap_hash).second;

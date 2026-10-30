@@ -226,7 +226,7 @@ void play_poll(App &a)
                 std::string(d.name) + "'s shaders are ready (" + std::to_string(secs / 60) + " min " + std::to_string(secs % 60) +
                 " s). Chapters will now start without building them. Do this again after a graphics driver update or a new "
                 "COGBox release.", { "OK" });
-        else if (known && code == 0)
+        else if ((known && code == 0) || (known && code == 0xC0B05709))   // job 666: 0xC0B05709 = the Stop button
             set_message(a, "Preparing shaders stopped before the end - what was built so far is kept.", false);
         else
             set_message(a, "Preparing shaders stopped (" + (known ? "exit code " + hex32(code) : std::string("unknown exit")) +

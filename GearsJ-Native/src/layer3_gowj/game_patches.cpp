@@ -190,8 +190,7 @@ void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const s
 void GowjInstallLoadingClamp() {
   if (REXCVAR_GET(gowj_loading_fps) <= 0) return;
 #if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
-  rex::filesystem::SetFileOpenObserver(&OnGowjFileOpened);
-  // the shader prebuild (installed later, when the launcher turns it on) takes the SDK's one observer; it calls ours first
+  // Job 666: through the shader reader's observer (it tells ours first), so it doesn't matter which installs first.
   Ue3ShaderPrebuildChainFileOpened(&OnGowjFileOpened);
   REXLOG_INFO("gowj_loading_fps: on - loading screens run at {} fps at most (GitHub #38)", REXCVAR_GET(gowj_loading_fps));
 #else
