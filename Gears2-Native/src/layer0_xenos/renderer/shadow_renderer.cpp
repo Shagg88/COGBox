@@ -2097,7 +2097,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     DrainPrebuild();        // patch 0068
     // Patch 0062: the on-screen "Building shaders" note (fps_bar.cpp) - pipelines still queued or being built, and how
     // many were ever queued (both games; no game data).
-    XenosSetShaderJobs(backend_->PipelineJobsLeft(), backend_->Stats().pipelines_async);
+    // Job 633 (Shagg: "always 64 left"): the recipe pack tops the build queue up to its cap as it drains, so the queue
+    // alone sat at 64 (or 6) while real work went on behind it. The note now also counts the pack's records whose
+    // shaders are ready and only wait for a free job - real work that is done for this area once it reaches 0.
+    // (Records still waiting for a shader the game has not loaded are not counted: nothing can build them yet.)
+    if (frame_ % 30 == 0) rcp_ready_left_ = CountReadyRecipes();
+    XenosSetShaderJobs(backend_->PipelineJobsLeft() + rcp_ready_left_,
+                       backend_->Stats().pipelines_async + rcp_ready_left_);
     if (upscale_probe_ && frame_ % upscale_probe_ == 0) LogProbeFrame();
     FrameStep("upscaler end frame", [&] { UpscaleEndFrame(); });
     if (textures_) FrameStep("texture end frame", [&] { textures_->EndFrame(frame_); });
@@ -7732,6 +7738,22 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::vector<uint8_t> rcp_state_;      // 0 untouched, 1 to translate, 3 waiting, 2 done
   std::deque<uint32_t> rcp_need_;
   std::vector<uint32_t> rcp_waiting_;
+  uint64_t rcp_ready_left_ = 0;  // job 633: for the shader note
+  uint64_t CountReadyRecipes() {
+    uint64_t n = 0;
+    for (const uint32_t i : rcp_waiting_) {
+      if (rcp_state_[i] != 3) continue;
+      const PipelineRecord& r = rcp_records_[i];
+      const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
+      if (!vsg || !vsg->ready()) continue;
+      if (r.flags & 1) {
+        const rr::GuestShader* psg = cache_->Find(r.ps_hash, false);
+        if (!psg || !psg->ready()) continue;
+      }
+      ++n;
+    }
+    return n;
+  }
   struct {
     uint64_t vs_rebuilt = 0, ps_found = 0, queued = 0, known = 0, failed = 0, no_gs = 0, chapters_on = 0;
     uint64_t idle_slices = 0;  // job 617
