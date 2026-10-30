@@ -168,3 +168,46 @@ TEST_CASE("queries: 'hidden' only after repeated zeros, keyed by report and draw
   REQUIRE(c.Estimate(other, 1, 0, &hit) == 1);
   REQUIRE(!hit);
 }
+
+TEST_CASE("queries: strict completion preserves pending until the matching GPU result", "[queries]") {
+  q::DeferredReports pending;
+  q::SampleCounts report;
+  report.zpass_a = report.zpass_b = q::kPendingMarkerLE;
+  auto* bytes = reinterpret_cast<uint8_t*>(&report);
+  const auto first = pending.Issue(0x200);
+  REQUIRE(report.Pending());
+  REQUIRE(!pending.Complete(0x100, first, bytes, 0));
+  REQUIRE(report.Pending());
+  REQUIRE(pending.Complete(0x200, first, bytes, 0));
+  REQUIRE(!report.Pending());
+  REQUIRE(report.ZPass() == 0);  // A genuine zero can hide a flare immediately.
+  REQUIRE(!pending.Complete(0x200, first, bytes, 90));
+}
+
+TEST_CASE("queries: old strict results cannot overwrite a reissued report", "[queries]") {
+  q::DeferredReports pending;
+  q::SampleCounts report;
+  report.zpass_a = report.zpass_b = q::kPendingMarkerLE;
+  auto* bytes = reinterpret_cast<uint8_t*>(&report);
+  const auto old = pending.Issue(0x200);
+  const auto current = pending.Issue(0x200);
+  REQUIRE(!pending.Complete(0x200, old, bytes, 0));
+  REQUIRE(report.Pending());
+  REQUIRE(pending.Complete(0x200, current, bytes, 17));
+  REQUIRE(report.ZPass() == 17);
+  report = {};
+  const auto reused = pending.Issue(0x200);
+  REQUIRE(!pending.Complete(0x200, reused, bytes, 0));  // Guest cleared/reused the buffer.
+  REQUIRE(!pending.Complete(0x200, reused, nullptr, 0));
+}
+
+TEST_CASE("queries: deferred resolves cover ended slots without including gaps or wrapping", "[queries]") {
+  std::vector<std::pair<uint32_t, uint32_t>> runs;
+  auto resolve = [&](uint32_t first, uint32_t count) { runs.emplace_back(first, count); };
+  q::ResolveEndedRuns({}, resolve);
+  REQUIRE(runs.empty());
+  const uint32_t slots[] = {65534, 65535, 0, 1, 4, 6, 7, 8};
+  q::ResolveEndedRuns(slots, resolve);
+  const std::vector<std::pair<uint32_t, uint32_t>> expected = {{65534, 2}, {0, 2}, {4, 1}, {6, 3}};
+  REQUIRE(runs == expected);
+}

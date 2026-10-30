@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -40,6 +41,23 @@ inline constexpr uint32_t kEventZpassDone = 21;
 // gives the value below.
 inline constexpr uint32_t kPendingMarkerLE = 0xEDFEFFFFu;
 inline constexpr uint32_t kReportBytes = 32;
+
+// Resolve only ended slots, once per contiguous run, at submission. Resolving
+// each query between proxy draws forces the GPU to finish its count before it
+// can process the next proxy. Slot allocation can wrap or skip held slots.
+template<class Resolve>
+void ResolveEndedRuns(std::span<const uint32_t> slots, Resolve&& resolve) {
+  size_t i = 0;
+  while (i < slots.size()) {
+    const uint32_t first = slots[i++];
+    uint32_t count = 1;
+    while (i < slots.size() && uint64_t(slots[i]) == uint64_t(first) + count) {
+      ++i;
+      ++count;
+    }
+    resolve(first, count);
+  }
+}
 
 // One report as it sits in guest memory (8 little-endian dwords).
 struct SampleCounts {
@@ -77,6 +95,23 @@ struct SampleCounts {
   }
 };
 static_assert(sizeof(SampleCounts) == kReportBytes, "report is 8 dwords");
+
+// Strict answers belong to this issuance, never to a cached result from an older
+// object which happened to reuse the same query-report address.
+class DeferredReports {
+ public:
+  uint64_t Issue(uint32_t address) { return issued_[address] = ++sequence_; }
+  bool Complete(uint32_t address, uint64_t sequence, uint8_t* report, uint64_t samples) {
+    const auto it = issued_.find(address);
+    if (it == issued_.end() || it->second != sequence || !SampleCounts::Read(report).Pending()) return false;
+    SampleCounts::WriteAnswer(report, samples, false);
+    issued_.erase(it);
+    return true;
+  }
+ private:
+  std::unordered_map<uint32_t, uint64_t> issued_;
+  uint64_t sequence_ = 0;
+};
 
 // Where one query's two reports are relative to each other, from the D3D library (layer 1). For XDK 7645 (Gears 2) the
 // end report sits 32 bytes before the begin report (notes/46 section 2: Issue 82978120 / the ZPD writer 82993080 / the

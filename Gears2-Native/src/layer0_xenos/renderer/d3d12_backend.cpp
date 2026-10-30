@@ -10,6 +10,12 @@
 // Device creation follows tools/gn_shader_oracle_d3d12.cpp (works on the RTX 3080 Ti, Shader Model 6.6, job 088).
 // Our code (MIT).
 #include <xenos/renderer/gpu.h>
+#include <xenos/renderer/fenced_retirement.h>
+#include <xenos/tracy_profile.h>
+#include <xenos/renderer/mapped_file.h>
+#include <xenos/renderer/queries.h>
+#include <xenos/renderer/warm_source_cache.h>
+#include <xenos/renderer/warm_stage_store.h>
 
 #include <cstring>
 
@@ -87,6 +93,7 @@ bool EnableDeviceLossDiagnostics() { return false; }
 #include <map>
 #include <deque>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace xenos::renderer::gpu {
@@ -302,11 +309,14 @@ struct Texture {
   std::vector<int32_t> uav_mips;  // typed UAVs of mips 1.. (created on first use)
   bool typeless = false;
   bool bits = false;     // typeless render target with a UINT bits view (BitsFormat)
+  bool imported = false;
   uint64_t serial = 0;   // creation number: a reused handle is a different texture (texture-table cache, upl-n109)
   int32_t rtv_bits = -1;
   std::vector<std::pair<uint64_t, int32_t>> views;  // texture views by key -> CPU heap slot
   int32_t heap = -1;  // patch 0017: placed in tex_heaps_[heap] at heap_offset (heap_size bytes); -1 = committed
   uint64_t heap_offset = 0, heap_size = 0;
+  bool scratch_pending = false;  // batched texture loads: a scratch copy into it is queued (FlushScratchCopies)
+  uint64_t uav_unbarriered = 0;  // batched texture loads: mips written as a UAV with the barrier left out (bit = mip)
 };
 
 struct Pipeline {
@@ -328,6 +338,7 @@ struct PipelineJob {
   std::shared_ptr<const std::vector<uint8_t>> code[3];
   std::wstring library_name;  // saved pipelines: stored under this name once created (empty = library off)
   uint8_t priority = 0;       // patch 0057: which queue (PipelinePriority)
+  bool stage_prefetch = false;
 };
 // Patch 0057 (Canary pipeline_util.h CalculatePipelinePriority, refined): the order the workers take new pipelines.
 // 4 = writes colour target 0 and depth (opaque scene geometry: characters, walls, ground), 3 = writes colour target 0
@@ -583,7 +594,11 @@ class CommandListProxy {
     if (!threaded_) return;
     Flush();
     std::unique_lock<std::mutex> lock(mutex_);
+    if (ready_.empty() && !busy_) return;
+    COGBOX_TRACY_SCOPE("Wait for command recorder");
+    const auto start = std::chrono::steady_clock::now();
     idle_cv_.wait(lock, [this] { return ready_.empty() && !busy_; });
+    recording_wait_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
   }
 
   // ---- lifecycle ----
@@ -700,6 +715,8 @@ class CommandListProxy {
     Pod(x); Pod(y); Pod(z);
   }
   uint64_t barrier_calls = 0, barriers = 0;  // job 045: barrier counts (each call can stall the GPU pipeline)
+  double recording_wait_ms = 0.0;  // caller thread only
+  uint64_t recording_wakeups = 0, recording_wakeups_avoided = 0;
   uint64_t barrier_batches = 0, barriers_merged = 0;  // job 046: emitted batches, transitions merged away
   // Job 046: barriers are queued and emitted as ONE ResourceBarrier call right before the next command of any kind,
   // so consecutive barriers (render targets, textures, the guest buffer) cost one GPU sync instead of one each. A
@@ -921,15 +938,18 @@ class CommandListProxy {
   void Flush() {
     if (cur_.empty()) return;
     std::vector<uint8_t> next;
+    bool wake;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       ready_.push_back(std::move(cur_));
+      wake = worker_sleeping_;
       if (!free_.empty()) {
         next = std::move(free_.back());
         free_.pop_back();
       }
     }
-    cv_.notify_one();
+    if (wake) { ++recording_wakeups; cv_.notify_one(); }
+    else ++recording_wakeups_avoided;
     next.clear();
     cur_ = std::move(next);
   }
@@ -957,6 +977,7 @@ class CommandListProxy {
     if (error_.compare_exchange_strong(ok, hr)) error_what_.store(what);
   }
   void Replay(const std::vector<uint8_t>& block) {
+    COGBOX_TRACY_SCOPE("Record D3D12 command batch");
     Reader r{block.data()};
     const uint8_t* end = block.data() + block.size();
     ID3D12GraphicsCommandList* l = real_;
@@ -964,6 +985,7 @@ class CommandListProxy {
       uint32_t n = 0;
       switch (Op(r.Pod<uint32_t>())) {
         case kClose: {
+          COGBOX_TRACY_SCOPE("Close D3D12 command list");
           const HRESULT hr = l->Close();
           if (FAILED(hr)) Fail(hr, "ID3D12GraphicsCommandList::Close");
           break;
@@ -971,7 +993,11 @@ class CommandListProxy {
         case kReset: {
           auto* allocator = r.Pod<ID3D12CommandAllocator*>();
           auto* state = r.Pod<ID3D12PipelineState*>();
-          allocator->Reset();
+          {
+            COGBOX_TRACY_SCOPE("Reset D3D12 command allocator");
+            allocator->Reset();
+          }
+          COGBOX_TRACY_SCOPE("Reset D3D12 command list");
           const HRESULT hr = l->Reset(allocator, state);
           if (FAILED(hr)) Fail(hr, "ID3D12GraphicsCommandList::Reset");
           break;
@@ -980,8 +1006,14 @@ class CommandListProxy {
           auto* fence = r.Pod<ID3D12Fence*>();
           const UINT64 value = r.Pod<UINT64>();
           ID3D12CommandList* lists[] = {l};
-          if (Error() == S_OK) queue_->ExecuteCommandLists(1, lists);
-          queue_->Signal(fence, value);
+          if (Error() == S_OK) {
+            COGBOX_TRACY_SCOPE("Execute D3D12 command list");
+            queue_->ExecuteCommandLists(1, lists);
+          }
+          {
+            COGBOX_TRACY_SCOPE("Signal D3D12 submission fence");
+            queue_->Signal(fence, value);
+          }
           break;
         }
         case kCopyBufferRegion: {
@@ -1154,11 +1186,14 @@ class CommandListProxy {
   }
   void Run() {
     using SetDesc = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+    ::xenos::profiling::ThreadName("COGBox D3D12 recorder");
     if (auto fn = reinterpret_cast<SetDesc>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription")))
       fn(GetCurrentThread(), L"GPU Recording (ours)");
     std::unique_lock<std::mutex> lock(mutex_);
     for (;;) {
+      worker_sleeping_ = true;  // published under the same lock as ready_, so a wake cannot be lost
       cv_.wait(lock, [this] { return stop_ || !ready_.empty(); });
+      worker_sleeping_ = false;
       if (ready_.empty() && stop_) break;
       std::vector<uint8_t> block = std::move(ready_.front());
       ready_.pop_front();
@@ -1182,7 +1217,7 @@ class CommandListProxy {
   std::condition_variable cv_, idle_cv_;
   std::deque<std::vector<uint8_t>> ready_;
   std::vector<std::vector<uint8_t>> free_;
-  bool busy_ = false, stop_ = false;
+  bool busy_ = false, stop_ = false, worker_sleeping_ = false;
   std::thread worker_;
   std::atomic<HRESULT> error_{S_OK};
   std::atomic<const char*> error_what_{nullptr};
@@ -1306,10 +1341,33 @@ class D3D12Backend final : public Backend {
 
     // Upload ring (persistently mapped).
     upload_size_ = uint64_t(std::max<uint32_t>(options.upload_ring_mb, 16)) << 20;
-    if (!CreateBuffer(upload_size_, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ,
-                      &upload_, error)) return false;
     D3D12_RANGE none{0, 0};
-    if (FAILED(hr = upload_->Map(0, &none, reinterpret_cast<void**>(&upload_mapped_)))) { error = Hr("Map(upload)", hr); return false; }
+    bool gpu_upload = false;
+    if (options.gpu_upload_ring) {
+      D3D12_FEATURE_DATA_D3D12_OPTIONS16 feature{};
+      if (SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS16, &feature, sizeof(feature))) &&
+          feature.GPUUploadHeapSupported) {
+        std::string why;
+        if (CreateBuffer(upload_size_, D3D12_HEAP_TYPE_GPU_UPLOAD, D3D12_RESOURCE_FLAG_NONE,
+                         D3D12_RESOURCE_STATE_GENERIC_READ, &upload_, why)) {
+          const HRESULT mapped = upload_->Map(0, &none, reinterpret_cast<void**>(&upload_mapped_));
+          gpu_upload = SUCCEEDED(mapped);
+          if (!gpu_upload) why = Hr("Map(GPU upload)", mapped);
+        }
+        if (!gpu_upload) {
+          SafeRelease(upload_);
+          upload_mapped_ = nullptr;
+          REXLOG_WARN("gow2_renderer: GPU upload ring unavailable ({}); using system upload memory", why);
+        }
+      } else REXLOG_INFO("gow2_renderer: GPU upload heaps not supported; using system upload memory");
+    }
+    if (!gpu_upload) {
+      if (!CreateBuffer(upload_size_, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ,
+                        &upload_, error)) return false;
+      if (FAILED(hr = upload_->Map(0, &none, reinterpret_cast<void**>(&upload_mapped_)))) { error = Hr("Map(upload)", hr); return false; }
+    }
+    REXLOG_INFO("gow2_renderer: upload ring {} MB in {}", upload_size_ >> 20,
+                gpu_upload ? "GPU upload memory (CPU writes, GPU-local reads)" : "system upload memory");
     upload_gpu_ = upload_->GetGPUVirtualAddress();
     // 64 KB of zeros for constant slots that were never set.
     if (!CreateBuffer(65536, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ,
@@ -1518,6 +1576,7 @@ class D3D12Backend final : public Backend {
 
   // ---- resources ----
   TextureHandle CreateTexture(const TextureDesc& desc) override {
+    COGBOX_TRACY_SCOPE("Create D3D12 texture");
     if (!ready_ || lost_) return 0;
     Texture t;
     t.desc = desc;
@@ -1693,14 +1752,20 @@ class D3D12Backend final : public Backend {
   }
   void DestroyTexture(TextureHandle h) override {
     if (h == 0 || h >= textures_.size() || !textures_[h].resource) return;
+    if (textures_[h].scratch_pending) FlushScratchCopies();  // batched texture loads: before its copy can't happen
     // Job 188: with threaded recording, encoded calls still name this texture's CPU descriptors (RTV/DSV are read when
     // the recording thread replays OMSetRenderTargets / clears). Freed now, a texture created next would reuse those
     // slots before the replay and the old calls would hit the new texture - the transfer self-test chains read 0 from
     // job 175 on. Let the recording thread catch up first (rare: evictions, size changes, the self-test).
     list_->Drain();
     Texture& t = textures_[h];
-    textures_dirty_ = textures_dirty_ || textures_custom_;  // its handle may come back for another texture
     deferred_releases_.push_back({t.resource, next_fence_, t.heap, t.heap_offset, t.heap_size});
+    FreeTextureDescriptors(t);
+    t = Texture{};
+    ForgetTextureHandle(h);
+  }
+
+  void FreeTextureDescriptors(const Texture& t) {
     rtv_heap_.Free(t.rtv);
     rtv_heap_.Free(t.rtv_bits);
     dsv_heap_.Free(t.dsv);
@@ -1709,7 +1774,9 @@ class D3D12Backend final : public Backend {
     view_heap_.Free(t.uav);
     for (int32_t slot : t.uav_mips) view_heap_.Free(slot);
     for (const auto& [key, slot] : t.views) view_heap_.Free(slot);
-    t = Texture{};
+  }
+  void ForgetTextureHandle(TextureHandle h) {
+    textures_dirty_ = textures_dirty_ || textures_custom_;  // its handle may come back for another texture
     for (TextureHandle& b : bound_colors_) if (b == h) b = 0;
     if (bound_depth_ == h) bound_depth_ = 0;
     for (TextureView& v : bound_views_)  // a reused handle must not match the old table (texture eviction, upl-n108)
@@ -1723,11 +1790,12 @@ class D3D12Backend final : public Backend {
     if (!ready_ || lost_ || !native_resource) return 0;
     Texture t;
     t.resource = static_cast<ID3D12Resource*>(native_resource);
-    t.resource->AddRef();  // balanced by DestroyTexture's deferred release
+    t.resource->AddRef();  // balanced by fenced import retirement or DestroyTexture
     const D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
     t.desc.width = uint32_t(rd.Width);
     t.desc.height = rd.Height;
     t.desc.format = format;
+    t.imported = true;
     t.desc.usage = kUsageSampled | ((rd.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) ? kUsageStorage : 0u);
     t.serial = ++texture_serial_;
     t.state = D3D12_RESOURCE_STATES(state_now);
@@ -1754,6 +1822,19 @@ class D3D12Backend final : public Backend {
   void ReleaseImport(TextureHandle h, uint32_t final_state) override {
     if (!ValidTexture(h)) return;
     if (Recording()) Transition(textures_[h], D3D12_RESOURCE_STATES(final_state));
+    if (options_.defer_import_release && textures_[h].imported &&
+        retired_imports_.Push(next_fence_, std::move(textures_[h]))) {
+      // Encoded calls may still name these CPU descriptors, and submitted GPU
+      // work still names the resource. Retain BOTH through the final fence.
+      // The presenter still gets the normal, drained Submit before returning.
+      textures_[h] = Texture{};
+      ForgetTextureHandle(h);
+      ++stats_.imports_deferred;
+      stats_.imports_pending = retired_imports_.Pending();
+      stats_.imports_pending_peak = std::max(stats_.imports_pending_peak, stats_.imports_pending);
+      return;
+    }
+    ++stats_.imports_synchronous;  // disabled, non-import, or bounded-queue fallback
     DestroyTexture(h);
   }
 
@@ -1872,6 +1953,12 @@ class D3D12Backend final : public Backend {
   PipelineHandle GetGraphicsPipeline(const GraphicsPipelineDesc& d, bool async, bool* pending) override {
     if (pending) *pending = false;
     if (!ready_ || lost_) return 0;
+    // Consecutive draws very often use the same pipeline: the last ready one is answered from here, without hashing
+    // the description and looking it up (pipelines are never destroyed, and a ready one stays ready).
+    if (last_pipeline_ && d == last_pipeline_desc_) {
+      ++stats_.pipeline_memo_hits;
+      return last_pipeline_;
+    }
     const uint64_t key = HashPipelineDesc(d);
     auto it = pipeline_cache_.find(key);
     if (it != pipeline_cache_.end()) {
@@ -1879,7 +1966,12 @@ class D3D12Backend final : public Backend {
         if (!(desc == d)) continue;
         if (!handle) return 0;
         Pipeline& p = pipelines_[handle];
-        if (p.ready.load(std::memory_order_acquire)) return p.failed.load() ? 0 : handle;
+        if (p.ready.load(std::memory_order_acquire)) {
+          if (p.failed.load()) return 0;
+          last_pipeline_desc_ = d;
+          last_pipeline_ = handle;
+          return handle;
+        }
         if (!pipeline_backlog_ && (pending || !async)) PromoteBacklogJob(handle, p);  // patch 0062
         if (async) {
           if (pending) {
@@ -1902,7 +1994,7 @@ class D3D12Backend final : public Backend {
     // Patch 0010: with pipeline_load_async, an asynchronous request leaves the library load to the worker.
     if (pipeline_library_ && !(async && options_.pipeline_load_async && StartPipelineWorkers())) {
       ID3D12PipelineState* loaded = nullptr;
-      if (SUCCEEDED(pipeline_library_->LoadGraphicsPipeline(library_name.c_str(), &pd, IID_PPV_ARGS(&loaded)))) {
+      if (SUCCEEDED(LoadLibraryPipeline(library_name, pd, &loaded))) {
         Pipeline& slot = pipelines_.emplace_back();
         slot.pso = loaded;
         slot.topology = p.topology;
@@ -1988,7 +2080,7 @@ class D3D12Backend final : public Backend {
 
   // ---- guest memory ----
   void UploadGuestMemory(uint32_t guest_physical, const void* data, uint32_t size) override {
-    if (!Recording() || !size) return;
+    if (!OpenList() || !size) return;  // batched texture loads: touches neither the scratch buffer nor a texture
     guest_physical &= 0x1FFFFFFFu;
     if (uint64_t(guest_physical) + size > options_.guest_memory_bytes) size = uint32_t(options_.guest_memory_bytes - guest_physical);
     uint64_t offset;
@@ -2317,6 +2409,8 @@ class D3D12Backend final : public Backend {
                    uint32_t sampler_count) override {
     view_count = std::clamp<uint32_t>(view_count, 1u, kTextureSrvCount);
     sampler_count = std::clamp<uint32_t>(sampler_count, 1u, kSamplerCount);
+    // Batched texture loads: the queued copies first - the table reuse below reads the textures' states.
+    if (!scratch_copies_.empty()) FlushScratchCopies();
     if (!views96 && !samplers32) {
       if (textures_custom_) {
         textures_custom_ = false;
@@ -2393,7 +2487,13 @@ class D3D12Backend final : public Backend {
 
   // ---- compute ----
   void Dispatch(PipelineHandle p, const ComputeBindings& b, uint32_t gx, uint32_t gy, uint32_t gz) override {
-    if (!Recording() || !p || p >= pipelines_.size() || !pipelines_[p].compute || !gx || !gy || !gz) return;
+    // Batched texture loads: a texture load's dispatch keeps the queued copies queued - it reads the guest-memory
+    // mirror and writes its own scratch region or its own (not queued) texture.
+    const bool scratch_batch = options_.batch_texture_loads && b.scratch_u0;
+    const bool load_batch = scratch_batch || (options_.batch_texture_loads && b.defer_uav_barrier);
+    if (!(load_batch ? OpenList() : Recording()) || !p || p >= pipelines_.size() || !pipelines_[p].compute || !gx ||
+        !gy || !gz)
+      return;
     const uint32_t base = AllocShaderDescriptors(kComputeSrvCount + 2);
     if (base == UINT32_MAX) return;
     D3D12_CPU_DESCRIPTOR_HANDLE cpu = shader_heap_->GetCPUDescriptorHandleForHeapStart();
@@ -2428,11 +2528,31 @@ class D3D12Backend final : public Backend {
                                  : -1;
     if (b.scratch_u0 && scratch_uav_ >= 0 && scratch_) {  // patch 0021
       TransitionScratch(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-      device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(scratch_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+      if (scratch_batch) {  // a raw view starting at this subresource's region (the shader addresses from 0)
+        D3D12_UNORDERED_ACCESS_VIEW_DESC u{};
+        u.Format = DXGI_FORMAT_R32_TYPELESS;
+        u.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        u.Buffer.FirstElement = scratch_fp_.Offset / 4;
+        u.Buffer.NumElements = UINT((scratch_size_ - scratch_fp_.Offset) / 4);
+        u.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+        device_->CreateUnorderedAccessView(scratch_, nullptr, &u, udst);
+      } else {
+        device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(scratch_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+      }
     } else if (b.guest_u0 && guest_uav_ >= 0) {
+      if (options_.defer_guest_uav_barrier && guest_state_ == D3D12_RESOURCE_STATE_UNORDERED_ACCESS) {
+        // This may follow a compute write OR a vertex/pixel memexport. An
+        // overlapping UAV access must see it before this dispatch starts.
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        barrier.UAV.pResource = guest_;
+        list_->ResourceBarrier(1, &barrier);
+        ++stats_.guest_uav_barriers_before;
+      }
       TransitionGuest(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
       device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(guest_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     } else if (uav_slot >= 0) {
+      UavBarrierIfWritten(textures_[b.uav_texture], b.uav_mip);
       Transition(textures_[b.uav_texture], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
       device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(uav_slot), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     } else {
@@ -2445,6 +2565,7 @@ class D3D12Backend final : public Backend {
     D3D12_CPU_DESCRIPTOR_HANDLE udst2{cpu.ptr + SIZE_T(base + kComputeSrvCount + 1) * view_increment_};
     const int32_t uav2_slot = ValidTexture(b.uav2_texture) ? UavSlot(textures_[b.uav2_texture], 0) : -1;
     if (uav2_slot >= 0) {
+      UavBarrierIfWritten(textures_[b.uav2_texture], 0);
       Transition(textures_[b.uav2_texture], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
       device_->CopyDescriptorsSimple(1, udst2, view_heap_.Handle(uav2_slot), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     } else {
@@ -2465,10 +2586,16 @@ class D3D12Backend final : public Backend {
     list_->Dispatch(gx, gy, gz);
     if (b.scratch_u0 && scratch_) {  // patch 0021: CopyScratchToTexture transitions it next
     } else if (b.guest_u0) {
-      D3D12_RESOURCE_BARRIER u{};
-      u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-      u.UAV.pResource = guest_;
-      list_->ResourceBarrier(1, &u);
+      if (!options_.defer_guest_uav_barrier) {
+        D3D12_RESOURCE_BARRIER u{};
+        u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        u.UAV.pResource = guest_;
+        list_->ResourceBarrier(1, &u);
+        ++stats_.guest_uav_barriers_after;
+      }
+    } else if (ValidTexture(b.uav_texture) && options_.batch_texture_loads && b.defer_uav_barrier) {
+      textures_[b.uav_texture].uav_unbarriered |= 1ull << std::min<uint32_t>(b.uav_mip, 63);
+      ++stats_.uav_barriers_deferred;
     } else if (ValidTexture(b.uav_texture)) {
       D3D12_RESOURCE_BARRIER u{};
       u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
@@ -2549,6 +2676,29 @@ class D3D12Backend final : public Backend {
     occ_free_handles_.push_back(h);
   }
 
+  void* OcclusionCompletionEvent(OcclusionHandle h) override {
+    if (!h || h >= occ_queries_.size() || lost_) return nullptr;
+    const OcclusionQuery& q = occ_queries_[h];
+    if (!q.in_use || !q.ended || q.broken || !q.parts) return nullptr;
+    uint64_t value = 0;
+    for (uint32_t i = 0; i < q.parts; ++i) {
+      const uint64_t f = occ_slot_fence_[q.slot[i]];
+      if (!f) return nullptr;
+      value = std::max(value, f);
+    }
+    // Keep completion signalled until the target changes. An auto-reset event
+    // can be consumed by an earlier wait; remembering only the fence value
+    // must not leave the next wait with an already-consumed notification.
+    if (!occ_event_) occ_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!occ_event_) return nullptr;
+    if (value != occ_event_fence_) {
+      ResetEvent(occ_event_);
+      if (FAILED(fence_->SetEventOnCompletion(value, occ_event_))) return nullptr;
+      occ_event_fence_ = value;
+    }
+    return occ_event_;
+  }
+
   // ---- readback ----
   ReadbackHandle ReadbackTexture(TextureHandle h, const Rect& region) override {
     if (!Recording() || !ValidTexture(h) || region.empty()) return 0;
@@ -2603,7 +2753,8 @@ class D3D12Backend final : public Backend {
   // ---- patch 0021: scratch buffer for GPU loads into BCn textures (Canary loads every texture on the GPU) ----
   bool PrepareScratchFor(TextureHandle h, uint32_t mip, uint32_t layer, uint32_t& row_pitch, uint32_t& rows) override {
     row_pitch = rows = 0;
-    if (!Recording() || !ValidTexture(h)) return false;
+    const bool batch = options_.batch_texture_loads;
+    if (!(batch ? OpenList() : Recording()) || !ValidTexture(h)) return false;
     Texture& t = textures_[h];
     D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
     if (mip >= rd.MipLevels || layer >= rd.DepthOrArraySize) return false;
@@ -2613,11 +2764,22 @@ class D3D12Backend final : public Backend {
     UINT64 row_size = 0, total = 0;
     device_->GetCopyableFootprints(&rd, sub, 1, 0, &fp, &num_rows, &row_size, &total);
     if (!total || fp.Footprint.Depth != 1) return false;
+    // Batched texture loads: this subresource's region follows the queued ones; when it doesn't fit, they are copied
+    // out first and the buffer starts over (the next load's transition to UAV waits for those copies).
+    UINT64 at = 0;
+    if (batch) {
+      at = (scratch_head_ + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1) & ~UINT64(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1);
+      if (scratch_ && at + total > scratch_size_) {
+        FlushScratchCopies();
+        at = 0;
+      }
+    }
     if (total > scratch_size_) {
       if (scratch_) deferred_releases_.push_back({scratch_, next_fence_});  // the open list may still use it
       scratch_ = nullptr;
       scratch_size_ = 0;
-      const UINT64 size = std::max<UINT64>((total + 0xFFFFF) & ~UINT64(0xFFFFF), 4ull << 20);
+      // Batched: room for a burst of loads (a level start loads hundreds of BC textures in one frame).
+      const UINT64 size = std::max<UINT64>((total + 0xFFFFF) & ~UINT64(0xFFFFF), batch ? 32ull << 20 : 4ull << 20);
       std::string error;
       if (!CreateBuffer(size, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                         D3D12_RESOURCE_STATE_COMMON, &scratch_, error)) {
@@ -2637,18 +2799,25 @@ class D3D12Backend final : public Backend {
       device_->CreateUnorderedAccessView(scratch_, nullptr, &u, view_heap_.Handle(scratch_uav_));
     }
     scratch_fp_ = fp;
-    scratch_fp_.Offset = 0;
+    scratch_fp_.Offset = at;
     scratch_sub_ = sub;
+    scratch_head_ = at + total;
     row_pitch = fp.Footprint.RowPitch;
     rows = num_rows;
     return true;
   }
   void CopyScratchToTexture(TextureHandle h, uint32_t mip, uint32_t layer) override {
-    if (!Recording() || !ValidTexture(h) || !scratch_) return;
+    const bool batch = options_.batch_texture_loads;
+    if (!(batch ? OpenList() : Recording()) || !ValidTexture(h) || !scratch_) return;
     Texture& t = textures_[h];
     D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
     const UINT sub = mip + layer * rd.MipLevels;
     if (sub != scratch_sub_) return;  // PrepareScratchFor was for another subresource
+    if (batch) {  // queued: recorded with the others by FlushScratchCopies
+      scratch_copies_.push_back({h, t.serial, sub, scratch_fp_});
+      t.scratch_pending = true;
+      return;
+    }
     TransitionScratch(D3D12_RESOURCE_STATE_COPY_SOURCE);
     Transition(t, D3D12_RESOURCE_STATE_COPY_DEST);
     D3D12_TEXTURE_COPY_LOCATION dl{};
@@ -2662,6 +2831,51 @@ class D3D12Backend final : public Backend {
     TsCat();
     list_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
     ++stats_.scratch_texture_copies;
+  }
+  // Batched texture loads: records the queued scratch copies - the scratch buffer's one transition, every target's
+  // transition (consecutive barriers: the proxy sends them as one batch), then the copies.
+  void FlushScratchCopies() {
+    if (scratch_copies_.empty()) return;
+    std::vector<ScratchCopy> copies;
+    copies.swap(scratch_copies_);
+    scratch_head_ = 0;
+    for (const ScratchCopy& c : copies)  // first: Transition below must not flush again
+      if (ValidTexture(c.texture) && textures_[c.texture].serial == c.serial) textures_[c.texture].scratch_pending = false;
+    if (list_open_ && !lost_ && scratch_) {
+      const uint8_t category = gpu_cat_pending_;  // job 177: timed as texture loads, whatever comes next
+      gpu_cat_pending_ = 3;
+      TransitionScratch(D3D12_RESOURCE_STATE_COPY_SOURCE);
+      for (const ScratchCopy& c : copies)
+        if (ValidTexture(c.texture) && textures_[c.texture].serial == c.serial)
+          Transition(textures_[c.texture], D3D12_RESOURCE_STATE_COPY_DEST);
+      for (const ScratchCopy& c : copies) {
+        if (!ValidTexture(c.texture) || textures_[c.texture].serial != c.serial) continue;
+        D3D12_TEXTURE_COPY_LOCATION dl{};
+        dl.pResource = textures_[c.texture].resource;
+        dl.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dl.SubresourceIndex = c.subresource;
+        D3D12_TEXTURE_COPY_LOCATION sl{};
+        sl.pResource = scratch_;
+        sl.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        sl.PlacedFootprint = c.footprint;
+        TsCat();
+        list_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
+        ++stats_.scratch_texture_copies;
+      }
+      ++stats_.scratch_batches;
+      gpu_cat_pending_ = category;
+    }
+    copies.clear();
+    if (scratch_copies_.empty()) scratch_copies_.swap(copies);  // keep the capacity
+  }
+  // Batched texture loads: a mip written as a UAV with its barrier left out gets it before it is written again.
+  void UavBarrierIfWritten(Texture& t, uint32_t mip) {
+    if (!(t.uav_unbarriered & (1ull << std::min<uint32_t>(mip, 63)))) return;
+    D3D12_RESOURCE_BARRIER u{};
+    u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    u.UAV.pResource = t.resource;
+    list_->ResourceBarrier(1, &u);
+    t.uav_unbarriered = 0;  // a UAV barrier covers the whole resource
   }
   void TransitionScratch(D3D12_RESOURCE_STATES state) {
     if (!scratch_ || scratch_state_ == state) return;
@@ -2736,6 +2950,7 @@ class D3D12Backend final : public Backend {
     return SubmitImpl(false);
   }
   uint64_t SubmitImpl(bool drain) {
+    COGBOX_TRACY_SCOPE("Submit D3D12 command list");
     stats_.barrier_calls = proxy_.barrier_calls;  // job 045
     stats_.barriers = proxy_.barriers;
     stats_.barrier_batches = proxy_.barrier_batches;  // job 046
@@ -2764,10 +2979,14 @@ class D3D12Backend final : public Backend {
       }
     }
     if (!list_open_) return last_submitted_;
+    FlushScratchCopies();  // batched texture loads: they belong to this list
     if (occ_open_ && occ_open_in_list_) {  // upl-s4c: a query spanning this Submit continues in the next list
       CloseOcclusionPart();
       occ_open_in_list_ = false;
     }
+    queries::ResolveEndedRuns(occ_slots_in_list_, [this](uint32_t first, uint32_t count) {
+      list_->ResolveQueryData(occ_heap_, D3D12_QUERY_TYPE_OCCLUSION, first, count, occ_readback_, UINT64(first) * 8);
+    });
     if (ts_open_ && ts_cur_.count) {
       TsEmit(0xFE);  // end mark
       const uint32_t first = ts_cur_.first, n = ts_cur_.count;
@@ -2798,6 +3017,9 @@ class D3D12Backend final : public Backend {
     // work being in the queue when Submit returns), then pick up any failure it saw. Patch 0138: an early (mid-frame)
     // submit does not wait - the recording thread submits lists in order, and the frame's last Submit drains.
     if (drain) list_->Drain(); else list_->Kick();
+    stats_.recording_wait_ms = proxy_.recording_wait_ms;
+    stats_.recording_wakeups = proxy_.recording_wakeups;
+    stats_.recording_wakeups_avoided = proxy_.recording_wakeups_avoided;
     if (FAILED(list_->Error()) && !lost_) {
       lost_ = true;
       lost_reason_ = Hr(list_->ErrorWhat() ? list_->ErrorWhat() : "command recording", list_->Error());
@@ -2838,6 +3060,7 @@ class D3D12Backend final : public Backend {
     wait_site_ = saved;
   }
   void WaitForFence(uint64_t value) override {
+    COGBOX_TRACY_SCOPE("Wait for D3D12 fence");
     if (!fence_ || lost_) return;
     if (value >= next_fence_) value = Submit();  // waiting on unsubmitted work: submit it first
     if (fence_->GetCompletedValue() >= value) return;
@@ -2874,6 +3097,7 @@ class D3D12Backend final : public Backend {
   struct Shader {
     ShaderStage stage = ShaderStage::kVertex;
     std::shared_ptr<const std::vector<uint8_t>> code;  // patch 0058: shared with pipeline jobs
+    uint8_t prefetch_status = 0;  // recording-thread only: 0 unchecked, 1 unavailable, 2 cached
   };
   struct FencedAllocator {
     ID3D12CommandAllocator* allocator;
@@ -2975,6 +3199,8 @@ class D3D12Backend final : public Backend {
     }
     proxy_.Stop();  // the recording thread is idle after the last Submit; nothing may reach it after this
     copies_.Stop();
+    retired_imports_.Clear([this](Texture& t) { FreeTextureDescriptors(t); SafeRelease(t.resource); });
+    stats_.imports_pending = 0;
     for (auto& d : deferred_releases_) ReleaseDeferred(d);
     deferred_releases_.clear();
     for (Texture& t : textures_) SafeRelease(t.resource);
@@ -2987,6 +3213,10 @@ class D3D12Backend final : public Backend {
       if (pipeline_library_dirty_.load()) SavePipelineLibrary();
       SafeRelease(pipeline_library_);
     }
+    if (warm_pipeline_library_) {
+      if (warm_library_dirty_.load()) SavePipelineLibrary(false, true);
+      SafeRelease(warm_pipeline_library_);
+    }
     for (Pipeline& p : pipelines_) SafeRelease(p.pso);
     for (IndexBuffer& b : index_buffers_) SafeRelease(b.resource);
     for (Readback& r : readbacks_) SafeRelease(r.buffer);
@@ -2996,6 +3226,7 @@ class D3D12Backend final : public Backend {
     SafeRelease(occ_heap_);  // upl-s4c
     SafeRelease(occ_readback_);
     occ_mapped_ = nullptr;
+    if (occ_event_) { CloseHandle(occ_event_); occ_event_ = nullptr; }
     for (auto& a : allocators_) SafeRelease(a.allocator);
     allocators_.clear();
     SafeRelease(current_allocator_);
@@ -3027,7 +3258,14 @@ class D3D12Backend final : public Backend {
   bool ValidTexture(TextureHandle h) const { return h && h < textures_.size() && textures_[h].resource; }
 
   // Opens the command list if needed (binding heaps and root signatures). False when the device is unusable.
+  // Batched texture loads: every recording call but the texture-load ones (OpenList) first records the queued scratch
+  // copies, so nothing can read a texture before its copy.
   bool Recording() {
+    if (!OpenList()) return false;
+    if (!scratch_copies_.empty()) FlushScratchCopies();
+    return true;
+  }
+  bool OpenList() {
     if (!ready_ || lost_) return false;
     if (list_open_) return true;
     // An allocator whose submission has completed, or a new one.
@@ -3248,7 +3486,6 @@ class D3D12Backend final : public Backend {
     OcclusionQuery& q = occ_queries_[occ_open_];
     const uint32_t s = q.slot[q.parts - 1];
     list_->EndQuery(occ_heap_, D3D12_QUERY_TYPE_OCCLUSION, s);
-    list_->ResolveQueryData(occ_heap_, D3D12_QUERY_TYPE_OCCLUSION, s, 1, occ_readback_, UINT64(s) * 8);
     occ_slots_in_list_.push_back(s);
   }
   void ContinueOcclusionQuery() {
@@ -3732,7 +3969,9 @@ class D3D12Backend final : public Backend {
   }
 
   void Transition(Texture& t, D3D12_RESOURCE_STATES state) {
+    if (t.scratch_pending) FlushScratchCopies();  // batched texture loads: its queued copy goes first
     if (t.state == state) return;
+    t.uav_unbarriered = 0;  // a transition out of UAV state waits for those writes
     // Patch 0089 (Canary d3d12_render_target_cache.cc): MSAA depth drawn with programmable sample positions is
     // decompressed in place before anything but depth writing reads it.
     if (positions_ever_ && t.dsv >= 0 && t.desc.samples > 1 && t.state == D3D12_RESOURCE_STATE_DEPTH_WRITE &&
@@ -3849,6 +4088,12 @@ class D3D12Backend final : public Backend {
     if (!fence_) return;
     if (poll) completed_ = fence_->GetCompletedValue();
     const uint64_t done = completed_;
+    retired_imports_.Collect(done, [this](Texture& t) {
+      FreeTextureDescriptors(t);
+      SafeRelease(t.resource);
+      ++stats_.imports_collected;
+    });
+    stats_.imports_pending = retired_imports_.Pending();
     while (!upload_markers_.empty() && upload_markers_.front().fence <= done) {
       upload_tail_ = upload_markers_.front().position;
       upload_markers_.pop_front();
@@ -3877,6 +4122,14 @@ class D3D12Backend final : public Backend {
         prev = t;
       }
       if (prev > t0) stats_.gpu_ms += double(prev - t0) * k;
+      if (ts_prev_end_ && t0 > ts_prev_end_) {  // idle between this list and the previous timed one
+        const double gap = double(t0 - ts_prev_end_) * k;
+        if (gap < 1000.0) {
+          stats_.gpu_idle_ms += gap;
+          ++stats_.gpu_idle_gaps;
+        }
+      }
+      if (prev >= t0) ts_prev_end_ = prev;
       ++stats_.gpu_lists_timed;
       ts_used_ -= l.count;
       ts_pending_.pop_front();
@@ -3901,7 +4154,10 @@ class D3D12Backend final : public Backend {
       std::vector<uint8_t> buf(len);
       auto* m = reinterpret_cast<D3D12_MESSAGE*>(buf.data());
       if (SUCCEEDED(info_queue_->GetMessage(i, m, &len)) && m->Severity <= D3D12_MESSAGE_SEVERITY_WARNING) {
-        REXLOG_WARN("gow2_renderer: D3D12 debug: {}", std::string(m->pDescription, m->DescriptionByteLength ? m->DescriptionByteLength - 1 : 0));
+        const std::string message(m->pDescription, m->DescriptionByteLength ? m->DescriptionByteLength - 1 : 0);
+        if (m->Severity <= D3D12_MESSAGE_SEVERITY_ERROR)
+          REXLOG_ERROR("gow2_renderer: D3D12 debug error {}: {}", unsigned(m->ID), message);
+        else REXLOG_WARN("gow2_renderer: D3D12 debug warning {}: {}", unsigned(m->ID), message);
         ++info_messages_logged_;
       }
     }
@@ -3920,8 +4176,8 @@ class D3D12Backend final : public Backend {
     rd.SampleDesc.Count = 1;
     rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     rd.Flags = flags;
-    // Buffers are always created in COMMON (the debug layer ignores any other InitialState, job 097); upload buffers are
-    // then readable and readback buffers writable by copies through implicit promotion.
+    // Buffers are effectively created in COMMON on this runtime, including GPU_UPLOAD
+    // (debug message 1328). Keep the existing implicit-promotion path (job 097).
     (void)state;
     const HRESULT hr = device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COMMON,
                                                         nullptr, IID_PPV_ARGS(out));
@@ -4076,6 +4332,8 @@ class D3D12Backend final : public Backend {
   ID3D12CommandQueue* queue_ = nullptr;
   ID3D12Fence* fence_ = nullptr;
   HANDLE fence_event_ = nullptr;
+  HANDLE occ_event_ = nullptr;
+  uint64_t occ_event_fence_ = 0;
   uint64_t next_fence_ = 1, last_submitted_ = 0;
   ID3D12GraphicsCommandList* real_list_ = nullptr;
   CommandListProxy proxy_;
@@ -4093,6 +4351,7 @@ class D3D12Backend final : public Backend {
   ID3D12QueryHeap* ts_heap_ = nullptr;
   ID3D12Resource* ts_readback_ = nullptr;
   const uint64_t* ts_mapped_ = nullptr;
+  uint64_t ts_prev_end_ = 0;  // the last timed list's end timestamp (GPU idle between lists)
   UINT64 ts_freq_ = 0;
   uint32_t ts_head_ = 0, ts_used_ = 0;
   bool ts_open_ = false, ts_failed_ = false;
@@ -4186,6 +4445,15 @@ class D3D12Backend final : public Backend {
   D3D12_RESOURCE_STATES scratch_state_ = D3D12_RESOURCE_STATE_COMMON;
   D3D12_PLACED_SUBRESOURCE_FOOTPRINT scratch_fp_{};
   UINT scratch_sub_ = UINT_MAX;
+  // Batched texture loads: the next free byte of the scratch buffer and the copies queued out of it.
+  struct ScratchCopy {
+    TextureHandle texture = 0;
+    uint64_t serial = 0;
+    UINT subresource = 0;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+  };
+  UINT64 scratch_head_ = 0;
+  std::vector<ScratchCopy> scratch_copies_;
   int32_t null_views_[3] = {-1, -1, -1};
   uint64_t lost_checked_ms_ = 0;  // IsLost: last GetDeviceRemovedReason
   uint64_t completed_ = 0;        // Retire: last fence value read  // view_heap_ slots of null 2D / cube / 3D views (TextureView::zero)
@@ -4246,17 +4514,56 @@ class D3D12Backend final : public Backend {
             std::lock_guard<std::mutex> l(b->job_mutex_);
             --*counter;
           }
-          if (counter == &b->warm_busy_) b->job_cv_.notify_one();  // patch 0069: a warm slot is free again
+          if (counter == &b->warm_busy_) { b->job_cv_.notify_one(); b->warm_capacity_cv_.notify_all(); }  // patch 0069: a warm slot is free again
         }
       } busy_done{this, job->target ? &jobs_busy_ : &warm_busy_};
-      if (!job->target) {  // patch 0068: warm-only - put the pixel shader through the driver, keep nothing
+      if (!job->target) {  // warm-only: load or create the stage pipeline, persist it, then release the PSO
+        // Prebuild v2: a speculative build runs at its own (lower) priority, so it takes CPU time only the game, the
+        // renderer, the audio and the draws' own pipelines leave free; the worker's priority is restored after.
+        const int base_prio = std::clamp(options_.pipeline_thread_priority, -2, 0);
+        const int warm_prio = warm_startup_.load(std::memory_order_relaxed) ? base_prio
+                              : std::clamp(options_.warm_thread_priority, -2, 0);
+        struct PrioScope {
+          int from, to;
+          static int Win(int p) { return p == 0 ? THREAD_PRIORITY_NORMAL : p == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST; }
+          PrioScope(int f, int t) : from(f), to(t) { if (to != from) SetThreadPriority(GetCurrentThread(), Win(to)); }
+          ~PrioScope() { if (to != from) SetThreadPriority(GetCurrentThread(), Win(from)); }
+        } prio_scope{base_prio, warm_prio};
+        if (job->stage_prefetch) {
+          SeedWarmStages(*job);
+          continue;
+        }
         const auto w0 = std::chrono::steady_clock::now();
         ID3D12PipelineState* warm = nullptr;
-        const HRESULT whr = device_->CreateGraphicsPipelineState(&job->desc, IID_PPV_ARGS(&warm));
+        HRESULT whr = E_FAIL;
+        const std::wstring& name = job->library_name;
+        whr = LoadLibraryPipeline(name, job->desc, &warm, true);
+        bool persisted = SUCCEEDED(whr);
+        if (SUCCEEDED(whr)) warm_loaded_.fetch_add(1, std::memory_order_relaxed);
+        if (FAILED(whr)) {
+          whr = device_->CreateGraphicsPipelineState(&job->desc, IID_PPV_ARGS(&warm));
+          if (SUCCEEDED(whr)) {
+            ID3DBlob* blob = nullptr;
+            if (SUCCEEDED(warm->GetCachedBlob(&blob))) {
+              persisted = warm_stages_.Put(name, blob->GetBufferPointer(), blob->GetBufferSize());
+              blob->Release();
+            }
+            if (!persisted && warm_save_failed_.fetch_add(1) < 4)
+              REXLOG_WARN("gow2_renderer: could not save compiled stage; startup will retry it next launch");
+          }
+        }
         warm_us_.fetch_add(uint64_t(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - w0).count()),
                            std::memory_order_relaxed);
         if (SUCCEEDED(whr)) {
           warm->Release();
+          {
+            std::lock_guard<std::mutex> lock(job_mutex_);
+            warm_success_names_.insert(name);
+            if (auto it = warm_source_pending_.find(name); it != warm_source_pending_.end()) {
+              if (persisted) for (const auto& key : it->second) warm_sources_.Remember(key, name);
+              warm_source_pending_.erase(it);
+            }
+          }
           warmed_.fetch_add(1, std::memory_order_relaxed);
         } else if (warm_failed_.fetch_add(1, std::memory_order_relaxed) < 4) {
           REXLOG_WARN("gow2_renderer: {} (warm-only pipeline, patch 0068)", Hr("CreateGraphicsPipelineState", whr));
@@ -4268,12 +4575,13 @@ class D3D12Backend final : public Backend {
       // Patch 0010: a pipeline already saved loads from the library here, off the recording thread. Each pipeline has
       // one job, so no two threads load the same one (the one case the library does not synchronise itself).
       if (pipeline_library_ && options_.pipeline_load_async && !job->library_name.empty() &&
-          SUCCEEDED(pipeline_library_->LoadGraphicsPipeline(job->library_name.c_str(), &job->desc, IID_PPV_ARGS(&pso)))) {
+          SUCCEEDED(LoadLibraryPipeline(job->library_name, job->desc, &pso))) {
         p.pso = pso;
         loaded_async_.fetch_add(1, std::memory_order_relaxed);
         p.ready.store(true, std::memory_order_release);
         continue;
       }
+      SeedWarmStages(*job);
       const auto t0 = std::chrono::steady_clock::now();
       const HRESULT hr = device_->CreateGraphicsPipelineState(&job->desc, IID_PPV_ARGS(&pso));
       {  // patch 0057: how long the driver takes per new pipeline, and for how much bytecode
@@ -4315,38 +4623,48 @@ class D3D12Backend final : public Backend {
   // pipeline_library_blob_. Names: XXH3-128 of the root signature, the shader bytecode and the fixed-function state of
   // the description (pointers zeroed), so the same pipeline gets the same name in every run of the same build.
   void OpenPipelineLibrary() {
+    LoadPipelineLibrary(std::filesystem::path(options_.pipeline_library_path), pipeline_library_, pipeline_library_blob_);
+    pipeline_library_saved_at_ = std::chrono::steady_clock::now();
+  }
+  void LoadPipelineLibrary(const std::filesystem::path& path, ID3D12PipelineLibrary1*& library,
+                           std::vector<uint8_t>& blob, cogbox::io::MappedFile* mapped = nullptr,
+                           std::atomic<bool>* existing_valid = nullptr) {
     ID3D12Device1* device1 = nullptr;
     if (FAILED(device_->QueryInterface(IID_PPV_ARGS(&device1)))) {
       REXLOG_WARN("gow2_renderer: saved pipelines: the device has no ID3D12Device1; off");
       return;
     }
     std::error_code ec;
-    const std::filesystem::path path(options_.pipeline_library_path);
     std::filesystem::create_directories(path.parent_path(), ec);
-    {
-      std::ifstream f(path, std::ios::binary);
-      if (f) pipeline_library_blob_.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    const void* data = nullptr;
+    size_t had = 0;
+    if (mapped && mapped->Open(path)) { data = mapped->Data(); had = mapped->Size(); }
+    else if (!mapped) {
+      std::ifstream f(path, std::ios::binary | std::ios::ate);
+      if (f && f.tellg() > 0) {
+        blob.resize(size_t(f.tellg())); f.seekg(0);
+        if (f.read(reinterpret_cast<char*>(blob.data()), std::streamsize(blob.size()))) {
+          data = blob.data(); had = blob.size();
+        } else blob.clear();
+      }
     }
-    HRESULT hr = E_FAIL;
-    if (!pipeline_library_blob_.empty())
-      hr = device1->CreatePipelineLibrary(pipeline_library_blob_.data(), pipeline_library_blob_.size(),
-                                          IID_PPV_ARGS(&pipeline_library_));
-    const size_t had = pipeline_library_blob_.size();
+    HRESULT hr = had ? device1->CreatePipelineLibrary(data, had, IID_PPV_ARGS(&library)) : E_FAIL;
+    if (existing_valid) *existing_valid = had && SUCCEEDED(hr);
     if (FAILED(hr)) {  // no file yet, another driver / GPU (DRIVER_VERSION_MISMATCH, ADAPTER_NOT_FOUND) or damaged
       if (had) REXLOG_INFO("gow2_renderer: saved pipelines: {} not usable ({:08X}) - starting a new library",
                            path.string(), uint32_t(hr));
-      pipeline_library_blob_.clear();
-      hr = device1->CreatePipelineLibrary(nullptr, 0, IID_PPV_ARGS(&pipeline_library_));
+      blob.clear();
+      if (mapped) mapped->Reset();
+      hr = device1->CreatePipelineLibrary(nullptr, 0, IID_PPV_ARGS(&library));
     }
     device1->Release();
     if (FAILED(hr)) {
       REXLOG_WARN("gow2_renderer: saved pipelines: CreatePipelineLibrary failed ({:08X}); off", uint32_t(hr));
-      pipeline_library_ = nullptr;
+      library = nullptr;
       return;
     }
-    pipeline_library_saved_at_ = std::chrono::steady_clock::now();
     REXLOG_INFO("gow2_renderer: saved pipelines: {} ({} KB loaded)", path.string(),
-                pipeline_library_blob_.empty() ? 0 : had / 1024);
+                SUCCEEDED(hr) ? had / 1024 : 0);
   }
   std::wstring PipelineLibraryName(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& pd) const {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC fixed = pd;  // value copy; pointer members cleared below (padding stays zero:
@@ -4370,52 +4688,149 @@ class D3D12Backend final : public Backend {
     swprintf(name, 40, L"gp%016llx%016llx", (unsigned long long)h.high64, (unsigned long long)h.low64);
     return name;
   }
-  void StorePipeline(const std::wstring& name, ID3D12PipelineState* pso) {
-    if (!pipeline_library_ || name.empty() || !pso) return;
-    std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
-    const HRESULT hr = pipeline_library_->StorePipeline(name.c_str(), pso);
-    if (SUCCEEDED(hr)) {  // E_INVALIDARG = the name is already there (two creations of one pipeline): fine
-      ++stats_.pipelines_stored;
-      pipeline_library_dirty_.store(true, std::memory_order_relaxed);
+  void SeedWarmStages(const PipelineJob& job) {
+    if (!warm_ready_.load(std::memory_order_acquire) || !warm_sources_.Size()) return;
+    {
+      std::lock_guard<std::mutex> lock(warm_lifecycle_mutex_);
+      if (!warm_pipeline_library_ && warm_library_valid_)
+        LoadPipelineLibrary(WarmLibraryPath(), warm_pipeline_library_, warm_library_blob_, &warm_library_map_);
+    }
+    if (!warm_pipeline_library_) return;
+    for (bool vertex : {true, false}) {
+      const auto& code = job.code[vertex ? 0 : 1];
+      if (!code || code->empty()) continue;
+      auto pd = warm_pd_;
+      if (vertex) {
+        pd.VS = {code->data(), code->size()}; pd.PS = {}; pd.NumRenderTargets = 0;
+        for (auto& format : pd.RTVFormats) format = DXGI_FORMAT_UNKNOWN;
+      } else pd.PS = {code->data(), code->size()};
+      const auto name = PipelineLibraryName(pd);
+      if (!warm_sources_.HasPipeline(name)) continue;
+      // Another live pipeline may need this same stage. Wait off the render
+      // thread until its restore finishes instead of racing into a cold compile.
+      std::lock_guard<std::mutex> seed_lock(warm_seed_mutexes_[std::hash<std::wstring>{}(name) % warm_seed_mutexes_.size()]);
+      {
+        std::lock_guard<std::mutex> lock(job_mutex_);
+        if (live_seeded_.count(name)) continue;
+      }
+      ID3D12PipelineState* stage = nullptr;
+      const auto restored_at = std::chrono::steady_clock::now();
+      if (SUCCEEDED(LoadLibraryPipeline(name, pd, &stage, true))) {
+        stage->Release();
+        stage_restores_.fetch_add(1, std::memory_order_relaxed);
+        stage_restore_us_.fetch_add(uint64_t(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now() - restored_at).count()), std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lock(job_mutex_);
+        live_seeded_.insert(name);
+      }
+    }
+  }
+  HRESULT LoadLibraryPipeline(const std::wstring& name, const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc,
+                              ID3D12PipelineState** out, bool warm = false) {
+    if (warm) {
+      std::vector<uint8_t> bytes;
+      if (warm_stages_.Get(name, bytes)) {
+        auto cached = desc;
+        cached.CachedPSO = {bytes.data(), bytes.size()};
+        const HRESULT hr = device_->CreateGraphicsPipelineState(&cached, IID_PPV_ARGS(out));
+        if (SUCCEEDED(hr)) return hr;
+      }
+    }
+    ID3D12PipelineLibrary1* library = warm ? warm_pipeline_library_ : pipeline_library_;
+    if (!library || name.empty()) return E_FAIL;
+    // D3D12 requires synchronization for loads of the same PSO. Striped locks retain parallel
+    // loading for unrelated keys and never make a live lookup wait for cache serialization.
+    std::lock_guard<std::mutex> lock(pipeline_load_mutexes_[std::hash<std::wstring>{}(name) % pipeline_load_mutexes_.size()]);
+    return library->LoadGraphicsPipeline(name.c_str(), &desc, IID_PPV_ARGS(out));
+  }
+  void StorePipeline(const std::wstring& name, ID3D12PipelineState* pso, bool warm = false) {
+    ID3D12PipelineLibrary1* library = warm ? warm_pipeline_library_ : pipeline_library_;
+    if (!library || name.empty() || !pso) return;
+    std::lock_guard<std::mutex> lock(warm ? warm_library_mutex_ : pipeline_library_mutex_);
+    const HRESULT hr = library->StorePipeline(name.c_str(), pso);
+    if (SUCCEEDED(hr)) {
+      if (!warm) stored_pipelines_.fetch_add(1, std::memory_order_relaxed);
+      else warm_library_valid_ = false;
+      (warm ? warm_library_dirty_ : pipeline_library_dirty_).store(true, std::memory_order_relaxed);
     }
   }
   // Patch 0010: also called on the background saver thread (on_recording_thread = false): then it leaves the stats and
   // the save time to the recording thread and reports success by its result.
-  bool SavePipelineLibrary(bool on_recording_thread = true) {
+  bool SavePipelineLibrary(bool on_recording_thread = true, bool warm = false) {
+    ID3D12PipelineLibrary1* library = warm ? warm_pipeline_library_ : pipeline_library_;
+    auto& dirty = warm ? warm_library_dirty_ : pipeline_library_dirty_;
     std::vector<uint8_t> out;
     {
       // Only the snapshot is taken under the lock (workers store new pipelines meanwhile); the file is written after.
-      std::lock_guard<std::mutex> lock(pipeline_library_mutex_);
+      std::lock_guard<std::mutex> lock(warm ? warm_library_mutex_ : pipeline_library_mutex_);
       if (on_recording_thread) pipeline_library_saved_at_ = std::chrono::steady_clock::now();
-      if (!pipeline_library_ || !pipeline_library_dirty_.exchange(false)) return false;
-      const SIZE_T size = pipeline_library_->GetSerializedSize();
+      if (!library || !dirty.exchange(false)) return false;
+      const SIZE_T size = library->GetSerializedSize();
       out.resize(size);
-      if (!size || FAILED(pipeline_library_->Serialize(out.data(), size))) {
+      if (!size || FAILED(library->Serialize(out.data(), size))) {
         REXLOG_WARN("gow2_renderer: saved pipelines: Serialize failed ({} bytes)", size_t(size));
+        dirty.store(true);
         return false;
       }
     }
-    const std::filesystem::path path(options_.pipeline_library_path);
+    if (warm) {
+      SafeRelease(warm_pipeline_library_);
+      warm_library_map_.Reset();
+      std::vector<uint8_t>().swap(warm_library_blob_);
+    }
+    const std::filesystem::path path = warm ? WarmLibraryPath() : std::filesystem::path(options_.pipeline_library_path);
     std::filesystem::path tmp = path;
     tmp += L".tmp";
     {
       std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
       f.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
-      if (!f) return false;
+      if (!f) { dirty.store(true); REXLOG_WARN("gow2_renderer: could not write shader pipeline cache {}", tmp.string()); return false; }
     }
     std::error_code ec;
     std::filesystem::rename(tmp, path, ec);  // whole file or nothing: a crash mid-write leaves the old one
     if (ec) {
+      REXLOG_WARN("gow2_renderer: could not replace shader pipeline cache {}: {}", path.string(), ec.message());
       std::filesystem::remove(tmp, ec);
+      dirty.store(true);
       return false;
     }
     if (on_recording_thread) ++stats_.pipeline_library_saves;
+    if (warm) warm_library_valid_ = true;
     return true;
   }
+  cogbox::shader_cache::WarmSourceCache warm_sources_;
+  cogbox::shader_cache::WarmStageStore warm_stages_;
+  bool WarmSourceStamp(cogbox::shader_cache::LibraryStamp& stamp) const {
+    return cogbox::shader_cache::WarmSourceCache::Stamp(WarmLibraryPath(), warm_source_identity_, stamp) &&
+           warm_stages_.Stamp(stamp);
+  }
+  std::string warm_source_identity_;
+  std::filesystem::path WarmSourcePath() const {
+    return WarmLibraryPath().wstring() + L".sources-v2-" + std::to_wstring(
+        cogbox::shader_cache::InventoryHash(warm_source_identity_.data(), warm_source_identity_.size()));
+  }
+  std::atomic<bool> warm_library_valid_{false};
+  std::atomic<uint64_t> warm_source_hits_{0};
+  std::atomic<uint64_t> warm_save_failed_{0};
+  std::atomic<uint64_t> stage_prefetches_{0}, stage_restores_{0}, stage_restore_us_{0};
+  std::mutex warm_lifecycle_mutex_;
+  std::unordered_set<std::wstring> warm_success_names_, live_seeded_;
+  std::unordered_set<std::wstring> stage_prefetch_seen_;
+  std::unordered_map<std::wstring, std::vector<cogbox::shader_cache::SourceKey>> warm_source_pending_;
+  std::filesystem::path WarmLibraryPath() const { return options_.pipeline_library_path + ".prebuild"; }
+  ID3D12PipelineLibrary1* warm_pipeline_library_ = nullptr;
+  cogbox::io::MappedFile warm_library_map_;
+  std::vector<uint8_t> warm_library_blob_;  // retained for the library's entire lifetime
+  std::mutex warm_library_mutex_;
+  std::atomic<bool> warm_library_dirty_{false};
+  std::array<std::mutex, 64> pipeline_load_mutexes_;
+  GraphicsPipelineDesc last_pipeline_desc_;  // GetGraphicsPipeline's one-entry memo (renderer thread only)
+  PipelineHandle last_pipeline_ = 0;
+  std::array<std::mutex, 64> warm_seed_mutexes_;
   ID3D12PipelineLibrary1* pipeline_library_ = nullptr;
   std::vector<uint8_t> pipeline_library_blob_;
   std::mutex pipeline_library_mutex_;
   std::atomic<bool> pipeline_library_dirty_{false};
+  std::atomic<uint64_t> stored_pipelines_{0};
   std::chrono::steady_clock::time_point pipeline_library_saved_at_{};
   // Patch 0010: background saves and asynchronous library loads.
   std::thread saver_;
@@ -4437,12 +4852,17 @@ class D3D12Backend final : public Backend {
     return q;
   }
   void RefreshWorkerStats() {  // patch 0057 (moved here by 0061: also for the prepare-only report)
+    stats_.cached_stage_prefetches = stage_prefetches_.load(std::memory_order_relaxed);
+    stats_.cached_stage_restores = stage_restores_.load(std::memory_order_relaxed);
+    stats_.cached_stage_restore_ms = double(stage_restore_us_.load(std::memory_order_relaxed)) / 1000.0;
+    stats_.pipelines_stored = stored_pipelines_.load(std::memory_order_relaxed);
     stats_.pipelines_loaded_async = loaded_async_.load(std::memory_order_relaxed);
     stats_.pipelines_built_async = built_async_.load(std::memory_order_relaxed);
     stats_.pipeline_async_ms = double(async_us_.load(std::memory_order_relaxed)) / 1000.0;
     stats_.pipeline_async_max_ms = double(async_max_us_.load(std::memory_order_relaxed)) / 1000.0;
     stats_.pipeline_async_bytes = async_bytes_.load(std::memory_order_relaxed);
     stats_.pipelines_warmed = warmed_.load(std::memory_order_relaxed);  // patch 0068
+    stats_.pipelines_warm_loaded = warm_loaded_.load(std::memory_order_relaxed);
     stats_.pipelines_warm_failed = warm_failed_.load(std::memory_order_relaxed);
     stats_.pipeline_warm_ms = double(warm_us_.load(std::memory_order_relaxed)) / 1000.0;
     for (uint32_t i = 0; i < kPipelineClasses; ++i)
@@ -4458,6 +4878,17 @@ class D3D12Backend final : public Backend {
     RefreshWorkerStats();
     if (saver_.joinable()) saver_.join();
     if (pipeline_library_ && pipeline_library_dirty_.load()) SavePipelineLibrary();
+    if (warm_pipeline_library_ && warm_library_dirty_.load()) SavePipelineLibrary(false, true);
+    if (warm_library_valid_ && !warm_source_identity_.empty()) {
+      cogbox::shader_cache::LibraryStamp stamp;
+      if (cogbox::shader_cache::WarmSourceCache::Stamp(WarmLibraryPath(), warm_source_identity_, stamp) &&
+          !warm_sources_.Save(WarmSourcePath(), stamp))
+        REXLOG_WARN("gow2_renderer: could not save the configuration's compiled source inventory");
+      // Retain the legacy inventory for older executables and rollback builds.
+      if (WarmSourceStamp(stamp) &&
+          !warm_sources_.Save(WarmLibraryPath().wstring() + L".sources", stamp))
+        REXLOG_WARN("gow2_renderer: could not save the compiled source inventory");
+    }
   }
   void SetPipelineBacklog(bool on) override { pipeline_backlog_ = on; }
   bool PipelinePending(const GraphicsPipelineDesc& d) override {  // patch 0063 (the renderer's load hold)
@@ -4523,19 +4954,25 @@ class D3D12Backend final : public Backend {
   }
   // Patch 0068 (gpu.h SetWarmTemplate / WarmPixelShader): warm-only pipelines.
   std::deque<std::unique_ptr<PipelineJob>> warm_jobs_;  // under job_mutex_
+  std::unordered_set<std::wstring> warm_seen_;  // identical final bytecode/state needs only one driver build
+  std::condition_variable warm_capacity_cv_;
+  std::atomic<bool> warm_startup_{false};
   uint64_t warm_busy_ = 0;                              // under job_mutex_
-  uint64_t warm_workers_ = 3;                           // patch 0069 (SetWarmTemplate)
+  uint64_t warm_workers_ = 3;                           // patch 0069 (SetWarmTemplate); prebuild v2: SetWarmWorkers
+  bool warm_workers_set_ = false;                       // prebuild v2: SetWarmWorkers was called (under job_mutex_)
   D3D12_GRAPHICS_PIPELINE_STATE_DESC warm_pd_{};        // written once, before warm_ready_
   std::shared_ptr<const std::vector<uint8_t>> warm_vs_;
   std::atomic<bool> warm_ready_{false};
-  std::atomic<uint64_t> warmed_{0}, warm_failed_{0}, warm_us_{0};
+  std::atomic<uint64_t> warmed_{0}, warm_failed_{0}, warm_us_{0}, warm_loaded_{0};
   bool SetWarmTemplate(const GraphicsPipelineDesc& d) override {
     if (warm_ready_.load(std::memory_order_acquire)) return true;
     {
       std::lock_guard<std::mutex> lock(job_mutex_);
-      warm_workers_ = std::max<uint64_t>(1, options_.warm_workers);  // patch 0069
+      if (!warm_workers_set_) warm_workers_ = std::max<uint64_t>(1, options_.warm_workers);  // patch 0069 (v2: unless set)
     }
     if (!ready_ || lost_ || !d.vs || d.vs >= shaders_.size() || !shaders_[d.vs].code || d.gs) return false;
+    if (!options_.pipeline_library_path.empty())
+      LoadPipelineLibrary(WarmLibraryPath(), warm_pipeline_library_, warm_library_blob_, &warm_library_map_, &warm_library_valid_);
     if (!StartPipelineWorkers()) return false;
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
     D3D_PRIMITIVE_TOPOLOGY topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
@@ -4551,16 +4988,70 @@ class D3D12Backend final : public Backend {
                 d.color_count);
     return true;
   }
-  bool WarmPixelShader(std::vector<uint8_t>&& ps_bytecode) override {
+  bool WarmPixelShader(std::vector<uint8_t>&& ps_bytecode, uint64_t source_hash = 0) override {
     if (!warm_ready_.load(std::memory_order_acquire) || ps_bytecode.empty()) return false;
     auto job = std::make_unique<PipelineJob>();
     job->desc = warm_pd_;
     job->code[0] = warm_vs_;
     job->code[1] = std::make_shared<const std::vector<uint8_t>>(std::move(ps_bytecode));
     job->desc.PS = {job->code[1]->data(), job->code[1]->size()};
+    return QueueWarmPipeline(std::move(job), source_hash, false);
+  }
+  bool PrefetchShaderStage(ShaderHandle shader) override {
+    if (!warm_ready_.load(std::memory_order_acquire) || !shader || shader >= shaders_.size() || !shaders_[shader].code)
+      return false;
+    auto& source = shaders_[shader];
+    if (source.prefetch_status) return source.prefetch_status == 2;
+    source.prefetch_status = 1;
+    const bool vertex = shaders_[shader].stage == ShaderStage::kVertex;
+    if (!vertex && shaders_[shader].stage != ShaderStage::kPixel) return false;
+    auto job = std::make_unique<PipelineJob>();
+    auto pd = warm_pd_;
+    job->code[vertex ? 0 : 1] = shaders_[shader].code;
+    if (vertex) {
+      pd.VS = {job->code[0]->data(), job->code[0]->size()}; pd.PS = {}; pd.NumRenderTargets = 0;
+      for (auto& format : pd.RTVFormats) format = DXGI_FORMAT_UNKNOWN;
+    } else pd.PS = {job->code[1]->data(), job->code[1]->size()};
+    const auto name = PipelineLibraryName(pd);
+    if (!warm_sources_.HasPipeline(name)) return false;
+    source.prefetch_status = 2;
+    job->stage_prefetch = true;
     {
       std::lock_guard<std::mutex> lock(job_mutex_);
       if (stop_workers_) return false;
+      if (live_seeded_.count(name) || stage_prefetch_seen_.count(name)) return true;
+      // Optional prefetch is bounded. A draw still restores any stage not queued here.
+      if (warm_jobs_.size() >= 256) return true;
+      stage_prefetch_seen_.insert(name);
+      stage_prefetches_.fetch_add(1, std::memory_order_relaxed);
+      warm_jobs_.push_front(std::move(job));
+    }
+    job_cv_.notify_one();
+    return true;
+  }
+  bool WarmVertexShader(std::vector<uint8_t>&& bytecode, uint64_t source_hash = 0) override {
+    if (!warm_ready_.load(std::memory_order_acquire) || bytecode.empty()) return false;
+    auto job = std::make_unique<PipelineJob>();
+    job->desc = warm_pd_;
+    job->code[0] = std::make_shared<const std::vector<uint8_t>>(std::move(bytecode));
+    job->desc.VS = {job->code[0]->data(), job->code[0]->size()};
+    job->desc.PS = {};
+    job->desc.NumRenderTargets = 0;
+    for (auto& format : job->desc.RTVFormats) format = DXGI_FORMAT_UNKNOWN;
+    return QueueWarmPipeline(std::move(job), source_hash, true);
+  }
+  bool QueueWarmPipeline(std::unique_ptr<PipelineJob> job, uint64_t source_hash, bool vertex) {
+    job->library_name = PipelineLibraryName(job->desc);
+    {
+      std::lock_guard<std::mutex> lock(job_mutex_);
+      if (stop_workers_) return false;
+      const bool saved = warm_sources_.HasPipeline(job->library_name);
+      if (saved || warm_success_names_.count(job->library_name)) {
+        if (source_hash && saved) warm_sources_.Remember({source_hash, vertex}, job->library_name);
+        return true;
+      }
+      if (source_hash) warm_source_pending_[job->library_name].push_back({source_hash, vertex});
+      if (!warm_seen_.insert(job->library_name).second) return true;
       warm_jobs_.push_back(std::move(job));
     }
     job_cv_.notify_one();
@@ -4570,6 +5061,70 @@ class D3D12Backend final : public Backend {
     std::lock_guard<std::mutex> lock(job_mutex_);
     return warm_jobs_.size() + warm_busy_;
   }
+  void ConfigureWarmSourceCache(const std::string& identity) override {
+    if (options_.pipeline_library_path.empty()) return;
+    const auto name = PipelineLibraryName(warm_pd_);
+    warm_source_identity_ = identity + std::string(name.begin(), name.end());
+    const bool compatible = warm_library_valid_.load();
+    // Save an empty driver/adapter validation anchor before the first compile. The
+    // individual stage blobs are streamed to disk and their PSOs immediately released.
+    if (!compatible && warm_pipeline_library_) {
+      warm_library_dirty_ = true;
+      if (SavePipelineLibrary(false, true))
+        LoadPipelineLibrary(WarmLibraryPath(), warm_pipeline_library_, warm_library_blob_, &warm_library_map_, &warm_library_valid_);
+    }
+    if (!warm_stages_.Open(WarmLibraryPath().wstring() + L".stages", compatible))
+      REXLOG_WARN("gow2_renderer: compiled stage store unavailable; shaders remain available through live compilation");
+    cogbox::shader_cache::LibraryStamp stamp;
+    bool loaded = warm_library_valid_ &&
+        cogbox::shader_cache::WarmSourceCache::Stamp(WarmLibraryPath(), warm_source_identity_, stamp) &&
+        warm_sources_.Load(WarmSourcePath(), stamp);
+    const bool configuration_inventory = loaded;
+    if (!loaded && warm_library_valid_ && WarmSourceStamp(stamp))
+      loaded = warm_sources_.Load(WarmLibraryPath().wstring() + L".sources", stamp);
+    const size_t missing = loaded ? warm_sources_.RetainPipelines(
+        [this](const std::wstring& pipeline) { return warm_stages_.Contains(pipeline); }) : 0;
+    if (missing) REXLOG_INFO("gow2_renderer: {} source entries need rebuilding because their driver stage is missing", missing);
+    REXLOG_INFO("gow2_renderer: compiled source inventory: {} ({} sources; {})", loaded ? "valid" : "will rebuild",
+                warm_sources_.Size(), configuration_inventory ? "configuration cache" : loaded ? "legacy migration" : "new configuration");
+  }
+  bool WarmSourceCached(bool vertex, uint64_t hash) override {
+    if (!warm_sources_.Contains({hash, vertex})) return false;
+    warm_source_hits_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+  }
+  uint64_t WarmSourcesReused() const override { return warm_source_hits_.load(std::memory_order_relaxed); }
+  void WaitWarmCapacity(uint64_t capacity) override {
+    std::unique_lock<std::mutex> lock(job_mutex_);
+    warm_capacity_cv_.wait_for(lock, std::chrono::milliseconds(25), [this, capacity] {
+      return stop_workers_ || warm_jobs_.size() + warm_busy_ < capacity;
+    });
+  }
+  void ReleaseWarmupCache() override {
+    // Called after the startup barrier: no job may still read the library's backing memory.
+    if (WarmJobsLeft()) return;
+    REXLOG_INFO("gow2_renderer: streamed stage cache: {} pipelines, {} save failures", warm_stages_.Size(), warm_save_failed_.load());
+    if (warm_source_hits_.load() && warm_pipeline_library_) {
+      REXLOG_INFO("gow2_renderer: compiled shader inventory reused {}; mapped driver library retained for on-demand stages",
+                  warm_source_hits_.load());
+      return;
+    }
+    SafeRelease(warm_pipeline_library_);
+    warm_library_map_.Reset();
+    std::vector<uint8_t>().swap(warm_library_blob_);
+    REXLOG_INFO("gow2_renderer: startup driver library released before gameplay");
+  }
+  void SetWarmWorkers(uint32_t n) override {  // prebuild v2: the renderer's load / play setting (0 = paused)
+    warm_startup_.store(n >= 1024u, std::memory_order_relaxed);
+    bool more = false;
+    {
+      std::lock_guard<std::mutex> lock(job_mutex_);
+      more = n > warm_workers_;
+      warm_workers_ = n;
+      warm_workers_set_ = true;
+    }
+    if (more) job_cv_.notify_all();  // idle workers may take the waiting warm jobs now
+  }
   std::mutex job_mutex_;
   std::condition_variable job_cv_;
   bool stop_workers_ = false;
@@ -4577,6 +5132,7 @@ class D3D12Backend final : public Backend {
   std::vector<Readback> readbacks_;
   std::vector<ReadbackHandle> pending_readbacks_;
   std::vector<DeferredRelease> deferred_releases_;
+  FencedRetirement<Texture, 64> retired_imports_;
   std::vector<TextureHeap> tex_heaps_;  // patch 0017
   uint64_t placed_live_bytes_ = 0, placed_live_count_ = 0;  // job 306: placed textures not yet released
   // Recorded state, re-applied lazily.

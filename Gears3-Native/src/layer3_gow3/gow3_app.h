@@ -24,6 +24,11 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 
 #include <rex/system/interfaces/graphics.h>
 
+// Prebuild v2: Gears 2's layer 2 shader prebuild (Gears2-Native/src/layer2_ue3/shader_prebuild.cpp, built into this
+// game's layer 2 from GN_LAYER0_HOME): reads each package the game opens for its pixel shaders. After the renderer.
+void Ue3InstallShaderPrebuildIfRequested(rex::Runtime* runtime);
+void Ue3HoldForShaderPrebuild(rex::system::XThread* thread);
+
 void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime);
 void Gow3AddBuiltInIniEdits();  // game_patches.cpp: --gow3_trilinear, --gow3_fast_mip_fade
 void Gow3StopMemoryGauge();     // game_patches.cpp: --gow3_memory_log_seconds stops before the kernel goes away
@@ -80,6 +85,11 @@ class Gow3App : public rex::ReXApp {
     game_default("gow2_upscale_camera_constant", "5");
     game_default("gow2_renderer_memexport", "true");
     game_default("gow2_renderer_resolution_scale_threshold", "1120");
+    // Real per-issuance answers cull hidden geometry and lens flares. Explicit
+    // renderer-query settings remain available for comparisons.
+    if (XenosOurGpuSystem() && rex::cvar::GetFlagByName("gow2_renderer_api") == "d3d12" &&
+        rex::cvar::GetFlagByName("gow2_pm4_split") == "true")
+      game_default("gow2_renderer_queries", "strict");
     //  - the upscalers' scene colour: Gears 3's lit scene is 10:10:10:2 UNORM (job 055), not 16-bit float as Gears 2's
     //    (the shared renderer's default, 1, would never find it).
     game_default("gow2_upscale_scene_formats", "2");
@@ -88,6 +98,7 @@ class Gow3App : public rex::ReXApp {
     //    unjittered, whole character triangles lost their lighting under DLSS / FSR. Jittered, the frames are clean.
     game_default("gow2_upscale_jitter_late", "true");
     XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull});
+    Ue3InstallShaderPrebuildIfRequested(runtime());  // prebuild v2: after the renderer (it asks whether the renderer wants them)
     XenosInstallQueryLogIfRequested(runtime(), {});
     XenosInstallStateCoverageIfRequested();
     XenosInstallPm4ShadowIfRequested(runtime());
@@ -97,7 +108,7 @@ class Gow3App : public rex::ReXApp {
     Gow3ApplyDataPatchesIfRequested(runtime());
   }
   void OnPreLaunchModule() override { Ue3SetLaunchCommandLineIfRequested(); }
-  void OnPostLaunchModule(rex::system::XThread* thread) override { XenosHoldGuestIfRequested(thread); }
+  void OnPostLaunchModule(rex::system::XThread* thread) override { Ue3HoldForShaderPrebuild(thread); XenosHoldGuestIfRequested(thread); }
   // --gow2_fps_bar (job 052, Gears 2 b3a16da): our frame-rate bar on the SDK's overlay layer.
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     // "Match my monitor" (Gears 2 0086, same lines as Gow2App): layer 0 learns the window and its size, for the

@@ -1,0 +1,597 @@
+diff --git a/Gears2-Native/notes/texture-batching-2026-10-29.md b/Gears2-Native/notes/texture-batching-2026-10-29.md
+new file mode 100644
+index 0000000..9b8106c
+--- /dev/null
++++ b/Gears2-Native/notes/texture-batching-2026-10-29.md
+@@ -0,0 +1,69 @@
++# Batched texture loads and two small CPU savings
++
++October 29, 2026. The changes below are D3D12 only and haven't been run yet. They passed a syntax check against the
++tree at `bbb7cee`. Turn the main change off with `--gow2_renderer_texture_batch=false` to compare.
++
++## The freeze this targets
++
++Gears 2 log `20261029-114138`, frame 8321: the first gameplay frame after a cutscene. It had 4,221 draws, uploaded
++98.55 MB, spent 50.5 ms in texture work and created no shaders or pipelines. In the next frames the GPU work took
++126, 58, 61 and 27 ms, against about 9.4 ms in steady play. That window loaded 491 BC textures on the GPU path, which
++is 4,872 subresources, and made no CPU-path loads.
++
++Each BC subresource was loaded the same way:
++
++1. A compute pass untiles it into the single scratch buffer, which is in UAV state.
++2. A barrier moves the scratch buffer to COPY_SOURCE and the texture to COPY_DEST.
++3. A copy moves it into the texture.
++4. The next subresource needs the scratch buffer back in UAV state, so the GPU waits for that copy before it can
++   start the next pass.
++
++That gives about 4,900 strictly serialized pass → barrier → copy → barrier round trips in one frame, with the GPU
++mostly idle. Raw (non-BC) GPU loads also put a UAV barrier after every mip's untile pass. Each texture's upload also
++switched the guest-memory mirror between COPY_DEST and shader-resource state once per texture.
++
++## What changed
++
++- **Uploads first, then untiles.** Within one draw's texture binding (`TextureCache::Bind`), every texture's
++  guest-memory upload is recorded first. The untile work runs at the end of the binding, through `RunGpuJobs`. The
++  mirror now changes state once per draw instead of twice per texture.
++- **One scratch buffer, many regions (D3D12).**
++  - Each BC subresource gets its own 512-byte-aligned region of the scratch buffer, which is now 32 MB.
++  - Each pass writes through a raw UAV view that starts at its region, so the shader is unchanged.
++  - The copies are queued and recorded together: one scratch barrier, one batch of texture barriers, then all the
++    copies.
++  - The queue is flushed by:
++    - any recording call other than the texture-load ones (`Recording()`);
++    - `SetTextures`;
++    - a transition of a queued texture;
++    - `DestroyTexture`;
++    - `Submit`;
++    - a full scratch buffer.
++- **No barrier after each untile pass.** A raw untile pass no longer adds a UAV barrier after itself
++  (`ComputeBindings::defer_uav_barrier`). The texture's next use is a transition, which waits for the writes. Writing
++  the same mip as a UAV again gets the barrier first (`Texture::uav_unbarriered`).
++- **Pipeline memo.** `GetGraphicsPipeline` remembers the last ready pipeline. A draw with the same description
++  skips the hash and map lookup. Pipelines are never destroyed. The "pipelines … (same as the previous draw N)" count
++  in the CPU split line shows the hits.
++- **Page watch.** `GuestWatch::Bump` adds once per 256 KB block and once per 4 MB block instead of once per page. The
++  sums are identical (checked against the old code on 20,000 random ranges). A 4 MB widening now takes 1,041
++  atomic adds instead of 3,072.
++
++What was left alone:
++
++- The Vulkan backend is unchanged, and the texture-cache reordering is switched off for Vulkan.
++- No shader text changed, so the shader caches stay valid.
++
++## How to test
++
++1. Replay the same Gears 2 transition, once as normal and once with `--gow2_renderer_texture_batch=false`. Compare the
++   frame log rows for the first gameplay frames: `our_gpu_ms`, `renderer_top_part_ms` and `frame_ms`.
++2. Run once with `--d3d12_debug=true` through a level start. The debug layer reports resource-state mistakes in the
++   log. There should be no new errors.
++3. Add `--gow2_texture_phase_log_ms=20` to see how the remaining texture time splits between hashing, creation,
++   upload and the GPU path.
++4. The "patch 0021" log line now ends with "in N batches, untile barriers left out M".
++
++The Gears 2 query wait needs no code change. `--gow2_patch_query_wait=1` already makes Gears 2's query wait sleep
++the way Gears 3 and Judgment do when uncapped. The default, 2, spins when uncapped. To compare them, add the switch
++and keep everything else the same.
+diff --git a/Gears2-Native/src/layer0_xenos/include/xenos/renderer/gpu.h b/Gears2-Native/src/layer0_xenos/include/xenos/renderer/gpu.h
+index d7c6b99..a9c0b52 100644
+--- a/Gears2-Native/src/layer0_xenos/include/xenos/renderer/gpu.h
++++ b/Gears2-Native/src/layer0_xenos/include/xenos/renderer/gpu.h
+@@ -206,6 +206,10 @@ struct ComputeBindings {
+   // Patch 0021 (Canary texture_cache, D36): u0 = the backend's scratch raw buffer (RWByteAddressBuffer), sized and laid
+   // out by Backend::PrepareScratchFor for one texture subresource, instead of uav_texture.
+   bool scratch_u0 = false;
++  // Batched texture loads (BackendOptions::batch_texture_loads; D3D12): no UAV barrier after this dispatch - uav_texture
++  // is a texture load's own target, whose next use transitions it (a transition waits for the writes); writing the same
++  // mip as a UAV again first gets the barrier.
++  bool defer_uav_barrier = false;
+ };
+ 
+ // Notes/68 stage V3: the Vulkan backend on someone else's device (the SDK's Vulkan provider, which the presenter uses), so
+@@ -279,6 +283,11 @@ struct BackendOptions {
+   // shared 64 MB heaps instead of each getting its own committed allocation. Job 299: CreateCommittedResource was 157
+   // of the 208 ms that 376 new textures cost at the ch10 level start (~0.4 ms each).
+   bool placed_textures = false;
++  // Batched texture loads (--gow2_renderer_texture_batch, D3D12): BC loads share the scratch buffer (each subresource in
++  // its own 512-byte-aligned region) and their copies are recorded together before the next other command, so the
++  // scratch buffer changes state once per batch instead of twice per mip level; texture untile dispatches skip their
++  // UAV barrier (ComputeBindings::defer_uav_barrier).
++  bool batch_texture_loads = false;
+   // Patch 0150 (deep-dive review): persistent index buffers (CreateIndexBuffer) live in GPU memory, copied once from an
+   // upload buffer, instead of an upload-heap buffer the GPU reads over the bus at every draw (D3D12 only).
+   bool index_buffers_in_vram = false;
+@@ -368,6 +377,8 @@ struct BackendStats {
+   uint64_t barrier_calls = 0, barriers = 0;  // job 045: ResourceBarrier calls / barriers recorded (updated at Submit)
+   uint64_t barrier_batches = 0, barriers_merged = 0;  // job 046: batches emitted, transitions merged away
+   uint64_t pipelines_async = 0, pipelines_pending_draws = 0, sampler_tables_written = 0;
++  uint64_t pipeline_memo_hits = 0;
++  uint64_t scratch_batches = 0, uav_barriers_deferred = 0;  // batched texture loads: copy batches, barriers left out  // GetGraphicsPipeline answered from its one-entry memo (same as the last draw)
+   uint64_t pipelines_loaded = 0, pipelines_stored = 0, pipeline_library_saves = 0;  // saved pipelines (notes/64)
+   uint64_t pipelines_loaded_async = 0;  // patch 0010: of pipelines_loaded, loaded by a pipeline worker
+   // Patch 0057: pipelines the workers created (not loaded): count, CPU ms in CreateGraphicsPipelineState (all workers
+diff --git a/Gears2-Native/src/layer0_xenos/include/xenos/renderer/texture_cache.h b/Gears2-Native/src/layer0_xenos/include/xenos/renderer/texture_cache.h
+index cc20817..979412f 100644
+--- a/Gears2-Native/src/layer0_xenos/include/xenos/renderer/texture_cache.h
++++ b/Gears2-Native/src/layer0_xenos/include/xenos/renderer/texture_cache.h
+@@ -76,6 +76,11 @@ class TextureCache {
+   // Patch 0021 (Canary texture_cache): BC1-5 textures (2D, arrays, cubes) also load on the GPU from the mirror through
+   // this pipeline (builtin kUntileBlocksCs) and the backend's scratch buffer. 0 = CPU path, as before.
+   void SetGpuUntileBlocks(gpu::PipelineHandle untile_blocks) { untile_blocks_ = untile_blocks; }
++  // Batched texture loads (--gow2_renderer_texture_batch): a GPU-path load's untile dispatches (and BC scratch copies)
++  // are recorded at the end of the draw's Bind, after every upload that Bind made, instead of between them - so the
++  // guest-memory mirror changes state once per draw instead of twice per texture, and the backend can batch the scratch
++  // copies (notes/texture-batching-2026-10-29.md).
++  void SetBatchLoads(bool on) { batch_loads_ = on; }
+   // Patch 0026: true 3D textures (32/64/128bpp raw-copy formats) untiled on the GPU into a 3D host texture.
+   void SetGpuUntileVolume(gpu::PipelineHandle untile_volume) { untile_volume_ = untile_volume; }
+   void ResetCounters();
+@@ -260,6 +265,9 @@ class TextureCache {
+   gpu::PipelineHandle untile_ = 0;
+   gpu::PipelineHandle untile3d_ = 0;
+   gpu::PipelineHandle untile_blocks_ = 0;  // patch 0021
++  bool batch_loads_ = false;
++  std::vector<std::function<void()>> gpu_jobs_;  // batched loads: this Bind's untile work, run at its end
++  void RunGpuJobs();
+   gpu::PipelineHandle untile_volume_ = 0;  // patch 0026
+   uint64_t cap_bytes_ = 0;
+   bool always_reload_ = false;
+diff --git a/Gears2-Native/src/layer0_xenos/renderer/d3d12_backend.cpp b/Gears2-Native/src/layer0_xenos/renderer/d3d12_backend.cpp
+index ebfa482..8fce93b 100644
+--- a/Gears2-Native/src/layer0_xenos/renderer/d3d12_backend.cpp
++++ b/Gears2-Native/src/layer0_xenos/renderer/d3d12_backend.cpp
+@@ -312,6 +312,8 @@ struct Texture {
+   std::vector<std::pair<uint64_t, int32_t>> views;  // texture views by key -> CPU heap slot
+   int32_t heap = -1;  // patch 0017: placed in tex_heaps_[heap] at heap_offset (heap_size bytes); -1 = committed
+   uint64_t heap_offset = 0, heap_size = 0;
++  bool scratch_pending = false;  // batched texture loads: a scratch copy into it is queued (FlushScratchCopies)
++  uint64_t uav_unbarriered = 0;  // batched texture loads: mips written as a UAV with the barrier left out (bit = mip)
+ };
+ 
+ struct Pipeline {
+@@ -1703,6 +1705,7 @@ class D3D12Backend final : public Backend {
+   }
+   void DestroyTexture(TextureHandle h) override {
+     if (h == 0 || h >= textures_.size() || !textures_[h].resource) return;
++    if (textures_[h].scratch_pending) FlushScratchCopies();  // batched texture loads: before its copy can't happen
+     // Job 188: with threaded recording, encoded calls still name this texture's CPU descriptors (RTV/DSV are read when
+     // the recording thread replays OMSetRenderTargets / clears). Freed now, a texture created next would reuse those
+     // slots before the replay and the old calls would hit the new texture - the transfer self-test chains read 0 from
+@@ -1882,6 +1885,12 @@ class D3D12Backend final : public Backend {
+   PipelineHandle GetGraphicsPipeline(const GraphicsPipelineDesc& d, bool async, bool* pending) override {
+     if (pending) *pending = false;
+     if (!ready_ || lost_) return 0;
++    // Consecutive draws very often use the same pipeline: the last ready one is answered from here, without hashing
++    // the description and looking it up (pipelines are never destroyed, and a ready one stays ready).
++    if (last_pipeline_ && d == last_pipeline_desc_) {
++      ++stats_.pipeline_memo_hits;
++      return last_pipeline_;
++    }
+     const uint64_t key = HashPipelineDesc(d);
+     auto it = pipeline_cache_.find(key);
+     if (it != pipeline_cache_.end()) {
+@@ -1889,7 +1898,12 @@ class D3D12Backend final : public Backend {
+         if (!(desc == d)) continue;
+         if (!handle) return 0;
+         Pipeline& p = pipelines_[handle];
+-        if (p.ready.load(std::memory_order_acquire)) return p.failed.load() ? 0 : handle;
++        if (p.ready.load(std::memory_order_acquire)) {
++          if (p.failed.load()) return 0;
++          last_pipeline_desc_ = d;
++          last_pipeline_ = handle;
++          return handle;
++        }
+         if (!pipeline_backlog_ && (pending || !async)) PromoteBacklogJob(handle, p);  // patch 0062
+         if (async) {
+           if (pending) {
+@@ -1998,7 +2012,7 @@ class D3D12Backend final : public Backend {
+ 
+   // ---- guest memory ----
+   void UploadGuestMemory(uint32_t guest_physical, const void* data, uint32_t size) override {
+-    if (!Recording() || !size) return;
++    if (!OpenList() || !size) return;  // batched texture loads: touches neither the scratch buffer nor a texture
+     guest_physical &= 0x1FFFFFFFu;
+     if (uint64_t(guest_physical) + size > options_.guest_memory_bytes) size = uint32_t(options_.guest_memory_bytes - guest_physical);
+     uint64_t offset;
+@@ -2327,6 +2341,8 @@ class D3D12Backend final : public Backend {
+                    uint32_t sampler_count) override {
+     view_count = std::clamp<uint32_t>(view_count, 1u, kTextureSrvCount);
+     sampler_count = std::clamp<uint32_t>(sampler_count, 1u, kSamplerCount);
++    // Batched texture loads: the queued copies first - the table reuse below reads the textures' states.
++    if (!scratch_copies_.empty()) FlushScratchCopies();
+     if (!views96 && !samplers32) {
+       if (textures_custom_) {
+         textures_custom_ = false;
+@@ -2403,7 +2419,13 @@ class D3D12Backend final : public Backend {
+ 
+   // ---- compute ----
+   void Dispatch(PipelineHandle p, const ComputeBindings& b, uint32_t gx, uint32_t gy, uint32_t gz) override {
+-    if (!Recording() || !p || p >= pipelines_.size() || !pipelines_[p].compute || !gx || !gy || !gz) return;
++    // Batched texture loads: a texture load's dispatch keeps the queued copies queued - it reads the guest-memory
++    // mirror and writes its own scratch region or its own (not queued) texture.
++    const bool scratch_batch = options_.batch_texture_loads && b.scratch_u0;
++    const bool load_batch = scratch_batch || (options_.batch_texture_loads && b.defer_uav_barrier);
++    if (!(load_batch ? OpenList() : Recording()) || !p || p >= pipelines_.size() || !pipelines_[p].compute || !gx ||
++        !gy || !gz)
++      return;
+     const uint32_t base = AllocShaderDescriptors(kComputeSrvCount + 2);
+     if (base == UINT32_MAX) return;
+     D3D12_CPU_DESCRIPTOR_HANDLE cpu = shader_heap_->GetCPUDescriptorHandleForHeapStart();
+@@ -2438,11 +2460,22 @@ class D3D12Backend final : public Backend {
+                                  : -1;
+     if (b.scratch_u0 && scratch_uav_ >= 0 && scratch_) {  // patch 0021
+       TransitionScratch(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+-      device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(scratch_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++      if (scratch_batch) {  // a raw view starting at this subresource's region (the shader addresses from 0)
++        D3D12_UNORDERED_ACCESS_VIEW_DESC u{};
++        u.Format = DXGI_FORMAT_R32_TYPELESS;
++        u.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
++        u.Buffer.FirstElement = scratch_fp_.Offset / 4;
++        u.Buffer.NumElements = UINT((scratch_size_ - scratch_fp_.Offset) / 4);
++        u.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
++        device_->CreateUnorderedAccessView(scratch_, nullptr, &u, udst);
++      } else {
++        device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(scratch_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++      }
+     } else if (b.guest_u0 && guest_uav_ >= 0) {
+       TransitionGuest(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+       device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(guest_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+     } else if (uav_slot >= 0) {
++      UavBarrierIfWritten(textures_[b.uav_texture], b.uav_mip);
+       Transition(textures_[b.uav_texture], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+       device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(uav_slot), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+     } else {
+@@ -2455,6 +2488,7 @@ class D3D12Backend final : public Backend {
+     D3D12_CPU_DESCRIPTOR_HANDLE udst2{cpu.ptr + SIZE_T(base + kComputeSrvCount + 1) * view_increment_};
+     const int32_t uav2_slot = ValidTexture(b.uav2_texture) ? UavSlot(textures_[b.uav2_texture], 0) : -1;
+     if (uav2_slot >= 0) {
++      UavBarrierIfWritten(textures_[b.uav2_texture], 0);
+       Transition(textures_[b.uav2_texture], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+       device_->CopyDescriptorsSimple(1, udst2, view_heap_.Handle(uav2_slot), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+     } else {
+@@ -2479,6 +2513,9 @@ class D3D12Backend final : public Backend {
+       u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+       u.UAV.pResource = guest_;
+       list_->ResourceBarrier(1, &u);
++    } else if (ValidTexture(b.uav_texture) && options_.batch_texture_loads && b.defer_uav_barrier) {
++      textures_[b.uav_texture].uav_unbarriered |= 1ull << std::min<uint32_t>(b.uav_mip, 63);
++      ++stats_.uav_barriers_deferred;
+     } else if (ValidTexture(b.uav_texture)) {
+       D3D12_RESOURCE_BARRIER u{};
+       u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+@@ -2632,7 +2669,8 @@ class D3D12Backend final : public Backend {
+   // ---- patch 0021: scratch buffer for GPU loads into BCn textures (Canary loads every texture on the GPU) ----
+   bool PrepareScratchFor(TextureHandle h, uint32_t mip, uint32_t layer, uint32_t& row_pitch, uint32_t& rows) override {
+     row_pitch = rows = 0;
+-    if (!Recording() || !ValidTexture(h)) return false;
++    const bool batch = options_.batch_texture_loads;
++    if (!(batch ? OpenList() : Recording()) || !ValidTexture(h)) return false;
+     Texture& t = textures_[h];
+     D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
+     if (mip >= rd.MipLevels || layer >= rd.DepthOrArraySize) return false;
+@@ -2642,11 +2680,22 @@ class D3D12Backend final : public Backend {
+     UINT64 row_size = 0, total = 0;
+     device_->GetCopyableFootprints(&rd, sub, 1, 0, &fp, &num_rows, &row_size, &total);
+     if (!total || fp.Footprint.Depth != 1) return false;
++    // Batched texture loads: this subresource's region follows the queued ones; when it doesn't fit, they are copied
++    // out first and the buffer starts over (the next load's transition to UAV waits for those copies).
++    UINT64 at = 0;
++    if (batch) {
++      at = (scratch_head_ + D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1) & ~UINT64(D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1);
++      if (scratch_ && at + total > scratch_size_) {
++        FlushScratchCopies();
++        at = 0;
++      }
++    }
+     if (total > scratch_size_) {
+       if (scratch_) deferred_releases_.push_back({scratch_, next_fence_});  // the open list may still use it
+       scratch_ = nullptr;
+       scratch_size_ = 0;
+-      const UINT64 size = std::max<UINT64>((total + 0xFFFFF) & ~UINT64(0xFFFFF), 4ull << 20);
++      // Batched: room for a burst of loads (a level start loads hundreds of BC textures in one frame).
++      const UINT64 size = std::max<UINT64>((total + 0xFFFFF) & ~UINT64(0xFFFFF), batch ? 32ull << 20 : 4ull << 20);
+       std::string error;
+       if (!CreateBuffer(size, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                         D3D12_RESOURCE_STATE_COMMON, &scratch_, error)) {
+@@ -2666,18 +2715,25 @@ class D3D12Backend final : public Backend {
+       device_->CreateUnorderedAccessView(scratch_, nullptr, &u, view_heap_.Handle(scratch_uav_));
+     }
+     scratch_fp_ = fp;
+-    scratch_fp_.Offset = 0;
++    scratch_fp_.Offset = at;
+     scratch_sub_ = sub;
++    scratch_head_ = at + total;
+     row_pitch = fp.Footprint.RowPitch;
+     rows = num_rows;
+     return true;
+   }
+   void CopyScratchToTexture(TextureHandle h, uint32_t mip, uint32_t layer) override {
+-    if (!Recording() || !ValidTexture(h) || !scratch_) return;
++    const bool batch = options_.batch_texture_loads;
++    if (!(batch ? OpenList() : Recording()) || !ValidTexture(h) || !scratch_) return;
+     Texture& t = textures_[h];
+     D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
+     const UINT sub = mip + layer * rd.MipLevels;
+     if (sub != scratch_sub_) return;  // PrepareScratchFor was for another subresource
++    if (batch) {  // queued: recorded with the others by FlushScratchCopies
++      scratch_copies_.push_back({h, t.serial, sub, scratch_fp_});
++      t.scratch_pending = true;
++      return;
++    }
+     TransitionScratch(D3D12_RESOURCE_STATE_COPY_SOURCE);
+     Transition(t, D3D12_RESOURCE_STATE_COPY_DEST);
+     D3D12_TEXTURE_COPY_LOCATION dl{};
+@@ -2692,6 +2748,51 @@ class D3D12Backend final : public Backend {
+     list_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
+     ++stats_.scratch_texture_copies;
+   }
++  // Batched texture loads: records the queued scratch copies - the scratch buffer's one transition, every target's
++  // transition (consecutive barriers: the proxy sends them as one batch), then the copies.
++  void FlushScratchCopies() {
++    if (scratch_copies_.empty()) return;
++    std::vector<ScratchCopy> copies;
++    copies.swap(scratch_copies_);
++    scratch_head_ = 0;
++    for (const ScratchCopy& c : copies)  // first: Transition below must not flush again
++      if (ValidTexture(c.texture) && textures_[c.texture].serial == c.serial) textures_[c.texture].scratch_pending = false;
++    if (list_open_ && !lost_ && scratch_) {
++      const uint8_t category = gpu_cat_pending_;  // job 177: timed as texture loads, whatever comes next
++      gpu_cat_pending_ = 3;
++      TransitionScratch(D3D12_RESOURCE_STATE_COPY_SOURCE);
++      for (const ScratchCopy& c : copies)
++        if (ValidTexture(c.texture) && textures_[c.texture].serial == c.serial)
++          Transition(textures_[c.texture], D3D12_RESOURCE_STATE_COPY_DEST);
++      for (const ScratchCopy& c : copies) {
++        if (!ValidTexture(c.texture) || textures_[c.texture].serial != c.serial) continue;
++        D3D12_TEXTURE_COPY_LOCATION dl{};
++        dl.pResource = textures_[c.texture].resource;
++        dl.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
++        dl.SubresourceIndex = c.subresource;
++        D3D12_TEXTURE_COPY_LOCATION sl{};
++        sl.pResource = scratch_;
++        sl.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
++        sl.PlacedFootprint = c.footprint;
++        TsCat();
++        list_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
++        ++stats_.scratch_texture_copies;
++      }
++      ++stats_.scratch_batches;
++      gpu_cat_pending_ = category;
++    }
++    copies.clear();
++    if (scratch_copies_.empty()) scratch_copies_.swap(copies);  // keep the capacity
++  }
++  // Batched texture loads: a mip written as a UAV with its barrier left out gets it before it is written again.
++  void UavBarrierIfWritten(Texture& t, uint32_t mip) {
++    if (!(t.uav_unbarriered & (1ull << std::min<uint32_t>(mip, 63)))) return;
++    D3D12_RESOURCE_BARRIER u{};
++    u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
++    u.UAV.pResource = t.resource;
++    list_->ResourceBarrier(1, &u);
++    t.uav_unbarriered = 0;  // a UAV barrier covers the whole resource
++  }
+   void TransitionScratch(D3D12_RESOURCE_STATES state) {
+     if (!scratch_ || scratch_state_ == state) return;
+     D3D12_RESOURCE_BARRIER b{};
+@@ -2793,6 +2894,7 @@ class D3D12Backend final : public Backend {
+       }
+     }
+     if (!list_open_) return last_submitted_;
++    FlushScratchCopies();  // batched texture loads: they belong to this list
+     if (occ_open_ && occ_open_in_list_) {  // upl-s4c: a query spanning this Submit continues in the next list
+       CloseOcclusionPart();
+       occ_open_in_list_ = false;
+@@ -3066,7 +3168,14 @@ class D3D12Backend final : public Backend {
+   bool ValidTexture(TextureHandle h) const { return h && h < textures_.size() && textures_[h].resource; }
+ 
+   // Opens the command list if needed (binding heaps and root signatures). False when the device is unusable.
++  // Batched texture loads: every recording call but the texture-load ones (OpenList) first records the queued scratch
++  // copies, so nothing can read a texture before its copy.
+   bool Recording() {
++    if (!OpenList()) return false;
++    if (!scratch_copies_.empty()) FlushScratchCopies();
++    return true;
++  }
++  bool OpenList() {
+     if (!ready_ || lost_) return false;
+     if (list_open_) return true;
+     // An allocator whose submission has completed, or a new one.
+@@ -3770,7 +3879,9 @@ class D3D12Backend final : public Backend {
+   }
+ 
+   void Transition(Texture& t, D3D12_RESOURCE_STATES state) {
++    if (t.scratch_pending) FlushScratchCopies();  // batched texture loads: its queued copy goes first
+     if (t.state == state) return;
++    t.uav_unbarriered = 0;  // a transition out of UAV state waits for those writes
+     // Patch 0089 (Canary d3d12_render_target_cache.cc): MSAA depth drawn with programmable sample positions is
+     // decompressed in place before anything but depth writing reads it.
+     if (positions_ever_ && t.dsv >= 0 && t.desc.samples > 1 && t.state == D3D12_RESOURCE_STATE_DEPTH_WRITE &&
+@@ -4226,6 +4337,15 @@ class D3D12Backend final : public Backend {
+   D3D12_RESOURCE_STATES scratch_state_ = D3D12_RESOURCE_STATE_COMMON;
+   D3D12_PLACED_SUBRESOURCE_FOOTPRINT scratch_fp_{};
+   UINT scratch_sub_ = UINT_MAX;
++  // Batched texture loads: the next free byte of the scratch buffer and the copies queued out of it.
++  struct ScratchCopy {
++    TextureHandle texture = 0;
++    uint64_t serial = 0;
++    UINT subresource = 0;
++    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
++  };
++  UINT64 scratch_head_ = 0;
++  std::vector<ScratchCopy> scratch_copies_;
+   int32_t null_views_[3] = {-1, -1, -1};
+   uint64_t lost_checked_ms_ = 0;  // IsLost: last GetDeviceRemovedReason
+   uint64_t completed_ = 0;        // Retire: last fence value read  // view_heap_ slots of null 2D / cube / 3D views (TextureView::zero)
+@@ -4591,6 +4711,8 @@ class D3D12Backend final : public Backend {
+   std::mutex warm_library_mutex_;
+   std::atomic<bool> warm_library_dirty_{false};
+   std::array<std::mutex, 64> pipeline_load_mutexes_;
++  GraphicsPipelineDesc last_pipeline_desc_;  // GetGraphicsPipeline's one-entry memo (renderer thread only)
++  PipelineHandle last_pipeline_ = 0;
+   std::array<std::mutex, 64> warm_seed_mutexes_;
+   ID3D12PipelineLibrary1* pipeline_library_ = nullptr;
+   std::vector<uint8_t> pipeline_library_blob_;
+diff --git a/Gears2-Native/src/layer0_xenos/renderer/guest_watch.cpp b/Gears2-Native/src/layer0_xenos/renderer/guest_watch.cpp
+index b134b29..3e732d6 100644
+--- a/Gears2-Native/src/layer0_xenos/renderer/guest_watch.cpp
++++ b/Gears2-Native/src/layer0_xenos/renderer/guest_watch.cpp
+@@ -156,10 +156,19 @@ void GuestWatch::Bump(uint32_t address, uint32_t length) {
+   if (!length) return;
+   const uint32_t first = address >> kPageShift;
+   const uint32_t last = uint32_t(std::min<uint64_t>((uint64_t(address) + length - 1) >> kPageShift, kPages - 1));
+-  for (uint32_t p = first; p <= last; ++p) {
+-    versions_[p].fetch_add(1, std::memory_order_relaxed);
+-    blocks_[p >> kBlockShift].fetch_add(1, std::memory_order_relaxed);
+-    supers_[p >> kSuperShift].fetch_add(1, std::memory_order_relaxed);
++  for (uint32_t p = first; p <= last; ++p) versions_[p].fetch_add(1, std::memory_order_relaxed);
++  // A 256 KB block's (4 MB super-block's) counter is the sum of its page versions, so it goes up by the number of its
++  // pages bumped here: one add per block instead of one per page (a 4 MB widening: 1024 + 16 + 1 adds, was 3072).
++  // Readers see the same final sums; mid-update they could already see a page ahead of its block before, too.
++  for (uint32_t p = first; p <= last;) {
++    const uint32_t end = std::min(last + 1, ((p >> kBlockShift) + 1) << kBlockShift);
++    blocks_[p >> kBlockShift].fetch_add(end - p, std::memory_order_relaxed);
++    p = end;
++  }
++  for (uint32_t p = first; p <= last;) {
++    const uint32_t end = std::min(last + 1, ((p >> kSuperShift) + 1) << kSuperShift);
++    supers_[p >> kSuperShift].fetch_add(end - p, std::memory_order_relaxed);
++    p = end;
+   }
+   epoch_.fetch_add(1, std::memory_order_release);
+ }
+diff --git a/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp b/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp
+index 802b588..9f89760 100644
+--- a/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp
++++ b/Gears2-Native/src/layer0_xenos/renderer/shadow_renderer.cpp
+@@ -216,6 +216,11 @@ REXCVAR_DEFINE_INT32(gow2_renderer_shader_precreate_ms, 6, "Gears2",
+                     "waits for the next frame");
+ REXCVAR_DEFINE_INT32(gow2_renderer_play_hold_max_ms, 1000, "Gears2",
+                     "Patch 0064: the longest one mid-play hold may wait (ms); then the frame is shown as it is");
++REXCVAR_DEFINE_BOOL(gow2_renderer_texture_batch, true, "Gears2",
++                    "Batched texture loads (D3D12; 2026-10-29, the Gears 2 level-start freeze: ~4,900 BC mip loads in one "
++                    "frame, each a compute pass, a copy and a GPU wait on one scratch buffer): a draw's texture uploads "
++                    "go first, then their untile passes, and the BC copies are recorded together - the GPU waits once "
++                    "per draw instead of twice per mip level. false = the old one-at-a-time loads");
+ REXCVAR_DEFINE_BOOL(gow2_renderer_placed_textures, true, "Gears2",
+                     "Patch 0017 (stutter): guest textures (sampled only, up to 16 MB) are placed in shared 64 MB heaps "
+                     "instead of one committed allocation each - job 299: creating 376 textures took 157 of the 208 ms "
+@@ -1107,6 +1112,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
+     options.warm_thread_priority = std::clamp(REXCVAR_GET(gow2_renderer_shader_prebuild_priority), -2, 0);  // v2
+     options.debug_layer = REXCVAR_GET(gow2_renderer_debug);
+     options.placed_textures = REXCVAR_GET(gow2_renderer_placed_textures);  // patch 0017
++    options.batch_texture_loads = REXCVAR_GET(gow2_renderer_texture_batch) && !vulkan;  // 2026-10-29
+     options.index_buffers_in_vram = REXCVAR_GET(gow2_renderer_index_buffers_vram);  // patch 0150
+     {  // patch 0087
+       const std::string m = REXCVAR_GET(gow2_renderer_vulkan_compressible_targets);
+@@ -1351,6 +1357,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
+     textures_->SetMismatchZero(REXCVAR_GET(gow2_renderer_texture_mismatch_zero));
+     textures_->SetScaledMissLog(REXCVAR_GET(gow2_renderer_scaled_miss_log));
+     textures_->SetPackedTailAtBase(REXCVAR_GET(gow2_renderer_packed_tail_at_base));  // patch 0087
++    textures_->SetBatchLoads(REXCVAR_GET(gow2_renderer_texture_batch) && !api_vulkan_);  // 2026-10-29 (D3D12)
+     textures_->SetLoadLogFrame(uint64_t(std::max(REXCVAR_GET(gow2_renderer_texture_load_log), 0)));
+     if (const std::string list = REXCVAR_GET(gow2_renderer_texture_probe); !list.empty()) {  // job 284
+       std::vector<uint32_t> bases;
+@@ -2128,9 +2135,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+       if (textures_ && REXCVAR_GET(gow2_renderer_gpu_block_textures)) {  // patch 0021
+         const rr::TextureCacheStats& ts = textures_->Stats();
+         REXLOG_INFO("gow2_renderer: patch 0021 frames {}-{}: BC textures loaded on the GPU {} ({} subresources, {} "
+-                    "failed) | 3D textures on the GPU {} (0026) | CPU-path loads {} | scratch copies so far {}",
++                    "failed) | 3D textures on the GPU {} (0026) | CPU-path loads {} | scratch copies so far {} (batched loads: in "
++                    "{} batches, untile barriers left out {})",
+                     frame_ + 1 - uint64_t(log_every_), frame_, ts.gpu_block_loads, ts.gpu_block_subresources,
+-                    ts.gpu_block_failures, ts.gpu_volume_loads, ts.cpu_loads, backend_->Stats().scratch_texture_copies);
++                    ts.gpu_block_failures, ts.gpu_volume_loads, ts.cpu_loads, backend_->Stats().scratch_texture_copies,
++                    backend_->Stats().scratch_batches, backend_->Stats().uav_barriers_deferred);
+       }
+       if (submit_draws_) {  // patch 0138
+         const uint64_t es = backend_->Stats().early_submits;
+@@ -8584,7 +8593,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+                   "({:.2f} Mpx/frame) + passes {:.1f}/frame, fill-bounded ownership draws {:.1f}/frame (multi-rect {:.1f}), float-constant uploads skipped by generation {:.0f}/frame, compacted {:.0f}/frame ({:.2f} KB/frame not uploaded) | of which blocked "
+                   "on our GPU {:.3f} ({} waits) | texture tables reused {} | state calls skipped {} | constant uploads "
+                   "skipped {} | ownership fast path {} | transfer runs {} | alternate rule {} | descriptors {} (ring waits {}) | "
+-                  "pipelines {} | upload-ring waits {}",
++                  "pipelines {} (same as the previous draw {}) | upload-ring waits {}",
+                   frame_ - uint64_t(log_every_) + 1, frame_, split, total / log_every_,
+                   (bs.gpu_ms - gpu_ms_base_) / log_every_, bs.gpu_lists_timed - gpu_lists_base_,
+                   (bs.gpu_cat_ms[0] - gpu_cat_base_[0]) / log_every_,
+@@ -8605,7 +8614,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
+                   (bs.fence_wait_ms - gpu_wait_base_ms_) / log_every_, bs.fence_waits, bs.texture_tables_reused,
+                   bs.state_calls_skipped, bs.constant_uploads_skipped, rts_->FastHits(), stats_.transfer_passes,
+                   alt_mode_ == 2 ? "always" : "off", bs.descriptors_allocated,
+-                  bs.descriptor_ring_waits, bs.pipelines, bs.ring_waits);
++                  bs.descriptor_ring_waits, bs.pipelines, bs.pipeline_memo_hits, bs.ring_waits);
+       gpu_wait_base_ms_ = bs.fence_wait_ms;
+       if (XenosFrameLogOn()) {
+         std::string steps;
+diff --git a/Gears2-Native/src/layer0_xenos/renderer/texture_cache.cpp b/Gears2-Native/src/layer0_xenos/renderer/texture_cache.cpp
+index fd863ad..406ed2f 100644
+--- a/Gears2-Native/src/layer0_xenos/renderer/texture_cache.cpp
++++ b/Gears2-Native/src/layer0_xenos/renderer/texture_cache.cpp
+@@ -325,9 +325,17 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
+     sc.stand_ins = stand_ins - stand_ins_before;
+     sc.bound = uint32_t(stats_.bound - bound_before);
+   }
++  RunGpuJobs();  // batched loads: every slot's uploads are recorded; now their untile work
+   return stand_ins;
+ }
+ 
++void TextureCache::RunGpuJobs() {
++  if (gpu_jobs_.empty()) return;
++  PhaseScope load(g_phase.load), gpu(g_phase.gpu);  // job 299: still counted as GPU-path load time
++  for (const std::function<void()>& job : gpu_jobs_) job();
++  gpu_jobs_.clear();
++}
++
+ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind, uint64_t frame) {
+   // Content key: everything that changes the texel data or layout (not swizzle, signs, filters or clamps).
+   const uint64_t a = (uint64_t(tf[0] & 0xFFC00000u) << 32) | (tf[1] & 0xFFFFF4FFu);
+@@ -1004,6 +1012,11 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
+       }
+       flush(last + 1);
+     }
++    // The untile work for this texture: now, or (batched loads) at the end of this Bind, after its other uploads.
++    const gpu::TextureHandle tex = e.texture;
++    const tx::FormatBlock block = fb;
++    auto untile = [=, this]() {
++    const tx::FormatBlock& fb = block;
+     for (uint32_t level = 0; level < host_mips; ++level) {
+       const bool in_tail = layout.packed_level != UINT32_MAX && level >= layout.packed_level;
+       const uint32_t storage_level = in_tail ? layout.packed_level : level;
+@@ -1017,7 +1030,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
+         const uint32_t bw = (lw + fb.block_width - 1) / fb.block_width, bh = (lh + fb.block_height - 1) / fb.block_height;
+         for (uint32_t u = 0; u < layers; ++u) {
+           uint32_t row_pitch = 0, rows = 0;
+-          if (!backend_.PrepareScratchFor(e.texture, level, u, row_pitch, rows) || row_pitch < (bw << bpb_log2)) {
++          if (!backend_.PrepareScratchFor(tex, level, u, row_pitch, rows) || row_pitch < (bw << bpb_log2)) {
+             ++stats_.gpu_block_failures;
+             continue;
+           }
+@@ -1037,7 +1050,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
+           bb.scratch_u0 = true;
+           backend_.SetGpuCategory(3);
+           backend_.Dispatch(untile_blocks_, bb, (bw + 7) / 8, (std::min(bh, rows) + 7) / 8, 1);
+-          backend_.CopyScratchToTexture(e.texture, level, u);
++          backend_.CopyScratchToTexture(tex, level, u);
+           ++stats_.gpu_block_subresources;
+         }
+         continue;
+@@ -1055,8 +1068,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
+       b.constants[9] = gpu_code;
+       b.constant_count = 12;
+       b.guest_t3 = true;
+-      b.uav_texture = e.texture;
++      b.uav_texture = tex;
+       b.uav_mip = level;
++      b.defer_uav_barrier = batch_loads_;  // the texture's next use (sampling: a transition) waits for the write
+       backend_.SetGpuCategory(3);  // job 177: texture loads (the next draw part sets draws again)
+       if (volume) {  // patch 0026: one dispatch per level, z from the packed-tail offset
+         const uint32_t ld = std::max(d >> level, 1u);
+@@ -1083,6 +1097,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
+       }
+       backend_.Dispatch(untile_, b, (lw + 7) / 8, (lh + 7) / 8, 1);
+     }
++    };
++    if (batch_loads_) gpu_jobs_.push_back(std::move(untile));
++    else untile();
+     if (gpu_blocks) ++stats_.gpu_block_loads;
+     ++stats_.gpu_loads;
+     ++stats_.uploads;

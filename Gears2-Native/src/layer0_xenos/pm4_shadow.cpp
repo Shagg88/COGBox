@@ -6,6 +6,7 @@
 #include <xenos/dev_tools.h>
 #include <xenos/display_gamma.h>
 #include <xenos/gpu_system.h>
+#include <xenos/tracy_profile.h>
 #include <xenos/pm4.h>
 
 #include <rex/hash.h>  // XXH3_64bits, as the SDK hashes shader ucode
@@ -394,12 +395,18 @@ class RenderPipe {
       queued_.store(uint32_t(queue_.size()), std::memory_order_release);
       wake = consumer_sleeping_;
     }
-    if (wake) cv_.notify_one();
+    if (wake) {
+#ifdef _WIN32
+      if (work_event_) SetEvent(work_event_);
+#endif
+      cv_.notify_one();
+    }
     current_ = NewBlock();
   }
 
   // ---- consumer (the renderer thread) ----
   void Run() {
+    ::xenos::profiling::ThreadName("COGBox renderer");
 #ifdef _WIN32
     using SetDesc = HRESULT(WINAPI*)(HANDLE, PCWSTR);
     if (auto fn = reinterpret_cast<SetDesc>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription")))
@@ -412,10 +419,33 @@ class RenderPipe {
         for (int i = 0; i < kSpin && !queued_.load(std::memory_order_acquire); ++i) _mm_pause();
         std::unique_lock<std::mutex> lock(mutex_);
         if (queue_.empty()) {
+          lock.unlock();
+          const bool pending_gpu_results = XenosPollRendererIdle();
+          lock.lock();
           ++stats_.consumer_sleeps;
           consumer_sleeping_ = true;
-          cv_.wait(lock, [&] { return !queue_.empty(); });
+          bool waited_on_event = false;
+#ifdef _WIN32
+          if (pending_gpu_results && work_event_ && queue_.empty()) {
+            if (HANDLE gpu_event = static_cast<HANDLE>(XenosRendererIdleEvent())) {
+              const HANDLE events[] = {work_event_, gpu_event};
+              lock.unlock();
+              // The completion event is the fast path. Recheck within 2 ms
+              // even if a notification is missed, rather than holding the
+              // guest's query-dependent frame behind a 100 ms recovery timer.
+              COGBOX_TRACY_SCOPE("Wait for renderer work or query completion");
+              WaitForMultipleObjects(2, events, FALSE, 2);
+              lock.lock();
+              waited_on_event = true;
+            }
+          }
+#endif
+          if (!waited_on_event) {
+            if (pending_gpu_results) cv_.wait_for(lock, std::chrono::milliseconds(1), [&] { return !queue_.empty(); });
+            else cv_.wait(lock, [&] { return !queue_.empty(); });
+          }
           consumer_sleeping_ = false;
+          if (queue_.empty()) continue;
         }
         b = std::move(queue_.front());
         queue_.pop_front();
@@ -457,6 +487,7 @@ class RenderPipe {
 
  private:
   void RunBlock(const Block& b) {
+    COGBOX_TRACY_SCOPE("Execute renderer batch");
     RegisterFile& regs = Shadow();
     uint32_t c = 0;
     running_block_ = &b;  // patch 0051
@@ -553,6 +584,9 @@ class RenderPipe {
   const Block* running_block_ = nullptr;  // patch 0051: renderer thread only
   size_t running_item_ = 0;
   Stats stats_;  // producer-side counters (consumer_sleeps / writes: consumer; read for the log only)
+#ifdef _WIN32
+  HANDLE work_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);  // pipe lives until process exit
+#endif
   std::thread thread_;  // never joined: the pipe lives until the process exits
 };
 RenderPipe* g_pipe = nullptr;  // set once, on the GPU thread, before the first item
@@ -680,7 +714,13 @@ class Pm4Execute final : public DrawObserver {
             uint8_t* p = report ? memory->TranslatePhysical<uint8_t*>(report) : nullptr;
             auto answer = rex::graphics::ZpdAnswer::kNone;
             uint64_t samples = 0;
-            if (fake >= 0 && p) {
+            if (XenosRendererStrictQueries() && p) {
+              // Leave the end's pending marker intact until its actual GPU
+              // result arrives. Publishing a fake visible result here races the
+              // renderer and lets UE3 consume it before it can be corrected.
+              if (!is_end) std::memset(p, 0, 32);
+              answer = is_end ? rex::graphics::ZpdAnswer::kNone : rex::graphics::ZpdAnswer::kBegin;
+            } else if (fake >= 0 && p) {
               std::memset(p, 0, 32);
               if (is_end) {
                 const uint32_t v = uint32_t(fake);
@@ -724,6 +764,7 @@ class Pm4Execute final : public DrawObserver {
                         ahead);
           }
           env.own_swap = [this, rf, done = s->swap_done, ahead](uint32_t fb, uint32_t w, uint32_t h) {
+            FrameLogSwap();  // the frame log's game frame ends here (its GPU-thread waits first)
             if (g_pipe) {  // job 173: the renderer thread presents; we wait for it (a swap is a frame boundary)
               PipeChanges();
               if (ahead) {  // patch 0148: the renderer calls done() itself once it presented
@@ -767,6 +808,25 @@ class Pm4Execute final : public DrawObserver {
   }
 
  public:
+  // Frame log (frame_log.cpp): this thread's waits since the previous swap (WAIT_REG_MEM spins, and waiting at swaps
+  // for our renderer thread), then the game frame itself. GPU thread.
+  void FrameLogSwap() {
+    if (!XenosFrameLogOn()) return;
+    if (proc_) {
+      const pm::Stats& s = proc_->GetStats();
+      XenosFrameAddWait(kXenosWaitPm4, s.wait_ms - fl_pm4_ms_, uint32_t(s.waits_spun - fl_pm4_waits_));
+      fl_pm4_ms_ = s.wait_ms;
+      fl_pm4_waits_ = s.waits_spun;
+    }
+    if (g_pipe) {
+      const RenderPipe::Stats& p = g_pipe->GetStats();
+      const double behind = p.swap_sync_ms + p.swap_wait_ms;
+      XenosFrameAddWait(kXenosWaitRenderer, behind - fl_behind_ms_, uint32_t(p.swap_waits - fl_behind_waits_));
+      fl_behind_ms_ = behind;
+      fl_behind_waits_ = p.swap_waits;
+    }
+    XenosFrameGuestSwap();
+  }
   // Job 173: the register changes since the previous item go into the pipe (GPU thread).
   void PipeChanges() {
     changed_.clear();
@@ -781,6 +841,8 @@ class Pm4Execute final : public DrawObserver {
   bool swap_ahead_ = false;  // patch 0148: set before the processor exists
   std::unique_ptr<pm::Processor> proc_;
   std::vector<uint32_t> changed_;
+  double fl_pm4_ms_ = 0.0, fl_behind_ms_ = 0.0;  // frame log: the totals at the previous swap
+  uint64_t fl_pm4_waits_ = 0, fl_behind_waits_ = 0;
 };
 
 }  // namespace
@@ -821,6 +883,7 @@ void XenosNotifyGuestWrite() {
 }
 
 void XenosWaitGuestWrite(uint32_t seen, uint32_t timeout_ms) {
+  COGBOX_TRACY_SCOPE("Guest completion wait");
   if (g_guest_write_seq.load(std::memory_order_acquire) != seen) return;
   WaitOnAddress(&g_guest_write_seq, &seen, sizeof(seen), timeout_ms);  // returns early on any write; spurious wakes ok
 }

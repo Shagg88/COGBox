@@ -206,6 +206,10 @@ struct ComputeBindings {
   // Patch 0021 (Canary texture_cache, D36): u0 = the backend's scratch raw buffer (RWByteAddressBuffer), sized and laid
   // out by Backend::PrepareScratchFor for one texture subresource, instead of uav_texture.
   bool scratch_u0 = false;
+  // Batched texture loads (BackendOptions::batch_texture_loads; D3D12): no UAV barrier after this dispatch - uav_texture
+  // is a texture load's own target, whose next use transitions it (a transition waits for the writes); writing the same
+  // mip as a UAV again first gets the barrier.
+  bool defer_uav_barrier = false;
 };
 
 // Notes/68 stage V3: the Vulkan backend on someone else's device (the SDK's Vulkan provider, which the presenter uses), so
@@ -236,8 +240,11 @@ struct VulkanPresentTarget {
 };
 
 struct BackendOptions {
-  bool debug_layer = false;  // only works if nothing else in the process has created a D3D12 device yet
+  bool debug_layer = false;  // forward D3D12 messages; the device owner must enable validation before creating it
   uint32_t upload_ring_mb = 256;
+  bool gpu_upload_ring = false;  // D3D12 GPU_UPLOAD when supported, with ordinary UPLOAD fallback
+  bool defer_guest_uav_barrier = false;
+  bool defer_import_release = true;  // retain imported views until the GPU fence, avoiding a recording drain
   uint32_t frames_in_flight = 2;
   uint64_t guest_memory_bytes = 512ull << 20;  // the Xenos physical address space (0x1FFFFFFF mask)
   // Stage 5C-2: run on someone else's device and queue (the SDK presenter's D3D12 provider: ID3D12Device* and its
@@ -269,12 +276,21 @@ struct BackendOptions {
   // Patch 0162: the workers' Windows thread priority (-2 lowest, -1 below normal, 0 normal).
   int pipeline_thread_priority = 0;  // job 518: normal by default, as Canary / Edge
   uint32_t warm_workers = 3;  // patch 0069: workers allowed on warm-only pipelines at once (WarmPixelShader)
+  // Prebuild v2: a worker's Windows thread priority while it builds a warm-only pipeline (-2 lowest, -1 below normal,
+  // 0 normal); back to pipeline_thread_priority after. Speculative builds then yield the CPU to the game, the renderer,
+  // the audio and the draws' own pipelines instead of competing with them.
+  int warm_thread_priority = -2;
   // Patch 0056: seconds between periodic library saves while it grows (was 60; a quit lost minutes of pipelines).
   int pipeline_save_seconds = 15;
   // Patch 0017 (stutter): sampled-only textures (no render-target / depth use, no MSAA) up to 16 MB are placed in
   // shared 64 MB heaps instead of each getting its own committed allocation. Job 299: CreateCommittedResource was 157
   // of the 208 ms that 376 new textures cost at the ch10 level start (~0.4 ms each).
   bool placed_textures = false;
+  // Batched texture loads (--gow2_renderer_texture_batch, D3D12): BC loads share the scratch buffer (each subresource in
+  // its own 512-byte-aligned region) and their copies are recorded together before the next other command, so the
+  // scratch buffer changes state once per batch instead of twice per mip level; texture untile dispatches skip their
+  // UAV barrier (ComputeBindings::defer_uav_barrier).
+  bool batch_texture_loads = false;
   // Patch 0150 (deep-dive review): persistent index buffers (CreateIndexBuffer) live in GPU memory, copied once from an
   // upload buffer, instead of an upload-heap buffer the GPU reads over the bus at every draw (D3D12 only).
   bool index_buffers_in_vram = false;
@@ -330,6 +346,10 @@ struct BackendStats {
   uint64_t copies_deferred = 0, copy_deferred_bytes = 0, copy_flushes = 0;  // job 171: copy threads
   double gpu_ms = 0.0;           // job 176: GPU time of our command lists (first to last timestamp)
   uint64_t gpu_lists_timed = 0;
+  // 2026-10-29 (Judgment judder): GPU time between our timed command lists - the GPU had nothing of ours to run (the
+  // gap from one list's last timestamp to the next one's first; gaps over a second, loads and pauses, are left out).
+  double gpu_idle_ms = 0.0;
+  uint64_t gpu_idle_gaps = 0;
   double gpu_cat_ms[8] = {};     // job 177: GPU time by category (SetGpuCategory)
   double gpu_target_ms[32] = {};
   double gpu_target_px[32] = {};  // patch 0098 (Vulkan): samples that passed depth / stencil, by render-target slot  // job 234: draw time by render-target slot (categories 0x20-0x3F, also counted as draws)
@@ -353,6 +373,11 @@ struct BackendStats {
   uint64_t vk_pass_end[10] = {};  // patch 0089 (Vulkan): why render passes ended (vulkan_backend.cpp EndPass)
   uint64_t fence_waits = 0;      // WaitForFence calls that really blocked
   double fence_wait_ms = 0.0;    // CPU time blocked in them (our GPU behind, ring full, readbacks)
+  double recording_wait_ms = 0.0;  // elapsed time waiting for the command-recording worker, not CPU execution
+  uint64_t recording_wakeups = 0, recording_wakeups_avoided = 0;
+  uint64_t guest_uav_barriers_before = 0, guest_uav_barriers_after = 0;
+  uint64_t imports_deferred = 0, imports_collected = 0, imports_synchronous = 0;
+  uint64_t imports_pending = 0, imports_pending_peak = 0;
   uint64_t texture_tables_reused = 0, state_calls_skipped = 0;
   uint64_t descriptors_allocated = 0, descriptor_ring_waits = 0;
   // Blocking waits by site (upl-n108): 0 renderer (frame pacing, comparisons), 1 readback release, 2 sampler table,
@@ -363,6 +388,8 @@ struct BackendStats {
   uint64_t barrier_calls = 0, barriers = 0;  // job 045: ResourceBarrier calls / barriers recorded (updated at Submit)
   uint64_t barrier_batches = 0, barriers_merged = 0;  // job 046: batches emitted, transitions merged away
   uint64_t pipelines_async = 0, pipelines_pending_draws = 0, sampler_tables_written = 0;
+  uint64_t pipeline_memo_hits = 0;
+  uint64_t scratch_batches = 0, uav_barriers_deferred = 0;  // batched texture loads: copy batches, barriers left out  // GetGraphicsPipeline answered from its one-entry memo (same as the last draw)
   uint64_t pipelines_loaded = 0, pipelines_stored = 0, pipeline_library_saves = 0;  // saved pipelines (notes/64)
   uint64_t pipelines_loaded_async = 0;  // patch 0010: of pipelines_loaded, loaded by a pipeline worker
   // Patch 0057: pipelines the workers created (not loaded): count, CPU ms in CreateGraphicsPipelineState (all workers
@@ -373,8 +400,10 @@ struct BackendStats {
   // Patch 0062: start-up backlog jobs moved to the front because a draw (or a waiting user) needed them now.
   uint64_t pipelines_promoted = 0;
   // Patch 0068: warm-only pipelines (WarmPixelShader) built and released, failed, and the driver's ms for them.
-  uint64_t pipelines_warmed = 0, pipelines_warm_failed = 0;
+  uint64_t pipelines_warmed = 0, pipelines_warm_failed = 0, pipelines_warm_loaded = 0;
   double pipeline_warm_ms = 0.0;
+  uint64_t cached_stage_prefetches = 0, cached_stage_restores = 0;
+  double cached_stage_restore_ms = 0.0;
   uint64_t sampler_heap_switches = 0;  // patch 0034: a full sampler heap swapped for a free one instead of waiting
   uint64_t sampler_table_hits = 0;                         // upl-n109: sampler sets found in the heap's cache
   uint64_t texture_table_hits = 0, texture_table_misses = 0;  // upl-n109: texture descriptor tables reused / written
@@ -404,7 +433,8 @@ class Backend {
   virtual void DestroyTexture(TextureHandle texture) = 0;
   // Stage 5C-2: a texture owned by someone else on our device (D3D12: an ID3D12Resource* in `state_now`, a
   // D3D12_RESOURCE_STATES value), usable as a UAV / SRV like ours. ReleaseImport records a transition to
-  // `final_state` and forgets the handle (the owner keeps the resource).
+  // `final_state` and forgets the handle (the owner keeps the resource). The
+  // backend may retain its views/reference until the final GPU submission completes.
   virtual TextureHandle ImportTexture(void* native_resource, Format format, uint32_t state_now) = 0;
   virtual void ReleaseImport(TextureHandle texture, uint32_t final_state) = 0;
   // Notes/68 V3: our packed present words (an R32 uint texture: R, G, B in 10 bits each, as kPresentUnpackCs reads
@@ -442,8 +472,20 @@ class Backend {
   // workers after every pipeline a draw is waiting for and before the start-up backlog. WarmJobsLeft: queued + being
   // built. All false / 0 on a backend without it.
   virtual bool SetWarmTemplate(const GraphicsPipelineDesc& d) { (void)d; return false; }
-  virtual bool WarmPixelShader(std::vector<uint8_t>&& ps_bytecode) { (void)ps_bytecode; return false; }
+  virtual bool WarmPixelShader(std::vector<uint8_t>&& ps_bytecode, uint64_t source_hash = 0) { (void)ps_bytecode; (void)source_hash; return false; }
+  virtual bool WarmVertexShader(std::vector<uint8_t>&& bytecode, uint64_t source_hash = 0) { (void)bytecode; (void)source_hash; return false; }
+  // Recording thread: restore a known cached stage on a background worker while
+  // the engine loads its asset, before a draw needs a new state combination.
+  virtual bool PrefetchShaderStage(ShaderHandle shader) { (void)shader; return false; }
   virtual uint64_t WarmJobsLeft() { return 0; }
+  virtual void WaitWarmCapacity(uint64_t capacity) { (void)capacity; }
+  virtual void ReleaseWarmupCache() {}
+  virtual void ConfigureWarmSourceCache(const std::string& identity) { (void)identity; }
+  virtual bool WarmSourceCached(bool vertex, uint64_t hash) { (void)vertex; (void)hash; return false; }
+  virtual uint64_t WarmSourcesReused() const { return 0; }
+  // Prebuild v2 (any thread): how many workers may be on warm-only pipelines from now on; 0 = none (queued warm jobs
+  // wait). The renderer raises it while the game loads and lowers it during play.
+  virtual void SetWarmWorkers(uint32_t n) { (void)n; }
   virtual void SavePipelinesNow() {}
   virtual PipelineHandle CreateComputePipeline(ShaderHandle cs) = 0;
 
@@ -556,6 +598,9 @@ class Backend {
   virtual void EndOcclusionQuery(OcclusionHandle query) = 0;
   // True once every part has completed on our GPU; *samples = the sum. Never waits.
   virtual bool GetOcclusionResult(OcclusionHandle query, uint64_t* samples) = 0;
+  // Optional native completion event for an ended, submitted query. The backend
+  // owns it; the renderer may wait alongside its work event without polling.
+  virtual void* OcclusionCompletionEvent(OcclusionHandle query) { return nullptr; }
   // The slots come back once our GPU is past them (no wait).
   virtual void ReleaseOcclusionQuery(OcclusionHandle query) = 0;
 

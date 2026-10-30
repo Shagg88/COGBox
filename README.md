@@ -29,9 +29,9 @@ the ports what an emulator can't easily offer:
 - **Anti-aliasing and upscaling** - SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS, including upscaling modes for weaker GPUs.
 - **High frame rates** - the 30 fps limit lifted, vsync with a cap matched to your monitor, AMD FSR frame
   generation (highly experimental for now).
-- **Smooth play** - the games' shaders are translated straight to Direct3D 12 shader code in under a millisecond each
-  (as Xenia Canary does), kept on your PC, and pipelines are made in the background - a new area shows a moment
-  later instead of freezing the game.
+- **Startup shader preparation (Direct3D 12)** - scans the installed game, title update, DLC and enabled mods before
+  play, preparing both stored shader stages and variants. Package indexes and compiled driver pipelines are kept on
+  your PC for later launches. Runtime-generated or patched variants retain the normal renderer fallback.
 - **Vulkan (experimental)** - a choice on each game's Graphics tab, for testing; close to Direct3D 12 already.
 - **Lower input lag** - one frame in flight, NVIDIA Reflex / AMD Anti-Lag 2 where your GPU has them.
 - **HDR10**, **ultrawide 21:9** (all three games), **16x anisotropic filtering**, field of view, and the games' own motion blur, depth of
@@ -156,7 +156,7 @@ Plans, not promises:
 - **Vulkan as the default** - it's already a choice (experimental); next: matching Direct3D 12 everywhere, then default.
 - **Better frame generation** - an OptiScaler-style frame generation to replace today's experimental AMD FSR one.
 - **Background art read from your own copy of each game** inside COGBox.
-- **Multi-core rendering** (the next step of the speed work) and shaders built at the main menu, for no first-visit hitches.
+- **Multi-core rendering** (the next step of the speed work).
 - **DLSS Frame Generation and DLSS 4/5 features** through NVIDIA Streamline on the cards that support them.
 - **More controllers (Switch and others) and an accessibility section** in COGBox.
 - **Split-screen across two monitors**, and the European releases at full speed.

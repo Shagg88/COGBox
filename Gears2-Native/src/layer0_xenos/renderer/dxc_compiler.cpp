@@ -7,6 +7,7 @@
 // Arguments are the S3.3 pinned set (notes/39): -E main -HV 2021 -Gis -denorm ftz, Shader Model 6.6; SPIR-V adds
 // -spirv -fspv-target-env=vulkan1.3 (Vulkan backend, later). Our code (MIT).
 #include <xenos/renderer/shader_cache.h>
+#include <xenos/tracy_profile.h>
 
 #ifndef _WIN32
 
@@ -130,6 +131,7 @@ class DxcCompiler final : public ShaderCompiler {
     }
     DxcBuffer source{hlsl.data(), hlsl.size(), DXC_CP_UTF8};
     IDxcResult* result = nullptr;
+    COGBOX_TRACY_SCOPE("Compile shader with DXC");
     HRESULT hr = compiler_->Compile(&source, args.data(), UINT32(args.size()), nullptr, IID_PPV_ARGS(&result));
     if (FAILED(hr) || !result) {
       char b[64];

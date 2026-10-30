@@ -5,6 +5,8 @@
 // with or without modification, are permitted under the BSD 3-Clause licence (THIRD_PARTY_NOTICES.md). The rest is our
 // code (MIT).
 #include <xenos/renderer/texture_cache.h>
+#include <xenos/renderer/resolve_through.h>
+#include <xenos/tracy_profile.h>
 
 #include <xenos/formats.h>
 #include <xenos/texture_layout.h>
@@ -325,7 +327,15 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
     sc.stand_ins = stand_ins - stand_ins_before;
     sc.bound = uint32_t(stats_.bound - bound_before);
   }
+  RunGpuJobs();  // batched loads: every slot's uploads are recorded; now their untile work
   return stand_ins;
+}
+
+void TextureCache::RunGpuJobs() {
+  if (gpu_jobs_.empty()) return;
+  PhaseScope load(g_phase.load), gpu(g_phase.gpu);  // job 299: still counted as GPU-path load time
+  for (const std::function<void()>& job : gpu_jobs_) job();
+  gpu_jobs_.clear();
 }
 
 TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind, uint64_t frame) {
@@ -535,6 +545,15 @@ TextureCache::Entry* TextureCache::LookupScaled(const uint32_t* tf) {
     if (!e->texture) return nullptr;
     e->format = hf.format;
     e->gpu_storage = true;
+    e->base_start = base;
+    e->base_length = std::max(layout.base.level_data_extent_bytes, 1u);
+    e->width = w;
+    e->height = h;
+    e->through_ok = tiled && layout.packed_level != 0;
+    e->through_pitch = pitch;
+    e->through_bpb_log2 = bpb_log2;
+    e->through_code = code;
+    e->through_endian = endian;
     e->host_bytes = uint64_t(td.width) * td.height * hf.host_bytes;
     ++stats_.scaled_textures;
     stats_.scaled_bytes += e->host_bytes;
@@ -644,7 +663,8 @@ bool TextureCache::FindResolveThrough(uint32_t base, uint32_t pitch, uint32_t bp
     Entry& e = *it->second;
     if (!e.through_ok || !e.texture || e.through_pitch != pitch_aligned || e.through_bpb_log2 != bpb_log2) continue;
     // Wholly covered: the resolve defines every texel, whatever the texture held. Else it must be current now.
-    const bool covers = dx == 0 && dy == 0 && w >= e.width && h >= e.height;
+    const bool covers = ResolveCoversTexture(dx, dy, w, h, e.width, e.height);
+    watch_.Watch(e.base_start, e.base_length);
     const uint64_t v = watch_.Version(e.base_start, e.base_length);
     if (!covers && v != e.version) {
       ++stats_.through_out_of_date;
@@ -658,6 +678,28 @@ bool TextureCache::FindResolveThrough(uint32_t base, uint32_t pitch, uint32_t bp
     out.entry = &e;
     out.version_before = v;
     out.covers = covers;
+    out.scaled = false;
+    return true;
+  }
+  return false;
+}
+
+bool TextureCache::FindScaledResolveThrough(uint32_t base, uint32_t pitch, uint32_t bpb_log2, uint32_t dx,
+                                            uint32_t dy, uint32_t w, uint32_t h, ResolveThrough& out) {
+  for (auto& [key, entry] : scaled_entries_) {
+    Entry& e = *entry;
+    if (!e.through_ok || !e.texture || e.base_start != base || e.through_pitch != pitch ||
+        e.through_bpb_log2 != bpb_log2 || !ResolveCoversTexture(dx, dy, w, h, e.width, e.height)) continue;
+    watch_.Watch(e.base_start, e.base_length);
+    out.texture = e.texture;
+    out.code = e.through_code;
+    out.endian = e.through_endian;
+    out.width = e.width * scale_;
+    out.height = e.height * scale_;
+    out.entry = &e;
+    out.version_before = watch_.Version(e.base_start, e.base_length);
+    out.covers = true;
+    out.scaled = true;
     return true;
   }
   return false;
@@ -671,18 +713,20 @@ void TextureCache::ResolveThroughWritten(const ResolveThrough& t, uint32_t exten
   const uint64_t s1 = std::min<uint64_t>(uint64_t(extent_start) + extent_length, uint64_t(e.base_start) + e.base_length);
   if (s1 <= s0) return;  // the resolve wrote none of its bytes (cannot happen for the same base; keep the reload)
   const uint32_t first = uint32_t(s0 >> kShift), last = uint32_t((s1 - 1) >> kShift);
-  if (t.covers) {
-    watch_.Watch(e.base_start, e.base_length);  // re-arm: an earlier CPU write may have unwatched its pages
-    e.version = watch_.Version(e.base_start, e.base_length);
-  } else {
-    // MarkGpuWritten bumped each page it wrote once; anything else moved = a write we did not account for.
-    const uint64_t v = watch_.Version(e.base_start, e.base_length);
-    if (v != t.version_before + (last - first + 1)) {
-      ++stats_.through_raced;
-      return;  // version left behind: the next fetch reloads it
-    }
-    e.version = v;
+  const uint64_t version = watch_.Version(e.base_start, e.base_length);
+  if (!ResolveVersionMatches(t.version_before, version, extent_start, extent_length, e.base_start, e.base_length)) {
+    ++stats_.through_raced;
+    return;
   }
+  if (t.scaled) {
+    ScaledSource src;
+    if (!scaled_lookup_ || !scaled_lookup_(e.base_start, e.base_length, src) || !src.words || src.gen != version) return;
+    e.scaled_gen = src.gen;
+    e.scaled_words = src.words;
+    ++stats_.scaled_through_writes;
+    return;
+  }
+  e.version = version;
   // The pages it wrote: their new versions are accounted for (no "changed" at the next content check, no mirror copy).
   const uint32_t efirst = e.base_start >> kShift;
   for (uint32_t p = first; p <= last; ++p) {
@@ -697,16 +741,40 @@ void TextureCache::ResolveThroughWritten(const ResolveThrough& t, uint32_t exten
 gpu::TextureHandle TextureCache::UntileCopyForCheck(const ResolveThrough& t, uint32_t& texel_bytes) {
   const Entry& e = *static_cast<const Entry*>(t.entry);
   if (!untile_ || !e.width || !e.height) return 0;
-  texel_bytes = uint32_t(e.host_bytes / (uint64_t(e.width) * e.height));
+  texel_bytes = uint32_t(e.host_bytes / (uint64_t(t.width) * t.height));
   gpu::TextureDesc td;
-  td.width = e.width;
-  td.height = e.height;
+  td.width = t.width;
+  td.height = t.height;
   td.format = e.format;
   td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
   td.debug_name = "gow2 resolve-through check";
   const gpu::TextureHandle tex = backend_.CreateTexture(td);
   if (!tex) return 0;
   gpu::ComputeBindings b;  // as Load's level 0
+  if (t.scaled) {
+    ScaledSource src;
+    if (!scaled_lookup_ || !scaled_lookup_(e.base_start, e.base_length, src) || !src.words) {
+      backend_.DestroyTexture(tex);
+      return 0;
+    }
+    b.constants[0] = e.base_start;
+    b.constants[1] = e.through_pitch;
+    b.constants[4] = t.width;
+    b.constants[5] = t.height;
+    b.constants[6] = e.through_bpb_log2;
+    b.constants[7] = e.through_endian;
+    b.constants[8] = 1;
+    b.constants[9] = e.through_code;
+    b.constants[10] = scale_;
+    b.constants[11] = src.chunk_base;
+    b.constants[12] = src.chunk_width;
+    b.constants[13] = src.chunk_bytes;
+    b.constant_count = 16;
+    b.srv[0] = src.words;
+    b.uav_texture = tex;
+    backend_.Dispatch(scaled_load_, b, (t.width + 7) / 8, (t.height + 7) / 8, 1);
+    return tex;
+  }
   b.constants[0] = e.through_base;
   b.constants[1] = e.through_pitch;
   b.constants[4] = e.width;
@@ -794,6 +862,7 @@ void TextureCache::EndFrame(uint64_t frame) {
 }
 
 void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
+  COGBOX_TRACY_SCOPE("Load guest texture");
   PhaseScope phase_load(g_phase.load);  // job 299
   ++g_phase.loads;
   const uint32_t format = Bits(tf[1], 0, 6), endian = Bits(tf[1], 6, 2);
@@ -1004,6 +1073,11 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       }
       flush(last + 1);
     }
+    // The untile work for this texture: now, or (batched loads) at the end of this Bind, after its other uploads.
+    const gpu::TextureHandle tex = e.texture;
+    const tx::FormatBlock block = fb;
+    auto untile = [=, this]() {
+    const tx::FormatBlock& fb = block;
     for (uint32_t level = 0; level < host_mips; ++level) {
       const bool in_tail = layout.packed_level != UINT32_MAX && level >= layout.packed_level;
       const uint32_t storage_level = in_tail ? layout.packed_level : level;
@@ -1017,7 +1091,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         const uint32_t bw = (lw + fb.block_width - 1) / fb.block_width, bh = (lh + fb.block_height - 1) / fb.block_height;
         for (uint32_t u = 0; u < layers; ++u) {
           uint32_t row_pitch = 0, rows = 0;
-          if (!backend_.PrepareScratchFor(e.texture, level, u, row_pitch, rows) || row_pitch < (bw << bpb_log2)) {
+          if (!backend_.PrepareScratchFor(tex, level, u, row_pitch, rows) || row_pitch < (bw << bpb_log2)) {
             ++stats_.gpu_block_failures;
             continue;
           }
@@ -1037,7 +1111,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
           bb.scratch_u0 = true;
           backend_.SetGpuCategory(3);
           backend_.Dispatch(untile_blocks_, bb, (bw + 7) / 8, (std::min(bh, rows) + 7) / 8, 1);
-          backend_.CopyScratchToTexture(e.texture, level, u);
+          backend_.CopyScratchToTexture(tex, level, u);
           ++stats_.gpu_block_subresources;
         }
         continue;
@@ -1055,8 +1129,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       b.constants[9] = gpu_code;
       b.constant_count = 12;
       b.guest_t3 = true;
-      b.uav_texture = e.texture;
+      b.uav_texture = tex;
       b.uav_mip = level;
+      b.defer_uav_barrier = batch_loads_;  // the texture's next use (sampling: a transition) waits for the write
       backend_.SetGpuCategory(3);  // job 177: texture loads (the next draw part sets draws again)
       if (volume) {  // patch 0026: one dispatch per level, z from the packed-tail offset
         const uint32_t ld = std::max(d >> level, 1u);
@@ -1083,6 +1158,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       }
       backend_.Dispatch(untile_, b, (lw + 7) / 8, (lh + 7) / 8, 1);
     }
+    };
+    if (batch_loads_) gpu_jobs_.push_back(std::move(untile));
+    else untile();
     if (gpu_blocks) ++stats_.gpu_block_loads;
     ++stats_.gpu_loads;
     ++stats_.uploads;

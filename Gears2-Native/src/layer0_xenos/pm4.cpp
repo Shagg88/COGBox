@@ -296,6 +296,7 @@ bool Processor::Type3(Reader& r, uint32_t packet, uint32_t depth) {  // ExecuteP
       const uint32_t info = r.Next(), poll = r.Next(), ref = r.Next(), mask = r.Next(), wait = r.Next();
       ++stats_.wait_loops;
       bool released = false;
+      std::chrono::steady_clock::time_point spun_since{};  // frame log: timed only once it has to spin
       for (;;) {
         uint32_t value;
         if (info & 0x10) {
@@ -305,6 +306,7 @@ bool Processor::Type3(Reader& r, uint32_t packet, uint32_t depth) {  // ExecuteP
           value = ReadReg(poll);
         }
         if (Compare(info, value, ref, mask)) break;
+        if (spun_since == std::chrono::steady_clock::time_point{}) spun_since = std::chrono::steady_clock::now();
         if (env_.defer_write && !released) {  // job 173: what it waits for may be queued for the renderer thread
           released = true;
           ++stats_.release_waits;
@@ -317,6 +319,10 @@ bool Processor::Type3(Reader& r, uint32_t packet, uint32_t depth) {  // ExecuteP
           std::this_thread::sleep_for(std::chrono::milliseconds(wait / 0x100));
         else
           std::this_thread::yield();
+      }
+      if (spun_since != std::chrono::steady_clock::time_point{}) {
+        ++stats_.waits_spun;
+        stats_.wait_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - spun_since).count();
       }
       return finish();
     }

@@ -12,6 +12,10 @@
 // on every other existing target of the same storage class and tile pitch that overlaps those tiles. The 24-point no-op
 // draws are skipped and counted. Our code (MIT).
 #include <xenos/dev_tools.h>
+#include <xenos/tracy_profile.h>
+#include <xenos/renderer/async_file_appender.h>
+#include <xenos/renderer/resolve_reuse.h>
+#include <xenos/renderer/resolve_through.h>
 #include <xenos/dxbc_gen.h>
 #include <xenos/dxbc_spirv.h>
 #include <xenos/display_size.h>
@@ -33,6 +37,7 @@
 #include <xenos/renderer/colour_hlsl.h>
 
 #ifdef _WIN32
+#include <windows.h>
 void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend.cpp (0.2.0, #9)
 #endif
 #include "builtin_shaders.h"
@@ -185,21 +190,39 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_shader_precreate, true, "Gears2",
                     "hook in each game's own shader-creation code) are translated at once and built by the driver in "
                     "a guessed pipeline in the background, before their first draw. Job 362c [V]: the driver keeps "
                     "each shader stage, so the real pipelines later cost ~0.1 ms instead of 15-35 ms. DXBC path only");
-REXCVAR_DEFINE_BOOL(gow2_renderer_shader_prebuild, false, "Gears2",
-                    "Patch 0132: off by default (its warm-only builds took pipeline workers from the draws' own pipelines). Patch 0068 (Shagg: shaders built behind the loading screen, both games): when the game opens a "
-                    "package, its pixel shaders (found by layer 2 in the file itself) are translated like a draw's and "
-                    "put through the driver in warm-only pipelines (built and released), so their first draws cost "
-                    "~0.1 ms instead of 15-35 ms (job 362c). DXBC path only. The load hold stays as the safety net");
+REXCVAR_DEFINE_BOOL(gow2_renderer_stage_prefetch, true, "Gears2",
+                    "Restore compiled stage-cache entries on background workers when UE3 creates its shaders, "
+                    "before the first draw using a new pipeline combination; live draws retain priority");
+REXCVAR_DEFINE_BOOL(gow2_renderer_shader_prebuild, true, "Gears2",
+                    "Prepare all package vertex/pixel shaders and both stored variants at startup (D3D12 DXBC). "
+                    "Stage bytecode and driver pipeline keys match the normal renderer; dynamic variants retain live fallback");
 REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_queue, 64, "Gears2",
                     "Patch 0068: the most warm-only pipelines queued for the pipeline workers at once (the rest waits)");
-REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_workers, 3, "Gears2",
-                    "Patch 0069: the most pipeline workers building warm-only pipelines at the same time (job 368b: "
-                    "all 12 at once doubled the frame time of a cold ch10 and slowed the draws' own pipelines)");
+REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_workers, -1, "Gears2",
+                    "Prebuild v2: pipeline workers building warm-only pipelines at the same time while the game loads "
+                    "(no swap for 250 ms, or the 20 s after a load / new scene as for the load hold). -1 (default) = a "
+                    "quarter of the logical processors, at least 2. Patch 0069 used 3 at all times (job 368b: all 12 at "
+                    "once doubled the frame time of a cold ch10 and slowed the draws' own pipelines)");
+REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_play_workers, 1, "Gears2",
+                    "Prebuild v2: the same during play (outside a load): 1 (default) keeps building areas the game "
+                    "streams in while playing at a trickle; 0 = warm-only builds only while loading");
+// Retained for compatibility with old launcher configurations. Speculative work never holds a live frame.
+REXCVAR_DEFINE_BOOL(gow2_renderer_shader_prebuild_hold, false, "Gears2", "Deprecated: use ue3_shader_prebuild_startup");
+REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_hold_max_ms, 120000, "Gears2", "Deprecated; no gameplay prebuild holds");
+REXCVAR_DEFINE_STRING(gow2_renderer_shader_prebuild_variant, "auto", "Gears2", "Deprecated; all stored variants are prepared");
+REXCVAR_DEFINE_INT32(gow2_renderer_shader_prebuild_priority, -2, "Gears2",
+                    "Prebuild v2: Windows priority of a pipeline worker while it builds a warm-only pipeline: -2 = "
+                    "lowest (default), -1 = below normal, 0 = the workers' own (gow2_renderer_pipeline_thread_priority)");
 REXCVAR_DEFINE_INT32(gow2_renderer_shader_precreate_ms, 6, "Gears2",
                     "Patch 0066: the most time per frame spent translating shaders the game created (ms); the rest "
                     "waits for the next frame");
 REXCVAR_DEFINE_INT32(gow2_renderer_play_hold_max_ms, 1000, "Gears2",
                     "Patch 0064: the longest one mid-play hold may wait (ms); then the frame is shown as it is");
+REXCVAR_DEFINE_BOOL(gow2_renderer_texture_batch, true, "Gears2",
+                    "Batched texture loads (D3D12; 2026-10-29, the Gears 2 level-start freeze: ~4,900 BC mip loads in one "
+                    "frame, each a compute pass, a copy and a GPU wait on one scratch buffer): a draw's texture uploads "
+                    "go first, then their untile passes, and the BC copies are recorded together - the GPU waits once "
+                    "per draw instead of twice per mip level. false = the old one-at-a-time loads");
 REXCVAR_DEFINE_BOOL(gow2_renderer_placed_textures, true, "Gears2",
                     "Patch 0017 (stutter): guest textures (sampled only, up to 16 MB) are placed in shared 64 MB heaps "
                     "instead of one committed allocation each - job 299: creating 376 textures took 157 of the 208 ms "
@@ -383,7 +406,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_shader_lookahead, true, "Gears2",
                     "Patch 0051: when a draw has to wait for a shader still compiling, first look up the shaders of the "
                     "draws already queued behind it, so new ones compile on all compile threads at once instead of one "
                     "after another on the draw thread. false = as before");
-REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_constants, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_constants, true, "Gears2",
                     "Patch 0105 (with --gow2_renderer_tex_num_format, the default): the texture-fetch post-processing "
                     "values that depend only on the fetch constant (per component sign mode, signed mode and fixed "
                     "width; per fetch fixed / integer / point sampled) are worked out once per draw on the CPU and read "
@@ -409,6 +432,11 @@ REXCVAR_DEFINE_INT32(gow2_renderer_cpu_split, 0, "Gears2",
                      "1 = part sums and stretches over 20 ms (the CPU split line and HITCH parts, cheap); 2 = also "
                      "every stretch over 50 us summed per source line (patch 0036 detail, as before 0153). Patch 0154: default "
                      "0 (job 461: 1 cost ~3% fps); test jobs that need the CPU split ask for 1");
+REXCVAR_DEFINE_INT32(gow2_renderer_idle_submit, -1, "Gears2",
+                     "2026-10-29 (Judgment judder): when our renderer thread runs out of work mid-frame, hand the GPU "
+                     "what it has recorded so far once at least this many draws are waiting (at most 4 times a frame), "
+                     "so the GPU starts the next frame while the game is still building it. -1 = auto (32 with strict "
+                     "occlusion queries, where the game waits for the GPU every frame; off otherwise), 0 = off");
 REXCVAR_DEFINE_INT32(gow2_renderer_submit_draws, 0, "Gears2",
                      "Patch 0138: submit our recorded work to the GPU after every N draws (0 = once a frame, as before).");
 REXCVAR_DEFINE_INT32(gow2_renderer_frames_in_flight, 1, "Gears2",
@@ -448,6 +476,9 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_gpu_load_stacked_3d, true, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_other_bpp, true, "Gears2",
                     "Patch 0030 (Canary resolve_full_8/16/128bpp): colour resolves into 8, 16 and 128 bpp destinations "
                     "and 64/128-bit endian swaps are written (false = skipped as before, the pages keep old bytes)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_reuse, true, "Gears2",
+                    "Reuse matching resolve scratch textures unused for four frames when guest addresses change; "
+                    "reduces resource creation, destruction and video-memory pressure while streaming");
 REXCVAR_DEFINE_INT32(gow2_renderer_dest_evict_frames, 600, "Gears2",
                      "Patch 0032: resolve destination textures (1x and scaled) not used for this many frames are freed "
                      "(0 = never, the old behaviour: they piled up and over-filled video memory in long Gears 3 runs)");
@@ -522,11 +553,9 @@ REXCVAR_DEFINE_STRING(gow2_renderer_vertex_log_frames, "", "Gears2",
                       "6 vertices) logs its vertex fetch ranges as our renderer reads them (first floats + a hash), and "
                       "at that frame's swap the ranges are hashed again - 'CHANGED after the draw' = the CPU rewrote the "
                       "bytes after we read them (empty = off)");
-REXCVAR_DEFINE_DOUBLE(gow2_renderer_pipeline_wait_ms, 0.0, "Gears2",
-                      "Patch 0132: 0 by default (never wait on the driver; the draw pops in when its pipeline is built). Gears 3 job 037: with async pipelines, each frame may wait up to this many ms in total for new "
-                      "pipeline states instead of skipping their draws (a skipped draw leaves the previous content - "
-                      "Gears 3 ch17's random blue/rainbow skin, job 034). Patch 0047: -1 = no cap, the default (never "
-                      "skip). 0 = never wait (skip, as before 0047)");
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_pipeline_wait_ms, 3.0, "Gears2",
+                      "With async pipelines, wait up to this many ms in total per frame for queued driver work, "
+                      "reducing skipped draws and pop-in. Default 3; 0 skips pending draws immediately; -1 removes the cap");
 REXCVAR_DEFINE_BOOL(gow2_renderer_transfer_mixed_bpp, false, "Gears2",
                     "Patch 0005 (Gears 3 2026-10-23): EDRAM ownership transfers between 32bpp and 64bpp targets - a "
                     "64bpp colour target's tiles into a depth target, and colour words between 32bpp and 64bpp colour "
@@ -549,7 +578,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_memexport_readback, true, "Gears2",
                     "written it (job 041: Gears 3 moves DXT textures with memexport copies, and DXT textures load from "
                     "guest memory, so without this they keep the old bytes - pale blue skin). The reference emulators' "
                     "readback_memexport");
-REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_through, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_through, true, "Gears2",
                     "Job 047: a resolve into memory that a cached texture is loaded from (same base, pitch and bytes "
                     "per texel, single level) also writes that texture, the same way the GPU untile would load it, so "
                     "the texture is not reloaded (Gears 3 ch8: the shadow map is resolved and reloaded ~15 times a "
@@ -629,6 +658,14 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_index_reuse, true, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_threaded_recording, true, "Gears2",
                     "Replay our D3D12 command-list calls on a recording thread instead of the GPU worker thread "
                     "(notes/52 section 10)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_gpu_upload, false, "Gears2",
+                    "Use CPU-writable video memory for the D3D12 upload ring when supported; avoids repeated GPU "
+                    "reads from system memory. Falls back to ordinary upload memory if unavailable");
+REXCVAR_DEFINE_BOOL(gow2_renderer_guest_uav_defer, false, "Gears2",
+                    "Order guest-memory UAV writes at the next dependent access; transitions already order writes");
+REXCVAR_DEFINE_BOOL(gow2_renderer_defer_import_release, true, "Gears2",
+                    "Retain imported presentation views until their GPU fence completes, avoiding a recording "
+                    "drain during every release; bounded queue falls back to synchronous release");
 REXCVAR_DEFINE_INT32(gow2_renderer_copy_threads, 0, "Gears2",
                      "Guest-memory copies into the upload ring run on this many worker threads, finished before each "
                      "submission and before the title can see the GPU got further (job 171; 0 = inline)");
@@ -719,6 +756,12 @@ REXCVAR_DEFINE_INT32(gow2_renderer_fused_scaled_kinds, 3, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_const_gen_skip, true, "Gears2",
                     "Job 240 (default on since job 249; shots identical in ch10 / ch02): skip the float-constant compare and copy for a draw when no register write reached the "
                     "VS / PS float constants since that slot's last upload (render-pipe generation counters)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_scaled_resolve_through, true, "Gears2",
+                    "Update a cached scaled texture during the scaled-memory write, avoiding its later reload. "
+                    "Requires a single tiled level, matching layout, complete coverage and unchanged page versions");
+REXCVAR_DEFINE_INT32(gow2_renderer_fused_scaled_min_pixels, 65536, "Gears2",
+                     "Minimum guest-pixel resolve area for the optional fused path; smaller resolves keep the reference "
+                     "path. 0 restores the unrestricted experiment. Size filtering alone does not establish equivalence");
 REXCVAR_DEFINE_BOOL(gow2_renderer_fused_scaled_resolve, false, "Gears2",
                     "Job 238: the resolve shaders' scaled pass writes straight into the scaled-memory windows (one pass "
                     "per window), skipping the scaled destination texture and the copy from it. Front-buffer copies keep "
@@ -797,7 +840,8 @@ REXCVAR_DEFINE_INT32(gow2_shader_threads, 0, "Gears2",
                      "Shader compile threads for our renderer (0 = logical processors minus 2, at least 1)");
 // Stage 4 (upl-s4c, notes/46 section 4): our own occlusion counts. Needs SDK patch 15 (DrawObserver::OnZpd).
 REXCVAR_DEFINE_STRING(gow2_renderer_queries, "off", "Gears2",
-                      "Occlusion queries: off | shadow (run our host queries and log our counts, write nothing) | "
+                      "Occlusion queries: strict (defer completion until this query's GPU result; own split GPU) | "
+                      "off | shadow (run our host queries and log our counts, write nothing) | "
                       "answer (also write our answers into the game's query reports: the last real count for that "
                       "report, 1 if none; corrected when our count lands)");
 REXCVAR_DEFINE_INT32(gow2_renderer_queries_min, 0, "Gears2",
@@ -1004,7 +1048,7 @@ struct FrameStats {
            lookaheads = 0, lookahead_draws = 0, lookahead_queued = 0,  // patch 0051
            pipelines_recorded = 0,  // patch 0058
            load_holds = 0,  // patch 0063: frames held back until their pipelines were built
-           created_seen = 0, created_known = 0, created_translated = 0, created_guessed = 0,  // patch 0066
+           created_seen = 0, created_known = 0, created_translated = 0, created_guessed = 0, created_prefetched = 0,
            new_draw_pipelines = 0, new_vs_from_load = 0, new_ps_from_load = 0,                // patch 0066
            prebuild_offered = 0, prebuild_known = 0, prebuild_queued = 0,                     // patch 0068
            new_ps_pipelines = 0, new_ps_prebuilt = 0,                                         // patch 0068
@@ -1054,12 +1098,15 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
   explicit ShadowRenderer(const XenosRendererHints& hints) : hints_(hints) {}
 
   bool Init(rex::Runtime* runtime) {
+    ::xenos::profiling::Initialize();
+    COGBOX_TRACY_SCOPE("Renderer initialization");
     memory_ = runtime ? runtime->memory() : nullptr;
     if (!memory_) {
       REXLOG_ERROR("gow2_renderer: no guest memory; staying off");
       return false;
     }
     const bool vulkan = REXCVAR_GET(gow2_renderer_api) == "vulkan";  // notes/68
+    api_vulkan_ = vulkan;  // prebuild v2: warm-only pipelines are D3D12 only
     if (!vulkan && REXCVAR_GET(gow2_renderer_api) != "d3d12")
       REXLOG_WARN("gow2_renderer: unknown --gow2_renderer_api '{}' (d3d12 | vulkan); using d3d12", REXCVAR_GET(gow2_renderer_api));
     backend_ = vulkan ? gpu::CreateVulkanBackend() : gpu::CreateD3D12Backend();
@@ -1084,9 +1131,14 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       options.pipeline_thread_priority = REXCVAR_GET(gow2_renderer_pipeline_thread_priority);  // patch 0162
       options.pipeline_save_seconds = REXCVAR_GET(gow2_renderer_pipeline_save_seconds);  // patch 0056
     }
-    options.warm_workers = uint32_t(std::max(1, REXCVAR_GET(gow2_renderer_shader_prebuild_workers)));  // patch 0069
-    options.debug_layer = REXCVAR_GET(gow2_renderer_debug);
+    options.warm_workers = PrebuildLoadWorkers();  // patch 0069 (v2: the loading count; StartPrebuild governs it)
+    options.warm_thread_priority = std::clamp(REXCVAR_GET(gow2_renderer_shader_prebuild_priority), -2, 0);  // v2
+    options.debug_layer = REXCVAR_GET(gow2_renderer_debug) || (!vulkan && rex::cvar::Query<bool>("d3d12_debug"));
+    options.gpu_upload_ring = REXCVAR_GET(gow2_renderer_gpu_upload) && !vulkan;
+    options.defer_guest_uav_barrier = REXCVAR_GET(gow2_renderer_guest_uav_defer) && !vulkan;
+    options.defer_import_release = REXCVAR_GET(gow2_renderer_defer_import_release) && !vulkan;
     options.placed_textures = REXCVAR_GET(gow2_renderer_placed_textures);  // patch 0017
+    options.batch_texture_loads = REXCVAR_GET(gow2_renderer_texture_batch) && !vulkan;  // 2026-10-29
     options.index_buffers_in_vram = REXCVAR_GET(gow2_renderer_index_buffers_vram);  // patch 0150
     {  // patch 0087
       const std::string m = REXCVAR_GET(gow2_renderer_vulkan_compressible_targets);
@@ -1331,6 +1383,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     textures_->SetMismatchZero(REXCVAR_GET(gow2_renderer_texture_mismatch_zero));
     textures_->SetScaledMissLog(REXCVAR_GET(gow2_renderer_scaled_miss_log));
     textures_->SetPackedTailAtBase(REXCVAR_GET(gow2_renderer_packed_tail_at_base));  // patch 0087
+    textures_->SetBatchLoads(REXCVAR_GET(gow2_renderer_texture_batch) && !api_vulkan_);  // 2026-10-29 (D3D12)
     textures_->SetLoadLogFrame(uint64_t(std::max(REXCVAR_GET(gow2_renderer_texture_load_log), 0)));
     if (const std::string list = REXCVAR_GET(gow2_renderer_texture_probe); !list.empty()) {  // job 284
       std::vector<uint32_t> bases;
@@ -1362,14 +1415,23 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     log_every_ = std::max(1, REXCVAR_GET(gow2_renderer_log_every));
     {  // occlusion queries (upl-s4c)
       const std::string q = REXCVAR_GET(gow2_renderer_queries);
-      queries_mode_ = q == "answer" ? QueriesMode::kAnswer : q == "shadow" ? QueriesMode::kShadow : QueriesMode::kOff;
+      queries_mode_ = q == "strict" ? QueriesMode::kStrict : q == "answer" ? QueriesMode::kAnswer :
+                      q == "shadow" ? QueriesMode::kShadow : QueriesMode::kOff;
+      if (queries_mode_ == QueriesMode::kStrict &&
+          (!XenosOurGpuSystem() || rex::cvar::GetFlagByName("gow2_pm4_split") != "true")) {
+        REXLOG_WARN("gow2_renderer: strict queries require our split GPU; keeping fake visible answers");
+        queries_mode_ = QueriesMode::kOff;
+      }
       if (!q.empty() && q != "off" && queries_mode_ == QueriesMode::kOff)
-        REXLOG_WARN("gow2_renderer: unknown --gow2_renderer_queries '{}' (off | shadow | answer); queries off", q);
+        REXLOG_WARN("gow2_renderer: unavailable --gow2_renderer_queries '{}' (off | shadow | answer | strict); queries off", q);
       queries_min_ = uint64_t(std::max(0, REXCVAR_GET(gow2_renderer_queries_min)));
       queries_correct_ = REXCVAR_GET(gow2_renderer_queries_correct);
       occ_answers_.SetHiddenAfter(uint32_t(std::max(1, REXCVAR_GET(gow2_renderer_queries_hidden_after))));
       queries_log_ = std::max(0, REXCVAR_GET(gow2_renderer_queries_log));
-      if (queries_mode_ != QueriesMode::kOff)
+      if (queries_mode_ == QueriesMode::kStrict)
+        REXLOG_INFO("gow2_renderer: occlusion queries STRICT (this issuance's actual GPU result; batched submission, "
+                    "idle polling; incomplete draws fall back to visible)");
+      else if (queries_mode_ != QueriesMode::kOff)
         REXLOG_INFO("gow2_renderer: occlusion queries {} (immediate answer = last count for the report, else 1; "
                     "minimum {}; correction {})",
                     queries_mode_ == QueriesMode::kAnswer ? "ANSWERED BY US" : "shadow (counted, not written)",
@@ -1498,7 +1560,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         resolves_to_guest_ = false;
       }
     }
-    if (resolves_to_guest_ && textures_ && REXCVAR_GET(gow2_renderer_resolve_through) &&
+    if (resolves_to_guest_ && textures_ &&
+        (REXCVAR_GET(gow2_renderer_resolve_through) || REXCVAR_GET(gow2_renderer_scaled_resolve_through)) &&
         REXCVAR_GET(gow2_renderer_gpu_texture_load)) {
       const gpu::ShaderHandle wtt = cache_->GetBuiltin("words_to_guest_through_cs", rr::builtin::kWordsToGuestThroughCs,
                                                        gpu::ShaderStage::kCompute);
@@ -1571,6 +1634,13 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       const gpu::ShaderHandle stm =
           cache_->GetBuiltin("scaled_to_mem_cs", rr::builtin::kScaledWordsToMemCs, gpu::ShaderStage::kCompute);
       scaled_to_mem_ = stm ? backend_->CreateComputePipeline(stm) : 0;
+      if (REXCVAR_GET(gow2_renderer_scaled_resolve_through)) {
+        const gpu::ShaderHandle st = cache_->GetBuiltin("scaled_to_mem_through_cs",
+            std::string("#define XE_SCALED_THROUGH\n") + rr::builtin::kScaledWordsToMemCs, gpu::ShaderStage::kCompute);
+        scaled_to_mem_through_ = st ? backend_->CreateComputePipeline(st) : 0;
+        REXLOG_INFO("gow2_renderer: direct scaled texture refresh {}",
+                    scaled_to_mem_through_ ? "ON (complete matching tiled levels only)" : "shader missing - OFF");
+      }
       const gpu::ShaderHandle scp =
           cache_->GetBuiltin("scaled_copy_cs", rr::builtin::kScaledCopyWordsCs, gpu::ShaderStage::kCompute);
       scaled_copy_ = scp ? backend_->CreateComputePipeline(scp) : 0;
@@ -1734,6 +1804,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!backend_ || backend_->IsLost()) return;
     const uint64_t t0 = __rdtsc();
     fill_.valid = false;  // job 185
+    if (queries_mode_ == QueriesMode::kStrict) {
+      // Query data is useful before the post-processing/present work after it.
+      // Give a completed query batch its own fence instead of making UE3 wait
+      // for every remaining GPU command in the frame. Bound extra submissions.
+      if (occ_need_submit_ && !occ_open_.open && occ_closed_in_batch_ && occ_batches_this_frame_ < 4) {
+        backend_->SubmitEarly();
+        occ_need_submit_ = false;
+        occ_closed_in_batch_ = 0;
+        ++occ_batches_this_frame_;
+      }
+      if (!occ_pending_.empty() && (draw_index_ & 31u) == 0) PollOcclusion();
+    }
     BeginParts();
     {
       PartScope ps(*this, kPartPoll);
@@ -1764,7 +1846,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void OnZpd(const RegisterFile&, const rex::graphics::ObservedZpd& zpd) override {
     if (queries_mode_ == QueriesMode::kOff || !backend_ || backend_->IsLost()) return;
     const uint64_t t0 = __rdtsc();
-    const bool answer = queries_mode_ == QueriesMode::kAnswer;
+    const bool strict = queries_mode_ == QueriesMode::kStrict;
+    const bool answer = queries_mode_ == QueriesMode::kAnswer || strict;
+    if (strict) PollOcclusion();
     uint8_t* report = zpd.report_address ? memory_->TranslatePhysical<uint8_t*>(zpd.report_address) : nullptr;
     if (!zpd.is_end) {
       if (occ_open_.open) {  // the previous query never got its end
@@ -1795,6 +1879,33 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++occ_stats_.ours;
       if (!complete) ++occ_stats_.incomplete;
     }
+    if (strict) {
+      const uint64_t sequence = occ_deferred_.Issue(zpd.report_address);
+      if (complete) {
+        PendingOcclusion pending;
+        pending.end_address = zpd.report_address;
+        pending.handle = q.handle;
+        pending.frame = frame_;
+        pending.sequence = sequence;
+        pending.complete = true;
+        pending.draws = uint32_t(attempted);
+        pending.scale = q.scale ? q.scale : res_scale_;
+        pending.queued_at = std::chrono::steady_clock::now();
+        occ_pending_.push_back(pending);
+        occ_need_submit_ = true;
+        ++occ_closed_in_batch_;
+      } else {
+        // A missing draw or failed query must not incorrectly hide an object.
+        if (occ_deferred_.Complete(zpd.report_address, sequence, report, 1)) {
+          ++occ_stats_.answered;
+          ++occ_stats_.fallback;
+          XenosNotifyGuestWrite();
+        }
+        if (q.handle) backend_->ReleaseOcclusionQuery(q.handle);
+      }
+      cpu_ms_ += double(__rdtsc() - t0) * MsPerTick();
+      return;
+    }
     bool from_cache = false;
     const uint64_t estimate =
         occ_answers_.Estimate(rr::queries::AnswerCache::Key(zpd.report_address, uint32_t(attempted)), 1, queries_min_,
@@ -1819,6 +1930,42 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Our counts that have landed (never waits): learn them and, when answering, correct reports still holding our
   // estimate.
   void PollOcclusion() {
+    if (queries_mode_ == QueriesMode::kStrict) {
+      bool completed_reports = false;
+      while (!occ_pending_.empty()) {
+        const PendingOcclusion& p = occ_pending_.front();
+        uint64_t samples = 0;
+        const bool ready = !backend_->IsLost() && backend_->GetOcclusionResult(p.handle, &samples);
+        if (!ready && !backend_->IsLost() &&
+            std::chrono::steady_clock::now() - p.queued_at < std::chrono::seconds(2)) break;
+        if (ready) {
+          samples = rr::queries::AnswerCache::ToGuestSamples(samples, p.scale * p.scale);
+          ++occ_stats_.results;
+          if (!samples) ++occ_stats_.zero;
+          occ_stats_.samples += samples;
+          occ_stats_.latency_frames += frame_ - p.frame;
+        } else {
+          samples = 1;  // Device/query failure: preserve visibility and release the guest wait.
+          ++occ_stats_.dropped;
+          ++occ_stats_.fallback;
+        }
+        auto* report = memory_->TranslatePhysical<uint8_t*>(p.end_address);
+        if (occ_deferred_.Complete(p.end_address, p.sequence, report, samples)) {
+          ++occ_stats_.answered;
+          if (!samples) ++occ_stats_.answered_hidden;
+          completed_reports = true;
+        } else ++occ_stats_.too_late;
+        backend_->ReleaseOcclusionQuery(p.handle);
+        occ_pending_.pop_front();
+      }
+      if (completed_reports) {
+        // Every completed report is already visible. Publish one sequence change
+        // and wake after the batch, instead of waking again for each report.
+        XenosNotifyGuestWrite();
+        ++occ_stats_.completion_notifications;
+      }
+      return;
+    }
     const bool answer = queries_mode_ == QueriesMode::kAnswer;
     while (!occ_pending_.empty()) {
       PendingOcclusion& p = occ_pending_.front();
@@ -1871,8 +2018,71 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
 
+  bool StrictQueries() const { return queries_mode_ == QueriesMode::kStrict; }
+  void* IdleGpuEvent() {
+    return StrictQueries() && !occ_pending_.empty()
+        ? backend_->OcclusionCompletionEvent(occ_pending_.front().handle) : nullptr;
+  }
+  bool PollGpuIdle() {
+    COGBOX_TRACY_SCOPE("Poll idle GPU results");
+    IdleSubmit();
+    if (!StrictQueries() || occ_pending_.empty()) return false;
+    const uint64_t t0 = __rdtsc();
+    if (occ_need_submit_ && !backend_->IsLost()) {
+      backend_->SubmitEarly();  // Batch all queued query resolves; never one GPU wait per query.
+      occ_need_submit_ = false;
+      occ_closed_in_batch_ = 0;
+    }
+    PollOcclusion();
+    cpu_ms_ += double(__rdtsc() - t0) * MsPerTick();
+    return !occ_pending_.empty();
+  }
+
+  // 2026-10-29 (Judgment Tracy capture): with strict queries the game waits for its GPU results every frame, so after
+  // each result the GPU had nothing of ours until this frame's first submit, 2-3 ms later. The renderer thread is out
+  // of work here (its queue is empty): give the GPU what this frame has recorded so far.
+  void IdleSubmit() {
+    if (!backend_ || backend_->IsLost()) return;
+    const int32_t v = REXCVAR_GET(gow2_renderer_idle_submit);
+    const uint32_t min_draws = v < 0 ? (StrictQueries() ? 32u : 0u) : uint32_t(v);
+    if (!min_draws || idle_submits_frame_ >= kIdleSubmitsPerFrame || draw_index_ < idle_submit_draw_ + min_draws) return;
+    if (occ_open_.open) return;  // never split an open occlusion query across lists (as the strict batches don't)
+    backend_->SubmitEarly();
+    idle_submit_draw_ = draw_index_;
+    ++idle_submits_frame_;
+  }
+  static constexpr uint32_t kIdleSubmitsPerFrame = 4;
+  uint32_t idle_submit_draw_ = 0, idle_submits_frame_ = 0, idle_submits_last_frame_ = 0;
+
+  template<class F> void FrameStep(const char* site, F&& work) {
+    COGBOX_TRACY_SCOPE("Renderer frame step");
+    COGBOX_TRACY_NAME(site);
+    const uint64_t start = __rdtsc();
+    work();
+    const uint64_t ticks = __rdtsc() - start;
+    const double ms = double(ticks) * MsPerTick();
+    if (XenosFrameLogOn()) {
+      for (auto& step : frame_steps_) {
+        if (!step.site) step.site = site;
+        if (step.site == site) { step.ticks += ticks; break; }
+      }
+    }
+    if (ms >= 20.0 && XenosFrameLogOn())
+      REXLOG_INFO("gow2_renderer: frame {} slow step {}: {:.1f} ms", frame_, site, ms);
+  }
+  static uint64_t ThreadCpuTicks() {
+#ifdef _WIN32
+    FILETIME created, exited, kernel, user;
+    if (GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user))
+      return (uint64_t(kernel.dwHighDateTime) << 32 | kernel.dwLowDateTime) +
+             (uint64_t(user.dwHighDateTime) << 32 | user.dwLowDateTime);
+#endif
+    return 0;
+  }
   void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t fb_width, uint32_t fb_height) override {
+    COGBOX_TRACY_SCOPE("Renderer swap");
     if (!backend_) return;
+    if (!thread_cpu_base_) thread_cpu_base_ = ThreadCpuTicks();
 #if defined(GN_PGO_GEN)
     {  // patch 0159: the training run is ended from outside (no normal exit), so the counters are written here
       static uint32_t pgo_swaps = 0;
@@ -1883,16 +2093,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
 #endif
-    if (!vertex_log_.empty()) RecheckDrawVertices();  // job 304
-    PollExportReadbacks();  // job 041
-    if (!through_checks_.empty()) PollThroughChecks();  // job 047
-    if (!resolve_readback_retire_.empty()) RetireResolveReadbacks();  // patch 0020
     part_level_ = std::clamp(REXCVAR_GET(gow2_renderer_cpu_split), 0, 2);  // patch 0153
     if (part_level_ == 2 && part_level_prev_ != 2 && backend_) part_upload_mark_ = backend_->Stats().upload_bytes;
     part_level_prev_ = part_level_;
     const uint64_t t0 = __rdtsc();
     BeginParts();
     PartScope frame_scope(*this, kPartFrame);
+    if (!vertex_log_.empty()) FrameStep("vertex recheck", [&] { RecheckDrawVertices(); });
+    FrameStep("export readback results", [&] { PollExportReadbacks(); });
+    if (!through_checks_.empty()) FrameStep("through checks", [&] { PollThroughChecks(); });
+    if (!resolve_readback_retire_.empty()) FrameStep("resolve readback retirement", [&] { RetireResolveReadbacks(); });
     {
       PartScope ps(*this, kPartPoll);
       cache_->Poll();
@@ -1905,15 +2115,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     ++frame_;
     if (report_first_) ReportFrame();  // patch 0101
-    DrainCreatedShaders();  // patch 0066
-    DrainPrebuild();        // patch 0068
+    FrameStep("created shaders", [&] { DrainCreatedShaders(); });  // patch 0066
+    // Patch 0068's DrainPrebuild (the whole incoming batch, every frame, here) is gone in prebuild v2: package shaders go
+    // straight to the prebuild thread. This thread only keeps the warm-only worker count in step with load / play.
+    if (prebuild_on_) GovernWarmWorkers();
     // Patch 0062: the on-screen "Building shaders" note (fps_bar.cpp) - pipelines still queued or being built, and how
     // many were ever queued (both games; no game data).
-    XenosSetShaderJobs(backend_->PipelineJobsLeft(), backend_->Stats().pipelines_async);
+    // Prebuild v2: and the shaders the prebuild still has to build, so a background compile shows too.
+    XenosSetShaderJobs(backend_->PipelineJobsLeft() + (prebuild_on_ ? PrebuildLeft() : 0),
+                       backend_->Stats().pipelines_async + (prebuild_on_ ? prebuild_accepted_.load() : 0));
     if (upscale_probe_ && frame_ % upscale_probe_ == 0) LogProbeFrame();
-    UpscaleEndFrame();
-    if (textures_) textures_->EndFrame(frame_);
-    EvictDestinations();  // patch 0032
+    FrameStep("upscaler end frame", [&] { UpscaleEndFrame(); });
+    if (textures_) FrameStep("texture end frame", [&] { textures_->EndFrame(frame_); });
+    FrameStep("destination eviction", [&] { EvictDestinations(); });  // patch 0032
     std::string lost;
     if (backend_->IsLost(&lost)) {
       if (!lost_logged_) REXLOG_ERROR("gow2_renderer: our device is lost ({}); shadow renderer stopped", lost);
@@ -1922,28 +2136,42 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (!selftest_started_) StartTransferSelfTest();
     DecideLoadHold();  // patch 0063
-    if (display_ours_) RequestDisplay(regs, frontbuffer_ptr & 0x1FFFFFFFu, fb_width, fb_height);
-    if (!export_ranges_.empty()) IssueExportReadbacks();  // patch 0042: this frame's merged export readbacks
-    frame_fences_.push_back(backend_->Submit());
+    if (display_ours_) FrameStep("present image", [&] { RequestDisplay(regs, frontbuffer_ptr & 0x1FFFFFFFu, fb_width, fb_height); });
+    if (!export_ranges_.empty()) FrameStep("export readback copies", [&] { IssueExportReadbacks(); });
+    FrameStep("submit", [&] { frame_fences_.push_back(backend_->Submit()); });
+    occ_need_submit_ = false;
+    occ_closed_in_batch_ = 0;
+    occ_batches_this_frame_ = 0;
     XenosLatencyFrameSubmitted();  // patch 0135: Reflex RENDERSUBMIT_END
-    backend_->NextFrame();
-    while (frame_fences_.size() > frames_in_flight_) {  // patch 0133: at most this many frames queued on our device
-      backend_->WaitForFence(frame_fences_.front());
-      frame_fences_.pop_front();
+    FrameStep("next frame", [&] { backend_->NextFrame(); });
+    FrameStep("frame throttle", [&] {
+      while (frame_fences_.size() > frames_in_flight_) {
+        backend_->WaitForFence(frame_fences_.front());
+        frame_fences_.pop_front();
+      }
+    });
+    if (queries_mode_ != QueriesMode::kOff) FrameStep("occlusion results", [&] { PollOcclusion(); });  // upl-s4c
+    double fl_hold_ms = 0.0;  // frame log
+    if (hold_this_frame_) {
+      const auto th = std::chrono::steady_clock::now();
+      HoldForPipelines();  // patch 0063
+      fl_hold_ms = MsSince(th);
     }
-    if (queries_mode_ != QueriesMode::kOff) PollOcclusion();  // upl-s4c
-    if (hold_this_frame_) HoldForPipelines();  // patch 0063
     hold_descs_.clear();
     hold_keys_.clear();
     if (display_ours_ && !present_ours_) ShowDisplay(frontbuffer_ptr & 0x1FFFFFFFu);
-    if (present_ours_) DeliverFrameImages();
+    if (present_ours_) FrameStep("deliver image", [&] { DeliverFrameImages(); });
     {
       PartScope ps(*this, kPartCompare);
       EndTraceFrame();
       FlushTraces(false);
       CheckTransferSelfTest();
     }
+    const double fl_pipe_wait_ms = pipeline_wait_ms_frame_;  // frame log: this frame's, before the reset below
+    const uint32_t fl_draws = uint32_t(draw_index_), fl_skipped = uint32_t(pending_this_frame_);
     draw_index_ = 0;
+    idle_submits_last_frame_ = idle_submits_frame_;  // for the frame log (recorded after this reset)
+    idle_submit_draw_ = idle_submits_frame_ = 0;
     copy_index_ = 0;
     occ_lines_ = 0;
     pending_this_frame_ = shader_errors_this_frame_ = pipeline_failures_this_frame_ = 0;
@@ -1961,6 +2189,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     cpu_ms_ = 0;
     cpu_sum_ += ms;
     cpu_max_ = std::max(cpu_max_, ms);
+    if (XenosFrameLogOn()) FrameLogRecord(ms, fl_hold_ms, fl_pipe_wait_ms, fl_draws, fl_skipped);  // before 0010
+    ::xenos::profiling::Frame(ms, backend_->Stats().gpu_ms);
     ReportHitch(ms);  // patch 0010
     if (frame_ % uint64_t(log_every_) == 0) {
       if (depth_alias_drop_ || memexport_)  // patches 0024 / 0025
@@ -1970,9 +2200,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (textures_ && REXCVAR_GET(gow2_renderer_gpu_block_textures)) {  // patch 0021
         const rr::TextureCacheStats& ts = textures_->Stats();
         REXLOG_INFO("gow2_renderer: patch 0021 frames {}-{}: BC textures loaded on the GPU {} ({} subresources, {} "
-                    "failed) | 3D textures on the GPU {} (0026) | CPU-path loads {} | scratch copies so far {}",
+                    "failed) | 3D textures on the GPU {} (0026) | CPU-path loads {} | scratch copies so far {} (batched loads: in "
+                    "{} batches, untile barriers left out {})",
                     frame_ + 1 - uint64_t(log_every_), frame_, ts.gpu_block_loads, ts.gpu_block_subresources,
-                    ts.gpu_block_failures, ts.gpu_volume_loads, ts.cpu_loads, backend_->Stats().scratch_texture_copies);
+                    ts.gpu_block_failures, ts.gpu_volume_loads, ts.cpu_loads, backend_->Stats().scratch_texture_copies,
+                    backend_->Stats().scratch_batches, backend_->Stats().uav_barriers_deferred);
       }
       if (submit_draws_) {  // patch 0138
         const uint64_t es = backend_->Stats().early_submits;
@@ -2016,10 +2248,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           uint64_t vram_used = 0, vram_budget = 0;
           const bool vram = backend_->VideoMemory(&vram_used, &vram_budget);
           REXLOG_INFO("gow2_renderer: patch 0032 frames {}-{}: resolve destinations {} ({:.1f} MB), scaled {} "
-                      "({:.1f} MB); freed {} ({:.1f} MB) by age {}, by budget {} (video memory pressure {}x) (this range){}",
+                      "({:.1f} MB); freed {} ({:.1f} MB) by age {}, by budget {} (video memory pressure {}x); reused {} "
+                      "unscaled / {} scaled (this range){}",
                       frame_ + 1 - uint64_t(log_every_), frame_, destinations_.size(), double(one_bytes) / 1048576.0,
                       scaled_dests_.size(), double(scaled_bytes) / 1048576.0, dest_evict_.count,
                       double(dest_evict_.bytes) / 1048576.0, dest_evict_.by_age, dest_evict_.by_budget, dest_evict_.pressure_events,
+                      dest_evict_.reused_one, dest_evict_.reused_scaled,
                       vram ? fmt::format(" | video memory used {:.0f} MB of budget {:.0f} MB{}",
                                          double(vram_used) / 1048576.0, double(vram_budget) / 1048576.0,
                                          vram_used > vram_budget ? " - OVER BUDGET (the driver pages: slow)" : "")
@@ -2078,6 +2312,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // The next frame's draw records, if it is a comparison frame (shared with its pending resolves).
     BeginTraceFrame();
     last_swap_end_ = std::chrono::steady_clock::now();  // patch 0063 (after any hold: a hold is not a load)
+    last_swap_ns_.store(last_swap_end_.time_since_epoch().count(), std::memory_order_relaxed);  // prebuild v2
   }
 
   // ---- Patch 0063: load hold (Shagg 18:24, job 358 [V]: a first visit's 340-470 new pipelines cost 80-150 s of
@@ -2092,12 +2327,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       load_window_until_ = now + std::chrono::seconds(20);  // a load (or the first frame)
       hold_left_ms_ = double(REXCVAR_GET(gow2_renderer_load_hold_max_ms));
     }
-    if (!REXCVAR_GET(gow2_renderer_load_hold) || !present_ours_ || hold_descs_.empty()) return;
     const bool scene = pending_this_frame_ >= 200 && uint64_t(pending_this_frame_) * 2 >= draw_index_;
-    if (scene && now >= load_window_until_) {  // a new scene mid-play: a window and budget of its own
-      load_window_until_ = now + std::chrono::seconds(20);
+    // Prebuild v2: a new scene opens the load window even with the hold off (the prebuild uses the window too).
+    if (scene && now >= load_window_until_ && (prebuild_on_ || REXCVAR_GET(gow2_renderer_load_hold))) {
+      load_window_until_ = now + std::chrono::seconds(20);  // a new scene mid-play: a window and budget of its own
       hold_left_ms_ = double(REXCVAR_GET(gow2_renderer_load_hold_max_ms));
     }
+    load_until_ns_.store(load_window_until_.time_since_epoch().count(), std::memory_order_relaxed);
+    if (!REXCVAR_GET(gow2_renderer_load_hold) || !present_ours_ || hold_descs_.empty()) return;
     // Patch 0064 (Shagg 18:33: "I'll take a longer hold over stuttering frames everyday"; job 360: ch05 still showed
     // 1391 skipped draws after its 20 s window, in bursts of 70-450 per 300 frames): any pending draw holds a frame in
     // the load window; mid-play, 8+ pending draws hold it for up to 1 s (the load budget is not used).
@@ -2105,7 +2342,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const int32_t play_n = REXCVAR_GET(gow2_renderer_play_hold_draws);
     hold_in_window_ = now < load_window_until_;
     if (hold_in_window_) {
-      hold_this_frame_ = hold_left_ms_ > 0.0 && (pending_this_frame_ >= load_n || scene);
+      hold_this_frame_ = (hold_left_ms_ > 0.0 && (pending_this_frame_ >= load_n || scene));
       hold_cap_ms_ = hold_left_ms_;
     } else {
       hold_this_frame_ = play_n > 0 && pending_this_frame_ >= uint32_t(play_n);
@@ -2117,11 +2354,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     size_t left = 0;
     for (bool shown = false;;) {
       left = 0;
-      for (const gpu::GraphicsPipelineDesc& d : hold_descs_) left += backend_->PipelinePending(d) ? 1 : 0;
-      if (!left || MsSince(t0) >= hold_cap_ms_) break;
-      // Patch 0067: the animated "Loading shaders N%" indicator (fps_bar.cpp) once the hold lasts over 100 ms - a short
-      // one would only flash it.
-      if (shown || MsSince(t0) >= 100.0) {
+      for (const auto& d : hold_descs_) left += backend_->PipelinePending(d) ? 1 : 0;
+      const double ms = MsSince(t0);
+      if (!left || ms >= hold_cap_ms_) break;
+      if (shown || ms >= 100.0) {
         XenosSetLoadHold(true, uint32_t(hold_descs_.size()), uint32_t(left));
         shown = true;
       }
@@ -2131,11 +2367,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const double ms = MsSince(t0);
     if (hold_in_window_) hold_left_ms_ -= ms;
     ++stats_.load_holds;
-    REXLOG_INFO("gow2_renderer: {} hold (patch 0063): frame {} not shown ({} of {} draws pending, {} pipelines) - "
-                "waited {:.0f} ms, {}; hold time left for this load {:.0f} ms",
-                hold_in_window_ ? "load" : "play", frame_, pending_this_frame_, draw_index_, hold_descs_.size(), ms,
-                left ? fmt::format("{} still not ready", left) : std::string("all ready"),
-                std::max(0.0, hold_left_ms_));
+    REXLOG_INFO("gow2_renderer: {} hold: frame {} not shown ({} of {} draws pending, {} pipelines) - "
+                "waited {:.0f} ms, {} still pending; hold time left {:.0f} ms",
+                hold_in_window_ ? "load" : "play", frame_, pending_this_frame_, draw_index_, hold_descs_.size(),
+                ms, left, std::max(0.0, hold_left_ms_));
   }
 
   // ---- Patch 0066: shaders the game creates while loading (Shagg 19:09-19:23: "build behind the loading screen").
@@ -2186,8 +2421,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++stats_.created_seen;
       const uint64_t h = XXH3_64bits(c.bytes.data(), c.bytes.size());  // the same key as the draws' shaders
       created_hashes_.insert(h);
-      if (cache_->Find(h, c.is_vertex)) {
+      if (prebuild_on_ && !c.is_vertex) PrebuildMarkKnown(h);  // prebuild v2: built here, not again from a package
+      if (const auto* known = cache_->Find(h, c.is_vertex)) {
         ++stats_.created_known;
+        if (known->ready() && known->handle && REXCVAR_GET(gow2_renderer_stage_prefetch) &&
+            backend_->PrefetchShaderStage(known->handle)) ++stats_.created_prefetched;
       } else {
         dwords.resize(c.bytes.size() / 4);
         for (size_t i = 0; i < dwords.size(); ++i) {
@@ -2198,6 +2436,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         const rr::GuestShader& g = cache_->Get(h, dwords.data(), dwords.size(), c.is_vertex);
         if (g.ready() && g.handle) {
           ++stats_.created_translated;
+          if (REXCVAR_GET(gow2_renderer_stage_prefetch) && backend_->PrefetchShaderStage(g.handle)) {
+            ++stats_.created_prefetched;
+            if (MsSince(t0) >= budget) break;
+            continue;
+          }
           gpu::ShaderHandle& partner_slot = c.is_vertex ? guess_vs_ : guess_ps_;  // the first of a stage pairs others
           if (!partner_slot) partner_slot = g.handle;
           guess_waiting_.push_back({c.is_vertex, g.handle});
@@ -2234,127 +2477,251 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::ShaderHandle guess_vs_ = 0, guess_ps_ = 0;
 
   // ---- patch 0068: shaders built while the game loads an area (Shagg: "build behind the actual loading screen") ----
-  // Layer 2 (UE3, both games) reads each package as the game opens it and hands over its pixel shaders' microcode
-  // (XenosPrebuildPixelShader, any thread). Per frame the recording thread drops the ones already known (drawn, or from
-  // the start-up warm-up / backlog) and passes the rest to one prebuild thread: it translates each exactly as a draw
-  // would (ShaderCache::TranslateDxbcOnly - same bytes, so the driver's stage cache hits later) and queues a warm-only
-  // pipeline (gpu.h WarmPixelShader), at most gow2_renderer_shader_prebuild_queue at a time. Pixel shaders only: the
-  // XDK patches vertex shaders at bind, so their microcode in the files never matches a draw's (job 367).
+  // Layer 2 (UE3, all three games) reads each package as the game opens it and hands over its pixel shaders' microcode
+  // Package records arrive off the render thread. Every distinct stage/microcode pair and both
+  // stored variants are retained. Backpressure bounds the queue without dropping records.
+  // At startup all pipeline workers prepare the game before its main thread runs; afterward live
+  // draws retain priority and package work never holds a gameplay frame. The backend also deduplicates
+  // equivalent final bytecode/state and persists its warm pipelines separately from live pipelines.
  public:
   bool PrebuildWanted() const { return prebuild_on_; }
-  void OnPrebuildPixelShader(const void* be_ucode, uint32_t size, uint32_t variant) {  // any thread (layer 2's reader)
+  void BeginStartupPrebuild() {
+    startup_pipeline_total_.store(backend_->PipelineJobsLeft(), std::memory_order_relaxed);
+    startup_prebuild_.store(true, std::memory_order_relaxed);
+    XenosSetShaderStartupPhase(::cogbox::shader_progress::ShaderPreparationPhase::kFinding);
+    GovernWarmWorkers();
+  }
+  bool FinishStartupPrebuild() {
+    const uint64_t left = PrebuildLeft() + backend_->PipelineJobsLeft();
+    XenosSetPrebuildProgress(left, prebuild_accepted_.load() + startup_pipeline_total_.load(), true);
+    if (left) return false;
+    XenosSetShaderStartupPhase(::cogbox::shader_progress::ShaderPreparationPhase::kSaving);
+    backend_->SavePipelinesNow();
+    backend_->ReleaseWarmupCache();
+    REXLOG_INFO("gow2_renderer: startup source cache reused {} compiled shaders", backend_->WarmSourcesReused());
+    startup_prebuild_.store(false, std::memory_order_relaxed);
+    GovernWarmWorkers();
+    const auto& s = backend_->Stats();
+    REXLOG_INFO("gow2_renderer: startup shader preparation finished: {} unique shaders, {} translated/queued, "
+                "{} distinct driver pipelines ({} cache hits), {} translation failures, {} driver failures; live fallback enabled",
+                prebuild_accepted_.load(), prebuild_sent_.load(), s.pipelines_warmed, s.pipelines_warm_loaded,
+                prebuild_untranslated_.load(), s.pipelines_warm_failed);
+    return true;
+  }
+  void OnPrebuildShader(bool vertex, const void* be_ucode, uint32_t size, uint32_t variant, uint64_t hash) {  // any thread
     if (!prebuild_on_ || !be_ucode || !size || size > 256u * 1024u || (size & 3)) return;
+    if (!hash) hash = XXH3_64bits(be_ucode, size);  // the draws' key; layer 2 passes it (this is the reader's thread)
     PrebuildItem it;
+    it.hash = hash;
+    it.vertex = vertex;
     it.variant = uint8_t(variant & 1);
-    it.bytes.assign(static_cast<const uint8_t*>(be_ucode), static_cast<const uint8_t*>(be_ucode) + size);
-    std::lock_guard<std::mutex> lock(prebuild_in_mutex_);
-    if (prebuild_in_.size() < 200000) prebuild_in_.push_back(std::move(it));
-  }
-  uint64_t PrebuildVariantHits(uint32_t v) const { return prebuild_variant_hits_[v & 1].load(std::memory_order_relaxed); }
-
- private:
-  struct PrebuildItem {
-    uint64_t hash = 0;
-    uint8_t variant = 0;
-    std::vector<uint8_t> bytes;  // big-endian microcode
-  };
-  void StartPrebuild() {  // Init, after the shader cache is set up
-    prebuild_on_ = REXCVAR_GET(gow2_renderer_shader_prebuild) && cache_ && cache_->Dxbc();
-    if (!prebuild_on_) return;
-    LoadVariantCounts();  // patch 0069
-    prebuild_thread_ = std::thread([this] { PrebuildThread(); });  // lives as long as the renderer (never destroyed)
-    REXLOG_INFO("gow2_renderer: shader prebuild at package open on (patch 0068), up to {} warm-only pipelines queued",
-                std::max(1, REXCVAR_GET(gow2_renderer_shader_prebuild_queue)));
-  }
-  void DrainPrebuild() {  // recording thread, once per frame
-    if (!prebuild_on_) return;
-    std::deque<PrebuildItem> in;
+    prebuild_offered_.fetch_add(1, std::memory_order_relaxed);
+    last_offer_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
     {
-      std::lock_guard<std::mutex> lock(prebuild_in_mutex_);
-      if (prebuild_in_.empty()) return;
-      in.swap(prebuild_in_);
-    }
-    std::vector<PrebuildItem> out;
-    for (auto& b : in) {
-      ++pb_.prebuild_offered;
-      const uint64_t h = XXH3_64bits(b.bytes.data(), b.bytes.size());  // the same key as the draws' shaders
-      if (!prebuild_seen_.insert(h).second) continue;      // offered before (another package)
-      if (cache_->Find(h, false)) {  // already drawn (or recorded): also tells which variant this game draws (0069)
-        ++pb_.prebuild_known;
-        prebuild_variant_hits_[b.variant & 1].fetch_add(1, std::memory_order_relaxed);
-        continue;
+      std::unique_lock<std::mutex> lock(prebuild_mutex_);
+      if (!prebuild_seen_[vertex ? 1 : 0].insert(hash).second) return;
+      if (backend_->WarmSourceCached(vertex, hash)) {
+        if (!vertex) prebuild_queued_hashes_.emplace(hash, it.variant);
+        prebuild_accepted_.fetch_add(1, std::memory_order_relaxed);
+        prebuild_sent_.fetch_add(1, std::memory_order_relaxed);
+        prebuild_queued_.fetch_add(1, std::memory_order_relaxed);
+        return;  // already compiled: no microcode copy, translation, queue or driver recreation
       }
-      ++pb_.prebuild_queued;
-      prebuild_queued_hashes_.emplace(h, b.variant);
-      b.hash = h;
-      out.push_back(std::move(b));
-    }
-    if (out.empty()) return;
-    {
-      std::lock_guard<std::mutex> lock(prebuild_mutex_);
-      for (auto& it : out) prebuild_queue_.push_back(std::move(it));
+      prebuild_cv_.wait(lock, [this] { return prebuild_queue_.size() < kPrebuildQueueMax; });
+      it.bytes.assign(static_cast<const uint8_t*>(be_ucode), static_cast<const uint8_t*>(be_ucode) + size);
+      prebuild_queue_.push_back(std::move(it));
+      prebuild_accepted_.fetch_add(1, std::memory_order_relaxed);
     }
     prebuild_cv_.notify_one();
   }
-  void PrebuildThread() {
+  // Layer 2 asks this to choose which variants to offer (0069); a forced variant (compile step) answers for itself.
+  uint64_t PrebuildVariantHits(uint32_t v) const {
+    return prebuild_variant_hits_[v & 1].load(std::memory_order_relaxed);
+  }
+
+ private:
+  static constexpr size_t kPrebuildQueueMax = 60000;  // ~2-3 KB each: well under 200 MB even when full
+  struct PrebuildItem {
+    uint64_t hash = 0;
+    uint8_t variant = 0;
+    bool vertex = false;
+    std::vector<uint8_t> bytes;  // big-endian microcode
+  };
+  static uint32_t PrebuildLoadWorkers() {  // gow2_renderer_shader_prebuild_workers, -1 = a quarter, at least 2
+    const int v = REXCVAR_GET(gow2_renderer_shader_prebuild_workers);
+    if (v >= 0) return uint32_t(v);
+    return std::max(2u, std::max(1u, std::thread::hardware_concurrency()) / 4u);
+  }
+  void StartPrebuild() {  // Init, after the shader cache is set up (before any draw)
+    prebuild_on_ = REXCVAR_GET(gow2_renderer_shader_prebuild) && cache_ && cache_->Dxbc() && !api_vulkan_;
+    if (!prebuild_on_) return;
+    gpu::GraphicsPipelineDesc warm;
+    xenos::ucode::Program stub;
+    stub.is_vertex_shader = true;
+    const auto translated = xenos::dxbc_gen::TranslateToDxbc(stub);
+    if (translated.ok) warm.vs = backend_->CreateShader(gpu::ShaderStage::kVertex,
+                                                       translated.bytecode.data(), translated.bytecode.size());
+    warm.color_count = 4;
+    for (uint32_t i = 0; i < warm.color_count; ++i) {
+      warm.color_formats[i] = gpu::Format::kR8G8B8A8Unorm;
+      warm.color_write_masks[i] = 15;
+    }
+    warm.depth_format = gpu::Format::kD24UnormS8;
+    warm_template_set_ = backend_->SetWarmTemplate(warm);
+    if (!warm_template_set_) {
+      REXLOG_ERROR("gow2_renderer: startup shader template could not be created; prebuild unavailable");
+      prebuild_on_ = false;
+      return;
+    }
+    backend_->ConfigureWarmSourceCache(cache_->PrebuildIdentity());
+    warm_load_workers_ = PrebuildLoadWorkers();
+    warm_play_workers_ = uint32_t(std::max(0, REXCVAR_GET(gow2_renderer_shader_prebuild_play_workers)));
+    LoadVariantCounts();  // diagnostic counts only; never suppress either variant
+    {  // Track recorded shaders for diagnostics; they still receive driver preparation.
+      std::lock_guard<std::mutex> lock(prebuild_mutex_);
+      cache_->ForEachKnown(false, [this](uint64_t h) { prebuild_known_ps_.insert(h); });
+    }
+    GovernWarmWorkers();
+    const uint32_t translators = std::clamp(std::max(1u, std::thread::hardware_concurrency()) / 4u, 1u, 4u);
+    for (uint32_t i = 0; i < translators; ++i)
+      prebuild_threads_.emplace_back([this, i] { PrebuildThread(i); });  // lives as long as the renderer (never destroyed)
+    REXLOG_INFO("gow2_renderer: shader prebuild enabled: both stages, all stored variants, {} pipeline workers "
+                "while loading / {} during play; startup uses the full worker pool, no speculative gameplay holds",
+                warm_load_workers_, warm_play_workers_);
+  }
+  // v2: loading = no swap for 250 ms (the game is loading without presenting) or within the load window (DecideLoadHold:
+  // the 20 s after a load or a new scene). Any thread; tells the backend only when the count changes.
+  void GovernWarmWorkers() {
+    const int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const int64_t last = last_swap_ns_.load(std::memory_order_relaxed);
+    const int64_t stall = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::milliseconds(250)).count();
+    const int64_t recent = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::seconds(5)).count();
+    // v2 fix (Gears 3 log, 16:39: its loading screen keeps presenting, so neither test above saw the map load and the
+    // prebuild ran on 1 worker): a package opened in the last 5 s is a load too.
+    const bool loading = startup_prebuild_.load(std::memory_order_relaxed) || !last || now - last > stall || now < load_until_ns_.load(std::memory_order_relaxed) ||
+                         now - last_offer_ns_.load(std::memory_order_relaxed) < recent;
+    // Compile step: the game waits behind the hold, so every pipeline worker may build (the backend caps it).
+    const uint32_t want = startup_prebuild_.load(std::memory_order_relaxed) ? 1024u
+                          : loading                                         ? warm_load_workers_
+                                                                            : warm_play_workers_;
+    // The on-screen compile indicator (fps_bar.cpp), at most every 100 ms: from here, because the prebuild thread
+    // calls this while it works and while it idles - also when the game presents nothing (no swap to report it).
+    const int64_t every = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::milliseconds(100)).count();
+    int64_t shown = progress_shown_ns_.load(std::memory_order_relaxed);
+    if (now - shown >= every && progress_shown_ns_.compare_exchange_strong(shown, now, std::memory_order_relaxed)) {
+      const bool startup = startup_prebuild_.load(std::memory_order_relaxed);
+      XenosSetPrebuildProgress(PrebuildLeft() + (startup ? backend_->PipelineJobsLeft() : 0),
+                               prebuild_accepted_.load(std::memory_order_relaxed) +
+                                   (startup ? startup_pipeline_total_.load(std::memory_order_relaxed) : 0), loading);
+    }
+    std::lock_guard<std::mutex> lock(warm_govern_mutex_);
+    if (want == warm_workers_now_) return;
+    warm_workers_now_ = want;
+    backend_->SetWarmWorkers(want);
+    ++warm_govern_changes_;
+  }
+  void PrebuildMarkKnown(uint64_t ps_hash) {  // recording thread: a pixel shader now in the cache (drawn / created)
+    std::lock_guard<std::mutex> lock(prebuild_mutex_);
+    prebuild_known_ps_.insert(ps_hash);
+  }
+  void PrebuildThread(uint32_t worker_index) {
     const uint64_t cap = uint64_t(std::max(1, REXCVAR_GET(gow2_renderer_shader_prebuild_queue)));
     std::vector<uint32_t> dwords;
     for (;;) {
       PrebuildItem item;
-      {
-        std::unique_lock<std::mutex> lock(prebuild_mutex_);
-        prebuild_cv_.wait(lock, [this] { return !prebuild_queue_.empty(); });
-        // Patch 0069: newest first - the package the game opened last is the area about to be drawn.
-        item = std::move(prebuild_queue_.back());
-        prebuild_queue_.pop_back();
+      for (;;) {
+        {
+          std::unique_lock<std::mutex> lock(prebuild_mutex_);
+          // A timed wait: the worker count follows load / play even while nothing new arrives (no swaps in a load).
+          prebuild_cv_.wait_for(lock, std::chrono::milliseconds(50), [this, worker_index] { return !prebuild_queue_.empty() && (worker_index == 0 || startup_prebuild_.load()); });
+          if (!prebuild_queue_.empty() && (worker_index == 0 || startup_prebuild_.load())) {
+            // Patch 0069: newest first - the package the game opened last is the area about to be drawn.
+            item = std::move(prebuild_queue_.back());
+            prebuild_queue_.pop_back();
+            prebuild_cv_.notify_all();
+            break;
+          }
+        }
+        GovernWarmWorkers();
       }
+      GovernWarmWorkers();  // also while busy: the worker count and the on-screen progress (rate-limited inside)
       // The workers' warm queue is bounded; until the first DXBC draw there is no template, so wait for it.
-      while (!warm_template_set_.load(std::memory_order_acquire) || backend_->WarmJobsLeft() >= cap)
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      while (!warm_template_set_.load(std::memory_order_acquire) || backend_->WarmJobsLeft() >= cap) {
+        GovernWarmWorkers();
+        backend_->WaitWarmCapacity(cap);
+      }
+      if (backend_->WarmSourceCached(item.vertex, item.hash)) {
+        if (!item.vertex) { std::lock_guard<std::mutex> lock(prebuild_mutex_); prebuild_queued_hashes_.emplace(item.hash, item.variant); }
+        prebuild_sent_.fetch_add(1, std::memory_order_relaxed);
+        prebuild_queued_.fetch_add(1, std::memory_order_relaxed);
+        continue;
+      }
       dwords.resize(item.bytes.size() / 4);
       for (size_t i = 0; i < dwords.size(); ++i) {
         uint32_t v;
         std::memcpy(&v, item.bytes.data() + i * 4, 4);
         dwords[i] = std::byteswap(v);
       }
-      // Patch 0069: a variant this game is now known not to draw is dropped here too (queued before it was known).
-      {
-        const uint64_t h0 = prebuild_variant_hits_[0].load(std::memory_order_relaxed);
-        const uint64_t h1 = prebuild_variant_hits_[1].load(std::memory_order_relaxed);
-        const uint64_t hv = item.variant ? h1 : h0;
-        if (h0 + h1 >= 32 && hv * 20 < h0 + h1) {
-          prebuild_dropped_.fetch_add(1, std::memory_order_relaxed);
-          continue;
-        }
-      }
       std::vector<uint8_t> dxbc;
-      if (!cache_->TranslateDxbcOnly(dwords.data(), dwords.size(), false, dxbc)) {
+      if (!cache_->TranslateDxbcOnly(dwords.data(), dwords.size(), item.vertex, dxbc)) {
         prebuild_untranslated_.fetch_add(1, std::memory_order_relaxed);
+        REXLOG_WARN("gow2_renderer: prebuild could not translate {} {:016X}; live shader fallback remains enabled",
+                    item.vertex ? "VS" : "PS", item.hash);
         continue;
       }
-      if (backend_->WarmPixelShader(std::move(dxbc)))
-        prebuild_sent_.fetch_add(1, std::memory_order_relaxed);
+      {
+        std::lock_guard<std::mutex> lock(prebuild_mutex_);
+        if (!item.vertex) prebuild_queued_hashes_.emplace(item.hash, item.variant);
+      }
+      const bool sent = item.vertex ? backend_->WarmVertexShader(std::move(dxbc), item.hash)
+                                    : backend_->WarmPixelShader(std::move(dxbc), item.hash);
+      if (sent) prebuild_sent_.fetch_add(1, std::memory_order_relaxed);
+      else REXLOG_ERROR("gow2_renderer: prebuild could not queue {} {:016X}", item.vertex ? "VS" : "PS", item.hash);
+      // Publish completion only after the backend owns the job (no false zero at the startup barrier).
+      prebuild_queued_.fetch_add(1, std::memory_order_relaxed);
     }
   }
+  std::atomic<bool> startup_prebuild_{false};
+  std::atomic<uint64_t> startup_pipeline_total_{0};
   bool prebuild_on_ = false;
+  bool api_vulkan_ = false;  // v2 (Init)
   std::atomic<bool> warm_template_set_{false};
-  std::unordered_set<uint64_t> prebuild_seen_;            // recording thread: every hash offered
-  std::unordered_map<uint64_t, uint8_t> prebuild_queued_hashes_;  // recording thread: sent to be built -> variant
   std::atomic<uint64_t> prebuild_variant_hits_[2] = {};
-  std::mutex prebuild_in_mutex_;
-  std::deque<PrebuildItem> prebuild_in_;  // from layer 2
-  std::mutex prebuild_mutex_;
+  std::mutex prebuild_mutex_;  // guards the queue and the three sets / maps below
   std::condition_variable prebuild_cv_;
-  std::deque<PrebuildItem> prebuild_queue_;  // to the prebuild thread
-  std::thread prebuild_thread_;
+  std::deque<PrebuildItem> prebuild_queue_;  // from layer 2, to the prebuild thread
+  std::unordered_set<uint64_t> prebuild_seen_[2];                    // every hash offered
+  std::unordered_set<uint64_t> prebuild_known_ps_;                // v2: pixel shaders the cache has (nothing to build)
+  std::unordered_map<uint64_t, uint8_t> prebuild_queued_hashes_;  // sent to be built -> variant
+  std::vector<std::thread> prebuild_threads_;
+  std::atomic<uint64_t> prebuild_offered_{0}, prebuild_known_{0}, prebuild_queued_{0}, prebuild_overflow_{0};
   std::atomic<uint64_t> prebuild_sent_{0}, prebuild_untranslated_{0}, prebuild_dropped_{0};
+  // v2: the load / play worker count (GovernWarmWorkers) and the last swap / load window for any thread.
+  uint32_t warm_load_workers_ = 3, warm_play_workers_ = 1;
+  std::mutex warm_govern_mutex_;
+  uint32_t warm_workers_now_ = UINT32_MAX;  // under warm_govern_mutex_
+  uint64_t warm_govern_changes_ = 0;        // under warm_govern_mutex_
+  std::atomic<int64_t> last_swap_ns_{0}, load_until_ns_{0};  // steady_clock ticks
+  std::atomic<int64_t> progress_shown_ns_{0};  // the compile indicator's last report (GovernWarmWorkers)
+  // Startup and background progress counts.
+  std::atomic<int64_t> last_offer_ns_{0};
+  std::atomic<uint64_t> prebuild_accepted_{0};
+  // Shaders still to do: taken in but not yet through the prebuild thread, plus the warm-only jobs at the workers.
+  uint64_t PrebuildLeft() {
+    const uint64_t acc = prebuild_accepted_.load(std::memory_order_relaxed);
+    const uint64_t done = prebuild_known_.load(std::memory_order_relaxed) + prebuild_dropped_.load(std::memory_order_relaxed) +
+                          prebuild_untranslated_.load(std::memory_order_relaxed) +
+                          prebuild_queued_.load(std::memory_order_relaxed) + prebuild_overflow_.load(std::memory_order_relaxed);
+    return (acc > done ? acc - done : 0) + backend_->WarmJobsLeft();
+  }
   uint64_t prebuild_logged_offered_ = 0, prebuild_logged_new_ps_ = 0;
   // Patch 0069: totals for the whole session (stats_ is cleared every log window, so 0068's line showed one window).
+  // v2: only the recording thread's two counts are here; the rest are the atomics above.
   struct PrebuildTotals {
-    uint64_t prebuild_offered = 0, prebuild_known = 0, prebuild_queued = 0, new_ps_pipelines = 0, new_ps_prebuilt = 0;
+    uint64_t new_ps_pipelines = 0, new_ps_prebuilt = 0;
   } pb_;
   // Patch 0069: which variant this game draws, remembered in the shader cache folder (prebuild-variants.txt: two
-  // counts), so a later session offers only that one from its first load.
+  // counts), for diagnostics; it never filters the next session.
   std::filesystem::path variant_file_;
   uint64_t variant_saved_total_ = 0;
   void LoadVariantCounts() {
@@ -2651,7 +3018,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (XenosFrameImagesWanted()) {
         PresentImage img;
         img.readback = backend_->ReadbackTexture(present_out_, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
-        img.frame = ours_image_index_++;
+        img.frame = XenosSwapCount();  // align captures with frame-timed controller input, including skipped presents
         img.width = w;
         img.height = h;
         if (img.readback) ours_images_.push_back(img);
@@ -2701,7 +3068,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (XenosFrameImagesWanted()) {  // frame shots: our presented image, read back (the SDK makes none now)
       PresentImage img;
       img.readback = backend_->ReadbackTexture(present_out_, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
-      img.frame = ours_image_index_++;
+      img.frame = XenosSwapCount();
       img.width = w;
       img.height = h;
       if (img.readback) ours_images_.push_back(img);
@@ -2897,7 +3264,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     return true;
   }
   std::deque<PresentImage> ours_images_;
-  uint64_t ours_image_index_ = 0;
   OursStats ours_stats_;
 
  public:
@@ -2970,6 +3336,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
  private:
   void LogPresent() {
+    COGBOX_TRACY_SCOPE("Present diagnostics");
     if (present_ours_) {
       const OursStats& o = ours_stats_;
       REXLOG_INFO("gow2_present: ours frames {}-{}: swaps {} | presented {} | refresh failed {} | gamma pass not run {} "
@@ -3009,6 +3376,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint64_t last_used = 0, bytes = 0;  // patch 0032
   };
   bool scaled_resolves_ = false;
+  gpu::PipelineHandle scaled_to_mem_through_ = 0;
   std::unordered_map<std::string, ScaledDest> scaled_dests_;
   uint32_t tex_memo_scaled_ = 0;
   bool scaled_partial_ = true;
@@ -3039,8 +3407,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       it->second.last_used = frame_;
       return it->second.texture ? &it->second : nullptr;
     }
-    ScaledDest& d = scaled_dests_[key];
-    d.last_used = frame_;
     if (uint64_t(w) * res_scale_ * words > 16384 || uint64_t(h) * res_scale_ > 16384) return nullptr;
     gpu::TextureDesc td;
     td.width = w * res_scale_ * words;
@@ -3048,8 +3414,24 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     td.format = gpu::Format::kR32Uint;
     td.usage = gpu::kUsageStorage | gpu::kUsageSampled | (resolve_draws_ ? gpu::kUsageRenderTarget : 0u);  // 0119
     td.debug_name = "gow2 scaled resolve destination";
-    d.texture = backend_->CreateTexture(td);
-    if (!d.texture) return nullptr;
+    gpu::TextureHandle texture = 0;
+    if (REXCVAR_GET(gow2_renderer_resolve_reuse)) {
+      auto reuse = cogbox::renderer::ReusableResolve(scaled_dests_, frame_, td.width, td.height,
+          [&](const ScaledDest& value) {
+            if (front_bases_.count(value.base)) return std::pair<uint32_t,uint32_t>{0,0};
+            return std::pair{value.pitch * res_scale_ * value.words, value.height * res_scale_};
+          });
+      if (reuse != scaled_dests_.end()) {
+        texture = reuse->second.texture;
+        scaled_dests_.erase(reuse);
+        ++dest_evict_.reused_scaled;
+      }
+    }
+    if (!texture) texture = backend_->CreateTexture(td);
+    if (!texture) return nullptr;
+    ScaledDest& d = scaled_dests_[key];
+    d.texture = texture;
+    d.last_used = frame_;
     d.base = info.dest_base;
     d.pitch = w;
     d.height = h;
@@ -3110,7 +3492,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // After a scaled resolve into d: its rectangle (guest dx, dy, w, h) into the scaled copy of guest memory, in every
   // window it touches. False if no window could hold it (the pages then stay 1x only).
   bool ScaledToMemory(const ScaledDest& d, const ::xenos::resolve::Info& info, uint32_t dx, uint32_t dy, uint32_t w,
-                      uint32_t h, uint32_t endian) {
+                      uint32_t h, uint32_t endian, rr::TextureCache::ResolveThrough& through) {
     ++scaled_resolve_count_;
     if (!scaled_to_mem_ || !info.dest_extent_length) return false;
     if (!ScaledChunkFor(info.dest_extent_start, info.dest_extent_length)) {
@@ -3118,6 +3500,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return false;
     }
     const uint64_t s0 = info.dest_extent_start, s1 = s0 + info.dest_extent_length;
+    const bool direct = scaled_to_mem_through_ && endian <= 3 &&
+        textures_->FindScaledResolveThrough(info.dest_base, d.pitch, d.words == 2 ? 3u : 2u, dx, dy, w, h, through);
     for (const ScaledChunkInfo& c : scaled_chunks_) {
       if (s1 <= c.base || s0 >= uint64_t(c.base) + kChunkBytes) continue;
       gpu::ComputeBindings b;
@@ -3136,7 +3520,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       b.constant_count = 12;
       b.srv[0] = d.texture;
       b.uav_texture = c.texture;
-      ResolveDispatch(scaled_to_mem_, b, (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
+      if (direct) {
+        b.constants[12] = through.code;
+        b.constants[13] = through.endian;
+        b.constants[14] = through.width;
+        b.constants[15] = through.height;
+        b.constant_count = 16;
+        b.uav2_texture = through.texture;
+      }
+      ResolveDispatch(direct ? scaled_to_mem_through_ : scaled_to_mem_, b,
+                      (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
       ++scaled_window_writes_;  // job 235: windows written per scaled resolve
     }
     return true;
@@ -3275,6 +3668,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     backend_->ReleaseReadback(p.readback);
   }
   void LogDisplay() {
+    COGBOX_TRACY_SCOPE("Display diagnostics");
     if (!display_ours_ || present_ours_) return;  // 5C-2: LogPresent reports the swaps
     const DisplayStats& d = display_stats_;
     REXLOG_INFO("gow2_renderer: display (ours) frames {}-{}: swaps {} shown {} (lag {:.2f} frames, {:.1f} MB written) | "
@@ -3388,7 +3782,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   // ---- takeover T2: our resolves into the GPU guest-memory mirror ----
   void WriteResolveToGuest(gpu::TextureHandle dest, const ::xenos::resolve::Info& info, uint32_t endian, uint32_t words,
-                           uint32_t dx, uint32_t dy, uint32_t w, uint32_t h, bool scaled = false) {
+                           uint32_t dx, uint32_t dy, uint32_t w, uint32_t h, bool scaled = false,
+                           const rr::TextureCache::ResolveThrough* scaled_through = nullptr) {
     if (scaled_resolves_ && frame_ + 1 == 901 && REXCVAR_GET(gow2_renderer_scaled_miss_log))  // job 192 (0029: diag only): every resolve of one frame, to place the scaled-memory misses
       REXLOG_INFO("gow2_renderer: frame 901 resolve: dest {:08X} fmt {} pitch {} extent {:08X}+{:X} rect {},{} {}x{} "
                   "words {} endian {} bpp_log2 {} scaled {}", info.dest_base, info.dest_format,
@@ -3423,7 +3818,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // Job 047: the cached texture loaded from this memory, written by the same dispatch (not for scaled resolves, whose
     // textures load from the scaled copy).
     rr::TextureCache::ResolveThrough through;
-    const bool through_on = words_to_guest_through_ && !scaled && (info.dest_bpp_log2 == 2 || info.dest_bpp_log2 == 3) &&
+    const bool through_on = words_to_guest_through_ && REXCVAR_GET(gow2_renderer_resolve_through) && !scaled &&
+                            (info.dest_bpp_log2 == 2 || info.dest_bpp_log2 == 3) &&
                             endian <= 3 &&
                             textures_->FindResolveThrough(info.dest_base, info.dest_pitch_aligned_div_32 * 32,
                                                           words == 2 ? 3u : 2u, dx, dy, w, h, through);
@@ -3442,7 +3838,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       watch_->Watch(info.dest_extent_start, info.dest_extent_length);
     watch_->MarkGpuWritten(info.dest_extent_start, info.dest_extent_length, scaled);
     if (resolve_readback_) ReadbackResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
-    if (through_on) {
+    if (through_on || (scaled && scaled_through && scaled_through->texture)) {
+      if (!through_on) through = *scaled_through;
       textures_->ResolveThroughWritten(through, info.dest_extent_start, info.dest_extent_length);
       if (through_check_frame_ && frame_ + 1 == through_check_frame_ && through_checks_started_ < 12) {
         ++through_checks_started_;
@@ -4278,6 +4675,59 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }();
     return ratio;
   }
+  // Frame log (frame_log.cpp): this frame's renderer side - busy time and its waits, the biggest CPU part (this frame's
+  // part ticks, read before ReportHitch moves the mark and the summary clears them), new pipelines / shaders, uploads.
+  void FrameLogRecord(double ms, double hold_ms, double pipe_wait_ms, uint32_t draws, uint32_t skipped) {
+    const gpu::BackendStats& bs = backend_->Stats();
+    const rr::ShaderCacheStats& cs = cache_->Stats();
+    XenosRenderedFrame f;
+    f.cpu_ms = ms;
+    f.gpu_wait_ms = std::max(0.0, bs.fence_wait_ms - fl_prev_.fence_wait_ms);
+    f.hold_ms = hold_ms;
+    f.pipeline_wait_ms = pipe_wait_ms;
+    f.gpu_ms = std::max(0.0, bs.gpu_ms - fl_prev_.gpu_ms);
+    if (part_level_ > 0) {
+      uint32_t top = kPartCount;
+      double top_ms = 0.0;
+      for (uint32_t i = 0; i < kPartCount; ++i) {
+        const double pm = double(part_ticks_[i] - hitch_ticks_[i]) * MsPerTick();
+        if (pm > top_ms) {
+          top_ms = pm;
+          top = i;
+        }
+      }
+      if (top < kPartCount) {
+        f.top_part = kPartNames[top];
+        f.top_part_ms = top_ms;
+      }
+    }
+    f.draws = draws;
+    f.skipped_draws = skipped;
+    f.pipelines_new = uint32_t(bs.pipelines - fl_prev_.pipelines);
+    f.shaders_new = uint32_t(cs.translated - fl_prev_.translated);
+    f.upload_mb = double(bs.upload_bytes - fl_prev_.upload_bytes) / 1048576.0;
+    auto cat = [&](std::initializer_list<int> c) {
+      double v = 0.0;
+      for (int i : c) v += bs.gpu_cat_ms[i] - fl_prev_.cat[i];
+      return std::max(0.0, v);
+    };
+    f.gpu_draws_ms = cat({0});
+    f.gpu_transfers_ms = cat({1, 5, 6, 7});
+    f.gpu_resolves_ms = cat({2});
+    f.gpu_textures_ms = cat({3});
+    f.gpu_idle_ms = std::max(0.0, bs.gpu_idle_ms - fl_prev_.gpu_idle_ms);
+    f.idle_submits = idle_submits_last_frame_;
+    fl_prev_ = FrameLogPrev{bs.fence_wait_ms, bs.gpu_ms, bs.pipelines, cs.translated, bs.upload_bytes, {}, bs.gpu_idle_ms};
+    std::copy(std::begin(bs.gpu_cat_ms), std::end(bs.gpu_cat_ms), std::begin(fl_prev_.cat));
+    XenosFrameRendered(f);
+  }
+  struct FrameLogPrev {
+    double fence_wait_ms = 0.0, gpu_ms = 0.0;
+    uint64_t pipelines = 0, translated = 0, upload_bytes = 0;
+    double cat[8] = {};
+    double gpu_idle_ms = 0.0;
+  };
+  FrameLogPrev fl_prev_;
   // Patch 0010: one line for a frame over --gow2_hitch_report_ms - its biggest CPU parts and what happened in it.
   void ReportHitch(double ms) {
     const double limit = REXCVAR_GET(gow2_hitch_report_ms);
@@ -4938,6 +5388,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t edram_mode = Bits(r[rr::reg::RB_MODECONTROL], 0, 3);
     const rr::GuestShader* psg =
         ps_.dwords ? &cache_->Get(ps_hash, ps_.dwords, ps_.count, false) : nullptr;
+    // Shared by all titles, including shader construction paths without a UE3
+    // notification hook. Hide stage-cache I/O behind vertex/texture preparation.
+    // The backend checks each handle once; live pipeline work retains priority.
+    if (REXCVAR_GET(gow2_renderer_stage_prefetch)) {
+      if (vsg.ready() && vsg.handle) backend_->PrefetchShaderStage(vsg.handle);
+      if (psg && psg->ready() && psg->handle) backend_->PrefetchShaderStage(psg->handle);
+    }
 
     // Patch 0025 (Canary render_target_cache.cc Update, 9da693480; Gears 3 review 01-g): a depth target at the same
     // guest EDRAM base as a colour target this draw writes is not bound - the colour target owns those tiles - unless
@@ -5441,10 +5898,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const double pw = REXCVAR_GET(gow2_renderer_pipeline_wait_ms);  // patch 0047: negative = no cap
     const double wait_budget = async_pso ? (pw < 0.0 ? 1e9 : pw) : 0.0;
     const bool budget_sync = wait_budget > 0.0 && pipeline_wait_ms_frame_ < wait_budget;
-    if (budget_sync) async_pso = false;
+    // A live budget waits for the asynchronous worker instead of compiling here.
     if (export_wait) async_pso = false;  // patch 0024: exporting draws create their pipeline synchronously
     const bool standin_sync = standin_wait && async_pso;  // patch 0045
-    if (standin_sync) async_pso = false;
+    // Texture stand-ins also use a bounded asynchronous wait; never compile a speculative PSO here.
     const auto pso_t0 = budget_sync || standin_sync ? std::chrono::steady_clock::now()
                                                      : std::chrono::steady_clock::time_point{};
     bool pipeline_pending = false;
@@ -5454,6 +5911,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         d.color_formats[0] != gpu::Format::kUnknown && d.topology == gpu::Topology::kTriangleList)
       warm_template_set_ = backend_->SetWarmTemplate(d);
     gpu::PipelineHandle pipeline = backend_->GetGraphicsPipeline(d, async_pso, &pipeline_pending);
+    if (pipeline_pending && budget_sync && backend_->WaitGraphicsPipeline(d, wait_budget - pipeline_wait_ms_frame_))
+      pipeline = backend_->GetGraphicsPipeline(d, true, &pipeline_pending);
+    if (pipeline_pending && standin_sync && !budget_sync &&
+        backend_->WaitGraphicsPipeline(d, std::max(0.0, standin_wait_left_ms_)))
+      pipeline = backend_->GetGraphicsPipeline(d, true, &pipeline_pending);
     // Patch 0132: a depth-only / shadow draw may wait briefly for its pipeline to come off a worker.
     if (pipeline_pending && colour_count == 0 && depth_bound && depth_wait_left_ms_ > 0.0) {
       const auto t0 = std::chrono::steady_clock::now();
@@ -5471,10 +5933,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (pipeline_list_) RecordPipeline(d, vs_hash, d.ps ? ps_hash : 0, tess_n);
       if (prebuild_on_ && d.ps) {  // patch 0068: was this new pipeline's pixel shader built ahead from the package?
         ++pb_.new_ps_pipelines;
+        std::lock_guard<std::mutex> lock(prebuild_mutex_);  // v2: shared with the prebuild thread (new pipelines only)
         if (const auto q = prebuild_queued_hashes_.find(ps_hash); q != prebuild_queued_hashes_.end()) {
           ++pb_.new_ps_prebuilt;
           prebuild_variant_hits_[q->second & 1].fetch_add(1, std::memory_order_relaxed);
         }
+        prebuild_known_ps_.insert(ps_hash);  // v2: drawn now - a later offer of it needs no warm-only build
       }
       if (!created_hashes_.empty()) {  // patch 0066: did this new pipeline's shaders come from the game's loading?
         ++stats_.new_draw_pipelines;
@@ -7061,15 +7525,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->SetPipelineBacklog(false);
     }
     if (REXCVAR_GET(gow2_renderer_pipeline_record)) {
-      pipeline_list_ = std::make_unique<std::ofstream>(path, std::ios::binary | std::ios::app);
-      if (!*pipeline_list_) {
-        pipeline_list_.reset();
-      } else if (!header_ok) {
+      if (!header_ok) {
+        std::ofstream header(path, std::ios::binary | std::ios::trunc);
         const uint32_t hdr[3] = {kPipelineListMagic, kPipelineListVersion, uint32_t(sizeof(PipelineRecord))};
-        pipeline_list_->write(reinterpret_cast<const char*>(hdr), sizeof(hdr));
-        pipeline_list_->flush();
+        header.write(reinterpret_cast<const char*>(hdr), sizeof(hdr));
       }
+      pipeline_list_ = std::make_unique<cogbox::io::AsyncFileAppender>(path);
+      if (!pipeline_list_->Good()) pipeline_list_.reset();
     }
+
     REXLOG_INFO("gow2_renderer: recorded pipelines: {} in {} - {} queued to the workers as start-up backlog, {} "
                 "already made, {} skipped (shader not ready{}), {} skipped (no GS) ({:.0f} ms){}",
                 records.size(), path.string(), queued, known, no_shader, cache_->Dxbc() ? "" : " - HLSL path: still compiling",
@@ -7113,8 +7577,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     r.desc = d;
     r.desc.vs = r.desc.ps = r.desc.gs = 0;
     if (!recorded_.insert(PipelineRecordKey(r)).second) return;
-    pipeline_list_->write(reinterpret_cast<const char*>(&r), sizeof(r));
-    pipeline_list_->flush();  // a hard exit loses at most the record being written
+    pipeline_list_->Append(&r, sizeof(r));
     ++stats_.pipelines_recorded;
   }
 
@@ -7596,8 +8059,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     d.format = gpu::Format::kR32Uint;
     d.usage = gpu::kUsageStorage | gpu::kUsageSampled | (resolve_draws_ ? gpu::kUsageRenderTarget : 0u);  // 0119
     d.debug_name = "gow2 resolve destination";
-    const gpu::TextureHandle t = backend_->CreateTexture(d);
-    if (t) destinations_.emplace(key, DestEntry{t, frame_, uint64_t(d.width) * d.height * 4});
+    gpu::TextureHandle t = 0;
+    if (REXCVAR_GET(gow2_renderer_resolve_reuse)) {
+      auto reuse = cogbox::renderer::ReusableResolve(destinations_, frame_, d.width, d.height,
+          [&](const DestEntry& value) {
+            if (front_bases_.count(value.base)) return std::pair<uint32_t,uint32_t>{0,0};
+            return std::pair{value.width, value.height};
+          });
+      if (reuse != destinations_.end()) {
+        t = reuse->second.texture;
+        destinations_.erase(reuse);
+        ++dest_evict_.reused_one;
+      }
+    }
+    if (!t) t = backend_->CreateTexture(d);
+    if (t) destinations_.emplace(key, DestEntry{t, frame_, uint64_t(d.width) * d.height * 4, d.width, d.height, info.dest_base});
     return t;
   }
 
@@ -7609,9 +8085,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   struct DestEntry {
     gpu::TextureHandle texture = 0;
     uint64_t last_used = 0, bytes = 0;
+    uint32_t width = 0, height = 0, base = 0;
   };
   struct DestEvictStats {
     uint64_t count = 0, bytes = 0, by_age = 0, by_budget = 0, pressure_events = 0;  // pressure: patch 0033
+    uint64_t reused_one = 0, reused_scaled = 0;
   };
   DestEvictStats dest_evict_;
   // Patch 0149 (deep-dive review): the watched vertex ranges and converted index buffers (with their persistent GPU
@@ -7773,22 +8251,25 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.uav_texture = dest;
     ResolveDispatch(depth_resolve_, b, (w + 7) / 8, (h + 7) / 8, 1);
     bool scaled = false;
+    rr::TextureCache::ResolveThrough through;
     // Per-target scale: a 1x target (below the threshold) writes only the 1x copy, so its pages stop being
     // scaled-current and textures load them at 1x (the reference's 1x1 resolves do the same).
     // Patch 0143 (upscaling modes): a scene-scale depth target above 1x also fills the output-scale copy (nearest).
     const uint32_t cross = up_scale_in_ > 1 && rt->scale == up_scale_in_ ? rt->scale : 0u;
     if (cross) b.constants[12] = res_scale_;
-    if (scaled_resolves_ && (rt->scale == res_scale_ || cross) && fused_scaled_ && (fused_kinds_ & 2u)) {  // job 238: straight into the windows (depth is never presented)
+    if (scaled_resolves_ && (rt->scale == res_scale_ || cross) && fused_scaled_ && (fused_kinds_ & 2u) &&
+        rr::FuseResolveSize(w, h, uint32_t(std::max(0, REXCVAR_GET(gow2_renderer_fused_scaled_min_pixels))))) {
       scaled = FusedScaledResolve(depth_resolve_, b, info, w, h, 1, endian, cross);
-    } else if (scaled_resolves_ && (rt->scale == res_scale_ || cross)) {  // Stage 7 phase B: every host pixel into the scaled copy
+    }
+    if (!scaled && scaled_resolves_ && (rt->scale == res_scale_ || cross)) {
       if (ScaledDest* sd = ScaledDestination(info, 1)) {
         b.constants[13] = 1u | (cross << 8);  // patch 0143
         b.uav_texture = sd->texture;
         ResolveDispatch(depth_resolve_, b, (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
-        scaled = ScaledToMemory(*sd, info, dx, dy, w, h, endian);
+        scaled = ScaledToMemory(*sd, info, dx, dy, w, h, endian, through);
       }
     }
-    WriteResolveToGuest(dest, info, endian, 1, dx, dy, w, h, scaled);
+    WriteResolveToGuest(dest, info, endian, 1, dx, dy, w, h, scaled, &through);
     if (trace_on_)
       TraceEvent(*rt, {uint32_t(std::max(info.x0, 0)), uint32_t(std::max(info.y0, 0)), uint32_t(std::max(info.x1, 0)),
                        uint32_t(std::max(info.y1, 0))},
@@ -7976,6 +8457,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ++stats_.colour_resolves_compared;
     ScaledDest* sd = nullptr;
     bool scaled_mem = false;
+    rr::TextureCache::ResolveThrough through;
     // Patch 0143 (upscaling modes): a scene-scale source above 1x (not MSAA) also fills the output-scale copy (nearest);
     // the passes below then run at the output scale with the source's scale in c3.y bits 8-15.
     const uint32_t cross = up_scale_in_ > 1 && !ms_src && source_scale == up_scale_in_ ? source_scale : 0u;
@@ -7984,9 +8466,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // for MSAA sources: their shader takes the sample count / map in c2.z / c2.w, which the fused pass uses itself.
     if (narrow_or_wide) {
       // Patch 0030: unscaled only (the scaled-memory paths are 32/64 bpp).
-    } else if (scaled_resolves_ && (source_scale == res_scale_ || cross) && fused_scaled_ && (fused_kinds_ & 1u) && !ms_src && !front_bases_.count(info.dest_base)) {
+    } else if (scaled_resolves_ && (source_scale == res_scale_ || cross) && fused_scaled_ && (fused_kinds_ & 1u) && !ms_src &&
+               !front_bases_.count(info.dest_base) &&
+               rr::FuseResolveSize(w, h, uint32_t(std::max(0, REXCVAR_GET(gow2_renderer_fused_scaled_min_pixels))))) {
       scaled_mem = FusedScaledResolve(colour_resolve_, b, info, w, h, words, endian, cross);
-    } else if (scaled_resolves_ && (source_scale == res_scale_ || cross)) {  // Stage 7 phase B (per-target scale: scaled targets only)
+    }
+    if (!narrow_or_wide && !scaled_mem && scaled_resolves_ && (source_scale == res_scale_ || cross)) {
       sd = ScaledDestination(info, words);
       if (sd) {
         b.constants[13] = 1u | (cross << 8);  // patch 0143
@@ -7995,10 +8480,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ResolveDraw(b, dx * res_scale_, dy * res_scale_, (dx + w) * res_scale_, (dy + h) * res_scale_);
         else
           ResolveDispatch(resolve_pipe, b, (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
-        scaled_mem = ScaledToMemory(*sd, info, dx, dy, w, h, endian);
+        scaled_mem = ScaledToMemory(*sd, info, dx, dy, w, h, endian, through);
       }
     }
-    WriteResolveToGuest(dest, info, endian, words, dx, dy, w, h, scaled_mem);
+    WriteResolveToGuest(dest, info, endian, words, dx, dy, w, h, scaled_mem, &through);
     if (display_ours_ && dest_bytes == 4) {  // takeover step 1: remember this frame's colour copies by destination
       DisplaySource& d = display_sources_[info.dest_base];
       d.texture = dest;
@@ -8047,6 +8532,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
 
   void LogSummary() {
+    COGBOX_TRACY_SCOPE("Renderer summary diagnostics");
     const rr::ShaderCacheStats& s = cache_->Stats();
     std::string skipped;
     for (const auto& [why, n] : stats_.skipped) skipped += " | skipped " + std::to_string(n) + ": " + why;
@@ -8124,11 +8610,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   double(stats_.memexport_readback_bytes) / 1048576.0, stats_.memexport_readback_failures,
                   stats_.memexport_readback_waits, stats_.memexport_ranges_gathered, stats_.memexport_readbacks_issued);
     }
-    if (words_to_guest_through_ && textures_) {  // job 047 (this summary's frames)
+    if ((words_to_guest_through_ || scaled_to_mem_through_) && textures_) {
       const rr::TextureCacheStats& ts = textures_->Stats();
       REXLOG_INFO("gow2_renderer: resolve-through: textures written by their resolve {} (reload skipped), matched but "
-                  "already out of date {}, version moved meanwhile {} | GPU texture loads {}",
-                  ts.through_writes, ts.through_out_of_date, ts.through_raced, ts.gpu_loads);
+                  "already out of date {}, version moved meanwhile {} | GPU texture loads {} | scaled mirrors updated {}",
+                  ts.through_writes, ts.through_out_of_date, ts.through_raced, ts.gpu_loads, ts.scaled_through_writes);
     }
     if (stats_.depth_pipeline_waits)  // patch 0132 (this summary's frames)
       REXLOG_INFO("gow2_renderer: patch 0132 depth-only / shadow pipeline waits: {} draws waited {:.1f} ms in all, {} got "
@@ -8211,7 +8697,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "({:.2f} Mpx/frame) + passes {:.1f}/frame, fill-bounded ownership draws {:.1f}/frame (multi-rect {:.1f}), float-constant uploads skipped by generation {:.0f}/frame, compacted {:.0f}/frame ({:.2f} KB/frame not uploaded) | of which blocked "
                   "on our GPU {:.3f} ({} waits) | texture tables reused {} | state calls skipped {} | constant uploads "
                   "skipped {} | ownership fast path {} | transfer runs {} | alternate rule {} | descriptors {} (ring waits {}) | "
-                  "pipelines {} | upload-ring waits {}",
+                  "pipelines {} (same as the previous draw {}) | upload-ring waits {}",
                   frame_ - uint64_t(log_every_) + 1, frame_, split, total / log_every_,
                   (bs.gpu_ms - gpu_ms_base_) / log_every_, bs.gpu_lists_timed - gpu_lists_base_,
                   (bs.gpu_cat_ms[0] - gpu_cat_base_[0]) / log_every_,
@@ -8232,8 +8718,37 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   (bs.fence_wait_ms - gpu_wait_base_ms_) / log_every_, bs.fence_waits, bs.texture_tables_reused,
                   bs.state_calls_skipped, bs.constant_uploads_skipped, rts_->FastHits(), stats_.transfer_passes,
                   alt_mode_ == 2 ? "always" : "off", bs.descriptors_allocated,
-                  bs.descriptor_ring_waits, bs.pipelines, bs.ring_waits);
+                  bs.descriptor_ring_waits, bs.pipelines, bs.pipeline_memo_hits, bs.ring_waits);
       gpu_wait_base_ms_ = bs.fence_wait_ms;
+      if (XenosFrameLogOn()) {
+        std::string steps;
+        for (auto& step : frame_steps_) {
+          if (step.site) steps += std::format("{}{} {:.3f}", steps.empty() ? "" : ", ", step.site,
+                                              double(step.ticks) * MsPerTick() / log_every_);
+          step.ticks = 0;
+        }
+        const uint64_t cpu = ThreadCpuTicks();
+        REXLOG_INFO("gow2_renderer: frames {}-{}: frame steps (elapsed ms/frame, includes waits): {} | render thread "
+                    "CPU {:.3f} ms/frame (OS thread time, includes idle polling; excludes recording/copy workers) | "
+                    "waiting for command recorder {:.3f} ms/frame (included in elapsed CPU split) | recorder wakes "
+                    "{:.1f}/frame, redundant notifications avoided {:.1f}/frame | guest-memory UAV barriers "
+                    "before writes {:.1f}/frame, after writes {:.1f}/frame",
+                    frame_ - uint64_t(log_every_) + 1, frame_, steps,
+                    cpu >= thread_cpu_base_ ? double(cpu - thread_cpu_base_) / 10000.0 / log_every_ : 0.0,
+                    (bs.recording_wait_ms - detail_base_.recording_wait_ms) / log_every_,
+                    double(bs.recording_wakeups - detail_base_.recording_wakeups) / log_every_,
+                    double(bs.recording_wakeups_avoided - detail_base_.recording_wakeups_avoided) / log_every_,
+                    double(bs.guest_uav_barriers_before - detail_base_.guest_uav_barriers_before) / log_every_,
+                    double(bs.guest_uav_barriers_after - detail_base_.guest_uav_barriers_after) / log_every_);
+        thread_cpu_base_ = cpu;
+        REXLOG_INFO("gow2_renderer: frames {}-{}: presentation imports: deferred {}, collected {}, synchronous {} | "
+                    "pending {} (peak {})",
+                    frame_ - uint64_t(log_every_) + 1, frame_,
+                    bs.imports_deferred - detail_base_.imports_deferred,
+                    bs.imports_collected - detail_base_.imports_collected,
+                    bs.imports_synchronous - detail_base_.imports_synchronous,
+                    bs.imports_pending, bs.imports_pending_peak);
+      }
       gpu_ms_base_ = bs.gpu_ms;
       std::copy(std::begin(bs.gpu_cat_ms), std::end(bs.gpu_cat_ms), gpu_cat_base_);
       if (gpu_by_target_) {  // job 234: the targets whose draws took the most GPU time this window
@@ -8378,32 +8893,44 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     bs.pipelines_built_by_priority[0] - b0.pipelines_built_by_priority[0], bs.pipeline_jobs_queued,
                     stats_.pipelines_recorded, bs.pipelines_promoted - b0.pipelines_promoted);
       }
-      if (prebuild_on_ && (pb_.prebuild_offered != prebuild_logged_offered_ ||
+      if (prebuild_on_ && (prebuild_offered_.load() != prebuild_logged_offered_ ||
                            pb_.new_ps_pipelines != prebuild_logged_new_ps_)) {  // patch 0068
-        REXLOG_INFO("gow2_renderer: frames {}-{}: shader prebuild (patch 0068): {} pixel shaders from opened packages, {} "
-                    "already known, {} queued, {} sent to the driver, {} not translatable, {} dropped (variant), {} "
-                    "waiting | warm-only pipelines built {} ({:.0f} ms in the driver), failed {} | new draw pipelines "
-                    "with a pixel shader {}, its shader prebuilt {} | variants drawn: whole {} / code only {} (totals "
-                    "so far)",
-                    frame_ - uint64_t(log_every_) + 1, frame_, pb_.prebuild_offered, pb_.prebuild_known,
-                    pb_.prebuild_queued, prebuild_sent_.load(), prebuild_untranslated_.load(), prebuild_dropped_.load(),
-                    PrebuildWaiting(), bs.pipelines_warmed, bs.pipeline_warm_ms, bs.pipelines_warm_failed,
-                    pb_.new_ps_pipelines, pb_.new_ps_prebuilt, prebuild_variant_hits_[0].load(),
-                    prebuild_variant_hits_[1].load());
+        uint32_t workers_now = 0;
+        uint64_t govern_changes = 0;
+        {
+          std::lock_guard<std::mutex> lock(warm_govern_mutex_);
+          workers_now = warm_workers_now_;
+          govern_changes = warm_govern_changes_;
+        }
+        REXLOG_INFO("gow2_renderer: frames {}-{}: shader prebuild (patch 0068 v2): {} pixel shaders from opened packages, "
+                    "{} already known, {} queued, {} sent to the driver, {} not translatable, {} dropped (variant), {} "
+                    "waiting, {} dropped (queue full) | warm-only pipelines built {} ({:.0f} ms in the driver), failed "
+                    "{}, workers now {} ({} load/play switches) | new draw pipelines with a pixel shader {}, its shader "
+                    "prebuilt {} | variants drawn: whole {} / code only {} (totals so far)",
+                    frame_ - uint64_t(log_every_) + 1, frame_, prebuild_offered_.load(), prebuild_known_.load(),
+                    prebuild_queued_.load(), prebuild_sent_.load(), prebuild_untranslated_.load(),
+                    prebuild_dropped_.load(), PrebuildWaiting(), prebuild_overflow_.load(), bs.pipelines_warmed,
+                    bs.pipeline_warm_ms, bs.pipelines_warm_failed, workers_now, govern_changes, pb_.new_ps_pipelines,
+                    pb_.new_ps_prebuilt, prebuild_variant_hits_[0].load(), prebuild_variant_hits_[1].load());
         SaveVariantCounts();  // patch 0069
-        prebuild_logged_offered_ = pb_.prebuild_offered;
+        prebuild_logged_offered_ = prebuild_offered_.load();
         prebuild_logged_new_ps_ = pb_.new_ps_pipelines;
       }
       if (stats_.created_seen != created_logged_.created_seen ||
           stats_.new_draw_pipelines != created_logged_.new_draw_pipelines) {
         REXLOG_INFO("gow2_renderer: frames {}-{}: shaders the game created (patch 0066): {} seen, {} already known, {} "
-                    "translated, {} guessed pipelines queued, {} waiting | new draw pipelines {}: VS made at load {}, "
+                    "translated, {} guessed pipelines queued, {} cached stage prefetch requests, {} waiting | new draw pipelines {}: VS made at load {}, "
                     "PS made at load {} (totals so far)",
                     frame_ - uint64_t(log_every_) + 1, frame_, stats_.created_seen, stats_.created_known,
-                    stats_.created_translated, stats_.created_guessed, CreatedQueued(), stats_.new_draw_pipelines,
+                    stats_.created_translated, stats_.created_guessed, stats_.created_prefetched, CreatedQueued(), stats_.new_draw_pipelines,
                     stats_.new_vs_from_load, stats_.new_ps_from_load);
         created_logged_ = stats_;
       }
+      if (bs.cached_stage_prefetches != detail_base_.cached_stage_prefetches ||
+          bs.cached_stage_restores != detail_base_.cached_stage_restores)
+        REXLOG_INFO("gow2_renderer: frames {}-{}: cached stages: {} prefetched, {} restored off-thread in {:.1f} ms (totals)",
+                    frame_ - uint64_t(log_every_) + 1, frame_, bs.cached_stage_prefetches,
+                    bs.cached_stage_restores, bs.cached_stage_restore_ms);
       detail_base_ = bs;
       drawn_base_ = stats_.drawn;
     }
@@ -8433,15 +8960,17 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "0 -> {} ({:.1f}%), mean "
                   "{:.1f}, after {:.2f} frames; corrected {}, too late {}, estimate visibility wrong {}, dropped {} | "
                   "SDK answers: fake {}, host {} | draws {:.1f}/frame | backend: segments {} refused {} | reports known {} | "
-                  "answered hidden {}, WRONGLY hidden {} (visible objects skipped), zeros not yet trusted {}",
-                  queries_mode_ == QueriesMode::kAnswer ? "answer" : "shadow", frame_ - uint64_t(log_every_) + 1, frame_,
+                  "answered hidden {}, WRONGLY hidden {} (visible objects skipped), zeros not yet trusted {} | "
+                  "completion notifications {:.1f}/frame",
+                  queries_mode_ == QueriesMode::kStrict ? "strict" : queries_mode_ == QueriesMode::kAnswer ? "answer" : "shadow", frame_ - uint64_t(log_every_) + 1, frame_,
                   o.ends, double(o.ends) / log_every_, o.ours, o.incomplete, o.refused, o.unended, o.proxies, o.answered,
                   o.from_cache, o.fallback, o.results, o.zero, o.results ? 100.0 * double(o.zero) / double(o.results) : 0.0,
                   o.results ? double(o.samples) / double(o.results) : 0.0,
                   o.results ? double(o.latency_frames) / double(o.results) : 0.0, o.corrected, o.too_late,
                   o.visibility_changed, o.dropped, o.sdk_fake, o.sdk_host, double(stats_.draws) / log_every_,
                   b.occlusion_segments - occ_backend_segments_base_, b.occlusion_refused - occ_backend_refused_base_,
-                  occ_answers_.size(), o.answered_hidden, o.wrong_hidden, o.zero_not_trusted);
+                  occ_answers_.size(), o.answered_hidden, o.wrong_hidden, o.zero_not_trusted,
+                  double(o.completion_notifications) / log_every_);
       occ_backend_segments_base_ = b.occlusion_segments;
       occ_backend_refused_base_ = b.occlusion_refused;
       occ_stats_ = OcclusionStats{};
@@ -8460,7 +8989,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::unique_ptr<rr::RenderTargetCache> rts_;
   gpu::ShaderHandle rect_gs_ = 0;
   gpu::ShaderHandle rect_gs_dxbc_ = 0;  // the DXBC one, for pipelines of DXBC guest shaders
-  std::unique_ptr<std::ofstream> pipeline_list_;  // patch 0058: pipelines.list, appended to (null = not recording)
+  std::unique_ptr<cogbox::io::AsyncFileAppender> pipeline_list_;  // patch 0058: pipelines.list, appended to (null = not recording)
   std::unordered_set<uint64_t> recorded_;         // patch 0058: PipelineRecordKey of every record in the list
   gpu::PipelineHandle depth_resolve_ = 0, colour_resolve_ = 0, trace_colour_ = 0;
   gpu::PipelineHandle colour_resolve_ms_ = 0;  // Gears 3: MSAA colour sources (Texture2DMS)
@@ -8783,6 +9312,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   double cpu_ms_ = 0, cpu_sum_ = 0, cpu_max_ = 0;
   double part_ms_[kPartCount] = {};  // since the last summary (filled from part_ticks_ when it is logged)
   uint64_t part_ticks_[kPartCount] = {};
+  struct FrameStepCounter { const char* site = nullptr; uint64_t ticks = 0; };
+  std::array<FrameStepCounter, 24> frame_steps_{};
+  uint64_t thread_cpu_base_ = 0;
   Part part_cur_ = kPartOther;
   uint64_t part_mark_ = 0;
   bool parts_on_ = false;
@@ -8934,7 +9466,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   double gpu_cat_base_[8] = {};
   bool lost_logged_ = false;
   // ---- occlusion queries (Stage 4, upl-s4c) ----
-  enum class QueriesMode { kOff, kShadow, kAnswer };
+  enum class QueriesMode { kOff, kShadow, kAnswer, kStrict };
   QueriesMode queries_mode_ = QueriesMode::kOff;
   uint64_t queries_min_ = 0;
   bool queries_correct_ = true;
@@ -8955,14 +9487,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint32_t draws = 0;
     bool log = false, from_cache = false;
     uint32_t scale = 1;  // patch 0141: host pixels per guest pixel of the draws it counted
+    std::chrono::steady_clock::time_point queued_at{};
   };
   std::deque<PendingOcclusion> occ_pending_;
   rr::queries::AnswerCache occ_answers_;
+  rr::queries::DeferredReports occ_deferred_;
+  bool occ_need_submit_ = false;
+  uint32_t occ_closed_in_batch_ = 0, occ_batches_this_frame_ = 0;
   struct OcclusionStats {
     uint64_t ends = 0, ours = 0, incomplete = 0, refused = 0, unended = 0, answered = 0, from_cache = 0, fallback = 0,
              results = 0, zero = 0, samples = 0, latency_frames = 0, corrected = 0, too_late = 0,
              visibility_changed = 0, dropped = 0, sdk_fake = 0, sdk_host = 0, proxies = 0, zero_not_trusted = 0,
-             answered_hidden = 0, wrong_hidden = 0;
+             answered_hidden = 0, wrong_hidden = 0, completion_notifications = 0;
   };
   OcclusionStats occ_stats_;
   uint64_t occ_backend_segments_base_ = 0, occ_backend_refused_base_ = 0;
@@ -8976,9 +9512,14 @@ bool g_renderer_presents = false;  // 5C-2: set once at install (before the GPU 
 ShadowRenderer* g_release_target = nullptr;  // job 171: set once at install, like g_renderer_presents
 }  // namespace
 
+void XenosPrebuildShader(bool vertex, const void* bytes, uint32_t size, uint32_t variant, uint64_t hash) {
+  if (g_release_target) g_release_target->OnPrebuildShader(vertex, bytes, size, variant, hash);
+}
+void XenosBeginStartupPrebuild() { if (g_release_target) g_release_target->BeginStartupPrebuild(); }
+bool XenosFinishStartupPrebuild() { return !g_release_target || g_release_target->FinishStartupPrebuild(); }
 bool XenosPrebuildWanted() { return g_release_target && g_release_target->PrebuildWanted(); }  // patch 0068
-void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant) {     // patch 0068
-  if (g_release_target) g_release_target->OnPrebuildPixelShader(be_ucode, size_bytes, variant);
+void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant, uint64_t ucode_hash) {  // 0068
+  if (g_release_target) g_release_target->OnPrebuildShader(false, be_ucode, size_bytes, variant, ucode_hash);
 }
 uint64_t XenosPrebuildVariantHits(uint32_t variant) {                                           // patch 0068
   return g_release_target ? g_release_target->PrebuildVariantHits(variant) : 0;
@@ -8990,6 +9531,9 @@ void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t si
 }
 
 bool XenosRendererPresents() { return g_renderer_presents; }
+bool XenosRendererStrictQueries() { return g_release_target && g_release_target->StrictQueries(); }
+bool XenosPollRendererIdle() { return g_release_target && g_release_target->PollGpuIdle(); }
+void* XenosRendererIdleEvent() { return g_release_target ? g_release_target->IdleGpuEvent() : nullptr; }
 void XenosRendererRelease() {
   if (g_release_target) g_release_target->ReleaseToGuest();
 }

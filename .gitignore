@@ -2,3 +2,8 @@
 /releases/
 /history/
 /work/
+Gears2-Native/tools/build_all.ps1
+Gears2-Native/tools/dev_launcher.ps1
+Gears2-Native/tools/prepare_games.ps1
+Gears2-Native/tools/setup_sdk.ps1
+judder-fix.patch
