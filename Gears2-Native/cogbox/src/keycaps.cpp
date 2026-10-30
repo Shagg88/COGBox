@@ -35,7 +35,14 @@ const Cell kG3J[] = {
     { 203, 188, 229, 218, "keybind_left_trigger" }, { 229, 188, 256, 218, "keybind_right_trigger" },
     { 0, 219, 29, 238, "keybind_left_shoulder" }, { 29, 219, 58, 238, "keybind_right_shoulder" },
     { 103, 55, 135, 78, "keybind_back" }, { 147, 55, 179, 78, "keybind_start" }, { 44, 55, 71, 78, "keybind_back" },
-    { 74, 55, 104, 78, "keybind_start" } };
+    { 74, 55, 104, 78, "keybind_start" },
+    // job 662 (Shagg 00:48 "ALL those prompts"): the d-pad (weapon keys) and the pressed sticks
+    { 218, 28, 238, 51, "keybind_dpad_up" }, { 232, 160, 251, 182, "keybind_dpad_up" },
+    { 194, 30, 217, 51, "keybind_dpad_right" }, { 30, 195, 52, 214, "keybind_dpad_right" },
+    { 0, 57, 21, 80, "keybind_dpad_down" }, { 80, 195, 99, 217, "keybind_dpad_down" },
+    { 21, 57, 44, 78, "keybind_dpad_left" }, { 0, 195, 22, 214, "keybind_dpad_left" },
+    { 158, 188, 177, 213, "dpad_vertical" }, { 177, 191, 202, 210, "dpad_horizontal" },
+    { 80, 161, 109, 191, "keybind_rstick_press" }, { 143, 161, 172, 190, "keybind_lstick_press" } };
 const Cell kG2[] = {
     { 202, 55, 227, 80, "keybind_a" }, { 228, 55, 254, 80, "keybind_b" }, { 196, 109, 221, 136, "keybind_x" },
     { 222, 109, 248, 136, "keybind_y" }, { 200, 83, 223, 106, "keybind_lstick_press" }, { 223, 83, 246, 106, "keybind_lstick_press" },
@@ -44,7 +51,12 @@ const Cell kG2[] = {
     { 203, 189, 228, 219, "keybind_left_trigger" }, { 228, 189, 255, 219, "keybind_right_trigger" },
     { 0, 219, 29, 239, "keybind_left_shoulder" }, { 29, 219, 57, 239, "keybind_right_shoulder" },
     { 45, 55, 72, 76, "keybind_back" }, { 75, 55, 102, 76, "keybind_start" }, { 106, 55, 136, 76, "keybind_back" },
-    { 149, 55, 179, 76, "keybind_start" } };
+    { 149, 55, 179, 76, "keybind_start" },
+    // job 662: the d-pad, and the sticks (moved: WASD / the mouse; pressed: their keys)
+    { 233, 161, 251, 184, "keybind_dpad_up" }, { 3, 189, 24, 211, "keybind_dpad_left" },
+    { 29, 192, 52, 211, "keybind_dpad_right" }, { 81, 192, 99, 216, "keybind_dpad_down" },
+    { 79, 168, 110, 191, "move_right" }, { 109, 164, 140, 191, "keybind_rstick_press" },
+    { 141, 168, 172, 192, "move_left" }, { 172, 164, 203, 191, "keybind_lstick_press" } };
 struct Sheet { const char *hash; const Cell *cells; size_t count; };
 const Sheet kSheets[] = { { "5D9324DDFEA00FBF", kG3J, sizeof kG3J / sizeof kG3J[0] },
                           { "A52EE00BE48FE5C5", kG3J, sizeof kG3J / sizeof kG3J[0] },
@@ -156,12 +168,13 @@ std::string label_of(const std::string &k) {
 std::vector<uint8_t> draw_cap(int w, int h, const std::string &k) {
     Canvas c(w * kSS, h * kSS);
     const float W = float(c.w), H = float(c.h), S = float(kSS);
-    if (k == "LMB" || k == "RMB" || k == "MMB") {   // a mouse, the pressed button red
+    if (k == "LMB" || k == "RMB" || k == "MMB" || k == "MOUSE") {   // a mouse, the pressed button red (MOUSE: none)
         const float bw = std::min(W, H * 0.72f), bh = H * 0.92f, x0 = (W - bw) / 2, y0 = (H - bh) / 2;
         const float lw = std::max(2.0f, S);
         key_rect(c, x0, y0, x0 + bw, y0 + bh, bw / 2, 235 / 255.0f, 30 / 255.0f, lw);
         const float mid = x0 + bw / 2, top = y0 + bh * 0.45f;
-        if (k == "MMB") fill_round_rect(c, mid - bw / 8, y0 + bh / 10, mid + bw / 8, top - bh / 10, bw / 10, 220 / 255.0f, 60 / 255.0f, 40 / 255.0f);
+        if (k == "MOUSE") {}
+        else if (k == "MMB") fill_round_rect(c, mid - bw / 8, y0 + bh / 10, mid + bw / 8, top - bh / 10, bw / 10, 220 / 255.0f, 60 / 255.0f, 40 / 255.0f);
         else {
             const float hx0 = k == "LMB" ? x0 + lw : mid + lw / 2, hx1 = k == "LMB" ? mid - lw / 2 : x0 + bw - lw;
             for (int y = int(y0 + lw); y < int(top - lw / 2); ++y)
@@ -184,7 +197,7 @@ std::vector<uint8_t> draw_cap(int w, int h, const std::string &k) {
         else if (k == "Right") fill_triangle(c, cx + a, cy, cx - a * 0.8f, cy - a, cx - a * 0.8f, cy + a, ink);
         else if (k == "Up") fill_triangle(c, cx, cy - a, cx - a, cy + a * 0.8f, cx + a, cy + a * 0.8f, ink);
         else if (k == "Down") fill_triangle(c, cx, cy + a, cx - a, cy - a * 0.8f, cx + a, cy - a * 0.8f, ink);
-        else draw_text(c, label_of(k), tx0, ty0, tx1, ty1, ink);
+        else draw_text(c, !k.empty() && k[0] == '\x01' ? k.substr(1) : label_of(k), tx0, ty0, tx1, ty1, ink);
     }
     std::vector<uint8_t> out(size_t(w) * h * 4, 0);
     for (int y = 0; y < h; ++y)
@@ -216,9 +229,18 @@ std::string compose(const std::string &promptDir, const std::string &game, const
         for (size_t i = 0; i < sh.count; ++i) {
             const Cell &cl = sh.cells[i];
             const int x0 = cl.x0 * kScale, y0 = cl.y0 * kScale, w = (cl.x1 - cl.x0) * kScale, h = (cl.y1 - cl.y0) * kScale;
-            auto it = keys.find(cl.cvar);
-            std::string k = it != keys.end() ? it->second : "";
-            k = k.substr(0, k.find(','));   // the first key shows
+            auto first = [&](const char *cv) {   // the first key bound to a button
+                auto it = keys.find(cv);
+                const std::string v = it != keys.end() ? it->second : "";
+                return v.substr(0, v.find(','));
+            };
+            std::string k;
+            const std::string cv = cl.cvar;
+            if (cv == "dpad_vertical") k = "\x01" + label_of(first("keybind_dpad_up")) + "/" + label_of(first("keybind_dpad_down"));
+            else if (cv == "dpad_horizontal") k = "\x01" + label_of(first("keybind_dpad_left")) + "/" + label_of(first("keybind_dpad_right"));
+            else if (cv == "move_left") k = "\x01WASD";   // the launcher's fixed movement keys (W/A/S/D and the arrows)
+            else if (cv == "move_right") k = "MOUSE";
+            else k = first(cl.cvar);
             for (int y = y0; y < y0 + h; ++y)
                 for (int x = x0; x < x0 + w; ++x) { uint8_t *p = &ov[(size_t(y) * OW + x) * 4]; p[0] = p[1] = p[2] = 0; p[3] = 1; }
             if (k.empty() || k == "None") continue;   // unbound: the button is just cleared

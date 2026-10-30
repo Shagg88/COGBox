@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -351,21 +352,40 @@ void ScaleBc3Level(const std::vector<uint8_t>& src, uint32_t lw, uint32_t lh, ui
   if (ov) { std::memcpy(&ow, ov->data(), 4); std::memcpy(&oh, ov->data() + 4, 4); opx = ov->data() + 8; }
   const uint32_t obw = (big_w + 3) / 4, obh = (big_h + 3) / 4;
   out.assign(size_t(obw) * 16 * obh, 0);
+  // job 662 (Shagg 00:48: "ALL those prompts need to be upscaled"): Catmull-Rom bicubic on premultiplied colour (no dark
+  // fringes at the icons' soft edges), sharper than bilinear; the game's art is only upscaled, never redrawn.
+  std::vector<float> pm(size_t(iw) * bh * 4 * 4);
+  for (size_t i = 0; i < pm.size() / 4; ++i) {
+    const float a = img[i * 4 + 3] / 255.0f;
+    pm[i * 4 + 0] = img[i * 4 + 0] * a; pm[i * 4 + 1] = img[i * 4 + 1] * a; pm[i * 4 + 2] = img[i * 4 + 2] * a; pm[i * 4 + 3] = img[i * 4 + 3];
+  }
+  auto cr = [](float t, float* w) {   // Catmull-Rom weights for the 4 taps around t in [0, 1)
+    const float t2 = t * t, t3 = t2 * t;
+    w[0] = 0.5f * (-t3 + 2 * t2 - t); w[1] = 0.5f * (3 * t3 - 5 * t2 + 2); w[2] = 0.5f * (-3 * t3 + 4 * t2 + t); w[3] = 0.5f * (t3 - t2);
+  };
   const float fx = float(lw) / float(big_w), fy = float(lh) / float(big_h);
   for (uint32_t by = 0; by < obh; ++by)
     for (uint32_t bx = 0; bx < obw; ++bx) {
       for (uint32_t i = 0; i < 16; ++i) {
         const uint32_t x = std::min(bx * 4 + (i & 3), big_w - 1), y = std::min(by * 4 + (i >> 2), big_h - 1);
-        const float sx = std::clamp((float(x) + 0.5f) * fx - 0.5f, 0.0f, float(lw - 1));
-        const float sy = std::clamp((float(y) + 0.5f) * fy - 0.5f, 0.0f, float(lh - 1));
-        const uint32_t x0 = uint32_t(sx), y0 = uint32_t(sy), x1 = std::min(x0 + 1, lw - 1), y1 = std::min(y0 + 1, lh - 1);
-        const float ax = sx - float(x0), ay = sy - float(y0);
-        for (uint32_t ch = 0; ch < 4; ++ch) {
-          const float a = img[(size_t(y0) * iw + x0) * 4 + ch], b = img[(size_t(y0) * iw + x1) * 4 + ch];
-          const float c2 = img[(size_t(y1) * iw + x0) * 4 + ch], d = img[(size_t(y1) * iw + x1) * 4 + ch];
-          const float v = (a * (1 - ax) + b * ax) * (1 - ay) + (c2 * (1 - ax) + d * ax) * ay;
-          t[4 * i + ch] = uint8_t(std::clamp(v + 0.5f, 0.0f, 255.0f));
+        const float sx = (float(x) + 0.5f) * fx - 0.5f, sy = (float(y) + 0.5f) * fy - 0.5f;
+        const int ix = int(std::floor(sx)), iy = int(std::floor(sy));
+        float wx[4], wy[4];
+        cr(sx - float(ix), wx);
+        cr(sy - float(iy), wy);
+        float acc[4] = { 0, 0, 0, 0 };
+        for (int ty = 0; ty < 4; ++ty) {
+          const int yy = std::clamp(iy - 1 + ty, 0, int(lh) - 1);
+          for (int tx2 = 0; tx2 < 4; ++tx2) {
+            const int xx = std::clamp(ix - 1 + tx2, 0, int(lw) - 1);
+            const float wgt = wx[tx2] * wy[ty];
+            const float* s = &pm[(size_t(yy) * iw + xx) * 4];
+            for (int ch = 0; ch < 4; ++ch) acc[ch] += s[ch] * wgt;
+          }
         }
+        const float a = std::clamp(acc[3], 0.0f, 255.0f);
+        t[4 * i + 3] = uint8_t(a + 0.5f);
+        for (int ch = 0; ch < 3; ++ch) t[4 * i + ch] = a > 0.5f ? uint8_t(std::clamp(acc[ch] / (a / 255.0f), 0.0f, 255.0f) + 0.5f) : 0;
         if (opx) {
           const uint32_t ox = std::min(ow - 1, (x << level) + ((1u << level) >> 1)), oy = std::min(oh - 1, (y << level) + ((1u << level) >> 1));
           const uint8_t* o = opx + (size_t(oy) * ow + ox) * 4;
