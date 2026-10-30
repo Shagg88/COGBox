@@ -340,6 +340,14 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_clear_msaa_twins, true, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_msaa_colour_resolves, true, "Gears2",
                     "Resolve MSAA colour targets (Gears 3: one 4x MSAA 7e3 half-resolution resolve per frame): read the "
                     "selected host samples, average after decoding; false = skip them as before (\"build B\")");
+REXCVAR_DEFINE_BOOL(gow2_renderer_learn_clear_pair, false, "Gears2",
+                    "Developer: when the fast-clear hint pair never matches, learn the pair from 3-vertex 4x MSAA "
+                    "rectangle lists (first pair with 30 draws, from frame 90) and treat it as the fast clear (redirected to pitch x2 1x)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_msaa2x_colour_draws, true, "Gears2",
+                    "Draw into 2x MSAA colour targets (a 7e3 scene at 2x); false = skip them as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_msaa_depth_resolves, true, "Gears2",
+                    "Resolve MSAA depth targets (sample 0 / the selected sample), as the reference does; false = "
+                    "skip them as before (\"MSAA depth resolves are not in M1\")");
 REXCVAR_DEFINE_STRING(gow2_renderer_resolve_rules, "canary", "Gears2",
                       "Patch 0023 (D36): colour resolve conversion rules - canary (default since 0039, map group 2) or sdk "
                       "(the SDK's old-Xenia rules, kept until the switch to Canary is play-tested) - Canary's incl. its hardware-tested Oct 2026 "
@@ -1127,7 +1135,7 @@ struct FrameStats {
            transferred_tiles = 0, cleared_tiles = 0, unknown_tiles = 0, index_skipped_bytes = 0, watch_checked = 0,
            watch_stale = 0, watch_stale_bytes = 0, unknown_colour_tiles = 0, disagree_tiles = 0, tainted_tiles = 0, colour_to_depth_tiles = 0, transfer_passes = 0,
            unclipped_depth_draws = 0, mrt_duplicates = 0, colour_drawn = 0, colour_transferred_tiles = 0,
-           colour_unknown_tiles = 0, resolve_view_targets = 0, msaa_colour_resolves = 0, msaa_twin_clears = 0, msaa_up_transfers = 0, colour_resolves_compared = 0, fixed16_multiplicative_blends = 0,
+           colour_unknown_tiles = 0, resolve_view_targets = 0, msaa_colour_resolves = 0, learned_clears = 0, msaa2x_colour_draws = 0, msaa2x_resolve_clears = 0, msaa2x_twin_clears = 0, msaa_twin_clears = 0, msaa_up_transfers = 0, colour_resolves_compared = 0, fixed16_multiplicative_blends = 0,
            colour_word_transferred_tiles = 0, colour_clears_resolve = 0;
   uint64_t colour_not_modelled[16] = {};  // per colour storage class: draws into it we don't render yet
   double cpu_ms = 0.0;
@@ -1565,6 +1573,31 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         cache_->GetBuiltin("depth_resolve_cs", std::string(rr::builtin::kHlslScaledChunk) + rr::builtin::kDepthResolveCs,
                            gpu::ShaderStage::kCompute);
     depth_resolve_ = resolve_cs ? backend_->CreateComputePipeline(resolve_cs) : 0;
+    if (REXCVAR_GET(gow2_renderer_msaa_depth_resolves)) {  // MSAA depth sources (a 2x scene depth resolved per tile and restored for lighting).
+      // Same shader reading one sample (c1.w = host sample index) of Texture2DMS planes.
+      std::string ms = rr::builtin::kDepthResolveCs;
+      auto sub = [&ms](const std::string& a, const std::string& b) {
+        size_t n = 0;
+        for (size_t p = ms.find(a); p != std::string::npos; p = ms.find(a, p + b.size()), ++n) ms.replace(p, a.size(), b);
+        return n;
+      };
+      size_t ok = sub("Texture2D<float> xe_depth : register(t0);", "Texture2DMS<float> xe_depth : register(t0);");
+      ok += sub("Texture2D<uint2> xe_stencil : register(t1);", "Texture2DMS<uint2> xe_stencil : register(t1);");
+      ok += sub("xe_depth.GetDimensions(tw, th);", "uint xe_sc; xe_depth.GetDimensions(tw, th, xe_sc);");
+      sub("xe_depth.Load(", "XeMsDepth(");
+      sub("xe_stencil.Load(", "XeMsStencil(");
+      const std::string decl = "cbuffer XeResolveConstants : register(b0) { uint4 c0; uint4 c1; uint4 c2; uint4 c3; };";
+      const size_t pd = ms.find(decl);
+      if (ok == 3 && pd != std::string::npos) {
+        ms.insert(pd + decl.size(),
+                  "\nfloat XeMsDepth(int3 p) { return xe_depth.Load(p.xy, int(c1.w & 3u)); }"
+                  "\nuint2 XeMsStencil(int3 p) { return xe_stencil.Load(p.xy, int(c1.w & 3u)); }\n");
+        const gpu::ShaderHandle msh = cache_->GetBuiltin(
+            "depth_resolve_ms_cs", std::string(rr::builtin::kHlslScaledChunk) + ms, gpu::ShaderStage::kCompute);
+        depth_resolve_ms_ = msh ? backend_->CreateComputePipeline(msh) : 0;
+      }
+      REXLOG_INFO("gow2_renderer: MSAA depth resolve shader {}", depth_resolve_ms_ ? "on" : "OFF");
+    }
     const gpu::ShaderHandle colour_resolve_cs =
         cache_->GetBuiltin("colour_resolve_cs", std::string(rr::builtin::kHlslScaledChunk) +
                                                     ColourShaderSource(rr::builtin::kColourResolveCs),
@@ -5218,8 +5251,36 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     // The D3D library's fast clear: fixed shader pair, a 3-vertex rectangle list at half pitch with 4x MSAA. Same
     // tiles as the 1x surface at full pitch (notes/35, Brief 8), so draw it at 2x scale onto that surface.
-    const bool is_clear = hints_.clear_vs && vs_hash == hints_.clear_vs && ps_hash == hints_.clear_ps && prim == 0x08 &&
-                          msaa == 2;
+    const bool hint_clear = hints_.clear_vs && vs_hash == hints_.clear_vs && ps_hash == hints_.clear_ps && prim == 0x08 &&
+                            msaa == 2;
+    if (hint_clear) ++hint_clears_seen_;
+    // Older XDK builds of D3D use a different fast-clear shader pair, so the hint pair never matches
+    // (log: "clears 0" every window) and its half-pitch 4x clears of the scene depth/stencil, light-accumulation
+    // target and shadow maps went to separate 4x textures - nothing was ever cleared. When no hint clear has been
+    // seen, learn the pair: shaders of 3-vertex rectangle lists at 4x MSAA counted from frame 30; from frame 90 the
+    // first pair with 30 such draws is taken.
+    bool learned_clear = false;
+    if (!hint_clear && hint_clears_seen_ == 0 && REXCVAR_GET(gow2_renderer_learn_clear_pair) && prim == 0x08 &&
+        msaa == 2 && index_count == 3 && vs_hash && ps_hash) {
+      if (learned_clear_vs_) {
+        learned_clear = vs_hash == learned_clear_vs_ && ps_hash == learned_clear_ps_;
+      } else if (frame_ + 1 >= 30) {
+        uint32_t& votes = clear_pair_votes_[{vs_hash, ps_hash}];
+        ++votes;
+        // From frame 90 on, the first pair with 30 votes wins (votes keep coming until one does).
+        if (frame_ + 1 >= 90 && votes >= 30) {
+          learned_clear_vs_ = vs_hash;
+          learned_clear_ps_ = ps_hash;
+          REXLOG_INFO("gow2_renderer: fast clear pair learned frame {}: {:016X}/{:016X} ({} draws, {} "
+                      "candidate pairs); hint pair {:016X}/{:016X} never matched", frame_ + 1, learned_clear_vs_,
+                      learned_clear_ps_, votes, clear_pair_votes_.size(), hints_.clear_vs, hints_.clear_ps);
+          clear_pair_votes_.clear();
+          learned_clear = true;
+        }
+      }
+      if (learned_clear) ++stats_.learned_clears;
+    }
+    const bool is_clear = hint_clear || learned_clear;
     fill_.valid = false;  // job 185: set below for this draw only
     fill_geom_.valid = false;  // job 188
     if (trace_on_) {
@@ -5504,8 +5565,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         std::memcpy(c, &r[kRegFloatConstPs + 4 * uint32_t(psg->constant_color0)], 16);
         known = ColorClearBits(Bits(ci, 16, 4), c, bits);
       }
-      const bool drawable = draw_colour_ && colour_keys[k].msaa == 0 &&
+      // the scene (rt0 base 1024 7e3, 2x MSAA) was never drawn - MSAA colour keys were not drawable,
+      // so its resolve created an empty "resolve-only view" target fed from the depth tiles (dark silhouettes).
+      // 2x MSAA colour is drawn now (--gow2_renderer_msaa2x_colour_draws); 4x stays as before (Gears 2/3 stand-ins).
+      const bool msaa2x_colour = colour_keys[k].msaa == 1 && REXCVAR_GET(gow2_renderer_msaa2x_colour_draws);
+      const bool drawable = draw_colour_ && (colour_keys[k].msaa == 0 || msaa2x_colour) &&
                             rr::ColorHostFormat(colour_keys[k].storage_class) != gpu::Format::kUnknown;
+      if (drawable && msaa2x_colour) {
+        ++stats_.msaa2x_colour_draws;
+        if (!msaa2x_colour_logged_) {
+          msaa2x_colour_logged_ = true;
+          REXLOG_INFO("gow2_renderer: 2x MSAA colour draw (first) frame {} draw {}: {} base {} pitch {}",
+                      frame_ + 1, draw_index_, rr::StorageClassName(colour_keys[k].storage_class),
+                      colour_keys[k].base_tiles, colour_keys[k].pitch_pixels);
+        }
+      }
       if (!drawable && draw_colour_) ++stats_.colour_not_modelled[colour_keys[k].storage_class & 15];
       if (rr::RenderTarget* t = rts_->Get(colour_keys[k], drawable)) {
         const Ownership cown =
@@ -5829,7 +5903,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     d.depth_format = target ? target->format : gpu::Format::kUnknown;
     // The diagnostic target: the first colour target drawn, else the depth target.
-    d.samples = 1u << (target ? key.msaa : 0u);
+    uint32_t colour_msaa = 0;  // a colour-only 2x MSAA draw needs the colour target's sample count
+    for (uint32_t i = 0; i < 4 && !target; ++i)
+      if (colour_rt[i] && d.ps) {
+        colour_msaa = colour_rt[i]->key.msaa;
+        break;
+      }
+    d.samples = 1u << (target ? key.msaa : colour_msaa);
     textures_part.Switch(kPartRecord);
     bool async_pso = REXCVAR_GET(gow2_renderer_async_pipelines);
     // Job 037: a per-frame budget for waiting on new pipelines (--gow2_renderer_pipeline_wait_ms). While this frame has
@@ -6198,6 +6278,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         const uint32_t ci = r[rr::reg::kColorInfo[i]];
         const rr::RenderTargetKey k4{Bits(ci, 0, 12) & 2047u, rr::ColorStorageClass(Bits(ci, 16, 4)), pitch, msaa};
         rr::RenderTarget* twin = rts_->FindAny(k4);  // patch 0141 review: either phase's twin
+        if ((!twin || !twin->texture || !twin->key.msaa) && REXCVAR_GET(gow2_renderer_msaa2x_colour_draws)) {
+          // the real twin can be the 2x target at the full pitch (the scene, base 1024 7e3).
+          twin = rts_->FindAny({k4.base_tiles, k4.storage_class, pitch * 2, 1u});
+          if (twin && twin->texture && i == 0 && psg && psg->constant_color0 >= 0) ++stats_.msaa2x_twin_clears;
+        }
         if (!twin || !twin->texture || !twin->key.msaa) continue;
         if (i != 0 || !psg || psg->constant_color0 < 0) continue;
         float c[4];
@@ -8542,7 +8627,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++resolve_early_[why];  // patch 0030: per-window count of resolves that end here (Gears 3's squad lead)
     };
     if (!rt || !rt->texture) return log_not_compared("we never drew into that depth target");
-    if (rt->key.msaa) return log_not_compared("MSAA depth resolves are not in M1");
+    const bool ms_depth = rt->key.msaa != 0;
+    if (ms_depth && !depth_resolve_ms_) return log_not_compared("MSAA depth resolves are not in M1");
     if (!depth_resolve_) return log_not_compared("depth resolve shader missing");
     if (!info.dest_supported || info.dest_bpp_log2 != 2) return log_not_compared("destination format");
     if (endian > 3) return log_not_compared("64/128-bit endian swap on a 32-bit destination");
@@ -8563,10 +8649,28 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.constants[5] = dy;
     b.constants[6] = DepthFlags(rt->key.storage_class);
     b.constants[12] = rt->scale;  // Stage 7: source pixel = guest pixel x scale (one host sample per guest pixel)
+    uint32_t ms_host_sample = 0;
+    if (ms_depth) {
+      // One sample (depth sample selects are single after SanitizeSampleSelect), mapped to the host
+      // sample as the MSAA colour resolve does. c1.w carries it; the de-jitter (c1.w, c2.xy) is off for this path.
+      const bool four = rg.msaa >= 2;
+      const bool xp = msaa_positions_mode_ == 1 && msaa_positions_ok_;
+      static constexpr uint32_t kHost4x[4] = {0, 3, 2, 1};
+      const uint32_t g = std::min<uint32_t>(uint32_t(info.sample_select), 3u);
+      ms_host_sample = four ? (xp ? g : kHost4x[g]) : (xp ? ((g & 1) ^ 1) : (g & 1));
+      b.constants[7] = ms_host_sample;
+      if (!msaa_depth_resolve_logged_) {
+        msaa_depth_resolve_logged_ = true;
+        REXLOG_INFO("gow2_renderer: MSAA depth resolve (first) frame {} copy {}: {} | sample select {} -> "
+                    "host sample {}", frame_ + 1, copy, source, uint32_t(info.sample_select), ms_host_sample);
+      }
+      ++resolve_early_["MSAA depth resolved (not an early end)"];
+    }
+    const gpu::PipelineHandle depth_pipe = ms_depth ? depth_resolve_ms_ : depth_resolve_;
     // Upscalers (Gears 3 job 058): the frame's scene depth, drawn with this frame's jitter, is resolved at the
     // unjittered centres - the same shift the scene draws got (UpscaleJitter: the viewport moves by up_jitter_ host
     // pixels, after --gow2_upscale_jitter_scale). Other depth targets (shadow maps) and frames without jitter: as before.
-    if (upscaler_ && up_dejitter_depth_ && up_last_ok_ && up_camera_ && rt->key == up_depth_key_ &&
+    if (!ms_depth && upscaler_ && up_dejitter_depth_ && up_last_ok_ && up_camera_ && rt->key == up_depth_key_ &&
         (up_jitter_.x != 0.0f || up_jitter_.y != 0.0f)) {
       // c1.w and c2.xy: the only constants no depth-resolve path uses (the fused path sets c2.zw / c3.zw).
       b.constants[7] = std::bit_cast<uint32_t>(up_depth_a_);
@@ -8581,20 +8685,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.srv[1] = rt->texture;
     b.srv_plane[1] = 1;
     b.uav_texture = dest;
-    ResolveDispatch(depth_resolve_, b, (w + 7) / 8, (h + 7) / 8, 1);
+    ResolveDispatch(depth_pipe, b, (w + 7) / 8, (h + 7) / 8, 1);
     bool scaled = false;
     // Per-target scale: a 1x target (below the threshold) writes only the 1x copy, so its pages stop being
     // scaled-current and textures load them at 1x (the reference's 1x1 resolves do the same).
     // Patch 0143 (upscaling modes): a scene-scale depth target above 1x also fills the output-scale copy (nearest).
     const uint32_t cross = up_scale_in_ > 1 && rt->scale == up_scale_in_ ? rt->scale : 0u;
     if (cross) b.constants[12] = res_scale_;
-    if (scaled_resolves_ && (rt->scale == res_scale_ || cross) && fused_scaled_ && (fused_kinds_ & 2u)) {  // job 238: straight into the windows (depth is never presented)
+    if (!ms_depth && scaled_resolves_ && (rt->scale == res_scale_ || cross) && fused_scaled_ && (fused_kinds_ & 2u)) {  // job 238: straight into the windows (depth is never presented)
       scaled = FusedScaledResolve(depth_resolve_, b, info, w, h, 1, endian, cross);
     } else if (scaled_resolves_ && (rt->scale == res_scale_ || cross)) {  // Stage 7 phase B: every host pixel into the scaled copy
       if (ScaledDest* sd = ScaledDestination(info, 1)) {
         b.constants[13] = 1u | (cross << 8);  // patch 0143
         b.uav_texture = sd->texture;
-        ResolveDispatch(depth_resolve_, b, (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
+        ResolveDispatch(depth_pipe, b, (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
         scaled = ScaledToMemory(*sd, info, dx, dy, w, h, endian);
       }
     }
@@ -8610,7 +8714,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void ColourResolveClear(const uint32_t* r, const ::xenos::resolve::Regs& rg, const ::xenos::resolve::Info& info) {
     const uint32_t cls = rr::ColorStorageClass(rg.color_format);
     rr::RenderTarget* rt = rts_->FindAny({rg.color_base, cls, rg.surface_pitch, rg.msaa});  // patch 0141 review
-    if (!rt || !rt->texture || rg.msaa || rr::ColorHostFormat(cls) == gpu::Format::kUnknown) return;
+    // the 2x MSAA scene target (drawn since fix 3) is cleared by each tile's resolve too; skipping it left
+    // tile 1's picture under tile 2 (the bottom band showed the top of the scene).
+    const bool ms2x = rg.msaa == 1 && REXCVAR_GET(gow2_renderer_msaa2x_colour_draws);
+    if (!rt || !rt->texture || (rg.msaa && !ms2x) || rr::ColorHostFormat(cls) == gpu::Format::kUnknown) return;
+    if (ms2x) {
+      ++stats_.msaa2x_resolve_clears;
+      if (!msaa2x_clear_logged_) {
+        msaa2x_clear_logged_ = true;
+        REXLOG_INFO("gow2_renderer: 2x MSAA colour resolve-clear (first) frame {}: {} base {} pitch {} "
+                    "rect {},{}-{},{}", frame_ + 1, rr::StorageClassName(cls), rg.color_base, rg.surface_pitch, info.x0,
+                    info.y0, info.x1, info.y1);
+      }
+    }
     namespace col = ::xenos::colour;
     const bool is64 = rr::RenderTargetCache::Is64bpp(*rt);
     const uint64_t v = col::ColourClearValue(is64, r[kRegColorClear], r[kRegColorClearLo], col::Reference::kCanary);  // patch 0039 (map group 2): Canary's 64bpp order, CLEAR_LO | CLEAR << 32
@@ -8860,7 +8976,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const rr::ShaderCacheStats& s = cache_->Stats();
     std::string skipped;
     for (const auto& [why, n] : stats_.skipped) skipped += " | skipped " + std::to_string(n) + ": " + why;
-    REXLOG_INFO("gow2_renderer: frames {}-{}: draws {} drawn {} (clears {} + {} repeated on aliases, colour clears {}) "
+    REXLOG_INFO("gow2_renderer: frames {}-{}: draws {} drawn {} [2x MSAA colour {}, resolve-clears {}, fast-clear twins {}] (clears {} [learned pair {}] + {} repeated on aliases, colour clears {}) "
                 "| dummy points {} | patches {} (tessellated {}, not drawn {}) | colour-only (stubbed) {} | texture-dependent kills/alpha {} | aliases "
                 "{} ({} tiles) | pending shaders {} | not drawn: shader {} pipeline {} other {} | copies {} (depth {}, "
                 "colour {}) | resolves compared {} matched {} explained diffs {} incomplete {} | upload watch: index {:.1f} MB "
@@ -8870,7 +8986,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                 "copy threads: deferred {:.1f} MB in {} copies, flushes {} | "
                 "shaders translated {} disk hits {} compiled {} queued {} in flight {} rejected {} (compile {:.0f} "
                 "ms on {} threads) | targets {} | our CPU {:.3f} ms/frame (max {:.3f}) | GPU submits {}{}",
-                frame_ - uint64_t(log_every_) + 1, frame_, stats_.draws, stats_.drawn, stats_.clears,
+                frame_ - uint64_t(log_every_) + 1, frame_, stats_.draws, stats_.drawn, stats_.msaa2x_colour_draws, stats_.msaa2x_resolve_clears, stats_.msaa2x_twin_clears, stats_.clears, stats_.learned_clears,
                 stats_.clear_copies, stats_.colour_clears, stats_.dummy_points, stats_.patches, stats_.tessellated,
                 stats_.patches_not_drawn, stats_.colour_only,
                 stats_.texture_dependent, stats_.alias_events, stats_.alias_tiles, stats_.pending_shaders,
@@ -9293,6 +9409,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::unordered_set<uint64_t> recorded_;         // patch 0058: PipelineRecordKey of every record in the list
   gpu::PipelineHandle depth_resolve_ = 0, colour_resolve_ = 0, trace_colour_ = 0;
   gpu::PipelineHandle colour_resolve_ms_ = 0;  // Gears 3: MSAA colour sources (Texture2DMS)
+  gpu::PipelineHandle depth_resolve_ms_ = 0;   // MSAA depth sources (Texture2DMS)
+  bool msaa_depth_resolve_logged_ = false;
+  bool msaa2x_colour_logged_ = false;
+  bool msaa2x_clear_logged_ = false;
+  // Fast-clear pair learned when the hint pair never matches.
+  uint64_t hint_clears_seen_ = 0, learned_clear_vs_ = 0, learned_clear_ps_ = 0;
+  std::map<std::pair<uint64_t, uint64_t>, uint32_t> clear_pair_votes_;
   gpu::ShaderHandle msaa_up_transfer_ps_ = 0;  // Gears 3: 1x -> 4x MSAA colour transfer
   std::unordered_map<uint64_t, gpu::PipelineHandle> msaa_up_pipelines_;
   uint32_t depth_bias_logged_ = 0;  // gow2_renderer_log_depth_bias_base lines so far
