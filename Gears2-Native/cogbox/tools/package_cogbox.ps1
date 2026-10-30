@@ -56,6 +56,12 @@ foreach ($p in $ports) {
     if ($f -and [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($f.FullName)).Contains('TracyClient')) { $problems += "loads Tracy: $($f.FullName)" }
   }
 }
+# Job 642: the chapter recipe packs (launcher: <COGBox>\recipes\recipes-<exe>.rcp, job 630) and the keyboard prompt
+# overlays (<COGBox>\prompts\keyboard\*.overlay, job 629) - no game data, our own lists and drawings.
+$recipeSrc = Join-Path $launcher 'recipes'   # the copies the launcher uses on this PC (same files as work\recipes)
+foreach ($g in 'gow2', 'gow3', 'gowj') { if (-not (Test-Path (Join-Path $recipeSrc "recipes-$g.rcp"))) { $problems += "missing recipe pack: $recipeSrc\recipes-$g.rcp" } }
+$promptSrc = Join-Path $launcher 'prompts\keyboard'
+if (-not @(Get-ChildItem -LiteralPath $promptSrc -Filter *.overlay -File -ErrorAction SilentlyContinue).Count) { $problems += "no keyboard prompt overlays in $promptSrc" }
 if ($problems.Count) { $problems | ForEach-Object { Write-Host "PROBLEM: $_" }; Write-Host 'RESULT: FAIL (nothing written)'; exit 1 }
 
 $name = "COGBox-$Version"
@@ -79,6 +85,11 @@ Copy-Item (Join-Path $cogbox 'README.txt') $stage
 # Launcher translations (0.2.0): cogbox\lang\<code>.txt -> lang\ beside CogBox.exe.
 $langSrc = Join-Path $cogbox 'lang'
 if (Test-Path $langSrc) { $langDst = Join-Path $stage 'lang'; New-Item -ItemType Directory -Force $langDst | Out-Null; Copy-Item (Join-Path $langSrc '*.txt') $langDst } else { throw 'cogbox\lang is missing' }
+# Job 642: recipe packs and keyboard prompts beside CogBox.exe.
+$rd = Join-Path $stage 'recipes'; New-Item -ItemType Directory -Force $rd | Out-Null
+foreach ($g in 'gow2', 'gow3', 'gowj') { Copy-Item (Join-Path $recipeSrc "recipes-$g.rcp") $rd }
+$pd = Join-Path $stage 'prompts\keyboard'; New-Item -ItemType Directory -Force $pd | Out-Null
+Copy-Item (Join-Path $promptSrc '*.overlay') $pd
 Copy-Item (Join-Path (Split-Path -Parent $cogbox) 'LICENSE') (Join-Path $stage 'LICENSE.txt')
 $lic = Join-Path $stage 'licenses'; New-Item -ItemType Directory -Force $lic | Out-Null
 Copy-Item (Join-Path $cogbox 'licenses\*') $lic
