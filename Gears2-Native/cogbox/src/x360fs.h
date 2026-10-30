@@ -159,5 +159,6 @@ bool extract_god(const fs::path &header, const fs::path &out_dir, ProgressFn pro
 
 std::string sha1_hex(const void *data, size_t size);        // 40 lowercase hex digits
 std::string sha1_file(const fs::path &file);                 // "" if the file cannot be read
+std::string xex_code_sha1(const fs::path &file);             // job 647: SHA-1 from the XEX image offset on; "" if not an XEX
 
 } // namespace x360fs

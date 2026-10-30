@@ -71,7 +71,8 @@ static int game_of_xex(const x360fs::XexInfo &xi, const std::string &xexPath)
     int g = game_by_title_id(xi.title_id);
     if (g >= 0 || xexPath.empty()) return g;
     std::string h = x360fs::sha1_file(widen(xexPath));
-    for (int i = 0; i < G_COUNT; i++) if (h == game_def(i).xex.sha1) return i;
+    const std::string c = x360fs::xex_code_sha1(widen(xexPath));   // job 647: region discs
+    for (int i = 0; i < G_COUNT; i++) if (xex_is_tested(game_def(i), h, c)) return i;
     return -1;
 }
 
@@ -175,7 +176,7 @@ static void worker(App *ap)
     const GameDef &d = game_def(p.game);
     std::string file = join(p.finalDir, p.update ? "default.xexp" : "default.xex");
     std::string h = x360fs::sha1_file(widen(file));
-    bool match = h == (p.update ? d.xexp.sha1 : d.xex.sha1);
+    bool match = p.update ? h == d.xexp.sha1 : xex_is_tested(d, h, x360fs::xex_code_sha1(widen(file)));   // job 647
     std::lock_guard<std::mutex> l(j.m);
     // Shagg 29 Oct: a version or update COGBox wasn't made for is added with a warning, never refused.
     if (p.update)

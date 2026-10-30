@@ -10,15 +10,15 @@
 static const GameDef k_games[G_COUNT] = {
     { G_GEARS2, "Gears of War 2", "Gears 2", "gears2", "Gears2", x360fs::kTitleGears2, "gow2.exe", "gow2.log",
       "Title Update 6", true, "port-tu6", "port-disc",
-      { 18595840, "b6860bf31e55013467b53eca963d12314c0d78da" }, { 2074624, "8689bf52b2a47908eb9281d05c5e86653db0cf11" },
+      { 18595840, "b6860bf31e55013467b53eca963d12314c0d78da", "eb8aedd4567c220176ae4e7d95c89f667a361387" }, { 2074624, "8689bf52b2a47908eb9281d05c5e86653db0cf11" },
       "2008", "Add your copy of the disc to play" },
     { G_GEARS3, "Gears of War 3", "Gears 3", "gears3", "Gears3", x360fs::kTitleGears3, "gow3.exe", "gow3.log",
       "Title Update 6", true, "port-tu6", "port-disc",
-      { 21938176, "2450fd8e4c3cf4d772cd471785d1e38cad3888ad" }, { 1908736, "5c335a50116064d2dc91dce1ec922ec9e1975b62" },
+      { 21938176, "2450fd8e4c3cf4d772cd471785d1e38cad3888ad", "35bf62c8d47fe948fea0b994a984706c5f6690a6" }, { 1908736, "5c335a50116064d2dc91dce1ec922ec9e1975b62" },
       "2011", "Add your copy of the disc to play" },
     { G_JUDGMENT, "Gears of War: Judgment", "Judgment", "judgment", "Judgment", x360fs::kTitleGearsJudgment, "gowj.exe", "gowj.log",
       "Title Update 4", false, "", "port",
-      { 22855680, "426c5d27ff73d3ff2af9d404adb49e9a3db18bf1" }, { 1888256, "88e876b10276535379d5524f2bef73ed9195870e" },
+      { 22855680, "426c5d27ff73d3ff2af9d404adb49e9a3db18bf1", "8fb96d4149721dc94fc0024b3001d2b734c814df" }, { 1888256, "88e876b10276535379d5524f2bef73ed9195870e" },
       "2013", "Add your copy of the disc to play" },
 };
 
@@ -64,6 +64,25 @@ std::string cached_sha1(Ini &ini, const std::string &path)
     return h;
 }
 
+// Job 647: the program's own fingerprint (the XEX after its header), cached like cached_sha1
+std::string cached_code_sha1(Ini &ini, const std::string &path)
+{
+    uint64_t size = file_size(path);
+    int64_t t = file_time(path);
+    char tag[64];
+    snprintf(tag, sizeof tag, "%llu:%lld:", (unsigned long long)size, (long long)t);
+    std::string have = ini.get("CodeHashes", path);
+    if (have.size() > 40 && have.compare(0, strlen(tag), tag) == 0) return have.substr(strlen(tag));
+    std::string h = x360fs::xex_code_sha1(widen(path));
+    if (!h.empty()) ini.set("CodeHashes", path, tag + h);
+    return h;
+}
+
+bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code)
+{
+    return (!full.empty() && full == d.xex.sha1) || (!code.empty() && *d.xex.code && code == d.xex.code);
+}
+
 void game_set_data(Ini &ini, int g, const std::string &dataDir, bool own)
 {
     const GameDef &d = game_def(g);
@@ -104,7 +123,7 @@ void game_refresh(int g, Ini &ini, GameState &st, bool hash)
     if (hash) {
         st.xexKnown = !st.dataDir.empty();
         const std::string hx = st.xexKnown ? cached_sha1(ini, join(st.dataDir, "default.xex")) : std::string();
-        st.xexMatch = st.xexKnown && hx == d.xex.sha1;
+        st.xexMatch = st.xexKnown && (hx == d.xex.sha1 || xex_is_tested(d, hx, cached_code_sha1(ini, join(st.dataDir, "default.xex"))));
         st.xexConfirmed = st.xexKnown && !st.xexMatch && !hx.empty() && ini.get(d.key, "WorksXex") == hx;
         st.xexpKnown = !st.updateDir.empty();
         const std::string hp = st.xexpKnown ? cached_sha1(ini, join(st.updateDir, "default.xexp")) : std::string();

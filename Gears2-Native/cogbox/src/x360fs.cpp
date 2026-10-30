@@ -1461,4 +1461,29 @@ std::string sha1_file(const fs::path &file)
     return hex(h, 20);
 }
 
+// Job 647: the XEX2 header's word at offset 8 is where the image (PE data) starts; everything before it is the header
+// (region, media ID, keys, signature), which region discs change while the program stays the same.
+std::string xex_code_sha1(const fs::path &file)
+{
+    InFile f;
+    if (!f.open(file)) return std::string();
+    uint8_t h8[12];
+    if (f.size() < 12 || !f.read_at(0, h8, 12) || memcmp(h8, "XEX2", 4) != 0) return std::string();
+    const uint64_t pe = (uint64_t(h8[8]) << 24) | (uint64_t(h8[9]) << 16) | (uint64_t(h8[10]) << 8) | h8[11];
+    if (pe < 24 || pe >= f.size()) return std::string();
+    Sha1 s;
+    std::vector<uint8_t> buf(1u << 20);
+    uint64_t off = pe, left = f.size() - pe;
+    while (left) {
+        size_t n = size_t(std::min<uint64_t>(left, buf.size()));
+        if (!f.read_at(off, buf.data(), n)) return std::string();
+        s.update(buf.data(), n);
+        off += n;
+        left -= n;
+    }
+    uint8_t h[20];
+    s.final(h);
+    return hex(h, 20);
+}
+
 } // namespace x360fs

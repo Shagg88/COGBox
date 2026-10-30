@@ -17,7 +17,10 @@
 
 enum GameId { G_GEARS2, G_GEARS3, G_JUDGMENT, G_COUNT };
 
-struct Fingerprint { uint64_t size; const char *sha1; };
+// Job 647 (GitHub #45, region discs): code = SHA-1 of the XEX from its image (PE data) offset on. The European and
+// Japanese Judgment discs and the European Gears 2 disc differ from the US ones only in the XEX header (region, media
+// ID, signature) - the same program - so they count as the tested version. "" = no code fingerprint.
+struct Fingerprint { uint64_t size; const char *sha1; const char *code = ""; };
 
 struct GameDef {
     GameId id;
@@ -81,3 +84,5 @@ void game_set_data(Ini &ini, int g, const std::string &dataDir, bool own);
 void game_set_update(Ini &ini, int g, const std::string &updateDir);
 // The SHA-1 of a file, cached in CogBox.ini by path + size + time ([Hashes]).
 std::string cached_sha1(Ini &ini, const std::string &path);
+std::string cached_code_sha1(Ini &ini, const std::string &path);   // job 647
+bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code);
