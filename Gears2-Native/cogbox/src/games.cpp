@@ -84,7 +84,18 @@ static bool fp_match(const Fingerprint &f, const std::string &full, const std::s
 }
 bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code) { return fp_match(d.xex, full, code); }
 // Job 648 (Shagg 23:23): a region disc's title update - the same patch after its header counts as the tested one
-bool xexp_is_tested(const GameDef &d, const std::string &full, const std::string &code) { return fp_match(d.xexp, full, code); }
+// Title updates players have reported working, beyond the one each port is made for (GitHub #51, LeffetheProgrammer:
+// a Gears 2 Title Update 6 of the same size with a different file - probably another region's copy).
+struct ReportedXexp { GameId game; const char *sha1; };
+static const ReportedXexp k_reportedXexp[] = {
+    { G_GEARS2, "acfe0507c5a196eb322b36e91b4ca44233d40da5" },   // #51, 2,074,624 bytes
+};
+bool xexp_is_tested(const GameDef &d, const std::string &full, const std::string &code)
+{
+    if (fp_match(d.xexp, full, code)) return true;
+    for (const ReportedXexp &r : k_reportedXexp) if (r.game == d.id && !full.empty() && full == r.sha1) return true;
+    return false;
+}
 
 void game_set_data(Ini &ini, int g, const std::string &dataDir, bool own)
 {
