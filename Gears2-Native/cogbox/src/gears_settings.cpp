@@ -158,9 +158,13 @@ std::vector<Option> make_options(Game g) {
                "are off. If something looks wrong, make a problem report and send it to us.", 0));
     // Shagg 13:16: Vulkan is no longer forced under Proton / Wine - this box lets Steam Deck / Linux / CrossOver
     // players run DirectX 12 there (off = Vulkan, which is known to get in game there).
-    add(make("WineD3D12", "DirectX 12 on Proton / Wine (testing)", Tab::Graphics, Kind::Bool, PG, 0,
-             "Steam Deck, Linux and Mac (CrossOver) only. Off = Vulkan, which gets in game there. On = DirectX 12 (vkd3d-proton "
-             "or D3DMetal), being tested - if the game closes or looks wrong, make a problem report and send it to us.", 0));
+    // Job 643 (Shagg: "the default for SteamOS / Mac should be the currently better API"): was the WineD3D12 box (on =
+    // DirectX 12); a saved WineD3D12=1 becomes DirectX 12 here (Store::load_ini).
+    add(choice("WineApi", "Graphics API on Proton / Wine", Tab::Graphics, PG,
+               { "Automatic", "Vulkan", "DirectX 12 (testing)" }, 0,
+               "Steam Deck, Linux and Mac (CrossOver) only. Automatic = the one that works best there now: DirectX 12 "
+               "(D3DMetal) on a Mac, where Vulkan can't start, and Vulkan on Steam Deck / Linux, where DirectX 12 is still "
+               "being tested. If the game closes or looks wrong, make a problem report and send it to us.", 0));
     // Render resolution: no PS1 tooltip; text from 59-how-to-play's Picture table.
     add(choice("Resolution", "Render resolution", Tab::Graphics, PG,
                { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)", "1080p" }, 0,
@@ -401,7 +405,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
     else if (o.id == "RealOcclusion" && (s.i("Api") != 0 || env.wine)) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // PR #43
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
-    else if (o.id == "WineD3D12") on = env.wine && s.i("Api") == 0;                   // Shagg 13:16
+    else if (o.id == "WineApi") on = env.wine && s.i("Api") == 0;                     // Shagg 13:16, job 643
     a.ok = on;
     return a;
 }
@@ -576,6 +580,11 @@ bool Store::load_ini(const std::string& text) {
         int gsec = section == "Gears2" ? 0 : section == "Gears3" ? 1 : section == "Judgment" ? 2 : -1;
         if (gsec < 0) {
             if (key == "Game") { last_game = std::max(0, std::min(2, static_cast<int>(x))); any = true; continue; }
+            if (key == "WineD3D12") {   // job 643: the old box; on = DirectX 12, off = the new Automatic
+                top["WineApi"] = x != 0 ? 2 : 0;
+                any = true;
+                continue;
+            }
             if (key == "Fps") {   // job 638: the old 4-step frame rate limit (the shared value)
                 top["FrameCap"] = old_fps_to_cap(x);
                 any = true;
@@ -588,6 +597,11 @@ bool Store::load_ini(const std::string& text) {
             if (!done && o && o->scope != Scope::GameOwn) { top[key] = x; done = true; }
             any = any || done;
         } else {
+            if (key == "WineD3D12") {   // job 643: the old box of this game
+                per[gsec]["WineApi"] = x != 0 ? 2 : 0;
+                any = true;
+                continue;
+            }
             if (key == "Fps") {   // job 638: the old 4-step frame rate limit of this game
                 per[gsec]["FrameCap"] = old_fps_to_cap(x);
                 any = true;
@@ -696,10 +710,14 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // seconds in (exit code 3, right after the renderer starts, every game); Vulkan gets in game there - so there
         // it is always Vulkan, and the log says so
         // Shagg 13:16: no longer forced - Vulkan by default there, DirectX 12 when "DirectX 12 on Proton / Wine" is on
-        const bool wineDx = env.wine && s.i("Api") == 0 && s.b("WineD3D12");
+        // Job 643: Automatic = DirectX 12 on a Mac (Vulkan can't start there: CrossOver has 1.2, the renderer needs 1.3,
+        // GitHub #36 / #40), Vulkan on SteamOS / Linux (DirectX 12 there still being tested).
+        const int wapi = s.i("WineApi");
+        const bool wineDx = env.wine && s.i("Api") == 0 && (wapi == 2 || (wapi == 0 && env.mac));
         const bool vk = s.i("Api") == 1 || (env.wine && !wineDx);
-        if (env.wine && s.i("Api") != 1) notes.push_back(wineDx ? "launcher: Proton / Wine - DirectX 12 (testing, chosen in the launcher)"
-                                                               : "launcher: Proton / Wine - Vulkan (DirectX 12 there is a testing box in Graphics)");
+        if (env.wine && s.i("Api") != 1) notes.push_back(wineDx ? (s.i("WineApi") == 0 ? "launcher: Mac (CrossOver) - DirectX 12 (Automatic: Vulkan can't start there)"
+                                                                                : "launcher: Proton / Wine - DirectX 12 (testing, chosen in the launcher)")
+                                                               : "launcher: Proton / Wine - Vulkan (Graphics API on Proton / Wine: DirectX 12 is being tested)");
         if (vk) {   // job 521: Vulkan (experimental); the upscalers are DirectX 12 only
             a.push_back("--gow2_renderer_api=vulkan");
             if (aa >= 2) { notes.push_back(std::string("launcher: Vulkan - ") + k_aaNames[aa] + " is DirectX 12 only, SMAA instead"); aa = 1; }

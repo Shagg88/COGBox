@@ -61,6 +61,7 @@ struct Environment {
     std::string monitor_device;
     bool has_avx2 = true;           // PS1 207-210 GearsCpu.HasAvx2
     bool wine = false;              // job 523: Wine / Proton (Linux, Steam Deck)
+    bool mac = false;               // job 643: Wine on a Mac (CrossOver) - DirectX 12 (D3DMetal) by default
     std::vector<std::string> mods;              // 0.2.0: the enabled mod folders, in load order (--ue3_mods)
     std::map<std::string, std::string> keys;   // 0.2.0: the player's own keyboard keys, cvar -> key (CogBox.ini [Keys])
     std::string recipe_pack;                   // job 630: <COGBox>\recipes\recipes-<exe>.rcp, "" = none

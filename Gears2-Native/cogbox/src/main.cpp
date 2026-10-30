@@ -476,6 +476,16 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     a.ini.path = join(exe_dir(), "CogBox.ini");
     // job 523: Wine / Proton (Linux, Steam Deck) - ntdll has wine_get_version there
     a.wine = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
+    // job 643: a Mac (CrossOver / Game Porting Toolkit) - Wine's host system is Darwin there. Vulkan can't start on a
+    // Mac (CrossOver offers Vulkan 1.2, the renderer needs 1.3: GitHub #36 / #40), so DirectX 12 (D3DMetal) is its default.
+    if (a.wine) {
+        typedef void(__cdecl * HostVersionFn)(const char **sysname, const char **release);
+        if (HostVersionFn hv = (HostVersionFn)(void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_host_version")) {
+            const char *sys = nullptr, *rel = nullptr;
+            hv(&sys, &rel);
+            a.mac = sys && strcmp(sys, "Darwin") == 0;
+        }
+    }
     {
         // a small screen (Steam Deck 1280x800) starts borderless and maximised the first time; then the player's choice
         const bool small = dm && dm->w <= 1280 && dm->h <= 800;

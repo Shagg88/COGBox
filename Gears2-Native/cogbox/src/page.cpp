@@ -86,6 +86,7 @@ void env_refresh(App &a, int g)
     if (ids) SDL_free(ids);
     e.has_avx2 = a.hasAvx2;
     e.wine = a.wine;   // job 523
+    e.mac = a.mac;     // job 643
     e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab), shared by the three games
     for (const gs::KeyAction &k : gs::key_actions()) {
         std::string v = a.ini.get("Keys", k.cvar);
@@ -227,7 +228,8 @@ static void prepare_section(App &a, int g)
     ImGui::Dummy(ImVec2(0, S(6)));
     th_heading("PREPARE ALL SHADERS", g_rowX1);
     row_desc("Builds the shaders of every chapter before you play, so chapters start without stutter while they are "
-             "built. Takes about 5-12 minutes, once - again only after a graphics driver update or a new COGBox release. "
+             "built. Takes a few minutes depending on your PC (about 1.5 minutes on a fast one), once - again only after a "
+             "graphics driver update or a new COGBox release. "
              "The game window opens and shows its intro while it works, then closes by itself.");
     const bool mine = a.run.proc && a.run.prepare && a.run.game == g;
     if (mine) {
@@ -936,7 +938,7 @@ void page_draw(App &a, ImVec2 size)
         }
         for (const gs::Option &o : gs::options((gs::Game)g)) {
             if (o.tab != want) continue;
-            if (o.id == "WineD3D12" && !a.env[g].wine) continue;   // Shagg 13:16: Proton / Wine only
+            if (o.id == "WineApi" && !a.env[g].wine) continue;   // Shagg 13:16: Proton / Wine only
             option_row(a, g, o);
             shown++;
         }

@@ -102,6 +102,7 @@ struct App {
     bool fullscreen = false;          // job 523: COGBox fills the screen (F11, or LT + RT together)
     bool playWasMax = false;          // job 526: the window as it was when Play was pressed, put back afterwards
     bool wine = false;                // job 523: running under Wine / Proton (Linux, Steam Deck)
+    bool mac = false;                 // job 643: ... on a Mac (CrossOver)
     std::vector<std::string> dropped; // files dropped on the window, handled next frame
 };
 
