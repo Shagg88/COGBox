@@ -320,6 +320,10 @@ struct Prebuild {
   std::filesystem::path shader_files;      // job 632: <shader cache>\prebuild-files.txt - packages that held shaders
   std::unordered_set<std::string> known;   // ... their lower-case names (read at start, added to as found)
   std::unordered_set<uint64_t> seen;  // reader thread: pixel shader hashes already handed over
+  // Job 641 (under mutex): readers busy with a file, files read, the start-up list queued, the start-up reading done.
+  int busy = 0;
+  uint64_t files_read = 0;
+  bool at_start_listed = false, at_start_done = false;
 };
 Prebuild* g_prebuild = nullptr;  // never destroyed (the thread runs until the process exits)
 
@@ -371,8 +375,27 @@ void ReaderThread() {
       g_prebuild->cv.wait(lock, [] { return !g_prebuild->queue.empty(); });
       path = std::move(g_prebuild->queue.front());
       g_prebuild->queue.pop_front();
+      ++g_prebuild->busy;  // job 641: counted with the pop, so no other reader sees an empty queue and nobody busy
     }
     const auto t0 = std::chrono::steady_clock::now();
+    // Job 641: when this was the last queued file and no other reader is busy, the start-up reading is done.
+    struct BusyGuard {
+      ~BusyGuard() {
+        bool done = false;
+        uint64_t files = 0;
+        {
+          std::lock_guard<std::mutex> l(g_prebuild->mutex);
+          --g_prebuild->busy;
+          ++g_prebuild->files_read;
+          if (g_prebuild->at_start_listed && !g_prebuild->at_start_done && g_prebuild->queue.empty() && !g_prebuild->busy) {
+            g_prebuild->at_start_done = true;
+            done = true;
+            files = g_prebuild->files_read;
+          }
+        }
+        if (done) XenosPrebuildAtStartDone(files);
+      }
+    } busy_guard;
     std::vector<uint8_t> data;
     {
       std::ifstream f(path, std::ios::binary);
@@ -489,6 +512,14 @@ void Ue3InstallShaderPrebuildIfRequested() {
               bytes += size;
               ++queued;
             }
+      }
+      {
+        std::lock_guard<std::mutex> lock(g_prebuild->mutex);
+        g_prebuild->at_start_listed = true;  // job 641
+        if (g_prebuild->queue.empty() && !g_prebuild->busy && !g_prebuild->at_start_done) {
+          g_prebuild->at_start_done = true;
+          XenosPrebuildAtStartDone(g_prebuild->files_read);
+        }
       }
       g_prebuild->cv.notify_all();
       REXLOG_INFO("ue3_shader_prebuild_at_start: {} file(s) queued ({} shader cache(s) / known shader packages first, {:.0f} MB in all) from {}", queued,

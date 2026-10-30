@@ -107,7 +107,7 @@ static bool apply_menu_changes(App &a, int g, const std::string &logDir)
     return file_exists(join(logDir, "menu-restart.flag"));
 }
 
-void play_start(App &a, int g)
+void play_start(App &a, int g, bool prepare)
 {
     if (a.run.proc) return;
     const GameDef &d = game_def(g);
@@ -136,6 +136,10 @@ void play_start(App &a, int g)
     std::string shared = join(exe_dir(), "shared");
     bool useShared = dir_exists(shared);
     if (useShared) args.push_back("--gow2_dxc_dir=\"" + shared + "\"");
+    if (prepare) {   // job 641: build every shipped recipe, then the game saves its pipeline library and exits
+        args.push_back("--gow2_renderer_prepare_all=true");
+        DeleteFileW(widen(join(game_shader_dir(g), "prepare-progress.txt")).c_str());
+    }
     if (a.env[g].cap.exe_has && a.env[g].cap.exe_has("cogbox_menu")) {   // ports with the in-game menu (patch 0163)
         write_menu_file(a, g, ver, logDir);
         args.push_back("--cogbox_menu=\"" + join(logDir, "menu.txt") + "\"");
@@ -192,6 +196,8 @@ void play_start(App &a, int g)
     a.run.game = g;
     a.run.started = unix_now();
     a.run.logDir = logDir;
+    a.run.prepare = prepare;
+    if (prepare) return;   // job 641: the launcher stays up and shows the progress
     a.ini.seti("LastPlayed", d.key, a.run.started);
     a.ini.save();
     a.playWasMax = (SDL_GetWindowFlags(a.win) & SDL_WINDOW_MAXIMIZED) != 0;   // job 526
@@ -208,6 +214,26 @@ void play_poll(App &a)
     int g = a.run.game;
     const GameDef &d = game_def(g);
     int64_t secs = std::max<int64_t>(0, unix_now() - a.run.started);
+    if (a.run.prepare) {   // job 641: no play time, no window juggling - say how it went
+        a.run.prepare = false;
+        std::string prog;
+        read_file(join(game_shader_dir(g), "prepare-progress.txt"), prog, 4096);
+        const bool done = prog.find(" done ") != std::string::npos;
+        append_line(join(a.run.logDir, "args.txt"), "launcher: prepare all shaders ended after " + std::to_string(secs) + " s, exit code " +
+                                                        (known ? hex32(code) : std::string("unknown")) + ", progress " + prog);
+        if (done && known && code == 0)
+            ask(a, "info", g, "Shaders prepared",
+                std::string(d.name) + "'s shaders are ready (" + std::to_string(secs / 60) + " min " + std::to_string(secs % 60) +
+                " s). Chapters will now start without building them. Do this again after a graphics driver update or a new "
+                "COGBox release.", { "OK" });
+        else if (known && code == 0)
+            set_message(a, "Preparing shaders stopped before the end - what was built so far is kept.", false);
+        else
+            set_message(a, "Preparing shaders stopped (" + (known ? "exit code " + hex32(code) : std::string("unknown exit")) +
+                           ") - what was built so far is kept. A problem report from the Help tab helps.", true);
+        refresh_games(a, false);
+        return;
+    }
     // play time: only plays that got going (a start that fails at once isn't play)
     if (secs >= 20) a.ini.seti("PlayTime", d.key, a.ini.geti64("PlayTime", d.key, 0) + secs);
     a.ini.save();

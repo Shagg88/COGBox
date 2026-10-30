@@ -43,6 +43,7 @@ struct Running {
     int game = -1;
     int64_t started = 0;
     std::string logDir;
+    bool prepare = false;   // job 641: a "Prepare all shaders" run (the game builds the pack, then exits)
 };
 
 enum Screen { SCR_FRONT, SCR_PAGE };
@@ -145,7 +146,7 @@ bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err
 void install_poll(App &a);
 void install_draw(App &a, ImVec2 size);
 // play.cpp
-void play_start(App &a, int g);
+void play_start(App &a, int g, bool prepare = false);   // prepare: job 641's Prepare all shaders
 void play_poll(App &a);
 void play_answer(App &a, const Modal &m);
 void auto_settings_apply(App &a, int g);    // Shagg 29 Oct: the "Detect best settings" answer (page.cpp)   // the "crash" question answered

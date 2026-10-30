@@ -217,6 +217,12 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_pipeline_precreate, true, "Gears2",
                     "pipelines.list whose shaders the warm-up has ready is queued to the pipeline workers, behind any "
                     "pipeline a draw is waiting for - built (or loaded from the saved library) during the start-up and "
                     "loading screens instead of when first drawn");
+REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_all, false, "Gears2",
+                    "Job 641 (the launcher's \"Prepare all shaders\"): with --gow2_renderer_recipe_pack and "
+                    "--ue3_shader_prebuild_at_start, every chapter list of the pack starts at once and is built at full "
+                    "speed while the game shows its intro; once the package reading is done and nothing more can be "
+                    "built, the pipeline library is saved and the game exits. Progress in <shader cache dir>\\"
+                    "prepare-progress.txt (\"<done> <total> <state> <seconds>\")");
 REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_only, false, "Gears2",
                     "Patch 0061 (\"Preparing shaders\"; a test switch since 0062 removed the launcher button): at "
                     "start-up build every recorded pipeline (pipelines.list) on all pipeline workers, save the pipeline "
@@ -2165,6 +2171,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // shaders are ready and only wait for a free job - real work that is done for this area once it reaches 0.
     // (Records still waiting for a shader the game has not loaded are not counted: nothing can build them yet.)
     if (frame_ % 30 == 0) rcp_ready_left_ = CountReadyRecipes();
+    if (prepare_all_) PrepareAllStep();  // job 641
     XenosSetShaderJobs(backend_->PipelineJobsLeft() + rcp_ready_left_,
                        backend_->Stats().pipelines_async + rcp_ready_left_);
     if (upscale_probe_ && frame_ % upscale_probe_ == 0) LogProbeFrame();
@@ -7602,6 +7609,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     rcp_rec_hot_.assign(rcp_records_.size(), 0);
     rcp_vs_found_ = std::make_unique<std::atomic<uint8_t>[]>(std::max<size_t>(1, rcp_.vertex.size()));
     rcp_on_ = true;
+    if (REXCVAR_GET(gow2_renderer_prepare_all)) {  // job 641: every list now, no waiting for its marker shaders
+      prepare_all_ = true;
+      prepare_t0_ = std::chrono::steady_clock::now();
+      for (uint32_t c = 0; c < uint32_t(rcp_.chapters.size()); ++c)
+        if (!rcp_ch_on_[c]) StartRecipeChapter(c);
+    }
     REXLOG_INFO("gow2_renderer: chapter recipe pack: {} pipelines in {} chapter lists, {} vertex shaders to rebuild, {} "
                 "pixel shaders to find, from {} (notes/78 C3); at most {} pipeline jobs in flight for it",
                 rcp_records_.size(), rcp_.chapters.size(), rcp_.vertex.size(), rcp_ps_.size(), path,
@@ -7701,7 +7714,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!rcp_waiting_.empty()) {
       // Job 613: full speed while nothing much is drawn (a loading screen, a menu) or the frame is already missing
       // draws (the burst the pack is there to end); the low limit only during clean play.
-      const bool burst = idle || draw_index_ < 64 || pending_this_frame_ >= 32;  // 617: idle = the game is not drawing
+      const bool burst = idle || draw_index_ < 64 || pending_this_frame_ >= 32 || prepare_all_;  // 617: idle = the game is not drawing; 641
       // Job 613 (Shagg 11:12, "99% (6 left)" all chapter): after ~5 s of frames with no skipped draws the pack stops
       // queueing (play is clean; the rest are areas or chapter lists this visit may never reach) until the next
       // loading screen, menu or burst - it no longer keeps workers busy for minutes.
@@ -7831,6 +7844,52 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
   uint64_t rcp_ready_left_ = 0;  // job 633: for the shader note
+  // Job 641 (--gow2_renderer_prepare_all): build the whole pack, then save and exit.
+  bool prepare_all_ = false;
+  std::chrono::steady_clock::time_point prepare_t0_{}, prepare_quiet_since_{}, prepare_written_{};
+  uint64_t prepare_last_made_ = UINT64_MAX;
+ public:
+  std::atomic<bool> prepare_reading_done_{false};
+  std::atomic<uint64_t> prepare_files_{0};
+ private:
+  void PrepareAllStep() {
+    const auto now = std::chrono::steady_clock::now();
+    const uint64_t total = rcp_records_.size();
+    const uint64_t left = backend_->PipelineJobsLeft();
+    const uint64_t asked = rcp_n_.queued + rcp_n_.known + rcp_n_.failed + rcp_n_.no_gs;
+    const uint64_t made = asked > left ? asked - left : 0;
+    const bool reading = !prepare_reading_done_.load(std::memory_order_acquire);
+    bool inbox = false;
+    {
+      std::lock_guard<std::mutex> lock(rcp_mutex_);
+      inbox = !rcp_in_.empty();
+    }
+    // Nothing more can be built: the reading is done, every shader it found is in, nothing waits to be translated or
+    // queued (records still waiting are for shaders no package holds), and the workers are idle - for 3 s.
+    const bool quiet = !reading && !inbox && rcp_need_.empty() && rcp_ready_left_ == 0 && left == 0;
+    if (made != prepare_last_made_ || !quiet) prepare_quiet_since_ = now;
+    prepare_last_made_ = made;
+    auto write = [&](uint64_t done, const char* state) {
+      std::ofstream f(cache_->Dir() / "prepare-progress.txt", std::ios::trunc);
+      f << done << ' ' << total << ' ' << state << ' ' << uint64_t(MsSince(prepare_t0_) / 1000.0) << '\n';
+    };
+    if (now - prepare_written_ >= std::chrono::milliseconds(500)) {
+      write(std::min(made, total), reading ? "reading" : "building");
+      prepare_written_ = now;
+    }
+    if (!quiet || now - prepare_quiet_since_ < std::chrono::seconds(3)) return;
+    write(std::min(made, total), "saving");
+    backend_->SavePipelinesNow();
+    const gpu::BackendStats& bs = backend_->Stats();
+    REXLOG_INFO("gow2_renderer: prepare all: done - {} of {} recipe pipelines made ({} queued, {} already there, {} "
+                "failed; {} still waiting for a shader no package holds) in {:.1f} s, {} packages read; {} built by the "
+                "driver ({:.0f} ms driver time in all); library saved",
+                made, total, rcp_n_.queued, rcp_n_.known, rcp_n_.failed, rcp_waiting_.size(), MsSince(prepare_t0_) / 1000.0,
+                prepare_files_.load(), bs.pipelines_built_async, bs.pipeline_async_ms);
+    write(total, "done");
+    std::fflush(nullptr);
+    std::_Exit(0);  // like prepare_only: nothing of the process needs a clean shutdown
+  }
   uint64_t CountReadyRecipes() {
     uint64_t n = 0;
     for (const uint32_t i : rcp_waiting_) {
@@ -9779,6 +9838,13 @@ void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_
 }
 void XenosPrebuildVertexShader(const void* be_ucode, uint32_t size_bytes) {  // notes/78 C3
   if (g_release_target) g_release_target->OnPrebuildVertexShader(be_ucode, size_bytes);
+}
+void XenosPrebuildAtStartDone(uint64_t files) {  // job 641
+  if (g_release_target) {
+    g_release_target->prepare_files_.store(files);
+    g_release_target->prepare_reading_done_.store(true, std::memory_order_release);
+  }
+  REXLOG_INFO("ue3_shader_prebuild_at_start: every queued file read ({} in all)", files);
 }
 uint64_t XenosPrebuildVariantHits(uint32_t variant) {                                           // patch 0068
   return g_release_target ? g_release_target->PrebuildVariantHits(variant) : 0;

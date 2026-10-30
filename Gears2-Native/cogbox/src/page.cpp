@@ -217,6 +217,47 @@ static std::string key_shown(const std::string &v)   // "MMB,Z" -> "Middle mouse
     return out;
 }
 
+static bool small_button(const char *label_en);
+// Job 641 (Shagg 29 Oct: "pre-compile every single Shader before they jump into gameplay even if it costs users 8 to
+// 12 minutes"): the game builds every shipped chapter recipe (--gow2_renderer_prepare_all), saves its pipeline library
+// and exits; its <shadercache>\prepare-progress.txt ("<done> <total> <state> <seconds>") drives the bar here.
+static void prepare_section(App &a, int g)
+{
+    const bool supported = a.env[g].cap.exe_has && a.env[g].cap.exe_has("gow2_renderer_prepare_all") && !a.env[g].recipe_pack.empty();
+    ImGui::Dummy(ImVec2(0, S(6)));
+    th_heading("PREPARE ALL SHADERS", g_rowX1);
+    row_desc("Builds the shaders of every chapter before you play, so chapters start without stutter while they are "
+             "built. Takes about 5-12 minutes, once - again only after a graphics driver update or a new COGBox release. "
+             "The game window opens and shows its intro while it works, then closes by itself.");
+    const bool mine = a.run.proc && a.run.prepare && a.run.game == g;
+    if (mine) {
+        std::string prog;
+        uint64_t done = 0, total = 0, secs = 0;
+        char state[32] = {};
+        if (read_file(join(game_shader_dir(g), "prepare-progress.txt"), prog, 4096))
+            sscanf(prog.c_str(), "%llu %llu %31s %llu", (unsigned long long *)&done, (unsigned long long *)&total, state, (unsigned long long *)&secs);
+        const float f = total ? std::min(1.0f, float(double(done) / double(total))) : 0.0f;
+        const std::string what = !strcmp(state, "reading") ? "reading the game's packages and building"
+                                 : !strcmp(state, "saving") ? "saving" : !strcmp(state, "done") ? "done" : "building";
+        char line[200];
+        snprintf(line, sizeof line, "%s - %llu of %llu (%d%%), %llu min %02llu s", what.c_str(), (unsigned long long)done,
+                 (unsigned long long)total, int(f * 100.0f), (unsigned long long)(secs / 60), (unsigned long long)(secs % 60));
+        ImGui::ProgressBar(f, ImVec2(g_rowX1 - ImGui::GetCursorScreenPos().x, T(26)), total ? line : "starting the game...");
+        ImGui::Dummy(ImVec2(0, S(4)));
+        if (small_button("Stop preparing")) TerminateProcess(a.run.proc, 1);
+    } else {
+        const bool ok = supported && a.st[g].ready == R_READY && !a.run.proc && a.job.state.load() != 1;
+        if (!ok) ImGui::BeginDisabled();
+        if (small_button("Prepare all shaders now")) {
+            settings_save(a);
+            play_start(a, g, true);
+        }
+        if (!ok) ImGui::EndDisabled();
+        if (!supported && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", tr("Needs this game's next build and its recipe pack (recipes folder)."));
+    }
+}
+
 static void keys_section(App &a)
 {
     static int capture = -1, captureFrame = 0;
@@ -901,6 +942,7 @@ void page_draw(App &a, ImVec2 size)
         }
         if (!shown) row_desc("Nothing to set here yet.");
         if (want == gs::Tab::Controls) keys_section(a);   // 0.2.0
+        if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
     } else about_tab(a, g);
     ImGui::PopFont();
     ImGui::EndChild();
