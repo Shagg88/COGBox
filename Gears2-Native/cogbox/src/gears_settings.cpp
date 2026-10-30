@@ -862,6 +862,15 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                                "keybind_rstick_up=None", "keybind_rstick_down=None", "keybind_rstick_left=None", "keybind_rstick_right=None" })
             a.push_back(std::string("--") + m);
     }
+    // Job 630 (Shagg 19:05): the shipped chapter recipes, built during the opening videos - every package of the game's
+    // folders is read at start-up for their shaders (the player's own files; only the recipes' shaders are built).
+    if (!env.recipe_pack.empty() && cap_exe(env, "ue3_shader_prebuild_at_start")) {
+        a.push_back("--ue3_shader_prebuild=true");
+        a.push_back("--gow2_renderer_recipe_pack=" + q(env.recipe_pack));
+        std::string dirs = env.game_data_root;
+        if (!env.update_data_root.empty()) dirs += ";" + env.update_data_root;
+        a.push_back("--ue3_shader_prebuild_at_start=" + q(dirs));
+    }
     // 0.2.0: mods - the enabled ones in load order (layer 2's --ue3_mods folder overlay)
     if (!env.mods.empty()) {
         std::string j;

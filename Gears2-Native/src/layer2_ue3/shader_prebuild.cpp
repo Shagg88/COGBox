@@ -69,6 +69,12 @@ REXCVAR_DEFINE_BOOL(ue3_shader_prebuild, false, "Gears2",
                     "cold area's new pixel shaders were in the opened packages, but ~10,000 were offered per load, so "
                     "most were not built in time, and building them doubled a cold ch10's frame time)");
 
+REXCVAR_DEFINE_STRING(ue3_shader_prebuild_at_start, "", "Gears2",
+                      "Job 630 (Shagg 19:05: build the shipped recipes during the opening videos): folders (';' between "
+                      "them - the game's data and update folders) whose packages are all read at start-up, shader caches "
+                      "first, instead of waiting for the game to open each one; with a recipe pack only its shaders are "
+                      "built. Same low-priority reader thread. Empty = only the packages the game opens");
+
 namespace {
 
 uint32_t Be32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
@@ -323,8 +329,19 @@ void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host
   if (!package && !global_cache) return;
   {
     std::lock_guard<std::mutex> lock(g_prebuild->mutex);
-    if (!g_prebuild->opened.insert(name).second) return;
-    g_prebuild->queue.push_back(*host_path);
+    if (!g_prebuild->opened.insert(name).second) {
+      // Job 630: queued at start-up and not read yet - the game wants it now, so it goes to the front.
+      auto& q = g_prebuild->queue;
+      for (auto it = q.begin(); it != q.end(); ++it)
+        if (Lower(it->filename().string()) == name) {
+          std::filesystem::path moved = std::move(*it);
+          q.erase(it);
+          q.push_front(std::move(moved));
+          break;
+        }
+      return;
+    }
+    g_prebuild->queue.push_front(*host_path);   // job 630: what the game opens now comes before the start-up list
   }
   g_prebuild->cv.notify_one();
 }
@@ -397,6 +414,46 @@ void Ue3InstallShaderPrebuildIfRequested() {
   g_prebuild->thread = std::thread(ReaderThread);
   rex::filesystem::SetFileOpenObserver(&OnFileOpened);
   REXLOG_INFO("ue3_shader_prebuild: on - packages the game opens are read for their pixel shaders (patch 0068)");
+  // Job 630: every package of the game's folders, queued at start-up (shader caches first, then the largest - the
+  // chapter packages); a package the game opens later is not read twice (the `opened` set).
+  const std::string at_start = REXCVAR_GET(ue3_shader_prebuild_at_start);
+  if (!at_start.empty()) {
+    std::thread([at_start] {
+      std::vector<std::pair<std::filesystem::path, uintmax_t>> caches, packages;
+      size_t p = 0;
+      while (p <= at_start.size()) {
+        size_t q = at_start.find(';', p);
+        if (q == std::string::npos) q = at_start.size();
+        const std::filesystem::path dir = std::filesystem::u8path(at_start.substr(p, q - p));
+        p = q + 1;
+        std::error_code ec;
+        if (dir.empty() || !std::filesystem::is_directory(dir, ec)) continue;
+        for (auto it = std::filesystem::recursive_directory_iterator(dir, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+          if (!it->is_regular_file(ec)) continue;
+          const std::string name = Lower(it->path().filename().string());
+          const uintmax_t size = it->file_size(ec);
+          if (name.ends_with(".bin") && name.find("shadercache") != std::string::npos) caches.emplace_back(it->path(), size);
+          else if (name.size() > 4 && name.ends_with(".xxx")) packages.emplace_back(it->path(), size);
+        }
+      }
+      std::sort(packages.begin(), packages.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+      uintmax_t bytes = 0;
+      size_t queued = 0;
+      {
+        std::lock_guard<std::mutex> lock(g_prebuild->mutex);
+        for (const auto* list : {&caches, &packages})
+          for (const auto& [path, size] : *list)
+            if (g_prebuild->opened.insert(Lower(path.filename().string())).second) {
+              g_prebuild->queue.push_back(path);
+              bytes += size;
+              ++queued;
+            }
+      }
+      g_prebuild->cv.notify_one();
+      REXLOG_INFO("ue3_shader_prebuild_at_start: {} file(s) queued ({} shader cache(s), {:.0f} MB in all) from {}", queued,
+                  caches.size(), double(bytes) / 1048576.0, at_start);
+    }).detach();
+  }
 #else
   REXLOG_WARN("ue3_shader_prebuild: this SDK has no file-open observer (SDK patch 32); nothing is prebuilt");
 #endif

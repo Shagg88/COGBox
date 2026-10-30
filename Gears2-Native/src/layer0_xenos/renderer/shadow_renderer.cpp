@@ -423,13 +423,14 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_shader_lookahead, true, "Gears2",
                     "Patch 0051: when a draw has to wait for a shader still compiling, first look up the shaders of the "
                     "draws already queued behind it, so new ones compile on all compile threads at once instead of one "
                     "after another on the draw thread. false = as before");
-REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_constants, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_constants, true, "Gears2",
                     "Patch 0105 (with --gow2_renderer_tex_num_format, the default): the texture-fetch post-processing "
                     "values that depend only on the fetch constant (per component sign mode, signed mode and fixed "
                     "width; per fetch fixed / integer / point sampled) are worked out once per draw on the CPU and read "
                     "by the shaders from the fetch-constant buffer, instead of per pixel (a 25-way format switch and "
                     "~40 integer ops per fetch). Same results by construction. Job 412: that per-pixel work is ~1.6 ms of "
-                    "ch15's 5.3 ms of Vulkan draws (0.7 ms of D3D12's 3.3). Changes the generated shaders");
+                    "ch15's 5.3 ms of Vulkan draws (0.7 ms of D3D12's 3.3). Changes the generated shaders. Job 630: on by default "
+                    "(job 629b: the three games' title screens identical off and on)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_tex_num_format, true, "Gears2",
                     "Patch 0040 (Canary d119505 / 2ddc5ef / 6a45452 / 0c843ef): texture fetches of fixed-point formats "
                     "follow Canary - integer num_format restores the guest integer, unsigned-biased decodes as offset "

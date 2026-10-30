@@ -63,6 +63,7 @@ struct Environment {
     bool wine = false;              // job 523: Wine / Proton (Linux, Steam Deck)
     std::vector<std::string> mods;              // 0.2.0: the enabled mod folders, in load order (--ue3_mods)
     std::map<std::string, std::string> keys;   // 0.2.0: the player's own keyboard keys, cvar -> key (CogBox.ini [Keys])
+    std::string recipe_pack;                   // job 630: <COGBox>\recipes\recipes-<exe>.rcp, "" = none
     std::string prompt_dir;                    // job 629: <COGBox>\prompts\keyboard (key-cap overlays), "" = none
     // PS1 960-961: the lines of out\extra-args.txt (raw; empty = no file). Trimmed, '#' lines skipped, {LOG} = log_dir.
     std::vector<std::string> extra_args_lines;

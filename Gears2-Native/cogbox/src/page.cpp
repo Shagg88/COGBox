@@ -62,6 +62,11 @@ void env_refresh(App &a, int g)
     e.user_data_root = game_user_dir(g);
     e.shader_cache_dir = game_shader_dir(g);
     e.mods = mods_enabled_paths(a, g);   // 0.2.0
+    {   // job 630: the shipped chapter recipes for this game (built from the player's own files at start-up)
+        std::string exe = game_def(g).exeName;
+        const std::string rcp = join(exe_dir(), "recipes\\recipes-" + exe.substr(0, exe.size() - 4) + ".rcp");
+        e.recipe_pack = file_exists(rcp) ? rcp : "";
+    }
     e.prompt_dir = dir_exists(join(exe_dir(), "prompts\\keyboard")) ? join(exe_dir(), "prompts\\keyboard") : "";   // job 629
     e.update_ready = !st.updateDir.empty() && (game_def(g).updateNeeded ? !st.portExeTu.empty() : true);
     e.g2_disc_ini_edits = g == G_GEARS2 && !st.portExeDisc.empty() && file_has(st.portExeDisc, "~=");
