@@ -10,6 +10,8 @@
 // Device creation follows tools/gn_shader_oracle_d3d12.cpp (works on the RTX 3080 Ti, Shader Model 6.6, job 088).
 // Our code (MIT).
 #include <xenos/renderer/gpu.h>
+#include <xenos/renderer/fenced_retirement.h>
+#include <xenos/tracy_profile.h>
 #include <xenos/renderer/mapped_file.h>
 #include <xenos/renderer/queries.h>
 #include <xenos/renderer/warm_source_cache.h>
@@ -307,6 +309,7 @@ struct Texture {
   std::vector<int32_t> uav_mips;  // typed UAVs of mips 1.. (created on first use)
   bool typeless = false;
   bool bits = false;     // typeless render target with a UINT bits view (BitsFormat)
+  bool imported = false;
   uint64_t serial = 0;   // creation number: a reused handle is a different texture (texture-table cache, upl-n109)
   int32_t rtv_bits = -1;
   std::vector<std::pair<uint64_t, int32_t>> views;  // texture views by key -> CPU heap slot
@@ -592,6 +595,7 @@ class CommandListProxy {
     Flush();
     std::unique_lock<std::mutex> lock(mutex_);
     if (ready_.empty() && !busy_) return;
+    COGBOX_TRACY_SCOPE("Wait for command recorder");
     const auto start = std::chrono::steady_clock::now();
     idle_cv_.wait(lock, [this] { return ready_.empty() && !busy_; });
     recording_wait_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -712,6 +716,7 @@ class CommandListProxy {
   }
   uint64_t barrier_calls = 0, barriers = 0;  // job 045: barrier counts (each call can stall the GPU pipeline)
   double recording_wait_ms = 0.0;  // caller thread only
+  uint64_t recording_wakeups = 0, recording_wakeups_avoided = 0;
   uint64_t barrier_batches = 0, barriers_merged = 0;  // job 046: emitted batches, transitions merged away
   // Job 046: barriers are queued and emitted as ONE ResourceBarrier call right before the next command of any kind,
   // so consecutive barriers (render targets, textures, the guest buffer) cost one GPU sync instead of one each. A
@@ -933,15 +938,18 @@ class CommandListProxy {
   void Flush() {
     if (cur_.empty()) return;
     std::vector<uint8_t> next;
+    bool wake;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       ready_.push_back(std::move(cur_));
+      wake = worker_sleeping_;
       if (!free_.empty()) {
         next = std::move(free_.back());
         free_.pop_back();
       }
     }
-    cv_.notify_one();
+    if (wake) { ++recording_wakeups; cv_.notify_one(); }
+    else ++recording_wakeups_avoided;
     next.clear();
     cur_ = std::move(next);
   }
@@ -969,6 +977,7 @@ class CommandListProxy {
     if (error_.compare_exchange_strong(ok, hr)) error_what_.store(what);
   }
   void Replay(const std::vector<uint8_t>& block) {
+    COGBOX_TRACY_SCOPE("Record D3D12 command batch");
     Reader r{block.data()};
     const uint8_t* end = block.data() + block.size();
     ID3D12GraphicsCommandList* l = real_;
@@ -976,6 +985,7 @@ class CommandListProxy {
       uint32_t n = 0;
       switch (Op(r.Pod<uint32_t>())) {
         case kClose: {
+          COGBOX_TRACY_SCOPE("Close D3D12 command list");
           const HRESULT hr = l->Close();
           if (FAILED(hr)) Fail(hr, "ID3D12GraphicsCommandList::Close");
           break;
@@ -983,7 +993,11 @@ class CommandListProxy {
         case kReset: {
           auto* allocator = r.Pod<ID3D12CommandAllocator*>();
           auto* state = r.Pod<ID3D12PipelineState*>();
-          allocator->Reset();
+          {
+            COGBOX_TRACY_SCOPE("Reset D3D12 command allocator");
+            allocator->Reset();
+          }
+          COGBOX_TRACY_SCOPE("Reset D3D12 command list");
           const HRESULT hr = l->Reset(allocator, state);
           if (FAILED(hr)) Fail(hr, "ID3D12GraphicsCommandList::Reset");
           break;
@@ -992,8 +1006,14 @@ class CommandListProxy {
           auto* fence = r.Pod<ID3D12Fence*>();
           const UINT64 value = r.Pod<UINT64>();
           ID3D12CommandList* lists[] = {l};
-          if (Error() == S_OK) queue_->ExecuteCommandLists(1, lists);
-          queue_->Signal(fence, value);
+          if (Error() == S_OK) {
+            COGBOX_TRACY_SCOPE("Execute D3D12 command list");
+            queue_->ExecuteCommandLists(1, lists);
+          }
+          {
+            COGBOX_TRACY_SCOPE("Signal D3D12 submission fence");
+            queue_->Signal(fence, value);
+          }
           break;
         }
         case kCopyBufferRegion: {
@@ -1166,11 +1186,14 @@ class CommandListProxy {
   }
   void Run() {
     using SetDesc = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+    ::xenos::profiling::ThreadName("COGBox D3D12 recorder");
     if (auto fn = reinterpret_cast<SetDesc>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription")))
       fn(GetCurrentThread(), L"GPU Recording (ours)");
     std::unique_lock<std::mutex> lock(mutex_);
     for (;;) {
+      worker_sleeping_ = true;  // published under the same lock as ready_, so a wake cannot be lost
       cv_.wait(lock, [this] { return stop_ || !ready_.empty(); });
+      worker_sleeping_ = false;
       if (ready_.empty() && stop_) break;
       std::vector<uint8_t> block = std::move(ready_.front());
       ready_.pop_front();
@@ -1194,7 +1217,7 @@ class CommandListProxy {
   std::condition_variable cv_, idle_cv_;
   std::deque<std::vector<uint8_t>> ready_;
   std::vector<std::vector<uint8_t>> free_;
-  bool busy_ = false, stop_ = false;
+  bool busy_ = false, stop_ = false, worker_sleeping_ = false;
   std::thread worker_;
   std::atomic<HRESULT> error_{S_OK};
   std::atomic<const char*> error_what_{nullptr};
@@ -1318,10 +1341,33 @@ class D3D12Backend final : public Backend {
 
     // Upload ring (persistently mapped).
     upload_size_ = uint64_t(std::max<uint32_t>(options.upload_ring_mb, 16)) << 20;
-    if (!CreateBuffer(upload_size_, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ,
-                      &upload_, error)) return false;
     D3D12_RANGE none{0, 0};
-    if (FAILED(hr = upload_->Map(0, &none, reinterpret_cast<void**>(&upload_mapped_)))) { error = Hr("Map(upload)", hr); return false; }
+    bool gpu_upload = false;
+    if (options.gpu_upload_ring) {
+      D3D12_FEATURE_DATA_D3D12_OPTIONS16 feature{};
+      if (SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS16, &feature, sizeof(feature))) &&
+          feature.GPUUploadHeapSupported) {
+        std::string why;
+        if (CreateBuffer(upload_size_, D3D12_HEAP_TYPE_GPU_UPLOAD, D3D12_RESOURCE_FLAG_NONE,
+                         D3D12_RESOURCE_STATE_GENERIC_READ, &upload_, why)) {
+          const HRESULT mapped = upload_->Map(0, &none, reinterpret_cast<void**>(&upload_mapped_));
+          gpu_upload = SUCCEEDED(mapped);
+          if (!gpu_upload) why = Hr("Map(GPU upload)", mapped);
+        }
+        if (!gpu_upload) {
+          SafeRelease(upload_);
+          upload_mapped_ = nullptr;
+          REXLOG_WARN("gow2_renderer: GPU upload ring unavailable ({}); using system upload memory", why);
+        }
+      } else REXLOG_INFO("gow2_renderer: GPU upload heaps not supported; using system upload memory");
+    }
+    if (!gpu_upload) {
+      if (!CreateBuffer(upload_size_, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ,
+                        &upload_, error)) return false;
+      if (FAILED(hr = upload_->Map(0, &none, reinterpret_cast<void**>(&upload_mapped_)))) { error = Hr("Map(upload)", hr); return false; }
+    }
+    REXLOG_INFO("gow2_renderer: upload ring {} MB in {}", upload_size_ >> 20,
+                gpu_upload ? "GPU upload memory (CPU writes, GPU-local reads)" : "system upload memory");
     upload_gpu_ = upload_->GetGPUVirtualAddress();
     // 64 KB of zeros for constant slots that were never set.
     if (!CreateBuffer(65536, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ,
@@ -1530,6 +1576,7 @@ class D3D12Backend final : public Backend {
 
   // ---- resources ----
   TextureHandle CreateTexture(const TextureDesc& desc) override {
+    COGBOX_TRACY_SCOPE("Create D3D12 texture");
     if (!ready_ || lost_) return 0;
     Texture t;
     t.desc = desc;
@@ -1712,8 +1759,13 @@ class D3D12Backend final : public Backend {
     // job 175 on. Let the recording thread catch up first (rare: evictions, size changes, the self-test).
     list_->Drain();
     Texture& t = textures_[h];
-    textures_dirty_ = textures_dirty_ || textures_custom_;  // its handle may come back for another texture
     deferred_releases_.push_back({t.resource, next_fence_, t.heap, t.heap_offset, t.heap_size});
+    FreeTextureDescriptors(t);
+    t = Texture{};
+    ForgetTextureHandle(h);
+  }
+
+  void FreeTextureDescriptors(const Texture& t) {
     rtv_heap_.Free(t.rtv);
     rtv_heap_.Free(t.rtv_bits);
     dsv_heap_.Free(t.dsv);
@@ -1722,7 +1774,9 @@ class D3D12Backend final : public Backend {
     view_heap_.Free(t.uav);
     for (int32_t slot : t.uav_mips) view_heap_.Free(slot);
     for (const auto& [key, slot] : t.views) view_heap_.Free(slot);
-    t = Texture{};
+  }
+  void ForgetTextureHandle(TextureHandle h) {
+    textures_dirty_ = textures_dirty_ || textures_custom_;  // its handle may come back for another texture
     for (TextureHandle& b : bound_colors_) if (b == h) b = 0;
     if (bound_depth_ == h) bound_depth_ = 0;
     for (TextureView& v : bound_views_)  // a reused handle must not match the old table (texture eviction, upl-n108)
@@ -1736,11 +1790,12 @@ class D3D12Backend final : public Backend {
     if (!ready_ || lost_ || !native_resource) return 0;
     Texture t;
     t.resource = static_cast<ID3D12Resource*>(native_resource);
-    t.resource->AddRef();  // balanced by DestroyTexture's deferred release
+    t.resource->AddRef();  // balanced by fenced import retirement or DestroyTexture
     const D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
     t.desc.width = uint32_t(rd.Width);
     t.desc.height = rd.Height;
     t.desc.format = format;
+    t.imported = true;
     t.desc.usage = kUsageSampled | ((rd.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) ? kUsageStorage : 0u);
     t.serial = ++texture_serial_;
     t.state = D3D12_RESOURCE_STATES(state_now);
@@ -1767,6 +1822,19 @@ class D3D12Backend final : public Backend {
   void ReleaseImport(TextureHandle h, uint32_t final_state) override {
     if (!ValidTexture(h)) return;
     if (Recording()) Transition(textures_[h], D3D12_RESOURCE_STATES(final_state));
+    if (options_.defer_import_release && textures_[h].imported &&
+        retired_imports_.Push(next_fence_, std::move(textures_[h]))) {
+      // Encoded calls may still name these CPU descriptors, and submitted GPU
+      // work still names the resource. Retain BOTH through the final fence.
+      // The presenter still gets the normal, drained Submit before returning.
+      textures_[h] = Texture{};
+      ForgetTextureHandle(h);
+      ++stats_.imports_deferred;
+      stats_.imports_pending = retired_imports_.Pending();
+      stats_.imports_pending_peak = std::max(stats_.imports_pending_peak, stats_.imports_pending);
+      return;
+    }
+    ++stats_.imports_synchronous;  // disabled, non-import, or bounded-queue fallback
     DestroyTexture(h);
   }
 
@@ -2472,6 +2540,15 @@ class D3D12Backend final : public Backend {
         device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(scratch_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
       }
     } else if (b.guest_u0 && guest_uav_ >= 0) {
+      if (options_.defer_guest_uav_barrier && guest_state_ == D3D12_RESOURCE_STATE_UNORDERED_ACCESS) {
+        // This may follow a compute write OR a vertex/pixel memexport. An
+        // overlapping UAV access must see it before this dispatch starts.
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        barrier.UAV.pResource = guest_;
+        list_->ResourceBarrier(1, &barrier);
+        ++stats_.guest_uav_barriers_before;
+      }
       TransitionGuest(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
       device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(guest_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     } else if (uav_slot >= 0) {
@@ -2509,10 +2586,13 @@ class D3D12Backend final : public Backend {
     list_->Dispatch(gx, gy, gz);
     if (b.scratch_u0 && scratch_) {  // patch 0021: CopyScratchToTexture transitions it next
     } else if (b.guest_u0) {
-      D3D12_RESOURCE_BARRIER u{};
-      u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-      u.UAV.pResource = guest_;
-      list_->ResourceBarrier(1, &u);
+      if (!options_.defer_guest_uav_barrier) {
+        D3D12_RESOURCE_BARRIER u{};
+        u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        u.UAV.pResource = guest_;
+        list_->ResourceBarrier(1, &u);
+        ++stats_.guest_uav_barriers_after;
+      }
     } else if (ValidTexture(b.uav_texture) && options_.batch_texture_loads && b.defer_uav_barrier) {
       textures_[b.uav_texture].uav_unbarriered |= 1ull << std::min<uint32_t>(b.uav_mip, 63);
       ++stats_.uav_barriers_deferred;
@@ -2606,9 +2686,13 @@ class D3D12Backend final : public Backend {
       if (!f) return nullptr;
       value = std::max(value, f);
     }
-    if (!occ_event_) occ_event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    // Keep completion signalled until the target changes. An auto-reset event
+    // can be consumed by an earlier wait; remembering only the fence value
+    // must not leave the next wait with an already-consumed notification.
+    if (!occ_event_) occ_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!occ_event_) return nullptr;
     if (value != occ_event_fence_) {
+      ResetEvent(occ_event_);
       if (FAILED(fence_->SetEventOnCompletion(value, occ_event_))) return nullptr;
       occ_event_fence_ = value;
     }
@@ -2866,6 +2950,7 @@ class D3D12Backend final : public Backend {
     return SubmitImpl(false);
   }
   uint64_t SubmitImpl(bool drain) {
+    COGBOX_TRACY_SCOPE("Submit D3D12 command list");
     stats_.barrier_calls = proxy_.barrier_calls;  // job 045
     stats_.barriers = proxy_.barriers;
     stats_.barrier_batches = proxy_.barrier_batches;  // job 046
@@ -2933,6 +3018,8 @@ class D3D12Backend final : public Backend {
     // submit does not wait - the recording thread submits lists in order, and the frame's last Submit drains.
     if (drain) list_->Drain(); else list_->Kick();
     stats_.recording_wait_ms = proxy_.recording_wait_ms;
+    stats_.recording_wakeups = proxy_.recording_wakeups;
+    stats_.recording_wakeups_avoided = proxy_.recording_wakeups_avoided;
     if (FAILED(list_->Error()) && !lost_) {
       lost_ = true;
       lost_reason_ = Hr(list_->ErrorWhat() ? list_->ErrorWhat() : "command recording", list_->Error());
@@ -2973,6 +3060,7 @@ class D3D12Backend final : public Backend {
     wait_site_ = saved;
   }
   void WaitForFence(uint64_t value) override {
+    COGBOX_TRACY_SCOPE("Wait for D3D12 fence");
     if (!fence_ || lost_) return;
     if (value >= next_fence_) value = Submit();  // waiting on unsubmitted work: submit it first
     if (fence_->GetCompletedValue() >= value) return;
@@ -3111,6 +3199,8 @@ class D3D12Backend final : public Backend {
     }
     proxy_.Stop();  // the recording thread is idle after the last Submit; nothing may reach it after this
     copies_.Stop();
+    retired_imports_.Clear([this](Texture& t) { FreeTextureDescriptors(t); SafeRelease(t.resource); });
+    stats_.imports_pending = 0;
     for (auto& d : deferred_releases_) ReleaseDeferred(d);
     deferred_releases_.clear();
     for (Texture& t : textures_) SafeRelease(t.resource);
@@ -3998,6 +4088,12 @@ class D3D12Backend final : public Backend {
     if (!fence_) return;
     if (poll) completed_ = fence_->GetCompletedValue();
     const uint64_t done = completed_;
+    retired_imports_.Collect(done, [this](Texture& t) {
+      FreeTextureDescriptors(t);
+      SafeRelease(t.resource);
+      ++stats_.imports_collected;
+    });
+    stats_.imports_pending = retired_imports_.Pending();
     while (!upload_markers_.empty() && upload_markers_.front().fence <= done) {
       upload_tail_ = upload_markers_.front().position;
       upload_markers_.pop_front();
@@ -4026,6 +4122,14 @@ class D3D12Backend final : public Backend {
         prev = t;
       }
       if (prev > t0) stats_.gpu_ms += double(prev - t0) * k;
+      if (ts_prev_end_ && t0 > ts_prev_end_) {  // idle between this list and the previous timed one
+        const double gap = double(t0 - ts_prev_end_) * k;
+        if (gap < 1000.0) {
+          stats_.gpu_idle_ms += gap;
+          ++stats_.gpu_idle_gaps;
+        }
+      }
+      if (prev >= t0) ts_prev_end_ = prev;
       ++stats_.gpu_lists_timed;
       ts_used_ -= l.count;
       ts_pending_.pop_front();
@@ -4050,7 +4154,10 @@ class D3D12Backend final : public Backend {
       std::vector<uint8_t> buf(len);
       auto* m = reinterpret_cast<D3D12_MESSAGE*>(buf.data());
       if (SUCCEEDED(info_queue_->GetMessage(i, m, &len)) && m->Severity <= D3D12_MESSAGE_SEVERITY_WARNING) {
-        REXLOG_WARN("gow2_renderer: D3D12 debug: {}", std::string(m->pDescription, m->DescriptionByteLength ? m->DescriptionByteLength - 1 : 0));
+        const std::string message(m->pDescription, m->DescriptionByteLength ? m->DescriptionByteLength - 1 : 0);
+        if (m->Severity <= D3D12_MESSAGE_SEVERITY_ERROR)
+          REXLOG_ERROR("gow2_renderer: D3D12 debug error {}: {}", unsigned(m->ID), message);
+        else REXLOG_WARN("gow2_renderer: D3D12 debug warning {}: {}", unsigned(m->ID), message);
         ++info_messages_logged_;
       }
     }
@@ -4069,8 +4176,8 @@ class D3D12Backend final : public Backend {
     rd.SampleDesc.Count = 1;
     rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     rd.Flags = flags;
-    // Buffers are always created in COMMON (the debug layer ignores any other InitialState, job 097); upload buffers are
-    // then readable and readback buffers writable by copies through implicit promotion.
+    // Buffers are effectively created in COMMON on this runtime, including GPU_UPLOAD
+    // (debug message 1328). Keep the existing implicit-promotion path (job 097).
     (void)state;
     const HRESULT hr = device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COMMON,
                                                         nullptr, IID_PPV_ARGS(out));
@@ -4244,6 +4351,7 @@ class D3D12Backend final : public Backend {
   ID3D12QueryHeap* ts_heap_ = nullptr;
   ID3D12Resource* ts_readback_ = nullptr;
   const uint64_t* ts_mapped_ = nullptr;
+  uint64_t ts_prev_end_ = 0;  // the last timed list's end timestamp (GPU idle between lists)
   UINT64 ts_freq_ = 0;
   uint32_t ts_head_ = 0, ts_used_ = 0;
   bool ts_open_ = false, ts_failed_ = false;
@@ -4696,6 +4804,10 @@ class D3D12Backend final : public Backend {
            warm_stages_.Stamp(stamp);
   }
   std::string warm_source_identity_;
+  std::filesystem::path WarmSourcePath() const {
+    return WarmLibraryPath().wstring() + L".sources-v2-" + std::to_wstring(
+        cogbox::shader_cache::InventoryHash(warm_source_identity_.data(), warm_source_identity_.size()));
+  }
   std::atomic<bool> warm_library_valid_{false};
   std::atomic<uint64_t> warm_source_hits_{0};
   std::atomic<uint64_t> warm_save_failed_{0};
@@ -4769,6 +4881,10 @@ class D3D12Backend final : public Backend {
     if (warm_pipeline_library_ && warm_library_dirty_.load()) SavePipelineLibrary(false, true);
     if (warm_library_valid_ && !warm_source_identity_.empty()) {
       cogbox::shader_cache::LibraryStamp stamp;
+      if (cogbox::shader_cache::WarmSourceCache::Stamp(WarmLibraryPath(), warm_source_identity_, stamp) &&
+          !warm_sources_.Save(WarmSourcePath(), stamp))
+        REXLOG_WARN("gow2_renderer: could not save the configuration's compiled source inventory");
+      // Retain the legacy inventory for older executables and rollback builds.
       if (WarmSourceStamp(stamp) &&
           !warm_sources_.Save(WarmLibraryPath().wstring() + L".sources", stamp))
         REXLOG_WARN("gow2_renderer: could not save the compiled source inventory");
@@ -4960,10 +5076,17 @@ class D3D12Backend final : public Backend {
     if (!warm_stages_.Open(WarmLibraryPath().wstring() + L".stages", compatible))
       REXLOG_WARN("gow2_renderer: compiled stage store unavailable; shaders remain available through live compilation");
     cogbox::shader_cache::LibraryStamp stamp;
-    const bool loaded = warm_library_valid_ &&
-        WarmSourceStamp(stamp) &&
-        warm_sources_.Load(WarmLibraryPath().wstring() + L".sources", stamp);
-    REXLOG_INFO("gow2_renderer: compiled source inventory: {} ({} sources)", loaded ? "valid" : "will rebuild", warm_sources_.Size());
+    bool loaded = warm_library_valid_ &&
+        cogbox::shader_cache::WarmSourceCache::Stamp(WarmLibraryPath(), warm_source_identity_, stamp) &&
+        warm_sources_.Load(WarmSourcePath(), stamp);
+    const bool configuration_inventory = loaded;
+    if (!loaded && warm_library_valid_ && WarmSourceStamp(stamp))
+      loaded = warm_sources_.Load(WarmLibraryPath().wstring() + L".sources", stamp);
+    const size_t missing = loaded ? warm_sources_.RetainPipelines(
+        [this](const std::wstring& pipeline) { return warm_stages_.Contains(pipeline); }) : 0;
+    if (missing) REXLOG_INFO("gow2_renderer: {} source entries need rebuilding because their driver stage is missing", missing);
+    REXLOG_INFO("gow2_renderer: compiled source inventory: {} ({} sources; {})", loaded ? "valid" : "will rebuild",
+                warm_sources_.Size(), configuration_inventory ? "configuration cache" : loaded ? "legacy migration" : "new configuration");
   }
   bool WarmSourceCached(bool vertex, uint64_t hash) override {
     if (!warm_sources_.Contains({hash, vertex})) return false;
@@ -5009,6 +5132,7 @@ class D3D12Backend final : public Backend {
   std::vector<Readback> readbacks_;
   std::vector<ReadbackHandle> pending_readbacks_;
   std::vector<DeferredRelease> deferred_releases_;
+  FencedRetirement<Texture, 64> retired_imports_;
   std::vector<TextureHeap> tex_heaps_;  // patch 0017
   uint64_t placed_live_bytes_ = 0, placed_live_count_ = 0;  // job 306: placed textures not yet released
   // Recorded state, re-applied lazily.

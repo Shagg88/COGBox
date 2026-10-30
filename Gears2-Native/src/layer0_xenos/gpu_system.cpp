@@ -7,6 +7,7 @@
 // through the draw observer hub exactly as SDK patches 20-23 reach it), so nothing here parses PM4 except INTERRUPT,
 // the one packet Pm4Execute hands back.
 #include "xenos/gpu_system.h"
+#include <xenos/tracy_profile.h>
 #include "xenos/display_size.h"
 
 #include <xenos/dev_tools.h>
@@ -142,6 +143,7 @@ class OurGpuSystem final : public rex::system::IGraphicsSystem {
   bool timer_tried_ = false;
 
   X_STATUS SetupPresentation(rex::ui::WindowedAppContext* app_context) override {
+    ::xenos::profiling::Initialize();
     if (presenter_) return X_STATUS_SUCCESS;
     RequestHighResolutionTimer();
     if (!CreateProvider()) {

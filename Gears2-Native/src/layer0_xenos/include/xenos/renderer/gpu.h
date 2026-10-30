@@ -240,8 +240,11 @@ struct VulkanPresentTarget {
 };
 
 struct BackendOptions {
-  bool debug_layer = false;  // only works if nothing else in the process has created a D3D12 device yet
+  bool debug_layer = false;  // forward D3D12 messages; the device owner must enable validation before creating it
   uint32_t upload_ring_mb = 256;
+  bool gpu_upload_ring = false;  // D3D12 GPU_UPLOAD when supported, with ordinary UPLOAD fallback
+  bool defer_guest_uav_barrier = false;
+  bool defer_import_release = true;  // retain imported views until the GPU fence, avoiding a recording drain
   uint32_t frames_in_flight = 2;
   uint64_t guest_memory_bytes = 512ull << 20;  // the Xenos physical address space (0x1FFFFFFF mask)
   // Stage 5C-2: run on someone else's device and queue (the SDK presenter's D3D12 provider: ID3D12Device* and its
@@ -343,6 +346,10 @@ struct BackendStats {
   uint64_t copies_deferred = 0, copy_deferred_bytes = 0, copy_flushes = 0;  // job 171: copy threads
   double gpu_ms = 0.0;           // job 176: GPU time of our command lists (first to last timestamp)
   uint64_t gpu_lists_timed = 0;
+  // 2026-10-29 (Judgment judder): GPU time between our timed command lists - the GPU had nothing of ours to run (the
+  // gap from one list's last timestamp to the next one's first; gaps over a second, loads and pauses, are left out).
+  double gpu_idle_ms = 0.0;
+  uint64_t gpu_idle_gaps = 0;
   double gpu_cat_ms[8] = {};     // job 177: GPU time by category (SetGpuCategory)
   double gpu_target_ms[32] = {};
   double gpu_target_px[32] = {};  // patch 0098 (Vulkan): samples that passed depth / stencil, by render-target slot  // job 234: draw time by render-target slot (categories 0x20-0x3F, also counted as draws)
@@ -367,6 +374,10 @@ struct BackendStats {
   uint64_t fence_waits = 0;      // WaitForFence calls that really blocked
   double fence_wait_ms = 0.0;    // CPU time blocked in them (our GPU behind, ring full, readbacks)
   double recording_wait_ms = 0.0;  // elapsed time waiting for the command-recording worker, not CPU execution
+  uint64_t recording_wakeups = 0, recording_wakeups_avoided = 0;
+  uint64_t guest_uav_barriers_before = 0, guest_uav_barriers_after = 0;
+  uint64_t imports_deferred = 0, imports_collected = 0, imports_synchronous = 0;
+  uint64_t imports_pending = 0, imports_pending_peak = 0;
   uint64_t texture_tables_reused = 0, state_calls_skipped = 0;
   uint64_t descriptors_allocated = 0, descriptor_ring_waits = 0;
   // Blocking waits by site (upl-n108): 0 renderer (frame pacing, comparisons), 1 readback release, 2 sampler table,
@@ -422,7 +433,8 @@ class Backend {
   virtual void DestroyTexture(TextureHandle texture) = 0;
   // Stage 5C-2: a texture owned by someone else on our device (D3D12: an ID3D12Resource* in `state_now`, a
   // D3D12_RESOURCE_STATES value), usable as a UAV / SRV like ours. ReleaseImport records a transition to
-  // `final_state` and forgets the handle (the owner keeps the resource).
+  // `final_state` and forgets the handle (the owner keeps the resource). The
+  // backend may retain its views/reference until the final GPU submission completes.
   virtual TextureHandle ImportTexture(void* native_resource, Format format, uint32_t state_now) = 0;
   virtual void ReleaseImport(TextureHandle texture, uint32_t final_state) = 0;
   // Notes/68 V3: our packed present words (an R32 uint texture: R, G, B in 10 bits each, as kPresentUnpackCs reads

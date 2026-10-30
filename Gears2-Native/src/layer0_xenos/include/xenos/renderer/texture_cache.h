@@ -50,6 +50,7 @@ struct TextureCacheStats {
   // Job 047 resolve-through: resolves that wrote a cached texture directly (its reload skipped); resolves that matched
   // a texture whose content was already out of date (normal reload); writes whose version moved meanwhile.
   uint64_t through_writes = 0, through_out_of_date = 0, through_raced = 0;
+  uint64_t scaled_through_writes = 0;
   // Patch 0137 (frame-rate research): where texture binding time goes as the cache grows. Slot-cache hits (no lookup)
   // and misses; lookups that ended at "no write anywhere" (epoch), at "its pages unchanged" (version walk), or went on
   // to re-check bytes; 4 KB pages walked by those version checks; watch epoch changes seen by Bind.
@@ -162,9 +163,12 @@ class TextureCache {
     void* entry = nullptr;
     uint64_t version_before = 0;
     bool covers = false;
+    bool scaled = false;
   };
   bool FindResolveThrough(uint32_t base, uint32_t pitch, uint32_t bpb_log2, uint32_t dx, uint32_t dy, uint32_t w,
                           uint32_t h, ResolveThrough& out);
+  bool FindScaledResolveThrough(uint32_t base, uint32_t pitch, uint32_t bpb_log2, uint32_t dx, uint32_t dy,
+                                uint32_t w, uint32_t h, ResolveThrough& out);
   // After the resolve's dispatch and its GuestWatch::MarkGpuWritten(extent_start, extent_length).
   void ResolveThroughWritten(const ResolveThrough& t, uint32_t extent_start, uint32_t extent_length);
   // Job 047 check: a new texture holding what the GPU untile loads from the same memory now (in queue order), to

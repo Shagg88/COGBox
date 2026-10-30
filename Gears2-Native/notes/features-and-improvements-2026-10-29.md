@@ -3,6 +3,12 @@
 **Gears of War 2, Gears of War 3 and Gears of War: Judgment**  
 October 28–29, 2026. This summarizes the changes made in this chat, rather than every feature already present in COGBox. Shader preparation and the new automatic occlusion behavior target DirectX 12.
 
+## Latest trace-guided renderer pass
+
+The normal Gears 2 base/TU6, Gears 3 base/TU6 and Judgment executables now include guarded direct refresh of cached unscaled/scaled resolve textures, bounded query-completion recovery waits, fence-based presentation-import retirement and separate compiled-source inventories for shader configurations. CPU texture-format constants default on; an explicit launcher override still takes precedence. The optional selective fused-resolve path remains off pending stronger image-equivalence checks.
+
+Validation: 149 tests / 818,076 assertions; pixel comparisons passed in all three games with the D3D12 debug layer. Judgment's matched opening check measured approximately 97.2 → 100.2 FPS and p99 14.5 → 12.7 ms. This is not the heavy checkpoint. The player's heavy-area capture still contains a submission-related hitch; all stuttering is not fixed. Details and limits: [gowj3 trace investigation](judgment-gowj3-optimization-2026-10-29.md).
+
 ## Full shader preparation before launch
 
 - Added whole-game preparation before gameplay starts, covering installed game files, title updates, DLC/user content and enabled mods.
@@ -56,6 +62,10 @@ October 28–29, 2026. This summarizes the changes made in this chat, rather tha
 - Built all five game configurations across this work. After the frame-pacing revision, the shared suite passed **139 tests / 818,002 assertions**; earlier launcher setting checks also passed.
 
 ## Measured results on this PC
+
+[Tracy profiling is now enabled](tracy-profiling-2026-10-29.md) in the five local normal game builds. The shared renderer exposes CPU zones for recording, submission, texture work, waits and diagnostics, plus frame markers and GPU-time plots. Live captures were recorded and decoded in all three games. Recording is on demand when a matching Tracy 0.14.1 viewer connects; public-release packaging remains configured to reject profiling builds.
+
+The later [Judgment CPU/GPU optimization pass](judgment-performance-2026-10-29.md) removes redundant command-recorder and query-completion notifications, forwards custom-renderer validation messages when `d3d12_debug` is enabled, and adds diagnostic counters. Two tested GPU experiments remain off by default because their results were mixed. The matched Museum debug-layer check measured about **10% lower FPS with debugging enabled**; normal average FPS after this pass was essentially unchanged. A separate long-route renderer-wait hitch remains unresolved.
 
 | Check | Result |
 | --- | --- |

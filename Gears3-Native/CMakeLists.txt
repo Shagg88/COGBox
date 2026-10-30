@@ -116,6 +116,8 @@ if(GN_GAME_VERSION STREQUAL "tu6")
 endif()
 # GPU_PLUGINS xenos: the SDK's Xenos GPU emulation, the reference our renderer is compared with (developer builds).
 rexglue_setup_target(gow3 GPU_PLUGINS xenos)
+include("${GN_LAYER0_HOME}/cmake/cogbox_tracy.cmake")
+cogbox_enable_tracy(gn_layer0_xenos gow3)
 add_custom_command(TARGET gow3 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${GN_DXC_DIR}/bin/x64/dxcompiler.dll ${GN_DXC_DIR}/bin/x64/dxil.dll $<TARGET_FILE_DIR:gow3>

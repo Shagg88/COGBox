@@ -6,6 +6,7 @@
 #include <xenos/dev_tools.h>
 #include <xenos/display_gamma.h>
 #include <xenos/gpu_system.h>
+#include <xenos/tracy_profile.h>
 #include <xenos/pm4.h>
 
 #include <rex/hash.h>  // XXH3_64bits, as the SDK hashes shader ucode
@@ -405,6 +406,7 @@ class RenderPipe {
 
   // ---- consumer (the renderer thread) ----
   void Run() {
+    ::xenos::profiling::ThreadName("COGBox renderer");
 #ifdef _WIN32
     using SetDesc = HRESULT(WINAPI*)(HANDLE, PCWSTR);
     if (auto fn = reinterpret_cast<SetDesc>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription")))
@@ -428,9 +430,11 @@ class RenderPipe {
             if (HANDLE gpu_event = static_cast<HANDLE>(XenosRendererIdleEvent())) {
               const HANDLE events[] = {work_event_, gpu_event};
               lock.unlock();
-              // Wake for queued commands or the actual GPU completion. The
-              // timeout retains query/device-failure recovery without spinning.
-              WaitForMultipleObjects(2, events, FALSE, 100);
+              // The completion event is the fast path. Recheck within 2 ms
+              // even if a notification is missed, rather than holding the
+              // guest's query-dependent frame behind a 100 ms recovery timer.
+              COGBOX_TRACY_SCOPE("Wait for renderer work or query completion");
+              WaitForMultipleObjects(2, events, FALSE, 2);
               lock.lock();
               waited_on_event = true;
             }
@@ -483,6 +487,7 @@ class RenderPipe {
 
  private:
   void RunBlock(const Block& b) {
+    COGBOX_TRACY_SCOPE("Execute renderer batch");
     RegisterFile& regs = Shadow();
     uint32_t c = 0;
     running_block_ = &b;  // patch 0051
@@ -878,6 +883,7 @@ void XenosNotifyGuestWrite() {
 }
 
 void XenosWaitGuestWrite(uint32_t seen, uint32_t timeout_ms) {
+  COGBOX_TRACY_SCOPE("Guest completion wait");
   if (g_guest_write_seq.load(std::memory_order_acquire) != seen) return;
   WaitOnAddress(&g_guest_write_seq, &seen, sizeof(seen), timeout_ms);  // returns early on any write; spurious wakes ok
 }

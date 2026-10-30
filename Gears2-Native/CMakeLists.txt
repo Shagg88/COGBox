@@ -56,6 +56,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/fps_bar.cpp
     src/layer0_xenos/ingame_menu.cpp
     src/layer0_xenos/profiler.cpp
+    src/layer0_xenos/tracy_profile.cpp
 )
 target_include_directories(gn_layer0_xenos PUBLIC src/layer0_xenos/include)
 # stb_image_write for PNG frame capture (public domain / MIT), from the pinned FLIP checkout (job 031).
@@ -155,6 +156,8 @@ endif()
 # GPU_PLUGINS xenos: the SDK's Xenos GPU emulation (from Xenia). Kept in developer builds as the reference while our
 # own renderer is built (roadmap decision D1); runs with --gpu_plugin=xenos via tools/run.ps1.
 rexglue_setup_target(gow2 GPU_PLUGINS xenos)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/cogbox_tracy.cmake")
+cogbox_enable_tracy(gn_layer0_xenos gow2)
 # CPU work (notes/60). GN_RECOMP_NO_PERF_COUNTERS: the SDK's RelWithDebInfo build defines REXGLUE_ENABLE_PROFILING, so
 # every indirect call in the recompiled code bumps one shared atomic counter nothing of ours reads. GN_CPU_ARCH: the CPU
 # level our code and the recompiled code are built for (empty = the compiler's x86-64 baseline); multiply-adds are
@@ -349,6 +352,8 @@ if(GN_BUILD_TESTS)
         tests/layer0_shader_progress_test.cpp
         tests/layer0_shader_io_test.cpp
         tests/layer0_resolve_reuse_test.cpp
+        tests/layer0_resolve_through_test.cpp
+        tests/layer0_fenced_retirement_test.cpp
         tests/layer2_config_bundle_test.cpp
         tests/layer2_shader_prebuild_test.cpp
         src/layer2_ue3/lzx.cpp

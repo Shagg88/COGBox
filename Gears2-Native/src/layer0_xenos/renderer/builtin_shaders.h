@@ -1230,6 +1230,31 @@ void main(uint3 id : SV_DispatchThreadID) {
 constexpr const char* kScaledWordsToMemCs = R"(
 Texture2D<uint> xe_words : register(t0);
 RWTexture2D<uint> xe_chunk : register(u0);
+#ifdef XE_SCALED_THROUGH
+RWTexture2D<float4> xe_through : register(u1);
+float XeUn(uint v, uint bits) { return float(v & ((1u << bits) - 1u)) / float((1u << bits) - 1u); }
+// Same conversion as kScaledLoadCs, applied to the stored words before they
+// would be loaded back from the tiled scaled-memory window.
+float4 XeThroughValue(uint4 w, uint code) {
+  float4 o = float4(0.0, 0.0, 0.0, 1.0);
+  switch (code) {
+    case 3u: o = float4(XeUn(w.x,8u),XeUn(w.x>>8u,8u),XeUn(w.x>>16u,8u),XeUn(w.x>>24u,8u)); break;
+    case 5u: o.xy = float2(XeUn(w.x,16u),XeUn(w.x>>16u,16u)); break;
+    case 6u: o = float4(XeUn(w.x,16u),XeUn(w.x>>16u,16u),XeUn(w.y,16u),XeUn(w.y>>16u,16u)); break;
+    case 8u: o.xy = float2(f16tof32(w.x),f16tof32(w.x>>16u)); break;
+    case 9u: o = float4(f16tof32(w.x),f16tof32(w.x>>16u),f16tof32(w.y),f16tof32(w.y>>16u)); break;
+    case 10u: o.x = asfloat(w.x); break;
+    case 11u: o.xy = asfloat(w.xy); break;
+    case 13u: o = float4(XeUn(w.x,10u),XeUn(w.x>>10u,10u),XeUn(w.x>>20u,10u),XeUn(w.x>>30u,2u)); break;
+    case 14u: o.x = float(w.x>>8u)/16777215.0; break;
+    case 15u: {
+      uint f24=w.x>>8u, m=f24&0xFFFFFu, e=f24>>20u;
+      o.x=e==0u?float(m)*asfloat(0x2E800000u):asfloat(((e+112u)<<23u)|(m<<3u)); break;
+    }
+  }
+  return o;
+}
+#endif
 cbuffer XeScaledConstants : register(b0) { uint4 c0; uint4 c1; uint4 c2; uint4 c3; };
 int XeTiledCombine(int oib, uint bank, uint pipe, uint ylsb) {
   return int((ylsb << 4u) | (pipe << 6u) | (bank << 11u)) | (oib & 0xF) | (((oib >> 4) & 1) << 5) |
@@ -1262,11 +1287,20 @@ void main(uint3 id : SV_DispatchThreadID) {
   uint words = c1.z == 3u ? 2u : 1u;
   uint idx = ((a - c2.y) * s * s + sub * 4u * words) >> 2u;
   uint2 hp = uint2(c0.z * s + id.x, c0.w * s + id.y);
+#ifdef XE_SCALED_THROUGH
+  uint4 through_words = uint4(0u,0u,0u,0u);
+#endif
   for (uint k = 0u; k < words; ++k) {
     uint v = XeSwapWord(xe_words.Load(int3(int(hp.x * words + k), int(hp.y), 0)), c1.w);
     uint i = idx + k;
     xe_chunk[uint2(i % c2.z, i / c2.z)] = v;
+#ifdef XE_SCALED_THROUGH
+    through_words[k] = XeSwapWord(v, c3.y);
+#endif
   }
+#ifdef XE_SCALED_THROUGH
+  if (hp.x < c3.z && hp.y < c3.w) xe_through[hp] = XeThroughValue(through_words, c3.x);
+#endif
 }
 )";
 

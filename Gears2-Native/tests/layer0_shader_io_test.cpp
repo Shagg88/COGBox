@@ -137,6 +137,60 @@ TEST_CASE("An updated inventory atomically replaces its previous snapshot", "[sh
   REQUIRE(cache.Load(file.path, stamp));
   REQUIRE(cache.Size() == 2);
 }
+TEST_CASE("Different shader configurations retain independent source inventories", "[shader-io]") {
+  TestFile a, b;
+  cogbox::shader_cache::WarmSourceCache cache;
+  const cogbox::shader_cache::LibraryStamp sa{123,896,17}, sb{124,896,17};
+  cache.Remember({1,false}, L"gp00000000000000000000000000000001");
+  REQUIRE(cache.Save(a.path,sa));
+  cache.Clear();
+  cache.Remember({2,false}, L"gp00000000000000000000000000000002");
+  REQUIRE(cache.Save(b.path,sb));
+  REQUIRE(cache.Load(a.path,sa));
+  REQUIRE(cache.Contains({1,false}));
+  REQUIRE_FALSE(cache.Contains({2,false}));
+  REQUIRE_FALSE(cache.Load(a.path,sb));
+  REQUIRE(cache.Load(b.path,sb));
+  REQUIRE(cache.Contains({2,false}));
+}
+TEST_CASE("Appending another configuration's stages preserves existing source readiness", "[shader-io]") {
+  TestFile stages, inventory;
+  cogbox::shader_cache::WarmStageStore store;
+  const std::wstring a=L"gp00000000000000000000000000000001", b=L"gp00000000000000000000000000000002";
+  REQUIRE(store.Open(stages.path,true));
+  REQUIRE(store.Put(a,"first",5));
+  cogbox::shader_cache::WarmSourceCache cache;
+  const cogbox::shader_cache::LibraryStamp anchor{123,896,17};
+  cache.Remember({1,false},a);
+  REQUIRE(cache.Save(inventory.path,anchor));
+  REQUIRE(store.Put(b,"second",6));
+  REQUIRE(store.Open(stages.path,true));
+  REQUIRE(cache.Load(inventory.path,anchor));
+  REQUIRE(cache.RetainPipelines([&](const auto& name){return store.Contains(name);})==0);
+  REQUIRE(cache.Contains({1,false}));
+}
+TEST_CASE("Truncating stage storage invalidates only sources whose records disappeared", "[shader-io]") {
+  TestFile stages, inventory;
+  cogbox::shader_cache::WarmStageStore store;
+  const std::wstring a=L"gp00000000000000000000000000000001", b=L"gp00000000000000000000000000000002";
+  REQUIRE(store.Open(stages.path,true));
+  REQUIRE(store.Put(a,"first",5));
+  const auto intact=std::filesystem::file_size(stages.path);
+  REQUIRE(store.Put(b,"second",6));
+  cogbox::shader_cache::WarmSourceCache cache;
+  const cogbox::shader_cache::LibraryStamp anchor{123,896,17};
+  cache.Remember({1,false},a); cache.Remember({2,false},b); cache.Remember({3,true},b);
+  REQUIRE(cache.Save(inventory.path,anchor));
+  std::filesystem::resize_file(stages.path,intact+4);  // incomplete second record
+  REQUIRE(store.Open(stages.path,true));
+  REQUIRE(cache.Load(inventory.path,anchor));
+  REQUIRE(cache.RetainPipelines([&](const auto& name){return store.Contains(name);})==2);
+  REQUIRE(cache.Size()==1);
+  REQUIRE(cache.Contains({1,false}));
+  REQUIRE_FALSE(cache.Contains({2,false}));
+  REQUIRE_FALSE(cache.Contains({3,true}));
+  REQUIRE_FALSE(cache.HasPipeline(b));
+}
 TEST_CASE("Compiled stages survive restart without loading their blobs into the index", "[shader-io]") {
   TestFile file;
   const std::wstring name = L"gp00000000000000000000000000000001";

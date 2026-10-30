@@ -182,13 +182,14 @@ class FrameLog {
       if (!csv_started_) StartCsv();
       csv_buf_ += std::format(
           "{},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{},{:.3f},{},"
-          "{:.3f},{},{:.3f},{},{},{},{},{},{:.2f},{},{}\n",
+          "{:.3f},{},{:.3f},{},{},{},{},{},{:.2f},{},{},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{}\n",
           i, TicksToMs(now - t0_) / 1000.0, frame_ms, have_guest ? g.ms : 0.0,
           have_guest ? TicksToMs(now - g.t) : 0.0, f.cpu_ms, rend_other, f.top_part ? f.top_part : "", f.top_part_ms,
           f.gpu_wait_ms, f.hold_ms, f.pipeline_wait_ms, f.gpu_ms, g.wait_ms[kXenosWaitGameGpu],
           g.waits[kXenosWaitGameGpu], g.wait_ms[kXenosWaitGameQuery], g.waits[kXenosWaitGameQuery],
           g.wait_ms[kXenosWaitPm4], g.waits[kXenosWaitPm4], g.wait_ms[kXenosWaitRenderer], f.draws, f.skipped_draws,
-          f.pipelines_new, f.shaders_new, have_guest ? 1 : 0, f.upload_mb, stall ? 2 : spike ? 1 : 0, cause);
+          f.pipelines_new, f.shaders_new, have_guest ? 1 : 0, f.upload_mb, stall ? 2 : spike ? 1 : 0, cause,
+          f.gpu_draws_ms, f.gpu_transfers_ms, f.gpu_resolves_ms, f.gpu_textures_ms, f.gpu_idle_ms, f.idle_submits);
       if (++csv_rows_ % 30 == 0) FlushCsv();
     }
 
@@ -208,6 +209,7 @@ class FrameLog {
       w_.hold += f.hold_ms;
       w_.pipe_wait += f.pipeline_wait_ms;
       w_.gpu += f.gpu_ms;
+      w_.gpu_idle += f.gpu_idle_ms;
       w_.game_cpu += game_cpu;
       for (uint32_t k = 0; k < kXenosWaitCount; ++k) {
         w_.wait[k] += g.wait_ms[k];
@@ -251,7 +253,7 @@ class FrameLog {
     std::vector<double> frame, game;
     double jitter = 0.0;
     uint64_t jitter_n = 0;
-    double rend_cpu = 0, gpu_wait = 0, hold = 0, pipe_wait = 0, gpu = 0, game_cpu = 0;
+    double rend_cpu = 0, gpu_wait = 0, hold = 0, pipe_wait = 0, gpu = 0, game_cpu = 0, gpu_idle = 0;
     double wait[kXenosWaitCount] = {};
     uint64_t waits[kXenosWaitCount] = {};
     std::map<std::string, uint32_t> causes, spikes;
@@ -292,13 +294,14 @@ class FrameLog {
           "max {:.2f} | 1% low {:.1f} fps, 0.1% low {:.1f} fps | jitter (frame-to-frame change) {:.2f} ms | spikes {}: "
           "{} | per frame: game {:.2f} ms (own CPU {:.2f}, GPU waits {:.2f} ms x{:.1f}, query waits {:.2f} ms x{:.1f}, GPU "
           "thread WAIT_REG_MEM {:.2f} ms x{:.1f}, GPU thread waiting for renderer {:.2f} ms), renderer own CPU {:.2f} "
-          "ms, waiting for our GPU {:.2f} ms, shader holds {:.2f} ms, pipeline waits {:.2f} ms, our GPU {:.2f} ms | "
+          "ms, waiting for our GPU {:.2f} ms, shader holds {:.2f} ms, pipeline waits {:.2f} ms, our GPU {:.2f} ms "
+          "(idle between our lists {:.2f} ms) | "
           "frames by cause: {}{}",
           last + 1 - n - w.stalls, last, mean, 1000.0 / mean, pct(0.50), pct(0.95), pct(0.99), s.back(), low(0.01),
           low(0.001), w.jitter_n ? w.jitter / double(w.jitter_n) : 0.0, w.spike_n, list(w.spikes), game_mean,
           w.game_cpu / d, w.wait[0] / d, double(w.waits[0]) / d, w.wait[1] / d, double(w.waits[1]) / d, w.wait[2] / d,
           double(w.waits[2]) / d, w.wait[3] / d, w.rend_cpu / d, w.gpu_wait / d, w.hold / d, w.pipe_wait / d,
-          w.gpu / d, list(w.causes),
+          w.gpu / d, w.gpu_idle / d, list(w.causes),
           w.stalls ? std::format(" | stalls over {:.0f} ms (loads, pauses; not in the numbers above): {} ({:.1f} s)",
                                  kStallMs, w.stalls, w.stall_ms / 1000.0)
                    : std::string());
@@ -328,7 +331,8 @@ class FrameLog {
         "renderer_top_part,renderer_top_part_ms,renderer_gpu_wait_ms,shader_hold_ms,pipeline_wait_ms,our_gpu_ms,"
         "game_gpu_wait_ms,game_gpu_waits,game_query_wait_ms,game_query_waits,gpu_thread_wait_reg_mem_ms,"
         "gpu_thread_wait_reg_mem_waits,gpu_thread_waiting_for_renderer_ms,draws,skipped_draws,new_pipelines,"
-        "new_shaders,game_frame_matched,upload_mb,spike,cause\n";
+        "new_shaders,game_frame_matched,upload_mb,spike,cause,our_gpu_draws_ms,our_gpu_transfers_ms,"
+        "our_gpu_resolves_ms,our_gpu_texture_loads_ms,our_gpu_idle_ms,idle_submits\n";
     std::thread([this, path] { CsvThread(path); }).detach();  // lives as long as the process (never destroyed)
   }
   void FlushCsv() {

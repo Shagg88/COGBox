@@ -12,8 +12,10 @@
 // on every other existing target of the same storage class and tile pitch that overlaps those tiles. The 24-point no-op
 // draws are skipped and counted. Our code (MIT).
 #include <xenos/dev_tools.h>
+#include <xenos/tracy_profile.h>
 #include <xenos/renderer/async_file_appender.h>
 #include <xenos/renderer/resolve_reuse.h>
+#include <xenos/renderer/resolve_through.h>
 #include <xenos/dxbc_gen.h>
 #include <xenos/dxbc_spirv.h>
 #include <xenos/display_size.h>
@@ -404,7 +406,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_shader_lookahead, true, "Gears2",
                     "Patch 0051: when a draw has to wait for a shader still compiling, first look up the shaders of the "
                     "draws already queued behind it, so new ones compile on all compile threads at once instead of one "
                     "after another on the draw thread. false = as before");
-REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_constants, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_constants, true, "Gears2",
                     "Patch 0105 (with --gow2_renderer_tex_num_format, the default): the texture-fetch post-processing "
                     "values that depend only on the fetch constant (per component sign mode, signed mode and fixed "
                     "width; per fetch fixed / integer / point sampled) are worked out once per draw on the CPU and read "
@@ -430,6 +432,11 @@ REXCVAR_DEFINE_INT32(gow2_renderer_cpu_split, 0, "Gears2",
                      "1 = part sums and stretches over 20 ms (the CPU split line and HITCH parts, cheap); 2 = also "
                      "every stretch over 50 us summed per source line (patch 0036 detail, as before 0153). Patch 0154: default "
                      "0 (job 461: 1 cost ~3% fps); test jobs that need the CPU split ask for 1");
+REXCVAR_DEFINE_INT32(gow2_renderer_idle_submit, -1, "Gears2",
+                     "2026-10-29 (Judgment judder): when our renderer thread runs out of work mid-frame, hand the GPU "
+                     "what it has recorded so far once at least this many draws are waiting (at most 4 times a frame), "
+                     "so the GPU starts the next frame while the game is still building it. -1 = auto (32 with strict "
+                     "occlusion queries, where the game waits for the GPU every frame; off otherwise), 0 = off");
 REXCVAR_DEFINE_INT32(gow2_renderer_submit_draws, 0, "Gears2",
                      "Patch 0138: submit our recorded work to the GPU after every N draws (0 = once a frame, as before).");
 REXCVAR_DEFINE_INT32(gow2_renderer_frames_in_flight, 1, "Gears2",
@@ -571,7 +578,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_memexport_readback, true, "Gears2",
                     "written it (job 041: Gears 3 moves DXT textures with memexport copies, and DXT textures load from "
                     "guest memory, so without this they keep the old bytes - pale blue skin). The reference emulators' "
                     "readback_memexport");
-REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_through, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_through, true, "Gears2",
                     "Job 047: a resolve into memory that a cached texture is loaded from (same base, pitch and bytes "
                     "per texel, single level) also writes that texture, the same way the GPU untile would load it, so "
                     "the texture is not reloaded (Gears 3 ch8: the shadow map is resolved and reloaded ~15 times a "
@@ -651,6 +658,14 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_index_reuse, true, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_threaded_recording, true, "Gears2",
                     "Replay our D3D12 command-list calls on a recording thread instead of the GPU worker thread "
                     "(notes/52 section 10)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_gpu_upload, false, "Gears2",
+                    "Use CPU-writable video memory for the D3D12 upload ring when supported; avoids repeated GPU "
+                    "reads from system memory. Falls back to ordinary upload memory if unavailable");
+REXCVAR_DEFINE_BOOL(gow2_renderer_guest_uav_defer, false, "Gears2",
+                    "Order guest-memory UAV writes at the next dependent access; transitions already order writes");
+REXCVAR_DEFINE_BOOL(gow2_renderer_defer_import_release, true, "Gears2",
+                    "Retain imported presentation views until their GPU fence completes, avoiding a recording "
+                    "drain during every release; bounded queue falls back to synchronous release");
 REXCVAR_DEFINE_INT32(gow2_renderer_copy_threads, 0, "Gears2",
                      "Guest-memory copies into the upload ring run on this many worker threads, finished before each "
                      "submission and before the title can see the GPU got further (job 171; 0 = inline)");
@@ -741,6 +756,12 @@ REXCVAR_DEFINE_INT32(gow2_renderer_fused_scaled_kinds, 3, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_const_gen_skip, true, "Gears2",
                     "Job 240 (default on since job 249; shots identical in ch10 / ch02): skip the float-constant compare and copy for a draw when no register write reached the "
                     "VS / PS float constants since that slot's last upload (render-pipe generation counters)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_scaled_resolve_through, true, "Gears2",
+                    "Update a cached scaled texture during the scaled-memory write, avoiding its later reload. "
+                    "Requires a single tiled level, matching layout, complete coverage and unchanged page versions");
+REXCVAR_DEFINE_INT32(gow2_renderer_fused_scaled_min_pixels, 65536, "Gears2",
+                     "Minimum guest-pixel resolve area for the optional fused path; smaller resolves keep the reference "
+                     "path. 0 restores the unrestricted experiment. Size filtering alone does not establish equivalence");
 REXCVAR_DEFINE_BOOL(gow2_renderer_fused_scaled_resolve, false, "Gears2",
                     "Job 238: the resolve shaders' scaled pass writes straight into the scaled-memory windows (one pass "
                     "per window), skipping the scaled destination texture and the copy from it. Front-buffer copies keep "
@@ -1077,6 +1098,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
   explicit ShadowRenderer(const XenosRendererHints& hints) : hints_(hints) {}
 
   bool Init(rex::Runtime* runtime) {
+    ::xenos::profiling::Initialize();
+    COGBOX_TRACY_SCOPE("Renderer initialization");
     memory_ = runtime ? runtime->memory() : nullptr;
     if (!memory_) {
       REXLOG_ERROR("gow2_renderer: no guest memory; staying off");
@@ -1110,7 +1133,10 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     }
     options.warm_workers = PrebuildLoadWorkers();  // patch 0069 (v2: the loading count; StartPrebuild governs it)
     options.warm_thread_priority = std::clamp(REXCVAR_GET(gow2_renderer_shader_prebuild_priority), -2, 0);  // v2
-    options.debug_layer = REXCVAR_GET(gow2_renderer_debug);
+    options.debug_layer = REXCVAR_GET(gow2_renderer_debug) || (!vulkan && rex::cvar::Query<bool>("d3d12_debug"));
+    options.gpu_upload_ring = REXCVAR_GET(gow2_renderer_gpu_upload) && !vulkan;
+    options.defer_guest_uav_barrier = REXCVAR_GET(gow2_renderer_guest_uav_defer) && !vulkan;
+    options.defer_import_release = REXCVAR_GET(gow2_renderer_defer_import_release) && !vulkan;
     options.placed_textures = REXCVAR_GET(gow2_renderer_placed_textures);  // patch 0017
     options.batch_texture_loads = REXCVAR_GET(gow2_renderer_texture_batch) && !vulkan;  // 2026-10-29
     options.index_buffers_in_vram = REXCVAR_GET(gow2_renderer_index_buffers_vram);  // patch 0150
@@ -1534,7 +1560,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         resolves_to_guest_ = false;
       }
     }
-    if (resolves_to_guest_ && textures_ && REXCVAR_GET(gow2_renderer_resolve_through) &&
+    if (resolves_to_guest_ && textures_ &&
+        (REXCVAR_GET(gow2_renderer_resolve_through) || REXCVAR_GET(gow2_renderer_scaled_resolve_through)) &&
         REXCVAR_GET(gow2_renderer_gpu_texture_load)) {
       const gpu::ShaderHandle wtt = cache_->GetBuiltin("words_to_guest_through_cs", rr::builtin::kWordsToGuestThroughCs,
                                                        gpu::ShaderStage::kCompute);
@@ -1607,6 +1634,13 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       const gpu::ShaderHandle stm =
           cache_->GetBuiltin("scaled_to_mem_cs", rr::builtin::kScaledWordsToMemCs, gpu::ShaderStage::kCompute);
       scaled_to_mem_ = stm ? backend_->CreateComputePipeline(stm) : 0;
+      if (REXCVAR_GET(gow2_renderer_scaled_resolve_through)) {
+        const gpu::ShaderHandle st = cache_->GetBuiltin("scaled_to_mem_through_cs",
+            std::string("#define XE_SCALED_THROUGH\n") + rr::builtin::kScaledWordsToMemCs, gpu::ShaderStage::kCompute);
+        scaled_to_mem_through_ = st ? backend_->CreateComputePipeline(st) : 0;
+        REXLOG_INFO("gow2_renderer: direct scaled texture refresh {}",
+                    scaled_to_mem_through_ ? "ON (complete matching tiled levels only)" : "shader missing - OFF");
+      }
       const gpu::ShaderHandle scp =
           cache_->GetBuiltin("scaled_copy_cs", rr::builtin::kScaledCopyWordsCs, gpu::ShaderStage::kCompute);
       scaled_copy_ = scp ? backend_->CreateComputePipeline(scp) : 0;
@@ -1897,6 +1931,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // estimate.
   void PollOcclusion() {
     if (queries_mode_ == QueriesMode::kStrict) {
+      bool completed_reports = false;
       while (!occ_pending_.empty()) {
         const PendingOcclusion& p = occ_pending_.front();
         uint64_t samples = 0;
@@ -1918,10 +1953,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         if (occ_deferred_.Complete(p.end_address, p.sequence, report, samples)) {
           ++occ_stats_.answered;
           if (!samples) ++occ_stats_.answered_hidden;
-          XenosNotifyGuestWrite();
+          completed_reports = true;
         } else ++occ_stats_.too_late;
         backend_->ReleaseOcclusionQuery(p.handle);
         occ_pending_.pop_front();
+      }
+      if (completed_reports) {
+        // Every completed report is already visible. Publish one sequence change
+        // and wake after the batch, instead of waking again for each report.
+        XenosNotifyGuestWrite();
+        ++occ_stats_.completion_notifications;
       }
       return;
     }
@@ -1983,6 +2024,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         ? backend_->OcclusionCompletionEvent(occ_pending_.front().handle) : nullptr;
   }
   bool PollGpuIdle() {
+    COGBOX_TRACY_SCOPE("Poll idle GPU results");
+    IdleSubmit();
     if (!StrictQueries() || occ_pending_.empty()) return false;
     const uint64_t t0 = __rdtsc();
     if (occ_need_submit_ && !backend_->IsLost()) {
@@ -1995,7 +2038,25 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     return !occ_pending_.empty();
   }
 
+  // 2026-10-29 (Judgment Tracy capture): with strict queries the game waits for its GPU results every frame, so after
+  // each result the GPU had nothing of ours until this frame's first submit, 2-3 ms later. The renderer thread is out
+  // of work here (its queue is empty): give the GPU what this frame has recorded so far.
+  void IdleSubmit() {
+    if (!backend_ || backend_->IsLost()) return;
+    const int32_t v = REXCVAR_GET(gow2_renderer_idle_submit);
+    const uint32_t min_draws = v < 0 ? (StrictQueries() ? 32u : 0u) : uint32_t(v);
+    if (!min_draws || idle_submits_frame_ >= kIdleSubmitsPerFrame || draw_index_ < idle_submit_draw_ + min_draws) return;
+    if (occ_open_.open) return;  // never split an open occlusion query across lists (as the strict batches don't)
+    backend_->SubmitEarly();
+    idle_submit_draw_ = draw_index_;
+    ++idle_submits_frame_;
+  }
+  static constexpr uint32_t kIdleSubmitsPerFrame = 4;
+  uint32_t idle_submit_draw_ = 0, idle_submits_frame_ = 0, idle_submits_last_frame_ = 0;
+
   template<class F> void FrameStep(const char* site, F&& work) {
+    COGBOX_TRACY_SCOPE("Renderer frame step");
+    COGBOX_TRACY_NAME(site);
     const uint64_t start = __rdtsc();
     work();
     const uint64_t ticks = __rdtsc() - start;
@@ -2019,6 +2080,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     return 0;
   }
   void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t fb_width, uint32_t fb_height) override {
+    COGBOX_TRACY_SCOPE("Renderer swap");
     if (!backend_) return;
     if (!thread_cpu_base_) thread_cpu_base_ = ThreadCpuTicks();
 #if defined(GN_PGO_GEN)
@@ -2108,6 +2170,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const double fl_pipe_wait_ms = pipeline_wait_ms_frame_;  // frame log: this frame's, before the reset below
     const uint32_t fl_draws = uint32_t(draw_index_), fl_skipped = uint32_t(pending_this_frame_);
     draw_index_ = 0;
+    idle_submits_last_frame_ = idle_submits_frame_;  // for the frame log (recorded after this reset)
+    idle_submit_draw_ = idle_submits_frame_ = 0;
     copy_index_ = 0;
     occ_lines_ = 0;
     pending_this_frame_ = shader_errors_this_frame_ = pipeline_failures_this_frame_ = 0;
@@ -2126,6 +2190,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     cpu_sum_ += ms;
     cpu_max_ = std::max(cpu_max_, ms);
     if (XenosFrameLogOn()) FrameLogRecord(ms, fl_hold_ms, fl_pipe_wait_ms, fl_draws, fl_skipped);  // before 0010
+    ::xenos::profiling::Frame(ms, backend_->Stats().gpu_ms);
     ReportHitch(ms);  // patch 0010
     if (frame_ % uint64_t(log_every_) == 0) {
       if (depth_alias_drop_ || memexport_)  // patches 0024 / 0025
@@ -3271,6 +3336,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
  private:
   void LogPresent() {
+    COGBOX_TRACY_SCOPE("Present diagnostics");
     if (present_ours_) {
       const OursStats& o = ours_stats_;
       REXLOG_INFO("gow2_present: ours frames {}-{}: swaps {} | presented {} | refresh failed {} | gamma pass not run {} "
@@ -3310,6 +3376,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint64_t last_used = 0, bytes = 0;  // patch 0032
   };
   bool scaled_resolves_ = false;
+  gpu::PipelineHandle scaled_to_mem_through_ = 0;
   std::unordered_map<std::string, ScaledDest> scaled_dests_;
   uint32_t tex_memo_scaled_ = 0;
   bool scaled_partial_ = true;
@@ -3425,7 +3492,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // After a scaled resolve into d: its rectangle (guest dx, dy, w, h) into the scaled copy of guest memory, in every
   // window it touches. False if no window could hold it (the pages then stay 1x only).
   bool ScaledToMemory(const ScaledDest& d, const ::xenos::resolve::Info& info, uint32_t dx, uint32_t dy, uint32_t w,
-                      uint32_t h, uint32_t endian) {
+                      uint32_t h, uint32_t endian, rr::TextureCache::ResolveThrough& through) {
     ++scaled_resolve_count_;
     if (!scaled_to_mem_ || !info.dest_extent_length) return false;
     if (!ScaledChunkFor(info.dest_extent_start, info.dest_extent_length)) {
@@ -3433,6 +3500,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return false;
     }
     const uint64_t s0 = info.dest_extent_start, s1 = s0 + info.dest_extent_length;
+    const bool direct = scaled_to_mem_through_ && endian <= 3 &&
+        textures_->FindScaledResolveThrough(info.dest_base, d.pitch, d.words == 2 ? 3u : 2u, dx, dy, w, h, through);
     for (const ScaledChunkInfo& c : scaled_chunks_) {
       if (s1 <= c.base || s0 >= uint64_t(c.base) + kChunkBytes) continue;
       gpu::ComputeBindings b;
@@ -3451,7 +3520,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       b.constant_count = 12;
       b.srv[0] = d.texture;
       b.uav_texture = c.texture;
-      ResolveDispatch(scaled_to_mem_, b, (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
+      if (direct) {
+        b.constants[12] = through.code;
+        b.constants[13] = through.endian;
+        b.constants[14] = through.width;
+        b.constants[15] = through.height;
+        b.constant_count = 16;
+        b.uav2_texture = through.texture;
+      }
+      ResolveDispatch(direct ? scaled_to_mem_through_ : scaled_to_mem_, b,
+                      (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
       ++scaled_window_writes_;  // job 235: windows written per scaled resolve
     }
     return true;
@@ -3590,6 +3668,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     backend_->ReleaseReadback(p.readback);
   }
   void LogDisplay() {
+    COGBOX_TRACY_SCOPE("Display diagnostics");
     if (!display_ours_ || present_ours_) return;  // 5C-2: LogPresent reports the swaps
     const DisplayStats& d = display_stats_;
     REXLOG_INFO("gow2_renderer: display (ours) frames {}-{}: swaps {} shown {} (lag {:.2f} frames, {:.1f} MB written) | "
@@ -3703,7 +3782,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   // ---- takeover T2: our resolves into the GPU guest-memory mirror ----
   void WriteResolveToGuest(gpu::TextureHandle dest, const ::xenos::resolve::Info& info, uint32_t endian, uint32_t words,
-                           uint32_t dx, uint32_t dy, uint32_t w, uint32_t h, bool scaled = false) {
+                           uint32_t dx, uint32_t dy, uint32_t w, uint32_t h, bool scaled = false,
+                           const rr::TextureCache::ResolveThrough* scaled_through = nullptr) {
     if (scaled_resolves_ && frame_ + 1 == 901 && REXCVAR_GET(gow2_renderer_scaled_miss_log))  // job 192 (0029: diag only): every resolve of one frame, to place the scaled-memory misses
       REXLOG_INFO("gow2_renderer: frame 901 resolve: dest {:08X} fmt {} pitch {} extent {:08X}+{:X} rect {},{} {}x{} "
                   "words {} endian {} bpp_log2 {} scaled {}", info.dest_base, info.dest_format,
@@ -3738,7 +3818,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // Job 047: the cached texture loaded from this memory, written by the same dispatch (not for scaled resolves, whose
     // textures load from the scaled copy).
     rr::TextureCache::ResolveThrough through;
-    const bool through_on = words_to_guest_through_ && !scaled && (info.dest_bpp_log2 == 2 || info.dest_bpp_log2 == 3) &&
+    const bool through_on = words_to_guest_through_ && REXCVAR_GET(gow2_renderer_resolve_through) && !scaled &&
+                            (info.dest_bpp_log2 == 2 || info.dest_bpp_log2 == 3) &&
                             endian <= 3 &&
                             textures_->FindResolveThrough(info.dest_base, info.dest_pitch_aligned_div_32 * 32,
                                                           words == 2 ? 3u : 2u, dx, dy, w, h, through);
@@ -3757,7 +3838,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       watch_->Watch(info.dest_extent_start, info.dest_extent_length);
     watch_->MarkGpuWritten(info.dest_extent_start, info.dest_extent_length, scaled);
     if (resolve_readback_) ReadbackResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
-    if (through_on) {
+    if (through_on || (scaled && scaled_through && scaled_through->texture)) {
+      if (!through_on) through = *scaled_through;
       textures_->ResolveThroughWritten(through, info.dest_extent_start, info.dest_extent_length);
       if (through_check_frame_ && frame_ + 1 == through_check_frame_ && through_checks_started_ < 12) {
         ++through_checks_started_;
@@ -4624,12 +4706,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     f.pipelines_new = uint32_t(bs.pipelines - fl_prev_.pipelines);
     f.shaders_new = uint32_t(cs.translated - fl_prev_.translated);
     f.upload_mb = double(bs.upload_bytes - fl_prev_.upload_bytes) / 1048576.0;
-    fl_prev_ = FrameLogPrev{bs.fence_wait_ms, bs.gpu_ms, bs.pipelines, cs.translated, bs.upload_bytes};
+    auto cat = [&](std::initializer_list<int> c) {
+      double v = 0.0;
+      for (int i : c) v += bs.gpu_cat_ms[i] - fl_prev_.cat[i];
+      return std::max(0.0, v);
+    };
+    f.gpu_draws_ms = cat({0});
+    f.gpu_transfers_ms = cat({1, 5, 6, 7});
+    f.gpu_resolves_ms = cat({2});
+    f.gpu_textures_ms = cat({3});
+    f.gpu_idle_ms = std::max(0.0, bs.gpu_idle_ms - fl_prev_.gpu_idle_ms);
+    f.idle_submits = idle_submits_last_frame_;
+    fl_prev_ = FrameLogPrev{bs.fence_wait_ms, bs.gpu_ms, bs.pipelines, cs.translated, bs.upload_bytes, {}, bs.gpu_idle_ms};
+    std::copy(std::begin(bs.gpu_cat_ms), std::end(bs.gpu_cat_ms), std::begin(fl_prev_.cat));
     XenosFrameRendered(f);
   }
   struct FrameLogPrev {
     double fence_wait_ms = 0.0, gpu_ms = 0.0;
     uint64_t pipelines = 0, translated = 0, upload_bytes = 0;
+    double cat[8] = {};
+    double gpu_idle_ms = 0.0;
   };
   FrameLogPrev fl_prev_;
   // Patch 0010: one line for a frame over --gow2_hitch_report_ms - its biggest CPU parts and what happened in it.
@@ -8155,22 +8251,25 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.uav_texture = dest;
     ResolveDispatch(depth_resolve_, b, (w + 7) / 8, (h + 7) / 8, 1);
     bool scaled = false;
+    rr::TextureCache::ResolveThrough through;
     // Per-target scale: a 1x target (below the threshold) writes only the 1x copy, so its pages stop being
     // scaled-current and textures load them at 1x (the reference's 1x1 resolves do the same).
     // Patch 0143 (upscaling modes): a scene-scale depth target above 1x also fills the output-scale copy (nearest).
     const uint32_t cross = up_scale_in_ > 1 && rt->scale == up_scale_in_ ? rt->scale : 0u;
     if (cross) b.constants[12] = res_scale_;
-    if (scaled_resolves_ && (rt->scale == res_scale_ || cross) && fused_scaled_ && (fused_kinds_ & 2u)) {  // job 238: straight into the windows (depth is never presented)
+    if (scaled_resolves_ && (rt->scale == res_scale_ || cross) && fused_scaled_ && (fused_kinds_ & 2u) &&
+        rr::FuseResolveSize(w, h, uint32_t(std::max(0, REXCVAR_GET(gow2_renderer_fused_scaled_min_pixels))))) {
       scaled = FusedScaledResolve(depth_resolve_, b, info, w, h, 1, endian, cross);
-    } else if (scaled_resolves_ && (rt->scale == res_scale_ || cross)) {  // Stage 7 phase B: every host pixel into the scaled copy
+    }
+    if (!scaled && scaled_resolves_ && (rt->scale == res_scale_ || cross)) {
       if (ScaledDest* sd = ScaledDestination(info, 1)) {
         b.constants[13] = 1u | (cross << 8);  // patch 0143
         b.uav_texture = sd->texture;
         ResolveDispatch(depth_resolve_, b, (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
-        scaled = ScaledToMemory(*sd, info, dx, dy, w, h, endian);
+        scaled = ScaledToMemory(*sd, info, dx, dy, w, h, endian, through);
       }
     }
-    WriteResolveToGuest(dest, info, endian, 1, dx, dy, w, h, scaled);
+    WriteResolveToGuest(dest, info, endian, 1, dx, dy, w, h, scaled, &through);
     if (trace_on_)
       TraceEvent(*rt, {uint32_t(std::max(info.x0, 0)), uint32_t(std::max(info.y0, 0)), uint32_t(std::max(info.x1, 0)),
                        uint32_t(std::max(info.y1, 0))},
@@ -8358,6 +8457,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ++stats_.colour_resolves_compared;
     ScaledDest* sd = nullptr;
     bool scaled_mem = false;
+    rr::TextureCache::ResolveThrough through;
     // Patch 0143 (upscaling modes): a scene-scale source above 1x (not MSAA) also fills the output-scale copy (nearest);
     // the passes below then run at the output scale with the source's scale in c3.y bits 8-15.
     const uint32_t cross = up_scale_in_ > 1 && !ms_src && source_scale == up_scale_in_ ? source_scale : 0u;
@@ -8366,9 +8466,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // for MSAA sources: their shader takes the sample count / map in c2.z / c2.w, which the fused pass uses itself.
     if (narrow_or_wide) {
       // Patch 0030: unscaled only (the scaled-memory paths are 32/64 bpp).
-    } else if (scaled_resolves_ && (source_scale == res_scale_ || cross) && fused_scaled_ && (fused_kinds_ & 1u) && !ms_src && !front_bases_.count(info.dest_base)) {
+    } else if (scaled_resolves_ && (source_scale == res_scale_ || cross) && fused_scaled_ && (fused_kinds_ & 1u) && !ms_src &&
+               !front_bases_.count(info.dest_base) &&
+               rr::FuseResolveSize(w, h, uint32_t(std::max(0, REXCVAR_GET(gow2_renderer_fused_scaled_min_pixels))))) {
       scaled_mem = FusedScaledResolve(colour_resolve_, b, info, w, h, words, endian, cross);
-    } else if (scaled_resolves_ && (source_scale == res_scale_ || cross)) {  // Stage 7 phase B (per-target scale: scaled targets only)
+    }
+    if (!narrow_or_wide && !scaled_mem && scaled_resolves_ && (source_scale == res_scale_ || cross)) {
       sd = ScaledDestination(info, words);
       if (sd) {
         b.constants[13] = 1u | (cross << 8);  // patch 0143
@@ -8377,10 +8480,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ResolveDraw(b, dx * res_scale_, dy * res_scale_, (dx + w) * res_scale_, (dy + h) * res_scale_);
         else
           ResolveDispatch(resolve_pipe, b, (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
-        scaled_mem = ScaledToMemory(*sd, info, dx, dy, w, h, endian);
+        scaled_mem = ScaledToMemory(*sd, info, dx, dy, w, h, endian, through);
       }
     }
-    WriteResolveToGuest(dest, info, endian, words, dx, dy, w, h, scaled_mem);
+    WriteResolveToGuest(dest, info, endian, words, dx, dy, w, h, scaled_mem, &through);
     if (display_ours_ && dest_bytes == 4) {  // takeover step 1: remember this frame's colour copies by destination
       DisplaySource& d = display_sources_[info.dest_base];
       d.texture = dest;
@@ -8429,6 +8532,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
 
   void LogSummary() {
+    COGBOX_TRACY_SCOPE("Renderer summary diagnostics");
     const rr::ShaderCacheStats& s = cache_->Stats();
     std::string skipped;
     for (const auto& [why, n] : stats_.skipped) skipped += " | skipped " + std::to_string(n) + ": " + why;
@@ -8506,11 +8610,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   double(stats_.memexport_readback_bytes) / 1048576.0, stats_.memexport_readback_failures,
                   stats_.memexport_readback_waits, stats_.memexport_ranges_gathered, stats_.memexport_readbacks_issued);
     }
-    if (words_to_guest_through_ && textures_) {  // job 047 (this summary's frames)
+    if ((words_to_guest_through_ || scaled_to_mem_through_) && textures_) {
       const rr::TextureCacheStats& ts = textures_->Stats();
       REXLOG_INFO("gow2_renderer: resolve-through: textures written by their resolve {} (reload skipped), matched but "
-                  "already out of date {}, version moved meanwhile {} | GPU texture loads {}",
-                  ts.through_writes, ts.through_out_of_date, ts.through_raced, ts.gpu_loads);
+                  "already out of date {}, version moved meanwhile {} | GPU texture loads {} | scaled mirrors updated {}",
+                  ts.through_writes, ts.through_out_of_date, ts.through_raced, ts.gpu_loads, ts.scaled_through_writes);
     }
     if (stats_.depth_pipeline_waits)  // patch 0132 (this summary's frames)
       REXLOG_INFO("gow2_renderer: patch 0132 depth-only / shadow pipeline waits: {} draws waited {:.1f} ms in all, {} got "
@@ -8626,11 +8730,24 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         const uint64_t cpu = ThreadCpuTicks();
         REXLOG_INFO("gow2_renderer: frames {}-{}: frame steps (elapsed ms/frame, includes waits): {} | render thread "
                     "CPU {:.3f} ms/frame (OS thread time, includes idle polling; excludes recording/copy workers) | "
-                    "waiting for command recorder {:.3f} ms/frame (included in elapsed CPU split)",
+                    "waiting for command recorder {:.3f} ms/frame (included in elapsed CPU split) | recorder wakes "
+                    "{:.1f}/frame, redundant notifications avoided {:.1f}/frame | guest-memory UAV barriers "
+                    "before writes {:.1f}/frame, after writes {:.1f}/frame",
                     frame_ - uint64_t(log_every_) + 1, frame_, steps,
                     cpu >= thread_cpu_base_ ? double(cpu - thread_cpu_base_) / 10000.0 / log_every_ : 0.0,
-                    (bs.recording_wait_ms - detail_base_.recording_wait_ms) / log_every_);
+                    (bs.recording_wait_ms - detail_base_.recording_wait_ms) / log_every_,
+                    double(bs.recording_wakeups - detail_base_.recording_wakeups) / log_every_,
+                    double(bs.recording_wakeups_avoided - detail_base_.recording_wakeups_avoided) / log_every_,
+                    double(bs.guest_uav_barriers_before - detail_base_.guest_uav_barriers_before) / log_every_,
+                    double(bs.guest_uav_barriers_after - detail_base_.guest_uav_barriers_after) / log_every_);
         thread_cpu_base_ = cpu;
+        REXLOG_INFO("gow2_renderer: frames {}-{}: presentation imports: deferred {}, collected {}, synchronous {} | "
+                    "pending {} (peak {})",
+                    frame_ - uint64_t(log_every_) + 1, frame_,
+                    bs.imports_deferred - detail_base_.imports_deferred,
+                    bs.imports_collected - detail_base_.imports_collected,
+                    bs.imports_synchronous - detail_base_.imports_synchronous,
+                    bs.imports_pending, bs.imports_pending_peak);
       }
       gpu_ms_base_ = bs.gpu_ms;
       std::copy(std::begin(bs.gpu_cat_ms), std::end(bs.gpu_cat_ms), gpu_cat_base_);
@@ -8843,7 +8960,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "0 -> {} ({:.1f}%), mean "
                   "{:.1f}, after {:.2f} frames; corrected {}, too late {}, estimate visibility wrong {}, dropped {} | "
                   "SDK answers: fake {}, host {} | draws {:.1f}/frame | backend: segments {} refused {} | reports known {} | "
-                  "answered hidden {}, WRONGLY hidden {} (visible objects skipped), zeros not yet trusted {}",
+                  "answered hidden {}, WRONGLY hidden {} (visible objects skipped), zeros not yet trusted {} | "
+                  "completion notifications {:.1f}/frame",
                   queries_mode_ == QueriesMode::kStrict ? "strict" : queries_mode_ == QueriesMode::kAnswer ? "answer" : "shadow", frame_ - uint64_t(log_every_) + 1, frame_,
                   o.ends, double(o.ends) / log_every_, o.ours, o.incomplete, o.refused, o.unended, o.proxies, o.answered,
                   o.from_cache, o.fallback, o.results, o.zero, o.results ? 100.0 * double(o.zero) / double(o.results) : 0.0,
@@ -8851,7 +8969,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   o.results ? double(o.latency_frames) / double(o.results) : 0.0, o.corrected, o.too_late,
                   o.visibility_changed, o.dropped, o.sdk_fake, o.sdk_host, double(stats_.draws) / log_every_,
                   b.occlusion_segments - occ_backend_segments_base_, b.occlusion_refused - occ_backend_refused_base_,
-                  occ_answers_.size(), o.answered_hidden, o.wrong_hidden, o.zero_not_trusted);
+                  occ_answers_.size(), o.answered_hidden, o.wrong_hidden, o.zero_not_trusted,
+                  double(o.completion_notifications) / log_every_);
       occ_backend_segments_base_ = b.occlusion_segments;
       occ_backend_refused_base_ = b.occlusion_refused;
       occ_stats_ = OcclusionStats{};
@@ -9379,7 +9498,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint64_t ends = 0, ours = 0, incomplete = 0, refused = 0, unended = 0, answered = 0, from_cache = 0, fallback = 0,
              results = 0, zero = 0, samples = 0, latency_frames = 0, corrected = 0, too_late = 0,
              visibility_changed = 0, dropped = 0, sdk_fake = 0, sdk_host = 0, proxies = 0, zero_not_trusted = 0,
-             answered_hidden = 0, wrong_hidden = 0;
+             answered_hidden = 0, wrong_hidden = 0, completion_notifications = 0;
   };
   OcclusionStats occ_stats_;
   uint64_t occ_backend_segments_base_ = 0, occ_backend_refused_base_ = 0;

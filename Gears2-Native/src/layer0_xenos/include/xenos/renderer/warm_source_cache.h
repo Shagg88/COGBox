@@ -47,6 +47,21 @@ class WarmSourceCache {
   }
   size_t Size() const { std::lock_guard<std::mutex> lock(mutex_); return sources_.size(); }
   void Clear() { std::lock_guard<std::mutex> lock(mutex_); sources_.clear(); pipelines_.clear(); }
+  // A stage store may grow or lose an interrupted final append. Validate the
+  // individual referenced records rather than invalidating every configuration
+  // merely because the append-only file's size or timestamp changed.
+  template<class Exists> size_t RetainPipelines(Exists&& exists) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto it = pipelines_.begin(); it != pipelines_.end();) {
+      if (!exists(*it)) it = pipelines_.erase(it); else ++it;
+    }
+    size_t removed = 0;
+    for (auto it = sources_.begin(); it != sources_.end();) {
+      if (!pipelines_.contains(it->second)) { it = sources_.erase(it); ++removed; }
+      else ++it;
+    }
+    return removed;
+  }
   bool Load(const std::filesystem::path& path, const LibraryStamp& expected) {
     Clear();
     std::ifstream f(path, std::ios::binary | std::ios::ate);

@@ -244,5 +244,9 @@ struct XenosRenderedFrame {
   double top_part_ms = 0;
   uint32_t draws = 0, skipped_draws = 0, pipelines_new = 0, shaders_new = 0;
   double upload_mb = 0;
+  // 2026-10-29: where our GPU time went (lists that finished since the previous frame) and how long the GPU sat idle
+  // between our lists; idle submits = the renderer handed the GPU its recorded work early because it ran out of work.
+  double gpu_draws_ms = 0, gpu_transfers_ms = 0, gpu_resolves_ms = 0, gpu_textures_ms = 0, gpu_idle_ms = 0;
+  uint32_t idle_submits = 0;
 };
 void XenosFrameRendered(const XenosRenderedFrame& frame);
