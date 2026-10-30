@@ -37,11 +37,11 @@ REXCVAR_DEFINE_STRING(gow2_texture_replace_dir, "", "Gears2",
                       "(BC blocks, rows top to bottom) for the guest texture whose base-level guest bytes have that XXH3. "
                       "Same size and format as the original; such textures load on the CPU path. Empty = off");
 REXCVAR_DEFINE_STRING(gow2_texture_dump_dir, "", "Gears2",
-                      "Developer (job 620): write each new 2D block-compressed texture (one layer) of a size in "
-                      "--gow2_texture_dump_sizes as <dir>/tex-<hash16>-f<fmt>-<w>x<h>.bin (level 0, host-format blocks) - "
-                      "to find texture atlases such as button prompts. Empty = off");
+                      "Developer (job 620; 628: any format): write each new 2D texture (one layer) of a size in "
+                      "--gow2_texture_dump_sizes as <dir>/tex-<hash16>-f<fmt>-<w>x<h>.bin (level 0, host-format data: "
+                      "BC blocks or texel rows) - to find texture atlases such as button prompts. Empty = off");
 REXCVAR_DEFINE_STRING(gow2_texture_dump_sizes, "128x128,256x256,512x512,1024x1024,512x256,256x512,1024x512,512x1024",
-                      "Gears2", "Sizes --gow2_texture_dump_dir writes (WxH, comma-separated)");
+                      "Gears2", "Sizes --gow2_texture_dump_dir writes (WxH, comma-separated; 'all' = every size from 32x32 up)");
 
 namespace {
 // Job 620: texture replacement / dump state (one TextureCache per process).
@@ -50,6 +50,7 @@ struct TexSwap {
   std::string replace_dir, dump_dir;
   std::unordered_set<uint64_t> replace;     // hashes with replacement files
   std::unordered_set<uint32_t> dump_sizes;  // w << 16 | h
+  bool dump_all = false;                    // job 628: --gow2_texture_dump_sizes=all
   std::unordered_set<uint64_t> dumped;
   uint32_t dump_count = 0, replaced = 0;
   void Init() {
@@ -72,6 +73,7 @@ struct TexSwap {
     if (!dump_dir.empty()) {
       std::filesystem::create_directories(std::filesystem::path(dump_dir), ec);
       const std::string sizes = REXCVAR_GET(gow2_texture_dump_sizes);
+      dump_all = sizes == "all";
       size_t p = 0;
       while (p < sizes.size()) {
         size_t q = sizes.find(',', p);
@@ -80,10 +82,11 @@ struct TexSwap {
         if (std::sscanf(sizes.substr(p, q - p).c_str(), "%ux%u", &w, &h) == 2) dump_sizes.insert((w << 16) | h);
         p = q + 1;
       }
-      REXLOG_INFO("gow2_texture_dump: block-compressed textures of {} size(s) to {}", dump_sizes.size(), dump_dir);
+      REXLOG_INFO("gow2_texture_dump: textures of {} to {}", dump_all ? std::string("every size") : std::to_string(dump_sizes.size()) + " size(s)", dump_dir);
     }
   }
-  bool On() const { return !replace.empty() || !dump_sizes.empty(); }
+  bool Dumps(uint32_t w, uint32_t h) const { return dump_all ? (w >= 32 && h >= 32) : dump_sizes.count((w << 16) | h) != 0; }
+  bool On() const { return !replace.empty() || !dump_sizes.empty() || dump_all; }
   bool ReadLevel(uint64_t h, uint32_t level, std::vector<uint8_t>& out) const {
     char leaf[40];
     std::snprintf(leaf, sizeof(leaf), "%016llX_%u.bin", static_cast<unsigned long long>(h), level);
@@ -946,14 +949,14 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   }
   const uint32_t layers = gd == tx::Dimension::k3D ? 1 : layout.array_size;
   const bool host_3d = host_kind == 2;
-  // Job 620: replacement / dump candidates (2D, one layer, block-compressed) are hashed and kept on the CPU path.
+  // Job 620: replacement / dump candidates (2D, one layer; job 628: any format) are hashed and kept on the CPU path.
   g_swap.Init();
   uint64_t swap_hash = 0;
   bool swap_replace = false, swap_dump = false;
-  if (g_swap.On() && hf.block_compressed && gd == tx::Dimension::k2DOrStacked && layers == 1 && host_kind == 0) {
+  if (g_swap.On() && gd == tx::Dimension::k2DOrStacked && layers == 1 && host_kind == 0) {
     swap_hash = XXH3_64bits(guest_ + base, std::max(layout.base.level_data_extent_bytes, 1u));
     swap_replace = g_swap.replace.count(swap_hash) != 0;
-    swap_dump = !g_swap.dump_sizes.empty() && g_swap.dump_sizes.count((w << 16) | h) && g_swap.dump_count < 2000 &&
+    swap_dump = !g_swap.dump_dir.empty() && g_swap.Dumps(w, h) && g_swap.dump_count < 4000 &&
                 g_swap.dumped.insert(swap_hash).second;
   }
   const bool swap_cpu = swap_replace || swap_dump;
