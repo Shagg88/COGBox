@@ -880,6 +880,12 @@ hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_qu
   options.tex_post_constants = tex_post_constants_;  // patch 0105
   options.tex_post_affine = tex_post_affine_;        // job 634
   options.dxbc_mul_min_abs = mul_min_abs_;           // job 634
+  options.dxbc_structured_jumps = lean_.structured_jumps;  // job 636
+  options.dxbc_mul_movc = lean_.mul_movc;
+  options.dxbc_short_r21 = lean_.short_r21;
+  options.dxbc_short_swap = lean_.short_swap;
+  options.dxbc_short_degamma = lean_.short_degamma;
+  options.dxbc_coalesce_moves = lean_.coalesce_moves;
   options.vertex_index_clamp = vertex_index_clamp_;    // patch 0028
   options.dxbc_direct_operands = options.dxbc_loop_only_if_needed = options.dxbc_slim_prologue = dxbc_slim_;  // 0060
   options.dxbc_canary_minmax = dxbc_canary_maths_;                                                           // 0060

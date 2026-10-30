@@ -86,6 +86,18 @@ struct HlslOptions {
   bool tex_post_affine = false;
   // Job 634 (DXBC back end): the legacy multiply's zero rule as min(|x|, |y|) != 0 (four instructions, same bits).
   bool dxbc_mul_min_abs = false;
+  // Job 634 (DXBC back end): forward-jump-only programs as nested if / else instead of the pc loop.
+  bool dxbc_structured_jumps = false;
+  // Job 634 (DXBC back end): the multiply's zero rule in three instructions (movc on min(|x|, |y|)); overrides
+  // dxbc_mul_min_abs. Differs only for a denormal times Inf / NaN.
+  bool dxbc_mul_movc = false;
+  // Job 634 (DXBC back end): xe_r21 in nine instructions instead of eleven (the same bits for every input).
+  bool dxbc_short_r21 = false;
+  // Job 634 (DXBC back end): the vertex word swap in 12 instructions and the gamma decode in 12, both the same bits.
+  bool dxbc_short_swap = false, dxbc_short_degamma = false;
+  // Job 634 (DXBC back end): an op into a scratch temp followed by its move to the destination writes the
+  // destination directly when the temp is not read again (a peephole pass on the finished code).
+  bool dxbc_coalesce_moves = false;
 };
 
 // Patch 0105: the two dwords per fetch slot that tex_post_constants shaders read (fetch = the slot's 6 fetch-constant

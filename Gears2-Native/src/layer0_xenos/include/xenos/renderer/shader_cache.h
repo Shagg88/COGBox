@@ -186,6 +186,12 @@ class ShaderCache {
   void SetTexPostConstants(bool on) { tex_post_constants_ = on; }  // patch 0105
   void SetTexPostAffine(bool on) { tex_post_affine_ = on; }        // job 634
   void SetMulMinAbs(bool on) { mul_min_abs_ = on; }                // job 634
+  // Job 636: the leaner DXBC forms (xenos::hlsl::HlslOptions dxbc_structured_jumps ... dxbc_coalesce_moves).
+  struct Lean {
+    bool structured_jumps = false, mul_movc = false, short_r21 = false, short_swap = false, short_degamma = false,
+         coalesce_moves = false;
+  };
+  void SetLean(const Lean& l) { lean_ = l; }
   void SetVertexIndexClamp(bool on) { vertex_index_clamp_ = on; }    // patch 0028
   // --gow2_renderer_shader_backend=dxbc: guest shaders are translated straight to DXBC (D3D12 only). Set once,
   // before the first Get.
@@ -251,6 +257,7 @@ class ShaderCache {
   bool tex_num_format_ = false;  // patch 0040
   bool tex_post_constants_ = false;  // patch 0105
   bool tex_post_affine_ = false, mul_min_abs_ = false;  // job 634
+  Lean lean_;                                            // job 636
   bool vertex_index_clamp_ = false;   // patch 0028
   bool dxbc_ = false;
   bool dxbc_slim_ = false, dxbc_canary_maths_ = false;  // patch 0060

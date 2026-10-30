@@ -165,6 +165,27 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_affine, true, "Gears2",
                     "fetch constant - ~45 instructions a fetch instead of ~100 (the driver's pipeline build time grows "
                     "with the DXBC size). The same values bit for bit (job 634: 367M CPU cases, and all 3,423 shaders "
                     "of a Judgment run interpreted on the same inputs). false = as before");
+// Job 636: the second round of smaller DXBC (each checked on all 3,423 shaders of a Judgment run: the same outputs on
+// 10 random input sets; the short forms also on every possible input).
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_structured_jumps, true, "Gears2",
+                    "Job 636 (DXBC back end): a program whose only flow control is forward jumps as nested if / else "
+                    "instead of the pc loop (1,209 of 1,212 looping shaders of a Judgment run). false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_mul_movc, true, "Gears2",
+                    "Job 636 (DXBC back end): the legacy multiply in three instructions (movc on min(|x|, |y|)); "
+                    "differs from the four-instruction form only for a denormal times Inf / NaN. false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_short_r21, true, "Gears2",
+                    "Job 636 (DXBC back end): the 21-bit result rounding in nine instructions instead of eleven - the "
+                    "same bits for all 2^32 inputs. false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_short_swap, true, "Gears2",
+                    "Job 636 (DXBC back end): the vertex word byte swap in 12 instructions instead of 17 - the same bits "
+                    "for every value and mode. false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_short_degamma, true, "Gears2",
+                    "Job 636 (DXBC back end): the texture gamma decode as a sum of clamped segments, 12 instructions "
+                    "instead of 16 - the same bits for every float in [0, 1]. false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_coalesce_moves, true, "Gears2",
+                    "Job 636 (DXBC back end): an instruction into a scratch temp followed by its move to the destination "
+                    "writes the destination itself when the temp is not read again (a pass on the finished code). "
+                    "false = as before");
 REXCVAR_DEFINE_BOOL(gow2_renderer_dxbc_mul_min_abs, true, "Gears2",
                     "Job 634 (DXBC back end): the legacy multiply's zero rule (0 * anything = 0) in four instructions "
                     "(min(|x|, |y|) != 0) instead of five - the same bits (9M operand pairs, and all 3,423 shaders of "
@@ -1280,6 +1301,16 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     tex_post_affine_ = tex_post_constants_ && REXCVAR_GET(gow2_renderer_tex_post_affine);  // job 634
     cache_->SetTexPostAffine(tex_post_affine_);
     cache_->SetMulMinAbs(REXCVAR_GET(gow2_renderer_dxbc_mul_min_abs));  // job 634
+    {
+      rr::ShaderCache::Lean lean;  // job 636
+      lean.structured_jumps = REXCVAR_GET(gow2_renderer_dxbc_structured_jumps);
+      lean.mul_movc = REXCVAR_GET(gow2_renderer_dxbc_mul_movc);
+      lean.short_r21 = REXCVAR_GET(gow2_renderer_dxbc_short_r21);
+      lean.short_swap = REXCVAR_GET(gow2_renderer_dxbc_short_swap);
+      lean.short_degamma = REXCVAR_GET(gow2_renderer_dxbc_short_degamma);
+      lean.coalesce_moves = REXCVAR_GET(gow2_renderer_dxbc_coalesce_moves);
+      cache_->SetLean(lean);
+    }
     cache_->SetVertexIndexClamp(REXCVAR_GET(gow2_renderer_vertex_index_clamp));  // patch 0028
     {
       const std::string be = REXCVAR_GET(gow2_renderer_shader_backend);

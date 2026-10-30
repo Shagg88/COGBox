@@ -282,6 +282,14 @@ struct Gen {
     Scope sc(*this);
     const uint32_t pr = Push(), z = Push();
     a.OpMul(R(pr, mask), x, y);
+    if (opt.dxbc_mul_movc) {
+      // Job 634: three instructions - movc tests the bits of min(|x|, |y|), so a zero factor (either sign: the abs) gives
+      // +0 and anything else the product. Differs from the eq form only for a denormal factor (its bits are not 0,
+      // where eq flushes it) times Inf / NaN: NaN instead of 0.
+      a.OpMin(R(z, mask), x.Abs(), y.Abs());
+      a.OpMovC(R(d, mask), S(z), S(pr), LF(0.0f));
+      return;
+    }
     if (opt.dxbc_mul_min_abs) {
       // Job 634: four instructions instead of five - min(|x|, |y|) is 0 exactly when x or y is (a NaN factor gives the
       // other one; both NaN gives NaN, which is not 0), and the product AND (that min != 0) is +0 or the product. The
@@ -350,6 +358,22 @@ struct Gen {
       a.OpMov(R(d, kX), v);
       return;
     }
+    if (opt.dxbc_short_r21) {
+      // Job 634: nine instructions instead of eleven - the round half up of the low two bits as (v + 2) & ~3 (equal to
+      // t + 4 when (v & 3) >= 2, else t), the same overflow and Inf / NaN rules. The same bits for all 2^32 inputs.
+      Scope sc(*this);
+      const uint32_t t = Push(), r = Push(), c = Push();
+      a.OpAnd(R(t, kX), v, LU(~3u));
+      a.OpIAdd(R(r, kX), v, LU(2));
+      a.OpAnd(R(r, kX), S1(r, 0), LU(~3u));
+      a.OpAnd(R(c, kX), S1(r, 0), LU(0x7F800000u));
+      a.OpIEq(R(c, kX), S1(c, 0), LU(0x7F800000u));
+      a.OpMovC(R(r, kX), S1(c, 0), S1(t, 0), S1(r, 0));
+      a.OpAnd(R(c, kX), v, LU(0x7F800000u));
+      a.OpIEq(R(c, kX), S1(c, 0), LU(0x7F800000u));
+      a.OpMovC(R(d, kX), S1(c, 0), v, S1(r, 0));
+      return;
+    }
     Scope sc(*this);
     const uint32_t e = Push(), t = Push(), u = Push(), f = Push(), g = Push();
     a.OpAnd(R(e, kX), v, LU(0x7F800000u));
@@ -409,6 +433,26 @@ struct Gen {
   }
   // xe_swap(v, e) with e in a component: 8-in-16 for 1 / 2, 16-in-32 for 2 / 3.
   void Swap(uint32_t d, const Src& v, const Src& e, uint32_t mask) {
+    if (opt.dxbc_short_swap) {
+      // Job 634: 12 instructions instead of 17 - 8-in-16 for e = 1 or 2 is ((e + 1) & 2) != 0, 16-in-32 for e = 2 or 3
+      // is (e & 2) != 0 (e is 0-3). The same bits for every value and mode (2^32 x 4, job 634).
+      Scope sc(*this);
+      const uint32_t c = Push(), t = Push(), u = Push();
+      a.OpAnd(R(t, mask), v, LU(0x00FF00FFu));
+      a.OpIShL(R(t, mask), S(t), LU(8));
+      a.OpUShR(R(u, mask), v, LU(8));
+      a.OpAnd(R(u, mask), S(u), LU(0x00FF00FFu));
+      a.OpOr(R(t, mask), S(t), S(u));
+      a.OpIAdd(R(c, mask), e, LU(1));
+      a.OpAnd(R(c, mask), S(c), LU(2));
+      a.OpMovC(R(d, mask), S(c), S(t), v);
+      a.OpAnd(R(c, mask), e, LU(2));
+      a.OpIShL(R(t, mask), S(d), LU(16));
+      a.OpUShR(R(u, mask), S(d), LU(16));
+      a.OpOr(R(t, mask), S(t), S(u));
+      a.OpMovC(R(d, mask), S(c), S(t), S(d));
+      return;
+    }
     Scope sc(*this);
     const uint32_t c = Push(), t = Push(), u = Push();
     a.OpMov(R(d, mask), v);
@@ -447,6 +491,24 @@ struct Gen {
     const uint32_t x = Push(), l = Push(), t = Push(), c = Push();
     Sat(x, g, mask);
     a.OpMul(R(x, mask), S(x), LF(255.0f));
+    if (opt.dxbc_short_degamma) {
+      // Job 634: l = x + max(x - 64, 0) + 2 max(x - 96, 0) + 4 max(x - 192, 0) - the same four segments (x, 2x - 64,
+      // 4x - 256, 8x - 1024) without the compares and selects, 11 instructions instead of 15. Every step is exact for
+      // x = sat(g) * 255, so the same bits for every float g in [0, 1] (all 1,065,353,217 checked, job 634).
+      a.OpAdd(R(t, mask), S(x), LF(-64.0f));
+      a.OpMax(R(t, mask), S(t), LF(0.0f));
+      a.OpAdd(R(l, mask), S(x), S(t));
+      a.OpAdd(R(t, mask), S(x), LF(-96.0f));
+      a.OpMax(R(t, mask), S(t), LF(0.0f));
+      a.OpMul(R(t, mask), S(t), LF(2.0f));
+      a.OpAdd(R(l, mask), S(l), S(t));
+      a.OpAdd(R(t, mask), S(x), LF(-192.0f));
+      a.OpMax(R(t, mask), S(t), LF(0.0f));
+      a.OpMul(R(t, mask), S(t), LF(4.0f));
+      a.OpAdd(R(l, mask), S(l), S(t));
+      a.OpDiv(R(d, mask), S(l), LF(1023.0f));
+      return;
+    }
     // 512 + (x - 192) * 8
     a.OpAdd(R(l, mask), S(x), LF(-192.0f));
     a.OpMul(R(l, mask), S(l), LF(8.0f));
@@ -704,6 +766,7 @@ struct Gen {
     }
   }
 
+  bool scalar_in_ps_ = false;  // job 634: this slot's scalar result is ps (St().x) itself, not a copy in sr
   void EmitAlu(const Alu& al) {
     const bool vec_writes = al.vector_result.write_mask != 0;
     const bool do_vector = !al.IsVectorOpDefaultNop() && (vec_writes || VectorChangesState(al.vector_opcode));
@@ -751,7 +814,9 @@ struct Gen {
       scalar_source(al.scalar_operands[1], 0, 1, sb);
     }
 
-    if (!do_vector) a.OpMov(R(vr), LF(0.0f));
+    // Job 634: the zero for a nop's register writes only when something writes it.
+    if (!do_vector && (vec_writes || !opt.dxbc_coalesce_moves)) a.OpMov(R(vr), LF(0.0f));
+    scalar_in_ps_ = false;
     if (do_vector) EmitVectorOp(al, vsrc[0], vsrc[1], vsrc[2], s0, vr, vm);
 
     if (do_scalar) EmitScalarOp(al, sa, sb, sr);
@@ -778,7 +843,7 @@ struct Gen {
           rel = Push();
           RelRegIndex(rel, s.index);
         }
-        a.OpMov(RegDest(s.index, rel, s.write_mask), S(sr, Src::kXXXX));
+        a.OpMov(RegDest(s.index, rel, s.write_mask), scalar_in_ps_ ? S(St(), Src::kXXXX) : S(sr, Src::kXXXX));
       }
     } else if (v.write_mask || s.write_mask) {
       if (v.target == Target::kExportAddress) {
@@ -800,7 +865,7 @@ struct Gen {
           const Src val = c == Swizzle::k0 ? LF(0.0f) : c == Swizzle::k1 ? LF(1.0f) : S(vr);
           a.OpMov(ExportDest(dst, bit), val);
         } else if (s.write_mask & bit) {
-          a.OpMov(ExportDest(dst, bit), S(sr, Src::kXXXX));
+          a.OpMov(ExportDest(dst, bit), scalar_in_ps_ ? S(St(), Src::kXXXX) : S(sr, Src::kXXXX));
         }
       }
       if (v.target == Target::kDepth || s.target == Target::kDepth) writes_depth = true;
@@ -1115,6 +1180,7 @@ struct Gen {
     }
     // The clamp applies to the written value; ps keeps the unclamped result.
     if (al.scalar_result.clamp) Sat(sr, ps, kX);
+    else if (opt.dxbc_coalesce_moves) scalar_in_ps_ = true;  // job 634: the writes read ps itself (unchanged until then)
     else a.OpMov(R(sr, kX), ps);
   }
 
@@ -1984,6 +2050,98 @@ struct Gen {
 
   void SetPc(uint32_t v) { a.OpMov(R(Fl(), kX), LU(v)); }
 
+  // Job 634 (opt.dxbc_structured_jumps): a program whose only flow control is forward jumps (1,210 of the 1,211 jumping
+  // shaders of a Judgment run - no loops, calls or returns) as nested if / else blocks instead of the pc loop: a jump
+  // over [k + 1, t) becomes `if (!jump) { ... }`, and one whose skipped part ends in an unconditional jump to u becomes
+  // `if (!jump) { [k + 1, t - 1) } else { [t, u) }`. No loop, guard counter or per-block pc compare for the driver to
+  // work through. Only when every jump stays inside the block it starts in and no exec ends the program inside a block
+  // (StructuredOk, a dry run of the same walk); the others keep the pc loop.
+  int CfPos(uint32_t index) const {  // position in p.control_flow of a control-flow index; size() = past the end
+    for (size_t i = 0; i < p.control_flow.size(); ++i)
+      if (p.control_flow[i].index == index) return int(i);
+    uint32_t last = 0;
+    for (const ControlFlow& cf : p.control_flow) last = std::max(last, cf.index);
+    return index > last ? int(p.control_flow.size()) : -1;
+  }
+  bool StructuredOk(int from, int to, bool top) const {
+    for (int k = from; k < to; ++k) {
+      const ControlFlow& cf = p.control_flow[size_t(k)];
+      switch (cf.opcode) {
+        case CfOpcode::kLoopStart: case CfOpcode::kLoopEnd: case CfOpcode::kCondCall: case CfOpcode::kReturn:
+          return false;
+        case CfOpcode::kCondJmp: {
+          const int t = CfPos(cf.target);
+          if (t <= k || t > to) return false;  // backward, outside this block, or unknown
+          int skip_end = t, else_end = -1;
+          if (t - 1 > k) {
+            const ControlFlow& j = p.control_flow[size_t(t - 1)];
+            if (j.opcode == CfOpcode::kCondJmp && j.branch_type == ControlFlow::ExecType::kUnconditional) {
+              const int u = CfPos(j.target);
+              if (u >= t && u <= to) {
+                skip_end = t - 1;
+                else_end = u;
+              }
+            }
+          }
+          if (!StructuredOk(k + 1, skip_end, false)) return false;
+          if (else_end >= 0 && !StructuredOk(t, else_end, false)) return false;
+          k = (else_end >= 0 ? else_end : t) - 1;
+          break;
+        }
+        default:
+          if (IsExec(cf.opcode) && cf.exec_end) {
+            // Only an unconditional end at the top level (the rest is cut, as in EmitStraightLine).
+            if (!top || cf.exec_type != ControlFlow::ExecType::kUnconditional) return false;
+          }
+          break;
+      }
+    }
+    return true;
+  }
+  // Emits [from, to).
+  void EmitStructured(int from, int to) {
+    for (int k = from; k < to; ++k) {
+      const ControlFlow& cf = p.control_flow[size_t(k)];
+      if (cf.opcode == CfOpcode::kCondJmp) {
+        const int t = CfPos(cf.target);
+        int skip_end = t, else_end = -1;
+        if (t - 1 > k) {
+          const ControlFlow& j = p.control_flow[size_t(t - 1)];
+          if (j.opcode == CfOpcode::kCondJmp && j.branch_type == ControlFlow::ExecType::kUnconditional) {
+            const int u = CfPos(j.target);
+            if (u >= t && u <= to) {
+              skip_end = t - 1;
+              else_end = u;
+            }
+          }
+        }
+        Scope sc(*this);
+        const uint32_t u = Push();
+        if (!CondValue(u, cf.branch_type, cf.bool_constant, cf.condition)) {
+          // Always taken: [k + 1, t) never runs; with an else part, that part always does.
+          if (else_end >= 0) EmitStructured(t, else_end);
+        } else {
+          a.OpIf(false, S1(u, 0));
+          EmitStructured(k + 1, skip_end);
+          if (else_end >= 0) {
+            a.OpElse();
+            EmitStructured(t, else_end);
+          }
+          a.OpEndIf();
+        }
+        k = (else_end >= 0 ? else_end : t) - 1;
+        continue;
+      }
+      if (!IsExec(cf.opcode)) continue;
+      const bool c = OpenExec(cf);
+      EmitExecBody(cf);
+      if (c) a.OpEndIf();
+      // An unconditional end at the top level (StructuredOk): the rest is unreachable - cut after it is generated.
+      if (cf.exec_end && structured_dead_from_ == SIZE_MAX) structured_dead_from_ = code.size();
+    }
+  }
+  size_t structured_dead_from_ = SIZE_MAX;
+
   void EmitPcLoop() {
     uses_pc_loop = true;
     uses_x1 = true;
@@ -2514,8 +2672,17 @@ struct Gen {
         needs_pc = true;
       }
     }
-    if (needs_pc) EmitPcLoop();
-    else EmitStraightLine();
+    if (needs_pc && opt.dxbc_structured_jumps && StructuredOk(0, int(p.control_flow.size()), true)) {
+      // Job 634: forward jumps only - nested ifs. After an unconditional exec_end (top level only) the rest is
+      // generated (the same metadata) but cut, as in EmitStraightLine.
+      structured_dead_from_ = SIZE_MAX;
+      EmitStructured(0, int(p.control_flow.size()));
+      if (structured_dead_from_ != SIZE_MAX) code.resize(structured_dead_from_);
+    } else if (needs_pc) {
+      EmitPcLoop();
+    } else {
+      EmitStraightLine();
+    }
     if (!p.issues.empty()) {
       for (const auto& is : p.issues) Simplify("decoder_issue", IssueKindName(is.kind));
     }
@@ -2574,6 +2741,274 @@ struct Gen {
   bool uses_x1_final = false;
   bool writes_depth_final = false;
 };
+
+// ---- Job 634 (opt.dxbc_coalesce_moves): copy coalescing on the finished SHEX code ----
+// The generator computes into a scratch temp and then moves it to the destination (a quarter of all instructions were
+// movs on a Judgment run). Where an instruction I writing temp t is directly followed by `mov D.m, t` (identity swizzle
+// on m, no modifiers, no saturate), m is within I's mask, I works per component (or replicates one value), and none of
+// the components I wrote of t is read again before it is overwritten (a forward scan; leaving the block through a loop
+// end, continue or break counts as read), I writes D.m itself and the mov goes. The same values: only who holds them.
+namespace coalesce {
+struct Op {
+  size_t at = 0, len = 0;     // whole operand tokens [at, at + len)
+  uint32_t type = 0, mask = 0xF, sel = 0, comps = 0, dim = 0;
+  bool mod = false, rel = false;
+  uint32_t index0 = 0;
+  uint32_t read_comps = 0xF;  // components a read of it can touch (from the swizzle / select)
+};
+inline size_t ParseOp(const std::vector<uint32_t>& c, size_t p, Op& o, std::vector<Op>* nested) {
+  o.at = p;
+  const uint32_t t = c[p++];
+  o.comps = t & 3;
+  o.sel = (t >> 2) & 3;
+  o.type = (t >> 12) & 0xFF;
+  o.dim = (t >> 20) & 3;
+  const uint32_t cdata = (t >> 4) & 0xFF;
+  if (o.comps == 2) {
+    if (o.sel == 0) o.mask = cdata & 0xF;
+    else if (o.sel == 1) {
+      o.read_comps = 0;
+      for (int i = 0; i < 4; ++i) o.read_comps |= 1u << ((cdata >> (2 * i)) & 3);
+    } else o.read_comps = 1u << (cdata & 3);
+  } else if (o.comps == 1) {
+    o.read_comps = 1;
+    o.mask = 1;
+  }
+  bool ext = t >> 31;
+  while (ext) {
+    const uint32_t e = c[p++];
+    if ((e & 63) == 1 && ((e >> 6) & 0xFF)) o.mod = true;
+    if ((e & 63) != 1) o.mod = true;  // anything else: leave it alone
+    ext = e >> 31;
+  }
+  if (o.type == 4 || o.type == 5) {  // immediates
+    const size_t n = (o.comps == 1 ? 1 : 4) * (o.type == 5 ? 2 : 1);
+    p += n;
+    o.len = p - o.at;
+    return p;
+  }
+  for (uint32_t i = 0; i < o.dim; ++i) {
+    const uint32_t r = (t >> (22 + 3 * i)) & 7;
+    if (r == 0) {
+      if (i == 0) o.index0 = c[p];
+      ++p;
+    } else if (r == 1) {
+      p += 2;
+    } else {
+      if (r == 3) ++p;
+      o.rel = true;
+      Op inner;
+      p = ParseOp(c, p, inner, nested);
+      if (nested) nested->push_back(inner);
+    }
+  }
+  o.len = p - o.at;
+  return p;
+}
+struct Ins {
+  size_t at = 0, len = 0, ops_at = 0;
+  uint32_t op = 0;
+  bool sat = false, ext = false;
+  std::vector<Op> ops, rel_ops;  // rel_ops: operands inside relative indices (always reads)
+};
+inline bool ParseIns(const std::vector<uint32_t>& c, size_t p, Ins& in) {
+  in = {};
+  in.at = p;
+  const uint32_t t = c[p];
+  in.op = t & 0x7FF;
+  in.len = (t >> 24) & 0x7F;
+  if (in.op == 53) in.len = c[p + 1];
+  if (!in.len) return false;
+  in.sat = (t >> 13) & 1;
+  in.ext = t >> 31;
+  if (in.op == 53) return true;
+  size_t q = p + 1;
+  if (in.ext) {
+    while (c[q] >> 31) ++q;
+    ++q;
+  }
+  in.ops_at = q;
+  while (q < p + in.len) {
+    Op o;
+    q = ParseOp(c, q, o, &in.rel_ops);
+    in.ops.push_back(o);
+  }
+  return q == p + in.len;
+}
+// Opcodes that write their first operand and work per component (or replicate one value): the ones I may be.
+inline bool PerComponent(uint32_t op) {
+  switch (op) {
+    case 0: case 1: case 14: case 15: case 16: case 17: case 24: case 25: case 26: case 27: case 28: case 29: case 30:
+    case 32: case 33: case 34: case 35: case 36: case 37: case 39: case 41: case 42: case 43: case 47: case 49:
+    case 50: case 51: case 52: case 54: case 55: case 56: case 57: case 59: case 60: case 64: case 65: case 66:
+    case 67: case 68: case 75: case 79: case 80: case 82: case 83: case 84: case 85: case 86: case 87: case 130:
+    case 131: case 138: case 139: case 140:
+      return true;
+    default: return false;
+  }
+}
+// Opcodes whose first operand is a destination (others: every operand is read).
+inline uint32_t DestCount(uint32_t op) {
+  if (PerComponent(op)) return 1;
+  switch (op) {
+    case 77: case 38: case 78: case 81:  // sincos, imul, udiv, umul: two destinations
+      return 2;
+    case 45: case 46: case 61: case 69: case 70: case 71: case 72: case 73: case 74: case 108: case 165: case 163:
+    case 122: case 123: case 124: case 125: case 135: case 136: case 141: case 204: case 205:
+      return 1;
+    default: return 0;
+  }
+}
+inline bool FlowOut(uint32_t op) {  // leaves the block backwards / sideways: endloop, continue(c), break(c), case, default
+  return op == 22 || op == 7 || op == 8 || op == 2 || op == 3 || op == 6 || op == 10 || op == 23;
+}
+// Whether components `live` of temp t, as written at instruction index k, can be read after it. Reads count the
+// components the swizzle can pick for the components the instruction writes (per-component ops) or all it names;
+// writes kill components for the rest of their block (an if / else part); after an endif the state from before the
+// if returns (a kill on one path only does not count). Leaving a loop or switch, continue or break: read.
+inline bool LiveAfter(const std::vector<Ins>& v, const std::vector<uint32_t>& c, size_t k, uint32_t t, uint32_t live) {
+  std::vector<uint32_t> st{live};       // live set per open block
+  std::vector<uint8_t> kind{0};          // 0 base, 1 if, 2 loop / switch
+  std::vector<uint32_t> at_if{live};     // the live set when the block opened (for else / endif)
+  for (size_t i = k + 1; i < v.size(); ++i) {
+    const Ins& in = v[i];
+    if (in.op == 53) continue;
+    uint32_t& L = st.back();
+    const uint32_t nd = DestCount(in.op);
+    uint32_t dmask = 0xF;
+    if (nd == 1 && !in.ops.empty() && PerComponent(in.op) && in.op != 15 && in.op != 16 && in.op != 17)
+      dmask = in.ops[0].comps == 2 && in.ops[0].sel == 0 ? in.ops[0].mask : (in.ops[0].comps == 1 ? 1u : 0xFu);
+    for (const Op& o : in.rel_ops)
+      if (o.type == 0 && o.index0 == t && (o.read_comps & L)) return true;
+    for (size_t j = nd; j < in.ops.size(); ++j) {
+      const Op& o = in.ops[j];
+      if (o.type != 0 || o.dim != 1 || o.index0 != t) continue;
+      if (o.rel) return true;
+      uint32_t rc = o.read_comps;
+      if (dmask != 0xF && o.comps == 2 && o.sel == 1) {  // swizzle: only the lanes of the written components
+        const uint32_t cd = (c[o.at] >> 4) & 0xFF;
+        rc = 0;
+        for (int q = 0; q < 4; ++q)
+          if ((dmask >> q) & 1) rc |= 1u << ((cd >> (2 * q)) & 3);
+      }
+      if (rc & L) return true;
+    }
+    switch (in.op) {
+      case 31:  // if
+        st.push_back(L);
+        kind.push_back(1);
+        at_if.push_back(L);
+        continue;
+      case 18:  // else: back to the state at the if
+        if (kind.back() == 1) st.back() = at_if.back();
+        continue;
+      case 21:  // endif
+        if (kind.size() > 1 && kind.back() == 1) {
+          st.pop_back();
+          kind.pop_back();
+          at_if.pop_back();
+          st.back() = at_if.size() ? st.back() : st.back();
+        }
+        continue;
+      case 48: case 76:  // loop, switch: inside, kills do not count afterwards and the code may repeat
+        st.push_back(L);
+        kind.push_back(2);
+        at_if.push_back(L);
+        continue;
+      case 22: case 23:  // endloop / endswitch
+        if (kind.size() > 1 && kind.back() == 2) {
+          if (in.op == 22) {  // the body may run again with what we left live: still checked by the reads above
+          }
+          st.pop_back();
+          kind.pop_back();
+          at_if.pop_back();
+          continue;
+        }
+        return true;  // the end of a loop / switch we started inside
+      default: break;
+    }
+    if (FlowOut(in.op)) {
+      bool inside_own = false;
+      for (size_t q = 1; q < kind.size(); ++q) if (kind[q] == 2) inside_own = true;
+      if (!inside_own) return true;
+    }
+    if (in.op == 62 && kind.size() == 1) return false;  // ret at our level
+    for (uint32_t j = 0; j < nd && j < in.ops.size(); ++j) {
+      const Op& o = in.ops[j];
+      if (o.type == 0 && !o.rel && o.dim == 1 && o.index0 == t) L &= ~o.mask;
+    }
+    if (kind.size() == 1 && !L) return false;
+  }
+  return false;  // the end of the shader: temps are not outputs
+}
+inline uint32_t Run(std::vector<uint32_t>& c) {
+  uint32_t removed = 0;
+  for (int pass = 0; pass < 4; ++pass) {
+    std::vector<Ins> v;
+    for (size_t p = 0; p < c.size();) {
+      Ins in;
+      if (!ParseIns(c, p, in)) return removed;  // something we don't parse: leave the code as it is
+      v.push_back(std::move(in));
+      p += v.back().len;
+    }
+    std::vector<uint32_t> out;
+    out.reserve(c.size());
+    uint32_t here = 0;
+    for (size_t i = 0; i < v.size(); ++i) {
+      const Ins& I = v[i];
+      bool fused = false;
+      if (i + 1 < v.size() && PerComponent(I.op) && !I.ext && !I.ops.empty()) {
+        const Ins& J = v[i + 1];
+        const Op& id = I.ops[0];
+        if (J.op == 54 && !J.sat && !J.ext && J.ops.size() == 2 && id.type == 0 && !id.rel && id.dim == 1 &&
+            id.comps == 2 && id.sel == 0 && !id.mod) {
+          const Op& jd = J.ops[0];
+          const Op& js = J.ops[1];
+          bool ok = !jd.mod && !jd.rel && jd.comps == 2 && jd.sel == 0 && (jd.type == 0 || jd.type == 2) &&
+                    jd.dim == 1 && js.type == 0 && !js.rel && js.dim == 1 && js.index0 == id.index0 && !js.mod &&
+                    (jd.mask & ~id.mask) == 0 && jd.mask;
+          if (ok) {
+            // The source must read component c for each written c (swizzle identity on the mask).
+            const uint32_t st = c[js.at];
+            const uint32_t jsel = (st >> 2) & 3, jcd = (st >> 4) & 0xFF;
+            if ((st & 3) != 2) ok = false;
+            else if (jsel == 0) ok = (jcd & 0xF) == 0xF || (jcd & 0xF) == jd.mask;  // mask-mode source: as is
+            else if (jsel == 1) {
+              for (int q = 0; q < 4 && ok; ++q)
+                if (((jd.mask >> q) & 1) && ((jcd >> (2 * q)) & 3) != uint32_t(q)) ok = false;
+            } else {
+              ok = jd.mask != 0 && (jd.mask & (jd.mask - 1)) == 0 && (jcd & 3) == uint32_t(std::countr_zero(jd.mask));
+            }
+          }
+          // A replicating op (dp2-4) writes one value to every component: any mask is fine. Otherwise the same mask
+          // is required when I reads its sources by swizzle per written component (it is: DXBC ALU ops are per
+          // written component), so a narrower mask only computes fewer components.
+          if (ok && !LiveAfter(v, c, i + 1, id.index0, id.mask)) {
+            // I with J's destination: opcode token (length changes), J's dest tokens, I's sources.
+            const size_t i_dest_end = I.ops[0].at + I.ops[0].len;
+            std::vector<uint32_t> ni;
+            ni.push_back(c[I.at]);
+            ni.insert(ni.end(), c.begin() + jd.at, c.begin() + jd.at + jd.len);
+            ni.insert(ni.end(), c.begin() + i_dest_end, c.begin() + I.at + I.len);
+            ni[0] = (ni[0] & ~(0x7Fu << 24)) | (uint32_t(ni.size()) << 24);
+            if (ni.size() <= 0x7F) {
+              out.insert(out.end(), ni.begin(), ni.end());
+              ++i;
+              ++here;
+              fused = true;
+            }
+          }
+        }
+      }
+      if (!fused) out.insert(out.end(), c.begin() + I.at, c.begin() + I.at + I.len);
+    }
+    c.swap(out);
+    removed += here;
+    if (!here) break;
+  }
+  return removed;
+}
+}  // namespace coalesce
 
 // ---- Container (the blobs Canary's DxbcShaderTranslator::CompleteTranslation writes) ----
 
@@ -2813,6 +3248,11 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
   if (!g.unsupported.empty()) {
     out.unsupported = g.unsupported;
     return out;
+  }
+  if (options.dxbc_coalesce_moves) {  // job 634
+    const uint32_t removed = coalesce::Run(g.code);
+    g.stat.instruction_count -= std::min(g.stat.instruction_count, removed);
+    if (g.stat.mov_instruction_count >= removed) g.stat.mov_instruction_count -= removed;
   }
 
   // Metadata (hlsl.cpp's Translation fields).
