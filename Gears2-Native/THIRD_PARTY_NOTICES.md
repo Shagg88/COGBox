@@ -101,6 +101,12 @@ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 
+## stb_dxt (src/layer0_xenos/renderer/stb_dxt.h)
+
+https://github.com/nothings/stb - DXT1/DXT5 compressor by Fabian "ryg" Giesen, ported to C by Sean Barrett. Public
+domain (or MIT, at your choice), unmodified. Used to re-encode a button-prompt sheet after COGBox's keyboard key caps
+are drawn over it (GitHub #41).
+
 ## Native mouse look (ue3_mouse_look.h, mouse_look.cpp)
 
 Copyright (c) 2026, Flippage and the gow3-recomp contributors

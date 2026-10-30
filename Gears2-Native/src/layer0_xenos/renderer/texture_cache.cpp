@@ -26,6 +26,12 @@
 #include <unordered_set>
 #include <vector>
 
+// Job 629 (keyboard button prompts, GitHub #41): re-encoding a prompt sheet after our key caps are drawn over it.
+// stb_dxt (public domain, Fabian Giesen / Sean Barrett).
+#define STB_DXT_IMPLEMENTATION
+#define STB_DXT_STATIC
+#include "stb_dxt.h"
+
 REXCVAR_DEFINE_DOUBLE(gow2_texture_phase_log_ms, 0.0, "Gears2",
                       "Diagnostic (job 299): log a frame whose texture loads took longer than this many ms, split into "
                       "phases - page watch arming, page hashing, host texture creation, GPU-path copy + untile, CPU-path "
@@ -36,6 +42,10 @@ REXCVAR_DEFINE_STRING(gow2_texture_replace_dir, "", "Gears2",
                       "Folder of replacement textures (job 620): <hash16>_<level>.bin = that level's host-format data "
                       "(BC blocks, rows top to bottom) for the guest texture whose base-level guest bytes have that XXH3. "
                       "Same size and format as the original; such textures load on the CPU path. Empty = off");
+REXCVAR_DEFINE_STRING(gow2_texture_overlay_dir, "", "Gears2",
+                      "Folder of texture overlays (job 629, keyboard button prompts): <hash16>.overlay = 'COGBOXOV', width, "
+                      "height (two little-endian uint32) and width x height RGBA bytes drawn over that DXT5 texture on the "
+                      "player's own copy (alpha 0 keeps the game's pixel, 1 clears it, 2+ draws ours). Empty = off");
 REXCVAR_DEFINE_STRING(gow2_texture_dump_dir, "", "Gears2",
                       "Developer (job 620; 628: any format): write each new 2D texture (one layer) of a size in "
                       "--gow2_texture_dump_sizes as <dir>/tex-<hash16>-f<fmt>-<w>x<h>.bin (level 0, host-format data: "
@@ -49,6 +59,7 @@ struct TexSwap {
   bool init = false;
   std::string replace_dir, dump_dir;
   std::unordered_set<uint64_t> replace;     // hashes with replacement files
+  std::unordered_map<uint64_t, std::vector<uint8_t>> overlay;  // job 629: hash -> w, h (8 bytes) + RGBA
   std::unordered_set<uint32_t> dump_sizes;  // w << 16 | h
   bool dump_all = false;                    // job 628: --gow2_texture_dump_sizes=all
   std::unordered_set<uint64_t> dumped;
@@ -70,6 +81,25 @@ struct TexSwap {
       }
       REXLOG_INFO("gow2_texture_replace: {} replaced texture(s) in {}", replace.size(), replace_dir);
     }
+    const std::string ov_dir = REXCVAR_GET(gow2_texture_overlay_dir);
+    if (!ov_dir.empty()) {
+      for (const auto& f : std::filesystem::directory_iterator(std::filesystem::path(ov_dir), ec)) {
+        const std::string n = f.path().filename().string();
+        if (n.size() != 24 || f.path().extension() != ".overlay") continue;
+        char* end = nullptr;
+        const uint64_t h = std::strtoull(n.substr(0, 16).c_str(), &end, 16);
+        if (!end || *end) continue;
+        std::ifstream in{f.path(), std::ios::binary};
+        std::vector<uint8_t> b((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        uint32_t ow = 0, oh = 0;
+        if (b.size() < 16 || std::memcmp(b.data(), "COGBOXOV", 8) != 0) continue;
+        std::memcpy(&ow, b.data() + 8, 4);
+        std::memcpy(&oh, b.data() + 12, 4);
+        if (ow == 0 || oh == 0 || ow > 4096 || oh > 4096 || b.size() != 16 + size_t(ow) * oh * 4) continue;
+        overlay[h].assign(b.begin() + 8, b.end());
+      }
+      REXLOG_INFO("gow2_texture_overlay: {} overlay(s) in {}", overlay.size(), ov_dir);
+    }
     if (!dump_dir.empty()) {
       std::filesystem::create_directories(std::filesystem::path(dump_dir), ec);
       const std::string sizes = REXCVAR_GET(gow2_texture_dump_sizes);
@@ -86,7 +116,7 @@ struct TexSwap {
     }
   }
   bool Dumps(uint32_t w, uint32_t h) const { return dump_all ? (w >= 32 && h >= 32) : dump_sizes.count((w << 16) | h) != 0; }
-  bool On() const { return !replace.empty() || !dump_sizes.empty() || dump_all; }
+  bool On() const { return !replace.empty() || !overlay.empty() || !dump_sizes.empty() || dump_all; }
   bool ReadLevel(uint64_t h, uint32_t level, std::vector<uint8_t>& out) const {
     char leaf[40];
     std::snprintf(leaf, sizeof(leaf), "%016llX_%u.bin", static_cast<unsigned long long>(h), level);
@@ -232,6 +262,59 @@ void DecodeDxt3a(const uint8_t* block, uint8_t* out) {
 uint16_t Expand(uint32_t v, uint32_t bits) {
   const uint32_t r = v << (16 - bits);
   return uint16_t(r | (r >> bits));  // bit replication to 16 bits (exact for 0 and max)
+}
+
+// Job 629: one host BC3 (DXT5) block -> 16 RGBA texels.
+void DecodeBc3(const uint8_t* b, uint8_t* out) {
+  uint8_t al[8] = {b[0], b[1]};
+  if (al[0] > al[1]) for (int i = 1; i < 7; ++i) al[i + 1] = uint8_t(((7 - i) * al[0] + i * al[1]) / 7);
+  else { for (int i = 1; i < 5; ++i) al[i + 1] = uint8_t(((5 - i) * al[0] + i * al[1]) / 5); al[6] = 0; al[7] = 255; }
+  uint64_t abits = 0;
+  for (int i = 0; i < 6; ++i) abits |= uint64_t(b[2 + i]) << (8 * i);
+  const uint16_t c0 = uint16_t(b[8] | (b[9] << 8)), c1 = uint16_t(b[10] | (b[11] << 8));
+  uint8_t c[4][3];
+  auto rgb = [](uint16_t v, uint8_t* o) { o[0] = uint8_t(((v >> 11) & 31) * 255 / 31); o[1] = uint8_t(((v >> 5) & 63) * 255 / 63); o[2] = uint8_t((v & 31) * 255 / 31); };
+  rgb(c0, c[0]); rgb(c1, c[1]);
+  for (int k = 0; k < 3; ++k) { c[2][k] = uint8_t((2 * c[0][k] + c[1][k]) / 3); c[3][k] = uint8_t((c[0][k] + 2 * c[1][k]) / 3); }
+  const uint32_t idx = uint32_t(b[12] | (b[13] << 8) | (b[14] << 16) | (uint32_t(b[15]) << 24));
+  for (int t = 0; t < 16; ++t) {
+    const uint8_t* cc = c[(idx >> (2 * t)) & 3];
+    out[4 * t] = cc[0]; out[4 * t + 1] = cc[1]; out[4 * t + 2] = cc[2];
+    out[4 * t + 3] = al[(abits >> (3 * t)) & 7];
+  }
+}
+
+// Job 629 (keyboard button prompts): draws an overlay over one level of a DXT5 texture held as host BC3 blocks in
+// `level_data` (rows of blocks, `row_bytes` apart): decode, put the overlay's texels in (scaled to the level, nearest),
+// re-encode. Overlay alpha: 0 keeps the game's texel, 1 clears it, 2+ is ours.
+void ApplyOverlay(std::vector<uint8_t>& level_data, const std::vector<uint8_t>& ov, uint32_t level, uint32_t lw, uint32_t lh,
+                  uint32_t row_bytes, uint64_t hash) {
+  uint32_t ow = 0, oh = 0;
+  std::memcpy(&ow, ov.data(), 4);
+  std::memcpy(&oh, ov.data() + 4, 4);
+  const uint8_t* px = ov.data() + 8;
+  const uint32_t bw = (lw + 3) / 4, bh = (lh + 3) / 4;
+  if ((ow >> level) != lw && level == 0) return;  // a different size than the overlay was made for
+  if (row_bytes < bw * 16 || level_data.size() < size_t(row_bytes) * bh) return;
+  uint8_t t[64];
+  for (uint32_t by = 0; by < bh; ++by)
+    for (uint32_t bx = 0; bx < bw; ++bx) {
+      uint8_t* blk = level_data.data() + size_t(by) * row_bytes + bx * 16;
+      DecodeBc3(blk, t);
+      bool changed = false;
+      for (uint32_t i = 0; i < 16; ++i) {
+        const uint32_t x = bx * 4 + (i & 3), y = by * 4 + (i >> 2);
+        const uint32_t sx = std::min(ow - 1, (x << level) + ((1u << level) >> 1)), sy = std::min(oh - 1, (y << level) + ((1u << level) >> 1));
+        const uint8_t* o = px + (size_t(sy) * ow + sx) * 4;
+        if (o[3] == 0) continue;
+        changed = true;
+        if (o[3] == 1) { t[4 * i] = t[4 * i + 1] = t[4 * i + 2] = t[4 * i + 3] = 0; }
+        else std::memcpy(t + 4 * i, o, 4);
+      }
+      if (changed) stb_compress_dxt_block(blk, t, 1, STB_DXT_HIGHQUAL);
+    }
+  static int logged = 0;
+  if (level == 0 && logged++ < 8) REXLOG_INFO("gow2_texture_overlay: {:016X} ({}x{}) - our key caps drawn in", hash, lw, lh);
 }
 
 }  // namespace
@@ -953,13 +1036,18 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   g_swap.Init();
   uint64_t swap_hash = 0;
   bool swap_replace = false, swap_dump = false;
+  const std::vector<uint8_t>* swap_overlay = nullptr;  // job 629
   if (g_swap.On() && gd == tx::Dimension::k2DOrStacked && layers == 1 && host_kind == 0) {
     swap_hash = XXH3_64bits(guest_ + base, std::max(layout.base.level_data_extent_bytes, 1u));
     swap_replace = g_swap.replace.count(swap_hash) != 0;
+    if (format == 20) {  // k_DXT4_5 -> host BC3
+      const auto ov = g_swap.overlay.find(swap_hash);
+      if (ov != g_swap.overlay.end()) swap_overlay = &ov->second;
+    }
     swap_dump = !g_swap.dump_dir.empty() && g_swap.Dumps(w, h) && g_swap.dump_count < 4000 &&
                 g_swap.dumped.insert(swap_hash).second;
   }
-  const bool swap_cpu = swap_replace || swap_dump;
+  const bool swap_cpu = swap_replace || swap_dump || swap_overlay;
   // GPU path: raw 2D textures (one layer) in a format with typed UAV stores (D3D11-class hardware guarantees these).
   // Takeover T3: 24:8 depth textures (shadow maps, scene depth - resolve destinations) also load on the GPU, from the
   // guest-memory mirror where our resolves put them (codes 14/15: the CPU path's kDepthUnorm / kDepthFloat).
@@ -1341,6 +1429,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         f.write(reinterpret_cast<const char*>(scratch_.data()), std::streamsize(scratch_.size()));
         ++g_swap.dump_count;
       }
+      if (swap_overlay && u == 0) ApplyOverlay(scratch_, *swap_overlay, level, lw, lh, row_bytes, swap_hash);  // job 629
       if (swap_replace && u == 0) {  // job 620: this level from the replacement file, when its size matches
         std::vector<uint8_t> rep;
         if (g_swap.ReadLevel(swap_hash, level, rep) && rep.size() == scratch_.size()) {

@@ -846,11 +846,17 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back("--pad_look_scale=0.25");
             a.push_back(std::string("--pad_look_deadzone=") + (g == Game::Gears2 ? "0.3" : isG3 ? "0" : "0.2"));
         }
+        bool defaultKeys = true;
         for (const KeyAction &k : key_actions()) {   // 0.2.0: the Gears layout, or the player's own keys (Controls tab)
             auto it = env.keys.find(k.cvar);
             const std::string v = it != env.keys.end() && !it->second.empty() ? it->second : k.def;
+            if (v != k.def) defaultKeys = false;
             a.push_back(std::string("--") + k.cvar + "=" + v);
         }
+        // Job 629 (GitHub #41): keyboard button prompts - our key caps drawn over the game's controller-button sheet.
+        // Made for the Gears layout, so only with the default keys (the player's own keys keep the controller prompts).
+        if (defaultKeys && !env.prompt_dir.empty() && cap_exe(env, "gow2_texture_overlay_dir"))
+            a.push_back("--gow2_texture_overlay_dir=" + q(env.prompt_dir));
         // 0.2.1 (quick win): move with WASD and the arrow keys alike; the arrows used to turn the camera (the mouse does)
         for (const char* m : { "keybind_lstick_up=W,Up", "keybind_lstick_down=S,Down", "keybind_lstick_left=A,Left", "keybind_lstick_right=D,Right",
                                "keybind_rstick_up=None", "keybind_rstick_down=None", "keybind_rstick_left=None", "keybind_rstick_right=None" })

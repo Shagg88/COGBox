@@ -62,6 +62,7 @@ void env_refresh(App &a, int g)
     e.user_data_root = game_user_dir(g);
     e.shader_cache_dir = game_shader_dir(g);
     e.mods = mods_enabled_paths(a, g);   // 0.2.0
+    e.prompt_dir = dir_exists(join(exe_dir(), "prompts\\keyboard")) ? join(exe_dir(), "prompts\\keyboard") : "";   // job 629
     e.update_ready = !st.updateDir.empty() && (game_def(g).updateNeeded ? !st.portExeTu.empty() : true);
     e.g2_disc_ini_edits = g == G_GEARS2 && !st.portExeDisc.empty() && file_has(st.portExeDisc, "~=");
     e.gpus = a.gpus;
