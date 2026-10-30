@@ -462,12 +462,13 @@ REXCVAR_DEFINE_DOUBLE(gow2_renderer_depth_pipeline_wait_ms, 3.0, "Gears2",
                       "blocks for that frame, worse than a late object): a draw with no colour target that tests or writes "
                       "depth / stencil may wait this many ms per frame in total for its pipeline to come off a worker "
                       "(never built on the frame); past that it is skipped like any other. 0 = off");
-REXCVAR_DEFINE_DOUBLE(gow2_renderer_fullscreen_wait_ms, 50.0, "Gears2",
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_fullscreen_wait_ms, 8.0, "Gears2",
                       "Job 621 (Shagg 15:33: a white frame during a fast 360 turn, cold shader cache): a full-screen pass "
                       "(a rectangle or a quad drawn to a colour target - post effects such as motion blur that only run "
                       "while turning) waits for its shaders and creates its pipeline on the spot, up to this many ms per "
                       "frame in total, instead of being skipped - a skipped one leaves its target holding old or empty data "
-                      "that the final picture then shows. 0 = off (skip while compiling, as before)");
+                      "that the final picture then shows. 0 = off (skip while compiling, as before). Job 632: 8 (was 50 - job 631b's cold "
+                      "run froze for up to 2-3 s while full-screen passes waited)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_standin_new_vs, false, "Gears2",
                     "Patch 0132: also treat 'new vertex shader drawing to a target not drawn in the last 4 frames' as a "
                     "stand-in wait (0045's broad case). Off by default: Shagg's 21:34 session spent 1.8 s in 34 such "

@@ -75,6 +75,10 @@ REXCVAR_DEFINE_STRING(ue3_shader_prebuild_at_start, "", "Gears2",
                       "first, instead of waiting for the game to open each one; with a recipe pack only its shaders are "
                       "built. Same low-priority reader thread. Empty = only the packages the game opens");
 
+REXCVAR_DEFINE_INT32(ue3_shader_prebuild_threads, 0, "Gears2",
+                     "Job 632: reader threads with --ue3_shader_prebuild_at_start (0 = a quarter of the CPU threads, 2 to 4): "
+                     "the videos and menus leave the CPU idle; all at the lowest priority, so the game still comes first");
+
 namespace {
 
 uint32_t Be32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
@@ -230,7 +234,7 @@ class PackageScanner {
     if (vertex) {
       ++r_.vertex;
       // notes/78 C3: the renderer rebuilds recipe vertex shaders from these (a no-op without a recipe pack).
-      if (seen_.insert(XXH3_64bits(rec + off, size) ^ 0x5653ull).second) XenosPrebuildVertexShader(rec + off, size);
+      if (Fresh(XXH3_64bits(rec + off, size) ^ 0x5653ull)) XenosPrebuildVertexShader(rec + off, size);
       return;
     }
     ++r_.pixel;
@@ -244,7 +248,7 @@ class PackageScanner {
     }
   }
   void Offer(uint32_t variant, const uint8_t* code, uint32_t size) {
-    if (!offer_[variant] || !seen_.insert(XXH3_64bits(code, size)).second) return;
+    if (!offer_[variant] || !Fresh(XXH3_64bits(code, size))) return;
     ++r_.new_pixel;
     ++r_.offered[variant];
     XenosPrebuildPixelShader(code, size, variant);
@@ -299,6 +303,9 @@ class PackageScanner {
   }
   std::unordered_set<uint64_t>& seen_;
   bool offer_[2] = {true, true};
+  // Job 632: several reader threads at start-up share one set of shaders already handed over.
+  static std::mutex& SeenMutex() { static std::mutex m; return m; }
+  bool Fresh(uint64_t h) { std::lock_guard<std::mutex> lock(SeenMutex()); return seen_.insert(h).second; }
   std::vector<uint8_t> scratch_;
   ScanResult r_;
 };
@@ -310,6 +317,8 @@ struct Prebuild {
   std::deque<std::filesystem::path> queue;
   std::unordered_set<std::string> opened;  // lower-case file names already queued (each package once per session)
   std::thread thread;
+  std::filesystem::path shader_files;      // job 632: <shader cache>\prebuild-files.txt - packages that held shaders
+  std::unordered_set<std::string> known;   // ... their lower-case names (read at start, added to as found)
   std::unordered_set<uint64_t> seen;  // reader thread: pixel shader hashes already handed over
 };
 Prebuild* g_prebuild = nullptr;  // never destroyed (the thread runs until the process exits)
@@ -379,6 +388,14 @@ void ReaderThread() {
     const uint64_t h0 = XenosPrebuildVariantHits(0), h1 = XenosPrebuildVariantHits(1), hn = h0 + h1;
     scanner.SetVariants(hn < 32 || h0 * 20 >= hn, hn < 32 || h1 * 20 >= hn);
     const ScanResult r = scanner.Scan(data);
+    if ((r.pixel || r.vertex) && !g_prebuild->shader_files.empty()) {  // job 632: remembered for the next start-up
+      const std::string name = Lower(path.filename().string());
+      std::lock_guard<std::mutex> lock(g_prebuild->mutex);
+      if (g_prebuild->known.insert(name).second) {
+        std::ofstream f(g_prebuild->shader_files, std::ios::app);
+        f << name << "\n";
+      }
+    }
     ++files;
     pixel += r.pixel;
     fresh += r.new_pixel;
@@ -411,14 +428,35 @@ void Ue3InstallShaderPrebuildIfRequested() {
   }
 #ifdef REX_FILESYSTEM_FILE_OPEN_OBSERVER
   g_prebuild = new Prebuild();
-  g_prebuild->thread = std::thread(ReaderThread);
+  const std::string at_start_dirs = REXCVAR_GET(ue3_shader_prebuild_at_start);
+  int readers = 1;
+  if (!at_start_dirs.empty()) {   // job 632: more readers at start-up (the videos and menus leave the CPU idle)
+    readers = REXCVAR_GET(ue3_shader_prebuild_threads);
+    if (readers <= 0) readers = std::clamp(int(std::thread::hardware_concurrency() / 4), 2, 4);   // each holds a whole package in memory
+    readers = std::min(readers, 16);
+    const std::string cache = rex::cvar::GetFlagByName("gow2_shader_cache_dir");
+    if (!cache.empty()) {
+      g_prebuild->shader_files = std::filesystem::u8path(cache) / "prebuild-files.txt";
+      std::ifstream f(g_prebuild->shader_files);
+      for (std::string l; std::getline(f, l);) if (!l.empty()) g_prebuild->known.insert(Lower(l));
+    }
+    REXLOG_INFO("ue3_shader_prebuild_at_start: {} reader thread(s), {} package(s) known to hold shaders", readers,
+                g_prebuild->known.size());
+  }
+  g_prebuild->thread = std::thread(ReaderThread);   // after the list above is read (the readers add to it)
+  for (int i = 1; i < readers; ++i) std::thread(ReaderThread).detach();
   rex::filesystem::SetFileOpenObserver(&OnFileOpened);
   REXLOG_INFO("ue3_shader_prebuild: on - packages the game opens are read for their pixel shaders (patch 0068)");
   // Job 630: every package of the game's folders, queued at start-up (shader caches first, then the largest - the
   // chapter packages); a package the game opens later is not read twice (the `opened` set).
   const std::string at_start = REXCVAR_GET(ue3_shader_prebuild_at_start);
   if (!at_start.empty()) {
-    std::thread([at_start] {
+    std::unordered_set<std::string> known;
+    {
+      std::lock_guard<std::mutex> lock(g_prebuild->mutex);
+      known = g_prebuild->known;
+    }
+    std::thread([at_start, known = std::move(known)] {
       std::vector<std::pair<std::filesystem::path, uintmax_t>> caches, packages;
       size_t p = 0;
       while (p <= at_start.size()) {
@@ -433,7 +471,10 @@ void Ue3InstallShaderPrebuildIfRequested() {
           const std::string name = Lower(it->path().filename().string());
           const uintmax_t size = it->file_size(ec);
           if (name.ends_with(".bin") && name.find("shadercache") != std::string::npos) caches.emplace_back(it->path(), size);
-          else if (name.size() > 4 && name.ends_with(".xxx")) packages.emplace_back(it->path(), size);
+          else if (name.size() > 4 && name.ends_with(".xxx")) {
+            if (known.count(name)) caches.emplace_back(it->path(), size);   // job 632: held shaders last time
+            else packages.emplace_back(it->path(), size);
+          }
         }
       }
       std::sort(packages.begin(), packages.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
@@ -449,8 +490,8 @@ void Ue3InstallShaderPrebuildIfRequested() {
               ++queued;
             }
       }
-      g_prebuild->cv.notify_one();
-      REXLOG_INFO("ue3_shader_prebuild_at_start: {} file(s) queued ({} shader cache(s), {:.0f} MB in all) from {}", queued,
+      g_prebuild->cv.notify_all();
+      REXLOG_INFO("ue3_shader_prebuild_at_start: {} file(s) queued ({} shader cache(s) / known shader packages first, {:.0f} MB in all) from {}", queued,
                   caches.size(), double(bytes) / 1048576.0, at_start);
     }).detach();
   }
