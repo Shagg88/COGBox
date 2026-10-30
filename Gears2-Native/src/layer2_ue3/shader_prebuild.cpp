@@ -45,6 +45,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -333,8 +334,12 @@ std::string Lower(std::string s) {
 }
 
 // The opening thread (the game's loader): copy the path and return.
+// COGBox job 659: a second listener (Judgment's loading-screen frame limit, GitHub #38). The SDK keeps one observer,
+// and this reader installs after the game's own code, so the game hands its listener here and it is told first.
+std::atomic<void (*)(std::string_view, const std::filesystem::path*)> g_chain{nullptr};
+
 void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host_path) {
-  (void)guest_path;
+  if (const auto chain = g_chain.load()) chain(guest_path, host_path);
   if (!host_path || !g_prebuild) return;
   const std::string name = Lower(host_path->filename().string());
   const bool package = name.size() > 4 && name.ends_with(".xxx");
@@ -442,6 +447,15 @@ void ReaderThread() {
 #endif
 
 }  // namespace
+
+// Job 659: a game's own file-open listener, called before this reader's (see g_chain).
+void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*)) {
+#ifdef REX_FILESYSTEM_FILE_OPEN_OBSERVER
+  g_chain.store(listener);
+#else
+  (void)listener;
+#endif
+}
 
 void Ue3InstallShaderPrebuildIfRequested() {
   if (!REXCVAR_GET(ue3_shader_prebuild)) return;

@@ -9,6 +9,7 @@
 // memory gauge, the two GPU-wait sleeps. The ultrawide hooks (0.2.0) are at the end of the file. Left out: Gears 3's shadow diagnostics. Community patch authors (boma, Sowa_95, illusion) are credited in the option descriptions.
 // Not needed: Gears 2's "Black Shading Fix" - Judgment stores 0 to its tiling flag itself at 0x8299257C, like Gears 3.
 #include <rex/cvar.h>
+#include <rex/filesystem/vfs.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 #include <rex/runtime.h>
@@ -25,6 +26,9 @@
 #include <cstring>
 #include <format>
 #include <string>
+#include <string_view>
+#include <cctype>
+#include <filesystem>
 #include <thread>
 #include <vector>
 
@@ -126,9 +130,79 @@ void TickTimeline() {  // the game thread is the only caller
 }
 }  // namespace
 
-void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E220: read-only (tick timing)
-  (void)f1;
+// ---- Loading screens at a safe frame rate (GitHub #38) -------------------------------------------------------------
+// A player at a 162 fps limit (165 Hz, vsync) finished Monroe Commons and the loading screen that followed never ended:
+// the engine kept ticking at 162 fps for minutes (report 20261028-171446; the session's earlier loading screens ended).
+// Xenia Canary shows the same with its "Unlock FPS" patch, and at 60 the game gets through. So while a loading screen
+// runs, the engine's limit is held at --gowj_loading_fps (60): from the moment the game opens its loading movie
+// (GearGame\Movies\LoadingMovie*.bik) until 6 s after the last level package (.xxx) it opened, at least 10 s. Then
+// the player's own limit comes back. Gameplay itself is unchanged; only the loading screen's own rate is lowered.
+REXCVAR_DEFINE_INT32(gowj_loading_fps, 60, "Judgment",
+                     "GitHub #38: the engine's frame-rate limit while a loading screen runs (0 = no change). Above it a "
+                     "loading screen can stay up for ever (the end of Monroe Commons at 162 fps)");
+
+namespace {
+using LoadClock = std::chrono::steady_clock;
+std::atomic<int64_t> g_load_start{0};     // steady_clock ticks of the loading movie's open; 0 = no loading screen
+std::atomic<int64_t> g_load_last_pkg{0};  // the last .xxx opened since then
+
+bool EndsWithNoCase(std::string_view s, std::string_view tail) {
+  if (s.size() < tail.size()) return false;
+  for (size_t i = 0; i < tail.size(); ++i)
+    if (std::tolower(static_cast<unsigned char>(s[s.size() - tail.size() + i])) != tail[i]) return false;
+  return true;
+}
+bool ContainsNoCase(std::string_view s, std::string_view needle) {
+  for (size_t i = 0; i + needle.size() <= s.size(); ++i) {
+    size_t k = 0;
+    while (k < needle.size() && std::tolower(static_cast<unsigned char>(s[i + k])) == needle[k]) ++k;
+    if (k == needle.size()) return true;
+  }
+  return false;
+}
+void OnGowjFileOpened(std::string_view guest_path, const std::filesystem::path*) {
+  const int64_t now = LoadClock::now().time_since_epoch().count();
+  if (EndsWithNoCase(guest_path, ".bik") && ContainsNoCase(guest_path, "loadingmovie")) {
+    if (g_load_start.exchange(now) == 0) REXLOG_INFO("gowj_loading_fps: loading screen - engine limit {} fps", REXCVAR_GET(gowj_loading_fps));
+    g_load_last_pkg.store(now);
+  } else if (g_load_start.load() != 0 && EndsWithNoCase(guest_path, ".xxx")) {
+    g_load_last_pkg.store(now);
+  }
+}
+bool LoadingClampActive() {
+  const int64_t start = g_load_start.load();
+  if (start == 0) return false;
+  using namespace std::chrono;
+  const auto now = LoadClock::now().time_since_epoch();
+  const auto since_start = now - LoadClock::duration(start);
+  const auto since_pkg = now - LoadClock::duration(g_load_last_pkg.load());
+  if (since_start < seconds(10) || since_pkg < seconds(6)) return true;
+  int64_t expected = start;
+  if (g_load_start.compare_exchange_strong(expected, 0))
+    REXLOG_INFO("gowj_loading_fps: loading screen over after {:.1f} s - the player's own limit again",
+                duration<double>(since_start).count());
+  return false;
+}
+}  // namespace
+
+void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));  // shader_prebuild.cpp
+
+void GowjInstallLoadingClamp() {
+  if (REXCVAR_GET(gowj_loading_fps) <= 0) return;
+#if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
+  rex::filesystem::SetFileOpenObserver(&OnGowjFileOpened);
+  // the shader prebuild (installed later, when the launcher turns it on) takes the SDK's one observer; it calls ours first
+  Ue3ShaderPrebuildChainFileOpened(&OnGowjFileOpened);
+  REXLOG_INFO("gowj_loading_fps: on - loading screens run at {} fps at most (GitHub #38)", REXCVAR_GET(gowj_loading_fps));
+#else
+  REXLOG_WARN("gowj_loading_fps: this SDK has no file-open observer (SDK patch 32); loading screens keep the player's limit");
+#endif
+}
+
+void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E220: f1 = the engine's limit (fps)
   TickTimeline();
+  const int32_t cap = REXCVAR_GET(gowj_loading_fps);
+  if (cap > 0 && LoadingClampActive() && (f1.f64 <= 0.0 || f1.f64 > double(cap))) f1.f64 = double(cap);
 }
 
 // ---- Engine settings through the game's own config (layer 2 --ue3_ini_edits) ----------------------------------------
@@ -210,6 +284,7 @@ static std::string GowjLevelSelectEdits() {
 }
 
 void GowjAddBuiltInIniEdits() {
+  GowjInstallLoadingClamp();  // GitHub #38 (runs once, at start-up, before the game opens any file)
   std::string add;
   if (REXCVAR_GET(gowj_level_select)) add += GowjLevelSelectEdits();
   if (REXCVAR_GET(gowj_skip_logos)) add += "Xbox360-GearEngine.ini|FullScreenMovie|StartupMovies-=Open_Logos;";
