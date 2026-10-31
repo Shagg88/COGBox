@@ -87,7 +87,7 @@ void env_refresh(App &a, int g)
     e.has_avx2 = a.hasAvx2;
     e.wine = a.wine;   // job 523
     e.mac = a.mac;     // job 643
-    e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab), shared by the three games
+    e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab), shared by all the games
     for (const gs::KeyAction &k : gs::key_actions()) {
         std::string v = a.ini.get("Keys", k.cvar);
         if (!v.empty()) e.keys[k.cvar] = v;
@@ -110,7 +110,7 @@ void env_refresh(App &a, int g)
     std::string exe = gs::exe_for_update((gs::Game)g, ver, e) ? st.portExeTu : st.portExeDisc;
     if (exe.empty()) exe = st.portExeDisc.empty() ? st.portExeTu : st.portExeDisc;
     st.useUpdate = !st.portExeTu.empty() && exe == st.portExeTu && !st.updateDir.empty();
-    if (game_def(g).id == G_JUDGMENT) st.useUpdate = !st.updateDir.empty();
+    if (game_update_required(g)) st.useUpdate = !st.updateDir.empty();   // Judgment / Gears 1: one build
     e.cap.exe_has = [exe](const std::string &s) { return !exe.empty() && file_has(exe, s); };
     e.cap.runtime_has = [exe](const std::string &s) { std::string r = runtime_dll(exe); return !r.empty() && file_has(r, s); };
     // beside the exe, or in the release's shared folder (<COGBox>\shared), which play.cpp puts on the game's PATH: the
@@ -263,6 +263,7 @@ static void prepare_section(App &a, int g)
 static void keys_section(App &a)
 {
     static int capture = -1, captureFrame = 0;
+    static std::string keyNote;   // what the last key press changed besides its own action
     const auto &acts = gs::key_actions();
     ImGui::Dummy(ImVec2(0, S(6)));
     th_heading("KEYBOARD KEYS", g_rowX1);
@@ -273,6 +274,7 @@ static void keys_section(App &a)
         a.ini.save();
         for (int g = 0; g < G_COUNT; g++) env_refresh(a, g);
     };
+    if (!keyNote.empty()) row_desc(keyNote.c_str());
     const bool capturing = capture >= 0;
     if (capturing) ImGui::BeginDisabled();   // while waiting for a key, Space / Enter mustn't press a button
     for (int i = 0; i < (int)acts.size(); i++) {
@@ -302,7 +304,37 @@ static void keys_section(App &a)
         else if (ImGui::IsMouseClicked(2)) name = "MMB";
         for (int k = ImGuiKey_NamedKey_BEGIN; !name && k < ImGuiKey_NamedKey_END; k++)
             if (ImGui::IsKeyPressed((ImGuiKey)k, false)) name = sdk_key_name((ImGuiKey)k);
-        if (name) { set_all(acts[capture].cvar, name); capture = -1; }
+        if (name) {
+            // Players reported mixed-up binds: one key bound to two actions pressed both. A key now belongs to one action:
+            // taken from any other action that had it (an action left with no key says so). WASD and the arrows move and
+            // can't be bound to an action.
+            const std::string nm = name;
+            keyNote.clear();
+            for (const char *mv : { "W", "A", "S", "D", "Up", "Down", "Left", "Right" })
+                if (nm == mv) { keyNote = nm + " moves (W A S D and the arrow keys) - choose another key."; capture = -1; return; }
+            for (int j = 0; j < (int)acts.size(); j++) {
+                if (j == capture) continue;
+                std::string cur = a.ini.get("Keys", acts[j].cvar);
+                if (cur.empty()) cur = acts[j].def;
+                std::string kept, tok;
+                bool removed = false;
+                for (size_t p0 = 0; p0 <= cur.size();) {
+                    size_t p1 = cur.find(',', p0);
+                    if (p1 == std::string::npos) p1 = cur.size();
+                    tok = cur.substr(p0, p1 - p0);
+                    p0 = p1 + 1;
+                    if (tok.empty()) continue;
+                    if (tok == nm) { removed = true; continue; }
+                    kept += (kept.empty() ? "" : ",") + tok;
+                }
+                if (!removed) continue;
+                a.ini.set("Keys", acts[j].cvar, kept.empty() ? std::string("None") : kept);
+                keyNote += std::string(keyNote.empty() ? "" : " ") + key_shown(nm) + " was taken from \"" + acts[j].what + "\"" +
+                           (kept.empty() ? " - that action has no key now." : ".");
+            }
+            set_all(acts[capture].cvar, name);
+            capture = -1;
+        }
     }
 }
 
@@ -316,6 +348,15 @@ static bool lang_on_copy(App &a, int g, int idx)
     if (idx <= 0 || idx >= 22 || !code[idx][0]) return true;
     const std::string &root = a.env[g].game_data_root;
     if (root.empty()) return true;
+    if (g == G_GEARS1) {   // UE3 2006: WarGame\Localization\Coalesced.<code> (chi deu esm esn fra int ita jpn kor)
+        // the codes Gears 1 has (gears_settings choice_available limits the list to these); Chinese (Traditional) = chi
+        static const char *g1code[22] = { "", "INT", "INT", "FRA", "DEU", "ITA", "ESN", "ESM", "", "", "", "", "", "", "", "", "",
+                                          "", "JPN", "KOR", "CHI", "" };
+        if (!g1code[idx][0]) return false;
+        const std::string dir = root + "\\WarGame\\Localization\\";
+        if (GetFileAttributesW(widen(dir + "Coalesced.INT").c_str()) == INVALID_FILE_ATTRIBUTES) return true;   // unknown layout: allow
+        return GetFileAttributesW(widen(dir + "Coalesced." + g1code[idx]).c_str()) != INVALID_FILE_ATTRIBUTES;
+    }
     bool any = false;
     for (const char *sub : { "\\GearGame\\CookedXenon\\", "\\GearGame\\CookedXbox360\\" }) {
         const std::string dir = root + sub;
@@ -357,6 +398,11 @@ static void option_row(App &a, int g, const gs::Option &o)
             if (o.id == "Resolution" && items.size() == 6) ord = { 0, 5, 1, 2, 3, 4 };
             for (int i : ord) {
                 gs::Availability ca = gs::choice_available(o, G, i);
+                // 0.3.0 (Shagg 14:18): FSR / DLSS / XeSS are DirectX 12 only - greyed while Vulkan is the Graphics API
+                if (ca.ok && o.id == "AAMode" && i >= 2 && a.cur[g].i("Api") == 1) {
+                    ca.ok = false;
+                    ca.why = "DirectX 12 only - with Vulkan the launcher uses SMAA. Choose DirectX 12 as the Graphics API to use it.";
+                }
                 if (ca.ok && o.id == "Lang" && !lang_on_copy(a, g, i)) {   // job 620 (#45)
                     ca.ok = false;
                     ca.why = "Not on your copy of the game - it would show English. Copies from other regions have other languages.";
@@ -615,8 +661,9 @@ static void about_tab(App &a, int g)
         }
     }
     if (st.updateDir.empty())
-        lamp_line(d.updateNeeded || g == G_JUDGMENT ? 2 : 0, std::string(d.updateName) + ": not added" +
+        lamp_line(d.updateNeeded || game_update_required(g) ? 2 : 0, std::string(d.updateName) + ": not added" +
                   (g == G_JUDGMENT ? " - required for now (the disc version crashes at start)"   // 0.2.0 (#1)
+                   : g == G_GEARS1 ? " - required (the port is made from the disc and this update together)"
                    : d.updateNeeded ? " - the disc version runs instead" : " (optional)"));
     else
     {

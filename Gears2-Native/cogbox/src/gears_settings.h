@@ -1,4 +1,4 @@
-// COGBox - the Gears of War settings (Gears 2, Gears 3, Judgment): data model, presets, per-game memory, ini load/save
+// COGBox - the Gears of War settings (Gears 2, Gears 3, Judgment, Gears 1): data model, presets, per-game memory, ini load/save
 // and the game's command line. A port of the game-settings part of Gears2-Native's tools\launcher.ps1 (WinForms);
 // "PS1 nnn" comments cite that file's line numbers. No UI code here: the Dear ImGui side reads options() and calls
 // available() / build_args(); everything that depends on the PC comes in through Environment / Capability.
@@ -11,7 +11,9 @@
 namespace cogbox {
 namespace gears {
 
-enum class Game { Gears2 = 0, Gears3 = 1, Judgment = 2 };
+// Gears1 is the last index (added after the others) so saved settings keep their meaning.
+enum class Game { Gears2 = 0, Gears3 = 1, Judgment = 2, Gears1 = 3 };
+constexpr int kGameCount = 4;
 enum class Version { TitleUpdate = 0, Disc = 1 };   // PS1 125 $verNames (index 0 = the title update)
 enum class Tab { Display, Graphics, Controls, Gameplay };
 enum class Kind { Bool, Choice, Int, Float };
@@ -41,7 +43,7 @@ struct Environment {
     std::string game_data_root;     // --game_data_root (the game's extracted disc)
     std::string update_data_root;   // --update_data_root (the extracted title update package)
     std::string user_data_root;     // --user_data_root (saves)
-    std::string shader_cache_dir;   // --gow2_shader_cache_dir (Gears 3 / Judgment only; PS1 813, 820)
+    std::string shader_cache_dir;   // --gow2_shader_cache_dir (every game; Gears 2 since #58)
     std::string log_dir;            // this play session's folder (--log_file, --gow2_crash_dir, {LOG} in extra args)
     char path_sep = '\\';           // used to join log_dir with the log file's name
     // PS1 15 / 24 / 821: the title update build and its package are there (Gears 2 / 3: the TU6 exe and default.xexp;
@@ -114,7 +116,8 @@ Availability can(Game g, const std::string& feature, Version ver, const Environm
 // can() for the option's feature plus the UI dependencies (fullscreen -> exclusive, HDR -> nits, AA -> scene
 // resolution, at least 2 screens -> monitor).
 Availability available(const Option& o, Game g, Version ver, const Settings& s, const Environment& env);
-// A single choice greyed: the FPS counter's "Game's own (column)" in Judgment (PS1 267, 475).
+// A single choice greyed: the FPS counter's "Game's own (column)" in Judgment / Gears 1 (PS1 267, 475), and the game
+// languages Gears 1 has no text for.
 Availability choice_available(const Option& o, Game g, int index);
 // The tooltip to show: the reason in front of the description (PS1 412-416, 476-477), the GPU line for AA (PS1 345).
 std::string tooltip_for(const Option& o, Game g, const Availability& a, const Environment& env);
@@ -137,7 +140,7 @@ std::string main_gpu(const std::vector<std::string>& gpus);
 // PS1 141: the start URL for a chapter (0-based).
 std::string launch_url(Game g, int chapter);
 
-// The remembered settings of all three games (PS1 $s + PerGame).
+// The remembered settings of all the games (PS1 $s + PerGame).
 class Store {
 public:
     Store();                                         // the PS1 $defaults (PS1 103-116, 154, 157-158)
@@ -150,8 +153,8 @@ public:
     void reset();                                    // PS1 737-741: everything back to the defaults
     // The raw stores (exposed for tests / migration).
     std::map<std::string, double> top;               // Shared + PerGame keys (the last game's), and the legacy flags
-    std::map<std::string, double> per[3];            // PerGame sets; empty = the game has none yet
-    std::map<std::string, double> own[3];            // GameOwn values
+    std::map<std::string, double> per[kGameCount];   // PerGame sets; empty = the game has none yet
+    std::map<std::string, double> own[kGameCount];   // GameOwn values
 private:
     void migrate();
 };

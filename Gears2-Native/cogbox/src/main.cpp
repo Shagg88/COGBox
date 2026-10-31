@@ -159,7 +159,7 @@ void startup_notices(App &a)
     if (!a.ini.geti("Notices", "TitleUpdatesNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION) {
         ask(a, "tunotice", -1, "Recommended game updates",
             "COGBox's most-tested builds use these title updates:\n\n"
-            "    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4 (required for now)\n\n"
+            "    Gears of War - Title Update 5 (required)\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4 (required for now)\n\n"
             "They give the best compatibility and performance. Add each one from your own console (ADD UPDATE, or the game's "
             "About tab) - COGBox doesn't include game or update files.", { "Continue" });
         a.modal.check = "Don't show this again";
@@ -288,9 +288,10 @@ static void draw_ui(App &a, ImVec2 size)
     ImGui::Begin("##root", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                                         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse);
     ImDrawList *bg = ImGui::GetBackgroundDrawList();
-    static const ImVec4 tints[G_COUNT] = { ImVec4(0.30f, 0.45f, 0.70f, 1), ImVec4(0.75f, 0.50f, 0.22f, 1), ImVec4(0.70f, 0.22f, 0.16f, 1) };
-    // the tint follows the box in front (blended while turning)
-    int g0 = (int)floorf(a.carPos) % G_COUNT, g1 = (g0 + 1) % G_COUNT;
+    static const ImVec4 tints[G_COUNT] = { ImVec4(0.30f, 0.45f, 0.70f, 1), ImVec4(0.75f, 0.50f, 0.22f, 1), ImVec4(0.70f, 0.22f, 0.16f, 1),
+                                           ImVec4(0.45f, 0.52f, 0.40f, 1) };
+    // the tint follows the box in front (blended while turning); carPos is a carousel slot (front.cpp)
+    const int s0 = (int)floorf(a.carPos), g0 = game_at_slot(s0), g1 = game_at_slot(s0 + 1);
     float f = a.carPos - floorf(a.carPos);
     int tg = a.screen == SCR_PAGE ? a.page : -1;
     ImVec4 tint = tg >= 0 ? tints[tg] : ImVec4(tints[g0].x * (1 - f) + tints[g1].x * f, tints[g0].y * (1 - f) + tints[g1].y * f, tints[g0].z * (1 - f) + tints[g1].z * f, 1);
@@ -431,7 +432,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         int argc = 0;
         wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
         if (argv && argc >= 2 && wcscmp(argv[1], L"--x360test") == 0) return x360test(argc, argv);
-        // 0.2.0: a game's desktop shortcut starts COGBox with --play <gears2 | gears3 | judgment>
+        // 0.2.0: a game's desktop shortcut starts COGBox with --play <gears1 | gears2 | gears3 | judgment>
         if (argv && argc >= 3 && wcscmp(argv[1], L"--play") == 0) g_playArg = narrow(argv[2]);
         if (argv) LocalFree(argv);
     }
@@ -513,7 +514,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (a.st[a.front].ready != R_READY)
         for (int g = 0; g < G_COUNT; g++) if (a.st[g].ready == R_READY) { a.front = g; break; }
     if (const char *t = getenv("COGBOX_FRONT")) a.front = std::max(0, std::min(G_COUNT - 1, atoi(t)));
-    a.carPos = (float)a.front;
+    a.carPos = (float)game_slot(a.front);
     if (const char *t = getenv("COGBOX_PAGE")) {
         a.page = std::max(0, std::min(G_COUNT - 1, atoi(t)));
         const char *c = strchr(t, ':');
@@ -526,11 +527,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         bool noPort = false;
         for (int g = 0; g < G_COUNT; g++) noPort |= a.st[g].ready == R_NO_PORT;
         bool flat = false;
-        for (const char *n : { "gow2.exe", "gow3.exe", "gowj.exe" }) flat |= file_exists(join(exe_dir(), n));
+        for (const char *n : { "gow1.exe", "gow2.exe", "gow3.exe", "gowj.exe" }) flat |= file_exists(join(exe_dir(), n));
         if (noPort && flat)
             ask(a, "info", -1, "Unzipped without its folders",
                 "The game programs are directly beside CogBox.exe instead of in their folders (Gears2\\port-tu6, Gears3\\port-tu6, "
-                "Judgment\\port ...). Some unzip tools flatten folders - KDE's Ark does.\n\nUnzip the release again keeping its "
+                "Judgment\\port, Gears1\\port ...). Some unzip tools flatten folders - KDE's Ark does.\n\nUnzip the release again keeping its "
                 "folders: Windows' Extract All, 7-Zip, or 'unzip' on Linux.", { "OK" });
     }
     startup_notices(a);   // 0.2.0: the language prompt, then the title-update notice
@@ -539,7 +540,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (!g_playArg.empty()) {
         for (int g = 0; g < G_COUNT; g++) {
             if (g_playArg != game_def(g).key) continue;
-            a.front = g; a.carPos = (float)g;
+            a.front = g; a.carPos = (float)game_slot(g);
             if (a.st[g].ready == R_READY && !a.modal.open) play_start(a, g);
         }
     }

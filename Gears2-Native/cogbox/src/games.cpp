@@ -1,4 +1,4 @@
-// COGBox - the three games (see games.h)
+// COGBox - the games (see games.h)
 #include "games.h"
 #include "x360fs.h"
 
@@ -20,7 +20,21 @@ static const GameDef k_games[G_COUNT] = {
       "Title Update 4", false, "", "port",
       { 22855680, "426c5d27ff73d3ff2af9d404adb49e9a3db18bf1", "8fb96d4149721dc94fc0024b3001d2b734c814df" }, { 1888256, "88e876b10276535379d5524f2bef73ed9195870e", "269c0ae816e077ad37ec945c98abae6f0cafd2a0" },
       "2013", "Add your copy of the disc to play" },
+    // Gears 1: one build, like Judgment, made from the disc and Title Update 5 together (fingerprints: Gears1-Native
+    // notes/01-release; code = SHA-1 from the XEX's image offset on, as x360fs::xex_code_sha1).
+    { G_GEARS1, "Gears of War", "Gears 1", "gears1", "Gears1", x360fs::kTitleGears1, "gow1.exe", "gow1.log",
+      "Title Update 5", false, "", "port",
+      { 4767744, "ee2f204979f9811e99c4e08b70e11de869d005c0", "1c2701ade85df1fe6a86dad6dcf4e879600c1ba5" }, { 2295808, "01e2fd390bbd96b48a80e3f3559343a397d37356", "66c794cc9f49190becc19d24a1682332efbef572" },
+      "2006", "Add your copy of the disc to play" },
 };
+
+static const int k_slotGame[G_COUNT] = { G_GEARS1, G_GEARS2, G_GEARS3, G_JUDGMENT };
+int game_at_slot(int slot) { return k_slotGame[((slot % G_COUNT) + G_COUNT) % G_COUNT]; }
+int game_slot(int g)
+{
+    for (int s = 0; s < G_COUNT; s++) if (k_slotGame[s] == g) return s;
+    return 0;
+}
 
 const GameDef &game_def(int g) { return k_games[g < 0 || g >= G_COUNT ? 0 : g]; }
 
@@ -89,6 +103,10 @@ bool xex_is_tested(const GameDef &d, const std::string &full, const std::string 
 struct ReportedXexp { GameId game; const char *sha1; };
 static const ReportedXexp k_reportedXexp[] = {
     { G_GEARS2, "acfe0507c5a196eb322b36e91b4ca44233d40da5" },   // #51, 2,074,624 bytes
+    { G_GEARS3, "12cbb408bf77f1fa0ab69e5eb01d5028ce4b2bbf" },   // #56, Title Update 6, 1,908,736 bytes
+    { G_JUDGMENT, "d7c0b9ede168544b9a24d6e5afe3992cd87022ca" }, // #57, Title Update 4, 1,888,256 bytes
+    { G_JUDGMENT, "d7cd928cded5fe3798377b0c26a9591298144f60" }, // #61, Title Update 4, 1,888,256 bytes
+    { G_GEARS3, "20030da09581f4374f2f6820ff9fbf31a35dfffe" },   // #64, Title Update 6, 1,908,736 bytes
 };
 bool xexp_is_tested(const GameDef &d, const std::string &full, const std::string &code)
 {
@@ -155,5 +173,6 @@ void game_refresh(int g, Ini &ini, GameState &st, bool hash)
     st.useUpdate = !st.updateDir.empty() && (d.updateNeeded ? !st.portExeTu.empty() : true);
     if (st.ready == R_READY && d.updateNeeded && !st.useUpdate && st.portExeDisc.empty()) st.ready = R_NEED_UPDATE;
     // 0.2.0 (GitHub #1): Judgment's disc version crashes at start in this release; Title Update 4 is required for now.
-    if (st.ready == R_READY && g == G_JUDGMENT && st.updateDir.empty()) st.ready = R_NEED_UPDATE;
+    // Gears 1: its one build is made from the disc and Title Update 5 together, so TU5 is required too.
+    if (st.ready == R_READY && game_update_required(g) && st.updateDir.empty()) st.ready = R_NEED_UPDATE;
 }

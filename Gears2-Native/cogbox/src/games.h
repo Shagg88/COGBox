@@ -1,10 +1,10 @@
-// COGBox - the three games, where their ports and the player's copies are, and whether each is ready to play.
+// COGBox - the games, where their ports and the player's copies are, and whether each is ready to play.
 //
 // The release folder (what the zip unpacks to):
 //   CogBox.exe, SDL3.dll, README.txt, licenses (folder)
 //   Gears2\port-tu6\gow2.exe   Gears2\port-disc\gow2.exe     (each with its runtime DLLs)
 //   Gears3\port-tu6\gow3.exe   Gears3\port-disc\gow3.exe
-//   Judgment\port\gowj.exe
+//   Judgment\port\gowj.exe   Gears1\port\gow1.exe
 // What COGBox makes there for the player (never in the zip, so an update keeps it):
 //   <Game>\game\extracted      the disc's files (default.xex ...), unless the player points at a folder of their own
 //   <Game>\game\update         the title update's files (default.xexp ...)
@@ -15,7 +15,9 @@
 #include <cstdint>
 #include "util.h"
 
-enum GameId { G_GEARS2, G_GEARS3, G_JUDGMENT, G_COUNT };
+// Gears 1 (2006) was added after the others: it is the last index so saved settings / CogBox.ini keep their meaning;
+// the front screen shows the games in release order (game_at_slot / game_slot).
+enum GameId { G_GEARS2, G_GEARS3, G_JUDGMENT, G_GEARS1, G_COUNT };
 
 // Job 647 (GitHub #45, region discs): code = SHA-1 of the XEX from its image (PE data) offset on. The European and
 // Japanese Judgment discs and the European Gears 2 disc differ from the US ones only in the XEX header (region, media
@@ -43,7 +45,11 @@ struct GameDef {
 
 const GameDef &game_def(int g);
 int game_by_title_id(uint32_t tid);        // -1 if none of ours
-
+// The front screen's order (release order: Gears 1, 2, 3, Judgment): the game in a carousel slot, and a game's slot.
+int game_at_slot(int slot);
+int game_slot(int g);
+// Judgment and Gears 1: one build made from the disc and the title update together - the update is required for now.
+inline bool game_update_required(int g) { return g == G_JUDGMENT || g == G_GEARS1; }
 enum Readiness {
     R_NO_PORT,         // this release has no port program for the game
     R_NO_COPY,         // the player hasn't added their copy yet

@@ -219,6 +219,7 @@ std::vector<uint8_t> draw_cap(int w, int h, const std::string &k) {
 
 std::string compose(const std::string &promptDir, const std::string &game, const std::map<std::string, std::string> &keys) {
     namespace fs = std::filesystem;
+    if (game == "gears1") return "";   // Gears 1: no known prompt sheet yet - nothing drawn
     const fs::path dir = fs::u8path(promptDir) / ("hires-" + game);
     std::error_code ec;
     fs::create_directories(dir, ec);

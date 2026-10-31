@@ -1,4 +1,4 @@
-// COGBox - the front screen: the three games as boxes on a turning carousel, with Play and Settings under the one in
+// COGBox - the front screen: the games as boxes on a turning carousel, with Play and Settings under the one in
 // front. Each box is drawn flat, then every vertex of it is carried through a small 3D turn and perspective, so the
 // cover, its spine and its reflection on the floor bend together.
 #include "app.h"
@@ -176,7 +176,8 @@ static void draw_cover_flat(App &a, ImDrawList *dl, int g, ImVec2 o, float w, fl
         return;
     }
     const GameDef &d = game_def(g);
-    static const ImVec4 tints[G_COUNT] = { ImVec4(0.20f, 0.30f, 0.42f, 1), ImVec4(0.42f, 0.30f, 0.16f, 1), ImVec4(0.40f, 0.12f, 0.10f, 1) };
+    static const ImVec4 tints[G_COUNT] = { ImVec4(0.20f, 0.30f, 0.42f, 1), ImVec4(0.42f, 0.30f, 0.16f, 1), ImVec4(0.40f, 0.12f, 0.10f, 1),
+                                           ImVec4(0.26f, 0.30f, 0.24f, 1) };
     ImVec4 t = tints[g];
     auto L = [&](ImVec4 c) { return U(ImVec4(c.x * light, c.y * light, c.z * light, c.w)); };
     ImVec2 b(o.x + w, o.y + h);
@@ -199,10 +200,11 @@ static void draw_cover_flat(App &a, ImDrawList *dl, int g, ImVec2 o, float w, fl
                                 L(ImVec4(0.16f, 0.40f, 0.07f, 1)), L(ImVec4(0.16f, 0.40f, 0.07f, 1)));
     dl->AddLine(ImVec2(o.x, o.y + band), ImVec2(b.x, o.y + band), L(ImVec4(0.85f, 0.88f, 0.8f, 0.7f)), h * 0.004f);
     // the title: "GEARS OF WAR" and the big number / word (plain type, no logo)
-    const char *top = "GEARS OF WAR", *big = g == G_GEARS2 ? "2" : g == G_GEARS3 ? "3" : "JUDGMENT";
-    float sTop = h * 0.075f, sBig = g == G_JUDGMENT ? h * 0.13f : h * 0.30f;
+    // Gears 1 (no number): "GEARS OF" over a big "WAR"
+    const char *top = g == G_GEARS1 ? "GEARS OF" : "GEARS OF WAR", *big = g == G_GEARS2 ? "2" : g == G_GEARS3 ? "3" : g == G_GEARS1 ? "WAR" : "JUDGMENT";
+    float sTop = h * 0.075f, sBig = g == G_JUDGMENT ? h * 0.13f : g == G_GEARS1 ? h * 0.20f : h * 0.30f;
     ImVec2 st = F_TITLE->CalcTextSizeA(sTop, FLT_MAX, 0, top);
-    float topY = o.y + h * (g == G_JUDGMENT ? 0.26f : 0.18f);
+    float topY = o.y + h * (g == G_JUDGMENT ? 0.26f : g == G_GEARS1 ? 0.22f : 0.18f);
     dl->AddText(F_TITLE, sTop, ImVec2(o.x + (w - st.x) * 0.5f + h * 0.004f, topY + h * 0.004f), IM_COL32(0, 0, 0, 160), top);
     dl->AddText(F_TITLE, sTop, ImVec2(o.x + (w - st.x) * 0.5f, topY), L(ImVec4(0.90f, 0.88f, 0.84f, 1)), top);
     ImVec2 sb = F_TITLE->CalcTextSizeA(sBig, FLT_MAX, 0, big);
@@ -259,16 +261,18 @@ void draw_box(App &a, int g, ImVec2 center, float H, float yawDeg, float light, 
 }
 
 // ---- the carousel ----------------------------------------------------------------------------------------------------
-static float wrap_d(float d)   // -1.5 .. 1.5 for three boxes
+// The carousel works in slots (release order, game_at_slot); a.front stays a game index, a.carPos is a slot position.
+static float wrap_d(float d)   // -G_COUNT/2 .. G_COUNT/2
 {
-    while (d > 1.5f) d -= 3;
-    while (d < -1.5f) d += 3;
+    const float n = (float)G_COUNT, half = n * 0.5f;
+    while (d > half) d -= n;
+    while (d < -half) d += n;
     return d;
 }
 
 static void turn(App &a, int dir)
 {
-    a.front = ((a.front + dir) % G_COUNT + G_COUNT) % G_COUNT;
+    a.front = game_at_slot(game_slot(a.front) + dir);
     a.ini.seti("Front", "Box", a.front);
 }
 
@@ -312,11 +316,11 @@ void front_draw(App &a, ImVec2 size)
         if (ImGui::IsWindowHovered() && io.MouseWheel != 0) turn(a, io.MouseWheel > 0 ? -1 : 1);
     }
     // ease the short way round
-    float target = (float)a.front, d = wrap_d(target - a.carPos);
+    float target = (float)game_slot(a.front), d = wrap_d(target - a.carPos);
     float step = std::min(1.0f, io.DeltaTime * 9.0f);
     if (fabsf(d) < 0.002f) { if (a.carPos != target) a.restSince = now; a.carPos = target; }
     else a.carPos += d * step;
-    a.carPos = fmodf(a.carPos + 3, 3);
+    a.carPos = fmodf(a.carPos + G_COUNT, (float)G_COUNT);
 
     // the corner mark
     {
@@ -333,10 +337,10 @@ void front_draw(App &a, ImVec2 size)
     float cx = size.x * 0.5f, cy = S(90) + H * 0.5f, spacing = H * kCoverAspect * 1.25f;
     int order[G_COUNT];
     for (int i = 0; i < G_COUNT; i++) order[i] = i;
-    std::sort(order, order + G_COUNT, [&](int x, int y) { return fabsf(wrap_d(x - a.carPos)) > fabsf(wrap_d(y - a.carPos)); });
+    std::sort(order, order + G_COUNT, [&](int x, int y) { return fabsf(wrap_d(game_slot(x) - a.carPos)) > fabsf(wrap_d(game_slot(y) - a.carPos)); });
     for (int k = 0; k < G_COUNT; k++) {
         int g = order[k];
-        float dd = wrap_d(g - a.carPos), ad = std::min(1.0f, fabsf(dd));
+        float dd = wrap_d(game_slot(g) - a.carPos), ad = std::min(1.0f, fabsf(dd));
         float scale = 1.0f - 0.30f * ad, h = H * scale;
         float yaw = std::max(-1.0f, std::min(1.0f, dd)) * 35.0f;
         float light = 1.0f - 0.45f * ad;
@@ -479,7 +483,7 @@ void front_draw(App &a, ImVec2 size)
     // 0.2.0 (GitHub #1): once per session, when the carousel stops on Judgment and it has no Title Update 4
     {
         static bool toldTu4 = false;
-        if (!toldTu4 && a.front == G_JUDGMENT && a.carPos == (float)G_JUDGMENT && a.st[G_JUDGMENT].ready == R_NEED_UPDATE &&
+        if (!toldTu4 && a.front == G_JUDGMENT && a.carPos == (float)game_slot(G_JUDGMENT) && a.st[G_JUDGMENT].ready == R_NEED_UPDATE &&
             !a.modal.open && a.zoomTo == SCR_FRONT) {
             toldTu4 = true;
             ask(a, "info", G_JUDGMENT, "Title Update 4 needed",
@@ -488,13 +492,25 @@ void front_draw(App &a, ImVec2 size)
                 "folder. We're working on getting the disc version to run too.", { "OK" });
         }
     }
+    // Gears 1: its one build is made from the disc and Title Update 5 together - once per session, as Judgment's
+    {
+        static bool toldTu5 = false;
+        if (!toldTu5 && a.front == G_GEARS1 && a.carPos == (float)game_slot(G_GEARS1) && a.st[G_GEARS1].ready == R_NEED_UPDATE &&
+            !a.modal.open && a.zoomTo == SCR_FRONT) {
+            toldTu5 = true;
+            ask(a, "info", G_GEARS1, "Title Update 5 needed",
+                "Gears of War needs Title Update 5 - its port is made from the disc and Title Update 5 together.\n\n"
+                "Add it with ADD UPDATE: the update package from your console's Content\\0000000000000000\\4D5307D5\\000B0000 "
+                "folder.", { "OK" });
+        }
+    }
     // 0.2.0 (Shagg 12:33): Gears 2 / 3 added without their Title Update 6 - once per session per game, until "Don't
     // show this again" (CogBox.ini [Notices] TuRecommendNever_<game>)
     {
         static bool told[G_COUNT] = {};
         for (int g : { (int)G_GEARS2, (int)G_GEARS3 }) {
             const GameState &st = a.st[g];
-            if (told[g] || a.front != g || a.carPos != (float)g || a.modal.open || a.zoomTo != SCR_FRONT) continue;
+            if (told[g] || a.front != g || a.carPos != (float)game_slot(g) || a.modal.open || a.zoomTo != SCR_FRONT) continue;
             if (st.dataDir.empty() || !st.updateDir.empty()) continue;
             if (a.ini.geti("Notices", std::string("TuRecommendNever_") + game_def(g).key, 0)) { told[g] = true; continue; }
             told[g] = true;

@@ -1,5 +1,5 @@
 // COGBox - "Add your copy": whatever the player has (a disc image, a Games on Demand copy, an extracted folder, a title
-// update package) is recognised, matched to one of the three games, checked, and turned into the folders the ports
+// update package) is recognised, matched to one of the games, checked, and turned into the folders the ports
 // read. Unpacking runs on a worker thread into a "...partial" folder that is renamed into place only when it is
 // complete, so a cancel or a failure never leaves a half copy where the game looks for it.
 #include "app.h"
@@ -307,7 +307,7 @@ void install_start(App &a, const std::string &path, int forGame)
         snprintf(tid, sizeof tid, "%08X", p.titleId);
         if (forGame < 0) {
             set_message(a, std::string("COGBox doesn't know this version (title ID ") + tid + "). If it is a regional release of "
-                           "Gears of War 2, 3 or Judgment, add it from that game's page - it will be added as an untested version.", true);
+                           "Gears of War, 2, 3 or Judgment, add it from that game's page - it will be added as an untested version.", true);
             return;
         }
         p.game = forGame;

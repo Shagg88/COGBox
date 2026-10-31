@@ -1,7 +1,8 @@
 COGBox - Gears of War native PC ports
 =====================================
 
-COGBox starts the native PC ports of Gears of War 2, Gears of War 3 and Gears of War: Judgment.
+COGBox starts the native PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
+Judgment (Gears of War is new in 0.3.0 and still a preview).
 These are fan-made ports, rebuilt from the Xbox 360 games' own code by static recompilation. This
 is an unofficial fan project, not made by or connected to Microsoft, Xbox Game Studios, The
 Coalition or Epic Games.
@@ -22,9 +23,11 @@ What you need
   default and the fastest build. Without it, COGBox starts the disc version; you can also pick
   the disc version on a game's Gameplay tab. Judgment needs its Title Update 4 for now (its disc
   version crashes at start in this release).
+  Gears of War (the first game) needs its Title Update 5: its one build is made from the disc and
+  the update together.
   The update is a file on a console that has played the game online, in
       Content\0000000000000000\<title ID>\000B0000\
-  (Gears 2: 4D53082D, Gears 3: 4D5308AB, Judgment: 4D530A26).
+  (Gears 1: 4D5307D5, Gears 2: 4D53082D, Gears 3: 4D5308AB, Judgment: 4D530A26).
 - About 8 to 16 GB of free space per game if COGBox unpacks a disc image for you.
 
 

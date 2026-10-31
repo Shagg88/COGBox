@@ -14,11 +14,47 @@ namespace gears {
 
 namespace {
 
-const char* const k_gameNames[3] = { "Gears of War 2", "Gears of War 3", "Gears of War: Judgment" };   // PS1 95
-const char* const k_gameShort[3] = { "Gears 2", "Gears 3", "Judgment" };                               // PS1 96
-const char* const k_procNames[3] = { "gow2", "gow3", "gowj" };                                         // PS1 98
-const char* const k_engineIni[3] = { "Xe-GearEngine.ini", "Xbox360-GearEngine.ini", "Xbox360-GearEngine.ini" };   // PS1 101
+// Index = Game (Gears 1 last: it was added after the others).
+const char* const k_gameNames[kGameCount] = { "Gears of War 2", "Gears of War 3", "Gears of War: Judgment", "Gears of War" };   // PS1 95
+const char* const k_gameShort[kGameCount] = { "Gears 2", "Gears 3", "Judgment", "Gears 1" };                               // PS1 96
+const char* const k_procNames[kGameCount] = { "gow2", "gow3", "gowj", "gow1" };                                           // PS1 98
+// Gears 1 (UE3 2006) has one flat Coalesced.ini; --ue3_ini_edits goes to it when gow1.exe has gow1_ini_edits (can() "iniedit").
+const char* const k_engineIni[kGameCount] = { "Xe-GearEngine.ini", "Xbox360-GearEngine.ini", "Xbox360-GearEngine.ini", "Xe-WarEngine.ini" };   // PS1 101
 
+struct Gears1Chapter { const char* map; int point; const char* name; };
+const Gears1Chapter k_gears1Chapters[] = {
+    { "sp_prison_p", 37, "Act 1 - Time off for good behavior" },
+    { "sp_embry_p", 38, "Act 1 - Begin the mission to find Alpha Squad" },
+    { "sp_embry_p", 39, "Act 1 - Taking heat in Embry Square" },
+    { "sp_embry_p", 40, "Act 1 - Delta Squad divides and conquers in Embry" },
+    { "sp_hos_p", 41, "Act 1 - Infiltrate the House of Sovereigns" },
+    { "sp_hos_p", 42, "Act 1 - Drop the Hammer on the House of Sovereigns" },
+    { "sp_hos_p", 43, "Act 1 - A bloody reunion with Alpha Squad" },
+    { "sp_tomb_p", 44, "Act 1 - Berserker bait" },
+    { "sp_ephyrastreets_p", 45, "Act 2 - Locust counterattack" },
+    { "sp_ephyrastreets_p", 46, "Act 2 - Heavy weapons in close quarters" },
+    { "sp_oldephyra_p", 48, "Act 2 - A \"helping\" hand from the Stranded" },
+    { "sp_oldephyra_p", 49, "Act 2 - Stay in the light or be consumed" },
+    { "sp_oldephyra_p", 50, "Act 2 - Light your way to salvation" },
+    { "sp_oldephyra_p", 51, "Act 2 - Shootout at Aspho Gas Station" },
+    { "sp_viaducts_p", 52, "Act 2 - Burn Kryll... while burning rubber" },
+    { "sp_alamo_p", 69, "Act 2 - Fight alongside the Stranded" },
+    { "sp_factory_p", 53, "Act 3 - Enter Lethia Imulsion Facility" },
+    { "sp_factoryinterior_p", 54, "Act 3 - Keep your distance from Dark Wretches" },
+    { "sp_factoryinterior_p", 55, "Act 3 - Mechanized death ride" },
+    { "sp_caves_p", 57, "Act 3 - Traverse the caves before the Kryll come home" },
+    { "sp_caves_p", 58, "Act 3 - David versus Goliath" },
+    { "sp_caves_p", 59, "Act 3 - More mysteries found" },
+    { "sp_eba_p", 60, "Act 4 - Bullies on the playground" },
+    { "sp_eba_p", 61, "Act 4 - Enjoy the local flora and fauna" },
+    { "SP_EBA_RiverWalk_P", 62, "Act 4 - Surprise encore" },
+    { "SP_EBA_RiverWalk_P", 63, "Act 4 - Academy campus uprising" },
+    { "sp_adams_p", 64, "Act 4 - Storm the House!" },
+    { "sp_adams_p", 65, "Act 4 - Evict the Locust from Adam's House" },
+    { "sp_station_p", 66, "Act 5 - Secure the platform and catch the train" },
+    { "sp_tyro_p", 67, "Act 5 - All aboard" },
+    { "sp_tyro_p", 68, "Act 5 - A dish best served cold" },
+};
 // PS1 131-140: where Play can start.
 std::vector<std::string> start_names(Game g) {
     std::vector<std::string> v{ "Main menu (normal)" };
@@ -32,12 +68,16 @@ std::vector<std::string> start_names(Game g) {
             "Act IV - Char 2", "Act IV - Char 3", "Act IV - Shipyard 1", "Act IV - Shipyard 2", "Act V - Maelstrom",
             "Act V - Coast 1", "Act V - Coast 2", "Act V - Azura 1", "Act V - Azura 2", "Act V - Tower 1", "Act V - Tower 2" };
         v.insert(v.end(), std::begin(n), std::end(n));
-    } else {
+    } else if (g == Game::Judgment) {
         const char* n[] = { "Prologue (museum / trial)", "Sera University", "Onyx Mansion", "Onyx Mansion (part 3)",
             "Halvo Bay military base", "Halvo Bay - to the rooftops", "Rooftops", "Rooftops (part 2)", "Courthouse",
             "Courthouse (transition)", "Courthouse - boss", "Aftermath 1", "Aftermath 2", "Aftermath 2 - oil rig", "Aftermath 3",
             "Aftermath 3 - outro", "Aftermath 4", "Aftermath 5" };
         v.insert(v.end(), std::begin(n), std::end(n));
+    }
+    else if (g == Game::Gears1) {   // the game's own chapter table (Coalesced.ini [*-ChapN UIDataProvider_WarfareMaps], its
+        // SelectMap descriptions): 31 chapters, each a level file plus its start point (job 703b)
+        for (const auto& c : k_gears1Chapters) v.push_back(c.name);
     }
     return v;
 }
@@ -139,12 +179,12 @@ std::vector<Option> make_options(Game g) {
     add(choice("FrameCap", "Frame rate limit", Tab::Display, PG,
                { "30 (original)", "45", "60", "90", "120", "144", "165", "Unlimited" }, 0,
                "The game itself asks for 30 frames per second, as on the console. 60 / 120 lift the limit to that; Unlimited "
-               "removes it. With V-Sync on, the limit stays just under your monitor's refresh rate.", 341), "", "", true);
+               "removes it. With V-Sync on, the limit stays just under your monitor's refresh rate.", 341), "framecap", "", true);
     add(choice("FpsMode", "FPS counter", Tab::Display, OWN, { "Off", "Bar at the top", "Bar at the bottom", "Game's own (column)" }, 0,
                "Bar: one line (FPS, frame time, slowest frame) drawn by the port itself, nothing in the game changed. Game's own: "
                "the game's built-in FPS / frame-time column.", 336));
-    add(make("Ultrawide", "Ultrawide 21:9", Tab::Display, Kind::Bool, PG, 0,
-             "A wider view for a 21:9 screen; black bars on other shapes.", 362), "ultrawide");
+    add(make("Ultrawide", "Ultrawide", Tab::Display, Kind::Bool, PG, 0,
+             "A wider view that matches an ultrawide monitor (21:9 or 32:9); black bars on other shapes.", 362), "ultrawide");
 
     // ---- Graphics ------------------------------------------------------------------------------------------------
     add(choice("Preset", "Quality preset", Tab::Graphics, PG, { "Original (as on the console)", "High", "Ultra", "Custom" }, 3,
@@ -172,7 +212,7 @@ std::vector<Option> make_options(Game g) {
                "4x: 5120x2880. Real detail, not an upscale. Match my monitor: the smallest scale that covers the screen, "
                "resampled to its exact size. 1080p: drawn at 720p and upscaled to the screen with sharpening - fast, for "
                "weaker graphics cards; softer than real detail.", 340), "", "", true);
-    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA", "FSR (highly experimental)", "DLSS (NVIDIA RTX, highly experimental)", "XeSS (highly experimental)" }, 0,
+    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (highly experimental)", "DLSS (NVIDIA RTX, highly experimental)", "XeSS (highly experimental)" }, 0,
                "SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX12 GPU. DLSS: the same on "
                "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.", 346), "", "", true);
     add(choice("SceneMode", "Scene resolution", Tab::Graphics, SH,
@@ -191,25 +231,27 @@ std::vector<Option> make_options(Game g) {
     add(make("Trilinear", "Smooth texture detail steps (trilinear)", Tab::Graphics, Kind::Bool, PG, 1,
              "Texture detail levels blend instead of showing a line where they step down (the game uses point filtering "
              "between levels).", 358), "trilinear", "", true);
-    add(make("MipFade", "Sharp textures show at once (fast mip fade)", Tab::Graphics, Kind::Bool, PG, 1,
+    // 0.3.0 (Shagg 17:48): settings Gears 1's 2006 engine doesn't have are left out of its list, not greyed
+    const bool g1 = g == Game::Gears1;
+    if (!g1) add(make("MipFade", "Sharp textures show at once (fast mip fade)", Tab::Graphics, Kind::Bool, PG, 1,
              "A newly loaded sharper texture shows at once instead of fading in over 0.3-2 seconds.", 359), "mipfade", "", true);
     add(choice("Pool", "Texture memory", Tab::Graphics, PG,
                { "Game's own (smallest)", "Standard (196 MB / Gears 3 200 MB)", "Large (256 MB)", "Larger (320 MB, not long-tested)" }, 1,
                "The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory "
                "for the rest of the game.", 360), "pool", "", true);
-    add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
+    if (!g1) add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
                "How far away detail and objects are still drawn.", 361), "drawdist", "", true);
     // Motion blur / lens flares: no PS1 tooltip.
-    add(make("MotionBlur", "Motion blur", Tab::Graphics, Kind::Bool, PG, 1, "The blur of fast movement (the game's own setting).", 370),
-        "", "", true);
-    add(make("DoF", "Depth of field", Tab::Graphics, Kind::Bool, PG, 1,
-             "The blur of distant / out-of-focus areas (cutscenes, aiming).", 371), "", "", true);
-    add(make("LensFlares", "Lens flares", Tab::Graphics, Kind::Bool, PG, 1, "Light flares from bright lights (the game's own setting).", 372),
-        "", "", true);
+    if (!g1) add(make("MotionBlur", "Motion blur", Tab::Graphics, Kind::Bool, PG, 1, "The blur of fast movement (the game's own setting).", 370),
+        "inifx", "", true);
+    if (!g1) add(make("DoF", "Depth of field", Tab::Graphics, Kind::Bool, PG, 1,
+             "The blur of distant / out-of-focus areas (cutscenes, aiming).", 371), "inifx", "", true);
+    if (!g1) add(make("LensFlares", "Lens flares", Tab::Graphics, Kind::Bool, PG, 1, "Light flares from bright lights (the game's own setting).", 372),
+        "inifx", "", true);
     add(choice("Shake", "Camera shake (roadie run)", Tab::Graphics, PG, { "Original", "Less", "Off" }, 0,
-               "The camera shake while roadie-running. Less halves the game's own shake; Off removes it.", 373), "", "", true);
+               "The camera shake while roadie-running. Less halves the game's own shake; Off removes it.", 373), "iniedit", "", true);
     add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 5, 100,
-               "100 = the original. Widens (or narrows) every camera view by this much.", 374), "", "", true);
+               "100 = the original. Widens (or narrows) every camera view by this much.", 374), "iniedit", "", true);
     // PR #43 (legoliamneeson): strict occlusion queries (--gow2_renderer_queries=strict), off by default in every game.
     // Per game, Gears 3 and Judgment only (where it was tried: walls hiding light flares); not in the preset.
     // Job 620 (PR #43 bbb7cee: batched result copies, early submits, wake on GPU completion - Judgment Museum 93 fps
@@ -242,9 +284,9 @@ std::vector<Option> make_options(Game g) {
 
 
     // ---- Gameplay ------------------------------------------------------------------------------------------------
-    add(choice("Start", "Start at", Tab::Gameplay, OWN, start_names(g), 0,
-               "Main menu, or straight into a chapter from its beginning (it opens paused: press A / Start). Your saves are not "
-               "changed.", 323), "start");
+    // 0.3.0 (Shagg 13:43): no "Start at" chapter option in any game - a level opened by its URL skips the game's own
+    // chapter start (checkpoint, scripting), so a chapter could look broken that plays fine from the game's Chapter
+    // Select. A player's older saved "Start" value is ignored (below).
     add(choice("Version", "Game version", Tab::Gameplay, OWN, { "Title Update (latest)", "Disc (original release)" },
                0,   // COGBox (Shagg 19:46): the PGO build is the default - Gears 2's and Gears 3's title-update builds
                     // (the PS1 has G3Version = 1, the disc; Gears 3's chat built both its exes with PGO, job 143)
@@ -271,7 +313,7 @@ std::vector<Option> make_options(Game g) {
                  "Chinese (Simplified)" }, 0,
                "The language of the game's own text and voices - every language the US and European releases have. Only "
                "the languages on your copy of the game are there; the others fall back to English. European copies have "
-               "the most. Takes effect when the game starts.", 0));
+               "the most. Takes effect when the game starts.", 0), "lang");
     add(make("Mute", "Mute when the game is not the active window", Tab::Gameplay, Kind::Bool, SH, 0,
              "Silences the game while another window is in front; the sound comes back when you click back into the game.", 386),
         "mute");   // the only sound option, so it lives here (no Audio tab)
@@ -293,7 +335,18 @@ double clamp_value(const Option& o, double x, const Environment* env) {
     return x;
 }
 
-bool cap_exe(const Environment& e, const std::string& n) { return e.cap.exe_has && e.cap.exe_has(n); }
+bool cap_exe(const Environment& e, const std::string& n) {
+    // 0.3.0 (Shagg 14:02, Gears 1's Graphics tab greyed): the compiler builds some short option names inside the code a
+    // few letters at a time ("gow1_ani" ...), so a text search misses them. Every Gears 1 build COGBox ships has these.
+    static const char* const k_gears1_has[] = { "gow1_aniso16", "gow1_trilinear", "gow1_ini_edits", "gow1_skip_logos",
+                                                "gow1_texture_pool_mb", "gow1_max_fps" };
+    for (const char* h : k_gears1_has)
+        if (n == h && e.cap.exe_has && e.cap.exe_has("gow1_tiling_off")) return true;   // any Gears 1 exe since job 697
+    // 0.3.0 (job 733): --gow2_aspect / --gowj_aspect are short enough to be split the same way (job 730's gow2.exe: no
+    // "gow2_aspect" text) - their description, a long literal, is searched instead
+    if ((n == "gow2_aspect" || n == "gowj_aspect") && e.cap.exe_has && e.cap.exe_has("the shape. Empty = 21:9")) return true;
+    return e.cap.exe_has && e.cap.exe_has(n);
+}
 bool cap_rt(const Environment& e, const std::string& n) { return e.cap.runtime_has && e.cap.runtime_has(n); }
 bool cap_file(const Environment& e, const std::string& n) { return e.cap.file_next_to_exe && e.cap.file_next_to_exe(n); }
 
@@ -303,13 +356,27 @@ std::vector<std::string> gpu_list(const Environment& env) {
 }
 std::string gpu_main(const Environment& env) { return env.gpu_name.empty() ? main_gpu(env.gpus) : env.gpu_name; }
 
-const char* section_name(int g) { return g == 0 ? "Gears2" : g == 1 ? "Gears3" : "Judgment"; }
+const char* section_name(int g) { return g == 0 ? "Gears2" : g == 1 ? "Gears3" : g == 2 ? "Judgment" : "Gears1"; }
+int section_game(const std::string& s) {
+    for (int g = 0; g < kGameCount; ++g) if (s == section_name(g)) return g;
+    return -1;
+}
+
+// Gears 1's disc has Coalesced.<lang> for chi deu esm esn fra int ita jpn kor (Gears1-Native notes/01-release): the
+// Lang choices it can show (indices into the Lang list; 20 = Chinese (Traditional) for "chi" - the 2006 Asian release).
+bool gears1_lang(int idx) {
+    switch (idx) {
+    case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 18: case 19: case 20: return true;
+    default: return false;
+    }
+}
 
 }  // namespace
 
 // ---- The model ------------------------------------------------------------------------------------------------------
 const std::vector<Option>& options(Game g) {
-    static const std::vector<Option> all[3] = { make_options(Game::Gears2), make_options(Game::Gears3), make_options(Game::Judgment) };
+    static const std::vector<Option> all[kGameCount] = { make_options(Game::Gears2), make_options(Game::Gears3), make_options(Game::Judgment),
+                                                         make_options(Game::Gears1) };
     return all[static_cast<int>(g)];
 }
 const Option* find_option(Game g, const std::string& id) {
@@ -333,26 +400,43 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     if (f == "version") {
         if (g == Game::Gears2) { if (!env.update_ready) return no("The Title Update 6 build is not there yet."); }
         else if (g == Game::Gears3) { if (!env.update_ready) return no("The Gears 3 Title Update 6 build is not there yet."); }
+        else if (g == Game::Gears1) return no("Gears 1 always runs with its Title Update 5.");
         else return no("Judgment always runs with its Title Update 4.");
     } else if (f == "start" || f == "prebuild") {
-        if (g == Game::Judgment && start_names(g).size() < 2)
-            return no(not_yet(2, f == "start" ? "its chapter list is coming" : "needs its chapter list"));
+        if ((g == Game::Judgment || g == Game::Gears1) && start_names(g).size() < 2)
+            return no(not_yet(gi, f == "start" ? "its chapter list is coming" : "needs its chapter list"));
     } else if (f == "gamefps") {
-        if (g == Game::Judgment) return no(not_yet(2, "game's own counter"));
-    } else if (f == "ultrawide") {   // 0.2.0: Judgment too (--gowj_ultrawide, a new build)
+        if (g == Game::Judgment || g == Game::Gears1) return no(not_yet(gi, "game's own counter"));
+    } else if (f == "ultrawide") {   // 0.2.0: Judgment too (--gowj_ultrawide, a new build); Gears 1 when gow1.exe has it
         if (g == Game::Judgment && !cap_exe(env, "gowj_ultrawide")) return no(not_yet(2));
+        if (g == Game::Gears1 && !cap_exe(env, "gow1_ultrawide")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "cheats" || f == "mutators") {
         if (g != Game::Gears3) return no(not_yet(gi));
         if (ver == Version::TitleUpdate && env.update_ready)
             return no("Gears 3: the Disc version only for now (Title Update 6 shows a dirty-disc error with it).");
     } else if (f == "levelsel") {
         if (g != Game::Judgment) return no(not_yet(gi));
+    } else if (f == "inifx") {   // motion blur, depth of field, lens flares: [SystemSettings] switches
+        if (g == Game::Gears1) return no("Gears 1's engine (2006) has no setting for this.");
     } else if (f == "drawdist") {
         if (g == Game::Gears2) return no(not_yet(0, "its config has no draw-distance setting"));
+        if (g == Game::Gears1) return no("Gears 1's engine (2006) has no draw-distance setting.");
+    } else if (f == "iniedit") {   // the options sent through --ue3_ini_edits; Gears 1 (flat Coalesced.ini) when gow1.exe edits it
+        if (g == Game::Gears1 && !cap_exe(env, "gow1_ini_edits")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "skiplogos" || f == "trilinear") {
         if (g == Game::Gears2 && !env.g2_disc_ini_edits) return no(not_yet(0, "needs the next Gears 2 build"));
+        if (g == Game::Gears1 && !cap_exe(env, f == "skiplogos" ? "gow1_skip_logos" : "gow1_trilinear")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "mipfade") {
         if (g == Game::Gears2) return no(not_yet(0, "its config has no mip-fade setting"));
+        if (g == Game::Gears1) return no("Gears 1's engine (2006) has no mip-fade setting - its sharper textures already show at once.");
+    } else if (f == "aniso") {
+        if (g == Game::Gears1 && !cap_exe(env, "gow1_aniso16")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "pool") {
+        if (g == Game::Gears1 && !cap_exe(env, "gow1_texture_pool_mb")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "framecap") {
+        if (g == Game::Gears1 && !cap_exe(env, "gow1_max_fps")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "lang") {   // the SDK runtime's --user_language / --user_country
+        if (g == Game::Gears1 && !cap_rt(env, "user_language") && !cap_exe(env, "user_language")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "lowlag") {
         if (!cap_exe(env, "gow2_renderer_frames_in_flight")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "scenescale") {
@@ -364,6 +448,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "realocclusion") {   // PR #43: tried in Gears 3 and Judgment only
         if (g == Game::Gears2) return no(not_yet(0, "tried in Gears 3 and Judgment so far"));
+        // 0.3.0: with Gears 1's shader pack it froze the title screen (frame 183, 14:10 runs) - off until that is fixed
+        if (g == Game::Gears1) return no(not_yet(gi, "freezes Gears 1's title screen with its shader pack - off for now"));
     } else if (f == "vsync") {   // launcher patch 0155
         if (!cap_rt(env, "d3d12_present_vsync")) return no(not_yet(gi, "needs its next build (SDK patch 37)"));
     }
@@ -412,7 +498,8 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
 
 Availability choice_available(const Option& o, Game g, int index) {
     Availability a;
-    if (o.id == "FpsMode" && index == 3 && g == Game::Judgment) { a.ok = false; a.why = not_yet(2, "game's own counter"); }   // PS1 267, 475
+    if (o.id == "FpsMode" && index == 3 && (g == Game::Judgment || g == Game::Gears1)) { a.ok = false; a.why = not_yet(static_cast<int>(g), "game's own counter"); }   // PS1 267, 475
+    if (o.id == "Lang" && g == Game::Gears1 && !gears1_lang(index)) { a.ok = false; a.why = "Not in Gears 1 - it would show English."; }
     return a;
 }
 
@@ -424,6 +511,8 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
     }
     if (g == Game::Judgment && o.id == "FpsMode") return not_yet(2, "game's own counter") + " " + base;   // PS1 476
     if (g == Game::Judgment && o.id == "Players") return "Untested in Judgment. " + base;                 // PS1 477
+    if (g == Game::Gears1 && o.id == "FpsMode") return not_yet(3, "game's own counter") + " " + base;
+    if (g == Game::Gears1 && o.id == "Players" && a.why.empty()) return "Untested in Gears 1. " + base;
     if (g == Game::Judgment && o.id == "FrameCap")   // GitHub #38: as on Xenia Canary, unlimited can leave a loading screen endless
         return base + "\nJudgment: Unlimited can leave the loading screen after some chapters (Monroe Commons) running for "
                       "ever. 60 is the recommended limit.";
@@ -432,12 +521,12 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
 }
 
 Version effective_version(Game g, const Settings& s, const Environment& env) {   // PS1 459
-    if (g == Game::Judgment) return Version::TitleUpdate;
+    if (g == Game::Judgment || g == Game::Gears1) return Version::TitleUpdate;   // one build (disc + its title update)
     if (!env.update_ready) return Version::Disc;
     return s.i("Version") == 0 ? Version::TitleUpdate : Version::Disc;
 }
 bool exe_for_update(Game g, Version ver, const Environment& env) {   // PS1 442-445, 804, 809, 821
-    if (g == Game::Judgment) return env.update_ready;
+    if (g == Game::Judgment || g == Game::Gears1) return env.update_ready;
     return env.update_ready && ver == Version::TitleUpdate;
 }
 
@@ -476,6 +565,11 @@ std::string main_gpu(const std::vector<std::string>& gpus) {     // PS1 152
 }
 std::string launch_url(Game g, int chapter) {                    // PS1 141-144
     if (g == Game::Judgment) return std::string(k_mapsGJ[std::max(0, std::min(17, chapter))]) + " -nostartupmovies";
+    if (g == Game::Gears1) {   // the chapter's level file and its start point (the game's chapter select passes it the same way)
+        const int n = int(sizeof(k_gears1Chapters) / sizeof(k_gears1Chapters[0]));
+        const Gears1Chapter& c = k_gears1Chapters[std::max(0, std::min(n - 1, chapter))];
+        return std::string(c.map) + "?LoadChapter=" + std::to_string(c.point);
+    }
     return "GearGame_P?loadcheckpoint=0?chapter=" + std::to_string(chapter) + " -nostartupmovies";
 }
 
@@ -484,10 +578,10 @@ Store::Store() { reset(); }
 
 void Store::reset() {
     top.clear();
-    for (int g = 0; g < 3; ++g) { per[g].clear(); own[g].clear(); }
+    for (int g = 0; g < kGameCount; ++g) { per[g].clear(); own[g].clear(); }
     last_game = 0;
     for (const Option& o : options(Game::Gears2)) if (o.scope != Scope::GameOwn) top[o.id] = o.def;
-    for (int g = 0; g < 3; ++g)
+    for (int g = 0; g < kGameCount; ++g)
         for (const Option& o : options(static_cast<Game>(g))) if (o.scope == Scope::GameOwn) own[g][o.id] = o.def;
     // PS1 104-105 / 154 / 157-158: AAMode and the FPS counters start at -1 and are worked out from the older boxes.
     top["AAMode"] = -1; top["AA"] = 0; top["ShowFps"] = 0; top["G3ShowFps"] = 0;
@@ -518,14 +612,15 @@ Settings Store::view(Game g, const Environment& env) const {
         s.set(o.id, clamp_value(o, x, &env));   // PS1 300 / 431 / 437-438 clamping
     }
     s.set("Version", static_cast<int>(effective_version(g, s, env)));   // PS1 459
-    if (g == Game::Judgment && s.i("FpsMode") == 3) s.set("FpsMode", 0); // PS1 475
+    if ((g == Game::Judgment || g == Game::Gears1) && s.i("FpsMode") == 3) s.set("FpsMode", 0); // PS1 475
+    if (g == Game::Gears1 && !gears1_lang(s.i("Lang"))) s.set("Lang", 0);   // a language Gears 1 has no text for
     return s;
 }
 
 void Store::remember(Game g, const Settings& s) {   // PS1 450-455
     const int gi = static_cast<int>(g);
     own[gi]["Start"] = s.f("Start"); own[gi]["Aniso"] = s.f("Aniso"); own[gi]["FpsMode"] = s.f("FpsMode");
-    if (g != Game::Judgment) own[gi]["Version"] = s.f("Version");
+    if (g != Game::Judgment && g != Game::Gears1) own[gi]["Version"] = s.f("Version");
     for (const Option& o : options(g)) if (o.scope == Scope::PerGame) per[gi][o.id] = s.f(o.id);   // PS1 419-427
 }
 
@@ -533,7 +628,7 @@ void Store::commit(Game g, const Settings& s, const Environment& env) {   // PS1
     const int gi = static_cast<int>(g);
     last_game = gi;
     own[gi]["Start"] = s.f("Start"); own[gi]["Aniso"] = s.f("Aniso"); own[gi]["FpsMode"] = s.f("FpsMode");
-    if (g != Game::Judgment && env.update_ready) own[gi]["Version"] = s.f("Version");   // PS1 761-762
+    if (g != Game::Judgment && g != Game::Gears1 && env.update_ready) own[gi]["Version"] = s.f("Version");   // PS1 761-762
     for (const Option& o : options(g)) {
         if (o.scope == Scope::GameOwn) continue;
         top[o.id] = s.f(o.id);
@@ -577,9 +672,9 @@ bool Store::load_ini(const std::string& text) {
             std::istringstream num(val); num.imbue(std::locale::classic());
             if (!(num >> x)) continue;
         }
-        int gsec = section == "Gears2" ? 0 : section == "Gears3" ? 1 : section == "Judgment" ? 2 : -1;
+        int gsec = section_game(section);
         if (gsec < 0) {
-            if (key == "Game") { last_game = std::max(0, std::min(2, static_cast<int>(x))); any = true; continue; }
+            if (key == "Game") { last_game = std::max(0, std::min(kGameCount - 1, static_cast<int>(x))); any = true; continue; }
             if (key == "WineD3D12") {   // job 643: the old box; on = DirectX 12, off = the new Automatic
                 top["WineApi"] = x != 0 ? 2 : 0;
                 any = true;
@@ -638,7 +733,7 @@ std::string Store::save_ini() const {
     out << "; COGBox - Gears of War settings. Boxes: true / false; lists: the position from 0.\n";
     out << "[General]\nGame=" << last_game << "\n";
     for (const Option& o : options(Game::Gears2)) if (o.scope != Scope::GameOwn) out << o.id << "=" << val(o, get(top, o)) << "\n";
-    for (int g = 0; g < 3; ++g) {
+    for (int g = 0; g < kGameCount; ++g) {
         out << "\n[" << section_name(g) << "]\n";
         for (const Option& o : options(static_cast<Game>(g))) {
             if (o.scope == Scope::GameOwn) out << o.id << "=" << val(o, get(own[g], o)) << "\n";
@@ -653,7 +748,7 @@ PromptComposer g_prompt_composer = nullptr;   // job 661: set by keycaps.cpp
 
 std::vector<std::string> build_args(Game g, Version ver, const Settings& s, const Environment& env, std::vector<std::string>* notesOut) {
     const int gi = static_cast<int>(g);
-    const bool isG3 = g == Game::Gears3, isGJ = g == Game::Judgment;
+    const bool isG3 = g == Game::Gears3, isGJ = g == Game::Judgment, isG1 = g == Game::Gears1;
     std::vector<std::string> a, notes;
     auto q = [](const std::string& p) { return "\"" + p + "\""; };
     auto logf = [&](const char* name) { return env.log_dir + env.path_sep + name; };
@@ -664,32 +759,31 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // 0.2.1: native mouse look (the engine's own PC mouse axes, ue3_mouse_look in the exe) replaces 0.2.0's boosted
     // right stick; the old way stays for exes without it
     const bool nativeMouse = s.b("Mnk") && cap_exe(env, "ue3_mouse_look");
-    const bool mouseLook = !nativeMouse && s.b("Mnk") && cap_exe(env, "pad_look_scale") &&
+    const bool mouseLook = !nativeMouse && (!isG1 || cap_exe(env, "gow1_ini_edits")) && s.b("Mnk") && cap_exe(env, "pad_look_scale") &&
                            !(g == Game::Gears2 && !useUpdate && !env.g2_disc_ini_edits);
 
     // PS1 800-823: data roots, log, crash folder, renderer, shader cache, title update
     if (g == Game::Gears2) {
         a = { "--game_data_root=" + q(env.game_data_root), "--user_data_root=" + q(env.user_data_root),
-              "--log_file=" + q(logf("gow2.log")), "--gow2_crash_dir=" + q(env.log_dir), "--gpu_plugin=xenos" };
+              "--log_file=" + q(logf("gow2.log")), "--gow2_crash_dir=" + q(env.log_dir), "--gpu_plugin=xenos",
+              // GitHub #58: without this Gears 2 kept its shaders in port\out\shader-cache, so "Prepare all shaders"
+              // wrote its progress there and the launcher, reading Gears2\shadercache, said it never finished
+              "--gow2_shader_cache_dir=" + q(env.shader_cache_dir) };
         if (useUpdate) a.push_back("--update_data_root=" + q(env.update_data_root));
     } else if (isG3) {
         a = { "--game_data_root=" + q(env.game_data_root), "--user_data_root=" + q(env.user_data_root),
               "--log_file=" + q(logf("gow3.log")), "--gow2_crash_dir=" + q(env.log_dir),
               "--gow2_shader_cache_dir=" + q(env.shader_cache_dir) };
         if (useUpdate) a.push_back("--update_data_root=" + q(env.update_data_root));
-    } else {
+    } else {   // Judgment, Gears 1 (the same layout: one build, its title update when present)
         a = { "--game_data_root=" + q(env.game_data_root), "--user_data_root=" + q(env.user_data_root),
-              "--log_file=" + q(logf("gowj.log")), "--gow2_crash_dir=" + q(env.log_dir), "--gpu_plugin=xenos",
+              "--log_file=" + q(logf(isG1 ? "gow1.log" : "gowj.log")), "--gow2_crash_dir=" + q(env.log_dir), "--gpu_plugin=xenos",
               "--gow2_shader_cache_dir=" + q(env.shader_cache_dir) };
         if (useUpdate) a.push_back("--update_data_root=" + q(env.update_data_root));
     }
     if (env.wine) notes.push_back("launcher: running under Wine / Proton");   // job 523
     // PS1 832-836: start at a chapter
-    const int chapter = s.i("Start") - 1;
-    if (avail("Start") && chapter >= 0) {
-        std::string url = launch_url(g, chapter);
-        a.push_back((g == Game::Gears2 ? "--gow2_launch=" : "--ue3_launch=") + q(url));
-    }
+    // 0.3.0: "Start at" removed (see the option list) - the game always opens at its own main menu.
     // PS1 837-842: render resolution ("Match my monitor" = scale 0 + native size; counts as 2x below)
     int scale = s.i("Resolution") + 1;
     if (scale == 6) {   // 0.2.0 "1080p": 720p drawn, upscaled to the window (Lanczos) and sharpened (RCAS)
@@ -755,19 +849,27 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // warns and keeps them off)
     if (on("RealOcclusion")) a.push_back("--gow2_renderer_queries=strict");
     // PS1 858: 16x anisotropic
-    if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : "--gowj_aniso16=true");
+    if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : isG1 ? "--gow1_aniso16=true" : "--gowj_aniso16=true");
     // PS1 860-864: texture pool (-1 = the port's own default; Judgment then 200)
     if (avail("Pool")) {
         int mb = k_poolMb[std::max(0, std::min(3, s.i("Pool")))];
         if (mb < 0 && isGJ) mb = 200;
+        if (mb < 0 && isG1) mb = 196;   // as Gears 2 (the same 140 MB pool on the disc)
         if (mb >= 0) {
-            static const char* const sw[3] = { "--gow2_patch_texture_pool_mb=", "--gow3_texture_pool_mb=", "--gowj_texture_pool_mb=" };
+            static const char* const sw[kGameCount] = { "--gow2_patch_texture_pool_mb=", "--gow3_texture_pool_mb=", "--gowj_texture_pool_mb=",
+                                                        "--gow1_texture_pool_mb=" };
             a.push_back(sw[gi] + std::to_string(mb));
         }
     }
     // PS1 866-867: Gears 3 / Judgment trilinear and fast mip fade (on by default there, so always sent)
     if (isG3) { a.push_back("--gow3_trilinear=" + fmt_bool(s.b("Trilinear"))); a.push_back("--gow3_fast_mip_fade=" + fmt_bool(s.b("MipFade"))); }
+    // 0.3.0 (GitHub #54, soldiermxdeath: Monroe Commons' loading screen ends at 30 fps, not at 60): loading screens at 30
+    if (isGJ) a.push_back("--gowj_loading_fps=30");
     if (isGJ) { a.push_back("--gowj_trilinear=" + fmt_bool(s.b("Trilinear"))); a.push_back("--gowj_fast_mip_fade=" + fmt_bool(s.b("MipFade"))); }
+    if (isG1) {   // only when gow1.exe has the switch (can(): trilinear / mipfade)
+        if (avail("Trilinear")) a.push_back("--gow1_trilinear=" + fmt_bool(s.b("Trilinear")));
+        if (avail("MipFade")) a.push_back("--gow1_fast_mip_fade=" + fmt_bool(s.b("MipFade")));
+    }
     // PS1 869-871: cheats, mutators, level select
     if (on("Cheats")) a.push_back("--gow3_cheats=true");
     if (on("Mutators")) a.push_back("--gow3_unlock_mutators=true");
@@ -776,25 +878,27 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     {
         const std::string ei = k_engineIni[gi];
         std::vector<std::string> ini;
-        if (!s.b("MotionBlur")) ini.push_back(ei + "|SystemSettings|MotionBlur=False");
-        if (!s.b("DoF")) ini.push_back(ei + "|SystemSettings|DepthOfField=False");
-        if (!s.b("LensFlares")) ini.push_back(ei + "|SystemSettings|LensFlares=False");
-        if (s.i("Fov") != 100) {
+        if (avail("MotionBlur") && !s.b("MotionBlur")) ini.push_back(ei + "|SystemSettings|MotionBlur=False");
+        if (avail("DoF") && !s.b("DoF")) ini.push_back(ei + "|SystemSettings|DepthOfField=False");
+        if (avail("LensFlares") && !s.b("LensFlares")) ini.push_back(ei + "|SystemSettings|LensFlares=False");
+        if (avail("Fov") && s.i("Fov") != 100) {
             std::string k = fmt_double(static_cast<double>(s.i("Fov")) / 100);
-            ini.push_back("GearCamera.ini|*|FOVAngle*=" + k);
+            ini.push_back(std::string(isG1 ? "WarCamera.ini" : "GearCamera.ini") + "|*|FOVAngle*=" + k);
             if (g == Game::Gears2) ini.push_back("GearPawn.ini|*|DefaultFOV*=" + k);
         }
         if (on("SkipLogos")) {   // PS1 882-887: only the logo films; Judgment has its own switch
             if (g == Game::Gears2) { ini.push_back(ei + "|FullScreenMovie|-StartupMovies=EpicLogo"); ini.push_back(ei + "|FullScreenMovie|-StartupMovies=MGSLogo"); }
             else if (isG3) ini.push_back(ei + "|FullScreenMovie|-StartupMovies=Open_Logos");
+            else if (isG1) a.push_back("--gow1_skip_logos=true");
             else a.push_back("--gowj_skip_logos=true");
         }
         int dd = std::max(0, std::min(2, s.i("DrawDist")));
         if (avail("DrawDist") && dd > 0) ini.push_back(ei + "|SystemSettings|MaxDrawDistanceScale=" + k_drawScale[dd]);
         int sh = std::max(0, std::min(2, s.i("Shake")));
-        if (sh > 0) {   // PS1 889-896
+        if (avail("Shake") && sh > 0) {   // PS1 889-896
             std::string v = k_shakeValue[sh];
             if (g == Game::Gears2) ini.push_back("GearCamera.ini|GearGame.GearCamMod_CameraBone|RoadieRunShakyCamDampeningFactor" + v);
+            else if (isG1) ini.push_back("WarCamera.ini|WarfareGame.WarCamMod_CameraBone|RoadieRunShakyCamDampeningFactor" + v);
             else if (isG3) { for (const char* pf : { "GearPawn.ini", "GearPawnMP.ini" }) ini.push_back(std::string(pf) + "|GearGame.GearPawn|RoadieRunShakyCamDampeningFactor" + v); }
             else { for (const char* pf : { "GearPawn.ini", "GearPawnMP.ini", "GearPawnFFA.ini" }) ini.push_back(std::string(pf) + "|GearGame.GearPawn|RoadieRunShakyCamDampeningFactor" + v); }
         }
@@ -810,6 +914,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                 ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.3>Axis aTurn Speed=4.0 DeadZone=0.0");
                 ini.push_back(fi + "Axis aLookup Speed=0.75 DeadZone=0.3>Axis aLookup Speed=3.0 DeadZone=0.0");
                 ini.push_back(fi + "Axis aLookup Speed=-0.75 DeadZone=0.3>Axis aLookup Speed=-3.0 DeadZone=0.0");
+            } else if (isG1) {   // WarInput.ini / Xe-WarInput.ini: two sets (0.2 and 0.3 dead zones)
+                ini.push_back("WarInput.ini|Engine.PlayerInput|~=Axis aTurn Speed=1.0 DeadZone=0.2>Axis aTurn Speed=4.0 DeadZone=0.0");
+                ini.push_back("WarInput.ini|Engine.PlayerInput|~=Axis aLookup Speed=0.8 DeadZone=0.2>Axis aLookup Speed=3.2 DeadZone=0.0");
+                ini.push_back("WarInput.ini|Engine.PlayerInput|~=Axis aTurn Speed=1.0 DeadZone=0.3>Axis aTurn Speed=4.0 DeadZone=0.0");
+                ini.push_back("WarInput.ini|Engine.PlayerInput|~=Axis aLookup Speed=0.75 DeadZone=0.3>Axis aLookup Speed=3.0 DeadZone=0.0");
             } else if (isG3) {
                 ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.0>Axis aTurn Speed=4.0 DeadZone=0.0");
                 ini.push_back(fi + "Axis aLookup Speed=1.0 DeadZone=0.0>Axis aLookup Speed=4.0 DeadZone=0.0");
@@ -827,7 +936,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
     }
     // PS1 899: ultrawide
-    if (on("Ultrawide")) a.push_back(isG3 ? "--gow3_ultrawide=true" : g == Game::Judgment ? "--gowj_ultrawide=true" : "--gow2_ultrawide=true");
+    // GitHub #60: the picture widens to the monitor's own shape (21:9, 32:9...), not a fixed 21:9, when the build can
+    if (on("Ultrawide")) {
+        const char *k = isG3 ? "gow3_aspect" : isGJ ? "gowj_aspect" : isG1 ? "gow1_aspect" : "gow2_aspect";
+        if (cap_exe(env, k)) a.push_back(std::string("--") + k + "=auto");
+    }
+    if (on("Ultrawide")) a.push_back(isG3 ? "--gow3_ultrawide=true" : isGJ ? "--gowj_ultrawide=true" : isG1 ? "--gow1_ultrawide=true" : "--gow2_ultrawide=true");
     // PS1 900: HDR
     if (s.b("HDR")) {
         a.push_back("--present_hdr=true");
@@ -871,7 +985,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         static const int lang[22] = { 0, 1, 1, 4, 3, 6, 5, 5, 9, 11, 12, 1, 1, 16, 1, 1, 15, 13, 2, 7, 8, 10 };   // job 666: Chinese = 10 (job 664)
         static const int country[22] = { 0, 103, 35, 34, 24, 50, 31, 71, 13, 82, 88, 23, 42, 74, 25, 32, 75, 90, 53, 56, 101, 20 };
         const int l = std::max(0, std::min(21, s.i("Lang")));
-        if (l > 0) {
+        const Option* lo = find_option(g, "Lang");
+        if (l > 0 && avail("Lang") && lo && choice_available(*lo, g, l).ok) {
             a.push_back("--user_language=" + std::to_string(lang[l]));
             a.push_back("--user_country=" + std::to_string(country[l]));
         }
@@ -882,7 +997,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     switch (s.i("FpsMode")) {
     case 1: a.push_back("--gow2_fps_bar=top"); break;
     case 2: a.push_back("--gow2_fps_bar=bottom"); break;
-    case 3: if (!isGJ) a.push_back(isG3 ? "--gow3_patch_show_fps=true" : "--gow2_patch_show_fps=true"); break;
+    case 3: if (!isGJ && !isG1) a.push_back(isG3 ? "--gow3_patch_show_fps=true" : "--gow2_patch_show_fps=true"); break;
     default: break;
     }
     // PS1 930-937: keyboard and mouse with the Gears layout
@@ -905,7 +1020,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
         // Job 629 (GitHub #41): keyboard button prompts - our key caps drawn over the game's controller-button sheet.
         // Job 661: drawn by the launcher at 4x for whatever keys are set (keycaps.cpp).
-        if (!env.prompt_dir.empty() && cap_exe(env, "gow2_texture_overlay_dir")) {
+        // Gears 1: no known prompt sheet yet - no overlays
+        if (!isG1 && !env.prompt_dir.empty() && cap_exe(env, "gow2_texture_overlay_dir")) {
             // Job 661 (Shagg 30 Oct: "make those prompts higher resolution"): the launcher draws the key caps itself, 4x the
             // sheet's size and for the player's own keys too (job 660); without it, the shipped default-key overlays.
             std::string dir;
@@ -915,8 +1031,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                     auto it = env.keys.find(k.cvar);
                     keys[k.cvar] = it != env.keys.end() && !it->second.empty() ? it->second : k.def;
                 }
-                static const char* const kGameDir[] = { "gears2", "gears3", "judgment" };
-                dir = g_prompt_composer(env.prompt_dir, kGameDir[static_cast<int>(g) % 3], keys);
+                static const char* const kGameDir[kGameCount] = { "gears2", "gears3", "judgment", "gears1" };
+                dir = g_prompt_composer(env.prompt_dir, kGameDir[gi], keys);
                 notes.push_back(dir.empty() ? "launcher: key caps could not be drawn - the shipped ones"
                                             : "launcher: key caps drawn (4x) in " + dir);
             }
@@ -946,7 +1062,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PS1 940-958 (launcher patches 0155 / 0158): frame rate; with vsync a cap at or above the refresh rate becomes 3
     // under it (half the refresh minus 2 with frame generation)
     {
-        const int fps = std::max(0, std::min(k_fpsCapCount - 1, s.i("FrameCap")));
+        // Gears 1: no frame-rate limit until gow1.exe has gow1_max_fps (can() "framecap") - then the game's own rate
+        const int fps = avail("FrameCap") ? std::max(0, std::min(k_fpsCapCount - 1, s.i("FrameCap"))) : 0;
         int cap = k_fpsCaps[fps];
         const bool vsync = on("Vsync");
         if (vsync && fps >= 1) {
@@ -957,7 +1074,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             notes.push_back("launcher: vsync on; " + env.monitor_device + " at " + std::to_string(hz) + " Hz (0 = unknown)" +
                             (fgOn ? ", frame generation on" : "") + " -> frame-rate cap " + std::to_string(cap));
         }
-        if (vsync) a.push_back("--d3d12_present_vsync=true");
+        if (vsync) {
+            a.push_back("--d3d12_present_vsync=true");
+            // 0.3.0 (Shagg 14:09, Gears 1 on Vulkan ran past its cap): the SDK's Vulkan presenter picks IMMEDIATE (no vsync)
+            // whenever the driver offers it, and MAILBOX next - only FIFO waits for the screen. With vsync on, those two are
+            // switched off so Vulkan gets FIFO like DirectX 12's vsync. (Runtime cvars; DirectX 12 ignores them.)
+            if (cap_rt(env, "vulkan_allow_present_mode_immediate")) {
+                a.push_back("--vulkan_allow_present_mode_immediate=false");
+                a.push_back("--vulkan_allow_present_mode_mailbox=false");
+            }
+        }
         if (g == Game::Gears2 && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gow2_max_fps=" + std::to_string(cap)); }
         if (isG3 && fps > 0) {
             a.push_back("--gow2_gpu_vsync=false");
@@ -965,6 +1091,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             if (cap != k_fpsCaps[fps] || cap != 60) a.push_back("--gow3_max_fps=" + std::to_string(cap));
         }
         if (isGJ && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gowj_max_fps=" + std::to_string(cap)); }
+        if (isG1 && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gow1_max_fps=" + std::to_string(cap)); }
     }
     // PS1 960-961: out\extra-args.txt, one switch per line (# = comment, {LOG} = this session's folder)
     for (const std::string& raw : env.extra_args_lines) {

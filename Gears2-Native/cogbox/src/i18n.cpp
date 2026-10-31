@@ -81,7 +81,7 @@ const std::vector<Language> &languages()
 {
     static const std::vector<Language> v = {
         { "en", "English" }, { "es", "Espa\xC3\xB1ol" }, { "fr", "Fran\xC3\xA7" "ais" }, { "de", "Deutsch" },
-        { "it", "Italiano" }, { "pt-BR", "Portugu\xC3\xAAs (Brasil)" }, { "pl", "Polski" },
+        { "it", "Italiano" }, { "pt-BR", "Portugu\xC3\xAAs (Brasil)" }, { "pl", "Polski" }, { "hu", "Magyar" },
         { "ru", "\xD0\xA0\xD1\x83\xD1\x81\xD1\x81\xD0\xBA\xD0\xB8\xD0\xB9" },
         { "ja", "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E" }, { "zh-Hans", "\xE7\xAE\x80\xE4\xBD\x93\xE4\xB8\xAD\xE6\x96\x87" },
         { "ko", "\xED\x95\x9C\xEA\xB5\xAD\xEC\x96\xB4" },
@@ -99,6 +99,7 @@ std::string i18n_auto_code()
     case LANG_ITALIAN: return "it";
     case LANG_PORTUGUESE: return "pt-BR";
     case LANG_POLISH: return "pl";
+    case LANG_HUNGARIAN: return "hu";
     case LANG_RUSSIAN: return "ru";
     case LANG_JAPANESE: return "ja";
     case LANG_CHINESE: return "zh-Hans";

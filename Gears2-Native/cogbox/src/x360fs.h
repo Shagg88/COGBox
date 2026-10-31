@@ -69,6 +69,7 @@ constexpr uint32_t kContentTitleUpdate     = 0x000B0000;   // "installer" conten
 constexpr uint32_t kTitleGears2        = 0x4D53082D;
 constexpr uint32_t kTitleGears3        = 0x4D5308AB;
 constexpr uint32_t kTitleGearsJudgment = 0x4D530A26;
+constexpr uint32_t kTitleGears1        = 0x4D5307D5;
 
 struct PackageInfo {
     std::string magic;                 // "CON ", "LIVE" or "PIRS"

@@ -130,6 +130,22 @@ void play_start(App &a, int g, bool prepare)
     make_dirs(logDir);
     make_dirs(game_user_dir(g));
     make_dirs(game_shader_dir(g));
+    if (g == G_GEARS2) {   // GitHub #58: shaders Gears 2 built before 0.3.0 sit next to the port; move them once
+        const std::string to = game_shader_dir(g);
+        const std::string from = join(exe.substr(0, exe.find_last_of("\\/")), "out\\shader-cache");
+        if (dir_exists(from) && !file_exists(join(to, "pipelines-d3d12.bin"))) {
+            WIN32_FIND_DATAW fd;
+            HANDLE h = FindFirstFileW(widen(join(from, "*")).c_str(), &fd);
+            if (h != INVALID_HANDLE_VALUE) {
+                do {
+                    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                    MoveFileExW(widen(join(from, narrow(fd.cFileName))).c_str(), widen(join(to, narrow(fd.cFileName))).c_str(),
+                                MOVEFILE_COPY_ALLOWED);
+                } while (FindNextFileW(h, &fd));
+                FindClose(h);
+            }
+        }
+    }
     a.env[g].log_dir = logDir;
     std::vector<std::string> notes;
     std::vector<std::string> args = gs::build_args(G, ver, a.cur[g], a.env[g], &notes);
