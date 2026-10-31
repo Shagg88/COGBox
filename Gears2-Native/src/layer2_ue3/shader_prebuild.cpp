@@ -141,6 +141,96 @@ struct ScanResult {
   bool unreadable = false;  // starts like a fully compressed file, but no chunk decoded
 };
 
+// Gears 1 (2006) packages are LZO1X-compressed per block (package summary CompressionFlags = 2; checked on
+// SP_Prison_S02.xxx: 93 of 93 blocks decode to their stated size, 662 pixel shader containers). A bounds-checked LZO1X
+// decoder written from the format (literal runs, M1-M4 matches, trailing literals in the low 2 bits); our code (MIT).
+bool Lzo1x(const uint8_t* in, size_t in_len, uint8_t* out, size_t out_len) {
+  size_t ip = 0, op = 0;
+  auto need = [&](size_t k) { return ip + k <= in_len; };
+  auto lit = [&](size_t k) {
+    if (!need(k) || op + k > out_len) return false;
+    std::memcpy(out + op, in + ip, k); ip += k; op += k; return true;
+  };
+  auto copy = [&](size_t dist, size_t len) {
+    if (dist == 0 || dist > op || op + len > out_len) return false;
+    for (size_t k = 0; k < len; ++k, ++op) out[op] = out[op - dist];
+    return true;
+  };
+  auto run = [&](size_t base, size_t mask_add, size_t& len) {   // a zero-extended length
+    len = base;
+    while (need(1) && in[ip] == 0) { len += 255; ++ip; }
+    if (!need(1)) return false;
+    len += in[ip++] + mask_add;
+    return true;
+  };
+  if (!need(1)) return false;
+  int state = 0;
+  int t = -1;
+  if (in[0] > 17) {
+    ip = 1;
+    const size_t k = in[0] - 17;
+    if (!lit(k)) return false;
+    state = k >= 4 ? 4 : int(k);
+  }
+  for (;;) {
+    if (t < 0) { if (!need(1)) return false; t = in[ip++]; }
+    if (t < 16) {
+      if (state == 0) {   // a literal run
+        size_t len = size_t(t);
+        if (t == 0 && !run(15, 0, len)) return false;
+        if (!lit(len + 3)) return false;
+        state = 4;
+        if (!need(1)) return false;
+        t = in[ip++];
+        if (t >= 16) continue;
+        if (!need(1)) return false;
+        const size_t dist = 1 + 0x0800 + (size_t(t) >> 2) + (size_t(in[ip++]) << 2);
+        if (!copy(dist, 3)) return false;
+      } else {
+        if (!need(1)) return false;
+        const size_t dist = (state < 4 ? 1 : 1 + 0x0800) + (size_t(t) >> 2) + (size_t(in[ip++]) << 2);
+        if (!copy(dist, state < 4 ? 2 : 3)) return false;
+      }
+      state = t & 3;
+      if (!lit(size_t(state))) return false;
+      t = -1;
+      continue;
+    }
+    size_t len, dist;
+    int trailing;
+    if (t >= 64) {
+      if (!need(1)) return false;
+      dist = 1 + ((size_t(t) >> 2) & 7) + (size_t(in[ip++]) << 3);
+      len = (size_t(t) >> 5) + 1;
+      trailing = t & 3;
+    } else if (t >= 32) {
+      len = size_t(t) & 31;
+      if (len == 0 && !run(31, 0, len)) return false;
+      len += 2;
+      if (!need(2)) return false;
+      const size_t d = in[ip] | (size_t(in[ip + 1]) << 8);
+      ip += 2;
+      dist = 1 + (d >> 2);
+      trailing = int(d & 3);
+    } else {   // 16..31
+      len = size_t(t) & 7;
+      if (len == 0 && !run(7, 0, len)) return false;
+      len += 2;
+      if (!need(2)) return false;
+      const size_t d = in[ip] | (size_t(in[ip + 1]) << 8);
+      ip += 2;
+      dist = ((size_t(t) & 8) << 11) + (d >> 2);
+      trailing = int(d & 3);
+      if (dist == 0) return op == out_len;   // end of stream
+      dist += 0x4000;
+    }
+    if (!copy(dist, len)) return false;
+    state = trailing;
+    if (!lit(size_t(trailing))) return false;
+    t = -1;
+  }
+}
+
 class PackageScanner {
  public:
   explicit PackageScanner(std::unordered_set<uint64_t>& seen) : seen_(seen) {}
@@ -157,7 +247,12 @@ class PackageScanner {
     const size_t n = b.size();
     for (size_t i = 0; i + 24 <= n; ++i) {
       if (b[i] != 0x9E || b[i + 1] != 0x2A || b[i + 2] != 0x83 || b[i + 3] != 0xC1) continue;
-      const uint32_t bsz = Be32(&b[i + 4]), tc = Be32(&b[i + 8]), tu = Be32(&b[i + 12]);
+      uint32_t bsz = Be32(&b[i + 4]);
+      // Older UE3 packages (Gears 1, 2006) store the package tag again where the block size goes; the engine then uses
+      // its default loading chunk size, 0x20000 (UE3's FCompressedChunkInfo reader does the same).
+      const bool legacy = bsz == 0x9E2A83C1u;   // ... and LZO1X blocks (Lzo1x above)
+      if (legacy) bsz = 0x20000;
+      const uint32_t tc = Be32(&b[i + 8]), tu = Be32(&b[i + 12]);
       if (bsz < 0x8000 || bsz > 0x100000 || (bsz & (bsz - 1)) || !tu || tu > 0x10000000u || !tc || tc > n) continue;
       const uint32_t nb = (tu + bsz - 1) / bsz;
       if (i + 16 + size_t(nb) * 8 > n) continue;
@@ -182,7 +277,7 @@ class PackageScanner {
           break;
         }
         bool pad = false;
-        if (Lzx(data, cs, &all[base + w], us, scratch_, &pad)) {
+        if (legacy ? Lzo1x(data, cs, &all[base + w], us) : Lzx(data, cs, &all[base + w], us, scratch_, &pad)) {
           any = true;
           if (pad) {
             padded = true;

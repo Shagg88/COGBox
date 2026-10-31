@@ -26,6 +26,7 @@
 #include <cstring>
 #include <format>
 #include <string>
+#include <cstdio>
 #include <string_view>
 #include <cctype>
 #include <filesystem>
@@ -162,7 +163,10 @@ bool ContainsNoCase(std::string_view s, std::string_view needle) {
 }
 void OnGowjFileOpened(std::string_view guest_path, const std::filesystem::path*) {
   const int64_t now = LoadClock::now().time_since_epoch().count();
-  if (EndsWithNoCase(guest_path, ".bik") && ContainsNoCase(guest_path, "loadingmovie")) {
+  // GitHub #54 (report 20261030-092812): the loading movie is opened only once a session, so every loading screen after
+  // the first ran at the player's limit (162 fps) and the one after Monroe Commons hung again. A level's persistent
+  // package (*_P.xxx) is opened by every level change, so it starts the clamp too.
+  if ((EndsWithNoCase(guest_path, ".bik") && ContainsNoCase(guest_path, "loadingmovie")) || EndsWithNoCase(guest_path, "_p.xxx")) {
     if (g_load_start.exchange(now) == 0) REXLOG_INFO("gowj_loading_fps: loading screen - engine limit {} fps", REXCVAR_GET(gowj_loading_fps));
     g_load_last_pkg.store(now);
   } else if (g_load_start.load() != 0 && EndsWithNoCase(guest_path, ".xxx")) {
@@ -459,7 +463,53 @@ REXCVAR_DEFINE_BOOL(gowj_ultrawide, false, "Judgment",
                     "21:9 ultrawide (Canary patch by boma): a 1280x550 picture (x the resolution scale) with a wider view; "
                     "fills a 21:9 window or monitor, letterboxed in others");
 
+// ---- 0.3.0: any ultrawide shape (GitHub #60: 21:9 and 32:9) --------------------------------------------------------
+// --gowj_aspect picks the shape when gowj_ultrawide is on: "" = the Canary patch's own 21:9 (1280x550, unchanged), "auto"
+// = the monitor's shape, or "21:9", "32:9", "3440:1440", "3.56". The scene height is 1280 / aspect (even, 320-720).
+// The field-of-view factor is Canary's 21:9 value times how much more the shape widens than 21:9 does, at the half
+// angle (34.05 deg) where Canary's 21:9 factor is exact (the hooks don't see the game's own field of view).
+namespace uwshape {
+inline double ParseAspect(const std::string& v) {
+  double a = 0, b = 0;
+  if (std::sscanf(v.c_str(), "%lf:%lf", &a, &b) == 2 && a > 0 && b > 0) return a / b;
+  if (std::sscanf(v.c_str(), "%lf", &a) == 1 && a > 0) return a;
+  return 0.0;
+}
+inline double MonitorAspect() {
+  MONITORINFO mi{sizeof(mi)};
+  HMONITOR m = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+  if (!m || !GetMonitorInfoW(m, &mi)) return 0.0;
+  const double w = double(mi.rcMonitor.right - mi.rcMonitor.left), h = double(mi.rcMonitor.bottom - mi.rcMonitor.top);
+  return h > 0 ? w / h : 0.0;
+}
+// 550 = Canary's shape; another height when --gowj_aspect asks for one
+inline uint32_t Height(const std::string& v, const char* tag) {
+  if (v.empty()) return 550u;
+  const double aspect = v == "auto" ? MonitorAspect() : ParseAspect(v);
+  if (!(aspect > 16.0 / 9.0 + 0.01)) {
+    REXLOG_INFO("{}: aspect '{}' = {:.4f} is not wider than 16:9 - Canary's 21:9 is used", tag, v, aspect);
+    return 550u;
+  }
+  const uint32_t h = std::clamp(uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u, 320u, 720u);
+  REXLOG_INFO("{}: aspect '{}' = {:.4f} -> scene 1280x{}", tag, v, aspect, h);
+  return h;
+}
+inline double Widen(uint32_t h) { return (1280.0 / double(h)) / (16.0 / 9.0); }
+// how much a shape of height h widens the view, relative to Canary's 550
+inline double FovScale(uint32_t h) {
+  constexpr double kRef = 34.046711 * 3.14159265358979 / 180.0;
+  auto k = [&](double w) { return std::atan(std::tan(kRef) * w) / kRef; };
+  return k(Widen(h)) / k(Widen(550));
+}
+}  // namespace uwshape
+REXCVAR_DEFINE_STRING(gowj_aspect, "", "Judgment",
+                      "With --gowj_ultrawide: the shape. Empty = 21:9 (1280x550, the Canary patch); auto = the monitor's; "
+                      "or e.g. '21:9', '32:9', '3440:1440'");
 namespace {
+uint32_t GowjWideHeight() {
+  static const uint32_t h = uwshape::Height(REXCVAR_GET(gowj_aspect), "gowj_ultrawide");
+  return h;
+}
 template <typename T> void LogOnce(bool& done, const char* what, T before, T after) {
   if (done) return;
   done = true;
@@ -471,14 +521,15 @@ bool GowjUltrawideNoConstrain() { return REXCVAR_GET(gowj_ultrawide); }  // jump
 void GowjUltrawideFov(PPCRegister& f0) {
   if (!REXCVAR_GET(gowj_ultrawide)) return;
   static bool l = false;
-  LogOnce(l, "field-of-view factor", f0.f64, double(0.010975f));
-  f0.f64 = double(0.010975f);
+  const double f = double(0.010975f) * uwshape::FovScale(GowjWideHeight());
+  LogOnce(l, "field-of-view factor", f0.f64, f);
+  f0.f64 = f;
 }
 void GowjUltrawideSceneHeight(PPCRegister& r11) {
   if (!REXCVAR_GET(gowj_ultrawide)) return;
   static bool l = false;
-  LogOnce(l, "scene buffer height", uint32_t(r11.u32), 550u);
-  r11.u64 = 550;
+  LogOnce(l, "scene buffer height", uint32_t(r11.u32), GowjWideHeight());
+  r11.u64 = GowjWideHeight();
 }
 bool GowjUltrawideNoVignette() { return REXCVAR_GET(gowj_ultrawide); }  // jump_address_on_true 0x82369E3C
 void GowjUltrawideTargetHeight(PPCRegister& r30) {
@@ -499,7 +550,7 @@ void GowjApplyUltrawideIfRequested(rex::Runtime* runtime) {
   if (!REXCVAR_GET(gowj_ultrawide) || !runtime || !runtime->memory()) return;
   for (uint32_t addr : {0x82082C30u, 0x82083350u}) {
     uint8_t* p = runtime->memory()->TranslateVirtual<uint8_t*>(addr);
-    const float value = 2.3273f;
+    const float value = GowjWideHeight() == 550 ? 2.3273f : float(1280.0 / GowjWideHeight());
     uint32_t bits = 0, old_bits = 0;
     std::memcpy(&bits, &value, 4);
     for (int i = 0; i < 4; ++i) old_bits = (old_bits << 8) | p[i];

@@ -47,6 +47,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <algorithm>
+#include <cmath>
 
 REXCVAR_DEFINE_BOOL(gow2_patch_aniso16, false, "Gears2", "Force 16x anisotropic filtering (community patch, boma)");
 REXCVAR_DEFINE_INT32(gow2_patch_query_poll_yield, 0, "Gears2",
@@ -236,11 +238,60 @@ void Gow2MaxTickRate(PPCRegister& f1) {
 }
 
 // Stage 7.5 ultrawide hooks (see the top of the file).
+// ---- 0.3.0: any ultrawide shape (GitHub #60: 21:9 and 32:9) --------------------------------------------------------
+// --gow2_aspect picks the shape when gow2_ultrawide is on: "" = the Canary patch's own 21:9 (1280x550, unchanged), "auto"
+// = the monitor's shape, or "21:9", "32:9", "3440:1440", "3.56". The scene height is 1280 / aspect (even, 320-720).
+// The field-of-view factor is Canary's 21:9 value times how much more the shape widens than 21:9 does, at the half
+// angle (34.05 deg) where Canary's 21:9 factor is exact (the hooks don't see the game's own field of view).
+namespace uwshape {
+inline double ParseAspect(const std::string& v) {
+  double a = 0, b = 0;
+  if (std::sscanf(v.c_str(), "%lf:%lf", &a, &b) == 2 && a > 0 && b > 0) return a / b;
+  if (std::sscanf(v.c_str(), "%lf", &a) == 1 && a > 0) return a;
+  return 0.0;
+}
+inline double MonitorAspect() {
+  MONITORINFO mi{sizeof(mi)};
+  HMONITOR m = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+  if (!m || !GetMonitorInfoW(m, &mi)) return 0.0;
+  const double w = double(mi.rcMonitor.right - mi.rcMonitor.left), h = double(mi.rcMonitor.bottom - mi.rcMonitor.top);
+  return h > 0 ? w / h : 0.0;
+}
+// 550 = Canary's shape; another height when --gow2_aspect asks for one
+inline uint32_t Height(const std::string& v, const char* tag) {
+  if (v.empty()) return 550u;
+  const double aspect = v == "auto" ? MonitorAspect() : ParseAspect(v);
+  if (!(aspect > 16.0 / 9.0 + 0.01)) {
+    REXLOG_INFO("{}: aspect '{}' = {:.4f} is not wider than 16:9 - Canary's 21:9 is used", tag, v, aspect);
+    return 550u;
+  }
+  const uint32_t h = std::clamp(uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u, 320u, 720u);
+  REXLOG_INFO("{}: aspect '{}' = {:.4f} -> scene 1280x{}", tag, v, aspect, h);
+  return h;
+}
+inline double Widen(uint32_t h) { return (1280.0 / double(h)) / (16.0 / 9.0); }
+// how much a shape of height h widens the view, relative to Canary's 550
+inline double FovScale(uint32_t h) {
+  constexpr double kRef = 34.046711 * 3.14159265358979 / 180.0;
+  auto k = [&](double w) { return std::atan(std::tan(kRef) * w) / kRef; };
+  return k(Widen(h)) / k(Widen(550));
+}
+}  // namespace uwshape
+REXCVAR_DEFINE_STRING(gow2_aspect, "", "Gears2",
+                      "With --gow2_ultrawide: the shape. Empty = 21:9 (1280x550, the Canary patch); auto = the monitor's; "
+                      "or e.g. '21:9', '32:9', '3440:1440'");
+namespace {
+uint32_t Gow2WideHeight() {
+  static const uint32_t h = uwshape::Height(REXCVAR_GET(gow2_aspect), "gow2_ultrawide");
+  return h;
+}
+}  // namespace
 void Gow2UltrawideFov(PPCRegister& f0) {
   if (!REXCVAR_GET(gow2_ultrawide)) return;
   static bool logged = false;
-  if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: field-of-view factor {} -> 0.0106355", f0.f64); }
-  f0.f64 = double(0.0106355f);
+  const double f = double(0.0106355f) * uwshape::FovScale(Gow2WideHeight());
+  if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: field-of-view factor {} -> {}", f0.f64, f); }
+  f0.f64 = f;
 }
 
 bool Gow2UltrawideNoConstrain() { return REXCVAR_GET(gow2_ultrawide); }  // jump_address_on_true: the beq is taken
@@ -248,15 +299,16 @@ bool Gow2UltrawideNoConstrain() { return REXCVAR_GET(gow2_ultrawide); }  // jump
 void Gow2UltrawideSceneHeight(PPCRegister& r11, PPCRegister& f13) {
   if (!REXCVAR_GET(gow2_ultrawide)) return;
   static bool logged = false;
-  if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: scene buffer height {} -> 550 (aspect factor {})", r11.u32, f13.f64); }
-  r11.u64 = 550;
+  if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: scene buffer height {} -> {} (aspect factor {})", r11.u32, Gow2WideHeight(), f13.f64); }
+  r11.u64 = Gow2WideHeight();
 }
 
 void Gow2UltrawideUiHeight(PPCRegister& r3) {
   if (!REXCVAR_GET(gow2_ultrawide)) return;
   static bool logged = false;
-  if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: UI viewport height {} -> 564", r3.u32); }
-  r3.u64 = 564;
+  const uint32_t ui = Gow2WideHeight() == 550 ? 564u : (Gow2WideHeight() * 564u / 550u + 1u) & ~1u;
+  if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: UI viewport height {} -> {}", r3.u32, ui); }
+  r3.u64 = ui;
 }
 
 // Stage 6 Horde crash (notes/58, jobs 206-208): about 2 s into Horde's first wave countdown the main thread reads through
@@ -344,7 +396,8 @@ void Gow2ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
     REXLOG_INFO("gow2_patch_show_fps: FPS and frame-time display flags set");
   }
   if (REXCVAR_GET(gow2_ultrawide)) {
-    Gow2WriteGuestFloat(runtime, gow2::addr::kWidescreenAspect, 2.33333f, "gow2_ultrawide: widescreen aspect");
+    Gow2WriteGuestFloat(runtime, gow2::addr::kWidescreenAspect, Gow2WideHeight() == 550 ? 2.33333f : float(1280.0 / Gow2WideHeight()),
+                        "gow2_ultrawide: widescreen aspect");
     // Job 200: the front buffer itself becomes 1280x550 (x the resolution scale). Show it at that shape (letterboxed in
     // a window of another shape) rather than Canary's way (letterbox off, which is right only in a 21:9 window).
     const bool a = rex::cvar::SetFlagByName("gow2_present_frame_aspect", "true");

@@ -268,6 +268,11 @@ REXCVAR_DEFINE_INT32(gow2_renderer_recipe_pack_jobs_load, 64, "Gears2",
                      "Job 613 (Shagg 11:01: let the loading screen do the work): the recipe pack's limit instead while "
                      "the frame is a loading screen or menu (under 64 draws) or already missing draws (32+ skipped) - "
                      "Gears 2 ch5 had ~200 of ~800 pipelines ready after 10 s at 6. 1-64");
+REXCVAR_DEFINE_INT32(gow2_renderer_recipe_pack_jobs_missing, 4, "Gears2",
+                     "Job 730 (Shagg 17:40, Gears 3 at 18 fps for minutes after a renderer update): the recipe pack's limit "
+                     "during play while frames are missing draws (32+ skipped). Was the loading-screen limit (64), which "
+                     "filled every logical processor and left the game and its renderer no CPU. Loading screens, menus "
+                     "and Prepare all shaders keep the full limit. 1-64");
 REXCVAR_DEFINE_BOOL(gow2_renderer_shader_prebuild, false, "Gears2",
                     "Patch 0132: off by default (its warm-only builds took pipeline workers from the draws' own pipelines). Patch 0068 (Shagg: shaders built behind the loading screen, both games): when the game opens a "
                     "package, its pixel shaders (found by layer 2 in the file itself) are translated like a draw's and "
@@ -726,6 +731,19 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vertex_reuse, true, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_stencil_transfer_bits, 0, "Gears2",
                      "Depth transfers without SV_StencilRef (NVIDIA): 0 all 8 stencil bit passes, 1 only the bits the "
                      "title ever sets or tests (job 179)");
+REXCVAR_DEFINE_INT32(gow2_renderer_overlay_depth_nudge, 0, "Gears2",
+                     "Job 712: draws with no depth write and a less/greater-or-equal test on a float24 depth target (decals: "
+                     "Gears 1 blood) are moved this many 20e4 steps toward passing, so they stop flickering against the "
+                     "surface under them (0 = off)");
+
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_decal_min_bias, 0.0, "Gears2",
+                      "Job 713 (Gears 1 blood flicker; Canary game-compatibility #44, goldislead's Decal Fix for UE3): a draw "
+                      "on a float24 depth target with polygon offset on but smaller than this (guest depth units, ~0.01 "
+                      "works) gets this much, same sign - UE3 decals ship ~0.00005, which z-fights on PC (0 = off)");
+
+REXCVAR_DEFINE_STRING(gow2_renderer_fill_vs_extra, "0A6D1DD7767FDF27", "Gears2",
+                      "Job 709: more vertex-shader hashes (hex, comma-separated) treated as the rect-list fill/clear shader, "
+                      "for the fill skips below. Gears 2/3/Judgment use 1E6883FCCDE1F688; Gears 1 (older XDK) its own. Empty = off");
 REXCVAR_DEFINE_BOOL(gow2_renderer_fill_transfer_trim, true, "Gears2",
                     "Depth transfers asked for by the rect-list fill/clear shader skip the depth pass and/or the stencil "
                     "passes it overwrites itself, inside its exact rectangle (job 185)");
@@ -764,6 +782,15 @@ REXCVAR_DEFINE_BOOL(gow2_fg_inputs, false, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_upscale_jitter_sign, 1, "Gears2",
                      "Diagnostic: 1 or -1 - the sign of the jitter handed to the upscaler (the image shift itself is "
                      "unchanged), for checking against the DLSS SDK's jitter overlay");
+REXCVAR_DEFINE_BOOL(gow2_upscale_capture_key, false, "Gears2",
+                    "Developer (job 724): F9 saves 6 frames of upscaler input / output / motion / depth next to the log. "
+                    "Off in releases (Shagg: developer tools never ship)");
+REXCVAR_DEFINE_STRING(gow2_upscale_capture_frames, "", "Gears2",
+                      "Job 727 (DLSS / FSR comparison runs): frames at which to save 6 frames of upscaler input / output / "
+                      "motion / depth next to the log, as F9 does, e.g. '2000,2600'");
+REXCVAR_DEFINE_INT32(gow2_upscale_jitter_sign_y, 1, "Gears2",
+                     "Job 723 (Gears 1 flicker): 1 or -1 - the sign of only the vertical jitter handed to the upscaler, on "
+                     "top of --gow2_upscale_jitter_sign (the image shift itself is unchanged)");
 REXCVAR_DEFINE_DOUBLE(gow2_upscale_jitter_scale, 1.0, "Gears2",
                       "Diagnostic (Gears 3 chat, job 058): multiplies the sub-pixel camera jitter, both the image shift and "
                       "what the upscaler is told (0 = no jitter; 1 = normal)");
@@ -772,9 +799,15 @@ REXCVAR_DEFINE_BOOL(gow2_upscale_camera_move, true, "Gears2",
                     "camera-relative, so its camera matrix only turns; notes/64). false: turning only, for comparison");
 // From the Gears 3 chat (its commit 80d9b9e, job 056): which vertex constants carry the object rows / the camera
 // position. 0 = Gears 2's behaviour (objects c5-c8, no camera position); gow3.exe sets 7 and 5.
-REXCVAR_DEFINE_INT32(gow2_upscale_object_constants, 0, "Gears2",
+REXCVAR_DEFINE_INT32(gow2_upscale_object_constants, -1, "Gears2",
                      "Camera move for DLSS / FSR / XeSS: the first of the four vertex constants holding an object's "
-                     "object-to-world rows (translation in the fourth). 0 = the game's (Gears 2: c5; Gears 3 sets c7)");
+                     "object-to-world rows (translation in the fourth). -1 = the game's (Gears 2: c5; Gears 3 sets c7; "
+                     "Gears 1 sets c0)");
+REXCVAR_DEFINE_INT32(gow2_upscale_camera_matrix, 0, "Gears2",
+                     "DLSS / FSR / XeSS (Gears 1 job 715): the first of the four vertex constants holding the camera's "
+                     "view-projection. 0 = c0 (Gears 2, 3, Judgment); -1 = found on the frame's first scene draw (the "
+                     "first four constants it reads that make a perspective matrix, outside the object rows) - Gears 1, "
+                     "whose c0-c3 are each object's own object-to-world rows");
 REXCVAR_DEFINE_INT32(gow2_upscale_camera_constant, 0, "Gears2",
                      "Camera move for DLSS / FSR / XeSS: a vertex constant holding the camera's world position on every "
                      "scene draw (its change = the move; the sign is learned from the object vote). 0 = none (Gears 3 sets c5)");
@@ -1131,7 +1164,7 @@ struct FrameStats {
            vertex_bytes = 0, index_bytes = 0, empty = 0, vertex_skipped_bytes = 0, texture_bytes = 0,
            vertex_direct_bytes = 0, vertex_reused_bytes = 0, vertex_memo_hits = 0, xfer_px[4] = {},
            stencil_passes_skipped = 0, texture_memo_hits = 0, readonly_transfers_skipped = 0, readonly_px_skipped = 0,
-           fill_transfers_skipped = 0, fill_px_skipped = 0, fill_passes_skipped = 0, fill_ownership_draws = 0, fill_multi_rect_draws = 0, const_gen_skips = 0, compacted_uploads = 0, compacted_bytes_saved = 0,
+           fill_transfers_skipped = 0, overlay_nudged = 0, decal_bias_raised = 0, fill_px_skipped = 0, fill_passes_skipped = 0, fill_ownership_draws = 0, fill_multi_rect_draws = 0, const_gen_skips = 0, compacted_uploads = 0, compacted_bytes_saved = 0,
            transferred_tiles = 0, cleared_tiles = 0, unknown_tiles = 0, index_skipped_bytes = 0, watch_checked = 0,
            watch_stale = 0, watch_stale_bytes = 0, unknown_colour_tiles = 0, disagree_tiles = 0, tainted_tiles = 0, colour_to_depth_tiles = 0, transfer_passes = 0,
            unclipped_depth_draws = 0, mrt_duplicates = 0, colour_drawn = 0, colour_transferred_tiles = 0,
@@ -1454,6 +1487,25 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     fill_trim_ = REXCVAR_GET(gow2_renderer_fill_transfer_trim);
     fill_ownership_ = REXCVAR_GET(gow2_renderer_fill_ownership);
     fill_rect_lists_ = REXCVAR_GET(gow2_renderer_fill_rect_lists);
+    overlay_nudge_ = std::clamp(REXCVAR_GET(gow2_renderer_overlay_depth_nudge), 0, 64);  // job 712
+    {   // job 713: the minimum as a D3D10 integer bias on a float24 target (as D3D10IntegerPolygonOffset: ceil(x * 2^21) << 3)
+      const double m = std::clamp(double(REXCVAR_GET(gow2_renderer_decal_min_bias)), 0.0, 0.1);
+      decal_min_bias_ = m > 0.0 ? int32_t(std::ceil(m * double(1u << 21))) << 3 : 0;
+    }
+    {   // job 709
+      const std::string list = REXCVAR_GET(gow2_renderer_fill_vs_extra);
+      size_t at = 0;
+      while (at < list.size()) {
+        size_t end = list.find(',', at);
+        if (end == std::string::npos) end = list.size();
+        const std::string one = list.substr(at, end - at);
+        if (!one.empty()) {
+          const uint64_t h = std::strtoull(one.c_str(), nullptr, 16);
+          if (h) fill_vs_extra_.push_back(h);
+        }
+        at = end + 1;
+      }
+    }
     const_gen_skip_ = REXCVAR_GET(gow2_renderer_const_gen_skip);
     upscale_probe_ = uint32_t(std::max(0, REXCVAR_GET(gow2_upscale_probe)));
     stencil_transfer_bits_ = REXCVAR_GET(gow2_renderer_stencil_transfer_bits) != 0;
@@ -4054,6 +4106,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Gears 3 job 056: which constants carry the object rows / the camera position; the camera position this frame and
   // last, and the sign that maps its change onto the move (learned from frames where the object vote also found one).
   uint32_t up_object_base_ = 5, up_camera_reg_ = 0;
+  int32_t up_vp_base_ = 0;   // job 715: the camera matrix's first constant; -1 = not found yet (auto)
+  bool up_vp_auto_ = false;
   float up_cam_pos_[3] = {}, up_prev_cam_pos_[3] = {};
   bool up_cam_pos_ok_ = false, up_prev_cam_pos_ok_ = false;
   int up_cam_sign_ = 0, up_cam_sign_votes_ = 0;
@@ -4102,7 +4156,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     up_jitter_late_ = REXCVAR_GET(gow2_upscale_jitter_late);
     {
       const int32_t ob = REXCVAR_GET(gow2_upscale_object_constants), cr = REXCVAR_GET(gow2_upscale_camera_constant);
-      up_object_base_ = ob > 0 && ob <= 252 ? uint32_t(ob) : 5u;
+      up_object_base_ = ob >= 0 && ob <= 252 ? uint32_t(ob) : 5u;
+      const int32_t vb = REXCVAR_GET(gow2_upscale_camera_matrix);  // job 715
+      up_vp_auto_ = vb < 0;
+      up_vp_base_ = vb < 0 ? -1 : vb <= 252 ? vb : 0;
       up_camera_reg_ = cr > 0 && cr <= 255 ? uint32_t(cr) : 0u;
       up_scene_formats_ = uint32_t(std::clamp(REXCVAR_GET(gow2_upscale_scene_formats), 1, 3));
       up_jitter_scope_ = uint32_t(std::clamp(REXCVAR_GET(gow2_upscale_jitter_scope), 0, 3));
@@ -4133,6 +4190,103 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       REXLOG_INFO("gow2_fg_inputs: patch 0145: scene depth and motion vectors every frame, no upscaler (no jitter)");
   }
 
+  // Job 715 (Gears 1): its c0-c3 are each object's object-to-world rows (probe, 15:16 run: 512 c0-c3 groups in a frame,
+  // the biggest the identity), so the camera's view-projection is elsewhere. The first four constants this scene draw
+  // reads, outside the object rows, that make a perspective matrix with a near plane are taken, once.
+  uint32_t up_vp_tries_ = 0;
+  // Job 724 (Gears 1 DLSS flicker): F9 during play saves the next 6 frames' upscaler input colour, output, motion and
+  // depth (the centre 1280x720 of each, 24-bit BMP) next to the log, so frame-to-frame changes can be looked at.
+  int up_cap_left_ = 0;
+  uint32_t up_cap_set_ = 0;
+  void CaptureTex(gpu::TextureHandle t, gpu::Format f, uint32_t w, uint32_t h, const char* name, int kind) {
+    if (!t || !w || !h) return;
+    const uint32_t cw = std::min<uint32_t>(1280, w), ch = std::min<uint32_t>(720, h);
+    const int32_t x0 = int32_t((w - cw) / 2), y0 = int32_t((h - ch) / 2);
+    // Job 725: the whole area from the corner (every other readback here starts at 0,0; job 724 crashed with an offset)
+    const gpu::ReadbackHandle rb = backend_->ReadbackTexture(t, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
+    if (!rb) return;
+    backend_->WaitForFence(backend_->Submit());
+    uint32_t pitch = 0;
+    const uint8_t* data = backend_->ReadbackData(rb, pitch);
+    uint32_t bpp = (f == gpu::Format::kR16G16B16A16Float || f == gpu::Format::kR16G16B16A16Snorm || f == gpu::Format::kR32G32Float) ? 8 : 4;
+    if (data && pitch >= w * bpp) {
+      std::string dir = rex::cvar::GetFlagByName("gow2_crash_dir");
+      if (dir.empty()) dir = ".";
+      const std::string path = std::format("{}\\dlss-cap{}-f{}-{}.bmp", dir, up_cap_set_, frame_ + 1, name);
+      std::vector<uint8_t> img(size_t(cw) * ch * 3);
+      for (uint32_t y = 0; y < ch; ++y)
+        for (uint32_t x = 0; x < cw; ++x) {
+          float c[4] = {};
+          uint32_t n = 0;
+          StatsTexel(f, data + size_t(y + uint32_t(y0)) * pitch + size_t(x + uint32_t(x0)) * bpp, c, n);
+          float r = c[0], g = c[1], b = c[2];
+          if (kind == 1) { r = 0.5f + c[0] * 0.05f; g = 0.5f + c[1] * 0.05f; b = 0.5f; }   // motion: 0.5 = still, 20 px = edge
+          else if (kind == 2) { r = g = b = std::pow(std::clamp(c[0], 0.0f, 1.0f), 64.0f); }  // depth, spread out near 1
+          else { r = r / (1.0f + r); g = g / (1.0f + g); b = b / (1.0f + b); r = std::sqrt(r) ; g = std::sqrt(g); b = std::sqrt(b); }
+          uint8_t* o = &img[(size_t(ch - 1 - y) * cw + x) * 3];
+          o[0] = uint8_t(std::clamp(b, 0.0f, 1.0f) * 255.0f + 0.5f);
+          o[1] = uint8_t(std::clamp(g, 0.0f, 1.0f) * 255.0f + 0.5f);
+          o[2] = uint8_t(std::clamp(r, 0.0f, 1.0f) * 255.0f + 0.5f);
+        }
+      if (FILE* fp = std::fopen(path.c_str(), "wb")) {
+        const uint32_t sz = 54 + uint32_t(img.size());
+        uint8_t hd[54] = {'B', 'M'};
+        auto put = [&](int at, uint32_t v) { for (int i = 0; i < 4; ++i) hd[at + i] = uint8_t(v >> (8 * i)); };
+        put(2, sz); put(10, 54); put(14, 40); put(18, cw); put(22, ch);
+        hd[26] = 1; hd[28] = 24; put(34, uint32_t(img.size()));
+        std::fwrite(hd, 1, 54, fp);
+        std::fwrite(img.data(), 1, img.size(), fp);
+        std::fclose(fp);
+      }
+    }
+    backend_->ReleaseReadback(rb);
+  }
+  uint64_t up_resets_ = 0, up_mv_n_ = 0, up_depth_changes_ = 0;  // job 722
+  uint64_t up_jittered_early_ = 0;  // job 726: draws before the frame's camera was found
+  double up_mv_sum_ = 0.0, up_mv_max_ = 0.0;
+  uint32_t up_last_depth_dims_ = 0;
+  bool ObjectRowsIdentity(const uint32_t* r, const rr::GuestShader& vsg) const {
+    const uint32_t ob = up_object_base_;
+    if (!(vsg.Reads(ob) && vsg.Reads(ob + 1) && vsg.Reads(ob + 2) && vsg.Reads(ob + 3))) return true;  // no object rows
+    static const float kId[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    return std::memcmp(&r[kRegFloatConstVs + ob * 4], kId, sizeof(kId)) == 0;
+  }
+  void FindCameraMatrix(const uint32_t* r, const rr::GuestShader& vsg) {
+    if (up_vp_tries_ >= 64) return;
+    // Job 716: Gears 1's c4-c7 are the object rows times the camera (job 715's boot: found on a scaled, moved object,
+    // so only 5 draws a frame matched). The camera alone is there only on a draw whose object rows are the identity
+    // (the level's own geometry), so a draw with other object rows is passed over.
+    if (!ObjectRowsIdentity(r, vsg)) return;
+    ++up_vp_tries_;
+    if (up_vp_tries_ == 1)  // what the first scene draw reads, so a miss can be worked out from one log
+      for (uint32_t b = 0; b + 3 < 64; b += 4) {
+        if (!(vsg.Reads(b) || vsg.Reads(b + 1) || vsg.Reads(b + 2) || vsg.Reads(b + 3))) continue;
+        const float* m = reinterpret_cast<const float*>(&r[kRegFloatConstVs + b * 4]);
+        REXLOG_INFO("gow2_upscaler: first scene draw c{}-c{}: {} {} {} {} | {} {} {} {} | {} {} {} {} | {} {} {} {}", b, b + 3,
+                    m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
+      }
+    for (uint32_t b = 0; b + 3 < 64; ++b) {
+      if (b + 3 >= up_object_base_ && b <= up_object_base_ + 3) continue;
+      if (!(vsg.Reads(b) && vsg.Reads(b + 1) && vsg.Reads(b + 2) && vsg.Reads(b + 3))) continue;
+      float m[16];
+      std::memcpy(m, &r[kRegFloatConstVs + b * 4], sizeof(m));
+      bool finite = true;
+      for (float x : m) finite = finite && std::isfinite(x);
+      if (!finite || (m[3] == 0.0f && m[7] == 0.0f && m[11] == 0.0f)) continue;  // no w from position: not perspective
+      float fov = 0.0f, zn = 0.0f;
+      bool inf = false;
+      if (!rr::upscale::PerspectiveParams(rr::upscale::FromConstantsTransposed(m, 0), fov, zn, inf) || !(fov > 0.1f && fov < 3.0f))
+        continue;
+      up_vp_base_ = int32_t(b);
+      REXLOG_INFO("gow2_upscaler: camera matrix found at c{}-c{} (frame {}, try {}): vertical fov {:.1f} deg, near {}, {} far; "
+                  "{} {} {} {} | {} {} {} {} | {} {} {} {} | {} {} {} {}",
+                  b, b + 3, frame_ + 1, up_vp_tries_, fov * 57.29578f, zn, inf ? "infinite" : "finite", m[0], m[1], m[2], m[3],
+                  m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
+      return;
+    }
+    if (up_vp_tries_ == 64) REXLOG_WARN("gow2_upscaler: no camera matrix found in c0-c63 on 64 scene draws - no jitter");
+  }
+
   // Called for each draw before its viewport is set (v in host pixels). c: the draw's VS float constants c0-c3.
   void UpscaleJitter(const uint32_t* r, const rr::GuestShader& vsg, const rr::PipelineState& ps,
                      const rr::RenderTarget* depth, bool depth_writes, rr::ViewportState& v) {
@@ -4141,9 +4295,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // depth get the jitter besides the camera draws - 1: also those whose vertex shader does not read c0-c3, 2: also
     // those with other c0-c3. A depth prepass drawn jittered and a base pass drawn unjittered fail UE3's depth-equal
     // test in patches (black / missing surfaces).
-    const bool reads_camera = vsg.Reads(0) && vsg.Reads(1) && vsg.Reads(2) && vsg.Reads(3);
+    if (up_vp_base_ < 0) {  // job 715: find the camera matrix on the first scene draw that has one
+      if (!depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < kSceneMinHeight) return;
+      FindCameraMatrix(r, vsg);
+      if (up_vp_base_ < 0) return;
+    }
+    const uint32_t cb = uint32_t(up_vp_base_);
+    const bool reads_camera = vsg.Reads(cb) && vsg.Reads(cb + 1) && vsg.Reads(cb + 2) && vsg.Reads(cb + 3);
     if (!reads_camera) {
-      if (up_jitter_scope_ >= 1 && up_camera_ && up_last_ok_ && IsSceneDepth(*depth)) {
+      if (up_jitter_scope_ >= 1 && (up_camera_ || up_vp_auto_) && up_last_ok_ && IsSceneDepth(*depth)) {  // 726
         v.x += up_jitter_.x;
         v.y += up_jitter_.y;
         ++up_jittered_;
@@ -4152,7 +4312,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return;
     }
     float c[16];
-    std::memcpy(c, &r[kRegFloatConstVs], sizeof(c));
+    std::memcpy(c, &r[kRegFloatConstVs + cb * 4], sizeof(c));
     if (up_camera_ && up_jitter_scope_ >= 2 && IsSceneDepth(*depth) && std::memcmp(c, up_vp_, sizeof(c)) != 0) {
       if (up_last_ok_) {
         v.x += up_jitter_.x;
@@ -4163,7 +4323,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return;
     }
     if (!up_camera_) {
-      if (!depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < kSceneMinHeight) return;
+      if (!depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < kSceneMinHeight ||
+          (up_vp_auto_ && !ObjectRowsIdentity(r, vsg))) {  // job 716: the camera alone, not one object's camera
+        // Job 726 (job 725's captures: the lighting on stone changed frame to frame in the INPUT): Gears 1 draws its
+        // objects into the scene depth before the first level-geometry draw, so they were drawn unjittered while the
+        // later passes were jittered, and UE3's depth-equal light passes failed in patches. Draws into last frame's
+        // scene depth are jittered from the frame's start.
+        if (up_vp_auto_ && up_jitter_scope_ >= 2 && up_last_ok_ && IsSceneDepth(*depth)) {
+          v.x += up_jitter_.x;
+          v.y += up_jitter_.y;
+          ++up_jittered_;
+          ++up_jittered_early_;
+        }
+        return;
+      }
       up_camera_ = true;
       ++up_camera_frames_;  // Gears 3 job 054
       if (up_camera_reg_ && vsg.Reads(up_camera_reg_)) {  // Gears 3 job 056: the camera's world position
@@ -4215,7 +4388,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!up_camera_ || !depth || !(depth->key == up_depth_key_) || ps.viewport.xy_divided_by_w ||
         ps.viewport.clip_disabled)
       return;
-    if (std::memcmp(&r[kRegFloatConstVs], up_vp_, sizeof(up_vp_)) != 0) return;
+    if (up_vp_base_ < 0 || std::memcmp(&r[kRegFloatConstVs + uint32_t(up_vp_base_) * 4], up_vp_, sizeof(up_vp_)) != 0) return;
     ++up_late_draws_;
     if (up_jitter_late_ && up_last_ok_) {
       const float k = up_depth_scale_ ? float(depth->scale) / float(up_depth_scale_) : 1.0f;  // 0141: output twin
@@ -4374,8 +4547,27 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     in.output_width = ow;  // patch 0141
     in.output_height = oh;
     const float sign = REXCVAR_GET(gow2_upscale_jitter_sign) < 0 ? -1.0f : 1.0f;
-    in.jitter = up_last_ok_ ? rr::upscale::Jitter{up_jitter_.x * sign, up_jitter_.y * sign} : rr::upscale::Jitter{};
+    const float sign_y = sign * (REXCVAR_GET(gow2_upscale_jitter_sign_y) < 0 ? -1.0f : 1.0f);  // job 723
+    in.jitter = up_last_ok_ ? rr::upscale::Jitter{up_jitter_.x * sign, up_jitter_.y * sign_y} : rr::upscale::Jitter{};
     in.reset = !up_prev_camera_ || !up_last_ok_ || !have_rep || cut;
+    if (in.reset) ++up_resets_;  // job 722 diagnostics: a reset throws the history away (raw jittered frame shown)
+    if (have_rep) {  // the screen centre at mid depth, reprojected: how far the motion vectors say it moved
+      const float u = 0.5f, vv = 0.5f, z = 0.5f;
+      const float px = rep.m[0] * u + rep.m[1] * vv + rep.m[2] * z + rep.m[3];
+      const float py = rep.m[4] * u + rep.m[5] * vv + rep.m[6] * z + rep.m[7];
+      const float pw = rep.m[12] * u + rep.m[13] * vv + rep.m[14] * z + rep.m[15];
+      if (pw != 0.0f && std::isfinite(px / pw)) {
+        const double dx = (px / pw * 0.5 + 0.5 - u) * rw, dy = (0.5 - py / pw * 0.5 - vv) * rh;
+        up_mv_sum_ += std::sqrt(dx * dx + dy * dy);
+        up_mv_max_ = std::max(up_mv_max_, std::sqrt(dx * dx + dy * dy));
+        ++up_mv_n_;
+      }
+    }
+    {
+      rr::RenderTarget* dt = rts_->Find(up_depth_key_);
+      const uint32_t dk = dt ? (dt->guest_width << 16) | dt->guest_height : 0;
+      if (dk != up_last_depth_dims_) ++up_depth_changes_, up_last_depth_dims_ = dk;
+    }
     in.hdr = hdr;
     in.frame_ms = up_last_time_.time_since_epoch().count()
                       ? float(std::chrono::duration<double, std::milli>(now - up_last_time_).count())
@@ -4436,6 +4628,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ++up_ok_;
     up_frame_ok_ = true;
     up_output_upscaled_ = ow != rw;  // patch 0141: the resolve reads it at the output scale
+    if (up_cap_left_ > 0) {  // job 724
+      REXLOG_INFO("gow2_upscaler: capture set {} frame {}: jitter told {:.3f} {:.3f}, image shift {:.3f} {:.3f}, reset {}, "
+                  "colour {}x{} format {}", up_cap_set_, frame_ + 1, in.jitter.x, in.jitter.y, up_jitter_.x, up_jitter_.y,
+                  in.reset, rw, rh, int(rt.format));
+      CaptureTex(rt.texture, rt.format, rw, rh, "in", 0);
+      CaptureTex(up_output_, rt.format, ow, oh, "out", 0);
+      CaptureTex(up_motion_, gpu::Format::kR16G16Float, rw, rh, "motion", 1);
+      CaptureTex(up_depth_, gpu::Format::kR32Float, rw, rh, "depth", 2);
+    }
     return up_output_;
   }
 
@@ -4521,6 +4722,22 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Frame boundary (OnSwap): this frame's camera becomes the previous one; next frame's jitter.
   void UpscaleEndFrame() {
     if (!up_active_) return;  // patch 0145
+    if (up_cap_left_ > 0) --up_cap_left_;
+    bool cap_now = false;  // job 727: --gow2_upscale_capture_frames
+    {
+      static const std::string list = REXCVAR_GET(gow2_upscale_capture_frames);
+      if (!list.empty()) {
+        const std::string key = "," + std::to_string(frame_ + 1) + ",";
+        cap_now = ("," + list + ",").find(key) != std::string::npos;
+      }
+    }
+    static const bool cap_key = REXCVAR_GET(gow2_upscale_capture_key);  // job 731: developer only, off by default
+    if (((cap_key && (GetAsyncKeyState(VK_F9) & 1)) || cap_now) && up_cap_left_ == 0) {  // job 724
+      up_cap_left_ = 6;
+      ++up_cap_set_;
+      REXLOG_INFO("gow2_upscaler: F9 - saving the next 6 frames' DLSS inputs and outputs (set {}), jitter now {:.3f} {:.3f}",
+                  up_cap_set_, up_jitter_.x, up_jitter_.y);
+    }
     up_last_ok_ = up_frame_ok_;
     up_frame_ok_ = false;
     up_prev_camera_ = up_camera_;
@@ -4572,6 +4789,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                                   up_scale_in_, up_scene_phase_frames_, res_scale_, up_ow_, up_oh_,
                                                   up_no_flip_, rts_->HostBytes() >> 20)
                                     : std::string()));
+      {
+        rr::RenderTarget* dt = rts_->Find(up_depth_key_);
+        REXLOG_INFO("gow2_upscaler: job 722: history resets {} of {} frames | centre motion {:.2f} px/frame mean, {:.1f} max | "
+                    "camera depth target {}x{}, changed {} times | camera matrix c{} | jittered before the camera {:.0f}/frame",
+                    up_resets_, log_every_, up_mv_n_ ? up_mv_sum_ / double(up_mv_n_) : 0.0, up_mv_max_,
+                    dt ? dt->guest_width : 0, dt ? dt->guest_height : 0, up_depth_changes_, up_vp_base_,
+                    double(up_jittered_early_) / log_every_);
+        up_resets_ = up_mv_n_ = up_depth_changes_ = up_jittered_early_ = 0;
+        up_mv_sum_ = up_mv_max_ = 0.0;
+      }
       up_scene_phase_frames_ = 0;
       up_no_flip_ = 0;
       up_late_draws_ = 0;
@@ -5462,15 +5689,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // union of its vertices instead of falling back to the scissor; the exact fill_trim rectangle stays 3-vertex only.
     const bool fill_count_ok = index_count == 3 || index_count == 6 ||
                                (fill_rect_lists_ && index_count % 3 == 0 && index_count >= 9 && index_count <= 48);
-    if ((fill_trim_ || fill_ownership_) && vs_hash == 0x1E6883FCCDE1F688ull && prim == 0x08 && !ib && fill_count_ok &&
+    // Job 709: Gears 1's fill shader (older XDK) has another hash and vertex size - the size is taken from the
+    // fetch (whole floats, x y z first) for the extra hashes.
+    const bool fill_vs = vs_hash == 0x1E6883FCCDE1F688ull ||
+                         std::find(fill_vs_extra_.begin(), fill_vs_extra_.end(), vs_hash) != fill_vs_extra_.end();
+    if ((fill_trim_ || fill_ownership_) && fill_vs && prim == 0x08 && !ib && fill_count_ok &&
         ps.viewport.xy_divided_by_w) {
       const uint32_t dw0 = r[kRegFetchConst], dw1 = r[kRegFetchConst + 1];
       const uint32_t addr = dw0 & 0x1FFFFFFCu, size = ((dw1 >> 2) & 0xFFFFFFu) * 4;
-      if ((dw0 & 3) == 3 && size == index_count * 28u && addr + size <= (512u << 20)) {
+      const uint32_t stride = vs_hash == 0x1E6883FCCDE1F688ull ? 28u : (index_count ? size / index_count : 0u);
+      if (fill_vs_logged_ < 4 && vs_hash != 0x1E6883FCCDE1F688ull) {
+        ++fill_vs_logged_;
+        REXLOG_INFO("gow2_renderer: fill shader {:016X} (extra): {} vertices, fetch {} bytes, stride {}", vs_hash,
+                    index_count, size, stride);
+      }
+      if ((dw0 & 3) == 3 && stride >= 12 && stride <= 64 && stride % 4 == 0 && size == index_count * stride &&
+          addr + size <= (512u << 20)) {
         const uint8_t* mem = memory_->TranslatePhysical<const uint8_t*>(addr);
         auto f = [&](uint32_t v, uint32_t c) {
           uint32_t w;
-          std::memcpy(&w, mem + 28 * v + 4 * c, 4);
+          std::memcpy(&w, mem + stride * v + 4 * c, 4);
           return std::bit_cast<float>(std::byteswap(w));
         };
         auto hx = [&](float x) {
@@ -5874,6 +6112,34 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     d.wireframe = ps.raster.fill_mode == rr::FillMode::Wireframe;
     d.depth_bias = ps.raster.depth_bias;
     d.depth_bias_slope = ps.raster.depth_bias_slope_scaled;
+    // Job 713: UE3 decals (Gears 1 blood) carry a polygon offset of ~0.00005 - enough on the console, z-fighting here.
+    // On a float24 target, an offset that is on but below gow2_renderer_decal_min_bias is raised to it (same sign).
+    if (decal_min_bias_ && d.depth_bias != 0 && target && (target->key.storage_class & 1) &&
+        std::abs(d.depth_bias) < decal_min_bias_) {
+      if (stats_.decal_bias_raised == 0)
+        REXLOG_INFO("gow2_renderer: decal depth bias (job 713): frame {} func {} write {} bias {} -> {}", frame_ + 1,
+                    uint32_t(ds.depth_func), ds.depth_write ? 1 : 0, d.depth_bias,
+                    d.depth_bias < 0 ? -decal_min_bias_ : decal_min_bias_);
+      d.depth_bias = d.depth_bias < 0 ? -decal_min_bias_ : decal_min_bias_;
+      ++stats_.decal_bias_raised;
+    }
+    // Job 712 (Gears 1 blood flicker, also in Canary / Edge): decals and other overlays are drawn with no depth write and
+    // a less/greater-or-equal test on the same surface as the floor, relying on both depths rounding to the same 20e4
+    // value on the console. Kept as float32 here, two shaders' depths differ in the last bits and the winner flips as the
+    // camera moves. On a float24 target, such a draw is nudged --gow2_renderer_overlay_depth_nudge 20e4 steps toward
+    // passing (one 20e4 step = 8 float32 steps, the same unit D3D10IntegerPolygonOffset uses). Draws that write depth,
+    // and EQUAL / ALWAYS / NEVER tests, are untouched.
+    if (overlay_nudge_ > 0 && target && (target->key.storage_class & 1) && ds.depth_enable && !ds.depth_write) {
+      const int32_t n = overlay_nudge_ * 8;
+      if (stats_.overlay_nudged == 0 || stats_.overlay_nudged == 100000)
+        REXLOG_INFO("gow2_renderer: overlay depth nudge (job 712): {} so far - frame {} func {} bias {} -> {} 20e4 steps",
+                    stats_.overlay_nudged, frame_ + 1, uint32_t(ds.depth_func), d.depth_bias, overlay_nudge_);
+      switch (ds.depth_func) {
+        case rr::CompareFunc::GreaterEqual: case rr::CompareFunc::Greater: d.depth_bias += n; ++stats_.overlay_nudged; break;
+        case rr::CompareFunc::LessEqual: case rr::CompareFunc::Less: d.depth_bias -= n; ++stats_.overlay_nudged; break;
+        default: break;
+      }
+    }
     d.depth_clip = ps.raster.depth_clip;
     d.depth_enable = ds.depth_enable;
     d.depth_write = ds.depth_write;
@@ -7807,9 +8073,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       // Never in the first ~60 s after a chapter list starts (Shagg 11:26: a cutscene plays at a clean frame rate, and
       // it is the time the pack needs).
       const bool paused = !burst && rcp_clean_frames_ >= 150 && frame_ >= rcp_list_started_frame_ + 1800;
+      // Job 730: the full limit only on loading screens, menus and Prepare all shaders; during play that is missing
+      // draws, a middle limit, so the workers leave the game and its renderer CPU time.
+      const bool loading = idle || draw_index_ < 64 || prepare_all_;
       const uint64_t cap = paused ? 0
-                                  : uint64_t(std::clamp(burst ? REXCVAR_GET(gow2_renderer_recipe_pack_jobs_load)
-                                                              : REXCVAR_GET(gow2_renderer_recipe_pack_jobs), 1, 64));
+                                  : uint64_t(std::clamp(loading ? REXCVAR_GET(gow2_renderer_recipe_pack_jobs_load)
+                                                        : burst ? REXCVAR_GET(gow2_renderer_recipe_pack_jobs_missing)
+                                                                : REXCVAR_GET(gow2_renderer_recipe_pack_jobs), 1, 64));
       bool backlog = false;
       size_t keep = 0;
       if (rcp_hot_chapters_)  // job 634: the area being played first
@@ -9876,6 +10146,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   } fill_;                       // job 185: this draw's exact fill rectangle (host pixels) and what it overwrites
   uint32_t fill_rects_logged_ = 0;
   bool fill_trim_ = false;
+  std::vector<uint64_t> fill_vs_extra_;   // job 709
+  int32_t overlay_nudge_ = 0;              // job 712 (off: did not stop the blood flicker, 13:57 at 64 steps)
+  int32_t decal_min_bias_ = 0;             // job 713: 0 = off
+  int fill_vs_logged_ = 0;
   struct FillGeom {
     bool valid = false;
     rr::PixelRect rect{};

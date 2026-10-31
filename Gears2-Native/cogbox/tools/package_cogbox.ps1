@@ -1,4 +1,4 @@
-﻿# CogBox: assemble the player zip (CogBox-<version>.zip + .sha256) from the launcher and the three ports' builds.
+﻿# CogBox: assemble the player zip (CogBox-<version>.zip + .sha256) from the launcher and the four ports' builds.
 # Run on the PC: pwsh -File cogbox\tools\package_cogbox.ps1 [-Version 0.1.0] [-Out <folder>] [-WhatIf]
 # The zip and its .sha256 land in COGBox-Project\releases\<version>\; the
 # unzipped working copy is built in Gears2-Native\out\pack\. A new build of the same version replaces the old files.
@@ -23,11 +23,14 @@ $ports = @(
   @{ to = 'Gears2\port-disc'; from = "$docs\Gears2-Native\build\Release";           exe = 'gow2.exe' },   # 0.2.2: Release (no Tracy)
   @{ to = 'Gears3\port-tu6';  from = "$docs\Gears3-Native\build\Release-tu6";       exe = 'gow3.exe' },
   @{ to = 'Gears3\port-disc'; from = "$docs\Gears3-Native\build\Release";           exe = 'gow3.exe' },
-  @{ to = 'Judgment\port';    from = "$docs\GearsJ-Native\build\Release";           exe = 'gowj.exe' }
+  @{ to = 'Judgment\port';    from = "$docs\GearsJ-Native\build\Release";           exe = 'gowj.exe' },
+  # 0.3.0: Gears 1. Its build has no upscaler or shader-compiler DLLs of its own (noShared): it uses shared\ like the
+  # others, so those five files are checked and taken from the other builds only.
+  @{ to = 'Gears1\port';      from = "$docs\Gears1-Native\build\Release";           exe = 'gow1.exe'; noShared = $true }
 )
 # Licences: CogBox's own (fonts, Dear ImGui, SDL3, miniz, stb), each project's LICENSE and THIRD_PARTY_NOTICES.md, and
 # the licence files found at the top of each SDK whose code or DLLs ship.
-$projects = @('Gears2-Native', 'Gears3-Native', 'GearsJ-Native')
+$projects = @('Gears2-Native', 'Gears3-Native', 'GearsJ-Native', 'Gears1-Native')
 $sdks = @('rexglue-sdk', 'dlss-sdk', 'fidelityfx-sdk', 'xess-sdk', 'dxc-1.9.2607', 'antilag2-sdk', 'nvapi', 'streamline-sdk', 'agility-sdk')
 
 # ---- Checks first ---------------------------------------------------------------------------------------------------
@@ -41,7 +44,7 @@ if (-not $Version) {
 foreach ($p in $ports) {
   if (-not (Test-Path (Join-Path $p.from $p.exe))) { $problems += "missing port: $($p.from)\$($p.exe)" }
   if (-not (Test-Path (Join-Path $p.from 'D3D12\D3D12Core.dll'))) { $problems += "no D3D12\D3D12Core.dll beside $($p.from)\$($p.exe) (Agility SDK, 0.2.0)" }
-  foreach ($f in $needDlls) { if (-not (Test-Path (Join-Path $p.from $f))) { $problems += "missing next to $($p.to): $($p.from)\$f" } }
+  foreach ($f in $needDlls) { if ($p.noShared -and $f -eq 'dxcompiler.dll') { continue }; if (-not (Test-Path (Join-Path $p.from $f))) { $problems += "missing next to $($p.to): $($p.from)\$f" } }
   if (-not @(Get-ChildItem -LiteralPath $p.from -Filter 'rexruntime*.dll' -File -ErrorAction SilentlyContinue).Count) { $problems += "no rexruntime*.dll in $($p.from)" }
 }
 # 0.2.2 (Shagg: developer tools never ship): no profiler, debug runtime, symbols or test program in any port folder, and
@@ -59,7 +62,7 @@ foreach ($p in $ports) {
 # Job 642: the chapter recipe packs (launcher: <COGBox>\recipes\recipes-<exe>.rcp, job 630) and the keyboard prompt
 # overlays (<COGBox>\prompts\keyboard\*.overlay, job 629) - no game data, our own lists and drawings.
 $recipeSrc = Join-Path $launcher 'recipes'   # the copies the launcher uses on this PC (same files as work\recipes)
-foreach ($g in 'gow2', 'gow3', 'gowj') { if (-not (Test-Path (Join-Path $recipeSrc "recipes-$g.rcp"))) { $problems += "missing recipe pack: $recipeSrc\recipes-$g.rcp" } }
+foreach ($g in 'gow2', 'gow3', 'gowj', 'gow1') { if (-not (Test-Path (Join-Path $recipeSrc "recipes-$g.rcp"))) { $problems += "missing recipe pack: $recipeSrc\recipes-$g.rcp" } }
 $promptSrc = Join-Path $launcher 'prompts\keyboard'
 if (-not @(Get-ChildItem -LiteralPath $promptSrc -Filter *.overlay -File -ErrorAction SilentlyContinue).Count) { $problems += "no keyboard prompt overlays in $promptSrc" }
 if ($problems.Count) { $problems | ForEach-Object { Write-Host "PROBLEM: $_" }; Write-Host 'RESULT: FAIL (nothing written)'; exit 1 }
@@ -87,7 +90,7 @@ $langSrc = Join-Path $cogbox 'lang'
 if (Test-Path $langSrc) { $langDst = Join-Path $stage 'lang'; New-Item -ItemType Directory -Force $langDst | Out-Null; Copy-Item (Join-Path $langSrc '*.txt') $langDst } else { throw 'cogbox\lang is missing' }
 # Job 642: recipe packs and keyboard prompts beside CogBox.exe.
 $rd = Join-Path $stage 'recipes'; New-Item -ItemType Directory -Force $rd | Out-Null
-foreach ($g in 'gow2', 'gow3', 'gowj') { Copy-Item (Join-Path $recipeSrc "recipes-$g.rcp") $rd }
+foreach ($g in 'gow2', 'gow3', 'gowj', 'gow1') { Copy-Item (Join-Path $recipeSrc "recipes-$g.rcp") $rd }
 $pd = Join-Path $stage 'prompts\keyboard'; New-Item -ItemType Directory -Force $pd | Out-Null
 Copy-Item (Join-Path $promptSrc '*.overlay') $pd
 Copy-Item (Join-Path (Split-Path -Parent $cogbox) 'LICENSE') (Join-Path $stage 'LICENSE.txt')
@@ -124,9 +127,9 @@ foreach ($sdk in $sdks) {
 $sharedNames = @('libxess.dll', 'amd_fidelityfx_loader_dx12.dll', 'amd_fidelityfx_upscaler_dx12.dll', 'amd_fidelityfx_framegeneration_dx12.dll', 'dxcompiler.dll')
 $sh = Join-Path $stage 'shared'; New-Item -ItemType Directory -Force $sh | Out-Null
 foreach ($n in $sharedNames) {
-  $copies = @($ports | ForEach-Object { Join-Path $_.from $n } | Where-Object { Test-Path $_ })
+  $copies = @($ports | Where-Object { -not $_.noShared } | ForEach-Object { Join-Path $_.from $n } | Where-Object { Test-Path $_ })
   $hashes = @($copies | ForEach-Object { (Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash } | Sort-Object -Unique)
-  if ($copies.Count -ne $ports.Count -or $hashes.Count -ne 1) { Write-Host "PROBLEM: $n is missing from a build or differs between builds ($($copies.Count) copies, $($hashes.Count) versions) - it can't be shared"; Write-Host 'RESULT: FAIL'; exit 1 }
+  if ($copies.Count -ne @($ports | Where-Object { -not $_.noShared }).Count -or $hashes.Count -ne 1) { Write-Host "PROBLEM: $n is missing from a build or differs between builds ($($copies.Count) copies, $($hashes.Count) versions) - it can't be shared"; Write-Host 'RESULT: FAIL'; exit 1 }
   Copy-Item $copies[0] $sh
 }
 foreach ($p in $ports) {

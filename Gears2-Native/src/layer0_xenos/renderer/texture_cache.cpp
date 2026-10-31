@@ -33,6 +33,11 @@
 #define STB_DXT_STATIC
 #include "stb_dxt.h"
 
+// Player options: better texture filtering than the game asks for, on filtered textures that have mip levels.
+REXCVAR_DEFINE_INT32(gow2_renderer_force_aniso, 0, "Gears2",
+                     "Anisotropic filtering at least this much (2, 4, 8 or 16) on filtered, mipmapped textures; 0 = the game's own");
+REXCVAR_DEFINE_BOOL(gow2_renderer_force_trilinear, false, "Gears2",
+                    "Blend between mip levels (trilinear) on filtered, mipmapped textures the game samples with point mips");
 REXCVAR_DEFINE_DOUBLE(gow2_texture_phase_log_ms, 0.0, "Gears2",
                       "Diagnostic (job 299): log a frame whose texture loads took longer than this many ms, split into "
                       "phases - page watch arming, page hashing, host texture creation, GPU-path copy + untile, CPU-path "
@@ -496,6 +501,11 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
     sd.min_lod = float(Bits(dw4, 2, 4));
     sd.max_lod = mip == 2 ? sd.min_lod : float(Bits(dw4, 6, 4));  // kBaseMap: no mips
     if (sd.max_lod < sd.min_lod) sd.max_lod = sd.min_lod;
+    if (sd.min_linear && sd.max_lod > sd.min_lod) {   // the player options above
+      if (REXCVAR_GET(gow2_renderer_force_trilinear)) sd.mip_linear = true;
+      const int32_t fa = REXCVAR_GET(gow2_renderer_force_aniso);
+      if (fa > sd.max_anisotropy) sd.max_anisotropy = uint8_t(std::min(fa, 16));
+    }
     // Views: swizzle (fetch constant, then the host format's channel map) and signedness.
     const HostFormat hf = Host(Bits(tf[1], 0, 6));
     const uint32_t swz = Bits(dw3, 1, 12);
