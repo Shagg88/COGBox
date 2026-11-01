@@ -251,13 +251,14 @@ std::vector<Option> make_options(Game g) {
     if (!g1) add(choice("MeshLod", "Character detail (LOD)", Tab::Graphics, PG, { "Original", "Higher", "Highest" }, 0,
                "Keeps characters' and weapons' detailed models (hair, faces, armour) at a greater distance, for high "
                "resolutions. Costs some GPU time in crowded scenes. Original = the game's own.", 0), "inifx");
-    // Motion blur / lens flares: no PS1 tooltip.
+    // Motion blur: no PS1 tooltip.
     if (!g1) add(make("MotionBlur", "Motion blur", Tab::Graphics, Kind::Bool, PG, 1, "The blur of fast movement (the game's own setting).", 370),
         "inifx", "", true);
     if (!g1) add(make("DoF", "Depth of field", Tab::Graphics, Kind::Bool, PG, 1,
              "The blur of distant / out-of-focus areas (cutscenes, aiming).", 371), "inifx", "", true);
-    if (!g1) add(make("LensFlares", "Lens flares", Tab::Graphics, Kind::Bool, PG, 1, "Light flares from bright lights (the game's own setting).", 372),
-        "inifx", "", true);
+    // GitHub #102 (Shagg): no Lens flares option any more - the launcher decides per game at launch (below): on where the
+    // game's occlusion queries are answered (Real occlusion, DirectX 12, not under Wine / Proton), off where they can't
+    // be, since every flare would show through the scenery there.
     add(choice("Shake", "Camera shake (roadie run)", Tab::Graphics, PG, { "Original", "Less", "Off" }, 0,
                "The camera shake while roadie-running. Less halves the game's own shake; Off removes it.", 373), "iniedit", "", true);
     add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 5, 100,
@@ -589,7 +590,7 @@ void apply_preset(Settings& s, int p) {
     s.set("Preset", p);
     s.set("Resolution", x.res); s.set("FrameCap", x.fps); s.set("AAMode", x.aa); s.set("Aniso", x.aniso);
     s.set("Trilinear", x.tri); s.set("MipFade", x.mip); s.set("Pool", x.pool); s.set("DrawDist", x.draw);
-    s.set("MotionBlur", x.blur); s.set("DoF", x.dof); s.set("LensFlares", x.flare); s.set("Shake", x.shake); s.set("Fov", x.fov);
+    s.set("MotionBlur", x.blur); s.set("DoF", x.dof); s.set("Shake", x.shake); s.set("Fov", x.fov);
 }
 
 void set_value(Game g, Settings& s, const std::string& id, double value) {
@@ -930,7 +931,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         std::vector<std::string> ini;
         if (avail("MotionBlur") && !s.b("MotionBlur")) ini.push_back(ei + "|SystemSettings|MotionBlur=False");
         if (avail("DoF") && !s.b("DoF")) ini.push_back(ei + "|SystemSettings|DepthOfField=False");
-        if (avail("LensFlares") && !s.b("LensFlares")) ini.push_back(ei + "|SystemSettings|LensFlares=False");
+        // GitHub #102: lens flares are not a player setting. Flares are hidden behind walls only by the game's occlusion
+        // queries, which only Real occlusion answers (DirectX 12, not under Wine / Proton); without them every flare shows
+        // through the scenery, so they are off for that launch. Gears 1's engine has no lens-flare switch.
+        if (!isG1) {
+            const bool occlusion = s.i("Api") == 0 && !env.wine && avail("RealOcclusion") && s.b("RealOcclusion");
+            if (!occlusion) {
+                ini.push_back(ei + "|SystemSettings|LensFlares=False");
+                notes.push_back("launcher: lens flares off for this launch - no Real occlusion (DirectX 12) to hide them behind walls (GitHub #102)");
+            }
+        }
         if (avail("Fov") && s.i("Fov") != 100) {
             std::string k = fmt_double(static_cast<double>(s.i("Fov")) / 100);
             ini.push_back(std::string(isG1 ? "WarCamera.ini" : "GearCamera.ini") + "|*|FOVAngle*=" + k);

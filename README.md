@@ -34,8 +34,8 @@ the ports what an emulator can't easily offer:
   later instead of freezing the game.
 - **Vulkan (experimental)** - a choice on each game's Graphics tab, for testing; close to Direct3D 12 already.
 - **Lower input lag** - one frame in flight, NVIDIA Reflex / AMD Anti-Lag 2 where your GPU has them.
-- **HDR10**, **ultrawide 21:9** (all three games), **16x anisotropic filtering**, field of view, and the games' own motion blur, depth of
-  field and lens flares as switches.
+- **HDR10**, **ultrawide 21:9** (all three games), **16x anisotropic filtering**, field of view, and the games' own motion blur and depth of
+  field as switches (lens flares are set per game automatically: on where Real occlusion hides them behind walls).
 - **Split-screen** (Gears 2), **keyboard and mouse** (mouse look without the stick's speed limit, keys you can change),
   **Xbox and PlayStation controllers** with **auto-switching button prompts** (the game's own for Xbox pads; PlayStation, Switch, Steam Deck, Steam Controller and keyboard prompts as you switch; `--gow_button_prompts=auto|original|xbox|playstation|switch|steamdeck|steamcontroller|keyboard`), **title updates**, **chapter select**.
 - **DLC and mods** - add DLC packages from your console and mods as .zip files on each game's About tab.
