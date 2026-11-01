@@ -1,5 +1,6 @@
 // COGBox - one page per game: its box and name, status lamps, the settings in tabs (built from gears_settings'
 // option list, so a new option there shows up here), the About tab, and a bar with Library, a summary, Save and Play.
+#include <cctype>
 #include "app.h"
 #include "theme.h"
 #include "i18n.h"   // 0.2.0
@@ -916,6 +917,27 @@ static void about_tab(App &a, int g)
             ImGui::EndCombo();
         }
         row_desc("Translations are written by the project; corrections are welcome on GitHub (the lang folder).");
+    }
+    {   // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=, SDK patch 54)
+        static char buf[16] = {};
+        static bool loaded = false;
+        if (!loaded) {
+            loaded = true;
+            const std::string cur = a.ini.get("Profile", "Gamertag");
+            std::snprintf(buf, sizeof(buf), "%s", cur.c_str());
+        }
+        row_label("Gamertag", "", true);
+        ImGui::SetNextItemWidth(g_ctrlW);
+        auto filter = [](ImGuiInputTextCallbackData *d) -> int {   // Xbox gamertags: letters, digits, spaces
+            const ImWchar c = d->EventChar;
+            return (c < 128 && (std::isalnum(static_cast<int>(c)) || c == ' ')) ? 0 : 1;
+        };
+        if (ImGui::InputText("##gamertag", buf, sizeof(buf), ImGuiInputTextFlags_CallbackCharFilter, filter)) {
+            a.ini.set("Profile", "Gamertag", buf);
+            a.ini.save();
+        }
+        row_desc("The name the games show for you (up to 15 letters, digits or spaces). Empty = \"User\". Your saves are "
+                 "kept whatever the name.");
     }
     bool fs = a.fullscreen;   // job 523
     if (ImGui::Checkbox(tr("Fullscreen (F11, or LT + RT together)"), &fs)) set_fullscreen(a, fs);
