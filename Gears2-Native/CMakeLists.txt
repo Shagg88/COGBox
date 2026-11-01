@@ -30,6 +30,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/renderer/render_target_cache.cpp
     src/layer0_xenos/renderer/guest_watch.cpp
     src/layer0_xenos/renderer/texture_cache.cpp
+    src/layer0_xenos/renderer/prompt_atlas_catalog.cpp
     src/layer0_xenos/renderer/shadow_renderer.cpp
     src/layer0_xenos/renderer/upscaler.cpp
     src/layer0_xenos/hold_guest.cpp
@@ -350,6 +351,8 @@ if(GN_BUILD_TESTS)
         src/layer0_xenos/renderer/texture_cache.cpp
         src/layer0_xenos/renderer/guest_watch.cpp
         tests/layer0_glyph_assets_test.cpp
+        tests/layer0_prompt_catalog_test.cpp
+        src/layer0_xenos/renderer/prompt_atlas_catalog.cpp
         tests/layer2_config_bundle_test.cpp
         src/layer2_ue3/config_bundle.cpp
         tests/layer2_prebuild_lzx_test.cpp
