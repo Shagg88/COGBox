@@ -44,3 +44,4 @@ All logic resides in the shared engine foundation `Gears2-Native/src/layer0_xeno
   - Gears of War 3 (TU6)
   - Gears of War: Judgment (Disc & TU4)
 - Verified seamless switching between DualSense controller and Keyboard & Mouse in menus, gameplay, and weapon switch prompts.
+

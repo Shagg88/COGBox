@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include <bitset>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -59,9 +60,12 @@ class PromptDeviceMonitor {
 
   // Records key down / up and mouse down / up for tracking active KBM engagement.
   void NotifyKeyDown(uint64_t timestamp_ms = 0);
+  void NotifyKeyDown(uint32_t vk, uint64_t timestamp_ms = 0);
   void NotifyKeyUp(uint64_t timestamp_ms = 0);
+  void NotifyKeyUp(uint32_t vk, uint64_t timestamp_ms = 0);
   void NotifyMouseDown(uint64_t timestamp_ms = 0);
   void NotifyMouseUp(uint64_t timestamp_ms = 0);
+  void ResetInputStates();
 
   // Checks whether the player is actively pressing keys/mouse or was recently using KBM.
   bool IsKeyboardMouseInUse(uint64_t now_ms = 0) const;
@@ -138,8 +142,9 @@ class PromptDeviceMonitor {
   std::string last_keybind_sig_;
   std::atomic<bool> dirty_{false};
   std::atomic<bool> hardware_polling_enabled_{true};
-  std::atomic<int32_t> keys_down_count_{0};
-  std::atomic<int32_t> mouse_buttons_down_count_{0};
+  std::bitset<256> keys_down_;
+  std::atomic<bool> mouse_down_{false};
+  bool HasAnyKeyDownLocked() const;
 
   rex::ui::Window* attached_window_ = nullptr;
   rex::input::InputSystem* attached_input_system_ = nullptr;

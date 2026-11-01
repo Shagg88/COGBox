@@ -150,14 +150,22 @@ class PromptDeviceMonitor::WindowWatcher final : public rex::ui::WindowInputList
  public:
   explicit WindowWatcher(PromptDeviceMonitor& monitor) : monitor_(monitor) {}
 
-  void OnKeyDown(rex::ui::KeyEvent&) override { monitor_.NotifyKeyDown(PromptDeviceMonitor::NowMs()); }
-  void OnKeyUp(rex::ui::KeyEvent&) override { monitor_.NotifyKeyUp(PromptDeviceMonitor::NowMs()); }
+  void OnKeyDown(rex::ui::KeyEvent& e) override {
+    monitor_.NotifyKeyDown(static_cast<uint32_t>(e.virtual_key()), PromptDeviceMonitor::NowMs());
+  }
+  void OnKeyUp(rex::ui::KeyEvent& e) override {
+    monitor_.NotifyKeyUp(static_cast<uint32_t>(e.virtual_key()), PromptDeviceMonitor::NowMs());
+  }
 
   void OnMouseDown(rex::ui::MouseEvent&) override {
     monitor_.NotifyMouseDown(PromptDeviceMonitor::NowMs());
   }
   void OnMouseUp(rex::ui::MouseEvent&) override {
     monitor_.NotifyMouseUp(PromptDeviceMonitor::NowMs());
+  }
+
+  void OnLostFocus(rex::ui::UISetupEvent&) override {
+    monitor_.ResetInputStates();
   }
 
   void OnMouseWheel(rex::ui::MouseEvent&) override {
@@ -387,36 +395,89 @@ void PromptDeviceMonitor::Reset() {
   has_applied_style_ = false;
   last_poll_ms_ = 0;
   dirty_.store(false, std::memory_order_release);
-  keys_down_count_.store(0, std::memory_order_relaxed);
-  mouse_buttons_down_count_.store(0, std::memory_order_relaxed);
+  keys_down_.reset();
+  mouse_down_.store(false, std::memory_order_relaxed);
+}
+
+void PromptDeviceMonitor::ResetInputStates() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  keys_down_.reset();
+  mouse_down_.store(false, std::memory_order_relaxed);
 }
 
 void PromptDeviceMonitor::NotifyKeyDown(uint64_t timestamp_ms) {
-  keys_down_count_.fetch_add(1, std::memory_order_relaxed);
+  NotifyKeyboardMouseActivity(timestamp_ms);
+}
+
+void PromptDeviceMonitor::NotifyKeyDown(uint32_t vk, uint64_t timestamp_ms) {
+  if (timestamp_ms == 0) timestamp_ms = NowMs();
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (vk < 256) {
+      keys_down_.set(vk);
+    }
+  }
   NotifyKeyboardMouseActivity(timestamp_ms);
 }
 
 void PromptDeviceMonitor::NotifyKeyUp(uint64_t timestamp_ms) {
-  int32_t val = keys_down_count_.load(std::memory_order_relaxed);
-  while (val > 0 && !keys_down_count_.compare_exchange_weak(val, val - 1, std::memory_order_relaxed)) {}
+  std::lock_guard<std::mutex> lock(mutex_);
+  keys_down_.reset();
+}
+
+void PromptDeviceMonitor::NotifyKeyUp(uint32_t vk, uint64_t timestamp_ms) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (vk < 256) {
+    keys_down_.reset(vk);
+  }
 }
 
 void PromptDeviceMonitor::NotifyMouseDown(uint64_t timestamp_ms) {
-  mouse_buttons_down_count_.fetch_add(1, std::memory_order_relaxed);
+  mouse_down_.store(true, std::memory_order_relaxed);
   NotifyKeyboardMouseActivity(timestamp_ms);
 }
 
 void PromptDeviceMonitor::NotifyMouseUp(uint64_t timestamp_ms) {
-  int32_t val = mouse_buttons_down_count_.load(std::memory_order_relaxed);
-  while (val > 0 && !mouse_buttons_down_count_.compare_exchange_weak(val, val - 1, std::memory_order_relaxed)) {}
+  mouse_down_.store(false, std::memory_order_relaxed);
+}
+
+bool PromptDeviceMonitor::HasAnyKeyDownLocked() const {
+  if (!keys_down_.any()) return false;
+#ifdef _WIN32
+  bool really_down = false;
+  for (size_t i = 0; i < 256; ++i) {
+    if (keys_down_.test(i)) {
+      if ((GetAsyncKeyState(static_cast<int>(i)) & 0x8000) != 0) {
+        really_down = true;
+      } else {
+        const_cast<PromptDeviceMonitor*>(this)->keys_down_.reset(i);
+      }
+    }
+  }
+  return really_down;
+#else
+  return keys_down_.any();
+#endif
 }
 
 bool PromptDeviceMonitor::IsKeyboardMouseInUse(uint64_t now_ms) const {
-  if (keys_down_count_.load(std::memory_order_relaxed) > 0) return true;
-  if (mouse_buttons_down_count_.load(std::memory_order_relaxed) > 0) return true;
   if (now_ms == 0) now_ms = NowMs();
+
+#ifdef _WIN32
+  if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 ||
+      (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0 ||
+      (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0) {
+    return true;
+  }
+#else
+  if (mouse_down_.load(std::memory_order_relaxed)) return true;
+#endif
+
   std::lock_guard<std::mutex> lock(mutex_);
-  return (last_kbm_ms_ != 0 && now_ms < last_kbm_ms_ + 400);
+  if (HasAnyKeyDownLocked()) {
+    return true;
+  }
+  return (last_kbm_ms_ != 0 && now_ms < last_kbm_ms_ + 300);
 }
 
 void PromptDeviceMonitor::NotifyKeyboardMouseActivity(uint64_t timestamp_ms) {

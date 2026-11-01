@@ -186,3 +186,46 @@ TEST_CASE("PromptDeviceMonitor DetectConnectedRawInputPadStyle identifies connec
            *style == DeviceStyle::kSteamController));
   }
 }
+
+TEST_CASE("PromptDeviceMonitor IsKeyboardMouseInUse handles autorepeat and switching back to gamepad",
+          "[layer0][input][device_monitor]") {
+  ScopedPromptCvarReset guard;
+  REQUIRE(GlobalPromptCompositor().Initialize("assets/glyphs"));
+
+  PromptDeviceMonitor& monitor = GlobalPromptDeviceMonitor();
+  monitor.Reset();
+
+  // 1. Initially controller active
+  monitor.NotifyGamepadActivity(DeviceStyle::kPlayStation, 1000);
+  CHECK(monitor.EvaluateActiveStyle(1000) == DeviceStyle::kPlayStation);
+  CHECK_FALSE(monitor.IsKeyboardMouseInUse(1000));
+
+  // 2. Player presses 'W' to walk forward (VK 0x57)
+  monitor.NotifyKeyDown(0x57, 2000);
+  CHECK(monitor.IsKeyboardMouseInUse(2000));
+
+  // Windows sends repeated WM_KEYDOWN events at ~30Hz while 'W' is held
+  for (uint64_t t = 2030; t <= 3000; t += 30) {
+    monitor.NotifyKeyDown(0x57, t);
+    CHECK(monitor.IsKeyboardMouseInUse(t));
+  }
+
+  // Monitor evaluated at t=3000 (after debounce) has switched to kKeyboard
+  CHECK(monitor.EvaluateActiveStyle(3000) == DeviceStyle::kKeyboard);
+
+  // Player releases 'W' -> single WM_KEYUP event
+  monitor.NotifyKeyUp(0x57, 3050);
+
+  // Within the debounce window after key release
+  CHECK(monitor.IsKeyboardMouseInUse(3050));
+  CHECK(monitor.IsKeyboardMouseInUse(3200));
+
+  // After 300ms since last key activity (last key down was 2990ms, so 3290ms+ is inactive)
+  CHECK_FALSE(monitor.IsKeyboardMouseInUse(3350));
+
+  // 3. Player uses DualSense controller at t=3400ms:
+  // Controller input must register cleanly and switch back to PlayStation!
+  monitor.NotifyGamepadActivity(DeviceStyle::kPlayStation, 3400);
+  CHECK(monitor.EvaluateActiveStyle(3400) == DeviceStyle::kPlayStation);
+  CHECK(GlobalPromptCompositor().ActiveStyle() == DeviceStyle::kPlayStation);
+}

@@ -266,7 +266,7 @@ void PollPads() {
                     pad.sThumbRY, DeviceStyleName(pad_style));
       }
       if (active) {
-        prompt_mon.NotifyGamepadActivity(pad_style);
+        prompt_mon.NotifyGamepadActivity(pad_style, now);
       } else {
         prompt_mon.SetDefaultGamepadStyle(pad_style);
       }
