@@ -1,0 +1,35 @@
+diff --git a/src/kernel/xam/xam_user.cpp b/src/kernel/xam/xam_user.cpp
+--- a/src/kernel/xam/xam_user.cpp
++++ b/src/kernel/xam/xam_user.cpp
+@@ -33,6 +33,11 @@ REXCVAR_DEFINE_UINT32(user_language, 1, "Kernel", "User's language ID");
+ // asks for them) are signed-in offline profiles "Player 2".."Player 4" with their own XUIDs, so a second controller
+ // can drop into split-screen co-op. Their profile settings read as the defaults and writes are accepted but not kept.
+ REXCVAR_DEFINE_UINT32(local_players, 1, "Kernel", "Signed-in local profiles, 1-4 (players 2-4: offline profiles)");
++// COGBox SDK patch 54 (GitHub #119): the gamertag player 1's profile shows in game (XamUserGetName, the signin info,
++// XamUserGetGamerTag). Empty = the profile's own name ("User"). Only what the game is told changes: the profile's
++// folder (content_manager's ResolveGameUserContentPath uses user_profile()->name()) stays where it was, so settings
++// and saves are kept. Xbox gamertags: up to 15 characters, letters, digits and spaces; anything else is dropped.
++REXCVAR_DEFINE_STRING(user_gamertag, "", "Kernel", "Gamertag player 1's profile shows in game (empty: 'User')");
+ 
+ namespace rex {
+ namespace kernel {
+@@ -49,8 +54,18 @@ static bool UserSignedIn(uint32_t user_index) { return user_index < LocalPlayers
+ static uint64_t UserXuid(uint32_t user_index) {
+   return REX_KERNEL_STATE()->user_profile()->xuid() + user_index;
+ }
++static std::string Player1Gamertag() {
++  std::string out;
++  for (const char c : std::string(REXCVAR_GET(user_gamertag))) {
++    const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ';
++    if (ok && !(c == ' ' && (out.empty() || out.back() == ' '))) out += c;
++    if (out.size() == 15) break;
++  }
++  while (!out.empty() && out.back() == ' ') out.pop_back();
++  return out.empty() ? REX_KERNEL_STATE()->user_profile()->name() : out;
++}
+ static std::string UserName(uint32_t user_index) {
+-  if (!user_index) return REX_KERNEL_STATE()->user_profile()->name();
++  if (!user_index) return Player1Gamertag();
+   return "Player " + std::to_string(user_index + 1);
+ }
+ 

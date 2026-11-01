@@ -1025,7 +1025,14 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
-    if (on("SystemLink")) a.push_back("--net_system_link=true");   // 0.3.5: off = not sent (the runtime's default)
+    if (on("SystemLink")) a.push_back("--net_system_link=true");
+    // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=). Only with a runtime that
+    // has SDK patch 54; it keeps 15 letters / digits / spaces. The profile's save folder is not renamed.
+    if (!env.gamertag.empty() && cap_rt(env, "user_gamertag")) {
+        std::string t;
+        for (char c : env.gamertag) if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ') t += c;
+        if (!t.empty()) a.push_back("--user_gamertag=" + q(t.substr(0, 15)));
+    }   // 0.3.5: off = not sent (the runtime's default)
     // PS1 929: FPS counter
     switch (s.i("FpsMode")) {
     case 1: a.push_back("--gow2_fps_bar=top"); break;

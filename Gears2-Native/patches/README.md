@@ -30,6 +30,10 @@ Then move the third-party submodules to the tags in `sdk-pins.txt` and configure
 - `sdk-patch53-joystick-background-events.diff` (GitHub #108: the game's SDL input sets
   SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, as the launcher does, and rex_app.cpp no longer zeroes the pad while
   the window is unfocused) comes after patch 52. Apply it in the SDK root.
+- `sdk-patch54-user-gamertag.diff` (GitHub #119): `--user_gamertag=<name>` is the gamertag player 1's profile
+  shows in game (XamUserGetName / GetSigninInfo / GetGamerTag; 15 letters, digits or spaces). The profile's folder
+  keeps its old name, so saves stay. Builds on patch 25 (`UserName`); apply it in the SDK root after patch 53.
+  The launcher sends it from `CogBox.ini` `[Profile] Gamertag=`.
 - `sdk-patch15` to `sdk-patch37` are the separate patches that went into `rexglue-sdk.diff`. They're kept
   for reference only, so don't apply them again.
 - `sdk-patch16-zpd-pairing-UNBUILT.diff` was never built. It isn't in any release.
