@@ -82,6 +82,13 @@ REXCVAR_DEFINE_DOUBLE(ue3_mouse_scale, 1.0, "COGBox", "Native mouse look: multip
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_fov_comp, 1.0, "COGBox",
                       "Native mouse look: multiplier that undoes the launcher's FOV / ultrawide widening (GitHub #52)")
     .range(0.25, 4.0);
+REXCVAR_DEFINE_DOUBLE(ue3_mouse_min_counts, 2.0, "COGBox",
+                      "Native mouse look (GitHub #115): smaller motion waits, per axis, until it reaches this many counts "
+                      "(or --ue3_mouse_hold_ms), so slow zoomed aiming isn't lost to the engine's whole rotation units. 0 = off")
+    .range(0.0, 20.0);
+REXCVAR_DEFINE_DOUBLE(ue3_mouse_hold_ms, 25.0, "COGBox",
+                      "Native mouse look (GitHub #115): the longest a small motion waits before it is sent anyway")
+    .range(0.0, 200.0);
 REXCVAR_DEFINE_BOOL(ue3_mouse_invert_y, false, "COGBox", "Native mouse look: invert up / down");
 REXCVAR_DEFINE_BOOL(ue3_mouse_aim_assist, false, "COGBox",
                     "Native mouse look (Gears 2): keep the aim friction for the mouse too");
@@ -166,9 +173,33 @@ inline bool SafeCall(PPCFunc* fn, PPCContext* c, uint8_t* base) {
 }
 
 // The banked motion of this frame, scaled and signed for the game (y up). False when there is none.
+// GitHub #115: the engine turns the float turn into whole rotation units every frame (UnrealScript's float-to-int when
+// PlayerController.UpdateRotation fills its Rotator), so a frame's turn under one unit is lost. Zoomed (Longshot,
+// FOVScale = FOV / 90 small) and at a high frame rate, slow aiming moves were all under it: a dead zone. A small
+// motion is now kept banked, per axis, until it reaches --ue3_mouse_min_counts or has waited --ue3_mouse_hold_ms, so it
+// arrives in steps the engine keeps. Ordinary motion (above the minimum) goes out the same frame, as before.
+inline void DrainReady(double* dx, double* dy) {
+  static int64_t held_x = 0, held_y = 0;  // when each axis' banked motion started waiting (0 = nothing waiting)
+  const double min_counts = REXCVAR_GET(ue3_mouse_min_counts);
+  const int64_t hold = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                           std::chrono::duration<double, std::milli>(REXCVAR_GET(ue3_mouse_hold_ms))).count();
+  const int64_t now = Now();
+  std::lock_guard<std::mutex> l(g_bank_mutex);
+  auto take = [&](double& bank, int64_t& held, double* out) {
+    *out = 0;
+    if (bank == 0) { held = 0; return; }
+    if (min_counts <= 0 || std::fabs(bank) >= min_counts || (held && now - held >= hold)) {
+      *out = bank; bank = 0; held = 0;
+    } else if (!held) {
+      held = now;
+    }
+  };
+  take(g_bank_dx, held_x, dx);
+  take(g_bank_dy, held_y, dy);
+}
 inline bool Take(double* x, double* y) {
   double dx, dy;
-  Drain(&dx, &dy);
+  DrainReady(&dx, &dy);
   if (dx == 0 && dy == 0) return false;
   const double s = REXCVAR_GET(ue3_mouse_scale) * REXCVAR_GET(ue3_mouse_fov_comp);  // GitHub #52
   *x = dx * s;
