@@ -110,7 +110,8 @@ void env_refresh(App &a, int g)
         std::string v = a.ini.get("Keys", k.cvar);
         if (!v.empty()) e.keys[k.cvar] = v;
     }
-    e.gamertag = a.ini.get("Profile", "Gamertag");   // GitHub #119 (SDK patch 54)
+    e.gamertag = a.ini.get("Profile", "Gamertag");
+    e.pad_remap = a.ini.get("Pad", "Remap");   // GitHub #97 (SDK patch 55)   // GitHub #119 (SDK patch 54)
     e.extra_args_lines.clear();
     std::string extra;
     if (read_file(join(exe_dir(), "extra-args.txt"), extra, 1 << 20)) {

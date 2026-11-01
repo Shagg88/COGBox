@@ -34,6 +34,10 @@ Then move the third-party submodules to the tags in `sdk-pins.txt` and configure
   shows in game (XamUserGetName / GetSigninInfo / GetGamerTag; 15 letters, digits or spaces). The profile's folder
   keeps its old name, so saves stay. Builds on patch 25 (`UserName`); apply it in the SDK root after patch 53.
   The launcher sends it from `CogBox.ini` `[Profile] Gamertag=`.
+- `sdk-patch55-pad-layout.diff` (GitHub #95 / #97): controllers only, before the devices are merged -
+  `--pad_radial_deadzone=<fraction>` (a round dead zone on both sticks, rescaled from its edge) and
+  `--pad_remap=<src=dst,...>` (button layout; `sticks=swap` for southpaw). Apply it in the SDK root after patch 54
+  (it builds on patch 38's block in `src/input/input_system.cpp`).
 - `sdk-patch15` to `sdk-patch37` are the separate patches that went into `rexglue-sdk.diff`. They're kept
   for reference only, so don't apply them again.
 - `sdk-patch16-zpd-pairing-UNBUILT.diff` was never built. It isn't in any release.

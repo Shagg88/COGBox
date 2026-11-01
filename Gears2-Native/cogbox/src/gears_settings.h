@@ -70,6 +70,7 @@ struct Environment {
     std::string prompt_dir;                    // job 629: <COGBox>\prompts\keyboard (key-cap overlays), "" = none
     // PS1 960-961: the lines of out\extra-args.txt (raw; empty = no file). Trimmed, '#' lines skipped, {LOG} = log_dir.
     std::vector<std::string> extra_args_lines;
+    std::string pad_remap;  // GitHub #97: CogBox.ini [Pad] Remap= (the Custom controller layout, SDK patch 55)
     std::string gamertag;   // GitHub #119: CogBox.ini [Profile] Gamertag= (--user_gamertag, SDK patch 54); "" = the runtime's "User"
     Capability cap;
 };

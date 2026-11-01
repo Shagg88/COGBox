@@ -289,6 +289,20 @@ std::vector<Option> make_options(Game g) {
                "low-DPI one.", 381, 2));
     add(choice("DeadZone", "Extra stick dead zone", Tab::Controls, SH, { "Game's own", "5%", "10%", "15%", "20%", "25%" }, 0,
                "Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added.", 382));
+    // GitHub #95: a round (radial) dead zone on both sticks, rescaled from its edge - Gears 3's feel for Gears 1 and 2.
+    // SDK patch 55 (pad_radial_deadzone). In Gears 1 and 2 the game's own per-axis dead zone on the look binding is
+    // taken off at the same time (below), so the round one is the one you feel.
+    add(choice("RadialDZ", "Radial stick dead zone", Tab::Controls, SH, { "Game's own", "8%", "12%", "16%", "20%", "25%" }, 0,
+               "A round dead zone on both sticks (measured from the centre, not per axis), so small diagonal aim moves "
+               "are not swallowed. Gears 1 and 2's own square dead zone on the camera is removed with it. Game's own = "
+               "unchanged.", 0), "padlayout");
+    // GitHub #97: controller layouts (SDK patch 55, pad_remap). Custom = CogBox.ini [Pad] Remap=, e.g. "a=b,b=a".
+    add(choice("PadLayout", "Controller layout", Tab::Controls, SH,
+               { "Game's own", "Southpaw (sticks swapped)", "A and B swapped", "Bumpers and triggers swapped",
+                 "Custom (CogBox.ini [Pad] Remap=)" }, 0,
+               "Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts "
+               "keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up "
+               "down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=.", 0), "padlayout");
     add(make("Vibration", "Controller vibration", Tab::Controls, Kind::Bool, SH, 1, "The controller's rumble.", 383));   // no PS1 tooltip
     add(make("LowLag", "Lower input lag", Tab::Controls, Kind::Bool, SH, 1,
              "Fewer frames waiting in line between the game and your screen, so the controller feels quicker. May cost a few "
@@ -457,6 +471,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1 && !cap_exe(env, "gow1_max_fps")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "lang") {   // the SDK runtime's --user_language / --user_country
         if (g == Game::Gears1 && !cap_rt(env, "user_language") && !cap_exe(env, "user_language")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "padlayout") {   // GitHub #95 / #97: SDK patch 55
+        if (!cap_rt(env, "pad_remap")) return no(not_yet(gi, "needs the next runtime (SDK patch 55)"));
     } else if (f == "lowlag") {
         if (!cap_exe(env, "gow2_renderer_frames_in_flight")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "scenescale") {
@@ -937,6 +953,22 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // full stick. With keyboard and mouse on, the binding gets no dead zone and k_lookBoost x the speed; the mouse is
         // scaled down by the same factor (same feel, 4x the ceiling) and a controller used alongside gets both undone by
         // the SDK (patch 38: pad_look_scale / pad_look_deadzone). Each game's own binding text, from its Coalesced_int.
+        // GitHub #95: with the radial dead zone on, Gears 1 and 2's look binding loses its own per-axis dead zone (the
+        // same binding text the mouse-look edits below replace; Speed unchanged). Not with mouseLook, which does it too.
+        if (!mouseLook && avail("RadialDZ") && s.i("RadialDZ") > 0 && (g == Game::Gears2 || isG1)) {
+            if (g == Game::Gears2) {
+                const std::string fi = "GearInput.ini|Engine.PlayerInput|~=";
+                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.3>Axis aTurn Speed=1.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=0.75 DeadZone=0.3>Axis aLookup Speed=0.75 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=-0.75 DeadZone=0.3>Axis aLookup Speed=-0.75 DeadZone=0.0");
+            } else {
+                const std::string fi = "WarInput.ini|Engine.PlayerInput|~=";
+                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.2>Axis aTurn Speed=1.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=0.8 DeadZone=0.2>Axis aLookup Speed=0.8 DeadZone=0.0");
+                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.3>Axis aTurn Speed=1.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=0.75 DeadZone=0.3>Axis aLookup Speed=0.75 DeadZone=0.0");
+            }
+        }
         if (mouseLook) {
             const std::string fi = "GearInput.ini|Engine.PlayerInput|~=";
             if (g == Game::Gears2) {
@@ -1001,6 +1033,20 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (d > 0) { std::string dz = fmt_double(k_deadValue[d]); a.push_back("--left_stick_deadzone_percentage=" + dz); a.push_back("--right_stick_deadzone_percentage=" + dz); }
     }
     if (!s.b("Vibration")) a.push_back("--vibration=false");
+    // GitHub #95 / #97 (SDK patch 55): radial dead zone and controller layout
+    if (avail("RadialDZ")) {
+        static const double k_radial[6] = { 0, 0.08, 0.12, 0.16, 0.20, 0.25 };
+        const int r = std::max(0, std::min(5, s.i("RadialDZ")));
+        if (r > 0) a.push_back("--pad_radial_deadzone=" + fmt_double(k_radial[r]));
+    }
+    if (avail("PadLayout")) {
+        static const char* k_layouts[4] = { "", "sticks=swap", "a=b,b=a", "lb=lt,lt=lb,rb=rt,rt=rb" };
+        const int l = std::max(0, std::min(4, s.i("PadLayout")));
+        std::string spec = l < 4 ? k_layouts[l] : env.pad_remap;
+        std::string clean;
+        for (char c : spec) if (std::isalnum(static_cast<unsigned char>(c)) || c == '=' || c == ',') clean += c;
+        if (!clean.empty()) a.push_back("--pad_remap=" + clean);
+    }
     // PS1 911-925 (patches 0133 / 0135 / 0136 / 0152): lower input lag; Reflex / Anti-Lag 2 by the main card's maker
     if (avail("LowLag")) {
         const std::string gpu = gpu_main(env);
