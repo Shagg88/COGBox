@@ -7,6 +7,7 @@
 #include <xenos/renderer/texture_cache.h>
 
 #include <xenos/formats.h>
+#include <xenos/input/prompt_device_monitor.h>
 #include <xenos/renderer/prompt_overlay_compositor.h>
 #include <xenos/texture_layout.h>
 
@@ -549,6 +550,7 @@ uint32_t UntileCode(gpu::Format f) {
 
 uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t slots_cube, uint32_t slots_3d,
                             uint64_t frame, gpu::TextureView views[96], gpu::SamplerDesc samplers[32]) {
+  ::xenos::input::GlobalPromptDeviceMonitor().PollFromBind();
   uint32_t stand_ins = 0;
   last_scaled_mask_ = 0;
   const uint64_t epoch = watch_.Epoch();

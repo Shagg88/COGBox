@@ -31,7 +31,7 @@ message(STATUS "GearsJ-Native: layer 0 (renderer) from ${GN_LAYER0_DIR}")
 include(cmake/rexglue.cmake)
 
 # Layer 0: Xbox 360 GPU core and game-free developer tooling (the shared copy in Gears2-Native).
-file(GLOB GN_LAYER0_SOURCES CONFIGURE_DEPENDS ${GN_LAYER0_DIR}/*.cpp ${GN_LAYER0_DIR}/renderer/*.cpp)
+file(GLOB GN_LAYER0_SOURCES CONFIGURE_DEPENDS ${GN_LAYER0_DIR}/*.cpp ${GN_LAYER0_DIR}/renderer/*.cpp ${GN_LAYER0_DIR}/input/*.cpp)
 # The vendor-SDK wrappers are added below only when their SDK is there (job 052).
 list(FILTER GN_LAYER0_SOURCES EXCLUDE REGEX "(dlss|fsr|xess)_upscaler\\.cpp$")
 add_library(gn_layer0_xenos STATIC ${GN_LAYER0_SOURCES})
