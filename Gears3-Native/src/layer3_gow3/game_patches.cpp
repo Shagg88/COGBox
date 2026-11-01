@@ -8,6 +8,7 @@
 // Not needed in Gears 3: Gears 2's "Black Shading Fix" (Gears 3 sets its tiling flag 0x83428B98 to 0 itself, at
 // 0x82960B94; TU6: 0x83439358 at 0x82971B6C).
 #include <rex/cvar.h>
+#include <rex/filesystem/vfs.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 #include <rex/runtime.h>
@@ -23,7 +24,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cctype>
 #include <cstring>
+#include <filesystem>
+#include <string_view>
 #include <format>
 #include <string>
 #include <thread>
@@ -250,9 +254,51 @@ void TickTimeline() {  // the game thread is the only caller
 }
 }  // namespace
 
+// GitHub #101: the front end (title screen, its menus) ran at the player's limit - with none, hundreds of fps and the
+// graphics card at 100 % on a still menu. While the front-end package is the last level the game opened, the engine
+// limit is held at --gow3_menu_fps. Signal: the file-open observer (SDK patch 32, chained through the shader reader):
+// GearStart*.xxx opened -> front end; any other level package (*_P.xxx) -> a level, the player's limit again.
+REXCVAR_DEFINE_INT32(gow3_menu_fps, 60, "Gears3",
+                     "GitHub #101: the engine's frame-rate limit on the title screen and its menus (0 = the player's)");
+namespace {
+std::atomic<bool> g_in_front_end{false};
+bool Gow3NameHas(std::string_view s, std::string_view needle) {
+  for (size_t i = 0; i + needle.size() <= s.size(); ++i) {
+    size_t k = 0;
+    while (k < needle.size() && std::tolower(static_cast<unsigned char>(s[i + k])) == needle[k]) ++k;
+    if (k == needle.size()) return true;
+  }
+  return false;
+}
+void OnGow3FileOpened(std::string_view path, const std::filesystem::path*) {
+  if (!Gow3NameHas(path, ".xxx")) return;
+  const bool front = Gow3NameHas(path, "gearstart");
+  if (front) {
+    if (!g_in_front_end.exchange(true)) REXLOG_INFO("gow3_menu_fps: front end ({}) - limit {} fps", path, REXCVAR_GET(gow3_menu_fps));
+  } else if (Gow3NameHas(path, "_p.xxx") && g_in_front_end.exchange(false)) {
+    REXLOG_INFO("gow3_menu_fps: level {} - the player's limit again", path);
+  }
+}
+}  // namespace
+void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));  // shader_prebuild.cpp
+void Gow3InstallMenuCap() {
+  if (REXCVAR_GET(gow3_menu_fps) <= 0) return;
+#if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
+  Ue3ShaderPrebuildChainFileOpened(&OnGow3FileOpened);
+  REXLOG_INFO("gow3_menu_fps: on - the front end runs at {} fps at most (GitHub #101)", REXCVAR_GET(gow3_menu_fps));
+#else
+  REXLOG_WARN("gow3_menu_fps: this SDK has no file-open observer (SDK patch 32); menus keep the player's limit");
+#endif
+}
+
 void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9B0
   TickTimeline();
   const int32_t v = REXCVAR_GET(gow3_max_fps);
+  if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
+    const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)
+    f1.f64 = (own <= 0.0 || own > double(m)) ? double(m) : own;
+    return;
+  }
   if (!v) return;
   GOW3_LOG_ONCE("gow3_max_fps: engine frame-rate limit {} -> {}", f1.f64, v < 0 ? std::string("none") : std::to_string(v));
   f1.f64 = v < 0 ? 0.0 : double(v);
@@ -302,6 +348,7 @@ constexpr const char* kGow3FastMipFadeEdits =
     "Xbox360-GearEngine.ini|Engine.Engine|MipFadeInSpeed0=0.01;Xbox360-GearEngine.ini|Engine.Engine|MipFadeOutSpeed0=0.01;"
     "Xbox360-GearEngine.ini|Engine.Engine|MipFadeInSpeed1=0.01;Xbox360-GearEngine.ini|Engine.Engine|MipFadeOutSpeed1=0.01;";
 void Gow3AddBuiltInIniEdits() {
+  Gow3InstallMenuCap();  // GitHub #101 (once, at start-up, before the game opens a file)
   std::string add;
   if (REXCVAR_GET(gow3_trilinear)) add += kGow3TrilinearEdits;
   if (REXCVAR_GET(gow3_fast_mip_fade)) add += kGow3FastMipFadeEdits;
