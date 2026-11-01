@@ -37,7 +37,7 @@ the ports what an emulator can't easily offer:
 - **HDR10**, **ultrawide 21:9** (all three games), **16x anisotropic filtering**, field of view, and the games' own motion blur, depth of
   field and lens flares as switches.
 - **Split-screen** (Gears 2), **keyboard and mouse** (mouse look without the stick's speed limit, keys you can change),
-  **Xbox and PlayStation controllers**, **title updates**, **chapter select**.
+  **auto-switching 4x button prompts** (Keyboard & Mouse, Xbox, PlayStation, Nintendo Switch, Steam Deck, and Steam Controller across HUD action prompts, menus, and chainsaw duels; configurable via `--gow_button_prompts=auto|xbox|playstation|switch|steamdeck|steamcontroller|keyboard|original`), **title updates**, **chapter select**.
 - **DLC and mods** - add DLC packages from your console and mods as .zip files on each game's About tab.
 - **Every game language** the US and European releases have (21), chosen per game - the ones on your copy work.
 - **In-game menu** - Back + Start (Share + Options on PlayStation, or F1) during play: change settings, restart to
@@ -185,7 +185,7 @@ This project stands on the work of many open-source projects and their communiti
 - The **Gears community patches** - ultrawide by boma and TudorHorse (Gears 2, 3 and Judgment), ported here as switches.
 - **Microsoft DirectX 12 Agility SDK** - the DirectX 12 runtime the ports bring along (so Windows 10 works too).
 - **[NVIDIA FLIP](https://github.com/NVlabs/flip)** - the picture comparisons in our test runs.
-- The **Anton** and **Barlow** fonts (SIL Open Font License).
+- The **Anton** and **Barlow** fonts (SIL Open Font License), and **[Kenney Input Prompts](https://kenney.nl/assets/input-prompts)** (CC0 1.0 Public Domain) for controller and keyboard/mouse prompt glyphs.
 
 Every licence is in `THIRD_PARTY_NOTICES.md` and in the release's `licenses` folder. If we've missed anyone, please
 open an issue and we'll add them.
