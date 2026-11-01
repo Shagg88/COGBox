@@ -27,6 +27,21 @@
 
 namespace xenos::renderer {
 
+// Computes the 6-qword metadata + content XXH3 texture hash used by ReXGlue texture packs (rex_hash), where
+// `swap_hash` is the XXH3_64bits of the base-level guest bytes.
+uint64_t ComputeRexTextureHash(uint64_t swap_hash, uint32_t width, uint32_t height, uint32_t layers,
+                               uint32_t pitch_div_32, uint32_t format, uint32_t endian, uint32_t dim, bool tiled,
+                               bool packed, uint32_t max_level, uint32_t base_extent_bytes,
+                               uint32_t mips_extent_bytes);
+
+// In-memory dynamic texture overlays (auto-switching prompt glyphs and unit tests). `overlay_data` may be either raw
+// [width:u32, height:u32, rgba...] or prefixed with the 8-byte "COGBOXOV" file header; empty removes the overlay.
+// Calling SetDynamicOverlay or ClearDynamicOverlays automatically advances OverlayGeneration().
+void SetDynamicOverlay(uint64_t hash, std::vector<uint8_t> overlay_data);
+void ClearDynamicOverlays();
+uint64_t BumpOverlayGeneration();
+uint64_t OverlayGeneration();
+
 struct TextureCacheStats {
   uint64_t textures = 0, uploads = 0, upload_bytes = 0, bound = 0, stand_ins = 0;
   uint64_t gpu_loads = 0, gpu_load_bytes = 0, gpu_loads_stacked = 0;
@@ -171,6 +186,16 @@ class TextureCache {
   // compare with the texture the resolve wrote. Its texel size in bytes in `texel_bytes`. The caller destroys it.
   gpu::TextureHandle UntileCopyForCheck(const ResolveThrough& t, uint32_t& texel_bytes);
 
+  static void SetDynamicOverlay(uint64_t hash, std::vector<uint8_t> overlay_data) {
+    ::xenos::renderer::SetDynamicOverlay(hash, std::move(overlay_data));
+  }
+  static void SetOverlayForTest(uint64_t hash, std::vector<uint8_t> overlay_data) {
+    ::xenos::renderer::SetDynamicOverlay(hash, std::move(overlay_data));
+  }
+  static void ClearDynamicOverlays() { ::xenos::renderer::ClearDynamicOverlays(); }
+  static uint64_t BumpOverlayGeneration() { return ::xenos::renderer::BumpOverlayGeneration(); }
+  static uint64_t OverlayGeneration() { return ::xenos::renderer::OverlayGeneration(); }
+
  private:
   struct Entry {
     gpu::TextureHandle texture = 0;
@@ -187,6 +212,8 @@ class TextureCache {
     bool dimension_mismatch = false;  // the failure is a fetch-dimension mismatch (zero view, see SetMismatchZero)
     bool gpu_storage = false;  // created with UAV access: loads go through the GPU untile
     uint32_t ov_scale = 1;     // job 661: an overlay N times the guest size made the host texture N times bigger
+    uint64_t overlay_gen = 0;  // overlay generation at the last Load
+    bool has_overlay = false;  // whether an overlay or replacement was applied at the last Load
     // GPU path: the page versions of [base] and [mip] last copied to the GPU's guest-memory mirror, so a reload copies
     // only the 4 KB pages written since (upl-n107).
     std::vector<uint32_t> copied_pages[2];
@@ -220,6 +247,7 @@ class TextureCache {
   gpu::Backend& backend_;
   const uint8_t* guest_;
   uint64_t last_bind_epoch_ = 0;  // patch 0137
+  uint64_t last_bind_overlay_gen_ = 0;
   GuestWatch& watch_;
   struct Key {
     uint64_t a, b;

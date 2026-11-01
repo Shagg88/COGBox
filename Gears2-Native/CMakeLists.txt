@@ -1,4 +1,4 @@
-﻿# Gears2-Native - started from the rexglue project template (`rexglue init`, job 007).
+# Gears2-Native - started from the rexglue project template (`rexglue init`, job 007).
 # Four layers (decision D16, roadmap section 1b): each is its own library, and a layer can only see its own and lower
 # layers' headers, so a wrong-way dependency fails to build.
 cmake_minimum_required(VERSION 3.25)
@@ -344,6 +344,9 @@ if(GN_BUILD_TESTS)
         src/layer0_xenos/display_gamma.cpp
         tests/layer0_hlsl_compact_test.cpp
         tests/layer0_upscaler_test.cpp
+        tests/layer0_texture_cache_test.cpp
+        src/layer0_xenos/renderer/texture_cache.cpp
+        src/layer0_xenos/renderer/guest_watch.cpp
         tests/layer2_config_bundle_test.cpp
         src/layer2_ue3/config_bundle.cpp
         tests/layer2_prebuild_lzx_test.cpp
@@ -358,7 +361,14 @@ if(GN_BUILD_TESTS)
     elseif(MSVC)
         target_compile_options(gn_tests PRIVATE /fp:precise)
     endif()
-    target_link_libraries(gn_tests PRIVATE Catch2::Catch2WithMain)
+    target_link_libraries(gn_tests PRIVATE Catch2::Catch2WithMain rex::runtime)
+    rexglue_apply_target_settings(gn_tests)
+    if(WIN32)
+        add_custom_command(TARGET gn_tests POST_BUILD
+            COMMAND "$<$<BOOL:$<TARGET_RUNTIME_DLLS:gn_tests>>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_RUNTIME_DLLS:gn_tests>;$<TARGET_FILE_DIR:gn_tests>>"
+            COMMAND_EXPAND_LISTS
+            VERBATIM)
+    endif()
 endif()
 
 # Stage 3 S3.2: our microcode decoder checked against the SDK's disassembly of a shader corpus (game-free tool;
