@@ -1043,6 +1043,73 @@ void main(uint3 id : SV_DispatchThreadID) {
 }
 )";
 
+// Notes/79 s.21: the game's velocity target (t0, k_16_16 as float2) copied into ours (u0, same size) at its resolve, so
+// the motion pass still has it after the game reuses that EDRAM.
+constexpr const char* kCopyFloat2Cs = R"(
+Texture2D<float2> xe_src : register(t0);
+RWTexture2D<float2> xe_out : register(u0);
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+  uint w, h;
+  xe_out.GetDimensions(w, h);
+  if (id.x >= w || id.y >= h) return;
+  xe_out[id.xy] = xe_src.Load(int3(id.xy, 0));
+}
+)";
+
+// Notes/79 s.21: motion of the characters, after kMotionVectorsCs. The game's velocity pass draws every character
+// (skinned mesh) into a half-res target cleared to 0; where it drew (t1 != 0), the pixel is moved with the nearest
+// character's own transform instead of the camera's: Gears' camera follows the player, so camera-only motion is wrong
+// on him by the whole camera move. t2 = the table (RGBA32F, 5 wide): row 0 = the matrix (u, v, depth, 1) -> camera-
+// relative position (texels 0-3, rows) and (count, mask x scale, mask y scale, largest squared distance) in texel 4;
+// row i = character i's reprojection matrix (texels 0-3, rows, as kMotionVectorsCs's) and its origin (texel 4, xyz;
+// w = 1 for an upright body, 0 for a part attached to a bone).
+constexpr const char* kMotionObjectsCs = R"(
+Texture2D<float> xe_depth : register(t0);
+Texture2D<float2> xe_vel : register(t1);
+Texture2D<float4> xe_obj : register(t2);
+RWTexture2D<float2> xe_motion : register(u0);
+float4 XeRow(int2 at, float4 q) {
+  return float4(dot(xe_obj.Load(int3(at.x, at.y, 0)), q), dot(xe_obj.Load(int3(at.x + 1, at.y, 0)), q),
+                dot(xe_obj.Load(int3(at.x + 2, at.y, 0)), q), dot(xe_obj.Load(int3(at.x + 3, at.y, 0)), q));
+}
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+  uint w, h;
+  xe_motion.GetDimensions(w, h);
+  if (id.x >= w || id.y >= h) return;
+  const float4 hd = xe_obj.Load(int3(4, 0, 0));
+  if (!any(xe_vel.Load(int3(int(float(id.x) * hd.y), int(float(id.y) * hd.z), 0)) != 0.0)) return;
+  const float2 uv = (float2(id.xy) + 0.5) / float2(w, h);
+  const float4 q = float4(uv, xe_depth.Load(int3(id.xy, 0)), 1.0);
+  const float4 p = XeRow(int2(0, 0), q);
+  if (!(abs(p.w) > 1e-12)) return;
+  const float3 pos = p.xyz / p.w;
+  // The nearest upright character body in range; a part attached to a bone (w = 0) only when no body is.
+  int best = 0, best_part = 0;
+  float best_d = hd.w, best_part_d = hd.w;
+  for (int i = 1; i <= int(hd.x); ++i) {
+    const float4 o = xe_obj.Load(int3(4, i, 0));
+    const float3 d = pos - o.xyz;
+    const float dd = dot(d, d);
+    if (o.w > 0.5) {
+      if (dd < best_d) best_d = dd, best = i;
+    } else if (dd < best_part_d) {
+      best_part_d = dd, best_part = i;
+    }
+  }
+  if (best == 0) best = best_part;
+  if (best == 0) return;
+  const float4 r = XeRow(int2(0, best), q);
+  float2 m = float2(0.0, 0.0);
+  if (r.w > 1e-6) {
+    const float2 prev = float2(r.x / r.w + 1.0, 1.0 - r.y / r.w) * 0.5;
+    if (all(isfinite(prev))) m = (prev - uv) * float2(w, h);
+  }
+  xe_motion[id.xy] = m;
+}
+)";
+
 // A plain copy of packed words (t0 -> u0), e.g. the sharpened image back into the present image.
 constexpr const char* kCopyWordsCs = R"(
 Texture2D<uint> xe_src : register(t0);

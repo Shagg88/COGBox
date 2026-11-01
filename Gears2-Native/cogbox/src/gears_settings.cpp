@@ -86,7 +86,7 @@ const char* const k_mapsGJ[18] = { "SP_00_Museum_P", "SP_01_University_P", "SP_0
     "SP_03_to_04_P", "SP_04_Rooftops_P", "SP_04_Rooftops2_P", "SP_05_Courthouse_P", "SP_05_CourthouseTrans_P",
     "SP_05_CourthouseBoss_P", "SPE_E1_P", "SPE_E2_P", "SPE_E2oilrig_P", "SPE_E3_P", "SPE_E3_Outro_P", "SPE_E4_P", "SPE_E5_P" };
 
-const char* const k_aaNames[5] = { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS" };   // PS1 150
+const char* const k_aaNames[6] = { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS", "SMAA T2x" };   // PS1 150; 5: notes/79 s.22
 // Job 638 (Shagg: "90 144 165 and maybe 45 for the Steam Deck"): saved as "FrameCap", in order; the old "Fps" (30 /
 // 60 / 120 / Unlimited) is read once and moved over (Store::load_ini).
 const int k_fpsCaps[8] = { 0, 45, 60, 90, 120, 144, 165, -1 };                               // PS1 159
@@ -225,9 +225,10 @@ std::vector<Option> make_options(Game g) {
     add(choice("Sharpen", "Upscale sharpening (1080p)", Tab::Graphics, PG, { "Automatic", "On", "Off" }, 0,
                "With the 1080p render resolution: sharpen the upscaled picture. Automatic = on, except on Steam Deck / "
                "Linux (Wine / Proton), where it can make text and some textures look wrong.", 0));
-    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (highly experimental)", "DLSS (NVIDIA RTX, highly experimental)", "XeSS (highly experimental)" }, 0,
+    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (highly experimental)", "DLSS (NVIDIA RTX, highly experimental)", "XeSS (highly experimental)",
+                 "SMAA T2x (temporal)" }, 0,
                "SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX12 GPU. DLSS: the same on "
-               "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.", 346), "", "", true);
+               "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.\nSMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now.", 346), "", "", true);
     add(choice("SceneMode", "Scene resolution", Tab::Graphics, SH,
                { "Native (same as render resolution)", "Quality (scene at 2/3)", "Performance (scene at 1/2)",
                  "Ultra performance (scene at 1/3)" }, 0,
@@ -267,6 +268,14 @@ std::vector<Option> make_options(Game g) {
     // GitHub #102 (Shagg): no Lens flares option any more - the launcher decides per game at launch (below): on where the
     // game's occlusion queries are answered (Real occlusion, DirectX 12, not under Wine / Proton), off where they can't
     // be, since every flare would show through the scenery there.
+    // Notes/79 (Gears2-Native): XeGTAO screen-space ambient occlusion in place of the game's own (Gears 2), or added
+    // where a level has none (Gears 3 s.25: opt-in there, default "Game's own").
+    if (!g1) add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high)", "XeGTAO (ultra)" },
+                        g == Game::Gears3 ? 1 : 2,
+               "The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version "
+               "(Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, "
+               "characters included, at about the cost of the original. Ultra looks in more directions and catches more small "
+               "details, for a little more. Game's own: the original. Off: none.", 0), "ao");
     add(choice("Shake", "Camera shake (roadie run)", Tab::Graphics, PG, { "Original", "Less", "Off" }, 0,
                "The camera shake while roadie-running. Less halves the game's own shake; Off removes it.", 373), "iniedit", "", true);
     add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 5, 100,
@@ -506,6 +515,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll")) return no(not_yet(gi, "this build has no AMD frame generation files"));
     } else if (f == "mute") {
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "ao") {   // notes/79: XeGTAO in Gears 2 and Gears 3 (s.25); Judgment needs its own AO pass found
+        if (g != Game::Gears2 && g != Game::Gears3) return no(not_yet(gi, "Gears 2 and 3 first"));
+        if (!cap_exe(env, "gow2_ao_quality")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "realocclusion") {   // PR #43: Gears 3 and Judgment; GitHub #75: Gears 2 too
         // an older Gears 2 exe without strict queries would only warn - keep the box greyed out for it
         if (g == Game::Gears2 && !cap_exe(env, "gow2_renderer_queries")) return no(not_yet(0, "needs its next build"));
@@ -549,7 +561,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     if (o.id == "WindowSize") on = s.i("Fullscreen") == 0;                             // PS1 333: windowed only
     else if (o.id == "PaperWhite" || o.id == "Peak") on = s.b("HDR");                 // PS1 366
     else if (o.id == "PadPrompts") on = s.b("Mnk");                                  // GitHub #104
-    else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("Api") == 0;        // PS1 352, 473; job 521
+    else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("AAMode") <= 4 && s.i("Api") == 0;   // PS1 352, 473; job 521; T2x: no scene scale
     else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
     else if (o.id == "RealOcclusion" && (s.i("Api") != 0 || env.wine)) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // PR #43
     else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
@@ -563,11 +575,14 @@ Availability choice_available(const Option& o, Game g, int index) {
     Availability a;
     if (o.id == "FpsMode" && index == 3 && (g == Game::Judgment || g == Game::Gears1)) { a.ok = false; a.why = not_yet(static_cast<int>(g), "game's own counter"); }   // PS1 267, 475
     if (o.id == "Lang" && g == Game::Gears1 && !gears1_lang(index)) { a.ok = false; a.why = "Not in Gears 1 - it would show English."; }
+    if (o.id == "AAMode" && index == 5 && g != Game::Gears2 && g != Game::Gears3) { a.ok = false; a.why = "Gears 2 and Gears 3 for now."; }   // notes/79 s.22
     return a;
 }
 
 std::string tooltip_for(const Option& o, Game g, const Availability& a, const Environment& env) {
     std::string base = o.tooltip;
+    if (o.id == "AO" && g == Game::Gears3)   // notes/79 s.25
+        base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it. Off by default in Gears 3.";
     if (o.id == "AAMode") {   // PS1 345
         std::string gpu = gpu_main(env);
         base += "\nYour graphics card: " + (gpu.empty() ? std::string("not detected") : gpu);
@@ -881,6 +896,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         for (const std::string& n : gpus) if (icase_search(n, "RTX")) hasRtx = true;
         if (aa == 3 && !hasRtx && !gpus.empty()) { notes.push_back("launcher: DLSS needs an NVIDIA RTX card (" + gpu_main(env) + ") - FSR instead"); aa = 2; }
         static const char* const need[5] = { "", "", "amd_fidelityfx_loader_dx12.dll", "nvngx_dlss.dll", "libxess.dll" };
+        if (aa == 5 && ((g != Game::Gears2 && g != Game::Gears3) || !cap_exe(env, "smaa_t2x"))) {   // notes/79 s.22: ours, in the Gears 2 exe from 0.3.x
+            notes.push_back("launcher: SMAA T2x is not in this game / build - SMAA instead"); aa = 1;
+        }
         if (aa >= 2 && aa <= 4 && !cap_file(env, need[aa])) {
             notes.push_back(std::string("launcher: ") + k_aaNames[aa] + " is not available for this game / build - SMAA instead"); aa = 1;
         }
@@ -898,13 +916,15 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                                                                : "launcher: Proton / Wine - Vulkan (Graphics API on Proton / Wine: DirectX 12 is being tested)");
         if (vk) {   // job 521: Vulkan (experimental); the upscalers are DirectX 12 only
             a.push_back("--gow2_renderer_api=vulkan");
-            if (aa >= 2) { notes.push_back(std::string("launcher: Vulkan - ") + k_aaNames[aa] + " is DirectX 12 only, SMAA instead"); aa = 1; }
+            // Notes/79 s.22: SMAA T2x (5) is ours - built-in shaders, both APIs
+            if (aa >= 2 && aa <= 4) { notes.push_back(std::string("launcher: Vulkan - ") + k_aaNames[aa] + " is DirectX 12 only, SMAA instead"); aa = 1; }
         }
         switch (aa) {
         case 1: a.push_back("--gow2_present_aa=smaa"); break;
         case 2: a.push_back("--gow2_upscaler=fsr"); break;
         case 3: a.push_back("--gow2_upscaler=dlss"); break;
         case 4: a.push_back("--gow2_upscaler=xess"); break;
+        case 5: a.push_back("--gow2_upscaler=smaa_t2x"); break;   // notes/79 s.22
         default: break;
         }
     }
@@ -912,7 +932,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     {
         static const char* const modes[4] = { "", "--gow2_upscale_mode=quality", "--gow2_upscale_mode=performance", "--gow2_upscale_mode=ultra" };
         int m = s.i("SceneMode");
-        if (aa >= 2 && avail("SceneMode") && m > 0 && m < 4) a.push_back(modes[m]);
+        if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4) a.push_back(modes[m]);
     }
     // PS1 857 (0146 / 0147): frame generation
     const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0 && !env.wine;   // job 521: DirectX 12 only
@@ -920,6 +940,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PR #43: real (strict) occlusion queries - sent only when on (the exe's default is off; an exe without "strict"
     // warns and keeps them off)
     if (on("RealOcclusion")) a.push_back("--gow2_renderer_queries=strict");
+    // Notes/79: XeGTAO (2 high, 3 ultra); 0 Off goes through the game's own [SystemSettings] below, 1 changes nothing
+    if (avail("AO") && s.i("AO") >= 2) {
+        a.push_back("--gow2_ao=gtao");
+        a.push_back(s.i("AO") == 3 ? "--gow2_ao_quality=ultra" : "--gow2_ao_quality=high");
+    }
     // PS1 858: 16x anisotropic
     if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : isG1 ? "--gow1_aniso16=true" : "--gowj_aniso16=true");
     // PS1 860-864: texture pool (-1 = the port's own default; Judgment then 200)
@@ -961,6 +986,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                 notes.push_back("launcher: lens flares off for this launch - no Real occlusion (DirectX 12) to hide them behind walls (GitHub #102)");
             }
         }
+        if (avail("AO") && s.i("AO") == 0) ini.push_back(ei + "|SystemSettings|AmbientOcclusion=False");   // notes/79
         if (avail("Fov") && s.i("Fov") != 100) {
             std::string k = fmt_double(static_cast<double>(s.i("Fov")) / 100);
             ini.push_back(std::string(isG1 ? "WarCamera.ini" : "GearCamera.ini") + "|*|FOVAngle*=" + k);

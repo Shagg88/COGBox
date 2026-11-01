@@ -207,6 +207,103 @@ TEST_CASE("camera motion when rendering camera-relative (UE3): translation passe
   CHECK(worst_rot_only > 5.0f);  // without the translation the near points are off by many pixels
 }
 
+TEST_CASE("camera motion with a reversed-Z viewport (Gears 2, notes/79 s.21)", "[upscaler]") {
+  // The same camera move, but the depth the motion pass reads is the viewport's 1 - z/w (Gears 2). With the viewport's
+  // depth map passed in, the motion matches the exact projection; read as plain z/w (the old code), it is far off.
+  const up::Mat4 proj = Perspective(1.0f, 16.0f / 9.0f, 10.0f, 50000.0f);
+  const float cam_now[3] = {130.0f, 100.0f, 40.0f}, cam_then[3] = {100.0f, 100.0f, 0.0f};
+  const up::Mat4 cur = up::Multiply(proj, View(0, 0, 0, 0.05f));
+  const up::Mat4 prev = up::Multiply(proj, View(0, 0, 0, 0.0f));
+  const float move[3] = {cam_now[0] - cam_then[0], cam_now[1] - cam_then[1], cam_now[2] - cam_then[2]};
+  up::Mat4 rep, rep_unmapped;
+  REQUIRE(up::ReprojectionMatrix(cur, prev, move, 1.0f, rep, -1.0f, 1.0f));
+  REQUIRE(up::ReprojectionMatrix(cur, prev, move, 1.0f, rep_unmapped));
+  const float pts[][3] = {{150, 100, 600}, {300, 60, 1500}, {-200, 180, 3000}, {120, 90, 200}};
+  float worst_unmapped = 0.0f;
+  for (const auto& p : pts) {
+    float u, v, d, pu, pv, pd;
+    REQUIRE(Project(cur, p[0] - cam_now[0], p[1] - cam_now[1], p[2] - cam_now[2], u, v, d));
+    REQUIRE(Project(prev, p[0] - cam_then[0], p[1] - cam_then[1], p[2] - cam_then[2], pu, pv, pd));
+    const float reversed = 1.0f - d;  // what Gears 2's depth buffer holds
+    float mx, my;
+    REQUIRE(up::CameraMotion(rep, u, v, reversed, 1280, 720, mx, my));
+    CHECK(mx == Approx((pu - u) * 1280.0f).margin(0.05));
+    CHECK(my == Approx((pv - v) * 720.0f).margin(0.05));
+    if (up::CameraMotion(rep_unmapped, u, v, reversed, 1280, 720, mx, my))
+      worst_unmapped = std::max(worst_unmapped, std::fabs(mx - (pu - u) * 1280.0f));
+    else
+      worst_unmapped = 1e9f;
+  }
+  CHECK(worst_unmapped > 20.0f);  // the bug: reversed depth read as plain z/w
+  // The plain 0..1 map (1 / 0) is the old behaviour exactly.
+  up::Mat4 rep_plain;
+  REQUIRE(up::ReprojectionMatrix(cur, prev, move, 1.0f, rep_plain, 1.0f, 0.0f));
+  for (int i = 0; i < 16; ++i) CHECK(rep_plain.m[i] == Approx(rep_unmapped.m[i]));
+}
+
+TEST_CASE("characters move with their own transforms (Gears 2 velocity pass, notes/79 s.21)", "[upscaler]") {
+  // The camera strafes and turns; the player's character moves with it (camera-relative pose unchanged), another
+  // stands still in the world. Object rows as UE3 gives them: now relative to the camera, then in absolute world.
+  const up::Mat4 proj = Perspective(1.0f, 16.0f / 9.0f, 10.0f, 50000.0f);
+  const float cam_then[3] = {20000.0f, -10000.0f, 150.0f}, cam_now[3] = {20009.0f, -10000.0f, 150.0f};
+  const up::Mat4 cur = up::Multiply(proj, View(0, 0, 0, 0.03f)), prev = up::Multiply(proj, View(0, 0, 0, 0.0f));
+  auto at = [](float x, float y, float z, float yaw) {
+    up::Mat4 m;
+    m(0, 0) = std::cos(yaw), m(0, 2) = std::sin(yaw), m(2, 0) = -std::sin(yaw), m(2, 2) = std::cos(yaw);
+    m(0, 3) = x, m(1, 3) = y, m(2, 3) = z;
+    return m;
+  };
+  up::MovingObject player_then, player_now, npc_then, npc_now;
+  player_then.key = player_now.key = 1;
+  npc_then.key = npc_now.key = 2;
+  // The player: 200 ahead of the camera both frames (in the camera's frame, which turned by 0.03).
+  player_then.now = at(0, -90, 200, 0.0f);
+  player_then.then = at(cam_then[0] - 9, cam_then[1] - 90, cam_then[2] + 200, 0.0f);  // the frame before
+  const up::Mat4 turn = View(0, 0, 0, -0.03f);  // camera-relative -> world axes of this frame
+  player_now.now = up::Multiply(turn, at(0, -90, 200, 0.0f));
+  player_now.then = at(cam_then[0], cam_then[1] - 90, cam_then[2] + 200, 0.0f);
+  // The NPC: fixed in the world.
+  const float npc[3] = {20100.0f, -10050.0f, 900.0f};
+  npc_then.now = at(npc[0] - cam_then[0], npc[1] - cam_then[1], npc[2] - cam_then[2], 0.4f);
+  npc_then.then = at(npc[0], npc[1], npc[2], 0.4f);
+  npc_now.now = at(npc[0] - cam_now[0], npc[1] - cam_now[1], npc[2] - cam_now[2], 0.4f);
+  npc_now.then = at(npc[0], npc[1], npc[2], 0.4f);
+  // Last frame's camera from the two frames' objects (both agree).
+  float cam[3];
+  REQUIRE(up::PreviousCameraFromObjects({player_then, npc_then}, {player_now, npc_now}, cam));
+  CHECK(cam[0] == Approx(cam_then[0]));
+  CHECK(cam[1] == Approx(cam_then[1]));
+  CHECK(cam[2] == Approx(cam_then[2]));
+  CHECK_FALSE(up::PreviousCameraFromObjects({npc_then}, {player_now}, cam));  // nothing matched
+  const float move[3] = {cam_now[0] - cam_then[0], cam_now[1] - cam_then[1], cam_now[2] - cam_then[2]};
+  up::Mat4 rep_player, rep_npc, rep_camera;
+  REQUIRE(up::ObjectReprojectionMatrix(cur, prev, player_now, cam_then, 1.0f, rep_player, -1.0f, 1.0f));
+  REQUIRE(up::ObjectReprojectionMatrix(cur, prev, npc_now, cam_then, 1.0f, rep_npc, -1.0f, 1.0f));
+  REQUIRE(up::ReprojectionMatrix(cur, prev, move, 1.0f, rep_camera, -1.0f, 1.0f));
+  auto motion = [&](const up::Mat4& rep, const up::Mat4& obj_now, float lx, float ly, float lz, float& mx, float& my) {
+    const float p[3] = {obj_now(0, 0) * lx + obj_now(0, 1) * ly + obj_now(0, 2) * lz + obj_now(0, 3),
+                        obj_now(1, 0) * lx + obj_now(1, 1) * ly + obj_now(1, 2) * lz + obj_now(1, 3),
+                        obj_now(2, 0) * lx + obj_now(2, 1) * ly + obj_now(2, 2) * lz + obj_now(2, 3)};
+    float u, v, d;
+    REQUIRE(Project(cur, p[0], p[1], p[2], u, v, d));
+    return up::CameraMotion(rep, u, v, 1.0f - d, 1280, 720, mx, my);
+  };
+  float mx, my;
+  // A point on the player: on screen where it was (the camera follows him), whatever the camera did.
+  REQUIRE(motion(rep_player, player_now.now, 20, 60, 0, mx, my));
+  CHECK(mx == Approx(0.0f).margin(0.05));
+  CHECK(my == Approx(0.0f).margin(0.05));
+  // The camera-only vectors were wrong on him by many pixels.
+  REQUIRE(motion(rep_camera, player_now.now, 20, 60, 0, mx, my));
+  CHECK(std::fabs(mx) > 20.0f);
+  // A point on the NPC: its own transform gives the camera's motion (it stands still in the world).
+  float cx, cy;
+  REQUIRE(motion(rep_npc, npc_now.now, 30, 40, 10, mx, my));
+  REQUIRE(motion(rep_camera, npc_now.now, 30, 40, 10, cx, cy));
+  CHECK(mx == Approx(cx).margin(0.05));
+  CHECK(my == Approx(cy).margin(0.05));
+}
+
 TEST_CASE("camera move voted from objects' camera-relative translations", "[upscaler]") {
   const float move[3] = {-2.009f, -0.033f, -3.132f};  // job 253 probe, ch02
   std::vector<up::ObjectSample> prev, cur;

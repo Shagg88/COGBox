@@ -6,6 +6,7 @@
 #include <xenos/hlsl.h>
 #include <xenos/ucode.h>
 
+#include <rex/cvar.h>
 #include <rex/logging/macros.h>
 
 #include <algorithm>
@@ -18,6 +19,12 @@
 #include <iterator>
 #include <thread>
 #include <system_error>
+
+// Notes/79 developer diagnostic: the translated HLSL of the listed shaders (ucode hashes, hex, comma-separated) is written
+// to --gow2_renderer_hlsl_dump_dir as <vs|ps>-<hash>.hlsl, whatever back end compiles them.
+REXCVAR_DEFINE_STRING(gow2_renderer_hlsl_dump_hashes, "", "Gears2",
+                      "Developer (notes/79): comma list of shader ucode hashes whose translated HLSL is written out");
+REXCVAR_DEFINE_STRING(gow2_renderer_hlsl_dump_dir, "", "Gears2", "Developer: folder for --gow2_renderer_hlsl_dump_hashes");
 
 namespace xenos::renderer {
 
@@ -933,6 +940,19 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
   // DXBC carries the shader cache's text post-processing below natively (precise everywhere; the depth remap).
   // Notes/68 V5a: on Vulkan the same DXBC becomes SPIR-V instruction for instruction (dxbc_spirv.cpp), so both
   // back ends run one translation; a shader the converter doesn't handle goes through the HLSL path as before.
+  {  // notes/79 developer diagnostic
+    static const std::string dump_list = "," + REXCVAR_GET(gow2_renderer_hlsl_dump_hashes) + ",";
+    static const std::string dump_dir = REXCVAR_GET(gow2_renderer_hlsl_dump_dir);
+    char hex[17];
+    std::snprintf(hex, sizeof(hex), "%016llX", static_cast<unsigned long long>(ucode_hash));
+    if (!dump_dir.empty() && dump_list.find("," + std::string(hex) + ",") != std::string::npos) {
+      const hlsl::Translation dump = hlsl::TranslateToHlsl(program, options);
+      std::error_code ec;
+      std::filesystem::create_directories(dump_dir, ec);
+      std::ofstream(std::filesystem::path(dump_dir) / ((is_vertex ? "vs-" : "ps-") + std::string(hex) + ".hlsl"),
+                    std::ios::binary) << dump.hlsl;
+    }
+  }
   const bool spirv = backend_.GetShaderIL() == gpu::ShaderIL::kSpirv;
   if (dxbc_ && (backend_.GetShaderIL() == gpu::ShaderIL::kDxil || spirv)) {
     dxbc_gen::DxbcTranslation dt = TranslateDxbcFor(program, options, spirv);  // patch 0084: shared with the warm-up

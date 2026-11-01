@@ -22,6 +22,7 @@ Kind ParseKind(const std::string& name) {
   if (name == "dlss") return Kind::kDlss;
   if (name == "fsr") return Kind::kFsr;
   if (name == "xess") return Kind::kXess;
+  if (name == "smaa_t2x") return Kind::kSmaaT2x;  // notes/79 s.22
   return Kind::kNone;
 }
 
@@ -30,6 +31,7 @@ const char* KindName(Kind kind) {
     case Kind::kDlss: return "DLSS";
     case Kind::kFsr: return "FSR";
     case Kind::kXess: return "XeSS";
+    case Kind::kSmaaT2x: return "SMAA T2x";
     default: return "none";
   }
 }
@@ -154,25 +156,29 @@ bool PerspectiveParams(const Mat4& m, float& vertical_fov, float& near_plane, bo
   return near_plane > 0.0f;
 }
 
-bool ReprojectionMatrix(const Mat4& view_proj, const Mat4& prev_view_proj, float depth_scale, Mat4& out) {
+bool ReprojectionMatrix(const Mat4& view_proj, const Mat4& prev_view_proj, float depth_scale, Mat4& out,
+                        float depth_map_scale, float depth_map_offset) {
   Mat4 inv;
   if (!Invert(view_proj, inv)) return false;
-  // (u, v, depth, 1) -> NDC (D3D: x right, y up, z 0..1): x = 2u - 1, y = 1 - 2v, z = depth * scale.
+  if (!(std::fabs(depth_map_scale) > 1e-6f)) return false;
+  // (u, v, depth, 1) -> NDC (D3D: x right, y up, z 0..1): x = 2u - 1, y = 1 - 2v, z = (depth * scale - offset) / map
+  // scale - the viewport's Z transform undone (notes/79 s.21).
   Mat4 ndc;
   ndc(0, 0) = 2.0f;  ndc(0, 3) = -1.0f;
   ndc(1, 1) = -2.0f; ndc(1, 3) = 1.0f;
-  ndc(2, 2) = depth_scale;
+  ndc(2, 2) = depth_scale / depth_map_scale;
+  ndc(2, 3) = -depth_map_offset / depth_map_scale;
   out = Multiply(prev_view_proj, Multiply(inv, ndc));
   return true;
 }
 
 bool ReprojectionMatrix(const Mat4& view_proj, const Mat4& prev_view_proj, const float camera_move[3], float depth_scale,
-                        Mat4& out) {
+                        Mat4& out, float depth_map_scale, float depth_map_offset) {
   Mat4 t;  // this frame's camera-relative position -> last frame's: + (camera now - camera then)
   t(0, 3) = camera_move[0];
   t(1, 3) = camera_move[1];
   t(2, 3) = camera_move[2];
-  return ReprojectionMatrix(view_proj, Multiply(prev_view_proj, t), depth_scale, out);
+  return ReprojectionMatrix(view_proj, Multiply(prev_view_proj, t), depth_scale, out, depth_map_scale, depth_map_offset);
 }
 
 namespace {
@@ -238,6 +244,43 @@ bool CameraMoveFromObjects(std::vector<ObjectSample> prev, std::vector<ObjectSam
   return true;
 }
 
+bool PreviousCameraFromObjects(const std::vector<MovingObject>& prev, const std::vector<MovingObject>& cur,
+                               float camera[3], uint32_t min_agree, float tolerance) {
+  std::vector<float> c[3];
+  for (const MovingObject& o : cur)
+    for (const MovingObject& p : prev)
+      if (p.key == o.key) {
+        for (int k = 0; k < 3; ++k) c[k].push_back(o.then(k, 3) - p.now(k, 3));
+        break;
+      }
+  if (c[0].empty()) return false;
+  for (int k = 0; k < 3; ++k) {
+    std::vector<float> s = c[k];
+    std::nth_element(s.begin(), s.begin() + s.size() / 2, s.end());
+    camera[k] = s[s.size() / 2];
+  }
+  uint32_t agree = 0;
+  for (size_t i = 0; i < c[0].size(); ++i)
+    if (std::fabs(c[0][i] - camera[0]) <= tolerance && std::fabs(c[1][i] - camera[1]) <= tolerance &&
+        std::fabs(c[2][i] - camera[2]) <= tolerance)
+      ++agree;
+  return agree >= min_agree && std::isfinite(camera[0]) && std::isfinite(camera[1]) && std::isfinite(camera[2]);
+}
+
+bool ObjectReprojectionMatrix(const Mat4& view_proj, const Mat4& prev_view_proj, const MovingObject& object,
+                              const float prev_camera[3], float depth_scale, Mat4& out, float depth_map_scale,
+                              float depth_map_offset) {
+  Mat4 inv_now;
+  if (!Invert(object.now, inv_now)) return false;
+  Mat4 t;
+  t(0, 3) = -prev_camera[0];
+  t(1, 3) = -prev_camera[1];
+  t(2, 3) = -prev_camera[2];
+  const Mat4 to_prev = Multiply(t, Multiply(object.then, inv_now));  // camera-relative now -> camera-relative then
+  return ReprojectionMatrix(view_proj, Multiply(prev_view_proj, to_prev), depth_scale, out, depth_map_scale,
+                            depth_map_offset);
+}
+
 bool CameraMotion(const Mat4& reprojection, float u, float v, float depth, uint32_t width, uint32_t height,
                   float& motion_x, float& motion_y) {
   motion_x = motion_y = 0.0f;
@@ -268,6 +311,7 @@ std::unique_ptr<Upscaler> CreateUpscaler(Kind kind) {
 }
 
 bool BuiltIn(Kind kind) {
+  if (kind == Kind::kSmaaT2x) return true;  // notes/79 s.22: ours, always built
 #if defined(GN_HAVE_DLSS)
   if (kind == Kind::kDlss) return true;
 #endif

@@ -100,6 +100,7 @@ class Gow2App : public rex::ReXApp {
     }
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
+    XenosInstallAoDebugKeys(drawer);  // notes/79 phase 3b (--gow2_ao_debug_keys)
     XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
@@ -108,6 +109,7 @@ class Gow2App : public rex::ReXApp {
   void OnShutdown() override {
     XenosShutdownInGameMenu();  // patch 0163
     XenosDestroyFpsBar();
+    XenosShutdownAoDebugKeys();  // notes/79
   }
   // Patch 0130: --gow2_mute_unfocused. The SDK checks audio_mute for each audio buffer, so this takes effect at once.
   // Only undoes a mute we set ourselves: a player's own --audio_mute=true stays on.
