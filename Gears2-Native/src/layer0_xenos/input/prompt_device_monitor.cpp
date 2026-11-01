@@ -4,6 +4,7 @@
 #include <xenos/input/prompt_device_monitor.h>
 
 #include <rex/cvar.h>
+#include <rex/input/input_system.h>
 #include <rex/logging/macros.h>
 #include <rex/ui/ui_event.h>
 #include <rex/ui/window.h>
@@ -188,7 +189,10 @@ PromptDeviceMonitor::PromptDeviceMonitor() {
   committed_auto_style_ = last_detected_pad_style_;
 }
 
-PromptDeviceMonitor::~PromptDeviceMonitor() { DetachWindow(nullptr); }
+PromptDeviceMonitor::~PromptDeviceMonitor() {
+  DetachInputSystem(nullptr);
+  DetachWindow(nullptr);
+}
 
 uint64_t PromptDeviceMonitor::NowMs() {
   return static_cast<uint64_t>(
@@ -268,9 +272,84 @@ std::optional<DeviceStyle> PromptDeviceMonitor::ParseModeOption(std::string_view
   return std::nullopt;
 }
 
+std::optional<DeviceStyle> PromptDeviceMonitor::DetectConnectedRawInputPadStyle() {
+#ifdef _WIN32
+  UINT num_devices = 0;
+  if (GetRawInputDeviceList(nullptr, &num_devices, sizeof(RAWINPUTDEVICELIST)) != 0 || num_devices == 0) {
+    return std::nullopt;
+  }
+  std::vector<RAWINPUTDEVICELIST> raw_devices(num_devices);
+  if (GetRawInputDeviceList(raw_devices.data(), &num_devices, sizeof(RAWINPUTDEVICELIST)) ==
+      static_cast<UINT>(-1)) {
+    return std::nullopt;
+  }
+
+  std::optional<DeviceStyle> found_style;
+  for (UINT i = 0; i < num_devices; ++i) {
+    if (raw_devices[i].dwType != RIM_TYPEHID) continue;
+    UINT name_len = 0;
+    GetRawInputDeviceInfoW(raw_devices[i].hDevice, RIDI_DEVICENAME, nullptr, &name_len);
+    if (name_len == 0) continue;
+    std::wstring dev_name(name_len, L'\0');
+    if (GetRawInputDeviceInfoW(raw_devices[i].hDevice, RIDI_DEVICENAME, dev_name.data(), &name_len) ==
+        static_cast<UINT>(-1)) {
+      continue;
+    }
+    for (auto& ch : dev_name) {
+      ch = static_cast<wchar_t>(towupper(ch));
+    }
+
+    // PlayStation: Sony VID 0x054C (DualSense, DualShock 4)
+    if (dev_name.find(L"VID_054C") != std::wstring::npos) {
+      return DeviceStyle::kPlayStation;
+    }
+    // Nintendo Switch: Nintendo VID 0x057E
+    if (dev_name.find(L"VID_057E") != std::wstring::npos) {
+      found_style = DeviceStyle::kSwitch;
+    } else if (dev_name.find(L"VID_28DE") != std::wstring::npos) {
+      // Valve Steam Deck / Steam Controller
+      if (dev_name.find(L"PID_1205") != std::wstring::npos) {
+        found_style = DeviceStyle::kSteamDeck;
+      } else if (!found_style) {
+        found_style = DeviceStyle::kSteamController;
+      }
+    } else if (dev_name.find(L"VID_045E") != std::wstring::npos && !found_style) {
+      found_style = DeviceStyle::kXbox;
+    }
+  }
+  return found_style;
+#else
+  return std::nullopt;
+#endif
+}
+
+void PromptDeviceMonitor::AttachInputSystem(rex::input::InputSystem* input_system) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  attached_input_system_ = input_system;
+  if (input_system) {
+    if (auto detected = DetectConnectedRawInputPadStyle()) {
+      last_detected_pad_style_ = *detected;
+      has_detected_pad_ = true;
+      if (!has_committed_auto_ || committed_auto_style_ != DeviceStyle::kKeyboard) {
+        committed_auto_style_ = *detected;
+      }
+    }
+  }
+}
+
+void PromptDeviceMonitor::DetachInputSystem(rex::input::InputSystem* input_system) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!input_system || attached_input_system_ == input_system) {
+    attached_input_system_ = nullptr;
+  }
+}
+
 DeviceStyle PromptDeviceMonitor::DefaultGamepadStyleLocked() const {
   if (IsSteamDeckEnvironment()) return DeviceStyle::kSteamDeck;
   if (rex::cvar::Query<bool>("cogbox_menu_ps")) return DeviceStyle::kPlayStation;
+  if (auto detected = DetectConnectedRawInputPadStyle()) {
+    return *detected;
+  }
   return DeviceStyle::kXbox;
 }
 
@@ -447,84 +526,146 @@ DeviceStyle PromptDeviceMonitor::EvaluateActiveStyle(uint64_t now_ms) const {
   return target;
 }
 
+using GetStateForUIFn = rex::X_RESULT(*)(rex::input::InputSystem* self, uint32_t user_index, rex::input::X_INPUT_STATE* out_state);
+
+GetStateForUIFn ResolveGetStateForUI() {
+  static bool resolved = false;
+  static GetStateForUIFn fn = nullptr;
+  if (!resolved) {
+    resolved = true;
+    HMODULE mod = GetModuleHandleW(L"rexruntime.dll");
+    if (!mod) mod = GetModuleHandleW(L"rexruntimerd.dll");
+    if (mod) {
+      fn = reinterpret_cast<GetStateForUIFn>(
+          GetProcAddress(mod, "?GetStateForUI@InputSystem@input@rex@@QEAAIIPEAUX_INPUT_STATE@23@@Z"));
+      if (!fn) {
+        fn = reinterpret_cast<GetStateForUIFn>(
+            GetProcAddress(mod, "?GetState@InputSystem@input@rex@@QEAAIIPEAUX_INPUT_STATE@23@@Z"));
+      }
+    }
+  }
+  return fn;
+}
+
 void PromptDeviceMonitor::PollHardwareLocked(uint64_t now_ms) {
 #ifdef _WIN32
-  bool any_sdl_gamepad = false;
-  static SdlGamepadApi sdl;
-  if (sdl.Resolve()) {
-    int count = 0;
-    SdlGamepadApi::SDL_JoystickID* ids = sdl.GetGamepads(&count);
-    if (ids && count > 0) {
-      any_sdl_gamepad = true;
-      for (int i = 0; i < count; ++i) {
-        const SdlGamepadApi::SDL_JoystickID id = ids[i];
-        const int sdl_type = sdl.GetGamepadTypeForID ? sdl.GetGamepadTypeForID(id) : 0;
-        const uint16_t vid = sdl.GetGamepadVendorForID ? sdl.GetGamepadVendorForID(id) : 0;
-        const uint16_t pid = sdl.GetGamepadProductForID ? sdl.GetGamepadProductForID(id) : 0;
-        const char* raw_name = sdl.GetGamepadNameForID ? sdl.GetGamepadNameForID(id) : "";
-        const DeviceStyle pad_style = ClassifyGamepad(sdl_type, vid, pid, raw_name ? raw_name : "");
+  const auto raw_style = DetectConnectedRawInputPadStyle();
+  if (raw_style) {
+    last_detected_pad_style_ = *raw_style;
+    has_detected_pad_ = true;
+  }
+  const DeviceStyle active_pad_style = raw_style.value_or(DefaultGamepadStyleLocked());
 
-        if (!has_detected_pad_) {
+  bool any_pad_input = false;
+
+  // 1. Query attached rex::input::InputSystem (SDL runtime: DualSense, DualShock, Switch, Deck, Xbox)
+  if (attached_input_system_) {
+    if (GetStateForUIFn get_state_for_ui = ResolveGetStateForUI()) {
+      for (uint32_t i = 0; i < 4; ++i) {
+        rex::input::X_INPUT_STATE st = {};
+        if (get_state_for_ui(attached_input_system_, i, &st) == rex::X_RESULT(0)) {
           has_detected_pad_ = true;
-          last_detected_pad_style_ = pad_style;
-          if (!has_committed_auto_) {
-            committed_auto_style_ = pad_style;
-          }
-        }
-
-        SdlGamepadApi::SDL_Gamepad* pad = sdl.GetGamepadFromID ? sdl.GetGamepadFromID(id) : nullptr;
-        if (!pad && sdl.OpenGamepad) {
-          pad = sdl.OpenGamepad(id);
-        }
-        if (!pad) continue;
-
-        bool active = false;
-        if (sdl.GetGamepadButton) {
-          for (int b = 0; b <= 20; ++b) {
-            if (sdl.GetGamepadButton(pad, b)) {
-              active = true;
-              break;
+          const uint16_t buttons = static_cast<uint16_t>(st.gamepad.buttons);
+          const bool active = buttons != 0 || st.gamepad.left_trigger > 30 || st.gamepad.right_trigger > 30 ||
+                              std::abs(static_cast<int>(st.gamepad.thumb_lx)) > 10000 ||
+                              std::abs(static_cast<int>(st.gamepad.thumb_ly)) > 10000 ||
+                              std::abs(static_cast<int>(st.gamepad.thumb_rx)) > 10000 ||
+                              std::abs(static_cast<int>(st.gamepad.thumb_ry)) > 10000;
+          if (active) {
+            any_pad_input = true;
+            last_detected_pad_style_ = active_pad_style;
+            last_pad_ms_ = now_ms;
+            if (!has_committed_auto_ || committed_auto_style_ != DeviceStyle::kKeyboard || last_kbm_ms_ == 0 ||
+                now_ms >= last_kbm_ms_ + kDebounceWindowMs) {
+              committed_auto_style_ = active_pad_style;
+              has_committed_auto_ = true;
             }
+            break;
           }
-        }
-        if (!active && sdl.GetGamepadAxis) {
-          for (int a = 0; a < 4; ++a) {
-            if (std::abs(static_cast<int>(sdl.GetGamepadAxis(pad, a))) > 10000) {
-              active = true;
-              break;
-            }
-          }
-          if (!active) {
-            if (sdl.GetGamepadAxis(pad, 4) > 4000 || sdl.GetGamepadAxis(pad, 5) > 4000) {
-              active = true;
-            }
-          }
-        }
-
-        if (active) {
-          last_detected_pad_style_ = pad_style;
-          has_detected_pad_ = true;
-          last_pad_ms_ = now_ms;
-          if (!has_committed_auto_ || committed_auto_style_ != DeviceStyle::kKeyboard || last_kbm_ms_ == 0 ||
-              now_ms >= last_kbm_ms_ + kDebounceWindowMs) {
-            committed_auto_style_ = pad_style;
-            has_committed_auto_ = true;
-          }
-          break;
         }
       }
     }
-    if (ids) {
-      sdl.Free(ids);
+  }
+
+  // 2. Query standalone SDL3.dll if dynamically loaded
+  if (!any_pad_input) {
+    static SdlGamepadApi sdl;
+    if (sdl.Resolve()) {
+      int count = 0;
+      SdlGamepadApi::SDL_JoystickID* ids = sdl.GetGamepads(&count);
+      if (ids && count > 0) {
+        for (int i = 0; i < count; ++i) {
+          const SdlGamepadApi::SDL_JoystickID id = ids[i];
+          const int sdl_type = sdl.GetGamepadTypeForID ? sdl.GetGamepadTypeForID(id) : 0;
+          const uint16_t vid = sdl.GetGamepadVendorForID ? sdl.GetGamepadVendorForID(id) : 0;
+          const uint16_t pid = sdl.GetGamepadProductForID ? sdl.GetGamepadProductForID(id) : 0;
+          const char* raw_name = sdl.GetGamepadNameForID ? sdl.GetGamepadNameForID(id) : "";
+          const DeviceStyle pad_style = ClassifyGamepad(sdl_type, vid, pid, raw_name ? raw_name : "");
+
+          if (!has_detected_pad_) {
+            has_detected_pad_ = true;
+            last_detected_pad_style_ = pad_style;
+            if (!has_committed_auto_) {
+              committed_auto_style_ = pad_style;
+            }
+          }
+
+          SdlGamepadApi::SDL_Gamepad* pad = sdl.GetGamepadFromID ? sdl.GetGamepadFromID(id) : nullptr;
+          if (!pad && sdl.OpenGamepad) {
+            pad = sdl.OpenGamepad(id);
+          }
+          if (!pad) continue;
+
+          bool active = false;
+          if (sdl.GetGamepadButton) {
+            for (int b = 0; b <= 20; ++b) {
+              if (sdl.GetGamepadButton(pad, b)) {
+                active = true;
+                break;
+              }
+            }
+          }
+          if (!active && sdl.GetGamepadAxis) {
+            for (int a = 0; a < 4; ++a) {
+              if (std::abs(static_cast<int>(sdl.GetGamepadAxis(pad, a))) > 10000) {
+                active = true;
+                break;
+              }
+            }
+            if (!active) {
+              if (sdl.GetGamepadAxis(pad, 4) > 4000 || sdl.GetGamepadAxis(pad, 5) > 4000) {
+                active = true;
+              }
+            }
+          }
+
+          if (active) {
+            any_pad_input = true;
+            last_detected_pad_style_ = pad_style;
+            has_detected_pad_ = true;
+            last_pad_ms_ = now_ms;
+            if (!has_committed_auto_ || committed_auto_style_ != DeviceStyle::kKeyboard || last_kbm_ms_ == 0 ||
+                now_ms >= last_kbm_ms_ + kDebounceWindowMs) {
+              committed_auto_style_ = pad_style;
+              has_committed_auto_ = true;
+            }
+            break;
+          }
+        }
+      }
+      if (ids) {
+        sdl.Free(ids);
+      }
     }
   }
 
-  if (!any_sdl_gamepad) {
+  // 3. Fallback to XInput (Xbox controllers)
+  if (!any_pad_input) {
     if (XInputGetStateFn xinput_get = ResolveXInputGetState()) {
       for (DWORD i = 0; i < 4; ++i) {
         XINPUT_STATE st = {};
         if (xinput_get(i, &st) == ERROR_SUCCESS) {
-          const DeviceStyle pad_style = DefaultGamepadStyleLocked();
+          const DeviceStyle pad_style = active_pad_style;
           if (!has_detected_pad_) {
             has_detected_pad_ = true;
             last_detected_pad_style_ = pad_style;
@@ -549,11 +690,8 @@ void PromptDeviceMonitor::PollHardwareLocked(uint64_t now_ms) {
       }
     }
   }
-#else
-  (void)now_ms;
 #endif
 }
-
 std::string PromptDeviceMonitor::SnapshotKeybindSignature() const {
   std::string sig;
   sig.reserve(256);

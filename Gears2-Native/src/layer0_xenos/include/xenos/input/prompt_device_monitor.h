@@ -21,6 +21,10 @@ namespace rex::ui {
 class Window;
 }  // namespace rex::ui
 
+namespace rex::input {
+class InputSystem;
+}  // namespace rex::input
+
 namespace xenos::input {
 
 using DeviceStyle = ::xenos::renderer::prompt::DeviceStyle;
@@ -81,6 +85,13 @@ class PromptDeviceMonitor {
   void SetHardwarePollingEnabled(bool enabled) { hardware_polling_enabled_.store(enabled, std::memory_order_relaxed); }
   bool IsHardwarePollingEnabled() const { return hardware_polling_enabled_.load(std::memory_order_relaxed); }
 
+  // Attaches/detaches rex::input::InputSystem to poll live controllers (DualSense, DualShock, Switch, Steam Deck, Xbox).
+  void AttachInputSystem(rex::input::InputSystem* input_system);
+  void DetachInputSystem(rex::input::InputSystem* input_system = nullptr);
+
+  // Win32 RawInput device scan for connected gamepad hardware styles (PlayStation, Switch, Steam Deck, Steam Controller, Xbox).
+  static std::optional<DeviceStyle> DetectConnectedRawInputPadStyle();
+
   // Attaches/detaches a WindowInputListener on the game window to track KBM events.
   void AttachWindow(rex::ui::Window* window);
   void DetachWindow(rex::ui::Window* window = nullptr);
@@ -115,6 +126,7 @@ class PromptDeviceMonitor {
   std::atomic<bool> hardware_polling_enabled_{true};
 
   rex::ui::Window* attached_window_ = nullptr;
+  rex::input::InputSystem* attached_input_system_ = nullptr;
   std::unique_ptr<WindowWatcher> window_watcher_;
 };
 

@@ -531,6 +531,10 @@ void RequestOpenOnUIThread() {
 
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window, rex::Runtime* runtime) {
   if (window) ::xenos::input::GlobalPromptDeviceMonitor().AttachWindow(window);
+  if (runtime && runtime->input_system()) {
+    ::xenos::input::GlobalPromptDeviceMonitor().AttachInputSystem(
+        static_cast<rex::input::InputSystem*>(runtime->input_system()));
+  }
   if (!REXCVAR_GET(cogbox_menu_enabled) || !drawer || !window) return;
   g_drawer = drawer;
   g_window = window;
@@ -551,6 +555,7 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* windo
 }
 
 void XenosShutdownInGameMenu() {
+  ::xenos::input::GlobalPromptDeviceMonitor().DetachInputSystem();
   ::xenos::input::GlobalPromptDeviceMonitor().DetachWindow(g_window);
   AllowSetForegroundWindow(ASFW_ANY);   // 0.2.0: any other way out too (window closed, the game's own quit)
   g_stop.store(true);

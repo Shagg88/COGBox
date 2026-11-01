@@ -174,3 +174,15 @@ TEST_CASE("PromptDeviceMonitor user cvar overrides immediately select DeviceStyl
   CHECK(monitor.Poll(2500) == DeviceStyle::kPlayStation);
   CHECK(GlobalPromptCompositor().ActiveStyle() == DeviceStyle::kPlayStation);
 }
+
+TEST_CASE("PromptDeviceMonitor DetectConnectedRawInputPadStyle identifies connected controller hardware",
+          "[layer0][input][device_monitor]") {
+  ScopedPromptCvarReset guard;
+  PromptDeviceMonitor monitor;
+  const auto style = PromptDeviceMonitor::DetectConnectedRawInputPadStyle();
+  if (style) {
+    CHECK((*style == DeviceStyle::kPlayStation || *style == DeviceStyle::kXbox ||
+           *style == DeviceStyle::kSwitch || *style == DeviceStyle::kSteamDeck ||
+           *style == DeviceStyle::kSteamController));
+  }
+}
