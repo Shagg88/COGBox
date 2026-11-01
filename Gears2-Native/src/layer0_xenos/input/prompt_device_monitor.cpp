@@ -106,6 +106,7 @@ struct SdlGamepadApi {
 
   bool Resolve() {
     HMODULE current = GetModuleHandleW(L"SDL3.dll");
+    if (!current) current = LoadLibraryW(L"SDL3.dll");
     if (!current) return false;
     if (mod == current && GetGamepads) return true;
     mod = current;
@@ -160,19 +161,31 @@ class PromptDeviceMonitor::WindowWatcher final : public rex::ui::WindowInputList
   }
 
   void OnMouseMove(rex::ui::MouseEvent& e) override {
+    if (!has_last_pos_) {
+      last_x_ = e.x();
+      last_y_ = e.y();
+      has_last_pos_ = true;
+      return;
+    }
     int32_t dx = 0;
     int32_t dy = 0;
+    const bool captured = e.target() && e.target()->IsMouseCaptureRequested();
     if (e.dx() != 0.0f || e.dy() != 0.0f) {
       dx = static_cast<int32_t>(std::lround(e.dx()));
       dy = static_cast<int32_t>(std::lround(e.dy()));
-    } else if (has_last_pos_) {
-      dx = e.x() - last_x_;
-      dy = e.y() - last_y_;
+    } else if (!captured) {
+      const int32_t raw_dx = e.x() - last_x_;
+      const int32_t raw_dy = e.y() - last_y_;
+      if (std::abs(raw_dx) < 300 && std::abs(raw_dy) < 300) {
+        dx = raw_dx;
+        dy = raw_dy;
+      }
     }
     last_x_ = e.x();
     last_y_ = e.y();
-    has_last_pos_ = true;
-    monitor_.NotifyMouseMove(dx, dy, PromptDeviceMonitor::NowMs());
+    if (dx != 0 || dy != 0) {
+      monitor_.NotifyMouseMove(dx, dy, PromptDeviceMonitor::NowMs());
+    }
   }
 
   void OnClosing(rex::ui::UIEvent& e) override { monitor_.DetachWindow(e.target()); }

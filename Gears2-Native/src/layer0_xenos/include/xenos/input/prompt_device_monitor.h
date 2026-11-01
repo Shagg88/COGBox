@@ -99,10 +99,12 @@ class PromptDeviceMonitor {
   void AttachWindow(rex::ui::Window* window);
   void DetachWindow(rex::ui::Window* window = nullptr);
 
+  // Steady clock timestamp in milliseconds.
+  static uint64_t NowMs();
+
  private:
   class WindowWatcher;
 
-  static uint64_t NowMs();
   DeviceStyle DefaultGamepadStyleLocked() const;
   std::optional<DeviceStyle> ResolveForcedStyleLocked() const;
   DeviceStyle EvaluateActiveStyleLocked(uint64_t now_ms) const;

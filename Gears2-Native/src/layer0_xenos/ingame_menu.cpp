@@ -204,14 +204,29 @@ void PollPads() {
     if (connected) {
       const auto pad_style = prompt_mon.GetDefaultGamepadStyle();
       const bool active = pad.wButtons != 0 || pad.bLeftTrigger > 30 || pad.bRightTrigger > 30 ||
-                          std::abs(static_cast<int>(pad.sThumbLX)) > 10000 ||
-                          std::abs(static_cast<int>(pad.sThumbLY)) > 10000 ||
-                          std::abs(static_cast<int>(pad.sThumbRX)) > 10000 ||
-                          std::abs(static_cast<int>(pad.sThumbRY)) > 10000;
+                          std::abs(static_cast<int>(pad.sThumbLX)) > 8000 ||
+                          std::abs(static_cast<int>(pad.sThumbLY)) > 8000 ||
+                          std::abs(static_cast<int>(pad.sThumbRX)) > 8000 ||
+                          std::abs(static_cast<int>(pad.sThumbRY)) > 8000;
+      static uint64_t s_last_pad_log = 0;
+      const uint64_t now = ::xenos::input::PromptDeviceMonitor::NowMs();
+      if (active && (now - s_last_pad_log > 1000)) {
+        s_last_pad_log = now;
+        REXLOG_INFO("PollPads: pad active! btn=0x{:04X}, lt={}, rt={}, lx={}, ly={}, rx={}, ry={}, style={}",
+                    pad.wButtons, pad.bLeftTrigger, pad.bRightTrigger, pad.sThumbLX, pad.sThumbLY, pad.sThumbRX,
+                    pad.sThumbRY, DeviceStyleName(pad_style));
+      }
       if (active) {
         prompt_mon.NotifyGamepadActivity(pad_style);
       } else {
         prompt_mon.SetDefaultGamepadStyle(pad_style);
+      }
+    } else {
+      static uint64_t s_last_conn_log = 0;
+      const uint64_t now = ::xenos::input::PromptDeviceMonitor::NowMs();
+      if (now - s_last_conn_log > 3000) {
+        s_last_conn_log = now;
+        REXLOG_INFO("PollPads: no pad connected (g_input={})", (void*)g_input);
       }
     }
     const bool combo = connected && (pad.wButtons & XINPUT_GAMEPAD_BACK) && (pad.wButtons & XINPUT_GAMEPAD_START);
