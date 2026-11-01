@@ -958,6 +958,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                 ini.push_back(fi + "Axis aLookup Speed=-1.0 DeadZone=0.2>Axis aLookup Speed=-4.0 DeadZone=0.0");
             }
         }
+        // GitHub #118: with native mouse look the turn speed changed with the frame rate (an RTSS cap changed in game
+        // turned faster or slower; one set before start-up did not). UE3's PlayerInput.SmoothMouse scales each frame's
+        // aMouseX/Y by DeltaTime / (MouseSamplingTotal / MouseSamples) - the average frame time since start-up - so a
+        // frame rate different from the history's average turns by the ratio. Mouse smoothing off (as the PC games
+        // allow in their Input.ini, and as Judgment's own KBM work did) passes the counts through unscaled.
+        if (nativeMouse && (!isG1 || cap_exe(env, "gow1_ini_edits"))) {
+            const std::string pi = isG1 ? "WarInput.ini" : "GearInput.ini";
+            ini.push_back(pi + "|*|bEnableMouseSmoothing=FALSE");                 // wherever the game's own ini sets it
+            ini.push_back(pi + "|Engine.PlayerInput|bEnableMouseSmoothing=FALSE");  // and added when it does not
+        }
         if (!ini.empty()) {
             std::string j;
             for (size_t i = 0; i < ini.size(); ++i) j += (i ? ";" : "") + ini[i];
