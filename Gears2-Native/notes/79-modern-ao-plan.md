@@ -1,8 +1,38 @@
-# 79. Modern ambient occlusion (XeGTAO): how frames reach our renderer, and the plan (written 2026-10-31)
+# 79. Modern ambient occlusion (XeGTAO), and what it led to: motion vectors, SMAA T2x, Gears 3 (2026-10-31 - 11-01)
 
-Goal: replace the games' own screen-space AO with a modern one (XeGTAO; HBAO+ considered), Gears 2 first, then
-Gears 3 / Judgment through the shared layer 0. Nothing here is built yet: facts from earlier notes are marked as they
-were there ([V] verified, [I] inferred); everything else is the plan.
+## Summary (read this first)
+
+The note began as a plan (sections 1-6) and then records the work in order (7-31). Facts are marked [V] verified,
+[I] inferred, [G] guessed, as in the other notes. All of it is shared layer 0 (`Gears2-Native/src/layer0_xenos`), so
+Gears 3 gets it too; per-game settings are in `gow2_app.h` / `gow3_app.h`, and the launcher in `cogbox/`.
+
+**What was added** (all user-tested at 4K HDR on a high-end NVIDIA GPU, D3D12; Vulkan where noted):
+
+| Feature | Switches (launcher option) | Sections |
+|---|---|---|
+| **XeGTAO** (Intel, MIT) at full resolution. Gears 2: replaces the game's own half-res AO in its own composite, and is added (multiplied before the fog pass) where the game turns AO off. Gears 3: the same where a level has real-time AO (ch1, ch12), added gently where AO is baked (ch8). The game's own AO chain is skipped while ours is shown (cost about equal to the original). | `--gow2_ao=gtao`, `--gow2_ao_quality`, `_radius`, `_power`, `_add_radius`, `_add_power`, `_skip_game`, `_everywhere`, `_fog_ps` ("Ambient occlusion": Off / Game's own / XeGTAO high / ultra; default XeGTAO high in Gears 2, Game's own in Gears 3) | 7-19, 25 |
+| **Developer A/B keys** F9 (AO: XeGTAO / none / game), F10 (views), F11 (quality) | `--gow2_ao_debug_keys`, `--gow2_ao_show`, `--gow2_ao_debug` | 12 |
+| **DLSS / FSR / XeSS fixes:** depth copied before the game clears it (vectors had lost all translation), reversed-Z in the reprojection, the SDKs' inverted-depth flags | `--gow2_upscale_depth_at_resolve` | 20-21 |
+| **Characters' own motion** in the motion vectors (Gears 2), from the game's velocity-pass transforms | `--gow2_upscale_character_motion` | 21 |
+| **SMAA T2x:** SMAA with two-position jitter and a temporal resolve, as an "upscaler" kind (D3D12 and Vulkan; Gears 2 and 3) | `--gow2_upscaler=smaa_t2x` ("Anti-aliasing: SMAA T2x (temporal)") | 22, 26 |
+| **Ultrawide** checked; AO detection and the character mask fixed for its 1280x550 scene | - | 23 |
+| **Gears 3 scene camera:** a planar-reflection camera was taken for the view, which had left DLSS / FSR / XeSS / T2x without jitter in whole levels | - | 28 |
+
+**Bugs found and fixed on the way** (besides the above):
+- The AO chain stayed "known" after the game stopped drawing it, so other effects reusing that EDRAM were skipped, causing a device loss in Gears 3 cutscenes (s.30).
+- One-off false AO matches are now ignored: a 3-frame streak is required (s.27).
+- Nothing of ours touches multisampled targets / depth (s.29).
+
+**Tests:** `tests/layer0_ao_test.cpp` (camera maths, the Gears 2 measured camera, the Gears 3 reflection camera), and in `tests/layer0_upscaler_test.cpp` reversed-Z motion and per-character motion. 116 test cases pass.
+
+**Open / later:** Judgment's AO (s.16 item 4); PCSS for dynamic shadows (s.16 item 5); XeGTAO denoise tied to the AA choice (s.16 item 3); split-screen untested.
+
+**Developer switches kept** (all off by default):
+- `--gow2_ao_log`, `--gow2_ao_trace_frames` / `_class` / `_vs`, `--gow2_renderer_hlsl_dump_hashes`;
+- `--gow2_upscale_capture_frames` with `--gow2_upscale_capture_raw_class`;
+- the one-time "multisampled" warnings.
+- The one-off camera-constant scan of s.21 was removed (s.31).
+
 
 ## 1. How a Gears 2 frame reaches the native renderer
 1. **The ring buffer.** The guest writes `CP_RB_WPTR`, which wakes `OurGpuSystem::WorkerMain`
@@ -829,7 +859,7 @@ T2x is shared layer 0, so it was already in the Gears 3 build; only the launcher
 - The pixels that differ are whole edges shifted by several pixels: the cutscene timing differs between runs, while jitter is at most 0.4 px.
 - The DLSS output is clean.
 
-## 29. Gears 3 device loss at the ch8 cave (2026-11-01, open but not seen since)
+## 29. Gears 3 device loss at the ch8 cave (2026-11-01; cause found in s.30)
 
 **Symptom:** `DEVICE LOST: INVALID_CALL`, page fault at GPU VA 0; the picture freezes and input and sound lock.
 - The tester, ch8 (Badlands), a few seconds into the cave-in cutscene (falling rocks, smoke, dust): with T2x + XeGTAO, twice in a row (14:34, 14:37).
@@ -902,3 +932,27 @@ So XeGTAO is the common factor, not T2x.
 - **The tester's retest (2026-11-01, after this fix):** T2x + XeGTAO through the ch8 cave and the ch12 airship landing, where it had crashed before. Both passed, no device loss.
 
 **The ch8 cave and intro losses** (add path only, no chain seen in the logged windows) are not explained by this unless a chain was matched in the unlogged last window. The retest will tell.
+
+## 31. Pre-commit cleanup (2026-11-01)
+
+- **Removed:** the camera-constant scan (`--gow2_camera_scan_frames`, `CamScanDraw` / `CamScanEndFrame`) and its two per-frame log blocks ("motion inputs", "characters: camera then"). They were one-off diagnostics for s.21 and s.30, and the answers are recorded there.
+- **Generalised and made opt-in:**
+  - The AO trace's vertex-shader constants. Before, always c5-c12 for k_16_16 targets; now `--gow2_ao_trace_vs=first-last` for any traced draw, which is useful for finding shadow matrices (PCSS, s.16 item 5).
+  - The raw float dumps. Before, written for every capture set (~20 MB each, 26 GB in one session); now only with `--gow2_upscale_capture_raw_class=<storage class>`, for the motion vectors and the colour resolves of that class.
+- **Line endings:** CRLF as the repository's other files (`core.autocrlf=true`). Codegen-touched manifests restored.
+- Committed in two steps (everything, then this cleanup), so the history keeps the removed code.
+
+## 32. Judgment and Gears 1 build the same layer 0 (2026-11-01)
+
+GearsJ-Native and Gears1-Native compile `Gears2-Native/src/layer0_xenos` too (their CMakeLists, `GN_LAYER0_HOME`), so every change here is in their builds as well. Neither was built or run in this work. What reaches them:
+
+- **Off unless asked for:** XeGTAO (`--gow2_ao` defaults to "game"), SMAA T2x (`--gow2_upscaler=smaa_t2x`). The launcher offers both for Gears 2 and Gears 3 only.
+- **Made Gears 2-only defaults** (off in layer 0, on in `gow2_app.h` through the `game_default` helper as in `gow3_app.h`):
+  - `--gow2_upscale_depth_at_resolve` (the early depth copy). Gears 3 measured the same either way (s.24) and is back on the old timing.
+  - `--gow2_upscale_character_motion` (Gears 2's velocity-pass layout; it never fired in Gears 3).
+- **Applied to every game** (its upscalers): the scene camera must pass the perspective test (s.28). It fixed Gears 3 and is a no-op on Gears 2's cameras; Gears 1's own camera search (job 715) already requires a perspective matrix. The MSAA guards (s.29) only ever refuse work.
+- **To check before or after a PR:** a DLSS smoke run in Judgment and Gears 1, which needs their game images.
+
+**Smoke matrix after the cleanup** (each 70-90 s, a local script), all with 0 errors and 0 device losses:
+- Gears 2 ch1: SMAA + XeGTAO; DLSS, FSR, XeSS (every frame upscaled, character motion on every frame); T2x; Vulkan + T2x; ultrawide + XeGTAO + DLSS. The game's AO was replaced on 600 of 600 frames wherever XeGTAO was on.
+- Gears 3: ch8 DLSS + XeGTAO; ch12 T2x + XeGTAO.
