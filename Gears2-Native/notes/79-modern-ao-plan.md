@@ -10,7 +10,7 @@ Gears 3 gets it too; per-game settings are in `gow2_app.h` / `gow3_app.h`, and t
 
 | Feature | Switches (launcher option) | Sections |
 |---|---|---|
-| **XeGTAO** (Intel, MIT) at full resolution. Gears 2: replaces the game's own half-res AO in its own composite, and is added (multiplied before the fog pass) where the game turns AO off. Gears 3: the same where a level has real-time AO (ch1, ch12), added gently where AO is baked (ch8). The game's own AO chain is skipped while ours is shown (cost about equal to the original). | `--gow2_ao=gtao`, `--gow2_ao_quality`, `_radius`, `_power`, `_add_radius`, `_add_power`, `_skip_game`, `_everywhere`, `_fog_ps` ("Ambient occlusion": Off / Game's own / XeGTAO high / ultra; default XeGTAO high in Gears 2, Game's own in Gears 3) | 7-19, 25 |
+| **XeGTAO** (Intel, MIT) at full resolution. Gears 2: replaces the game's own half-res AO in its own composite, and is added (multiplied before the fog pass) where the game turns AO off. Gears 3: the same where a level has real-time AO (ch1, ch12), added gently where AO is baked (ch8). The game's own AO chain is skipped while ours is shown (cost about equal to the original). | `--gow2_ao=gtao`, `--gow2_ao_quality`, `_radius`, `_power`, `_add_radius`, `_add_power`, `_skip_game`, `_everywhere`, `_fog_ps` ("Ambient occlusion": Off / Game's own / XeGTAO high / ultra; default Game's own in both games, s.33) | 7-19, 25 |
 | **Developer A/B keys** F9 (AO: XeGTAO / none / game), F10 (views), F11 (quality) | `--gow2_ao_debug_keys`, `--gow2_ao_show`, `--gow2_ao_debug` | 12 |
 | **DLSS / FSR / XeSS fixes:** depth copied before the game clears it (vectors had lost all translation), reversed-Z in the reprojection, the SDKs' inverted-depth flags | `--gow2_upscale_depth_at_resolve` | 20-21 |
 | **Characters' own motion** in the motion vectors (Gears 2), from the game's velocity-pass transforms | `--gow2_upscale_character_motion` | 21 |
@@ -956,3 +956,8 @@ GearsJ-Native and Gears1-Native compile `Gears2-Native/src/layer0_xenos` too (th
 **Smoke matrix after the cleanup** (each 70-90 s, a local script), all with 0 errors and 0 device losses:
 - Gears 2 ch1: SMAA + XeGTAO; DLSS, FSR, XeSS (every frame upscaled, character motion on every frame); T2x; Vulkan + T2x; ultrawide + XeGTAO + DLSS. The game's AO was replaced on 600 of 600 frames wherever XeGTAO was on.
 - Gears 3: ch8 DLSS + XeGTAO; ch12 T2x + XeGTAO.
+
+## 33. Launcher default: "Game's own" in both games (2026-11-01)
+
+- The "Ambient occlusion" option now defaults to "Game's own" in Gears 2 too, as in Gears 3: XeGTAO is opt-in everywhere, so updating the launcher changes nothing until a player picks it. Off / XeGTAO high / ultra are unchanged, and the exe's own default (`--gow2_ao` "game") was already the same.
+- The Gears 3 tooltip's last sentence ("Off by default in Gears 3.") went with it, in all 11 language files: it no longer told the two games apart, and the default was never "Off" but "Game's own".
