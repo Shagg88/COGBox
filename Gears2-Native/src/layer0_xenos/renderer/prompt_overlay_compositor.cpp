@@ -503,6 +503,8 @@ bool PromptOverlayCompositor::Initialize(const std::filesystem::path& glyphs_dir
 
   ComposeKeyboardStyleLocked(keybind_overrides);
   initialized_ = true;
+  REXLOG_INFO("prompt_compositor: initialized from '{}', active style={}",
+              resolved_glyphs_dir_.string(), DeviceStyleName(active_style_));
 
   if (active_style_ != DeviceStyle::kOriginal) {
     ApplyActiveStyleLocked();
@@ -703,6 +705,7 @@ void PromptOverlayCompositor::ApplyActiveStyleLocked() {
 }
 
 void PromptOverlayCompositor::SetActiveStyle(DeviceStyle style) {
+  REXLOG_INFO("prompt_compositor: SetActiveStyle({})", DeviceStyleName(style));
   {
     std::lock_guard<std::mutex> lock(mutex_);
     active_style_ = style;

@@ -425,6 +425,12 @@ void PromptDeviceMonitor::SetDefaultGamepadStyle(DeviceStyle pad_style) {
   }
 }
 
+DeviceStyle PromptDeviceMonitor::GetDefaultGamepadStyle() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (has_detected_pad_) return last_detected_pad_style_;
+  return DefaultGamepadStyleLocked();
+}
+
 std::optional<DeviceStyle> PromptDeviceMonitor::ResolveForcedStyleLocked() const {
   const std::string& gow_val = REXCVAR_GET(gow_button_prompts);
   const std::string& gow2_val = REXCVAR_GET(gow2_button_prompts);
@@ -482,10 +488,13 @@ DeviceStyle PromptDeviceMonitor::EvaluateActiveStyleLocked(uint64_t now_ms) cons
   }
 
   if (last_kbm_ms_ == 0 && last_pad_ms_ == 0) {
-    if (!has_detected_pad_ && rex::cvar::Query<bool>("mnk_mode")) {
+    const bool pad_present = has_detected_pad_ || rex::cvar::Query<bool>("cogbox_menu_ps") ||
+                             IsSteamDeckEnvironment() || DetectConnectedRawInputPadStyle().has_value();
+    if (!pad_present && rex::cvar::Query<bool>("mnk_mode")) {
       return DeviceStyle::kKeyboard;
     }
-    return has_detected_pad_ ? last_detected_pad_style_ : DefaultGamepadStyleLocked();
+    return pad_present ? (has_detected_pad_ ? last_detected_pad_style_ : DefaultGamepadStyleLocked())
+                       : DefaultGamepadStyleLocked();
   }
 
   const uint64_t eval_ms = (now_ms != 0) ? now_ms : std::max(last_kbm_ms_, last_pad_ms_);
@@ -526,27 +535,6 @@ DeviceStyle PromptDeviceMonitor::EvaluateActiveStyle(uint64_t now_ms) const {
   return target;
 }
 
-using GetStateForUIFn = rex::X_RESULT(*)(rex::input::InputSystem* self, uint32_t user_index, rex::input::X_INPUT_STATE* out_state);
-
-GetStateForUIFn ResolveGetStateForUI() {
-  static bool resolved = false;
-  static GetStateForUIFn fn = nullptr;
-  if (!resolved) {
-    resolved = true;
-    HMODULE mod = GetModuleHandleW(L"rexruntime.dll");
-    if (!mod) mod = GetModuleHandleW(L"rexruntimerd.dll");
-    if (mod) {
-      fn = reinterpret_cast<GetStateForUIFn>(
-          GetProcAddress(mod, "?GetStateForUI@InputSystem@input@rex@@QEAAIIPEAUX_INPUT_STATE@23@@Z"));
-      if (!fn) {
-        fn = reinterpret_cast<GetStateForUIFn>(
-            GetProcAddress(mod, "?GetState@InputSystem@input@rex@@QEAAIIPEAUX_INPUT_STATE@23@@Z"));
-      }
-    }
-  }
-  return fn;
-}
-
 void PromptDeviceMonitor::PollHardwareLocked(uint64_t now_ms) {
 #ifdef _WIN32
   const auto raw_style = DetectConnectedRawInputPadStyle();
@@ -558,36 +546,7 @@ void PromptDeviceMonitor::PollHardwareLocked(uint64_t now_ms) {
 
   bool any_pad_input = false;
 
-  // 1. Query attached rex::input::InputSystem (SDL runtime: DualSense, DualShock, Switch, Deck, Xbox)
-  if (attached_input_system_) {
-    if (GetStateForUIFn get_state_for_ui = ResolveGetStateForUI()) {
-      for (uint32_t i = 0; i < 4; ++i) {
-        rex::input::X_INPUT_STATE st = {};
-        if (get_state_for_ui(attached_input_system_, i, &st) == rex::X_RESULT(0)) {
-          has_detected_pad_ = true;
-          const uint16_t buttons = static_cast<uint16_t>(st.gamepad.buttons);
-          const bool active = buttons != 0 || st.gamepad.left_trigger > 30 || st.gamepad.right_trigger > 30 ||
-                              std::abs(static_cast<int>(st.gamepad.thumb_lx)) > 10000 ||
-                              std::abs(static_cast<int>(st.gamepad.thumb_ly)) > 10000 ||
-                              std::abs(static_cast<int>(st.gamepad.thumb_rx)) > 10000 ||
-                              std::abs(static_cast<int>(st.gamepad.thumb_ry)) > 10000;
-          if (active) {
-            any_pad_input = true;
-            last_detected_pad_style_ = active_pad_style;
-            last_pad_ms_ = now_ms;
-            if (!has_committed_auto_ || committed_auto_style_ != DeviceStyle::kKeyboard || last_kbm_ms_ == 0 ||
-                now_ms >= last_kbm_ms_ + kDebounceWindowMs) {
-              committed_auto_style_ = active_pad_style;
-              has_committed_auto_ = true;
-            }
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  // 2. Query standalone SDL3.dll if dynamically loaded
+  // 1. Query standalone SDL3.dll if dynamically loaded
   if (!any_pad_input) {
     static SdlGamepadApi sdl;
     if (sdl.Resolve()) {
@@ -718,7 +677,7 @@ DeviceStyle PromptDeviceMonitor::Poll(uint64_t now_ms, bool force) {
 
     if (interval_elapsed || force) {
       last_poll_ms_ = now_ms;
-      if (attached_window_ != nullptr && hardware_polling_enabled_.load(std::memory_order_relaxed)) {
+      if (hardware_polling_enabled_.load(std::memory_order_relaxed)) {
         PollHardwareLocked(now_ms);
       }
     }
@@ -735,6 +694,8 @@ DeviceStyle PromptDeviceMonitor::Poll(uint64_t now_ms, bool force) {
 
     if (!has_applied_style_ || last_applied_style_ != target ||
         ::xenos::renderer::prompt::GlobalPromptCompositor().ActiveStyle() != target) {
+      REXLOG_INFO("prompt_device_monitor: switching active style {} -> {}",
+                  DeviceStyleName(last_applied_style_), DeviceStyleName(target));
       last_applied_style_ = target;
       has_applied_style_ = true;
       should_apply = true;
@@ -761,7 +722,8 @@ void PromptDeviceMonitor::PollFromBind() {
       (REXCVAR_GET(gow_button_prompts) != "auto") || (REXCVAR_GET(gow2_button_prompts) != "auto");
   const bool is_dirty = dirty_.load(std::memory_order_acquire);
 
-  if (!cvar_changed && !has_cvar_override && !is_dirty && attached_window_ == nullptr) {
+  if (!cvar_changed && !has_cvar_override && !is_dirty && attached_window_ == nullptr &&
+      attached_input_system_ == nullptr && !has_detected_pad_) {
     // Headless context with no cvar overrides and no monitor input notifications:
     // if GlobalPromptCompositor has not been initialized yet, leave it as-is so unit tests
     // calling PromptOverlayCompositor::SetActiveStyle() directly are not clobbered.

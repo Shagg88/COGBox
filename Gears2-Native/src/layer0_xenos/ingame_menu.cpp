@@ -200,6 +200,20 @@ void PollPads() {
       g_pad = pad;
       g_pad_connected = connected;
     }
+    auto& prompt_mon = ::xenos::input::GlobalPromptDeviceMonitor();
+    if (connected) {
+      const auto pad_style = prompt_mon.GetDefaultGamepadStyle();
+      const bool active = pad.wButtons != 0 || pad.bLeftTrigger > 30 || pad.bRightTrigger > 30 ||
+                          std::abs(static_cast<int>(pad.sThumbLX)) > 10000 ||
+                          std::abs(static_cast<int>(pad.sThumbLY)) > 10000 ||
+                          std::abs(static_cast<int>(pad.sThumbRX)) > 10000 ||
+                          std::abs(static_cast<int>(pad.sThumbRY)) > 10000;
+      if (active) {
+        prompt_mon.NotifyGamepadActivity(pad_style);
+      } else {
+        prompt_mon.SetDefaultGamepadStyle(pad_style);
+      }
+    }
     const bool combo = connected && (pad.wButtons & XINPUT_GAMEPAD_BACK) && (pad.wButtons & XINPUT_GAMEPAD_START);
     if (combo && !combo_was && !g_open.load()) RequestOpenOnUIThread();
     combo_was = combo;

@@ -67,6 +67,9 @@ class PromptDeviceMonitor {
   // Updates the default controller profile when a gamepad is enumerated before any input event is pressed.
   void SetDefaultGamepadStyle(DeviceStyle pad_style);
 
+  // Returns the current or detected gamepad style (PlayStation, Switch, Steam Deck, Steam Controller, Xbox).
+  DeviceStyle GetDefaultGamepadStyle() const;
+
   // Evaluates the target DeviceStyle at `now_ms`, honoring cvar overrides ("gow_button_prompts" /
   // "gow2_button_prompts") and the 250 ms cross-device debounce window. Also syncs GlobalPromptCompositor().
   DeviceStyle EvaluateActiveStyle(uint64_t now_ms = 0) const;
