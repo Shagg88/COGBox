@@ -805,17 +805,24 @@ REXCVAR_DEFINE_STRING(gow2_ao_fog_ps, "D58B286B84EE971D", "Gears2",
 REXCVAR_DEFINE_INT32(gow2_ao_trace_class, -1, "Gears2",
                      "Notes/79 diagnostic: with --gow2_ao_trace_frames, also log every draw whose first colour target has "
                      "this storage class (e.g. 4 = k_16_16, the velocity buffer), not only full-screen passes; -1 = off");
-REXCVAR_DEFINE_BOOL(gow2_upscale_depth_at_resolve, true, "Gears2",
+REXCVAR_DEFINE_STRING(gow2_ao_trace_vs, "", "Gears2",
+                      "Notes/79 diagnostic: with --gow2_ao_trace_frames, also log these vertex shader float constants of "
+                      "each traced draw, a register range 'first-last' (e.g. 0-12: UE3's camera c0-c3 and object rows); "
+                      "empty = off");
+REXCVAR_DEFINE_INT32(gow2_upscale_capture_raw_class, -1, "Gears2",
+                     "Notes/79 diagnostic: during upscaler capture sets (--gow2_upscale_capture_frames), also write exact "
+                     "float dumps (.raw: int32 w, h, format, then 2 floats a texel) of the motion vectors and of every "
+                     "colour resolve whose source has this storage class (e.g. 4 = k_16_16, Gears 2's velocity buffer); "
+                     "-1 = off. Large: ~20 MB a resolve");
+REXCVAR_DEFINE_BOOL(gow2_upscale_depth_at_resolve, false, "Gears2",
                     "Notes/79 s.21: the upscalers' depth is copied at the game's scene depth resolve (Gears 2 clears that "
-                    "depth before the scene colour resolve); false: read at the scene colour resolve, as before");
-REXCVAR_DEFINE_BOOL(gow2_upscale_character_motion, true, "Gears2",
+                    "depth before the scene colour resolve - on there by gow2_app.h); false: read at the scene colour "
+                    "resolve, as before (Gears 3 measured the same either way, s.24)");
+REXCVAR_DEFINE_BOOL(gow2_upscale_character_motion, false, "Gears2",
                     "Notes/79 s.21: DLSS / FSR / XeSS motion vectors on characters from their own movement (the "
                     "transforms of the game's velocity pass), not the camera's - the camera follows the player, so "
-                    "camera-only vectors are wrong on him by the whole camera move");
-REXCVAR_DEFINE_STRING(gow2_camera_scan_frames, "", "Gears2",
-                      "Notes/79 s.21 diagnostic: comma list of frames whose per-frame shader constants are logged - every "
-                      "VS / PS float constant that all scene draws reading it agree on (camera position candidates), with "
-                      "the object vote's camera move");
+                    "camera-only vectors are wrong on him by the whole camera move. Gears 2's layout (velocity pass "
+                    "c5-c12); on there by gow2_app.h");
 REXCVAR_DEFINE_STRING(gow2_ao_quality, "high", "Gears2",
                       "XeGTAO quality (notes/79): low (1 slice x 2 steps), medium (2 x 2), high (3 x 3), ultra (9 x 3)");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_radius, 60.0, "Gears2",
@@ -4166,14 +4173,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint64_t ao_skipped_draws_ = 0, ao_skipped_resolves_ = 0;
   bool ao_skipped_frame_ = false;
   bool ao_trace_ = false;  // --gow2_ao_trace_frames is set
-  // Notes/79 s.21 (--gow2_camera_scan_frames): per register (VS 0-255, PS 256-511): draws that read it, its first value,
-  // and whether any draw disagreed; the vote's last move.
-  struct CamScanReg { uint32_t n = 0; float v[8][4] = {}; uint32_t count[8] = {}; };
-  std::array<CamScanReg, 512> cam_scan_{};
-  bool cam_scan_on_ = false, cam_scan_frame_ = false;
-  float cam_scan_move_[3] = {};
-  bool cam_scan_voted_ = false;
   int32_t ao_trace_class_ = -1;  // --gow2_ao_trace_class
+  uint32_t ao_trace_vs_first_ = 1, ao_trace_vs_last_ = 0;  // --gow2_ao_trace_vs (first > last: off)
+  int32_t up_capture_raw_class_ = -1;                      // --gow2_upscale_capture_raw_class
   // Notes/79 s.19 (--gow2_ao_everywhere): the multiply pass for frames without the game's AO chain.
   bool ao_everywhere_ = false, ao_added_frame_ = false;
   std::string ao_fog_ps_;  // ",HASH,HASH,"
@@ -4611,7 +4613,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // clears that EDRAM (through a 640-pitch alias) for its half-res effects before the scene colour resolve, where the
   // upscaler runs: read there, every pixel was at infinity, and the motion vectors lost the camera's translation.
   bool up_depth_saved_ = false;  // this frame's copy is in up_depth_
-  bool up_depth_at_resolve_ = true;  // --gow2_upscale_depth_at_resolve
+  bool up_depth_at_resolve_ = false;  // --gow2_upscale_depth_at_resolve
   uint32_t up_scene_scale_ = 0;  // the scene colour's scale the last time the upscaler ran (up_depth_ was made for it)
   void CopyUpscaleDepth(const rr::RenderTarget& depth) {
     gpu::ComputeBindings b;
@@ -4873,27 +4875,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++vel_no_camera_;
       return;
     }
-    if (cam_scan_frame_) {  // notes/79 s.21 diagnostic
-      std::string l;
-      for (const rr::upscale::MovingObject& o : vel_objs_) {
-        const rr::upscale::MovingObject* p = nullptr;
-        for (const rr::upscale::MovingObject& e : vel_prev_objs_)
-          if (e.key == o.key) p = &e;
-        l += std::format(" [{:016X} now ({:.3f} {:.3f} {:.3f}) then ({:.3f} {:.3f} {:.3f})", o.key, o.now(0, 3), o.now(1, 3),
-                         o.now(2, 3), o.then(0, 3), o.then(1, 3), o.then(2, 3));
-        if (p) l += std::format(" cam ({:.3f} {:.3f} {:.3f})", o.then(0, 3) - p->now(0, 3), o.then(1, 3) - p->now(1, 3),
-                                o.then(2, 3) - p->now(2, 3));
-        l += " rot now";
-        for (int i = 0; i < 3; ++i)
-          for (int j = 0; j < 3; ++j) l += std::format(" {:.5f}", o.now(i, j));
-        l += " then";
-        for (int i = 0; i < 3; ++i)
-          for (int j = 0; j < 3; ++j) l += std::format(" {:.5f}", o.then(i, j));
-        l += "]";
-      }
-      REXLOG_INFO("gow2_camera_scan: frame {} characters: camera then ({:.3f} {:.3f} {:.3f}) |{}", frame_ + 1, cam[0], cam[1],
-                  cam[2], l);
-    }
     constexpr uint32_t kW = 5;
     std::array<float, kW * 4 * (kMaxMovingObjects + 1)> t{};
     rr::upscale::Mat4 pos;  // (u, v, depth, 1) -> camera-relative position (homogeneous)
@@ -5028,8 +5009,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       for (int i = 0; i < 3; ++i) pos_move[i] = up_cam_pos_[i] - up_prev_cam_pos_[i];
     if (up_camera_move_ && up_prev_camera_) {
       bool voted = rr::upscale::CameraMoveFromObjects(up_prev_objects_, up_objects_, move, &up_last_votes_, &up_last_matched_);
-      cam_scan_voted_ = voted;  // notes/79 s.21 diagnostic
-      std::memcpy(cam_scan_move_, move, sizeof(cam_scan_move_));
       if (voted && have_pos) {  // learn / check the sign
         double dp = 0, dm = 0, len = 0;
         for (int i = 0; i < 3; ++i) {
@@ -5071,15 +5050,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (!have_rep && !cut)
       have_rep = rr::upscale::ReprojectionMatrix(cur, prev, 1.0f, rep, up_depth_map_.scale, up_depth_map_.offset);
-    if (cam_scan_frame_) {  // notes/79 s.21 diagnostic: the inputs of the motion pass
-      std::string l;
-      for (int i = 0; i < 16; ++i) l += std::format(" {:.6g}", up_vp_[i]);
-      l += " |";
-      for (int i = 0; i < 16; ++i) l += std::format(" {:.6g}", up_prev_vp_[i]);
-      REXLOG_INFO("gow2_camera_scan: frame {} motion inputs prev_camera {} rep {} move ({:.4f} {:.4f} {:.4f}) map ({} {}) "
-                  "size {}x{} | vp{}", frame_ + 1, up_prev_camera_, have_rep, move[0], move[1], move[2],
-                  up_depth_map_.scale, up_depth_map_.offset, rw, rh, l);
-    }
     gpu::ComputeBindings mb;
     for (int i = 0; i < 16; ++i) mb.constants[i] = std::bit_cast<uint32_t>(have_rep ? rep.m[i] : (i % 5 ? 0.0f : 1.0f));
     mb.constant_count = 16;
@@ -5186,7 +5156,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       CaptureTex(rt.texture, rt.format, rw, rh, "in", 0);
       CaptureTex(up_output_, rt.format, ow, oh, "out", 0);
       CaptureTex(up_motion_, gpu::Format::kR16G16Float, rw, rh, "motion", 1);
-      CaptureRaw(up_motion_, gpu::Format::kR16G16Float, rw, rh, "motion");  // notes/79 s.21: unclamped
+      if (up_capture_raw_class_ >= 0)  // --gow2_upscale_capture_raw_class (notes/79 s.21): unclamped
+        CaptureRaw(up_motion_, gpu::Format::kR16G16Float, rw, rh, "motion");
       CaptureTex(up_depth_, gpu::Format::kR32Float, rw, rh, "depth", 2);
     }
     return up_output_;
@@ -5287,8 +5258,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Notes/79 phase 2: XeGTAO's pipelines, once (the quality preset picks the main pass's slices x steps).
   void InitAo() {
     ao_trace_ = !REXCVAR_GET(gow2_ao_trace_frames).empty();  // the diagnostic works with the game's own AO too
-    cam_scan_on_ = !REXCVAR_GET(gow2_camera_scan_frames).empty();
     ao_trace_class_ = REXCVAR_GET(gow2_ao_trace_class);
+    up_capture_raw_class_ = REXCVAR_GET(gow2_upscale_capture_raw_class);
+    {
+      unsigned a = 0, b = 0;
+      if (std::sscanf(REXCVAR_GET(gow2_ao_trace_vs).c_str(), "%u-%u", &a, &b) == 2 && a <= b && b < 256)
+        ao_trace_vs_first_ = a, ao_trace_vs_last_ = b;
+    }
     if (ao_mode_ != rr::ao::Mode::kGtao) return;
     static constexpr const char* kQuality[4] = {"low", "medium", "high", "ultra"};
     static constexpr const char* kSlices[4] = {"1.0", "2.0", "3.0", "9.0"};
@@ -5611,47 +5587,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                        std::bit_cast<float>(r[kRegFloatConstPs + 4 * k + 1]), std::bit_cast<float>(r[kRegFloatConstPs + 4 * k + 2]),
                        std::bit_cast<float>(r[kRegFloatConstPs + 4 * k + 3]));
     REXLOG_INFO("gow2_ao_trace: frame {} draw {} ps constants{}", frame_ + 1, draw_index_, c);
-    if (k0.storage_class == 4) {  // notes/79 s.21: the velocity pass's object transforms (VS c5-c12)
+    if (ao_trace_vs_last_ >= ao_trace_vs_first_) {  // --gow2_ao_trace_vs (notes/79 s.21: the velocity pass's c5-c12)
       std::string t;
-      for (uint32_t k = 5; k < 13; ++k)
+      for (uint32_t k = ao_trace_vs_first_; k <= ao_trace_vs_last_; ++k)
         t += std::format(" c{}=({:.4g} {:.4g} {:.4g} {:.4g})", k, std::bit_cast<float>(r[kRegFloatConstVs + 4 * k]),
                          std::bit_cast<float>(r[kRegFloatConstVs + 4 * k + 1]),
                          std::bit_cast<float>(r[kRegFloatConstVs + 4 * k + 2]),
                          std::bit_cast<float>(r[kRegFloatConstVs + 4 * k + 3]));
       REXLOG_INFO("gow2_ao_trace: frame {} draw {} vs constants{}", frame_ + 1, draw_index_, t);
     }
-  }
-
-  // Notes/79 s.21 diagnostic: one scene draw's constants into the per-frame scan.
-  void CamScanDraw(const uint32_t* r, const rr::GuestShader& vsg, const rr::GuestShader* psg) {
-    auto note = [&](uint32_t slot, uint32_t base, uint32_t k) {
-      CamScanReg& g = cam_scan_[slot];
-      float v[4];
-      std::memcpy(v, &r[base + 4 * k], sizeof(v));
-      for (uint32_t i = 0; i < g.n; ++i)
-        if (std::memcmp(g.v[i], v, sizeof(v)) == 0) { ++g.count[i]; return; }
-      if (g.n < 8) { std::memcpy(g.v[g.n], v, sizeof(v)); g.count[g.n++] = 1; }
-    };
-    for (uint32_t k = 4; k < 256; ++k)
-      if (vsg.Reads(k)) note(k, kRegFloatConstVs, k);
-    if (psg)
-      for (uint32_t k = 0; k < 256; ++k)
-        if (psg->Reads(k)) note(256 + k, kRegFloatConstPs, k);
-  }
-  void CamScanEndFrame() {
-    std::string line;
-    for (uint32_t i = 0; i < 512; ++i) {
-      const CamScanReg& g = cam_scan_[i];
-      uint32_t best = 0;
-      for (uint32_t j = 1; j < g.n; ++j)
-        if (g.count[j] > g.count[best]) best = j;
-      if (!g.n || g.count[best] < 4) continue;
-      line += std::format(" {}c{}=({:.3f} {:.3f} {:.3f} {:.3f})x{}", i < 256 ? "vs" : "ps", i & 255, g.v[best][0],
-                          g.v[best][1], g.v[best][2], g.v[best][3], g.count[best]);
-    }
-    REXLOG_INFO("gow2_camera_scan: frame {} vote {} move ({:.3f} {:.3f} {:.3f}) |{}", frame_, cam_scan_voted_ ? "found" : "none",
-                cam_scan_move_[0], cam_scan_move_[1], cam_scan_move_[2], line);
-    cam_scan_ = {};
   }
 
   // Notes/79: --gow2_ao_debug - the final AO over the finished picture (present_out_, w x h packed words).
@@ -5718,11 +5662,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
 
   void UpscaleEndFrame() {
-    if (cam_scan_on_) {  // notes/79 s.21 diagnostic: this frame's scan out, the next frame's decided
-      static const std::string list = "," + REXCVAR_GET(gow2_camera_scan_frames) + ",";
-      if (cam_scan_frame_) CamScanEndFrame();
-      cam_scan_frame_ = list.find("," + std::to_string(frame_ + 1) + ",") != std::string::npos;
-    }
     if (!up_active_) return;  // patch 0145
     if (ao_mode_ == rr::ao::Mode::kGtao) AoEndFrame();  // notes/79, before this frame's camera is rolled over
     if (up_cap_left_ > 0) --up_cap_left_;
@@ -7287,7 +7226,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     textures_part.Switch(kPartConstants);
     rr::ViewportState v = ps.viewport;
     rr::NdcForBottomLeftOrigin(v);  // D3D12: +Y up in NDC
-    if (cam_scan_frame_ && target && IsSceneDepth(*target) && !ps.viewport.xy_divided_by_w) CamScanDraw(r, vsg, psg);
     if (up_active_ && !up_scene_done_) UpscaleJitter(r, vsg, ps, target, depth_writes, v);  // notes/64 (0145: or inputs)
     else if (up_active_) UpscaleLateDraw(r, ps, target, v);  // Gears 3 job 120
     const bool remap24 = float24_remap_ && target && (target->key.storage_class & 1);
@@ -10140,8 +10078,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     if (vel_seen_) VelocityResolve(*rt, w, h);  // notes/79 s.21
-    if (up_cap_left_ > 0 && rt->key.storage_class == 4 && rt->key.pitch_pixels == 640)  // notes/79 s.21 diagnostic
-      CaptureRaw(rt->texture, rt->format, rt->width, rt->height, std::format("k1616-{:08X}", info.dest_base).c_str());
+    if (up_cap_left_ > 0 && up_capture_raw_class_ >= 0 && rt->key.storage_class == uint32_t(up_capture_raw_class_))
+      CaptureRaw(rt->texture, rt->format, rt->width, rt->height,  // --gow2_upscale_capture_raw_class (notes/79 s.21)
+                 std::format("class{}-{:08X}", up_capture_raw_class_, info.dest_base).c_str());
     // Upscalers (notes/64): the frame's scene colour goes through DLSS / FSR, and the resolve reads their output.
     gpu::TextureHandle resolve_source = rt->texture;
     uint32_t source_scale = rt->scale;  // patch 0141: the upscaler's output is at the output scale
