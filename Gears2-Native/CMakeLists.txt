@@ -244,7 +244,9 @@ endif()
 add_custom_command(TARGET gow2 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${GN_DXC_DIR}/bin/x64/dxcompiler.dll ${GN_DXC_DIR}/bin/x64/dxil.dll $<TARGET_FILE_DIR:gow2>
-    COMMENT "Copying dxcompiler.dll + dxil.dll next to gow2.exe")
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets/glyphs $<TARGET_FILE_DIR:gow2>/assets/glyphs
+    COMMENT "Copying dxcompiler.dll, dxil.dll, and assets/glyphs next to gow2.exe")
 
 # Upscalers (notes/64, notes/65): DLSS, FSR and XeSS are built in when their SDKs are in third_party (never committed;
 # jobs 250 and 270 download them). GN_WITH_DLSS / GN_WITH_FSR / GN_WITH_XESS switch one off (e.g. if a future SDK does
@@ -347,6 +349,7 @@ if(GN_BUILD_TESTS)
         tests/layer0_texture_cache_test.cpp
         src/layer0_xenos/renderer/texture_cache.cpp
         src/layer0_xenos/renderer/guest_watch.cpp
+        tests/layer0_glyph_assets_test.cpp
         tests/layer2_config_bundle_test.cpp
         src/layer2_ue3/config_bundle.cpp
         tests/layer2_prebuild_lzx_test.cpp
@@ -354,7 +357,7 @@ if(GN_BUILD_TESTS)
         src/layer0_xenos/renderer/upscaler.cpp
         src/layer0_xenos/hlsl.cpp
         src/layer0_xenos/ucode.cpp)
-    target_include_directories(gn_tests PRIVATE src/layer0_xenos/include src/layer2_ue3/include tests)
+    target_include_directories(gn_tests PRIVATE src/layer0_xenos/include src/layer2_ue3/include tests third_party/flip/src/cpp/tool)
     # Keep float results bit-identical to the references: no fused multiply-add contraction across statements.
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(gn_tests PRIVATE -ffp-contract=off)
@@ -366,6 +369,7 @@ if(GN_BUILD_TESTS)
     if(WIN32)
         add_custom_command(TARGET gn_tests POST_BUILD
             COMMAND "$<$<BOOL:$<TARGET_RUNTIME_DLLS:gn_tests>>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_RUNTIME_DLLS:gn_tests>;$<TARGET_FILE_DIR:gn_tests>>"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets/glyphs $<TARGET_FILE_DIR:gn_tests>/assets/glyphs
             COMMAND_EXPAND_LISTS
             VERBATIM)
     endif()

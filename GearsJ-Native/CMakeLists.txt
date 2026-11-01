@@ -20,6 +20,9 @@ set(GN_THIRD_PARTY "${CMAKE_SOURCE_DIR}/../Gears2-Native/third_party" CACHE PATH
 if(NOT DEFINED GN_LAYER0_HOME)
     set(GN_LAYER0_HOME "${CMAKE_SOURCE_DIR}/../Gears2-Native")
 endif()
+if(NOT DEFINED GN_G2_DIR)
+    set(GN_G2_DIR "${GN_LAYER0_HOME}")
+endif()
 set(GN_LAYER0_DIR "${GN_LAYER0_HOME}/src/layer0_xenos")
 set(GN_LAYER0_TESTS "${GN_LAYER0_HOME}/tests")
 message(STATUS "GearsJ-Native: layer 0 (renderer) from ${GN_LAYER0_DIR}")
@@ -113,7 +116,9 @@ rexglue_setup_target(gowj GPU_PLUGINS xenos)
 add_custom_command(TARGET gowj POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${GN_DXC_DIR}/bin/x64/dxcompiler.dll ${GN_DXC_DIR}/bin/x64/dxil.dll $<TARGET_FILE_DIR:gowj>
-    COMMENT "Copying dxcompiler.dll + dxil.dll next to gowj.exe")
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${GN_G2_DIR}/assets/glyphs $<TARGET_FILE_DIR:gowj>/assets/glyphs
+    COMMENT "Copying dxcompiler.dll, dxil.dll, and assets/glyphs next to gowj.exe")
 
 # Upscalers (job 052, from Gears 2 notes/64 and notes/65): DLSS, FSR and XeSS are built in when their SDKs are in
 # Gears 2's third_party folder (read-only, never committed). GN_WITH_DLSS / GN_WITH_FSR / GN_WITH_XESS switch one off.

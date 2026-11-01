@@ -20,6 +20,9 @@ set(GN_THIRD_PARTY "${CMAKE_SOURCE_DIR}/../Gears2-Native/third_party" CACHE PATH
 if(NOT DEFINED GN_LAYER0_HOME)
     set(GN_LAYER0_HOME "${CMAKE_SOURCE_DIR}/../Gears2-Native")
 endif()
+if(NOT DEFINED GN_G2_DIR)
+    set(GN_G2_DIR "${GN_LAYER0_HOME}")
+endif()
 set(GN_LAYER0_DIR "${GN_LAYER0_HOME}/src/layer0_xenos")
 set(GN_LAYER0_TESTS "${GN_LAYER0_HOME}/tests")
 message(STATUS "Gears3-Native: layer 0 (renderer) from ${GN_LAYER0_DIR}")
@@ -118,7 +121,9 @@ rexglue_setup_target(gow3 GPU_PLUGINS xenos)
 add_custom_command(TARGET gow3 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${GN_DXC_DIR}/bin/x64/dxcompiler.dll ${GN_DXC_DIR}/bin/x64/dxil.dll $<TARGET_FILE_DIR:gow3>
-    COMMENT "Copying dxcompiler.dll + dxil.dll next to gow3.exe")
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${GN_G2_DIR}/assets/glyphs $<TARGET_FILE_DIR:gow3>/assets/glyphs
+    COMMENT "Copying dxcompiler.dll, dxil.dll, and assets/glyphs next to gow3.exe")
 
 # Low input lag (Gears 2 patches 0135 / 0136): NVIDIA Reflex through NVAPI and AMD Anti-Lag 2 (header-only), built in
 # when Gears 2's third_party has them (read-only, never committed) - the same block as Gears 2's CMakeLists. Their code
