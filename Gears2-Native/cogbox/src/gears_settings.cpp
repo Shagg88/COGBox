@@ -1127,8 +1127,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (vsync && fps >= 1) {
             const int hz = env.refresh_hz;
             const int top = fgOn ? static_cast<int>(std::floor(hz / 2.0)) - 2 : hz - 3;
+            const int chosen = cap;
             if (isG3 && cap == 60) cap = 62;   // review 0158: Gears 3's 60 is its own 62 cap
-            if (hz >= 50 && (cap < 0 || cap > top)) cap = top;
+            // GitHub #106: a cap the player set to the refresh rate itself (60 on a 60 Hz TV) is kept - vsync paces it.
+            // 3 under is for VRR screens; on a fixed-refresh TV it gave a steady 57 fps that judders.
+            const bool atRefresh = !fgOn && chosen > 0 && std::abs(chosen - hz) <= 1;
+            if (hz >= 50 && !atRefresh && (cap < 0 || cap > top)) cap = top;
             notes.push_back("launcher: vsync on; " + env.monitor_device + " at " + std::to_string(hz) + " Hz (0 = unknown)" +
                             (fgOn ? ", frame generation on" : "") + " -> frame-rate cap " + std::to_string(cap));
         }
