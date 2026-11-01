@@ -24,6 +24,7 @@
 #include <rex/runtime.h>
 #include <rex/system/xmemory.h>
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -128,6 +129,59 @@ class OverlayDevice : public rex::filesystem::HostPathDevice {
   uint32_t replaced_hits_ = 0;
   uint32_t hidden_hits_ = 0;
 };
+// GitHub #116: the image's address range is not all readable (a 0x83xxxxxx page of the TU6 image faulted on one PC,
+// 0xC0000005 at start-up right after the first bundle was edited). Only the pages the guest heap has readable are
+// scanned, run by run, and a fault in a run is caught and that run skipped instead of taking the game down.
+void ScanRunInto(const uint8_t* data, size_t size, const std::string* name, const ue3::Sha1Digest* hash,
+                 std::vector<size_t>* out) {
+  *out = ue3::FindFileHash(data, size, *name, *hash);
+}
+bool ScanRunGuarded(const uint8_t* data, size_t size, const std::string* name, const ue3::Sha1Digest* hash,
+                    std::vector<size_t>* out) {
+#if defined(_MSC_VER)
+  __try {
+    ScanRunInto(data, size, name, hash, out);
+    return true;
+  } __except (1) {
+    return false;
+  }
+#else
+  ScanRunInto(data, size, name, hash, out);
+  return true;
+#endif
+}
+std::vector<size_t> FindFileHashReadable(rex::Runtime* runtime, uint32_t base, uint32_t size, const std::string& name,
+                                         const ue3::Sha1Digest& hash) {
+  std::vector<size_t> found;
+  const uint8_t* image = runtime->virtual_membase() + base;
+  rex::memory::BaseHeap* heap = runtime->memory()->LookupHeap(base);
+  const uint32_t page = heap ? heap->page_size() : 0;
+  if (!heap || page == 0) return found;
+  auto readable = [&](uint32_t a) {
+    uint32_t p = 0;
+    return heap->QueryProtect(a, &p) && (p & rex::memory::kMemoryProtectRead) != 0;
+  };
+  uint32_t off = 0, skipped = 0;
+  while (off < size) {
+    if (!readable(base + off)) { off += page; ++skipped; continue; }
+    uint32_t end = off;
+    while (end < size && readable(base + end)) end += page;
+    end = std::min(end, size);
+    std::vector<size_t> run;
+    if (ScanRunGuarded(image + off, end - off, &name, &hash, &run)) {
+      for (size_t r : run) found.push_back(off + r);
+    } else {
+      REXLOG_WARN("ue3 hash table: a fault reading image {:08X}-{:08X}; that part is skipped", base + off, base + end);
+    }
+    off = end;
+  }
+  static bool logged = false;
+  if (skipped && !logged) {
+    logged = true;
+    REXLOG_INFO("ue3 hash table: {} unreadable page(s) of the image skipped (GitHub #116)", skipped);
+  }
+  return found;
+}
 // The game image's start-up file hash table (ue3/config_bundle.h): give each edited bundle its new hash, so the
 // game's own check passes instead of showing the dirty-disc error (job 257). Image at 0x82000000, size from its PE
 // header (as XenosDumpImageIfRequested). The table sits in read-only data: its page is made writable for the write
@@ -143,7 +197,7 @@ int UpdateHashTable(rex::Runtime* runtime, const std::string& name, const ue3::S
   std::memcpy(&size, image + pe + 24 + 56, 4);
   if (size == 0 || size > 0x08000000u) return -1;
   int changed = 0;
-  for (size_t off : ue3::FindFileHash(image, size, AsciiLower(name), old_hash)) {
+  for (size_t off : FindFileHashReadable(runtime, kBase, size, AsciiLower(name), old_hash)) {
     const uint32_t addr = kBase + uint32_t(off);
     rex::memory::BaseHeap* heap = runtime->memory()->LookupHeap(addr);
     if (!heap) continue;
