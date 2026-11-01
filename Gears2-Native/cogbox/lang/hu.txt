@@ -784,3 +784,13 @@ Add it with ADD UPDATE: the update package from your console's folder = Add hozz
 # 0.4.0: player name
 Player name = Játékosnév
 The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = A név, amelyet minden játék mutat (a gamertaged): legfeljebb 15 betű, számjegy vagy szóköz. Üresen: "User". Csak megjelenítés - a profilod és a mentéseid a helyükön maradnak.
+# notes/79: ambient occlusion (XeGTAO)
+Ambient occlusion = Környezeti takarás
+XeGTAO (high) = XeGTAO (magas)
+XeGTAO (ultra) = XeGTAO (ultra)
+Gears 2 first = először a Gears 2
+The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version (Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, characters included, at about the cost of the original. Ultra looks in more directions and catches more small details, for a little more. Game's own: the original. Off: none. = A lágy árnyékolás a sarkokban, a résekben és ott, ahol a tárgyak összeérnek. XeGTAO: modern, teljes felbontású változat (az Intel XeGTAO-ja) a játék saját, alacsony felbontású változata helyett - foltok helyett pontos érintkezési árnyékok, a karaktereken is, nagyjából az eredeti költségén. Az Ultra több irányban keres, és több apró részletet talál, kicsivel többért. A játék saját: az eredeti. Ki: nincs.
+SMAA T2x (temporal) = SMAA T2x (időbeli)
+SMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now. = SMAA T2x: SMAA egy időbeli lépéssel - simább élek és sokkal kevesebb vibrálás, kevés költséggel, bármely videokártyán, DirectX 12 vagy Vulkan alatt. Egyelőre csak a Gears 2-ben és a Gears 3-ban.
+Gears 2 and Gears 3 for now. = Egyelőre csak a Gears 2-ben és a Gears 3-ban.
+Gears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it. Off by default in Gears 3. = Gears 3: a legtöbb pályán az árnyékolás előre ki van számítva, valós idejű AO nélkül - ott az XeGTAO enyhe érintkezési árnyékolást ad, és ahol egy pályának van saját AO-ja, azt lecseréli. A Gears 3-ban alapból ki van kapcsolva.

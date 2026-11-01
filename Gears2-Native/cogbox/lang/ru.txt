@@ -784,3 +784,13 @@ Add it with ADD UPDATE: the update package from your console's folder = Доба
 # 0.4.0: player name
 Player name = Имя игрока
 The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = Имя, которое показывает каждая игра (ваш gamertag): до 15 букв, цифр или пробелов. Пусто: "User". Только для отображения - профиль и сохранения остаются на месте.
+# notes/79: ambient occlusion (XeGTAO)
+Ambient occlusion = Затенение окружения (AO)
+XeGTAO (high) = XeGTAO (высокое)
+XeGTAO (ultra) = XeGTAO (ультра)
+Gears 2 first = сначала Gears 2
+The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version (Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, characters included, at about the cost of the original. Ultra looks in more directions and catches more small details, for a little more. Game's own: the original. Off: none. = Мягкое затенение в углах, щелях и там, где предметы соприкасаются. XeGTAO: современная версия в полном разрешении (XeGTAO от Intel) вместо встроенной в игру версии низкого разрешения - точные контактные тени вместо пятен, в том числе на персонажах, примерно за ту же цену, что и оригинал. Ультра проверяет больше направлений и находит больше мелких деталей, немного дороже. Встроенная в игру: оригинал. Выкл.: нет.
+SMAA T2x (temporal) = SMAA T2x (временное)
+SMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now. = SMAA T2x: SMAA с дополнительным временным проходом - более гладкие края и гораздо меньше мерцания при небольших затратах, любая видеокарта, DirectX 12 или Vulkan. Пока только в Gears 2 и Gears 3.
+Gears 2 and Gears 3 for now. = Пока только в Gears 2 и Gears 3.
+Gears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it. Off by default in Gears 3. = Gears 3: в большинстве уровней затенение просчитано заранее и нет AO в реальном времени - там XeGTAO добавляет мягкое контактное затенение, а где у уровня есть своя AO, заменяет её. В Gears 3 по умолчанию выключено.
