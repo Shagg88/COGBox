@@ -793,4 +793,4 @@ The soft shadowing in corners, creases and where things touch. XeGTAO: a modern 
 SMAA T2x (temporal) = SMAA T2x（时间性）
 SMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now. = SMAA T2x：在 SMAA 基础上增加时间性处理 - 以很小的开销获得更平滑的边缘和更少的闪烁，适用于任何显卡（DirectX 12 或 Vulkan）。目前仅限 Gears 2 和 Gears 3。
 Gears 2 and Gears 3 for now. = 目前仅限 Gears 2 和 Gears 3。
-Gears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it. Off by default in Gears 3. = Gears 3：大多数关卡的阴影是预先烘焙的，没有实时 AO - XeGTAO 会在这些地方添加柔和的接触阴影，并在关卡自带 AO 的地方将其替换。Gears 3 中默认关闭。
+Gears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it. = Gears 3：大多数关卡的阴影是预先烘焙的，没有实时 AO - XeGTAO 会在这些地方添加柔和的接触阴影，并在关卡自带 AO 的地方将其替换。

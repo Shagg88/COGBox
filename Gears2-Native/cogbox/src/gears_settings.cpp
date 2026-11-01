@@ -271,7 +271,7 @@ std::vector<Option> make_options(Game g) {
     // Notes/79 (Gears2-Native): XeGTAO screen-space ambient occlusion in place of the game's own (Gears 2), or added
     // where a level has none (Gears 3 s.25: opt-in there, default "Game's own").
     if (!g1) add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high)", "XeGTAO (ultra)" },
-                        g == Game::Gears3 ? 1 : 2,
+                        1,   // Game's own: XeGTAO is opt-in in every game
                "The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version "
                "(Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, "
                "characters included, at about the cost of the original. Ultra looks in more directions and catches more small "
@@ -582,7 +582,7 @@ Availability choice_available(const Option& o, Game g, int index) {
 std::string tooltip_for(const Option& o, Game g, const Availability& a, const Environment& env) {
     std::string base = o.tooltip;
     if (o.id == "AO" && g == Game::Gears3)   // notes/79 s.25
-        base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it. Off by default in Gears 3.";
+        base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it.";
     if (o.id == "AAMode") {   // PS1 345
         std::string gpu = gpu_main(env);
         base += "\nYour graphics card: " + (gpu.empty() ? std::string("not detected") : gpu);
