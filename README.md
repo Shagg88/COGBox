@@ -76,6 +76,32 @@ Other hardware hasn't been tried yet - please report what you find.
   copy; programs are never taken from a mod.
 - **Desktop shortcuts** for COGBox and each game.
 
+### Adding DLC
+
+The easiest way: drag the DLC's folder (or its package file) onto the COGBox window, or use **Downloadable content**
+on the game's About tab. COGBox copies it to the right place. If you would rather do it by hand, a package goes into
+the game's user folder under the console's own layout:
+
+`<COGBox>\<game>\user\0000000000000000\<title ID>\00000002\<package file>`
+
+For example, Gears of War 3 (title ID `4D5308AB`):
+`<COGBox>\Gears3\user\0000000000000000\4D5308AB\00000002\<package file>`. Restart the game afterwards.
+
+### Cheats (Gears of War 3)
+
+Tick **Gameplay > Cheats (hotkeys F5-F11)** in the game's settings, then in game:
+
+| Key | Cheat |
+|---|---|
+| F5 | God mode |
+| F6 | Slow motion (0.5, 0.25, back to 1) |
+| F8 | Free camera (photo mode) |
+| F9 | Freeze the world |
+| F10 | Hide / show the HUD |
+| F11 | All weapons and ammo |
+
+**Unlock all mutators** (same tab) makes every mutator available without touching your profile.
+
 ---
 
 ## What you need
