@@ -25,8 +25,8 @@ constexpr PromptCell kFont256G3JCells[] = {
     // Face buttons
     {"a", "keybind_a", {200, 54, 227, 81}, {200, 54, 226, 80}, {212, 66}, true, false},
     {"b", "keybind_b", {227, 54, 254, 81}, {227, 54, 253, 80}, {239, 66}, true, false},
-    {"x", "keybind_x", {196, 108, 221, 133}, {196, 108, 220, 132}, {207, 119}, true, false},
-    {"y", "keybind_y", {222, 108, 248, 133}, {222, 108, 246, 132}, {233, 119}, true, false},
+    {"x", "keybind_x", {196, 108, 221, 133}, {197, 109, 221, 133}, {209, 121}, true, false},
+    {"y", "keybind_y", {222, 108, 248, 133}, {222, 109, 248, 133}, {235, 121}, true, false},
     // Triggers & Bumpers
     {"lt", "keybind_left_trigger", {31, 134, 56, 162}, {31, 134, 56, 162}, {43, 148}, true, false},
     {"rt", "keybind_right_trigger", {57, 134, 81, 162}, {57, 134, 81, 162}, {68, 148}, true, false},

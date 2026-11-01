@@ -579,6 +579,9 @@ void PromptOverlayCompositor::ComposeControllerStyleLocked(DeviceStyle style,
     std::memcpy(buf->data() + 4, &oh, 4);
     uint8_t* rgba = buf->data() + 8;
 
+    // Leave safe ~7.5% inner margin (0.85x scale) inside cell bounds so circular buttons and keycaps never
+    // clip against Unreal Engine font quad UV bounds (e.g. font sheet cell tops at Y=54 where quad begins at Y=55.5).
+    constexpr float kGlyphScale = 0.85f;
     for (const PromptCell& cell : layout->cells) {
       ClearCellRectOnOverlay(rgba, static_cast<int>(ow), static_cast<int>(oh), *layout, cell);
       auto it = glyphs.find(cell.button);
@@ -588,7 +591,8 @@ void PromptOverlayCompositor::ComposeControllerStyleLocked(DeviceStyle style,
       const int dy0 = cell.draw_rect[1] * kScale;
       const int bw = (cell.draw_rect[2] - cell.draw_rect[0]) * kScale;
       const int bh = (cell.draw_rect[3] - cell.draw_rect[1]) * kScale;
-      const float scale = std::min(float(bw) / float(content.width), float(bh) / float(content.height));
+      const float scale =
+          std::min(float(bw) / float(content.width), float(bh) / float(content.height)) * kGlyphScale;
       const int w = std::max(1, int(std::lround(content.width * scale)));
       const int h = std::max(1, int(std::lround(content.height * scale)));
       blit_overlay(rgba, static_cast<int>(ow), static_cast<int>(oh), content, dx0 + (bw - w) / 2, dy0 + (bh - h) / 2,
