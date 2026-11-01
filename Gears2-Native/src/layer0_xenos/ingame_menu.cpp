@@ -167,12 +167,21 @@ void PollPads() {
   HMODULE xi = LoadLibraryW(L"xinput1_4.dll");
   if (!xi) xi = LoadLibraryW(L"xinput9_1_0.dll");
   auto get = xi ? reinterpret_cast<XInputGetStateFn>(GetProcAddress(xi, "XInputGetState")) : nullptr;
-  if (!get && !g_input) {
+  if (!get && !g_input && !rex::Runtime::instance()) {
     REXLOG_WARN("cogbox_menu: no controller input found - the menu opens with F1 only");
     return;
   }
   bool combo_was = false;
   while (!g_stop.load()) {
+    if (!g_input) {
+      if (auto* rt = rex::Runtime::instance()) {
+        if (auto* input = static_cast<rex::input::InputSystem*>(rt->input_system())) {
+          g_input = input;
+          ::xenos::input::GlobalPromptDeviceMonitor().AttachInputSystem(g_input);
+          REXLOG_INFO("PollPads: dynamically acquired g_input={:p}", (void*)g_input);
+        }
+      }
+    }
     XINPUT_GAMEPAD pad = {};
     bool connected = false;
     if (g_input) {
@@ -189,7 +198,8 @@ void PollPads() {
           connected = true;
         }
       }
-    } else {
+    }
+    if (!connected && get) {
       for (DWORD i = 0; i < 4 && !connected; ++i) {
         XINPUT_STATE s = {};
         if (get(i, &s) == ERROR_SUCCESS) { pad = s.Gamepad; connected = true; }
