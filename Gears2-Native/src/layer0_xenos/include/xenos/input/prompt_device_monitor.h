@@ -57,6 +57,15 @@ class PromptDeviceMonitor {
   // Records keyboard button or mouse button/wheel activity at `timestamp_ms`.
   void NotifyKeyboardMouseActivity(uint64_t timestamp_ms = 0);
 
+  // Records key down / up and mouse down / up for tracking active KBM engagement.
+  void NotifyKeyDown(uint64_t timestamp_ms = 0);
+  void NotifyKeyUp(uint64_t timestamp_ms = 0);
+  void NotifyMouseDown(uint64_t timestamp_ms = 0);
+  void NotifyMouseUp(uint64_t timestamp_ms = 0);
+
+  // Checks whether the player is actively pressing keys/mouse or was recently using KBM.
+  bool IsKeyboardMouseInUse(uint64_t now_ms = 0) const;
+
   // Records mouse movement delta `(dx, dy)` at `timestamp_ms`. Only triggers KBM activity when
   // `std::abs(dx) > 5 || std::abs(dy) > 5` (5-pixel deadzone).
   void NotifyMouseMove(int32_t dx, int32_t dy, uint64_t timestamp_ms = 0);
@@ -129,6 +138,8 @@ class PromptDeviceMonitor {
   std::string last_keybind_sig_;
   std::atomic<bool> dirty_{false};
   std::atomic<bool> hardware_polling_enabled_{true};
+  std::atomic<int32_t> keys_down_count_{0};
+  std::atomic<int32_t> mouse_buttons_down_count_{0};
 
   rex::ui::Window* attached_window_ = nullptr;
   rex::input::InputSystem* attached_input_system_ = nullptr;

@@ -213,13 +213,52 @@ void PollPads() {
     auto& prompt_mon = ::xenos::input::GlobalPromptDeviceMonitor();
     if (connected) {
       const auto pad_style = prompt_mon.GetDefaultGamepadStyle();
-      const bool active = pad.wButtons != 0 || pad.bLeftTrigger > 30 || pad.bRightTrigger > 30 ||
-                          std::abs(static_cast<int>(pad.sThumbLX)) > 8000 ||
-                          std::abs(static_cast<int>(pad.sThumbLY)) > 8000 ||
-                          std::abs(static_cast<int>(pad.sThumbRX)) > 8000 ||
-                          std::abs(static_cast<int>(pad.sThumbRY)) > 8000;
-      static uint64_t s_last_pad_log = 0;
       const uint64_t now = ::xenos::input::PromptDeviceMonitor::NowMs();
+      const bool kbm_in_use = prompt_mon.IsKeyboardMouseInUse(now);
+
+      static int16_t prev_lx = 0, prev_ly = 0, prev_rx = 0, prev_ry = 0;
+      static bool has_prev_pad = false;
+
+      bool button_active = false;
+      if (pad.wButtons != 0 && !kbm_in_use) {
+        button_active = true;
+      }
+      if ((pad.bLeftTrigger > 40 || pad.bRightTrigger > 40) && !kbm_in_use) {
+        button_active = true;
+      }
+
+      bool stick_active = false;
+      if (!kbm_in_use) {
+        constexpr int kStickDeadzone = 14000;
+        const int alx = std::abs(static_cast<int>(pad.sThumbLX));
+        const int aly = std::abs(static_cast<int>(pad.sThumbLY));
+        const int arx = std::abs(static_cast<int>(pad.sThumbRX));
+        const int ary = std::abs(static_cast<int>(pad.sThumbRY));
+
+        if (alx > kStickDeadzone || aly > kStickDeadzone || arx > kStickDeadzone || ary > kStickDeadzone) {
+          if (has_prev_pad) {
+            const int dlx = std::abs(static_cast<int>(pad.sThumbLX) - prev_lx);
+            const int dly = std::abs(static_cast<int>(pad.sThumbLY) - prev_ly);
+            const int drx = std::abs(static_cast<int>(pad.sThumbRX) - prev_rx);
+            const int dry = std::abs(static_cast<int>(pad.sThumbRY) - prev_ry);
+            if (dlx > 2000 || dly > 2000 || drx > 2000 || dry > 2000 ||
+                alx > 20000 || aly > 20000 || arx > 20000 || ary > 20000) {
+              stick_active = true;
+            }
+          } else {
+            stick_active = true;
+          }
+        }
+      }
+
+      prev_lx = pad.sThumbLX;
+      prev_ly = pad.sThumbLY;
+      prev_rx = pad.sThumbRX;
+      prev_ry = pad.sThumbRY;
+      has_prev_pad = true;
+
+      const bool active = button_active || stick_active;
+      static uint64_t s_last_pad_log = 0;
       if (active && (now - s_last_pad_log > 1000)) {
         s_last_pad_log = now;
         REXLOG_INFO("PollPads: pad active! btn=0x{:04X}, lt={}, rt={}, lx={}, ly={}, rx={}, ry={}, style={}",
