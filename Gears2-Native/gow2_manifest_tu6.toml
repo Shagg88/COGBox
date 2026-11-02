@@ -378,6 +378,13 @@ name = "Gow2UltrawideUiHeight"
 registers = ["r3"]
 after_instruction = true
 
+# GitHub #94 (job 1026): 0x8281C718 `cmplw cr6,r10,r11` in sub_8281C680 - the render-target pool's size / capacity
+# check before its trap (bl 0x82AC6098). Logging only (Gow2RtPoolCheck). TU6 only: the disc's site is not known yet.
+[[entrypoint.midasm_hook]]
+address = 0x8281C718
+name = "Gow2RtPoolCheck"
+registers = ["r10", "r11", "r28", "r30", "r31"]
+
 # 0x828307A0: first instruction (`mflr r12`) of the function that crashes in Horde (notes/58, jobs 206-208).
 [[entrypoint.midasm_hook]]
 address = 0x82840960  # TU6: base 0x828307A0

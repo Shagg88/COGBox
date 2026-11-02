@@ -343,6 +343,22 @@ void Gow2UltrawideUiHeight(PPCRegister& r3) {
   r3.u64 = ui;
 }
 
+// GitHub #94 diagnosis (job 1026, TU6 listing): sub_8281C680 makes a render target inside a pool object (r31, its 6th
+// argument): size = sub_829BABD8(...) rounded up to 4 KB (r10), compared with the pool's capacity `lwz r11,20(r31)`;
+// larger -> bl 0x82AC6098 -> 0x82F692C4, the trap that ends the game at 32:9 / 360 rows (exit 0x80000003). This hook,
+// before the `cmplw` at 0x8281C718 (TU6 only: the disc's site is not known yet), changes nothing: it logs the first
+// 24 calls and every call that would trap, with the arguments that sized it (r30 = sub_829BABD8's r3, r28 = its r4),
+// so the pool and the target that outgrows it are known before anything is raised.
+void Gow2RtPoolCheck(PPCRegister& r10, PPCRegister& r11, PPCRegister& r28, PPCRegister& r30, PPCRegister& r31) {
+  static std::atomic<int> calls{0}, over{0};
+  const bool traps = r10.u32 > r11.u32;
+  const int n = calls.fetch_add(1);
+  if (n < 24 || (traps && over.fetch_add(1) < 24))
+    REXLOG_INFO("gow2_rt_pool: call {} pool {:08X} size {:#x} capacity {:#x}{} (args {:08X} {:08X}, scene rows {})", n,
+                r31.u32, r10.u32, r11.u32, traps ? " - TOO BIG, the game traps next" : "", r30.u32, r28.u32,
+                REXCVAR_GET(gow2_ultrawide) ? Gow2WideHeight() : 720u);
+}
+
 // Stage 6 Horde crash (notes/58, jobs 206-208): about 2 s into Horde's first wave countdown the main thread reads through
 // a null pointer in sub_828307A0 (`lwz r11,4(r4)` then `lwz r9,4(r11)`), called from sub_82826EC8 with r4 = the
 // caller's field at +1004. Same on the SDK reference, so not a drawing problem. This hook (the function's first
