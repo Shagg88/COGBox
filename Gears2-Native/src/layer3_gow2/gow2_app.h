@@ -64,7 +64,7 @@ class Gow2App : public rex::ReXApp {
     XenosInstallBufferDumpIfRequested(runtime());
     XenosInstallShaderDumpIfRequested();
     XenosInstallShaderWatchIfRequested();
-    // Notes/79 s.21 / s.32: Gears 2's settings for the shared renderer, each set only while it still has its compiled-in
+    // Notes/80 s.6 / s.11: Gears 2's settings for the shared renderer, each set only while it still has its compiled-in
     // default (a command line, config file or environment variable always wins), as Gow3App does:
     //  - the upscalers' depth copied at the scene depth resolve (Gears 2 clears it before the scene colour resolve);
     //  - the characters' own motion from Gears 2's velocity pass (its c5-c12 layout).
@@ -109,7 +109,7 @@ class Gow2App : public rex::ReXApp {
     }
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
-    XenosInstallAoDebugKeys(drawer);  // notes/79 phase 3b (--gow2_ao_debug_keys)
+    XenosInstallAoDebugKeys(drawer);  // notes/80 s.12 (--gow2_ao_debug_keys)
     XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
@@ -118,7 +118,7 @@ class Gow2App : public rex::ReXApp {
   void OnShutdown() override {
     XenosShutdownInGameMenu();  // patch 0163
     XenosDestroyFpsBar();
-    XenosShutdownAoDebugKeys();  // notes/79
+    XenosShutdownAoDebugKeys();  // notes/80
   }
   // Patch 0130: --gow2_mute_unfocused. The SDK checks audio_mute for each audio buffer, so this takes effect at once.
   // Only undoes a mute we set ourselves: a player's own --audio_mute=true stays on.

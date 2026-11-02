@@ -1,4 +1,4 @@
-// Layer 0 (game-free): the camera maths for screen-space AO (ao.h, notes/79). Our code (MIT).
+// Layer 0 (game-free): the camera maths for screen-space AO (ao.h, notes/80). Our code (MIT).
 #include "xenos/renderer/ao.h"
 
 #include <cmath>

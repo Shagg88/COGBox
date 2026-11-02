@@ -1,4 +1,4 @@
-// Layer 0 (game-free): XeGTAO screen-space ambient occlusion as the renderer's built-in compute shaders (notes/79).
+// Layer 0 (game-free): XeGTAO screen-space ambient occlusion as the renderer's built-in compute shaders (notes/80).
 //
 // Ported from XeGTAO (https://github.com/GameTechDev/XeGTAO, Source/Rendering/Shaders/XeGTAO.hlsli, XeGTAO.h,
 // vaGTAO.hlsl): Copyright (C) 2016-2021, Intel Corporation, SPDX-License-Identifier: MIT (THIRD_PARTY_NOTICES.md has the
@@ -356,7 +356,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 }
 )";
 
-// Debug view (--gow2_ao_debug, notes/79): an XeGTAO texture over the presented image (packed 10:10:10:2 words, the
+// Debug view (--gow2_ao_debug, notes/80): an XeGTAO texture over the presented image (packed 10:10:10:2 words, the
 // gamma pass's output). c0 = present width, height, -, mode (2 = split: the game's picture left, the texture right;
 // anything else: the texture only); c1 = the texture's width, height, asfloat value scale. Dispatch (width + 7) / 8 x
 // (height + 7) / 8.
@@ -383,7 +383,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 }
 )";
 
-// Phase 3 (notes/79): the full-resolution stand-in for the game's final AO texture. x = XeGTAO's visibility (or 1 for
+// Notes/80 s.4: the full-resolution stand-in for the game's final AO texture. x = XeGTAO's visibility (or 1 for
 // "no AO"), y = the game's own y channel at the same place (its 640x360 target). t0 = the game's AO target (host
 // R16G16 float), t1 = the final AO (scene size), u0 = the stand-in (scene size, R16G16 float).
 // c0 = stand-in width, height, mode (0 XeGTAO, 1 no AO), 1 = the chain was skipped (y = 0); c1 = the resolved rectangle in the game target's host pixels:
@@ -405,7 +405,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 }
 )";
 
-// "Everywhere" (notes/79 s.18-19): where the game draws no AO chain, the scene is multiplied by XeGTAO's visibility
+// "Everywhere" (notes/80 s.5-19): where the game draws no AO chain, the scene is multiplied by XeGTAO's visibility
 // just before the game's fog pass - the same place and formula as the game's own apply (scene * AO, then fog). Drawn
 // with kTransferVs (a full-screen triangle) and a multiply blend (src Zero, dst SrcColor, RGB only). t0 = the final AO
 // (scene size, as the viewport).

@@ -135,7 +135,7 @@ class XessUpscaler final : public Upscaler {
     p.outputResolution = {output_width, output_height};
     p.qualitySetting = q;
     p.initFlags = hdr ? XESS_INIT_FLAG_ENABLE_AUTOEXPOSURE : XESS_INIT_FLAG_LDR_INPUT_COLOR;  // low-res MVs + depth
-    if (inverted_) p.initFlags |= XESS_INIT_FLAG_INVERTED_DEPTH;  // notes/79 s.21
+    if (inverted_) p.initFlags |= XESS_INIT_FLAG_INVERTED_DEPTH;  // notes/80 s.6
     // Blocking: builds XeSS's pipelines / kernels for these settings (first time only noticeably slow).
     const xess_result_t r = x.Init(context_, &p);
     if (r != XESS_RESULT_SUCCESS) return Fail(std::format("XeSS {} initialisation failed (result {})", version_, int(r)));
@@ -191,7 +191,7 @@ class XessUpscaler final : public Upscaler {
 
   xess_context_handle_t context_ = nullptr;
   bool initialised_ = false, failed_ = false, hdr_ = false, error_logged_ = false;
-  bool inverted_ = false;  // notes/79 s.21
+  bool inverted_ = false;  // notes/80 s.6
   uint32_t rw_ = 0, rh_ = 0, ow_ = 0, oh_ = 0;
   std::string version_ = "?", status_ = "XeSS not started";
 };

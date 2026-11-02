@@ -1043,7 +1043,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 }
 )";
 
-// Notes/79 s.21: the game's velocity target (t0, k_16_16 as float2) copied into ours (u0, same size) at its resolve, so
+// Notes/80 s.6: the game's velocity target (t0, k_16_16 as float2) copied into ours (u0, same size) at its resolve, so
 // the motion pass still has it after the game reuses that EDRAM.
 constexpr const char* kCopyFloat2Cs = R"(
 Texture2D<float2> xe_src : register(t0);
@@ -1057,7 +1057,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 }
 )";
 
-// Notes/79 s.21: motion of the characters, after kMotionVectorsCs. The game's velocity pass draws every character
+// Notes/80 s.6: motion of the characters, after kMotionVectorsCs. The game's velocity pass draws every character
 // (skinned mesh) into a half-res target cleared to 0; where it drew (t1 != 0), the pixel is moved with the nearest
 // character's own transform instead of the camera's: Gears' camera follows the player, so camera-only motion is wrong
 // on him by the whole camera move. t2 = the table (RGBA32F, 5 wide): row 0 = the matrix (u, v, depth, 1) -> camera-

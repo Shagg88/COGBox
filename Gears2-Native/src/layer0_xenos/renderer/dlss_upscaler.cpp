@@ -168,7 +168,7 @@ class DlssUpscaler final : public Upscaler {
     // DLSS's own exposure (guide 3.9: HDR needs the tone mapper's exposure, which we don't read from the game).
     c.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
                              (hdr ? NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure : 0) |
-                             (inverted_ ? NVSDK_NGX_DLSS_Feature_Flags_DepthInverted : 0);  // notes/79 s.21
+                             (inverted_ ? NVSDK_NGX_DLSS_Feature_Flags_DepthInverted : 0);  // notes/80 s.6
     const std::string preset = REXCVAR_GET(gow2_dlss_preset);
     SetDlssPresets(params_, preset);
     const NVSDK_NGX_Result r = NGX_D3D12_CREATE_DLSS_EXT(list, 1, 1, &feature_, params_, &c);
@@ -190,7 +190,7 @@ class DlssUpscaler final : public Upscaler {
   }
 
   bool initialised_ = false, failed_ = false, hdr_ = false, eval_error_logged_ = false;
-  bool inverted_ = false;  // notes/79 s.21: the depth input is reversed-Z
+  bool inverted_ = false;  // notes/80 s.6: the depth input is reversed-Z
   ID3D12Device* device_ = nullptr;
   NVSDK_NGX_Parameter* params_ = nullptr;
   NVSDK_NGX_Handle* feature_ = nullptr;

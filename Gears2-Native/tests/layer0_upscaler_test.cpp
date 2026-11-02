@@ -207,7 +207,7 @@ TEST_CASE("camera motion when rendering camera-relative (UE3): translation passe
   CHECK(worst_rot_only > 5.0f);  // without the translation the near points are off by many pixels
 }
 
-TEST_CASE("camera motion with a reversed-Z viewport (Gears 2, notes/79 s.21)", "[upscaler]") {
+TEST_CASE("camera motion with a reversed-Z viewport (Gears 2, notes/80 s.6)", "[upscaler]") {
   // The same camera move, but the depth the motion pass reads is the viewport's 1 - z/w (Gears 2). With the viewport's
   // depth map passed in, the motion matches the exact projection; read as plain z/w (the old code), it is far off.
   const up::Mat4 proj = Perspective(1.0f, 16.0f / 9.0f, 10.0f, 50000.0f);
@@ -241,7 +241,7 @@ TEST_CASE("camera motion with a reversed-Z viewport (Gears 2, notes/79 s.21)", "
   for (int i = 0; i < 16; ++i) CHECK(rep_plain.m[i] == Approx(rep_unmapped.m[i]));
 }
 
-TEST_CASE("characters move with their own transforms (Gears 2 velocity pass, notes/79 s.21)", "[upscaler]") {
+TEST_CASE("characters move with their own transforms (Gears 2 velocity pass, notes/80 s.6)", "[upscaler]") {
   // The camera strafes and turns; the player's character moves with it (camera-relative pose unchanged), another
   // stands still in the world. Object rows as UE3 gives them: now relative to the camera, then in absolute world.
   const up::Mat4 proj = Perspective(1.0f, 16.0f / 9.0f, 10.0f, 50000.0f);

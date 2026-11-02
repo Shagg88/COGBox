@@ -22,7 +22,7 @@ Kind ParseKind(const std::string& name) {
   if (name == "dlss") return Kind::kDlss;
   if (name == "fsr") return Kind::kFsr;
   if (name == "xess") return Kind::kXess;
-  if (name == "smaa_t2x") return Kind::kSmaaT2x;  // notes/79 s.22
+  if (name == "smaa_t2x") return Kind::kSmaaT2x;  // notes/80 s.7
   return Kind::kNone;
 }
 
@@ -162,7 +162,7 @@ bool ReprojectionMatrix(const Mat4& view_proj, const Mat4& prev_view_proj, float
   if (!Invert(view_proj, inv)) return false;
   if (!(std::fabs(depth_map_scale) > 1e-6f)) return false;
   // (u, v, depth, 1) -> NDC (D3D: x right, y up, z 0..1): x = 2u - 1, y = 1 - 2v, z = (depth * scale - offset) / map
-  // scale - the viewport's Z transform undone (notes/79 s.21).
+  // scale - the viewport's Z transform undone (notes/80 s.6).
   Mat4 ndc;
   ndc(0, 0) = 2.0f;  ndc(0, 3) = -1.0f;
   ndc(1, 1) = -2.0f; ndc(1, 3) = 1.0f;
@@ -311,7 +311,7 @@ std::unique_ptr<Upscaler> CreateUpscaler(Kind kind) {
 }
 
 bool BuiltIn(Kind kind) {
-  if (kind == Kind::kSmaaT2x) return true;  // notes/79 s.22: ours, always built
+  if (kind == Kind::kSmaaT2x) return true;  // notes/80 s.7: ours, always built
 #if defined(GN_HAVE_DLSS)
   if (kind == Kind::kDlss) return true;
 #endif

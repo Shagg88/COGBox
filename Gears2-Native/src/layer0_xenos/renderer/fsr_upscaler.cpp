@@ -104,7 +104,7 @@ class FsrUpscaler final : public Upscaler {
     // HDR linear colour; FSR's own exposure (we don't read the game's tone-mapper exposure).
     c.flags = (hdr ? (FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE) : 0u) |
               (depth_infinite ? FFX_UPSCALE_ENABLE_DEPTH_INFINITE : 0u) |
-              (depth_inverted ? FFX_UPSCALE_ENABLE_DEPTH_INVERTED : 0u);  // notes/79 s.21
+              (depth_inverted ? FFX_UPSCALE_ENABLE_DEPTH_INVERTED : 0u);  // notes/80 s.6
     c.maxRenderSize = {render_width, render_height};
     c.maxUpscaleSize = {output_width, output_height};
     c.fpMessage = &FfxMessage;
@@ -189,7 +189,7 @@ class FsrUpscaler final : public Upscaler {
   std::vector<Retired> retired_;   // 0.2.0 (#6): old contexts the GPU may still be using
   ffxContext context_ = nullptr;
   bool failed_ = false, hdr_ = false, infinite_ = false, eval_error_logged_ = false;
-  bool inverted_ = false;  // notes/79 s.21
+  bool inverted_ = false;  // notes/80 s.6
   uint32_t rw_ = 0, rh_ = 0, ow_ = 0, oh_ = 0;
   std::string status_ = "FSR not started";
 };

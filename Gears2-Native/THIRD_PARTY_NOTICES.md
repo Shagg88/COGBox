@@ -6,7 +6,7 @@ Gears2-Native's own code is MIT-licensed (`LICENSE`). It contains or builds agai
 |---|---|---|
 | rexglue SDK (Tom Clay; portions from the Xenia project, Ben Vanik and contributors) | `third_party/rexglue-sdk` (downloaded, not committed); `cmake/rexglue.cmake`, `src/main.cpp`, parts of `src/gow2_app.h` come from its project template | BSD-3-Clause |
 | Xenia Canary (e6cd2e4) and Xenia Edge (5045c19) (Ben Vanik and the Xenia project contributors) | ported or adapted pieces of `src/layer0_xenos` (texture loading and formats, tiling and mip layout, resolve and gamma rules, the rectangle-list geometry shader, PM4 and shader-translation rules); each such file carries the notice | BSD-3-Clause |
-| XeGTAO (Intel Corporation) | `src/layer0_xenos/renderer/xegtao_shaders.h` (ported shaders, notes/79) | MIT (notice below) |
+| XeGTAO (Intel Corporation) | `src/layer0_xenos/renderer/xegtao_shaders.h` (ported shaders, notes/80) | MIT (notice below) |
 | Libraries bundled by the SDK (SDL3, Dear ImGui, Tracy, fmt, spdlog, FFmpeg, ...) | inside the SDK | their own licences, listed in the SDK's `licenses/` folder |
 | gow3-recomp (Flippage and the gow3-recomp contributors) and gears-of-war-2-pc-port / gow2-recomp (Santiago Quiroz Upegui and the gow2-recomp contributors) | the native mouse look method and the Gears 3 / Gears 2 base-disc addresses in `ue3_mouse_look.h` and `mouse_look.cpp` (layer 3 of all three ports, COGBox 0.2.1), plus the multi-controller 4x prompt overlay catalog and live device monitor (`prompt_atlas_catalog.*`, `prompt_overlay_compositor.*`, `prompt_device_monitor.*`) | BSD-3-Clause (notices below) |
 | Kenney Input Prompts (`assets/glyphs/`) | Controller and keyboard/mouse prompt glyph icons for Xbox, PlayStation, Nintendo Switch, Steam Deck, and Steam Controller | CC0 1.0 Universal (Public Domain, notice below) |
@@ -107,7 +107,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ## XeGTAO (src/layer0_xenos/renderer/xegtao_shaders.h)
 
 https://github.com/GameTechDev/XeGTAO - the XeGTAO screen-space ambient occlusion shaders (XeGTAO.hlsli, XeGTAO.h,
-vaGTAO.hlsl), ported to the renderer's compute layout (notes/79; the header lists the changes).
+vaGTAO.hlsl), ported to the renderer's compute layout (notes/80; the header lists the changes).
 
 MIT License
 

@@ -784,7 +784,7 @@ Add it with ADD UPDATE: the update package from your console's folder = Add hozz
 # 0.4.0: player name
 Player name = Játékosnév
 The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = A név, amelyet minden játék mutat (a gamertaged): legfeljebb 15 betű, számjegy vagy szóköz. Üresen: "User". Csak megjelenítés - a profilod és a mentéseid a helyükön maradnak.
-# notes/79: ambient occlusion (XeGTAO)
+# notes/80: ambient occlusion (XeGTAO)
 Ambient occlusion = Környezeti takarás
 XeGTAO (high) = XeGTAO (magas)
 XeGTAO (ultra) = XeGTAO (ultra)

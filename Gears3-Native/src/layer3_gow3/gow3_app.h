@@ -91,7 +91,7 @@ class Gow3App : public rex::ReXApp {
     //    per frame into the scene depth AFTER the scene colour resolve that runs the upscaler (later lighting passes);
     //    unjittered, whole character triangles lost their lighting under DLSS / FSR. Jittered, the frames are clean.
     game_default("gow2_upscale_jitter_late", "true");
-    //  - XeGTAO (Gears 2 notes/79 s.25, with --gow2_ao=gtao): some Gears 3 levels draw Gears 2's real-time AO chain
+    //  - XeGTAO (Gears 2 notes/80 s.9, with --gow2_ao=gtao): some Gears 3 levels draw Gears 2's real-time AO chain
     //    (half-res 16_16_FLOAT, ch12) - XeGTAO replaces it at Gears 2's strength; most bake their AO into the lightmaps
     //    and draw none (ch8) - there XeGTAO is added just before the fog pass (this pixel shader, the anchor of
     //    --gow2_ao_everywhere), small and gentle: contact and character shading, not a second darkening of the baked AO.
@@ -120,7 +120,7 @@ class Gow3App : public rex::ReXApp {
     }
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
-    XenosInstallAoDebugKeys(drawer);  // Gears 2 notes/79 phase 3b: F9 / F10 / F11 (--gow2_ao_debug_keys)
+    XenosInstallAoDebugKeys(drawer);  // Gears 2 notes/80 s.12: F9 / F10 / F11 (--gow2_ao_debug_keys)
     XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
@@ -143,7 +143,7 @@ class Gow3App : public rex::ReXApp {
     Gow3StopMemoryGauge();
     XenosShutdownInGameMenu();  // patch 0163
     XenosDestroyFpsBar();  // before the SDK drops its drawer
-    XenosShutdownAoDebugKeys();  // Gears 2 notes/79
+    XenosShutdownAoDebugKeys();  // Gears 2 notes/80
   }
   // 0054 (Gears 2): the achievement toast is built only when one is shown, so the SDK's always-on toast window no longer
   // counts as a second presented surface (the NVIDIA overlay showed 2x fps). Same lines as Gow2App.

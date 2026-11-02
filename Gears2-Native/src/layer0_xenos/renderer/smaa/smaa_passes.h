@@ -110,7 +110,7 @@ uint main(XeSmaaV v) : SV_Target0 {
 }
 )";
 
-// ---- SMAA T2x (notes/79 s.22): SMAA 1x on the HDR scene with two alternating sub-pixel jitters, and a temporal
+// ---- SMAA T2x (notes/80 s.7): SMAA 1x on the HDR scene with two alternating sub-pixel jitters, and a temporal
 // resolve of this frame with the last one reprojected by the motion vectors. Runs at the scene colour resolve (as the
 // upscalers do), so the HUD and the post passes never see history. The scene goes into a tone-mapped copy first
 // (Reinhard on the largest channel, invertible): SMAA blends that, the resolve inverts it - bright highlights do not
