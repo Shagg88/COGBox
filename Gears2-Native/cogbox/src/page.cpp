@@ -304,6 +304,7 @@ static void prepare_section(App &a, int g)
 static void keys_section(App &a)
 {
     static int capture = -1, captureFrame = 0;
+    static bool captureAdd = false;   // right-click: the key is added as a second key, not instead of the keys
     static std::string keyNote;   // what the last key press changed besides its own action
     const auto &acts = gs::key_actions();
     ImGui::Dummy(ImVec2(0, S(6)));
@@ -326,7 +327,10 @@ static void keys_section(App &a)
         std::string cur = a.ini.get("Keys", k.cvar);
         if (cur.empty()) cur = k.def;
         std::string shown = capture == i ? std::string("Press a key...") : key_shown(cur);
-        if (th_button((shown + "##k").c_str(), ImVec2(g_ctrlW, T(26)), true, F_BODY, capture == i)) { capture = i; captureFrame = ImGui::GetFrameCount(); }
+        if (th_button((shown + "##k").c_str(), ImVec2(g_ctrlW, T(26)), true, F_BODY, capture == i)) { capture = i; captureAdd = false; captureFrame = ImGui::GetFrameCount(); }
+        // Two keys per action: right-click adds one beside the current key (the SDK takes a comma list, "MMB,Z").
+        if (!capturing && ImGui::IsItemClicked(ImGuiMouseButton_Right)) { capture = i; captureAdd = true; captureFrame = ImGui::GetFrameCount(); }
+        if (!capturing && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Click: set the key. Right-click: add a second key."));
         ImGui::PopID();
     }
     if (capturing) ImGui::EndDisabled();
@@ -375,7 +379,14 @@ static void keys_section(App &a)
                 keyNote += std::string(keyNote.empty() ? "" : " ") + key_shown(nm) + " was taken from \"" + acts[j].what + "\"" +
                            (kept.empty() ? " - that action has no key now." : ".");
             }
-            set_all(acts[capture].cvar, name);
+            std::string value = name;
+            if (captureAdd) {   // keep the action's first key that isn't this one: at most two keys
+                std::string cur = a.ini.get("Keys", acts[capture].cvar);
+                if (cur.empty()) cur = acts[capture].def;
+                const std::string first = cur.substr(0, cur.find(','));
+                if (!first.empty() && first != "None" && first != nm) value = first + "," + nm;
+            }
+            set_all(acts[capture].cvar, value);
             capture = -1;
         }
     }
