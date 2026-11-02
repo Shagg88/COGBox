@@ -37,7 +37,7 @@ index b240409..0c02f8b 100644
                      "Not useful to non-developers. Allows code to write to paths "
                      "relative to game://. Used for "
 diff --git a/src/kernel/xam/xam_content.cpp b/src/kernel/xam/xam_content.cpp
-index 1c8090e..405c47f 100644
+index 1c8090e..e51748d 100644
 --- a/src/kernel/xam/xam_content.cpp
 +++ b/src/kernel/xam/xam_content.cpp
 @@ -27,6 +27,8 @@ REXCVAR_DEFINE_UINT32(license_mask, 0, "Kernel", "Set license mask for activated
@@ -49,10 +49,10 @@ index 1c8090e..405c47f 100644
  REXCVAR_DEFINE_BOOL(cogbox_content_log, true, "Kernel", "Log content (DLC / save) enumerations and opens (GitHub #79)");
  
  namespace rex {
-@@ -149,6 +151,30 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
-   if (content_data.content_type == XContentType::kMarketplaceContent) {
-     xuid = 0;
+@@ -151,6 +153,30 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
    }
+ 
+   auto content_manager = REX_KERNEL_STATE()->content_manager();
 +  // COGBox patch 57 (GitHub #55 #68 #120): what the title asked for, field by field - Shagg's friendly-fire trace showed
 +  // an OPEN_EXISTING of 'PlayerStorage.dat' on SG0_0 failing with PATH_NOT_FOUND right after the same package opened on
 +  // savedrive0, so the two requests must differ in a field the package path depends on (data xuid, title id).
@@ -78,8 +78,8 @@ index 1c8090e..405c47f 100644
 +    }
 +  }
  
-   auto content_manager = REX_KERNEL_STATE()->content_manager();
- 
+   if (overlapped_ptr && disposition_ptr) {
+     *disposition_ptr = 0;
 diff --git a/src/kernel/xam/xam_msg.cpp b/src/kernel/xam/xam_msg.cpp
 index 704eb0c..6c4c3cd 100644
 --- a/src/kernel/xam/xam_msg.cpp
