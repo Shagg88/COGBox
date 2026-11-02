@@ -291,3 +291,12 @@ jump_address_on_true = 0x82BDD3C0
 address = 0x82978908
 name = "Gow3TexturePoolSize"
 registers = ["r11", "r26"]
+
+# Cheats on TU6 (Shagg 2 Nov): TU6 compares a loaded file's SHA-1 (20 bytes, loop 0x82323C3C) with its stored value and
+# calls the dirty-disc error (sub_82CF8A90) when they differ - our patched GearGame.xxx (AllowCheats) differs. Before
+# `cmpwi cr6,r9,0` at 0x82323C5C (r9 = first differing byte, 0 = same): extras.cpp sets r9 = 0 only while --gow3_cheats
+# or --gow3_unlock_mutators is on, and logs it.
+[[entrypoint.midasm_hook]]
+address = 0x82323C5C
+name = "Gow3Tu6PackageHashOk"
+registers = ["r9"]

@@ -107,7 +107,11 @@ struct App {
 };
 
 void set_message(App &a, const std::string &m, bool bad = false);
-void report_now(App &a, int g, const std::string &session);   // page.cpp: the About tab problem report
+void report_now(App &a, int g, const std::string &session, bool versionOk = false);   // page.cpp: the About tab problem report
+// page.cpp: the game version or title update isn't one COGBox expects (and the player hasn't said that file works)
+bool untested_version(const App &a, int g);
+// page.cpp: after a report: its folder opens with the zip selected and a pre-filled GitHub issue opens (Shagg 2 Nov)
+void report_share(App &a, int g, const std::string &zip, const std::string &what);
 // Job 523: a controller button's name for the connected pad - "A" on Xbox, "Cross" on PlayStation (A B X Y LB RB Back Start).
 const char *pad_name(const App &a, const char *xbox);
 void set_borderless(App &a, bool on);   // job 523: saved in CogBox.ini [Window] Borderless
