@@ -515,6 +515,12 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
       std::ifstream in(edited != map.end() ? edited->second : e.path(), std::ios::binary);
       std::string text((std::istreambuf_iterator<char>(in)), {}), outText;
       std::set<std::string> listed;
+      // GitHub #122 (KiltedKernel): Gears 1 / 3 / Judgment tables have 4 fields per line (<size> <usize> <path> <md5>),
+      // Gears 2's 5 (<size> <usize> <sector> <path> <md5>). Each line keeps its own layout; added files take the
+      // table's layout and go FIRST (the game stops reading at the table's own last line) and only into the main table
+      // (Xbox360TOC.txt), not the language ones, when there is one.
+      std::string added;
+      int fields_seen = 0;
       size_t p = 0;
       int changed = 0;
       while (p < text.size()) {
@@ -524,28 +530,36 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
         p = nl + 1;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         std::istringstream ls(line);
-        std::string size, usize, sector, path, md5;
-        if (ls >> size >> usize >> sector >> path) {
-          ls >> md5;
+        std::vector<std::string> tok;
+        for (std::string t; ls >> t;) tok.push_back(t);
+        if (tok.size() == 4 || tok.size() == 5) {
+          if (!fields_seen) fields_seen = int(tok.size());
+          const std::string& path = tok.size() == 5 ? tok[3] : tok[2];
           std::string k = RelKey(path);
           while (k.rfind("..\\", 0) == 0) k.erase(0, 3);
           listed.insert(k);
           auto it = files.find(k);
           if (it != files.end()) {
-            line = std::to_string(fs::file_size(it->second, ec)) + " 0 " + sector + " " + path + " " + Md5Hex(it->second);
+            line = std::to_string(fs::file_size(it->second, ec)) + " 0 " + (tok.size() == 5 ? tok[2] + " " : std::string()) + path + " " +
+                   Md5Hex(it->second);
             ++changed;
           }
         }
         outText += line + "\r\n";
       }
+      bool has_main = false;
+      for (const auto& e2 : fs::directory_iterator(topdir, ec))
+        if (ModLower(rex::path_to_utf8(e2.path().filename())) == "xbox360toc.txt") has_main = true;
+      const bool add_here = !has_main || tl == "xbox360toc.txt";
       for (const auto& [k, host] : files) {
-        if (listed.count(k) || k.rfind(top + "\\", 0) != 0) continue;
+        if (!add_here || listed.count(k) || k.rfind(top + "\\", 0) != 0) continue;
         std::string rel = rex::path_to_utf8(host.filename());
         std::string guest = "..\\" + rex::path_to_utf8(topdir.filename()) + "\\" + k.substr(top.size() + 1);
         guest = guest.substr(0, guest.size() - rel.size()) + rel;   // keep the mod file's own name casing
-        outText += std::to_string(fs::file_size(host, ec)) + " 0 0 " + guest + " " + Md5Hex(host) + "\r\n";
+        added += std::to_string(fs::file_size(host, ec)) + (fields_seen == 5 ? " 0 0 " : " 0 ") + guest + " " + Md5Hex(host) + "\r\n";
         ++changed;
       }
+      outText = added + outText;
       if (!changed) continue;
       const fs::path tocOut = out_dir / tname;
       std::ofstream o(tocOut, std::ios::binary | std::ios::trunc);
