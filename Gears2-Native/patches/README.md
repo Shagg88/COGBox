@@ -61,6 +61,16 @@ Then move the third-party submodules to the tags in `sdk-pins.txt` and configure
   Gears 3 rewrites GearsCheckpoint<N>.sav from offset 0 through an OPEN_IF handle and never shortens it: Bon Voyage's
   slot 2 stayed 336,119 bytes after ~141 KB rewrites, and its bytes past the largest rewrite (0x24005) equal the older
   save's.
+- `sdk-patch58-g3-online-xuid-save-convert.diff` (GitHub #68, jobs 1066 / 1067; COGBox 0.4.0's runtime, after 57): the
+  Gears 3 friendly-fire / "killed out of nowhere" fix, ported from Xenia Canary. `NetDll_XNetRandom` fills the buffer
+  with real random bytes (a locked `std::mt19937_64`; a guest NULL is refused). `XamUserGetSigninInfo` answers "online
+  XUID" with 0 for a local profile, **for Gears 3 only** (title 4D5308AB); every other game keeps the old answer, so
+  its saves are untouched. Because Gears 3 signs PlayerStorage.dat and its profile settings (63E83FFF + FFE + FFD) with
+  SHA-1(online XUID + data), `kernel_state.cpp` converts old COGBox saves once at start-up: a save still signed with
+  the offline XUID is re-signed with 8 zero bytes (data unchanged). The first file is backed up once as
+  `<file>.pre-xuid0` (verified by size before anything is written), and the new file is written to `<file>.cogbox-tmp`
+  and renamed over the original. Logged as `cogbox_save_convert:`. A converted save makes 0.3.x reset it, so restore
+  the `.pre-xuid0` files before going back. Made from the live SDK's `.pre1066` sources.
 - `sdk-patch15` to `sdk-patch37` are the separate patches that went into `rexglue-sdk.diff`. They're kept
   for reference only, so don't apply them again.
 - `sdk-patch16-zpd-pairing-UNBUILT.diff` was never built. It isn't in any release.
