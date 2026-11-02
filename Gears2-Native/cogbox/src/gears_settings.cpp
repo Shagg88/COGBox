@@ -334,6 +334,11 @@ std::vector<Option> make_options(Game g) {
                "TU4, Gears 1: TU5). Disc-only versions are no longer supported.", 324), "version");
     add(choice("Players", "Players", Tab::Gameplay, PG, { "1", "2 (split-screen)", "3 (split-screen)", "4 (split-screen)" }, 0,
                "Local split-screen co-op (one controller each).", 325), "players");
+    // GitHub #136 (ebercr): two-player split side by side. The engine's own viewport setting, sent as a console command
+    // once player 1 exists (Gears 3's --ue3_exec); the reporter's Back-button binding showed the game honours it.
+    add(choice("SplitLayout", "Two-player split", Tab::Gameplay, PG, { "Top and bottom (game's)", "Side by side" }, 0,
+               "Experimental - how the screen is split for 2 players. Side by side suits ultrawide monitors. 3 and 4 players keep "
+               "the game's own split.", 325), "splitlayout");
     // 0.3.5 (GitHub #72, SDK patch 49b): System Link over a LAN or a LAN VPN (Radmin VPN, ZeroTier, Hamachi). Off = the
     // runtime behaves exactly as before ("No Network Connection").
     add(make("SystemLink", "System Link - LAN play (experimental)", Tab::Gameplay, Kind::Bool, PG, 0,
@@ -467,6 +472,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g != Game::Gears3) return no(not_yet(gi));
         if (ver == Version::TitleUpdate && env.update_ready)
             return no("Gears 3: not with Title Update 6 yet (it shows a dirty-disc error with it).");
+    } else if (f == "splitlayout") {   // GitHub #136: needs the port's --ue3_exec (Gears 3 so far)
+        if (g != Game::Gears3) return no(not_yet(gi, "needs its console-command support"));
+        if (!cap_exe(env, "ue3_exec")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "levelsel") {
         if (g != Game::Judgment) return no(not_yet(gi));
     } else if (f == "inifx") {   // motion blur, depth of field, lens flares: [SystemSettings] switches
@@ -553,6 +561,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
     else if (o.id == "RealOcclusion" && (s.i("Api") != 0 || env.wine)) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // PR #43
     else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
+    else if (o.id == "SplitLayout") on = s.i("Players") == 1;                       // GitHub #136: 2 players only
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
     else if (o.id == "WineApi") on = env.wine && s.i("Api") == 0;                     // Shagg 13:16, job 643
     a.ok = on;
@@ -1122,6 +1131,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
+    if (avail("SplitLayout") && s.i("SplitLayout") == 1)   // GitHub #136 (avail: Gears 3, 2 players)
+        a.push_back("--ue3_exec=" + q("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL"));
     if (on("SystemLink")) a.push_back("--net_system_link=true");
     // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=). Only with a runtime that
     // has SDK patch 54; it keeps 15 letters / digits / spaces. The profile's save folder is not renamed.
