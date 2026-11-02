@@ -49,6 +49,13 @@
 
 REXCVAR_DEFINE_BOOL(gow3_mod_chapters, true, "Gears3",
                     "Mods' campaign chapters (32-49) and content packages (KiltedKernel's mod support)");
+REXCVAR_DEFINE_BOOL(gow3_mod_content_packages, true, "Gears3",
+                    "Load the content packages mods name (mod.ini content = ...); false to test without them");
+REXCVAR_DEFINE_BOOL(gow3_mod_file_log, false, "Gears3",
+                    "Developers: log every package the game opens (to see where a mod's chapter stops loading)");
+
+// layer 2 shader_prebuild.cpp: the one file-open observer, with a listener chained after it
+void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));
 
 namespace {
 namespace obj = ue3::obj;
@@ -141,14 +148,12 @@ void MakeName(const std::string& s, uint32_t& index, uint32_t& number) {
   number = obj::Read32(out + 4);
 }
 
-// ChapterLevelNames grown to the last new chapter, the new chapters' maps in it (game thread, once)
-void FillChapterTable() {
+// ChapterLevelNames grown to the last new chapter, the new chapters' maps in it (game thread, once). False while the
+// class isn't ready yet (its properties are linked a little after its default object exists): asked again later.
+bool FillChapterTable() {
   const uint32_t types = g_types;
   const int off = obj::PropertyOffset(obj::ClassOf(types), "ChapterLevelNames");
-  if (off < 0) {
-    REXLOG_WARN("mod chapters: Default__GearTypes has no ChapterLevelNames");
-    return;
-  }
+  if (off < 0) return false;
   const uint32_t arr = types + uint32_t(off);
   const uint32_t oldData = obj::Read32(arr), oldCount = obj::Read32(arr + 4);
   const uint32_t count = std::max<uint32_t>(oldCount, uint32_t(g_chapters.rbegin()->first + 1));
@@ -169,6 +174,7 @@ void FillChapterTable() {
   obj::Write32(arr + 4, count);
   obj::Write32(arr + 8, count);
   REXLOG_INFO("mod chapters: {} chapter maps (was {})", count, oldCount);
+  return true;
 }
 
 // ---- while a new chapter's map is loaded ----------------------------------------------------------------------------
@@ -178,7 +184,12 @@ void ChapterKeeper() {
   int chapter = -1;
   for (;;) {
     std::this_thread::sleep_for(std::chrono::seconds(2));
-    if (!g_tableDone || g_chapters.empty()) continue;
+    if (!g_tableDone || g_chapters.empty() || !obj::Ready()) continue;
+    if (static int t = 0; ++t % 5 == 0 && !g_chapterGame)   // (every 10 s until a chapter map is seen)
+      for (auto& [n, map] : g_chapters) {
+        const uint32_t p = obj::FindObject(map.c_str());
+        REXLOG_INFO("mod chapters: chapter {} map {} {}", n, map, p ? "in memory (class " + obj::ObjectName(obj::ClassOf(p)) + ")" : "not loaded");
+      }
     static uint32_t gameClass = 0, griClass = 0;   // (looked up until found: GearGame's classes load after boot)
     if (!gameClass) gameClass = obj::FindClass("GearGameSP_Base");
     if (!griClass) griClass = obj::FindClass("GearGRI_SP");
@@ -452,7 +463,19 @@ void ApplyScan() {
   g_scanBusy = false;
 }
 
+// the requests sent at once (game thread): from the boot (FName hook), before any chapter's map can import from them
+void SendContentPackages() {
+  if (!REXCVAR_GET(gow3_mod_content_packages)) g_contentOff = true;
+  if (g_contentOff) return;
+  if (g_requests.empty())
+    for (const std::string& n : ue3::ModContentPackages()) g_requests.push_back({n});
+  if (g_requests.empty()) { g_contentOff = true; return; }
+  for (auto& r : g_requests)
+    if (!r.sent) Send(r);
+}
+
 void ContentPackagesTick() {  // game thread
+  if (!REXCVAR_GET(gow3_mod_content_packages)) g_contentOff = true;
   if (g_contentOff) return;
   if (g_requests.empty()) {
     for (const std::string& n : ue3::ModContentPackages()) g_requests.push_back({n});
@@ -485,28 +508,16 @@ void ContentPackagesTick() {  // game thread
   if (!pending && !g_scanBusy) g_contentOff = true;
 }
 
-void Worker() {
-  ReadChapters();
-  for (int tries = 0; !obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar); tries++) {
-    if (tries % 200 == 199)
-      REXLOG_INFO("mod chapters: engine tables not found yet (names var {:08X} -> {:08X}, objects var {:08X} -> {:08X})",
-                  gow3::addr::kGNamesVar, obj::Read32(gow3::addr::kGNamesVar), gow3::addr::kGObjectsVar,
-                  obj::Read32(gow3::addr::kGObjectsVar));
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  }
-  if (g_chapters.empty()) return;
-  // polled closely: a chapter URL on the command line reads the table seconds after GearGame.xxx has loaded
-  for (int tries = 0; tries < 6000 && !g_types; tries++) {
-    g_types = obj::FindObject("Default__GearTypes");
-    if (!g_types) std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  }
-  if (!g_types) REXLOG_WARN("mod chapters: Default__GearTypes not found");
-  else REXLOG_INFO("mod chapters: Default__GearTypes at {:08X}; the chapter table is filled on the next game tick", uint32_t(g_types));
-}
+void Worker() { ReadChapters(); }
 }  // namespace
 
 // OnPostSetup, after the mods' config is merged (Ue3InstallConfigEditsIfRequested)
 void Gow3InstallModChapters() {
+  if (REXCVAR_GET(gow3_mod_file_log))
+    Ue3ShaderPrebuildChainFileOpened([](std::string_view guest, const std::filesystem::path* host) {
+      if (guest.size() > 4 && (guest.ends_with(".xxx") || guest.ends_with(".XXX") || guest.ends_with(".txt")))
+        REXLOG_INFO("mod files: opened {}{}", guest, host ? " <- " + rex::path_to_utf8(*host) : std::string());
+    });
   if (!REXCVAR_GET(gow3_mod_chapters) || g_started.exchange(true)) return;
   std::thread(Worker).detach();
   std::thread(ChapterKeeper).detach();
@@ -519,9 +530,22 @@ void Gow3InstallModChapters() {
 // once the first map has loaded). The table's own names come through the same constructor: not re-entered.
 void Gow3ModFName() {
   static thread_local bool busy = false;
-  if (busy || g_tableDone || !g_types || g_chapters.empty()) return;
+  static std::atomic<uint32_t> calls{0};
+  if (busy || g_tableDone || (g_chapters.empty() && ue3::ModContentPackages().empty()) || (++calls & 255)) return;
   busy = true;
-  if (!g_tableDone.exchange(true)) FillChapterTable();
+  // the engine's tables and Default__GearTypes looked up here, on the game thread, as the boot goes (cheap once the
+  // names read so far are cached): the table is filled the first time GearTypes' default object exists
+  if (obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar)) {
+    if (!g_types) g_types = obj::FindObject("Default__GearTypes");
+    if (g_types && !g_tableDone.exchange(true)) {
+      if (g_chapters.empty() || FillChapterTable()) {
+        REXLOG_INFO("mod chapters: table filled at FName call {}", calls.load());
+        SendContentPackages();
+      } else {
+        g_tableDone = false;   // (its properties not linked yet)
+      }
+    }
+  }
   busy = false;
 }
 
@@ -529,9 +553,13 @@ void Gow3ModFName() {
 void Gow3ModChaptersTick() {
   if (!g_started) return;
   if (g_restore.exchange(false)) RestoreSections();
-  if (!g_tableDone && g_types && !g_chapters.empty()) {
-    g_tableDone = true;
-    FillChapterTable();
+  if (!obj::Ready() && !obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar)) return;
+  if (!g_tableDone && !g_chapters.empty()) {
+    if (!g_types) g_types = obj::FindObject("Default__GearTypes");
+    if (g_types && !g_tableDone.exchange(true)) {
+      if (FillChapterTable()) SendContentPackages();   // (before a chapter's map, which imports from them, can load)
+      else g_tableDone = false;
+    }
   }
   ContentPackagesTick();
 }
