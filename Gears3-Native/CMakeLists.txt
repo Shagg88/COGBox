@@ -73,8 +73,11 @@ rexglue_apply_target_settings(gn_layer0_xenos)
 # Layer 2: Unreal Engine 3.
 add_library(gn_layer2_ue3 STATIC src/layer2_ue3/launch_command_line.cpp src/layer2_ue3/config_bundle.cpp
             src/layer2_ue3/config_install.cpp src/layer2_ue3/package_patch.cpp src/layer2_ue3/lzx.cpp
-            src/layer2_ue3/console.cpp)
+            src/layer2_ue3/console.cpp src/layer2_ue3/mod_extras.cpp src/layer2_ue3/objects.cpp
+            src/layer2_ue3/modcore/modcore.cpp)
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
+# modcore (MIT, from KiltedKernel's Gears 3 port): mod.ini rules, config fragments, bare-file mods (ue3/mod_extras.h)
+target_include_directories(gn_layer2_ue3 PRIVATE src/layer2_ue3)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer0_xenos)
 rexglue_apply_target_settings(gn_layer2_ue3)
 # notes/78 chapter recipes: Gears 2's package shader reader (patch 0068, game-free UE3 code that already reads Gears 3's
@@ -92,6 +95,7 @@ set(GOW3_SOURCES
     src/layer3_gow3/game_patches.cpp
     src/layer3_gow3/extras.cpp
     src/layer3_gow3/mouse_look.cpp
+    src/layer3_gow3/mod_chapters.cpp
 )
 if(WIN32)
     add_executable(gow3 WIN32 ${GOW3_SOURCES})
