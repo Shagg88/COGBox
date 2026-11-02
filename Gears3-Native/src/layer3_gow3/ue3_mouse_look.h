@@ -82,6 +82,16 @@ REXCVAR_DEFINE_DOUBLE(ue3_mouse_scale, 1.0, "COGBox", "Native mouse look: multip
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_fov_comp, 1.0, "COGBox",
                       "Native mouse look: multiplier that undoes the launcher's FOV / ultrawide widening (GitHub #52)")
     .range(0.25, 4.0);
+// GitHub #114: the same FOVScale makes a camera the game widens itself turn faster per count: down but not out
+// (GameplayCam_DBNO FOVAngle 110 against the default 80 = 1.375x), roadie run. The view's field of view (degrees, before
+// the ultrawide widening) is noted once per view at the projection set-up (the ultrawide FOV hook site, which runs
+// whether or not ultrawide is on) - the value PlayerController.GetFOVAngle gives PlayerInput. While it is wider than
+// this reference (times the launcher's FOV %), the mouse is scaled by reference / FOV, so it turns as with the default
+// camera. Narrower views (zoom) keep the console's slower scaling. 0 = off.
+REXCVAR_DEFINE_DOUBLE(ue3_mouse_wide_fov_ref, 80.0, "COGBox",
+                      "Native mouse look (GitHub #114): cameras wider than this FOV (degrees, x the launcher's FOV %) "
+                      "turn as fast per count as this one (DBNO, roadie run). 0 = off")
+    .range(0.0, 170.0);
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_min_counts, 2.0, "COGBox",
                       "Native mouse look (GitHub #115): smaller motion waits, per axis, until it reaches this many counts "
                       "(or --ue3_mouse_hold_ms), so slow zoomed aiming isn't lost to the engine's whole rotation units. 0 = off")
@@ -136,6 +146,16 @@ inline thread_local bool g_injecting = false;
 inline std::mutex g_bank_mutex;
 inline double g_bank_dx = 0, g_bank_dy = 0;
 inline std::atomic<int64_t> g_last_mouse{0}, g_last_pad{0};
+inline std::atomic<float> g_view_fov{0.0f};  // GitHub #114: the latest view's field of view, degrees (0 = none yet)
+
+// GitHub #114: the factor for a camera wider than the reference; 1 otherwise.
+inline double WideCameraComp() {
+  const double ref = REXCVAR_GET(ue3_mouse_wide_fov_ref);
+  const double fov = g_view_fov.load(std::memory_order_relaxed);
+  if (ref <= 0 || !(fov > 1.0 && fov < 170.0)) return 1.0;
+  const double widened_ref = ref / REXCVAR_GET(ue3_mouse_fov_comp);  // fov_comp = 100 / launcher FOV %
+  return fov > widened_ref ? widened_ref / fov : 1.0;
+}
 
 inline void Drain(double* dx, double* dy) {
   std::lock_guard<std::mutex> l(g_bank_mutex);
@@ -201,7 +221,8 @@ inline bool Take(double* x, double* y) {
   double dx, dy;
   DrainReady(&dx, &dy);
   if (dx == 0 && dy == 0) return false;
-  const double s = REXCVAR_GET(ue3_mouse_scale) * REXCVAR_GET(ue3_mouse_fov_comp);  // GitHub #52
+  const double s = REXCVAR_GET(ue3_mouse_scale) * REXCVAR_GET(ue3_mouse_fov_comp)  // GitHub #52
+                   * WideCameraComp();                                                  // GitHub #114
   *x = dx * s;
   *y = -dy * s;
   if (REXCVAR_GET(ue3_mouse_invert_y)) *y = -*y;
@@ -331,6 +352,11 @@ inline void AxisHook(PPCContext& ctx, uint8_t* base) {
 }
 
 }  // namespace detail
+
+// GitHub #114: each view's field of view in degrees (the projection set-up calls this once per view).
+inline void NoteViewFov(double fov) {
+  if (fov > 1.0 && fov < 170.0) detail::g_view_fov.store(float(fov), std::memory_order_relaxed);
+}
 
 // Before the input system reads the mouse (OnPreSetup or OnPostSetup start): only when the launcher asked for it.
 inline bool Wanted() { return REXCVAR_GET(ue3_mouse_look) && rex::cvar::Query<bool>("mnk_mouse"); }

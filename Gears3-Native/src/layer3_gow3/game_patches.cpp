@@ -18,6 +18,7 @@
 #include <xenos/display_size.h>
 
 #include "gow3_addresses.h"
+#include "mouse_look.h"
 
 #include <algorithm>
 #include <atomic>
@@ -159,6 +160,7 @@ bool Wide() { return WideHeight() != 0; }
 }  // namespace
 
 void Gow3UltrawideFov(PPCRegister& f0, PPCRegister& f31) {  // after `lfs f0,0x630(r27)` at 0x8261BEF0
+  CogMouseLookNoteFov(f31.f64);  // GitHub #114: the camera's own FOV, also without ultrawide
   if (!Wide()) return;
   const double game = f0.f64, fov = f31.f64;
   double factor = double(0.0109750f);  // Canary's
