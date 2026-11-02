@@ -63,6 +63,28 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 
 
+New in 0.4.2
+------------
+- Vulkan is no longer experimental: purple / wrong textures in Gears 3 and Judgment fixed, other picture
+  fixes, and Vulkan uses less CPU per frame. DirectX 12 stays the default.
+- Ambient occlusion (Gears 2 / Gears 3, Graphics tab): XeGTAO high / ultra - sharper, full-resolution contact
+  shadows. Default: Game's own. Thanks to gmihaic (GitHub PR #139).
+- Anti-aliasing: SMAA T2x (Gears 2 / Gears 3) - smoother edges and much less shimmer, DirectX 12 and Vulkan
+  (PR #139).
+- DLSS / FSR / XeSS: better motion vectors and depth in Gears 2 and Gears 3 (PR #139).
+- About tab: "Report a problem" makes the report zip, opens a pre-filled GitHub issue and shows the zip to
+  drag into it.
+- Untested game versions or title updates still play, with a clearer warning; please don't report problems
+  you get with them.
+- Gears 2: ultrawide 32:9 is no longer cut to 21:9 (GitHub #137); the camera turns the same amount per mouse
+  movement in every view (#52).
+- Gears 3: two-player split can be side by side (experimental, #136).
+- In-game menu: mouse control, and the game no longer gets input while the menu is open (based on PR #134 by
+  Flippage).
+- Launcher: row descriptions wrap inside the page (#123).
+- Thanks to the contributors whose pull requests are in this version: gmihaic (PR #139) and Flippage (PR #134).
+
+
 New in 0.4.1
 ------------
 - Steam Deck / Linux (Proton): controllers work in the games again - the game now finds a pad that

@@ -965,6 +965,10 @@ static void about_tab(App &a, int g)
         }
         row_desc("Translations are written by the project; corrections are welcome on GitHub (the lang folder).");
     }
+    // Shagg 2 Nov: credit to the people whose pull requests are in COGBox (GitHub names only)
+    row_desc("Thanks to the contributors: gmihaic (XeGTAO ambient occlusion, upscaler fixes, SMAA T2x - PR #139), "
+             "Flippage (in-game menu mouse control - PR #134), HubertFer (System Link) and legoliamneeson (PR #43).");
+    if (small_button("Contributors on GitHub")) shell_open("https://github.com/Shagg88/COGBox/graphs/contributors");
     {   // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=, SDK patch 54)
         static char buf[16] = {};
         static bool loaded = false;
