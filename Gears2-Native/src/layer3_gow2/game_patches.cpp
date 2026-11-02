@@ -246,15 +246,20 @@ void Gow2MaxTickRate(PPCRegister& f1) {
 // Stage 7.5 ultrawide hooks (see the top of the file).
 // ---- 0.3.0: any ultrawide shape (GitHub #60: 21:9 and 32:9) --------------------------------------------------------
 // --gow2_aspect picks the shape when gow2_ultrawide is on: "" = the Canary patch's own 21:9 (1280x550, unchanged), "auto"
-// = the monitor's shape, or "21:9", "32:9", "3440:1440", "3.56". The scene height is 1280 / aspect (even, 536-720).
+// = the monitor's shape, or "21:9", "32:9", "3440:1440", "3.56". The scene height is 1280 / aspect (even, 360-720; GitHub #137).
 // The field-of-view factor is Canary's 21:9 value times how much more the shape widens than 21:9 does, at the half
 // angle (34.05 deg) where Canary's 21:9 factor is exact (the hooks don't see the game's own field of view).
-// GitHub #94: the clamp below as a switch, so a PC job can reproduce the 32:9 trap (360) and read where it is. Players
-// keep 536 until the pool's capacity is raised.
-REXCVAR_DEFINE_INT32(gow2_ultrawide_min_rows, 536, "Gears2",
-                     "With --gow2_ultrawide: the fewest scene rows (536 = 3440x1440; fewer traps in the render-target "
-                     "pool setup - for diagnosis only, GitHub #94)")
+// GitHub #94: the clamp below as a switch, so a PC job can reproduce the 32:9 trap (360) and read where it is.
+// GitHub #137: 0.4.0 fixed the trap (gow2_rt_pool_grow, job 1028d: 32:9 / 360 rows, TU6 and disc, no crash) but the
+// floor stayed 536, so 32:9 was still drawn 2.39:1 and pillarboxed. The floor is now 360 rows (32:9, the shape job
+// 1028d ran) while the pool fix is on; with --gow2_rt_pool_grow=false the old 536 still applies, since narrower than that traps.
+REXCVAR_DEFINE_INT32(gow2_ultrawide_min_rows, 360, "Gears2",
+                     "With --gow2_ultrawide: the fewest scene rows (360 = 32:9, the widest tested; with --gow2_rt_pool_grow=false "
+                     "at least 536 = 3440x1440, as fewer trap in the render-target pool setup - GitHub #94/#137)")
     .range(320, 720);
+REXCVAR_DEFINE_BOOL(gow2_rt_pool_grow, true, "Gears2",
+                    "GitHub #94: a render target too large for its pool (Gears 2 wider than ~2.39:1) gets memory of its "
+                    "own instead of the game's trap");
 namespace uwshape {
 inline double ParseAspect(const std::string& v) {
   double a = 0, b = 0;
@@ -280,10 +285,11 @@ inline uint32_t Height(const std::string& v, const char* tag) {
   // GitHub #60/#73: below ~536 rows (wider than ~2.39:1) the game's render-target pool setup sub_8281C680 traps
   // (size from sub_829BABD8, page-aligned, > the pool's capacity at +20 -> sub_82AC6098). 536 = 3440x1440, the widest
   // shape reported working. Wider monitors get a 1280x536 picture, pillarboxed by gow2_present_frame_aspect.
-  const uint32_t kMinRows = uint32_t(REXCVAR_GET(gow2_ultrawide_min_rows));
+  uint32_t kMinRows = uint32_t(REXCVAR_GET(gow2_ultrawide_min_rows));
+  if (!REXCVAR_GET(gow2_rt_pool_grow)) kMinRows = std::max(kMinRows, 536u);   // the trap is back without the pool fix
   const uint32_t want = uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u;
   const uint32_t h = std::clamp(want, kMinRows, 720u);
-  if (h != want) REXLOG_INFO("{}: aspect {:.4f} wants {} rows; clamped to {} (32:9 is pillarboxed until the wide-render fix)", tag, aspect, want, h);
+  if (h != want) REXLOG_INFO("{}: aspect {:.4f} wants {} rows; clamped to {} (pillarboxed)", tag, aspect, want, h);
   REXLOG_INFO("{}: aspect '{}' = {:.4f} -> scene 1280x{}", tag, v, aspect, h);
   return h;
 }
@@ -356,9 +362,7 @@ void Gow2UltrawideUiHeight(PPCRegister& r3) {
 // the pool), and the check is passed (r11 = r10). Nothing changes for a target that fits.
 // Sites (checked against the guest code words before use, else left alone): cmplw cr6,r10,r11 (7F0A5840) then 16 bytes
 // on lwz r4,16(r31) (809F0010): TU6 0x8281C718 / 0x8281C728, disc 0x8280CB4C / 0x8280CB5C (job 1028's shape search).
-REXCVAR_DEFINE_BOOL(gow2_rt_pool_grow, true, "Gears2",
-                    "GitHub #94: a render target too large for its pool (Gears 2 wider than ~2.39:1) gets memory of its "
-                    "own instead of the game's trap");
+// (gow2_rt_pool_grow is defined above, beside gow2_ultrawide_min_rows, which depends on it - GitHub #137)
 namespace rtpool {
 struct Extra { uint32_t pool, size, va; };
 inline std::mutex g_mutex;
