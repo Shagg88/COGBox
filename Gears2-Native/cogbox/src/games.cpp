@@ -100,6 +100,7 @@ static bool fp_match(const Fingerprint &f, const std::string &full, const std::s
 struct ReportedXex { GameId game; const char *sha1; };
 static const ReportedXex k_reportedXex[] = {
     { G_GEARS1, "c25a48e7cd98fc61aa4369b614dce782c4cb2152" },   // #127, 13,086,720 bytes (COGBox 0.3.7)
+    { G_GEARS1, "5ed6f2a3746bfe02a994a226a10cdacca142030f" },   // #88, 3,252,224 bytes (COGBox 0.3.0)
 };
 bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code)
 {
@@ -122,6 +123,7 @@ static const ReportedXexp k_reportedXexp[] = {
     { G_JUDGMENT, "730af13877e29b78491fa3df5e07878ffd0426c0" }, // #70, Title Update 4, 1,888,256 bytes
     { G_GEARS3, "d05adc22bff6197229fc3685558ba5bed6b30abf" },   // #84, 1,513,472 bytes
     { G_GEARS3, "b2a6e5308155650448b27b74e169101596abc98d" },   // #86, Title Update 6, 1,908,736 bytes
+    { G_GEARS3, "67b0c9c5fcd8ed15bcc79eb62e273d75e6e1ece6" },   // #109, Title Update 6, 1,908,736 bytes (COGBox 0.3.5)
 };
 bool xexp_is_tested(const GameDef &d, const std::string &full, const std::string &code)
 {
