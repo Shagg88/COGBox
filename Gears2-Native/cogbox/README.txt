@@ -175,6 +175,12 @@ screen). The games use Vulkan there by themselves (DirectX 12 does not start und
 Steam Input should present the controller as a standard gamepad. Problem reports from Linux
 help a lot: "Make a problem report" saves them in COGBox's reports folder (and opens it).
 
+One Steam entry per game (Windows or Linux): add CogBox.exe again for each game and set its
+Launch Options to --play gears1, --play gears2, --play gears3 or --play judgment - COGBox then
+starts that game straight away with your settings. Adding gow3.exe (or another game program)
+itself does not work: it stops with "--game_data_root was not provided", because COGBox passes
+it the game folder and your settings.
+
 
 Where things are
 ----------------

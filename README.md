@@ -123,7 +123,9 @@ Only Gears 3 saves are converted - Gears of War, Gears 2 and Judgment saves are 
 - **Mods** (Mods on the About tab): add a mod's .zip or drop its folder into the game's `mods` folder, tick it, set the
   order. A mod is laid out like the game's own files (`GearGame\...`) and replaces or adds files without changing your
   copy; programs are never taken from a mod.
-- **Desktop shortcuts** for COGBox and each game.
+- **Desktop shortcuts** for COGBox and each game. For a **Steam** entry per game, add `CogBox.exe` as a non-Steam game
+  with the Launch Options `--play gears1` / `gears2` / `gears3` / `judgment` - not the game's own `gow3.exe` etc., which
+  stops with "--game_data_root was not provided" (COGBox passes the game folder and your settings).
 - **Player name** (About tab): the name every game shows for player 1 (display only, saves untouched).
 
 ### Adding DLC
