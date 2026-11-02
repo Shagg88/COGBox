@@ -156,6 +156,9 @@ bool settings_save(App &a)
 
 // ---- rows ------------------------------------------------------------------------------------------------------------
 static float g_labelW, g_ctrlW, g_rowX1;
+// GitHub #123: g_rowX1 is a screen x, but PushTextWrapPos takes a window-local x (Dear ImGui adds the window's
+// position), so the rows' descriptions wrapped that far past the right edge and were cut off. This converts it.
+static float row_wrap_x() { return g_rowX1 - ImGui::GetWindowPos().x + ImGui::GetScrollX(); }
 static const float k_rowText = 1.1f;    // the rows' text, bigger than the body font (Shagg 21:44: hard to read)
 
 static void row_label(const char *label, const std::string &desc, bool enabled)
@@ -175,7 +178,7 @@ static void row_desc(const std::string &desc)
     const std::string shown = tr(desc);   // 0.2.0
     ImGui::PushFont(F_SMALL, FS(F_SMALL) * k_rowText);
     ImGui::PushStyleColor(ImGuiCol_Text, col::dim);
-    ImGui::PushTextWrapPos(g_rowX1);
+    ImGui::PushTextWrapPos(row_wrap_x());   // GitHub #123
     ImGui::TextUnformatted(shown.c_str());
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
@@ -530,7 +533,7 @@ static void lamp_line(int state, const std::string &text_en)
     float h = ImGui::GetTextLineHeight();
     th_lamp(ImGui::GetWindowDrawList(), ImVec2(p.x + S(6), p.y + h * 0.55f), S(4.5f), state);
     ImGui::SetCursorScreenPos(ImVec2(p.x + S(20), p.y));
-    ImGui::PushTextWrapPos(g_rowX1);
+    ImGui::PushTextWrapPos(row_wrap_x());   // GitHub #123
     ImGui::TextUnformatted(text.c_str());
     ImGui::PopTextWrapPos();
 }
