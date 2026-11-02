@@ -6,6 +6,7 @@
 
 #include <rex/rex_app.h>
 #include "mouse_look.h"
+#include "main_menu_exit.h"
 
 namespace rex::ui {
 class WindowedAppContext;
@@ -66,6 +67,7 @@ class Gow2App : public rex::ReXApp {
     XenosInstallShaderWatchIfRequested();
     XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull});
     Gow2InstallLocLogIfRequested();  // GitHub #90: before the game opens its localized packages
+    Gow2InstallMainMenuExitIfRequested();
     Ue3InstallShaderPrebuildIfRequested();  // patch 0068: after the renderer (it asks whether the renderer wants them)
     XenosInstallQueryLogIfRequested(runtime(), {-32});
     XenosInstallStateCoverageIfRequested();
@@ -78,7 +80,10 @@ class Gow2App : public rex::ReXApp {
     Gow2ApplyDataPatchesIfRequested(runtime());
   }
   // Everything is set up and the game is about to start.
-  void OnPreLaunchModule() override { Ue3SetLaunchCommandLineIfRequested(); }
+  void OnPreLaunchModule() override {
+    Gow2NotifyReadyToExit();
+    Ue3SetLaunchCommandLineIfRequested();
+  }
   // The game's main thread exists but hasn't run yet.
   void OnPostLaunchModule(rex::system::XThread* thread) override { XenosHoldGuestIfRequested(thread); }
 

@@ -430,12 +430,21 @@ std::string Lower(std::string s) {
 }
 
 // The opening thread (the game's loader): copy the path and return.
-// COGBox job 659: a second listener (Judgment's loading-screen frame limit, GitHub #38). The SDK keeps one observer,
-// and this reader installs after the game's own code, so the game hands its listener here and it is told first.
-std::atomic<void (*)(std::string_view, const std::filesystem::path*)> g_chain{nullptr};
+// COGBox job 659: file-open listeners chained before this reader. Supports multiple listeners
+// (e.g. localization logging and main menu exit interception).
+using FileOpenListener = void (*)(std::string_view, const std::filesystem::path*);
+std::mutex g_chain_mutex;
+std::vector<FileOpenListener> g_chain_listeners;
 
 void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host_path) {
-  if (const auto chain = g_chain.load()) chain(guest_path, host_path);
+  std::vector<FileOpenListener> listeners;
+  {
+    std::lock_guard<std::mutex> lock(g_chain_mutex);
+    listeners = g_chain_listeners;
+  }
+  for (auto* listener : listeners) {
+    if (listener) listener(guest_path, host_path);
+  }
   if (!host_path || !g_prebuild) return;
   const std::string name = Lower(host_path->filename().string());
   const bool package = name.size() > 4 && name.ends_with(".xxx");
@@ -548,12 +557,17 @@ void ReaderThread() {
 
 }  // namespace
 
-// Job 659: a game's own file-open listener, called before this reader's (see g_chain).
+// Job 659: a game's own file-open listener, called before this reader's (see g_chain_listeners).
 void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*)) {
 #ifdef REX_FILESYSTEM_FILE_OPEN_OBSERVER
-  g_chain.store(listener);
+  if (listener) {
+    std::lock_guard<std::mutex> lock(g_chain_mutex);
+    if (std::find(g_chain_listeners.begin(), g_chain_listeners.end(), listener) == g_chain_listeners.end()) {
+      g_chain_listeners.push_back(listener);
+    }
+  }
   // Job 666: either order works - while this reader isn't on, its observer still passes every open to the game's
-  // listener (OnFileOpened tells the chain first, then returns without g_prebuild); when it goes on it sets the same one.
+  // listeners (OnFileOpened tells the chain first, then returns without g_prebuild); when it goes on it sets the same one.
   rex::filesystem::SetFileOpenObserver(&OnFileOpened);
 #else
   (void)listener;
