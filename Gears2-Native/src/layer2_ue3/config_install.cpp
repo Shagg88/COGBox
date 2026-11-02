@@ -9,6 +9,7 @@
 // where it is), except that the edited bundles' entries point at our copies. The game's files are never written.
 // Our code (MIT).
 #include <ue3/config_bundle.h>
+#include <ue3/main_menu_exit.h>
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -50,6 +51,7 @@ REXCVAR_DEFINE_STRING(ue3_voice_language, "", "Gears2",
                       "empty = the game's language");
 REXCVAR_DEFINE_STRING(ue3_ini_bundle_dir, "GearGame\\CookedXenon", "Gears2",
                       "Folder of the Coalesced_*.bin config bundles, relative to the game data root");
+REXCVAR_DEFINE_BOOL(gow_main_menu_exit, true, "ui", "Add Exit Game to the main menu; restart");
 
 namespace {
 constexpr const char* kGameDevice = "\\Device\\Harddisk0\\Partition1";
@@ -629,6 +631,24 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
   }
   REXLOG_INFO("ue3_mods: {} folder view(s); {} hash table entries updated", devices, hashed);
 }
+ue3::GameId DetermineGameId(rex::Runtime* runtime) {
+  if (runtime && runtime->kernel_state()) {
+    const uint32_t tid = runtime->kernel_state()->title_id();
+    if (tid == 0x4D53082D) return ue3::GameId::Gears2;
+    if (tid == 0x4D5308AB) return ue3::GameId::Gears3;
+    if (tid == 0x4D530A26) return ue3::GameId::Judgment;
+  }
+  if (runtime) {
+    const std::string root = Lower(rex::path_to_utf8(runtime->game_data_root()));
+    if (root.find("gears3") != std::string::npos || root.find("gow3") != std::string::npos) return ue3::GameId::Gears3;
+    if (root.find("judgment") != std::string::npos || root.find("gearsj") != std::string::npos || root.find("gowj") != std::string::npos) return ue3::GameId::Judgment;
+    if (root.find("gears2") != std::string::npos || root.find("gow2") != std::string::npos) return ue3::GameId::Gears2;
+  }
+  const std::string bdir = Lower(REXCVAR_GET(ue3_ini_bundle_dir));
+  if (bdir.find("gears3") != std::string::npos || bdir.find("gow3") != std::string::npos) return ue3::GameId::Gears3;
+  if (bdir.find("judgment") != std::string::npos || bdir.find("gearsj") != std::string::npos || bdir.find("gowj") != std::string::npos) return ue3::GameId::Judgment;
+  return ue3::GameId::Gears2;
+}
 }  // namespace
 
 void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
@@ -650,12 +670,13 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
     }
   } modsAtEnd{runtime, &mods, &modDirs};
   const std::string spec = REXCVAR_GET(ue3_ini_edits);
-  if (spec.empty()) return;
+  const bool exit_menu = REXCVAR_GET(gow_main_menu_exit);
+  if (spec.empty() && !exit_menu) return;
   std::string error;
-  const std::vector<ue3::ConfigEdit> edits = ue3::ParseConfigEdits(spec, &error);
+  const std::vector<ue3::ConfigEdit> edits = spec.empty() ? std::vector<ue3::ConfigEdit>{} : ue3::ParseConfigEdits(spec, &error);
   if (!error.empty()) REXLOG_WARN("ue3_ini_edits: {}", error);
-  if (edits.empty()) return;
-  EditTitleUpdateInis(runtime, edits);   // 0.2.1
+  if (edits.empty() && !exit_menu) return;
+  if (!edits.empty()) EditTitleUpdateInis(runtime, edits);   // 0.2.1
   std::string rel = REXCVAR_GET(ue3_ini_bundle_dir);
   const fs::path src_dir = runtime->game_data_root() / fs::path(rel);
   const fs::path out_dir = runtime->user_data_root() / "ini-edits";
@@ -696,7 +717,20 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
       continue;
     }
     std::vector<std::string> log;
-    const int changed = ue3::ApplyConfigEdits(bundle, edits, &log);
+    int changed = 0;
+    if (!edits.empty()) {
+      changed += ue3::ApplyConfigEdits(bundle, edits, &log);
+    }
+    if (exit_menu) {
+      const ue3::GameId game = DetermineGameId(runtime);
+      const int exit_changed = ue3::ApplyMainMenuExitToBundle(game, n, bundle);
+      if (exit_changed > 0) {
+        changed += exit_changed;
+        if (n == "Coalesced_int.bin" || written == 0) {
+          REXLOG_INFO("main_menu_exit: {}: applied Exit Game to {} key(s)", n, exit_changed);
+        }
+      }
+    }
     if (n == "Coalesced_int.bin" || written == 0)
       for (const std::string& l : log) REXLOG_INFO("ue3_ini_edits: {}: {}", n, l);
     const std::vector<uint8_t> edited = ue3::WriteConfigBundle(bundle);
@@ -706,7 +740,7 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
       REXLOG_WARN("ue3_ini_edits: could not write {}", (out_dir / n).string());
       continue;
     }
-    if (changed == 0) REXLOG_WARN("ue3_ini_edits: {}: no edit matched anything", n);
+    if (changed == 0 && !spec.empty()) REXLOG_WARN("ue3_ini_edits: {}: no edit matched anything", n);
     const std::vector<uint8_t>& before = original.empty() ? bytes : original;
     const int table = UpdateHashTable(runtime, n, ue3::Sha1(before.data(), before.size()),
                                       ue3::Sha1(edited.data(), edited.size()));
