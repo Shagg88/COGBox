@@ -96,6 +96,9 @@ class SinglePlayerPads final : public rex::input::DeviceAssignment {
 // pads thread below retries; true once decided.
 bool InstallPadAssignment(rex::Runtime* runtime) {
   auto* input = runtime ? static_cast<rex::input::InputSystem*>(runtime->input_system()) : nullptr;
+  if (!input) {   // the dialogs can come before the runtime has its input system (job 1103's logs): ask the runtime itself
+    if (auto* rt = rex::Runtime::instance()) input = static_cast<rex::input::InputSystem*>(rt->input_system());
+  }
   if (!input) return false;
   const uint32_t players = rex::cvar::Query<uint32_t>("local_players");
   const bool script2 = !rex::cvar::Query<std::string>("gow2_input_script2").empty();
