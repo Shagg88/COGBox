@@ -360,6 +360,8 @@ if(GN_BUILD_TESTS)
         src/layer0_xenos/renderer/prompt_overlay_compositor.cpp
         tests/layer0_device_monitor_test.cpp
         src/layer0_xenos/input/prompt_device_monitor.cpp
+        tests/layer0_ingame_menu_test.cpp
+        src/layer0_xenos/ingame_menu.cpp
         tests/layer2_config_bundle_test.cpp
         src/layer2_ue3/config_bundle.cpp
         tests/layer2_prebuild_lzx_test.cpp
@@ -368,6 +370,7 @@ if(GN_BUILD_TESTS)
         src/layer0_xenos/hlsl.cpp
         src/layer0_xenos/ucode.cpp)
     target_include_directories(gn_tests PRIVATE src/layer0_xenos/include src/layer2_ue3/include tests third_party/flip/src/cpp/tool)
+    target_compile_definitions(gn_tests PRIVATE GN_BUILD_TESTS=1)
     # Keep float results bit-identical to the references: no fused multiply-add contraction across statements.
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(gn_tests PRIVATE -ffp-contract=off)

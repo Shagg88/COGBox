@@ -7,12 +7,16 @@
 // Without --cogbox_menu (started by hand) the menu has only Resume and Quit game.
 // The controller is read with XInput (loaded at run time, nothing to link) on a small polling thread; while the menu is
 // open its buttons are fed to Dear ImGui's gamepad navigation. Our code (MIT).
+#ifndef GN_TESTS_EXPORTS
+#define GN_TESTS_EXPORTS 1
+#endif
 #include <xenos/dev_tools.h>
 #include <xenos/input/prompt_device_monitor.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/runtime.h>
 #include <rex/input/input_system.h>
+#include <rex/input/mnk/mnk_input_driver.h>
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/imgui_drawer.h>
 #include <rex/ui/keybinds.h>
@@ -45,6 +49,7 @@ REXCVAR_DEFINE_BOOL(cogbox_menu_enabled, true, "Gears2", "COGBox's in-game menu 
 REXCVAR_DEFINE_BOOL(cogbox_menu_ps, false, "Gears2", "Job 523: show PlayStation button names in the in-game menu (COGBox sets it for a PlayStation pad)");
 REXCVAR_DEFINE_BOOL(cogbox_menu_open_at_start, false, "Gears2",
                     "Test switch: open the in-game menu as soon as the window exists");
+REXCVAR_DECLARE(bool, mnk_mouse);
 
 namespace {
 
@@ -149,6 +154,7 @@ bool g_pad_connected = false;
 
 std::atomic<bool> g_open{false};          // the menu is showing (the game gets no input)
 std::atomic<bool> g_open_wanted{false};   // a combo / F1 asked for it (the UI thread makes it)
+std::atomic<bool> g_unblock_pending{false};
 std::atomic<bool> g_stop{false};
 std::thread g_poller;
 rex::ui::ImGuiDrawer* g_drawer = nullptr;
@@ -157,28 +163,63 @@ MenuFile g_file;
 
 void RequestOpenOnUIThread();
 void ScheduleDrop();
-void BlockGameInput(bool on);   // 0.2.0, below
+
+std::atomic<const XenosClosingInputsState*> s_closing_inputs_override{nullptr};
+
+XenosClosingInputsState SampleClosingInputs() {
+  const auto* override_inputs = s_closing_inputs_override.load();
+  if (override_inputs) {
+    return *override_inputs;
+  }
+  XenosClosingInputsState s;
+  HWND fg = GetForegroundWindow();
+  HWND hwnd = g_window ? static_cast<HWND>(g_window->GetNativeWindowHandle()) : nullptr;
+  const bool has_fg = (fg == hwnd) || (hwnd == nullptr);
+  if (has_fg) {
+    s.lbutton_down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+    s.rbutton_down = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+    s.mbutton_down = (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0;
+    s.escape_down = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+    s.return_down = (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0;
+  }
+  {
+    std::lock_guard<std::mutex> l(g_pad_mutex);
+    s.left_trigger = g_pad.bLeftTrigger;
+    s.right_trigger = g_pad.bRightTrigger;
+    s.pad_buttons = g_pad.wButtons;
+  }
+  return s;
+}
 
 // Job 523: the controller through the game's own input system (SDL: Xbox, PlayStation, Switch and Steam Deck pads), as
 // the game itself reads it; plain XInput only when there is none.
-rex::input::InputSystem* g_input = nullptr;
+std::atomic<rex::input::InputSystem*> g_input{nullptr};
 
 void PollPads() {
   HMODULE xi = LoadLibraryW(L"xinput1_4.dll");
   if (!xi) xi = LoadLibraryW(L"xinput9_1_0.dll");
   auto get = xi ? reinterpret_cast<XInputGetStateFn>(GetProcAddress(xi, "XInputGetState")) : nullptr;
-  if (!get && !g_input) {
+  if (!get && !g_input.load() && !rex::Runtime::instance()) {
     REXLOG_WARN("cogbox_menu: no controller input found - the menu opens with F1 only");
     return;
   }
   bool combo_was = false;
   while (!g_stop.load()) {
+    auto* input_sys = g_input.load();
+    if (!input_sys) {
+      if (auto* rt = rex::Runtime::instance()) {
+        if (auto* input = static_cast<rex::input::InputSystem*>(rt->input_system())) {
+          g_input.store(input);
+          input_sys = input;
+        }
+      }
+    }
     XINPUT_GAMEPAD pad = {};
     bool connected = false;
-    if (g_input) {
+    if (input_sys) {
       for (uint32_t i = 0; i < 4 && !connected; ++i) {
         rex::input::X_INPUT_STATE st = {};
-        if (g_input->GetStateForUI(i, &st) == rex::X_RESULT(0)) {   // X_ERROR_SUCCESS
+        if (input_sys->GetStateForUI(i, &st) == rex::X_RESULT(0)) {   // X_ERROR_SUCCESS
           pad.wButtons = static_cast<uint16_t>(st.gamepad.buttons);   // the same bit layout as XInput
           pad.bLeftTrigger = st.gamepad.left_trigger;
           pad.bRightTrigger = st.gamepad.right_trigger;
@@ -201,7 +242,7 @@ void PollPads() {
       g_pad_connected = connected;
     }
     const bool combo = connected && (pad.wButtons & XINPUT_GAMEPAD_BACK) && (pad.wButtons & XINPUT_GAMEPAD_START);
-    if (combo && !combo_was && !g_open.load()) RequestOpenOnUIThread();
+    if (combo && !combo_was && !XenosInGameMenuIsOpen()) RequestOpenOnUIThread();
     combo_was = combo;
     std::this_thread::sleep_for(std::chrono::milliseconds(15));
   }
@@ -214,23 +255,74 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     ImGuiIO& io = GetIO();
     saved_config_ = io.ConfigFlags;
     saved_backend_ = io.BackendFlags;
+    saved_mouse_draw_cursor_ = io.MouseDrawCursor;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NavEnableKeyboard;
     io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     std::lock_guard<std::mutex> l(g_pad_mutex);
     last_ = g_pad;  // buttons already down (the Back + Start that opened us) count only after a release
     held_at_open_ = g_pad.wButtons;
+    const bool opened_with_pad = (held_at_open_ & XINPUT_GAMEPAD_BACK) && (held_at_open_ & XINPUT_GAMEPAD_START);
+    show_mouse_cursor_ = !opened_with_pad;
+    io.MouseDrawCursor = show_mouse_cursor_;
+    prev_mouse_pos_ = io.MousePos;
   }
   ~InGameMenu() override {
+    g_unblock_pending.store(false);
     ImGuiIO& io = GetIO();
     io.ConfigFlags = saved_config_;
     io.BackendFlags = saved_backend_;
+    io.MouseDrawCursor = saved_mouse_draw_cursor_;
   }
   bool done() const { return done_; }
+  bool unblock_pending() const { return unblock_pending_; }
+
+  void SignalDone() {
+    done_ = true;
+    if (!unblock_pending_) {
+      unblock_pending_ = true;
+      dismiss_start_time_ = std::chrono::steady_clock::now();
+      g_unblock_pending.store(true);
+    }
+  }
+
+  bool CheckUnblockBarrier() {
+    if (!unblock_pending_) return false;
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - dismiss_start_time_).count());
+    const bool held = XenosAreClosingInputsHeld(SampleClosingInputs());
+    if (XenosEvaluateDismissalBarrier(unblock_pending_, elapsed, held)) {
+      g_unblock_pending.store(false);
+      return true;
+    }
+    return false;
+  }
 
  protected:
   void OnDraw(ImGuiIO& io) override {
+    if (close_scheduled_) return;
+    if (unblock_pending_) {
+      io.MouseDrawCursor = false;
+      if (CheckUnblockBarrier()) {
+        close_scheduled_ = true;
+        ScheduleDrop();
+      }
+      return;
+    }
+
+    if (io.MousePos.x != prev_mouse_pos_.x || io.MousePos.y != prev_mouse_pos_.y ||
+        io.MouseDown[0] || io.MouseDown[1] || io.MouseDown[2] || io.MouseWheel != 0.0f) {
+      show_mouse_cursor_ = true;
+      prev_mouse_pos_ = io.MousePos;
+    }
+
     FeedPad(io);
+
+    io.MouseDrawCursor = show_mouse_cursor_;
     const float scale = std::max(1.0f, io.DisplaySize.y / 900.0f);
+    if (show_mouse_cursor_) {
+      ImGui::GetStyle().MouseCursorScale = scale;
+    }
     const float w = std::min(io.DisplaySize.x - 40.0f, 900.0f * scale), h = std::min(io.DisplaySize.y - 40.0f, 640.0f * scale);
     ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - w) * 0.5f, (io.DisplaySize.y - h) * 0.5f));
     ImGui::SetNextWindowSize(ImVec2(w, h));
@@ -281,13 +373,16 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     ImGui::PopStyleColor(19);
     ImGui::PopStyleVar(7);
     first_frame_ = false;
-    // Closing: the game gets its input back at once; the dialog is dropped by one deferred call on the UI thread
-    // (not from inside its own Draw).
+    // Closing: ensure all closing inputs (LMB, triggers, Esc, B, etc.) are physically neutral
+    // or safety timeout elapsed before unblocking game input and dropping the dialog.
     if (done_ && !close_scheduled_) {
-      close_scheduled_ = true;
-      g_open.store(false);
-      BlockGameInput(false);   // 0.2.0
-      ScheduleDrop();
+      if (!unblock_pending_) {
+        SignalDone();
+      }
+      if (CheckUnblockBarrier()) {
+        close_scheduled_ = true;
+        ScheduleDrop();
+      }
     }
   }
 
@@ -314,6 +409,9 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, lx > dz, lx > dz ? lx : 0.0f);
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, ly > dz, ly > dz ? ly : 0.0f);
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, ly < -dz, ly < -dz ? -ly : 0.0f);
+    if (live != 0 || std::abs(lx) > dz || std::abs(ly) > dz) {
+      show_mouse_cursor_ = false;
+    }
     // our own presses: LB / RB tabs, B / Start / Esc close (edge-triggered)
     const WORD pressed = WORD(live & ~last_live_);
     last_live_ = live;
@@ -476,7 +574,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     const float bw = (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3.0f;
     if (first_frame_) ImGui::SetKeyboardFocusHere();
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.10f, 0.08f, 1.0f));   // 0.2.0: Resume is the crimson main button
-    if (ImGui::Button("Resume", ImVec2(bw, 0))) done_ = true;
+    if (ImGui::Button("Resume", ImVec2(bw, 0))) SignalDone();
     ImGui::PopStyleColor();
     ImGui::SameLine();
     if (!n || g_file.restart_path.empty()) ImGui::BeginDisabled();
@@ -492,6 +590,11 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
   WORD held_at_open_ = 0, last_live_ = 0;
   int tab_ = 0;
   bool first_frame_ = true, done_ = false, popup_last_ = false, close_scheduled_ = false;
+  bool unblock_pending_ = false;
+  std::chrono::steady_clock::time_point dismiss_start_time_{};
+  bool saved_mouse_draw_cursor_ = false;
+  bool show_mouse_cursor_ = true;
+  ImVec2 prev_mouse_pos_{-FLT_MAX, -FLT_MAX};
 };
 
 std::unique_ptr<InGameMenu> g_menu;
@@ -504,23 +607,44 @@ std::unique_ptr<InGameMenu> g_menu;
 // The menu itself reads through GetStateForUI, which the blocker doesn't stop. (The driver "active" callback used
 // before could be replaced by the SDK's own, which let input through.)
 std::atomic<bool> g_blocking{false};
-void BlockGameInput(bool on) {
-  if (!g_input || g_blocking.load() == on) return;
-  g_blocking.store(on);
-  if (on) g_input->AddUIInputBlocker();
-  else g_input->RemoveUIInputBlocker();
-}
 
 void OpenNow() {
-  if (g_menu || !g_drawer) return;
-  g_open.store(true);
-  BlockGameInput(true);
-  g_menu = std::make_unique<InGameMenu>(g_drawer);
+  if (g_menu || XenosInGameMenuIsOpen()) return;
+  XenosSetInGameMenuOpen(true);
+  rex::input::mnk::SetMouseLookActive(false);
+  if (g_window) {
+    g_window->SetRelativeMouseMode(false);
+    while (g_window->IsMouseCaptureRequested()) {
+      g_window->ReleaseMouse();
+    }
+    g_window->SetCursorVisibility(rex::ui::Window::CursorVisibility::kHidden);
+  }
+  XenosBlockGameInput(true);
+  if (g_drawer) {
+    g_menu = std::make_unique<InGameMenu>(g_drawer);
+  }
   REXLOG_INFO("cogbox_menu: opened");
 }
 
 void ScheduleDrop() {
-  if (g_window) g_window->app_context().CallInUIThreadDeferred([] { g_menu.reset(); });
+  if (!XenosInGameMenuIsOpen()) return;
+  g_unblock_pending.store(false);
+  if (g_drawer) {
+    g_drawer->GetIO().MouseDrawCursor = false;
+  }
+  if (g_window && REXCVAR_GET(mnk_mouse)) {
+    rex::input::mnk::SetMouseLookActive(true);
+    g_window->SetRelativeMouseMode(true);
+    g_window->CaptureMouse();
+    g_window->SetCursorVisibility(rex::ui::Window::CursorVisibility::kHidden);
+  }
+  XenosSetInGameMenuOpen(false);
+  XenosBlockGameInput(false);
+  if (g_window) {
+    g_window->app_context().CallInUIThreadDeferred([] { g_menu.reset(); });
+  } else {
+    g_menu.reset();
+  }
 }
 
 void RequestOpenOnUIThread() {
@@ -540,11 +664,11 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* windo
   // While the menu is open the game gets no controller / keyboard / mouse input.
   if (runtime) {
     if (auto* input = static_cast<rex::input::InputSystem*>(runtime->input_system())) {
-      g_input = input;   // job 523; 0.2.0: blocking is BlockGameInput (the UI input blocker), not an active callback
+      g_input.store(input);   // job 523; 0.2.0: blocking is XenosBlockGameInput (the UI input blocker), not an active callback
     }
   }
   rex::ui::RegisterBind("bind_cogbox_menu", "F1", "COGBox in-game menu", [] {
-    if (!g_open.load()) OpenNow();
+    if (!XenosInGameMenuIsOpen()) OpenNow();
   });
   g_stop.store(false);
   g_poller = std::thread(PollPads);
@@ -558,11 +682,106 @@ void XenosShutdownInGameMenu() {
   AllowSetForegroundWindow(ASFW_ANY);   // 0.2.0: any other way out too (window closed, the game's own quit)
   g_stop.store(true);
   if (g_poller.joinable()) g_poller.join();
+  g_unblock_pending.store(false);
+  if (g_drawer) {
+    g_drawer->GetIO().MouseDrawCursor = false;
+  }
   g_menu.reset();
-  g_open.store(false);
-  BlockGameInput(false);   // 0.2.0
+  XenosSetInGameMenuOpen(false);
+  XenosBlockGameInput(false);   // 0.2.0
   rex::ui::UnregisterBind("bind_cogbox_menu");
   g_drawer = nullptr;
   g_window = nullptr;
-  g_input = nullptr;
+  g_input.store(nullptr);
 }
+
+bool XenosInGameMenuIsOpen() noexcept {
+  return g_open.load();
+}
+
+void XenosSetInGameMenuOpen(bool open) noexcept {
+  g_open.store(open);
+}
+
+void XenosBlockGameInput(bool on) {
+  auto* input = g_input.load();
+  if (!input) {
+    if (auto* rt = rex::Runtime::instance()) {
+      input = static_cast<rex::input::InputSystem*>(rt->input_system());
+      if (input) {
+        g_input.store(input);
+      }
+    }
+  }
+  if (!input) return;
+  if (g_blocking.exchange(on) == on) return;
+  if (on) input->AddUIInputBlocker();
+  else input->RemoveUIInputBlocker();
+}
+
+bool XenosIsGameInputBlocked() noexcept {
+  return g_blocking.load();
+}
+
+void XenosSetInGameMenuInputSystem(rex::input::InputSystem* input) noexcept {
+  g_input.store(input);
+  if (!input) {
+    g_blocking.store(false);
+  }
+}
+
+void XenosSetInGameMenuWindow(rex::ui::Window* window) noexcept {
+  g_window = window;
+}
+
+void XenosOpenInGameMenu() {
+  OpenNow();
+}
+
+void XenosCloseInGameMenu() {
+  ScheduleDrop();
+}
+
+bool XenosInGameMenuIsUnblockPending() noexcept {
+  return g_unblock_pending.load();
+}
+
+bool XenosAreClosingInputsHeld(const XenosClosingInputsState& state) noexcept {
+  if (state.lbutton_down || state.rbutton_down || state.mbutton_down ||
+      state.escape_down || state.return_down) {
+    return true;
+  }
+  if (state.left_trigger > 30 || state.right_trigger > 30) {
+    return true;
+  }
+  if ((state.pad_buttons & (XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_START | XINPUT_GAMEPAD_A)) != 0) {
+    return true;
+  }
+  return false;
+}
+
+bool XenosEvaluateDismissalBarrier(bool& unblock_pending, uint64_t elapsed_ms, bool any_input_held) noexcept {
+  if (!unblock_pending) return false;
+  if (!any_input_held || elapsed_ms >= 250) {
+    unblock_pending = false;
+    return true;
+  }
+  return false;
+}
+
+void XenosSetClosingInputsOverride(const XenosClosingInputsState* override_inputs) noexcept {
+  s_closing_inputs_override.store(override_inputs);
+}
+
+bool XenosInGameMenuIsMouseCursorDrawn() noexcept {
+  if (g_drawer) {
+    return g_drawer->GetIO().MouseDrawCursor;
+  }
+  return false;
+}
+
+#if defined(GN_BUILD_TESTS) || defined(GN_TESTS_EXPORTS)
+void XenosSetInGameMenuDrawer(rex::ui::ImGuiDrawer* drawer) noexcept {
+  g_drawer = drawer;
+}
+#endif

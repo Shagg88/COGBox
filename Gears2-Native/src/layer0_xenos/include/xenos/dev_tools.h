@@ -7,6 +7,7 @@
 namespace rex { class Runtime; }
 namespace rex::system { class XThread; }
 namespace rex::graphics { class DrawObserver; class RegisterFile; struct ObservedIndexBuffer; }
+namespace rex::input { class InputSystem; }
 namespace rex::ui { class ImGuiDrawer; class Window; }
 
 // Crash report (unwound stack + minidump) for unhandled host exceptions; --gow2_crash_dir.
@@ -65,6 +66,37 @@ bool XenosOnScreenNotesHidden();
 // runtime), shut down from OnShutdown.
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window, rex::Runtime* runtime);
 void XenosShutdownInGameMenu();
+bool XenosInGameMenuIsOpen() noexcept;
+void XenosSetInGameMenuOpen(bool open) noexcept;
+void XenosBlockGameInput(bool on);
+inline void BlockGameInput(bool on) { XenosBlockGameInput(on); }
+bool XenosIsGameInputBlocked() noexcept;
+void XenosOpenInGameMenu();
+inline void XenosOpenInGameMenuNow() { XenosOpenInGameMenu(); }
+void XenosCloseInGameMenu();
+inline void XenosScheduleDropInGameMenu() { XenosCloseInGameMenu(); }
+bool XenosInGameMenuIsUnblockPending() noexcept;
+bool XenosInGameMenuIsMouseCursorDrawn() noexcept;
+
+#if defined(GN_BUILD_TESTS) || defined(GN_TESTS_EXPORTS)
+void XenosSetInGameMenuInputSystem(rex::input::InputSystem* input) noexcept;
+void XenosSetInGameMenuWindow(rex::ui::Window* window) noexcept;
+void XenosSetInGameMenuDrawer(rex::ui::ImGuiDrawer* drawer) noexcept;
+
+struct XenosClosingInputsState {
+  bool lbutton_down = false;
+  bool rbutton_down = false;
+  bool mbutton_down = false;
+  bool escape_down = false;
+  bool return_down = false;
+  uint8_t left_trigger = 0;
+  uint8_t right_trigger = 0;
+  uint16_t pad_buttons = 0;
+};
+bool XenosAreClosingInputsHeld(const XenosClosingInputsState& state) noexcept;
+bool XenosEvaluateDismissalBarrier(bool& unblock_pending, uint64_t elapsed_ms, bool any_input_held) noexcept;
+void XenosSetClosingInputsOverride(const XenosClosingInputsState* override_inputs) noexcept;
+#endif
 // Patch 0062: --gow2_shader_note (default on) - a small "Building shaders N%" note in the bottom-left corner while the
 // renderer's pipeline workers have work queued for more than a second (created and destroyed with the FPS bar, shown
 // whatever the bar's setting). The renderer reports, once a frame: jobs left (queued + being built), jobs ever queued.
