@@ -1,4 +1,5 @@
 // Layer 0 (game-free): screen-space ambient occlusion (notes/80) - the camera maths XeGTAO (Intel, MIT) needs, read
+// XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 // off the game's own view-projection and viewport, shared by the Gears ports.
 //
 // Conventions:
