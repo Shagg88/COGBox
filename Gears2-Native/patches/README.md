@@ -38,6 +38,13 @@ Then move the third-party submodules to the tags in `sdk-pins.txt` and configure
   `--pad_radial_deadzone=<fraction>` (a round dead zone on both sticks, rescaled from its edge) and
   `--pad_remap=<src=dst,...>` (button layout; `sticks=swap` for southpaw). Apply it in the SDK root after patch 54
   (it builds on patch 38's block in `src/input/input_system.cpp`).
+- `sdk-patch56-save-trace-edge-semantics.diff` (GitHub #55 #68 #79 #80 #120, Gears 3 checkpoint deaths): two switches,
+  both off by default. `--cogbox_save_trace` logs content calls, save-path file opens / reads / writes, every
+  overlapped completion and every failed root lookup (with the mounted roots). `--cogbox_xam_edge_semantics` switches
+  content / overlapped behaviour to Xenia Edge's October 2026 series (c7a43fa ad0d187 0028503 4ee7c0f 52f802d 451f915
+  af53787): the requesting thread is kept apart from InternalContext, no event with an APC, a root in use is reopened,
+  TRUNCATE_EXISTING empties the package, HRESULT errors. Written from Edge's commit titles; check against their diffs
+  (job 1039 dumps them). Apply it in the SDK root after patch 55.
 - `sdk-patch15` to `sdk-patch37` are the separate patches that went into `rexglue-sdk.diff`. They're kept
   for reference only, so don't apply them again.
 - `sdk-patch16-zpd-pairing-UNBUILT.diff` was never built. It isn't in any release.

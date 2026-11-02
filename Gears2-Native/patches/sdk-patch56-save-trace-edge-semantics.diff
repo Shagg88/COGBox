@@ -1,0 +1,355 @@
+diff --git a/include/rex/system/save_trace.h b/include/rex/system/save_trace.h
+new file mode 100644
+index 0000000..c4a1177
+--- /dev/null
++++ b/include/rex/system/save_trace.h
+@@ -0,0 +1,35 @@
++/**
++ * COGBox SDK patch 56 (GitHub #55 #68 #79 #80 #120, Gears 3 checkpoint deaths): a trace of the save path and a switch
++ * for content / overlapped semantics as Xenia Edge changed them in October 2026.
++ *  --cogbox_save_trace (default off): one info line per content call (create / open / close / device state), per
++ *    file open / read / write on a save path (SG*, savedrive, *.sav, GearsCheckpoint, PlayerStorage), per overlapped
++ *    completion (event set, APC queued, InternalContext before), and per failed root lookup with the mounted roots.
++ *  --cogbox_xam_edge_semantics (default off): (1) the requesting thread is kept beside the overlapped, not written
++ *    into its InternalContext; (2) with a completion routine only the APC is queued, the event is not set; (3) a
++ *    CREATE_NEW / OPEN_ALWAYS on a root still in use closes that root first instead of failing; (4) TRUNCATE_EXISTING
++ *    empties the open package instead of deleting and recreating it; (5) XamContentClose / GetDeviceState failures
++ *    and the generic deferred completion report an HRESULT extended error and length 0.
++ * Written from Edge's commit titles (c7a43fa ad0d187 0028503 4ee7c0f 52f802d 451f915 af53787); their diffs were not
++ * readable when this was written - job 1039 dumps them for a check.
++ */
++#pragma once
++
++#include <rex/cvar.h>
++
++#include <algorithm>
++#include <cctype>
++#include <string>
++#include <string_view>
++
++REXCVAR_DECLARE(bool, cogbox_save_trace);
++REXCVAR_DECLARE(bool, cogbox_xam_edge_semantics);
++
++namespace rex::system {
++inline bool SaveTracePath(std::string_view p) {
++  std::string l(p);
++  std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return char(std::tolower(c)); });
++  for (const char* k : {"sg0", "sg1", "sg2", "savedrive", ".sav", "checkpoint", "playerstorage", "content"})
++    if (l.find(k) != std::string::npos) return true;
++  return false;
++}
++}  // namespace rex::system
+diff --git a/src/filesystem/virtual_file_system.cpp b/src/filesystem/virtual_file_system.cpp
+index 4675f5b..b240409 100644
+--- a/src/filesystem/virtual_file_system.cpp
++++ b/src/filesystem/virtual_file_system.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <rex/filesystem/vfs.h>
++#include <rex/system/save_trace.h>
+ #include <rex/logging.h>
+ #include <rex/string.h>
+ 
+@@ -17,6 +18,13 @@
+ 
+ #include <atomic>
+ 
++// COGBox SDK patch 56 (include/rex/system/save_trace.h).
++REXCVAR_DEFINE_BOOL(cogbox_save_trace, false, "Kernel",
++                    "Patch 56 (GitHub #55 #120): log content calls, save-path file I/O, overlapped completions and failed "
++                    "root lookups");
++REXCVAR_DEFINE_BOOL(cogbox_xam_edge_semantics, false, "Kernel",
++                    "Patch 56: content / overlapped semantics as Xenia Edge (Oct 2026): thread not in InternalContext, "
++                    "no event with an APC, roots in use reopened, TRUNCATE empties, HRESULT errors");
+ REXCVAR_DEFINE_BOOL(allow_game_relative_writes, false, "Filesystem",
+                     "Not useful to non-developers. Allows code to write to paths "
+                     "relative to game://. Used for "
+@@ -137,6 +145,11 @@ Entry* VirtualFileSystem::ResolvePath(const std::string_view path) {
+     // not an actual problem nor something we care about.
+     if (path != "ShaderDumpxe:\\CompareBackEnds") {
+       REXFS_ERROR("ResolvePath({}) failed - device not found", path);
++      if (REXCVAR_GET(cogbox_save_trace)) {  // patch 56: which roots were there at that moment
++        std::string roots;
++        for (const auto& d : devices_) roots += " '" + d->mount_path() + "'";
++        REXFS_INFO("cogbox_save_trace: no device for '{}'; mounted:{}", path, roots);
++      }
+     }
+     return nullptr;
+   }
+diff --git a/src/kernel/xam/xam_content.cpp b/src/kernel/xam/xam_content.cpp
+index c0285d0..ae57628 100644
+--- a/src/kernel/xam/xam_content.cpp
++++ b/src/kernel/xam/xam_content.cpp
+@@ -17,6 +17,8 @@
+ #include <rex/types.h>
+ #include <rex/string.h>
+ #include <rex/system/kernel_state.h>
++#include <rex/system/save_trace.h>
++#include <filesystem>
+ #include <rex/system/xam/content_device.h>
+ #include <rex/system/xenumerator.h>
+ #include <rex/system/xtypes.h>
+@@ -162,6 +164,11 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
+               license_mask_ptr](uint32_t& extended_error, uint32_t& length) -> X_RESULT {
+     X_RESULT result = X_ERROR_INVALID_PARAMETER;
+     kDispositionState disposition = kDispositionState::Unknown;
++    const bool edge = REXCVAR_GET(cogbox_xam_edge_semantics);  // patch 56
++    // patch 56 (Edge 0028503): a create / open on a root still in use reopens it instead of failing with no package
++    if (edge && ((flags & 0xF) == 1 || (flags & 0xF) == 4) && !content_manager->GetOpenPackagePath(root_name).empty())
++      content_manager->CloseContent(root_name);
++    bool truncated = false;
+     switch (flags & 0xF) {
+       case 1:  // CREATE_NEW
+                // Fail if exists.
+@@ -203,6 +210,11 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
+                // Fail if doesn't exist, if does exist delete and recreate.
+         if (!content_manager->ContentExists(xuid, content_data)) {
+           result = X_ERROR_PATH_NOT_FOUND;
++        } else if (edge) {
++          // patch 56 (Edge 4ee7c0f): empty the package and open it - its header stays
++          content_manager->CloseContent(root_name);
++          disposition = kDispositionState::Open;
++          truncated = true;
+         } else {
+           content_manager->CloseContent(root_name);
+           if (content_manager->DeleteContent(xuid, content_data) != X_ERROR_SUCCESS) {
+@@ -225,6 +237,12 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
+       }
+     } else if (disposition == kDispositionState::Open) {
+       result = content_manager->OpenContent(root_name, xuid, content_data, content_license);
++      if (truncated && result == X_ERROR_SUCCESS) {  // patch 56: TRUNCATE_EXISTING = the package's files removed
++        std::error_code ec;
++        const std::filesystem::path dir = content_manager->GetOpenPackagePath(root_name);
++        if (!dir.empty())
++          for (const auto& e : std::filesystem::directory_iterator(dir, ec)) std::filesystem::remove_all(e.path(), ec);
++      }
+     }
+ 
+     if (license_mask_ptr && result == X_ERROR_SUCCESS) {
+@@ -237,6 +255,10 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
+ 
+     extended_error = X_HRESULT_FROM_WIN32(result);
+     length = static_cast<uint32_t>(disposition);
++    if (REXCVAR_GET(cogbox_save_trace))  // patch 56
++      REXLOG_INFO("cogbox_save_trace: content create flags {:#x} root '{}' package '{}' -> disposition {} result {:08X} "
++                  "ext {:08X} path '{}'", flags, root_name, content_data.file_name(), uint32_t(disposition),
++                  uint32_t(result), extended_error, content_manager->GetOpenPackagePath(root_name).string());
+     if (REXCVAR_GET(cogbox_content_log))  // patch 48
+       REXLOG_INFO("cogbox_content: {} root '{}' package '{}' type {:08X} -> {} result {:08X}",
+                   (flags & 0xF) == 3 ? "open" : (flags & 0xF) == 4 ? "open/create" : "create", root_name,
+@@ -298,8 +320,15 @@ u32 XamContentFlush_entry(mapped_string root_name, mapped_void overlapped_ptr) {
+ u32 XamContentClose_entry(mapped_string root_name, mapped_void overlapped_ptr) {
+   // Closes a previously opened root from XamContentCreate*.
+   auto result = REX_KERNEL_STATE()->content_manager()->CloseContent(root_name.value());
++  if (REXCVAR_GET(cogbox_save_trace))  // patch 56
++    REXLOG_INFO("cogbox_save_trace: content close root '{}' -> {:08X}", root_name.value(), uint32_t(result));
+ 
+-  if (overlapped_ptr) {
++  if (overlapped_ptr && REXCVAR_GET(cogbox_xam_edge_semantics) && result != X_ERROR_SUCCESS) {
++    // patch 56 (Edge 451f915): an HRESULT and no length
++    REX_KERNEL_STATE()->CompleteOverlappedImmediateEx(overlapped_ptr.guest_address(), result,
++                                                      X_HRESULT_FROM_WIN32(result), 0);
++    return X_ERROR_IO_PENDING;
++  } else if (overlapped_ptr) {
+     REX_KERNEL_STATE()->CompleteOverlappedImmediate(overlapped_ptr.guest_address(), result);
+     return X_ERROR_IO_PENDING;
+   } else {
+diff --git a/src/kernel/xam/xam_content_device.cpp b/src/kernel/xam/xam_content_device.cpp
+index f153b69..662f591 100644
+--- a/src/kernel/xam/xam_content_device.cpp
++++ b/src/kernel/xam/xam_content_device.cpp
+@@ -15,6 +15,7 @@
+ #include <rex/hook.h>
+ #include <rex/types.h>
+ #include <rex/system/kernel_state.h>
++#include <rex/system/save_trace.h>
+ #include <rex/system/xam/content_device.h>
+ #include <rex/system/xenumerator.h>
+ #include <rex/system/xtypes.h>
+@@ -78,10 +79,16 @@ u32 XamContentGetDeviceName_entry(u32 device_id, mapped_wstring name_buffer, u32
+ 
+ u32 XamContentGetDeviceState_entry(u32 device_id, mapped_void overlapped_ptr) {
+   auto device_info = GetDummyDeviceInfo(device_id);
++  if (REXCVAR_GET(cogbox_save_trace))  // patch 56
++    REXLOG_INFO("cogbox_save_trace: content device state {:#x} -> {}", uint32_t(device_id),
++                device_info ? "present" : "unknown");
+   if (device_info == nullptr) {
+     if (overlapped_ptr) {
++      // patch 56 (Edge af53787): the unknown device as an HRESULT
+       REX_KERNEL_STATE()->CompleteOverlappedImmediateEx(
+-          overlapped_ptr.guest_address(), X_ERROR_FUNCTION_FAILED, X_ERROR_DEVICE_NOT_CONNECTED, 0);
++          overlapped_ptr.guest_address(), X_ERROR_FUNCTION_FAILED,
++          REXCVAR_GET(cogbox_xam_edge_semantics) ? X_HRESULT_FROM_WIN32(X_ERROR_DEVICE_NOT_CONNECTED)
++                                                 : X_ERROR_DEVICE_NOT_CONNECTED, 0);
+       return X_ERROR_IO_PENDING;
+     } else {
+       return X_ERROR_DEVICE_NOT_CONNECTED;
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_io.cpp b/src/kernel/xboxkrnl/xboxkrnl_io.cpp
+index cce4f65..36c52d9 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_io.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_io.cpp
+@@ -20,6 +20,7 @@
+ #include <rex/types.h>
+ #include <rex/system/info/file.h>
+ #include <rex/system/kernel_state.h>
++#include <rex/system/save_trace.h>
+ #include <rex/system/util/string_utils.h>
+ #include <rex/system/xevent.h>
+ #include <rex/system/xfile.h>
+@@ -144,7 +145,7 @@ u32 NtCreateFile_entry(mapped_u32 handle_out, u32 desired_access,
+ 
+   // Attempt open (or create).
+   rex::filesystem::File* vfs_file;
+-  rex::filesystem::FileAction file_action;
++  rex::filesystem::FileAction file_action{};
+   X_STATUS result = REX_KERNEL_FS()->OpenFile(
+       root_entry, target_path, rex::filesystem::FileDisposition((uint32_t)creation_disposition),
+       desired_access, (create_options & CreateOptions::FILE_DIRECTORY_FILE) != 0,
+@@ -168,6 +169,10 @@ u32 NtCreateFile_entry(mapped_u32 handle_out, u32 desired_access,
+   }
+ 
+   *handle_out = handle;
++  if (REXCVAR_GET(cogbox_save_trace) && rex::system::SaveTracePath(target_path))  // patch 56
++    REXKRNL_INFO("cogbox_save_trace: open '{}' disp {:#x} access {:#x} options {:#x} -> {:08X} action {} handle {:08X}",
++                 target_path, uint32_t(creation_disposition), uint32_t(desired_access), uint32_t(create_options),
++                 uint32_t(result), uint32_t(file_action), handle);
+   if (XFAILED(result)) {
+     REXKRNL_IMPORT_FAIL("NtCreateFile", "path='{}' -> {:#x}", target_path, result);
+   } else {
+@@ -279,6 +284,11 @@ u32 NtReadFile_entry(u32 file_handle, u32 event_handle, mapped_void apc_routine_
+     ev->Set(0, false);
+   }
+ 
++  if (file && REXCVAR_GET(cogbox_save_trace) && rex::system::SaveTracePath(file->path()))  // patch 56
++    REXKRNL_INFO("cogbox_save_trace: read '{}' offset {} len {:#x} -> {:08X} got {:#x} sync {} event {} apc {}",
++                 file->path(), byte_offset_ptr ? int64_t(byte_offset) : -1, uint32_t(buffer_length), uint32_t(result),
++                 io_status_block ? uint32_t(io_status_block->information) : 0u, file->is_synchronous(),
++                 uint32_t(event_handle), apc_queued);
+   // Log detailed completion info for debugging async IO issues
+   if (file) {
+     REXKRNL_IMPORT_RESULT(
+@@ -446,6 +456,13 @@ u32 NtWriteFile_entry(u32 file_handle, u32 event_handle, u32 apc_routine, mapped
+     io_status_block->information = 0;
+   }
+ 
++  if (REXCVAR_GET(cogbox_save_trace)) {  // patch 56
++    auto tf = REX_KERNEL_OBJECTS()->LookupObject<XFile>(file_handle);
++    if (tf && rex::system::SaveTracePath(tf->path()))
++      REXKRNL_INFO("cogbox_save_trace: write '{}' offset {} len {:#x} -> {:08X} wrote {:#x} event {}", tf->path(),
++                   byte_offset_ptr ? int64_t(*byte_offset_ptr) : -1, uint32_t(buffer_length), uint32_t(result),
++                   io_status_block ? uint32_t(io_status_block->information) : 0u, uint32_t(event_handle));
++  }
+   if (ev && signal_event) {
+     ev->Set(0, false);
+   }
+diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
+index caf0282..9c8669a 100644
+--- a/src/system/kernel_state.cpp
++++ b/src/system/kernel_state.cpp
+@@ -27,6 +27,9 @@
+ #include <rex/kernel/xboxkrnl/threading.h>
+ #include <rex/system/kernel_module.h>
+ #include <rex/system/kernel_state.h>
++#include <rex/system/save_trace.h>
++#include <mutex>
++#include <unordered_map>
+ #include <rex/system/function_dispatcher.h>
+ #include <chrono>
+ #include <thread>
+@@ -1135,6 +1138,32 @@ void KernelState::BroadcastNotification(XNotificationID id, uint32_t data) {
+   }
+ }
+ 
++// Patch 56 (Edge c7a43fa): the requesting thread of an overlapped, kept here instead of in its InternalContext.
++namespace {
++std::mutex g_overlapped_thread_mutex;
++std::unordered_map<uint32_t, X_HANDLE> g_overlapped_thread;
++void NoteOverlappedThread(void* ptr, uint32_t overlapped_ptr, X_HANDLE thread) {
++  if (REXCVAR_GET(cogbox_xam_edge_semantics)) {
++    std::lock_guard<std::mutex> l(g_overlapped_thread_mutex);
++    g_overlapped_thread[overlapped_ptr] = thread;
++  } else {
++    XOverlappedSetContext(ptr, thread);
++  }
++}
++X_HANDLE TakeOverlappedThread(void* ptr, uint32_t overlapped_ptr) {
++  {
++    std::lock_guard<std::mutex> l(g_overlapped_thread_mutex);
++    auto it = g_overlapped_thread.find(overlapped_ptr);
++    if (it != g_overlapped_thread.end()) {
++      X_HANDLE h = it->second;
++      g_overlapped_thread.erase(it);
++      return h;
++    }
++  }
++  return XOverlappedGetContext(ptr);
++}
++}  // namespace
++
+ void KernelState::CompleteOverlapped(uint32_t overlapped_ptr, X_RESULT result) {
+   CompleteOverlappedEx(overlapped_ptr, result, result, 0);
+ }
+@@ -1142,19 +1171,30 @@ void KernelState::CompleteOverlapped(uint32_t overlapped_ptr, X_RESULT result) {
+ void KernelState::CompleteOverlappedEx(uint32_t overlapped_ptr, X_RESULT result,
+                                        uint32_t extended_error, uint32_t length) {
+   auto ptr = memory()->TranslateVirtual(overlapped_ptr);
++  const bool edge = REXCVAR_GET(cogbox_xam_edge_semantics);  // patch 56
++  const uint32_t context_before = XOverlappedGetContext(ptr);
+   XOverlappedSetResult(ptr, result);
+   XOverlappedSetExtendedError(ptr, extended_error);
+   XOverlappedSetLength(ptr, length);
++  const bool has_routine = XOverlappedGetCompletionRoutine(ptr) != 0;
+   X_HANDLE event_handle = XOverlappedGetEvent(ptr);
+-  if (event_handle) {
++  bool event_set = false;
++  if (event_handle && !(edge && has_routine)) {  // patch 56 (Edge ad0d187): an APC replaces the event
+     auto ev = object_table()->LookupObject<XEvent>(event_handle);
+     assert_not_null(ev);
+     if (ev) {
+       ev->Set(0, false);
++      event_set = true;
+     }
+   }
+-  if (XOverlappedGetCompletionRoutine(ptr)) {
+-    X_HANDLE thread_handle = XOverlappedGetContext(ptr);
++  const X_HANDLE requester = TakeOverlappedThread(ptr, overlapped_ptr);
++  if (REXCVAR_GET(cogbox_save_trace))
++    REXSYS_INFO("cogbox_save_trace: overlapped {:08X} done result {:08X} ext {:08X} len {:#x} event {:08X}{} "
++                "routine {} internal_context_before {:08X} requester {:08X}",
++                overlapped_ptr, result, extended_error, length, event_handle, event_set ? " set" : " not set",
++                has_routine ? "APC" : "none", context_before, requester);
++  if (has_routine) {
++    X_HANDLE thread_handle = requester;
+     auto thread = object_table()->LookupObject<XThread>(thread_handle);
+     if (thread) {
+       // Queue APC on the thread that requested the overlapped operation.
+@@ -1175,7 +1215,7 @@ void KernelState::CompleteOverlappedImmediate(uint32_t overlapped_ptr, X_RESULT
+ void KernelState::CompleteOverlappedImmediateEx(uint32_t overlapped_ptr, X_RESULT result,
+                                                 uint32_t extended_error, uint32_t length) {
+   auto ptr = memory()->TranslateVirtual(overlapped_ptr);
+-  XOverlappedSetContext(ptr, XThread::GetCurrentThreadHandle());
++  NoteOverlappedThread(ptr, overlapped_ptr, XThread::GetCurrentThreadHandle());  // patch 56
+   CompleteOverlappedEx(overlapped_ptr, result, extended_error, length);
+ }
+ 
+@@ -1210,7 +1250,9 @@ void KernelState::CompleteOverlappedDeferred(std::function<X_RESULT()> completio
+   CompleteOverlappedDeferredEx(
+       [completion_callback](uint32_t& extended_error, uint32_t& length) -> X_RESULT {
+         auto result = completion_callback();
+-        extended_error = static_cast<uint32_t>(result);
++        // patch 56 (Edge 52f802d): an HRESULT, not the raw error
++        extended_error = REXCVAR_GET(cogbox_xam_edge_semantics) ? X_HRESULT_FROM_WIN32(result)
++                                                                : static_cast<uint32_t>(result);
+         length = 0;
+         return result;
+       },
+@@ -1223,7 +1265,7 @@ void KernelState::CompleteOverlappedDeferredEx(
+   REXSYS_DEBUG("CompleteOverlappedDeferredEx: queuing for overlapped {:08X}", overlapped_ptr);
+   auto ptr = memory()->TranslateVirtual(overlapped_ptr);
+   XOverlappedSetResult(ptr, X_ERROR_IO_PENDING);
+-  XOverlappedSetContext(ptr, XThread::GetCurrentThreadHandle());
++  NoteOverlappedThread(ptr, overlapped_ptr, XThread::GetCurrentThreadHandle());  // patch 56
+   auto global_lock = global_critical_region_.Acquire();
+   dispatch_queue_.push_back(
+       [this, completion_callback, overlapped_ptr, pre_callback, post_callback]() {
