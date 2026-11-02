@@ -92,6 +92,14 @@ REXCVAR_DEFINE_DOUBLE(ue3_mouse_wide_fov_ref, 80.0, "COGBox",
                       "Native mouse look (GitHub #114): cameras wider than this FOV (degrees, x the launcher's FOV %) "
                       "turn as fast per count as this one (DBNO, roadie run). 0 = off")
     .range(0.0, 170.0);
+// GitHub #52 (still uneven after 0.3.5): each camera mode has its own FOV in GearCamera.ini (cover 95, targeting 50,
+// roadie run 105, DBNO 110 ...), and UE3 scales the mouse by FOV / 90, so the same mouse motion turned the view by a
+// different angle in each mode. With this on (default), every camera turns the same angle per count as the reference
+// one - narrower ones (aiming, zoom) too, not only the wider ones #114 evened out. Off: only cameras wider than the
+// reference are evened out, and aiming / zoom keep the console's slower turn.
+REXCVAR_DEFINE_BOOL(ue3_mouse_fov_constant, true, "COGBox",
+                    "Native mouse look (GitHub #52): every camera mode turns the same angle per mouse count (aiming and "
+                    "zoom included); off = aiming / zoom keep the game's slower turn");
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_min_counts, 2.0, "COGBox",
                       "Native mouse look (GitHub #115): smaller motion waits, per axis, until it reaches this many counts "
                       "(or --ue3_mouse_hold_ms), so slow zoomed aiming isn't lost to the engine's whole rotation units. 0 = off")
@@ -154,6 +162,7 @@ inline double WideCameraComp() {
   const double fov = g_view_fov.load(std::memory_order_relaxed);
   if (ref <= 0 || !(fov > 1.0 && fov < 170.0)) return 1.0;
   const double widened_ref = ref / REXCVAR_GET(ue3_mouse_fov_comp);  // fov_comp = 100 / launcher FOV %
+  if (REXCVAR_GET(ue3_mouse_fov_constant)) return widened_ref / fov;  // GitHub #52: the same angle per count everywhere
   return fov > widened_ref ? widened_ref / fov : 1.0;
 }
 
