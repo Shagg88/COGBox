@@ -43,8 +43,13 @@ Then move the third-party submodules to the tags in `sdk-pins.txt` and configure
   overlapped completion and every failed root lookup (with the mounted roots). `--cogbox_xam_edge_semantics` switches
   content / overlapped behaviour to Xenia Edge's October 2026 series (c7a43fa ad0d187 0028503 4ee7c0f 52f802d 451f915
   af53787): the requesting thread is kept apart from InternalContext, no event with an APC, a root in use is reopened,
-  TRUNCATE_EXISTING empties the package, HRESULT errors. Written from Edge's commit titles; check against their diffs
-  (job 1039 dumps them). Apply it in the SDK root after patch 55.
+  TRUNCATE_EXISTING empties the package, HRESULT errors. Ported from Edge's diffs (job 1039 dumped them). Apply it in
+  the SDK root after patch 55.
+- `sdk-patch56b-edge-ports-from-diffs.diff`: only for an SDK that already has the first patch 56 (job 1039). It turns
+  that first port, written from Edge's commit titles, into the one in `sdk-patch56`: a create on a root in use makes the
+  package and fails with ERROR_DUP_NAME (it no longer closes the root), TRUNCATE_EXISTING keeps the thumbnail and refuses
+  an open package, XamContentClose completes with ERROR_FUNCTION_FAILED, no raw-error change to the generic deferred
+  completion, and an APC with no noted thread goes to the current one.
 - `sdk-patch15` to `sdk-patch37` are the separate patches that went into `rexglue-sdk.diff`. They're kept
   for reference only, so don't apply them again.
 - `sdk-patch16-zpd-pairing-UNBUILT.diff` was never built. It isn't in any release.
