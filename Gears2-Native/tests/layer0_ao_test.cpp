@@ -1,5 +1,5 @@
-// Unit tests for the screen-space AO camera maths (ao.h, notes/79): XeGTAO's constants from the game's view-projection
-// and viewport. Game-free (one test uses numbers measured from Gears 2, notes/79 s.8). Our code (MIT).
+// Unit tests for the screen-space AO camera maths (ao.h, notes/80): XeGTAO's constants from the game's view-projection
+// and viewport. Game-free (one test uses numbers measured from Gears 2, notes/80 s.3). Our code (MIT).
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
@@ -74,7 +74,7 @@ TEST_CASE("ao: view positions round-trip through the constants", "[ao]") {
       }
 }
 
-TEST_CASE("ao: Gears 2's measured camera (notes/79 s.8)", "[ao]") {
+TEST_CASE("ao: Gears 2's measured camera (notes/80 s.3)", "[ao]") {
   // Ch2 frame 1500, c0-c3 as the game stores them (columns of clip = x*c0 + y*c1 + z*c2 + c3), reversed-Z viewport.
   const float c[16] = {0.067059f, 0.0f, -0.996321f, -0.997319f, -0.913874f, 0.0f, -0.0731089f, -0.0731821f,
                        0.0f, 1.62903f, 0.0f, 0.0f, 0.0f, -2.48571e-05f, -9.99195f, -0.00195312f};
@@ -88,7 +88,7 @@ TEST_CASE("ao: Gears 2's measured camera (notes/79 s.8)", "[ao]") {
   for (const auto& p : pairs) CHECK(ao::ViewDepth(k, p[0]) == Approx(p[1]).epsilon(5e-3));
 }
 
-TEST_CASE("ao: a planar-reflection camera is not the scene camera (Gears 3 Raven's Nest, notes/79 s.28)", "[ao]") {
+TEST_CASE("ao: a planar-reflection camera is not the scene camera (Gears 3 Raven's Nest, notes/80 s.3)", "[ao]") {
   // The first camera Gears 3 draws into the scene depth there, c0-c3 as logged: perspective along -y, but its depth row
   // is a world plane (z = 142, an oblique near plane), not the distance. Refused - the renderer then takes the next
   // camera (the view). Gears 2's measured camera above passes the same test.

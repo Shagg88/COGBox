@@ -1,4 +1,4 @@
-// Layer 0 (game-free): screen-space ambient occlusion (notes/79) - the camera maths XeGTAO (Intel, MIT) needs, read
+// Layer 0 (game-free): screen-space ambient occlusion (notes/80) - the camera maths XeGTAO (Intel, MIT) needs, read
 // off the game's own view-projection and viewport, shared by the Gears ports.
 //
 // Conventions:
@@ -7,7 +7,7 @@
 //     is needed here).
 //   - Guest depth = the value the game's depth buffer holds (0..1, before our host-side x0.5 float24 remap):
 //     depth = DepthMap.scale * (clip.z / clip.w) + DepthMap.offset, the viewport's Z transform. Gears 2 / UE3 on the
-//     360 draws reversed-Z through it (scale -1, offset 1: 1 at the near plane, ~0.001 at infinity; notes/79 s.8).
+//     360 draws reversed-Z through it (scale -1, offset 1: 1 at the near plane, ~0.001 at infinity; notes/80 s.3).
 //   - View space as XeGTAO's shaders rebuild it: z = distance along the camera's forward axis (clip.w per unit length
 //     of the w row), x / y = ndc x / y * z * tan(half field of view) per axis. A mirrored axis (the guest's viewport
 //     y direction) mirrors the positions and their normals alike, so AO doesn't depend on it.

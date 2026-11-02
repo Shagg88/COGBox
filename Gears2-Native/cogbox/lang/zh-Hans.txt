@@ -784,7 +784,7 @@ Add it with ADD UPDATE: the update package from your console's folder = 请用�
 # 0.4.0: player name
 Player name = 玩家名称
 The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = 每个游戏为你显示的名称(你的玩家代号):最多 15 个字母、数字或空格。留空: "User"。仅用于显示——你的档案和存档位置不变。
-# notes/79: ambient occlusion (XeGTAO)
+# notes/80: ambient occlusion (XeGTAO)
 Ambient occlusion = 环境光遮蔽
 XeGTAO (high) = XeGTAO（高）
 XeGTAO (ultra) = XeGTAO（极致）

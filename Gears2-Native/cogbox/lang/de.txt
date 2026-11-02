@@ -784,7 +784,7 @@ Add it with ADD UPDATE: the update package from your console's folder = Füge es
 # 0.4.0: player name
 Player name = Spielername
 The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = Der Name, den jedes Spiel für dich anzeigt (dein Gamertag): bis zu 15 Buchstaben, Ziffern oder Leerzeichen. Leer: "User". Nur zur Anzeige - dein Profil und deine Spielstände bleiben, wo sie sind.
-# notes/79: ambient occlusion (XeGTAO)
+# notes/80: ambient occlusion (XeGTAO)
 Ambient occlusion = Umgebungsverdeckung
 XeGTAO (high) = XeGTAO (hoch)
 XeGTAO (ultra) = XeGTAO (ultra)

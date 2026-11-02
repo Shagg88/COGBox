@@ -1,4 +1,4 @@
-// Layer 0 (game-free): notes/79 phase 3b - live A/B switches for the screen-space AO, for developers only
+// Layer 0 (game-free): notes/80 s.12 - live A/B switches for the screen-space AO, for developers only
 // (--gow2_ao_debug_keys; developer tools never ship on). F9: which AO the game's composite gets (XeGTAO / none / the
 // game's own); F10: the debug view (normal, XeGTAO only, split, view depth, raw term, edges); F11: XeGTAO's quality
 // preset. A small label (top left, like the FPS bar) says what is on. The keys run on the UI thread and only set
@@ -19,7 +19,7 @@
 #include <memory>
 
 REXCVAR_DEFINE_BOOL(gow2_ao_debug_keys, false, "Gears2",
-                    "Notes/79 developer switches (with --gow2_ao=gtao): F9 cycles the AO the game gets (XeGTAO / none / "
+                    "Notes/80 developer switches (with --gow2_ao=gtao): F9 cycles the AO the game gets (XeGTAO / none / "
                     "the game's own), F10 the debug view, F11 XeGTAO's quality; a label shows the state. Off in releases");
 
 namespace {

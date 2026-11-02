@@ -784,7 +784,7 @@ Add it with ADD UPDATE: the update package from your console's folder = Доба
 # 0.4.0: player name
 Player name = Имя игрока
 The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = Имя, которое показывает каждая игра (ваш gamertag): до 15 букв, цифр или пробелов. Пусто: "User". Только для отображения - профиль и сохранения остаются на месте.
-# notes/79: ambient occlusion (XeGTAO)
+# notes/80: ambient occlusion (XeGTAO)
 Ambient occlusion = Затенение окружения (AO)
 XeGTAO (high) = XeGTAO (высокое)
 XeGTAO (ultra) = XeGTAO (ультра)

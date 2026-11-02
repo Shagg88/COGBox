@@ -20,10 +20,10 @@
 #include <thread>
 #include <system_error>
 
-// Notes/79 developer diagnostic: the translated HLSL of the listed shaders (ucode hashes, hex, comma-separated) is written
+// Notes/80 developer diagnostic: the translated HLSL of the listed shaders (ucode hashes, hex, comma-separated) is written
 // to --gow2_renderer_hlsl_dump_dir as <vs|ps>-<hash>.hlsl, whatever back end compiles them.
 REXCVAR_DEFINE_STRING(gow2_renderer_hlsl_dump_hashes, "", "Gears2",
-                      "Developer (notes/79): comma list of shader ucode hashes whose translated HLSL is written out");
+                      "Developer (notes/80): comma list of shader ucode hashes whose translated HLSL is written out");
 REXCVAR_DEFINE_STRING(gow2_renderer_hlsl_dump_dir, "", "Gears2", "Developer: folder for --gow2_renderer_hlsl_dump_hashes");
 
 namespace xenos::renderer {
@@ -949,7 +949,7 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
   // DXBC carries the shader cache's text post-processing below natively (precise everywhere; the depth remap).
   // Notes/68 V5a: on Vulkan the same DXBC becomes SPIR-V instruction for instruction (dxbc_spirv.cpp), so both
   // back ends run one translation; a shader the converter doesn't handle goes through the HLSL path as before.
-  {  // notes/79 developer diagnostic
+  {  // notes/80 developer diagnostic
     static const std::string dump_list = "," + REXCVAR_GET(gow2_renderer_hlsl_dump_hashes) + ",";
     static const std::string dump_dir = REXCVAR_GET(gow2_renderer_hlsl_dump_dir);
     char hex[17];

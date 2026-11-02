@@ -28,7 +28,7 @@
 
 namespace xenos::renderer::upscale {
 
-// kSmaaT2x (notes/79 s.22): ours, no SDK - SMAA 1x with two alternating jitters and a temporal resolve, at the
+// kSmaaT2x (notes/80 s.7): ours, no SDK - SMAA 1x with two alternating jitters and a temporal resolve, at the
 // render size (no upscaling); made by the renderer (it needs the shader cache), not by CreateUpscaler.
 enum class Kind : uint32_t { kNone, kDlss, kFsr, kXess, kSmaaT2x };
 // Render size / output size: 1 (native-resolution AA: DLAA / FSR "native AA"), 1.5, 1.7, 2.
@@ -88,7 +88,7 @@ bool PerspectiveParams(const Mat4& view_proj, float& vertical_fov, float& near_p
 // The matrix the motion pass uses: (u, v, depth, 1) of a pixel of this frame (u, v in [0, 1], depth guest
 // convention times `depth_scale`, which undoes a host-side remap) -> the previous frame's clip position.
 // = prev_view_proj x inverse(view_proj) x (uv / depth -> NDC). False when view_proj is singular.
-// depth_map_scale / depth_map_offset (notes/79 s.21): the viewport's Z transform, depth = scale * (clip z / w) + offset
+// depth_map_scale / depth_map_offset (notes/80 s.6): the viewport's Z transform, depth = scale * (clip z / w) + offset
 // (ao::ViewportDepthMap); clip z / w = (depth - offset) / scale. 1 / 0 for a plain 0..1 range; Gears 2 draws reversed-Z
 // (-1 / 1), which the matrix must undo or every pixel looks a few units from the camera and camera moves blow up.
 bool ReprojectionMatrix(const Mat4& view_proj, const Mat4& prev_view_proj, float depth_scale, Mat4& out,
@@ -111,7 +111,7 @@ struct ObjectSample {
 bool CameraMoveFromObjects(std::vector<ObjectSample> prev, std::vector<ObjectSample> cur, float camera_move[3],
                            uint32_t* votes = nullptr, uint32_t* matched = nullptr, float tolerance = 0.05f,
                            uint32_t min_votes = 3, float min_share = 0.3f);
-// Notes/79 s.21 (Gears 2): one character of the game's velocity pass. UE3 gives its VS this frame's object-to-world
+// Notes/80 s.6 (Gears 2): one character of the game's velocity pass. UE3 gives its VS this frame's object-to-world
 // relative to the camera (`now`, c5-c8, as columns: world = x*c5 + y*c6 + z*c7 + c8) and last frame's in absolute world
 // coordinates (`then`, c9-c12). `key` names the draw across frames (vertex data, shader, index count).
 struct MovingObject {
@@ -158,7 +158,7 @@ class Upscaler {
   // (Re)creates the SDK's feature for these sizes. Cheap when nothing changed. False: not available on this GPU /
   // driver (Status() says why) - the renderer then keeps its own path.
   // depth_infinite: the projection has no far plane (depth -> 1 at infinity); FSR needs to know.
-  // depth_inverted (notes/79 s.21): the depth input is reversed - 1 at the near plane, toward 0 far away (Gears 2's
+  // depth_inverted (notes/80 s.6): the depth input is reversed - 1 at the near plane, toward 0 far away (Gears 2's
   // viewport draws reversed-Z); every SDK has a creation flag for it.
   virtual bool Configure(gpu::Backend& backend, uint32_t render_width, uint32_t render_height, uint32_t output_width,
                          uint32_t output_height, bool hdr, bool depth_infinite = false, bool depth_inverted = false) = 0;

@@ -784,7 +784,7 @@ Add it with ADD UPDATE: the update package from your console's folder = 「ア�
 # 0.4.0: player name
 Player name = プレイヤー名
 The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = 各ゲームに表示される名前（ゲーマータグ）：英字・数字・スペースで15文字まで。空欄の場合: "User"。表示のみで、プロフィールとセーブデータの場所は変わりません。
-# notes/79: ambient occlusion (XeGTAO)
+# notes/80: ambient occlusion (XeGTAO)
 Ambient occlusion = アンビエントオクルージョン
 XeGTAO (high) = XeGTAO（高）
 XeGTAO (ultra) = XeGTAO（ウルトラ）
