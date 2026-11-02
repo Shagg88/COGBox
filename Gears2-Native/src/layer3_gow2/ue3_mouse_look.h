@@ -82,8 +82,9 @@ REXCVAR_DEFINE_DOUBLE(ue3_mouse_fov_comp, 1.0, "COGBox",
     .range(0.25, 4.0);
 // The view's field of view (degrees, before the ultrawide widening) is noted once per view at the projection set-up
 // (Gow2UltrawideFov's hook, which runs whether or not ultrawide is on). The mouse is scaled by reference / FOV, so every
-// camera turns as the walking camera does. The reference is Gears 2's GameplayCam_Default FOVAngle 80 (its coalesced
-// ini: roadie run 105, cover 95, aiming 50, DBNO 80). 0 = off.
+// camera turns as the walking camera does. The reference, 80, is GameplayCam_Default's FOVAngle in the Gears 1 / Gears 3
+// coalesced ini (roadie run 105, cover 95, aiming 50); Gears 2's own value was not read yet - check it with
+// --ue3_mouse_log / the FOV noted here before shipping. 0 = off.
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_wide_fov_ref, 80.0, "COGBox",
                       "Native mouse look (GitHub #52): cameras wider than this FOV (degrees, x the launcher's FOV %) "
                       "turn as fast per count as this one (roadie run, DBNO). 0 = off")
