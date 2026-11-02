@@ -65,6 +65,8 @@ bool XenosOnScreenNotesHidden();
 // runtime), shut down from OnShutdown.
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window, rex::Runtime* runtime);
 void XenosShutdownInGameMenu();
+// PR #134 (Flippage): true while the in-game menu is open - the native mouse look drops mouse motion then.
+bool XenosInGameMenuIsOpen() noexcept;
 // Patch 0062: --gow2_shader_note (default on) - a small "Building shaders N%" note in the bottom-left corner while the
 // renderer's pipeline workers have work queued for more than a second (created and destroyed with the FPS bar, shown
 // whatever the bar's setting). The renderer reports, once a frame: jobs left (queued + being built), jobs ever queued.

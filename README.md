@@ -271,6 +271,8 @@ This project stands on the work of many open-source projects and their communiti
 - **[Xenia](https://xenia.jp)** - Ben Vanik and the Xenia contributors, and the **Xenia Canary** and **Xenia Edge** forks.
   Their open code and years of research into the Xbox 360 made this possible; much of our renderer's exact behaviour,
   its texture and resolve rules, and the fast shader translation follow their work.
+- **[Flippage](https://github.com/Flippage)** - mouse control and input isolation for the in-game menu (PR #134), the
+  controller prompt glyphs (PR #117), and the gow3-recomp mouse look our native mouse look builds on.
 - **rexglue SDK** - the static-recompilation toolchain and runtime the ports are built
   with (Xenia-derived).
 - **[SDL3](https://libsdl.org)** - windows, controllers (Xbox, PlayStation and more) and input, in the games and COGBox.
