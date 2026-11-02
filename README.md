@@ -156,6 +156,21 @@ Tick **Gameplay > Cheats (hotkeys F5-F11)** in the game's settings, then in game
 
 **Unlock all mutators** (same tab) makes every mutator available without touching your profile.
 
+### System Link / LAN co-op (experimental)
+
+Tick **Gameplay > System Link - LAN play (experimental)** on every PC (title-update versions only). The PCs must be on
+the same network, or on a LAN VPN such as Radmin VPN, ZeroTier or Hamachi (not an internet VPN like NordVPN). If Windows
+asks about the firewall, allow Private networks. With 3 or more PCs, each PC must list every other PC (see
+`Gears2-Native/patches/README.md`, patch 50). Gears 2 campaign co-op worked in testing; other modes and games are less
+tested. There is no voice chat yet, and no internet (Xbox Live) play.
+
+**On 0.4.0, Gears 3 System Link co-op needs a two-PC test.** The #68 fix changes two things the game sees: XNetRandom
+now gives real random numbers (before, every PC could produce the same "random" values, so this should help), and
+Gears 3 now gets "no online ID" (0) for every player on every PC. COGBox's own System Link code finds and connects PCs
+by IP address and doesn't use those IDs (the offline IDs were already the same on every PC), but we haven't yet
+checked what Gears 3's own session code does with them. Please report how it goes. Gears of War, Gears 2 and Judgment
+are unchanged.
+
 ---
 
 ## What you need
@@ -232,7 +247,7 @@ saves and settings are not in the zip, so they are kept.
 ## What's coming
 
 Plans, not promises:
-- **Gamer Tag Login**
+- **Gamer Tag Login** - a Player name (display only) is in since 0.4.0; real sign-in later.
 - **Texture packs** - a texture dumper and replacement packs (mods and DLC are in since 0.2.0).
 - **Mac, Linux, Steamdeck** - Linux and Steam Deck through Proton are in as experimental now; tested support next.
 - **Online Co-Op** - Hopefully.

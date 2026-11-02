@@ -71,6 +71,10 @@ Then move the third-party submodules to the tags in `sdk-pins.txt` and configure
   `<file>.pre-xuid0` (verified by size before anything is written), and the new file is written to `<file>.cogbox-tmp`
   and renamed over the original. Logged as `cogbox_save_convert:`. A converted save makes 0.3.x reset it, so restore
   the `.pre-xuid0` files before going back. Made from the live SDK's `.pre1066` sources.
+  System Link (patches 49b / 50) finds and connects peers by IP address (XNADDR from the adapter IP) and makes its own
+  session IDs / keys with `std::random_device`, so it uses neither XNetRandom nor any XUID. The offline XUIDs were
+  already the same on every PC. What Gears 3's own session code does with online XUID 0 on both PCs is untested:
+  Gears 3 System Link on this runtime needs a two-PC test.
 - `sdk-patch15` to `sdk-patch37` are the separate patches that went into `rexglue-sdk.diff`. They're kept
   for reference only, so don't apply them again.
 - `sdk-patch16-zpd-pairing-UNBUILT.diff` was never built. It isn't in any release.
