@@ -257,6 +257,19 @@ non_argument_as_local = false
 # 'stw r11,0x2EA4(r6)' that sets the engine's tiling flag (0x83122EA4, GUseTilingMode) to 1 during startup; the community
 # "black shading" fix for emulators stops that store. The hook runs before the store and clears r11 when
 # --gow2_untiled is on (src/layer3_gow2/untiled.cpp). r11 is overwritten a few instructions later, so nothing else changes.
+# GitHub #94 (jobs 1026 / 1028): `cmplw cr6,r10,r11` - the render-target pool's size / capacity check before its trap
+# (Gow2RtPoolCheck), and 16 bytes on `lwz r4,16(r31)` - the pool base the target is placed at (Gow2RtPoolBase).
+[[entrypoint.midasm_hook]]
+address = 0x8280CB4C
+name = "Gow2RtPoolCheck"
+registers = ["r10", "r11", "r28", "r30", "r31"]
+
+[[entrypoint.midasm_hook]]
+address = 0x8280CB5C
+name = "Gow2RtPoolBase"
+registers = ["r4", "r31"]
+after_instruction = true
+
 [[entrypoint.midasm_hook]]
 address = 0x82806A44
 name = "Gow2UntiledHook"

@@ -38,6 +38,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <thread>
 #include <immintrin.h>
 #ifdef _WIN32
@@ -343,20 +344,86 @@ void Gow2UltrawideUiHeight(PPCRegister& r3) {
   r3.u64 = ui;
 }
 
-// GitHub #94 diagnosis (job 1026, TU6 listing): sub_8281C680 makes a render target inside a pool object (r31, its 6th
-// argument): size = sub_829BABD8(...) rounded up to 4 KB (r10), compared with the pool's capacity `lwz r11,20(r31)`;
-// larger -> bl 0x82AC6098 -> 0x82F692C4, the trap that ends the game at 32:9 / 360 rows (exit 0x80000003). This hook,
-// before the `cmplw` at 0x8281C718 (TU6 only: the disc's site is not known yet), changes nothing: it logs the first
-// 24 calls and every call that would trap, with the arguments that sized it (r30 = sub_829BABD8's r3, r28 = its r4),
-// so the pool and the target that outgrows it are known before anything is raised.
+// GitHub #94 (Gears 2 wider than ~2.39:1 trapped at start-up). sub_8281C680 (TU6; disc sub_8280CAB8) places a render
+// target in a pool: size = sub_829BABD8(w, h, ...) rounded up to 4 KB (r10) against the pool's capacity `lwz r11,20(r31)`;
+// larger -> bl 0x82AC6098 -> the trap. Job 1028: at 32:9 / 360 rows the capacity is 0x1E0000 = 1280 x 384 x 4 (the pool
+// is sized from the scene buffer: 360 rows, tiled to 384) and the 8th target is 800 x 800 (0x271000), which fits a
+// pool sized from 1280 x 512+ rows (536 = the old clamp) but not this one. The target only borrows the pool's memory
+// (`lwz r4,16(r31)` -> sub_829BADF0 sets its base); so a target the pool can't hold gets memory of its own instead:
+// one physical allocation per pool, as large as the largest such target (targets in one pool share it, as they share
+// the pool), and the check is passed (r11 = r10). Nothing changes for a target that fits.
+// Sites (checked against the guest code words before use, else left alone): cmplw cr6,r10,r11 (7F0A5840) then 16 bytes
+// on lwz r4,16(r31) (809F0010): TU6 0x8281C718 / 0x8281C728, disc 0x8280CB4C / 0x8280CB5C (job 1028's shape search).
+REXCVAR_DEFINE_BOOL(gow2_rt_pool_grow, true, "Gears2",
+                    "GitHub #94: a render target too large for its pool (Gears 2 wider than ~2.39:1) gets memory of its "
+                    "own instead of the game's trap");
+namespace rtpool {
+struct Extra { uint32_t pool, size, va; };
+inline std::mutex g_mutex;
+inline Extra g_extra[16];
+inline int g_count = 0;
+inline thread_local uint32_t t_pool = 0, t_size = 0;  // set by the check hook for the lwz hook right after it
+inline bool SiteOk(uint32_t cmp_addr) {
+  static std::atomic<int> ok{-1};
+  int v = ok.load();
+  if (v < 0) {
+    rex::Runtime* rt = rex::Runtime::instance();
+    const uint8_t* b = rt ? rt->virtual_membase() : nullptr;
+    auto w = [&](uint32_t a) { const uint8_t* q = b + a; return (uint32_t(q[0]) << 24) | (uint32_t(q[1]) << 16) | (uint32_t(q[2]) << 8) | q[3]; };
+    v = b && w(cmp_addr) == 0x7F0A5840u && w(cmp_addr + 16) == 0x809F0010u ? 1 : 0;
+    ok.store(v);
+    REXLOG_INFO("gow2_rt_pool: check site {:08X} {}", cmp_addr, v ? "matches" : "does not match this build - left alone");
+  }
+  return v == 1;
+}
+// A guest base for `size` bytes, in the form the pool's own base has (virtual 0xA0000000+ or physical). 0 = none.
+inline uint32_t BaseFor(uint32_t pool, uint32_t size, uint32_t pool_base) {
+  std::lock_guard<std::mutex> l(g_mutex);
+  for (int k = 0; k < g_count; ++k)
+    if (g_extra[k].pool == pool && g_extra[k].size >= size) return g_extra[k].va;
+  auto* ks = REX_KERNEL_STATE();
+  auto* mem = ks ? ks->memory() : nullptr;
+  rex::memory::BaseHeap* heap = mem ? mem->LookupHeapByType(true, 4096) : nullptr;
+  uint32_t va = 0;
+  if (!heap || g_count >= 16 ||
+      !heap->Alloc(size, 0x10000, rex::memory::kMemoryAllocationReserve | rex::memory::kMemoryAllocationCommit,
+                   rex::memory::kMemoryProtectRead | rex::memory::kMemoryProtectWrite, true, &va) || !va)
+    return 0;
+  const uint32_t base = pool_base >= 0xA0000000u ? va : mem->GetPhysicalAddress(va);
+  if (base == UINT32_MAX) return 0;
+  g_extra[g_count++] = {pool, size, base};
+  REXLOG_INFO("gow2_rt_pool: pool {:08X}: a {:#x}-byte target gets its own memory at {:08X} (pool base {:08X})", pool,
+              size, base, pool_base);
+  return base;
+}
+}  // namespace rtpool
+
 void Gow2RtPoolCheck(PPCRegister& r10, PPCRegister& r11, PPCRegister& r28, PPCRegister& r30, PPCRegister& r31) {
+#if defined(GOW2_TU6) && GOW2_TU6
+  constexpr uint32_t kSite = 0x8281C718;
+#else
+  constexpr uint32_t kSite = 0x8280CB4C;
+#endif
   static std::atomic<int> calls{0}, over{0};
+  rtpool::t_pool = rtpool::t_size = 0;
   const bool traps = r10.u32 > r11.u32;
   const int n = calls.fetch_add(1);
   if (n < 24 || (traps && over.fetch_add(1) < 24))
     REXLOG_INFO("gow2_rt_pool: call {} pool {:08X} size {:#x} capacity {:#x}{} (args {:08X} {:08X}, scene rows {})", n,
-                r31.u32, r10.u32, r11.u32, traps ? " - TOO BIG, the game traps next" : "", r30.u32, r28.u32,
+                r31.u32, r10.u32, r11.u32, traps ? " - too big for the pool" : "", r30.u32, r28.u32,
                 REXCVAR_GET(gow2_ultrawide) ? Gow2WideHeight() : 720u);
+  if (!traps || !REXCVAR_GET(gow2_rt_pool_grow) || !rtpool::SiteOk(kSite)) return;
+  rtpool::t_pool = r31.u32;
+  rtpool::t_size = r10.u32;
+  r11.u64 = r10.u32;  // the check passes (ble taken); the base is replaced right after
+}
+// After `lwz r4,16(r31)`: the pool's base, replaced for a target the check hook let through.
+void Gow2RtPoolBase(PPCRegister& r4, PPCRegister& r31) {
+  if (!rtpool::t_size || rtpool::t_pool != r31.u32) return;
+  const uint32_t size = rtpool::t_size;
+  rtpool::t_pool = rtpool::t_size = 0;
+  if (const uint32_t base = rtpool::BaseFor(r31.u32, size, r4.u32)) r4.u64 = base;
+  else REXLOG_ERROR("gow2_rt_pool: no memory for a {:#x}-byte target - it overlaps the pool's neighbour", size);
 }
 
 // Stage 6 Horde crash (notes/58, jobs 206-208): about 2 s into Horde's first wave countdown the main thread reads through
