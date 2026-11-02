@@ -183,6 +183,14 @@ std::vector<Option> make_options(Game g) {
     add(choice("FpsMode", "FPS counter", Tab::Display, OWN, { "Off", "Bar at the top", "Bar at the bottom", "Game's own (column)" }, 0,
                "Bar: one line (FPS, frame time, slowest frame) drawn by the port itself, nothing in the game changed. Game's own: "
                "the game's built-in FPS / frame-time column.", 336));
+    // GitHub #121: the port's own notes over the game (shader building / loading, achievement pop-ups) off.
+    add(make("HideNotes", "Hide on-screen notes", Tab::Display, Kind::Bool, OWN, 0,
+             "Draws nothing of the port's over the game: no shader-building note, no shader-loading indicator and no "
+             "achievement pop-ups (achievements still unlock). The FPS counter above is separate.", 0));
+    // GitHub #52 (Gears 3 native mouse look)
+    if (g == Game::Gears3) add(choice("AimTurn", "Mouse turn when aiming", Tab::Controls, OWN, { "Same as moving around", "Game's (slower)" }, 0,
+               "Same: the mouse turns the view by the same angle per inch in every camera mode - running, roadie run, cover, "
+               "aiming and zoom. Game's: aiming and zoom keep the console game's slower turn. Native mouse look only.", 0));
     add(make("Ultrawide", "Ultrawide", Tab::Display, Kind::Bool, PG, 0,
              "A wider view that matches an ultrawide monitor (21:9 or 32:9); black bars on other shapes.", 362), "ultrawide");
 
@@ -246,13 +254,19 @@ std::vector<Option> make_options(Game g) {
                "for the rest of the game.", 360), "pool", "", true);
     if (!g1) add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
                "How far away detail and objects are still drawn.", 361), "drawdist", "", true);
-    // Motion blur / lens flares: no PS1 tooltip.
+    // GitHub #113: character / weapon mesh detail. UE3's [SystemSettings] SkeletalMeshLODBias (0 = the game's own);
+    // negative keeps the more detailed versions (hair, faces, armour) to a greater distance. Not in a preset: untested.
+    if (!g1) add(choice("MeshLod", "Character detail (LOD)", Tab::Graphics, PG, { "Original", "Higher", "Highest" }, 0,
+               "Keeps characters' and weapons' detailed models (hair, faces, armour) at a greater distance, for high "
+               "resolutions. Costs some GPU time in crowded scenes. Original = the game's own.", 0), "inifx");
+    // Motion blur: no PS1 tooltip.
     if (!g1) add(make("MotionBlur", "Motion blur", Tab::Graphics, Kind::Bool, PG, 1, "The blur of fast movement (the game's own setting).", 370),
         "inifx", "", true);
     if (!g1) add(make("DoF", "Depth of field", Tab::Graphics, Kind::Bool, PG, 1,
              "The blur of distant / out-of-focus areas (cutscenes, aiming).", 371), "inifx", "", true);
-    if (!g1) add(make("LensFlares", "Lens flares", Tab::Graphics, Kind::Bool, PG, 1, "Light flares from bright lights (the game's own setting).", 372),
-        "inifx", "", true);
+    // GitHub #102 (Shagg): no Lens flares option any more - the launcher decides per game at launch (below): on where the
+    // game's occlusion queries are answered (Real occlusion, DirectX 12, not under Wine / Proton), off where they can't
+    // be, since every flare would show through the scenery there.
     add(choice("Shake", "Camera shake (roadie run)", Tab::Graphics, PG, { "Original", "Less", "Off" }, 0,
                "The camera shake while roadie-running. Less halves the game's own shake; Off removes it.", 373), "iniedit", "", true);
     add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 5, 100,
@@ -289,6 +303,20 @@ std::vector<Option> make_options(Game g) {
                "low-DPI one.", 381, 2));
     add(choice("DeadZone", "Extra stick dead zone", Tab::Controls, SH, { "Game's own", "5%", "10%", "15%", "20%", "25%" }, 0,
                "Added on top of the game's own dead zone, for worn sticks that drift. Game's own = nothing added.", 382));
+    // GitHub #95: a round (radial) dead zone on both sticks, rescaled from its edge - Gears 3's feel for Gears 1 and 2.
+    // SDK patch 55 (pad_radial_deadzone). In Gears 1 and 2 the game's own per-axis dead zone on the look binding is
+    // taken off at the same time (below), so the round one is the one you feel.
+    add(choice("RadialDZ", "Radial stick dead zone", Tab::Controls, SH, { "Game's own", "8%", "12%", "16%", "20%", "25%" }, 0,
+               "A round dead zone on both sticks (measured from the centre, not per axis), so small diagonal aim moves "
+               "are not swallowed. Gears 1 and 2's own square dead zone on the camera is removed with it. Game's own = "
+               "unchanged.", 0), "padlayout");
+    // GitHub #97: controller layouts (SDK patch 55, pad_remap). Custom = CogBox.ini [Pad] Remap=, e.g. "a=b,b=a".
+    add(choice("PadLayout", "Controller layout", Tab::Controls, SH,
+               { "Game's own", "Southpaw (sticks swapped)", "A and B swapped", "Bumpers and triggers swapped",
+                 "Custom (CogBox.ini [Pad] Remap=)" }, 0,
+               "Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts "
+               "keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up "
+               "down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=.", 0), "padlayout");
     add(make("Vibration", "Controller vibration", Tab::Controls, Kind::Bool, SH, 1, "The controller's rumble.", 383));   // no PS1 tooltip
     add(make("LowLag", "Lower input lag", Tab::Controls, Kind::Bool, SH, 1,
              "Fewer frames waiting in line between the game and your screen, so the controller feels quicker. May cost a few "
@@ -302,8 +330,8 @@ std::vector<Option> make_options(Game g) {
     add(choice("Version", "Game version", Tab::Gameplay, OWN, { "Title Update (latest)", "Disc (original release)" },
                0,   // COGBox (Shagg 19:46): the PGO build is the default - Gears 2's and Gears 3's title-update builds
                     // (the PS1 has G3Version = 1, the disc; Gears 3's chat built both its exes with PGO, job 143)
-               "Title Update: the latest patch from Epic (Gears 2: TU6; Gears 3: TU6, new; Judgment: TU4). Disc: the original "
-               "release.", 324), "version");
+               "Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: "
+               "TU4, Gears 1: TU5). Disc-only versions are no longer supported.", 324), "version");
     add(choice("Players", "Players", Tab::Gameplay, PG, { "1", "2 (split-screen)", "3 (split-screen)", "4 (split-screen)" }, 0,
                "Local split-screen co-op (one controller each).", 325), "players");
     // 0.3.5 (GitHub #72, SDK patch 49b): System Link over a LAN or a LAN VPN (Radmin VPN, ZeroTier, Hamachi). Off = the
@@ -331,6 +359,14 @@ std::vector<Option> make_options(Game g) {
                "The language of the game's own text and voices - every language the US and European releases have. Only "
                "the languages on your copy of the game are there; the others fall back to English. European copies have "
                "the most. Takes effect when the game starts.", 0), "lang");
+    // GitHub #87: voices in another language than the text (layer 2 --ue3_voice_language: the game's localised packages
+    // *_LOC_<lang>.xxx are served from the voice language's twins). Only languages whose packages are on the copy work.
+    add(choice("VoiceLang", "Voice language", Tab::Gameplay, PG,
+               { "Same as the game language", "English", "French", "German", "Italian", "Spanish (Spain)",
+                 "Spanish (Latin America)", "Polish", "Russian", "Japanese" }, 0,
+               "The language of the spoken dialogue, separately from the menus and text (Game language). Needs that "
+               "language's voice files on your copy (European copies have English, French, German, Italian, Spanish). "
+               "Subtitles stored with the voices may follow them.", 0), "voicelang");
     add(make("Mute", "Mute when the game is not the active window", Tab::Gameplay, Kind::Bool, SH, 0,
              "Silences the game while another window is in front; the sound comes back when you click back into the game.", 386),
         "mute");   // the only sound option, so it lives here (no Audio tab)
@@ -415,8 +451,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     const int gi = static_cast<int>(g);
     auto no = [](const std::string& why) { Availability a; a.ok = false; a.why = why; return a; };
     if (f == "version") {
-        if (g == Game::Gears2) { if (!env.update_ready) return no("The Title Update 6 build is not there yet."); }
-        else if (g == Game::Gears3) { if (!env.update_ready) return no("The Gears 3 Title Update 6 build is not there yet."); }
+        // Title updates required (0.4.0): the disc-only version is no longer supported in any game
+        if (g == Game::Gears2 || g == Game::Gears3) return no("Title updates are now required - this game always runs with its Title Update 6.");
         else if (g == Game::Gears1) return no("Gears 1 always runs with its Title Update 5.");
         else return no("Judgment always runs with its Title Update 4.");
     } else if (f == "start" || f == "prebuild") {
@@ -430,7 +466,7 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "cheats" || f == "mutators") {
         if (g != Game::Gears3) return no(not_yet(gi));
         if (ver == Version::TitleUpdate && env.update_ready)
-            return no("Gears 3: the Disc version only for now (Title Update 6 shows a dirty-disc error with it).");
+            return no("Gears 3: not with Title Update 6 yet (it shows a dirty-disc error with it).");
     } else if (f == "levelsel") {
         if (g != Game::Judgment) return no(not_yet(gi));
     } else if (f == "inifx") {   // motion blur, depth of field, lens flares: [SystemSettings] switches
@@ -457,6 +493,10 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1 && !cap_exe(env, "gow1_max_fps")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "lang") {   // the SDK runtime's --user_language / --user_country
         if (g == Game::Gears1 && !cap_rt(env, "user_language") && !cap_exe(env, "user_language")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "voicelang") {   // GitHub #87: layer 2's ue3_voice_language
+        if (!cap_exe(env, "ue3_voice_language")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "padlayout") {   // GitHub #95 / #97: SDK patch 55
+        if (!cap_rt(env, "pad_remap")) return no(not_yet(gi, "needs the next runtime (SDK patch 55)"));
     } else if (f == "lowlag") {
         if (!cap_exe(env, "gow2_renderer_frames_in_flight")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "scenescale") {
@@ -548,7 +588,9 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
 Version effective_version(Game g, const Settings& s, const Environment& env) {   // PS1 459
     if (g == Game::Judgment || g == Game::Gears1) return Version::TitleUpdate;   // one build (disc + its title update)
     if (!env.update_ready) return Version::Disc;
-    return s.i("Version") == 0 ? Version::TitleUpdate : Version::Disc;
+    // Title updates required (0.4.0): an older saved "Disc (original release)" choice is no longer followed.
+    (void)s;
+    return Version::TitleUpdate;
 }
 bool exe_for_update(Game g, Version ver, const Environment& env) {   // PS1 442-445, 804, 809, 821
     if (g == Game::Judgment || g == Game::Gears1) return env.update_ready;
@@ -568,7 +610,7 @@ void apply_preset(Settings& s, int p) {
     s.set("Preset", p);
     s.set("Resolution", x.res); s.set("FrameCap", x.fps); s.set("AAMode", x.aa); s.set("Aniso", x.aniso);
     s.set("Trilinear", x.tri); s.set("MipFade", x.mip); s.set("Pool", x.pool); s.set("DrawDist", x.draw);
-    s.set("MotionBlur", x.blur); s.set("DoF", x.dof); s.set("LensFlares", x.flare); s.set("Shake", x.shake); s.set("Fov", x.fov);
+    s.set("MotionBlur", x.blur); s.set("DoF", x.dof); s.set("Shake", x.shake); s.set("Fov", x.fov);
 }
 
 void set_value(Game g, Settings& s, const std::string& id, double value) {
@@ -909,7 +951,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         std::vector<std::string> ini;
         if (avail("MotionBlur") && !s.b("MotionBlur")) ini.push_back(ei + "|SystemSettings|MotionBlur=False");
         if (avail("DoF") && !s.b("DoF")) ini.push_back(ei + "|SystemSettings|DepthOfField=False");
-        if (avail("LensFlares") && !s.b("LensFlares")) ini.push_back(ei + "|SystemSettings|LensFlares=False");
+        // GitHub #102: lens flares are not a player setting. Flares are hidden behind walls only by the game's occlusion
+        // queries, which only Real occlusion answers (DirectX 12, not under Wine / Proton); without them every flare shows
+        // through the scenery, so they are off for that launch. Gears 1's engine has no lens-flare switch.
+        if (!isG1) {
+            const bool occlusion = s.i("Api") == 0 && !env.wine && avail("RealOcclusion") && s.b("RealOcclusion");
+            if (!occlusion) {
+                ini.push_back(ei + "|SystemSettings|LensFlares=False");
+                notes.push_back("launcher: lens flares off for this launch - no Real occlusion (DirectX 12) to hide them behind walls (GitHub #102)");
+            }
+        }
         if (avail("Fov") && s.i("Fov") != 100) {
             std::string k = fmt_double(static_cast<double>(s.i("Fov")) / 100);
             ini.push_back(std::string(isG1 ? "WarCamera.ini" : "GearCamera.ini") + "|*|FOVAngle*=" + k);
@@ -921,6 +972,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             else if (isG1) a.push_back("--gow1_skip_logos=true");
             else a.push_back("--gowj_skip_logos=true");
         }
+        if (avail("MeshLod") && s.i("MeshLod") > 0)   // GitHub #113
+            ini.push_back(ei + "|SystemSettings|SkeletalMeshLODBias=" + (s.i("MeshLod") >= 2 ? "-3" : "-1"));
         int dd = std::max(0, std::min(2, s.i("DrawDist")));
         if (avail("DrawDist") && dd > 0) ini.push_back(ei + "|SystemSettings|MaxDrawDistanceScale=" + k_drawScale[dd]);
         int sh = std::max(0, std::min(2, s.i("Shake")));
@@ -937,6 +990,22 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // full stick. With keyboard and mouse on, the binding gets no dead zone and k_lookBoost x the speed; the mouse is
         // scaled down by the same factor (same feel, 4x the ceiling) and a controller used alongside gets both undone by
         // the SDK (patch 38: pad_look_scale / pad_look_deadzone). Each game's own binding text, from its Coalesced_int.
+        // GitHub #95: with the radial dead zone on, Gears 1 and 2's look binding loses its own per-axis dead zone (the
+        // same binding text the mouse-look edits below replace; Speed unchanged). Not with mouseLook, which does it too.
+        if (!mouseLook && avail("RadialDZ") && s.i("RadialDZ") > 0 && (g == Game::Gears2 || isG1)) {
+            if (g == Game::Gears2) {
+                const std::string fi = "GearInput.ini|Engine.PlayerInput|~=";
+                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.3>Axis aTurn Speed=1.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=0.75 DeadZone=0.3>Axis aLookup Speed=0.75 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=-0.75 DeadZone=0.3>Axis aLookup Speed=-0.75 DeadZone=0.0");
+            } else {
+                const std::string fi = "WarInput.ini|Engine.PlayerInput|~=";
+                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.2>Axis aTurn Speed=1.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=0.8 DeadZone=0.2>Axis aLookup Speed=0.8 DeadZone=0.0");
+                ini.push_back(fi + "Axis aTurn Speed=1.0 DeadZone=0.3>Axis aTurn Speed=1.0 DeadZone=0.0");
+                ini.push_back(fi + "Axis aLookup Speed=0.75 DeadZone=0.3>Axis aLookup Speed=0.75 DeadZone=0.0");
+            }
+        }
         if (mouseLook) {
             const std::string fi = "GearInput.ini|Engine.PlayerInput|~=";
             if (g == Game::Gears2) {
@@ -957,6 +1026,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                 ini.push_back(fi + "Axis aLookup Speed=1.0 DeadZone=0.2>Axis aLookup Speed=4.0 DeadZone=0.0");
                 ini.push_back(fi + "Axis aLookup Speed=-1.0 DeadZone=0.2>Axis aLookup Speed=-4.0 DeadZone=0.0");
             }
+        }
+        // GitHub #118: with native mouse look the turn speed changed with the frame rate (an RTSS cap changed in game
+        // turned faster or slower; one set before start-up did not). UE3's PlayerInput.SmoothMouse scales each frame's
+        // aMouseX/Y by DeltaTime / (MouseSamplingTotal / MouseSamples) - the average frame time since start-up - so a
+        // frame rate different from the history's average turns by the ratio. Mouse smoothing off (as the PC games
+        // allow in their Input.ini, and as Judgment's own KBM work did) passes the counts through unscaled.
+        if (nativeMouse && (!isG1 || cap_exe(env, "gow1_ini_edits"))) {
+            const std::string pi = isG1 ? "WarInput.ini" : "GearInput.ini";
+            ini.push_back(pi + "|*|bEnableMouseSmoothing=FALSE");                 // wherever the game's own ini sets it
+            ini.push_back(pi + "|Engine.PlayerInput|bEnableMouseSmoothing=FALSE");  // and added when it does not
         }
         if (!ini.empty()) {
             std::string j;
@@ -991,6 +1070,20 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (d > 0) { std::string dz = fmt_double(k_deadValue[d]); a.push_back("--left_stick_deadzone_percentage=" + dz); a.push_back("--right_stick_deadzone_percentage=" + dz); }
     }
     if (!s.b("Vibration")) a.push_back("--vibration=false");
+    // GitHub #95 / #97 (SDK patch 55): radial dead zone and controller layout
+    if (avail("RadialDZ")) {
+        static const double k_radial[6] = { 0, 0.08, 0.12, 0.16, 0.20, 0.25 };
+        const int r = std::max(0, std::min(5, s.i("RadialDZ")));
+        if (r > 0) a.push_back("--pad_radial_deadzone=" + fmt_double(k_radial[r]));
+    }
+    if (avail("PadLayout")) {
+        static const char* k_layouts[4] = { "", "sticks=swap", "a=b,b=a", "lb=lt,lt=lb,rb=rt,rt=rb" };
+        const int l = std::max(0, std::min(4, s.i("PadLayout")));
+        std::string spec = l < 4 ? k_layouts[l] : env.pad_remap;
+        std::string clean;
+        for (char c : spec) if (std::isalnum(static_cast<unsigned char>(c)) || c == '=' || c == ',') clean += c;
+        if (!clean.empty()) a.push_back("--pad_remap=" + clean);
+    }
     // PS1 911-925 (patches 0133 / 0135 / 0136 / 0152): lower input lag; Reflex / Anti-Lag 2 by the main card's maker
     if (avail("LowLag")) {
         const std::string gpu = gpu_main(env);
@@ -1023,9 +1116,28 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             if (isG1 && l == 7 && cap_rt(env, "user_game_region")) a.push_back("--user_game_region=255");
         }
     }
+    if (avail("VoiceLang") && s.i("VoiceLang") > 0) {   // GitHub #87
+        static const char* k_voice[10] = { "", "INT", "FRA", "DEU", "ITA", "ESN", "ESM", "POL", "RUS", "JPN" };
+        a.push_back(std::string("--ue3_voice_language=") + k_voice[std::max(0, std::min(9, s.i("VoiceLang")))]);
+    }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
-    if (on("SystemLink")) a.push_back("--net_system_link=true");   // 0.3.5: off = not sent (the runtime's default)
+    if (on("SystemLink")) a.push_back("--net_system_link=true");
+    // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=). Only with a runtime that
+    // has SDK patch 54; it keeps 15 letters / digits / spaces. The profile's save folder is not renamed.
+    // 0.4.0: the same rules as the runtime's Player1Gamertag - ASCII letters / digits and single spaces, trimmed, 15 max.
+    if (!env.gamertag.empty() && cap_rt(env, "user_gamertag")) {
+        std::string t;
+        for (char c : env.gamertag) {
+            const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ';
+            if (ok && !(c == ' ' && (t.empty() || t.back() == ' '))) t += c;
+            if (t.size() == 15) break;
+        }
+        while (!t.empty() && t.back() == ' ') t.pop_back();
+        if (!t.empty()) a.push_back("--user_gamertag=" + q(t));
+    }   // 0.3.5: off = not sent (the runtime's default)
+    // GitHub #121: only an exe whose layer 0 has the switch (an older one would refuse the unknown flag)
+    if (s.b("HideNotes") && cap_exe(env, "gow2_hide_onscreen_notes")) a.push_back("--gow2_hide_onscreen_notes=true");
     // PS1 929: FPS counter
     switch (s.i("FpsMode")) {
     case 1: a.push_back("--gow2_fps_bar=top"); break;
@@ -1043,6 +1155,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // GitHub #52: keep the turn speed per count the same whatever Field of view (%) is (UE3 scales the mouse by the
         // FOV). Only the FOV % here: the ultrawide patch (gow3_aspect) widens the projection, not FOVAngle, so
         // PlayerInput's FOVScale does not see it - check that in the aspect code before adding its factor.
+        // GitHub #52: Gears 3 - the mouse turns the same angle per count in every camera mode unless the player keeps the
+        // game's slower aiming / zoom turn ("Mouse turn when aiming": Same as running around / Game's (slower))
+        if (nativeMouse && isG3 && s.i("AimTurn") == 1 && cap_exe(env, "ue3_mouse_fov_constant")) a.push_back("--ue3_mouse_fov_constant=false");
         if (nativeMouse && avail("Fov") && s.i("Fov") != 100 && cap_exe(env, "ue3_mouse_fov_comp"))
             a.push_back("--ue3_mouse_fov_comp=" + fmt_double(100.0 / static_cast<double>(s.i("Fov"))));
         if (mouseLook) {
@@ -1110,8 +1225,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (vsync && fps >= 1) {
             const int hz = env.refresh_hz;
             const int top = fgOn ? static_cast<int>(std::floor(hz / 2.0)) - 2 : hz - 3;
+            const int chosen = cap;
             if (isG3 && cap == 60) cap = 62;   // review 0158: Gears 3's 60 is its own 62 cap
-            if (hz >= 50 && (cap < 0 || cap > top)) cap = top;
+            // GitHub #106: a cap the player set to the refresh rate itself (60 on a 60 Hz TV) is kept - vsync paces it.
+            // 3 under is for VRR screens; on a fixed-refresh TV it gave a steady 57 fps that judders.
+            const bool atRefresh = !fgOn && chosen > 0 && std::abs(chosen - hz) <= 1;
+            if (hz >= 50 && !atRefresh && (cap < 0 || cap > top)) cap = top;
             notes.push_back("launcher: vsync on; " + env.monitor_device + " at " + std::to_string(hz) + " Hz (0 = unknown)" +
                             (fgOn ? ", frame generation on" : "") + " -> frame-rate cap " + std::to_string(cap));
         }

@@ -1,0 +1,238 @@
+diff --git a/src/kernel/xam/xam_net.cpp b/src/kernel/xam/xam_net.cpp
+index 98f7f48..1e4c699 100644
+--- a/src/kernel/xam/xam_net.cpp
++++ b/src/kernel/xam/xam_net.cpp
+@@ -14,6 +14,7 @@
+ 
+ #include <cstring>
+ #include <cwctype>
++#include <mutex>
+ #include <random>
+ #include <string>
+ #include <vector>
+@@ -540,10 +541,24 @@ u32 NetDll_XNetGetOpt_entry(u32 one, u32 option_id, mapped_void buffer_ptr,
+ }
+ 
+ u32 NetDll_XNetRandom_entry(u32 caller, mapped_void buffer_ptr, u32 length) {
+-  // For now, constant values.
+-  // This makes replicating things easier.
+-  std::memset(buffer_ptr, 0xBB, length);
+-
++  // COGBox: real random bytes (port of Xenia Canary 53c0178 "Implemented XNetRandom - Fixed checkpoints in
++  // Gears of War 3"). The old stub filled 0xBB, so every "random" id the game made was identical.
++  uint8_t* data = reinterpret_cast<uint8_t*>(static_cast<void*>(buffer_ptr));
++  static uint32_t cogbox_xnr_calls = 0;
++  if (cogbox_xnr_calls < 16) {
++    REXLOG_INFO("cogbox_xnet: XNetRandom caller {:08X} length {} (call {})", caller, length, cogbox_xnr_calls + 1);
++  }
++  ++cogbox_xnr_calls;
++  if (!buffer_ptr.guest_address() || data == nullptr || length == 0) {
++    return 0;
++  }
++  static std::mutex gen_lock;
++  static std::mt19937_64 gen{std::random_device{}()};
++  std::lock_guard<std::mutex> guard(gen_lock);
++  std::uniform_int_distribution<int> dist(0, 255);
++  for (u32 i = 0; i < length; ++i) {
++    data[i] = static_cast<uint8_t>(dist(gen));
++  }
+   return 0;
+ }
+ 
+diff --git a/src/kernel/xam/xam_user.cpp b/src/kernel/xam/xam_user.cpp
+index 16dd407..7a87cdb 100644
+--- a/src/kernel/xam/xam_user.cpp
++++ b/src/kernel/xam/xam_user.cpp
+@@ -130,7 +130,21 @@ i32 XamUserGetSigninInfo_entry(u32 user_index, u32 flags, ppc_ptr_t<X_USER_SIGNI
+   }
+ 
+   const auto& user_profile = REX_KERNEL_STATE()->user_profile();
+-  info->xuid = UserXuid(user_index);
++  // COGBox: port of Xenia Canary 01aec51 - flags 1 = online XUID only (none for a local profile -> 0),
++  // flags 2 = offline XUID only. Before, the offline XUID was always returned ("fixes GoW3 save stats / checkpoints").
++  constexpr u32 kOfflineXuidOnly = 0x2;
++  // Job 1067: Gears 3 only (the title the fix and its save converter were made and tested for); every other game keeps
++  // the old answer so its existing saves are untouched.
++  const bool cogbox_online_xuid_fix = REX_KERNEL_STATE()->title_id() == 0x4D5308AB;
++  if (!cogbox_online_xuid_fix || !flags || (flags & kOfflineXuidOnly)) {
++    info->xuid = UserXuid(user_index);
++  }
++  static uint32_t cogbox_si_calls = 0;
++  if (cogbox_si_calls < 16) {
++    REXLOG_INFO("cogbox_xnet: XamUserGetSigninInfo user {} flags {:08X} -> xuid {:016X} (call {})", user_index, flags,
++                uint64_t(info->xuid), cogbox_si_calls + 1);
++  }
++  ++cogbox_si_calls;
+   info->signin_state = user_profile->signin_state();
+   rex::string::copy_truncating(info->name, UserName(user_index), rex::countof(info->name));
+   return X_E_SUCCESS;
+diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
+index b48213f..e1b69e2 100644
+--- a/src/system/kernel_state.cpp
++++ b/src/system/kernel_state.cpp
+@@ -12,6 +12,9 @@
+ #include <chrono>
+ #include <cstring>
+ #include <filesystem>
++#include <array>
++#include <cstdio>
++#include <vector>
+ #include <string>
+ 
+ #include <fmt/format.h>
+@@ -46,6 +49,147 @@
+ #include <rex/system/xthread.h>
+ #include <rex/system/xtimer.h>
+ 
++
++// COGBox (jobs 1066/1067): Gears 3 save conversion for the XamUserGetSigninInfo fix (Canary 01aec51 port). Gears 3 signs
++// PlayerStorage.dat and its profile settings (63E83FFF+63E83FFE+63E83FFD) with SHA-1(online XUID, 8 bytes big-endian +
++// data) in the first 20 bytes. Before the fix we answered "online XUID" with the offline one, so every COGBox save is
++// signed with it; now a local profile's online XUID is 0 and the game would wipe them. Saves still signed the old way are
++// re-signed with 8 zero bytes (data untouched; the old file kept once as <name>.pre-xuid0). Runs once at start-up.
++namespace {
++struct CogSha1 {
++  uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
++  static uint32_t rol(uint32_t v, int n) { return (v << n) | (v >> (32 - n)); }
++  void block(const uint8_t* p) {
++    uint32_t w[80];
++    for (int i = 0; i < 16; ++i) w[i] = (uint32_t(p[4 * i]) << 24) | (uint32_t(p[4 * i + 1]) << 16) | (uint32_t(p[4 * i + 2]) << 8) | p[4 * i + 3];
++    for (int i = 16; i < 80; ++i) w[i] = rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
++    uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
++    for (int i = 0; i < 80; ++i) {
++      uint32_t f, k;
++      if (i < 20) { f = (b & c) | (~b & d); k = 0x5A827999u; }
++      else if (i < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1u; }
++      else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDCu; }
++      else { f = b ^ c ^ d; k = 0xCA62C1D6u; }
++      uint32_t t = rol(a, 5) + f + e + k + w[i];
++      e = d; d = c; c = rol(b, 30); b = a; a = t;
++    }
++    h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
++  }
++  std::array<uint8_t, 20> digest(const std::vector<uint8_t>& m) {
++    std::vector<uint8_t> x(m);
++    uint64_t bits = uint64_t(m.size()) * 8;
++    x.push_back(0x80);
++    while (x.size() % 64 != 56) x.push_back(0);
++    for (int i = 7; i >= 0; --i) x.push_back(uint8_t(bits >> (8 * i)));
++    for (size_t i = 0; i < x.size(); i += 64) block(&x[i]);
++    std::array<uint8_t, 20> out{};
++    for (int i = 0; i < 5; ++i) for (int j = 0; j < 4; ++j) out[4 * i + j] = uint8_t(h[i] >> (24 - 8 * j));
++    return out;
++  }
++};
++std::vector<uint8_t> CogReadAll(const std::filesystem::path& p) {
++  std::vector<uint8_t> v;
++  FILE* f = nullptr;
++#if REX_PLATFORM_WIN32
++  _wfopen_s(&f, p.c_str(), L"rb");
++#else
++  f = fopen(p.c_str(), "rb");
++#endif
++  if (!f) return v;
++  uint8_t buf[65536];
++  size_t n;
++  while ((n = fread(buf, 1, sizeof(buf), f)) > 0) v.insert(v.end(), buf, buf + n);
++  fclose(f);
++  return v;
++}
++bool CogWriteAll(const std::filesystem::path& p, const std::vector<uint8_t>& v) {
++  FILE* f = nullptr;
++#if REX_PLATFORM_WIN32
++  _wfopen_s(&f, p.c_str(), L"wb");
++#else
++  f = fopen(p.c_str(), "wb");
++#endif
++  if (!f) return false;
++  bool ok = fwrite(v.data(), 1, v.size(), f) == v.size();
++  fclose(f);
++  return ok;
++}
++std::array<uint8_t, 20> CogSign(uint64_t key, const uint8_t* body, size_t len) {
++  std::vector<uint8_t> m(8 + len);
++  for (int i = 0; i < 8; ++i) m[i] = uint8_t(key >> (56 - 8 * i));
++  if (len) std::memcpy(m.data() + 8, body, len);
++  return CogSha1().digest(m);
++}
++// files: in order; the signature sits in the first 20 bytes of files[0] and covers the rest of their concatenation.
++void CogResign(const std::vector<std::filesystem::path>& files, uint64_t old_key) {
++  std::vector<uint8_t> all;
++  std::vector<size_t> sizes;
++  for (auto& f : files) { auto v = CogReadAll(f); sizes.push_back(v.size()); all.insert(all.end(), v.begin(), v.end()); }
++  if (all.size() < 21 || sizes.empty() || sizes[0] < 20) return;
++  auto old_sig = CogSign(old_key, all.data() + 20, all.size() - 20);
++  if (std::memcmp(old_sig.data(), all.data(), 20) != 0) {
++    auto new_sig = CogSign(0, all.data() + 20, all.size() - 20);
++    REXLOG_INFO("cogbox_save_convert: {} - {}", rex::path_to_utf8(files[0]),
++                std::memcmp(new_sig.data(), all.data(), 20) == 0 ? "already converted" : "signature not recognised, left alone");
++    return;
++  }
++  auto first = CogReadAll(files[0]);
++  auto backup = files[0];
++  backup += ".pre-xuid0";
++  std::error_code ec;
++  if (!std::filesystem::exists(backup, ec)) {
++    ec.clear();
++    std::filesystem::copy_file(files[0], backup, ec);
++  }
++  if (ec || !std::filesystem::exists(backup, ec) || std::filesystem::file_size(backup, ec) != first.size()) {
++    REXLOG_INFO("cogbox_save_convert: {} - no backup could be made, left alone", rex::path_to_utf8(files[0]));
++    return;
++  }
++  auto new_sig = CogSign(0, all.data() + 20, all.size() - 20);
++  std::memcpy(first.data(), new_sig.data(), 20);
++  // Write a temp file next to it, then replace the original in one step (no half-written save on a crash).
++  auto tmp = files[0];
++  tmp += ".cogbox-tmp";
++  bool ok = CogWriteAll(tmp, first) && std::filesystem::file_size(tmp, ec) == first.size() && !ec;
++  if (ok) {
++    std::filesystem::rename(tmp, files[0], ec);
++    ok = !ec;
++  }
++  if (!ok) std::filesystem::remove(tmp, ec);
++  REXLOG_INFO("cogbox_save_convert: {} - re-signed for the signed-out online XUID: {}", rex::path_to_utf8(files[0]),
++              ok ? "done" : "WRITE FAILED (original untouched)");
++}
++void CogConvertGears3SavesImpl(const std::filesystem::path& root, uint64_t xuid) {
++  if (root.empty() || !xuid) return;
++  std::error_code ec;
++  auto ps = root / fmt::format("{:016X}", xuid) / "4D5308AB" / "00000001" / "PlayerStorage.dat" / "PlayerStorage.dat";
++  if (std::filesystem::exists(ps, ec)) CogResign({ps}, xuid);
++  auto prof = root / "4D5308AB" / "profile";
++  if (!std::filesystem::is_directory(prof, ec)) return;
++  for (auto it = std::filesystem::directory_iterator(prof, ec); !ec && it != std::filesystem::directory_iterator();
++       it.increment(ec)) {
++    const auto& d = *it;
++    std::error_code dec;
++    if (!d.is_directory(dec) || dec) continue;
++    std::vector<std::filesystem::path> files;
++    for (const char* n : {"63E83FFF", "63E83FFE", "63E83FFD"}) {
++      auto f = d.path() / n;
++      if (std::filesystem::exists(f, ec)) files.push_back(f); else break;
++    }
++    if (!files.empty()) CogResign(files, xuid);
++  }
++}
++void CogConvertGears3Saves(const std::filesystem::path& root, uint64_t xuid) {
++  try {
++    CogConvertGears3SavesImpl(root, xuid);
++  } catch (const std::exception& e) {
++    REXLOG_INFO("cogbox_save_convert: stopped ({}); saves left as they were", e.what());
++  } catch (...) {
++    REXLOG_INFO("cogbox_save_convert: stopped; saves left as they were");
++  }
++}
++}  // namespace
++
+ namespace rex::kernel::xam {
+ uint32_t LocalPlayersSignedInMask();  // xam_user.cpp (Gears2-Native SDK patch 25)
+ }  // namespace rex::kernel::xam
+@@ -80,6 +224,7 @@ KernelState::KernelState(Runtime* emulator)
+     user_data_root = std::filesystem::absolute(user_data_root);
+   }
+   content_manager_ = std::make_unique<xam::ContentManager>(this, user_data_root);
++  CogConvertGears3Saves(user_data_root, user_profile_->xuid());  // job 1066
+ 
+   if (shared_kernel_state_ != nullptr) {
+     REXSYS_ERROR("KernelState constructed but shared_kernel_state_ already set");

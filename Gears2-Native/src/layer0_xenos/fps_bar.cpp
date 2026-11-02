@@ -25,6 +25,13 @@ REXCVAR_DEFINE_STRING(gow2_fps_bar, "off", "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_shader_note, true, "Gears2",
                     "Patch 0062: a small 'Building shaders N%' note in the bottom-left corner while the renderer's "
                     "pipeline workers have had work queued for more than a second (start-up backlog, new areas)");
+// GitHub #121 (Codec95: the frame-rate target is off while the shader note or an achievement toast shows): nothing of
+// ours is drawn over the game but the FPS bar the player asked for. Each note on the drawer used to make the presenter
+// repaint at the monitor's rate (ImGuiDialog::WantsContinuousPaint), and those extra presents are what the frame cap /
+// V-Sync pacing got out of step with; that is fixed below too, this switch is for players who want none of it.
+REXCVAR_DEFINE_BOOL(gow2_hide_onscreen_notes, false, "Gears2",
+                    "Hide the on-screen notes drawn over the game: the shader-building note, the shader-loading "
+                    "indicator and achievement pop-ups (achievements still unlock). The FPS bar is its own option");
 
 namespace {
 
@@ -119,6 +126,11 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
     }
   }
   ~ShaderNote() override { *alive_ = false; }
+  // GitHub #121: the note is drawn with each game frame, so it needs no repaints of its own - only the hold indicator
+  // does (the game waits behind the held frame and presents nothing, and the arc must still turn). Before, the note
+  // kept the presenter repainting at the monitor's rate for as long as shaders were building (minutes in a new area),
+  // and the frame cap / V-Sync pacing counted those presents: the frame-rate target was off while it showed.
+  bool WantsContinuousPaint() const override { return g_hold_active.load(std::memory_order_acquire); }
   // Any thread: work is queued or a frame is held - be on the drawer.
   void Wake() {
     if (!ui_ || attached_.exchange(true)) return;
@@ -243,8 +255,10 @@ void XenosSetShaderJobs(uint64_t left, uint64_t ever_queued) {
 // 0.2.1: the UI thread for the shader note (each game's OnCreateDialogs, before XenosCreateFpsBarIfRequested).
 void XenosSetUiContext(rex::ui::WindowedAppContext* ui) { g_ui = ui; }
 
+bool XenosOnScreenNotesHidden() { return REXCVAR_GET(gow2_hide_onscreen_notes); }  // GitHub #121
+
 void XenosCreateFpsBarIfRequested(rex::ui::ImGuiDrawer* drawer) {
-  if (drawer && REXCVAR_GET(gow2_shader_note)) {  // patch 0062
+  if (drawer && REXCVAR_GET(gow2_shader_note) && !XenosOnScreenNotesHidden()) {  // patch 0062, GitHub #121
     g_note = std::make_unique<ShaderNote>(drawer, g_ui);
     g_note_live.store(g_note.get(), std::memory_order_release);
   }

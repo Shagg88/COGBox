@@ -271,8 +271,6 @@ Motion blur = Размытие движения
 The blur of fast movement (the game's own setting). = Размытие быстрого движения (настройка самой игры).
 Depth of field = Глубина резкости
 The blur of distant / out-of-focus areas (cutscenes, aiming). = Размытие дальних / расфокусированных областей (катсцены, прицеливание).
-Lens flares = Блики линз
-Light flares from bright lights (the game's own setting). = Блики от ярких источников света (настройка самой игры).
 Shake = Тряска
 Camera shake (roadie run) = Тряска камеры (бег рядового)
 Less = Меньше
@@ -777,3 +775,12 @@ is out. Click to download and install it; COGBox restarts by itself. = выше�
 Close the game first, then update. = Сначала закройте игру, затем обновите.
 Updating COGBox - it restarts by itself when done. = COGBox обновляется - по завершении он перезапустится сам.
 SMAA (recommended) = SMAA (рекомендуется)
+# 0.4.0: title updates required
+Title updates required = Нужны обновления игр
+Title update needed = Нужно обновление игры
+Title updates are now required to play. Disc-only versions are no longer supported. = Теперь для игры обязательны обновления (Title Update). Версии только с диска больше не поддерживаются.
+Title updates are now required to play. Disc-only versions are no longer supported.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nAdd each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's Content\0000000000000000\<title ID>\000B0000 folder. COGBox doesn't include game or update files. = Теперь для игры обязательны обновления (Title Update). Версии только с диска больше не поддерживаются.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nДобавьте каждое со своей консоли (ДОБАВИТЬ ОБНОВЛЕНИЕ или вкладка «О программе» игры): оно лежит в папке Content\0000000000000000\<title ID>\000B0000 консоли. COGBox не содержит файлов игр и обновлений.
+Add it with ADD UPDATE: the update package from your console's folder = Добавьте его кнопкой ДОБАВИТЬ ОБНОВЛЕНИЕ: пакет обновления из папки вашей консоли
+# 0.4.0: player name
+Player name = Имя игрока
+The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = Имя, которое показывает каждая игра (ваш gamertag): до 15 букв, цифр или пробелов. Пусто: "User". Только для отображения - профиль и сохранения остаются на месте.

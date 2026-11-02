@@ -271,8 +271,6 @@ Motion blur = Desfoque de movimento
 The blur of fast movement (the game's own setting). = O desfoque de movimentos rápidos (configuração do próprio jogo).
 Depth of field = Profundidade de campo
 The blur of distant / out-of-focus areas (cutscenes, aiming). = O desfoque de áreas distantes / fora de foco (cenas, mira).
-Lens flares = Reflexos de lente
-Light flares from bright lights (the game's own setting). = Reflexos de luz de luzes fortes (configuração do próprio jogo).
 Shake = Tremor
 Camera shake (roadie run) = Tremor da câmera (corrida roadie)
 Less = Menos
@@ -777,3 +775,12 @@ is out. Click to download and install it; COGBox restarts by itself. = já saiu.
 Close the game first, then update. = Feche o jogo primeiro e depois atualize.
 Updating COGBox - it restarts by itself when done. = Atualizando o COGBox - ele reinicia sozinho ao terminar.
 SMAA (recommended) = SMAA (recomendado)
+# 0.4.0: title updates required
+Title updates required = Atualizações obrigatórias
+Title update needed = Atualização necessária
+Title updates are now required to play. Disc-only versions are no longer supported. = Agora as atualizações de título são obrigatórias para jogar. Versões só de disco não são mais suportadas.
+Title updates are now required to play. Disc-only versions are no longer supported.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nAdd each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's Content\0000000000000000\<title ID>\000B0000 folder. COGBox doesn't include game or update files. = Agora as atualizações de título são obrigatórias para jogar. Versões só de disco não são mais suportadas.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nAdicione cada uma a partir do seu próprio console (ADICIONAR ATUALIZAÇÃO, ou a aba Sobre do jogo): ela fica na pasta Content\0000000000000000\<title ID>\000B0000 do console. O COGBox não inclui arquivos de jogo nem de atualização.
+Add it with ADD UPDATE: the update package from your console's folder = Adicione com ADICIONAR ATUALIZAÇÃO: o pacote de atualização da pasta do seu console
+# 0.4.0: player name
+Player name = Nome do jogador
+The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = O nome que cada jogo mostra para você (sua gamertag): até 15 letras, números ou espaços. Vazio: "User". Só exibição - seu perfil e seus saves continuam onde estão.

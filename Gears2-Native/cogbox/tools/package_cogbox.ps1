@@ -20,9 +20,8 @@ $cogbox = Split-Path -Parent (Split-Path -Parent $PSCommandPath)                
 $needDlls = @('dxcompiler.dll', 'dxil.dll')   # plus a rexruntime*.dll, checked below
 $ports = @(
   @{ to = 'Gears2\port-tu6';  from = "$docs\Gears2-Native\build\Release-tu6";       exe = 'gow2.exe' },
-  @{ to = 'Gears2\port-disc'; from = "$docs\Gears2-Native\build\Release";           exe = 'gow2.exe' },   # 0.2.2: Release (no Tracy)
+  # 0.4.0 (Shagg): title updates are required, so the Gears 2 / Gears 3 disc builds (port-disc) no longer ship
   @{ to = 'Gears3\port-tu6';  from = "$docs\Gears3-Native\build\Release-tu6";       exe = 'gow3.exe' },
-  @{ to = 'Gears3\port-disc'; from = "$docs\Gears3-Native\build\Release";           exe = 'gow3.exe' },
   @{ to = 'Judgment\port';    from = "$docs\GearsJ-Native\build\Release";           exe = 'gowj.exe' },
   # 0.3.0: Gears 1. Its build has no upscaler or shader-compiler DLLs of its own (noShared): it uses shared\ like the
   # others, so those five files are checked and taken from the other builds only.

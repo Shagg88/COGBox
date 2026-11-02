@@ -1,0 +1,167 @@
+diff --git a/include/rex/system/save_trace.h b/include/rex/system/save_trace.h
+index ee9875f..0935bd2 100644
+--- a/include/rex/system/save_trace.h
++++ b/include/rex/system/save_trace.h
+@@ -23,6 +23,7 @@
+ 
+ REXCVAR_DECLARE(bool, cogbox_save_trace);
+ REXCVAR_DECLARE(bool, cogbox_xam_edge_semantics);
++REXCVAR_DECLARE(bool, cogbox_save_truncate_rewrite);
+ 
+ namespace rex::system {
+ inline bool SaveTracePath(std::string_view p) {
+diff --git a/include/rex/system/xam/content_manager.h b/include/rex/system/xam/content_manager.h
+index 8130d54..a4bceae 100644
+--- a/include/rex/system/xam/content_manager.h
++++ b/include/rex/system/xam/content_manager.h
+@@ -175,6 +175,8 @@ class ContentManager {
+   // COGBox patch 56 (Xenia Edge 0028503 / 4ee7c0f): make the package without mounting it; empty it but for its
+   // thumbnail (X_ERROR_SHARING_VIOLATION while it is open).
+   X_RESULT CreatePackage(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data);
++  // patch 57: the package folder a request resolves to (trace)
++  std::filesystem::path PackagePathFor(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data) { return ResolvePackagePath(xuid, data); }
+   X_RESULT TruncateContent(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data);
+   void CloseOpenedFilesFromContent(const std::string_view root_name);
+ 
+diff --git a/src/filesystem/virtual_file_system.cpp b/src/filesystem/virtual_file_system.cpp
+index b240409..0c02f8b 100644
+--- a/src/filesystem/virtual_file_system.cpp
++++ b/src/filesystem/virtual_file_system.cpp
+@@ -25,6 +25,8 @@ REXCVAR_DEFINE_BOOL(cogbox_save_trace, false, "Kernel",
+ REXCVAR_DEFINE_BOOL(cogbox_xam_edge_semantics, false, "Kernel",
+                     "Patch 56: content / overlapped semantics as Xenia Edge (Oct 2026): thread not in InternalContext, "
+                     "no event with an APC, roots in use reopened, TRUNCATE empties, HRESULT errors");
++REXCVAR_DEFINE_BOOL(cogbox_save_truncate_rewrite, false, "Kernel",
++                    "Patch 57 (A/B): a write at offset 0 to a GearsCheckpoint file ends the file there (no stale tail)");
+ REXCVAR_DEFINE_BOOL(allow_game_relative_writes, false, "Filesystem",
+                     "Not useful to non-developers. Allows code to write to paths "
+                     "relative to game://. Used for "
+diff --git a/src/kernel/xam/xam_content.cpp b/src/kernel/xam/xam_content.cpp
+index 1c8090e..e51748d 100644
+--- a/src/kernel/xam/xam_content.cpp
++++ b/src/kernel/xam/xam_content.cpp
+@@ -27,6 +27,8 @@ REXCVAR_DEFINE_UINT32(license_mask, 0, "Kernel", "Set license mask for activated
+ // Patch 48 (COGBox GitHub #79: Raam's Shadow DLC sometimes needs 2-3 restarts before Gears 3 sees it): every content
+ // enumeration (what the game asked for and the packages it was given) and every content create / open (root, package,
+ // result) is logged at info level, so a report from a start where the DLC was missing shows why.
++REXCVAR_DEFINE_BOOL(cogbox_content_profile_xuid, false, "Kernel",
++                    "Patch 57 (A/B): a save request whose data xuid finds no package is served from the signed-in profile's");
+ REXCVAR_DEFINE_BOOL(cogbox_content_log, true, "Kernel", "Log content (DLC / save) enumerations and opens (GitHub #79)");
+ 
+ namespace rex {
+@@ -151,6 +153,30 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
+   }
+ 
+   auto content_manager = REX_KERNEL_STATE()->content_manager();
++  // COGBox patch 57 (GitHub #55 #68 #120): what the title asked for, field by field - Shagg's friendly-fire trace showed
++  // an OPEN_EXISTING of 'PlayerStorage.dat' on SG0_0 failing with PATH_NOT_FOUND right after the same package opened on
++  // savedrive0, so the two requests must differ in a field the package path depends on (data xuid, title id).
++  if (REXCVAR_GET(cogbox_save_trace))
++    REXLOG_INFO("cogbox_save_trace: content request user {} size {:#x} flags {:#x} root '{}' device {:08X} type {:08X} "
++                "file '{}' data_xuid {:016X} data_title {:08X} profile_xuid {:016X} -> path '{}' exists {}",
++                uint32_t(user_index), uint32_t(content_data_size), uint32_t(flags), root_name.value(),
++                uint32_t(content_data.device_id), uint32_t(static_cast<XContentType>(content_data.content_type)),
++                content_data.file_name(), uint64_t(content_data.xuid), uint32_t(content_data.title_id), xuid,
++                content_manager->PackagePathFor(xuid, content_data).string(),
++                content_manager->ContentExists(xuid, content_data));
++  // patch 57 (--cogbox_content_profile_xuid, default off, A/B): a save request whose own data xuid names no package
++  // that exists while the signed-in profile's does, is served from the profile's (the title's xuid field is stale)
++  if (REXCVAR_GET(cogbox_content_profile_xuid) && content_data_size == sizeof(XCONTENT_AGGREGATE_DATA) &&
++      content_data.content_type != XContentType::kMarketplaceContent && uint64_t(content_data.xuid) != 0 &&
++      uint64_t(content_data.xuid) != xuid && !content_manager->ContentExists(xuid, content_data)) {
++    XCONTENT_AGGREGATE_DATA alt = content_data;
++    alt.xuid = 0;
++    if (content_manager->ContentExists(xuid, alt)) {
++      REXLOG_INFO("cogbox_content_profile_xuid: '{}' data xuid {:016X} -> the profile's {:016X}", content_data.file_name(),
++                  uint64_t(content_data.xuid), xuid);
++      content_data = alt;
++    }
++  }
+ 
+   if (overlapped_ptr && disposition_ptr) {
+     *disposition_ptr = 0;
+diff --git a/src/kernel/xam/xam_msg.cpp b/src/kernel/xam/xam_msg.cpp
+index 704eb0c..6c4c3cd 100644
+--- a/src/kernel/xam/xam_msg.cpp
++++ b/src/kernel/xam/xam_msg.cpp
+@@ -18,6 +18,7 @@
+ #include <rex/hook.h>
+ #include <rex/types.h>
+ #include <rex/system/kernel_state.h>
++#include <rex/system/save_trace.h>
+ #include <rex/system/xevent.h>
+ #include <rex/system/xio.h>
+ #include <rex/system/xthread.h>
+@@ -98,6 +99,9 @@ u32 XMsgCancelIORequest_entry(ppc_ptr_t<XAM_OVERLAPPED> overlapped_ptr, u32 wait
+ 
+ u32 XMsgCompleteIORequest_entry(ppc_ptr_t<XAM_OVERLAPPED> overlapped_ptr, u32 result,
+                                 u32 extended_error, u32 length) {
++  if (REXCVAR_GET(cogbox_save_trace))  // patch 57: who completes an XMsg request (Shagg's trace: length 0xBEBEBEBE)
++    REXLOG_INFO("cogbox_save_trace: XMsgCompleteIORequest overlapped {:08X} result {:08X} ext {:08X} len {:#x}",
++                overlapped_ptr.guest_address(), uint32_t(result), uint32_t(extended_error), uint32_t(length));
+   REX_KERNEL_STATE()->CompleteOverlappedImmediateEx(overlapped_ptr.guest_address(), result,
+                                                     extended_error, length);
+   return X_ERROR_SUCCESS;
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_io.cpp b/src/kernel/xboxkrnl/xboxkrnl_io.cpp
+index 36c52d9..f18480a 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_io.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_io.cpp
+@@ -456,12 +456,27 @@ u32 NtWriteFile_entry(u32 file_handle, u32 event_handle, u32 apc_routine, mapped
+     io_status_block->information = 0;
+   }
+ 
++  // patch 57 (--cogbox_save_truncate_rewrite, A/B, default off): Gears 3 rewrites GearsCheckpoint<N>.sav from offset
++  // 0 through an OPEN_IF handle and never shortens it, so a smaller checkpoint keeps the older, longer one's tail
++  // (job 1048 evidence: slot 2 stayed 336,119 bytes after ~141 KB rewrites; its bytes past the largest rewrite equal
++  // the older save's). With the switch, a write at offset 0 to a checkpoint file ends the file where the write ends.
++  if (REXCVAR_GET(cogbox_save_truncate_rewrite) && XSUCCEEDED(result) && byte_offset_ptr &&  // PENDING = done, async handle
++      static_cast<uint64_t>(*byte_offset_ptr) == 0) {
++    auto cf = REX_KERNEL_OBJECTS()->LookupObject<XFile>(file_handle);
++    if (cf && cf->path().find("GearsCheckpoint") != std::string::npos) {
++      const X_STATUS cut = cf->SetLength(buffer_length);
++      cf->entry()->update();
++      REXKRNL_INFO("cogbox_save_truncate_rewrite: '{}' ends at {:#x} -> {:08X}", cf->path(), uint32_t(buffer_length),
++                   uint32_t(cut));
++    }
++  }
+   if (REXCVAR_GET(cogbox_save_trace)) {  // patch 56
+     auto tf = REX_KERNEL_OBJECTS()->LookupObject<XFile>(file_handle);
+     if (tf && rex::system::SaveTracePath(tf->path()))
+-      REXKRNL_INFO("cogbox_save_trace: write '{}' offset {} len {:#x} -> {:08X} wrote {:#x} event {}", tf->path(),
+-                   byte_offset_ptr ? int64_t(*byte_offset_ptr) : -1, uint32_t(buffer_length), uint32_t(result),
+-                   io_status_block ? uint32_t(io_status_block->information) : 0u, uint32_t(event_handle));
++      REXKRNL_INFO("cogbox_save_trace: write '{}' offset {} len {:#x} -> {:08X} wrote {:#x} event {} (file size {:#x})",
++                   tf->path(), byte_offset_ptr ? int64_t(*byte_offset_ptr) : -1, uint32_t(buffer_length),
++                   uint32_t(result), io_status_block ? uint32_t(io_status_block->information) : 0u,
++                   uint32_t(event_handle), uint64_t(tf->entry()->size()));
+   }
+   if (ev && signal_event) {
+     ev->Set(0, false);
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_io_info.cpp b/src/kernel/xboxkrnl/xboxkrnl_io_info.cpp
+index bd5de65..035eaf6 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_io_info.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_io_info.cpp
+@@ -21,6 +21,7 @@
+ #include <rex/system/info/file.h>
+ #include <rex/system/info/volume.h>
+ #include <rex/system/kernel_state.h>
++#include <rex/system/save_trace.h>
+ #include <rex/system/util/string_utils.h>
+ #include <rex/system/xevent.h>
+ #include <rex/system/xfile.h>
+@@ -349,6 +350,15 @@ u32 NtSetInformationFile_entry(u32 file_handle, ppc_ptr_t<X_IO_STATUS_BLOCK> io_
+     io_status_block->status = result;
+     io_status_block->information = out_length;
+   }
++  // patch 57: every set-information on a save file (does the title cut a checkpoint shorter after rewriting it?)
++  if (REXCVAR_GET(cogbox_save_trace) && rex::system::SaveTracePath(file->path())) {
++    uint64_t value = 0;
++    if (info_class == XFileEndOfFileInformation) value = info_ptr.as<X_FILE_END_OF_FILE_INFORMATION*>()->end_of_file;
++    if (info_class == XFileAllocationInformation) value = info_ptr.as<X_FILE_ALLOCATION_INFORMATION*>()->allocation_size;
++    if (info_class == XFilePositionInformation) value = info_ptr.as<X_FILE_POSITION_INFORMATION*>()->current_byte_offset;
++    REXKRNL_INFO("cogbox_save_trace: set-info '{}' class {} value {:#x} -> {:08X} (size now {:#x})", file->path(),
++                 uint32_t(info_class), value, uint32_t(result), uint64_t(file->entry()->size()));
++  }
+ 
+   return result;
+ }

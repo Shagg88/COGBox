@@ -57,6 +57,9 @@ uint64_t XenosSwapCount();
 // app's OnCreateDialogs; destroy from OnShutdown (before the SDK drops its ImGui drawer).
 void XenosCreateFpsBarIfRequested(rex::ui::ImGuiDrawer* drawer);
 void XenosDestroyFpsBar();
+// GitHub #121: --gow2_hide_onscreen_notes - no "Building shaders" note, no "Loading shaders" indicator and no
+// achievement toast drawn over the game (achievements still unlock). The apps' CreateAchievementNotificationDialog asks.
+bool XenosOnScreenNotesHidden();
 // Patch 0163: COGBox's in-game menu (ingame_menu.cpp) - Back + Start or F1 opens it; COGBox's settings for this game
 // (--cogbox_menu=<file>), Resume, Restart to apply, Quit game. Install from OnCreateDialogs (with the app's window and
 // runtime), shut down from OnShutdown.

@@ -24,6 +24,7 @@
 #include <rex/runtime.h>
 #include <rex/system/xmemory.h>
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -42,6 +43,14 @@ REXCVAR_DEFINE_STRING(ue3_ini_edits, "", "Gears3",
 REXCVAR_DEFINE_STRING(ue3_mods, "", "Gears3",
                       "Mods (0.2.0): host folders, ';'-separated in load order (a later one wins), each laid out like the game "
                       "data folder; their files replace or add to the game's, read-only, through a folder overlay");
+// GitHub #87: the spoken language apart from the text. UE3 loads voices (and other localised assets) from
+// <package>_LOC_<LANG>.xxx in the game's language; with --ue3_voice_language=INT (or FRA, ESM, ...) every
+// *_LOC_<other>.xxx that has a <voice language> twin in the same folder is served as that twin through the mods'
+// folder overlay - which also gives its table-of-contents line the twin's size and MD5 and fixes the start-up hash
+// table. Menus and Coalesced text stay in the game's language; subtitles stored in the packages may follow the voices.
+REXCVAR_DEFINE_STRING(ue3_voice_language, "", "Gears3",
+                      "GitHub #87: the voices' language as the packages name it (INT, FRA, DEU, ITA, ESN, ESM, ...); "
+                      "empty = the game's language");
 REXCVAR_DEFINE_STRING(ue3_ini_bundle_dir, "GearGame\\CookedXbox360", "Gears3",
                       "Folder of the Coalesced_*.bin config bundles, relative to the game data root");
 
@@ -128,6 +137,59 @@ class OverlayDevice : public rex::filesystem::HostPathDevice {
   uint32_t replaced_hits_ = 0;
   uint32_t hidden_hits_ = 0;
 };
+// GitHub #116: the image's address range is not all readable (a 0x83xxxxxx page of the TU6 image faulted on one PC,
+// 0xC0000005 at start-up right after the first bundle was edited). Only the pages the guest heap has readable are
+// scanned, run by run, and a fault in a run is caught and that run skipped instead of taking the game down.
+void ScanRunInto(const uint8_t* data, size_t size, const std::string* name, const ue3::Sha1Digest* hash,
+                 std::vector<size_t>* out) {
+  *out = ue3::FindFileHash(data, size, *name, *hash);
+}
+bool ScanRunGuarded(const uint8_t* data, size_t size, const std::string* name, const ue3::Sha1Digest* hash,
+                    std::vector<size_t>* out) {
+#if defined(_MSC_VER)
+  __try {
+    ScanRunInto(data, size, name, hash, out);
+    return true;
+  } __except (1) {
+    return false;
+  }
+#else
+  ScanRunInto(data, size, name, hash, out);
+  return true;
+#endif
+}
+std::vector<size_t> FindFileHashReadable(rex::Runtime* runtime, uint32_t base, uint32_t size, const std::string& name,
+                                         const ue3::Sha1Digest& hash) {
+  std::vector<size_t> found;
+  const uint8_t* image = runtime->virtual_membase() + base;
+  rex::memory::BaseHeap* heap = runtime->memory()->LookupHeap(base);
+  const uint32_t page = heap ? heap->page_size() : 0;
+  if (!heap || page == 0) return found;
+  auto readable = [&](uint32_t a) {
+    uint32_t p = 0;
+    return heap->QueryProtect(a, &p) && (p & rex::memory::kMemoryProtectRead) != 0;
+  };
+  uint32_t off = 0, skipped = 0;
+  while (off < size) {
+    if (!readable(base + off)) { off += page; ++skipped; continue; }
+    uint32_t end = off;
+    while (end < size && readable(base + end)) end += page;
+    end = std::min(end, size);
+    std::vector<size_t> run;
+    if (ScanRunGuarded(image + off, end - off, &name, &hash, &run)) {
+      for (size_t r : run) found.push_back(off + r);
+    } else {
+      REXLOG_WARN("ue3 hash table: a fault reading image {:08X}-{:08X}; that part is skipped", base + off, base + end);
+    }
+    off = end;
+  }
+  static bool logged = false;
+  if (skipped && !logged) {
+    logged = true;
+    REXLOG_INFO("ue3 hash table: {} unreadable page(s) of the image skipped (GitHub #116)", skipped);
+  }
+  return found;
+}
 // The game image's start-up file hash table (ue3/config_bundle.h): give each edited bundle its new hash, so the
 // game's own check passes instead of showing the dirty-disc error (job 257). Image at 0x82000000, size from its PE
 // header (as XenosDumpImageIfRequested). The table sits in read-only data: its page is made writable for the write
@@ -143,7 +205,7 @@ int UpdateHashTable(rex::Runtime* runtime, const std::string& name, const ue3::S
   std::memcpy(&size, image + pe + 24 + 56, 4);
   if (size == 0 || size > 0x08000000u) return -1;
   int changed = 0;
-  for (size_t off : ue3::FindFileHash(image, size, AsciiLower(name), old_hash)) {
+  for (size_t off : FindFileHashReadable(runtime, kBase, size, AsciiLower(name), old_hash)) {
     const uint32_t addr = kBase + uint32_t(off);
     rex::memory::BaseHeap* heap = runtime->memory()->LookupHeap(addr);
     if (!heap) continue;
@@ -320,6 +382,48 @@ class ModOverlayDevice : public rex::filesystem::HostPathDevice {
 };
 
 // rel (lower case, '\\', from the game data root) -> host file; later mods win. Programs are refused.
+// GitHub #87 (see ue3_voice_language): adds "<rel of *_LOC_<lang>.xxx>" -> its <voice> twin to the mods' files (a real
+// mod's own copy of a file wins). Returns how many were added.
+int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, std::filesystem::path>* files) {
+  namespace fs = std::filesystem;
+  std::string voice = REXCVAR_GET(ue3_voice_language);
+  for (char& c : voice) c = char(std::toupper(uint8_t(c)));
+  if (voice.size() != 3) return 0;
+  std::error_code ec;
+  if (!fs::is_directory(game, ec)) return 0;
+  // folder -> lower-case name -> real path, for the twin lookup
+  std::map<fs::path, std::map<std::string, fs::path>> byDir;
+  for (auto it = fs::recursive_directory_iterator(game, fs::directory_options::skip_permission_denied, ec);
+       !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+    if (!it->is_regular_file(ec)) continue;
+    std::string n = rex::path_to_utf8(it->path().filename());
+    for (char& c : n) c = char(std::tolower(uint8_t(c)));
+    if (n.size() > 12 && n.find("_loc_") != std::string::npos && n.ends_with(".xxx")) byDir[it->path().parent_path()][n] = it->path();
+  }
+  std::string lv = voice;
+  for (char& c : lv) c = char(std::tolower(uint8_t(c)));
+  int added = 0, langs = 0;
+  std::set<std::string> seenLangs;
+  for (const auto& [dir, names] : byDir)
+    for (const auto& [n, p] : names) {
+      const size_t at = n.rfind("_loc_");
+      if (at == std::string::npos || n.size() != at + 12) continue;   // <base>_loc_<xxx>.xxx
+      const std::string lang = n.substr(at + 5, 3);
+      if (lang == lv) continue;
+      const auto twin = names.find(n.substr(0, at + 5) + lv + ".xxx");
+      if (twin == names.end()) continue;
+      const fs::path relp = fs::relative(p, game, ec);
+      if (ec || relp.empty()) continue;
+      const std::string key = RelKey(rex::path_to_utf8(relp));
+      if (files->count(key)) continue;
+      (*files)[key] = twin->second;
+      ++added;
+      if (seenLangs.insert(lang).second) ++langs;
+    }
+  REXLOG_INFO("ue3_voice_language: {} - {} localised package(s) in {} other language(s) now give the {} voices (GitHub #87)",
+              voice, added, langs, voice);
+  return added;
+}
 std::map<std::string, std::filesystem::path> CollectMods(std::map<std::string, std::filesystem::path>* dirs) {
   namespace fs = std::filesystem;
   std::map<std::string, fs::path> out;
@@ -384,7 +488,7 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
       return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), {});
     };
     const std::vector<uint8_t> a = read(orig), b = read(host);
-    const std::string name = ModLower(rex::path_to_utf8(host.filename()));
+    const std::string name = ModLower(rex::path_to_utf8(orig.filename()));   // the game's name (GitHub #87: a voice twin is named otherwise)
     const int n = UpdateHashTable(runtime, name, ue3::Sha1(a.data(), a.size()), ue3::Sha1(b.data(), b.size()));
     if (n > 0) hashed += n;
   }
@@ -416,6 +520,12 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
       std::ifstream in(edited != map.end() ? edited->second : e.path(), std::ios::binary);
       std::string text((std::istreambuf_iterator<char>(in)), {}), outText;
       std::set<std::string> listed;
+      // GitHub #122 (KiltedKernel): Gears 1 / 3 / Judgment tables have 4 fields per line (<size> <usize> <path> <md5>),
+      // Gears 2's 5 (<size> <usize> <sector> <path> <md5>). Each line keeps its own layout; added files take the
+      // table's layout and go FIRST (the game stops reading at the table's own last line) and only into the main table
+      // (Xbox360TOC.txt), not the language ones, when there is one.
+      std::string added;
+      int fields_seen = 0;
       size_t p = 0;
       int changed = 0;
       while (p < text.size()) {
@@ -425,28 +535,36 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
         p = nl + 1;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         std::istringstream ls(line);
-        std::string size, usize, sector, path, md5;
-        if (ls >> size >> usize >> sector >> path) {
-          ls >> md5;
+        std::vector<std::string> tok;
+        for (std::string t; ls >> t;) tok.push_back(t);
+        if (tok.size() == 4 || tok.size() == 5) {
+          if (!fields_seen) fields_seen = int(tok.size());
+          const std::string& path = tok.size() == 5 ? tok[3] : tok[2];
           std::string k = RelKey(path);
           while (k.rfind("..\\", 0) == 0) k.erase(0, 3);
           listed.insert(k);
           auto it = files.find(k);
           if (it != files.end()) {
-            line = std::to_string(fs::file_size(it->second, ec)) + " 0 " + sector + " " + path + " " + Md5Hex(it->second);
+            line = std::to_string(fs::file_size(it->second, ec)) + " 0 " + (tok.size() == 5 ? tok[2] + " " : std::string()) + path + " " +
+                   Md5Hex(it->second);
             ++changed;
           }
         }
         outText += line + "\r\n";
       }
+      bool has_main = false;
+      for (const auto& e2 : fs::directory_iterator(topdir, ec))
+        if (ModLower(rex::path_to_utf8(e2.path().filename())) == "xbox360toc.txt") has_main = true;
+      const bool add_here = !has_main || tl == "xbox360toc.txt";
       for (const auto& [k, host] : files) {
-        if (listed.count(k) || k.rfind(top + "\\", 0) != 0) continue;
+        if (!add_here || listed.count(k) || k.rfind(top + "\\", 0) != 0) continue;
         std::string rel = rex::path_to_utf8(host.filename());
         std::string guest = "..\\" + rex::path_to_utf8(topdir.filename()) + "\\" + k.substr(top.size() + 1);
         guest = guest.substr(0, guest.size() - rel.size()) + rel;   // keep the mod file's own name casing
-        outText += std::to_string(fs::file_size(host, ec)) + " 0 0 " + guest + " " + Md5Hex(host) + "\r\n";
+        added += std::to_string(fs::file_size(host, ec)) + (fields_seen == 5 ? " 0 0 " : " 0 ") + guest + " " + Md5Hex(host) + "\r\n";
         ++changed;
       }
+      outText = added + outText;
       if (!changed) continue;
       const fs::path tocOut = out_dir / tname;
       std::ofstream o(tocOut, std::ios::binary | std::ios::trunc);
@@ -474,6 +592,7 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
   // 0.2.0: mods. With mods on, the config edits' copies join the mods' overlay instead of their own folder view.
   std::map<std::string, std::filesystem::path> modDirs;
   std::map<std::string, std::filesystem::path> mods = CollectMods(&modDirs);
+  AddVoiceLanguage(runtime->game_data_root(), &mods);  // GitHub #87
   struct ModsAtEnd {
     rex::Runtime* rt; std::map<std::string, std::filesystem::path>* files; std::map<std::string, std::filesystem::path>* dirs;
     ~ModsAtEnd() {   // a destructor must not throw: a file-system error here would end the game at start-up

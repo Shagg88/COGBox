@@ -271,8 +271,6 @@ Motion blur = モーションブラー
 The blur of fast movement (the game's own setting). = 高速な動きのぼかしです（ゲーム本来の設定）。
 Depth of field = 被写界深度
 The blur of distant / out-of-focus areas (cutscenes, aiming). = 遠景やピントの合っていない部分のぼかしです（カットシーン、照準時）。
-Lens flares = レンズフレア
-Light flares from bright lights (the game's own setting). = 明るい光源からのフレアです（ゲーム本来の設定）。
 Shake = シェイク
 Camera shake (roadie run) = カメラの揺れ（ロードランニング）
 Less = 少なめ
@@ -777,3 +775,12 @@ is out. Click to download and install it; COGBox restarts by itself. = が公開
 Close the game first, then update. = 先にゲームを閉じてからアップデートしてください。
 Updating COGBox - it restarts by itself when done. = COGBox をアップデート中です。完了すると自動で再起動します。
 SMAA (recommended) = SMAA（推奨）
+# 0.4.0: title updates required
+Title updates required = タイトルアップデートが必要です
+Title update needed = タイトルアップデートが必要です
+Title updates are now required to play. Disc-only versions are no longer supported. = プレイにはタイトルアップデートが必須になりました。ディスクのみのバージョンはサポートされなくなりました。
+Title updates are now required to play. Disc-only versions are no longer supported.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nAdd each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's Content\0000000000000000\<title ID>\000B0000 folder. COGBox doesn't include game or update files. = プレイにはタイトルアップデートが必須になりました。ディスクのみのバージョンはサポートされなくなりました。\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nご自身のコンソールから各アップデートを追加してください（「アップデートを追加」、またはゲームの「情報」タブ）。コンソールの Content\0000000000000000\<title ID>\000B0000 フォルダーにあります。COGBoxにはゲームやアップデートのファイルは含まれていません。
+Add it with ADD UPDATE: the update package from your console's folder = 「アップデートを追加」で追加してください。コンソールの次のフォルダーにあるアップデートパッケージです:
+# 0.4.0: player name
+Player name = プレイヤー名
+The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = 各ゲームに表示される名前（ゲーマータグ）：英字・数字・スペースで15文字まで。空欄の場合: "User"。表示のみで、プロフィールとセーブデータの場所は変わりません。

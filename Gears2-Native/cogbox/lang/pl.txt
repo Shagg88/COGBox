@@ -271,8 +271,6 @@ Motion blur = Rozmycie ruchu
 The blur of fast movement (the game's own setting). = Rozmycie szybkiego ruchu (ustawienie samej gry).
 Depth of field = Głębia ostrości
 The blur of distant / out-of-focus areas (cutscenes, aiming). = Rozmycie odległych / nieostrych obszarów (przerywniki, celowanie).
-Lens flares = Flary soczewki
-Light flares from bright lights (the game's own setting). = Rozbłyski jasnych świateł (ustawienie samej gry).
 Shake = Drżenie
 Camera shake (roadie run) = Drżenie kamery (bieg roadie)
 Less = Mniejsze
@@ -777,3 +775,12 @@ is out. Click to download and install it; COGBox restarts by itself. = jest już
 Close the game first, then update. = Najpierw zamknij grę, potem zaktualizuj.
 Updating COGBox - it restarts by itself when done. = Aktualizowanie COGBox - po zakończeniu uruchomi się ponownie sam.
 SMAA (recommended) = SMAA (zalecane)
+# 0.4.0: title updates required
+Title updates required = Wymagane aktualizacje
+Title update needed = Wymagana aktualizacja
+Title updates are now required to play. Disc-only versions are no longer supported. = Do gry wymagane są teraz aktualizacje (Title Update). Wersje tylko z płyty nie są już obsługiwane.
+Title updates are now required to play. Disc-only versions are no longer supported.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nAdd each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's Content\0000000000000000\<title ID>\000B0000 folder. COGBox doesn't include game or update files. = Do gry wymagane są teraz aktualizacje (Title Update). Wersje tylko z płyty nie są już obsługiwane.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nDodaj każdą z własnej konsoli (DODAJ AKTUALIZACJĘ lub karta Informacje gry): jest w folderze Content\0000000000000000\<title ID>\000B0000 konsoli. COGBox nie zawiera plików gier ani aktualizacji.
+Add it with ADD UPDATE: the update package from your console's folder = Dodaj ją przyciskiem DODAJ AKTUALIZACJĘ: pakiet aktualizacji z folderu Twojej konsoli
+# 0.4.0: player name
+Player name = Nazwa gracza
+The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = Nazwa, którą pokazuje każda gra (twój gamertag): do 15 liter, cyfr lub spacji. Puste: "User". Tylko wyświetlanie - profil i zapisy zostają na miejscu.

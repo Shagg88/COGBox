@@ -96,7 +96,18 @@ static bool fp_match(const Fingerprint &f, const std::string &full, const std::s
 {
     return (!full.empty() && full == f.sha1) || (!code.empty() && *f.code && code == f.code);
 }
-bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code) { return fp_match(d.xex, full, code); }
+// Game programs (default.xex) players have reported working, beyond the one each port is made for.
+struct ReportedXex { GameId game; const char *sha1; };
+static const ReportedXex k_reportedXex[] = {
+    { G_GEARS1, "c25a48e7cd98fc61aa4369b614dce782c4cb2152" },   // #127, 13,086,720 bytes (COGBox 0.3.7)
+    { G_GEARS1, "5ed6f2a3746bfe02a994a226a10cdacca142030f" },   // #88, 3,252,224 bytes (COGBox 0.3.0)
+};
+bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code)
+{
+    if (fp_match(d.xex, full, code)) return true;
+    for (const ReportedXex &r : k_reportedXex) if (r.game == d.id && !full.empty() && full == r.sha1) return true;
+    return false;
+}
 // Job 648 (Shagg 23:23): a region disc's title update - the same patch after its header counts as the tested one
 // Title updates players have reported working, beyond the one each port is made for (GitHub #51, LeffetheProgrammer:
 // a Gears 2 Title Update 6 of the same size with a different file - probably another region's copy).
@@ -112,6 +123,7 @@ static const ReportedXexp k_reportedXexp[] = {
     { G_JUDGMENT, "730af13877e29b78491fa3df5e07878ffd0426c0" }, // #70, Title Update 4, 1,888,256 bytes
     { G_GEARS3, "d05adc22bff6197229fc3685558ba5bed6b30abf" },   // #84, 1,513,472 bytes
     { G_GEARS3, "b2a6e5308155650448b27b74e169101596abc98d" },   // #86, Title Update 6, 1,908,736 bytes
+    { G_GEARS3, "67b0c9c5fcd8ed15bcc79eb62e273d75e6e1ece6" },   // #109, Title Update 6, 1,908,736 bytes (COGBox 0.3.5)
 };
 bool xexp_is_tested(const GameDef &d, const std::string &full, const std::string &code)
 {
@@ -177,7 +189,7 @@ void game_refresh(int g, Ini &ini, GameState &st, bool hash)
     // (gears_settings effective_version), applied by the caller. Gears 2 / 3 without the update need the disc build.
     st.useUpdate = !st.updateDir.empty() && (d.updateNeeded ? !st.portExeTu.empty() : true);
     if (st.ready == R_READY && d.updateNeeded && !st.useUpdate && st.portExeDisc.empty()) st.ready = R_NEED_UPDATE;
-    // 0.2.0 (GitHub #1): Judgment's disc version crashes at start in this release; Title Update 4 is required for now.
-    // Gears 1: its one build is made from the disc and Title Update 5 together, so TU5 is required too.
-    if (st.ready == R_READY && game_update_required(g) && st.updateDir.empty()) st.ready = R_NEED_UPDATE;
+    // Title updates required (0.4.0): no game plays from the disc alone any more - Gears 2 / 3 need their title-update
+    // build and Title Update 6, Judgment TU4, Gears 1 TU5 (their one build is made from the disc and the update).
+    if (st.ready == R_READY && game_update_required(g) && !st.useUpdate) st.ready = R_NEED_UPDATE;
 }

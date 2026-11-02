@@ -29,6 +29,9 @@ class LazyAchievementToast final : public rex::ui::AchievementToastDialog {
     imgui_drawer()->RemoveDialog(this);  // the base registered it; nothing to show yet
   }
   ~LazyAchievementToast() override { *alive_ = false; }
+  // GitHub #121: drawn with each game frame (the fade too), so no repaints of its own at the monitor's rate - those
+  // extra presents put the frame cap / V-Sync pacing out of step for the 5 s a toast shows.
+  bool WantsContinuousPaint() const override { return false; }
 
   // Any thread (guest threads included), as the base.
   void Push(const rex::system::AchievementEvent& event) override {

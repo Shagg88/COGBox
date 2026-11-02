@@ -19,12 +19,13 @@ What you need
     * a disc image (.iso) of the US disc,
     * a Games on Demand copy from your console's hard drive, or
     * a folder with the disc's files (default.xex and the rest) that you already extracted.
-- For Gears of War 2 and 3: the last title update (Title Update 6) is recommended - it is the
-  default and the fastest build. Without it, COGBox starts the disc version; you can also pick
-  the disc version on a game's Gameplay tab. Judgment needs its Title Update 4 for now (its disc
-  version crashes at start in this release).
-  Gears of War (the first game) needs its Title Update 5: its one build is made from the disc and
-  the update together.
+- Each game's title update - REQUIRED. Title updates are now required to play; disc-only versions
+  are no longer supported:
+      Gears of War             Title Update 5
+      Gears of War 2           Title Update 6
+      Gears of War 3           Title Update 6
+      Gears of War: Judgment   Title Update 4
+  Without it the game's box shows "Needs Title Update ..." and ADD UPDATE instead of PLAY.
   The update is a file on a console that has played the game online, in
       Content\0000000000000000\<title ID>\000B0000\
   (Gears 1: 4D5307D5, Gears 2: 4D53082D, Gears 3: 4D5308AB, Judgment: 4D530A26).
@@ -43,7 +44,9 @@ Getting started
    default.xex in an extracted folder. You can also drop it onto the COGBox window.
    COGBox works out which game it is, unpacks it next to itself if needed, and checks it is the
    release the ports are made for.
-4. Add the title update the same way: ADD UPDATE, or "Add the title update" on the game's About tab.
+4. Add the title update the same way (it's required): ADD UPDATE, "Add the title update" on the
+   game's About tab, or drop the package onto the window. COGBox unpacks it into <Game>\game\update
+   and always plays with it.
 5. Press PLAY. SETTINGS opens the game's page, which has graphics, frame rate, controls and more.
    Every setting has a short description.
 
@@ -58,6 +61,23 @@ instead of A / B / X / Y, LB / RB.
 In the game: Back + Start (Share + Options on PlayStation, or F1) opens the in-game menu - the same settings, Resume,
 Restart to apply and Quit game. Most settings take effect when the game restarts; Restart to
 apply does that for you.
+
+
+New in 0.4.0 - please read
+--------------------------
+- Title updates are required (see "What you need"). The Gears 2 / Gears 3 disc builds are no longer
+  included, and the Game version setting is gone.
+- Gears 3 saves are converted automatically the first time you start Gears 3 on 0.4.0 (part of the
+  friendly-fire fix, GitHub #68). Nothing to do. A backup of each changed file is kept next to it as
+  <file>.pre-xuid0 (PlayerStorage.dat and profile\User\63E83FFF, under Gears3\user\).
+  To roll back: close Gears 3, rename the converted file, and rename the .pre-xuid0 copy back to the
+  original name. Going back to COGBox 0.3.x? Restore the .pre-xuid0 files first - a converted save
+  started on 0.3.x makes Gears 3 reset it. Only Gears 3 saves are converted.
+- Gears 3 Cheats and "Unlock all mutators" are removed for now (they only worked with the disc
+  version).
+- Player name: any game's Settings > About tab > Player name. Up to 15 letters, digits or spaces;
+  empty = "User". Every game shows it for player 1. It only changes the name shown - your profile
+  folder and saves stay where they are.
 
 
 Graphics API: DirectX 12 is the default and the tested renderer. Vulkan (experimental) is on each
@@ -84,9 +104,12 @@ War, Gears of War 3 and Judgment have not been tested yet - please try them and 
 issue #72).
 
 What every player needs
-- COGBox 0.3.5 or newer and your own copy of the game.
-- The game's Title Update version (Gears 2 and 3: Settings > Gameplay > Game version = Title Update).
+- The same COGBox version on every PC (0.4.0) and your own copy of the game with its title update.
   Every player must use the same game.
+- Gears 3 on 0.4.0: System Link needs a two-PC test. The friendly-fire fix (#68) changes the random
+  numbers and the "online ID" Gears 3 sees. COGBox's own System Link code finds PCs by their IP address
+  and doesn't use those IDs, but Gears 3 co-op on 0.4.0 hasn't been tried on two PCs yet - please
+  tell us how it goes (GitHub issue #72).
 - Turn OFF internet VPNs such as NordVPN, ExpressVPN or Surfshark while you play. They do not link
   PCs together, and they can make System Link use the wrong network.
 
@@ -124,8 +147,7 @@ work the same way; the steps below use Radmin VPN.
    there, so with 3 or more PCs every PC must list ALL the other PCs (commas between them).
 
 If it doesn't work
-- Can't select System Link / "No Network Connection": the box in step 1 is not ticked, or this is
-  the Disc version of Gears 2 or 3 (System Link is for the Title Update versions).
+- Can't select System Link / "No Network Connection": the box in step 1 is not ticked.
 - The host's game never shows up: check the firewall (Private network, game allowed), that both of
   you are in the same Radmin network (green dots), that internet VPNs are off, then try step B7.
 - Please send a problem report (the game's About tab) from BOTH PCs to GitHub issue #72 - it lists

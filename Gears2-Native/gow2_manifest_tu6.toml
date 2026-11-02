@@ -339,7 +339,7 @@ after_instruction = true
 [[entrypoint.midasm_hook]]
 address = 0x825324B4  # TU6: base 0x8252D73C
 name = "Gow2UltrawideFov"
-registers = ["f0"]
+registers = ["f0", "f30"]  # GitHub #74: f30 = the camera FOV (degrees), job 1022
 after_instruction = true
 
 # Job 231 (notes/60): 0x828075BC `li r6,1`, the head of sub_82807588's retry loop (UE3's wait for one query's
@@ -376,6 +376,20 @@ after_instruction = true
 address = 0x826E9BF8  # TU6: base 0x826E3728
 name = "Gow2UltrawideUiHeight"
 registers = ["r3"]
+after_instruction = true
+
+
+# GitHub #94 (jobs 1026 / 1028): `cmplw cr6,r10,r11` - the render-target pool's size / capacity check before its trap
+# (Gow2RtPoolCheck), and 16 bytes on `lwz r4,16(r31)` - the pool base the target is placed at (Gow2RtPoolBase).
+[[entrypoint.midasm_hook]]
+address = 0x8281C718
+name = "Gow2RtPoolCheck"
+registers = ["r10", "r11", "r28", "r30", "r31"]
+
+[[entrypoint.midasm_hook]]
+address = 0x8281C728
+name = "Gow2RtPoolBase"
+registers = ["r4", "r31"]
 after_instruction = true
 
 # 0x828307A0: first instruction (`mflr r12`) of the function that crashes in Horde (notes/58, jobs 206-208).

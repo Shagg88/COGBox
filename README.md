@@ -34,8 +34,8 @@ the ports what an emulator can't easily offer:
   later instead of freezing the game.
 - **Vulkan (experimental)** - a choice on each game's Graphics tab, for testing; close to Direct3D 12 already.
 - **Lower input lag** - one frame in flight, NVIDIA Reflex / AMD Anti-Lag 2 where your GPU has them.
-- **HDR10**, **ultrawide 21:9** (all three games), **16x anisotropic filtering**, field of view, and the games' own motion blur, depth of
-  field and lens flares as switches.
+- **HDR10**, **ultrawide 21:9** (all three games), **16x anisotropic filtering**, field of view, and the games' own motion blur and depth of
+  field as switches (lens flares are set per game automatically: on where Real occlusion hides them behind walls).
 - **Split-screen** (Gears 2), **keyboard and mouse** (mouse look without the stick's speed limit, keys you can change),
   **Xbox and PlayStation controllers** with **auto-switching button prompts** (the game's own for Xbox pads; PlayStation, Switch, Steam Deck, Steam Controller and keyboard prompts as you switch; `--gow_button_prompts=auto|original|xbox|playstation|switch|steamdeck|steamcontroller|keyboard`), **title updates**, **chapter select**.
 - **DLC and mods** - add DLC packages from your console and mods as .zip files on each game's About tab.
@@ -49,12 +49,61 @@ the ports what an emulator can't easily offer:
 
 | Game | Version the port is made for | Status |
 |---|---|---|
-| Gears of War 2 | US disc (0.0.0.5) + Title Update 6 | Every chapter plays in testing; Title Update 6 is the default and fastest build |
-| Gears of War 3 | Disc + Title Update 6 | Playable; Title Update 6 is the default |
-| Gears of War: Judgment | Disc + Title Update 4 (required for now) | Playable |
+| Gears of War 2 | US disc (0.0.0.5) + Title Update 6 (required) | Every chapter plays in testing |
+| Gears of War 3 | Disc + Title Update 6 (required) | Playable |
+| Gears of War: Judgment | Disc + Title Update 4 (required) | Playable |
+
+**Title updates are now required to play. Disc-only versions are no longer supported.** Every game needs its title
+update (Gears of War: Title Update 5, Gears 2 and 3: Title Update 6, Judgment: Title Update 4) - see
+[What you need](#what-you-need).
 
 "In testing" means on the developer's PC (an RTX 3080 Ti) and scripted test runs through the chapters.
 Other hardware hasn't been tried yet - please report what you find.
+
+## Upgrading to 0.4.0 - what you need to do
+
+### 1. Add each game's title update (now required)
+Title updates are now required to play. Disc-only versions are no longer supported.
+
+| Game | Title update needed | Title ID folder on the console |
+|---|---|---|
+| Gears of War | Title Update 5 | `4D5307D5` |
+| Gears of War 2 | Title Update 6 | `4D53082D` |
+| Gears of War 3 | Title Update 6 | `4D5308AB` |
+| Gears of War: Judgment | Title Update 4 | `4D530A26` |
+
+1. Copy the update package from your own console: it's in `Content\0000000000000000\<title ID>\000B0000\`.
+2. In COGBox, turn to the game and press **ADD UPDATE** (or drop the package file onto the COGBox window, or use the
+   game's About tab).
+3. COGBox checks it and unpacks it into `<COGBox>\<game>\game\update`. Nothing else to set: Play always uses it.
+
+**If the update is missing**, the game's box shows **Needs Title Update ...** and **ADD UPDATE** instead of Play. Your
+copy and saves stay where they are; add the update and the game is ready again.
+
+The Gears 2 and Gears 3 disc builds are no longer in the download, and the "Game version" option is gone (greyed out).
+
+### 2. Gears 3 saves are converted automatically
+The first time you start Gears 3 on 0.4.0, your existing saves are converted for the friendly-fire fix (#68). You
+don't need to do anything.
+Only Gears 3 saves are converted - Gears of War, Gears 2 and Judgment saves are not touched.
+
+- A backup of each changed file is kept next to it, named `<file>.pre-xuid0`: `PlayerStorage.dat` (your campaign
+  progress) and `profile\User\63E83FFF` (your profile), both under `<COGBox>\Gears3\user\`.
+- **To roll back:** close Gears 3, rename the converted file (e.g. add `.new`), then rename the `.pre-xuid0` copy
+  back to the original name (remove `.pre-xuid0`).
+- **Going back to 0.3.x?** Restore the `.pre-xuid0` files first (steps above). A converted save started on 0.3.x
+  makes Gears 3 reset it. Restored saves are converted again the next time you start 0.4.0.
+
+### 3. Removed in this release
+- **Gears 3 Cheats and "Unlock all mutators"** are gone for now. They only worked with the disc version (Title Update 6
+  shows a dirty-disc error with them).
+- **The Gears 2 / Gears 3 disc builds** are no longer included (see 1).
+
+### 4. Your name in the games (Player name, #119)
+1. In COGBox, open any game's **Settings**, then the **About** tab.
+2. Type your name in **Player name** (up to 15 letters, digits or spaces; extra spaces are trimmed). It's saved straight away.
+3. Start (or restart) any game: player 1 shows that name in all four games. Leave it empty for "User".
+   It only changes the name shown: your profile folder and saves stay exactly where they are.
 
 ## COGBox, the launcher
 
@@ -75,6 +124,53 @@ Other hardware hasn't been tried yet - please report what you find.
   order. A mod is laid out like the game's own files (`GearGame\...`) and replaces or adds files without changing your
   copy; programs are never taken from a mod.
 - **Desktop shortcuts** for COGBox and each game.
+- **Player name** (About tab): the name every game shows for player 1 (display only, saves untouched).
+
+### Adding DLC
+
+The easiest way: drag the DLC's folder (or its package file) onto the COGBox window, or use **Downloadable content**
+on the game's About tab. COGBox copies it to the right place. If you would rather do it by hand, a package goes into
+the game's user folder under the console's own layout:
+
+`<COGBox>\<game>\user\0000000000000000\<title ID>\00000002\<package file>`
+
+For example, Gears of War 3 (title ID `4D5308AB`):
+`<COGBox>\Gears3\user\0000000000000000\4D5308AB\00000002\<package file>`. Restart the game afterwards.
+
+### Cheats (Gears of War 3)
+
+> **Not available in this release:** the cheats and **Unlock all mutators** only work with the disc version so far
+> (Title Update 6 shows a dirty-disc error with them), and title updates are now required. They'll come back once they
+> work with Title Update 6.
+
+Tick **Gameplay > Cheats (hotkeys F5-F11)** in the game's settings, then in game:
+
+| Key | Cheat |
+|---|---|
+| F5 | God mode |
+| F6 | Slow motion (0.5, 0.25, back to 1) |
+| F8 | Free camera (photo mode) |
+| F9 | Freeze the world |
+| F10 | Hide / show the HUD |
+| F11 | All weapons and ammo |
+
+**Unlock all mutators** (same tab) makes every mutator available without touching your profile.
+
+### System Link / LAN co-op (experimental)
+
+Tick **Gameplay > System Link - LAN play (experimental)** on every PC. Every PC needs the same COGBox version (0.4.0)
+and the same game with its title update. The PCs must be on
+the same network, or on a LAN VPN such as Radmin VPN, ZeroTier or Hamachi (not an internet VPN like NordVPN). If Windows
+asks about the firewall, allow Private networks. With 3 or more PCs, each PC must list every other PC (full steps, including Radmin VPN, are in the
+README.txt inside the download). Gears 2 campaign co-op worked in testing; other modes and games are less
+tested. There is no voice chat yet, and no internet (Xbox Live) play.
+
+**On 0.4.0, Gears 3 System Link co-op needs a two-PC test.** The #68 fix changes two things the game sees: XNetRandom
+now gives real random numbers (before, every PC could produce the same "random" values, so this should help), and
+Gears 3 now gets "no online ID" (0) for every player on every PC. COGBox's own System Link code finds and connects PCs
+by IP address and doesn't use those IDs (the offline IDs were already the same on every PC), but we haven't yet
+checked what Gears 3's own session code does with them. Please report how it goes. Gears of War, Gears 2 and Judgment
+are unchanged.
 
 ---
 
@@ -85,9 +181,10 @@ Other hardware hasn't been tried yet - please report what you find.
 - **A DirectX 12 graphics card.**
 - **Your own copy of the game**, as a disc image (.iso) of the disc, a Games on Demand copy from your console, or a
   folder with the disc's files you extracted yourself.
-- For Gears 2 and 3, the last **title update** (Title Update 6) is recommended. It's a file on a console that has
-  played the game online, in `Content\0000000000000000\<title ID>\000B0000\`
-  (Gears 2: `4D53082D`, Gears 3: `4D5308AB`, Judgment: `4D530A26`).
+- **The game's title update - required.** Title updates are now required to play; disc-only versions are no longer
+  supported. Gears of War needs Title Update 5, Gears 2 and 3 Title Update 6, Judgment Title Update 4. It's a file on a
+  console that has played the game online, in `Content\0000000000000000\<title ID>\000B0000\`
+  (Gears of War: `4D5307D5`, Gears 2: `4D53082D`, Gears 3: `4D5308AB`, Judgment: `4D530A26`).
 - About 8-16 GB of free space per game if COGBox unpacks a disc image for you.
 
 ## How to play
@@ -96,7 +193,7 @@ Other hardware hasn't been tried yet - please report what you find.
 2. Unzip the **whole** folder somewhere you can write to, e.g. `C:\Games\COGBox` (not Program Files).
 3. Start `CogBox.exe`. The programs aren't code-signed, so Windows may show "Windows protected your PC" - choose
    **More info**, then **Run anyway**.
-4. Turn to a game and press **ADD YOUR COPY** (or drop the file on the window). Then add the title update the same way.
+4. Turn to a game and press **ADD YOUR COPY** (or drop the file on the window). Then add the title update the same way - it's required.
 5. Press **PLAY**. **SETTINGS** has the graphics, frame rate, controls and gameplay options.
 
 **Controls in COGBox:** the D-pad (or the arrow keys, the mouse wheel) turns the carousel; LB / RB choose Play or
@@ -151,7 +248,7 @@ saves and settings are not in the zip, so they are kept.
 ## What's coming
 
 Plans, not promises:
-- **Gamer Tag Login**
+- **Gamer Tag Login** - a Player name (display only) is in since 0.4.0; real sign-in later.
 - **Texture packs** - a texture dumper and replacement packs (mods and DLC are in since 0.2.0).
 - **Mac, Linux, Steamdeck** - Linux and Steam Deck through Proton are in as experimental now; tested support next.
 - **Online Co-Op** - Hopefully.

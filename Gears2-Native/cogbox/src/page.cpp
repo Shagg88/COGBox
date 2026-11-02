@@ -1,5 +1,6 @@
 // COGBox - one page per game: its box and name, status lamps, the settings in tabs (built from gears_settings'
 // option list, so a new option there shows up here), the About tab, and a bar with Library, a summary, Save and Play.
+#include <cctype>
 #include "app.h"
 #include "theme.h"
 #include "i18n.h"   // 0.2.0
@@ -110,6 +111,8 @@ void env_refresh(App &a, int g)
         std::string v = a.ini.get("Keys", k.cvar);
         if (!v.empty()) e.keys[k.cvar] = v;
     }
+    e.gamertag = a.ini.get("Profile", "Gamertag");
+    e.pad_remap = a.ini.get("Pad", "Remap");   // GitHub #97 (SDK patch 55)   // GitHub #119 (SDK patch 54)
     e.extra_args_lines.clear();
     std::string extra;
     if (read_file(join(exe_dir(), "extra-args.txt"), extra, 1 << 20)) {
@@ -128,7 +131,7 @@ void env_refresh(App &a, int g)
     std::string exe = gs::exe_for_update((gs::Game)g, ver, e) ? st.portExeTu : st.portExeDisc;
     if (exe.empty()) exe = st.portExeDisc.empty() ? st.portExeTu : st.portExeDisc;
     st.useUpdate = !st.portExeTu.empty() && exe == st.portExeTu && !st.updateDir.empty();
-    if (game_update_required(g)) st.useUpdate = !st.updateDir.empty();   // Judgment / Gears 1: one build
+    if (game_update_required(g)) st.useUpdate = !st.updateDir.empty() && (!game_def(g).updateNeeded || !st.portExeTu.empty());   // title updates required
     e.cap.exe_has = [exe](const std::string &s) { return !exe.empty() && file_has(exe, s); };
     e.cap.runtime_has = [exe](const std::string &s) { std::string r = runtime_dll(exe); return !r.empty() && file_has(r, s); };
     // beside the exe, or in the release's shared folder (<COGBox>\shared), which play.cpp puts on the game's PATH: the
@@ -701,10 +704,7 @@ static void about_tab(App &a, int g)
         }
     }
     if (st.updateDir.empty())
-        lamp_line(d.updateNeeded || game_update_required(g) ? 2 : 0, std::string(d.updateName) + ": not added" +
-                  (g == G_JUDGMENT ? " - required for now (the disc version crashes at start)"   // 0.2.0 (#1)
-                   : g == G_GEARS1 ? " - required (the port is made from the disc and this update together)"
-                   : d.updateNeeded ? " - the disc version runs instead" : " (optional)"));
+        lamp_line(2, std::string(d.updateName) + ": not added - required to play");   // title updates required (0.4.0)
     else
     {
         lamp_line(st.xexpMatch || st.xexpConfirmed ? 1 : 2, std::string(d.updateName) + ": " + st.updateDir +
@@ -914,6 +914,27 @@ static void about_tab(App &a, int g)
             ImGui::EndCombo();
         }
         row_desc("Translations are written by the project; corrections are welcome on GitHub (the lang folder).");
+    }
+    {   // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=, SDK patch 54)
+        static char buf[16] = {};
+        static bool loaded = false;
+        if (!loaded) {
+            loaded = true;
+            const std::string cur = a.ini.get("Profile", "Gamertag");
+            std::snprintf(buf, sizeof(buf), "%s", cur.c_str());
+        }
+        row_label("Player name", "", true);   // 0.4.0 (Shagg): "Player name" - the gamertag, display only
+        ImGui::SetNextItemWidth(g_ctrlW);
+        auto filter = [](ImGuiInputTextCallbackData *d) -> int {   // Xbox gamertags: letters, digits, spaces
+            const ImWchar c = d->EventChar;
+            return (c < 128 && (std::isalnum(static_cast<int>(c)) || c == ' ')) ? 0 : 1;
+        };
+        if (ImGui::InputText("##gamertag", buf, sizeof(buf), ImGuiInputTextFlags_CallbackCharFilter, filter)) {
+            a.ini.set("Profile", "Gamertag", buf);
+            a.ini.save();
+        }
+        row_desc("The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: \"User\". "
+                 "Display only - your profile and saves stay where they are.");
     }
     bool fs = a.fullscreen;   // job 523
     if (ImGui::Checkbox(tr("Fullscreen (F11, or LT + RT together)"), &fs)) set_fullscreen(a, fs);

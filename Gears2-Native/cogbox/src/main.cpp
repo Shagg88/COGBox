@@ -20,6 +20,9 @@ extern int g_lastKeyScancode;   // page.cpp
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 void set_message(App &a, const std::string &m, bool bad)
 {
@@ -56,12 +59,35 @@ void refresh_games(App &a, bool hash)
 }
 
 // ---- answers to the questions ----------------------------------------------------------------------------------------
-static bool zip_folder(const std::string &dir, const std::string &zipPath, std::string &err)
+// GitHub #120 (jojobear69: "Back up saves" froze the launcher; the Saves folder zipped to 2.6 GB): the user folder also
+// holds the installed DLC (content type 00000002, packages of hundreds of MB) and title-update content (000B0000), and
+// the backup read every file into one zip in memory on the UI thread. Now only saves and profiles go in (those two
+// content types are skipped), the zip is written to the file as it is made, and it runs on its own thread; the
+// launcher keeps drawing and says when it is done.
+static size_t zip_write_handle(void *opaque, mz_uint64 ofs, const void *buf, size_t n)
 {
+    HANDLE h = (HANDLE)opaque;
+    LARGE_INTEGER li;
+    li.QuadPart = (LONGLONG)ofs;
+    if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) return 0;
+    DWORD done = 0;
+    return WriteFile(h, buf, (DWORD)n, &done, nullptr) ? done : 0;
+}
+static bool zip_skip_dir(const std::string &name)
+{
+    return _stricmp(name.c_str(), "00000002") == 0 || _stricmp(name.c_str(), "000B0000") == 0;   // DLC, title update
+}
+static bool zip_folder(const std::string &dir, const std::string &zipPath, std::string &err, int &files)
+{
+    HANDLE h = CreateFileW(widen(zipPath).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) { err = "couldn't create " + zipPath; return false; }
     mz_zip_archive z;
     memset(&z, 0, sizeof z);
-    if (!mz_zip_writer_init_heap(&z, 0, 1 << 20)) { err = "couldn't start the zip"; return false; }
+    z.m_pWrite = zip_write_handle;
+    z.m_pIO_opaque = h;
+    if (!mz_zip_writer_init(&z, 0)) { CloseHandle(h); DeleteFileW(widen(zipPath).c_str()); err = "couldn't start the zip"; return false; }
     bool ok = true;
+    files = 0;
     std::vector<std::string> stack = { "" };
     while (!stack.empty() && ok) {
         std::string rel = stack.back();
@@ -74,23 +100,51 @@ static bool zip_folder(const std::string &dir, const std::string &zipPath, std::
             if (n == "." || n == "..") continue;
             std::string r = rel.empty() ? n : rel + "\\" + n;
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;   // links aren't followed into the backup (review 11)
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { stack.push_back(r); continue; }
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { if (!zip_skip_dir(n)) stack.push_back(r); continue; }
             std::string data;
             if (!read_file(join(dir, r), data, 1u << 30)) { ok = false; err = "couldn't read " + r; break; }
             std::string zn = r;
             std::replace(zn.begin(), zn.end(), '\\', '/');
             ok = mz_zip_writer_add_mem(&z, zn.c_str(), data.data(), data.size(), MZ_DEFAULT_COMPRESSION) != 0;
+            if (ok) files++;
         } while (ok && FindNextFileW(f, &fd));
         FindClose(f);
     }
-    void *buf = nullptr;
-    size_t size = 0;
-    if (ok) ok = mz_zip_writer_finalize_heap_archive(&z, &buf, &size) != 0;
-    if (ok) ok = write_file(zipPath, std::string((const char *)buf, size));
-    if (buf) mz_free(buf);
+    if (ok) ok = mz_zip_writer_finalize_archive(&z) != 0;
     mz_zip_writer_end(&z);
-    if (!ok && err.empty()) err = "couldn't write the zip (is the disk full?)";
+    CloseHandle(h);
+    if (!ok) { DeleteFileW(widen(zipPath).c_str()); if (err.empty()) err = "couldn't write the zip (is the disk full?)"; }
     return ok;
+}
+// The backup's thread and its result, read by backup_poll() on the UI thread.
+static std::atomic<int> g_backupState{0};   // 0 idle, 1 running, 2 done
+static std::mutex g_backupMutex;
+static std::string g_backupZip, g_backupErr, g_backupDir;
+static int g_backupGame = -1, g_backupFiles = 0;
+static bool g_backupOk = false;
+static void backup_start(App &a, int g, const std::string &dir, const std::string &zip)
+{
+    if (g_backupState.load() == 1) { set_message(a, "A backup is already running.", false); return; }
+    { std::lock_guard<std::mutex> l(g_backupMutex); g_backupZip = zip; g_backupDir = dir; g_backupGame = g; g_backupErr.clear(); }
+    g_backupState = 1;
+    set_message(a, "Backing up the saves...", false);
+    std::thread([dir, zip] {
+        std::string err;
+        int files = 0;
+        const bool ok = zip_folder(dir, zip, err, files);
+        { std::lock_guard<std::mutex> l(g_backupMutex); g_backupOk = ok; g_backupErr = err; g_backupFiles = files; }
+        g_backupState = 2;
+    }).detach();
+}
+static void backup_poll(App &a)
+{
+    if (g_backupState.load() != 2 || a.modal.open) return;
+    std::lock_guard<std::mutex> l(g_backupMutex);
+    g_backupState = 0;
+    if (g_backupOk)
+        ask(a, "info", g_backupGame, "Back up saves", "Saved on your desktop (" + std::to_string(g_backupFiles) + " files; installed DLC is not "
+            "included):\n" + g_backupZip + "\n\nTo restore: close the game and unzip it into\n" + g_backupDir, { "OK" });
+    else set_message(a, "Couldn't back up the saves: " + g_backupErr, true);
 }
 
 void startup_notices(App &a);   // 0.2.0, below
@@ -112,7 +166,7 @@ static void answered(App &a)
         i18n_load(code);
     }
     else if (m.tag == "tunotice") {   // 0.2.0: the title-update notice - shown again after the next COGBox update unless ticked
-        if (m.checked) a.ini.seti("Notices", "TitleUpdatesNever", 1);
+        if (m.checked) a.ini.seti("Notices", "TitleUpdatesRequiredNever", 1);   // 0.4.0: title updates required
         a.ini.set("Notices", "TitleUpdatesSeen", COGBOX_VERSION);
         a.ini.save();
     }
@@ -139,10 +193,7 @@ static void answered(App &a)
     else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
     else if (m.tag == "dlcremove" && m.answer == 0) dlc_remove_confirmed(a);   // 0.2.0
     else if (m.tag == "backup" && m.answer == 0) {
-        std::string zip = join(desktop_dir(), std::string("CogBox-saves-") + d.dir + "-" + now_stamp() + ".zip"), err;
-        if (zip_folder(game_user_dir(g), zip, err))
-            ask(a, "info", g, "Back up saves", "Saved on your desktop:\n" + zip + "\n\nTo restore: close the game and unzip it into\n" + game_user_dir(g), { "OK" });
-        else set_message(a, "Couldn't back up the saves: " + err, true);
+        backup_start(a, g, game_user_dir(g), join(desktop_dir(), std::string("CogBox-saves-") + d.dir + "-" + now_stamp() + ".zip"));   // #120
     } else if (m.tag == "clearshaders" && m.answer == 0) {
         std::string dir = game_shader_dir(g);
         if (MoveFileExW(widen(dir).c_str(), widen(dir + ".cleared-" + now_stamp()).c_str(), 0)) set_message(a, std::string("Cleared the shaders of ") + d.name + ".", false);
@@ -173,12 +224,14 @@ void startup_notices(App &a)
         a.modal.check = "Don't show this again";
         return;
     }
-    if (!a.ini.geti("Notices", "TitleUpdatesNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION) {
-        ask(a, "tunotice", -1, "Recommended game updates",
-            "COGBox's most-tested builds use these title updates:\n\n"
-            "    Gears of War - Title Update 5 (required)\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4 (required for now)\n\n"
-            "They give the best compatibility and performance. Add each one from your own console (ADD UPDATE, or the game's "
-            "About tab) - COGBox doesn't include game or update files.", { "Continue" });
+    // Title updates required (0.4.0): a new "never" key, so a player who ticked the old "recommended" notice away
+    // still sees once that the updates are now required
+    if (!a.ini.geti("Notices", "TitleUpdatesRequiredNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION) {
+        ask(a, "tunotice", -1, "Title updates required",
+            "Title updates are now required to play. Disc-only versions are no longer supported.\n\n"
+            "    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\n"
+            "Add each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's "
+            "Content\\0000000000000000\\<title ID>\\000B0000 folder. COGBox doesn't include game or update files.", { "Continue" });
         a.modal.check = "Don't show this again";
         return;
     }
@@ -307,6 +360,40 @@ static void draw_window_buttons(App &a, ImVec2 size)
     g_dragTop = m.y >= 0 && m.y < S(20) && m.x < x - S(4) && !ImGui::IsAnyItemHovered() && !a.modal.open;
 }
 
+// Shagg (0.3.7: "a fade to changing screens ... not working correctly or doesn't look good"): a 150 ms cross-fade. After
+// the frame that asked for another screen is drawn, its picture is read back into a texture and the screen switches;
+// the following frames draw the new screen and that picture over it with falling alpha. Another switch during a fade
+// reads back the blended picture, so it carries on without a jump. Nothing is drawn twice and no widget runs twice.
+static SDL_Texture *g_fadeTex = nullptr;
+static double g_fadeStart = -10;
+static void screen_fade_frame_end(App &a, SDL_Renderer *ren)
+{
+    const double len = getenv("COGBOX_SLOW") ? 2.0 : 0.15, t = ImGui::GetTime() - g_fadeStart;
+    SDL_SetRenderClipRect(ren, nullptr);
+    if (g_fadeTex && t < len) {
+        SDL_SetTextureAlphaModFloat(g_fadeTex, (float)(1.0 - t / len));
+        SDL_RenderTexture(ren, g_fadeTex, nullptr, nullptr);
+    } else if (g_fadeTex) {
+        SDL_DestroyTexture(g_fadeTex);
+        g_fadeTex = nullptr;
+    }
+    if (a.zoomTo == a.screen) return;
+    a.screen = a.zoomTo;
+    SDL_Surface *read = SDL_RenderReadPixels(ren, nullptr);
+    // opaque whatever alpha the back buffer read back with (XRGB): the fade is the texture's alpha mod alone
+    SDL_Surface *shot = read ? SDL_ConvertSurface(read, SDL_PIXELFORMAT_XRGB8888) : nullptr;
+    if (read) SDL_DestroySurface(read);
+    if (shot) {
+        if (SDL_Texture *tex = SDL_CreateTextureFromSurface(ren, shot)) {
+            if (g_fadeTex) SDL_DestroyTexture(g_fadeTex);
+            g_fadeTex = tex;
+            SDL_SetTextureBlendMode(g_fadeTex, SDL_BLENDMODE_BLEND);
+            g_fadeStart = ImGui::GetTime();
+        }
+        SDL_DestroySurface(shot);
+    }
+}
+
 static void draw_ui(App &a, ImVec2 size)
 {
     double now = ImGui::GetTime();
@@ -330,16 +417,11 @@ static void draw_ui(App &a, ImVec2 size)
     else if (!lib.empty()) { backdrop_draw(a, bg, size, g0, 0.85f * (1 - f)); backdrop_draw(a, bg, size, g1, 0.85f * f); }
     if (tg < 0) bg->AddRectFilledMultiColor(ImVec2(0, size.y * 0.45f), size, IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 200), IM_COL32(0, 0, 0, 200));
 
-    // the zoom between the carousel and a page: darkens, switches half way, lightens (0.5 s)
-    double zt = now - a.zoomStart;
-    const double zoomLen = getenv("COGBOX_SLOW") ? 4.0 : 0.5;
-    if (zt >= 0 && zt < zoomLen && a.zoomTo != a.screen && zt >= zoomLen * 0.5) a.screen = a.zoomTo;
+    // Carousel <-> page: the screen changes at the end of the frame that asked for it (screen_fade_frame_end); the
+    // old picture then cross-fades into the new one. (Before 0.3.8: a 0.5 s dip through black - the whole window,
+    // window buttons and background included, went black half way, and the switch waited for it.)
     if (a.screen == SCR_FRONT) front_draw(a, size);
     else page_draw(a, size);
-    if (zt >= 0 && zt < zoomLen) {
-        float k = (float)(1.0 - fabs(zt / zoomLen * 2 - 1));
-        ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(0, 0), size, IM_COL32(0, 0, 0, (int)(255 * k)));
-    } else if (a.zoomTo != a.screen) a.screen = a.zoomTo;
 
     // the message line
     if (!a.message.empty() && now - a.messageAt < 12) {
@@ -602,6 +684,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         case 3: set_message(a, "The box art couldn't be downloaded - check the internet connection.", true); break;
         }
         install_poll(a);
+        backup_poll(a);   // GitHub #120: the save backup runs on its own thread
         // 0.2.0 (Shagg 13:18): everything dropped is handled, one after another - several DLC packages, or a folder of
         // them (a console's ...\<title ID>\00000002, or the title folder), are each added in turn. A folder that isn't a
         // game copy or a title update is searched for DLC packages.
@@ -659,6 +742,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         SDL_RenderClear(ren);
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), ren);
         test_shot(a);
+        screen_fade_frame_end(a, ren);   // the cross-fade between the carousel and a page
         SDL_RenderPresent(ren);
     }
     if (std::any_of(a.dirty, a.dirty + G_COUNT, [](bool x) { return x; })) settings_save(a);
