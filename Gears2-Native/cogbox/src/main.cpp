@@ -307,6 +307,40 @@ static void draw_window_buttons(App &a, ImVec2 size)
     g_dragTop = m.y >= 0 && m.y < S(20) && m.x < x - S(4) && !ImGui::IsAnyItemHovered() && !a.modal.open;
 }
 
+// Shagg (0.3.7: "a fade to changing screens ... not working correctly or doesn't look good"): a 150 ms cross-fade. After
+// the frame that asked for another screen is drawn, its picture is read back into a texture and the screen switches;
+// the following frames draw the new screen and that picture over it with falling alpha. Another switch during a fade
+// reads back the blended picture, so it carries on without a jump. Nothing is drawn twice and no widget runs twice.
+static SDL_Texture *g_fadeTex = nullptr;
+static double g_fadeStart = -10;
+static void screen_fade_frame_end(App &a, SDL_Renderer *ren)
+{
+    const double len = getenv("COGBOX_SLOW") ? 2.0 : 0.15, t = ImGui::GetTime() - g_fadeStart;
+    SDL_SetRenderClipRect(ren, nullptr);
+    if (g_fadeTex && t < len) {
+        SDL_SetTextureAlphaModFloat(g_fadeTex, (float)(1.0 - t / len));
+        SDL_RenderTexture(ren, g_fadeTex, nullptr, nullptr);
+    } else if (g_fadeTex) {
+        SDL_DestroyTexture(g_fadeTex);
+        g_fadeTex = nullptr;
+    }
+    if (a.zoomTo == a.screen) return;
+    a.screen = a.zoomTo;
+    SDL_Surface *read = SDL_RenderReadPixels(ren, nullptr);
+    // opaque whatever alpha the back buffer read back with (XRGB): the fade is the texture's alpha mod alone
+    SDL_Surface *shot = read ? SDL_ConvertSurface(read, SDL_PIXELFORMAT_XRGB8888) : nullptr;
+    if (read) SDL_DestroySurface(read);
+    if (shot) {
+        if (SDL_Texture *tex = SDL_CreateTextureFromSurface(ren, shot)) {
+            if (g_fadeTex) SDL_DestroyTexture(g_fadeTex);
+            g_fadeTex = tex;
+            SDL_SetTextureBlendMode(g_fadeTex, SDL_BLENDMODE_BLEND);
+            g_fadeStart = ImGui::GetTime();
+        }
+        SDL_DestroySurface(shot);
+    }
+}
+
 static void draw_ui(App &a, ImVec2 size)
 {
     double now = ImGui::GetTime();
@@ -330,16 +364,11 @@ static void draw_ui(App &a, ImVec2 size)
     else if (!lib.empty()) { backdrop_draw(a, bg, size, g0, 0.85f * (1 - f)); backdrop_draw(a, bg, size, g1, 0.85f * f); }
     if (tg < 0) bg->AddRectFilledMultiColor(ImVec2(0, size.y * 0.45f), size, IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 200), IM_COL32(0, 0, 0, 200));
 
-    // the zoom between the carousel and a page: darkens, switches half way, lightens (0.5 s)
-    double zt = now - a.zoomStart;
-    const double zoomLen = getenv("COGBOX_SLOW") ? 4.0 : 0.5;
-    if (zt >= 0 && zt < zoomLen && a.zoomTo != a.screen && zt >= zoomLen * 0.5) a.screen = a.zoomTo;
+    // Carousel <-> page: the screen changes at the end of the frame that asked for it (screen_fade_frame_end); the
+    // old picture then cross-fades into the new one. (Before 0.3.8: a 0.5 s dip through black - the whole window,
+    // window buttons and background included, went black half way, and the switch waited for it.)
     if (a.screen == SCR_FRONT) front_draw(a, size);
     else page_draw(a, size);
-    if (zt >= 0 && zt < zoomLen) {
-        float k = (float)(1.0 - fabs(zt / zoomLen * 2 - 1));
-        ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(0, 0), size, IM_COL32(0, 0, 0, (int)(255 * k)));
-    } else if (a.zoomTo != a.screen) a.screen = a.zoomTo;
 
     // the message line
     if (!a.message.empty() && now - a.messageAt < 12) {
@@ -659,6 +688,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         SDL_RenderClear(ren);
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), ren);
         test_shot(a);
+        screen_fade_frame_end(a, ren);   // the cross-fade between the carousel and a page
         SDL_RenderPresent(ren);
     }
     if (std::any_of(a.dirty, a.dirty + G_COUNT, [](bool x) { return x; })) settings_save(a);
