@@ -32,6 +32,7 @@ void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime);
 void Gow3AddBuiltInIniEdits();  // game_patches.cpp: --gow3_trilinear, --gow3_fast_mip_fade
 void Gow3StopMemoryGauge();     // game_patches.cpp: --gow3_memory_log_seconds stops before the kernel goes away
 void Gow3InstallExtras();       // extras.cpp: --gow3_cheats, --gow3_unlock_mutators, engine console hotkeys
+void Gow3InstallModChapters();  // mod_chapters.cpp: mods' campaign chapters and content packages
 REXCVAR_DECLARE(bool, gow3_mute_unfocused);  // extras.cpp
 
 class Gow3App : public rex::ReXApp {
@@ -57,6 +58,7 @@ class Gow3App : public rex::ReXApp {
     Gow3AddBuiltInIniEdits();  // before the bundle is edited
     Gow3InstallExtras();       // its package patches too
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
+    Gow3InstallModChapters();  // mods' chapters 32-49 and content packages (mod_chapters.cpp), after their config
     XenosInstallDrawStatsIfRequested();
     XenosInstallPrimDetailIfRequested();
     XenosInstallFrameCaptureIfRequested();
