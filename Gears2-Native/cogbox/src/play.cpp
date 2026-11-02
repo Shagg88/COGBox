@@ -389,8 +389,14 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
     // the game files' fingerprints (never the files)
     sys += std::string("Game files: ") + (st.dataDir.empty() ? "none" : st.xexMatch ? "the expected release" : "a different release (default.xex " +
            cached_sha1(a.ini, join(st.dataDir, "default.xex")) + ", " + std::to_string(file_size(join(st.dataDir, "default.xex"))) + " bytes)") + "\r\n";
-    sys += std::string(d.updateName) + ": " + (st.updateDir.empty() ? "none" : st.xexpMatch ? "the expected update" : "a different update (default.xexp " +
-           cached_sha1(a.ini, join(st.updateDir, "default.xexp")) + ")") + "\r\n";
+    // GitHub #138: always the update's SHA-1 and size, and "expected" only for the port's own update - a file from the
+    // reported-working list or one the player confirmed is named as such (#138's TU1 file was listed as "expected").
+    const std::string xexpPath = st.updateDir.empty() ? "" : join(st.updateDir, "default.xexp");
+    const std::string xexpSha = xexpPath.empty() ? "" : cached_sha1(a.ini, xexpPath);
+    sys += std::string(d.updateName) + ": " + (st.updateDir.empty() ? "none" :
+           std::string(xexpSha == d.xexp.sha1 ? "the expected update" : st.xexpMatch ? "a reported-working update" :
+                       st.xexpConfirmed ? "a different update the player confirmed works" : "a different update") +
+           " (default.xexp " + xexpSha + ", " + std::to_string(file_size(xexpPath)) + " bytes)") + "\r\n";
     sys += "\r\nMade by COGBox at " + now_stamp() + ". Your Windows user name and PC name are replaced (x's in crash dumps).\r\n";
     std::string name = std::string("CogBox-report-") + d.dir + "-" + now_stamp() + ".zip";
     // 0.2.1: under Proton / Wine the "desktop" is hidden inside the game's prefix - use COGBox's own reports folder
