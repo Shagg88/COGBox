@@ -98,10 +98,11 @@ don't need to do anything.
   shows a dirty-disc error with them).
 - **The Gears 2 / Gears 3 disc builds** are no longer included (see 1).
 
-### 4. Your name in the games (Gamertag, #119)
+### 4. Your name in the games (Player name, #119)
 1. In COGBox, open any game's **Settings**, then the **About** tab.
-2. Type your name in **Gamertag** (up to 15 letters, digits or spaces). It's saved straight away.
-3. Start (or restart) the game: player 1 shows that name. Leave it empty for "User". Your saves are kept whatever the name.
+2. Type your name in **Player name** (up to 15 letters, digits or spaces; extra spaces are trimmed). It's saved straight away.
+3. Start (or restart) any game: player 1 shows that name in all four games. Leave it empty for "User".
+   It only changes the name shown: your profile folder and saves stay exactly where they are.
 
 ## COGBox, the launcher
 
@@ -122,6 +123,7 @@ don't need to do anything.
   order. A mod is laid out like the game's own files (`GearGame\...`) and replaces or adds files without changing your
   copy; programs are never taken from a mod.
 - **Desktop shortcuts** for COGBox and each game.
+- **Player name** (About tab): the name every game shows for player 1 (display only, saves untouched).
 
 ### Adding DLC
 

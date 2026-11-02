@@ -1125,10 +1125,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (on("SystemLink")) a.push_back("--net_system_link=true");
     // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=). Only with a runtime that
     // has SDK patch 54; it keeps 15 letters / digits / spaces. The profile's save folder is not renamed.
+    // 0.4.0: the same rules as the runtime's Player1Gamertag - ASCII letters / digits and single spaces, trimmed, 15 max.
     if (!env.gamertag.empty() && cap_rt(env, "user_gamertag")) {
         std::string t;
-        for (char c : env.gamertag) if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ') t += c;
-        if (!t.empty()) a.push_back("--user_gamertag=" + q(t.substr(0, 15)));
+        for (char c : env.gamertag) {
+            const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ';
+            if (ok && !(c == ' ' && (t.empty() || t.back() == ' '))) t += c;
+            if (t.size() == 15) break;
+        }
+        while (!t.empty() && t.back() == ' ') t.pop_back();
+        if (!t.empty()) a.push_back("--user_gamertag=" + q(t));
     }   // 0.3.5: off = not sent (the runtime's default)
     // GitHub #121: only an exe whose layer 0 has the switch (an older one would refuse the unknown flag)
     if (s.b("HideNotes") && cap_exe(env, "gow2_hide_onscreen_notes")) a.push_back("--gow2_hide_onscreen_notes=true");

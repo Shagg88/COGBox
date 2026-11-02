@@ -923,7 +923,7 @@ static void about_tab(App &a, int g)
             const std::string cur = a.ini.get("Profile", "Gamertag");
             std::snprintf(buf, sizeof(buf), "%s", cur.c_str());
         }
-        row_label("Gamertag", "", true);
+        row_label("Player name", "", true);   // 0.4.0 (Shagg): "Player name" - the gamertag, display only
         ImGui::SetNextItemWidth(g_ctrlW);
         auto filter = [](ImGuiInputTextCallbackData *d) -> int {   // Xbox gamertags: letters, digits, spaces
             const ImWchar c = d->EventChar;
@@ -933,8 +933,8 @@ static void about_tab(App &a, int g)
             a.ini.set("Profile", "Gamertag", buf);
             a.ini.save();
         }
-        row_desc("The name the games show for you (up to 15 letters, digits or spaces). Empty = \"User\". Your saves are "
-                 "kept whatever the name.");
+        row_desc("The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: \"User\". "
+                 "Display only - your profile and saves stay where they are.");
     }
     bool fs = a.fullscreen;   // job 523
     if (ImGui::Checkbox(tr("Fullscreen (F11, or LT + RT together)"), &fs)) set_fullscreen(a, fs);

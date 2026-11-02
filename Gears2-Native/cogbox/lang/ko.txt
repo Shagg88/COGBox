@@ -781,3 +781,6 @@ Title update needed = 타이틀 업데이트 필요
 Title updates are now required to play. Disc-only versions are no longer supported. = 이제 플레이하려면 타이틀 업데이트가 필요해요. 디스크 전용 버전은 더 이상 지원되지 않아요.
 Title updates are now required to play. Disc-only versions are no longer supported.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nAdd each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's Content\0000000000000000\<title ID>\000B0000 folder. COGBox doesn't include game or update files. = 이제 플레이하려면 타이틀 업데이트가 필요해요. 디스크 전용 버전은 더 이상 지원되지 않아요.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\n각각 내 콘솔에서 추가하세요 (업데이트 추가 또는 게임의 About 탭). 콘솔의 Content\0000000000000000\<title ID>\000B0000 폴더에 있어요. COGBox에는 게임이나 업데이트 파일이 포함되어 있지 않아요.
 Add it with ADD UPDATE: the update package from your console's folder = 업데이트 추가로 추가하세요. 콘솔의 다음 폴더에 있는 업데이트 패키지예요:
+# 0.4.0: player name
+Player name = 플레이어 이름
+The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = 모든 게임에 표시되는 이름(게이머태그): 영문자, 숫자, 공백 최대 15자. 비워 두면: "User". 표시만 바뀌고 프로필과 저장 파일은 그대로예요.

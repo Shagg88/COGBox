@@ -781,3 +781,6 @@ Title update needed = 需要标题更新
 Title updates are now required to play. Disc-only versions are no longer supported. = 现在必须安装标题更新才能游玩。不再支持仅光盘版本。
 Title updates are now required to play. Disc-only versions are no longer supported.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nAdd each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's Content\0000000000000000\<title ID>\000B0000 folder. COGBox doesn't include game or update files. = 现在必须安装标题更新才能游玩。不再支持仅光盘版本。\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\n请从你自己的主机添加每一个(添加更新,或游戏的“关于”选项卡):它位于主机的 Content\0000000000000000\<title ID>\000B0000 文件夹中。COGBox 不包含游戏或更新文件。
 Add it with ADD UPDATE: the update package from your console's folder = 请用“添加更新”添加:主机以下文件夹中的更新包:
+# 0.4.0: player name
+Player name = 玩家名称
+The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = 每个游戏为你显示的名称(你的玩家代号):最多 15 个字母、数字或空格。留空: "User"。仅用于显示——你的档案和存档位置不变。
