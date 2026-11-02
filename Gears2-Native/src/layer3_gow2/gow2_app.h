@@ -85,7 +85,7 @@ class Gow2App : public rex::ReXApp {
   // Patch 0054: the achievement toast attaches the overlay drawer only while a toast shows (the SDK's kept the
   // presenter repainting at the monitor's rate all the time - the NVIDIA overlay counted those as frames).
   std::unique_ptr<rex::ui::AchievementNotificationDialog> CreateAchievementNotificationDialog() override {
-    if (!imgui_drawer() || !immediate_drawer() || !runtime()) return nullptr;
+    if (XenosOnScreenNotesHidden() || !imgui_drawer() || !immediate_drawer() || !runtime()) return nullptr;
     return std::make_unique<xenos::LazyAchievementToast>(imgui_drawer(), immediate_drawer(), runtime(), &app_context());
   }
 

@@ -183,6 +183,10 @@ std::vector<Option> make_options(Game g) {
     add(choice("FpsMode", "FPS counter", Tab::Display, OWN, { "Off", "Bar at the top", "Bar at the bottom", "Game's own (column)" }, 0,
                "Bar: one line (FPS, frame time, slowest frame) drawn by the port itself, nothing in the game changed. Game's own: "
                "the game's built-in FPS / frame-time column.", 336));
+    // GitHub #121: the port's own notes over the game (shader building / loading, achievement pop-ups) off.
+    add(make("HideNotes", "Hide on-screen notes", Tab::Display, Kind::Bool, OWN, 0,
+             "Draws nothing of the port's over the game: no shader-building note, no shader-loading indicator and no "
+             "achievement pop-ups (achievements still unlock). The FPS counter above is separate.", 0));
     add(make("Ultrawide", "Ultrawide", Tab::Display, Kind::Bool, PG, 0,
              "A wider view that matches an ultrawide monitor (21:9 or 32:9); black bars on other shapes.", 362), "ultrawide");
 
@@ -1120,6 +1124,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         for (char c : env.gamertag) if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ') t += c;
         if (!t.empty()) a.push_back("--user_gamertag=" + q(t.substr(0, 15)));
     }   // 0.3.5: off = not sent (the runtime's default)
+    // GitHub #121: only an exe whose layer 0 has the switch (an older one would refuse the unknown flag)
+    if (s.b("HideNotes") && cap_exe(env, "gow2_hide_onscreen_notes")) a.push_back("--gow2_hide_onscreen_notes=true");
     // PS1 929: FPS counter
     switch (s.i("FpsMode")) {
     case 1: a.push_back("--gow2_fps_bar=top"); break;
