@@ -1,0 +1,37 @@
+--- a/src/input/mnk/mnk_input_driver.cpp
++++ b/src/input/mnk/mnk_input_driver.cpp
+@@ -62,6 +62,13 @@ REXCVAR_DEFINE_STRING(keybind_back, "Z,Tab", "Input/Keybinds/Controller", "Back
+ REXCVAR_DEFINE_STRING(keybind_start, "X,Return", "Input/Keybinds/Controller", "Start button");
+ REXCVAR_DEFINE_STRING(keybind_guide, "", "Input/Keybinds/Controller", "Guide button");
+ 
++// COGBox SDK patch 60 (GitHub #125): a walk key. While it is held (or after a press with mnk_walk_toggle), the
++// keyboard's left stick is scaled to mnk_walk_scale, so the character walks instead of jogging.
++REXCVAR_DEFINE_STRING(keybind_walk, "", "Input/Keybinds/Controller", "Walk (left stick scaled down)");
++REXCVAR_DEFINE_BOOL(mnk_walk_toggle, false, "Input", "Walk key toggles walking instead of being held");
++REXCVAR_DEFINE_DOUBLE(mnk_walk_scale, 0.5, "Input", "Left stick deflection while walking (0.1 - 1)")
++    .range(0.1, 1.0);
++
+ REXCVAR_DEFINE_BOOL(mnk_passthrough, false, "Input",
+                     "Surface raw keystrokes to the title instead of emulating a pad, for "
+                     "titles that read a USB keyboard. Enables the device on its own");
+@@ -535,6 +542,20 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_lstick_down)))
+     ly -= INT16_MAX;
+ 
++  // Patch 60 (#125): walk key - hold, or toggle on each press.
++  {
++    static bool walk_was_down = false, walk_toggled = false;
++    const bool walk_down = !REXCVAR_GET(keybind_walk).empty() && IsBindPressed(key_down_, REXCVAR_GET(keybind_walk));
++    if (walk_down && !walk_was_down) walk_toggled = !walk_toggled;
++    walk_was_down = walk_down;
++    const bool walking = REXCVAR_GET(mnk_walk_toggle) ? walk_toggled : walk_down;
++    if (walking) {
++      const double k = REXCVAR_GET(mnk_walk_scale);
++      lx = static_cast<int32_t>(double(lx) * k);
++      ly = static_cast<int32_t>(double(ly) * k);
++    }
++  }
++
+   int32_t rx = 0;
+   int32_t ry = 0;
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_rstick_left)))
