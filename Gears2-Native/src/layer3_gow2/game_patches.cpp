@@ -247,6 +247,12 @@ void Gow2MaxTickRate(PPCRegister& f1) {
 // = the monitor's shape, or "21:9", "32:9", "3440:1440", "3.56". The scene height is 1280 / aspect (even, 536-720).
 // The field-of-view factor is Canary's 21:9 value times how much more the shape widens than 21:9 does, at the half
 // angle (34.05 deg) where Canary's 21:9 factor is exact (the hooks don't see the game's own field of view).
+// GitHub #94: the clamp below as a switch, so a PC job can reproduce the 32:9 trap (360) and read where it is. Players
+// keep 536 until the pool's capacity is raised.
+REXCVAR_DEFINE_INT32(gow2_ultrawide_min_rows, 536, "Gears2",
+                     "With --gow2_ultrawide: the fewest scene rows (536 = 3440x1440; fewer traps in the render-target "
+                     "pool setup - for diagnosis only, GitHub #94)")
+    .range(320, 720);
 namespace uwshape {
 inline double ParseAspect(const std::string& v) {
   double a = 0, b = 0;
@@ -272,7 +278,7 @@ inline uint32_t Height(const std::string& v, const char* tag) {
   // GitHub #60/#73: below ~536 rows (wider than ~2.39:1) the game's render-target pool setup sub_8281C680 traps
   // (size from sub_829BABD8, page-aligned, > the pool's capacity at +20 -> sub_82AC6098). 536 = 3440x1440, the widest
   // shape reported working. Wider monitors get a 1280x536 picture, pillarboxed by gow2_present_frame_aspect.
-  constexpr uint32_t kMinRows = 536u;
+  const uint32_t kMinRows = uint32_t(REXCVAR_GET(gow2_ultrawide_min_rows));
   const uint32_t want = uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u;
   const uint32_t h = std::clamp(want, kMinRows, 720u);
   if (h != want) REXLOG_INFO("{}: aspect {:.4f} wants {} rows; clamped to {} (32:9 is pillarboxed until the wide-render fix)", tag, aspect, want, h);
