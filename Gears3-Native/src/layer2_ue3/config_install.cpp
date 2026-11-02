@@ -46,6 +46,14 @@ REXCVAR_DEFINE_STRING(ue3_ini_edits, "", "Gears3",
 REXCVAR_DEFINE_STRING(ue3_mods, "", "Gears3",
                       "Mods (0.2.0): host folders, ';'-separated in load order (a later one wins), each laid out like the game "
                       "data folder; their files replace or add to the game's, read-only, through a folder overlay");
+// GitHub #87: the spoken language apart from the text. UE3 loads voices (and other localised assets) from
+// <package>_LOC_<LANG>.xxx in the game's language; with --ue3_voice_language=INT (or FRA, ESM, ...) every
+// *_LOC_<other>.xxx that has a <voice language> twin in the same folder is served as that twin through the mods'
+// folder overlay - which also gives its table-of-contents line the twin's size and MD5 and fixes the start-up hash
+// table. Menus and Coalesced text stay in the game's language; subtitles stored in the packages may follow the voices.
+REXCVAR_DEFINE_STRING(ue3_voice_language, "", "Gears3",
+                      "GitHub #87: the voices' language as the packages name it (INT, FRA, DEU, ITA, ESN, ESM, ...); "
+                      "empty = the game's language");
 REXCVAR_DEFINE_STRING(ue3_ini_bundle_dir, "GearGame\\CookedXbox360", "Gears3",
                       "Folder of the Coalesced_*.bin config bundles, relative to the game data root");
 REXCVAR_DEFINE_STRING(ue3_package_patches, "", "Gears3",
@@ -474,6 +482,48 @@ class ModOverlayDevice : public rex::filesystem::HostPathDevice {
 };
 
 // rel (lower case, '\\', from the game data root) -> host file; later mods win. Programs are refused.
+// GitHub #87 (see ue3_voice_language): adds "<rel of *_LOC_<lang>.xxx>" -> its <voice> twin to the mods' files (a real
+// mod's own copy of a file wins). Returns how many were added.
+int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, std::filesystem::path>* files) {
+  namespace fs = std::filesystem;
+  std::string voice = REXCVAR_GET(ue3_voice_language);
+  for (char& c : voice) c = char(std::toupper(uint8_t(c)));
+  if (voice.size() != 3) return 0;
+  std::error_code ec;
+  if (!fs::is_directory(game, ec)) return 0;
+  // folder -> lower-case name -> real path, for the twin lookup
+  std::map<fs::path, std::map<std::string, fs::path>> byDir;
+  for (auto it = fs::recursive_directory_iterator(game, fs::directory_options::skip_permission_denied, ec);
+       !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+    if (!it->is_regular_file(ec)) continue;
+    std::string n = rex::path_to_utf8(it->path().filename());
+    for (char& c : n) c = char(std::tolower(uint8_t(c)));
+    if (n.size() > 12 && n.find("_loc_") != std::string::npos && n.ends_with(".xxx")) byDir[it->path().parent_path()][n] = it->path();
+  }
+  std::string lv = voice;
+  for (char& c : lv) c = char(std::tolower(uint8_t(c)));
+  int added = 0, langs = 0;
+  std::set<std::string> seenLangs;
+  for (const auto& [dir, names] : byDir)
+    for (const auto& [n, p] : names) {
+      const size_t at = n.rfind("_loc_");
+      if (at == std::string::npos || n.size() != at + 12) continue;   // <base>_loc_<xxx>.xxx
+      const std::string lang = n.substr(at + 5, 3);
+      if (lang == lv) continue;
+      const auto twin = names.find(n.substr(0, at + 5) + lv + ".xxx");
+      if (twin == names.end()) continue;
+      const fs::path relp = fs::relative(p, game, ec);
+      if (ec || relp.empty()) continue;
+      const std::string key = RelKey(rex::path_to_utf8(relp));
+      if (files->count(key)) continue;
+      (*files)[key] = twin->second;
+      ++added;
+      if (seenLangs.insert(lang).second) ++langs;
+    }
+  REXLOG_INFO("ue3_voice_language: {} - {} localised package(s) in {} other language(s) now give the {} voices (GitHub #87)",
+              voice, added, langs, voice);
+  return added;
+}
 std::map<std::string, std::filesystem::path> CollectMods(std::map<std::string, std::filesystem::path>* dirs) {
   namespace fs = std::filesystem;
   std::map<std::string, fs::path> out;
@@ -538,7 +588,7 @@ void InstallModOverlay(rex::Runtime* runtime, std::map<std::string, std::filesys
       return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), {});
     };
     const std::vector<uint8_t> a = read(orig), b = read(host);
-    const std::string name = ModLower(rex::path_to_utf8(host.filename()));
+    const std::string name = ModLower(rex::path_to_utf8(orig.filename()));   // the game's name (GitHub #87: a voice twin is named otherwise)
     const int n = UpdateHashTable(runtime, name, ue3::Sha1(a.data(), a.size()), ue3::Sha1(b.data(), b.size()));
     if (n > 0) hashed += n;
   }
@@ -628,6 +678,7 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
   // 0.2.0: mods. With mods on, the config edits' copies join the mods' overlay instead of their own folder view.
   std::map<std::string, std::filesystem::path> modDirs;
   std::map<std::string, std::filesystem::path> mods = CollectMods(&modDirs);
+  AddVoiceLanguage(runtime->game_data_root(), &mods);  // GitHub #87
   struct ModsAtEnd {
     rex::Runtime* rt; std::map<std::string, std::filesystem::path>* files; std::map<std::string, std::filesystem::path>* dirs;
     ~ModsAtEnd() {   // a destructor must not throw: a file-system error here would end the game at start-up

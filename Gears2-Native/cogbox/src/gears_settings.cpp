@@ -351,6 +351,14 @@ std::vector<Option> make_options(Game g) {
                "The language of the game's own text and voices - every language the US and European releases have. Only "
                "the languages on your copy of the game are there; the others fall back to English. European copies have "
                "the most. Takes effect when the game starts.", 0), "lang");
+    // GitHub #87: voices in another language than the text (layer 2 --ue3_voice_language: the game's localised packages
+    // *_LOC_<lang>.xxx are served from the voice language's twins). Only languages whose packages are on the copy work.
+    add(choice("VoiceLang", "Voice language", Tab::Gameplay, PG,
+               { "Same as the game language", "English", "French", "German", "Italian", "Spanish (Spain)",
+                 "Spanish (Latin America)", "Polish", "Russian", "Japanese" }, 0,
+               "The language of the spoken dialogue, separately from the menus and text (Game language). Needs that "
+               "language's voice files on your copy (European copies have English, French, German, Italian, Spanish). "
+               "Subtitles stored with the voices may follow them.", 0), "voicelang");
     add(make("Mute", "Mute when the game is not the active window", Tab::Gameplay, Kind::Bool, SH, 0,
              "Silences the game while another window is in front; the sound comes back when you click back into the game.", 386),
         "mute");   // the only sound option, so it lives here (no Audio tab)
@@ -477,6 +485,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1 && !cap_exe(env, "gow1_max_fps")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "lang") {   // the SDK runtime's --user_language / --user_country
         if (g == Game::Gears1 && !cap_rt(env, "user_language") && !cap_exe(env, "user_language")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "voicelang") {   // GitHub #87: layer 2's ue3_voice_language
+        if (!cap_exe(env, "ue3_voice_language")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "padlayout") {   // GitHub #95 / #97: SDK patch 55
         if (!cap_rt(env, "pad_remap")) return no(not_yet(gi, "needs the next runtime (SDK patch 55)"));
     } else if (f == "lowlag") {
@@ -1095,6 +1105,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             // GitHub #76: Gears 1 plays Latin American Spanish only for a North American game region (SDK patch 47)
             if (isG1 && l == 7 && cap_rt(env, "user_game_region")) a.push_back("--user_game_region=255");
         }
+    }
+    if (avail("VoiceLang") && s.i("VoiceLang") > 0) {   // GitHub #87
+        static const char* k_voice[10] = { "", "INT", "FRA", "DEU", "ITA", "ESN", "ESM", "POL", "RUS", "JPN" };
+        a.push_back(std::string("--ue3_voice_language=") + k_voice[std::max(0, std::min(9, s.i("VoiceLang")))]);
     }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
