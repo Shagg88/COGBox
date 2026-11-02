@@ -24,17 +24,32 @@ first field, e.g. a menu entry).
 ## Verified [V] / not yet [G]
 
 Built here from the repo with the SDK at nightly-20261002-bd833a2a + `rexglue-sdk-full.diff` + patches 46-53 and the
-pins (LLVM 23.1.3, VS 2022 17.14 / MSVC 14.44), TU6 (0.0.6.11), with the trilogy's Gears 1 chapter 1 mod:
-- [V] mod.ini read (name, version), fingerprint logged; 28 mod files, 6 replaced / 28 added, 34 TOC lines per TOC.
+pins (LLVM 23.1.3, VS 2022 17.14 / MSVC 14.44), TU6 (0.0.6.11) and the disc build, with the trilogy's Gears 1 chapter 1
+mod:
+- [V] mod.ini read, fingerprint logged; 28 mod files, 6 replaced / 28 added.
 - [V] 2 config fragments merged into 3 bundles; chapter 32 -> GOW1_SP_Prison_P read from the merged config.
-- [V] engine tables found (names / objects), `Default__GearTypes` found, `ChapterLevelNames[32]` = GOW1_SP_Prison_P
-  through the game's FName constructor, table 31 -> 33 entries.
-- [V] content packages MPCH_COGDomG2MP_SF and MPCH_COGMarcusG2MP_SF loaded (LoadPackageAsync from the tick) and found.
-- [G] starting the chapter. From Select Chapter it should work (the table is filled at the title screen); not run yet:
-  the scripted pad (`--gow2_input_script`) presses were logged but the title screen did not react in a background
-  window here. `--ue3_launch="GearGame_P?chapter=32"` at start races the boot: the table can be filled after the URL
-  has looked its map up (then the game starts with no map); the FName hook narrows that but did not win every run.
-- [G] the disc build (only TU6 built here).
+- [V] engine tables and `Default__GearTypes` found on the game thread during the boot (FName hook, every 256th call);
+  `ChapterLevelNames[32]` = GOW1_SP_Prison_P through the game's FName constructor, table 31 -> 33 (retried until
+  GearTypes' properties are linked, a few seconds after its default object exists).
+- [V] content packages MPCH_COGDomG2MP_SF and MPCH_COGMarcusG2MP_SF requested right after the table is filled, opened,
+  their objects rooted.
+- [V] `--ue3_exec="open GearGame_P?game=geargamecontent.GearGameSP?chapter=32?listen"` from the title screen travels
+  into chapter 32: GearGame_P loads and the GOW1_SP_Prison_P package object exists.
+- [G] **open: the chapter's map file is never opened** (`--gow3_mod_file_log=true`: GearGame_P.xxx is the last .xxx
+  opened), on TU6 and the disc build, so the loading screen stays. The same mod loads the prison in KiltedKernel's
+  runtime. Found and fixed on the way, in `config_install.cpp`'s TOC rewrite (Gears 3 only; Gears 2's 5-field layout
+  unchanged): Gears 3's TOC lines have 4 fields (`<size> 0 <path> <md5>`, Gears 2 has a sector field too); added files
+  were written with 5, and replaced files' MD5 went into the path field; added lines go first now (the table ends with
+  its own entry, `0 0 ..\GearGame\Xbox360TOC.txt 0`), only in the main table (not the language tables), in the
+  table's own folder spelling. The game reads the rewritten tables (logged). Still unexplained: why the map's package
+  is not looked up / opened. Next suspects: how the engine's package file cache is filled on this runtime (TOC vs a
+  folder listing of the overlay device), and the async loader's queue.
+- [G] `--ue3_launch="GearGame_P?chapter=32"` at start: the boot URL reads ChapterLevelNames before chapters 32+ can be
+  filled (also in KiltedKernel's runtime); start new chapters from the title screen / Select Chapter (or `ue3_exec`).
+- [G] Select Chapter with the scripted pad: presses logged, the title screen did not react in a background window.
+
+Debug switches added: `--gow3_mod_file_log` (every .xxx / .txt the game opens, chained to the shader prebuild's
+file-open observer), `--gow3_mod_content_packages=false`.
 
 ## For the launcher (to work out with Shagg)
 
