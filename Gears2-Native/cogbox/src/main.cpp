@@ -20,6 +20,9 @@ extern int g_lastKeyScancode;   // page.cpp
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 void set_message(App &a, const std::string &m, bool bad)
 {
@@ -56,12 +59,35 @@ void refresh_games(App &a, bool hash)
 }
 
 // ---- answers to the questions ----------------------------------------------------------------------------------------
-static bool zip_folder(const std::string &dir, const std::string &zipPath, std::string &err)
+// GitHub #120 (jojobear69: "Back up saves" froze the launcher; the Saves folder zipped to 2.6 GB): the user folder also
+// holds the installed DLC (content type 00000002, packages of hundreds of MB) and title-update content (000B0000), and
+// the backup read every file into one zip in memory on the UI thread. Now only saves and profiles go in (those two
+// content types are skipped), the zip is written to the file as it is made, and it runs on its own thread; the
+// launcher keeps drawing and says when it is done.
+static size_t zip_write_handle(void *opaque, mz_uint64 ofs, const void *buf, size_t n)
 {
+    HANDLE h = (HANDLE)opaque;
+    LARGE_INTEGER li;
+    li.QuadPart = (LONGLONG)ofs;
+    if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) return 0;
+    DWORD done = 0;
+    return WriteFile(h, buf, (DWORD)n, &done, nullptr) ? done : 0;
+}
+static bool zip_skip_dir(const std::string &name)
+{
+    return _stricmp(name.c_str(), "00000002") == 0 || _stricmp(name.c_str(), "000B0000") == 0;   // DLC, title update
+}
+static bool zip_folder(const std::string &dir, const std::string &zipPath, std::string &err, int &files)
+{
+    HANDLE h = CreateFileW(widen(zipPath).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) { err = "couldn't create " + zipPath; return false; }
     mz_zip_archive z;
     memset(&z, 0, sizeof z);
-    if (!mz_zip_writer_init_heap(&z, 0, 1 << 20)) { err = "couldn't start the zip"; return false; }
+    z.m_pWrite = zip_write_handle;
+    z.m_pIO_opaque = h;
+    if (!mz_zip_writer_init(&z, 0)) { CloseHandle(h); DeleteFileW(widen(zipPath).c_str()); err = "couldn't start the zip"; return false; }
     bool ok = true;
+    files = 0;
     std::vector<std::string> stack = { "" };
     while (!stack.empty() && ok) {
         std::string rel = stack.back();
@@ -74,23 +100,51 @@ static bool zip_folder(const std::string &dir, const std::string &zipPath, std::
             if (n == "." || n == "..") continue;
             std::string r = rel.empty() ? n : rel + "\\" + n;
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;   // links aren't followed into the backup (review 11)
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { stack.push_back(r); continue; }
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { if (!zip_skip_dir(n)) stack.push_back(r); continue; }
             std::string data;
             if (!read_file(join(dir, r), data, 1u << 30)) { ok = false; err = "couldn't read " + r; break; }
             std::string zn = r;
             std::replace(zn.begin(), zn.end(), '\\', '/');
             ok = mz_zip_writer_add_mem(&z, zn.c_str(), data.data(), data.size(), MZ_DEFAULT_COMPRESSION) != 0;
+            if (ok) files++;
         } while (ok && FindNextFileW(f, &fd));
         FindClose(f);
     }
-    void *buf = nullptr;
-    size_t size = 0;
-    if (ok) ok = mz_zip_writer_finalize_heap_archive(&z, &buf, &size) != 0;
-    if (ok) ok = write_file(zipPath, std::string((const char *)buf, size));
-    if (buf) mz_free(buf);
+    if (ok) ok = mz_zip_writer_finalize_archive(&z) != 0;
     mz_zip_writer_end(&z);
-    if (!ok && err.empty()) err = "couldn't write the zip (is the disk full?)";
+    CloseHandle(h);
+    if (!ok) { DeleteFileW(widen(zipPath).c_str()); if (err.empty()) err = "couldn't write the zip (is the disk full?)"; }
     return ok;
+}
+// The backup's thread and its result, read by backup_poll() on the UI thread.
+static std::atomic<int> g_backupState{0};   // 0 idle, 1 running, 2 done
+static std::mutex g_backupMutex;
+static std::string g_backupZip, g_backupErr, g_backupDir;
+static int g_backupGame = -1, g_backupFiles = 0;
+static bool g_backupOk = false;
+static void backup_start(App &a, int g, const std::string &dir, const std::string &zip)
+{
+    if (g_backupState.load() == 1) { set_message(a, "A backup is already running.", false); return; }
+    { std::lock_guard<std::mutex> l(g_backupMutex); g_backupZip = zip; g_backupDir = dir; g_backupGame = g; g_backupErr.clear(); }
+    g_backupState = 1;
+    set_message(a, "Backing up the saves...", false);
+    std::thread([dir, zip] {
+        std::string err;
+        int files = 0;
+        const bool ok = zip_folder(dir, zip, err, files);
+        { std::lock_guard<std::mutex> l(g_backupMutex); g_backupOk = ok; g_backupErr = err; g_backupFiles = files; }
+        g_backupState = 2;
+    }).detach();
+}
+static void backup_poll(App &a)
+{
+    if (g_backupState.load() != 2 || a.modal.open) return;
+    std::lock_guard<std::mutex> l(g_backupMutex);
+    g_backupState = 0;
+    if (g_backupOk)
+        ask(a, "info", g_backupGame, "Back up saves", "Saved on your desktop (" + std::to_string(g_backupFiles) + " files; installed DLC is not "
+            "included):\n" + g_backupZip + "\n\nTo restore: close the game and unzip it into\n" + g_backupDir, { "OK" });
+    else set_message(a, "Couldn't back up the saves: " + g_backupErr, true);
 }
 
 void startup_notices(App &a);   // 0.2.0, below
@@ -139,10 +193,7 @@ static void answered(App &a)
     else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
     else if (m.tag == "dlcremove" && m.answer == 0) dlc_remove_confirmed(a);   // 0.2.0
     else if (m.tag == "backup" && m.answer == 0) {
-        std::string zip = join(desktop_dir(), std::string("CogBox-saves-") + d.dir + "-" + now_stamp() + ".zip"), err;
-        if (zip_folder(game_user_dir(g), zip, err))
-            ask(a, "info", g, "Back up saves", "Saved on your desktop:\n" + zip + "\n\nTo restore: close the game and unzip it into\n" + game_user_dir(g), { "OK" });
-        else set_message(a, "Couldn't back up the saves: " + err, true);
+        backup_start(a, g, game_user_dir(g), join(desktop_dir(), std::string("CogBox-saves-") + d.dir + "-" + now_stamp() + ".zip"));   // #120
     } else if (m.tag == "clearshaders" && m.answer == 0) {
         std::string dir = game_shader_dir(g);
         if (MoveFileExW(widen(dir).c_str(), widen(dir + ".cleared-" + now_stamp()).c_str(), 0)) set_message(a, std::string("Cleared the shaders of ") + d.name + ".", false);
@@ -631,6 +682,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         case 3: set_message(a, "The box art couldn't be downloaded - check the internet connection.", true); break;
         }
         install_poll(a);
+        backup_poll(a);   // GitHub #120: the save backup runs on its own thread
         // 0.2.0 (Shagg 13:18): everything dropped is handled, one after another - several DLC packages, or a folder of
         // them (a console's ...\<title ID>\00000002, or the title folder), are each added in turn. A folder that isn't a
         // game copy or a title update is searched for DLC packages.
