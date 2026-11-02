@@ -293,6 +293,14 @@ void Gow3InstallMenuCap() {
 #endif
 }
 
+// GitHub #55 #68 #79 #80 #120 (Shagg's 21:04 trace, uncapped): during checkpoint saves and streaming the engine ticked at
+// 0.35-0.6 ms (2000+ ticks/s) for seconds at a time - with no engine limit (--gow3_max_fps=-1) only the presents pace the
+// loop, and in those windows nothing is presented. Capped runs (1039 c, 30 fps) show no such bursts: the engine's own
+// limiter (this function's value) is asked every tick, in those windows too. --gow3_tick_floor_fps puts a ceiling under
+// "no limit": the engine never ticks faster than N per second, so a tick's delta never drops below 1/N s.
+REXCVAR_DEFINE_INT32(gow3_tick_floor_fps, 0, "Gears3",
+                     "With no frame-rate limit: the engine still ticks at most N times a second (no sub-millisecond ticks "
+                     "while nothing is presented, e.g. checkpoint saves). 0 = off");
 void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9B0
   TickTimeline();
   const int32_t v = REXCVAR_GET(gow3_max_fps);
@@ -301,9 +309,14 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
     f1.f64 = (own <= 0.0 || own > double(m)) ? double(m) : own;
     return;
   }
-  if (!v) return;
-  GOW3_LOG_ONCE("gow3_max_fps: engine frame-rate limit {} -> {}", f1.f64, v < 0 ? std::string("none") : std::to_string(v));
-  f1.f64 = v < 0 ? 0.0 : double(v);
+  const int32_t floor_fps = REXCVAR_GET(gow3_tick_floor_fps);
+  if (!v) {
+    if (floor_fps > 0 && !(f1.f64 > 0.0)) f1.f64 = double(floor_fps);  // the game's own "none" (0) gets the floor too
+    return;
+  }
+  GOW3_LOG_ONCE("gow3_max_fps: engine frame-rate limit {} -> {}{}", f1.f64, v < 0 ? std::string("none") : std::to_string(v),
+                v < 0 && floor_fps > 0 ? " (tick floor " + std::to_string(floor_fps) + "/s)" : std::string());
+  f1.f64 = v < 0 ? (floor_fps > 0 ? double(floor_fps) : 0.0) : double(v);
 }
 
 // ---- Engine settings through the game's own config (layer 2 --ue3_ini_edits) ----------------------------------------
