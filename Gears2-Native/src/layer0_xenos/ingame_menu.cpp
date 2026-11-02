@@ -89,27 +89,31 @@ class SinglePlayerPads final : public rex::input::DeviceAssignment {
 
  private:
   std::vector<rex::input::DeviceId> user0_;
-  std::string last_;
+  std::string last_ = "\x01";   // so the first list (even an empty one) is logged
 };
 
-void InstallPadAssignment(rex::Runtime* runtime) {
+// Returns false while the runtime has no input system yet (it is made after the dialogs: job 1101's Gears 1 log), so the
+// pads thread below retries; true once decided.
+bool InstallPadAssignment(rex::Runtime* runtime) {
   auto* input = runtime ? static_cast<rex::input::InputSystem*>(runtime->input_system()) : nullptr;
-  if (!input) return;
+  if (!input) return false;
   const uint32_t players = rex::cvar::Query<uint32_t>("local_players");
   const bool script2 = !rex::cvar::Query<std::string>("gow2_input_script2").empty();
   if (!REXCVAR_GET(cogbox_pad_merge) || players > 1 || script2) {
     REXLOG_INFO("cogbox_pads: one controller per player (local_players {}, merge {}, second script pad {})", players,
                 REXCVAR_GET(cogbox_pad_merge), script2);
-    return;
+    return true;
   }
   input->SetDeviceAssignment(std::make_unique<SinglePlayerPads>());
+  REXLOG_INFO("cogbox_pads: one local player - every controller drives player 1");
+  return true;
 }
 
 // GitHub #108 (Steam Deck): the SDK's SDL driver pumps SDL only from calls on a controller it already knows, and under
 // Wine / Proton SDL finds controllers only while it pumps - so the game never saw one (SDK patch 59 fixes it in the
 // runtime). Until that runtime ships: if the runtime exports SDL_PumpEvents, pump on the UI thread every 0.5 s while
 // no controller is known. Nothing happens when the export is missing or a controller is already there.
-void StartPadPump(rex::ui::Window* window) {
+void StartPadPump(rex::ui::Window* window, rex::Runtime* runtime) {
   using PumpFn = void(__cdecl*)(void);
   PumpFn pump = nullptr;
   for (const wchar_t* dll : {L"rexruntime.dll", L"SDL3.dll"}) {
@@ -119,13 +123,17 @@ void StartPadPump(rex::ui::Window* window) {
     }
   }
   REXLOG_INFO("cogbox_pads: SDL_PumpEvents {}", pump ? "found - pumped while no controller is known" : "not exported - left to the SDK");
-  if (!pump || !window || g_pump.joinable()) return;
+  if (g_pump.joinable()) return;
   g_pump_stop.store(false);
-  g_pump = std::thread([pump, window] {
-    bool logged = false;
-    while (!g_pump_stop.load()) {
+  g_pump = std::thread([pump, window, runtime] {
+    bool logged = false, assigned = InstallPadAssignment(runtime);
+    for (int tries = 0; !g_pump_stop.load(); ++tries) {
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
-      if (g_pump_stop.load() || g_real_pads.load() != 0) continue;
+      if (!assigned) {
+        assigned = InstallPadAssignment(runtime);
+        if (!assigned && tries == 120) REXLOG_WARN("cogbox_pads: no input system after 60 s");
+      }
+      if (!pump || !window || g_pump_stop.load() || g_real_pads.load() != 0) continue;
       if (!logged) { logged = true; REXLOG_INFO("cogbox_pads: no controller known yet - pumping SDL for new ones"); }
       window->app_context().CallInUIThread([pump] { pump(); });
     }
@@ -619,8 +627,7 @@ void RequestOpenOnUIThread() {
 }  // namespace
 
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window, rex::Runtime* runtime) {
-  InstallPadAssignment(runtime);   // GitHub #108, menu or no menu
-  StartPadPump(window);
+  StartPadPump(window, runtime);   // GitHub #108, menu or no menu: pad assignment (+ SDL pump when exported)
   // PR #117: the button-prompt monitor (its own thread; nothing with --gow_button_prompts=original), menu or no menu.
   ::xenos::input::GlobalPromptDeviceMonitor().Start(
       window, runtime ? static_cast<rex::input::InputSystem*>(runtime->input_system()) : nullptr);
