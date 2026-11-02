@@ -187,8 +187,8 @@ std::vector<Option> make_options(Game g) {
     add(make("HideNotes", "Hide on-screen notes", Tab::Display, Kind::Bool, OWN, 0,
              "Draws nothing of the port's over the game: no shader-building note, no shader-loading indicator and no "
              "achievement pop-ups (achievements still unlock). The FPS counter above is separate.", 0));
-    // GitHub #52 (Gears 3 native mouse look)
-    if (g == Game::Gears3) add(choice("AimTurn", "Mouse turn when aiming", Tab::Controls, OWN, { "Same as moving around", "Game's (slower)" }, 0,
+    // GitHub #52 (Gears 3 native mouse look; Gears 2 too since sweep 21)
+    if (g == Game::Gears3 || g == Game::Gears2) add(choice("AimTurn", "Mouse turn when aiming", Tab::Controls, OWN, { "Same as moving around", "Game's (slower)" }, 0,
                "Same: the mouse turns the view by the same angle per inch in every camera mode - running, roadie run, cover, "
                "aiming and zoom. Game's: aiming and zoom keep the console game's slower turn. Native mouse look only.", 0));
     add(make("Ultrawide", "Ultrawide", Tab::Display, Kind::Bool, PG, 0,
@@ -1157,7 +1157,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // PlayerInput's FOVScale does not see it - check that in the aspect code before adding its factor.
         // GitHub #52: Gears 3 - the mouse turns the same angle per count in every camera mode unless the player keeps the
         // game's slower aiming / zoom turn ("Mouse turn when aiming": Same as running around / Game's (slower))
-        if (nativeMouse && isG3 && s.i("AimTurn") == 1 && cap_exe(env, "ue3_mouse_fov_constant")) a.push_back("--ue3_mouse_fov_constant=false");
+        if (nativeMouse && (isG3 || g == Game::Gears2) && s.i("AimTurn") == 1 && cap_exe(env, "ue3_mouse_fov_constant")) a.push_back("--ue3_mouse_fov_constant=false");
         if (nativeMouse && avail("Fov") && s.i("Fov") != 100 && cap_exe(env, "ue3_mouse_fov_comp"))
             a.push_back("--ue3_mouse_fov_comp=" + fmt_double(100.0 / static_cast<double>(s.i("Fov"))));
         if (mouseLook) {

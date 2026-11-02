@@ -74,6 +74,23 @@ REXCVAR_DEFINE_BOOL(ue3_mouse_look, false, "COGBox",
                     "dead zone, cap or acceleration). Off: the mouse drives the right stick");
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_scale, 1.0, "COGBox", "Native mouse look: multiplier on the mouse counts")
     .range(0.01, 20.0);
+// GitHub #52 for Gears 2 (as Gears 3's ue3_mouse_look.h): UE3's PlayerInput multiplies the mouse axes by FOVScale
+// (FOVAngle / 90), so a wider camera turns faster per count - roadie run ~50% faster (jojobear69, 2 Nov). The launcher's
+// Field of view (%) widens every camera by that factor; it sends 100 / FOV % here. 1 = as before.
+REXCVAR_DEFINE_DOUBLE(ue3_mouse_fov_comp, 1.0, "COGBox",
+                      "Native mouse look: multiplier that undoes the launcher's FOV widening (GitHub #52)")
+    .range(0.25, 4.0);
+// The view's field of view (degrees, before the ultrawide widening) is noted once per view at the projection set-up
+// (Gow2UltrawideFov's hook, which runs whether or not ultrawide is on). The mouse is scaled by reference / FOV, so every
+// camera turns as the walking camera does. The reference is Gears 2's GameplayCam_Default FOVAngle 80 (its coalesced
+// ini: roadie run 105, cover 95, aiming 50, DBNO 80). 0 = off.
+REXCVAR_DEFINE_DOUBLE(ue3_mouse_wide_fov_ref, 80.0, "COGBox",
+                      "Native mouse look (GitHub #52): cameras wider than this FOV (degrees, x the launcher's FOV %) "
+                      "turn as fast per count as this one (roadie run, DBNO). 0 = off")
+    .range(0.0, 170.0);
+REXCVAR_DEFINE_BOOL(ue3_mouse_fov_constant, true, "COGBox",
+                    "Native mouse look (GitHub #52): every camera mode turns the same angle per mouse count (aiming and "
+                    "zoom included); off = aiming / zoom keep the game's slower turn");
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_min_counts, 2.0, "COGBox",
                       "Native mouse look (GitHub #115): smaller motion waits, per axis, until it reaches this many counts "
                       "(or --ue3_mouse_hold_ms), so slow zoomed aiming isn't lost to the engine's whole rotation units. 0 = off")
@@ -128,6 +145,17 @@ inline thread_local bool g_injecting = false;
 inline std::mutex g_bank_mutex;
 inline double g_bank_dx = 0, g_bank_dy = 0;
 inline std::atomic<int64_t> g_last_mouse{0}, g_last_pad{0};
+inline std::atomic<float> g_view_fov{0.0f};  // GitHub #52: the latest view's field of view, degrees (0 = none yet)
+
+// GitHub #52: reference / FOV (fov_constant) or, off, only for cameras wider than the reference; 1 otherwise.
+inline double WideCameraComp() {
+  const double ref = REXCVAR_GET(ue3_mouse_wide_fov_ref);
+  const double fov = g_view_fov.load(std::memory_order_relaxed);
+  if (ref <= 0 || !(fov > 1.0 && fov < 170.0)) return 1.0;
+  const double widened_ref = ref / REXCVAR_GET(ue3_mouse_fov_comp);  // fov_comp = 100 / launcher FOV %
+  if (REXCVAR_GET(ue3_mouse_fov_constant)) return widened_ref / fov;
+  return fov > widened_ref ? widened_ref / fov : 1.0;
+}
 
 inline void Drain(double* dx, double* dy) {
   std::lock_guard<std::mutex> l(g_bank_mutex);
@@ -193,7 +221,8 @@ inline bool Take(double* x, double* y) {
   double dx, dy;
   DrainReady(&dx, &dy);
   if (dx == 0 && dy == 0) return false;
-  const double s = REXCVAR_GET(ue3_mouse_scale);
+  const double s = REXCVAR_GET(ue3_mouse_scale) * REXCVAR_GET(ue3_mouse_fov_comp)  // GitHub #52
+                   * WideCameraComp();
   *x = dx * s;
   *y = -dy * s;
   if (REXCVAR_GET(ue3_mouse_invert_y)) *y = -*y;
@@ -323,6 +352,11 @@ inline void AxisHook(PPCContext& ctx, uint8_t* base) {
 }
 
 }  // namespace detail
+
+// GitHub #52: each view's field of view in degrees (the projection set-up calls this once per view).
+inline void NoteViewFov(double fov) {
+  if (fov > 1.0 && fov < 170.0) detail::g_view_fov.store(float(fov), std::memory_order_relaxed);
+}
 
 // Before the input system reads the mouse (OnPreSetup or OnPostSetup start): only when the launcher asked for it.
 inline bool Wanted() { return REXCVAR_GET(ue3_mouse_look) && rex::cvar::Query<bool>("mnk_mouse"); }
