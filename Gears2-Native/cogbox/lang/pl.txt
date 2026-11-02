@@ -784,3 +784,13 @@ Add it with ADD UPDATE: the update package from your console's folder = Dodaj j�
 # 0.4.0: player name
 Player name = Nazwa gracza
 The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = Nazwa, którą pokazuje każda gra (twój gamertag): do 15 liter, cyfr lub spacji. Puste: "User". Tylko wyświetlanie - profil i zapisy zostają na miejscu.
+# notes/80: ambient occlusion (XeGTAO)
+Ambient occlusion = Okluzja otoczenia
+XeGTAO (high) = XeGTAO (wysoka)
+XeGTAO (ultra) = XeGTAO (ultra)
+Gears 2 first = najpierw Gears 2
+The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version (Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, characters included, at about the cost of the original. Ultra looks in more directions and catches more small details, for a little more. Game's own: the original. Off: none. = Miękkie cieniowanie w kątach, szczelinach i tam, gdzie przedmioty się stykają. XeGTAO: nowoczesna wersja w pełnej rozdzielczości (XeGTAO od Intela) zamiast własnej gry w niskiej rozdzielczości - dokładne cienie kontaktowe zamiast plam, także na postaciach, przy koszcie zbliżonym do oryginału. Ultra szuka w większej liczbie kierunków i łapie więcej drobnych detali, za nieco więcej. Własna gry: oryginał. Wył.: brak.
+SMAA T2x (temporal) = SMAA T2x (czasowe)
+SMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now. = SMAA T2x: SMAA z dodatkowym przebiegiem czasowym - gładsze krawędzie i znacznie mniej migotania przy niewielkim koszcie, dowolna karta graficzna, DirectX 12 lub Vulkan. Na razie tylko w Gears 2 i Gears 3.
+Gears 2 and Gears 3 for now. = Na razie tylko w Gears 2 i Gears 3.
+Gears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it. = Gears 3: większość poziomów ma wcześniej obliczone cieniowanie i nie ma AO w czasie rzeczywistym - XeGTAO dodaje tam delikatne cieniowanie kontaktowe i zastępuje AO gry tam, gdzie poziom je ma.

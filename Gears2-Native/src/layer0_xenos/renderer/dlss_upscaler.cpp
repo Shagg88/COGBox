@@ -65,12 +65,13 @@ class DlssUpscaler final : public Upscaler {
   std::string Status() const override { return status_; }
 
   bool Configure(gpu::Backend& backend, uint32_t render_width, uint32_t render_height, uint32_t output_width,
-                 uint32_t output_height, bool hdr, bool depth_infinite) override {
-    (void)depth_infinite;  // DLSS only needs near 0 / far 1 (guide 3.8)
+                 uint32_t output_height, bool hdr, bool depth_infinite, bool depth_inverted) override {
+    (void)depth_infinite;  // DLSS only needs near 0 / far 1 (guide 3.8) - or the reverse, with the inverted flag
     if (failed_) return false;
     if (feature_ && render_width == rw_ && render_height == rh_ && output_width == ow_ && output_height == oh_ &&
-        hdr == hdr_)
+        hdr == hdr_ && depth_inverted == inverted_)
       return true;
+    inverted_ = depth_inverted;
     void* dev = nullptr;
     void* list = nullptr;
     if (!backend.BeginNative(&dev, &list)) return Fail("the backend gives no native D3D12 access");
@@ -166,7 +167,8 @@ class DlssUpscaler final : public Upscaler {
     // Render-resolution motion vectors without jitter (guide 3.6.2); linear HDR colour when the scene is HDR, with
     // DLSS's own exposure (guide 3.9: HDR needs the tone mapper's exposure, which we don't read from the game).
     c.InFeatureCreateFlags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
-                             (hdr ? NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure : 0);
+                             (hdr ? NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure : 0) |
+                             (inverted_ ? NVSDK_NGX_DLSS_Feature_Flags_DepthInverted : 0);  // notes/80 s.6
     const std::string preset = REXCVAR_GET(gow2_dlss_preset);
     SetDlssPresets(params_, preset);
     const NVSDK_NGX_Result r = NGX_D3D12_CREATE_DLSS_EXT(list, 1, 1, &feature_, params_, &c);
@@ -188,6 +190,7 @@ class DlssUpscaler final : public Upscaler {
   }
 
   bool initialised_ = false, failed_ = false, hdr_ = false, eval_error_logged_ = false;
+  bool inverted_ = false;  // notes/80 s.6: the depth input is reversed-Z
   ID3D12Device* device_ = nullptr;
   NVSDK_NGX_Parameter* params_ = nullptr;
   NVSDK_NGX_Handle* feature_ = nullptr;

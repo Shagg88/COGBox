@@ -492,7 +492,7 @@ static void option_row(App &a, int g, const gs::Option &o)
             for (int i : ord) {
                 gs::Availability ca = gs::choice_available(o, G, i);
                 // 0.3.0 (Shagg 14:18): FSR / DLSS / XeSS are DirectX 12 only - greyed while Vulkan is the Graphics API
-                if (ca.ok && o.id == "AAMode" && i >= 2 && a.cur[g].i("Api") == 1) {
+                if (ca.ok && o.id == "AAMode" && i >= 2 && i <= 4 && a.cur[g].i("Api") == 1) {   // 5 SMAA T2x: both APIs
                     ca.ok = false;
                     ca.why = "DirectX 12 only - with Vulkan the launcher uses SMAA. Choose DirectX 12 as the Graphics API to use it.";
                 }
