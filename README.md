@@ -158,10 +158,11 @@ Tick **Gameplay > Cheats (hotkeys F5-F11)** in the game's settings, then in game
 
 ### System Link / LAN co-op (experimental)
 
-Tick **Gameplay > System Link - LAN play (experimental)** on every PC (title-update versions only). The PCs must be on
+Tick **Gameplay > System Link - LAN play (experimental)** on every PC. Every PC needs the same COGBox version (0.4.0)
+and the same game with its title update. The PCs must be on
 the same network, or on a LAN VPN such as Radmin VPN, ZeroTier or Hamachi (not an internet VPN like NordVPN). If Windows
-asks about the firewall, allow Private networks. With 3 or more PCs, each PC must list every other PC (see
-`Gears2-Native/patches/README.md`, patch 50). Gears 2 campaign co-op worked in testing; other modes and games are less
+asks about the firewall, allow Private networks. With 3 or more PCs, each PC must list every other PC (full steps, including Radmin VPN, are in the
+README.txt inside the download). Gears 2 campaign co-op worked in testing; other modes and games are less
 tested. There is no voice chat yet, and no internet (Xbox Live) play.
 
 **On 0.4.0, Gears 3 System Link co-op needs a two-PC test.** The #68 fix changes two things the game sees: XNetRandom
