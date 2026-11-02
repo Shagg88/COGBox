@@ -65,7 +65,7 @@ apply does that for you.
 
 New in 0.4.2
 ------------
-- Vulkan is no longer experimental: purple / wrong textures in Gears 3 and Judgment fixed, other picture
+- Vulkan and DLSS are no longer experimental - both now work as they should. Vulkan: purple / wrong textures in Gears 3 and Judgment fixed, other picture
   fixes, and Vulkan uses less CPU per frame. DirectX 12 stays the default.
 - Ambient occlusion (Gears 2 / Gears 3, Graphics tab): XeGTAO high / ultra - sharper, full-resolution contact
   shadows. Default: Game's own. Thanks to gmihaic (GitHub PR #139).
