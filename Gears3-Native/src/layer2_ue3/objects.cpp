@@ -296,8 +296,11 @@ bool IsA(uint32_t object, uint32_t cls) {
 namespace {
 // "Name" or "Name_<n>" -> (name index, number): the names table searched once per string; -1 when not (yet) a name
 bool NameKey(const std::string& full, uint32_t* index, uint32_t* number) {
+  // every name read so far, by text: the table only grows, so each call reads only the names added since the last
+  // (a name looked up before it exists - Default__GearTypes while GearGame.xxx loads - costs little to ask again)
   static std::mutex m;
-  static std::unordered_map<std::string, uint32_t> cache;
+  static std::unordered_map<std::string, uint32_t> byText;
+  static uint32_t scanned = 0;
   std::string base = full;
   uint32_t num = 0;
   if (const size_t u = full.find_last_of('_'); u != std::string::npos && u + 1 < full.size() &&
@@ -306,23 +309,17 @@ bool NameKey(const std::string& full, uint32_t* index, uint32_t* number) {
     base = full.substr(0, u);
     num = uint32_t(std::stoul(full.substr(u + 1))) + 1;
   }
-  {
-    std::lock_guard lock(m);
-    if (auto it = cache.find(base); it != cache.end()) { *index = it->second; *number = num; return true; }
-  }
+  std::lock_guard lock(m);
   if (!g_names) return false;
-  for (uint32_t i = 0; i < 1000000; i++) {
-    const uint32_t entry = Read32(g_names + 4 * i);
-    if (!entry) { if (i > 200000) break; continue; }
-    if (EntryName(entry) == base) {
-      std::lock_guard lock(m);
-      cache[base] = i;
-      *index = i;
-      *number = num;
-      return true;
-    }
-  }
-  return false;
+  // up to the table's count (TArray {data, count, max} in the engine's global; empty slots are skipped)
+  const uint32_t count = g_namesVar ? std::min<uint32_t>(Read32(g_namesVar + 4), 2000000) : 1000000;
+  for (; scanned < count; scanned++)
+    if (const uint32_t entry = Read32(g_names + 4 * scanned)) byText.emplace(EntryName(entry), scanned);
+  const auto it = byText.find(base);
+  if (it == byText.end()) return false;
+  *index = it->second;
+  *number = num;
+  return true;
 }
 }  // namespace
 
