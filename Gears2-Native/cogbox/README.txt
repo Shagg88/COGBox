@@ -82,7 +82,7 @@ New in 0.4.2
 - In-game menu: mouse control, and the game no longer gets input while the menu is open (based on PR #134 by
   Flippage).
 - Launcher: row descriptions wrap inside the page (#123).
-- Thanks to the contributors whose pull requests are in this version: gmihaic (PR #139) and Flippage (PR #134).
+- Thanks to gmihaic (PR #139) and Flippage (PR #134), whose pull requests are in this version, and to KiltedKernel (PR #122) and legoliamneeson (PR #43) for their contributions.
 
 
 New in 0.4.1
