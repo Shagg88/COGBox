@@ -96,7 +96,17 @@ static bool fp_match(const Fingerprint &f, const std::string &full, const std::s
 {
     return (!full.empty() && full == f.sha1) || (!code.empty() && *f.code && code == f.code);
 }
-bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code) { return fp_match(d.xex, full, code); }
+// Game programs (default.xex) players have reported working, beyond the one each port is made for.
+struct ReportedXex { GameId game; const char *sha1; };
+static const ReportedXex k_reportedXex[] = {
+    { G_GEARS1, "c25a48e7cd98fc61aa4369b614dce782c4cb2152" },   // #127, 13,086,720 bytes (COGBox 0.3.7)
+};
+bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code)
+{
+    if (fp_match(d.xex, full, code)) return true;
+    for (const ReportedXex &r : k_reportedXex) if (r.game == d.id && !full.empty() && full == r.sha1) return true;
+    return false;
+}
 // Job 648 (Shagg 23:23): a region disc's title update - the same patch after its header counts as the tested one
 // Title updates players have reported working, beyond the one each port is made for (GitHub #51, LeffetheProgrammer:
 // a Gears 2 Title Update 6 of the same size with a different file - probably another region's copy).
