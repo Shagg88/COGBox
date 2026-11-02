@@ -91,7 +91,7 @@ Compiled executables were deployed directly to local game test installations:
 
 ---
 
-## Configuration & Cv रणनीति (CVARs)
+## Configuration & Console Variables (CVARs)
 
 | Game | CVAR | Default | Description |
 |---|---|---|---|
