@@ -1,4 +1,5 @@
 // Layer 0 (game-free): the SDK-independent part of the upscaler interface (upscaler.h, notes/64) - names, the
+// XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 // jitter sequence, the camera-motion matrices - and the factory. Our code (MIT).
 #include "xenos/renderer/upscaler.h"
 

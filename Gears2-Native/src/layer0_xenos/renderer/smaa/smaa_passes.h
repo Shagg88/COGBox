@@ -1,4 +1,5 @@
 // Layer 0 (game-free): our wrappers around SMAA (smaa_hlsl.h, MIT) for the presented image - Stage 7.2, notes/54.
+// XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 // SMAA 1x, preset HIGH, luma edges, on the swap's gamma-corrected RGB10A2 image (SMAA wants non-linear colour):
 // edges (R8G8 in an RGBA8 target) -> blend weights (RGBA8, with SMAA's area and search tables) -> neighbourhood
 // blending written straight back as packed RGB10A2 words into the present image (R32_UINT), so presenting and frame

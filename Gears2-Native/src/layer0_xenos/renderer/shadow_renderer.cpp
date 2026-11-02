@@ -1,4 +1,5 @@
 // Layer 0 (game-free): our renderer in SHADOW mode (notes/42 section 1; steps 1-2 of notes/42 section 4; milestone M1
+// XeGTAO, SMAA T2x and the upscaler depth / motion fixes in this file: PR #139 by gmihaic (https://github.com/gmihaic).
 // of notes/36: depth prepass + shadow maps). Behind --gow2_renderer=shadow, off by default. The draw observer feeds it
 // on the GPU worker thread; it draws every draw that writes depth or stencil into its own targets on its own D3D12
 // device, resolves depth region-to-region into host textures in the guest format, and on chosen frames compares each

@@ -1,4 +1,5 @@
 // Layer 0 (game-free): the camera maths for screen-space AO (ao.h, notes/80). Our code (MIT).
+// XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 #include "xenos/renderer/ao.h"
 
 #include <cmath>

@@ -1,4 +1,5 @@
 // Layer 0 (game-free): COGBox's in-game menu. Back + Start on a controller (or F1) opens it over the game; the game
+// In-game menu mouse control and input isolation: based on PR #134 by Flippage (https://github.com/Flippage).
 // keeps running underneath, but while the menu is open the controller, keyboard and mouse only work the menu (the SDK's
 // input "active" callback says no to the game). The menu shows COGBox's settings for this game, read from the file
 // COGBox names in --cogbox_menu (written just before it started the game), with Resume, Restart to apply and Quit game.

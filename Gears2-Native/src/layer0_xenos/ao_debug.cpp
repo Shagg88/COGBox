@@ -1,4 +1,5 @@
 // Layer 0 (game-free): notes/80 s.12 - live A/B switches for the screen-space AO, for developers only
+// XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 // (--gow2_ao_debug_keys; developer tools never ship on). F9: which AO the game's composite gets (XeGTAO / none / the
 // game's own); F10: the debug view (normal, XeGTAO only, split, view depth, raw term, edges); F11: XeGTAO's quality
 // preset. A small label (top left, like the FPS bar) says what is on. The keys run on the UI thread and only set

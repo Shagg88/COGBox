@@ -1,4 +1,5 @@
 // Layer 0 (game-free): XeGTAO screen-space ambient occlusion as the renderer's built-in compute shaders (notes/80).
+// XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 //
 // Ported from XeGTAO (https://github.com/GameTechDev/XeGTAO, Source/Rendering/Shaders/XeGTAO.hlsli, XeGTAO.h,
 // vaGTAO.hlsl): Copyright (C) 2016-2021, Intel Corporation, SPDX-License-Identifier: MIT (THIRD_PARTY_NOTICES.md has the

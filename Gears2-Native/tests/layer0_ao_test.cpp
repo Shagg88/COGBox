@@ -1,4 +1,5 @@
 // Unit tests for the screen-space AO camera maths (ao.h, notes/80): XeGTAO's constants from the game's view-projection
+// XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 // and viewport. Game-free (one test uses numbers measured from Gears 2, notes/80 s.3). Our code (MIT).
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>

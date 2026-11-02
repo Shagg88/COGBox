@@ -1,4 +1,5 @@
 // Layer 0 (game-free): temporal upscalers (NVIDIA DLSS, AMD FSR, Intel XeSS) behind one small interface (notes/64,
+// XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 // notes/65), shared by the
 // Gears 2 and Gears 3 ports. The renderer supplies, per frame: the scene colour before post-processing, its depth, a
 // per-pixel motion texture (camera reprojection from depth, with the game's own velocity on top where it has one) and
