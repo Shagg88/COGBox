@@ -70,7 +70,8 @@ Then move the third-party submodules to the tags in `sdk-pins.txt` and configure
   the offline XUID is re-signed with 8 zero bytes (data unchanged). The first file is backed up once as
   `<file>.pre-xuid0` (verified by size before anything is written), and the new file is written to `<file>.cogbox-tmp`
   and renamed over the original. Logged as `cogbox_save_convert:`. A converted save makes 0.3.x reset it, so restore
-  the `.pre-xuid0` files before going back. Made from the live SDK's `.pre1066` sources.
+  the `.pre-xuid0` files before going back. Made against the SDK as it was before job 1060 (`xam_net.cpp` / `xam_user.cpp` `.pre1060`, `kernel_state.cpp`
+  `.pre1066`); applying it reproduces 1067's three files exactly.
   System Link (patches 49b / 50) finds and connects peers by IP address (XNADDR from the adapter IP) and makes its own
   session IDs / keys with `std::random_device`, so it uses neither XNetRandom nor any XUID. The offline XUIDs were
   already the same on every PC. What Gears 3's own session code does with online XUID 0 on both PCs is untested:

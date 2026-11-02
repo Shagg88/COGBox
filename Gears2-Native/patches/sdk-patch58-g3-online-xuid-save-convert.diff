@@ -1,5 +1,5 @@
 diff --git a/src/kernel/xam/xam_net.cpp b/src/kernel/xam/xam_net.cpp
-index c927314..e710efe 100644
+index 98f7f48..1e4c699 100644
 --- a/src/kernel/xam/xam_net.cpp
 +++ b/src/kernel/xam/xam_net.cpp
 @@ -14,6 +14,7 @@
@@ -10,38 +10,64 @@ index c927314..e710efe 100644
  #include <random>
  #include <string>
  #include <vector>
-@@ -548,10 +549,12 @@ u32 NetDll_XNetRandom_entry(u32 caller, mapped_void buffer_ptr, u32 length) {
-     REXLOG_INFO("cogbox_xnet: XNetRandom caller {:08X} length {} (call {})", caller, length, cogbox_xnr_calls + 1);
-   }
-   ++cogbox_xnr_calls;
--  if (data == nullptr || length == 0) {
+@@ -540,10 +541,24 @@ u32 NetDll_XNetGetOpt_entry(u32 one, u32 option_id, mapped_void buffer_ptr,
+ }
+ 
+ u32 NetDll_XNetRandom_entry(u32 caller, mapped_void buffer_ptr, u32 length) {
+-  // For now, constant values.
+-  // This makes replicating things easier.
+-  std::memset(buffer_ptr, 0xBB, length);
+-
++  // COGBox: real random bytes (port of Xenia Canary 53c0178 "Implemented XNetRandom - Fixed checkpoints in
++  // Gears of War 3"). The old stub filled 0xBB, so every "random" id the game made was identical.
++  uint8_t* data = reinterpret_cast<uint8_t*>(static_cast<void*>(buffer_ptr));
++  static uint32_t cogbox_xnr_calls = 0;
++  if (cogbox_xnr_calls < 16) {
++    REXLOG_INFO("cogbox_xnet: XNetRandom caller {:08X} length {} (call {})", caller, length, cogbox_xnr_calls + 1);
++  }
++  ++cogbox_xnr_calls;
 +  if (!buffer_ptr.guest_address() || data == nullptr || length == 0) {
-     return 0;
-   }
++    return 0;
++  }
 +  static std::mutex gen_lock;
-   static std::mt19937_64 gen{std::random_device{}()};
++  static std::mt19937_64 gen{std::random_device{}()};
 +  std::lock_guard<std::mutex> guard(gen_lock);
-   std::uniform_int_distribution<int> dist(0, 255);
-   for (u32 i = 0; i < length; ++i) {
-     data[i] = static_cast<uint8_t>(dist(gen));
++  std::uniform_int_distribution<int> dist(0, 255);
++  for (u32 i = 0; i < length; ++i) {
++    data[i] = static_cast<uint8_t>(dist(gen));
++  }
+   return 0;
+ }
+ 
 diff --git a/src/kernel/xam/xam_user.cpp b/src/kernel/xam/xam_user.cpp
-index 0a95344..4b9d27b 100644
+index 16dd407..7a87cdb 100644
 --- a/src/kernel/xam/xam_user.cpp
 +++ b/src/kernel/xam/xam_user.cpp
-@@ -133,7 +133,10 @@ i32 XamUserGetSigninInfo_entry(u32 user_index, u32 flags, ppc_ptr_t<X_USER_SIGNI
-   // COGBox: port of Xenia Canary 01aec51 - flags 1 = online XUID only (none for a local profile -> 0),
-   // flags 2 = offline XUID only. Before, the offline XUID was always returned ("fixes GoW3 save stats / checkpoints").
-   constexpr u32 kOfflineXuidOnly = 0x2;
--  if (!flags || (flags & kOfflineXuidOnly)) {
+@@ -130,7 +130,21 @@ i32 XamUserGetSigninInfo_entry(u32 user_index, u32 flags, ppc_ptr_t<X_USER_SIGNI
+   }
+ 
+   const auto& user_profile = REX_KERNEL_STATE()->user_profile();
+-  info->xuid = UserXuid(user_index);
++  // COGBox: port of Xenia Canary 01aec51 - flags 1 = online XUID only (none for a local profile -> 0),
++  // flags 2 = offline XUID only. Before, the offline XUID was always returned ("fixes GoW3 save stats / checkpoints").
++  constexpr u32 kOfflineXuidOnly = 0x2;
 +  // Job 1067: Gears 3 only (the title the fix and its save converter were made and tested for); every other game keeps
 +  // the old answer so its existing saves are untouched.
 +  const bool cogbox_online_xuid_fix = REX_KERNEL_STATE()->title_id() == 0x4D5308AB;
 +  if (!cogbox_online_xuid_fix || !flags || (flags & kOfflineXuidOnly)) {
-     info->xuid = UserXuid(user_index);
-   }
-   static uint32_t cogbox_si_calls = 0;
++    info->xuid = UserXuid(user_index);
++  }
++  static uint32_t cogbox_si_calls = 0;
++  if (cogbox_si_calls < 16) {
++    REXLOG_INFO("cogbox_xnet: XamUserGetSigninInfo user {} flags {:08X} -> xuid {:016X} (call {})", user_index, flags,
++                uint64_t(info->xuid), cogbox_si_calls + 1);
++  }
++  ++cogbox_si_calls;
+   info->signin_state = user_profile->signin_state();
+   rex::string::copy_truncating(info->name, UserName(user_index), rex::countof(info->name));
+   return X_E_SUCCESS;
 diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
-index 894aa9c..bf2754f 100644
+index b48213f..e1b69e2 100644
 --- a/src/system/kernel_state.cpp
 +++ b/src/system/kernel_state.cpp
 @@ -12,6 +12,9 @@
