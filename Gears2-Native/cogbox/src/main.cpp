@@ -166,7 +166,7 @@ static void answered(App &a)
         i18n_load(code);
     }
     else if (m.tag == "tunotice") {   // 0.2.0: the title-update notice - shown again after the next COGBox update unless ticked
-        if (m.checked) a.ini.seti("Notices", "TitleUpdatesNever", 1);
+        if (m.checked) a.ini.seti("Notices", "TitleUpdatesRequiredNever", 1);   // 0.4.0: title updates required
         a.ini.set("Notices", "TitleUpdatesSeen", COGBOX_VERSION);
         a.ini.save();
     }
@@ -224,12 +224,14 @@ void startup_notices(App &a)
         a.modal.check = "Don't show this again";
         return;
     }
-    if (!a.ini.geti("Notices", "TitleUpdatesNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION) {
-        ask(a, "tunotice", -1, "Recommended game updates",
-            "COGBox's most-tested builds use these title updates:\n\n"
-            "    Gears of War - Title Update 5 (required)\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4 (required for now)\n\n"
-            "They give the best compatibility and performance. Add each one from your own console (ADD UPDATE, or the game's "
-            "About tab) - COGBox doesn't include game or update files.", { "Continue" });
+    // Title updates required (0.4.0): a new "never" key, so a player who ticked the old "recommended" notice away
+    // still sees once that the updates are now required
+    if (!a.ini.geti("Notices", "TitleUpdatesRequiredNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION) {
+        ask(a, "tunotice", -1, "Title updates required",
+            "Title updates are now required to play. Disc-only versions are no longer supported.\n\n"
+            "    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\n"
+            "Add each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's "
+            "Content\\0000000000000000\\<title ID>\\000B0000 folder. COGBox doesn't include game or update files.", { "Continue" });
         a.modal.check = "Don't show this again";
         return;
     }

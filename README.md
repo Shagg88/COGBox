@@ -49,9 +49,13 @@ the ports what an emulator can't easily offer:
 
 | Game | Version the port is made for | Status |
 |---|---|---|
-| Gears of War 2 | US disc (0.0.0.5) + Title Update 6 | Every chapter plays in testing; Title Update 6 is the default and fastest build |
-| Gears of War 3 | Disc + Title Update 6 | Playable; Title Update 6 is the default |
-| Gears of War: Judgment | Disc + Title Update 4 (required for now) | Playable |
+| Gears of War 2 | US disc (0.0.0.5) + Title Update 6 (required) | Every chapter plays in testing |
+| Gears of War 3 | Disc + Title Update 6 (required) | Playable |
+| Gears of War: Judgment | Disc + Title Update 4 (required) | Playable |
+
+**Title updates are now required to play. Disc-only versions are no longer supported.** Every game needs its title
+update (Gears of War: Title Update 5, Gears 2 and 3: Title Update 6, Judgment: Title Update 4) - see
+[What you need](#what-you-need).
 
 "In testing" means on the developer's PC (an RTX 3080 Ti) and scripted test runs through the chapters.
 Other hardware hasn't been tried yet - please report what you find.
@@ -89,6 +93,10 @@ For example, Gears of War 3 (title ID `4D5308AB`):
 
 ### Cheats (Gears of War 3)
 
+> **Not available in this release:** the cheats and **Unlock all mutators** only work with the disc version so far
+> (Title Update 6 shows a dirty-disc error with them), and title updates are now required. They'll come back once they
+> work with Title Update 6.
+
 Tick **Gameplay > Cheats (hotkeys F5-F11)** in the game's settings, then in game:
 
 | Key | Cheat |
@@ -111,9 +119,10 @@ Tick **Gameplay > Cheats (hotkeys F5-F11)** in the game's settings, then in game
 - **A DirectX 12 graphics card.**
 - **Your own copy of the game**, as a disc image (.iso) of the disc, a Games on Demand copy from your console, or a
   folder with the disc's files you extracted yourself.
-- For Gears 2 and 3, the last **title update** (Title Update 6) is recommended. It's a file on a console that has
-  played the game online, in `Content\0000000000000000\<title ID>\000B0000\`
-  (Gears 2: `4D53082D`, Gears 3: `4D5308AB`, Judgment: `4D530A26`).
+- **The game's title update - required.** Title updates are now required to play; disc-only versions are no longer
+  supported. Gears of War needs Title Update 5, Gears 2 and 3 Title Update 6, Judgment Title Update 4. It's a file on a
+  console that has played the game online, in `Content\0000000000000000\<title ID>\000B0000\`
+  (Gears of War: `4D5307D5`, Gears 2: `4D53082D`, Gears 3: `4D5308AB`, Judgment: `4D530A26`).
 - About 8-16 GB of free space per game if COGBox unpacks a disc image for you.
 
 ## How to play
@@ -122,7 +131,7 @@ Tick **Gameplay > Cheats (hotkeys F5-F11)** in the game's settings, then in game
 2. Unzip the **whole** folder somewhere you can write to, e.g. `C:\Games\COGBox` (not Program Files).
 3. Start `CogBox.exe`. The programs aren't code-signed, so Windows may show "Windows protected your PC" - choose
    **More info**, then **Run anyway**.
-4. Turn to a game and press **ADD YOUR COPY** (or drop the file on the window). Then add the title update the same way.
+4. Turn to a game and press **ADD YOUR COPY** (or drop the file on the window). Then add the title update the same way - it's required.
 5. Press **PLAY**. **SETTINGS** has the graphics, frame rate, controls and gameplay options.
 
 **Controls in COGBox:** the D-pad (or the arrow keys, the mouse wheel) turns the carousel; LB / RB choose Play or

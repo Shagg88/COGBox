@@ -330,8 +330,8 @@ std::vector<Option> make_options(Game g) {
     add(choice("Version", "Game version", Tab::Gameplay, OWN, { "Title Update (latest)", "Disc (original release)" },
                0,   // COGBox (Shagg 19:46): the PGO build is the default - Gears 2's and Gears 3's title-update builds
                     // (the PS1 has G3Version = 1, the disc; Gears 3's chat built both its exes with PGO, job 143)
-               "Title Update: the latest patch from Epic (Gears 2: TU6; Gears 3: TU6, new; Judgment: TU4). Disc: the original "
-               "release.", 324), "version");
+               "Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: "
+               "TU4, Gears 1: TU5). Disc-only versions are no longer supported.", 324), "version");
     add(choice("Players", "Players", Tab::Gameplay, PG, { "1", "2 (split-screen)", "3 (split-screen)", "4 (split-screen)" }, 0,
                "Local split-screen co-op (one controller each).", 325), "players");
     // 0.3.5 (GitHub #72, SDK patch 49b): System Link over a LAN or a LAN VPN (Radmin VPN, ZeroTier, Hamachi). Off = the
@@ -451,8 +451,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     const int gi = static_cast<int>(g);
     auto no = [](const std::string& why) { Availability a; a.ok = false; a.why = why; return a; };
     if (f == "version") {
-        if (g == Game::Gears2) { if (!env.update_ready) return no("The Title Update 6 build is not there yet."); }
-        else if (g == Game::Gears3) { if (!env.update_ready) return no("The Gears 3 Title Update 6 build is not there yet."); }
+        // Title updates required (0.4.0): the disc-only version is no longer supported in any game
+        if (g == Game::Gears2 || g == Game::Gears3) return no("Title updates are now required - this game always runs with its Title Update 6.");
         else if (g == Game::Gears1) return no("Gears 1 always runs with its Title Update 5.");
         else return no("Judgment always runs with its Title Update 4.");
     } else if (f == "start" || f == "prebuild") {
@@ -466,7 +466,7 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "cheats" || f == "mutators") {
         if (g != Game::Gears3) return no(not_yet(gi));
         if (ver == Version::TitleUpdate && env.update_ready)
-            return no("Gears 3: the Disc version only for now (Title Update 6 shows a dirty-disc error with it).");
+            return no("Gears 3: not with Title Update 6 yet (it shows a dirty-disc error with it).");
     } else if (f == "levelsel") {
         if (g != Game::Judgment) return no(not_yet(gi));
     } else if (f == "inifx") {   // motion blur, depth of field, lens flares: [SystemSettings] switches
@@ -588,7 +588,9 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
 Version effective_version(Game g, const Settings& s, const Environment& env) {   // PS1 459
     if (g == Game::Judgment || g == Game::Gears1) return Version::TitleUpdate;   // one build (disc + its title update)
     if (!env.update_ready) return Version::Disc;
-    return s.i("Version") == 0 ? Version::TitleUpdate : Version::Disc;
+    // Title updates required (0.4.0): an older saved "Disc (original release)" choice is no longer followed.
+    (void)s;
+    return Version::TitleUpdate;
 }
 bool exe_for_update(Game g, Version ver, const Environment& env) {   // PS1 442-445, 804, 809, 821
     if (g == Game::Judgment || g == Game::Gears1) return env.update_ready;

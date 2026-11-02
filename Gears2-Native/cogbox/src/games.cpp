@@ -187,7 +187,7 @@ void game_refresh(int g, Ini &ini, GameState &st, bool hash)
     // (gears_settings effective_version), applied by the caller. Gears 2 / 3 without the update need the disc build.
     st.useUpdate = !st.updateDir.empty() && (d.updateNeeded ? !st.portExeTu.empty() : true);
     if (st.ready == R_READY && d.updateNeeded && !st.useUpdate && st.portExeDisc.empty()) st.ready = R_NEED_UPDATE;
-    // 0.2.0 (GitHub #1): Judgment's disc version crashes at start in this release; Title Update 4 is required for now.
-    // Gears 1: its one build is made from the disc and Title Update 5 together, so TU5 is required too.
-    if (st.ready == R_READY && game_update_required(g) && st.updateDir.empty()) st.ready = R_NEED_UPDATE;
+    // Title updates required (0.4.0): no game plays from the disc alone any more - Gears 2 / 3 need their title-update
+    // build and Title Update 6, Judgment TU4, Gears 1 TU5 (their one build is made from the disc and the update).
+    if (st.ready == R_READY && game_update_required(g) && !st.useUpdate) st.ready = R_NEED_UPDATE;
 }

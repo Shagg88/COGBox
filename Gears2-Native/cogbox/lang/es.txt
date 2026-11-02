@@ -775,3 +775,9 @@ is out. Click to download and install it; COGBox restarts by itself. = ya está 
 Close the game first, then update. = Cierra el juego primero y luego actualiza.
 Updating COGBox - it restarts by itself when done. = Actualizando COGBox: se reinicia solo al terminar.
 SMAA (recommended) = SMAA (recomendado)
+# 0.4.0: title updates required
+Title updates required = Actualizaciones de título obligatorias
+Title update needed = Actualización de título necesaria
+Title updates are now required to play. Disc-only versions are no longer supported. = Ahora las actualizaciones de título son obligatorias para jugar. Las versiones solo de disco ya no son compatibles.
+Title updates are now required to play. Disc-only versions are no longer supported.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nAdd each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's Content\0000000000000000\<title ID>\000B0000 folder. COGBox doesn't include game or update files. = Ahora las actualizaciones de título son obligatorias para jugar. Las versiones solo de disco ya no son compatibles.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nAñade cada una desde tu propia consola (AÑADIR ACTUALIZACIÓN, o la pestaña Acerca de del juego): está en la carpeta Content\0000000000000000\<title ID>\000B0000 de la consola. COGBox no incluye archivos de juegos ni de actualizaciones.
+Add it with ADD UPDATE: the update package from your console's folder = Añádela con AÑADIR ACTUALIZACIÓN: el paquete de actualización de esta carpeta de tu consola:

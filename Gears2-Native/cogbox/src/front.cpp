@@ -581,46 +581,20 @@ void front_draw(App &a, ImVec2 size)
                 ImGui::SetTooltip("%s", (std::string("COGBox ") + newer + " " + tr("is out. Click to download and install it; COGBox restarts by itself.")).c_str());
         }
     }
-    // 0.2.0 (GitHub #1): once per session, when the carousel stops on Judgment and it has no Title Update 4
-    {
-        static bool toldTu4 = false;
-        if (!toldTu4 && a.front == G_JUDGMENT && a.carPos == (float)library_slot(a, G_JUDGMENT) && a.st[G_JUDGMENT].ready == R_NEED_UPDATE &&
-            !a.modal.open && a.zoomTo == SCR_FRONT) {
-            toldTu4 = true;
-            ask(a, "info", G_JUDGMENT, "Title Update 4 needed",
-                "Gears of War: Judgment needs Title Update 4 for now - the disc version crashes at startup in this release.\n\n"
-                "Add it with ADD UPDATE: the update package from your console's Content\\0000000000000000\\4D530A26\\000B0000 "
-                "folder. We're working on getting the disc version to run too.", { "OK" });
-        }
-    }
-    // Gears 1: its one build is made from the disc and Title Update 5 together - once per session, as Judgment's
-    {
-        static bool toldTu5 = false;
-        if (!toldTu5 && a.front == G_GEARS1 && a.carPos == (float)library_slot(a, G_GEARS1) && a.st[G_GEARS1].ready == R_NEED_UPDATE &&
-            !a.modal.open && a.zoomTo == SCR_FRONT) {
-            toldTu5 = true;
-            ask(a, "info", G_GEARS1, "Title Update 5 needed",
-                "Gears of War needs Title Update 5 - its port is made from the disc and Title Update 5 together.\n\n"
-                "Add it with ADD UPDATE: the update package from your console's Content\\0000000000000000\\4D5307D5\\000B0000 "
-                "folder.", { "OK" });
-        }
-    }
-    // 0.2.0 (Shagg 12:33): Gears 2 / 3 added without their Title Update 6 - once per session per game, until "Don't
-    // show this again" (CogBox.ini [Notices] TuRecommendNever_<game>)
+    // Title updates required (0.4.0): once per session per game, when the carousel stops on a game that has no title
+    // update yet (replaces 0.2.0's Judgment / Gears 1 "needed" and Gears 2 / 3 "recommended" notices)
     {
         static bool told[G_COUNT] = {};
-        for (int g : { (int)G_GEARS2, (int)G_GEARS3 }) {
+        for (int g = 0; g < G_COUNT; g++) {
             const GameState &st = a.st[g];
-            if (told[g] || a.front != g || a.carPos != (float)library_slot(a, g) || a.modal.open || a.zoomTo != SCR_FRONT) continue;
-            if (st.dataDir.empty() || !st.updateDir.empty()) continue;
-            if (a.ini.geti("Notices", std::string("TuRecommendNever_") + game_def(g).key, 0)) { told[g] = true; continue; }
+            if (told[g] || st.ready != R_NEED_UPDATE || a.front != g || a.carPos != (float)library_slot(a, g) || a.modal.open || a.zoomTo != SCR_FRONT) continue;
             told[g] = true;
-            ask(a, "turec", g, "Title Update 6 recommended",
-                std::string(game_def(g).name) + " runs without its title update, but Title Update 6 is highly recommended: "
-                "it's the build COGBox's ports are made and tested for, with the best performance and compatibility.\n\n"
-                "Add it with ADD UPDATE: the update package from your console's Content\\0000000000000000\\" +
-                (g == G_GEARS2 ? "4D53082D" : "4D5308AB") + "\\000B0000 folder.", { "OK" });
-            a.modal.check = "Don't show this again";
+            char tid[16];
+            snprintf(tid, sizeof tid, "%08X", (unsigned)game_def(g).titleId);
+            ask(a, "info", g, "Title update needed",
+                tr("Title updates are now required to play. Disc-only versions are no longer supported.") + std::string("\n\n") +
+                game_def(g).name + ": " + game_def(g).updateName + "\n\n" +
+                tr("Add it with ADD UPDATE: the update package from your console's folder") + " Content\\0000000000000000\\" + tid + "\\000B0000", { "OK" });
         }
     }
     // the hint line

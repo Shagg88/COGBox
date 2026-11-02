@@ -183,7 +183,7 @@ static void worker(App *ap)
     if (p.update)
         j.result = match ? std::string(d.updateName) + " for " + d.name + " is added and checked." :
                            std::string("This title update for ") + d.name + " hasn't been tested with COGBox (the port is made for " + d.updateName +
-                           "). It was added - it may work, but you may experience problems. If the game won't start, choose the disc version on the Gameplay tab.";
+                           "). It was added - it may work, but you may experience problems. If the game won't start, add the " + d.updateName + " from your own console.";
     else
         j.result = match ? std::string(d.name) + " is added and checked - ready to play." :
                            std::string("This version of ") + d.name + " hasn't been tested with COGBox (the ports are made for the US release). "
@@ -404,7 +404,7 @@ void install_poll(App &a)
             ask(a, "info", g_plan.game, std::string(d.name) + " is added",
                 j.result + "\n\nNext, add " + d.updateName + " (the last update, which the main port build is made for). It's on a console that "
                 "has played the game online, in Content\\0000000000000000\\" + [&] { char b[12]; snprintf(b, sizeof b, "%08X", d.titleId); return std::string(b); }() +
-                "\\000B0000. Without it, the disc version is started.", { "OK" });
+                "\\000B0000. Title updates are now required to play - disc-only versions are no longer supported.", { "OK" });
     } else if (s == 3) set_message(a, "Couldn't add it: " + j.error, true);
     else set_message(a, "Cancelled - nothing was changed.", false);
     j.state = 0;

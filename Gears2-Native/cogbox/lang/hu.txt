@@ -775,3 +775,9 @@ is out. Click to download and install it; COGBox restarts by itself. = megjelent
 Close the game first, then update. = Előbb zárd be a játékot, aztán frissíts.
 Updating COGBox - it restarts by itself when done. = COGBox frissítése - végeztével magától újraindul.
 SMAA (recommended) = SMAA (ajánlott)
+# 0.4.0: title updates required
+Title updates required = Title Update szükséges
+Title update needed = Title Update szükséges
+Title updates are now required to play. Disc-only versions are no longer supported. = A játékhoz mostantól Title Update szükséges. A csak lemezes verziók már nem támogatottak.
+Title updates are now required to play. Disc-only versions are no longer supported.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nAdd each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's Content\0000000000000000\<title ID>\000B0000 folder. COGBox doesn't include game or update files. = A játékhoz mostantól Title Update szükséges. A csak lemezes verziók már nem támogatottak.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\nMindegyiket add hozzá a saját konzolodról (FRISSÍTÉS HOZZÁADÁSA, vagy a játék Névjegy füle): a konzol Content\0000000000000000\<title ID>\000B0000 mappájában van. A COGBox nem tartalmaz játék- vagy frissítésfájlokat.
+Add it with ADD UPDATE: the update package from your console's folder = Add hozzá a FRISSÍTÉS HOZZÁADÁSA gombbal: a frissítéscsomag a konzolod mappájából:

@@ -48,8 +48,9 @@ int game_by_title_id(uint32_t tid);        // -1 if none of ours
 // The front screen's order (release order: Gears 1, 2, 3, Judgment): the game in a carousel slot, and a game's slot.
 int game_at_slot(int slot);
 int game_slot(int g);
-// Judgment and Gears 1: one build made from the disc and the title update together - the update is required for now.
-inline bool game_update_required(int g) { return g == G_JUDGMENT || g == G_GEARS1; }
+// Title updates required (0.4.0): every game needs its title update - disc-only versions are no longer supported.
+// (Judgment and Gears 1 always did: one build made from the disc and the title update together.)
+inline bool game_update_required(int g) { return g >= 0 && g < G_COUNT; }
 enum Readiness {
     R_NO_PORT,         // this release has no port program for the game
     R_NO_COPY,         // the player hasn't added their copy yet
