@@ -92,6 +92,7 @@ set(GOW3_SOURCES
     src/layer3_gow3/game_patches.cpp
     src/layer3_gow3/extras.cpp
     src/layer3_gow3/mouse_look.cpp
+    src/layer3_gow3/main_menu_exit.cpp
 )
 if(WIN32)
     add_executable(gow3 WIN32 ${GOW3_SOURCES})

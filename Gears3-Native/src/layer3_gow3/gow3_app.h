@@ -8,6 +8,7 @@
 #include <rex/cvar.h>
 #include <rex/rex_app.h>
 #include "mouse_look.h"
+#include "main_menu_exit.h"
 
 namespace rex::ui {
 class WindowedAppContext;
