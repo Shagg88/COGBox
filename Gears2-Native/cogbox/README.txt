@@ -63,6 +63,13 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 
 
+New in 0.4.1
+------------
+- Steam Deck / Linux (Proton): controllers work in the games again - the game now finds a pad that
+  was not there when it started looking (GitHub #108).
+- With one player, every connected controller controls player 1.
+- Keyboard keys: right-click an action to give it a second key.
+
 New in 0.4.0 - please read
 --------------------------
 - Title updates are required (see "What you need"). The Gears 2 / Gears 3 disc builds are no longer

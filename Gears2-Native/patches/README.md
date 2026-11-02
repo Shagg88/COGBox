@@ -61,6 +61,7 @@ Then move the third-party submodules to the tags in `sdk-pins.txt` and configure
   Gears 3 rewrites GearsCheckpoint<N>.sav from offset 0 through an OPEN_IF handle and never shortens it: Bon Voyage's
   slot 2 stayed 336,119 bytes after ~141 KB rewrites, and its bytes past the largest rewrite (0x24005) equal the older
   save's.
+- `sdk-patch59-sdl-pump-without-controllers.diff` (GitHub #108, Steam Deck; after 58, NOT BUILT yet - needs a runtime build): the SDL driver pumped SDL events only from calls on a controller it already knew, so with none known it never pumped, and under Wine / Proton SDL finds pads (XInput / DirectInput) only while pumping - the 0.3.5 Deck logs show `SDL input driver initialized` and never `SDL JoystickAdded`. `EnumerateDevices` now queues a pump at most every 0.5 s while no controller is known. Apply it in the SDK root (`git apply`).
 - `sdk-patch58-g3-online-xuid-save-convert.diff` (GitHub #68, jobs 1066 / 1067; COGBox 0.4.0's runtime, after 57): the
   Gears 3 friendly-fire / "killed out of nowhere" fix, ported from Xenia Canary. `NetDll_XNetRandom` fills the buffer
   with real random bytes (a locked `std::mt19937_64`; a guest NULL is refused). `XamUserGetSigninInfo` answers "online
