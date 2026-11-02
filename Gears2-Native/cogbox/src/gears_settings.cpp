@@ -199,9 +199,9 @@ std::vector<Option> make_options(Game g) {
                "Sets the graphics boxes in one go. Original = the game as on the console. Change any box afterwards and the "
                "preset shows Custom.", 316));
     // Job 521 (Shagg 19:02): Vulkan opened for testing - the play exes have the full Vulkan renderer.
-    add(choice("Api", "Graphics API", Tab::Graphics, PG, { "DirectX 12 (recommended)", "Vulkan (experimental)" }, 0,
-               "Experimental - Vulkan is here so players can test it and send us their logs. DirectX 12 is the tested "
-               "renderer; on Vulkan, Gears 3 is known to look darker in places and show some black patches.\n"
+    add(choice("Api", "Graphics API", Tab::Graphics, PG, { "DirectX 12 (recommended)", "Vulkan" }, 0,
+               "Vulkan is a full alternative to DirectX 12, and the usual choice on Steam Deck / Linux. "
+               "\n"
                "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
                "are off. If something looks wrong, make a problem report and send it to us.", 0));
     // Shagg 13:16: Vulkan is no longer forced under Proton / Wine - this box lets Steam Deck / Linux / CrossOver

@@ -380,7 +380,7 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
     {   // Shagg 31 Oct: name the experimental settings that were on, so a report shows them at once
         const gs::Settings &cs = a.cur[g];
         std::string exp;
-        if (cs.i("Api") == 1) exp += "Vulkan, ";
+        // Vulkan is no longer experimental (Shagg 2 Nov)
         if (cs.i("AAMode") >= 2) exp += std::string(cs.i("AAMode") == 2 ? "FSR" : cs.i("AAMode") == 3 ? "DLSS" : "XeSS") + ", ";
         if (cs.i("FrameGen") > 0) exp += "frame generation, ";
         if (cs.b("SystemLink")) exp += "System Link, ";
