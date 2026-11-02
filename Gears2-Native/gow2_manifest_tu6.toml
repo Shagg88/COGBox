@@ -339,7 +339,7 @@ after_instruction = true
 [[entrypoint.midasm_hook]]
 address = 0x825324B4  # TU6: base 0x8252D73C
 name = "Gow2UltrawideFov"
-registers = ["f0"]
+registers = ["f0", "f30"]  # GitHub #74: f30 = the camera FOV (degrees), job 1022
 after_instruction = true
 
 # Job 231 (notes/60): 0x828075BC `li r6,1`, the head of sub_82807588's retry loop (UE3's wait for one query's

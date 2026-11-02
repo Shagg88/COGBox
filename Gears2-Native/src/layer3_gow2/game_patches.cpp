@@ -296,11 +296,27 @@ uint32_t Gow2WideHeight() {
   return h;
 }
 }  // namespace
-void Gow2UltrawideFov(PPCRegister& f0) {
+// GitHub #74: exact Hor+ (as Gears 3's gow3_ultrawide_fov_exact). Job 1022 (disc sub_8252D1B8, TU6 sub_82531F30):
+// right after this `lfs f0,1032(r7)` the game does `fmuls f1,f30,f0` (0x8252D750 / TU6 0x825324C8) - f30 is the camera's
+// horizontal field of view in degrees and f0 pi/360, so f1 is the half angle passed to the projection (bl 0x82531840).
+// The old fixed factor (Canary's 0.0106355 scaled at a 34.05 degree half angle) was exact only for one camera; every
+// other camera (aiming, cover, the launcher's FOV %) came out Vert- - the view cut at the top and bottom, which looks
+// like a camera placed higher (#74). Now the factor is worked out from f30 for each camera so the vertical view is
+// exactly 16:9's: half' = atan(tan(half) * widen), f0 = half' / fov. --gow2_ultrawide_fov_exact=false = the old factor.
+REXCVAR_DEFINE_BOOL(gow2_ultrawide_fov_exact, true, "Gears2",
+                    "With --gow2_ultrawide: the wider view computed exactly from each camera's field of view, keeping "
+                    "16:9's vertical view (GitHub #74); false = the fixed factor of 0.3.7");
+void Gow2UltrawideFov(PPCRegister& f0, PPCRegister& f30) {
   if (!REXCVAR_GET(gow2_ultrawide)) return;
-  static bool logged = false;
-  const double f = double(0.0106355f) * uwshape::FovScale(Gow2WideHeight());
-  if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: field-of-view factor {} -> {}", f0.f64, f); }
+  const double game = f0.f64, fov = f30.f64;
+  double f = double(0.0106355f) * uwshape::FovScale(Gow2WideHeight());
+  if (REXCVAR_GET(gow2_ultrawide_fov_exact) && fov > 1.0 && fov < 170.0 && game > 0.0 && fov * game < 1.5) {
+    f = std::atan(std::tan(fov * game) * uwshape::Widen(Gow2WideHeight())) / fov;  // fov * game = the game's half angle
+  }
+  static std::atomic<int> logged{0};
+  if (logged.fetch_add(1) < 8)
+    REXLOG_INFO("gow2_ultrawide: field of view {:.2f} deg: factor {} -> {} (half angle {:.2f} -> {:.2f} deg)", fov, game, f,
+                fov * game * 57.29578, fov * f * 57.29578);
   f0.f64 = f;
 }
 
