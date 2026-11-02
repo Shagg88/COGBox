@@ -174,6 +174,9 @@ static void answered(App &a)
         if (m.checked) { a.ini.seti("Notices", "ReportExperimentalNever", 1); a.ini.save(); }
         if (m.answer == 0) report_now(a, m.game, m.data);
     }
+    else if (m.tag == "reportver") {   // Shagg 2 Nov: report made anyway with an untested version
+        if (m.answer == 0) report_now(a, m.game, m.data, true);
+    }
     else if (m.tag == "expnotice") {   // Shagg 31 Oct: experimental settings are for testing, not for regular play
         if (m.checked) a.ini.seti("Notices", "ExperimentalNever", 1);
         a.ini.set("Notices", "ExperimentalSeen", COGBOX_VERSION);

@@ -290,6 +290,12 @@ void shell_open(const std::string &target)
     ShellExecuteW(nullptr, L"open", widen(target).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+void shell_select(const std::string &file)
+{
+    const std::wstring args = L"/select,\"" + widen(file) + L"\"";
+    ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+}
+
 static std::string pick(const wchar_t *title, const wchar_t *filter, bool folder)
 {
     std::string result;

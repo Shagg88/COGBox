@@ -371,7 +371,9 @@ void play_poll(App &a)
         what += "; its log mentions the graphics card being lost (a driver reset, or an overheating / overclocked card)";
     if (!crash.empty()) what += "; it wrote a crash report";
     ask(a, "crash", g, std::string(d.name) + " closed",
-        std::string(d.name) + " closed unexpectedly: " + what + ".\n\nMake a problem report (a zip on your desktop) for it? "
+        std::string(d.name) + " closed unexpectedly: " + what + ".\n\n" + (untested_version(a, g) ?
+        "Your game version or title update is an untested one, so this may be why. Please don't report problems you get with it - "
+        "try the expected version first.\n\n" : "") + "Make a problem report (a zip on your desktop) for it? "
         "It holds the log, the settings, a description of this PC and any crash report - no saves, no game files, and your "
         "Windows user name is taken out. Nothing is sent by itself.",
         { "Make a report", "Open the log folder", "Close" }, a.run.logDir + "\n" + what);
@@ -383,10 +385,8 @@ void play_answer(App &a, const Modal &m)
     std::string what = m.data.find('\n') == std::string::npos ? "" : m.data.substr(m.data.find('\n') + 1);
     if (m.answer == 0) {
         std::string zip, err;
-        if (make_report(a, m.game, dir, what, zip, err)) {
-            set_message(a, std::string(a.wine ? "Saved in COGBox's reports folder: " : "Saved on your desktop: ") + zip.substr(zip.find_last_of('\\') + 1) + " - attach it to a GitHub issue.", false);
-            shell_open(zip.substr(0, zip.find_last_of('\\')));
-        } else set_message(a, "Couldn't make the report: " + err, true);
+        if (make_report(a, m.game, dir, what, zip, err)) report_share(a, m.game, zip, what);
+        else set_message(a, "Couldn't make the report: " + err, true);
     } else if (m.answer == 1) shell_open(dir);
 }
 

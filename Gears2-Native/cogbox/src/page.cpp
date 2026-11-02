@@ -5,6 +5,7 @@
 #include "theme.h"
 #include "i18n.h"   // 0.2.0
 #include "update.h"
+#include "report.h"   // report_gpu_names (report_share)
 #include "imgui_internal.h"
 
 #include <windows.h>
@@ -29,11 +30,46 @@ static const HelpTest k_helpTest[] = {
     { 15, "Other versions of the game (regional discs, other title updates): if yours isn't the one COGBox expects, tell us whether it works." },
 };
 
-// Shagg 31 Oct: the About tab's problem report (also after the experimental-settings prompt, main.cpp "reportexp")
-void report_now(App &a, int g, const std::string &session)
+static std::string url_encode(const std::string &s);
+
+// Shagg 2 Nov: "Report a problem" in one go - GitHub can't take a file from COGBox (that needs the player's GitHub
+// sign-in), so the zip's folder opens with it selected and a new issue opens pre-filled; the player drags the zip in.
+void report_share(App &a, int g, const std::string &zip, const std::string &what)
 {
+    const GameDef &d = game_def(g);
+    std::string gpus;
+    for (const std::string &n : report_gpu_names()) gpus += (gpus.empty() ? "" : ", ") + n;
+    const std::string title = std::string(d.name) + ": " + (what.empty() ? "describe the problem here" : what.substr(0, 80));
+    const std::string body = std::string("**What happened:** \n\n**Where in the game (chapter / menu / loading):** \n\n**Does it happen every time?** \n\n---\n") +
+        "Game: " + d.name + "\nCOGBox: " COGBOX_VERSION "\nGraphics: " + (gpus.empty() ? "unknown" : gpus) +
+        (what.empty() ? "" : "\nThe launcher's reading: " + what) +
+        "\n\nPlease drag the report zip (" + zip.substr(zip.find_last_of('\\') + 1) + ") into this box before you submit.\n";
+    shell_select(zip);
+    shell_open("https://github.com/Shagg88/COGBox/issues/new?title=" + url_encode(title) + "&body=" + url_encode(body));
+    set_message(a, "Report saved: " + zip.substr(zip.find_last_of('\\') + 1) + ". A GitHub page opened - drag the zip into it and submit.", false);
+}
+
+// Shagg 31 Oct: the About tab's problem report (also after the experimental-settings prompt, main.cpp "reportexp")
+bool untested_version(const App &a, int g)
+{
+    const GameState &st = a.st[g];
+    return (st.xexKnown && !st.xexMatch && !st.xexConfirmed) || (st.useUpdate && st.xexpKnown && !st.xexpMatch && !st.xexpConfirmed);
+}
+
+void report_now(App &a, int g, const std::string &session, bool versionOk)
+{
+    if (!versionOk && untested_version(a, g)) {   // Shagg 2 Nov: allowed to play, but no bug reports from the wrong update
+        const GameDef &d = game_def(g);
+        ask(a, "reportver", g, "Untested game version or title update",
+            std::string("Your copy of ") + d.name + " or its " + d.updateName + " isn't the one COGBox is made for, so problems with it "
+            "are expected and usually can't be fixed on our side.\n\nPlease don't report a problem you get with it. Use the "
+            "expected version first (the About tab shows which file is different); if the problem happens there too, report it.",
+            { "Make the report anyway", "Cancel" });
+        a.modal.data = session;
+        return;
+    }
     std::string zip, err;
-    if (make_report(a, g, session, "", zip, err)) { set_message(a, std::string(a.wine ? "Saved in COGBox's reports folder: " : "Saved on your desktop: ") + zip.substr(zip.find_last_of('\\') + 1), false); if (a.wine) shell_open(zip.substr(0, zip.find_last_of('\\'))); }
+    if (make_report(a, g, session, "", zip, err)) report_share(a, g, zip, "");
     else set_message(a, "Couldn't make the report: " + err, true);
 }
 
@@ -798,7 +834,7 @@ static void about_tab(App &a, int g)
     else
     {
         lamp_line(st.xexpMatch || st.xexpConfirmed ? 1 : 2, std::string(d.updateName) + ": " + st.updateDir +
-                  (st.xexpMatch ? "" : st.xexpConfirmed ? "  -  an untested update you confirmed works" : "  -  an untested update: it may work, but you may experience problems"));
+                  (st.xexpMatch ? "" : st.xexpConfirmed ? "  -  an untested update you confirmed works" : "  -  an untested update: it may work, but problems are likely. Please don't report problems you get with it - use the expected update first"));
         if (!st.xexpMatch && !st.xexpConfirmed) {
             ImGui::PushID("works_xexp");
             if (small_button("This update works")) confirm_works(a, g, true);
@@ -933,7 +969,7 @@ static void about_tab(App &a, int g)
     th_heading("PROBLEMS", g_rowX1);
     row_desc("A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC "
              "(no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub issue.");
-    if (small_button("Make a problem report")) {
+    if (small_button("Report a problem")) {
         std::string s = newest_session(g);
         if (s.empty()) set_message(a, std::string("No play of ") + d.name + " yet - play once, then make the report.", false);
         else if (!a.ini.geti("Notices", "ReportExperimentalNever", 0)) {   // Shagg 31 Oct: experimental settings off first
