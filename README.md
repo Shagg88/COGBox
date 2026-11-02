@@ -85,13 +85,14 @@ The Gears 2 and Gears 3 disc builds are no longer in the download, and the "Game
 ### 2. Gears 3 saves are converted automatically
 The first time you start Gears 3 on 0.4.0, your existing saves are converted for the friendly-fire fix (#68). You
 don't need to do anything.
+Only Gears 3 saves are converted - Gears of War, Gears 2 and Judgment saves are not touched.
 
 - A backup of each changed file is kept next to it, named `<file>.pre-xuid0`: `PlayerStorage.dat` (your campaign
   progress) and `profile\User\63E83FFF` (your profile), both under `<COGBox>\Gears3\user\`.
-- **To roll back:** close Gears 3, delete or rename the converted file, and rename the `.pre-xuid0` copy back to the
-  original name (remove `.pre-xuid0`).
-- Rolled-back saves only work on older COGBox versions (0.3.7 and earlier). If you start them on 0.4.0, they're
-  converted again.
+- **To roll back:** close Gears 3, rename the converted file (e.g. add `.new`), then rename the `.pre-xuid0` copy
+  back to the original name (remove `.pre-xuid0`).
+- **Going back to 0.3.x?** Restore the `.pre-xuid0` files first (steps above). A converted save started on 0.3.x
+  makes Gears 3 reset it. Restored saves are converted again the next time you start 0.4.0.
 
 ### 3. Removed in this release
 - **Gears 3 Cheats and "Unlock all mutators"** are gone for now. They only worked with the disc version (Title Update 6
