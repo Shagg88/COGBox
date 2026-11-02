@@ -60,6 +60,49 @@ update (Gears of War: Title Update 5, Gears 2 and 3: Title Update 6, Judgment: T
 "In testing" means on the developer's PC (an RTX 3080 Ti) and scripted test runs through the chapters.
 Other hardware hasn't been tried yet - please report what you find.
 
+## Upgrading to 0.4.0 - what you need to do
+
+### 1. Add each game's title update (now required)
+Title updates are now required to play. Disc-only versions are no longer supported.
+
+| Game | Title update needed | Title ID folder on the console |
+|---|---|---|
+| Gears of War | Title Update 5 | `4D5307D5` |
+| Gears of War 2 | Title Update 6 | `4D53082D` |
+| Gears of War 3 | Title Update 6 | `4D5308AB` |
+| Gears of War: Judgment | Title Update 4 | `4D530A26` |
+
+1. Copy the update package from your own console: it's in `Content\0000000000000000\<title ID>\000B0000\`.
+2. In COGBox, turn to the game and press **ADD UPDATE** (or drop the package file onto the COGBox window, or use the
+   game's About tab).
+3. COGBox checks it and unpacks it into `<COGBox>\<game>\game\update`. Nothing else to set: Play always uses it.
+
+**If the update is missing**, the game's box shows **Needs Title Update ...** and **ADD UPDATE** instead of Play. Your
+copy and saves stay where they are; add the update and the game is ready again.
+
+The Gears 2 and Gears 3 disc builds are no longer in the download, and the "Game version" option is gone (greyed out).
+
+### 2. Gears 3 saves are converted automatically
+The first time you start Gears 3 on 0.4.0, your existing saves are converted for the friendly-fire fix (#68). You
+don't need to do anything.
+
+- A backup of each changed file is kept next to it, named `<file>.pre-xuid0`: `PlayerStorage.dat` (your campaign
+  progress) and `profile\User\63E83FFF` (your profile), both under `<COGBox>\Gears3\user\`.
+- **To roll back:** close Gears 3, delete or rename the converted file, and rename the `.pre-xuid0` copy back to the
+  original name (remove `.pre-xuid0`).
+- Rolled-back saves only work on older COGBox versions (0.3.7 and earlier). If you start them on 0.4.0, they're
+  converted again.
+
+### 3. Removed in this release
+- **Gears 3 Cheats and "Unlock all mutators"** are gone for now. They only worked with the disc version (Title Update 6
+  shows a dirty-disc error with them).
+- **The Gears 2 / Gears 3 disc builds** are no longer included (see 1).
+
+### 4. Your name in the games (Gamertag, #119)
+1. In COGBox, open any game's **Settings**, then the **About** tab.
+2. Type your name in **Gamertag** (up to 15 letters, digits or spaces). It's saved straight away.
+3. Start (or restart) the game: player 1 shows that name. Leave it empty for "User". Your saves are kept whatever the name.
+
 ## COGBox, the launcher
 
 - The three games as boxes on a carousel; box art and backgrounds from the open
