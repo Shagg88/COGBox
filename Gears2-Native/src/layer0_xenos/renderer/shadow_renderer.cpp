@@ -1,4 +1,5 @@
 // Layer 0 (game-free): our renderer in SHADOW mode (notes/42 section 1; steps 1-2 of notes/42 section 4; milestone M1
+// XeGTAO, SMAA T2x and the upscaler depth / motion fixes in this file: PR #139 by gmihaic (https://github.com/gmihaic).
 // of notes/36: depth prepass + shadow maps). Behind --gow2_renderer=shadow, off by default. The draw observer feeds it
 // on the GPU worker thread; it draws every draw that writes depth or stencil into its own targets on its own D3D12
 // device, resolves depth region-to-region into host textures in the guest format, and on chosen frames compares each
@@ -48,6 +49,8 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include "builtin_shaders.h"
 #include "smaa/smaa_area_tex.h"
 #include "xenos/renderer/upscaler.h"
+#include "xenos/renderer/ao.h"
+#include "xegtao_shaders.h"
 #include "smaa/smaa_passes.h"
 #include "smaa/smaa_search_tex.h"
 
@@ -779,6 +782,65 @@ REXCVAR_DEFINE_BOOL(gow2_fg_inputs, false, "Gears2",
                     "Patch 0145 (frame-rate item 6, frame generation step 1): make the scene's depth and motion vectors "
                     "every frame even with no upscaler selected (no jitter: the picture is unchanged). Frame generation "
                     "needs them; on its own this adds two small GPU passes and a log line");
+REXCVAR_DEFINE_STRING(gow2_ao, "game", "Gears2",
+                      "Ambient occlusion (notes/80): game = the game's own (as before), gtao = XeGTAO in its place, off "
+                      "= none. Work in progress: gtao only tracks the camera every frame so far (no jitter, no extra "
+                      "passes, the picture is unchanged)");
+REXCVAR_DEFINE_INT32(gow2_ao_log, 0, "Gears2",
+                     "Notes/80: every N frames, log the XeGTAO camera constants of the frame's scene (0 = off)");
+REXCVAR_DEFINE_STRING(gow2_ao_show, "gtao", "Gears2",
+                      "With --gow2_ao=gtao (notes/80): the AO the game's composite gets - gtao = XeGTAO, none = no AO (white), "
+                      "game = the game's own (XeGTAO still runs, for the debug views). F9 cycles it with --gow2_ao_debug_keys");
+REXCVAR_DEFINE_INT32(gow2_ao_skip_game, 3, "Gears2",
+                     "Notes/80: while XeGTAO (or no AO) is shown, skip the game's own AO chain, since its result is "
+                     "replaced anyway: 1 = its draws, 2 = its copies, 3 = both, 0 = off");
+REXCVAR_DEFINE_STRING(gow2_ao_trace_frames, "", "Gears2",
+                      "Notes/80 diagnostic: comma list of frames whose full-screen passes (quads / rectangles) are logged with "
+                      "their targets, shader hashes, blending and 2D texture addresses");
+REXCVAR_DEFINE_BOOL(gow2_ao_everywhere, true, "Gears2",
+                    "Notes/80: with XeGTAO, also where the game turns its own AO off (some outdoor areas): the scene is "
+                    "multiplied by XeGTAO's AO just before the game's fog pass, as the game's own AO apply does");
+REXCVAR_DEFINE_STRING(gow2_ao_fog_ps, "D58B286B84EE971D", "Gears2",
+                      "Notes/80: pixel shader hash(es), comma-separated, of the game's fog pass in frames without its AO "
+                      "(the anchor for --gow2_ao_everywhere)");
+REXCVAR_DEFINE_INT32(gow2_ao_trace_class, -1, "Gears2",
+                     "Notes/80 diagnostic: with --gow2_ao_trace_frames, also log every draw whose first colour target has "
+                     "this storage class (e.g. 4 = k_16_16, the velocity buffer), not only full-screen passes; -1 = off");
+REXCVAR_DEFINE_STRING(gow2_ao_trace_vs, "", "Gears2",
+                      "Notes/80 diagnostic: with --gow2_ao_trace_frames, also log these vertex shader float constants of "
+                      "each traced draw, a register range 'first-last' (e.g. 0-12: UE3's camera c0-c3 and object rows); "
+                      "empty = off");
+REXCVAR_DEFINE_INT32(gow2_upscale_capture_raw_class, -1, "Gears2",
+                     "Notes/80 diagnostic: during upscaler capture sets (--gow2_upscale_capture_frames), also write exact "
+                     "float dumps (.raw: int32 w, h, format, then 2 floats a texel) of the motion vectors and of every "
+                     "colour resolve whose source has this storage class (e.g. 4 = k_16_16, Gears 2's velocity buffer); "
+                     "-1 = off. Large: ~20 MB a resolve");
+REXCVAR_DEFINE_BOOL(gow2_upscale_depth_at_resolve, false, "Gears2",
+                    "Notes/80 s.6: the upscalers' depth is copied at the game's scene depth resolve (Gears 2 clears that "
+                    "depth before the scene colour resolve - on there by gow2_app.h); false: read at the scene colour "
+                    "resolve, as before (Gears 3 measured the same either way, s.9)");
+REXCVAR_DEFINE_BOOL(gow2_upscale_character_motion, false, "Gears2",
+                    "Notes/80 s.6: DLSS / FSR / XeSS motion vectors on characters from their own movement (the "
+                    "transforms of the game's velocity pass), not the camera's - the camera follows the player, so "
+                    "camera-only vectors are wrong on him by the whole camera move. Gears 2's layout (velocity pass "
+                    "c5-c12); on there by gow2_app.h");
+REXCVAR_DEFINE_STRING(gow2_ao_quality, "high", "Gears2",
+                      "XeGTAO quality (notes/80): low (1 slice x 2 steps), medium (2 x 2), high (3 x 3), ultra (9 x 3)");
+REXCVAR_DEFINE_DOUBLE(gow2_ao_radius, 60.0, "Gears2",
+                      "XeGTAO effect radius in the game's world units (notes/80; UE3: about 2 cm each)");
+REXCVAR_DEFINE_INT32(gow2_ao_denoise, 3, "Gears2",
+                     "XeGTAO denoise passes (notes/80): 1 = sharp, 2 = medium, 3 = soft (XeGTAO leaves the rest to TAA, "
+                     "which these games don't have)");
+REXCVAR_DEFINE_DOUBLE(gow2_ao_power, 2.2, "Gears2", "XeGTAO final value power - higher is darker (XeGTAO's default 2.2)");
+REXCVAR_DEFINE_DOUBLE(gow2_ao_add_radius, -1.0, "Gears2",
+                      "Notes/80 s.9: XeGTAO's radius where the game draws no AO of its own and ours is added "
+                      "(--gow2_ao_everywhere; Gears 3 bakes its AO there - a gentler complement); below 0 = --gow2_ao_radius");
+REXCVAR_DEFINE_DOUBLE(gow2_ao_add_power, -1.0, "Gears2",
+                      "Notes/80 s.9: XeGTAO's power where ours is added (see --gow2_ao_add_radius); below 0 = --gow2_ao_power");
+REXCVAR_DEFINE_INT32(gow2_ao_debug, 0, "Gears2",
+                     "Notes/80 developer view: 1 = XeGTAO's result only, 2 = split (the game's picture left, XeGTAO "
+                     "right), drawn over the finished picture; 3 = view depth (/ 2000), 4 = the raw AO term, 5 = edges; "
+                     "0 = off");
 REXCVAR_DEFINE_INT32(gow2_upscale_jitter_sign, 1, "Gears2",
                      "Diagnostic: 1 or -1 - the sign of the jitter handed to the upscaler (the image shift itself is "
                      "unchanged), for checking against the DLSS SDK's jitter overlay");
@@ -1674,6 +1736,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     if (resolve_draws_)
       REXLOG_INFO("gow2_renderer: resolve draws (patch 0119) {}", colour_resolve_draw_ ? "on" : "OFF (shader or pipeline failed)");
     InitUpscaler();  // --gow2_upscaler (notes/64)
+    InitAo();        // --gow2_ao (notes/80), after InitUpscaler set the camera tracking up
     if (REXCVAR_GET(gow2_renderer_msaa_colour_resolves)) {
       // Gears 3 (job 025): the same resolve reading a multisample source - c2.z samples (1, 2 or 4), host sample index
       // per selected guest sample in c2.w (4 bits each) - all decoded, then combined by XeColourResolvePixel as for
@@ -2966,6 +3029,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       smaa_failed_logged_ = true;
       REXLOG_ERROR("gow2_present: SMAA could not run (shaders or textures missing); presenting without it");
     }
+    AoDebugView(w, h);  // notes/80 (--gow2_ao_debug)
+    ao_ready_ = false;
     // "Match my monitor": the image at the window's exact size (the game's shape kept), shown 1:1 by the presenter.
     rex::system::X_VIDEO_MODE mode;
     rex::kernel::xboxkrnl::VdQueryVideoMode(&mode);
@@ -4064,6 +4129,61 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Patch 0145: the camera tracking and the depth / motion passes run when an upscaler is selected or with
   // --gow2_fg_inputs; inputs only = no upscaler, no jitter, the resolve reads the scene as it is.
   bool up_active_ = false, up_inputs_only_ = false;
+  // Notes/80 (--gow2_ao=gtao): the camera tracking runs for the AO even with no upscaler and no --gow2_fg_inputs -
+  // camera only = no depth / motion passes at the scene resolve. Captured with the frame's camera: the scene depth's
+  // viewport Z transform and size; the AO constants are made from them once per frame, on first use.
+  rr::ao::Mode ao_mode_ = rr::ao::Mode::kGame;
+  bool up_camera_only_ = false;
+  rr::ao::DepthMap up_depth_map_{};
+  uint32_t up_scene_w_ = 0, up_scene_h_ = 0;
+  rr::ao::GtaoConstants ao_constants_{};
+  int ao_constants_state_ = 0;  // 0 not made this frame, 1 made, -1 the camera gave none
+  uint64_t ao_frames_ok_ = 0, ao_frames_none_ = 0;  // log window
+  // Notes/80 s.4: XeGTAO's passes and textures (scene size): the view-depth pyramid (5 levels), the working AO term
+  // and edges, the final AO. ao_ready_: this frame's final AO is made (the debug view shows it).
+  gpu::PipelineHandle ao_prefilter_pipe_ = 0, ao_main_pipe_ = 0, ao_denoise_pipe_ = 0, ao_debug_pipe_ = 0;
+  std::array<gpu::PipelineHandle, 4> ao_main_pipes_{};  // notes/80 s.12: every quality preset, so F11 needs no compile
+  gpu::TextureHandle ao_depth_ = 0, ao_work_ = 0, ao_work2_ = 0, ao_edges_ = 0, ao_final_ = 0;
+  uint32_t ao_denoise_passes_ = 3;
+  uint32_t ao_w_ = 0, ao_h_ = 0;
+  bool ao_ready_ = false, ao_failed_logged_ = false;
+  int32_t ao_debug_ = 0;
+  uint64_t ao_runs_ = 0;
+  // Notes/80 s.4: the game's AO chain found by shape in this frame's resolves (the ping-pong address and how many
+  // went there), the final AO's address while XeGTAO's full-resolution stand-in replaces it (0 = none), its guest size;
+  // what the stand-in holds (0 XeGTAO, 1 no AO); counts for the log.
+  gpu::PipelineHandle ao_pack_pipe_ = 0;
+  gpu::TextureHandle ao_full_ = 0;
+  uint32_t ao_full_w_ = 0, ao_full_h_ = 0;
+  uint32_t ao_pp_dest_ = 0, ao_pp_count_ = 0;
+  bool ao_final_seen_ = false;
+  bool ao_had_chain_last_ = false;  // notes/80 s.9: last frame had the game's own AO (XeGTAO replaces it)
+  bool ao_detected_frame_ = false;   // notes/80 s.2: this frame's resolves held a chain of the AO's shape
+  mutable uint64_t ao_msaa_skips_ = 0;  // notes/80 s.10: fog passes into a multisampled target (none added there)
+  uint64_t ao_msaa_depth_skips_ = 0;    // notes/80 s.10: frames whose scene depth was multisampled (no XeGTAO)
+  uint64_t up_msaa_depth_skips_ = 0;    // notes/80 s.10: scene depth resolves not copied early (multisampled)
+  uint32_t ao_chain_streak_ = 0;     // ... on this many frames in a row before this one
+  uint32_t ao_override_base_ = 0, ao_override_w_ = 0, ao_override_h_ = 0;
+  uint32_t ao_show_ = 0;
+  uint64_t ao_finals_ = 0, ao_replaced_ = 0, ao_binds_ = 0;
+  // The game's AO target (learned when its chain is found) and whether to skip the chain while it is replaced.
+  rr::RenderTargetKey ao_chain_key_{};
+  bool ao_chain_known_ = false;
+  uint32_t ao_chain_pp_dest_ = 0;  // notes/80 s.10: the chain's ping-pong copy address (the copies skipped)
+  uint32_t ao_skip_game_ = 3;  // bit 0 draws, bit 1 copies
+  uint64_t ao_skipped_draws_ = 0, ao_skipped_resolves_ = 0;
+  bool ao_skipped_frame_ = false;
+  bool ao_trace_ = false;  // --gow2_ao_trace_frames is set
+  int32_t ao_trace_class_ = -1;  // --gow2_ao_trace_class
+  uint32_t ao_trace_vs_first_ = 1, ao_trace_vs_last_ = 0;  // --gow2_ao_trace_vs (first > last: off)
+  int32_t up_capture_raw_class_ = -1;                      // --gow2_upscale_capture_raw_class
+  // Notes/80 s.5 (--gow2_ao_everywhere): the multiply pass for frames without the game's AO chain.
+  bool ao_everywhere_ = false, ao_added_frame_ = false;
+  std::string ao_fog_ps_;  // ",HASH,HASH,"
+  gpu::ShaderHandle ao_multiply_ps_ = 0;
+  std::unordered_map<uint32_t, gpu::PipelineHandle> ao_multiply_pipes_;  // by target format
+  uint64_t ao_added_ = 0;
+
   // Patch 0145: the newest frame's frame-generation inputs, at the render size. The textures are rewritten by the next
   // frame's scene resolve, so a consumer copies them before then (the presenter's mailbox slot, plan step 3).
   struct FgInputs {
@@ -4135,29 +4255,48 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const std::string name = REXCVAR_GET(gow2_upscaler);
     fg_wanted_ = XenosFrameGenerationWanted();  // patch 0147
     const bool fg_inputs = REXCVAR_GET(gow2_fg_inputs) || fg_wanted_;  // patch 0145
+    ao_mode_ = rr::ao::ParseMode(REXCVAR_GET(gow2_ao));  // notes/80
+    const bool ao_camera = ao_mode_ == rr::ao::Mode::kGtao;
     if (kind == rr::upscale::Kind::kNone) {
-      if (!name.empty() && name != "off") REXLOG_WARN("gow2_upscaler: unknown '{}' (off | dlss | fsr | xess); off", name);
-      if (!fg_inputs) return;
+      if (!name.empty() && name != "off") REXLOG_WARN("gow2_upscaler: unknown '{}' (off | dlss | fsr | xess | smaa_t2x); off", name);
+      if (!fg_inputs && !ao_camera) return;
+    } else if (kind == rr::upscale::Kind::kSmaaT2x) {  // notes/80 s.7: ours, made here (it needs the shader cache)
+      upscaler_ = std::make_unique<T2xUpscaler>(*this);
     } else {
       upscaler_ = rr::upscale::CreateUpscaler(kind);
       if (!upscaler_) {
         REXLOG_WARN("gow2_upscaler: {} is not built into this exe (its SDK was not in third_party at build time); off",
                     rr::upscale::KindName(kind));
-        if (!fg_inputs) return;
+        if (!fg_inputs && !ao_camera) return;
       }
     }
-    const gpu::ShaderHandle d = cache_->GetBuiltin("upscale_depth_cs", rr::builtin::kDepthToFloatCs, gpu::ShaderStage::kCompute);
-    const gpu::ShaderHandle m = cache_->GetBuiltin("upscale_motion_cs", rr::builtin::kMotionVectorsCs, gpu::ShaderStage::kCompute);
-    up_depth_pipe_ = d ? backend_->CreateComputePipeline(d) : 0;
-    up_motion_pipe_ = m ? backend_->CreateComputePipeline(m) : 0;
-    if (!up_depth_pipe_ || !up_motion_pipe_) {
-      REXLOG_WARN("gow2_upscaler: helper shaders failed to compile; off");
-      upscaler_.reset();
-      return;
+    up_camera_only_ = !upscaler_ && !fg_inputs;  // notes/80: the AO needs the camera, not the depth / motion passes
+    if (!up_camera_only_) {
+      const gpu::ShaderHandle d = cache_->GetBuiltin("upscale_depth_cs", rr::builtin::kDepthToFloatCs, gpu::ShaderStage::kCompute);
+      const gpu::ShaderHandle m = cache_->GetBuiltin("upscale_motion_cs", rr::builtin::kMotionVectorsCs, gpu::ShaderStage::kCompute);
+      up_depth_pipe_ = d ? backend_->CreateComputePipeline(d) : 0;
+      up_motion_pipe_ = m ? backend_->CreateComputePipeline(m) : 0;
+      if (REXCVAR_GET(gow2_upscale_character_motion)) {  // notes/80 s.6: optional; camera-only vectors without it
+        const gpu::ShaderHandle vc =
+            cache_->GetBuiltin("velocity_copy_cs", rr::builtin::kCopyFloat2Cs, gpu::ShaderStage::kCompute);
+        const gpu::ShaderHandle vm =
+            cache_->GetBuiltin("motion_objects_cs", rr::builtin::kMotionObjectsCs, gpu::ShaderStage::kCompute);
+        vel_copy_pipe_ = vc ? backend_->CreateComputePipeline(vc) : 0;
+        vel_motion_pipe_ = vm ? backend_->CreateComputePipeline(vm) : 0;
+        if (!vel_copy_pipe_ || !vel_motion_pipe_)
+          REXLOG_WARN("gow2_upscaler: character motion shaders failed to compile; camera motion only");
+      }
+      if (!up_depth_pipe_ || !up_motion_pipe_) {
+        REXLOG_WARN("gow2_upscaler: helper shaders failed to compile; off");
+        upscaler_.reset();
+        if (!ao_camera) return;
+        up_camera_only_ = true;  // notes/80: the AO keeps its camera
+      }
     }
     up_active_ = true;  // patch 0145
     up_inputs_only_ = !upscaler_;
     up_camera_move_ = REXCVAR_GET(gow2_upscale_camera_move);
+    up_depth_at_resolve_ = REXCVAR_GET(gow2_upscale_depth_at_resolve);  // notes/80 s.6
     up_dejitter_depth_ = REXCVAR_GET(gow2_upscale_dejitter_depth);
     up_jitter_late_ = REXCVAR_GET(gow2_upscale_jitter_late);
     {
@@ -4175,7 +4314,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     up_objects_.reserve(kMaxObjectSamples);
     up_prev_objects_.reserve(kMaxObjectSamples);
-    if (upscaler_) {  // patch 0141: the scene scale for an upscaling mode (integer pairs only; 0145: not inputs only)
+    t2x_ = kind == rr::upscale::Kind::kSmaaT2x;
+    if (t2x_ && !REXCVAR_GET(gow2_upscale_mode).empty() && REXCVAR_GET(gow2_upscale_mode) != "native")
+      REXLOG_INFO("gow2_upscaler: SMAA T2x anti-aliases at the render size; scene resolution mode '{}' ignored",
+                  REXCVAR_GET(gow2_upscale_mode));
+    if (upscaler_ && !t2x_) {  // patch 0141: the scene scale for an upscaling mode (integer pairs only; 0145: not inputs only)
       const std::string mode = REXCVAR_GET(gow2_upscale_mode);
       const uint32_t out = res_scale_;
       uint32_t in = out;
@@ -4192,6 +4335,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (upscaler_)
       REXLOG_INFO("gow2_upscaler: {} selected", rr::upscale::KindName(kind));
+    else if (up_camera_only_)
+      REXLOG_INFO("gow2_ao: {}: camera tracking every frame (no upscaler: no jitter, no extra passes)",
+                  rr::ao::ModeName(ao_mode_));
     else
       REXLOG_INFO("gow2_fg_inputs: patch 0145: scene depth and motion vectors every frame, no upscaler (no jitter)");
   }
@@ -4204,6 +4350,37 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // depth (the centre 1280x720 of each, 24-bit BMP) next to the log, so frame-to-frame changes can be looked at.
   int up_cap_left_ = 0;
   uint32_t up_cap_set_ = 0;
+  // Notes/80 s.6 diagnostic: a texture's first two channels as raw floats (int32 w, h, format; then w*h*2 floats).
+  void CaptureRaw(gpu::TextureHandle t, gpu::Format f, uint32_t w, uint32_t h, const char* name) {
+    if (!t || !w || !h) return;
+    const gpu::ReadbackHandle rb = backend_->ReadbackTexture(t, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
+    if (!rb) return;
+    backend_->WaitForFence(backend_->Submit());
+    uint32_t pitch = 0;
+    const uint8_t* data = backend_->ReadbackData(rb, pitch);
+    float c[4] = {};
+    uint32_t n = 0;
+    if (!data || !StatsTexel(f, data, c, n)) return;
+    const uint32_t bpp = n * ((f == gpu::Format::kR8G8B8A8Unorm || f == gpu::Format::kR10G10B10A2Unorm) ? 1 : 2) *
+                         ((f == gpu::Format::kR32Float || f == gpu::Format::kR32G32Float) ? 2 : 1);
+    std::string dir = rex::cvar::GetFlagByName("gow2_crash_dir");
+    if (dir.empty()) dir = ".";
+    const std::string path = std::format("{}\\dlss-cap{}-f{}-{}.raw", dir, up_cap_set_, frame_ + 1, name);
+    std::vector<float> out(size_t(w) * h * 2);
+    for (uint32_t y = 0; y < h; ++y)
+      for (uint32_t x = 0; x < w; ++x) {
+        float v[4] = {};
+        StatsTexel(f, data + size_t(y) * pitch + size_t(x) * bpp, v, n);
+        out[(size_t(y) * w + x) * 2] = v[0];
+        out[(size_t(y) * w + x) * 2 + 1] = v[1];
+      }
+    if (FILE* fp = std::fopen(path.c_str(), "wb")) {
+      const int32_t hd[3] = {int32_t(w), int32_t(h), int32_t(f)};
+      std::fwrite(hd, sizeof(hd), 1, fp);
+      std::fwrite(out.data(), sizeof(float), out.size(), fp);
+      std::fclose(fp);
+    }
+  }
   void CaptureTex(gpu::TextureHandle t, gpu::Format f, uint32_t w, uint32_t h, const char* name, int kind) {
     if (!t || !w || !h) return;
     const uint32_t cw = std::min<uint32_t>(1280, w), ch = std::min<uint32_t>(720, h);
@@ -4227,7 +4404,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           StatsTexel(f, data + size_t(y + uint32_t(y0)) * pitch + size_t(x + uint32_t(x0)) * bpp, c, n);
           float r = c[0], g = c[1], b = c[2];
           if (kind == 1) { r = 0.5f + c[0] * 0.05f; g = 0.5f + c[1] * 0.05f; b = 0.5f; }   // motion: 0.5 = still, 20 px = edge
-          else if (kind == 2) { r = g = b = std::pow(std::clamp(c[0], 0.0f, 1.0f), 64.0f); }  // depth, spread out near 1
+          else if (kind == 2) {  // depth, spread out near 1 (near 0 when reversed-Z, notes/80 s.6: 1 - depth then)
+            const float d = up_depth_map_.scale < 0.0f ? 1.0f - c[0] : c[0];
+            r = g = b = std::pow(std::clamp(d, 0.0f, 1.0f), 64.0f);
+          }
           else { r = r / (1.0f + r); g = g / (1.0f + g); b = b / (1.0f + b); r = std::sqrt(r) ; g = std::sqrt(g); b = std::sqrt(b); }
           uint8_t* o = &img[(size_t(ch - 1 - y) * cw + x) * 3];
           o[0] = uint8_t(std::clamp(b, 0.0f, 1.0f) * 255.0f + 0.5f);
@@ -4329,8 +4509,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return;
     }
     if (!up_camera_) {
+      // Notes/80 s.3: not a planar-reflection camera. Gears 3's Raven's Nest draws a reflection (an oblique near plane:
+      // its depth row is a world plane, not the distance) into the scene depth before the view; taken as the camera,
+      // it left the whole level without jitter (DLSS / T2x did nothing) and XeGTAO without constants. A real
+      // perspective camera's depth row is proportional to its distance row - what MakeGtaoConstants checks.
+      rr::ao::GtaoConstants probe;
+      const bool perspective = rr::ao::MakeGtaoConstants(rr::upscale::FromConstantsTransposed(c, 0),
+                                                         rr::ao::ViewportDepthMap(ps.viewport),
+                                                         uint32_t(ps.viewport.width), uint32_t(ps.viewport.height), probe);
       if (!depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < kSceneMinHeight ||
-          (up_vp_auto_ && !ObjectRowsIdentity(r, vsg))) {  // job 716: the camera alone, not one object's camera
+          (up_vp_auto_ && !ObjectRowsIdentity(r, vsg)) || !perspective) {  // job 716: the camera alone, not one object's
         // Job 726 (job 725's captures: the lighting on stone changed frame to frame in the INPUT): Gears 1 draws its
         // objects into the scene depth before the first level-geometry draw, so they were drawn unjittered while the
         // later passes were jittered, and UE3's depth-equal light passes failed in patches. Draws into last frame's
@@ -4351,6 +4539,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
       up_depth_key_ = depth->key;
       up_depth_scale_ = depth->scale;
+      up_depth_map_ = rr::ao::ViewportDepthMap(ps.viewport);  // notes/80: guest depth from z / w (before remap24)
+      up_scene_w_ = uint32_t(ps.viewport.width);
+      up_scene_h_ = uint32_t(ps.viewport.height);
+      ao_constants_state_ = 0;
       std::memcpy(up_vp_, c, sizeof(c));
       up_depth_a_ = rr::upscale::DepthAtInfinity(rr::upscale::FromConstantsTransposed(up_vp_, 0));
     } else if (!IsSceneDepth(*depth) || std::memcmp(c, up_vp_, sizeof(c)) != 0) {
@@ -4418,15 +4610,333 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
            info.width_div_8 * 8 >= kSceneMinWidth && info.height_div_8 * 8 >= kSceneMinHeight;
   }
 
+  // Notes/80 s.6: the scene depth for the upscaler and the motion pass, copied at the game's scene depth resolve. Gears 2
+  // clears that EDRAM (through a 640-pitch alias) for its half-res effects before the scene colour resolve, where the
+  // upscaler runs: read there, every pixel was at infinity, and the motion vectors lost the camera's translation.
+  bool up_depth_saved_ = false;  // this frame's copy is in up_depth_
+  bool up_depth_at_resolve_ = false;  // --gow2_upscale_depth_at_resolve
+  uint32_t up_scene_scale_ = 0;  // the scene colour's scale the last time the upscaler ran (up_depth_ was made for it)
+  void CopyUpscaleDepth(const rr::RenderTarget& depth) {
+    gpu::ComputeBindings b;
+    b.constants[0] = std::bit_cast<uint32_t>((float24_remap_ && (depth.key.storage_class & 1)) ? 2.0f : 1.0f);
+    b.constant_count = 4;
+    b.srv[0] = depth.texture;
+    b.srv_plane[0] = 0;
+    b.uav_texture = up_depth_;
+    backend_->Dispatch(up_depth_pipe_, b, (up_w_ + 7) / 8, (up_h_ + 7) / 8, 1);
+  }
+  void UpscaleSaveDepth(const rr::RenderTarget& depth) {
+    if (depth.key.msaa != 0 && !up_msaa_depth_skips_++)
+      REXLOG_WARN("gow2_upscaler: frame {}: the scene depth is multisampled (base {} pitch {}, msaa {}) - not copied for "
+                  "the upscaler (notes/80 s.10)", frame_ + 1, depth.key.base_tiles, depth.key.pitch_pixels, depth.key.msaa);
+    if (up_depth_saved_ || !up_depth_ || !up_depth_pipe_ || !depth.texture || depth.key.msaa != 0 ||
+        depth.scale != up_scene_scale_ ||
+        depth.width < up_w_ || depth.height < up_h_)
+      return;  // the first frame (no texture yet) or a scale change: read at the colour resolve as before
+    CopyUpscaleDepth(depth);
+    up_depth_saved_ = true;
+  }
+
+  // ---- Notes/80 s.7: SMAA T2x (smaa/smaa_passes.h) ----
+  // The "upscaler" the renderer drives like DLSS: Evaluate gets the scene colour, motion and jitter of the frame.
+  class T2xUpscaler : public rr::upscale::Upscaler {
+   public:
+    explicit T2xUpscaler(ShadowRenderer& r) : r_(r) {}
+    rr::upscale::Kind kind() const override { return rr::upscale::Kind::kSmaaT2x; }
+    bool Configure(gpu::Backend&, uint32_t render_width, uint32_t render_height, uint32_t output_width,
+                   uint32_t output_height, bool, bool, bool) override {
+      return render_width == output_width && render_height == output_height;  // anti-aliasing only
+    }
+    bool Evaluate(gpu::Backend&, const rr::upscale::FrameInputs& in) override { return r_.T2xEvaluate(in); }
+    std::string Status() const override { return "SMAA T2x (ours)"; }
+
+   private:
+    ShadowRenderer& r_;
+  };
+  bool t2x_ = false, t2x_ready_ = false, t2x_hist_ok_ = false;
+  gpu::PipelineHandle t2x_prep_ = 0, t2x_resolve_ = 0, t2x_edge_ = 0, t2x_weight_ = 0, t2x_blend_ = 0;
+  gpu::TextureHandle t2x_edge_in_ = 0, t2x_tm_ = 0, t2x_edges_ = 0, t2x_weights_ = 0, t2x_hist_[2] = {};
+  uint32_t t2x_w_ = 0, t2x_h_ = 0, t2x_cur_ = 0;
+  uint64_t t2x_frames_ = 0, t2x_resets_ = 0;  // log window
+  bool EnsureSmaaTables() {
+    if (!smaa_area_) {
+      gpu::TextureDesc ad;
+      ad.width = AREATEX_WIDTH;
+      ad.height = AREATEX_HEIGHT;
+      ad.format = gpu::Format::kR8G8Unorm;
+      ad.usage = gpu::kUsageSampled;
+      ad.debug_name = "SMAA area table";
+      smaa_area_ = backend_->CreateTexture(ad);
+    }
+    if (!smaa_search_) {
+      gpu::TextureDesc sd;
+      sd.width = SEARCHTEX_WIDTH;
+      sd.height = SEARCHTEX_HEIGHT;
+      sd.format = gpu::Format::kR8Unorm;
+      sd.usage = gpu::kUsageSampled;
+      sd.debug_name = "SMAA search table";
+      smaa_search_ = backend_->CreateTexture(sd);
+    }
+    if (!smaa_area_ || !smaa_search_) return false;
+    if (!smaa_tables_uploaded_) {
+      backend_->UploadTexture(smaa_area_, 0, 0, areaTexBytes, AREATEX_PITCH, AREATEX_HEIGHT, 1);
+      backend_->UploadTexture(smaa_search_, 0, 0, searchTexBytes, SEARCHTEX_PITCH, SEARCHTEX_HEIGHT, 1);
+      smaa_tables_uploaded_ = true;
+    }
+    return true;
+  }
+  bool T2xEnsure(uint32_t w, uint32_t h) {
+    if (!t2x_ready_) {
+      t2x_ready_ = true;  // once
+      auto pipe = [&](const char* name, const char* vs, const char* ps, gpu::Format fmt) -> gpu::PipelineHandle {
+        const gpu::ShaderHandle v =
+            cache_->GetBuiltin(std::string(name) + "_vs", rr::smaa::Source(vs, true), gpu::ShaderStage::kVertex);
+        const gpu::ShaderHandle p =
+            cache_->GetBuiltin(std::string(name) + "_ps", rr::smaa::Source(ps, true), gpu::ShaderStage::kPixel);
+        if (!v || !p) return 0;
+        gpu::GraphicsPipelineDesc d;
+        d.vs = v;
+        d.ps = p;
+        d.topology = gpu::Topology::kTriangleList;
+        d.depth_clip = false;
+        d.color_count = 1;
+        d.color_formats[0] = fmt;
+        d.color_write_masks[0] = 0xF;
+        return backend_->GetGraphicsPipeline(d);
+      };
+      auto compute = [&](const char* name, const char* src) -> gpu::PipelineHandle {
+        const gpu::ShaderHandle c = cache_->GetBuiltin(name, src, gpu::ShaderStage::kCompute);
+        return c ? backend_->CreateComputePipeline(c) : 0;
+      };
+      t2x_prep_ = compute("smaa_t2x_prep_cs", rr::smaa::kT2xPrepCs);
+      t2x_resolve_ = compute("smaa_t2x_resolve_cs", rr::smaa::kT2xResolveCs);
+      t2x_edge_ = pipe("smaa_t2x_edge", rr::smaa::kEdgeVs, rr::smaa::kEdgePs, gpu::Format::kR8G8B8A8Unorm);
+      t2x_weight_ = pipe("smaa_t2x_weight", rr::smaa::kWeightVs, rr::smaa::kT2xWeightPs, gpu::Format::kR8G8B8A8Unorm);
+      t2x_blend_ = pipe("smaa_t2x_blend", rr::smaa::kBlendVs, rr::smaa::kT2xBlendPs, gpu::Format::kR16G16B16A16Float);
+      REXLOG_INFO("gow2_upscaler: SMAA T2x passes: prep {} edges {} weights {} blend {} resolve {}", t2x_prep_ != 0,
+                  t2x_edge_ != 0, t2x_weight_ != 0, t2x_blend_ != 0, t2x_resolve_ != 0);
+    }
+    if (!t2x_prep_ || !t2x_resolve_ || !t2x_edge_ || !t2x_weight_ || !t2x_blend_ || !EnsureSmaaTables()) return false;
+    if (t2x_w_ != w || t2x_h_ != h) {
+      for (gpu::TextureHandle* t : {&t2x_edge_in_, &t2x_tm_, &t2x_edges_, &t2x_weights_, &t2x_hist_[0], &t2x_hist_[1]})
+        if (*t) backend_->DestroyTexture(*t), *t = 0;
+      t2x_w_ = t2x_h_ = 0;
+      t2x_hist_ok_ = false;
+      gpu::TextureDesc d;
+      d.width = w;
+      d.height = h;
+      d.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      d.format = gpu::Format::kR10G10B10A2Unorm;
+      d.debug_name = "SMAA T2x edge input";
+      t2x_edge_in_ = backend_->CreateTexture(d);
+      d.format = gpu::Format::kR16G16B16A16Float;
+      d.debug_name = "SMAA T2x tone-mapped scene";
+      t2x_tm_ = backend_->CreateTexture(d);
+      d.usage = gpu::kUsageSampled | gpu::kUsageRenderTarget;
+      d.debug_name = "SMAA T2x frame";
+      t2x_hist_[0] = backend_->CreateTexture(d);
+      t2x_hist_[1] = backend_->CreateTexture(d);
+      d.format = gpu::Format::kR8G8B8A8Unorm;
+      d.debug_name = "SMAA T2x edges";
+      t2x_edges_ = backend_->CreateTexture(d);
+      d.debug_name = "SMAA T2x weights";
+      t2x_weights_ = backend_->CreateTexture(d);
+      if (!t2x_edge_in_ || !t2x_tm_ || !t2x_hist_[0] || !t2x_hist_[1] || !t2x_edges_ || !t2x_weights_) return false;
+      t2x_w_ = w, t2x_h_ = h;
+    }
+    return true;
+  }
+  bool T2xEvaluate(const rr::upscale::FrameInputs& in) {
+    const uint32_t w = in.render_width, h = in.render_height;
+    if (!in.color || !in.output || !in.motion || !T2xEnsure(w, h)) return false;
+    const float pre = in.pre_exposure > 0.0f ? in.pre_exposure : 1.0f;
+    {
+      gpu::ComputeBindings b;
+      const float k[4] = {1.0f / pre, in.hdr ? 1.0f : 0.0f, 0.0f, 0.0f};
+      std::memcpy(b.constants, k, sizeof(k));
+      b.constant_count = 4;
+      b.srv[0] = in.color;
+      b.uav_texture = t2x_edge_in_;
+      b.uav2_texture = t2x_tm_;
+      backend_->Dispatch(t2x_prep_, b, (w + 7) / 8, (h + 7) / 8, 1);
+    }
+    // The jitter tells the phase (the renderer alternates the two): sub-sample indices for the weight pass.
+    const float sub = in.jitter.x > 0.0f ? 1.0f : in.jitter.x < 0.0f ? 2.0f : 0.0f;
+    const float cb[8] = {1.0f / float(w), 1.0f / float(h), float(w), float(h), sub, sub, sub, 0.0f};
+    gpu::SamplerDesc s[32];
+    for (uint32_t i = 0; i < 2; ++i) {
+      s[i].mag_linear = s[i].min_linear = i == 0 ? 1 : 0;
+      s[i].mip_linear = 0;
+      for (gpu::SamplerAddress& a : s[i].address) a = gpu::SamplerAddress::kClamp;
+      s[i].max_lod = 0.0f;
+    }
+    const float zero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    auto pass = [&](gpu::TextureHandle target, gpu::PipelineHandle pipeline, std::initializer_list<gpu::TextureHandle> inputs) {
+      gpu::TextureView views[96];
+      uint32_t n = 0;
+      for (gpu::TextureHandle t : inputs) views[n++].texture = t;
+      backend_->SetRenderTargets(1, &target, 0);
+      backend_->SetViewport({0.0f, 0.0f, float(w), float(h), 0.0f, 1.0f});
+      backend_->SetScissor({0, 0, int32_t(w), int32_t(h)});
+      backend_->SetPipeline(pipeline);
+      backend_->SetConstantsBoth(gpu::kCbSystem, cb, sizeof(cb));
+      backend_->SetTextures(views, s, n, 2);
+      backend_->Draw(3);
+    };
+    const uint32_t cur = t2x_cur_, prev = cur ^ 1u;
+    tex_memo_valid_ = false;  // the bound views and constants change (the game's next draw binds its own)
+    backend_->ClearColor(t2x_edges_, zero);
+    pass(t2x_edges_, t2x_edge_, {t2x_edge_in_});
+    backend_->ClearColor(t2x_weights_, zero);
+    pass(t2x_weights_, t2x_weight_, {t2x_edges_, smaa_area_, smaa_search_});
+    pass(t2x_hist_[cur], t2x_blend_, {t2x_tm_, t2x_weights_});
+    backend_->SetTextures(nullptr, nullptr);
+    const bool reset = in.reset || !t2x_hist_ok_ || sub == 0.0f;
+    {
+      gpu::ComputeBindings b;
+      const float k[4] = {pre, in.hdr ? 1.0f : 0.0f, reset ? 1.0f : 0.0f, 0.0f};
+      std::memcpy(b.constants, k, sizeof(k));
+      b.constant_count = 4;
+      b.srv[0] = t2x_hist_[cur];
+      b.srv[1] = t2x_hist_[prev];
+      b.srv[2] = in.motion;
+      b.uav_texture = in.output;
+      backend_->Dispatch(t2x_resolve_, b, (w + 7) / 8, (h + 7) / 8, 1);
+    }
+    t2x_cur_ = prev;
+    t2x_hist_ok_ = true;
+    ++t2x_frames_;
+    t2x_resets_ += reset ? 1 : 0;
+    return true;
+  }
+
+  // Notes/80 s.6: the characters' own motion. The game's velocity pass (k_16_16, half res) draws each skinned mesh with
+  // its object-to-world now (camera-relative, VS c5-c8) and last frame (absolute world, c9-c12); its target, copied at
+  // its resolve, marks the pixels; the motion pass then moves those with the nearest character's transform.
+  std::vector<rr::upscale::MovingObject> vel_objs_, vel_prev_objs_;
+  rr::RenderTargetKey vel_key_{};
+  bool vel_seen_ = false, vel_mask_ok_ = false;
+  gpu::PipelineHandle vel_copy_pipe_ = 0, vel_motion_pipe_ = 0;
+  gpu::TextureHandle vel_mask_ = 0, vel_table_ = 0;
+  uint32_t vel_mask_w_ = 0, vel_mask_h_ = 0;
+  uint64_t vel_frames_ = 0, vel_no_camera_ = 0, vel_objects_sum_ = 0;  // log window
+  static constexpr uint32_t kMaxMovingObjects = 32;
+  void VelocityDraw(const uint32_t* r, const rr::GuestShader& vsg, const rr::RenderTargetKey& k0, uint32_t index_count) {
+    if (!vel_motion_pipe_ || !up_camera_ || k0.storage_class != rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16))) return;
+    for (uint32_t k = 0; k < 13; ++k)  // the camera (c0-c3) and both object-to-world matrices (c5-c12)
+      if (k != 4 && !vsg.Reads(k)) return;
+    if (std::memcmp(&r[kRegFloatConstVs], up_vp_, sizeof(up_vp_)) != 0) return;  // drawn with the scene camera
+    float c[32];
+    std::memcpy(c, &r[kRegFloatConstVs + 5 * 4], sizeof(c));
+    if (c[15] != 1.0f || c[31] != 1.0f || c[3] != 0.0f || c[19] != 0.0f) return;  // two affine object-to-world rows
+    if (vel_seen_ && !(k0 == vel_key_)) return;
+    vel_key_ = k0;
+    vel_seen_ = true;
+    rr::upscale::MovingObject o;
+    o.now = rr::upscale::FromConstantsTransposed(c, 0);
+    o.then = rr::upscale::FromConstantsTransposed(c, 4);
+    for (const rr::upscale::MovingObject& e : vel_objs_)  // parts of one mesh share its transform
+      if (std::memcmp(e.now.m, o.now.m, sizeof(o.now.m)) == 0 && std::memcmp(e.then.m, o.then.m, sizeof(o.then.m)) == 0)
+        return;
+    if (vel_objs_.size() >= kMaxMovingObjects) return;
+    uint32_t vb = 0;
+    for (uint32_t i = 0; i < 96 && !vb; ++i)
+      if ((vsg.vfetch_constants[i >> 5] >> (i & 31)) & 1) vb = r[kRegFetchConst + 2 * i] & 0x1FFFFFFCu;
+    const struct { uint32_t vb, count; uint64_t vs; } k{vb, index_count, vsg.ucode_hash};
+    o.key = XXH3_64bits(&k, sizeof(k));
+    vel_objs_.push_back(o);
+  }
+  // At the velocity target's resolve: keep its content (the game reuses that EDRAM before the scene colour resolve).
+  void VelocityResolve(const rr::RenderTarget& rt, uint32_t w, uint32_t h) {
+    if (!vel_seen_ || !(rt.key == vel_key_) || !rt.texture || rt.scale != 1 || !w || !h) return;
+    if (vel_mask_w_ != w || vel_mask_h_ != h) {
+      if (vel_mask_) backend_->DestroyTexture(vel_mask_), vel_mask_ = 0;
+      vel_mask_w_ = vel_mask_h_ = 0;
+      gpu::TextureDesc td;
+      td.width = w;
+      td.height = h;
+      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      td.format = gpu::Format::kR16G16Float;
+      td.debug_name = "game velocity copy";
+      vel_mask_ = backend_->CreateTexture(td);
+      if (!vel_mask_) return;
+      vel_mask_w_ = w, vel_mask_h_ = h;
+    }
+    gpu::ComputeBindings b;
+    b.srv[0] = rt.texture;
+    b.uav_texture = vel_mask_;
+    backend_->Dispatch(vel_copy_pipe_, b, (w + 7) / 8, (h + 7) / 8, 1);
+    vel_mask_ok_ = true;
+  }
+  // After the camera motion pass: the characters' pixels again, each with its nearest character's reprojection.
+  void CharacterMotion(const rr::upscale::Mat4& cur, const rr::upscale::Mat4& prev, uint32_t rw, uint32_t rh) {
+    if (!vel_motion_pipe_ || !vel_mask_ok_ || vel_objs_.empty() || vel_prev_objs_.empty() || !up_prev_camera_) return;
+    float cam[3];
+    if (!rr::upscale::PreviousCameraFromObjects(vel_prev_objs_, vel_objs_, cam)) {
+      ++vel_no_camera_;
+      return;
+    }
+    constexpr uint32_t kW = 5;
+    std::array<float, kW * 4 * (kMaxMovingObjects + 1)> t{};
+    rr::upscale::Mat4 pos;  // (u, v, depth, 1) -> camera-relative position (homogeneous)
+    if (!rr::upscale::ReprojectionMatrix(cur, rr::upscale::Mat4{}, 1.0f, pos, up_depth_map_.scale, up_depth_map_.offset))
+      return;
+    std::memcpy(&t[0], pos.m, sizeof(pos.m));
+    uint32_t n = 0;
+    for (const rr::upscale::MovingObject& o : vel_objs_) {
+      rr::upscale::Mat4 rep;
+      if (!rr::upscale::ObjectReprojectionMatrix(cur, prev, o, cam, 1.0f, rep, up_depth_map_.scale, up_depth_map_.offset))
+        continue;
+      float* row = &t[(n + 1) * kW * 4];
+      std::memcpy(row, rep.m, sizeof(rep.m));
+      row[16] = o.now(0, 3), row[17] = o.now(1, 3), row[18] = o.now(2, 3);
+      // A character's body is upright (a yaw-only rotation, maybe scaled); a part attached to a bone (gun, helmet) is
+      // not, sways with the animation, and isn't drawn every frame - nearest by origin, it took over the upper body on
+      // the frames it was drawn: a flickering ~1 px of motion on a still player (notes/80 s.6, Ultra performance).
+      const float tilt = std::fabs(o.now(2, 0)) + std::fabs(o.now(2, 1)) + std::fabs(o.now(0, 2)) + std::fabs(o.now(1, 2));
+      row[19] = tilt < 1e-3f * std::fabs(o.now(2, 2)) ? 1.0f : 0.0f;
+      ++n;
+    }
+    if (!n) return;
+    // A character's pixels lie within ~2.5 m (250 units) of its origin; farther than that, the camera's motion stays.
+    // The velocity pass draws at half the scene (guest pixels); its copy may be taller (rounded up to 8 - ultrawide's
+    // 275 rows come as 280, notes/80 s.8), so the scale comes from the scene, not from the copy's size.
+    const float half = up_scene_w_ && up_depth_scale_ ? 0.5f * float(up_scene_w_ / up_depth_scale_) / float(rw) : 0.5f;
+    const float half_y = up_scene_h_ && up_depth_scale_ ? 0.5f * float(up_scene_h_ / up_depth_scale_) / float(rh) : 0.5f;
+    t[16] = float(n), t[17] = half, t[18] = half_y;
+    t[19] = 250.0f * 250.0f;
+    if (!vel_table_) {
+      gpu::TextureDesc td;
+      td.width = kW;
+      td.height = kMaxMovingObjects + 1;
+      td.usage = gpu::kUsageSampled;
+      td.format = gpu::Format::kR32G32B32A32Float;
+      td.debug_name = "character motion table";
+      vel_table_ = backend_->CreateTexture(td);
+      if (!vel_table_) return;
+    }
+    backend_->UploadTexture(vel_table_, 0, 0, t.data(), kW * 16, kMaxMovingObjects + 1, 1);
+    gpu::ComputeBindings b;
+    b.srv[0] = up_depth_;
+    b.srv[1] = vel_mask_;
+    b.srv[2] = vel_table_;
+    b.uav_texture = up_motion_;
+    backend_->Dispatch(vel_motion_pipe_, b, (rw + 7) / 8, (rh + 7) / 8, 1);
+    ++vel_frames_;
+    vel_objects_sum_ += n;
+  }
+
   uint32_t up_diag_lines_ = 0;  // Gears 3 job 054
   // Runs the upscaler for the scene colour target; returns the texture the resolve should read (0: keep the target).
   gpu::TextureHandle RunUpscaler(const rr::RenderTarget& rt, uint32_t w, uint32_t h) {
     rr::RenderTarget* depth = rts_->Find(up_depth_key_);
-    if (!depth || !depth->texture || depth->scale != rt.scale) {
+    // Notes/80 s.10: a multisampled depth target can't be read as the plain Texture2D the depth copy expects.
+    if (!depth || !depth->texture || depth->scale != rt.scale || (!up_depth_saved_ && depth->key.msaa != 0)) {
       if (up_diag_lines_ < 12) {  // Gears 3 job 054
         ++up_diag_lines_;
         REXLOG_INFO("gow2_upscaler: frame {}: scene resolve found, but its depth target {} (scale {} vs colour {})",
-                    frame_ + 1, !depth ? "is gone" : !depth->texture ? "has no texture" : "differs in scale",
+                    frame_ + 1, !depth ? "is gone" : !depth->texture ? "has no texture"
+                                : depth->scale != rt.scale ? "differs in scale" : "is multisampled",
                     depth ? depth->scale : 0, rt.scale);
       }
       return 0;
@@ -4444,6 +4954,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (up_w_ != rw || up_h_ != rh || up_ow_ != ow || up_oh_ != oh || up_out_format_ != rt.format) {
       for (gpu::TextureHandle* t : {&up_depth_, &up_motion_, &up_output_})
         if (*t) backend_->DestroyTexture(*t), *t = 0;
+      up_depth_saved_ = false;  // notes/80 s.6: an early copy went into the old texture
       gpu::TextureDesc td;
       td.width = rw;
       td.height = rh;
@@ -4466,7 +4977,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     bool infinite = false;
     const bool persp = rr::upscale::PerspectiveParams(cur, fov, znear, infinite);
     const bool hdr = rt.format == gpu::Format::kR16G16B16A16Float;
-    if (upscaler_ && !upscaler_->Configure(*backend_, rw, rh, ow, oh, hdr, persp && infinite)) {
+    // Notes/80 s.6: the depth handed over is the guest's - reversed-Z in Gears 2 (the viewport maps z/w to 1 - z/w).
+    const bool depth_inverted = up_depth_map_.scale < 0.0f;
+    if (upscaler_ && !upscaler_->Configure(*backend_, rw, rh, ow, oh, hdr, persp && infinite, depth_inverted)) {
       REXLOG_WARN("gow2_upscaler: {}; off", upscaler_->Status());
       upscaler_.reset();
       up_last_ok_ = false;
@@ -4475,18 +4988,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         up_scale_in_ = 0;
         rts_->SetPhaseScale(res_scale_);
       }
-      up_inputs_only_ = REXCVAR_GET(gow2_fg_inputs) || fg_wanted_;  // patch 0145: frame generation keeps its inputs
+      const bool fg_keep = REXCVAR_GET(gow2_fg_inputs) || fg_wanted_;  // patch 0145: frame generation keeps its inputs
+      const bool ao_keep = ao_mode_ == rr::ao::Mode::kGtao;              // notes/80: the AO keeps the camera only
+      up_inputs_only_ = fg_keep || ao_keep;
+      up_camera_only_ = !fg_keep && ao_keep;
       up_active_ = up_inputs_only_;
-      if (!up_inputs_only_) return 0;
+      if (!up_inputs_only_ || up_camera_only_) return 0;
     }
-    // Depth in guest convention (a float24 target is stored halved, see remap24 in Draw).
-    gpu::ComputeBindings b;
-    b.constants[0] = std::bit_cast<uint32_t>((float24_remap_ && (depth->key.storage_class & 1)) ? 2.0f : 1.0f);
-    b.constant_count = 4;
-    b.srv[0] = depth->texture;
-    b.srv_plane[0] = 0;
-    b.uav_texture = up_depth_;
-    backend_->Dispatch(up_depth_pipe_, b, (rw + 7) / 8, (rh + 7) / 8, 1);
+    // Depth in guest convention (a float24 target is stored halved, see remap24 in Draw) - taken at the scene depth
+    // resolve when it could be (notes/80 s.6: Gears 2 has cleared the target by now), else from the target now.
+    if (!up_depth_saved_) CopyUpscaleDepth(*depth);
+    up_depth_saved_ = false;
+    up_scene_scale_ = rt.scale;
     rr::upscale::Mat4 rep;
     bool have_rep = false, cut = false;
     float move[3] = {};
@@ -4529,19 +5042,22 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         } else {
           ++up_move_found_;
           up_move_sum_ += len;
-          have_rep = rr::upscale::ReprojectionMatrix(cur, prev, move, 1.0f, rep);
+          have_rep = rr::upscale::ReprojectionMatrix(cur, prev, move, 1.0f, rep, up_depth_map_.scale,
+                                                     up_depth_map_.offset);
         }
       } else {
         ++up_move_missing_;
       }
     }
-    if (!have_rep && !cut) have_rep = rr::upscale::ReprojectionMatrix(cur, prev, 1.0f, rep);
+    if (!have_rep && !cut)
+      have_rep = rr::upscale::ReprojectionMatrix(cur, prev, 1.0f, rep, up_depth_map_.scale, up_depth_map_.offset);
     gpu::ComputeBindings mb;
     for (int i = 0; i < 16; ++i) mb.constants[i] = std::bit_cast<uint32_t>(have_rep ? rep.m[i] : (i % 5 ? 0.0f : 1.0f));
     mb.constant_count = 16;
     mb.srv[0] = up_depth_;
     mb.uav_texture = up_motion_;
     backend_->Dispatch(up_motion_pipe_, mb, (rw + 7) / 8, (rh + 7) / 8, 1);
+    if (have_rep) CharacterMotion(cur, prev, rw, rh);  // notes/80 s.6
     const auto now = std::chrono::steady_clock::now();
     rr::upscale::FrameInputs in;
     in.color = rt.texture;
@@ -4641,6 +5157,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       CaptureTex(rt.texture, rt.format, rw, rh, "in", 0);
       CaptureTex(up_output_, rt.format, ow, oh, "out", 0);
       CaptureTex(up_motion_, gpu::Format::kR16G16Float, rw, rh, "motion", 1);
+      if (up_capture_raw_class_ >= 0)  // --gow2_upscale_capture_raw_class (notes/80 s.6): unclamped
+        CaptureRaw(up_motion_, gpu::Format::kR16G16Float, rw, rh, "motion");
       CaptureTex(up_depth_, gpu::Format::kR32Float, rw, rh, "depth", 2);
     }
     return up_output_;
@@ -4726,8 +5244,427 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
 
   // Frame boundary (OnSwap): this frame's camera becomes the previous one; next frame's jitter.
+  // Notes/80: XeGTAO's camera constants for this frame's scene (null: the frame has no camera, or not a perspective the
+  // shaders can use). Made once per frame on first use - the AO resolve (notes/80 s.4) and the --gow2_ao_log line.
+  const rr::ao::GtaoConstants* AoConstants() {
+    if (!up_camera_) return nullptr;
+    if (ao_constants_state_ == 0) {
+      const bool ok = rr::ao::MakeGtaoConstants(rr::upscale::FromConstantsTransposed(up_vp_, 0), up_depth_map_,
+                                                up_scene_w_, up_scene_h_, ao_constants_);
+      ao_constants_state_ = ok ? 1 : -1;
+    }
+    return ao_constants_state_ > 0 ? &ao_constants_ : nullptr;
+  }
+
+  // Notes/80 s.4: XeGTAO's pipelines, once (the quality preset picks the main pass's slices x steps).
+  void InitAo() {
+    ao_trace_ = !REXCVAR_GET(gow2_ao_trace_frames).empty();  // the diagnostic works with the game's own AO too
+    ao_trace_class_ = REXCVAR_GET(gow2_ao_trace_class);
+    up_capture_raw_class_ = REXCVAR_GET(gow2_upscale_capture_raw_class);
+    {
+      unsigned a = 0, b = 0;
+      if (std::sscanf(REXCVAR_GET(gow2_ao_trace_vs).c_str(), "%u-%u", &a, &b) == 2 && a <= b && b < 256)
+        ao_trace_vs_first_ = a, ao_trace_vs_last_ = b;
+    }
+    if (ao_mode_ != rr::ao::Mode::kGtao) return;
+    static constexpr const char* kQuality[4] = {"low", "medium", "high", "ultra"};
+    static constexpr const char* kSlices[4] = {"1.0", "2.0", "3.0", "9.0"};
+    static constexpr const char* kSteps[4] = {"2.0", "2.0", "3.0", "3.0"};
+    const std::string quality = REXCVAR_GET(gow2_ao_quality);
+    uint32_t q = 2;
+    for (uint32_t i = 0; i < 4; ++i)
+      if (quality == kQuality[i]) q = i;
+    const std::string common = rr::builtin::kXeGtaoCommon;
+    auto make = [&](const std::string& name, const std::string& hlsl) -> gpu::PipelineHandle {
+      const gpu::ShaderHandle s = cache_->GetBuiltin(name, hlsl, gpu::ShaderStage::kCompute);
+      return s ? backend_->CreateComputePipeline(s) : 0;
+    };
+    ao_prefilter_pipe_ = make("xegtao_prefilter_cs", common + rr::builtin::kXeGtaoPrefilterCs);
+    for (uint32_t i = 0; i < 4; ++i)
+      ao_main_pipes_[i] = make(std::string("xegtao_main_") + kQuality[i] + "_cs",
+                               std::string("#define XE_SLICES ") + kSlices[i] + "\n#define XE_STEPS " + kSteps[i] + "\n" +
+                                   common + rr::builtin::kXeGtaoMainCs);
+    ao_main_pipe_ = ao_main_pipes_[q];
+    ao_denoise_pipe_ = make("xegtao_denoise_cs", common + rr::builtin::kXeGtaoDenoiseCs);
+    ao_debug_pipe_ = make("xegtao_debug_cs", rr::builtin::kXeGtaoDebugCs);
+    ao_pack_pipe_ = make("xegtao_pack_cs", rr::builtin::kXeGtaoPackCs);
+    ao_debug_ = std::clamp(REXCVAR_GET(gow2_ao_debug), 0, 5);
+    ao_denoise_passes_ = uint32_t(std::clamp(REXCVAR_GET(gow2_ao_denoise), 1, 3));
+    const std::string show = REXCVAR_GET(gow2_ao_show);
+    ao_show_ = show == "none" ? 1u : show == "game" ? 2u : 0u;
+    ao_skip_game_ = uint32_t(std::clamp(REXCVAR_GET(gow2_ao_skip_game), 0, 3));
+    ao_everywhere_ = REXCVAR_GET(gow2_ao_everywhere);
+    ao_fog_ps_ = "," + REXCVAR_GET(gow2_ao_fog_ps) + ",";
+    if (ao_everywhere_)
+      ao_multiply_ps_ = cache_->GetBuiltin("xegtao_multiply_ps", rr::builtin::kXeGtaoMultiplyPs, gpu::ShaderStage::kPixel);
+
+    if (!ao_prefilter_pipe_ || !ao_main_pipe_ || !ao_denoise_pipe_ || !ao_pack_pipe_) {
+      REXLOG_WARN("gow2_ao: XeGTAO shaders failed to compile; the game's own AO stays");
+      return;
+    }
+    XenosAoDebugSetState(ao_show_, uint32_t(ao_debug_), q);  // notes/80 s.12: the keys start from here
+    REXLOG_INFO("gow2_ao: XeGTAO {} ({} slices x {} steps), radius {}, power {}, {} denoise pass(es), shown: {}{}",
+                kQuality[q], kSlices[q], kSteps[q], REXCVAR_GET(gow2_ao_radius), REXCVAR_GET(gow2_ao_power),
+                ao_denoise_passes_, ao_show_ == 1 ? "none" : ao_show_ == 2 ? "the game's own" : "XeGTAO",
+                ao_debug_ ? ", debug view " + std::to_string(ao_debug_) : std::string());
+  }
+
+  // Notes/80 s.4: XeGTAO on the frame's scene depth, into ao_final_ (scene size, visibility 0..1). Needs the frame's
+  // camera (AoConstants) and its depth target complete - called at the scene depth resolve.
+  bool RunGtao() {
+    ao_ready_ = false;
+    if (!ao_prefilter_pipe_ || !ao_main_pipe_ || !ao_denoise_pipe_) return false;
+    const rr::ao::GtaoConstants* k = AoConstants();
+    if (!k) return false;
+    rr::RenderTarget* depth = rts_->FindAny(up_depth_key_);
+    // Notes/80 s.10: a multisampled depth target is no Texture2D for the prefilter (an invalid call - device loss).
+    if (!depth || !depth->texture) return false;
+    if (depth->key.msaa != 0) {
+      if (!ao_msaa_depth_skips_++)
+        REXLOG_WARN("gow2_ao: frame {}: the scene depth is multisampled (base {} pitch {}, msaa {}) - XeGTAO skipped on "
+                    "such frames (notes/80 s.10)", frame_ + 1, depth->key.base_tiles, depth->key.pitch_pixels, depth->key.msaa);
+      return false;
+    }
+    const uint32_t w = k->width, h = k->height;
+    if (ao_w_ != w || ao_h_ != h) {
+      for (gpu::TextureHandle* t : {&ao_depth_, &ao_work_, &ao_work2_, &ao_edges_, &ao_final_})
+        if (*t) backend_->DestroyTexture(*t), *t = 0;
+      ao_w_ = ao_h_ = 0;
+      gpu::TextureDesc td;
+      td.width = w;
+      td.height = h;
+      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      td.format = gpu::Format::kR32Float;
+      td.mips = 5;  // XE_GTAO_DEPTH_MIP_LEVELS
+      td.debug_name = "xegtao view depth";
+      ao_depth_ = backend_->CreateTexture(td);
+      td.mips = 1;
+      td.format = gpu::Format::kR16Float;
+      td.debug_name = "xegtao working ao";
+      ao_work_ = backend_->CreateTexture(td);
+      ao_work2_ = backend_->CreateTexture(td);  // the earlier denoise passes ping-pong through it
+      td.debug_name = "xegtao edges";
+      ao_edges_ = backend_->CreateTexture(td);
+      td.debug_name = "xegtao ao";
+      ao_final_ = backend_->CreateTexture(td);
+      if (!ao_depth_ || !ao_work_ || !ao_work2_ || !ao_edges_ || !ao_final_) {
+        if (!ao_failed_logged_) REXLOG_WARN("gow2_ao: XeGTAO textures ({}x{}) could not be made", w, h);
+        ao_failed_logged_ = true;
+        return false;
+      }
+      ao_w_ = w, ao_h_ = h;
+    }
+    gpu::ComputeBindings b;
+    b.constant_count = 16;
+    b.constants[0] = w;
+    b.constants[1] = h;
+    // Host depth -> guest depth: a float24 target holds guest depth x 0.5 (remap24 in Draw), as RunUpscaler undoes.
+    b.constants[2] = std::bit_cast<uint32_t>((float24_remap_ && (depth->key.storage_class & 1)) ? 2.0f : 1.0f);
+    b.constants[4] = std::bit_cast<uint32_t>(k->depth_unpack[0]);
+    b.constants[5] = std::bit_cast<uint32_t>(k->depth_unpack[1]);
+    b.constants[6] = std::bit_cast<uint32_t>(k->tan_half_fov[0]);
+    b.constants[7] = std::bit_cast<uint32_t>(k->tan_half_fov[1]);
+    // Notes/80 s.9: replacing the game's AO (it drew one last frame) or added where it has none (gentler in Gears 3).
+    const double add_r = REXCVAR_GET(gow2_ao_add_radius), add_p = REXCVAR_GET(gow2_ao_add_power);
+    const bool added = !ao_had_chain_last_;
+    b.constants[8] = std::bit_cast<uint32_t>(float(added && add_r >= 0.0 ? add_r : REXCVAR_GET(gow2_ao_radius)));
+    b.constants[9] = std::bit_cast<uint32_t>(0.615f);   // XE_GTAO_DEFAULT_FALLOFF_RANGE
+    b.constants[10] = std::bit_cast<uint32_t>(float(added && add_p >= 0.0 ? add_p : REXCVAR_GET(gow2_ao_power)));
+    b.constants[11] = 0;                                // noise index: no temporal accumulation of ours
+    b.constants[12] = std::bit_cast<uint32_t>(1.2f);    // denoise blur beta (XeGTAO: one "sharp" pass)
+    b.constants[13] = std::bit_cast<uint32_t>(3.30f);   // XE_GTAO_DEFAULT_DEPTH_MIP_SAMPLING_OFFSET
+    b.constants[14] = std::bit_cast<uint32_t>(2.0f);    // XE_GTAO_DEFAULT_SAMPLE_DISTRIBUTION_POWER
+    // 1. The view-depth pyramid, one dispatch per level.
+    b.srv[0] = depth->texture;
+    b.srv_plane[0] = 0;
+    b.uav_texture = ao_depth_;
+    for (uint32_t mip = 0; mip < 5; ++mip) {
+      b.constants[3] = mip;
+      b.uav_mip = mip;
+      backend_->Dispatch(ao_prefilter_pipe_, b, (w + 15) / 16, (h + 15) / 16, 1);
+    }
+    // 2. The main pass: working AO term + edges.
+    b.constants[3] = 0;
+    b.srv[0] = ao_depth_;
+    b.uav_texture = ao_work_;
+    b.uav_mip = 0;
+    b.uav2_texture = ao_edges_;
+    backend_->Dispatch(ao_main_pipe_, b, (w + 7) / 8, (h + 7) / 8, 1);
+    // 3. Denoise: the earlier passes ping-pong between the working textures, the last one writes the final AO.
+    b.srv[1] = ao_edges_;
+    b.uav2_texture = 0;
+    gpu::TextureHandle src = ao_work_, other = ao_work2_;
+    for (uint32_t pass = 0; pass < ao_denoise_passes_; ++pass) {
+      const bool last = pass + 1 == ao_denoise_passes_;
+      b.constants[3] = last ? 1u : 0u;
+      b.srv[0] = src;
+      b.uav_texture = last ? ao_final_ : other;
+      backend_->Dispatch(ao_denoise_pipe_, b, ((w + 1) / 2 + 7) / 8, (h + 7) / 8, 1);
+      std::swap(src, other);
+    }
+    ao_ready_ = true;
+    ++ao_runs_;
+    return true;
+  }
+
+  // Notes/80 s.4: the game's AO chain, by shape - its addresses move with the settings (notes/80 s.2). Resolves of a
+  // half-scene-size k_16_16_FLOAT target: the raw term and its blurs go to one address (ping-pong, 4 in Gears 2), then
+  // the final AO - the composite's input and next frame's history - goes to another. That one is replaced for the rest
+  // of the frame by XeGTAO's result at full resolution (the game's own resolve is kept: its history stays its own).
+  void AoNoteResolve(const ::xenos::resolve::Info& info, const rr::RenderTarget& rt, uint32_t w, uint32_t h) {
+    if (ao_override_base_ && info.dest_base == ao_override_base_) {  // written again: no longer the AO
+      ao_override_base_ = 0;
+      tex_memo_valid_ = false;
+    }
+    if (ao_final_seen_ || rt.format != gpu::Format::kR16G16Float || !up_depth_scale_ || !up_scene_w_) return;
+    const uint32_t sw = up_scene_w_ / up_depth_scale_, sh = up_scene_h_ / up_depth_scale_;  // the scene, guest pixels
+    // Half the scene, give or take the copy rectangle's rounding up to 8 (ultrawide: 550 / 2 = 275 is copied as 280,
+    // notes/80 s.8).
+    auto close = [](uint32_t a, uint32_t b) { return a + 8 >= b && b + 8 >= a; };
+    if (!close(w, sw / 2) || !close(h, sh / 2)) return;
+    if (info.dest_base == ao_pp_dest_) {
+      ++ao_pp_count_;
+      return;
+    }
+    if (ao_pp_count_ < 3) {
+      ao_pp_dest_ = info.dest_base;
+      ao_pp_count_ = 1;
+      return;
+    }
+    // Notes/80 s.2: trusted only once seen on 3 frames in a row. A real AO chain is drawn every frame; in Gears 3 at
+    // 4x scale something of the same shape matched once in 600 frames, and replacing / skipping on that one frame is
+    // the likeliest cause of a device loss seen in testing there.
+    ao_detected_frame_ = true;
+    if (ao_chain_streak_ < 2) return;
+    ao_final_seen_ = true;
+    ++ao_finals_;
+    ao_chain_key_ = rt.key;  // skipped from the next frame on (AoSkipping)
+    ao_chain_known_ = true;
+    ao_chain_pp_dest_ = ao_pp_dest_;  // notes/80 s.10: only copies to the chain's own ping-pong address are skipped
+    if (ao_show_ == 2 || !ao_ready_ || !rt.texture || !ao_final_ || !ao_pack_pipe_) return;  // 2: the game's own AO
+    if (ao_full_w_ != ao_w_ || ao_full_h_ != ao_h_) {
+      if (ao_full_) backend_->DestroyTexture(ao_full_), ao_full_ = 0;
+      gpu::TextureDesc td;
+      td.width = ao_w_;
+      td.height = ao_h_;
+      td.format = gpu::Format::kR16G16Float;
+      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      td.debug_name = "xegtao game ao stand-in";
+      ao_full_ = backend_->CreateTexture(td);
+      ao_full_w_ = ao_full_ ? ao_w_ : 0;
+      ao_full_h_ = ao_full_ ? ao_h_ : 0;
+      if (!ao_full_) return;
+    }
+    gpu::ComputeBindings b;
+    b.constant_count = 8;
+    b.constants[0] = ao_w_;
+    b.constants[1] = ao_h_;
+    b.constants[2] = ao_show_;
+    b.constants[3] = ao_skipped_frame_ ? 1u : 0u;  // the chain was skipped: its target holds no y of this frame
+    b.constants[4] = uint32_t(std::max(info.x0, 0)) * rt.scale;
+    b.constants[5] = uint32_t(std::max(info.y0, 0)) * rt.scale;
+    b.constants[6] = w * rt.scale;
+    b.constants[7] = h * rt.scale;
+    b.srv[0] = rt.texture;
+    b.srv[1] = ao_final_;
+    b.uav_texture = ao_full_;
+    backend_->Dispatch(ao_pack_pipe_, b, (ao_w_ + 7) / 8, (ao_h_ + 7) / 8, 1);
+    ao_override_base_ = info.dest_base;
+    ao_override_w_ = w;
+    ao_override_h_ = h;
+    tex_memo_valid_ = false;
+    ++ao_replaced_;
+  }
+
+  // Notes/80: the game's own AO chain is skipped while its result is replaced - only on frames where XeGTAO already ran
+  // (so the stand-in will exist), only into the target the chain was found in, and only until this frame's final AO
+  // resolve (which still runs, so the chain keeps being found) and never after the scene colour resolve.
+  bool AoSkipping() const {
+    return ao_skip_game_ && ao_chain_known_ && ao_show_ != 2 && ao_ready_ && !ao_final_seen_ && !up_scene_done_;
+  }
+
+  // Notes/80 s.5: before the game's fog pass in a frame without its AO chain, the scene times XeGTAO's AO - where the
+  // game's own apply would have multiplied it (scene * AO, then fog). Once per frame; only while XeGTAO is shown.
+  bool AoAddWanted(const rr::PipelineState& ps, const rr::RenderTarget* rt, uint32_t colour_count, uint64_t ps_hash,
+                   uint32_t prim, uint32_t index_count) const {
+    if (!ao_everywhere_ || ao_mode_ != rr::ao::Mode::kGtao || ao_show_ != 0 || !ao_ready_ || ao_final_seen_ ||
+        ao_added_frame_ || ao_detected_frame_ || up_scene_done_ || colour_count != 1 || !rt || !rt->texture || !ao_final_ ||
+        !ao_multiply_ps_)
+      return false;
+    if (!(prim == 0x08 || index_count <= 6)) return false;  // a full-screen pass
+    const rr::RenderTargetBlend& b = ps.blend.rt[0];
+    if (!b.blend_enable || b.src_color != rr::BlendFactor::One || b.dst_color != rr::BlendFactor::SrcAlpha) return false;
+    // The scene colour: 16-bit float (Gears 2's HDR; Gears 3 lights into a 2_10_10_10_FLOAT target, also float here) or
+    // 10:10:10:2 (notes/80 s.9); the fog shader's hash is what picks the pass.
+    const bool scene_format = rt->format == gpu::Format::kR16G16B16A16Float || rt->format == gpu::Format::kR10G10B10A2Unorm;
+    // Notes/80 s.10: never into a multisampled target (Gears 3 draws effects through 4x MSAA views of the scene; the
+    // multiply pipeline is single-sampled - drawing it into one is an invalid call, the device loss seen in testing).
+    if (rt->scale != up_depth_scale_ || !scene_format) return false;
+    char hex[20];
+    std::snprintf(hex, sizeof(hex), ",%016llX,", static_cast<unsigned long long>(ps_hash));
+    if (ao_fog_ps_.find(hex) == std::string::npos) return false;
+    if (rt->key.msaa != 0) {
+      if (!ao_msaa_skips_++)
+        REXLOG_WARN("gow2_ao: frame {}: the fog pass draws into a multisampled target (base {} pitch {}, msaa {}) - "
+                    "nothing added there (notes/80 s.10)", frame_ + 1, rt->key.base_tiles, rt->key.pitch_pixels,
+                    rt->key.msaa);
+      return false;
+    }
+    return true;
+  }
+
+  void AoAddPass(rr::RenderTarget& rt) {
+    ao_added_frame_ = true;
+    auto it = ao_multiply_pipes_.find(uint32_t(rt.format));
+    if (it == ao_multiply_pipes_.end()) {
+      gpu::GraphicsPipelineDesc d;
+      d.vs = transfer_vs_;
+      d.ps = ao_multiply_ps_;
+      d.topology = gpu::Topology::kTriangleList;
+      d.depth_clip = false;
+      d.color_count = 1;
+      d.color_formats[0] = rt.format;
+      d.color_write_masks[0] = 0x7;  // RGB, as the game's apply
+      d.color_blend[0].enable = true;
+      d.color_blend[0].src = gpu::BlendFactor::kZero;
+      d.color_blend[0].dst = gpu::BlendFactor::kSrcColor;
+      it = ao_multiply_pipes_.emplace(uint32_t(rt.format), transfer_vs_ ? backend_->GetGraphicsPipeline(d) : 0).first;
+    }
+    if (!it->second) return;
+    gpu::TextureView views[1];
+    views[0].texture = ao_final_;
+    gpu::SamplerDesc samplers[1];
+    tex_memo_valid_ = false;  // the bound views change (the game's draw binds its own next)
+    backend_->SetTextures(views, samplers, 1, 1);
+    gpu::TextureHandle target = rt.texture;
+    backend_->SetRenderTargets(1, &target, 0);
+    backend_->SetViewport({0.0f, 0.0f, float(ao_w_), float(ao_h_), 0.0f, 1.0f});
+    backend_->SetScissor({0, 0, int32_t(ao_w_), int32_t(ao_h_)});
+    backend_->SetPipeline(it->second);
+    backend_->Draw(3);
+    Wrote(rt);
+    ++ao_added_;
+  }
+
+  // Notes/80 s.4: a draw's 2D fetches of the final AO's address (and size) read the full-resolution stand-in. The
+  // slot is marked as held at the resolution scale, so the shader keeps its texel maths in the guest texture's units.
+  void AoOverrideViews(const uint32_t* fetch, uint32_t t2d, gpu::TextureView* views, uint32_t& scaled_mask) {
+    for (uint32_t m = t2d; m; m &= m - 1) {
+      const uint32_t i = uint32_t(std::countr_zero(m));
+      const uint32_t* f = fetch + 6 * i;
+      if ((f[1] & 0xFFFFF000u) != ao_override_base_) continue;
+      const uint32_t tw = (f[2] & 0x1FFFu) + 1, th = ((f[2] >> 13) & 0x1FFFu) + 1;
+      if (tw + 8 < ao_override_w_ || tw > ao_override_w_ + 8 || th + 8 < ao_override_h_ || th > ao_override_h_ + 8)
+        continue;
+      views[i].texture = ao_full_;
+      views[i].signed_view = false;
+      views[i].bits_view = false;
+      views[i].zero = false;
+      views[i].plane = 0;
+      scaled_mask |= 1u << i;
+      ++ao_binds_;
+    }
+  }
+
+  // Notes/80 diagnostic (--gow2_ao_trace_frames): one line per full-screen pass of the listed frames.
+  void AoTraceDraw(const uint32_t* r, const rr::PipelineState& ps, const rr::RenderTargetKey& k0, uint32_t colour_count,
+                   uint64_t vs_hash, uint64_t ps_hash, uint32_t prim, uint32_t index_count) {
+    static const std::string list = "," + REXCVAR_GET(gow2_ao_trace_frames) + ",";
+    if (list.find("," + std::to_string(frame_ + 1) + ",") == std::string::npos) return;
+    std::string tex;
+    for (uint32_t i = 0; i < 16; ++i) {
+      const uint32_t* f = &r[kRegFetchConst + 6 * i];
+      if ((f[0] & 3u) != 2u || !(f[1] & 0xFFFFF000u)) continue;  // not a texture fetch constant (type 2) / no address
+      tex += std::format(" t{}={:08X}:{}x{}", i, f[1] & 0xFFFFF000u, (f[2] & 0x1FFFu) + 1, ((f[2] >> 13) & 0x1FFFu) + 1);
+    }
+    const rr::RenderTargetBlend& b = ps.blend.rt[0];
+    REXLOG_INFO("gow2_ao_trace: frame {} draw {} prim {} count {} | rt0 base {} class {} pitch {} ({} targets) | vs {:016X} "
+                "ps {:016X} | blend {} src {} dst {} op {} mask {:X} |{}", frame_ + 1, draw_index_, prim, index_count,
+                k0.base_tiles, k0.storage_class, k0.pitch_pixels, colour_count, vs_hash, ps_hash, b.blend_enable ? 1 : 0,
+                uint32_t(b.src_color), uint32_t(b.dst_color), uint32_t(b.color_op), b.write_mask, tex);
+    std::string c;  // the pixel shader's first float constants (the AO apply's occlusion colour and scales, notes/80)
+    for (uint32_t k = 0; k < 9; ++k)
+      c += std::format(" c{}=({:.4g} {:.4g} {:.4g} {:.4g})", k, std::bit_cast<float>(r[kRegFloatConstPs + 4 * k]),
+                       std::bit_cast<float>(r[kRegFloatConstPs + 4 * k + 1]), std::bit_cast<float>(r[kRegFloatConstPs + 4 * k + 2]),
+                       std::bit_cast<float>(r[kRegFloatConstPs + 4 * k + 3]));
+    REXLOG_INFO("gow2_ao_trace: frame {} draw {} ps constants{}", frame_ + 1, draw_index_, c);
+    if (ao_trace_vs_last_ >= ao_trace_vs_first_) {  // --gow2_ao_trace_vs (notes/80 s.6: the velocity pass's c5-c12)
+      std::string t;
+      for (uint32_t k = ao_trace_vs_first_; k <= ao_trace_vs_last_; ++k)
+        t += std::format(" c{}=({:.4g} {:.4g} {:.4g} {:.4g})", k, std::bit_cast<float>(r[kRegFloatConstVs + 4 * k]),
+                         std::bit_cast<float>(r[kRegFloatConstVs + 4 * k + 1]),
+                         std::bit_cast<float>(r[kRegFloatConstVs + 4 * k + 2]),
+                         std::bit_cast<float>(r[kRegFloatConstVs + 4 * k + 3]));
+      REXLOG_INFO("gow2_ao_trace: frame {} draw {} vs constants{}", frame_ + 1, draw_index_, t);
+    }
+  }
+
+  // Notes/80: --gow2_ao_debug - the final AO over the finished picture (present_out_, w x h packed words).
+  void AoDebugView(uint32_t w, uint32_t h) {
+    if (!ao_debug_ || !ao_ready_ || !ao_debug_pipe_ || !present_out_ || !ao_final_) return;
+    gpu::ComputeBindings b;
+    b.constant_count = 8;
+    b.constants[0] = w;
+    b.constants[1] = h;
+    b.constants[3] = uint32_t(ao_debug_);
+    b.constants[4] = ao_w_;
+    b.constants[5] = ao_h_;
+    // 3-5: the passes' inputs (view depth / 2000 world units, the working term x its packing scale, packed edges).
+    const float scale = ao_debug_ == 3 ? 1.0f / 2000.0f : ao_debug_ == 4 ? 1.5f : 1.0f;
+    b.constants[6] = std::bit_cast<uint32_t>(scale);
+    b.srv[0] = ao_debug_ == 3 ? ao_depth_ : ao_debug_ == 4 ? ao_work_ : ao_debug_ == 5 ? ao_edges_ : ao_final_;
+    b.uav_texture = present_out_;
+    backend_->Dispatch(ao_debug_pipe_, b, (w + 7) / 8, (h + 7) / 8, 1);
+  }
+
+  void AoEndFrame() {
+    const rr::ao::GtaoConstants* k = AoConstants();
+    ++(k ? ao_frames_ok_ : ao_frames_none_);
+    static const int32_t every = REXCVAR_GET(gow2_ao_log);
+    if (every > 0 && frame_ % uint64_t(every) == 0) {
+      const uint64_t total = ao_frames_ok_ + ao_frames_none_;
+      if (k)
+        REXLOG_INFO("gow2_ao: frame {}: scene {}x{}, near {:.3f}, tan(fov/2) {:.4f} x {:.4f}, view z = {:.6g} / ({:.6g} - "
+                    "depth), depth = {} * z/w + {}; constants on {} of {} frames",
+                    frame_, k->width, k->height, k->near_plane, k->tan_half_fov[0], k->tan_half_fov[1], k->depth_unpack[0],
+                    k->depth_unpack[1], up_depth_map_.scale, up_depth_map_.offset, ao_frames_ok_, total);
+      else
+        REXLOG_INFO("gow2_ao: frame {}: no camera constants (camera {}); constants on {} of {} frames", frame_,
+                    up_camera_ ? "not a perspective" : "not seen", ao_frames_ok_, total);
+      REXLOG_INFO("gow2_ao: XeGTAO ran on {} frames; the game's final AO found {} times, replaced {}, read through the "
+                  "stand-in by {} texture bindings; the game's chain skipped: {} draws, {} copies; added where the game "
+                  "had none: {}", ao_runs_, ao_finals_, ao_replaced_, ao_binds_, ao_skipped_draws_, ao_skipped_resolves_,
+                  ao_added_);
+      ao_frames_ok_ = ao_frames_none_ = 0;
+      ao_runs_ = ao_finals_ = ao_replaced_ = ao_binds_ = ao_skipped_draws_ = ao_skipped_resolves_ = ao_added_ = 0;
+    }
+    ao_constants_state_ = 0;
+    {  // notes/80 s.12: the live state (F9 / F10 / F11) for the next frame
+      ao_show_ = XenosAoDebugShow();
+      ao_debug_ = int32_t(XenosAoDebugView());
+      if (const gpu::PipelineHandle p = ao_main_pipes_[XenosAoDebugQuality() & 3u]) ao_main_pipe_ = p;
+    }
+    ao_pp_dest_ = ao_pp_count_ = 0;  // notes/80 s.4: the next frame's chain is found afresh
+    ao_skipped_frame_ = false;
+    ao_added_frame_ = false;
+    ao_had_chain_last_ = ao_final_seen_;  // notes/80 s.9
+    ao_chain_streak_ = ao_detected_frame_ ? std::min(ao_chain_streak_ + 1, 1000u) : 0u;  // notes/80 s.2
+    // Notes/80 s.10: a frame without the chain = the game stopped drawing its AO (detection runs while the chain is
+    // skipped - its copies still pass AoNoteResolve). Forgotten at once: the same EDRAM target is then reused for other
+    // effects (Gears 3 ch12's landing cutscene), whose draws and copies must not be skipped - a copy never made and
+    // read later was the device loss (INVALID_CALL, VA 0) seen in testing in ch12 and, after a false match, in ch1.
+    if (!ao_detected_frame_) ao_chain_known_ = false;
+    ao_detected_frame_ = false;
+    ao_final_seen_ = false;
+    if (ao_override_base_) {
+      ao_override_base_ = 0;
+      tex_memo_valid_ = false;
+    }
+  }
+
   void UpscaleEndFrame() {
     if (!up_active_) return;  // patch 0145
+    if (ao_mode_ == rr::ao::Mode::kGtao) AoEndFrame();  // notes/80, before this frame's camera is rolled over
     if (up_cap_left_ > 0) --up_cap_left_;
     bool cap_now = false;  // job 727: --gow2_upscale_capture_frames
     {
@@ -4755,9 +5692,17 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     up_objects_.clear();
     up_camera_ = false;
     up_scene_done_ = false;
+    up_depth_saved_ = false;  // notes/80 s.6
+    if (up_prev_camera_) vel_prev_objs_.swap(vel_objs_);  // notes/80 s.6 (up_camera_ is already reset): this frame's characters, for the camera position
+    else vel_prev_objs_.clear();
+    vel_objs_.clear();
+    vel_seen_ = vel_mask_ok_ = false;
     ++up_frames_;
     up_jitter_ = rr::upscale::JitterOffset(  // patch 0141: more phases when upscaling (render < output)
         up_frames_, rr::upscale::JitterPhaseCount(up_scale_in_ ? up_scale_in_ : 1, up_scale_in_ ? res_scale_ : 1));
+    // Notes/80 s.7: SMAA T2x's two sub-pixel positions (SMAA's (0.25, -0.25) / (-0.25, 0.25), NDC y up; our viewport
+    // offset is +y down), each with its sub-sample indices in the weight pass.
+    if (t2x_) up_jitter_ = (up_frames_ & 1) ? rr::upscale::Jitter{-0.25f, 0.25f} : rr::upscale::Jitter{0.25f, -0.25f};
     if (up_scale_in_) {  // patch 0141: the next frame's scene at the scene scale only if this frame upscaled
       if (rts_->PhaseScale() != res_scale_) ++up_no_flip_;  // scene scale all frame: no scene resolve upscaled
       const bool scene_next = up_last_ok_ || up_scene_seen_;  // 0141 review: also after an output-scale scene frame
@@ -4816,6 +5761,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     "position, sign {} x{}), not found {}, cuts {}; last frame {} of {} matched objects agreed",
                     up_move_found_, up_move_found_ ? up_move_sum_ / double(up_move_found_) : 0.0, up_move_from_pos_,
                     up_cam_sign_, up_cam_sign_votes_, up_move_missing_, up_cuts_, up_last_votes_, up_last_matched_);
+      if (t2x_)  // notes/80 s.7
+        REXLOG_INFO("gow2_upscaler: SMAA T2x on {} frames ({} without history)", t2x_frames_, t2x_resets_);
+      t2x_frames_ = t2x_resets_ = 0;
+      if (vel_motion_pipe_)  // notes/80 s.6
+        REXLOG_INFO("gow2_upscaler: character motion on {} frames ({:.1f} characters/frame), no previous camera on {}",
+                    vel_frames_, vel_frames_ ? double(vel_objects_sum_) / double(vel_frames_) : 0.0, vel_no_camera_);
+      vel_frames_ = vel_objects_sum_ = vel_no_camera_ = 0;
       up_move_from_pos_ = 0;
       up_jittered_ = 0;
       up_move_found_ = up_move_missing_ = up_cuts_ = 0;
@@ -5794,6 +6746,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++colour_count;
     }
     if (depth_bound) bound_bases[bound_count++] = key.base_tiles;
+    if (colour_count == 1 && up_active_ && !up_camera_only_) VelocityDraw(r, vsg, colour_keys[0], index_count);  // notes/80 s.6
+    if (ao_trace_ && colour_count && (prim == 0x08 || index_count <= 6 || int32_t(colour_keys[0].storage_class) == ao_trace_class_)) AoTraceDraw(r, ps, colour_keys[0], colour_count,
+                                                                                   vs_hash, ps_hash, prim, index_count);
+    // Notes/80: the game's AO chain while XeGTAO replaces its result - skipped before any ownership or transfer work.
+    // Only draws that write the AO target alone: the chain's first draw also writes a second target (rt1, 8888, EDRAM
+    // 1808 in ch2) that the game uses outside the chain - skipping it washes the picture out (notes/80 s.4) - and a
+    // draw that writes depth or stencil leaves state other passes may use.
+    if ((ao_skip_game_ & 1u) && colour_count == 1 && colour_keys[0] == ao_chain_key_ &&
+        !(depth_bound && (ds.depth_write || stencil_writes)) && AoSkipping()) {
+      ++ao_skipped_draws_;
+      ao_skipped_frame_ = true;
+      Skip("the game's AO chain (XeGTAO shown, notes/80)");
+      return;
+    }
     rr::RenderTarget* colour_rt[4] = {};  // per guest slot: the targets this draw renders into
     bool draw_colour = false;
     for (uint32_t k = 0; k < colour_count; ++k) {
@@ -5841,6 +6807,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     if (is_clear && writes_colour) ++stats_.colour_clears;
+    // Notes/80 s.5: XeGTAO where the game has no AO this frame, just before its fog pass (the scene target is current).
+    if (AoAddWanted(ps, colour_rt[0], colour_count, ps_hash, prim, index_count)) AoAddPass(*colour_rt[0]);
 
     const bool depth_writes = ds.depth_write || stencil_writes;
     const Ownership own = OwnershipFor(ps, depth_writes, depth_bound, CanaryLimit(key.base_tiles, bound_bases, bound_count));
@@ -6056,6 +7024,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       stand_ins = textures_->Bind(&r[kRegFetchConst], t2d, tcube, t3d, frame_, views, samplers);
       backend_->SetGpuCategory(gpu_cat_ != 0xFF ? gpu_cat_ : 0);
       scaled_mask = textures_->LastScaledMask();
+      if (ao_override_base_) AoOverrideViews(&r[kRegFetchConst], t2d, views, scaled_mask);  // notes/80 s.4
       stats_.texture_bytes += textures_->Stats().upload_bytes - before;
       // The table only needs to reach the highest slot the shaders read (t0-31 2D, t32-63 cube, t64-95 3D).
       const uint32_t count = t3d ? 64u + 32u - uint32_t(std::countl_zero(t3d))
@@ -8702,6 +9671,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++stats_.depth_resolves;
       ++t2_stats_.seen_depth;
       ResolveDepth(info, rg, depth_rt, copy, first_draw, last_draw, drawn, Bits(dinfo, 0, 3));
+      // Notes/80: XeGTAO right after the game copies its scene depth out (the base pass is done; later in the frame the
+      // game clears that EDRAM through a 640-pitch alias, before the scene colour resolve). Once per frame.
+      if (ao_mode_ == rr::ao::Mode::kGtao && !ao_ready_ && up_camera_ && depth_rt && IsSceneDepth(*depth_rt)) RunGtao();
+      if (up_active_ && !up_camera_only_ && up_camera_ && depth_rt && IsSceneDepth(*depth_rt) && up_depth_at_resolve_)
+        UpscaleSaveDepth(*depth_rt);
     } else {
       ++stats_.colour_resolves;
       ++t2_stats_.seen_colour;
@@ -9095,13 +10069,27 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t words = dest_bytes == 16 ? 4u : dest_bytes == 8 ? 2u : 1u;
     // Tiles the resolve reads that another target wrote last: their data comes in, ownership stays (a read).
     PrepareColourTarget(*rt, OwnershipForRect(HostRect(*rt, info.x0, info.y0, info.x1, info.y1)), false, 0, true);
+    if (ao_mode_ == rr::ao::Mode::kGtao) {  // notes/80 s.4
+      const bool skip = (ao_skip_game_ & 2u) && rt->key == ao_chain_key_ && info.dest_base == ao_chain_pp_dest_ &&
+                        AoSkipping();  // decided before the final resolve is recognised
+      AoNoteResolve(info, *rt, w, h);
+      if (skip && !ao_final_seen_) {
+        ++ao_skipped_resolves_;
+        return log_not_compared("the game's AO chain (XeGTAO shown, notes/80)");
+      }
+    }
+    if (vel_seen_) VelocityResolve(*rt, w, h);  // notes/80 s.6
+    if (up_cap_left_ > 0 && up_capture_raw_class_ >= 0 && rt->key.storage_class == uint32_t(up_capture_raw_class_))
+      CaptureRaw(rt->texture, rt->format, rt->width, rt->height,  // --gow2_upscale_capture_raw_class (notes/80 s.6)
+                 std::format("class{}-{:08X}", up_capture_raw_class_, info.dest_base).c_str());
     // Upscalers (notes/64): the frame's scene colour goes through DLSS / FSR, and the resolve reads their output.
     gpu::TextureHandle resolve_source = rt->texture;
     uint32_t source_scale = rt->scale;  // patch 0141: the upscaler's output is at the output scale
     if (up_active_ && !up_scene_done_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt)) {
       up_scene_done_ = true;
       up_output_upscaled_ = false;
-      if (const gpu::TextureHandle o = RunUpscaler(*rt, w, h)) {
+      // Notes/80: camera only (the AO) - the scene stays as it is, nothing to run here.
+      if (const gpu::TextureHandle o = up_camera_only_ ? gpu::TextureHandle(0) : RunUpscaler(*rt, w, h)) {
         resolve_source = o;
         if (up_output_upscaled_) source_scale = res_scale_;
       }

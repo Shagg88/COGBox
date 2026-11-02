@@ -118,10 +118,13 @@ static const ReportedXexp k_reportedXexp[] = {
     { G_JUDGMENT, "d7c0b9ede168544b9a24d6e5afe3992cd87022ca" }, // #57, Title Update 4, 1,888,256 bytes
     { G_JUDGMENT, "d7cd928cded5fe3798377b0c26a9591298144f60" }, // #61, Title Update 4, 1,888,256 bytes
     { G_GEARS3, "20030da09581f4374f2f6820ff9fbf31a35dfffe" },   // #64, Title Update 6, 1,908,736 bytes
-    { G_GEARS3, "2b5866d2db5401f266de617679dba5cfd848096e" },   // #66, 1,513,472 bytes
+    // GitHub #138: #66 and #84 (Gears 3, 1,513,472 bytes) were reported on 0.2.5 / 0.3.0, when the disc build ran
+    // without the update. They are not Title Update 6 (1,908,736 bytes): the patch makes version 0.0.1.11, so the
+    // TU6-only port (0.4.0+) finds no code at the entry point and Windows ends it (0xC0000374). No longer "tested".
+    // { G_GEARS3, "2b5866d2db5401f266de617679dba5cfd848096e" },   // #66, 1,513,472 bytes
     { G_JUDGMENT, "75a392f838611700ba8ddc679ad4152f65e851b0" }, // #69, Title Update 4, 1,888,256 bytes
     { G_JUDGMENT, "730af13877e29b78491fa3df5e07878ffd0426c0" }, // #70, Title Update 4, 1,888,256 bytes
-    { G_GEARS3, "d05adc22bff6197229fc3685558ba5bed6b30abf" },   // #84, 1,513,472 bytes
+    // { G_GEARS3, "d05adc22bff6197229fc3685558ba5bed6b30abf" },   // #84, 1,513,472 bytes (#138)
     { G_GEARS3, "b2a6e5308155650448b27b74e169101596abc98d" },   // #86, Title Update 6, 1,908,736 bytes
     { G_GEARS3, "67b0c9c5fcd8ed15bcc79eb62e273d75e6e1ece6" },   // #109, Title Update 6, 1,908,736 bytes (COGBox 0.3.5)
 };
