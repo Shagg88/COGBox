@@ -260,3 +260,61 @@ TEST_CASE("main menu exit: narrow string preservation when applicable", "[ue3][e
   CHECK(dlc->value.Utf8() == "EXIT GAME");
   CHECK_FALSE(dlc->value.wide);
 }
+
+TEST_CASE("main menu exit: judgment main menu routes DLC directly to MAINMENUOP_DLC", "[ue3][exit]") {
+  using namespace ue3;
+
+  const std::string all_options_val =
+      "(Identifier=MAINMENUOP_MainMenu,Title=\"TITLE_MainMenu\","
+      "HeaderPicturePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_MainMenu\",HeaderType=\"\","
+      "List=((Label=\"Campaign\",ImagePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_Campaign\","
+      "Next=MAINMENUOP_Campaign,bHaltProgression=true,bIsDisabled=false),"
+      "(Label=\"Horde\",ImagePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_Horde\","
+      "Next=MAINMENUOP_Horde,bIsDisabled=false),"
+      "(Label=\"VS\",ImagePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_Versus\","
+      "Next=MAINMENUOP_VS_Competitiveness,bHaltProgression=true),"
+      "(Label=\"Store\",ImagePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_MainMenu\","
+      "Next=MAINMENUOP_Store,bHaltProgression=true,bIsDisabled=false),"
+      "(Label=\"Journal\",ImagePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_MainMenu\","
+      "Next=MAINMENUOP_WarJournal,bHaltProgression=true,bIsDisabled=false),"
+      "(Label=\"DLC\",Next=MAINMENUOP_DLC_Categories,bHaltProgression=true)))";
+
+  auto bundle = MakeMockBundle(
+      "Xbox360-GearUI.ini", "GearGame.UIWidget_MainMenu",
+      {{"AllOptions", all_options_val}},
+      true);
+
+  int replaced = ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle);
+  CHECK(replaced == 1);
+
+  const auto* all_options = FindKey(bundle, "Xbox360-GearUI.ini", "GearGame.UIWidget_MainMenu", "AllOptions");
+  REQUIRE(all_options != nullptr);
+  const std::string new_val = all_options->value.Utf8();
+  CHECK(new_val.find("Next=MAINMENUOP_DLC") != std::string::npos);
+  CHECK(new_val.find("Next=MAINMENUOP_DLC_Categories") == std::string::npos);
+  CHECK(all_options->value.wide == true);
+
+  // Also test case-insensitivity and relative path handling
+  auto bundle_path = MakeMockBundle(
+      "..\\..\\GearGame\\Config\\Xbox360-GearUI.ini", "geargame.uiwidget_mainmenu",
+      {{"alloptions", all_options_val}},
+      true);
+
+  int replaced_path = ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle_path);
+  CHECK(replaced_path == 1);
+
+  const auto* all_options_path =
+      FindKey(bundle_path, "..\\..\\GearGame\\Config\\Xbox360-GearUI.ini", "geargame.uiwidget_mainmenu", "alloptions");
+  REQUIRE(all_options_path != nullptr);
+  const std::string new_path_val = all_options_path->value.Utf8();
+  CHECK(new_path_val.find("Next=MAINMENUOP_DLC") != std::string::npos);
+  CHECK(new_path_val.find("Next=MAINMENUOP_DLC_Categories") == std::string::npos);
+
+  // Verify non-Judgment game leaves Xbox360-GearUI.ini untouched
+  auto bundle_g3 = MakeMockBundle(
+      "Xbox360-GearUI.ini", "GearGame.UIWidget_MainMenu",
+      {{"AllOptions", all_options_val}},
+      true);
+  int replaced_g3 = ApplyMainMenuExitToBundle(GameId::Gears3, "INT", bundle_g3);
+  CHECK(replaced_g3 == 0);
+}

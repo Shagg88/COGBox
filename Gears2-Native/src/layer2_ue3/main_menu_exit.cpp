@@ -111,15 +111,18 @@ bool NeedsWide(std::string_view s) {
   return false;
 }
 
-bool IsMatchingFile(std::string_view path, std::string_view target_stem) {
-  // Extract filename after last slash / backslash
+void SplitPath(std::string_view path, std::string_view& stem, std::string_view& ext) {
   size_t last_sep = path.find_last_of("/\\");
   std::string_view fname = (last_sep != std::string_view::npos) ? path.substr(last_sep + 1) : path;
 
-  // Extract stem before extension dot
   size_t dot_pos = fname.rfind('.');
-  std::string_view ext = (dot_pos != std::string_view::npos) ? fname.substr(dot_pos) : "";
-  std::string_view stem = (dot_pos != std::string_view::npos) ? fname.substr(0, dot_pos) : fname;
+  ext = (dot_pos != std::string_view::npos) ? fname.substr(dot_pos) : "";
+  stem = (dot_pos != std::string_view::npos) ? fname.substr(0, dot_pos) : fname;
+}
+
+bool IsMatchingFile(std::string_view path, std::string_view target_stem) {
+  std::string_view stem, ext;
+  SplitPath(path, stem, ext);
 
   // Configuration files (.ini) are never localization files
   if (ToLower(ext) == ".ini") {
@@ -127,6 +130,17 @@ bool IsMatchingFile(std::string_view path, std::string_view target_stem) {
   }
 
   return ToLower(stem) == ToLower(target_stem);
+}
+
+bool IsGearUIConfigFile(std::string_view path) {
+  std::string_view stem, ext;
+  SplitPath(path, stem, ext);
+
+  if (ToLower(ext) != ".ini") {
+    return false;
+  }
+
+  return ToLower(stem).find("gearui") != std::string::npos;
 }
 
 }  // namespace
@@ -156,6 +170,38 @@ int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& 
 
   for (ConfigFile& f : bundle.files) {
     const std::string fname = f.name.Utf8();
+
+    if (game == GameId::Judgment && IsGearUIConfigFile(fname)) {
+      for (ConfigSection& s : f.sections) {
+        if (ToLower(s.name.Utf8()) != "geargame.uiwidget_mainmenu") {
+          continue;
+        }
+
+        for (ConfigKey& k : s.keys) {
+          if (ToLower(k.key.Utf8()) != "alloptions") {
+            continue;
+          }
+
+          std::string val = k.value.Utf8();
+          const std::string_view kMainId = "Identifier=MAINMENUOP_MainMenu";
+          const std::string_view kTarget = "Next=MAINMENUOP_DLC_Categories";
+          const std::string_view kReplacement = "Next=MAINMENUOP_DLC";
+
+          if (val.find(kMainId) != std::string::npos && val.find(kTarget) != std::string::npos) {
+            size_t pos = 0;
+            while ((pos = val.find(kTarget, pos)) != std::string::npos) {
+              val.replace(pos, kTarget.length(), kReplacement);
+              pos += kReplacement.length();
+            }
+            k.value = ConfigString::FromUtf8(val, k.value.wide);
+            k.value.present = true;
+            ++replaced;
+          }
+        }
+      }
+      continue;
+    }
+
     if (!IsMatchingFile(fname, target_stem)) {
       continue;
     }

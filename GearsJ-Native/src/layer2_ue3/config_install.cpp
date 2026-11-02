@@ -13,6 +13,7 @@
 // an earlier search of an incomplete image copy missed it), so both are updated.
 // Our code (MIT).
 #include <ue3/config_bundle.h>
+#include <ue3/main_menu_exit.h>
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -53,6 +54,7 @@ REXCVAR_DEFINE_STRING(ue3_voice_language, "", "Gears3",
                       "empty = the game's language");
 REXCVAR_DEFINE_STRING(ue3_ini_bundle_dir, "GearGame\\CookedXbox360", "Gears3",
                       "Folder of the Coalesced_*.bin config bundles, relative to the game data root");
+REXCVAR_DEFINE_BOOL(gow_main_menu_exit, true, "ui", "Add Exit Game to the main menu; restart");
 
 namespace {
 constexpr const char* kGameDevice = "\\Device\\Harddisk0\\Partition1";
@@ -600,11 +602,12 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
     }
   } modsAtEnd{runtime, &mods, &modDirs};
   const std::string spec = REXCVAR_GET(ue3_ini_edits);
-  if (spec.empty() || !runtime || !runtime->file_system()) return;
+  const bool exit_menu = REXCVAR_GET(gow_main_menu_exit);
+  if ((spec.empty() && !exit_menu) || !runtime || !runtime->file_system()) return;
   std::string error;
-  const std::vector<ue3::ConfigEdit> edits = ue3::ParseConfigEdits(spec, &error);
+  const std::vector<ue3::ConfigEdit> edits = spec.empty() ? std::vector<ue3::ConfigEdit>{} : ue3::ParseConfigEdits(spec, &error);
   if (!error.empty()) REXLOG_WARN("ue3_ini_edits: {}", error);
-  if (edits.empty()) return;
+  if (edits.empty() && !exit_menu) return;
   namespace fs = std::filesystem;
   std::string rel = REXCVAR_GET(ue3_ini_bundle_dir);
   const fs::path src_dir = runtime->game_data_root() / fs::path(rel);
@@ -628,7 +631,8 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
   const fs::path out_dir = out_root / fs::path(bundle_rel);
   fs::create_directories(out_dir, ec);
   std::vector<std::string> names;
-  for (const auto& e : fs::directory_iterator(src_dir, ec)) {
+  if (!edits.empty() || exit_menu)
+    for (const auto& e : fs::directory_iterator(src_dir, ec)) {
     const std::string n = e.path().filename().string();
     if (e.is_regular_file() && n.size() > 14 && n.rfind("Coalesced_", 0) == 0 && n.ends_with(".bin")) names.push_back(n);
   }
@@ -660,7 +664,19 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
       continue;
     }
     std::vector<std::string> log;
-    const int changed = ue3::ApplyConfigEdits(bundle, edits, &log);
+    int changed = 0;
+    if (!edits.empty()) {
+      changed += ue3::ApplyConfigEdits(bundle, edits, &log);
+    }
+    if (exit_menu) {
+      const int exit_changed = ue3::ApplyMainMenuExitToBundle(ue3::GameId::Judgment, n, bundle);
+      if (exit_changed > 0) {
+        changed += exit_changed;
+        if (AsciiLower(n) == "coalesced_int.bin" || written == 0) {
+          REXLOG_INFO("main_menu_exit: {}: applied Exit Game to {} key(s)", n, exit_changed);
+        }
+      }
+    }
     // Log the English bundle's changes (Coalesced_int.bin on Gears 2, Coalesced_INT.bin on Gears 3), or the first one.
     const bool log_this = AsciiLower(n) == "coalesced_int.bin" || written == 0;
     if (log_this)

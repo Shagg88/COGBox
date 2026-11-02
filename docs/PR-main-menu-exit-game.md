@@ -10,12 +10,14 @@ In the original Xbox 360 Unreal Engine 3 builds, title shutdown sequences were d
 ### Solution Overview
 1. **Menu Item Repurposing via In-Memory Coalesced Overrides (`layer2_ue3`):**
    - Repurposes obsolete/defunct online menu slots in the coalesced configuration bundles (`Coalesced_*.bin`) at startup.
-   - Localized into **12 languages** (`INT`, `FRA`, `DEU`, `ITA`, `ESN`, `ESM`, `PTB`, `POL`, `RUS`, `CZE`, `HUN`, `KOR`, `CHN`, `CHT`) matching native casing and font styling.
+   - Localized into **14 languages** (`INT`, `FRA`, `DEU`, `ITA`, `ESN`, `ESM`, `PTB`, `POL`, `RUS`, `CZE`, `HUN`, `KOR`, `CHN`, `CHT`) matching native casing and font styling.
+   - Seamlessly integrated across all three ports (`Gears2-Native`, `Gears3-Native`, and `GearsJ-Native`) with startup TOC and SHA-1 hash recalculations.
+   - For Judgment, also rewrites `Xbox360-GearUI.ini` (`[GearGame.UIWidget_MainMenu]` `AllOptions`) to route DLC directly (`Next=MAINMENUOP_DLC` instead of `Next=MAINMENUOP_DLC_Categories`), bypassing the DLC category submenus.
 2. **Deterministic Guest Trigger Interception (`layer3_*`):**
    - Hooks into the game-specific triggers executed upon selecting the menu slot:
      - **Gears 3 TU6**: Intercepts `Localize("NeedLiveForDownloadableContent")` (`sub_8230CF58`).
      - **Judgment TU4**: Intercepts `Localize("NeedLiveForDownloadableContent")` (`sub_82302DE0`) and marketplace UI thunk (`sub_82DBF838`).
-     - **Gears 2 TU6**: Intercepts Credits level map opening (`SP_Credits_P` / `UI_Scenes_Credits`) via a thread-safe VFS `FileOpenObserver`.
+     - **Gears 2 TU6**: Intercepts `Localize()` (`sub_8228AF78`) querying `"credits"` / `"line_00000"` (with options menu protection), supplemented by a VFS `FileOpenObserver` for `SP_Credits_P` / `UI_Scenes_Credits`.
 3. **Clean Instant Termination:**
    - On activation, invokes `ExitGame()`, which flushes pending logging via `rex::FlushLogging()` and terminates the process directly using `TerminateProcess(GetCurrentProcess(), 0)` (or `_exit(0)` on POSIX platforms), eliminating shutdown deadlocks entirely.
 
@@ -27,15 +29,15 @@ In the original Xbox 360 Unreal Engine 3 builds, title shutdown sequences were d
 - **Header & Source:** `src/layer2_ue3/include/ue3/main_menu_exit.h` and `src/layer2_ue3/main_menu_exit.cpp`.
 - **String Lookups & Title Substitution:**
   - `GetExitStringsForLang(lang, game)` provides localized label and tooltip strings with dynamic substitution of `{GameTitle}` (`Gears of War 2`, `Gears of War 3`, or `Gears of War: Judgment`).
-  - All uppercase labels are used across languages to conform to the game font textures (e.g., `EXIT GAME`, `QUITTER LE JEU`, `SPIEL BEENDEN`, `ESCI DAL GIOCO`, `SALIR DEL JUEGO`, `SAIR DO JOGO`, `WYJDŹ Z GRY`, `ВЫХОД ИЗ ИГРЫ`, `OPUSTIT HRU`, `KILÉPÉS`, `게임 종료`, `退出游戏` / `退出遊戲`).
+  - All uppercase labels are used across languages to conform to the game font textures (e.g., `EXIT GAME`, `QUITTER LE JEU`, `SPIEL BEENDEN`, `ESCI DAL GIOCO`, `SALIR DEL JUEGO`, `SAIR DO JOGO`, `WYJDŹ Z GRY`, `ВЫХОД ИЗ ИГРЫ`, `UKONČIT HRU`, `KILÉPÉS A JÁTÉKBÓL`, `게임 종료`, `離開遊戲`).
 - **Coalesced Configuration Targets:**
   - **Gears of War 3:** Rewrites section `[MainMenu]`, keys `DLC` and `TOOLTIP_DLC` in `GearGameUI.<lang>`.
-  - **Gears of War: Judgment:** Rewrites section `[MainMenu]`, keys `TITLE_DLC`, `DLC`, and `TOOLTIP_DLC` in `GearGameUI.<lang>`.
+  - **Gears of War: Judgment:** Rewrites section `[MainMenu]`, keys `TITLE_DLC`, `DLC`, and `TOOLTIP_DLC` in `GearGameUI.<lang>`, plus `Xbox360-GearUI.ini` `AllOptions` route rewriting (`Next=MAINMENUOP_DLC`).
   - **Gears of War 2:** Rewrites section `[OptionsMenu]`, keys `Credits` and `Credits_Desc` in `GearGame.<lang>`.
 - **Encoding Preservation:**
   - Inspects the existing bundle entry value encoding. If the original string was wide (UTF-16 LE/BE), rewrites the new value as UTF-16; if narrow, preserves 8-bit ASCII/UTF-8 representation.
 - **Engine Configuration Pipeline Integration:**
-  - In `config_install.cpp`, `Ue3InstallConfigEditsIfRequested` checks cvar `gow_main_menu_exit` (default: `true`), detects the active title (`0x4D53082D`, `0x4D5308AB`, `0x4D530A26`), and calls `ApplyMainMenuExitToBundle()` prior to generating the `ini-edits` overlay device.
+  - In `config_install.cpp` across all games, `Ue3InstallConfigEditsIfRequested` checks cvar `gow_main_menu_exit` (default: `true`), and calls `ApplyMainMenuExitToBundle()` prior to generating the `ini-edits` overlay device.
 
 ### 2. Gears 3 TU6 Hook (`layer3_gow3`)
 - **Module:** `Gears3-Native/src/layer3_gow3/main_menu_exit.h` and `main_menu_exit.cpp`.
@@ -55,13 +57,12 @@ In the original Xbox 360 Unreal Engine 3 builds, title shutdown sequences were d
 ### 4. Gears 2 TU6 Hook (`layer3_gow2`)
 - **Module:** `Gears2-Native/src/layer3_gow2/main_menu_exit.h` and `main_menu_exit.cpp`.
 - **Cvar:** `gow2_main_menu_exit` (default `true`, category `"ui"`).
-- **Chained VFS File-Opened Notifications:**
-  - Enhanced `Ue3ShaderPrebuildChainFileOpened` in `layer2_ue3/shader_prebuild.cpp` to maintain a thread-safe list of observer callbacks (`g_chain_listeners` protected by `g_chain_mutex`), allowing multiple subsystems (e.g. localization logging and main menu exit) to register concurrently.
-- **Interception Mechanism:**
-  - In Gears 2, selecting the repurposed Credits entry attempts to load the credits level map `SP_Credits_P.war` / `UI_Scenes_Credits`.
-  - Registered file-open observer `Gow2OnFileOpenedExit` detects case-insensitive requests for `sp_credits_p` or `ui_scenes_credits`.
-  - Gatekeeper flag `g_ready_to_exit` (set via `OnPreLaunchModule`) prevents accidental triggers during engine startup / initial precaching.
-  - Upon user activation from the menu, triggers `ExitGame()`, cleanly terminating the game.
+- **Function Hook:** `sub_8228AF78` (TU6 `Localize` function).
+- **Matching Logic:** `MatchesCredits(base, ctx)`:
+  - Protects against exit while rendering Options menu: if `ctx.r4.u32` is `"optionsmenu"`, returns `false`.
+  - Triggers exit when Credits scene starts: if `ctx.r4.u32` is `"credits"`, `ctx.r6.u32` is `"credits"`, or `ctx.r5.u32` is `"line_00000"`, returns `true`.
+- **Secondary Fallback:** `Gow2OnFileOpenedExit` VFS file-open observer for `sp_credits_p` or `ui_scenes_credits`.
+- **Gatekeeper:** Gatekeeper flag `g_ready_to_exit` (set via `OnPreLaunchModule`) prevents accidental triggers during engine startup / initial precaching.
 
 ---
 
@@ -69,13 +70,14 @@ In the original Xbox 360 Unreal Engine 3 builds, title shutdown sequences were d
 
 ### 1. Unit Tests (Catch2)
 Executed `Gears2-Native/build/Release/gn_tests.exe`:
-- **Main Menu Exit Suite:** 6 test cases (71 assertions) testing:
+- **Main Menu Exit Suite:** 7 test cases (81 assertions) testing:
   - Localized string lookups for all supported languages and title substitutions.
   - Bundle rewriting for Gears 2, Gears 3, and Judgment.
   - Preservation of unrelated sections and keys.
   - Encoding preservation across wide (UTF-16) and narrow entries.
   - Foreign language bundle rewriting.
-- **Full Test Suite:** **133 test cases, 1,064,027 assertions passed (100% success, 0 failures).**
+  - Judgment `Xbox360-GearUI.ini` `AllOptions` route rewriting and non-Judgment immunity.
+- **Full Test Suite:** **134 test cases, 1,064,038 assertions passed (100% success, 0 failures).**
 
 ### 2. Compilation Verification
 All three Title Update targets compiled in `Release` configuration with 0 errors:
@@ -84,7 +86,7 @@ All three Title Update targets compiled in `Release` configuration with 0 errors
 - **Gears of War: Judgment TU4:** `gowj.exe` (mapped guest arena base `0x0000000100000000`, XEX version `0.0.4.3`).
 
 ### 3. Binary Deployment
-Compiled executables were deployed directly to local game test installations:
+Compiled executables deployed directly to local game test installations:
 - `COGBox/Gears2-Native/build/Release-tu6/gow2.exe` -> `C:\Users\flipp\Downloads\COGBox\Gears2\port-tu6\gow2.exe`
 - `COGBox/Gears3-Native/build/Release-tu6/gow3.exe` -> `C:\Users\flipp\Downloads\COGBox\Gears3\port-tu6\gow3.exe`
 - `COGBox/GearsJ-Native/build/Release/gowj.exe` -> `C:\Users\flipp\Downloads\COGBox\Judgment\port\gowj.exe`
