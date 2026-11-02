@@ -12,6 +12,7 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/runtime.h>
+#include <rex/input/device_assignment.h>
 #include <rex/input/input_system.h>
 #include <rex/ui/imgui_dialog.h>
 #include <rex/ui/imgui_drawer.h>
@@ -46,7 +47,54 @@ REXCVAR_DEFINE_BOOL(cogbox_menu_ps, false, "Gears2", "Job 523: show PlayStation 
 REXCVAR_DEFINE_BOOL(cogbox_menu_open_at_start, false, "Gears2",
                     "Test switch: open the in-game menu as soon as the window exists");
 
+REXCVAR_DEFINE_BOOL(cogbox_pad_merge, true, "Gears2",
+                    "GitHub #108: with one local player, every controller drives player 1 (off: controller N = player N)");
+
 namespace {
+
+// ---- GitHub #108: which controller is player 1 ----------------------------------------------------------------------
+// The SDK's default assignment gives player N the controller that connected Nth. On a Steam Deck the game can see more
+// than one pad (the Deck's own controls and Steam Input's virtual pad, or an extra pad), and the first one is not
+// always the one that sends input - so player 1 got a pad that stays silent while the launcher (which reads every pad)
+// worked. With one local player (all single-player games, and co-op off) every controller now drives player 1, merged
+// as the SDK merges keyboard / mouse with a pad. Split-screen (--local_players 2-4) and the second scripted pad keep
+// one controller per player. Every change of the device set is logged, so a problem report shows what the game saw.
+class SinglePlayerPads final : public rex::input::DeviceAssignment {
+ public:
+  void OnDevicesChanged(const std::vector<rex::input::DeviceInfo>& devices) override {
+    user0_.clear();
+    for (const auto& d : devices) user0_.push_back(d.id);
+    std::string list;
+    for (const auto& d : devices)
+      list += (list.empty() ? "" : " | ") + std::string(d.synthetic ? "[kbm/stand-in] " : "") + "#" +
+              std::to_string(d.ordinal) + " \"" + d.name + "\" " + d.guid;
+    if (list != last_) {
+      last_ = list;
+      REXLOG_INFO("cogbox_pads: {} device(s), all drive player 1: {}", devices.size(), list.empty() ? "none" : list);
+    }
+  }
+  void DevicesForUser(uint32_t user_index, std::vector<rex::input::DeviceId>& out) const override {
+    out.clear();
+    if (user_index == 0) out = user0_;
+  }
+
+ private:
+  std::vector<rex::input::DeviceId> user0_;
+  std::string last_;
+};
+
+void InstallPadAssignment(rex::Runtime* runtime) {
+  auto* input = runtime ? static_cast<rex::input::InputSystem*>(runtime->input_system()) : nullptr;
+  if (!input) return;
+  const uint32_t players = rex::cvar::Query<uint32_t>("local_players");
+  const bool script2 = !rex::cvar::Query<std::string>("gow2_input_script2").empty();
+  if (!REXCVAR_GET(cogbox_pad_merge) || players > 1 || script2) {
+    REXLOG_INFO("cogbox_pads: one controller per player (local_players {}, merge {}, second script pad {})", players,
+                REXCVAR_GET(cogbox_pad_merge), script2);
+    return;
+  }
+  input->SetDeviceAssignment(std::make_unique<SinglePlayerPads>());
+}
 
 // ---- the settings COGBox gave us ----------------------------------------------------------------------------------
 struct MenuOption {
@@ -530,6 +578,7 @@ void RequestOpenOnUIThread() {
 }  // namespace
 
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window, rex::Runtime* runtime) {
+  InstallPadAssignment(runtime);   // GitHub #108, menu or no menu
   // PR #117: the button-prompt monitor (its own thread; nothing with --gow_button_prompts=original), menu or no menu.
   ::xenos::input::GlobalPromptDeviceMonitor().Start(
       window, runtime ? static_cast<rex::input::InputSystem*>(runtime->input_system()) : nullptr);
