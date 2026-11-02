@@ -91,6 +91,7 @@ set(GOWJ_SOURCES
     src/layer3_gowj/main.cpp
     src/layer3_gowj/game_patches.cpp
     src/layer3_gowj/mouse_look.cpp
+    src/layer3_gowj/main_menu_exit.cpp
 )
 if(WIN32)
     add_executable(gowj WIN32 ${GOWJ_SOURCES})
