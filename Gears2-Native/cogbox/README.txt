@@ -87,7 +87,7 @@ New in 0.4.0 - please read
   folder and saves stay where they are.
 
 
-Graphics API: DirectX 12 is the default and the tested renderer. Vulkan (experimental) is on each
+Graphics API: DirectX 12 is the default. Vulkan is on each
 game's Graphics tab for testing; FSR / DLSS / XeSS and frame generation are DirectX 12 only. If
 something looks wrong on Vulkan, please send a problem report.
 
