@@ -50,6 +50,17 @@ Then move the third-party submodules to the tags in `sdk-pins.txt` and configure
   package and fails with ERROR_DUP_NAME (it no longer closes the root), TRUNCATE_EXISTING keeps the thumbnail and refuses
   an open package, XamContentClose completes with ERROR_FUNCTION_FAILED, no raw-error change to the generic deferred
   completion, and an APC with no noted thread goes to the current one.
+- `sdk-patch57-content-request-trace.diff` (after 56 / 56b): with `--cogbox_save_trace`, every XamContentCreate logs the
+  request field by field (user, data size, device, type, file, the data's own xuid and title id, the profile xuid, the
+  package path and whether it exists), and XMsgCompleteIORequest logs its result and length. `--cogbox_content_profile_xuid`
+  (default off, an A/B): a save request whose data xuid finds no package, while the signed-in profile's does, is served
+  from the profile's. Shagg's friendly-fire run opened PlayerStorage.dat on savedrive0, then failed the same package on SG0_0
+  with PATH_NOT_FOUND.
+  It also logs every set-information on a save file (class, value, result) and the file size after each write, and adds
+  `--cogbox_save_truncate_rewrite` (default off, A/B): a write at offset 0 to a GearsCheckpoint file ends the file there.
+  Gears 3 rewrites GearsCheckpoint<N>.sav from offset 0 through an OPEN_IF handle and never shortens it: Bon Voyage's
+  slot 2 stayed 336,119 bytes after ~141 KB rewrites, and its bytes past the largest rewrite (0x24005) equal the older
+  save's.
 - `sdk-patch15` to `sdk-patch37` are the separate patches that went into `rexglue-sdk.diff`. They're kept
   for reference only, so don't apply them again.
 - `sdk-patch16-zpd-pairing-UNBUILT.diff` was never built. It isn't in any release.
