@@ -354,6 +354,8 @@ static void keys_section(App &a, int g)
     static int capture = -1, captureFrame = 0;
     static bool captureAdd = false;   // right-click: the key is added as a second key, not instead of the keys
     static std::string keyNote;   // what the last key press changed besides its own action
+    static int keysGame = -1;     // review 1186: a key chosen for one game's row never lands on another game's
+    if (keysGame != g) { keysGame = g; capture = -1; keyNote.clear(); }
     const auto &acts = gs::key_actions();
     ImGui::Dummy(ImVec2(0, S(6)));
     th_heading("KEYBOARD KEYS", g_rowX1);
@@ -408,6 +410,7 @@ static void keys_section(App &a, int g)
             keyNote.clear();
             for (const char *mv : { "W", "A", "S", "D", "Up", "Down", "Left", "Right" })
                 if (nm == mv) { keyNote = nm + " moves (W A S D and the arrow keys) - choose another key."; capture = -1; return; }
+            if (nm == "Backslash") { keyNote = "\\ takes a screenshot in every game - choose another key."; capture = -1; return; }
             for (int j = 0; j < (int)acts.size(); j++) {
                 if (j == capture) continue;
                 std::string cur = key_get(a, g, acts[j].cvar);

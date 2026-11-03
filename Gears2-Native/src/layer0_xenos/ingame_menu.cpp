@@ -763,8 +763,11 @@ void IdleCursorWatch() {
       if (hide_sent) {
         hide_sent = false;
         w->app_context().CallInUIThreadDeferred([] {
+          // Review 1186: with the menu open or mouse look on, the hide stays ours (the flag kept), so the next
+          // movement after they end still puts the cursor back - clearing it here left the cursor hidden for good.
           rex::ui::Window* uw = g_idle_window.load();
-          if (uw && g_idle_hidden && !g_open.load()) uw->SetCursorVisibility(g_idle_before);
+          if (!uw || !g_idle_hidden || g_open.load() || rex::input::mnk::IsMouseLookActive()) return;
+          uw->SetCursorVisibility(g_idle_before);
           g_idle_hidden = false;
         });
       }
