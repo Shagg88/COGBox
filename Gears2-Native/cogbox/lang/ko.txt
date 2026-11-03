@@ -794,3 +794,9 @@ SMAA T2x (temporal) = SMAA T2x (시간적)
 SMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now. = SMAA T2x: SMAA에 시간적 패스를 더한 방식 - 적은 부하로 더 부드러운 가장자리와 훨씬 적은 깜빡임. 모든 그래픽 카드, DirectX 12 또는 Vulkan. 현재는 Gears 2와 Gears 3 전용.
 Gears 2 and Gears 3 for now. = 현재는 Gears 2와 Gears 3 전용.
 Gears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it. = Gears 3: 대부분의 레벨은 음영이 미리 계산되어 있고 실시간 AO가 없습니다. 그곳에서는 XeGTAO가 은은한 접촉 음영을 더하고, 레벨에 게임 자체 AO가 있으면 그것을 대체합니다.
+
+# 0.4.4 (Shagg 3 Nov): XeGTAO experimental; Proton Graphics API labels
+XeGTAO (high, experimental) = XeGTAO (높음, 실험적)
+XeGTAO (ultra, experimental) = XeGTAO (울트라, 실험적)
+DirectX 12 = DirectX 12
+Vulkan = Vulkan

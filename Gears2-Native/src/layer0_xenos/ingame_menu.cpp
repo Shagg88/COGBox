@@ -739,7 +739,7 @@ namespace {
 std::atomic<rex::ui::Window*> g_idle_window{nullptr};
 std::atomic<bool> g_idle_stop{false};
 std::thread g_idle_thread;
-bool g_idle_hidden = false;   // UI thread
+std::atomic<bool> g_idle_hidden{false};   // set / cleared on the UI thread; the watcher reads it
 rex::ui::Window::CursorVisibility g_idle_before = rex::ui::Window::CursorVisibility::kVisible;
 
 void IdleCursorWatch() {
@@ -760,13 +760,13 @@ void IdleCursorWatch() {
     if (p.x != last.x || p.y != last.y || !front) {
       last = p;
       moved_at = now;
-      if (hide_sent) {
+      if (hide_sent || g_idle_hidden.load()) {   // review 1188: while the hide is ours, every movement asks to restore
         hide_sent = false;
         w->app_context().CallInUIThreadDeferred([] {
           // Review 1186: with the menu open or mouse look on, the hide stays ours (the flag kept), so the next
           // movement after they end still puts the cursor back - clearing it here left the cursor hidden for good.
           rex::ui::Window* uw = g_idle_window.load();
-          if (!uw || !g_idle_hidden || g_open.load() || rex::input::mnk::IsMouseLookActive()) return;
+          if (!uw || !g_idle_hidden.load() || g_open.load() || rex::input::mnk::IsMouseLookActive()) return;
           uw->SetCursorVisibility(g_idle_before);
           g_idle_hidden = false;
         });
@@ -775,7 +775,7 @@ void IdleCursorWatch() {
       hide_sent = true;
       w->app_context().CallInUIThreadDeferred([] {
         rex::ui::Window* uw = g_idle_window.load();
-        if (!uw || g_idle_hidden || g_open.load() || rex::input::mnk::IsMouseLookActive()) return;
+        if (!uw || g_idle_hidden.load() || g_open.load() || rex::input::mnk::IsMouseLookActive()) return;
         if (uw->GetCursorVisibility() == rex::ui::Window::CursorVisibility::kHidden) return;
         g_idle_before = uw->GetCursorVisibility();
         uw->SetCursorVisibility(rex::ui::Window::CursorVisibility::kHidden);
@@ -822,7 +822,7 @@ void XenosShutdownInGameMenu() {
   rex::ui::UnregisterBind("bind_cogbox_screenshot");
   g_idle_stop.store(true);   // GitHub #143
   if (g_idle_thread.joinable()) g_idle_thread.join();
-  if (rex::ui::Window* w = g_idle_window.exchange(nullptr); w && g_idle_hidden) w->SetCursorVisibility(g_idle_before);
+  if (rex::ui::Window* w = g_idle_window.exchange(nullptr); w && g_idle_hidden.load()) w->SetCursorVisibility(g_idle_before);
   g_idle_hidden = false;
   ::xenos::input::GlobalPromptDeviceMonitor().Stop();
   ::xenos::input::GlobalPromptDeviceMonitor().DetachWindow(nullptr);

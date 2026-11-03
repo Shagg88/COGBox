@@ -497,7 +497,7 @@ static void option_row(App &a, int g, const gs::Option &o)
         std::vector<std::string> items = o.id == "Monitor" ? monitor_choices() : o.choices;
         int idx = std::max(0, std::min((int)items.size() - 1, (int)v));
         // Shagg 3 Nov: on Proton / Wine Vulkan is the recommended path (DirectX 12 crashes there), so not "experimental"
-        if (o.id == "Api" && a.env[g].wine && items.size() > 1 && items[1] == "Vulkan (experimental)") items[1] = "Vulkan";
+        if (o.id == "Api" && a.env[g].wine && items.size() > 1 && items[1] == "Vulkan (experimental)") { items[0] = "DirectX 12"; items[1] = "Vulkan"; }
         for (std::string &it : items) it = tr(it);   // 0.2.0
         if (ImGui::BeginCombo("##v", items.empty() ? "" : items[idx].c_str())) {
             // 0.2.1: Render resolution lists 1080p in size order; the saved value is still the original index
