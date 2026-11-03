@@ -17,6 +17,7 @@
 
 #include <cctype>
 #include <cstring>
+#include <string>
 #include <string_view>
 
 #include <rex/logging.h>
@@ -47,8 +48,11 @@ inline bool IsMemoryReadable(const void* ptr, size_t size) {
 
 inline bool IsValidGuestPtr(const uint8_t* base, uint32_t addr, size_t size = 1) {
   if (!base || addr < 0x00010000) return false;
-  // Physical RAM: 512 MB (0x00010000 .. 0x20000000) or game XEX image (0x82000000 .. 0x83700000)
-  if (addr >= 0x20000000 && (addr < 0x82000000 || addr >= 0x83700000)) return false;
+  // Any 32-bit guest address can be valid: the game's heap objects (the main menu widget among them)
+  // live at 0x40000000-0x7FFFFFFF, the image at 0x82000000, physical memory views from 0xA0000000.
+  // Whether the page is committed is what decides (a sparse reservation: reading an uncommitted page
+  // faults).
+  if (uint64_t(addr) + size > 0x100000000ull) return false;
   return IsMemoryReadable(base + addr, size);
 }
 
@@ -111,6 +115,21 @@ bool CheckStringCandidate(const uint8_t* base, uint32_t addr) {
     return true;
   }
   return false;
+}
+
+// The screen name in the widget's currentScreen copy (this + 216: an AS2 value, type byte at +0, 5 =
+// string, +4 = the string node whose +0 is the text), or "" when it isn't a readable string.
+std::string ScreenName(const uint8_t* base, uint32_t this_ptr) {
+  if (!IsValidGuestPtr(base, this_ptr + 216, 8) || base[this_ptr + 216] != 5) return {};
+  const uint32_t node = SafeReadU32BE(base, this_ptr + 216 + 4);
+  const uint32_t text = node ? SafeReadU32BE(base, node) : 0;
+  std::string out;
+  for (uint32_t i = 0; text && i < 96 && IsValidGuestPtr(base, text + i, 1); ++i) {
+    const char c = static_cast<char>(base[text + i]);
+    if (c < 32 || c > 126) break;  // also stops at the terminating NUL
+    out += c;
+  }
+  return out;
 }
 
 bool CheckObjectForExitScreen(const uint8_t* base, uint32_t this_ptr) {
@@ -183,6 +202,12 @@ extern "C" void sub_82D0EE70(PPCContext& ctx, uint8_t* base) {
   __imp__sub_82D0EE70(ctx, base);
 
   if (REXCVAR_GET(gowj_main_menu_exit) && base) {
+    // One line per screen change, so the log shows which screen names the menu reports.
+    static std::string last_screen;
+    if (std::string screen = rex::glue::ScreenName(base, this_ptr); screen != last_screen) {
+      REXLOG_INFO("MAINMENU: screen '{}' (widget {:08X})", screen, this_ptr);
+      last_screen = std::move(screen);
+    }
     const uint64_t swaps = XenosSwapCount();
     // Gate to ensure boot-time initialization is complete
     if (swaps > 100) {
