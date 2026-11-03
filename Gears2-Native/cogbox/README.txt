@@ -63,6 +63,13 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 
 
+New in 0.4.3
+------------
+- Gears 3 mods can do more than replace files: mod.ini rules (requires / game / enabled), config fragments, bare
+  Xbox 360 files at a mod's top, new campaign chapters (32-49) and content packages. Thanks to KiltedKernel (PR #122).
+- Mods that add new files (not only replace them) now work in Gears 1, Gears 3 and Judgment (PR #122).
+
+
 New in 0.4.2
 ------------
 - Vulkan and DLSS are no longer experimental - both now work as they should. Vulkan: purple / wrong textures in Gears 3 and Judgment fixed, other picture
