@@ -5,7 +5,7 @@
        const auto* host_path_entry = dynamic_cast<const HostPathEntry*>(parent_entry);
        if (host_path_entry) {
 -        const auto file_path = host_path_entry->host_path() / rex::to_path(entry->name());
-+        // COGBox SDK patch 60: an entry with its own host file is checked at that file. An overlay folder (the
++        // COGBox SDK patch 61: an entry with its own host file is checked at that file. An overlay folder (the
 +        // games' --ue3_mods) is the game's folder, and a file only in a mod is not there: checked as parent / name, a
 +        // mod's new package was deleted on its first open (X_STATUS_NO_SUCH_FILE; Gears 3 mod chapters never loaded).
 +        // For a plain host folder the two paths are the same.
