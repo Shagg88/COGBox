@@ -512,7 +512,6 @@ void ContentPackagesTick() {  // game thread
   if (!pending && !g_scanBusy) g_contentOff = true;
 }
 
-void Worker() { ReadChapters(); }
 }  // namespace
 
 // OnPostSetup, after the mods' config is merged (Ue3InstallConfigEditsIfRequested)
@@ -522,8 +521,14 @@ void Gow3InstallModChapters() {
       if (guest.size() > 4 && (guest.ends_with(".xxx") || guest.ends_with(".XXX") || guest.ends_with(".txt")))
         REXLOG_INFO("mod files: opened {}{}", guest, host ? " <- " + rex::path_to_utf8(*host) : std::string());
     });
-  if (!REXCVAR_GET(gow3_mod_chapters) || g_started.exchange(true)) return;
-  std::thread(Worker).detach();
+  if (!REXCVAR_GET(gow3_mod_chapters) || g_started) return;
+  // COGBox review (0.4.3): the chapters are read here, before any thread or hook can look at g_chapters (it is never
+  // written again), and with no mod chapter and no content package nothing starts: no threads, no tick work, and the
+  // FName hook returns at once - a game without mods runs exactly as before.
+  ReadChapters();
+  if (g_chapters.empty() && ue3::ModContentPackages().empty()) return;
+  REXLOG_INFO("mod chapters: {} chapter(s), {} content package(s) from mods", g_chapters.size(), ue3::ModContentPackages().size());
+  g_started = true;
   std::thread(ChapterKeeper).detach();
   std::thread(CheckpointStreaming).detach();
   std::thread(TrilogyRoots).detach();
@@ -535,7 +540,7 @@ void Gow3InstallModChapters() {
 void Gow3ModFName() {
   static thread_local bool busy = false;
   static std::atomic<uint32_t> calls{0};
-  if (busy || g_tableDone || (g_chapters.empty() && ue3::ModContentPackages().empty()) || (++calls & 255)) return;
+  if (!g_started || busy || g_tableDone || (g_chapters.empty() && ue3::ModContentPackages().empty()) || (++calls & 255)) return;
   busy = true;
   // the engine's tables and Default__GearTypes looked up here, on the game thread, as the boot goes (cheap once the
   // names read so far are cached): the table is filled the first time GearTypes' default object exists
