@@ -785,6 +785,8 @@ void IdleCursorWatch() {
 
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window, rex::Runtime* runtime) {
   StartPadPump(window, runtime);
+  // Shagg 3 Nov: \ is the screenshot key in every game, menu or no menu (frame_capture.cpp saves the next frame)
+  rex::ui::RegisterBind("bind_cogbox_screenshot", "Backslash", "COGBox screenshot (Pictures\\COGBox)", [] { XenosRequestScreenshot(); });
   if (window && !g_idle_thread.joinable()) {   // GitHub #143, menu or no menu
     g_idle_window.store(window);
     g_idle_stop.store(false);
@@ -814,6 +816,7 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* windo
 
 void XenosShutdownInGameMenu() {
   StopPadPump();   // GitHub #108
+  rex::ui::UnregisterBind("bind_cogbox_screenshot");
   g_idle_stop.store(true);   // GitHub #143
   if (g_idle_thread.joinable()) g_idle_thread.join();
   if (rex::ui::Window* w = g_idle_window.exchange(nullptr); w && g_idle_hidden) w->SetCursorVisibility(g_idle_before);
