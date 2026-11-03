@@ -499,10 +499,14 @@ void ContentPackagesTick() {  // game thread
         r.package = p;
         r.seen = std::chrono::steady_clock::now();
         REXLOG_INFO("content packages: {} is package {:08X}", r.name, p);
+        if (FlagsLayoutOk()) StartScan();   // at once: a chapter started right away must not find it unkept
       }
       continue;
     }
-    if (g_frame % 120 == 0 && FlagsLayoutOk()) StartScan();
+    // every 30 frames until the package has something kept (its ObjectReferencer holds what it carries), then every
+    // 120: the next map change's garbage collection drops what is not kept (with the classic Marcus's class gone, the
+    // chapter's first spawn read a None class: guest 0xEC)
+    if (g_frame % (r.rooted.empty() ? 30 : 120) == 0 && FlagsLayoutOk()) StartScan();
     if (std::chrono::steady_clock::now() - r.seen > std::chrono::seconds(60) && !g_scanBusy) r.done = true;
   }
   if (!pending && !g_scanBusy) g_contentOff = true;
