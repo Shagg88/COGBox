@@ -10,6 +10,7 @@
 // Our code (MIT).
 #include <ue3/config_bundle.h>
 #include <ue3/main_menu_exit.h>
+#include <ue3/package_exports.h>
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -33,6 +34,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 REXCVAR_DEFINE_STRING(ue3_ini_edits, "", "Gears2",
@@ -462,8 +464,9 @@ int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, st
   }
   std::string lv = voice;
   for (char& c : lv) c = char(std::tolower(uint8_t(c)));
-  int added = 0, langs = 0;
+  int added = 0, langs = 0, kept = 0;
   std::set<std::string> seenLangs;
+  std::map<fs::path, std::pair<bool, std::set<std::string>>> twinExports;
   for (const auto& [dir, names] : byDir)
     for (const auto& [n, p] : names) {
       const size_t at = n.rfind("_loc_");
@@ -476,12 +479,28 @@ int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, st
       if (ec || relp.empty()) continue;
       const std::string key = RelKey(rex::path_to_utf8(relp));
       if (files->count(key)) continue;
+      // GitHub #145: only a twin with every object this package exports. GearGame_LOC_ESM lacks one sound the other
+      // languages' GearGame_LOC have; given it, the game read a null object at start-up. When either table cannot be
+      // read, the package keeps its own language.
+      std::set<std::string> mine;
+      auto theirs = twinExports.find(twin->second);   // one twin serves every other language: read it once
+      if (theirs == twinExports.end()) {
+        std::set<std::string> paths;
+        const bool ok = ue3::ReadPackageExportPaths(twin->second, &paths);
+        theirs = twinExports.emplace(twin->second, std::make_pair(ok, std::move(paths))).first;
+      }
+      if (!theirs->second.first || !ue3::ReadPackageExportPaths(p, &mine) ||
+          !std::includes(theirs->second.second.begin(), theirs->second.second.end(), mine.begin(), mine.end())) {
+        ++kept;
+        continue;
+      }
       (*files)[key] = twin->second;
       ++added;
       if (seenLangs.insert(lang).second) ++langs;
     }
-  REXLOG_INFO("ue3_voice_language: {} - {} localised package(s) in {} other language(s) now give the {} voices (GitHub #87)",
-              voice, added, langs, voice);
+  REXLOG_INFO("ue3_voice_language: {} - {} localised package(s) in {} other language(s) now give the {} voices (GitHub #87); "
+              "{} kept their own: their {} twin lacks objects they export, or a table could not be read (GitHub #145)",
+              voice, added, langs, voice, kept, voice);
   return added;
 }
 std::map<std::string, std::filesystem::path> CollectMods(std::map<std::string, std::filesystem::path>* dirs) {

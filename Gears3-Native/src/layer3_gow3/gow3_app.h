@@ -33,6 +33,7 @@ void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime);
 void Gow3AddBuiltInIniEdits();  // game_patches.cpp: --gow3_trilinear, --gow3_fast_mip_fade
 void Gow3StopMemoryGauge();     // game_patches.cpp: --gow3_memory_log_seconds stops before the kernel goes away
 void Gow3InstallExtras();       // extras.cpp: --gow3_cheats, --gow3_unlock_mutators, engine console hotkeys
+void Gow3InstallModChapters();  // mod_chapters.cpp: mods' campaign chapters and content packages
 REXCVAR_DECLARE(bool, gow3_mute_unfocused);  // extras.cpp
 
 class Gow3App : public rex::ReXApp {
@@ -58,6 +59,7 @@ class Gow3App : public rex::ReXApp {
     Gow3AddBuiltInIniEdits();  // before the bundle is edited
     Gow3InstallExtras();       // its package patches too
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
+    Gow3InstallModChapters();  // mods' chapters 32-49 and content packages (mod_chapters.cpp), after their config
     XenosInstallDrawStatsIfRequested();
     XenosInstallPrimDetailIfRequested();
     XenosInstallFrameCaptureIfRequested();
@@ -92,6 +94,13 @@ class Gow3App : public rex::ReXApp {
     //    per frame into the scene depth AFTER the scene colour resolve that runs the upscaler (later lighting passes);
     //    unjittered, whole character triangles lost their lighting under DLSS / FSR. Jittered, the frames are clean.
     game_default("gow2_upscale_jitter_late", "true");
+    //  - XeGTAO (Gears 2 notes/80 s.9, with --gow2_ao=gtao): some Gears 3 levels draw Gears 2's real-time AO chain
+    //    (half-res 16_16_FLOAT, ch12) - XeGTAO replaces it at Gears 2's strength; most bake their AO into the lightmaps
+    //    and draw none (ch8) - there XeGTAO is added just before the fog pass (this pixel shader, the anchor of
+    //    --gow2_ao_everywhere), small and gentle: contact and character shading, not a second darkening of the baked AO.
+    game_default("gow2_ao_fog_ps", "724AB5F143DBBFD4");
+    game_default("gow2_ao_add_radius", "35");
+    game_default("gow2_ao_add_power", "1.6");
     XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull});
     Ue3InstallShaderPrebuildIfRequested();  // notes/78: after the renderer (it asks whether the renderer wants them)
     XenosInstallQueryLogIfRequested(runtime(), {});
@@ -114,6 +123,7 @@ class Gow3App : public rex::ReXApp {
     }
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
+    XenosInstallAoDebugKeys(drawer);  // Gears 2 notes/80 s.12: F9 / F10 / F11 (--gow2_ao_debug_keys)
     XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
@@ -136,6 +146,7 @@ class Gow3App : public rex::ReXApp {
     Gow3StopMemoryGauge();
     XenosShutdownInGameMenu();  // patch 0163
     XenosDestroyFpsBar();  // before the SDK drops its drawer
+    XenosShutdownAoDebugKeys();  // Gears 2 notes/80
   }
   // 0054 (Gears 2): the achievement toast is built only when one is shown, so the SDK's always-on toast window no longer
   // counts as a second presented surface (the NVIDIA overlay showed 2x fps). Same lines as Gow2App.

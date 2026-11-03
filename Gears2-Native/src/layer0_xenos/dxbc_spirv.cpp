@@ -1294,6 +1294,9 @@ SpirvResult Converter::Run(const uint32_t* shex, size_t n) {
   for (auto& [x, vs] : xtemps_) Module::Put(m_.fn, kOpVariable, {TPtr(kScFunction, vs.second), vs.first, kScFunction});
   // D3D temps start at 0.
   for (uint32_t v : temps_) Void(kOpStore, {v, SplatU(0)});
+  // VKA2: indexable temps and pixel outputs start at 0 too (undefined on Vulkan otherwise; D3D zeroes them).
+  for (auto& [x, vs] : xtemps_) Void(kOpStore, {vs.first, m_.Cached(46 /*OpConstantNull*/, {vs.second}, true)});
+  for (auto& [r, v] : targets_) Void(kOpStore, {v, m_.Cached(46, {TF4()}, true)});
   for (size_t k = 0; k < code.size(); ++k) {
     const Instr& in = code[k];
     if (is_decl(in.op)) continue;

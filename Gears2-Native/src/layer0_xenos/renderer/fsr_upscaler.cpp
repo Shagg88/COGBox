@@ -72,10 +72,10 @@ class FsrUpscaler final : public Upscaler {
   std::string Status() const override { return status_; }
 
   bool Configure(gpu::Backend& backend, uint32_t render_width, uint32_t render_height, uint32_t output_width,
-                 uint32_t output_height, bool hdr, bool depth_infinite) override {
+                 uint32_t output_height, bool hdr, bool depth_infinite, bool depth_inverted) override {
     if (failed_) return false;
     if (context_ && render_width == rw_ && render_height == rh_ && output_width == ow_ && output_height == oh_ &&
-        hdr == hdr_ && depth_infinite == infinite_)
+        hdr == hdr_ && depth_infinite == infinite_ && depth_inverted == inverted_)
       return true;
     if (!module_) {
       module_ = LoadLibraryW(L"amd_fidelityfx_loader_dx12.dll");
@@ -103,13 +103,15 @@ class FsrUpscaler final : public Upscaler {
     c.header.pNext = &be.header;
     // HDR linear colour; FSR's own exposure (we don't read the game's tone-mapper exposure).
     c.flags = (hdr ? (FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE) : 0u) |
-              (depth_infinite ? FFX_UPSCALE_ENABLE_DEPTH_INFINITE : 0u);
+              (depth_infinite ? FFX_UPSCALE_ENABLE_DEPTH_INFINITE : 0u) |
+              (depth_inverted ? FFX_UPSCALE_ENABLE_DEPTH_INVERTED : 0u);  // notes/80 s.6
     c.maxRenderSize = {render_width, render_height};
     c.maxUpscaleSize = {output_width, output_height};
     c.fpMessage = &FfxMessage;
     const ffxReturnCode_t r = fn_.CreateContext(&context_, &c.header, nullptr);
     if (r != FFX_API_RETURN_OK || !context_) return Fail(std::format("context creation failed ({})", uint32_t(r)));
     rw_ = render_width, rh_ = render_height, ow_ = output_width, oh_ = output_height, hdr_ = hdr, infinite_ = depth_infinite;
+    inverted_ = depth_inverted;
     // Which upscaler the loader chose (FSR 4 / 3.1.x): its provider version string.
     std::string version = "?";
     ffxQueryGetProviderVersion v{};
@@ -187,6 +189,7 @@ class FsrUpscaler final : public Upscaler {
   std::vector<Retired> retired_;   // 0.2.0 (#6): old contexts the GPU may still be using
   ffxContext context_ = nullptr;
   bool failed_ = false, hdr_ = false, infinite_ = false, eval_error_logged_ = false;
+  bool inverted_ = false;  // notes/80 s.6
   uint32_t rw_ = 0, rh_ = 0, ow_ = 0, oh_ = 0;
   std::string status_ = "FSR not started";
 };

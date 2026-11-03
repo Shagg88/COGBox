@@ -248,6 +248,14 @@ name = "Gow3GpuWaitStep"
 registers = []
 jump_address_on_true = 0x82B0D0BC
 
+# Mods' campaign chapters (mod_chapters.cpp, KiltedKernel): the entry of FName::FName (FName*, const TCHAR*, EFindName;
+# disc 0x82302F28), which the game thread runs from the first moments of the boot: the chapter table is filled the first time it
+# runs once Default__GearTypes exists, before a chapter URL given at start (--ue3_launch) looks its map up.
+[[entrypoint.midasm_hook]]
+address = 0x823135B0
+name = "Gow3ModFName"
+registers = []
+
 # The engine's frame-rate limit (--gow3_max_fps; settings override after the MaxSmoothedFrameRate load, game_patches.cpp).
 [[entrypoint.midasm_hook]]
 address = 0x8254E4A8
@@ -291,3 +299,12 @@ jump_address_on_true = 0x82BDD3C0
 address = 0x82978908
 name = "Gow3TexturePoolSize"
 registers = ["r11", "r26"]
+
+# Cheats on TU6 (Shagg 2 Nov): TU6 compares a loaded file's SHA-1 (20 bytes, loop 0x82323C3C) with its stored value and
+# calls the dirty-disc error (sub_82CF8A90) when they differ - our patched GearGame.xxx (AllowCheats) differs. Before
+# `cmpwi cr6,r9,0` at 0x82323C5C (r9 = first differing byte, 0 = same): extras.cpp sets r9 = 0 only while --gow3_cheats
+# or --gow3_unlock_mutators is on, and logs it.
+[[entrypoint.midasm_hook]]
+address = 0x82323C5C
+name = "Gow3Tu6PackageHashOk"
+registers = ["r9"]

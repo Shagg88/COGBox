@@ -63,6 +63,50 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 
 
+New in 0.4.4
+------------
+- Screenshot key: \ (backslash) saves a screenshot in all four games, to Pictures\COGBox\<game>.
+- Voice language: a game no longer freezes or crashes at start-up when the voice language differs from the game's
+  language. Gears 2 (GitHub #145, thanks to KiltedKernel, PR #156), Gears 3 and Judgment (#153).
+- Gears 3 with XeGTAO: a crash fixed (GitHub #146, thanks to KiltedKernel, PR #148).
+- Gears 3: versus, Horde and Beast are no longer held at 60 fps (the menu limit stayed on there, #157).
+- Launcher: the library music plays again (#151). Keyboard keys are kept per game (#154).
+- The mouse cursor hides after 3 seconds without mouse movement, so it no longer sits over the game when you play
+  with a controller (#143).
+- DLSS is marked experimental again (flickering in Gears 1 and Judgment, smearing in Gears 3), and so is Vulkan in
+  Gears 3 and Judgment on Windows (some things still look wrong there; on Steam Deck / Linux Vulkan stays the usual
+  choice) and XeGTAO (it costs too much frame rate for now). DirectX 12 with SMAA is the tested setup on Windows.
+
+
+New in 0.4.3
+------------
+- Gears 3 mods can do more than replace files: mod.ini rules (requires / game / enabled), config fragments, bare
+  Xbox 360 files at a mod's top, new campaign chapters (32-49) and content packages. Thanks to KiltedKernel (PR #122).
+- Mods that add new files (not only replace them) now work in Gears 1, Gears 3 and Judgment (PR #122).
+
+
+New in 0.4.2
+------------
+- Vulkan and DLSS are no longer experimental - both now work as they should. Vulkan: purple / wrong textures in Gears 3 and Judgment fixed, other picture
+  fixes, and Vulkan uses less CPU per frame. DirectX 12 stays the default.
+- Ambient occlusion (Gears 2 / Gears 3, Graphics tab): XeGTAO high / ultra - sharper, full-resolution contact
+  shadows. Default: Game's own. Thanks to gmihaic (GitHub PR #139).
+- Anti-aliasing: SMAA T2x (Gears 2 / Gears 3) - smoother edges and much less shimmer, DirectX 12 and Vulkan
+  (PR #139).
+- DLSS / FSR / XeSS: better motion vectors and depth in Gears 2 and Gears 3 (PR #139).
+- About tab: "Report a problem" makes the report zip, opens a pre-filled GitHub issue and shows the zip to
+  drag into it.
+- Untested game versions or title updates still play, with a clearer warning; please don't report problems
+  you get with them.
+- Gears 2: ultrawide 32:9 is no longer cut to 21:9 (GitHub #137); the camera turns the same amount per mouse
+  movement in every view (#52).
+- Gears 3: two-player split can be side by side (experimental, #136).
+- In-game menu: mouse control, and the game no longer gets input while the menu is open (based on PR #134 by
+  Flippage).
+- Launcher: row descriptions wrap inside the page (#123).
+- Thanks to gmihaic (PR #139) and Flippage (PR #134), whose pull requests are in this version, and to KiltedKernel (PR #122) and legoliamneeson (PR #43) for their contributions.
+
+
 New in 0.4.1
 ------------
 - Steam Deck / Linux (Proton): controllers work in the games again - the game now finds a pad that
@@ -87,7 +131,7 @@ New in 0.4.0 - please read
   folder and saves stay where they are.
 
 
-Graphics API: DirectX 12 is the default and the tested renderer. Vulkan (experimental) is on each
+Graphics API: DirectX 12 is the default. Vulkan is on each
 game's Graphics tab for testing; FSR / DLSS / XeSS and frame generation are DirectX 12 only. If
 something looks wrong on Vulkan, please send a problem report.
 
@@ -174,6 +218,12 @@ Under Proton COGBox skips exclusive fullscreen, Reflex and Anti-Lag (the composi
 screen). The games use Vulkan there by themselves (DirectX 12 does not start under Proton yet).
 Steam Input should present the controller as a standard gamepad. Problem reports from Linux
 help a lot: "Make a problem report" saves them in COGBox's reports folder (and opens it).
+
+One Steam entry per game (Windows or Linux): add CogBox.exe again for each game and set its
+Launch Options to --play gears1, --play gears2, --play gears3 or --play judgment - COGBox then
+starts that game straight away with your settings. Adding gow3.exe (or another game program)
+itself does not work: it stops with "--game_data_root was not provided", because COGBox passes
+it the game folder and your settings.
 
 
 Where things are

@@ -784,3 +784,19 @@ Add it with ADD UPDATE: the update package from your console's folder = Aggiungi
 # 0.4.0: player name
 Player name = Nome giocatore
 The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = Il nome che ogni gioco mostra per te (il tuo gamertag): fino a 15 lettere, cifre o spazi. Vuoto: "User". Solo visualizzazione: profilo e salvataggi restano dove sono.
+# notes/80: ambient occlusion (XeGTAO)
+Ambient occlusion = Occlusione ambientale
+XeGTAO (high) = XeGTAO (alta)
+XeGTAO (ultra) = XeGTAO (ultra)
+Gears 2 first = prima Gears 2
+The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version (Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, characters included, at about the cost of the original. Ultra looks in more directions and catches more small details, for a little more. Game's own: the original. Off: none. = L'ombreggiatura morbida negli angoli, nelle fessure e dove gli oggetti si toccano. XeGTAO: una versione moderna a piena risoluzione (XeGTAO di Intel) al posto di quella del gioco, a bassa risoluzione - ombre di contatto precise invece di macchie, anche sui personaggi, con un costo simile all'originale. Ultra cerca in più direzioni e coglie più piccoli dettagli, per poco di più. Quella del gioco: l'originale. No: nessuna.
+SMAA T2x (temporal) = SMAA T2x (temporale)
+SMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now. = SMAA T2x: SMAA più un passaggio temporale - bordi più morbidi e molto meno sfarfallio, con un costo ridotto, qualsiasi scheda video, DirectX 12 o Vulkan. Per ora solo in Gears 2 e Gears 3.
+Gears 2 and Gears 3 for now. = Per ora solo in Gears 2 e Gears 3.
+Gears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it. = Gears 3: la maggior parte dei livelli ha l'ombreggiatura precalcolata e nessuna AO in tempo reale - lì XeGTAO aggiunge un'ombreggiatura di contatto delicata e sostituisce l'AO del gioco dove un livello ce l'ha.
+
+# 0.4.4 (Shagg 3 Nov): XeGTAO experimental; Proton Graphics API labels
+XeGTAO (high, experimental) = XeGTAO (alta, sperimentale)
+XeGTAO (ultra, experimental) = XeGTAO (ultra, sperimentale)
+DirectX 12 = DirectX 12
+Vulkan = Vulkan

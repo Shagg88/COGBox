@@ -16,3 +16,4 @@ constexpr ue3_mouse::Build kBuild = { "Gears of War 2 (disc)", true, 0x827FC468,
 }  // namespace
 
 void CogMouseLookInstall(rex::ui::Window* window) { ue3_mouse::Install(kBuild, window); }
+void CogMouseLookNoteFov(double fov) { ue3_mouse::NoteViewFov(fov); }

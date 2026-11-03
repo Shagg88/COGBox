@@ -272,12 +272,20 @@ bool Gow3NameHas(std::string_view s, std::string_view needle) {
   }
   return false;
 }
+// GitHub #157: versus, Horde and Beast maps are MP_<map>.xxx, without the campaign's _P - the cap stayed at 60 there.
+bool Gow3IsLevel(std::string_view path) {
+  if (Gow3NameHas(path, "_p.xxx")) return true;
+  const size_t slash = path.find_last_of("\\/");
+  const std::string_view base = slash == std::string_view::npos ? path : path.substr(slash + 1);
+  return base.size() > 3 && std::tolower(static_cast<unsigned char>(base[0])) == 'm' &&
+         std::tolower(static_cast<unsigned char>(base[1])) == 'p' && base[2] == '_' && !Gow3NameHas(base, "_loc_");
+}
 void OnGow3FileOpened(std::string_view path, const std::filesystem::path*) {
   if (!Gow3NameHas(path, ".xxx")) return;
   const bool front = Gow3NameHas(path, "gearstart");
   if (front) {
     if (!g_in_front_end.exchange(true)) REXLOG_INFO("gow3_menu_fps: front end ({}) - limit {} fps", path, REXCVAR_GET(gow3_menu_fps));
-  } else if (Gow3NameHas(path, "_p.xxx") && g_in_front_end.exchange(false)) {
+  } else if (Gow3IsLevel(path) && g_in_front_end.exchange(false)) {
     REXLOG_INFO("gow3_menu_fps: level {} - the player's limit again", path);
   }
 }
@@ -301,8 +309,11 @@ void Gow3InstallMenuCap() {
 REXCVAR_DEFINE_INT32(gow3_tick_floor_fps, 0, "Gears3",
                      "With no frame-rate limit: the engine still ticks at most N times a second (no sub-millisecond ticks "
                      "while nothing is presented, e.g. checkpoint saves). 0 = off");
+void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content packages, on the game thread
+
 void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9B0
   TickTimeline();
+  Gow3ModChaptersTick();
   const int32_t v = REXCVAR_GET(gow3_max_fps);
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)

@@ -43,6 +43,7 @@ struct Ini {
 
 // Opens a folder or a web page with Windows' own handler.
 void shell_open(const std::string &target);
+void shell_select(const std::string &file);   // Explorer opens the folder with that file selected
 // Windows' folder / file pickers (empty = cancelled). filter is like L"Disc images\0*.iso\0All files\0*.*\0".
 std::string pick_folder(const wchar_t *title);
 std::string pick_file(const wchar_t *title, const wchar_t *filter);

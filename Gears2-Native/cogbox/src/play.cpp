@@ -306,7 +306,9 @@ void play_poll(App &a)
         what += "; its log mentions the graphics card being lost (a driver reset, or an overheating / overclocked card)";
     if (!crash.empty()) what += "; it wrote a crash report";
     ask(a, "crash", g, std::string(d.name) + " closed",
-        std::string(d.name) + " closed unexpectedly: " + what + ".\n\nMake a problem report (a zip on your desktop) for it? "
+        std::string(d.name) + " closed unexpectedly: " + what + ".\n\n" + (untested_version(a, g) ?
+        "Your game version or title update is an untested one, so this may be why. Please don't report problems you get with it - "
+        "try the expected version first.\n\n" : "") + "Make a problem report (a zip on your desktop) for it? "
         "It holds the log, the settings, a description of this PC and any crash report - no saves, no game files, and your "
         "Windows user name is taken out. Nothing is sent by itself.",
         { "Make a report", "Open the log folder", "Close" }, a.run.logDir + "\n" + what);
@@ -318,10 +320,8 @@ void play_answer(App &a, const Modal &m)
     std::string what = m.data.find('\n') == std::string::npos ? "" : m.data.substr(m.data.find('\n') + 1);
     if (m.answer == 0) {
         std::string zip, err;
-        if (make_report(a, m.game, dir, what, zip, err)) {
-            set_message(a, std::string(a.wine ? "Saved in COGBox's reports folder: " : "Saved on your desktop: ") + zip.substr(zip.find_last_of('\\') + 1) + " - attach it to a GitHub issue.", false);
-            shell_open(zip.substr(0, zip.find_last_of('\\')));
-        } else set_message(a, "Couldn't make the report: " + err, true);
+        if (make_report(a, m.game, dir, what, zip, err)) report_share(a, m.game, zip, what);
+        else set_message(a, "Couldn't make the report: " + err, true);
     } else if (m.answer == 1) shell_open(dir);
 }
 
@@ -380,8 +380,11 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
     {   // Shagg 31 Oct: name the experimental settings that were on, so a report shows them at once
         const gs::Settings &cs = a.cur[g];
         std::string exp;
-        if (cs.i("Api") == 1) exp += "Vulkan, ";
-        if (cs.i("AAMode") >= 2) exp += std::string(cs.i("AAMode") == 2 ? "FSR" : cs.i("AAMode") == 3 ? "DLSS" : "XeSS") + ", ";
+        // Vulkan: experimental again in Gears 3 and Judgment (Shagg 3 Nov), not in Gears 1 / 2
+        if (cs.i("Api") == 1 && (g == G_GEARS3 || g == G_JUDGMENT) && !a.wine) exp += "Vulkan, ";   // (the Proton path is Vulkan)
+        // DLSS experimental again (Shagg 3 Nov: flickering in Gears 1 #147 and Judgment, smearing in Gears 3 #150); SMAA T2x is not
+        if (cs.i("AAMode") >= 2 && cs.i("AAMode") <= 4) exp += std::string(cs.i("AAMode") == 2 ? "FSR" : cs.i("AAMode") == 3 ? "DLSS" : "XeSS") + ", ";
+        if (cs.i("AO") >= 2) exp += "XeGTAO, ";   // experimental again (Shagg 3 Nov: about 5 ms a frame)
         if (cs.i("FrameGen") > 0) exp += "frame generation, ";
         if (cs.b("SystemLink")) exp += "System Link, ";
         sys += "Experimental settings on: " + (exp.empty() ? std::string("none") : exp.substr(0, exp.size() - 2)) + "\r\n\r\n";
@@ -389,8 +392,14 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
     // the game files' fingerprints (never the files)
     sys += std::string("Game files: ") + (st.dataDir.empty() ? "none" : st.xexMatch ? "the expected release" : "a different release (default.xex " +
            cached_sha1(a.ini, join(st.dataDir, "default.xex")) + ", " + std::to_string(file_size(join(st.dataDir, "default.xex"))) + " bytes)") + "\r\n";
-    sys += std::string(d.updateName) + ": " + (st.updateDir.empty() ? "none" : st.xexpMatch ? "the expected update" : "a different update (default.xexp " +
-           cached_sha1(a.ini, join(st.updateDir, "default.xexp")) + ")") + "\r\n";
+    // GitHub #138: always the update's SHA-1 and size, and "expected" only for the port's own update - a file from the
+    // reported-working list or one the player confirmed is named as such (#138's TU1 file was listed as "expected").
+    const std::string xexpPath = st.updateDir.empty() ? "" : join(st.updateDir, "default.xexp");
+    const std::string xexpSha = xexpPath.empty() ? "" : cached_sha1(a.ini, xexpPath);
+    sys += std::string(d.updateName) + ": " + (st.updateDir.empty() ? "none" :
+           std::string(xexpSha == d.xexp.sha1 ? "the expected update" : st.xexpMatch ? "a reported-working update" :
+                       st.xexpConfirmed ? "a different update the player confirmed works" : "a different update") +
+           " (default.xexp " + xexpSha + ", " + std::to_string(file_size(xexpPath)) + " bytes)") + "\r\n";
     sys += "\r\nMade by COGBox at " + now_stamp() + ". Your Windows user name and PC name are replaced (x's in crash dumps).\r\n";
     std::string name = std::string("CogBox-report-") + d.dir + "-" + now_stamp() + ".zip";
     // 0.2.1: under Proton / Wine the "desktop" is hidden inside the game's prefix - use COGBox's own reports folder

@@ -65,6 +65,15 @@ class Gow2App : public rex::ReXApp {
     XenosInstallBufferDumpIfRequested(runtime());
     XenosInstallShaderDumpIfRequested();
     XenosInstallShaderWatchIfRequested();
+    // Notes/80 s.6 / s.11: Gears 2's settings for the shared renderer, each set only while it still has its compiled-in
+    // default (a command line, config file or environment variable always wins), as Gow3App does:
+    //  - the upscalers' depth copied at the scene depth resolve (Gears 2 clears it before the scene colour resolve);
+    //  - the characters' own motion from Gears 2's velocity pass (its c5-c12 layout).
+    const auto game_default = [](const char* name, const char* value) {
+      if (rex::cvar::GetFlagSource(name) == rex::cvar::Source::kDefault) rex::cvar::SetFlagByName(name, value);
+    };
+    game_default("gow2_upscale_depth_at_resolve", "true");
+    game_default("gow2_upscale_character_motion", "true");
     XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull});
     Gow2InstallLocLogIfRequested();  // GitHub #90: before the game opens its localized packages
     Gow2InstallMainMenuExitIfRequested();
@@ -105,6 +114,7 @@ class Gow2App : public rex::ReXApp {
     }
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
+    XenosInstallAoDebugKeys(drawer);  // notes/80 s.12 (--gow2_ao_debug_keys)
     XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
@@ -113,6 +123,7 @@ class Gow2App : public rex::ReXApp {
   void OnShutdown() override {
     XenosShutdownInGameMenu();  // patch 0163
     XenosDestroyFpsBar();
+    XenosShutdownAoDebugKeys();  // notes/80
   }
   // Patch 0130: --gow2_mute_unfocused. The SDK checks audio_mute for each audio buffer, so this takes effect at once.
   // Only undoes a mute we set ourselves: a player's own --audio_mute=true stays on.

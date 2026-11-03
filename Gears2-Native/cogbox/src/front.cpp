@@ -460,7 +460,7 @@ void front_draw(App &a, ImVec2 size)
             // Shagg 29 Oct 18:07: an untested game version or title update (or an update made for another disc) still plays,
             // with a warning - unless the player said that exact file works
             if ((st.xexKnown && !st.xexMatch && !st.xexConfirmed) || (st.useUpdate && st.xexpKnown && !st.xexpMatch && !st.xexpConfirmed))
-                line += "   |   an untested version - things may not work as they should";
+                line += "   |   an untested version - it may not work as it should. Please don't report problems you get with it; use the expected one first";
             break;
         case R_NO_COPY: line = gd.tagline; break;
         case R_COPY_MISSING: line = "Your copy isn't where it was - is its drive connected?"; break;

@@ -84,7 +84,13 @@ class ObserverHub final : public DrawObserver {
     }
     if (timing_) cb_ticks_ += __rdtsc() - t0;
   }
-  bool WantsFrameImages() const override { return wants_images_; }
+  // Shagg 3 Nov: asked each frame, so an observer that wants images only now and then (the screenshot key) is heard.
+  bool WantsFrameImages() const override {
+    if (wants_images_) return true;
+    for (DrawObserver* o : observers_)
+      if (o->WantsFrameImages()) return true;
+    return false;
+  }
   void OnFrameImage(const uint8_t* rgb10a2, uint32_t width, uint32_t height, uint32_t row_pitch,
                     uint64_t frame) override {
     const uint64_t t0 = timing_ ? __rdtsc() : 0;

@@ -36,6 +36,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/input/prompt_device_monitor.cpp
     src/layer0_xenos/renderer/shadow_renderer.cpp
     src/layer0_xenos/renderer/upscaler.cpp
+    src/layer0_xenos/renderer/ao.cpp
     src/layer0_xenos/hold_guest.cpp
     src/layer0_xenos/draw_log.cpp
     src/layer0_xenos/shader_watch.cpp
@@ -58,6 +59,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/image_dump.cpp
     src/layer0_xenos/script_pad.cpp
     src/layer0_xenos/fps_bar.cpp
+    src/layer0_xenos/ao_debug.cpp
     src/layer0_xenos/ingame_menu.cpp
     src/layer0_xenos/profiler.cpp
 )
@@ -120,6 +122,7 @@ add_library(gn_layer2_ue3 STATIC
     src/layer2_ue3/shader_prebuild.cpp
     src/layer2_ue3/prebuild_lzx.cpp
     src/layer2_ue3/main_menu_exit.cpp
+    src/layer2_ue3/package_exports.cpp
 )
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer1_xdk7645)
@@ -362,13 +365,17 @@ if(GN_BUILD_TESTS)
         src/layer0_xenos/renderer/prompt_overlay_compositor.cpp
         tests/layer0_device_monitor_test.cpp
         src/layer0_xenos/input/prompt_device_monitor.cpp
+        tests/layer0_ao_test.cpp
         tests/layer2_config_bundle_test.cpp
         src/layer2_ue3/config_bundle.cpp
         tests/layer2_prebuild_lzx_test.cpp
         src/layer2_ue3/prebuild_lzx.cpp
         tests/layer2_main_menu_exit_test.cpp
         src/layer2_ue3/main_menu_exit.cpp
+        tests/layer2_package_exports_test.cpp
+        src/layer2_ue3/package_exports.cpp
         src/layer0_xenos/renderer/upscaler.cpp
+        src/layer0_xenos/renderer/ao.cpp
         src/layer0_xenos/hlsl.cpp
         src/layer0_xenos/ucode.cpp)
     target_include_directories(gn_tests PRIVATE src/layer0_xenos/include src/layer2_ue3/include tests third_party/flip/src/cpp/tool)

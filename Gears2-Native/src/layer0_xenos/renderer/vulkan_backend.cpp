@@ -427,6 +427,10 @@ class VulkanBackend final : public Backend {
         VkClearColorValue v{};
         VkImageSubresourceRange rg{VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
         vk_.vkCmdClearColorImage(C(VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT), t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &v, 1, &rg);
+      } else {
+        // VKA3 (Judgment purple textures): block-compressed images can't take vkCmdClearColorImage, so they started as
+        // whatever the memory held - D3D12 gives zeroed memory. Every mip / layer is copied from a zero-filled buffer.
+        ZeroBlockImage(textures_[h], fi);
       }
     }
     return h;
@@ -442,6 +446,10 @@ class VulkanBackend final : public Backend {
     for (auto& [k, v] : t.views) Defer(VK_NULL_HANDLE, v, VK_NULL_HANDLE, VK_NULL_HANDLE);
     t = {};
     view_sets_.clear();  // sets that named this texture's views
+    // VKA4 (Judgment purple / wrong textures): the BOUND set may name this texture's old views too, and SetTextures
+    // sees no change when a reused handle comes back in the same slot - so look the set up again (fresh views).
+    dirty_views_ = true;
+    cur_view_set_ = VK_NULL_HANDLE;
   }
   TextureHandle ImportTexture(void*, Format, uint32_t) override { NotDone("ImportTexture (V3: the presenter's image)"); return 0; }
   void ReleaseImport(TextureHandle, uint32_t) override {}
@@ -665,13 +673,24 @@ class VulkanBackend final : public Backend {
   PipelineHandle GetGraphicsPipeline(const GraphicsPipelineDesc& d, bool async, bool* pending) override {
     if (pending) *pending = false;
     if (!ready_ || lost_) return 0;
+    // VKP1 (as D3D12): consecutive draws very often use the same pipeline - the last ready one is answered without
+    // hashing the description and looking it up (pipelines are never destroyed; a ready one stays ready).
+    if (last_pipeline_ && d == last_pipeline_desc_) {
+      ++stats_.pipeline_memo_hits;
+      return last_pipeline_;
+    }
     auto it = pipeline_cache_.find(HashPipelineDesc(d));
     if (it != pipeline_cache_.end()) {
       for (const auto& [desc, handle] : it->second) {
         if (!(desc == d)) continue;
         if (!handle) return 0;
         Pipeline& p = *pipelines_[handle];
-        if (p.ready.load(std::memory_order_acquire)) return p.failed.load() ? 0 : handle;
+        if (p.ready.load(std::memory_order_acquire)) {
+          if (p.failed.load()) return 0;
+          last_pipeline_ = handle;
+          last_pipeline_desc_ = d;
+          return handle;
+        }
         // Patch 0076 (as D3D12's 0062): a draw that needs a job still queued - behind the start-up backlog or the
         // guessed pipelines - doesn't wait its turn: a waiting draw builds it now, an async one moves it to the front.
         if (!pipeline_backlog_) {
@@ -983,14 +1002,18 @@ class VulkanBackend final : public Backend {
     view_count = std::min(view_count, 96u);
     sampler_count = std::min(sampler_count, 32u);
     bool vchg = false, schg = false;
-    for (uint32_t i = 0; i < 96; ++i) {
+    // VKP1: only the slots set now or by the last call can differ (the rest stay default) - no 96 + 32 compares a draw.
+    const uint32_t vn = std::max(view_count, set_view_count_), sn = std::max(sampler_count, set_sampler_count_);
+    for (uint32_t i = 0; i < vn; ++i) {
       const TextureView v = views && i < view_count ? views[i] : TextureView{};
       if (!(views_[i] == v)) { views_[i] = v; vchg = true; }
     }
-    for (uint32_t i = 0; i < 32; ++i) {
+    for (uint32_t i = 0; i < sn; ++i) {
       const SamplerDesc d = samplers && i < sampler_count ? samplers[i] : SamplerDesc{};
       if (!(samplers_[i] == d)) { samplers_[i] = d; schg = true; }
     }
+    set_view_count_ = views ? view_count : 0u;
+    set_sampler_count_ = samplers ? sampler_count : 0u;
     if (vchg) {
       dirty_views_ = true;
       bound_view_count_ = 0;
@@ -1005,9 +1028,9 @@ class VulkanBackend final : public Backend {
     if (!Valid(h) || !Record() || !data) return;
     Texture& t = textures_[h];
     const FormatInfo fi = Info(t.desc.format);
-    if (mip >= std::max(1u, t.desc.mips)) { ++stats_.texture_uploads_refused; return; }
+    if (mip >= std::max(1u, t.desc.mips)) { ++stats_.texture_uploads_refused; LogUploadRefusal(t, mip, layer, row_bytes, 0, rows, "mip"); return; }
     const bool is3d = t.desc.dimension == TextureDimension::k3D;
-    if (!is3d && layer >= std::max(1u, t.desc.depth_or_layers)) { ++stats_.texture_uploads_refused; return; }
+    if (!is3d && layer >= std::max(1u, t.desc.depth_or_layers)) { ++stats_.texture_uploads_refused; LogUploadRefusal(t, mip, layer, row_bytes, 0, rows, "layer"); return; }
     const uint32_t w = std::max(1u, t.desc.width >> mip), hgt = std::max(1u, t.desc.height >> mip);
     const uint32_t d = is3d ? std::max(1u, std::max(1u, t.desc.depth_or_layers) >> mip) : 1u;
     slices = std::max(1u, std::min(slices, d));
@@ -1015,15 +1038,23 @@ class VulkanBackend final : public Backend {
     const uint32_t tw = fi.block ? (w + 3) / 4 : w;
     const uint32_t th = fi.block ? (hgt + 3) / 4 : hgt;
     const uint32_t tight = tw * fi.block_bytes;
+    // VKA6 (as D3D12's UploadTexture): the source's own row count is its slice stride; a shorter source row is copied as
+    // far as it goes (the rest of the row zero) instead of the whole upload being refused.
+    const uint32_t src_rows = rows;
     rows = std::min(rows, th);
-    if (row_bytes < tight || !rows) { ++stats_.texture_uploads_refused; return; }
+    if (!rows) { ++stats_.texture_uploads_refused; LogUploadRefusal(t, mip, layer, row_bytes, tight, src_rows, "no rows"); return; }
+    if (row_bytes < tight) LogUploadRefusal(t, mip, layer, row_bytes, tight, src_rows, "short rows (copied, not refused)");
     const uint64_t size = uint64_t(tight) * rows * slices;
     uint64_t at = 0;
-    if (!RingAlloc(size, std::max(16u, fi.block_bytes), at)) return;
+    if (!RingAlloc(size, std::max(16u, fi.block_bytes), at)) { LogUploadRefusal(t, mip, layer, row_bytes, tight, src_rows, "upload ring"); return; }
     const uint8_t* src = static_cast<const uint8_t*>(data);
+    const uint32_t copy = std::min(row_bytes, tight);
     for (uint32_t s = 0; s < slices; ++s)
-      for (uint32_t y = 0; y < rows; ++y)
-        std::memcpy(ring_.mapped + at + (uint64_t(s) * rows + y) * tight, src + (uint64_t(s) * rows + y) * row_bytes, tight);
+      for (uint32_t y = 0; y < rows; ++y) {
+        uint8_t* dst = ring_.mapped + at + (uint64_t(s) * rows + y) * tight;
+        std::memcpy(dst, src + (uint64_t(s) * src_rows + y) * row_bytes, copy);
+        if (copy < tight) std::memset(dst + copy, 0, tight - copy);
+      }
     EndPass(3);
     Transition(t, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     VkBufferImageCopy c{};
@@ -1197,7 +1228,13 @@ class VulkanBackend final : public Backend {
     const uint32_t pitch = uint32_t(x1 - x0) * bpp;
     Readback rb;
     rb.row_pitch = pitch;
-    if (!MakeBuffer(uint64_t(pitch) * uint32_t(y1 - y0), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    // VKP2: a finished readback's buffer is reused (frame captures read back every frame; a new host-visible buffer
+    // each time cost ~0.4 ms a frame on Vulkan - D3D12 reuses its readback memory).
+    const uint64_t rb_need = uint64_t(pitch) * uint32_t(y1 - y0);
+    for (size_t i = 0; i < readback_pool_.size(); ++i)
+      if (readback_pool_[i].size >= rb_need) { rb.buffer = readback_pool_[i]; readback_pool_.erase(readback_pool_.begin() + i); break; }
+    if (!rb.buffer.buffer &&
+        !MakeBuffer(rb_need, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, rb.buffer, true,
                     VK_MEMORY_PROPERTY_HOST_CACHED_BIT))
       return 0;
@@ -1247,7 +1284,14 @@ class VulkanBackend final : public Backend {
     return true;
   }
   void CopyScratchToTexture(TextureHandle h, uint32_t mip, uint32_t layer) override {
-    if (!Valid(h) || !Record() || scratch_layout_.texture != h || scratch_layout_.mip != mip || scratch_layout_.layer != layer) return;
+    if (!Valid(h) || !Record() || scratch_layout_.texture != h || scratch_layout_.mip != mip || scratch_layout_.layer != layer) {
+      if (upload_refusals_logged_ < 40 && Valid(h)) {
+        ++upload_refusals_logged_;
+        REXLOG_INFO("vulkan VKA6 scratch copy skipped: texture {} mip {} layer {} (prepared for {} mip {} layer {})", h, mip, layer,
+                    scratch_layout_.texture, scratch_layout_.mip, scratch_layout_.layer);
+      }
+      return;
+    }
     Texture& t = textures_[h];
     const FormatInfo fi = Info(t.desc.format);
     EndPass(3);
@@ -1273,6 +1317,12 @@ class VulkanBackend final : public Backend {
   void ReleaseReadback(ReadbackHandle h) override {
     if (!h || h >= readbacks_.size() || !readbacks_[h].live) return;
     Readback& rb = readbacks_[h];
+    // VKP2: kept for reuse once the GPU is done with it (still mapped; at most 8 kept)
+    if (rb.fence && CompletedFence() >= rb.fence && rb.buffer.mapped && readback_pool_.size() < 8) {
+      readback_pool_.push_back(rb.buffer);
+      rb = {};
+      return;
+    }
     if (rb.buffer.mapped) vk_.vkUnmapMemory(device_, rb.buffer.memory);
     rb.buffer.mapped = nullptr;
     Defer(VK_NULL_HANDLE, VK_NULL_HANDLE, rb.buffer.buffer, rb.buffer.memory);
@@ -1783,7 +1833,6 @@ class VulkanBackend final : public Backend {
         ca[i].imageLayout = AttachmentLayout(textures_[c]);
         ca[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         ca[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        pass_written_.push_back(c);
       }
     }
     VkRenderingAttachmentInfo da{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
@@ -1792,7 +1841,6 @@ class VulkanBackend final : public Backend {
       da.imageLayout = AttachmentLayout(textures_[targets_.depth]);
       da.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
       da.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-      pass_written_.push_back(targets_.depth);
     }
     VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
     ri.renderArea = {{0, 0}, {w, h}};
@@ -1805,8 +1853,8 @@ class VulkanBackend final : public Backend {
     vk_.vkCmdBeginRendering(C(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT), &ri);
     in_pass_ = true;
     ++stats_.vk_passes;  // patch 0089
-    dirty_viewport_ = dirty_scissor_ = dirty_stencil_ = dirty_blend_ = true;
-    bound_pipeline_ = VK_NULL_HANDLE;
+    // VKP1: bound pipeline, dynamic state and descriptor sets are command-buffer state - they survive rendering
+    // instances, so nothing is re-recorded per pass (Record() still resets them for a new command buffer).
     return true;
   }
   // Patch 0089: why each render pass ended (BackendStats::vk_pass_end): 0 other, 1 new targets, 2 guest-memory upload,
@@ -1840,6 +1888,41 @@ class VulkanBackend final : public Backend {
     for (uint32_t i = 0; i < targets_.count; ++i) if (targets_.colors[i] == h) return true;
     return false;
   }
+  void LogUploadRefusal(const Texture& t, uint32_t mip, uint32_t layer, uint32_t row_bytes, uint32_t tight, uint32_t rows,
+                        const char* why) {
+    if (upload_refusals_logged_ >= 40) return;
+    ++upload_refusals_logged_;
+    REXLOG_INFO("vulkan VKA6 upload: {} - {}x{}x{} mips {} format {} | mip {} layer {} row_bytes {} tight {} rows {}", why,
+                t.desc.width, t.desc.height, t.desc.depth_or_layers, t.desc.mips, int(t.desc.format), mip, layer, row_bytes, tight, rows);
+  }
+  void ZeroBlockImage(Texture& t, const FormatInfo& fi) {
+    const TextureDesc& d = t.desc;
+    const bool is3d = d.dimension == TextureDimension::k3D;
+    const uint32_t layers = is3d ? 1u : std::max(1u, d.depth_or_layers);
+    const uint32_t depth0 = is3d ? std::max(1u, d.depth_or_layers) : 1u;
+    const uint64_t need = uint64_t((std::max(1u, d.width) + 3) / 4) * ((std::max(1u, d.height) + 3) / 4) * fi.block_bytes * depth0;
+    if (!need) return;
+    if (need > zero_.size) {
+      if (zero_.buffer) Defer(VK_NULL_HANDLE, VK_NULL_HANDLE, zero_.buffer, zero_.memory);
+      zero_ = {};
+      if (!MakeBuffer(std::max<uint64_t>(need, 1ull << 20), VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, zero_, false, 0)) { zero_ = {}; return; }
+      vk_.vkCmdFillBuffer(C(VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT), zero_.buffer, 0, VK_WHOLE_SIZE, 0);
+      FullBarrier();
+    }
+    Transition(t, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    std::vector<VkBufferImageCopy> cs;
+    for (uint32_t m = 0; m < std::max(1u, d.mips); ++m)
+      for (uint32_t l = 0; l < layers; ++l) {
+        VkBufferImageCopy c{};
+        c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, m, l, 1};
+        c.imageExtent = {std::max(1u, d.width >> m), std::max(1u, d.height >> m), is3d ? std::max(1u, depth0 >> m) : 1u};
+        cs.push_back(c);
+      }
+    vk_.vkCmdCopyBufferToImage(C(VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT), zero_.buffer, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               uint32_t(cs.size()), cs.data());
+    if (zeroed_block_images_++ == 0) REXLOG_INFO("vulkan: block-compressed images now start zeroed (VKA3)");
+  }
   void FullBarrier() {
     // Patch 0100: attachments left in an attachment layout go back to GENERAL inside this barrier (one barrier call
     // either way), except the current targets while a pass is about to begin on them; all callers are outside a pass.
@@ -1860,7 +1943,6 @@ class VulkanBackend final : public Backend {
     ++att_epoch_;               // patch 0116
     outside_dirty_ = false;
     GuestBarrier(false);
-    pass_written_.clear();
   }
 
   // ---- descriptors ----
@@ -1946,6 +2028,10 @@ class VulkanBackend final : public Backend {
     n.live = true;
     t = std::move(n);
     view_sets_.clear();  // sets that named the old image's views
+    // VKA4 (Judgment purple / wrong textures): the BOUND set may name this texture's old views too, and SetTextures
+    // sees no change when a reused handle comes back in the same slot - so look the set up again (fresh views).
+    dirty_views_ = true;
+    cur_view_set_ = VK_NULL_HANDLE;
     ++stats_.vk_targets_made_mutable;
     REXLOG_INFO("gow2_renderer: Vulkan: render target {} ({}x{}, VkFormat {}) made mutable for a view of another "
                 "format (patch 0087; {} so far)", h, d.width, d.height, int(t.format), stats_.vk_targets_made_mutable);
@@ -2080,9 +2166,21 @@ class VulkanBackend final : public Backend {
       const ViewDimension want = i < 32 ? ViewDimension::k2D : i < 64 ? ViewDimension::kCube : ViewDimension::k3D;
       const TextureView& v = views_[i];
       TextureHandle th = v.texture;
+      if (v.texture && !Valid(v.texture) && dim_mismatch_logged_ < 40) {  // VKA5: a handle that is no longer live
+        ++dim_mismatch_logged_;
+        REXLOG_INFO("vulkan VKA5: slot {} names texture {} which is not live - default bound", i, v.texture);
+      }
+      if (Valid(th) && ViewDimensionOf(textures_[th]) != want && dim_mismatch_logged_ < 40) {  // VKA5 diagnostic
+        const TextureDesc& td = textures_[th].desc;
+        ++dim_mismatch_logged_;
+        REXLOG_INFO("vulkan VKA5: slot {} wants {} but texture {} is {} ({}x{}x{}, mips {}, format {}, usage {:#x}) - default bound",
+                    i, int(want), th, int(ViewDimensionOf(textures_[th])), td.width, td.height, td.depth_or_layers, td.mips,
+                    int(td.format), uint32_t(td.usage));
+      }
       if (!Valid(th) || ViewDimensionOf(textures_[th]) != want) th = defaults_[v.zero || Valid(v.texture) ? 1 : 0][uint32_t(want)];
       VkImageView view = SampledView(th, th == v.texture ? v : TextureView{}, want);
       // Outside review: a view the driver refused - the default texture instead, and no set (draw skipped) if even that fails.
+      if (!view && dim_mismatch_logged_ < 40) { ++dim_mismatch_logged_; REXLOG_INFO("vulkan VKA5: slot {} texture {}: the driver refused its view - default bound", i, th); }
       if (!view) view = SampledView(defaults_[1][uint32_t(want)], TextureView{}, want);
       if (!view) return VK_NULL_HANDLE;
       ii[i] = {VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
@@ -2138,7 +2236,7 @@ class VulkanBackend final : public Backend {
       const TextureHandle th = views_[bound_views_[k]].texture;
       if (!Valid(th)) continue;
       if (textures_[th].layout != VK_IMAGE_LAYOUT_GENERAL) split = true;
-      for (TextureHandle w : pass_written_) if (w == th) split = true;
+      if (textures_[th].written_epoch == barrier_epoch_) split = true;  // VKP1: drawn to since the last full barrier
     }
     if (split) {
       EndPass(6);
@@ -2163,10 +2261,13 @@ class VulkanBackend final : public Backend {
     if (dirty_scissor_) { vk_.vkCmdSetScissor(cmd_, 0, 1, &scissor_); dirty_scissor_ = false; }
     if (dirty_stencil_) { vk_.vkCmdSetStencilReference(cmd_, VK_STENCIL_FACE_FRONT_AND_BACK, stencil_ref_); dirty_stencil_ = false; }
     if (dirty_blend_) { vk_.vkCmdSetBlendConstants(cmd_, blend_); dirty_blend_ = false; }
-    if (dirty_sets_ || dirty_cb_) {
+    if (dirty_sets_) {
       const VkDescriptorSet sets[3] = {cb_set_, cur_view_set_, cur_sampler_set_};
       vk_.vkCmdBindDescriptorSets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 3, sets, 2 * kCbCount, cb_offset_);
       dirty_sets_ = dirty_cb_ = false;
+    } else if (dirty_cb_) {  // VKP1: only the constant offsets changed - set 0 alone (sets 1-2 stay bound, one layout)
+      vk_.vkCmdBindDescriptorSets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &cb_set_, 2 * kCbCount, cb_offset_);
+      dirty_cb_ = false;
     }
     OccTrack();  // patch 0098
     return true;
@@ -2384,6 +2485,7 @@ class VulkanBackend final : public Backend {
     want.vertexPipelineStoresAndAtomics = have.vertexPipelineStoresAndAtomics;
     want.shaderImageGatherExtended = have.shaderImageGatherExtended;
     want.shaderStorageImageWriteWithoutFormat = have.shaderStorageImageWriteWithoutFormat;
+    want.shaderStorageImageReadWithoutFormat = have.shaderStorageImageReadWithoutFormat;  // VKA1
     want.occlusionQueryPrecise = have.occlusionQueryPrecise;
     if (options_.vk_robust_buffer_access) want.robustBufferAccess = have.robustBufferAccess;  // patch 0088 (bench)
     depth_clamp_ = have.depthClamp;
@@ -2506,6 +2608,9 @@ class VulkanBackend final : public Backend {
         if (sh.set_layout) vk_.vkDestroyDescriptorSetLayout(device_, sh.set_layout, nullptr);
       }
       Free(scratch_);
+      Free(zero_);
+      for (Buffer& b : readback_pool_) { if (b.mapped) vk_.vkUnmapMemory(device_, b.memory); Free(b); }
+      readback_pool_.clear();
       if (cb_pool_) vk_.vkDestroyDescriptorPool(device_, cb_pool_, nullptr);
       if (layout_) vk_.vkDestroyPipelineLayout(device_, layout_, nullptr);
       for (auto& l : set_layouts_) if (l) vk_.vkDestroyDescriptorSetLayout(device_, l, nullptr);
@@ -3126,6 +3231,11 @@ class VulkanBackend final : public Backend {
   std::vector<DescriptorPool> compute_pools_;
   uint32_t compute_pool_index_ = UINT32_MAX;
   Buffer scratch_;
+  uint64_t zeroed_block_images_ = 0;
+  uint32_t dim_mismatch_logged_ = 0;  // VKA5
+  uint32_t upload_refusals_logged_ = 0;  // VKA6
+  Buffer zero_;  // VKA3: zero-filled source for block-compressed images at creation
+  std::vector<Buffer> readback_pool_;  // VKP2: finished readback buffers (mapped), reused
   struct ScratchLayout { TextureHandle texture = 0; uint32_t mip = 0, layer = 0, row_pitch = 0, rows = 0, slices = 1; } scratch_layout_;
   VkDescriptorSetLayout set_layouts_[3] = {};
   VkPipelineLayout layout_ = VK_NULL_HANDLE;
@@ -3192,7 +3302,6 @@ class VulkanBackend final : public Backend {
   std::unordered_map<uint64_t, VkSampler> sampler_objects_;
   TargetSet targets_;
   bool in_pass_ = false;
-  std::vector<TextureHandle> pass_written_;
   std::vector<TextureHandle> att_layout_;  // patch 0100: textures put in an attachment layout, not yet back in GENERAL
   std::vector<VkImageMemoryBarrier2> pending_img_;  // patch 0082: queued barriers, sent by FlushBarriers
   bool pending_mem_ = false;
@@ -3214,6 +3323,9 @@ class VulkanBackend final : public Backend {
   CbShadow cb_shadow_[2 * kCbCount];
   uint8_t bound_views_[96] = {};
   uint32_t bound_view_count_ = 0;
+  uint32_t set_view_count_ = 96, set_sampler_count_ = 32;  // VKP1: slots the last SetTextures set (all at start)
+  PipelineHandle last_pipeline_ = 0;                       // VKP1: GetGraphicsPipeline memo
+  GraphicsPipelineDesc last_pipeline_desc_{};
   VkSampler sampler_memo_[32] = {};
   SamplerDesc sampler_memo_desc_[32];
   VkViewport viewport_{0, 1, 1, -1, 0, 1};
