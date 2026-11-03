@@ -106,6 +106,15 @@ static std::string runtime_dll(const std::string &exe)
     return "";
 }
 
+// GitHub #154: keyboard keys per game - CogBox.ini [Keys.<game>] (e.g. [Keys.judgment]). A key the player never set for
+// a game falls back to the old shared [Keys] (what 0.2.0 - 0.4.3 saved for all the games), then to the Gears layout.
+static std::string keys_section_name(int g) { return std::string("Keys.") + game_def(g).key; }
+static std::string key_get(App &a, int g, const char *cvar)
+{
+    std::string v = a.ini.get(keys_section_name(g), cvar);
+    return v.empty() ? a.ini.get("Keys", cvar) : v;
+}
+
 void env_refresh(App &a, int g)
 {
     GameState &st = a.st[g];
@@ -142,9 +151,9 @@ void env_refresh(App &a, int g)
     e.has_avx2 = a.hasAvx2;
     e.wine = a.wine;   // job 523
     e.mac = a.mac;     // job 643
-    e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab), shared by all the games
+    e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab); GitHub #154: this game's own
     for (const gs::KeyAction &k : gs::key_actions()) {
-        std::string v = a.ini.get("Keys", k.cvar);
+        std::string v = key_get(a, g, k.cvar);
         if (!v.empty()) e.keys[k.cvar] = v;
     }
     e.gamertag = a.ini.get("Profile", "Gamertag");
@@ -340,7 +349,7 @@ static void prepare_section(App &a, int g)
     }
 }
 
-static void keys_section(App &a)
+static void keys_section(App &a, int g)
 {
     static int capture = -1, captureFrame = 0;
     static bool captureAdd = false;   // right-click: the key is added as a second key, not instead of the keys
@@ -348,12 +357,13 @@ static void keys_section(App &a)
     const auto &acts = gs::key_actions();
     ImGui::Dummy(ImVec2(0, S(6)));
     th_heading("KEYBOARD KEYS", g_rowX1);
-    row_desc("Used when Keyboard and mouse is on, in all three games. Choose an action, then press its new key or mouse "
-             "button (Esc cancels).");
-    auto set_all = [&](const char *cvar, const std::string &v) {
-        a.ini.set("Keys", cvar, v);
+    row_desc((std::string("Used when Keyboard and mouse is on, in ") + game_def(g).shortName +
+              " only - each game keeps its own keys. Choose an action, then press its new key or mouse button (Esc cancels).").c_str());
+    const std::string sec = keys_section_name(g);
+    auto set_all = [&](const char *cvar, const std::string &v) {   // (this game's keys only, GitHub #154)
+        a.ini.set(sec, cvar, v);
         a.ini.save();
-        for (int g = 0; g < G_COUNT; g++) env_refresh(a, g);
+        env_refresh(a, g);
     };
     if (!keyNote.empty()) row_desc(keyNote.c_str());
     const bool capturing = capture >= 0;
@@ -363,7 +373,7 @@ static void keys_section(App &a)
         ImGui::PushID(k.cvar);
         std::string label = std::string(pad_name(a, k.pad)) + "  -  " + k.what;
         row_label(label.c_str(), "", true);
-        std::string cur = a.ini.get("Keys", k.cvar);
+        std::string cur = key_get(a, g, k.cvar);
         if (cur.empty()) cur = k.def;
         std::string shown = capture == i ? std::string("Press a key...") : key_shown(cur);
         if (th_button((shown + "##k").c_str(), ImVec2(g_ctrlW, T(26)), true, F_BODY, capture == i)) { capture = i; captureAdd = false; captureFrame = ImGui::GetFrameCount(); }
@@ -375,8 +385,8 @@ static void keys_section(App &a)
     if (capturing) ImGui::EndDisabled();
     ImGui::Dummy(ImVec2(0, S(4)));
     if (th_button("Reset keys to the Gears layout", ImVec2(F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, "Reset keys to the Gears layout").x + S(28), T(26)), true, F_BODY)) {
-        for (const gs::KeyAction &k : acts) a.ini.set("Keys", k.cvar, "");
-        set_all(acts[0].cvar, "");
+        for (const gs::KeyAction &k : acts) a.ini.set(sec, k.cvar, k.def);   // the layout itself, not the shared [Keys]
+        set_all(acts[0].cvar, acts[0].def);
         capture = -1;
     }
     // the press that sets the key: a frame after the click that chose the row, so that click isn't taken as the key
@@ -400,7 +410,7 @@ static void keys_section(App &a)
                 if (nm == mv) { keyNote = nm + " moves (W A S D and the arrow keys) - choose another key."; capture = -1; return; }
             for (int j = 0; j < (int)acts.size(); j++) {
                 if (j == capture) continue;
-                std::string cur = a.ini.get("Keys", acts[j].cvar);
+                std::string cur = key_get(a, g, acts[j].cvar);
                 if (cur.empty()) cur = acts[j].def;
                 std::string kept, tok;
                 bool removed = false;
@@ -414,13 +424,13 @@ static void keys_section(App &a)
                     kept += (kept.empty() ? "" : ",") + tok;
                 }
                 if (!removed) continue;
-                a.ini.set("Keys", acts[j].cvar, kept.empty() ? std::string("None") : kept);
+                a.ini.set(sec, acts[j].cvar, kept.empty() ? std::string("None") : kept);
                 keyNote += std::string(keyNote.empty() ? "" : " ") + key_shown(nm) + " was taken from \"" + acts[j].what + "\"" +
                            (kept.empty() ? " - that action has no key now." : ".");
             }
             std::string value = name;
             if (captureAdd) {   // keep the action's first key that isn't this one: at most two keys
-                std::string cur = a.ini.get("Keys", acts[capture].cvar);
+                std::string cur = key_get(a, g, acts[capture].cvar);
                 if (cur.empty()) cur = acts[capture].def;
                 const std::string first = cur.substr(0, cur.find(','));
                 if (!first.empty() && first != "None" && first != nm) value = first + "," + nm;
@@ -1119,7 +1129,7 @@ void page_draw(App &a, ImVec2 size)
             shown++;
         }
         if (!shown) row_desc("Nothing to set here yet.");
-        if (want == gs::Tab::Controls) keys_section(a);   // 0.2.0
+        if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
         if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
     } else about_tab(a, g);
     ImGui::PopFont();
