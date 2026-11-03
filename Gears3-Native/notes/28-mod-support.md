@@ -23,9 +23,9 @@ first field, e.g. a menu entry).
 
 ## Verified [V] / not yet [G]
 
-Built here from the repo with the SDK at nightly-20261002-bd833a2a + `rexglue-sdk-full.diff` + patches 46-53 and the
-pins (LLVM 23.1.3, VS 2022 17.14 / MSVC 14.44), TU6 (0.0.6.11) and the disc build, with the trilogy's Gears 1 chapter 1
-mod:
+Built here from the repo (rebased on 0.4.1, d7962fb) with the SDK at nightly-20261002-bd833a2a +
+`rexglue-sdk-full.diff` + patches 46-53 and the pins (LLVM 23.1.3, VS 2022 17.14 / MSVC 14.44), Title Update 6
+(0.0.6.11), with the trilogy's Gears 1 chapter 1 mod:
 - [V] mod.ini read, fingerprint logged; 28 mod files, 6 replaced / 28 added.
 - [V] 2 config fragments merged into 3 bundles; chapter 32 -> GOW1_SP_Prison_P read from the merged config.
 - [V] engine tables and `Default__GearTypes` found on the game thread during the boot (FName hook, every 256th call);
@@ -36,14 +36,8 @@ mod:
 - [V] `--ue3_exec="open GearGame_P?game=geargamecontent.GearGameSP?chapter=32?listen"` from the title screen travels
   into chapter 32: GearGame_P loads and the GOW1_SP_Prison_P package object exists.
 - [G] **open: the chapter's map file is never opened** (`--gow3_mod_file_log=true`: GearGame_P.xxx is the last .xxx
-  opened), on TU6 and the disc build, so the loading screen stays. The same mod loads the prison in KiltedKernel's
-  runtime. Found and fixed on the way, in `config_install.cpp`'s TOC rewrite (Gears 3 only; Gears 2's 5-field layout
-  unchanged): Gears 3's TOC lines have 4 fields (`<size> 0 <path> <md5>`, Gears 2 has a sector field too); added files
-  were written with 5, and replaced files' MD5 went into the path field; added lines go first now (the table ends with
-  its own entry, `0 0 ..\GearGame\Xbox360TOC.txt 0`), only in the main table (not the language tables), in the
-  table's own folder spelling. The game reads the rewritten tables (logged). Still unexplained: why the map's package
-  is not looked up / opened. Next suspects: how the engine's package file cache is filled on this runtime (TOC vs a
-  folder listing of the overlay device), and the async loader's queue.
+  opened), so the loading screen stays. The same mod loads the prison in KiltedKernel's runtime. The table of contents
+  lists the mod's packages (main's 8a5cefd, the 4-field fix first found here) and the game reads the rewritten table.
 - [G] `--ue3_launch="GearGame_P?chapter=32"` at start: the boot URL reads ChapterLevelNames before chapters 32+ can be
   filled (also in KiltedKernel's runtime); start new chapters from the title screen / Select Chapter (or `ue3_exec`).
 - [G] Select Chapter with the scripted pad: presses logged, the title screen did not react in a background window.
