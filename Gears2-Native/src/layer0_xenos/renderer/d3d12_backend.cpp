@@ -2367,8 +2367,11 @@ class D3D12Backend final : public Backend {
       ++stats_.texture_tables_reused;
       return;
     }
-    for (uint32_t i = 0; i < 96; ++i) bound_views_[i] = views96 ? views96[i] : TextureView{};
-    for (uint32_t i = 0; i < 32; ++i) bound_samplers_[i] = samplers32 ? samplers32[i] : SamplerDesc{};
+    // Only the views and samplers given (the rest default, as the Vulkan backend does): XeGTAO's pass binds one of each
+    // from one-element arrays, and reading 96 / 32 ran past them - off the render thread's stack (GitHub #146).
+    for (uint32_t i = 0; i < 96; ++i) bound_views_[i] = views96 && i < view_count ? views96[i] : TextureView{};
+    for (uint32_t i = 0; i < 32; ++i)
+      bound_samplers_[i] = samplers32 && i < sampler_count ? samplers32[i] : SamplerDesc{};
     bound_view_count_ = view_count;
     bound_sampler_count_ = sampler_count;
     textures_custom_ = true;
