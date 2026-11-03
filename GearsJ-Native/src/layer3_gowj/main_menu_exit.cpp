@@ -37,6 +37,14 @@ inline bool IsValidGuestPtr(uint32_t addr) {
   return false;
 }
 
+inline uint32_t SafeReadU32BE(const uint8_t* base, uint32_t addr) {
+  if (!base || !IsValidGuestPtr(addr) || !IsValidGuestPtr(addr + 3)) return 0;
+  return (static_cast<uint32_t>(base[addr + 0]) << 24) |
+         (static_cast<uint32_t>(base[addr + 1]) << 16) |
+         (static_cast<uint32_t>(base[addr + 2]) << 8)  |
+          static_cast<uint32_t>(base[addr + 3]);
+}
+
 bool GuestUtf16StartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_view expected) {
   if (!addr || !base || !IsValidGuestPtr(addr)) return false;
   for (size_t i = 0; i < expected.size(); ++i) {
@@ -70,6 +78,58 @@ bool MatchesKey(const uint8_t* base, uint32_t addr, std::string_view expected) {
          GuestAsciiStartsWithNoCase(base, addr, expected);
 }
 
+bool CheckStringCandidate(const uint8_t* base, uint32_t addr) {
+  if (!base || !IsValidGuestPtr(addr) || !IsValidGuestPtr(addr + 3)) return false;
+  char buf[64];
+  size_t len = 0;
+  for (; len < sizeof(buf) - 1; ++len) {
+    if (!IsValidGuestPtr(addr + static_cast<uint32_t>(len))) break;
+    const char c = static_cast<char>(base[addr + len]);
+    if (c == '\0') break;
+    if (c < 32 || c > 126) return false;
+    buf[len] = c;
+  }
+  buf[len] = '\0';
+  if (len < 3) return false;
+  if (strstr(buf, "DLC_Categories") != nullptr ||
+      strstr(buf, "MAINMENUOP_DLC") != nullptr ||
+      strstr(buf, "TITLE_DLC") != nullptr) {
+    REXLOG_INFO("MAINMENU: Exit screen string matched ('{}' at {:08X})", buf, addr);
+    return true;
+  }
+  return false;
+}
+
+bool CheckObjectForExitScreen(const uint8_t* base, uint32_t this_ptr) {
+  if (!base || !IsValidGuestPtr(this_ptr)) return false;
+  // UIWidget_MainMenu stores currentScreen at this_ptr + 216 and related screen state
+  // across this_ptr + 200..260. Check all pointer fields.
+  for (uint32_t offset = 200; offset <= 260; offset += 4) {
+    const uint32_t ptr = SafeReadU32BE(base, this_ptr + offset);
+    if (!IsValidGuestPtr(ptr)) continue;
+
+    // 1. Direct ASCII string at ptr
+    if (CheckStringCandidate(base, ptr)) return true;
+    // 2. Scaleform GFxStringNode (text starts at offset 12)
+    if (CheckStringCandidate(base, ptr + 12)) return true;
+
+    // 3. Indirect string pointer
+    const uint32_t deref = SafeReadU32BE(base, ptr);
+    if (IsValidGuestPtr(deref)) {
+      if (CheckStringCandidate(base, deref)) return true;
+      if (CheckStringCandidate(base, deref + 12)) return true;
+    }
+
+    // 4. Scaleform GFxValue secondary field at ptr + 4
+    const uint32_t deref4 = SafeReadU32BE(base, ptr + 4);
+    if (IsValidGuestPtr(deref4)) {
+      if (CheckStringCandidate(base, deref4)) return true;
+      if (CheckStringCandidate(base, deref4 + 12)) return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 bool MatchesNeedLive(const uint8_t* base, uint32_t addr) {
@@ -94,6 +154,11 @@ extern "C" void sub_82302DE0(PPCContext& ctx, uint8_t* base) {
     if (rex::glue::MatchesNeedLive(base, ctx.r5.u32)) {
       rex::glue::ExitGame();
     }
+    const uint64_t swaps = XenosSwapCount();
+    if (swaps > 100 && rex::glue::MatchesKey(base, ctx.r5.u32, "TITLE_DLC")) {
+      REXLOG_INFO("MAINMENU: TITLE_DLC queried after boot (swaps={}), terminating process immediately", swaps);
+      rex::glue::ExitGame();
+    }
   }
   __imp__sub_82302DE0(ctx, base);
 }
@@ -108,28 +173,10 @@ extern "C" void sub_82D0EE70(PPCContext& ctx, uint8_t* base) {
     const uint64_t swaps = XenosSwapCount();
     // Gate to ensure boot-time initialization is complete
     if (swaps > 100) {
-      if (rex::glue::IsValidGuestPtr(this_ptr) && rex::glue::IsValidGuestPtr(this_ptr + 216 + 7)) {
-        const uint32_t screen_state_addr = this_ptr + 216;
-        const uint8_t type = base[screen_state_addr];
-        if (type == 5) { // Scaleform VT_String
-          const uint32_t node = (static_cast<uint32_t>(base[screen_state_addr + 4]) << 24) |
-                                (static_cast<uint32_t>(base[screen_state_addr + 5]) << 16) |
-                                (static_cast<uint32_t>(base[screen_state_addr + 6]) << 8) |
-                                static_cast<uint32_t>(base[screen_state_addr + 7]);
-          if (rex::glue::IsValidGuestPtr(node) && rex::glue::IsValidGuestPtr(node + 3)) {
-            const uint32_t str_addr = (static_cast<uint32_t>(base[node + 0]) << 24) |
-                                      (static_cast<uint32_t>(base[node + 1]) << 16) |
-                                      (static_cast<uint32_t>(base[node + 2]) << 8) |
-                                      static_cast<uint32_t>(base[node + 3]);
-            if (rex::glue::IsValidGuestPtr(str_addr)) {
-              const char* s = reinterpret_cast<const char*>(base + str_addr);
-              if (strstr(s, "DLC_Categories") != nullptr || strstr(s, "TITLE_DLC") != nullptr) {
-                REXLOG_INFO("MAINMENU: Exit Game selected (screen={}), terminating process immediately", s);
-                rex::glue::ExitGame();
-              }
-            }
-          }
-        }
+      if (rex::glue::CheckObjectForExitScreen(base, this_ptr)) {
+        REXLOG_INFO("MAINMENU: Exit Game transition detected on main menu widget (this={:08X}, swaps={}), terminating process immediately",
+                    this_ptr, swaps);
+        rex::glue::ExitGame();
       }
     }
   }
