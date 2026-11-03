@@ -5,13 +5,19 @@
 #include <xenos/dev_tools.h>
 
 #include <rex/cvar.h>
-
-#include <windows.h>
 #include <rex/graphics/draw_observer.h>
 #include <rex/logging/macros.h>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"  // from third_party/flip/src/cpp/tool (public domain / MIT), see CMakeLists.txt
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>   // GetModuleFileNameA (the screenshot's game name)
 
 #include <algorithm>
 #include <chrono>

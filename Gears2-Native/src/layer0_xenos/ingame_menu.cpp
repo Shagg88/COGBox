@@ -784,14 +784,14 @@ void IdleCursorWatch() {
 }  // namespace
 
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window, rex::Runtime* runtime) {
-  StartPadPump(window, runtime);
+  StartPadPump(window, runtime);   // GitHub #108, menu or no menu: pad assignment (+ SDL pump when exported)
   // Shagg 3 Nov: \ is the screenshot key in every game, menu or no menu (frame_capture.cpp saves the next frame)
   rex::ui::RegisterBind("bind_cogbox_screenshot", "Backslash", "COGBox screenshot (Pictures\\COGBox)", [] { XenosRequestScreenshot(); });
   if (window && !g_idle_thread.joinable()) {   // GitHub #143, menu or no menu
     g_idle_window.store(window);
     g_idle_stop.store(false);
     g_idle_thread = std::thread(IdleCursorWatch);
-  }   // GitHub #108, menu or no menu: pad assignment (+ SDL pump when exported)
+  }
   // PR #117: the button-prompt monitor (its own thread; nothing with --gow_button_prompts=original), menu or no menu.
   ::xenos::input::GlobalPromptDeviceMonitor().Start(
       window, runtime ? static_cast<rex::input::InputSystem*>(runtime->input_system()) : nullptr);
