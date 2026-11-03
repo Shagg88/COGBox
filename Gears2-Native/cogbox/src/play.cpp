@@ -384,6 +384,7 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
         if (cs.i("Api") == 1 && (g == G_GEARS3 || g == G_JUDGMENT) && !a.wine) exp += "Vulkan, ";   // (the Proton path is Vulkan)
         // DLSS experimental again (Shagg 3 Nov: flickering in Gears 1 #147 and Judgment, smearing in Gears 3 #150); SMAA T2x is not
         if (cs.i("AAMode") >= 2 && cs.i("AAMode") <= 4) exp += std::string(cs.i("AAMode") == 2 ? "FSR" : cs.i("AAMode") == 3 ? "DLSS" : "XeSS") + ", ";
+        if (cs.i("AO") >= 2) exp += "XeGTAO, ";   // experimental again (Shagg 3 Nov: about 5 ms a frame)
         if (cs.i("FrameGen") > 0) exp += "frame generation, ";
         if (cs.b("SystemLink")) exp += "System Link, ";
         sys += "Experimental settings on: " + (exp.empty() ? std::string("none") : exp.substr(0, exp.size() - 2)) + "\r\n\r\n";

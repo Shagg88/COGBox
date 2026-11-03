@@ -279,12 +279,13 @@ std::vector<Option> make_options(Game g) {
     // be, since every flare would show through the scenery there.
     // Notes/80 (Gears2-Native): XeGTAO screen-space ambient occlusion in place of the game's own (Gears 2), or added
     // where a level has none (Gears 3 s.9: opt-in there, default "Game's own").
-    if (!g1) add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high)", "XeGTAO (ultra)" },
+    if (!g1) add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, experimental)", "XeGTAO (ultra, experimental)" },
                         1,   // Game's own: XeGTAO is opt-in in every game
                "The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version "
                "(Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, "
-               "characters included, at about the cost of the original. Ultra looks in more directions and catches more small "
-               "details, for a little more. Game's own: the original. Off: none.", 0), "ao");
+               "characters included. Experimental (Shagg 3 Nov): in our tests it cost about 5 ms a frame, roughly halving a "
+               "high frame rate - being worked on. Ultra looks in more directions and catches more small details, for a "
+               "little more. Game's own: the original. Off: none.", 0), "ao");
     add(choice("Shake", "Camera shake (roadie run)", Tab::Graphics, PG, { "Original", "Less", "Off" }, 0,
                "The camera shake while roadie-running. Less halves the game's own shake; Off removes it.", 373), "iniedit", "", true);
     add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 5, 100,

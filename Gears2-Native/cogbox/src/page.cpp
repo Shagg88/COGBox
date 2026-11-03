@@ -913,7 +913,7 @@ static void about_tab(App &a, int g)
         if (s.empty()) set_message(a, std::string("No play of ") + d.name + " yet - play once, then make the report.", false);
         else if (!a.ini.geti("Notices", "ReportExperimentalNever", 0)) {   // Shagg 31 Oct: experimental settings off first
             ask(a, "reportexp", g, "Before you make the report",
-                "Experimental settings (FSR / DLSS / XeSS, frame generation and others) are for "
+                "Experimental settings (FSR / DLSS / XeSS, XeGTAO, frame generation and others) are for "
                 "testing, not for regular play - for the smoothest play, use settings that aren't marked experimental.\n\n"
                 "Please turn every experimental setting off, play again and then make the report - unless the report is "
                 "about one of those settings. The report lists the experimental settings that were on.",

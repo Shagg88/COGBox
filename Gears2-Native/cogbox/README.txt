@@ -74,7 +74,8 @@ New in 0.4.4
 - The mouse cursor hides after 3 seconds without mouse movement, so it no longer sits over the game when you play
   with a controller (#143).
 - DLSS is marked experimental again (flickering in Gears 1 and Judgment, smearing in Gears 3), and so is Vulkan in
-  Gears 3 and Judgment (some things still look wrong there). DirectX 12 with SMAA is the tested setup.
+  Gears 3 and Judgment on Windows (some things still look wrong there; on Steam Deck / Linux Vulkan stays the usual
+  choice) and XeGTAO (it costs too much frame rate for now). DirectX 12 with SMAA is the tested setup on Windows.
 
 
 New in 0.4.3
