@@ -50,7 +50,7 @@ In the original Xbox 360 Unreal Engine 3 builds, title shutdown sequences were d
 - **Module:** `GearsJ-Native/src/layer3_gowj/main_menu_exit.h` and `main_menu_exit.cpp`.
 - **Cvar:** `gowj_main_menu_exit` (default `true`, category `"ui"`).
 - **Function Hooks:**
-  - `sub_82302DE0` (`Localize` handler): inspects `ctx.r5.u32` for `"TITLE_DLC"` (requested immediately upon Scaleform navigating to the DLC categories screen) and `"NeedLive"` via case-insensitive UTF-16 BE and ASCII matching (`MatchesKey`).
+  - `sub_82302DE0` (`Localize` handler): tracks `TOOLTIP_DLC`, `NeedLive`, and `TITLE_DLC`. During boot initialization, `UIWidget_MainMenu` pre-caches screen titles from `AllOptions` (call count 0); subsequent queries (call count > 0, when selecting Exit Game and entering `MAINMENUOP_DLC_Categories`) guarded by active frames / tooltips immediately terminate the process before the sub-menu is rendered.
   - `sub_82DBDA80` (`XamShowMarketplaceUI` thunk): marketplace general UI entry point.
   - `sub_82DBF838` (`XamShowMarketplaceDownloadItemsUI` thunk): marketplace items UI entry point.
   - `sub_829C25E8` (`ShowMarketplaceUI` caller): high-level marketplace action entry point before live check.

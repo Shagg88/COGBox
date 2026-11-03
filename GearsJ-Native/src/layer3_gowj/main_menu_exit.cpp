@@ -4,7 +4,8 @@
 // Exit Game on the main menu. The Coalesced/TU edit renames the defunct "Xbox LIVE
 // Marketplace" entry; selecting it triggers marketplace UI (sub_82DBDA80, sub_82DBF838,
 // sub_829C25E8, sub_829C2680, sub_829CAC40) or looks up the "NeedLive..." error text (sub_82302DE0, Localize).
-// Any of these triggers ends the process immediately.
+// When MAINMENUOP_DLC_Categories is navigated to, its title (TITLE_DLC) is requested; after the
+// boot-time pre-cache pass, querying TITLE_DLC terminates the process immediately.
 
 #include "main_menu_exit.h"
 
@@ -14,18 +15,25 @@
 #include <unistd.h>
 #endif
 
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #include <string_view>
 
 #include <rex/logging.h>
 #include <rex/ppc.h>
+#include <xenos/dev_tools.h>
 
 REXCVAR_DEFINE_BOOL(gowj_main_menu_exit, true, "ui",
                     "Add Exit Game to the main menu (replaces Xbox LIVE Marketplace); restart");
 
 namespace rex::glue {
 namespace {
+
+const auto g_start_time = std::chrono::steady_clock::now();
+std::atomic<uint32_t> g_title_dlc_count{0};
+std::atomic<bool> g_saw_tooltip_dlc{false};
 
 bool GuestUtf16StartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_view expected) {
   if (!addr || !base) return false;
@@ -64,11 +72,6 @@ bool MatchesNeedLive(const uint8_t* base, uint32_t addr) {
   return MatchesKey(base, addr, "NeedLive");
 }
 
-bool MatchesExitTrigger(const uint8_t* base, const PPCContext& ctx) {
-  if (!base) return false;
-  return MatchesKey(base, ctx.r5.u32, "TITLE_DLC") || MatchesKey(base, ctx.r5.u32, "NeedLive");
-}
-
 void ExitGame() {
   REXLOG_INFO("MAINMENU: Exit Game selected, ending the process");
   rex::FlushLogging();
@@ -83,8 +86,33 @@ void ExitGame() {
 
 extern "C" void __imp__sub_82302DE0(PPCContext& ctx, uint8_t* base);
 extern "C" void sub_82302DE0(PPCContext& ctx, uint8_t* base) {
-  if (REXCVAR_GET(gowj_main_menu_exit) && rex::glue::MatchesExitTrigger(base, ctx)) {
-    rex::glue::ExitGame();
+  if (REXCVAR_GET(gowj_main_menu_exit) && base) {
+    if (rex::glue::MatchesKey(base, ctx.r5.u32, "TOOLTIP_DLC")) {
+      rex::glue::g_saw_tooltip_dlc.store(true, std::memory_order_relaxed);
+    }
+
+    if (rex::glue::MatchesNeedLive(base, ctx.r5.u32)) {
+      rex::glue::ExitGame();
+    }
+
+    if (rex::glue::MatchesKey(base, ctx.r5.u32, "TITLE_DLC")) {
+      const uint32_t count = rex::glue::g_title_dlc_count.fetch_add(1, std::memory_order_relaxed);
+      const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+          std::chrono::steady_clock::now() - rex::glue::g_start_time).count();
+      const uint64_t swaps = XenosSwapCount();
+
+      // UIWidget_MainMenu pre-caches screen titles from AllOptions during initial boot (count == 0).
+      // Only subsequent queries (count > 0, when the player actually selects Exit Game and navigates
+      // to MAINMENUOP_DLC_Categories), or queries after the tooltip was shown / gameplay frames swapped,
+      // trigger immediate process exit.
+      if (count > 0 && (rex::glue::g_saw_tooltip_dlc.load(std::memory_order_relaxed) ||
+                        swaps > 30 || elapsed > 3)) {
+        rex::glue::ExitGame();
+      } else {
+        REXLOG_INFO("MAINMENU: TITLE_DLC queried during initial pre-cache (count: {}, swaps: {}, elapsed: {}s), skipping exit",
+                    count, swaps, elapsed);
+      }
+    }
   }
   __imp__sub_82302DE0(ctx, base);
 }
