@@ -199,11 +199,20 @@ std::vector<Option> make_options(Game g) {
                "Sets the graphics boxes in one go. Original = the game as on the console. Change any box afterwards and the "
                "preset shows Custom.", 316));
     // Job 521 (Shagg 19:02): Vulkan opened for testing - the play exes have the full Vulkan renderer.
-    add(choice("Api", "Graphics API", Tab::Graphics, PG, { "DirectX 12 (recommended)", "Vulkan" }, 0,
+    // Shagg 3 Nov: experimental again in Gears 3 and Judgment (Gears 3: black eyes on Vulkan, fine on DirectX 12)
+    const bool vkExp = g == Game::Gears3 || g == Game::Judgment;
+    static const char* const kVkTip =
                "Vulkan is a full alternative to DirectX 12, and the usual choice on Steam Deck / Linux. "
                "\n"
                "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
-               "are off. If something looks wrong, make a problem report and send it to us.", 0));
+               "are off. If something looks wrong, make a problem report and send it to us.";
+    static const char* const kVkTipExp =
+               "Experimental in this game - some things still look wrong on Vulkan (in Gears 3, black eyes); DirectX 12 is "
+               "the tested renderer.\n"
+               "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
+               "are off. If something looks wrong, make a problem report and send it to us.";
+    add(choice("Api", "Graphics API", Tab::Graphics, PG, { "DirectX 12 (recommended)", vkExp ? "Vulkan (experimental)" : "Vulkan" }, 0,
+               vkExp ? kVkTipExp : kVkTip, 0));
     // Shagg 13:16: Vulkan is no longer forced under Proton / Wine - this box lets Steam Deck / Linux / CrossOver
     // players run DirectX 12 there (off = Vulkan, which is known to get in game there).
     // Job 643 (Shagg: "the default for SteamOS / Mac should be the currently better API"): was the WineD3D12 box (on =
