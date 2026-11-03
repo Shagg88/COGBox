@@ -3,7 +3,7 @@
 //
 // Exit Game on the main menu. The Coalesced/TU edit renames the defunct "Xbox LIVE
 // Marketplace" entry; selecting it triggers marketplace UI (sub_82DBDA80, sub_82DBF838,
-// sub_829C2680, sub_829CAC40) or looks up the "NeedLive..." error text (sub_82302DE0, Localize).
+// sub_829C25E8, sub_829C2680, sub_829CAC40) or looks up the "NeedLive..." error text (sub_82302DE0, Localize).
 // Any of these triggers ends the process immediately.
 
 #include "main_menu_exit.h"
@@ -77,6 +77,14 @@ extern "C" void sub_82DBF838(PPCContext& ctx, uint8_t* base) {
     rex::glue::ExitGame();
   }
   __imp__sub_82DBF838(ctx, base);
+}
+
+extern "C" void __imp__sub_829C25E8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_829C25E8(PPCContext& ctx, uint8_t* base) {
+  if (REXCVAR_GET(gowj_main_menu_exit)) {
+    rex::glue::ExitGame();
+  }
+  __imp__sub_829C25E8(ctx, base);
 }
 
 extern "C" void __imp__sub_829C2680(PPCContext& ctx, uint8_t* base);

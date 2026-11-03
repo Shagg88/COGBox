@@ -251,15 +251,32 @@ int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& 
           std::string val = k.value.Utf8();
           bool val_modified = false;
 
-          const std::string_view kTarget = "Next=MAINMENUOP_DLC_Categories";
-          const std::string_view kReplacement = "Next=MAINMENUOP_DLC";
-          if (val.find(kTarget) != std::string::npos) {
+          auto ReplaceSubstr = [](std::string& s, std::string_view from, std::string_view to) -> bool {
+            bool matched = false;
             size_t pos = 0;
-            while ((pos = val.find(kTarget, pos)) != std::string::npos) {
-              val.replace(pos, kTarget.length(), kReplacement);
-              pos += kReplacement.length();
+            while ((pos = s.find(from, pos)) != std::string::npos) {
+              s.replace(pos, from.length(), to);
+              pos += to.length();
+              matched = true;
             }
-            val_modified = true;
+            return matched;
+          };
+
+          if (val.find("Identifier=MAINMENUOP_MainMenu") != std::string::npos) {
+            // In Scaleform GFx, setting Next=MAINMENUOP_None defines a terminal action (like Continue,
+            // LeaveParty, Journal, Options, or DLC in ClientMenu). Setting Next=MAINMENUOP_DLC caused
+            // navigateToScreen("MAINMENUOP_DLC") to return undefined and crash because MAINMENUOP_DLC
+            // is not an AllOptions screen. With Next=MAINMENUOP_None, no screen is pushed and the action
+            // for Label="DLC" executes directly, triggering our Exit Game interception.
+            if (ReplaceSubstr(val, "Next=MAINMENUOP_DLC_Categories", "Next=MAINMENUOP_None")) {
+              val_modified = true;
+            }
+            if (ReplaceSubstr(val, "Next=MAINMENUOP_DLC,", "Next=MAINMENUOP_None,")) {
+              val_modified = true;
+            }
+            if (ReplaceSubstr(val, "Next=MAINMENUOP_DLC)", "Next=MAINMENUOP_None)")) {
+              val_modified = true;
+            }
           }
 
           if (val.find("Identifier=MAINMENUOP_DLC_Categories") != std::string::npos) {

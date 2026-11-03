@@ -275,7 +275,7 @@ TEST_CASE("main menu exit: narrow string preservation when applicable", "[ue3][e
   CHECK_FALSE(dlc->value.wide);
 }
 
-TEST_CASE("main menu exit: judgment main menu routes DLC directly to MAINMENUOP_DLC", "[ue3][exit]") {
+TEST_CASE("main menu exit: judgment main menu routes DLC directly to MAINMENUOP_None", "[ue3][exit]") {
   using namespace ue3;
 
   const std::string all_options_val =
@@ -304,7 +304,8 @@ TEST_CASE("main menu exit: judgment main menu routes DLC directly to MAINMENUOP_
   const auto* all_options = FindKey(bundle, "Xbox360-GearUI.ini", "GearGame.UIWidget_MainMenu", "AllOptions");
   REQUIRE(all_options != nullptr);
   const std::string new_val = all_options->value.Utf8();
-  CHECK(new_val.find("Next=MAINMENUOP_DLC") != std::string::npos);
+  CHECK(new_val.find("Next=MAINMENUOP_None") != std::string::npos);
+  CHECK(new_val.find("Next=MAINMENUOP_DLC") == std::string::npos);
   CHECK(new_val.find("Next=MAINMENUOP_DLC_Categories") == std::string::npos);
   CHECK(all_options->value.wide == true);
 
@@ -321,7 +322,8 @@ TEST_CASE("main menu exit: judgment main menu routes DLC directly to MAINMENUOP_
       FindKey(bundle_path, "..\\..\\GearGame\\Config\\Xbox360-GearUI.ini", "geargame.uiwidget_mainmenu", "alloptions");
   REQUIRE(all_options_path != nullptr);
   const std::string new_path_val = all_options_path->value.Utf8();
-  CHECK(new_path_val.find("Next=MAINMENUOP_DLC") != std::string::npos);
+  CHECK(new_path_val.find("Next=MAINMENUOP_None") != std::string::npos);
+  CHECK(new_path_val.find("Next=MAINMENUOP_DLC") == std::string::npos);
   CHECK(new_path_val.find("Next=MAINMENUOP_DLC_Categories") == std::string::npos);
 
   // Verify non-Judgment game leaves Xbox360-GearUI.ini untouched
@@ -378,7 +380,8 @@ TEST_CASE("main menu exit: judgment TU gearui ini with +AllOptions, DLC categori
   const auto* main_menu_key = FindKeyContaining(bundle, "TU__xbox360-gearui.ini", "GearGame.UIWidget_MainMenu",
                                                 "Identifier=MAINMENUOP_MainMenu");
   REQUIRE(main_menu_key != nullptr);
-  CHECK(main_menu_key->value.Utf8().find("Next=MAINMENUOP_DLC") != std::string::npos);
+  CHECK(main_menu_key->value.Utf8().find("Next=MAINMENUOP_None") != std::string::npos);
+  CHECK(main_menu_key->value.Utf8().find("Next=MAINMENUOP_DLC") == std::string::npos);
   CHECK(main_menu_key->value.Utf8().find("Next=MAINMENUOP_DLC_Categories") == std::string::npos);
 
   const auto* dlc_cat_key = FindKeyContaining(bundle, "TU__xbox360-gearui.ini", "GearGame.UIWidget_MainMenu",
@@ -467,7 +470,8 @@ TEST_CASE("main menu exit: judgment TU gearui ini key prefix handling (.AllOptio
   const auto* main_menu = FindKeyContaining(bundle, "update:\\TU__xbox360-gearui.ini", "geargame.uiwidget_mainmenu",
                                             "Identifier=MAINMENUOP_MainMenu");
   REQUIRE(main_menu != nullptr);
-  CHECK(main_menu->value.Utf8().find("Next=MAINMENUOP_DLC") != std::string::npos);
+  CHECK(main_menu->value.Utf8().find("Next=MAINMENUOP_None") != std::string::npos);
+  CHECK(main_menu->value.Utf8().find("Next=MAINMENUOP_DLC") == std::string::npos);
 
   const auto* dlc_cat = FindKeyContaining(bundle, "update:\\TU__xbox360-gearui.ini", "geargame.uiwidget_mainmenu",
                                           "Identifier=MAINMENUOP_DLC_Categories");
@@ -513,6 +517,38 @@ TEST_CASE("main menu exit: judgment gearui already containing MAINMENUOP_DLC era
   const auto* dlc = FindKeyContaining(bundle, "Xbox360-GearUI.ini", "GearGame.UIWidget_MainMenu",
                                       "Identifier=MAINMENUOP_DLC,");
   CHECK(dlc == nullptr);
+
+  const auto* main_menu = FindKeyContaining(bundle, "Xbox360-GearUI.ini", "GearGame.UIWidget_MainMenu",
+                                            "Identifier=MAINMENUOP_MainMenu");
+  REQUIRE(main_menu != nullptr);
+  CHECK(main_menu->value.Utf8().find("Next=MAINMENUOP_None") != std::string::npos);
+  CHECK(main_menu->value.Utf8().find("Next=MAINMENUOP_DLC") == std::string::npos);
+
+  // Idempotency
+  CHECK(ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle) == 0);
+}
+
+TEST_CASE("main menu exit: judgment gearui with existing Next=MAINMENUOP_DLC rewrites to Next=MAINMENUOP_None", "[ue3][exit]") {
+  using namespace ue3;
+
+  const std::string main_menu_with_dlc_route =
+      "(Identifier=MAINMENUOP_MainMenu,Title=\"TITLE_MainMenu\","
+      "HeaderPicturePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_MainMenu\",HeaderType=\"\","
+      "List=((Label=\"DLC\",Next=MAINMENUOP_DLC,bHaltProgression=true)))";
+
+  auto bundle = MakeMockBundle(
+      "Xbox360-GearUI.ini", "GearGame.UIWidget_MainMenu",
+      {{"+AllOptions", main_menu_with_dlc_route}},
+      true);
+
+  int replaced = ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle);
+  CHECK(replaced == 1);
+
+  const auto* main_menu = FindKeyContaining(bundle, "Xbox360-GearUI.ini", "GearGame.UIWidget_MainMenu",
+                                            "Identifier=MAINMENUOP_MainMenu");
+  REQUIRE(main_menu != nullptr);
+  CHECK(main_menu->value.Utf8().find("Next=MAINMENUOP_None") != std::string::npos);
+  CHECK(main_menu->value.Utf8().find("Next=MAINMENUOP_DLC") == std::string::npos);
 
   // Idempotency
   CHECK(ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle) == 0);
