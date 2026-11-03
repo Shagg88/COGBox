@@ -252,6 +252,14 @@ name = "Gow3GpuWaitStep"
 registers = []
 jump_address_on_true = 0x82AF991C
 
+# Mods' campaign chapters (mod_chapters.cpp, KiltedKernel): the entry of FName::FName (FName*, const TCHAR*, EFindName;
+# TU6 0x823135B0), which the game thread runs from the first moments of the boot: the chapter table is filled the first time it
+# runs once Default__GearTypes exists, before a chapter URL given at start (--ue3_launch) looks its map up.
+[[entrypoint.midasm_hook]]
+address = 0x82302F28
+name = "Gow3ModFName"
+registers = []
+
 # The engine's frame-rate limit (--gow3_max_fps; settings override after the MaxSmoothedFrameRate load, game_patches.cpp).
 [[entrypoint.midasm_hook]]
 address = 0x8253D9B0

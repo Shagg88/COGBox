@@ -14,6 +14,7 @@
 // --ue3_package_patches (notes/25): patched script packages go through the same overlay (ue3/package_patch.h).
 // Our code (MIT).
 #include <ue3/config_bundle.h>
+#include <ue3/mod_extras.h>
 #include <ue3/package_patch.h>
 
 #include <rex/cvar.h>
@@ -527,34 +528,27 @@ int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, st
 std::map<std::string, std::filesystem::path> CollectMods(std::map<std::string, std::filesystem::path>* dirs) {
   namespace fs = std::filesystem;
   std::map<std::string, fs::path> out;
-  std::string spec = REXCVAR_GET(ue3_mods);
-  size_t at = 0;
-  while (at <= spec.size()) {
-    size_t end = spec.find(';', at);
-    if (end == std::string::npos) end = spec.size();
-    std::string one = spec.substr(at, end - at);
-    at = end + 1;
-    while (!one.empty() && (one.back() == ' ' || one.back() == '"')) one.pop_back();
-    while (!one.empty() && (one.front() == ' ' || one.front() == '"')) one.erase(0, 1);
-    if (one.empty()) continue;
-    const fs::path root = rex::to_path(one);
+  // the folders with their mod.ini rules applied (requires, game, enabled; ue3/mod_extras.h)
+  const std::string bundle_rel = REXCVAR_GET(ue3_ini_bundle_dir);
+  for (const fs::path& root : ue3::ActiveModFolders(REXCVAR_GET(ue3_mods))) {
+    const std::string one = rex::path_to_utf8(root);
     std::error_code ec;
-    if (!fs::is_directory(root, ec)) {
-      REXLOG_WARN("ue3_mods: {} is not a folder - skipped", one);
-      continue;
-    }
     int n = 0;
     for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
          !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
       if (it->is_symlink(ec)) { it.disable_recursion_pending(); continue; }   // never follow links out of the mod
       const fs::path relp = fs::relative(it->path(), root, ec);
       if (ec || relp.empty() || relp.is_absolute() || *relp.begin() == "..") continue;
-      const std::string key = RelKey(rex::path_to_utf8(relp));
+      const std::string rel = RelKey(rex::path_to_utf8(relp));
       if (it->is_directory(ec)) {
-        (*dirs)[key] = it->path();
+        if (rel == "config" || rel.rfind("config\\", 0) == 0) { it.disable_recursion_pending(); continue; }   // fragments
+        (*dirs)[rel] = it->path();
         continue;
       }
-      if (key.find('\\') == std::string::npos) continue;   // files at the mod's top (mod.ini, readme) are its own
+      // files at the mod's top (mod.ini, readme) are its own, except bare Xbox 360 files (packages, Coalesced bundles,
+      // texture caches, movies), which go where the game keeps them (ue3/mod_extras.h)
+      const std::string key = ue3::ModGameKey(rel, bundle_rel);
+      if (key.empty()) continue;
       const std::string ext = ModLower(it->path().extension().string());
       if (ext == ".xex" || ext == ".xexp" || ext == ".dll" || ext == ".exe") {
         REXLOG_WARN("ue3_mods: {}: programs are not taken from mods - skipped", rex::path_to_utf8(it->path()));
@@ -693,6 +687,10 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
   std::map<std::string, std::filesystem::path> modDirs;
   std::map<std::string, std::filesystem::path> mods = CollectMods(&modDirs);
   AddVoiceLanguage(runtime->game_data_root(), &mods);  // GitHub #87
+  // the mods' config fragments, merged into the config bundles (the mods' own copies, else the game's), join the mods'
+  // files; the config edits below then edit those merged copies
+  ue3::MergeModConfigFragments(runtime->game_data_root(), REXCVAR_GET(ue3_ini_bundle_dir),
+                               runtime->user_data_root() / "mod-config", mods);
   struct ModsAtEnd {
     rex::Runtime* rt; std::map<std::string, std::filesystem::path>* files; std::map<std::string, std::filesystem::path>* dirs;
     ~ModsAtEnd() {   // a destructor must not throw: a file-system error here would end the game at start-up
