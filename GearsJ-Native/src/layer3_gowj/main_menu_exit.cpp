@@ -3,9 +3,9 @@
 //
 // Exit Game on the main menu. The Coalesced/TU edit renames the defunct "Xbox LIVE
 // Marketplace" entry; selecting it triggers marketplace UI (sub_82DBDA80, sub_82DBF838,
-// sub_829C25E8, sub_829C2680, sub_829CAC40) or looks up the "NeedLive..." error text (sub_82302DE0, Localize).
-// When MAINMENUOP_DLC_Categories is navigated to, its title (TITLE_DLC) is requested; after the
-// boot-time pre-cache pass, querying TITLE_DLC terminates the process immediately.
+// sub_829C25E8, sub_829C2680, sub_829CAC40), looks up "NeedLive..." error text (sub_82302DE0),
+// or transitions to MAINMENUOP_DLC_Categories (screen state setter sub_82D0EE70).
+// Any of these events after boot-time initialization terminates the process immediately.
 
 #include "main_menu_exit.h"
 
@@ -15,9 +15,7 @@
 #include <unistd.h>
 #endif
 
-#include <atomic>
 #include <cctype>
-#include <chrono>
 #include <cstring>
 #include <string_view>
 
@@ -31,13 +29,18 @@ REXCVAR_DEFINE_BOOL(gowj_main_menu_exit, true, "ui",
 namespace rex::glue {
 namespace {
 
-const auto g_start_time = std::chrono::steady_clock::now();
-std::atomic<uint32_t> g_title_dlc_count{0};
-std::atomic<bool> g_saw_tooltip_dlc{false};
+inline bool IsValidGuestPtr(uint32_t addr) {
+  // Physical RAM: 512 MB
+  if (addr >= 0x00010000 && addr < 0x20000000) return true;
+  // Game XEX image (code and data sections)
+  if (addr >= 0x82000000 && addr < 0x83700000) return true;
+  return false;
+}
 
 bool GuestUtf16StartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_view expected) {
-  if (!addr || !base) return false;
+  if (!addr || !base || !IsValidGuestPtr(addr)) return false;
   for (size_t i = 0; i < expected.size(); ++i) {
+    if (!IsValidGuestPtr(addr + static_cast<uint32_t>(2 * i + 1))) return false;
     const uint16_t c = static_cast<uint16_t>((base[addr + 2 * i] << 8) | base[addr + 2 * i + 1]);
     if (c > 127) return false;
     if (std::tolower(static_cast<unsigned char>(c)) !=
@@ -49,8 +52,9 @@ bool GuestUtf16StartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_
 }
 
 bool GuestAsciiStartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_view expected) {
-  if (!addr || !base) return false;
+  if (!addr || !base || !IsValidGuestPtr(addr)) return false;
   for (size_t i = 0; i < expected.size(); ++i) {
+    if (!IsValidGuestPtr(addr + static_cast<uint32_t>(i))) return false;
     const uint8_t c = base[addr + i];
     if (std::tolower(static_cast<unsigned char>(c)) !=
         std::tolower(static_cast<unsigned char>(expected[i]))) {
@@ -60,13 +64,13 @@ bool GuestAsciiStartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_
   return true;
 }
 
-}  // namespace
-
 bool MatchesKey(const uint8_t* base, uint32_t addr, std::string_view expected) {
-  if (!base || !addr) return false;
+  if (!base || !addr || !IsValidGuestPtr(addr)) return false;
   return GuestUtf16StartsWithNoCase(base, addr, expected) ||
          GuestAsciiStartsWithNoCase(base, addr, expected);
 }
+
+}  // namespace
 
 bool MatchesNeedLive(const uint8_t* base, uint32_t addr) {
   return MatchesKey(base, addr, "NeedLive");
@@ -87,63 +91,48 @@ void ExitGame() {
 extern "C" void __imp__sub_82302DE0(PPCContext& ctx, uint8_t* base);
 extern "C" void sub_82302DE0(PPCContext& ctx, uint8_t* base) {
   if (REXCVAR_GET(gowj_main_menu_exit) && base) {
-    if (rex::glue::MatchesKey(base, ctx.r5.u32, "TOOLTIP_DLC")) {
-      rex::glue::g_saw_tooltip_dlc.store(true, std::memory_order_relaxed);
-      REXLOG_INFO("MAINMENU: TOOLTIP_DLC queried (Exit Game focused)");
-    } else if (rex::glue::MatchesKey(base, ctx.r5.u32, "TOOLTIP_")) {
-      rex::glue::g_saw_tooltip_dlc.store(false, std::memory_order_relaxed);
-    }
-
     if (rex::glue::MatchesNeedLive(base, ctx.r5.u32)) {
       rex::glue::ExitGame();
-    }
-
-    if (rex::glue::MatchesKey(base, ctx.r5.u32, "TITLE_DLC")) {
-      const uint32_t count = rex::glue::g_title_dlc_count.fetch_add(1, std::memory_order_relaxed);
-      const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-          std::chrono::steady_clock::now() - rex::glue::g_start_time).count();
-      const uint64_t swaps = XenosSwapCount();
-
-      // UIWidget_MainMenu pre-caches screen titles from AllOptions during initial boot (count == 0).
-      // Only subsequent queries (count > 0, when the player actually selects Exit Game and navigates
-      // to MAINMENUOP_DLC_Categories), or queries after the tooltip was shown / gameplay frames swapped,
-      // trigger immediate process exit.
-      if (count > 0 && (rex::glue::g_saw_tooltip_dlc.load(std::memory_order_relaxed) ||
-                        swaps > 30 || elapsed > 3)) {
-        rex::glue::ExitGame();
-      } else {
-        REXLOG_INFO("MAINMENU: TITLE_DLC queried during initial pre-cache (count: {}, swaps: {}, elapsed: {}s), skipping exit",
-                    count, swaps, elapsed);
-      }
     }
   }
   __imp__sub_82302DE0(ctx, base);
 }
 
-extern "C" void __imp__sub_82C7B4D8(PPCContext& ctx, uint8_t* base);
-extern "C" void sub_82C7B4D8(PPCContext& ctx, uint8_t* base) {
+extern "C" void __imp__sub_82D0EE70(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82D0EE70(PPCContext& ctx, uint8_t* base) {
+  const uint32_t this_ptr = ctx.r3.u32;
+
+  __imp__sub_82D0EE70(ctx, base);
+
   if (REXCVAR_GET(gowj_main_menu_exit) && base) {
-    const auto safe_read_u8 = [base](uint32_t addr) -> uint8_t {
-      if (!addr || addr < 0x1000 || addr >= 0xFF000000) return 0xFF;
-      return base[addr + (((uint32_t)addr >= 0xE0000000u) ? 0x1000u : 0u)];
-    };
-
-    const uint8_t old_screen = safe_read_u8(ctx.r3.u32);
-    const uint8_t new_screen = safe_read_u8(ctx.r5.u32);
     const uint64_t swaps = XenosSwapCount();
-    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::steady_clock::now() - rex::glue::g_start_time).count();
-
-    REXLOG_INFO("MAINMENU: sub_82C7B4D8 transition: old={} (r3={:08X}), new={} (r5={:08X}), swaps={}, elapsed={}s",
-                old_screen, ctx.r3.u32, new_screen, ctx.r5.u32, swaps, elapsed);
-
-    // Screen 11 is MAINMENUOP_DLC_Categories (Exit Game).
-    if ((new_screen == 11 || ctx.r5.u32 == 11) && (old_screen == 1 || swaps > 30 || elapsed > 2)) {
-      REXLOG_INFO("MAINMENU: Transition to MAINMENUOP_DLC_Categories detected (Exit Game), terminating process directly");
-      rex::glue::ExitGame();
+    // Gate to ensure boot-time initialization is complete
+    if (swaps > 100) {
+      if (rex::glue::IsValidGuestPtr(this_ptr) && rex::glue::IsValidGuestPtr(this_ptr + 216 + 7)) {
+        const uint32_t screen_state_addr = this_ptr + 216;
+        const uint8_t type = base[screen_state_addr];
+        if (type == 5) { // Scaleform VT_String
+          const uint32_t node = (static_cast<uint32_t>(base[screen_state_addr + 4]) << 24) |
+                                (static_cast<uint32_t>(base[screen_state_addr + 5]) << 16) |
+                                (static_cast<uint32_t>(base[screen_state_addr + 6]) << 8) |
+                                static_cast<uint32_t>(base[screen_state_addr + 7]);
+          if (rex::glue::IsValidGuestPtr(node) && rex::glue::IsValidGuestPtr(node + 3)) {
+            const uint32_t str_addr = (static_cast<uint32_t>(base[node + 0]) << 24) |
+                                      (static_cast<uint32_t>(base[node + 1]) << 16) |
+                                      (static_cast<uint32_t>(base[node + 2]) << 8) |
+                                      static_cast<uint32_t>(base[node + 3]);
+            if (rex::glue::IsValidGuestPtr(str_addr)) {
+              const char* s = reinterpret_cast<const char*>(base + str_addr);
+              if (strstr(s, "DLC_Categories") != nullptr || strstr(s, "TITLE_DLC") != nullptr) {
+                REXLOG_INFO("MAINMENU: Exit Game selected (screen={}), terminating process immediately", s);
+                rex::glue::ExitGame();
+              }
+            }
+          }
+        }
+      }
     }
   }
-  __imp__sub_82C7B4D8(ctx, base);
 }
 
 extern "C" void __imp__sub_82DBDA80(PPCContext& ctx, uint8_t* base);
