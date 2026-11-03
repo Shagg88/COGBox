@@ -81,9 +81,10 @@ rexglue_apply_target_settings(gn_layer2_ue3)
 # package layout) and its LZX decoder, built from GN_LAYER0_HOME like layer 0. Only those files get Gears 2's layer 2
 # include folder, so this game's own ue3/ headers are not shadowed.
 target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp)
+    ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp
+    ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp)  # GitHub #153
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp PROPERTIES
+    ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 
 # Layer 3: Gears of War: Judgment (the executable).
