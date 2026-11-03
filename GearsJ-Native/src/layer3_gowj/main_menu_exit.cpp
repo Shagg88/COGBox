@@ -29,16 +29,31 @@ REXCVAR_DEFINE_BOOL(gowj_main_menu_exit, true, "ui",
 namespace rex::glue {
 namespace {
 
-inline bool IsValidGuestPtr(uint32_t addr) {
-  // Physical RAM: 512 MB
-  if (addr >= 0x00010000 && addr < 0x20000000) return true;
-  // Game XEX image (code and data sections)
-  if (addr >= 0x82000000 && addr < 0x83700000) return true;
-  return false;
+inline bool IsMemoryReadable(const void* ptr, size_t size) {
+  if (!ptr || size == 0) return false;
+#ifdef _WIN32
+  MEMORY_BASIC_INFORMATION mbi;
+  if (VirtualQuery(ptr, &mbi, sizeof(mbi)) != sizeof(mbi)) return false;
+  if (mbi.State != MEM_COMMIT) return false;
+  if ((mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)) == 0) return false;
+  if (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) return false;
+  const uint8_t* p = static_cast<const uint8_t*>(ptr);
+  const uint8_t* region_end = static_cast<const uint8_t*>(mbi.BaseAddress) + mbi.RegionSize;
+  return (p + size <= region_end);
+#else
+  return true;
+#endif
+}
+
+inline bool IsValidGuestPtr(const uint8_t* base, uint32_t addr, size_t size = 1) {
+  if (!base || addr < 0x00010000) return false;
+  // Physical RAM: 512 MB (0x00010000 .. 0x20000000) or game XEX image (0x82000000 .. 0x83700000)
+  if (addr >= 0x20000000 && (addr < 0x82000000 || addr >= 0x83700000)) return false;
+  return IsMemoryReadable(base + addr, size);
 }
 
 inline uint32_t SafeReadU32BE(const uint8_t* base, uint32_t addr) {
-  if (!base || !IsValidGuestPtr(addr) || !IsValidGuestPtr(addr + 3)) return 0;
+  if (!IsValidGuestPtr(base, addr, 4)) return 0;
   return (static_cast<uint32_t>(base[addr + 0]) << 24) |
          (static_cast<uint32_t>(base[addr + 1]) << 16) |
          (static_cast<uint32_t>(base[addr + 2]) << 8)  |
@@ -46,9 +61,8 @@ inline uint32_t SafeReadU32BE(const uint8_t* base, uint32_t addr) {
 }
 
 bool GuestUtf16StartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_view expected) {
-  if (!addr || !base || !IsValidGuestPtr(addr)) return false;
+  if (!base || !IsValidGuestPtr(base, addr, expected.size() * 2)) return false;
   for (size_t i = 0; i < expected.size(); ++i) {
-    if (!IsValidGuestPtr(addr + static_cast<uint32_t>(2 * i + 1))) return false;
     const uint16_t c = static_cast<uint16_t>((base[addr + 2 * i] << 8) | base[addr + 2 * i + 1]);
     if (c > 127) return false;
     if (std::tolower(static_cast<unsigned char>(c)) !=
@@ -60,9 +74,8 @@ bool GuestUtf16StartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_
 }
 
 bool GuestAsciiStartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_view expected) {
-  if (!addr || !base || !IsValidGuestPtr(addr)) return false;
+  if (!base || !IsValidGuestPtr(base, addr, expected.size())) return false;
   for (size_t i = 0; i < expected.size(); ++i) {
-    if (!IsValidGuestPtr(addr + static_cast<uint32_t>(i))) return false;
     const uint8_t c = base[addr + i];
     if (std::tolower(static_cast<unsigned char>(c)) !=
         std::tolower(static_cast<unsigned char>(expected[i]))) {
@@ -73,17 +86,17 @@ bool GuestAsciiStartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_
 }
 
 bool MatchesKey(const uint8_t* base, uint32_t addr, std::string_view expected) {
-  if (!base || !addr || !IsValidGuestPtr(addr)) return false;
+  if (!base || !addr) return false;
   return GuestUtf16StartsWithNoCase(base, addr, expected) ||
          GuestAsciiStartsWithNoCase(base, addr, expected);
 }
 
 bool CheckStringCandidate(const uint8_t* base, uint32_t addr) {
-  if (!base || !IsValidGuestPtr(addr) || !IsValidGuestPtr(addr + 3)) return false;
+  if (!IsValidGuestPtr(base, addr, 4)) return false;
   char buf[64];
   size_t len = 0;
   for (; len < sizeof(buf) - 1; ++len) {
-    if (!IsValidGuestPtr(addr + static_cast<uint32_t>(len))) break;
+    if (!IsValidGuestPtr(base, addr + static_cast<uint32_t>(len), 1)) break;
     const char c = static_cast<char>(base[addr + len]);
     if (c == '\0') break;
     if (c < 32 || c > 126) return false;
@@ -101,32 +114,32 @@ bool CheckStringCandidate(const uint8_t* base, uint32_t addr) {
 }
 
 bool CheckObjectForExitScreen(const uint8_t* base, uint32_t this_ptr) {
-  if (!base || !IsValidGuestPtr(this_ptr)) return false;
-  // UIWidget_MainMenu stores currentScreen at this_ptr + 216 and related screen state
-  // across this_ptr + 200..260. Check all pointer fields.
-  for (uint32_t offset = 200; offset <= 260; offset += 4) {
-    const uint32_t ptr = SafeReadU32BE(base, this_ptr + offset);
-    if (!IsValidGuestPtr(ptr)) continue;
+  if (!IsValidGuestPtr(base, this_ptr, 230)) return false;
 
-    // 1. Direct ASCII string at ptr
-    if (CheckStringCandidate(base, ptr)) return true;
-    // 2. Scaleform GFxStringNode (text starts at offset 12)
-    if (CheckStringCandidate(base, ptr + 12)) return true;
+  // UIWidget_MainMenu stores currentScreen (Scaleform GFxValue) at this_ptr + 216.
+  const uint32_t screen_state_addr = this_ptr + 216;
+  const uint8_t type = base[screen_state_addr];
 
-    // 3. Indirect string pointer
-    const uint32_t deref = SafeReadU32BE(base, ptr);
-    if (IsValidGuestPtr(deref)) {
-      if (CheckStringCandidate(base, deref)) return true;
-      if (CheckStringCandidate(base, deref + 12)) return true;
-    }
-
-    // 4. Scaleform GFxValue secondary field at ptr + 4
-    const uint32_t deref4 = SafeReadU32BE(base, ptr + 4);
-    if (IsValidGuestPtr(deref4)) {
-      if (CheckStringCandidate(base, deref4)) return true;
-      if (CheckStringCandidate(base, deref4 + 12)) return true;
+  // Scaleform VT_String is 5 (or bitfield flags combined, e.g. 0x45)
+  if ((type & 0x0F) == 5 || type == 5) {
+    const uint32_t node = SafeReadU32BE(base, screen_state_addr + 4);
+    if (node) {
+      // 1. Scaleform GFxStringNode: offset 0 is pData (pointer to char buffer)
+      const uint32_t str_addr = SafeReadU32BE(base, node + 0);
+      if (str_addr && CheckStringCandidate(base, str_addr)) return true;
+      // 2. Direct string pointer at node
+      if (CheckStringCandidate(base, node)) return true;
     }
   }
+
+  // Also check secondary field or raw string pointer at screen_state_addr + 4
+  const uint32_t direct_ptr = SafeReadU32BE(base, screen_state_addr + 4);
+  if (direct_ptr) {
+    if (CheckStringCandidate(base, direct_ptr)) return true;
+    const uint32_t deref = SafeReadU32BE(base, direct_ptr + 0);
+    if (deref && CheckStringCandidate(base, deref)) return true;
+  }
+
   return false;
 }
 
