@@ -199,11 +199,20 @@ std::vector<Option> make_options(Game g) {
                "Sets the graphics boxes in one go. Original = the game as on the console. Change any box afterwards and the "
                "preset shows Custom.", 316));
     // Job 521 (Shagg 19:02): Vulkan opened for testing - the play exes have the full Vulkan renderer.
-    add(choice("Api", "Graphics API", Tab::Graphics, PG, { "DirectX 12 (recommended)", "Vulkan" }, 0,
+    // Shagg 3 Nov: experimental again in Gears 3 and Judgment (Gears 3: black eyes on Vulkan, fine on DirectX 12)
+    const bool vkExp = g == Game::Gears3 || g == Game::Judgment;
+    static const char* const kVkTip =
                "Vulkan is a full alternative to DirectX 12, and the usual choice on Steam Deck / Linux. "
                "\n"
                "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
-               "are off. If something looks wrong, make a problem report and send it to us.", 0));
+               "are off. If something looks wrong, make a problem report and send it to us.";
+    static const char* const kVkTipExp =
+               "Experimental in this game - some things still look wrong on Vulkan (in Gears 3, black eyes); DirectX 12 is "
+               "the tested renderer.\n"
+               "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
+               "are off. If something looks wrong, make a problem report and send it to us.";
+    add(choice("Api", "Graphics API", Tab::Graphics, PG, { "DirectX 12 (recommended)", vkExp ? "Vulkan (experimental)" : "Vulkan" }, 0,
+               vkExp ? kVkTipExp : kVkTip, 0));
     // Shagg 13:16: Vulkan is no longer forced under Proton / Wine - this box lets Steam Deck / Linux / CrossOver
     // players run DirectX 12 there (off = Vulkan, which is known to get in game there).
     // Job 643 (Shagg: "the default for SteamOS / Mac should be the currently better API"): was the WineD3D12 box (on =
@@ -225,7 +234,7 @@ std::vector<Option> make_options(Game g) {
     add(choice("Sharpen", "Upscale sharpening (1080p)", Tab::Graphics, PG, { "Automatic", "On", "Off" }, 0,
                "With the 1080p render resolution: sharpen the upscaled picture. Automatic = on, except on Steam Deck / "
                "Linux (Wine / Proton), where it can make text and some textures look wrong.", 0));
-    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (highly experimental)", "DLSS (NVIDIA RTX)", "XeSS (highly experimental)",
+    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (highly experimental)", "DLSS (NVIDIA RTX, highly experimental)", "XeSS (highly experimental)",
                  "SMAA T2x (temporal)" }, 0,
                "SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX12 GPU. DLSS: the same on "
                "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.\nSMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now.", 346), "", "", true);
@@ -270,12 +279,13 @@ std::vector<Option> make_options(Game g) {
     // be, since every flare would show through the scenery there.
     // Notes/80 (Gears2-Native): XeGTAO screen-space ambient occlusion in place of the game's own (Gears 2), or added
     // where a level has none (Gears 3 s.9: opt-in there, default "Game's own").
-    if (!g1) add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high)", "XeGTAO (ultra)" },
+    if (!g1) add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, experimental)", "XeGTAO (ultra, experimental)" },
                         1,   // Game's own: XeGTAO is opt-in in every game
                "The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version "
                "(Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, "
-               "characters included, at about the cost of the original. Ultra looks in more directions and catches more small "
-               "details, for a little more. Game's own: the original. Off: none.", 0), "ao");
+               "characters included. Experimental (Shagg 3 Nov): in our tests it cost about 5 ms a frame, roughly halving a "
+               "high frame rate - being worked on. Ultra looks in more directions and catches more small details, for a "
+               "little more. Game's own: the original. Off: none.", 0), "ao");
     add(choice("Shake", "Camera shake (roadie run)", Tab::Graphics, PG, { "Original", "Less", "Off" }, 0,
                "The camera shake while roadie-running. Less halves the game's own shake; Off removes it.", 373), "iniedit", "", true);
     add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 5, 100,
@@ -590,6 +600,10 @@ Availability choice_available(const Option& o, Game g, int index) {
 
 std::string tooltip_for(const Option& o, Game g, const Availability& a, const Environment& env) {
     std::string base = o.tooltip;
+    if (o.id == "Api" && env.wine && (g == Game::Gears3 || g == Game::Judgment))   // Shagg 3 Nov: Vulkan is the Proton path
+        base = "On Steam Deck / Linux (Proton) Vulkan is the usual choice - DirectX 12 can crash there.\n"
+               "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
+               "are off. If something looks wrong, make a problem report and send it to us.";
     if (o.id == "AO" && g == Game::Gears3)   // notes/80 s.9
         base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it.";
     if (o.id == "AAMode") {   // PS1 345
