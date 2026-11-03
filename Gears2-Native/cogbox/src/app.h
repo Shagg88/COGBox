@@ -17,7 +17,7 @@
 #include "util.h"
 #include <xenos/renderer/preparation_progress.h>
 
-#define COGBOX_VERSION "0.4.2"
+#define COGBOX_VERSION "0.4.3"
 #define COGBOX_NAME "COGBox"
 
 namespace gs = cogbox::gears;
