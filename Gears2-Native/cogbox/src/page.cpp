@@ -8,6 +8,7 @@
 #include "imgui_internal.h"
 
 #include <windows.h>
+#include <shellapi.h>
 #include <shlobj.h>     // 0.2.0: desktop shortcuts
 #include <shobjidl.h>
 #include <objbase.h>
@@ -175,7 +176,7 @@ static void row_desc(const std::string &desc)
     const std::string shown = tr(desc);   // 0.2.0
     ImGui::PushFont(F_SMALL, FS(F_SMALL) * k_rowText);
     ImGui::PushStyleColor(ImGuiCol_Text, col::dim);
-    ImGui::PushTextWrapPos(g_rowX1);
+    ImGui::PushTextWrapPos(g_rowX1 - ImGui::GetWindowPos().x);
     ImGui::TextUnformatted(shown.c_str());
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
@@ -260,45 +261,120 @@ static std::string key_shown(const std::string &v)   // "MMB,Z" -> "Middle mouse
 }
 
 static bool small_button(const char *label_en);
-// Job 641 (Shagg 29 Oct: "pre-compile every single Shader before they jump into gameplay even if it costs users 8 to
-// 12 minutes"): the game builds every shipped chapter recipe (--gow2_renderer_prepare_all), saves its pipeline library
-// and exits; its <shadercache>\prepare-progress.txt ("<done> <total> <state> <seconds>") drives the bar here.
+// Preparation runs in a compiler process; the launcher only displays progress.
 static void prepare_section(App &a, int g)
 {
-    const bool supported = a.env[g].cap.exe_has && a.env[g].cap.exe_has("gow2_renderer_prepare_all") && !a.env[g].recipe_pack.empty();
+    const bool supported = file_exists(join(exe_dir(), "CogBoxShaderCompiler.exe")) && !a.env[g].recipe_pack.empty();
     ImGui::Dummy(ImVec2(0, S(6)));
-    th_heading("PREPARE ALL SHADERS", g_rowX1);
-    row_desc("Builds the shaders of every chapter before you play, so chapters start without stutter while they are "
-             "built. Takes a few minutes depending on your PC (about 1.5 minutes on a fast one), once - again only after a "
-             "graphics driver update or a new COGBox release. "
-             "The game window opens and shows its intro while it works, then closes by itself.");
+    th_heading("SHADER PREPARATION", g_rowX1);
+    row_desc("Prepare shaders before playing. Compilation runs separately from the game, with its own progress screen. "
+             "Repeat after a graphics driver or renderer update.");
+    int mode = a.ini.geti("ShaderPreparation", game_def(g).key, 0) ? 1 : 0;
+    ImGui::SetNextItemWidth(std::min(g_rowX1 - ImGui::GetCursorScreenPos().x, T(330)));
+    if (ImGui::Combo("##shaderPreparationMode", &mode, "Quick - recorded pipelines\0Deep - game files and variants\0")) {
+        a.ini.seti("ShaderPreparation", game_def(g).key, mode);
+        a.ini.save();
+    }
+    row_desc(mode ? "Scans game, title-update and enabled mod packages for stored vertex and pixel shader variants. "
+                    "Warms these with the graphics driver and prepares the known pipeline permutations. More complete and slower. "
+                    "Some graphics-state combinations are only created during play."
+                  : "Prepares the known pipelines in this game's recipe pack. A smaller shader set and a faster pass.");
+    const bool wineDx = a.env[g].wine && a.cur[g].i("Api") == 0 &&
+                        (a.cur[g].i("WineApi") == 2 || (a.cur[g].i("WineApi") == 0 && a.env[g].mac));
+    const bool vulkan = a.cur[g].i("Api") == 1 || (a.env[g].wine && !wineDx);
+    if (mode && vulkan) row_desc("Deep driver preparation needs DirectX 12. Choose Quick for Vulkan.");
     const bool mine = a.run.proc && a.run.prepare && a.run.game == g;
     if (mine) {
-        std::string prog;
-        uint64_t done = 0, total = 0, secs = 0;
-        char state[32] = {};
-        if (read_file(join(game_shader_dir(g), "prepare-progress.txt"), prog, 4096))
-            sscanf(prog.c_str(), "%llu %llu %31s %llu", (unsigned long long *)&done, (unsigned long long *)&total, state, (unsigned long long *)&secs);
-        const float f = total ? std::min(1.0f, float(double(done) / double(total))) : 0.0f;
-        const std::string what = !strcmp(state, "reading") ? "reading the game's packages and building"
-                                 : !strcmp(state, "saving") ? "saving" : !strcmp(state, "done") ? "done" : "building";
-        char line[200];
-        snprintf(line, sizeof line, "%s - %llu of %llu (%d%%), %llu min %02llu s", what.c_str(), (unsigned long long)done,
-                 (unsigned long long)total, int(f * 100.0f), (unsigned long long)(secs / 60), (unsigned long long)(secs % 60));
-        ImGui::ProgressBar(f, ImVec2(g_rowX1 - ImGui::GetCursorScreenPos().x, T(26)), total ? line : "starting the game...");
-        ImGui::Dummy(ImVec2(0, S(4)));
-        if (small_button("Stop preparing")) TerminateProcess(a.run.proc, 0xC0B05709);   // job 666: stopped on purpose (play_poll)
+        if (small_button("View preparation")) a.zoomTo = SCR_PREPARE;
     } else {
-        const bool ok = supported && a.st[g].ready == R_READY && !a.run.proc && a.job.state.load() != 1;
+        const bool ok = supported && (!mode || !vulkan) && a.st[g].ready == R_READY && !a.run.proc && a.job.state.load() != 1;
         if (!ok) ImGui::BeginDisabled();
-        if (small_button("Prepare all shaders now")) {
+        if (small_button("Prepare shaders now")) {
             settings_save(a);
             play_start(a, g, true);
         }
+        if (mode && small_button("Restart Deep from scratch")) {
+            settings_save(a);
+            play_start(a, g, true, true);
+        }
         if (!ok) ImGui::EndDisabled();
+        if (mode) row_desc("Restart uses a fresh COGBox cache and backs up the previous one. Driver-managed shader caches may still be reused.");
         if (!supported && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", tr("Needs this game's next build and its recipe pack (recipes folder)."));
+            ImGui::SetTooltip("%s", tr("Needs CogBoxShaderCompiler.exe and this game's recipe pack."));
     }
+}
+
+void prepare_draw(App &a, ImVec2 size)
+{
+    const int g = std::max(0, a.run.game);
+    const bool running = a.run.proc && a.run.prepare;
+    const double now = ImGui::GetTime();
+    if (running && now - a.preparationPollAt >= 0.25) {
+        a.preparationPollAt = now;
+        std::string text;
+        xenos::preparation::Progress update;
+        if (read_file(join(game_shader_dir(g), "prepare-progress." + a.run.prepareSession + ".txt"), text, 4096) &&
+            xenos::preparation::Progress::Parse(text, update)) a.preparation = update;
+    }
+    const auto& p = a.preparation;
+    const float width = std::min(size.x - S(80), S(920));
+    const float x = (size.x - width) * 0.5f, top = S(70);
+    ImGui::SetCursorScreenPos(ImVec2(x, top));
+    ImGui::BeginChild("##shaderPreparation", ImVec2(width, size.y - top - S(35)), 0, ImGuiWindowFlags_NoSavedSettings);
+    ImGui::PushFont(F_HEAD, FS(F_HEAD));
+    ImGui::TextUnformatted("SHADER PREPARATION");
+    ImGui::PopFont();
+    ImGui::TextUnformatted(game_def(g).name);
+    ImGui::TextColored(col::dim, "%s", a.run.prepareDeep ? "Deep - game files and variants" : "Quick - recorded pipelines");
+    if (a.run.prepareRestart) ImGui::TextColored(col::dim, "Fresh COGBox cache - previous cache backed up when present");
+    ImGui::Spacing();
+    const char* status = a.run.prepareStopping && running ? "Stopping - saving completed work"
+                         : p.state == "starting" ? "Starting the shader compiler"
+                         : p.state == "reading" ? "Reading game files and preparing shaders"
+                         : p.state == "building" ? "Preparing shader variants and pipelines"
+                         : p.state == "saving" ? "Saving the shader cache"
+                         : p.state == "done" ? "Preparation complete"
+                         : p.state == "partial" ? "Preparation finished with gaps"
+                         : p.state == "cancelled" ? "Preparation stopped - completed work kept"
+                         : "Preparation could not finish";
+    ImGui::PushFont(F_BOLD, FS(F_BOLD));
+    ImGui::TextWrapped("%s", status);
+    ImGui::PopFont();
+    auto bar = [&](const char* title, uint64_t done, uint64_t total) {
+        ImGui::Spacing();
+        ImGui::Text("%s: %llu / %llu", title, (unsigned long long)done, (unsigned long long)total);
+        const float fraction = total ? std::min(1.0f, float(double(done) / double(total))) : 0.0f;
+        ImGui::ProgressBar(fraction, ImVec2(-1, T(18)), total ? nullptr : "Waiting for the scan...");
+    };
+    bar("Packages scanned", p.files, p.files_total);
+    if (a.run.prepareDeep) bar("Shader variants processed", p.variants, p.variants_total);
+    bar("Graphics pipelines", p.pipelines, p.pipelines_total);
+    ImGui::TextColored(col::dim, "Elapsed: %llu min %02llu s", (unsigned long long)(p.seconds / 60), (unsigned long long)(p.seconds % 60));
+    ImGui::Spacing();
+    ImGui::TextWrapped("The game and its render loop are stopped while compilation runs in a separate process. "
+                       "Your current graphics settings are used for the cache.");
+    if (p.state == "partial") {
+        ImGui::TextColored(col::amber, "Unavailable pipelines: %llu   Failed pipelines: %llu", (unsigned long long)p.pipelines_missing,
+                           (unsigned long long)p.pipelines_failed);
+        ImGui::TextColored(col::amber, "Unreadable packages: %llu   Failed shader variants: %llu", (unsigned long long)p.files_failed,
+                           (unsigned long long)p.variants_failed);
+    }
+    if (p.Finished()) ImGui::TextWrapped("Completed cache entries are saved. Pipeline combinations that are only created "
+                                        "during play may still compile on first use.");
+    if (!a.preparationError.empty()) ImGui::TextWrapped("%s", a.preparationError.c_str());
+    ImGui::Spacing();
+    if (running) {
+        if (!a.run.prepareStopping && small_button("Stop preparing")) prepare_stop(a);
+        if (a.run.prepareStopping && unix_now() - a.run.prepareStopAt >= 10 && small_button("Force stop"))
+            TerminateProcess(a.run.proc, 0xC0B05709);
+    } else {
+        if (small_button("Back to settings")) { a.page = g; a.zoomTo = SCR_PAGE; }
+        ImGui::SameLine();
+        if (small_button("Open preparation log"))
+            ShellExecuteW(nullptr, L"open", widen(join(a.run.logDir, "shader-prepare.log")).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        if (a.run.prepareDeep && small_button("Restart Deep from scratch")) play_start(a, g, true, true);
+    }
+    ImGui::EndChild();
 }
 
 static void keys_section(App &a)
@@ -1072,6 +1148,8 @@ void page_draw(App &a, ImVec2 size)
                 ask(a, "autoset", g, "Detect best settings", p.text, { "Apply", "Cancel" });
             }
             ImGui::Dummy(ImVec2(0, S(4)));
+            prepare_section(a, g);
+            ImGui::Dummy(ImVec2(0, S(8)));
         }
         for (const gs::Option &o : gs::options((gs::Game)g)) {
             if (o.tab != want) continue;
@@ -1081,7 +1159,6 @@ void page_draw(App &a, ImVec2 size)
         }
         if (!shown) row_desc("Nothing to set here yet.");
         if (want == gs::Tab::Controls) keys_section(a);   // 0.2.0
-        if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
     } else about_tab(a, g);
     ImGui::PopFont();
     ImGui::EndChild();

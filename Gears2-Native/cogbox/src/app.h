@@ -15,6 +15,7 @@
 #include "games.h"
 #include "gears_settings.h"
 #include "util.h"
+#include <xenos/renderer/preparation_progress.h>
 
 #define COGBOX_VERSION "0.4.1"
 #define COGBOX_NAME "COGBox"
@@ -43,10 +44,15 @@ struct Running {
     int game = -1;
     int64_t started = 0;
     std::string logDir;
-    bool prepare = false;   // job 641: a "Prepare all shaders" run (the game builds the pack, then exits)
+    bool prepare = false;   // a standalone shader compiler session
+    bool prepareDeep = false, prepareStopping = false;
+    bool prepareRestart = false;
+    int64_t prepareStopAt = 0;
+    HANDLE cacheLock = nullptr;
+    std::string prepareSession;
 };
 
-enum Screen { SCR_FRONT, SCR_PAGE };
+enum Screen { SCR_FRONT, SCR_PAGE, SCR_PREPARE };
 
 struct Modal {                       // one message box at a time, drawn by main.cpp
     bool open = false;
@@ -93,6 +99,9 @@ struct App {
     Modal modal;
     InstallJob job;
     Running run;
+    xenos::preparation::Progress preparation;
+    double preparationPollAt = -1;
+    std::string preparationError;
     std::vector<std::string> gpus;    // graphics cards (DXGI)
     bool hasAvx2 = true;
     bool padConnected = false;
@@ -152,7 +161,9 @@ bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err
 void install_poll(App &a);
 void install_draw(App &a, ImVec2 size);
 // play.cpp
-void play_start(App &a, int g, bool prepare = false);   // prepare: job 641's Prepare all shaders
+void play_start(App &a, int g, bool prepare = false, bool restartDeep = false);
+void prepare_draw(App &a, ImVec2 size);
+void prepare_stop(App &a);
 void play_poll(App &a);
 void play_answer(App &a, const Modal &m);
 void auto_settings_apply(App &a, int g);    // Shagg 29 Oct: the "Detect best settings" answer (page.cpp)   // the "crash" question answered

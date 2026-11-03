@@ -459,6 +459,9 @@ class Backend {
   // built. All false / 0 on a backend without it.
   virtual bool SetWarmTemplate(const GraphicsPipelineDesc& d) { (void)d; return false; }
   virtual bool WarmPixelShader(std::vector<uint8_t>&& ps_bytecode) { (void)ps_bytecode; return false; }
+    // Standalone deep preparation: warm a translated VS or PS without retaining a guessed pipeline in the library.
+    virtual bool WarmShader(ShaderHandle shader) { (void)shader; return false; }
+    virtual uint64_t WarmFailures() const { return 0; }
   virtual uint64_t WarmJobsLeft() { return 0; }
   virtual void SavePipelinesNow() {}
   virtual PipelineHandle CreateComputePipeline(ShaderHandle cs) = 0;

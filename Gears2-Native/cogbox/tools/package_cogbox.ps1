@@ -35,7 +35,7 @@ $sdks = @('rexglue-sdk', 'dlss-sdk', 'fidelityfx-sdk', 'xess-sdk', 'dxc-1.9.2607
 # ---- Checks first ---------------------------------------------------------------------------------------------------
 $problems = @()
 $launcher = Join-Path $cogbox 'build'
-foreach ($f in 'CogBox.exe', 'SDL3.dll') { if (-not (Test-Path (Join-Path $launcher $f))) { $problems += "missing launcher file: $launcher\$f" } }
+foreach ($f in 'CogBox.exe', 'SDL3.dll', 'CogBoxShaderCompiler.exe', 'rexruntime.dll', 'dxil.dll', 'D3D12\D3D12Core.dll') { if (-not (Test-Path (Join-Path $launcher $f))) { $problems += "missing launcher file: $launcher\$f" } }
 if (-not $Version) {
   $m = Select-String -Path (Join-Path $cogbox 'src\app.h') -Pattern '#define COGBOX_VERSION "([0-9.]+)"' | Select-Object -First 1
   if ($m) { $Version = $m.Matches[0].Groups[1].Value } else { $problems += 'no version (src\app.h COGBOX_VERSION)' }
@@ -88,6 +88,9 @@ New-Item -ItemType Directory -Force $Out | Out-Null
 
 # ---- Copy -----------------------------------------------------------------------------------------------------------
 Copy-Item (Join-Path $launcher 'CogBox.exe'), (Join-Path $launcher 'SDL3.dll') $stage
+Copy-Item (Join-Path $launcher 'CogBoxShaderCompiler.exe'), (Join-Path $launcher 'rexruntime.dll'), (Join-Path $launcher 'dxil.dll') $stage
+New-Item -ItemType Directory -Path (Join-Path $stage 'D3D12') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $launcher 'D3D12\D3D12Core.dll') -Destination (Join-Path $stage 'D3D12')
 # The library music's XMA decoder (FFmpeg, LGPL 2.1, separate DLLs; licenses\FFmpeg-*.txt): optional - without them the
 # library is silent, so a build without them still packages (with a warning).
 $ff = @(Get-ChildItem $launcher -Filter 'av*-*.dll' -ErrorAction SilentlyContinue)

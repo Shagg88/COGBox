@@ -4692,6 +4692,7 @@ class D3D12Backend final : public Backend {
   uint64_t warm_workers_ = 3;                           // patch 0069 (SetWarmTemplate)
   D3D12_GRAPHICS_PIPELINE_STATE_DESC warm_pd_{};        // written once, before warm_ready_
   std::shared_ptr<const std::vector<uint8_t>> warm_vs_;
+  std::shared_ptr<const std::vector<uint8_t>> warm_ps_;
   std::atomic<bool> warm_ready_{false};
   std::atomic<uint64_t> warmed_{0}, warm_failed_{0}, warm_us_{0};
   bool SetWarmTemplate(const GraphicsPipelineDesc& d) override {
@@ -4708,6 +4709,7 @@ class D3D12Backend final : public Backend {
     t.ps = 0;
     BuildPipelineDesc(t, pd, topology);
     warm_vs_ = shaders_[d.vs].code;
+    if (d.ps && d.ps < shaders_.size()) warm_ps_ = shaders_[d.ps].code;
     pd.VS = {warm_vs_->data(), warm_vs_->size()};
     pd.PS = {};
     warm_pd_ = pd;
@@ -4734,6 +4736,26 @@ class D3D12Backend final : public Backend {
   uint64_t WarmJobsLeft() override {
     std::lock_guard<std::mutex> lock(job_mutex_);
     return warm_jobs_.size() + warm_busy_;
+  }
+  uint64_t WarmFailures() const override { return warm_failed_.load(std::memory_order_relaxed); }
+  bool WarmShader(ShaderHandle shader) override {
+    if (!warm_ready_.load(std::memory_order_acquire) || !shader || shader >= shaders_.size() || !shaders_[shader].code)
+      return false;
+    const bool vertex = shaders_[shader].stage == ShaderStage::kVertex;
+    if (vertex && !warm_ps_) return false;
+    auto job = std::make_unique<PipelineJob>();
+    job->desc = warm_pd_;
+    job->code[0] = vertex ? shaders_[shader].code : warm_vs_;
+    job->code[1] = vertex ? warm_ps_ : shaders_[shader].code;
+    job->desc.VS = {job->code[0]->data(), job->code[0]->size()};
+    job->desc.PS = {job->code[1]->data(), job->code[1]->size()};
+    {
+      std::lock_guard<std::mutex> lock(job_mutex_);
+      if (stop_workers_) return false;
+      warm_jobs_.push_back(std::move(job));
+    }
+    job_cv_.notify_one();
+    return true;
   }
   std::mutex job_mutex_;
   std::condition_variable job_cv_;

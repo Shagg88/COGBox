@@ -409,7 +409,7 @@ static void draw_ui(App &a, ImVec2 size)
     const int nLib = std::max(1, (int)lib.size()), s0 = (int)floorf(a.carPos);
     const int g0 = lib.empty() ? a.front : lib[(s0 % nLib + nLib) % nLib], g1 = lib.empty() ? a.front : lib[((s0 + 1) % nLib + nLib) % nLib];
     float f = lib.empty() ? 0.0f : a.carPos - floorf(a.carPos);
-    int tg = a.screen == SCR_PAGE ? a.page : -1;
+    int tg = a.screen == SCR_PAGE || a.screen == SCR_PREPARE ? a.page : -1;
     ImVec4 tint = tg >= 0 ? tints[tg] : ImVec4(tints[g0].x * (1 - f) + tints[g1].x * f, tints[g0].y * (1 - f) + tints[g1].y * f, tints[g0].z * (1 - f) + tints[g1].z * f, 1);
     th_background(bg, size, now, tint);
     // the game's own background art (when downloaded), crossfading with the box in front, darker on a page
@@ -421,6 +421,7 @@ static void draw_ui(App &a, ImVec2 size)
     // old picture then cross-fades into the new one. (Before 0.3.8: a 0.5 s dip through black - the whole window,
     // window buttons and background included, went black half way, and the switch waited for it.)
     if (a.screen == SCR_FRONT) front_draw(a, size);
+    else if (a.screen == SCR_PREPARE) prepare_draw(a, size);
     else page_draw(a, size);
 
     // the message line
@@ -651,6 +652,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     }
     startup_notices(a);   // 0.2.0: the language prompt, then the title-update notice
     if (getenv("COGBOX_GETART")) art_download_start();   // test switch
+    // Exercise the real compiler/progress flow in screenshot tests without UI input automation.
+    if (const char* t = getenv("COGBOX_PREPARE_START")) {
+        const int g = std::max(0, std::min(G_COUNT - 1, atoi(t)));
+        if (!a.modal.open) play_start(a, g, true);
+    }
     // 0.2.0: started from a game's desktop shortcut - play it straight away when it's ready, else show its box
     if (!g_playArg.empty()) {
         for (int g = 0; g < G_COUNT; g++) {
@@ -749,6 +755,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     a.ini.save();
     if (a.job.state.load() == 1) { a.job.cancel = true; }
     if (a.job.th.joinable()) a.job.th.join();
+    if (a.run.proc && a.run.prepare) prepare_stop(a);
     music_stop();
     for (auto &c : a.cover) if (c.tex) SDL_DestroyTexture(c.tex);
     ImGui_ImplSDLRenderer3_Shutdown();

@@ -339,6 +339,8 @@ if(GN_BUILD_TESTS)
     add_subdirectory(third_party/catch2 EXCLUDE_FROM_ALL)
     add_executable(gn_tests
         tests/layer0_formats_test.cpp
+        tests/layer0_preparation_progress_test.cpp
+        tests/layer0_preparation_restart_test.cpp
         tests/layer0_renderer_core_test.cpp
         tests/layer0_pipeline_state_test.cpp
         tests/layer0_transfer_words_test.cpp
@@ -383,6 +385,18 @@ if(GN_BUILD_TESTS)
             COMMAND_EXPAND_LISTS
             VERBATIM)
     endif()
+endif()
+
+if(WIN32)
+    add_executable(CogBoxShaderCompiler tools/shader_prepare.cpp src/layer0_xenos/agility/agility.cpp)
+    target_link_libraries(CogBoxShaderCompiler PRIVATE gn_layer2_ue3)
+    rexglue_apply_target_settings(CogBoxShaderCompiler)
+    add_custom_command(TARGET CogBoxShaderCompiler POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:CogBoxShaderCompiler> $<TARGET_FILE_DIR:CogBoxShaderCompiler>
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:CogBoxShaderCompiler>/D3D12
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${GN_AGILITY_DIR}/build/native/bin/x64/D3D12Core.dll $<TARGET_FILE_DIR:CogBoxShaderCompiler>/D3D12
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${GN_DXC_DIR}/bin/x64/dxcompiler.dll ${GN_DXC_DIR}/bin/x64/dxil.dll $<TARGET_FILE_DIR:CogBoxShaderCompiler>
+        COMMAND_EXPAND_LISTS VERBATIM)
 endif()
 
 # Stage 3 S3.2: our microcode decoder checked against the SDK's disassembly of a shader corpus (game-free tool;

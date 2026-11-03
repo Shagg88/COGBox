@@ -456,6 +456,15 @@ bool ShaderCache::WaitReady(const GuestShader& s, double budget_ms) {
   return s.state != ShaderState::kPending;
 }
 
+void ShaderCache::FinishPreparationRecording() {
+  {
+    std::lock_guard<std::mutex> lock(ucode_mutex_);
+    ucode_stop_ = true;
+  }
+  ucode_cv_.notify_all();
+  if (ucode_thread_.joinable()) ucode_thread_.join();
+}
+
 void ShaderCache::SaveUcode(uint64_t ucode_hash, bool is_vertex, const uint32_t* dwords, size_t dword_count) {
   if (!record_ucode_ || !dwords || !dword_count) return;
   char name[48];

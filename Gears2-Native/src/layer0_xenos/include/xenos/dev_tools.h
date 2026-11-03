@@ -92,6 +92,10 @@ uint64_t XenosPrebuildVariantHits(uint32_t variant);
 // Job 641: layer 2 says its start-up package reading (--ue3_shader_prebuild_at_start) has read every queued file
 // (`files` read in all). --gow2_renderer_prepare_all waits for it before it can finish.
 void XenosPrebuildAtStartDone(uint64_t files);
+// Standalone preparation: package-reader progress and a coordinator with no game/render loop.
+void XenosPrebuildScanProgress(uint64_t files, uint64_t total, uint64_t failed);
+bool XenosInitStandalonePreparation();
+void XenosStepStandalonePreparation();  // exits after saving the cache, or on a cancellation request
 // --gow2_frame_times=N: every N swaps log swap interval (mean/p99/max) and the observer callbacks' own time per frame.
 void XenosInstallFrameTimesIfRequested();
 // --gow2_profile=S (--gow2_profile_start, --gow2_profile_top): sampling profiler of every busy thread (notes/52).

@@ -9,6 +9,17 @@
 #include <cstdio>
 #include <algorithm>
 
+void prepare_stop(App &a)
+{
+    if (!a.run.proc || !a.run.prepare || a.run.prepareStopping) return;
+    a.run.prepareStopping = true;
+    a.run.prepareStopAt = unix_now();
+    if (!write_file(join(game_shader_dir(a.run.game), "prepare-cancel." + a.run.prepareSession + ".flag"), "cancel\n")) {
+        a.preparationError = "Couldn't request a stop. Use Force stop if the compiler does not finish.";
+        return;
+    }
+}
+
 static std::string hex32(DWORD c) { char b[16]; snprintf(b, sizeof b, "0x%08lX", (unsigned long)c); return b; }
 
 static const char *exit_meaning(DWORD code)
@@ -107,9 +118,10 @@ static bool apply_menu_changes(App &a, int g, const std::string &logDir)
     return file_exists(join(logDir, "menu-restart.flag"));
 }
 
-void play_start(App &a, int g, bool prepare)
+void play_start(App &a, int g, bool prepare, bool restartDeep)
 {
     if (a.run.proc) return;
+    if (restartDeep) prepare = true;
     const GameDef &d = game_def(g);
     refresh_games(a, false);
     GameState &st = a.st[g];
@@ -120,6 +132,13 @@ void play_start(App &a, int g, bool prepare)
     std::string exe = gs::exe_for_update(G, ver, a.env[g]) ? st.portExeTu : st.portExeDisc;
     if (exe.empty()) exe = st.portExeDisc.empty() ? st.portExeTu : st.portExeDisc;
     if (exe.empty() || !file_exists(exe)) { set_message(a, "The port program is missing - unzip the COGBox release again.", true); return; }
+    if (prepare) {
+        exe = join(exe_dir(), "CogBoxShaderCompiler.exe");
+        if (!file_exists(exe) || a.env[g].recipe_pack.empty()) {
+            set_message(a, "The shader compiler or this game's recipe pack is missing.", true);
+            return;
+        }
+    }
     std::string why;
     if (gs::blocked_by_cpu(G, a.env[g], &why)) {
         ask(a, "info", g, "CPU too old for this build", why, { "OK" });
@@ -152,11 +171,43 @@ void play_start(App &a, int g, bool prepare)
     std::string shared = join(exe_dir(), "shared");
     bool useShared = dir_exists(shared);
     if (useShared) args.push_back("--gow2_dxc_dir=\"" + shared + "\"");
-    if (prepare) {   // job 641: build every shipped recipe, then the game saves its pipeline library and exits
-        args.push_back("--gow2_renderer_prepare_all=true");
-        DeleteFileW(widen(join(game_shader_dir(g), "prepare-progress.txt")).c_str());
+    HANDLE cacheLock = nullptr;
+    std::string prepareSession;
+    if (prepare) {
+        HANDLE probe = CreateFileW(widen(join(game_shader_dir(g), "prepare.lock")).c_str(), GENERIC_READ | GENERIC_WRITE,
+                                   0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (probe == INVALID_HANDLE_VALUE) {
+            set_message(a, "This game's shader cache is already in use. Wait for it to finish.", true);
+            return;
+        }
+        CloseHandle(probe);
+        FILETIME stamp;
+        GetSystemTimeAsFileTime(&stamp);
+        prepareSession = std::to_string((uint64_t(stamp.dwHighDateTime) << 32) | stamp.dwLowDateTime);
+        args.erase(std::remove_if(args.begin(), args.end(), [](const std::string& s) {
+            return s.rfind("--ue3_shader_prebuild_at_start=", 0) == 0 || s.rfind("--gow2_renderer_recipe_pack=", 0) == 0 ||
+                   s.rfind("--gow2_shader_cache_dir=", 0) == 0 || s.rfind("--gow2_renderer_prepare_deep=", 0) == 0 ||
+                   s.rfind("--gow2_renderer_prepare_reset=", 0) == 0;
+        }), args.end());
+        std::string roots = a.env[g].game_data_root;
+        if (!a.env[g].update_data_root.empty()) roots += ";" + a.env[g].update_data_root;
+        for (const auto& mod : a.env[g].mods) roots += ";" + mod;
+        args.push_back("--ue3_shader_prebuild_at_start=\"" + roots + "\"");
+        args.push_back("--gow2_renderer_recipe_pack=\"" + a.env[g].recipe_pack + "\"");
+        args.push_back("--gow2_shader_cache_dir=\"" + game_shader_dir(g) + "\"");
+        args.push_back(std::string("--gow2_renderer_prepare_deep=") + (restartDeep || a.ini.geti("ShaderPreparation", d.key, 0) ? "true" : "false"));
+        args.push_back(std::string("--gow2_renderer_prepare_reset=") + (restartDeep ? "true" : "false"));
+        args.push_back("--gow2_renderer_prepare_session=" + prepareSession);
+        args.push_back("--log_file=\"" + join(logDir, "shader-prepare.log") + "\"");
+    } else {
+        cacheLock = CreateFileW(widen(join(game_shader_dir(g), "prepare.lock")).c_str(), GENERIC_READ | GENERIC_WRITE,
+                                0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (cacheLock == INVALID_HANDLE_VALUE) {
+            set_message(a, "This game's shader cache is being prepared in another window. Wait for it to finish.", true);
+            return;
+        }
     }
-    if (a.env[g].cap.exe_has && a.env[g].cap.exe_has("cogbox_menu")) {   // ports with the in-game menu (patch 0163)
+    if (!prepare && a.env[g].cap.exe_has && a.env[g].cap.exe_has("cogbox_menu")) {   // ports with the in-game menu (patch 0163)
         write_menu_file(a, g, ver, logDir);
         args.push_back("--cogbox_menu=\"" + join(logDir, "menu.txt") + "\"");
         if (a.padPs && a.env[g].cap.exe_has("Circle: back to the game")) args.push_back("--cogbox_menu_ps=true");   // job 523: PlayStation names in the in-game menu
@@ -199,10 +250,13 @@ void play_start(App &a, int g, bool prepare)
     std::wstring dir = widen(exe.substr(0, exe.find_last_of('\\')));
     STARTUPINFOW si = {};
     si.cb = sizeof si;
+    if (prepare) { si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE; }
     PROCESS_INFORMATION pi = {};
-    if (!CreateProcessW(widen(exe).c_str(), &cmd[0], nullptr, nullptr, FALSE, newEnv ? CREATE_UNICODE_ENVIRONMENT : 0,
+    const DWORD creationFlags = (newEnv ? CREATE_UNICODE_ENVIRONMENT : 0) | (prepare ? CREATE_NO_WINDOW : 0);
+    if (!CreateProcessW(widen(exe).c_str(), &cmd[0], nullptr, nullptr, FALSE, creationFlags,
                         newEnv ? (LPVOID)envBlock.data() : nullptr, dir.c_str(), &si, &pi)) {
         DWORD e = GetLastError();
+        if (cacheLock) CloseHandle(cacheLock);
         append_line(join(logDir, "args.txt"), "launcher: not started, Windows error " + std::to_string(e));
         set_message(a, std::string(d.name) + " couldn't be started (Windows error " + std::to_string(e) + ").", true);
         return;
@@ -213,7 +267,20 @@ void play_start(App &a, int g, bool prepare)
     a.run.started = unix_now();
     a.run.logDir = logDir;
     a.run.prepare = prepare;
-    if (prepare) return;   // job 641: the launcher stays up and shows the progress
+    a.run.cacheLock = cacheLock;
+    if (prepare) {
+        a.run.prepareDeep = restartDeep || a.ini.geti("ShaderPreparation", d.key, 0) != 0;
+        a.run.prepareRestart = restartDeep;
+        a.run.prepareStopping = false;
+        a.run.prepareStopAt = 0;
+        a.run.prepareSession = prepareSession;
+        a.preparation = {};
+        a.preparationError.clear();
+        a.preparationPollAt = -1;
+        a.page = g;
+        a.zoomTo = SCR_PREPARE;
+        return;
+    }
     a.ini.seti("LastPlayed", d.key, a.run.started);
     a.ini.save();
     a.playWasMax = (SDL_GetWindowFlags(a.win) & SDL_WINDOW_MAXIMIZED) != 0;   // job 526
@@ -227,26 +294,24 @@ void play_poll(App &a)
     bool known = GetExitCodeProcess(a.run.proc, &code) != 0;
     CloseHandle(a.run.proc);
     a.run.proc = nullptr;
+    if (a.run.cacheLock) { CloseHandle(a.run.cacheLock); a.run.cacheLock = nullptr; }
     int g = a.run.game;
     const GameDef &d = game_def(g);
     int64_t secs = std::max<int64_t>(0, unix_now() - a.run.started);
-    if (a.run.prepare) {   // job 641: no play time, no window juggling - say how it went
+    if (a.run.prepare) {   // compilation is not play time; keep the dedicated result screen
         a.run.prepare = false;
         std::string prog;
-        read_file(join(game_shader_dir(g), "prepare-progress.txt"), prog, 4096);
-        const bool done = prog.find(" done ") != std::string::npos;
+        read_file(join(game_shader_dir(g), "prepare-progress." + a.run.prepareSession + ".txt"), prog, 4096);
+        xenos::preparation::Progress final;
+        const bool valid = xenos::preparation::Progress::Parse(prog, final);
+        if (valid) a.preparation = final;
+        if (!valid || !known || code != 0 || !a.preparation.Finished()) {
+            a.preparation.state = a.run.prepareStopping && known && code == 0xC0B05709 ? "cancelled" : "failed";
+            if (a.preparation.state == "failed")
+                a.preparationError = "Preparation stopped unexpectedly. See shader-prepare.log in this game's latest log folder.";
+        }
         append_line(join(a.run.logDir, "args.txt"), "launcher: prepare all shaders ended after " + std::to_string(secs) + " s, exit code " +
                                                         (known ? hex32(code) : std::string("unknown")) + ", progress " + prog);
-        if (done && known && code == 0)
-            ask(a, "info", g, "Shaders prepared",
-                std::string(d.name) + "'s shaders are ready (" + std::to_string(secs / 60) + " min " + std::to_string(secs % 60) +
-                " s). Chapters will now start without building them. Do this again after a graphics driver update or a new "
-                "COGBox release.", { "OK" });
-        else if ((known && code == 0) || (known && code == 0xC0B05709))   // job 666: 0xC0B05709 = the Stop button
-            set_message(a, "Preparing shaders stopped before the end - what was built so far is kept.", false);
-        else
-            set_message(a, "Preparing shaders stopped (" + (known ? "exit code " + hex32(code) : std::string("unknown exit")) +
-                           ") - what was built so far is kept. A problem report from the Help tab helps.", true);
         refresh_games(a, false);
         return;
     }

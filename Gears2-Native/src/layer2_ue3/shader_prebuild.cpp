@@ -419,7 +419,7 @@ struct Prebuild {
   std::unordered_set<uint64_t> seen;  // reader thread: pixel shader hashes already handed over
   // Job 641 (under mutex): readers busy with a file, files read, the start-up list queued, the start-up reading done.
   int busy = 0;
-  uint64_t files_read = 0;
+  uint64_t files_read = 0, files_total = 0, files_failed = 0;
   bool at_start_listed = false, at_start_done = false;
 };
 Prebuild* g_prebuild = nullptr;  // never destroyed (the thread runs until the process exits)
@@ -438,18 +438,19 @@ void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host
   if (const auto chain = g_chain.load()) chain(guest_path, host_path);
   if (!host_path || !g_prebuild) return;
   const std::string name = Lower(host_path->filename().string());
-  const bool package = name.size() > 4 && name.ends_with(".xxx");
+  const bool package = name.ends_with(".xxx") || name.ends_with(".upk") || name.ends_with(".udk") || name.ends_with(".u");
   const bool global_cache = name.ends_with(".bin") && name.find("shadercache") != std::string::npos;
   if (!package && !global_cache) return;
+  const std::string identity = Lower(host_path->lexically_normal().generic_string());
   {
     std::lock_guard<std::mutex> lock(g_prebuild->mutex);
-    if (!g_prebuild->opened.insert(name).second) {
+    if (!g_prebuild->opened.insert(identity).second) {
       // Job 630: queued at start-up and not read yet - the game wants it now, so it goes to the front.
       // Job 666: only looked for when it is still waiting (a package read already costs nothing here).
-      if (!g_prebuild->waiting.count(name)) return;
+      if (!g_prebuild->waiting.count(identity)) return;
       auto& q = g_prebuild->queue;
       for (auto it = q.begin(); it != q.end(); ++it)
-        if (Lower(it->filename().string()) == name) {
+        if (Lower(it->lexically_normal().generic_string()) == identity) {
           std::filesystem::path moved = std::move(*it);
           q.erase(it);
           q.push_front(std::move(moved));
@@ -457,7 +458,8 @@ void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host
         }
       return;
     }
-    g_prebuild->waiting.insert(name);
+    g_prebuild->waiting.insert(identity);
+    ++g_prebuild->files_total;
     g_prebuild->queue.push_front(*host_path);   // job 630: what the game opens now comes before the start-up list
   }
   g_prebuild->cv.notify_one();
@@ -479,12 +481,13 @@ void ReaderThread() {
       g_prebuild->cv.wait(lock, [] { return !g_prebuild->queue.empty(); });
       path = std::move(g_prebuild->queue.front());
       g_prebuild->queue.pop_front();
-      g_prebuild->waiting.erase(Lower(path.filename().string()));   // job 666
+      g_prebuild->waiting.erase(Lower(path.lexically_normal().generic_string()));
       ++g_prebuild->busy;  // job 641: counted with the pop, so no other reader sees an empty queue and nobody busy
     }
     const auto t0 = std::chrono::steady_clock::now();
     // Job 641: when this was the last queued file and no other reader is busy, the start-up reading is done.
     struct BusyGuard {
+      bool failed = true;
       ~BusyGuard() {
         bool done = false;
         uint64_t files = 0;
@@ -492,6 +495,8 @@ void ReaderThread() {
           std::lock_guard<std::mutex> l(g_prebuild->mutex);
           --g_prebuild->busy;
           ++g_prebuild->files_read;
+          if (failed) ++g_prebuild->files_failed;
+          XenosPrebuildScanProgress(g_prebuild->files_read, g_prebuild->files_total, g_prebuild->files_failed);
           if (g_prebuild->at_start_listed && !g_prebuild->at_start_done && g_prebuild->queue.empty() && !g_prebuild->busy) {
             g_prebuild->at_start_done = true;
             done = true;
@@ -514,8 +519,10 @@ void ReaderThread() {
     }
     // Once enough new draws have used prebuilt shaders, stop offering a variant this game never draws (under 5%).
     const uint64_t h0 = XenosPrebuildVariantHits(0), h1 = XenosPrebuildVariantHits(1), hn = h0 + h1;
-    scanner.SetVariants(hn < 32 || h0 * 20 >= hn, hn < 32 || h1 * 20 >= hn);
+    const bool deep = rex::cvar::GetFlagByName("gow2_renderer_prepare_deep") == "true";
+    scanner.SetVariants(deep || hn < 32 || h0 * 20 >= hn, deep || hn < 32 || h1 * 20 >= hn);
     const ScanResult r = scanner.Scan(data);
+    busy_guard.failed = r.unreadable || r.failed_chunks != 0;
     if ((r.pixel || r.vertex) && !g_prebuild->shader_files.empty()) {  // job 632: remembered for the next start-up
       const std::string name = Lower(path.filename().string());
       std::lock_guard<std::mutex> lock(g_prebuild->mutex);
@@ -611,7 +618,7 @@ void Ue3InstallShaderPrebuildIfRequested() {
           const std::string name = Lower(it->path().filename().string());
           const uintmax_t size = it->file_size(ec);
           if (name.ends_with(".bin") && name.find("shadercache") != std::string::npos) caches.emplace_back(it->path(), size);
-          else if (name.size() > 4 && name.ends_with(".xxx")) {
+          else if (name.ends_with(".xxx") || name.ends_with(".upk") || name.ends_with(".udk") || name.ends_with(".u")) {
             if (known.count(name)) caches.emplace_back(it->path(), size);   // job 632: held shaders last time
             else packages.emplace_back(it->path(), size);
           }
@@ -624,12 +631,14 @@ void Ue3InstallShaderPrebuildIfRequested() {
         std::lock_guard<std::mutex> lock(g_prebuild->mutex);
         for (const auto* list : {&caches, &packages})
           for (const auto& [path, size] : *list)
-            if (g_prebuild->opened.insert(Lower(path.filename().string())).second) {
-              g_prebuild->waiting.insert(Lower(path.filename().string()));   // job 666
+            if (g_prebuild->opened.insert(Lower(path.lexically_normal().generic_string())).second) {
+              g_prebuild->waiting.insert(Lower(path.lexically_normal().generic_string()));
               g_prebuild->queue.push_back(path);
               bytes += size;
               ++queued;
             }
+        g_prebuild->files_total += queued;
+        XenosPrebuildScanProgress(g_prebuild->files_read, g_prebuild->files_total, g_prebuild->files_failed);
       }
       {
         std::lock_guard<std::mutex> lock(g_prebuild->mutex);

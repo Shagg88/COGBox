@@ -131,6 +131,10 @@ class ShaderCache {
     return GetImpl(ucode_hash, dwords, dword_count, is_vertex, tess_quad_segments, false);
   }
   // Patch 0058: a shader already known to this cache (Get or the warm-up), or nullptr - no translation, no queueing.
+  // A speculative package variant is for driver warming, not the game's next startup warm-up list.
+  const GuestShader& GetForPreparation(uint64_t hash, const uint32_t* words, size_t count, bool vertex) {
+    return GetImpl(hash, words, count, vertex, 0, true);
+  }
   const GuestShader* Find(uint64_t ucode_hash, bool is_vertex, uint32_t tess_quad_segments = 0) const {
     const auto& map = shaders_[is_vertex ? 1 : 0];
     const uint64_t key = (is_vertex && tess_quad_segments)
@@ -142,6 +146,8 @@ class ShaderCache {
   // Finishes compiles that are done (creates the backend shaders). Call often on the caller's thread.
   void Poll();
   size_t PendingCount() const { return in_flight_; }
+  // Standalone compiler shutdown: drain the recording writer before a hard process exit.
+  void FinishPreparationRecording();
   // Shader pop-in (see the header comment).
   void SetUcodeRecord(bool on) { record_ucode_ = on && dir_ok_; }
   // Patch 0015 (stutter): keep compiled shaders in one file, <dir>\shaders.pack, opened once and kept open. Each loose
