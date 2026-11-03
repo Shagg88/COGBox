@@ -106,7 +106,7 @@ class DxcCompiler final : public ShaderCompiler {
 
   std::string CacheTag(gpu::ShaderIL il) const override {
     return "dxc " + version_ + (il == gpu::ShaderIL::kDxil ? " -HV 2021 -Gis -denorm ftz sm6.6" :
-                                                        " -HV 2021 -Gis -spirv vulkan1.3 sm6.6 shifts b0 t100 s200 u300");
+                                                        " -HV 2021 -Gis -spirv vulkan1.3 sm6.6 shifts b0 t100 s200 u300 unkfmt");
   }
 
   bool Compile(const std::string& hlsl, gpu::ShaderStage stage, gpu::ShaderIL il, std::vector<uint8_t>& out,
@@ -122,6 +122,7 @@ class DxcCompiler final : public ShaderCompiler {
     } else {
       args.push_back(L"-spirv");
       args.push_back(L"-fspv-target-env=vulkan1.3");
+      args.push_back(L"-fspv-use-unknown-image-format");  // VKA1: RW images take the view format, not Rgba32f
       // Notes/68 (Vulkan backend): registers without [[vk::binding]] (our fixed shaders, the memexport u0) land in set 0 at
       // these offsets; the backend moves them into its layout (vulkan_backend.cpp RemapBindings).
       for (const wchar_t* a : {L"-fvk-b-shift", L"0", L"0", L"-fvk-t-shift", L"100", L"0", L"-fvk-s-shift", L"200", L"0",

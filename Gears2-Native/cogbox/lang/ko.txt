@@ -784,3 +784,13 @@ Add it with ADD UPDATE: the update package from your console's folder = 업데�
 # 0.4.0: player name
 Player name = 플레이어 이름
 The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: "User". Display only - your profile and saves stay where they are. = 모든 게임에 표시되는 이름(게이머태그): 영문자, 숫자, 공백 최대 15자. 비워 두면: "User". 표시만 바뀌고 프로필과 저장 파일은 그대로예요.
+# notes/80: ambient occlusion (XeGTAO)
+Ambient occlusion = 앰비언트 오클루전
+XeGTAO (high) = XeGTAO (높음)
+XeGTAO (ultra) = XeGTAO (울트라)
+Gears 2 first = Gears 2 먼저
+The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version (Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, characters included, at about the cost of the original. Ultra looks in more directions and catches more small details, for a little more. Game's own: the original. Off: none. = 모서리, 틈, 물체가 맞닿는 곳에 생기는 부드러운 그림자입니다. XeGTAO: 게임 자체의 저해상도 버전 대신 최신 전체 해상도 버전(Intel XeGTAO)을 사용합니다. 뭉개진 얼룩 대신 정확한 접촉 그림자가 생기고 캐릭터에도 적용되며, 부하는 원래와 비슷합니다. 울트라는 더 많은 방향을 살펴 작은 부분까지 잡아내며 부하가 약간 늘어납니다. 게임 자체: 원래 그대로. 끔: 없음.
+SMAA T2x (temporal) = SMAA T2x (시간적)
+SMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now. = SMAA T2x: SMAA에 시간적 패스를 더한 방식 - 적은 부하로 더 부드러운 가장자리와 훨씬 적은 깜빡임. 모든 그래픽 카드, DirectX 12 또는 Vulkan. 현재는 Gears 2와 Gears 3 전용.
+Gears 2 and Gears 3 for now. = 현재는 Gears 2와 Gears 3 전용.
+Gears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it. = Gears 3: 대부분의 레벨은 음영이 미리 계산되어 있고 실시간 AO가 없습니다. 그곳에서는 XeGTAO가 은은한 접촉 음영을 더하고, 레벨에 게임 자체 AO가 있으면 그것을 대체합니다.

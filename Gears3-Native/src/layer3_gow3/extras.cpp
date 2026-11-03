@@ -68,6 +68,15 @@ void Gow3InstallExtras() {
   }
 }
 
+// TU6 only (gow3_manifest_tu6.toml): the 20-byte SHA-1 compare before the dirty-disc error. r9 = the first differing
+// byte (0 = same). Treated as same only while a package patch of ours is on, so the game's own files are always checked.
+void Gow3Tu6PackageHashOk(PPCRegister& r9) {
+  if (r9.u32 == 0 || !(REXCVAR_GET(gow3_cheats) || REXCVAR_GET(gow3_unlock_mutators))) return;
+  static int n = 0;
+  if (n++ < 8) REXLOG_INFO("gow3 TU6: package hash differs (patched package) - accepted for cheats / mutators");
+  r9.u64 = 0;
+}
+
 // UEngine::GetMaxTickRate, overridden: the original, then any queued console commands (ctx left as the original left
 // it, so f1 - its result - is untouched).
 #if defined(GOW3_TU6) && GOW3_TU6

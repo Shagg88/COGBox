@@ -174,6 +174,9 @@ static void answered(App &a)
         if (m.checked) { a.ini.seti("Notices", "ReportExperimentalNever", 1); a.ini.save(); }
         if (m.answer == 0) report_now(a, m.game, m.data);
     }
+    else if (m.tag == "reportver") {   // Shagg 2 Nov: report made anyway with an untested version
+        if (m.answer == 0) report_now(a, m.game, m.data, true);
+    }
     else if (m.tag == "expnotice") {   // Shagg 31 Oct: experimental settings are for testing, not for regular play
         if (m.checked) a.ini.seti("Notices", "ExperimentalNever", 1);
         a.ini.set("Notices", "ExperimentalSeen", COGBOX_VERSION);
@@ -237,7 +240,7 @@ void startup_notices(App &a)
     }
     if (!a.ini.geti("Notices", "ExperimentalNever", 0) && a.ini.get("Notices", "ExperimentalSeen") != COGBOX_VERSION) {
         ask(a, "expnotice", -1, "Experimental settings",
-            "Settings marked experimental (Vulkan, FSR / DLSS / XeSS, frame generation and others) "
+            "Settings marked experimental (FSR / XeSS, frame generation and others) "
             "are there for testing and debugging. They are not meant for regular play yet: they can be slow, look wrong "
             "or crash.\n\n"
             "Before you send a report, please turn every experimental setting off and try again - unless the report is "

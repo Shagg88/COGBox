@@ -1,4 +1,5 @@
 // Layer 0 (game-free): temporal upscalers (NVIDIA DLSS, AMD FSR, Intel XeSS) behind one small interface (notes/64,
+// XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 // notes/65), shared by the
 // Gears 2 and Gears 3 ports. The renderer supplies, per frame: the scene colour before post-processing, its depth, a
 // per-pixel motion texture (camera reprojection from depth, with the game's own velocity on top where it has one) and
@@ -28,11 +29,13 @@
 
 namespace xenos::renderer::upscale {
 
-enum class Kind : uint32_t { kNone, kDlss, kFsr, kXess };
+// kSmaaT2x (notes/80 s.7): ours, no SDK - SMAA 1x with two alternating jitters and a temporal resolve, at the
+// render size (no upscaling); made by the renderer (it needs the shader cache), not by CreateUpscaler.
+enum class Kind : uint32_t { kNone, kDlss, kFsr, kXess, kSmaaT2x };
 // Render size / output size: 1 (native-resolution AA: DLAA / FSR "native AA"), 1.5, 1.7, 2.
 enum class Quality : uint32_t { kNativeAA, kQuality, kBalanced, kPerformance };
 
-Kind ParseKind(const std::string& name);  // "dlss", "fsr", "xess", anything else -> kNone
+Kind ParseKind(const std::string& name);  // "dlss", "fsr", "xess", "smaa_t2x", anything else -> kNone
 const char* KindName(Kind kind);
 float QualityRatio(Quality quality);      // output / render per axis
 
@@ -86,12 +89,16 @@ bool PerspectiveParams(const Mat4& view_proj, float& vertical_fov, float& near_p
 // The matrix the motion pass uses: (u, v, depth, 1) of a pixel of this frame (u, v in [0, 1], depth guest
 // convention times `depth_scale`, which undoes a host-side remap) -> the previous frame's clip position.
 // = prev_view_proj x inverse(view_proj) x (uv / depth -> NDC). False when view_proj is singular.
-bool ReprojectionMatrix(const Mat4& view_proj, const Mat4& prev_view_proj, float depth_scale, Mat4& out);
+// depth_map_scale / depth_map_offset (notes/80 s.6): the viewport's Z transform, depth = scale * (clip z / w) + offset
+// (ao::ViewportDepthMap); clip z / w = (depth - offset) / scale. 1 / 0 for a plain 0..1 range; Gears 2 draws reversed-Z
+// (-1 / 1), which the matrix must undo or every pixel looks a few units from the camera and camera moves blow up.
+bool ReprojectionMatrix(const Mat4& view_proj, const Mat4& prev_view_proj, float depth_scale, Mat4& out,
+                        float depth_map_scale = 1.0f, float depth_map_offset = 0.0f);
 // The same for a game that renders camera-relative (UE3, job 253: its view-projection has no translation; positions
 // are given relative to the camera): `camera_move` = this frame's camera position minus last frame's, in world units.
 // = prev_view_proj x translate(camera_move) x inverse(view_proj) x (uv / depth -> NDC).
 bool ReprojectionMatrix(const Mat4& view_proj, const Mat4& prev_view_proj, const float camera_move[3], float depth_scale,
-                        Mat4& out);
+                        Mat4& out, float depth_map_scale = 1.0f, float depth_map_offset = 0.0f);
 // How far the camera moved, read off the objects drawn (camera-relative rendering): each sample is one draw's
 // object-to-world translation (relative to the camera) under a key that names the object (its vertex data, shader
 // and rotation rows). A static object's translation changes by minus the camera's move, so the move most matched
@@ -105,6 +112,24 @@ struct ObjectSample {
 bool CameraMoveFromObjects(std::vector<ObjectSample> prev, std::vector<ObjectSample> cur, float camera_move[3],
                            uint32_t* votes = nullptr, uint32_t* matched = nullptr, float tolerance = 0.05f,
                            uint32_t min_votes = 3, float min_share = 0.3f);
+// Notes/80 s.6 (Gears 2): one character of the game's velocity pass. UE3 gives its VS this frame's object-to-world
+// relative to the camera (`now`, c5-c8, as columns: world = x*c5 + y*c6 + z*c7 + c8) and last frame's in absolute world
+// coordinates (`then`, c9-c12). `key` names the draw across frames (vertex data, shader, index count).
+struct MovingObject {
+  uint64_t key = 0;
+  Mat4 now, then;
+};
+// Last frame's camera position (world), from objects drawn in both frames: an object's absolute position last frame
+// (this frame's `then`) minus its camera-relative position last frame (last frame's `now`). The median of all matched
+// objects; true when at least `min_agree` of them lie within `tolerance` of it (an animated part's origin may move).
+bool PreviousCameraFromObjects(const std::vector<MovingObject>& prev, const std::vector<MovingObject>& cur,
+                               float camera[3], uint32_t min_agree = 1, float tolerance = 0.5f);
+// The reprojection matrix (as ReprojectionMatrix) for points on one object: a point's camera-relative position now ->
+// the object's local position -> its world position last frame -> relative to last frame's camera -> last frame's clip.
+// = prev_view_proj x translate(-prev_camera) x then x inverse(now) x inverse(view_proj) x (uv / depth -> NDC).
+bool ObjectReprojectionMatrix(const Mat4& view_proj, const Mat4& prev_view_proj, const MovingObject& object,
+                              const float prev_camera[3], float depth_scale, Mat4& out, float depth_map_scale = 1.0f,
+                              float depth_map_offset = 0.0f);
 // What the shader computes for one pixel, for tests and diagnostics: motion in pixels of a width x height image.
 // False (motion 0) when the previous position is behind the camera or not finite.
 bool CameraMotion(const Mat4& reprojection, float u, float v, float depth, uint32_t width, uint32_t height,
@@ -134,8 +159,10 @@ class Upscaler {
   // (Re)creates the SDK's feature for these sizes. Cheap when nothing changed. False: not available on this GPU /
   // driver (Status() says why) - the renderer then keeps its own path.
   // depth_infinite: the projection has no far plane (depth -> 1 at infinity); FSR needs to know.
+  // depth_inverted (notes/80 s.6): the depth input is reversed - 1 at the near plane, toward 0 far away (Gears 2's
+  // viewport draws reversed-Z); every SDK has a creation flag for it.
   virtual bool Configure(gpu::Backend& backend, uint32_t render_width, uint32_t render_height, uint32_t output_width,
-                         uint32_t output_height, bool hdr, bool depth_infinite = false) = 0;
+                         uint32_t output_height, bool hdr, bool depth_infinite = false, bool depth_inverted = false) = 0;
   // Records the upscale into the backend's command list (Backend::BeginNative / NativeTexture / EndNative).
   virtual bool Evaluate(gpu::Backend& backend, const FrameInputs& inputs) = 0;
   // A line for the log: SDK / runtime version, feature state, or the reason it is off.

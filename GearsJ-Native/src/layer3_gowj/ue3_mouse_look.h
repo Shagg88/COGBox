@@ -60,6 +60,7 @@
 #include <rex/system/function_dispatcher.h>
 #include <rex/ui/window.h>
 #include <rex/ui/window_listener.h>
+#include <xenos/dev_tools.h>   // PR #134: XenosInGameMenuIsOpen
 
 #include <atomic>
 #include <chrono>
@@ -138,6 +139,11 @@ inline void Drain(double* dx, double* dy) {
 class Listener : public rex::ui::WindowInputListener {
  public:
   void OnMouseMove(rex::ui::MouseEvent& e) override {
+    if (XenosInGameMenuIsOpen()) {   // PR #134 (Flippage): the in-game menu is open - its mouse, not the camera's
+      double x, y;
+      Drain(&x, &y);
+      return;
+    }
     rex::ui::Window* w = e.target();
     if (!w || !w->IsMouseCaptureRequested() || !rex::input::mnk::IsMouseLookActive()) {
       double x, y;

@@ -7,3 +7,6 @@ class Window;
 
 // After setup: hooks the engine's input when the launcher asked for it (--ue3_mouse_look); logs why when not.
 void CogMouseLookInstall(rex::ui::Window* window);
+
+// GitHub #52: the projection set-up's field of view (degrees) for the per-camera mouse compensation.
+void CogMouseLookNoteFov(double fov);
