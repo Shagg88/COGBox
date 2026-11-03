@@ -166,7 +166,7 @@ class ShaderCache {
     double list_ms = 0.0, read_ms = 0.0, translate_ms = 0.0, make_ms = 0.0;
     size_t from_pack = 0, packed_now = 0;  // patch 0085: shaders read from recorded.pack / files queued into it  // patch 0083: where the time went
   };
-  WarmResult WarmFromDisk();
+  WarmResult WarmFromDisk(const std::filesystem::path& source_cache = {});
   // Patch 0068 (first-start shader prebuild): the DXBC this cache would make for these dwords - same decode and
   // translation options, so the driver later sees identical bytes - without keeping, recording or creating anything.
   // False when the DXBC back end is off or the shader is not translatable to DXBC.

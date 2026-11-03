@@ -197,6 +197,10 @@ void play_start(App &a, int g, bool prepare, bool restartDeep)
         args.push_back("--gow2_shader_cache_dir=\"" + game_shader_dir(g) + "\"");
         args.push_back(std::string("--gow2_renderer_prepare_deep=") + (restartDeep || a.ini.geti("ShaderPreparation", d.key, 0) ? "true" : "false"));
         args.push_back(std::string("--gow2_renderer_prepare_reset=") + (restartDeep ? "true" : "false"));
+        args.push_back(std::string("--gow2_renderer_prepare_inventory=") +
+                       (a.ini.geti("ShaderPreparation", std::string(d.key) + "_inventory", 0) ? "true" : "false"));
+        const auto profile = a.ini.get("ShaderPreparation", std::string(d.key) + "_profile");
+        if (!profile.empty()) args.push_back("--gow2_renderer_prepare_profile=\"" + profile + "\"");
         args.push_back("--gow2_renderer_prepare_session=" + prepareSession);
         args.push_back("--log_file=\"" + join(logDir, "shader-prepare.log") + "\"");
     } else {

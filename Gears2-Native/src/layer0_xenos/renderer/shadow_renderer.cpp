@@ -84,6 +84,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include <rex/ui/vulkan/provider.h>
 #endif
 #include <rex/ui/flags.h>  // present_hdr (SDK patch 24)
+#include <stdexcept>
 
 #include <algorithm>
 #include <source_location>
@@ -234,6 +235,14 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_deep, false, "Gears2",
                     "Standalone preparation: cache all unique package shader variants and all recorded pipeline "
                     "states. Unrecorded runtime pipeline combinations still require their first use.");
 REXCVAR_DEFINE_STRING(gow2_renderer_prepare_session, "", "Gears2", "Standalone compiler progress/cancellation session ID");
+REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_stream_warmup, true, "Gears2",
+                    "Standalone Deep preparation: feed driver workers during each translation batch (false restores batch-end submission).");
+REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_warm_variants, false, "Gears2",
+                    "Experimental: also driver-warm arbitrary stage pairings. Default Deep builds complete recorded/captured pipelines; full inventory is optional.");
+REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_inventory, false, "Gears2",
+                    "Deep preparation: additionally translate every recognized stored shader variant. Extra inventory work, not exhaustive pipeline coverage.");
+REXCVAR_DEFINE_STRING(gow2_renderer_prepare_profile, "", "Gears2",
+                      "Deep preparation: read gameplay-captured pipelines.list and ucode from this cache, without changing the source.");
 REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_only, false, "Gears2",
                     "Patch 0061 (\"Preparing shaders\"; a test switch since 0062 removed the launcher button): at "
                     "start-up build every recorded pipeline (pipelines.list) on all pipeline workers, save the pipeline "
@@ -1480,6 +1489,13 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
                   "recorded pack, {} files added to it)",
                   w.files, w.known, w.disk_hits, w.queued, w.failed, w.ms, w.list_ms, w.read_ms, w.translate_ms, w.make_ms, w.from_pack, w.packed_now);
     }
+    if (offline_ && REXCVAR_GET(gow2_renderer_prepare_deep)) {
+      const auto profile = std::filesystem::u8path(REXCVAR_GET(gow2_renderer_prepare_profile));
+      if (!profile.empty()) {
+        const auto imported = cache_->WarmFromDisk(profile);
+        REXLOG_INFO("shader preparation: captured gameplay shaders: {} read, {} already known, {} failed", imported.files, imported.known, imported.failed);
+      }
+    }
     StartPrebuild();  // patch 0068
     if (offline_) {
       // The compiler has a device and workers, but no guest memory, window, frame loop or presenter.
@@ -2715,8 +2731,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
  public:
   bool PrebuildWanted() const { return prebuild_on_; }
   void OnPrebuildPixelShader(const void* be_ucode, uint32_t size, uint32_t variant) {  // any thread (layer 2's reader)
-    if (offline_ && deep_) OfferDeepShader(false, be_ucode, size);
-    if (offline_ && deep_) OfferDeepShader(false, be_ucode, size);
+    if (offline_ && deep_inventory_) OfferDeepShader(false, be_ucode, size);
     if (rcp_on_) {  // notes/78 C3: the recipe pack decides (the 0068 warm-only path is not used with it)
       OfferRecipePixel(be_ucode, size);
       return;
@@ -2745,7 +2760,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   };
   void StartPrebuild() {  // Init, after the shader cache is set up
     deep_ = offline_ && REXCVAR_GET(gow2_renderer_prepare_deep);
-    deep_ = offline_ && REXCVAR_GET(gow2_renderer_prepare_deep);
+    deep_inventory_ = deep_ && (REXCVAR_GET(gow2_renderer_prepare_inventory) || REXCVAR_GET(gow2_renderer_prepare_warm_variants));
     LoadRecipes();     // notes/78
     LoadRecipePack();  // notes/78 C3
     prebuild_on_ = (REXCVAR_GET(gow2_renderer_shader_prebuild) || !recipe_ps_.empty() || rcp_on_) && cache_ && cache_->Dxbc();
@@ -8765,6 +8780,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   };
   static constexpr uint32_t kPipelineListMagic = 0x4C50474Eu;  // "NGPL"
   static constexpr uint32_t kPipelineListVersion = 1;          // bump when GraphicsPipelineDesc's meaning changes
+  std::vector<PipelineRecord> preparation_captured_;
   static uint64_t PipelineRecordKey(const PipelineRecord& r) {
     uint64_t h = gpu::HashPipelineDesc(r.desc);
     for (uint64_t v : {r.vs_hash, r.ps_hash, uint64_t(r.tess_n) << 32 | r.flags}) {
@@ -8789,6 +8805,30 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           if (recorded_.insert(PipelineRecordKey(r)).second) records.push_back(r);
         }
       }
+    }
+    std::vector<PipelineRecord> imported_records;
+    if (offline_ && deep_) {
+      const auto profile = std::filesystem::u8path(REXCVAR_GET(gow2_renderer_prepare_profile));
+      if (!profile.empty()) {
+        std::ifstream f(profile / "pipelines.list", std::ios::binary);
+        uint32_t hdr[3] = {};
+        if (!f.read(reinterpret_cast<char*>(hdr), sizeof(hdr)) || hdr[0] != kPipelineListMagic ||
+            hdr[1] != kPipelineListVersion || hdr[2] != sizeof(PipelineRecord)) {
+          throw std::runtime_error("The captured pipeline list has an incompatible format.");
+        }
+        PipelineRecord r;
+        while (f.read(reinterpret_cast<char*>(&r), sizeof(r))) {
+          if (recorded_.insert(PipelineRecordKey(r)).second) {
+            records.push_back(r);
+            imported_records.push_back(r);
+          }
+        }
+      }
+      std::unordered_set<uint64_t> recipes;
+      for (const auto& r : rcp_records_) recipes.insert(PipelineRecordKey(r));
+      for (const auto& r : records)
+        if (!recipes.count(PipelineRecordKey(r))) preparation_captured_.push_back(r);
+      REXLOG_INFO("shader preparation: {} captured complete pipelines beyond the shipped recipes", preparation_captured_.size());
     }
     std::error_code ec;
     if (!header_ok && std::filesystem::exists(path, ec)) {  // another layout: moved aside, never deleted
@@ -8834,6 +8874,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         const uint32_t hdr[3] = {kPipelineListMagic, kPipelineListVersion, uint32_t(sizeof(PipelineRecord))};
         pipeline_list_->Append(hdr, sizeof(hdr));
       }
+      if (pipeline_list_)
+        for (const auto& r : imported_records) pipeline_list_->Append(&r, sizeof(r));
     }
     REXLOG_INFO("gow2_renderer: recorded pipelines: {} in {} - {} queued to the workers as start-up backlog, {} "
                 "already made, {} skipped (shader not ready{}), {} skipped (no GS) ({:.0f} ms){}",
@@ -8907,8 +8949,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     rcp_in_.push_back(std::move(s));
   }
   void OnPrebuildVertexShader(const void* be_ucode, uint32_t size) {  // any thread (layer 2's reader)
-    if (offline_ && deep_) OfferDeepShader(true, be_ucode, size);
-    if (offline_ && deep_) OfferDeepShader(true, be_ucode, size);
+    if (offline_ && deep_inventory_) OfferDeepShader(true, be_ucode, size);
     if (!rcp_on_ || !be_ucode || !size || size > 256u * 1024u || (size & 3)) return;
     rcp_vs_offered_.fetch_add(1, std::memory_order_relaxed);
     thread_local std::vector<uint8_t> scratch;
@@ -9224,7 +9265,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool prepare_all_ = false;
   std::chrono::steady_clock::time_point prepare_t0_{}, prepare_quiet_since_{}, prepare_written_{};
   uint64_t prepare_last_made_ = UINT64_MAX;
-  bool offline_ = false, deep_ = false;
+  bool offline_ = false, deep_ = false, deep_inventory_ = false;
   std::atomic<bool> preparation_cancelled_{false};
   std::mutex deep_mutex_;
   std::condition_variable deep_cv_;
@@ -9268,13 +9309,27 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     } while (MsSince(start) < 20);
   }
   void DrainDeepWarmup() {
-    if (!deep_warm_ready_) return;
+    const bool driver_warm = REXCVAR_GET(gow2_renderer_prepare_warm_variants);
+    if (driver_warm && !deep_warm_ready_) return;
     while (deep_warm_next_ < deep_compiles_.size() && backend_->WarmJobsLeft() < 64) {
       const auto* shader = deep_compiles_[deep_warm_next_];
       if (shader->state == rr::ShaderState::kPending) break;
-      if (shader->ready() && !backend_->WarmShader(shader->handle)) ++deep_warm_unavailable_;
+      if (driver_warm && shader->ready() && !backend_->WarmShader(shader->handle)) ++deep_warm_unavailable_;
       ++deep_warm_next_;
     }
+  }
+  void CountPreparedPipeline(const PipelineRecord& r, xenos::preparation::Progress& p) {
+    const auto* vs = cache_->Find(r.vs_hash, true, r.tess_n);
+    const auto* ps = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
+    if (!vs || ((r.flags & 1) && !ps)) { ++p.pipelines_missing; return; }
+    if (!vs->ready() || ((r.flags & 1) && !ps->ready())) { ++p.pipelines_failed; return; }
+    auto desc = r.desc;
+    desc.vs = vs->handle;
+    desc.ps = ps ? ps->handle : 0;
+    desc.gs = (r.flags & 2) ? (vs->dxbc ? rect_gs_dxbc_ : rect_gs_) : 0;
+    if ((r.flags & 2) && !desc.gs) { ++p.pipelines_failed; return; }
+    if (backend_->GetGraphicsPipeline(desc, true, nullptr)) ++p.pipelines;
+    else ++p.pipelines_failed;
   }
  public:
   std::atomic<bool> prepare_reading_done_{false};
@@ -9308,9 +9363,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const auto warm_jobs = backend_->WarmJobsLeft();
     p.variants = deep_warm_next_ > warm_jobs ? deep_warm_next_ - warm_jobs : 0;
     p.variants_failed += backend_->WarmFailures() + deep_warm_unavailable_;
-    p.pipelines_total = rcp_records_.size();
+    p.pipelines_total = rcp_records_.size() + preparation_captured_.size();
     const auto jobs = backend_->PipelineJobsLeft();
-    const auto asked = rcp_n_.queued + rcp_n_.known;
+    const auto asked = rcp_n_.queued + rcp_n_.known + preparation_captured_.size();
     p.pipelines = std::min(p.pipelines_total, asked > jobs ? asked - jobs : 0);
     bool queues_empty;
     {
@@ -9319,7 +9374,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     const bool reading = !prepare_reading_done_.load(std::memory_order_acquire);
     // A pack with no usable VS/PS pair cannot supply a warm template. Report these variants as unavailable.
-    if (deep_ && !deep_warm_ready_ && !reading && queues_empty && rcp_need_.empty() && CountReadyRecipes() == 0 &&
+    if (deep_ && REXCVAR_GET(gow2_renderer_prepare_warm_variants) && !deep_warm_ready_ && !reading && queues_empty && rcp_need_.empty() && CountReadyRecipes() == 0 &&
         jobs == 0 && cache_->PendingCount() == 0) {
       deep_warm_unavailable_ += deep_compiles_.size() - deep_warm_next_;
       deep_warm_next_ = deep_compiles_.size();
@@ -9341,18 +9396,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       for (size_t i = 0; !cancelled && i < rcp_records_.size(); ++i) {
         const auto& r = rcp_records_[i];
         if (rcp_state_[i] != 2) { ++p.pipelines_missing; continue; }
-        const auto* vs = cache_->Find(r.vs_hash, true, r.tess_n);
-        const auto* ps = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
-        if (!vs || ((r.flags & 1) && !ps)) { ++p.pipelines_missing; continue; }
-        if (!vs->ready() || ((r.flags & 1) && !ps->ready())) { ++p.pipelines_failed; continue; }
-        auto desc = r.desc;
-        desc.vs = vs->handle;
-        desc.ps = ps ? ps->handle : 0;
-        desc.gs = (r.flags & 2) ? (vs->dxbc ? rect_gs_dxbc_ : rect_gs_) : 0;
-        if ((r.flags & 2) && !desc.gs) { ++p.pipelines_failed; continue; }
-        if (backend_->GetGraphicsPipeline(desc, true, nullptr)) ++p.pipelines;
-        else ++p.pipelines_failed;
+        CountPreparedPipeline(r, p);
       }
+      if (!cancelled)
+        for (const auto& r : preparation_captured_) CountPreparedPipeline(r, p);
       p.state = "saving";
       prep::WriteProgress(path, p);
       cache_->FinishPreparationRecording();
@@ -9403,9 +9450,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const auto warm_jobs = backend_->WarmJobsLeft();
     p.variants = deep_warm_next_ > warm_jobs ? deep_warm_next_ - warm_jobs : 0;
     p.variants_failed += backend_->WarmFailures() + deep_warm_unavailable_;
-    p.pipelines_total = rcp_records_.size();
+    p.pipelines_total = rcp_records_.size() + preparation_captured_.size();
     const auto jobs = backend_->PipelineJobsLeft();
-    const auto asked = rcp_n_.queued + rcp_n_.known;
+    const auto asked = rcp_n_.queued + rcp_n_.known + preparation_captured_.size();
     p.pipelines = std::min(p.pipelines_total, asked > jobs ? asked - jobs : 0);
     bool queues_empty;
     {
@@ -9414,7 +9461,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     const bool reading = !prepare_reading_done_.load(std::memory_order_acquire);
     // A pack with no usable VS/PS pair cannot supply a warm template. Report these variants as unavailable.
-    if (deep_ && !deep_warm_ready_ && !reading && queues_empty && rcp_need_.empty() && CountReadyRecipes() == 0 &&
+    if (deep_ && REXCVAR_GET(gow2_renderer_prepare_warm_variants) && !deep_warm_ready_ && !reading && queues_empty && rcp_need_.empty() && CountReadyRecipes() == 0 &&
         jobs == 0 && cache_->PendingCount() == 0) {
       deep_warm_unavailable_ += deep_compiles_.size() - deep_warm_next_;
       deep_warm_next_ = deep_compiles_.size();
@@ -9436,18 +9483,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       for (size_t i = 0; !cancelled && i < rcp_records_.size(); ++i) {
         const auto& r = rcp_records_[i];
         if (rcp_state_[i] != 2) { ++p.pipelines_missing; continue; }
-        const auto* vs = cache_->Find(r.vs_hash, true, r.tess_n);
-        const auto* ps = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
-        if (!vs || ((r.flags & 1) && !ps)) { ++p.pipelines_missing; continue; }
-        if (!vs->ready() || ((r.flags & 1) && !ps->ready())) { ++p.pipelines_failed; continue; }
-        auto desc = r.desc;
-        desc.vs = vs->handle;
-        desc.ps = ps ? ps->handle : 0;
-        desc.gs = (r.flags & 2) ? (vs->dxbc ? rect_gs_dxbc_ : rect_gs_) : 0;
-        if ((r.flags & 2) && !desc.gs) { ++p.pipelines_failed; continue; }
-        if (backend_->GetGraphicsPipeline(desc, true, nullptr)) ++p.pipelines;
-        else ++p.pipelines_failed;
+        CountPreparedPipeline(r, p);
       }
+      if (!cancelled)
+        for (const auto& r : preparation_captured_) CountPreparedPipeline(r, p);
       p.state = "saving";
       prep::WriteProgress(path, p);
       cache_->FinishPreparationRecording();

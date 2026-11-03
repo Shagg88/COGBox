@@ -310,14 +310,31 @@ static void prepare_section(App &a, int g)
              "Repeat after a graphics driver or renderer update.");
     int mode = a.ini.geti("ShaderPreparation", game_def(g).key, 0) ? 1 : 0;
     ImGui::SetNextItemWidth(std::min(g_rowX1 - ImGui::GetCursorScreenPos().x, T(330)));
-    if (ImGui::Combo("##shaderPreparationMode", &mode, "Quick - recorded pipelines\0Deep - game files and variants\0")) {
+    if (ImGui::Combo("##shaderPreparationMode", &mode, "Quick - recorded pipelines\0Deep - captured pipelines\0")) {
         a.ini.seti("ShaderPreparation", game_def(g).key, mode);
         a.ini.save();
     }
-    row_desc(mode ? "Scans game, title-update and enabled mod packages for stored vertex and pixel shader variants. "
-                    "Warms these with the graphics driver and prepares the known pipeline permutations. More complete and slower. "
-                    "Some graphics-state combinations are only created during play."
+    row_desc(mode ? "Experimental: builds complete pipelines from the shipped recipes and a gameplay capture. "
+                    "Arbitrary shader pairings are skipped. Captures cover only combinations previously encountered; gameplay gains need repeat testing."
                   : "Prepares the known pipelines in this game's recipe pack. A smaller shader set and a faster pass.");
+    if (mode) {
+        const std::string inventoryKey = std::string(game_def(g).key) + "_inventory";
+        bool inventory = a.ini.geti("ShaderPreparation", inventoryKey, 0) != 0;
+        if (ImGui::Checkbox("Also translate every stored shader variant", &inventory)) {
+            a.ini.seti("ShaderPreparation", inventoryKey, inventory ? 1 : 0); a.ini.save();
+        }
+        row_desc("The optional full inventory takes longer and has no proven gameplay benefit. Complete captured pipelines are prepared either way.");
+        const std::string key = std::string(game_def(g).key) + "_profile";
+        if (small_button("Use gameplay capture...")) {
+            const auto folder = pick_folder(L"Choose this game's shadercache folder (close the game first)");
+            if (!folder.empty()) { a.ini.set("ShaderPreparation", key, folder); a.ini.save(); }
+        }
+        const auto profile = a.ini.get("ShaderPreparation", key);
+        if (!profile.empty()) {
+            row_desc("Gameplay capture: " + profile);
+            if (small_button("Clear capture")) { a.ini.set("ShaderPreparation", key, ""); a.ini.save(); }
+        } else row_desc("Uses this game's existing captured pipelines automatically. Select another capture to add it.");
+    }
     const bool wineDx = a.env[g].wine && a.cur[g].i("Api") == 0 &&
                         (a.cur[g].i("WineApi") == 2 || (a.cur[g].i("WineApi") == 0 && a.env[g].mac));
     const bool vulkan = a.cur[g].i("Api") == 1 || (a.env[g].wine && !wineDx);
@@ -364,7 +381,7 @@ void prepare_draw(App &a, ImVec2 size)
     ImGui::TextUnformatted("SHADER PREPARATION");
     ImGui::PopFont();
     ImGui::TextUnformatted(game_def(g).name);
-    ImGui::TextColored(col::dim, "%s", a.run.prepareDeep ? "Deep - game files and variants" : "Quick - recorded pipelines");
+    ImGui::TextColored(col::dim, "%s", a.run.prepareDeep ? "Deep - captured pipelines" : "Quick - recorded pipelines");
     if (a.run.prepareRestart) ImGui::TextColored(col::dim, "Fresh COGBox cache - previous cache backed up when present");
     ImGui::Spacing();
     const char* status = a.run.prepareStopping && running ? "Stopping - saving completed work"
@@ -386,7 +403,7 @@ void prepare_draw(App &a, ImVec2 size)
         ImGui::ProgressBar(fraction, ImVec2(-1, T(18)), total ? nullptr : "Waiting for the scan...");
     };
     bar("Packages scanned", p.files, p.files_total);
-    if (a.run.prepareDeep) bar("Shader variants processed", p.variants, p.variants_total);
+    if (a.run.prepareDeep && p.variants_total) bar("Shader variants translated", p.variants, p.variants_total);
     bar("Graphics pipelines", p.pipelines, p.pipelines_total);
     ImGui::TextColored(col::dim, "Elapsed: %llu min %02llu s", (unsigned long long)(p.seconds / 60), (unsigned long long)(p.seconds % 60));
     ImGui::Spacing();

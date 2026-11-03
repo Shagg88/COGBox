@@ -37,7 +37,9 @@ int wmain(int argc, wchar_t** argv) {
       if (arg == "--help") {
         std::puts("COGBox shader compiler: --ue3_shader_prebuild_at_start=<game;update> "
                   "--gow2_renderer_recipe_pack=<pack> --gow2_shader_cache_dir=<cache> "
-                  "[--gow2_renderer_prepare_deep=true] [--gow2_renderer_prepare_reset=true] [renderer settings]");
+                  "[--gow2_renderer_prepare_deep=true] [--gow2_renderer_prepare_reset=true] "
+                  "[--gow2_renderer_prepare_priority=1] [--gow2_renderer_prepare_profile=<gameplay cache>] "
+                  "[--gow2_renderer_prepare_inventory=false] [--gow2_renderer_prepare_warm_variants=false] [renderer settings]");
         return 0;
       }
       const auto eq = arg.find('=');
@@ -82,9 +84,16 @@ int wmain(int argc, wchar_t** argv) {
     if (rex::cvar::GetFlagByName("gow2_renderer_prepare_deep") == "true" &&
         rex::cvar::GetFlagByName("gow2_renderer_api") != "d3d12")
       throw std::runtime_error("Deep driver preparation currently requires DirectX 12. Use Quick for Vulkan.");
-    rex::cvar::SetFlagFromCommandLine("gow2_renderer_shader_prebuild_workers",
-                                      std::to_string(std::clamp(int(std::thread::hardware_concurrency()) - 2, 1, 8)));
-    SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+    ConfigureCpu();
+    const auto profile = std::filesystem::u8path(rex::cvar::GetFlagByName("gow2_renderer_prepare_profile"));
+    if (!profile.empty() && rex::cvar::GetFlagByName("gow2_renderer_prepare_deep") == "true") {
+      if (!std::filesystem::is_regular_file(profile / "pipelines.list") ||
+          !std::filesystem::is_directory(profile / "ucode"))
+        throw std::runtime_error("Choose a gameplay cache with pipelines.list and a ucode folder.");
+      if (std::filesystem::equivalent(profile, cache))
+        // This cache's captured shaders and pipeline records are loaded normally.
+        rex::cvar::SetFlagFromCommandLine("gow2_renderer_prepare_profile", "");
+    }
     // Serialize compiler instances; the launcher also excludes Play while preparation runs.
     const auto lock_path = cache / "prepare.lock";
     HANDLE cache_lock = CreateFileW(lock_path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS,
@@ -93,6 +102,13 @@ int wmain(int argc, wchar_t** argv) {
     owns_cache = true;
     if (restart) {
       const auto backup = xenos::preparation::RestartCache(cache, session);
+      // Retain learned raw shader inputs and pipeline descriptions, not compiled
+      // binaries. A fresh cache can rebuild exact combinations seen during play.
+      if (rex::cvar::GetFlagByName("gow2_renderer_prepare_profile").empty() && !backup.empty() &&
+          std::filesystem::is_regular_file(backup / "pipelines.list") && std::filesystem::is_directory(backup / "ucode")) {
+        const auto utf8 = backup.u8string();
+        rex::cvar::SetFlagFromCommandLine("gow2_renderer_prepare_profile", std::string(utf8.begin(), utf8.end()));
+      }
       REXLOG_INFO("shader preparation: fresh Deep restart; previous cache backup: {}",
                   backup.empty() ? std::string("cache was already empty") : backup.string());
     }

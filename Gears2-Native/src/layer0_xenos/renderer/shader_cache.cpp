@@ -691,12 +691,12 @@ const GuestShader& ShaderCache::AdoptDxbc(uint64_t key, std::unique_ptr<GuestSha
   return ref;
 }
 
-ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
+ShaderCache::WarmResult ShaderCache::WarmFromDisk(const std::filesystem::path& source_cache) {
   WarmResult r;
   if (!dir_ok_) return r;
   const auto t0 = std::chrono::steady_clock::now();
   std::error_code ec;
-  const std::filesystem::path dir = dir_ / "ucode";
+  const std::filesystem::path dir = (source_cache.empty() ? dir_ : source_cache) / "ucode";
   if (!std::filesystem::is_directory(dir, ec)) return r;
   // Patch 0083: the files are listed first, read on several threads, then made one by one on this thread. Job 385:
   // 13,581 recorded shaders took 81 s to warm on D3D12 (91 s for 12,498 on Vulkan) while their translation took 2 s
@@ -780,7 +780,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
   }
   r.read_ms = MsSince(t1);
   // Patch 0085: shaders found only as files go into the pack too, so the next start reads them from it.
-  if (record_ucode_ && items.size() > first_file_item) {
+  if (source_cache.empty() && record_ucode_ && items.size() > first_file_item) {
     {
       std::lock_guard<std::mutex> lock(ucode_mutex_);
       for (size_t i = first_file_item; i < items.size(); ++i) {
@@ -841,6 +841,9 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
   for (size_t i = 0; i < items.size(); ++i) {
     Item& it = items[i];
     if (it.dwords.empty()) continue;
+    // Captures contain shaders actually used by gameplay. Persist them in the
+    // destination cache; never append to or otherwise change the source capture.
+    if (!source_cache.empty()) SaveUcode(it.hash, it.is_vertex, it.dwords.data(), it.dwords.size());
     if (dxbc_path && made[i].s && made[i].dt.ok && !shaders_[it.is_vertex ? 1 : 0].count(it.hash)) {
       ++stats_.lookups;
       ++stats_.translated;
