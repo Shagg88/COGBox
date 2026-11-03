@@ -130,8 +130,25 @@ class Screenshot final : public DrawObserver {
 
  private:
   std::filesystem::path Folder() const {
-    const char* up = std::getenv("USERPROFILE");
-    std::filesystem::path base = up && *up ? std::filesystem::path(up) / "Pictures" : std::filesystem::current_path();
+    // The real Pictures folder (it may be moved, e.g. to OneDrive - job 1187 saved to %USERPROFILE%\Pictures while
+    // Explorer's Pictures was elsewhere): SHGetKnownFolderPath(FOLDERID_Pictures), looked up at run time so no
+    // game needs to link shell32 / ole32; %USERPROFILE%\Pictures if that fails.
+    std::filesystem::path base;
+    using KnownFolderFn = HRESULT(WINAPI*)(const GUID&, DWORD, HANDLE, PWSTR*);
+    using FreeFn = void(WINAPI*)(LPVOID);
+    static const GUID kPictures = {0x33E28130, 0x4E1E, 0x4676, {0x83, 0x5A, 0x98, 0x39, 0x5C, 0x3B, 0xC3, 0xBB}};
+    if (HMODULE sh = LoadLibraryA("shell32.dll")) {
+      auto known = reinterpret_cast<KnownFolderFn>(GetProcAddress(sh, "SHGetKnownFolderPath"));
+      HMODULE ole = LoadLibraryA("ole32.dll");
+      auto free_mem = ole ? reinterpret_cast<FreeFn>(GetProcAddress(ole, "CoTaskMemFree")) : nullptr;
+      PWSTR w = nullptr;
+      if (known && known(kPictures, 0, nullptr, &w) == S_OK && w) base = std::filesystem::path(w);
+      if (w && free_mem) free_mem(w);
+    }
+    if (base.empty()) {
+      const char* up = std::getenv("USERPROFILE");
+      base = up && *up ? std::filesystem::path(up) / "Pictures" : std::filesystem::current_path();
+    }
     return base / "COGBox" / game_;
   }
   std::atomic<bool> pending_{false};
