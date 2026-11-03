@@ -238,10 +238,6 @@ int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& 
           continue;
         }
 
-        bool has_dlc_identifier = false;
-        bool has_categories_identifier = false;
-        size_t categories_key_idx = std::string::npos;
-
         for (size_t i = 0; i < s.keys.size(); ++i) {
           ConfigKey& k = s.keys[i];
           std::string kn = ToLower(k.key.Utf8());
@@ -267,8 +263,6 @@ int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& 
           }
 
           if (val.find("Identifier=MAINMENUOP_DLC_Categories") != std::string::npos) {
-            has_categories_identifier = true;
-            categories_key_idx = i;
             if (ClearListProperty(val)) {
               val_modified = true;
             }
@@ -278,10 +272,13 @@ int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& 
           if (dlc_id_pos != std::string::npos) {
             size_t end_pos = dlc_id_pos + std::string_view("Identifier=MAINMENUOP_DLC").length();
             if (end_pos >= val.size() || val[end_pos] == ',' || val[end_pos] == ')') {
-              has_dlc_identifier = true;
-              if (ClearListProperty(val)) {
-                val_modified = true;
-              }
+              // Identifier=MAINMENUOP_DLC must NEVER be an AllOptions entry; in UE3 Scaleform
+              // any identifier in AllOptions is registered as a navigable submenu screen rather than
+              // an immediate action. Erase it if present so selecting Exit Game triggers the action.
+              s.keys.erase(s.keys.begin() + i);
+              --i;
+              ++replaced;
+              continue;
             }
           }
 
@@ -290,17 +287,6 @@ int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& 
             k.value.present = true;
             ++replaced;
           }
-        }
-
-        if (has_categories_identifier && !has_dlc_identifier && categories_key_idx != std::string::npos) {
-          ConfigKey dlc_key;
-          dlc_key.key = s.keys[categories_key_idx].key;
-          dlc_key.value = ConfigString::FromUtf8(
-              "(Identifier=MAINMENUOP_DLC,Title=\"TITLE_DLC\",HeaderPicturePath=\"\",List=())",
-              s.keys[categories_key_idx].value.wide);
-          dlc_key.value.present = true;
-          s.keys.insert(s.keys.begin() + categories_key_idx + 1, dlc_key);
-          ++replaced;
         }
       }
       continue;

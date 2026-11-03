@@ -16,7 +16,7 @@ In the original Xbox 360 Unreal Engine 3 builds, title shutdown sequences were d
 2. **Deterministic Guest Trigger Interception (`layer3_*`):**
    - Hooks into the game-specific triggers executed upon selecting the menu slot:
      - **Gears 3 TU6**: Intercepts `Localize("NeedLiveForDownloadableContent")` (`sub_8230CF58`).
-     - **Judgment TU4**: Intercepts `Localize("NeedLiveForDownloadableContent")` (`sub_82302DE0`) and marketplace UI thunk (`sub_82DBF838`).
+     - **Judgment TU4**: Intercepts `Localize("NeedLive...")` (`sub_82302DE0`), `XamShowMarketplaceUI` (`sub_82DBDA80`), `XamShowMarketplaceDownloadItemsUI` (`sub_82DBF838`), and marketplace launchers (`sub_829C2680`, `sub_829CAC40`).
      - **Gears 2 TU6**: Intercepts `Localize()` (`sub_8228AF78`) querying `"credits"` / `"line_00000"` (with options menu protection), supplemented by a VFS `FileOpenObserver` for `SP_Credits_P` / `UI_Scenes_Credits`.
 3. **Clean Instant Termination:**
    - On activation, invokes `ExitGame()`, which flushes pending logging via `rex::FlushLogging()` and terminates the process directly using `TerminateProcess(GetCurrentProcess(), 0)` (or `_exit(0)` on POSIX platforms), eliminating shutdown deadlocks entirely.
@@ -50,9 +50,12 @@ In the original Xbox 360 Unreal Engine 3 builds, title shutdown sequences were d
 - **Module:** `GearsJ-Native/src/layer3_gowj/main_menu_exit.h` and `main_menu_exit.cpp`.
 - **Cvar:** `gowj_main_menu_exit` (default `true`, category `"ui"`).
 - **Function Hooks:**
-  - `sub_82302DE0` (`Localize` handler): inspects `ctx.r5.u32` for `"NeedLiveForDownloadableContent"` via `MatchesNeedLive`.
-  - `sub_82DBF838` (`XamShowMarketplaceDownloadItemsUI` thunk): secondary entry point if Marketplace activation bypasses localization.
-- **Action:** If either hook is triggered while `gowj_main_menu_exit` is enabled, triggers `ExitGame()` to flush logs and terminate the process.
+  - `sub_82302DE0` (`Localize` handler): inspects `ctx.r5.u32` for `"NeedLive"` via `MatchesNeedLive`.
+  - `sub_82DBDA80` (`XamShowMarketplaceUI` thunk): marketplace general UI entry point.
+  - `sub_82DBF838` (`XamShowMarketplaceDownloadItemsUI` thunk): marketplace items UI entry point.
+  - `sub_829C2680` (`ShowMarketplaceUI` caller): high-level marketplace action entry point.
+  - `sub_829CAC40` (`ShowMarketplaceDownloadItemsUI` caller): high-level marketplace items action entry point.
+- **Action:** If any hook is triggered while `gowj_main_menu_exit` is enabled, triggers `ExitGame()` to flush logs and terminate the process.
 
 ### 4. Gears 2 TU6 Hook (`layer3_gow2`)
 - **Module:** `Gears2-Native/src/layer3_gow2/main_menu_exit.h` and `main_menu_exit.cpp`.
