@@ -134,6 +134,82 @@ class OverlayDevice : public rex::filesystem::HostPathDevice {
   std::unique_ptr<OverlayFolder> root_;
   uint32_t replaced_hits_ = 0;
 };
+// 0.2.1: a title update's loose config files (update:\TU__<name>.ini, read after the bundles) can set the same keys
+// again - Judgment TU's TU__xbox360-gearui.ini overrides [GearGame.UIWidget_MainMenu] AllOptions.
+// The edits and main menu exit fixes are applied to those files too, and update:\ shows the edited copies.
+void EditTitleUpdateInis(rex::Runtime* runtime, const std::vector<ue3::ConfigEdit>& edits, bool exit_menu) {
+  namespace fs = std::filesystem;
+  const fs::path root = runtime->update_data_root();
+  std::error_code ec;
+  if (root.empty() || !fs::is_directory(root, ec)) return;
+  const fs::path out = runtime->user_data_root() / "ini-edits" / "update";
+  std::set<std::string> replaced;
+  for (const auto& e : fs::directory_iterator(root, ec)) {
+    const std::string n = rex::path_to_utf8(e.path().filename());
+    const std::string ln = AsciiLower(n);
+    if (!e.is_regular_file() || ln.rfind("tu__", 0) != 0 || !ln.ends_with(".ini")) continue;
+    std::ifstream in(e.path(), std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (text.size() >= 2 && (uint8_t(text[0]) == 0xFF || uint8_t(text[0]) == 0xFE)) continue;  // UTF-16: not seen in a TU
+    ue3::ConfigBundle b;
+    b.files.emplace_back();
+    ue3::ConfigFile& f = b.files.back();
+    f.name = ue3::ConfigString::FromUtf8(n, false);
+    std::istringstream ls(text);
+    std::string line;
+    while (std::getline(ls, line)) {
+      while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
+      if (line.empty() || line[0] == ';') continue;
+      if (line.front() == '[' && line.back() == ']') {
+        f.sections.emplace_back();
+        f.sections.back().name = ue3::ConfigString::FromUtf8(line.substr(1, line.size() - 2), false);
+        continue;
+      }
+      const size_t eq = line.find('=');
+      if (eq == std::string::npos || f.sections.empty()) continue;
+      ue3::ConfigKey k;
+      k.key = ue3::ConfigString::FromUtf8(line.substr(0, eq), false);
+      k.value = ue3::ConfigString::FromUtf8(line.substr(eq + 1), false);
+      f.sections.back().keys.push_back(std::move(k));
+    }
+    std::vector<std::string> log;
+    int changed = 0;
+    if (!edits.empty()) {
+      changed += ue3::ApplyConfigEdits(b, edits, &log);
+    }
+    if (exit_menu) {
+      const int exit_changed = ue3::ApplyMainMenuExitToBundle(ue3::GameId::Judgment, n, b);
+      if (exit_changed > 0) {
+        changed += exit_changed;
+        REXLOG_INFO("main_menu_exit: title update: {}: applied Exit Game to {} key(s)", n, exit_changed);
+      }
+    }
+    if (changed == 0) continue;
+    for (const std::string& l : log) REXLOG_INFO("ue3_ini_edits: title update: {}", l);
+    std::string o;
+    for (const ue3::ConfigSection& sec : f.sections) {
+      o += "[" + sec.name.Utf8() + "]\r\n";
+      for (const ue3::ConfigKey& k : sec.keys) o += k.key.Utf8() + "=" + k.value.Utf8() + "\r\n";
+      o += "\r\n";
+    }
+    fs::create_directories(out, ec);
+    std::ofstream w(out / n, std::ios::binary | std::ios::trunc);
+    w.write(o.data(), std::streamsize(o.size()));
+    if (!w) { REXLOG_WARN("ue3_ini_edits: could not write {}", rex::path_to_utf8(out / n)); continue; }
+    replaced.insert(ln);
+  }
+  if (replaced.empty()) return;
+  constexpr const char* kUpdateOverlay = "\\Device\\Ue3IniUpdateOverlay";
+  auto dev = std::make_unique<OverlayDevice>(kUpdateOverlay, root, out, replaced);
+  OverlayDevice* view = dev.get();
+  if (!dev->Initialize() || !runtime->file_system()->RegisterDevice(std::move(dev))) {
+    REXLOG_WARN("ue3_ini_edits: could not set up the title update's view; it reads its own config files");
+    return;
+  }
+  runtime->file_system()->UnregisterSymbolicLink("update:");
+  runtime->file_system()->RegisterSymbolicLink("update:", kUpdateOverlay);
+  REXLOG_INFO("ue3_ini_edits: title update: {} file(s) edited, {} shown through update:", replaced.size(), view->replaced_count());
+}
 // GitHub #116: the image's address range is not all readable (a 0x83xxxxxx page of the TU6 image faulted on one PC,
 // 0xC0000005 at start-up right after the first bundle was edited). Only the pages the guest heap has readable are
 // scanned, run by run, and a fault in a run is caught and that run skipped instead of taking the game down.
@@ -608,6 +684,7 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
   const std::vector<ue3::ConfigEdit> edits = spec.empty() ? std::vector<ue3::ConfigEdit>{} : ue3::ParseConfigEdits(spec, &error);
   if (!error.empty()) REXLOG_WARN("ue3_ini_edits: {}", error);
   if (edits.empty() && !exit_menu) return;
+  if (!edits.empty() || exit_menu) EditTitleUpdateInis(runtime, edits, exit_menu);
   namespace fs = std::filesystem;
   std::string rel = REXCVAR_GET(ue3_ini_bundle_dir);
   const fs::path src_dir = runtime->game_data_root() / fs::path(rel);

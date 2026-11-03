@@ -112,7 +112,7 @@ bool NeedsWide(std::string_view s) {
 }
 
 void SplitPath(std::string_view path, std::string_view& stem, std::string_view& ext) {
-  size_t last_sep = path.find_last_of("/\\");
+  size_t last_sep = path.find_last_of("/\\:");
   std::string_view fname = (last_sep != std::string_view::npos) ? path.substr(last_sep + 1) : path;
 
   size_t dot_pos = fname.rfind('.');
@@ -141,6 +141,67 @@ bool IsGearUIConfigFile(std::string_view path) {
   }
 
   return ToLower(stem).find("gearui") != std::string::npos;
+}
+
+size_t FindListProperty(std::string_view val) {
+  size_t pos = 0;
+  while ((pos = val.find("List=", pos)) != std::string_view::npos) {
+    if (pos == 0 || val[pos - 1] == ',' || val[pos - 1] == '(' ||
+        std::isspace(static_cast<unsigned char>(val[pos - 1]))) {
+      return pos;
+    }
+    pos += 5;
+  }
+  return std::string_view::npos;
+}
+
+bool ClearListProperty(std::string& val) {
+  const size_t list_pos = FindListProperty(val);
+  if (list_pos == std::string::npos) {
+    const size_t last_paren = val.rfind(')');
+    if (last_paren != std::string::npos) {
+      val.insert(last_paren, ",List=()");
+      return true;
+    }
+    return false;
+  }
+
+  size_t open_paren = list_pos + 5;
+  while (open_paren < val.size() && std::isspace(static_cast<unsigned char>(val[open_paren]))) {
+    ++open_paren;
+  }
+  if (open_paren >= val.size() || val[open_paren] != '(') {
+    return false;
+  }
+
+  int depth = 0;
+  size_t close_paren = std::string::npos;
+  bool in_quotes = false;
+  for (size_t p = open_paren; p < val.size(); ++p) {
+    if (val[p] == '"' && (p == 0 || val[p - 1] != '\\')) {
+      in_quotes = !in_quotes;
+    } else if (!in_quotes) {
+      if (val[p] == '(') {
+        ++depth;
+      } else if (val[p] == ')') {
+        --depth;
+        if (depth == 0) {
+          close_paren = p;
+          break;
+        }
+      }
+    }
+  }
+
+  if (close_paren != std::string::npos) {
+    const std::string_view current_list = std::string_view(val).substr(list_pos, (close_paren + 1) - list_pos);
+    if (current_list != "List=()") {
+      val.replace(list_pos, (close_paren + 1) - list_pos, "List=()");
+      return true;
+    }
+  }
+
+  return false;
 }
 
 }  // namespace
@@ -177,26 +238,69 @@ int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& 
           continue;
         }
 
-        for (ConfigKey& k : s.keys) {
-          if (ToLower(k.key.Utf8()) != "alloptions") {
+        bool has_dlc_identifier = false;
+        bool has_categories_identifier = false;
+        size_t categories_key_idx = std::string::npos;
+
+        for (size_t i = 0; i < s.keys.size(); ++i) {
+          ConfigKey& k = s.keys[i];
+          std::string kn = ToLower(k.key.Utf8());
+          while (!kn.empty() && (kn.front() == '+' || kn.front() == '.' || kn.front() == '!')) {
+            kn.erase(kn.begin());
+          }
+          if (kn != "alloptions") {
             continue;
           }
 
           std::string val = k.value.Utf8();
-          const std::string_view kMainId = "Identifier=MAINMENUOP_MainMenu";
+          bool val_modified = false;
+
           const std::string_view kTarget = "Next=MAINMENUOP_DLC_Categories";
           const std::string_view kReplacement = "Next=MAINMENUOP_DLC";
-
-          if (val.find(kMainId) != std::string::npos && val.find(kTarget) != std::string::npos) {
+          if (val.find(kTarget) != std::string::npos) {
             size_t pos = 0;
             while ((pos = val.find(kTarget, pos)) != std::string::npos) {
               val.replace(pos, kTarget.length(), kReplacement);
               pos += kReplacement.length();
             }
+            val_modified = true;
+          }
+
+          if (val.find("Identifier=MAINMENUOP_DLC_Categories") != std::string::npos) {
+            has_categories_identifier = true;
+            categories_key_idx = i;
+            if (ClearListProperty(val)) {
+              val_modified = true;
+            }
+          }
+
+          size_t dlc_id_pos = val.find("Identifier=MAINMENUOP_DLC");
+          if (dlc_id_pos != std::string::npos) {
+            size_t end_pos = dlc_id_pos + std::string_view("Identifier=MAINMENUOP_DLC").length();
+            if (end_pos >= val.size() || val[end_pos] == ',' || val[end_pos] == ')') {
+              has_dlc_identifier = true;
+              if (ClearListProperty(val)) {
+                val_modified = true;
+              }
+            }
+          }
+
+          if (val_modified) {
             k.value = ConfigString::FromUtf8(val, k.value.wide);
             k.value.present = true;
             ++replaced;
           }
+        }
+
+        if (has_categories_identifier && !has_dlc_identifier && categories_key_idx != std::string::npos) {
+          ConfigKey dlc_key;
+          dlc_key.key = s.keys[categories_key_idx].key;
+          dlc_key.value = ConfigString::FromUtf8(
+              "(Identifier=MAINMENUOP_DLC,Title=\"TITLE_DLC\",HeaderPicturePath=\"\",List=())",
+              s.keys[categories_key_idx].value.wide);
+          dlc_key.value.present = true;
+          s.keys.insert(s.keys.begin() + categories_key_idx + 1, dlc_key);
+          ++replaced;
         }
       }
       continue;

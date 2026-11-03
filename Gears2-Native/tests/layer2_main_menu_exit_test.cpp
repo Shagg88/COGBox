@@ -42,6 +42,20 @@ const ue3::ConfigKey* FindKey(const ue3::ConfigBundle& b, const std::string& fil
   return nullptr;
 }
 
+const ue3::ConfigKey* FindKeyContaining(const ue3::ConfigBundle& b, const std::string& filename,
+                                        const std::string& section, const std::string& needle) {
+  for (const auto& f : b.files) {
+    if (f.name.Utf8() != filename) continue;
+    for (const auto& s : f.sections) {
+      if (s.name.Utf8() != section) continue;
+      for (const auto& k : s.keys) {
+        if (k.value.Utf8().find(needle) != std::string::npos) return &k;
+      }
+    }
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 TEST_CASE("main menu exit: string lookup for languages and games", "[ue3][exit]") {
@@ -317,4 +331,198 @@ TEST_CASE("main menu exit: judgment main menu routes DLC directly to MAINMENUOP_
       true);
   int replaced_g3 = ApplyMainMenuExitToBundle(GameId::Gears3, "INT", bundle_g3);
   CHECK(replaced_g3 == 0);
+}
+
+TEST_CASE("main menu exit: judgment TU gearui ini with +AllOptions, DLC categories clearing, and MAINMENUOP_DLC insertion", "[ue3][exit]") {
+  using namespace ue3;
+
+  const std::string main_menu_val =
+      "(Identifier=MAINMENUOP_MainMenu,Title=\"TITLE_MainMenu\","
+      "HeaderPicturePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_MainMenu\",HeaderType=\"\","
+      "List=((Label=\"Campaign\",ImagePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_Campaign\","
+      "Next=MAINMENUOP_Campaign,bHaltProgression=true,bIsDisabled=false),"
+      "(Label=\"Horde\",ImagePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_Horde\","
+      "Next=MAINMENUOP_Horde,bIsDisabled=false),"
+      "(Label=\"VS\",ImagePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_Versus\","
+      "Next=MAINMENUOP_VS_Competitiveness,bHaltProgression=true),"
+      "(Label=\"Store\",ImagePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_MainMenu\","
+      "Next=MAINMENUOP_Store,bHaltProgression=true,bIsDisabled=false),"
+      "(Label=\"Journal\",ImagePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_MainMenu\","
+      "Next=MAINMENUOP_WarJournal,bHaltProgression=true,bIsDisabled=false),"
+      "(Label=\"DLC\",Next=MAINMENUOP_DLC_Categories,bHaltProgression=true)))";
+
+  const std::string dlc_categories_val =
+      "(Identifier=MAINMENUOP_DLC_Categories,Title=\"TITLE_DLC\",HeaderPicturePath=\"\","
+      "List=((Label=\"DLCCategory1\",Next=MAINMENUOP_DLC,bHaltProgression=true),"
+      "(Label=\"DLCCategory2\",Next=MAINMENUOP_DLC,bHaltProgression=true),"
+      "(Label=\"DLCCategory3\",Next=MAINMENUOP_DLC,bHaltProgression=true),"
+      "(Label=\"DLCCategory4\",Next=MAINMENUOP_DLC,bHaltProgression=true),"
+      "(Label=\"DLCCategory5\",Next=MAINMENUOP_XP_Offers,bHaltProgression=true),"
+      "(Label=\"DLCCategory6\",Next=MAINMENUOP_DLC,bHaltProgression=true)))";
+
+  auto bundle = MakeMockBundle(
+      "TU__xbox360-gearui.ini", "GearGame.UIWidget_MainMenu",
+      {{"!AllOptions", "ClearArray"},
+       {"+AllOptions", "(Identifier=MAINMENUOP_None,Title=\"TITLE_None\",HeaderPicturePath=\"\",HeaderType=\"\")"},
+       {"+AllOptions", main_menu_val},
+       {"+AllOptions", dlc_categories_val},
+       {"+AllOptions", "(Identifier=MAINMENUOP_WarJournal,Title=\"TITLE_WarJournal\",HeaderPicturePath=\"\",List=())"}},
+      true);
+
+  int replaced = ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle);
+  // 1: MAINMENUOP_MainMenu route rewritten
+  // 2: MAINMENUOP_DLC_Categories List cleared
+  // 3: MAINMENUOP_DLC inserted
+  CHECK(replaced == 3);
+
+  const auto* main_menu_key = FindKeyContaining(bundle, "TU__xbox360-gearui.ini", "GearGame.UIWidget_MainMenu",
+                                                "Identifier=MAINMENUOP_MainMenu");
+  REQUIRE(main_menu_key != nullptr);
+  CHECK(main_menu_key->value.Utf8().find("Next=MAINMENUOP_DLC") != std::string::npos);
+  CHECK(main_menu_key->value.Utf8().find("Next=MAINMENUOP_DLC_Categories") == std::string::npos);
+
+  const auto* dlc_cat_key = FindKeyContaining(bundle, "TU__xbox360-gearui.ini", "GearGame.UIWidget_MainMenu",
+                                              "Identifier=MAINMENUOP_DLC_Categories");
+  REQUIRE(dlc_cat_key != nullptr);
+  CHECK(dlc_cat_key->value.Utf8().find("List=()") != std::string::npos);
+  CHECK(dlc_cat_key->value.Utf8().find("DLCCategory") == std::string::npos);
+
+  const auto* dlc_key = FindKeyContaining(bundle, "TU__xbox360-gearui.ini", "GearGame.UIWidget_MainMenu",
+                                          "Identifier=MAINMENUOP_DLC,");
+  REQUIRE(dlc_key != nullptr);
+  CHECK(dlc_key->key.Utf8() == "+AllOptions");
+  CHECK(dlc_key->value.Utf8() == "(Identifier=MAINMENUOP_DLC,Title=\"TITLE_DLC\",HeaderPicturePath=\"\",List=())");
+  CHECK(dlc_key->value.wide == true);
+
+  // Verify order in section: MAINMENUOP_DLC is inserted right after MAINMENUOP_DLC_Categories
+  const auto& sec = bundle.files[0].sections[0];
+  REQUIRE(sec.keys.size() == 6);
+  CHECK(sec.keys[0].key.Utf8() == "!AllOptions");
+  CHECK(sec.keys[1].value.Utf8().find("Identifier=MAINMENUOP_None") != std::string::npos);
+  CHECK(sec.keys[2].value.Utf8().find("Identifier=MAINMENUOP_MainMenu") != std::string::npos);
+  CHECK(sec.keys[3].value.Utf8().find("Identifier=MAINMENUOP_DLC_Categories") != std::string::npos);
+  CHECK(sec.keys[4].value.Utf8().find("Identifier=MAINMENUOP_DLC,") != std::string::npos);
+  CHECK(sec.keys[5].value.Utf8().find("Identifier=MAINMENUOP_WarJournal") != std::string::npos);
+
+  // Verify idempotency
+  int replaced_again = ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle);
+  CHECK(replaced_again == 0);
+  CHECK(sec.keys.size() == 6);
+}
+
+TEST_CASE("main menu exit: judgment coalesced bundle with standard AllOptions and DLC categories", "[ue3][exit]") {
+  using namespace ue3;
+
+  const std::string main_menu_val =
+      "(Identifier=MAINMENUOP_MainMenu,Title=\"TITLE_MainMenu\","
+      "HeaderPicturePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_MainMenu\",HeaderType=\"\","
+      "List=((Label=\"Campaign\",ImagePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_Campaign\","
+      "Next=MAINMENUOP_Campaign,bHaltProgression=true,bIsDisabled=false),"
+      "(Label=\"DLC\",Next=MAINMENUOP_DLC_Categories,bHaltProgression=true)))";
+
+  const std::string dlc_categories_val =
+      "(Identifier=MAINMENUOP_DLC_Categories,Title=\"TITLE_DLC\",HeaderPicturePath=\"\","
+      "List=((Label=\"DLCCategory1\",Next=MAINMENUOP_DLC,bHaltProgression=true)))";
+
+  auto bundle = MakeMockBundle(
+      "..\\..\\GearGame\\Config\\Xbox360-GearUI.ini", "GearGame.UIWidget_MainMenu",
+      {{"AllOptions", "(Identifier=MAINMENUOP_None,Title=\"TITLE_None\",HeaderPicturePath=\"\",HeaderType=\"\")"},
+       {"AllOptions", main_menu_val},
+       {"AllOptions", dlc_categories_val}},
+      true);
+
+  int replaced = ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle);
+  CHECK(replaced == 3);
+
+  const auto* dlc_key = FindKeyContaining(bundle, "..\\..\\GearGame\\Config\\Xbox360-GearUI.ini",
+                                          "GearGame.UIWidget_MainMenu", "Identifier=MAINMENUOP_DLC,");
+  REQUIRE(dlc_key != nullptr);
+  CHECK(dlc_key->key.Utf8() == "AllOptions");
+  CHECK(dlc_key->value.Utf8() == "(Identifier=MAINMENUOP_DLC,Title=\"TITLE_DLC\",HeaderPicturePath=\"\",List=())");
+
+  const auto* dlc_cat_key = FindKeyContaining(bundle, "..\\..\\GearGame\\Config\\Xbox360-GearUI.ini",
+                                              "GearGame.UIWidget_MainMenu", "Identifier=MAINMENUOP_DLC_Categories");
+  REQUIRE(dlc_cat_key != nullptr);
+  CHECK(dlc_cat_key->value.Utf8().find("List=()") != std::string::npos);
+
+  // Idempotency
+  CHECK(ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle) == 0);
+}
+
+TEST_CASE("main menu exit: judgment TU gearui ini key prefix handling (.AllOptions, +AllOptions, !AllOptions)", "[ue3][exit]") {
+  using namespace ue3;
+
+  const std::string main_menu_val =
+      "(Identifier=MAINMENUOP_MainMenu,Title=\"TITLE_MainMenu\","
+      "HeaderPicturePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_MainMenu\",HeaderType=\"\","
+      "List=((Label=\"DLC\",Next=MAINMENUOP_DLC_Categories,bHaltProgression=true)))";
+
+  const std::string dlc_categories_val =
+      "(Identifier=MAINMENUOP_DLC_Categories,Title=\"TITLE_DLC\",HeaderPicturePath=\"\","
+      "List=((Label=\"DLCCategory1\",Next=MAINMENUOP_DLC,bHaltProgression=true)))";
+
+  auto bundle = MakeMockBundle(
+      "update:\\TU__xbox360-gearui.ini", "geargame.uiwidget_mainmenu",
+      {{".AllOptions", main_menu_val},
+       {"+alloptions", dlc_categories_val}},
+      true);
+
+  int replaced = ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle);
+  CHECK(replaced == 3);
+
+  const auto* main_menu = FindKeyContaining(bundle, "update:\\TU__xbox360-gearui.ini", "geargame.uiwidget_mainmenu",
+                                            "Identifier=MAINMENUOP_MainMenu");
+  REQUIRE(main_menu != nullptr);
+  CHECK(main_menu->value.Utf8().find("Next=MAINMENUOP_DLC") != std::string::npos);
+
+  const auto* dlc_cat = FindKeyContaining(bundle, "update:\\TU__xbox360-gearui.ini", "geargame.uiwidget_mainmenu",
+                                          "Identifier=MAINMENUOP_DLC_Categories");
+  REQUIRE(dlc_cat != nullptr);
+  CHECK(dlc_cat->value.Utf8().find("List=()") != std::string::npos);
+
+  const auto* dlc = FindKeyContaining(bundle, "update:\\TU__xbox360-gearui.ini", "geargame.uiwidget_mainmenu",
+                                      "Identifier=MAINMENUOP_DLC,");
+  REQUIRE(dlc != nullptr);
+  CHECK(dlc->key.Utf8() == "+alloptions");
+}
+
+TEST_CASE("main menu exit: judgment gearui already containing MAINMENUOP_DLC avoids duplicate insertion", "[ue3][exit]") {
+  using namespace ue3;
+
+  const std::string main_menu_val =
+      "(Identifier=MAINMENUOP_MainMenu,Title=\"TITLE_MainMenu\","
+      "HeaderPicturePath=\"UI_Portraits_G3.Menu.T_Portraits_MenuSections_MainMenu\",HeaderType=\"\","
+      "List=((Label=\"DLC\",Next=MAINMENUOP_DLC_Categories,bHaltProgression=true)))";
+
+  const std::string dlc_categories_val =
+      "(Identifier=MAINMENUOP_DLC_Categories,Title=\"TITLE_DLC\",HeaderPicturePath=\"\","
+      "List=((Label=\"DLCCategory1\",Next=MAINMENUOP_DLC,bHaltProgression=true)))";
+
+  const std::string dlc_existing_val =
+      "(Identifier=MAINMENUOP_DLC,Title=\"TITLE_DLC\",HeaderPicturePath=\"\","
+      "List=((Label=\"DLCOffer\",Next=MAINMENUOP_None,bHaltProgression=true)))";
+
+  auto bundle = MakeMockBundle(
+      "Xbox360-GearUI.ini", "GearGame.UIWidget_MainMenu",
+      {{"+AllOptions", main_menu_val},
+       {"+AllOptions", dlc_categories_val},
+       {"+AllOptions", dlc_existing_val}},
+      true);
+
+  int replaced = ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle);
+  // 1 for main menu route, 1 for clearing DLC_Categories list, 1 for clearing existing MAINMENUOP_DLC list
+  CHECK(replaced == 3);
+
+  // No 4th key inserted!
+  const auto& sec = bundle.files[0].sections[0];
+  CHECK(sec.keys.size() == 3);
+
+  const auto* dlc = FindKeyContaining(bundle, "Xbox360-GearUI.ini", "GearGame.UIWidget_MainMenu",
+                                      "Identifier=MAINMENUOP_DLC,");
+  REQUIRE(dlc != nullptr);
+  CHECK(dlc->value.Utf8().find("List=()") != std::string::npos);
+  CHECK(dlc->value.Utf8().find("DLCOffer") == std::string::npos);
+
+  // Idempotency
+  CHECK(ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle) == 0);
 }
