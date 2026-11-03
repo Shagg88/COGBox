@@ -32,6 +32,7 @@
 #include <xenos/renderer/queries.h>
 #include <xenos/renderer/recipe_pack.h>
 #include <xenos/renderer/preparation_progress.h>
+#include <xenos/renderer/preparation_progress.h>
 #include <xenos/renderer/async_file_appender.h>
 #include <xenos/renderer/resolve_reuse.h>
 #include <xenos/colour_formats.h>
@@ -62,6 +63,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include <rex/graphics/register_file.h>
 #include <rex/graphics/registers.h>
 #include <rex/logging/macros.h>
+#include <rex/logging.h>
 #include <rex/logging.h>
 #include <rex/runtime.h>
 #include <rex/system/xmemory.h>
@@ -232,8 +234,6 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_deep, false, "Gears2",
                     "Standalone preparation: cache all unique package shader variants and all recorded pipeline "
                     "states. Unrecorded runtime pipeline combinations still require their first use.");
 REXCVAR_DEFINE_STRING(gow2_renderer_prepare_session, "", "Gears2", "Standalone compiler progress/cancellation session ID");
-REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_stream_warmup, true, "Gears2",
-                    "Standalone Deep preparation: feed driver workers during each translation batch (false restores batch-end submission).");
 REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_only, false, "Gears2",
                     "Patch 0061 (\"Preparing shaders\"; a test switch since 0062 removed the launcher button): at "
                     "start-up build every recorded pipeline (pipelines.list) on all pipeline workers, save the pipeline "
@@ -1269,9 +1269,11 @@ constexpr const char* kPartNames[kPartCount] = {"state", "ownership", "transfers
 class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
  public:
   explicit ShadowRenderer(const XenosRendererHints& hints, bool offline = false) : hints_(hints), offline_(offline) {}
+  explicit ShadowRenderer(const XenosRendererHints& hints, bool offline = false) : hints_(hints), offline_(offline) {}
 
   bool Init(rex::Runtime* runtime) {
     memory_ = runtime ? runtime->memory() : nullptr;
+    if (!memory_ && !offline_) {
     if (!memory_ && !offline_) {
       REXLOG_ERROR("gow2_renderer: no guest memory; staying off");
       return false;
@@ -1324,9 +1326,11 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     // presenter yet (stage V3 connects the SDK's Vulkan presenter): the frame shots read that image, so a Vulkan run
     // can be compared picture for picture with a D3D12 one; the window stays black.
     vk_headless_present_ = !offline_ && vulkan && REXCVAR_GET(gow2_present) == "ours";
+    vk_headless_present_ = !offline_ && vulkan && REXCVAR_GET(gow2_present) == "ours";
 #if GN_SDK_VULKAN
     // Stage V3: our backend on the SDK Vulkan provider's device and queue (our GPU system made that provider for
     // --gow2_renderer_api=vulkan), so our image goes into its presenter's guest output on the same queue.
+    if (vk_headless_present_ && !offline_) {
     if (vk_headless_present_ && !offline_) {
       auto* gs = runtime->graphics_system();
       auto* provider = gs ? dynamic_cast<rex::ui::vulkan::VulkanProvider*>(gs->provider()) : nullptr;
@@ -1366,6 +1370,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     if (vk_headless_present_)
       REXLOG_WARN("gow2_renderer: Vulkan: our present runs without a window image (the SDK has no Vulkan presenter here) "
                   "- frame shots only");
+    if (!offline_ && !vulkan && REXCVAR_GET(gow2_present) == "ours") {  // Stage 5C-2: the presenter's device and direct queue
     if (!offline_ && !vulkan && REXCVAR_GET(gow2_present) == "ours") {  // Stage 5C-2: the presenter's device and direct queue
       auto* gs = runtime->graphics_system();
       auto* provider = gs ? dynamic_cast<rex::ui::d3d12::D3D12Provider*>(gs->provider()) : nullptr;
@@ -1476,6 +1481,17 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
                   w.files, w.known, w.disk_hits, w.queued, w.failed, w.ms, w.list_ms, w.read_ms, w.translate_ms, w.make_ms, w.from_pack, w.packed_now);
     }
     StartPrebuild();  // patch 0068
+    if (offline_) {
+      // The compiler has a device and workers, but no guest memory, window, frame loop or presenter.
+      rect_gs_ = cache_->GetBuiltin("rect_list_gs", rr::builtin::kRectListGs, gpu::ShaderStage::kGeometry);
+      if (cache_->Dxbc() && backend_->GetShaderIL() == gpu::ShaderIL::kDxil) {
+        const auto gs = xenos::dxbc_gen::RectListGeometryShader();
+        rect_gs_dxbc_ = backend_->CreateShader(gpu::ShaderStage::kGeometry, gs.data(), gs.size());
+      }
+      if (!rcp_on_) return false;
+      OpenPipelineList();
+      return true;
+    }
     if (offline_) {
       // The compiler has a device and workers, but no guest memory, window, frame loop or presenter.
       rect_gs_ = cache_->GetBuiltin("rect_list_gs", rr::builtin::kRectListGs, gpu::ShaderStage::kGeometry);
@@ -2700,6 +2716,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool PrebuildWanted() const { return prebuild_on_; }
   void OnPrebuildPixelShader(const void* be_ucode, uint32_t size, uint32_t variant) {  // any thread (layer 2's reader)
     if (offline_ && deep_) OfferDeepShader(false, be_ucode, size);
+    if (offline_ && deep_) OfferDeepShader(false, be_ucode, size);
     if (rcp_on_) {  // notes/78 C3: the recipe pack decides (the 0068 warm-only path is not used with it)
       OfferRecipePixel(be_ucode, size);
       return;
@@ -2728,6 +2745,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   };
   void StartPrebuild() {  // Init, after the shader cache is set up
     deep_ = offline_ && REXCVAR_GET(gow2_renderer_prepare_deep);
+    deep_ = offline_ && REXCVAR_GET(gow2_renderer_prepare_deep);
     LoadRecipes();     // notes/78
     LoadRecipePack();  // notes/78 C3
     prebuild_on_ = (REXCVAR_GET(gow2_renderer_shader_prebuild) || !recipe_ps_.empty() || rcp_on_) && cache_ && cache_->Dxbc();
@@ -2736,6 +2754,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return;
     }
     LoadVariantCounts();  // patch 0069
+    if (!offline_) prebuild_thread_ = std::thread([this] { PrebuildThread(); });
     if (!offline_) prebuild_thread_ = std::thread([this] { PrebuildThread(); });
     REXLOG_INFO("gow2_renderer: shader prebuild at package open on (patch 0068), up to {} warm-only pipelines queued",
                 std::max(1, REXCVAR_GET(gow2_renderer_shader_prebuild_queue)));
@@ -8889,6 +8908,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
   void OnPrebuildVertexShader(const void* be_ucode, uint32_t size) {  // any thread (layer 2's reader)
     if (offline_ && deep_) OfferDeepShader(true, be_ucode, size);
+    if (offline_ && deep_) OfferDeepShader(true, be_ucode, size);
     if (!rcp_on_ || !be_ucode || !size || size > 256u * 1024u || (size & 3)) return;
     rcp_vs_offered_.fetch_add(1, std::memory_order_relaxed);
     thread_local std::vector<uint8_t> scratch;
@@ -9113,6 +9133,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         }
         if (offline_ && deep_ && !deep_warm_ready_ && d.ps && !d.gs)
           deep_warm_ready_ = backend_->SetWarmTemplate(d);
+        if (offline_ && deep_ && !deep_warm_ready_ && d.ps && !d.gs)
+          deep_warm_ready_ = backend_->SetWarmTemplate(d);
         if (!backlog) {
           backend_->SetPipelineBacklog(true);
           backlog = true;
@@ -9232,7 +9254,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
   void DrainDeepShaders() {
     const auto start = std::chrono::steady_clock::now();
-    const bool stream = REXCVAR_GET(gow2_renderer_prepare_stream_warmup);
     do {
       RcpShader shader;
       {
@@ -9244,9 +9265,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
       deep_cv_.notify_all();
       deep_compiles_.push_back(&cache_->GetForPreparation(shader.hash, shader.dwords.data(), shader.dwords.size(), shader.vertex));
-      // Feed the driver during translation, rather than leaving its workers idle
-      // until the whole 20 ms coordinator slice has finished. The queue stays bounded.
-      if (stream) DrainDeepWarmup();
     } while (MsSince(start) < 20);
   }
   void DrainDeepWarmup() {
@@ -9261,6 +9279,101 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
  public:
   std::atomic<bool> prepare_reading_done_{false};
   std::atomic<uint64_t> prepare_files_{0};
+  std::atomic<uint64_t> prepare_files_total_{0}, prepare_files_failed_{0};
+  void StandaloneStep() {
+    namespace prep = xenos::preparation;
+    const auto now = std::chrono::steady_clock::now();
+    const auto session = REXCVAR_GET(gow2_renderer_prepare_session);
+    const auto path = prep::ProgressPath(cache_->Dir(), session);
+    std::error_code ec;
+    if (std::filesystem::exists(prep::CancelPath(cache_->Dir(), session), ec)) {
+      preparation_cancelled_.store(true);
+      deep_cv_.notify_all();
+    }
+    const bool cancelled = preparation_cancelled_.load();
+    cache_->Poll();
+    if (!cancelled) {
+      DrainRecipePack(true);
+      if (deep_) { DrainDeepShaders(); DrainDeepWarmup(); }
+    }
+    prep::Progress p;
+    p.seconds = uint64_t(MsSince(prepare_t0_) / 1000.0);
+    p.files = prepare_files_.load();
+    p.files_total = std::max(p.files, prepare_files_total_.load());
+    p.files_failed = std::min(p.files, prepare_files_failed_.load());
+    p.variants_total = deep_total_.load();
+    for (const auto* shader : deep_compiles_) {
+      if (shader->state == rr::ShaderState::kFailed) ++p.variants_failed;
+    }
+    const auto warm_jobs = backend_->WarmJobsLeft();
+    p.variants = deep_warm_next_ > warm_jobs ? deep_warm_next_ - warm_jobs : 0;
+    p.variants_failed += backend_->WarmFailures() + deep_warm_unavailable_;
+    p.pipelines_total = rcp_records_.size();
+    const auto jobs = backend_->PipelineJobsLeft();
+    const auto asked = rcp_n_.queued + rcp_n_.known;
+    p.pipelines = std::min(p.pipelines_total, asked > jobs ? asked - jobs : 0);
+    bool queues_empty;
+    {
+      std::scoped_lock lock(deep_mutex_, rcp_mutex_);
+      queues_empty = deep_queue_.empty() && rcp_in_.empty();
+    }
+    const bool reading = !prepare_reading_done_.load(std::memory_order_acquire);
+    // A pack with no usable VS/PS pair cannot supply a warm template. Report these variants as unavailable.
+    if (deep_ && !deep_warm_ready_ && !reading && queues_empty && rcp_need_.empty() && CountReadyRecipes() == 0 &&
+        jobs == 0 && cache_->PendingCount() == 0) {
+      deep_warm_unavailable_ += deep_compiles_.size() - deep_warm_next_;
+      deep_warm_next_ = deep_compiles_.size();
+      p.variants = deep_warm_next_;
+      p.variants_failed = deep_warm_unavailable_;
+    }
+    const bool quiet = !reading && queues_empty && rcp_need_.empty() && CountReadyRecipes() == 0 &&
+                       jobs == 0 && cache_->PendingCount() == 0 && warm_jobs == 0 && deep_warm_next_ == deep_compiles_.size();
+    if (!quiet) prepare_quiet_since_ = now;
+    p.state = reading ? "reading" : "building";
+    if (cancelled) p.state = "saving";
+    if (cancelled || (quiet && now - prepare_quiet_since_ >= std::chrono::seconds(1))) {
+      // Drain jobs already in flight before serializing; cancellation never starts more work.
+      if (jobs || warm_jobs || cache_->PendingCount()) {
+        prep::WriteProgress(path, p);
+        return;
+      }
+      if (!cancelled) p.pipelines = 0;
+      for (size_t i = 0; !cancelled && i < rcp_records_.size(); ++i) {
+        const auto& r = rcp_records_[i];
+        if (rcp_state_[i] != 2) { ++p.pipelines_missing; continue; }
+        const auto* vs = cache_->Find(r.vs_hash, true, r.tess_n);
+        const auto* ps = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
+        if (!vs || ((r.flags & 1) && !ps)) { ++p.pipelines_missing; continue; }
+        if (!vs->ready() || ((r.flags & 1) && !ps->ready())) { ++p.pipelines_failed; continue; }
+        auto desc = r.desc;
+        desc.vs = vs->handle;
+        desc.ps = ps ? ps->handle : 0;
+        desc.gs = (r.flags & 2) ? (vs->dxbc ? rect_gs_dxbc_ : rect_gs_) : 0;
+        if ((r.flags & 2) && !desc.gs) { ++p.pipelines_failed; continue; }
+        if (backend_->GetGraphicsPipeline(desc, true, nullptr)) ++p.pipelines;
+        else ++p.pipelines_failed;
+      }
+      p.state = "saving";
+      prep::WriteProgress(path, p);
+      cache_->FinishPreparationRecording();
+      backend_->SavePipelinesNow();
+      p.state = cancelled ? "cancelled" : p.files_failed || p.variants_failed || p.pipelines_failed || p.pipelines_missing
+                                              ? "partial" : "done";
+      if (!prep::WriteProgress(path, p)) { REXLOG_ERROR("shader preparation: cannot save completion status"); rex::FlushLogging(); std::_Exit(2); }
+      prep::WriteProgress(cache_->Dir() / "prepare-progress.txt", p);  // last-run summary for diagnostics
+      std::filesystem::remove(prep::CancelPath(cache_->Dir(), session), ec);
+      REXLOG_INFO("shader preparation: {}: {} / {} variants, {} / {} pipelines, {} missing, {} failed, {} unreadable files",
+                  p.state, p.variants, p.variants_total, p.pipelines, p.pipelines_total, p.pipelines_missing,
+                  p.pipelines_failed, p.files_failed);
+      rex::FlushLogging();
+      std::fflush(nullptr);
+      std::_Exit(0);
+    }
+    if (now - prepare_written_ >= std::chrono::milliseconds(250)) {
+      if (!prep::WriteProgress(path, p)) { REXLOG_ERROR("shader preparation: progress file could not be written"); std::_Exit(2); }
+      prepare_written_ = now;
+    }
+  }
   std::atomic<uint64_t> prepare_files_total_{0}, prepare_files_failed_{0};
   void StandaloneStep() {
     namespace prep = xenos::preparation;
@@ -11399,6 +11512,21 @@ ShadowRenderer* g_release_target = nullptr;  // job 171: set once at install, li
 }  // namespace
 
 bool XenosPrebuildWanted() { return g_release_target && g_release_target->PrebuildWanted(); }  // patch 0068
+bool XenosInitStandalonePreparation() {
+  auto* renderer = new ShadowRenderer({}, true);
+  if (!renderer->Init(nullptr)) { delete renderer; return false; }
+  g_release_target = renderer;
+  return true;
+}
+void XenosStepStandalonePreparation() {
+  if (g_release_target) g_release_target->StandaloneStep();
+}
+void XenosPrebuildScanProgress(uint64_t files, uint64_t total, uint64_t failed) {
+  if (!g_release_target) return;
+  g_release_target->prepare_files_total_.store(total);
+  g_release_target->prepare_files_failed_.store(failed);
+  g_release_target->prepare_files_.store(files);
+}
 bool XenosInitStandalonePreparation() {
   auto* renderer = new ShadowRenderer({}, true);
   if (!renderer->Init(nullptr)) { delete renderer; return false; }
