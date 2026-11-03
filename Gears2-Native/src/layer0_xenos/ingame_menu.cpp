@@ -731,8 +731,65 @@ void RequestOpenOnUIThread() {
 
 }  // namespace
 
+// GitHub #143: the OS cursor stayed over the game when playing with a controller (keyboard and mouse off, or mouse look
+// not active). A watcher hides it after 3 s without mouse movement while the game is in front, and shows it again on the
+// first movement. Mouse look (the driver hides the cursor itself) and the open menu (it draws its own) are left alone.
+// Visibility is changed on the UI thread only; what was there before is put back.
+namespace {
+std::atomic<rex::ui::Window*> g_idle_window{nullptr};
+std::atomic<bool> g_idle_stop{false};
+std::thread g_idle_thread;
+bool g_idle_hidden = false;   // UI thread
+rex::ui::Window::CursorVisibility g_idle_before = rex::ui::Window::CursorVisibility::kVisible;
+
+void IdleCursorWatch() {
+  POINT last{};
+  GetCursorPos(&last);
+  auto moved_at = std::chrono::steady_clock::now();
+  bool hide_sent = false;
+  while (!g_idle_stop.load()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    rex::ui::Window* w = g_idle_window.load();
+    if (!w) continue;
+    POINT p{};
+    GetCursorPos(&p);
+    DWORD pid = 0;
+    if (HWND fg = GetForegroundWindow()) GetWindowThreadProcessId(fg, &pid);
+    const bool front = pid == GetCurrentProcessId();
+    const auto now = std::chrono::steady_clock::now();
+    if (p.x != last.x || p.y != last.y || !front) {
+      last = p;
+      moved_at = now;
+      if (hide_sent) {
+        hide_sent = false;
+        w->app_context().CallInUIThreadDeferred([] {
+          rex::ui::Window* uw = g_idle_window.load();
+          if (uw && g_idle_hidden && !g_open.load()) uw->SetCursorVisibility(g_idle_before);
+          g_idle_hidden = false;
+        });
+      }
+    } else if (!hide_sent && now - moved_at >= std::chrono::seconds(3) && !g_open.load()) {
+      hide_sent = true;
+      w->app_context().CallInUIThreadDeferred([] {
+        rex::ui::Window* uw = g_idle_window.load();
+        if (!uw || g_idle_hidden || g_open.load() || rex::input::mnk::IsMouseLookActive()) return;
+        if (uw->GetCursorVisibility() == rex::ui::Window::CursorVisibility::kHidden) return;
+        g_idle_before = uw->GetCursorVisibility();
+        uw->SetCursorVisibility(rex::ui::Window::CursorVisibility::kHidden);
+        g_idle_hidden = true;
+      });
+    }
+  }
+}
+}  // namespace
+
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window, rex::Runtime* runtime) {
-  StartPadPump(window, runtime);   // GitHub #108, menu or no menu: pad assignment (+ SDL pump when exported)
+  StartPadPump(window, runtime);
+  if (window && !g_idle_thread.joinable()) {   // GitHub #143, menu or no menu
+    g_idle_window.store(window);
+    g_idle_stop.store(false);
+    g_idle_thread = std::thread(IdleCursorWatch);
+  }   // GitHub #108, menu or no menu: pad assignment (+ SDL pump when exported)
   // PR #117: the button-prompt monitor (its own thread; nothing with --gow_button_prompts=original), menu or no menu.
   ::xenos::input::GlobalPromptDeviceMonitor().Start(
       window, runtime ? static_cast<rex::input::InputSystem*>(runtime->input_system()) : nullptr);
@@ -757,6 +814,10 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* windo
 
 void XenosShutdownInGameMenu() {
   StopPadPump();   // GitHub #108
+  g_idle_stop.store(true);   // GitHub #143
+  if (g_idle_thread.joinable()) g_idle_thread.join();
+  if (rex::ui::Window* w = g_idle_window.exchange(nullptr); w && g_idle_hidden) w->SetCursorVisibility(g_idle_before);
+  g_idle_hidden = false;
   ::xenos::input::GlobalPromptDeviceMonitor().Stop();
   ::xenos::input::GlobalPromptDeviceMonitor().DetachWindow(nullptr);
   AllowSetForegroundWindow(ASFW_ANY);   // 0.2.0: any other way out too (window closed, the game's own quit)
