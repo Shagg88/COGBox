@@ -263,9 +263,9 @@ int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& 
           };
 
           if (val.find("Identifier=MAINMENUOP_MainMenu") != std::string::npos) {
-            // Option 6 on MAINMENUOP_MainMenu routes to MAINMENUOP_DLC_Categories.
-            // When selected, Scaleform navigates to MAINMENUOP_DLC_Categories and queries its Title
-            // ("TITLE_DLC"), triggering our deterministic exit hook in sub_82302DE0 immediately.
+            // Option 6 on MAINMENUOP_MainMenu routes to MAINMENUOP_DLC_Categories, whose title
+            // (TITLE_DLC) is the Exit Game label: opening it writes that title into the sub-menu
+            // header, which the gowj hook on the text-field setter turns into the exit.
             // If the key previously contained Next=MAINMENUOP_None or Next=MAINMENUOP_DLC, restore it.
             if (ReplaceSubstr(val, "Next=MAINMENUOP_None", "Next=MAINMENUOP_DLC_Categories")) {
               val_modified = true;
