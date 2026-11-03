@@ -50,13 +50,14 @@ In the original Xbox 360 Unreal Engine 3 builds, title shutdown sequences were d
 - **Module:** `GearsJ-Native/src/layer3_gowj/main_menu_exit.h` and `main_menu_exit.cpp`.
 - **Cvar:** `gowj_main_menu_exit` (default `true`, category `"ui"`).
 - **Function Hooks:**
-  - `sub_82302DE0` (`Localize` handler): tracks `TOOLTIP_DLC`, `NeedLive`, and `TITLE_DLC`. During boot initialization, `UIWidget_MainMenu` pre-caches screen titles from `AllOptions` (call count 0); subsequent queries (call count > 0, when selecting Exit Game and entering `MAINMENUOP_DLC_Categories`) guarded by active frames / tooltips immediately terminate the process before the sub-menu is rendered.
+  - `sub_82C7B4D8` (`UIWidget_MainMenu` screen transition handler): intercepts transitions between menu screens. When the target screen is 11 (`MAINMENUOP_DLC_Categories`), triggered upon selecting Option 6 "Exit Game" from `MAINMENUOP_MainMenu` (screen 1), immediately terminates the process before the sub-menu is ever rendered.
+  - `sub_82302DE0` (`Localize` handler): tracks `TOOLTIP_DLC` focus changes and handles any `NeedLive` queries.
   - `sub_82DBDA80` (`XamShowMarketplaceUI` thunk): marketplace general UI entry point.
   - `sub_82DBF838` (`XamShowMarketplaceDownloadItemsUI` thunk): marketplace items UI entry point.
   - `sub_829C25E8` (`ShowMarketplaceUI` caller): high-level marketplace action entry point before live check.
   - `sub_829C2680` (`ShowMarketplaceUI` caller): secondary marketplace action entry point.
   - `sub_829CAC40` (`ShowMarketplaceDownloadItemsUI` caller): high-level marketplace items action entry point.
-- **Action:** If any hook is triggered while `gowj_main_menu_exit` is enabled, triggers `ExitGame()` to flush logs and terminate the process. Screen transition queries for `TITLE_DLC` exit immediately before the sub-menu is ever rendered.
+- **Action:** If any hook is triggered while `gowj_main_menu_exit` is enabled, triggers `ExitGame()` to flush logs and terminate the process. Screen transition hook `sub_82C7B4D8` guarantees instantaneous exit to desktop directly from the root main menu without displaying any intermediate sub-menu.
 
 ### 4. Gears 2 TU6 Hook (`layer3_gow2`)
 - **Module:** `Gears2-Native/src/layer3_gow2/main_menu_exit.h` and `main_menu_exit.cpp`.
