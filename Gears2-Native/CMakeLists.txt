@@ -121,6 +121,7 @@ add_library(gn_layer2_ue3 STATIC
     src/layer2_ue3/config_install.cpp
     src/layer2_ue3/shader_prebuild.cpp
     src/layer2_ue3/prebuild_lzx.cpp
+    src/layer2_ue3/package_exports.cpp
 )
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer1_xdk7645)
@@ -369,6 +370,8 @@ if(GN_BUILD_TESTS)
         src/layer2_ue3/config_bundle.cpp
         tests/layer2_prebuild_lzx_test.cpp
         src/layer2_ue3/prebuild_lzx.cpp
+        tests/layer2_package_exports_test.cpp
+        src/layer2_ue3/package_exports.cpp
         src/layer0_xenos/renderer/upscaler.cpp
         src/layer0_xenos/renderer/ao.cpp
         src/layer0_xenos/hlsl.cpp

@@ -8,7 +8,12 @@ SDL=${SDL3_DIR:-/tmp/claude-0/sdl/SDL3-3.4.18/x86_64-w64-mingw32}
 # tools/build_ffmpeg_xma.sh with the xma1 / xma2 decoders only (~1 MB of DLLs). Linked at run time (LoadLibrary), never
 # statically: without the DLLs CogBox runs and the library is silent. Without FFMPEG_DIR's headers the music is left out.
 FF=${FFMPEG_DIR:-third_party/ffmpeg-xma}   # (not committed: .gitignore)
-FFDEF="-DCOGBOX_NO_FFMPEG"; [ -f $FF/include/libavcodec/avcodec.h ] && FFDEF="-isystem $FF/include"
+[ -f $FF/include/libavcodec/avcodec.h ] || [ -n "$FFMPEG_DIR" ] || FF=/tmp/claude-0/ffmpeg-xma   # (where SDL3_DIR's default lives)
+# GitHub #151: 0.4.1 - 0.4.3 were built from a clone without these headers and shipped without library music. A build
+# without them now stops, unless COGBOX_NO_FFMPEG=1 asks for a silent library on purpose.
+if [ -f $FF/include/libavcodec/avcodec.h ]; then FFDEF="-isystem $FF/include"
+elif [ "$COGBOX_NO_FFMPEG" = 1 ]; then FFDEF="-DCOGBOX_NO_FFMPEG"
+else echo "build.sh: no FFmpeg headers in $FF (tools/build_ffmpeg_xma.sh) - set FFMPEG_DIR, or COGBOX_NO_FFMPEG=1 for no music" >&2; exit 1; fi
 CXX=x86_64-w64-mingw32-g++
 OUT=build; mkdir -p $OUT/obj
 OPT="-O2"; [ "$1" = debug ] && OPT="-O0 -g"

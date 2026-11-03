@@ -95,6 +95,11 @@ Copy-Item -LiteralPath (Join-Path $launcher 'D3D12\D3D12Core.dll') -Destination 
 # library is silent, so a build without them still packages (with a warning).
 $ff = @(Get-ChildItem $launcher -Filter 'av*-*.dll' -ErrorAction SilentlyContinue)
 if ($ff.Count -ge 2) { $ff | Copy-Item -Destination $stage } else { Write-Warning 'no avcodec / avutil DLLs in cogbox\build: the library music will be silent' }
+# GitHub #151: 0.4.1 - 0.4.3 shipped a CogBox.exe built without FFmpeg (no headers in that clone), so the library was
+# silent although the DLLs were there. A launcher built that way is no longer packaged.
+$exeText = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes((Join-Path $launcher 'CogBox.exe')))
+if ($exeText.Contains('built without FFmpeg') -or -not $exeText.Contains('avcodec_find_decoder')) {
+  throw 'CogBox.exe was built without FFmpeg (no library music) - rebuild it with FFMPEG_DIR set (cogbox\build.sh)' }
 Copy-Item (Join-Path $cogbox 'README.txt') $stage
 # Launcher translations (0.2.0): cogbox\lang\<code>.txt -> lang\ beside CogBox.exe.
 $langSrc = Join-Path $cogbox 'lang'

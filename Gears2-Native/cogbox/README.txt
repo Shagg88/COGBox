@@ -63,6 +63,21 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 
 
+New in 0.4.4
+------------
+- Screenshot key: \ (backslash) saves a screenshot in all four games, to Pictures\COGBox\<game>.
+- Voice language: a game no longer freezes or crashes at start-up when the voice language differs from the game's
+  language. Gears 2 (GitHub #145, thanks to KiltedKernel, PR #156), Gears 3 and Judgment (#153).
+- Gears 3 with XeGTAO: a crash fixed (GitHub #146, thanks to KiltedKernel, PR #148).
+- Gears 3: versus, Horde and Beast are no longer held at 60 fps (the menu limit stayed on there, #157).
+- Launcher: the library music plays again (#151). Keyboard keys are kept per game (#154).
+- The mouse cursor hides after 3 seconds without mouse movement, so it no longer sits over the game when you play
+  with a controller (#143).
+- DLSS is marked experimental again (flickering in Gears 1 and Judgment, smearing in Gears 3), and so is Vulkan in
+  Gears 3 and Judgment on Windows (some things still look wrong there; on Steam Deck / Linux Vulkan stays the usual
+  choice) and XeGTAO (it costs too much frame rate for now). DirectX 12 with SMAA is the tested setup on Windows.
+
+
 New in 0.4.3
 ------------
 - Gears 3 mods can do more than replace files: mod.ini rules (requires / game / enabled), config fragments, bare

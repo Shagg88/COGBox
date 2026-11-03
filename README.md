@@ -26,13 +26,14 @@ the ports what an emulator can't easily offer:
 
 - **Any resolution** - 1x to 4x the original (up to 5K) or matched to your monitor, with real extra detail, not a
   stretched picture - and a fast **1080p** mode (720p drawn, upscaled and sharpened) for weaker graphics cards.
-- **Anti-aliasing and upscaling** - SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS, including upscaling modes for weaker GPUs.
+- **Anti-aliasing and upscaling** - SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS (FSR / DLSS / XeSS experimental), including upscaling modes for weaker GPUs.
 - **High frame rates** - the 30 fps limit lifted, vsync with a cap matched to your monitor, AMD FSR frame
   generation (highly experimental for now).
 - **Smooth play** - the games' shaders are translated straight to Direct3D 12 shader code in under a millisecond each
   (as Xenia Canary does), kept on your PC, and pipelines are made in the background - a new area shows a moment
   later instead of freezing the game.
 - **Vulkan (experimental)** - a choice on each game's Graphics tab, for testing; close to Direct3D 12 already.
+- **Screenshots** - press **\\** (backslash) in any game; they go to `Pictures\COGBox\<game>`.
 - **Lower input lag** - one frame in flight, NVIDIA Reflex / AMD Anti-Lag 2 where your GPU has them.
 - **HDR10**, **ultrawide 21:9** (all three games), **16x anisotropic filtering**, field of view, and the games' own motion blur and depth of
   field as switches (lens flares are set per game automatically: on where Real occlusion hides them behind walls).

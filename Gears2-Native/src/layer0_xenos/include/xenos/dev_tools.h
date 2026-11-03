@@ -46,6 +46,8 @@ void XenosDumpImageIfRequested(rex::Runtime* runtime);
 void XenosInstallDrawStatsIfRequested();
 // The one SDK draw observer is a hub in layer 0; tools register with it (before the game starts).
 void XenosRegisterDrawObserver(rex::graphics::DrawObserver* observer);
+// Shagg 3 Nov: save the next finished frame to Pictures\COGBox\<game> (the backslash key; frame_capture.cpp).
+void XenosRequestScreenshot();
 // --gow2_frame_shots=N and --gow2_frame_dir: save every Nth finished frame as PNG, read back inside the process
 // (SDK patch 3) - no window capture, no focus stealing.
 void XenosInstallFrameCaptureIfRequested();
