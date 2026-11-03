@@ -69,6 +69,7 @@ New in 0.4.4
 - Voice language: a game no longer freezes or crashes at start-up when the voice language differs from the game's
   language. Gears 2 (GitHub #145, thanks to KiltedKernel, PR #156), Gears 3 and Judgment (#153).
 - Gears 3 with XeGTAO: a crash fixed (GitHub #146, thanks to KiltedKernel, PR #148).
+- Gears 3: versus, Horde and Beast are no longer held at 60 fps (the menu limit stayed on there, #157).
 - Launcher: the library music plays again (#151). Keyboard keys are kept per game (#154).
 - The mouse cursor hides after 3 seconds without mouse movement, so it no longer sits over the game when you play
   with a controller (#143).
