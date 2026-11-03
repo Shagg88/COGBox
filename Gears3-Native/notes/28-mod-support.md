@@ -33,7 +33,7 @@ Built here from the repo (rebased on 0.4.1, d7962fb) with the SDK at nightly-202
   GearTypes' properties are linked, a few seconds after its default object exists).
 - [V] content packages MPCH_COGDomG2MP_SF and MPCH_COGMarcusG2MP_SF requested right after the table is filled, opened,
   their objects rooted.
-- [V] **the chapter loads and plays** with SDK patch 60 (`Gears2-Native/patches/sdk-patch60-overlay-added-files.diff`):
+- [V] **the chapter loads and plays** with SDK patch 61 (`Gears2-Native/patches/sdk-patch61-overlay-added-files.diff`):
   chapter 32 from the title screen (`--ue3_exec_at="45s:open GearGame_P?game=geargamecontent.GearGameSP?chapter=32?listen"`,
   as Select Chapter builds it) opens GOW1_SP_Prison_P and its sections, carriers and characters; the opening runs,
   Marcus in his cell with Gears 1's WALK tutorial. Without the patch: a mod's *added* file was deleted from the overlay
