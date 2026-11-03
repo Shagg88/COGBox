@@ -33,11 +33,17 @@ Built here from the repo (rebased on 0.4.1, d7962fb) with the SDK at nightly-202
   GearTypes' properties are linked, a few seconds after its default object exists).
 - [V] content packages MPCH_COGDomG2MP_SF and MPCH_COGMarcusG2MP_SF requested right after the table is filled, opened,
   their objects rooted.
-- [V] `--ue3_exec="open GearGame_P?game=geargamecontent.GearGameSP?chapter=32?listen"` from the title screen travels
-  into chapter 32: GearGame_P loads and the GOW1_SP_Prison_P package object exists.
-- [G] **open: the chapter's map file is never opened** (`--gow3_mod_file_log=true`: GearGame_P.xxx is the last .xxx
-  opened), so the loading screen stays. The same mod loads the prison in KiltedKernel's runtime. The table of contents
-  lists the mod's packages (main's 8a5cefd, the 4-field fix first found here) and the game reads the rewritten table.
+- [V] **the chapter loads and plays** with SDK patch 60 (`Gears2-Native/patches/sdk-patch60-overlay-added-files.diff`):
+  chapter 32 from the title screen (`--ue3_exec_at="45s:open GearGame_P?game=geargamecontent.GearGameSP?chapter=32?listen"`,
+  as Select Chapter builds it) opens GOW1_SP_Prison_P and its sections, carriers and characters; the opening runs,
+  Marcus in his cell with Gears 1's WALK tutorial. Without the patch: a mod's *added* file was deleted from the overlay
+  on its first open (`VirtualFileSystem::OpenFile` checked it at the game's folder / name), NO_SUCH_FILE, loading
+  screen forever. Found with `--log_level=debug` (`[NtCreateFile] FAILED ... 0xc000000f`) after a stock map in the
+  same chapter slot loaded fine.
+- [V] content packages are kept before the first map change: scanned as soon as each is found, then every 30 frames
+  until something is kept. A travel in the same tick as the request (the first engine tick, `--ue3_exec` at start) is
+  too early: their classes were collected and the chapter's first spawn read a None class (guest 0xEC). Select Chapter
+  is always later.
 - [G] `--ue3_launch="GearGame_P?chapter=32"` at start: the boot URL reads ChapterLevelNames before chapters 32+ can be
   filled (also in KiltedKernel's runtime); start new chapters from the title screen / Select Chapter (or `ue3_exec`).
 - [G] Select Chapter with the scripted pad: presses logged, the title screen did not react in a background window.
