@@ -4,6 +4,7 @@
 #include <rex/filesystem/vfs.h>
 #include <ue3/shader_prebuild.h>
 #include <xenos/dev_tools.h>
+#include <xenos/renderer/preparation_cpu.h>
 #include <xenos/renderer/preparation_progress.h>
 #include <xenos/renderer/preparation_restart.h>
 
@@ -18,6 +19,42 @@
 
 REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_reset, false, "Gears2",
                     "Start Deep preparation with a fresh per-game COGBox cache; keep the previous cache as a backup.");
+REXCVAR_DEFINE_INT32(gow2_renderer_prepare_priority, 1, "Gears2",
+                     "Standalone compiler process priority: -1 below normal, 0 normal, 1 above normal (default), 2 high.");
+
+static void SetPreparationDefault(const char* name, int value) {
+  // Keep explicit advanced settings, including command-line overrides used for profiling.
+  if (rex::cvar::GetFlagSource(name) == rex::cvar::Source::kDefault)
+    rex::cvar::SetFlagFromCommandLine(name, std::to_string(value));
+}
+
+static void ConfigureCpu() {
+  MEMORYSTATUSEX memory{};
+  memory.dwLength = sizeof(memory);
+  const uint64_t available = GlobalMemoryStatusEx(&memory) ? memory.ullAvailPhys : 0;
+  const unsigned logical = std::max(1u, std::thread::hardware_concurrency());
+  const auto plan = xenos::preparation::SelectCpuPlan(logical, available);
+  SetPreparationDefault("gow2_renderer_pipeline_threads", int(plan.pipeline_workers));
+  SetPreparationDefault("gow2_renderer_pipeline_thread_priority", 0);
+  SetPreparationDefault("gow2_renderer_shader_prebuild_workers", int(plan.pipeline_workers));
+  SetPreparationDefault("gow2_renderer_shader_prebuild_priority", 0);
+  SetPreparationDefault("ue3_shader_prebuild_threads", int(plan.package_readers));
+  SetPreparationDefault("ue3_shader_prebuild_thread_priority", 0);
+
+  const int priority = std::stoi(rex::cvar::GetFlagByName("gow2_renderer_prepare_priority"));
+  if (priority < -1 || priority > 2) throw std::runtime_error("Compiler priority must be between -1 and 2.");
+  const DWORD classes[] = {BELOW_NORMAL_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
+                            ABOVE_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS};
+  const char* names[] = {"below normal", "normal", "above normal", "high"};
+  if (!SetPriorityClass(GetCurrentProcess(), classes[priority + 1]))
+    REXLOG_WARN("shader preparation: could not change process priority (Windows error {})", GetLastError());
+  REXLOG_INFO("shader preparation CPU: {} logical processors; priority {} (actual class {}); "
+              "pipeline workers {}, driver warm workers {}, package readers {}; {} MiB available",
+              logical, names[priority + 1], GetPriorityClass(GetCurrentProcess()),
+              rex::cvar::GetFlagByName("gow2_renderer_pipeline_threads"),
+              rex::cvar::GetFlagByName("gow2_renderer_shader_prebuild_workers"),
+              rex::cvar::GetFlagByName("ue3_shader_prebuild_threads"), available / (1024 * 1024));
+}
 
 static std::string Utf8(const wchar_t* s) {
   const int n = WideCharToMultiByte(CP_UTF8, 0, s, -1, nullptr, 0, nullptr, nullptr);
@@ -37,7 +74,8 @@ int wmain(int argc, wchar_t** argv) {
       if (arg == "--help") {
         std::puts("COGBox shader compiler: --ue3_shader_prebuild_at_start=<game;update> "
                   "--gow2_renderer_recipe_pack=<pack> --gow2_shader_cache_dir=<cache> "
-                  "[--gow2_renderer_prepare_deep=true] [--gow2_renderer_prepare_reset=true] [renderer settings]");
+                  "[--gow2_renderer_prepare_deep=true] [--gow2_renderer_prepare_reset=true] "
+                  "[--gow2_renderer_prepare_priority=1] [renderer settings]");
         return 0;
       }
       const auto eq = arg.find('=');
@@ -82,9 +120,7 @@ int wmain(int argc, wchar_t** argv) {
     if (rex::cvar::GetFlagByName("gow2_renderer_prepare_deep") == "true" &&
         rex::cvar::GetFlagByName("gow2_renderer_api") != "d3d12")
       throw std::runtime_error("Deep driver preparation currently requires DirectX 12. Use Quick for Vulkan.");
-    rex::cvar::SetFlagFromCommandLine("gow2_renderer_shader_prebuild_workers",
-                                      std::to_string(std::clamp(int(std::thread::hardware_concurrency()) - 2, 1, 8)));
-    SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+    ConfigureCpu();
     // Serialize compiler instances; the launcher also excludes Play while preparation runs.
     const auto lock_path = cache / "prepare.lock";
     HANDLE cache_lock = CreateFileW(lock_path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS,

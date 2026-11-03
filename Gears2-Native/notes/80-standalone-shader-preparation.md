@@ -25,6 +25,16 @@ Completion can be `done`, `partial`, `cancelled` or `failed`. Missing recipes/sh
 
 An exclusive `prepare.lock` prevents concurrent compiler instances from writing one cache. The launcher also holds this lock during game sessions it manages, and excludes Play while its preparation worker runs. Directly starting a port executable outside the launcher does not participate in this launcher-level lock.
 
+## CPU scheduling
+
+Standalone preparation defaults to Windows **Above normal** process priority. Its pipeline and driver-warming pools default to one worker per logical CPU, up to 32, instead of capping driver warming at eight workers. On the local Ryzen 7 9800X3D this permits 16 concurrent driver workers. Pipeline and package-reader threads use normal relative thread priority within the elevated process, replacing the lowest-priority driver-warming/readers used during gameplay.
+
+Package readers default to half the logical CPU count, capped at eight, and are reduced when available physical memory is low. The scheduling allowance reserves 4 GiB and allows one reader per remaining 2 GiB, with at least one reader; this does not impose a hard limit on individual package allocations. A failed memory query selects one reader. Gameplay retains its existing defaults.
+
+Explicit advanced CPU flags are respected. `--gow2_renderer_prepare_priority=-1|0|1|2` selects Below normal, Normal, Above normal, or High, respectively. Real-time priority is not used. Worker counts can be overridden with `gow2_renderer_pipeline_threads`, `gow2_renderer_shader_prebuild_workers`, and `ue3_shader_prebuild_threads`; relative priorities use the corresponding existing pipeline/warming flags and the new `ue3_shader_prebuild_thread_priority` (-2 lowest, -1 below normal, 0 normal). Startup logging records the requested and actual process priority, selected counts and available memory. Other Windows scheduling software can override the requested priority.
+
+Deep translation offers each newly translated variant to the bounded driver-warming queue immediately. Previously driver workers received new variants only after the coordinator's entire 20 ms translation slice, leaving gaps on a warm driver cache. Cache mutation and device shader creation still occur on the coordinator; driver pipeline compilation remains on its worker pool.
+
 ## Build and packaging
 
 Build the Windows CMake target `CogBoxShaderCompiler` from Gears2-Native. It links the common engine/renderer and patched SDK; no recompiled game source is required. Place it beside `CogBox.exe` with `rexruntime.dll`, `dxil.dll`, the normal shared DXC/upscaler files, and the matching `D3D12/D3D12Core.dll`. The packaging script checks and copies the worker and its runtime dependencies.

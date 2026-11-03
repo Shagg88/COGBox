@@ -229,6 +229,8 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_deep, false, "Gears2",
                     "Standalone preparation: cache all unique package shader variants and all recorded pipeline "
                     "states. Unrecorded runtime pipeline combinations still require their first use.");
 REXCVAR_DEFINE_STRING(gow2_renderer_prepare_session, "", "Gears2", "Standalone compiler progress/cancellation session ID");
+REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_stream_warmup, true, "Gears2",
+                    "Standalone Deep preparation: feed driver workers during each translation batch (false restores batch-end submission).");
 REXCVAR_DEFINE_BOOL(gow2_renderer_prepare_only, false, "Gears2",
                     "Patch 0061 (\"Preparing shaders\"; a test switch since 0062 removed the launcher button): at "
                     "start-up build every recorded pipeline (pipelines.list) on all pipeline workers, save the pipeline "
@@ -8261,6 +8263,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
   void DrainDeepShaders() {
     const auto start = std::chrono::steady_clock::now();
+    const bool stream = REXCVAR_GET(gow2_renderer_prepare_stream_warmup);
     do {
       RcpShader shader;
       {
@@ -8272,6 +8275,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
       deep_cv_.notify_all();
       deep_compiles_.push_back(&cache_->GetForPreparation(shader.hash, shader.dwords.data(), shader.dwords.size(), shader.vertex));
+      // Feed the driver during translation, rather than leaving its workers idle
+      // until the whole 20 ms coordinator slice has finished. The queue stays bounded.
+      if (stream) DrainDeepWarmup();
     } while (MsSince(start) < 20);
   }
   void DrainDeepWarmup() {

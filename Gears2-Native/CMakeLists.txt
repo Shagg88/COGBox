@@ -340,6 +340,7 @@ if(GN_BUILD_TESTS)
     add_executable(gn_tests
         tests/layer0_formats_test.cpp
         tests/layer0_preparation_progress_test.cpp
+        tests/layer0_preparation_cpu_test.cpp
         tests/layer0_preparation_restart_test.cpp
         tests/layer0_renderer_core_test.cpp
         tests/layer0_pipeline_state_test.cpp

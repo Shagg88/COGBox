@@ -78,7 +78,9 @@ REXCVAR_DEFINE_STRING(ue3_shader_prebuild_at_start, "", "Gears2",
 
 REXCVAR_DEFINE_INT32(ue3_shader_prebuild_threads, 0, "Gears2",
                      "Job 632: reader threads with --ue3_shader_prebuild_at_start (0 = a quarter of the CPU threads, 2 to 4): "
-                     "the videos and menus leave the CPU idle; all at the lowest priority, so the game still comes first");
+                     "the game defaults to lowest priority; the standalone compiler chooses a CPU/memory-aware count");
+REXCVAR_DEFINE_INT32(ue3_shader_prebuild_thread_priority, -2, "Gears2",
+                     "Package reader priority: -2 lowest (game default), -1 below normal, 0 normal (standalone preparation default).");
 
 namespace {
 
@@ -469,8 +471,11 @@ void ReaderThread() {
 #ifdef _WIN32
   // Job 615: the reader decompresses every package the game opens while the game loads it too - at the lowest
   // priority it only takes CPU time the game, the renderer and the pipeline workers leave free (Gears 3 ch11's
-  // opening was ~5,000 skipped draws worse with it on).
-  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+  // opening was ~5,000 skipped draws worse with it on). The standalone compiler
+  // overrides this to normal thread priority because no game is running there.
+  const int priority = std::clamp(REXCVAR_GET(ue3_shader_prebuild_thread_priority), -2, 0);
+  SetThreadPriority(GetCurrentThread(), priority == 0 ? THREAD_PRIORITY_NORMAL :
+                    priority == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST);
 #endif
   PackageScanner scanner(g_prebuild->seen);
   uint64_t files = 0, pixel = 0, fresh = 0;
