@@ -14,7 +14,9 @@
 #include <unistd.h>
 #endif
 
+#include <cctype>
 #include <cstring>
+#include <string_view>
 
 #include <rex/logging.h>
 #include <rex/ppc.h>
@@ -25,22 +27,46 @@ REXCVAR_DEFINE_BOOL(gowj_main_menu_exit, true, "ui",
 namespace rex::glue {
 namespace {
 
-bool GuestUtf16Is(const uint8_t* base, uint32_t addr, const char* text) {
+bool GuestUtf16StartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_view expected) {
   if (!addr || !base) return false;
-  for (uint32_t i = 0;; ++i) {
-    if (!text[i]) return true;
-    const uint16_t c = uint16_t((base[addr + 2 * i] << 8) | base[addr + 2 * i + 1]);
-    if (c != uint8_t(text[i])) return false;
+  for (size_t i = 0; i < expected.size(); ++i) {
+    const uint16_t c = static_cast<uint16_t>((base[addr + 2 * i] << 8) | base[addr + 2 * i + 1]);
+    if (c > 127) return false;
+    if (std::tolower(static_cast<unsigned char>(c)) !=
+        std::tolower(static_cast<unsigned char>(expected[i]))) {
+      return false;
+    }
   }
+  return true;
+}
+
+bool GuestAsciiStartsWithNoCase(const uint8_t* base, uint32_t addr, std::string_view expected) {
+  if (!addr || !base) return false;
+  for (size_t i = 0; i < expected.size(); ++i) {
+    const uint8_t c = base[addr + i];
+    if (std::tolower(static_cast<unsigned char>(c)) !=
+        std::tolower(static_cast<unsigned char>(expected[i]))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace
 
+bool MatchesKey(const uint8_t* base, uint32_t addr, std::string_view expected) {
+  if (!base || !addr) return false;
+  return GuestUtf16StartsWithNoCase(base, addr, expected) ||
+         GuestAsciiStartsWithNoCase(base, addr, expected);
+}
+
 bool MatchesNeedLive(const uint8_t* base, uint32_t addr) {
-  if (!addr || !base) return false;
-  if (GuestUtf16Is(base, addr, "NeedLive")) return true;
-  const char* str = reinterpret_cast<const char*>(base + addr);
-  return std::strncmp(str, "NeedLive", 8) == 0;
+  return MatchesKey(base, addr, "NeedLive");
+}
+
+bool MatchesExitTrigger(const uint8_t* base, const PPCContext& ctx) {
+  if (!base) return false;
+  return MatchesKey(base, ctx.r5.u32, "TITLE_DLC") || MatchesKey(base, ctx.r5.u32, "NeedLive");
 }
 
 void ExitGame() {
@@ -57,7 +83,7 @@ void ExitGame() {
 
 extern "C" void __imp__sub_82302DE0(PPCContext& ctx, uint8_t* base);
 extern "C" void sub_82302DE0(PPCContext& ctx, uint8_t* base) {
-  if (REXCVAR_GET(gowj_main_menu_exit) && rex::glue::MatchesNeedLive(base, ctx.r5.u32)) {
+  if (REXCVAR_GET(gowj_main_menu_exit) && rex::glue::MatchesExitTrigger(base, ctx)) {
     rex::glue::ExitGame();
   }
   __imp__sub_82302DE0(ctx, base);

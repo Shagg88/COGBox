@@ -50,13 +50,13 @@ In the original Xbox 360 Unreal Engine 3 builds, title shutdown sequences were d
 - **Module:** `GearsJ-Native/src/layer3_gowj/main_menu_exit.h` and `main_menu_exit.cpp`.
 - **Cvar:** `gowj_main_menu_exit` (default `true`, category `"ui"`).
 - **Function Hooks:**
-  - `sub_82302DE0` (`Localize` handler): inspects `ctx.r5.u32` for `"NeedLive"` via `MatchesNeedLive`.
+  - `sub_82302DE0` (`Localize` handler): inspects `ctx.r5.u32` for `"TITLE_DLC"` (requested immediately upon Scaleform navigating to the DLC categories screen) and `"NeedLive"` via case-insensitive UTF-16 BE and ASCII matching (`MatchesKey`).
   - `sub_82DBDA80` (`XamShowMarketplaceUI` thunk): marketplace general UI entry point.
   - `sub_82DBF838` (`XamShowMarketplaceDownloadItemsUI` thunk): marketplace items UI entry point.
   - `sub_829C25E8` (`ShowMarketplaceUI` caller): high-level marketplace action entry point before live check.
   - `sub_829C2680` (`ShowMarketplaceUI` caller): secondary marketplace action entry point.
   - `sub_829CAC40` (`ShowMarketplaceDownloadItemsUI` caller): high-level marketplace items action entry point.
-- **Action:** If any hook is triggered while `gowj_main_menu_exit` is enabled, triggers `ExitGame()` to flush logs and terminate the process.
+- **Action:** If any hook is triggered while `gowj_main_menu_exit` is enabled, triggers `ExitGame()` to flush logs and terminate the process. Screen transition queries for `TITLE_DLC` exit immediately before the sub-menu is ever rendered.
 
 ### 4. Gears 2 TU6 Hook (`layer3_gow2`)
 - **Module:** `Gears2-Native/src/layer3_gow2/main_menu_exit.h` and `main_menu_exit.cpp`.

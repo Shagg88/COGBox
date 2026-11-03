@@ -263,18 +263,17 @@ int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& 
           };
 
           if (val.find("Identifier=MAINMENUOP_MainMenu") != std::string::npos) {
-            // In Scaleform GFx, setting Next=MAINMENUOP_None defines a terminal action (like Continue,
-            // LeaveParty, Journal, Options, or DLC in ClientMenu). Setting Next=MAINMENUOP_DLC caused
-            // navigateToScreen("MAINMENUOP_DLC") to return undefined and crash because MAINMENUOP_DLC
-            // is not an AllOptions screen. With Next=MAINMENUOP_None, no screen is pushed and the action
-            // for Label="DLC" executes directly, triggering our Exit Game interception.
-            if (ReplaceSubstr(val, "Next=MAINMENUOP_DLC_Categories", "Next=MAINMENUOP_None")) {
+            // Option 6 on MAINMENUOP_MainMenu routes to MAINMENUOP_DLC_Categories.
+            // When selected, Scaleform navigates to MAINMENUOP_DLC_Categories and queries its Title
+            // ("TITLE_DLC"), triggering our deterministic exit hook in sub_82302DE0 immediately.
+            // If the key previously contained Next=MAINMENUOP_None or Next=MAINMENUOP_DLC, restore it.
+            if (ReplaceSubstr(val, "Next=MAINMENUOP_None", "Next=MAINMENUOP_DLC_Categories")) {
               val_modified = true;
             }
-            if (ReplaceSubstr(val, "Next=MAINMENUOP_DLC,", "Next=MAINMENUOP_None,")) {
+            if (ReplaceSubstr(val, "Next=MAINMENUOP_DLC,", "Next=MAINMENUOP_DLC_Categories,")) {
               val_modified = true;
             }
-            if (ReplaceSubstr(val, "Next=MAINMENUOP_DLC)", "Next=MAINMENUOP_None)")) {
+            if (ReplaceSubstr(val, "Next=MAINMENUOP_DLC)", "Next=MAINMENUOP_DLC_Categories)")) {
               val_modified = true;
             }
           }
