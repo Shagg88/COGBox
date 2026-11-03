@@ -91,8 +91,16 @@ int MergeModConfigFragments(const fs::path& game_root, const std::string& bundle
       if (m.Active())
         for (const fs::path& f : modcore::Fragments(m)) fragments.emplace_back(m.name, f);
   }
-  if (fragments.empty()) return 0;
   std::error_code ec;
+  if (fragments.empty()) {
+    // COGBox review (0.4.3): no fragments this run - a merged bundle left from an earlier run with mods must go, or
+    // mod_chapters.cpp would read that run's chapters (the folder holds nothing else of ours)
+    for (const auto& e : fs::directory_iterator(out_dir, ec)) {
+      const std::string low = Lower(rex::path_to_utf8(e.path().filename()));
+      if (low.rfind("coalesced_", 0) == 0) { std::error_code rm; fs::remove(e.path(), rm); }
+    }
+    return 0;
+  }
   const fs::path src_dir = game_root / rex::to_path(bundle_rel);
   fs::create_directories(out_dir, ec);
   int written = 0;
