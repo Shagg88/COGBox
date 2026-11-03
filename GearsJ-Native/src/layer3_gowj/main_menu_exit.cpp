@@ -89,6 +89,9 @@ extern "C" void sub_82302DE0(PPCContext& ctx, uint8_t* base) {
   if (REXCVAR_GET(gowj_main_menu_exit) && base) {
     if (rex::glue::MatchesKey(base, ctx.r5.u32, "TOOLTIP_DLC")) {
       rex::glue::g_saw_tooltip_dlc.store(true, std::memory_order_relaxed);
+      REXLOG_INFO("MAINMENU: TOOLTIP_DLC queried (Exit Game focused)");
+    } else if (rex::glue::MatchesKey(base, ctx.r5.u32, "TOOLTIP_")) {
+      rex::glue::g_saw_tooltip_dlc.store(false, std::memory_order_relaxed);
     }
 
     if (rex::glue::MatchesNeedLive(base, ctx.r5.u32)) {
@@ -115,6 +118,32 @@ extern "C" void sub_82302DE0(PPCContext& ctx, uint8_t* base) {
     }
   }
   __imp__sub_82302DE0(ctx, base);
+}
+
+extern "C" void __imp__sub_82C7B4D8(PPCContext& ctx, uint8_t* base);
+extern "C" void sub_82C7B4D8(PPCContext& ctx, uint8_t* base) {
+  if (REXCVAR_GET(gowj_main_menu_exit) && base) {
+    const auto safe_read_u8 = [base](uint32_t addr) -> uint8_t {
+      if (!addr || addr < 0x1000 || addr >= 0xFF000000) return 0xFF;
+      return base[addr + (((uint32_t)addr >= 0xE0000000u) ? 0x1000u : 0u)];
+    };
+
+    const uint8_t old_screen = safe_read_u8(ctx.r3.u32);
+    const uint8_t new_screen = safe_read_u8(ctx.r5.u32);
+    const uint64_t swaps = XenosSwapCount();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - rex::glue::g_start_time).count();
+
+    REXLOG_INFO("MAINMENU: sub_82C7B4D8 transition: old={} (r3={:08X}), new={} (r5={:08X}), swaps={}, elapsed={}s",
+                old_screen, ctx.r3.u32, new_screen, ctx.r5.u32, swaps, elapsed);
+
+    // Screen 11 is MAINMENUOP_DLC_Categories (Exit Game).
+    if ((new_screen == 11 || ctx.r5.u32 == 11) && (old_screen == 1 || swaps > 30 || elapsed > 2)) {
+      REXLOG_INFO("MAINMENU: Transition to MAINMENUOP_DLC_Categories detected (Exit Game), terminating process directly");
+      rex::glue::ExitGame();
+    }
+  }
+  __imp__sub_82C7B4D8(ctx, base);
 }
 
 extern "C" void __imp__sub_82DBDA80(PPCContext& ctx, uint8_t* base);
