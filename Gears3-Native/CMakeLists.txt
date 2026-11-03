@@ -291,6 +291,12 @@ if(GN_BUILD_TESTS)
         target_compile_options(gn_tests PRIVATE /fp:precise)
     endif()
     target_link_libraries(gn_tests PRIVATE Catch2::Catch2WithMain)
+    # The renderer backends themselves (layer 0's library, as the game links it): GitHub #146.
+    if(WIN32)
+        add_executable(gn_backend_tests ${GN_LAYER0_TESTS}/layer0_d3d12_set_textures_test.cpp)
+        target_link_libraries(gn_backend_tests PRIVATE gn_layer0_xenos Catch2::Catch2WithMain)
+        rexglue_apply_target_settings(gn_backend_tests)
+    endif()
 endif()
 
 # Game-free shader tools (Gears 2 S3.2 / S3.3 + Gears 3 census).
