@@ -385,9 +385,82 @@ Totals SumTotals(const std::vector<GameAchievements>& games) {
   return t;
 }
 
+namespace {
+// U+00C0-U+017F folded to base letters ("" = keep the character as it is: x and / signs).
+const char* const kFold[0x180 - 0xC0] = {
+    // U+00C0-U+00DF
+    "a", "a", "a", "a", "a", "a", "ae", "c", "e", "e", "e", "e", "i", "i", "i", "i",
+    "d", "n", "o", "o", "o", "o", "o", "", "o", "u", "u", "u", "u", "y", "th", "ss",
+    // U+00E0-U+00FF
+    "a", "a", "a", "a", "a", "a", "ae", "c", "e", "e", "e", "e", "i", "i", "i", "i",
+    "d", "n", "o", "o", "o", "o", "o", "", "o", "u", "u", "u", "u", "y", "th", "y",
+    // U+0100-U+017F (Latin Extended-A)
+    "a", "a", "a", "a", "a", "a", "c", "c", "c", "c", "c", "c", "c", "c", "d", "d",
+    "d", "d", "e", "e", "e", "e", "e", "e", "e", "e", "e", "e", "g", "g", "g", "g",
+    "g", "g", "g", "g", "h", "h", "h", "h", "i", "i", "i", "i", "i", "i", "i", "i",
+    "i", "i", "ij", "ij", "j", "j", "k", "k", "k", "l", "l", "l", "l", "l", "l", "l",
+    "l", "l", "l", "n", "n", "n", "n", "n", "n", "n", "n", "n", "o", "o", "o", "o",
+    "o", "o", "oe", "oe", "r", "r", "r", "r", "r", "r", "s", "s", "s", "s", "s", "s",
+    "s", "s", "t", "t", "t", "t", "t", "t", "u", "u", "u", "u", "u", "u", "u", "u",
+    "u", "u", "u", "u", "w", "w", "y", "y", "y", "z", "z", "z", "z", "z", "z", "s"};
+bool GameOrderBefore(const Achievement& a, const Achievement& b) {
+  if (a.game_index != b.game_index) return a.game_index < b.game_index;
+  return a.list_order < b.list_order;
+}
+}  // namespace
+
+std::string NameSortKey(const std::string& utf8) {
+  std::string out;
+  out.reserve(utf8.size());
+  for (size_t i = 0; i < utf8.size();) {
+    const unsigned char c = static_cast<unsigned char>(utf8[i]);
+    if (c < 0x80) {
+      out += static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+      ++i;
+      continue;
+    }
+    // two-byte sequences are the only ones that can fold (U+0080-U+07FF); the rest is copied byte for byte
+    if ((c & 0xE0) == 0xC0 && i + 1 < utf8.size() && (static_cast<unsigned char>(utf8[i + 1]) & 0xC0) == 0x80) {
+      const uint32_t cp = ((c & 0x1Fu) << 6) | (static_cast<unsigned char>(utf8[i + 1]) & 0x3Fu);
+      if (cp >= 0xC0 && cp < 0x180 && kFold[cp - 0xC0][0]) {
+        out += kFold[cp - 0xC0];
+      } else {
+        out.append(utf8, i, 2);
+      }
+      i += 2;
+      continue;
+    }
+    out += static_cast<char>(c);
+    ++i;
+  }
+  return out;
+}
+
 void SortAchievements(std::vector<Achievement>& list, SortOrder order) {
   if (order == SortOrder::kUnlockTime) {
     std::stable_sort(list.begin(), list.end(), TimeBefore);
+    return;
+  }
+  if (order == SortOrder::kGameOrder) {
+    std::stable_sort(list.begin(), list.end(), GameOrderBefore);
+    return;
+  }
+  if (order == SortOrder::kGamerscore) {
+    std::stable_sort(list.begin(), list.end(), [](const Achievement& a, const Achievement& b) {
+      if (a.gamerscore != b.gamerscore) return a.gamerscore > b.gamerscore;
+      return GameOrderBefore(a, b);
+    });
+    return;
+  }
+  if (order == SortOrder::kName) {
+    std::vector<std::pair<std::string, Achievement>> keyed;
+    keyed.reserve(list.size());
+    for (auto& a : list) keyed.emplace_back(NameSortKey(a.label), std::move(a));
+    std::stable_sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+      if (a.first != b.first) return a.first < b.first;
+      return GameOrderBefore(a.second, b.second);
+    });
+    for (size_t i = 0; i < list.size(); ++i) list[i] = std::move(keyed[i].second);
     return;
   }
   std::stable_sort(list.begin(), list.end(), [](const Achievement& a, const Achievement& b) {

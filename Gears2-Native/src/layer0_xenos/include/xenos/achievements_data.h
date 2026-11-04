@@ -115,9 +115,13 @@ GameAchievements LoadGame(const std::filesystem::path& cogbox_dir, const GameDef
 std::vector<GameAchievements> LoadAllGames(const std::filesystem::path& cogbox_dir, RarityProvider& rarity);
 Totals SumTotals(const std::vector<GameAchievements>& games);  // loaded games only
 
-enum class SortOrder { kUnlockTime, kRarity };
+enum class SortOrder { kUnlockTime, kRarity, kGameOrder, kGamerscore, kName };
 // kUnlockTime: unlocked first, newest first, unknown time last among them; locked in game then catalog order.
 // kRarity: known rarity first, rarest first; the rest in kUnlockTime order.
+// kGameOrder: game, then catalog order. kGamerscore: highest GP first. kName: A-Z by NameSortKey. Ties in game order.
 void SortAchievements(std::vector<Achievement>& list, SortOrder order);
+// The key names sort by: ASCII lower case, Latin letters with accents (U+00C0-U+017F) as their base letter(s)
+// ("Élite" -> "elite", "ß" -> "ss"); everything else, bad UTF-8 included, kept as its bytes.
+std::string NameSortKey(const std::string& utf8);
 
 }  // namespace xenos::ach

@@ -231,3 +231,53 @@ TEST_CASE("ach: an atomic write replaces an existing file and leaves no temp fil
   CHECK_FALSE(std::filesystem::exists(file.string() + ".tmp"));
   std::filesystem::remove_all(dir);
 }
+
+// --- Part 3: game order, gamerscore and name sorting ---
+static xenos::ach::Achievement Ach(const char* label, uint32_t game, uint32_t order, uint32_t gp = 10) {
+  xenos::ach::Achievement a;
+  a.label = label;
+  a.game_index = game;
+  a.list_order = order;
+  a.gamerscore = gp;
+  return a;
+}
+
+TEST_CASE("ach: SortAchievements kGameOrder: game index, then catalog order", "[ach]") {
+  std::vector<xenos::ach::Achievement> v{Ach("a", 2, 1), Ach("b", 0, 5), Ach("c", 0, 2)};
+  xenos::ach::SortAchievements(v, xenos::ach::SortOrder::kGameOrder);
+  CHECK(v[0].label == "c");
+  CHECK(v[1].label == "b");
+  CHECK(v[2].label == "a");
+}
+
+TEST_CASE("ach: SortAchievements kGamerscore: highest first, ties in game order", "[ach]") {
+  std::vector<xenos::ach::Achievement> v{Ach("o3", 0, 3, 10), Ach("o4", 0, 4, 50), Ach("o1", 0, 1, 10)};
+  xenos::ach::SortAchievements(v, xenos::ach::SortOrder::kGamerscore);
+  CHECK(v[0].label == "o4");
+  CHECK(v[1].label == "o1");
+  CHECK(v[2].label == "o3");
+}
+
+TEST_CASE("ach: SortAchievements kName: case and accents ignored, ties in game order", "[ach]") {
+  std::vector<xenos::ach::Achievement> v{Ach("beta", 0, 1), Ach("\xC3\x89lite", 0, 2), Ach("Alpha", 1, 0),
+                                         Ach("alpha", 0, 0), Ach("Alpha", 0, 9), Ach("\xED\x95\x9C\xEA\xB8\x80", 0, 3)};
+  xenos::ach::SortAchievements(v, xenos::ach::SortOrder::kName);
+  REQUIRE(v.size() == 6);
+  CHECK((v[0].label == "alpha" && v[0].game_index == 0 && v[0].list_order == 0));
+  CHECK((v[1].label == "Alpha" && v[1].game_index == 0 && v[1].list_order == 9));
+  CHECK((v[2].label == "Alpha" && v[2].game_index == 1));
+  CHECK(v[3].label == "beta");
+  CHECK(v[4].label == "\xC3\x89lite");
+  CHECK(v[5].label == "\xED\x95\x9C\xEA\xB8\x80");
+}
+
+TEST_CASE("ach: NameSortKey folds ASCII case and Latin accents", "[ach]") {
+  using xenos::ach::NameSortKey;
+  CHECK(NameSortKey("\xC3\x89LITE") == "elite");          // ÉLITE
+  CHECK(NameSortKey("\xC3\x87" "a") == "ca");             // Ça
+  CHECK(NameSortKey("Stra\xC3\x9F" "e") == "strasse");    // Straße
+  CHECK(NameSortKey("\xC3\x86gis") == "aegis");           // Ægis
+  CHECK(NameSortKey("\xED\x95\x9C\xEA\xB8\x80") == "\xED\x95\x9C\xEA\xB8\x80");  // 한글 unchanged
+  CHECK(NameSortKey("a\xFF" "b") == "a\xFF" "b");         // a bad byte is kept
+  CHECK(NameSortKey("x\xC3") == "x\xC3");                 // a cut-off sequence is kept
+}
