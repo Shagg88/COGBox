@@ -518,7 +518,12 @@ uint64_t OverlayGeneration() { return g_overlay_gen.load(std::memory_order_acqui
 void TextureCache::ResetCounters() {
   const uint64_t textures = stats_.textures, host = stats_.host_bytes;
   const uint64_t scaled = stats_.scaled_textures, scaled_bytes = stats_.scaled_bytes;
+  // Job 1204b: the texture-time timers are not reset here - the patch 0137 line takes differences between windows
+  const double bind = stats_.bind_ms, lookup = stats_.lookup_ms, load = stats_.load_ms, jobs = stats_.gpu_jobs_ms;
+  const uint64_t epoch_misses = stats_.slot_epoch_misses;
   stats_ = TextureCacheStats{};
+  stats_.bind_ms = bind; stats_.lookup_ms = lookup; stats_.load_ms = load; stats_.gpu_jobs_ms = jobs;
+  stats_.slot_epoch_misses = epoch_misses;
   stats_.textures = textures;
   stats_.host_bytes = host;
   stats_.scaled_textures = scaled;
