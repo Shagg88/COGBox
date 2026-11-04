@@ -22,14 +22,14 @@ ImU32 Col(const ach::Rgb& c, float alpha, float shade) {
 }
 
 namespace {
-ImFont* FontFor(bool semibold) {
-  ImFont* f = XenosAchievementFont(semibold);
+ImFont* FontFor(bool semibold, float px) {
+  ImFont* f = XenosAchievementFontFor(semibold, px);
   return f ? f : ImGui::GetFont();
 }
 }  // namespace
 
 float TextWidth(bool semibold, float size, const std::string& text) {
-  return FontFor(semibold)->CalcTextSizeA(size, FLT_MAX, 0.f, text.c_str()).x;
+  return FontFor(semibold, size)->CalcTextSizeA(size, FLT_MAX, 0.f, text.c_str()).x;
 }
 
 void Text(ImDrawList* dl, bool semibold, float size, ImVec2 pos, ImU32 col, const std::string& text, float max_width) {
@@ -39,7 +39,7 @@ void Text(ImDrawList* dl, bool semibold, float size, ImVec2 pos, ImU32 col, cons
       ach::FitText(text, max_width, [&](const std::string& s) { return TextWidth(semibold, size, s); }, &scale);
   const float sz = size * scale;
   // Keep the line's vertical centre where it was at full size.
-  dl->AddText(FontFor(semibold), sz, ImVec2(pos.x, pos.y + (size - sz) * 0.5f), col, fitted.c_str());
+  dl->AddText(FontFor(semibold, size), sz, ImVec2(pos.x, pos.y + (size - sz) * 0.5f), col, fitted.c_str());
 }
 
 void Trophy(ImDrawList* dl, ImVec2 c, float h, ImU32 col, float sx) {

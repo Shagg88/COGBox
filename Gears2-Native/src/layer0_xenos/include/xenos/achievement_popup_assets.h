@@ -15,6 +15,12 @@ void XenosConfigureAchievementFonts(ImFontAtlas* atlas);
 ImFont* XenosAchievementFont(bool semibold);
 // The size the popup fonts were rasterised at.
 constexpr float kAchievementFontPixels = 48.f;
+// A second, small raster of the same fonts: text drawn at kAchievementSmallFontMax px or less uses it (a 48 px raster
+// shrunk to 13-20 px reads thin and blurry - the browser at 720p).
+constexpr float kAchievementSmallFontPixels = 22.f;
+constexpr float kAchievementSmallFontMax = 24.f;
+// The font to draw text `px` tall with (small or large raster), or nullptr when none could be loaded.
+ImFont* XenosAchievementFontFor(bool semibold, float px);
 
 // Plays the style's sound file ("x360" / "xbox" / "ps5"), or achievement.wav; asynchronously; silent (one log line)
 // when there is no file.

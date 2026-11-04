@@ -26,6 +26,8 @@ namespace {
 
 ImFont* g_regular = nullptr;
 ImFont* g_semibold = nullptr;
+ImFont* g_regular_small = nullptr;   // part 4 player check: small text (the browser at 720p) from a small raster
+ImFont* g_semibold_small = nullptr;
 
 std::filesystem::path FontsDir() {
 #ifdef _WIN32
@@ -103,23 +105,23 @@ void XenosConfigureAchievementFonts(ImFontAtlas* atlas) {
   hangul_ranges = RangesFor(hangul);
   han_ranges = RangesFor(han);
 
-  auto add = [&](const char* file, bool merge_cjk) -> ImFont* {
+  auto add = [&](const char* file, bool merge_cjk, float px) -> ImFont* {
     const std::filesystem::path p = dir / file;
     if (!Exists(p)) return nullptr;
     ImFontConfig cfg;
     cfg.OversampleH = 2;
     cfg.OversampleV = 1;
-    ImFont* f = atlas->AddFontFromFileTTF(rex::path_to_utf8(p).c_str(), kAchievementFontPixels, &cfg, kWestern);
+    ImFont* f = atlas->AddFontFromFileTTF(rex::path_to_utf8(p).c_str(), px, &cfg, kWestern);
     if (!f || !merge_cjk) return f;
     ImFontConfig m;
     m.MergeMode = true;
     m.OversampleH = 1;
     if (hangul_ranges.size() > 1 && Exists(dir / "malgun.ttf"))
-      atlas->AddFontFromFileTTF(rex::path_to_utf8(dir / "malgun.ttf").c_str(), kAchievementFontPixels, &m, hangul_ranges.data());
+      atlas->AddFontFromFileTTF(rex::path_to_utf8(dir / "malgun.ttf").c_str(), px, &m, hangul_ranges.data());
     if (han_ranges.size() > 1) {
       for (const char* cjk : {"msyh.ttc", "msjh.ttc", "simsun.ttc"}) {
         if (!Exists(dir / cjk)) continue;
-        atlas->AddFontFromFileTTF(rex::path_to_utf8(dir / cjk).c_str(), kAchievementFontPixels, &m, han_ranges.data());
+        atlas->AddFontFromFileTTF(rex::path_to_utf8(dir / cjk).c_str(), px, &m, han_ranges.data());
         break;
       }
     }
@@ -127,9 +129,12 @@ void XenosConfigureAchievementFonts(ImFontAtlas* atlas) {
   };
   for (const Pair& p : chain) {
     if (!Exists(dir / p.regular)) continue;
-    g_regular = add(p.regular, true);
-    g_semibold = add(p.semibold, true);
+    g_regular = add(p.regular, true, kAchievementFontPixels);
+    g_semibold = add(p.semibold, true, kAchievementFontPixels);
     if (!g_semibold) g_semibold = g_regular;
+    g_regular_small = add(p.regular, true, kAchievementSmallFontPixels);
+    g_semibold_small = add(p.semibold, true, kAchievementSmallFontPixels);
+    if (!g_semibold_small) g_semibold_small = g_regular_small;
     REXLOG_INFO("achievement popups: font {} ({} Korean, {} Chinese characters from the cached lists)", p.regular,
                 hangul.size(), han.size());
     return;
@@ -139,6 +144,10 @@ void XenosConfigureAchievementFonts(ImFontAtlas* atlas) {
 }
 
 ImFont* XenosAchievementFont(bool semibold) { return semibold ? g_semibold : g_regular; }
+ImFont* XenosAchievementFontFor(bool semibold, float px) {
+  ImFont* small = semibold ? g_semibold_small : g_regular_small;
+  return px <= kAchievementSmallFontMax && small ? small : XenosAchievementFont(semibold);
+}
 
 std::filesystem::path XenosCogboxDir() {
   const std::string dir = REXCVAR_GET(cogbox_dir);

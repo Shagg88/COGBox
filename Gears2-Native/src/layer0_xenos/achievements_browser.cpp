@@ -160,7 +160,7 @@ ImTextureID AchievementsBrowser::Icon(const ach::Achievement& a) {
 
 std::string AchievementsBrowser::Draw(float scale, float height) {
   if (stale_->load() || sidebar_.empty()) Reload();
-  const float s = scale;
+  const float s = scale * 1.15f;   // part 4 player check: bigger text at 720p
   std::string tip;
   DrawSidebar(s, height);
   ImGui::SameLine();
