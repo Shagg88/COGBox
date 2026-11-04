@@ -18,6 +18,7 @@ include(cmake/rexglue.cmake)
 add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/achievements_data.cpp
     src/layer0_xenos/achievements_export.cpp
+    src/layer0_xenos/achievements_popup_logic.cpp
     src/layer0_xenos/crash_report.cpp
     src/layer0_xenos/system_report.cpp
     src/layer0_xenos/save_watch.cpp
@@ -370,6 +371,8 @@ if(GN_BUILD_TESTS)
         src/layer2_ue3/config_bundle.cpp
         tests/layer2_prebuild_lzx_test.cpp
         src/layer2_ue3/prebuild_lzx.cpp
+        tests/layer0_achievements_popup_test.cpp
+        src/layer0_xenos/achievements_popup_logic.cpp
         tests/layer0_achievements_data_test.cpp
         src/layer0_xenos/achievements_data.cpp
         tests/layer2_package_exports_test.cpp
