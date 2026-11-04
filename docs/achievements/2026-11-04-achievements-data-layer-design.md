@@ -120,8 +120,8 @@ unachieved=...
 
 ### Secret achievements
 
-An achievement is secret when its XDBF flags do not have the "show unachieved" bit (0x8, as Xenia names it; to be
-checked against the four games' real data when this is built). Until it is unlocked, browsers
+An achievement is secret when its XDBF flags do not have the "show unachieved" bit (0x8, as Xenia names it;
+confirmed on Gears 3, below). Until it is unlocked, browsers
 show "Secret achievement" and hide its name, description and icon. The player can reveal one (parts 3 and 4 ask
 "Do you want to reveal this secret achievement?"; yes reveals it, no leaves it secret). A reveal is saved in
 `revealed.txt`, one `<TitleID>:<id>` per line, so it stays revealed in every game and the launcher. Revealing never
@@ -130,7 +130,8 @@ unlocks anything; an unlocked secret is always shown.
 The game's own data decides what is secret; COGBox keeps no list of its own. Checked 2026-11-04 on Gears 2 TU6: all
 79 achievements (DLC included) have the 0x8 bit, so none is secret - including the seven map-pack achievements that
 achievement sites list as secret (they were hidden before the map packs shipped; the console took that from the DLC or
-the online service, not the title data). The 0x8 bit itself is still to be confirmed on a game whose data has a secret.
+the online service, not the title data). Confirmed on Gears 3 TU6: of its 72 achievements only "Respect for the Dead" (id 19, flags 0x1, unachieved text
+"Secret.") lacks 0x8 - the one secret achievement of the base game.
 
 ### What the reader gives
 
