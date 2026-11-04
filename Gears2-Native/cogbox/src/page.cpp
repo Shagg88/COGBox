@@ -1012,8 +1012,8 @@ static void about_tab(App &a, int g)
 }
 
 // ---- the page --------------------------------------------------------------------------------------------------------
-static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "ABOUT" };   // the one sound option is in Gameplay
-static const int k_tabCount = 5;
+static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "ACHIEVEMENTS", "ABOUT" };   // the one sound option is in Gameplay
+static const int k_tabCount = 6;   // achievements part 4: ACHIEVEMENTS = gs::Tab::Achievements
 
 static std::string summary(App &a, int g)
 {
@@ -1127,15 +1127,17 @@ void page_draw(App &a, ImVec2 size)
             }
             ImGui::Dummy(ImVec2(0, S(4)));
         }
+        if (want == gs::Tab::Achievements) th_heading("ACHIEVEMENT POPUPS", g_rowX1);   // achievements part 4
         for (const gs::Option &o : gs::options((gs::Game)g)) {
             if (o.tab != want) continue;
             if (o.id == "WineApi" && !a.env[g].wine) continue;   // Shagg 13:16: Proton / Wine only
             option_row(a, g, o);
             shown++;
         }
-        if (!shown) row_desc("Nothing to set here yet.");
+        if (!shown && want != gs::Tab::Achievements) row_desc("Nothing to set here yet.");
         if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
         if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
+        if (want == gs::Tab::Achievements) achievements_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // achievements part 4
     } else about_tab(a, g);
     ImGui::PopFont();
     ImGui::EndChild();

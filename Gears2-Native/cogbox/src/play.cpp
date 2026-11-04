@@ -231,6 +231,7 @@ void play_poll(App &a)
     bool known = GetExitCodeProcess(a.run.proc, &code) != 0;
     CloseHandle(a.run.proc);
     a.run.proc = nullptr;
+    achievements_tab_reload();   // achievements part 4: its new unlocks
     int g = a.run.game;
     const GameDef &d = game_def(g);
     int64_t secs = std::max<int64_t>(0, unix_now() - a.run.started);

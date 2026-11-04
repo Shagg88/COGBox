@@ -132,6 +132,13 @@ void art_download_start();
 int art_download_poll();
 // page.cpp
 void page_draw(App &a, ImVec2 size);
+// achievements_tab.cpp (achievements part 4): the ACHIEVEMENTS tab below its option rows (the rows' label / control
+// widths and right edge, as page.cpp lays them out); read again after a game closed; the front button's "open on All";
+// the reveal question answered (ask tag "achreveal", 1 = yes).
+void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1);
+void achievements_tab_reload();
+void achievements_tab_open_all();
+void achievements_reveal_answer(App &a, int answer);
 void env_refresh(App &a, int g);
 bool settings_save(App &a);
 std::vector<std::string> monitor_choices();   // page.cpp: "Default (main screen)", then each screen

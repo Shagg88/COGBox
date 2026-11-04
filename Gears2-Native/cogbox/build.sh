@@ -31,7 +31,8 @@ for f in third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_part
 done
 o=$OUT/obj/miniz.o; objs="$objs $o"
 [ -f $o ] || x86_64-w64-mingw32-gcc $OPT -w -c third_party/miniz/miniz.c -o $o
-for f in src/*.cpp ../src/layer2_ue3/prebuild_lzx.cpp ../src/layer0_xenos/achievements_data.cpp; do   # (the LZX decoder: Gears2-Native's own, MIT)
+for f in src/*.cpp ../src/layer2_ue3/prebuild_lzx.cpp ../src/layer0_xenos/achievements_data.cpp \
+         ../src/layer0_xenos/achievements_browser_model.cpp ../src/layer0_xenos/achievements_popup_logic.cpp; do   # (the LZX decoder: Gears2-Native's own, MIT)
   case $f in src/hello.cpp) continue;; esac
   o=$OUT/obj/$(basename $f .cpp).o; objs="$objs $o"
   $CXX $FLAGS -c $f -o $o
