@@ -15,7 +15,7 @@ namespace gears {
 enum class Game { Gears2 = 0, Gears3 = 1, Judgment = 2, Gears1 = 3 };
 constexpr int kGameCount = 4;
 enum class Version { TitleUpdate = 0, Disc = 1 };   // PS1 125 $verNames (index 0 = the title update)
-enum class Tab { Display, Graphics, Controls, Gameplay };
+enum class Tab { Display, Graphics, Controls, Gameplay, Achievements };   // = the page's tab index (ABOUT is after)
 enum class Kind { Bool, Choice, Int, Float };
 // Where a value is kept (PS1 103-123, 418-441, 446-464, 759-774):
 //   Shared  - one value for all games (PS1 top-level $s keys outside $perKeys)

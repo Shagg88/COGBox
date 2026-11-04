@@ -188,19 +188,19 @@ std::vector<Option> make_options(Game g) {
     add(make("HideNotes", "Hide on-screen notes", Tab::Display, Kind::Bool, OWN, 0,
              "Draws none of the port's notes over the game: no shader-building note and no shader-loading indicator. "
              "The FPS counter above and achievement popups are separate.", 0));
-    // Achievements part 2: one value for every game ([General]); on the Achievements page from part 4.
-    add(choice("AchievementStyle", "Achievement popups", Tab::Display, SH, { "Xbox 360", "Xbox", "PlayStation" }, 0,
+    // Achievements part 2: one value for every game ([General]). Part 4: on the ACHIEVEMENTS tab.
+    add(choice("AchievementStyle", "Popup style", Tab::Achievements, SH, { "Xbox 360", "Xbox", "PlayStation" }, 0,
                "The look of the popup when an achievement unlocks. PlayStation shows a trophy grade worked out from the "
                "gamerpoints; the gamerpoints are always recorded.", 0), "achpopups");
-    add(choice("AchievementColour", "Popup colour", Tab::Display, SH,
+    add(choice("AchievementColour", "Popup colour (Xbox style)", Tab::Achievements, SH,
                { "Dark", "Red", "Green", "Blue", "Purple", "Orange", "Pink", "Teal", "Grey", "Gold" }, 0,
                "The Xbox style popup's colour.", 0), "achpopups");
-    add(choice("AchievementPosition", "Popup position", Tab::Display, SH,
+    add(choice("AchievementPosition", "Popup position", Tab::Achievements, SH,
                { "Default", "Top left", "Top centre", "Top right", "Bottom left", "Bottom centre", "Bottom right" }, 0,
                "Where the popup shows. Default: bottom centre (Xbox 360, Xbox), top right (PlayStation).", 0), "achpopups");
-    add(make("AchievementSound", "Achievement sound", Tab::Display, Kind::Bool, SH, 1,
+    add(make("AchievementSound", "Popup sound", Tab::Achievements, Kind::Bool, SH, 1,
              "Plays assets\\sounds\\achievement.wav with each popup (replace the file to change the sound).", 0), "achpopups");
-    add(make("HideAchievementPopups", "Hide achievement popups", Tab::Display, Kind::Bool, SH, 0,
+    add(make("HideAchievementPopups", "Hide achievement popups", Tab::Achievements, Kind::Bool, SH, 0,
              "No popup and no sound when an achievement unlocks. Achievements still unlock and are saved.", 0), "achpopups");
     // GitHub #52 (Gears 3 native mouse look; Gears 2 too since sweep 21)
     if (g == Game::Gears3 || g == Game::Gears2) add(choice("AimTurn", "Mouse turn when aiming", Tab::Controls, OWN, { "Same as moving around", "Game's (slower)" }, 0,
@@ -481,6 +481,7 @@ const char* tab_name(Tab t) {
     case Tab::Graphics: return "Graphics";
     case Tab::Controls: return "Controls";
     case Tab::Gameplay: return "Gameplay";
+    case Tab::Achievements: return "Achievements";   // achievements part 4
     }
     return "?";
 }
