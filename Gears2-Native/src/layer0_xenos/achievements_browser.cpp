@@ -10,6 +10,7 @@
 #include <rex/runtime.h>
 #include <rex/system/achievement_manager.h>
 #include <rex/system/kernel_state.h>
+#include <rex/system/user_module.h>
 #include <rex/ui/image_decode.h>
 #include <rex/ui/immediate_drawer.h>
 
@@ -54,16 +55,24 @@ float Tag(ImDrawList* dl, ImVec2 pos, float size, const char* text) {
 }  // namespace
 
 AchievementsBrowser::AchievementsBrowser(rex::ui::ImmediateDrawer* immediate, rex::Runtime* runtime)
-    : immediate_(immediate), runtime_(runtime), running_icons_(immediate, runtime),
-      stale_(std::make_shared<std::atomic<bool>>(true)) {
-  if (runtime_ && runtime_->kernel_state()) {
-    running_title_ = runtime_->kernel_state()->title_id();
-    std::weak_ptr<std::atomic<bool>> stale = stale_;
-    unlock_listener_ = runtime_->kernel_state()->achievements().RegisterUnlockCallback(
-        [stale](const rex::system::AchievementEvent&) {
-          if (auto s = stale.lock()) s->store(true);
-        });
-  }
+    : immediate_(immediate), runtime_(runtime), stale_(std::make_shared<std::atomic<bool>>(true)) {
+  Attach();
+}
+
+rex::Runtime* AchievementsBrowser::Rt() const { return runtime_ ? runtime_ : rex::Runtime::instance(); }
+
+void AchievementsBrowser::Attach() {
+  if (running_icons_) return;  // attached
+  rex::Runtime* rt = Rt();
+  if (!rt || !rt->kernel_state() || !rt->kernel_state()->GetExecutableModule()) return;  // not loaded yet
+  runtime_ = rt;
+  auto* kernel = rt->kernel_state();
+  running_title_ = kernel->title_id();
+  running_icons_ = std::make_unique<rex::ui::AchievementIconCache>(immediate_, rt);
+  std::weak_ptr<std::atomic<bool>> stale = stale_;
+  unlock_listener_ = kernel->achievements().RegisterUnlockCallback([stale](const rex::system::AchievementEvent&) {
+    if (auto s = stale.lock()) s->store(true);
+  });
 }
 
 AchievementsBrowser::~AchievementsBrowser() {
@@ -72,15 +81,16 @@ AchievementsBrowser::~AchievementsBrowser() {
 }
 
 void AchievementsBrowser::Reload() {
+  Attach();
   stale_->store(false);
   dir_ = XenosCogboxDir();
   games_ = ach::LoadAllGames(dir_, ach::CurrentRarityProvider());
   // The running game from the SDK when the cache has no catalog for it (it could not be written).
   for (size_t i = 0; i < ach::kGames.size() && i < games_.size(); ++i) {
     if (ach::kGames[i].title_id != running_title_ || games_[i].loaded) continue;
-    ach::Catalog c = XenosCatalogFromRuntime(runtime_);
+    ach::Catalog c = XenosCatalogFromRuntime(Rt());
     if (c.achievements.empty()) break;
-    games_[i] = ach::BuildGame(ach::kGames[i], c, XenosUnlocksFromRuntime(runtime_), ach::LoadRevealed(dir_),
+    games_[i] = ach::BuildGame(ach::kGames[i], c, XenosUnlocksFromRuntime(Rt()), ach::LoadRevealed(dir_),
                                ach::CurrentRarityProvider(), dir_);
   }
   sidebar_ = ach::BuildSidebar(games_, running_title_);
@@ -125,9 +135,9 @@ void AchievementsBrowser::CycleShow() {
 }
 
 ImTextureID AchievementsBrowser::Icon(const ach::Achievement& a) {
-  if (a.title_id == running_title_ && runtime_ && runtime_->kernel_state()) {
+  if (running_icons_ && a.title_id == running_title_ && runtime_ && runtime_->kernel_state()) {
     if (auto info = runtime_->kernel_state()->achievements().FindAchievement(a.id)) {
-      if (rex::ui::ImmediateTexture* t = running_icons_.GetIcon(*info)) return reinterpret_cast<ImTextureID>(t);
+      if (rex::ui::ImmediateTexture* t = running_icons_->GetIcon(*info)) return reinterpret_cast<ImTextureID>(t);
     }
   }
   const auto key = std::make_pair(a.title_id, a.id);

@@ -48,6 +48,11 @@ class AchievementsBrowser {
   bool RevealOpen() const { return reveal_open_; }  // the reveal question is showing (B means No there)
 
  private:
+  // The menu is set up before the runtime exists (OnCreateDialogs comes before ConstructRuntime): the runtime is
+  // looked up when needed, and the running title, its icon cache and the unlock callback are attached once the game's
+  // module is loaded. Retried on every Reload until then.
+  rex::Runtime* Rt() const;
+  void Attach();
   void RebuildRows();
   void Select(size_t index);
   ImTextureID Icon(const ach::Achievement& a);  // 0 = none
@@ -57,7 +62,7 @@ class AchievementsBrowser {
 
   rex::ui::ImmediateDrawer* immediate_ = nullptr;
   rex::Runtime* runtime_ = nullptr;
-  rex::ui::AchievementIconCache running_icons_;
+  std::unique_ptr<rex::ui::AchievementIconCache> running_icons_;  // made by Attach
   std::map<std::pair<uint32_t, uint32_t>, std::unique_ptr<rex::ui::ImmediateTexture>> icons_;  // null = failed
   uint64_t unlock_listener_ = 0;
   std::shared_ptr<std::atomic<bool>> stale_;
