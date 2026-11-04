@@ -886,6 +886,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
               "--gow2_shader_cache_dir=" + q(env.shader_cache_dir) };
         if (useUpdate) a.push_back("--update_data_root=" + q(env.update_data_root));
     }
+    // 0.4.5 (jobs 1198 / 1201): the window's own thread paints and presents the picture, not the game's renderer thread
+    // (the presenter waited 0.5-1.4 ms per frame there): Gears 2 1440p 191 -> 195 fps, 1% low 150 -> 160.
+    a.push_back("--host_present_from_non_ui_thread=false");
     if (env.wine) notes.push_back("launcher: running under Wine / Proton");   // job 523
     // PS1 832-836: start at a chapter
     // 0.3.0: "Start at" removed (see the option list) - the game always opens at its own main menu.
