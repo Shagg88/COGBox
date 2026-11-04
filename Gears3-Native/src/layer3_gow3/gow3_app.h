@@ -21,6 +21,7 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 #include <xenos/display_size.h>
 #include <xenos/gpu_system.h>
 #include <xenos/achievements_export.h>
+#include <xenos/achievement_popup_assets.h>
 #include <xenos/lazy_achievement_toast.h>
 
 #include <rex/system/interfaces/graphics.h>
@@ -111,6 +112,8 @@ class Gow3App : public rex::ReXApp {
     XenosDumpImageIfRequested(runtime());
     Gow3ApplyDataPatchesIfRequested(runtime());
   }
+  // Achievements part 2: the popups' fonts (Segoe UI from the PC; CJK from the cached achievement lists).
+  void OnConfigureFonts(ImFontAtlas* atlas) override { XenosConfigureAchievementFonts(atlas); }
   void OnPreLaunchModule() override {
     XenosExportAchievements(runtime());  // achievements part 1: the shared catalog + icons
     Ue3SetLaunchCommandLineIfRequested();

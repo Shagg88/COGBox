@@ -108,6 +108,7 @@ $pd = Join-Path $stage 'prompts\keyboard'; New-Item -ItemType Directory -Force $
 Copy-Item (Join-Path $promptSrc '*.overlay') $pd
 $gd = Join-Path $stage 'assets'; New-Item -ItemType Directory -Force $gd | Out-Null
 Copy-Item -LiteralPath $glyphSrc -Destination $gd -Recurse   # -> assets\glyphs\ (LICENSE.txt + one folder per style)
+Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $cogbox) 'assets\sounds') -Destination $gd -Recurse   # -> assets\sounds\ (achievement popup sound, replaceable)
 Copy-Item (Join-Path (Split-Path -Parent $cogbox) 'LICENSE') (Join-Path $stage 'LICENSE.txt')
 $lic = Join-Path $stage 'licenses'; New-Item -ItemType Directory -Force $lic | Out-Null
 Copy-Item (Join-Path $cogbox 'licenses\*') $lic
