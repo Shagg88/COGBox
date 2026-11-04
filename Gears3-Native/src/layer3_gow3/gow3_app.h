@@ -20,6 +20,7 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 #include <xenos/dev_tools.h>
 #include <xenos/display_size.h>
 #include <xenos/gpu_system.h>
+#include <xenos/achievements_export.h>
 #include <xenos/lazy_achievement_toast.h>
 
 #include <rex/system/interfaces/graphics.h>
@@ -110,7 +111,10 @@ class Gow3App : public rex::ReXApp {
     XenosDumpImageIfRequested(runtime());
     Gow3ApplyDataPatchesIfRequested(runtime());
   }
-  void OnPreLaunchModule() override { Ue3SetLaunchCommandLineIfRequested(); }
+  void OnPreLaunchModule() override {
+    XenosExportAchievements(runtime());  // achievements part 1: the shared catalog + icons
+    Ue3SetLaunchCommandLineIfRequested();
+  }
   void OnPostLaunchModule(rex::system::XThread* thread) override { XenosHoldGuestIfRequested(thread); }
   // --gow2_fps_bar (job 052, Gears 2 b3a16da): our frame-rate bar on the SDK's overlay layer.
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {

@@ -20,6 +20,7 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 #include <xenos/dev_tools.h>
 #include <xenos/display_size.h>
 #include <xenos/gpu_system.h>
+#include <xenos/achievements_export.h>
 #include <xenos/lazy_achievement_toast.h>
 
 #include <rex/system/interfaces/graphics.h>
@@ -87,7 +88,10 @@ class Gow2App : public rex::ReXApp {
     Gow2ApplyDataPatchesIfRequested(runtime());
   }
   // Everything is set up and the game is about to start.
-  void OnPreLaunchModule() override { Ue3SetLaunchCommandLineIfRequested(); }
+  void OnPreLaunchModule() override {
+    XenosExportAchievements(runtime());  // achievements part 1: the shared catalog + icons
+    Ue3SetLaunchCommandLineIfRequested();
+  }
   // The game's main thread exists but hasn't run yet.
   void OnPostLaunchModule(rex::system::XThread* thread) override { XenosHoldGuestIfRequested(thread); }
 

@@ -17,6 +17,7 @@ include(cmake/rexglue.cmake)
 # Layer 0: Xbox 360 GPU core and game-free developer tooling.
 add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/achievements_data.cpp
+    src/layer0_xenos/achievements_export.cpp
     src/layer0_xenos/crash_report.cpp
     src/layer0_xenos/system_report.cpp
     src/layer0_xenos/save_watch.cpp
