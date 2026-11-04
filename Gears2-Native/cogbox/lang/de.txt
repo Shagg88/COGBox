@@ -800,3 +800,15 @@ XeGTAO (high, experimental) = XeGTAO (hoch, experimentell)
 XeGTAO (ultra, experimental) = XeGTAO (ultra, experimentell)
 DirectX 12 = DirectX 12
 Vulkan = Vulkan
+
+# 0.4.5 (Shagg 4 Nov): What's new notice, EXIT button, Walk key (#125)
+COGBox updated = COGBox aktualisiert
+COGBox has been updated. See what's new and what was fixed in this version's changelog. = COGBox wurde aktualisiert. Im Änderungsprotokoll dieser Version steht, was neu ist und was behoben wurde.
+Open the changelog = Änderungsprotokoll öffnen
+EXIT = BEENDEN
+Close COGBox. = COGBox schließen.
+Walk key = Taste zum Gehen
+Hold to walk = Halten zum Gehen
+Press to switch walking on / off = Drücken zum Ein-/Ausschalten des Gehens
+With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = Mit Tastatur und Maus: wie die Gehen-Taste funktioniert (die Taste wählst du unter TASTATURTASTEN). Gehen bewegt sich mit halber Geschwindigkeit. Anfangs ist keine Taste gesetzt.
+Walk = Gehen

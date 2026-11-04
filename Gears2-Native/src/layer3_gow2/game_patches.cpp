@@ -26,6 +26,7 @@
 // All off by default except the two texture streaming switches (on since job 154: job 153 passed - notes/51 section 12). The Black Shading Fix lives in untiled.cpp (on by default). The other patches in that file are
 // emulator workarounds or cheap hacks and are deliberately not ported (D28).
 #include <rex/cvar.h>
+#include <rex/filesystem.h>   // rex::path_to_utf8 (#90 log)
 #include <rex/filesystem/vfs.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
@@ -572,12 +573,14 @@ bool Gow2LooksLocalized(std::string_view path) {
     if (Gow2EndsWithNoCase(name, ext)) return true;
   return false;
 }
-void Gow2OnFileOpenedLoc(std::string_view guest_path, const std::filesystem::path*) {
+void Gow2OnFileOpenedLoc(std::string_view guest_path, const std::filesystem::path* host_path) {
   if (!Gow2LooksLocalized(guest_path)) return;
   const int n = g_loc_log_lines.fetch_add(1, std::memory_order_relaxed);
   if (n >= kLocLogMax) return;
-  REXLOG_INFO("gow2_loc_log: opened {} (user_language {}){}", guest_path, rex::cvar::GetFlagByName("user_language"),
-              n + 1 == kLocLogMax ? " - last line of this log (200)" : "");
+  // 0.4.5 (#90): also the file actually served - with --ue3_voice_language its twin in the voice language
+  REXLOG_INFO("gow2_loc_log: opened {} -> {} (user_language {}, voice {}){}", guest_path,
+              host_path ? rex::path_to_utf8(host_path->filename()) : std::string("?"), rex::cvar::GetFlagByName("user_language"),
+              rex::cvar::GetFlagByName("ue3_voice_language"), n + 1 == kLocLogMax ? " - last line of this log (200)" : "");
 }
 }  // namespace
 

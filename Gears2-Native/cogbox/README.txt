@@ -63,6 +63,24 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 
 
+New in 0.4.5
+------------
+- Gears 1: no more crash while loading with a different voice language (GitHub #176). Voice language is greyed
+  in Gears 1 for now: its voice files can't be checked yet, so it would change nothing.
+- Vulkan on laptops uses the dedicated graphics card instead of the built-in one (#176).
+- Folders with accented letters (e.g. GRAFICA with an accent) work for the game, user, update and log folders
+  (#177, thanks to KiltedKernel, PR #178).
+- Languages your copy of the game does not have are greyed out, voices too (#159, thanks to KiltedKernel, PR #172).
+- Keyboard: a Walk key (Controls tab, KEYBOARD KEYS; none at first), held or pressed once (#125).
+- Steam Deck / Proton: controllers are found when the game starts with none known (#108). Mods can add new files,
+  not only replace them (thanks to KiltedKernel, PR #122).
+- Gears 2 / Gears 3: "Mouse turn when aiming" now starts at the game's own slower aim (#169).
+- Smoother frame rate: the picture is presented from the window's own thread, in all four games.
+- Launcher: an EXIT button, it comes back to the front when a game closes, a "COGBox updated" note with a link to
+  the changelog, the same Graphics and Display options in all four games (ones a game can't do yet are greyed with
+  the reason), and Real occlusion is set for you per game. With DLSS / FSR / XeSS at full scene size, the log says it
+  is anti-aliasing only (DLSS runs as DLAA), with no extra frames (#98).
+
 New in 0.4.4
 ------------
 - Screenshot key: \ (backslash) saves a screenshot in all four games, to Pictures\COGBox\<game>.
