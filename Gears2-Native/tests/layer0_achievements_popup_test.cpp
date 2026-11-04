@@ -202,3 +202,28 @@ TEST_CASE("ach: LiveCvarFor maps the launcher's popup options to game cvars", "[
     CHECK(xenos::ach::ParseColour(LiveCvarFor("AchievementColour", i)->second).name ==
           xenos::ach::kColourPresets[size_t(i)].name);
 }
+
+// Part 4 player check: F7's descriptions wrap to two lines (then "...")
+TEST_CASE("ach: WrapText wraps at spaces into at most max_lines, the last cut with an ellipsis", "[ach]") {
+  using xenos::ach::WrapText;
+  auto w = [](const std::string& s) { return static_cast<float>(s.size()); };  // 1 px per byte
+  CHECK(WrapText("", 10.f, w, 2).empty());
+  CHECK(WrapText("short", 10.f, w, 2) == std::vector<std::string>{"short"});
+  CHECK(WrapText("aaaa bbbb cccc", 10.f, w, 2) == std::vector<std::string>{"aaaa bbbb", "cccc"});
+  // too long for two lines: the second is cut and ends with the ellipsis, within max_width
+  const auto cut = WrapText("aaaa bbbb cccc dddd eeee", 10.f, w, 2);
+  REQUIRE(cut.size() == 2);
+  CHECK(cut[0] == "aaaa bbbb");
+  CHECK(cut[1].size() <= 10);
+  CHECK(cut[1].substr(cut[1].size() - 3) == "\xE2\x80\xA6");
+  // a word longer than a line breaks inside it, never mid UTF-8 character
+  const auto longw = WrapText("abcdefghijklmnop", 10.f, w, 3);
+  REQUIRE(longw.size() == 2);
+  CHECK(longw[0] == "abcdefghij");
+  CHECK(longw[1] == "klmnop");
+  const auto cjk = WrapText("\xED\x95\x9C\xED\x95\x9C\xED\x95\x9C\xED\x95\x9C", 7.f, w, 3);  // 4 x 3-byte characters
+  REQUIRE(cjk.size() == 2);
+  CHECK(cjk[0] == "\xED\x95\x9C\xED\x95\x9C");
+  CHECK(cjk[1] == "\xED\x95\x9C\xED\x95\x9C");
+  CHECK(WrapText("one two", 100.f, w, 1) == std::vector<std::string>{"one two"});
+}

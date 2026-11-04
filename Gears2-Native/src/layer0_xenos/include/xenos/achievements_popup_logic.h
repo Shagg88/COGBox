@@ -48,6 +48,10 @@ PopupPosition ResolvePosition(PopupStyle style, PopupPosition p);  // Default: P
 // dropped from the end and an ellipsis added. `measure` gives a text's width at scale 1.
 std::string FitText(const std::string& text, float max_width, const std::function<float(const std::string&)>& measure,
                     float* scale_out);
+// Text wrapped at spaces into at most max_lines lines no wider than max_width (a word wider than a line breaks inside it,
+// on a UTF-8 character boundary); what does not fit on the last line is cut with an ellipsis. Empty text: no lines.
+std::vector<std::string> WrapText(const std::string& text, float max_width,
+                                  const std::function<float(const std::string&)>& measure, int max_lines);
 
 // The animation, measured from reference clips of the real popups (docs/achievements/...-popups-design.md): where
 // each moving part of a popup is, `seconds` after it started. The styles draw only from these numbers.

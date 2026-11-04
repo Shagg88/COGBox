@@ -198,4 +198,57 @@ std::optional<std::pair<std::string, std::string>> LiveCvarFor(const std::string
   return std::nullopt;
 }
 
+namespace {
+size_t NextChar(const std::string& s, size_t i) {  // the index after the UTF-8 character at i
+  ++i;
+  while (i < s.size() && (static_cast<unsigned char>(s[i]) & 0xC0) == 0x80) ++i;
+  return i;
+}
+std::string TrimSpaces(const std::string& s) {
+  const size_t a = s.find_first_not_of(' ');
+  if (a == std::string::npos) return {};
+  return s.substr(a, s.find_last_not_of(' ') - a + 1);
+}
+}  // namespace
+
+std::vector<std::string> WrapText(const std::string& text, float max_width,
+                                  const std::function<float(const std::string&)>& measure, int max_lines) {
+  static const std::string kEllipsis = "\xE2\x80\xA6";
+  std::vector<std::string> lines;
+  std::string rest = TrimSpaces(text);
+  while (!rest.empty() && static_cast<int>(lines.size()) < max_lines) {
+    if (measure(rest) <= max_width) {
+      lines.push_back(rest);
+      break;
+    }
+    if (static_cast<int>(lines.size()) + 1 == max_lines) {  // the last line: cut with the ellipsis
+      size_t keep = 0;
+      for (size_t i = 0; i < rest.size(); i = NextChar(rest, i)) {
+        const size_t next = NextChar(rest, i);
+        if (measure(TrimSpaces(rest.substr(0, next)) + kEllipsis) > max_width) break;
+        keep = next;
+      }
+      lines.push_back(TrimSpaces(rest.substr(0, keep)) + kEllipsis);
+      break;
+    }
+    // the longest run of whole words that fits; else the longest run of characters (at least one)
+    size_t cut = 0;
+    for (size_t sp = rest.find(' '); sp != std::string::npos; sp = rest.find(' ', sp + 1)) {
+      if (measure(rest.substr(0, sp)) > max_width) break;
+      cut = sp;
+    }
+    if (cut == 0) {
+      cut = NextChar(rest, 0);
+      for (size_t i = cut; i < rest.size(); i = NextChar(rest, i)) {
+        const size_t next = NextChar(rest, i);
+        if (measure(rest.substr(0, next)) > max_width) break;
+        cut = next;
+      }
+    }
+    lines.push_back(TrimSpaces(rest.substr(0, cut)));
+    rest = TrimSpaces(rest.substr(cut));
+  }
+  return lines;
+}
+
 }  // namespace xenos::ach

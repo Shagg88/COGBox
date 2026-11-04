@@ -257,7 +257,7 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
       scroll_top_ = false;
     }
     ImDrawList* rl = ImGui::GetWindowDrawList();
-    const float rw = ImGui::GetContentRegionAvail().x, rh = 64.f * s, icon = 52.f * s, pad = 10.f * s;
+    const float rw = ImGui::GetContentRegionAvail().x, rh = 82.f * s, icon = 52.f * s, pad = 10.f * s;   // part 4: room for a 2-line description
     if (rows_.empty() && !sidebar_.empty()) {
       const std::string msg = ach::EmptyMessage(sidebar_[sel_], show_);
       const float tw = popup::TextWidth(false, 16.f * s, msg);
@@ -301,24 +301,29 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
         const float right_w = std::max({popup::TextWidth(true, 16.f * s, r.gp), popup::TextWidth(false, 15.f * s, r.status),
                                         popup::TextWidth(false, 15.f * s, r.rarity)});
         const float rx = q.x - pad;
-        popup::Text(rl, true, 16.f * s, ImVec2(rx - popup::TextWidth(true, 16.f * s, r.gp), p.y + 9.f * s), kText, r.gp, right_w);
-        popup::Text(rl, false, 15.f * s, ImVec2(rx - popup::TextWidth(false, 15.f * s, r.status), p.y + 30.f * s), kDim,
+        // the name and up to two lines of text, centred in the row as one block (part 4 player check: wrap, not "...")
+        const float tx = ib.x + 12.f * s, text_w = std::max(10.f, rx - right_w - 14.f * s - tx);
+        const std::vector<std::string> lines = ach::WrapText(
+            r.text, text_w, [&](const std::string& t) { return popup::TextWidth(false, 16.f * s, t); }, 2);
+        const float block = (25.f + 19.f * float(lines.size())) * s, ny = p.y + (rh - block) * 0.5f;
+        popup::Text(rl, true, 16.f * s, ImVec2(rx - popup::TextWidth(true, 16.f * s, r.gp), ny - 1.f * s), kText, r.gp, right_w);
+        popup::Text(rl, false, 15.f * s, ImVec2(rx - popup::TextWidth(false, 15.f * s, r.status), ny + 21.f * s), kDim,
                     r.status, right_w);
         if (!r.rarity.empty())
-          popup::Text(rl, false, 15.f * s, ImVec2(rx - popup::TextWidth(false, 15.f * s, r.rarity), p.y + 45.f * s),
+          popup::Text(rl, false, 15.f * s, ImVec2(rx - popup::TextWidth(false, 15.f * s, r.rarity), ny + 38.f * s),
                       IM_COL32(230, 195, 74, 255), r.rarity, right_w);
         // name (+ tags) and text
-        const float tx = ib.x + 12.f * s, text_w = std::max(10.f, rx - right_w - 14.f * s - tx);
         float tags = 0;
         if (r.secret_tag) tags += popup::TextWidth(true, 11.f * s, "Secret") + 14.f * s;
         if (!r.game_label.empty()) tags += popup::TextWidth(true, 11.f * s, r.game_label.c_str()) + 14.f * s;
         const ImU32 name_col = r.hidden_secret ? IM_COL32(153, 153, 153, 255) : r.locked ? IM_COL32(187, 187, 187, 255) : kText;
         const float name_w = std::max(10.f, text_w - tags);
-        popup::Text(rl, true, 17.f * s, ImVec2(tx, p.y + 10.f * s), name_col, r.name, name_w);
+        popup::Text(rl, true, 17.f * s, ImVec2(tx, ny), name_col, r.name, name_w);
         float tag_x = tx + std::min(name_w, popup::TextWidth(true, 17.f * s, r.name)) + 6.f * s;
-        if (r.secret_tag) tag_x += Tag(rl, ImVec2(tag_x, p.y + 13.f * s), 11.f * s, "Secret") + 6.f * s;
-        if (!r.game_label.empty()) Tag(rl, ImVec2(tag_x, p.y + 13.f * s), 11.f * s, r.game_label.c_str());
-        popup::Text(rl, false, 16.f * s, ImVec2(tx, p.y + 35.f * s), kSoft, r.text, text_w);
+        if (r.secret_tag) tag_x += Tag(rl, ImVec2(tag_x, ny + 3.f * s), 11.f * s, "Secret") + 6.f * s;
+        if (!r.game_label.empty()) Tag(rl, ImVec2(tag_x, ny + 3.f * s), 11.f * s, r.game_label.c_str());
+        for (size_t li = 0; li < lines.size(); ++li)
+          popup::Text(rl, false, 16.f * s, ImVec2(tx, ny + (25.f + 19.f * float(li)) * s), kSoft, lines[li], text_w + 1.f);
       }
     }
     ImGui::PopStyleColor(3);
