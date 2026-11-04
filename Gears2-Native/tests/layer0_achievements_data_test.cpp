@@ -68,3 +68,41 @@ TEST_CASE("ach: atomic write then load", "[ach]") {
   CHECK_FALSE(xenos::ach::LoadCatalog(dir, 0x4D53082D));
   std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("ach: unlocks in the SDK's current format", "[ach]") {
+  auto u = xenos::ach::ParseUnlocks(
+      "# Achievement unlock state - managed by ReXGlue runtime\n\n"
+      "[unlocked.\"3\"]\nfiletime = 133500000000000000\n\n"
+      "[unlocked.\"12\"]\r\nfiletime = 133600000000000000\r\n");
+  REQUIRE(u.size() == 2);
+  CHECK(u.at(3) == 133500000000000000ull);
+  CHECK(u.at(12) == 133600000000000000ull);
+}
+
+TEST_CASE("ach: unlocks in the old array format have no time", "[ach]") {
+  auto u = xenos::ach::ParseUnlocks("unlocked = [1, 2, 9]\n");
+  REQUIRE(u.size() == 3);
+  CHECK(u.at(9) == 0);
+}
+
+TEST_CASE("ach: a damaged unlock file gives no unlocks and no crash", "[ach]") {
+  CHECK(xenos::ach::ParseUnlocks("[unlocked.\"abc\"]\nfiletime = x\n\xff\xfe").empty());
+  auto u = xenos::ach::ParseUnlocks("[unlocked.\"4\"]\n");  // header only: unlocked, time unknown
+  REQUIRE(u.size() == 1);
+  CHECK(u.at(4) == 0);
+}
+
+TEST_CASE("ach: revealed list round trip and junk lines", "[ach]") {
+  const auto dir = std::filesystem::temp_directory_path() / "cogbox_ach_test2";
+  std::filesystem::remove_all(dir);
+  REQUIRE(xenos::ach::AddRevealed(dir, 0x4D53082D, 15));
+  REQUIRE(xenos::ach::AddRevealed(dir, 0x4D53082D, 15));  // twice: still one entry
+  auto r = xenos::ach::LoadRevealed(dir);
+  CHECK(r.size() == 1);
+  CHECK(r.count({0x4D53082D, 15}) == 1);
+  auto p = xenos::ach::ParseRevealed("\n4d53082d:7\njunk\n4D5308AB:\n:5\n4D5308AB:2\r\n");
+  CHECK(p.size() == 2);
+  CHECK(p.count({0x4D53082D, 7}) == 1);
+  CHECK(p.count({0x4D5308AB, 2}) == 1);
+  std::filesystem::remove_all(dir);
+}

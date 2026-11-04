@@ -55,4 +55,15 @@ bool WriteFileAtomic(const std::filesystem::path& path, const std::string& bytes
 bool ReadFile(const std::filesystem::path& path, std::string* out);
 std::optional<Catalog> LoadCatalog(const std::filesystem::path& cogbox_dir, uint32_t title_id);
 
+// A game's unlocks, from the SDK's file ([unlocked."<id>"] / filetime = <FILETIME>, or the old unlocked = [ids]).
+using Unlocks = std::map<uint32_t, uint64_t>;  // id -> FILETIME (UTC); 0 = time unknown
+Unlocks ParseUnlocks(const std::string& toml);  // never throws; lines it doesn't know are skipped
+Unlocks LoadUnlocks(const std::filesystem::path& cogbox_dir, const GameDef& game);  // missing file: none
+
+// Secret achievements the player chose to reveal (revealed.txt: <hex title>:<decimal id> per line).
+using RevealedSet = std::set<std::pair<uint32_t, uint32_t>>;  // (title_id, achievement id)
+RevealedSet ParseRevealed(const std::string& text);
+RevealedSet LoadRevealed(const std::filesystem::path& cogbox_dir);
+bool AddRevealed(const std::filesystem::path& cogbox_dir, uint32_t title_id, uint32_t id);  // load, add, write
+
 }  // namespace xenos::ach

@@ -195,4 +195,98 @@ std::optional<Catalog> LoadCatalog(const std::filesystem::path& cogbox_dir, uint
   return c;
 }
 
+namespace {
+
+std::string Trim(const std::string& s) {
+  const size_t b = s.find_first_not_of(" \t");
+  if (b == std::string::npos) return {};
+  return s.substr(b, s.find_last_not_of(" \t") - b + 1);
+}
+
+// 64-bit decimal, whole string.
+bool ParseU64(const std::string& s, uint64_t* out) {
+  if (s.empty() || s.size() > 20 || s[0] < '0' || s[0] > '9') return false;
+  char* end = nullptr;
+  const unsigned long long v = std::strtoull(s.c_str(), &end, 10);
+  if (end != s.c_str() + s.size()) return false;
+  *out = v;
+  return true;
+}
+
+}  // namespace
+
+Unlocks ParseUnlocks(const std::string& toml) {
+  Unlocks unlocks;
+  std::optional<uint32_t> current;
+  for (const std::string& raw : Lines(toml)) {
+    const std::string line = Trim(raw);
+    if (line.empty() || line[0] == '#') continue;
+    const std::string prefix = "[unlocked.";
+    if (line.compare(0, prefix.size(), prefix) == 0 && line.back() == ']') {
+      std::string key = line.substr(prefix.size(), line.size() - prefix.size() - 1);
+      if (key.size() >= 2 && key.front() == '"' && key.back() == '"') key = key.substr(1, key.size() - 2);
+      uint32_t id = 0;
+      current.reset();
+      if (ParseU32(key, 10, &id) && id != 0) {
+        unlocks.emplace(id, 0);
+        current = id;
+      }
+      continue;
+    }
+    const size_t eq = line.find('=');
+    if (eq == std::string::npos) continue;
+    const std::string key = Trim(line.substr(0, eq)), value = Trim(line.substr(eq + 1));
+    if (key == "filetime" && current) {
+      uint64_t t = 0;
+      if (ParseU64(value, &t)) unlocks[*current] = t;
+    } else if (key == "unlocked" && value.size() >= 2 && value.front() == '[' && value.back() == ']') {
+      std::string list = value.substr(1, value.size() - 2);
+      size_t start = 0;
+      while (start <= list.size()) {
+        size_t comma = list.find(',', start);
+        if (comma == std::string::npos) comma = list.size();
+        uint32_t id = 0;
+        if (ParseU32(Trim(list.substr(start, comma - start)), 10, &id) && id != 0) unlocks.emplace(id, 0);
+        start = comma + 1;
+      }
+      current.reset();
+    }
+  }
+  return unlocks;
+}
+
+Unlocks LoadUnlocks(const std::filesystem::path& cogbox_dir, const GameDef& game) {
+  std::string text;
+  if (!ReadFile(UnlockPath(cogbox_dir, game), &text)) return {};
+  return ParseUnlocks(text);
+}
+
+RevealedSet ParseRevealed(const std::string& text) {
+  RevealedSet set;
+  for (const std::string& raw : Lines(text)) {
+    const std::string line = Trim(raw);
+    const size_t colon = line.find(':');
+    if (colon == std::string::npos) continue;
+    uint32_t title = 0, id = 0;
+    if (ParseU32(line.substr(0, colon), 16, &title) && ParseU32(line.substr(colon + 1), 10, &id) && id != 0) {
+      set.insert({title, id});
+    }
+  }
+  return set;
+}
+
+RevealedSet LoadRevealed(const std::filesystem::path& cogbox_dir) {
+  std::string text;
+  if (!ReadFile(RevealedPath(cogbox_dir), &text)) return {};
+  return ParseRevealed(text);
+}
+
+bool AddRevealed(const std::filesystem::path& cogbox_dir, uint32_t title_id, uint32_t id) {
+  RevealedSet set = LoadRevealed(cogbox_dir);
+  set.insert({title_id, id});
+  std::string out;
+  for (const auto& [t, i] : set) out += Hex8(t) + ":" + std::to_string(i) + "\n";
+  return WriteFileAtomic(RevealedPath(cogbox_dir), out);
+}
+
 }  // namespace xenos::ach
