@@ -370,11 +370,11 @@ void front_draw(App &a, ImVec2 size)
                a.zoomTo == SCR_FRONT;   // not while zooming into a page
     if (nav) {
         // Shagg 21:44: the D-pad (and left stick, arrow keys, mouse wheel, a click on a side box) turns the carousel; LB / RB
-        // choose between Play and Settings under the box (a.frontSel), A presses the chosen one
+        // choose between Play, Settings and Achievements under the box (a.frontSel), A presses the chosen one
         if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) turn(a, -1);
         if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) turn(a, 1);
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) a.frontSel = 0;
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) a.frontSel = 1;
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) a.frontSel = std::max(0, a.frontSel - 1);
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) a.frontSel = std::min(2, a.frontSel + 1);   // achievements part 4: 3
         if (ImGui::IsWindowHovered() && io.MouseWheel != 0) turn(a, io.MouseWheel > 0 ? -1 : 1);
     }
     // Shagg 1 Nov: only the added games are on the carousel. When that set changes (a copy added, a drive unplugged),
@@ -473,8 +473,9 @@ void front_draw(App &a, ImVec2 size)
         bool running = a.run.proc != nullptr, busy = a.job.state.load() == 1;
         // the controller's choice shows only while a controller is connected; A presses it
         bool sel0 = a.padConnected && a.frontSel == 0, sel1 = a.padConnected && a.frontSel == 1;
+        bool sel2 = a.padConnected && a.frontSel == 2;   // achievements part 4
         bool padA = nav && a.padConnected && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
-        ImGui::SetCursorScreenPos(ImVec2(cx - bw - gap * 0.5f, y));
+        ImGui::SetCursorScreenPos(ImVec2(cx - bw * 1.5f - gap, y));   // achievements part 4: three buttons, centred
         if (st.ready == R_READY) {
             // A presses the choice LB / RB made (a.frontSel); Enter plays
             if (th_button_red(running ? "RUNNING" : "PLAY", ImVec2(bw, bh), !running && !busy, F_HEAD, sel0) ||
@@ -495,6 +496,13 @@ void front_draw(App &a, ImVec2 size)
         if (th_button("SETTINGS", ImVec2(bw, bh), st.ready != R_NO_PORT, F_HEAD, sel1) ||
             (nav && st.ready != R_NO_PORT && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || (padA && a.frontSel == 1)))) {
             a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 0; a.barSel = -1;
+        }
+        // achievements part 4: the page's ACHIEVEMENTS tab, on All
+        ImGui::SameLine(0, gap);
+        if (th_button("ACHIEVEMENTS", ImVec2(bw, bh), st.ready != R_NO_PORT, F_HEAD, sel2) ||
+            (nav && st.ready != R_NO_PORT && padA && a.frontSel == 2)) {
+            a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 4; a.barSel = -1;
+            achievements_tab_open_all();
         }
         // the side buttons: add a folder instead of a file
         if (st.ready != R_READY && st.ready != R_NO_PORT) {
