@@ -188,9 +188,9 @@ std::vector<Option> make_options(Game g) {
              "Draws nothing of the port's over the game: no shader-building note, no shader-loading indicator and no "
              "achievement pop-ups (achievements still unlock). The FPS counter above is separate.", 0));
     // GitHub #52 (Gears 3 native mouse look; Gears 2 too since sweep 21)
-    if (g == Game::Gears3 || g == Game::Gears2) add(choice("AimTurn", "Mouse turn when aiming", Tab::Controls, OWN, { "Same as moving around", "Game's (slower)" }, 0,
+    if (g == Game::Gears3 || g == Game::Gears2) add(choice("AimTurn", "Mouse turn when aiming", Tab::Controls, OWN, { "Same as moving around", "Game's (slower)" }, 1,
                "Same: the mouse turns the view by the same angle per inch in every camera mode - running, roadie run, cover, "
-               "aiming and zoom. Game's: aiming and zoom keep the console game's slower turn. Native mouse look only.", 0));
+               "aiming and zoom. Game's (default, GitHub #169): aiming and zoom keep the console game's slower turn. Native mouse look only.", 0));
     add(make("Ultrawide", "Ultrawide", Tab::Display, Kind::Bool, PG, 0,
              "A wider view that matches an ultrawide monitor (21:9 or 32:9); black bars on other shapes.", 362), "ultrawide");
 
