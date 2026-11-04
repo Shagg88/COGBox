@@ -166,15 +166,20 @@ void AchievementsBrowser::DrawSidebar(float s, float height) {
   }
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float w = ImGui::GetContentRegionAvail().x, h = 62.f * s, pad = 9.f * s;
+  // ImGui's own highlight is a little taller than our box (only strips of it showed): off; we draw the whole border.
+  ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(0, 0, 0, 0));
+  ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(0, 0, 0, 0));
+  ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(0, 0, 0, 0));
   for (size_t i = 0; i < sidebar_.size(); ++i) {
     const ach::BrowserEntry& e = sidebar_[i];
     ImGui::PushID(int(i));
     const ImVec2 p = ImGui::GetCursorScreenPos();
     if (ImGui::Selectable("##entry", i == sel_, 0, ImVec2(w, h)) && i != sel_) Select(i);
+    const bool hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
     ImGui::PopID();
     const ImVec2 q(p.x + w, p.y + h);
     dl->AddRectFilled(p, q, kPanel, 3.f * s);
-    if (i == sel_) dl->AddRect(p, q, kCrimson, 3.f * s, 0, 2.f * s);
+    if (i == sel_ || hot) dl->AddRect(p, q, kCrimson, 3.f * s, 0, 2.f * s);
     const ImU32 name_col = e.loaded ? kText : IM_COL32(119, 119, 119, 255);
     float x = p.x + pad;
     popup::Text(dl, true, 17.f * s, ImVec2(x, p.y + pad * 0.6f), name_col, e.name, w - 2 * pad);
@@ -182,6 +187,7 @@ void AchievementsBrowser::DrawSidebar(float s, float height) {
     if (e.loaded) Bar(dl, ImVec2(x, p.y + 30.f * s), ImVec2(q.x - pad, p.y + 35.f * s), ach::PercentByGp(e.totals));
     popup::Text(dl, false, 14.f * s, ImVec2(x, p.y + (e.loaded ? 39.f : 33.f) * s), kDim, e.line, w - 2 * pad);
   }
+  ImGui::PopStyleColor(3);
   ImGui::EndChild();
 }
 
@@ -248,6 +254,9 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
       const ImVec2 p = ImGui::GetCursorScreenPos();
       popup::Text(rl, false, 16.f * s, ImVec2(p.x + std::max(0.f, (rw - tw) * 0.5f), p.y + 40.f * s), kDim, msg, rw);
     }
+    ImGui::PushStyleColor(ImGuiCol_Header, IM_COL32(0, 0, 0, 0));   // our own border instead (see the left column)
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, IM_COL32(0, 0, 0, 0));
     ImGuiListClipper clip;
     clip.Begin(int(rows_.size()), rh + ImGui::GetStyle().ItemSpacing.y);
     while (clip.Step()) {
@@ -302,6 +311,7 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
         popup::Text(rl, false, 14.f * s, ImVec2(tx, p.y + 36.f * s), kSoft, r.text, text_w);
       }
     }
+    ImGui::PopStyleColor(3);
   }
   ImGui::EndChild();
   ImGui::EndChild();
