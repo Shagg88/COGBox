@@ -242,7 +242,8 @@ std::vector<Option> make_options(Game g) {
                { "Native (same as render resolution)", "Quality (scene at 2/3)", "Performance (scene at 1/2)",
                  "Ultra performance (scene at 1/3)" }, 0,
                "With FSR, DLSS or XeSS: draw the 3D scene at a lower resolution and let the upscaler fill in the detail - more "
-               "frames per second, a little softer. HUD and menus stay at the full resolution.\nPerformance needs render "
+               "frames per second, a little softer. HUD and menus stay at the full resolution. Native: no upscaling - the "
+               "upscaler only anti-aliases (DLSS runs as DLAA), so it gives no extra frames.\nPerformance needs render "
                "resolution 2x (1440p) or 4x; Quality and Ultra performance need 3x (4K).", 351), "scenescale", "AAMode>=2");
     add(choice("FrameGen", "Frame generation (highly experimental)", Tab::Graphics, SH, { "Off", "AMD FSR frame generation" }, 0,
                "Highly experimental - it's rough for now. Shows a generated frame between each two the game draws: smoother motion on a fast monitor, about one frame more "
@@ -956,6 +957,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         static const char* const modes[4] = { "", "--gow2_upscale_mode=quality", "--gow2_upscale_mode=performance", "--gow2_upscale_mode=ultra" };
         int m = s.i("SceneMode");
         if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4) a.push_back(modes[m]);
+        // to-do 18 (GitHub #98): with the scene at full size the upscaler only anti-aliases (DLSS = DLAA, FSR / XeSS =
+        // native AA) - say so, so nobody expects more frames from it
+        if (aa >= 2 && aa <= 4 && !(avail("SceneMode") && m > 0 && m < 4)) {
+            static const char* const aaOnly[5] = { "", "", "FSR native AA", "DLAA", "XeSS native AA" };
+            notes.push_back(std::string("launcher: ") + k_aaNames[aa] + " with Scene resolution Native runs as " + aaOnly[aa] +
+                            " - anti-aliasing only, no extra frames; pick a lower Scene resolution for more frames (GitHub #98)");
+        }
     }
     // PS1 857 (0146 / 0147): frame generation
     const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0 && !env.wine;   // job 521: DirectX 12 only
