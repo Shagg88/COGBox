@@ -608,6 +608,18 @@ void front_draw(App &a, ImVec2 size)
         ImVec2 ts = F_SMALL->CalcTextSizeA(FS(F_SMALL), FLT_MAX, 0, hint);
         dl->AddText(F_SMALL, FS(F_SMALL), ImVec2((size.x - ts.x) * 0.5f, size.y - FS(F_SMALL) - S(10)), U(col::faint), hint);
     }
+    {   // to-do 21 (Shagg 3 Nov): an Exit button on the library screen, bottom left (asks first, like Esc / Start)
+        const std::string lbl = tr("EXIT");
+        ImVec2 es(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, lbl.c_str()).x + S(36), T(28));
+        ImGui::SetCursorScreenPos(ImVec2(S(24), size.y - FS(F_SMALL) - es.y - S(18)));
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);   // the D-pad keeps turning the carousel
+        const bool can = !a.run.proc && !a.modal.open && a.job.state.load() != 1;
+        if (th_button((lbl + "##frontexit").c_str(), es, can, F_BOLD) && can)
+            ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip("%s", a.run.proc ? tr("Close the game first.") : tr("Close COGBox."));
+        ImGui::PopItemFlag();
+    }
     {   // job 529 (Shagg 21:17): the maker's mark, bottom right, just above the hint line
         const char *mark = "Made by Shagg";
         ImVec2 ms = F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, mark);
