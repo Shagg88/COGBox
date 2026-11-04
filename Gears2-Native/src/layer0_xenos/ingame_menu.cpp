@@ -560,16 +560,12 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     return n;
   }
 
-  // Every changed option, for COGBox to save once the game has closed (however it closes).
-  static std::string ChangesText() {
-    std::string text;
-    for (const MenuOption& o : g_file.options) {
-      if (o.value == o.start) continue;
-      char v[64];
-      std::snprintf(v, sizeof v, "%.6g", o.value);
-      text += o.id + "=" + v + "\r\n";
-    }
-    return text;
+  // The changed options, for COGBox to save once the game has closed (live_only: just the popup settings - see
+  // xenos::ach::MenuChangesText).
+  static std::string ChangesText(bool live_only) {
+    std::vector<xenos::ach::MenuChange> opts;
+    for (const MenuOption& o : g_file.options) opts.push_back({o.id, o.value, o.start});
+    return xenos::ach::MenuChangesText(opts, live_only);
   }
 
   // Achievements part 4: the popup settings take effect at once (the popups read their cvars on every unlock), and are
@@ -584,12 +580,12 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
       o.applied = o.value;
       changed = true;
     }
-    if (changed && !g_file.changes_path.empty() && !WriteText(g_file.changes_path, ChangesText()))
+    if (changed && !g_file.changes_path.empty() && !WriteText(g_file.changes_path, ChangesText(true)))
       REXLOG_WARN("cogbox_menu: couldn't write {}", g_file.changes_path);
   }
 
   void Finish(bool restart) {
-    const std::string text = ChangesText();
+    const std::string text = ChangesText(false);
     if (!text.empty() && !WriteText(g_file.changes_path, text)) REXLOG_WARN("cogbox_menu: couldn't write {}", g_file.changes_path);
     if (restart && !WriteText(g_file.restart_path, "restart\r\n")) REXLOG_WARN("cogbox_menu: couldn't write {}", g_file.restart_path);
     REXLOG_INFO("cogbox_menu: {} with {} change(s)", restart ? "restart" : "quit", Changes());

@@ -79,5 +79,13 @@ PopupFrame PopupTimeline(PopupStyle style, float seconds);
 // the menu sets these at once - the popups read them on every unlock - so they need no restart. nullopt for any other
 // option. An index out of range gives the first choice, as the launcher does.
 std::optional<std::pair<std::string, std::string>> LiveCvarFor(const std::string& option_id, double value);
+// The in-game menu's changes file ("<id>=<value %.6g>\r\n" per changed option). live_only: only the options LiveCvarFor
+// knows - what the menu writes the moment a popup setting changes, so a restart-only edit the player put back is never
+// saved by a game that closes another way (crash, Alt-F4); Quit / Restart write every change.
+struct MenuChange {
+  std::string id;
+  double value = 0, start = 0;
+};
+std::string MenuChangesText(const std::vector<MenuChange>& options, bool live_only);
 
 }  // namespace xenos::ach

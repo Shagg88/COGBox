@@ -2,6 +2,7 @@
 // Our code (MIT).
 #include <xenos/achievements_popup_logic.h>
 
+#include <cstdio>
 #include <initializer_list>
 
 #include <cctype>
@@ -249,6 +250,18 @@ std::vector<std::string> WrapText(const std::string& text, float max_width,
     rest = TrimSpaces(rest.substr(cut));
   }
   return lines;
+}
+
+std::string MenuChangesText(const std::vector<MenuChange>& options, bool live_only) {
+  std::string text;
+  for (const MenuChange& o : options) {
+    if (o.value == o.start) continue;
+    if (live_only && !LiveCvarFor(o.id, o.value)) continue;
+    char v[64];
+    std::snprintf(v, sizeof v, "%.6g", o.value);
+    text += o.id + "=" + v + "\r\n";
+  }
+  return text;
 }
 
 }  // namespace xenos::ach

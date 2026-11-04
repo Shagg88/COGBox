@@ -227,3 +227,17 @@ TEST_CASE("ach: WrapText wraps at spaces into at most max_lines, the last cut wi
   CHECK(cjk[1] == "\xED\x95\x9C\xED\x95\x9C");
   CHECK(WrapText("one two", 100.f, w, 1) == std::vector<std::string>{"one two"});
 }
+
+// Part 4 final review: the changes file written on a live change holds only the live options, so a restart-only edit
+// the player put back is never saved by a crash / Alt-F4 after a popup change
+TEST_CASE("ach: MenuChangesText keeps restart-only edits out of the live write", "[ach]") {
+  using xenos::ach::MenuChange;
+  using xenos::ach::MenuChangesText;
+  const std::vector<MenuChange> opts = {{"Fov", 110, 90}, {"AchievementStyle", 2, 0}, {"HDR", 0, 0}};
+  CHECK(MenuChangesText(opts, false) == "Fov=110\r\nAchievementStyle=2\r\n");  // Quit / Restart: every change
+  CHECK(MenuChangesText(opts, true) == "AchievementStyle=2\r\n");              // a live change: live options only
+  const std::vector<MenuChange> reverted = {{"Fov", 90, 90}, {"AchievementStyle", 2, 0}};
+  CHECK(MenuChangesText(reverted, false) == "AchievementStyle=2\r\n");
+  CHECK(MenuChangesText({{"AchievementSound", 0, 1}}, true) == "AchievementSound=0\r\n");
+  CHECK(MenuChangesText({{"Sens", 1.7, 1}}, false) == "Sens=1.7\r\n");  // "%.6g", as the menu always wrote
+}
