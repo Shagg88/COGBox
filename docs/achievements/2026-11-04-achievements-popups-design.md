@@ -45,8 +45,8 @@ Durations: Xbox 360 6.1 s, modern Xbox 7.3 s, PS5 5.7 s. Popups queue and show o
 
 - **Xbox 360** (re-measured at 60 fps): a white ghost of the orb flashes (0-0.16 s) and the orb fades in at full size
   (0.03-0.15 s, it does not grow); the bar slides out from behind it, no overshoot (0.12-0.36 s); the text fades in
-  with a small slide from the right (0.32-0.38 s); the grey four-part ring appears (0.36 s), its green quarter lights
-  (0.42-0.45 s); the X dims and the achievement icon fades in (0.7-0.9 s). The bar has a faint lighter rim. Out:
+  with a small slide from the right (0.32-0.38 s); the sphere, drawn filling the whole orb until then, shrinks to its normal size and
+  uncovers the four-part ring at full strength (0.3-0.37 s; no fade); its green quarter switches on (0.38-0.4 s); the X dims and the achievement icon fades in (0.7-0.9 s). The bar has a faint lighter rim. Out:
   icon back to the X (5.2-5.5 s), text (5.6 s), ring (5.64 s), the orb shrinks away (5.68-5.83 s), the bar fades
   while pulling in a little (5.8-6.1 s). No achievement icon: the X stays.
 - **Modern Xbox:** a small hollow ring grows (0-0.35 s) and fills (0.35-0.45 s); the achievement icon grows from a

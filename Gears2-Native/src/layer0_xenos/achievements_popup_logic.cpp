@@ -131,8 +131,8 @@ PopupFrame PopupTimeline(PopupStyle style, float t) {
   switch (style) {
     case PopupStyle::X360:
       // Measured at 60 fps: a white ghost of the orb flashes and the orb fades in at full size; the bar slides out from
-      // behind it (no overshoot); the text comes with a small slide from the right, then the grey ring, then its
-      // green quarter; the X turns into the achievement icon. Out: the icon back to the X, the text, the ring, the
+      // behind it (no overshoot); the text comes with a small slide from the right; the sphere shrinks to uncover the
+      // ring, then its green quarter switches on; the X turns into the achievement icon. Out: the icon back to the X, the text, the ring, the
       // orb shrinks away, then the bar fades while pulling in a little.
       f.glow = Ramp(t, 0.f, 0.06f) * (1.f - Ramp(t, 0.06f, 0.16f));
       f.alpha = Ramp(t, 0.03f, 0.15f) * (1.f - Ramp(t, 5.85f, 6.1f));
@@ -140,8 +140,11 @@ PopupFrame PopupTimeline(PopupStyle style, float t) {
       f.bar = t < 3.f ? EaseOutQuad(Ramp(t, 0.12f, 0.36f)) : 1.f - 0.4f * Ramp(t, 5.8f, 6.1f);
       f.text_alpha = Ramp(t, 0.32f, 0.36f) * (1.f - Ramp(t, 5.6f, 5.66f));
       f.slide = t < 3.f ? 1.f - Ramp(t, 0.32f, 0.38f) : Ramp(t, 5.6f, 5.66f);
-      f.ring = Ramp(t, 0.36f, 0.38f) * (1.f - Ramp(t, 5.64f, 5.68f));
-      f.light = Ramp(t, 0.42f, 0.45f) * (1.f - Ramp(t, 5.64f, 5.68f));
+      // The ring is uncovered, not faded in: the sphere first fills the whole orb, then shrinks to its normal size
+      // (about 4 frames) with the ring behind it at full strength; the green quarter switches on two frames later.
+      f.cover = t < 0.3f ? 1.f : 1.f - EaseOutQuad(Ramp(t, 0.3f, 0.37f));
+      f.ring = Ramp(t, 0.29f, 0.3f) * (1.f - Ramp(t, 5.64f, 5.68f));
+      f.light = Ramp(t, 0.38f, 0.40f) * (1.f - Ramp(t, 5.64f, 5.68f));
       f.swap = Ramp(t, 0.7f, 0.9f) * (1.f - Ramp(t, 5.2f, 5.5f));
       f.glyph_scale = 1.f;
       break;

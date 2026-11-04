@@ -57,6 +57,7 @@ struct PopupFrame {
   float icon_scale = 0;   // the orb / badge size, 0-1
   float ring = 0;         // X360: the four-part ring's opacity; Xbox: hollow ring (0) -> filled badge (1)
   float light = 0;        // X360: the ring's green quarter lit, 0-1 (comes on a moment after the ring)
+  float cover = 0;        // X360: 1 = the sphere fills the whole orb (hides the ring), 0 = its normal size
   float glow = 0;         // X360: the white ghost of the orb that flashes before it fades in, 0-1
   float glyph_scale = 0;  // Xbox: the icon inside the badge, grown from a dot
   float swap = 0;         // X360: 0 the X, 1 the achievement icon (dark between); Xbox: the coin flip from the

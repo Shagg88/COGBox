@@ -84,6 +84,7 @@ TEST_CASE("ach popup: timeline starts and ends invisible, holds fully shown", "[
     CHECK(hold.swap == 1.f);
     CHECK(hold.light == 1.f);
     CHECK(hold.glow == 0.f);
+    CHECK(hold.cover == 0.f);
     CHECK_FALSE(hold.finished);
     CHECK_FALSE(PopupTimeline(s, d - 0.01f).finished);
     const auto end = PopupTimeline(s, d);
@@ -96,6 +97,8 @@ TEST_CASE("ach popup: timeline starts and ends invisible, holds fully shown", "[
       CHECK(f.bar >= 0.f);
       CHECK(f.bar <= 1.f);
       CHECK(f.glow >= 0.f);
+      CHECK(f.cover >= 0.f);
+      CHECK(f.cover <= 1.f);
       CHECK(f.glow <= 1.f);
       CHECK(f.slide >= 0.f);
       CHECK(f.slide <= 1.f);
@@ -126,10 +129,14 @@ TEST_CASE("ach popup: Xbox 360 motion (from the reference clip, 60 fps)", "[ach]
   CHECK(PopupTimeline(s, 0.34f).slide > 0.f);          // ... with a small slide from the right
   CHECK(PopupTimeline(s, 0.4f).text_alpha == 1.f);
   CHECK(PopupTimeline(s, 0.5f).slide == 0.f);
-  CHECK(PopupTimeline(s, 0.35f).ring == 0.f);          // then the ring
-  CHECK(PopupTimeline(s, 0.4f).ring == 1.f);
-  CHECK(PopupTimeline(s, 0.4f).light == 0.f);          // its green quarter lights a moment later
-  CHECK(PopupTimeline(s, 0.5f).light == 1.f);
+  CHECK(PopupTimeline(s, 0.2f).cover == 1.f);          // the sphere fills the whole orb at first
+  CHECK(PopupTimeline(s, 0.25f).ring == 0.f);
+  CHECK(PopupTimeline(s, 0.31f).ring == 1.f);          // the ring is there at full strength, under the sphere
+  CHECK(PopupTimeline(s, 0.33f).cover > 0.f);          // the sphere shrinks and uncovers it (no fade)
+  CHECK(PopupTimeline(s, 0.33f).cover < 1.f);
+  CHECK(PopupTimeline(s, 0.4f).cover == 0.f);
+  CHECK(PopupTimeline(s, 0.36f).light == 0.f);         // the green quarter switches on a moment later
+  CHECK(PopupTimeline(s, 0.42f).light == 1.f);
   CHECK(PopupTimeline(s, 0.6f).swap == 0.f);           // still the X
   CHECK(PopupTimeline(s, 0.8f).swap > 0.f);            // X -> achievement icon
   CHECK(PopupTimeline(s, 5.35f).swap < 1.f);           // and back at the end
