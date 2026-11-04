@@ -55,7 +55,6 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include "smaa/smaa_search_tex.h"
 
 #include <rex/cvar.h>
-#include <rex/filesystem.h>  // rex::to_path (GitHub #177)
 #include <rex/graphics/draw_observer.h>
 #include <rex/hash.h>
 #include <rex/graphics/pipeline/shader/shader.h>
@@ -1285,7 +1284,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     options.gpu_timestamp_split = REXCVAR_GET(gow2_renderer_gpu_timestamp_split);  // patch 0109
     options.copy_threads = uint32_t(std::clamp(REXCVAR_GET(gow2_renderer_copy_threads), 0, 16));
     if (REXCVAR_GET(gow2_renderer_pipeline_library)) {  // notes/64: next to our compiled shaders
-      std::filesystem::path dir = rex::to_path(REXCVAR_GET(gow2_shader_cache_dir));  // GitHub #177: UTF-8
+      std::filesystem::path dir = REXCVAR_GET(gow2_shader_cache_dir);
       if (dir.empty()) dir = std::filesystem::current_path() / "out" / "shader-cache";
       options.pipeline_library_path = (dir / "pipelines-d3d12.bin").string();
       options.pipeline_save_background = REXCVAR_GET(gow2_renderer_pipeline_save_background);  // patch 0010
@@ -1392,7 +1391,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       std::string e;
       return rr::CreateDxcCompiler(dxc_dir, e);
     };
-    std::filesystem::path dir = rex::to_path(REXCVAR_GET(gow2_shader_cache_dir));  // GitHub #177: UTF-8
+    std::filesystem::path dir = REXCVAR_GET(gow2_shader_cache_dir);
     if (dir.empty()) dir = std::filesystem::current_path() / "out" / "shader-cache";
     cache_ = std::make_unique<rr::ShaderCache>(*backend_, factory, dir, uint32_t(std::max(0, REXCVAR_GET(gow2_shader_threads))));
     cache_->SetCompactFloatConstants(REXCVAR_GET(gow2_renderer_compact_constants));

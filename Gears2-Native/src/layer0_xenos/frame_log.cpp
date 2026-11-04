@@ -22,7 +22,6 @@
 // Our code (MIT).
 #include <xenos/dev_tools.h>
 
-#include <rex/filesystem.h>  // rex::to_path (GitHub #177: UTF-8 path cvars)
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 
@@ -320,7 +319,7 @@ class FrameLog {
       path = lp.parent_path() / (lp.stem().string() + "-frames.csv");
     } else {
       const std::string dir = REXCVAR_GET(gow2_crash_dir);
-      path = dir.empty() ? std::filesystem::path("frames.csv") : rex::to_path(dir) / "frames.csv";  // #177
+      path = dir.empty() ? std::filesystem::path("frames.csv") : std::filesystem::path(dir) / "frames.csv";
     }
     REXLOG_INFO("gow2_frame_log: per-frame CSV {} (frame times, cause per frame; stall=2 / spike=1 in the spike "
                 "column)", path.string());

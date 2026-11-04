@@ -3,7 +3,6 @@
 // llvm-symbolizer --relative-address) and a small minidump. Only exceptions nobody else handled reach this: the
 // runtime's own guest-memory fault handling runs first.
 #include <xenos/dev_tools.h>
-#include <rex/filesystem.h>  // rex::to_path (GitHub #177: UTF-8 path cvars)
 #include <rex/cvar.h>
 
 #include <cstdio>
@@ -101,7 +100,7 @@ void XenosInstallCrashHandler() {
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     g_dir = (std::filesystem::path(exe).parent_path() / L"crashes").wstring();
   } else {
-    g_dir = rex::to_path(dir).wstring();  // GitHub #177: the cvar is UTF-8
+    g_dir = std::filesystem::path(dir).wstring();
   }
   SetUnhandledExceptionFilter(OnCrash);
 }
