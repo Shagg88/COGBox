@@ -192,3 +192,9 @@ Catch2 tests in `gn_tests` (as the Exit Game tests):
 
 In each game: after one start, the catalog and icons exist; unlocking one (by playing, or a test build that unlocks
 one at start; the SDK has no debug unlock) updates the TOML, and the reader sees it.
+
+## Changed after the later parts (2026-11-05)
+
+- The launcher passes `--cogbox_dir` when the exe contains "COGBox achievement popups" (part 2's popup setting
+  description), not the folder setting's own description: every exe with the popups has the folder setting, and the
+  launcher searches an 82 MB exe once for both (about 0.3 s per text searched).

@@ -47,15 +47,16 @@ Gears of War 2, Gears of War 3, Gears of War: Judgment, skipping the running one
 - Percent is part 1's `PercentByGp`; All's numbers are part 1's `SumTotals` (loaded games only).
 
 **Rows:**
-- Icon (52 px at 1080p), name, one line of text, GP on the right, and "Unlocked <d Mon yyyy, HH:MM>" in the PC's local
+- Icon (52 px at 1080p), name, the text on up to two lines, GP on the right, and "Unlocked <d Mon yyyy, HH:MM>" in the PC's local
   time or "Locked" under it. An unlock with no known time shows "Unlocked".
 - Unlocked: the description. Locked: greyed icon and the game's "unachieved" text (how to unlock).
 - In All: a small game label after the name ("Gears 1", "Gears 2", "Gears 3", "Judgment").
 - A secret, locked and not revealed: a "?" icon, "Secret achievement", "Select to reveal"; the GP still shows.
 - A revealed secret, or an unlocked one: shown normally, with a small "Secret" tag.
 - When the rarity is known: "Rare · <percent>%" (part 2's `IsRare`) on the right; otherwise nothing.
-- One line each; text that does not fit is cut with "…" (part 2's `FitText`). The selected row's full name and text
-  show in the menu's description line at the bottom.
+- The name on one line (cut with "…", part 2's `FitText`); the text wrapped to two lines, the second cut with "…" if
+  needed (`WrapText`), with a small gap under the name. The selected row's full name and text show in the menu's
+  description line at the bottom.
 - Empty results: "No unlocked achievements yet" (Show: Unlocked), "Every achievement is unlocked!" (Show: Locked).
 
 **Reveal question**, over the page when a hidden secret is selected: "Reveal this secret achievement?", "Its name,
@@ -91,7 +92,8 @@ B. The chosen game, sort and Show are kept while the game runs.
   decoded with the SDK's image decoder into `ImmediateDrawer` textures. Loaded only for rows on screen, kept until the
   game closes.
 - Reveal: part 1's `AddRevealed`; then reload.
-- Fonts: rows use part 2's achievement fonts (`XenosAchievementFont`), so the catalogs' languages draw.
+- Fonts: rows use part 2's achievement fonts (`XenosAchievementFontFor`: Inter, the 22 px raster for small text), so
+  the catalogs' languages draw.
 
 ## Code
 
@@ -125,3 +127,13 @@ All in Gears 2's `layer0_xenos`, built into all four games.
 - In game, by the player: F1 → Achievements and F7 in two games; controller and mouse; every sort and Show; All; a
   secret reveal with No then Yes (Gears 3 "Respect for the Dead", id 19 - back up `revealed.txt` first if it should
   stay secret); a real unlock while the page is open appears without reopening.
+
+## Changed after the in-game checks (2026-11-05)
+
+- **Runtime:** the menu is installed before the SDK makes the runtime (`OnCreateDialogs` comes before
+  `ConstructRuntime`), so the page looks the runtime up when needed and attaches the running title, its icon cache and
+  the unlock callback once the game's module is loaded (retried on every reload). Before that fix the page had no
+  "This game".
+- **Look:** the left column's hover draws the full red border (ImGui's own highlight is off); the page is drawn
+  1.15 x; the second lines are one step bigger (descriptions 16, status 15, totals 15, header 17 px at 1080p); rows
+  are 82 px for the two-line text.

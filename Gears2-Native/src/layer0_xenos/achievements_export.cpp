@@ -16,8 +16,8 @@
 #include <string>
 #include <system_error>
 
-// The launcher (cogbox/src/play.cpp) looks for "The COGBox folder (set by the launcher)" in the exe to know a game takes
-// --cogbox_dir: keep that text in the description.
+// The launcher (cogbox/src/play.cpp) passes --cogbox_dir to exes that contain "COGBox achievement popups" (the popup
+// style setting's description, achievement_popup.cpp): every exe with the popups has this setting too.
 REXCVAR_DEFINE_STRING(cogbox_dir, "", "COGBox",
                       "The COGBox folder (set by the launcher): achievements are cached in its achievements folder");
 

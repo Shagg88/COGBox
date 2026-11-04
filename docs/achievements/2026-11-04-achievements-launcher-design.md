@@ -39,7 +39,8 @@ Inside the page's existing scrolling rows area, top to bottom:
    - **Game buttons** (the launcher's small button style, as "Replace your copy..." on ABOUT): this page's game first,
      the others in series order, then All - part 3's `BuildSidebar` order with the page's game as the running title.
      Labels: Gears of War, Gears of War 2, Gears of War 3, Judgment, All. The chosen one uses the red button style; a
-     game that is not loaded is drawn disabled-looking but can be chosen (its message shows). The page's game is chosen
+     game that is not loaded is drawn like the others, with a "Not played yet" tooltip, and can be chosen (its message
+     shows). The page's game is chosen
      when the tab opens (All when opened from the front button).
    - **Status line** with the launcher's lamp: `"<u> / <t> achievements | <e> / <g> G | <p>%"`; lamp green when at
      least one is unlocked, grey otherwise (none yet, or not played).
@@ -97,3 +98,13 @@ front screen LB / RB step through PLAY, SETTINGS and ACHIEVEMENTS (today two cho
   are no longer on Display; every game button and All; every Sort and Show; a secret reveal (No, then Yes) and the
   same secret revealed in game; the front button with the mouse and with LB / RB; a game played from the test launcher
   shows its new unlocks after it closes; one window resize.
+
+## Changed after the launcher checks (2026-11-05)
+
+- The launcher searches the game exe once for the achievements' capability text (see part 1's last section).
+- The F1 menu's ACHIEVEMENTS tab applies its settings at once (part 2's last section).
+- Checked against COGBox 0.4.5 (released 4 Nov 2026): the branch merges with two "both sides added lines here"
+  conflicts (Gears2-Native/CMakeLists.txt test list, cogbox/test/settings_test.cpp self-checks), resolved by keeping
+  both; the merged launcher builds, `settings_test --summary` says "self-checks ok" (0.4.5 fixed the older "ini values"
+  failure), the tab test passes, and all 200 game unit tests pass.
+- The Play-to-window delay (about 4 s against 0.4.2's 2 s) is the same in plain 0.4.4, so it is not this work.

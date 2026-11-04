@@ -15,8 +15,8 @@ stored, whichever style shows.
 - The achievement browser (parts 3 and 4) and the launcher's Achievements page (part 4). Until part 4 the settings
   are changed in the F1 in-game menu (or `settings.ini`).
 - Cloud rarity: "Rare" depends on the part 1 `RarityProvider`; with `NoRarity` it never shows.
-- No Microsoft or Sony logo, font, artwork or sound is shipped. Every shape is our own drawing; fonts come from the
-  player's PC or a bundled free font; the sound is our own placeholder.
+- No Microsoft or Sony logo, font, artwork or sound is shipped. Every shape is our own drawing; the font is Inter
+  (SIL Open Font License, shipped with its licence), the PC's fonts as the fallback; the sound is our own placeholder.
 
 ## The three styles (approved as mockups in the brainstorm; kept locally, not in the repo)
 
@@ -27,7 +27,7 @@ stored, whichever style shows.
 | Icon | our orb: dark ring cut in four by a cross, top-left quarter lit green, glossy grey sphere, symmetric green X of two curved bands; the X turns into the achievement's own icon (game data, clipped to the circle) | round badge: the achievement's own icon (clipped to the circle), which flips to a trophy (normal) / diamond with laurels (rare) | the achievement's own icon + a grade cup in gold / silver / bronze |
 | Line 1 | "Achievement unlocked" | "Achievement unlocked!" / "Rare achievement unlocked" (bold) | grade cup + achievement name |
 | Line 2 | "<GP>G - <name>" | white "G" coin, "<GP> - <name>" | "Trophy earned!" (grey) |
-| Font | Segoe UI | Segoe UI, line 1 Semibold/Bold | Segoe UI |
+| Font | Inter | Inter, line 1 SemiBold | Inter |
 
 Platinum (PS5 style only): when an unlock makes its game 100 % (every achievement in the game's list, DLC included),
 a second popup follows it: a platinum cup and the game's name on line 1, "Platinum trophy earned!" on line 2.
@@ -82,15 +82,16 @@ Rare when the rarity provider knows the achievement and fewer than 10 % of playe
 
 ## Settings
 
-All four are global (`settings.ini [General]`), passed by the launcher to whichever game starts, shown in the F1 menu
-(changes there are written back to `[General]`):
+All are global (`settings.ini [General]`), passed by the launcher to whichever game starts, on the launcher's and the
+F1 menu's ACHIEVEMENTS tab (part 4; changes there are written back to `[General]`, and in the F1 menu they take effect
+at once - see the end of this document):
 
 | Setting | `[General]` key | Values (first = default) | Game option |
 |---|---|---|---|
-| Achievement popups | `AchievementStyle` | Xbox 360, Xbox, PlayStation | `--cogbox_ach_style=x360\|xbox\|ps5` |
-| Popup colour | `AchievementColour` | the 10 presets above | `--cogbox_ach_colour=<name>` |
+| Popup style | `AchievementStyle` | Xbox 360, Xbox, PlayStation | `--cogbox_ach_style=x360\|xbox\|ps5` |
+| Popup colour (Xbox style) | `AchievementColour` | the 10 presets above | `--cogbox_ach_colour=<name>` |
 | Popup position | `AchievementPosition` | Default, Top left, Top centre, Top right, Bottom left, Bottom centre, Bottom right | `--cogbox_ach_position=<name>` |
-| Achievement sound | `AchievementSound` | On, Off | `--cogbox_ach_sound=true\|false` |
+| Popup sound | `AchievementSound` | On, Off | `--cogbox_ach_sound=true\|false` |
 | Hide achievement popups | `HideAchievementPopups` | Off, On | `--cogbox_ach_hide=true\|false` |
 
 "Hide achievement popups" on: no popup and no sound; achievements still unlock and save. The existing per-game "Hide
@@ -127,10 +128,12 @@ rebuild. Missing or unplayable: silent, one log line.
   behaviour and `WantsContinuousPaint() == false` (drawn with the game's frames), a queue, the sound.
 - `popup_x360.cpp`, `popup_xbox.cpp`, `popup_ps5.cpp`: each draws one frame from `PopupFrame` with ImGui draw lists
   (rounded rects, circles, paths). Icons from the SDK's achievement icon cache.
-- Size: designed for 1080p, scaled by window height / 1080, clamped to 0.6-2.0; the screen-edge margin scales too.
-- Fonts in each game's `OnConfigureFonts`: Segoe UI and Segoe UI Semibold from `C:\Windows\Fonts`, merged with Malgun
-  Gothic (Korean) and Microsoft JhengHei / YaHei (Chinese) when present; when Segoe UI is missing (Proton), the bundled
-  Noto Sans (OFL, in `assets/fonts`). A character in no loaded font shows as a box, never as nothing.
+- Size: designed for 1080p, scaled by window height / 1080, clamped to 0.8-2.0; the screen-edge margin scales too.
+  The modern Xbox style is drawn 1.25 x its 1080p design.
+- Fonts in each game's `OnConfigureFonts`: Inter Regular and SemiBold from `<COGBox>\assets\fonts` (else Segoe UI,
+  Tahoma or Arial from `C:\Windows\Fonts`), each at 48 px and at 22 px (text drawn at 24 px or less uses the 22 px
+  raster), merged with Malgun Gothic (Korean) and Microsoft YaHei / JhengHei / SimSun (Chinese, Japanese) for the
+  characters the cached lists use. A character in no loaded font shows as a box, never as nothing.
 
 ### Data flow
 
@@ -142,7 +145,7 @@ rebuild. Missing or unplayable: silent, one log line.
 
 ### When things go wrong
 
-- No icon: Xbox shows its badge (needs no game icon); PS5 shows a plain dark square; 360 never uses the game icon.
+- No icon: Xbox keeps its badge with the trophy / diamond; PS5 shows a plain dark square; 360 keeps its X.
 - Long names: `FitText`, never overflowing the popup.
 - Settings: unknown values -> defaults (Xbox 360, Dark, Default, sound on, not hidden).
 - Sound: missing or unplayable -> silent, one log line.
@@ -153,7 +156,8 @@ Unit tests (`gn_tests`, `[ach]`):
 - `GradeFor`: 10/20/30 -> Bronze; 40/50/74 -> Silver; 75/100/150 -> Gold; Gears 1 13 and 19 -> Gold; ids 13 / 19 of
   another title -> by GP.
 - `IsRare`: `NoRarity` false; 9.9 % true; exactly 10 % and 40 % false.
-- `CompletesGame`: last locked one -> true; already unlocked, unknown id, or another still locked -> false.
+- `CompletesGame`: last locked one -> true; unknown id, or another still locked -> false. (A repeat unlock of an
+  already-unlocked achievement never reaches the popup: the SDK's `UnlockAchievement` returns `kAlreadyUnlocked` first.)
 - `PopupTimeline`, each style at 0, mid-intro, hold, mid-outro, end: values in range; alpha starts and ends at 0;
   finished after the end.
 - Settings parsing: every preset name, every position, unknown -> default.
@@ -165,3 +169,17 @@ In the visual companion: the three animations rebuilt from the same timeline num
 In the games (the player runs them): a test build with a debug key (off by default, on only in the test `.bat`) that
 shows a sample popup; each style, colour and position at 1080p and another size; the Platinum sample; "Hide
 achievement popups" shows nothing and plays nothing.
+
+## Changed after the in-game checks (2026-11-05)
+
+- **Font:** Inter 4.1 (Regular + SemiBold, SIL Open Font License; `assets\fonts\Inter-LICENSE.txt` beside them), the
+  player's choice: Segoe UI read thin at small sizes and is missing under Proton. Inter covers every non-CJK language
+  COGBox and the games offer; Korean / Chinese / Japanese still come from the Windows fonts.
+- **Sizes:** the modern Xbox popup 1.25 x (its 17 / 16 px text was too small); PlayStation's second line 23 px, regular,
+  #CFCFCF; no popup below 0.8 x its 1080p size; Xbox 360 text re-centred in its bar for Inter (line 1 at y 22, line 2
+  at y 50, 1080p units).
+- **Settings in game:** the F1 menu applies the five popup settings at once (`LiveCvarFor` maps the launcher's option and
+  index to the game cvar; the popups read their cvars on every unlock), writes only those five to the changes file
+  straight away (`MenuChangesText`, so a restart-only edit the player put back is never saved by a crash), and does not
+  count them for "Restart to apply".
+- **Sound:** played after the queue lock is released (a slow disk no longer holds up a game thread reporting an unlock).

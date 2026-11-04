@@ -289,7 +289,7 @@ This project stands on the work of many open-source projects and their communiti
 - The **Gears community patches** - ultrawide by boma and TudorHorse (Gears 2, 3 and Judgment), ported here as switches.
 - **Microsoft DirectX 12 Agility SDK** - the DirectX 12 runtime the ports bring along (so Windows 10 works too).
 - **[NVIDIA FLIP](https://github.com/NVlabs/flip)** - the picture comparisons in our test runs.
-- The **Anton** and **Barlow** fonts (SIL Open Font License), and **[Kenney Input Prompts](https://kenney.nl/assets/input-prompts)** (CC0 1.0 Public Domain) for controller and keyboard/mouse prompt glyphs.
+- The **Anton**, **Barlow** and **Inter** fonts (SIL Open Font License), and **[Kenney Input Prompts](https://kenney.nl/assets/input-prompts)** (CC0 1.0 Public Domain) for controller and keyboard/mouse prompt glyphs.
 
 Every licence is in `THIRD_PARTY_NOTICES.md` and in the release's `licenses` folder. If we've missed anyone, please
 open an issue and we'll add them.
@@ -342,7 +342,7 @@ already asks you to keep the copyright notice in copies of the code.)
 Also used, each under its own licence: Xenia / Canary / Edge (BSD-3), the rexglue SDK (BSD-style), FFmpeg (LGPL-2.1+,
 for the game movies), SDL3 (zlib), Dear ImGui (MIT), SMAA (MIT), xxHash (BSD-2), miniz (MIT), stb (MIT), the DirectX
 Shader Compiler, the Vulkan Headers, AMD FidelityFX and Anti-Lag 2, NVIDIA DLSS and Reflex, Intel XeSS, and the
-Anton / Barlow fonts (SIL OFL). Full texts are in [`THIRD_PARTY_NOTICES.md`](Gears2-Native/THIRD_PARTY_NOTICES.md)
+Anton / Barlow / Inter fonts (SIL OFL). Full texts are in [`THIRD_PARTY_NOTICES.md`](Gears2-Native/THIRD_PARTY_NOTICES.md)
 and the release's `licenses` folder.
 
 No game content is included. "Gears of War" and "Xbox" are trademarks of Microsoft; this is an unofficial fan project.
