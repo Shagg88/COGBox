@@ -524,6 +524,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1 && !cap_rt(env, "user_language") && !cap_exe(env, "user_language")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "voicelang") {   // GitHub #87: layer 2's ue3_voice_language
         if (!cap_exe(env, "ue3_voice_language")) return no(not_yet(gi, "needs its next build"));
+        // GitHub #176 (job 1212): Gears 1's packages can't be checked by the export reader yet, so the swap now changes
+        // nothing there (an unchecked swap crashed the game while loading) - greyed until the reader knows Gears 1
+        if (g == Game::Gears1) return no(not_yet(gi, "its voice files can't be checked yet (GitHub #176)"));
     } else if (f == "padlayout") {   // GitHub #95 / #97: SDK patch 55
         if (!cap_rt(env, "pad_remap")) return no(not_yet(gi, "needs the next runtime (SDK patch 55)"));
     } else if (f == "lowlag") {
