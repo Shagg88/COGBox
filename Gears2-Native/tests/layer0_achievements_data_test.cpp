@@ -6,6 +6,17 @@
 #include <filesystem>
 #include <string>
 
+// Test files go to a folder in the build tree (GN_TEST_SCRATCH_DIR, set by CMake), never under AppData / %TEMP%.
+static std::filesystem::path Scratch(const char* name) {
+  return std::filesystem::path(GN_TEST_SCRATCH_DIR) / name;
+}
+
+TEST_CASE("ach: test scratch folder is in the build tree", "[ach]") {
+  const std::string dir = std::filesystem::path(GN_TEST_SCRATCH_DIR).generic_string();
+  CHECK(dir.find("AppData") == std::string::npos);
+  CHECK(dir.find("gn-test-scratch") != std::string::npos);
+}
+
 TEST_CASE("ach: catalog round trip keeps every field", "[ach]") {
   xenos::ach::Catalog c{0x4D53082D, "Gears of War 2", 1, {
       {1, 10, 0x8, 3, "Line\nBreak \\ back", "Описание", ""},
@@ -57,7 +68,7 @@ TEST_CASE("ach: paths and game table", "[ach]") {
 }
 
 TEST_CASE("ach: atomic write then load", "[ach]") {
-  const auto dir = std::filesystem::temp_directory_path() / "cogbox_ach_test1";
+  const auto dir = Scratch("ach1");
   std::filesystem::remove_all(dir);
   xenos::ach::Catalog c{0x4D5307D5, "Gears of War", 1, {{5, 20, 0x8, 1, "L", "D", "U"}}};
   REQUIRE(xenos::ach::WriteFileAtomic(xenos::ach::CatalogPath(dir, c.title_id), xenos::ach::FormatCatalog(c)));
@@ -93,7 +104,7 @@ TEST_CASE("ach: a damaged unlock file gives no unlocks and no crash", "[ach]") {
 }
 
 TEST_CASE("ach: revealed list round trip and junk lines", "[ach]") {
-  const auto dir = std::filesystem::temp_directory_path() / "cogbox_ach_test2";
+  const auto dir = Scratch("ach2");
   std::filesystem::remove_all(dir);
   REQUIRE(xenos::ach::AddRevealed(dir, 0x4D53082D, 15));
   REQUIRE(xenos::ach::AddRevealed(dir, 0x4D53082D, 15));  // twice: still one entry
@@ -199,4 +210,24 @@ TEST_CASE("ach: rarity provider defaults to none", "[ach]") {
   CHECK(xenos::ach::CurrentRarityProvider().Get(1, 3).known);
   xenos::ach::SetRarityProvider(nullptr);
   CHECK_FALSE(xenos::ach::CurrentRarityProvider().Get(1, 3).known);
+}
+
+TEST_CASE("ach: unlocks as the SDK writes them (unquoted ids)", "[ach]") {
+  auto u = xenos::ach::ParseUnlocks("[unlocked.3]\nfiletime = 133500000000000000\n[unlocked.12]\nfiletime = 7\n");
+  REQUIRE(u.size() == 2);
+  CHECK(u.at(3) == 133500000000000000ull);
+  CHECK(u.at(12) == 7);
+}
+
+TEST_CASE("ach: an atomic write replaces an existing file and leaves no temp file", "[ach]") {
+  const auto dir = Scratch("ach3");
+  std::filesystem::remove_all(dir);
+  const auto file = dir / "revealed.txt";
+  REQUIRE(xenos::ach::WriteFileAtomic(file, "old\n"));
+  REQUIRE(xenos::ach::WriteFileAtomic(file, "new\n"));
+  std::string text;
+  REQUIRE(xenos::ach::ReadFile(file, &text));
+  CHECK(text == "new\n");
+  CHECK_FALSE(std::filesystem::exists(file.string() + ".tmp"));
+  std::filesystem::remove_all(dir);
 }

@@ -55,7 +55,8 @@ bool WriteFileAtomic(const std::filesystem::path& path, const std::string& bytes
 bool ReadFile(const std::filesystem::path& path, std::string* out);
 std::optional<Catalog> LoadCatalog(const std::filesystem::path& cogbox_dir, uint32_t title_id);
 
-// A game's unlocks, from the SDK's file ([unlocked."<id>"] / filetime = <FILETIME>, or the old unlocked = [ids]).
+// A game's unlocks, from the SDK's file ([unlocked.<id>] / filetime = <FILETIME>; quoted ids and the old
+// unlocked = [ids] form are read too).
 using Unlocks = std::map<uint32_t, uint64_t>;  // id -> FILETIME (UTC); 0 = time unknown
 Unlocks ParseUnlocks(const std::string& toml);  // never throws; lines it doesn't know are skipped
 Unlocks LoadUnlocks(const std::filesystem::path& cogbox_dir, const GameDef& game);  // missing file: none

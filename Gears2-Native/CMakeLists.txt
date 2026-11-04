@@ -387,6 +387,8 @@ if(GN_BUILD_TESTS)
     endif()
     target_link_libraries(gn_tests PRIVATE Catch2::Catch2WithMain rex::runtime)
     rexglue_apply_target_settings(gn_tests)
+    # Files the tests write go here (never under AppData / %TEMP%).
+    target_compile_definitions(gn_tests PRIVATE GN_TEST_SCRATCH_DIR="${CMAKE_CURRENT_BINARY_DIR}/gn-test-scratch")
     if(WIN32)
         add_custom_command(TARGET gn_tests POST_BUILD
             COMMAND "$<$<BOOL:$<TARGET_RUNTIME_DLLS:gn_tests>>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_RUNTIME_DLLS:gn_tests>;$<TARGET_FILE_DIR:gn_tests>>"

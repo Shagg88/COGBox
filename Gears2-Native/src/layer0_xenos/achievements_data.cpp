@@ -172,13 +172,17 @@ bool WriteFileAtomic(const std::filesystem::path& path, const std::string& bytes
     f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     if (!f) return false;
   }
-  std::filesystem::remove(path, ec);
+  // Rename over the old file in one step (MoveFileEx with replace on Windows). Only if that fails: remove the old file
+  // and try again - and never delete the new copy once the old one is gone, so nothing is ever lost.
   std::filesystem::rename(tmp, path, ec);
-  if (ec) {
-    std::filesystem::remove(tmp, ec);
+  if (!ec) return true;
+  ec.clear();
+  if (!std::filesystem::remove(path, ec) || ec) {
+    std::filesystem::remove(tmp, ec);  // the old file is still there
     return false;
   }
-  return true;
+  std::filesystem::rename(tmp, path, ec);
+  return !ec;  // on failure <path>.tmp keeps the new content
 }
 
 bool ReadFile(const std::filesystem::path& path, std::string* out) {
