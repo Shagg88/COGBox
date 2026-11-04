@@ -1,10 +1,13 @@
 #include "ue3/main_menu_exit.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+
+#include <rex/logging/macros.h>
 
 namespace ue3 {
 namespace {
@@ -363,5 +366,40 @@ int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& 
 
   return replaced;
 }
+
+namespace {
+
+std::atomic<bool> g_in_front_end{false};
+
+bool HasNoCase(std::string_view s, std::string_view needle) {
+  return std::search(s.begin(), s.end(), needle.begin(), needle.end(), [](char a, char b) {
+           return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+         }) != s.end();
+}
+
+// A level's persistent package: *_P.xxx (campaign), or MP_*.xxx (versus / Horde maps, not their _LOC_ files).
+// GearGame_P.xxx is the game's script package, loaded with every level, so it says nothing.
+bool IsLevelPackage(std::string_view path) {
+  const size_t slash = path.find_last_of("\\/");
+  const std::string_view name = slash == std::string_view::npos ? path : path.substr(slash + 1);
+  if (HasNoCase(name, "geargame_p.xxx")) return false;
+  if (HasNoCase(name, "_p.xxx")) return true;
+  return name.size() > 3 && std::tolower(static_cast<unsigned char>(name[0])) == 'm' &&
+         std::tolower(static_cast<unsigned char>(name[1])) == 'p' && name[2] == '_' && HasNoCase(name, ".xxx") &&
+         !HasNoCase(name, "_loc_");
+}
+
+}  // namespace
+
+void NoteFileOpenedForExit(std::string_view guest_path) {
+  if (!HasNoCase(guest_path, ".xxx")) return;
+  if (HasNoCase(guest_path, "gearstart")) {
+    if (!g_in_front_end.exchange(true)) REXLOG_INFO("main_menu_exit: front end ({}) - Exit Game armed", guest_path);
+  } else if (IsLevelPackage(guest_path)) {
+    if (g_in_front_end.exchange(false)) REXLOG_INFO("main_menu_exit: level {} - Exit Game disarmed", guest_path);
+  }
+}
+
+bool InFrontEndForExit() { return g_in_front_end.load(std::memory_order_relaxed); }
 
 }  // namespace ue3

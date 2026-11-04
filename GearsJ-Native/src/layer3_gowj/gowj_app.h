@@ -59,7 +59,6 @@ class GowjApp : public rex::ReXApp {
     XenosLatencyInstall();  // Gears 2 patch 0135: Reflex / Anti-Lag 2 (only with --gow2_reflex and when the build has it)
   }
   void OnPostSetup() override {
-    XenosEnsureObserverHub();  // swap count for telemetry and menu transitions
     CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
     GowjAddBuiltInIniEdits();  // before the bundle is edited

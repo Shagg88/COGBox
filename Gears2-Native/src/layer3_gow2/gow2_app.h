@@ -89,10 +89,7 @@ class Gow2App : public rex::ReXApp {
     Gow2ApplyDataPatchesIfRequested(runtime());
   }
   // Everything is set up and the game is about to start.
-  void OnPreLaunchModule() override {
-    Gow2NotifyReadyToExit();
-    Ue3SetLaunchCommandLineIfRequested();
-  }
+  void OnPreLaunchModule() override { Ue3SetLaunchCommandLineIfRequested(); }
   // The game's main thread exists but hasn't run yet.
   void OnPostLaunchModule(rex::system::XThread* thread) override { XenosHoldGuestIfRequested(thread); }
 

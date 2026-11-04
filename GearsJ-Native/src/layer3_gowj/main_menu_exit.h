@@ -4,11 +4,10 @@
 #include <cstdint>
 #include <rex/cvar.h>
 
-REXCVAR_DECLARE(bool, gowj_main_menu_exit);
+REXCVAR_DECLARE(bool, gow_main_menu_exit);  // config_install.cpp: the label and this hook
 
 namespace rex::glue {
 
-bool MatchesNeedLive(const uint8_t* base, uint32_t addr);
 void ExitGame();
 
 }  // namespace rex::glue

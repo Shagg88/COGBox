@@ -8,7 +8,7 @@
 
 struct PPCContext;
 
-REXCVAR_DECLARE(bool, gow2_main_menu_exit);
+REXCVAR_DECLARE(bool, gow_main_menu_exit);  // config_install.cpp: the label and these hooks
 
 namespace rex::glue {
 
@@ -21,4 +21,3 @@ bool MatchesCredits(const uint8_t* base, const PPCContext& ctx);
 }  // namespace rex::glue
 
 void Gow2InstallMainMenuExitIfRequested();
-void Gow2NotifyReadyToExit();

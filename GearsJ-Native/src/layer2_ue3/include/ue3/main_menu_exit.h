@@ -25,4 +25,10 @@ ExitMenuStrings GetExitStringsForLang(std::string_view lang, GameId game);
 // Returns the number of keys replaced.
 int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& bundle);
 
+// Front-end tracking for the per-game exit hooks, so a credits map or a "need Xbox LIVE" message elsewhere in the
+// game can't close it. Feed every guest path the game opens (the file-open observer); InFrontEndForExit() is true
+// while GearStart*.xxx (the title screen and its menus) is the last level package the game opened.
+void NoteFileOpenedForExit(std::string_view guest_path);
+bool InFrontEndForExit();
+
 }  // namespace ue3

@@ -7,6 +7,9 @@
 // In TU6, sub_8228AF78 is the core Localize() function. When Credits is selected,
 // it looks up the credits entries (Section="credits", Package="Credits", or Key="line_00000").
 // Intercepting this provides deterministic exit without relying solely on file-open timing.
+//
+// Both only fire while the front end is loaded (ue3::InFrontEndForExit: GearStart.xxx is the last
+// level package opened). Finishing the campaign plays the same credits from a level, and they play.
 
 #include "main_menu_exit.h"
 
@@ -17,21 +20,16 @@
 #endif
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
 #include <filesystem>
 #include <string_view>
 
 #include <rex/logging.h>
 #include <rex/ppc.h>
+#include <ue3/main_menu_exit.h>
 #include <ue3/shader_prebuild.h>
 
-REXCVAR_DEFINE_BOOL(gow2_main_menu_exit, true, "ui",
-                    "Add Exit Game to the main menu (replaces Credits); restart");
-
 namespace {
-
-std::atomic<bool> g_ready_to_exit{false};
 
 bool ContainsNoCase(std::string_view s, std::string_view needle) {
   if (needle.empty()) return true;
@@ -47,16 +45,17 @@ bool ContainsNoCase(std::string_view s, std::string_view needle) {
 }
 
 void Gow2OnFileOpenedExit(std::string_view guest_path, const std::filesystem::path* host_path) {
-  if (!REXCVAR_GET(gow2_main_menu_exit)) return;
-  if (!g_ready_to_exit.load(std::memory_order_relaxed)) return;
+  if (!REXCVAR_GET(gow_main_menu_exit)) return;
 
-  const bool match = ContainsNoCase(guest_path, "sp_credits_p") ||
-                     ContainsNoCase(guest_path, "ui_scenes_credits") ||
-                     (host_path && (ContainsNoCase(host_path->string(), "sp_credits_p") ||
-                                    ContainsNoCase(host_path->string(), "ui_scenes_credits")));
-  if (match) {
-    rex::glue::ExitGame();
+  // Checked before the open is noted: SP_Credits_P is a level package, and opening it ends the front end.
+  if (ue3::InFrontEndForExit()) {
+    const bool match = ContainsNoCase(guest_path, "sp_credits_p") ||
+                       ContainsNoCase(guest_path, "ui_scenes_credits") ||
+                       (host_path && (ContainsNoCase(host_path->string(), "sp_credits_p") ||
+                                      ContainsNoCase(host_path->string(), "ui_scenes_credits")));
+    if (match) rex::glue::ExitGame();
   }
+  ue3::NoteFileOpenedForExit(guest_path);
 }
 
 }  // namespace
@@ -106,7 +105,7 @@ bool MatchesStringNoCase(const uint8_t* base, uint32_t addr, std::string_view te
 }
 
 bool MatchesCredits(const uint8_t* base, const PPCContext& ctx) {
-  if (!base || !g_ready_to_exit.load(std::memory_order_relaxed)) {
+  if (!base || !ue3::InFrontEndForExit()) {
     return false;
   }
   if (MatchesStringNoCase(base, ctx.r4.u32, "optionsmenu")) {
@@ -125,19 +124,15 @@ bool MatchesCredits(const uint8_t* base, const PPCContext& ctx) {
 #if defined(GOW2_TU6) && GOW2_TU6
 extern "C" void __imp__sub_8228AF78(PPCContext& ctx, uint8_t* base);
 extern "C" void sub_8228AF78(PPCContext& ctx, uint8_t* base) {
-  if (REXCVAR_GET(gow2_main_menu_exit) && rex::glue::MatchesCredits(base, ctx)) {
+  if (REXCVAR_GET(gow_main_menu_exit) && rex::glue::MatchesCredits(base, ctx)) {
     rex::glue::ExitGame();
   }
   __imp__sub_8228AF78(ctx, base);
 }
 #endif
 
-void Gow2NotifyReadyToExit() {
-  g_ready_to_exit.store(true, std::memory_order_relaxed);
-}
-
 void Gow2InstallMainMenuExitIfRequested() {
-  if (!REXCVAR_GET(gow2_main_menu_exit)) return;
+  if (!REXCVAR_GET(gow_main_menu_exit)) return;
   Ue3ShaderPrebuildChainFileOpened(&Gow2OnFileOpenedExit);
-  REXLOG_INFO("gow2_main_menu_exit: installed file-open hook for main menu Exit Game");
+  REXLOG_INFO("main_menu_exit: file-open hook installed (Exit Game while the front end is loaded)");
 }

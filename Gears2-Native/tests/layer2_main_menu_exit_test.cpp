@@ -554,3 +554,25 @@ TEST_CASE("main menu exit: judgment gearui with existing Next=MAINMENUOP_DLC rew
   // Idempotency
   CHECK(ApplyMainMenuExitToBundle(GameId::Judgment, "INT", bundle) == 0);
 }
+
+TEST_CASE("main menu exit: armed only while the front end is the last level opened", "[ue3][exit]") {
+  using ue3::InFrontEndForExit;
+  using ue3::NoteFileOpenedForExit;
+  NoteFileOpenedForExit("game:/GearGame/CookedXenon/SP_Hospital_P.xxx");
+  CHECK_FALSE(InFrontEndForExit());
+  NoteFileOpenedForExit("game:/GearGame/CookedXenon/GearStart.xxx");
+  CHECK(InFrontEndForExit());
+  // Packages that aren't levels leave it as it is: the script package, localized files, streamed parts, other files.
+  NoteFileOpenedForExit("game:/GearGame/CookedXenon/GearGame_P.xxx");
+  NoteFileOpenedForExit("game:/GearGame/CookedXenon/MP_Avalanche_LOC_INT.xxx");
+  NoteFileOpenedForExit("game:/GearGame/CookedXenon/SP_Closure_01.xxx");
+  NoteFileOpenedForExit("game:/GearGame/CookedXenon/Coalesced_INT.bin");
+  CHECK(InFrontEndForExit());
+  // A level ends it: the campaign's end credits play from a level, so they can't close the game.
+  NoteFileOpenedForExit("game:/GearGame/CookedXenon/SP_Closure_P.xxx");
+  CHECK_FALSE(InFrontEndForExit());
+  NoteFileOpenedForExit("game:/GearGame/CookedXenon/GearStart_LOC_INT.xxx");
+  CHECK(InFrontEndForExit());
+  NoteFileOpenedForExit("game:/GearGame/CookedXenon/MP_Avalanche.xxx");
+  CHECK_FALSE(InFrontEndForExit());
+}
