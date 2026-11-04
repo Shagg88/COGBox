@@ -8,6 +8,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -69,5 +70,10 @@ struct PopupFrame {
   bool finished = false;
 };
 PopupFrame PopupTimeline(PopupStyle style, float seconds);
+
+// The launcher's popup options (their ids and choice indices, as the in-game menu gets them) as the game's cvar and value:
+// the menu sets these at once - the popups read them on every unlock - so they need no restart. nullopt for any other
+// option. An index out of range gives the first choice, as the launcher does.
+std::optional<std::pair<std::string, std::string>> LiveCvarFor(const std::string& option_id, double value);
 
 }  // namespace xenos::ach

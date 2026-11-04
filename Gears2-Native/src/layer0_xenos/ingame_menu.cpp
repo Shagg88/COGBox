@@ -10,6 +10,7 @@
 // open its buttons are fed to Dear ImGui's gamepad navigation. Our code (MIT).
 #include <xenos/dev_tools.h>
 #include <xenos/achievements_browser.h>   // achievements part 3: the Achievements page
+#include <xenos/achievements_popup_logic.h>   // achievements part 4: popup settings applied at once (LiveCvarFor)
 #include <xenos/input/prompt_device_monitor.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -157,6 +158,7 @@ struct MenuOption {
   std::string id, tab, label, kind, why, tip;
   std::vector<std::string> choices;
   double value = 0, start = 0, min = 0, max = 1, step = 1;
+  double applied = 0;   // achievements part 4: the value last set live (options LiveCvarFor knows)
   int decimals = 0;
   bool enabled = true;
 };
@@ -213,7 +215,7 @@ MenuFile LoadMenuFile(const std::string& path) {
     else if (k == "kind") o.kind = v;
     else if (k == "why") o.why = v;
     else if (k == "tip") o.tip = v;
-    else if (k == "value") o.value = o.start = std::atof(v.c_str());
+    else if (k == "value") o.value = o.start = o.applied = std::atof(v.c_str());
     else if (k == "min") o.min = std::atof(v.c_str());
     else if (k == "max") o.max = std::atof(v.c_str());
     else if (k == "step") o.step = std::atof(v.c_str());
@@ -551,13 +553,15 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     page_first_frame_ = false;
   }
 
+  // Changes that need the restart (the popup settings apply at once, see ApplyLive).
   int Changes() const {
     int n = 0;
-    for (const MenuOption& o : g_file.options) n += o.value != o.start;
+    for (const MenuOption& o : g_file.options) n += o.value != o.start && !xenos::ach::LiveCvarFor(o.id, o.value);
     return n;
   }
 
-  void Finish(bool restart) {
+  // Every changed option, for COGBox to save once the game has closed (however it closes).
+  static std::string ChangesText() {
     std::string text;
     for (const MenuOption& o : g_file.options) {
       if (o.value == o.start) continue;
@@ -565,6 +569,27 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
       std::snprintf(v, sizeof v, "%.6g", o.value);
       text += o.id + "=" + v + "\r\n";
     }
+    return text;
+  }
+
+  // Achievements part 4: the popup settings take effect at once (the popups read their cvars on every unlock), and are
+  // written to the changes file straight away so COGBox keeps them even if the game is closed another way.
+  static void ApplyLive() {
+    bool changed = false;
+    for (MenuOption& o : g_file.options) {
+      if (o.value == o.applied) continue;
+      const auto c = xenos::ach::LiveCvarFor(o.id, o.value);
+      if (!c) continue;
+      if (!rex::cvar::SetFlagByName(c->first, c->second)) REXLOG_WARN("cogbox_menu: couldn't set {}", c->first);
+      o.applied = o.value;
+      changed = true;
+    }
+    if (changed && !g_file.changes_path.empty() && !WriteText(g_file.changes_path, ChangesText()))
+      REXLOG_WARN("cogbox_menu: couldn't write {}", g_file.changes_path);
+  }
+
+  void Finish(bool restart) {
+    const std::string text = ChangesText();
     if (!text.empty() && !WriteText(g_file.changes_path, text)) REXLOG_WARN("cogbox_menu: couldn't write {}", g_file.changes_path);
     if (restart && !WriteText(g_file.restart_path, "restart\r\n")) REXLOG_WARN("cogbox_menu: couldn't write {}", g_file.restart_path);
     REXLOG_INFO("cogbox_menu: {} with {} change(s)", restart ? "restart" : "quit", Changes());
@@ -698,10 +723,13 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
       ImGui::TextWrapped("Start the game from COGBox to change its settings here.");
       ImGui::SetCursorPosY(ImGui::GetWindowHeight() - bar_h - ImGui::GetStyle().WindowPadding.y + ImGui::GetStyle().ItemSpacing.y);
     }
+    ApplyLive();   // achievements part 4
     // the bar
     ImGui::Separator();
     const int n = Changes();
     if (n) ImGui::TextDisabled("%d change(s) - they take effect when the game restarts.", n);
+    else if (g_file.tabs.size() > size_t(tab_) && g_file.tabs[size_t(tab_)] == "Achievements")   // achievements part 4
+      ImGui::TextDisabled("Achievement popup settings take effect straight away.");
     else ImGui::TextDisabled("Settings take effect when the game restarts.");
     const float bw = (ImGui::GetContentRegionAvail().x - 3 * ImGui::GetStyle().ItemSpacing.x) / 4.0f;
     if (page_first_frame_) ImGui::SetKeyboardFocusHere();

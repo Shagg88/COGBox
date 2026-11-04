@@ -178,3 +178,27 @@ TEST_CASE("ach popup: PS5 motion (from the reference clip)", "[ach]") {
   CHECK(PopupTimeline(s, 5.6f).alpha < 1.f);
   CHECK(kPs5SlidePixels == 10.f);
 }
+
+// Part 4 player check: the in-game menu applies the popup settings at once (the popups read their cvars on each unlock)
+TEST_CASE("ach: LiveCvarFor maps the launcher's popup options to game cvars", "[ach]") {
+  using xenos::ach::LiveCvarFor;
+  auto c = LiveCvarFor("AchievementStyle", 2);
+  REQUIRE(c);
+  CHECK(c->first == "cogbox_ach_style");
+  CHECK(c->second == "ps5");
+  CHECK(LiveCvarFor("AchievementStyle", 0)->second == "x360");
+  CHECK(LiveCvarFor("AchievementColour", 7)->second == "teal");
+  CHECK(LiveCvarFor("AchievementColour", 7)->first == "cogbox_ach_colour");
+  CHECK(LiveCvarFor("AchievementPosition", 3)->second == "top_right");
+  CHECK(LiveCvarFor("AchievementPosition", 0)->second == "default");
+  CHECK(LiveCvarFor("AchievementSound", 0)->second == "false");
+  CHECK(LiveCvarFor("AchievementSound", 1)->first == "cogbox_ach_sound");
+  CHECK(LiveCvarFor("HideAchievementPopups", 1)->second == "true");
+  CHECK(LiveCvarFor("HideAchievementPopups", 1)->first == "cogbox_ach_hide");
+  CHECK(LiveCvarFor("AchievementColour", 42)->second == "dark");  // out of range: the first, as the launcher does
+  CHECK_FALSE(LiveCvarFor("Fov", 90));                             // not a live option: needs the restart as before
+  // every value maps to a name the popups read back
+  for (int i = 0; i < 10; ++i)
+    CHECK(xenos::ach::ParseColour(LiveCvarFor("AchievementColour", i)->second).name ==
+          xenos::ach::kColourPresets[size_t(i)].name);
+}

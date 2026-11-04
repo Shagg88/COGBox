@@ -2,6 +2,8 @@
 // Our code (MIT).
 #include <xenos/achievements_popup_logic.h>
 
+#include <initializer_list>
+
 #include <cctype>
 
 namespace xenos::ach {
@@ -176,6 +178,24 @@ PopupFrame PopupTimeline(PopupStyle style, float t) {
       break;
   }
   return f;
+}
+
+std::optional<std::pair<std::string, std::string>> LiveCvarFor(const std::string& option_id, double value) {
+  const int i = static_cast<int>(value + 0.5);
+  auto pick = [i](std::initializer_list<const char*> names) {
+    const int n = static_cast<int>(names.size());
+    return std::string(*(names.begin() + (i >= 0 && i < n ? i : 0)));
+  };
+  if (option_id == "AchievementStyle") return std::make_pair(std::string("cogbox_ach_style"), pick({"x360", "xbox", "ps5"}));
+  if (option_id == "AchievementColour")
+    return std::make_pair(std::string("cogbox_ach_colour"),
+                          pick({"dark", "red", "green", "blue", "purple", "orange", "pink", "teal", "grey", "gold"}));
+  if (option_id == "AchievementPosition")
+    return std::make_pair(std::string("cogbox_ach_position"),
+                          pick({"default", "top_left", "top_centre", "top_right", "bottom_left", "bottom_centre", "bottom_right"}));
+  if (option_id == "AchievementSound") return std::make_pair(std::string("cogbox_ach_sound"), std::string(i ? "true" : "false"));
+  if (option_id == "HideAchievementPopups") return std::make_pair(std::string("cogbox_ach_hide"), std::string(i ? "true" : "false"));
+  return std::nullopt;
 }
 
 }  // namespace xenos::ach
