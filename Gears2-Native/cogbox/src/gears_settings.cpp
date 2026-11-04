@@ -259,32 +259,32 @@ std::vector<Option> make_options(Game g) {
     add(make("Trilinear", "Smooth texture detail steps (trilinear)", Tab::Graphics, Kind::Bool, PG, 1,
              "Texture detail levels blend instead of showing a line where they step down (the game uses point filtering "
              "between levels).", 358), "trilinear", "", true);
-    // 0.3.0 (Shagg 17:48): settings Gears 1's 2006 engine doesn't have are left out of its list, not greyed
-    const bool g1 = g == Game::Gears1;
-    if (!g1) add(make("MipFade", "Sharp textures show at once (fast mip fade)", Tab::Graphics, Kind::Bool, PG, 1,
+    // 0.4.5 (Shagg 3 Nov, to-do 22: every graphics / display option the same in all four games): the settings Gears 1's
+    // 2006 engine doesn't have are in its list too, greyed with the reason (0.3.0 left them out).
+    add(make("MipFade", "Sharp textures show at once (fast mip fade)", Tab::Graphics, Kind::Bool, PG, 1,
              "A newly loaded sharper texture shows at once instead of fading in over 0.3-2 seconds.", 359), "mipfade", "", true);
     add(choice("Pool", "Texture memory", Tab::Graphics, PG,
                { "Game's own (smallest)", "Standard (196 MB / Gears 3 200 MB)", "Large (256 MB)", "Larger (320 MB, not long-tested)" }, 1,
                "The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory "
                "for the rest of the game.", 360), "pool", "", true);
-    if (!g1) add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
+    add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
                "How far away detail and objects are still drawn.", 361), "drawdist", "", true);
     // GitHub #113: character / weapon mesh detail. UE3's [SystemSettings] SkeletalMeshLODBias (0 = the game's own);
     // negative keeps the more detailed versions (hair, faces, armour) to a greater distance. Not in a preset: untested.
-    if (!g1) add(choice("MeshLod", "Character detail (LOD)", Tab::Graphics, PG, { "Original", "Higher", "Highest" }, 0,
+    add(choice("MeshLod", "Character detail (LOD)", Tab::Graphics, PG, { "Original", "Higher", "Highest" }, 0,
                "Keeps characters' and weapons' detailed models (hair, faces, armour) at a greater distance, for high "
                "resolutions. Costs some GPU time in crowded scenes. Original = the game's own.", 0), "inifx");
     // Motion blur: no PS1 tooltip.
-    if (!g1) add(make("MotionBlur", "Motion blur", Tab::Graphics, Kind::Bool, PG, 1, "The blur of fast movement (the game's own setting).", 370),
+    add(make("MotionBlur", "Motion blur", Tab::Graphics, Kind::Bool, PG, 1, "The blur of fast movement (the game's own setting).", 370),
         "inifx", "", true);
-    if (!g1) add(make("DoF", "Depth of field", Tab::Graphics, Kind::Bool, PG, 1,
+    add(make("DoF", "Depth of field", Tab::Graphics, Kind::Bool, PG, 1,
              "The blur of distant / out-of-focus areas (cutscenes, aiming).", 371), "inifx", "", true);
     // GitHub #102 (Shagg): no Lens flares option any more - the launcher decides per game at launch (below): on where the
     // game's occlusion queries are answered (Real occlusion, DirectX 12, not under Wine / Proton), off where they can't
     // be, since every flare would show through the scenery there.
     // Notes/80 (Gears2-Native): XeGTAO screen-space ambient occlusion in place of the game's own (Gears 2), or added
     // where a level has none (Gears 3 s.9: opt-in there, default "Game's own").
-    if (!g1) add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, experimental)", "XeGTAO (ultra, experimental)" },
+    add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, experimental)", "XeGTAO (ultra, experimental)" },
                         1,   // Game's own: XeGTAO is opt-in in every game
                "The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version "
                "(Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, "
