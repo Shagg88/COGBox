@@ -389,7 +389,9 @@ callback that calls `CurrentRarityProvider().ReportUnlock(title, id, unlocked_at
 
 Run (each folder's existing build dir): `ninja -C Gears2-Native/build/Release-tu6 gow2`,
 `ninja -C Gears3-Native/build/Release-tu6 gow3`, `ninja -C GearsJ-Native/build/Release gowj`,
-`ninja -C Gears1-Native/build/Release gow1` (use the folder that has a `build.ninja` if the name differs).
+`ninja -C Gears1-Native/build/Release gow1`. Gears 1 has no build folder on this PC yet: configure one the way
+the Gears 3 / Judgment ones were (read their `CMakeCache.txt` for the generator, compiler and options), or, if that
+fails, say so and leave Gears 1 to be built by Shagg.
 Expected: each ends `Linking CXX executable gowN.exe`, no errors.
 
 - [ ] **Step 3: Check in a game (the player runs it; never play or control the game yourself)**
