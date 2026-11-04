@@ -65,7 +65,8 @@ apply does that for you.
 
 New in 0.4.5
 ------------
-- Gears 1: no more crash while loading with a different voice language (Spanish and others, GitHub #176).
+- Gears 1: no more crash while loading with a different voice language (GitHub #176). Voice language is greyed
+  in Gears 1 for now: its voice files can't be checked yet, so it would change nothing.
 - Vulkan on laptops uses the dedicated graphics card instead of the built-in one (#176).
 - Folders with accented letters (e.g. GRAFICA with an accent) work for the game, user and log folders (#177, thanks
   to KiltedKernel, PR #178) and for the shader cache, crash and screenshot folders.
