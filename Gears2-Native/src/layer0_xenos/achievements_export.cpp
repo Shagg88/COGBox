@@ -50,6 +50,12 @@ void XenosExportAchievements(rex::Runtime* runtime) {
     catalog.achievements.push_back(std::move(e));
   }
   const std::filesystem::path catalog_path = xenos::ach::CatalogPath(root, title_id);
+  if (catalog.achievements.empty()) {
+    // Every COGBox game has achievements: an empty list means the game's data could not be read this time. Keep the
+    // cache from an earlier start rather than replace it with nothing.
+    REXLOG_WARN("achievements: the game reported no achievements; {} left as it is", rex::path_to_utf8(catalog_path));
+    return;
+  }
   if (!xenos::ach::WriteFileAtomic(catalog_path, xenos::ach::FormatCatalog(catalog))) {
     REXLOG_WARN("achievements: could not write {}", rex::path_to_utf8(catalog_path));
     return;
