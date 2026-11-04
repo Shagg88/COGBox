@@ -228,8 +228,9 @@ void startup_notices(App &a)
         const bool updated = !a.ini.get("Notices", "LanguageSeen").empty() || !a.ini.get("Notices", "WhatsNewSeen").empty();
         if (!updated) { a.ini.set("Notices", "WhatsNewSeen", COGBOX_VERSION); a.ini.save(); }
         else {
-            ask(a, "whatsnew", -1, "COGBox updated", std::string("COGBox is now version ") + COGBOX_VERSION +
-                ". See what's new and what was fixed in the changelog.", { "Open the changelog", "Continue" });
+            ask(a, "whatsnew", -1, "COGBox updated",
+                "COGBox has been updated. See what's new and what was fixed in this version's changelog.",
+                { "Open the changelog", "Continue" });
             return;
         }
     }

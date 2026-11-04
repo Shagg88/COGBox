@@ -800,3 +800,15 @@ XeGTAO (high, experimental) = XeGTAO (높음, 실험적)
 XeGTAO (ultra, experimental) = XeGTAO (울트라, 실험적)
 DirectX 12 = DirectX 12
 Vulkan = Vulkan
+
+# 0.4.5 (Shagg 4 Nov): What's new notice, EXIT button, Walk key (#125)
+COGBox updated = COGBox 업데이트됨
+COGBox has been updated. See what's new and what was fixed in this version's changelog. = COGBox가 업데이트되었습니다. 새로운 기능과 수정 사항은 이 버전의 변경 내역에서 확인하세요.
+Open the changelog = 변경 내역 열기
+EXIT = 종료
+Close COGBox. = COGBox를 닫습니다.
+Walk key = 걷기 키
+Hold to walk = 누르고 있는 동안 걷기
+Press to switch walking on / off = 누를 때마다 걷기 켜기 / 끄기
+With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = 키보드와 마우스 사용 시: 걷기 키의 동작 (키는 키보드 키에서 선택). 걸으면 절반 속도로 움직입니다. 처음에는 키가 설정되어 있지 않습니다.
+Walk = 걷기

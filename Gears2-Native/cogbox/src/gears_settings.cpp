@@ -246,8 +246,7 @@ std::vector<Option> make_options(Game g) {
                { "Native (same as render resolution)", "Quality (scene at 2/3)", "Performance (scene at 1/2)",
                  "Ultra performance (scene at 1/3)" }, 0,
                "With FSR, DLSS or XeSS: draw the 3D scene at a lower resolution and let the upscaler fill in the detail - more "
-               "frames per second, a little softer. HUD and menus stay at the full resolution. Native: no upscaling - the "
-               "upscaler only anti-aliases (DLSS runs as DLAA), so it gives no extra frames.\nPerformance needs render "
+               "frames per second, a little softer. HUD and menus stay at the full resolution.\nPerformance needs render "
                "resolution 2x (1440p) or 4x; Quality and Ultra performance need 3x (4K).", 351), "scenescale", "AAMode>=2");
     add(choice("FrameGen", "Frame generation (highly experimental)", Tab::Graphics, SH, { "Off", "AMD FSR frame generation" }, 0,
                "Highly experimental - it's rough for now. Shows a generated frame between each two the game draws: smoother motion on a fast monitor, about one frame more "
@@ -572,7 +571,7 @@ const std::vector<KeyAction> &key_actions()
         { "keybind_lstick_press", "Left stick click", "Left stick click", "C" },
         { "keybind_start", "Start", "Pause menu", "Escape,Return" },
         { "keybind_back", "Back", "Back / scores", "Backspace" },
-        { "keybind_walk", "-", "Walk (slower movement, GitHub #125)", "None" },   // SDK patch 60: no key until chosen
+        { "keybind_walk", "-", "Walk", "None" },   // SDK patch 60: no key until chosen
     };
     return v;
 }
