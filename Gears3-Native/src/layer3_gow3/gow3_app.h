@@ -8,6 +8,7 @@
 #include <rex/cvar.h>
 #include <rex/rex_app.h>
 #include "mouse_look.h"
+#include "main_menu_exit.h"
 
 namespace rex::ui {
 class WindowedAppContext;
@@ -58,6 +59,7 @@ class Gow3App : public rex::ReXApp {
     Gow3AddBuiltInIniEdits();  // before the bundle is edited
     Gow3InstallExtras();       // its package patches too
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
+    Gow3InstallMainMenuExitIfRequested();  // Exit Game: front-end tracking, before the game opens a level
     Gow3InstallModChapters();  // mods' chapters 32-49 and content packages (mod_chapters.cpp), after their config
     XenosInstallDrawStatsIfRequested();
     XenosInstallPrimDetailIfRequested();

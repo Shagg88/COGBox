@@ -121,6 +121,7 @@ add_library(gn_layer2_ue3 STATIC
     src/layer2_ue3/config_install.cpp
     src/layer2_ue3/shader_prebuild.cpp
     src/layer2_ue3/prebuild_lzx.cpp
+    src/layer2_ue3/main_menu_exit.cpp
     src/layer2_ue3/package_exports.cpp
 )
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
@@ -133,6 +134,7 @@ set(GOW2_SOURCES
     src/layer3_gow2/untiled.cpp
     src/layer3_gow2/game_patches.cpp
     src/layer3_gow2/mouse_look.cpp
+    src/layer3_gow2/main_menu_exit.cpp
 )
 if(WIN32)
     add_executable(gow2 WIN32 ${GOW2_SOURCES})
@@ -368,6 +370,8 @@ if(GN_BUILD_TESTS)
         src/layer2_ue3/config_bundle.cpp
         tests/layer2_prebuild_lzx_test.cpp
         src/layer2_ue3/prebuild_lzx.cpp
+        tests/layer2_main_menu_exit_test.cpp
+        src/layer2_ue3/main_menu_exit.cpp
         tests/layer2_package_exports_test.cpp
         src/layer2_ue3/package_exports.cpp
         src/layer0_xenos/renderer/upscaler.cpp

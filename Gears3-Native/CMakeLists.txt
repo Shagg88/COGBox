@@ -85,9 +85,11 @@ rexglue_apply_target_settings(gn_layer2_ue3)
 # include folder, so this game's own ue3/ headers are not shadowed.
 target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp)  # GitHub #153
+    ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp  # GitHub #153
+    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp)
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp PROPERTIES
+    ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp
+    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 
 # Layer 3: Gears of War 3 (the executable).
@@ -96,6 +98,7 @@ set(GOW3_SOURCES
     src/layer3_gow3/game_patches.cpp
     src/layer3_gow3/extras.cpp
     src/layer3_gow3/mouse_look.cpp
+    src/layer3_gow3/main_menu_exit.cpp
     src/layer3_gow3/mod_chapters.cpp
 )
 if(WIN32)
