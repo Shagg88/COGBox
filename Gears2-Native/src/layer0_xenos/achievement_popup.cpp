@@ -132,13 +132,14 @@ void AchievementPopup::OnDraw(ImGuiIO& io) {
   const auto now = std::chrono::steady_clock::now();
   Entry e;
   float t = 0.f;
+  const char* sound = nullptr;  // played after unlocking: file checks / PlaySound must not hold up Push on a game thread
   {
     std::lock_guard<std::mutex> lock(mutex_);
     while (!queue_.empty()) {
       Entry& front = queue_.front();
       if (!front.started) {
         front.started = now;
-        if (front.sound) XenosPlayAchievementSound(StyleName(front.style));
+        if (front.sound) sound = StyleName(front.style);
       }
       t = std::chrono::duration<float>(now - *front.started).count();
       if (t >= ach::PopupDuration(front.style)) {
@@ -153,6 +154,7 @@ void AchievementPopup::OnDraw(ImGuiIO& io) {
       return;
     }
   }
+  if (sound) XenosPlayAchievementSound(sound);
 
   const float scale = std::clamp(io.DisplaySize.y / 1080.f, 0.6f, 2.f), margin = 48.f * scale;
   ImVec2 size;
