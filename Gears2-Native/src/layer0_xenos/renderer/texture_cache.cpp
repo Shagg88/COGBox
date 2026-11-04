@@ -521,9 +521,11 @@ void TextureCache::ResetCounters() {
   // Job 1204b: the texture-time timers are not reset here - the patch 0137 line takes differences between windows
   const double bind = stats_.bind_ms, lookup = stats_.lookup_ms, load = stats_.load_ms, jobs = stats_.gpu_jobs_ms;
   const uint64_t epoch_misses = stats_.slot_epoch_misses;
+  const uint64_t rg = stats_.reload_gpu, rv = stats_.reload_volatile, rc = stats_.reload_cpu, rb = stats_.reload_bytes;
   stats_ = TextureCacheStats{};
   stats_.bind_ms = bind; stats_.lookup_ms = lookup; stats_.load_ms = load; stats_.gpu_jobs_ms = jobs;
   stats_.slot_epoch_misses = epoch_misses;
+  stats_.reload_gpu = rg; stats_.reload_volatile = rv; stats_.reload_cpu = rc; stats_.reload_bytes = rb;
   stats_.textures = textures;
   stats_.host_bytes = host;
   stats_.scaled_textures = scaled;
@@ -826,6 +828,10 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   const char* why = stats_.gpu_pages_changed != gpu_pages0 ? "reload: our GPU wrote its pages"
                     : stats_.volatile_reloads != volatile0 ? "reload: volatile (pages written, not hashed)"
                                                             : "reload: CPU changed its bytes";
+  if (stats_.gpu_pages_changed != gpu_pages0) ++stats_.reload_gpu;   // job 1207
+  else if (stats_.volatile_reloads != volatile0) ++stats_.reload_volatile;
+  else ++stats_.reload_cpu;
+  stats_.reload_bytes += uint64_t(e.base_length) + e.mip_length;
   if (load_log_frame_ && frame == load_log_frame_) LogLoad(e, tf, frame, why);
   return done(e, why);
 }

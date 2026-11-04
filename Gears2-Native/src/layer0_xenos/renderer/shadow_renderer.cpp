@@ -2425,7 +2425,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     "looked up {:.0f} | lookups {:.0f}: no write since {:.0f}, pages unchanged {:.0f} (pages walked {:.0f}), "
                     "bytes re-checked {:.0f} | watch changes seen {:.1f} | cached textures {} | ms per frame: Bind {:.3f} "
                     "(lookups {:.3f}, of which loads {:.3f}; GPU loads {:.3f}), SetTextures {:.3f} | slot misses only from "
-                    "the epoch {:.0f}",
+                    "the epoch {:.0f} | reloads: our GPU wrote {:.1f}, volatile {:.1f}, CPU changed bytes {:.1f}, {:.0f} KB",
                     frame_ + 1 - uint64_t(log_every_), frame_, d(ts.slot_hits, tex_prev_.slot_hits) / n,
                     d(ts.slot_misses, tex_prev_.slot_misses) / n, d(ts.lookups, tex_prev_.lookups) / n,
                     d(ts.lookup_epoch_hits, tex_prev_.lookup_epoch_hits) / n,
@@ -2434,9 +2434,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     d(ts.epoch_changes, tex_prev_.epoch_changes) / n, ts.textures,
                     (ts.bind_ms - tex_prev_.bind_ms) / n, (ts.lookup_ms - tex_prev_.lookup_ms) / n,
                     (ts.load_ms - tex_prev_.load_ms) / n, (ts.gpu_jobs_ms - tex_prev_.gpu_jobs_ms) / n,
-                    (set_textures_ms_ - set_textures_prev_ms_) / n, d(ts.slot_epoch_misses, tex_prev_.slot_epoch_misses) / n);
+                    (set_textures_ms_ - set_textures_prev_ms_) / n, d(ts.slot_epoch_misses, tex_prev_.slot_epoch_misses) / n,
+                    d(ts.reload_gpu, tex_prev_.reload_gpu) / n, d(ts.reload_volatile, tex_prev_.reload_volatile) / n,
+                    d(ts.reload_cpu, tex_prev_.reload_cpu) / n, d(ts.reload_bytes, tex_prev_.reload_bytes) / n / 1024.0);
         tex_prev_.bind_ms = ts.bind_ms; tex_prev_.lookup_ms = ts.lookup_ms; tex_prev_.load_ms = ts.load_ms;
         tex_prev_.gpu_jobs_ms = ts.gpu_jobs_ms; tex_prev_.slot_epoch_misses = ts.slot_epoch_misses;
+        tex_prev_.reload_gpu = ts.reload_gpu; tex_prev_.reload_volatile = ts.reload_volatile;
+        tex_prev_.reload_cpu = ts.reload_cpu; tex_prev_.reload_bytes = ts.reload_bytes;
         set_textures_prev_ms_ = set_textures_ms_;
         tex_prev_.slot_hits = ts.slot_hits; tex_prev_.slot_misses = ts.slot_misses; tex_prev_.lookups = ts.lookups;
         tex_prev_.lookup_epoch_hits = ts.lookup_epoch_hits; tex_prev_.lookup_version_hits = ts.lookup_version_hits;
