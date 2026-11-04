@@ -552,6 +552,7 @@ uint32_t UntileCode(gpu::Format f) {
 
 uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t slots_cube, uint32_t slots_3d,
                             uint64_t frame, gpu::TextureView views[96], gpu::SamplerDesc samplers[32]) {
+  PhaseScope bind_time(stats_.bind_ms);  // 0.4.5 texture-time research
   uint32_t stand_ins = 0;
   last_scaled_mask_ = 0;
   const uint64_t epoch = watch_.Epoch();
@@ -586,6 +587,7 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
       continue;
     }
     ++stats_.slot_misses;  // patch 0137
+    if (sc.valid && sc.kinds == kinds && sc.epoch != epoch && std::memcmp(sc.tf, tf, sizeof(sc.tf)) == 0) ++stats_.slot_epoch_misses;
     const uint32_t stand_ins_before = stand_ins;
     sc.entries[0] = sc.entries[1] = sc.entries[2] = nullptr;
     sc.scaled = false;
@@ -692,6 +694,7 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
 
 void TextureCache::RunGpuJobs() {
   if (gpu_jobs_.empty()) return;
+  PhaseScope jobs_time(stats_.gpu_jobs_ms);  // 0.4.5 texture-time research
   PhaseScope load(g_phase.load), gpu(g_phase.gpu);  // job 299: still counted as GPU-path load time
   for (const std::function<void()>& job : gpu_jobs_) job();
   gpu_jobs_.clear();
@@ -711,6 +714,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
     if (probe) Probe(r, tf, frame, what);
     return r;
   };
+  PhaseScope lookup_time(stats_.lookup_ms);  // 0.4.5 texture-time research
   ++stats_.lookups;  // patch 0137
   auto it = entries_.find(key);
   // Patch 0149 (deep-dive review): a texture whose host creation failed (memory pressure) was a stand-in for the rest of
@@ -1198,6 +1202,7 @@ void TextureCache::EndFrame(uint64_t frame) {
 
 void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   PhaseScope phase_load(g_phase.load);  // job 299
+  PhaseScope load_time(stats_.load_ms);  // 0.4.5 texture-time research
   ++g_phase.loads;
   const uint32_t format = Bits(tf[1], 0, 6), endian = Bits(tf[1], 6, 2);
   const HostFormat hf = Host(format);

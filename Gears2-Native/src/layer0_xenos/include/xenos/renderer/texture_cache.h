@@ -72,6 +72,10 @@ struct TextureCacheStats {
   // to re-check bytes; 4 KB pages walked by those version checks; watch epoch changes seen by Bind.
   uint64_t slot_hits = 0, slot_misses = 0, lookups = 0, lookup_epoch_hits = 0, lookup_version_hits = 0;
   uint64_t lookup_rechecks = 0, version_pages = 0, epoch_changes = 0;
+  // 0.4.5 texture-time research: wall time inside Bind (all of it), inside Lookup (incl. loads), inside Load, and
+  // in RunGpuJobs; slot-cache misses whose fetch constant was the same as the slot's last one apart from the epoch.
+  double bind_ms = 0, lookup_ms = 0, load_ms = 0, gpu_jobs_ms = 0;
+  uint64_t slot_epoch_misses = 0;
 };
 
 class TextureCache {

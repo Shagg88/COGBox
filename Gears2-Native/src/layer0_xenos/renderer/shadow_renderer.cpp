@@ -2422,13 +2422,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         auto d = [](uint64_t cur, uint64_t prev) { return double(cur >= prev ? cur - prev : cur); };
         REXLOG_INFO("gow2_renderer: patch 0137 frames {}-{}: texture binding per frame: slots from the slot cache {:.0f}, "
                     "looked up {:.0f} | lookups {:.0f}: no write since {:.0f}, pages unchanged {:.0f} (pages walked {:.0f}), "
-                    "bytes re-checked {:.0f} | watch changes seen {:.1f} | cached textures {}",
+                    "bytes re-checked {:.0f} | watch changes seen {:.1f} | cached textures {} | ms per frame: Bind {:.3f} "
+                    "(lookups {:.3f}, of which loads {:.3f}; GPU loads {:.3f}), SetTextures {:.3f} | slot misses only from "
+                    "the epoch {:.0f}",
                     frame_ + 1 - uint64_t(log_every_), frame_, d(ts.slot_hits, tex_prev_.slot_hits) / n,
                     d(ts.slot_misses, tex_prev_.slot_misses) / n, d(ts.lookups, tex_prev_.lookups) / n,
                     d(ts.lookup_epoch_hits, tex_prev_.lookup_epoch_hits) / n,
                     d(ts.lookup_version_hits, tex_prev_.lookup_version_hits) / n,
                     d(ts.version_pages, tex_prev_.version_pages) / n, d(ts.lookup_rechecks, tex_prev_.lookup_rechecks) / n,
-                    d(ts.epoch_changes, tex_prev_.epoch_changes) / n, ts.textures);
+                    d(ts.epoch_changes, tex_prev_.epoch_changes) / n, ts.textures,
+                    (ts.bind_ms - tex_prev_.bind_ms) / n, (ts.lookup_ms - tex_prev_.lookup_ms) / n,
+                    (ts.load_ms - tex_prev_.load_ms) / n, (ts.gpu_jobs_ms - tex_prev_.gpu_jobs_ms) / n,
+                    (set_textures_ms_ - set_textures_prev_ms_) / n, d(ts.slot_epoch_misses, tex_prev_.slot_epoch_misses) / n);
+        tex_prev_.bind_ms = ts.bind_ms; tex_prev_.lookup_ms = ts.lookup_ms; tex_prev_.load_ms = ts.load_ms;
+        tex_prev_.gpu_jobs_ms = ts.gpu_jobs_ms; tex_prev_.slot_epoch_misses = ts.slot_epoch_misses;
+        set_textures_prev_ms_ = set_textures_ms_;
         tex_prev_.slot_hits = ts.slot_hits; tex_prev_.slot_misses = ts.slot_misses; tex_prev_.lookups = ts.lookups;
         tex_prev_.lookup_epoch_hits = ts.lookup_epoch_hits; tex_prev_.lookup_version_hits = ts.lookup_version_hits;
         tex_prev_.version_pages = ts.version_pages; tex_prev_.lookup_rechecks = ts.lookup_rechecks;
@@ -7031,7 +7039,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                              : tcube ? 32u + 32u - uint32_t(std::countl_zero(tcube))
                                      : 32u - uint32_t(std::countl_zero(t2d));
       const uint32_t sampler_count = 32u - uint32_t(std::countl_zero(t2d | tcube | t3d));  // fetch slot = sampler
+      const auto st_t0 = std::chrono::steady_clock::now();  // 0.4.5 texture-time research
       backend_->SetTextures(views, samplers, count, sampler_count);
+      set_textures_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - st_t0).count();
       if (report_on_ || StatsTexturesNow()) RepNoteTextures(views, samplers, count, sampler_count);  // 0101, 0124
       if (texture_memo_) {
         tex_memo_valid_ = true;
@@ -10775,6 +10785,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::unique_ptr<rr::GuestWatch> watch_;
   std::unique_ptr<rr::TextureCache> textures_;
   rr::TextureCacheStats tex_prev_;  // patch 0137: the counters at the previous log line
+  double set_textures_ms_ = 0, set_textures_prev_ms_ = 0;  // 0.4.5 texture-time research
   uint32_t submit_draws_ = 0, draws_since_submit_ = 0;  // patch 0138
   uint64_t early_prev_ = 0;  // patch 0138
   bool use_textures_ = true, upload_watch_ = true, vertex_direct_ = true, float_constants_trim_ = true;
