@@ -127,6 +127,11 @@ show "Secret achievement" and hide its name, description and icon. The player ca
 `revealed.txt`, one `<TitleID>:<id>` per line, so it stays revealed in every game and the launcher. Revealing never
 unlocks anything; an unlocked secret is always shown.
 
+The game's own data decides what is secret; COGBox keeps no list of its own. Checked 2026-11-04 on Gears 2 TU6: all
+79 achievements (DLC included) have the 0x8 bit, so none is secret - including the seven map-pack achievements that
+achievement sites list as secret (they were hidden before the map packs shipped; the console took that from the DLC or
+the online service, not the title data). The 0x8 bit itself is still to be confirmed on a game whose data has a secret.
+
 ### What the reader gives
 
 - Per achievement: id, label, description, unachieved description, GP, secret, revealed, icon path, unlocked, unlock
