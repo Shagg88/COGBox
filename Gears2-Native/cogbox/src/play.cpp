@@ -251,11 +251,19 @@ static bool launcher_to_front(App &a)
 void play_poll(App &a)
 {
     if (a.raiseUntil) {   // to-do 20
-        if (a.run.proc || SDL_GetTicks() >= a.raiseUntil || launcher_to_front(a)) a.raiseUntil = 0;
+        // review 0.4.5: at most every 250 ms, and given up once another program has the front (the player chose it)
+        static uint64_t next = 0;
+        HWND fg = GetForegroundWindow();
+        DWORD pid = 0;
+        if (fg) GetWindowThreadProcessId(fg, &pid);
+        const bool other = fg && pid != GetCurrentProcessId() && pid != a.raisePid;
+        if (a.run.proc || SDL_GetTicks() >= a.raiseUntil || other) a.raiseUntil = 0;
+        else if (SDL_GetTicks() >= next) { next = SDL_GetTicks() + 250; if (launcher_to_front(a)) a.raiseUntil = 0; }
     }
     if (!a.run.proc || WaitForSingleObject(a.run.proc, 0) != WAIT_OBJECT_0) return;
     DWORD code = 0;
     bool known = GetExitCodeProcess(a.run.proc, &code) != 0;
+    a.raisePid = GetProcessId(a.run.proc);   // review 0.4.5: the closing game's windows don't count as "another program"
     CloseHandle(a.run.proc);
     a.run.proc = nullptr;
     int g = a.run.game;

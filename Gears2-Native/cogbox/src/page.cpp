@@ -382,6 +382,9 @@ static void keys_section(App &a, int g)
     if (capturing) ImGui::BeginDisabled();   // while waiting for a key, Space / Enter mustn't press a button
     for (int i = 0; i < (int)acts.size(); i++) {
         const gs::KeyAction &k = acts[i];
+        // review 0.4.5: the Walk key only with a runtime that has it (SDK patch 60) - binding it would take the key from
+        // another action and send nothing
+        if (!strcmp(k.cvar, "keybind_walk") && !(a.env[g].cap.runtime_has && a.env[g].cap.runtime_has("keybind_walk"))) continue;
         ImGui::PushID(k.cvar);
         std::string label = std::string(pad_name(a, k.pad)) + "  -  " + k.what;
         row_label(label.c_str(), "", true);
