@@ -1158,7 +1158,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         static const int country[22] = { 0, 103, 35, 34, 24, 50, 31, 71, 13, 82, 88, 23, 42, 74, 25, 32, 75, 90, 53, 56, 101, 20 };
         const int l = std::max(0, std::min(21, s.i("Lang")));
         const Option* lo = find_option(g, "Lang");
-        if (l > 0 && avail("Lang") && lo && choice_available(*lo, g, l).ok) {
+        const bool missing = l < static_cast<int>(env.lang_missing.size()) && env.lang_missing[l];   // GitHub #159
+        if (l > 0 && avail("Lang") && lo && choice_available(*lo, g, l).ok && missing)
+            notes.push_back("launcher: Game language " + lo->choices[l] + " is not on this copy of the game - the game's own default instead");
+        if (l > 0 && avail("Lang") && lo && choice_available(*lo, g, l).ok && !missing) {
             a.push_back("--user_language=" + std::to_string(lang[l]));
             a.push_back("--user_country=" + std::to_string(country[l]));
             // GitHub #76: Gears 1 plays Latin American Spanish only for a North American game region (SDK patch 47)
@@ -1167,7 +1170,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     if (avail("VoiceLang") && s.i("VoiceLang") > 0) {   // GitHub #87
         static const char* k_voice[10] = { "", "INT", "FRA", "DEU", "ITA", "ESN", "ESM", "POL", "RUS", "JPN" };
-        a.push_back(std::string("--ue3_voice_language=") + k_voice[std::max(0, std::min(9, s.i("VoiceLang")))]);
+        const int v = std::max(0, std::min(9, s.i("VoiceLang")));
+        if (v < static_cast<int>(env.voice_missing.size()) && env.voice_missing[v]) {   // GitHub #159
+            const Option* vo = find_option(g, "VoiceLang");
+            if (vo) notes.push_back("launcher: Voice language " + vo->choices[v] + " is not on this copy of the game - the game language's voices instead");
+        } else {
+            a.push_back(std::string("--ue3_voice_language=") + k_voice[v]);
+        }
     }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
