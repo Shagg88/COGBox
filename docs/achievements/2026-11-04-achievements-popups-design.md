@@ -22,9 +22,9 @@ stored, whichever style shows.
 
 | | Xbox 360 | Modern Xbox | PS5 trophy |
 |---|---|---|---|
-| Default position | bottom centre | bottom centre | top right |
+| Default position | bottom centre | bottom centre (centred; opens from the middle) | top right |
 | Shape | flat grey (#4B4B4B) pill | pill in the chosen colour, round badge on the left | dark (#1F2023, slightly see-through) rounded box |
-| Icon | our orb: dark ring cut in four by a cross, top-left quarter lit green, glossy grey sphere, symmetric green X of two curved bands | trophy badge (normal) / diamond with laurels (rare) | the achievement's own icon (game data) + a grade cup in gold / silver / bronze |
+| Icon | our orb: dark ring cut in four by a cross, top-left quarter lit green, glossy grey sphere, symmetric green X of two curved bands; the X turns into the achievement's own icon (game data, clipped to the circle) | round badge: the achievement's own icon (clipped to the circle), which flips to a trophy (normal) / diamond with laurels (rare) | the achievement's own icon + a grade cup in gold / silver / bronze |
 | Line 1 | "Achievement unlocked" | "Achievement unlocked!" / "Rare achievement unlocked" (bold) | grade cup + achievement name |
 | Line 2 | "<GP>G - <name>" | white "G" coin, "<GP> - <name>" | "Trophy earned!" (grey) |
 | Font | Segoe UI | Segoe UI, line 1 Semibold/Bold | Segoe UI |
@@ -39,15 +39,23 @@ Dark `#24262B` (default, thin `#3C3F46` border), Red `#9E1B22`, Green `#107C10`,
 Orange `#C25A0C`, Pink `#B4246E`, Teal `#0E7C7B`, Grey `#4B4F56`, Gold `#A07A12`. Text stays white; the badge is a
 darker shade of the same colour.
 
-### Animation (our own timing, tuned against reference clips before it ships)
+### Animation (measured frame by frame from reference clips of the real popups; our own drawing)
 
-Each popup is about 5 s: 0.5 s intro, about 4 s hold, 0.5 s outro. Popups queue and show one after another.
+Durations: Xbox 360 6.1 s, modern Xbox 7.3 s, PS5 5.7 s. Popups queue and show one after another.
 
-- **Xbox 360:** the orb appears; the bar stretches out sideways from behind it into the full pill; the text fades in
-  once the bar is open. Outro: the bar shrinks back into the orb and all fades.
-- **Modern Xbox:** the badge pops in (small overshoot); the pill extends to the right from the badge; the two lines
-  slide / fade in; a quick shine crosses the trophy. Outro: the pill folds back into the badge, then fades.
-- **PS5:** the box slides in from the right edge; holds; slides back out and fades.
+- **Xbox 360:** a plain orb (no ring) fades and grows in (0-0.15 s); the bar slides out to the right from behind it
+  with a small overshoot (0.15-0.6 s); the ring and the text appear (0.35 s); the X dims and the achievement icon
+  fades in (0.75-0.95 s). Out, reversed: icon back to the X (5.2-5.5 s), ring off, text off, the orb shrinks to a dot
+  (5.85-5.95 s), the empty bar fades (5.95-6.1 s). No achievement icon: the X stays.
+- **Modern Xbox:** a small hollow ring grows (0-0.35 s) and fills (0.35-0.45 s); the achievement icon grows from a
+  dot inside it (0.5-0.75 s); the badge flips like a coin to the trophy / diamond (1.2-1.4 s) while the pill opens
+  outward from the centre (1.2-1.55 s); the text fades in (1.55-1.75 s). Page 1 (title, "G <GP> - name") until
+  4.2 s, cross-fade to page 2 (the achievement's description) by 4.4 s. Out: text off (6.1 s), the pill closes to
+  the centre (6.25-6.5 s), flips back (6.5-6.7 s), the icon shrinks (6.7-6.85 s), the ring empties and shrinks
+  (6.85-7.3 s). The real one's "Hold Guide to open" page and console logo are not copied. Rare title: "Rare
+  achievement unlocked - <percent>%". No achievement icon: the trophy shows from the start, no flip.
+- **PS5:** fades in with a short 10 px slide from the right (0-0.15 s), holds, fades out with the same slide
+  (5.5-5.7 s).
 
 The sound starts with the intro.
 

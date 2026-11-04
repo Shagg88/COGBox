@@ -48,16 +48,21 @@ PopupPosition ResolvePosition(PopupStyle style, PopupPosition p);  // Default: P
 std::string FitText(const std::string& text, float max_width, const std::function<float(const std::string&)>& measure,
                     float* scale_out);
 
-// The animation: where each moving part of a popup is, `seconds` after it started. 5 s per popup: 0.5 s intro, hold,
-// 0.5 s outro. The styles draw only from these numbers.
-constexpr float kPopupSeconds = 5.0f;
+// The animation, measured from reference clips of the real popups (docs/achievements/...-popups-design.md): where
+// each moving part of a popup is, `seconds` after it started. The styles draw only from these numbers.
+float PopupDuration(PopupStyle style);  // X360 6.1 s, Xbox 7.3 s, PS5 5.7 s
+constexpr float kPs5SlidePixels = 10.f;  // the PS5 box's short slide (at 1080p)
 struct PopupFrame {
-  float alpha = 0;       // the whole popup, 0-1
-  float icon_scale = 0;  // orb / badge (the Xbox badge overshoots to 1.12)
-  float bar = 0;         // pill / box width, 0-1 (0 = only the icon)
-  float slide = 1;       // 0 = in place, 1 = fully off screen (PS5: to the right)
+  float alpha = 0;        // the whole popup, 0-1
+  float icon_scale = 0;   // the orb / badge size, 0-1
+  float ring = 0;         // X360: the four-part ring's opacity; Xbox: hollow ring (0) -> filled badge (1)
+  float glyph_scale = 0;  // Xbox: the icon inside the badge, grown from a dot
+  float swap = 0;         // X360: 0 the X, 1 the achievement icon (dark between); Xbox: the coin flip from the
+                          // achievement icon (0) to the trophy / diamond (1), drawn squeezed by |cos(pi * swap)|
+  float bar = 0;          // pill / box width, 0-1 (the 360 bar overshoots to 1.04); Xbox opens from the centre
+  float slide = 1;        // PS5: 0 in place, 1 = kPs5SlidePixels to the right
   float text_alpha = 0;
-  float shine = -1;      // Xbox trophy shine position 0-1, -1 = none
+  float page = 0;         // Xbox: 0 the title page, 1 the description page (cross-fade between)
   bool finished = false;
 };
 PopupFrame PopupTimeline(PopupStyle style, float seconds);

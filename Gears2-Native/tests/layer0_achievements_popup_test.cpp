@@ -67,7 +67,11 @@ TEST_CASE("ach popup: text fitting", "[ach]") {
 
 TEST_CASE("ach popup: timeline starts and ends invisible, holds fully shown", "[ach]") {
   using namespace xenos::ach;
+  CHECK(PopupDuration(PopupStyle::X360) == 6.1f);
+  CHECK(PopupDuration(PopupStyle::Xbox) == 7.3f);
+  CHECK(PopupDuration(PopupStyle::Ps5) == 5.7f);
   for (PopupStyle s : {PopupStyle::X360, PopupStyle::Xbox, PopupStyle::Ps5}) {
+    const float d = PopupDuration(s);
     CHECK(PopupTimeline(s, 0.f).alpha == 0.f);
     const auto hold = PopupTimeline(s, 2.5f);
     CHECK(hold.alpha == 1.f);
@@ -75,31 +79,76 @@ TEST_CASE("ach popup: timeline starts and ends invisible, holds fully shown", "[
     CHECK(hold.text_alpha == 1.f);
     CHECK(hold.slide == 0.f);
     CHECK(hold.icon_scale == 1.f);
+    CHECK(hold.ring == 1.f);
+    CHECK(hold.glyph_scale == 1.f);
+    CHECK(hold.swap == 1.f);
     CHECK_FALSE(hold.finished);
-    const auto end = PopupTimeline(s, 5.f);
+    CHECK_FALSE(PopupTimeline(s, d - 0.01f).finished);
+    const auto end = PopupTimeline(s, d);
     CHECK(end.finished);
     CHECK(end.alpha == 0.f);
-    for (float t = 0; t < 5.f; t += 0.05f) {
+    for (float t = 0; t < d; t += 0.05f) {
       const auto f = PopupTimeline(s, t);
       CHECK(f.alpha >= 0.f);
       CHECK(f.alpha <= 1.f);
       CHECK(f.bar >= 0.f);
-      CHECK(f.bar <= 1.f);
+      CHECK(f.bar <= 1.05f);  // the 360 bar overshoots a little
       CHECK(f.slide >= 0.f);
       CHECK(f.slide <= 1.f);
-      CHECK(f.icon_scale <= 1.12f + 1e-4f);
+      CHECK(f.icon_scale >= 0.f);
+      CHECK(f.icon_scale <= 1.f);
+      CHECK(f.ring >= 0.f);
+      CHECK(f.ring <= 1.f);
+      CHECK(f.swap >= 0.f);
+      CHECK(f.swap <= 1.f);
+      CHECK(f.page >= 0.f);
+      CHECK(f.page <= 1.f);
     }
   }
 }
 
-TEST_CASE("ach popup: each style's own motion", "[ach]") {
+TEST_CASE("ach popup: Xbox 360 motion (from the reference clip)", "[ach]") {
   using namespace xenos::ach;
-  CHECK(PopupTimeline(PopupStyle::X360, 0.3f).bar > 0.f);
-  CHECK(PopupTimeline(PopupStyle::X360, 0.3f).bar < 1.f);
-  CHECK(PopupTimeline(PopupStyle::X360, 0.1f).text_alpha == 0.f);
-  CHECK(PopupTimeline(PopupStyle::Xbox, 0.18f).icon_scale > 1.f);  // overshoot
-  CHECK(PopupTimeline(PopupStyle::Xbox, 0.9f).shine > 0.f);
-  CHECK(PopupTimeline(PopupStyle::Xbox, 2.0f).shine == -1.f);
-  CHECK(PopupTimeline(PopupStyle::Ps5, 0.2f).slide > 0.f);
-  CHECK(PopupTimeline(PopupStyle::Ps5, 4.8f).slide > 0.f);
+  const auto s = PopupStyle::X360;
+  CHECK(PopupTimeline(s, 0.25f).bar > 0.f);
+  CHECK(PopupTimeline(s, 0.25f).bar < 1.f);
+  CHECK(PopupTimeline(s, 0.35f).bar > 1.f);           // overshoot, then settles
+  CHECK(PopupTimeline(s, 0.25f).ring == 0.f);          // the ring and the text come after the bar opens
+  CHECK(PopupTimeline(s, 0.25f).text_alpha == 0.f);
+  CHECK(PopupTimeline(s, 0.6f).swap == 0.f);           // still the X
+  CHECK(PopupTimeline(s, 0.85f).swap > 0.f);           // X -> achievement icon
+  CHECK(PopupTimeline(s, 5.35f).swap < 1.f);           // and back at the end
+  CHECK(PopupTimeline(s, 5.7f).ring < 1.f);
+  CHECK(PopupTimeline(s, 5.9f).icon_scale < 1.f);      // the orb shrinks away
+  CHECK(PopupTimeline(s, 5.9f).text_alpha == 0.f);
+  CHECK(PopupTimeline(s, 5.9f).alpha == 1.f);          // the empty bar fades last
+}
+
+TEST_CASE("ach popup: modern Xbox motion (from the reference clip)", "[ach]") {
+  using namespace xenos::ach;
+  const auto s = PopupStyle::Xbox;
+  CHECK(PopupTimeline(s, 0.2f).icon_scale < 1.f);      // the ring grows
+  CHECK(PopupTimeline(s, 0.2f).ring == 0.f);           // hollow until it fills
+  CHECK(PopupTimeline(s, 0.6f).glyph_scale > 0.f);     // the icon grows from a dot
+  CHECK(PopupTimeline(s, 0.6f).glyph_scale < 1.f);
+  CHECK(PopupTimeline(s, 1.0f).bar == 0.f);            // still only the badge
+  CHECK(PopupTimeline(s, 1.3f).swap > 0.f);            // the coin flip to the trophy
+  CHECK(PopupTimeline(s, 1.3f).swap < 1.f);
+  CHECK(PopupTimeline(s, 1.4f).bar > 0.f);             // the pill opens from the centre
+  CHECK(PopupTimeline(s, 3.0f).page == 0.f);           // title page
+  CHECK(PopupTimeline(s, 5.0f).page == 1.f);           // description page
+  CHECK(PopupTimeline(s, 6.4f).bar < 1.f);             // closing
+  CHECK(PopupTimeline(s, 6.6f).swap < 1.f);            // flips back
+  CHECK(PopupTimeline(s, 7.1f).icon_scale < 1.f);      // the ring shrinks away
+}
+
+TEST_CASE("ach popup: PS5 motion (from the reference clip)", "[ach]") {
+  using namespace xenos::ach;
+  const auto s = PopupStyle::Ps5;
+  CHECK(PopupTimeline(s, 0.05f).slide > 0.f);          // a short slide from the right while it fades in
+  CHECK(PopupTimeline(s, 0.05f).alpha > 0.f);
+  CHECK(PopupTimeline(s, 0.2f).slide == 0.f);
+  CHECK(PopupTimeline(s, 5.6f).slide > 0.f);
+  CHECK(PopupTimeline(s, 5.6f).alpha < 1.f);
+  CHECK(kPs5SlidePixels == 10.f);
 }
