@@ -163,7 +163,9 @@ void play_start(App &a, int g, bool prepare)
     }
     // Achievements (part 1): the game caches its achievement list in <COGBox>\achievements. The capability text is the
     // setting's description: a short name like "cogbox_dir" is built in code, not stored as text in the exe.
-    if (a.env[g].cap.exe_has && a.env[g].cap.exe_has("The COGBox folder (set by the launcher)"))
+    // Part 4: the popups' text stands for both (every exe with the popups has the folder setting, and the launcher looks
+    // for that text anyway), so the 82 MB exe is searched once for achievements instead of twice (~0.3 s each).
+    if (a.env[g].cap.exe_has && a.env[g].cap.exe_has("COGBox achievement popups"))
         args.push_back("--cogbox_dir=\"" + exe_dir() + "\"");
     std::string argText;
     for (auto &s : args) argText += s + "\r\n";
