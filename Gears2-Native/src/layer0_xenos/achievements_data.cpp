@@ -1,6 +1,7 @@
 // Layer 0 (game-free): COGBox's achievement data - see xenos/achievements_data.h. Standard C++17 only. Our code (MIT).
 #include <xenos/achievements_data.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -287,6 +288,109 @@ bool AddRevealed(const std::filesystem::path& cogbox_dir, uint32_t title_id, uin
   std::string out;
   for (const auto& [t, i] : set) out += Hex8(t) + ":" + std::to_string(i) + "\n";
   return WriteFileAtomic(RevealedPath(cogbox_dir), out);
+}
+
+namespace {
+NoRarity g_no_rarity;
+RarityProvider* g_rarity = nullptr;
+
+// Unlock-time order: true when a comes first.
+bool TimeBefore(const Achievement& a, const Achievement& b) {
+  if (a.unlocked != b.unlocked) return a.unlocked;
+  if (a.unlocked) {
+    if ((a.unlocked_at == 0) != (b.unlocked_at == 0)) return a.unlocked_at != 0;
+    if (a.unlocked_at != b.unlocked_at) return a.unlocked_at > b.unlocked_at;
+  }
+  if (a.game_index != b.game_index) return a.game_index < b.game_index;
+  return a.list_order < b.list_order;
+}
+}  // namespace
+
+RarityProvider& CurrentRarityProvider() { return g_rarity ? *g_rarity : g_no_rarity; }
+void SetRarityProvider(RarityProvider* provider) { g_rarity = provider; }
+
+uint32_t PercentByGp(const Totals& t) {
+  if (t.gp_total == 0) return 0;
+  return static_cast<uint32_t>(uint64_t(t.gp_earned) * 100 / t.gp_total);
+}
+
+GameAchievements BuildGame(const GameDef& game, const std::optional<Catalog>& catalog, const Unlocks& unlocks,
+                           const RevealedSet& revealed, RarityProvider& rarity,
+                           const std::filesystem::path& cogbox_dir) {
+  GameAchievements out;
+  out.game = &game;
+  if (!catalog) return out;
+  out.loaded = true;
+  uint32_t game_index = 0;
+  for (size_t i = 0; i < kGames.size(); ++i) {
+    if (kGames[i].title_id == game.title_id) game_index = static_cast<uint32_t>(i);
+  }
+  for (size_t i = 0; i < catalog->achievements.size(); ++i) {
+    const CatalogEntry& e = catalog->achievements[i];
+    Achievement a;
+    a.title_id = game.title_id;
+    a.id = e.id;
+    a.gamerscore = e.gamerscore;
+    a.label = e.label;
+    a.description = e.description;
+    a.unachieved = e.unachieved;
+    std::error_code ec;
+    const std::filesystem::path icon = IconPath(cogbox_dir, game.title_id, e.id);
+    if (std::filesystem::exists(icon, ec)) a.icon = icon;
+    a.secret = (e.flags & kFlagShowUnachieved) == 0;
+    a.revealed = revealed.count({game.title_id, e.id}) != 0;
+    const auto u = unlocks.find(e.id);
+    a.unlocked = u != unlocks.end();
+    a.unlocked_at = a.unlocked ? u->second : 0;
+    a.rarity = rarity.Get(game.title_id, e.id);
+    a.game_index = game_index;
+    a.list_order = static_cast<uint32_t>(i);
+    out.totals.total += 1;
+    out.totals.gp_total += a.gamerscore;
+    if (a.unlocked) {
+      out.totals.unlocked += 1;
+      out.totals.gp_earned += a.gamerscore;
+    }
+    out.achievements.push_back(std::move(a));
+  }
+  return out;
+}
+
+GameAchievements LoadGame(const std::filesystem::path& cogbox_dir, const GameDef& game, const RevealedSet& revealed,
+                          RarityProvider& rarity) {
+  return BuildGame(game, LoadCatalog(cogbox_dir, game.title_id), LoadUnlocks(cogbox_dir, game), revealed, rarity,
+                   cogbox_dir);
+}
+
+std::vector<GameAchievements> LoadAllGames(const std::filesystem::path& cogbox_dir, RarityProvider& rarity) {
+  const RevealedSet revealed = LoadRevealed(cogbox_dir);
+  std::vector<GameAchievements> games;
+  for (const GameDef& g : kGames) games.push_back(LoadGame(cogbox_dir, g, revealed, rarity));
+  return games;
+}
+
+Totals SumTotals(const std::vector<GameAchievements>& games) {
+  Totals t;
+  for (const GameAchievements& g : games) {
+    if (!g.loaded) continue;
+    t.unlocked += g.totals.unlocked;
+    t.total += g.totals.total;
+    t.gp_earned += g.totals.gp_earned;
+    t.gp_total += g.totals.gp_total;
+  }
+  return t;
+}
+
+void SortAchievements(std::vector<Achievement>& list, SortOrder order) {
+  if (order == SortOrder::kUnlockTime) {
+    std::stable_sort(list.begin(), list.end(), TimeBefore);
+    return;
+  }
+  std::stable_sort(list.begin(), list.end(), [](const Achievement& a, const Achievement& b) {
+    if (a.rarity.known != b.rarity.known) return a.rarity.known;
+    if (a.rarity.known && a.rarity.percent != b.rarity.percent) return a.rarity.percent < b.rarity.percent;
+    return TimeBefore(a, b);
+  });
 }
 
 }  // namespace xenos::ach

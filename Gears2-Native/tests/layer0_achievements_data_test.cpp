@@ -106,3 +106,97 @@ TEST_CASE("ach: revealed list round trip and junk lines", "[ach]") {
   CHECK(p.count({0x4D5308AB, 2}) == 1);
   std::filesystem::remove_all(dir);
 }
+
+namespace {
+xenos::ach::Catalog ThreeAchievements() {
+  return {0x4D53082D, "Gears of War 2", 1,
+          {{1, 10, 0x8, 1, "A", "", ""}, {2, 30, 0, 2, "B", "", ""}, {3, 60, 0x8, 3, "C", "", ""}}};
+}
+struct FixedRarity : xenos::ach::RarityProvider {
+  xenos::ach::Rarity Get(uint32_t, uint32_t id) override {
+    if (id == 3) return {true, 2.5f};
+    if (id == 1) return {true, 40.f};
+    return {};
+  }
+};
+}  // namespace
+
+TEST_CASE("ach: join, secrets and totals", "[ach]") {
+  xenos::ach::NoRarity none;
+  const auto& g2 = *xenos::ach::FindGame(0x4D53082D);
+  auto g = xenos::ach::BuildGame(g2, ThreeAchievements(), {{2, 100}, {99, 5}}, {{0x4D53082D, 3}}, none, "C:/none");
+  REQUIRE(g.loaded);
+  REQUIRE(g.achievements.size() == 3);  // the unlock of unknown id 99 is ignored
+  CHECK(g.achievements[1].unlocked);
+  CHECK(g.achievements[1].secret);  // flags 0: secret
+  CHECK_FALSE(g.achievements[0].secret);
+  CHECK(g.achievements[2].revealed);
+  CHECK_FALSE(g.achievements[0].revealed);
+  CHECK(g.achievements[1].unlocked_at == 100);
+  CHECK(g.achievements[2].list_order == 2);
+  CHECK(g.achievements[2].game_index == 1);
+  CHECK(g.achievements[0].icon.empty());  // no PNG on disk
+  CHECK(g.totals.unlocked == 1);
+  CHECK(g.totals.total == 3);
+  CHECK(g.totals.gp_earned == 30);
+  CHECK(g.totals.gp_total == 100);
+  CHECK(xenos::ach::PercentByGp(g.totals) == 30);
+  CHECK(xenos::ach::PercentByGp({}) == 0);
+}
+
+TEST_CASE("ach: all-games totals count loaded games only", "[ach]") {
+  xenos::ach::NoRarity none;
+  std::vector<xenos::ach::GameAchievements> games{
+      xenos::ach::BuildGame(xenos::ach::kGames[1], ThreeAchievements(), {{3, 1}}, {}, none, "C:/none"),
+      xenos::ach::BuildGame(xenos::ach::kGames[2], std::nullopt, {{1, 1}}, {}, none, "C:/none")};
+  CHECK_FALSE(games[1].loaded);
+  CHECK(games[1].achievements.empty());
+  auto t = xenos::ach::SumTotals(games);
+  CHECK(t.total == 3);
+  CHECK(t.unlocked == 1);
+  CHECK(t.gp_earned == 60);
+  CHECK(t.gp_total == 100);
+}
+
+TEST_CASE("ach: sort by unlock time", "[ach]") {
+  xenos::ach::NoRarity none;
+  auto g = xenos::ach::BuildGame(xenos::ach::kGames[1], ThreeAchievements(), {{1, 0}, {3, 500}, {2, 500}}, {}, none,
+                                 "C:/x");
+  xenos::ach::Achievement locked = g.achievements[0];
+  locked.unlocked = false;
+  locked.id = 4;
+  locked.list_order = 3;
+  g.achievements.insert(g.achievements.begin(), locked);
+  xenos::ach::SortAchievements(g.achievements, xenos::ach::SortOrder::kUnlockTime);
+  // same time: list order; unknown time (0) after timed; locked last
+  CHECK(g.achievements[0].id == 2);
+  CHECK(g.achievements[1].id == 3);
+  CHECK(g.achievements[2].id == 1);
+  CHECK(g.achievements[3].id == 4);
+}
+
+TEST_CASE("ach: sort by rarity", "[ach]") {
+  xenos::ach::NoRarity none;
+  FixedRarity fixed;
+  auto a = xenos::ach::BuildGame(xenos::ach::kGames[1], ThreeAchievements(), {{1, 300}, {2, 200}, {3, 100}}, {},
+                                 none, "C:/x");
+  auto b = a.achievements;
+  xenos::ach::SortAchievements(a.achievements, xenos::ach::SortOrder::kRarity);
+  xenos::ach::SortAchievements(b, xenos::ach::SortOrder::kUnlockTime);
+  for (size_t i = 0; i < b.size(); ++i) CHECK(a.achievements[i].id == b[i].id);  // NoRarity: same as time
+  auto r = xenos::ach::BuildGame(xenos::ach::kGames[1], ThreeAchievements(), {{1, 300}, {2, 200}, {3, 100}}, {},
+                                 fixed, "C:/x");
+  xenos::ach::SortAchievements(r.achievements, xenos::ach::SortOrder::kRarity);
+  CHECK(r.achievements[0].id == 3);
+  CHECK(r.achievements[1].id == 1);
+  CHECK(r.achievements[2].id == 2);
+}
+
+TEST_CASE("ach: rarity provider defaults to none", "[ach]") {
+  CHECK_FALSE(xenos::ach::CurrentRarityProvider().Get(1, 1).known);
+  FixedRarity fixed;
+  xenos::ach::SetRarityProvider(&fixed);
+  CHECK(xenos::ach::CurrentRarityProvider().Get(1, 3).known);
+  xenos::ach::SetRarityProvider(nullptr);
+  CHECK_FALSE(xenos::ach::CurrentRarityProvider().Get(1, 3).known);
+}

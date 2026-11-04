@@ -66,4 +66,57 @@ RevealedSet ParseRevealed(const std::string& text);
 RevealedSet LoadRevealed(const std::filesystem::path& cogbox_dir);
 bool AddRevealed(const std::filesystem::path& cogbox_dir, uint32_t title_id, uint32_t id);  // load, add, write
 
+// Rarity: the share of players who have an achievement. Only a placeholder for now (NoRarity: always unknown); a
+// cloud tracker can replace it with SetRarityProvider without the popups or the browsers changing.
+struct Rarity {
+  bool known = false;
+  float percent = 0;  // of players who have it
+};
+class RarityProvider {
+ public:
+  virtual ~RarityProvider() = default;
+  virtual Rarity Get(uint32_t title_id, uint32_t achievement_id) = 0;
+  virtual void ReportUnlock(uint32_t /*title_id*/, uint32_t /*achievement_id*/, uint64_t /*filetime*/) {}
+};
+class NoRarity final : public RarityProvider {
+ public:
+  Rarity Get(uint32_t, uint32_t) override { return {}; }
+};
+RarityProvider& CurrentRarityProvider();           // NoRarity unless one was set
+void SetRarityProvider(RarityProvider* provider);  // nullptr: back to NoRarity
+
+// One achievement as the browsers and popups see it.
+struct Achievement {
+  uint32_t title_id = 0, id = 0, gamerscore = 0;
+  std::string label, description, unachieved;
+  std::filesystem::path icon;  // empty if the PNG is not there
+  bool secret = false, revealed = false, unlocked = false;
+  uint64_t unlocked_at = 0;  // FILETIME UTC, 0 = unknown
+  Rarity rarity;
+  uint32_t game_index = 0, list_order = 0;  // index in kGames, position in the game's catalog
+};
+struct Totals {
+  uint32_t unlocked = 0, total = 0, gp_earned = 0, gp_total = 0;
+};
+uint32_t PercentByGp(const Totals& t);  // earned GP * 100 / total GP, rounded down; 0 with no GP
+struct GameAchievements {
+  const GameDef* game = nullptr;
+  bool loaded = false;  // false: no catalog yet ("Play once to load achievements")
+  std::vector<Achievement> achievements;
+  Totals totals;
+};
+// Joins one game's catalog and unlocks (no catalog: not loaded). Icons: the PNG's path when the file exists.
+GameAchievements BuildGame(const GameDef& game, const std::optional<Catalog>& catalog, const Unlocks& unlocks,
+                           const RevealedSet& revealed, RarityProvider& rarity,
+                           const std::filesystem::path& cogbox_dir);
+GameAchievements LoadGame(const std::filesystem::path& cogbox_dir, const GameDef& game, const RevealedSet& revealed,
+                          RarityProvider& rarity);
+std::vector<GameAchievements> LoadAllGames(const std::filesystem::path& cogbox_dir, RarityProvider& rarity);
+Totals SumTotals(const std::vector<GameAchievements>& games);  // loaded games only
+
+enum class SortOrder { kUnlockTime, kRarity };
+// kUnlockTime: unlocked first, newest first, unknown time last among them; locked in game then catalog order.
+// kRarity: known rarity first, rarest first; the rest in kUnlockTime order.
+void SortAchievements(std::vector<Achievement>& list, SortOrder order);
+
 }  // namespace xenos::ach
