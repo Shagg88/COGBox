@@ -42,7 +42,7 @@ void DrawPs5(ImDrawList* dl, const PopupDraw& d) {
   Cup(dl, ImVec2(tx + 11.f * s, o.y + 38.f * s), 25.f * s, GradeCol(d.grade, a * f.text_alpha));
   Text(dl, false, 27.f * s, ImVec2(tx + 30.f * s, o.y + 22.f * s), Col(0xF2, 0xF2, 0xF2, a * f.text_alpha), d.title,
        max_w - 30.f * s);
-  Text(dl, true, 23.f * s, ImVec2(tx, o.y + 59.f * s), Col(0xCF, 0xCF, 0xCF, a * f.text_alpha), d.sub, max_w);   // part 4: bigger, semibold
+  Text(dl, false, 23.f * s, ImVec2(tx, o.y + 59.f * s), Col(0xCF, 0xCF, 0xCF, a * f.text_alpha), d.sub, max_w);   // part 4: bigger, lighter
 }
 
 }  // namespace xenos::popup

@@ -43,8 +43,8 @@ void DrawX360(ImDrawList* dl, const PopupDraw& d) {
   if (f.text_alpha > 0.f) {
     dl->PushClipRect(b0, b1, true);
     const float tx = o.x + (104.f + f.slide * 12.f) * s, max_w = (kW - 104.f - 30.f) * s;
-    Text(dl, false, 27.f * s, ImVec2(tx, o.y + 12.f * s), Col(255, 255, 255, f.text_alpha * f.alpha), d.title, max_w);
-    Text(dl, false, 21.f * s, ImVec2(tx, o.y + 46.f * s), Col(255, 255, 255, f.text_alpha * f.alpha),
+    Text(dl, false, 27.f * s, ImVec2(tx, o.y + 22.f * s), Col(255, 255, 255, f.text_alpha * f.alpha), d.title, max_w);
+    Text(dl, false, 21.f * s, ImVec2(tx, o.y + 50.f * s), Col(255, 255, 255, f.text_alpha * f.alpha),
          std::to_string(d.gamerscore) + "G - " + d.name, max_w);
     dl->PopClipRect();
   }
