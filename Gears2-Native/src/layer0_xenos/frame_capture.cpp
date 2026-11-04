@@ -4,6 +4,7 @@
 // Image: the guest output after the game's gamma ramp, before window scaling and overlays (notes/33).
 #include <xenos/dev_tools.h>
 
+#include <rex/filesystem.h>  // rex::to_path (GitHub #177: UTF-8 path cvars)
 #include <rex/cvar.h>
 #include <rex/graphics/draw_observer.h>
 #include <rex/logging/macros.h>
@@ -173,7 +174,7 @@ void XenosInstallFrameCaptureIfRequested() {
   }
   const int every = REXCVAR_GET(gow2_frame_shots);
   if (every <= 0) return;
-  std::filesystem::path dir = REXCVAR_GET(gow2_frame_dir);
+  std::filesystem::path dir = rex::to_path(REXCVAR_GET(gow2_frame_dir));  // GitHub #177: UTF-8
   if (dir.empty()) dir = std::filesystem::current_path() / "frames";
   const uint64_t first = uint64_t(std::max(REXCVAR_GET(gow2_frame_shots_first), 0));
   const uint64_t last = uint64_t(std::max(REXCVAR_GET(gow2_frame_shots_last), 0));
