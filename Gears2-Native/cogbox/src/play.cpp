@@ -161,6 +161,10 @@ void play_start(App &a, int g, bool prepare)
         args.push_back("--cogbox_menu=\"" + join(logDir, "menu.txt") + "\"");
         if (a.padPs && a.env[g].cap.exe_has("Circle: back to the game")) args.push_back("--cogbox_menu_ps=true");   // job 523: PlayStation names in the in-game menu
     }
+    // Achievements (part 1): the game caches its achievement list in <COGBox>\achievements. The capability text is the
+    // setting's description: a short name like "cogbox_dir" is built in code, not stored as text in the exe.
+    if (a.env[g].cap.exe_has && a.env[g].cap.exe_has("The COGBox folder (set by the launcher)"))
+        args.push_back("--cogbox_dir=\"" + exe_dir() + "\"");
     std::string argText;
     for (auto &s : args) argText += s + "\r\n";
     argText += "launcher: COGBox " COGBOX_VERSION ", game " + std::string(d.name) + ", exe " + exe + "\r\n";
