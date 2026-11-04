@@ -21,6 +21,36 @@
 REXCVAR_DEFINE_STRING(cogbox_dir, "", "COGBox",
                       "The COGBox folder (set by the launcher): achievements are cached in its achievements folder");
 
+xenos::ach::Catalog XenosCatalogFromRuntime(rex::Runtime* runtime) {
+  xenos::ach::Catalog catalog;
+  if (!runtime || !runtime->kernel_state()) return catalog;
+  auto* kernel = runtime->kernel_state();
+  catalog.title_id = kernel->title_id();
+  if (const xenos::ach::GameDef* game = xenos::ach::FindGame(catalog.title_id)) catalog.game = game->name;
+  catalog.language = REXCVAR_GET(user_language);
+  for (const auto& info : kernel->achievements().ListAchievements()) {
+    xenos::ach::CatalogEntry e;
+    e.id = info.id;
+    e.gamerscore = info.gamerscore;
+    e.flags = info.flags;
+    e.image_id = info.image_id;
+    e.label = info.label;
+    e.description = info.description;
+    e.unachieved = info.unachieved_description;
+    catalog.achievements.push_back(std::move(e));
+  }
+  return catalog;
+}
+
+xenos::ach::Unlocks XenosUnlocksFromRuntime(rex::Runtime* runtime) {
+  xenos::ach::Unlocks unlocks;
+  if (!runtime || !runtime->kernel_state()) return unlocks;
+  auto& mgr = runtime->kernel_state()->achievements();
+  for (const auto& info : mgr.ListAchievements())
+    if (mgr.IsUnlocked(info.id)) unlocks[info.id] = mgr.GetUnlockTime(info.id);
+  return unlocks;
+}
+
 void XenosExportAchievements(rex::Runtime* runtime) {
   const std::string dir = REXCVAR_GET(cogbox_dir);
   if (dir.empty() || !runtime || !runtime->kernel_state()) return;
@@ -33,22 +63,8 @@ void XenosExportAchievements(rex::Runtime* runtime) {
   }
   const std::filesystem::path root = rex::to_path(dir);
 
-  xenos::ach::Catalog catalog;
-  catalog.title_id = title_id;
-  catalog.game = game->name;
-  catalog.language = REXCVAR_GET(user_language);
+  const xenos::ach::Catalog catalog = XenosCatalogFromRuntime(runtime);
   const auto list = kernel->achievements().ListAchievements();
-  for (const auto& info : list) {
-    xenos::ach::CatalogEntry e;
-    e.id = info.id;
-    e.gamerscore = info.gamerscore;
-    e.flags = info.flags;
-    e.image_id = info.image_id;
-    e.label = info.label;
-    e.description = info.description;
-    e.unachieved = info.unachieved_description;
-    catalog.achievements.push_back(std::move(e));
-  }
   const std::filesystem::path catalog_path = xenos::ach::CatalogPath(root, title_id);
   if (catalog.achievements.empty()) {
     // Every COGBox game has achievements: an empty list means the game's data could not be read this time. Keep the

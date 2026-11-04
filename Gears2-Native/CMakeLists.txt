@@ -20,6 +20,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/achievements_export.cpp
     src/layer0_xenos/achievements_popup_logic.cpp
     src/layer0_xenos/achievements_browser_model.cpp
+    src/layer0_xenos/achievements_browser.cpp
     src/layer0_xenos/achievement_popup_assets.cpp
     src/layer0_xenos/achievement_popup.cpp
     src/layer0_xenos/popup_common.cpp

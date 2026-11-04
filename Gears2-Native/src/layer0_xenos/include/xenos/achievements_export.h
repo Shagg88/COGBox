@@ -4,8 +4,15 @@
 // --cogbox_dir (a game started by hand) it does nothing. Our code (MIT).
 #pragma once
 
+#include <xenos/achievements_data.h>
+
 namespace rex {
 class Runtime;
 }
 
 void XenosExportAchievements(rex::Runtime* runtime);
+
+// The running title's achievement list as a catalog (empty when the SDK has none), and its unlocks (id -> FILETIME).
+// The in-game browser uses them when the cache has no catalog for the running game.
+xenos::ach::Catalog XenosCatalogFromRuntime(rex::Runtime* runtime);
+xenos::ach::Unlocks XenosUnlocksFromRuntime(rex::Runtime* runtime);
