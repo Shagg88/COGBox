@@ -108,6 +108,7 @@ float Ramp(float t, float a, float b) {
 }
 float EaseOut(float x) { return x >= 1.f ? 1.f : 1.f - (1.f - x) * (1.f - x) * (1.f - x); }
 float EaseIn(float x) { return x * x * x; }
+float EaseOutQuad(float x) { return x >= 1.f ? 1.f : 1.f - (1.f - x) * (1.f - x); }
 // a -> b, exactly b at x = 1.
 float Lerp(float a, float b, float x) { return x >= 1.f ? b : a + (b - a) * x; }
 }  // namespace
@@ -129,17 +130,20 @@ PopupFrame PopupTimeline(PopupStyle style, float t) {
   if (t < 0.f) t = 0.f;
   switch (style) {
     case PopupStyle::X360:
-      // A plain orb fades in; the bar slides out to the right from behind it (a little overshoot); then the ring and
-      // the text; the X turns into the achievement icon. Out: the icon back to the X, ring, text, the orb shrinks,
-      // the empty bar fades.
-      f.alpha = Ramp(t, 0.f, 0.15f) * (1.f - Ramp(t, 5.95f, 6.1f));
-      f.icon_scale = Lerp(0.6f, 1.f, EaseOut(Ramp(t, 0.f, 0.15f))) * (1.f - Ramp(t, 5.85f, 5.95f));
-      f.bar = t < 0.35f ? 1.04f * EaseOut(Ramp(t, 0.15f, 0.35f)) : Lerp(1.04f, 1.f, EaseOut(Ramp(t, 0.35f, 0.6f)));
-      f.ring = Ramp(t, 0.35f, 0.4f) * (1.f - Ramp(t, 5.6f, 5.75f));
-      f.text_alpha = Ramp(t, 0.35f, 0.45f) * (1.f - Ramp(t, 5.75f, 5.85f));
-      f.swap = Ramp(t, 0.75f, 0.95f) * (1.f - Ramp(t, 5.2f, 5.5f));
+      // Measured at 60 fps: a white ghost of the orb flashes and the orb fades in at full size; the bar slides out from
+      // behind it (no overshoot); the text comes with a small slide from the right, then the grey ring, then its
+      // green quarter; the X turns into the achievement icon. Out: the icon back to the X, the text, the ring, the
+      // orb shrinks away, then the bar fades while pulling in a little.
+      f.glow = Ramp(t, 0.f, 0.06f) * (1.f - Ramp(t, 0.06f, 0.16f));
+      f.alpha = Ramp(t, 0.03f, 0.15f) * (1.f - Ramp(t, 5.85f, 6.1f));
+      f.icon_scale = 1.f - Ramp(t, 5.68f, 5.83f);
+      f.bar = t < 3.f ? EaseOutQuad(Ramp(t, 0.12f, 0.36f)) : 1.f - 0.4f * Ramp(t, 5.8f, 6.1f);
+      f.text_alpha = Ramp(t, 0.32f, 0.36f) * (1.f - Ramp(t, 5.6f, 5.66f));
+      f.slide = t < 3.f ? 1.f - Ramp(t, 0.32f, 0.38f) : Ramp(t, 5.6f, 5.66f);
+      f.ring = Ramp(t, 0.36f, 0.38f) * (1.f - Ramp(t, 5.64f, 5.68f));
+      f.light = Ramp(t, 0.42f, 0.45f) * (1.f - Ramp(t, 5.64f, 5.68f));
+      f.swap = Ramp(t, 0.7f, 0.9f) * (1.f - Ramp(t, 5.2f, 5.5f));
       f.glyph_scale = 1.f;
-      f.slide = 0.f;
       break;
     case PopupStyle::Xbox:
       // A small ring grows, fills, the achievement icon grows from a dot, the badge flips to the trophy while the
@@ -153,6 +157,7 @@ PopupFrame PopupTimeline(PopupStyle style, float t) {
       f.text_alpha = Ramp(t, 1.55f, 1.75f) * (1.f - Ramp(t, 6.1f, 6.25f));
       f.page = Ramp(t, 4.2f, 4.4f);
       f.slide = 0.f;
+      f.light = 1.f;
       break;
     case PopupStyle::Ps5:
       // Fades in with a short slide from the right, holds, fades out the same way.
@@ -164,6 +169,7 @@ PopupFrame PopupTimeline(PopupStyle style, float t) {
       f.glyph_scale = 1.f;
       f.swap = 1.f;
       f.bar = 1.f;
+      f.light = 1.f;
       break;
   }
   return f;

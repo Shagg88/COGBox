@@ -43,10 +43,12 @@ darker shade of the same colour.
 
 Durations: Xbox 360 6.1 s, modern Xbox 7.3 s, PS5 5.7 s. Popups queue and show one after another.
 
-- **Xbox 360:** a plain orb (no ring) fades and grows in (0-0.15 s); the bar slides out to the right from behind it
-  with a small overshoot (0.15-0.6 s); the ring and the text appear (0.35 s); the X dims and the achievement icon
-  fades in (0.75-0.95 s). Out, reversed: icon back to the X (5.2-5.5 s), ring off, text off, the orb shrinks to a dot
-  (5.85-5.95 s), the empty bar fades (5.95-6.1 s). No achievement icon: the X stays.
+- **Xbox 360** (re-measured at 60 fps): a white ghost of the orb flashes (0-0.16 s) and the orb fades in at full size
+  (0.03-0.15 s, it does not grow); the bar slides out from behind it, no overshoot (0.12-0.36 s); the text fades in
+  with a small slide from the right (0.32-0.38 s); the grey four-part ring appears (0.36 s), its green quarter lights
+  (0.42-0.45 s); the X dims and the achievement icon fades in (0.7-0.9 s). The bar has a faint lighter rim. Out:
+  icon back to the X (5.2-5.5 s), text (5.6 s), ring (5.64 s), the orb shrinks away (5.68-5.83 s), the bar fades
+  while pulling in a little (5.8-6.1 s). No achievement icon: the X stays.
 - **Modern Xbox:** a small hollow ring grows (0-0.35 s) and fills (0.35-0.45 s); the achievement icon grows from a
   dot inside it (0.5-0.75 s); the badge flips like a coin to the trophy / diamond (1.2-1.4 s) while the pill opens
   outward from the centre (1.2-1.55 s); the text fades in (1.55-1.75 s). Page 1 (title, "G <GP> - name") until

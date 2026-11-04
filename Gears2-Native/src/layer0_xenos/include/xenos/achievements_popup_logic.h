@@ -56,11 +56,13 @@ struct PopupFrame {
   float alpha = 0;        // the whole popup, 0-1
   float icon_scale = 0;   // the orb / badge size, 0-1
   float ring = 0;         // X360: the four-part ring's opacity; Xbox: hollow ring (0) -> filled badge (1)
+  float light = 0;        // X360: the ring's green quarter lit, 0-1 (comes on a moment after the ring)
+  float glow = 0;         // X360: the white ghost of the orb that flashes before it fades in, 0-1
   float glyph_scale = 0;  // Xbox: the icon inside the badge, grown from a dot
   float swap = 0;         // X360: 0 the X, 1 the achievement icon (dark between); Xbox: the coin flip from the
                           // achievement icon (0) to the trophy / diamond (1), drawn squeezed by |cos(pi * swap)|
-  float bar = 0;          // pill / box width, 0-1 (the 360 bar overshoots to 1.04); Xbox opens from the centre
-  float slide = 1;        // PS5: 0 in place, 1 = kPs5SlidePixels to the right
+  float bar = 0;          // pill / box width, 0-1 (360: slides out from behind the orb); Xbox opens from the centre
+  float slide = 1;        // PS5: the box, X360: the text; 0 in place, 1 = kPs5SlidePixels to the right
   float text_alpha = 0;
   float page = 0;         // Xbox: 0 the title page, 1 the description page (cross-fade between)
   bool finished = false;

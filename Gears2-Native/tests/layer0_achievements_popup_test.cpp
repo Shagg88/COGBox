@@ -82,6 +82,8 @@ TEST_CASE("ach popup: timeline starts and ends invisible, holds fully shown", "[
     CHECK(hold.ring == 1.f);
     CHECK(hold.glyph_scale == 1.f);
     CHECK(hold.swap == 1.f);
+    CHECK(hold.light == 1.f);
+    CHECK(hold.glow == 0.f);
     CHECK_FALSE(hold.finished);
     CHECK_FALSE(PopupTimeline(s, d - 0.01f).finished);
     const auto end = PopupTimeline(s, d);
@@ -92,7 +94,9 @@ TEST_CASE("ach popup: timeline starts and ends invisible, holds fully shown", "[
       CHECK(f.alpha >= 0.f);
       CHECK(f.alpha <= 1.f);
       CHECK(f.bar >= 0.f);
-      CHECK(f.bar <= 1.05f);  // the 360 bar overshoots a little
+      CHECK(f.bar <= 1.f);
+      CHECK(f.glow >= 0.f);
+      CHECK(f.glow <= 1.f);
       CHECK(f.slide >= 0.f);
       CHECK(f.slide <= 1.f);
       CHECK(f.icon_scale >= 0.f);
@@ -107,21 +111,36 @@ TEST_CASE("ach popup: timeline starts and ends invisible, holds fully shown", "[
   }
 }
 
-TEST_CASE("ach popup: Xbox 360 motion (from the reference clip)", "[ach]") {
+TEST_CASE("ach popup: Xbox 360 motion (from the reference clip, 60 fps)", "[ach]") {
   using namespace xenos::ach;
   const auto s = PopupStyle::X360;
-  CHECK(PopupTimeline(s, 0.25f).bar > 0.f);
+  CHECK(PopupTimeline(s, 0.06f).glow > 0.f);           // a white ghost of the orb flashes first
+  CHECK(PopupTimeline(s, 0.3f).glow == 0.f);
+  CHECK(PopupTimeline(s, 0.05f).icon_scale == 1.f);    // the orb fades in at full size (it does not grow)
+  CHECK(PopupTimeline(s, 0.05f).alpha > 0.f);
+  CHECK(PopupTimeline(s, 0.05f).alpha < 1.f);
+  CHECK(PopupTimeline(s, 0.25f).bar > 0.f);            // the bar slides out from behind the orb
   CHECK(PopupTimeline(s, 0.25f).bar < 1.f);
-  CHECK(PopupTimeline(s, 0.35f).bar > 1.f);           // overshoot, then settles
-  CHECK(PopupTimeline(s, 0.25f).ring == 0.f);          // the ring and the text come after the bar opens
-  CHECK(PopupTimeline(s, 0.25f).text_alpha == 0.f);
+  CHECK(PopupTimeline(s, 0.4f).bar == 1.f);            // no overshoot
+  CHECK(PopupTimeline(s, 0.3f).text_alpha == 0.f);     // the text comes when the bar is nearly open
+  CHECK(PopupTimeline(s, 0.34f).slide > 0.f);          // ... with a small slide from the right
+  CHECK(PopupTimeline(s, 0.4f).text_alpha == 1.f);
+  CHECK(PopupTimeline(s, 0.5f).slide == 0.f);
+  CHECK(PopupTimeline(s, 0.35f).ring == 0.f);          // then the ring
+  CHECK(PopupTimeline(s, 0.4f).ring == 1.f);
+  CHECK(PopupTimeline(s, 0.4f).light == 0.f);          // its green quarter lights a moment later
+  CHECK(PopupTimeline(s, 0.5f).light == 1.f);
   CHECK(PopupTimeline(s, 0.6f).swap == 0.f);           // still the X
-  CHECK(PopupTimeline(s, 0.85f).swap > 0.f);           // X -> achievement icon
+  CHECK(PopupTimeline(s, 0.8f).swap > 0.f);            // X -> achievement icon
   CHECK(PopupTimeline(s, 5.35f).swap < 1.f);           // and back at the end
-  CHECK(PopupTimeline(s, 5.7f).ring < 1.f);
-  CHECK(PopupTimeline(s, 5.9f).icon_scale < 1.f);      // the orb shrinks away
-  CHECK(PopupTimeline(s, 5.9f).text_alpha == 0.f);
-  CHECK(PopupTimeline(s, 5.9f).alpha == 1.f);          // the empty bar fades last
+  CHECK(PopupTimeline(s, 5.7f).text_alpha == 0.f);     // out: text, ring, then the orb shrinks, then the bar fades
+  CHECK(PopupTimeline(s, 5.7f).ring == 0.f);
+  CHECK(PopupTimeline(s, 5.75f).icon_scale > 0.f);
+  CHECK(PopupTimeline(s, 5.75f).icon_scale < 1.f);
+  CHECK(PopupTimeline(s, 5.9f).icon_scale == 0.f);
+  CHECK(PopupTimeline(s, 5.9f).alpha < 1.f);
+  CHECK(PopupTimeline(s, 5.95f).bar < 1.f);
+  CHECK(PopupTimeline(s, 5.95f).bar > 0.6f);
 }
 
 TEST_CASE("ach popup: modern Xbox motion (from the reference clip)", "[ach]") {
