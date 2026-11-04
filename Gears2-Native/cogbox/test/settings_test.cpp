@@ -212,19 +212,36 @@ int summary() {
         if (s.i("Resolution") != 4 || s.i("Preset") != 2) { std::cout << "FAIL preset\n"; ++fails; }
         set_value(Game::Gears3, s, "Fov", 110);
         if (s.i("Preset") != 3) { std::cout << "FAIL preset -> custom\n"; ++fails; }
-        s.set("Sens", 1.7); s.set("Start", 4);
+        s.set("Sens", 1.7);   // (not "Start": removed in 0.3.0, a saved value is ignored)
         st.commit(Game::Gears3, s, e);
         std::string ini = st.save_ini();
         Store st2; st2.load_ini(ini);
         if (st2.save_ini() != ini) { std::cout << "FAIL ini round trip\n"; ++fails; }
         Settings s2 = st2.view(Game::Gears3, e);
-        if (s2.f("Sens") != 1.7 || s2.i("Start") != 4 || s2.i("Fov") != 110 || st2.last_game != 1) { std::cout << "FAIL ini values\n"; ++fails; }
+        if (s2.f("Sens") != 1.7 || s2.i("Fov") != 110 || st2.last_game != 1) { std::cout << "FAIL ini values\n"; ++fails; }
         // Gears 2 has no set of its own yet: it starts from the last game's (PS1 429)
         Settings g2 = st2.view(Game::Gears2, e);
         if (g2.i("Fov") != 110 || g2.i("Start") != 0 || !g2.b("Aniso")) { std::cout << "FAIL per-game fallback\n"; ++fails; }
         g2.set("Fov", 90); st2.remember(Game::Gears2, g2);
         if (st2.view(Game::Gears3, e).i("Fov") != 110 || st2.view(Game::Gears2, e).i("Fov") != 90) { std::cout << "FAIL per-game memory\n"; ++fails; }
         std::cout << "--- ini after a Gears 3 save ---\n" << ini;
+    }
+    // GitHub #159: a game / voice language not on the player's copy is not passed (a choice saved before), and said so
+    for (int miss = 0; miss <= 1; ++miss) {
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        if (miss) { e.lang_missing.assign(22, false); e.lang_missing[7] = true; e.voice_missing.assign(10, false); e.voice_missing[6] = true; }
+        Store st; Settings s = st.view(Game::Gears3, e);
+        s.set("Lang", 7); s.set("VoiceLang", 6);
+        std::vector<std::string> notes;
+        const std::vector<std::string> a = build_args(Game::Gears3, Version::TitleUpdate, s, e, &notes);
+        auto has = [&](const std::string& v) { for (const std::string& x : a) if (x.rfind(v, 0) == 0) return true; return false; };
+        int said = 0;
+        for (const std::string& n : notes) if (n.find("is not on this copy") != std::string::npos) ++said;
+        if (has("--user_language=") == (miss != 0) || has("--ue3_voice_language=") == (miss != 0) || said != (miss ? 2 : 0)) {
+            std::cout << "FAIL languages not on the copy (" << (miss ? "missing" : "present") << ")\n"; ++fails;
+        }
     }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;

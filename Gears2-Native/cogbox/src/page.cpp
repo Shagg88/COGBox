@@ -115,6 +115,9 @@ static std::string key_get(App &a, int g, const char *cvar)
     return v.empty() ? a.ini.get("Keys", cvar) : v;
 }
 
+static bool lang_on_copy(const std::string &root, int g, int idx);
+static bool voice_on_copy(const std::string &root, int g, int idx);
+
 void env_refresh(App &a, int g)
 {
     GameState &st = a.st[g];
@@ -126,6 +129,13 @@ void env_refresh(App &a, int g)
     e.user_data_root = game_user_dir(g);
     e.shader_cache_dir = game_shader_dir(g);
     e.mods = mods_enabled_paths(a, g);   // 0.2.0
+    {   // job 620 (#45), GitHub #159: the Lang / VoiceLang choices not on this copy (greyed, and not passed at launch)
+        const gs::Option *lo = gs::find_option((gs::Game)g, "Lang"), *vo = gs::find_option((gs::Game)g, "VoiceLang");
+        e.lang_missing.assign(lo ? lo->choices.size() : 0, false);
+        e.voice_missing.assign(vo ? vo->choices.size() : 0, false);
+        for (size_t i = 0; i < e.lang_missing.size(); i++) e.lang_missing[i] = !lang_on_copy(e.game_data_root, g, (int)i);
+        for (size_t i = 0; i < e.voice_missing.size(); i++) e.voice_missing[i] = !voice_on_copy(e.game_data_root, g, (int)i);
+    }
     {   // job 630: the shipped chapter recipes for this game (built from the player's own files at start-up)
         std::string exe = game_def(g).exeName;
         const std::string rcp = join(exe_dir(), "recipes\\recipes-" + exe.substr(0, exe.size() - 4) + ".rcp");
@@ -447,12 +457,11 @@ static void keys_section(App &a, int g)
 // Job 620 (GitHub #45): a game language whose text isn't on the player's copy can't be chosen - the game would fall
 // back to English (the US Judgment disc has 11 languages, not German, Italian, Spanish (Spain), Russian, Portuguese
 // or Japanese). Decided by the copy's Coalesced_<code>.bin; a code we don't know, or an unknown folder, stays allowed.
-static bool lang_on_copy(App &a, int g, int idx)
+static bool lang_on_copy(const std::string &root, int g, int idx)
 {
     static const char *code[22] = { "", "INT", "INT", "FRA", "DEU", "ITA", "ESN", "ESM", "PTB", "POL", "RUS", "CZE", "HUN",
                                     "DUT", "DAN", "FIN", "NOR", "", "JPN", "KOR", "", "CHN" };
     if (idx <= 0 || idx >= 22 || !code[idx][0]) return true;
-    const std::string &root = a.env[g].game_data_root;
     if (root.empty()) return true;
     if (g == G_GEARS1) {   // UE3 2006: WarGame\Localization\Coalesced.<code> (chi deu esm esn fra int ita jpn kor)
         // the codes Gears 1 has (gears_settings choice_available limits the list to these); Chinese (Traditional) = chi
@@ -471,6 +480,25 @@ static bool lang_on_copy(App &a, int g, int idx)
         if (GetFileAttributesW(widen(dir + "Coalesced_" + code[idx] + ".bin").c_str()) != INVALID_FILE_ATTRIBUTES) return true;
     }
     return !any;   // no Coalesced_INT.bin found: not a layout we know, allow
+}
+
+// GitHub #159: a voice language (VoiceLang, GitHub #87) needs that language's localised packages on the copy
+// (<base>_LOC_<code>.xxx, the voices' twins the runtime swaps in); with none, the swap finds nothing. Gears 2, 3 and
+// Judgment; Gears 1, a code we don't know or an unknown folder stay allowed.
+static bool voice_on_copy(const std::string &root, int g, int idx)
+{
+    static const char *code[10] = { "", "INT", "FRA", "DEU", "ITA", "ESN", "ESM", "POL", "RUS", "JPN" };
+    if (idx <= 0 || idx >= 10 || root.empty() || g == G_GEARS1) return true;
+    bool any = false;
+    for (const char *sub : { "\\GearGame\\CookedXenon\\", "\\GearGame\\CookedXbox360\\" }) {
+        const std::string dir = root + sub;
+        if (GetFileAttributesW(widen(dir + "Coalesced_INT.bin").c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+        any = true;
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW(widen(dir + "*_LOC_" + code[idx] + ".xxx").c_str(), &fd);
+        if (h != INVALID_HANDLE_VALUE) { FindClose(h); return true; }
+    }
+    return !any;
 }
 
 static void option_row(App &a, int g, const gs::Option &o)
@@ -511,9 +539,11 @@ static void option_row(App &a, int g, const gs::Option &o)
                     ca.ok = false;
                     ca.why = "DirectX 12 only - with Vulkan the launcher uses SMAA. Choose DirectX 12 as the Graphics API to use it.";
                 }
-                if (ca.ok && o.id == "Lang" && !lang_on_copy(a, g, i)) {   // job 620 (#45)
+                const std::vector<bool> &miss = o.id == "Lang" ? a.env[g].lang_missing : a.env[g].voice_missing;
+                if (ca.ok && (o.id == "Lang" || o.id == "VoiceLang") && i < (int)miss.size() && miss[i]) {   // job 620 (#45), #159
                     ca.ok = false;
-                    ca.why = "Not on your copy of the game - it would show English. Copies from other regions have other languages.";
+                    ca.why = o.id == "Lang" ? "Not on your copy of the game - it would show English. Copies from other regions have other languages."
+                                            : "Not on your copy of the game - it has no voice files in this language. Copies from other regions have other languages.";
                 }
                 if (!ca.ok) ImGui::BeginDisabled();
                 ImGui::PushID(i);   // translations can make two choices read the same
