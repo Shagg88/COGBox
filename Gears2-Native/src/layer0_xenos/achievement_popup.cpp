@@ -156,7 +156,10 @@ void AchievementPopup::OnDraw(ImGuiIO& io) {
   }
   if (sound) XenosPlayAchievementSound(sound);
 
-  const float scale = std::clamp(io.DisplaySize.y / 1080.f, 0.6f, 2.f), margin = 48.f * scale;
+  // Part 4 player check: never below 80 % of the 1080p size (text at 720p was too small); the modern Xbox style is drawn
+  // 25 % bigger than its 1080p design (its 17 / 16 px text was too small at any size). Margins follow the screen only.
+  const float screen = std::clamp(io.DisplaySize.y / 1080.f, 0.8f, 2.f), margin = 48.f * screen;
+  const float scale = screen * (e.style == ach::PopupStyle::Xbox ? 1.25f : 1.f);
   ImVec2 size;
   switch (e.style) {
     case ach::PopupStyle::Xbox: size = popup::SizeXbox(scale); break;

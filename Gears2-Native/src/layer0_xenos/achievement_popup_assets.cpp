@@ -105,8 +105,7 @@ void XenosConfigureAchievementFonts(ImFontAtlas* atlas) {
   hangul_ranges = RangesFor(hangul);
   han_ranges = RangesFor(han);
 
-  auto add = [&](const char* file, bool merge_cjk, float px) -> ImFont* {
-    const std::filesystem::path p = dir / file;
+  auto add = [&](const std::filesystem::path& p, bool merge_cjk, float px) -> ImFont* {
     if (!Exists(p)) return nullptr;
     ImFontConfig cfg;
     cfg.OversampleH = 2;
@@ -127,16 +126,26 @@ void XenosConfigureAchievementFonts(ImFontAtlas* atlas) {
     }
     return f;
   };
+  auto use = [&](const std::filesystem::path& regular, const std::filesystem::path& semibold) {
+    g_regular = add(regular, true, kAchievementFontPixels);
+    g_semibold = add(semibold, true, kAchievementFontPixels);
+    if (!g_semibold) g_semibold = g_regular;
+    g_regular_small = add(regular, true, kAchievementSmallFontPixels);
+    g_semibold_small = add(semibold, true, kAchievementSmallFontPixels);
+    if (!g_semibold_small) g_semibold_small = g_regular_small;
+    REXLOG_INFO("achievement popups: font {} ({} Korean, {} Chinese characters from the cached lists)",
+                rex::path_to_utf8(regular.filename()), hangul.size(), han.size());
+  };
+  // Part 4 player check: Inter (SIL Open Font License, shipped in <COGBox>\assets\fonts) - the same everywhere, Proton
+  // too, and readable small. Then the PC's own fonts, as before.
+  const std::filesystem::path shipped = XenosCogboxDir() / "assets" / "fonts";
+  if (Exists(shipped / "Inter-Regular.ttf")) {
+    use(shipped / "Inter-Regular.ttf", shipped / "Inter-SemiBold.ttf");
+    return;
+  }
   for (const Pair& p : chain) {
     if (!Exists(dir / p.regular)) continue;
-    g_regular = add(p.regular, true, kAchievementFontPixels);
-    g_semibold = add(p.semibold, true, kAchievementFontPixels);
-    if (!g_semibold) g_semibold = g_regular;
-    g_regular_small = add(p.regular, true, kAchievementSmallFontPixels);
-    g_semibold_small = add(p.semibold, true, kAchievementSmallFontPixels);
-    if (!g_semibold_small) g_semibold_small = g_regular_small;
-    REXLOG_INFO("achievement popups: font {} ({} Korean, {} Chinese characters from the cached lists)", p.regular,
-                hangul.size(), han.size());
+    use(dir / p.regular, dir / p.semibold);
     return;
   }
   REXLOG_WARN("achievement popups: no Segoe UI, Tahoma or Arial in {}; ImGui's own font is used",

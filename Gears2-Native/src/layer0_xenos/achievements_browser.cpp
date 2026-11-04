@@ -195,7 +195,7 @@ void AchievementsBrowser::DrawSidebar(float s, float height) {
     popup::Text(dl, true, 17.f * s, ImVec2(x, p.y + pad * 0.6f), name_col, e.name, w - 2 * pad);
     if (e.this_game) Tag(dl, ImVec2(x + popup::TextWidth(true, 17.f * s, e.name) + 6.f * s, p.y + pad * 0.7f), 11.f * s, "This game");
     if (e.loaded) Bar(dl, ImVec2(x, p.y + 30.f * s), ImVec2(q.x - pad, p.y + 35.f * s), ach::PercentByGp(e.totals));
-    popup::Text(dl, false, 14.f * s, ImVec2(x, p.y + (e.loaded ? 39.f : 33.f) * s), kDim, e.line, w - 2 * pad);
+    popup::Text(dl, false, 15.f * s, ImVec2(x, p.y + (e.loaded ? 39.f : 33.f) * s), kDim, e.line, w - 2 * pad);
   }
   ImGui::PopStyleColor(3);
   ImGui::EndChild();
@@ -213,7 +213,7 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
     const ach::BrowserHeader hd = ach::HeaderFor(sidebar_[sel_]);
     const ImVec2 p = ImGui::GetCursorScreenPos();
     popup::Text(dl, true, 21.f * s, p, kText, hd.title, w);
-    popup::Text(dl, false, 15.f * s, ImVec2(p.x, p.y + 28.f * s), kSoft, hd.counts, w);
+    popup::Text(dl, false, 17.f * s, ImVec2(p.x, p.y + 28.f * s), kSoft, hd.counts, w);
     Bar(dl, ImVec2(p.x, p.y + 52.f * s), ImVec2(p.x + w, p.y + 58.f * s), hd.percent);
     ImGui::Dummy(ImVec2(w, 64.f * s));
   }
@@ -298,14 +298,14 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
                       IM_COL32(119, 119, 119, 255), "?", icon);
         }
         // right column: GP, status, rarity
-        const float right_w = std::max({popup::TextWidth(true, 16.f * s, r.gp), popup::TextWidth(false, 13.f * s, r.status),
-                                        popup::TextWidth(false, 13.f * s, r.rarity)});
+        const float right_w = std::max({popup::TextWidth(true, 16.f * s, r.gp), popup::TextWidth(false, 15.f * s, r.status),
+                                        popup::TextWidth(false, 15.f * s, r.rarity)});
         const float rx = q.x - pad;
         popup::Text(rl, true, 16.f * s, ImVec2(rx - popup::TextWidth(true, 16.f * s, r.gp), p.y + 9.f * s), kText, r.gp, right_w);
-        popup::Text(rl, false, 13.f * s, ImVec2(rx - popup::TextWidth(false, 13.f * s, r.status), p.y + 30.f * s), kDim,
+        popup::Text(rl, false, 15.f * s, ImVec2(rx - popup::TextWidth(false, 15.f * s, r.status), p.y + 30.f * s), kDim,
                     r.status, right_w);
         if (!r.rarity.empty())
-          popup::Text(rl, false, 13.f * s, ImVec2(rx - popup::TextWidth(false, 13.f * s, r.rarity), p.y + 45.f * s),
+          popup::Text(rl, false, 15.f * s, ImVec2(rx - popup::TextWidth(false, 15.f * s, r.rarity), p.y + 45.f * s),
                       IM_COL32(230, 195, 74, 255), r.rarity, right_w);
         // name (+ tags) and text
         const float tx = ib.x + 12.f * s, text_w = std::max(10.f, rx - right_w - 14.f * s - tx);
@@ -318,7 +318,7 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
         float tag_x = tx + std::min(name_w, popup::TextWidth(true, 17.f * s, r.name)) + 6.f * s;
         if (r.secret_tag) tag_x += Tag(rl, ImVec2(tag_x, p.y + 13.f * s), 11.f * s, "Secret") + 6.f * s;
         if (!r.game_label.empty()) Tag(rl, ImVec2(tag_x, p.y + 13.f * s), 11.f * s, r.game_label.c_str());
-        popup::Text(rl, false, 14.f * s, ImVec2(tx, p.y + 36.f * s), kSoft, r.text, text_w);
+        popup::Text(rl, false, 16.f * s, ImVec2(tx, p.y + 35.f * s), kSoft, r.text, text_w);
       }
     }
     ImGui::PopStyleColor(3);
