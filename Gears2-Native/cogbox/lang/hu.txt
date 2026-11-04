@@ -800,3 +800,15 @@ XeGTAO (high, experimental) = XeGTAO (magas, kísérleti)
 XeGTAO (ultra, experimental) = XeGTAO (ultra, kísérleti)
 DirectX 12 = DirectX 12
 Vulkan = Vulkan
+
+# 0.4.5 (Shagg 4 Nov): What's new notice, EXIT button, Walk key (#125)
+COGBox updated = COGBox frissítve
+COGBox has been updated. See what's new and what was fixed in this version's changelog. = A COGBox frissült. Az újdonságokat és a javításokat ennek a verziónak a változásnaplójában találod.
+Open the changelog = Változásnapló megnyitása
+EXIT = KILÉPÉS
+Close COGBox. = COGBox bezárása.
+Walk key = Séta gomb
+Hold to walk = Nyomva tartva sétál
+Press to switch walking on / off = Megnyomva be- / kikapcsolja a sétát
+With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = Billentyűzettel és egérrel: hogyan működik a Séta gomb (a gombot a BILLENTYŰK részben választhatod). Sétálva fél sebességgel mozogsz. Kezdetben nincs gomb beállítva.
+Walk = Séta

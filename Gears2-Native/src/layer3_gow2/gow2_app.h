@@ -6,6 +6,7 @@
 
 #include <rex/rex_app.h>
 #include "mouse_look.h"
+#include "main_menu_exit.h"
 
 namespace rex::ui {
 class WindowedAppContext;
@@ -77,6 +78,7 @@ class Gow2App : public rex::ReXApp {
     game_default("gow2_upscale_character_motion", "true");
     XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull});
     Gow2InstallLocLogIfRequested();  // GitHub #90: before the game opens its localized packages
+    Gow2InstallMainMenuExitIfRequested();
     Ue3InstallShaderPrebuildIfRequested();  // patch 0068: after the renderer (it asks whether the renderer wants them)
     XenosInstallQueryLogIfRequested(runtime(), {-32});
     XenosInstallStateCoverageIfRequested();

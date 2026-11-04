@@ -203,9 +203,13 @@ std::vector<Option> make_options(Game g) {
     add(make("HideAchievementPopups", "Hide achievement popups", Tab::Achievements, Kind::Bool, SH, 0,
              "No popup and no sound when an achievement unlocks. Achievements still unlock and are saved.", 0), "achpopups");
     // GitHub #52 (Gears 3 native mouse look; Gears 2 too since sweep 21)
-    if (g == Game::Gears3 || g == Game::Gears2) add(choice("AimTurn", "Mouse turn when aiming", Tab::Controls, OWN, { "Same as moving around", "Game's (slower)" }, 0,
+    // GitHub #125 (SDK patch 60): the Walk key (KEYBOARD KEYS, below) is held or pressed once to switch walking on / off
+    add(choice("WalkMode", "Walk key", Tab::Controls, PG, { "Hold to walk", "Press to switch walking on / off" }, 0,
+               "With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half "
+               "speed. No key is set at first.", 0), "walkkey");
+    if (g == Game::Gears3 || g == Game::Gears2) add(choice("AimTurn", "Mouse turn when aiming", Tab::Controls, OWN, { "Same as moving around", "Game's (slower)" }, 1,
                "Same: the mouse turns the view by the same angle per inch in every camera mode - running, roadie run, cover, "
-               "aiming and zoom. Game's: aiming and zoom keep the console game's slower turn. Native mouse look only.", 0));
+               "aiming and zoom. Game's (default, GitHub #169): aiming and zoom keep the console game's slower turn. Native mouse look only.", 0));
     add(make("Ultrawide", "Ultrawide", Tab::Display, Kind::Bool, PG, 0,
              "A wider view that matches an ultrawide monitor (21:9 or 32:9); black bars on other shapes.", 362), "ultrawide");
 
@@ -269,32 +273,32 @@ std::vector<Option> make_options(Game g) {
     add(make("Trilinear", "Smooth texture detail steps (trilinear)", Tab::Graphics, Kind::Bool, PG, 1,
              "Texture detail levels blend instead of showing a line where they step down (the game uses point filtering "
              "between levels).", 358), "trilinear", "", true);
-    // 0.3.0 (Shagg 17:48): settings Gears 1's 2006 engine doesn't have are left out of its list, not greyed
-    const bool g1 = g == Game::Gears1;
-    if (!g1) add(make("MipFade", "Sharp textures show at once (fast mip fade)", Tab::Graphics, Kind::Bool, PG, 1,
+    // 0.4.5 (Shagg 3 Nov, to-do 22: every graphics / display option the same in all four games): the settings Gears 1's
+    // 2006 engine doesn't have are in its list too, greyed with the reason (0.3.0 left them out).
+    add(make("MipFade", "Sharp textures show at once (fast mip fade)", Tab::Graphics, Kind::Bool, PG, 1,
              "A newly loaded sharper texture shows at once instead of fading in over 0.3-2 seconds.", 359), "mipfade", "", true);
     add(choice("Pool", "Texture memory", Tab::Graphics, PG,
                { "Game's own (smallest)", "Standard (196 MB / Gears 3 200 MB)", "Large (256 MB)", "Larger (320 MB, not long-tested)" }, 1,
                "The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory "
                "for the rest of the game.", 360), "pool", "", true);
-    if (!g1) add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
+    add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
                "How far away detail and objects are still drawn.", 361), "drawdist", "", true);
     // GitHub #113: character / weapon mesh detail. UE3's [SystemSettings] SkeletalMeshLODBias (0 = the game's own);
     // negative keeps the more detailed versions (hair, faces, armour) to a greater distance. Not in a preset: untested.
-    if (!g1) add(choice("MeshLod", "Character detail (LOD)", Tab::Graphics, PG, { "Original", "Higher", "Highest" }, 0,
+    add(choice("MeshLod", "Character detail (LOD)", Tab::Graphics, PG, { "Original", "Higher", "Highest" }, 0,
                "Keeps characters' and weapons' detailed models (hair, faces, armour) at a greater distance, for high "
                "resolutions. Costs some GPU time in crowded scenes. Original = the game's own.", 0), "inifx");
     // Motion blur: no PS1 tooltip.
-    if (!g1) add(make("MotionBlur", "Motion blur", Tab::Graphics, Kind::Bool, PG, 1, "The blur of fast movement (the game's own setting).", 370),
+    add(make("MotionBlur", "Motion blur", Tab::Graphics, Kind::Bool, PG, 1, "The blur of fast movement (the game's own setting).", 370),
         "inifx", "", true);
-    if (!g1) add(make("DoF", "Depth of field", Tab::Graphics, Kind::Bool, PG, 1,
+    add(make("DoF", "Depth of field", Tab::Graphics, Kind::Bool, PG, 1,
              "The blur of distant / out-of-focus areas (cutscenes, aiming).", 371), "inifx", "", true);
     // GitHub #102 (Shagg): no Lens flares option any more - the launcher decides per game at launch (below): on where the
     // game's occlusion queries are answered (Real occlusion, DirectX 12, not under Wine / Proton), off where they can't
     // be, since every flare would show through the scenery there.
     // Notes/80 (Gears2-Native): XeGTAO screen-space ambient occlusion in place of the game's own (Gears 2), or added
     // where a level has none (Gears 3 s.9: opt-in there, default "Game's own").
-    if (!g1) add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, experimental)", "XeGTAO (ultra, experimental)" },
+    add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, experimental)", "XeGTAO (ultra, experimental)" },
                         1,   // Game's own: XeGTAO is opt-in in every game
                "The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version "
                "(Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, "
@@ -313,11 +317,9 @@ std::vector<Option> make_options(Game g) {
     // GitHub #75 (report 28b2db29): Gears 2 shows flares through walls for the same reason (every ZPass query answered
     // with the fake count 1000). Now offered and on by default there too, as in Gears 3 / Judgment. If distant surfaces
     // flicker (jobs 139-140, the old late-answer path), turn it off; Lens Flares off is the other workaround.
-    add(make("RealOcclusion", "Real occlusion", Tab::Graphics, Kind::Bool, PG, 1,
-             "The game asks the graphics card whether things like light flares are hidden behind walls; on means it "
-             "waits for the card's real answer instead of always being told \"visible\", so flares and hidden objects "
-             "behind walls disappear as on the console, and fewer hidden things are drawn. DirectX 12 only. "
-             "Off = everything counts as visible, as before.", 0), "realocclusion");
+    // 0.4.5 (Shagg 3 Nov, to-do 23): Real occlusion is no longer a player setting - the launcher sends a fixed value per
+    // game at launch (real_occlusion() below): on in Gears 2, Gears 3 and Judgment on DirectX 12 (not under Wine /
+    // Proton), off in Gears 1 (froze its title screen) and wherever the answers can't be had.
 
     // ---- Controls ------------------------------------------------------------------------------------------------
     add(make("Mnk", "Keyboard and mouse (Gears layout)", Tab::Controls, Kind::Bool, SH, 0,
@@ -540,6 +542,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1 && !cap_rt(env, "user_language") && !cap_exe(env, "user_language")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "voicelang") {   // GitHub #87: layer 2's ue3_voice_language
         if (!cap_exe(env, "ue3_voice_language")) return no(not_yet(gi, "needs its next build"));
+        // GitHub #176 (job 1212): Gears 1's packages can't be checked by the export reader yet, so the swap now changes
+        // nothing there (an unchecked swap crashed the game while loading) - greyed until the reader knows Gears 1
+        if (g == Game::Gears1) return no(not_yet(gi, "its voice files can't be checked yet (GitHub #176)"));
     } else if (f == "padlayout") {   // GitHub #95 / #97: SDK patch 55
         if (!cap_rt(env, "pad_remap")) return no(not_yet(gi, "needs the next runtime (SDK patch 55)"));
     } else if (f == "lowlag") {
@@ -559,6 +564,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears2 && !cap_exe(env, "gow2_renderer_queries")) return no(not_yet(0, "needs its next build"));
         // 0.3.0: with Gears 1's shader pack it froze the title screen (frame 183, 14:10 runs) - off until that is fixed
         if (g == Game::Gears1) return no(not_yet(gi, "freezes Gears 1's title screen with its shader pack - off for now"));
+    } else if (f == "walkkey") {   // GitHub #125: SDK patch 60 (the 0.4.5 runtime)
+        if (!cap_rt(env, "keybind_walk")) return no(not_yet(gi, "needs its next build (SDK patch 60)"));
     } else if (f == "vsync") {   // launcher patch 0155
         if (!cap_rt(env, "d3d12_present_vsync")) return no(not_yet(gi, "needs its next build (SDK patch 37)"));
     }
@@ -585,6 +592,7 @@ const std::vector<KeyAction> &key_actions()
         { "keybind_lstick_press", "Left stick click", "Left stick click", "C" },
         { "keybind_start", "Start", "Pause menu", "Escape,Return" },
         { "keybind_back", "Back", "Back / scores", "Backspace" },
+        { "keybind_walk", "-", "Walk", "None" },   // SDK patch 60: no key until chosen
     };
     return v;
 }
@@ -597,9 +605,9 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     if (o.id == "WindowSize") on = s.i("Fullscreen") == 0;                             // PS1 333: windowed only
     else if (o.id == "PaperWhite" || o.id == "Peak") on = s.b("HDR");                 // PS1 366
     else if (o.id == "PadPrompts") on = s.b("Mnk");                                  // GitHub #104
+    else if (o.id == "WalkMode") on = s.b("Mnk");                                    // GitHub #125
     else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("AAMode") <= 4 && s.i("Api") == 0;   // PS1 352, 473; job 521; T2x: no scene scale
     else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
-    else if (o.id == "RealOcclusion" && (s.i("Api") != 0 || env.wine)) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // PR #43
     else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
     else if (o.id == "SplitLayout") on = s.i("Players") == 1;                       // GitHub #136: 2 players only
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
@@ -904,6 +912,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
               "--gow2_shader_cache_dir=" + q(env.shader_cache_dir) };
         if (useUpdate) a.push_back("--update_data_root=" + q(env.update_data_root));
     }
+    // 0.4.5 (jobs 1198 / 1201): the window's own thread paints and presents the picture, not the game's renderer thread
+    // (the presenter waited 0.5-1.4 ms per frame there): Gears 2 1440p 191 -> 195 fps, 1% low 150 -> 160.
+    a.push_back("--host_present_from_non_ui_thread=false");
     if (env.wine) notes.push_back("launcher: running under Wine / Proton");   // job 523
     // PS1 832-836: start at a chapter
     // 0.3.0: "Start at" removed (see the option list) - the game always opens at its own main menu.
@@ -974,13 +985,23 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         static const char* const modes[4] = { "", "--gow2_upscale_mode=quality", "--gow2_upscale_mode=performance", "--gow2_upscale_mode=ultra" };
         int m = s.i("SceneMode");
         if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4) a.push_back(modes[m]);
+        // to-do 18 (GitHub #98): with the scene at full size the upscaler only anti-aliases (DLSS = DLAA, FSR / XeSS =
+        // native AA) - say so, so nobody expects more frames from it
+        if (aa >= 2 && aa <= 4 && !(avail("SceneMode") && m > 0 && m < 4)) {
+            static const char* const aaOnly[5] = { "", "", "FSR native AA", "DLAA", "XeSS native AA" };
+            notes.push_back(std::string("launcher: ") + k_aaNames[aa] + " with Scene resolution Native runs as " + aaOnly[aa] +
+                            " - anti-aliasing only, no extra frames; pick a lower Scene resolution for more frames (GitHub #98)");
+        }
     }
     // PS1 857 (0146 / 0147): frame generation
     const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0 && !env.wine;   // job 521: DirectX 12 only
     if (fgOn) a.push_back("--gow2_frame_generation=fsr");
-    // PR #43: real (strict) occlusion queries - sent only when on (the exe's default is off; an exe without "strict"
-    // warns and keeps them off)
-    if (on("RealOcclusion")) a.push_back("--gow2_renderer_queries=strict");
+    // PR #43 / to-do 23: real (strict) occlusion queries, a fixed value per game (no player setting any more): on in
+    // Gears 2, Gears 3 and Judgment on DirectX 12 and not under Wine / Proton; off in Gears 1 (title-screen freeze, 0.3.0)
+    // and for a Gears 2 exe without strict queries. The exe's own default is off.
+    const bool realOcclusion = s.i("Api") == 0 && !env.wine && g != Game::Gears1 &&
+                               (g != Game::Gears2 || cap_exe(env, "gow2_renderer_queries"));
+    if (realOcclusion) a.push_back("--gow2_renderer_queries=strict");
     // Notes/80: XeGTAO (2 high, 3 ultra); 0 Off goes through the game's own [SystemSettings] below, 1 changes nothing
     if (avail("AO") && s.i("AO") >= 2) {
         a.push_back("--gow2_ao=gtao");
@@ -1021,7 +1042,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // queries, which only Real occlusion answers (DirectX 12, not under Wine / Proton); without them every flare shows
         // through the scenery, so they are off for that launch. Gears 1's engine has no lens-flare switch.
         if (!isG1) {
-            const bool occlusion = s.i("Api") == 0 && !env.wine && avail("RealOcclusion") && s.b("RealOcclusion");
+            const bool occlusion = realOcclusion;   // to-do 23: the fixed per-game value above
             if (!occlusion) {
                 ini.push_back(ei + "|SystemSettings|LensFlares=False");
                 notes.push_back("launcher: lens flares off for this launch - no Real occlusion (DirectX 12) to hide them behind walls (GitHub #102)");
@@ -1176,7 +1197,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         static const int country[22] = { 0, 103, 35, 34, 24, 50, 31, 71, 13, 82, 88, 23, 42, 74, 25, 32, 75, 90, 53, 56, 101, 20 };
         const int l = std::max(0, std::min(21, s.i("Lang")));
         const Option* lo = find_option(g, "Lang");
-        if (l > 0 && avail("Lang") && lo && choice_available(*lo, g, l).ok) {
+        const bool missing = l < static_cast<int>(env.lang_missing.size()) && env.lang_missing[l];   // GitHub #159
+        if (l > 0 && avail("Lang") && lo && choice_available(*lo, g, l).ok && missing)
+            notes.push_back("launcher: Game language " + lo->choices[l] + " is not on this copy of the game - the game's own default instead");
+        if (l > 0 && avail("Lang") && lo && choice_available(*lo, g, l).ok && !missing) {
             a.push_back("--user_language=" + std::to_string(lang[l]));
             a.push_back("--user_country=" + std::to_string(country[l]));
             // GitHub #76: Gears 1 plays Latin American Spanish only for a North American game region (SDK patch 47)
@@ -1185,7 +1209,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     if (avail("VoiceLang") && s.i("VoiceLang") > 0) {   // GitHub #87
         static const char* k_voice[10] = { "", "INT", "FRA", "DEU", "ITA", "ESN", "ESM", "POL", "RUS", "JPN" };
-        a.push_back(std::string("--ue3_voice_language=") + k_voice[std::max(0, std::min(9, s.i("VoiceLang")))]);
+        const int v = std::max(0, std::min(9, s.i("VoiceLang")));
+        if (v < static_cast<int>(env.voice_missing.size()) && env.voice_missing[v]) {   // GitHub #159
+            const Option* vo = find_option(g, "VoiceLang");
+            if (vo) notes.push_back("launcher: Voice language " + vo->choices[v] + " is not on this copy of the game - the game language's voices instead");
+        } else {
+            a.push_back(std::string("--ue3_voice_language=") + k_voice[v]);
+        }
     }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
@@ -1254,6 +1284,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             auto it = env.keys.find(k.cvar);
             const std::string v = it != env.keys.end() && !it->second.empty() ? it->second : k.def;
             if (v != k.def) defaultKeys = false;
+            if (std::string(k.cvar) == "keybind_walk") {   // GitHub #125: a runtime with SDK patch 60 only
+                if (v != "None" && cap_rt(env, "keybind_walk")) {
+                    a.push_back("--keybind_walk=" + v);
+                    if (s.i("WalkMode") == 1) a.push_back("--mnk_walk_toggle=true");
+                }
+                continue;
+            }
             a.push_back(std::string("--") + k.cvar + "=" + v);
         }
         // Job 629 (GitHub #41): keyboard button prompts - our key caps drawn over the game's controller-button sheet.

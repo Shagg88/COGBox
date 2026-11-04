@@ -265,6 +265,13 @@ Plans, not promises:
 - **Achievements**, kept locally.
 - More of the Gears series.
 
+## Community translations
+
+- **Gears of War 2 in Brazilian Portuguese (PT-BR)** - menus, subtitles and a full campaign dub, by HubertFer and the
+  Gears2-PTBR team: <https://github.com/Gears2-PTBR/Gears2-PTBR/releases>. It builds everything from your own copy of
+  the game (no game files are shared). It is their project, not part of COGBox - check that its version matches your
+  COGBox version before installing.
+
 ## Thank you
 
 This project stands on the work of many open-source projects and their communities. Thank you to:

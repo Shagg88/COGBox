@@ -72,6 +72,10 @@ struct Environment {
     std::vector<std::string> extra_args_lines;
     std::string pad_remap;  // GitHub #97: CogBox.ini [Pad] Remap= (the Custom controller layout, SDK patch 55)
     std::string gamertag;   // GitHub #119: CogBox.ini [Profile] Gamertag= (--user_gamertag, SDK patch 54); "" = the runtime's "User"
+    // GitHub #159: the Lang / VoiceLang choices (by index) whose files are not on the player's copy, found by the
+    // launcher from game_data_root (empty: not checked, every choice allowed). A choice saved before, or copied from
+    // another game's set, is then not passed on: the game keeps its own default instead of finding nothing.
+    std::vector<bool> lang_missing, voice_missing;
     Capability cap;
 };
 

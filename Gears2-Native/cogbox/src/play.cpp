@@ -226,11 +226,50 @@ void play_start(App &a, int g, bool prepare)
     SDL_MinimizeWindow(a.win);
 }
 
+// job 528 / to-do 20: bring the launcher's window to the front after a game closed. Windows won't let a background
+// program take the front (it only flashes its taskbar button). A tap of Alt counts as this program's own input,
+// joining the foreground thread's input for a moment lets SetForegroundWindow through, and a moment as a topmost
+// window lifts it over anything left behind.
+// true when the launcher is already in front (then the 3-second retry stops, so a click elsewhere is left alone)
+static bool launcher_to_front(App &a)
+{
+    HWND h = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(a.win), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    if (!h || GetForegroundWindow() == h) return true;
+    if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
+    const DWORD me = GetCurrentThreadId();
+    const HWND fgw = GetForegroundWindow();
+    const DWORD fg = fgw ? GetWindowThreadProcessId(fgw, nullptr) : 0;
+    if (fg && fg != me) AttachThreadInput(me, fg, TRUE);
+    INPUT in[2] = {};
+    in[0].type = in[1].type = INPUT_KEYBOARD;
+    in[0].ki.wVk = in[1].ki.wVk = VK_MENU;
+    in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, in, sizeof(INPUT));
+    SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetWindowPos(h, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetForegroundWindow(h);
+    BringWindowToTop(h);
+    SetFocus(h);
+    if (fg && fg != me) AttachThreadInput(me, fg, FALSE);
+    return GetForegroundWindow() == h;
+}
+
 void play_poll(App &a)
 {
+    if (a.raiseUntil) {   // to-do 20
+        // review 0.4.5: at most every 250 ms, and given up once another program has the front (the player chose it)
+        static uint64_t next = 0;
+        HWND fg = GetForegroundWindow();
+        DWORD pid = 0;
+        if (fg) GetWindowThreadProcessId(fg, &pid);
+        const bool other = fg && pid != GetCurrentProcessId() && pid != a.raisePid;
+        if (a.run.proc || SDL_GetTicks() >= a.raiseUntil || other) a.raiseUntil = 0;
+        else if (SDL_GetTicks() >= next) { next = SDL_GetTicks() + 250; if (launcher_to_front(a)) a.raiseUntil = 0; }
+    }
     if (!a.run.proc || WaitForSingleObject(a.run.proc, 0) != WAIT_OBJECT_0) return;
     DWORD code = 0;
     bool known = GetExitCodeProcess(a.run.proc, &code) != 0;
+    a.raisePid = GetProcessId(a.run.proc);   // review 0.4.5: the closing game's windows don't count as "another program"
     CloseHandle(a.run.proc);
     a.run.proc = nullptr;
     achievements_tab_reload();   // achievements part 4: its new unlocks
@@ -269,21 +308,9 @@ void play_poll(App &a)
     // job 528 (Shagg 20:57): Windows won't let a background program take the front (it only flashes its taskbar
     // button), and the game that was in front has just closed. A tap of Alt counts as this program's own input, and
     // joining the foreground thread's input for a moment lets SetForegroundWindow through - the usual workaround.
-    if (HWND h = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(a.win), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr)) {
-        const DWORD me = GetCurrentThreadId();
-        const HWND fgw = GetForegroundWindow();
-        const DWORD fg = fgw ? GetWindowThreadProcessId(fgw, nullptr) : 0;
-        if (fg && fg != me) AttachThreadInput(me, fg, TRUE);
-        INPUT in[2] = {};
-        in[0].type = in[1].type = INPUT_KEYBOARD;
-        in[0].ki.wVk = in[1].ki.wVk = VK_MENU;
-        in[1].ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput(2, in, sizeof(INPUT));
-        SetForegroundWindow(h);
-        BringWindowToTop(h);
-        SetFocus(h);
-        if (fg && fg != me) AttachThreadInput(me, fg, FALSE);
-    }
+    // to-do 20 (Shagg 3 Nov: the launcher didn't come back after the game closed): the game's window may still be
+    // closing in this frame, so the launcher keeps asking for the front for 3 seconds (play_poll, launcher_to_front)
+    a.raiseUntil = launcher_to_front(a) ? 0 : SDL_GetTicks() + 3000;
 
     std::vector<std::string> crash = crash_files(a.run.logDir);
     append_line(join(a.run.logDir, "args.txt"), "launcher: the game ended after " + std::to_string(secs) + " s, exit code " +

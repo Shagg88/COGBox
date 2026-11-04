@@ -49,6 +49,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 REXCVAR_DEFINE_STRING(gow2_gpu, "ours", "Gears2",
                       "Stage 6: ours (default since 6C, job 142: our own graphics system - the SDK's GPU plugin is not "
@@ -93,6 +94,7 @@ class OurGpuSystem final : public rex::system::IGraphicsSystem {
     if (provider_) return true;
     if (REXCVAR_GET(gow2_renderer_api) == "vulkan") {
 #if GN_SDK_VULKAN
+      PreferDiscreteVulkanDevice();   // GitHub #176
       provider_ = rex::ui::vulkan::VulkanProvider::Create(true, true);
       if (provider_) {
         provider_api_ = "Vulkan";
@@ -110,6 +112,49 @@ class OurGpuSystem final : public rex::system::IGraphicsSystem {
     return provider_ != nullptr;
   }
   const char* provider_api_ = "D3D12";
+
+  // GitHub #176: on a laptop (an RTX card and Intel graphics) the SDK's Vulkan provider took the first device the loader
+  // lists - the Intel one. Unless the player set vulkan_device, pick the first discrete GPU (then integrated, then any)
+  // by the loader's own order, the order the SDK numbers vulkan_device in.
+  void PreferDiscreteVulkanDevice() {
+#if GN_SDK_VULKAN
+    const std::string cur = rex::cvar::GetFlagByName("vulkan_device");
+    if (!cur.empty() && cur != "-1") return;   // the player's choice
+    HMODULE lib = LoadLibraryW(L"vulkan-1.dll");
+    if (!lib) return;
+    auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(lib, "vkGetInstanceProcAddr"));
+    auto create = gipa ? reinterpret_cast<PFN_vkCreateInstance>(gipa(nullptr, "vkCreateInstance")) : nullptr;
+    VkInstance inst = VK_NULL_HANDLE;
+    VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    app.apiVersion = VK_API_VERSION_1_1;
+    VkInstanceCreateInfo ci{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    ci.pApplicationInfo = &app;
+    if (create && create(&ci, nullptr, &inst) == VK_SUCCESS && inst) {
+      auto enumerate = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(gipa(inst, "vkEnumeratePhysicalDevices"));
+      auto props = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(gipa(inst, "vkGetPhysicalDeviceProperties"));
+      auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(gipa(inst, "vkDestroyInstance"));
+      uint32_t n = 0;
+      if (enumerate && props && enumerate(inst, &n, nullptr) == VK_SUCCESS && n > 1) {
+        std::vector<VkPhysicalDevice> devs(n);
+        enumerate(inst, &n, devs.data());
+        int best = -1, best_score = -1;
+        std::string best_name;
+        for (uint32_t i = 0; i < n; ++i) {
+          VkPhysicalDeviceProperties p{};
+          props(devs[i], &p);
+          const int score = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3
+                            : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : 1;
+          if (score > best_score) { best = int(i); best_score = score; best_name = p.deviceName; }
+        }
+        if (best > 0 && rex::cvar::SetFlagByName("vulkan_device", std::to_string(best)))
+          REXLOG_INFO("gow2_gpu: Vulkan device {} ({}) - the first discrete GPU; the loader lists {} (GitHub #176)", best,
+                      best_name, n);
+      }
+      if (destroy) destroy(inst, nullptr);
+    }
+    FreeLibrary(lib);
+#endif
+  }
 
   // Patch 0006: before the provider creates the device (DRED settings apply to devices created afterwards).
   void EnableDred() {
