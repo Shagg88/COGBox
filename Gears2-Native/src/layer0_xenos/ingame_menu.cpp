@@ -9,6 +9,7 @@
 // The controller is read with XInput (loaded at run time, nothing to link) on a small polling thread; while the menu is
 // open its buttons are fed to Dear ImGui's gamepad navigation. Our code (MIT).
 #include <xenos/dev_tools.h>
+#include <xenos/achievements_browser.h>   // achievements part 3: the Achievements page
 #include <xenos/input/prompt_device_monitor.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -257,6 +258,16 @@ std::thread g_poller;
 rex::ui::ImGuiDrawer* g_drawer = nullptr;
 rex::ui::Window* g_window = nullptr;
 MenuFile g_file;
+// Achievements part 3: the Achievements page (made on first use, UI thread; it keeps the chosen game, sort and Show
+// while the game runs).
+rex::ui::ImmediateDrawer* g_immediate = nullptr;
+rex::Runtime* g_runtime = nullptr;
+std::unique_ptr<xenos::AchievementsBrowser> g_browser;
+xenos::AchievementsBrowser* Browser() {
+  if (!g_browser) g_browser = std::make_unique<xenos::AchievementsBrowser>(g_immediate, g_runtime);
+  return g_browser.get();
+}
+enum class MenuPage { kSettings, kAchievements };
 
 void RequestOpenOnUIThread();
 void ScheduleDrop();
@@ -356,7 +367,8 @@ void PollPads() {
 // ---- the menu itself --------------------------------------------------------------------------------------------
 class InGameMenu final : public rex::ui::ImGuiDialog {
  public:
-  explicit InGameMenu(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {
+  InGameMenu(rex::ui::ImGuiDrawer* drawer, MenuPage page) : ImGuiDialog(drawer) {
+    ShowPage(page);
     ImGuiIO& io = GetIO();
     saved_config_ = io.ConfigFlags;
     saved_backend_ = io.BackendFlags;
@@ -379,6 +391,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     io.MouseDrawCursor = saved_draw_cursor_;
   }
   bool done() const { return done_; }
+  void Close() { done_ = true; }   // F7 while open
 
  protected:
   void OnDraw(ImGuiIO& io) override {
@@ -494,13 +507,48 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     const WORD pressed = WORD(live & ~last_live_);
     last_live_ = live;
     const bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
-    if (!g_file.tabs.empty()) {
+    if (page_ == MenuPage::kAchievements) {   // achievements part 3: LB / RB game, X sort, Y show
+      if (!popup) {
+        if (pressed & XINPUT_GAMEPAD_LEFT_SHOULDER) Browser()->Previous();
+        if (pressed & XINPUT_GAMEPAD_RIGHT_SHOULDER) Browser()->Next();
+        if (pressed & XINPUT_GAMEPAD_X) Browser()->CycleSort();
+        if (pressed & XINPUT_GAMEPAD_Y) Browser()->CycleShow();
+      }
+    } else if (!g_file.tabs.empty()) {
       if (pressed & XINPUT_GAMEPAD_LEFT_SHOULDER) tab_ = (tab_ + int(g_file.tabs.size()) - 1) % int(g_file.tabs.size());
       if (pressed & XINPUT_GAMEPAD_RIGHT_SHOULDER) tab_ = (tab_ + 1) % int(g_file.tabs.size());
     }
-    if (!popup && !popup_last_ && ((pressed & (XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_START)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
-      done_ = true;  // resume
+    const bool back = (pressed & XINPUT_GAMEPAD_B) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    if (!popup && !popup_last_) {
+      if (back && page_ == MenuPage::kAchievements) ShowPage(MenuPage::kSettings);   // B: back to the settings
+      else if (back || (pressed & XINPUT_GAMEPAD_START)) done_ = true;               // resume
+    }
     popup_last_ = popup;
+  }
+
+  void ShowPage(MenuPage page) {
+    page_ = page;
+    page_first_frame_ = true;
+    if (page == MenuPage::kAchievements) Browser()->Reload();
+  }
+
+  // Achievements part 3: the page below the title line, then Back to settings / Resume.
+  void DrawAchievements(float scale) {
+    const float bar_h = ImGui::GetFrameHeightWithSpacing() * 1.6f;
+    const float list_h = ImGui::GetContentRegionAvail().y - bar_h - ImGui::GetTextLineHeightWithSpacing() * 2.2f;
+    const std::string tip = Browser()->Draw(scale, std::max(list_h, 100.0f * scale));
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("%s", tip.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::SetCursorPosY(ImGui::GetWindowHeight() - bar_h - ImGui::GetStyle().WindowPadding.y + ImGui::GetStyle().ItemSpacing.y);
+    ImGui::Separator();
+    const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    if (ImGui::Button("Back to settings", ImVec2(bw, 0))) ShowPage(MenuPage::kSettings);
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.10f, 0.08f, 1.0f));
+    if (ImGui::Button("Resume", ImVec2(bw, 0))) done_ = true;
+    ImGui::PopStyleColor();
+    page_first_frame_ = false;
   }
 
   int Changes() const {
@@ -571,6 +619,12 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     ImGui::SameLine();
     ImGui::TextDisabled("%s", (g_file.game.empty() ? std::string("GAME MENU") : g_file.game).c_str());
     ImGui::SameLine();
+    if (page_ == MenuPage::kAchievements) {
+      ImGui::TextDisabled("   %s", xenos::ach::HintLine(REXCVAR_GET(cogbox_menu_ps)));
+      ImGui::Separator();
+      DrawAchievements(scale);
+      return;
+    }
     ImGui::TextDisabled(REXCVAR_GET(cogbox_menu_ps) ? "   L1 / R1: tabs   Cross: change   Circle: back to the game"   // job 523
                                                     : "   LB / RB: tabs   A: change   B: back to the game");
     ImGui::Separator();
@@ -649,11 +703,14 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     const int n = Changes();
     if (n) ImGui::TextDisabled("%d change(s) - they take effect when the game restarts.", n);
     else ImGui::TextDisabled("Settings take effect when the game restarts.");
-    const float bw = (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3.0f;
-    if (first_frame_) ImGui::SetKeyboardFocusHere();
+    const float bw = (ImGui::GetContentRegionAvail().x - 3 * ImGui::GetStyle().ItemSpacing.x) / 4.0f;
+    if (page_first_frame_) ImGui::SetKeyboardFocusHere();
+    page_first_frame_ = false;
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.10f, 0.08f, 1.0f));   // 0.2.0: Resume is the crimson main button
     if (ImGui::Button("Resume", ImVec2(bw, 0))) done_ = true;
     ImGui::PopStyleColor();
+    ImGui::SameLine();
+    if (ImGui::Button("Achievements", ImVec2(bw, 0))) ShowPage(MenuPage::kAchievements);   // achievements part 3
     ImGui::SameLine();
     if (!n || g_file.restart_path.empty()) ImGui::BeginDisabled();
     if (ImGui::Button(n ? ("Restart to apply (" + std::to_string(n) + ")").c_str() : "Restart to apply", ImVec2(bw, 0))) Finish(true);
@@ -667,6 +724,8 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
   XINPUT_GAMEPAD last_ = {};
   WORD held_at_open_ = 0, last_live_ = 0;
   int tab_ = 0;
+  MenuPage page_ = MenuPage::kSettings;   // achievements part 3
+  bool page_first_frame_ = true;
   bool first_frame_ = true, done_ = false, popup_last_ = false, close_scheduled_ = false;
   bool unblock_pending_ = false, saved_draw_cursor_ = false, show_cursor_ = true;   // PR #134
   std::chrono::steady_clock::time_point dismissed_at_{};
@@ -706,12 +765,12 @@ void RestoreMouseState() {
   g_look_saved = false;
 }
 
-void OpenNow() {
+void OpenNow(MenuPage page = MenuPage::kSettings) {
   if (g_menu || !g_drawer) return;
   g_open.store(true);
   SaveMouseState();
   BlockGameInput(true);
-  g_menu = std::make_unique<InGameMenu>(g_drawer);
+  g_menu = std::make_unique<InGameMenu>(g_drawer, page);
   REXLOG_INFO("cogbox_menu: opened");
 }
 
@@ -786,7 +845,8 @@ void IdleCursorWatch() {
 }
 }  // namespace
 
-void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window, rex::Runtime* runtime) {
+void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDrawer* immediate, rex::ui::Window* window,
+                            rex::Runtime* runtime) {
   StartPadPump(window, runtime);   // GitHub #108, menu or no menu: pad assignment (+ SDL pump when exported)
   // Shagg 3 Nov: \ is the screenshot key in every game, menu or no menu (frame_capture.cpp saves the next frame)
   rex::ui::RegisterBind("bind_cogbox_screenshot", "Backslash", "COGBox screenshot (Pictures\\COGBox)", [] { XenosRequestScreenshot(); });
@@ -801,6 +861,8 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* windo
   if (!REXCVAR_GET(cogbox_menu_enabled) || !drawer || !window) return;
   g_drawer = drawer;
   g_window = window;
+  g_immediate = immediate;   // achievements part 3
+  g_runtime = runtime;
   g_file = LoadMenuFile(REXCVAR_GET(cogbox_menu));
   // While the menu is open the game gets no controller / keyboard / mouse input.
   if (runtime) {
@@ -810,6 +872,13 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* windo
   }
   rex::ui::RegisterBind("bind_cogbox_menu", "F1", "COGBox in-game menu", [] {
     if (!g_open.load()) OpenNow();
+  });
+  // Achievements part 3: F7 opens the menu on the Achievements page (and closes it again), instead of the SDK's own
+  // achievements window (its bind is registered before ours and would win the key).
+  rex::ui::UnregisterBind("bind_achievements");
+  rex::ui::RegisterBind("bind_cogbox_achievements", "F7", "COGBox achievements", [] {
+    if (g_menu) g_menu->Close();
+    else if (!g_open.load()) OpenNow(MenuPage::kAchievements);
   });
   g_stop.store(false);
   g_poller = std::thread(PollPads);
@@ -835,6 +904,10 @@ void XenosShutdownInGameMenu() {
   g_open.store(false);
   BlockGameInput(false);   // 0.2.0
   rex::ui::UnregisterBind("bind_cogbox_menu");
+  rex::ui::UnregisterBind("bind_cogbox_achievements");
+  g_browser.reset();
+  g_immediate = nullptr;
+  g_runtime = nullptr;
   g_drawer = nullptr;
   g_window = nullptr;
   g_input.store(nullptr);

@@ -120,6 +120,8 @@ class Gow3App : public rex::ReXApp {
   }
   void OnPostLaunchModule(rex::system::XThread* thread) override { XenosHoldGuestIfRequested(thread); }
   // --gow2_fps_bar (job 052, Gears 2 b3a16da): our frame-rate bar on the SDK's overlay layer.
+  // Achievements part 3: no SDK achievements window; F7 opens COGBox's in-game menu on its Achievements page.
+  std::unique_ptr<rex::ui::ImGuiDialog> CreateAchievementsOverlay() override { return nullptr; }
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     // "Match my monitor" (Gears 2 0086, same lines as Gow2App): layer 0 learns the window and its size, for the
     // renderer's auto scale and exact-size present, and for --gow3_aspect=auto.
@@ -130,7 +132,7 @@ class Gow3App : public rex::ReXApp {
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
     XenosInstallAoDebugKeys(drawer);  // Gears 2 notes/80 s.12: F9 / F10 / F11 (--gow2_ao_debug_keys)
-    XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
+    XenosInstallInGameMenu(drawer, immediate_drawer(), window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
     xenos::display::SetSurfaceSize(pixel_width, pixel_height);

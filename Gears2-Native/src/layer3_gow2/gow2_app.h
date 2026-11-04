@@ -110,6 +110,8 @@ class Gow2App : public rex::ReXApp {
   // Other hooks available from rex::ReXApp:
   // void OnLoadXexImage(std::string& xex_image) override {}
   // The window and the SDK's ImGui overlay layer exist.
+  // Achievements part 3: no SDK achievements window; F7 opens COGBox's in-game menu on its Achievements page.
+  std::unique_ptr<rex::ui::ImGuiDialog> CreateAchievementsOverlay() override { return nullptr; }
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     // "Match my monitor": layer 0 learns the window and its size (xenos/display_size.h).
     if (rex::ui::Window* w = window()) {
@@ -119,7 +121,7 @@ class Gow2App : public rex::ReXApp {
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
     XenosInstallAoDebugKeys(drawer);  // notes/80 s.12 (--gow2_ao_debug_keys)
-    XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
+    XenosInstallInGameMenu(drawer, immediate_drawer(), window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
     xenos::display::SetSurfaceSize(pixel_width, pixel_height);
