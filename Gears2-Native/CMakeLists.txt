@@ -20,6 +20,11 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/achievements_export.cpp
     src/layer0_xenos/achievements_popup_logic.cpp
     src/layer0_xenos/achievement_popup_assets.cpp
+    src/layer0_xenos/achievement_popup.cpp
+    src/layer0_xenos/popup_common.cpp
+    src/layer0_xenos/popup_x360.cpp
+    src/layer0_xenos/popup_xbox.cpp
+    src/layer0_xenos/popup_ps5.cpp
     src/layer0_xenos/crash_report.cpp
     src/layer0_xenos/system_report.cpp
     src/layer0_xenos/save_watch.cpp

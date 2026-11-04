@@ -22,7 +22,7 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 #include <xenos/gpu_system.h>
 #include <xenos/achievements_export.h>
 #include <xenos/achievement_popup_assets.h>
-#include <xenos/lazy_achievement_toast.h>
+#include <xenos/achievement_popup.h>
 
 #include <rex/system/interfaces/graphics.h>
 #include <xdk7645/stage1.h>
@@ -101,8 +101,10 @@ class Gow2App : public rex::ReXApp {
   // Patch 0054: the achievement toast attaches the overlay drawer only while a toast shows (the SDK's kept the
   // presenter repainting at the monitor's rate all the time - the NVIDIA overlay counted those as frames).
   std::unique_ptr<rex::ui::AchievementNotificationDialog> CreateAchievementNotificationDialog() override {
-    if (XenosOnScreenNotesHidden() || !imgui_drawer() || !immediate_drawer() || !runtime()) return nullptr;
-    return std::make_unique<xenos::LazyAchievementToast>(imgui_drawer(), immediate_drawer(), runtime(), &app_context());
+    // Achievements part 2: COGBox's own popups (Xbox 360 / Xbox / PS5); "Hide achievement popups" is checked per
+    // unlock, so "Hide on-screen notes" no longer hides them.
+    if (!imgui_drawer() || !immediate_drawer() || !runtime()) return nullptr;
+    return std::make_unique<xenos::AchievementPopup>(imgui_drawer(), immediate_drawer(), runtime(), &app_context());
   }
 
   // Other hooks available from rex::ReXApp:
