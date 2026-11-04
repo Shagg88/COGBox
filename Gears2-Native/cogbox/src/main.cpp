@@ -156,6 +156,11 @@ static void answered(App &a)
     const GameDef &d = game_def(g < 0 ? 0 : g);
     if (m.tag == "crash") play_answer(a, m);
     else if (m.tag == "quit" && m.answer == 0) a.quit = true;   // job 526
+    else if (m.tag == "whatsnew") {   // to-do 13: this version's release notes on GitHub
+        a.ini.set("Notices", "WhatsNewSeen", COGBOX_VERSION);
+        a.ini.save();
+        if (m.answer == 0) shell_open(std::string("https://github.com/Shagg88/COGBox/releases/tag/") + COGBOX_VERSION);
+    }
     else if (m.tag == "langpick") {   // 0.2.0: the language prompt - Automatic, then languages()
         const auto &L = languages();
         const std::string code = m.listSel <= 0 ? std::string("auto") : L[size_t(std::min<int>(m.listSel - 1, (int)L.size() - 1))].code;
@@ -217,6 +222,17 @@ static void answered(App &a)
 void startup_notices(App &a)
 {
     if (a.modal.open || (getenv("COGBOX_SHOT") && !getenv("COGBOX_SHOT_NOTICES"))) return;
+    // to-do 13 (Shagg 3 Nov): after an update, say so and offer the changelog (this version's release page). A first
+    // start (no notice seen before) just records the version.
+    if (a.ini.get("Notices", "WhatsNewSeen") != COGBOX_VERSION) {
+        const bool updated = !a.ini.get("Notices", "LanguageSeen").empty() || !a.ini.get("Notices", "WhatsNewSeen").empty();
+        if (!updated) { a.ini.set("Notices", "WhatsNewSeen", COGBOX_VERSION); a.ini.save(); }
+        else {
+            ask(a, "whatsnew", -1, "COGBox updated", std::string("COGBox is now version ") + COGBOX_VERSION +
+                ". See what's new and what was fixed in the changelog.", { "Open the changelog", "Continue" });
+            return;
+        }
+    }
     if (!a.ini.geti("Notices", "LanguageNever", 0) && a.ini.get("Notices", "LanguageSeen") != COGBOX_VERSION) {
         ask(a, "langpick", -1, "Language", "Choose COGBox's language. You can change it any time on a game's About tab.", { "Continue" });
         a.modal.list.push_back(std::string("Automatic (") + tr("Windows' language") + ")");
