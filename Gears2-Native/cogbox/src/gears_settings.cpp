@@ -298,11 +298,9 @@ std::vector<Option> make_options(Game g) {
     // GitHub #75 (report 28b2db29): Gears 2 shows flares through walls for the same reason (every ZPass query answered
     // with the fake count 1000). Now offered and on by default there too, as in Gears 3 / Judgment. If distant surfaces
     // flicker (jobs 139-140, the old late-answer path), turn it off; Lens Flares off is the other workaround.
-    add(make("RealOcclusion", "Real occlusion", Tab::Graphics, Kind::Bool, PG, 1,
-             "The game asks the graphics card whether things like light flares are hidden behind walls; on means it "
-             "waits for the card's real answer instead of always being told \"visible\", so flares and hidden objects "
-             "behind walls disappear as on the console, and fewer hidden things are drawn. DirectX 12 only. "
-             "Off = everything counts as visible, as before.", 0), "realocclusion");
+    // 0.4.5 (Shagg 3 Nov, to-do 23): Real occlusion is no longer a player setting - the launcher sends a fixed value per
+    // game at launch (real_occlusion() below): on in Gears 2, Gears 3 and Judgment on DirectX 12 (not under Wine /
+    // Proton), off in Gears 1 (froze its title screen) and wherever the answers can't be had.
 
     // ---- Controls ------------------------------------------------------------------------------------------------
     add(make("Mnk", "Keyboard and mouse (Gears layout)", Tab::Controls, Kind::Bool, SH, 0,
@@ -581,7 +579,6 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "PadPrompts") on = s.b("Mnk");                                  // GitHub #104
     else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("AAMode") <= 4 && s.i("Api") == 0;   // PS1 352, 473; job 521; T2x: no scene scale
     else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
-    else if (o.id == "RealOcclusion" && (s.i("Api") != 0 || env.wine)) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // PR #43
     else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
     else if (o.id == "SplitLayout") on = s.i("Players") == 1;                       // GitHub #136: 2 players only
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
@@ -963,9 +960,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PS1 857 (0146 / 0147): frame generation
     const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0 && !env.wine;   // job 521: DirectX 12 only
     if (fgOn) a.push_back("--gow2_frame_generation=fsr");
-    // PR #43: real (strict) occlusion queries - sent only when on (the exe's default is off; an exe without "strict"
-    // warns and keeps them off)
-    if (on("RealOcclusion")) a.push_back("--gow2_renderer_queries=strict");
+    // PR #43 / to-do 23: real (strict) occlusion queries, a fixed value per game (no player setting any more): on in
+    // Gears 2, Gears 3 and Judgment on DirectX 12 and not under Wine / Proton; off in Gears 1 (title-screen freeze, 0.3.0)
+    // and for a Gears 2 exe without strict queries. The exe's own default is off.
+    const bool realOcclusion = s.i("Api") == 0 && !env.wine && g != Game::Gears1 &&
+                               (g != Game::Gears2 || cap_exe(env, "gow2_renderer_queries"));
+    if (realOcclusion) a.push_back("--gow2_renderer_queries=strict");
     // Notes/80: XeGTAO (2 high, 3 ultra); 0 Off goes through the game's own [SystemSettings] below, 1 changes nothing
     if (avail("AO") && s.i("AO") >= 2) {
         a.push_back("--gow2_ao=gtao");
@@ -1006,7 +1006,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // queries, which only Real occlusion answers (DirectX 12, not under Wine / Proton); without them every flare shows
         // through the scenery, so they are off for that launch. Gears 1's engine has no lens-flare switch.
         if (!isG1) {
-            const bool occlusion = s.i("Api") == 0 && !env.wine && avail("RealOcclusion") && s.b("RealOcclusion");
+            const bool occlusion = realOcclusion;   // to-do 23: the fixed per-game value above
             if (!occlusion) {
                 ini.push_back(ei + "|SystemSettings|LensFlares=False");
                 notes.push_back("launcher: lens flares off for this launch - no Real occlusion (DirectX 12) to hide them behind walls (GitHub #102)");
