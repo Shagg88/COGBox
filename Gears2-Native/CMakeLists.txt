@@ -19,6 +19,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/achievements_data.cpp
     src/layer0_xenos/achievements_export.cpp
     src/layer0_xenos/achievements_popup_logic.cpp
+    src/layer0_xenos/achievements_browser_model.cpp
     src/layer0_xenos/achievement_popup_assets.cpp
     src/layer0_xenos/achievement_popup.cpp
     src/layer0_xenos/popup_common.cpp
@@ -379,6 +380,8 @@ if(GN_BUILD_TESTS)
         src/layer2_ue3/prebuild_lzx.cpp
         tests/layer0_achievements_popup_test.cpp
         src/layer0_xenos/achievements_popup_logic.cpp
+        tests/layer0_achievements_browser_test.cpp
+        src/layer0_xenos/achievements_browser_model.cpp
         tests/layer0_achievements_data_test.cpp
         src/layer0_xenos/achievements_data.cpp
         tests/layer2_package_exports_test.cpp
