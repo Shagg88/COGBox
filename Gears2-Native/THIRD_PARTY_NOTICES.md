@@ -10,6 +10,7 @@ Gears2-Native's own code is MIT-licensed (`LICENSE`). It contains or builds agai
 | Libraries bundled by the SDK (SDL3, Dear ImGui, Tracy, fmt, spdlog, FFmpeg, ...) | inside the SDK | their own licences, listed in the SDK's `licenses/` folder |
 | gow3-recomp (Flippage and the gow3-recomp contributors) and gears-of-war-2-pc-port / gow2-recomp (Santiago Quiroz Upegui and the gow2-recomp contributors) | the native mouse look method and the Gears 3 / Gears 2 base-disc addresses in `ue3_mouse_look.h` and `mouse_look.cpp` (layer 3 of all three ports, COGBox 0.2.1), plus the multi-controller 4x prompt overlay catalog and live device monitor (`prompt_atlas_catalog.*`, `prompt_overlay_compositor.*`, `prompt_device_monitor.*`) | BSD-3-Clause (notices below) |
 | Kenney Input Prompts (`assets/glyphs/`) | Controller and keyboard/mouse prompt glyph icons for Xbox, PlayStation, Nintendo Switch, Steam Deck, and Steam Controller | CC0 1.0 Universal (Public Domain, notice below) |
+| Achievement sound (`assets/sounds/achievement.wav`) | the achievement popups' sound, made with ElevenLabs (elevenlabs.io) Sound Effects on its free plan | ElevenLabs' terms for free-plan output (credit to elevenlabs.io; no commercial licence) |
 | Inter 4.1 (The Inter Project Authors, `assets/fonts/`) | Inter-Regular.ttf and Inter-SemiBold.ttf, the achievement popups' and the in-game Achievements page's font | SIL Open Font License 1.1 (`assets/fonts/Inter-LICENSE.txt`) |
 
 No game files are included. Players supply their own copy of Gears of War 2.
