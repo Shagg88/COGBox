@@ -188,6 +188,10 @@ std::vector<Option> make_options(Game g) {
              "Draws nothing of the port's over the game: no shader-building note, no shader-loading indicator and no "
              "achievement pop-ups (achievements still unlock). The FPS counter above is separate.", 0));
     // GitHub #52 (Gears 3 native mouse look; Gears 2 too since sweep 21)
+    // GitHub #125 (SDK patch 60): the Walk key (KEYBOARD KEYS, below) is held or pressed once to switch walking on / off
+    add(choice("WalkMode", "Walk key", Tab::Controls, PG, { "Hold to walk", "Press to switch walking on / off" }, 0,
+               "With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half "
+               "speed. No key is set at first.", 0), "walkkey");
     if (g == Game::Gears3 || g == Game::Gears2) add(choice("AimTurn", "Mouse turn when aiming", Tab::Controls, OWN, { "Same as moving around", "Game's (slower)" }, 1,
                "Same: the mouse turns the view by the same angle per inch in every camera mode - running, roadie run, cover, "
                "aiming and zoom. Game's (default, GitHub #169): aiming and zoom keep the console game's slower turn. Native mouse look only.", 0));
@@ -540,6 +544,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears2 && !cap_exe(env, "gow2_renderer_queries")) return no(not_yet(0, "needs its next build"));
         // 0.3.0: with Gears 1's shader pack it froze the title screen (frame 183, 14:10 runs) - off until that is fixed
         if (g == Game::Gears1) return no(not_yet(gi, "freezes Gears 1's title screen with its shader pack - off for now"));
+    } else if (f == "walkkey") {   // GitHub #125: SDK patch 60 (the 0.4.5 runtime)
+        if (!cap_rt(env, "keybind_walk")) return no(not_yet(gi, "needs its next build (SDK patch 60)"));
     } else if (f == "vsync") {   // launcher patch 0155
         if (!cap_rt(env, "d3d12_present_vsync")) return no(not_yet(gi, "needs its next build (SDK patch 37)"));
     }
@@ -566,6 +572,7 @@ const std::vector<KeyAction> &key_actions()
         { "keybind_lstick_press", "Left stick click", "Left stick click", "C" },
         { "keybind_start", "Start", "Pause menu", "Escape,Return" },
         { "keybind_back", "Back", "Back / scores", "Backspace" },
+        { "keybind_walk", "-", "Walk (slower movement, GitHub #125)", "None" },   // SDK patch 60: no key until chosen
     };
     return v;
 }
@@ -578,6 +585,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     if (o.id == "WindowSize") on = s.i("Fullscreen") == 0;                             // PS1 333: windowed only
     else if (o.id == "PaperWhite" || o.id == "Peak") on = s.b("HDR");                 // PS1 366
     else if (o.id == "PadPrompts") on = s.b("Mnk");                                  // GitHub #104
+    else if (o.id == "WalkMode") on = s.b("Mnk");                                    // GitHub #125
     else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("AAMode") <= 4 && s.i("Api") == 0;   // PS1 352, 473; job 521; T2x: no scene scale
     else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
     else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
@@ -1240,6 +1248,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             auto it = env.keys.find(k.cvar);
             const std::string v = it != env.keys.end() && !it->second.empty() ? it->second : k.def;
             if (v != k.def) defaultKeys = false;
+            if (std::string(k.cvar) == "keybind_walk") {   // GitHub #125: a runtime with SDK patch 60 only
+                if (v != "None" && cap_rt(env, "keybind_walk")) {
+                    a.push_back("--keybind_walk=" + v);
+                    if (s.i("WalkMode") == 1) a.push_back("--mnk_walk_toggle=true");
+                }
+                continue;
+            }
             a.push_back(std::string("--") + k.cvar + "=" + v);
         }
         // Job 629 (GitHub #41): keyboard button prompts - our key caps drawn over the game's controller-button sheet.
