@@ -48,4 +48,18 @@ PopupPosition ResolvePosition(PopupStyle style, PopupPosition p);  // Default: P
 std::string FitText(const std::string& text, float max_width, const std::function<float(const std::string&)>& measure,
                     float* scale_out);
 
+// The animation: where each moving part of a popup is, `seconds` after it started. 5 s per popup: 0.5 s intro, hold,
+// 0.5 s outro. The styles draw only from these numbers.
+constexpr float kPopupSeconds = 5.0f;
+struct PopupFrame {
+  float alpha = 0;       // the whole popup, 0-1
+  float icon_scale = 0;  // orb / badge (the Xbox badge overshoots to 1.12)
+  float bar = 0;         // pill / box width, 0-1 (0 = only the icon)
+  float slide = 1;       // 0 = in place, 1 = fully off screen (PS5: to the right)
+  float text_alpha = 0;
+  float shine = -1;      // Xbox trophy shine position 0-1, -1 = none
+  bool finished = false;
+};
+PopupFrame PopupTimeline(PopupStyle style, float seconds);
+
 }  // namespace xenos::ach

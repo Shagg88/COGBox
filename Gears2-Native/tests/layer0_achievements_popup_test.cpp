@@ -64,3 +64,42 @@ TEST_CASE("ach popup: text fitting", "[ach]") {
   CHECK(ru.size() > 3);
   CHECK((ru.size() - 3) % 2 == 0);  // whole 2-byte Cyrillic letters kept before the ellipsis
 }
+
+TEST_CASE("ach popup: timeline starts and ends invisible, holds fully shown", "[ach]") {
+  using namespace xenos::ach;
+  for (PopupStyle s : {PopupStyle::X360, PopupStyle::Xbox, PopupStyle::Ps5}) {
+    CHECK(PopupTimeline(s, 0.f).alpha == 0.f);
+    const auto hold = PopupTimeline(s, 2.5f);
+    CHECK(hold.alpha == 1.f);
+    CHECK(hold.bar == 1.f);
+    CHECK(hold.text_alpha == 1.f);
+    CHECK(hold.slide == 0.f);
+    CHECK(hold.icon_scale == 1.f);
+    CHECK_FALSE(hold.finished);
+    const auto end = PopupTimeline(s, 5.f);
+    CHECK(end.finished);
+    CHECK(end.alpha == 0.f);
+    for (float t = 0; t < 5.f; t += 0.05f) {
+      const auto f = PopupTimeline(s, t);
+      CHECK(f.alpha >= 0.f);
+      CHECK(f.alpha <= 1.f);
+      CHECK(f.bar >= 0.f);
+      CHECK(f.bar <= 1.f);
+      CHECK(f.slide >= 0.f);
+      CHECK(f.slide <= 1.f);
+      CHECK(f.icon_scale <= 1.12f + 1e-4f);
+    }
+  }
+}
+
+TEST_CASE("ach popup: each style's own motion", "[ach]") {
+  using namespace xenos::ach;
+  CHECK(PopupTimeline(PopupStyle::X360, 0.3f).bar > 0.f);
+  CHECK(PopupTimeline(PopupStyle::X360, 0.3f).bar < 1.f);
+  CHECK(PopupTimeline(PopupStyle::X360, 0.1f).text_alpha == 0.f);
+  CHECK(PopupTimeline(PopupStyle::Xbox, 0.18f).icon_scale > 1.f);  // overshoot
+  CHECK(PopupTimeline(PopupStyle::Xbox, 0.9f).shine > 0.f);
+  CHECK(PopupTimeline(PopupStyle::Xbox, 2.0f).shine == -1.f);
+  CHECK(PopupTimeline(PopupStyle::Ps5, 0.2f).slide > 0.f);
+  CHECK(PopupTimeline(PopupStyle::Ps5, 4.8f).slide > 0.f);
+}

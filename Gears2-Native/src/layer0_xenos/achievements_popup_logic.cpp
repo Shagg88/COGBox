@@ -99,4 +99,53 @@ std::string FitText(const std::string& text, float max_width, const std::functio
   return kept + kEllipsis;
 }
 
+namespace {
+// 0 before a, 1 after b, linear between.
+float Ramp(float t, float a, float b) {
+  if (t <= a) return 0.f;
+  if (t >= b) return 1.f;
+  return (t - a) / (b - a);
+}
+float EaseOut(float x) { return x >= 1.f ? 1.f : 1.f - (1.f - x) * (1.f - x) * (1.f - x); }
+float EaseIn(float x) { return x * x * x; }
+// a -> b, exactly b at x = 1.
+float Lerp(float a, float b, float x) { return x >= 1.f ? b : a + (b - a) * x; }
+}  // namespace
+
+PopupFrame PopupTimeline(PopupStyle style, float t) {
+  PopupFrame f;
+  if (t >= kPopupSeconds) {
+    f.finished = true;
+    return f;
+  }
+  if (t < 0.f) t = 0.f;
+  switch (style) {
+    case PopupStyle::X360:
+      f.alpha = Ramp(t, 0.f, 0.15f) * (1.f - Ramp(t, 4.8f, 5.0f));
+      f.icon_scale = EaseOut(Ramp(t, 0.f, 0.15f));
+      f.bar = EaseOut(Ramp(t, 0.15f, 0.5f)) * (1.f - EaseIn(Ramp(t, 4.5f, 4.85f)));
+      f.text_alpha = Ramp(t, 0.4f, 0.6f) * (1.f - Ramp(t, 4.5f, 4.65f));
+      f.slide = 0.f;
+      break;
+    case PopupStyle::Xbox:
+      f.alpha = Ramp(t, 0.f, 0.1f) * (1.f - Ramp(t, 4.75f, 5.0f));
+      f.icon_scale = t < 0.18f ? 1.12f * EaseOut(Ramp(t, 0.f, 0.18f)) : Lerp(1.12f, 1.f, EaseOut(Ramp(t, 0.18f, 0.28f)));
+      f.bar = EaseOut(Ramp(t, 0.2f, 0.5f)) * (1.f - EaseIn(Ramp(t, 4.5f, 4.8f)));
+      f.text_alpha = Ramp(t, 0.4f, 0.65f) * (1.f - Ramp(t, 4.5f, 4.6f));
+      f.shine = (t >= 0.7f && t <= 1.2f) ? Ramp(t, 0.7f, 1.2f) : -1.f;
+      f.slide = 0.f;
+      break;
+    case PopupStyle::Ps5: {
+      const float in = 1.f - EaseOut(Ramp(t, 0.f, 0.4f)), out = EaseIn(Ramp(t, 4.6f, 5.0f));
+      f.slide = in > out ? in : out;
+      f.alpha = Ramp(t, 0.f, 0.2f) * (1.f - Ramp(t, 4.6f, 5.0f));
+      f.text_alpha = f.alpha;
+      f.icon_scale = 1.f;
+      f.bar = 1.f;
+      break;
+    }
+  }
+  return f;
+}
+
 }  // namespace xenos::ach
