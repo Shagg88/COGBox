@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -446,6 +447,10 @@ class ModOverlayDevice : public rex::filesystem::HostPathDevice {
 // rel (lower case, '\\', from the game data root) -> host file; later mods win. Programs are refused.
 // GitHub #87 (see ue3_voice_language): adds "<rel of *_LOC_<lang>.xxx>" -> its <voice> twin to the mods' files (a real
 // mod's own copy of a file wins). Returns how many were added.
+REXCVAR_DEFINE_INT32(ue3_voice_language_log, 40, "Gears2",
+                     "GitHub #90: with --ue3_voice_language, log why a localised package keeps its own language (a table "
+                     "unreadable, or the twin lacks an object it exports - the first "
+                     "missing one named), up to N lines. Logging only. 0 = only the summary");
 int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, std::filesystem::path>* files) {
   namespace fs = std::filesystem;
   std::string voice = REXCVAR_GET(ue3_voice_language);
@@ -464,7 +469,17 @@ int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, st
   }
   std::string lv = voice;
   for (char& c : lv) c = char(std::tolower(uint8_t(c)));
-  int added = 0, langs = 0, kept = 0;
+  int added = 0, langs = 0, kept = 0, no_twin = 0;
+  int kept_no_twin_table = 0, kept_no_own_table = 0, kept_missing = 0;
+  const int log_max = std::max(REXCVAR_GET(ue3_voice_language_log), 0);
+  int logged = 0;
+  auto why = [&](const fs::path& pkg, const std::string& reason) {   // GitHub #90: per-package reason, bounded
+    if (logged >= log_max) return;
+    ++logged;
+    const fs::path rel = fs::relative(pkg, game, ec);
+    REXLOG_INFO("ue3_voice_language: {} keeps its own language: {}{}", rex::path_to_utf8(ec ? pkg.filename() : rel), reason,
+                logged == log_max ? " (last line of this log - ue3_voice_language_log)" : "");
+  };
   std::set<std::string> seenLangs;
   std::map<fs::path, std::pair<bool, std::set<std::string>>> twinExports;
   for (const auto& [dir, names] : byDir)
@@ -474,7 +489,10 @@ int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, st
       const std::string lang = n.substr(at + 5, 3);
       if (lang == lv) continue;
       const auto twin = names.find(n.substr(0, at + 5) + lv + ".xxx");
-      if (twin == names.end()) continue;
+      if (twin == names.end()) {
+        ++no_twin;   // counted only: every other language's copy of a package would flood the log
+        continue;
+      }
       const fs::path relp = fs::relative(p, game, ec);
       if (ec || relp.empty()) continue;
       const std::string key = RelKey(rex::path_to_utf8(relp));
@@ -489,9 +507,26 @@ int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, st
         const bool ok = ue3::ReadPackageExportPaths(twin->second, &paths);
         theirs = twinExports.emplace(twin->second, std::make_pair(ok, std::move(paths))).first;
       }
-      if (!theirs->second.first || !ue3::ReadPackageExportPaths(p, &mine) ||
-          !std::includes(theirs->second.second.begin(), theirs->second.second.end(), mine.begin(), mine.end())) {
-        ++kept;
+      if (!theirs->second.first) {
+        ++kept, ++kept_no_twin_table;
+        why(p, "the " + voice + " twin's export table could not be read");
+        continue;
+      }
+      if (!ue3::ReadPackageExportPaths(p, &mine)) {
+        ++kept, ++kept_no_own_table;
+        why(p, "its own export table could not be read");
+        continue;
+      }
+      if (!std::includes(theirs->second.second.begin(), theirs->second.second.end(), mine.begin(), mine.end())) {
+        ++kept, ++kept_missing;
+        size_t missing = 0;
+        std::string first;
+        for (const std::string& e : mine)
+          if (!theirs->second.second.count(e)) {
+            if (first.empty()) first = e;
+            ++missing;
+          }
+        why(p, std::format("the {} twin lacks {} object(s) it exports (first: {})", voice, missing, first));
         continue;
       }
       (*files)[key] = twin->second;
@@ -501,6 +536,9 @@ int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, st
   REXLOG_INFO("ue3_voice_language: {} - {} localised package(s) in {} other language(s) now give the {} voices (GitHub #87); "
               "{} kept their own: their {} twin lacks objects they export, or a table could not be read (GitHub #145)",
               voice, added, langs, voice, kept, voice);
+  REXLOG_INFO("ue3_voice_language: kept own language (GitHub #90): {} twin lacks objects, {} twin table unreadable, {} own "
+              "table unreadable; {} other-language package(s) have no {} twin at all",
+              kept_missing, kept_no_twin_table, kept_no_own_table, no_twin, voice);
   return added;
 }
 std::map<std::string, std::filesystem::path> CollectMods(std::map<std::string, std::filesystem::path>* dirs) {
