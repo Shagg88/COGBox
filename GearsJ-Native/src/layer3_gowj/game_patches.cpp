@@ -156,9 +156,14 @@ REXCVAR_DEFINE_INT32(gowj_loading_fps, 30, "Judgment",
                      "loading screen can stay up for ever (the end of Monroe Commons at 162 fps)");
 REXCVAR_DEFINE_INT32(gowj_loading_max_s, 90, "Judgment",
                      "GitHub #77: a loading-screen cap ends after this many seconds whatever the loading signals say (0 = never)");
-REXCVAR_DEFINE_INT32(gowj_loading_stream_s, 20, "Judgment",
+REXCVAR_DEFINE_INT32(gowj_loading_stream_s, 8, "Judgment",
                      "GitHub #77: streamed level packages (.xxx that are not *_P.xxx) keep the cap on for at most this many "
                      "seconds after the last level package / loading movie");
+
+REXCVAR_DEFINE_INT32(gowj_loading_tail_s, 3, "Judgment",
+                     "0.4.6 (Shagg 5 Nov: the 30 fps after a loading screen / cutscene lasted too long): seconds the "
+                     "loading cap stays on after the last level package / loading movie (was 6), and the cap's minimum "
+                     "length is this + 2 (was 10)");
 
 namespace {
 using LoadClock = std::chrono::steady_clock;
@@ -287,8 +292,9 @@ bool LoadingClampActive() {
   if (!on) {  // no hook: the file-open window, streamed packages capped at gowj_loading_stream_s past the last trigger
     const auto since_pkg = now - LoadClock::duration(g_load_last_pkg.load());
     const auto since_trigger = now - LoadClock::duration(g_load_last_trigger.load());
-    const bool streaming = since_pkg < seconds(6) && since_trigger < seconds(std::max(6, REXCVAR_GET(gowj_loading_stream_s)));
-    on = since_start < seconds(10) || since_trigger < seconds(6) || streaming;
+    const int32_t tail = std::clamp(REXCVAR_GET(gowj_loading_tail_s), 1, 10);  // 0.4.6: was a fixed 6 s (minimum 10 s)
+    const bool streaming = since_pkg < seconds(tail) && since_trigger < seconds(std::max(tail, REXCVAR_GET(gowj_loading_stream_s)));
+    on = since_start < seconds(tail + 2) || since_trigger < seconds(tail) || streaming;
   }
   if (!on) {
     ReleaseLoadingClamp(start, "loading screen over", since_start);
