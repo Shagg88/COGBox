@@ -8,6 +8,7 @@
 // Not needed in Gears 3: Gears 2's "Black Shading Fix" (Gears 3 sets its tiling flag 0x83428B98 to 0 itself, at
 // 0x82960B94; TU6: 0x83439358 at 0x82971B6C).
 #include <rex/cvar.h>
+#include <rex/filesystem.h>   // rex::path_to_utf8 (#193 log)
 #include <rex/filesystem/vfs.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
@@ -291,7 +292,49 @@ void OnGow3FileOpened(std::string_view path, const std::filesystem::path*) {
 }
 }  // namespace
 void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));  // shader_prebuild.cpp
+
+// GitHub #193 (DLC not found after 0.4.5): every file the game opens, and (SDK patch 52) every open that fails, with
+// the host file it came from - so a run shows whether the DLC packages / their config are looked up after the first
+// map, and with what result. Content enumeration itself (XamContentCreateEnumerator) is in the SDK and is not seen here.
+REXCVAR_DEFINE_INT32(gow3_log_file_opens, 0, "Gears3",
+                     "Diagnostic (GitHub #193): log every file open (and failed open) with its host file, up to N lines. "
+                     "0 = off");
+namespace {
+std::atomic<int> g_open_lines{0};
+void OnGow3FileOpenLogged(std::string_view path, const std::filesystem::path* host) {
+  const int max = REXCVAR_GET(gow3_log_file_opens);
+  const int n = g_open_lines.fetch_add(1);
+  if (n >= max) return;
+  REXLOG_INFO("gow3_log_file_opens: opened {} -> {}{}", path, host ? rex::path_to_utf8(*host) : std::string("(no host file)"),
+              n + 1 == max ? " - last line (gow3_log_file_opens)" : "");
+}
+#if defined(REX_FILESYSTEM_FILE_OPEN_FAILED_OBSERVER)
+void OnGow3FileOpenFailedLogged(std::string_view path) {
+  const int max = REXCVAR_GET(gow3_log_file_opens);
+  const int n = g_open_lines.fetch_add(1);
+  if (n >= max) return;
+  REXLOG_INFO("gow3_log_file_opens: NOT FOUND {}{}", path, n + 1 == max ? " - last line (gow3_log_file_opens)" : "");
+}
+#endif
+}  // namespace
+void Gow3InstallFileOpenLog() {
+  if (REXCVAR_GET(gow3_log_file_opens) <= 0) return;
+#if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
+  Ue3ShaderPrebuildChainFileOpened(&OnGow3FileOpenLogged);
+#if defined(REX_FILESYSTEM_FILE_OPEN_FAILED_OBSERVER)
+  rex::filesystem::SetFileOpenFailedObserver(&OnGow3FileOpenFailedLogged);
+  REXLOG_INFO("gow3_log_file_opens: on - opens and failed opens, up to {} lines", REXCVAR_GET(gow3_log_file_opens));
+#else
+  REXLOG_INFO("gow3_log_file_opens: on - opens only (this SDK has no failed-open observer, patch 52), up to {} lines",
+              REXCVAR_GET(gow3_log_file_opens));
+#endif
+#else
+  REXLOG_WARN("gow3_log_file_opens: this SDK has no file-open observer (SDK patch 32)");
+#endif
+}
+
 void Gow3InstallMenuCap() {
+  Gow3InstallFileOpenLog();  // GitHub #193 (off by default)
   if (REXCVAR_GET(gow3_menu_fps) <= 0) return;
 #if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
   Ue3ShaderPrebuildChainFileOpened(&OnGow3FileOpened);
