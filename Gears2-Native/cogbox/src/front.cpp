@@ -332,10 +332,7 @@ static void empty_draw(App &a, ImVec2 size, bool nav)
     const float bw = T(180), bh = T(36);
     ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
     const bool busy = a.job.state.load() == 1;
-    if (th_button_red("ADD A GAME", ImVec2(bw, bh), !busy, F_HEAD, a.padConnected) ||
-        (nav && !busy && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false) ||
-                          ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false))))
-        add_game_ask(a);
+    (void)bw; (void)bh; (void)busy; (void)nav;   // 0.4.6 (Shagg 5 Nov): drag and drop only
 }
 
 static std::string last_played_text(int64_t t)
@@ -485,13 +482,8 @@ void front_draw(App &a, ImVec2 size)
                 (nav && !running && !busy && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || (padA && a.frontSel == 0))))
                 play_start(a, g);
         } else if (st.ready != R_NO_PORT) {
-            bool addHit = th_button_red(st.ready == R_NEED_UPDATE ? "ADD UPDATE" : "ADD YOUR COPY", ImVec2(bw, bh), !busy, F_HEAD, sel0) ||
-                          (nav && !busy && padA && a.frontSel == 0);
-            if (addHit) {
-                std::string p = pick_file(L"Choose your copy: a disc image (.iso), a Games on Demand file, a title update, or default.xex in a folder",
-                                          L"Xbox 360 games and updates\0*.iso;*.xex;*.*\0All files\0*.*\0");
-                if (!p.empty()) install_start(a, p, g);
-            }
+            // 0.4.6 (Shagg 5 Nov): drag and drop is the only way to add a copy, update or DLC
+            th_button_red(st.ready == R_NEED_UPDATE ? "DROP THE UPDATE HERE" : "DROP YOUR COPY HERE", ImVec2(bw, bh), false, F_HEAD, sel0);
         } else {
             th_button_red("PLAY", ImVec2(bw, bh), false, F_HEAD, sel0);
         }
@@ -500,20 +492,9 @@ void front_draw(App &a, ImVec2 size)
             (nav && st.ready != R_NO_PORT && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false) || (padA && a.frontSel == 1)))) {
             a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 0; a.barSel = -1;
         }
-        // the side buttons: add a folder instead of a file
-        if (st.ready != R_READY && st.ready != R_NO_PORT) {
-            ImGui::SetCursorScreenPos(ImVec2(cx - S(130), y + bh + S(12)));
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-            ImGui::PushStyleColor(ImGuiCol_Text, col::dim);
-            if (ImGui::Button("...or a folder you already extracted", ImVec2(S(260), 0)) && !busy) {
-                std::string p = pick_folder(L"Choose the folder with your game's default.xex (or a Games on Demand / title update folder)");
-                if (!p.empty()) install_start(a, p, g);
-            }
-            ImGui::PopStyleColor(2);
-        }
         // Shagg 1 Nov: the drop tip, under the buttons (and the folder button when it shows)
         {
-            const bool folderRow = st.ready != R_READY && st.ready != R_NO_PORT;
+            const bool folderRow = false;
             centred(F_SMALL, FS(F_SMALL), col::dim,
                     tr("Tip: drag and drop a disc image, Games on Demand copy, title update, DLC package or game folder onto this window to add it."),
                     y + bh + S(14) + (folderRow ? ImGui::GetFrameHeight() + S(8) : 0.0f));
@@ -558,9 +539,7 @@ void front_draw(App &a, ImVec2 size)
         if (nLib > 0) {
             const bool busy = a.job.state.load() == 1;
             ImVec2 as(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, tr("ADD GAME")).x + S(36), bh);
-            place(as.x);
-            if (th_button("ADD GAME", as, !busy, F_BOLD) || (nav && !busy && ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false)))
-                add_game_ask(a);
+            (void)as; (void)busy;   // 0.4.6: no ADD GAME - drop files on the window
             // Shagg 1 Nov: music on / off (music.cpp) - when a game in the library has a copy to read it from
             if (music_any_source(a)) {
                 const char *ml = music_on(a) ? "MUSIC: ON" : "MUSIC: OFF";

@@ -819,30 +819,14 @@ static void about_tab(App &a, int g)
                                                      " - unzip the release again, keeping its folders." : "Port: " + exe);
     ImGui::Dummy(ImVec2(0, S(4)));
     bool busy = a.job.state.load() == 1, running = a.run.proc != nullptr;
-    if (busy || running) ImGui::BeginDisabled();
-    if (small_button(st.dataDir.empty() ? "Add your copy..." : "Replace your copy...")) {
-        std::string p = pick_file(L"Choose your copy: a disc image (.iso), a Games on Demand file, or default.xex in a folder",
-                                  L"Xbox 360 games\0*.iso;*.xex;*.*\0All files\0*.*\0");
-        if (!p.empty()) install_start(a, p, g);
-    }
-    ImGui::SameLine();
-    if (small_button("Use a folder...")) {
-        std::string p = pick_folder(L"Choose the folder with your game's default.xex");
-        if (!p.empty()) install_start(a, p, g);
-    }
-    ImGui::SameLine();
-    if (small_button(st.updateDir.empty() ? "Add the title update..." : "Replace the title update...")) {
-        std::string p = pick_file(L"Choose the title update package (from your console's Content\\0000000000000000\\<title ID>\\000B0000 folder)",
-                                  L"All files\0*.*\0");
-        if (!p.empty()) install_start(a, p, g);
-    }
-    if (busy || running) ImGui::EndDisabled();
+    // 0.4.6 (Shagg 5 Nov): drag and drop is the only way to add a copy, title update or DLC
+    lamp_line(0, "To add or replace your copy or the title update, drag and drop it onto this window.");
 
     // 0.2.0: downloadable content from the player's own console (Content\0000000000000000\<title ID>\00000002)
     ImGui::Dummy(ImVec2(0, S(8)));
     th_heading("DOWNLOADABLE CONTENT", g_rowX1);
     const std::vector<DlcItem> &dl = dlc_list(g);
-    if (dl.empty()) lamp_line(0, "None added. Map packs and other add-ons from your console can be added here, one package at a time.");
+    if (dl.empty()) lamp_line(0, "None added.");
     for (size_t i = 0; i < dl.size(); i++) {
         ImGui::PushID((int)i + 7000);
         lamp_line(1, dl[i].title + (dl[i].title != dl[i].name ? "  (" + dl[i].name + ")" : ""));
@@ -852,15 +836,7 @@ static void about_tab(App &a, int g)
         if (busy || running) ImGui::EndDisabled();
         ImGui::PopID();
     }
-    if (busy || running) ImGui::BeginDisabled();
-    if (small_button("Add downloadable content...")) {
-        char tid[16];
-        snprintf(tid, sizeof tid, "%08X", d.titleId);
-        std::wstring t = L"Choose a downloadable content package (from your console's Content\\0000000000000000\\" + widen(tid) + L"\\00000002 folder)";
-        std::string p = pick_file(t.c_str(), L"All files\0*.*\0");
-        if (!p.empty()) install_start(a, p, g);
-    }
-    if (busy || running) ImGui::EndDisabled();
+    lamp_line(0, "To add downloadable content, drag and drop the package onto this window.");
 
     // 0.2.0: mods - <Game>\mods\<mod>\, laid out like the game's data folder; a later one wins
     ImGui::Dummy(ImVec2(0, S(8)));

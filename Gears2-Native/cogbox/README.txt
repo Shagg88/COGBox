@@ -25,7 +25,7 @@ What you need
       Gears of War 2           Title Update 6
       Gears of War 3           Title Update 6
       Gears of War: Judgment   Title Update 4
-  Without it the game's box shows "Needs Title Update ..." and ADD UPDATE instead of PLAY.
+  Without it the game's box shows "Needs Title Update ..." instead of PLAY.
   The update is a file on a console that has played the game online, in
       Content\0000000000000000\<title ID>\000B0000\
   (Gears 1: 4D5307D5, Gears 2: 4D53082D, Gears 3: 4D5308AB, Judgment: 4D530A26).
@@ -40,12 +40,11 @@ Getting started
    such as KDE's Ark, flatten them - COGBox then can't find the games.
 2. Start CogBox.exe. The programs aren't code-signed, so the first time Windows may show "Windows
    protected your PC": choose "More info", then "Run anyway".
-3. Turn to a game and press ADD YOUR COPY. Choose your disc image, Games on Demand file, or
-   default.xex in an extracted folder. You can also drop it onto the COGBox window.
+3. Drag and drop your disc image, Games on Demand file, or extracted game folder onto the
+   COGBox window (this is the only way to add games, title updates and DLC).
    COGBox works out which game it is, unpacks it next to itself if needed, and checks it is the
    release the ports are made for.
-4. Add the title update the same way (it's required): ADD UPDATE, "Add the title update" on the
-   game's About tab, or drop the package onto the window. COGBox unpacks it into <Game>\game\update
+4. Add the title update the same way (it's required): drop the package onto the window. COGBox unpacks it into <Game>\game\update
    and always plays with it.
 5. Press PLAY. SETTINGS opens the game's page, which has graphics, frame rate, controls and more.
    Every setting has a short description.
@@ -65,6 +64,7 @@ apply does that for you.
 
 New in 0.4.6
 ------------
+- Games, title updates and DLC are now added only by dragging and dropping them onto the window.
 - Frame-rate limit: the limit you pick is the limit. With Vsync it is no longer lowered to 3 under your screen's
   refresh rate (60 stays 60); only a limit above the refresh rate is brought down to it. The quality presets no
   longer change it.

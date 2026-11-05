@@ -336,7 +336,7 @@ void play_poll(App &a)
     // update - say so plainly. (The warning alone is harmless on some known-good copies, so only with a crash.)
     if (code != 0 && secs <= 90 && log.find("XEX patch signature hash doesn't match") != std::string::npos)
         what += ". Its log says the title update doesn't match this copy of the game (it was made for another version of "
-                "the game) - add the title update that belongs to your copy (same console and disc) with ADD UPDATE";
+                "the game) - add the title update that belongs to your copy (same console and disc) by dropping it onto this window";
     if (!crash.empty()) what += "; it wrote a crash report";
     ask(a, "crash", g, std::string(d.name) + " closed",
         std::string(d.name) + " closed unexpectedly: " + what + ".\n\n" + (untested_version(a, g) ?
