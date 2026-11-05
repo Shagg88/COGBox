@@ -88,6 +88,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include <bit>
 #include <bitset>
 #include <cstdio>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <intrin.h>
@@ -718,6 +719,11 @@ REXCVAR_DEFINE_INT32(gow2_renderer_camera_log, 0, "Gears2",
                      "Diagnostic (GitHub #132): every N frames, the scene camera taken from the view-projection in c0-c3 "
                      "of the frame's first scene-depth draw - world position, yaw / pitch, vertical and horizontal field "
                      "of view, viewport - so a 16:9 and an ultrawide run can be compared. 0 = off; at most 2000 lines");
+REXCVAR_DEFINE_INT32(gow2_after_load_log_s, 0, "Gears2",
+                     "Diagnostic (Judgment: low frame rate after a load): for N seconds after a loading screen ends (the "
+                     "game says when - Judgment's loading cap release), one line per second: frames, slowest frame, our "
+                     "renderer's CPU ms, waits for shaders / pipelines / stand-ins, new draw pipelines, texture upload "
+                     "MB, and the time outside our renderer (the game, its frame limit). 0 = off; at most 120 s");
 REXCVAR_DEFINE_BOOL(gow2_renderer_fill_ownership, true, "Gears2",
                     "Job 188: the rect-list fill/clear shader (VS 1E6883FCCDE1F688) takes EDRAM ownership only of the "
                     "tiles its rectangle covers (bounds from its 3 vertices), not of its whole scissor rectangle - fewer "
@@ -2308,6 +2314,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
   void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t fb_width, uint32_t fb_height) override {
     if (!backend_) return;
+    AfterLoadSample();  // off by default (gow2_after_load_log_s)
     if (!thread_cpu_base_) thread_cpu_base_ = ThreadCpuTicks();
 #if defined(GN_PGO_GEN)
     {  // patch 0159: the training run is ended from outside (no normal exit), so the counters are written here
@@ -4099,6 +4106,54 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::vector<ProbeGroup> probe_groups_;
   std::vector<std::string> probe_resolves_;
   std::vector<std::string> probe_draws_;  // the first depth-writing camera draws: vertex data address + c4-c15
+  // Judgment "low frame rate after loading" (--gow2_after_load_log_s): per-second sums from the frame stats, which other
+  // logs reset (a counter lower than last time is taken as counted from 0).
+  struct AfterLoad {
+    int64_t armed = 0;     // the XenosNoteLoadEnded ticks this window belongs to
+    std::chrono::steady_clock::time_point end{}, sec_start{}, last_swap{};
+    uint32_t frames = 0, lines = 0;
+    double max_frame_ms = 0, cpu = 0, shader_wait = 0, pipe_wait = 0, standin_wait = 0;
+    uint64_t pipelines = 0, tex_bytes = 0;
+    double p_cpu = 0, p_shader = 0, p_pipe = 0, p_standin = 0;
+    uint64_t p_pipelines = 0, p_tex = 0;
+  } al_;
+  void AfterLoadSample() {
+    const int32_t secs = REXCVAR_GET(gow2_after_load_log_s);
+    if (secs <= 0) return;
+    using clk = std::chrono::steady_clock;
+    const clk::time_point now = clk::now();
+    const int64_t ended = g_load_ended_ticks.load(std::memory_order_relaxed);
+    auto dd = [](double cur, double& prev) { const double d = cur >= prev ? cur - prev : cur; prev = cur; return d; };
+    auto du = [](uint64_t cur, uint64_t& prev) { const uint64_t d = cur >= prev ? cur - prev : cur; prev = cur; return d; };
+    const double d_cpu = dd(stats_.cpu_ms, al_.p_cpu), d_shader = dd(stats_.shader_wait_ms, al_.p_shader),
+                 d_pipe = dd(stats_.pipeline_wait_ms, al_.p_pipe), d_standin = dd(stats_.standin_wait_ms, al_.p_standin);
+    const uint64_t d_pipelines = du(stats_.new_draw_pipelines, al_.p_pipelines), d_tex = du(stats_.texture_bytes, al_.p_tex);
+    if (ended && ended != al_.armed) {  // a load just ended: a new window
+      al_ = AfterLoad{ended, now + std::chrono::seconds(std::min(secs, 120)), now, now, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      al_.p_cpu, al_.p_shader, al_.p_pipe, al_.p_standin, al_.p_pipelines, al_.p_tex};
+      REXLOG_INFO("gow2_after_load: a loading screen ended - logging the next {} s", std::min(secs, 120));
+      return;
+    }
+    if (!al_.armed || now > al_.end) return;
+    const double frame_ms = std::chrono::duration<double, std::milli>(now - al_.last_swap).count();
+    al_.last_swap = now;
+    ++al_.frames;
+    al_.max_frame_ms = std::max(al_.max_frame_ms, frame_ms);
+    al_.cpu += d_cpu, al_.shader_wait += d_shader, al_.pipe_wait += d_pipe, al_.standin_wait += d_standin;
+    al_.pipelines += d_pipelines, al_.tex_bytes += d_tex;
+    const double span = std::chrono::duration<double, std::milli>(now - al_.sec_start).count();
+    if (span < 1000.0) return;
+    ++al_.lines;
+    REXLOG_INFO("gow2_after_load: +{} s: {} frames ({:.1f} fps), slowest {:.1f} ms | our renderer CPU {:.0f} ms (waits: "
+                "shaders {:.0f}, pipelines {:.0f}, stand-ins {:.0f}) | new draw pipelines {} | texture uploads {:.1f} MB | "
+                "outside our renderer {:.0f} ms",
+                al_.lines, al_.frames, al_.frames * 1000.0 / span, al_.max_frame_ms, al_.cpu, al_.shader_wait, al_.pipe_wait,
+                al_.standin_wait, al_.pipelines, double(al_.tex_bytes) / 1048576.0, std::max(0.0, span - al_.cpu));
+    al_.sec_start = now;
+    al_.frames = 0;
+    al_.max_frame_ms = al_.cpu = al_.shader_wait = al_.pipe_wait = al_.standin_wait = 0;
+    al_.pipelines = al_.tex_bytes = 0;
+  }
   bool ProbeFrame() const { return upscale_probe_ && (frame_ + 1) % upscale_probe_ == 0; }
   // GitHub #132 (--gow2_renderer_camera_log): see the cvar. The camera matrix's rows (FromConstantsTransposed: clip x, y,
   // z, w) give the camera position as the point where clip x, y and w are all 0, and the forward direction as the w row.
@@ -11349,6 +11404,13 @@ bool XenosRendererRecipeIdle() { return g_release_target && g_release_target->Re
 void* XenosRendererIdleEvent() { return g_release_target ? g_release_target->IdleGpuEvent() : nullptr; }
 void XenosRendererRelease() {
   if (g_release_target) g_release_target->ReleaseToGuest();
+}
+
+namespace {
+std::atomic<int64_t> g_load_ended_ticks{0};  // steady_clock ticks of the last XenosNoteLoadEnded; 0 = none
+}  // namespace
+void XenosNoteLoadEnded() {
+  g_load_ended_ticks.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
 }
 
 void XenosInstallRendererIfRequested(rex::Runtime* runtime, const XenosRendererHints& hints) {

@@ -260,6 +260,7 @@ void ReleaseLoadingClamp(int64_t start, const char* why, std::chrono::steady_clo
       g_load_names.clear();
       g_load_reopens = 0;
     }
+    XenosNoteLoadEnded();  // --gow2_after_load_log_s (off by default)
     REXLOG_INFO("gowj_loading_fps: cap off - {} after {:.1f} s, the player's own limit again ({} level package(s), {} "
                 "re-read(s) ignored)", why, std::chrono::duration<double>(since_start).count(), levels, reopens);
   }

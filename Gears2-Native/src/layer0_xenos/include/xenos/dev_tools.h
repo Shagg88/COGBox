@@ -137,6 +137,8 @@ struct XenosRendererHints {
   uint64_t dummy_point_vs = 0;
 };
 void XenosInstallRendererIfRequested(rex::Runtime* runtime, const XenosRendererHints& hints = {});
+// A game's loading screen has ended (Judgment: its loading cap release) - starts --gow2_after_load_log_s.
+void XenosNoteLoadEnded();
 // --gow2_query_log=N: log every occlusion query of every Nth frame (report addresses, the draws each covers, the
 // emulator's answer read back from guest memory) plus per-frame and per-N-frame counts (Stage 4 reference, notes/46).
 // The hint is D3D library knowledge (layer 1): the end report's offset from the begin report, in bytes (XDK 7645:
