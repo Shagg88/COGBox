@@ -978,6 +978,20 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             notes.push_back(std::string("launcher: ") + k_aaNames[aa] + " with Scene resolution Native runs as " + aaOnly[aa] +
                             " - anti-aliasing only, no extra frames; pick a lower Scene resolution for more frames (GitHub #98)");
         }
+        // GitHub #98 (Gears 1 "DLSS" runs were DLAA): the scene scale is a whole number of times smaller than the render
+        // resolution only for Performance at 2x / 4x and Quality / Ultra performance at 3x; any other pairing (and every
+        // 720p or "1080p" render resolution, both drawn at 1x) runs as native anti-aliasing. Say so before launch. Fixed
+        // scales only - "Match my monitor" picks its scale in the game (its log names the result).
+        if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4 && s.i("Resolution") + 1 != 5) {
+            const int out = scale;
+            const bool fits = (m == 2 && (out == 2 || out == 4)) || ((m == 1 || m == 3) && out == 3);
+            if (!fits) {
+                static const char* const mname[4] = { "", "Quality", "Performance", "Ultra performance" };
+                notes.push_back(std::string("launcher: Scene resolution ") + mname[m] + " has no whole-number scene size at render "
+                                "resolution " + std::to_string(out) + "x - the scene stays at full size and " + k_aaNames[aa] +
+                                " only anti-aliases (Performance needs 2x or 4x; Quality and Ultra performance need 3x) (GitHub #98)");
+            }
+        }
     }
     // PS1 857 (0146 / 0147): frame generation
     const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0 && !env.wine;   // job 521: DirectX 12 only
