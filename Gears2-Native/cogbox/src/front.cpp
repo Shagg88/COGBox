@@ -595,16 +595,72 @@ void front_draw(App &a, ImVec2 size)
                 std::string(game_def(g).updateName) + " " + tr("is required for the smoothest experience. See the README for details."), { "OK" });
         }
     }
-    // the hint line
-    std::string padHint = std::string(tr("D-pad: choose a game")) + "      " + pad_name(a, "LB") + " / " + pad_name(a, "RB") + ": " + tr("Play or Settings") + "      " +
-                          pad_name(a, "A") + ": " + tr("press") + "      " + pad_name(a, "X") + ": " + tr("settings") + "      " + pad_name(a, "Y") + ": " + tr("box art") + "      " + pad_name(a, "Back") + ": " + tr("add a game") + "      " +
-                          (music_any_source(a) ? std::string(pad_name(a, "RS")) + ": " + tr("music") + "      " : std::string()) +
-                          pad_name(a, "LT") + " + " + pad_name(a, "RT") + ": " + tr("fullscreen") + "      " + pad_name(a, "Start") + ": " + tr("quit");   // job 523 / 525 / 526; 0.2.0 tr
-    const char *hint = a.padConnected && a.lastPad ? padHint.c_str()   // 0.2.0: the device used last
-                                      : tr("Arrows / wheel: turn      Enter: play      F11: fullscreen      Esc: quit      drop a disc image or folder on the window to add it");
+    // the hint line - 0.4.6 (Shagg 4 Nov): a short legend with button / key pictures for the device in use (Xbox
+    // colours, PlayStation shapes, key caps), only the main actions (no "press", no install text)
     {
-        ImVec2 ts = F_SMALL->CalcTextSizeA(FS(F_SMALL), FLT_MAX, 0, hint);
-        dl->AddText(F_SMALL, FS(F_SMALL), ImVec2((size.x - ts.x) * 0.5f, size.y - FS(F_SMALL) - S(10)), U(col::faint), hint);
+        struct Item { int kind; const char *key; std::string label; };   // kind 0 = pad button, 1 = keyboard key
+        std::vector<Item> it;
+        const bool pad = a.padConnected && a.lastPad;
+        if (pad) {
+            it.push_back({ 0, "D-pad", tr("choose") });
+            it.push_back({ 0, "A", tr("play") });
+            it.push_back({ 0, "X", tr("settings") });
+            it.push_back({ 0, "Y", tr("box art") });
+            if (music_any_source(a)) it.push_back({ 0, "RS", tr("music") });
+            it.push_back({ 0, "LT+RT", tr("fullscreen") });
+            it.push_back({ 0, "Start", tr("quit") });
+        } else {
+            it.push_back({ 1, "< >", tr("choose") });
+            it.push_back({ 1, "Enter", tr("play") });
+            it.push_back({ 1, "F11", tr("fullscreen") });
+            it.push_back({ 1, "Esc", tr("quit") });
+        }
+        const float fs = FS(F_SMALL), ih = fs * 1.35f, gap = S(22), pad_x = S(6);
+        auto icon_w = [&](const Item &x) {
+            const char *n = x.kind == 0 ? pad_name(a, x.key) : x.key;
+            const bool face = x.kind == 0 && (!strcmp(x.key, "A") || !strcmp(x.key, "B") || !strcmp(x.key, "X") || !strcmp(x.key, "Y"));
+            return face ? ih : F_BOLD->CalcTextSizeA(fs, FLT_MAX, 0, n).x + pad_x * 2;
+        };
+        float total = 0;
+        for (const Item &x : it) total += icon_w(x) + S(6) + F_SMALL->CalcTextSizeA(fs, FLT_MAX, 0, x.label.c_str()).x + gap;
+        total -= gap;
+        float x0 = (size.x - total) * 0.5f;
+        const float y0 = size.y - ih - S(10);
+        for (const Item &x : it) {
+            const float w = icon_w(x);
+            const ImVec2 c(x0 + w * 0.5f, y0 + ih * 0.5f);
+            const bool face = x.kind == 0 && (!strcmp(x.key, "A") || !strcmp(x.key, "B") || !strcmp(x.key, "X") || !strcmp(x.key, "Y"));
+            if (face) {
+                const float r = ih * 0.5f;
+                if (!a.padPs) {   // Xbox: the coloured face button with its letter
+                    const ImU32 fill = !strcmp(x.key, "A") ? IM_COL32(80, 170, 60, 255) : !strcmp(x.key, "B") ? IM_COL32(200, 50, 50, 255)
+                                     : !strcmp(x.key, "X") ? IM_COL32(40, 110, 200, 255) : IM_COL32(220, 180, 40, 255);
+                    dl->AddCircleFilled(c, r, fill, 24);
+                    const ImVec2 ts = F_BOLD->CalcTextSizeA(fs, FLT_MAX, 0, x.key);
+                    dl->AddText(F_BOLD, fs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(255, 255, 255, 255), x.key);
+                } else {          // PlayStation: the shape on a dark button
+                    dl->AddCircleFilled(c, r, IM_COL32(40, 40, 46, 255), 24);
+                    const float q = r * 0.48f;
+                    if (!strcmp(x.key, "A")) {   // cross
+                        const ImU32 k = IM_COL32(120, 160, 230, 255);
+                        dl->AddLine(ImVec2(c.x - q, c.y - q), ImVec2(c.x + q, c.y + q), k, S(2));
+                        dl->AddLine(ImVec2(c.x - q, c.y + q), ImVec2(c.x + q, c.y - q), k, S(2));
+                    } else if (!strcmp(x.key, "B")) dl->AddCircle(c, q, IM_COL32(230, 90, 100, 255), 20, S(2));
+                    else if (!strcmp(x.key, "X")) dl->AddRect(ImVec2(c.x - q, c.y - q), ImVec2(c.x + q, c.y + q), IM_COL32(220, 120, 200, 255), 0, 0, S(2));
+                    else dl->AddTriangle(ImVec2(c.x, c.y - q), ImVec2(c.x + q, c.y + q * 0.8f), ImVec2(c.x - q, c.y + q * 0.8f), IM_COL32(60, 200, 170, 255), S(2));
+                }
+            } else {   // a key cap / shoulder, trigger, stick or menu button: its name in a rounded box
+                const char *n = x.kind == 0 ? pad_name(a, x.key) : x.key;
+                dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + w, y0 + ih), IM_COL32(48, 48, 54, 255), S(4));
+                dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + w, y0 + ih), IM_COL32(110, 110, 118, 255), S(4), 0, S(1));
+                const ImVec2 ts = F_BOLD->CalcTextSizeA(fs, FLT_MAX, 0, n);
+                dl->AddText(F_BOLD, fs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(235, 235, 235, 255), n);
+            }
+            x0 += w + S(6);
+            const ImVec2 ls = F_SMALL->CalcTextSizeA(fs, FLT_MAX, 0, x.label.c_str());
+            dl->AddText(F_SMALL, fs, ImVec2(x0, y0 + (ih - ls.y) * 0.5f), U(col::dim), x.label.c_str());
+            x0 += ls.x + gap;
+        }
     }
     {   // to-do 21 (Shagg 3 Nov): an Exit button on the library screen, bottom left (asks first, like Esc / Start)
         const std::string lbl = tr("EXIT");

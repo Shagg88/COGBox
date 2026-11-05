@@ -823,3 +823,10 @@ added = ajouté
 Drag and drop your game, Title Update or DLC files here to install them. = Glissez-déposez ici les fichiers du jeu, de la Title Update ou du DLC pour les installer.
 COGBox does not include game files. See the README for details. = COGBox ne contient aucun fichier de jeu. Voir le README pour les détails.
 Install COGBox outside cloud-synced folders such as OneDrive, Dropbox or Google Drive - syncing can lock, move or partly update files while they are in use. = Installez COGBox hors des dossiers synchronisés dans le cloud comme OneDrive, Dropbox ou Google Drive - la synchronisation peut verrouiller, déplacer ou mettre à jour partiellement des fichiers en cours d'utilisation.
+# 0.4.6: the library legend
+choose = choisir
+play = jouer
+settings = paramètres
+music = musique
+fullscreen = plein écran
+quit = quitter
