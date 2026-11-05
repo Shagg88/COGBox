@@ -414,6 +414,11 @@ REXCVAR_DEFINE_BOOL(gowj_mute_unfocused, false, "Judgment",
 // loading movie and every cutscene stay (bForceNoMovies would drop those too). Layer 2's key-=value removes one entry.
 REXCVAR_DEFINE_BOOL(gowj_skip_logos, false, "Judgment",
                     "Skip the intro logo movie at start-up (the loading movie and cutscenes still play)");
+REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
+                    "TEST ONLY (scripted test runs): no full-screen movies - the engine's own [FullScreenMovie] "
+                    "bForceNoMovies, so the logos, the loading movie and every pre-rendered (.bik) cutscene are passed as "
+                    "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
+                    "play. Not for players: loading screens go black");
 static std::string GowjLevelSelectEdits() {
   struct Entry { const char* map; const char* name; };
   static constexpr Entry kMaps[] = {
@@ -439,6 +444,7 @@ void GowjAddBuiltInIniEdits() {
   GowjInstallLoadingClamp();  // GitHub #38 (runs once, at start-up, before the game opens any file)
   std::string add;
   if (REXCVAR_GET(gowj_level_select)) add += GowjLevelSelectEdits();
+  if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xbox360-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;";
   if (REXCVAR_GET(gowj_skip_logos)) add += "Xbox360-GearEngine.ini|FullScreenMovie|StartupMovies-=Open_Logos;";
   if (REXCVAR_GET(gowj_aniso16)) add += "Xbox360-GearEngine.ini|SystemSettings|MaxAnisotropy=16;";
   if (const int32_t mb = REXCVAR_GET(gowj_texture_pool_mb); mb > 0 && mb <= 400)

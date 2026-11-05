@@ -552,6 +552,18 @@ void Gow2ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
 void Gow2ShaderCreatedPixel(PPCRegister& r6, PPCRegister& r27) { XenosGuestShaderCreated(false, r6.u32, r27.u32); }
 void Gow2ShaderCreatedVertex(PPCRegister& r4, PPCRegister& r28) { XenosGuestShaderCreated(true, r4.u32, r28.u32); }
 
+REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
+                    "TEST ONLY (scripted test runs): no full-screen movies - the engine's own [FullScreenMovie] "
+                    "bForceNoMovies, so the logos, the loading movie and every pre-rendered (.bik) cutscene are passed as "
+                    "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
+                    "play. Not for players: loading screens go black");
+REXCVAR_DECLARE(std::string, ue3_ini_edits);  // layer 2 config_install.cpp
+void Gow2AddTestIniEdits() {
+  if (!REXCVAR_GET(cogbox_test_skip_movies)) return;
+  rex::cvar::SetFlagByName("ue3_ini_edits", "Xe-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;" + REXCVAR_GET(ue3_ini_edits));
+  REXLOG_INFO("cogbox_test_skip_movies: full-screen movies off (bForceNoMovies) - test runs only");
+}
+
 // GitHub #90 (French / Italian voices fall back to English): logging only, nothing changes. Every file the game opens
 // whose name looks localized (_LOC_, _FRA, _ITA, _DEU, _ESN, _INT, or a .int/.fra/.ita/.deu/.esn file) is logged with
 // the language the runtime was given (--user_language), the first 200 of them, so a report shows which language's

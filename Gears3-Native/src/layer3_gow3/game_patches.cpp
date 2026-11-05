@@ -373,9 +373,15 @@ constexpr const char* kGow3TrilinearEdits =
 constexpr const char* kGow3FastMipFadeEdits =
     "Xbox360-GearEngine.ini|Engine.Engine|MipFadeInSpeed0=0.01;Xbox360-GearEngine.ini|Engine.Engine|MipFadeOutSpeed0=0.01;"
     "Xbox360-GearEngine.ini|Engine.Engine|MipFadeInSpeed1=0.01;Xbox360-GearEngine.ini|Engine.Engine|MipFadeOutSpeed1=0.01;";
+REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
+                    "TEST ONLY (scripted test runs): no full-screen movies - the engine's own [FullScreenMovie] "
+                    "bForceNoMovies, so the logos, the loading movie and every pre-rendered (.bik) cutscene are passed as "
+                    "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
+                    "play. Not for players: loading screens go black");
 void Gow3AddBuiltInIniEdits() {
   Gow3InstallMenuCap();  // GitHub #101 (once, at start-up, before the game opens a file)
   std::string add;
+  if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xbox360-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;";
   if (REXCVAR_GET(gow3_trilinear)) add += kGow3TrilinearEdits;
   if (REXCVAR_GET(gow3_fast_mip_fade)) add += kGow3FastMipFadeEdits;
   if (add.empty()) return;

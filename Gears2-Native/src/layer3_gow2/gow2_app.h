@@ -27,7 +27,8 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 #include <xdk7645/stage1.h>
 
 void Gow2ApplyDataPatchesIfRequested(rex::Runtime* runtime);
-void Gow2InstallLocLogIfRequested();  // game_patches.cpp (GitHub #90)
+void Gow2InstallLocLogIfRequested();
+void Gow2AddTestIniEdits();  // game_patches.cpp: --cogbox_test_skip_movies  // game_patches.cpp (GitHub #90)
 REXCVAR_DECLARE(bool, gow2_mute_unfocused);  // game_patches.cpp (patch 0130)
 
 class Gow2App : public rex::ReXApp {
@@ -54,6 +55,7 @@ class Gow2App : public rex::ReXApp {
   void OnPostSetup() override {
     CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
+    Gow2AddTestIniEdits();  // before the bundle is edited
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (notes/64): before the game reads its config
     XenosInstallDrawStatsIfRequested();
     XenosInstallPrimDetailIfRequested();

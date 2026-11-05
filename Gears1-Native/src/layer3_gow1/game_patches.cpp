@@ -45,6 +45,12 @@ REXCVAR_DEFINE_BOOL(gow1_ini_edits, true, "Gears 1",
 REXCVAR_DECLARE(std::string, ue3_ini_edits);
 REXCVAR_DECLARE(std::string, ue3_ini_bundle_dir);
 
+REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
+                    "TEST ONLY (scripted test runs): no full-screen movies - the start-up film player passes "
+                    "every film after the rating screen (EpicLogo, MGSLogo, Startup), plus [FullScreenMovie] bForceNoMovies "
+                    "in case this engine reads it (unverified for Gears 1), so the logos and title film are passed as "
+                    "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
+                    "play. Not for players: loading screens go black");
 void Gow1AddBuiltInIniEdits() {
   const auto game_default = [](const char* name, const std::string& value) {
     if (rex::cvar::GetFlagSource(name) == rex::cvar::Source::kDefault) rex::cvar::SetFlagByName(name, value);
@@ -53,6 +59,7 @@ void Gow1AddBuiltInIniEdits() {
   if (REXCVAR_GET(gow1_aniso16)) game_default("gow2_renderer_force_aniso", "16");
   if (REXCVAR_GET(gow1_trilinear)) game_default("gow2_renderer_force_trilinear", "true");
   std::string add;
+  if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xe-WarEngine.ini|FullScreenMovie|bForceNoMovies=True;";
   if (const int32_t mb = REXCVAR_GET(gow1_texture_pool_mb); mb > 0 && mb <= 400)
     add += std::format("Xe-WarEngine.ini|TextureStreaming|PoolSize={};", mb);
   if (!add.empty()) rex::cvar::SetFlagByName("ue3_ini_edits", add + REXCVAR_GET(ue3_ini_edits));   // the player's last
@@ -73,6 +80,12 @@ bool Gow1CoalescedSkip() {
 
 void Gow1HideLogosIfRequested(rex::Runtime*) {}   // job 694: hiding the films crashed the player - see Gow1SkipLogoStep
 void Gow1SkipLogoStep(PPCRegister& r11) {   // gow1_manifest.toml: the start-up film index, after each step
+  if (REXCVAR_GET(cogbox_test_skip_movies) && r11.u32 >= 1 && r11.u32 <= 3) {  // test only: past the table's 4 films
+    static bool logged_all = false;
+    if (!logged_all) { logged_all = true; REXLOG_INFO("cogbox_test_skip_movies: start-up films after the rating screen passed"); }
+    r11.u64 = 4;
+    return;
+  }
   if (!REXCVAR_GET(gow1_skip_logos) || (r11.u32 != 1 && r11.u32 != 2)) return;
   static bool logged = false;
   if (!logged) { logged = true; REXLOG_INFO("gow1_skip_logos: the Epic and Microsoft logo films passed"); }
