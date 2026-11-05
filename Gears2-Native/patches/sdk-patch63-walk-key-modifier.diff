@@ -1,0 +1,26 @@
+diff --git a/src/input/mnk/mnk_input_driver.cpp b/src/input/mnk/mnk_input_driver.cpp
+index cfd6cb5..a82d3b9 100644
+--- a/src/input/mnk/mnk_input_driver.cpp
++++ b/src/input/mnk/mnk_input_driver.cpp
+@@ -486,15 +486,18 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+ 
+   // Which modifiers are bound as keys of their own (live-editable cvars, so per call).
+   g_bare_mod_mask = 0;
+-  for (const PadBind& pb : PadBinds()) {
+-    std::string_view rest(pb.keys);
++  auto note_bare_mods = [](std::string_view rest) {
+     while (!rest.empty()) {
+       size_t comma = rest.find(',');
+       std::string_view tok = TrimSpaces(rest.substr(0, comma));
+       rest = comma == std::string_view::npos ? std::string_view() : rest.substr(comma + 1);
+       g_bare_mod_mask |= BareModifierBit(tok);
+     }
+-  }
++  };
++  for (const PadBind& pb : PadBinds()) note_bare_mods(pb.keys);
++  // COGBox SDK patch 63 (GitHub #196): the walk key (patch 60) is not a pad bind. Bound to a bare modifier
++  // (Control), holding it failed every plain bind's exact modifier match: W/A/S/D went silent while walking.
++  note_bare_mods(REXCVAR_GET(keybind_walk));
+ 
+   uint16_t buttons = 0;
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_a)))
