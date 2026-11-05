@@ -669,8 +669,8 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_memexport_readback, true, "Gears2",
                     "written it (job 041: Gears 3 moves DXT textures with memexport copies, and DXT textures load from "
                     "guest memory, so without this they keep the old bytes - pale blue skin). The reference emulators' "
                     "readback_memexport");
-REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_through, false, "Gears2",
-                    "Job 047: a resolve into memory that a cached texture is loaded from (same base, pitch and bytes "
+REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_through, true, "Gears2",
+                    "0.4.6 on by default (job 1219, Gears 2 in play: ~12 reloads a frame skipped, texture time ~1.5 -> ~0.7 ms, its texel-by-texel check 0 differences). Job 047: a resolve into memory that a cached texture is loaded from (same base, pitch and bytes "
                     "per texel, single level) also writes that texture, the same way the GPU untile would load it, so "
                     "the texture is not reloaded (Gears 3 ch8: the shadow map is resolved and reloaded ~15 times a "
                     "frame, bloom buffers ~20)");
