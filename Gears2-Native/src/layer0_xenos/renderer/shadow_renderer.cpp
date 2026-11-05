@@ -724,9 +724,9 @@ REXCVAR_DEFINE_INT32(gow2_after_load_log_s, 0, "Gears2",
                      "game says when - Judgment's loading cap release), one line per second: frames, slowest frame, our "
                      "renderer's CPU ms, waits for shaders / pipelines / stand-ins, new draw pipelines, texture upload "
                      "MB, and the time outside our renderer (the game, its frame limit). 0 = off; at most 120 s");
-REXCVAR_DEFINE_BOOL(gow2_screenshot_presented, true, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_screenshot_presented, false, "Gears2",
                     "Shagg's to-do 8: the screenshot key (\\) saves the image as shown in the window (its full size, after "
-                    "resizing and sharpening); false = the game's output size, as 0.4.5. Frame shots keep the game's size");
+                    "resizing and sharpening); false (default) = the game's output size, as 0.4.5. Frame shots keep the game's size");
 REXCVAR_DEFINE_BOOL(gow2_renderer_fill_ownership, true, "Gears2",
                     "Job 188: the rect-list fill/clear shader (VS 1E6883FCCDE1F688) takes EDRAM ownership only of the "
                     "tiles its rectangle covers (bounds from its 3 vertices), not of its whole scissor rectangle - fewer "
@@ -1132,6 +1132,8 @@ constexpr uint32_t kRegFloatConstVs = 0x4000;  // SHADER_CONSTANT_000_X
 constexpr uint32_t kRegFloatConstPs = 0x4400;  // SHADER_CONSTANT_256_X
 constexpr uint32_t kRegFetchConst = 0x4800;    // SHADER_CONSTANT_FETCH_00_0
 constexpr uint32_t kRegBoolConst = 0x4900;     // SHADER_CONSTANT_BOOL_000_031, then 32 loop constants at 0x4908
+// --gow2_after_load_log_s: steady_clock ticks of the last XenosNoteLoadEnded (a game's loading screen ended); 0 = none.
+std::atomic<int64_t> g_load_ended_ticks{0};
 
 constexpr uint32_t Bits(uint32_t v, uint32_t shift, uint32_t width) { return (v >> shift) & ((1u << width) - 1u); }
 constexpr int32_t SignExtend(uint32_t v, uint32_t width) {
@@ -1958,6 +1960,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
                       present_lanczos_ ? ", lanczos enlarging" : "", present_sharpen_ ? "" : " - SHADER MISSING (off)");
         }
       }
+      presented_shots_ = present_ours_ && REXCVAR_GET(gow2_screenshot_presented);  // to-do 8
+      XenosScreenshotSetPresented(presented_shots_);  // the screenshot observer then waits for our readback
       if (present_shadow_ || present_ours_) {
         const gpu::ShaderHandle pg =
             cache_->GetBuiltin("present_gamma_cs", rr::builtin::kPresentGammaCs, gpu::ShaderStage::kCompute);
@@ -3186,6 +3190,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!presenter_) {  // notes/68: Vulkan without a presenter yet - the image is made, nothing is shown
       backend_->Submit();
       ++ours_stats_.presented;
+      if (presented_shots_ && !shot_.readback && XenosTakeScreenshotRequest()) TakeShot(present_out_, w, h);  // to-do 8 (nothing shown)
       if (XenosFrameImagesWanted()) {
         PresentImage img;
         img.readback = backend_->ReadbackTexture(present_out_, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
@@ -3238,17 +3243,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (refreshed && wrote) ++ours_stats_.presented; else ++ours_stats_.refresh_failed;
     const int check_every = REXCVAR_GET(gow2_present_check_every);
     if (refreshed && wrote && check_every > 0 && frame_ % uint64_t(check_every) == 0) ScreenCheck(out_tex, ow, oh);
+    // Shagg's to-do 8 (--gow2_screenshot_presented): the screenshot key's image as presented - resized to the window and
+    // sharpened - read back on its own, for the screenshot alone (frame shots keep the game's size). HDR10 output is
+    // PQ-encoded by now, so there the SDR image before that, at the game's size.
+    if (presented_shots_ && !shot_.readback && XenosTakeScreenshotRequest()) {
+      const bool shown = !(hdr_ && hdr_encode_) && out_tex && ow && oh;
+      TakeShot(shown ? out_tex : present_out_, shown ? ow : w, shown ? oh : h);
+    }
     if (XenosFrameImagesWanted()) {  // frame shots: our presented image, read back (the SDK makes none now)
-      // Shagg's to-do 8: the screenshot key saves the image as presented (resized to the window, sharpened), not the
-      // game's output size - unless it was PQ-encoded for HDR (then the SDR image before that, at the game's size).
-      const bool shown = XenosScreenshotPending() && REXCVAR_GET(gow2_screenshot_presented) && !(hdr_ && hdr_encode_) &&
-                         out_tex && ow && oh;
       PresentImage img;
-      img.readback = shown ? backend_->ReadbackTexture(out_tex, gpu::Rect{0, 0, int32_t(ow), int32_t(oh)})
-                           : backend_->ReadbackTexture(present_out_, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
+      img.readback = backend_->ReadbackTexture(present_out_, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
       img.frame = XenosSwapCount();  // PR #43: as above
-      img.width = shown ? ow : w;
-      img.height = shown ? oh : h;
+      img.width = w;
+      img.height = h;
       if (img.readback) ours_images_.push_back(img);
     }
   }
@@ -3290,7 +3297,24 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                 frame_, 100.0 * double(within1) / n, 100.0 * double(exact) / n, maxd);
     backend_->ReleaseReadback(rb);
   }
+  // To-do 8: one pending screenshot readback (shot_.readback 0 = none); a second request while one is in flight waits.
+  PresentImage shot_{};
+  bool presented_shots_ = false;  // --gow2_screenshot_presented, set at Init
+  void TakeShot(gpu::TextureHandle tex, uint32_t w, uint32_t h) {
+    if (shot_.readback) return;
+    shot_.readback = backend_->ReadbackTexture(tex, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
+    shot_.width = w;
+    shot_.height = h;
+    shot_.frame = XenosSwapCount();
+  }
   void DeliverFrameImages() {
+    if (shot_.readback && backend_->IsReadbackReady(shot_.readback)) {
+      uint32_t pitch = 0;
+      if (const uint8_t* data = backend_->ReadbackData(shot_.readback, pitch))
+        XenosSaveScreenshot(data, shot_.width, shot_.height, pitch);
+      backend_->ReleaseReadback(shot_.readback);
+      shot_.readback = 0;
+    }
     while (!ours_images_.empty() && backend_->IsReadbackReady(ours_images_.front().readback)) {
       const PresentImage img = ours_images_.front();
       ours_images_.pop_front();
@@ -5564,6 +5588,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->Dispatch(ao_denoise_pipe_, b, ((w + 1) / 2 + 7) / 8, (h + 7) / 8, 1);
       std::swap(src, other);
     }
+    // Back to the tag in force before: timing runs only while the draw report is off (AoGpuTimed), and that report is
+    // the only other user of GPU tags, so it was 0. (The backend has no getter to read it back.)
     if (timed) backend_->SetGpuTag(0);
     ao_ready_ = true;
     ++ao_runs_;
@@ -11451,9 +11477,6 @@ void XenosRendererRelease() {
   if (g_release_target) g_release_target->ReleaseToGuest();
 }
 
-namespace {
-std::atomic<int64_t> g_load_ended_ticks{0};  // steady_clock ticks of the last XenosNoteLoadEnded; 0 = none
-}  // namespace
 void XenosNoteLoadEnded() {
   g_load_ended_ticks.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
 }

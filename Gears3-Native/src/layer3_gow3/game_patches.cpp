@@ -377,7 +377,7 @@ REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
                     "TEST ONLY (scripted test runs): no full-screen movies - the engine's own [FullScreenMovie] "
                     "bForceNoMovies, so the logos, the loading movie and every pre-rendered (.bik) cutscene are passed as "
                     "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
-                    "play. Not for players: loading screens go black");
+                    "play. Not for players: loading screens go black.");
 void Gow3AddBuiltInIniEdits() {
   Gow3InstallMenuCap();  // GitHub #101 (once, at start-up, before the game opens a file)
   std::string add;

@@ -808,6 +808,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
       const uint64_t epoch_before = watch_.Epoch();
       e.loaded_frame = frame;
       Load(e, tf, host_kind);
+      e.verify_hash = 0;  // verify fallback: a new baseline
       e.checked_frame = frame;
       e.callbacks_at_check = epoch_before;
       if (probe_base) e.probe_load_hash = GuestHash(e);
@@ -822,7 +823,10 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
     for (uint32_t p = e.base_start >> GuestWatch::kPageShift;
          e.base_length && p <= (e.base_start + e.base_length - 1) >> GuestWatch::kPageShift && !gpu_pages; ++p)
       gpu_pages = !watch_.NeverResolved(p);
-    if (!gpu_pages) {
+    // Only changes the watch did NOT see: when its pages' versions moved, the normal check below handles them.
+    const bool watch_saw = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length) != e.version;
+    if (watch_saw) e.verify_hash = 0;
+    if (!gpu_pages && !watch_saw) {
       const uint64_t h = GuestHash(e) ^ (e.mip_length ? XXH3_64bits(guest_ + e.mip_start, e.mip_length) * 31u : 0u);
       const bool changed = e.verify_hash != 0 && h != e.verify_hash;
       e.verify_hash = h;
@@ -894,6 +898,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   }
   e.loaded_frame = frame;
   Load(e, tf, host_kind);  // re-upload into the same host texture
+  e.verify_hash = 0;  // --gow2_renderer_texture_verify_frames: the next check takes the new bytes as its baseline
   if (probe_base) e.probe_load_hash = GuestHash(e);
   const char* why = stats_.gpu_pages_changed != gpu_pages0 ? "reload: our GPU wrote its pages"
                     : stats_.volatile_reloads != volatile0 ? "reload: volatile (pages written, not hashed)"

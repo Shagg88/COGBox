@@ -419,7 +419,9 @@ REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
                     "TEST ONLY (scripted test runs): no full-screen movies - the engine's own [FullScreenMovie] "
                     "bForceNoMovies, so the logos, the loading movie and every pre-rendered (.bik) cutscene are passed as "
                     "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
-                    "play. Not for players: loading screens go black");
+                    "play. Not for players: loading screens go black. With it on, the loading movie no longer starts the "
+                    "loading-screen frame cap (--gowj_loading_fps) or --gow2_after_load_log_s - only a level package "
+                    "(*_P.xxx) does, so they may start late or not at all: don't measure loading with it");
 static std::string GowjLevelSelectEdits() {
   struct Entry { const char* map; const char* name; };
   static constexpr Entry kMaps[] = {

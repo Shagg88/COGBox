@@ -556,7 +556,7 @@ REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
                     "TEST ONLY (scripted test runs): no full-screen movies - the engine's own [FullScreenMovie] "
                     "bForceNoMovies, so the logos, the loading movie and every pre-rendered (.bik) cutscene are passed as "
                     "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
-                    "play. Not for players: loading screens go black");
+                    "play. Not for players: loading screens go black.");
 REXCVAR_DECLARE(std::string, ue3_ini_edits);  // layer 2 config_install.cpp
 void Gow2AddTestIniEdits() {
   if (!REXCVAR_GET(cogbox_test_skip_movies)) return;

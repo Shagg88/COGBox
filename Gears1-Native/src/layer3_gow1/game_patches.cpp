@@ -50,7 +50,7 @@ REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
                     "every film after the rating screen (EpicLogo, MGSLogo, Startup), plus [FullScreenMovie] bForceNoMovies "
                     "in case this engine reads it (unverified for Gears 1), so the logos and title film are passed as "
                     "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
-                    "play. Not for players: loading screens go black");
+                    "play. Not for players: loading screens go black.");
 void Gow1AddBuiltInIniEdits() {
   const auto game_default = [](const char* name, const std::string& value) {
     if (rex::cvar::GetFlagSource(name) == rex::cvar::Source::kDefault) rex::cvar::SetFlagByName(name, value);

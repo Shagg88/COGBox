@@ -87,6 +87,10 @@ class FrameCapture final : public DrawObserver {
   std::atomic<int> in_flight_{0};
 };
 
+// To-do 8: the renderer reads the presented image back for the screenshot (XenosScreenshotSetPresented); a global, so
+// the order in which the renderer and the screenshot observer are set up doesn't matter.
+std::atomic<bool> g_presented{false};
+
 // Shagg 3 Nov: the official screenshot key, \ (Backslash), in all four games. One press saves the next finished frame
 // as Pictures\COGBox\<game>\<game>-YYYYMMDD-HHMMSS.png (the game's output after its gamma ramp, as
 // --gow2_frame_shots). Frame images are asked for only while a shot is pending, so the key costs nothing until pressed.
@@ -94,11 +98,14 @@ class Screenshot final : public DrawObserver {
  public:
   void OnDraw(const RegisterFile&, xenos::PrimitiveType, uint32_t, const ObservedIndexBuffer*, bool) override {}
   void OnSwap(const RegisterFile&, uint32_t, uint32_t, uint32_t) override {}
-  bool WantsFrameImages() const override { return pending_.load(); }
+  bool WantsFrameImages() const override { return pending_.load() && !g_presented.load(); }
   void Request() { pending_.store(true); }
-  bool Pending() const { return pending_.load(); }
+  bool Take() { return pending_.exchange(false); }
   void OnFrameImage(const uint8_t* src, uint32_t width, uint32_t height, uint32_t row_pitch, uint64_t) override {
-    if (!pending_.exchange(false)) return;
+    if (g_presented.load() || !pending_.exchange(false)) return;
+    Save(src, width, height, row_pitch);
+  }
+  void Save(const uint8_t* src, uint32_t width, uint32_t height, uint32_t row_pitch) {
     std::vector<uint8_t> rgb(size_t(width) * height * 3);
     for (uint32_t y = 0; y < height; ++y) {
       const uint8_t* row = src + size_t(y) * row_pitch;
@@ -159,7 +166,11 @@ Screenshot* g_screenshot = nullptr;
 }  // namespace
 
 void XenosRequestScreenshot() { if (g_screenshot) g_screenshot->Request(); }
-bool XenosScreenshotPending() { return g_screenshot && g_screenshot->Pending(); }
+void XenosScreenshotSetPresented(bool on) { g_presented.store(on); }
+bool XenosTakeScreenshotRequest() { return g_screenshot && g_screenshot->Take(); }
+void XenosSaveScreenshot(const uint8_t* rgb10a2, uint32_t width, uint32_t height, uint32_t row_pitch) {
+  if (g_screenshot && rgb10a2 && width && height) g_screenshot->Save(rgb10a2, width, height, row_pitch);
+}
 
 void XenosInstallFrameCaptureIfRequested() {
   {  // Shagg 3 Nov: the screenshot key, every game, always

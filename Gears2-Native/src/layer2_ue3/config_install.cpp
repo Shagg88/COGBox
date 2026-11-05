@@ -444,13 +444,13 @@ class ModOverlayDevice : public rex::filesystem::HostPathDevice {
   uint32_t replaced_ = 0, added_ = 0;
 };
 
+REXCVAR_DEFINE_INT32(ue3_voice_language_log, 40, "Gears2",
+                     "GitHub #90: with --ue3_voice_language, log why a localised package keeps its own language (a table "
+                     "unreadable, or the twin lacks an object it exports - the first missing "
+                     "one named), up to N lines. Logging only. 0 = only the summary");
 // rel (lower case, '\\', from the game data root) -> host file; later mods win. Programs are refused.
 // GitHub #87 (see ue3_voice_language): adds "<rel of *_LOC_<lang>.xxx>" -> its <voice> twin to the mods' files (a real
 // mod's own copy of a file wins). Returns how many were added.
-REXCVAR_DEFINE_INT32(ue3_voice_language_log, 40, "Gears2",
-                     "GitHub #90: with --ue3_voice_language, log why a localised package keeps its own language (a table "
-                     "unreadable, or the twin lacks an object it exports - the first "
-                     "missing one named), up to N lines. Logging only. 0 = only the summary");
 int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, std::filesystem::path>* files) {
   namespace fs = std::filesystem;
   std::string voice = REXCVAR_GET(ue3_voice_language);

@@ -202,12 +202,18 @@ class SmallResolveLog final : public DrawObserver {
  private:
   void Flush() {
     if (pending_.empty()) return;
-    std::string value = " | first texel: ";
+    std::string value = " | first texel at the destination base (the copy's x/y offset is not applied): ";
     uint32_t w[4] = {};
     const uint8_t* p = memory_->TranslatePhysical<const uint8_t*>(pending_dest_);
+    uint32_t raw4[4];
+    std::memcpy(raw4, p, 16);
     for (int i = 0; i < 4; ++i) {
-      std::memcpy(&w[i], p + 4 * i, 4);
-      w[i] = SwapWord(w[i], pending_endian_);
+      // k8in64 / k8in128 (Endian128 4 / 5, as in Xenia's enum) move bytes across 32-bit words: word i comes from
+      // word i^1 (k8in64) or 3-i (k8in128), byte-reversed.
+      const uint32_t mode = uint32_t(pending_endian_);
+      const int from = mode == 4u ? (i ^ 1) : mode == 5u ? (3 - i) : i;
+      const bool whole = mode == 4u || mode == 5u;
+      w[i] = whole ? std::byteswap(raw4[from]) : SwapWord(raw4[from], pending_endian_);
     }
     char v[160];
     switch (pending_format_) {

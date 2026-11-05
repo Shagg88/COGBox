@@ -48,8 +48,12 @@ void XenosInstallDrawStatsIfRequested();
 void XenosRegisterDrawObserver(rex::graphics::DrawObserver* observer);
 // Shagg 3 Nov: save the next finished frame to Pictures\COGBox\<game> (the backslash key; frame_capture.cpp).
 void XenosRequestScreenshot();
-// True while a screenshot (\\ key) waits for its frame (the renderer then reads back the image as presented).
-bool XenosScreenshotPending();
+// To-do 8 (--gow2_screenshot_presented): the renderer reads back the image as presented for the screenshot key.
+// SetPresented(true): the screenshot observer no longer takes a frame image; the renderer takes the request (true once
+// per press - it clears it) and hands the pixels (RGB10A2 words) to XenosSaveScreenshot.
+void XenosScreenshotSetPresented(bool on);
+bool XenosTakeScreenshotRequest();
+void XenosSaveScreenshot(const uint8_t* rgb10a2, uint32_t width, uint32_t height, uint32_t row_pitch);
 // --gow2_frame_shots=N and --gow2_frame_dir: save every Nth finished frame as PNG, read back inside the process
 // (SDK patch 3) - no window capture, no focus stealing.
 void XenosInstallFrameCaptureIfRequested();
