@@ -847,6 +847,10 @@ REXCVAR_DEFINE_DOUBLE(gow2_ao_radius, 60.0, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_ao_denoise, 3, "Gears2",
                      "XeGTAO denoise passes (notes/80): 1 = sharp, 2 = medium, 3 = soft (XeGTAO leaves the rest to TAA, "
                      "which these games don't have)");
+REXCVAR_DEFINE_INT32(gow2_ao_gpu_log, 0, "Gears2",
+                     "XeGTAO cost: every N frames, the average GPU time of each XeGTAO pass (depth pyramid levels 0-4, main, "
+                     "each denoise pass) from the backend's GPU timestamps. 0 = off. Not while --gow2_renderer_draw_report_frame "
+                     "runs (it owns the GPU tags); needs --gow2_renderer_gpu_timestamp_split (the default)");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_power, 2.2, "Gears2", "XeGTAO final value power - higher is darker (XeGTAO's default 2.2)");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_add_radius, -1.0, "Gears2",
                       "Notes/80 s.9: XeGTAO's radius where the game draws no AO of its own and ours is added "
@@ -5524,9 +5528,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.srv[0] = depth->texture;
     b.srv_plane[0] = 0;
     b.uav_texture = ao_depth_;
+    const bool timed = AoGpuTimed();  // --gow2_ao_gpu_log
     for (uint32_t mip = 0; mip < 5; ++mip) {
       b.constants[3] = mip;
       b.uav_mip = mip;
+      if (timed) backend_->SetGpuTag(kAoTagBase + mip);
       backend_->Dispatch(ao_prefilter_pipe_, b, (w + 15) / 16, (h + 15) / 16, 1);
     }
     // 2. The main pass: working AO term + edges.
@@ -5535,6 +5541,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.uav_texture = ao_work_;
     b.uav_mip = 0;
     b.uav2_texture = ao_edges_;
+    if (timed) backend_->SetGpuTag(kAoTagBase + 5);
     backend_->Dispatch(ao_main_pipe_, b, (w + 7) / 8, (h + 7) / 8, 1);
     // 3. Denoise: the earlier passes ping-pong between the working textures, the last one writes the final AO.
     b.srv[1] = ao_edges_;
@@ -5545,9 +5552,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       b.constants[3] = last ? 1u : 0u;
       b.srv[0] = src;
       b.uav_texture = last ? ao_final_ : other;
+      if (timed) backend_->SetGpuTag(kAoTagBase + 6 + pass);
       backend_->Dispatch(ao_denoise_pipe_, b, ((w + 1) / 2 + 7) / 8, (h + 7) / 8, 1);
       std::swap(src, other);
     }
+    if (timed) backend_->SetGpuTag(0);
     ao_ready_ = true;
     ++ao_runs_;
     return true;
@@ -5763,7 +5772,35 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     backend_->Dispatch(ao_debug_pipe_, b, (w + 7) / 8, (h + 7) / 8, 1);
   }
 
+  // --gow2_ao_gpu_log: each XeGTAO pass carries a GPU tag of its own (0-4 the depth pyramid levels, 5 the main pass,
+  // 6-8 the denoise passes); AoEndFrame collects the tagged times and logs per-pass averages.
+  static constexpr uint32_t kAoTagBase = 0x7A000000u;
+  static constexpr uint32_t kAoTagCount = 9;
+  double ao_gpu_ms_[kAoTagCount] = {};
+  uint32_t ao_gpu_frames_ = 0;
+  bool AoGpuTimed() const { return REXCVAR_GET(gow2_ao_gpu_log) > 0 && report_first_ == 0; }
+  void AoGpuCollect() {
+    if (!AoGpuTimed()) return;
+    std::vector<gpu::GpuTagTime> got;
+    backend_->TakeGpuTagTimes(got);
+    for (const gpu::GpuTagTime& g : got)
+      if (g.samples < 0.0 && g.tag >= kAoTagBase && g.tag < kAoTagBase + kAoTagCount) ao_gpu_ms_[g.tag - kAoTagBase] += g.ms;
+    const uint32_t every = uint32_t(REXCVAR_GET(gow2_ao_gpu_log));
+    if (++ao_gpu_frames_ < every) return;
+    const double n = double(ao_gpu_frames_);
+    double pyramid = 0.0, denoise = 0.0;
+    for (uint32_t i = 0; i < 5; ++i) pyramid += ao_gpu_ms_[i];
+    for (uint32_t i = 6; i < kAoTagCount; ++i) denoise += ao_gpu_ms_[i];
+    REXLOG_INFO("gow2_ao: GPU ms/frame over {} frames ({}x{}): total {:.3f} | depth pyramid {:.3f} (levels {:.3f} {:.3f} "
+                "{:.3f} {:.3f} {:.3f}) | main {:.3f} | denoise {:.3f} ({:.3f} {:.3f} {:.3f}) | XeGTAO ran {} time(s) in all",
+                ao_gpu_frames_, ao_w_, ao_h_, (pyramid + ao_gpu_ms_[5] + denoise) / n, pyramid / n, ao_gpu_ms_[0] / n,
+                ao_gpu_ms_[1] / n, ao_gpu_ms_[2] / n, ao_gpu_ms_[3] / n, ao_gpu_ms_[4] / n, ao_gpu_ms_[5] / n, denoise / n,
+                ao_gpu_ms_[6] / n, ao_gpu_ms_[7] / n, ao_gpu_ms_[8] / n, ao_runs_);
+    ao_gpu_frames_ = 0;
+    for (double& v : ao_gpu_ms_) v = 0.0;
+  }
   void AoEndFrame() {
+    AoGpuCollect();
     const rr::ao::GtaoConstants* k = AoConstants();
     ++(k ? ao_frames_ok_ : ao_frames_none_);
     static const int32_t every = REXCVAR_GET(gow2_ao_log);

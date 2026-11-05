@@ -1006,6 +1006,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (avail("AO") && s.i("AO") >= 2) {
         a.push_back("--gow2_ao=gtao");
         a.push_back(s.i("AO") == 3 ? "--gow2_ao_quality=ultra" : "--gow2_ao_quality=high");
+        // Shagg's to-do 1(d) (XeGTAO ~5 ms/frame): High denoises twice (medium), Ultra keeps the soft three passes
+        if (s.i("AO") == 2) a.push_back("--gow2_ao_denoise=2");
     }
     // PS1 858: 16x anisotropic
     if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : isG1 ? "--gow1_aniso16=true" : "--gowj_aniso16=true");
