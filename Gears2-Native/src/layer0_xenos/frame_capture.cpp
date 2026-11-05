@@ -96,6 +96,7 @@ class Screenshot final : public DrawObserver {
   void OnSwap(const RegisterFile&, uint32_t, uint32_t, uint32_t) override {}
   bool WantsFrameImages() const override { return pending_.load(); }
   void Request() { pending_.store(true); }
+  bool Pending() const { return pending_.load(); }
   void OnFrameImage(const uint8_t* src, uint32_t width, uint32_t height, uint32_t row_pitch, uint64_t) override {
     if (!pending_.exchange(false)) return;
     std::vector<uint8_t> rgb(size_t(width) * height * 3);
@@ -158,6 +159,7 @@ Screenshot* g_screenshot = nullptr;
 }  // namespace
 
 void XenosRequestScreenshot() { if (g_screenshot) g_screenshot->Request(); }
+bool XenosScreenshotPending() { return g_screenshot && g_screenshot->Pending(); }
 
 void XenosInstallFrameCaptureIfRequested() {
   {  // Shagg 3 Nov: the screenshot key, every game, always

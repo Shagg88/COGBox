@@ -724,6 +724,9 @@ REXCVAR_DEFINE_INT32(gow2_after_load_log_s, 0, "Gears2",
                      "game says when - Judgment's loading cap release), one line per second: frames, slowest frame, our "
                      "renderer's CPU ms, waits for shaders / pipelines / stand-ins, new draw pipelines, texture upload "
                      "MB, and the time outside our renderer (the game, its frame limit). 0 = off; at most 120 s");
+REXCVAR_DEFINE_BOOL(gow2_screenshot_presented, true, "Gears2",
+                    "Shagg's to-do 8: the screenshot key (\\) saves the image as shown in the window (its full size, after "
+                    "resizing and sharpening); false = the game's output size, as 0.4.5. Frame shots keep the game's size");
 REXCVAR_DEFINE_BOOL(gow2_renderer_fill_ownership, true, "Gears2",
                     "Job 188: the rect-list fill/clear shader (VS 1E6883FCCDE1F688) takes EDRAM ownership only of the "
                     "tiles its rectangle covers (bounds from its 3 vertices), not of its whole scissor rectangle - fewer "
@@ -3236,11 +3239,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const int check_every = REXCVAR_GET(gow2_present_check_every);
     if (refreshed && wrote && check_every > 0 && frame_ % uint64_t(check_every) == 0) ScreenCheck(out_tex, ow, oh);
     if (XenosFrameImagesWanted()) {  // frame shots: our presented image, read back (the SDK makes none now)
+      // Shagg's to-do 8: the screenshot key saves the image as presented (resized to the window, sharpened), not the
+      // game's output size - unless it was PQ-encoded for HDR (then the SDR image before that, at the game's size).
+      const bool shown = XenosScreenshotPending() && REXCVAR_GET(gow2_screenshot_presented) && !(hdr_ && hdr_encode_) &&
+                         out_tex && ow && oh;
       PresentImage img;
-      img.readback = backend_->ReadbackTexture(present_out_, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
+      img.readback = shown ? backend_->ReadbackTexture(out_tex, gpu::Rect{0, 0, int32_t(ow), int32_t(oh)})
+                           : backend_->ReadbackTexture(present_out_, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
       img.frame = XenosSwapCount();  // PR #43: as above
-      img.width = w;
-      img.height = h;
+      img.width = shown ? ow : w;
+      img.height = shown ? oh : h;
       if (img.readback) ours_images_.push_back(img);
     }
   }
