@@ -46,6 +46,17 @@ REXCVAR_DEFINE_DOUBLE(gow2_texture_phase_log_ms, 0.0, "Gears2",
                       "phases - page watch arming, page hashing, host texture creation, GPU-path copy + untile, CPU-path "
                       "untile, CPU-path upload. 0 = off");
 
+// GitHub #131 / #59 (Judgment under Proton): the texture cache trusts the page watch - write-protected pages whose
+// first CPU write or kernel file read raises a callback. If that mechanism misses writes (a suspicion for Wine: kernel
+// reads into protected pages, or protection changes it handles otherwise), textures keep old contents. This fallback
+// hashes each texture's guest bytes again when it is used and at least N frames have passed since the last check, and
+// reloads it when the bytes changed although the watch saw nothing. Textures whose pages our GPU wrote are skipped
+// (their newest bytes are in the mirror, not guest memory). 0 = off (the default; the watch alone, as before).
+REXCVAR_DEFINE_INT32(gow2_renderer_texture_verify_frames, 0, "Gears2",
+                     "Fallback for write tracking that misses changes (Proton tests, GitHub #131 / #59): re-hash a texture's "
+                     "guest bytes when it is used at least N frames after its last check, and reload it if they changed "
+                     "unseen. 0 = off (default). Costs CPU time; try 30");
+
 // GitHub #131 diagnostic (Judgment corruption on Vulkan / Proton, AMD): each distinct binding - guest base, guest
 // format, dimension, size, tiling, fetch swizzle and signs, and the host format, view components, signed view, load
 // path and host bytes it was given - logged once, up to N lines, so the same asset can be compared between D3D12 on
@@ -804,6 +815,35 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
       return done(e, "reload: overlay generation changed");
     }
     e.overlay_gen = ov_gen;
+  }
+  if (const int32_t vf = REXCVAR_GET(gow2_renderer_texture_verify_frames); vf > 0 && frame >= e.verify_frame + uint64_t(vf)) {
+    e.verify_frame = frame;  // GitHub #131 / #59 fallback (see the cvar)
+    bool gpu_pages = false;
+    for (uint32_t p = e.base_start >> GuestWatch::kPageShift;
+         e.base_length && p <= (e.base_start + e.base_length - 1) >> GuestWatch::kPageShift && !gpu_pages; ++p)
+      gpu_pages = !watch_.NeverResolved(p);
+    if (!gpu_pages) {
+      const uint64_t h = GuestHash(e) ^ (e.mip_length ? XXH3_64bits(guest_ + e.mip_start, e.mip_length) * 31u : 0u);
+      const bool changed = e.verify_hash != 0 && h != e.verify_hash;
+      e.verify_hash = h;
+      if (changed) {
+        ++stats_.verify_reloads;
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1) < 20)
+          REXLOG_INFO("gow2_texture_verify: base {:08X} (+{:X}) format {} changed without a page-watch callback - reloaded",
+                      e.base_start, e.base_length, tf[1] & 0x3Fu);
+        const uint64_t epoch_before = watch_.Epoch();
+        const uint64_t rearmed = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length);
+        watch_.Watch(e.base_start, e.base_length);
+        if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
+        e.loaded_frame = frame;
+        Load(e, tf, host_kind);
+        e.version = rearmed;
+        e.checked_frame = frame;
+        e.callbacks_at_check = epoch_before;
+        return done(e, "reload: bytes changed unseen by the page watch (verify fallback)");
+      }
+    }
   }
   // Re-check only when something was written since the last check: the watch epoch advances on every Bump, the
   // callbacks' and our own resolves' alike (upl-n107: the callback counter alone missed resolves within a frame, so a

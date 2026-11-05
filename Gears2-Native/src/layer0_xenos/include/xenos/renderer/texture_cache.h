@@ -56,6 +56,7 @@ struct TextureCacheStats {
   // upl-n108: re-checks whose written pages all hashed the same as before (no reload), pages hashed for them, and
   // textures evicted by the host-memory cap.
   uint64_t content_unchanged = 0, pages_hashed = 0, evictions = 0, evicted_bytes = 0;
+  uint64_t verify_reloads = 0;  // --gow2_renderer_texture_verify_frames: changes the page watch missed
   uint64_t pages_skipped = 0, volatile_reloads = 0;  // upl-n109: pages not hashed / reloads of volatile textures
   // Takeover T2: pages our resolves wrote on the GPU - kept (not re-uploaded from CPU bytes), counted as changed - and
   // CPU-path loads that read such pages (their CPU bytes are not ours: shown as a count, should stay 0).
@@ -229,6 +230,7 @@ class TextureCache {
     uint64_t freed_at_load = 0;  // patch 0149: freed_total_ when it was loaded (a failed creation retries after a free)
     uint64_t loaded_frame = ~0ull;  // frame of the last (re)load (job 150 diagnostic)
     uint64_t probe_load_hash = 0;   // job 284: XXH3 of the guest bytes at the last (re)load (probed textures only)
+    uint64_t verify_hash = 0, verify_frame = 0;  // --gow2_renderer_texture_verify_frames (#131 / #59 Proton fallback)
     std::string failure;  // non-empty: this guest texture can't be represented (stand-in)
     bool dimension_mismatch = false;  // the failure is a fetch-dimension mismatch (zero view, see SetMismatchZero)
     bool gpu_storage = false;  // created with UAV access: loads go through the GPU untile
