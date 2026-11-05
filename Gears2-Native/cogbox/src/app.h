@@ -100,6 +100,7 @@ struct App {
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
     bool borderless = false;          // job 523: no title bar (COGBox draws its own minimise / maximise / close)
     bool fullscreen = false;          // job 523: COGBox fills the screen (F11, or LT + RT together)
+    bool tuTold[G_COUNT] = {};            // 0.4.6: "Title update needed" said for this game this session (front.cpp, install.cpp)
     uint64_t raiseUntil = 0;
     unsigned long raisePid = 0;       // the game that just closed (play_poll)          // to-do 20: keep bringing the launcher to the front until then (SDL ticks, ms)
     bool playWasMax = false;          // job 526: the window as it was when Play was pressed, put back afterwards

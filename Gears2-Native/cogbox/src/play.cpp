@@ -420,6 +420,7 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
         if (cs.i("AO") >= 2) exp += "XeGTAO, ";   // experimental again (Shagg 3 Nov: about 5 ms a frame)
         if (cs.i("FrameGen") > 0) exp += "frame generation, ";
         if (cs.b("SystemLink")) exp += "System Link, ";
+        if (cs.b("HDR")) exp += "HDR, ";   // 0.4.6: experimental in all four games
         sys += "Experimental settings on: " + (exp.empty() ? std::string("none") : exp.substr(0, exp.size() - 2)) + "\r\n\r\n";
     }
     // the game files' fingerprints (never the files)

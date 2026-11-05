@@ -248,20 +248,17 @@ void startup_notices(App &a)
     // still sees once that the updates are now required
     if (!a.ini.geti("Notices", "TitleUpdatesRequiredNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION) {
         ask(a, "tunotice", -1, "Title updates required",
-            "Title updates are now required to play. Disc-only versions are no longer supported.\n\n"
-            "    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\n"
-            "Add each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's "
-            "Content\\0000000000000000\\<title ID>\\000B0000 folder. COGBox doesn't include game or update files.", { "Continue" });
+            // 0.4.6 (Shagg 4 Nov): short - the steps are in the README
+            "For the smoothest experience, these games require the listed Title Updates. See the README for details.\n\n"
+            "    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4", { "Continue" });
         a.modal.check = "Don't show this again";
         return;
     }
     if (!a.ini.geti("Notices", "ExperimentalNever", 0) && a.ini.get("Notices", "ExperimentalSeen") != COGBOX_VERSION) {
         ask(a, "expnotice", -1, "Experimental settings",
-            "Settings marked experimental (FSR / DLSS / XeSS, XeGTAO, frame generation and others) "
-            "are there for testing and debugging. They are not meant for regular play yet: they can be slow, look wrong "
-            "or crash.\n\n"
-            "Before you send a report, please turn every experimental setting off and try again - unless the report is "
-            "about one of those settings.", { "Continue" });
+            // 0.4.6 (Shagg 4 Nov): two short sentences
+            "Experimental settings are for testing, logging and debugging - not regular gameplay. They may reduce "
+            "performance, cause visual problems or make the game unstable.", { "Continue" });
         a.modal.check = "Don't show this again";
     }
 }
@@ -642,7 +639,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         for (int g = 0; g < G_COUNT; g++) { a.cur[g] = a.store.view((gs::Game)g, a.env[g]); env_refresh(a, g); }
         bool anyReady = false;
         for (int g = 0; g < G_COUNT; g++) anyReady |= a.st[g].ready == R_READY;
-        if (!had && !anyReady) set_message(a, "Welcome! Add your copy of a game to start - a disc image, a Games on Demand copy or an extracted folder.", false);
+        // 0.4.6 (Shagg 4 Nov): no "Welcome!" toast over the first-start dialogs - the empty library screen says it
+        (void)had; (void)anyReady;
     }
     a.front = std::max(0, std::min(G_COUNT - 1, a.ini.geti("Front", "Box", 0)));
     // the first game the player has, if the remembered one isn't ready

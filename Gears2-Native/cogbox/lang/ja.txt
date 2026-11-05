@@ -812,3 +812,14 @@ Hold to walk = 押している間歩く
 Press to switch walking on / off = 押すたびに歩きのオン / オフ
 With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = キーボードとマウス使用時：歩きキーの動作（キーは「キーボードのキー」で選びます）。歩くと半分の速さで移動します。最初はキーが設定されていません。
 Walk = 歩き
+# 0.4.6 (Shagg 4-5 Nov): shorter notices, HDR experimental, frame-rate limit
+HDR (experimental) = HDR（実験的）
+Experimental in all four games - colours and brightness are not checked yet. Needs HDR turned on in Windows display settings. = 4作すべてで実験的です。色と明るさはまだ確認されていません。Windowsのディスプレイ設定でHDRをオンにする必要があります。
+The game itself asks for 30 frames per second, as on the console. 60 / 120 lift the limit to that; Unlimited removes it. With V-Sync on, a limit above your monitor's refresh rate is lowered to the refresh rate. The quality presets leave it as it is. = ゲーム自体はコンソールと同じく毎秒30フレームを要求します。60 / 120 で上限をその値に上げ、無制限で上限をなくします。V-Syncオン時、モニターのリフレッシュレートを超える上限はリフレッシュレートまで下げられます。画質プリセットでは変更されません。
+For the smoothest experience, these games require the listed Title Updates. See the README for details.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4 = 最も快適にプレイするには、これらのゲームに記載のTitle Updateが必要です。詳しくはREADMEをご覧ください。\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4
+Experimental settings are for testing, logging and debugging - not regular gameplay. They may reduce performance, cause visual problems or make the game unstable. = 実験的な設定はテスト、ログ、デバッグ用で、通常のプレイ向けではありません。パフォーマンスの低下や表示の不具合、ゲームの不安定化を招くことがあります。
+is required for the smoothest experience. See the README for details. = が最も快適なプレイに必要です。詳しくはREADMEをご覧ください。
+added = を追加しました
+Drag and drop your game, Title Update or DLC files here to install them. = ゲーム、Title Update、DLCのファイルをここにドラッグ＆ドロップしてインストールします。
+COGBox does not include game files. See the README for details. = COGBoxにはゲームファイルは含まれていません。詳しくはREADMEをご覧ください。
+Install COGBox outside cloud-synced folders such as OneDrive, Dropbox or Google Drive - syncing can lock, move or partly update files while they are in use. = COGBoxはOneDrive、Dropbox、Google Driveなどのクラウド同期フォルダーの外にインストールしてください。同期によって使用中のファイルがロック、移動、または一部だけ更新されることがあります。

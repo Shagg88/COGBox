@@ -322,12 +322,12 @@ static void empty_draw(App &a, ImVec2 size, bool nav)
     };
     centred(F_HEAD, FS(F_HEAD) * 1.25f, col::text, tr("Your library is empty"));
     y += S(8);
-    centred(F_BODY, FS(F_BODY), col::dim, tr("Add your own copy of Gears of War, Gears of War 2, Gears of War 3 or Gears of War: Judgment - COGBox doesn't include any game files."));
-    y += S(18);
-    // Shagg 1 Nov: what main.cpp takes when dropped on the window (install_start / dlc_packages_in)
-    centred(F_BODY, FS(F_BODY), col::amber, tr("Drag and drop your game files onto this window to add them:"));
+    // 0.4.6 (Shagg 4 Nov): short; drag and drop first (ADD A GAME below opens the same import, for controllers)
+    centred(F_BODY, FS(F_BODY), col::amber, tr("Drag and drop your game, Title Update or DLC files here to install them."));
     y += S(4);
-    centred(F_BODY, FS(F_BODY), col::text, tr("a disc image (.iso), a Games on Demand copy, a title update or DLC package, or a folder with the game's default.xex."));
+    centred(F_BODY, FS(F_BODY), col::dim, tr("COGBox does not include game files. See the README for details."));
+    y += S(10);
+    centred(F_SMALL, FS(F_SMALL), col::dim, tr("Install COGBox outside cloud-synced folders such as OneDrive, Dropbox or Google Drive - syncing can lock, move or partly update files while they are in use."));
     y += S(22);
     const float bw = T(180), bh = T(36);
     ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
@@ -400,7 +400,6 @@ void front_draw(App &a, ImVec2 size)
         ImVec2 m(S(26), S(20));
         th_cog(dl, ImVec2(m.x + S(16), m.y + S(18)), S(16), 10, (float)now * 0.15f, U(col::redHi), U(ImVec4(0.03f, 0.03f, 0.035f, 1)));
         dl->AddText(F_TITLE, FS(F_TITLE), ImVec2(m.x + S(42), m.y), U(col::text), "COGBOX");
-        dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(m.x + S(44), m.y + FS(F_TITLE) + S(2)), U(col::dim), (tr(std::string("Gears of War native PC ports  -  launcher")) + " " COGBOX_VERSION).c_str());
     }
 
     if (nLib == 0) empty_draw(a, size, nav);
@@ -584,17 +583,16 @@ void front_draw(App &a, ImVec2 size)
     // Title updates required (0.4.0): once per session per game, when the carousel stops on a game that has no title
     // update yet (replaces 0.2.0's Judgment / Gears 1 "needed" and Gears 2 / 3 "recommended" notices)
     {
-        static bool told[G_COUNT] = {};
+        bool *told = a.tuTold;   // 0.4.6: shared with the import notice (install.cpp), so it is said once
         for (int g = 0; g < G_COUNT; g++) {
             const GameState &st = a.st[g];
             if (told[g] || st.ready != R_NEED_UPDATE || a.front != g || a.carPos != (float)library_slot(a, g) || a.modal.open || a.zoomTo != SCR_FRONT) continue;
             told[g] = true;
             char tid[16];
             snprintf(tid, sizeof tid, "%08X", (unsigned)game_def(g).titleId);
-            ask(a, "info", g, "Title update needed",
-                tr("Title updates are now required to play. Disc-only versions are no longer supported.") + std::string("\n\n") +
-                game_def(g).name + ": " + game_def(g).updateName + "\n\n" +
-                tr("Add it with ADD UPDATE: the update package from your console's folder") + " Content\\0000000000000000\\" + tid + "\\000B0000", { "OK" });
+            (void)tid;
+            ask(a, "info", g, "Title update needed",   // 0.4.6 (Shagg 4 Nov): short - the steps are in the README
+                std::string(game_def(g).updateName) + " " + tr("is required for the smoothest experience. See the README for details."), { "OK" });
         }
     }
     // the hint line

@@ -812,3 +812,14 @@ Hold to walk = 按住步行
 Press to switch walking on / off = 按一下开启 / 关闭步行
 With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = 使用键盘和鼠标时：步行键的工作方式（在“键盘按键”中选择按键）。步行时以一半速度移动。初始未设置按键。
 Walk = 步行
+# 0.4.6 (Shagg 4-5 Nov): shorter notices, HDR experimental, frame-rate limit
+HDR (experimental) = HDR（实验性）
+Experimental in all four games - colours and brightness are not checked yet. Needs HDR turned on in Windows display settings. = 在全部四款游戏中均为实验性功能——颜色和亮度尚未经过检查。需要在 Windows 显示设置中开启 HDR。
+The game itself asks for 30 frames per second, as on the console. 60 / 120 lift the limit to that; Unlimited removes it. With V-Sync on, a limit above your monitor's refresh rate is lowered to the refresh rate. The quality presets leave it as it is. = 游戏本身要求每秒 30 帧，与主机相同。60 / 120 将上限提高到该值；无限制则取消上限。开启垂直同步时，高于显示器刷新率的上限会降到刷新率。画质预设不会改变它。
+For the smoothest experience, these games require the listed Title Updates. See the README for details.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4 = 为获得最流畅的体验，这些游戏需要下列 Title Update。详情请参阅 README。\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4
+Experimental settings are for testing, logging and debugging - not regular gameplay. They may reduce performance, cause visual problems or make the game unstable. = 实验性设置用于测试、记录日志和调试，而不是日常游戏。它们可能降低性能、造成画面问题或使游戏不稳定。
+is required for the smoothest experience. See the README for details. = 是获得最流畅体验所必需的。详情请参阅 README。
+added = 已添加
+Drag and drop your game, Title Update or DLC files here to install them. = 将游戏、Title Update 或 DLC 文件拖放到这里进行安装。
+COGBox does not include game files. See the README for details. = COGBox 不包含游戏文件。详情请参阅 README。
+Install COGBox outside cloud-synced folders such as OneDrive, Dropbox or Google Drive - syncing can lock, move or partly update files while they are in use. = 请将 COGBox 安装在 OneDrive、Dropbox 或 Google Drive 等云同步文件夹之外——同步可能会在文件使用时锁定、移动或只更新部分文件。

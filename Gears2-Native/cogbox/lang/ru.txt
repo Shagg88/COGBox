@@ -812,3 +812,14 @@ Hold to walk = Удерживать, чтобы идти
 Press to switch walking on / off = Нажать, чтобы включить / выключить шаг
 With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = С клавиатурой и мышью: как работает клавиша «Шаг» (клавишу выберите в разделе КЛАВИШИ). Шагом персонаж движется вдвое медленнее. Сначала клавиша не назначена.
 Walk = Шаг
+# 0.4.6 (Shagg 4-5 Nov): shorter notices, HDR experimental, frame-rate limit
+HDR (experimental) = HDR (экспериментально)
+Experimental in all four games - colours and brightness are not checked yet. Needs HDR turned on in Windows display settings. = Экспериментально во всех четырёх играх: цвета и яркость ещё не проверены. Нужно включить HDR в параметрах дисплея Windows.
+The game itself asks for 30 frames per second, as on the console. 60 / 120 lift the limit to that; Unlimited removes it. With V-Sync on, a limit above your monitor's refresh rate is lowered to the refresh rate. The quality presets leave it as it is. = Сама игра запрашивает 30 кадров в секунду, как на консоли. 60 / 120 поднимают ограничение до этого значения; «Без ограничения» снимает его. С V-Sync ограничение выше частоты обновления монитора снижается до этой частоты. Пресеты качества его не меняют.
+For the smoothest experience, these games require the listed Title Updates. See the README for details.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4 = Для максимально плавной игры этим играм нужны указанные Title Update. Подробности в README.\n\n    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4
+Experimental settings are for testing, logging and debugging - not regular gameplay. They may reduce performance, cause visual problems or make the game unstable. = Экспериментальные настройки нужны для тестирования, логов и отладки, а не для обычной игры. Они могут снизить производительность, вызвать графические ошибки или сделать игру нестабильной.
+is required for the smoothest experience. See the README for details. = нужен для максимально плавной игры. Подробности в README.
+added = добавлена
+Drag and drop your game, Title Update or DLC files here to install them. = Перетащите сюда файлы игры, Title Update или DLC, чтобы установить их.
+COGBox does not include game files. See the README for details. = COGBox не содержит файлов игр. Подробности в README.
+Install COGBox outside cloud-synced folders such as OneDrive, Dropbox or Google Drive - syncing can lock, move or partly update files while they are in use. = Устанавливайте COGBox вне папок с облачной синхронизацией (OneDrive, Dropbox, Google Drive): синхронизация может блокировать, перемещать или частично обновлять используемые файлы.

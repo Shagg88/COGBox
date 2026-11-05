@@ -165,7 +165,9 @@ std::vector<Option> make_options(Game g) {
     // Monitor: no PS1 tooltip (59-how-to-play: "Which monitor fullscreen uses"). Entries 1..N: monitor_label().
     add(choice("Monitor", "Monitor", Tab::Display, SH, { "Default (main screen)" }, 0,
                "Which screen the game uses. Default = the main screen.", 334), "", "screens>=2");
-    add(make("HDR", "HDR", Tab::Display, Kind::Bool, PG, 0, "Needs HDR turned on in Windows display settings.", 363));
+    add(make("HDR", "HDR (experimental)", Tab::Display, Kind::Bool, PG, 0,
+             "Experimental in all four games - colours and brightness are not checked yet. Needs HDR turned on in Windows "
+             "display settings.", 363));   // 0.4.6 (Shagg 4 Nov): HDR experimental
     add(number("PaperWhite", "HDR paper white (nits)", Tab::Display, Kind::Int, PG, 80, 400, 10, 203,
                "How bright normal scenes are. 203 is the reference; raise it in a bright room.", 364), "", "HDR");
     add(number("Peak", "HDR peak (nits)", Tab::Display, Kind::Int, PG, 400, 4000, 100, 1000,
@@ -178,7 +180,8 @@ std::vector<Option> make_options(Game g) {
     add(choice("FrameCap", "Frame rate limit", Tab::Display, PG,
                { "30 (original)", "45", "60", "90", "120", "144", "165", "Unlimited" }, 0,
                "The game itself asks for 30 frames per second, as on the console. 60 / 120 lift the limit to that; Unlimited "
-               "removes it. With V-Sync on, the limit stays just under your monitor's refresh rate.", 341), "framecap", "", true);
+               "removes it. With V-Sync on, a limit above your monitor's refresh rate is lowered to the refresh rate. The quality "
+               "presets leave it as it is.", 341), "framecap", "", false);   // 0.4.6: not part of the presets
     add(choice("FpsMode", "FPS counter", Tab::Display, OWN, { "Off", "Bar at the top", "Bar at the bottom", "Game's own (column)" }, 0,
                "Bar: one line (FPS, frame time, slowest frame) drawn by the port itself, nothing in the game changed. Game's own: "
                "the game's built-in FPS / frame-time column.", 336));
@@ -654,7 +657,7 @@ void apply_preset(Settings& s, int p) {
     };
     const P& x = v[p];
     s.set("Preset", p);
-    s.set("Resolution", x.res); s.set("FrameCap", x.fps); s.set("AAMode", x.aa); s.set("Aniso", x.aniso);
+    s.set("Resolution", x.res); s.set("AAMode", x.aa);   // 0.4.6 (Shagg 4 Nov): the frame-rate limit is its own setting s.set("Aniso", x.aniso);
     s.set("Trilinear", x.tri); s.set("MipFade", x.mip); s.set("Pool", x.pool); s.set("DrawDist", x.draw);
     s.set("MotionBlur", x.blur); s.set("DoF", x.dof); s.set("Shake", x.shake); s.set("Fov", x.fov);
 }

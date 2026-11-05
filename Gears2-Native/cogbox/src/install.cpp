@@ -4,6 +4,7 @@
 // complete, so a cancel or a failure never leaves a half copy where the game looks for it.
 #include "app.h"
 #include "theme.h"
+#include "i18n.h"
 #include "x360fs.h"
 
 #include <windows.h>
@@ -186,7 +187,7 @@ static void worker(App *ap)
                            "). It was added - it may work, but you may experience problems. If the game won't start, please open an issue on "
                            "GitHub and attach the problem report (About > Make a problem report).";
     else
-        j.result = match ? std::string(d.name) + " is added and checked - ready to play." :
+        j.result = match ? std::string(d.name) + " is added and checked." :   // 0.4.6: "ready to play" only with its update (below)
                            std::string("This version of ") + d.name + " hasn't been tested with COGBox (the ports are made for the US release). "
                            "It was added - it may work, but you may experience problems.";
     j.state = 2;
@@ -398,14 +399,19 @@ void install_poll(App &a)
         if (!a.dirty[g_plan.game]) { a.cur[g_plan.game] = a.store.view((gs::Game)g_plan.game, a.env[g_plan.game]); env_refresh(a, g_plan.game); }
         a.front = g_plan.game;
         bool good = j.result.find("checked") != std::string::npos;
+        // 0.4.6 (Shagg 4 Nov): "ready to play" only when the game has what it needs (its title update)
+        const GameDef &dd = game_def(g_plan.game);
+        if (good && !g_plan.update && !g_plan.dlc && (!dd.updateNeeded || !a.st[g_plan.game].updateDir.empty()))
+            j.result = std::string(dd.name) + " is added and ready to play.";
         set_message(a, j.result, !good);
         // a game without its title update: say where it comes from
         const GameDef &d = game_def(g_plan.game);
-        if (!g_plan.update && !g_plan.dlc && a.st[g_plan.game].updateDir.empty() && d.updateNeeded)
-            ask(a, "info", g_plan.game, std::string(d.name) + " is added",
-                j.result + "\n\nNext, add " + d.updateName + " (the last update, which the main port build is made for). It's on a console that "
-                "has played the game online, in Content\\0000000000000000\\" + [&] { char b[12]; snprintf(b, sizeof b, "%08X", d.titleId); return std::string(b); }() +
-                "\\000B0000. Title updates are now required to play - disc-only versions are no longer supported.", { "OK" });
+        // 0.4.6 (Shagg 4 Nov): one short notice (the carousel's "Title update needed" is not shown again after it)
+        if (!g_plan.update && !g_plan.dlc && a.st[g_plan.game].updateDir.empty() && d.updateNeeded) {
+            a.tuTold[g_plan.game] = true;
+            ask(a, "info", g_plan.game, std::string(d.name) + " " + tr("added"),
+                std::string(d.updateName) + " " + tr("is required for the smoothest experience. See the README for details."), { "OK" });
+        }
     } else if (s == 3) set_message(a, "Couldn't add it: " + j.error, true);
     else set_message(a, "Cancelled - nothing was changed.", false);
     j.state = 0;
