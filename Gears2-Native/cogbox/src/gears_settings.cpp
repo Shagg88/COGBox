@@ -1257,6 +1257,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             if (std::string(k.cvar) == "keybind_walk") {   // GitHub #125: a runtime with SDK patch 60 only
                 if (v != "None" && cap_rt(env, "keybind_walk")) {
                     a.push_back("--keybind_walk=" + v);
+                    // 0.4.6 (Shagg 5 Nov, Gears 3): the runtime's 0.5 was a jog and 0.3 sat inside the game's stick dead
+                    // zone (no movement); 0.4 walks ("works perfectly")
+                    a.push_back("--mnk_walk_scale=0.4");
                     if (s.i("WalkMode") == 1) a.push_back("--mnk_walk_toggle=true");
                 }
                 continue;
