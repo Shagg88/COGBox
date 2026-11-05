@@ -319,6 +319,7 @@ struct Texture {
 struct Pipeline {
   ID3D12PipelineState* pso = nullptr;  // set before `ready` (release) by a worker for asynchronous creations
   bool compute = false;
+  bool mips = false;  // CreateComputePipelineMips: the five-UAV compute root signature (compute_root_mips_)
   D3D_PRIMITIVE_TOPOLOGY topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
   std::atomic<bool> ready{true};   // false while a worker is creating it
   std::atomic<bool> failed{false};
@@ -1991,10 +1992,14 @@ class D3D12Backend final : public Backend {
     return handle;
   }
 
-  PipelineHandle CreateComputePipeline(ShaderHandle cs) override {
+  PipelineHandle CreateComputePipeline(ShaderHandle cs) override { return MakeComputePipeline(cs, false); }
+  PipelineHandle CreateComputePipelineMips(ShaderHandle cs) override {  // XeGTAO single-dispatch pyramid
+    return compute_root_mips_ ? MakeComputePipeline(cs, true) : 0;
+  }
+  PipelineHandle MakeComputePipeline(ShaderHandle cs, bool mips) {
     if (!ready_ || lost_ || !cs || cs >= shaders_.size()) return 0;
     D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
-    pd.pRootSignature = compute_root_;
+    pd.pRootSignature = mips ? compute_root_mips_ : compute_root_;
     if (!shaders_[cs].code) return 0;
     pd.CS = {shaders_[cs].code->data(), shaders_[cs].code->size()};
     ID3D12PipelineState* pso = nullptr;
@@ -2006,6 +2011,7 @@ class D3D12Backend final : public Backend {
     Pipeline& slot = pipelines_.emplace_back();
     slot.pso = pso;
     slot.compute = true;
+    slot.mips = mips;
     ++stats_.pipelines;
     return PipelineHandle(pipelines_.size() - 1);
   }
@@ -2429,6 +2435,10 @@ class D3D12Backend final : public Backend {
     if (!(load_batch ? OpenList() : Recording()) || !p || p >= pipelines_.size() || !pipelines_[p].compute || !gx ||
         !gy || !gz)
       return;
+    if (pipelines_[p].mips) {
+      DispatchMips(p, b, gx, gy, gz);
+      return;
+    }
     const uint32_t base = AllocShaderDescriptors(kComputeSrvCount + 2);
     if (base == UINT32_MAX) return;
     D3D12_CPU_DESCRIPTOR_HANDLE cpu = shader_heap_->GetCPUDescriptorHandleForHeapStart();
@@ -2532,6 +2542,66 @@ class D3D12Backend final : public Backend {
       list_->ResourceBarrier(1, &u);
     }
     rt_dirty_ = true;  // a bound render target may have been transitioned for reading
+    ++stats_.dispatches;
+  }
+
+  // XeGTAO single-dispatch pyramid: t0-t3 as Dispatch, u0..u(n-1) = mips of b.uav_mips_texture, the rest null views.
+  void DispatchMips(PipelineHandle p, const ComputeBindings& b, uint32_t gx, uint32_t gy, uint32_t gz) {
+    const uint32_t base = AllocShaderDescriptors(kComputeSrvCount + kMaxUavMips);
+    if (base == UINT32_MAX) return;
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu = shader_heap_->GetCPUDescriptorHandleForHeapStart();
+    for (uint32_t i = 0; i < kComputeSrvCount; ++i) {
+      D3D12_CPU_DESCRIPTOR_HANDLE dst{cpu.ptr + SIZE_T(base + i) * view_increment_};
+      const TextureHandle h = b.srv[i];
+      int32_t slot = -1;
+      if (ValidTexture(h)) {
+        slot = textures_[h].srv[b.srv_plane[i] ? 1 : 0];
+        Transition(textures_[h], D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+      }
+      if (slot >= 0) {
+        device_->CopyDescriptorsSimple(1, dst, view_heap_.Handle(slot), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+      } else {
+        D3D12_SHADER_RESOURCE_VIEW_DESC v{};
+        v.Format = DXGI_FORMAT_R32_FLOAT;
+        v.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        v.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        v.Texture2D.MipLevels = 1;
+        device_->CreateShaderResourceView(nullptr, &v, dst);
+      }
+    }
+    const bool valid = ValidTexture(b.uav_mips_texture);
+    const uint32_t count = valid ? std::min(b.uav_mip_count, kMaxUavMips) : 0u;
+    if (valid) Transition(textures_[b.uav_mips_texture], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    for (uint32_t i = 0; i < kMaxUavMips; ++i) {
+      D3D12_CPU_DESCRIPTOR_HANDLE dst{cpu.ptr + SIZE_T(base + kComputeSrvCount + i) * view_increment_};
+      const int32_t slot = i < count ? UavSlot(textures_[b.uav_mips_texture], i) : -1;
+      if (slot >= 0) {
+        UavBarrierIfWritten(textures_[b.uav_mips_texture], i);
+        device_->CopyDescriptorsSimple(1, dst, view_heap_.Handle(slot), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+      } else {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC u{};
+        u.Format = DXGI_FORMAT_R32_FLOAT;
+        u.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        device_->CreateUnorderedAccessView(nullptr, nullptr, &u, dst);
+      }
+    }
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu = shader_heap_->GetGPUDescriptorHandleForHeapStart();
+    list_->SetComputeRootSignature(compute_root_mips_);
+    list_->SetPipelineState(pipelines_[p].pso);
+    pipeline_dirty_ = true;
+    if (b.constant_count)
+      list_->SetComputeRoot32BitConstants(kRootCsConstants, std::min<uint32_t>(b.constant_count, 16), b.constants, 0);
+    list_->SetComputeRootDescriptorTable(kRootCsSrv, {gpu.ptr + UINT64(base) * view_increment_});
+    list_->SetComputeRootDescriptorTable(kRootCsUav, {gpu.ptr + UINT64(base + kComputeSrvCount) * view_increment_});
+    TsCat();
+    list_->Dispatch(gx, gy, gz);
+    if (valid) {
+      D3D12_RESOURCE_BARRIER u{};
+      u.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+      u.UAV.pResource = textures_[b.uav_mips_texture].resource;
+      list_->ResourceBarrier(1, &u);
+    }
+    rt_dirty_ = true;
     ++stats_.dispatches;
   }
 
@@ -3152,6 +3222,7 @@ class D3D12Backend final : public Backend {
     default_table_heap_.Shutdown();
     SafeRelease(graphics_root_);
     SafeRelease(compute_root_);
+    SafeRelease(compute_root_mips_);
     SafeRelease(info_queue_);
     SafeRelease(fence_);
     SafeRelease(queue_);
@@ -4185,6 +4256,12 @@ class D3D12Backend final : public Backend {
       params[kRootCsUav].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
       D3D12_ROOT_SIGNATURE_DESC rs{3, params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
       if (!SerializeRoot(rs, &compute_root_, error)) return false;
+      // XeGTAO single-dispatch pyramid: the same layout with u0-u4 (only CreateComputePipelineMips uses it). Its
+      // failure only leaves that feature off.
+      D3D12_DESCRIPTOR_RANGE uav5{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, kMaxUavMips, 0, 0, 0};
+      params[kRootCsUav].DescriptorTable = {1, &uav5};
+      std::string mips_error;
+      if (!SerializeRoot(rs, &compute_root_mips_, mips_error)) compute_root_mips_ = nullptr;
     }
     return true;
   }
@@ -4273,6 +4350,7 @@ class D3D12Backend final : public Backend {
   std::vector<FencedAllocator> allocators_;
   ID3D12RootSignature* graphics_root_ = nullptr;
   ID3D12RootSignature* compute_root_ = nullptr;
+  ID3D12RootSignature* compute_root_mips_ = nullptr;  // u0-u4 (CreateComputePipelineMips)
   ID3D12DescriptorHeap* shader_heap_ = nullptr;
 
   UINT view_increment_ = 0;

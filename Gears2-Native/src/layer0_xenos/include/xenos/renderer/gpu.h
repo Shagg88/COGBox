@@ -210,7 +210,13 @@ struct ComputeBindings {
   // is a texture load's own target, whose next use transitions it (a transition waits for the writes); writing the same
   // mip as a UAV again first gets the barrier.
   bool defer_uav_barrier = false;
+  // XeGTAO single-dispatch depth pyramid (--gow2_ao_prefilter_single): with a pipeline from CreateComputePipelineMips,
+  // u0..u(n-1) = mips 0..n-1 of this texture (n = uav_mip_count, at most kMaxUavMips; the rest null views); uav_texture,
+  // uav_mip and uav2_texture are not used then. Other pipelines ignore these.
+  TextureHandle uav_mips_texture = 0;
+  uint32_t uav_mip_count = 0;
 };
+constexpr uint32_t kMaxUavMips = 5;
 
 // Notes/68 stage V3: the Vulkan backend on someone else's device (the SDK's Vulkan provider, which the presenter uses), so
 // our image can be written into the presenter's guest-output image on the same queue. Handles as void* (no Vulkan types
@@ -462,6 +468,9 @@ class Backend {
   virtual uint64_t WarmJobsLeft() { return 0; }
   virtual void SavePipelinesNow() {}
   virtual PipelineHandle CreateComputePipeline(ShaderHandle cs) = 0;
+  // A compute pipeline whose shader writes u0-u4 (ComputeBindings::uav_mips_texture). 0 = not supported by this backend
+  // (the caller keeps its one-UAV path).
+  virtual PipelineHandle CreateComputePipelineMips(ShaderHandle cs) { (void)cs; return 0; }
 
   // ---- guest memory mirror (t96) ----
   // Copies host bytes (guest byte order, as in guest memory) into the GPU copy of guest physical memory.

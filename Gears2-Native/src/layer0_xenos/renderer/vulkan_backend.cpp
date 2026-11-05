@@ -209,7 +209,7 @@ struct Shader {
   // Compute (stage V4): its own one-set layout, from the descriptor types found in the SPIR-V (ComputeBinding below).
   VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
   VkPipelineLayout layout = VK_NULL_HANDLE;
-  VkDescriptorType types[8] = {};  // by compute binding; VK_DESCRIPTOR_TYPE_MAX_ENUM = unused
+  VkDescriptorType types[10] = {};  // by compute binding (0-9); VK_DESCRIPTOR_TYPE_MAX_ENUM = unused
 };
 
 struct Pipeline {
@@ -775,6 +775,8 @@ class VulkanBackend final : public Backend {
       if (desc == d) return handle && !pipelines_[handle]->ready.load(std::memory_order_acquire);
     return false;
   }
+  // XeGTAO single-dispatch pyramid: the layout comes from the shader's own bindings (u2-u4 -> 7-9), so it's the same call.
+  PipelineHandle CreateComputePipelineMips(ShaderHandle cs) override { return CreateComputePipeline(cs); }
   PipelineHandle CreateComputePipeline(ShaderHandle cs) override {
     if (!ready_ || lost_ || !cs || cs >= shaders_.size() || shaders_[cs].stage != ShaderStage::kCompute) return 0;
     const Shader& sh = shaders_[cs];
@@ -1158,12 +1160,14 @@ class VulkanBackend final : public Backend {
     for (uint32_t i = 0; i < 4; ++i) if (Valid(b.srv[i])) Transition(textures_[b.srv[i]], VK_IMAGE_LAYOUT_GENERAL);
     if (Valid(b.uav_texture)) Transition(textures_[b.uav_texture], VK_IMAGE_LAYOUT_GENERAL);
     if (Valid(b.uav2_texture)) Transition(textures_[b.uav2_texture], VK_IMAGE_LAYOUT_GENERAL);
+    const bool mips = b.uav_mip_count > 0 && Valid(b.uav_mips_texture);  // XeGTAO single-dispatch pyramid
+    if (mips) Transition(textures_[b.uav_mips_texture], VK_IMAGE_LAYOUT_GENERAL);
     FullBarrier();
     VkDescriptorSet set = AllocateComputeSet(sh.set_layout);
     if (!set) return;
     std::vector<VkWriteDescriptorSet> wr;
-    VkDescriptorBufferInfo bufs[8];
-    VkDescriptorImageInfo imgs[8];
+    VkDescriptorBufferInfo bufs[10];
+    VkDescriptorImageInfo imgs[10];
     // Binding 0: the constants (b0, up to 16 dwords) in the ring.
     if (sh.types[0] == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
       uint64_t at = 0;
@@ -1192,10 +1196,17 @@ class VulkanBackend final : public Backend {
       if (!imgs[binding].imageView) { NotDone("Dispatch: image view creation failed"); return; }  // outside review
       wr.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, 0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &imgs[binding], nullptr, nullptr});
     }
-    for (uint32_t u = 0; u < 2; ++u) {
+    for (uint32_t u = 0; u < (mips ? kMaxUavMips : 2u); ++u) {
       const uint32_t binding = 5 + u;
       const VkDescriptorType ty = sh.types[binding];
       if (ty == VK_DESCRIPTOR_TYPE_MAX_ENUM) continue;
+      if (mips) {  // u0..u(n-1) = mips 0..n-1 (a storage image binding for each the shader declares)
+        if (ty != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE || u >= b.uav_mip_count) { NotDone("Dispatch: pyramid UAV missing"); return; }
+        imgs[binding] = {VK_NULL_HANDLE, StorageView(b.uav_mips_texture, u), VK_IMAGE_LAYOUT_GENERAL};
+        if (!imgs[binding].imageView) { NotDone("Dispatch: storage view creation failed"); return; }
+        wr.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &imgs[binding], nullptr, nullptr});
+        continue;
+      }
       if (ty == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {  // u0 = guest memory (guest_u0) or the scratch buffer (scratch_u0)
         if (u == 0 && b.scratch_u0 && scratch_.buffer) bufs[binding] = {scratch_.buffer, 0, VK_WHOLE_SIZE};
         else bufs[binding] = {guest_.buffer, 0, VK_WHOLE_SIZE};
@@ -1447,7 +1458,7 @@ class VulkanBackend final : public Backend {
       uint32_t& b = w[d.binding_at];
       if (stage == ShaderStage::kCompute) {  // one set: 0 = b0, 1-4 = t0-t3, 5-6 = u0-u1
         if (set == 0 && b >= 100 && b < 104) b = 1 + (b - 100);
-        else if (set == 0 && b >= 300 && b < 302) b = 5 + (b - 300);
+        else if (set == 0 && b >= 300 && b < 300 + kMaxUavMips) b = 5 + (b - 300);  // u2-u4 -> 7-9 (pyramid shader)
         continue;
       }
       if (set != 0) continue;  // explicit set 1 / 2 from the translator
@@ -2322,7 +2333,7 @@ class VulkanBackend final : public Backend {
     for (const Var& v : vars) {
       if (!binding_of.count(v.id)) continue;
       const uint32_t b = binding_of[v.id];
-      if (b >= 8 || set_of[v.id] != 0) { REXLOG_ERROR("gow2_renderer: Vulkan: compute binding {} set {} outside the layout", b, set_of[v.id]); return false; }
+      if (b >= 10 || set_of[v.id] != 0) { REXLOG_ERROR("gow2_renderer: Vulkan: compute binding {} set {} outside the layout", b, set_of[v.id]); return false; }
       const uint32_t t = pointer_to[v.type];
       VkDescriptorType ty;
       if (v.cls == 2) ty = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;                // Uniform

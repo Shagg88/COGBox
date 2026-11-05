@@ -850,6 +850,10 @@ REXCVAR_DEFINE_DOUBLE(gow2_ao_radius, 60.0, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_ao_denoise, 3, "Gears2",
                      "XeGTAO denoise passes (notes/80): 1 = sharp, 2 = medium, 3 = soft (XeGTAO leaves the rest to TAA, "
                      "which these games don't have)");
+REXCVAR_DEFINE_BOOL(gow2_ao_prefilter_single, false, "Gears2",
+                    "XeGTAO: build the depth pyramid's 5 levels in one dispatch (XeGTAO's PrefilterDepths16x16) instead of "
+                    "five, each reading the whole scene depth again. Needs a backend that binds 5 UAVs (D3D12, Vulkan); "
+                    "otherwise the five dispatches are used. false (default) = five dispatches, as 0.4.5");
 REXCVAR_DEFINE_INT32(gow2_ao_gpu_log, 0, "Gears2",
                      "XeGTAO cost: every N frames, the average GPU time of each XeGTAO pass (depth pyramid levels 0-4, main, "
                      "each denoise pass) from the backend's GPU timestamps. 0 = off. Not while --gow2_renderer_draw_report_frame "
@@ -4325,6 +4329,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Notes/80 s.4: XeGTAO's passes and textures (scene size): the view-depth pyramid (5 levels), the working AO term
   // and edges, the final AO. ao_ready_: this frame's final AO is made (the debug view shows it).
   gpu::PipelineHandle ao_prefilter_pipe_ = 0, ao_main_pipe_ = 0, ao_denoise_pipe_ = 0, ao_debug_pipe_ = 0;
+  gpu::PipelineHandle ao_prefilter5_pipe_ = 0;  // --gow2_ao_prefilter_single (CreateComputePipelineMips)
   std::array<gpu::PipelineHandle, 4> ao_main_pipes_{};  // notes/80 s.12: every quality preset, so F11 needs no compile
   gpu::TextureHandle ao_depth_ = 0, ao_work_ = 0, ao_work2_ = 0, ao_edges_ = 0, ao_final_ = 0;
   uint32_t ao_denoise_passes_ = 3;
@@ -5463,6 +5468,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return s ? backend_->CreateComputePipeline(s) : 0;
     };
     ao_prefilter_pipe_ = make("xegtao_prefilter_cs", common + rr::builtin::kXeGtaoPrefilterCs);
+    if (REXCVAR_GET(gow2_ao_prefilter_single)) {  // one dispatch for the 5 levels (falls back to the five if refused)
+      const gpu::ShaderHandle s5 = cache_->GetBuiltin("xegtao_prefilter5_cs", common + rr::builtin::kXeGtaoPrefilter5Cs,
+                                                      gpu::ShaderStage::kCompute);
+      ao_prefilter5_pipe_ = s5 ? backend_->CreateComputePipelineMips(s5) : 0;
+      REXLOG_INFO("gow2_ao: XeGTAO depth pyramid in one dispatch {}", ao_prefilter5_pipe_ ? "on" : "NOT available - five dispatches");
+    }
     for (uint32_t i = 0; i < 4; ++i)
       ao_main_pipes_[i] = make(std::string("xegtao_main_") + kQuality[i] + "_cs",
                                std::string("#define XE_SLICES ") + kSlices[i] + "\n#define XE_STEPS " + kSteps[i] + "\n" +
@@ -5562,11 +5573,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.srv_plane[0] = 0;
     b.uav_texture = ao_depth_;
     const bool timed = AoGpuTimed();  // --gow2_ao_gpu_log
-    for (uint32_t mip = 0; mip < 5; ++mip) {
-      b.constants[3] = mip;
-      b.uav_mip = mip;
-      if (timed) backend_->SetGpuTag(kAoTagBase + mip);
-      backend_->Dispatch(ao_prefilter_pipe_, b, (w + 15) / 16, (h + 15) / 16, 1);
+    if (ao_prefilter5_pipe_) {  // --gow2_ao_prefilter_single: all 5 levels at once (u0-u4 = MIPs 0-4)
+      b.uav_texture = 0;
+      b.uav_mips_texture = ao_depth_;
+      b.uav_mip_count = 5;
+      if (timed) backend_->SetGpuTag(kAoTagBase + 0);
+      backend_->Dispatch(ao_prefilter5_pipe_, b, (w + 15) / 16, (h + 15) / 16, 1);
+      b.uav_mips_texture = 0;
+      b.uav_mip_count = 0;
+    } else {
+      for (uint32_t mip = 0; mip < 5; ++mip) {
+        b.constants[3] = mip;
+        b.uav_mip = mip;
+        if (timed) backend_->SetGpuTag(kAoTagBase + mip);
+        backend_->Dispatch(ao_prefilter_pipe_, b, (w + 15) / 16, (h + 15) / 16, 1);
+      }
     }
     // 2. The main pass: working AO term + edges.
     b.constants[3] = 0;
