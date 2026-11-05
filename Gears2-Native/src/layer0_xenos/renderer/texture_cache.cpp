@@ -46,6 +46,14 @@ REXCVAR_DEFINE_DOUBLE(gow2_texture_phase_log_ms, 0.0, "Gears2",
                       "phases - page watch arming, page hashing, host texture creation, GPU-path copy + untile, CPU-path "
                       "untile, CPU-path upload. 0 = off");
 
+// GitHub #131 diagnostic (Judgment corruption on Vulkan / Proton, AMD): each distinct binding - guest base, guest
+// format, dimension, size, tiling, fetch swizzle and signs, and the host format, view components, signed view, load
+// path and host bytes it was given - logged once, up to N lines, so the same asset can be compared between D3D12 on
+// Windows and Vulkan under Proton. 0 = off (the default); capped at 4000 lines. Logging only: nothing is changed.
+REXCVAR_DEFINE_INT32(gow2_renderer_texture_view_log, 0, "Gears2",
+                     "Diagnostic (GitHub #131): log each distinct texture binding once (guest base / format / size / "
+                     "swizzle -> host format / view components / load path), up to N lines (max 4000). 0 = off");
+
 // Job 620 (GitHub #41 - keyboard button prompts): replace a guest texture by the XXH3 of its base-level guest bytes.
 REXCVAR_DEFINE_STRING(gow2_texture_replace_dir, "", "Gears2",
                       "Folder of replacement textures (job 620): <hash16>_<level>.bin = that level's host-format data "
@@ -683,6 +691,28 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
       for (uint32_t i = 0; i < 4; ++i) v.components[i] = comp[i];
       v.signed_view = any_signed;
       ++stats_.bound;
+      if (const int32_t view_log = REXCVAR_GET(gow2_renderer_texture_view_log); view_log > 0) {  // GitHub #131
+        static std::mutex m;
+        static std::unordered_set<uint64_t> seen;
+        static uint32_t lines = 0;
+        const uint32_t cap = uint32_t(std::min(view_log, 4000));
+        const uint64_t sig = (uint64_t(tf[1] & 0xFFFFF03Fu) << 32) ^ (uint64_t(tf[2]) << 7) ^ (uint64_t(swz) << 1) ^
+                             (uint64_t(kind) << 60) ^ (uint64_t(Bits(tf[0], 2, 8)) << 50) ^ uint64_t(tf[0] >> 31);
+        std::lock_guard<std::mutex> lock(m);
+        if (lines < cap && seen.insert(sig).second) {
+          ++lines;
+          const uint32_t w = Bits(tf[2], 0, 13) + 1, h = Bits(tf[2], 13, 13) + 1;
+          REXLOG_INFO("gow2_texture_view: frame {} kind {} base {:08X} (+{:X}) mips {:08X} | guest fmt {} endian {} {}x{} "
+                      "dim {} tiled {} swizzle {:03X} signs {:02X} | host fmt {} view {}{}{}{}{} | {} {} bytes, "
+                      "loaded frame {}{}",
+                      frame, kind, e.base_start, e.base_length, e.mip_start, Bits(tf[1], 0, 6), Bits(tf[1], 6, 2), w, h,
+                      Bits(tf[5], 9, 2), Bits(tf[0], 31, 1), swz, Bits(tf[0], 2, 8),
+                      uint32_t(e.format), uint32_t(comp[0]), uint32_t(comp[1]), uint32_t(comp[2]), uint32_t(comp[3]),
+                      any_signed ? " signed" : "", e.gpu_storage ? "GPU untile" : "CPU", e.host_bytes,
+                      e.loaded_frame == ~0ull ? -1ll : (long long)e.loaded_frame,
+                      lines == cap ? " (gow2_renderer_texture_view_log: limit reached)" : "");
+        }
+      }
     }
     // Remember the result; a re-upload inside Lookup bumps nothing in the watch, so the epoch read before is valid.
     sc.valid = true;
