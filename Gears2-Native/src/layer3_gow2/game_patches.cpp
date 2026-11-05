@@ -323,6 +323,20 @@ REXCVAR_DEFINE_BOOL(gow2_ultrawide_fov_exact, true, "Gears2",
                     "16:9's vertical view (GitHub #74); false = the fixed factor of 0.3.7");
 void Gow2UltrawideFov(PPCRegister& f0, PPCRegister& f30) {
   CogMouseLookNoteFov(f30.f64);  // GitHub #52: the camera's own FOV, also without ultrawide
+  {  // GitHub #132: with --gow2_renderer_camera_log, every change of the camera's FOV (and the factor) is logged too
+    static const bool camera_log = [] {
+      const std::string v = rex::cvar::GetFlagByName("gow2_renderer_camera_log");
+      return !v.empty() && v != "0";
+    }();
+    static double last_fov = -1.0;
+    static int lines = 0;
+    if (camera_log && f30.f64 != last_fov && lines < 400) {
+      last_fov = f30.f64;
+      ++lines;
+      REXLOG_INFO("gow2_camera_log: camera FOV {:.3f} deg, game factor {} (ultrawide {})", f30.f64, f0.f64,
+                  REXCVAR_GET(gow2_ultrawide) ? "on" : "off");
+    }
+  }
   if (!REXCVAR_GET(gow2_ultrawide)) return;
   const double game = f0.f64, fov = f30.f64;
   double f = double(0.0106355f) * uwshape::FovScale(Gow2WideHeight());

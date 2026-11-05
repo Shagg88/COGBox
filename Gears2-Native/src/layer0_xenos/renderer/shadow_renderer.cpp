@@ -714,6 +714,10 @@ REXCVAR_DEFINE_STRING(gow2_renderer_resolution_scale_pitches, "", "Gears2",
                       "is otherwise drawn at the console's size and enlarged. Their viewports, scissors, resolves and the "
                       "textures read from them follow the target's own scale; the game's texel offsets stay in "
                       "normalised source-size units, so kernels keep their footprint. Empty = off (as 0.4.5). No effect at 1x");
+REXCVAR_DEFINE_INT32(gow2_renderer_camera_log, 0, "Gears2",
+                     "Diagnostic (GitHub #132): every N frames, the scene camera taken from the view-projection in c0-c3 "
+                     "of the frame's first scene-depth draw - world position, yaw / pitch, vertical and horizontal field "
+                     "of view, viewport - so a 16:9 and an ultrawide run can be compared. 0 = off; at most 2000 lines");
 REXCVAR_DEFINE_BOOL(gow2_renderer_fill_ownership, true, "Gears2",
                     "Job 188: the rect-list fill/clear shader (VS 1E6883FCCDE1F688) takes EDRAM ownership only of the "
                     "tiles its rectangle covers (bounds from its 3 vertices), not of its whole scissor rectangle - fewer "
@@ -4096,6 +4100,57 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::vector<std::string> probe_resolves_;
   std::vector<std::string> probe_draws_;  // the first depth-writing camera draws: vertex data address + c4-c15
   bool ProbeFrame() const { return upscale_probe_ && (frame_ + 1) % upscale_probe_ == 0; }
+  // GitHub #132 (--gow2_renderer_camera_log): see the cvar. The camera matrix's rows (FromConstantsTransposed: clip x, y,
+  // z, w) give the camera position as the point where clip x, y and w are all 0, and the forward direction as the w row.
+  uint64_t camera_log_frame_ = ~0ull;
+  uint32_t camera_log_lines_ = 0;
+  void CameraLog(const uint32_t* r, const rr::GuestShader& vsg, const rr::PipelineState& ps, const rr::RenderTarget* depth,
+                 bool depth_writes) {
+    const int32_t every = REXCVAR_GET(gow2_renderer_camera_log);
+    if (every <= 0 || camera_log_lines_ >= 2000 || (frame_ + 1) % uint64_t(every) != 0 || camera_log_frame_ == frame_ + 1)
+      return;
+    if (!depth || !depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < 300) return;
+    if (!(vsg.Reads(0) && vsg.Reads(1) && vsg.Reads(2) && vsg.Reads(3))) return;
+    float c[16];
+    std::memcpy(c, &r[kRegFloatConstVs], sizeof(c));
+    const rr::upscale::Mat4 m = rr::upscale::FromConstantsTransposed(c, 0);
+    float vfov = 0.0f, zn = 0.0f;
+    bool inf = false;
+    if (!rr::upscale::PerspectiveParams(m, vfov, zn, inf) || !(vfov > 0.05f && vfov < 3.0f)) return;
+    camera_log_frame_ = frame_ + 1;
+    ++camera_log_lines_;
+    // Solve rows 0, 1, 3 (xyz) . p = -row.w (Cramer's rule, doubles).
+    const int rows[3] = {0, 1, 3};
+    double A[3][3], bv[3];
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) A[i][j] = m(rows[i], j);
+      bv[i] = -double(m(rows[i], 3));
+    }
+    auto det3 = [](const double M[3][3]) {
+      return M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
+             M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+    };
+    const double d = det3(A);
+    double p[3] = {0, 0, 0};
+    if (std::abs(d) > 1e-12)
+      for (int k = 0; k < 3; ++k) {
+        double B[3][3];
+        for (int i = 0; i < 3; ++i)
+          for (int j = 0; j < 3; ++j) B[i][j] = j == k ? bv[i] : A[i][j];
+        p[k] = det3(B) / d;
+      }
+    const double fx = m(3, 0), fy = m(3, 1), fz = m(3, 2);
+    const double fl = std::sqrt(fx * fx + fy * fy + fz * fz);
+    const double xs = std::sqrt(double(m(0, 0)) * m(0, 0) + double(m(0, 1)) * m(0, 1) + double(m(0, 2)) * m(0, 2));
+    const double hfov = xs > 1e-9 ? 2.0 * std::atan(fl / xs) : 0.0;
+    constexpr double kDeg = 57.29577951308232;
+    REXLOG_INFO("gow2_camera_log: frame {} position {:.1f} {:.1f} {:.1f} | yaw {:.2f} pitch {:.2f} deg | fov vertical {:.2f} "
+                "horizontal {:.2f} deg | near {:.2f}{} | viewport {:.0f}x{:.0f} at {:.0f},{:.0f} | target {}x{}{}",
+                frame_ + 1, p[0], p[1], p[2], std::atan2(fy, fx) * kDeg, fl > 0 ? std::asin(fz / fl) * kDeg : 0.0,
+                vfov * kDeg, hfov * kDeg, zn, inf ? " (infinite far)" : "", ps.viewport.width, ps.viewport.height,
+                ps.viewport.x, ps.viewport.y, depth->guest_width, depth->guest_height,
+                camera_log_lines_ == 2000 ? " - last line (gow2_renderer_camera_log)" : "");
+  }
   void NoteProbeDraw(const uint32_t* r, const rr::GuestShader& vsg, const rr::PipelineState& ps,
                      const rr::RenderTarget* depth, bool depth_writes) {
     float c[16];
@@ -7261,6 +7316,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
 
     if (ProbeFrame()) NoteProbeDraw(r, vsg, ps, target, depth_writes);
+    CameraLog(r, vsg, ps, target, depth_writes);  // GitHub #132 (off by default)
     // Constants.
     textures_part.Switch(kPartConstants);
     rr::ViewportState v = ps.viewport;
