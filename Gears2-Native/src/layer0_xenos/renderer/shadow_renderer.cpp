@@ -834,6 +834,10 @@ REXCVAR_DEFINE_INT32(gow2_upscale_capture_raw_class, -1, "Gears2",
                      "float dumps (.raw: int32 w, h, format, then 2 floats a texel) of the motion vectors and of every "
                      "colour resolve whose source has this storage class (e.g. 4 = k_16_16, Gears 2's velocity buffer); "
                      "-1 = off. Large: ~20 MB a resolve");
+REXCVAR_DEFINE_STRING(gow2_velocity_scan_frames, "", "Gears2",
+                      "Diagnostic (#147 / #150): frames 'first-last' in which draws into k_16_16 / k_16_16_FLOAT or half-size "
+                      "targets are logged once per shader pair with the VS constants they read - finds a game's velocity "
+                      "pass for the upscalers' character motion. Empty = off");
 REXCVAR_DEFINE_BOOL(gow2_upscale_depth_at_resolve, false, "Gears2",
                     "Notes/80 s.6: the upscalers' depth is copied at the game's scene depth resolve (Gears 2 clears that "
                     "depth before the scene colour resolve - on there by gow2_app.h); false: read at the scene colour "
@@ -1617,6 +1621,14 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     }
     const_gen_skip_ = REXCVAR_GET(gow2_renderer_const_gen_skip);
     upscale_probe_ = uint32_t(std::max(0, REXCVAR_GET(gow2_upscale_probe)));
+    {  // #147 / #150: --gow2_velocity_scan_frames
+      unsigned long long a = 0, z = 0;
+      if (std::sscanf(REXCVAR_GET(gow2_velocity_scan_frames).c_str(), "%llu-%llu", &a, &z) == 2 && a >= 1 && a <= z) {
+        vel_scan_first_ = a;
+        vel_scan_last_ = z;
+        REXLOG_INFO("gow2_velocity_scan: frames {}-{}", a, z);
+      }
+    }
     stencil_transfer_bits_ = REXCVAR_GET(gow2_renderer_stencil_transfer_bits) != 0;
     static_index_buffers_ = REXCVAR_GET(gow2_renderer_static_index_buffers);
     textures_ = std::make_unique<rr::TextureCache>(*backend_, memory_->TranslatePhysical<const uint8_t*>(0), *watch_);
@@ -5009,6 +5021,42 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t vel_mask_w_ = 0, vel_mask_h_ = 0;
   uint64_t vel_frames_ = 0, vel_no_camera_ = 0, vel_objects_sum_ = 0;  // log window
   static constexpr uint32_t kMaxMovingObjects = 32;
+  // #147 / #150 (--gow2_velocity_scan_frames "first-last"): one Windows run per game finds its velocity pass. In those
+  // frames, each distinct (VS, PS, target class, pitch) drawing into a k_16_16 / k_16_16_FLOAT target, or into any
+  // target at most 720 pixels wide (half resolution), is logged once: shaders, target, index count, the VS float
+  // constants it reads (as ranges), and whether the 8 constants after the camera (c5-c12, Gears 2's velocity layout)
+  // hold two affine matrices. Logging only; at most 600 lines.
+  uint64_t vel_scan_first_ = 0, vel_scan_last_ = 0;
+  uint32_t vel_scan_lines_ = 0;
+  std::unordered_set<uint64_t> vel_scan_seen_;
+  void VelocityScan(const uint32_t* r, const rr::GuestShader& vsg, const rr::RenderTargetKey& k0, uint32_t colour_count,
+                    uint64_t vs_hash, uint64_t ps_hash, uint32_t index_count) {
+    const uint64_t f = frame_ + 1;
+    if (f < vel_scan_first_ || f > vel_scan_last_ || vel_scan_lines_ >= 600) return;
+    const uint32_t c16 = rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16));
+    const uint32_t c16f = rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16_FLOAT));
+    if (k0.storage_class != c16 && k0.storage_class != c16f && k0.pitch_pixels > 720) return;
+    const uint64_t key = vs_hash * 0x9E3779B97F4A7C15ull ^ ps_hash ^ (uint64_t(k0.storage_class) << 56) ^
+                         (uint64_t(k0.pitch_pixels) << 40);
+    if (!vel_scan_seen_.insert(key).second) return;
+    ++vel_scan_lines_;
+    std::string reads;
+    for (uint32_t c = 0; c < 256;) {
+      if (!vsg.Reads(c)) { ++c; continue; }
+      uint32_t e = c;
+      while (e + 1 < 256 && vsg.Reads(e + 1)) ++e;
+      reads += (reads.empty() ? "c" : ",c") + std::to_string(c) + (e > c ? "-" + std::to_string(e) : std::string());
+      c = e + 1;
+    }
+    float m[32];
+    std::memcpy(m, &r[kRegFloatConstVs + 5 * 4], sizeof(m));
+    const bool affine2 = m[15] == 1.0f && m[31] == 1.0f && m[3] == 0.0f && m[19] == 0.0f;
+    REXLOG_INFO("gow2_velocity_scan: frame {} vs {:016X} ps {:016X} -> {} pitch {} msaa {} ({} target(s)) indices {} | VS "
+                "reads {} | c5-c12 two affine matrices: {}{}",
+                f, vs_hash, ps_hash, rr::StorageClassName(k0.storage_class), k0.pitch_pixels, 1u << k0.msaa, colour_count,
+                index_count, reads.empty() ? std::string("none") : reads, affine2 ? "yes" : "no",
+                vel_scan_lines_ == 600 ? " - last line (gow2_velocity_scan_frames)" : "");
+  }
   void VelocityDraw(const uint32_t* r, const rr::GuestShader& vsg, const rr::RenderTargetKey& k0, uint32_t index_count) {
     if (!vel_motion_pipe_ || !up_camera_ || k0.storage_class != rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16))) return;
     for (uint32_t k = 0; k < 13; ++k)  // the camera (c0-c3) and both object-to-world matrices (c5-c12)
@@ -6986,6 +7034,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (depth_bound) bound_bases[bound_count++] = key.base_tiles;
     if (colour_count == 1 && up_active_ && !up_camera_only_) VelocityDraw(r, vsg, colour_keys[0], index_count);  // notes/80 s.6
+    if (colour_count >= 1 && vel_scan_last_) VelocityScan(r, vsg, colour_keys[0], colour_count, vs_hash, ps_hash, index_count);
     if (ao_trace_ && colour_count && (prim == 0x08 || index_count <= 6 || int32_t(colour_keys[0].storage_class) == ao_trace_class_)) AoTraceDraw(r, ps, colour_keys[0], colour_count,
                                                                                    vs_hash, ps_hash, prim, index_count);
     // Notes/80: the game's AO chain while XeGTAO replaces its result - skipped before any ownership or transfer work.
