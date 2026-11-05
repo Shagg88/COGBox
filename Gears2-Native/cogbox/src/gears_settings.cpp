@@ -318,7 +318,8 @@ std::vector<Option> make_options(Game g) {
     // dead zone at 5. True mouse look (no stick limits) is planned.
     // 0.2.1: native mouse look - the value is the multiplier on the mouse counts (Shagg 15:59: 1.0 far too fast, 0.5
     // better at 1600 DPI); the old right-stick way gets twice it (its old default 1.0 at 0.5)
-    add(number("Sens", "Mouse sensitivity", Tab::Controls, Kind::Float, SH, 0.05, 2, 0.05, 0.5,
+    // GitHub #195: steps of 0.01 (were 0.05) for fine tuning; the slider moves one step per key / pad press
+    add(number("Sens", "Mouse sensitivity", Tab::Controls, Kind::Float, SH, 0.01, 2, 0.01, 0.5,
                "How fast the mouse turns the camera. 0.5 is a good start; lower it for a high-DPI mouse, raise it for a "
                "low-DPI one.", 381, 2));
     add(choice("DeadZone", "Extra stick dead zone", Tab::Controls, SH, { "Game's own", "5%", "10%", "15%", "20%", "25%" }, 0,
