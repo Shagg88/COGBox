@@ -141,9 +141,18 @@ class RenderTargetCache {
   // The scale a target with this pitch / MSAA is (or will be) drawn at.
   uint32_t ScaleFor(uint32_t pitch_pixels, uint32_t msaa) const {
     (void)msaa;
-    return (scale_ > 1 && scale_threshold_ && pitch_pixels <= scale_threshold_) ? 1u : phase_scale_;
+    if (scale_ > 1 && scale_threshold_ && pitch_pixels <= scale_threshold_ && !ScaledAnyway(pitch_pixels)) return 1u;
+    return phase_scale_;
   }
   uint32_t ScaleFor(const RenderTargetKey& key) const { return ScaleFor(key.pitch_pixels, key.msaa); }
+  // GitHub #105 (--gow2_renderer_resolution_scale_pitches): surface pitches drawn at the scale even though they are at
+  // or below the threshold (Gears 3's depth-of-field chain). Empty = the threshold alone, as before.
+  void SetScaledPitches(std::vector<uint32_t> pitches) { scaled_pitches_ = std::move(pitches); }
+  bool ScaledAnyway(uint32_t pitch_pixels) const {
+    for (uint32_t p : scaled_pitches_)
+      if (p == pitch_pixels) return true;
+    return false;
+  }
   uint64_t HostBytes() const { return host_bytes_; }
   // Finds or creates the host target for a key. With create_storage = false only the bookkeeping exists (texture 0),
   // used in M1 for colour targets, whose tile ownership is tracked but which are not drawn yet. Null if the texture
@@ -193,6 +202,7 @@ class RenderTargetCache {
   bool d24s8_as_d32_ = false;
   uint32_t scale_ = 1;
   uint32_t scale_threshold_ = 0;
+  std::vector<uint32_t> scaled_pitches_;  // GitHub #105
   uint32_t phase_scale_ = 1;  // patch 0141
   uint64_t host_bytes_ = 0;
   std::vector<std::unique_ptr<RenderTarget>> targets_;

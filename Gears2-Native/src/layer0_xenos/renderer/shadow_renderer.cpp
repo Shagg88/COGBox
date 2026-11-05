@@ -708,6 +708,12 @@ REXCVAR_DEFINE_INT32(gow2_renderer_resolution_scale_threshold, 1120, "Gears2",
                      "draw_resolution_scale_threshold (364 or 512 suggested there for Gears 3). 0 = scale every target. "
                      "Default 1120 since job 294 (job 292, ch10 at 2x: the white line along the left/top edges, +60/+22 "
                      "brightness with 0, gone with 1120; Gears 3's green tint): the 1280-wide scene targets still scale");
+REXCVAR_DEFINE_STRING(gow2_renderer_resolution_scale_pitches, "", "Gears2",
+                      "GitHub #105: surface pitches (pixels, comma-separated, e.g. 640) drawn at the resolution scale even "
+                      "though they are at or below --gow2_renderer_resolution_scale_threshold - Gears 3's depth of field "
+                      "is otherwise drawn at the console's size and enlarged. Their viewports, scissors, resolves and the "
+                      "textures read from them follow the target's own scale; the game's texel offsets stay in "
+                      "normalised source-size units, so kernels keep their footprint. Empty = off (as 0.4.5). No effect at 1x");
 REXCVAR_DEFINE_BOOL(gow2_renderer_fill_ownership, true, "Gears2",
                     "Job 188: the rect-list fill/clear shader (VS 1E6883FCCDE1F688) takes EDRAM ownership only of the "
                     "tiles its rectangle covers (bounds from its 3 vertices), not of its whole scissor rectangle - fewer "
@@ -1487,6 +1493,24 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     const uint32_t scale_threshold = uint32_t(std::max(REXCVAR_GET(gow2_renderer_resolution_scale_threshold), 0));
     rts_ = std::make_unique<rr::RenderTargetCache>(*backend_, REXCVAR_GET(gow2_renderer_d24s8_exact), res_scale_,
                                                    scale_threshold);
+    if (res_scale_ > 1 && scale_threshold) {  // GitHub #105
+      std::vector<uint32_t> pitches;
+      const std::string list = REXCVAR_GET(gow2_renderer_resolution_scale_pitches);
+      size_t at = 0;
+      while (at < list.size()) {
+        const size_t end = std::min(list.find(',', at), list.size());
+        const unsigned long v = std::strtoul(list.substr(at, end - at).c_str(), nullptr, 10);
+        if (v >= 32 && v <= scale_threshold && pitches.size() < 16) pitches.push_back(uint32_t(v));
+        at = end + 1;
+      }
+      if (!pitches.empty()) {
+        std::string shown;
+        for (uint32_t p : pitches) shown += (shown.empty() ? "" : ",") + std::to_string(p);
+        REXLOG_INFO("gow2_renderer: GitHub #105: targets with pitch {} are drawn at {}x despite the threshold", shown,
+                    res_scale_);
+        rts_->SetScaledPitches(std::move(pitches));
+      }
+    }
     if (res_scale_ > 1)
       REXLOG_INFO("gow2_renderer: resolution scale {}x (notes/53){}", res_scale_,
                   scale_threshold ? std::format("; targets with pitch <= {} stay 1x (notes/53b)", scale_threshold)
