@@ -1527,6 +1527,23 @@ class VulkanBackend final : public Backend {
         }
       }
     }
+    if (initial.size() >= 32) {  // Shagg's to-do 3: say whether the driver will take this cache (its header's device + UUID)
+      uint32_t hdr[4];
+      std::memcpy(hdr, initial.data(), 16);  // header length, header version, vendor, device (host byte order)
+      uint8_t uuid[VK_UUID_SIZE];
+      std::memcpy(uuid, initial.data() + 16, VK_UUID_SIZE);
+      VkPhysicalDeviceProperties p{};
+      vk_.vkGetPhysicalDeviceProperties(physical_, &p);
+      const bool same_device = hdr[2] == p.vendorID && hdr[3] == p.deviceID;
+      const bool same_uuid = std::memcmp(uuid, p.pipelineCacheUUID, VK_UUID_SIZE) == 0;
+      if (same_device && same_uuid)
+        REXLOG_INFO("gow2_renderer: Vulkan pipeline cache header matches this GPU and driver (vendor {:04X} device {:04X})",
+                    p.vendorID, p.deviceID);
+      else
+        REXLOG_WARN("gow2_renderer: Vulkan pipeline cache is from {} (file vendor {:04X} device {:04X}, this GPU {:04X} "
+                    "{:04X}) - the driver will ignore it and every pipeline is built again",
+                    same_device ? "another driver version" : "another GPU", hdr[2], hdr[3], p.vendorID, p.deviceID);
+    }
     VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
     ci.initialDataSize = initial.size();
     ci.pInitialData = initial.empty() ? nullptr : initial.data();
