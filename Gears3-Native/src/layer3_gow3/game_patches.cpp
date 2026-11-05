@@ -303,6 +303,7 @@ namespace {
 std::atomic<int> g_open_lines{0};
 void OnGow3FileOpenLogged(std::string_view path, const std::filesystem::path* host) {
   const int max = REXCVAR_GET(gow3_log_file_opens);
+  if (g_open_lines.load(std::memory_order_relaxed) >= max) return;
   const int n = g_open_lines.fetch_add(1);
   if (n >= max) return;
   REXLOG_INFO("gow3_log_file_opens: opened {} -> {}{}", path, host ? rex::path_to_utf8(*host) : std::string("(no host file)"),
@@ -311,12 +312,12 @@ void OnGow3FileOpenLogged(std::string_view path, const std::filesystem::path* ho
 #if defined(REX_FILESYSTEM_FILE_OPEN_FAILED_OBSERVER)
 void OnGow3FileOpenFailedLogged(std::string_view path) {
   const int max = REXCVAR_GET(gow3_log_file_opens);
+  if (g_open_lines.load(std::memory_order_relaxed) >= max) return;
   const int n = g_open_lines.fetch_add(1);
   if (n >= max) return;
   REXLOG_INFO("gow3_log_file_opens: NOT FOUND {}{}", path, n + 1 == max ? " - last line (gow3_log_file_opens)" : "");
 }
 #endif
-}  // namespace
 void Gow3InstallFileOpenLog() {
   if (REXCVAR_GET(gow3_log_file_opens) <= 0) return;
 #if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
@@ -332,6 +333,7 @@ void Gow3InstallFileOpenLog() {
   REXLOG_WARN("gow3_log_file_opens: this SDK has no file-open observer (SDK patch 32)");
 #endif
 }
+}  // namespace
 
 void Gow3InstallMenuCap() {
   Gow3InstallFileOpenLog();  // GitHub #193 (off by default)

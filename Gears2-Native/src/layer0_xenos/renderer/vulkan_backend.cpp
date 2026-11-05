@@ -1161,6 +1161,11 @@ class VulkanBackend final : public Backend {
     if (Valid(b.uav_texture)) Transition(textures_[b.uav_texture], VK_IMAGE_LAYOUT_GENERAL);
     if (Valid(b.uav2_texture)) Transition(textures_[b.uav2_texture], VK_IMAGE_LAYOUT_GENERAL);
     const bool mips = b.uav_mip_count > 0 && Valid(b.uav_mips_texture);  // XeGTAO single-dispatch pyramid
+    if (!mips && (sh.types[7] != VK_DESCRIPTOR_TYPE_MAX_ENUM || sh.types[8] != VK_DESCRIPTOR_TYPE_MAX_ENUM ||
+                  sh.types[9] != VK_DESCRIPTOR_TYPE_MAX_ENUM)) {
+      NotDone("Dispatch: a u2-u4 shader without uav_mips_texture");  // bindings 7-9 would stay unwritten
+      return;
+    }
     if (mips) Transition(textures_[b.uav_mips_texture], VK_IMAGE_LAYOUT_GENERAL);
     FullBarrier();
     VkDescriptorSet set = AllocateComputeSet(sh.set_layout);

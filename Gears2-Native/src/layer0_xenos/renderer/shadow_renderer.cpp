@@ -5895,11 +5895,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     double pyramid = 0.0, denoise = 0.0;
     for (uint32_t i = 0; i < 5; ++i) pyramid += ao_gpu_ms_[i];
     for (uint32_t i = 6; i < kAoTagCount; ++i) denoise += ao_gpu_ms_[i];
-    REXLOG_INFO("gow2_ao: GPU ms/frame over {} frames ({}x{}): total {:.3f} | depth pyramid {:.3f} (levels {:.3f} {:.3f} "
-                "{:.3f} {:.3f} {:.3f}) | main {:.3f} | denoise {:.3f} ({:.3f} {:.3f} {:.3f}) | XeGTAO ran {} time(s) in all",
-                ao_gpu_frames_, ao_w_, ao_h_, (pyramid + ao_gpu_ms_[5] + denoise) / n, pyramid / n, ao_gpu_ms_[0] / n,
-                ao_gpu_ms_[1] / n, ao_gpu_ms_[2] / n, ao_gpu_ms_[3] / n, ao_gpu_ms_[4] / n, ao_gpu_ms_[5] / n, denoise / n,
-                ao_gpu_ms_[6] / n, ao_gpu_ms_[7] / n, ao_gpu_ms_[8] / n, ao_runs_);
+    std::string levels;  // one dispatch (--gow2_ao_prefilter_single): no per-level times
+    if (ao_prefilter5_pipe_)
+      levels = "one dispatch";
+    else
+      levels = std::format("levels {:.3f} {:.3f} {:.3f} {:.3f} {:.3f}", ao_gpu_ms_[0] / n, ao_gpu_ms_[1] / n,
+                           ao_gpu_ms_[2] / n, ao_gpu_ms_[3] / n, ao_gpu_ms_[4] / n);
+    REXLOG_INFO("gow2_ao: GPU ms/frame over {} frames ({}x{}): total {:.3f} | depth pyramid {:.3f} ({}) | main {:.3f} | "
+                "denoise {:.3f} ({:.3f} {:.3f} {:.3f}) | XeGTAO ran {} time(s) in all",
+                ao_gpu_frames_, ao_w_, ao_h_, (pyramid + ao_gpu_ms_[5] + denoise) / n, pyramid / n, levels,
+                ao_gpu_ms_[5] / n, denoise / n, ao_gpu_ms_[6] / n, ao_gpu_ms_[7] / n, ao_gpu_ms_[8] / n, ao_runs_);
     ao_gpu_frames_ = 0;
     for (double& v : ao_gpu_ms_) v = 0.0;
   }
