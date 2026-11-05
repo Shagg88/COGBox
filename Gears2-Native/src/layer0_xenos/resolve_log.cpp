@@ -208,11 +208,12 @@ class SmallResolveLog final : public DrawObserver {
     uint32_t raw4[4];
     std::memcpy(raw4, p, 16);
     for (int i = 0; i < 4; ++i) {
-      // k8in64 / k8in128 (Endian128 4 / 5, as in Xenia's enum) move bytes across 32-bit words: word i comes from
-      // word i^1 (k8in64) or 3-i (k8in128), byte-reversed.
-      const uint32_t mode = uint32_t(pending_endian_);
-      const int from = mode == 4u ? (i ^ 1) : mode == 5u ? (3 - i) : i;
-      const bool whole = mode == 4u || mode == 5u;
+      // k8in64 / k8in128 move bytes across 32-bit words: word i comes from word i^1 (k8in64) or 3-i (k8in128),
+      // byte-reversed.
+      const bool in64 = pending_endian_ == rex::graphics::xenos::Endian128::k8in64;
+      const bool in128 = pending_endian_ == rex::graphics::xenos::Endian128::k8in128;
+      const int from = in64 ? (i ^ 1) : in128 ? (3 - i) : i;
+      const bool whole = in64 || in128;
       w[i] = whole ? std::byteswap(raw4[from]) : SwapWord(raw4[from], pending_endian_);
     }
     char v[160];

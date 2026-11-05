@@ -1960,8 +1960,6 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
                       present_lanczos_ ? ", lanczos enlarging" : "", present_sharpen_ ? "" : " - SHADER MISSING (off)");
         }
       }
-      presented_shots_ = present_ours_ && REXCVAR_GET(gow2_screenshot_presented);  // to-do 8
-      XenosScreenshotSetPresented(presented_shots_);  // the screenshot observer then waits for our readback
       if (present_shadow_ || present_ours_) {
         const gpu::ShaderHandle pg =
             cache_->GetBuiltin("present_gamma_cs", rr::builtin::kPresentGammaCs, gpu::ShaderStage::kCompute);
@@ -1981,6 +1979,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           REXLOG_INFO("gow2_present: SHADOW - our gamma pass on our front buffer, compared with the SDK's image");
         }
       }
+      // To-do 8: after the gamma block, which can still turn present_ours_ off (then the screenshot keeps its own path).
+      presented_shots_ = present_ours_ && REXCVAR_GET(gow2_screenshot_presented);
+      XenosScreenshotSetPresented(presented_shots_);  // the screenshot observer then waits for our readback
     }
     if (REXCVAR_GET(gow2_renderer_transfers)) {
       transfer_vs_ = cache_->GetBuiltin("transfer_vs", rr::builtin::kTransferVs, gpu::ShaderStage::kVertex);
