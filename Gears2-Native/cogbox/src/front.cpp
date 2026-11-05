@@ -414,6 +414,11 @@ void front_draw(App &a, ImVec2 size)
         std::sort(order.begin(), order.end(), [&](int x, int y) { return dist(x) > dist(y); });
         for (int g : order) {
             float dd = wrap_d(library_slot(a, g) - a.carPos, nLib), ad = std::min(1.0f, fabsf(dd));
+            // 0.4.6 (Shagg 4 Nov): at most three whole covers - the front one and one each side; a fourth fades out
+            // while the carousel turns and is not drawn at all once it would be past the side ones
+            const float away = fabsf(dd);
+            if (away >= 1.5f) continue;
+            const float edgeFade = away > 1.0f ? std::max(0.0f, 1.0f - (away - 1.0f) * 2.0f) : 1.0f;
             float scale = 1.0f - 0.30f * ad, h = H * scale;
             float yaw = std::max(-1.0f, std::min(1.0f, dd)) * 35.0f;
             float light = 1.0f - 0.45f * ad;
@@ -427,7 +432,7 @@ void front_draw(App &a, ImVec2 size)
             int v0 = ImGui::GetWindowDrawList()->VtxBuffer.Size;
             draw_box(a, g, c, h, yaw, light, true);
             // boxes not in front: see-through (Shagg 18:41), more so the further round they are
-            float alpha = 1.0f - 0.45f * ad;
+            float alpha = (1.0f - 0.45f * ad) * edgeFade;
             ImDrawList *bdl = ImGui::GetWindowDrawList();
             for (int vi = v0; alpha < 0.999f && vi < bdl->VtxBuffer.Size; vi++) {
                 ImU32 &c32 = bdl->VtxBuffer[vi].col;
@@ -515,33 +520,52 @@ void front_draw(App &a, ImVec2 size)
         }
     }   // the carousel (nLib > 0)
 
-    // Get box art (Y): top right
-    float artW = 0;
+    // 0.4.6 (Shagg 4 Nov): one toolbar, top right, right to left: EXIT, box art, ADD GAME, MUSIC - the launcher's own
+    // actions together (EXIT was alone at the bottom left); the same keys / pad buttons as before
+    float artW = 0;   // the whole toolbar's width (the update notice sits left of it)
     {
-        const char *lbl = "GET BOX ART";
-        bool any = false;
-        for (int i = 0; i < G_COUNT; i++) any |= a.cover[i].tex != nullptr;
-        ImVec2 bs(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, any ? "UPDATE ART" : lbl).x + S(36), T(28));
-        artW = bs.x;
-        ImGui::SetCursorScreenPos(ImVec2(size.x - bs.x - S(24), S(22)));
-        if (th_button(any ? "UPDATE ART" : lbl, bs, true, F_BOLD) || (nav && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))) {
-            art_download_start();
-            set_message(a, "Getting the box art and backgrounds from the x360db archive on GitHub...", false);
+        const float bh = T(28), gap = S(10), y = S(22);
+        float right = size.x - S(24);
+        auto place = [&](float w) { right -= w; ImGui::SetCursorScreenPos(ImVec2(right, y)); const float x = right; right -= gap; return x; };
+        // EXIT (asks first, like Esc / Start; to-do 21)
+        {
+            const std::string lbl = tr("EXIT");
+            ImVec2 es(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, lbl.c_str()).x + S(36), bh);
+            place(es.x);
+            ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);   // the D-pad keeps turning the carousel
+            const bool can = !a.run.proc && !a.modal.open && a.job.state.load() != 1;
+            if (th_button((lbl + "##frontexit").c_str(), es, can, F_BOLD) && can)
+                ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip("%s", a.run.proc ? tr("Close the game first.") : tr("Close COGBox."));
+            ImGui::PopItemFlag();
         }
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-            ImGui::SetTooltip("Downloads each game's Xbox Marketplace box art and background from the x360db archive on GitHub\n(the one Xenia Manager uses) into the covers folder. Your own covers\\gears2.png etc. still win.");
-        // Shagg 1 Nov: ADD GAME (Back / View) under it - the carousel has no boxes for games not added yet
+        // Get box art (Y)
+        {
+            const char *lbl = "GET BOX ART";
+            bool any = false;
+            for (int i = 0; i < G_COUNT; i++) any |= a.cover[i].tex != nullptr;
+            ImVec2 bs(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, tr(any ? "UPDATE ART" : lbl)).x + S(36), bh);
+            place(bs.x);
+            if (th_button(any ? "UPDATE ART" : lbl, bs, true, F_BOLD) || (nav && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))) {
+                art_download_start();
+                set_message(a, "Getting the box art and backgrounds from the x360db archive on GitHub...", false);
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip("Downloads each game's Xbox Marketplace box art and background from the x360db archive on GitHub\n(the one Xenia Manager uses) into the covers folder. Your own covers\\gears2.png etc. still win.");
+        }
+        // Shagg 1 Nov: ADD GAME (Back / View) - the carousel has no boxes for games not added yet (same import as a drop)
         if (nLib > 0) {
             const bool busy = a.job.state.load() == 1;
-            ImVec2 as(std::max(bs.x, F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, tr("ADD GAME")).x + S(36)), bs.y);
-            ImGui::SetCursorScreenPos(ImVec2(size.x - as.x - S(24), S(22) + bs.y + S(8)));
+            ImVec2 as(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, tr("ADD GAME")).x + S(36), bh);
+            place(as.x);
             if (th_button("ADD GAME", as, !busy, F_BOLD) || (nav && !busy && ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false)))
                 add_game_ask(a);
-            // Shagg 1 Nov: music on / off (music.cpp), beside it - when a game in the library has a copy to read it from
+            // Shagg 1 Nov: music on / off (music.cpp) - when a game in the library has a copy to read it from
             if (music_any_source(a)) {
                 const char *ml = music_on(a) ? "MUSIC: ON" : "MUSIC: OFF";
-                ImVec2 ms(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, tr(ml)).x + S(36), bs.y);
-                ImGui::SetCursorScreenPos(ImVec2(size.x - as.x - S(24) - S(12) - ms.x, S(22) + bs.y + S(8)));
+                ImVec2 ms(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, tr(ml)).x + S(36), bh);
+                place(ms.x);
                 if (th_button(ml, ms, true, F_BOLD) || (nav && ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false)) ||
                     (!ImGui::GetIO().WantTextInput && !a.modal.open && ImGui::IsKeyPressed(ImGuiKey_M, false)))
                     music_set_on(a, !music_on(a));
@@ -549,6 +573,7 @@ void front_draw(App &a, ImVec2 size)
                     ImGui::SetTooltip("%s", tr("Plays the chosen game's own menu music, read from your copy, in the library and on its settings page. M switches it."));
             }
         }
+        artW = size.x - S(24) - (right + gap);
     }
     // a newer COGBox on GitHub: a small notice beside the box art button; it opens this game's About tab, where Update is
     // (Shagg 21:57). COGBOX_SHOW_UPDATE=<version> shows it without a release (test switch, off for players).
@@ -661,18 +686,6 @@ void front_draw(App &a, ImVec2 size)
             dl->AddText(F_SMALL, fs, ImVec2(x0, y0 + (ih - ls.y) * 0.5f), U(col::dim), x.label.c_str());
             x0 += ls.x + gap;
         }
-    }
-    {   // to-do 21 (Shagg 3 Nov): an Exit button on the library screen, bottom left (asks first, like Esc / Start)
-        const std::string lbl = tr("EXIT");
-        ImVec2 es(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, lbl.c_str()).x + S(36), T(28));
-        ImGui::SetCursorScreenPos(ImVec2(S(24), size.y - FS(F_SMALL) - es.y - S(18)));
-        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);   // the D-pad keeps turning the carousel
-        const bool can = !a.run.proc && !a.modal.open && a.job.state.load() != 1;
-        if (th_button((lbl + "##frontexit").c_str(), es, can, F_BOLD) && can)
-            ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayNormal))
-            ImGui::SetTooltip("%s", a.run.proc ? tr("Close the game first.") : tr("Close COGBox."));
-        ImGui::PopItemFlag();
     }
     {   // job 529 (Shagg 21:17): the maker's mark, bottom right, just above the hint line
         const char *mark = "Made by Shagg";
