@@ -331,6 +331,12 @@ void play_poll(App &a)
     if (read_file(join(a.run.logDir, d.logName), log, 64u << 20) &&
         (log.find("DEVICE_REMOVED") != std::string::npos || log.find("DEVICE_HUNG") != std::string::npos || log.find("DXGI_ERROR_DEVICE") != std::string::npos))
         what += "; its log mentions the graphics card being lost (a driver reset, or an overheating / overclocked card)";
+    // 0.4.6 (GitHub #183): a crash early on, right after the runtime warned that the title update is for another
+    // version of the game (its base signature doesn't match the game's default.xex), most likely comes from that
+    // update - say so plainly. (The warning alone is harmless on some known-good copies, so only with a crash.)
+    if (code != 0 && secs <= 90 && log.find("XEX patch signature hash doesn't match") != std::string::npos)
+        what += ". Its log says the title update doesn't match this copy of the game (it was made for another version of "
+                "the game) - add the title update that belongs to your copy (same console and disc) with ADD UPDATE";
     if (!crash.empty()) what += "; it wrote a crash report";
     ask(a, "crash", g, std::string(d.name) + " closed",
         std::string(d.name) + " closed unexpectedly: " + what + ".\n\n" + (untested_version(a, g) ?
