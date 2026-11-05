@@ -172,9 +172,8 @@ std::vector<Option> make_options(Game g) {
                "Your screen's peak brightness (see its specs or Windows HDR calibration).", 365), "", "HDR");
     add(make("Vsync", "Vsync (no tearing)", Tab::Display, Kind::Bool, SH, 0,
              "Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen "
-             "follows the game below its refresh rate. The frame rate is capped a little under your screen's refresh rate (half "
-             "of it with frame generation), which keeps the extra input lag small. Off = frames are shown at once (lowest lag, "
-             "may tear).", 344), "vsync");
+             "follows the game below its refresh rate. A frame-rate limit above your screen's refresh rate is lowered to the "
+             "refresh rate (half of it with frame generation). Off = frames are shown at once (lowest lag, may tear).", 344), "vsync");
     // Frame rate limit: no PS1 tooltip; text from 59-how-to-play ("The game itself asks for 30 fps").
     add(choice("FrameCap", "Frame rate limit", Tab::Display, PG,
                { "30 (original)", "45", "60", "90", "120", "144", "165", "Unlimited" }, 0,
@@ -1303,8 +1302,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         for (const std::string &m : env.mods) j += (j.empty() ? "" : ";") + m;
         a.push_back("--ue3_mods=" + q(j));
     }
-    // PS1 940-958 (launcher patches 0155 / 0158): frame rate; with vsync a cap at or above the refresh rate becomes 3
-    // under it (half the refresh minus 2 with frame generation)
+    // PS1 940-958 (launcher patches 0155 / 0158): frame rate. 0.4.6 (Shagg 5 Nov: "FPS cap needs to be 60"): the cap the
+    // player picks is the cap. With vsync, only a cap ABOVE the refresh rate (or Unlimited) is brought down - to the refresh
+    // rate itself (half of it with frame generation), no longer to 3 under it (60 on a 60 Hz screen stays 60; 120 on a
+    // 60 Hz screen becomes 60, not 57).
     {
         // Gears 1: no frame-rate limit until gow1.exe has gow1_max_fps (can() "framecap") - then the game's own rate
         const int fps = avail("FrameCap") ? std::max(0, std::min(k_fpsCapCount - 1, s.i("FrameCap"))) : 0;
@@ -1312,13 +1313,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         const bool vsync = on("Vsync");
         if (vsync && fps >= 1) {
             const int hz = env.refresh_hz;
-            const int top = fgOn ? static_cast<int>(std::floor(hz / 2.0)) - 2 : hz - 3;
-            const int chosen = cap;
+            const int top = fgOn ? hz / 2 : hz;
+            if (hz >= 50 && (cap < 0 || cap > top)) cap = top;
             if (isG3 && cap == 60) cap = 62;   // review 0158: Gears 3's 60 is its own 62 cap
-            // GitHub #106: a cap the player set to the refresh rate itself (60 on a 60 Hz TV) is kept - vsync paces it.
-            // 3 under is for VRR screens; on a fixed-refresh TV it gave a steady 57 fps that judders.
-            const bool atRefresh = !fgOn && chosen > 0 && std::abs(chosen - hz) <= 1;
-            if (hz >= 50 && !atRefresh && (cap < 0 || cap > top)) cap = top;
             notes.push_back("launcher: vsync on; " + env.monitor_device + " at " + std::to_string(hz) + " Hz (0 = unknown)" +
                             (fgOn ? ", frame generation on" : "") + " -> frame-rate cap " + std::to_string(cap));
         }
