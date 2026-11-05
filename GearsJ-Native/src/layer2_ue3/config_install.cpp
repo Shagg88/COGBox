@@ -43,6 +43,7 @@
 // game's include folder (CMakeLists.txt), declared here so this game's own ue3/ headers are not shadowed.
 namespace ue3 {
 bool ReadPackageExportPaths(const std::filesystem::path& file, std::set<std::string>* out);
+std::string DescribePackageSummary(const std::filesystem::path& file);  // Gears 2's package_exports.cpp (to-do 2)
 }  // namespace ue3
 
 REXCVAR_DEFINE_STRING(ue3_ini_edits, "", "Gears3",
@@ -507,9 +508,18 @@ int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, st
         const bool ok = ue3::ReadPackageExportPaths(twin->second, &paths);
         theirs = twinExports.emplace(twin->second, std::make_pair(ok, std::move(paths))).first;
       }
-      if (!theirs->second.first || !ue3::ReadPackageExportPaths(p, &mine) ||
+      const bool twin_ok = theirs->second.first;
+      const bool mine_ok = twin_ok && ue3::ReadPackageExportPaths(p, &mine);
+      if (!twin_ok || !mine_ok ||
           !std::includes(theirs->second.second.begin(), theirs->second.second.end(), mine.begin(), mine.end())) {
         ++kept;
+        if (kept <= 12) {  // Shagg's to-do 2 (Judgment: "22 kept their own"): which reason, and the summary's version
+          const fs::path& bad = !twin_ok ? twin->second : p;
+          REXLOG_INFO("ue3_voice_language: {} keeps its own language: {} ({}: {})", rex::path_to_utf8(p.filename()),
+                      !twin_ok ? "the twin's table could not be read" : !mine_ok ? "its own table could not be read"
+                                                                         : "the twin lacks objects it exports",
+                      rex::path_to_utf8(bad.filename()), twin_ok && mine_ok ? std::string("tables read") : ue3::DescribePackageSummary(bad));
+        }
         continue;
       }
       (*files)[key] = twin->second;

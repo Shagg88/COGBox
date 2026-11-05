@@ -180,6 +180,23 @@ TEST_CASE("Package exports: Gears 3's summary (version 828)", "[package-exports]
   REQUIRE(paths == kPaths);
 }
 
+TEST_CASE("Package exports: a package compressed as a whole (Judgment's form)", "[package-exports]") {
+  // The whole uncompressed package in one chunk at byte 0 (block size 0x20000 where the version would be).
+  const auto plain = Uncompressed();
+  const auto block = FramedStored(plain);
+  std::vector<uint8_t> f;
+  U32(f, 0x9E2A83C1u);
+  U32(f, 0x20000);
+  U32(f, uint32_t(block.size()));
+  U32(f, uint32_t(plain.size()));
+  U32(f, uint32_t(block.size()));
+  U32(f, uint32_t(plain.size()));
+  f.insert(f.end(), block.begin(), block.end());
+  std::set<std::string> paths;
+  REQUIRE(Paths(f, &paths));
+  REQUIRE(paths == kPaths);
+}
+
 TEST_CASE("Package exports: what it refuses", "[package-exports]") {
   std::set<std::string> paths;
   auto f = Uncompressed();

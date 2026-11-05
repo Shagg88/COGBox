@@ -26,9 +26,12 @@ namespace ue3 {
 // Reads `size` bytes at `offset` of the package into `dst`; false if they are not there.
 using PackageRead = std::function<bool(uint64_t offset, size_t size, uint8_t* dst)>;
 
-// The package's export paths into *out. False (and *out undefined): not a package this reads - a version other than
-// 575, a package compressed as a whole, a compression other than none or LZX, a table that does not parse or decode.
+// The package's export paths into *out. False (and *out undefined): not a package this reads - a version outside
+// 543-834 (Gears 2 575, Gears 3 828), a package compressed as a whole that doesn't decode, a compression other than none or LZX, a table that does not parse or decode.
 bool ReadPackageExportPaths(const PackageRead& read, uint64_t file_size, std::set<std::string>* out);
 bool ReadPackageExportPaths(const std::filesystem::path& file, std::set<std::string>* out);
+// Shagg's to-do 2: "version N licensee L" (or "compressed as a whole, version N ...") of a package's summary, for the
+// voice-language log when a table can't be read.
+std::string DescribePackageSummary(const std::filesystem::path& file);
 
 }  // namespace ue3

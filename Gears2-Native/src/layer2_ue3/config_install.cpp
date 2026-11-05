@@ -509,12 +509,12 @@ int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, st
       }
       if (!theirs->second.first) {
         ++kept, ++kept_no_twin_table;
-        why(p, "the " + voice + " twin's export table could not be read");
+        why(p, "the " + voice + " twin's export table could not be read (" + ue3::DescribePackageSummary(twin->second) + ")");
         continue;
       }
       if (!ue3::ReadPackageExportPaths(p, &mine)) {
         ++kept, ++kept_no_own_table;
-        why(p, "its own export table could not be read");
+        why(p, "its own export table could not be read (" + ue3::DescribePackageSummary(p) + ")");
         continue;
       }
       if (!std::includes(theirs->second.second.begin(), theirs->second.second.end(), mine.begin(), mine.end())) {
