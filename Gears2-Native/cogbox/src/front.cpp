@@ -632,7 +632,7 @@ void front_draw(App &a, ImVec2 size)
             it.push_back({ 0, "X", tr("settings") });
             it.push_back({ 0, "Y", tr("box art") });
             if (music_any_source(a)) it.push_back({ 0, "RS", tr("music") });
-            it.push_back({ 0, "LT+RT", tr("fullscreen") });
+            it.push_back({ 0, "LT+RT", tr("fullscreen") });   // drawn with the pad's own names (L2+R2 on PlayStation)
             it.push_back({ 0, "Start", tr("quit") });
         } else {
             it.push_back({ 1, "< >", tr("choose") });
@@ -640,16 +640,32 @@ void front_draw(App &a, ImVec2 size)
             it.push_back({ 1, "F11", tr("fullscreen") });
             it.push_back({ 1, "Esc", tr("quit") });
         }
-        const float fs = FS(F_SMALL), ih = fs * 1.35f, gap = S(22), pad_x = S(6);
-        auto icon_w = [&](const Item &x) {
-            const char *n = x.kind == 0 ? pad_name(a, x.key) : x.key;
-            const bool face = x.kind == 0 && (!strcmp(x.key, "A") || !strcmp(x.key, "B") || !strcmp(x.key, "X") || !strcmp(x.key, "Y"));
-            return face ? ih : F_BOLD->CalcTextSizeA(fs, FLT_MAX, 0, n).x + pad_x * 2;
+        float fs = FS(F_SMALL);
+        const float gap = S(22), pad_x = S(6);
+        auto key_text = [&](const Item &x) -> std::string {
+            if (x.kind != 0) return x.key;
+            if (!strcmp(x.key, "LT+RT")) return std::string(pad_name(a, "LT")) + "+" + pad_name(a, "RT");
+            return pad_name(a, x.key);
         };
-        float total = 0;
-        for (const Item &x : it) total += icon_w(x) + S(6) + F_SMALL->CalcTextSizeA(fs, FLT_MAX, 0, x.label.c_str()).x + gap;
-        total -= gap;
-        float x0 = (size.x - total) * 0.5f;
+        float ih = fs * 1.35f;
+        auto icon_w = [&](const Item &x) {
+            const std::string n = key_text(x);
+            const bool face = x.kind == 0 && (!strcmp(x.key, "A") || !strcmp(x.key, "B") || !strcmp(x.key, "X") || !strcmp(x.key, "Y"));
+            return face ? ih : F_BOLD->CalcTextSizeA(fs, FLT_MAX, 0, n.c_str()).x + pad_x * 2;
+        };
+        auto measure = [&] {
+            float t = 0;
+            for (const Item &x : it) t += icon_w(x) + S(6) + F_SMALL->CalcTextSizeA(fs, FLT_MAX, 0, x.label.c_str()).x + gap;
+            return t - gap;
+        };
+        float total = measure();
+        // review 0.4.6: a narrow window / long language - a smaller legend that fits instead of running off the edges
+        if (total > size.x - S(32)) {
+            fs *= std::max(0.6f, (size.x - S(32)) / total);
+            ih = fs * 1.35f;
+            total = measure();
+        }
+        float x0 = std::max(S(16), (size.x - total) * 0.5f);
         const float y0 = size.y - ih - S(10);
         for (const Item &x : it) {
             const float w = icon_w(x);
@@ -675,7 +691,8 @@ void front_draw(App &a, ImVec2 size)
                     else dl->AddTriangle(ImVec2(c.x, c.y - q), ImVec2(c.x + q, c.y + q * 0.8f), ImVec2(c.x - q, c.y + q * 0.8f), IM_COL32(60, 200, 170, 255), S(2));
                 }
             } else {   // a key cap / shoulder, trigger, stick or menu button: its name in a rounded box
-                const char *n = x.kind == 0 ? pad_name(a, x.key) : x.key;
+                const std::string ns = key_text(x);
+                const char *n = ns.c_str();
                 dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + w, y0 + ih), IM_COL32(48, 48, 54, 255), S(4));
                 dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + w, y0 + ih), IM_COL32(110, 110, 118, 255), S(4), 0, S(1));
                 const ImVec2 ts = F_BOLD->CalcTextSizeA(fs, FLT_MAX, 0, n);
@@ -690,7 +707,7 @@ void front_draw(App &a, ImVec2 size)
     {   // job 529 (Shagg 21:17): the maker's mark, bottom right, just above the hint line
         const char *mark = "Made by Shagg";
         ImVec2 ms = F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, mark);
-        ImVec2 mp(size.x - ms.x - S(24), size.y - FS(F_SMALL) - ms.y - S(18));
+        ImVec2 mp(size.x - ms.x - S(24), size.y - FS(F_SMALL) * 1.35f - ms.y - S(20));   // review 0.4.6: above the legend's button pictures
         ImDrawList *wl = ImGui::GetWindowDrawList();
         wl->AddText(F_BOLD, FS(F_BOLD), ImVec2(mp.x + S(1), mp.y + S(1)), U(col::shadow, 0.8f), mark);
         wl->AddText(F_BOLD, FS(F_BOLD), mp, U(col::dim, 0.85f), mark);

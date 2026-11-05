@@ -68,7 +68,8 @@ New in 0.4.6
 - Frame-rate limit: the limit you pick is the limit. With Vsync it is no longer lowered to 3 under your screen's
   refresh rate (60 stays 60); only a limit above the refresh rate is brought down to it. The quality presets no
   longer change it.
-- Keyboard: holding the Walk key on Ctrl no longer stops W/A/S/D (#196, thanks to KiltedKernel, PR #197).
+- Keyboard: holding the Walk key on Ctrl no longer stops W/A/S/D, and walking is slower (#196, thanks to KiltedKernel,
+  PR #197).
 - Mouse sensitivity in steps of 0.01 (#195, thanks to KiltedKernel, PR #198).
 - Faster: textures the game draws into on the graphics card are no longer copied back and reloaded every frame
   (about 12 a frame in Gears 2).

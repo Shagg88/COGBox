@@ -657,7 +657,8 @@ void apply_preset(Settings& s, int p) {
     };
     const P& x = v[p];
     s.set("Preset", p);
-    s.set("Resolution", x.res); s.set("AAMode", x.aa);   // 0.4.6 (Shagg 4 Nov): the frame-rate limit is its own setting s.set("Aniso", x.aniso);
+    // 0.4.6 (Shagg 4 Nov): the frame-rate limit (x.fps) is its own setting - the presets leave it alone
+    s.set("Resolution", x.res); s.set("AAMode", x.aa); s.set("Aniso", x.aniso);
     s.set("Trilinear", x.tri); s.set("MipFade", x.mip); s.set("Pool", x.pool); s.set("DrawDist", x.draw);
     s.set("MotionBlur", x.blur); s.set("DoF", x.dof); s.set("Shake", x.shake); s.set("Fov", x.fov);
 }
@@ -1318,8 +1319,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (vsync && fps >= 1) {
             const int hz = env.refresh_hz;
             const int top = fgOn ? hz / 2 : hz;
-            if (hz >= 50 && (cap < 0 || cap > top)) cap = top;
-            if (isG3 && cap == 60) cap = 62;   // review 0158: Gears 3's 60 is its own 62 cap
+            // review 0.4.6: 60 on a 59 Hz mode (59.94 Hz TVs) is "at the refresh rate" too (GitHub #106) - kept
+            if (hz >= 50 && (cap < 0 || cap > top + 1)) cap = top;
+            // review 0158: Gears 3's 60 is its own 62 cap - not with frame generation, where 62 doubled is over the refresh
+            if (isG3 && cap == 60 && !fgOn) cap = 62;
             notes.push_back("launcher: vsync on; " + env.monitor_device + " at " + std::to_string(hz) + " Hz (0 = unknown)" +
                             (fgOn ? ", frame generation on" : "") + " -> frame-rate cap " + std::to_string(cap));
         }
