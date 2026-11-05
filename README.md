@@ -140,6 +140,11 @@ the game's user folder under the console's own layout:
 For example, Gears of War 3 (title ID `4D5308AB`):
 `<COGBox>\Gears3\user\0000000000000000\4D5308AB\00000002\<package file>`. Restart the game afterwards.
 
+**Gears of War 3 with many add-ons:** with a large number of DLC packages installed (GitHub #25 and #158 had 30+), the
+game can stop showing them - Raam's Shadow shows "coming soon", or the add-ons appear for a second player but not in
+single player. Remove them all, add Raam's Shadow alone and start the game once, then add the others a few at a time,
+starting the game after each, so you can see which one stops the list from loading.
+
 ### Cheats (Gears of War 3)
 
 > **Not available in this release:** the cheats and **Unlock all mutators** only work with the disc version so far
