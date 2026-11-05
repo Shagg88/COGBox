@@ -62,6 +62,7 @@ class Gow2App : public rex::ReXApp {
     XenosInstallProfilerIfRequested();
     XenosInstallDrawLogIfRequested();
     XenosInstallResolveLogIfRequested();
+    XenosInstallSmallResolveLogIfRequested(runtime());  // GitHub #185
     XenosInstallBufferDumpIfRequested(runtime());
     XenosInstallShaderDumpIfRequested();
     XenosInstallShaderWatchIfRequested();

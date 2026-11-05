@@ -114,6 +114,8 @@ void XenosInstallProfilerIfRequested();
 void XenosInstallDrawLogIfRequested();
 // --gow2_resolve_log_frames="1500,2400": log every EDRAM copy/clear of those frames (source, destination, formats).
 void XenosInstallResolveLogIfRequested();
+// GitHub #185: --gow2_resolve_log_small=N logs colour copies up to N x N pixels with the first texel they wrote.
+void XenosInstallSmallResolveLogIfRequested(rex::Runtime* runtime);
 // --gow2_buffer_dump_frame=N (+ --readback_resolve=full): save every resolve of frame N as EXR/PNG.
 void XenosInstallBufferDumpIfRequested(rex::Runtime* runtime);
 // --gow2_shader_dump_dir: write every distinct shader (microcode + the SDK disassembly) once (Stage 3 corpus).
