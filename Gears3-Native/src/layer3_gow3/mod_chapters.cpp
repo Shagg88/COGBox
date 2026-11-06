@@ -563,7 +563,6 @@ void Gow3ModFName() {
   busy = false;
 }
 
-// Every engine tick, on the game thread (game_patches.cpp, the Gow3MaxTickRate hook)
 // TU6 hides the mods' acts: its patched UIWidget_MainMenu.ConstructActList (ScriptPatch_GearGame.bin) lists at most
 // five - a row is added `if (I < 5)` (bytecode 2C 05 16: IntConstByte 5) and after the loop
 // `CurrentList.SetFloat('length', 5.0)` (1E 40 A0 00 00) cuts the list; the base disc builds it from every act in
@@ -574,7 +573,7 @@ void RaiseActCap() {
   const uint32_t fn = obj::FindObject("ConstructActList");
   if (!fn) return;   // not loaded yet
   g_actCapDone = true;
-  const int acts = g_maxAct + 1;
+  const int acts = std::min(g_maxAct + 1, 255);  // #205 review: IntConstByte holds one byte
   for (uint32_t off = 0x20; off < 0x100; off += 4) {
     const uint32_t data = obj::Read32(fn + off), num = obj::Read32(fn + off + 4), cap = obj::Read32(fn + off + 8);
     if (num < 0x200 || num > 0x4000 || cap < num || !obj::Readable(data, num)) continue;
@@ -596,6 +595,7 @@ void RaiseActCap() {
   REXLOG_INFO("mod chapters: ConstructActList has no five-act cap here (the base disc) - acts come from config as they are");
 }
 
+// Every engine tick, on the game thread (game_patches.cpp, the Gow3MaxTickRate hook)
 void Gow3ModChaptersTick() {
   if (!g_started) return;
   if (g_restore.exchange(false)) RestoreSections();

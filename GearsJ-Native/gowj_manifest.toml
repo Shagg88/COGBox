@@ -316,3 +316,14 @@ address = 0x82CBA684  # `stw r4,136(r3)`: Scaleform's scale mode (the patch: `li
 name = "GowjUltrawideUiScale"
 registers = ["r4"]
 jump_address_on_true = 0x82CBA688
+
+# Film grain off (--gowj_no_film_grain; the launcher's Graphics option). Xenia Canary's TU4 "Disable Film Grain"
+# (boma, file hash 013148141A27D4C7 - our TU4 image: its Bloom / DoF / motion-blur sites are the same GSystemSettings
+# loads in our generated code) changes the override branch's `lfs f0,180(r30)` at 0x8243CF5C. Both branches of that
+# blend (the post-process volume's override or the defaults' `lfs f0,360(r28)`) meet at the store below, which writes
+# the frame's film-grain amount (+316); this hook runs before it and makes f0 0, for both - one bool test per
+# post-process blend when off. The instruction is checked at start-up (game_patches.cpp GowjInstallFilmGrainSwitch).
+[[entrypoint.midasm_hook]]
+address = 0x8243CF68  # `stfs f0,316(r31)`: the blended film-grain amount
+name = "GowjNoFilmGrain"
+registers = ["f0"]

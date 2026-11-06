@@ -1,0 +1,134 @@
+diff --git a/include/rex/system/kernel_state.h b/include/rex/system/kernel_state.h
+index 9b9cf9e..0fd2282 100644
+--- a/include/rex/system/kernel_state.h
++++ b/include/rex/system/kernel_state.h
+@@ -320,6 +320,12 @@ class KernelState {
+   void CompleteOverlappedDeferredEx(
+       std::function<X_RESULT(uint32_t&, uint32_t&)> completion_callback, uint32_t overlapped_ptr,
+       std::function<void()> pre_callback = nullptr, std::function<void()> post_callback = nullptr);
++  // COGBox patch 64 (GitHub #193 #201): the same deferred completion (dispatch thread, FIFO with every other
++  // deferred overlapped, APC to the requester) with its own delay before the completion runs, in ms
++  void CompleteOverlappedDeferredExDelay(
++      std::function<X_RESULT(uint32_t&, uint32_t&)> completion_callback, uint32_t overlapped_ptr,
++      uint32_t delay_millis, std::function<void()> pre_callback = nullptr,
++      std::function<void()> post_callback = nullptr);
+ 
+   bool Save(stream::ByteStream* stream);
+   bool Restore(stream::ByteStream* stream);
+diff --git a/include/rex/system/xenumerator.h b/include/rex/system/xenumerator.h
+index 866943b..c7dac08 100644
+--- a/include/rex/system/xenumerator.h
++++ b/include/rex/system/xenumerator.h
+@@ -66,7 +66,13 @@ class XEnumerator : public XObject {
+   size_t item_size() const { return item_size_; }
+   size_t items_per_enumerate() const { return items_per_enumerate_; }
+ 
++  // COGBox patch 64 (GitHub #193 #201): a DLC (marketplace content) enumerator, whose overlapped XEnumerate
++  // completes without the artificial deferred delay
++  bool dlc_fast_complete() const { return dlc_fast_complete_; }
++  void set_dlc_fast_complete(bool v) { dlc_fast_complete_ = v; }
++
+  private:
++  bool dlc_fast_complete_ = false;
+   size_t items_per_enumerate_;
+   size_t item_size_;
+ };
+diff --git a/src/kernel/xam/xam_content.cpp b/src/kernel/xam/xam_content.cpp
+index e51748d..8c98ee4 100644
+--- a/src/kernel/xam/xam_content.cpp
++++ b/src/kernel/xam/xam_content.cpp
+@@ -30,6 +30,14 @@ REXCVAR_DEFINE_UINT32(license_mask, 0, "Kernel", "Set license mask for activated
+ REXCVAR_DEFINE_BOOL(cogbox_content_profile_xuid, false, "Kernel",
+                     "Patch 57 (A/B): a save request whose data xuid finds no package is served from the signed-in profile's");
+ REXCVAR_DEFINE_BOOL(cogbox_content_log, true, "Kernel", "Log content (DLC / save) enumerations and opens (GitHub #79)");
++// Patch 64 (GitHub #193 #201): Gears 3 (and 2) mount the DLC at start-up one package at a time - an overlapped
++// XEnumerate of one item, then an overlapped XamContentCreate of it - and every step waited the deferred queue's
++// artificial 100 ms before it completed (~0.23 s a package, ~2.8 s for 12). When the title's checkpoint load started
++// inside that window, the title ran it after the package in flight and never asked for the rest (SG2_0 instead of
++// SG13_0) until the main menu. DLC steps now complete without the delay, still deferred and in queue order.
++REXCVAR_DEFINE_BOOL(cogbox_dlc_fast_complete, true, "Kernel",
++                    "Patch 64: DLC (marketplace content) enumerate / open steps complete without the 100 ms deferred "
++                    "delay, so all DLC mounts before the checkpoint load (GitHub #193 #201)");
+ 
+ namespace rex {
+ namespace kernel {
+@@ -126,6 +134,11 @@ u32 XamContentCreateEnumerator_entry(u32 user_index, u32 device_id, u32 content_
+     REXLOG_INFO("cogbox_content: enumerate type {:08X} device {} user {} -> {} item(s){}{}", uint32_t(content_type),
+                 uint32_t(device_id), uint32_t(user_index), e->item_count(), names.empty() ? "" : ": ", names);
+ 
++  // patch 64: XEnumerate of a DLC enumerator completes without the deferred delay
++  if (static_cast<XContentType>(uint32_t(content_type)) == XContentType::kMarketplaceContent &&
++      REXCVAR_GET(cogbox_dlc_fast_complete))
++    e->set_dlc_fast_complete(true);
++
+   *handle_out = e->handle();
+   return X_ERROR_SUCCESS;
+ }
+@@ -300,7 +313,11 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
+     uint32_t extended_error, length;
+     return run(extended_error, length);
+   } else {
+-    REX_KERNEL_STATE()->CompleteOverlappedDeferredEx(run, overlapped_ptr.guest_address());
++    // patch 64: a DLC open completes without the 100 ms delay (saves keep it), in queue order behind anything pending
++    if (content_data.content_type == XContentType::kMarketplaceContent && REXCVAR_GET(cogbox_dlc_fast_complete))
++      REX_KERNEL_STATE()->CompleteOverlappedDeferredExDelay(run, overlapped_ptr.guest_address(), 0);
++    else
++      REX_KERNEL_STATE()->CompleteOverlappedDeferredEx(run, overlapped_ptr.guest_address());
+     return X_ERROR_IO_PENDING;
+   }
+ }
+diff --git a/src/kernel/xam/xam_enum.cpp b/src/kernel/xam/xam_enum.cpp
+index 9dcab94..669c381 100644
+--- a/src/kernel/xam/xam_enum.cpp
++++ b/src/kernel/xam/xam_enum.cpp
+@@ -63,7 +63,10 @@ uint32_t xeXamEnumerate(uint32_t handle, uint32_t flags, mapped_void buffer_ptr,
+     return result;
+   } else if (overlapped_ptr) {
+     assert_true(!items_returned);
+-    REX_KERNEL_STATE()->CompleteOverlappedDeferredEx(run, overlapped_ptr);
++    if (e->dlc_fast_complete())  // patch 64 (GitHub #193 #201): a DLC enumerator, no deferred delay
++      REX_KERNEL_STATE()->CompleteOverlappedDeferredExDelay(run, overlapped_ptr, 0);
++    else
++      REX_KERNEL_STATE()->CompleteOverlappedDeferredEx(run, overlapped_ptr);
+     return X_ERROR_IO_PENDING;
+   } else {
+     assert_always();
+diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
+index e1b69e2..3c5b6c7 100644
+--- a/src/system/kernel_state.cpp
++++ b/src/system/kernel_state.cpp
+@@ -1406,20 +1406,30 @@ void KernelState::CompleteOverlappedDeferred(std::function<X_RESULT()> completio
+ void KernelState::CompleteOverlappedDeferredEx(
+     std::function<X_RESULT(uint32_t&, uint32_t&)> completion_callback, uint32_t overlapped_ptr,
+     std::function<void()> pre_callback, std::function<void()> post_callback) {
++  CompleteOverlappedDeferredExDelay(std::move(completion_callback), overlapped_ptr,
++                                    kDeferredOverlappedDelayMillis, std::move(pre_callback),
++                                    std::move(post_callback));
++}
++
++void KernelState::CompleteOverlappedDeferredExDelay(
++    std::function<X_RESULT(uint32_t&, uint32_t&)> completion_callback, uint32_t overlapped_ptr,
++    uint32_t delay_millis, std::function<void()> pre_callback,
++    std::function<void()> post_callback) {
+   REXSYS_DEBUG("CompleteOverlappedDeferredEx: queuing for overlapped {:08X}", overlapped_ptr);
+   auto ptr = memory()->TranslateVirtual(overlapped_ptr);
+   XOverlappedSetResult(ptr, X_ERROR_IO_PENDING);
+   NoteOverlappedThread(ptr, overlapped_ptr, XThread::GetCurrentThreadHandle());  // patch 56
+   auto global_lock = global_critical_region_.Acquire();
+   dispatch_queue_.push_back(
+-      [this, completion_callback, overlapped_ptr, pre_callback, post_callback]() {
++      [this, completion_callback, overlapped_ptr, delay_millis, pre_callback, post_callback]() {
+         REXSYS_DEBUG("Deferred overlapped {:08X}: running pre_callback", overlapped_ptr);
+         if (pre_callback) {
+           pre_callback();
+         }
+-        REXSYS_DEBUG("Deferred overlapped {:08X}: sleeping {}ms", overlapped_ptr,
+-                     kDeferredOverlappedDelayMillis);
+-        rex::thread::Sleep(std::chrono::milliseconds(kDeferredOverlappedDelayMillis));
++        REXSYS_DEBUG("Deferred overlapped {:08X}: sleeping {}ms", overlapped_ptr, delay_millis);
++        if (delay_millis) {  // patch 64: 0 for a DLC mount step
++          rex::thread::Sleep(std::chrono::milliseconds(delay_millis));
++        }
+         uint32_t extended_error, length;
+         REXSYS_DEBUG("Deferred overlapped {:08X}: running completion", overlapped_ptr);
+         auto result = completion_callback(extended_error, length);

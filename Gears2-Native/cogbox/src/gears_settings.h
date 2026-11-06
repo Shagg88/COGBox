@@ -15,7 +15,7 @@ namespace gears {
 enum class Game { Gears2 = 0, Gears3 = 1, Judgment = 2, Gears1 = 3 };
 constexpr int kGameCount = 4;
 enum class Version { TitleUpdate = 0, Disc = 1 };   // PS1 125 $verNames (index 0 = the title update)
-enum class Tab { Display, Graphics, Controls, Gameplay };
+enum class Tab { Display, Graphics, Controls, Gameplay, Achievements };   // = the page's tab index (ABOUT is after)
 enum class Kind { Bool, Choice, Int, Float };
 // Where a value is kept (PS1 103-123, 418-441, 446-464, 759-774):
 //   Shared  - one value for all games (PS1 top-level $s keys outside $perKeys)
@@ -167,7 +167,9 @@ private:
 
 // 0.2.0: the keyboard keys for keyboard-and-mouse play - each controller input, what it does in Gears, its default.
 struct KeyAction { const char *cvar; const char *pad; const char *what; const char *def; };
-const std::vector<KeyAction> &key_actions();
+// GitHub #208: per game - Judgment throws grenades with LB and opens the tactical display with D-pad down (the other
+// three the other way round), so its two rows are named and given their default keys (Tab / 4) by what they do there.
+const std::vector<KeyAction> &key_actions(Game g = Game::Gears2);
 // Job 661: draws the keyboard button prompts (key caps over each game's controller-button sheet, 4x the sheet's size) for
 // these keys (cvar -> "Key[,Key2]") into <promptDir>\hires-<game>; returns that folder or "" (keycaps.cpp sets it).
 using PromptComposer = std::string (*)(const std::string &promptDir, const std::string &game,

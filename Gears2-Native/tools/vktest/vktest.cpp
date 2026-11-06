@@ -275,7 +275,7 @@ static void PipelineCacheCheck() {
     BackendOptions o;
     o.upload_ring_mb = 16;
     o.guest_memory_bytes = 16ull << 20;
-    o.pipeline_library_path = (dir / "pipelines-d3d12.bin").string();
+    o.pipeline_library_path = dir / "pipelines-d3d12.bin";
     auto b = CreateVulkanBackend();
     std::string err;
     const bool init = b->Init(o, err);

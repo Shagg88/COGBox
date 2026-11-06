@@ -5,7 +5,10 @@
 #include <xenos/dev_tools.h>
 #include <rex/cvar.h>
 
+#include <csignal>
 #include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <ctime>
 #include <filesystem>
 #include <string>
@@ -91,6 +94,43 @@ LONG WINAPI OnCrash(EXCEPTION_POINTERS* ep) {
   return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// P0-2: the CRT's fail-fast paths (an invalid parameter to a CRT function, a pure virtual call, abort() /
+// std::terminate) end the process with 0xC0000409 without an exception reaching OnCrash - no report, no dump. Each of
+// them now writes the same report from the current context first. (A real __fastfail is caught by nobody in-process;
+// the launcher registers Windows Error Reporting's LocalDumps for the game exes for that.)
+constexpr DWORD kFailFast = 0xC0000409;  // STATUS_STACK_BUFFER_OVERRUN, the code these paths end with
+void ReportHere(DWORD code, const char* why) {
+  CONTEXT ctx{};
+  RtlCaptureContext(&ctx);
+  EXCEPTION_RECORD er{};
+  er.ExceptionCode = code;
+  er.ExceptionAddress = reinterpret_cast<PVOID>(ctx.Rip);
+  er.NumberParameters = 1;
+  er.ExceptionInformation[0] = reinterpret_cast<ULONG_PTR>(why);
+  EXCEPTION_POINTERS ep{&er, &ctx};
+  OnCrash(&ep);
+  // the reason, next to the report OnCrash wrote (its first line says 0xC0000409)
+  const std::wstring note = g_dir + L"\\crash-reason.txt";
+  FILE* f = nullptr;
+  if (_wfopen_s(&f, note.c_str(), L"a") == 0 && f) {
+    std::fprintf(f, "fail-fast: %s\n", why);
+    std::fclose(f);
+  }
+}
+void OnInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned, uintptr_t) {
+  ReportHere(kFailFast, "invalid parameter to a CRT function");
+  std::abort();
+}
+void OnPureCall() {
+  ReportHere(kFailFast, "pure virtual function call");
+  std::abort();
+}
+void OnAbort(int) { ReportHere(kFailFast, "abort()"); }
+void OnTerminate() {
+  ReportHere(kFailFast, "std::terminate (an exception nobody caught, or noexcept)");
+  std::abort();
+}
+
 }  // namespace
 
 void XenosInstallCrashHandler() {
@@ -103,4 +143,8 @@ void XenosInstallCrashHandler() {
     g_dir = std::filesystem::path(dir).wstring();
   }
   SetUnhandledExceptionFilter(OnCrash);
+  _set_invalid_parameter_handler(OnInvalidParameter);  // P0-2
+  _set_purecall_handler(OnPureCall);
+  std::signal(SIGABRT, OnAbort);
+  std::set_terminate(OnTerminate);
 }

@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -210,7 +211,13 @@ struct ComputeBindings {
   // is a texture load's own target, whose next use transitions it (a transition waits for the writes); writing the same
   // mip as a UAV again first gets the barrier.
   bool defer_uav_barrier = false;
+  // XeGTAO single-dispatch depth pyramid (--gow2_ao_prefilter_single): with a pipeline from CreateComputePipelineMips,
+  // u0..u(n-1) = mips 0..n-1 of this texture (n = uav_mip_count, at most kMaxUavMips; the rest null views); uav_texture,
+  // uav_mip and uav2_texture are not used then. Other pipelines ignore these.
+  TextureHandle uav_mips_texture = 0;
+  uint32_t uav_mip_count = 0;
 };
+constexpr uint32_t kMaxUavMips = 5;
 
 // Notes/68 stage V3: the Vulkan backend on someone else's device (the SDK's Vulkan provider, which the presenter uses), so
 // our image can be written into the presenter's guest-output image on the same queue. Handles as void* (no Vulkan types
@@ -258,7 +265,7 @@ struct BackendOptions {
   // Saved pipelines (notes/64 section 'Shader warm-up'): a D3D12 pipeline library file. Pipelines already in it load in
   // ~1 ms on first use, synchronously, so their draws are never skipped as "pending"; new ones compile as before and are
   // stored. Saved every ~15 s (patch 0056) while it grows and at shutdown. Empty = off. A driver change starts a new library.
-  std::string pipeline_library_path;
+  std::filesystem::path pipeline_library_path;  // F-12 / #177: a path, never through the ANSI code page
   // Patch 0010 (stutter): the periodic save serializes the whole library (tens of MB) and writes the file - on the
   // recording thread that froze a frame for 100-400 ms. true: a background thread does it (the library is
   // thread-safe, CreatePipelineLibrary docs). The save at shutdown stays where it is.
@@ -462,6 +469,9 @@ class Backend {
   virtual uint64_t WarmJobsLeft() { return 0; }
   virtual void SavePipelinesNow() {}
   virtual PipelineHandle CreateComputePipeline(ShaderHandle cs) = 0;
+  // A compute pipeline whose shader writes u0-u4 (ComputeBindings::uav_mips_texture). 0 = not supported by this backend
+  // (the caller keeps its one-UAV path).
+  virtual PipelineHandle CreateComputePipelineMips(ShaderHandle cs) { (void)cs; return 0; }
 
   // ---- guest memory mirror (t96) ----
   // Copies host bytes (guest byte order, as in guest memory) into the GPU copy of guest physical memory.

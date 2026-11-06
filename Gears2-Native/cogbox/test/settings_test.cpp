@@ -125,22 +125,22 @@ void run_case(int n, const std::string& line) {
 
 const char* const k_builtin[] = {
     "game=0",
-    "game=0;upd=1;Version=0;Resolution=2;AAMode=3;gpus=NVIDIA GeForce RTX 4080;files=dlss,fsr;exe=fif,ups,reflex,mute,edits;rt=vs,lat;SceneMode=2;Fps=3;Vsync=1;hz=144;LowLag=1;Mute=1;SkipLogos=1;Trilinear=1",
-    "game=0;Resolution=4;AAMode=3;gpus=AMD Radeon RX 7900 XTX;exe=fif,al2;LowLag=1;Fps=2;Fullscreen=1;Exclusive=1;Monitor=2;screens=2;HDR=1;PaperWhite=250;Peak=1400;Mnk=1;Sens=1.3",
-    "game=0;Start=5;Fov=115;MotionBlur=0;DoF=0;LensFlares=0;Shake=2;DeadZone=2;Vibration=0;WindowSize=3;Players=1;FpsMode=1;Pool=0;Aniso=0;extra=--gow2_frame_times={LOG}\\ft.csv|# comment| --foo=1 |",
-    "game=0;upd=1;Version=1;LowLag=0;exe=fif,fg;rt=vs,lat;Fps=1;Vsync=1;hz=60;FrameGen=1;files=fgdll;FpsMode=3",
-    "game=0;AAMode=2;Fps=2;Vsync=1;hz=0;rt=vs;Pool=3;DrawDist=2;MipFade=1;Ultrawide=1;gpus=Microsoft Basic Display Adapter",
+    "game=0;upd=1;Version=0;Resolution=2;AAMode=3;gpus=NVIDIA GeForce RTX 4080;files=dlss,fsr;exe=fif,ups,reflex,mute,edits;rt=vs,lat;SceneMode=2;FrameCap=7;Vsync=1;hz=144;LowLag=1;Mute=1;SkipLogos=1;Trilinear=1",
+    "game=0;Resolution=4;AAMode=3;gpus=AMD Radeon RX 7900 XTX;exe=fif,al2;LowLag=1;FrameCap=4;Fullscreen=2;Monitor=2;screens=2;HDR=1;PaperWhite=250;Peak=1400;Mnk=1;Sens=1.3",
+    "game=0;Fov=115;MotionBlur=0;DoF=0;Shake=2;DeadZone=2;Vibration=0;WindowSize=3;Players=1;FpsMode=1;Pool=0;Aniso=0;extra=--gow2_frame_times={LOG}\\ft.csv|# comment| --foo=1 |",
+    "game=0;upd=1;Version=1;LowLag=0;exe=fif,fg;rt=vs,lat;FrameCap=2;Vsync=1;hz=60;FrameGen=1;files=fgdll;FpsMode=3",
+    "game=0;AAMode=2;FrameCap=4;Vsync=1;hz=0;rt=vs;Pool=3;DrawDist=2;MipFade=1;Ultrawide=1;gpus=Microsoft Basic Display Adapter",
     "game=1",
-    "game=1;upd=1;Version=0;Cheats=1;Mutators=1;Resolution=4;exe=fif;Fps=1",
-    "game=1;upd=1;Version=1;Cheats=1;Mutators=1;Resolution=4;exe=fif,aspect,mute;Mute=1;Fps=1;Vsync=1;rt=vs;hz=0",
-    "game=1;Fps=1;Vsync=1;rt=vs;hz=144;Ultrawide=1;Resolution=4;FpsMode=3;Aniso=1;Trilinear=0;MipFade=0;Shake=1;DrawDist=1;SkipLogos=1",
-    "game=1;Fps=2;AAMode=4;files=xess;exe=ups,fif;SceneMode=1;Resolution=2;Players=3;LowLag=0;rt=lat",
-    "game=1;Fps=3;Vsync=1;rt=vs;hz=240;FrameGen=1;exe=fg;files=fgdll;Start=31;Fov=80",
+    "game=1;upd=1;Version=0;Cheats=1;Mutators=1;Resolution=4;exe=fif;FrameCap=2",
+    "game=1;upd=1;Version=1;Cheats=1;Mutators=1;Resolution=4;exe=fif,aspect,mute;Mute=1;FrameCap=2;Vsync=1;rt=vs;hz=0",
+    "game=1;FrameCap=2;Vsync=1;rt=vs;hz=144;Ultrawide=1;Resolution=4;FpsMode=3;Aniso=1;Trilinear=0;MipFade=0;Shake=1;DrawDist=1;SkipLogos=1",
+    "game=1;FrameCap=4;AAMode=4;files=xess;exe=ups,fif;SceneMode=1;Resolution=2;Players=3;LowLag=0;rt=lat",
+    "game=1;FrameCap=7;Vsync=1;rt=vs;hz=240;FrameGen=1;exe=fg;files=fgdll;Fov=80",
     "game=2",
-    "game=2;upd=1;Start=3;LevelSelect=1;SkipLogos=1;Pool=1;FpsMode=3;Fps=3;Ultrawide=1",
-    "game=2;Pool=3;Fps=1;Vsync=1;rt=vs;hz=165;FrameGen=1;exe=fg,fif,mute;files=fgdll;Mute=1;LowLag=1;gpus=Intel(R) UHD Graphics/NVIDIA GeForce GTX 1080",
-    "game=2;AAMode=3;gpus=NVIDIA GeForce GTX 1080;files=fsr;Fps=2;Shake=2;Fov=125;DoF=0;Cheats=1;Mutators=1;Start=18",
-    "game=2;Resolution=4;Fullscreen=0;WindowSize=5;Exclusive=1;Mnk=1;Sens=0.1;DeadZone=5;Vibration=0;Monitor=1;screens=1;HDR=1",
+    "game=2;upd=1;SkipLogos=1;Pool=1;FpsMode=3;FrameCap=7;Ultrawide=1",
+    "game=2;Pool=3;FrameCap=2;Vsync=1;rt=vs;hz=165;FrameGen=1;exe=fg,fif,mute;files=fgdll;Mute=1;LowLag=1;gpus=Intel(R) UHD Graphics/NVIDIA GeForce GTX 1080",
+    "game=2;AAMode=3;gpus=NVIDIA GeForce GTX 1080;files=fsr;FrameCap=4;Shake=2;Fov=125;DoF=0;Cheats=1;Mutators=1",
+    "game=2;Resolution=4;Fullscreen=0;WindowSize=5;Mnk=1;Sens=0.1;DeadZone=5;Vibration=0;Monitor=1;screens=1;HDR=1",
 };
 
 std::string random_case(std::mt19937& r) {
@@ -225,6 +225,22 @@ int summary() {
         g2.set("Fov", 90); st2.remember(Game::Gears2, g2);
         if (st2.view(Game::Gears3, e).i("Fov") != 110 || st2.view(Game::Gears2, e).i("Fov") != 90) { std::cout << "FAIL per-game memory\n"; ++fails; }
         std::cout << "--- ini after a Gears 3 save ---\n" << ini;
+    }
+    // Achievements part 4: the popup settings are on their own tab, with these labels
+    {
+        const std::pair<const char*, const char*> want[] = {
+            { "AchievementStyle", "Popup style" }, { "AchievementColour", "Popup colour (Xbox style)" },
+            { "AchievementPosition", "Popup position" }, { "AchievementSound", "Popup sound" },
+            { "HideAchievementPopups", "Hide achievement popups" } };
+        for (int g = 0; g < 3; ++g)
+            for (const auto& w : want) {
+                const Option* found = nullptr;
+                for (const Option& o : options(static_cast<Game>(g))) if (o.id == w.first) found = &o;
+                if (!found || std::string(tab_name(found->tab)) != "Achievements" || found->label != w.second) {
+                    std::cout << "FAIL achievements tab " << gn[g] << " " << w.first << "\n";
+                    ++fails;
+                }
+            }
     }
     // GitHub #159: a game / voice language not on the player's copy is not passed (a choice saved before), and said so
     for (int miss = 0; miss <= 1; ++miss) {

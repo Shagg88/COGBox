@@ -4495,6 +4495,22 @@ name = "Gow1CoalescedSkip"
 registers = []
 return_on_true = true
 
+# GitHub #179: depth of field off (--gow1_no_gaussian_blur; game_patches.cpp has the why). Canary's TU5 "Upscaling
+# Fix - Disable Gaussian Blur" (boma) changes the displacement of the two blur-radius loads before the gaussian filter's
+# only two calls; here the radius is set to 0 after each load. (Motion blur needs no hook here: its render is replaced
+# at start-up through the dispatcher.) Both instructions checked in our generated code and again at start-up.
+[[entrypoint.midasm_hook]]
+address = 0x82539568
+name = "Gow1NoGaussianBlurA"
+registers = ["f1"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x8255AF08
+name = "Gow1NoGaussianBlurB"
+registers = ["f1"]
+after_instruction = true
+
 # Skip the intro logos (--gow1_skip_logos). The start-up film player (sub around 0x8222E268) plays a table of four
 # films at 0x82F9CE6C - [0] the rating screen (REPLACEME.bik -> ESRB_<lang>), [1] EpicLogo, [2] MGSLogo, [3] Startup -
 # stepping its index at r31+0x44 (`addi r11,r11,1` at 0x8222E280, and 0x8222E2A8 when it passes a film switched off).

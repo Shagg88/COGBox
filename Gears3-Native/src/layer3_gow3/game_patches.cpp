@@ -8,6 +8,7 @@
 // Not needed in Gears 3: Gears 2's "Black Shading Fix" (Gears 3 sets its tiling flag 0x83428B98 to 0 itself, at
 // 0x82960B94; TU6: 0x83439358 at 0x82971B6C).
 #include <rex/cvar.h>
+#include <rex/filesystem.h>   // rex::path_to_utf8 (#193 log)
 #include <rex/filesystem/vfs.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
@@ -19,6 +20,7 @@
 
 #include "gow3_addresses.h"
 #include <ue3/objects.h>
+#include <ue3/console.h>  // Ue3ConsoleQueue (GitHub #208)
 #include "mouse_look.h"
 
 #include <algorithm>
@@ -176,6 +178,17 @@ void Gow3UltrawideFov(PPCRegister& f0, PPCRegister& f31) {  // after `lfs f0,0x6
                 factor, fov * game * 57.29578, fov * factor * 57.29578);
   f0.f64 = factor;
 }
+// GitHub #207 (gow3_manifest_tu6.toml): a voice callback whose object is already gone (no vtable) is not called
+bool Gow3VoiceCallbackGone(PPCRegister& r3) {
+  const uint8_t* m = rex::Runtime::instance()->virtual_membase();
+  const uint32_t obj = r3.u32;
+  const uint8_t* p = m + obj;
+  const uint32_t vtable = obj ? (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3] : 0;
+  if (obj && vtable) return false;
+  static std::atomic<int> told{0};
+  if (told.fetch_add(1) < 3) REXLOG_WARN("gow3: voice callback object {:08X} has no vtable - its call skipped (GitHub #207)", obj);
+  return true;
+}
 bool Gow3UltrawideNoConstrain() { return Wide(); }  // jump_address_on_true: the beq at 0x8261BE60 is taken
 void Gow3UltrawideSceneHeight(PPCRegister& r11) {  // after `li r11,720` at 0x82960C78
   if (!Wide()) return;
@@ -263,6 +276,9 @@ void TickTimeline() {  // the game thread is the only caller
 // GearStart*.xxx opened -> front end; any other level package (*_P.xxx) -> a level, the player's limit again.
 REXCVAR_DEFINE_INT32(gow3_menu_fps, 60, "Gears3",
                      "GitHub #101: the engine's frame-rate limit on the title screen and its menus (0 = the player's)");
+REXCVAR_DEFINE_STRING(ue3_exec_each_level, "", "Gears3",
+                      "GitHub #208: console commands (';'-separated) run again each time a level opens - e.g. the "
+                      "two-player side-by-side split, which the game resets when a level starts");
 namespace {
 std::atomic<bool> g_in_front_end{false};
 bool Gow3NameHas(std::string_view s, std::string_view needle) {
@@ -289,10 +305,67 @@ void OnGow3FileOpened(std::string_view path, const std::filesystem::path*) {
   } else if (Gow3IsLevel(path) && g_in_front_end.exchange(false)) {
     REXLOG_INFO("gow3_menu_fps: level {} - the player's limit again", path);
   }
+  // GitHub #208 / #136: commands run again at every level (the split-screen layout: the game sets its own when a
+  // level starts, so --ue3_exec's one run at the front end was overwritten). Queued; run once a player exists.
+  if (Gow3IsLevel(path) || front) {
+    const std::string each = REXCVAR_GET(ue3_exec_each_level);
+    if (!each.empty()) {
+      size_t at = 0;
+      while (at <= each.size()) {
+        const size_t end = std::min(each.find(';', at), each.size());
+        if (end > at) Ue3ConsoleQueue(each.substr(at, end - at));
+        at = end + 1;
+      }
+    }
+  }
 }
 }  // namespace
 void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));  // shader_prebuild.cpp
+
+// GitHub #193 (DLC not found after 0.4.5): every file the game opens, and (SDK patch 52) every open that fails, with
+// the host file it came from - so a run shows whether the DLC packages / their config are looked up after the first
+// map, and with what result. Content enumeration itself (XamContentCreateEnumerator) is in the SDK and is not seen here.
+REXCVAR_DEFINE_INT32(gow3_log_file_opens, 0, "Gears3",
+                     "Diagnostic (GitHub #193): log every file open (and failed open) with its host file, up to N lines. "
+                     "0 = off");
+namespace {
+std::atomic<int> g_open_lines{0};
+void OnGow3FileOpenLogged(std::string_view path, const std::filesystem::path* host) {
+  const int max = REXCVAR_GET(gow3_log_file_opens);
+  if (g_open_lines.load(std::memory_order_relaxed) >= max) return;
+  const int n = g_open_lines.fetch_add(1);
+  if (n >= max) return;
+  REXLOG_INFO("gow3_log_file_opens: opened {} -> {}{}", path, host ? rex::path_to_utf8(*host) : std::string("(no host file)"),
+              n + 1 == max ? " - last line (gow3_log_file_opens)" : "");
+}
+#if defined(REX_FILESYSTEM_FILE_OPEN_FAILED_OBSERVER)
+void OnGow3FileOpenFailedLogged(std::string_view path) {
+  const int max = REXCVAR_GET(gow3_log_file_opens);
+  if (g_open_lines.load(std::memory_order_relaxed) >= max) return;
+  const int n = g_open_lines.fetch_add(1);
+  if (n >= max) return;
+  REXLOG_INFO("gow3_log_file_opens: NOT FOUND {}{}", path, n + 1 == max ? " - last line (gow3_log_file_opens)" : "");
+}
+#endif
+void Gow3InstallFileOpenLog() {
+  if (REXCVAR_GET(gow3_log_file_opens) <= 0) return;
+#if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
+  Ue3ShaderPrebuildChainFileOpened(&OnGow3FileOpenLogged);
+#if defined(REX_FILESYSTEM_FILE_OPEN_FAILED_OBSERVER)
+  rex::filesystem::SetFileOpenFailedObserver(&OnGow3FileOpenFailedLogged);
+  REXLOG_INFO("gow3_log_file_opens: on - opens and failed opens, up to {} lines", REXCVAR_GET(gow3_log_file_opens));
+#else
+  REXLOG_INFO("gow3_log_file_opens: on - opens only (this SDK has no failed-open observer, patch 52), up to {} lines",
+              REXCVAR_GET(gow3_log_file_opens));
+#endif
+#else
+  REXLOG_WARN("gow3_log_file_opens: this SDK has no file-open observer (SDK patch 32)");
+#endif
+}
+}  // namespace
+
 void Gow3InstallMenuCap() {
+  Gow3InstallFileOpenLog();  // GitHub #193 (off by default)
   if (REXCVAR_GET(gow3_menu_fps) <= 0) return;
 #if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
   Ue3ShaderPrebuildChainFileOpened(&OnGow3FileOpened);
@@ -317,7 +390,9 @@ void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content pac
 // keybind_left_trigger = RMB: aim), so the left button chose the right path, against the on-screen prompts. While the
 // scene is open and takes input the two trigger binds are swapped, and put back as they were when it closes (the
 // player's own binds, whatever they are). A pad is not affected. From KiltedKernel's Gears 3 port (hid.cpp).
-REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, true, "Gears3",
+// 0.4.6 (Shagg 11-06): off by default - the fresh 0.4.6 package still froze at the main menu with it on (job 1294);
+// it comes back on once its object scan no longer stalls the game thread.
+REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, false, "Gears3",
                     "Path choice: the mouse button on a path's side picks that path (the trigger binds swap while it is open)");
 void Gow3PathChoiceTick() {
   if (!REXCVAR_GET(gow3_path_choice_mouse)) return;
@@ -328,7 +403,17 @@ void Gow3PathChoiceTick() {
   static uint32_t scene = 0;
   static int flags = -1;
   static uint32_t open_mask = 0, input_mask = 0;
+  // 0.4.6 freeze (Shagg 11-06: Gears 3 stopped at the menu): FindClass caches hits only, so while
+  // UIScene_PathChoice is not loaded (the menus) every call scanned all ~168,000 objects through checked reads -
+  // four times a second, which stalled the game thread to a standstill (so did the full FindInstancesOf per call).
+  // A miss is now retried every 5 s, and the instances are found by a scan spread over calls (below).
+  using Clock = std::chrono::steady_clock;
+  static Clock::time_point next_class{};
+  static std::vector<uint32_t> instances;
+  const Clock::time_point now = Clock::now();
   if (!scene) {
+    if (now < next_class) return;
+    next_class = now + std::chrono::seconds(5);
     const uint32_t movie = obj::FindClass("GFxMoviePlayer");
     scene = obj::FindClass("UIScene_PathChoice");
     if (!movie || !scene) { scene = 0; return; }
@@ -338,8 +423,22 @@ void Gow3PathChoiceTick() {
     if (flags < 0 || !open_mask) { REXLOG_WARN("path choice: GFxMoviePlayer flags not found - mouse buttons left as bound"); return; }
   }
   if (flags < 0) return;
+  // review: no full scan at all - 16384 table slots per call (a pass over ~168k slots in ~2.5 s), plus the newest 2048
+  // slots every call, where an opening scene's new instance usually lands (so the swap is not seconds late)
+  {
+    static uint32_t cursor = 0;
+    static std::vector<uint32_t> building;
+    uint32_t total = 0;
+    for (uint32_t m : obj::FindInstancesOfRange(scene, cursor, 16384, &total)) building.push_back(m);
+    cursor += 16384;
+    if (cursor >= total) { instances.swap(building); building.clear(); cursor = 0; }
+    if (total > 2048)
+      for (uint32_t m : obj::FindInstancesOfRange(scene, total - 2048, 2048, nullptr))
+        if (std::find(instances.begin(), instances.end(), m) == instances.end()) instances.push_back(m);
+  }
   bool open = false;
-  for (uint32_t m : obj::FindInstancesOf(scene)) {
+  for (uint32_t m : instances) {
+    if (!obj::IsA(m, scene)) continue;  // review L1: a freed / reused slot since it was listed
     const uint32_t f = obj::Read32(m + uint32_t(flags));
     if ((f & open_mask) && (!input_mask || (f & input_mask))) open = true;
   }
@@ -423,9 +522,15 @@ constexpr const char* kGow3TrilinearEdits =
 constexpr const char* kGow3FastMipFadeEdits =
     "Xbox360-GearEngine.ini|Engine.Engine|MipFadeInSpeed0=0.01;Xbox360-GearEngine.ini|Engine.Engine|MipFadeOutSpeed0=0.01;"
     "Xbox360-GearEngine.ini|Engine.Engine|MipFadeInSpeed1=0.01;Xbox360-GearEngine.ini|Engine.Engine|MipFadeOutSpeed1=0.01;";
+REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
+                    "TEST ONLY (scripted test runs): no full-screen movies - the engine's own [FullScreenMovie] "
+                    "bForceNoMovies, so the logos, the loading movie and every pre-rendered (.bik) cutscene are passed as "
+                    "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
+                    "play. Not for players: loading screens go black.");
 void Gow3AddBuiltInIniEdits() {
   Gow3InstallMenuCap();  // GitHub #101 (once, at start-up, before the game opens a file)
   std::string add;
+  if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xbox360-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;";
   if (REXCVAR_GET(gow3_trilinear)) add += kGow3TrilinearEdits;
   if (REXCVAR_GET(gow3_fast_mip_fade)) add += kGow3FastMipFadeEdits;
   if (add.empty()) return;

@@ -190,15 +190,10 @@ static void answered(App &a)
     else if (m.tag == "turec") {   // 0.2.0: Gears 2 / 3 without Title Update 6
         if (m.checked && g >= 0) { a.ini.seti("Notices", std::string("TuRecommendNever_") + game_def(g).key, 1); a.ini.save(); }
     }
-    else if (m.tag == "addgame" && (m.answer == 0 || m.answer == 1)) {   // Shagg 1 Nov: ADD GAME (front.cpp add_game_ask)
-        const int forGame = m.listSel <= 0 ? -1 : game_at_slot(m.listSel - 1);
-        std::string p = m.answer == 0 ? pick_file(L"Choose your copy: a disc image (.iso), a Games on Demand file, a title update, or default.xex in a folder",
-                                                  L"Xbox 360 games and updates\0*.iso;*.xex;*.*\0All files\0*.*\0")
-                                      : pick_folder(L"Choose the folder with your game's default.xex (or a Games on Demand / title update folder)");
-        if (!p.empty()) install_start(a, p, forGame);
-    }
     else if (m.tag == "replace" && m.answer == 0) install_confirmed(a);
     else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
+    else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
+    else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4
     else if (m.tag == "dlcremove" && m.answer == 0) dlc_remove_confirmed(a);   // 0.2.0
     else if (m.tag == "backup" && m.answer == 0) {
         backup_start(a, g, game_user_dir(g), join(desktop_dir(), std::string("CogBox-saves-") + d.dir + "-" + now_stamp() + ".zip"));   // #120
@@ -248,20 +243,17 @@ void startup_notices(App &a)
     // still sees once that the updates are now required
     if (!a.ini.geti("Notices", "TitleUpdatesRequiredNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION) {
         ask(a, "tunotice", -1, "Title updates required",
-            "Title updates are now required to play. Disc-only versions are no longer supported.\n\n"
-            "    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4\n\n"
-            "Add each one from your own console (ADD UPDATE, or the game's About tab): it's in the console's "
-            "Content\\0000000000000000\\<title ID>\\000B0000 folder. COGBox doesn't include game or update files.", { "Continue" });
+            // 0.4.6 (Shagg 4 Nov): short - the steps are in the README
+            "For the smoothest experience, these games require the listed Title Updates. See the README for details.\n\n"
+            "    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4", { "Continue" });
         a.modal.check = "Don't show this again";
         return;
     }
     if (!a.ini.geti("Notices", "ExperimentalNever", 0) && a.ini.get("Notices", "ExperimentalSeen") != COGBOX_VERSION) {
         ask(a, "expnotice", -1, "Experimental settings",
-            "Settings marked experimental (FSR / DLSS / XeSS, XeGTAO, frame generation and others) "
-            "are there for testing and debugging. They are not meant for regular play yet: they can be slow, look wrong "
-            "or crash.\n\n"
-            "Before you send a report, please turn every experimental setting off and try again - unless the report is "
-            "about one of those settings.", { "Continue" });
+            // 0.4.6 (Shagg 4 Nov): two short sentences
+            "Experimental settings are for testing, logging and debugging - not regular gameplay. They may reduce "
+            "performance, cause visual problems or make the game unstable.", { "Continue" });
         a.modal.check = "Don't show this again";
     }
 }
@@ -282,7 +274,7 @@ static void draw_modal(App &a, ImVec2 size)
         ImVec2 p0 = ImGui::GetWindowPos(), p1(p0.x + ImGui::GetWindowSize().x, p0.y + ImGui::GetWindowSize().y);
         th_plate(ImGui::GetWindowDrawList(), p0, p1, S(14), false);
         th_heading(m.title.c_str(), p1.x - S(28));
-        ImGui::Dummy(ImVec2(0, S(4)));
+        ImGui::Dummy(ImVec2(0, S(6)));
         ImGui::PushTextWrapPos(w - S(28));
         ImGui::TextUnformatted(m.text.c_str());
         ImGui::PopTextWrapPos();
@@ -299,12 +291,14 @@ static void draw_modal(App &a, ImVec2 size)
         if (!m.check.empty()) { ImGui::Dummy(ImVec2(0, S(6))); ImGui::Checkbox(tr(m.check).c_str(), &m.checked); }   // 0.2.0
         ImGui::Dummy(ImVec2(0, S(10)));
         float bw = 0;
-        for (auto &b : m.buttons) bw += ImGui::CalcTextSize(b.c_str()).x + S(44) + S(12);
+        // 0.4.6 (Shagg 5 Nov): one button size - at least S(120) wide, so a dialog's buttons line up
+        auto btn_w = [](const std::string &b) { return std::max(S(120), ImGui::CalcTextSize(b.c_str()).x + S(44)); };
+        for (auto &b : m.buttons) bw += btn_w(b) + S(12);
         ImGui::SetCursorPosX(std::max(S(28), w - S(28) - bw + S(12)));
         for (size_t i = 0; i < m.buttons.size(); i++) {
             if (i) ImGui::SameLine(0, S(12));
             const std::string &b = m.buttons[i];
-            ImVec2 bs(ImGui::CalcTextSize(b.c_str()).x + S(44), S(38));
+            ImVec2 bs(btn_w(b), S(38));
             bool hit = i == 0 ? th_button_red(b.c_str(), bs, true, F_BOLD) : th_button(b.c_str(), bs, true, F_BOLD);
             if (i == 0 && ImGui::IsWindowAppearing() && m.list.empty()) ImGui::SetKeyboardFocusHere(-1);
             if (hit) m.answer = (int)i;
@@ -444,7 +438,9 @@ static void draw_ui(App &a, ImVec2 size)
     else page_draw(a, size);
 
     // the message line
-    if (!a.message.empty() && now - a.messageAt < 12) {
+    // L-1: the toast is on the foreground draw list, which is above every window - a dialog would sit under it. It waits
+    // while a dialog is open (its 12 s keep counting).
+    if (!a.message.empty() && now - a.messageAt < 12 && !a.modal.open) {
         float al = (float)std::min(1.0, (12 - (now - a.messageAt)) / 1.5);
         ImDrawList *fg = ImGui::GetForegroundDrawList();
         ImVec2 ts = F_BODY->CalcTextSizeA(FS(F_BODY), size.x - S(120), size.x - S(120), a.message.c_str());
@@ -557,6 +553,7 @@ static int x360test(int argc, wchar_t **argv)
     return ok ? 0 : 1;
 }
 
+static bool g_popupLastFrame = false;   // 0.4.6 review: a popup was open at the end of the last frame
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
     {
@@ -642,7 +639,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         for (int g = 0; g < G_COUNT; g++) { a.cur[g] = a.store.view((gs::Game)g, a.env[g]); env_refresh(a, g); }
         bool anyReady = false;
         for (int g = 0; g < G_COUNT; g++) anyReady |= a.st[g].ready == R_READY;
-        if (!had && !anyReady) set_message(a, "Welcome! Add your copy of a game to start - a disc image, a Games on Demand copy or an extracted folder.", false);
+        // 0.4.6 (Shagg 4 Nov): no "Welcome!" toast over the first-start dialogs - the empty library screen says it
+        (void)had; (void)anyReady;
     }
     a.front = std::max(0, std::min(G_COUNT - 1, a.ini.geti("Front", "Box", 0)));
     // the first game the player has, if the remembered one isn't ready
@@ -653,7 +651,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (const char *t = getenv("COGBOX_PAGE")) {
         a.page = std::max(0, std::min(G_COUNT - 1, atoi(t)));
         const char *c = strchr(t, ':');
-        a.tab = c ? std::max(0, std::min(5, atoi(c + 1))) : 0;
+        a.tab = c ? std::max(0, std::min(6, atoi(c + 1))) : 0;   // 0-4 gs::Tab, 5 MODS, 6 ABOUT
         a.screen = a.zoomTo = SCR_PAGE;
     }
     covers_load(a);
@@ -715,18 +713,20 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             if (dir_exists(p) && !drop_is_game_or_update(p) && !(dlc = dlc_packages_in(p)).empty()) {
                 a.dropped.insert(a.dropped.begin(), dlc.begin(), dlc.end());
                 set_message(a, std::to_string(dlc.size()) + (dlc.size() == 1 ? " downloadable content package found - adding it." : " downloadable content packages found - adding them one by one."), false);
-            } else
-                install_start(a, p, -1);
+            } else   // L-8: dropped on a game's settings page, it is for that game (a regional release COGBox doesn't know)
+                install_start(a, p, a.screen == SCR_PAGE ? a.page : -1);
         }
         if (a.run.proc && (SDL_GetWindowFlags(win) & SDL_WINDOW_MINIMIZED)) { SDL_Delay(100); continue; }   // a game is playing
         if (SDL_GetWindowFlags(win) & SDL_WINDOW_MINIMIZED) { SDL_Delay(50); continue; }
         // the controller works the launcher only while it is the window in front
         // On the front screen the D-pad / arrows turn the carousel and LB / RB choose Play or Settings (front.cpp keeps
         // that choice itself), so Dear ImGui's own navigation is off there unless a question box is open.
-        bool frontOwn = (a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open) ||
+        bool frontOwn = (a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
+                         !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) ||   // 0.4.6 review: the player-name box takes the pad
                         (a.screen == SCR_PAGE && a.barSel >= 0 && !a.modal.open);   // also a page's bottom bar (page.cpp)
         if (!SDL_GetKeyboardFocus() || a.run.proc || frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
         else io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+        { extern int g_padlogFrontOwn; g_padlogFrontOwn = frontOwn ? 1 : 0; }   // COGBOX_PADLOG (front.cpp)
         if (frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         else io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         {   // job 523: everything grows with the window (1x at the starting size, at most 2x)
@@ -751,8 +751,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             triggersWere = triggers;
         }
         const bool quitAskable = !a.run.proc && SDL_GetKeyboardFocus() && a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
-                                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.job.state.load() != 1;
+                                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.job.state.load() != 1 &&
+                                 !g_popupLastFrame;   // 0.4.6 review: Dear ImGui closes a popup on Esc before this, so the same Esc must not quit
         draw_ui(a, io.DisplaySize);
+        g_popupLastFrame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
         // job 526: Start (Options) or Esc on the library screen asks to close COGBox (asked after this frame's drawing, so
         // the same Esc doesn't also answer it)
         if (quitAskable && !a.modal.open && (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))

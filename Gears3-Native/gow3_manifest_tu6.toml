@@ -308,3 +308,14 @@ registers = ["r11", "r26"]
 address = 0x82323C5C
 name = "Gow3Tu6PackageHashOk"
 registers = ["r9"]
+
+# GitHub #207 (0.4.5 crash in the Act 1 jail cutscene, guest read of 0x0000000C): sub_82B55900 (TU6) takes a finished
+# buffer off a voice (the atomic swap at this+720), then calls the voice's callback object (this+144) through its
+# vtable slot 3 (`lwz r11,0(r3)` / `lwz r11,12(r11)` / bctrl). In the crash that object's vtable word was 0 - an
+# object already torn down - so the slot read hit address 12. Skipped only then (straight to the event after the
+# call); every other path is unchanged. game_patches.cpp Gow3VoiceCallbackGone.
+[[entrypoint.midasm_hook]]
+address = 0x82B55AC4  # `lwz r11,0(r3)`: the callback object's vtable
+name = "Gow3VoiceCallbackGone"
+registers = ["r3"]
+jump_address_on_true = 0x82B55AD4

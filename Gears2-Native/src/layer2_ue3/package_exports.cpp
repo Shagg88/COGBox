@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <memory>
 #include <string_view>
 #include <vector>
 
@@ -70,9 +71,69 @@ bool FramedLzx(const uint8_t* in, size_t n, uint8_t* out, size_t out_size) {
   return !raw.empty() && prebuild::PrebuildLzxDecode(raw.data(), raw.size(), out, out_size, 17);
 }
 
+bool ReadPackageExportPathsPlain(const PackageRead& read, uint64_t file_size, std::set<std::string>* out);
+
+// One compressed chunk at `offset` of the file ({tag, block size, compressed total, uncompressed total, per block
+// {compressed, uncompressed}, the blocks}) decoded and appended to *plain; *next = the byte after it. False on any
+// inconsistency (and for the legacy LZO form, block size == tag, which this reader doesn't decode).
+bool DecodeChunkAt(const PackageRead& read, uint64_t file_size, uint64_t offset, std::vector<uint8_t>* plain, uint64_t* next) {
+  uint8_t hdr[16];
+  if (offset + 16 > file_size || !read(offset, 16, hdr) || Be32(hdr) != kTag) return false;
+  const uint32_t block_size = Be32(hdr + 4), ctot = Be32(hdr + 8), utot = Be32(hdr + 12);
+  if (block_size == 0 || block_size > (1u << 20) || utot == 0 || utot > kMaxTables || ctot == 0) return false;
+  const uint64_t blocks = (uint64_t(utot) + block_size - 1) / block_size;
+  const uint64_t table = 16 + blocks * 8;
+  if (offset + table + ctot > file_size) return false;
+  std::vector<uint8_t> chunk(size_t(table + ctot));
+  if (!read(offset, chunk.size(), chunk.data())) return false;
+  const size_t base = plain->size();
+  plain->resize(base + utot);
+  size_t src = size_t(table), dst = 0;
+  for (uint64_t b = 0; b < blocks; ++b) {
+    const uint32_t bc = Be32(&chunk[size_t(16 + b * 8)]), bu = Be32(&chunk[size_t(16 + b * 8 + 4)]);
+    if (bu > block_size || dst + bu > utot || bc > chunk.size() - src) return false;
+    if (!FramedLzx(&chunk[src], bc, plain->data() + base + dst, bu)) return false;
+    src += bc;
+    dst += bu;
+  }
+  if (dst != utot) return false;
+  *next = offset + table + ctot;
+  return true;
+}
+
 }  // namespace
 
 bool ReadPackageExportPaths(const PackageRead& read, uint64_t file_size, std::set<std::string>* out) {
+  out->clear();
+  {  // Shagg's to-do 2 (Judgment voices): a package compressed as a whole - the file is chunks back to back from byte 0
+     // (block size 0x20000 where the version would be). Its summary and tables are read from the chunks, decoded on
+     // demand, as from an uncompressed package.
+    uint8_t first[8];
+    if (file_size >= 16 && read(0, 8, first) && Be32(first) == kTag && Be32(first + 4) == 0x20000u) {
+      auto plain = std::make_shared<std::vector<uint8_t>>();
+      auto next = std::make_shared<uint64_t>(0);
+      auto failed = std::make_shared<bool>(false);
+      const PackageRead inner = [&read, file_size, plain, next, failed](uint64_t offset, size_t n, uint8_t* dst) {
+        if (offset + n > kMaxTables) return false;
+        while (plain->size() < offset + n && !*failed && *next < file_size)
+          if (!DecodeChunkAt(read, file_size, *next, plain.get(), next.get())) *failed = true;
+        if (plain->size() < offset + n) return false;
+        std::copy_n(plain->data() + offset, n, dst);
+        return true;
+      };
+      // The summary is read from the first 64 KB (less in a small package): decode that much now, so a package that
+      // ends sooner is given its real size.
+      while (plain->size() < 0x10000 && !*failed && *next < file_size)
+        if (!DecodeChunkAt(read, file_size, *next, plain.get(), next.get())) *failed = true;
+      if (*failed || plain->empty()) return false;
+      return ReadPackageExportPathsPlain(inner, *next >= file_size ? plain->size() : kMaxTables, out);
+    }
+  }
+  return ReadPackageExportPathsPlain(read, file_size, out);
+}
+
+namespace {
+bool ReadPackageExportPathsPlain(const PackageRead& read, uint64_t file_size, std::set<std::string>* out) {
   out->clear();
   // The summary: its fixed part and chunk table fit in the first 64 KB of every package seen; more is read if not.
   std::vector<uint8_t> head(size_t(std::min<uint64_t>(file_size, 0x10000)));
@@ -177,6 +238,33 @@ bool ReadPackageExportPaths(const PackageRead& read, uint64_t file_size, std::se
     out->insert(std::move(path));
   }
   return true;
+}
+}  // namespace
+
+std::string DescribePackageSummary(const std::filesystem::path& file) {
+  std::ifstream in(file, std::ios::binary);
+  if (!in) return "can't open";
+  in.seekg(0, std::ios::end);
+  const std::streamoff size = in.tellg();
+  if (size < 16) return "too short";
+  const PackageRead read = [&](uint64_t offset, size_t n, uint8_t* dst) {
+    if (offset > uint64_t(size) || n > uint64_t(size) - offset) return false;
+    in.clear();
+    in.seekg(std::streamoff(offset));
+    return bool(in.read(reinterpret_cast<char*>(dst), std::streamsize(n)));
+  };
+  uint8_t h[8];
+  if (!read(0, 8, h)) return "unreadable";
+  if (Be32(h) != kTag) return "not a package (tag " + std::to_string(Be32(h)) + ")";
+  if (Be32(h + 4) == 0x20000u || Be32(h + 4) == kTag) {
+    std::vector<uint8_t> plain;
+    uint64_t next = 0;
+    if (Be32(h + 4) == kTag || !DecodeChunkAt(read, uint64_t(size), 0, &plain, &next) || plain.size() < 8)
+      return "compressed as a whole, first chunk not decoded";
+    return "compressed as a whole, version " + std::to_string(Be32(&plain[4]) & 0xFFFF) + " licensee " +
+           std::to_string(Be32(&plain[4]) >> 16);
+  }
+  return "version " + std::to_string(Be32(h + 4) & 0xFFFF) + " licensee " + std::to_string(Be32(h + 4) >> 16);
 }
 
 bool ReadPackageExportPaths(const std::filesystem::path& file, std::set<std::string>* out) {

@@ -101,6 +101,7 @@ struct ReportedXex { GameId game; const char *sha1; };
 static const ReportedXex k_reportedXex[] = {
     { G_GEARS1, "c25a48e7cd98fc61aa4369b614dce782c4cb2152" },   // #127, 13,086,720 bytes (COGBox 0.3.7)
     { G_GEARS1, "5ed6f2a3746bfe02a994a226a10cdacca142030f" },   // #88, 3,252,224 bytes (COGBox 0.3.0)
+    { G_JUDGMENT, "04f61832c48746df328e93bbeae40e20f72ce721" },   // #189 / #190, 23,150,592 bytes (COGBox 0.4.5)
 };
 bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code)
 {

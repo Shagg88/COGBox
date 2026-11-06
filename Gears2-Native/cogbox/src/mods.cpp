@@ -178,7 +178,19 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
         if (!mz_zip_reader_file_stat(&z, i, &st)) { mz_zip_reader_end(&z); err = "The zip is damaged."; return false; }
         std::string nm = st.m_filename;
         for (char &c : nm) if (c == '\\') c = '/';
-        if (nm.empty() || nm[0] == '/' || nm.find(':') != std::string::npos || ("/" + nm + "/").find("/../") != std::string::npos) {
+        // P0-6: no absolute, drive-letter (C:...), UNC (//server) or rooted path and no ".." anywhere - also as Windows
+        // reads a component: it drops trailing dots and spaces, so ".. " and "..." are ".." / "" to it
+        bool unsafe = nm.empty() || nm[0] == '/' || nm.find(':') != std::string::npos;
+        for (size_t at = 0; !unsafe && at < nm.size();) {
+            size_t end = nm.find('/', at);
+            if (end == std::string::npos) end = nm.size();
+            const std::string raw = nm.substr(at, end - at);
+            std::string part = raw;
+            while (!part.empty() && (part.back() == '.' || part.back() == ' ')) part.pop_back();
+            if (!raw.empty() && raw != "." && part.empty()) unsafe = true;   // "..", "...", ".. "
+            at = end + 1;
+        }
+        if (unsafe || ("/" + nm + "/").find("/../") != std::string::npos) {
             mz_zip_reader_end(&z); err = "The zip has a file with an unsafe path (" + nm + ") - not added."; return false;
         }
         total += st.m_uncomp_size;

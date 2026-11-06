@@ -46,6 +46,41 @@ REXCVAR_DEFINE_DOUBLE(gow2_texture_phase_log_ms, 0.0, "Gears2",
                       "phases - page watch arming, page hashing, host texture creation, GPU-path copy + untile, CPU-path "
                       "untile, CPU-path upload. 0 = off");
 
+// GitHub #202 / #185 (Judgment at 2x: one texture shows other-surface noise): a block-compressed (BC/DXT) texture
+// loaded on the GPU from the guest-memory mirror keeps the mirror's bytes for pages our own resolve or memexport wrote
+// last (T2), instead of the CPU's. Real DXT data is never a resolve's output, so such a load means the mirror holds a
+// render target where the game now keeps a texture - a CPU / DMA / file write the page watch did not see.
+// --gow2_renderer_bc_gpu_page_log=N logs the first N such loads (base, format, size, pages); off by default.
+// --gow2_renderer_bc_cpu_over_gpu=true takes the CPU bytes for those pages of BC textures (pending memexport readbacks
+// land first); off by default - the 0.4.5 behaviour.
+REXCVAR_DEFINE_INT32(gow2_renderer_bc_gpu_page_log, 0, "Gears2",
+                     "Diagnostic (#202 / #185): log BC texture loads that keep pages our GPU wrote (resolve / memexport) "
+                     "in the mirror, up to N lines (max 500). 0 = off");
+REXCVAR_DEFINE_BOOL(gow2_renderer_bc_cpu_over_gpu, false, "Gears2",
+                    "Experimental (#202): BC textures take the guest CPU bytes even for pages our GPU wrote last "
+                    "(a render target's data is never valid DXT). The pages stay marked GPU-written, so other readers "
+                    "(render-target and 32-bit textures) still take the mirror. false (default) = the mirror's bytes, "
+                    "as 0.4.5");
+
+// GitHub #131 / #59 (Judgment under Proton): the texture cache trusts the page watch - write-protected pages whose
+// first CPU write or kernel file read raises a callback. If that mechanism misses writes (a suspicion for Wine: kernel
+// reads into protected pages, or protection changes it handles otherwise), textures keep old contents. This fallback
+// hashes each texture's guest bytes again when it is used and at least N frames have passed since the last check, and
+// reloads it when the bytes changed although the watch saw nothing. Textures whose pages our GPU wrote are skipped
+// (their newest bytes are in the mirror, not guest memory). 0 = off (the default; the watch alone, as before).
+REXCVAR_DEFINE_INT32(gow2_renderer_texture_verify_frames, 0, "Gears2",
+                     "Fallback for write tracking that misses changes (Proton tests, GitHub #131 / #59): re-hash a texture's "
+                     "guest bytes when it is used at least N frames after its last check, and reload it if they changed "
+                     "unseen. 0 = off (default). Costs CPU time; try 30");
+
+// GitHub #131 diagnostic (Judgment corruption on Vulkan / Proton, AMD): each distinct binding - guest base, guest
+// format, dimension, size, tiling, fetch swizzle and signs, and the host format, view components, signed view, load
+// path and host bytes it was given - logged once, up to N lines, so the same asset can be compared between D3D12 on
+// Windows and Vulkan under Proton. 0 = off (the default); capped at 4000 lines. Logging only: nothing is changed.
+REXCVAR_DEFINE_INT32(gow2_renderer_texture_view_log, 0, "Gears2",
+                     "Diagnostic (GitHub #131): log each distinct texture binding once (guest base / format / size / "
+                     "swizzle -> host format / view components / load path), up to N lines (max 4000). 0 = off");
+
 // Job 620 (GitHub #41 - keyboard button prompts): replace a guest texture by the XXH3 of its base-level guest bytes.
 REXCVAR_DEFINE_STRING(gow2_texture_replace_dir, "", "Gears2",
                       "Folder of replacement textures (job 620): <hash16>_<level>.bin = that level's host-format data "
@@ -685,6 +720,28 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
       for (uint32_t i = 0; i < 4; ++i) v.components[i] = comp[i];
       v.signed_view = any_signed;
       ++stats_.bound;
+      if (const int32_t view_log = REXCVAR_GET(gow2_renderer_texture_view_log); view_log > 0) {  // GitHub #131
+        static std::mutex m;
+        static std::unordered_set<uint64_t> seen;
+        static uint32_t lines = 0;
+        const uint32_t cap = uint32_t(std::min(view_log, 4000));
+        const uint64_t sig = (uint64_t(tf[1] & 0xFFFFF03Fu) << 32) ^ (uint64_t(tf[2]) << 7) ^ (uint64_t(swz) << 1) ^
+                             (uint64_t(kind) << 60) ^ (uint64_t(Bits(tf[0], 2, 8)) << 50) ^ uint64_t(tf[0] >> 31);
+        std::lock_guard<std::mutex> lock(m);
+        if (lines < cap && seen.insert(sig).second) {
+          ++lines;
+          const uint32_t w = Bits(tf[2], 0, 13) + 1, h = Bits(tf[2], 13, 13) + 1;
+          REXLOG_INFO("gow2_texture_view: frame {} kind {} base {:08X} (+{:X}) mips {:08X} | guest fmt {} endian {} {}x{} "
+                      "dim {} tiled {} swizzle {:03X} signs {:02X} | host fmt {} view {}{}{}{}{} | {} {} bytes, "
+                      "loaded frame {}{}",
+                      frame, kind, e.base_start, e.base_length, e.mip_start, Bits(tf[1], 0, 6), Bits(tf[1], 6, 2), w, h,
+                      Bits(tf[5], 9, 2), Bits(tf[0], 31, 1), swz, Bits(tf[0], 2, 8),
+                      uint32_t(e.format), uint32_t(comp[0]), uint32_t(comp[1]), uint32_t(comp[2]), uint32_t(comp[3]),
+                      any_signed ? " signed" : "", e.gpu_storage ? "GPU untile" : "CPU", e.host_bytes,
+                      e.loaded_frame == ~0ull ? -1ll : (long long)e.loaded_frame,
+                      lines == cap ? " (gow2_renderer_texture_view_log: limit reached)" : "");
+        }
+      }
     }
     // Remember the result; a re-upload inside Lookup bumps nothing in the watch, so the epoch read before is valid.
     sc.valid = true;
@@ -769,6 +826,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
       const uint64_t epoch_before = watch_.Epoch();
       e.loaded_frame = frame;
       Load(e, tf, host_kind);
+      e.verify_hash = 0;  // verify fallback: a new baseline
       e.checked_frame = frame;
       e.callbacks_at_check = epoch_before;
       if (probe_base) e.probe_load_hash = GuestHash(e);
@@ -776,6 +834,38 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
       return done(e, "reload: overlay generation changed");
     }
     e.overlay_gen = ov_gen;
+  }
+  if (const int32_t vf = REXCVAR_GET(gow2_renderer_texture_verify_frames); vf > 0 && frame >= e.verify_frame + uint64_t(vf)) {
+    e.verify_frame = frame;  // GitHub #131 / #59 fallback (see the cvar)
+    bool gpu_pages = false;
+    for (uint32_t p = e.base_start >> GuestWatch::kPageShift;
+         e.base_length && p <= (e.base_start + e.base_length - 1) >> GuestWatch::kPageShift && !gpu_pages; ++p)
+      gpu_pages = !watch_.NeverResolved(p);
+    // Only changes the watch did NOT see: when its pages' versions moved, the normal check below handles them.
+    const bool watch_saw = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length) != e.version;
+    if (watch_saw) e.verify_hash = 0;
+    if (!gpu_pages && !watch_saw) {
+      const uint64_t h = GuestHash(e) ^ (e.mip_length ? XXH3_64bits(guest_ + e.mip_start, e.mip_length) * 31u : 0u);
+      const bool changed = e.verify_hash != 0 && h != e.verify_hash;
+      e.verify_hash = h;
+      if (changed) {
+        ++stats_.verify_reloads;
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1) < 20)
+          REXLOG_INFO("gow2_texture_verify: base {:08X} (+{:X}) format {} changed without a page-watch callback - reloaded",
+                      e.base_start, e.base_length, tf[1] & 0x3Fu);
+        const uint64_t epoch_before = watch_.Epoch();
+        const uint64_t rearmed = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length);
+        watch_.Watch(e.base_start, e.base_length);
+        if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
+        e.loaded_frame = frame;
+        Load(e, tf, host_kind);
+        e.version = rearmed;
+        e.checked_frame = frame;
+        e.callbacks_at_check = epoch_before;
+        return done(e, "reload: bytes changed unseen by the page watch (verify fallback)");
+      }
+    }
   }
   // Re-check only when something was written since the last check: the watch epoch advances on every Bump, the
   // callbacks' and our own resolves' alike (upl-n107: the callback counter alone missed resolves within a frame, so a
@@ -826,6 +916,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   }
   e.loaded_frame = frame;
   Load(e, tf, host_kind);  // re-upload into the same host texture
+  e.verify_hash = 0;  // --gow2_renderer_texture_verify_frames: the next check takes the new bytes as its baseline
   if (probe_base) e.probe_load_hash = GuestHash(e);
   const char* why = stats_.gpu_pages_changed != gpu_pages0 ? "reload: our GPU wrote its pages"
                     : stats_.volatile_reloads != volatile0 ? "reload: volatile (pages written, not hashed)"
@@ -1515,6 +1606,20 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     // Copy the guest bytes to the GPU's guest-memory mirror - only the pages written since the last copy - then
     // untile each level there.
     const uint32_t starts[2] = {e.base_start, e.mip_start}, lengths[2] = {e.base_length, e.mip_length};
+    const bool is_bc = fb.block_width > 1;  // #202: block-compressed
+    const bool bc_cpu = is_bc && REXCVAR_GET(gow2_renderer_bc_cpu_over_gpu);
+    uint32_t gpu_pages_seen = 0;
+    if (bc_cpu && before_cpu_load_) {  // pending memexport readbacks land first - only if a page is GPU-written
+      bool any = false;
+      for (uint32_t r = 0; r < 2 && !any; ++r)
+        if (lengths[r])
+          for (uint32_t p = starts[r] >> GuestWatch::kPageShift;
+               p <= (starts[r] + lengths[r] - 1) >> GuestWatch::kPageShift && !any; ++p)
+            any = watch_.GpuCurrent(p);
+      if (any)
+        for (uint32_t r = 0; r < 2; ++r)
+          if (lengths[r]) before_cpu_load_(starts[r], lengths[r]);
+    }
     for (uint32_t r = 0; r < 2; ++r) {
       if (!lengths[r]) continue;
       constexpr uint32_t kShift = GuestWatch::kPageShift;
@@ -1539,7 +1644,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         const uint32_t v = watch_.PageVersion(p);
         if (v != pv[p - first]) {
           pv[p - first] = v;
-          if (watch_.GpuCurrent(p)) {  // T2: our resolve wrote this page into the mirror; the CPU bytes are older
+          const bool gpu_page = watch_.GpuCurrent(p);
+          if (gpu_page) ++gpu_pages_seen;
+          if (gpu_page && !bc_cpu) {  // T2: our resolve wrote this page into the mirror; the CPU bytes are older
             flush(p);
             ++stats_.gpu_pages_kept;
             continue;
@@ -1550,6 +1657,19 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         }
       }
       flush(last + 1);
+    }
+    if (is_bc && gpu_pages_seen) {  // #202 diagnostic
+      const int32_t max = std::min(REXCVAR_GET(gow2_renderer_bc_gpu_page_log), 500);
+      static std::atomic<int32_t> logged{0};
+      if (max > 0 && logged.load(std::memory_order_relaxed) < max) {
+        const int32_t n = logged.fetch_add(1);
+        if (n < max)
+          REXLOG_INFO("gow2_bc_gpu_pages: BC texture base {:08X} (+{:X}) mips {:08X} (+{:X}) format {} {}x{}: {} page(s) "
+                      "last written by our GPU (resolve / memexport) - {}{}",
+                      e.base_start, e.base_length, e.mip_start, e.mip_length, format, w, h, gpu_pages_seen,
+                      bc_cpu ? "re-copied from guest memory (bc_cpu_over_gpu)" : "kept from the mirror",
+                      n + 1 == max ? " - last line (gow2_renderer_bc_gpu_page_log)" : "");
+      }
     }
     // The untile work for this texture: now, or (batched loads) at the end of this Bind, after its other uploads.
     const gpu::TextureHandle tex = e.texture;

@@ -4,6 +4,8 @@
 #include "app.h"
 #include "report.h"
 #include "theme.h"
+#include "i18n.h"
+#include "x360fs.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -27,6 +29,140 @@ static const char *exit_meaning(DWORD code)
     case 0xE0C0B009: return "its renderer couldn't start (the game said why) - try the other Graphics API (Vulkan / DirectX 12) on the Graphics tab, and update Windows and the graphics driver";   // 0.2.0 (#9)
     }
     return nullptr;
+}
+
+// GitHub #194: 0xC0000135 (STATUS_DLL_NOT_FOUND) doesn't say which DLL. The exe's import table does: each DLL it
+// names is looked for where Windows looks (the exe's folder, COGBox's shared folder that goes first on the game's PATH,
+// System32, Windows, PATH), and the imports of the DLLs found outside Windows (ours, the runtime's) are checked too.
+// The file is mapped, not read, so only the header and import pages are touched. Delay-loaded DLLs don't stop a start
+// and are left out; api-ms-win-* / ext-ms-* names are API sets Windows resolves itself.
+static std::vector<std::string> pe_imports(const std::string &path)
+{
+    std::vector<std::string> out;
+    HANDLE f = CreateFileW(widen(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return out;
+    LARGE_INTEGER sz = {};
+    HANDLE m = GetFileSizeEx(f, &sz) && sz.QuadPart >= 4096 ? CreateFileMappingW(f, nullptr, PAGE_READONLY, 0, 0, nullptr) : nullptr;
+    const uint8_t *b = m ? (const uint8_t *)MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0) : nullptr;
+    const uint64_t n = (uint64_t)sz.QuadPart;
+    if (b) {
+        {   // every read below is checked against the file's size: a damaged file gives no names, not a crash
+            const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)b;
+            const uint64_t pe = dos->e_magic == IMAGE_DOS_SIGNATURE ? (uint32_t)dos->e_lfanew : n;
+            if (pe + sizeof(IMAGE_NT_HEADERS64) <= n && *(const DWORD *)(b + pe) == IMAGE_NT_SIGNATURE) {
+                const IMAGE_FILE_HEADER *fh = (const IMAGE_FILE_HEADER *)(b + pe + 4);
+                const uint8_t *opt = b + pe + 4 + sizeof(IMAGE_FILE_HEADER);
+                const WORD magic = *(const WORD *)opt;
+                const IMAGE_DATA_DIRECTORY *dd = nullptr;
+                DWORD ndd = 0;
+                if (magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+                    const IMAGE_OPTIONAL_HEADER64 *o = (const IMAGE_OPTIONAL_HEADER64 *)opt; dd = o->DataDirectory; ndd = o->NumberOfRvaAndSizes;
+                } else if (magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
+                    const IMAGE_OPTIONAL_HEADER32 *o = (const IMAGE_OPTIONAL_HEADER32 *)opt; dd = o->DataDirectory; ndd = o->NumberOfRvaAndSizes;
+                }
+                const IMAGE_SECTION_HEADER *sec = (const IMAGE_SECTION_HEADER *)(opt + fh->SizeOfOptionalHeader);
+                const uint64_t secEnd = (uint64_t)((const uint8_t *)(sec + fh->NumberOfSections) - b);
+                auto off = [&](DWORD rva) -> uint64_t {   // file offset of an RVA, n when it's in no section
+                    for (WORD i = 0; i < fh->NumberOfSections; i++) {
+                        const DWORD va = sec[i].VirtualAddress, len = std::max(sec[i].Misc.VirtualSize, sec[i].SizeOfRawData);
+                        if (rva >= va && rva - va < len) {
+                            const uint64_t o = (uint64_t)sec[i].PointerToRawData + (rva - va);
+                            return o < n ? o : n;
+                        }
+                    }
+                    return n;
+                };
+                if (dd && ndd > IMAGE_DIRECTORY_ENTRY_IMPORT && secEnd <= n && dd[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress) {
+                    uint64_t at = off(dd[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+                    for (int k = 0; k < 512 && at + sizeof(IMAGE_IMPORT_DESCRIPTOR) <= n; k++, at += sizeof(IMAGE_IMPORT_DESCRIPTOR)) {
+                        const IMAGE_IMPORT_DESCRIPTOR *d = (const IMAGE_IMPORT_DESCRIPTOR *)(b + at);
+                        if (!d->Name) break;
+                        const uint64_t s = off(d->Name);
+                        std::string name;
+                        for (uint64_t i = s; i < n && i < s + 260 && b[i]; i++) name += (char)b[i];
+                        if (!name.empty()) out.push_back(name);
+                    }
+                }
+            }
+        }
+        UnmapViewOfFile(b);
+    }
+    if (m) CloseHandle(m);
+    CloseHandle(f);
+    return out;
+}
+
+static std::string lower_ascii(std::string s) { for (char &c : s) if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a'); return s; }
+
+// The folders Windows looks in for the game's DLLs, in its order; [0] is the exe's own folder.
+static std::vector<std::string> dll_dirs(const std::string &exe)
+{
+    std::vector<std::string> v = { exe.substr(0, exe.find_last_of("\\/")) };
+    const std::string shared = join(exe_dir(), "shared");
+    if (dir_exists(shared)) v.push_back(shared);
+    wchar_t w[MAX_PATH];
+    UINT k = GetSystemDirectoryW(w, MAX_PATH);
+    if (k && k < MAX_PATH) v.push_back(narrow(w));
+    k = GetWindowsDirectoryW(w, MAX_PATH);
+    if (k && k < MAX_PATH) v.push_back(narrow(w));
+    DWORD len = GetEnvironmentVariableW(L"PATH", nullptr, 0);
+    if (len > 1 && len < (1u << 16)) {
+        std::wstring p(len, L'\0');
+        p.resize(GetEnvironmentVariableW(L"PATH", &p[0], len));
+        size_t at = 0;
+        while (at <= p.size()) {
+            size_t e = p.find(L';', at);
+            if (e == std::wstring::npos) e = p.size();
+            std::wstring d = p.substr(at, e - at);
+            d.erase(std::remove(d.begin(), d.end(), L'"'), d.end());
+            if (!d.empty()) v.push_back(narrow(d));
+            at = e + 1;
+        }
+    }
+    return v;
+}
+
+// The DLLs the game needs at start that are in none of those folders (lower case, each once). Empty when all are there
+// or the exe couldn't be read.
+static std::vector<std::string> missing_dlls(const std::string &exe)
+{
+    const std::vector<std::string> dirs = dll_dirs(exe);
+    const size_t own = dir_exists(join(exe_dir(), "shared")) ? 2 : 1;   // the exe's folder and shared: our files
+    std::vector<std::string> missing, seen, todo = { exe };
+    for (size_t t = 0; t < todo.size() && t < 24; t++) {   // the exe, then the DLLs of ours it pulls in (a few)
+        for (const std::string &raw : pe_imports(todo[t])) {
+            const std::string name = lower_ascii(raw);
+            if (name.rfind("api-ms-", 0) == 0 || name.rfind("ext-ms-", 0) == 0) continue;
+            if (std::find(seen.begin(), seen.end(), name) != seen.end()) continue;
+            seen.push_back(name);
+            size_t i = 0;
+            while (i < dirs.size() && !file_exists(join(dirs[i], raw))) i++;
+            if (i == dirs.size()) missing.push_back(name);
+            else if (i < own) todo.push_back(join(dirs[i], raw));
+        }
+    }
+    return missing;
+}
+
+// What usually brings a missing DLL back (English: appended after the translated message, like the DLL names).
+static std::string dll_fix(const std::string &name)
+{
+    if (name.rfind("vcruntime140", 0) == 0 || name.rfind("msvcp140", 0) == 0 || name.rfind("concrt140", 0) == 0 ||
+        name.rfind("vcomp140", 0) == 0 || name.rfind("ucrtbase", 0) == 0)
+        return "install the Microsoft Visual C++ 2015-2022 Redistributable (x64) from Microsoft (aka.ms/vs/17/release/vc_redist.x64.exe)";
+    if (name == "d3d12core.dll" || name == "d3d12sdklayers.dll" || name == "dxcompiler.dll" || name == "dxil.dll")
+        return "it ships in the COGBox zip - unzip the release again keeping every file (and check the antivirus didn't remove it)";
+    if (name == "d3d12.dll" || name == "dxgi.dll" || name == "vulkan-1.dll" || name.rfind("d3dcompiler_", 0) == 0 || name.rfind("xinput", 0) == 0)
+        return "part of Windows / the graphics driver - update Windows and the graphics driver";
+    return "unzip the COGBox release again keeping every file, and check the antivirus didn't remove it";
+}
+
+static std::string missing_dlls_text(const std::vector<std::string> &m)
+{
+    std::string s;
+    for (size_t i = 0; i < m.size() && i < 8; i++) s += (i ? "; " : "") + m[i] + " (" + dll_fix(m[i]) + ")";
+    return s;
 }
 
 static std::vector<std::string> crash_files(const std::string &dir)
@@ -70,13 +206,15 @@ static void write_menu_file(App &a, int g, gs::Version ver, const std::string &l
         const char *kind = o.kind == gs::Kind::Bool ? "bool" : o.kind == gs::Kind::Choice ? "choice" : o.kind == gs::Kind::Int ? "int" : "float";
         char nums[160];
         snprintf(nums, sizeof nums, "value=%.6g\r\nmin=%.6g\r\nmax=%.6g\r\nstep=%.6g\r\ndecimals=%d\r\n", v, o.min, o.max, o.step, o.decimals);
-        t += "[option]\r\nid=" + o.id + "\r\ntab=" + gs::tab_name(o.tab) + "\r\nlabel=" + one_line(o.label) + "\r\nkind=" + kind + "\r\n" + nums;
+        // the texts in the launcher's language (the game shows them as given); the tab stays English - the game matches
+        // "Achievements" by it and translates its button itself (--cogbox_ui_lang)
+        t += "[option]\r\nid=" + o.id + "\r\ntab=" + gs::tab_name(o.tab) + "\r\nlabel=" + one_line(tr(o.label)) + "\r\nkind=" + kind + "\r\n" + nums;
         if (!choices.empty()) {
             t += "choices=";
-            for (size_t i = 0; i < choices.size(); i++) t += (i ? "|" : "") + one_line(choices[i]);
+            for (size_t i = 0; i < choices.size(); i++) t += (i ? "|" : "") + one_line(o.id == "Monitor" ? choices[i] : tr(choices[i]));
             t += "\r\n";
         }
-        t += std::string("enabled=") + (av.ok ? "1" : "0") + "\r\nwhy=" + one_line(av.why) + "\r\ntip=" + one_line(gs::tooltip_for(o, G, av, a.env[g])) + "\r\n";
+        t += std::string("enabled=") + (av.ok ? "1" : "0") + "\r\nwhy=" + one_line(tr(av.why)) + "\r\ntip=" + one_line(tr(gs::tooltip_for(o, G, av, a.env[g]))) + "\r\n";
     }
     write_file(join(logDir, "menu.txt"), t);
 }
@@ -125,9 +263,42 @@ void play_start(App &a, int g, bool prepare)
         ask(a, "info", g, "CPU too old for this build", why, { "OK" });
         return;
     }
+    // Title-update preflight (#183 / #184, 0xC0000409 class): a title update made for another disc release than these
+    // game files - its execution info's base version (the version it patches) or title isn't the default.xex's - makes
+    // the game stop itself at start. Asked before the launch instead of letting it crash.
+    if (gs::exe_for_update(G, ver, a.env[g]) && !st.updateDir.empty() && !a.tuMismatchOk[g]) {
+        x360fs::XexInfo xi, pi;
+        if (x360fs::read_xex_info(widen(join(st.dataDir, "default.xex")), xi) &&
+            x360fs::read_xex_info(widen(join(st.updateDir, "default.xexp")), pi) && pi.base_version &&
+            (pi.title_id != xi.title_id || pi.base_version != xi.version)) {
+            ask(a, "tumismatch", g, tr("The title update doesn't match your game files"),
+                std::string(tr("This title update is for another release of the game, and the game would most likely stop at start.")) +
+                    " " + tr("Add the title update that matches your copy.") +
+                    "\n\n" + tr("Game files") + ": " + x360fs::xbox_version_string(xi.version) + "   " + tr("Title update for") +
+                    ": " + x360fs::xbox_version_string(pi.base_version),
+                { tr("Play anyway"), tr("Cancel") });   // Shagg: no disc-version button
+            return;
+        }
+    }
     // this play's own folder: the log, the arguments, any crash report
     std::string logDir = join(game_logs_dir(g), now_stamp());
     make_dirs(logDir);
+    // P0-2: a real fail-fast (__fastfail, 0xC0000409) ends the game before any handler of its own runs. Windows Error
+    // Reporting's LocalDumps writes a minidump for it - asked for this exe, into this play's folder. HKCU (no admin);
+    // Windows documents the HKLM key, recent versions read the per-user one too - if not, nothing changes.
+    {
+        const std::wstring key = L"Software\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\" +
+                                 widen(exe.substr(exe.find_last_of("\\/") + 1));
+        HKEY k = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, key.c_str(), 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k, nullptr) == ERROR_SUCCESS) {
+            const std::wstring dir = widen(logDir);
+            const DWORD count = 2, type = 1;   // two dumps at most, mini dumps
+            RegSetValueExW(k, L"DumpFolder", 0, REG_EXPAND_SZ, reinterpret_cast<const BYTE *>(dir.c_str()), DWORD((dir.size() + 1) * sizeof(wchar_t)));
+            RegSetValueExW(k, L"DumpCount", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&count), sizeof(count));
+            RegSetValueExW(k, L"DumpType", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&type), sizeof(type));
+            RegCloseKey(k);
+        }
+    }
     make_dirs(game_user_dir(g));
     make_dirs(game_shader_dir(g));
     if (g == G_GEARS2) {   // GitHub #58: shaders Gears 2 built before 0.3.0 sit next to the port; move them once
@@ -161,6 +332,16 @@ void play_start(App &a, int g, bool prepare)
         args.push_back("--cogbox_menu=\"" + join(logDir, "menu.txt") + "\"");
         if (a.padPs && a.env[g].cap.exe_has("Circle: back to the game")) args.push_back("--cogbox_menu_ps=true");   // job 523: PlayStation names in the in-game menu
     }
+    // Achievements (part 1): the game caches its achievement list in <COGBox>\achievements. The capability text is the
+    // setting's description: a short name like "cogbox_dir" is built in code, not stored as text in the exe.
+    // Part 4: the popups' text stands for both (every exe with the popups has the folder setting, and the launcher looks
+    // for that text anyway), so the 82 MB exe is searched once for achievements instead of twice (~0.3 s each).
+    if (a.env[g].cap.exe_has && a.env[g].cap.exe_has("COGBox achievement popups"))
+        args.push_back("--cogbox_dir=\"" + exe_dir() + "\"");
+    // The in-game text (menu, Achievements page, popups, shader notes) in the launcher's language, from lang\<code>.txt
+    // beside CogBox.exe - only an exe that has the option (an older one would refuse it)
+    if (a.env[g].cap.exe_has && i18n_current() != "en" && a.env[g].cap.exe_has("COGBox in-game language"))
+        args.push_back("--cogbox_ui_lang=" + i18n_current());
     std::string argText;
     for (auto &s : args) argText += s + "\r\n";
     argText += "launcher: COGBox " COGBOX_VERSION ", game " + std::string(d.name) + ", exe " + exe + "\r\n";
@@ -168,6 +349,10 @@ void play_start(App &a, int g, bool prepare)
     for (size_t i = 0; i < a.gpus.size(); i++) argText += (i ? " / " : "") + a.gpus[i];
     argText += "\r\n";
     for (auto &n : notes) argText += n + "\r\n";
+    {   // GitHub #194: a DLL the game can't start without, said before it fails with 0xC0000135
+        const std::vector<std::string> miss = missing_dlls(exe);
+        if (!miss.empty()) argText += "launcher: DLL(s) the game imports that aren't in its folder, shared, System32 or PATH: " + missing_dlls_text(miss) + "\r\n";
+    }
     write_file(join(logDir, "args.txt"), argText);
 
     // The upscaler and shader-compiler DLLs every game uses are kept once, in <COGBox>\shared (Shagg 20:27, option 1):
@@ -212,6 +397,7 @@ void play_start(App &a, int g, bool prepare)
     a.run.game = g;
     a.run.started = unix_now();
     a.run.logDir = logDir;
+    a.run.exe = exe;
     a.run.prepare = prepare;
     if (prepare) return;   // job 641: the launcher stays up and shows the progress
     a.ini.seti("LastPlayed", d.key, a.run.started);
@@ -266,6 +452,7 @@ void play_poll(App &a)
     a.raisePid = GetProcessId(a.run.proc);   // review 0.4.5: the closing game's windows don't count as "another program"
     CloseHandle(a.run.proc);
     a.run.proc = nullptr;
+    achievements_tab_reload();   // achievements part 4: its new unlocks
     int g = a.run.game;
     const GameDef &d = game_def(g);
     int64_t secs = std::max<int64_t>(0, unix_now() - a.run.started);
@@ -285,7 +472,7 @@ void play_poll(App &a)
             set_message(a, "Preparing shaders stopped before the end - what was built so far is kept.", false);
         else
             set_message(a, "Preparing shaders stopped (" + (known ? "exit code " + hex32(code) : std::string("unknown exit")) +
-                           ") - what was built so far is kept. A problem report from the Help tab helps.", true);
+                           ") - what was built so far is kept. A problem report from the About tab helps.", true);
         refresh_games(a, false);
         return;
     }
@@ -327,10 +514,21 @@ void play_poll(App &a)
     if (const char *m = known ? exit_meaning(code) : nullptr) what = m;
     else if (known && code != 0) what = "it ended with exit code " + hex32(code);
     else what = "it crashed";
+    if (known && code == 0xC0000135) {   // GitHub #194: which DLL (the names and fixes stay in English)
+        const std::vector<std::string> miss = missing_dlls(a.run.exe);
+        what += miss.empty() ? std::string(". Missing DLL: none found by COGBox's check of the game's imports")
+                             : ". Missing DLL: " + missing_dlls_text(miss);
+    }
     std::string log;
     if (read_file(join(a.run.logDir, d.logName), log, 64u << 20) &&
         (log.find("DEVICE_REMOVED") != std::string::npos || log.find("DEVICE_HUNG") != std::string::npos || log.find("DXGI_ERROR_DEVICE") != std::string::npos))
         what += "; its log mentions the graphics card being lost (a driver reset, or an overheating / overclocked card)";
+    // 0.4.6 (GitHub #183): a crash early on, right after the runtime warned that the title update is for another
+    // version of the game (its base signature doesn't match the game's default.xex), most likely comes from that
+    // update - say so plainly. (The warning alone is harmless on some known-good copies, so only with a crash.)
+    if (code != 0 && secs <= 90 && log.find("XEX patch signature hash doesn't match") != std::string::npos)
+        what += ". Its log says the title update doesn't match this copy of the game (it was made for another version of "
+                "the game) - add the title update that belongs to your copy (same console and disc) by dropping it onto this window";
     if (!crash.empty()) what += "; it wrote a crash report";
     ask(a, "crash", g, std::string(d.name) + " closed",
         std::string(d.name) + " closed unexpectedly: " + what + ".\n\n" + (untested_version(a, g) ?
@@ -414,6 +612,7 @@ bool make_report(App &a, int g, const std::string &session, const std::string &w
         if (cs.i("AO") >= 2) exp += "XeGTAO, ";   // experimental again (Shagg 3 Nov: about 5 ms a frame)
         if (cs.i("FrameGen") > 0) exp += "frame generation, ";
         if (cs.b("SystemLink")) exp += "System Link, ";
+        if (cs.b("HDR")) exp += "HDR, ";   // 0.4.6: experimental in all four games
         sys += "Experimental settings on: " + (exp.empty() ? std::string("none") : exp.substr(0, exp.size() - 2)) + "\r\n\r\n";
     }
     // the game files' fingerprints (never the files)

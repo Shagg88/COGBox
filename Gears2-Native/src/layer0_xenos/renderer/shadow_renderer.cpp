@@ -56,6 +56,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include "smaa/smaa_search_tex.h"
 
 #include <rex/cvar.h>
+#include <rex/filesystem.h>
 #include <rex/graphics/draw_observer.h>
 #include <rex/hash.h>
 #include <rex/graphics/pipeline/shader/shader.h>
@@ -89,6 +90,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include <bit>
 #include <bitset>
 #include <cstdio>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <intrin.h>
@@ -671,8 +673,8 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_memexport_readback, true, "Gears2",
                     "written it (job 041: Gears 3 moves DXT textures with memexport copies, and DXT textures load from "
                     "guest memory, so without this they keep the old bytes - pale blue skin). The reference emulators' "
                     "readback_memexport");
-REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_through, false, "Gears2",
-                    "Job 047: a resolve into memory that a cached texture is loaded from (same base, pitch and bytes "
+REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_through, true, "Gears2",
+                    "0.4.6 on by default (job 1219, Gears 2 in play: ~12 reloads a frame skipped, texture time ~1.5 -> ~0.7 ms, its texel-by-texel check 0 differences). Job 047: a resolve into memory that a cached texture is loaded from (same base, pitch and bytes "
                     "per texel, single level) also writes that texture, the same way the GPU untile would load it, so "
                     "the texture is not reloaded (Gears 3 ch8: the shadow map is resolved and reloaded ~15 times a "
                     "frame, bloom buffers ~20)");
@@ -710,6 +712,28 @@ REXCVAR_DEFINE_INT32(gow2_renderer_resolution_scale_threshold, 1120, "Gears2",
                      "draw_resolution_scale_threshold (364 or 512 suggested there for Gears 3). 0 = scale every target. "
                      "Default 1120 since job 294 (job 292, ch10 at 2x: the white line along the left/top edges, +60/+22 "
                      "brightness with 0, gone with 1120; Gears 3's green tint): the 1280-wide scene targets still scale");
+REXCVAR_DEFINE_STRING(gow2_renderer_resolution_scale_pitches, "", "Gears2",
+                      "GitHub #105: surface pitches (pixels, comma-separated, e.g. 640) drawn at the resolution scale even "
+                      "though they are at or below --gow2_renderer_resolution_scale_threshold - Gears 3's depth of field "
+                      "is otherwise drawn at the console's size and enlarged. Their viewports, scissors, resolves and the "
+                      "textures read from them follow the target's own scale; the game's texel offsets stay in "
+                      "normalised source-size units, so kernels keep their footprint. Empty = off (as 0.4.5). No effect at 1x");
+REXCVAR_DEFINE_STRING(gow2_renderer_resolution_unscaled_pitches, "", "Gears2",
+                      "GitHub #212: surface pitches (pixels, comma-separated) kept at 1x with a resolution scale although "
+                      "above --gow2_renderer_resolution_scale_threshold - Gears 3 sets 1360, its 1344-wide outdoor sun "
+                      "shadow map (pixelated shadows at 2x). Empty = off. No effect at 1x");
+REXCVAR_DEFINE_INT32(gow2_renderer_camera_log, 0, "Gears2",
+                     "Diagnostic (GitHub #132): every N frames, the scene camera taken from the view-projection in c0-c3 "
+                     "of the frame's first scene-depth draw - world position, yaw / pitch, vertical and horizontal field "
+                     "of view, viewport - so a 16:9 and an ultrawide run can be compared. 0 = off; at most 2000 lines");
+REXCVAR_DEFINE_INT32(gow2_after_load_log_s, 0, "Gears2",
+                     "Diagnostic (Judgment: low frame rate after a load): for N seconds after a loading screen ends (the "
+                     "game says when - Judgment's loading cap release), one line per second: frames, slowest frame, our "
+                     "renderer's CPU ms, waits for shaders / pipelines / stand-ins, new draw pipelines, texture upload "
+                     "MB, and the time outside our renderer (the game, its frame limit). 0 = off; at most 120 s");
+REXCVAR_DEFINE_BOOL(gow2_screenshot_presented, false, "Gears2",
+                    "Shagg's to-do 8: the screenshot key (\\) saves the image as shown in the window (its full size, after "
+                    "resizing and sharpening); false (default) = the game's output size, as 0.4.5. Frame shots keep the game's size");
 REXCVAR_DEFINE_BOOL(gow2_renderer_fill_ownership, true, "Gears2",
                     "Job 188: the rect-list fill/clear shader (VS 1E6883FCCDE1F688) takes EDRAM ownership only of the "
                     "tiles its rectangle covers (bounds from its 3 vertices), not of its whole scissor rectangle - fewer "
@@ -825,6 +849,10 @@ REXCVAR_DEFINE_INT32(gow2_upscale_capture_raw_class, -1, "Gears2",
                      "float dumps (.raw: int32 w, h, format, then 2 floats a texel) of the motion vectors and of every "
                      "colour resolve whose source has this storage class (e.g. 4 = k_16_16, Gears 2's velocity buffer); "
                      "-1 = off. Large: ~20 MB a resolve");
+REXCVAR_DEFINE_STRING(gow2_velocity_scan_frames, "", "Gears2",
+                      "Diagnostic (#147 / #150): frames 'first-last' in which draws into k_16_16 / k_16_16_FLOAT or half-size "
+                      "targets are logged once per shader pair with the VS constants they read - finds a game's velocity "
+                      "pass for the upscalers' character motion. Empty = off");
 REXCVAR_DEFINE_BOOL(gow2_upscale_depth_at_resolve, false, "Gears2",
                     "Notes/80 s.6: the upscalers' depth is copied at the game's scene depth resolve (Gears 2 clears that "
                     "depth before the scene colour resolve - on there by gow2_app.h); false: read at the scene colour "
@@ -848,6 +876,14 @@ REXCVAR_DEFINE_INT32(gow2_ao_denoise, 0, "Gears2",
                      "XeGTAO denoise passes (notes/80 s.4): 1 = sharp, 2 = medium, 3 = soft; 0 = automatic: under DLSS / FSR "
                      "/ XeSS by the scene's scale (ultra: 3x or more 1, 2x 2, 1x 3), else 2 at ultra; below ultra one more, up "
                      "to 3. F8 changes it live");
+REXCVAR_DEFINE_BOOL(gow2_ao_prefilter_single, false, "Gears2",
+                    "XeGTAO: build the depth pyramid's 5 levels in one dispatch (XeGTAO's PrefilterDepths16x16) instead of "
+                    "five, each reading the whole scene depth again. Needs a backend that binds 5 UAVs (D3D12, Vulkan); "
+                    "otherwise the five dispatches are used. false (default) = five dispatches, as 0.4.5");
+REXCVAR_DEFINE_INT32(gow2_ao_gpu_log, 0, "Gears2",
+                     "XeGTAO cost: every N frames, the average GPU time of each XeGTAO pass (depth pyramid levels 0-4, main, "
+                     "each denoise pass) from the backend's GPU timestamps. 0 = off. Not while --gow2_renderer_draw_report_frame "
+                     "runs (it owns the GPU tags); needs --gow2_renderer_gpu_timestamp_split (the default)");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_power, 2.2, "Gears2", "XeGTAO final value power - higher is darker (XeGTAO's default 2.2)");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_add_radius, -1.0, "Gears2",
                       "Notes/80 s.9: XeGTAO's radius where the game draws no AO of its own and ours is added "
@@ -1130,6 +1166,8 @@ constexpr uint32_t kRegFloatConstVs = 0x4000;  // SHADER_CONSTANT_000_X
 constexpr uint32_t kRegFloatConstPs = 0x4400;  // SHADER_CONSTANT_256_X
 constexpr uint32_t kRegFetchConst = 0x4800;    // SHADER_CONSTANT_FETCH_00_0
 constexpr uint32_t kRegBoolConst = 0x4900;     // SHADER_CONSTANT_BOOL_000_031, then 32 loop constants at 0x4908
+// --gow2_after_load_log_s: steady_clock ticks of the last XenosNoteLoadEnded (a game's loading screen ended); 0 = none.
+std::atomic<int64_t> g_load_ended_ticks{0};
 
 constexpr uint32_t Bits(uint32_t v, uint32_t shift, uint32_t width) { return (v >> shift) & ((1u << width) - 1u); }
 constexpr int32_t SignExtend(uint32_t v, uint32_t width) {
@@ -1305,9 +1343,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     options.gpu_timestamp_split = REXCVAR_GET(gow2_renderer_gpu_timestamp_split);  // patch 0109
     options.copy_threads = uint32_t(std::clamp(REXCVAR_GET(gow2_renderer_copy_threads), 0, 16));
     if (REXCVAR_GET(gow2_renderer_pipeline_library)) {  // notes/64: next to our compiled shaders
-      std::filesystem::path dir = REXCVAR_GET(gow2_shader_cache_dir);
+      std::filesystem::path dir = rex::to_path(REXCVAR_GET(gow2_shader_cache_dir));  // UTF-8 (#177)
       if (dir.empty()) dir = std::filesystem::current_path() / "out" / "shader-cache";
-      options.pipeline_library_path = (dir / "pipelines-d3d12.bin").string();
+      options.pipeline_library_path = dir / "pipelines-d3d12.bin";
       options.pipeline_save_background = REXCVAR_GET(gow2_renderer_pipeline_save_background);  // patch 0010
       options.pipeline_load_async = REXCVAR_GET(gow2_renderer_pipeline_load_async);
       options.pipeline_threads = REXCVAR_GET(gow2_renderer_pipeline_threads);            // patch 0056
@@ -1412,7 +1450,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       std::string e;
       return rr::CreateDxcCompiler(dxc_dir, e);
     };
-    std::filesystem::path dir = REXCVAR_GET(gow2_shader_cache_dir);
+    std::filesystem::path dir = rex::to_path(REXCVAR_GET(gow2_shader_cache_dir));  // UTF-8 (#177)
     if (dir.empty()) dir = std::filesystem::current_path() / "out" / "shader-cache";
     cache_ = std::make_unique<rr::ShaderCache>(*backend_, factory, dir, uint32_t(std::max(0, REXCVAR_GET(gow2_shader_threads))));
     cache_->SetCompactFloatConstants(REXCVAR_GET(gow2_renderer_compact_constants));
@@ -1508,6 +1546,41 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     const uint32_t scale_threshold = uint32_t(std::max(REXCVAR_GET(gow2_renderer_resolution_scale_threshold), 0));
     rts_ = std::make_unique<rr::RenderTargetCache>(*backend_, REXCVAR_GET(gow2_renderer_d24s8_exact), res_scale_,
                                                    scale_threshold);
+    if (res_scale_ > 1 && scale_threshold) {  // GitHub #105
+      std::vector<uint32_t> pitches;
+      const std::string list = REXCVAR_GET(gow2_renderer_resolution_scale_pitches);
+      size_t at = 0;
+      while (at < list.size()) {
+        const size_t end = std::min(list.find(',', at), list.size());
+        const unsigned long v = std::strtoul(list.substr(at, end - at).c_str(), nullptr, 10);
+        if (v >= 32 && v <= scale_threshold && pitches.size() < 16) pitches.push_back(uint32_t(v));
+        at = end + 1;
+      }
+      if (!pitches.empty()) {
+        std::string shown;
+        for (uint32_t p : pitches) shown += (shown.empty() ? "" : ",") + std::to_string(p);
+        REXLOG_INFO("gow2_renderer: GitHub #105: targets with pitch {} are drawn at {}x despite the threshold", shown,
+                    res_scale_);
+        rts_->SetScaledPitches(std::move(pitches));
+      }
+    }
+    if (res_scale_ > 1) {  // GitHub #212
+      std::vector<uint32_t> keep;
+      const std::string list = REXCVAR_GET(gow2_renderer_resolution_unscaled_pitches);
+      size_t at = 0;
+      while (at < list.size()) {
+        const size_t end = std::min(list.find(',', at), list.size());
+        const unsigned long v = std::strtoul(list.substr(at, end - at).c_str(), nullptr, 10);
+        if (v >= 32 && v <= 8192 && keep.size() < 16) keep.push_back(uint32_t(v));
+        at = end + 1;
+      }
+      if (!keep.empty()) {
+        std::string shown;
+        for (uint32_t p : keep) shown += (shown.empty() ? "" : ",") + std::to_string(p);
+        REXLOG_INFO("gow2_renderer: GitHub #212: targets with pitch {} stay 1x", shown);
+        rts_->SetUnscaledPitches(std::move(keep));
+      }
+    }
     if (res_scale_ > 1)
       REXLOG_INFO("gow2_renderer: resolution scale {}x (notes/53){}", res_scale_,
                   scale_threshold ? std::format("; targets with pitch <= {} stay 1x (notes/53b)", scale_threshold)
@@ -1591,6 +1664,14 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     }
     const_gen_skip_ = REXCVAR_GET(gow2_renderer_const_gen_skip);
     upscale_probe_ = uint32_t(std::max(0, REXCVAR_GET(gow2_upscale_probe)));
+    {  // #147 / #150: --gow2_velocity_scan_frames
+      unsigned long long a = 0, z = 0;
+      if (std::sscanf(REXCVAR_GET(gow2_velocity_scan_frames).c_str(), "%llu-%llu", &a, &z) == 2 && a >= 1 && a <= z) {
+        vel_scan_first_ = a;
+        vel_scan_last_ = z;
+        REXLOG_INFO("gow2_velocity_scan: frames {}-{}", a, z);
+      }
+    }
     stencil_transfer_bits_ = REXCVAR_GET(gow2_renderer_stencil_transfer_bits) != 0;
     static_index_buffers_ = REXCVAR_GET(gow2_renderer_static_index_buffers);
     textures_ = std::make_unique<rr::TextureCache>(*backend_, memory_->TranslatePhysical<const uint8_t*>(0), *watch_);
@@ -1957,6 +2038,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           REXLOG_INFO("gow2_present: SHADOW - our gamma pass on our front buffer, compared with the SDK's image");
         }
       }
+      // To-do 8: after the gamma block, which can still turn present_ours_ off (then the screenshot keeps its own path).
+      presented_shots_ = present_ours_ && REXCVAR_GET(gow2_screenshot_presented);
+      XenosScreenshotSetPresented(presented_shots_);  // the screenshot observer then waits for our readback
     }
     if (REXCVAR_GET(gow2_renderer_transfers)) {
       transfer_vs_ = cache_->GetBuiltin("transfer_vs", rr::builtin::kTransferVs, gpu::ShaderStage::kVertex);
@@ -2301,6 +2385,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
   void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t fb_width, uint32_t fb_height) override {
     if (!backend_) return;
+    AfterLoadSample();  // off by default (gow2_after_load_log_s)
     if (!thread_cpu_base_) thread_cpu_base_ = ThreadCpuTicks();
 #if defined(GN_PGO_GEN)
     {  // patch 0159: the training run is ended from outside (no normal exit), so the counters are written here
@@ -3165,6 +3250,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!presenter_) {  // notes/68: Vulkan without a presenter yet - the image is made, nothing is shown
       backend_->Submit();
       ++ours_stats_.presented;
+      if (presented_shots_ && !shot_.readback && XenosTakeScreenshotRequest()) TakeShot(present_out_, w, h);  // to-do 8 (nothing shown)
       if (XenosFrameImagesWanted()) {
         PresentImage img;
         img.readback = backend_->ReadbackTexture(present_out_, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
@@ -3217,6 +3303,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (refreshed && wrote) ++ours_stats_.presented; else ++ours_stats_.refresh_failed;
     const int check_every = REXCVAR_GET(gow2_present_check_every);
     if (refreshed && wrote && check_every > 0 && frame_ % uint64_t(check_every) == 0) ScreenCheck(out_tex, ow, oh);
+    // Shagg's to-do 8 (--gow2_screenshot_presented): the screenshot key's image as presented - resized to the window and
+    // sharpened - read back on its own, for the screenshot alone (frame shots keep the game's size). HDR10 output is
+    // PQ-encoded by now, so there the SDR image before that, at the game's size.
+    if (presented_shots_ && !shot_.readback && XenosTakeScreenshotRequest()) {
+      const bool shown = !(hdr_ && hdr_encode_) && out_tex && ow && oh;
+      TakeShot(shown ? out_tex : present_out_, shown ? ow : w, shown ? oh : h);
+    }
     if (XenosFrameImagesWanted()) {  // frame shots: our presented image, read back (the SDK makes none now)
       PresentImage img;
       img.readback = backend_->ReadbackTexture(present_out_, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
@@ -3264,7 +3357,24 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                 frame_, 100.0 * double(within1) / n, 100.0 * double(exact) / n, maxd);
     backend_->ReleaseReadback(rb);
   }
+  // To-do 8: one pending screenshot readback (shot_.readback 0 = none); a second request while one is in flight waits.
+  PresentImage shot_{};
+  bool presented_shots_ = false;  // --gow2_screenshot_presented, set at Init
+  void TakeShot(gpu::TextureHandle tex, uint32_t w, uint32_t h) {
+    if (shot_.readback) return;
+    shot_.readback = backend_->ReadbackTexture(tex, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
+    shot_.width = w;
+    shot_.height = h;
+    shot_.frame = XenosSwapCount();
+  }
   void DeliverFrameImages() {
+    if (shot_.readback && backend_->IsReadbackReady(shot_.readback)) {
+      uint32_t pitch = 0;
+      if (const uint8_t* data = backend_->ReadbackData(shot_.readback, pitch))
+        XenosSaveScreenshot(data, shot_.width, shot_.height, pitch);
+      backend_->ReleaseReadback(shot_.readback);
+      shot_.readback = 0;
+    }
     while (!ours_images_.empty() && backend_->IsReadbackReady(ours_images_.front().readback)) {
       const PresentImage img = ours_images_.front();
       ours_images_.pop_front();
@@ -4092,7 +4202,106 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::vector<ProbeGroup> probe_groups_;
   std::vector<std::string> probe_resolves_;
   std::vector<std::string> probe_draws_;  // the first depth-writing camera draws: vertex data address + c4-c15
+  // Judgment "low frame rate after loading" (--gow2_after_load_log_s): per-second sums from the frame stats, which other
+  // logs reset (a counter lower than last time is taken as counted from 0).
+  struct AfterLoad {
+    int64_t armed = 0;     // the XenosNoteLoadEnded ticks this window belongs to
+    std::chrono::steady_clock::time_point end{}, sec_start{}, last_swap{};
+    uint32_t frames = 0, lines = 0;
+    double max_frame_ms = 0, cpu = 0, shader_wait = 0, pipe_wait = 0, standin_wait = 0;
+    uint64_t pipelines = 0, tex_bytes = 0;
+    double p_cpu = 0, p_shader = 0, p_pipe = 0, p_standin = 0;
+    uint64_t p_pipelines = 0, p_tex = 0;
+  } al_;
+  void AfterLoadSample() {
+    const int32_t secs = REXCVAR_GET(gow2_after_load_log_s);
+    if (secs <= 0) return;
+    using clk = std::chrono::steady_clock;
+    const clk::time_point now = clk::now();
+    const int64_t ended = g_load_ended_ticks.load(std::memory_order_relaxed);
+    auto dd = [](double cur, double& prev) { const double d = cur >= prev ? cur - prev : cur; prev = cur; return d; };
+    auto du = [](uint64_t cur, uint64_t& prev) { const uint64_t d = cur >= prev ? cur - prev : cur; prev = cur; return d; };
+    const double d_cpu = dd(stats_.cpu_ms, al_.p_cpu), d_shader = dd(stats_.shader_wait_ms, al_.p_shader),
+                 d_pipe = dd(stats_.pipeline_wait_ms, al_.p_pipe), d_standin = dd(stats_.standin_wait_ms, al_.p_standin);
+    const uint64_t d_pipelines = du(stats_.new_draw_pipelines, al_.p_pipelines), d_tex = du(stats_.texture_bytes, al_.p_tex);
+    if (ended && ended != al_.armed) {  // a load just ended: a new window
+      al_ = AfterLoad{ended, now + std::chrono::seconds(std::min(secs, 120)), now, now, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      al_.p_cpu, al_.p_shader, al_.p_pipe, al_.p_standin, al_.p_pipelines, al_.p_tex};
+      REXLOG_INFO("gow2_after_load: a loading screen ended - logging the next {} s", std::min(secs, 120));
+      return;
+    }
+    if (!al_.armed || now > al_.end) return;
+    const double frame_ms = std::chrono::duration<double, std::milli>(now - al_.last_swap).count();
+    al_.last_swap = now;
+    ++al_.frames;
+    al_.max_frame_ms = std::max(al_.max_frame_ms, frame_ms);
+    al_.cpu += d_cpu, al_.shader_wait += d_shader, al_.pipe_wait += d_pipe, al_.standin_wait += d_standin;
+    al_.pipelines += d_pipelines, al_.tex_bytes += d_tex;
+    const double span = std::chrono::duration<double, std::milli>(now - al_.sec_start).count();
+    if (span < 1000.0) return;
+    ++al_.lines;
+    REXLOG_INFO("gow2_after_load: +{} s: {} frames ({:.1f} fps), slowest {:.1f} ms | our renderer CPU {:.0f} ms (waits: "
+                "shaders {:.0f}, pipelines {:.0f}, stand-ins {:.0f}) | new draw pipelines {} | texture uploads {:.1f} MB | "
+                "outside our renderer {:.0f} ms",
+                al_.lines, al_.frames, al_.frames * 1000.0 / span, al_.max_frame_ms, al_.cpu, al_.shader_wait, al_.pipe_wait,
+                al_.standin_wait, al_.pipelines, double(al_.tex_bytes) / 1048576.0, std::max(0.0, span - al_.cpu));
+    al_.sec_start = now;
+    al_.frames = 0;
+    al_.max_frame_ms = al_.cpu = al_.shader_wait = al_.pipe_wait = al_.standin_wait = 0;
+    al_.pipelines = al_.tex_bytes = 0;
+  }
   bool ProbeFrame() const { return upscale_probe_ && (frame_ + 1) % upscale_probe_ == 0; }
+  // GitHub #132 (--gow2_renderer_camera_log): see the cvar. The camera matrix's rows (FromConstantsTransposed: clip x, y,
+  // z, w) give the camera position as the point where clip x, y and w are all 0, and the forward direction as the w row.
+  uint64_t camera_log_frame_ = ~0ull;
+  uint32_t camera_log_lines_ = 0;
+  void CameraLog(const uint32_t* r, const rr::GuestShader& vsg, const rr::PipelineState& ps, const rr::RenderTarget* depth,
+                 bool depth_writes) {
+    const int32_t every = REXCVAR_GET(gow2_renderer_camera_log);
+    if (every <= 0 || camera_log_lines_ >= 2000 || (frame_ + 1) % uint64_t(every) != 0 || camera_log_frame_ == frame_ + 1)
+      return;
+    if (!depth || !depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < 300) return;
+    if (!(vsg.Reads(0) && vsg.Reads(1) && vsg.Reads(2) && vsg.Reads(3))) return;
+    float c[16];
+    std::memcpy(c, &r[kRegFloatConstVs], sizeof(c));
+    const rr::upscale::Mat4 m = rr::upscale::FromConstantsTransposed(c, 0);
+    float vfov = 0.0f, zn = 0.0f;
+    bool inf = false;
+    if (!rr::upscale::PerspectiveParams(m, vfov, zn, inf) || !(vfov > 0.05f && vfov < 3.0f)) return;
+    camera_log_frame_ = frame_ + 1;
+    ++camera_log_lines_;
+    // Solve rows 0, 1, 3 (xyz) . p = -row.w (Cramer's rule, doubles).
+    const int rows[3] = {0, 1, 3};
+    double A[3][3], bv[3];
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) A[i][j] = m(rows[i], j);
+      bv[i] = -double(m(rows[i], 3));
+    }
+    auto det3 = [](const double M[3][3]) {
+      return M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
+             M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+    };
+    const double d = det3(A);
+    double p[3] = {0, 0, 0};
+    if (std::abs(d) > 1e-12)
+      for (int k = 0; k < 3; ++k) {
+        double B[3][3];
+        for (int i = 0; i < 3; ++i)
+          for (int j = 0; j < 3; ++j) B[i][j] = j == k ? bv[i] : A[i][j];
+        p[k] = det3(B) / d;
+      }
+    const double fx = m(3, 0), fy = m(3, 1), fz = m(3, 2);
+    const double fl = std::sqrt(fx * fx + fy * fy + fz * fz);
+    const double xs = std::sqrt(double(m(0, 0)) * m(0, 0) + double(m(0, 1)) * m(0, 1) + double(m(0, 2)) * m(0, 2));
+    const double hfov = xs > 1e-9 ? 2.0 * std::atan(fl / xs) : 0.0;
+    constexpr double kDeg = 57.29577951308232;
+    REXLOG_INFO("gow2_camera_log: frame {} position {:.1f} {:.1f} {:.1f} | yaw {:.2f} pitch {:.2f} deg | fov vertical {:.2f} "
+                "horizontal {:.2f} deg | near {:.2f}{} | viewport {:.0f}x{:.0f} at {:.0f},{:.0f} | target {}x{}{}",
+                frame_ + 1, p[0], p[1], p[2], std::atan2(fy, fx) * kDeg, fl > 0 ? std::asin(fz / fl) * kDeg : 0.0,
+                vfov * kDeg, hfov * kDeg, zn, inf ? " (infinite far)" : "", ps.viewport.width, ps.viewport.height,
+                ps.viewport.x, ps.viewport.y, depth->guest_width, depth->guest_height,
+                camera_log_lines_ == 2000 ? " - last line (gow2_renderer_camera_log)" : "");
+  }
   void NoteProbeDraw(const uint32_t* r, const rr::GuestShader& vsg, const rr::PipelineState& ps,
                      const rr::RenderTarget* depth, bool depth_writes) {
     float c[16];
@@ -4182,6 +4391,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t cc_w_ = 0, cc_h_ = 0, cc_step_ = 0, cc_blur_passes_ = 3;
   std::array<double, 11> ao_pass_ms_{};  // --gow2_ao_pass_times
   gpu::PipelineHandle ao_prefilter_pipe_ = 0, ao_main_pipe_ = 0, ao_denoise_pipe_ = 0, ao_debug_pipe_ = 0;
+  gpu::PipelineHandle ao_prefilter5_pipe_ = 0;  // --gow2_ao_prefilter_single (CreateComputePipelineMips)
   std::array<gpu::PipelineHandle, 4> ao_main_pipes_{};  // notes/80 s.12: every quality preset, so F11 needs no compile
   gpu::TextureHandle ao_depth_ = 0, ao_work_ = 0, ao_work2_ = 0, ao_edges_ = 0, ao_final_ = 0;
   uint32_t ao_denoise_passes_ = 3;
@@ -4865,6 +5075,42 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t vel_mask_w_ = 0, vel_mask_h_ = 0;
   uint64_t vel_frames_ = 0, vel_no_camera_ = 0, vel_objects_sum_ = 0;  // log window
   static constexpr uint32_t kMaxMovingObjects = 32;
+  // #147 / #150 (--gow2_velocity_scan_frames "first-last"): one Windows run per game finds its velocity pass. In those
+  // frames, each distinct (VS, PS, target class, pitch) drawing into a k_16_16 / k_16_16_FLOAT target, or into any
+  // target at most 720 pixels wide (half resolution), is logged once: shaders, target, index count, the VS float
+  // constants it reads (as ranges), and whether the 8 constants after the camera (c5-c12, Gears 2's velocity layout)
+  // hold two affine matrices. Logging only; at most 600 lines.
+  uint64_t vel_scan_first_ = 0, vel_scan_last_ = 0;
+  uint32_t vel_scan_lines_ = 0;
+  std::unordered_set<uint64_t> vel_scan_seen_;
+  void VelocityScan(const uint32_t* r, const rr::GuestShader& vsg, const rr::RenderTargetKey& k0, uint32_t colour_count,
+                    uint64_t vs_hash, uint64_t ps_hash, uint32_t index_count) {
+    const uint64_t f = frame_ + 1;
+    if (f < vel_scan_first_ || f > vel_scan_last_ || vel_scan_lines_ >= 600) return;
+    const uint32_t c16 = rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16));
+    const uint32_t c16f = rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16_FLOAT));
+    if (k0.storage_class != c16 && k0.storage_class != c16f && k0.pitch_pixels > 720) return;
+    const uint64_t key = vs_hash * 0x9E3779B97F4A7C15ull ^ ps_hash ^ (uint64_t(k0.storage_class) << 56) ^
+                         (uint64_t(k0.pitch_pixels) << 40);
+    if (!vel_scan_seen_.insert(key).second) return;
+    ++vel_scan_lines_;
+    std::string reads;
+    for (uint32_t c = 0; c < 256;) {
+      if (!vsg.Reads(c)) { ++c; continue; }
+      uint32_t e = c;
+      while (e + 1 < 256 && vsg.Reads(e + 1)) ++e;
+      reads += (reads.empty() ? "c" : ",c") + std::to_string(c) + (e > c ? "-" + std::to_string(e) : std::string());
+      c = e + 1;
+    }
+    float m[32];
+    std::memcpy(m, &r[kRegFloatConstVs + 5 * 4], sizeof(m));
+    const bool affine2 = m[15] == 1.0f && m[31] == 1.0f && m[3] == 0.0f && m[19] == 0.0f;
+    REXLOG_INFO("gow2_velocity_scan: frame {} vs {:016X} ps {:016X} -> {} pitch {} msaa {} ({} target(s)) indices {} | VS "
+                "reads {} | c5-c12 two affine matrices: {}{}",
+                f, vs_hash, ps_hash, rr::StorageClassName(k0.storage_class), k0.pitch_pixels, 1u << k0.msaa, colour_count,
+                index_count, reads.empty() ? std::string("none") : reads, affine2 ? "yes" : "no",
+                vel_scan_lines_ == 600 ? " - last line (gow2_velocity_scan_frames)" : "");
+  }
   void VelocityDraw(const uint32_t* r, const rr::GuestShader& vsg, const rr::RenderTargetKey& k0, uint32_t index_count) {
     if (!vel_motion_pipe_ || !up_camera_ || k0.storage_class != rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16))) return;
     for (uint32_t k = 0; k < 13; ++k)  // the camera (c0-c3) and both object-to-world matrices (c5-c12)
@@ -5328,6 +5574,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return s ? backend_->CreateComputePipeline(s) : 0;
     };
     ao_prefilter_pipe_ = make("xegtao_prefilter_cs", common + rr::builtin::kXeGtaoPrefilterCs);
+    if (REXCVAR_GET(gow2_ao_prefilter_single)) {  // one dispatch for the 5 levels (falls back to the five if refused)
+      const gpu::ShaderHandle s5 = cache_->GetBuiltin("xegtao_prefilter5_cs", common + rr::builtin::kXeGtaoPrefilter5Cs,
+                                                      gpu::ShaderStage::kCompute);
+      ao_prefilter5_pipe_ = s5 ? backend_->CreateComputePipelineMips(s5) : 0;
+      REXLOG_INFO("gow2_ao: XeGTAO depth pyramid in one dispatch {}", ao_prefilter5_pipe_ ? "on" : "NOT available - five dispatches");
+    }
     for (uint32_t i = 0; i < 4; ++i)
       ao_main_pipes_[i] = make(std::string("xegtao_main_") + kQuality[i] + "_cs",
                                std::string("#define XE_SLICES ") + kSlices[i] + "\n#define XE_STEPS " + kSteps[i] + "\n" +
@@ -5456,10 +5708,22 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.srv[0] = depth->texture;
     b.srv_plane[0] = 0;
     b.uav_texture = ao_depth_;
-    for (uint32_t mip = 0; mip < 5; ++mip) {
-      b.constants[3] = mip;
-      b.uav_mip = mip;
-      backend_->Dispatch(ao_prefilter_pipe_, b, (w + 15) / 16, (h + 15) / 16, 1);
+    const bool timed = AoGpuTimed();  // --gow2_ao_gpu_log
+    if (ao_prefilter5_pipe_) {  // --gow2_ao_prefilter_single: all 5 levels at once (u0-u4 = MIPs 0-4)
+      b.uav_texture = 0;
+      b.uav_mips_texture = ao_depth_;
+      b.uav_mip_count = 5;
+      if (timed) backend_->SetGpuTag(kAoTagBase + 0);
+      backend_->Dispatch(ao_prefilter5_pipe_, b, (w + 15) / 16, (h + 15) / 16, 1);
+      b.uav_mips_texture = 0;
+      b.uav_mip_count = 0;
+    } else {
+      for (uint32_t mip = 0; mip < 5; ++mip) {
+        b.constants[3] = mip;
+        b.uav_mip = mip;
+        if (timed) backend_->SetGpuTag(kAoTagBase + mip);
+        backend_->Dispatch(ao_prefilter_pipe_, b, (w + 15) / 16, (h + 15) / 16, 1);
+      }
     }
     // 2. The main pass: working AO term + edges.
     AoPassTag(8);
@@ -5468,6 +5732,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.uav_texture = ao_work_;
     b.uav_mip = 0;
     b.uav2_texture = ao_edges_;
+    if (timed) backend_->SetGpuTag(kAoTagBase + 5);
     backend_->Dispatch(ao_main_pipe_, b, (w + 7) / 8, (h + 7) / 8, 1);
     // 3. Denoise: the earlier passes ping-pong between the working textures, the last one writes the final AO.
     AoPassTag(9);
@@ -5479,9 +5744,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       b.constants[3] = last ? 1u : 0u;
       b.srv[0] = src;
       b.uav_texture = last ? ao_final_ : other;
+      if (timed) backend_->SetGpuTag(kAoTagBase + 6 + pass);
       backend_->Dispatch(ao_denoise_pipe_, b, ((w + 1) / 2 + 7) / 8, (h + 7) / 8, 1);
       std::swap(src, other);
     }
+    // Back to the tag in force before: timing runs only while the draw report is off (AoGpuTimed), and that report is
+    // the only other user of GPU tags, so it was 0. (The backend has no getter to read it back.)
+    if (timed) backend_->SetGpuTag(0);
     AoPassTag(0);
     ao_ready_ = true;
     ++ao_runs_;
@@ -5529,8 +5798,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       td.debug_name = "cacao half";
       if (step == 4) cc_half_ = backend_->CreateTexture(td);
       if (!ok || !cc_normals_ || (step == 4 && !cc_half_)) {
-        if (!ao_failed_logged_) REXLOG_WARN("gow2_ao: CACAO textures ({}x{}) could not be made", w, h);
+        if (!ao_failed_logged_) REXLOG_WARN("gow2_ao: CACAO textures ({}x{}) could not be made; XeGTAO from the next frame", w, h);
         ao_failed_logged_ = true;
+        cc_ok_ = false;  // review: no create / destroy every frame - the per-frame state then keeps XeGTAO
+        XenosAoDebugSetCacao(false, false, cc_blur_passes_);
         return false;
       }
       cc_w_ = w, cc_h_ = h, cc_step_ = step;
@@ -5834,14 +6105,47 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     backend_->Dispatch(ao_debug_pipe_, b, (w + 7) / 8, (h + 7) / 8, 1);
   }
 
+  // --gow2_ao_gpu_log: each XeGTAO pass carries a GPU tag of its own (0-4 the depth pyramid levels, 5 the main pass,
+  // 6-8 the denoise passes); AoEndFrame collects the tagged times and logs per-pass averages.
+  static constexpr uint32_t kAoTagBase = 0x7A000000u;
+  static constexpr uint32_t kAoTagCount = 9;
+  double ao_gpu_ms_[kAoTagCount] = {};
+  uint32_t ao_gpu_frames_ = 0;
+  bool AoGpuTimed() const { return REXCVAR_GET(gow2_ao_gpu_log) > 0 && report_first_ == 0; }
+  void AoGpuCollect(const std::vector<gpu::GpuTagTime>& got) {  // AoEndFrame takes the times once for both AO logs
+    if (!AoGpuTimed()) return;
+    for (const gpu::GpuTagTime& g : got)
+      if (g.samples < 0.0 && g.tag >= kAoTagBase && g.tag < kAoTagBase + kAoTagCount) ao_gpu_ms_[g.tag - kAoTagBase] += g.ms;
+    const uint32_t every = uint32_t(REXCVAR_GET(gow2_ao_gpu_log));
+    if (++ao_gpu_frames_ < every) return;
+    const double n = double(ao_gpu_frames_);
+    double pyramid = 0.0, denoise = 0.0;
+    for (uint32_t i = 0; i < 5; ++i) pyramid += ao_gpu_ms_[i];
+    for (uint32_t i = 6; i < kAoTagCount; ++i) denoise += ao_gpu_ms_[i];
+    std::string levels;  // one dispatch (--gow2_ao_prefilter_single): no per-level times
+    if (ao_prefilter5_pipe_)
+      levels = "one dispatch";
+    else
+      levels = std::format("levels {:.3f} {:.3f} {:.3f} {:.3f} {:.3f}", ao_gpu_ms_[0] / n, ao_gpu_ms_[1] / n,
+                           ao_gpu_ms_[2] / n, ao_gpu_ms_[3] / n, ao_gpu_ms_[4] / n);
+    REXLOG_INFO("gow2_ao: GPU ms/frame over {} frames ({}x{}): total {:.3f} | depth pyramid {:.3f} ({}) | main {:.3f} | "
+                "denoise {:.3f} ({:.3f} {:.3f} {:.3f}) | XeGTAO ran {} time(s) in all",
+                ao_gpu_frames_, ao_w_, ao_h_, (pyramid + ao_gpu_ms_[5] + denoise) / n, pyramid / n, levels,
+                ao_gpu_ms_[5] / n, denoise / n, ao_gpu_ms_[6] / n, ao_gpu_ms_[7] / n, ao_gpu_ms_[8] / n, ao_runs_);
+    ao_gpu_frames_ = 0;
+    for (double& v : ao_gpu_ms_) v = 0.0;
+  }
   void AoEndFrame() {
+    // --gow2_ao_gpu_log and --gow2_ao_pass_times read the same GPU timers: one take feeds both (two takes would leave the
+    // second empty). Both are off while the draw report runs, which owns the timers.
+    static const bool pass_times = REXCVAR_GET(gow2_ao_pass_times);
+    std::vector<gpu::GpuTagTime> got;
+    if ((pass_times || AoGpuTimed()) && report_first_ == 0) backend_->TakeGpuTagTimes(got);
+    AoGpuCollect(got);
     const rr::ao::GtaoConstants* k = AoConstants();
     ++(k ? ao_frames_ok_ : ao_frames_none_);
     static const int32_t every = REXCVAR_GET(gow2_ao_log);
-    static const bool pass_times = REXCVAR_GET(gow2_ao_pass_times);
     if (pass_times) {
-      std::vector<gpu::GpuTagTime> got;
-      backend_->TakeGpuTagTimes(got);
       for (const gpu::GpuTagTime& g : got)
         if (g.tag > kAoPassTagBase && g.tag < kAoPassTagBase + kAoPassCount) ao_pass_ms_[g.tag - kAoPassTagBase] += g.ms;
     }
@@ -5901,12 +6205,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void UpdateMipBias() {
     static const std::string setting = REXCVAR_GET(gow2_upscale_mip_bias);
     static const bool wanted = setting != "off";
-    static const float fixed = wanted && setting != "auto" ? float(std::atof(setting.c_str())) : 0.0f;
+    static const bool is_auto = setting == "auto";  // a number, even 0, is used as given (0 = no bias)
+    static const float fixed = wanted && !is_auto ? float(std::atof(setting.c_str())) : 0.0f;
     static const bool logged = [] { XenosAoDebugSetMipBias(wanted); return true; }();
     (void)logged;
     float bias = 0.0f;
     if (XenosAoDebugMipBias() && up_scale_in_ && up_scale_in_ < res_scale_ && rts_->PhaseScale() == up_scale_in_)
-      bias = fixed != 0.0f ? fixed : std::log2(float(up_scale_in_) / float(res_scale_));
+      bias = !is_auto ? fixed : std::log2(float(up_scale_in_) / float(res_scale_));
     if (bias == mip_bias_) return;
     mip_bias_ = bias;
     static bool told = false;
@@ -7005,6 +7310,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (depth_bound) bound_bases[bound_count++] = key.base_tiles;
     if (colour_count == 1 && up_active_ && !up_camera_only_) VelocityDraw(r, vsg, colour_keys[0], index_count);  // notes/80 s.6
+    if (colour_count >= 1 && vel_scan_last_) VelocityScan(r, vsg, colour_keys[0], colour_count, vs_hash, ps_hash, index_count);
     if (ao_trace_ && colour_count && (prim == 0x08 || index_count <= 6 || int32_t(colour_keys[0].storage_class) == ao_trace_class_)) AoTraceDraw(r, ps, colour_keys[0], colour_count,
                                                                                    vs_hash, ps_hash, prim, index_count);
     // Notes/80: the game's AO chain while XeGTAO replaces its result - skipped before any ownership or transfer work.
@@ -7491,6 +7797,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
 
     if (ProbeFrame()) NoteProbeDraw(r, vsg, ps, target, depth_writes);
+    CameraLog(r, vsg, ps, target, depth_writes);  // GitHub #132 (off by default)
     // Constants.
     textures_part.Switch(kPartConstants);
     rr::ViewportState v = ps.viewport;
@@ -11525,6 +11832,10 @@ bool XenosRendererRecipeIdle() { return g_release_target && g_release_target->Re
 void* XenosRendererIdleEvent() { return g_release_target ? g_release_target->IdleGpuEvent() : nullptr; }
 void XenosRendererRelease() {
   if (g_release_target) g_release_target->ReleaseToGuest();
+}
+
+void XenosNoteLoadEnded() {
+  g_load_ended_ticks.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
 }
 
 void XenosInstallRendererIfRequested(rex::Runtime* runtime, const XenosRendererHints& hints) {

@@ -125,6 +125,69 @@ void main(uint3 dtid : SV_DispatchThreadID, uint3 gtid : SV_GroupThreadID) {
 }
 )";
 
+// --gow2_ao_prefilter_single: the same pyramid in ONE dispatch (XeGTAO_PrefilterDepths16x16 as written): u0-u4 are the
+// pyramid texture's MIPs 0-4 (a CreateComputePipelineMips pipeline). Dispatch (width + 15) / 16 x (height + 15) / 16.
+constexpr const char* kXeGtaoPrefilter5Cs = R"(
+Texture2D<float> xe_depth : register(t0);  // the scene's depth target (plane 0), host convention
+RWTexture2D<float> xe_out0 : register(u0);
+RWTexture2D<float> xe_out1 : register(u1);
+RWTexture2D<float> xe_out2 : register(u2);
+RWTexture2D<float> xe_out3 : register(u3);
+RWTexture2D<float> xe_out4 : register(u4);
+groupshared float xe_scratch[8][8];
+
+float XeRaw(int2 p) { return XeViewDepth(xe_depth.Load(int3(clamp(p, int2(0, 0), int2(XE_SIZE) - 1), 0))); }
+#define XE_STORE(T, P, V) { uint w_, h_; T.GetDimensions(w_, h_); const int2 p_ = (P); if (p_.x < int(w_) && p_.y < int(h_)) T[p_] = (V); }
+// XeGTAO_DepthMIPFilter (default constants)
+float XeMipFilter(float d0, float d1, float d2, float d3) {
+  const float max_depth = max(max(d0, d1), max(d2, d3));
+  const float effect_radius = 0.75 * XE_RADIUS * XE_RADIUS_MULTIPLIER;
+  const float falloff_range = XE_FALLOFF_RANGE * effect_radius;
+  const float falloff_from = effect_radius * (1.0 - XE_FALLOFF_RANGE);
+  const float falloff_mul = -1.0 / falloff_range;
+  const float falloff_add = falloff_from / falloff_range + 1.0;
+  const float w0 = saturate((max_depth - d0) * falloff_mul + falloff_add);
+  const float w1 = saturate((max_depth - d1) * falloff_mul + falloff_add);
+  const float w2 = saturate((max_depth - d2) * falloff_mul + falloff_add);
+  const float w3 = saturate((max_depth - d3) * falloff_mul + falloff_add);
+  return (w0 * d0 + w1 * d1 + w2 * d2 + w3 * d3) / (w0 + w1 + w2 + w3);
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 dtid : SV_DispatchThreadID, uint3 gtid : SV_GroupThreadID) {
+  const int2 base = int2(dtid.xy);
+  const int2 pc = base * 2;
+  const float d0 = XeRaw(pc), d1 = XeRaw(pc + int2(1, 0)), d2 = XeRaw(pc + int2(0, 1)), d3 = XeRaw(pc + int2(1, 1));
+  XE_STORE(xe_out0, pc, d0);
+  XE_STORE(xe_out0, pc + int2(1, 0), d1);
+  XE_STORE(xe_out0, pc + int2(0, 1), d2);
+  XE_STORE(xe_out0, pc + int2(1, 1), d3);
+  const float dm1 = XeMipFilter(d0, d1, d2, d3);
+  XE_STORE(xe_out1, base, dm1);
+  xe_scratch[gtid.x][gtid.y] = dm1;
+  GroupMemoryBarrierWithGroupSync();
+  if (all((gtid.xy % 2u) == 0u)) {
+    const float dm2 = XeMipFilter(xe_scratch[gtid.x][gtid.y], xe_scratch[gtid.x + 1][gtid.y],
+                                  xe_scratch[gtid.x][gtid.y + 1], xe_scratch[gtid.x + 1][gtid.y + 1]);
+    XE_STORE(xe_out2, base / 2, dm2);
+    xe_scratch[gtid.x][gtid.y] = dm2;
+  }
+  GroupMemoryBarrierWithGroupSync();
+  if (all((gtid.xy % 4u) == 0u)) {
+    const float dm3 = XeMipFilter(xe_scratch[gtid.x][gtid.y], xe_scratch[gtid.x + 2][gtid.y],
+                                  xe_scratch[gtid.x][gtid.y + 2], xe_scratch[gtid.x + 2][gtid.y + 2]);
+    XE_STORE(xe_out3, base / 4, dm3);
+    xe_scratch[gtid.x][gtid.y] = dm3;
+  }
+  GroupMemoryBarrierWithGroupSync();
+  if (all((gtid.xy % 8u) == 0u)) {
+    const float dm4 = XeMipFilter(xe_scratch[gtid.x][gtid.y], xe_scratch[gtid.x + 4][gtid.y],
+                                  xe_scratch[gtid.x][gtid.y + 4], xe_scratch[gtid.x + 4][gtid.y + 4]);
+    XE_STORE(xe_out4, base / 8, dm4);
+  }
+}
+)";
+
 // Main pass (XeGTAO_MainPass + CSGTAO*): XE_SLICES / XE_STEPS are #defined per quality preset in front of this.
 // t0 = the view-depth pyramid; u0 = the working AO term (visibility / XE_OCCLUSION_TERM_SCALE), u1 = packed edges.
 // Dispatch (width + 7) / 8 x (height + 7) / 8.

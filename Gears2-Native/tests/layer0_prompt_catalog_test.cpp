@@ -83,7 +83,7 @@ TEST_CASE("Prompt atlas catalog recognizes all known HUD, Font, and Chainsaw Due
   CHECK(prompt::GetAtlasLayout(0ULL) == nullptr);
   CHECK(prompt::GetAtlasLayout(0xdeadbeefcafebabeULL) == nullptr);
 
-  CHECK(prompt::GetAllAtlasLayouts().size() == 9);
+  CHECK(prompt::GetAllAtlasLayouts().size() == 11);  // GitHub #214: + Gears 1's font and HUD sheets
 }
 
 TEST_CASE("Every cell in every prompt atlas layout has valid coordinates and metadata", "[layer0][prompt][catalog]") {

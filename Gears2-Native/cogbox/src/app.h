@@ -16,7 +16,7 @@
 #include "gears_settings.h"
 #include "util.h"
 
-#define COGBOX_VERSION "0.4.5"
+#define COGBOX_VERSION "0.4.6"
 #define COGBOX_NAME "COGBox"
 
 namespace gs = cogbox::gears;
@@ -43,6 +43,7 @@ struct Running {
     int game = -1;
     int64_t started = 0;
     std::string logDir;
+    std::string exe;        // GitHub #194: the port program started (play_poll's missing-DLL check)
     bool prepare = false;   // job 641: a "Prepare all shaders" run (the game builds the pack, then exits)
 };
 
@@ -97,9 +98,11 @@ struct App {
     bool hasAvx2 = true;
     bool padConnected = false;
     bool lastPad = true;              // 0.2.0: the last input came from a controller (hints follow it), else keyboard / mouse
+    bool tuMismatchOk[G_COUNT] = {};  // TU preflight: "Play anyway" chosen for this game (until the launcher closes)
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
     bool borderless = false;          // job 523: no title bar (COGBox draws its own minimise / maximise / close)
     bool fullscreen = false;          // job 523: COGBox fills the screen (F11, or LT + RT together)
+    bool tuTold[G_COUNT] = {};            // 0.4.6: "Title update needed" said for this game this session (front.cpp, install.cpp)
     uint64_t raiseUntil = 0;
     unsigned long raisePid = 0;       // the game that just closed (play_poll)          // to-do 20: keep bringing the launcher to the front until then (SDL ticks, ms)
     bool playWasMax = false;          // job 526: the window as it was when Play was pressed, put back afterwards
@@ -129,11 +132,17 @@ void backdrop_draw(App &a, ImDrawList *dl, ImVec2 size, int g, float alpha);
 // Shagg 1 Nov: the games in the library carousel (added ones only, release order) and a game's place in it (-1: not there)
 std::vector<int> library_games(const App &a);
 int library_slot(const App &a, int g);
-void add_game_ask(App &a);           // the "Add a game" question: which game (or let COGBox tell), then a file or a folder
 void art_download_start();
 int art_download_poll();
 // page.cpp
 void page_draw(App &a, ImVec2 size);
+// achievements_tab.cpp (achievements part 4): the ACHIEVEMENTS tab below its option rows (the rows' label / control
+// widths and right edge, as page.cpp lays them out); read again after a game closed; the front button's "open on All";
+// the reveal question answered (ask tag "achreveal", 1 = yes).
+void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1);
+void achievements_tab_reload();
+void achievements_tab_open_all();
+void achievements_reveal_answer(App &a, int answer);
 void env_refresh(App &a, int g);
 bool settings_save(App &a);
 std::vector<std::string> monitor_choices();   // page.cpp: "Default (main screen)", then each screen

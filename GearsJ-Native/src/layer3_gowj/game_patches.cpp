@@ -65,6 +65,25 @@ uint64_t QpcFrequency() {
 // 16x anisotropic filtering through the game's own setting: [SystemSettings] MaxAnisotropy=4 -> 16 (the engine reads
 // it at 0x8299B564 `lwz r5,0x34C(r30)`, the site of Canary's register patch by boma, which we don't use).
 REXCVAR_DEFINE_BOOL(gowj_aniso16, false, "Judgment", "16x anisotropic filtering (the game's own MaxAnisotropy setting, 4 -> 16)");
+// Film grain off (gowj_manifest.toml: Xenia Canary's TU4 "Disable Film Grain" by boma, as the blended amount 0).
+REXCVAR_DEFINE_BOOL(gowj_no_film_grain, false, "Judgment", "No film grain (Canary's TU4 patch by boma: the frame's film-grain amount 0)");
+static std::atomic<bool> g_no_film_grain{false};
+void GowjInstallFilmGrainSwitch(rex::Runtime* runtime) {
+  if (!REXCVAR_GET(gowj_no_film_grain) || !runtime) return;
+  const uint8_t* m = runtime->virtual_membase();
+  if (!m) return;
+  const uint8_t* p = m + 0x8243CF68u;
+  const uint32_t w = (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
+  if (w != 0xD01F013Cu) {   // stfs f0,316(r31)
+    REXLOG_WARN("gowj_no_film_grain: the code at 0x8243CF68 is not TU4's ({:08X}) - left alone", w);
+    return;
+  }
+  g_no_film_grain.store(true);
+  REXLOG_INFO("gowj_no_film_grain: on");
+}
+void GowjNoFilmGrain(PPCRegister& f0) {   // before `stfs f0,316(r31)` at 0x8243CF68
+  if (g_no_film_grain.load(std::memory_order_relaxed)) f0.f64 = 0.0;
+}
 
 // ---- Frame rate and the engine tick ---------------------------------------------------------------------------------
 // GetMaxTickRate 0x8255E210 (shape as Gears 3's 0x8253D9A0): f1 = 0.0 (no limit); with frame-rate smoothing on (flag read at 0x8255E210, bSmoothFrameRate=TRUE
@@ -156,9 +175,14 @@ REXCVAR_DEFINE_INT32(gowj_loading_fps, 30, "Judgment",
                      "loading screen can stay up for ever (the end of Monroe Commons at 162 fps)");
 REXCVAR_DEFINE_INT32(gowj_loading_max_s, 90, "Judgment",
                      "GitHub #77: a loading-screen cap ends after this many seconds whatever the loading signals say (0 = never)");
-REXCVAR_DEFINE_INT32(gowj_loading_stream_s, 20, "Judgment",
+REXCVAR_DEFINE_INT32(gowj_loading_stream_s, 8, "Judgment",
                      "GitHub #77: streamed level packages (.xxx that are not *_P.xxx) keep the cap on for at most this many "
                      "seconds after the last level package / loading movie");
+
+REXCVAR_DEFINE_INT32(gowj_loading_tail_s, 3, "Judgment",
+                     "0.4.6 (Shagg 5 Nov: the 30 fps after a loading screen / cutscene lasted too long): seconds the "
+                     "loading cap stays on after the last level package / loading movie (was 6), and the cap's minimum "
+                     "length is this + 2 (was 10)");
 
 namespace {
 using LoadClock = std::chrono::steady_clock;
@@ -255,6 +279,7 @@ void ReleaseLoadingClamp(int64_t start, const char* why, std::chrono::steady_clo
       g_load_names.clear();
       g_load_reopens = 0;
     }
+    XenosNoteLoadEnded();  // --gow2_after_load_log_s (off by default)
     REXLOG_INFO("gowj_loading_fps: cap off - {} after {:.1f} s, the player's own limit again ({} level package(s), {} "
                 "re-read(s) ignored)", why, std::chrono::duration<double>(since_start).count(), levels, reopens);
   }
@@ -287,8 +312,9 @@ bool LoadingClampActive() {
   if (!on) {  // no hook: the file-open window, streamed packages capped at gowj_loading_stream_s past the last trigger
     const auto since_pkg = now - LoadClock::duration(g_load_last_pkg.load());
     const auto since_trigger = now - LoadClock::duration(g_load_last_trigger.load());
-    const bool streaming = since_pkg < seconds(6) && since_trigger < seconds(std::max(6, REXCVAR_GET(gowj_loading_stream_s)));
-    on = since_start < seconds(10) || since_trigger < seconds(6) || streaming;
+    const int32_t tail = std::clamp(REXCVAR_GET(gowj_loading_tail_s), 1, 10);  // 0.4.6: was a fixed 6 s (minimum 10 s)
+    const bool streaming = since_pkg < seconds(tail) && since_trigger < seconds(std::max(tail, REXCVAR_GET(gowj_loading_stream_s)));
+    on = since_start < seconds(tail + 2) || since_trigger < seconds(tail) || streaming;
   }
   if (!on) {
     ReleaseLoadingClamp(start, "loading screen over", since_start);
@@ -408,6 +434,13 @@ REXCVAR_DEFINE_BOOL(gowj_mute_unfocused, false, "Judgment",
 // loading movie and every cutscene stay (bForceNoMovies would drop those too). Layer 2's key-=value removes one entry.
 REXCVAR_DEFINE_BOOL(gowj_skip_logos, false, "Judgment",
                     "Skip the intro logo movie at start-up (the loading movie and cutscenes still play)");
+REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
+                    "TEST ONLY (scripted test runs): no full-screen movies - the engine's own [FullScreenMovie] "
+                    "bForceNoMovies, so the logos, the loading movie and every pre-rendered (.bik) cutscene are passed as "
+                    "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
+                    "play. Not for players: loading screens go black. With it on, the loading movie no longer starts the "
+                    "loading-screen frame cap (--gowj_loading_fps) or --gow2_after_load_log_s - only a level package "
+                    "(*_P.xxx) does, so they may start late or not at all: don't measure loading with it");
 static std::string GowjLevelSelectEdits() {
   struct Entry { const char* map; const char* name; };
   static constexpr Entry kMaps[] = {
@@ -433,6 +466,7 @@ void GowjAddBuiltInIniEdits() {
   GowjInstallLoadingClamp();  // GitHub #38 (runs once, at start-up, before the game opens any file)
   std::string add;
   if (REXCVAR_GET(gowj_level_select)) add += GowjLevelSelectEdits();
+  if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xbox360-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;";
   if (REXCVAR_GET(gowj_skip_logos)) add += "Xbox360-GearEngine.ini|FullScreenMovie|StartupMovies-=Open_Logos;";
   if (REXCVAR_GET(gowj_aniso16)) add += "Xbox360-GearEngine.ini|SystemSettings|MaxAnisotropy=16;";
   if (const int32_t mb = REXCVAR_GET(gowj_texture_pool_mb); mb > 0 && mb <= 400)

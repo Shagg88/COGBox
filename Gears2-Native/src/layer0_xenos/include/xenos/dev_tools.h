@@ -7,7 +7,7 @@
 namespace rex { class Runtime; }
 namespace rex::system { class XThread; }
 namespace rex::graphics { class DrawObserver; class RegisterFile; struct ObservedIndexBuffer; }
-namespace rex::ui { class ImGuiDrawer; class Window; }
+namespace rex::ui { class ImGuiDrawer; class ImmediateDrawer; class Window; }
 
 // Crash report (unwound stack + minidump) for unhandled host exceptions; --gow2_crash_dir.
 void XenosInstallCrashHandler();
@@ -48,6 +48,12 @@ void XenosInstallDrawStatsIfRequested();
 void XenosRegisterDrawObserver(rex::graphics::DrawObserver* observer);
 // Shagg 3 Nov: save the next finished frame to Pictures\COGBox\<game> (the backslash key; frame_capture.cpp).
 void XenosRequestScreenshot();
+// To-do 8 (--gow2_screenshot_presented): the renderer reads back the image as presented for the screenshot key.
+// SetPresented(true): the screenshot observer no longer takes a frame image; the renderer takes the request (true once
+// per press - it clears it) and hands the pixels (RGB10A2 words) to XenosSaveScreenshot.
+void XenosScreenshotSetPresented(bool on);
+bool XenosTakeScreenshotRequest();
+void XenosSaveScreenshot(const uint8_t* rgb10a2, uint32_t width, uint32_t height, uint32_t row_pitch);
 // --gow2_frame_shots=N and --gow2_frame_dir: save every Nth finished frame as PNG, read back inside the process
 // (SDK patch 3) - no window capture, no focus stealing.
 void XenosInstallFrameCaptureIfRequested();
@@ -83,7 +89,9 @@ void XenosAoDebugSetDenoisePasses(uint32_t passes);
 // Patch 0163: COGBox's in-game menu (ingame_menu.cpp) - Back + Start or F1 opens it; COGBox's settings for this game
 // (--cogbox_menu=<file>), Resume, Restart to apply, Quit game. Install from OnCreateDialogs (with the app's window and
 // runtime), shut down from OnShutdown.
-void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window, rex::Runtime* runtime);
+// Achievements part 3: `immediate` makes the Achievements page's icon textures; F7 opens the menu on that page.
+void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDrawer* immediate, rex::ui::Window* window,
+                            rex::Runtime* runtime);
 void XenosShutdownInGameMenu();
 // PR #134 (Flippage): true while the in-game menu is open - the native mouse look drops mouse motion then.
 bool XenosInGameMenuIsOpen() noexcept;
@@ -122,6 +130,8 @@ void XenosInstallProfilerIfRequested();
 void XenosInstallDrawLogIfRequested();
 // --gow2_resolve_log_frames="1500,2400": log every EDRAM copy/clear of those frames (source, destination, formats).
 void XenosInstallResolveLogIfRequested();
+// GitHub #185: --gow2_resolve_log_small=N logs colour copies up to N x N pixels with the first texel they wrote.
+void XenosInstallSmallResolveLogIfRequested(rex::Runtime* runtime);
 // --gow2_buffer_dump_frame=N (+ --readback_resolve=full): save every resolve of frame N as EXR/PNG.
 void XenosInstallBufferDumpIfRequested(rex::Runtime* runtime);
 // --gow2_shader_dump_dir: write every distinct shader (microcode + the SDK disassembly) once (Stage 3 corpus).
@@ -143,6 +153,8 @@ struct XenosRendererHints {
   uint64_t dummy_point_vs = 0;
 };
 void XenosInstallRendererIfRequested(rex::Runtime* runtime, const XenosRendererHints& hints = {});
+// A game's loading screen has ended (Judgment: its loading cap release) - starts --gow2_after_load_log_s.
+void XenosNoteLoadEnded();
 // --gow2_query_log=N: log every occlusion query of every Nth frame (report addresses, the draws each covers, the
 // emulator's answer read back from guest memory) plus per-frame and per-N-frame counts (Stage 4 reference, notes/46).
 // The hint is D3D library knowledge (layer 1): the end report's offset from the begin report, in bytes (XDK 7645:

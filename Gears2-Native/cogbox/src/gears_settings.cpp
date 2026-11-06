@@ -8,6 +8,7 @@
 #include <locale>
 #include <regex>
 #include <sstream>
+#include <cstring>
 
 namespace cogbox {
 namespace gears {
@@ -155,7 +156,7 @@ std::vector<Option> make_options(Game g) {
     // Shagg 29 Oct 14:06: one display mode box (windowed / borderless / exclusive). The id stays "Fullscreen" so saved
     // settings keep working: 0 and 1 mean what they did; the old "Exclusive" box becomes 2 (Store::view).
     add(choice("Fullscreen", "Display mode", Tab::Display, PG,
-               { "Windowed", "Borderless fullscreen", "Exclusive fullscreen" }, 0,
+               { "Windowed", "Borderless fullscreen", "Exclusive fullscreen" }, 1,   // Shagg 11-06: borderless by default
                "Windowed: a normal window (set its size below). Borderless fullscreen: a window without borders that covers "
                "the whole screen (quick alt-tab). Exclusive fullscreen: real fullscreen mode (lower latency on some PCs; "
                "alt-tab is slower; on Steam Deck / Linux this is borderless).", 330));
@@ -165,28 +166,45 @@ std::vector<Option> make_options(Game g) {
     // Monitor: no PS1 tooltip (59-how-to-play: "Which monitor fullscreen uses"). Entries 1..N: monitor_label().
     add(choice("Monitor", "Monitor", Tab::Display, SH, { "Default (main screen)" }, 0,
                "Which screen the game uses. Default = the main screen.", 334), "", "screens>=2");
-    add(make("HDR", "HDR", Tab::Display, Kind::Bool, PG, 0, "Needs HDR turned on in Windows display settings.", 363));
+    add(make("HDR", "HDR (experimental)", Tab::Display, Kind::Bool, PG, 0,
+             "Experimental in all four games - colours and brightness are not checked yet. Needs HDR turned on in Windows "
+             "display settings.", 363));   // 0.4.6 (Shagg 4 Nov): HDR experimental
     add(number("PaperWhite", "HDR paper white (nits)", Tab::Display, Kind::Int, PG, 80, 400, 10, 203,
                "How bright normal scenes are. 203 is the reference; raise it in a bright room.", 364), "", "HDR");
     add(number("Peak", "HDR peak (nits)", Tab::Display, Kind::Int, PG, 400, 4000, 100, 1000,
                "Your screen's peak brightness (see its specs or Windows HDR calibration).", 365), "", "HDR");
     add(make("Vsync", "Vsync (no tearing)", Tab::Display, Kind::Bool, SH, 0,
              "Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen "
-             "follows the game below its refresh rate. The frame rate is capped a little under your screen's refresh rate (half "
-             "of it with frame generation), which keeps the extra input lag small. Off = frames are shown at once (lowest lag, "
-             "may tear).", 344), "vsync");
+             "follows the game below its refresh rate. A frame-rate limit above your screen's refresh rate is lowered to the "
+             "refresh rate (half of it with frame generation). Off = frames are shown at once (lowest lag, may tear).", 344), "vsync");
     // Frame rate limit: no PS1 tooltip; text from 59-how-to-play ("The game itself asks for 30 fps").
     add(choice("FrameCap", "Frame rate limit", Tab::Display, PG,
                { "30 (original)", "45", "60", "90", "120", "144", "165", "Unlimited" }, 0,
                "The game itself asks for 30 frames per second, as on the console. 60 / 120 lift the limit to that; Unlimited "
-               "removes it. With V-Sync on, the limit stays just under your monitor's refresh rate.", 341), "framecap", "", true);
+               "removes it. With V-Sync on, a limit above your monitor's refresh rate is lowered to the refresh rate. The quality "
+               "presets leave it as it is.", 341), "framecap", "", false);   // 0.4.6: not part of the presets
     add(choice("FpsMode", "FPS counter", Tab::Display, OWN, { "Off", "Bar at the top", "Bar at the bottom", "Game's own (column)" }, 0,
                "Bar: one line (FPS, frame time, slowest frame) drawn by the port itself, nothing in the game changed. Game's own: "
                "the game's built-in FPS / frame-time column.", 336));
-    // GitHub #121: the port's own notes over the game (shader building / loading, achievement pop-ups) off.
+    // GitHub #121: the port's own notes over the game (shader building / loading) off. Achievement popups have their own
+    // setting below (achievements part 2).
     add(make("HideNotes", "Hide on-screen notes", Tab::Display, Kind::Bool, OWN, 0,
-             "Draws nothing of the port's over the game: no shader-building note, no shader-loading indicator and no "
-             "achievement pop-ups (achievements still unlock). The FPS counter above is separate.", 0));
+             "Draws none of the port's notes over the game: no shader-building note and no shader-loading indicator. "
+             "The FPS counter above and achievement popups are separate.", 0));
+    // Achievements part 2: one value for every game ([General]). Part 4: on the ACHIEVEMENTS tab.
+    add(choice("AchievementStyle", "Popup style", Tab::Achievements, SH, { "Xbox 360", "Xbox", "PlayStation" }, 0,
+               "The look of the popup when an achievement unlocks. PlayStation shows a trophy grade worked out from the "
+               "gamerpoints; the gamerpoints are always recorded.", 0), "achpopups");
+    add(choice("AchievementColour", "Popup colour (Xbox style)", Tab::Achievements, SH,
+               { "Dark", "Red", "Green", "Blue", "Purple", "Orange", "Pink", "Teal", "Grey", "Gold" }, 0,
+               "The Xbox style popup's colour.", 0), "achpopups");
+    add(choice("AchievementPosition", "Popup position", Tab::Achievements, SH,
+               { "Default", "Top left", "Top centre", "Top right", "Bottom left", "Bottom centre", "Bottom right" }, 0,
+               "Where the popup shows. Default: bottom centre (Xbox 360, Xbox), top right (PlayStation).", 0), "achpopups");
+    add(make("AchievementSound", "Popup sound", Tab::Achievements, Kind::Bool, SH, 1,
+             "Plays assets\\sounds\\achievement.wav with each popup (replace the file to change the sound).", 0), "achpopups");
+    add(make("HideAchievementPopups", "Hide achievement popups", Tab::Achievements, Kind::Bool, SH, 0,
+             "No popup and no sound when an achievement unlocks. Achievements still unlock and are saved.", 0), "achpopups");
     // GitHub #52 (Gears 3 native mouse look; Gears 2 too since sweep 21)
     // GitHub #125 (SDK patch 60): the Walk key (KEYBOARD KEYS, below) is held or pressed once to switch walking on / off
     add(choice("WalkMode", "Walk key", Tab::Controls, PG, { "Hold to walk", "Press to switch walking on / off" }, 0,
@@ -239,7 +257,7 @@ std::vector<Option> make_options(Game g) {
                "With the 1080p render resolution: sharpen the upscaled picture. Automatic = on, except on Steam Deck / "
                "Linux (Wine / Proton), where it can make text and some textures look wrong.", 0));
     add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (highly experimental)", "DLSS (NVIDIA RTX, highly experimental)", "XeSS (highly experimental)",
-                 "SMAA T2x (temporal)" }, 0,
+                 "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX12 GPU. DLSS: the same on "
                "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.\nSMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now.", 346), "", "", true);
     add(choice("SceneMode", "Scene resolution", Tab::Graphics, SH,
@@ -262,6 +280,10 @@ std::vector<Option> make_options(Game g) {
     // 2006 engine doesn't have are in its list too, greyed with the reason (0.3.0 left them out).
     add(make("MipFade", "Sharp textures show at once (fast mip fade)", Tab::Graphics, Kind::Bool, PG, 1,
              "A newly loaded sharper texture shows at once instead of fading in over 0.3-2 seconds.", 359), "mipfade", "", true);
+    // GitHub #105: Gears 3's depth of field (its half-size 640-pitch targets) at the render scale, not the console's 720p
+    add(make("DofScale", "Depth of field at the render resolution", Tab::Graphics, Kind::Bool, PG, 0,
+             "Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render "
+             "resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p.", 0), "dofscale");
     add(choice("Pool", "Texture memory", Tab::Graphics, PG,
                { "Game's own (smallest)", "Standard (196 MB / Gears 3 200 MB)", "Large (256 MB)", "Larger (320 MB, not long-tested)" }, 1,
                "The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory "
@@ -274,10 +296,18 @@ std::vector<Option> make_options(Game g) {
                "Keeps characters' and weapons' detailed models (hair, faces, armour) at a greater distance, for high "
                "resolutions. Costs some GPU time in crowded scenes. Original = the game's own.", 0), "inifx");
     // Motion blur: no PS1 tooltip.
+    // GitHub #179: Gears 1 through Canary's TU5 patches (illusion, boma) - gow1_no_motion_blur / gow1_no_gaussian_blur
     add(make("MotionBlur", "Motion blur", Tab::Graphics, Kind::Bool, PG, 1, "The blur of fast movement (the game's own setting).", 370),
-        "inifx", "", true);
+        "blurfx", "", true);
     add(make("DoF", "Depth of field", Tab::Graphics, Kind::Bool, PG, 1,
-             "The blur of distant / out-of-focus areas (cutscenes, aiming).", 371), "inifx", "", true);
+             "The blur of distant / out-of-focus areas (cutscenes, aiming).", 371), "doffx", "", true);
+    // Canary game-patches (boma): Bloom off is the same GSystemSettings field the patch zeroes (G2 TU6 +56, G3 TU6 /
+    // Judgment TU4 +72 - next to MotionBlur / DepthOfField, which the [SystemSettings] edits already set), so it goes
+    // through the game's own [SystemSettings] Bloom. Film grain: Judgment's post-process amount (gowj_no_film_grain).
+    add(make("Bloom", "Bloom", Tab::Graphics, Kind::Bool, PG, 1,
+             "The glow around bright lights and surfaces (the game's own setting). Off: no glow.", 0), "bloom");
+    add(make("FilmGrain", "Film grain", Tab::Graphics, Kind::Bool, PG, 1,
+             "Judgment's film grain noise over the picture. Off: a clean picture.", 0), "filmgrain");
     // GitHub #102 (Shagg): no Lens flares option any more - the launcher decides per game at launch (below): on where the
     // game's occlusion queries are answered (Real occlusion, DirectX 12, not under Wine / Proton), off where they can't
     // be, since every flare would show through the scenery there.
@@ -365,12 +395,16 @@ std::vector<Option> make_options(Game g) {
     // runtime behaves exactly as before ("No Network Connection").
     add(make("SystemLink", "System Link - LAN play (experimental)", Tab::Gameplay, Kind::Bool, PG, 0,
              "Experimental - lets the game's System Link find and join games on other PCs on your network (or on a LAN VPN "
-             "such as Radmin VPN, ZeroTier or Hamachi; not internet VPNs like NordVPN). Title Update versions only. Gears 2 "
-             "co-op worked in testing; its other modes and the other games are untested. Voice chat is not supported yet. Windows may ask about the firewall: "
+             "such as Radmin VPN, ZeroTier or Hamachi; not internet VPNs like NordVPN). Title Update versions only. Gears of War "
+             "and Gears 2 co-op worked in testing; other modes and the other games are less tested. Voice chat is not supported yet. Windows may ask about the firewall: "
              "allow Private networks.", 325), "syslink");
     add(make("SkipLogos", "Skip the intro logos", Tab::Gameplay, Kind::Bool, PG, 0,
              "Starts at the title screen without the publisher / studio logo films. The loading film and cutscenes still play.", 326),
         "skiplogos");
+    // GitHub #174 (Flippage's Gears 3 recomp, 26d6448): the difficulty screen sees Insane unlocked; the profile is untouched
+    add(make("UnlockInsane", "Unlock Insane from the start", Tab::Gameplay, Kind::Bool, OWN, 0,
+             "Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed.", 0),
+        "unlockinsane");
     add(make("Cheats", "Cheats (hotkeys F5-F11)", Tab::Gameplay, Kind::Bool, SH, 0,
              "The developers' cheat keys (Gears 3 chat, its notes/25): F5-F11 in game. Achievements and saves are your own "
              "business.", 327), "cheats");
@@ -469,6 +503,7 @@ const char* tab_name(Tab t) {
     case Tab::Graphics: return "Graphics";
     case Tab::Controls: return "Controls";
     case Tab::Gameplay: return "Gameplay";
+    case Tab::Achievements: return "Achievements";   // achievements part 4
     }
     return "?";
 }
@@ -485,6 +520,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "start" || f == "prebuild") {
         if ((g == Game::Judgment || g == Game::Gears1) && start_names(g).size() < 2)
             return no(not_yet(gi, f == "start" ? "its chapter list is coming" : "needs its chapter list"));
+    } else if (f == "achpopups") {   // achievements part 2: the text is in cogbox_ach_style's description
+        if (!cap_exe(env, "COGBox achievement popups")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "gamefps") {
         if (g == Game::Judgment || g == Game::Gears1) return no(not_yet(gi, "game's own counter"));
     } else if (f == "ultrawide") {   // 0.2.0: Judgment too (--gowj_ultrawide, a new build); Gears 1 when gow1.exe has it
@@ -499,6 +536,14 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_exe(env, "ue3_exec")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "levelsel") {
         if (g != Game::Judgment) return no(not_yet(gi));
+    } else if (f == "bloom") {   // Canary: Gears 2 / 3 / Judgment; Gears 1's bloom shares its blur (DoF option there)
+        if (g == Game::Gears1) return no("Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it.");
+    } else if (f == "filmgrain") {
+        if (g != Game::Judgment) return no("Judgment only.");
+        if (!cap_exe(env, "gowj_no_film_grain")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "blurfx" || f == "doffx") {   // GitHub #179: Gears 1 by Canary's TU5 patches, the others by ini
+        if (g == Game::Gears1 && !cap_exe(env, f == "blurfx" ? "gow1_no_motion_blur" : "gow1_no_gaussian_blur"))
+            return no(not_yet(gi, "needs its next build"));
     } else if (f == "inifx") {   // motion blur, depth of field, lens flares: [SystemSettings] switches
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no setting for this.");
     } else if (f == "drawdist") {
@@ -509,6 +554,12 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "skiplogos" || f == "trilinear") {
         if (g == Game::Gears2 && !env.g2_disc_ini_edits) return no(not_yet(0, "needs the next Gears 2 build"));
         if (g == Game::Gears1 && !cap_exe(env, f == "skiplogos" ? "gow1_skip_logos" : "gow1_trilinear")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "unlockinsane") {   // GitHub #174: Gears 3 (disc and Title Update 6) so far
+        if (g != Game::Gears3) return no(not_yet(gi, "its difficulty check isn't found yet"));
+        if (!cap_exe(env, "Unlock Insane difficulty from the start")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "dofscale") {   // GitHub #105
+        if (g != Game::Gears3) return no("Gears 3 only.");
+        if (!cap_exe(env, "GitHub #105: surface pitches")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "mipfade") {
         if (g == Game::Gears2) return no(not_yet(0, "its config has no mip-fade setting"));
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no mip-fade setting - its sharper textures already show at once.");
@@ -541,7 +592,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "ao") {   // notes/80: Gears 2 and Gears 3 (s.9); notes/81: Judgment, with the fog anchor its exe sets
         if (g != Game::Gears2 && g != Game::Gears3 && g != Game::Judgment) return no(not_yet(gi, "Gears 2 and 3 first"));
-        if (!cap_exe(env, g == Game::Judgment ? "gow2_ao_skip_ps" : "gow2_ao_quality")) return no(not_yet(gi, "needs its next build"));
+        // job 1272d: the short cvar name is not in gowj.exe as plain text - its description is
+        if (!cap_exe(env, g == Game::Judgment ? "AO passes that the chain detection does not" : "gow2_ao_quality")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "realocclusion") {   // PR #43: Gears 3 and Judgment; GitHub #75: Gears 2 too
         // an older Gears 2 exe without strict queries would only warn - keep the box greyed out for it
         if (g == Game::Gears2 && !cap_exe(env, "gow2_renderer_queries")) return no(not_yet(0, "needs its next build"));
@@ -555,7 +607,7 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     return Availability();
 }
 
-const std::vector<KeyAction> &key_actions()
+const std::vector<KeyAction> &key_actions(Game g)
 {
     // The Gears layout COGBox has always sent (PS1 930-937), now one row each so the player can change them.
     static const std::vector<KeyAction> v = {
@@ -577,6 +629,17 @@ const std::vector<KeyAction> &key_actions()
         { "keybind_back", "Back", "Back / scores", "Backspace" },
         { "keybind_walk", "-", "Walk", "None" },   // SDK patch 60: no key until chosen
     };
+    // GitHub #208: Judgment's LB is the grenade and D-pad down the tactical display - the same keys (Tab, 4) keep
+    // their meaning, so the two rows swap names and default keys
+    static const std::vector<KeyAction> judgment = [] {
+        std::vector<KeyAction> j = v;
+        for (KeyAction &k : j) {
+            if (!strcmp(k.cvar, "keybind_left_shoulder")) { k.what = "Grenades"; k.def = "4"; }
+            else if (!strcmp(k.cvar, "keybind_dpad_down")) { k.what = "Tactical display"; k.def = "Tab"; }
+        }
+        return j;
+    }();
+    if (g == Game::Judgment) return judgment;
     return v;
 }
 
@@ -617,6 +680,8 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         base += "\nCACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer.";
     if (o.id == "AO" && g == Game::Judgment)   // notes/81
         base += "\nJudgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS.";
+    if (o.id == "DoF" && g == Game::Gears1)   // GitHub #179
+        base += "\nGears 1: off turns off the game's blur pass, which the bloom uses too - the glow is softer.";
     if (o.id == "AO" && g == Game::Gears3)   // notes/80 s.9
         base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it.";
     if (o.id == "AAMode") {   // PS1 345
@@ -659,7 +724,8 @@ void apply_preset(Settings& s, int p) {
     };
     const P& x = v[p];
     s.set("Preset", p);
-    s.set("Resolution", x.res); s.set("FrameCap", x.fps); s.set("AAMode", x.aa); s.set("Aniso", x.aniso);
+    // 0.4.6 (Shagg 4 Nov): the frame-rate limit (x.fps) is its own setting - the presets leave it alone
+    s.set("Resolution", x.res); s.set("AAMode", x.aa); s.set("Aniso", x.aniso);
     s.set("Trilinear", x.tri); s.set("MipFade", x.mip); s.set("Pool", x.pool); s.set("DrawDist", x.draw);
     s.set("MotionBlur", x.blur); s.set("DoF", x.dof); s.set("Shake", x.shake); s.set("Fov", x.fov);
 }
@@ -702,7 +768,9 @@ void Store::reset() {
     for (int g = 0; g < kGameCount; ++g)
         for (const Option& o : options(static_cast<Game>(g))) if (o.scope == Scope::GameOwn) own[g][o.id] = o.def;
     // PS1 104-105 / 154 / 157-158: AAMode and the FPS counters start at -1 and are worked out from the older boxes.
-    top["AAMode"] = -1; top["AA"] = 0; top["ShowFps"] = 0; top["G3ShowFps"] = 0;
+    // Shagg 11-06 (GitHub #212: jagged shadow edges at 2x with anti-aliasing off): SMAA by default. AAMode still starts at
+    // -1 so a saved settings file that only has the old AA box keeps its choice (migrate); a new install gets AA = 1 -> SMAA.
+    top["AAMode"] = -1; top["AA"] = 1; top["ShowFps"] = 0; top["G3ShowFps"] = 0;
     own[0]["FpsMode"] = -1; own[1]["FpsMode"] = -1;
     migrate();
 }
@@ -921,6 +989,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PS1 843-849: Gears 3's threshold, memexport, aspect
     if (isG3) {
         if (scale > 1) a.push_back("--gow2_renderer_resolution_scale_threshold=1120");
+        if (on("UnlockInsane")) a.push_back("--gow3_unlock_insane=true");   // GitHub #174
+        // GitHub #105: the depth-of-field chain's half-size targets (pitch 640) follow the scale despite the threshold
+        if (scale > 1 && avail("DofScale") && on("DofScale")) a.push_back("--gow2_renderer_resolution_scale_pitches=640");
         a.push_back("--gow2_renderer_memexport=true");
         if (s.i("Resolution") >= 4 && !s.b("Ultrawide")) {
             if (cap_exe(env, "gow3_aspect")) a.push_back("--gow3_aspect=auto");
@@ -979,6 +1050,20 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             notes.push_back(std::string("launcher: ") + k_aaNames[aa] + " with Scene resolution Native runs as " + aaOnly[aa] +
                             " - anti-aliasing only, no extra frames; pick a lower Scene resolution for more frames (GitHub #98)");
         }
+        // GitHub #98 (Gears 1 "DLSS" runs were DLAA): the scene scale is a whole number of times smaller than the render
+        // resolution only for Performance at 2x / 4x and Quality / Ultra performance at 3x; any other pairing (and every
+        // 720p or "1080p" render resolution, both drawn at 1x) runs as native anti-aliasing. Say so before launch. Fixed
+        // scales only - "Match my monitor" picks its scale in the game (its log names the result).
+        if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4 && s.i("Resolution") + 1 != 5) {
+            const int out = scale;
+            const bool fits = (m == 2 && (out == 2 || out == 4)) || ((m == 1 || m == 3) && out == 3);
+            if (!fits) {
+                static const char* const mname[4] = { "", "Quality", "Performance", "Ultra performance" };
+                notes.push_back(std::string("launcher: Scene resolution ") + mname[m] + " has no whole-number scene size at render "
+                                "resolution " + std::to_string(out) + "x - the scene stays at full size and " + k_aaNames[aa] +
+                                " only anti-aliases (Performance needs 2x or 4x; Quality and Ultra performance need 3x) (GitHub #98)");
+            }
+        }
     }
     // PS1 857 (0146 / 0147): frame generation
     const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0 && !env.wine;   // job 521: DirectX 12 only
@@ -992,7 +1077,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // Notes/80: XeGTAO (2 high, 3 ultra); notes/81: CACAO (4); 0 Off goes through the game's own [SystemSettings] below,
     // 1 changes nothing
     if (avail("AO") && s.i("AO") >= 2) {
-        if (s.i("AO") == 4 && !cap_exe(env, "gow2_ao_algo")) {
+        if (s.i("AO") == 4 && !cap_exe(env, "or cacao (FidelityFX CACAO")) {
             notes.push_back("launcher: CACAO is not in this build - the game's own AO");
         } else {
             a.push_back("--gow2_ao=gtao");
@@ -1002,6 +1087,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                 a.push_back("--gow2_ao_cacao_blur=3");
             } else {
                 a.push_back(s.i("AO") == 3 ? "--gow2_ao_quality=ultra" : "--gow2_ao_quality=high");
+                // Shagg's to-do 1(d) (XeGTAO ~5 ms/frame): High denoises twice (medium); Ultra leaves it to the game's
+                // automatic choice (#204: 2 without DLSS / FSR / XeSS, by the scene scale with one)
+                if (s.i("AO") == 2) a.push_back("--gow2_ao_denoise=2");
             }
         }
     }
@@ -1034,8 +1122,15 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     {
         const std::string ei = k_engineIni[gi];
         std::vector<std::string> ini;
-        if (avail("MotionBlur") && !s.b("MotionBlur")) ini.push_back(ei + "|SystemSettings|MotionBlur=False");
-        if (avail("DoF") && !s.b("DoF")) ini.push_back(ei + "|SystemSettings|DepthOfField=False");
+        if (isG1) {   // GitHub #179: no [SystemSettings] in Gears 1 - Canary's patches as switches
+            if (avail("MotionBlur") && !s.b("MotionBlur")) a.push_back("--gow1_no_motion_blur=true");
+            if (avail("DoF") && !s.b("DoF")) a.push_back("--gow1_no_gaussian_blur=true");
+        } else {
+            if (avail("MotionBlur") && !s.b("MotionBlur")) ini.push_back(ei + "|SystemSettings|MotionBlur=False");
+            if (avail("DoF") && !s.b("DoF")) ini.push_back(ei + "|SystemSettings|DepthOfField=False");
+            if (avail("Bloom") && !s.b("Bloom")) ini.push_back(ei + "|SystemSettings|Bloom=False");
+        }
+        if (avail("FilmGrain") && !s.b("FilmGrain")) a.push_back("--gowj_no_film_grain=true");
         // GitHub #102: lens flares are not a player setting. Flares are hidden behind walls only by the game's occlusion
         // queries, which only Real occlusion answers (DirectX 12, not under Wine / Proton); without them every flare shows
         // through the scenery, so they are off for that launch. Gears 1's engine has no lens-flare switch.
@@ -1220,7 +1315,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
     if (avail("SplitLayout") && s.i("SplitLayout") == 1)   // GitHub #136 (avail: Gears 3, 2 players)
-        a.push_back("--ue3_exec=" + q("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL"));
+        // GitHub #208: one run at the front end was undone when a level started - again at every level where the exe can
+        a.push_back((cap_exe(env, "ue3_exec_each_level") ? "--ue3_exec_each_level=" : "--ue3_exec=") +
+                    q("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL"));
     if (on("SystemLink")) a.push_back("--net_system_link=true");
     // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=). Only with a runtime that
     // has SDK patch 54; it keeps 15 letters / digits / spaces. The profile's save folder is not renamed.
@@ -1237,6 +1334,22 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }   // 0.3.5: off = not sent (the runtime's default)
     // GitHub #121: only an exe whose layer 0 has the switch (an older one would refuse the unknown flag)
     if (s.b("HideNotes") && cap_exe(env, "gow2_hide_onscreen_notes")) a.push_back("--gow2_hide_onscreen_notes=true");
+    // Achievements part 2: the popups (only an exe that has them; an older one would refuse the unknown options)
+    if (cap_exe(env, "COGBox achievement popups")) {
+        static const char* const styles[] = { "x360", "xbox", "ps5" };
+        static const char* const colours[] = { "dark", "red", "green", "blue", "purple", "orange", "pink", "teal", "grey", "gold" };
+        static const char* const positions[] = { "default", "top_left", "top_centre", "top_right", "bottom_left",
+                                                 "bottom_centre", "bottom_right" };
+        auto pick = [&](const char* id, const char* const* names, int count) {
+            const int i = s.i(id);
+            return names[i >= 0 && i < count ? i : 0];
+        };
+        a.push_back(std::string("--cogbox_ach_style=") + pick("AchievementStyle", styles, 3));
+        a.push_back(std::string("--cogbox_ach_colour=") + pick("AchievementColour", colours, 10));
+        a.push_back(std::string("--cogbox_ach_position=") + pick("AchievementPosition", positions, 7));
+        a.push_back(std::string("--cogbox_ach_sound=") + (s.b("AchievementSound") ? "true" : "false"));
+        a.push_back(std::string("--cogbox_ach_hide=") + (s.b("HideAchievementPopups") ? "true" : "false"));
+    }
     // PS1 929: FPS counter
     switch (s.i("FpsMode")) {
     case 1: a.push_back("--gow2_fps_bar=top"); break;
@@ -1264,13 +1377,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back(std::string("--pad_look_deadzone=") + (g == Game::Gears2 ? "0.3" : isG3 ? "0" : "0.2"));
         }
         bool defaultKeys = true;
-        for (const KeyAction &k : key_actions()) {   // 0.2.0: the Gears layout, or the player's own keys (Controls tab)
+        for (const KeyAction &k : key_actions(g)) {   // 0.2.0: the Gears layout, or the player's own keys (Controls tab)
             auto it = env.keys.find(k.cvar);
             const std::string v = it != env.keys.end() && !it->second.empty() ? it->second : k.def;
             if (v != k.def) defaultKeys = false;
             if (std::string(k.cvar) == "keybind_walk") {   // GitHub #125: a runtime with SDK patch 60 only
                 if (v != "None" && cap_rt(env, "keybind_walk")) {
                     a.push_back("--keybind_walk=" + v);
+                    // 0.4.6 (Shagg 5 Nov, Gears 3): the runtime's 0.5 was a jog and 0.3 sat inside the game's stick dead
+                    // zone (no movement); 0.4 walks ("works perfectly")
+                    a.push_back("--mnk_walk_scale=0.4");
                     if (s.i("WalkMode") == 1) a.push_back("--mnk_walk_toggle=true");
                 }
                 continue;
@@ -1279,9 +1395,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
         // Job 629 (GitHub #41): keyboard button prompts - our key caps drawn over the game's controller-button sheet.
         // Job 661: drawn by the launcher at 4x for whatever keys are set (keycaps.cpp).
-        // Gears 1: no known prompt sheet yet - no overlays
+        // Gears 1 (GitHub #214): its button font and HUD sheets are in the runtime's prompt catalog now, so the game
+        // switches them to PlayStation / Switch / Steam / key-cap art itself; the launcher's own 4x key caps (below) are
+        // still Gears 2 / 3 / Judgment only (keycaps.cpp has no Gears 1 sheet).
         // GitHub #104 with PR #117's auto button prompts: keep the pad's prompts there too (no switch to key caps).
-        if (!isG1 && s.b("PadPrompts") && cap_exe(env, "gow_button_prompts_keep_pad"))
+        if (s.b("PadPrompts") && cap_exe(env, "gow_button_prompts_keep_pad"))
             a.push_back("--gow_button_prompts_keep_pad=true");
         if (!isG1 && !s.b("PadPrompts") && !env.prompt_dir.empty() && cap_exe(env, "gow2_texture_overlay_dir")) {
             // Job 661 (Shagg 30 Oct: "make those prompts higher resolution"): the launcher draws the key caps itself, 4x the
@@ -1289,7 +1407,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             std::string dir;
             if (g_prompt_composer) {
                 std::map<std::string, std::string> keys;
-                for (const KeyAction &k : key_actions()) {
+                for (const KeyAction &k : key_actions(g)) {
                     auto it = env.keys.find(k.cvar);
                     keys[k.cvar] = it != env.keys.end() && !it->second.empty() ? it->second : k.def;
                 }
@@ -1321,8 +1439,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         for (const std::string &m : env.mods) j += (j.empty() ? "" : ";") + m;
         a.push_back("--ue3_mods=" + q(j));
     }
-    // PS1 940-958 (launcher patches 0155 / 0158): frame rate; with vsync a cap at or above the refresh rate becomes 3
-    // under it (half the refresh minus 2 with frame generation)
+    // PS1 940-958 (launcher patches 0155 / 0158): frame rate. 0.4.6 (Shagg 5 Nov: "FPS cap needs to be 60"): the cap the
+    // player picks is the cap. With vsync, only a cap ABOVE the refresh rate (or Unlimited) is brought down - to the refresh
+    // rate itself (half of it with frame generation), no longer to 3 under it (60 on a 60 Hz screen stays 60; 120 on a
+    // 60 Hz screen becomes 60, not 57).
     {
         // Gears 1: no frame-rate limit until gow1.exe has gow1_max_fps (can() "framecap") - then the game's own rate
         const int fps = avail("FrameCap") ? std::max(0, std::min(k_fpsCapCount - 1, s.i("FrameCap"))) : 0;
@@ -1330,13 +1450,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         const bool vsync = on("Vsync");
         if (vsync && fps >= 1) {
             const int hz = env.refresh_hz;
-            const int top = fgOn ? static_cast<int>(std::floor(hz / 2.0)) - 2 : hz - 3;
-            const int chosen = cap;
-            if (isG3 && cap == 60) cap = 62;   // review 0158: Gears 3's 60 is its own 62 cap
-            // GitHub #106: a cap the player set to the refresh rate itself (60 on a 60 Hz TV) is kept - vsync paces it.
-            // 3 under is for VRR screens; on a fixed-refresh TV it gave a steady 57 fps that judders.
-            const bool atRefresh = !fgOn && chosen > 0 && std::abs(chosen - hz) <= 1;
-            if (hz >= 50 && !atRefresh && (cap < 0 || cap > top)) cap = top;
+            const int top = fgOn ? hz / 2 : hz;
+            // review 0.4.6: 60 on a 59 Hz mode (59.94 Hz TVs) is "at the refresh rate" too (GitHub #106) - kept
+            if (hz >= 50 && (cap < 0 || cap > top + 1)) cap = top;
+            // review 0158: Gears 3's 60 is its own 62 cap - not with frame generation, where 62 doubled is over the refresh
+            if (isG3 && cap == 60 && !fgOn) cap = 62;
             notes.push_back("launcher: vsync on; " + env.monitor_device + " at " + std::to_string(hz) + " Hz (0 = unknown)" +
                             (fgOn ? ", frame generation on" : "") + " -> frame-rate cap " + std::to_string(cap));
         }

@@ -7,6 +7,7 @@
 #include <xenos/ucode.h>
 
 #include <rex/cvar.h>
+#include <rex/filesystem.h>  // path_to_utf8 (F-12)
 #include <rex/logging/macros.h>
 
 #include <algorithm>
@@ -138,7 +139,7 @@ ShaderCache::ShaderCache(gpu::Backend& backend, const ShaderCompilerFactory& fac
   std::error_code ec;
   std::filesystem::create_directories(dir_, ec);
   dir_ok_ = std::filesystem::is_directory(dir_, ec);
-  if (!dir_ok_) REXLOG_WARN("gow2_renderer: shader cache folder {} not usable; compiling in memory only", dir_.string());
+  if (!dir_ok_) REXLOG_WARN("gow2_renderer: shader cache folder {} not usable; compiling in memory only", rex::path_to_utf8(dir_));
   if (factory) sync_compiler_ = factory();
   tag_ = sync_compiler_ ? sync_compiler_->CacheTag(backend_.GetShaderIL()) : std::string("no-compiler");
   if (!sync_compiler_ || !factory) return;
@@ -246,7 +247,7 @@ void ShaderCache::SetPack(bool on) {
     std::memcpy(&version, header + 8, 4);
     if (!in || std::memcmp(header, kPackMagic, 8) != 0 || version != kPackVersion) {
       REXLOG_WARN("gow2_renderer: {} is not a shader pack this build reads; shader pack off (loose files only)",
-                  path.string());
+                  rex::path_to_utf8(path));
       return;
     }
     good = kPackHeaderSize;
@@ -274,7 +275,7 @@ void ShaderCache::SetPack(bool on) {
     std::memcpy(header + 8, &kPackVersion, 4);
     out.write(header, sizeof(header));
     if (!out) {
-      REXLOG_WARN("gow2_renderer: can't create {}; shader pack off (loose files only)", path.string());
+      REXLOG_WARN("gow2_renderer: can't create {}; shader pack off (loose files only)", rex::path_to_utf8(path));
       return;
     }
     good = kPackHeaderSize;
@@ -287,13 +288,13 @@ void ShaderCache::SetPack(bool on) {
   }
   pack_.open(path, std::ios::binary | std::ios::in | std::ios::out);
   if (!pack_) {
-    REXLOG_WARN("gow2_renderer: can't open {}; shader pack off (loose files only)", path.string());
+    REXLOG_WARN("gow2_renderer: can't open {}; shader pack off (loose files only)", rex::path_to_utf8(path));
     pack_index_.clear();
     return;
   }
   pack_end_ = good;
   pack_on_ = true;
-  REXLOG_INFO("gow2_renderer: shader pack {}: {} shaders, {:.1f} MB, indexed in {:.0f} ms", path.string(),
+  REXLOG_INFO("gow2_renderer: shader pack {}: {} shaders, {:.1f} MB, indexed in {:.0f} ms", rex::path_to_utf8(path),
               pack_index_.size(), double(good) / 1048576.0, MsSince(t0));
 }
 

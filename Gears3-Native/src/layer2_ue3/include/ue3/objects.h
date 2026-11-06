@@ -33,6 +33,9 @@ uint32_t FindClass(const char* name);                 // the UClass object
 bool IsA(uint32_t object, uint32_t cls);              // object's class is cls or derives from it
 uint32_t FindObject(const char* name);                // the first object of that name (Default__X included)
 std::vector<uint32_t> FindInstancesOf(uint32_t cls);  // every non-default instance of cls or a subclass
+// The same over table slots [first, first + count) only, so a caller can spread a scan over several frames (0.4.6
+// Gears 3 menu freeze: a full scan per call stalled the game thread). *total = the table's slot count now.
+std::vector<uint32_t> FindInstancesOfRange(uint32_t cls, uint32_t first, uint32_t count, uint32_t* total);
 std::vector<uint32_t> AllObjects();                   // every object in GObjObjects
 int PropertyOffset(uint32_t cls, const char* property);  // -1 when not found
 int PropertySize(uint32_t cls, const char* property);    // ElementSize, -1 when not found

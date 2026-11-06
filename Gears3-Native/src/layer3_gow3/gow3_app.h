@@ -9,6 +9,7 @@
 #include <rex/rex_app.h>
 #include "mouse_look.h"
 #include "main_menu_exit.h"
+#include "unlocks.h"
 
 namespace rex::ui {
 class WindowedAppContext;
@@ -21,7 +22,9 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 #include <xenos/dev_tools.h>
 #include <xenos/display_size.h>
 #include <xenos/gpu_system.h>
-#include <xenos/lazy_achievement_toast.h>
+#include <xenos/achievements_export.h>
+#include <xenos/achievement_popup_assets.h>
+#include <xenos/achievement_popup.h>
 
 #include <rex/system/interfaces/graphics.h>
 
@@ -60,6 +63,7 @@ class Gow3App : public rex::ReXApp {
     Gow3InstallExtras();       // its package patches too
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     Gow3InstallMainMenuExitIfRequested();  // Exit Game: front-end tracking, before the game opens a level
+    Gow3InstallUnlocks();      // GitHub #174: --gow3_unlock_insane (base disc build)
     Gow3InstallModChapters();  // mods' chapters 32-49 and content packages (mod_chapters.cpp), after their config
     XenosInstallDrawStatsIfRequested();
     XenosInstallPrimDetailIfRequested();
@@ -68,6 +72,7 @@ class Gow3App : public rex::ReXApp {
     XenosInstallProfilerIfRequested();
     XenosInstallDrawLogIfRequested();
     XenosInstallResolveLogIfRequested();
+    XenosInstallSmallResolveLogIfRequested(runtime());  // GitHub #185
     XenosInstallBufferDumpIfRequested(runtime());
     XenosInstallShaderDumpIfRequested();
     XenosInstallShaderWatchIfRequested();
@@ -88,6 +93,8 @@ class Gow3App : public rex::ReXApp {
     game_default("gow2_upscale_camera_constant", "5");
     game_default("gow2_renderer_memexport", "true");
     game_default("gow2_renderer_resolution_scale_threshold", "1120");
+    //  - GitHub #212: the 1344-wide outdoor sun shadow map (pitch 1360) stays 1x - drawn at 2x its shadows were pixelated
+    game_default("gow2_renderer_resolution_unscaled_pitches", "1360");
     //  - the upscalers' scene colour: Gears 3's lit scene is 10:10:10:2 UNORM (job 055), not 16-bit float as Gears 2's
     //    (the shared renderer's default, 1, would never find it).
     game_default("gow2_upscale_scene_formats", "2");
@@ -112,9 +119,16 @@ class Gow3App : public rex::ReXApp {
     XenosDumpImageIfRequested(runtime());
     Gow3ApplyDataPatchesIfRequested(runtime());
   }
-  void OnPreLaunchModule() override { Ue3SetLaunchCommandLineIfRequested(); }
+  // Achievements part 2: the popups' fonts (Segoe UI from the PC; CJK from the cached achievement lists).
+  void OnConfigureFonts(ImFontAtlas* atlas) override { XenosConfigureAchievementFonts(atlas); }
+  void OnPreLaunchModule() override {
+    XenosExportAchievements(runtime());  // achievements part 1: the shared catalog + icons
+    Ue3SetLaunchCommandLineIfRequested();
+  }
   void OnPostLaunchModule(rex::system::XThread* thread) override { XenosHoldGuestIfRequested(thread); }
   // --gow2_fps_bar (job 052, Gears 2 b3a16da): our frame-rate bar on the SDK's overlay layer.
+  // Achievements part 3: no SDK achievements window; F7 opens COGBox's in-game menu on its Achievements page.
+  std::unique_ptr<rex::ui::ImGuiDialog> CreateAchievementsOverlay() override { return nullptr; }
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     // "Match my monitor" (Gears 2 0086, same lines as Gow2App): layer 0 learns the window and its size, for the
     // renderer's auto scale and exact-size present, and for --gow3_aspect=auto.
@@ -125,7 +139,7 @@ class Gow3App : public rex::ReXApp {
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
     XenosInstallAoDebugKeys(drawer);  // Gears 2 notes/80 s.12: F9 / F10 / F11 (--gow2_ao_debug_keys)
-    XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
+    XenosInstallInGameMenu(drawer, immediate_drawer(), window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
     xenos::display::SetSurfaceSize(pixel_width, pixel_height);
@@ -152,8 +166,10 @@ class Gow3App : public rex::ReXApp {
   // 0054 (Gears 2): the achievement toast is built only when one is shown, so the SDK's always-on toast window no longer
   // counts as a second presented surface (the NVIDIA overlay showed 2x fps). Same lines as Gow2App.
   std::unique_ptr<rex::ui::AchievementNotificationDialog> CreateAchievementNotificationDialog() override {
-    if (XenosOnScreenNotesHidden() || !imgui_drawer() || !immediate_drawer() || !runtime()) return nullptr;
-    return std::make_unique<xenos::LazyAchievementToast>(imgui_drawer(), immediate_drawer(), runtime(), &app_context());
+    // Achievements part 2: COGBox's own popups (Xbox 360 / Xbox / PS5); "Hide achievement popups" is checked per
+    // unlock, so "Hide on-screen notes" no longer hides them.
+    if (!imgui_drawer() || !immediate_drawer() || !runtime()) return nullptr;
+    return std::make_unique<xenos::AchievementPopup>(imgui_drawer(), immediate_drawer(), runtime(), &app_context());
   }
 
  private:

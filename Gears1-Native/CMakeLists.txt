@@ -28,8 +28,8 @@ message(STATUS "Gears1-Native: layer 0 (renderer) from ${GN_LAYER0_DIR}")
 include(cmake/rexglue.cmake)
 
 # Layer 0: Xbox 360 GPU core and game-free developer tooling (the shared copy in Gears2-Native).
-# PR #117: input/ holds the button-prompt monitor the shared texture cache and in-game menu use (Gears 1 has no known
-# prompt sheet and ships no glyphs, so its monitor finds none and stops at once).
+# PR #117: input/ holds the button-prompt monitor the shared texture cache and in-game menu use. GitHub #214: Gears 1's
+# button font and HUD sheets are in the shared prompt catalog; the glyphs come from the package's shared assets\glyphs.
 file(GLOB GN_LAYER0_SOURCES CONFIGURE_DEPENDS ${GN_LAYER0_DIR}/*.cpp ${GN_LAYER0_DIR}/renderer/*.cpp ${GN_LAYER0_DIR}/input/*.cpp)
 # The vendor-SDK wrappers are added below only when their SDK is there (job 052).
 list(FILTER GN_LAYER0_SOURCES EXCLUDE REGEX "(dlss|fsr|xess)_upscaler\\.cpp$")

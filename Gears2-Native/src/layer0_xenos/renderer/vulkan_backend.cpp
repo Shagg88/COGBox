@@ -54,6 +54,7 @@ std::unique_ptr<Backend> CreateVulkanBackend() { return nullptr; }
 #include <dlfcn.h>
 #endif
 
+#include <rex/filesystem.h>  // path_to_utf8 (F-12)
 #include <rex/logging/macros.h>
 
 #include <algorithm>
@@ -209,7 +210,7 @@ struct Shader {
   // Compute (stage V4): its own one-set layout, from the descriptor types found in the SPIR-V (ComputeBinding below).
   VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
   VkPipelineLayout layout = VK_NULL_HANDLE;
-  VkDescriptorType types[8] = {};  // by compute binding; VK_DESCRIPTOR_TYPE_MAX_ENUM = unused
+  VkDescriptorType types[10] = {};  // by compute binding (0-9); VK_DESCRIPTOR_TYPE_MAX_ENUM = unused
 };
 
 struct Pipeline {
@@ -775,6 +776,8 @@ class VulkanBackend final : public Backend {
       if (desc == d) return handle && !pipelines_[handle]->ready.load(std::memory_order_acquire);
     return false;
   }
+  // XeGTAO single-dispatch pyramid: the layout comes from the shader's own bindings (u2-u4 -> 7-9), so it's the same call.
+  PipelineHandle CreateComputePipelineMips(ShaderHandle cs) override { return CreateComputePipeline(cs); }
   PipelineHandle CreateComputePipeline(ShaderHandle cs) override {
     if (!ready_ || lost_ || !cs || cs >= shaders_.size() || shaders_[cs].stage != ShaderStage::kCompute) return 0;
     const Shader& sh = shaders_[cs];
@@ -1158,12 +1161,19 @@ class VulkanBackend final : public Backend {
     for (uint32_t i = 0; i < 4; ++i) if (Valid(b.srv[i])) Transition(textures_[b.srv[i]], VK_IMAGE_LAYOUT_GENERAL);
     if (Valid(b.uav_texture)) Transition(textures_[b.uav_texture], VK_IMAGE_LAYOUT_GENERAL);
     if (Valid(b.uav2_texture)) Transition(textures_[b.uav2_texture], VK_IMAGE_LAYOUT_GENERAL);
+    const bool mips = b.uav_mip_count > 0 && Valid(b.uav_mips_texture);  // XeGTAO single-dispatch pyramid
+    if (!mips && (sh.types[7] != VK_DESCRIPTOR_TYPE_MAX_ENUM || sh.types[8] != VK_DESCRIPTOR_TYPE_MAX_ENUM ||
+                  sh.types[9] != VK_DESCRIPTOR_TYPE_MAX_ENUM)) {
+      NotDone("Dispatch: a u2-u4 shader without uav_mips_texture");  // bindings 7-9 would stay unwritten
+      return;
+    }
+    if (mips) Transition(textures_[b.uav_mips_texture], VK_IMAGE_LAYOUT_GENERAL);
     FullBarrier();
     VkDescriptorSet set = AllocateComputeSet(sh.set_layout);
     if (!set) return;
     std::vector<VkWriteDescriptorSet> wr;
-    VkDescriptorBufferInfo bufs[8];
-    VkDescriptorImageInfo imgs[8];
+    VkDescriptorBufferInfo bufs[10];
+    VkDescriptorImageInfo imgs[10];
     // Binding 0: the constants (b0, up to 16 dwords) in the ring.
     if (sh.types[0] == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
       uint64_t at = 0;
@@ -1192,10 +1202,17 @@ class VulkanBackend final : public Backend {
       if (!imgs[binding].imageView) { NotDone("Dispatch: image view creation failed"); return; }  // outside review
       wr.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, 0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &imgs[binding], nullptr, nullptr});
     }
-    for (uint32_t u = 0; u < 2; ++u) {
+    for (uint32_t u = 0; u < (mips ? kMaxUavMips : 2u); ++u) {
       const uint32_t binding = 5 + u;
       const VkDescriptorType ty = sh.types[binding];
       if (ty == VK_DESCRIPTOR_TYPE_MAX_ENUM) continue;
+      if (mips) {  // u0..u(n-1) = mips 0..n-1 (a storage image binding for each the shader declares)
+        if (ty != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE || u >= b.uav_mip_count) { NotDone("Dispatch: pyramid UAV missing"); return; }
+        imgs[binding] = {VK_NULL_HANDLE, StorageView(b.uav_mips_texture, u), VK_IMAGE_LAYOUT_GENERAL};
+        if (!imgs[binding].imageView) { NotDone("Dispatch: storage view creation failed"); return; }
+        wr.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &imgs[binding], nullptr, nullptr});
+        continue;
+      }
       if (ty == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {  // u0 = guest memory (guest_u0) or the scratch buffer (scratch_u0)
         if (u == 0 && b.scratch_u0 && scratch_.buffer) bufs[binding] = {scratch_.buffer, 0, VK_WHOLE_SIZE};
         else bufs[binding] = {guest_.buffer, 0, VK_WHOLE_SIZE};
@@ -1447,7 +1464,7 @@ class VulkanBackend final : public Backend {
       uint32_t& b = w[d.binding_at];
       if (stage == ShaderStage::kCompute) {  // one set: 0 = b0, 1-4 = t0-t3, 5-6 = u0-u1
         if (set == 0 && b >= 100 && b < 104) b = 1 + (b - 100);
-        else if (set == 0 && b >= 300 && b < 302) b = 5 + (b - 300);
+        else if (set == 0 && b >= 300 && b < 300 + kMaxUavMips) b = 5 + (b - 300);  // u2-u4 -> 7-9 (pyramid shader)
         continue;
       }
       if (set != 0) continue;  // explicit set 1 / 2 from the translator
@@ -1508,24 +1525,47 @@ class VulkanBackend final : public Backend {
     // Patch 0079: the Vulkan pipeline cache on disk next to D3D12's library (the driver checks its own header and
     // ignores data from another driver or GPU).
     if (!options_.pipeline_library_path.empty()) {
-      std::filesystem::path pth(options_.pipeline_library_path);
-      std::string name = pth.filename().string();
-      const size_t at = name.find("d3d12");
-      name = at != std::string::npos ? name.replace(at, 5, "vulkan") : name + ".vulkan";
-      cache_path_ = (pth.parent_path() / name).string();
+      const std::filesystem::path& pth = options_.pipeline_library_path;  // F-12 / #177: wide all the way
+      std::wstring name = pth.filename().wstring();
+      const size_t at = name.find(L"d3d12");
+      name = at != std::wstring::npos ? name.replace(at, 5, L"vulkan") : name + L".vulkan";
+      cache_path_ = pth.parent_path() / name;
     }
     std::vector<char> initial;
     if (!cache_path_.empty()) {
       std::ifstream f(cache_path_, std::ios::binary | std::ios::ate);
       if (f) {
         const std::streamoff n = f.tellg();
-        if (n > 0 && n < (std::streamoff(1) << 30)) {
+        // A VkPipelineCache only grows: entries of pipelines a newer COGBox no longer makes (its SPIR-V changed) stay
+        // in it. It used to be dropped whole at 1 GB - every pipeline built again; now up to 2 GB is read, and from
+        // 768 MB on the log says so (delete the file to start lean; the driver rebuilds what is used).
+        if (n >= (std::streamoff(768) << 20))
+          REXLOG_WARN("gow2_renderer: Vulkan pipeline cache {} is {} MB - it keeps old versions' pipelines too; delete it "
+                      "to start a smaller one", rex::path_to_utf8(cache_path_), int64_t(n >> 20));
+        if (n > 0 && n < (std::streamoff(2) << 30)) {
           initial.resize(size_t(n));
           f.seekg(0);
           f.read(initial.data(), n);
           if (!f) initial.clear();
         }
       }
+    }
+    if (initial.size() >= 32) {  // Shagg's to-do 3: say whether the driver will take this cache (its header's device + UUID)
+      uint32_t hdr[4];
+      std::memcpy(hdr, initial.data(), 16);  // header length, header version, vendor, device (host byte order)
+      uint8_t uuid[VK_UUID_SIZE];
+      std::memcpy(uuid, initial.data() + 16, VK_UUID_SIZE);
+      VkPhysicalDeviceProperties p{};
+      vk_.vkGetPhysicalDeviceProperties(physical_, &p);
+      const bool same_device = hdr[2] == p.vendorID && hdr[3] == p.deviceID;
+      const bool same_uuid = std::memcmp(uuid, p.pipelineCacheUUID, VK_UUID_SIZE) == 0;
+      if (same_device && same_uuid)
+        REXLOG_INFO("gow2_renderer: Vulkan pipeline cache header matches this GPU and driver (vendor {:04X} device {:04X})",
+                    p.vendorID, p.deviceID);
+      else
+        REXLOG_WARN("gow2_renderer: Vulkan pipeline cache is from {} (file vendor {:04X} device {:04X}, this GPU {:04X} "
+                    "{:04X}) - the driver will ignore it and every pipeline is built again",
+                    same_device ? "another driver version" : "another GPU", hdr[2], hdr[3], p.vendorID, p.deviceID);
     }
     VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
     ci.initialDataSize = initial.size();
@@ -1538,7 +1578,7 @@ class VulkanBackend final : public Backend {
     }
     if (!pipeline_cache_vk_) REXLOG_WARN("gow2_renderer: Vulkan pipeline cache couldn't be created - running without one");
     if (!cache_path_.empty())
-      REXLOG_INFO("gow2_renderer: Vulkan pipeline cache {} ({} KB loaded)", cache_path_, (initial.size() + 1023) / 1024);
+      REXLOG_INFO("gow2_renderer: Vulkan pipeline cache {} ({} KB loaded)", rex::path_to_utf8(cache_path_), (initial.size() + 1023) / 1024);
     cache_saved_at_ = std::chrono::steady_clock::now();
     return true;
   }
@@ -2305,7 +2345,7 @@ class VulkanBackend final : public Backend {
     for (const Var& v : vars) {
       if (!binding_of.count(v.id)) continue;
       const uint32_t b = binding_of[v.id];
-      if (b >= 8 || set_of[v.id] != 0) { REXLOG_ERROR("gow2_renderer: Vulkan: compute binding {} set {} outside the layout", b, set_of[v.id]); return false; }
+      if (b >= 10 || set_of[v.id] != 0) { REXLOG_ERROR("gow2_renderer: Vulkan: compute binding {} set {} outside the layout", b, set_of[v.id]); return false; }
       const uint32_t t = pointer_to[v.type];
       VkDescriptorType ty;
       if (v.cls == 2) ty = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;                // Uniform
@@ -2735,9 +2775,10 @@ class VulkanBackend final : public Backend {
     cache_saved_at_ = t;
     cache_saved_built_ = built;
     ++stats_.pipeline_library_saves;
-    const std::string path = cache_path_;
+    const std::filesystem::path path = cache_path_;
     auto write = [path, data]() {
-      const std::string tmp = path + ".tmp";
+      std::filesystem::path tmp = path;
+      tmp += L".tmp";
       {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) return;
@@ -3279,7 +3320,7 @@ class VulkanBackend final : public Backend {
   bool stop_workers_ = false;
   std::atomic<uint64_t> built_async_{0}, async_us_{0}, async_bytes_{0}, async_max_us_{0};
   // Patch 0079: the pipeline cache file and its periodic save (the harness ends the process without a shutdown).
-  std::string cache_path_;
+  std::filesystem::path cache_path_;
   std::chrono::steady_clock::time_point cache_saved_at_{};
   uint64_t cache_saved_built_ = 0;
   std::atomic<bool> cache_saving_{false};

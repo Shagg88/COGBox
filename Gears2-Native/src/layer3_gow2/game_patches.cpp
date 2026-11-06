@@ -323,6 +323,20 @@ REXCVAR_DEFINE_BOOL(gow2_ultrawide_fov_exact, true, "Gears2",
                     "16:9's vertical view (GitHub #74); false = the fixed factor of 0.3.7");
 void Gow2UltrawideFov(PPCRegister& f0, PPCRegister& f30) {
   CogMouseLookNoteFov(f30.f64);  // GitHub #52: the camera's own FOV, also without ultrawide
+  {  // GitHub #132: with --gow2_renderer_camera_log, every change of the camera's FOV (and the factor) is logged too
+    static const bool camera_log = [] {
+      const std::string v = rex::cvar::GetFlagByName("gow2_renderer_camera_log");
+      return !v.empty() && v != "0";
+    }();
+    static double last_fov = -1.0;
+    static int lines = 0;
+    if (camera_log && f30.f64 != last_fov && lines < 400) {
+      last_fov = f30.f64;
+      ++lines;
+      REXLOG_INFO("gow2_camera_log: camera FOV {:.3f} deg, game factor {} (ultrawide {})", f30.f64, f0.f64,
+                  REXCVAR_GET(gow2_ultrawide) ? "on" : "off");
+    }
+  }
   if (!REXCVAR_GET(gow2_ultrawide)) return;
   const double game = f0.f64, fov = f30.f64;
   double f = double(0.0106355f) * uwshape::FovScale(Gow2WideHeight());
@@ -508,6 +522,51 @@ static void Gow2WriteGuestFloat(rex::Runtime* runtime, uint32_t addr, float valu
   REXLOG_INFO("{}: {:08X} {} -> {}", what, addr, old_value, value);
 }
 
+// GitHub #132 (ultrawide: the camera sits higher than at 16:9 - Marcus lower in the frame, cut at the chest).
+// The camera's native view offset (disc sub_82886238, run every frame) picks a viewport type from the viewport's shape
+// (sub_82527760): X / Y strictly between the .rdata floats 1.7677778 and 1.7877778 (16:9 +- 0.01; disc 0x821D0D20 /
+// 0x821D0D1C, read only there, 0x828862C0 / 0x828862D0) is widescreen (CVT_16to9_*), anything else CVT_4to3_* - so
+// every ultrawide shape got the 4:3 camera. GearGame.xxx's defaults add ViewOffset_ViewportAdjustments[CVT_4to3_Full]
+// to the camera offset: Z +17 (GameplayCam_Default), +25 (Cover), +3 (Targeting): the camera 17 units higher. That
+// matches Shagg's 16:9 / 21:9 shots (JacintoMed lobby): with the 16:9 shot mapped to 21:9 (x 0.761 about the centre,
+// exact Hor+), the back wall lands ~10 px high and Marcus (~150 units away) 56 px high; 17 units explains both.
+// The property is not config (flags 0x3), so no ini edit reaches it. Fix: with --gow2_ultrawide the upper bound
+// becomes the ultrawide shape's aspect + 0.05, so the full-screen ultrawide viewport counts as widescreen like 16:9.
+// The pair is found by value in .rdata (one copy on the disc; TU6 moves .rdata) and written only if found exactly once.
+static void Gow2UltrawideCameraViewportType(rex::Runtime* runtime) {
+  const uint8_t* image = runtime->virtual_membase() + 0x82000000u;
+  uint32_t lo = 0, hi = 0;  // .rdata, from the PE header (little-endian)
+  if (image[0] == 'M' && image[1] == 'Z') {
+    uint32_t pe = 0;
+    std::memcpy(&pe, image + 0x3C, 4);
+    if (pe > 0 && pe < 0x1000 && std::memcmp(image + pe, "PE\0\0", 4) == 0) {
+      uint16_t sections = 0, opt = 0;
+      std::memcpy(&sections, image + pe + 6, 2);
+      std::memcpy(&opt, image + pe + 20, 2);
+      for (uint32_t i = 0; i < sections && i < 32; ++i) {
+        const uint8_t* s = image + pe + 24 + opt + 40 * i;
+        if (std::memcmp(s, ".rdata", 7) == 0) {
+          uint32_t vsize = 0, va = 0;
+          std::memcpy(&vsize, s + 8, 4);
+          std::memcpy(&va, s + 12, 4);
+          lo = va, hi = va + vsize;
+        }
+      }
+    }
+  }
+  static const uint8_t kPair[8] = {0x3F, 0xE4, 0xD5, 0xE7, 0x3F, 0xE2, 0x46, 0x8B};  // 1.7877778f, 1.7677778f (BE)
+  uint32_t found = 0, count = 0;
+  for (uint32_t o = lo; hi > lo && hi < 0x02000000u && o + 8 <= hi; o += 4)
+    if (std::memcmp(image + o, kPair, 8) == 0) found = 0x82000000u + o, ++count;
+  if (count != 1) {
+    REXLOG_INFO("gow2_ultrawide: camera viewport bounds not found ({} copies in .rdata {:08X}-{:08X}) - left alone "
+                "(GitHub #132)", count, 0x82000000u + lo, 0x82000000u + hi);
+    return;
+  }
+  Gow2WriteGuestFloat(runtime, found, float(1280.0 / Gow2WideHeight() + 0.05),
+                      "gow2_ultrawide: camera widescreen upper bound (GitHub #132: no 4:3 camera offset)");
+}
+
 void Gow2ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
   if (!runtime || !runtime->memory()) return;
   g_gow2_membase = runtime->virtual_membase();
@@ -520,6 +579,7 @@ void Gow2ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
   if (REXCVAR_GET(gow2_ultrawide)) {
     Gow2WriteGuestFloat(runtime, gow2::addr::kWidescreenAspect, Gow2WideHeight() == 550 ? 2.33333f : float(1280.0 / Gow2WideHeight()),
                         "gow2_ultrawide: widescreen aspect");
+    Gow2UltrawideCameraViewportType(runtime);
     // Job 200: the front buffer itself becomes 1280x550 (x the resolution scale). Show it at that shape (letterboxed in
     // a window of another shape) rather than Canary's way (letterbox off, which is right only in a 21:9 window).
     const bool a = rex::cvar::SetFlagByName("gow2_present_frame_aspect", "true");
@@ -537,6 +597,18 @@ void Gow2ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
 // The renderer translates each one and has the driver build it before its first draw (XenosGuestShaderCreated).
 void Gow2ShaderCreatedPixel(PPCRegister& r6, PPCRegister& r27) { XenosGuestShaderCreated(false, r6.u32, r27.u32); }
 void Gow2ShaderCreatedVertex(PPCRegister& r4, PPCRegister& r28) { XenosGuestShaderCreated(true, r4.u32, r28.u32); }
+
+REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
+                    "TEST ONLY (scripted test runs): no full-screen movies - the engine's own [FullScreenMovie] "
+                    "bForceNoMovies, so the logos, the loading movie and every pre-rendered (.bik) cutscene are passed as "
+                    "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
+                    "play. Not for players: loading screens go black.");
+REXCVAR_DECLARE(std::string, ue3_ini_edits);  // layer 2 config_install.cpp
+void Gow2AddTestIniEdits() {
+  if (!REXCVAR_GET(cogbox_test_skip_movies)) return;
+  rex::cvar::SetFlagByName("ue3_ini_edits", "Xe-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;" + REXCVAR_GET(ue3_ini_edits));
+  REXLOG_INFO("cogbox_test_skip_movies: full-screen movies off (bForceNoMovies) - test runs only");
+}
 
 // GitHub #90 (French / Italian voices fall back to English): logging only, nothing changes. Every file the game opens
 // whose name looks localized (_LOC_, _FRA, _ITA, _DEU, _ESN, _INT, or a .int/.fra/.ita/.deu/.esn file) is logged with
@@ -573,7 +645,55 @@ bool Gow2LooksLocalized(std::string_view path) {
     if (Gow2EndsWithNoCase(name, ext)) return true;
   return false;
 }
+// GitHub #103 (Japanese Gears 2: movie voices stay English, with the Japanese disc's own .bik files): logging only. The
+// movie's language is not the file - the installed movies match the Japanese disc byte for byte - so it is the sound
+// track the engine asks Bink for. The first 40 .bik opens are logged with the audio tracks the header lists (count,
+// track IDs, sample rate, stereo), so a Japanese player's log shows whether a Japanese track is in the file and which ID
+// it has; picking it needs that ID and the address of this build's Bink track choice (BinkSetSoundTrack / the BinkOpen
+// track flag), which nobody has yet. Header layout as FFmpeg's Bink demuxer reads it (little-endian).
+void Gow2LogBinkTracks(std::string_view guest_path, const std::filesystem::path* host_path) {
+  static std::atomic<int> lines{0};
+  if (!host_path || lines.fetch_add(1, std::memory_order_relaxed) >= 40) return;
+  auto le32 = [](const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; };
+  uint8_t h[256] = {};
+  size_t got = 0;
+  if (FILE* fp = _wfopen(host_path->c_str(), L"rb")) {
+    got = std::fread(h, 1, sizeof(h), fp);
+    std::fclose(fp);
+  }
+  if (got < 44 || !((h[0] == 'B' && h[1] == 'I' && h[2] == 'K') || (h[0] == 'K' && h[1] == 'B' && h[2] == '2'))) {
+    REXLOG_INFO("gow2_movie_log: opened {} - not a Bink header we know ({} bytes read)", guest_path, got);
+    return;
+  }
+  const uint32_t n = le32(h + 40);
+  // Bink 1 revisions before 'k': the track table follows at once; 'BIKk' and Bink 2 have 4 more bytes first.
+  const size_t extra = (h[0] == 'K' || h[3] >= 'k') ? 4 : 0;
+  std::string tracks;
+  if (n <= 16 && got >= 44 + extra + 12 * size_t(n)) {
+    const uint8_t* info = h + 44 + extra + 4 * n;  // past each track's largest-packet size
+    const uint8_t* ids = info + 4 * n;
+    for (uint32_t i = 0; i < n; ++i) {
+      const uint32_t rate = uint32_t(info[4 * i]) | uint32_t(info[4 * i + 1]) << 8;
+      const uint32_t flags = uint32_t(info[4 * i + 2]) | uint32_t(info[4 * i + 3]) << 8;
+      tracks += (i ? ", " : " [") + std::string("id ") + std::to_string(le32(ids + 4 * i)) + " " + std::to_string(rate) +
+                " Hz" + ((flags & 0x2000) ? " stereo" : " mono");
+    }
+    if (n) tracks += "]";
+  } else {
+    tracks = " (track table not read)";
+  }
+  char raw[3 * 32 + 1] = {};   // the bytes from the track count on, in case this revision's layout differs
+  for (size_t i = 0; i < 32 && 40 + i < got; ++i) std::snprintf(raw + 3 * i, 4, "%02X ", h[40 + i]);
+  REXLOG_INFO("gow2_movie_log: opened {} - Bink {}{}{}{}, {} audio track(s){} (user_language {}, voice {}) raw@40: {}", guest_path,
+              char(h[0]), char(h[1]), char(h[2]), char(h[3]), n, tracks, rex::cvar::GetFlagByName("user_language"),
+              rex::cvar::GetFlagByName("ue3_voice_language"), raw);
+}
+
 void Gow2OnFileOpenedLoc(std::string_view guest_path, const std::filesystem::path* host_path) {
+  if (Gow2EndsWithNoCase(guest_path, ".bik")) {   // GitHub #103
+    Gow2LogBinkTracks(guest_path, host_path);
+    return;
+  }
   if (!Gow2LooksLocalized(guest_path)) return;
   const int n = g_loc_log_lines.fetch_add(1, std::memory_order_relaxed);
   if (n >= kLocLogMax) return;

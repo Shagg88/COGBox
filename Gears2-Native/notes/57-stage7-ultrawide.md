@@ -53,3 +53,10 @@ with `--gow2_present_frame_aspect` (below).
   shape is not verified on screen. [G] From presenter.cpp: with the presenter told 1280x550, a 21:9 window gets the
   whole picture edge to edge and other shapes get bars (letterbox on, the default).
 - Stage 7 is complete: 4K (notes/53), SMAA (54), HDR (55), frame-rate unlock (56), ultrawide (57).
+
+## GitHub #132: the camera higher in ultrawide (0.4.6 sweep)
+- Cause [V, disassembly + GearGame.xxx]: the camera's view offset (disc sub_82886238) calls a viewport widescreen only
+  when X / Y is within 16:9 +- 0.01 (.rdata 0x821D0D20 / 0x821D0D1C); every ultrawide shape became CVT_4to3_Full,
+  whose ViewOffset_ViewportAdjustments add Z +17 (default camera), +25 (cover), +3 (targeting). Not a config property.
+- Fix: with --gow2_ultrawide the upper bound (found by value in .rdata, so the disc and TU6 alike) is set to the shape's
+  aspect + 0.05 at load; log line "camera widescreen upper bound". Needs a build; not yet seen in a run.

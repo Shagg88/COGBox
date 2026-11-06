@@ -10,6 +10,7 @@
 #include <rex/rex_app.h>
 #include "mouse_look.h"
 #include "main_menu_exit.h"
+#include "profile_log.h"
 
 namespace rex::ui {
 class WindowedAppContext;
@@ -22,7 +23,9 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 #include <xenos/dev_tools.h>
 #include <xenos/display_size.h>
 #include <xenos/gpu_system.h>
-#include <xenos/lazy_achievement_toast.h>
+#include <xenos/achievements_export.h>
+#include <xenos/achievement_popup_assets.h>
+#include <xenos/achievement_popup.h>
 
 #include <rex/system/interfaces/graphics.h>
 
@@ -36,6 +39,7 @@ void GowjAddBuiltInIniEdits();  // game_patches.cpp: --gowj_trilinear, --gowj_fa
 void GowjStartMemoryGauge();    // game_patches.cpp: --gowj_memory_log_seconds (physical memory every N s)
 void GowjStopMemoryGauge();     // stops it before the kernel goes away
 void GowjApplyUltrawideIfRequested(rex::Runtime* runtime);  // game_patches.cpp: --gowj_ultrawide (0.2.0)
+void GowjInstallFilmGrainSwitch(rex::Runtime* runtime);  // game_patches.cpp: --gowj_no_film_grain (Canary TU4, boma)
 
 
 class GowjApp : public rex::ReXApp {
@@ -62,6 +66,8 @@ class GowjApp : public rex::ReXApp {
     CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
     GowjAddBuiltInIniEdits();  // before the bundle is edited
+    GowjInstallProfileLog();   // GitHub #174: --gowj_profile_log (read-only)
+    GowjInstallFilmGrainSwitch(runtime());   // --gowj_no_film_grain
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     GowjApplyUltrawideIfRequested(runtime());     // --gowj_ultrawide: the two aspect floats, the present shape
     XenosInstallDrawStatsIfRequested();
@@ -71,6 +77,7 @@ class GowjApp : public rex::ReXApp {
     XenosInstallProfilerIfRequested();
     XenosInstallDrawLogIfRequested();
     XenosInstallResolveLogIfRequested();
+    XenosInstallSmallResolveLogIfRequested(runtime());  // GitHub #185
     XenosInstallBufferDumpIfRequested(runtime());
     XenosInstallShaderDumpIfRequested();
     XenosInstallShaderWatchIfRequested();
@@ -121,9 +128,16 @@ class GowjApp : public rex::ReXApp {
     XenosDumpImageIfRequested(runtime());
     GowjStartMemoryGauge();
   }
-  void OnPreLaunchModule() override { Ue3SetLaunchCommandLineIfRequested(); }
+  // Achievements part 2: the popups' fonts (Segoe UI from the PC; CJK from the cached achievement lists).
+  void OnConfigureFonts(ImFontAtlas* atlas) override { XenosConfigureAchievementFonts(atlas); }
+  void OnPreLaunchModule() override {
+    XenosExportAchievements(runtime());  // achievements part 1: the shared catalog + icons
+    Ue3SetLaunchCommandLineIfRequested();
+  }
   void OnPostLaunchModule(rex::system::XThread* thread) override { XenosHoldGuestIfRequested(thread); }
   // --gow2_fps_bar (job 052, Gears 2 b3a16da): our frame-rate bar on the SDK's overlay layer.
+  // Achievements part 3: no SDK achievements window; F7 opens COGBox's in-game menu on its Achievements page.
+  std::unique_ptr<rex::ui::ImGuiDialog> CreateAchievementsOverlay() override { return nullptr; }
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     // "Match my monitor" (Gears 2 0086, same lines as Gow2App): layer 0 learns the window and its size, for the
     // renderer's auto scale and exact-size present, and for --gow3_aspect=auto.
@@ -134,7 +148,7 @@ class GowjApp : public rex::ReXApp {
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
     XenosInstallAoDebugKeys(drawer);  // Gears 2 notes/80 s.12, notes/81: F2, F5, F6, F8, F9, F10, F11 (--gow2_ao_debug_keys)
-    XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
+    XenosInstallInGameMenu(drawer, immediate_drawer(), window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   // --gowj_mute_unfocused (launcher item 8, Gears 2 0130): the SDK's SDL driver reads audio_mute for every buffer, so
   // this takes effect at once. A mute the player set themselves is left alone.
@@ -160,8 +174,10 @@ class GowjApp : public rex::ReXApp {
   // 0054 (Gears 2): the achievement toast is built only when one is shown, so the SDK's always-on toast window no longer
   // counts as a second presented surface (the NVIDIA overlay showed 2x fps). Same lines as Gow2App.
   std::unique_ptr<rex::ui::AchievementNotificationDialog> CreateAchievementNotificationDialog() override {
-    if (XenosOnScreenNotesHidden() || !imgui_drawer() || !immediate_drawer() || !runtime()) return nullptr;
-    return std::make_unique<xenos::LazyAchievementToast>(imgui_drawer(), immediate_drawer(), runtime(), &app_context());
+    // Achievements part 2: COGBox's own popups (Xbox 360 / Xbox / PS5); "Hide achievement popups" is checked per
+    // unlock, so "Hide on-screen notes" no longer hides them.
+    if (!imgui_drawer() || !immediate_drawer() || !runtime()) return nullptr;
+    return std::make_unique<xenos::AchievementPopup>(imgui_drawer(), immediate_drawer(), runtime(), &app_context());
   }
 
  private:

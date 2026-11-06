@@ -1,4 +1,4 @@
-# Gears of War Native - PC ports of Gears of War 2, Gears of War 3 and Gears of War: Judgment
+# Gears of War Native - PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War: Judgment
 
 **PLEASE FOR NOW MAKE SURE TO USE THE LATEST TITLE UPDATE FOR EACH GAME**
 
@@ -35,14 +35,16 @@ the ports what an emulator can't easily offer:
 - **Vulkan (experimental)** - a choice on each game's Graphics tab, for testing; close to Direct3D 12 already.
 - **Screenshots** - press **\\** (backslash) in any game; they go to `Pictures\COGBox\<game>`.
 - **Lower input lag** - one frame in flight, NVIDIA Reflex / AMD Anti-Lag 2 where your GPU has them.
-- **HDR10**, **ultrawide 21:9** (all three games), **16x anisotropic filtering**, field of view, and the games' own motion blur and depth of
+- **HDR10**, **ultrawide 21:9** (all four games), **16x anisotropic filtering**, field of view, and the games' own motion blur and depth of
   field as switches (lens flares are set per game automatically: on where Real occlusion hides them behind walls).
 - **Split-screen** (Gears 2), **keyboard and mouse** (mouse look without the stick's speed limit, keys you can change),
   **Xbox and PlayStation controllers** with **auto-switching button prompts** (the game's own for Xbox pads; PlayStation, Switch, Steam Deck, Steam Controller and keyboard prompts as you switch; `--gow_button_prompts=auto|original|xbox|playstation|switch|steamdeck|steamcontroller|keyboard`), **title updates**, **chapter select**.
 - **DLC and mods** - add DLC packages from your console and mods as .zip files on each game's About tab.
 - **Every game language** the US and European releases have (21), chosen per game - the ones on your copy work.
   Japanese (player reports, #103): Gears 3 and Judgment work from a Japanese disc (text and voices). Gears 2 is not
-  supported in Japanese out of the box: text and subtitles only with a manual workaround, and movie voices stay English.
+  supported in Japanese out of the box: text and subtitles only with a manual workaround, and movie voices stay English
+  (not fixed yet: the movies are the Japanese disc's own, so the engine picks the English sound track inside them; the
+  game log's `gow2_movie_log:` lines now list each movie's sound tracks, which we need from a Japanese copy to fix it).
 - **In-game menu** - Back + Start (Share + Options on PlayStation, or F1) during play: change settings, restart to
   apply them, or quit.
 
@@ -101,14 +103,14 @@ Only Gears 3 saves are converted - Gears of War, Gears 2 and Judgment saves are 
 - **The Gears 2 / Gears 3 disc builds** are no longer included (see 1).
 
 ### 4. Your name in the games (Player name, #119)
-1. In COGBox, open any game's **Settings**, then the **About** tab.
-2. Type your name in **Player name** (up to 15 letters, digits or spaces; extra spaces are trimmed). It's saved straight away.
+1. In COGBox's library screen, click the **PLAYER** plate at the top left (or press Back / View on a controller).
+2. Type your name (up to 15 letters, digits or spaces; extra spaces are trimmed) and press **Save name** or Enter.
 3. Start (or restart) any game: player 1 shows that name in all four games. Leave it empty for "User".
    It only changes the name shown: your profile folder and saves stay exactly where they are.
 
 ## COGBox, the launcher
 
-- The three games as boxes on a carousel; box art and backgrounds from the open
+- The four games as boxes on a carousel; box art and backgrounds from the open
   [x360db](https://github.com/xenia-manager/x360db) archive, downloaded only when you press **Get box art**.
 - **Add your copy**: drop your disc image (.iso), Games on Demand copy, title update package or extracted game folder
   onto the window. COGBox recognises the game, unpacks it next to itself and checks it is the right release.
@@ -119,15 +121,17 @@ Only Gears 3 saves are converted - Gears of War, Gears 2 and Judgment saves are 
 - Grows with its window, and has a **borderless** option (its own minimise / maximise / close).
 - **In 11 languages**: English, Spanish, French, German, Italian, Portuguese (Brazil), Polish, Russian, Japanese,
   Chinese (Simplified) and Korean - asked on first start, changeable on any game's About tab.
-- **DLC** (Downloadable content on the About tab): add the packages from your console's
+- **DLC** (YOUR COPY on the About tab): add the packages from your console's
   `Content\0000000000000000\<title ID>\00000002` folder; remove them there too.
-- **Mods** (Mods on the About tab): add a mod's .zip or drop its folder into the game's `mods` folder, tick it, set the
+- **Mods** (the MODS tab): add a mod's .zip or drop its folder into the game's `mods` folder, tick it, set the
   order. A mod is laid out like the game's own files (`GearGame\...`) and replaces or adds files without changing your
   copy; programs are never taken from a mod.
+- **Achievements** in all four games, kept locally (thanks to Flippage): a popup when one unlocks (Xbox 360, Xbox or
+  PlayStation style), an Achievements page in the in-game menu (F7) and an ACHIEVEMENTS tab in COGBox.
 - **Desktop shortcuts** for COGBox and each game. For a **Steam** entry per game, add `CogBox.exe` as a non-Steam game
   with the Launch Options `--play gears1` / `gears2` / `gears3` / `judgment` - not the game's own `gow3.exe` etc., which
   stops with "--game_data_root was not provided" (COGBox passes the game folder and your settings).
-- **Player name** (About tab): the name every game shows for player 1 (display only, saves untouched).
+- **Player name** (the PLAYER plate on the library screen): the name every game shows for player 1 (display only, saves untouched).
 
 ### Adding DLC
 
@@ -140,11 +144,20 @@ the game's user folder under the console's own layout:
 For example, Gears of War 3 (title ID `4D5308AB`):
 `<COGBox>\Gears3\user\0000000000000000\4D5308AB\00000002\<package file>`. Restart the game afterwards.
 
+**Gears of War 3 with many add-ons:** with a large number of DLC packages installed (GitHub #25 and #158 had 30+), the
+game can stop showing them - Raam's Shadow shows "coming soon", or the add-ons appear for a second player but not in
+single player. Remove them all, add Raam's Shadow alone and start the game once, then add the others a few at a time,
+starting the game after each, so you can see which one stops the list from loading.
+
 ### Cheats (Gears of War 3)
 
 > **Not available in this release:** the cheats and **Unlock all mutators** only work with the disc version so far
 > (Title Update 6 shows a dirty-disc error with them), and title updates are now required. They'll come back once they
 > work with Title Update 6.
+
+**Unlock Insane from the start** (Gameplay, off by default) lets you choose Insane without finishing the campaign;
+your profile and saves are not changed. For now it works in Gears of War 3 (thanks to Flippage's Gears 3 recomp); the
+other games come later.
 
 Tick **Gameplay > Cheats (hotkeys F5-F11)** in the game's settings, then in game:
 
@@ -165,8 +178,8 @@ Tick **Gameplay > System Link - LAN play (experimental)** on every PC. Every PC 
 and the same game with its title update. The PCs must be on
 the same network, or on a LAN VPN such as Radmin VPN, ZeroTier or Hamachi (not an internet VPN like NordVPN). If Windows
 asks about the firewall, allow Private networks. With 3 or more PCs, each PC must list every other PC (full steps, including Radmin VPN, are in the
-README.txt inside the download). Gears 2 campaign co-op worked in testing; other modes and games are less
-tested. There is no voice chat yet, and no internet (Xbox Live) play.
+README.txt inside the download). Gears 2 campaign co-op and Gears of War co-op (#209) worked in testing; other modes and
+games are less tested. There is no voice chat yet, and no internet (Xbox Live) play.
 
 **On 0.4.0, Gears 3 System Link co-op needs a two-PC test.** The #68 fix changes two things the game sees: XNetRandom
 now gives real random numbers (before, every PC could produce the same "random" values, so this should help), and
@@ -196,11 +209,14 @@ are unchanged.
 2. Unzip the **whole** folder somewhere you can write to, e.g. `C:\Games\COGBox` (not Program Files).
 3. Start `CogBox.exe`. The programs aren't code-signed, so Windows may show "Windows protected your PC" - choose
    **More info**, then **Run anyway**.
-4. Turn to a game and press **ADD YOUR COPY** (or drop the file on the window). Then add the title update the same way - it's required.
+4. Drag and drop your copy (disc image, Games on Demand copy or game folder) onto the COGBox window. Then drop the title
+   update the same way - it's required. Keep COGBox and your copies out of OneDrive, Dropbox or Google Drive folders:
+   syncing can lock, move or partly update files while a game uses them.
 5. Press **PLAY**. **SETTINGS** has the graphics, frame rate, controls and gameplay options.
 
-**Controls in COGBox:** the D-pad (or the arrow keys, the mouse wheel) turns the carousel; LB / RB choose Play or
-Settings and A presses it; X opens settings, Y gets box art. On a settings page LB / RB change tab, D-pad down past the
+**Controls in COGBox:** the D-pad (or the arrow keys, the mouse wheel) turns the carousel; LB / RB choose Play,
+Settings or Achievements and A presses it; X opens settings, Y gets box art. The line at the bottom of the screen
+shows the buttons for the controller or keyboard in use. On a settings page LB / RB change tab, D-pad down past the
 last option reaches Library / Save / Play, and B jumps to Library.
 
 **PlayStation controllers** work too - COGBox shows Cross / Circle / Square / Triangle and L1 / R1 instead.
@@ -262,7 +278,6 @@ Plans, not promises:
 - **DLSS Frame Generation and DLSS 4/5 features** through NVIDIA Streamline on the cards that support them.
 - **More controllers (Switch and others) and an accessibility section** in COGBox.
 - **Split-screen across two monitors**, and the European releases at full speed.
-- **Achievements**, kept locally.
 - More of the Gears series.
 
 ## Community translations
@@ -294,9 +309,14 @@ This project stands on the work of many open-source projects and their communiti
 - **[Xenia Manager](https://github.com/xenia-manager)** and its **[x360db](https://github.com/xenia-manager/x360db)**
   archive - the box art and backgrounds COGBox downloads.
 - The **Gears community patches** - ultrawide by boma and TudorHorse (Gears 2, 3 and Judgment), ported here as switches.
+- **[Xenia Canary's game patches](https://github.com/xenia-canary/game-patches)** - Gears 1's motion blur and depth of field
+  switches come from its "Disable Motion Blur" (illusion, boma) and "Disable Gaussian Blur" (boma) patches for Title Update 5.
+  Judgment's Film grain switch is its "Disable Film Grain" patch (boma); Bloom follows its "Disable Bloom" patches (boma)
+  through the games' own setting.
 - **Microsoft DirectX 12 Agility SDK** - the DirectX 12 runtime the ports bring along (so Windows 10 works too).
 - **[NVIDIA FLIP](https://github.com/NVlabs/flip)** - the picture comparisons in our test runs.
-- The **Anton** and **Barlow** fonts (SIL Open Font License), and **[Kenney Input Prompts](https://kenney.nl/assets/input-prompts)** (CC0 1.0 Public Domain) for controller and keyboard/mouse prompt glyphs.
+- The achievement sound (`Gears2-Native/assets/sounds/achievement.wav`), made by Flippage (PR #187) with **[ElevenLabs](https://elevenlabs.io)** Sound Effects on its free plan - under ElevenLabs' terms for free-plan output (credit to elevenlabs.io; no commercial licence), as `THIRD_PARTY_NOTICES.md` records.
+- The **Anton**, **Barlow** and **Inter** fonts (SIL Open Font License), and **[Kenney Input Prompts](https://kenney.nl/assets/input-prompts)** (CC0 1.0 Public Domain) for controller and keyboard/mouse prompt glyphs.
 
 Every licence is in `THIRD_PARTY_NOTICES.md` and in the release's `licenses` folder. If we've missed anyone, please
 open an issue and we'll add them.
@@ -349,7 +369,7 @@ already asks you to keep the copyright notice in copies of the code.)
 Also used, each under its own licence: Xenia / Canary / Edge (BSD-3), the rexglue SDK (BSD-style), FFmpeg (LGPL-2.1+,
 for the game movies), SDL3 (zlib), Dear ImGui (MIT), SMAA (MIT), xxHash (BSD-2), miniz (MIT), stb (MIT), the DirectX
 Shader Compiler, the Vulkan Headers, AMD FidelityFX and Anti-Lag 2, NVIDIA DLSS and Reflex, Intel XeSS, and the
-Anton / Barlow fonts (SIL OFL). Full texts are in [`THIRD_PARTY_NOTICES.md`](Gears2-Native/THIRD_PARTY_NOTICES.md)
+Anton / Barlow / Inter fonts (SIL OFL). Full texts are in [`THIRD_PARTY_NOTICES.md`](Gears2-Native/THIRD_PARTY_NOTICES.md)
 and the release's `licenses` folder.
 
 No game content is included. "Gears of War" and "Xbox" are trademarks of Microsoft; this is an unofficial fan project.

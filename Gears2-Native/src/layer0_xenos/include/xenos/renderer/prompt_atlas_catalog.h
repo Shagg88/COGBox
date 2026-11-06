@@ -14,6 +14,7 @@ enum class AtlasKind : uint8_t {
   kFont256G3J,    // 256x256 Gears 3 & Judgment button font sheet
   kFont256G2,     // 256x256 Gears 2 button font sheet
   kChainsawDuel,  // 256x256 Melee & Chainsaw Duel sheet (B mash, LT, RT, Y)
+  kHud512G1,      // GitHub #214: Gears 1's 512x512 HUD action sheet (Gears 2's A/B/X/Y cells; no RS cells there)
 };
 
 struct PromptCell {
