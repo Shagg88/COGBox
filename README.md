@@ -42,7 +42,9 @@ the ports what an emulator can't easily offer:
 - **DLC and mods** - add DLC packages from your console and mods as .zip files on each game's About tab.
 - **Every game language** the US and European releases have (21), chosen per game - the ones on your copy work.
   Japanese (player reports, #103): Gears 3 and Judgment work from a Japanese disc (text and voices). Gears 2 is not
-  supported in Japanese out of the box: text and subtitles only with a manual workaround, and movie voices stay English.
+  supported in Japanese out of the box: text and subtitles only with a manual workaround, and movie voices stay English
+  (not fixed yet: the movies are the Japanese disc's own, so the engine picks the English sound track inside them; the
+  game log's `gow2_movie_log:` lines now list each movie's sound tracks, which we need from a Japanese copy to fix it).
 - **In-game menu** - Back + Start (Share + Options on PlayStation, or F1) during play: change settings, restart to
   apply them, or quit.
 

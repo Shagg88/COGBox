@@ -599,7 +599,55 @@ bool Gow2LooksLocalized(std::string_view path) {
     if (Gow2EndsWithNoCase(name, ext)) return true;
   return false;
 }
+// GitHub #103 (Japanese Gears 2: movie voices stay English, with the Japanese disc's own .bik files): logging only. The
+// movie's language is not the file - the installed movies match the Japanese disc byte for byte - so it is the sound
+// track the engine asks Bink for. The first 40 .bik opens are logged with the audio tracks the header lists (count,
+// track IDs, sample rate, stereo), so a Japanese player's log shows whether a Japanese track is in the file and which ID
+// it has; picking it needs that ID and the address of this build's Bink track choice (BinkSetSoundTrack / the BinkOpen
+// track flag), which nobody has yet. Header layout as FFmpeg's Bink demuxer reads it (little-endian).
+void Gow2LogBinkTracks(std::string_view guest_path, const std::filesystem::path* host_path) {
+  static std::atomic<int> lines{0};
+  if (!host_path || lines.fetch_add(1, std::memory_order_relaxed) >= 40) return;
+  auto le32 = [](const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; };
+  uint8_t h[256] = {};
+  size_t got = 0;
+  if (FILE* fp = _wfopen(host_path->c_str(), L"rb")) {
+    got = std::fread(h, 1, sizeof(h), fp);
+    std::fclose(fp);
+  }
+  if (got < 44 || !((h[0] == 'B' && h[1] == 'I' && h[2] == 'K') || (h[0] == 'K' && h[1] == 'B' && h[2] == '2'))) {
+    REXLOG_INFO("gow2_movie_log: opened {} - not a Bink header we know ({} bytes read)", guest_path, got);
+    return;
+  }
+  const uint32_t n = le32(h + 40);
+  // Bink 1 revisions before 'k': the track table follows at once; 'BIKk' and Bink 2 have 4 more bytes first.
+  const size_t extra = (h[0] == 'K' || h[3] >= 'k') ? 4 : 0;
+  std::string tracks;
+  if (n <= 16 && got >= 44 + extra + 12 * size_t(n)) {
+    const uint8_t* info = h + 44 + extra + 4 * n;  // past each track's largest-packet size
+    const uint8_t* ids = info + 4 * n;
+    for (uint32_t i = 0; i < n; ++i) {
+      const uint32_t rate = uint32_t(info[4 * i]) | uint32_t(info[4 * i + 1]) << 8;
+      const uint32_t flags = uint32_t(info[4 * i + 2]) | uint32_t(info[4 * i + 3]) << 8;
+      tracks += (i ? ", " : " [") + std::string("id ") + std::to_string(le32(ids + 4 * i)) + " " + std::to_string(rate) +
+                " Hz" + ((flags & 0x2000) ? " stereo" : " mono");
+    }
+    if (n) tracks += "]";
+  } else {
+    tracks = " (track table not read)";
+  }
+  char raw[3 * 32 + 1] = {};   // the bytes from the track count on, in case this revision's layout differs
+  for (size_t i = 0; i < 32 && 40 + i < got; ++i) std::snprintf(raw + 3 * i, 4, "%02X ", h[40 + i]);
+  REXLOG_INFO("gow2_movie_log: opened {} - Bink {}{}{}{}, {} audio track(s){} (user_language {}, voice {}) raw@40: {}", guest_path,
+              char(h[0]), char(h[1]), char(h[2]), char(h[3]), n, tracks, rex::cvar::GetFlagByName("user_language"),
+              rex::cvar::GetFlagByName("ue3_voice_language"), raw);
+}
+
 void Gow2OnFileOpenedLoc(std::string_view guest_path, const std::filesystem::path* host_path) {
+  if (Gow2EndsWithNoCase(guest_path, ".bik")) {   // GitHub #103
+    Gow2LogBinkTracks(guest_path, host_path);
+    return;
+  }
   if (!Gow2LooksLocalized(guest_path)) return;
   const int n = g_loc_log_lines.fetch_add(1, std::memory_order_relaxed);
   if (n >= kLocLogMax) return;
