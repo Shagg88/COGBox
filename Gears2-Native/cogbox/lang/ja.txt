@@ -956,8 +956,8 @@ Not on your copy of the game - it will show English. = お使いのゲームに�
 Not on your copy of the game - the voices will be in the game language instead. = お使いのゲームにはありません - 音声はゲームの言語になります。
 # TU preflight (machine-made translation, please check)
 The title update doesn't match your game files = タイトルアップデートがゲームファイルと一致しません
-This title update is for another release of the game, and the game would most likely stop at start. Play the disc version, or add the title update that matches your copy. = このタイトルアップデートは別のリリース用で、ゲームは起動時に停止する可能性が高いです。ディスク版でプレイするか、お使いのコピーに合うタイトルアップデートを追加してください。
+This title update is for another release of the game, and the game would most likely stop at start. = このタイトルアップデートは別のリリース用で、ゲームは起動時に停止する可能性が高いです。
+Add the title update that matches your copy. = お使いのコピーに合うタイトルアップデートを追加してください。
 Game files = ゲームファイル
 Title update for = アップデートの対象
-Play the disc version = ディスク版でプレイ
 Play anyway = このままプレイ

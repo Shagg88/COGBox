@@ -956,8 +956,8 @@ Not on your copy of the game - it will show English. = 你的游戏副本中没�
 Not on your copy of the game - the voices will be in the game language instead. = 你的游戏副本中没有此语言 - 语音将改用游戏语言。
 # TU preflight (machine-made translation, please check)
 The title update doesn't match your game files = 标题更新与你的游戏文件不匹配
-This title update is for another release of the game, and the game would most likely stop at start. Play the disc version, or add the title update that matches your copy. = 此标题更新适用于游戏的另一个版本，游戏很可能会在启动时停止。请玩光盘版本，或添加与你的副本匹配的标题更新。
+This title update is for another release of the game, and the game would most likely stop at start. = 此标题更新适用于游戏的另一个版本，游戏很可能会在启动时停止。
+Add the title update that matches your copy. = 请添加与你的副本匹配的标题更新。
 Game files = 游戏文件
 Title update for = 更新适用于
-Play the disc version = 玩光盘版本
 Play anyway = 仍然开始游戏

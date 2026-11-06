@@ -956,8 +956,8 @@ Not on your copy of the game - it will show English. = Nincs a játékpéldányo
 Not on your copy of the game - the voices will be in the game language instead. = Nincs a játékpéldányodon - a hangok a játék nyelvén szólnak helyette.
 # TU preflight (machine-made translation, please check)
 The title update doesn't match your game files = A frissítés nem illik a játékfájljaidhoz
-This title update is for another release of the game, and the game would most likely stop at start. Play the disc version, or add the title update that matches your copy. = Ez a frissítés a játék egy másik kiadásához készült, és a játék nagy valószínűséggel leállna induláskor. Játszd a lemezes verziót, vagy add hozzá a példányodhoz illő frissítést.
+This title update is for another release of the game, and the game would most likely stop at start. = Ez a frissítés a játék egy másik kiadásához készült, és a játék nagy valószínűséggel leállna induláskor.
+Add the title update that matches your copy. = Add hozzá a példányodhoz illő frissítést.
 Game files = Játékfájlok
 Title update for = Frissítés ehhez
-Play the disc version = Lemezes verzió indítása
 Play anyway = Indítás mégis

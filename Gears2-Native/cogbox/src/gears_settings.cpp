@@ -280,7 +280,7 @@ std::vector<Option> make_options(Game g) {
     add(make("MipFade", "Sharp textures show at once (fast mip fade)", Tab::Graphics, Kind::Bool, PG, 1,
              "A newly loaded sharper texture shows at once instead of fading in over 0.3-2 seconds.", 359), "mipfade", "", true);
     // GitHub #105: Gears 3's depth of field (its half-size 640-pitch targets) at the render scale, not the console's 720p
-    add(make("DofScale", "Depth of field at the render resolution", Tab::Graphics, Kind::Bool, PG, 1,
+    add(make("DofScale", "Depth of field at the render resolution", Tab::Graphics, Kind::Bool, PG, 0,
              "Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render "
              "resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p.", 0), "dofscale");
     add(choice("Pool", "Texture memory", Tab::Graphics, PG,

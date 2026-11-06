@@ -956,8 +956,8 @@ Not on your copy of the game - it will show English. = Absent de votre copie du 
 Not on your copy of the game - the voices will be in the game language instead. = Absent de votre copie du jeu - les voix seront dans la langue du jeu.
 # TU preflight (machine-made translation, please check)
 The title update doesn't match your game files = La mise à jour ne correspond pas à vos fichiers de jeu
-This title update is for another release of the game, and the game would most likely stop at start. Play the disc version, or add the title update that matches your copy. = Cette mise à jour est destinée à une autre édition du jeu, qui s'arrêterait très probablement au démarrage. Jouez la version disque ou ajoutez la mise à jour qui correspond à votre copie.
+This title update is for another release of the game, and the game would most likely stop at start. = Cette mise à jour est destinée à une autre édition du jeu, qui s'arrêterait très probablement au démarrage.
+Add the title update that matches your copy. = Ajoutez la mise à jour qui correspond à votre copie.
 Game files = Fichiers du jeu
 Title update for = Mise à jour pour
-Play the disc version = Jouer la version disque
 Play anyway = Jouer quand même

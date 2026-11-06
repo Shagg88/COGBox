@@ -272,11 +272,11 @@ void play_start(App &a, int g, bool prepare)
             x360fs::read_xex_info(widen(join(st.updateDir, "default.xexp")), pi) && pi.base_version &&
             (pi.title_id != xi.title_id || pi.base_version != xi.version)) {
             ask(a, "tumismatch", g, tr("The title update doesn't match your game files"),
-                std::string(tr("This title update is for another release of the game, and the game would most likely stop at start. "
-                   "Play the disc version, or add the title update that matches your copy.")) +
+                std::string(tr("This title update is for another release of the game, and the game would most likely stop at start.")) +
+                    " " + tr("Add the title update that matches your copy.") +
                     "\n\n" + tr("Game files") + ": " + x360fs::xbox_version_string(xi.version) + "   " + tr("Title update for") +
                     ": " + x360fs::xbox_version_string(pi.base_version),
-                { tr("Play the disc version"), tr("Play anyway"), tr("Cancel") });
+                { tr("Play anyway"), tr("Cancel") });   // Shagg: no disc-version button
             return;
         }
     }
