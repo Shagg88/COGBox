@@ -18,6 +18,7 @@
 #include <xenos/display_size.h>
 
 #include "gow3_addresses.h"
+#include <ue3/objects.h>
 #include "mouse_look.h"
 
 #include <algorithm>
@@ -311,9 +312,58 @@ REXCVAR_DEFINE_INT32(gow3_tick_floor_fps, 0, "Gears3",
                      "while nothing is presented, e.g. checkpoint saves). 0 = off");
 void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content packages, on the game thread
 
+// Gears 3's path choice (UIScene_PathChoice: "left path / right path") reads the triggers - the left trigger picks the
+// left path - while the mouse's buttons are bound the other way round for play (keybind_right_trigger = LMB: fire,
+// keybind_left_trigger = RMB: aim), so the left button chose the right path, against the on-screen prompts. While the
+// scene is open and takes input the two trigger binds are swapped, and put back as they were when it closes (the
+// player's own binds, whatever they are). A pad is not affected. From KiltedKernel's Gears 3 port (hid.cpp).
+REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, true, "Gears3",
+                    "Path choice: the mouse button on a path's side picks that path (the trigger binds swap while it is open)");
+void Gow3PathChoiceTick() {
+  if (!REXCVAR_GET(gow3_path_choice_mouse)) return;
+  static uint32_t ticks = 0;
+  if (++ticks % 15) return;  // four times a second at 60: the scene stays open for seconds
+  namespace obj = ue3::obj;
+  if (!obj::Ready() && !obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar)) return;
+  static uint32_t scene = 0;
+  static int flags = -1;
+  static uint32_t open_mask = 0, input_mask = 0;
+  if (!scene) {
+    const uint32_t movie = obj::FindClass("GFxMoviePlayer");
+    scene = obj::FindClass("UIScene_PathChoice");
+    if (!movie || !scene) { scene = 0; return; }
+    flags = obj::PropertyOffset(movie, "bMovieIsOpen");
+    open_mask = obj::BoolMask(movie, "bMovieIsOpen");
+    input_mask = obj::BoolMask(movie, "bAllowInput");
+    if (flags < 0 || !open_mask) { REXLOG_WARN("path choice: GFxMoviePlayer flags not found - mouse buttons left as bound"); return; }
+  }
+  if (flags < 0) return;
+  bool open = false;
+  for (uint32_t m : obj::FindInstancesOf(scene)) {
+    const uint32_t f = obj::Read32(m + uint32_t(flags));
+    if ((f & open_mask) && (!input_mask || (f & input_mask))) open = true;
+  }
+  static bool swapped = false;
+  static std::string left, right;
+  if (open == swapped) return;
+  if (open) {
+    left = rex::cvar::GetFlagByName("keybind_left_trigger");
+    right = rex::cvar::GetFlagByName("keybind_right_trigger");
+    rex::cvar::SetFlagByName("keybind_left_trigger", right);
+    rex::cvar::SetFlagByName("keybind_right_trigger", left);
+  } else {
+    rex::cvar::SetFlagByName("keybind_left_trigger", left);
+    rex::cvar::SetFlagByName("keybind_right_trigger", right);
+  }
+  swapped = open;
+  REXLOG_INFO("path choice: {} (left path: {}, right path: {})", open ? "open, trigger binds swapped" : "closed, binds restored",
+              open ? right : left, open ? left : right);
+}
+
 void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9B0
   TickTimeline();
   Gow3ModChaptersTick();
+  Gow3PathChoiceTick();
   const int32_t v = REXCVAR_GET(gow3_max_fps);
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)
