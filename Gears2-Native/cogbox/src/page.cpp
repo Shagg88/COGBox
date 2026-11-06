@@ -1077,10 +1077,10 @@ struct TabGroups { const char *heading[4]; const char *const *ids[4]; const char
 static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", nullptr };
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
 static const char *const k_dispAdv[] = { "HDR", "PaperWhite", "Peak", "HideNotes", nullptr };
-static const char *const k_gfxQuality[] = { "Preset", "Resolution", "AAMode", nullptr };
+static const char *const k_gfxQuality[] = { "Api", "WineApi", "Preset", "Resolution", "AAMode", nullptr };
 static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "Pool", "DrawDist", "MeshLod", "AO", nullptr };
 static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "Shake", "Fov", nullptr };
-static const char *const k_gfxAdv[] = { "Api", "WineApi", "Sharpen", "SceneMode", "FrameGen", "MipFade", nullptr };
+static const char *const k_gfxAdv[] = { "Sharpen", "SceneMode", "FrameGen", "MipFade", nullptr };
 static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "PadPrompts", nullptr };
 static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", nullptr };
 static const char *const k_ctlAdv[] = { "DeadZone", "RadialDZ", "LowLag", nullptr };
