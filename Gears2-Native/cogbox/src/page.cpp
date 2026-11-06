@@ -1055,28 +1055,6 @@ static void about_tab(App &a, int g)
             ImGui::EndCombo();
         }
     }
-    {   // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=, SDK patch 54)
-        static char buf[16] = {};
-        static bool loaded = false;
-        if (!loaded) {
-            loaded = true;
-            const std::string cur = a.ini.get("Profile", "Gamertag");
-            std::snprintf(buf, sizeof(buf), "%s", cur.c_str());
-        }
-        static const char *k_nameTip = "The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: \"User\". "
-                                       "Display only - your profile and saves stay where they are.";
-        row_label("Player name", tr(k_nameTip), true);   // 0.4.0 (Shagg): "Player name" - the gamertag, display only
-        ImGui::SetNextItemWidth(g_ctrlW);
-        auto filter = [](ImGuiInputTextCallbackData *d) -> int {   // Xbox gamertags: letters, digits, spaces
-            const ImWchar c = d->EventChar;
-            return (c < 128 && (std::isalnum(static_cast<int>(c)) || c == ' ')) ? 0 : 1;
-        };
-        if (ImGui::InputText("##gamertag", buf, sizeof(buf), ImGuiInputTextFlags_CallbackCharFilter, filter)) {
-            a.ini.set("Profile", "Gamertag", buf);
-            a.ini.save();
-        }
-        ui_tip(k_nameTip);
-    }
     static const char *k_winTip = "COGBox draws its own minimise, maximise and close buttons in the top-right corner; drag the strip beside them to move the window.";
     bool fs = a.fullscreen;   // job 523
     if (ImGui::Checkbox(tr("Fullscreen (F11, or LT + RT together)"), &fs)) set_fullscreen(a, fs);

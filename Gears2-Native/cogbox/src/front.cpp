@@ -361,6 +361,72 @@ void backdrop_draw(App &a, ImDrawList *dl, ImVec2 size, int g, float alpha)
     dl->AddImage((ImTextureID)(intptr_t)b.tex, p, ImVec2(p.x + w, p.y + h), ImVec2(0, 0), ImVec2(1, 1), IM_COL32(150, 150, 150, v));
 }
 
+// 0.4.6 (Shagg 6 Nov): the player plate on the front screen - an initial in a crimson ring, PLAYER over the name.
+// Click (or Back / View) opens a small box to change the name: CogBox.ini [Profile] Gamertag, the same rules as the
+// runtime's Player1Gamertag (ASCII letters, digits and spaces, 15 at most; empty means "User").
+static void player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav)
+{
+    std::string name = a.ini.get("Profile", "Gamertag");
+    const bool unset = name.find_first_not_of(' ') == std::string::npos;
+    const std::string shown = unset ? std::string(tr("Set your name")) : name;
+    const float h = T(40), r = h * 0.5f - S(5);
+    const float nameW = F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, shown.c_str()).x;
+    const float lblW = F_SMALL->CalcTextSizeA(FS(F_SMALL), FLT_MAX, 0, tr("PLAYER")).x;
+    const float w = S(10) + r * 2 + S(12) + std::max(nameW, lblW) + S(18);
+    ImGui::SetCursorScreenPos(o);
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);   // the D-pad keeps turning the carousel
+    const bool click = ImGui::InvisibleButton("##playerplate", ImVec2(w, h));
+    const bool hov = ImGui::IsItemHovered();
+    ImGui::PopItemFlag();
+    th_plate(dl, o, ImVec2(o.x + w, o.y + h), S(6), hov);
+    // the badge: a dark disc, a crimson ring, the first letter (or a head-and-shoulders mark when no name is set)
+    const ImVec2 c(o.x + S(10) + r, o.y + h * 0.5f);
+    dl->AddCircleFilled(c, r, U(ImVec4(0.05f, 0.05f, 0.06f, 1)), 32);
+    dl->AddCircle(c, r, U(hov ? col::redHi : col::red), 32, S(2.2f));
+    if (unset) {
+        dl->AddCircleFilled(ImVec2(c.x, c.y - r * 0.22f), r * 0.30f, U(col::dim), 20);
+        dl->PathArcTo(ImVec2(c.x, c.y + r * 0.62f), r * 0.52f, 3.14159f, 6.28318f, 20);
+        dl->PathFillConvex(U(col::dim));
+    } else {
+        char ini[2] = { (char)toupper((unsigned char)name[name.find_first_not_of(' ')]), 0 };
+        const ImVec2 ts = F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, ini);
+        dl->AddText(F_HEAD, FS(F_HEAD), ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), U(col::text), ini);
+    }
+    const float tx = c.x + r + S(12);
+    const float ls = FS(F_SMALL), ns = FS(F_BOLD), ty = o.y + (h - ls - ns) * 0.5f;
+    dl->AddText(F_SMALL, ls, ImVec2(tx, ty), U(col::red), tr("PLAYER"));
+    dl->AddText(F_BOLD, ns, ImVec2(tx, ty + ls), U(unset ? col::dim : col::text), shown.c_str());
+    if (hov && !ImGui::IsPopupOpen("##playername")) hover_tip(o, ImVec2(o.x + w, o.y + h),
+        tr("The name every game shows for you (your gamertag). Click to change it. Your profile and saves stay where they are."));
+
+    static char buf[16] = {};
+    if (click || (nav && ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false))) {
+        std::snprintf(buf, sizeof(buf), "%s", name.c_str());
+        ImGui::OpenPopup("##playername");
+    }
+    ImGui::SetNextWindowPos(ImVec2(o.x, o.y + h + S(8)), ImGuiCond_Appearing);
+    if (ImGui::BeginPopup("##playername", ImGuiWindowFlags_NoMove)) {
+        static const char *k_tip = "Up to 15 letters, digits or spaces. Empty: \"User\".";
+        ImGui::PushFont(F_BOLD, FS(F_BOLD)); ImGui::TextUnformatted(tr("PLAYER NAME")); ImGui::PopFont();
+        ImGui::TextColored(col::dim, "%s", tr(k_tip));
+        auto filter = [](ImGuiInputTextCallbackData *d) -> int {   // Xbox gamertags: letters, digits, spaces
+            const ImWchar ch = d->EventChar;
+            return (ch < 128 && (std::isalnum(static_cast<int>(ch)) || ch == ' ')) ? 0 : 1;
+        };
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(S(260));
+        const bool enter = ImGui::InputText("##gamertag", buf, sizeof(buf),
+                                            ImGuiInputTextFlags_CallbackCharFilter | ImGuiInputTextFlags_EnterReturnsTrue, filter);
+        bool save = enter;
+        ImGui::Spacing();
+        if (th_button("SAVE", ImVec2(S(120), T(28)), true, F_BOLD)) save = true;
+        ImGui::SameLine(0, S(10));
+        if (th_button("CANCEL", ImVec2(S(120), T(28)), true, F_BOLD)) ImGui::CloseCurrentPopup();
+        if (save) { a.ini.set("Profile", "Gamertag", buf); a.ini.save(); ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+}
+
 void front_draw(App &a, ImVec2 size)
 {
     ImDrawList *dl = ImGui::GetWindowDrawList();
@@ -402,6 +468,10 @@ void front_draw(App &a, ImVec2 size)
         th_cog(dl, ImVec2(m.x + S(16), m.y + S(18)), S(16), 10, (float)now * 0.15f, U(col::redHi), U(ImVec4(0.03f, 0.03f, 0.035f, 1)));
         dl->AddText(F_TITLE, FS(F_TITLE), ImVec2(m.x + S(42), m.y), U(col::text), "COGBOX");
     }
+
+    // 0.4.6 (Shagg 6 Nov): the player plate, top left beside the mark - the name every game shows (GitHub #119; it
+    // was in the About tab). Click it, or press Back / View, to change it.
+    player_plate(a, dl, ImVec2(S(26) + S(42) + F_TITLE->CalcTextSizeA(FS(F_TITLE), FLT_MAX, 0, "COGBOX").x + S(22), S(18)), nav);
 
     if (nLib == 0) empty_draw(a, size, nav);
     else {
@@ -488,7 +558,11 @@ void front_draw(App &a, ImVec2 size)
         bool sel0 = a.padConnected && a.frontSel == 0, sel1 = a.padConnected && a.frontSel == 1;
         bool sel2 = a.padConnected && a.frontSel == 2;   // achievements part 4
         bool padA = nav && a.padConnected && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
-        ImGui::SetCursorScreenPos(ImVec2(cx - bw - gap * 0.5f, y));
+        // 0.4.6 (Shagg 6 Nov): ACHIEVEMENTS is a third button like the other two, and the row is centred
+        const bool achShown = st.ready != R_NO_PORT;
+        const float aw = std::max(bw, F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, tr("ACHIEVEMENTS")).x + S(36));
+        const float rowW = bw * 2 + gap + (achShown ? gap + aw : 0);
+        ImGui::SetCursorScreenPos(ImVec2(cx - rowW * 0.5f, y));
         if (st.ready == R_READY) {
             // A presses the choice LB / RB made (a.frontSel); Enter plays
             if (th_button_red(running ? "RUNNING" : "PLAY", ImVec2(bw, bh), !running && !busy, F_HEAD, sel0) ||
@@ -507,12 +581,9 @@ void front_draw(App &a, ImVec2 size)
         }
         // achievements part 4 (0.4.6 style): a small side button right of SETTINGS, not a third big one; it opens the
         // ACHIEVEMENTS tab on All. LB / RB reach it as the third choice.
-        if (st.ready != R_NO_PORT) {
-            ImGui::SetCursorScreenPos(ImVec2(cx + bw + gap * 1.5f, y + (bh - ImGui::GetFrameHeight()) * 0.5f));
-            ImGui::PushStyleColor(ImGuiCol_Button, sel2 ? ImVec4(1, 1, 1, 0.10f) : ImVec4(0, 0, 0, 0));
-            ImGui::PushStyleColor(ImGuiCol_Text, sel2 ? col::text : col::dim);
-            const bool hit = ImGui::Button(tr("Achievements"));
-            ImGui::PopStyleColor(2);
+        if (achShown) {
+            ImGui::SameLine(0, gap);
+            const bool hit = th_button("ACHIEVEMENTS", ImVec2(aw, bh), true, F_HEAD, sel2);
             hover_tip(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), tr("Your achievements in all four games."));
             if (hit || (nav && padA && a.frontSel == 2)) {
                 a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 4; a.barSel = -1;   // gs::Tab::Achievements
