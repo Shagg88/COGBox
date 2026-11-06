@@ -7,6 +7,9 @@
 #include <fstream>
 #include <iterator>
 #include <system_error>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace xenos::ach {
 
@@ -172,17 +175,16 @@ bool WriteFileAtomic(const std::filesystem::path& path, const std::string& bytes
     f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     if (!f) return false;
   }
-  // Rename over the old file in one step (MoveFileEx with replace on Windows). Only if that fails: remove the old file
-  // and try again - and never delete the new copy once the old one is gone, so nothing is ever lost.
-  std::filesystem::rename(tmp, path, ec);
-  if (!ec) return true;
-  ec.clear();
-  if (!std::filesystem::remove(path, ec) || ec) {
-    std::filesystem::remove(tmp, ec);  // the old file is still there
-    return false;
-  }
-  std::filesystem::rename(tmp, path, ec);
-  return !ec;  // on failure <path>.tmp keeps the new content
+  // Rename over the old file in one step. Windows: MoveFileExW with MOVEFILE_REPLACE_EXISTING - std::filesystem::rename
+  // (MinGW's especially) can refuse an existing target, and removing the old file first would leave a moment with no
+  // catalog at all. On failure <path>.tmp keeps the new content and the old file is untouched.
+#ifdef _WIN32
+  if (MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+  return false;
+#else
+  std::filesystem::rename(tmp, path, ec);  // POSIX rename replaces the target atomically
+  return !ec;
+#endif
 }
 
 bool ReadFile(const std::filesystem::path& path, std::string* out) {

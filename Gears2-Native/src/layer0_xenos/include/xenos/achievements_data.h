@@ -1,4 +1,4 @@
-// Layer 0 (game-free): COGBox's achievement data (docs/achievements/2026-11-04-achievements-data-layer-design.md).
+// Layer 0 (game-free): COGBox's achievement data (docs/achievements/README.md).
 // Each game writes its achievement list to <COGBox>\achievements\<TitleID>\catalog.txt (+ icons\<id>.png); the SDK
 // keeps each game's unlocks in <COGBox>\<Game>\user\achievements\<TitleID>.toml. This reads both for any of the four
 // games and gives per-game lists, totals, sort orders, revealed secrets and rarity. Standard C++17 only: the launcher

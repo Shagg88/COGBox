@@ -303,7 +303,7 @@ This project stands on the work of many open-source projects and their communiti
 - The **Gears community patches** - ultrawide by boma and TudorHorse (Gears 2, 3 and Judgment), ported here as switches.
 - **Microsoft DirectX 12 Agility SDK** - the DirectX 12 runtime the ports bring along (so Windows 10 works too).
 - **[NVIDIA FLIP](https://github.com/NVlabs/flip)** - the picture comparisons in our test runs.
-- The achievement sound, made with **[ElevenLabs](https://elevenlabs.io)** Sound Effects.
+- The achievement sound (`Gears2-Native/assets/sounds/achievement.wav`), made by Flippage (PR #187) with **[ElevenLabs](https://elevenlabs.io)** Sound Effects on its free plan - under ElevenLabs' terms for free-plan output (credit to elevenlabs.io; no commercial licence), as `THIRD_PARTY_NOTICES.md` records.
 - The **Anton**, **Barlow** and **Inter** fonts (SIL Open Font License), and **[Kenney Input Prompts](https://kenney.nl/assets/input-prompts)** (CC0 1.0 Public Domain) for controller and keyboard/mouse prompt glyphs.
 
 Every licence is in `THIRD_PARTY_NOTICES.md` and in the release's `licenses` folder. If we've missed anyone, please

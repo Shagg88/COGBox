@@ -1,5 +1,5 @@
-// Layer 0 (game-free): the Achievements page of COGBox's in-game menu (docs/achievements/2026-11-04-achievements-browser-
-// design.md): games down the left with their progress, the chosen game's (or All's) achievements on the right, sort,
+// Layer 0 (game-free): the Achievements page of COGBox's in-game menu (docs/achievements/README.md):
+// games down the left with their progress, the chosen game's (or All's) achievements on the right, sort,
 // Show filter and the secret-reveal question. What it shows comes from achievements_browser_model.h; this loads the data
 // and icons and draws it inside the menu's window. UI thread only, except the unlock callback. Our code (MIT).
 #pragma once

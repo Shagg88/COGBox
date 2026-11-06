@@ -1,4 +1,4 @@
-// Layer 0 (game-free): the achievement popups' rules (docs/achievements/2026-11-04-achievements-popups-design.md):
+// Layer 0 (game-free): the achievement popups' rules (docs/achievements/README.md):
 // trophy grade, rare, "completes the game", the settings' names, text fitting and the animation timeline. Standard
 // C++17 only, unit-tested; the drawing (achievement_popup.cpp) only reads these. Our code (MIT).
 #pragma once

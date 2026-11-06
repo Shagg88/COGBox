@@ -1,4 +1,4 @@
-// Layer 0 (game-free): COGBox's achievement popups (docs/achievements/2026-11-04-achievements-popups-design.md):
+// Layer 0 (game-free): COGBox's achievement popups (docs/achievements/README.md):
 // Xbox 360, modern Xbox and PS5 trophy styles, animated from xenos::ach::PopupTimeline, with a replaceable sound.
 // Replaces the SDK's toast. Like the old LazyAchievementToast it is attached to the ImGui drawer only while a popup
 // shows, and it is drawn with the game's own frames (no repaints of its own). Our code (MIT).

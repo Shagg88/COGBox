@@ -1,4 +1,4 @@
-// Layer 0 (game-free): the achievement popups' fonts and sound (docs/achievements/2026-11-04-achievements-popups-design.md).
+// Layer 0 (game-free): the achievement popups' fonts and sound (docs/achievements/README.md).
 // Fonts come from the PC (Segoe UI; Tahoma or Arial when it is missing, as under Proton); none is shipped. The sound
 // is <COGBox>\assets\sounds\achievement[-<style>].wav, a file the team can replace. Our code (MIT).
 #pragma once

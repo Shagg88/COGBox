@@ -1,4 +1,4 @@
-// Layer 0 (game-free): what the achievements browser shows (docs/achievements/2026-11-04-achievements-browser-design.md)
+// Layer 0 (game-free): what the achievements browser shows (docs/achievements/README.md)
 // - the left column, the header, the rows and every piece of their text - from part 1's data. No drawing, no SDK:
 // the in-game page (achievements_browser.cpp) draws it and part 4's launcher page reuses it. Standard C++17 only.
 // Our code (MIT).
