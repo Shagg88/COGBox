@@ -65,6 +65,13 @@ apply does that for you.
 New in 0.4.6
 ------------
 - Games, title updates and DLC are now added only by dragging and dropping them onto the window.
+- Your player name is on the library screen now (click it, or press Back / View, to change it), and ACHIEVEMENTS is
+  a full button next to PLAY and SETTINGS.
+- New installs start in borderless fullscreen with SMAA on. Your saved settings are kept.
+- Gears 1: button prompts for PlayStation and other controllers (#214).
+- Gears 2: ultrawide screens no longer get the 4:3 camera offset (#132).
+- Gears 3: no more freeze at the main menu.
+- No sound on one output device: a game muted or at zero in the Windows volume mixer is set back to full (#203).
 - System Link: Gears of War co-op reported working on two PCs (thanks to LenzTRO, #209); the setting's
   tip and this README say so.
 - Achievements in all four games (thanks to Flippage, PR #187): a popup when one unlocks (Xbox 360, Xbox or
