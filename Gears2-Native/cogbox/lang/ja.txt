@@ -975,3 +975,7 @@ Film grain = フィルムグレイン
 Judgment's film grain noise over the picture. Off: a clean picture. = Judgment の画面にかかるフィルムグレインのノイズ。オフ: きれいな画面。
 Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it. = Gears 1: ブルームは被写界深度のぼかしで描かれます。被写界深度をオフにすると弱くなります。
 Judgment only. = Judgment のみ。
+# GitHub #208: mouse buttons 4 / 5 (machine-made translation, please check)
+Mouse button 4 = マウスボタン 4
+Mouse button 5 = マウスボタン 5
+Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = マウスボタン 4 と 5 には次の COGBox ランタイムが必要です。別のキーを選んでください。

@@ -975,3 +975,7 @@ Film grain = 필름 그레인
 Judgment's film grain noise over the picture. Off: a clean picture. = Judgment 화면 위의 필름 그레인 노이즈. 끄면 깨끗한 화면입니다.
 Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it. = Gears 1: 블룸은 피사계 심도 블러로 그려집니다. 피사계 심도를 끄면 약해집니다.
 Judgment only. = Judgment 전용.
+# GitHub #208: mouse buttons 4 / 5 (machine-made translation, please check)
+Mouse button 4 = 마우스 버튼 4
+Mouse button 5 = 마우스 버튼 5
+Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = 마우스 버튼 4와 5에는 다음 COGBox 런타임이 필요합니다. 다른 키를 고르세요.

@@ -342,6 +342,7 @@ static std::string key_shown(const std::string &v)   // "MMB,Z" -> "Middle mouse
     std::string out, tok;
     auto add = [&](std::string t) {
         if (t == "LMB") t = "Left mouse"; else if (t == "RMB") t = "Right mouse"; else if (t == "MMB") t = "Middle mouse";
+        else if (t == "MB4") t = "Mouse button 4"; else if (t == "MB5") t = "Mouse button 5";   // GitHub #208 (SDK patch 65)
         else if (t == "Return") t = "Enter";
         if (!t.empty()) out += (out.empty() ? "" : " / ") + t;
     };
@@ -441,9 +442,13 @@ static void keys_section(App &a, int g)
         if (ImGui::IsMouseClicked(0)) name = "LMB";
         else if (ImGui::IsMouseClicked(1)) name = "RMB";
         else if (ImGui::IsMouseClicked(2)) name = "MMB";
+        else if (ImGui::IsMouseClicked(3) || ImGui::IsMouseClicked(4)) {   // GitHub #208: the side buttons, SDK patch 65
+            if (a.env[g].cap.runtime_has && a.env[g].cap.runtime_has("MB4")) name = ImGui::IsMouseClicked(3) ? "MB4" : "MB5";
+            else { keyNote = "Mouse buttons 4 and 5 need the next COGBox runtime - choose another key."; capture = -1; return; }
+        }
         for (int k = ImGuiKey_NamedKey_BEGIN; !name && k < ImGuiKey_NamedKey_END; k++)
             if (ImGui::IsKeyPressed((ImGuiKey)k, false)) name = sdk_key_name((ImGuiKey)k);
-        if (name && strcmp(name, "LMB") && strcmp(name, "RMB") && strcmp(name, "MMB"))
+        if (name && strcmp(name, "LMB") && strcmp(name, "RMB") && strcmp(name, "MMB") && strcmp(name, "MB4") && strcmp(name, "MB5"))
             if (const char *pos = sdk_scancode_name(g_lastKeyScancode)) name = pos;   // by position, as the driver sees it
         if (name) {
             // Players reported mixed-up binds: one key bound to two actions pressed both. A key now belongs to one action:

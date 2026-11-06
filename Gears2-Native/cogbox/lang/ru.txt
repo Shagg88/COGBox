@@ -975,3 +975,7 @@ Film grain = Зернистость
 Judgment's film grain noise over the picture. Off: a clean picture. = Шум зернистости поверх изображения в Judgment. Выкл.: чистая картинка.
 Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it. = Gears 1: bloom рисуется размытием глубины резкости - выключение глубины резкости смягчает его.
 Judgment only. = Только Judgment.
+# GitHub #208: mouse buttons 4 / 5 (machine-made translation, please check)
+Mouse button 4 = Кнопка мыши 4
+Mouse button 5 = Кнопка мыши 5
+Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = Для кнопок мыши 4 и 5 нужна следующая среда выполнения COGBox - выберите другую клавишу.

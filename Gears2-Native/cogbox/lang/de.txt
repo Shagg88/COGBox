@@ -975,3 +975,7 @@ Film grain = Filmkörnung
 Judgment's film grain noise over the picture. Off: a clean picture. = Das Filmkorn-Rauschen von Judgment über dem Bild. Aus: ein sauberes Bild.
 Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it. = Gears 1: Sein Bloom wird mit der Tiefenschärfe-Unschärfe gezeichnet - Tiefenschärfe aus schwächt ihn ab.
 Judgment only. = Nur Judgment.
+# GitHub #208: mouse buttons 4 / 5 (machine-made translation, please check)
+Mouse button 4 = Maustaste 4
+Mouse button 5 = Maustaste 5
+Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = Die Maustasten 4 und 5 brauchen die nächste COGBox-Laufzeit - wähle eine andere Taste.

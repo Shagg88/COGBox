@@ -975,3 +975,7 @@ Film grain = Grano de película
 Judgment's film grain noise over the picture. Off: a clean picture. = El ruido de grano de película de Judgment sobre la imagen. Desactivado: imagen limpia.
 Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it. = Gears 1: su resplandor se dibuja con el desenfoque de la profundidad de campo; desactivar la profundidad de campo lo suaviza.
 Judgment only. = Solo Judgment.
+# GitHub #208: mouse buttons 4 / 5 (machine-made translation, please check)
+Mouse button 4 = Botón 4 del ratón
+Mouse button 5 = Botón 5 del ratón
+Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = Los botones 4 y 5 del ratón necesitan el próximo runtime de COGBox: elige otra tecla.

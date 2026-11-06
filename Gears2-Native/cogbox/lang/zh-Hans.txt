@@ -975,3 +975,7 @@ Film grain = 胶片颗粒
 Judgment's film grain noise over the picture. Off: a clean picture. = Judgment 画面上的胶片颗粒噪点。关闭：画面干净。
 Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it. = Gears 1：其泛光使用景深模糊绘制 - 关闭景深会减弱泛光。
 Judgment only. = 仅限 Judgment。
+# GitHub #208: mouse buttons 4 / 5 (machine-made translation, please check)
+Mouse button 4 = 鼠标按键 4
+Mouse button 5 = 鼠标按键 5
+Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = 鼠标按键 4 和 5 需要下一个 COGBox 运行时 - 请选择其他按键。

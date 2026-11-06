@@ -975,3 +975,7 @@ Film grain = Filmszemcse
 Judgment's film grain noise over the picture. Off: a clean picture. = A Judgment filmszemcse-zaja a képen. Ki: tiszta kép.
 Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it. = Gears 1: a bloomját a mélységélesség elmosásával rajzolja - a mélységélesség kikapcsolása lágyítja.
 Judgment only. = Csak Judgment.
+# GitHub #208: mouse buttons 4 / 5 (machine-made translation, please check)
+Mouse button 4 = 4. egérgomb
+Mouse button 5 = 5. egérgomb
+Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = A 4. és 5. egérgombhoz a következő COGBox futtatókörnyezet kell - válassz másik gombot.
