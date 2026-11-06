@@ -142,6 +142,7 @@ class RenderTargetCache {
   uint32_t ScaleFor(uint32_t pitch_pixels, uint32_t msaa) const {
     (void)msaa;
     if (scale_ > 1 && scale_threshold_ && pitch_pixels <= scale_threshold_ && !ScaledAnyway(pitch_pixels)) return 1u;
+    if (scale_ > 1 && UnscaledAnyway(pitch_pixels)) return 1u;  // GitHub #212
     return phase_scale_;
   }
   uint32_t ScaleFor(const RenderTargetKey& key) const { return ScaleFor(key.pitch_pixels, key.msaa); }
@@ -150,6 +151,14 @@ class RenderTargetCache {
   void SetScaledPitches(std::vector<uint32_t> pitches) { scaled_pitches_ = std::move(pitches); }
   bool ScaledAnyway(uint32_t pitch_pixels) const {
     for (uint32_t p : scaled_pitches_)
+      if (p == pitch_pixels) return true;
+    return false;
+  }
+  // GitHub #212 (--gow2_renderer_resolution_unscaled_pitches): surface pitches kept at 1x although above the threshold
+  // (Gears 3's 1344-wide sun shadow map, pitch 1360: pixelated outdoor shadows at 2x).
+  void SetUnscaledPitches(std::vector<uint32_t> pitches) { unscaled_pitches_ = std::move(pitches); }
+  bool UnscaledAnyway(uint32_t pitch_pixels) const {
+    for (uint32_t p : unscaled_pitches_)
       if (p == pitch_pixels) return true;
     return false;
   }
@@ -203,6 +212,7 @@ class RenderTargetCache {
   uint32_t scale_ = 1;
   uint32_t scale_threshold_ = 0;
   std::vector<uint32_t> scaled_pitches_;  // GitHub #105
+  std::vector<uint32_t> unscaled_pitches_;  // GitHub #212
   uint32_t phase_scale_ = 1;  // patch 0141
   uint64_t host_bytes_ = 0;
   std::vector<std::unique_ptr<RenderTarget>> targets_;

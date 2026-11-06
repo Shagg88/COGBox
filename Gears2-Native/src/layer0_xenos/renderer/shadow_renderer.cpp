@@ -718,6 +718,10 @@ REXCVAR_DEFINE_STRING(gow2_renderer_resolution_scale_pitches, "", "Gears2",
                       "is otherwise drawn at the console's size and enlarged. Their viewports, scissors, resolves and the "
                       "textures read from them follow the target's own scale; the game's texel offsets stay in "
                       "normalised source-size units, so kernels keep their footprint. Empty = off (as 0.4.5). No effect at 1x");
+REXCVAR_DEFINE_STRING(gow2_renderer_resolution_unscaled_pitches, "", "Gears2",
+                      "GitHub #212: surface pitches (pixels, comma-separated) kept at 1x with a resolution scale although "
+                      "above --gow2_renderer_resolution_scale_threshold - Gears 3 sets 1360, its 1344-wide outdoor sun "
+                      "shadow map (pixelated shadows at 2x). Empty = off. No effect at 1x");
 REXCVAR_DEFINE_INT32(gow2_renderer_camera_log, 0, "Gears2",
                      "Diagnostic (GitHub #132): every N frames, the scene camera taken from the view-projection in c0-c3 "
                      "of the frame's first scene-depth draw - world position, yaw / pitch, vertical and horizontal field "
@@ -1558,6 +1562,23 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         REXLOG_INFO("gow2_renderer: GitHub #105: targets with pitch {} are drawn at {}x despite the threshold", shown,
                     res_scale_);
         rts_->SetScaledPitches(std::move(pitches));
+      }
+    }
+    if (res_scale_ > 1) {  // GitHub #212
+      std::vector<uint32_t> keep;
+      const std::string list = REXCVAR_GET(gow2_renderer_resolution_unscaled_pitches);
+      size_t at = 0;
+      while (at < list.size()) {
+        const size_t end = std::min(list.find(',', at), list.size());
+        const unsigned long v = std::strtoul(list.substr(at, end - at).c_str(), nullptr, 10);
+        if (v >= 32 && v <= 8192 && keep.size() < 16) keep.push_back(uint32_t(v));
+        at = end + 1;
+      }
+      if (!keep.empty()) {
+        std::string shown;
+        for (uint32_t p : keep) shown += (shown.empty() ? "" : ",") + std::to_string(p);
+        REXLOG_INFO("gow2_renderer: GitHub #212: targets with pitch {} stay 1x", shown);
+        rts_->SetUnscaledPitches(std::move(keep));
       }
     }
     if (res_scale_ > 1)

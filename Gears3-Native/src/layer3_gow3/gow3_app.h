@@ -93,6 +93,8 @@ class Gow3App : public rex::ReXApp {
     game_default("gow2_upscale_camera_constant", "5");
     game_default("gow2_renderer_memexport", "true");
     game_default("gow2_renderer_resolution_scale_threshold", "1120");
+    //  - GitHub #212: the 1344-wide outdoor sun shadow map (pitch 1360) stays 1x - drawn at 2x its shadows were pixelated
+    game_default("gow2_renderer_resolution_unscaled_pitches", "1360");
     //  - the upscalers' scene colour: Gears 3's lit scene is 10:10:10:2 UNORM (job 055), not 16-bit float as Gears 2's
     //    (the shared renderer's default, 1, would never find it).
     game_default("gow2_upscale_scene_formats", "2");
