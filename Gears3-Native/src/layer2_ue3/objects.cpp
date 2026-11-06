@@ -369,6 +369,35 @@ std::vector<uint32_t> FindInstancesOf(uint32_t cls) {
   return out;
 }
 
+std::vector<uint32_t> FindInstancesOfRange(uint32_t cls, uint32_t first, uint32_t count, uint32_t* total) {
+  std::vector<uint32_t> out;
+  Refresh();
+  ExtendCount();
+  if (total) *total = g_objectCount;
+  if (!cls || first >= g_objectCount) return out;
+  count = std::min(count, g_objectCount - first);
+  std::vector<uint32_t> table(count);
+  if (!count || !Copy(g_objects + 4 * first, table.data(), table.size() * 4)) return out;
+  static std::unordered_map<uint64_t, bool> isSub;  // (cls, class) -> derives (game thread; classes are not freed)
+  if (isSub.size() > 65536) isSub.clear();
+  for (uint32_t raw : table) {
+    const uint32_t o = Swap(raw);
+    if (!o) continue;
+    const uint32_t c = ClassOf(o);
+    if (!c) continue;
+    const uint64_t key = (uint64_t(cls) << 32) | c;
+    auto it = isSub.find(key);
+    if (it == isSub.end()) {
+      bool sub = false;
+      for (uint32_t k = c, guard = 0; k && guard < 64; k = Read32(k + 64), guard++)
+        if (k == cls) { sub = true; break; }
+      it = isSub.emplace(key, sub).first;
+    }
+    if (it->second && ObjectName(o).rfind("Default__", 0) != 0) out.push_back(o);
+  }
+  return out;
+}
+
 int PropertyOffset(uint32_t cls, const char* property) {
   const uint32_t p = FindProperty(cls, property);
   return p ? int(Read32(p + 84)) : -1;

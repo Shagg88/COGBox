@@ -401,7 +401,17 @@ void Gow3PathChoiceTick() {
   static uint32_t scene = 0;
   static int flags = -1;
   static uint32_t open_mask = 0, input_mask = 0;
+  // 0.4.6 freeze (Shagg 11-06: Gears 3 stopped at the menu): FindClass caches hits only, so while
+  // UIScene_PathChoice is not loaded (the menus) every call scanned all ~168,000 objects through checked reads -
+  // four times a second, which stalled the game thread to a standstill (so did the full FindInstancesOf per call).
+  // A miss is now retried every 5 s, and the instances are found by a scan spread over calls (below).
+  using Clock = std::chrono::steady_clock;
+  static Clock::time_point next_class{};
+  static std::vector<uint32_t> instances;
+  const Clock::time_point now = Clock::now();
   if (!scene) {
+    if (now < next_class) return;
+    next_class = now + std::chrono::seconds(5);
     const uint32_t movie = obj::FindClass("GFxMoviePlayer");
     scene = obj::FindClass("UIScene_PathChoice");
     if (!movie || !scene) { scene = 0; return; }
@@ -411,8 +421,22 @@ void Gow3PathChoiceTick() {
     if (flags < 0 || !open_mask) { REXLOG_WARN("path choice: GFxMoviePlayer flags not found - mouse buttons left as bound"); return; }
   }
   if (flags < 0) return;
+  // review: no full scan at all - 16384 table slots per call (a pass over ~168k slots in ~2.5 s), plus the newest 2048
+  // slots every call, where an opening scene's new instance usually lands (so the swap is not seconds late)
+  {
+    static uint32_t cursor = 0;
+    static std::vector<uint32_t> building;
+    uint32_t total = 0;
+    for (uint32_t m : obj::FindInstancesOfRange(scene, cursor, 16384, &total)) building.push_back(m);
+    cursor += 16384;
+    if (cursor >= total) { instances.swap(building); building.clear(); cursor = 0; }
+    if (total > 2048)
+      for (uint32_t m : obj::FindInstancesOfRange(scene, total - 2048, 2048, nullptr))
+        if (std::find(instances.begin(), instances.end(), m) == instances.end()) instances.push_back(m);
+  }
   bool open = false;
-  for (uint32_t m : obj::FindInstancesOf(scene)) {
+  for (uint32_t m : instances) {
+    if (!obj::IsA(m, scene)) continue;  // review L1: a freed / reused slot since it was listed
     const uint32_t f = obj::Read32(m + uint32_t(flags));
     if ((f & open_mask) && (!input_mask || (f & input_mask))) open = true;
   }
