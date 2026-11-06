@@ -720,7 +720,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         // the controller works the launcher only while it is the window in front
         // On the front screen the D-pad / arrows turn the carousel and LB / RB choose Play or Settings (front.cpp keeps
         // that choice itself), so Dear ImGui's own navigation is off there unless a question box is open.
-        bool frontOwn = (a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open) ||
+        bool frontOwn = (a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
+                         !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) ||   // 0.4.6 review: the player-name box takes the pad
                         (a.screen == SCR_PAGE && a.barSel >= 0 && !a.modal.open);   // also a page's bottom bar (page.cpp)
         if (!SDL_GetKeyboardFocus() || a.run.proc || frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
         else io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;

@@ -1133,3 +1133,4 @@ Set your name = Укажите имя
 PLAYER NAME = ИМЯ ИГРОКА
 Up to 15 letters, digits or spaces. Empty: "User". = До 15 букв, цифр или пробелов. Пусто: «User».
 The name every game shows for you (your gamertag). Click to change it. Your profile and saves stay where they are. = Имя, которое показывает каждая игра (ваш gamertag). Нажмите, чтобы изменить. Профиль и сохранения остаются на месте.
+Save name = СОХРАНИТЬ ИМЯ

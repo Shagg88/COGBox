@@ -1133,3 +1133,4 @@ Set your name = 이름 설정
 PLAYER NAME = 플레이어 이름
 Up to 15 letters, digits or spaces. Empty: "User". = 영문자, 숫자, 공백으로 최대 15자. 비워 두면 "User".
 The name every game shows for you (your gamertag). Click to change it. Your profile and saves stay where they are. = 모든 게임에 표시되는 이름(게이머태그)입니다. 클릭해서 바꿀 수 있습니다. 프로필과 저장 파일은 그대로 유지됩니다.
+Save name = 이름 저장

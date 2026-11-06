@@ -1133,3 +1133,4 @@ Set your name = 设置你的名字
 PLAYER NAME = 玩家名称
 Up to 15 letters, digits or spaces. Empty: "User". = 最多 15 个字母、数字或空格。留空则为“User”。
 The name every game shows for you (your gamertag). Click to change it. Your profile and saves stay where they are. = 每款游戏为你显示的名字（玩家代号）。点击即可更改。你的档案和存档保持不变。
+Save name = 保存名字

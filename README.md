@@ -103,8 +103,8 @@ Only Gears 3 saves are converted - Gears of War, Gears 2 and Judgment saves are 
 - **The Gears 2 / Gears 3 disc builds** are no longer included (see 1).
 
 ### 4. Your name in the games (Player name, #119)
-1. In COGBox, open any game's **Settings**, then the **About** tab.
-2. Type your name in **Player name** (up to 15 letters, digits or spaces; extra spaces are trimmed). It's saved straight away.
+1. In COGBox's library screen, click the **PLAYER** plate at the top left (or press Back / View on a controller).
+2. Type your name (up to 15 letters, digits or spaces; extra spaces are trimmed) and press **Save name** or Enter.
 3. Start (or restart) any game: player 1 shows that name in all four games. Leave it empty for "User".
    It only changes the name shown: your profile folder and saves stay exactly where they are.
 
@@ -131,7 +131,7 @@ Only Gears 3 saves are converted - Gears of War, Gears 2 and Judgment saves are 
 - **Desktop shortcuts** for COGBox and each game. For a **Steam** entry per game, add `CogBox.exe` as a non-Steam game
   with the Launch Options `--play gears1` / `gears2` / `gears3` / `judgment` - not the game's own `gow3.exe` etc., which
   stops with "--game_data_root was not provided" (COGBox passes the game folder and your settings).
-- **Player name** (About tab): the name every game shows for player 1 (display only, saves untouched).
+- **Player name** (the PLAYER plate on the library screen): the name every game shows for player 1 (display only, saves untouched).
 
 ### Adding DLC
 

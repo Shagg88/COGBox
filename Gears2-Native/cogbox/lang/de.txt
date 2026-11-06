@@ -1133,3 +1133,4 @@ Set your name = Namen festlegen
 PLAYER NAME = SPIELERNAME
 Up to 15 letters, digits or spaces. Empty: "User". = Bis zu 15 Buchstaben, Ziffern oder Leerzeichen. Leer: "User".
 The name every game shows for you (your gamertag). Click to change it. Your profile and saves stay where they are. = Der Name, den jedes Spiel für dich anzeigt (dein Gamertag). Klicke, um ihn zu ändern. Dein Profil und deine Spielstände bleiben, wo sie sind.
+Save name = NAMEN SPEICHERN

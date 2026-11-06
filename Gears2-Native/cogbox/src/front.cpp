@@ -419,9 +419,11 @@ static void player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav)
                                             ImGuiInputTextFlags_CallbackCharFilter | ImGuiInputTextFlags_EnterReturnsTrue, filter);
         bool save = enter;
         ImGui::Spacing();
-        if (th_button("SAVE", ImVec2(S(120), T(28)), true, F_BOLD)) save = true;
+        if (th_button("Save name", ImVec2(S(140), T(28)), true, F_BOLD)) save = true;
         ImGui::SameLine(0, S(10));
-        if (th_button("CANCEL", ImVec2(S(120), T(28)), true, F_BOLD)) ImGui::CloseCurrentPopup();
+        if (th_button("CANCEL", ImVec2(S(140), T(28)), true, F_BOLD) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();   // 0.4.6 review: B / Esc close it too
         if (save) { a.ini.set("Profile", "Gamertag", buf); a.ini.save(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
@@ -646,7 +648,8 @@ void front_draw(App &a, ImVec2 size)
                 ImVec2 ms(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, tr(ml)).x + S(36), bh);
                 place(ms.x);
                 if (th_button(ml, ms, true, F_BOLD) || (nav && ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false)) ||
-                    (!ImGui::GetIO().WantTextInput && !a.modal.open && ImGui::IsKeyPressed(ImGuiKey_M, false)))
+                    (!ImGui::GetIO().WantTextInput && !a.modal.open && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
+                     ImGui::IsKeyPressed(ImGuiKey_M, false)))
                     music_set_on(a, !music_on(a));
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                     ImGui::SetTooltip("%s", tr("Plays the chosen game's own menu music, read from your copy, in the library and on its settings page. M switches it."));

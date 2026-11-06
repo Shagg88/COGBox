@@ -71,7 +71,8 @@ New in 0.4.6
 - Gears 1: button prompts for PlayStation and other controllers (#214).
 - Gears 2: ultrawide screens no longer get the 4:3 camera offset (#132).
 - Gears 3: no more freeze at the main menu.
-- No sound on one output device: a game muted or at zero in the Windows volume mixer is set back to full (#203).
+- No sound on one output device: if the game is muted or at zero in the Windows volume mixer, COGBox sets it back
+  to full when the game starts (#203).
 - System Link: Gears of War co-op reported working on two PCs (thanks to LenzTRO, #209); the setting's
   tip and this README say so.
 - Achievements in all four games (thanks to Flippage, PR #187): a popup when one unlocks (Xbox 360, Xbox or
@@ -212,7 +213,7 @@ New in 0.4.0 - please read
   started on 0.3.x makes Gears 3 reset it. Only Gears 3 saves are converted.
 - Gears 3 Cheats and "Unlock all mutators" are removed for now (they only worked with the disc
   version).
-- Player name: any game's Settings > About tab > Player name. Up to 15 letters, digits or spaces;
+- Player name: the PLAYER plate at the top left of the library screen (or Back / View). Up to 15 letters, digits or spaces;
   empty = "User". Every game shows it for player 1. It only changes the name shown - your profile
   folder and saves stay where they are.
 

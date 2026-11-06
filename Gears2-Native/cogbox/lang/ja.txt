@@ -1133,3 +1133,4 @@ Set your name = 名前を設定
 PLAYER NAME = プレイヤー名
 Up to 15 letters, digits or spaces. Empty: "User". = 英数字とスペースで15文字まで。空欄の場合は「User」。
 The name every game shows for you (your gamertag). Click to change it. Your profile and saves stay where they are. = すべてのゲームで表示される名前（ゲーマータグ）です。クリックして変更できます。プロフィールとセーブデータはそのままです。
+Save name = 名前を保存
