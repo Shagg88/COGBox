@@ -89,7 +89,8 @@ New in 0.4.6
   advice).
 - Mouse look when zoomed (#175), a clearer message for missing program files (#194), DLC found again after the
   0.4.5 update (#193 / #201), Gears 3 TU6 mod campaigns with more than five acts in Select Chapter (thanks to
-  KiltedKernel, PR #205), the movie log (#103), screenshots saved at the size shown, the Vulkan pipeline cache read
+  KiltedKernel, PR #205), Gears 3's path choice picked with the mouse button on that path's side (thanks to
+  KiltedKernel, PR #206), the movie log (#103), screenshots saved at the size shown, the Vulkan pipeline cache read
   up to 2 GB, and user folders with non-Latin letters for the shader caches (#177).
 - Frame-rate limit: the limit you pick is the limit. With Vsync it is no longer lowered to 3 under your screen's
   refresh rate (60 stays 60); only a limit above the refresh rate is brought down to it. The quality presets no
