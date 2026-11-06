@@ -592,7 +592,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "ao") {   // notes/80: Gears 2 and Gears 3 (s.9); notes/81: Judgment, with the fog anchor its exe sets
         if (g != Game::Gears2 && g != Game::Gears3 && g != Game::Judgment) return no(not_yet(gi, "Gears 2 and 3 first"));
-        if (!cap_exe(env, g == Game::Judgment ? "gow2_ao_skip_ps" : "gow2_ao_quality")) return no(not_yet(gi, "needs its next build"));
+        // job 1272d: the short cvar name is not in gowj.exe as plain text - its description is
+        if (!cap_exe(env, g == Game::Judgment ? "AO passes that the chain detection does not" : "gow2_ao_quality")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "realocclusion") {   // PR #43: Gears 3 and Judgment; GitHub #75: Gears 2 too
         // an older Gears 2 exe without strict queries would only warn - keep the box greyed out for it
         if (g == Game::Gears2 && !cap_exe(env, "gow2_renderer_queries")) return no(not_yet(0, "needs its next build"));
