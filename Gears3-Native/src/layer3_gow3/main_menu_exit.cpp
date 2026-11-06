@@ -23,6 +23,9 @@
 #include <rex/logging.h>
 #include <rex/ppc.h>
 #include <ue3/main_menu_exit.h>
+#include <ue3/objects.h>
+
+#include "gow3_addresses.h"
 
 void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));  // shader_prebuild.cpp
 
@@ -88,7 +91,20 @@ extern "C" void GOW3_NEED_LIVE_IMP(PPCContext& ctx, uint8_t* base);
 
 extern "C" void GOW3_NEED_LIVE_FN(PPCContext& ctx, uint8_t* base) {
   if (REXCVAR_GET(gow_main_menu_exit) && rex::glue::MatchesNeedLive(base, ctx.r5.u32)) {
-    if (ue3::InFrontEndForExit()) {
+    // GitHub #215: back on the main menu after playing, Gears 3 does not open GearStart*.xxx again (the front end stays
+    // loaded), so the file-open tracking still says "in a level" and the entry showed the Marketplace message. A
+    // second test, only when the tracking says level: no live player pawn (GearPawn) = the front end.
+    bool front = ue3::InFrontEndForExit();
+    if (!front) {
+      namespace obj = ue3::obj;
+      if (obj::Ready() || obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar)) {
+        const uint32_t pawn = obj::FindClass("GearPawn");
+        const size_t n = pawn ? obj::FindInstancesOf(pawn).size() : size_t(1);
+        REXLOG_INFO("MAINMENU: #215 file tracking says level; GearPawn class {:08X}, live pawns {}", pawn, n);
+        front = pawn && n == 0;
+      }
+    }
+    if (front) {
       REXLOG_INFO("MAINMENU: NeedLiveForDownloadableContent on the front end (lr {:08X})",
                   static_cast<uint32_t>(ctx.lr));
       rex::glue::ExitGame();
