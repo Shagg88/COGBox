@@ -8,6 +8,7 @@
 #include <locale>
 #include <regex>
 #include <sstream>
+#include <cstring>
 
 namespace cogbox {
 namespace gears {
@@ -605,7 +606,7 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     return Availability();
 }
 
-const std::vector<KeyAction> &key_actions()
+const std::vector<KeyAction> &key_actions(Game g)
 {
     // The Gears layout COGBox has always sent (PS1 930-937), now one row each so the player can change them.
     static const std::vector<KeyAction> v = {
@@ -627,6 +628,17 @@ const std::vector<KeyAction> &key_actions()
         { "keybind_back", "Back", "Back / scores", "Backspace" },
         { "keybind_walk", "-", "Walk", "None" },   // SDK patch 60: no key until chosen
     };
+    // GitHub #208: Judgment's LB is the grenade and D-pad down the tactical display - the same keys (Tab, 4) keep
+    // their meaning, so the two rows swap names and default keys
+    static const std::vector<KeyAction> judgment = [] {
+        std::vector<KeyAction> j = v;
+        for (KeyAction &k : j) {
+            if (!strcmp(k.cvar, "keybind_left_shoulder")) { k.what = "Grenades"; k.def = "4"; }
+            else if (!strcmp(k.cvar, "keybind_dpad_down")) { k.what = "Tactical display"; k.def = "Tab"; }
+        }
+        return j;
+    }();
+    if (g == Game::Judgment) return judgment;
     return v;
 }
 
@@ -1360,7 +1372,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back(std::string("--pad_look_deadzone=") + (g == Game::Gears2 ? "0.3" : isG3 ? "0" : "0.2"));
         }
         bool defaultKeys = true;
-        for (const KeyAction &k : key_actions()) {   // 0.2.0: the Gears layout, or the player's own keys (Controls tab)
+        for (const KeyAction &k : key_actions(g)) {   // 0.2.0: the Gears layout, or the player's own keys (Controls tab)
             auto it = env.keys.find(k.cvar);
             const std::string v = it != env.keys.end() && !it->second.empty() ? it->second : k.def;
             if (v != k.def) defaultKeys = false;
@@ -1388,7 +1400,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             std::string dir;
             if (g_prompt_composer) {
                 std::map<std::string, std::string> keys;
-                for (const KeyAction &k : key_actions()) {
+                for (const KeyAction &k : key_actions(g)) {
                     auto it = env.keys.find(k.cvar);
                     keys[k.cvar] = it != env.keys.end() && !it->second.empty() ? it->second : k.def;
                 }

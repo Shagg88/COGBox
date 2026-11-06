@@ -162,7 +162,7 @@ void env_refresh(App &a, int g)
     e.wine = a.wine;   // job 523
     e.mac = a.mac;     // job 643
     e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab); GitHub #154: this game's own
-    for (const gs::KeyAction &k : gs::key_actions()) {
+    for (const gs::KeyAction &k : gs::key_actions((gs::Game)g)) {
         std::string v = key_get(a, g, k.cvar);
         if (!v.empty()) e.keys[k.cvar] = v;
     }
@@ -396,7 +396,7 @@ static void keys_section(App &a, int g)
     static std::string keyNote;   // what the last key press changed besides its own action
     static int keysGame = -1;     // review 1186: a key chosen for one game's row never lands on another game's
     if (keysGame != g) { keysGame = g; capture = -1; keyNote.clear(); }
-    const auto &acts = gs::key_actions();
+    const auto &acts = gs::key_actions((gs::Game)g);
     ui_section("KEYBOARD KEYS");
     const std::string keysTip = tr(std::string("Used when Keyboard and mouse is on, in ") + game_def(g).shortName +
               " only - each game keeps its own keys. Choose an action, then press its new key or mouse button (Esc cancels).") +
