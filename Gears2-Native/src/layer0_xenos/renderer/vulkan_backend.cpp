@@ -54,6 +54,7 @@ std::unique_ptr<Backend> CreateVulkanBackend() { return nullptr; }
 #include <dlfcn.h>
 #endif
 
+#include <rex/filesystem.h>  // path_to_utf8 (F-12)
 #include <rex/logging/macros.h>
 
 #include <algorithm>
@@ -1524,11 +1525,11 @@ class VulkanBackend final : public Backend {
     // Patch 0079: the Vulkan pipeline cache on disk next to D3D12's library (the driver checks its own header and
     // ignores data from another driver or GPU).
     if (!options_.pipeline_library_path.empty()) {
-      std::filesystem::path pth(options_.pipeline_library_path);
-      std::string name = pth.filename().string();
-      const size_t at = name.find("d3d12");
-      name = at != std::string::npos ? name.replace(at, 5, "vulkan") : name + ".vulkan";
-      cache_path_ = (pth.parent_path() / name).string();
+      const std::filesystem::path& pth = options_.pipeline_library_path;  // F-12 / #177: wide all the way
+      std::wstring name = pth.filename().wstring();
+      const size_t at = name.find(L"d3d12");
+      name = at != std::wstring::npos ? name.replace(at, 5, L"vulkan") : name + L".vulkan";
+      cache_path_ = pth.parent_path() / name;
     }
     std::vector<char> initial;
     if (!cache_path_.empty()) {
@@ -1540,7 +1541,7 @@ class VulkanBackend final : public Backend {
         // 768 MB on the log says so (delete the file to start lean; the driver rebuilds what is used).
         if (n >= (std::streamoff(768) << 20))
           REXLOG_WARN("gow2_renderer: Vulkan pipeline cache {} is {} MB - it keeps old versions' pipelines too; delete it "
-                      "to start a smaller one", cache_path_, int64_t(n >> 20));
+                      "to start a smaller one", rex::path_to_utf8(cache_path_), int64_t(n >> 20));
         if (n > 0 && n < (std::streamoff(2) << 30)) {
           initial.resize(size_t(n));
           f.seekg(0);
@@ -1577,7 +1578,7 @@ class VulkanBackend final : public Backend {
     }
     if (!pipeline_cache_vk_) REXLOG_WARN("gow2_renderer: Vulkan pipeline cache couldn't be created - running without one");
     if (!cache_path_.empty())
-      REXLOG_INFO("gow2_renderer: Vulkan pipeline cache {} ({} KB loaded)", cache_path_, (initial.size() + 1023) / 1024);
+      REXLOG_INFO("gow2_renderer: Vulkan pipeline cache {} ({} KB loaded)", rex::path_to_utf8(cache_path_), (initial.size() + 1023) / 1024);
     cache_saved_at_ = std::chrono::steady_clock::now();
     return true;
   }
@@ -2774,9 +2775,10 @@ class VulkanBackend final : public Backend {
     cache_saved_at_ = t;
     cache_saved_built_ = built;
     ++stats_.pipeline_library_saves;
-    const std::string path = cache_path_;
+    const std::filesystem::path path = cache_path_;
     auto write = [path, data]() {
-      const std::string tmp = path + ".tmp";
+      std::filesystem::path tmp = path;
+      tmp += L".tmp";
       {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) return;
@@ -3318,7 +3320,7 @@ class VulkanBackend final : public Backend {
   bool stop_workers_ = false;
   std::atomic<uint64_t> built_async_{0}, async_us_{0}, async_bytes_{0}, async_max_us_{0};
   // Patch 0079: the pipeline cache file and its periodic save (the harness ends the process without a shutdown).
-  std::string cache_path_;
+  std::filesystem::path cache_path_;
   std::chrono::steady_clock::time_point cache_saved_at_{};
   uint64_t cache_saved_built_ = 0;
   std::atomic<bool> cache_saving_{false};

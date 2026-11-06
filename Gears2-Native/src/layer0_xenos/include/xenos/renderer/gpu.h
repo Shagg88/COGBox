@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -264,7 +265,7 @@ struct BackendOptions {
   // Saved pipelines (notes/64 section 'Shader warm-up'): a D3D12 pipeline library file. Pipelines already in it load in
   // ~1 ms on first use, synchronously, so their draws are never skipped as "pending"; new ones compile as before and are
   // stored. Saved every ~15 s (patch 0056) while it grows and at shutdown. Empty = off. A driver change starts a new library.
-  std::string pipeline_library_path;
+  std::filesystem::path pipeline_library_path;  // F-12 / #177: a path, never through the ANSI code page
   // Patch 0010 (stutter): the periodic save serializes the whole library (tens of MB) and writes the file - on the
   // recording thread that froze a frame for 100-400 ms. true: a background thread does it (the library is
   // thread-safe, CreatePipelineLibrary docs). The save at shutdown stays where it is.

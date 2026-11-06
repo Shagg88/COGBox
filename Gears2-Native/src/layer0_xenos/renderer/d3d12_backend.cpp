@@ -69,6 +69,7 @@ bool EnableDeviceLossDiagnostics() { return false; }
 #include <d3d12sdklayers.h>
 #include <dxgi1_4.h>
 
+#include <rex/filesystem.h>  // path_to_utf8 (F-12)
 #include <rex/logging/macros.h>
 #include <rex/hash.h>  // XXH3 (pipeline library names)
 
@@ -4580,7 +4581,7 @@ class D3D12Backend final : public Backend {
     const size_t had = pipeline_library_blob_.size();
     if (FAILED(hr)) {  // no file yet, another driver / GPU (DRIVER_VERSION_MISMATCH, ADAPTER_NOT_FOUND) or damaged
       if (had) REXLOG_INFO("gow2_renderer: saved pipelines: {} not usable ({:08X}) - starting a new library",
-                           path.string(), uint32_t(hr));
+                           rex::path_to_utf8(path), uint32_t(hr));
       pipeline_library_blob_.clear();
       hr = device1->CreatePipelineLibrary(nullptr, 0, IID_PPV_ARGS(&pipeline_library_));
     }
@@ -4591,7 +4592,7 @@ class D3D12Backend final : public Backend {
       return;
     }
     pipeline_library_saved_at_ = std::chrono::steady_clock::now();
-    REXLOG_INFO("gow2_renderer: saved pipelines: {} ({} KB loaded)", path.string(),
+    REXLOG_INFO("gow2_renderer: saved pipelines: {} ({} KB loaded)", rex::path_to_utf8(path),
                 pipeline_library_blob_.empty() ? 0 : had / 1024);
   }
   std::wstring PipelineLibraryName(const D3D12_GRAPHICS_PIPELINE_STATE_DESC& pd) const {
