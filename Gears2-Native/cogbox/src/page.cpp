@@ -227,14 +227,46 @@ static void row_label(const char *label, const std::string &desc, bool enabled)
     ImGui::SameLine(g_labelW);
 }
 
-static void row_desc(const std::string &desc)
+// ---- 0.4.6 (Shagg 5 Nov 18:07: "the whole launcher aesthetically streamlined and simple") - one visual system for
+// every tab: a section is a gap and one heading style; explanations are hover tooltips (ui_tip), never paragraphs;
+// buttons share one height (and a minimum width, so a row of them lines up); rarely used options sit under a
+// collapsed ADVANCED toggle (ui_advanced), which the controller reaches like any button.
+static int g_sections;   // sections drawn so far in this tab (no gap above the first)
+
+static void ui_tip(const std::string &text_en)   // a hover / controller-focus tooltip for the last item
 {
-    if (desc.empty()) return;
-    const std::string shown = tr(desc);   // 0.2.0
+    if (text_en.empty() || !ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) return;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(S(460), FLT_MAX));
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(S(440));
+    ImGui::TextUnformatted(tr(text_en).c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
+static void ui_gap() { ImGui::Dummy(ImVec2(0, S(10))); }
+
+static void ui_section(const char *title_en)
+{
+    if (g_sections++) ui_gap();
+    th_heading(title_en, g_rowX1);
+    ImGui::Dummy(ImVec2(0, S(2)));
+}
+
+static bool small_button(const char *label_en)
+{
+    const char *label = tr(label_en);
+    const float w = std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, label).x + S(28));
+    return th_button(label, ImVec2(w, T(26)), true, F_BODY);
+}
+
+// one short line of feedback or status, small and dim (instead of a paragraph)
+static void ui_note(const std::string &text_en, ImVec4 c = col::dim)
+{
     ImGui::PushFont(F_SMALL, FS(F_SMALL) * k_rowText);
-    ImGui::PushStyleColor(ImGuiCol_Text, col::dim);
-    ImGui::PushTextWrapPos(row_wrap_x());   // GitHub #123
-    ImGui::TextUnformatted(shown.c_str());
+    ImGui::PushStyleColor(ImGuiCol_Text, c);
+    ImGui::PushTextWrapPos(row_wrap_x());
+    ImGui::TextUnformatted(tr(text_en).c_str());
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
     ImGui::PopFont();
@@ -317,19 +349,17 @@ static std::string key_shown(const std::string &v)   // "MMB,Z" -> "Middle mouse
     return out;
 }
 
-static bool small_button(const char *label_en);
 // Job 641 (Shagg 29 Oct: "pre-compile every single Shader before they jump into gameplay even if it costs users 8 to
 // 12 minutes"): the game builds every shipped chapter recipe (--gow2_renderer_prepare_all), saves its pipeline library
 // and exits; its <shadercache>\prepare-progress.txt ("<done> <total> <state> <seconds>") drives the bar here.
 static void prepare_section(App &a, int g)
 {
     const bool supported = a.env[g].cap.exe_has && a.env[g].cap.exe_has("gow2_renderer_prepare_all") && !a.env[g].recipe_pack.empty();
-    ImGui::Dummy(ImVec2(0, S(6)));
-    th_heading("PREPARE ALL SHADERS", g_rowX1);
-    row_desc("Builds the shaders of every chapter before you play, so chapters start without stutter while they are "
+    ui_section("PREPARE ALL SHADERS");
+    static const char *k_prepTip = "Builds the shaders of every chapter before you play, so chapters start without stutter while they are "
              "built. Takes a few minutes depending on your PC (about 1.5 minutes on a fast one), once - again only after a "
              "graphics driver update or a new COGBox release. "
-             "The game window opens and shows its intro while it works, then closes by itself.");
+             "The game window opens and shows its intro while it works, then closes by itself.";
     const bool mine = a.run.proc && a.run.prepare && a.run.game == g;
     if (mine) {
         std::string prog;
@@ -354,8 +384,7 @@ static void prepare_section(App &a, int g)
             play_start(a, g, true);
         }
         if (!ok) ImGui::EndDisabled();
-        if (!supported && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", tr("Needs this game's next build and its recipe pack (recipes folder)."));
+        ui_tip(supported ? k_prepTip : "Needs this game's next build and its recipe pack (recipes folder).");
     }
 }
 
@@ -367,17 +396,17 @@ static void keys_section(App &a, int g)
     static int keysGame = -1;     // review 1186: a key chosen for one game's row never lands on another game's
     if (keysGame != g) { keysGame = g; capture = -1; keyNote.clear(); }
     const auto &acts = gs::key_actions();
-    ImGui::Dummy(ImVec2(0, S(6)));
-    th_heading("KEYBOARD KEYS", g_rowX1);
-    row_desc((std::string("Used when Keyboard and mouse is on, in ") + game_def(g).shortName +
-              " only - each game keeps its own keys. Choose an action, then press its new key or mouse button (Esc cancels).").c_str());
+    ui_section("KEYBOARD KEYS");
+    const std::string keysTip = tr(std::string("Used when Keyboard and mouse is on, in ") + game_def(g).shortName +
+              " only - each game keeps its own keys. Choose an action, then press its new key or mouse button (Esc cancels).") +
+              "\n\n" + tr("Click: set the key. Right-click: add a second key.");
     const std::string sec = keys_section_name(g);
     auto set_all = [&](const char *cvar, const std::string &v) {   // (this game's keys only, GitHub #154)
         a.ini.set(sec, cvar, v);
         a.ini.save();
         env_refresh(a, g);
     };
-    if (!keyNote.empty()) row_desc(keyNote.c_str());
+    if (!keyNote.empty()) ui_note(keyNote, col::amber);
     const bool capturing = capture >= 0;
     if (capturing) ImGui::BeginDisabled();   // while waiting for a key, Space / Enter mustn't press a button
     for (int i = 0; i < (int)acts.size(); i++) {
@@ -394,12 +423,12 @@ static void keys_section(App &a, int g)
         if (th_button((shown + "##k").c_str(), ImVec2(g_ctrlW, T(26)), true, F_BODY, capture == i)) { capture = i; captureAdd = false; captureFrame = ImGui::GetFrameCount(); }
         // Two keys per action: right-click adds one beside the current key (the SDK takes a comma list, "MMB,Z").
         if (!capturing && ImGui::IsItemClicked(ImGuiMouseButton_Right)) { capture = i; captureAdd = true; captureFrame = ImGui::GetFrameCount(); }
-        if (!capturing && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Click: set the key. Right-click: add a second key."));
+        if (!capturing) ui_tip(keysTip);
         ImGui::PopID();
     }
     if (capturing) ImGui::EndDisabled();
     ImGui::Dummy(ImVec2(0, S(4)));
-    if (th_button("Reset keys to the Gears layout", ImVec2(F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, "Reset keys to the Gears layout").x + S(28), T(26)), true, F_BODY)) {
+    if (small_button("Reset keys to the Gears layout")) {
         for (const gs::KeyAction &k : acts) a.ini.set(sec, k.cvar, k.def);   // the layout itself, not the shared [Keys]
         set_all(acts[0].cvar, acts[0].def);
         capture = -1;
@@ -610,7 +639,7 @@ static void option_row(App &a, int g, const gs::Option &o)
 }
 
 // ---- the About tab ---------------------------------------------------------------------------------------------------
-static void lamp_line(int state, const std::string &text_en)
+static void lamp_line(int state, const std::string &text_en, const std::string &tip_en = "")
 {
     const std::string text = tr(text_en);   // 0.2.0
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -620,6 +649,11 @@ static void lamp_line(int state, const std::string &text_en)
     ImGui::PushTextWrapPos(row_wrap_x());   // GitHub #123
     ImGui::TextUnformatted(text.c_str());
     ImGui::PopTextWrapPos();
+    if (!tip_en.empty()) {   // a tip may reuse a "  -  ..." line piece: shown without the dash
+        std::string t = tr(tip_en);
+        t.erase(0, t.find_first_not_of(" -"));
+        ui_tip(t);
+    }
 }
 
 // 0.2.0: a shortcut on the player's desktop to CogBox.exe with these arguments (an existing one of the same name is replaced)
@@ -653,7 +687,6 @@ static bool make_shortcut(const std::string &name, const std::string &args, cons
     return ok;
 }
 
-static bool small_button(const char *label_en) { const char *label = tr(label_en); return th_button(label, ImVec2(F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, label).x + S(28), T(26)), true, F_BODY); }
 
 static bool any_files(const std::string &dir)
 {
@@ -788,31 +821,38 @@ static void mods_tab(App &a, int g)
 {
     bool running = a.run.proc != nullptr;
     // 0.2.0: mods - <Game>\mods\<mod>\, laid out like the game's data folder; a later one wins
-    th_heading("MODS", g_rowX1);
+    ui_section("MODS");
     {
+        static const char *k_modsTip = "Ticked mods are used, top to bottom - where two change the same file, the lower one wins. Changes apply the next time the game starts.";
+        static const char *k_noModsTip = "No mods. Add a mod's .zip, or put its folder in this game's mods folder - laid out like the game's own files (GearGame\\...).";
         static std::vector<ModItem> ml[G_COUNT];
         static Uint64 mlAt[G_COUNT] = {};
         if (!mlAt[g] || SDL_GetTicks() - mlAt[g] > 2000) { ml[g] = mods_list(a, g); mlAt[g] = SDL_GetTicks(); }
-        if (ml[g].empty()) lamp_line(0, "No mods. Add a mod's .zip, or put its folder in this game's mods folder - laid out like the game's own files (GearGame\\...).");
+        if (ml[g].empty()) { lamp_line(0, "No mods yet"); ui_tip(k_noModsTip); }
         bool changed = false;
+        const float bw = T(90);   // Up / Down: one column at the right, the same size
         for (size_t i = 0; i < ml[g].size(); i++) {
             const ModItem &m = ml[g][i];
             ImGui::PushID((int)i + 8000);
             if (running) ImGui::BeginDisabled();
             bool on = m.enabled;
             if (ImGui::Checkbox("##on", &on)) { mods_set_enabled(a, g, m.folder, on); changed = true; }
+            ui_tip(k_modsTip);
             ImGui::SameLine();
             std::string line = m.name + (m.version.empty() ? "" : "  " + m.version) + (m.author.empty() ? "" : "  -  " + m.author);
+            ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(line.c_str());
             if (!m.description.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.description.c_str());
-            ImGui::SameLine();
-            if (i > 0 && small_button("Up")) { mods_move(a, g, m.folder, -1); changed = true; }
-            if (i > 0) ImGui::SameLine();
-            if (i + 1 < ml[g].size() && small_button("Down")) { mods_move(a, g, m.folder, 1); changed = true; }
+            const float colX = g_rowX1 - ImGui::GetWindowPos().x + ImGui::GetScrollX() - bw * 2 - S(8);
+            if (i > 0) { ImGui::SameLine(colX); if (th_button(tr("Up"), ImVec2(bw, T(26)), true, F_BODY)) { mods_move(a, g, m.folder, -1); changed = true; } }
+            if (i + 1 < ml[g].size()) {
+                ImGui::SameLine(colX + bw + S(8));
+                if (th_button(tr("Down"), ImVec2(bw, T(26)), true, F_BODY)) { mods_move(a, g, m.folder, 1); changed = true; }
+            }
             if (running) ImGui::EndDisabled();
             ImGui::PopID();
         }
-        if (!ml[g].empty()) row_desc("Ticked mods are used, top to bottom - where two change the same file, the lower one wins. Changes apply the next time the game starts.");
+        ImGui::Dummy(ImVec2(0, S(4)));
         if (running) ImGui::BeginDisabled();
         if (small_button("Add a mod (.zip)...")) {
             std::string p = pick_file(L"Choose a mod's .zip", L"Zip files\0*.zip\0All files\0*.*\0");
@@ -823,28 +863,14 @@ static void mods_tab(App &a, int g)
                 changed = true;
             }
         }
+        ui_tip(ml[g].empty() ? k_noModsTip : k_modsTip);
         if (running) ImGui::EndDisabled();
         ImGui::SameLine();
         if (small_button("Mods folder")) { make_dirs(mods_dir(g)); shell_open(mods_dir(g)); }
+        ui_tip(k_noModsTip);
         if (changed) { mlAt[g] = 0; env_refresh(a, g); }
     }
-
 }
-
-// 0.4.6 (Shagg 5 Nov): "sweet and simple, not loaded with text" - short grouped sections; the explanations are
-// hover tooltips (about_tip) and the HELP US TEST list is a dialog (What to test...). Nothing was taken away.
-static void about_tip(const std::string &text_en)
-{
-    if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) return;
-    ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(S(460), FLT_MAX));
-    ImGui::BeginTooltip();
-    ImGui::PushTextWrapPos(S(440));
-    ImGui::TextUnformatted(tr(text_en).c_str());
-    ImGui::PopTextWrapPos();
-    ImGui::EndTooltip();
-}
-
-static void about_gap() { ImGui::Dummy(ImVec2(0, S(8))); }
 
 static void about_tab(App &a, int g)
 {
@@ -853,7 +879,7 @@ static void about_tab(App &a, int g)
     bool busy = a.job.state.load() == 1, running = a.run.proc != nullptr;
 
     // ---- COGBOX: the version and the update
-    th_heading("COGBOX", g_rowX1);
+    ui_section("COGBOX");
     std::string newer = update_newer();
     if (!newer.empty()) {
         lamp_line(2, "COGBox " + newer + " is out (this is " COGBOX_VERSION ").");
@@ -873,15 +899,16 @@ static void about_tab(App &a, int g)
     else lamp_line(update_checked() ? 1 : 0, update_checked() ? "COGBox " COGBOX_VERSION " - the latest (or GitHub couldn't be reached)." : "COGBox " COGBOX_VERSION " - checking for updates...");
 
     // ---- YOUR COPY: game files, title update, port (the folders are in the tooltips)
-    about_gap();
-    th_heading("YOUR COPY", g_rowX1);
+    ui_section("YOUR COPY");
     if (st.dataDir.empty()) lamp_line(3, "Not added yet. Use Add your copy below (a disc image, a Games on Demand copy, or an extracted folder).");
     else {
+        // 0.4.6: the path and a two-word state on the line; the explanation is its tooltip
         lamp_line(st.xexMatch || st.xexConfirmed ? 1 : st.xexKnown ? 2 : 0,
                   std::string("Game files: ") + st.dataDir + (st.dataOwn ? "  (your own folder)" : "") +
-                  (st.xexMatch ? "  -  the release the ports are made for"
-                   : st.xexConfirmed ? "  -  an untested version you confirmed works"
-                   : st.xexKnown ? "  -  an untested version: it may work, but you may experience problems" : "  -  not checked yet"));
+                  (st.xexMatch ? "" : st.xexConfirmed ? "  -  confirmed works" : st.xexKnown ? "  -  untested version" : "  -  not checked yet"),
+                  st.xexMatch ? "  -  the release the ports are made for"
+                  : st.xexConfirmed ? "  -  an untested version you confirmed works"
+                  : st.xexKnown ? "  -  an untested version: it may work, but you may experience problems" : "");
         if (st.xexKnown && !st.xexMatch && !st.xexConfirmed) {
             ImGui::PushID("works_xex");
             if (small_button("This version works")) confirm_works(a, g, false);
@@ -892,7 +919,8 @@ static void about_tab(App &a, int g)
         lamp_line(2, std::string(d.updateName) + ": not added - required to play");   // title updates required (0.4.0)
     else {
         lamp_line(st.xexpMatch || st.xexpConfirmed ? 1 : 2, std::string(d.updateName) + ": " + st.updateDir +
-                  (st.xexpMatch ? "" : st.xexpConfirmed ? "  -  an untested update you confirmed works" : "  -  an untested update: it may work, but problems are likely. Please don't report problems you get with it - use the expected update first"));
+                  (st.xexpMatch ? "" : st.xexpConfirmed ? "  -  confirmed works" : "  -  untested update"),
+                  st.xexpMatch ? "" : st.xexpConfirmed ? "  -  an untested update you confirmed works" : "  -  an untested update: it may work, but problems are likely. Please don't report problems you get with it - use the expected update first");
         if (!st.xexpMatch && !st.xexpConfirmed) {
             ImGui::PushID("works_xexp");
             if (small_button("This update works")) confirm_works(a, g, true);
@@ -915,12 +943,12 @@ static void about_tab(App &a, int g)
         ImGui::PopID();
     }
     // 0.4.6: drag and drop is the only way to add a copy, title update or DLC
-    row_desc("To add or replace your copy or the title update, drag and drop it onto this window.");
-    about_tip("To add downloadable content, drag and drop the package onto this window.");
+    ImGui::Dummy(ImVec2(0, S(2)));
+    ui_note("To add or replace your copy or the title update, drag and drop it onto this window.", col::amber);
+    ui_tip("To add downloadable content, drag and drop the package onto this window.");
 
     // ---- FOLDERS: folders, saves, shaders and desktop shortcuts
-    about_gap();
-    th_heading("FOLDERS", g_rowX1);
+    ui_section("FOLDERS");
     if (small_button("Saves")) { make_dirs(game_user_dir(g)); shell_open(game_user_dir(g)); }
     ImGui::SameLine();
     if (small_button("Logs")) { make_dirs(game_logs_dir(g)); shell_open(game_logs_dir(g)); }
@@ -944,7 +972,7 @@ static void about_tab(App &a, int g)
         if (make_shortcut("COGBox", "", "Gears of War native PC ports - launcher", err)) set_message(a, "A COGBox shortcut is on your desktop.", false);
         else set_message(a, "The shortcut couldn't be made: " + err, true);
     }
-    about_tip(k_pinTip);
+    ui_tip(k_pinTip);
     ImGui::SameLine();
     {
         const std::string label = std::string("Desktop shortcut: ") + d.name;
@@ -954,12 +982,11 @@ static void about_tab(App &a, int g)
                 set_message(a, std::string("A ") + d.name + " shortcut is on your desktop.", false);
             else set_message(a, "The shortcut couldn't be made: " + err, true);
         }
-        about_tip(k_pinTip);
+        ui_tip(k_pinTip);
     }
 
     // ---- PROBLEMS: report, what to test, issues, reset
-    about_gap();
-    th_heading("PROBLEMS", g_rowX1);
+    ui_section("PROBLEMS");
     if (small_button("Report a problem")) {
         std::string s = newest_session(g);
         if (s.empty()) set_message(a, std::string("No play of ") + d.name + " yet - play once, then make the report.", false);
@@ -974,7 +1001,7 @@ static void about_tab(App &a, int g)
             a.modal.data = s;
         } else report_now(a, g, s);
     }
-    about_tip("A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC "
+    ui_tip("A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC "
               "(no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub issue.");
     // Shagg 31 Oct: what this release needs players to test (k_helpTest, top of this file) - now a dialog
     {
@@ -994,8 +1021,7 @@ static void about_tab(App &a, int g)
     if (small_button("Reset settings to defaults...")) ask(a, "reset", g, "Reset to defaults", "Put every setting of every game back to its default? Your saves are not touched.", { "Reset", "Cancel" });
 
     // ---- SETTINGS: COGBox's own (the explanations are tooltips on the labels)
-    about_gap();
-    th_heading("SETTINGS", g_rowX1);
+    ui_section("SETTINGS");
     {   // 0.2.0: COGBox's language
         const auto &L = languages();
         const std::string cur = a.ini.get("Launcher", "Language").empty() ? "auto" : a.ini.get("Launcher", "Language");
@@ -1032,7 +1058,7 @@ static void about_tab(App &a, int g)
             a.ini.set("Profile", "Gamertag", buf);
             a.ini.save();
         }
-        about_tip(k_nameTip);
+        ui_tip(k_nameTip);
     }
     static const char *k_winTip = "COGBox draws its own minimise, maximise and close buttons in the top-right corner; drag the strip beside them to move the window.";
     bool fs = a.fullscreen;   // job 523
@@ -1040,10 +1066,44 @@ static void about_tab(App &a, int g)
     ImGui::SameLine(0, S(24));
     bool bl = a.borderless;   // job 523
     if (ImGui::Checkbox(tr("Borderless window (no title bar)"), &bl)) set_borderless(a, bl);
-    about_tip(k_winTip);
+    ui_tip(k_winTip);
     bool chk = a.ini.geti("Updates", "Check", 1) != 0;
     if (ImGui::Checkbox(tr("Check GitHub for a newer COGBox at start"), &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
-    about_tip("Only the release page's address is asked for; nothing about you or this PC is sent.");
+    ui_tip("Only the release page's address is asked for; nothing about you or this PC is sent.");
+}
+
+// ---- the settings tabs' groups (presentation only: which heading an option shows under) -------------------------------
+struct TabGroups { const char *heading[4]; const char *const *ids[4]; const char *const *advanced; };
+static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", nullptr };
+static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
+static const char *const k_dispAdv[] = { "HDR", "PaperWhite", "Peak", "HideNotes", nullptr };
+static const char *const k_gfxQuality[] = { "Preset", "Resolution", "AAMode", nullptr };
+static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "Pool", "DrawDist", "MeshLod", "AO", nullptr };
+static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "Shake", "Fov", nullptr };
+static const char *const k_gfxAdv[] = { "Api", "WineApi", "Sharpen", "SceneMode", "FrameGen", "MipFade", nullptr };
+static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "PadPrompts", nullptr };
+static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", nullptr };
+static const char *const k_ctlAdv[] = { "DeadZone", "RadialDZ", "LowLag", nullptr };
+static const char *const k_playGame[] = { "Version", "Lang", "VoiceLang", "SkipLogos", "Mute", nullptr };
+static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", nullptr };
+static const char *const k_playExtras[] = { "Cheats", "Mutators", nullptr };
+static const char *const k_none[] = { nullptr };
+static const TabGroups k_groups[4] = {
+    { { "SCREEN", "FRAME RATE", nullptr, nullptr }, { k_dispScreen, k_dispFrames, k_none, k_none }, k_dispAdv },
+    { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none }, k_gfxAdv },
+    { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none }, k_ctlAdv },
+    { { "GAME", "PLAYERS", "EXTRAS", nullptr }, { k_playGame, k_playPlayers, k_playExtras, k_none }, k_none },
+};
+
+// the collapsed ADVANCED section at the end of a tab: one button that opens / closes it (kept for the session)
+static bool ui_advanced(bool &open)
+{
+    if (g_sections++) ui_gap();
+    const std::string label = std::string(tr("ADVANCED")) + (open ? "   -" : "   +") + "##adv";
+    if (th_button(label.c_str(), ImVec2(T(160), T(26)), true, F_BOLD)) open = !open;
+    ui_tip("Settings most players never need. Every setting still works the same.");
+    if (open) ImGui::Dummy(ImVec2(0, S(2)));
+    return open;
 }
 
 // ---- the page --------------------------------------------------------------------------------------------------------
@@ -1153,6 +1213,7 @@ void page_draw(App &a, ImVec2 size)
     g_ctrlW = T(300);
     g_labelW = std::min(S(500), (c1.x - c0.x) - g_ctrlW - S(40));
     g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(16);
+    g_sections = 0;
     if (a.tab < k_tabMods) {
         gs::Tab want = (gs::Tab)a.tab;
         int shown = 0;
@@ -1163,15 +1224,36 @@ void page_draw(App &a, ImVec2 size)
             }
             ImGui::Dummy(ImVec2(0, S(4)));
         }
+        // grouped under a few headings (k_groups); the rest under the tab's collapsed ADVANCED. An option not in the
+        // table shows in its tab's first group, so a new option in gears_settings is never hidden.
+        std::vector<const gs::Option *> mine;
         for (const gs::Option &o : gs::options((gs::Game)g)) {
             if (o.tab != want) continue;
             if (o.id == "WineApi" && !a.env[g].wine) continue;   // Shagg 13:16: Proton / Wine only
-            option_row(a, g, o);
-            shown++;
+            mine.push_back(&o);
         }
-        if (!shown) row_desc("Nothing to set here yet.");
+        const TabGroups &tg = k_groups[(int)want];
+        auto group_of = [&](const std::string &id) {
+            for (int k = 0; k < 4 && tg.heading[k]; k++)
+                for (const char *const *x = tg.ids[k]; *x; x++) if (id == *x) return k;
+            for (const char *const *x = tg.advanced; *x; x++) if (id == *x) return -1;
+            return 0;
+        };
+        for (int k = 0; k < 4 && tg.heading[k]; k++) {
+            bool any = false;
+            for (const gs::Option *o : mine) any |= group_of(o->id) == k;
+            if (!any) continue;
+            ui_section(tg.heading[k]);
+            for (const gs::Option *o : mine) if (group_of(o->id) == k) { option_row(a, g, *o); shown++; }
+        }
         if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
         if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
+        bool anyAdv = false;
+        for (const gs::Option *o : mine) anyAdv |= group_of(o->id) < 0;
+        static bool advOpen[4] = {};
+        if (anyAdv && ui_advanced(advOpen[(int)want]))
+            for (const gs::Option *o : mine) if (group_of(o->id) < 0) { option_row(a, g, *o); shown++; }
+        if (!shown && !anyAdv) ui_note("Nothing to set here yet.");
     } else if (a.tab == k_tabMods) mods_tab(a, g);
     else about_tab(a, g);
     ImGui::PopFont();
