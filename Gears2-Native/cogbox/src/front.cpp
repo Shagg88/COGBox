@@ -378,11 +378,12 @@ static void player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav)
     const bool click = ImGui::InvisibleButton("##playerplate", ImVec2(w, h));
     const bool hov = ImGui::IsItemHovered();
     ImGui::PopItemFlag();
-    th_plate(dl, o, ImVec2(o.x + w, o.y + h), S(6), hov);
+    const bool psel = a.padConnected && a.frontSel == 10;   // 0.4.6: chosen with the D-pad (top row)
+    th_plate(dl, o, ImVec2(o.x + w, o.y + h), S(6), hov || psel);
     // the badge: a dark disc, a crimson ring, the first letter (or a head-and-shoulders mark when no name is set)
     const ImVec2 c(o.x + S(10) + r, o.y + h * 0.5f);
     dl->AddCircleFilled(c, r, U(ImVec4(0.05f, 0.05f, 0.06f, 1)), 32);
-    dl->AddCircle(c, r, U(hov ? col::redHi : col::red), 32, S(2.2f));
+    dl->AddCircle(c, r, U(hov || psel ? col::redHi : col::red), 32, S(2.2f));
     if (unset) {
         dl->AddCircleFilled(ImVec2(c.x, c.y - r * 0.22f), r * 0.30f, U(col::dim), 20);
         dl->PathArcTo(ImVec2(c.x, c.y + r * 0.62f), r * 0.52f, 3.14159f, 6.28318f, 20);
@@ -400,7 +401,8 @@ static void player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav)
         tr("The name every game shows for you (your gamertag). Click to change it. Your profile and saves stay where they are."));
 
     static char buf[16] = {};
-    if (click || (nav && ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false))) {
+    if (click || (nav && (ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false) ||
+                          (psel && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))))) {
         std::snprintf(buf, sizeof(buf), "%s", name.c_str());
         ImGui::OpenPopup("##playername");
     }
@@ -528,10 +530,30 @@ void front_draw(App &a, ImVec2 size)
     if (nav) {
         // Shagg 21:44: the D-pad (and left stick, arrow keys, mouse wheel, a click on a side box) turns the carousel; LB / RB
         // choose between Play, Settings and the Achievements side button under the box (a.frontSel), A presses the chosen one
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)) turn(a, -1);
-        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight)) turn(a, 1);
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) a.frontSel = std::max(0, a.frontSel - 1);
-        if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) a.frontSel = std::min(2, a.frontSel + 1);   // achievements part 4: 3
+        // 0.4.6 (Shagg 6 Nov): D-pad / stick up goes to the top row (PLAYER, MUSIC, UPDATE ART, EXIT = frontSel 10-13),
+        // where left / right (and LB / RB) move along it; down goes back to the buttons under the box
+        const bool left = ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft);
+        const bool right = ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadRight) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickRight);
+        const bool up = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickUp, false);
+        const bool down = ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown, false);
+        const bool musicItem = music_any_source(a) && !library_games(a).empty();
+        auto topStep = [&](int dir) {
+            int v = a.frontSel + dir;
+            if (v == 11 && !musicItem) v += dir;
+            a.frontSel = std::max(10, std::min(13, v));
+        };
+        if (a.frontSel >= 10) {
+            if (!musicItem && a.frontSel == 11) a.frontSel = 12;
+            if (left || ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) topStep(-1);
+            if (right || ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) topStep(1);
+            if (down) a.frontSel = 0;
+        } else {
+            if (left) turn(a, -1);
+            if (right) turn(a, 1);
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) a.frontSel = std::max(0, a.frontSel - 1);
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) a.frontSel = std::min(2, a.frontSel + 1);   // achievements part 4: 3
+            if (up) a.frontSel = 10;
+        }
         if (ImGui::IsWindowHovered() && io.MouseWheel != 0) turn(a, io.MouseWheel > 0 ? -1 : 1);
     }
     // Shagg 1 Nov: only the added games are on the carousel. When that set changes (a copy added, a drive unplugged),
@@ -705,7 +727,8 @@ void front_draw(App &a, ImVec2 size)
             place(es.x);
             ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);   // the D-pad keeps turning the carousel
             const bool can = !a.run.proc && !a.modal.open && a.job.state.load() != 1;
-            if (th_button((lbl + "##frontexit").c_str(), es, can, F_BOLD) && can)
+            if ((th_button((lbl + "##frontexit").c_str(), es, can, F_BOLD, a.padConnected && a.frontSel == 13) ||
+                 (nav && a.padConnected && a.frontSel == 13 && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) && can)
                 ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayNormal))
                 ImGui::SetTooltip("%s", a.run.proc ? tr("Close the game first.") : tr("Close COGBox."));
@@ -718,7 +741,9 @@ void front_draw(App &a, ImVec2 size)
             for (int i = 0; i < G_COUNT; i++) any |= a.cover[i].tex != nullptr;
             ImVec2 bs(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, tr(any ? "UPDATE ART" : lbl)).x + S(36), bh);
             place(bs.x);
-            if (th_button(any ? "UPDATE ART" : lbl, bs, true, F_BOLD) || (nav && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))) {
+            if (th_button(any ? "UPDATE ART" : lbl, bs, true, F_BOLD, a.padConnected && a.frontSel == 12) ||
+                (nav && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) ||
+                (nav && a.padConnected && a.frontSel == 12 && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))) {
                 art_download_start();
                 set_message(a, "Getting the box art and backgrounds from the x360db archive on GitHub...", false);
             }
@@ -735,7 +760,8 @@ void front_draw(App &a, ImVec2 size)
                 const char *ml = music_on(a) ? "MUSIC: ON" : "MUSIC: OFF";
                 ImVec2 ms(F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, tr(ml)).x + S(36), bh);
                 place(ms.x);
-                if (th_button(ml, ms, true, F_BOLD) || (nav && ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false)) ||
+                if (th_button(ml, ms, true, F_BOLD, a.padConnected && a.frontSel == 11) || (nav && ImGui::IsKeyPressed(ImGuiKey_GamepadR3, false)) ||
+                    (nav && a.padConnected && a.frontSel == 11 && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false)) ||
                     (!ImGui::GetIO().WantTextInput && !a.modal.open && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
                      ImGui::IsKeyPressed(ImGuiKey_M, false)))
                     music_set_on(a, !music_on(a));
