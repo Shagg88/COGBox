@@ -413,13 +413,44 @@ static void player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav)
             const ImWchar ch = d->EventChar;
             return (ch < 128 && (std::isalnum(static_cast<int>(ch)) || ch == ' ')) ? 0 : 1;
         };
-        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        // 0.4.6 (Shagg 6 Nov): with a controller an on-screen keyboard - D-pad to a key, A types it; X deletes, Y adds a
+        // space, START saves, B closes. With no controller the text box takes the keyboard as before.
+        const bool pad = a.padConnected;
+        if (!pad && ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(S(260));
         const bool enter = ImGui::InputText("##gamertag", buf, sizeof(buf),
                                             ImGuiInputTextFlags_CallbackCharFilter | ImGuiInputTextFlags_EnterReturnsTrue, filter);
         bool save = enter;
+        if (pad) {
+            static bool upper = true;
+            auto put = [&](char ch) { const size_t n = strlen(buf); if (n < sizeof(buf) - 1) { buf[n] = ch; buf[n + 1] = 0; } };
+            auto del = [&]() { const size_t n = strlen(buf); if (n) buf[n - 1] = 0; };
+            static const char *rows[] = { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM" };
+            const float k = T(30), g = S(4);
+            ImGui::Spacing();
+            for (int r = 0; r < 4; r++) {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + r * (k + g) * 0.5f * (r > 1 ? 1.0f : float(r)));
+                for (const char *c = rows[r]; *c; c++) {
+                    char ch = (upper || !isalpha((unsigned char)*c)) ? *c : (char)tolower((unsigned char)*c);
+                    char lbl[8]; std::snprintf(lbl, sizeof lbl, "%c##k%c", ch, *c);
+                    if (c != rows[r]) ImGui::SameLine(0, g);
+                    if (r == 0 && c == rows[0] && ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+                    if (th_button(lbl, ImVec2(k, k), true, F_BOLD)) put(ch);
+                    if (r == 0 && c == rows[0] && ImGui::IsWindowAppearing()) ImGui::SetItemDefaultFocus();
+                }
+            }
+            if (th_button(upper ? "abc##kcase" : "ABC##kcase", ImVec2(k * 2 + g, k), true, F_BOLD)) upper = !upper;
+            ImGui::SameLine(0, g);
+            if (th_button("SPACE##kspace", ImVec2(k * 4 + g * 3, k), true, F_BOLD)) put(' ');
+            ImGui::SameLine(0, g);
+            if (th_button("DEL##kdel", ImVec2(k * 2 + g, k), true, F_BOLD)) del();
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false)) del();
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) put(' ');
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false)) save = true;
+            ImGui::TextColored(col::dim, "%s", tr("X delete   Y space   START save   B close"));
+        }
         ImGui::Spacing();
-        if (th_button("Save name", ImVec2(S(140), T(28)), true, F_BOLD)) save = true;
+        if (th_button("SAVE NAME", ImVec2(S(140), T(28)), true, F_BOLD)) save = true;
         ImGui::SameLine(0, S(10));
         if (th_button("CANCEL", ImVec2(S(140), T(28)), true, F_BOLD) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false))

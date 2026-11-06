@@ -1133,4 +1133,5 @@ Set your name = Add meg a neved
 PLAYER NAME = JÁTÉKOSNÉV
 Up to 15 letters, digits or spaces. Empty: "User". = Legfeljebb 15 betű, számjegy vagy szóköz. Üres: "User".
 The name every game shows for you (your gamertag). Click to change it. Your profile and saves stay where they are. = A név, amelyet minden játék mutat neked (a gamertaged). Kattints a módosításhoz. A profilod és a mentéseid a helyükön maradnak.
-Save name = NÉV MENTÉSE
+SAVE NAME = NÉV MENTÉSE
+X delete   Y space   START save   B close = X törlés   Y szóköz   START mentés   B bezárás

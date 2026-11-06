@@ -553,6 +553,7 @@ static int x360test(int argc, wchar_t **argv)
     return ok ? 0 : 1;
 }
 
+static bool g_popupLastFrame = false;   // 0.4.6 review: a popup was open at the end of the last frame
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
     {
@@ -749,8 +750,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             triggersWere = triggers;
         }
         const bool quitAskable = !a.run.proc && SDL_GetKeyboardFocus() && a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
-                                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.job.state.load() != 1;
+                                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.job.state.load() != 1 &&
+                                 !g_popupLastFrame;   // 0.4.6 review: Dear ImGui closes a popup on Esc before this, so the same Esc must not quit
         draw_ui(a, io.DisplaySize);
+        g_popupLastFrame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
         // job 526: Start (Options) or Esc on the library screen asks to close COGBox (asked after this frame's drawing, so
         // the same Esc doesn't also answer it)
         if (quitAskable && !a.modal.open && (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))

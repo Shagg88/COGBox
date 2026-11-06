@@ -1133,4 +1133,5 @@ Set your name = Imposta il tuo nome
 PLAYER NAME = NOME GIOCATORE
 Up to 15 letters, digits or spaces. Empty: "User". = Fino a 15 lettere, cifre o spazi. Vuoto: "User".
 The name every game shows for you (your gamertag). Click to change it. Your profile and saves stay where they are. = Il nome che ogni gioco mostra per te (il tuo gamertag). Clicca per cambiarlo. Il profilo e i salvataggi restano dove sono.
-Save name = SALVA NOME
+SAVE NAME = SALVA NOME
+X delete   Y space   START save   B close = X cancella   Y spazio   START salva   B chiudi
