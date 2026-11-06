@@ -979,3 +979,10 @@ Judgment only. = Judgment 전용.
 Mouse button 4 = 마우스 버튼 4
 Mouse button 5 = 마우스 버튼 5
 Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = 마우스 버튼 4와 5에는 다음 COGBox 런타임이 필요합니다. 다른 키를 고르세요.
+# review: 0.4.6 strings without a translation (machine-made translation, please check)
+A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub issue. = 문제 보고서는 바탕 화면에 만들어지는 zip 하나로, 마지막 플레이의 로그, 설정, 이 PC의 설명이 들어 있습니다 (저장 데이터와 게임 파일은 없고 Windows 사용자 이름은 제거됩니다). 아무것도 전송되지 않습니다. GitHub 이슈에 첨부하세요.
+Click: set the key. Right-click: add a second key. = 클릭: 키 설정. 오른쪽 클릭: 두 번째 키 추가.
+PREPARE ALL SHADERS = 모든 셰이더 준비
+Tip: drag and drop a disc image, Games on Demand copy, title update, DLC package or game folder onto this window to add it. = 팁: 디스크 이미지, Games on Demand 사본, 타이틀 업데이트, DLC 패키지 또는 게임 폴더를 이 창에 끌어다 놓으면 추가됩니다.
+To add downloadable content, drag and drop the package onto this window. = 다운로드 콘텐츠를 추가하려면 패키지를 이 창에 끌어다 놓으세요.
+To add or replace your copy or the title update, drag and drop it onto this window. = 사본이나 타이틀 업데이트를 추가하거나 바꾸려면 이 창에 끌어다 놓으세요.

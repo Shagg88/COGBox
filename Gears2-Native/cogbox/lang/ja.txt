@@ -979,3 +979,10 @@ Judgment only. = Judgment のみ。
 Mouse button 4 = マウスボタン 4
 Mouse button 5 = マウスボタン 5
 Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = マウスボタン 4 と 5 には次の COGBox ランタイムが必要です。別のキーを選んでください。
+# review: 0.4.6 strings without a translation (machine-made translation, please check)
+A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub issue. = 問題レポートはデスクトップに作られる 1 つの zip で、前回のプレイのログ、設定、この PC の説明が入っています (セーブやゲームファイルは含まず、Windows のユーザー名は取り除かれます)。何も送信されません。GitHub の issue に添付してください。
+Click: set the key. Right-click: add a second key. = クリック: キーを設定。右クリック: 2 つ目のキーを追加。
+PREPARE ALL SHADERS = すべてのシェーダーを準備
+Tip: drag and drop a disc image, Games on Demand copy, title update, DLC package or game folder onto this window to add it. = ヒント: ディスクイメージ、Games on Demand 版、タイトルアップデート、DLC パッケージ、ゲームフォルダーをこのウィンドウにドラッグ＆ドロップすると追加されます。
+To add downloadable content, drag and drop the package onto this window. = ダウンロードコンテンツを追加するには、パッケージをこのウィンドウにドラッグ＆ドロップしてください。
+To add or replace your copy or the title update, drag and drop it onto this window. = コピーやタイトルアップデートを追加・置き換えるには、このウィンドウにドラッグ＆ドロップしてください。

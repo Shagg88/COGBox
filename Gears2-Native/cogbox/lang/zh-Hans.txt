@@ -979,3 +979,10 @@ Judgment only. = 仅限 Judgment。
 Mouse button 4 = 鼠标按键 4
 Mouse button 5 = 鼠标按键 5
 Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = 鼠标按键 4 和 5 需要下一个 COGBox 运行时 - 请选择其他按键。
+# review: 0.4.6 strings without a translation (machine-made translation, please check)
+A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub issue. = 问题报告是桌面上的一个 zip，包含上次游戏的日志、设置和这台电脑的说明（不含存档和游戏文件；你的 Windows 用户名会被去掉）。不会发送任何内容 - 请将其附加到 GitHub issue。
+Click: set the key. Right-click: add a second key. = 单击：设置按键。右键单击：添加第二个按键。
+PREPARE ALL SHADERS = 准备所有着色器
+Tip: drag and drop a disc image, Games on Demand copy, title update, DLC package or game folder onto this window to add it. = 提示：将光盘镜像、Games on Demand 副本、标题更新、DLC 包或游戏文件夹拖放到此窗口即可添加。
+To add downloadable content, drag and drop the package onto this window. = 要添加可下载内容，请将内容包拖放到此窗口。
+To add or replace your copy or the title update, drag and drop it onto this window. = 要添加或替换你的副本或标题更新，请将其拖放到此窗口。

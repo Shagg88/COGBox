@@ -1,12 +1,16 @@
 diff --git a/src/input/mnk/mnk_input_driver.cpp b/src/input/mnk/mnk_input_driver.cpp
-index a82d3b9..975a706 100644
+index a82d3b9..2c5d353 100644
 --- a/src/input/mnk/mnk_input_driver.cpp
 +++ b/src/input/mnk/mnk_input_driver.cpp
-@@ -833,6 +833,12 @@ void MnkInputDriver::OnMouseDown(rex::ui::MouseEvent& e) {
+@@ -833,6 +833,16 @@ void MnkInputDriver::OnMouseDown(rex::ui::MouseEvent& e) {
      case rex::ui::MouseEvent::Button::kMiddle:
        SetKeyState(static_cast<uint16_t>(VirtualKey::kMButton), true);
        break;
 +    case rex::ui::MouseEvent::Button::kX1:  // COGBox patch 65 (GitHub #208): bindable as MB4 / MB5
++      {  // also the launcher's marker for this patch (it looks for this text in the runtime)
++        static bool told = false;
++        if (!told) { told = true; REXLOG_INFO("mnk: mouse side buttons bindable (MB4 / MB5, COGBox patch 65)"); }
++      }
 +      SetKeyState(static_cast<uint16_t>(VirtualKey::kXButton1), true);
 +      break;
 +    case rex::ui::MouseEvent::Button::kX2:
@@ -15,7 +19,7 @@ index a82d3b9..975a706 100644
      default:
        break;
    }
-@@ -853,6 +859,12 @@ void MnkInputDriver::OnMouseUp(rex::ui::MouseEvent& e) {
+@@ -853,6 +863,12 @@ void MnkInputDriver::OnMouseUp(rex::ui::MouseEvent& e) {
      case rex::ui::MouseEvent::Button::kMiddle:
        SetKeyState(static_cast<uint16_t>(VirtualKey::kMButton), false);
        break;

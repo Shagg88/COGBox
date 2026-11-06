@@ -1074,7 +1074,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // Notes/80: XeGTAO (2 high, 3 ultra); notes/81: CACAO (4); 0 Off goes through the game's own [SystemSettings] below,
     // 1 changes nothing
     if (avail("AO") && s.i("AO") >= 2) {
-        if (s.i("AO") == 4 && !cap_exe(env, "gow2_ao_algo")) {
+        if (s.i("AO") == 4 && !cap_exe(env, "or cacao (FidelityFX CACAO")) {
             notes.push_back("launcher: CACAO is not in this build - the game's own AO");
         } else {
             a.push_back("--gow2_ao=gtao");

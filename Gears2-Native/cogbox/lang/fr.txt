@@ -979,3 +979,10 @@ Judgment only. = Judgment uniquement.
 Mouse button 4 = Bouton 4 de la souris
 Mouse button 5 = Bouton 5 de la souris
 Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = Les boutons 4 et 5 de la souris nécessitent le prochain runtime de COGBox - choisissez une autre touche.
+# review: 0.4.6 strings without a translation (machine-made translation, please check)
+A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub issue. = Un rapport de problème est un zip sur votre bureau avec le journal de la dernière partie, les paramètres et une description de ce PC (pas de sauvegardes ni de fichiers du jeu ; votre nom d'utilisateur Windows est retiré). Rien n'est envoyé - joignez-le à une issue GitHub.
+Click: set the key. Right-click: add a second key. = Clic : définir la touche. Clic droit : ajouter une deuxième touche.
+PREPARE ALL SHADERS = PRÉPARER TOUS LES SHADERS
+Tip: drag and drop a disc image, Games on Demand copy, title update, DLC package or game folder onto this window to add it. = Astuce : glissez-déposez une image disque, une copie Games on Demand, une mise à jour, un paquet DLC ou un dossier du jeu sur cette fenêtre pour l'ajouter.
+To add downloadable content, drag and drop the package onto this window. = Pour ajouter du contenu téléchargeable, glissez-déposez le paquet sur cette fenêtre.
+To add or replace your copy or the title update, drag and drop it onto this window. = Pour ajouter ou remplacer votre copie ou la mise à jour, glissez-la sur cette fenêtre.

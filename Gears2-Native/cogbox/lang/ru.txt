@@ -979,3 +979,10 @@ Judgment only. = Только Judgment.
 Mouse button 4 = Кнопка мыши 4
 Mouse button 5 = Кнопка мыши 5
 Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = Для кнопок мыши 4 и 5 нужна следующая среда выполнения COGBox - выберите другую клавишу.
+# review: 0.4.6 strings without a translation (machine-made translation, please check)
+A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub issue. = Отчёт о проблеме - это один zip на рабочем столе с журналом последней игры, настройками и описанием этого ПК (без сохранений и файлов игры; имя пользователя Windows удаляется). Ничего не отправляется - приложите его к issue на GitHub.
+Click: set the key. Right-click: add a second key. = Щелчок: назначить клавишу. Правый щелчок: добавить вторую клавишу.
+PREPARE ALL SHADERS = ПОДГОТОВИТЬ ВСЕ ШЕЙДЕРЫ
+Tip: drag and drop a disc image, Games on Demand copy, title update, DLC package or game folder onto this window to add it. = Совет: перетащите образ диска, копию Games on Demand, обновление, пакет DLC или папку игры в это окно, чтобы добавить.
+To add downloadable content, drag and drop the package onto this window. = Чтобы добавить загружаемый контент, перетащите пакет в это окно.
+To add or replace your copy or the title update, drag and drop it onto this window. = Чтобы добавить или заменить копию или обновление, перетащите их в это окно.

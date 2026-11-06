@@ -443,7 +443,7 @@ static void keys_section(App &a, int g)
         else if (ImGui::IsMouseClicked(1)) name = "RMB";
         else if (ImGui::IsMouseClicked(2)) name = "MMB";
         else if (ImGui::IsMouseClicked(3) || ImGui::IsMouseClicked(4)) {   // GitHub #208: the side buttons, SDK patch 65
-            if (a.env[g].cap.runtime_has && a.env[g].cap.runtime_has("MB4")) name = ImGui::IsMouseClicked(3) ? "MB4" : "MB5";
+            if (a.env[g].cap.runtime_has && a.env[g].cap.runtime_has("mouse side buttons bindable (MB4")) name = ImGui::IsMouseClicked(3) ? "MB4" : "MB5";
             else { keyNote = "Mouse buttons 4 and 5 need the next COGBox runtime - choose another key."; capture = -1; return; }
         }
         for (int k = ImGuiKey_NamedKey_BEGIN; !name && k < ImGuiKey_NamedKey_END; k++)

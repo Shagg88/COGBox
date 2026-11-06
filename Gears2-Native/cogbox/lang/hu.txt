@@ -979,3 +979,10 @@ Judgment only. = Csak Judgment.
 Mouse button 4 = 4. egérgomb
 Mouse button 5 = 5. egérgomb
 Mouse buttons 4 and 5 need the next COGBox runtime - choose another key. = A 4. és 5. egérgombhoz a következő COGBox futtatókörnyezet kell - válassz másik gombot.
+# review: 0.4.6 strings without a translation (machine-made translation, please check)
+A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub issue. = A hibajelentés egy zip az asztalodon az utolsó játék naplójával, a beállításokkal és a gép leírásával (mentések és játékfájlok nélkül; a Windows-felhasználóneved kikerül). Semmi sem kerül elküldésre - csatold egy GitHub-hibajegyhez.
+Click: set the key. Right-click: add a second key. = Kattintás: gomb beállítása. Jobb kattintás: második gomb hozzáadása.
+PREPARE ALL SHADERS = MINDEN SHADER ELŐKÉSZÍTÉSE
+Tip: drag and drop a disc image, Games on Demand copy, title update, DLC package or game folder onto this window to add it. = Tipp: húzz egy lemezképet, Games on Demand példányt, frissítést, DLC-csomagot vagy játékmappát erre az ablakra a hozzáadáshoz.
+To add downloadable content, drag and drop the package onto this window. = Letölthető tartalom hozzáadásához húzd a csomagot erre az ablakra.
+To add or replace your copy or the title update, drag and drop it onto this window. = A példányod vagy a frissítés hozzáadásához vagy cseréjéhez húzd erre az ablakra.
