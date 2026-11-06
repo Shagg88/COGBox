@@ -283,6 +283,22 @@ void play_start(App &a, int g, bool prepare)
     // this play's own folder: the log, the arguments, any crash report
     std::string logDir = join(game_logs_dir(g), now_stamp());
     make_dirs(logDir);
+    // P0-2: a real fail-fast (__fastfail, 0xC0000409) ends the game before any handler of its own runs. Windows Error
+    // Reporting's LocalDumps writes a minidump for it - asked for this exe, into this play's folder. HKCU (no admin);
+    // Windows documents the HKLM key, recent versions read the per-user one too - if not, nothing changes.
+    {
+        const std::wstring key = L"Software\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\" +
+                                 widen(exe.substr(exe.find_last_of("\\/") + 1));
+        HKEY k = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, key.c_str(), 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k, nullptr) == ERROR_SUCCESS) {
+            const std::wstring dir = widen(logDir);
+            const DWORD count = 2, type = 1;   // two dumps at most, mini dumps
+            RegSetValueExW(k, L"DumpFolder", 0, REG_EXPAND_SZ, reinterpret_cast<const BYTE *>(dir.c_str()), DWORD((dir.size() + 1) * sizeof(wchar_t)));
+            RegSetValueExW(k, L"DumpCount", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&count), sizeof(count));
+            RegSetValueExW(k, L"DumpType", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&type), sizeof(type));
+            RegCloseKey(k);
+        }
+    }
     make_dirs(game_user_dir(g));
     make_dirs(game_shader_dir(g));
     if (g == G_GEARS2) {   // GitHub #58: shaders Gears 2 built before 0.3.0 sit next to the port; move them once
