@@ -300,7 +300,7 @@ static bool install(const std::string &version)
     for (mz_uint i = 0; i < count && ok; i++) {
         if (mz_zip_reader_is_file_a_directory(&ar, i)) continue;
         std::string rel = names[i].substr(std::min(strip, names[i].size()));
-        if (rel.empty() || rel.find("..") != std::string::npos || rel[0] == '/' || rel.find(':') != std::string::npos) continue;
+        if (rel.empty() || rel.find("..") != std::string::npos || rel[0] == '/' || rel[0] == '\\' || rel.find(':') != std::string::npos) continue;   // P0-6: rooted with \ too
         for (char &ch : rel) if (ch == '/') ch = '\\';
         if (rel.back() == '\\') continue;   // 0.2.0: a folder entry (Windows zips name them with \, not /)
         if (protected_path(rel)) continue;
