@@ -783,6 +783,54 @@ void auto_settings_apply(App &a, int g)
     set_message(a, "Settings detected and applied. Change any of them as you like.", false);
 }
 
+// 0.4.6 (Shagg 5 Nov): mods have their own tab (they were a section of About)
+static void mods_tab(App &a, int g)
+{
+    bool running = a.run.proc != nullptr;
+    // 0.2.0: mods - <Game>\mods\<mod>\, laid out like the game's data folder; a later one wins
+    th_heading("MODS", g_rowX1);
+    {
+        static std::vector<ModItem> ml[G_COUNT];
+        static Uint64 mlAt[G_COUNT] = {};
+        if (!mlAt[g] || SDL_GetTicks() - mlAt[g] > 2000) { ml[g] = mods_list(a, g); mlAt[g] = SDL_GetTicks(); }
+        if (ml[g].empty()) lamp_line(0, "No mods. Add a mod's .zip, or put its folder in this game's mods folder - laid out like the game's own files (GearGame\\...).");
+        bool changed = false;
+        for (size_t i = 0; i < ml[g].size(); i++) {
+            const ModItem &m = ml[g][i];
+            ImGui::PushID((int)i + 8000);
+            if (running) ImGui::BeginDisabled();
+            bool on = m.enabled;
+            if (ImGui::Checkbox("##on", &on)) { mods_set_enabled(a, g, m.folder, on); changed = true; }
+            ImGui::SameLine();
+            std::string line = m.name + (m.version.empty() ? "" : "  " + m.version) + (m.author.empty() ? "" : "  -  " + m.author);
+            ImGui::TextUnformatted(line.c_str());
+            if (!m.description.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.description.c_str());
+            ImGui::SameLine();
+            if (i > 0 && small_button("Up")) { mods_move(a, g, m.folder, -1); changed = true; }
+            if (i > 0) ImGui::SameLine();
+            if (i + 1 < ml[g].size() && small_button("Down")) { mods_move(a, g, m.folder, 1); changed = true; }
+            if (running) ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+        if (!ml[g].empty()) row_desc("Ticked mods are used, top to bottom - where two change the same file, the lower one wins. Changes apply the next time the game starts.");
+        if (running) ImGui::BeginDisabled();
+        if (small_button("Add a mod (.zip)...")) {
+            std::string p = pick_file(L"Choose a mod's .zip", L"Zip files\0*.zip\0All files\0*.*\0");
+            std::string err;
+            if (!p.empty()) {
+                if (mods_add_zip(a, g, p, err)) set_message(a, "The mod is added and ticked.", false);
+                else set_message(a, err, true);
+                changed = true;
+            }
+        }
+        if (running) ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (small_button("Mods folder")) { make_dirs(mods_dir(g)); shell_open(mods_dir(g)); }
+        if (changed) { mlAt[g] = 0; env_refresh(a, g); }
+    }
+
+}
+
 static void about_tab(App &a, int g)
 {
     const GameDef &d = game_def(g);
@@ -837,49 +885,6 @@ static void about_tab(App &a, int g)
         ImGui::PopID();
     }
     lamp_line(0, "To add downloadable content, drag and drop the package onto this window.");
-
-    // 0.2.0: mods - <Game>\mods\<mod>\, laid out like the game's data folder; a later one wins
-    ImGui::Dummy(ImVec2(0, S(8)));
-    th_heading("MODS", g_rowX1);
-    {
-        static std::vector<ModItem> ml[G_COUNT];
-        static Uint64 mlAt[G_COUNT] = {};
-        if (!mlAt[g] || SDL_GetTicks() - mlAt[g] > 2000) { ml[g] = mods_list(a, g); mlAt[g] = SDL_GetTicks(); }
-        if (ml[g].empty()) lamp_line(0, "No mods. Add a mod's .zip, or put its folder in this game's mods folder - laid out like the game's own files (GearGame\\...).");
-        bool changed = false;
-        for (size_t i = 0; i < ml[g].size(); i++) {
-            const ModItem &m = ml[g][i];
-            ImGui::PushID((int)i + 8000);
-            if (running) ImGui::BeginDisabled();
-            bool on = m.enabled;
-            if (ImGui::Checkbox("##on", &on)) { mods_set_enabled(a, g, m.folder, on); changed = true; }
-            ImGui::SameLine();
-            std::string line = m.name + (m.version.empty() ? "" : "  " + m.version) + (m.author.empty() ? "" : "  -  " + m.author);
-            ImGui::TextUnformatted(line.c_str());
-            if (!m.description.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m.description.c_str());
-            ImGui::SameLine();
-            if (i > 0 && small_button("Up")) { mods_move(a, g, m.folder, -1); changed = true; }
-            if (i > 0) ImGui::SameLine();
-            if (i + 1 < ml[g].size() && small_button("Down")) { mods_move(a, g, m.folder, 1); changed = true; }
-            if (running) ImGui::EndDisabled();
-            ImGui::PopID();
-        }
-        if (!ml[g].empty()) row_desc("Ticked mods are used, top to bottom - where two change the same file, the lower one wins. Changes apply the next time the game starts.");
-        if (running) ImGui::BeginDisabled();
-        if (small_button("Add a mod (.zip)...")) {
-            std::string p = pick_file(L"Choose a mod's .zip", L"Zip files\0*.zip\0All files\0*.*\0");
-            std::string err;
-            if (!p.empty()) {
-                if (mods_add_zip(a, g, p, err)) set_message(a, "The mod is added and ticked.", false);
-                else set_message(a, err, true);
-                changed = true;
-            }
-        }
-        if (running) ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (small_button("Mods folder")) { make_dirs(mods_dir(g)); shell_open(mods_dir(g)); }
-        if (changed) { mlAt[g] = 0; env_refresh(a, g); }
-    }
 
     ImGui::Dummy(ImVec2(0, S(8)));
     th_heading("FOLDERS", g_rowX1);
@@ -1021,8 +1026,9 @@ static void about_tab(App &a, int g)
 }
 
 // ---- the page --------------------------------------------------------------------------------------------------------
-static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "ABOUT" };   // the one sound option is in Gameplay
-static const int k_tabCount = 5;
+static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "MODS", "ABOUT" };   // the one sound option is in Gameplay
+static const int k_tabCount = 6;
+static const int k_tabMods = 4;   // the tabs before it are gs::Tab's; ABOUT is the last
 
 static std::string summary(App &a, int g)
 {
@@ -1126,7 +1132,7 @@ void page_draw(App &a, ImVec2 size)
     g_ctrlW = T(300);
     g_labelW = std::min(S(500), (c1.x - c0.x) - g_ctrlW - S(40));
     g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(16);
-    if (a.tab < k_tabCount - 1) {
+    if (a.tab < k_tabMods) {
         gs::Tab want = (gs::Tab)a.tab;
         int shown = 0;
         if (want == gs::Tab::Graphics) {   // Shagg 29 Oct
@@ -1145,7 +1151,8 @@ void page_draw(App &a, ImVec2 size)
         if (!shown) row_desc("Nothing to set here yet.");
         if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
         if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
-    } else about_tab(a, g);
+    } else if (a.tab == k_tabMods) mods_tab(a, g);
+    else about_tab(a, g);
     ImGui::PopFont();
     ImGui::EndChild();
 
