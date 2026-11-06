@@ -726,6 +726,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                         (a.screen == SCR_PAGE && a.barSel >= 0 && !a.modal.open);   // also a page's bottom bar (page.cpp)
         if (!SDL_GetKeyboardFocus() || a.run.proc || frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
         else io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+        { extern int g_padlogFrontOwn; g_padlogFrontOwn = frontOwn ? 1 : 0; }   // COGBOX_PADLOG (front.cpp)
         if (frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         else io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         {   // job 523: everything grows with the window (1x at the starting size, at most 2x)

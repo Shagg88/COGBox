@@ -460,6 +460,62 @@ static void player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav)
     }
 }
 
+// COGBOX_PADLOG=1: one line per frame (only while something changes or a pad / arrow key is held) in padlog.txt next
+// to the exe - every input the front screen's `nav` gate and Dear ImGui's routing depend on, plus SDL's own D-pad
+// state, so a pad that SDL sees but the carousel ignores shows where it stops.
+int g_padlogFrontOwn = -1;   // main.cpp sets it each frame
+static void pad_log(App &a, bool nav)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("COGBOX_PADLOG") && atoi(getenv("COGBOX_PADLOG")) ? 1 : 0;
+    if (!on) return;
+    static FILE *f = nullptr;
+    if (!f) {
+        f = _wfopen((exe_dir_w() + L"\\padlog.txt").c_str(), L"w");
+        if (!f) { on = 0; return; }
+        fprintf(f, "COGBox %s pad log\n", COGBOX_VERSION);
+    }
+    ImGuiContext &g = *GImGui;
+    ImGuiIO &io = ImGui::GetIO();
+    auto kd = [](ImGuiKey k) { return ImGui::IsKeyDown(k) ? 1 : 0; };
+    auto kp = [](ImGuiKey k) { return ImGui::IsKeyPressed(k) ? 1 : 0; };
+    auto own = [](ImGuiKey k) { return (unsigned)ImGui::GetKeyOwner(k); };
+    auto rawd = [&](ImGuiKey k) { return ImGui::GetKeyData(k)->Down ? 1 : 0; };   // ignores ownership
+    int sdlN = 0, sdlL = 0, sdlR = 0, sdlX = 0;
+    if (SDL_JoystickID *ids = SDL_GetGamepads(&sdlN)) {
+        for (int i = 0; i < sdlN; i++)
+            if (SDL_Gamepad *gp = SDL_GetGamepadFromID(ids[i])) {
+                sdlL |= SDL_GetGamepadButton(gp, SDL_GAMEPAD_BUTTON_DPAD_LEFT) ? 1 << i : 0;
+                sdlR |= SDL_GetGamepadButton(gp, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) ? 1 << i : 0;
+                if (i == 0) sdlX = SDL_GetGamepadAxis(gp, SDL_GAMEPAD_AXIS_LEFTX);
+            }
+        SDL_free(ids);
+    }
+    std::string popups;
+    for (auto &p : g.OpenPopupStack) { popups += p.Window ? p.Window->Name : "?"; popups += ";"; }
+    char line[1024];
+    std::snprintf(line, sizeof line,
+        "nav=%d modal=%d job=%d popupAny=%d popups=[%s] frontOwn=%d screen=%d zoomTo=%d cfg=%x hasPad=%d padConn=%d lastPad=%d "
+        "kbFocus=%d navWin=%s active=%x wantKb=%d | ImGui down L/R/sL/sR=%d%d%d%d raw=%d%d%d%d pressed=%d%d%d%d A=%d LB=%d RB=%d "
+        "own L/R=%x/%x | SDL pads=%d dpadL=%x dpadR=%x lx=%d",
+        nav, a.modal.open, a.job.state.load(), ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), popups.c_str(), g_padlogFrontOwn,
+        (int)a.screen, (int)a.zoomTo, (unsigned)io.ConfigFlags, (io.BackendFlags & ImGuiBackendFlags_HasGamepad) ? 1 : 0,
+        a.padConnected, a.lastPad, SDL_GetKeyboardFocus() ? 1 : 0, g.NavWindow ? g.NavWindow->Name : "-", (unsigned)g.ActiveId,
+        io.WantCaptureKeyboard,
+        kd(ImGuiKey_GamepadDpadLeft), kd(ImGuiKey_GamepadDpadRight), kd(ImGuiKey_GamepadLStickLeft), kd(ImGuiKey_GamepadLStickRight),
+        rawd(ImGuiKey_GamepadDpadLeft), rawd(ImGuiKey_GamepadDpadRight), rawd(ImGuiKey_GamepadLStickLeft), rawd(ImGuiKey_GamepadLStickRight),
+        kp(ImGuiKey_GamepadDpadLeft), kp(ImGuiKey_GamepadDpadRight), kp(ImGuiKey_GamepadLStickLeft), kp(ImGuiKey_GamepadLStickRight),
+        kd(ImGuiKey_GamepadFaceDown), kd(ImGuiKey_GamepadL1), kd(ImGuiKey_GamepadR1),
+        own(ImGuiKey_GamepadDpadLeft), own(ImGuiKey_GamepadDpadRight), sdlN, sdlL, sdlR, sdlX);
+    static std::string last;
+    const bool held = sdlL || sdlR || rawd(ImGuiKey_GamepadDpadLeft) || rawd(ImGuiKey_GamepadDpadRight) || abs(sdlX) > 8000;
+    if (line != last || held) {
+        fprintf(f, "%d %.3f %s\n", ImGui::GetFrameCount(), ImGui::GetTime(), line);
+        fflush(f);
+        last = line;
+    }
+}
+
 void front_draw(App &a, ImVec2 size)
 {
     ImDrawList *dl = ImGui::GetWindowDrawList();
@@ -468,6 +524,7 @@ void front_draw(App &a, ImVec2 size)
     // input: arrows / D-pad / stick / wheel turn it (not while a box or menu has the keyboard)
     bool nav = !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !a.modal.open && a.job.state.load() != 1 &&
                a.zoomTo == SCR_FRONT;   // not while zooming into a page
+    pad_log(a, nav);   // COGBOX_PADLOG=1 (0.4.6 pad diagnostic)
     if (nav) {
         // Shagg 21:44: the D-pad (and left stick, arrow keys, mouse wheel, a click on a side box) turns the carousel; LB / RB
         // choose between Play, Settings and the Achievements side button under the box (a.frontSel), A presses the chosen one
