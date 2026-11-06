@@ -8,8 +8,7 @@ page, and the launcher has an ACHIEVEMENTS tab (popup settings, then every game'
 are in PR #187.
 
 Known follow-ups (none affects normal play): two simultaneous game-completing unlocks can queue two Platinum popups;
-the popup cvars are written on the UI thread while a guest thread may read them; the PS5 popup runs off screen below
-~440 px wide; the font atlas is ~32 MB; a failed icon load stays "?"; sorted by name, a hidden secret sits at its real
+the font atlas is ~32 MB; a failed icon load stays "?"; sorted by name, a hidden secret sits at its real
 name's place; F7 does nothing with `cogbox_menu_enabled=false`.
 
 Testing: `--cogbox_ach_test_keys=true` (off by default) makes F3 show a sample popup and F4 a sample Platinum. F3 / F4

@@ -13,7 +13,8 @@
 #include <xenos/achievements_popup_logic.h>   // achievements part 4: popup settings applied at once (LiveCvarFor)
 #include <xenos/input/prompt_device_monitor.h>
 #include <xenos/achievement_popup_assets.h>   // the in-game text's font (CJK / Cyrillic) when translated
-#include <xenos/ui_lang.h>   // --cogbox_ui_lang: XenosTr
+#include <xenos/ui_lang.h>
+#include <xenos/achievement_popup.h>   // F-8: XenosAchievementSettingsMutex   // --cogbox_ui_lang: XenosTr
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/runtime.h>
@@ -581,7 +582,12 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
       if (o.value == o.applied) continue;
       const auto c = xenos::ach::LiveCvarFor(o.id, o.value);
       if (!c) continue;
-      if (!rex::cvar::SetFlagByName(c->first, c->second)) REXLOG_WARN("cogbox_menu: couldn't set {}", c->first);
+      bool set;
+      {
+        std::lock_guard<std::mutex> lock(XenosAchievementSettingsMutex());  // F-8: an unlock may read them right now
+        set = rex::cvar::SetFlagByName(c->first, c->second);
+      }
+      if (!set) REXLOG_WARN("cogbox_menu: couldn't set {}", c->first);
       o.applied = o.value;
       changed = true;
     }

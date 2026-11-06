@@ -24,6 +24,9 @@ REXCVAR_DECLARE(std::string, cogbox_ach_position);
 REXCVAR_DECLARE(bool, cogbox_ach_sound);
 REXCVAR_DECLARE(bool, cogbox_ach_hide);
 REXCVAR_DECLARE(bool, cogbox_ach_test_keys);
+// F-8: the in-game menu sets the popup cvars on the UI thread while an unlock on a guest thread reads them (the style /
+// colour / position are strings). Both hold this lock: the menu around SetFlagByName, the popup while it reads them.
+std::mutex& XenosAchievementSettingsMutex();
 
 namespace rex {
 class Runtime;

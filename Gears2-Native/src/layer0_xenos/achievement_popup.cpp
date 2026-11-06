@@ -64,8 +64,19 @@ AchievementPopup::~AchievementPopup() {
   }
 }
 
+std::mutex& XenosAchievementSettingsMutex() {
+  static std::mutex m;
+  return m;
+}
+namespace {
+bool HideNow() {
+  std::lock_guard<std::mutex> lock(XenosAchievementSettingsMutex());
+  return REXCVAR_GET(cogbox_ach_hide);
+}
+}  // namespace
+
 void AchievementPopup::Push(const rex::system::AchievementEvent& event) {
-  if (REXCVAR_GET(cogbox_ach_hide)) return;  // nothing queued: turning it off later shows no backlog
+  if (HideNow()) return;  // nothing queued: turning it off later shows no backlog
   bool completes = false;
   if (runtime_ && runtime_->kernel_state()) {
     auto& mgr = runtime_->kernel_state()->achievements();
@@ -83,10 +94,13 @@ void AchievementPopup::Queue(Entry e) {
   const uint32_t title = runtime_ && runtime_->kernel_state() ? runtime_->kernel_state()->title_id() : 0;
   const bool completes = e.platinum;
   e.platinum = false;
-  e.style = ach::ParseStyle(REXCVAR_GET(cogbox_ach_style));
-  e.colour = ach::ParseColour(REXCVAR_GET(cogbox_ach_colour));
-  e.position = ach::ParsePosition(REXCVAR_GET(cogbox_ach_position));
-  e.sound = REXCVAR_GET(cogbox_ach_sound);
+  {  // F-8: one consistent read of the settings the in-game menu may be changing on the UI thread
+    std::lock_guard<std::mutex> lock(XenosAchievementSettingsMutex());
+    e.style = ach::ParseStyle(REXCVAR_GET(cogbox_ach_style));
+    e.colour = ach::ParseColour(REXCVAR_GET(cogbox_ach_colour));
+    e.position = ach::ParsePosition(REXCVAR_GET(cogbox_ach_position));
+    e.sound = REXCVAR_GET(cogbox_ach_sound);
+  }
   e.grade = ach::GradeFor(title, e.info.id, e.info.gamerscore);
   const ach::Rarity rarity = ach::CurrentRarityProvider().Get(title, e.info.id);
   e.rare = ach::IsRare(rarity);
@@ -107,7 +121,7 @@ void AchievementPopup::Queue(Entry e) {
 }
 
 void AchievementPopup::PushSample(bool completes_game) {
-  if (REXCVAR_GET(cogbox_ach_hide)) return;
+  if (HideNow()) return;
   Entry e;
   if (runtime_ && runtime_->kernel_state()) {
     const auto list = runtime_->kernel_state()->achievements().ListAchievements();
@@ -160,12 +174,20 @@ void AchievementPopup::OnDraw(ImGuiIO& io) {
   // Part 4 player check: never below 80 % of the 1080p size (text at 720p was too small); the modern Xbox style is drawn
   // 25 % bigger than its 1080p design (its 17 / 16 px text was too small at any size). Margins follow the screen only.
   const float screen = std::clamp(io.DisplaySize.y / 1080.f, 0.8f, 2.f), margin = 48.f * screen;
-  const float scale = screen * (e.style == ach::PopupStyle::Xbox ? 1.25f : 1.f);
-  ImVec2 size;
-  switch (e.style) {
-    case ach::PopupStyle::Xbox: size = popup::SizeXbox(scale); break;
-    case ach::PopupStyle::Ps5: size = popup::SizePs5(scale); break;
-    default: size = popup::SizeX360(scale); break;
+  float scale = screen * (e.style == ach::PopupStyle::Xbox ? 1.25f : 1.f);
+  auto size_at = [&](float sc) {
+    switch (e.style) {
+      case ach::PopupStyle::Xbox: return popup::SizeXbox(sc);
+      case ach::PopupStyle::Ps5: return popup::SizePs5(sc);
+      default: return popup::SizeX360(sc);
+    }
+  };
+  ImVec2 size = size_at(scale);
+  // F-8: a window narrower than the popup plus its margins (the PS5 style's 640 px at 80 % ran off screen below ~440
+  // px wide) - the popup is made smaller to fit, every style
+  if (size.x > 0.f && size.x + 2.f * margin > io.DisplaySize.x) {
+    scale *= std::max(0.2f, (io.DisplaySize.x - 2.f * margin) / size.x);
+    size = size_at(scale);
   }
   using P = ach::PopupPosition;
   const P pos = ach::ResolvePosition(e.style, e.position);
