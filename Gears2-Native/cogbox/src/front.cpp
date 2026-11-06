@@ -361,6 +361,10 @@ void backdrop_draw(App &a, ImDrawList *dl, ImVec2 size, int g, float alpha)
     dl->AddImage((ImTextureID)(intptr_t)b.tex, p, ImVec2(p.x + w, p.y + h), ImVec2(0, 0), ImVec2(1, 1), IM_COL32(150, 150, 150, v));
 }
 
+SDL_Texture *player_icon_texture(App &a, const std::string &rel);   // player_icon.cpp
+bool player_icon_picker(App &a, const std::string &letter);
+void player_icon_rescan();
+
 // 0.4.6 (Shagg 6 Nov): the player plate on the front screen - an initial in a crimson ring, PLAYER over the name.
 // Click (or Back / View) opens a small box to change the name: CogBox.ini [Profile] Gamertag, the same rules as the
 // runtime's Player1Gamertag (ASCII letters, digits and spaces, 15 at most; empty means "User").
@@ -383,15 +387,21 @@ static void player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav)
     // the badge: a dark disc, a crimson ring, the first letter (or a head-and-shoulders mark when no name is set)
     const ImVec2 c(o.x + S(10) + r, o.y + h * 0.5f);
     dl->AddCircleFilled(c, r, U(ImVec4(0.05f, 0.05f, 0.06f, 1)), 32);
+    // 0.4.6: the icon the player chose ([Profile] Icon, player_icon.cpp) in the ring; missing -> the letter as before
+    SDL_Texture *icon = player_icon_texture(a, a.ini.get("Profile", "Icon"));
+    const std::string letter = unset ? std::string("?") : std::string(1, (char)toupper((unsigned char)name[name.find_first_not_of(' ')]));
+    if (icon)
+        dl->AddImageRounded((ImTextureID)(intptr_t)icon, ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), ImVec2(0, 0), ImVec2(1, 1),
+                            IM_COL32_WHITE, r);
     dl->AddCircle(c, r, U(hov || psel ? col::redHi : col::red), 32, S(2.2f));
-    if (unset) {
+    if (icon) {
+    } else if (unset) {
         dl->AddCircleFilled(ImVec2(c.x, c.y - r * 0.22f), r * 0.30f, U(col::dim), 20);
         dl->PathArcTo(ImVec2(c.x, c.y + r * 0.62f), r * 0.52f, 3.14159f, 6.28318f, 20);
         dl->PathFillConvex(U(col::dim));
     } else {
-        char ini[2] = { (char)toupper((unsigned char)name[name.find_first_not_of(' ')]), 0 };
-        const ImVec2 ts = F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, ini);
-        dl->AddText(F_HEAD, FS(F_HEAD), ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), U(col::text), ini);
+        const ImVec2 ts = F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, letter.c_str());
+        dl->AddText(F_HEAD, FS(F_HEAD), ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), U(col::text), letter.c_str());
     }
     const float tx = c.x + r + S(12);
     const float ls = FS(F_SMALL), ns = FS(F_BOLD), ty = o.y + (h - ls - ns) * 0.5f;
@@ -401,13 +411,22 @@ static void player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav)
         tr("The name every game shows for you (your gamertag). Click to change it. Your profile and saves stay where they are."));
 
     static char buf[16] = {};
+    static bool iconView = false;   // the box shows the ICON grid in place of the name
     if (click || (nav && (ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false) ||
                           (psel && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))))) {
         std::snprintf(buf, sizeof(buf), "%s", name.c_str());
+        iconView = false;
         ImGui::OpenPopup("##playername");
     }
     ImGui::SetNextWindowPos(ImVec2(o.x, o.y + h + S(8)), ImGuiCond_Appearing);
     if (ImGui::BeginPopup("##playername", ImGuiWindowFlags_NoMove)) {
+      if (iconView) {
+        // 0.4.6: the icon grid (player_icon.cpp). D-pad moves, A picks, B closes (Dear ImGui's own nav cancel).
+        if (player_icon_picker(a, letter)) iconView = false;
+        ImGui::TextColored(col::dim, "%s", tr("D-pad choose   A pick   B close"));
+        ImGui::Spacing();
+        if (th_button("BACK##iconback", ImVec2(S(140), T(28)), true, F_BOLD)) iconView = false;
+      } else {
         static const char *k_tip = "Up to 15 letters, digits or spaces. Empty: \"User\".";
         ImGui::PushFont(F_BOLD, FS(F_BOLD)); ImGui::TextUnformatted(tr("PLAYER NAME")); ImGui::PopFont();
         ImGui::TextColored(col::dim, "%s", tr(k_tip));
@@ -454,10 +473,13 @@ static void player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav)
         ImGui::Spacing();
         if (th_button("SAVE NAME", ImVec2(S(140), T(28)), true, F_BOLD)) save = true;
         ImGui::SameLine(0, S(10));
+        if (th_button("ICON##playericon", ImVec2(S(100), T(28)), true, F_BOLD)) { iconView = true; player_icon_rescan(); }   // 0.4.6: the picture in the ring
+        ImGui::SameLine(0, S(10));
         if (th_button("CANCEL", ImVec2(S(140), T(28)), true, F_BOLD) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ImGui::CloseCurrentPopup();   // 0.4.6 review: B / Esc close it too
         if (save) { a.ini.set("Profile", "Gamertag", buf); a.ini.save(); ImGui::CloseCurrentPopup(); }
+      }
         ImGui::EndPopup();
     }
 }
