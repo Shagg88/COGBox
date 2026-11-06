@@ -7,7 +7,7 @@
 namespace rex { class Runtime; }
 namespace rex::system { class XThread; }
 namespace rex::graphics { class DrawObserver; class RegisterFile; struct ObservedIndexBuffer; }
-namespace rex::ui { class ImGuiDrawer; class Window; }
+namespace rex::ui { class ImGuiDrawer; class ImmediateDrawer; class Window; }
 
 // Crash report (unwound stack + minidump) for unhandled host exceptions; --gow2_crash_dir.
 void XenosInstallCrashHandler();
@@ -89,7 +89,9 @@ void XenosAoDebugSetDenoisePasses(uint32_t passes);
 // Patch 0163: COGBox's in-game menu (ingame_menu.cpp) - Back + Start or F1 opens it; COGBox's settings for this game
 // (--cogbox_menu=<file>), Resume, Restart to apply, Quit game. Install from OnCreateDialogs (with the app's window and
 // runtime), shut down from OnShutdown.
-void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window, rex::Runtime* runtime);
+// Achievements part 3: `immediate` makes the Achievements page's icon textures; F7 opens the menu on that page.
+void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDrawer* immediate, rex::ui::Window* window,
+                            rex::Runtime* runtime);
 void XenosShutdownInGameMenu();
 // PR #134 (Flippage): true while the in-game menu is open - the native mouse look drops mouse motion then.
 bool XenosInGameMenuIsOpen() noexcept;

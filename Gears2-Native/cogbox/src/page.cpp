@@ -1087,12 +1087,15 @@ static const char *const k_ctlAdv[] = { "DeadZone", "RadialDZ", "LowLag", nullpt
 static const char *const k_playGame[] = { "Version", "Lang", "VoiceLang", "SkipLogos", "Mute", nullptr };
 static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", nullptr };
 static const char *const k_playExtras[] = { "Cheats", "Mutators", nullptr };
+static const char *const k_achPopups[] = { "AchievementStyle", "AchievementColour", "AchievementPosition", "AchievementSound",
+                                           "HideAchievementPopups", nullptr };   // PR #187
 static const char *const k_none[] = { nullptr };
-static const TabGroups k_groups[4] = {
+static const TabGroups k_groups[5] = {   // one per gs::Tab, in its order
     { { "SCREEN", "FRAME RATE", nullptr, nullptr }, { k_dispScreen, k_dispFrames, k_none, k_none }, k_dispAdv },
     { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none }, k_gfxAdv },
     { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none }, k_ctlAdv },
     { { "GAME", "PLAYERS", "EXTRAS", nullptr }, { k_playGame, k_playPlayers, k_playExtras, k_none }, k_none },
+    { { "ACHIEVEMENT POPUPS", nullptr, nullptr, nullptr }, { k_achPopups, k_none, k_none, k_none }, k_none },
 };
 
 // the collapsed ADVANCED section at the end of a tab: one button that opens / closes it (kept for the session)
@@ -1107,9 +1110,9 @@ static bool ui_advanced(bool &open)
 }
 
 // ---- the page --------------------------------------------------------------------------------------------------------
-static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "MODS", "ABOUT" };   // the one sound option is in Gameplay
-static const int k_tabCount = 6;
-static const int k_tabMods = 4;   // the tabs before it are gs::Tab's; ABOUT is the last
+static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "ACHIEVEMENTS", "MODS", "ABOUT" };   // the one sound option is in Gameplay
+static const int k_tabCount = 7;
+static const int k_tabMods = 5;   // the tabs before it are gs::Tab's (ACHIEVEMENTS = gs::Tab::Achievements); ABOUT is the last
 
 static std::string summary(App &a, int g)
 {
@@ -1250,10 +1253,11 @@ void page_draw(App &a, ImVec2 size)
         if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
         bool anyAdv = false;
         for (const gs::Option *o : mine) anyAdv |= group_of(o->id) < 0;
-        static bool advOpen[4] = {};
+        static bool advOpen[k_tabMods] = {};
         if (anyAdv && ui_advanced(advOpen[(int)want]))
             for (const gs::Option *o : mine) if (group_of(o->id) < 0) { option_row(a, g, *o); shown++; }
-        if (!shown && !anyAdv) ui_note("Nothing to set here yet.");
+        if (want == gs::Tab::Achievements) achievements_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // achievements part 4
+        else if (!shown && !anyAdv) ui_note("Nothing to set here yet.");
     } else if (a.tab == k_tabMods) mods_tab(a, g);
     else about_tab(a, g);
     ImGui::PopFont();

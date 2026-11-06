@@ -16,6 +16,17 @@ include(cmake/rexglue.cmake)
 
 # Layer 0: Xbox 360 GPU core and game-free developer tooling.
 add_library(gn_layer0_xenos STATIC
+    src/layer0_xenos/achievements_data.cpp
+    src/layer0_xenos/achievements_export.cpp
+    src/layer0_xenos/achievements_popup_logic.cpp
+    src/layer0_xenos/achievements_browser_model.cpp
+    src/layer0_xenos/achievements_browser.cpp
+    src/layer0_xenos/achievement_popup_assets.cpp
+    src/layer0_xenos/achievement_popup.cpp
+    src/layer0_xenos/popup_common.cpp
+    src/layer0_xenos/popup_x360.cpp
+    src/layer0_xenos/popup_xbox.cpp
+    src/layer0_xenos/popup_ps5.cpp
     src/layer0_xenos/crash_report.cpp
     src/layer0_xenos/system_report.cpp
     src/layer0_xenos/save_watch.cpp
@@ -370,6 +381,12 @@ if(GN_BUILD_TESTS)
         src/layer2_ue3/config_bundle.cpp
         tests/layer2_prebuild_lzx_test.cpp
         src/layer2_ue3/prebuild_lzx.cpp
+        tests/layer0_achievements_popup_test.cpp
+        src/layer0_xenos/achievements_popup_logic.cpp
+        tests/layer0_achievements_browser_test.cpp
+        src/layer0_xenos/achievements_browser_model.cpp
+        tests/layer0_achievements_data_test.cpp
+        src/layer0_xenos/achievements_data.cpp
         tests/layer2_main_menu_exit_test.cpp
         src/layer2_ue3/main_menu_exit.cpp
         tests/layer2_package_exports_test.cpp
@@ -387,6 +404,8 @@ if(GN_BUILD_TESTS)
     endif()
     target_link_libraries(gn_tests PRIVATE Catch2::Catch2WithMain rex::runtime)
     rexglue_apply_target_settings(gn_tests)
+    # Files the tests write go here (never under AppData / %TEMP%).
+    target_compile_definitions(gn_tests PRIVATE GN_TEST_SCRATCH_DIR="${CMAKE_CURRENT_BINARY_DIR}/gn-test-scratch")
     if(WIN32)
         add_custom_command(TARGET gn_tests POST_BUILD
             COMMAND "$<$<BOOL:$<TARGET_RUNTIME_DLLS:gn_tests>>:${CMAKE_COMMAND};-E;copy_if_different;$<TARGET_RUNTIME_DLLS:gn_tests>;$<TARGET_FILE_DIR:gn_tests>>"

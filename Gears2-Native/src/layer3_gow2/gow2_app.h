@@ -21,7 +21,9 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 #include <xenos/dev_tools.h>
 #include <xenos/display_size.h>
 #include <xenos/gpu_system.h>
-#include <xenos/lazy_achievement_toast.h>
+#include <xenos/achievements_export.h>
+#include <xenos/achievement_popup_assets.h>
+#include <xenos/achievement_popup.h>
 
 #include <rex/system/interfaces/graphics.h>
 #include <xdk7645/stage1.h>
@@ -92,20 +94,29 @@ class Gow2App : public rex::ReXApp {
     Gow2ApplyDataPatchesIfRequested(runtime());
   }
   // Everything is set up and the game is about to start.
-  void OnPreLaunchModule() override { Ue3SetLaunchCommandLineIfRequested(); }
+  // Achievements part 2: the popups' fonts (Segoe UI from the PC; CJK from the cached achievement lists).
+  void OnConfigureFonts(ImFontAtlas* atlas) override { XenosConfigureAchievementFonts(atlas); }
+  void OnPreLaunchModule() override {
+    XenosExportAchievements(runtime());  // achievements part 1: the shared catalog + icons
+    Ue3SetLaunchCommandLineIfRequested();
+  }
   // The game's main thread exists but hasn't run yet.
   void OnPostLaunchModule(rex::system::XThread* thread) override { XenosHoldGuestIfRequested(thread); }
 
   // Patch 0054: the achievement toast attaches the overlay drawer only while a toast shows (the SDK's kept the
   // presenter repainting at the monitor's rate all the time - the NVIDIA overlay counted those as frames).
   std::unique_ptr<rex::ui::AchievementNotificationDialog> CreateAchievementNotificationDialog() override {
-    if (XenosOnScreenNotesHidden() || !imgui_drawer() || !immediate_drawer() || !runtime()) return nullptr;
-    return std::make_unique<xenos::LazyAchievementToast>(imgui_drawer(), immediate_drawer(), runtime(), &app_context());
+    // Achievements part 2: COGBox's own popups (Xbox 360 / Xbox / PS5); "Hide achievement popups" is checked per
+    // unlock, so "Hide on-screen notes" no longer hides them.
+    if (!imgui_drawer() || !immediate_drawer() || !runtime()) return nullptr;
+    return std::make_unique<xenos::AchievementPopup>(imgui_drawer(), immediate_drawer(), runtime(), &app_context());
   }
 
   // Other hooks available from rex::ReXApp:
   // void OnLoadXexImage(std::string& xex_image) override {}
   // The window and the SDK's ImGui overlay layer exist.
+  // Achievements part 3: no SDK achievements window; F7 opens COGBox's in-game menu on its Achievements page.
+  std::unique_ptr<rex::ui::ImGuiDialog> CreateAchievementsOverlay() override { return nullptr; }
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     // "Match my monitor": layer 0 learns the window and its size (xenos/display_size.h).
     if (rex::ui::Window* w = window()) {
@@ -115,7 +126,7 @@ class Gow2App : public rex::ReXApp {
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
     XenosInstallAoDebugKeys(drawer);  // notes/80 s.12 (--gow2_ao_debug_keys)
-    XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
+    XenosInstallInGameMenu(drawer, immediate_drawer(), window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
     xenos::display::SetSurfaceSize(pixel_width, pixel_height);

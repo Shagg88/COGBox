@@ -295,6 +295,12 @@ void play_start(App &a, int g, bool prepare)
         args.push_back("--cogbox_menu=\"" + join(logDir, "menu.txt") + "\"");
         if (a.padPs && a.env[g].cap.exe_has("Circle: back to the game")) args.push_back("--cogbox_menu_ps=true");   // job 523: PlayStation names in the in-game menu
     }
+    // Achievements (part 1): the game caches its achievement list in <COGBox>\achievements. The capability text is the
+    // setting's description: a short name like "cogbox_dir" is built in code, not stored as text in the exe.
+    // Part 4: the popups' text stands for both (every exe with the popups has the folder setting, and the launcher looks
+    // for that text anyway), so the 82 MB exe is searched once for achievements instead of twice (~0.3 s each).
+    if (a.env[g].cap.exe_has && a.env[g].cap.exe_has("COGBox achievement popups"))
+        args.push_back("--cogbox_dir=\"" + exe_dir() + "\"");
     std::string argText;
     for (auto &s : args) argText += s + "\r\n";
     argText += "launcher: COGBox " COGBOX_VERSION ", game " + std::string(d.name) + ", exe " + exe + "\r\n";
@@ -405,6 +411,7 @@ void play_poll(App &a)
     a.raisePid = GetProcessId(a.run.proc);   // review 0.4.5: the closing game's windows don't count as "another program"
     CloseHandle(a.run.proc);
     a.run.proc = nullptr;
+    achievements_tab_reload();   // achievements part 4: its new unlocks
     int g = a.run.game;
     const GameDef &d = game_def(g);
     int64_t secs = std::max<int64_t>(0, unix_now() - a.run.started);

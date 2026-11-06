@@ -199,6 +199,7 @@ static void answered(App &a)
     }
     else if (m.tag == "replace" && m.answer == 0) install_confirmed(a);
     else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
+    else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4
     else if (m.tag == "dlcremove" && m.answer == 0) dlc_remove_confirmed(a);   // 0.2.0
     else if (m.tag == "backup" && m.answer == 0) {
         backup_start(a, g, game_user_dir(g), join(desktop_dir(), std::string("CogBox-saves-") + d.dir + "-" + now_stamp() + ".zip"));   // #120
@@ -653,7 +654,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (const char *t = getenv("COGBOX_PAGE")) {
         a.page = std::max(0, std::min(G_COUNT - 1, atoi(t)));
         const char *c = strchr(t, ':');
-        a.tab = c ? std::max(0, std::min(5, atoi(c + 1))) : 0;
+        a.tab = c ? std::max(0, std::min(6, atoi(c + 1))) : 0;   // 0-4 gs::Tab, 5 MODS, 6 ABOUT
         a.screen = a.zoomTo = SCR_PAGE;
     }
     covers_load(a);

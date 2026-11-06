@@ -226,6 +226,22 @@ int summary() {
         if (st2.view(Game::Gears3, e).i("Fov") != 110 || st2.view(Game::Gears2, e).i("Fov") != 90) { std::cout << "FAIL per-game memory\n"; ++fails; }
         std::cout << "--- ini after a Gears 3 save ---\n" << ini;
     }
+    // Achievements part 4: the popup settings are on their own tab, with these labels
+    {
+        const std::pair<const char*, const char*> want[] = {
+            { "AchievementStyle", "Popup style" }, { "AchievementColour", "Popup colour (Xbox style)" },
+            { "AchievementPosition", "Popup position" }, { "AchievementSound", "Popup sound" },
+            { "HideAchievementPopups", "Hide achievement popups" } };
+        for (int g = 0; g < 3; ++g)
+            for (const auto& w : want) {
+                const Option* found = nullptr;
+                for (const Option& o : options(static_cast<Game>(g))) if (o.id == w.first) found = &o;
+                if (!found || std::string(tab_name(found->tab)) != "Achievements" || found->label != w.second) {
+                    std::cout << "FAIL achievements tab " << gn[g] << " " << w.first << "\n";
+                    ++fails;
+                }
+            }
+    }
     // GitHub #159: a game / voice language not on the player's copy is not passed (a choice saved before), and said so
     for (int miss = 0; miss <= 1; ++miss) {
         Environment e; e.update_ready = true;

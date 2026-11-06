@@ -185,10 +185,25 @@ std::vector<Option> make_options(Game g) {
     add(choice("FpsMode", "FPS counter", Tab::Display, OWN, { "Off", "Bar at the top", "Bar at the bottom", "Game's own (column)" }, 0,
                "Bar: one line (FPS, frame time, slowest frame) drawn by the port itself, nothing in the game changed. Game's own: "
                "the game's built-in FPS / frame-time column.", 336));
-    // GitHub #121: the port's own notes over the game (shader building / loading, achievement pop-ups) off.
+    // GitHub #121: the port's own notes over the game (shader building / loading) off. Achievement popups have their own
+    // setting below (achievements part 2).
     add(make("HideNotes", "Hide on-screen notes", Tab::Display, Kind::Bool, OWN, 0,
-             "Draws nothing of the port's over the game: no shader-building note, no shader-loading indicator and no "
-             "achievement pop-ups (achievements still unlock). The FPS counter above is separate.", 0));
+             "Draws none of the port's notes over the game: no shader-building note and no shader-loading indicator. "
+             "The FPS counter above and achievement popups are separate.", 0));
+    // Achievements part 2: one value for every game ([General]). Part 4: on the ACHIEVEMENTS tab.
+    add(choice("AchievementStyle", "Popup style", Tab::Achievements, SH, { "Xbox 360", "Xbox", "PlayStation" }, 0,
+               "The look of the popup when an achievement unlocks. PlayStation shows a trophy grade worked out from the "
+               "gamerpoints; the gamerpoints are always recorded.", 0), "achpopups");
+    add(choice("AchievementColour", "Popup colour (Xbox style)", Tab::Achievements, SH,
+               { "Dark", "Red", "Green", "Blue", "Purple", "Orange", "Pink", "Teal", "Grey", "Gold" }, 0,
+               "The Xbox style popup's colour.", 0), "achpopups");
+    add(choice("AchievementPosition", "Popup position", Tab::Achievements, SH,
+               { "Default", "Top left", "Top centre", "Top right", "Bottom left", "Bottom centre", "Bottom right" }, 0,
+               "Where the popup shows. Default: bottom centre (Xbox 360, Xbox), top right (PlayStation).", 0), "achpopups");
+    add(make("AchievementSound", "Popup sound", Tab::Achievements, Kind::Bool, SH, 1,
+             "Plays assets\\sounds\\achievement.wav with each popup (replace the file to change the sound).", 0), "achpopups");
+    add(make("HideAchievementPopups", "Hide achievement popups", Tab::Achievements, Kind::Bool, SH, 0,
+             "No popup and no sound when an achievement unlocks. Achievements still unlock and are saved.", 0), "achpopups");
     // GitHub #52 (Gears 3 native mouse look; Gears 2 too since sweep 21)
     // GitHub #125 (SDK patch 60): the Walk key (KEYBOARD KEYS, below) is held or pressed once to switch walking on / off
     add(choice("WalkMode", "Walk key", Tab::Controls, PG, { "Hold to walk", "Press to switch walking on / off" }, 0,
@@ -471,6 +486,7 @@ const char* tab_name(Tab t) {
     case Tab::Graphics: return "Graphics";
     case Tab::Controls: return "Controls";
     case Tab::Gameplay: return "Gameplay";
+    case Tab::Achievements: return "Achievements";   // achievements part 4
     }
     return "?";
 }
@@ -487,6 +503,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "start" || f == "prebuild") {
         if ((g == Game::Judgment || g == Game::Gears1) && start_names(g).size() < 2)
             return no(not_yet(gi, f == "start" ? "its chapter list is coming" : "needs its chapter list"));
+    } else if (f == "achpopups") {   // achievements part 2: the text is in cogbox_ach_style's description
+        if (!cap_exe(env, "COGBox achievement popups")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "gamefps") {
         if (g == Game::Judgment || g == Game::Gears1) return no(not_yet(gi, "game's own counter"));
     } else if (f == "ultrawide") {   // 0.2.0: Judgment too (--gowj_ultrawide, a new build); Gears 1 when gow1.exe has it
@@ -1257,6 +1275,22 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }   // 0.3.5: off = not sent (the runtime's default)
     // GitHub #121: only an exe whose layer 0 has the switch (an older one would refuse the unknown flag)
     if (s.b("HideNotes") && cap_exe(env, "gow2_hide_onscreen_notes")) a.push_back("--gow2_hide_onscreen_notes=true");
+    // Achievements part 2: the popups (only an exe that has them; an older one would refuse the unknown options)
+    if (cap_exe(env, "COGBox achievement popups")) {
+        static const char* const styles[] = { "x360", "xbox", "ps5" };
+        static const char* const colours[] = { "dark", "red", "green", "blue", "purple", "orange", "pink", "teal", "grey", "gold" };
+        static const char* const positions[] = { "default", "top_left", "top_centre", "top_right", "bottom_left",
+                                                 "bottom_centre", "bottom_right" };
+        auto pick = [&](const char* id, const char* const* names, int count) {
+            const int i = s.i(id);
+            return names[i >= 0 && i < count ? i : 0];
+        };
+        a.push_back(std::string("--cogbox_ach_style=") + pick("AchievementStyle", styles, 3));
+        a.push_back(std::string("--cogbox_ach_colour=") + pick("AchievementColour", colours, 10));
+        a.push_back(std::string("--cogbox_ach_position=") + pick("AchievementPosition", positions, 7));
+        a.push_back(std::string("--cogbox_ach_sound=") + (s.b("AchievementSound") ? "true" : "false"));
+        a.push_back(std::string("--cogbox_ach_hide=") + (s.b("HideAchievementPopups") ? "true" : "false"));
+    }
     // PS1 929: FPS counter
     switch (s.i("FpsMode")) {
     case 1: a.push_back("--gow2_fps_bar=top"); break;
