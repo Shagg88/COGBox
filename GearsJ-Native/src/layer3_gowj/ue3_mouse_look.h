@@ -79,8 +79,12 @@ REXCVAR_DEFINE_DOUBLE(ue3_mouse_min_counts, 2.0, "COGBox",
                       "Native mouse look (GitHub #115): smaller motion waits, per axis, until it reaches this many counts "
                       "(or --ue3_mouse_hold_ms), so slow zoomed aiming isn't lost to the engine's whole rotation units. 0 = off")
     .range(0.0, 20.0);
-REXCVAR_DEFINE_DOUBLE(ue3_mouse_hold_ms, 25.0, "COGBox",
-                      "Native mouse look (GitHub #115): the longest a small motion waits before it is sent anyway")
+// GitHub #175: was 25. A small motion sent on its own after the wait was still under one rotation unit when zoomed and
+// was lost (very slow aiming: each count arrived more than 25 ms after the last, so every count went out alone). 0 = it
+// waits, banked, until enough motion has added up - nothing is thrown away.
+REXCVAR_DEFINE_DOUBLE(ue3_mouse_hold_ms, 0.0, "COGBox",
+                      "Native mouse look (GitHub #115/#175): the longest a small motion waits before it is sent anyway "
+                      "(0 = never: it stays banked until it adds up to --ue3_mouse_min_counts, so none is lost)")
     .range(0.0, 200.0);
 REXCVAR_DEFINE_BOOL(ue3_mouse_invert_y, false, "COGBox", "Native mouse look: invert up / down");
 REXCVAR_DEFINE_BOOL(ue3_mouse_aim_assist, false, "COGBox",
@@ -176,9 +180,15 @@ inline bool SafeCall(PPCFunc* fn, PPCContext* c, uint8_t* base) {
 // FOVScale = FOV / 90 small) and at a high frame rate, slow aiming moves were all under it: a dead zone. A small
 // motion is now kept banked, per axis, until it reaches --ue3_mouse_min_counts or has waited --ue3_mouse_hold_ms, so it
 // arrives in steps the engine keeps. Ordinary motion (above the minimum) goes out the same frame, as before.
+// GitHub #175: the wait no longer ends by sending the small motion anyway (hold_ms is 0 = no limit by default): that was
+// where slow zoomed aiming was still lost - one count, sent alone after 25 ms, truncated to nothing. The leftover now
+// stays banked and is carried into the next frames until it adds up. The minimum is in counts at --ue3_mouse_scale 1;
+// a lower scale makes each count turn less, so the minimum grows by 1 / scale (a higher scale leaves it as it is).
 inline void DrainReady(double* dx, double* dy) {
   static int64_t held_x = 0, held_y = 0;  // when each axis' banked motion started waiting (0 = nothing waiting)
-  const double min_counts = REXCVAR_GET(ue3_mouse_min_counts);
+  const double scale = REXCVAR_GET(ue3_mouse_scale);
+  const double min_counts = std::fmin(REXCVAR_GET(ue3_mouse_min_counts) / std::fmin(1.0, std::fmax(scale, 0.01)), 20.0);
+  const double hold_ms = REXCVAR_GET(ue3_mouse_hold_ms);
   const int64_t hold = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                            std::chrono::duration<double, std::milli>(REXCVAR_GET(ue3_mouse_hold_ms))).count();
   const int64_t now = Now();
@@ -186,7 +196,7 @@ inline void DrainReady(double* dx, double* dy) {
   auto take = [&](double& bank, int64_t& held, double* out) {
     *out = 0;
     if (bank == 0) { held = 0; return; }
-    if (min_counts <= 0 || std::fabs(bank) >= min_counts || (held && now - held >= hold)) {
+    if (min_counts <= 0 || std::fabs(bank) >= min_counts || (hold_ms > 0 && held && now - held >= hold)) {
       *out = bank; bank = 0; held = 0;
     } else if (!held) {
       held = now;
