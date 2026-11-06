@@ -1,0 +1,30 @@
+--- a/src/kernel/xam/xam_misc.cpp	2026-11-06 14:52:37.368156314 -0800
++++ b/src/kernel/xam/xam_misc.cpp	2026-11-06 14:52:37.401537781 -0800
+@@ -11,6 +11,7 @@
+ #include <rex/kernel/xam/private.h>
+ #include <rex/logging.h>
+ #include <rex/hook.h>
++#include <rex/cvar.h>
+ 
+ // kinda gross but oh well
+ REX_EXPORT_STUB(__imp__CancelWaitableTimer);
+@@ -568,7 +569,18 @@
+ REX_EXPORT_STUB(__imp__XamMediaVerificationCreate);
+ REX_EXPORT_STUB(__imp__XamMediaVerificationFailedBlocks);
+ REX_EXPORT_STUB(__imp__XamMediaVerificationInject);
+-REX_EXPORT_STUB(__imp__XamMediaVerificationVerify);
++// SDK patch 67 (GitHub #215): Gears 3 calls this twice a second only while its main menu is up (the menu stays
++// resident after a level, so no file open says so). Counted here so the game can tell it is on the menu; no log line
++// (it was a STUB warning every 0.5 s).
++REXCVAR_DEFINE_INT32(xam_media_verify_calls, 0, "Kernel",
++                     "Read-only counter (SDK patch 67): calls to XamMediaVerificationVerify so far");
++extern "C" REX_FUNC(__imp__XamMediaVerificationVerify) {
++  (void)base;
++  (void)ctx;
++  REXCVAR_SET(xam_media_verify_calls, REXCVAR_GET(xam_media_verify_calls) + 1);
++}
++static rex::ppc::detail::PPCFuncRegistrar _ppc_reg___imp__XamMediaVerificationVerify("__imp__XamMediaVerificationVerify",
++                                                                                      &__imp__XamMediaVerificationVerify);
+ REX_EXPORT_STUB(__imp__XamMoveFile);
+ REX_EXPORT_STUB(__imp__XamNetworkStatusAddAddress);
+ REX_EXPORT_STUB(__imp__XamNetworkStatusGetInformation);

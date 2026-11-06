@@ -22,6 +22,7 @@
 #include <ue3/objects.h>
 #include <ue3/console.h>  // Ue3ConsoleQueue (GitHub #208)
 #include "mouse_look.h"
+#include "main_menu_exit.h"
 
 #include <algorithm>
 #include <atomic>
@@ -463,6 +464,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   TickTimeline();
   Gow3ModChaptersTick();
   Gow3PathChoiceTick();
+  Gow3MediaVerifyTick();  // GitHub #215
   const int32_t v = REXCVAR_GET(gow3_max_fps);
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)
