@@ -104,6 +104,12 @@ New in 0.4.6
 - Keyboard: holding the Walk key on Ctrl no longer stops W/A/S/D, and walking is slower (#196, thanks to KiltedKernel,
   PR #197).
 - Mouse sensitivity in steps of 0.01 (#195, thanks to KiltedKernel, PR #198).
+- Main menu: an Exit Game entry closes the game (thanks to Flippage, PR #168). It takes the place of Credits in
+  Gears 2 and of the Marketplace entry in Gears 3 and Judgment.
+- Mouse buttons 4 and 5 can be bound to actions (#208).
+- Judgment default keys: Grenades on 4 (LB) and Tactical display on Tab (D-pad down) (#208).
+- Gears 3: side-by-side split screen is set again at every level, not only the first (#208 / #136).
+- Gears 3 Title Update 6: no more crash in the Act 1 jail cutscene (#207).
 - Faster: textures the game draws into on the graphics card are no longer copied back and reloaded every frame
   (about 12 a frame in Gears 2).
 - A crash right after a title update that doesn't match the game now says so (#183).
