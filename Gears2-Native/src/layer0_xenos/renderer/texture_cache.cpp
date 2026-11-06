@@ -46,6 +46,20 @@ REXCVAR_DEFINE_DOUBLE(gow2_texture_phase_log_ms, 0.0, "Gears2",
                       "phases - page watch arming, page hashing, host texture creation, GPU-path copy + untile, CPU-path "
                       "untile, CPU-path upload. 0 = off");
 
+// GitHub #202 / #185 (Judgment at 2x: one texture shows other-surface noise): a block-compressed (BC/DXT) texture
+// loaded on the GPU from the guest-memory mirror keeps the mirror's bytes for pages our own resolve or memexport wrote
+// last (T2), instead of the CPU's. Real DXT data is never a resolve's output, so such a load means the mirror holds a
+// render target where the game now keeps a texture - a CPU / DMA / file write the page watch did not see.
+// --gow2_renderer_bc_gpu_page_log=N logs the first N such loads (base, format, size, pages); off by default.
+// --gow2_renderer_bc_cpu_over_gpu=true takes the CPU bytes for those pages of BC textures (pending memexport readbacks
+// land first); off by default - the 0.4.5 behaviour.
+REXCVAR_DEFINE_INT32(gow2_renderer_bc_gpu_page_log, 0, "Gears2",
+                     "Diagnostic (#202 / #185): log BC texture loads that keep pages our GPU wrote (resolve / memexport) "
+                     "in the mirror, up to N lines (max 500). 0 = off");
+REXCVAR_DEFINE_BOOL(gow2_renderer_bc_cpu_over_gpu, false, "Gears2",
+                    "Experimental (#202): BC textures take the guest CPU bytes even for pages our GPU wrote last "
+                    "(a render target's data is never valid DXT). false (default) = the mirror's bytes, as 0.4.5");
+
 // GitHub #131 / #59 (Judgment under Proton): the texture cache trusts the page watch - write-protected pages whose
 // first CPU write or kernel file read raises a callback. If that mechanism misses writes (a suspicion for Wine: kernel
 // reads into protected pages, or protection changes it handles otherwise), textures keep old contents. This fallback
@@ -1588,6 +1602,12 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     // Copy the guest bytes to the GPU's guest-memory mirror - only the pages written since the last copy - then
     // untile each level there.
     const uint32_t starts[2] = {e.base_start, e.mip_start}, lengths[2] = {e.base_length, e.mip_length};
+    const bool is_bc = fb.block_width > 1;  // #202: block-compressed
+    const bool bc_cpu = is_bc && REXCVAR_GET(gow2_renderer_bc_cpu_over_gpu);
+    uint32_t gpu_pages_seen = 0;
+    if (bc_cpu && before_cpu_load_)  // pending memexport readbacks land in guest memory before its bytes are copied
+      for (uint32_t r = 0; r < 2; ++r)
+        if (lengths[r]) before_cpu_load_(starts[r], lengths[r]);
     for (uint32_t r = 0; r < 2; ++r) {
       if (!lengths[r]) continue;
       constexpr uint32_t kShift = GuestWatch::kPageShift;
@@ -1612,7 +1632,8 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         const uint32_t v = watch_.PageVersion(p);
         if (v != pv[p - first]) {
           pv[p - first] = v;
-          if (watch_.GpuCurrent(p)) {  // T2: our resolve wrote this page into the mirror; the CPU bytes are older
+          if (watch_.GpuCurrent(p)) ++gpu_pages_seen;
+          if (watch_.GpuCurrent(p) && !bc_cpu) {  // T2: our resolve wrote this page into the mirror; the CPU bytes are older
             flush(p);
             ++stats_.gpu_pages_kept;
             continue;
@@ -1623,6 +1644,19 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         }
       }
       flush(last + 1);
+    }
+    if (is_bc && gpu_pages_seen) {  // #202 diagnostic
+      const int32_t max = std::min(REXCVAR_GET(gow2_renderer_bc_gpu_page_log), 500);
+      static std::atomic<int32_t> logged{0};
+      if (max > 0 && logged.load(std::memory_order_relaxed) < max) {
+        const int32_t n = logged.fetch_add(1);
+        if (n < max)
+          REXLOG_INFO("gow2_bc_gpu_pages: BC texture base {:08X} (+{:X}) mips {:08X} (+{:X}) format {} {}x{}: {} page(s) "
+                      "last written by our GPU (resolve / memexport) - {}{}",
+                      e.base_start, e.base_length, e.mip_start, e.mip_length, format, w, h, gpu_pages_seen,
+                      bc_cpu ? "taken from guest memory (bc_cpu_over_gpu)" : "kept from the mirror",
+                      n + 1 == max ? " - last line (gow2_renderer_bc_gpu_page_log)" : "");
+      }
     }
     // The untile work for this texture: now, or (batched loads) at the end of this Bind, after its other uploads.
     const gpu::TextureHandle tex = e.texture;
