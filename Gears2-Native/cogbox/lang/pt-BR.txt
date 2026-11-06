@@ -812,3 +812,8 @@ Hold to walk = Segurar para andar
 Press to switch walking on / off = Apertar para ligar / desligar o andar
 With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = Com teclado e mouse: como a tecla Andar funciona (escolha a tecla em TECLAS DO TECLADO). Andando, você se move na metade da velocidade. No início nenhuma tecla está definida.
 Walk = Andar
+
+# notes/81: CACAO
+CACAO (experimental) = CACAO (experimental)
+CACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer. = CACAO: FidelityFX CACAO da AMD em meia resolução: custa bem menos que o XeGTAO e mostra menos granulação com DLAA e SMAA T2x, mas os detalhes finos de contato ficam mais suaves.
+Judgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS. = Judgment: XeGTAO e CACAO substituem o AO do próprio jogo, que pode piscar com DLSS.

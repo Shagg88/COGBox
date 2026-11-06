@@ -63,15 +63,23 @@ void XenosDestroyFpsBar();
 // achievement toast drawn over the game (achievements still unlock). The apps' CreateAchievementNotificationDialog asks.
 bool XenosOnScreenNotesHidden();
 // Notes/80 s.12 (ao_debug.cpp): --gow2_ao_debug_keys - F9 / F10 / F11 cycle the AO the game gets (0 XeGTAO,
-// 1 none, 2 the game's own), the debug view (0-5, as --gow2_ao_debug) and XeGTAO's quality (0 low .. 3 ultra), with a
+// 1 none, 2 the game's own), the debug view (0-5, as --gow2_ao_debug) and XeGTAO's quality (0 low .. 3 ultra); F8 its
+// denoise passes (1-3), F6 XeGTAO / CACAO; with a
 // label. Install from OnCreateDialogs, shut down from OnShutdown. The renderer sets the starting state from its cvars
 // (XenosAoDebugSetState, which also turns the keys on) and reads the current one once per frame.
 void XenosInstallAoDebugKeys(rex::ui::ImGuiDrawer* drawer);
 void XenosShutdownAoDebugKeys();
-void XenosAoDebugSetState(uint32_t show, uint32_t view, uint32_t quality);
+void XenosAoDebugSetState(uint32_t show, uint32_t view, uint32_t quality, uint32_t denoise_passes);
 uint32_t XenosAoDebugShow();
 uint32_t XenosAoDebugView();
 uint32_t XenosAoDebugQuality();
+uint32_t XenosAoDebugDenoisePasses();  // 1-3
+void XenosAoDebugSetCacao(bool on, bool available, uint32_t blur_passes);  // F6: XeGTAO / CACAO (notes/81)
+bool XenosAoDebugCacao();
+void XenosAoDebugSetMipBias(bool on);  // notes/82: F2
+bool XenosAoDebugMipBias();
+uint32_t XenosAoDebugCacaoBlur();  // 0-8; F8 steps 1, 2, 3, 4, 6, 8 while CACAO is shown
+void XenosAoDebugSetDenoisePasses(uint32_t passes);
 // Patch 0163: COGBox's in-game menu (ingame_menu.cpp) - Back + Start or F1 opens it; COGBox's settings for this game
 // (--cogbox_menu=<file>), Resume, Restart to apply, Quit game. Install from OnCreateDialogs (with the app's window and
 // runtime), shut down from OnShutdown.

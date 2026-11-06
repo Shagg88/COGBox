@@ -812,3 +812,8 @@ Hold to walk = Tieni premuto per camminare
 Press to switch walking on / off = Premi per attivare / disattivare la camminata
 With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = Con tastiera e mouse: come funziona il tasto Cammina (scegli il tasto in TASTI DELLA TASTIERA). Camminando ci si muove a metà velocità. All'inizio non è impostato alcun tasto.
 Walk = Cammina
+
+# notes/81: CACAO
+CACAO (experimental) = CACAO (sperimentale)
+CACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer. = CACAO: FidelityFX CACAO di AMD a metà risoluzione: costa molto meno di XeGTAO e mostra meno grana con DLAA e SMAA T2x, ma i dettagli di contatto fini sono più morbidi.
+Judgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS. = Judgment: XeGTAO e CACAO sostituiscono l'AO del gioco, che può sfarfallare con DLSS.

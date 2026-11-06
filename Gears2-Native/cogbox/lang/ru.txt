@@ -812,3 +812,8 @@ Hold to walk = Удерживать, чтобы идти
 Press to switch walking on / off = Нажать, чтобы включить / выключить шаг
 With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = С клавиатурой и мышью: как работает клавиша «Шаг» (клавишу выберите в разделе КЛАВИШИ). Шагом персонаж движется вдвое медленнее. Сначала клавиша не назначена.
 Walk = Шаг
+
+# notes/81: CACAO
+CACAO (experimental) = CACAO (экспериментально)
+CACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer. = CACAO: FidelityFX CACAO от AMD в половинном разрешении: обходится намного дешевле XeGTAO и даёт меньше зерна с DLAA и SMAA T2x, но мелкие контактные детали мягче.
+Judgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS. = Judgment: XeGTAO и CACAO заменяют собственный AO игры, который может мерцать с DLSS.

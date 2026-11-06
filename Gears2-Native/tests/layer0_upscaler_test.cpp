@@ -374,3 +374,31 @@ TEST_CASE("Depth at infinity of a perspective matrix", "[upscaler]") {
   // Not a perspective matrix: 1.
   CHECK(up::DepthAtInfinity(up::Mat4{}) == 1.0f);
 }
+
+TEST_CASE("upscale: the frame's last scene copy is learned (notes/80 s.11)", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  // Which copy of a frame with n scene copies is taken first: as the renderer asks, stopping after the first taken.
+  const auto frame = [](up::SceneCopyPicker& p, int n) {
+    int taken = -1;
+    for (int i = 0; i < n; ++i)
+      if (p.Take() && taken < 0) taken = i;
+    p.EndFrame();
+    return taken;
+  };
+  up::SceneCopyPicker first;  // off: always the first
+  CHECK(frame(first, 4) == 0);
+  CHECK(frame(first, 4) == 0);
+  up::SceneCopyPicker last;
+  last.last_only = true;
+  CHECK(frame(last, 4) == 0);   // nothing learned yet
+  CHECK(frame(last, 4) == 3);   // every copy was counted, also those after the one taken
+  CHECK(frame(last, 4) == 3);
+  CHECK(frame(last, 0) == -1);  // a movie frame keeps the count
+  CHECK(frame(last, 4) == 3);
+  CHECK(frame(last, 5) == 3);   // more copies: one frame early
+  CHECK(frame(last, 5) == 4);
+  CHECK(frame(last, 2) == -1);  // fewer: none this frame
+  CHECK(frame(last, 2) == 1);
+  CHECK(frame(last, 1) == -1);
+  CHECK(frame(last, 1) == 0);
+}

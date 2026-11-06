@@ -283,7 +283,7 @@ std::vector<Option> make_options(Game g) {
     // be, since every flare would show through the scenery there.
     // Notes/80 (Gears2-Native): XeGTAO screen-space ambient occlusion in place of the game's own (Gears 2), or added
     // where a level has none (Gears 3 s.9: opt-in there, default "Game's own").
-    add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, experimental)", "XeGTAO (ultra, experimental)" },
+    add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, experimental)", "XeGTAO (ultra, experimental)", "CACAO (experimental)" },
                         1,   // Game's own: XeGTAO is opt-in in every game
                "The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version "
                "(Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, "
@@ -539,9 +539,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll")) return no(not_yet(gi, "this build has no AMD frame generation files"));
     } else if (f == "mute") {
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
-    } else if (f == "ao") {   // notes/80: XeGTAO in Gears 2 and Gears 3 (s.9); Judgment needs its own AO pass found
-        if (g != Game::Gears2 && g != Game::Gears3) return no(not_yet(gi, "Gears 2 and 3 first"));
-        if (!cap_exe(env, "gow2_ao_quality")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "ao") {   // notes/80: Gears 2 and Gears 3 (s.9); notes/81: Judgment, with the fog anchor its exe sets
+        if (g != Game::Gears2 && g != Game::Gears3 && g != Game::Judgment) return no(not_yet(gi, "Gears 2 and 3 first"));
+        if (!cap_exe(env, g == Game::Judgment ? "gow2_ao_skip_ps" : "gow2_ao_quality")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "realocclusion") {   // PR #43: Gears 3 and Judgment; GitHub #75: Gears 2 too
         // an older Gears 2 exe without strict queries would only warn - keep the box greyed out for it
         if (g == Game::Gears2 && !cap_exe(env, "gow2_renderer_queries")) return no(not_yet(0, "needs its next build"));
@@ -613,6 +613,10 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         base = "On Steam Deck / Linux (Proton) Vulkan is the usual choice - DirectX 12 can crash there.\n"
                "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
                "are off. If something looks wrong, make a problem report and send it to us.";
+    if (o.id == "AO")   // notes/81
+        base += "\nCACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer.";
+    if (o.id == "AO" && g == Game::Judgment)   // notes/81
+        base += "\nJudgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS.";
     if (o.id == "AO" && g == Game::Gears3)   // notes/80 s.9
         base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it.";
     if (o.id == "AAMode") {   // PS1 345
@@ -985,10 +989,21 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     const bool realOcclusion = s.i("Api") == 0 && !env.wine && g != Game::Gears1 &&
                                (g != Game::Gears2 || cap_exe(env, "gow2_renderer_queries"));
     if (realOcclusion) a.push_back("--gow2_renderer_queries=strict");
-    // Notes/80: XeGTAO (2 high, 3 ultra); 0 Off goes through the game's own [SystemSettings] below, 1 changes nothing
+    // Notes/80: XeGTAO (2 high, 3 ultra); notes/81: CACAO (4); 0 Off goes through the game's own [SystemSettings] below,
+    // 1 changes nothing
     if (avail("AO") && s.i("AO") >= 2) {
-        a.push_back("--gow2_ao=gtao");
-        a.push_back(s.i("AO") == 3 ? "--gow2_ao_quality=ultra" : "--gow2_ao_quality=high");
+        if (s.i("AO") == 4 && !cap_exe(env, "gow2_ao_algo")) {
+            notes.push_back("launcher: CACAO is not in this build - the game's own AO");
+        } else {
+            a.push_back("--gow2_ao=gtao");
+            if (s.i("AO") == 4) {   // low, with the blur passes that looked best in play
+                a.push_back("--gow2_ao_algo=cacao");
+                a.push_back("--gow2_ao_quality=low");
+                a.push_back("--gow2_ao_cacao_blur=3");
+            } else {
+                a.push_back(s.i("AO") == 3 ? "--gow2_ao_quality=ultra" : "--gow2_ao_quality=high");
+            }
+        }
     }
     // PS1 858: 16x anisotropic
     if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : isG1 ? "--gow1_aniso16=true" : "--gowj_aniso16=true");
@@ -1031,7 +1046,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                 notes.push_back("launcher: lens flares off for this launch - no Real occlusion (DirectX 12) to hide them behind walls (GitHub #102)");
             }
         }
-        if (avail("AO") && s.i("AO") == 0) ini.push_back(ei + "|SystemSettings|AmbientOcclusion=False");   // notes/80
+        // Notes/80; notes/81: Judgment's own AO goes whenever ours is on - ours is added, not swapped in
+        if (avail("AO") && (s.i("AO") == 0 || (g == Game::Judgment && s.i("AO") >= 2)))
+            ini.push_back(ei + "|SystemSettings|AmbientOcclusion=False");
         if (avail("Fov") && s.i("Fov") != 100) {
             std::string k = fmt_double(static_cast<double>(s.i("Fov")) / 100);
             ini.push_back(std::string(isG1 ? "WarCamera.ini" : "GearCamera.ini") + "|*|FOVAngle*=" + k);

@@ -145,6 +145,9 @@ class TextureCache {
   // A fetch whose dimension doesn't match the texture (cube fetch of a 2D texture, or the reverse) reads zero, as
   // Canary's null view does (default), instead of the white stand-in.
   void SetMismatchZero(bool on) { mismatch_zero_ = on; }
+  // Added to the LOD bias of textures with mips: an upscaler's scene is below the output, so the game's own mip choice
+  // is too blurry for it (notes/82). Rendered targets have no mips and are left alone.
+  void SetMipBias(float bias) { mip_bias_ = bias; }
   // Job 189 diagnostic (scaled_misses); off by default since job 227 - it cost 45% of the renderer thread at 2x.
   void SetScaledMissLog(bool on) { scaled_miss_log_ = on; }
   // Patch 0087 (Canary texture_util.cc, 344fca7): a texture whose level 0 is already the packed mip tail keeps its whole
@@ -332,6 +335,7 @@ class TextureCache {
   uint64_t cap_bytes_ = 0;
   bool always_reload_ = false;
   bool mismatch_zero_ = true;
+  float mip_bias_ = 0.0f, last_bind_mip_bias_ = 0.0f;
   bool scaled_miss_log_ = false;
   bool packed_tail_at_base_ = true;  // patch 0087
   uint32_t stale_after_ = 0;

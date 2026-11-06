@@ -568,9 +568,10 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
     last_bind_epoch_ = epoch;
   }
   const uint64_t ov_gen = OverlayGeneration();
-  if (ov_gen != last_bind_overlay_gen_) {
+  if (ov_gen != last_bind_overlay_gen_ || mip_bias_ != last_bind_mip_bias_) {
     for (SlotCache& sc : slot_cache_) sc.valid = false;
     last_bind_overlay_gen_ = ov_gen;
+    last_bind_mip_bias_ = mip_bias_;
   }
   for (uint32_t k = 0; k < 32; ++k) {
     const uint32_t kinds = ((slots_2d >> k) & 1) | (((slots_cube >> k) & 1) << 1) | (((slots_3d >> k) & 1) << 2);
@@ -630,6 +631,7 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
       if (REXCVAR_GET(gow2_renderer_force_trilinear)) sd.mip_linear = true;
       const int32_t fa = REXCVAR_GET(gow2_renderer_force_aniso);
       if (fa > sd.max_anisotropy) sd.max_anisotropy = uint8_t(std::min(fa, 16));
+      sd.lod_bias += mip_bias_;  // notes/82
     }
     // Views: swizzle (fetch constant, then the host format's channel map) and signedness.
     const HostFormat hf = Host(Bits(tf[1], 0, 6));
