@@ -2269,7 +2269,11 @@ class VulkanBackend final : public Backend {
     if (!ready_ || lost_ || !current_pipeline_ || !Record()) return false;
     Pipeline& p = *pipelines_[current_pipeline_];
     if (!p.ready.load(std::memory_order_acquire) || p.failed.load() || !p.pipeline) return false;
-    if (!targets_.count && !targets_.depth) return false;
+    // GitHub #202/#213/#131: no early-out for a draw without targets. The memory-export-only draws (the renderer binds
+    // no targets for them, as on D3D12) were all skipped here, so their eA/eM writes never reached the guest mirror -
+    // yet the end-of-frame export readback still copied the mirror's (stale / zero) bytes over guest memory. Judgment
+    // moves streamed DXT textures with such copies: their mip tails came out zero or another texture's (black props,
+    // a cyan normal map used as Cole's glow mask). BeginPass handles zero attachments (1x1 render area).
     // Textures read by this draw: in GENERAL, and not written in this pass without a barrier since.
     bool split = false;
     for (uint32_t k = 0; k < bound_view_count_ && !split; ++k) {  // patch 0080: only the slots holding a texture
