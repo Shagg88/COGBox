@@ -539,9 +539,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll")) return no(not_yet(gi, "this build has no AMD frame generation files"));
     } else if (f == "mute") {
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
-    } else if (f == "ao") {   // notes/80: XeGTAO in Gears 2 and Gears 3 (s.9); Judgment needs its own AO pass found
-        if (g != Game::Gears2 && g != Game::Gears3) return no(not_yet(gi, "Gears 2 and 3 first"));
-        if (!cap_exe(env, "gow2_ao_quality")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "ao") {   // notes/80: Gears 2 and Gears 3 (s.9); notes/81: Judgment, with the fog anchor its exe sets
+        if (g != Game::Gears2 && g != Game::Gears3 && g != Game::Judgment) return no(not_yet(gi, "Gears 2 and 3 first"));
+        if (!cap_exe(env, g == Game::Judgment ? "gow2_ao_skip_ps" : "gow2_ao_quality")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "realocclusion") {   // PR #43: Gears 3 and Judgment; GitHub #75: Gears 2 too
         // an older Gears 2 exe without strict queries would only warn - keep the box greyed out for it
         if (g == Game::Gears2 && !cap_exe(env, "gow2_renderer_queries")) return no(not_yet(0, "needs its next build"));
@@ -615,6 +615,8 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
                "are off. If something looks wrong, make a problem report and send it to us.";
     if (o.id == "AO")   // notes/81
         base += "\nCACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer.";
+    if (o.id == "AO" && g == Game::Judgment)   // notes/81
+        base += "\nJudgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS.";
     if (o.id == "AO" && g == Game::Gears3)   // notes/80 s.9
         base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it.";
     if (o.id == "AAMode") {   // PS1 345
@@ -1044,7 +1046,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                 notes.push_back("launcher: lens flares off for this launch - no Real occlusion (DirectX 12) to hide them behind walls (GitHub #102)");
             }
         }
-        if (avail("AO") && s.i("AO") == 0) ini.push_back(ei + "|SystemSettings|AmbientOcclusion=False");   // notes/80
+        // Notes/80; notes/81: Judgment's own AO goes whenever ours is on - ours is added, not swapped in
+        if (avail("AO") && (s.i("AO") == 0 || (g == Game::Judgment && s.i("AO") >= 2)))
+            ini.push_back(ei + "|SystemSettings|AmbientOcclusion=False");
         if (avail("Fov") && s.i("Fov") != 100) {
             std::string k = fmt_double(static_cast<double>(s.i("Fov")) / 100);
             ini.push_back(std::string(isG1 ? "WarCamera.ini" : "GearCamera.ini") + "|*|FOVAngle*=" + k);

@@ -102,6 +102,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include <string>
 #include <unordered_map>
 #include <cstdlib>
+#include <sstream>
 #include <fstream>
 #include <unordered_set>
 #include <vector>
@@ -809,6 +810,9 @@ REXCVAR_DEFINE_BOOL(gow2_ao_everywhere, true, "Gears2",
 REXCVAR_DEFINE_STRING(gow2_ao_fog_ps, "D58B286B84EE971D", "Gears2",
                       "Notes/80: pixel shader hash(es), comma-separated, of the game's fog pass in frames without its AO "
                       "(the anchor for --gow2_ao_everywhere)");
+REXCVAR_DEFINE_STRING(gow2_ao_skip_ps, "", "Gears2",
+                      "Notes/81: pixel shader hashes, comma-separated, of a game's own AO passes that the chain detection does not "
+                      "find (Judgment). Skipped while our AO or no AO is shown, drawn again for the game's own, so F5 and F9 work live");
 REXCVAR_DEFINE_INT32(gow2_ao_trace_class, -1, "Gears2",
                      "Notes/80 diagnostic: with --gow2_ao_trace_frames, also log every draw whose first colour target has "
                      "this storage class (e.g. 4 = k_16_16, the velocity buffer), not only full-screen passes; -1 = off");
@@ -4216,6 +4220,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Notes/80 s.5 (--gow2_ao_everywhere): the multiply pass for frames without the game's AO chain.
   bool ao_everywhere_ = false, ao_added_frame_ = false;
   std::string ao_fog_ps_;  // ",HASH,HASH,"
+  std::vector<uint64_t> ao_skip_ps_;  // --gow2_ao_skip_ps
   gpu::ShaderHandle ao_multiply_ps_ = 0;
   std::unordered_map<uint32_t, gpu::PipelineHandle> ao_multiply_pipes_;  // by target format
   uint64_t ao_added_ = 0;
@@ -5357,6 +5362,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ao_skip_game_ = uint32_t(std::clamp(REXCVAR_GET(gow2_ao_skip_game), 0, 3));
     ao_everywhere_ = REXCVAR_GET(gow2_ao_everywhere);
     ao_fog_ps_ = "," + REXCVAR_GET(gow2_ao_fog_ps) + ",";
+    {
+      std::stringstream list(REXCVAR_GET(gow2_ao_skip_ps));
+      std::string one;
+      while (std::getline(list, one, ','))
+        if (!one.empty()) ao_skip_ps_.push_back(std::strtoull(one.c_str(), nullptr, 16));
+    }
     if (ao_everywhere_)
       ao_multiply_ps_ = cache_->GetBuiltin("xegtao_multiply_ps", rr::builtin::kXeGtaoMultiplyPs, gpu::ShaderStage::kPixel);
 
@@ -7005,6 +7016,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++ao_skipped_draws_;
       ao_skipped_frame_ = true;
       Skip("the game's AO chain (XeGTAO shown, notes/80)");
+      return;
+    }
+    // Notes/81: a game's AO passes known by their shaders. Not until our AO exists this frame, so the game's stays if ours
+    // has no camera.
+    if (!ao_skip_ps_.empty() && ao_show_ != 2 && ao_ready_ && !(depth_bound && (ds.depth_write || stencil_writes)) &&
+        std::find(ao_skip_ps_.begin(), ao_skip_ps_.end(), ps_hash) != ao_skip_ps_.end()) {
+      ++ao_skipped_draws_;
+      Skip("the game's AO passes (notes/81)");
       return;
     }
     rr::RenderTarget* colour_rt[4] = {};  // per guest slot: the targets this draw renders into

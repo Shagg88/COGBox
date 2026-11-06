@@ -816,3 +816,4 @@ Walk = Marcher
 # notes/81: CACAO
 CACAO (experimental) = CACAO (expérimental)
 CACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer. = CACAO : FidelityFX CACAO d'AMD en demi-résolution : coûte bien moins que XeGTAO et montre moins de grain avec DLAA et SMAA T2x, mais les fins détails de contact sont plus doux.
+Judgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS. = Judgment : XeGTAO et CACAO remplacent l'AO du jeu, qui peut scintiller avec DLSS.

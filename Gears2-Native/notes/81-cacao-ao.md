@@ -2,7 +2,7 @@
 
 XeGTAO (notes/80) looks right but costs more than some players want. CACAO is AMD's compute version of Intel's ASSAO
 (MIT). It draws into the same `ao_final_` as XeGTAO, so the replace path, the add path and the skip of the game's chain
-(notes/80 s.4, s.5, s.9) are shared. It runs in the games that have AO in the launcher, Gears 2 and Gears 3.
+(notes/80 s.4, s.5, s.9) are shared. It runs in the games that have AO in the launcher: Gears 2, Gears 3 and now Judgment.
 
 ## What players get
 
@@ -82,6 +82,25 @@ CACAO low with 3 blur passes, in play:
 
 Not looked at: other chapters, Vulkan, FSR, XeSS, ultrawide, split screen. Half resolution should soften fine contact
 detail compared with XeGTAO. Strength follows XeGTAO's settings: power x 1.5 / 2.2, and `--gow2_ao_radius`.
+
+## Judgment
+
+Judgment's own AO is half resolution with a separate apply pass, and it was the source of the shadow flicker left under
+DLSS (notes/80 s.11). Confirmed live: with F5 the flicker comes back with the game's own and goes with ours, in University
+under DLAA. XeGTAO high and CACAO low do not flicker; XeGTAO low does a little, and is not a launcher choice.
+
+- The camera and depth already worked for DLSS. The chain detection finds nothing here, so ours is added before the fog
+  pass, the same shader as Gears 3's (`gow2_ao_fog_ps`, `gowj_app.h`), at Gears 2's strength.
+- The launcher turns the game's AO off with `AmbientOcclusion=False` when ours is chosen, so it goes in every level
+  whatever its shaders. `--gow2_ao_skip_ps` is for testing only: it names the AO passes (University: `D622A9B27036CA2F`,
+  `AFD089044AC2D462`, `7519EF9AB8169E14`, `1EAC0FD0D2CDFAC4`, `17D28C335665905E`) so that F5 can bring the game's back.
+- Its own AO costs little (6.40 ms against 6.35 ms without it), so nearly all of ours is added cost: University, 4K, CACAO
+  low 3 blur 6.60 ms, XeGTAO high 2 denoise 6.89 ms.
+- Level sweep, CACAO low started as the launcher does, under DLAA: AO added on 93-100% of frames in University, Mansion,
+  Island, Rooftops, Courthouse Boss and Aftermath E2, and in Aftermath E3 once its camera appears; no errors. Museum never
+  reached gameplay in that run, so it says nothing. Where no camera is found there is no AO, which is no worse than the
+  game's flicker.
+- By eye: University only.
 
 ## Developer keys (`--gow2_ao_debug_keys`)
 
