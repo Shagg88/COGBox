@@ -156,7 +156,7 @@ std::vector<Option> make_options(Game g) {
     // Shagg 29 Oct 14:06: one display mode box (windowed / borderless / exclusive). The id stays "Fullscreen" so saved
     // settings keep working: 0 and 1 mean what they did; the old "Exclusive" box becomes 2 (Store::view).
     add(choice("Fullscreen", "Display mode", Tab::Display, PG,
-               { "Windowed", "Borderless fullscreen", "Exclusive fullscreen" }, 0,
+               { "Windowed", "Borderless fullscreen", "Exclusive fullscreen" }, 1,   // Shagg 11-06: borderless by default
                "Windowed: a normal window (set its size below). Borderless fullscreen: a window without borders that covers "
                "the whole screen (quick alt-tab). Exclusive fullscreen: real fullscreen mode (lower latency on some PCs; "
                "alt-tab is slower; on Steam Deck / Linux this is borderless).", 330));
@@ -257,7 +257,7 @@ std::vector<Option> make_options(Game g) {
                "With the 1080p render resolution: sharpen the upscaled picture. Automatic = on, except on Steam Deck / "
                "Linux (Wine / Proton), where it can make text and some textures look wrong.", 0));
     add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (highly experimental)", "DLSS (NVIDIA RTX, highly experimental)", "XeSS (highly experimental)",
-                 "SMAA T2x (temporal)" }, 0,
+                 "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX12 GPU. DLSS: the same on "
                "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.\nSMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now.", 346), "", "", true);
     add(choice("SceneMode", "Scene resolution", Tab::Graphics, SH,
@@ -768,7 +768,9 @@ void Store::reset() {
     for (int g = 0; g < kGameCount; ++g)
         for (const Option& o : options(static_cast<Game>(g))) if (o.scope == Scope::GameOwn) own[g][o.id] = o.def;
     // PS1 104-105 / 154 / 157-158: AAMode and the FPS counters start at -1 and are worked out from the older boxes.
-    top["AAMode"] = -1; top["AA"] = 0; top["ShowFps"] = 0; top["G3ShowFps"] = 0;
+    // Shagg 11-06 (GitHub #212: jagged shadow edges at 2x with anti-aliasing off): SMAA by default. AAMode still starts at
+    // -1 so a saved settings file that only has the old AA box keeps its choice (migrate); a new install gets AA = 1 -> SMAA.
+    top["AAMode"] = -1; top["AA"] = 1; top["ShowFps"] = 0; top["G3ShowFps"] = 0;
     own[0]["FpsMode"] = -1; own[1]["FpsMode"] = -1;
     migrate();
 }
