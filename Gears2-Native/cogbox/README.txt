@@ -80,6 +80,8 @@ New in 0.4.6
   default; #105).
 - Gears 3: "Unlock Insane from the start" (Gameplay; off by default; the other games are not done yet - #174,
   thanks to Flippage's Gears 3 recomp).
+- Gears 1: Motion blur and Depth of field can be turned off (#179; from Xenia Canary's game patches by illusion and
+  boma). Depth of field off also softens the bloom.
 - A language or voice language your copy doesn't have now says so under its setting, with what the game uses
   instead (#90).
 - A title update made for another release of the game is caught before the game starts, instead of the game

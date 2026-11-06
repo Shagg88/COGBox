@@ -295,10 +295,11 @@ std::vector<Option> make_options(Game g) {
                "Keeps characters' and weapons' detailed models (hair, faces, armour) at a greater distance, for high "
                "resolutions. Costs some GPU time in crowded scenes. Original = the game's own.", 0), "inifx");
     // Motion blur: no PS1 tooltip.
+    // GitHub #179: Gears 1 through Canary's TU5 patches (illusion, boma) - gow1_no_motion_blur / gow1_no_gaussian_blur
     add(make("MotionBlur", "Motion blur", Tab::Graphics, Kind::Bool, PG, 1, "The blur of fast movement (the game's own setting).", 370),
-        "inifx", "", true);
+        "blurfx", "", true);
     add(make("DoF", "Depth of field", Tab::Graphics, Kind::Bool, PG, 1,
-             "The blur of distant / out-of-focus areas (cutscenes, aiming).", 371), "inifx", "", true);
+             "The blur of distant / out-of-focus areas (cutscenes, aiming).", 371), "doffx", "", true);
     // GitHub #102 (Shagg): no Lens flares option any more - the launcher decides per game at launch (below): on where the
     // game's occlusion queries are answered (Real occlusion, DirectX 12, not under Wine / Proton), off where they can't
     // be, since every flare would show through the scenery there.
@@ -527,6 +528,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_exe(env, "ue3_exec")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "levelsel") {
         if (g != Game::Judgment) return no(not_yet(gi));
+    } else if (f == "blurfx" || f == "doffx") {   // GitHub #179: Gears 1 by Canary's TU5 patches, the others by ini
+        if (g == Game::Gears1 && !cap_exe(env, f == "blurfx" ? "gow1_no_motion_blur" : "gow1_no_gaussian_blur"))
+            return no(not_yet(gi, "needs its next build"));
     } else if (f == "inifx") {   // motion blur, depth of field, lens flares: [SystemSettings] switches
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no setting for this.");
     } else if (f == "drawdist") {
@@ -651,6 +655,8 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         base += "\nCACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer.";
     if (o.id == "AO" && g == Game::Judgment)   // notes/81
         base += "\nJudgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS.";
+    if (o.id == "DoF" && g == Game::Gears1)   // GitHub #179
+        base += "\nGears 1: off turns off the game's blur pass, which the bloom uses too - the glow is softer.";
     if (o.id == "AO" && g == Game::Gears3)   // notes/80 s.9
         base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it.";
     if (o.id == "AAMode") {   // PS1 345
@@ -1089,8 +1095,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     {
         const std::string ei = k_engineIni[gi];
         std::vector<std::string> ini;
-        if (avail("MotionBlur") && !s.b("MotionBlur")) ini.push_back(ei + "|SystemSettings|MotionBlur=False");
-        if (avail("DoF") && !s.b("DoF")) ini.push_back(ei + "|SystemSettings|DepthOfField=False");
+        if (isG1) {   // GitHub #179: no [SystemSettings] in Gears 1 - Canary's patches as switches
+            if (avail("MotionBlur") && !s.b("MotionBlur")) a.push_back("--gow1_no_motion_blur=true");
+            if (avail("DoF") && !s.b("DoF")) a.push_back("--gow1_no_gaussian_blur=true");
+        } else {
+            if (avail("MotionBlur") && !s.b("MotionBlur")) ini.push_back(ei + "|SystemSettings|MotionBlur=False");
+            if (avail("DoF") && !s.b("DoF")) ini.push_back(ei + "|SystemSettings|DepthOfField=False");
+        }
         // GitHub #102: lens flares are not a player setting. Flares are hidden behind walls only by the game's occlusion
         // queries, which only Real occlusion answers (DirectX 12, not under Wine / Proton); without them every flare shows
         // through the scenery, so they are off for that launch. Gears 1's engine has no lens-flare switch.

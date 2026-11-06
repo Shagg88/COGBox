@@ -966,3 +966,5 @@ COGBox doesn't know this version. = COGBox no conoce esta versión.
 If it is a regional release of Gears of War, 2, 3 or Judgment, open that game's settings and drop it there - it will be added as an untested version. = Si es una edición regional de Gears of War, 2, 3 o Judgment, abre los ajustes de ese juego y suéltala allí: se añadirá como versión sin probar.
 # L-4 (machine-made translation, please check)
 In a cloud folder = En una carpeta en la nube
+# GitHub #179 (machine-made translation, please check)
+Gears 1: off turns off the game's blur pass, which the bloom uses too - the glow is softer. = Gears 1: al desactivarlo se apaga el paso de desenfoque del juego, que también usa el bloom; el resplandor es más suave.

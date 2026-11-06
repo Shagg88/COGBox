@@ -38,6 +38,7 @@ void Gow1AddBuiltInIniEdits();  // game_patches.cpp: the launcher's options
 void Gow1HideLogosIfRequested(rex::Runtime* runtime);  // --gow1_skip_logos
 void Gow1StartMemoryGauge();    // game_patches.cpp: --gow1_memory_log_seconds (physical memory every N s)
 void Gow1StopMemoryGauge();     // stops it before the kernel goes away
+void Gow1InstallPostFxSwitches(rex::Runtime* runtime);  // game_patches.cpp: GitHub #179 motion blur / depth of field
 void Gow1ApplyUltrawideIfRequested(rex::Runtime* runtime);  // game_patches.cpp (nothing yet)
 void Gow1ApplyDataPatchesIfRequested(rex::Runtime* runtime);  // game_patches.cpp: --gow1_tiling_off (test)
 
@@ -68,6 +69,7 @@ class Gow1App : public rex::ReXApp {
     Gow1AddBuiltInIniEdits();  // before the bundle is edited
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     Gow1HideLogosIfRequested(runtime());
+    Gow1InstallPostFxSwitches(runtime());   // GitHub #179
     Gow1ApplyUltrawideIfRequested(runtime());     // --gow1_ultrawide: the two aspect floats, the present shape
     XenosInstallDrawStatsIfRequested();
     XenosInstallPrimDetailIfRequested();

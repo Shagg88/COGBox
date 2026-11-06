@@ -3,6 +3,7 @@
 // matches the other three games' shape.
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 #include <format>
 #include <set>
 #include <string>
@@ -14,6 +15,8 @@
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 #include <rex/runtime.h>
+#include <rex/ppc/func.h>
+#include <rex/system/function_dispatcher.h>
 #include <rex/system/xmemory.h>
 #include <xenos/dev_tools.h>
 #include <ue3/config_bundle.h>
@@ -70,6 +73,62 @@ void Gow1AddBuiltInIniEdits() {
 // The start-up check of Coalesced.ini (gow1_manifest.toml): skipped only when the config edits gave the game an edited
 // copy, so an unedited game is checked as on the console.
 static bool Gow1EditedConfig() { return !REXCVAR_GET(ue3_ini_edits).empty(); }
+// GitHub #179: motion blur and depth of field off (the launcher's Graphics options; Gears 1 has no [SystemSettings]).
+// From Xenia Canary's game-patches for this TU5 image (hash 34849A59634915F6; the Coalesced-check addresses below are
+// that file's too): "Disable Motion Blur" (illusion, boma) and "Upscaling Fix - Disable Gaussian Blur" (boma).
+//  - Motion blur: Canary makes 0x82548E34 `lwz r11,4(r31)` read 0, so sub_82548E18 (the motion-blur proxy's render,
+//    419 instructions) takes its own first early exit (`beq` to `li r3,0`: nothing drawn, returns 0). The function is
+//    reached only through its vtable (no direct `bl` in the generated code), so here it is replaced whole, once at
+//    start-up, by a function that returns 0 - the same exit, without even entering it. Nothing when the option is off.
+//  - Depth of field: the gaussian filter sub_82998DE8 (f1 = blur radius) has exactly two callers, sub_82538EA0 and
+//    sub_8255A840 (the depth-of-field / bloom post passes), each loading the radius just before the call
+//    (0x82539568 `lfs f1,12(r26)`, 0x8255AF08 `lfs f1,12(r30)`); Canary reads it from offset 0 instead, i.e. ~0. Direct
+//    `bl` calls don't go through the dispatcher, so these two are midasm hooks after the loads (gow1_manifest.toml)
+//    that set the radius to 0 - one bool test per pass when off. The same filter softens the bloom: said in the
+//    launcher's tooltip.
+// Each is applied only when the guest code at those addresses holds the exact instructions the patches expect
+// (another build is logged and left alone).
+REXCVAR_DEFINE_BOOL(gow1_no_motion_blur, false, "Gears 1",
+                    "No motion blur (Canary's TU5 patch by illusion and boma, as the render's own early exit)");
+REXCVAR_DEFINE_BOOL(gow1_no_gaussian_blur, false, "Gears 1",
+                    "No depth of field: the gaussian blur radius 0 (Canary's TU5 patch by boma; the bloom is softer too)");
+namespace {
+std::atomic<bool> g_no_gaussian{false};
+uint32_t GuestWord(const uint8_t* m, uint32_t a) {
+  const uint8_t* p = m + a;
+  return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
+}
+void NoMotionBlurRender(PPCContext& ctx, uint8_t*) { ctx.r3.u64 = 0; }   // sub_82548E18's early exit
+}  // namespace
+void Gow1InstallPostFxSwitches(rex::Runtime* runtime) {
+  const uint8_t* m = runtime ? runtime->virtual_membase() : nullptr;
+  auto* d = runtime ? runtime->function_dispatcher() : nullptr;
+  if (!m || !d) return;
+  if (REXCVAR_GET(gow1_no_motion_blur)) {
+    if (GuestWord(m, 0x82548E34) != 0x817F0004u) {   // lwz r11,4(r31)
+      REXLOG_WARN("gow1_no_motion_blur: the code at 0x82548E34 is not TU5's - left alone");
+    } else if (!d->SetFunction(0x82548E18, &NoMotionBlurRender)) {
+      REXLOG_WARN("gow1_no_motion_blur: the motion-blur render couldn't be replaced");
+    } else {
+      REXLOG_INFO("gow1_no_motion_blur: on");
+    }
+  }
+  if (REXCVAR_GET(gow1_no_gaussian_blur)) {
+    if (GuestWord(m, 0x82539568) != 0xC03A000Cu || GuestWord(m, 0x8255AF08) != 0xC03E000Cu) {   // lfs f1,12(r26 / r30)
+      REXLOG_WARN("gow1_no_gaussian_blur: the code at 0x82539568 / 0x8255AF08 is not TU5's - left alone");
+    } else {
+      g_no_gaussian.store(true);
+      REXLOG_INFO("gow1_no_gaussian_blur: on (depth of field off, softer bloom)");
+    }
+  }
+}
+void Gow1NoGaussianBlurA(PPCRegister& f1) {   // after `lfs f1,12(r26)` at 0x82539568
+  if (g_no_gaussian.load(std::memory_order_relaxed)) f1.f64 = 0.0;
+}
+void Gow1NoGaussianBlurB(PPCRegister& f1) {   // after `lfs f1,12(r30)` at 0x8255AF08
+  if (g_no_gaussian.load(std::memory_order_relaxed)) f1.f64 = 0.0;
+}
+
 void Gow1CoalescedResult(PPCRegister& r3) { if (Gow1EditedConfig()) r3.u64 = 0; }
 bool Gow1CoalescedSkip() {
   if (!Gow1EditedConfig()) return false;

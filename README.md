@@ -309,6 +309,8 @@ This project stands on the work of many open-source projects and their communiti
 - **[Xenia Manager](https://github.com/xenia-manager)** and its **[x360db](https://github.com/xenia-manager/x360db)**
   archive - the box art and backgrounds COGBox downloads.
 - The **Gears community patches** - ultrawide by boma and TudorHorse (Gears 2, 3 and Judgment), ported here as switches.
+- **[Xenia Canary's game patches](https://github.com/xenia-canary/game-patches)** - Gears 1's motion blur and depth of field
+  switches come from its "Disable Motion Blur" (illusion, boma) and "Disable Gaussian Blur" (boma) patches for Title Update 5.
 - **Microsoft DirectX 12 Agility SDK** - the DirectX 12 runtime the ports bring along (so Windows 10 works too).
 - **[NVIDIA FLIP](https://github.com/NVlabs/flip)** - the picture comparisons in our test runs.
 - The achievement sound (`Gears2-Native/assets/sounds/achievement.wav`), made by Flippage (PR #187) with **[ElevenLabs](https://elevenlabs.io)** Sound Effects on its free plan - under ElevenLabs' terms for free-plan output (credit to elevenlabs.io; no commercial licence), as `THIRD_PARTY_NOTICES.md` records.
