@@ -94,6 +94,12 @@ class GowjApp : public rex::ReXApp {
     game_default("gow2_upscale_object_constants", "7");
     game_default("gow2_upscale_camera_constant", "5");
     game_default("gow2_upscale_scene_formats", "3");
+    // Gears 2 notes/80 s.11: the upscalers take the frame's last scene copy, not the first of the mid-frame copies for
+    // translucency, which was ~480 draws early: Ultra Performance added the rest at 720p, unjittered.
+    game_default("gow2_upscale_scene_last_copy", "true");
+    // Gears 2 notes/80 s.6: the upscalers' depth copied at the scene depth resolve - by the scene colour copy the game has
+    // reused that EDRAM, and DLSS got one depth for the whole frame (distant edges broke up; captured 2026-11-04).
+    game_default("gow2_upscale_depth_at_resolve", "true");
     game_default("gow2_renderer_memexport", "true");
     game_default("gow2_renderer_resolution_scale_threshold", "1120");
     //  - first-visit freezes: the DXBC shader path (shaders ready at once; HLSL spent 221 s of compiler time on University's

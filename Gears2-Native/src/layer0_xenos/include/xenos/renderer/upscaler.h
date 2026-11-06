@@ -112,6 +112,23 @@ struct ObjectSample {
 bool CameraMoveFromObjects(std::vector<ObjectSample> prev, std::vector<ObjectSample> cur, float camera_move[3],
                            uint32_t* votes = nullptr, uint32_t* matched = nullptr, float tolerance = 0.05f,
                            uint32_t min_votes = 3, float min_share = 0.3f);
+// Notes/80 s.11: which of a frame's full-screen scene copies the upscaler takes. Off: the first, each time asked (the
+// caller stops after one). last_only: the one at the position of the last frame's last copy - the frame's end can't be
+// seen in advance, but the count barely changes. Before any count is known the first is taken; a frame with fewer copies
+// takes none, and the next has learned. Frames without copies (movies) keep the count.
+struct SceneCopyPicker {
+  bool last_only = false;
+  uint32_t count = 0, last_count = 0;
+  bool Take() {
+    const uint32_t index = count++;
+    return !last_only || last_count == 0 || index + 1 >= last_count;
+  }
+  void EndFrame() {
+    if (count) last_count = count;
+    count = 0;
+  }
+};
+
 // Notes/80 s.6 (Gears 2): one character of the game's velocity pass. UE3 gives its VS this frame's object-to-world
 // relative to the camera (`now`, c5-c8, as columns: world = x*c5 + y*c6 + z*c7 + c8) and last frame's in absolute world
 // coordinates (`then`, c9-c12). `key` names the draw across frames (vertex data, shader, index count).

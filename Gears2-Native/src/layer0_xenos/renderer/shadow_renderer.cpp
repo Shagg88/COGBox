@@ -897,6 +897,10 @@ REXCVAR_DEFINE_INT32(gow2_upscale_scene_formats, 1, "Gears2",
                      "Which colour target formats count as the scene for DLSS / FSR / XeSS: 1 = 16-bit float (Gears 2's lit "
                      "scene), 2 = 10:10:10:2 UNORM (Gears 3's), 3 = both. Gears 2 keeps 1: in a ch05 cutscene a "
                      "full-screen 10:10:10:2 target came first and was taken instead of the scene (job 276); gow3.exe sets 2");
+REXCVAR_DEFINE_BOOL(gow2_upscale_scene_last_copy, false, "Gears2",
+                    "Notes/80 s.11: DLSS / FSR / XeSS / T2x take the frame's last full-screen scene copy, at the position "
+                    "learned from the frame before, not the first. Judgment copies its scene mid-frame for translucency "
+                    "before the finished copy: the first was upscaled ~480 draws early (gowj.exe sets true)");
 REXCVAR_DEFINE_INT32(gow2_upscale_probe, 0, "Gears2",
                      "Upscaler groundwork (notes/64): every N frames, log the vertex shaders' c0-c3 (the camera matrix "
                      "candidate) grouped by value for the draws of that frame, with their depth targets and whether they "
@@ -4319,6 +4323,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       up_vp_base_ = vb < 0 ? -1 : vb <= 252 ? vb : 0;
       up_camera_reg_ = cr > 0 && cr <= 255 ? uint32_t(cr) : 0u;
       up_scene_formats_ = uint32_t(std::clamp(REXCVAR_GET(gow2_upscale_scene_formats), 1, 3));
+      up_scene_copy_.last_only = REXCVAR_GET(gow2_upscale_scene_last_copy);
       up_jitter_scope_ = uint32_t(std::clamp(REXCVAR_GET(gow2_upscale_jitter_scope), 0, 3));
       REXLOG_INFO("gow2_upscaler: object rows c{}-c{}, camera position {}, scene formats {}", up_object_base_,
                   up_object_base_ + 3, up_camera_reg_ ? "c" + std::to_string(up_camera_reg_) : std::string("not used"),
@@ -4586,6 +4591,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // The scene colour: 16-bit float (Gears 2, linear HDR) and/or 10:10:10:2 UNORM (Gears 3, low dynamic range - from the
   // Gears 3 chat, 21:15), as --gow2_upscale_scene_formats says.
   uint32_t up_scene_formats_ = 1;
+  rr::upscale::SceneCopyPicker up_scene_copy_;  // --gow2_upscale_scene_last_copy: notes/80 s.11
   uint32_t up_jitter_scope_ = 0;         // --gow2_upscale_jitter_scope
   uint64_t up_jittered_scope_ = 0;       // draws jittered only because of the scope (log window)
   bool up_jitter_late_ = false;          // --gow2_upscale_jitter_late (Gears 3 job 120)
@@ -5704,6 +5710,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     up_objects_.clear();
     up_camera_ = false;
     up_scene_done_ = false;
+    up_scene_copy_.EndFrame();  // notes/80 s.11
     up_depth_saved_ = false;  // notes/80 s.6
     if (up_prev_camera_) vel_prev_objs_.swap(vel_objs_);  // notes/80 s.6 (up_camera_ is already reset): this frame's characters, for the camera position
     else vel_prev_objs_.clear();
@@ -10099,7 +10106,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // Upscalers (notes/64): the frame's scene colour goes through DLSS / FSR, and the resolve reads their output.
     gpu::TextureHandle resolve_source = rt->texture;
     uint32_t source_scale = rt->scale;  // patch 0141: the upscaler's output is at the output scale
-    if (up_active_ && !up_scene_done_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt)) {
+    // Every scene copy is counted, also after the one that was taken (notes/80 s.11).
+    if (up_active_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt) && up_scene_copy_.Take() && !up_scene_done_) {
       up_scene_done_ = true;
       up_output_upscaled_ = false;
       // Notes/80: camera only (the AO) - the scene stays as it is, nothing to run here.
