@@ -81,7 +81,8 @@ New in 0.4.6
 - Gears 1 launcher: says when the chosen Scene resolution can't be used at the render scale (#98).
 - New logs and test switches for reported issues (#90, #105, #131, #132, #185, #193, #202), all off unless asked for.
 - Launcher: shorter notices, one title-update notice after adding a game, the toolbar together at the top right,
-  at most three covers, a button legend with pictures for your controller or keyboard, HDR marked experimental.
+  at most three covers, a button legend with pictures for your controller or keyboard, HDR shown as
+  "HDR (experimental)".
 
 New in 0.4.5
 ------------
