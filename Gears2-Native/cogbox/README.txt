@@ -65,6 +65,32 @@ apply does that for you.
 New in 0.4.6
 ------------
 - Games, title updates and DLC are now added only by dragging and dropping them onto the window.
+- Achievements in all four games (thanks to Flippage, PR #187): a popup when one unlocks (Xbox 360, Xbox or
+  PlayStation style, colour, position, sound), an Achievements page in the in-game menu (F7) and an ACHIEVEMENTS tab
+  in the launcher.
+- Ambient occlusion: AMD FidelityFX CACAO as a cheaper choice next to XeGTAO, and XeGTAO / CACAO in Judgment,
+  which also fixes its shadow flicker with DLSS; DLSS / FSR / XeSS get sharper textures when they draw the scene
+  below the output size, and Judgment's DLSS takes the finished picture with real depth (thanks to gmihaic,
+  PR #204).
+- COGBox's own text in the game (the in-game menu, the Achievements page, popups, shader notes) is in the
+  launcher's language. Korean, Chinese and Japanese use the fonts Windows has.
+- Launcher: simpler tabs with headings and the rarely used settings under ADVANCED, explanations as tooltips,
+  a MODS tab and an ABOUT tab, and Graphics API back in the main list.
+- Gears 3: depth of field can be drawn at the render resolution instead of 720p (Graphics -> Advanced, off by
+  default; #105).
+- Gears 3, Disc version: "Unlock Insane from the start" (Gameplay; off by default; the title update and the other
+  games are not done yet - #174, thanks to Flippage's Gears 3 recomp).
+- A language or voice language your copy doesn't have now says so under its setting, with what the game uses
+  instead (#90).
+- A title update made for another release of the game is caught before the game starts, instead of the game
+  stopping at start (0xC0000409).
+- Crash reports also for the game's "fail-fast" exits (0xC0000409), and Windows is asked to keep a small dump.
+- COGBox in a OneDrive, Dropbox or Google Drive folder: an "In a cloud folder" line says so (its tooltip has the
+  advice).
+- Mouse look when zoomed (#175), a clearer message for missing program files (#194), DLC found again after the
+  0.4.5 update (#193 / #201), Gears 3 TU6 mod campaigns with more than five acts in Select Chapter (thanks to
+  KiltedKernel, PR #205), the movie log (#103), screenshots saved at the size shown, the Vulkan pipeline cache read
+  up to 2 GB, and user folders with non-Latin letters for the shader caches (#177).
 - Frame-rate limit: the limit you pick is the limit. With Vsync it is no longer lowered to 3 under your screen's
   refresh rate (60 stays 60); only a limit above the refresh rate is brought down to it. The quality presets no
   longer change it.
@@ -76,7 +102,8 @@ New in 0.4.6
 - A crash right after a title update that doesn't match the game now says so (#183).
 - Judgment: after a loading screen the 30 fps loading limit ends sooner (3 s after loading instead of 6, at most
   8 s while the level streams in instead of 20).
-- XeGTAO High uses two smoothing passes instead of three (a little faster, slightly less smooth; Ultra keeps three).
+- XeGTAO High uses two smoothing passes instead of three (a little faster, slightly less smooth); Ultra chooses its
+  passes by itself (two without DLSS / FSR / XeSS, fewer the lower DLSS / FSR / XeSS draws the scene).
 - Language: packages stored compressed as a whole are now read when switching the voice language.
 - Gears 1 launcher: says when the chosen Scene resolution can't be used at the render scale (#98).
 - New logs and test switches for reported issues (#90, #105, #131, #132, #185, #193, #202), all off unless asked for.

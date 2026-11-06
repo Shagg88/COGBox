@@ -1,4 +1,4 @@
-# Gears of War Native - PC ports of Gears of War 2, Gears of War 3 and Gears of War: Judgment
+# Gears of War Native - PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War: Judgment
 
 **PLEASE FOR NOW MAKE SURE TO USE THE LATEST TITLE UPDATE FOR EACH GAME**
 
@@ -35,7 +35,7 @@ the ports what an emulator can't easily offer:
 - **Vulkan (experimental)** - a choice on each game's Graphics tab, for testing; close to Direct3D 12 already.
 - **Screenshots** - press **\\** (backslash) in any game; they go to `Pictures\COGBox\<game>`.
 - **Lower input lag** - one frame in flight, NVIDIA Reflex / AMD Anti-Lag 2 where your GPU has them.
-- **HDR10**, **ultrawide 21:9** (all three games), **16x anisotropic filtering**, field of view, and the games' own motion blur and depth of
+- **HDR10**, **ultrawide 21:9** (all four games), **16x anisotropic filtering**, field of view, and the games' own motion blur and depth of
   field as switches (lens flares are set per game automatically: on where Real occlusion hides them behind walls).
 - **Split-screen** (Gears 2), **keyboard and mouse** (mouse look without the stick's speed limit, keys you can change),
   **Xbox and PlayStation controllers** with **auto-switching button prompts** (the game's own for Xbox pads; PlayStation, Switch, Steam Deck, Steam Controller and keyboard prompts as you switch; `--gow_button_prompts=auto|original|xbox|playstation|switch|steamdeck|steamcontroller|keyboard`), **title updates**, **chapter select**.
@@ -110,7 +110,7 @@ Only Gears 3 saves are converted - Gears of War, Gears 2 and Judgment saves are 
 
 ## COGBox, the launcher
 
-- The three games as boxes on a carousel; box art and backgrounds from the open
+- The four games as boxes on a carousel; box art and backgrounds from the open
   [x360db](https://github.com/xenia-manager/x360db) archive, downloaded only when you press **Get box art**.
 - **Add your copy**: drop your disc image (.iso), Games on Demand copy, title update package or extracted game folder
   onto the window. COGBox recognises the game, unpacks it next to itself and checks it is the right release.
@@ -121,11 +121,13 @@ Only Gears 3 saves are converted - Gears of War, Gears 2 and Judgment saves are 
 - Grows with its window, and has a **borderless** option (its own minimise / maximise / close).
 - **In 11 languages**: English, Spanish, French, German, Italian, Portuguese (Brazil), Polish, Russian, Japanese,
   Chinese (Simplified) and Korean - asked on first start, changeable on any game's About tab.
-- **DLC** (Downloadable content on the About tab): add the packages from your console's
+- **DLC** (YOUR COPY on the About tab): add the packages from your console's
   `Content\0000000000000000\<title ID>\00000002` folder; remove them there too.
-- **Mods** (Mods on the About tab): add a mod's .zip or drop its folder into the game's `mods` folder, tick it, set the
+- **Mods** (the MODS tab): add a mod's .zip or drop its folder into the game's `mods` folder, tick it, set the
   order. A mod is laid out like the game's own files (`GearGame\...`) and replaces or adds files without changing your
   copy; programs are never taken from a mod.
+- **Achievements** in all four games, kept locally (thanks to Flippage): a popup when one unlocks (Xbox 360, Xbox or
+  PlayStation style), an Achievements page in the in-game menu (F7) and an ACHIEVEMENTS tab in COGBox.
 - **Desktop shortcuts** for COGBox and each game. For a **Steam** entry per game, add `CogBox.exe` as a non-Steam game
   with the Launch Options `--play gears1` / `gears2` / `gears3` / `judgment` - not the game's own `gow3.exe` etc., which
   stops with "--game_data_root was not provided" (COGBox passes the game folder and your settings).
@@ -152,6 +154,10 @@ starting the game after each, so you can see which one stops the list from loadi
 > **Not available in this release:** the cheats and **Unlock all mutators** only work with the disc version so far
 > (Title Update 6 shows a dirty-disc error with them), and title updates are now required. They'll come back once they
 > work with Title Update 6.
+
+**Unlock Insane from the start** (Gameplay, off by default) lets you choose Insane without finishing the campaign;
+your profile and saves are not changed. For now it works in Gears of War 3's Disc version only (thanks to Flippage's
+Gears 3 recomp); the title update and the other games come later.
 
 Tick **Gameplay > Cheats (hotkeys F5-F11)** in the game's settings, then in game:
 
@@ -203,11 +209,14 @@ are unchanged.
 2. Unzip the **whole** folder somewhere you can write to, e.g. `C:\Games\COGBox` (not Program Files).
 3. Start `CogBox.exe`. The programs aren't code-signed, so Windows may show "Windows protected your PC" - choose
    **More info**, then **Run anyway**.
-4. Turn to a game and press **ADD YOUR COPY** (or drop the file on the window). Then add the title update the same way - it's required.
+4. Drag and drop your copy (disc image, Games on Demand copy or game folder) onto the COGBox window. Then drop the title
+   update the same way - it's required. Keep COGBox and your copies out of OneDrive, Dropbox or Google Drive folders:
+   syncing can lock, move or partly update files while a game uses them.
 5. Press **PLAY**. **SETTINGS** has the graphics, frame rate, controls and gameplay options.
 
-**Controls in COGBox:** the D-pad (or the arrow keys, the mouse wheel) turns the carousel; LB / RB choose Play or
-Settings and A presses it; X opens settings, Y gets box art. On a settings page LB / RB change tab, D-pad down past the
+**Controls in COGBox:** the D-pad (or the arrow keys, the mouse wheel) turns the carousel; LB / RB choose Play,
+Settings or Achievements and A presses it; X opens settings, Y gets box art. The line at the bottom of the screen
+shows the buttons for the controller or keyboard in use. On a settings page LB / RB change tab, D-pad down past the
 last option reaches Library / Save / Play, and B jumps to Library.
 
 **PlayStation controllers** work too - COGBox shows Cross / Circle / Square / Triangle and L1 / R1 instead.
@@ -269,7 +278,6 @@ Plans, not promises:
 - **DLSS Frame Generation and DLSS 4/5 features** through NVIDIA Streamline on the cards that support them.
 - **More controllers (Switch and others) and an accessibility section** in COGBox.
 - **Split-screen across two monitors**, and the European releases at full speed.
-- **Achievements**, kept locally.
 - More of the Gears series.
 
 ## Community translations
