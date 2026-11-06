@@ -74,6 +74,12 @@ New in 0.4.6
 - Faster: textures the game draws into on the graphics card are no longer copied back and reloaded every frame
   (about 12 a frame in Gears 2).
 - A crash right after a title update that doesn't match the game now says so (#183).
+- Judgment: after a loading screen the 30 fps loading limit ends sooner (3 s after loading instead of 6, at most
+  8 s while the level streams in instead of 20).
+- XeGTAO High uses two smoothing passes instead of three (a little faster, slightly less smooth; Ultra keeps three).
+- Language: packages stored compressed as a whole are now read when switching the voice language.
+- Gears 1 launcher: says when the chosen Scene resolution can't be used at the render scale (#98).
+- New logs and test switches for reported issues (#90, #105, #131, #132, #185, #193, #202), all off unless asked for.
 - Launcher: shorter notices, one title-update notice after adding a game, the toolbar together at the top right,
   at most three covers, a button legend with pictures for your controller or keyboard, HDR marked experimental.
 
