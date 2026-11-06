@@ -828,9 +828,10 @@ REXCVAR_DEFINE_STRING(gow2_ao_quality, "high", "Gears2",
                       "XeGTAO quality (notes/80): low (1 slice x 2 steps), medium (2 x 2), high (3 x 3), ultra (9 x 3)");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_radius, 60.0, "Gears2",
                       "XeGTAO effect radius in the game's world units (notes/80; UE3: about 2 cm each)");
-REXCVAR_DEFINE_INT32(gow2_ao_denoise, 3, "Gears2",
-                     "XeGTAO denoise passes (notes/80): 1 = sharp, 2 = medium, 3 = soft (XeGTAO leaves the rest to TAA, "
-                     "which these games don't have)");
+REXCVAR_DEFINE_INT32(gow2_ao_denoise, 0, "Gears2",
+                     "XeGTAO denoise passes (notes/80 s.4): 1 = sharp, 2 = medium, 3 = soft; 0 = automatic: under DLSS / FSR "
+                     "/ XeSS by the scene's scale (ultra: 3x or more 1, 2x 2, 1x 3), else 2 at ultra; below ultra one more, up "
+                     "to 3. F8 changes it live");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_power, 2.2, "Gears2", "XeGTAO final value power - higher is darker (XeGTAO's default 2.2)");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_add_radius, -1.0, "Gears2",
                       "Notes/80 s.9: XeGTAO's radius where the game draws no AO of its own and ours is added "
@@ -5000,6 +5001,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (upscaler_ && !upscaler_->Configure(*backend_, rw, rh, ow, oh, hdr, persp && infinite, depth_inverted)) {
       REXLOG_WARN("gow2_upscaler: {}; off", upscaler_->Status());
       upscaler_.reset();
+      if (ao_mode_ == rr::ao::Mode::kGtao)  // notes/80 s.4: nothing accumulates now (a pass count that was set stays)
+        XenosAoDebugSetDenoisePasses(rr::ao::DenoisePasses(REXCVAR_GET(gow2_ao_denoise), XenosAoDebugQuality() & 3u, "off", res_scale_));
       up_last_ok_ = false;
       if (up_output_) backend_->DestroyTexture(up_output_), up_output_ = 0;  // 0147 review: only the upscaler used it
       if (up_scale_in_) {  // patch 0145: an upscaling mode must not leave the scene below the output with no upscaler
@@ -5307,7 +5310,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ao_debug_pipe_ = make("xegtao_debug_cs", rr::builtin::kXeGtaoDebugCs);
     ao_pack_pipe_ = make("xegtao_pack_cs", rr::builtin::kXeGtaoPackCs);
     ao_debug_ = std::clamp(REXCVAR_GET(gow2_ao_debug), 0, 5);
-    ao_denoise_passes_ = uint32_t(std::clamp(REXCVAR_GET(gow2_ao_denoise), 1, 3));
+    // An upscaler that was asked for but isn't there (not built in, its shaders failed) accumulates nothing.
+    ao_denoise_passes_ = rr::ao::DenoisePasses(REXCVAR_GET(gow2_ao_denoise), q, upscaler_ ? REXCVAR_GET(gow2_upscaler) : std::string("off"),
+                                               up_scale_in_ ? up_scale_in_ : res_scale_);
     const std::string show = REXCVAR_GET(gow2_ao_show);
     ao_show_ = show == "none" ? 1u : show == "game" ? 2u : 0u;
     ao_skip_game_ = uint32_t(std::clamp(REXCVAR_GET(gow2_ao_skip_game), 0, 3));
@@ -5320,7 +5325,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       REXLOG_WARN("gow2_ao: XeGTAO shaders failed to compile; the game's own AO stays");
       return;
     }
-    XenosAoDebugSetState(ao_show_, uint32_t(ao_debug_), q);  // notes/80 s.12: the keys start from here
+    XenosAoDebugSetState(ao_show_, uint32_t(ao_debug_), q, ao_denoise_passes_);  // notes/80 s.12: the keys start from here
     REXLOG_INFO("gow2_ao: XeGTAO {} ({} slices x {} steps), radius {}, power {}, {} denoise pass(es), shown: {}{}",
                 kQuality[q], kSlices[q], kSteps[q], REXCVAR_GET(gow2_ao_radius), REXCVAR_GET(gow2_ao_power),
                 ao_denoise_passes_, ao_show_ == 1 ? "none" : ao_show_ == 2 ? "the game's own" : "XeGTAO",
@@ -5657,10 +5662,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ao_runs_ = ao_finals_ = ao_replaced_ = ao_binds_ = ao_skipped_draws_ = ao_skipped_resolves_ = ao_added_ = 0;
     }
     ao_constants_state_ = 0;
-    {  // notes/80 s.12: the live state (F9 / F10 / F11) for the next frame
+    {  // notes/80 s.12: the live state (F9 / F10 / F11 / F8) for the next frame
       ao_show_ = XenosAoDebugShow();
       ao_debug_ = int32_t(XenosAoDebugView());
       if (const gpu::PipelineHandle p = ao_main_pipes_[XenosAoDebugQuality() & 3u]) ao_main_pipe_ = p;
+      ao_denoise_passes_ = std::clamp(XenosAoDebugDenoisePasses(), 1u, 3u);
     }
     ao_pp_dest_ = ao_pp_count_ = 0;  // notes/80 s.4: the next frame's chain is found afresh
     ao_skipped_frame_ = false;

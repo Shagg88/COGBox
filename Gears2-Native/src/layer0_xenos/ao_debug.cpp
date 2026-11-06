@@ -2,7 +2,7 @@
 // XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 // (--gow2_ao_debug_keys; developer tools never ship on). F9: which AO the game's composite gets (XeGTAO / none / the
 // game's own); F10: the debug view (normal, XeGTAO only, split, view depth, raw term, edges); F11: XeGTAO's quality
-// preset. A small label (top left, like the FPS bar) says what is on. The keys run on the UI thread and only set
+// preset; F8: XeGTAO's denoise passes (1-3). A small label (top left, like the FPS bar) says what is on. The keys run on the UI thread and only set
 // atomics; the renderer reads them once per frame (ao_debug.h-style accessors in dev_tools.h). Our code (MIT).
 #include <xenos/dev_tools.h>
 
@@ -21,7 +21,8 @@
 
 REXCVAR_DEFINE_BOOL(gow2_ao_debug_keys, false, "Gears2",
                     "Notes/80 developer switches (with --gow2_ao=gtao): F9 cycles the AO the game gets (XeGTAO / none / "
-                    "the game's own), F10 the debug view, F11 XeGTAO's quality; a label shows the state. Off in releases");
+                    "the game's own), F10 the debug view, F11 XeGTAO's quality, F8 its denoise passes (1-3); a label shows the "
+                    "state. Off in releases");
 
 namespace {
 
@@ -29,19 +30,21 @@ constexpr uint32_t kShowCount = 3, kViewCount = 6, kQualityCount = 4;
 const char* const kShowNames[kShowCount] = {"XeGTAO", "no AO", "game's own"};
 const char* const kViewNames[kViewCount] = {"normal", "XeGTAO only", "split", "view depth", "raw term", "edges"};
 const char* const kQualityNames[kQualityCount] = {"low", "medium", "high", "ultra"};
+constexpr uint32_t kDenoiseCount = 3;
+const char* const kDenoiseNames[kDenoiseCount] = {"1 denoise pass", "2 denoise passes", "3 denoise passes"};
 
-std::atomic<uint32_t> g_show{0}, g_view{0}, g_quality{2};
+std::atomic<uint32_t> g_show{0}, g_view{0}, g_quality{2}, g_denoise{2};  // g_denoise: passes - 1
 std::atomic<bool> g_keys{false}, g_active{false};
 
 class AoLabel final : public rex::ui::ImGuiDialog {
  public:
   explicit AoLabel(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {}
   void OnDraw(ImGuiIO& io) override {
-    char text[160];
+    char text[192];
     if (g_active.load())
-      std::snprintf(text, sizeof(text), "AO: %s | %s | view: %s   (F9 AO, F10 view, F11 quality)",
+      std::snprintf(text, sizeof(text), "AO: %s | %s, %s | view: %s   (F9 AO, F10 view, F11 quality, F8 denoise)",
                     kShowNames[g_show.load() % kShowCount], kQualityNames[g_quality.load() % kQualityCount],
-                    kViewNames[g_view.load() % kViewCount]);
+                    kDenoiseNames[g_denoise.load() % kDenoiseCount], kViewNames[g_view.load() % kViewCount]);
     else
       std::snprintf(text, sizeof(text), "AO keys: start with --gow2_ao=gtao");
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
@@ -76,15 +79,18 @@ void Cycle(std::atomic<uint32_t>& v, uint32_t count, const char* what, const cha
 
 }  // namespace
 
-void XenosAoDebugSetState(uint32_t show, uint32_t view, uint32_t quality) {
+void XenosAoDebugSetState(uint32_t show, uint32_t view, uint32_t quality, uint32_t denoise_passes) {
   g_show.store(show % kShowCount);
   g_view.store(view % kViewCount);
   g_quality.store(quality % kQualityCount);
+  g_denoise.store((std::clamp(denoise_passes, 1u, kDenoiseCount) - 1) % kDenoiseCount);
   g_active.store(true);
 }
 uint32_t XenosAoDebugShow() { return g_show.load(); }
 uint32_t XenosAoDebugView() { return g_view.load(); }
 uint32_t XenosAoDebugQuality() { return g_quality.load(); }
+uint32_t XenosAoDebugDenoisePasses() { return g_denoise.load() % kDenoiseCount + 1; }
+void XenosAoDebugSetDenoisePasses(uint32_t passes) { g_denoise.store(std::clamp(passes, 1u, kDenoiseCount) - 1); }
 
 void XenosInstallAoDebugKeys(rex::ui::ImGuiDrawer* drawer) {
   if (!REXCVAR_GET(gow2_ao_debug_keys)) return;
@@ -95,8 +101,10 @@ void XenosInstallAoDebugKeys(rex::ui::ImGuiDrawer* drawer) {
                         [] { Cycle(g_view, kViewCount, "debug view", kViewNames); });
   rex::ui::RegisterBind("bind_gow2_ao_quality", "F11", "XeGTAO quality (developer)",
                         [] { Cycle(g_quality, kQualityCount, "quality", kQualityNames); });
+  rex::ui::RegisterBind("bind_gow2_ao_denoise", "F8", "XeGTAO denoise passes (developer)",
+                        [] { Cycle(g_denoise, kDenoiseCount, "denoise", kDenoiseNames); });
   if (drawer) g_label = std::make_unique<AoLabel>(drawer);
-  REXLOG_INFO("gow2_ao: developer keys on (F9 AO, F10 view, F11 quality)");
+  REXLOG_INFO("gow2_ao: developer keys on (F9 AO, F10 view, F11 quality, F8 denoise)");
 }
 
 void XenosShutdownAoDebugKeys() {
@@ -104,5 +112,6 @@ void XenosShutdownAoDebugKeys() {
   rex::ui::UnregisterBind("bind_gow2_ao_show");
   rex::ui::UnregisterBind("bind_gow2_ao_view");
   rex::ui::UnregisterBind("bind_gow2_ao_quality");
+  rex::ui::UnregisterBind("bind_gow2_ao_denoise");
   g_label.reset();
 }
