@@ -1535,7 +1535,13 @@ class VulkanBackend final : public Backend {
       std::ifstream f(cache_path_, std::ios::binary | std::ios::ate);
       if (f) {
         const std::streamoff n = f.tellg();
-        if (n > 0 && n < (std::streamoff(1) << 30)) {
+        // A VkPipelineCache only grows: entries of pipelines a newer COGBox no longer makes (its SPIR-V changed) stay
+        // in it. It used to be dropped whole at 1 GB - every pipeline built again; now up to 2 GB is read, and from
+        // 768 MB on the log says so (delete the file to start lean; the driver rebuilds what is used).
+        if (n >= (std::streamoff(768) << 20))
+          REXLOG_WARN("gow2_renderer: Vulkan pipeline cache {} is {} MB - it keeps old versions' pipelines too; delete it "
+                      "to start a smaller one", cache_path_, int64_t(n >> 20));
+        if (n > 0 && n < (std::streamoff(2) << 30)) {
           initial.resize(size_t(n));
           f.seekg(0);
           f.read(initial.data(), n);
