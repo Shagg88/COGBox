@@ -32,6 +32,12 @@ REXCVAR_DEFINE_BOOL(cogbox_ach_sound, true, "COGBox", "Play the achievement soun
 REXCVAR_DEFINE_BOOL(cogbox_ach_hide, false, "COGBox", "Hide achievement popups (no popup, no sound; achievements still unlock)");
 REXCVAR_DEFINE_BOOL(cogbox_ach_test_keys, false, "COGBox", "Test: F3 shows a sample achievement popup, F4 a sample Platinum (keys nothing else in the four games uses)");
 
+// F-8: declared at global scope in the header (ingame_menu.cpp calls it there), so defined here, outside xenos.
+std::mutex& XenosAchievementSettingsMutex() {
+  static std::mutex m;
+  return m;
+}
+
 namespace xenos {
 
 namespace {
@@ -64,10 +70,6 @@ AchievementPopup::~AchievementPopup() {
   }
 }
 
-std::mutex& XenosAchievementSettingsMutex() {
-  static std::mutex m;
-  return m;
-}
 namespace {
 bool HideNow() {
   std::lock_guard<std::mutex> lock(XenosAchievementSettingsMutex());
