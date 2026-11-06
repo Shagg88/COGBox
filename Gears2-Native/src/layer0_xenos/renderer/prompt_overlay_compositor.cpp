@@ -388,7 +388,7 @@ std::string ResolveCellKeyLabel(const char* cvar, const std::map<std::string, st
 void ClearCellRectOnOverlay(uint8_t* ov_rgba, int ow, int oh, const AtlasLayout& layout, const PromptCell& cell) {
   int cx0 = 0, cy0 = 0, cx1 = 0, cy1 = 0;
   if (cell.clear_box) {
-    const int pad = (layout.kind == AtlasKind::kHud512 || layout.kind == AtlasKind::kChainsawDuel) ? 1 : 0;
+    const int pad = (layout.kind == AtlasKind::kHud512 || layout.kind == AtlasKind::kHud512G1 || layout.kind == AtlasKind::kChainsawDuel) ? 1 : 0;
     cx0 = std::clamp(cell.box[0] * kScale, 0, ow);
     cy0 = std::clamp(cell.box[1] * kScale, 0, oh);
     cx1 = std::clamp((cell.box[2] + pad) * kScale, 0, ow);
@@ -656,6 +656,7 @@ void PromptOverlayCompositor::ComposeControllerStyleLocked(DeviceStyle style,
       AtlasKind::kFont256G3J,
       AtlasKind::kFont256G2,
       AtlasKind::kChainsawDuel,
+      AtlasKind::kHud512G1,
   };
 
   for (AtlasKind kind : kKinds) {
@@ -697,6 +698,7 @@ void PromptOverlayCompositor::ComposeKeyboardStyleLocked(const std::map<std::str
       AtlasKind::kFont256G3J,
       AtlasKind::kFont256G2,
       AtlasKind::kChainsawDuel,
+      AtlasKind::kHud512G1,
   };
 
   for (AtlasKind kind : kKinds) {

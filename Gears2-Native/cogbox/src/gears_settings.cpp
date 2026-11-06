@@ -1393,9 +1393,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
         // Job 629 (GitHub #41): keyboard button prompts - our key caps drawn over the game's controller-button sheet.
         // Job 661: drawn by the launcher at 4x for whatever keys are set (keycaps.cpp).
-        // Gears 1: no known prompt sheet yet - no overlays
+        // Gears 1 (GitHub #214): its button font and HUD sheets are in the runtime's prompt catalog now, so the game
+        // switches them to PlayStation / Switch / Steam / key-cap art itself; the launcher's own 4x key caps (below) are
+        // still Gears 2 / 3 / Judgment only (keycaps.cpp has no Gears 1 sheet).
         // GitHub #104 with PR #117's auto button prompts: keep the pad's prompts there too (no switch to key caps).
-        if (!isG1 && s.b("PadPrompts") && cap_exe(env, "gow_button_prompts_keep_pad"))
+        if (s.b("PadPrompts") && cap_exe(env, "gow_button_prompts_keep_pad"))
             a.push_back("--gow_button_prompts_keep_pad=true");
         if (!isG1 && !s.b("PadPrompts") && !env.prompt_dir.empty() && cap_exe(env, "gow2_texture_overlay_dir")) {
             // Job 661 (Shagg 30 Oct: "make those prompts higher resolution"): the launcher draws the key caps itself, 4x the

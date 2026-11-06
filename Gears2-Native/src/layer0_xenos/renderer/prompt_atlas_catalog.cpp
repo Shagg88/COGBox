@@ -107,6 +107,18 @@ constexpr PromptCell kChainsawDuelCells[] = {
     {"y", "keybind_y", {42, 203, 75, 250}, {47, 211, 69, 233}, {58, 222}, true, true},
 };
 
+// 5. GitHub #214: Gears 1's 512x512 HUD action sheet (cover / roadie-run icons). Its Y, A, A, B, X, X buttons sit
+// exactly where Gears 2's do (decoded from the 0.4.6 texture dump); the lower Y / RS cells of the Gears 2 sheet are a
+// camera and a weapon icon in Gears 1, so they are left out.
+constexpr PromptCell kHud512G1Cells[] = {
+    {"y", "keybind_y", {176, 314, 208, 376}, {177, 336, 205, 364}, {191, 350}, true, false},
+    {"a", "keybind_a", {214, 314, 245, 356}, {215, 328, 243, 356}, {229, 342}, true, false},
+    {"a", "keybind_a", {250, 314, 281, 357}, {251, 330, 279, 358}, {265, 344}, true, false},
+    {"b", "keybind_b", {285, 314, 327, 345}, {298, 315, 326, 343}, {312, 329}, true, false},
+    {"x", "keybind_x", {331, 314, 374, 345}, {331, 315, 359, 343}, {345, 329}, true, false},
+    {"x", "keybind_x", {378, 314, 419, 345}, {377, 316, 405, 344}, {391, 330}, true, false},
+};
+
 constexpr AtlasLayout kAtlasLayouts[] = {
     // 512x512 HUD Action Prompts
     {0xa000624a174e08baULL, AtlasKind::kHud512, 512, 512, kHud512Cells},
@@ -119,8 +131,12 @@ constexpr AtlasLayout kAtlasLayouts[] = {
     // 256x256 Gears 2 Font Sheets
     {0xa133822cba91c272ULL, AtlasKind::kFont256G2, 256, 256, kFont256G2Cells},
     {0x86bf4f7c0ec59721ULL, AtlasKind::kFont256G2, 256, 256, kFont256G2Cells},
+    // GitHub #214: Gears 1's button font sheet (DXT5) - the same layout as Gears 2's, cell for cell
+    {0x8c33362ad83f2f11ULL, AtlasKind::kFont256G2, 256, 256, kFont256G2Cells},
     // 256x256 Melee & Chainsaw Duel Sheet
     {0x30d01cc6c7ff5cd3ULL, AtlasKind::kChainsawDuel, 256, 256, kChainsawDuelCells},
+    // GitHub #214: Gears 1's 512x512 HUD action sheet (DXT5)
+    {0x49e274ee709ac41dULL, AtlasKind::kHud512G1, 512, 512, kHud512G1Cells},
 };
 
 }  // namespace

@@ -86,7 +86,7 @@ class PromptOverlayCompositor {
 
  private:
   static constexpr int kStyleCount = 7;
-  static constexpr int kKindCount = 4;
+  static constexpr int kKindCount = 5;  // AtlasKind values (GitHub #214: + kHud512G1)
 
   const AtlasLayout* ResolveLayoutLocked(uint64_t hash) const;
   void ComposeControllerStyleLocked(DeviceStyle style, const std::unordered_map<std::string, Image>& glyphs);
