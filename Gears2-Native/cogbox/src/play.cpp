@@ -472,7 +472,7 @@ void play_poll(App &a)
             set_message(a, "Preparing shaders stopped before the end - what was built so far is kept.", false);
         else
             set_message(a, "Preparing shaders stopped (" + (known ? "exit code " + hex32(code) : std::string("unknown exit")) +
-                           ") - what was built so far is kept. A problem report from the Help tab helps.", true);
+                           ") - what was built so far is kept. A problem report from the About tab helps.", true);
         refresh_games(a, false);
         return;
     }
