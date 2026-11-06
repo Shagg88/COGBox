@@ -862,6 +862,8 @@ REXCVAR_DEFINE_BOOL(gow2_upscale_character_motion, false, "Gears2",
                     "transforms of the game's velocity pass), not the camera's - the camera follows the player, so "
                     "camera-only vectors are wrong on him by the whole camera move. Gears 2's layout (velocity pass "
                     "c5-c12); on there by gow2_app.h");
+REXCVAR_DEFINE_BOOL(gow2_upscale_object_motion_address_key, false, "Gears2",
+                    "Object motion: also key draws by their vertex / index addresses (the first take; Gears 1 characters never matched)");
 REXCVAR_DEFINE_BOOL(gow2_upscale_object_motion, false, "Gears2",
                     "#147 / #150 (off by default until tested): DLSS / FSR / XeSS motion vectors per object. Every scene "
                     "draw's own local-to-clip matrix (the camera times its object-to-world rows; Gears 1: its combined "
@@ -5312,7 +5314,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return;
     }
     OmEntry e;
-    e.key = XXH3_64bits(&k, sizeof(k));
+    // Gears 1 (Shagg 11-06: characters still flicker with object motion on): skinned characters' vertex / index data
+    // moves from frame to frame, so a key with the addresses never matched them. The identity is the shaders and the
+    // index count; same-looking draws are told apart by where their origin projects (the nearest-candidate rule below).
+    static const bool strict_key = REXCVAR_GET(gow2_upscale_object_motion_address_key);
+    if (strict_key) e.key = XXH3_64bits(&k, sizeof(k));
+    else {
+      const struct { uint32_t count, pad; uint64_t vs, ps; } k2{k.count, 0u, k.vs, k.ps};
+      e.key = XXH3_64bits(&k2, sizeof(k2));
+    }
     e.now = l;
     ++om_tracked_;
     if (const auto it = om_prev_index_.find(e.key); it != om_prev_index_.end()) {
