@@ -432,18 +432,18 @@ static void player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav)
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + r * (k + g) * 0.5f * (r > 1 ? 1.0f : float(r)));
                 for (const char *c = rows[r]; *c; c++) {
                     char ch = (upper || !isalpha((unsigned char)*c)) ? *c : (char)tolower((unsigned char)*c);
-                    char lbl[8]; std::snprintf(lbl, sizeof lbl, "%c##k%c", ch, *c);
+                    char lbl[8]; std::snprintf(lbl, sizeof lbl, "%c###k%c", ch, *c);
                     if (c != rows[r]) ImGui::SameLine(0, g);
                     if (r == 0 && c == rows[0] && ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
                     if (th_button(lbl, ImVec2(k, k), true, F_BOLD)) put(ch);
                     if (r == 0 && c == rows[0] && ImGui::IsWindowAppearing()) ImGui::SetItemDefaultFocus();
                 }
             }
-            if (th_button(upper ? "abc##kcase" : "ABC##kcase", ImVec2(k * 2 + g, k), true, F_BOLD)) upper = !upper;
+            if (th_button(upper ? "abc###kcase" : "ABC###kcase", ImVec2(k * 2 + g, k), true, F_BOLD)) upper = !upper;
             ImGui::SameLine(0, g);
-            if (th_button("SPACE##kspace", ImVec2(k * 4 + g * 3, k), true, F_BOLD)) put(' ');
+            if (th_button("SPACE###kspace", ImVec2(k * 4 + g * 3, k), true, F_BOLD)) put(' ');
             ImGui::SameLine(0, g);
-            if (th_button("DEL##kdel", ImVec2(k * 2 + g, k), true, F_BOLD)) del();
+            if (th_button("DEL###kdel", ImVec2(k * 2 + g, k), true, F_BOLD)) del();
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false)) del();
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) put(' ');
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false)) save = true;

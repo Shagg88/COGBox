@@ -390,7 +390,9 @@ void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content pac
 // keybind_left_trigger = RMB: aim), so the left button chose the right path, against the on-screen prompts. While the
 // scene is open and takes input the two trigger binds are swapped, and put back as they were when it closes (the
 // player's own binds, whatever they are). A pad is not affected. From KiltedKernel's Gears 3 port (hid.cpp).
-REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, true, "Gears3",
+// 0.4.6 (Shagg 11-06): off by default - the fresh 0.4.6 package still froze at the main menu with it on (job 1294);
+// it comes back on once its object scan no longer stalls the game thread.
+REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, false, "Gears3",
                     "Path choice: the mouse button on a path's side picks that path (the trigger binds swap while it is open)");
 void Gow3PathChoiceTick() {
   if (!REXCVAR_GET(gow3_path_choice_mouse)) return;
