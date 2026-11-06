@@ -34,9 +34,9 @@ struct TrackDef { const char *packages[3]; const char *waves[3]; Pin pin; };
 const TrackDef kTracks[G_COUNT] = {
     // GearStart.xxx: 33 waves, one long: 109.3 s (decoded: RMS 3011, peak 19346)
     /* G_GEARS2   */ { { "GearGame/CookedXenon/GearStart.xxx", "GearGame/CookedXenon/GearStartTransition.xxx", nullptr }, { nullptr }, { 2, 32000, 109.3f } },
-    // GearStart.xxx: 26 waves, five long (125.7, 128.8, 143.8, 177.8 s at 32 kHz, 242.7 s at 44.1 kHz); the 44.1 kHz one
-    // (decoded: RMS 4286, peak 30388), to be confirmed by ear
-    /* G_GEARS3   */ { { "GearGame/CookedXbox360/GearStart.xxx", "GearGame/CookedXbox360/GearStartTransition.xxx", nullptr }, { nullptr }, { 2, 44100, 242.7f } },
+    // GearStart.xxx: 26 waves, five long (125.7, 128.8, 143.8, 177.8 s at 32 kHz, 242.7 s at 44.1 kHz); the 125.7 s one
+    // (Shagg 6 Nov picked it by ear; the 242.7 s one was 'terrible')
+    /* G_GEARS3   */ { { "GearGame/CookedXbox360/GearStart.xxx", "GearGame/CookedXbox360/GearStartTransition.xxx", nullptr }, { nullptr }, { 2, 32000, 125.7f } },
     // GearStart.xxx: 92 waves, two long (138.3 s, 128.1 s); the 138.3 s one (decoded: RMS 2692, peak 23920)
     /* G_JUDGMENT */ { { "GearGame/CookedXbox360/GearStart.xxx", "GearGame/CookedXbox360/GearStartTransition.xxx", nullptr }, { nullptr }, { 2, 32000, 138.3f } },
     // WarStart.xxx (the front end; the same track is in WarIntermission.xxx): little-endian XMA1, two long waves, 293.7 s
@@ -358,6 +358,10 @@ int music_test(const std::string &key, const std::string &copy, const std::strin
     for (const char *w : kTracks[g].waves) if (w) r.waves.push_back(w);
     r.pin = kTracks[g].pin;
     if (const char *w = getenv("COGBOX_MUSIC_WAVE")) { r.waves.clear(); r.waves.push_back(w); }
+    if (const char *pn = getenv("COGBOX_MUSIC_PIN")) {   // test: "<channels>,<rate>,<seconds>" picks another track
+        int ch = 0, rt = 0; float sec = 0;
+        if (sscanf(pn, "%d,%d,%f", &ch, &rt, &sec) == 3) r.pin = { ch, rt, sec };
+    }
     std::vector<int16_t> pcm;
     const bool ok = load_track(r, pcm, &log, false);
     if (ok) dump(g, pcm);
