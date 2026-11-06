@@ -98,3 +98,9 @@ Then move the third-party submodules to the tags in `sdk-pins.txt` and configure
 - `sdk-patch16-zpd-pairing-UNBUILT.diff` was never built. It isn't in any release.
 
 Gears 3 and Judgment use the same runtime.
+- `sdk-patch66-audio-session-volume.diff` (GitHub #203: sound on one output device, silence on another, while the log
+  shows the silent device opened normally). Windows keeps a volume-mixer slider and mute for each program on each output
+  device, by the exe's path, across reboots and reinstalls to the same folder. At start, and when the Windows default
+  output device changes (polled about every 5 s; SDL already moves the stream there), the runtime logs the device volume
+  and this game's mixer slider, and restores a muted or 0 slider (`--audio_restore_session_volume=false` leaves it). A
+  slider moved during play is not touched. Apply it in the SDK root after patch 65 (`git apply --ignore-whitespace`).
