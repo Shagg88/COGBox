@@ -178,6 +178,17 @@ void Gow3UltrawideFov(PPCRegister& f0, PPCRegister& f31) {  // after `lfs f0,0x6
                 factor, fov * game * 57.29578, fov * factor * 57.29578);
   f0.f64 = factor;
 }
+// GitHub #207 (gow3_manifest_tu6.toml): a voice callback whose object is already gone (no vtable) is not called
+bool Gow3VoiceCallbackGone(PPCRegister& r3) {
+  const uint8_t* m = rex::Runtime::instance()->virtual_membase();
+  const uint32_t obj = r3.u32;
+  const uint8_t* p = m + obj;
+  const uint32_t vtable = obj ? (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3] : 0;
+  if (obj && vtable) return false;
+  static std::atomic<int> told{0};
+  if (told.fetch_add(1) < 3) REXLOG_WARN("gow3: voice callback object {:08X} has no vtable - its call skipped (GitHub #207)", obj);
+  return true;
+}
 bool Gow3UltrawideNoConstrain() { return Wide(); }  // jump_address_on_true: the beq at 0x8261BE60 is taken
 void Gow3UltrawideSceneHeight(PPCRegister& r11) {  // after `li r11,720` at 0x82960C78
   if (!Wide()) return;
