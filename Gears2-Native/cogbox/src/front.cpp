@@ -296,17 +296,6 @@ static void turn(App &a, int dir)
     a.ini.seti("Front", "Box", a.front);
 }
 
-// Shagg 1 Nov: one place to add any game - the carousel only has the games already added
-void add_game_ask(App &a)
-{
-    ask(a, "addgame", -1, "Add a game",
-        "Choose your copy: a disc image (.iso), a Games on Demand file, a title update, or a folder with default.xex. "
-        "COGBox tells which game it is by itself - choose the game below only for a regional release it doesn't know.",
-        { "Choose a file", "Choose a folder", "Cancel" });
-    a.modal.list.push_back(tr("Find out from the file"));
-    for (int s = 0; s < G_COUNT; s++) a.modal.list.push_back(game_def(game_at_slot(s)).name);
-}
-
 // 0.4.6 (Shagg 5 Nov 18:07): a longer explanation of a drawn line shows when the mouse rests on it
 static void hover_tip(ImVec2 p0, ImVec2 p1, const char *text)
 {

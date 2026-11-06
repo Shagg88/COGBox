@@ -132,7 +132,6 @@ void backdrop_draw(App &a, ImDrawList *dl, ImVec2 size, int g, float alpha);
 // Shagg 1 Nov: the games in the library carousel (added ones only, release order) and a game's place in it (-1: not there)
 std::vector<int> library_games(const App &a);
 int library_slot(const App &a, int g);
-void add_game_ask(App &a);           // the "Add a game" question: which game (or let COGBox tell), then a file or a folder
 void art_download_start();
 int art_download_poll();
 // page.cpp

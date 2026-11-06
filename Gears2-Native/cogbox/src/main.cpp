@@ -190,13 +190,6 @@ static void answered(App &a)
     else if (m.tag == "turec") {   // 0.2.0: Gears 2 / 3 without Title Update 6
         if (m.checked && g >= 0) { a.ini.seti("Notices", std::string("TuRecommendNever_") + game_def(g).key, 1); a.ini.save(); }
     }
-    else if (m.tag == "addgame" && (m.answer == 0 || m.answer == 1)) {   // Shagg 1 Nov: ADD GAME (front.cpp add_game_ask)
-        const int forGame = m.listSel <= 0 ? -1 : game_at_slot(m.listSel - 1);
-        std::string p = m.answer == 0 ? pick_file(L"Choose your copy: a disc image (.iso), a Games on Demand file, a title update, or default.xex in a folder",
-                                                  L"Xbox 360 games and updates\0*.iso;*.xex;*.*\0All files\0*.*\0")
-                                      : pick_folder(L"Choose the folder with your game's default.xex (or a Games on Demand / title update folder)");
-        if (!p.empty()) install_start(a, p, forGame);
-    }
     else if (m.tag == "replace" && m.answer == 0) install_confirmed(a);
     else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
     else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
@@ -717,8 +710,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             if (dir_exists(p) && !drop_is_game_or_update(p) && !(dlc = dlc_packages_in(p)).empty()) {
                 a.dropped.insert(a.dropped.begin(), dlc.begin(), dlc.end());
                 set_message(a, std::to_string(dlc.size()) + (dlc.size() == 1 ? " downloadable content package found - adding it." : " downloadable content packages found - adding them one by one."), false);
-            } else
-                install_start(a, p, -1);
+            } else   // L-8: dropped on a game's settings page, it is for that game (a regional release COGBox doesn't know)
+                install_start(a, p, a.screen == SCR_PAGE ? a.page : -1);
         }
         if (a.run.proc && (SDL_GetWindowFlags(win) & SDL_WINDOW_MINIMIZED)) { SDL_Delay(100); continue; }   // a game is playing
         if (SDL_GetWindowFlags(win) & SDL_WINDOW_MINIMIZED) { SDL_Delay(50); continue; }

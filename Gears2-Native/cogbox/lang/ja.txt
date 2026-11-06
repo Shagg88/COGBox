@@ -961,3 +961,6 @@ Add the title update that matches your copy. = お使いのコピーに合うタ
 Game files = ゲームファイル
 Title update for = アップデートの対象
 Play anyway = このままプレイ
+# L-8 (machine-made translation, please check)
+COGBox doesn't know this version. = COGBox はこのバージョンを知りません。
+If it is a regional release of Gears of War, 2, 3 or Judgment, open that game's settings and drop it there - it will be added as an untested version. = Gears of War、2、3、Judgment の地域版なら、そのゲームの設定を開いてそこにドロップしてください。未テストのバージョンとして追加されます。
