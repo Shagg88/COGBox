@@ -45,6 +45,12 @@ DxbcTranslation TranslateToDxbc(const ucode::Program& program, const hlsl::HlslO
 // whose vertex and pixel shaders are DXBC (a pipeline state takes one bytecode kind).
 std::vector<uint8_t> RectListGeometryShader();
 
+// --gow2_upscale_object_motion (#147 / #150): the object-ID pixel shader as DXBC, for redrawing a DXBC guest vertex
+// shader's draw into the renderer's object-ID target. Its input signature is the guest pixel shaders' (TEXCOORD0-15,
+// SV_Position, SV_IsFrontFace), so it links with any guest vertex shader; it writes (1, SV_Position.z, 0, 0) to
+// SV_Target0 (the pipeline's blend factor turns the 1 into the object's number). Reads no constants or textures.
+std::vector<uint8_t> ObjectIdPixelShader();
+
 // Patch 0087: how many shaders (final translations, all threads, since start) each newer Canary rule changed.
 struct RuleHits {
   uint64_t tfetch1d_xy = 0, mulsc_round_toward_zero = 0, memexport_f16_nan_zero = 0;

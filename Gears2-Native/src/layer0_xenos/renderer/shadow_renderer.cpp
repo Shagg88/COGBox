@@ -862,6 +862,14 @@ REXCVAR_DEFINE_BOOL(gow2_upscale_character_motion, false, "Gears2",
                     "transforms of the game's velocity pass), not the camera's - the camera follows the player, so "
                     "camera-only vectors are wrong on him by the whole camera move. Gears 2's layout (velocity pass "
                     "c5-c12); on there by gow2_app.h");
+REXCVAR_DEFINE_BOOL(gow2_upscale_object_motion, false, "Gears2",
+                    "#147 / #150 (off by default until tested): DLSS / FSR / XeSS motion vectors per object. Every scene "
+                    "draw's own local-to-clip matrix (the camera times its object-to-world rows; Gears 1: its combined "
+                    "matrix) is kept by draw identity (vertex / index data, shaders, index count) and matched to last "
+                    "frame's; a draw whose identity was seen moving by itself (not as the camera) is drawn again into an "
+                    "object-ID target, and its pixels get its own reprojection (last frame's matrix x this frame's "
+                    "inverse) where its depth is still the scene's. Rigid only: limbs inside a skinned mesh move with "
+                    "the mesh. Logged every log window ('object motion')");
 REXCVAR_DEFINE_STRING(gow2_ao_quality, "high", "Gears2",
                       "XeGTAO quality (notes/80): low (1 slice x 2 steps), medium (2 x 2), high (3 x 3), ultra (9 x 3)");
 REXCVAR_DEFINE_STRING(gow2_ao_algo, "xegtao", "Gears2",
@@ -4538,6 +4546,23 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         if (!vel_copy_pipe_ || !vel_motion_pipe_)
           REXLOG_WARN("gow2_upscaler: character motion shaders failed to compile; camera motion only");
       }
+      if (REXCVAR_GET(gow2_upscale_object_motion)) {  // #147 / #150
+        om_ps_hlsl_ = cache_->GetBuiltin("object_id_ps", rr::builtin::kObjectIdPs, gpu::ShaderStage::kPixel);
+        if (cache_->Dxbc() && backend_->GetShaderIL() == gpu::ShaderIL::kDxil) {  // for DXBC guest vertex shaders
+          const std::vector<uint8_t> idps = xenos::dxbc_gen::ObjectIdPixelShader();
+          om_ps_dxbc_ = backend_->CreateShader(gpu::ShaderStage::kPixel, idps.data(), idps.size());
+        }
+        const gpu::ShaderHandle om =
+            cache_->GetBuiltin("object_motion_cs", rr::builtin::kObjectMotionCs, gpu::ShaderStage::kCompute);
+        om_cs_ = om ? backend_->CreateComputePipeline(om) : 0;
+        om_on_ = om_cs_ && (om_ps_hlsl_ || om_ps_dxbc_);
+        if (om_on_)
+          REXLOG_INFO("gow2_upscaler: object motion on (#147 / #150): ID pixel shader {}{}, {} matrix", om_ps_hlsl_ ? "HLSL" : "",
+                      om_ps_dxbc_ ? " + DXBC" : "", up_vp_auto_ || REXCVAR_GET(gow2_upscale_camera_matrix) < 0
+                                                         ? "combined (object x camera)" : "camera x object rows");
+        else
+          REXLOG_WARN("gow2_upscaler: object motion shaders failed to compile; camera motion only");
+      }
       if (!up_depth_pipe_ || !up_motion_pipe_) {
         REXLOG_WARN("gow2_upscaler: helper shaders failed to compile; off");
         upscaler_.reset();
@@ -5216,6 +5241,270 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     vel_objects_sum_ += n;
   }
 
+  // ---- --gow2_upscale_object_motion (#147 / #150): per-object motion vectors ----
+  // At each scene draw (into the scene depth, writing depth, perspective): its local-to-clip matrix L (camera c-block x
+  // object rows; Gears 1, whose camera block already holds object x camera: that block) under its draw identity,
+  // matched to last frame's entry of the same identity (nearest projected origin when several share it). At the scene
+  // resolve, matched entries whose last-frame matrix does not agree with the camera's reprojection (> 0.5 px at the
+  // origin or 64 units along an axis) mark that identity as moving by itself for 60 frames. A moving identity's draws
+  // are drawn again right after the game's draw - same vertex shader, constants, vertex and index data, viewport
+  // (with the jitter) and depth test, no depth / stencil writes - into the object-ID target with kObjectIdPs, which
+  // stores (object number, the depth drawn). kObjectMotionCs then gives those pixels the object's own reprojection
+  // prev_L x inverse(L) where the scene depth is still that depth; every other pixel keeps the camera motion.
+  struct OmEntry {
+    uint64_t key = 0;
+    rr::upscale::Mat4 now, prev;
+    bool has_prev = false;
+  };
+  static constexpr uint32_t kOmMaxObjects = 255, kOmMaxEntries = 8192, kOmMovingFrames = 60;
+  bool om_on_ = false, om_ids_frame_ = false;
+  gpu::ShaderHandle om_ps_hlsl_ = 0, om_ps_dxbc_ = 0;
+  gpu::PipelineHandle om_cs_ = 0;
+  gpu::TextureHandle om_ids_ = 0, om_table_ = 0;
+  uint32_t om_ids_w_ = 0, om_ids_h_ = 0;
+  rr::RenderTargetKey om_key_{};
+  float om_depth_factor_ = 1.0f;
+  std::vector<OmEntry> om_cur_, om_prev_;
+  std::unordered_map<uint64_t, std::vector<uint32_t>> om_prev_index_;
+  std::vector<uint8_t> om_prev_used_;
+  std::unordered_map<uint64_t, uint64_t> om_moving_;  // identity -> the last frame it was seen moving by itself
+  std::unordered_set<uint64_t> om_drawn_geo_;         // this frame's ID draws (geometry + matrix): drawn once
+  std::vector<uint32_t> om_ids_entry_;                // object n (1-based) -> om_cur_[om_ids_entry_[n - 1]]
+  // Log window.
+  uint64_t om_tracked_ = 0, om_matched_ = 0, om_drawn_ = 0, om_dedup_ = 0, om_static_ = 0, om_full_ = 0, om_pending_ = 0,
+           om_overflow_ = 0, om_key_miss_ = 0, om_frames_ = 0, om_moving_found_ = 0, om_size_miss_ = 0;
+
+  static bool OmProject(const rr::upscale::Mat4& m, const float p[4], float out[4]) {
+    for (int i = 0; i < 4; ++i) out[i] = m(i, 0) * p[0] + m(i, 1) * p[1] + m(i, 2) * p[2] + m(i, 3) * p[3];
+    return out[3] > 1e-6f && std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[3]);
+  }
+  // Called after the game's draw is issued (Draw). draw_again repeats exactly that draw call (same index source).
+  template <class DrawAgain>
+  void ObjMotionDraw(const uint32_t* r, const rr::GuestShader& vsg, const rr::GuestShader* psg, bool needs_ps,
+                     const gpu::GraphicsPipelineDesc& d, const rr::ViewportState& v, const rr::PipelineState& ps,
+                     const rr::RenderTarget* target, const ObservedIndexBuffer* ib, uint32_t index_count,
+                     uint64_t vs_hash, uint64_t ps_hash, DrawAgain&& draw_again) {
+    if (!target || !target->texture || target->key.msaa != 0 || !(target->key == up_depth_key_)) return;
+    if (!d.depth_enable || !d.depth_write || d.samples != 1 || v.xy_divided_by_w || v.clip_disabled) return;
+    if ((needs_ps && psg && psg->writes_depth) || vsg.memexport || occ_open_.open || up_vp_base_ < 0) return;
+    const uint32_t cb = uint32_t(up_vp_base_);
+    if (!(vsg.Reads(cb) && vsg.Reads(cb + 1) && vsg.Reads(cb + 2) && vsg.Reads(cb + 3))) return;
+    float c[16];
+    std::memcpy(c, &r[kRegFloatConstVs + cb * 4], sizeof(c));
+    rr::upscale::Mat4 l = rr::upscale::FromConstantsTransposed(c, 0);
+    if (!up_vp_auto_) {  // Gears 2 / 3 / Judgment: camera x the object-to-world rows (camera-relative)
+      const uint32_t ob = up_object_base_;
+      if (!(vsg.Reads(ob) && vsg.Reads(ob + 1) && vsg.Reads(ob + 2) && vsg.Reads(ob + 3))) return;
+      float o[16];
+      std::memcpy(o, &r[kRegFloatConstVs + ob * 4], sizeof(o));
+      if (!(o[15] == 1.0f && o[3] == 0.0f && o[7] == 0.0f && o[11] == 0.0f)) return;
+      l = rr::upscale::Multiply(l, rr::upscale::FromConstantsTransposed(o, 0));
+    }
+    for (float x : l.m)
+      if (!std::isfinite(x)) return;
+    uint32_t vb = 0;
+    for (uint32_t i = 0; i < 96 && !vb; ++i)
+      if ((vsg.vfetch_constants[i >> 5] >> (i & 31)) & 1) vb = r[kRegFetchConst + 2 * i] & 0x1FFFFFFCu;
+    const struct { uint32_t vb, ib, count, pad; uint64_t vs, ps; } k{vb, ib ? (ib->guest_base & 0x1FFFFFFFu) : 0u,
+                                                                     index_count, 0u, vs_hash, ps_hash};
+    if (om_cur_.size() >= kOmMaxEntries) {
+      ++om_overflow_;
+      return;
+    }
+    OmEntry e;
+    e.key = XXH3_64bits(&k, sizeof(k));
+    e.now = l;
+    ++om_tracked_;
+    if (const auto it = om_prev_index_.find(e.key); it != om_prev_index_.end()) {
+      // Several draws can share an identity (the same mesh drawn twice): the unused one whose origin projected last
+      // frame is nearest to this one's now (in NDC); with one candidate it is taken whatever the distance.
+      static const float kOrigin[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+      float a[4], bp[4];
+      const bool here = OmProject(l, kOrigin, a);
+      int best = -1;
+      float best_d = 1e30f;
+      uint32_t candidates = 0;
+      for (const uint32_t idx : it->second) {
+        if (om_prev_used_[idx]) continue;
+        ++candidates;
+        float dd = 1e29f;
+        if (here && OmProject(om_prev_[idx].now, kOrigin, bp)) {
+          const float dx = bp[0] / bp[3] - a[0] / a[3], dy = bp[1] / bp[3] - a[1] / a[3];
+          dd = dx * dx + dy * dy;
+        }
+        if (dd < best_d) best_d = dd, best = int(idx);
+      }
+      if (best >= 0 && (candidates == 1 || best_d < 0.25f)) {
+        om_prev_used_[uint32_t(best)] = 1;
+        e.prev = om_prev_[uint32_t(best)].now;
+        e.has_prev = true;
+        ++om_matched_;
+      }
+    }
+    const uint32_t entry = uint32_t(om_cur_.size());
+    om_cur_.push_back(e);
+    if (!e.has_prev) return;
+    const auto mv = om_moving_.find(e.key);
+    if (mv == om_moving_.end() || frame_ + 1 - mv->second > kOmMovingFrames) {
+      ++om_static_;  // the camera's motion is right for it
+      return;
+    }
+    {
+      struct { uint32_t vb, ib, count, pad; float m[16]; } g{k.vb, k.ib, k.count, 0u, {}};
+      std::memcpy(g.m, l.m, sizeof(l.m));
+      if (!om_drawn_geo_.insert(XXH3_64bits(&g, sizeof(g))).second) {
+        ++om_dedup_;  // another pass of the same mesh at the same place: its pixels have their number already
+        return;
+      }
+    }
+    if (om_ids_entry_.size() >= kOmMaxObjects) {
+      ++om_full_;
+      return;
+    }
+    const gpu::ShaderHandle id_ps = (vsg.dxbc && om_ps_dxbc_) ? om_ps_dxbc_ : om_ps_hlsl_;
+    if (!id_ps) return;
+    if (!om_ids_frame_) {  // the frame's first: (re)make the target at the depth target's size and clear it
+      if (om_ids_w_ != target->width || om_ids_h_ != target->height || !om_ids_) {
+        if (om_ids_) backend_->DestroyTexture(om_ids_), om_ids_ = 0;
+        om_ids_w_ = om_ids_h_ = 0;
+        gpu::TextureDesc td;
+        td.width = target->width;
+        td.height = target->height;
+        td.usage = gpu::kUsageSampled | gpu::kUsageRenderTarget;
+        td.format = gpu::Format::kR32G32Float;
+        td.debug_name = "object motion ids";
+        om_ids_ = backend_->CreateTexture(td);
+        if (!om_ids_) return;
+        om_ids_w_ = target->width, om_ids_h_ = target->height;
+      }
+      static const float kZero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+      backend_->ClearColor(om_ids_, kZero);
+      om_ids_frame_ = true;
+      om_key_ = target->key;
+      om_depth_factor_ = (float24_remap_ && (target->key.storage_class & 1)) ? 2.0f : 1.0f;  // as CopyUpscaleDepth
+    } else if (om_ids_w_ != target->width || om_ids_h_ != target->height) {
+      ++om_size_miss_;
+      return;
+    }
+    gpu::GraphicsPipelineDesc d2 = d;
+    d2.ps = id_ps;
+    for (uint32_t i = 0; i < gpu::GraphicsPipelineDesc::kMaxColor; ++i) {
+      d2.color_formats[i] = gpu::Format::kUnknown;
+      d2.color_write_masks[i] = 0;
+      d2.color_blend[i] = gpu::BlendDesc{};
+    }
+    d2.color_count = 1;
+    d2.color_formats[0] = gpu::Format::kR32G32Float;
+    d2.color_write_masks[0] = 0x3;  // R, G
+    gpu::BlendDesc bd;  // (1, z) x the blend factor (n, 1): (n, z), whatever was there
+    bd.enable = true;
+    bd.src = bd.src_alpha = gpu::BlendFactor::kBlendFactor;
+    bd.dst = bd.dst_alpha = gpu::BlendFactor::kZero;
+    d2.color_blend[0] = bd;
+    d2.depth_write = false;
+    d2.stencil_enable = false;
+    d2.color_bits = false;
+    if (d2.depth_func == gpu::CompareFunc::kLess) d2.depth_func = gpu::CompareFunc::kLessEqual;  // passes on its own depth
+    else if (d2.depth_func == gpu::CompareFunc::kGreater) d2.depth_func = gpu::CompareFunc::kGreaterEqual;
+    bool pending = false;
+    const gpu::PipelineHandle pipe = backend_->GetGraphicsPipeline(d2, true, &pending);
+    if (pending || !pipe) {
+      ++om_pending_;
+      return;
+    }
+    om_ids_entry_.push_back(entry);
+    const float bf[4] = {float(om_ids_entry_.size()), 1.0f, 0.0f, 0.0f};
+    backend_->SetPipeline(pipe);
+    backend_->SetBlendConstant(bf);
+    backend_->SetRenderTargets(1, &om_ids_, target->texture);
+    backend_->SetViewport({v.x, v.y, v.width, v.height, v.z_min, v.z_max});
+    backend_->SetScissor({int32_t(ps.scissor.x), int32_t(ps.scissor.y), int32_t(ps.scissor.x + ps.scissor.width),
+                          int32_t(ps.scissor.y + ps.scissor.height)});
+    draw_again();
+    backend_->SetBlendConstant(ps.blend.constant);  // the game's, as its draw left it
+    ++om_drawn_;
+  }
+  // Whether an entry moved by itself: its last-frame matrix against the camera's reprojection c (this frame's clip ->
+  // last frame's clip), at its origin and 64 units along each axis, in render pixels.
+  static bool OmMovesByItself(const OmEntry& e, const rr::upscale::Mat4& c, uint32_t rw, uint32_t rh) {
+    static const float kPts[4][4] = {{0, 0, 0, 1}, {64, 0, 0, 1}, {0, 64, 0, 1}, {0, 0, 64, 1}};
+    for (const auto& p : kPts) {
+      float a[4], b[4], q[4];
+      if (!OmProject(e.now, p, a)) continue;
+      const bool ob = OmProject(e.prev, p, b), oc = OmProject(c, a, q);
+      if (ob != oc) return true;
+      if (!ob) continue;
+      const float dx = (b[0] / b[3] - q[0] / q[3]) * 0.5f * float(rw), dy = (b[1] / b[3] - q[1] / q[3]) * 0.5f * float(rh);
+      if (dx * dx + dy * dy > 0.25f) return true;
+    }
+    return false;
+  }
+  // At the scene resolve, after the camera and character motion: learns which identities move by themselves (on frames
+  // whose camera move is known), then gives this frame's ID-drawn objects their own motion.
+  void ObjectMotion(const rr::upscale::Mat4& cur, const rr::upscale::Mat4& prev, const float* move, bool cut, uint32_t rw,
+                    uint32_t rh) {
+    if (move && !cut && up_prev_camera_) {
+      rr::upscale::Mat4 inv;
+      if (rr::upscale::Invert(cur, inv)) {
+        rr::upscale::Mat4 t;
+        t(0, 3) = move[0], t(1, 3) = move[1], t(2, 3) = move[2];
+        const rr::upscale::Mat4 c = rr::upscale::Multiply(prev, rr::upscale::Multiply(t, inv));
+        for (const OmEntry& e : om_cur_)
+          if (e.has_prev && OmMovesByItself(e, c, rw, rh)) {
+            om_moving_[e.key] = frame_ + 1;
+            ++om_moving_found_;
+          }
+      }
+    }
+    if (cut || !om_ids_frame_ || om_ids_entry_.empty()) return;
+    if (!(om_key_ == up_depth_key_)) {
+      ++om_key_miss_;
+      return;
+    }
+    constexpr uint32_t kW = 4, kRows = kOmMaxObjects + 1;
+    std::vector<float> t(size_t(kW) * 4 * kRows, 0.0f);
+    const uint32_t n = uint32_t(om_ids_entry_.size());
+    t[0] = float(n), t[1] = om_depth_factor_, t[2] = 2e-6f, t[3] = 1e-4f;
+    for (uint32_t i = 0; i < n; ++i) {
+      const OmEntry& e = om_cur_[om_ids_entry_[i]];
+      rr::upscale::Mat4 rep;
+      float* row = &t[size_t(i + 1) * kW * 4];
+      if (rr::upscale::ReprojectionMatrix(e.now, e.prev, 1.0f, rep, up_depth_map_.scale, up_depth_map_.offset))
+        std::memcpy(row, rep.m, sizeof(rep.m));  // else all 0: w = 0, the pixel keeps the camera's motion
+    }
+    if (!om_table_) {
+      gpu::TextureDesc td;
+      td.width = kW;
+      td.height = kRows;
+      td.usage = gpu::kUsageSampled;
+      td.format = gpu::Format::kR32G32B32A32Float;
+      td.debug_name = "object motion table";
+      om_table_ = backend_->CreateTexture(td);
+      if (!om_table_) return;
+    }
+    backend_->UploadTexture(om_table_, 0, 0, t.data(), kW * 16, kRows, 1);
+    gpu::ComputeBindings b;
+    b.srv[0] = up_depth_;
+    b.srv[1] = om_ids_;
+    b.srv[2] = om_table_;
+    b.uav_texture = up_motion_;
+    backend_->Dispatch(om_cs_, b, (rw + 7) / 8, (rh + 7) / 8, 1);
+    ++om_frames_;
+  }
+  void ObjMotionEndFrame() {
+    om_prev_.swap(om_cur_);
+    om_cur_.clear();
+    om_prev_index_.clear();
+    for (uint32_t i = 0; i < om_prev_.size(); ++i) om_prev_index_[om_prev_[i].key].push_back(i);
+    om_prev_used_.assign(om_prev_.size(), 0);
+    om_drawn_geo_.clear();
+    om_ids_entry_.clear();
+    om_ids_frame_ = false;
+    if (om_moving_.size() > 16384)
+      for (auto it = om_moving_.begin(); it != om_moving_.end();)
+        it = frame_ + 1 - it->second > 600 ? om_moving_.erase(it) : std::next(it);
+  }
+
   uint32_t up_diag_lines_ = 0;  // Gears 3 job 054
   // Runs the upscaler for the scene colour target; returns the texture the resolve should read (0: keep the target).
   gpu::TextureHandle RunUpscaler(const rr::RenderTarget& rt, uint32_t w, uint32_t h) {
@@ -5294,7 +5583,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     up_depth_saved_ = false;
     up_scene_scale_ = rt.scale;
     rr::upscale::Mat4 rep;
-    bool have_rep = false, cut = false;
+    bool have_rep = false, cut = false, move_ok = false;
     float move[3] = {};
     // Gears 3 job 056: the camera position's change, once its sign is known from frames where the object vote agrees.
     float pos_move[3] = {};
@@ -5337,6 +5626,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           up_move_sum_ += len;
           have_rep = rr::upscale::ReprojectionMatrix(cur, prev, move, 1.0f, rep, up_depth_map_.scale,
                                                      up_depth_map_.offset);
+          move_ok = have_rep;  // --gow2_upscale_object_motion: the camera's reprojection is known
         }
       } else {
         ++up_move_missing_;
@@ -5351,6 +5641,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     mb.uav_texture = up_motion_;
     backend_->Dispatch(up_motion_pipe_, mb, (rw + 7) / 8, (rh + 7) / 8, 1);
     if (have_rep) CharacterMotion(cur, prev, rw, rh);  // notes/80 s.6
+    if (om_on_) ObjectMotion(cur, prev, move_ok ? move : nullptr, cut || !have_rep, rw, rh);  // #147 / #150
     const auto now = std::chrono::steady_clock::now();
     rr::upscale::FrameInputs in;
     in.color = rt.texture;
@@ -6259,6 +6550,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     else vel_prev_objs_.clear();
     vel_objs_.clear();
     vel_seen_ = vel_mask_ok_ = false;
+    if (om_on_) ObjMotionEndFrame();  // #147 / #150
     ++up_frames_;
     up_jitter_ = rr::upscale::JitterOffset(  // patch 0141: more phases when upscaling (render < output)
         up_frames_, rr::upscale::JitterPhaseCount(up_scale_in_ ? up_scale_in_ : 1, up_scale_in_ ? res_scale_ : 1));
@@ -6331,6 +6623,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         REXLOG_INFO("gow2_upscaler: character motion on {} frames ({:.1f} characters/frame), no previous camera on {}",
                     vel_frames_, vel_frames_ ? double(vel_objects_sum_) / double(vel_frames_) : 0.0, vel_no_camera_);
       vel_frames_ = vel_objects_sum_ = vel_no_camera_ = 0;
+      if (om_on_) {  // #147 / #150
+        const double f = double(log_every_);
+        REXLOG_INFO("gow2_upscaler: object motion: per frame {:.1f} scene draws tracked, {:.1f} matched to last frame; "
+                    "per-object motion {:.1f} draws/frame (on {} frames; {:.1f} repeat passes); camera-only: {:.1f} "
+                    "static, {:.1f} not matched, table full {}, pipeline not ready {}, other size {}, depth target changed "
+                    "{}, over {} entries {}; {} moving identities (found moving {:.1f}/frame)",
+                    om_tracked_ / f, om_matched_ / f, om_drawn_ / f, om_frames_, om_dedup_ / f, om_static_ / f,
+                    (om_tracked_ - om_matched_) / f, om_full_, om_pending_, om_size_miss_, om_key_miss_, kOmMaxEntries,
+                    om_overflow_, om_moving_.size(), om_moving_found_ / f);
+        om_tracked_ = om_matched_ = om_drawn_ = om_dedup_ = om_static_ = om_full_ = om_pending_ = om_overflow_ = 0;
+        om_key_miss_ = om_frames_ = om_moving_found_ = om_size_miss_ = 0;
+      }
       up_move_from_pos_ = 0;
       up_jittered_ = 0;
       up_move_found_ = up_move_missing_ = up_cuts_ = 0;
@@ -8082,6 +8386,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++stats_.memexport_draws;
       MarkExports(r, vsg);
       if (needs_ps && psg->memexport) ++stats_.memexport_ps_draws;
+    }
+    if (om_on_ && up_active_ && !up_camera_only_ && !up_scene_done_ && !export_shader) {  // #147 / #150
+      // The same draw call as issue() made (its index source as it left it).
+      auto draw_again = [&]() {
+        if (indexed && cached_ib_ && static_index_buffers_) {
+          if (cached_ib_->gpu) backend_->DrawIndexedBuffer(cached_ib_->gpu, uint32_t(cached_ib_->indices.size()));
+          else backend_->DrawIndexed(index_ptr_->data(), uint32_t(index_ptr_->size()));
+        } else if (indexed && idx_hit) {
+          if (!backend_->DrawIndexedAt(idx_off, index_count, idx_list)) {
+            idx_hit = false;
+            if (ReadIndices(*ib, index_count, reset_index, use_restart))
+              backend_->DrawIndexed(index_ptr_->data(), uint32_t(index_ptr_->size()));
+          }
+        } else if (indexed) {
+          backend_->DrawIndexed(index_ptr_->data(), uint32_t(index_ptr_->size()));
+        } else {
+          backend_->Draw(index_count);
+        }
+      };
+      ObjMotionDraw(r, vsg, psg, needs_ps, d, v, ps, target, ib, index_count, vs_hash, ps_hash, draw_again);
     }
     // Gears 3 (job 028, Gears 2 chat's diagnosis): the fast clear's half-pitch 4x MSAA surface is redirected to the 1x
     // target at pitch x2 - right for Gears 2, where that 4x surface is only a stand-in. Gears 3 also has REAL 4x targets

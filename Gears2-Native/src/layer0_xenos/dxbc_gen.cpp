@@ -3928,6 +3928,78 @@ std::vector<uint8_t> RectListGeometryShader() {
   return out;
 }
 
+std::vector<uint8_t> ObjectIdPixelShader() {
+  // builtin_shaders.h kObjectIdPs as DXBC: o0 = (1, v16.z, 0, 0). The input declarations are the guest pixel shaders'
+  // (TranslateToDxbc), so the signature matches every guest vertex shader's output.
+  std::vector<uint32_t> shex;
+  dx::Statistics stat{};
+  dx::Assembler a(shex, stat);
+  shex.push_back(dx::VersionToken(dx::ProgramType::kPixelShader, 5, 1));
+  shex.push_back(0);
+  a.OpDclGlobalFlags(0);
+  for (uint32_t i = 0; i < 16; ++i) a.OpDclInputPS(dx::InterpolationMode::kLinear, Dest::V1D(i));
+  a.OpDclInputPSSIV(dx::InterpolationMode::kLinearNoPerspective, Dest::V1D(16), dx::Name::kPosition);
+  a.OpDclInputPSSGV(Dest::V1D(17, kX), dx::Name::kIsFrontFace);
+  a.OpDclOutput(Dest::O(0));
+  a.OpMov(Dest::O(0, kX | kZ | kW), Src::LF(1.0f, 0.0f, 0.0f, 0.0f));
+  a.OpMov(Dest::O(0, kY), Src::V1D(16).Select(2));
+  a.OpRet();
+  shex[1] = uint32_t(shex.size());
+
+  Blobs b;
+  constexpr uint32_t kBlobCount = 5;  // RDEF, ISGN, OSGN, SHEX, STAT
+  b.obj.resize(sizeof(dx::ContainerHeader) / 4 + kBlobCount);
+  uint32_t blob = 0;
+  auto begin_blob = [&](dx::BlobHeader::FourCC fourcc) {
+    b.obj[sizeof(dx::ContainerHeader) / 4 + blob++] = b.Pos() * 4;
+    const uint32_t pos = b.Reserve<dx::BlobHeader>();
+    b.At<dx::BlobHeader>(pos).fourcc = fourcc;
+    return pos;
+  };
+  auto end_blob = [&](uint32_t pos) { b.At<dx::BlobHeader>(pos).size_bytes = (b.Pos() - pos - 2) * 4; };
+  uint32_t bp = begin_blob(dx::BlobHeader::FourCC::kResourceDefinition);
+  {
+    const uint32_t start = b.Pos();
+    b.Reserve<dx::RdefHeader>();
+    dx::AppendAlignedString(b.obj, "Gears2-Native xenos::dxbc_gen");
+    auto& h = b.At<dx::RdefHeader>(start);
+    h.shader_model = dx::RdefShaderModel::kPixelShader5_1;
+    h.compile_flags = dx::kCompileFlagNoPreshader | dx::kCompileFlagPreferFlowControl | dx::kCompileFlagIeeeStrictness;
+    h.generator_name_ptr = sizeof(dx::RdefHeader);
+    h.fourcc = dx::RdefHeader::FourCC::k5_1;
+    h.InitializeSizes();
+  }
+  end_blob(bp);
+  using CT = dx::SignatureRegisterComponentType;
+  std::vector<SigParam> isgn, osgn;
+  for (uint32_t i = 0; i < 16; ++i) isgn.push_back({"TEXCOORD", i, dx::Name::kUndefined, CT::kFloat32, i, kXYZW, kXYZW});
+  isgn.push_back({"SV_Position", 0, dx::Name::kPosition, CT::kFloat32, 16, kXYZW, kXYZW});
+  isgn.push_back({"SV_IsFrontFace", 0, dx::Name::kIsFrontFace, CT::kUInt32, 17, kX, kX});
+  osgn.push_back({"SV_Target", 0, dx::Name::kUndefined, CT::kFloat32, 0, kXYZW, 0});
+  bp = begin_blob(dx::BlobHeader::FourCC::kInputSignature);
+  WriteSignature(b, isgn);
+  end_blob(bp);
+  bp = begin_blob(dx::BlobHeader::FourCC::kOutputSignature);
+  WriteSignature(b, osgn);
+  end_blob(bp);
+  bp = begin_blob(dx::BlobHeader::FourCC::kShaderEx);
+  b.obj.insert(b.obj.end(), shex.begin(), shex.end());
+  end_blob(bp);
+  bp = begin_blob(dx::BlobHeader::FourCC::kStatistics);
+  b.obj.resize(b.obj.size() + sizeof(stat) / 4);
+  std::memcpy(b.obj.data() + b.Pos() - sizeof(stat) / 4, &stat, sizeof(stat));
+  end_blob(bp);
+  const uint32_t size_bytes = b.Pos() * 4;
+  auto& h = b.At<dx::ContainerHeader>(0);
+  h.InitializeIdentification();
+  h.size_bytes = size_bytes;
+  h.blob_count = kBlobCount;
+  DxbcChecksum(reinterpret_cast<const uint8_t*>(b.obj.data()), size_bytes, h.hash);
+  std::vector<uint8_t> out(size_bytes);
+  std::memcpy(out.data(), b.obj.data(), size_bytes);
+  return out;
+}
+
 }  // namespace xenos::dxbc_gen
 
 namespace xenos::hlsl {
