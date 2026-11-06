@@ -43,6 +43,7 @@ struct Running {
     int game = -1;
     int64_t started = 0;
     std::string logDir;
+    std::string exe;        // GitHub #194: the port program started (play_poll's missing-DLL check)
     bool prepare = false;   // job 641: a "Prepare all shaders" run (the game builds the pack, then exits)
 };
 

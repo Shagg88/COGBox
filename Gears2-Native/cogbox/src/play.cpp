@@ -29,6 +29,140 @@ static const char *exit_meaning(DWORD code)
     return nullptr;
 }
 
+// GitHub #194: 0xC0000135 (STATUS_DLL_NOT_FOUND) doesn't say which DLL. The exe's import table does: each DLL it
+// names is looked for where Windows looks (the exe's folder, COGBox's shared folder that goes first on the game's PATH,
+// System32, Windows, PATH), and the imports of the DLLs found outside Windows (ours, the runtime's) are checked too.
+// The file is mapped, not read, so only the header and import pages are touched. Delay-loaded DLLs don't stop a start
+// and are left out; api-ms-win-* / ext-ms-* names are API sets Windows resolves itself.
+static std::vector<std::string> pe_imports(const std::string &path)
+{
+    std::vector<std::string> out;
+    HANDLE f = CreateFileW(widen(path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return out;
+    LARGE_INTEGER sz = {};
+    HANDLE m = GetFileSizeEx(f, &sz) && sz.QuadPart >= 4096 ? CreateFileMappingW(f, nullptr, PAGE_READONLY, 0, 0, nullptr) : nullptr;
+    const uint8_t *b = m ? (const uint8_t *)MapViewOfFile(m, FILE_MAP_READ, 0, 0, 0) : nullptr;
+    const uint64_t n = (uint64_t)sz.QuadPart;
+    if (b) {
+        {   // every read below is checked against the file's size: a damaged file gives no names, not a crash
+            const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)b;
+            const uint64_t pe = dos->e_magic == IMAGE_DOS_SIGNATURE ? (uint32_t)dos->e_lfanew : n;
+            if (pe + sizeof(IMAGE_NT_HEADERS64) <= n && *(const DWORD *)(b + pe) == IMAGE_NT_SIGNATURE) {
+                const IMAGE_FILE_HEADER *fh = (const IMAGE_FILE_HEADER *)(b + pe + 4);
+                const uint8_t *opt = b + pe + 4 + sizeof(IMAGE_FILE_HEADER);
+                const WORD magic = *(const WORD *)opt;
+                const IMAGE_DATA_DIRECTORY *dd = nullptr;
+                DWORD ndd = 0;
+                if (magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+                    const IMAGE_OPTIONAL_HEADER64 *o = (const IMAGE_OPTIONAL_HEADER64 *)opt; dd = o->DataDirectory; ndd = o->NumberOfRvaAndSizes;
+                } else if (magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
+                    const IMAGE_OPTIONAL_HEADER32 *o = (const IMAGE_OPTIONAL_HEADER32 *)opt; dd = o->DataDirectory; ndd = o->NumberOfRvaAndSizes;
+                }
+                const IMAGE_SECTION_HEADER *sec = (const IMAGE_SECTION_HEADER *)(opt + fh->SizeOfOptionalHeader);
+                const uint64_t secEnd = (uint64_t)((const uint8_t *)(sec + fh->NumberOfSections) - b);
+                auto off = [&](DWORD rva) -> uint64_t {   // file offset of an RVA, n when it's in no section
+                    for (WORD i = 0; i < fh->NumberOfSections; i++) {
+                        const DWORD va = sec[i].VirtualAddress, len = std::max(sec[i].Misc.VirtualSize, sec[i].SizeOfRawData);
+                        if (rva >= va && rva - va < len) {
+                            const uint64_t o = (uint64_t)sec[i].PointerToRawData + (rva - va);
+                            return o < n ? o : n;
+                        }
+                    }
+                    return n;
+                };
+                if (dd && ndd > IMAGE_DIRECTORY_ENTRY_IMPORT && secEnd <= n && dd[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress) {
+                    uint64_t at = off(dd[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+                    for (int k = 0; k < 512 && at + sizeof(IMAGE_IMPORT_DESCRIPTOR) <= n; k++, at += sizeof(IMAGE_IMPORT_DESCRIPTOR)) {
+                        const IMAGE_IMPORT_DESCRIPTOR *d = (const IMAGE_IMPORT_DESCRIPTOR *)(b + at);
+                        if (!d->Name) break;
+                        const uint64_t s = off(d->Name);
+                        std::string name;
+                        for (uint64_t i = s; i < n && i < s + 260 && b[i]; i++) name += (char)b[i];
+                        if (!name.empty()) out.push_back(name);
+                    }
+                }
+            }
+        }
+        UnmapViewOfFile(b);
+    }
+    if (m) CloseHandle(m);
+    CloseHandle(f);
+    return out;
+}
+
+static std::string lower_ascii(std::string s) { for (char &c : s) if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a'); return s; }
+
+// The folders Windows looks in for the game's DLLs, in its order; [0] is the exe's own folder.
+static std::vector<std::string> dll_dirs(const std::string &exe)
+{
+    std::vector<std::string> v = { exe.substr(0, exe.find_last_of("\\/")) };
+    const std::string shared = join(exe_dir(), "shared");
+    if (dir_exists(shared)) v.push_back(shared);
+    wchar_t w[MAX_PATH];
+    UINT k = GetSystemDirectoryW(w, MAX_PATH);
+    if (k && k < MAX_PATH) v.push_back(narrow(w));
+    k = GetWindowsDirectoryW(w, MAX_PATH);
+    if (k && k < MAX_PATH) v.push_back(narrow(w));
+    DWORD len = GetEnvironmentVariableW(L"PATH", nullptr, 0);
+    if (len > 1 && len < (1u << 16)) {
+        std::wstring p(len, L'\0');
+        p.resize(GetEnvironmentVariableW(L"PATH", &p[0], len));
+        size_t at = 0;
+        while (at <= p.size()) {
+            size_t e = p.find(L';', at);
+            if (e == std::wstring::npos) e = p.size();
+            std::wstring d = p.substr(at, e - at);
+            d.erase(std::remove(d.begin(), d.end(), L'"'), d.end());
+            if (!d.empty()) v.push_back(narrow(d));
+            at = e + 1;
+        }
+    }
+    return v;
+}
+
+// The DLLs the game needs at start that are in none of those folders (lower case, each once). Empty when all are there
+// or the exe couldn't be read.
+static std::vector<std::string> missing_dlls(const std::string &exe)
+{
+    const std::vector<std::string> dirs = dll_dirs(exe);
+    const size_t own = dir_exists(join(exe_dir(), "shared")) ? 2 : 1;   // the exe's folder and shared: our files
+    std::vector<std::string> missing, seen, todo = { exe };
+    for (size_t t = 0; t < todo.size() && t < 24; t++) {   // the exe, then the DLLs of ours it pulls in (a few)
+        for (const std::string &raw : pe_imports(todo[t])) {
+            const std::string name = lower_ascii(raw);
+            if (name.rfind("api-ms-", 0) == 0 || name.rfind("ext-ms-", 0) == 0) continue;
+            if (std::find(seen.begin(), seen.end(), name) != seen.end()) continue;
+            seen.push_back(name);
+            size_t i = 0;
+            while (i < dirs.size() && !file_exists(join(dirs[i], raw))) i++;
+            if (i == dirs.size()) missing.push_back(name);
+            else if (i < own) todo.push_back(join(dirs[i], raw));
+        }
+    }
+    return missing;
+}
+
+// What usually brings a missing DLL back (English: appended after the translated message, like the DLL names).
+static std::string dll_fix(const std::string &name)
+{
+    if (name.rfind("vcruntime140", 0) == 0 || name.rfind("msvcp140", 0) == 0 || name.rfind("concrt140", 0) == 0 ||
+        name.rfind("vcomp140", 0) == 0 || name.rfind("ucrtbase", 0) == 0)
+        return "install the Microsoft Visual C++ 2015-2022 Redistributable (x64) from Microsoft (aka.ms/vs/17/release/vc_redist.x64.exe)";
+    if (name == "d3d12core.dll" || name == "d3d12sdklayers.dll" || name == "dxcompiler.dll" || name == "dxil.dll")
+        return "it ships in the COGBox zip - unzip the release again keeping every file (and check the antivirus didn't remove it)";
+    if (name == "d3d12.dll" || name == "dxgi.dll" || name == "vulkan-1.dll" || name.rfind("d3dcompiler_", 0) == 0 || name.rfind("xinput", 0) == 0)
+        return "part of Windows / the graphics driver - update Windows and the graphics driver";
+    return "unzip the COGBox release again keeping every file, and check the antivirus didn't remove it";
+}
+
+static std::string missing_dlls_text(const std::vector<std::string> &m)
+{
+    std::string s;
+    for (size_t i = 0; i < m.size() && i < 8; i++) s += (i ? "; " : "") + m[i] + " (" + dll_fix(m[i]) + ")";
+    return s;
+}
+
 static std::vector<std::string> crash_files(const std::string &dir)
 {
     std::vector<std::string> out;
@@ -168,6 +302,10 @@ void play_start(App &a, int g, bool prepare)
     for (size_t i = 0; i < a.gpus.size(); i++) argText += (i ? " / " : "") + a.gpus[i];
     argText += "\r\n";
     for (auto &n : notes) argText += n + "\r\n";
+    {   // GitHub #194: a DLL the game can't start without, said before it fails with 0xC0000135
+        const std::vector<std::string> miss = missing_dlls(exe);
+        if (!miss.empty()) argText += "launcher: DLL(s) the game imports that aren't in its folder, shared, System32 or PATH: " + missing_dlls_text(miss) + "\r\n";
+    }
     write_file(join(logDir, "args.txt"), argText);
 
     // The upscaler and shader-compiler DLLs every game uses are kept once, in <COGBox>\shared (Shagg 20:27, option 1):
@@ -212,6 +350,7 @@ void play_start(App &a, int g, bool prepare)
     a.run.game = g;
     a.run.started = unix_now();
     a.run.logDir = logDir;
+    a.run.exe = exe;
     a.run.prepare = prepare;
     if (prepare) return;   // job 641: the launcher stays up and shows the progress
     a.ini.seti("LastPlayed", d.key, a.run.started);
@@ -327,6 +466,11 @@ void play_poll(App &a)
     if (const char *m = known ? exit_meaning(code) : nullptr) what = m;
     else if (known && code != 0) what = "it ended with exit code " + hex32(code);
     else what = "it crashed";
+    if (known && code == 0xC0000135) {   // GitHub #194: which DLL (the names and fixes stay in English)
+        const std::vector<std::string> miss = missing_dlls(a.run.exe);
+        what += miss.empty() ? std::string(". Missing DLL: none found by COGBox's check of the game's imports")
+                             : ". Missing DLL: " + missing_dlls_text(miss);
+    }
     std::string log;
     if (read_file(join(a.run.logDir, d.logName), log, 64u << 20) &&
         (log.find("DEVICE_REMOVED") != std::string::npos || log.find("DEVICE_HUNG") != std::string::npos || log.find("DXGI_ERROR_DEVICE") != std::string::npos))
