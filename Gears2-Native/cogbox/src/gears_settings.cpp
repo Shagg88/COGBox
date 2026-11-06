@@ -1019,7 +1019,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                 a.push_back("--gow2_ao_cacao_blur=3");
             } else {
                 a.push_back(s.i("AO") == 3 ? "--gow2_ao_quality=ultra" : "--gow2_ao_quality=high");
-                // Shagg's to-do 1(d) (XeGTAO ~5 ms/frame): High denoises twice (medium), Ultra keeps the soft three passes
+                // Shagg's to-do 1(d) (XeGTAO ~5 ms/frame): High denoises twice (medium); Ultra leaves it to the game's
+                // automatic choice (#204: 2 without DLSS / FSR / XeSS, by the scene scale with one)
                 if (s.i("AO") == 2) a.push_back("--gow2_ao_denoise=2");
             }
         }

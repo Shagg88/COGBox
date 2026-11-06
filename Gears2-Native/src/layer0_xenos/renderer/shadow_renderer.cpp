@@ -5776,8 +5776,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       td.debug_name = "cacao half";
       if (step == 4) cc_half_ = backend_->CreateTexture(td);
       if (!ok || !cc_normals_ || (step == 4 && !cc_half_)) {
-        if (!ao_failed_logged_) REXLOG_WARN("gow2_ao: CACAO textures ({}x{}) could not be made", w, h);
+        if (!ao_failed_logged_) REXLOG_WARN("gow2_ao: CACAO textures ({}x{}) could not be made; XeGTAO from the next frame", w, h);
         ao_failed_logged_ = true;
+        cc_ok_ = false;  // review: no create / destroy every frame - the per-frame state then keeps XeGTAO
+        XenosAoDebugSetCacao(false, false, cc_blur_passes_);
         return false;
       }
       cc_w_ = w, cc_h_ = h, cc_step_ = step;
@@ -6088,10 +6090,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   double ao_gpu_ms_[kAoTagCount] = {};
   uint32_t ao_gpu_frames_ = 0;
   bool AoGpuTimed() const { return REXCVAR_GET(gow2_ao_gpu_log) > 0 && report_first_ == 0; }
-  void AoGpuCollect() {
+  void AoGpuCollect(const std::vector<gpu::GpuTagTime>& got) {  // AoEndFrame takes the times once for both AO logs
     if (!AoGpuTimed()) return;
-    std::vector<gpu::GpuTagTime> got;
-    backend_->TakeGpuTagTimes(got);
     for (const gpu::GpuTagTime& g : got)
       if (g.samples < 0.0 && g.tag >= kAoTagBase && g.tag < kAoTagBase + kAoTagCount) ao_gpu_ms_[g.tag - kAoTagBase] += g.ms;
     const uint32_t every = uint32_t(REXCVAR_GET(gow2_ao_gpu_log));
@@ -6114,14 +6114,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     for (double& v : ao_gpu_ms_) v = 0.0;
   }
   void AoEndFrame() {
-    AoGpuCollect();
+    // --gow2_ao_gpu_log and --gow2_ao_pass_times read the same GPU timers: one take feeds both (two takes would leave the
+    // second empty). Both are off while the draw report runs, which owns the timers.
+    static const bool pass_times = REXCVAR_GET(gow2_ao_pass_times);
+    std::vector<gpu::GpuTagTime> got;
+    if ((pass_times || AoGpuTimed()) && report_first_ == 0) backend_->TakeGpuTagTimes(got);
+    AoGpuCollect(got);
     const rr::ao::GtaoConstants* k = AoConstants();
     ++(k ? ao_frames_ok_ : ao_frames_none_);
     static const int32_t every = REXCVAR_GET(gow2_ao_log);
-    static const bool pass_times = REXCVAR_GET(gow2_ao_pass_times);
     if (pass_times) {
-      std::vector<gpu::GpuTagTime> got;
-      backend_->TakeGpuTagTimes(got);
       for (const gpu::GpuTagTime& g : got)
         if (g.tag > kAoPassTagBase && g.tag < kAoPassTagBase + kAoPassCount) ao_pass_ms_[g.tag - kAoPassTagBase] += g.ms;
     }
@@ -6181,12 +6183,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void UpdateMipBias() {
     static const std::string setting = REXCVAR_GET(gow2_upscale_mip_bias);
     static const bool wanted = setting != "off";
-    static const float fixed = wanted && setting != "auto" ? float(std::atof(setting.c_str())) : 0.0f;
+    static const bool is_auto = setting == "auto";  // a number, even 0, is used as given (0 = no bias)
+    static const float fixed = wanted && !is_auto ? float(std::atof(setting.c_str())) : 0.0f;
     static const bool logged = [] { XenosAoDebugSetMipBias(wanted); return true; }();
     (void)logged;
     float bias = 0.0f;
     if (XenosAoDebugMipBias() && up_scale_in_ && up_scale_in_ < res_scale_ && rts_->PhaseScale() == up_scale_in_)
-      bias = fixed != 0.0f ? fixed : std::log2(float(up_scale_in_) / float(res_scale_));
+      bias = !is_auto ? fixed : std::log2(float(up_scale_in_) / float(res_scale_));
     if (bias == mip_bias_) return;
     mip_bias_ = bias;
     static bool told = false;
