@@ -29,7 +29,7 @@ REXCVAR_DEFINE_STRING(cogbox_ach_position, "default", "COGBox",
                       "Achievement popup position: default, top_left, top_centre, top_right, bottom_left, bottom_centre, bottom_right");
 REXCVAR_DEFINE_BOOL(cogbox_ach_sound, true, "COGBox", "Play the achievement sound (assets\\sounds\\achievement.wav)");
 REXCVAR_DEFINE_BOOL(cogbox_ach_hide, false, "COGBox", "Hide achievement popups (no popup, no sound; achievements still unlock)");
-REXCVAR_DEFINE_BOOL(cogbox_ach_test_keys, false, "COGBox", "Test: F9 shows a sample achievement popup, F10 a sample Platinum");
+REXCVAR_DEFINE_BOOL(cogbox_ach_test_keys, false, "COGBox", "Test: F3 shows a sample achievement popup, F4 a sample Platinum (keys nothing else in the four games uses)");
 
 namespace xenos {
 
@@ -50,8 +50,8 @@ AchievementPopup::AchievementPopup(rex::ui::ImGuiDrawer* drawer, rex::ui::Immedi
   imgui_drawer()->RemoveDialog(this);  // the base registered it; nothing to show yet
   test_keys_ = REXCVAR_GET(cogbox_ach_test_keys);
   if (test_keys_) {
-    rex::ui::RegisterBind("bind_cogbox_ach_sample", "F9", "COGBox: sample achievement popup", [this] { PushSample(false); });
-    rex::ui::RegisterBind("bind_cogbox_ach_platinum", "F10", "COGBox: sample Platinum popup", [this] { PushSample(true); });
+    rex::ui::RegisterBind("bind_cogbox_ach_sample", "F3", "COGBox: sample achievement popup", [this] { PushSample(false); });
+    rex::ui::RegisterBind("bind_cogbox_ach_platinum", "F4", "COGBox: sample Platinum popup", [this] { PushSample(true); });
   }
 }
 
@@ -114,7 +114,7 @@ void AchievementPopup::PushSample(bool completes_game) {
   }
   if (e.info.label.empty()) {
     e.info.label = "Sample achievement";
-    e.info.description = "A sample popup (F9)";
+    e.info.description = "A sample popup (F3)";
     e.info.gamerscore = 50;
   }
   e.platinum = completes_game;

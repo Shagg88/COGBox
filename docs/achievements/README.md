@@ -11,3 +11,7 @@ Known follow-ups (none affects normal play): two simultaneous game-completing un
 the popup cvars are written on the UI thread while a guest thread may read them; the PS5 popup runs off screen below
 ~440 px wide; the font atlas is ~32 MB; a failed icon load stays "?"; sorted by name, a hidden secret sits at its real
 name's place; F7 does nothing with `cogbox_menu_enabled=false`.
+
+Testing: `--cogbox_ach_test_keys=true` (off by default) makes F3 show a sample popup and F4 a sample Platinum. F3 / F4
+are free in all four games (F1 menu, F2 / F5 / F6 / F8-F11 AO debug keys and Gears 3's cheat keys, F7 the
+Achievements page, F9 the upscaler capture key, Backslash the screenshot).
