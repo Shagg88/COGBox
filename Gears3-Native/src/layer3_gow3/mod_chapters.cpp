@@ -35,6 +35,7 @@
 #include "gow3_addresses.h"
 
 #include <algorithm>
+#include <cstring>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -67,6 +68,8 @@ std::atomic<bool> g_tableDone{false};
 std::atomic<uint32_t> g_chapterGame{0};     // the GearGameSP_Base while a new chapter's map is loaded
 std::atomic<bool> g_restore{false};         // a checkpoint has loaded: its sections back, on the game thread
 std::atomic<bool> g_started{false};
+int g_maxAct = -1;                          // the highest ActNum a mod's config declares (acts count from 0)
+std::atomic<bool> g_actCapDone{false};
 
 rex::memory::Memory* Mem() { return rex::Runtime::instance()->memory(); }
 uint32_t Alloc(uint32_t size) { return Mem()->SystemHeapAlloc(size); }
@@ -126,9 +129,11 @@ void ReadChapters() {
       const int32_t keys = i32();
       int num = -1;
       if (sec.rfind("Chapter", 0) == 0 && sec.find(" GearCampaignChapterData") != std::string::npos) num = atoi(sec.c_str() + 7);
+      const bool act = sec.rfind("Act", 0) == 0 && sec.find(" GearCampaignActData") != std::string::npos;
       for (int32_t k = 0; k < keys && ok; k++) {
         const std::string key = str(), value = str();
         if (num >= kFirstChapter && num <= kLastChapter && key == "MapName" && !value.empty()) g_chapters[num] = value;
+        if (act && key == "ActNum" && !value.empty()) g_maxAct = std::max(g_maxAct, atoi(value.c_str()));
       }
     }
   }
@@ -559,6 +564,38 @@ void Gow3ModFName() {
 }
 
 // Every engine tick, on the game thread (game_patches.cpp, the Gow3MaxTickRate hook)
+// TU6 hides the mods' acts: its patched UIWidget_MainMenu.ConstructActList (ScriptPatch_GearGame.bin) lists at most
+// five - a row is added `if (I < 5)` (bytecode 2C 05 16: IntConstByte 5) and after the loop
+// `CurrentList.SetFloat('length', 5.0)` (1E 40 A0 00 00) cuts the list; the base disc builds it from every act in
+// config. Both constants are raised to the mods' act count (acts are numbered 0, 1, 2 ... with no gaps) in the
+// function's script, once, found by pattern (each exactly once in a script buffer of the function object, else
+// nothing is changed). Game thread, before the menu is built.
+void RaiseActCap() {
+  const uint32_t fn = obj::FindObject("ConstructActList");
+  if (!fn) return;   // not loaded yet
+  g_actCapDone = true;
+  const int acts = g_maxAct + 1;
+  for (uint32_t off = 0x20; off < 0x100; off += 4) {
+    const uint32_t data = obj::Read32(fn + off), num = obj::Read32(fn + off + 4), cap = obj::Read32(fn + off + 8);
+    if (num < 0x200 || num > 0x4000 || cap < num || !obj::Readable(data, num)) continue;
+    const uint8_t* s = Mem()->TranslateVirtual<const uint8_t*>(data);
+    std::vector<uint32_t> ints, floats;
+    for (uint32_t i = 0; i + 5 <= num; i++) {
+      if (s[i] == 0x2C && s[i + 1] == 0x05 && s[i + 2] == 0x16) ints.push_back(i);
+      if (s[i] == 0x1E && s[i + 1] == 0x40 && s[i + 2] == 0xA0 && s[i + 3] == 0 && s[i + 4] == 0) floats.push_back(i);
+    }
+    if (ints.size() != 1 || floats.size() != 1) continue;
+    obj::Write8(data + ints[0] + 1, uint8_t(acts));
+    const float f = float(acts);
+    uint32_t u;
+    std::memcpy(&u, &f, 4);
+    for (int b = 0; b < 4; b++) obj::Write8(data + floats[0] + 1 + b, uint8_t(u >> (24 - 8 * b)));
+    REXLOG_INFO("mod chapters: Select Chapter lists {} acts (TU6's ConstructActList stopped at 5)", acts);
+    return;
+  }
+  REXLOG_INFO("mod chapters: ConstructActList has no five-act cap here (the base disc) - acts come from config as they are");
+}
+
 void Gow3ModChaptersTick() {
   if (!g_started) return;
   if (g_restore.exchange(false)) RestoreSections();
@@ -570,5 +607,6 @@ void Gow3ModChaptersTick() {
       else g_tableDone = false;
     }
   }
+  if (!g_actCapDone && g_maxAct >= 5) RaiseActCap();
   ContentPackagesTick();
 }
