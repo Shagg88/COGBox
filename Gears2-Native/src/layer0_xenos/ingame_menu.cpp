@@ -12,6 +12,8 @@
 #include <xenos/achievements_browser.h>   // achievements part 3: the Achievements page
 #include <xenos/achievements_popup_logic.h>   // achievements part 4: popup settings applied at once (LiveCvarFor)
 #include <xenos/input/prompt_device_monitor.h>
+#include <xenos/achievement_popup_assets.h>   // the in-game text's font (CJK / Cyrillic) when translated
+#include <xenos/ui_lang.h>   // --cogbox_ui_lang: XenosTr
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/runtime.h>
@@ -458,7 +460,10 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
                          ImGuiWindowFlags_NoCollapse)) {
       DrawPlate(scale);   // 0.2.0
 #if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 19200
-      ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.35f * scale);
+      // --cogbox_ui_lang: a translation needs the font with its glyphs (Inter / the PC's own, CJK merged); English keeps
+      // the menu's own font
+      ImFont* menu_font = XenosUiLangActive() ? XenosAchievementFont(false) : nullptr;
+      ImGui::PushFont(menu_font, ImGui::GetStyle().FontSizeBase * 1.35f * scale);
 #else
       ImGui::SetWindowFontScale(1.35f * scale);
 #endif
@@ -545,10 +550,10 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     ImGui::SetCursorPosY(ImGui::GetWindowHeight() - bar_h - ImGui::GetStyle().WindowPadding.y + ImGui::GetStyle().ItemSpacing.y);
     ImGui::Separator();
     const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-    if (ImGui::Button("Back to settings", ImVec2(bw, 0))) ShowPage(MenuPage::kSettings);
+    if (ImGui::Button(XenosTr("Back to settings"), ImVec2(bw, 0))) ShowPage(MenuPage::kSettings);
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.10f, 0.08f, 1.0f));
-    if (ImGui::Button("Resume", ImVec2(bw, 0))) done_ = true;
+    if (ImGui::Button(XenosTr("Resume"), ImVec2(bw, 0))) done_ = true;
     ImGui::PopStyleColor();
     page_first_frame_ = false;
   }
@@ -638,16 +643,16 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     }
     ImGui::TextUnformatted("COGBOX");
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", (g_file.game.empty() ? std::string("GAME MENU") : g_file.game).c_str());
+    ImGui::TextDisabled("%s", (g_file.game.empty() ? std::string(XenosTr("GAME MENU")) : g_file.game).c_str());
     ImGui::SameLine();
     if (page_ == MenuPage::kAchievements) {
-      ImGui::TextDisabled("   %s", xenos::ach::HintLine(REXCVAR_GET(cogbox_menu_ps)));
+      ImGui::TextDisabled("   %s", XenosTr(xenos::ach::HintLine(REXCVAR_GET(cogbox_menu_ps))));
       ImGui::Separator();
       DrawAchievements(scale);
       return;
     }
-    ImGui::TextDisabled(REXCVAR_GET(cogbox_menu_ps) ? "   L1 / R1: tabs   Cross: change   Circle: back to the game"   // job 523
-                                                    : "   LB / RB: tabs   A: change   B: back to the game");
+    ImGui::TextDisabled("   %s", XenosTr(REXCVAR_GET(cogbox_menu_ps) ? "L1 / R1: tabs   Cross: change   Circle: back to the game"   // job 523
+                                                                     : "LB / RB: tabs   A: change   B: back to the game"));
     ImGui::Separator();
     const float bar_h = ImGui::GetFrameHeightWithSpacing() * 2.6f;
     const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -659,7 +664,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
         if (i) ImGui::SameLine();
         const bool sel = i == tab_;
         if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.10f, 0.08f, 1.0f));
-        if (ImGui::Button((g_file.tabs[size_t(i)] + "##tab").c_str(), ImVec2(tw, 0))) tab_ = i;
+        if (ImGui::Button((XenosTr(g_file.tabs[size_t(i)]) + "##tab").c_str(), ImVec2(tw, 0))) tab_ = i;
         if (sel) ImGui::PopStyleColor();
       }
       // the rows
@@ -716,31 +721,31 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
       ImGui::PopTextWrapPos();
       ImGui::SetCursorPosY(ImGui::GetWindowHeight() - bar_h - ImGui::GetStyle().WindowPadding.y + ImGui::GetStyle().ItemSpacing.y);
     } else {
-      ImGui::TextWrapped("Start the game from COGBox to change its settings here.");
+      ImGui::TextWrapped("%s", XenosTr("Start the game from COGBox to change its settings here."));
       ImGui::SetCursorPosY(ImGui::GetWindowHeight() - bar_h - ImGui::GetStyle().WindowPadding.y + ImGui::GetStyle().ItemSpacing.y);
     }
     ApplyLive();   // achievements part 4
     // the bar
     ImGui::Separator();
     const int n = Changes();
-    if (n) ImGui::TextDisabled("%d change(s) - they take effect when the game restarts.", n);
+    if (n) ImGui::TextDisabled("%d %s", n, XenosTr("change(s) - they take effect when the game restarts."));
     else if (g_file.tabs.size() > size_t(tab_) && g_file.tabs[size_t(tab_)] == "Achievements")   // achievements part 4
-      ImGui::TextDisabled("Achievement popup settings take effect straight away.");
-    else ImGui::TextDisabled("Settings take effect when the game restarts.");
+      ImGui::TextDisabled("%s", XenosTr("Achievement popup settings take effect straight away."));
+    else ImGui::TextDisabled("%s", XenosTr("Settings take effect when the game restarts."));
     const float bw = (ImGui::GetContentRegionAvail().x - 3 * ImGui::GetStyle().ItemSpacing.x) / 4.0f;
     if (page_first_frame_) ImGui::SetKeyboardFocusHere();
     page_first_frame_ = false;
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.10f, 0.08f, 1.0f));   // 0.2.0: Resume is the crimson main button
-    if (ImGui::Button("Resume", ImVec2(bw, 0))) done_ = true;
+    if (ImGui::Button(XenosTr("Resume"), ImVec2(bw, 0))) done_ = true;
     ImGui::PopStyleColor();
     ImGui::SameLine();
-    if (ImGui::Button("Achievements", ImVec2(bw, 0))) ShowPage(MenuPage::kAchievements);   // achievements part 3
+    if (ImGui::Button(XenosTr("Achievements"), ImVec2(bw, 0))) ShowPage(MenuPage::kAchievements);   // achievements part 3
     ImGui::SameLine();
     if (!n || g_file.restart_path.empty()) ImGui::BeginDisabled();
-    if (ImGui::Button(n ? ("Restart to apply (" + std::to_string(n) + ")").c_str() : "Restart to apply", ImVec2(bw, 0))) Finish(true);
+    if (ImGui::Button(n ? (std::string(XenosTr("Restart to apply")) + " (" + std::to_string(n) + ")").c_str() : XenosTr("Restart to apply"), ImVec2(bw, 0))) Finish(true);
     if (!n || g_file.restart_path.empty()) ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Quit game", ImVec2(bw, 0))) Finish(false);
+    if (ImGui::Button(XenosTr("Quit game"), ImVec2(bw, 0))) Finish(false);
   }
 
   ImGuiConfigFlags saved_config_ = 0;

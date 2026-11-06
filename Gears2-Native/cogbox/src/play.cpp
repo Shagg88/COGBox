@@ -4,6 +4,7 @@
 #include "app.h"
 #include "report.h"
 #include "theme.h"
+#include "i18n.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -204,13 +205,15 @@ static void write_menu_file(App &a, int g, gs::Version ver, const std::string &l
         const char *kind = o.kind == gs::Kind::Bool ? "bool" : o.kind == gs::Kind::Choice ? "choice" : o.kind == gs::Kind::Int ? "int" : "float";
         char nums[160];
         snprintf(nums, sizeof nums, "value=%.6g\r\nmin=%.6g\r\nmax=%.6g\r\nstep=%.6g\r\ndecimals=%d\r\n", v, o.min, o.max, o.step, o.decimals);
-        t += "[option]\r\nid=" + o.id + "\r\ntab=" + gs::tab_name(o.tab) + "\r\nlabel=" + one_line(o.label) + "\r\nkind=" + kind + "\r\n" + nums;
+        // the texts in the launcher's language (the game shows them as given); the tab stays English - the game matches
+        // "Achievements" by it and translates its button itself (--cogbox_ui_lang)
+        t += "[option]\r\nid=" + o.id + "\r\ntab=" + gs::tab_name(o.tab) + "\r\nlabel=" + one_line(tr(o.label)) + "\r\nkind=" + kind + "\r\n" + nums;
         if (!choices.empty()) {
             t += "choices=";
-            for (size_t i = 0; i < choices.size(); i++) t += (i ? "|" : "") + one_line(choices[i]);
+            for (size_t i = 0; i < choices.size(); i++) t += (i ? "|" : "") + one_line(o.id == "Monitor" ? choices[i] : tr(choices[i]));
             t += "\r\n";
         }
-        t += std::string("enabled=") + (av.ok ? "1" : "0") + "\r\nwhy=" + one_line(av.why) + "\r\ntip=" + one_line(gs::tooltip_for(o, G, av, a.env[g])) + "\r\n";
+        t += std::string("enabled=") + (av.ok ? "1" : "0") + "\r\nwhy=" + one_line(tr(av.why)) + "\r\ntip=" + one_line(tr(gs::tooltip_for(o, G, av, a.env[g]))) + "\r\n";
     }
     write_file(join(logDir, "menu.txt"), t);
 }
@@ -301,6 +304,10 @@ void play_start(App &a, int g, bool prepare)
     // for that text anyway), so the 82 MB exe is searched once for achievements instead of twice (~0.3 s each).
     if (a.env[g].cap.exe_has && a.env[g].cap.exe_has("COGBox achievement popups"))
         args.push_back("--cogbox_dir=\"" + exe_dir() + "\"");
+    // The in-game text (menu, Achievements page, popups, shader notes) in the launcher's language, from lang\<code>.txt
+    // beside CogBox.exe - only an exe that has the option (an older one would refuse it)
+    if (a.env[g].cap.exe_has && i18n_current() != "en" && a.env[g].cap.exe_has("COGBox in-game language"))
+        args.push_back("--cogbox_ui_lang=" + i18n_current());
     std::string argText;
     for (auto &s : args) argText += s + "\r\n";
     argText += "launcher: COGBox " COGBOX_VERSION ", game " + std::string(d.name) + ", exe " + exe + "\r\n";

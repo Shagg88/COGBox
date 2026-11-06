@@ -4,6 +4,7 @@
 #include <xenos/achievements_export.h>
 
 #include "popup_styles.h"
+#include <xenos/ui_lang.h>   // --cogbox_ui_lang: the page in the launcher's language
 
 #include <rex/filesystem.h>
 #include <rex/logging.h>
@@ -94,6 +95,10 @@ void AchievementsBrowser::Reload() {
                                ach::CurrentRarityProvider(), dir_);
   }
   sidebar_ = ach::BuildSidebar(games_, running_title_);
+  for (ach::BrowserEntry& e : sidebar_) {  // the model's English (shared with the launcher and its tests)
+    if (e.all) e.name = XenosTr(e.name);
+    if (!e.loaded) e.line = XenosTr(e.line);
+  }
   sel_ = 0;
   for (size_t i = 0; i < sidebar_.size(); ++i)
     if (sel_game_ != -2 && sidebar_[i].all == sel_all_ && (sel_all_ || sidebar_[i].game == sel_game_)) sel_ = i;
@@ -106,6 +111,12 @@ void AchievementsBrowser::RebuildRows() {
     return;
   }
   rows_ = ach::BuildRows(games_, sidebar_[sel_], sort_, show_, LocalOffsetMinutes);
+  if (XenosUiLangActive())
+    for (ach::BrowserRow& r : rows_) {
+      if (r.hidden_secret) r.name = XenosTr(r.name), r.text = XenosTr(r.text);  // ours; a real name is the game's
+      r.status = XenosTrWords(r.status, {"Unlocked", "Locked"});
+      r.rarity = XenosTrWords(r.rarity, {"Rare"});
+    }
 }
 
 void AchievementsBrowser::Select(size_t index) {
@@ -193,7 +204,7 @@ void AchievementsBrowser::DrawSidebar(float s, float height) {
     const ImU32 name_col = e.loaded ? kText : IM_COL32(119, 119, 119, 255);
     float x = p.x + pad;
     popup::Text(dl, true, 17.f * s, ImVec2(x, p.y + pad * 0.6f), name_col, e.name, w - 2 * pad);
-    if (e.this_game) Tag(dl, ImVec2(x + popup::TextWidth(true, 17.f * s, e.name) + 6.f * s, p.y + pad * 0.7f), 11.f * s, "This game");
+    if (e.this_game) Tag(dl, ImVec2(x + popup::TextWidth(true, 17.f * s, e.name) + 6.f * s, p.y + pad * 0.7f), 11.f * s, XenosTr("This game"));
     if (e.loaded) Bar(dl, ImVec2(x, p.y + 30.f * s), ImVec2(q.x - pad, p.y + 35.f * s), ach::PercentByGp(e.totals));
     popup::Text(dl, false, 15.f * s, ImVec2(x, p.y + (e.loaded ? 39.f : 33.f) * s), kDim, e.line, w - 2 * pad);
   }
@@ -210,7 +221,9 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
   const float w = ImGui::GetContentRegionAvail().x;
   // header
   if (!sidebar_.empty()) {
-    const ach::BrowserHeader hd = ach::HeaderFor(sidebar_[sel_]);
+    ach::BrowserHeader hd = ach::HeaderFor(sidebar_[sel_]);
+    if (sidebar_[sel_].all) hd.title = XenosTr("All played games");
+    hd.counts = XenosTrWords(hd.counts, {"achievements"});
     const ImVec2 p = ImGui::GetCursorScreenPos();
     popup::Text(dl, true, 21.f * s, p, kText, hd.title, w);
     popup::Text(dl, false, 17.f * s, ImVec2(p.x, p.y + 28.f * s), kSoft, hd.counts, w);
@@ -219,13 +232,13 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
   }
   // Sort / Show
   ImGui::AlignTextToFramePadding();
-  ImGui::TextUnformatted("Sort:");
+  ImGui::TextUnformatted(XenosTr("Sort:"));
   ImGui::SameLine();
   ImGui::SetNextItemWidth(190.f * s);
-  if (ImGui::BeginCombo("##sort", ach::SortName(sort_))) {
+  if (ImGui::BeginCombo("##sort", XenosTr(ach::SortName(sort_)))) {
     for (ach::SortOrder o : {ach::SortOrder::kUnlockTime, ach::SortOrder::kRarity, ach::SortOrder::kGameOrder,
                              ach::SortOrder::kGamerscore, ach::SortOrder::kName}) {
-      if (ImGui::Selectable(ach::SortName(o), o == sort_) && o != sort_) {
+      if (ImGui::Selectable(XenosTr(ach::SortName(o)), o == sort_) && o != sort_) {
         sort_ = o;
         scroll_top_ = true;
         RebuildRows();
@@ -235,12 +248,12 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
     ImGui::EndCombo();
   }
   ImGui::SameLine();
-  ImGui::TextUnformatted("  Show:");
+  ImGui::Text("  %s", XenosTr("Show:"));
   ImGui::SameLine();
   ImGui::SetNextItemWidth(140.f * s);
-  if (ImGui::BeginCombo("##show", ach::ShowName(show_))) {
+  if (ImGui::BeginCombo("##show", XenosTr(ach::ShowName(show_)))) {
     for (ach::ShowFilter f : {ach::ShowFilter::kAll, ach::ShowFilter::kUnlocked, ach::ShowFilter::kLocked}) {
-      if (ImGui::Selectable(ach::ShowName(f), f == show_) && f != show_) {
+      if (ImGui::Selectable(XenosTr(ach::ShowName(f)), f == show_) && f != show_) {
         show_ = f;
         scroll_top_ = true;
         RebuildRows();
@@ -259,7 +272,10 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
     ImDrawList* rl = ImGui::GetWindowDrawList();
     const float rw = ImGui::GetContentRegionAvail().x, rh = 82.f * s, icon = 52.f * s, pad = 10.f * s;   // part 4: room for a 2-line description
     if (rows_.empty() && !sidebar_.empty()) {
-      const std::string msg = ach::EmptyMessage(sidebar_[sel_], show_);
+      // "Start <game> once..." has the game's name in it: one sentence per case for the translations
+      const ach::BrowserEntry& se = sidebar_[sel_];
+      const std::string msg = !se.loaded && !se.all ? std::string(XenosTr("Start this game once from COGBox to load its achievements."))
+                                                    : XenosTr(ach::EmptyMessage(se, show_));
       const float tw = popup::TextWidth(false, 16.f * s, msg);
       const ImVec2 p = ImGui::GetCursorScreenPos();
       popup::Text(rl, false, 16.f * s, ImVec2(p.x + std::max(0.f, (rw - tw) * 0.5f), p.y + 40.f * s), kDim, msg, rw);
@@ -314,13 +330,13 @@ void AchievementsBrowser::DrawMain(float s, float height, std::string* tip) {
                       IM_COL32(230, 195, 74, 255), r.rarity, right_w);
         // name (+ tags) and text
         float tags = 0;
-        if (r.secret_tag) tags += popup::TextWidth(true, 11.f * s, "Secret") + 14.f * s;
+        if (r.secret_tag) tags += popup::TextWidth(true, 11.f * s, XenosTr("Secret")) + 14.f * s;
         if (!r.game_label.empty()) tags += popup::TextWidth(true, 11.f * s, r.game_label.c_str()) + 14.f * s;
         const ImU32 name_col = r.hidden_secret ? IM_COL32(153, 153, 153, 255) : r.locked ? IM_COL32(187, 187, 187, 255) : kText;
         const float name_w = std::max(10.f, text_w - tags);
         popup::Text(rl, true, 17.f * s, ImVec2(tx, ny), name_col, r.name, name_w);
         float tag_x = tx + std::min(name_w, popup::TextWidth(true, 17.f * s, r.name)) + 6.f * s;
-        if (r.secret_tag) tag_x += Tag(rl, ImVec2(tag_x, ny + 3.f * s), 11.f * s, "Secret") + 6.f * s;
+        if (r.secret_tag) tag_x += Tag(rl, ImVec2(tag_x, ny + 3.f * s), 11.f * s, XenosTr("Secret")) + 6.f * s;
         if (!r.game_label.empty()) Tag(rl, ImVec2(tag_x, ny + 3.f * s), 11.f * s, r.game_label.c_str());
         for (size_t li = 0; li < lines.size(); ++li)
           popup::Text(rl, false, 16.f * s, ImVec2(tx, ny + (25.f + 19.f * float(li)) * s), kSoft, lines[li], text_w + 1.f);
@@ -344,15 +360,15 @@ void AchievementsBrowser::DrawReveal(float s) {
                                   ImGuiWindowFlags_AlwaysAutoResize))
     return;
   reveal_open_ = true;
-  ImGui::TextUnformatted("Reveal this secret achievement?");
+  ImGui::TextUnformatted(XenosTr("Reveal this secret achievement?"));
   ImGui::PushTextWrapPos(0.0f);
-  ImGui::TextDisabled("Its name, description and icon will be shown in every game and in the launcher.");
-  if (reveal_failed_) ImGui::TextColored(ImVec4(0.92f, 0.30f, 0.25f, 1.f), "Couldn't save - is the COGBox folder read-only?");
+  ImGui::TextDisabled("%s", XenosTr("Its name, description and icon will be shown in every game and in the launcher."));
+  if (reveal_failed_) ImGui::TextColored(ImVec4(0.92f, 0.30f, 0.25f, 1.f), "%s", XenosTr("Couldn't save - is the COGBox folder read-only?"));
   ImGui::PopTextWrapPos();
   ImGui::Spacing();
   const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
   bool close = false;
-  if (ImGui::Button("Yes, reveal it", ImVec2(bw, 0))) {
+  if (ImGui::Button(XenosTr("Yes, reveal it"), ImVec2(bw, 0))) {
     if (ach::AddRevealed(dir_, reveal_.first, reveal_.second)) {
       REXLOG_INFO("achievements: revealed {:08X}:{}", reveal_.first, reveal_.second);
       close = true;
@@ -366,7 +382,7 @@ void AchievementsBrowser::DrawReveal(float s) {
   ImGui::SameLine();
   if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
   ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.10f, 0.08f, 1.0f));
-  if (ImGui::Button("No, keep it secret", ImVec2(bw, 0))) close = true;
+  if (ImGui::Button(XenosTr("No, keep it secret"), ImVec2(bw, 0))) close = true;
   ImGui::PopStyleColor();
   // B / Esc: No (a modal does not close on Cancel by itself)
   if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) close = true;

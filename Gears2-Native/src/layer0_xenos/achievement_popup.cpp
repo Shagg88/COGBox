@@ -4,6 +4,7 @@
 #include <xenos/achievements_data.h>
 
 #include "popup_styles.h"
+#include <xenos/ui_lang.h>   // --cogbox_ui_lang
 
 #include <rex/logging.h>
 #include <rex/runtime.h>
@@ -113,7 +114,7 @@ void AchievementPopup::PushSample(bool completes_game) {
     if (!list.empty()) e.info = list.front();
   }
   if (e.info.label.empty()) {
-    e.info.label = "Sample achievement";
+    e.info.label = XenosTr("Sample achievement");
     e.info.description = "A sample popup (F3)";
     e.info.gamerscore = 50;
   }
@@ -187,18 +188,18 @@ void AchievementPopup::OnDraw(ImGuiIO& io) {
   switch (e.style) {
     case ach::PopupStyle::Xbox: {
       char rare[96];
-      std::snprintf(rare, sizeof(rare), "Rare achievement unlocked - %.2f%%", e.rare_percent);
-      d.title = e.rare ? rare : "Achievement unlocked!";
+      std::snprintf(rare, sizeof(rare), "%s - %.2f%%", XenosTr("Rare achievement unlocked"), e.rare_percent);
+      d.title = e.rare ? rare : XenosTr("Achievement unlocked!");
       popup::DrawXbox(dl, d);
       break;
     }
     case ach::PopupStyle::Ps5:
       d.title = e.platinum ? e.game_name : e.info.label;
-      d.sub = e.platinum ? "Platinum trophy earned!" : "Trophy earned!";
+      d.sub = XenosTr(e.platinum ? "Platinum trophy earned!" : "Trophy earned!");
       popup::DrawPs5(dl, d);
       break;
     default:
-      d.title = "Achievement unlocked";
+      d.title = XenosTr("Achievement unlocked");
       popup::DrawX360(dl, d);
       break;
   }

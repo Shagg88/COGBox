@@ -4,6 +4,8 @@
 // second. For both games (shared layer 0); the game's own counter (--gow2_patch_show_fps) is a column and a patch.
 // Our code (MIT).
 #include <xenos/dev_tools.h>
+#include <xenos/achievement_popup_assets.h>   // the translated notes' font
+#include <xenos/ui_lang.h>   // --cogbox_ui_lang
 
 #include <rex/cvar.h>
 #include <rex/ui/imgui_dialog.h>
@@ -114,6 +116,20 @@ std::atomic<uint32_t> g_hold_total{0}, g_hold_left{0};
 // while no shaders are building - kept the presenter repainting at the monitor's rate (180 Hz on Shagg's PC), and the
 // overlays counted those repaints as frames (the 0054 achievement-toast problem again). Now it is only on the drawer
 // while the renderer has pipeline work or holds a frame: it leaves when idle and is added back on the UI thread.
+// --cogbox_ui_lang: a translated note is drawn with the font that has its glyphs (Inter / the PC's own, CJK merged)
+struct UiLangFont {
+  bool pushed = false;
+  UiLangFont() {
+#if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 19200
+    if (XenosUiLangActive())
+      if (ImFont* f = XenosAchievementFont(false)) ImGui::PushFont(f, 0.0f), pushed = true;
+#endif
+  }
+  ~UiLangFont() {
+    if (pushed) ImGui::PopFont();
+  }
+};
+
 class ShaderNote final : public rex::ui::ImGuiDialog {
  public:
   ShaderNote(rex::ui::ImGuiDrawer* drawer, rex::ui::WindowedAppContext* ui)
@@ -141,6 +157,7 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
 
  protected:
   void OnDraw(ImGuiIO& io) override {
+    const UiLangFont font;
     using clock = std::chrono::steady_clock;
     const clock::time_point now = clock::now();
     if (g_hold_active.load(std::memory_order_acquire)) {
@@ -165,8 +182,11 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
     const uint64_t total = ever > batch_base_ ? ever - batch_base_ : left;
     const uint64_t done = total > left ? total - left : 0;
     const int pct = int(std::min<uint64_t>(99, total ? done * 100 / total : 0));
-    char text[96];
-    std::snprintf(text, sizeof(text), "Building shaders %d%%  (%llu left)", pct, (unsigned long long)left);
+    char text[192];
+    if (XenosUiLangActive())  // the count alone: a lone "left" has no safe translation key
+      std::snprintf(text, sizeof(text), "%s %d%%  (%llu)", XenosTr("Building shaders"), pct, (unsigned long long)left);
+    else
+      std::snprintf(text, sizeof(text), "Building shaders %d%%  (%llu left)", pct, (unsigned long long)left);
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
     ImGui::SetNextWindowBgAlpha(0.40f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * scale, 3.0f * scale));
@@ -195,8 +215,8 @@ class ShaderNote final : public rex::ui::ImGuiDialog {
     const uint32_t total = g_hold_total.load(std::memory_order_relaxed);
     const uint32_t left = g_hold_left.load(std::memory_order_relaxed);
     const int pct = total ? int(std::min<uint32_t>(99, (total - std::min(left, total)) * 100u / total)) : 0;
-    char text[64];
-    std::snprintf(text, sizeof(text), "Loading shaders %d%%", pct);
+    char text[160];
+    std::snprintf(text, sizeof(text), "%s %d%%", XenosTr("Loading shaders"), pct);
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
     const ImVec2 ts = ImGui::CalcTextSize(text);
     const float r = 9.0f * scale, pad = 10.0f * scale;

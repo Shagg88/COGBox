@@ -1,6 +1,7 @@
 // Layer 0 (game-free): the achievement popups' fonts and sound - see xenos/achievement_popup_assets.h. Our code (MIT).
 #include <xenos/achievement_popup_assets.h>
 #include <xenos/achievements_data.h>
+#include <xenos/ui_lang.h>
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -83,8 +84,21 @@ void XenosConfigureAchievementFonts(ImFontAtlas* atlas) {
   static const ImWchar kWestern[] = {0x0020, 0x024F, 0x0370, 0x03FF, 0x0400, 0x052F, 0x2000, 0x206F, 0x20A0, 0x20CF, 0};
 
   // Korean / Chinese characters: those the cached achievement lists use (part 1's catalogs, any game).
+  // And those of the in-game text's translation (--cogbox_ui_lang: Japanese, Korean, Chinese).
   std::vector<uint32_t> hangul, han;
   const std::filesystem::path cogbox = XenosCogboxDir();
+  auto classify = [&](const std::vector<uint32_t>& cps) {
+    for (uint32_t cp : cps) {
+      if ((cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0x1100 && cp <= 0x11FF) || (cp >= 0x3130 && cp <= 0x318F)) hangul.push_back(cp);
+      else if (cp >= 0x2E80 && cp <= 0x9FFF) han.push_back(cp);  // also kana and CJK punctuation (0x3000-)
+      else if (cp >= 0xFF00 && cp <= 0xFFEF) han.push_back(cp);  // full-width forms
+    }
+  };
+  {
+    std::vector<uint32_t> lang_cps;
+    AddCodepoints(XenosUiLangAllText(), &lang_cps);
+    classify(lang_cps);
+  }
   for (const auto& g : xenos::ach::kGames) {
     const auto cat = xenos::ach::LoadCatalog(cogbox, g.title_id);
     if (!cat) continue;
@@ -95,11 +109,7 @@ void XenosConfigureAchievementFonts(ImFontAtlas* atlas) {
       AddCodepoints(e.unachieved, &cps);
     }
     AddCodepoints(cat->game, &cps);
-    for (uint32_t cp : cps) {
-      if ((cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0x1100 && cp <= 0x11FF) || (cp >= 0x3130 && cp <= 0x318F)) hangul.push_back(cp);
-      else if (cp >= 0x2E80 && cp <= 0x9FFF) han.push_back(cp);
-      else if (cp >= 0xFF00 && cp <= 0xFFEF) han.push_back(cp);  // full-width forms
-    }
+    classify(cps);
   }
   static std::vector<ImWchar> hangul_ranges, han_ranges;  // the atlas keeps the pointers until it is built
   hangul_ranges = RangesFor(hangul);
@@ -118,7 +128,12 @@ void XenosConfigureAchievementFonts(ImFontAtlas* atlas) {
     if (hangul_ranges.size() > 1 && Exists(dir / "malgun.ttf"))
       atlas->AddFontFromFileTTF(rex::path_to_utf8(dir / "malgun.ttf").c_str(), px, &m, hangul_ranges.data());
     if (han_ranges.size() > 1) {
-      for (const char* cjk : {"msyh.ttc", "msjh.ttc", "simsun.ttc"}) {
+      // Japanese in-game text: a Japanese font first (Chinese ones draw kanji in their own forms)
+      static const bool ja = XenosUiLangCode() == "ja";
+      static const char* const kJa[] = {"YuGothM.ttc", "meiryo.ttc", "msgothic.ttc", "msyh.ttc", "msjh.ttc", "simsun.ttc", nullptr};
+      static const char* const kZh[] = {"msyh.ttc", "msjh.ttc", "simsun.ttc", nullptr};
+      for (const char* const* c = ja ? kJa : kZh; *c; ++c) {
+        const char* cjk = *c;
         if (!Exists(dir / cjk)) continue;
         atlas->AddFontFromFileTTF(rex::path_to_utf8(dir / cjk).c_str(), px, &m, han_ranges.data());
         break;
