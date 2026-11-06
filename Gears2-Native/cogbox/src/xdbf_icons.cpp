@@ -124,7 +124,7 @@ bool parse_xex_images(const std::string &file, std::vector<Image> &out, uint32_t
     if (n < 0x18 || std::memcmp(d, "XEX2", 4) != 0) return fail(err, "not an XEX2 file");
     const uint32_t flags = be32(d + 4), hdr = be32(d + 8), sec = be32(d + 0x10), cnt = be32(d + 0x14);
     if (flags & 0x60) return fail(err, "a title update patch, not a game");
-    if (hdr > n || sec + 0x184 > n || 0x18 + uint64_t(cnt) * 8 > hdr) return fail(err, "damaged XEX header");
+    if (hdr > n || uint64_t(sec) + 0x184 > n || 0x18 + uint64_t(cnt) * 8 > hdr) return fail(err, "damaged XEX header");
     uint32_t ff = 0, res = 0, exec = 0;
     for (uint32_t i = 0; i < cnt; i++) {
         const uint32_t k = be32(d + 0x18 + 8 * i), v = be32(d + 0x1C + 8 * i);
@@ -132,8 +132,8 @@ bool parse_xex_images(const std::string &file, std::vector<Image> &out, uint32_t
         else if (k == 0x000002FF) res = v;
         else if (k == 0x00040006) exec = v;
     }
-    if (title_id) *title_id = exec && exec + 16 <= hdr ? be32(d + exec + 12) : 0;
-    if (!ff || ff + 8 > hdr || !res || res + 4 > hdr) return fail(err, "no file format or resource header");
+    if (title_id) *title_id = exec && uint64_t(exec) + 16 <= hdr ? be32(d + exec + 12) : 0;
+    if (!ff || uint64_t(ff) + 8 > hdr || !res || uint64_t(res) + 4 > hdr) return fail(err, "no file format or resource header");
     const uint32_t image_size = be32(d + sec + 4), load = be32(d + sec + 0x110);
     const uint16_t enc = be16(d + ff + 4), comp = be16(d + ff + 6);
     const uint32_t ff_size = be32(d + ff);
@@ -162,7 +162,7 @@ bool parse_xex_images(const std::string &file, std::vector<Image> &out, uint32_t
                 const uint64_t want = r.addr - load;
                 uint64_t img = 0, pay = 0;
                 bool found = false;
-                for (uint32_t b = 0; b < nb && ff + 16 + 8 * b <= hdr; b++) {
+                for (uint32_t b = 0; b < nb && uint64_t(ff) + 16 + 8ull * b <= hdr; b++) {
                     const uint32_t dsz = be32(d + ff + 8 + 8 * b), zsz = be32(d + ff + 12 + 8 * b);
                     if (want >= img && want + r.size <= img + dsz) { pay += want - img; found = true; break; }
                     img += uint64_t(dsz) + zsz;
@@ -181,7 +181,7 @@ bool parse_xex_images(const std::string &file, std::vector<Image> &out, uint32_t
             }
         } else if (comp == 2) {
             // "normal": the whole image is one LZX stream in hashed blocks
-            if (ff + 36 > hdr) return fail(err, "damaged file format header");
+            if (uint64_t(ff) + 36 > hdr) return fail(err, "damaged file format header");
             const uint32_t window = be32(d + ff + 8);
             int bits = 0;
             while (bits < 32 && (1u << bits) < window) bits++;

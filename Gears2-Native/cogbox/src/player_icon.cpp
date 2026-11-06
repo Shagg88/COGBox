@@ -76,7 +76,14 @@ void extract_xdbf(const std::string &dataDir, uint32_t tid)
     std::vector<xdbf::Image> imgs;
     uint32_t got = 0;
     std::string err;
-    if (!xdbf::read_xex_images(cogbox::cogbox_path(dataDir + "\\default.xex"), imgs, &got, &err) || (got && got != tid)) return;
+    if (!xdbf::read_xex_images(cogbox::cogbox_path(dataDir + "\\default.xex"), imgs, &got, &err) || (got && got != tid)) {
+        // review: a copy whose XEX can't be read is marked too, so it is not decrypted again on every ICON press
+        if (fs::exists(cogbox::cogbox_path(dataDir + "\\default.xex"), ec)) {
+            fs::create_directories(cogbox::cogbox_path(full_path(dir)), ec);
+            write_file(full_path(dir + "/xdbf.ok"), "0 (" + err + ")\n");
+        }
+        return;
+    }
     fs::create_directories(cogbox::cogbox_path(full_path(dir)), ec);
     int n = 0;
     for (const xdbf::Image &im : imgs) {
