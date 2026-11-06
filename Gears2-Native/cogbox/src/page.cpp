@@ -23,9 +23,10 @@
 // release (games: bit per GameId - 1 Gears 2, 2 Gears 3, 4 Judgment, 8 Gears 1; 15 = all).
 struct HelpTest { unsigned games; const char *text; };
 static const HelpTest k_helpTest[] = {
-    { 2,  "Sudden death / \"cursed\" save, or a teammate killing you (#55, #68, #79, #80): if it happens to you, play to a checkpoint, save and quit, resume and play on until it happens, then send a problem report (and your saves from before and after, if you can). This version logs every save file the game writes, so your report shows what went wrong." },
-    { 2,  "Raam's Shadow DLC not found (#79): if the game sometimes needs a restart or two before it sees the DLC, send a problem report from a start where it didn't." },
-    { 15, "System Link - LAN play (experimental, #72): turn it on in Gameplay on two PCs on the same network (or a LAN VPN such as Radmin VPN / ZeroTier / Hamachi), host co-op, Horde or versus on one and join from the other. Tell us in GitHub issue #72 what worked and what didn't, with a problem report from both PCs." },
+    // Shagg 6 Nov: never ask players to do extra work to find data for us - at most "press Report a problem".
+    { 2,  "Sudden death / \"cursed\" save, or a teammate killing you (#55, #68, #79, #80): if it happens to you, press Report a problem afterwards - the report has what we need." },
+    { 2,  "Raam's Shadow DLC not found (#79): if the game doesn't see your DLC, press Report a problem after that start." },
+    { 15, "System Link - LAN play (experimental, #72): if you try it, tell us in GitHub issue #72 whether it worked." },
     { 15, "Other versions of the game (regional discs, other title updates): if yours isn't the one COGBox expects, tell us whether it works." },
 };
 
@@ -1027,8 +1028,8 @@ static void about_tab(App &a, int g)
             ImGui::SameLine();
             if (small_button("What to test..."))
                 ask(a, "helptest", g, "HELP US TEST",
-                    std::string(tr("We're still tracking these down and need players' help. If one of them happens to you, please tell us in "
-                                   "its GitHub issue - a problem report (below) helps a lot.")) + "\n" + list, { "Close" });
+                    std::string(tr("We're still tracking these down. If one of them happens to you, press Report a problem (below) - that is all "
+                                   "we need.")) + "\n" + list, { "Close" });
         }
     }
     ImGui::SameLine();
