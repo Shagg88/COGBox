@@ -438,7 +438,9 @@ static void draw_ui(App &a, ImVec2 size)
     else page_draw(a, size);
 
     // the message line
-    if (!a.message.empty() && now - a.messageAt < 12) {
+    // L-1: the toast is on the foreground draw list, which is above every window - a dialog would sit under it. It waits
+    // while a dialog is open (its 12 s keep counting).
+    if (!a.message.empty() && now - a.messageAt < 12 && !a.modal.open) {
         float al = (float)std::min(1.0, (12 - (now - a.messageAt)) / 1.5);
         ImDrawList *fg = ImGui::GetForegroundDrawList();
         ImVec2 ts = F_BODY->CalcTextSizeA(FS(F_BODY), size.x - S(120), size.x - S(120), a.message.c_str());
