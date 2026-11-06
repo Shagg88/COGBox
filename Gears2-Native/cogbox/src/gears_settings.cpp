@@ -300,6 +300,13 @@ std::vector<Option> make_options(Game g) {
         "blurfx", "", true);
     add(make("DoF", "Depth of field", Tab::Graphics, Kind::Bool, PG, 1,
              "The blur of distant / out-of-focus areas (cutscenes, aiming).", 371), "doffx", "", true);
+    // Canary game-patches (boma): Bloom off is the same GSystemSettings field the patch zeroes (G2 TU6 +56, G3 TU6 /
+    // Judgment TU4 +72 - next to MotionBlur / DepthOfField, which the [SystemSettings] edits already set), so it goes
+    // through the game's own [SystemSettings] Bloom. Film grain: Judgment's post-process amount (gowj_no_film_grain).
+    add(make("Bloom", "Bloom", Tab::Graphics, Kind::Bool, PG, 1,
+             "The glow around bright lights and surfaces (the game's own setting). Off: no glow.", 0), "bloom");
+    add(make("FilmGrain", "Film grain", Tab::Graphics, Kind::Bool, PG, 1,
+             "Judgment's film grain noise over the picture. Off: a clean picture.", 0), "filmgrain");
     // GitHub #102 (Shagg): no Lens flares option any more - the launcher decides per game at launch (below): on where the
     // game's occlusion queries are answered (Real occlusion, DirectX 12, not under Wine / Proton), off where they can't
     // be, since every flare would show through the scenery there.
@@ -528,6 +535,11 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_exe(env, "ue3_exec")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "levelsel") {
         if (g != Game::Judgment) return no(not_yet(gi));
+    } else if (f == "bloom") {   // Canary: Gears 2 / 3 / Judgment; Gears 1's bloom shares its blur (DoF option there)
+        if (g == Game::Gears1) return no("Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it.");
+    } else if (f == "filmgrain") {
+        if (g != Game::Judgment) return no("Judgment only.");
+        if (!cap_exe(env, "gowj_no_film_grain")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "blurfx" || f == "doffx") {   // GitHub #179: Gears 1 by Canary's TU5 patches, the others by ini
         if (g == Game::Gears1 && !cap_exe(env, f == "blurfx" ? "gow1_no_motion_blur" : "gow1_no_gaussian_blur"))
             return no(not_yet(gi, "needs its next build"));
@@ -1101,7 +1113,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         } else {
             if (avail("MotionBlur") && !s.b("MotionBlur")) ini.push_back(ei + "|SystemSettings|MotionBlur=False");
             if (avail("DoF") && !s.b("DoF")) ini.push_back(ei + "|SystemSettings|DepthOfField=False");
+            if (avail("Bloom") && !s.b("Bloom")) ini.push_back(ei + "|SystemSettings|Bloom=False");
         }
+        if (avail("FilmGrain") && !s.b("FilmGrain")) a.push_back("--gowj_no_film_grain=true");
         // GitHub #102: lens flares are not a player setting. Flares are hidden behind walls only by the game's occlusion
         // queries, which only Real occlusion answers (DirectX 12, not under Wine / Proton); without them every flare shows
         // through the scenery, so they are off for that launch. Gears 1's engine has no lens-flare switch.

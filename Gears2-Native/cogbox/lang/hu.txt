@@ -968,3 +968,10 @@ If it is a regional release of Gears of War, 2, 3 or Judgment, open that game's 
 In a cloud folder = Felhőmappában
 # GitHub #179 (machine-made translation, please check)
 Gears 1: off turns off the game's blur pass, which the bloom uses too - the glow is softer. = Gears 1: kikapcsolva a játék elmosási lépése is kikapcsol, amelyet a bloom is használ - a ragyogás lágyabb.
+# Canary: Bloom / Film grain (machine-made translation, please check)
+Bloom = Bloom
+The glow around bright lights and surfaces (the game's own setting). Off: no glow. = A fényes fények és felületek körüli ragyogás (a játék saját beállítása). Ki: nincs ragyogás.
+Film grain = Filmszemcse
+Judgment's film grain noise over the picture. Off: a clean picture. = A Judgment filmszemcse-zaja a képen. Ki: tiszta kép.
+Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it. = Gears 1: a bloomját a mélységélesség elmosásával rajzolja - a mélységélesség kikapcsolása lágyítja.
+Judgment only. = Csak Judgment.

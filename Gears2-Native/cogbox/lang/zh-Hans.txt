@@ -968,3 +968,10 @@ If it is a regional release of Gears of War, 2, 3 or Judgment, open that game's 
 In a cloud folder = 位于云同步文件夹中
 # GitHub #179 (machine-made translation, please check)
 Gears 1: off turns off the game's blur pass, which the bloom uses too - the glow is softer. = Gears 1：关闭后会停用游戏的模糊处理，泛光也会用到它 - 光晕会变弱。
+# Canary: Bloom / Film grain (machine-made translation, please check)
+Bloom = 泛光
+The glow around bright lights and surfaces (the game's own setting). Off: no glow. = 明亮光源和表面周围的光晕（游戏自身设置）。关闭：无光晕。
+Film grain = 胶片颗粒
+Judgment's film grain noise over the picture. Off: a clean picture. = Judgment 画面上的胶片颗粒噪点。关闭：画面干净。
+Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it. = Gears 1：其泛光使用景深模糊绘制 - 关闭景深会减弱泛光。
+Judgment only. = 仅限 Judgment。

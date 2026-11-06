@@ -39,6 +39,7 @@ void GowjAddBuiltInIniEdits();  // game_patches.cpp: --gowj_trilinear, --gowj_fa
 void GowjStartMemoryGauge();    // game_patches.cpp: --gowj_memory_log_seconds (physical memory every N s)
 void GowjStopMemoryGauge();     // stops it before the kernel goes away
 void GowjApplyUltrawideIfRequested(rex::Runtime* runtime);  // game_patches.cpp: --gowj_ultrawide (0.2.0)
+void GowjInstallFilmGrainSwitch(rex::Runtime* runtime);  // game_patches.cpp: --gowj_no_film_grain (Canary TU4, boma)
 
 
 class GowjApp : public rex::ReXApp {
@@ -66,6 +67,7 @@ class GowjApp : public rex::ReXApp {
     XenosAddScriptPadIfRequested(runtime());
     GowjAddBuiltInIniEdits();  // before the bundle is edited
     GowjInstallProfileLog();   // GitHub #174: --gowj_profile_log (read-only)
+    GowjInstallFilmGrainSwitch(runtime());   // --gowj_no_film_grain
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     GowjApplyUltrawideIfRequested(runtime());     // --gowj_ultrawide: the two aspect floats, the present shape
     XenosInstallDrawStatsIfRequested();

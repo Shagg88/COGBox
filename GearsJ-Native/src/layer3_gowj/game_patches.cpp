@@ -65,6 +65,25 @@ uint64_t QpcFrequency() {
 // 16x anisotropic filtering through the game's own setting: [SystemSettings] MaxAnisotropy=4 -> 16 (the engine reads
 // it at 0x8299B564 `lwz r5,0x34C(r30)`, the site of Canary's register patch by boma, which we don't use).
 REXCVAR_DEFINE_BOOL(gowj_aniso16, false, "Judgment", "16x anisotropic filtering (the game's own MaxAnisotropy setting, 4 -> 16)");
+// Film grain off (gowj_manifest.toml: Xenia Canary's TU4 "Disable Film Grain" by boma, as the blended amount 0).
+REXCVAR_DEFINE_BOOL(gowj_no_film_grain, false, "Judgment", "No film grain (Canary's TU4 patch by boma: the frame's film-grain amount 0)");
+static std::atomic<bool> g_no_film_grain{false};
+void GowjInstallFilmGrainSwitch(rex::Runtime* runtime) {
+  if (!REXCVAR_GET(gowj_no_film_grain) || !runtime) return;
+  const uint8_t* m = runtime->virtual_membase();
+  if (!m) return;
+  const uint8_t* p = m + 0x8243CF68u;
+  const uint32_t w = (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
+  if (w != 0xD01F013Cu) {   // stfs f0,316(r31)
+    REXLOG_WARN("gowj_no_film_grain: the code at 0x8243CF68 is not TU4's ({:08X}) - left alone", w);
+    return;
+  }
+  g_no_film_grain.store(true);
+  REXLOG_INFO("gowj_no_film_grain: on");
+}
+void GowjNoFilmGrain(PPCRegister& f0) {   // before `stfs f0,316(r31)` at 0x8243CF68
+  if (g_no_film_grain.load(std::memory_order_relaxed)) f0.f64 = 0.0;
+}
 
 // ---- Frame rate and the engine tick ---------------------------------------------------------------------------------
 // GetMaxTickRate 0x8255E210 (shape as Gears 3's 0x8253D9A0): f1 = 0.0 (no limit); with frame-rate smoothing on (flag read at 0x8255E210, bSmoothFrameRate=TRUE
