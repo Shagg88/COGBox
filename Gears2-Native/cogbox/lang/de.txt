@@ -830,3 +830,7 @@ settings = Einstellungen
 music = Musik
 fullscreen = Vollbild
 quit = beenden
+# 0.4.6: About tab
+What to test... = Was testen...
+HELP US TEST = HILF UNS TESTEN
+Open the issues on GitHub = Die Issues auf GitHub öffnen

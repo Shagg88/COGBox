@@ -830,3 +830,7 @@ settings = 设置
 music = 音乐
 fullscreen = 全屏
 quit = 退出
+# 0.4.6: About tab
+What to test... = 需要测试的内容...
+HELP US TEST = 帮助我们测试
+Open the issues on GitHub = 打开 GitHub 上的问题

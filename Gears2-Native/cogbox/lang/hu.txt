@@ -830,3 +830,7 @@ settings = beállítások
 music = zene
 fullscreen = teljes képernyő
 quit = kilépés
+# 0.4.6: About tab
+What to test... = Mit tesztelj...
+HELP US TEST = SEGÍTS TESZTELNI
+Open the issues on GitHub = A GitHub-hibajegyek megnyitása

@@ -831,134 +831,28 @@ static void mods_tab(App &a, int g)
 
 }
 
+// 0.4.6 (Shagg 5 Nov): "sweet and simple, not loaded with text" - short grouped sections; the explanations are
+// hover tooltips (about_tip) and the HELP US TEST list is a dialog (What to test...). Nothing was taken away.
+static void about_tip(const std::string &text_en)
+{
+    if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) return;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(S(460), FLT_MAX));
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(S(440));
+    ImGui::TextUnformatted(tr(text_en).c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
+static void about_gap() { ImGui::Dummy(ImVec2(0, S(8))); }
+
 static void about_tab(App &a, int g)
 {
     const GameDef &d = game_def(g);
     GameState &st = a.st[g];
-    th_heading("YOUR COPY", g_rowX1);
-    if (st.dataDir.empty()) lamp_line(3, "Not added yet. Use Add your copy below (a disc image, a Games on Demand copy, or an extracted folder).");
-    else {
-        lamp_line(st.xexMatch || st.xexConfirmed ? 1 : st.xexKnown ? 2 : 0,
-                  std::string("Game files: ") + st.dataDir + (st.dataOwn ? "  (your own folder)" : "") +
-                  (st.xexMatch ? "  -  the release the ports are made for"
-                   : st.xexConfirmed ? "  -  an untested version you confirmed works"
-                   : st.xexKnown ? "  -  an untested version: it may work, but you may experience problems" : "  -  not checked yet"));
-        if (st.xexKnown && !st.xexMatch && !st.xexConfirmed) {
-            ImGui::PushID("works_xex");
-            if (small_button("This version works")) confirm_works(a, g, false);
-            ImGui::PopID();
-        }
-    }
-    if (st.updateDir.empty())
-        lamp_line(2, std::string(d.updateName) + ": not added - required to play");   // title updates required (0.4.0)
-    else
-    {
-        lamp_line(st.xexpMatch || st.xexpConfirmed ? 1 : 2, std::string(d.updateName) + ": " + st.updateDir +
-                  (st.xexpMatch ? "" : st.xexpConfirmed ? "  -  an untested update you confirmed works" : "  -  an untested update: it may work, but problems are likely. Please don't report problems you get with it - use the expected update first"));
-        if (!st.xexpMatch && !st.xexpConfirmed) {
-            ImGui::PushID("works_xexp");
-            if (small_button("This update works")) confirm_works(a, g, true);
-            ImGui::PopID();
-        }
-    }
-    std::string exe = st.exe();
-    // 0.2.0 (#3 / #7): name the file that is missing, so a screenshot says what's wrong
-    lamp_line(exe.empty() ? 3 : 1, exe.empty() ? std::string("The port program is missing: expected ") + join(join(game_root(g), *d.portTu ? d.portTu : d.portDisc), d.exeName) +
-                                                     " - unzip the release again, keeping its folders." : "Port: " + exe);
-    ImGui::Dummy(ImVec2(0, S(4)));
     bool busy = a.job.state.load() == 1, running = a.run.proc != nullptr;
-    // 0.4.6 (Shagg 5 Nov): drag and drop is the only way to add a copy, title update or DLC
-    lamp_line(0, "To add or replace your copy or the title update, drag and drop it onto this window.");
 
-    // 0.2.0: downloadable content from the player's own console (Content\0000000000000000\<title ID>\00000002)
-    ImGui::Dummy(ImVec2(0, S(8)));
-    th_heading("DOWNLOADABLE CONTENT", g_rowX1);
-    const std::vector<DlcItem> &dl = dlc_list(g);
-    if (dl.empty()) lamp_line(0, "None added.");
-    for (size_t i = 0; i < dl.size(); i++) {
-        ImGui::PushID((int)i + 7000);
-        lamp_line(1, dl[i].title + (dl[i].title != dl[i].name ? "  (" + dl[i].name + ")" : ""));
-        ImGui::SameLine();
-        if (busy || running) ImGui::BeginDisabled();
-        if (small_button("Remove")) dlc_remove_ask(a, g, dl[i]);
-        if (busy || running) ImGui::EndDisabled();
-        ImGui::PopID();
-    }
-    lamp_line(0, "To add downloadable content, drag and drop the package onto this window.");
-
-    ImGui::Dummy(ImVec2(0, S(8)));
-    th_heading("FOLDERS", g_rowX1);
-    if (small_button("Saves")) { make_dirs(game_user_dir(g)); shell_open(game_user_dir(g)); }
-    ImGui::SameLine();
-    if (small_button("Logs")) { make_dirs(game_logs_dir(g)); shell_open(game_logs_dir(g)); }
-    ImGui::SameLine();
-    if (small_button("Back up saves")) {
-        if (running) set_message(a, std::string(d.name) + " is running - close it first, so the save is complete.", true);
-        else if (!any_files(game_user_dir(g))) set_message(a, std::string(d.name) + " has no saves here yet.", false);
-        else ask(a, "backup", g, "Back up saves", std::string("Put a copy of ") + d.name + "'s saves in a zip on your desktop?", { "Back up", "Cancel" });
-    }
-    ImGui::SameLine();
-    if (small_button("Clear shaders...")) {
-        if (!dir_exists(game_shader_dir(g))) set_message(a, std::string(d.name) + " has no saved shaders to clear.", false);
-        else ask(a, "clearshaders", g, "Clear shaders",
-                 std::string("Clear the saved shaders and pipelines of ") + d.name + "?\n\nThe next start builds them again, so expect "
-                 "stutter and pop-in the first time, as on a new PC. The folder is set aside (renamed), not deleted.", { "Clear", "Cancel" });
-    }
-
-    ImGui::Dummy(ImVec2(0, S(8)));
-    // Shagg 31 Oct: what this release needs players to test - kept with each update (k_helpTest, top of this file)
-    {
-        bool any = false;
-        for (const HelpTest &h : k_helpTest) if (h.games & (1u << g)) { any = true; break; }
-        if (any) {
-            th_heading("HELP US TEST", g_rowX1);
-            row_desc("We're still tracking these down and need players' help. If one of them happens to you, please tell us in "
-                     "its GitHub issue - a problem report (below) helps a lot.");
-            for (const HelpTest &h : k_helpTest) if (h.games & (1u << g)) row_desc(std::string("  -  ") + h.text);
-            if (small_button("Open the issues on GitHub")) shell_open("https://github.com/Shagg88/COGBox/issues");
-            ImGui::Dummy(ImVec2(0, S(8)));
-        }
-    }
-    th_heading("PROBLEMS", g_rowX1);
-    row_desc("A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC "
-             "(no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub issue.");
-    if (small_button("Report a problem")) {
-        std::string s = newest_session(g);
-        if (s.empty()) set_message(a, std::string("No play of ") + d.name + " yet - play once, then make the report.", false);
-        else if (!a.ini.geti("Notices", "ReportExperimentalNever", 0)) {   // Shagg 31 Oct: experimental settings off first
-            ask(a, "reportexp", g, "Before you make the report",
-                "Experimental settings (FSR / DLSS / XeSS, XeGTAO, frame generation and others) are for "
-                "testing, not for regular play - for the smoothest play, use settings that aren't marked experimental.\n\n"
-                "Please turn every experimental setting off, play again and then make the report - unless the report is "
-                "about one of those settings. The report lists the experimental settings that were on.",
-                { "Make the report", "Cancel" });
-            a.modal.check = "Don't show this again";
-            a.modal.data = s;
-        } else report_now(a, g, s);
-    }
-    ImGui::SameLine();
-    if (small_button("Reset settings to defaults...")) ask(a, "reset", g, "Reset to defaults", "Put every setting of every game back to its default? Your saves are not touched.", { "Reset", "Cancel" });
-
-    ImGui::Dummy(ImVec2(0, S(8)));
-    // 0.2.0: desktop shortcuts - COGBox itself, and this game (it opens COGBox and starts the game; COGBox's settings and
-    // fixes still apply). Windows doesn't let programs pin to the taskbar: right-click a shortcut, "Pin to taskbar".
-    th_heading("SHORTCUTS", g_rowX1);
-    if (small_button("Desktop shortcut: COGBox")) {
-        std::string err;
-        if (make_shortcut("COGBox", "", "Gears of War native PC ports - launcher", err)) set_message(a, "A COGBox shortcut is on your desktop.", false);
-        else set_message(a, "The shortcut couldn't be made: " + err, true);
-    }
-    ImGui::SameLine();
-    {
-        const std::string label = std::string("Desktop shortcut: ") + d.name;
-        if (small_button(label.c_str())) {
-            std::string err;
-            if (make_shortcut(d.name, std::string("--play ") + d.key, std::string("Play ") + d.name + " through COGBox", err))
-                set_message(a, std::string("A ") + d.name + " shortcut is on your desktop.", false);
-            else set_message(a, "The shortcut couldn't be made: " + err, true);
-        }
-    }
-    row_desc("To pin one to the taskbar or Start, right-click the shortcut and choose Pin (Windows doesn't let programs do that themselves).");
+    // ---- COGBOX: the version and the update
     th_heading("COGBOX", g_rowX1);
     std::string newer = update_newer();
     if (!newer.empty()) {
@@ -977,12 +871,137 @@ static void about_tab(App &a, int g)
         }
     } else if (!a.ini.geti("Updates", "Check", 1)) lamp_line(0, "COGBox " COGBOX_VERSION " - checking for updates is off.");
     else lamp_line(update_checked() ? 1 : 0, update_checked() ? "COGBox " COGBOX_VERSION " - the latest (or GitHub couldn't be reached)." : "COGBox " COGBOX_VERSION " - checking for updates...");
+
+    // ---- YOUR COPY: game files, title update, port (the folders are in the tooltips)
+    about_gap();
+    th_heading("YOUR COPY", g_rowX1);
+    if (st.dataDir.empty()) lamp_line(3, "Not added yet. Use Add your copy below (a disc image, a Games on Demand copy, or an extracted folder).");
+    else {
+        lamp_line(st.xexMatch || st.xexConfirmed ? 1 : st.xexKnown ? 2 : 0,
+                  std::string("Game files: ") + st.dataDir + (st.dataOwn ? "  (your own folder)" : "") +
+                  (st.xexMatch ? "  -  the release the ports are made for"
+                   : st.xexConfirmed ? "  -  an untested version you confirmed works"
+                   : st.xexKnown ? "  -  an untested version: it may work, but you may experience problems" : "  -  not checked yet"));
+        if (st.xexKnown && !st.xexMatch && !st.xexConfirmed) {
+            ImGui::PushID("works_xex");
+            if (small_button("This version works")) confirm_works(a, g, false);
+            ImGui::PopID();
+        }
+    }
+    if (st.updateDir.empty())
+        lamp_line(2, std::string(d.updateName) + ": not added - required to play");   // title updates required (0.4.0)
+    else {
+        lamp_line(st.xexpMatch || st.xexpConfirmed ? 1 : 2, std::string(d.updateName) + ": " + st.updateDir +
+                  (st.xexpMatch ? "" : st.xexpConfirmed ? "  -  an untested update you confirmed works" : "  -  an untested update: it may work, but problems are likely. Please don't report problems you get with it - use the expected update first"));
+        if (!st.xexpMatch && !st.xexpConfirmed) {
+            ImGui::PushID("works_xexp");
+            if (small_button("This update works")) confirm_works(a, g, true);
+            ImGui::PopID();
+        }
+    }
+    std::string exe = st.exe();
+    // 0.2.0 (#3 / #7): name the file that is missing, so a screenshot says what's wrong
+    lamp_line(exe.empty() ? 3 : 1, exe.empty() ? std::string("The port program is missing: expected ") + join(join(game_root(g), *d.portTu ? d.portTu : d.portDisc), d.exeName) +
+                                                     " - unzip the release again, keeping its folders." : "Port: " + exe);
+    // 0.2.0: downloadable content from the player's own console; one compact list under the copy
+    const std::vector<DlcItem> &dl = dlc_list(g);
+    for (size_t i = 0; i < dl.size(); i++) {
+        ImGui::PushID((int)i + 7000);
+        lamp_line(1, dl[i].title + (dl[i].title != dl[i].name ? "  (" + dl[i].name + ")" : ""));
+        ImGui::SameLine();
+        if (busy || running) ImGui::BeginDisabled();
+        if (small_button("Remove")) dlc_remove_ask(a, g, dl[i]);
+        if (busy || running) ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+    // 0.4.6: drag and drop is the only way to add a copy, title update or DLC
+    row_desc("To add or replace your copy or the title update, drag and drop it onto this window.");
+    about_tip("To add downloadable content, drag and drop the package onto this window.");
+
+    // ---- FOLDERS: folders, saves, shaders and desktop shortcuts
+    about_gap();
+    th_heading("FOLDERS", g_rowX1);
+    if (small_button("Saves")) { make_dirs(game_user_dir(g)); shell_open(game_user_dir(g)); }
+    ImGui::SameLine();
+    if (small_button("Logs")) { make_dirs(game_logs_dir(g)); shell_open(game_logs_dir(g)); }
+    ImGui::SameLine();
+    if (small_button("Back up saves")) {
+        if (running) set_message(a, std::string(d.name) + " is running - close it first, so the save is complete.", true);
+        else if (!any_files(game_user_dir(g))) set_message(a, std::string(d.name) + " has no saves here yet.", false);
+        else ask(a, "backup", g, "Back up saves", std::string("Put a copy of ") + d.name + "'s saves in a zip on your desktop?", { "Back up", "Cancel" });
+    }
+    ImGui::SameLine();
+    if (small_button("Clear shaders...")) {
+        if (!dir_exists(game_shader_dir(g))) set_message(a, std::string(d.name) + " has no saved shaders to clear.", false);
+        else ask(a, "clearshaders", g, "Clear shaders",
+                 std::string("Clear the saved shaders and pipelines of ") + d.name + "?\n\nThe next start builds them again, so expect "
+                 "stutter and pop-in the first time, as on a new PC. The folder is set aside (renamed), not deleted.", { "Clear", "Cancel" });
+    }
+    // 0.2.0: desktop shortcuts - COGBox itself, and this game (it opens COGBox and starts the game)
+    static const char *k_pinTip = "To pin one to the taskbar or Start, right-click the shortcut and choose Pin (Windows doesn't let programs do that themselves).";
+    if (small_button("Desktop shortcut: COGBox")) {
+        std::string err;
+        if (make_shortcut("COGBox", "", "Gears of War native PC ports - launcher", err)) set_message(a, "A COGBox shortcut is on your desktop.", false);
+        else set_message(a, "The shortcut couldn't be made: " + err, true);
+    }
+    about_tip(k_pinTip);
+    ImGui::SameLine();
+    {
+        const std::string label = std::string("Desktop shortcut: ") + d.name;
+        if (small_button(label.c_str())) {
+            std::string err;
+            if (make_shortcut(d.name, std::string("--play ") + d.key, std::string("Play ") + d.name + " through COGBox", err))
+                set_message(a, std::string("A ") + d.name + " shortcut is on your desktop.", false);
+            else set_message(a, "The shortcut couldn't be made: " + err, true);
+        }
+        about_tip(k_pinTip);
+    }
+
+    // ---- PROBLEMS: report, what to test, issues, reset
+    about_gap();
+    th_heading("PROBLEMS", g_rowX1);
+    if (small_button("Report a problem")) {
+        std::string s = newest_session(g);
+        if (s.empty()) set_message(a, std::string("No play of ") + d.name + " yet - play once, then make the report.", false);
+        else if (!a.ini.geti("Notices", "ReportExperimentalNever", 0)) {   // Shagg 31 Oct: experimental settings off first
+            ask(a, "reportexp", g, "Before you make the report",
+                "Experimental settings (FSR / DLSS / XeSS, XeGTAO, frame generation and others) are for "
+                "testing, not for regular play - for the smoothest play, use settings that aren't marked experimental.\n\n"
+                "Please turn every experimental setting off, play again and then make the report - unless the report is "
+                "about one of those settings. The report lists the experimental settings that were on.",
+                { "Make the report", "Cancel" });
+            a.modal.check = "Don't show this again";
+            a.modal.data = s;
+        } else report_now(a, g, s);
+    }
+    about_tip("A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC "
+              "(no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub issue.");
+    // Shagg 31 Oct: what this release needs players to test (k_helpTest, top of this file) - now a dialog
+    {
+        std::string list;
+        for (const HelpTest &h : k_helpTest) if (h.games & (1u << g)) list += std::string("\n  -  ") + tr(h.text);
+        if (!list.empty()) {
+            ImGui::SameLine();
+            if (small_button("What to test..."))
+                ask(a, "helptest", g, "HELP US TEST",
+                    std::string(tr("We're still tracking these down and need players' help. If one of them happens to you, please tell us in "
+                                   "its GitHub issue - a problem report (below) helps a lot.")) + "\n" + list, { "Close" });
+        }
+    }
+    ImGui::SameLine();
+    if (small_button("Open the issues on GitHub")) shell_open("https://github.com/Shagg88/COGBox/issues");
+    ImGui::SameLine();
+    if (small_button("Reset settings to defaults...")) ask(a, "reset", g, "Reset to defaults", "Put every setting of every game back to its default? Your saves are not touched.", { "Reset", "Cancel" });
+
+    // ---- SETTINGS: COGBox's own (the explanations are tooltips on the labels)
+    about_gap();
+    th_heading("SETTINGS", g_rowX1);
     {   // 0.2.0: COGBox's language
         const auto &L = languages();
         const std::string cur = a.ini.get("Launcher", "Language").empty() ? "auto" : a.ini.get("Launcher", "Language");
         std::string shown = std::string(tr("Automatic")) + " (" + tr("Windows' language") + ")";
         for (const Language &l : L) if (l.code == cur) shown = l.name;
-        row_label("Language", "", true);
+        row_label("Language", tr("Translations are written by the project; corrections are welcome on GitHub (the lang folder)."), true);
         ImGui::SetNextItemWidth(g_ctrlW);
         if (ImGui::BeginCombo("##lang", shown.c_str())) {
             if (ImGui::Selectable((std::string(tr("Automatic")) + " (" + tr("Windows' language") + ")").c_str(), cur == "auto")) {
@@ -992,7 +1011,6 @@ static void about_tab(App &a, int g)
                 if (ImGui::Selectable(l.name.c_str(), cur == l.code)) { a.ini.set("Launcher", "Language", l.code); a.ini.save(); i18n_load(l.code); }
             ImGui::EndCombo();
         }
-        row_desc("Translations are written by the project; corrections are welcome on GitHub (the lang folder).");
     }
     {   // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=, SDK patch 54)
         static char buf[16] = {};
@@ -1002,7 +1020,9 @@ static void about_tab(App &a, int g)
             const std::string cur = a.ini.get("Profile", "Gamertag");
             std::snprintf(buf, sizeof(buf), "%s", cur.c_str());
         }
-        row_label("Player name", "", true);   // 0.4.0 (Shagg): "Player name" - the gamertag, display only
+        static const char *k_nameTip = "The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: \"User\". "
+                                       "Display only - your profile and saves stay where they are.";
+        row_label("Player name", tr(k_nameTip), true);   // 0.4.0 (Shagg): "Player name" - the gamertag, display only
         ImGui::SetNextItemWidth(g_ctrlW);
         auto filter = [](ImGuiInputTextCallbackData *d) -> int {   // Xbox gamertags: letters, digits, spaces
             const ImWchar c = d->EventChar;
@@ -1012,17 +1032,18 @@ static void about_tab(App &a, int g)
             a.ini.set("Profile", "Gamertag", buf);
             a.ini.save();
         }
-        row_desc("The name every game shows for you (your gamertag): up to 15 letters, digits or spaces. Empty: \"User\". "
-                 "Display only - your profile and saves stay where they are.");
+        about_tip(k_nameTip);
     }
+    static const char *k_winTip = "COGBox draws its own minimise, maximise and close buttons in the top-right corner; drag the strip beside them to move the window.";
     bool fs = a.fullscreen;   // job 523
     if (ImGui::Checkbox(tr("Fullscreen (F11, or LT + RT together)"), &fs)) set_fullscreen(a, fs);
+    ImGui::SameLine(0, S(24));
     bool bl = a.borderless;   // job 523
     if (ImGui::Checkbox(tr("Borderless window (no title bar)"), &bl)) set_borderless(a, bl);
-    row_desc("COGBox draws its own minimise, maximise and close buttons in the top-right corner; drag the strip beside them to move the window.");
+    about_tip(k_winTip);
     bool chk = a.ini.geti("Updates", "Check", 1) != 0;
     if (ImGui::Checkbox(tr("Check GitHub for a newer COGBox at start"), &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
-    row_desc("Only the release page's address is asked for; nothing about you or this PC is sent.");
+    about_tip("Only the release page's address is asked for; nothing about you or this PC is sent.");
 }
 
 // ---- the page --------------------------------------------------------------------------------------------------------
