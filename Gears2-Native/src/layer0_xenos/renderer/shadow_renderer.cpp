@@ -774,6 +774,9 @@ REXCVAR_DEFINE_STRING(gow2_upscaler, "off", "Gears2",
                       "lit scene before the game's post-processing, with "
                       "camera jitter and motion vectors from depth; native-resolution AA at the render scale for now");
 REXCVAR_DEFINE_DOUBLE(gow2_upscale_sharpness, 0.0, "Gears2", "FSR's own sharpening, 0..1 (DLSS ignores it)");
+REXCVAR_DEFINE_STRING(gow2_upscale_mip_bias, "auto", "Gears2",
+                      "Notes/82: while an upscaling mode draws the scene below the output, sharper mips for it: off, auto (log2 of "
+                      "scene / output: Quality -0.58, Ultra Performance -1.58) or a number. F2 toggles it with --gow2_ao_debug_keys");
 REXCVAR_DEFINE_STRING(gow2_upscale_mode, "native", "Gears2",
                       "Patch 0141 (frame-rate item 5): with --gow2_upscaler, draw the 3D scene below the output size and "
                       "let DLSS / FSR / XeSS fill in the detail. native = the scene at the render scale (anti-aliasing "
@@ -4250,6 +4253,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Patch 0141 (upscaling modes): scene scale (0 = native), output size, whether this frame's output is upscaled, the
   // phase flip pending after the scene resolve packet, frames whose scene ran below the output, frames that never flipped.
   uint32_t up_scale_in_ = 0, up_ow_ = 0, up_oh_ = 0;
+  float mip_bias_ = 0.0f;  // notes/82
   bool up_output_upscaled_ = false, up_flip_after_resolve_ = false, up_scene_seen_ = false;
   uint32_t up_fail_streak_ = 0;
   uint64_t up_scene_phase_frames_ = 0, up_no_flip_ = 0;
@@ -5024,6 +5028,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (up_scale_in_) {  // patch 0145: an upscaling mode must not leave the scene below the output with no upscaler
         up_scale_in_ = 0;
         rts_->SetPhaseScale(res_scale_);
+        UpdateMipBias();
       }
       const bool fg_keep = REXCVAR_GET(gow2_fg_inputs) || fg_wanted_;  // patch 0145: frame generation keeps its inputs
       const bool ao_keep = ao_mode_ == rr::ao::Mode::kGtao;              // notes/80: the AO keeps the camera only
@@ -5180,6 +5185,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         REXLOG_WARN("gow2_upscaler: 30 failures in a row with the scene at {}x; upscaling mode off (native)", up_scale_in_);
         up_scale_in_ = 0;
         rts_->SetPhaseScale(res_scale_);
+        UpdateMipBias();
       }
       return 0;
     }
@@ -5880,6 +5886,27 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
 
+  // Notes/82: the scene part of the frame only; post-processing and the HUD are drawn at the output scale.
+  void UpdateMipBias() {
+    static const std::string setting = REXCVAR_GET(gow2_upscale_mip_bias);
+    static const bool wanted = setting != "off";
+    static const float fixed = wanted && setting != "auto" ? float(std::atof(setting.c_str())) : 0.0f;
+    static const bool logged = [] { XenosAoDebugSetMipBias(wanted); return true; }();
+    (void)logged;
+    float bias = 0.0f;
+    if (XenosAoDebugMipBias() && up_scale_in_ && up_scale_in_ < res_scale_ && rts_->PhaseScale() == up_scale_in_)
+      bias = fixed != 0.0f ? fixed : std::log2(float(up_scale_in_) / float(res_scale_));
+    if (bias == mip_bias_) return;
+    mip_bias_ = bias;
+    static bool told = false;
+    if (bias != 0.0f && !told) {
+      told = true;
+      REXLOG_INFO("gow2_upscaler: mip bias {:.2f} on the scene's textures (scene {}x, output {}x)", bias, up_scale_in_, res_scale_);
+    }
+    textures_->SetMipBias(bias);
+    tex_memo_valid_ = false;  // the samplers change
+  }
+
   void UpscaleEndFrame() {
     if (!up_active_) return;  // patch 0145
     if (ao_mode_ == rr::ao::Mode::kGtao) AoEndFrame();  // notes/80, before this frame's camera is rolled over
@@ -5927,6 +5954,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const bool scene_next = up_last_ok_ || up_scene_seen_;  // 0141 review: also after an output-scale scene frame
       up_scene_seen_ = false;
       rts_->SetPhaseScale(scene_next ? up_scale_in_ : res_scale_);
+      UpdateMipBias();
       up_scene_phase_frames_ += scene_next ? 1 : 0;
     }
     {
@@ -9928,6 +9956,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (flip_after) {  // patch 0141: post-processing, HUD and the front buffer at the output scale
       up_flip_after_resolve_ = false;
       rts_->SetPhaseScale(res_scale_);
+      UpdateMipBias();
     }
   }
 

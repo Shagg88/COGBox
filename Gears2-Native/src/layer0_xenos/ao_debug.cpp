@@ -38,19 +38,20 @@ std::atomic<uint32_t> g_show{0}, g_view{0}, g_quality{2}, g_denoise{2};  // g_de
 std::atomic<bool> g_keys{false}, g_active{false}, g_cacao{false}, g_cacao_available{false};
 std::atomic<uint32_t> g_cacao_blur{3};  // the passes themselves
 std::atomic<uint32_t> g_show_before_game{0};  // F5: what it returns to
+std::atomic<bool> g_mip_bias{false};  // notes/82: F2
 
 class AoLabel final : public rex::ui::ImGuiDialog {
  public:
   explicit AoLabel(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {}
   void OnDraw(ImGuiIO& io) override {
-    char text[224], passes[32];
+    char text[256], passes[32];
     if (g_cacao.load()) std::snprintf(passes, sizeof(passes), "%u blur passes", g_cacao_blur.load());
     else std::snprintf(passes, sizeof(passes), "%s", kDenoiseNames[g_denoise.load() % kDenoiseCount]);
     if (g_active.load())
-      std::snprintf(text, sizeof(text), "AO: %s%s | %s, %s | view: %s   (F5 game AO on/off, F9 AO, F10 view, F11 quality, F8 denoise, F6 XeGTAO/CACAO)",
+      std::snprintf(text, sizeof(text), "AO: %s%s | %s, %s | view: %s | mip bias %s   (F2 mip bias, F5 game AO on/off, F9 AO, F10 view, F11 quality, F8 denoise, F6 XeGTAO/CACAO)",
                     g_show.load() % kShowCount == 0 && g_cacao.load() ? "CACAO" : kShowNames[g_show.load() % kShowCount], "", kQualityNames[g_quality.load() % kQualityCount],
                     passes,
-                    kViewNames[g_view.load() % kViewCount]);
+                    kViewNames[g_view.load() % kViewCount], g_mip_bias.load() ? "on" : "off");
     else
       std::snprintf(text, sizeof(text), "AO keys: start with --gow2_ao=gtao");
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
@@ -101,6 +102,8 @@ void XenosAoDebugSetCacao(bool on, bool available, uint32_t blur_passes) {
   g_cacao_blur.store(std::min(blur_passes, 8u));
 }
 bool XenosAoDebugCacao() { return g_cacao.load(); }
+void XenosAoDebugSetMipBias(bool on) { g_mip_bias.store(on); }
+bool XenosAoDebugMipBias() { return g_mip_bias.load(); }
 uint32_t XenosAoDebugCacaoBlur() { return g_cacao_blur.load(); }
 uint32_t XenosAoDebugDenoisePasses() { return g_denoise.load() % kDenoiseCount + 1; }
 void XenosAoDebugSetDenoisePasses(uint32_t passes) { g_denoise.store(std::clamp(passes, 1u, kDenoiseCount) - 1); }
@@ -128,6 +131,11 @@ void XenosInstallAoDebugKeys(rex::ui::ImGuiDrawer* drawer) {
       g_show.store(0);
     }
     REXLOG_INFO("gow2_ao: shown AO -> {}", name);
+  });
+  rex::ui::RegisterBind("bind_gow2_mip_bias", "F2", "Upscaler mip bias on / off (developer)", [] {
+    const bool on = !g_mip_bias.load();
+    g_mip_bias.store(on);
+    REXLOG_INFO("gow2_upscaler: mip bias -> {}", on ? "on" : "off");
   });
   rex::ui::RegisterBind("bind_gow2_ao_game", "F5", "AO: what is shown <-> the game's own (developer)", [] {
     if (!g_active.load()) return;
@@ -172,6 +180,7 @@ void XenosShutdownAoDebugKeys() {
   if (!g_keys.exchange(false)) return;
   rex::ui::UnregisterBind("bind_gow2_ao_show");
   rex::ui::UnregisterBind("bind_gow2_ao_game");
+  rex::ui::UnregisterBind("bind_gow2_mip_bias");
   rex::ui::UnregisterBind("bind_gow2_ao_view");
   rex::ui::UnregisterBind("bind_gow2_ao_quality");
   rex::ui::UnregisterBind("bind_gow2_ao_denoise");

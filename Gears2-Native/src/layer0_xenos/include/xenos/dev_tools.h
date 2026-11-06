@@ -76,6 +76,8 @@ uint32_t XenosAoDebugQuality();
 uint32_t XenosAoDebugDenoisePasses();  // 1-3
 void XenosAoDebugSetCacao(bool on, bool available, uint32_t blur_passes);  // F6: XeGTAO / CACAO (notes/81)
 bool XenosAoDebugCacao();
+void XenosAoDebugSetMipBias(bool on);  // notes/82: F2
+bool XenosAoDebugMipBias();
 uint32_t XenosAoDebugCacaoBlur();  // 0-8; F8 steps 1, 2, 3, 4, 6, 8 while CACAO is shown
 void XenosAoDebugSetDenoisePasses(uint32_t passes);
 // Patch 0163: COGBox's in-game menu (ingame_menu.cpp) - Back + Start or F1 opens it; COGBox's settings for this game
