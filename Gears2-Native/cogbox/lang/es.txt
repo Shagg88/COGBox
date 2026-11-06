@@ -812,3 +812,7 @@ Hold to walk = Mantener para caminar
 Press to switch walking on / off = Pulsar para activar / desactivar caminar
 With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = Con teclado y ratón: cómo funciona la tecla Caminar (elige la tecla en TECLAS DEL TECLADO). Caminar mueve a media velocidad. Al principio no hay ninguna tecla asignada.
 Walk = Caminar
+
+# notes/81: CACAO
+CACAO (experimental) = CACAO (experimental)
+CACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer. = CACAO: FidelityFX CACAO de AMD a media resolución: cuesta mucho menos que XeGTAO y muestra menos grano con DLAA y SMAA T2x, aunque los detalles finos de contacto son más suaves.

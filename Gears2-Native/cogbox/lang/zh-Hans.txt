@@ -812,3 +812,7 @@ Hold to walk = 按住步行
 Press to switch walking on / off = 按一下开启 / 关闭步行
 With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = 使用键盘和鼠标时：步行键的工作方式（在“键盘按键”中选择按键）。步行时以一半速度移动。初始未设置按键。
 Walk = 步行
+
+# notes/81: CACAO
+CACAO (experimental) = CACAO（实验性）
+CACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer. = CACAO：AMD 的 FidelityFX CACAO，以半分辨率运行：开销远低于 XeGTAO，在 DLAA 和 SMAA T2x 下颗粒更少，但细小的接触细节会更柔和。

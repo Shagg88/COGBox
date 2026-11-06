@@ -812,3 +812,7 @@ Hold to walk = 누르고 있는 동안 걷기
 Press to switch walking on / off = 누를 때마다 걷기 켜기 / 끄기
 With Keyboard and mouse: how the Walk key works (choose the key in KEYBOARD KEYS). Walking moves at half speed. No key is set at first. = 키보드와 마우스 사용 시: 걷기 키의 동작 (키는 키보드 키에서 선택). 걸으면 절반 속도로 움직입니다. 처음에는 키가 설정되어 있지 않습니다.
 Walk = 걷기
+
+# notes/81: CACAO
+CACAO (experimental) = CACAO (실험적)
+CACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer. = CACAO: AMD의 FidelityFX CACAO를 절반 해상도로 사용합니다. XeGTAO보다 훨씬 가볍고 DLAA 및 SMAA T2x에서 노이즈가 적지만, 세밀한 접촉 디테일은 더 부드러워집니다.
