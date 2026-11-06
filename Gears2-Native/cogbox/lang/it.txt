@@ -851,3 +851,5 @@ No mods yet = Ancora nessuna mod
 -  confirmed works = -  funziona (confermato)
 -  untested version = -  versione non testata
 -  untested update = -  aggiornamento non testato
+# 0.4.6: streamlined library screen (machine-made translation, please check)
+untested version = versione non testata

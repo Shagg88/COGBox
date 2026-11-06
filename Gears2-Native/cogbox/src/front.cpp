@@ -307,6 +307,18 @@ void add_game_ask(App &a)
     for (int s = 0; s < G_COUNT; s++) a.modal.list.push_back(game_def(game_at_slot(s)).name);
 }
 
+// 0.4.6 (Shagg 5 Nov 18:07): a longer explanation of a drawn line shows when the mouse rests on it
+static void hover_tip(ImVec2 p0, ImVec2 p1, const char *text)
+{
+    if (!ImGui::IsWindowHovered() || !ImGui::IsMouseHoveringRect(p0, p1) || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) return;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(S(460), FLT_MAX));
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(S(440));
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
 // No game added yet: a short welcome in place of the carousel, with the way to add one
 static void empty_draw(App &a, ImVec2 size, bool nav)
 {
@@ -325,9 +337,12 @@ static void empty_draw(App &a, ImVec2 size, bool nav)
     // 0.4.6 (Shagg 4 Nov): short; drag and drop first (ADD A GAME below opens the same import, for controllers)
     centred(F_BODY, FS(F_BODY), col::amber, tr("Drag and drop your game, Title Update or DLC files here to install them."));
     y += S(4);
-    centred(F_BODY, FS(F_BODY), col::dim, tr("COGBox does not include game files. See the README for details."));
-    y += S(10);
-    centred(F_SMALL, FS(F_SMALL), col::dim, tr("Install COGBox outside cloud-synced folders such as OneDrive, Dropbox or Google Drive - syncing can lock, move or partly update files while they are in use."));
+    {   // 0.4.6: one short line; the cloud-folder advice is its tooltip
+        const float y0 = y;
+        centred(F_BODY, FS(F_BODY), col::dim, tr("COGBox does not include game files. See the README for details."));
+        hover_tip(ImVec2(cx - wrap * 0.5f, y0), ImVec2(cx + wrap * 0.5f, y),
+                  tr("Install COGBox outside cloud-synced folders such as OneDrive, Dropbox or Google Drive - syncing can lock, move or partly update files while they are in use."));
+    }
     y += S(22);
     const float bw = T(180), bh = T(36);
     ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
@@ -452,7 +467,7 @@ void front_draw(App &a, ImVec2 size)
             return ts.y;
         };
         y += centred(F_HEAD, FS(F_HEAD) * 1.25f, col::text, gd.name, y) + S(2);
-        std::string line;
+        std::string line, lineTip;
         switch (st.ready) {
         case R_READY:
             line = st.useUpdate ? std::string(gd.updateName) : "Disc version";
@@ -460,15 +475,23 @@ void front_draw(App &a, ImVec2 size)
             if (st.lastPlayed > 0) line += ", " + last_played_text(st.lastPlayed);
             // Shagg 29 Oct 18:07: an untested game version or title update (or an update made for another disc) still plays,
             // with a warning - unless the player said that exact file works
-            if ((st.xexKnown && !st.xexMatch && !st.xexConfirmed) || (st.useUpdate && st.xexpKnown && !st.xexpMatch && !st.xexpConfirmed))
-                line += "   |   an untested version - it may not work as it should. Please don't report problems you get with it; use the expected one first";
+            // 0.4.6: two words on the line, the advice in its tooltip
+            if ((st.xexKnown && !st.xexMatch && !st.xexConfirmed) || (st.useUpdate && st.xexpKnown && !st.xexpMatch && !st.xexpConfirmed)) {
+                line += "   |   untested version";
+                lineTip = "an untested version - it may not work as it should. Please don't report problems you get with it; use the expected one first";
+            }
             break;
         case R_NO_COPY: line = gd.tagline; break;
         case R_COPY_MISSING: line = "Your copy isn't where it was - is its drive connected?"; break;
         case R_NEED_UPDATE: line = std::string("Needs ") + gd.updateName + " - add it from your console or its package file"; break;
         case R_NO_PORT: line = "Not in this release of COGBox yet"; break;
         }
-        y += centred(F_BODY, FS(F_BODY), st.ready == R_READY ? col::dim : col::amber, tr(line), y) + S(14);   // 0.2.0
+        {
+            const std::string shown = tr(line);   // 0.2.0
+            const float lw = F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, shown.c_str()).x, y0 = y;
+            y += centred(F_BODY, FS(F_BODY), st.ready == R_READY && lineTip.empty() ? col::dim : col::amber, shown, y) + S(14);
+            if (!lineTip.empty()) hover_tip(ImVec2(cx - lw * 0.5f, y0), ImVec2(cx + lw * 0.5f, y), tr(lineTip.c_str()));
+        }
 
         float bw = T(140), bh = T(36), gap = S(14);
         bool running = a.run.proc != nullptr, busy = a.job.state.load() == 1;
@@ -494,10 +517,12 @@ void front_draw(App &a, ImVec2 size)
         }
         // Shagg 1 Nov: the drop tip, under the buttons (and the folder button when it shows)
         {
-            const bool folderRow = false;
-            centred(F_SMALL, FS(F_SMALL), col::dim,
-                    tr("Tip: drag and drop a disc image, Games on Demand copy, title update, DLC package or game folder onto this window to add it."),
-                    y + bh + S(14) + (folderRow ? ImGui::GetFrameHeight() + S(8) : 0.0f));
+            // 0.4.6: the empty screen's short line; the full list of what can be dropped is its tooltip
+            const std::string tip = tr("Drag and drop your game, Title Update or DLC files here to install them.");
+            const float ty = y + bh + S(14), tw = F_SMALL->CalcTextSizeA(FS(F_SMALL), FLT_MAX, 0, tip.c_str()).x;
+            const float th = centred(F_SMALL, FS(F_SMALL), col::dim, tip, ty);
+            hover_tip(ImVec2(cx - tw * 0.5f, ty), ImVec2(cx + tw * 0.5f, ty + th),
+                      tr("Tip: drag and drop a disc image, Games on Demand copy, title update, DLC package or game folder onto this window to add it."));
         }
     }   // the carousel (nLib > 0)
 

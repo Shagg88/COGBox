@@ -851,3 +851,5 @@ No mods yet = MODはまだありません
 -  confirmed works = -  動作確認済み
 -  untested version = -  未検証のバージョン
 -  untested update = -  未検証のアップデート
+# 0.4.6: streamlined library screen (machine-made translation, please check)
+untested version = 未検証のバージョン

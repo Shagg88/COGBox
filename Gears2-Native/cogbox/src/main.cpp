@@ -279,7 +279,7 @@ static void draw_modal(App &a, ImVec2 size)
         ImVec2 p0 = ImGui::GetWindowPos(), p1(p0.x + ImGui::GetWindowSize().x, p0.y + ImGui::GetWindowSize().y);
         th_plate(ImGui::GetWindowDrawList(), p0, p1, S(14), false);
         th_heading(m.title.c_str(), p1.x - S(28));
-        ImGui::Dummy(ImVec2(0, S(4)));
+        ImGui::Dummy(ImVec2(0, S(6)));
         ImGui::PushTextWrapPos(w - S(28));
         ImGui::TextUnformatted(m.text.c_str());
         ImGui::PopTextWrapPos();
@@ -296,12 +296,14 @@ static void draw_modal(App &a, ImVec2 size)
         if (!m.check.empty()) { ImGui::Dummy(ImVec2(0, S(6))); ImGui::Checkbox(tr(m.check).c_str(), &m.checked); }   // 0.2.0
         ImGui::Dummy(ImVec2(0, S(10)));
         float bw = 0;
-        for (auto &b : m.buttons) bw += ImGui::CalcTextSize(b.c_str()).x + S(44) + S(12);
+        // 0.4.6 (Shagg 5 Nov): one button size - at least S(120) wide, so a dialog's buttons line up
+        auto btn_w = [](const std::string &b) { return std::max(S(120), ImGui::CalcTextSize(b.c_str()).x + S(44)); };
+        for (auto &b : m.buttons) bw += btn_w(b) + S(12);
         ImGui::SetCursorPosX(std::max(S(28), w - S(28) - bw + S(12)));
         for (size_t i = 0; i < m.buttons.size(); i++) {
             if (i) ImGui::SameLine(0, S(12));
             const std::string &b = m.buttons[i];
-            ImVec2 bs(ImGui::CalcTextSize(b.c_str()).x + S(44), S(38));
+            ImVec2 bs(btn_w(b), S(38));
             bool hit = i == 0 ? th_button_red(b.c_str(), bs, true, F_BOLD) : th_button(b.c_str(), bs, true, F_BOLD);
             if (i == 0 && ImGui::IsWindowAppearing() && m.list.empty()) ImGui::SetKeyboardFocusHere(-1);
             if (hit) m.answer = (int)i;

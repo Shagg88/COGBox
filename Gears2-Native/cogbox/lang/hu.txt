@@ -851,3 +851,5 @@ No mods yet = Még nincs mod
 -  confirmed works = -  megerősítve, hogy működik
 -  untested version = -  nem tesztelt verzió
 -  untested update = -  nem tesztelt frissítés
+# 0.4.6: streamlined library screen (machine-made translation, please check)
+untested version = nem tesztelt verzió

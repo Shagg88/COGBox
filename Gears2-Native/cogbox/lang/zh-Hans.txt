@@ -851,3 +851,5 @@ No mods yet = 还没有模组
 -  confirmed works = -  已确认可用
 -  untested version = -  未测试的版本
 -  untested update = -  未测试的更新
+# 0.4.6: streamlined library screen (machine-made translation, please check)
+untested version = 未测试的版本
