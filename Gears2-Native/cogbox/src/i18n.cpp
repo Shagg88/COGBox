@@ -45,6 +45,11 @@ void build_pieces()
     for (auto &kv : g_map) {
         const std::string &k = kv.first;
         if (k.size() < 4) continue;
+        // 0.4.6 (Hungarian / Italian screenshots: "Keret nélkül fullscreen", "if yours non è per the one"): a single
+        // word ("Borderless", " isn't ") is no piece - put inside an untranslated sentence it mixes two languages.
+        // A piece is a phrase (a space inside it) or a label ending in ':' ("Port: ").
+        const std::string kt = trim(k);
+        if (kt.find(' ') == std::string::npos && (kt.empty() || kt.back() != ':')) continue;
         g_pieces[k.substr(0, 3)].push_back(&kv.first);
     }
     for (auto &kv : g_pieces)
