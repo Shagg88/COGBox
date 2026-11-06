@@ -946,3 +946,8 @@ Loading shaders = Caricamento degli shader
 Depth of field at the render resolution = Profondità di campo alla risoluzione di rendering
 Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3: la profondità di campo (la sfocatura davanti e dietro ciò che guardi) è disegnata alla risoluzione di rendering invece che ai 720p della console ingranditi. Solo con una risoluzione di rendering sopra i 720p.
 Gears 3 only. = Solo Gears 3.
+# GitHub #174 (machine-made translation, please check)
+Unlock Insane from the start = Sblocca Folle dall'inizio
+Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = La difficoltà Folle si può scegliere senza finire prima la campagna. Profilo e salvataggi non vengono modificati.
+its difficulty check isn't found yet = il suo controllo della difficoltà non è ancora stato trovato
+Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3: per ora solo con la versione Disco (il codice dell'aggiornamento non è ancora mappato).

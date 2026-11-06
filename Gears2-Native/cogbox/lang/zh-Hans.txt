@@ -946,3 +946,8 @@ Loading shaders = 正在载入着色器
 Depth of field at the render resolution = 以渲染分辨率绘制景深
 Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3：景深（你所看物体前后的模糊）以渲染分辨率绘制，而不是放大主机的 720p。仅当渲染分辨率高于 720p 时。
 Gears 3 only. = 仅限 Gears 3。
+# GitHub #174 (machine-made translation, please check)
+Unlock Insane from the start = 从一开始解锁疯狂难度
+Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = 无需先通关战役即可选择疯狂难度。你的档案和存档不会被更改。
+its difficulty check isn't found yet = 尚未找到其难度检查
+Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3：目前仅限游戏版本为光盘（标题更新的代码尚未映射）。

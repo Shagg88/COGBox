@@ -946,3 +946,8 @@ Loading shaders = Shaderek betöltése
 Depth of field at the render resolution = Mélységélesség a renderfelbontáson
 Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3: a mélységélesség (az elmosás a nézett dolog előtt és mögött) a renderfelbontáson készül a konzol felnagyított 720p-je helyett. Csak 720p feletti renderfelbontásnál.
 Gears 3 only. = Csak Gears 3.
+# GitHub #174 (machine-made translation, please check)
+Unlock Insane from the start = Őrült nehézség feloldása az elejétől
+Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = Az Őrült nehézség a kampány befejezése nélkül is választható. A profilod és a mentéseid nem változnak.
+its difficulty check isn't found yet = a nehézségi ellenőrzése még nincs meg
+Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3: egyelőre csak Lemez játékverzióval (a frissítés kódja még nincs feltérképezve).

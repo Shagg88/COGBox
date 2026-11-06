@@ -1087,7 +1087,7 @@ static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", 
 static const char *const k_ctlAdv[] = { "DeadZone", "RadialDZ", "LowLag", nullptr };
 static const char *const k_playGame[] = { "Version", "Lang", "VoiceLang", "SkipLogos", "Mute", nullptr };
 static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", nullptr };
-static const char *const k_playExtras[] = { "Cheats", "Mutators", nullptr };
+static const char *const k_playExtras[] = { "UnlockInsane", "Cheats", "Mutators", nullptr };
 static const char *const k_achPopups[] = { "AchievementStyle", "AchievementColour", "AchievementPosition", "AchievementSound",
                                            "HideAchievementPopups", nullptr };   // PR #187
 static const char *const k_none[] = { nullptr };

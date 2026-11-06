@@ -946,3 +946,8 @@ Loading shaders = シェーダーを読み込み中
 Depth of field at the render resolution = 被写界深度をレンダリング解像度で
 Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3: 被写界深度 (見ている物の前後のぼかし) を、コンソールの 720p を拡大する代わりにレンダリング解像度で描画します。レンダリング解像度が 720p を超えるときのみ。
 Gears 3 only. = Gears 3 のみ。
+# GitHub #174 (machine-made translation, please check)
+Unlock Insane from the start = 最初から Insane を解放
+Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = キャンペーンをクリアしなくても Insane 難易度を選べます。プロフィールとセーブデータは変更されません。
+its difficulty check isn't found yet = 難易度のチェックがまだ見つかっていません
+Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3: 現在はゲームバージョンがディスクのときのみ (タイトルアップデートのコードはまだ未対応)。

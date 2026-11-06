@@ -946,3 +946,8 @@ Loading shaders = Chargement des shaders
 Depth of field at the render resolution = Profondeur de champ à la résolution de rendu
 Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3 : sa profondeur de champ (le flou devant et derrière ce que vous regardez) est dessinée à la résolution de rendu au lieu des 720p de la console agrandis. Seulement si la résolution de rendu dépasse 720p.
 Gears 3 only. = Gears 3 uniquement.
+# GitHub #174 (machine-made translation, please check)
+Unlock Insane from the start = Débloquer Démentiel dès le début
+Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = La difficulté Démentiel peut être choisie sans finir d'abord la campagne. Votre profil et vos sauvegardes ne sont pas modifiés.
+its difficulty check isn't found yet = sa vérification de difficulté n'est pas encore trouvée
+Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3 : pour l'instant seulement avec la version Disque (le code de la mise à jour n'est pas encore cartographié).

@@ -392,6 +392,10 @@ std::vector<Option> make_options(Game g) {
     add(make("SkipLogos", "Skip the intro logos", Tab::Gameplay, Kind::Bool, PG, 0,
              "Starts at the title screen without the publisher / studio logo films. The loading film and cutscenes still play.", 326),
         "skiplogos");
+    // GitHub #174 (Flippage's Gears 3 recomp, 26d6448): the difficulty screen sees Insane unlocked; the profile is untouched
+    add(make("UnlockInsane", "Unlock Insane from the start", Tab::Gameplay, Kind::Bool, OWN, 0,
+             "Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed.", 0),
+        "unlockinsane");
     add(make("Cheats", "Cheats (hotkeys F5-F11)", Tab::Gameplay, Kind::Bool, SH, 0,
              "The developers' cheat keys (Gears 3 chat, its notes/25): F5-F11 in game. Achievements and saves are your own "
              "business.", 327), "cheats");
@@ -533,6 +537,10 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "skiplogos" || f == "trilinear") {
         if (g == Game::Gears2 && !env.g2_disc_ini_edits) return no(not_yet(0, "needs the next Gears 2 build"));
         if (g == Game::Gears1 && !cap_exe(env, f == "skiplogos" ? "gow1_skip_logos" : "gow1_trilinear")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "unlockinsane") {   // GitHub #174: only Gears 3's base disc build so far
+        if (g != Game::Gears3) return no(not_yet(gi, "its difficulty check isn't found yet"));
+        if (ver != Version::Disc) return no("Gears 3: only with Game version Disc for now (the title update's code is not mapped yet).");
+        if (!cap_exe(env, "Unlock Insane difficulty from the start")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "dofscale") {   // GitHub #105
         if (g != Game::Gears3) return no("Gears 3 only.");
         if (!cap_exe(env, "GitHub #105: surface pitches")) return no(not_yet(gi, "needs its next build"));
@@ -949,6 +957,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PS1 843-849: Gears 3's threshold, memexport, aspect
     if (isG3) {
         if (scale > 1) a.push_back("--gow2_renderer_resolution_scale_threshold=1120");
+        if (on("UnlockInsane")) a.push_back("--gow3_unlock_insane=true");   // GitHub #174
         // GitHub #105: the depth-of-field chain's half-size targets (pitch 640) follow the scale despite the threshold
         if (scale > 1 && avail("DofScale") && on("DofScale")) a.push_back("--gow2_renderer_resolution_scale_pitches=640");
         a.push_back("--gow2_renderer_memexport=true");

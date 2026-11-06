@@ -946,3 +946,8 @@ Loading shaders = 셰이더 불러오는 중
 Depth of field at the render resolution = 렌더링 해상도로 피사계 심도
 Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3: 피사계 심도 (보고 있는 대상 앞뒤의 흐림)를 콘솔의 720p를 확대하는 대신 렌더링 해상도로 그립니다. 렌더링 해상도가 720p보다 높을 때만.
 Gears 3 only. = Gears 3 전용.
+# GitHub #174 (machine-made translation, please check)
+Unlock Insane from the start = 처음부터 광기 난이도 해제
+Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = 캠페인을 먼저 끝내지 않아도 광기 난이도를 고를 수 있습니다. 프로필과 저장 데이터는 바뀌지 않습니다.
+its difficulty check isn't found yet = 난이도 확인 코드를 아직 찾지 못했습니다
+Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3: 지금은 게임 버전이 디스크일 때만 (타이틀 업데이트 코드는 아직 분석되지 않음).
