@@ -1143,3 +1143,5 @@ No pictures found. Add a game, or start one once from COGBox. = 未找到图片�
 D-pad choose   A pick   B close = 方向键 选择   A 确定   B 关闭
 ICON = 头像
 BACK = 返回
+Horde bots = 部落模式机器人
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. = 本地部落模式：部落计分板第一次出现时按“返回 / 视图”键添加两个机器人（再按一次再加两个）。它们每一波都会重生。

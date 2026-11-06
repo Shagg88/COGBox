@@ -1143,3 +1143,5 @@ No pictures found. Add a game, or start one once from COGBox. = Nessuna immagine
 D-pad choose   A pick   B close = Croce scegli   A seleziona   B chiudi
 ICON = ICONA
 BACK = INDIETRO
+Horde bots = Bot in Orda
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. = Orda locale: premi Indietro / Visualizza quando compare per la prima volta il tabellone dell'Orda per aggiungere due bot (premi ancora per altri due). Ricompaiono a ogni ondata.

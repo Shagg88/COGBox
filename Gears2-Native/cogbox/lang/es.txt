@@ -1143,3 +1143,5 @@ No pictures found. Add a game, or start one once from COGBox. = No se encontraro
 D-pad choose   A pick   B close = Cruceta elegir   A seleccionar   B cerrar
 ICON = ICONO
 BACK = ATRÁS
+Horde bots = Bots en Horda
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. = Horda local: pulsa Atrás / Vista cuando aparezca por primera vez el marcador de Horda para añadir dos bots (vuelve a pulsar para dos más). Reaparecen en cada oleada.

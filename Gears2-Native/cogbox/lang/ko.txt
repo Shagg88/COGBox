@@ -1143,3 +1143,5 @@ No pictures found. Add a game, or start one once from COGBox. = 그림을 찾지
 D-pad choose   A pick   B close = 방향 버튼 선택   A 고르기   B 닫기
 ICON = 아이콘
 BACK = 뒤로
+Horde bots = 호드 봇
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. = 로컬 호드: 호드 점수판이 처음 나타날 때 뒤로 / 보기 버튼을 누르면 봇 두 명이 추가됩니다(다시 누르면 두 명 더). 봇은 매 웨이브 다시 나타납니다.
