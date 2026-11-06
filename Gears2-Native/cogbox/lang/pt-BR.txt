@@ -951,3 +951,6 @@ Unlock Insane from the start = Desbloquear Insano desde o início
 Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = A dificuldade Insano pode ser escolhida sem terminar a campanha antes. Seu perfil e seus salvamentos não são alterados.
 its difficulty check isn't found yet = a verificação de dificuldade ainda não foi encontrada
 Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3: por enquanto só com a versão Disco (o código da atualização ainda não foi mapeado).
+# GitHub #90 (machine-made translation, please check)
+Not on your copy of the game - it will show English. = Não está na sua cópia do jogo - será mostrado em inglês.
+Not on your copy of the game - the voices will be in the game language instead. = Não está na sua cópia do jogo - as vozes ficarão no idioma do jogo.

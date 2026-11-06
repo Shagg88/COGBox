@@ -951,3 +951,6 @@ Unlock Insane from the start = Odblokuj Szaleństwo od początku
 Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = Poziom Szaleństwo można wybrać bez wcześniejszego ukończenia kampanii. Profil i zapisy nie są zmieniane.
 its difficulty check isn't found yet = jego sprawdzenie poziomu trudności nie zostało jeszcze znalezione
 Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3: na razie tylko z wersją gry Płyta (kod aktualizacji nie jest jeszcze zmapowany).
+# GitHub #90 (machine-made translation, please check)
+Not on your copy of the game - it will show English. = Brak w twojej kopii gry - będzie po angielsku.
+Not on your copy of the game - the voices will be in the game language instead. = Brak w twojej kopii gry - głosy będą w języku gry.

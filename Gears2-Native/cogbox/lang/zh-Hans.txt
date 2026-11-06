@@ -951,3 +951,6 @@ Unlock Insane from the start = 从一开始解锁疯狂难度
 Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = 无需先通关战役即可选择疯狂难度。你的档案和存档不会被更改。
 its difficulty check isn't found yet = 尚未找到其难度检查
 Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3：目前仅限游戏版本为光盘（标题更新的代码尚未映射）。
+# GitHub #90 (machine-made translation, please check)
+Not on your copy of the game - it will show English. = 你的游戏副本中没有此语言 - 将显示英语。
+Not on your copy of the game - the voices will be in the game language instead. = 你的游戏副本中没有此语言 - 语音将改用游戏语言。

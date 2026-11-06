@@ -951,3 +951,6 @@ Unlock Insane from the start = Wahnsinnig von Anfang an freischalten
 Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = Der Schwierigkeitsgrad Wahnsinnig ist wählbar, ohne zuerst die Kampagne abzuschließen. Profil und Spielstände bleiben unverändert.
 its difficulty check isn't found yet = seine Schwierigkeitsprüfung ist noch nicht gefunden
 Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3: vorerst nur mit Spielversion Disc (der Code des Title Updates ist noch nicht erfasst).
+# GitHub #90 (machine-made translation, please check)
+Not on your copy of the game - it will show English. = Nicht auf deiner Spielkopie - es wird Englisch angezeigt.
+Not on your copy of the game - the voices will be in the game language instead. = Nicht auf deiner Spielkopie - die Stimmen sind stattdessen in der Spielsprache.

@@ -951,3 +951,6 @@ Unlock Insane from the start = 最初から Insane を解放
 Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = キャンペーンをクリアしなくても Insane 難易度を選べます。プロフィールとセーブデータは変更されません。
 its difficulty check isn't found yet = 難易度のチェックがまだ見つかっていません
 Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3: 現在はゲームバージョンがディスクのときのみ (タイトルアップデートのコードはまだ未対応)。
+# GitHub #90 (machine-made translation, please check)
+Not on your copy of the game - it will show English. = お使いのゲームにはありません - 英語で表示されます。
+Not on your copy of the game - the voices will be in the game language instead. = お使いのゲームにはありません - 音声はゲームの言語になります。

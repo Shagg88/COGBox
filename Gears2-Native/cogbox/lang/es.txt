@@ -951,3 +951,6 @@ Unlock Insane from the start = Desbloquear Locura desde el principio
 Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = Se puede elegir la dificultad Locura sin terminar antes la campaña. Tu perfil y tus partidas guardadas no cambian.
 its difficulty check isn't found yet = aún no se ha encontrado su comprobación de dificultad
 Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3: por ahora solo con la versión del juego Disco (el código de la actualización aún no está mapeado).
+# GitHub #90 (machine-made translation, please check)
+Not on your copy of the game - it will show English. = No está en tu copia del juego: se mostrará en inglés.
+Not on your copy of the game - the voices will be in the game language instead. = No está en tu copia del juego: las voces estarán en el idioma del juego.

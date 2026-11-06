@@ -951,3 +951,6 @@ Unlock Insane from the start = Débloquer Démentiel dès le début
 Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = La difficulté Démentiel peut être choisie sans finir d'abord la campagne. Votre profil et vos sauvegardes ne sont pas modifiés.
 its difficulty check isn't found yet = sa vérification de difficulté n'est pas encore trouvée
 Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3 : pour l'instant seulement avec la version Disque (le code de la mise à jour n'est pas encore cartographié).
+# GitHub #90 (machine-made translation, please check)
+Not on your copy of the game - it will show English. = Absent de votre copie du jeu - il s'affichera en anglais.
+Not on your copy of the game - the voices will be in the game language instead. = Absent de votre copie du jeu - les voix seront dans la langue du jeu.

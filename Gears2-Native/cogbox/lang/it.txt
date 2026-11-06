@@ -951,3 +951,6 @@ Unlock Insane from the start = Sblocca Folle dall'inizio
 Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = La difficoltà Folle si può scegliere senza finire prima la campagna. Profilo e salvataggi non vengono modificati.
 its difficulty check isn't found yet = il suo controllo della difficoltà non è ancora stato trovato
 Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3: per ora solo con la versione Disco (il codice dell'aggiornamento non è ancora mappato).
+# GitHub #90 (machine-made translation, please check)
+Not on your copy of the game - it will show English. = Non presente nella tua copia del gioco: verrà mostrato in inglese.
+Not on your copy of the game - the voices will be in the game language instead. = Non presente nella tua copia del gioco: le voci saranno nella lingua del gioco.

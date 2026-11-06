@@ -951,3 +951,6 @@ Unlock Insane from the start = Открыть «Безумие» с самого
 Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed. = Сложность «Безумие» можно выбрать, не проходя сначала кампанию. Профиль и сохранения не меняются.
 its difficulty check isn't found yet = его проверка сложности пока не найдена
 Gears 3: only with Game version Disc for now (the title update's code is not mapped yet). = Gears 3: пока только с версией игры «Диск» (код обновления ещё не разобран).
+# GitHub #90 (machine-made translation, please check)
+Not on your copy of the game - it will show English. = Нет в вашей копии игры - будет показан английский.
+Not on your copy of the game - the voices will be in the game language instead. = Нет в вашей копии игры - голоса будут на языке игры.

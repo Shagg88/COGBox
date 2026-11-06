@@ -636,6 +636,16 @@ static void option_row(App &a, int g, const gs::Option &o)
             ImGui::EndTooltip();
         }
     } else if (tipRow == id) tipRow = 0;
+    // GitHub #90: a language saved before (or from another copy) that this copy doesn't have - say so before the launch,
+    // with what the game uses instead (the launcher doesn't pass it, gears_settings build_args)
+    if (av.ok && (o.id == "Lang" || o.id == "VoiceLang")) {
+        const int cur = (int)lround(a.cur[g].has(o.id) ? a.cur[g].f(o.id) : o.def);
+        const std::vector<bool> &miss = o.id == "Lang" ? a.env[g].lang_missing : a.env[g].voice_missing;
+        if (cur > 0 && cur < (int)miss.size() && miss[cur])
+            ui_note(o.id == "Lang" ? "Not on your copy of the game - it will show English."
+                                   : "Not on your copy of the game - the voices will be in the game language instead.",
+                    col::amber);
+    }
     ImGui::PopID();
 }
 
