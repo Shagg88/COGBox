@@ -58,7 +58,9 @@ REXCVAR_DEFINE_INT32(gow2_renderer_bc_gpu_page_log, 0, "Gears2",
                      "in the mirror, up to N lines (max 500). 0 = off");
 REXCVAR_DEFINE_BOOL(gow2_renderer_bc_cpu_over_gpu, false, "Gears2",
                     "Experimental (#202): BC textures take the guest CPU bytes even for pages our GPU wrote last "
-                    "(a render target's data is never valid DXT). false (default) = the mirror's bytes, as 0.4.5");
+                    "(a render target's data is never valid DXT). The pages stay marked GPU-written, so other readers "
+                    "(render-target and 32-bit textures) still take the mirror. false (default) = the mirror's bytes, "
+                    "as 0.4.5");
 
 // GitHub #131 / #59 (Judgment under Proton): the texture cache trusts the page watch - write-protected pages whose
 // first CPU write or kernel file read raises a callback. If that mechanism misses writes (a suspicion for Wine: kernel
@@ -1605,9 +1607,17 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     const bool is_bc = fb.block_width > 1;  // #202: block-compressed
     const bool bc_cpu = is_bc && REXCVAR_GET(gow2_renderer_bc_cpu_over_gpu);
     uint32_t gpu_pages_seen = 0;
-    if (bc_cpu && before_cpu_load_)  // pending memexport readbacks land in guest memory before its bytes are copied
-      for (uint32_t r = 0; r < 2; ++r)
-        if (lengths[r]) before_cpu_load_(starts[r], lengths[r]);
+    if (bc_cpu && before_cpu_load_) {  // pending memexport readbacks land first - only if a page is GPU-written
+      bool any = false;
+      for (uint32_t r = 0; r < 2 && !any; ++r)
+        if (lengths[r])
+          for (uint32_t p = starts[r] >> GuestWatch::kPageShift;
+               p <= (starts[r] + lengths[r] - 1) >> GuestWatch::kPageShift && !any; ++p)
+            any = watch_.GpuCurrent(p);
+      if (any)
+        for (uint32_t r = 0; r < 2; ++r)
+          if (lengths[r]) before_cpu_load_(starts[r], lengths[r]);
+    }
     for (uint32_t r = 0; r < 2; ++r) {
       if (!lengths[r]) continue;
       constexpr uint32_t kShift = GuestWatch::kPageShift;
@@ -1632,8 +1642,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         const uint32_t v = watch_.PageVersion(p);
         if (v != pv[p - first]) {
           pv[p - first] = v;
-          if (watch_.GpuCurrent(p)) ++gpu_pages_seen;
-          if (watch_.GpuCurrent(p) && !bc_cpu) {  // T2: our resolve wrote this page into the mirror; the CPU bytes are older
+          const bool gpu_page = watch_.GpuCurrent(p);
+          if (gpu_page) ++gpu_pages_seen;
+          if (gpu_page && !bc_cpu) {  // T2: our resolve wrote this page into the mirror; the CPU bytes are older
             flush(p);
             ++stats_.gpu_pages_kept;
             continue;
@@ -1654,7 +1665,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
           REXLOG_INFO("gow2_bc_gpu_pages: BC texture base {:08X} (+{:X}) mips {:08X} (+{:X}) format {} {}x{}: {} page(s) "
                       "last written by our GPU (resolve / memexport) - {}{}",
                       e.base_start, e.base_length, e.mip_start, e.mip_length, format, w, h, gpu_pages_seen,
-                      bc_cpu ? "taken from guest memory (bc_cpu_over_gpu)" : "kept from the mirror",
+                      bc_cpu ? "re-copied from guest memory (bc_cpu_over_gpu)" : "kept from the mirror",
                       n + 1 == max ? " - last line (gow2_renderer_bc_gpu_page_log)" : "");
       }
     }
