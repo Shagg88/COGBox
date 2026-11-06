@@ -522,6 +522,51 @@ static void Gow2WriteGuestFloat(rex::Runtime* runtime, uint32_t addr, float valu
   REXLOG_INFO("{}: {:08X} {} -> {}", what, addr, old_value, value);
 }
 
+// GitHub #132 (ultrawide: the camera sits higher than at 16:9 - Marcus lower in the frame, cut at the chest).
+// The camera's native view offset (disc sub_82886238, run every frame) picks a viewport type from the viewport's shape
+// (sub_82527760): X / Y strictly between the .rdata floats 1.7677778 and 1.7877778 (16:9 +- 0.01; disc 0x821D0D20 /
+// 0x821D0D1C, read only there, 0x828862C0 / 0x828862D0) is widescreen (CVT_16to9_*), anything else CVT_4to3_* - so
+// every ultrawide shape got the 4:3 camera. GearGame.xxx's defaults add ViewOffset_ViewportAdjustments[CVT_4to3_Full]
+// to the camera offset: Z +17 (GameplayCam_Default), +25 (Cover), +3 (Targeting): the camera 17 units higher. That
+// matches Shagg's 16:9 / 21:9 shots (JacintoMed lobby): with the 16:9 shot mapped to 21:9 (x 0.761 about the centre,
+// exact Hor+), the back wall lands ~10 px high and Marcus (~150 units away) 56 px high; 17 units explains both.
+// The property is not config (flags 0x3), so no ini edit reaches it. Fix: with --gow2_ultrawide the upper bound
+// becomes the ultrawide shape's aspect + 0.05, so the full-screen ultrawide viewport counts as widescreen like 16:9.
+// The pair is found by value in .rdata (one copy on the disc; TU6 moves .rdata) and written only if found exactly once.
+static void Gow2UltrawideCameraViewportType(rex::Runtime* runtime) {
+  const uint8_t* image = runtime->virtual_membase() + 0x82000000u;
+  uint32_t lo = 0, hi = 0;  // .rdata, from the PE header (little-endian)
+  if (image[0] == 'M' && image[1] == 'Z') {
+    uint32_t pe = 0;
+    std::memcpy(&pe, image + 0x3C, 4);
+    if (pe > 0 && pe < 0x1000 && std::memcmp(image + pe, "PE\0\0", 4) == 0) {
+      uint16_t sections = 0, opt = 0;
+      std::memcpy(&sections, image + pe + 6, 2);
+      std::memcpy(&opt, image + pe + 20, 2);
+      for (uint32_t i = 0; i < sections && i < 32; ++i) {
+        const uint8_t* s = image + pe + 24 + opt + 40 * i;
+        if (std::memcmp(s, ".rdata", 7) == 0) {
+          uint32_t vsize = 0, va = 0;
+          std::memcpy(&vsize, s + 8, 4);
+          std::memcpy(&va, s + 12, 4);
+          lo = va, hi = va + vsize;
+        }
+      }
+    }
+  }
+  static const uint8_t kPair[8] = {0x3F, 0xE4, 0xD5, 0xE7, 0x3F, 0xE2, 0x46, 0x8B};  // 1.7877778f, 1.7677778f (BE)
+  uint32_t found = 0, count = 0;
+  for (uint32_t o = lo; hi > lo && hi < 0x02000000u && o + 8 <= hi; o += 4)
+    if (std::memcmp(image + o, kPair, 8) == 0) found = 0x82000000u + o, ++count;
+  if (count != 1) {
+    REXLOG_INFO("gow2_ultrawide: camera viewport bounds not found ({} copies in .rdata {:08X}-{:08X}) - left alone "
+                "(GitHub #132)", count, 0x82000000u + lo, 0x82000000u + hi);
+    return;
+  }
+  Gow2WriteGuestFloat(runtime, found, float(1280.0 / Gow2WideHeight() + 0.05),
+                      "gow2_ultrawide: camera widescreen upper bound (GitHub #132: no 4:3 camera offset)");
+}
+
 void Gow2ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
   if (!runtime || !runtime->memory()) return;
   g_gow2_membase = runtime->virtual_membase();
@@ -534,6 +579,7 @@ void Gow2ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
   if (REXCVAR_GET(gow2_ultrawide)) {
     Gow2WriteGuestFloat(runtime, gow2::addr::kWidescreenAspect, Gow2WideHeight() == 550 ? 2.33333f : float(1280.0 / Gow2WideHeight()),
                         "gow2_ultrawide: widescreen aspect");
+    Gow2UltrawideCameraViewportType(runtime);
     // Job 200: the front buffer itself becomes 1280x550 (x the resolution scale). Show it at that shape (letterboxed in
     // a window of another shape) rather than Canary's way (letterbox off, which is right only in a 21:9 window).
     const bool a = rex::cvar::SetFlagByName("gow2_present_frame_aspect", "true");
