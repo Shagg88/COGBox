@@ -942,3 +942,7 @@ Trophy earned! = Zdobyto trofeum!
 Sample achievement = Przykładowe osiągnięcie
 Building shaders = Tworzenie shaderów
 Loading shaders = Wczytywanie shaderów
+# GitHub #105 (machine-made translation, please check)
+Depth of field at the render resolution = Głębia ostrości w rozdzielczości renderowania
+Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3: głębia ostrości (rozmycie przed i za tym, na co patrzysz) jest rysowana w rozdzielczości renderowania zamiast powiększonych 720p konsoli. Tylko gdy rozdzielczość renderowania przekracza 720p.
+Gears 3 only. = Tylko Gears 3.

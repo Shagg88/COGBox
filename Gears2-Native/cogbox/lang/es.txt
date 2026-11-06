@@ -942,3 +942,7 @@ Trophy earned! = ¡Trofeo obtenido!
 Sample achievement = Logro de ejemplo
 Building shaders = Creando shaders
 Loading shaders = Cargando shaders
+# GitHub #105 (machine-made translation, please check)
+Depth of field at the render resolution = Profundidad de campo a la resolución de renderizado
+Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3: su profundidad de campo (el desenfoque delante y detrás de lo que miras) se dibuja a la resolución de renderizado en lugar de a los 720p de la consola ampliados. Solo cuando la resolución de renderizado supera 720p.
+Gears 3 only. = Solo Gears 3.

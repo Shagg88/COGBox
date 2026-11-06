@@ -942,3 +942,7 @@ Trophy earned! = Получен трофей!
 Sample achievement = Пример достижения
 Building shaders = Сборка шейдеров
 Loading shaders = Загрузка шейдеров
+# GitHub #105 (machine-made translation, please check)
+Depth of field at the render resolution = Глубина резкости в разрешении рендеринга
+Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3: глубина резкости (размытие перед и за тем, на что вы смотрите) рисуется в разрешении рендеринга, а не в увеличенных 720p консоли. Только при разрешении рендеринга выше 720p.
+Gears 3 only. = Только Gears 3.

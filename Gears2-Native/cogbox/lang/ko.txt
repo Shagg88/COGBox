@@ -942,3 +942,7 @@ Trophy earned! = 트로피 획득!
 Sample achievement = 샘플 도전 과제
 Building shaders = 셰이더 생성 중
 Loading shaders = 셰이더 불러오는 중
+# GitHub #105 (machine-made translation, please check)
+Depth of field at the render resolution = 렌더링 해상도로 피사계 심도
+Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3: 피사계 심도 (보고 있는 대상 앞뒤의 흐림)를 콘솔의 720p를 확대하는 대신 렌더링 해상도로 그립니다. 렌더링 해상도가 720p보다 높을 때만.
+Gears 3 only. = Gears 3 전용.

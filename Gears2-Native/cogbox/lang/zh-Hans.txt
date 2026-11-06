@@ -942,3 +942,7 @@ Trophy earned! = 获得奖杯！
 Sample achievement = 示例成就
 Building shaders = 正在生成着色器
 Loading shaders = 正在载入着色器
+# GitHub #105 (machine-made translation, please check)
+Depth of field at the render resolution = 以渲染分辨率绘制景深
+Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3：景深（你所看物体前后的模糊）以渲染分辨率绘制，而不是放大主机的 720p。仅当渲染分辨率高于 720p 时。
+Gears 3 only. = 仅限 Gears 3。

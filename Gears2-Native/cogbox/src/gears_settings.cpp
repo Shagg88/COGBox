@@ -279,6 +279,10 @@ std::vector<Option> make_options(Game g) {
     // 2006 engine doesn't have are in its list too, greyed with the reason (0.3.0 left them out).
     add(make("MipFade", "Sharp textures show at once (fast mip fade)", Tab::Graphics, Kind::Bool, PG, 1,
              "A newly loaded sharper texture shows at once instead of fading in over 0.3-2 seconds.", 359), "mipfade", "", true);
+    // GitHub #105: Gears 3's depth of field (its half-size 640-pitch targets) at the render scale, not the console's 720p
+    add(make("DofScale", "Depth of field at the render resolution", Tab::Graphics, Kind::Bool, PG, 1,
+             "Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render "
+             "resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p.", 0), "dofscale");
     add(choice("Pool", "Texture memory", Tab::Graphics, PG,
                { "Game's own (smallest)", "Standard (196 MB / Gears 3 200 MB)", "Large (256 MB)", "Larger (320 MB, not long-tested)" }, 1,
                "The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory "
@@ -529,6 +533,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "skiplogos" || f == "trilinear") {
         if (g == Game::Gears2 && !env.g2_disc_ini_edits) return no(not_yet(0, "needs the next Gears 2 build"));
         if (g == Game::Gears1 && !cap_exe(env, f == "skiplogos" ? "gow1_skip_logos" : "gow1_trilinear")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "dofscale") {   // GitHub #105
+        if (g != Game::Gears3) return no("Gears 3 only.");
+        if (!cap_exe(env, "GitHub #105: surface pitches")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "mipfade") {
         if (g == Game::Gears2) return no(not_yet(0, "its config has no mip-fade setting"));
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no mip-fade setting - its sharper textures already show at once.");
@@ -942,6 +949,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PS1 843-849: Gears 3's threshold, memexport, aspect
     if (isG3) {
         if (scale > 1) a.push_back("--gow2_renderer_resolution_scale_threshold=1120");
+        // GitHub #105: the depth-of-field chain's half-size targets (pitch 640) follow the scale despite the threshold
+        if (scale > 1 && avail("DofScale") && on("DofScale")) a.push_back("--gow2_renderer_resolution_scale_pitches=640");
         a.push_back("--gow2_renderer_memexport=true");
         if (s.i("Resolution") >= 4 && !s.b("Ultrawide")) {
             if (cap_exe(env, "gow3_aspect")) a.push_back("--gow3_aspect=auto");

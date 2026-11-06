@@ -942,3 +942,7 @@ Trophy earned! = Trófea megszerezve!
 Sample achievement = Minta teljesítmény
 Building shaders = Shaderek készítése
 Loading shaders = Shaderek betöltése
+# GitHub #105 (machine-made translation, please check)
+Depth of field at the render resolution = Mélységélesség a renderfelbontáson
+Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p. = Gears 3: a mélységélesség (az elmosás a nézett dolog előtt és mögött) a renderfelbontáson készül a konzol felnagyított 720p-je helyett. Csak 720p feletti renderfelbontásnál.
+Gears 3 only. = Csak Gears 3.
