@@ -5256,7 +5256,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     rr::upscale::Mat4 now, prev;
     bool has_prev = false;
   };
-  static constexpr uint32_t kOmMaxObjects = 255, kOmMaxEntries = 8192, kOmMovingFrames = 60;
+  static constexpr uint32_t kOmMaxObjects = 2047, kOmMaxEntries = 8192, kOmMovingFrames = 60;
   bool om_on_ = false, om_ids_frame_ = false;
   gpu::ShaderHandle om_ps_hlsl_ = 0, om_ps_dxbc_ = 0;
   gpu::PipelineHandle om_cs_ = 0;
