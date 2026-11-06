@@ -10,6 +10,7 @@
 #include <rex/rex_app.h>
 #include "mouse_look.h"
 #include "main_menu_exit.h"
+#include "profile_log.h"
 
 namespace rex::ui {
 class WindowedAppContext;
@@ -64,6 +65,7 @@ class GowjApp : public rex::ReXApp {
     CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
     GowjAddBuiltInIniEdits();  // before the bundle is edited
+    GowjInstallProfileLog();   // GitHub #174: --gowj_profile_log (read-only)
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     GowjApplyUltrawideIfRequested(runtime());     // --gowj_ultrawide: the two aspect floats, the present shape
     XenosInstallDrawStatsIfRequested();
