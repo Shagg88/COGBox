@@ -156,8 +156,8 @@ starting the game after each, so you can see which one stops the list from loadi
 > work with Title Update 6.
 
 **Unlock Insane from the start** (Gameplay, off by default) lets you choose Insane without finishing the campaign;
-your profile and saves are not changed. For now it works in Gears of War 3's Disc version only (thanks to Flippage's
-Gears 3 recomp); the title update and the other games come later.
+your profile and saves are not changed. For now it works in Gears of War 3 (thanks to Flippage's Gears 3 recomp); the
+other games come later.
 
 Tick **Gameplay > Cheats (hotkeys F5-F11)** in the game's settings, then in game:
 

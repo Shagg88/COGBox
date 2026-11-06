@@ -537,9 +537,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "skiplogos" || f == "trilinear") {
         if (g == Game::Gears2 && !env.g2_disc_ini_edits) return no(not_yet(0, "needs the next Gears 2 build"));
         if (g == Game::Gears1 && !cap_exe(env, f == "skiplogos" ? "gow1_skip_logos" : "gow1_trilinear")) return no(not_yet(gi, "needs its next build"));
-    } else if (f == "unlockinsane") {   // GitHub #174: only Gears 3's base disc build so far
+    } else if (f == "unlockinsane") {   // GitHub #174: Gears 3 (disc and Title Update 6) so far
         if (g != Game::Gears3) return no(not_yet(gi, "its difficulty check isn't found yet"));
-        if (ver != Version::Disc) return no("Gears 3: only with Game version Disc for now (the title update's code is not mapped yet).");
         if (!cap_exe(env, "Unlock Insane difficulty from the start")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "dofscale") {   // GitHub #105
         if (g != Game::Gears3) return no("Gears 3 only.");

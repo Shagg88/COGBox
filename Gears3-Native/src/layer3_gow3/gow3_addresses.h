@@ -22,6 +22,11 @@ inline constexpr uint32_t kGNamesVar = 0x8344D918u;        // disc 0x8343D148 (T
 inline constexpr uint32_t kGObjectsVar = 0x8344D958u;      // disc 0x8343D188 (TArray<UObject*> GObjObjects)
 inline constexpr uint32_t kFNameCtor = 0x823135B0u;        // disc 0x82302F28 FName::FName(FName*, const TCHAR*, EFindName)
 inline constexpr uint32_t kLoadPackageAsync = 0x822C7870u; // disc 0x822B7328 UObject::LoadPackageAsync
+// GitHub #174 (unlocks.cpp): UOnlinePlayerStorage::execGetProfileSettingValueInt - matched from the disc's 0x8251A2B0 by
+// its code (61 instructions, identical apart from the globals' addresses; its getter is vtable slot +336 in both; the
+// six sibling exec functions map one to one with the same slots). The native table entry isn't known for TU6.
+inline constexpr uint32_t kExecGetProfileSettingValueInt = 0x8252ABC8u;
+inline constexpr uint32_t kExecNativeTableEntry = 0;
 #else
 inline constexpr uint32_t kShowFpsFlag = 0x834290D8u;
 inline constexpr uint32_t kShowFrameTimeFlag = 0x834290ECu;
@@ -35,6 +40,8 @@ inline constexpr uint32_t kGNamesVar = 0x8343D148u;
 inline constexpr uint32_t kGObjectsVar = 0x8343D188u;
 inline constexpr uint32_t kFNameCtor = 0x82302F28u;
 inline constexpr uint32_t kLoadPackageAsync = 0x822B7328u;
+inline constexpr uint32_t kExecGetProfileSettingValueInt = 0x8251A2B0u;  // Flippage's gears-of-war-3-recomp 26d6448
+inline constexpr uint32_t kExecNativeTableEntry = 0x83396738u;
 #endif
 inline constexpr float kWidescreenAspectValue = 16.0f / 9.0f;  // what the game has there (3FE38E4C)
 }  // namespace gow3::addr

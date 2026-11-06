@@ -78,8 +78,8 @@ New in 0.4.6
   a MODS tab and an ABOUT tab, and Graphics API back in the main list.
 - Gears 3: depth of field can be drawn at the render resolution instead of 720p (Graphics -> Advanced, off by
   default; #105).
-- Gears 3, Disc version: "Unlock Insane from the start" (Gameplay; off by default; the title update and the other
-  games are not done yet - #174, thanks to Flippage's Gears 3 recomp).
+- Gears 3: "Unlock Insane from the start" (Gameplay; off by default; the other games are not done yet - #174,
+  thanks to Flippage's Gears 3 recomp).
 - A language or voice language your copy doesn't have now says so under its setting, with what the game uses
   instead (#90).
 - A title update made for another release of the game is caught before the game starts, instead of the game
