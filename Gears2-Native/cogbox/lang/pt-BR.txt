@@ -853,3 +853,8 @@ No mods yet = Nenhum mod ainda
 -  untested update = -  atualização não testada
 # 0.4.6: streamlined library screen (machine-made translation, please check)
 untested version = versão não testada
+
+# notes/81: CACAO
+CACAO (experimental) = CACAO (experimental)
+CACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer. = CACAO: FidelityFX CACAO da AMD em meia resolução: custa bem menos que o XeGTAO e mostra menos granulação com DLAA e SMAA T2x, mas os detalhes finos de contato ficam mais suaves.
+Judgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS. = Judgment: XeGTAO e CACAO substituem o AO do próprio jogo, que pode piscar com DLSS.

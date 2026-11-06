@@ -95,6 +95,15 @@ class GowjApp : public rex::ReXApp {
     game_default("gow2_upscale_object_constants", "7");
     game_default("gow2_upscale_camera_constant", "5");
     game_default("gow2_upscale_scene_formats", "3");
+    // Gears 2 notes/80 s.11: the upscalers take the frame's last scene copy, not the first of the mid-frame copies for
+    // translucency, which was ~480 draws early: Ultra Performance added the rest at 720p, unjittered.
+    game_default("gow2_upscale_scene_last_copy", "true");
+    // Gears 2 notes/80 s.6: the upscalers' depth copied at the scene depth resolve - by the scene colour copy the game has
+    // reused that EDRAM, and DLSS got one depth for the whole frame (distant edges broke up; captured 2026-11-04).
+    game_default("gow2_upscale_depth_at_resolve", "true");
+    // Gears 2 notes/81: with --gow2_ao=gtao, ours goes in before the fog pass, the same shader as Gears 3's. The launcher
+    // turns Judgment's own AO off with AmbientOcclusion=False.
+    game_default("gow2_ao_fog_ps", "724AB5F143DBBFD4");
     game_default("gow2_renderer_memexport", "true");
     game_default("gow2_renderer_resolution_scale_threshold", "1120");
     //  - first-visit freezes: the DXBC shader path (shaders ready at once; HLSL spent 221 s of compiler time on University's
@@ -125,6 +134,7 @@ class GowjApp : public rex::ReXApp {
     }
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
+    XenosInstallAoDebugKeys(drawer);  // Gears 2 notes/80 s.12, notes/81: F2, F5, F6, F8, F9, F10, F11 (--gow2_ao_debug_keys)
     XenosInstallInGameMenu(drawer, window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   // --gowj_mute_unfocused (launcher item 8, Gears 2 0130): the SDK's SDL driver reads audio_mute for every buffer, so
@@ -144,6 +154,7 @@ class GowjApp : public rex::ReXApp {
   }
   void OnShutdown() override {
     GowjStopMemoryGauge();
+    XenosShutdownAoDebugKeys();  // Gears 2 notes/80
     XenosShutdownInGameMenu();  // patch 0163
     XenosDestroyFpsBar();  // before the SDK drops its drawer
   }

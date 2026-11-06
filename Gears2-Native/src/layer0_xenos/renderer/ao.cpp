@@ -2,6 +2,7 @@
 // XeGTAO ambient occlusion, upscaler motion-vector / depth fixes and SMAA T2x: PR #139 by gmihaic (https://github.com/gmihaic).
 #include "xenos/renderer/ao.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace xenos::renderer::ao {
@@ -10,6 +11,13 @@ Mode ParseMode(const std::string& name) {
   if (name == "gtao") return Mode::kGtao;
   if (name == "off") return Mode::kOff;
   return Mode::kGame;
+}
+
+uint32_t DenoisePasses(int32_t setting, uint32_t quality, const std::string& upscaler, uint32_t scene_scale) {
+  if (setting >= 1) return setting >= 3 ? 3u : uint32_t(setting);
+  const bool accumulates = upscaler == "dlss" || upscaler == "fsr" || upscaler == "xess";
+  const uint32_t at_ultra = !accumulates ? 2u : scene_scale >= 3 ? 1u : scene_scale == 2 ? 2u : 3u;
+  return quality >= 3 ? at_ultra : std::min(at_ultra + 1u, 3u);
 }
 
 const char* ModeName(Mode mode) {
