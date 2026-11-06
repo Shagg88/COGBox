@@ -964,3 +964,5 @@ Play anyway = 仍然开始游戏
 # L-8 (machine-made translation, please check)
 COGBox doesn't know this version. = COGBox 不认识此版本。
 If it is a regional release of Gears of War, 2, 3 or Judgment, open that game's settings and drop it there - it will be added as an untested version. = 如果这是 Gears of War、2、3 或 Judgment 的地区版本，请打开该游戏的设置并拖放到那里 - 它将作为未测试版本添加。
+# L-4 (machine-made translation, please check)
+In a cloud folder = 位于云同步文件夹中

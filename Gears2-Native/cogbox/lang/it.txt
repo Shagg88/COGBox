@@ -964,3 +964,5 @@ Play anyway = Gioca comunque
 # L-8 (machine-made translation, please check)
 COGBox doesn't know this version. = COGBox non conosce questa versione.
 If it is a regional release of Gears of War, 2, 3 or Judgment, open that game's settings and drop it there - it will be added as an untested version. = Se è un'edizione regionale di Gears of War, 2, 3 o Judgment, apri le impostazioni di quel gioco e trascinala lì: verrà aggiunta come versione non testata.
+# L-4 (machine-made translation, please check)
+In a cloud folder = In una cartella cloud

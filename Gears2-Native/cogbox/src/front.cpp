@@ -613,6 +613,38 @@ void front_draw(App &a, ImVec2 size)
                 ImGui::SetTooltip("%s", (std::string("COGBox ") + newer + " " + tr("is out. Click to download and install it; COGBox restarts by itself.")).c_str());
         }
     }
+    // L-4: COGBox or a game's files inside a cloud-synced folder (OneDrive, Dropbox, Google Drive, iCloud) - a short
+    // amber line, bottom left, with the advice as its tooltip. Checked every few seconds (a copy can be added any time).
+    {
+        static double checkedAt = -100;
+        static bool cloud = false;
+        if (now - checkedAt > 5) {
+            checkedAt = now;
+            auto lower = [](std::string x) { for (char &c : x) c = (char)tolower((unsigned char)c); return x; };
+            std::vector<std::string> roots;   // the cloud folders this PC names, then the usual folder names
+            for (const char *v : { "OneDrive", "OneDriveConsumer", "OneDriveCommercial" })
+                if (const char *e = getenv(v)) if (*e) roots.push_back(lower(e));
+            auto in_cloud = [&](const std::string &path) {
+                if (path.empty()) return false;
+                const std::string l = lower(path) + "\\";
+                for (const std::string &r : roots) if (l.rfind(r + "\\", 0) == 0) return true;
+                for (const char *m : { "\\onedrive\\", "\\onedrive - ", "\\dropbox\\", "\\google drive\\", "\\my drive\\",
+                                       "\\icloud drive\\", "\\iclouddrive\\" })
+                    if (l.find(m) != std::string::npos) return true;
+                return false;
+            };
+            cloud = in_cloud(exe_dir());
+            for (int g = 0; g < G_COUNT && !cloud; g++) cloud = in_cloud(a.st[g].dataDir) || in_cloud(a.st[g].updateDir);
+        }
+        if (cloud) {
+            const std::string t = tr("In a cloud folder");
+            const ImVec2 ts = F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, t.c_str());
+            const ImVec2 p0(S(24), size.y - S(64) - ts.y);
+            ImGui::GetWindowDrawList()->AddText(F_BODY, FS(F_BODY), p0, U(col::amber), t.c_str());
+            hover_tip(p0, ImVec2(p0.x + ts.x, p0.y + ts.y),
+                      tr("Install COGBox outside cloud-synced folders such as OneDrive, Dropbox or Google Drive - syncing can lock, move or partly update files while they are in use."));
+        }
+    }
     // Title updates required (0.4.0): once per session per game, when the carousel stops on a game that has no title
     // update yet (replaces 0.2.0's Judgment / Gears 1 "needed" and Gears 2 / 3 "recommended" notices)
     {
