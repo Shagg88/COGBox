@@ -1,4 +1,4 @@
-// CogBox - the ACHIEVEMENTS tab (achievements part 4, docs/achievements/2026-11-04-achievements-launcher-design.md): the
+// CogBox - the ACHIEVEMENTS tab (achievements part 4, docs/achievements/README.md): the
 // same achievements as the in-game browser, in the launcher's own look - its headings, buttons, lamps, rows and message
 // box. What is shown comes from the shared model (Gears2-Native/src/layer0_xenos/achievements_browser_model.h); the
 // popup settings above it are ordinary option rows (gears_settings.cpp, Tab::Achievements).
@@ -22,6 +22,11 @@
 #include <vector>
 
 namespace ach = xenos::ach;
+
+// page.cpp's 0.4.6 building blocks, so this tab looks like the others: a section heading, a hover tooltip, a short note
+void ui_section(const char *title_en);
+void ui_tip(const std::string &text_en);
+void ui_note(const std::string &text_en, ImVec4 c = col::dim);
 
 namespace {
 std::vector<ach::GameAchievements> g_games;
@@ -154,8 +159,7 @@ void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
     if (g_stale) reload(g);
     if (g_sel_game == -2 && !g_side.empty()) g_sel_game = g_side[0].all ? -1 : g_side[0].game;
 
-    ImGui::Dummy(ImVec2(0, S(6)));
-    th_heading("ACHIEVEMENTS", rowX1);
+    ui_section("YOUR ACHIEVEMENTS");   // under the ACHIEVEMENT POPUPS group (page.cpp k_groups)
 
     // the game buttons
     const float bh = T(26);
@@ -167,7 +171,7 @@ void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
         ImGui::PushID((int)i);
         const bool chosen = i == selected_index();
         const bool hit = chosen ? th_button_red(label, sz, true, F_BODY, false) : th_button(label, sz, true, F_BODY, false);
-        if (!e.loaded && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("Not played yet"));
+        if (!e.loaded) ui_tip("Not played yet");
         ImGui::PopID();
         if (hit && !chosen) {
             g_sel_game = e.all ? -1 : e.game;
@@ -184,7 +188,7 @@ void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
         const float h = ImGui::GetTextLineHeight();
         th_lamp(dl, ImVec2(p.x + S(6), p.y + h * 0.55f), S(4.5f), sel.totals.unlocked > 0 ? 1 : 0);
         ImGui::SetCursorScreenPos(ImVec2(p.x + S(18), p.y));
-        ImGui::TextUnformatted(sel.loaded ? cogbox::status_line(sel.totals).c_str() : tr("Not played yet"));
+        ImGui::TextUnformatted(sel.loaded ? cogbox::status_line(sel.totals, tr("achievements")).c_str() : tr("Not played yet"));
     }
 
     // Sort and Show
@@ -198,9 +202,8 @@ void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
     // the list
     ImDrawList *dl = ImGui::GetWindowDrawList();
     if (g_rows.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, col::dim);
-        ImGui::TextUnformatted(tr(ach::EmptyMessage(sel, g_show)).c_str());
-        ImGui::PopStyleColor();
+        // the model's "Start <game> once..." has the game's name in it: one sentence per case for the translations
+        ui_note(!sel.loaded && !sel.all ? std::string("Start this game once from COGBox to load its achievements.") : ach::EmptyMessage(sel, g_show));
         return;
     }
     const float x0 = ImGui::GetCursorScreenPos().x, rw = rowX1 - x0, rh = T(46), ic = T(38), pad = S(6);
@@ -230,21 +233,24 @@ void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
                 dl->AddText(F_BOLD, fb, ImVec2(ia.x + (ic - text_w(F_BOLD, fb, "?")) * 0.5f, ia.y + (ic - fb) * 0.5f), U(col::faint), "?");
             }
             // right: GP, status, rarity
-            const float right_w = std::max({ text_w(F_BOLD, fb, r.gp), text_w(F_SMALL, fsm, r.status), text_w(F_SMALL, fsm, r.rarity) });
+            const std::string status = tr(r.status);   // "Unlocked <date>" / "Locked" (the date stays as the model wrote it)
+            const float right_w = std::max({ text_w(F_BOLD, fb, r.gp), text_w(F_SMALL, fsm, status), text_w(F_SMALL, fsm, r.rarity) });
             const float rx = p.x + rw - pad;
             dl->AddText(F_BOLD, fb, ImVec2(rx - text_w(F_BOLD, fb, r.gp), p.y + S(3)), U(col::text), r.gp.c_str());
-            dl->AddText(F_SMALL, fsm, ImVec2(rx - text_w(F_SMALL, fsm, r.status), p.y + S(3) + fb), U(col::dim), r.status.c_str());
+            dl->AddText(F_SMALL, fsm, ImVec2(rx - text_w(F_SMALL, fsm, status), p.y + S(3) + fb), U(col::dim), status.c_str());
             if (!r.rarity.empty())
                 dl->AddText(F_SMALL, fsm, ImVec2(rx - right_w - S(10) - text_w(F_SMALL, fsm, r.rarity), p.y + S(3) + fb), U(col::amber), r.rarity.c_str());
             // name (+ tags), text
             const float tx = ib.x + S(10), tw = std::max(S(20), rx - right_w - S(14) - tx);
             float tags = 0;
-            if (r.secret_tag) tags += text_w(F_SMALL, fsm, "Secret") + S(16);
+            const char *secret = tr("Secret");
+            const std::string name = r.hidden_secret ? tr(r.name) : r.name;   // "Secret achievement" is ours, a real name the game's
+            if (r.secret_tag) tags += text_w(F_SMALL, fsm, secret) + S(16);
             if (!r.game_label.empty()) tags += text_w(F_SMALL, fsm, r.game_label) + S(16);
             const float nw = std::max(S(20), tw - tags);
-            line(dl, F_BODY, fb, ImVec2(tx, p.y + S(3)), U(r.hidden_secret || r.locked ? col::dim : col::text), r.name, nw);
-            float x = tx + std::min(nw, text_w(F_BODY, fb, r.name)) + S(6);
-            if (r.secret_tag) x += tag(dl, ImVec2(x, p.y + S(5)), "Secret") + S(6);
+            line(dl, F_BODY, fb, ImVec2(tx, p.y + S(3)), U(r.hidden_secret || r.locked ? col::dim : col::text), name, nw);
+            float x = tx + std::min(nw, text_w(F_BODY, fb, name)) + S(6);
+            if (r.secret_tag) x += tag(dl, ImVec2(x, p.y + S(5)), secret) + S(6);
             if (!r.game_label.empty()) tag(dl, ImVec2(x, p.y + S(5)), r.game_label.c_str());
             line(dl, F_SMALL, fsm, ImVec2(tx, p.y + S(3) + fb), U(col::dim), r.text, tw);
         }

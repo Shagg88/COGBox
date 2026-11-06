@@ -14,9 +14,9 @@ std::filesystem::path cogbox_path(const std::string &utf8)
     return std::filesystem::path(w);
 }
 
-std::string status_line(const xenos::ach::Totals &t)
+std::string status_line(const xenos::ach::Totals &t, const char *word)
 {
-    return std::to_string(t.unlocked) + " / " + std::to_string(t.total) + " achievements | " + std::to_string(t.gp_earned) +
+    return std::to_string(t.unlocked) + " / " + std::to_string(t.total) + " " + word + " | " + std::to_string(t.gp_earned) +
            " / " + std::to_string(t.gp_total) + " G | " + std::to_string(xenos::ach::PercentByGp(t)) + "%";
 }
 

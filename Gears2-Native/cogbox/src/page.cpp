@@ -231,9 +231,10 @@ static void row_label(const char *label, const std::string &desc, bool enabled)
 // every tab: a section is a gap and one heading style; explanations are hover tooltips (ui_tip), never paragraphs;
 // buttons share one height (and a minimum width, so a row of them lines up); rarely used options sit under a
 // collapsed ADVANCED toggle (ui_advanced), which the controller reaches like any button.
+void ui_note(const std::string &text_en, ImVec4 c = col::dim);
 static int g_sections;   // sections drawn so far in this tab (no gap above the first)
 
-static void ui_tip(const std::string &text_en)   // a hover / controller-focus tooltip for the last item
+void ui_tip(const std::string &text_en)   // (also achievements_tab.cpp) a hover / controller-focus tooltip for the last item
 {
     if (text_en.empty() || !ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) return;
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(S(460), FLT_MAX));
@@ -246,7 +247,7 @@ static void ui_tip(const std::string &text_en)   // a hover / controller-focus t
 
 static void ui_gap() { ImGui::Dummy(ImVec2(0, S(10))); }
 
-static void ui_section(const char *title_en)
+void ui_section(const char *title_en)   // (also achievements_tab.cpp)
 {
     if (g_sections++) ui_gap();
     th_heading(title_en, g_rowX1);
@@ -261,7 +262,7 @@ static bool small_button(const char *label_en)
 }
 
 // one short line of feedback or status, small and dim (instead of a paragraph)
-static void ui_note(const std::string &text_en, ImVec4 c = col::dim)
+void ui_note(const std::string &text_en, ImVec4 c)   // (also achievements_tab.cpp)
 {
     ImGui::PushFont(F_SMALL, FS(F_SMALL) * k_rowText);
     ImGui::PushStyleColor(ImGuiCol_Text, c);
