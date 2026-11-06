@@ -199,6 +199,14 @@ static void answered(App &a)
     }
     else if (m.tag == "replace" && m.answer == 0) install_confirmed(a);
     else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
+    else if (m.tag == "tumismatch" && m.answer == 0) {   // TU preflight: the disc version for this game, then play
+        gs::set_value((gs::Game)m.game, a.cur[m.game], "Version", 1);
+        a.dirty[m.game] = true;
+        settings_save(a);
+        env_refresh(a, m.game);
+        play_start(a, m.game);
+    }
+    else if (m.tag == "tumismatch" && m.answer == 1) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
     else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4
     else if (m.tag == "dlcremove" && m.answer == 0) dlc_remove_confirmed(a);   // 0.2.0
     else if (m.tag == "backup" && m.answer == 0) {

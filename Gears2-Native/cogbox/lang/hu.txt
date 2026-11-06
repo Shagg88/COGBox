@@ -954,3 +954,10 @@ Gears 3: only with Game version Disc for now (the title update's code is not map
 # GitHub #90 (machine-made translation, please check)
 Not on your copy of the game - it will show English. = Nincs a játékpéldányodon - angolul fog megjelenni.
 Not on your copy of the game - the voices will be in the game language instead. = Nincs a játékpéldányodon - a hangok a játék nyelvén szólnak helyette.
+# TU preflight (machine-made translation, please check)
+The title update doesn't match your game files = A frissítés nem illik a játékfájljaidhoz
+This title update is for another release of the game, and the game would most likely stop at start. Play the disc version, or add the title update that matches your copy. = Ez a frissítés a játék egy másik kiadásához készült, és a játék nagy valószínűséggel leállna induláskor. Játszd a lemezes verziót, vagy add hozzá a példányodhoz illő frissítést.
+Game files = Játékfájlok
+Title update for = Frissítés ehhez
+Play the disc version = Lemezes verzió indítása
+Play anyway = Indítás mégis

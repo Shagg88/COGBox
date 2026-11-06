@@ -954,3 +954,10 @@ Gears 3: only with Game version Disc for now (the title update's code is not map
 # GitHub #90 (machine-made translation, please check)
 Not on your copy of the game - it will show English. = Нет в вашей копии игры - будет показан английский.
 Not on your copy of the game - the voices will be in the game language instead. = Нет в вашей копии игры - голоса будут на языке игры.
+# TU preflight (machine-made translation, please check)
+The title update doesn't match your game files = Обновление не подходит к файлам игры
+This title update is for another release of the game, and the game would most likely stop at start. Play the disc version, or add the title update that matches your copy. = Это обновление для другого издания игры, и игра, скорее всего, остановится при запуске. Играйте в версию с диска или добавьте обновление, подходящее к вашей копии.
+Game files = Файлы игры
+Title update for = Обновление для
+Play the disc version = Играть в версию с диска
+Play anyway = Всё равно играть

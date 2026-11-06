@@ -5,6 +5,7 @@
 #include "report.h"
 #include "theme.h"
 #include "i18n.h"
+#include "x360fs.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -261,6 +262,23 @@ void play_start(App &a, int g, bool prepare)
     if (gs::blocked_by_cpu(G, a.env[g], &why)) {
         ask(a, "info", g, "CPU too old for this build", why, { "OK" });
         return;
+    }
+    // Title-update preflight (#183 / #184, 0xC0000409 class): a title update made for another disc release than these
+    // game files - its execution info's base version (the version it patches) or title isn't the default.xex's - makes
+    // the game stop itself at start. Asked before the launch instead of letting it crash.
+    if (gs::exe_for_update(G, ver, a.env[g]) && !st.updateDir.empty() && !a.tuMismatchOk[g]) {
+        x360fs::XexInfo xi, pi;
+        if (x360fs::read_xex_info(widen(join(st.dataDir, "default.xex")), xi) &&
+            x360fs::read_xex_info(widen(join(st.updateDir, "default.xexp")), pi) && pi.base_version &&
+            (pi.title_id != xi.title_id || pi.base_version != xi.version)) {
+            ask(a, "tumismatch", g, tr("The title update doesn't match your game files"),
+                std::string(tr("This title update is for another release of the game, and the game would most likely stop at start. "
+                   "Play the disc version, or add the title update that matches your copy.")) +
+                    "\n\n" + tr("Game files") + ": " + x360fs::xbox_version_string(xi.version) + "   " + tr("Title update for") +
+                    ": " + x360fs::xbox_version_string(pi.base_version),
+                { tr("Play the disc version"), tr("Play anyway"), tr("Cancel") });
+            return;
+        }
     }
     // this play's own folder: the log, the arguments, any crash report
     std::string logDir = join(game_logs_dir(g), now_stamp());
