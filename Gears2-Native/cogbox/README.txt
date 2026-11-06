@@ -70,6 +70,10 @@ New in 0.4.6
 - New installs start in borderless fullscreen with SMAA on. Your saved settings are kept.
 - Gears 1: button prompts for PlayStation and other controllers (#214).
 - Gears 2: ultrawide screens no longer get the 4:3 camera offset (#132).
+- Gears 3 at 2x and higher: the big outdoor sun shadow is drawn at the game's own size, as the other shadows
+  are, instead of blocky (#212).
+- Library screen: pick a picture for your player badge (ICON in the name box) from your games' gamer pictures
+  and achievement icons; D-pad up reaches PLAYER, MUSIC, UPDATE ART and EXIT. New Gears 3 menu music.
 - Gears 3: no more freeze at the main menu. Picking a path with the mouse button on its side (thanks to
   KiltedKernel, PR #206) is off in this release while it is fixed; it caused that freeze.
 - No sound on one output device: if the game is muted or at zero in the Windows volume mixer, COGBox sets it back
