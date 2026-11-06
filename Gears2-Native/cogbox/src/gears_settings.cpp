@@ -1312,7 +1312,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
     if (avail("SplitLayout") && s.i("SplitLayout") == 1)   // GitHub #136 (avail: Gears 3, 2 players)
-        a.push_back("--ue3_exec=" + q("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL"));
+        // GitHub #208: one run at the front end was undone when a level started - again at every level where the exe can
+        a.push_back((cap_exe(env, "ue3_exec_each_level") ? "--ue3_exec_each_level=" : "--ue3_exec=") +
+                    q("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL"));
     if (on("SystemLink")) a.push_back("--net_system_link=true");
     // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=). Only with a runtime that
     // has SDK patch 54; it keeps 15 letters / digits / spaces. The profile's save folder is not renamed.

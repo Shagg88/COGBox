@@ -20,6 +20,7 @@
 
 #include "gow3_addresses.h"
 #include <ue3/objects.h>
+#include <ue3/console.h>  // Ue3ConsoleQueue (GitHub #208)
 #include "mouse_look.h"
 
 #include <algorithm>
@@ -264,6 +265,9 @@ void TickTimeline() {  // the game thread is the only caller
 // GearStart*.xxx opened -> front end; any other level package (*_P.xxx) -> a level, the player's limit again.
 REXCVAR_DEFINE_INT32(gow3_menu_fps, 60, "Gears3",
                      "GitHub #101: the engine's frame-rate limit on the title screen and its menus (0 = the player's)");
+REXCVAR_DEFINE_STRING(ue3_exec_each_level, "", "Gears3",
+                      "GitHub #208: console commands (';'-separated) run again each time a level opens - e.g. the "
+                      "two-player side-by-side split, which the game resets when a level starts");
 namespace {
 std::atomic<bool> g_in_front_end{false};
 bool Gow3NameHas(std::string_view s, std::string_view needle) {
@@ -289,6 +293,19 @@ void OnGow3FileOpened(std::string_view path, const std::filesystem::path*) {
     if (!g_in_front_end.exchange(true)) REXLOG_INFO("gow3_menu_fps: front end ({}) - limit {} fps", path, REXCVAR_GET(gow3_menu_fps));
   } else if (Gow3IsLevel(path) && g_in_front_end.exchange(false)) {
     REXLOG_INFO("gow3_menu_fps: level {} - the player's limit again", path);
+  }
+  // GitHub #208 / #136: commands run again at every level (the split-screen layout: the game sets its own when a
+  // level starts, so --ue3_exec's one run at the front end was overwritten). Queued; run once a player exists.
+  if (Gow3IsLevel(path) || front) {
+    const std::string each = REXCVAR_GET(ue3_exec_each_level);
+    if (!each.empty()) {
+      size_t at = 0;
+      while (at <= each.size()) {
+        const size_t end = std::min(each.find(';', at), each.size());
+        if (end > at) Ue3ConsoleQueue(each.substr(at, end - at));
+        at = end + 1;
+      }
+    }
   }
 }
 }  // namespace
