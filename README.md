@@ -178,8 +178,8 @@ Tick **Gameplay > System Link - LAN play (experimental)** on every PC. Every PC 
 and the same game with its title update. The PCs must be on
 the same network, or on a LAN VPN such as Radmin VPN, ZeroTier or Hamachi (not an internet VPN like NordVPN). If Windows
 asks about the firewall, allow Private networks. With 3 or more PCs, each PC must list every other PC (full steps, including Radmin VPN, are in the
-README.txt inside the download). Gears 2 campaign co-op worked in testing; other modes and games are less
-tested. There is no voice chat yet, and no internet (Xbox Live) play.
+README.txt inside the download). Gears 2 campaign co-op and Gears of War co-op (#209) worked in testing; other modes and
+games are less tested. There is no voice chat yet, and no internet (Xbox Live) play.
 
 **On 0.4.0, Gears 3 System Link co-op needs a two-PC test.** The #68 fix changes two things the game sees: XNetRandom
 now gives real random numbers (before, every PC could produce the same "random" values, so this should help), and

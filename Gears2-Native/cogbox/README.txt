@@ -65,6 +65,8 @@ apply does that for you.
 New in 0.4.6
 ------------
 - Games, title updates and DLC are now added only by dragging and dropping them onto the window.
+- System Link: Gears of War co-op reported working on two PCs (thanks to LenzTRO, #209); the setting's
+  tip and this README say so.
 - Achievements in all four games (thanks to Flippage, PR #187): a popup when one unlocks (Xbox 360, Xbox or
   PlayStation style, colour, position, sound), an Achievements page in the in-game menu (F7) and an ACHIEVEMENTS tab
   in the launcher.
@@ -221,9 +223,9 @@ System Link - LAN play (experimental; Title Update versions of all four games)
 -------------------------------------------------------------------------------
 Play the games' System Link modes (co-op and the other System Link modes) with other PCs - in the
 same house, or over the internet with a free "LAN VPN". Thanks to HubertFer, whose patch made this
-possible. Tested so far: Gears of War 2 campaign co-op. Gears of War 2's other modes and Gears of
-War, Gears of War 3 and Judgment have not been tested yet - please try them and tell us (GitHub
-issue #72).
+possible. Tested so far: Gears of War 2 campaign co-op, and Gears of War co-op (two PCs, about an
+hour, no problems; thanks to LenzTRO, #209). The games' other modes, Gears of War 3 and Judgment
+are less tested - please try them and tell us (GitHub issue #72).
 
 What every player needs
 - The same COGBox version on every PC (0.4.0) and your own copy of the game with its title update.

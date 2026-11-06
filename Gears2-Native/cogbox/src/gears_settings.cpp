@@ -395,8 +395,8 @@ std::vector<Option> make_options(Game g) {
     // runtime behaves exactly as before ("No Network Connection").
     add(make("SystemLink", "System Link - LAN play (experimental)", Tab::Gameplay, Kind::Bool, PG, 0,
              "Experimental - lets the game's System Link find and join games on other PCs on your network (or on a LAN VPN "
-             "such as Radmin VPN, ZeroTier or Hamachi; not internet VPNs like NordVPN). Title Update versions only. Gears 2 "
-             "co-op worked in testing; its other modes and the other games are untested. Voice chat is not supported yet. Windows may ask about the firewall: "
+             "such as Radmin VPN, ZeroTier or Hamachi; not internet VPNs like NordVPN). Title Update versions only. Gears of War "
+             "and Gears 2 co-op worked in testing; other modes and the other games are less tested. Voice chat is not supported yet. Windows may ask about the firewall: "
              "allow Private networks.", 325), "syslink");
     add(make("SkipLogos", "Skip the intro logos", Tab::Gameplay, Kind::Bool, PG, 0,
              "Starts at the title screen without the publisher / studio logo films. The loading film and cutscenes still play.", 326),
