@@ -1608,7 +1608,10 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       while (at < list.size()) {
         const size_t end = std::min(list.find(',', at), list.size());
         const unsigned long v = std::strtoul(list.substr(at, end - at).c_str(), nullptr, 10);
-        if (v >= 32 && v <= 8192 && keep.size() < 16) keep.push_back(uint32_t(v));
+        // Notes/80 s.16: with --gow2_pcss=ultra the sun shadow map (pitch 1360) is scaled too - its pixelation was the game's
+        // filter on a scaled map, which PCSS replaces.
+        const bool pcss_sun = v == 1360 && REXCVAR_GET(gow2_pcss) == "ultra";
+        if (v >= 32 && v <= 8192 && keep.size() < 16 && !pcss_sun) keep.push_back(uint32_t(v));
         at = end + 1;
       }
       if (!keep.empty()) {

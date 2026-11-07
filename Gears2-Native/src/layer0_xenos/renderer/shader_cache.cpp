@@ -51,11 +51,15 @@ namespace xenos::renderer {
 // computed from the same receiver depth and shadow-map coordinate and replaces the filter's combined result (r0.x)
 // before the game's fade / modulate maths. Live state from the system constants: xe_sys1.z bit 0 PCSS on, bits 1-2 the
 // view (0 normal, 1 split: left the game's filter, right PCSS, 2 coverage: the right half shadowed where a shadow pass
-// draws), bits 3-4 the quality (blocker-search texels 16/32/32/64 in gathers of 4, filter samples 16/24/32/64; a pixel
-// whose whole search is blockers skips the filter); xe_sys1.w the radius, which
+// draws), bits 3-4 the quality (blocker-search texels 16/32/32/64 and bilinear filter gathers 8/12/16/32; a pixel
+// whose whole search is blockers skips the filter); the penumbra in world units from the shadow matrix (orthographic:
+// depth gap x angle; perspective: similar triangles with a light size), in texels at the receiver; xe_sys1.w the radius, which
 // scales the penumbra growth, its widest and the blocker search. Distances in the game's shadow-map texels, so a map
 // drawn at the render scale gives finer samples, not a different shape.
-static std::string PcssBlock(uint32_t slot, const char* sharp, const char* one) {
+// The shadow matrix: the receiver's shadow-space position is col0 * a + col1 * b + col2 * c + konst (a, b, c its
+// view-space coordinates; what each column is varies by shader), components depth / u / w as `dz` / `du` / `dw`.
+struct PcssMatrix { int col0, col1, col2, konst; char dz, du, dw; };
+static std::string PcssBlock(uint32_t slot, const char* sharp, const char* one, const PcssMatrix& m) {
   std::string b = R"({  // PCSS (notes/80 s.16)
   const uint pc_st = xe_sys1.z;
   const uint pc_view = (pc_st >> 1u) & 3u, pc_q = (pc_st >> 3u) & 3u;
@@ -64,15 +68,22 @@ static std::string PcssBlock(uint32_t slot, const char* sharp, const char* one) 
   const bool pc_right = xe_in.position.x >= pc_ssz.x * 0.5;
   if (pc_view == 1u ? pc_right : (pc_st & 1u) != 0u) {
     const uint nb = pc_q == 0u ? 8u : (pc_q == 3u ? 32u : 16u);
-    const uint nf = pc_q == 0u ? 16u : (pc_q == 1u ? 24u : (pc_q == 2u ? 32u : 64u));
+    const uint nf = pc_q == 0u ? 8u : (pc_q == 1u ? 12u : (pc_q == 2u ? 16u : 32u));  // bilinear gathers
     float2 gsz; xe_tex_2d_@S.GetDimensions(gsz.x, gsz.y);
     if ((asuint(xe_ndc_offset.w) >> @Su) & 1u) gsz /= xe_ndc_scale.w;
+    float2 hsz; xe_tex_2d_@S.GetDimensions(hsz.x, hsz.y);  // the host texture (a scaled map: more texels)
     const float2 texel = 1.0 / gsz;
     const float sharp = @K, one = @O;
     const float spin = frac(sin(dot(floor(xe_in.position.xy), float2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
-    // The fetch constant's decode of the depth (its sign mode: a copy or signed offset binary - linear), worked out once.
     const float dec0 = xe_tex_post(float4(0.0, 0.0, 0.0, 0.0), @Su).x, dec1 = xe_tex_post(float4(1.0, 0.0, 0.0, 0.0), @Su).x - dec0;
-    // Blocker search: a gather per sample (4 texels), half as many samples as texels before the quality's count.
+    // The light, from the shadow matrix: orthographic (the sun, directional lights: no w row) or perspective (spot lights).
+    const float3 rz = float3(xe_c[@A].@Z, xe_c[@B].@Z, xe_c[@C].@Z), ru = float3(xe_c[@A].@U, xe_c[@B].@U, xe_c[@C].@U);
+    const float3 rw = float3(xe_c[@A].@W, xe_c[@B].@W, xe_c[@C].@W);
+    const float cz = xe_c[@N].@Z, cw = xe_c[@N].@W;
+    const bool persp = dot(rw, rw) > 1e-8;
+    const float ru_len = max(length(ru), 1e-20), rz_len = max(length(rz), 1e-20);
+    const float alpha = persp ? dot(rz, rw) / dot(rw, rw) : 0.0, beta = cz - alpha * cw;  // perspective: depth = alpha * w + beta
+    // Blocker search: a gather per sample (4 texels).
     const uint ng = max(nb / 2u, 4u);
     float bsum = 0.0, bn = 0.0, csum = 0.0;
     [loop] for (uint i = 0u; i < ng; ++i) {
@@ -90,13 +101,26 @@ static std::string PcssBlock(uint32_t slot, const char* sharp, const char* one) 
     if (bn >= nt) {
       lit = csum / nt;  // every texel searched is a blocker: deep in the shadow, the search's own average, no filter
     } else if (bn > 0.0) {
-      const float pen = clamp((pc_recv - bsum / bn) * (150.0 * pc_rs), 1.0, max(1.0, 12.0 * pc_rs));
+      // The penumbra in world units at the receiver, then in the game's texels. Orthographic: the depth gap (world) x the
+      // light's angular size. Perspective: (receiver - blocker) / blocker distance x the light's size (similar triangles).
+      const float db = bsum / bn;
+      float pen;
+      if (!persp) {
+        pen = (pc_recv - db) / rz_len * (0.2 * pc_rs) * ru_len * gsz.x;
+      } else {
+        const float lr = max(pc_w, 1e-4), lb = max((db - beta) / alpha, 1e-4);
+        pen = max(lr - lb, 0.0) / lb * (40.0 * pc_rs) * ru_len * gsz.x / lr;
+      }
+      pen = clamp(pen, 1.0, max(1.0, 12.0 * pc_rs));
+      // Filter: bilinear-weighted soft comparisons, a gather each, on a spiral rotated per pixel.
       float sum = 0.0;
       [loop] for (uint j = 0u; j < nf; ++j) {
         const float a = spin + float(j) * 2.39996323, rr = sqrt((float(j) + 0.5) / float(nf));
-        const float2 o = float2(cos(a), sin(a)) * rr * pen * texel;
-        const float d = xe_tex_2d_@S.SampleLevel(xe_sampler_@S, pc_uv + o, 0).x * dec1 + dec0;
-        sum += saturate((d - pc_recv) * sharp + one);
+        const float2 suv = pc_uv + float2(cos(a), sin(a)) * rr * pen * texel;
+        const float4 g = xe_tex_2d_@S.GatherRed(xe_sampler_@S, suv) * dec1 + dec0;
+        const float4 c = saturate((g - pc_recv) * sharp + one);
+        const float2 f = frac(suv * hsz - 0.5);
+        sum += lerp(lerp(c.w, c.z, f.x), lerp(c.x, c.y, f.x), f.y);
       }
       lit = sum / float(nf);
     }
@@ -111,6 +135,13 @@ static std::string PcssBlock(uint32_t slot, const char* sharp, const char* one) 
   put("@S", std::to_string(slot));
   put("@K", sharp);
   put("@O", one);
+  put("@A", std::to_string(m.col0));
+  put("@B", std::to_string(m.col1));
+  put("@C", std::to_string(m.col2));
+  put("@N", std::to_string(m.konst));
+  put("@Z", std::string(1, m.dz));
+  put("@U", std::string(1, m.du));
+  put("@W", std::string(1, m.dw));
   return b;
 }
 
@@ -128,14 +159,16 @@ static bool ApplyPcss(uint64_t ucode_hash, std::string& hlsl) {
     const std::string tail = "      {\n        float4 s0 = r[0].xxxx;\n        float4 s1 = r[0].xxxx;\n        float4 s2 = -(xe_c[12].yyyy);";
     if (!once(cf2) || !once(tail)) return false;
     insert_before(cf2, "    const float pc_recv = xe_min(r[0].xxxx, xe_c[12].zzzz).x;\n"
-                       "    const float2 pc_uv = r[0].yz * xe_rcp(r[0].w);\n");
-    insert_before(tail, PcssBlock(1, "xe_c[7].z", "xe_c[12].y"));
+                       "    const float2 pc_uv = r[0].yz * xe_rcp(r[0].w);\n"
+                       "    const float pc_w = r[0].w;\n");
+    // r0 = c8.zxyw * x + c9.zxyw * y + c10.zxyw * z + c11.zxyw: depth in the constants' z, u in x, w in w
+    insert_before(tail, PcssBlock(1, "xe_c[7].z", "xe_c[12].y", PcssMatrix{8, 9, 10, 11, 'z', 'x', 'w'}));
     return true;
   }
-  struct Modulated { uint64_t hash; int reg; const char* clamp; const char* sharp; const char* one; };
+  struct Modulated { uint64_t hash; int reg; const char* clamp; const char* sharp; const char* one; PcssMatrix m; };
   static const Modulated kModulated[] = {  // modulated shadows: a state machine, the coordinate ready at step 2
-      {0xCA3F4A808B09D6F4ull, 5, "xe_c[18].zzzz", "xe_c[12].z", "xe_c[18].y"},
-      {0x857CECDEB64A657Full, 6, "xe_c[20].zzzz", "xe_c[14].z", "xe_c[20].y"},
+      {0xCA3F4A808B09D6F4ull, 5, "xe_c[18].zzzz", "xe_c[12].z", "xe_c[18].y", {13, 14, 15, 16, 'z', 'x', 'w'}},
+      {0x857CECDEB64A657Full, 6, "xe_c[20].zzzz", "xe_c[14].z", "xe_c[20].y", {15, 16, 17, 18, 'z', 'x', 'w'}},
   };
   for (const Modulated& m : kModulated) {
     if (ucode_hash != m.hash) continue;
@@ -144,10 +177,10 @@ static bool ApplyPcss(uint64_t ucode_hash, std::string& hlsl) {
     const std::string step9_end = "      xe_pc = 10u;\n";
     if (!once(top) || !once(step2) || !once(step9_end)) return false;
     const std::string reg = "r[" + std::to_string(m.reg) + "]";
-    insert_before(top, "  float pc_recv = 0.0;\n  float2 pc_uv = float2(0.0, 0.0);\n");
+    insert_before(top, "  float pc_recv = 0.0, pc_w = 1.0;\n  float2 pc_uv = float2(0.0, 0.0);\n");
     insert_after(step2, "      pc_recv = xe_min(" + reg + ".zzzz, " + m.clamp + ").x;\n      pc_uv = " + reg + ".xy * xe_rcp(" +
-                            reg + ".w);\n");
-    insert_before(step9_end, PcssBlock(2, m.sharp, m.one));
+                            reg + ".w);\n      pc_w = " + reg + ".w;\n");
+    insert_before(step9_end, PcssBlock(2, m.sharp, m.one, m.m));
     return true;
   }
   return false;
