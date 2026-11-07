@@ -26,9 +26,9 @@ the ports what an emulator can't easily offer:
 
 - **Any resolution** - 1x to 4x the original (up to 5K) or matched to your monitor, with real extra detail, not a
   stretched picture - and a fast **1080p** mode (720p drawn, upscaled and sharpened) for weaker graphics cards.
-- **Anti-aliasing and upscaling** - SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS (FSR / DLSS / XeSS experimental), including upscaling modes for weaker GPUs.
-- **High frame rates** - the 30 fps limit lifted, vsync with a cap matched to your monitor, AMD FSR frame
-  generation (highly experimental for now).
+- **Anti-aliasing and upscaling** - SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS (XeSS highly experimental), including upscaling modes for weaker GPUs.
+- **High frame rates** - the 30 fps limit lifted, exact frame-rate caps (30 to 180, plus 40 / 45 for the Steam Deck), AMD
+  FSR frame generation (experimental in Gears 1) and NVIDIA DLSS frame generation (RTX 40/50, experimental).
 - **Smooth play** - the games' shaders are translated straight to Direct3D 12 shader code in under a millisecond each
   (as Xenia Canary does), kept on your PC, and pipelines are made in the background - a new area shows a moment
   later instead of freezing the game.
@@ -225,7 +225,22 @@ last option reaches Library / Save / Play, and B jumps to Library.
 **Quit game**. Most settings take effect when the game restarts; Restart to apply does that for you.
 
 **Graphics API:** Direct3D 12 is the default and the tested renderer. **Vulkan** is on each game's
-Graphics tab - FSR / DLSS / XeSS and frame generation are Direct3D 12 only. Problem reports from Vulkan help a lot.
+Graphics tab - FSR / DLSS / XeSS and DLSS frame generation are DirectX 12 only; AMD FSR frame generation also works on Vulkan (experimental). Problem reports from Vulkan help a lot.
+
+**DLSS frame generation on RTX 20 / 30 cards (unofficial):** COGBox works with the third-party
+[MFG Unlocker](https://github.com/dashdogy/MFG-Unlocker), which lets older RTX cards use DLSS frame generation. It is not part
+of COGBox and not made or supported by us or NVIDIA - use it at your own risk. We tested it on an RTX 3080 Ti in all four
+games: 2x and 3x ran well, with only slight flicker on distant textures. To use it:
+
+1. Download `MFGUnlocker.dll` (version 1.5.0 or newer) from the MFG Unlocker's GitHub releases page.
+2. Close COGBox. Copy the DLL into the game's `port` folder, next to the game's exe (for example `COGBox\Judgment\port`,
+   beside `gowj.exe`; Gears of War: `Gears1\port`, Gears 2: `Gears2\port-tu6`, Gears 3: `Gears3\port-tu6`), and rename it to
+   `dxgi.dll`. Do it once per game you want it in.
+3. Start COGBox, pick the game, and in **Graphics > Frame generation** choose **NVIDIA DLSS frame generation 2x** (or 3x / 4x).
+   Graphics API must be DirectX 12. (If the DLSS choices don't appear, COGBox didn't recognise the file as the MFG
+   Unlocker - check it's 1.5.0 or newer and named `dxgi.dll`.)
+4. Play. The unlocker's own menu opens with **Backspace** in game; leave its Mode on "Follow game".
+5. To stop using it, delete that `dxgi.dll` (or choose another frame generation option).
 
 **Linux and Steam Deck (experimental):** unzip COGBox in your home folder, add `CogBox.exe` to Steam as a non-Steam
 game, and in its Properties > Compatibility force **Proton Experimental** (or a recent Proton / GE-Proton). On a small
@@ -255,7 +270,7 @@ saves and settings are not in the zip, so they are kept.
   them - here or anywhere. Issues or pull requests containing game files will be removed.
 - **What this project contains:** our own code (MIT licence, see `LICENSE`) and pieces of the Xenia emulator projects
   (BSD-3-Clause); the release adds the rexglue SDK runtime (BSD-3-Clause) and the vendors' own upscaler libraries (NVIDIA DLSS,
-  AMD FidelityFX, Intel XeSS) and the DirectX Shader Compiler under their own licences. Every licence is in
+  DLSS Frame Generation and Streamline, AMD FidelityFX, Intel XeSS) and the DirectX Shader Compiler under their own licences. Every licence is in
   `THIRD_PARTY_NOTICES.md` and in the release's `licenses` folder.
 - **Box art and backgrounds** are not included; COGBox downloads them from the x360db archive only when you ask, onto
   your own PC.
@@ -306,6 +321,10 @@ This project stands on the work of many open-source projects and their communiti
 - **[DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler)** and the
   **[Vulkan Headers](https://github.com/KhronosGroup/Vulkan-Headers)** - Microsoft and the Khronos Group.
 - **AMD FidelityFX (FSR)**, **NVIDIA DLSS** and **Intel XeSS** - the upscalers, under their vendors' own licences.
+- **NVIDIA DLSS Frame Generation**, **NVIDIA Streamline** and **NVIDIA Reflex** - this product uses the NVIDIA DLSS SDK, the
+  NVIDIA Streamline SDK (MIT) and the NVIDIA Reflex SDK; their runtime files (`sl.*.dll`, `nvngx_dlssg.dll`) ship unmodified
+  beside each port under the NVIDIA RTX SDKs License and Reflex SDK licence (`licenses\NVIDIA-Streamline-DLSS-G-NOTICE.txt`).
+  NVIDIA, GeForce RTX, DLSS and Reflex are trademarks of NVIDIA Corporation.
 - **[Xenia Manager](https://github.com/xenia-manager)** and its **[x360db](https://github.com/xenia-manager/x360db)**
   archive - the box art and backgrounds COGBox downloads.
 - The **Gears community patches** - ultrawide by boma and TudorHorse (Gears 2, 3 and Judgment), ported here as switches.
@@ -368,7 +387,8 @@ already asks you to keep the copyright notice in copies of the code.)
 
 Also used, each under its own licence: Xenia / Canary / Edge (BSD-3), the rexglue SDK (BSD-style), FFmpeg (LGPL-2.1+,
 for the game movies), SDL3 (zlib), Dear ImGui (MIT), SMAA (MIT), xxHash (BSD-2), miniz (MIT), stb (MIT), the DirectX
-Shader Compiler, the Vulkan Headers, AMD FidelityFX and Anti-Lag 2, NVIDIA DLSS and Reflex, Intel XeSS, and the
+Shader Compiler, the Vulkan Headers, AMD FidelityFX and Anti-Lag 2, NVIDIA DLSS, DLSS Frame Generation, Streamline (MIT) and
+Reflex (NVIDIA RTX SDKs License / Reflex SDK licence), Intel XeSS, and the
 Anton / Barlow / Inter fonts (SIL OFL). Full texts are in [`THIRD_PARTY_NOTICES.md`](Gears2-Native/THIRD_PARTY_NOTICES.md)
 and the release's `licenses` folder.
 

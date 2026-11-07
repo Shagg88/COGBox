@@ -16,6 +16,7 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 #include <xenos/dev_tools.h>
+#include <xenos/frame_limiter.h>
 #include <xenos/display_size.h>
 
 #include "gow3_addresses.h"
@@ -35,6 +36,7 @@
 #include <string_view>
 #include <format>
 #include <string>
+#include <cstdio>
 #include <thread>
 #include <vector>
 
@@ -384,6 +386,8 @@ void Gow3InstallMenuCap() {
 REXCVAR_DEFINE_INT32(gow3_tick_floor_fps, 0, "Gears3",
                      "With no frame-rate limit: the engine still ticks at most N times a second (no sub-millisecond ticks "
                      "while nothing is presented, e.g. checkpoint saves). 0 = off");
+void Gow3CheckpointStreamTick();        // checkpoint_stream.cpp (GitHub #226)
+void Gow3InstallCheckpointStreamWait();  // checkpoint_stream.cpp
 void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content packages, on the game thread
 
 // Gears 3's path choice (UIScene_PathChoice: "left path / right path") reads the triggers - the left trigger picks the
@@ -460,15 +464,27 @@ void Gow3PathChoiceTick() {
               open ? right : left, open ? left : right);
 }
 
+// Exact cap (GitHub #225 follow-up: 121-123 at a 120 cap): the engine's own wait sleeps whole milliseconds, so a limit
+// of N gave N +- 2. With a player's limit the game thread waits here on the host clock (shared precise limiter) and the
+// engine is told "no limit" - it measured the time before this call, so its own wait would come on top.
+static void Gow3ExactLimit(PPCRegister& f1) {
+  static xenos::FrameLimiter limiter;
+  GOW3_LOG_ONCE("gow3_max_fps: exact host-side limiter on ({} fps)", f1.f64);
+  limiter.Wait(f1.f64);
+  f1.f64 = 0.0;
+}
+
 void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9B0
   TickTimeline();
   Gow3ModChaptersTick();
   Gow3PathChoiceTick();
   Gow3MediaVerifyTick();  // GitHub #215
+  Gow3CheckpointStreamTick();  // GitHub #226
   const int32_t v = REXCVAR_GET(gow3_max_fps);
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)
     f1.f64 = (own <= 0.0 || own > double(m)) ? double(m) : own;
+    if (v != 0) Gow3ExactLimit(f1);
     return;
   }
   const int32_t floor_fps = REXCVAR_GET(gow3_tick_floor_fps);
@@ -479,6 +495,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   GOW3_LOG_ONCE("gow3_max_fps: engine frame-rate limit {} -> {}{}", f1.f64, v < 0 ? std::string("none") : std::to_string(v),
                 v < 0 && floor_fps > 0 ? " (tick floor " + std::to_string(floor_fps) + "/s)" : std::string());
   f1.f64 = v < 0 ? (floor_fps > 0 ? double(floor_fps) : 0.0) : double(v);
+  if (v > 0) Gow3ExactLimit(f1);
 }
 
 // ---- Engine settings through the game's own config (layer 2 --ue3_ini_edits) ----------------------------------------
@@ -531,6 +548,7 @@ REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
                     "play. Not for players: loading screens go black.");
 void Gow3AddBuiltInIniEdits() {
   Gow3InstallMenuCap();  // GitHub #101 (once, at start-up, before the game opens a file)
+  Gow3InstallCheckpointStreamWait();  // GitHub #226
   std::string add;
   if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xbox360-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;";
   if (REXCVAR_GET(gow3_trilinear)) add += kGow3TrilinearEdits;
@@ -741,16 +759,37 @@ void Gow3UltrawideCameraViewportType(rex::Runtime* runtime, float aspect) {
       }
     }
   }
-  static const uint8_t kPair[8] = {0x3F, 0xE4, 0xD5, 0xE7, 0x3F, 0xE2, 0x46, 0x8B};  // 1.7877778f, 1.7677778f (BE)
+  // Gears 3 keeps them the other way round from Gears 2: 1.7677778f then 1.7877778f (TU6 820CE108 / 820CE10C, job 1336 probe).
+  static const uint8_t kPair[8] = {0x3F, 0xE2, 0x46, 0x8B, 0x3F, 0xE4, 0xD5, 0xE7};  // 1.7677778f, 1.7877778f (BE)
   uint32_t found = 0, count = 0;
   for (uint32_t o = lo; hi > lo && hi < 0x02000000u && o + 8 <= hi; o += 4)
     if (std::memcmp(image + o, kPair, 8) == 0) found = 0x82000000u + o, ++count;
   if (count != 1) {
     REXLOG_INFO("gow3_aspect: camera viewport bounds not found ({} copies in .rdata {:08X}-{:08X}) - left alone "
                 "(GitHub #220)", count, 0x82000000u + lo, 0x82000000u + hi);
+    // GitHub #220 (0.4.7: not found in Gears 3): log where 16:9-ish floats sit in the whole image, to find Gears 3's bounds.
+    uint32_t pe = 0, size = 0;
+    std::memcpy(&pe, image + 0x3C, 4);
+    if (pe > 0 && pe < 0x1000) std::memcpy(&size, image + pe + 24 + 56, 4);
+    if (size > 0x02000000u) size = 0x02000000u;
+    static const float kProbe[] = {1.7677778f, 1.7877778f, 1.7777778f, 1.7f, 1.76f, 1.77f, 1.78f, 1.8f, 1.5f, 1.3333334f};
+    for (float v : kProbe) {
+      uint32_t bits = 0;
+      std::memcpy(&bits, &v, 4);
+      const uint8_t be[4] = {uint8_t(bits >> 24), uint8_t(bits >> 16), uint8_t(bits >> 8), uint8_t(bits)};
+      std::string hits;
+      uint32_t n = 0;
+      for (uint32_t o = 0; o + 4 <= size; o += 4)
+        if (std::memcmp(image + o, be, 4) == 0 && ++n <= 12) {
+          char b[12];
+          std::snprintf(b, sizeof b, " %08X", 0x82000000u + o);
+          hits += b;
+        }
+      REXLOG_INFO("gow3_aspect: probe {:.7f}: {} hit(s){}", v, n, hits);
+    }
     return;
   }
-  WriteGuestFloat(runtime, found, 1.7877778f, aspect + 0.05f,
+  WriteGuestFloat(runtime, found + 4, 1.7877778f, aspect + 0.05f,
                   "gow3_aspect: camera widescreen upper bound (GitHub #220: no 4:3 camera offset)");
 }
 }  // namespace

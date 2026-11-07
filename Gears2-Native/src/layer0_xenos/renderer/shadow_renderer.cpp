@@ -495,6 +495,8 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_shader_lookahead, true, "Gears2",
                     "Patch 0051: when a draw has to wait for a shader still compiling, first look up the shaders of the "
                     "draws already queued behind it, so new ones compile on all compile threads at once instead of one "
                     "after another on the draw thread. false = as before");
+REXCVAR_DEFINE_DOUBLE(gow2_present_gamma, 1.0, "Gears2",
+                      "GitHub #185: extra gamma on the game's display ramp at present (1 = original; 1.2 = darker shadows, highlights kept)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_constants, true, "Gears2",
                     "Patch 0105 (with --gow2_renderer_tex_num_format, the default): the texture-fetch post-processing "
                     "values that depend only on the fetch constant (per component sign mode, signed mode and fixed "
@@ -853,6 +855,12 @@ REXCVAR_DEFINE_STRING(gow2_velocity_scan_frames, "", "Gears2",
                       "Diagnostic (#147 / #150): frames 'first-last' in which draws into k_16_16 / k_16_16_FLOAT or half-size "
                       "targets are logged once per shader pair with the VS constants they read - finds a game's velocity "
                       "pass for the upscalers' character motion. Empty = off");
+REXCVAR_DEFINE_STRING(gow2_skin_scan_frames, "", "Gears2",
+                      "Diagnostic (Gears 1 character motion): frames 'first-last' in which each distinct scene draw "
+                      "(VS, PS, index count) into the upscalers' depth is logged once with the VS constant ranges it "
+                      "reads (a bone palette shows as a long range), its vertex / index addresses and stride, and again "
+                      "when a later frame draws it from another vertex address (CPU / memexport-skinned data). Also "
+                      "logs memexport draws in those frames. Needs an upscaler or frame generation. Empty = off");
 REXCVAR_DEFINE_BOOL(gow2_upscale_depth_at_resolve, false, "Gears2",
                     "Notes/80 s.6: the upscalers' depth is copied at the game's scene depth resolve (Gears 2 clears that "
                     "depth before the scene colour resolve - on there by gow2_app.h); false: read at the scene colour "
@@ -1405,6 +1413,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           vk_external_.instance = dev->vulkan_instance()->instance();
           vk_external_.physical_device = dev->physical_device();
           vk_external_.device = dev->device();
+          // Notes/83: frame generation copies its inputs per presented image (the SDK's table has no vkCmdCopyImage).
+          vk_cmd_copy_image_ = reinterpret_cast<void*>(
+              dev->vulkan_instance()->functions().vkGetDeviceProcAddr(dev->device(), "vkCmdCopyImage"));
           vk_external_.queue_family = fam;
           vk_external_.queue = queue->queue;
           vk_external_.lock_user = queue;
@@ -1680,6 +1691,11 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         vel_scan_first_ = a;
         vel_scan_last_ = z;
         REXLOG_INFO("gow2_velocity_scan: frames {}-{}", a, z);
+      }
+      if (std::sscanf(REXCVAR_GET(gow2_skin_scan_frames).c_str(), "%llu-%llu", &a, &z) == 2 && a >= 1 && a <= z) {
+        skin_scan_first_ = a;
+        skin_scan_last_ = z;
+        REXLOG_INFO("gow2_skin_scan: frames {}-{}", a, z);
       }
     }
     stencil_transfer_bits_ = REXCVAR_GET(gow2_renderer_stencil_transfer_bits) != 0;
@@ -3023,6 +3039,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       DisplayPending p;
       p.src = it->second;
       p.frame = frame_;
+      hl_present_has_ = false;  // patch 0148: this front buffer's HUD-less resolve, the same way as the real one
+      if (auto hl = hl_sources_.find(fb_phys); hl != hl_sources_.end() && present_ours_) {
+        hl_present_src_ = hl->second;
+        hl_present_fb_w_ = fb_width, hl_present_fb_h_ = fb_height;
+        hl_present_has_ = !it->second.scaled || hl->second.scaled;
+        ++hl_st_.fb_match;
+        if (!hl_present_has_) ++hl_st_.fb_scaled;
+        if (it->second.scaled && hl->second.scaled) {
+          DisplaySource& s = hl_present_src_;
+          s.texture = s.scaled;
+          s.rect = {s.rect.x0 * int32_t(res_scale_), s.rect.y0 * int32_t(res_scale_), s.rect.x1 * int32_t(res_scale_),
+                    s.rect.y1 * int32_t(res_scale_)};
+          hl_present_fb_w_ = fb_width * res_scale_, hl_present_fb_h_ = fb_height * res_scale_;
+        }
+      }
       if (present_ours_ && hold_this_frame_) {  // patch 0063: held back - the previous picture stays on screen
         ++display_stats_.dropped;
       } else if (present_ours_ && it->second.scaled) {  // Stage 7: the front buffer at the resolution scale
@@ -3034,12 +3065,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       } else if (present_ours_) {  // 5C-2: straight into the presenter; no readback, no guest-memory front buffer
         PresentOurs(regs, it->second, fb_width, fb_height);
       } else {
+        gpu::TextureDesc td;  // clamped as the backends copy it: the CPU write-back walks this rectangle
+        if (backend_->TextureInfo(p.src.texture, td)) {
+          gpu::Rect& r = p.src.rect;
+          r.x0 = std::clamp(r.x0, 0, int32_t(td.width)), r.y0 = std::clamp(r.y0, 0, int32_t(td.height));
+          r.x1 = std::clamp(r.x1, r.x0, int32_t(td.width)), r.y1 = std::clamp(r.y1, r.y0, int32_t(td.height));
+        }
         p.readback = backend_->ReadbackTexture(p.src.texture, p.src.rect);
         if (p.readback) display_pending_.push_back(p); else ++display_stats_.bad;
         if (present_shadow_) PresentShadow(regs, it->second, fb_width, fb_height);
       }
     }
     display_sources_.clear();
+    hl_sources_.clear();  // patch 0148
+    hl_present_has_ = false;
   }
 
   // ---- Stage 5C-1: the swap's gamma pass on our front buffer, compared with the SDK's presented image ----
@@ -3087,8 +3126,29 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (ramps->table_version != ramp_table_version_ || ramps->pwl_version != ramp_pwl_version_) {
       uint32_t words[256 + 128 * 3];
       std::memcpy(words, ramps->table, sizeof(ramps->table));
+      // GitHub #185: --gow2_present_gamma (launcher "Gamma") bends the game's 256-entry ramp: out = in ^ gamma per
+      // component, so above 1 the shadows and midtones darken and the highlights stay. 1 = the game's own ramp.
+      if (const double g = REXCVAR_GET(gow2_present_gamma); g > 0.0 && std::abs(g - 1.0) > 1e-3) {
+        for (uint32_t& t : words) {
+          if (&t >= words + 256) break;
+          uint32_t o = 0;
+          for (int c = 0; c < 3; ++c) {
+            const uint32_t v = (t >> (10 * c)) & 0x3FF;
+            const uint32_t nv = uint32_t(std::lround(1023.0 * std::pow(v / 1023.0, g)));
+            o |= std::min<uint32_t>(nv, 1023) << (10 * c);
+          }
+          t = (t & 0xC0000000u) | o;
+        }
+      }
       std::memcpy(words + 256, ramps->pwl, sizeof(ramps->pwl));
       backend_->UploadTexture(ramp_texture_, 0, 0, words, uint32_t(sizeof(words)), 1, 1);
+      // GitHub #185: what the game's gamma ramp holds (red 10-bit at inputs 0/16/32/64/128/192/255; linear = 4x input).
+      if (ramp_logs_ < 24) {
+        ++ramp_logs_;
+        auto r = [&](int i) { return (ramps->table[i] >> 20) & 0x3FF; };
+        REXLOG_INFO("gow2_present: gamma ramp (table v{} pwl v{}) red at 0/16/32/64/128/192/255: {} {} {} {} {} {} {}",
+                    ramps->table_version, ramps->pwl_version, r(0), r(16), r(32), r(64), r(128), r(192), r(255));
+      }
       ramp_table_version_ = ramps->table_version;
       ramp_pwl_version_ = ramps->pwl_version;
     }
@@ -3256,6 +3316,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->Dispatch(hdr_encode_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
       table = false;  // 10 bits per channel to the window
     }
+    // Patch 0148: the HUD-less image through the same passes, at the same size (0 = none this frame).
+    const gpu::TextureHandle hl_image =
+        hl_present_has_ && fg_wanted_ ? HudlessChain(regs, w, h, ow, oh) : gpu::TextureHandle(0);  // notes/83: Vulkan too
+    const uint32_t hl_image_w = hl_fit_w_, hl_image_h = hl_fit_h_;  // its size (the generation rectangle's, when known)
+    hl_present_has_ = false;
     bool wrote = false;
     if (!presenter_) {  // notes/68: Vulkan without a presenter yet - the image is made, nothing is shown
       backend_->Submit();
@@ -3286,6 +3351,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
             t.height = oh;
             t.first_write = !v.image_ever_written_previously();
             if (!backend_->PresentPacked(out_tex, ow, oh, &t)) return false;
+            if (fg_wanted_) FgHandOver(reinterpret_cast<void*>(v.image()), hl_image, hl_image_w, hl_image_h);  // notes/83: frame generation's inputs, in the Submit below
             backend_->Submit();  // on the presenter's queue, before the refresher returns
             wrote = true;
             return true;
@@ -3305,7 +3371,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           b.uav_texture = out;
           backend_->Dispatch(present_unpack_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
           backend_->ReleaseImport(out, uint32_t(rex::ui::d3d12::D3D12Presenter::kGuestOutputInternalState));
-          if (fg_wanted_) FgHandOver(c.resource_uav_capable());  // patch 0147: before the Submit that carries the copies
+          if (fg_wanted_) FgHandOver(c.resource_uav_capable(), hl_image, hl_image_w, hl_image_h);  // patch 0147: before the Submit that carries the copies
           backend_->Submit();
           wrote = true;
           return true;
@@ -3406,6 +3472,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   rex::ui::Presenter* presenter_ = nullptr;  // D3D12Presenter, or VulkanPresenter when presenter_vulkan_ (notes/68 V3)
   bool presenter_vulkan_ = false;
   gpu::VulkanExternal vk_external_;  // notes/68 V3: the SDK device our Vulkan backend runs on (outlives backend_)
+  void* vk_cmd_copy_image_ = nullptr;  // notes/83: PFN_vkCmdCopyImage of that device (frame generation's input copies)
   bool vk_headless_present_ = false;  // notes/68: Vulkan, our present without a presenter (frame shots only)
   bool present_ours_ = false;
   gpu::PipelineHandle present_unpack_ = 0;
@@ -3874,6 +3941,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::TextureHandle ramp_texture_ = 0, present_out_ = 0;
   uint32_t present_out_w_ = 0, present_out_h_ = 0;
   uint64_t ramp_table_version_ = ~0ull, ramp_pwl_version_ = ~0ull;
+  uint32_t ramp_logs_ = 0;  // GitHub #185
   std::deque<PresentImage> present_images_;
   PresentStats present_stats_;
   void ShowDisplay(uint32_t fb_phys) {
@@ -3909,7 +3977,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         for (uint32_t x = 0; x < w; ++x) {
           const int64_t off = ::xenos::texture::TiledOffset2D(int32_t(dx0 + x), int32_t(dy0 + y), pitch_blocks,
                                                               in.dest_bpp_log2);
-          if (off < 0) continue;
+          if (off < 0 || uint64_t(fb_phys) + uint64_t(off) + 4 > 0x20000000ull) continue;  // inside 512 MB guest memory
           // Mark: magenta, alpha 255, in 8888 any channel order (R=B=FF, G=00) - only for 8888 destinations.
           const bool mark = display_mark_ && x < 32 && y < 32 && (in.dest_format == 6 || in.dest_format == 50);
           const uint32_t word = Swap32(mark ? 0xFFFF00FFu : row[x], p.src.endian);
@@ -4466,10 +4534,59 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     gpu::TextureHandle depth = 0, motion = 0;
     uint32_t width = 0, height = 0;
     uint64_t used = 0;
+    gpu::TextureHandle hudless = 0;  // patch 0148
+    uint32_t hl_width = 0, hl_height = 0, hl_format = 0;
   };
   std::array<FgSlot, 4> fg_slots_{};
   uint64_t fg_slot_clock_ = 0;
   bool fg_wanted_ = false;  // patch 0147: --gow2_frame_generation=fsr and the build has it
+  // Patch 0148 (--gow2_frame_generation_hudless): the frame as it was just before the HUD. Per frame, after the scene
+  // colour resolve: a full-screen opaque quad into a target at least kSceneMinWidth wide arms it (the last post pass,
+  // e.g. tone mapping); the first blended draw into that target after it (the HUD's first element) copies the target
+  // (hl_snap_). When that target is resolved, the copy is resolved too, the same way, into a destination of our own
+  // (hl_sources_); the swap that shows the real resolve runs the same present passes on the copy (hl_image_), and
+  // FgHandOver unpacks it into the slot in the back buffer's format. D3D12 only (frame generation is).
+  uint32_t hl_format_ = 0;  // XenosFrameGenerationHudlessFormat(), read at each frame's end; 0 = all of this off
+  bool hl_armed_ = false, hl_taken_ = false;
+  rr::RenderTargetKey hl_key_{};
+  gpu::TextureHandle hl_snap_ = 0;
+  uint32_t hl_snap_w_ = 0, hl_snap_h_ = 0;
+  gpu::Format hl_snap_format_ = gpu::Format::kUnknown;
+  struct HlDest {
+    gpu::TextureHandle texture = 0;
+    uint32_t width = 0, height = 0;
+  };
+  std::unordered_map<uint64_t, HlDest> hl_dests_;  // dest_base * 2 (+1: at the resolution scale)
+  std::unordered_map<uint32_t, DisplaySource> hl_sources_;  // this frame's HUD-less resolves, by destination
+  bool hl_present_has_ = false;
+  DisplaySource hl_present_src_{};
+  uint32_t hl_present_fb_w_ = 0, hl_present_fb_h_ = 0;
+  gpu::TextureHandle hl_out_ = 0, hl_scaled_ = 0, hl_sharp_ = 0, hl_fit_ = 0;
+  gpu::PipelineHandle hl_resample_ = 0;  // the present resample shader, for the fit to the generation rectangle
+  uint32_t hl_fit_w_ = 0, hl_fit_h_ = 0, hl_fit_tex_w_ = 0, hl_fit_tex_h_ = 0, hl_fit_logged_ = 0;
+  uint32_t hl_out_w_ = 0, hl_out_h_ = 0, hl_scaled_w_ = 0, hl_scaled_h_ = 0, hl_sharp_w_ = 0, hl_sharp_h_ = 0;
+  uint64_t hl_takes_ = 0, hl_resolves_ = 0, hl_images_ = 0, hl_logged_ = 0;
+  // Stage counters (eb0227f: "given 0, none made 600" - which stage never matches), logged every 600 frames.
+  struct HlStages {
+    uint64_t frames = 0, scene_frames = 0;           // frames with the HUD-less work on; of those, with the scene resolve
+    uint64_t draws = 0, msaa = 0, narrow = 0;        // draws after the scene resolve; skipped as MSAA / below scene width
+    uint64_t no_quad = 0, no_cover = 0, blended = 0, depth = 0;  // why a draw did not arm
+    uint64_t arms = 0, after_arm = 0, other_key = 0, take_fail = 0;  // arming; draws after it; on another target; copy failed
+    uint64_t res_cands = 0, res_key = 0, res_source = 0, res_size = 0, res_fmt = 0;  // resolves after a take; rejects
+    uint64_t fb_match = 0, fb_scaled = 0, chain_fail = 0;  // the front buffer had a HUD-less resolve; scale mismatch
+  } hl_st_;
+  uint32_t hl_frame_logged_ = 0, hl_frame_takes_ = 0;  // this frame's geometry lines / target copies
+  void HlStagesLog() {
+    const HlStages& c = hl_st_;
+    REXLOG_INFO("gow2_frame_generation_hudless: patch 0148 stages: frames {} with scene {}; draws after scene {} (msaa "
+                "{}; each counted alone: narrow {}, not quad {}, not covering {}, blended {}, depth writes {}); opaque "
+                "full-screen passes {}, takes started {} (refused by the 4/frame cap {}), taken {} (copy failed {}); resolves after take {} (other target {}, upscaler "
+                "source {}, size {}, format {}), replayed {}; front buffer matched {} (scale mismatch {}); images {} "
+                "(chain failed {})",
+                c.frames, c.scene_frames, c.draws, c.msaa, c.narrow, c.no_quad, c.no_cover, c.blended, c.depth, c.arms,
+                c.after_arm, c.other_key, hl_takes_, c.take_fail, c.res_cands, c.res_key, c.res_source, c.res_size,
+                c.res_fmt, hl_resolves_, c.fb_match, c.fb_scaled, hl_images_, c.chain_fail);
+  }
   FgInputs fg_{};
   uint64_t fg_made_ = 0, fg_resets_ = 0;  // log window
   gpu::PipelineHandle up_depth_pipe_ = 0, up_motion_pipe_ = 0;
@@ -5138,6 +5255,51 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                 index_count, reads.empty() ? std::string("none") : reads, affine2 ? "yes" : "no",
                 vel_scan_lines_ == 600 ? " - last line (gow2_velocity_scan_frames)" : "");
   }
+  // Gears 1 character motion research (--gow2_skin_scan_frames): see the cvar.
+  uint64_t skin_scan_first_ = 0, skin_scan_last_ = 0;
+  uint32_t skin_scan_lines_ = 0;
+  std::unordered_map<uint64_t, uint32_t> skin_scan_vb_;  // draw (VS, PS, count) -> its vertex address when first logged
+  std::unordered_set<uint64_t> skin_scan_moved_;
+  static std::string ConstRanges(const rr::GuestShader& vsg, uint32_t* longest) {
+    std::string reads;
+    *longest = 0;
+    for (uint32_t c = 0; c < 256;) {
+      if (!vsg.Reads(c)) { ++c; continue; }
+      uint32_t e = c;
+      while (e + 1 < 256 && vsg.Reads(e + 1)) ++e;
+      *longest = std::max(*longest, e - c + 1);
+      reads += (reads.empty() ? "c" : ",c") + std::to_string(c) + (e > c ? "-" + std::to_string(e) : std::string());
+      c = e + 1;
+    }
+    return reads.empty() ? std::string("none") : reads;
+  }
+  void SkinScan(const uint32_t* r, const rr::GuestShader& vsg, uint64_t vs_hash, uint64_t ps_hash, uint32_t ib_addr,
+                uint32_t index_count, const char* what) {
+    const uint64_t f = frame_ + 1;
+    if (f < skin_scan_first_ || f > skin_scan_last_ || skin_scan_lines_ >= 800) return;
+    uint32_t vb = 0, vb_dw = 0, fetches = 0;
+    for (uint32_t i = 0; i < 96; ++i)
+      if ((vsg.vfetch_constants[i >> 5] >> (i & 31)) & 1) {
+        ++fetches;
+        if (!vb) vb = r[kRegFetchConst + 2 * i] & 0x1FFFFFFCu, vb_dw = (r[kRegFetchConst + 2 * i + 1] >> 2) & 0xFFFFFFu;
+      }
+    const uint64_t key = (vs_hash * 0x9E3779B97F4A7C15ull ^ ps_hash) + index_count;
+    const auto it = skin_scan_vb_.find(key);
+    if (it == skin_scan_vb_.end()) {
+      skin_scan_vb_.emplace(key, vb);
+      uint32_t longest = 0;
+      const std::string reads = ConstRanges(vsg, &longest);
+      ++skin_scan_lines_;
+      REXLOG_INFO("gow2_skin_scan: frame {} {} vs {:016X} ps {:016X} indices {} vb {:08X} ({} dwords, {} fetch "
+                  "constant(s)) ib {:08X} | VS reads {} (longest run {}){}",
+                  f, what, vs_hash, ps_hash, index_count, vb, vb_dw, fetches, ib_addr, reads, longest,
+                  longest >= 12 ? " - palette-sized" : "");
+    } else if (it->second != vb && skin_scan_moved_.insert(key).second) {
+      ++skin_scan_lines_;
+      REXLOG_INFO("gow2_skin_scan: frame {} vs {:016X} ps {:016X} indices {}: vertex address {:08X} -> {:08X} (data "
+                  "rewritten each frame: CPU / memexport skinning)", f, vs_hash, ps_hash, index_count, it->second, vb);
+    }
+  }
   void VelocityDraw(const uint32_t* r, const rr::GuestShader& vsg, const rr::RenderTargetKey& k0, uint32_t index_count) {
     if (!vel_motion_pipe_ || !up_camera_ || k0.storage_class != rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16))) return;
     for (uint32_t k = 0; k < 13; ++k)  // the camera (c0-c3) and both object-to-world matrices (c5-c12)
@@ -5258,7 +5420,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     rr::upscale::Mat4 now, prev;
     bool has_prev = false;
   };
-  static constexpr uint32_t kOmMaxObjects = 2047, kOmMaxEntries = 8192, kOmMovingFrames = 60;
+  static constexpr uint32_t kOmMaxObjects = 4095, kOmMaxEntries = 8192, kOmMovingFrames = 60;
   bool om_on_ = false, om_ids_frame_ = false;
   gpu::ShaderHandle om_ps_hlsl_ = 0, om_ps_dxbc_ = 0;
   gpu::PipelineHandle om_cs_ = 0;
@@ -5288,6 +5450,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                      uint64_t vs_hash, uint64_t ps_hash, DrawAgain&& draw_again) {
     if (!target || !target->texture || target->key.msaa != 0 || !(target->key == up_depth_key_)) return;
     if (!d.depth_enable || !d.depth_write || d.samples != 1 || v.xy_divided_by_w || v.clip_disabled) return;
+    if (skin_scan_last_) SkinScan(r, vsg, vs_hash, ps_hash, ib ? (ib->guest_base & 0x1FFFFFFFu) : 0u, index_count, "scene");
     if ((needs_ps && psg && psg->writes_depth) || vsg.memexport || occ_open_.open || up_vp_base_ < 0) return;
     const uint32_t cb = uint32_t(up_vp_base_);
     if (!(vsg.Reads(cb) && vsg.Reads(cb + 1) && vsg.Reads(cb + 2) && vsg.Reads(cb + 3))) return;
@@ -5759,9 +5922,295 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     return up_output_;
   }
 
+  // Patch 0148: the HUD start guess (see hl_format_), before the draw is issued.
+  void HudlessDraw(rr::RenderTarget* const* colour_rt, const rr::PipelineState& ps, uint32_t prim, uint32_t index_count,
+                   bool depth_writes) {
+    rr::RenderTarget* c = colour_rt[0];
+    if (!c || !c->texture) return;
+    ++hl_st_.draws;
+    if (c->key.msaa) {
+      ++hl_st_.msaa;
+      return;
+    }
+    bool blends = false;
+    for (uint32_t i = 0; i < 4; ++i)
+      if (colour_rt[i] && ps.blend.rt[i].blend_enable) blends = true;
+    const bool quad = prim == 0x08 || (index_count > 0 && index_count <= 6);  // review: a non-indexed draw (0) is not a quad
+    const bool covers = ps.scissor.x == 0 && ps.scissor.y == 0 && uint64_t(ps.scissor.width) * 10 >= uint64_t(c->width) * 9 &&
+                        uint64_t(ps.scissor.height) * 10 >= uint64_t(c->height) * 9;
+    const bool wide = c->guest_width >= kSceneMinWidth;
+    // Each property counted on its own (864fac9 counted them as a chain: 'blended' was only after quad and covering).
+    if (!wide) ++hl_st_.narrow;
+    if (!quad) ++hl_st_.no_quad;
+    if (!covers) ++hl_st_.no_cover;
+    if (blends) ++hl_st_.blended;
+    if (depth_writes) ++hl_st_.depth;
+    // The real geometry, for the first 20 scene frames (6 wide-target draws each): what the detector sees.
+    if (wide && hl_st_.scene_frames < 20 && hl_frame_logged_ < 6) {
+      ++hl_frame_logged_;
+      REXLOG_INFO("gow2_frame_generation_hudless: frame {} draw after scene: prim {:02X} count {} scissor {},{} {}x{} "
+                  "target {}x{} (guest {}x{}) format {} tiles {} class {} pitch {}; blend {} depth writes {} -> {}",
+                  frame_, prim, index_count, ps.scissor.x, ps.scissor.y, ps.scissor.width, ps.scissor.height, c->width,
+                  c->height, c->guest_width, c->guest_height, uint32_t(c->format), c->key.base_tiles,
+                  c->key.storage_class, c->key.pitch_pixels, blends, depth_writes,
+                  !blends && !depth_writes && quad && covers ? "opaque full-screen pass (re-arm)"
+                  : blends && !depth_writes ? (hl_taken_ && c->key == hl_key_ ? "blended, already taken" : "blended: take")
+                                            : "ignored");
+    }
+    if (!wide) return;
+    // UE3 draws its HUD / Canvas / Scaleform alpha-blended with no depth writes, after the last post pass. An opaque
+    // full-screen pass (the post chain) over the taken target means the take was too early: take again at the next
+    // blended draw. A blended draw into another wide target moves the take there (the last target is the one shown; the
+    // resolve replay only uses the take of the target it resolves). At most 4 copies a frame.
+    if (!blends && !depth_writes && quad && covers) {
+      ++hl_st_.arms;
+      if (hl_taken_ && c->key == hl_key_) hl_taken_ = false;
+      return;
+    }
+    if (!blends || depth_writes) return;
+    if (hl_taken_ && c->key == hl_key_) return;
+    if (hl_frame_takes_ >= 4) {
+      ++hl_st_.other_key;  // counted as 'other target' (a take refused by the cap)
+      return;
+    }
+    ++hl_st_.after_arm;  // here: blended draws that start a take
+    ++hl_frame_takes_;
+    hl_key_ = c->key;
+    hl_armed_ = true;
+    hl_taken_ = true;
+    if (!hl_snap_ || hl_snap_w_ != c->width || hl_snap_h_ != c->height || hl_snap_format_ != c->format) {
+      if (hl_snap_) backend_->DestroyTexture(hl_snap_), hl_snap_ = 0;
+      gpu::TextureDesc td;
+      td.width = c->width;
+      td.height = c->height;
+      td.format = c->format;
+      td.usage = gpu::kUsageSampled;
+      td.debug_name = "gow2 frame generation HUD-less target copy";
+      hl_snap_ = backend_->CreateTexture(td);
+      hl_snap_w_ = c->width, hl_snap_h_ = c->height, hl_snap_format_ = c->format;
+    }
+    void* dev = nullptr;
+    void* list = nullptr;
+#if GN_SDK_VULKAN
+    if (presenter_vulkan_) {  // notes/83: the take on Vulkan (1385: every take failed on the D3D12-only copy below)
+      auto copy = reinterpret_cast<PFN_vkCmdCopyImage>(vk_cmd_copy_image_);
+      VkImage vs = VK_NULL_HANDLE, vd = VK_NULL_HANDLE;
+      if (hl_snap_ && copy && backend_->BeginNativeVulkan(&dev, &list)) {
+        vs = reinterpret_cast<VkImage>(backend_->NativeTextureVulkan(c->texture, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL));
+        vd = reinterpret_cast<VkImage>(backend_->NativeTextureVulkan(hl_snap_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL));
+        if (vs && vd) {
+          VkImageCopy r{};
+          r.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+          r.dstSubresource = r.srcSubresource;
+          r.extent = {c->width, c->height, 1};
+          copy(reinterpret_cast<VkCommandBuffer>(list), vs, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vd,
+               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+        }
+      }
+      // the next draw's pass moves the target back to its attachment layout; the copy is read as a texture later
+      if (!vs || !vd) {
+        ++hl_st_.take_fail;
+        hl_taken_ = hl_armed_ = false;
+        return;
+      }
+      ++hl_takes_;
+      return;
+    }
+#endif
+    if (!hl_snap_ || !backend_->BeginNative(&dev, &list)) {
+      ++hl_st_.take_fail;
+      hl_taken_ = false;
+      hl_armed_ = false;
+      return;
+    }
+    auto* s = static_cast<ID3D12Resource*>(backend_->NativeTexture(c->texture, D3D12_RESOURCE_STATE_COPY_SOURCE));
+    auto* d = static_cast<ID3D12Resource*>(backend_->NativeTexture(hl_snap_, D3D12_RESOURCE_STATE_COPY_DEST));
+    if (s && d) static_cast<ID3D12GraphicsCommandList*>(list)->CopyResource(d, s);
+    backend_->EndNative();  // our bindings are re-applied; the draw's SetRenderTargets moves the target back
+    if (!s || !d) {
+      ++hl_st_.take_fail;
+      hl_taken_ = hl_armed_ = false;
+      return;
+    }
+    ++hl_takes_;
+  }
+
+  HlDest* HudlessDest(uint64_t key, uint32_t w, uint32_t h) {
+    HlDest& d = hl_dests_[key];
+    if (d.texture && d.width == w && d.height == h) return &d;
+    if (d.texture) backend_->DestroyTexture(d.texture), d.texture = 0;
+    gpu::TextureDesc td;
+    td.width = w;
+    td.height = h;
+    td.format = gpu::Format::kR32Uint;
+    td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+    td.debug_name = "gow2 frame generation HUD-less resolve";
+    d.texture = backend_->CreateTexture(td);
+    d.width = w, d.height = h;
+    return d.texture ? &d : nullptr;
+  }
+
+  // Patch 0148: the HUD-less copy resolved like the real resolve (same shader and constants; 32 bpp, single sample).
+  void HudlessResolve(const gpu::ComputeBindings& b_main, gpu::PipelineHandle pipe, const ::xenos::resolve::Info& info,
+                      uint32_t endian, uint32_t w, uint32_t h, uint32_t dx, uint32_t dy, bool scaled, uint32_t cross) {
+    if (hl_dests_.size() > 16) {  // destinations the game no longer uses
+      for (auto& [k, d] : hl_dests_)
+        if (d.texture) backend_->DestroyTexture(d.texture);
+      hl_dests_.clear();
+    }
+    const uint32_t pw = std::max<uint32_t>(info.dest_pitch_aligned_div_32 * 32, 32),
+                   ph = std::max<uint32_t>(info.dest_height_aligned_div_32 * 32, 32);
+    HlDest* plain = HudlessDest(uint64_t(info.dest_base) * 2, pw, ph);
+    if (!plain) return;
+    gpu::ComputeBindings b = b_main;
+    b.srv[0] = hl_snap_;
+    b.uav_texture = plain->texture;
+    ResolveDispatch(pipe, b, (w + 7) / 8, (h + 7) / 8, 1);
+    DisplaySource s;
+    s.texture = plain->texture;
+    s.rect = gpu::Rect{int32_t(dx), int32_t(dy), int32_t(dx + w), int32_t(dy + h)};
+    s.info = info;
+    s.endian = endian;
+    if (scaled) {  // the real resolve also filled a copy at the resolution scale (Stage 7 phase B)
+      HlDest* sc = HudlessDest(uint64_t(info.dest_base) * 2 + 1, pw * res_scale_, ph * res_scale_);
+      if (!sc) return;
+      if (cross) b.constants[12] = res_scale_;
+      b.constants[13] = 1u | (cross << 8);
+      b.uav_texture = sc->texture;
+      ResolveDispatch(pipe, b, (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
+      s.scaled = sc->texture;
+    }
+    hl_sources_[info.dest_base] = s;
+    ++hl_resolves_;
+  }
+
+  // Patch 0148: the present passes of PresentOurs (gamma, SMAA, the resize to the window, sharpening, HDR10) on the
+  // HUD-less resolve, into our own textures. The result is the shown image's size (ow x oh) or 0.
+  gpu::TextureHandle HudlessChain(const RegisterFile& regs, uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
+    std::swap(present_out_, hl_out_);
+    std::swap(present_out_w_, hl_out_w_);
+    std::swap(present_out_h_, hl_out_h_);
+    uint32_t hw = 0, hh = 0;
+    bool table = false;
+    bool ok = GammaPass(regs, hl_present_src_, hl_present_fb_w_, hl_present_fb_h_, hw, hh, table) && hw == w && hh == h;
+    if (ok && smaa_) ok = SmaaPass(w, h);
+    std::swap(present_out_, hl_out_);
+    std::swap(present_out_w_, hl_out_w_);
+    std::swap(present_out_h_, hl_out_h_);
+    if (!ok || !hl_out_) {
+      ++hl_st_.chain_fail;
+      return 0;
+    }
+    gpu::TextureHandle out = hl_out_;
+    auto ensure = [&](gpu::TextureHandle& t, uint32_t& tw, uint32_t& th, const char* name) {
+      if (t && tw == ow && th == oh) return true;
+      if (t) backend_->DestroyTexture(t), t = 0;
+      gpu::TextureDesc sd;
+      sd.width = ow;
+      sd.height = oh;
+      sd.format = gpu::Format::kR32Uint;
+      sd.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      sd.debug_name = name;
+      t = backend_->CreateTexture(sd);
+      tw = ow, th = oh;
+      return t != 0;
+    };
+    if (ow != w || oh != h) {  // the shown image was resized to the window (present_scaled_)
+      if (!present_resample_ || !ensure(hl_scaled_, hl_scaled_w_, hl_scaled_h_, "gow2 HUD-less at the window's size"))
+        return 0;
+      gpu::ComputeBindings b;
+      b.constants[0] = w;
+      b.constants[1] = h;
+      b.constants[2] = ow;
+      b.constants[3] = oh;
+      b.constants[4] = present_lanczos_ ? 1u : 0u;
+      b.constant_count = 8;
+      b.srv[0] = out;
+      b.uav_texture = hl_scaled_;
+      backend_->Dispatch(present_resample_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
+      out = hl_scaled_;
+    }
+    if (present_sharpen_ && present_sharp_) {
+      if (!ensure(hl_sharp_, hl_sharp_w_, hl_sharp_h_, "gow2 HUD-less sharpened")) return 0;
+      gpu::ComputeBindings b;
+      b.constants[0] = ow;
+      b.constants[1] = oh;
+      b.constants[4] = std::bit_cast<uint32_t>(float(std::clamp(REXCVAR_GET(gow2_present_sharpen), 0.0, 1.0)));
+      b.constant_count = 8;
+      b.srv[0] = out;
+      b.uav_texture = hl_sharp_;
+      backend_->Dispatch(present_sharpen_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
+      out = hl_sharp_;
+    }
+    if (hdr_ && hdr_encode_) {
+      gpu::ComputeBindings b;
+      b.constants[0] = ow;
+      b.constants[1] = oh;
+      b.constants[4] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_paper_white)));
+      b.constants[5] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_peak)));
+      b.constants[6] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_knee)));
+      b.constants[7] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_expand)));
+      b.constant_count = 8;
+      b.uav_texture = out;
+      backend_->Dispatch(hdr_encode_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
+    }
+    // 8b9872a: the presenter stretches our ow x oh image into the back buffer (without "Match my monitor"), so the
+    // generation rectangle is the stretched size: the HUD-less image is resampled to it (the size frame generation
+    // reported last frame), with the present resample pass (box shrink / bilinear enlarge, in linear light).
+    uint32_t gw = 0, gh = 0;
+    hl_fit_w_ = ow, hl_fit_h_ = oh;
+    if (XenosFrameGenerationHudlessSize(gw, gh) && (gw != ow || gh != oh) && gw <= 16384 && gh <= 16384) {
+      if (!hl_resample_) {
+        if (present_resample_) {
+          hl_resample_ = present_resample_;
+        } else {
+          const gpu::ShaderHandle rs =
+              cache_->GetBuiltin("present_resample_cs", rr::builtin::kPresentResampleCs, gpu::ShaderStage::kCompute);
+          hl_resample_ = rs ? backend_->CreateComputePipeline(rs) : 0;
+        }
+      }
+      if (hl_fit_logged_ < 3) {
+        ++hl_fit_logged_;
+        REXLOG_INFO("gow2_frame_generation_hudless: HUD-less image {}x{}, generation rectangle {}x{}: resampled{}", ow,
+                    oh, gw, gh, hl_resample_ ? "" : " - RESAMPLE SHADER MISSING, none given");
+      }
+      if (hl_resample_ && (!hl_fit_ || hl_fit_tex_w_ != gw || hl_fit_tex_h_ != gh)) {
+        if (hl_fit_) backend_->DestroyTexture(hl_fit_), hl_fit_ = 0;
+        gpu::TextureDesc fd;
+        fd.width = gw;
+        fd.height = gh;
+        fd.format = gpu::Format::kR32Uint;
+        fd.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+        fd.debug_name = "gow2 HUD-less at the generation size";
+        hl_fit_ = backend_->CreateTexture(fd);
+        hl_fit_tex_w_ = gw, hl_fit_tex_h_ = gh;
+      }
+      if (!hl_resample_ || !hl_fit_) return 0;
+      gpu::ComputeBindings b;
+      b.constants[0] = ow;
+      b.constants[1] = oh;
+      b.constants[2] = gw;
+      b.constants[3] = gh;
+      b.constants[4] = 0;
+      b.constant_count = 8;
+      b.srv[0] = out;
+      b.uav_texture = hl_fit_;
+      backend_->Dispatch(hl_resample_, b, (gw + 7) / 8, (gh + 7) / 8, 1);
+      out = hl_fit_;
+      hl_fit_w_ = gw, hl_fit_h_ = gh;
+    }
+    ++hl_images_;
+    if (hl_logged_ < 3 || hl_images_ % 600 == 0) {
+      ++hl_logged_;
+      REXLOG_INFO("gow2_frame_generation_hudless: patch 0148: HUD-less image {}x{} given as {}x{} (target copies {}, "
+                  "resolves {}, images {})", ow, oh, hl_fit_w_, hl_fit_h_, hl_takes_, hl_resolves_, hl_images_);
+    }
+    return out;
+  }
+
   // Patch 0147: copies this frame's depth / motion into the slot of the presenter image just written and gives frame
   // generation their native resources; null when this frame made none (no 3D scene: frame generation pauses).
-  void FgHandOver(void* guest_output) {
+  void FgHandOver(void* guest_output, gpu::TextureHandle hl_image = 0, uint32_t hl_w = 0, uint32_t hl_h = 0) {
     if (!XenosFrameGenerationWanted()) return;  // AMD's files or swap chain missing: no copies for nothing
     const bool fresh = fg_.frame == frame_ && fg_.depth && fg_.motion && fg_.width && fg_.height;
     if (!fresh) {
@@ -5779,6 +6228,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     slot->used = ++fg_slot_clock_;
     if (slot->width != fg_.width || slot->height != fg_.height || !slot->depth || !slot->motion) {
+      if (slot->depth || slot->motion) XenosFrameGenerationSlotsRecreated();  // a held last frame names these
       for (gpu::TextureHandle* t : {&slot->depth, &slot->motion})
         if (*t) backend_->DestroyTexture(*t), *t = 0;
       gpu::TextureDesc td;
@@ -5795,15 +6245,72 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         return;
       }
     }
+    // Patch 0148: the HUD-less image (packed words) unpacked into the slot in the back buffer's format.
+    const uint32_t hl_fmt = hl_image && hl_w && hl_h ? hl_format_ : 0u;
+    bool hl_ok = false;
+    if (hl_fmt) {
+      if (!slot->hudless || slot->hl_width != hl_w || slot->hl_height != hl_h || slot->hl_format != hl_fmt) {
+        if (slot->hudless) XenosFrameGenerationSlotsRecreated(), backend_->DestroyTexture(slot->hudless), slot->hudless = 0;
+        gpu::TextureDesc td;
+        td.width = hl_w;
+        td.height = hl_h;
+        td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+        td.format = hl_fmt == 2 ? gpu::Format::kR10G10B10A2Unorm : gpu::Format::kR8G8B8A8Unorm;  // 3: BGRA8 bytes
+        td.debug_name = "gow2 frame generation HUD-less (presented size)";
+        slot->hudless = backend_->CreateTexture(td);
+        slot->hl_width = hl_w, slot->hl_height = hl_h, slot->hl_format = slot->hudless ? hl_fmt : 0u;
+      }
+      if (slot->hudless) {
+        gpu::ComputeBindings b;
+        b.constants[0] = hl_w;
+        b.constants[1] = hl_h;
+        b.constants[2] = hl_fmt == 3 ? 1u : 0u;  // red/blue swapped: frame generation copies the bytes into BGRA8
+        b.constant_count = 4;
+        b.srv[0] = hl_image;
+        b.uav_texture = slot->hudless;
+        backend_->Dispatch(present_unpack_, b, (hl_w + 7) / 8, (hl_h + 7) / 8, 1);
+        hl_ok = true;
+      }
+    }
     void* dev = nullptr;
     void* list = nullptr;
+    void* out_depth = nullptr;
+    void* out_motion = nullptr;
+    void* out_hudless = nullptr;
+#if GN_SDK_VULKAN
+    if (presenter_vulkan_) {  // notes/83: the same copies on Vulkan; the images end in SHADER_READ_ONLY_OPTIMAL
+      auto copy = reinterpret_cast<PFN_vkCmdCopyImage>(vk_cmd_copy_image_);
+      if (!copy || !backend_->BeginNativeVulkan(&dev, &list)) {
+        XenosFrameGenerationSetInputs(guest_output, nullptr);
+        return;
+      }
+      for (int i = 0; i < 2; ++i) {
+        const gpu::TextureHandle src = i ? fg_.motion : fg_.depth, dst = i ? slot->motion : slot->depth;
+        auto s = reinterpret_cast<VkImage>(backend_->NativeTextureVulkan(src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL));
+        auto d = reinterpret_cast<VkImage>(backend_->NativeTextureVulkan(dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL));
+        if (s && d) {
+          VkImageCopy r{};
+          r.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+          r.dstSubresource = r.srcSubresource;
+          r.extent = {fg_.width, fg_.height, 1};
+          copy(reinterpret_cast<VkCommandBuffer>(list), s, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, d,
+               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+        }
+        void* ready = s && d ? backend_->NativeTextureVulkan(dst, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) : nullptr;
+        (i ? out_motion : out_depth) = ready;
+      }
+      // notes/83: the HUD-less image too (frame generation copies it into its back-buffer-sized one)
+      out_hudless = hl_ok ? backend_->NativeTextureVulkan(slot->hudless, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) : nullptr;
+    } else
+#endif
+    {
     if (!backend_->BeginNative(&dev, &list)) {
       XenosFrameGenerationSetInputs(guest_output, nullptr);
       return;
     }
     auto* cl = static_cast<ID3D12GraphicsCommandList*>(list);
-    void* out_depth = nullptr;
-    void* out_motion = nullptr;
+    out_hudless =
+        hl_ok ? backend_->NativeTexture(slot->hudless, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) : nullptr;
     for (int i = 0; i < 2; ++i) {
       const gpu::TextureHandle src = i ? fg_.motion : fg_.depth, dst = i ? slot->motion : slot->depth;
       auto* s = static_cast<ID3D12Resource*>(backend_->NativeTexture(src, D3D12_RESOURCE_STATE_COPY_SOURCE));
@@ -5813,6 +6320,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       (i ? out_motion : out_depth) = ready;
     }
     backend_->EndNative();
+    }
     if (!out_depth || !out_motion) {
       XenosFrameGenerationSetInputs(guest_output, nullptr);
       return;
@@ -5820,6 +6328,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     XenosFgFrame f;
     f.depth = out_depth;
     f.motion = out_motion;
+    if (out_hudless) {  // patch 0148
+      f.hudless = out_hudless;
+      f.hudless_width = hl_w;
+      f.hudless_height = hl_h;
+    }
     f.width = fg_.width;
     f.height = fg_.height;
     f.jitter_x = fg_.jitter_x;
@@ -6553,7 +7066,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (up_camera_) up_prev_objects_.swap(up_objects_);
     up_objects_.clear();
     up_camera_ = false;
+    if (hl_format_) {  // patch 0148 stage counters, for the frame that ends here
+      ++hl_st_.frames;
+      if (up_scene_done_) ++hl_st_.scene_frames;
+      if (hl_st_.frames == 60 || hl_st_.frames % 600 == 0) HlStagesLog();
+    }
     up_scene_done_ = false;
+    hl_frame_logged_ = hl_frame_takes_ = 0;
+    hl_armed_ = hl_taken_ = false;  // patch 0148 (hl_sources_ is cleared by RequestDisplay, which runs after this)
+    hl_format_ = fg_wanted_ ? XenosFrameGenerationHudlessFormat() : 0u;  // notes/83: Vulkan too
     up_scene_copy_.EndFrame();  // notes/80 s.11
     up_depth_saved_ = false;  // notes/80 s.6
     if (up_prev_camera_) vel_prev_objs_.swap(vel_objs_);  // notes/80 s.6 (up_camera_ is already reset): this frame's characters, for the camera position
@@ -6638,10 +7159,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         REXLOG_INFO("gow2_upscaler: object motion: per frame {:.1f} scene draws tracked, {:.1f} matched to last frame; "
                     "per-object motion {:.1f} draws/frame (on {} frames; {:.1f} repeat passes); camera-only: {:.1f} "
                     "static, {:.1f} not matched, table full {}, pipeline not ready {}, other size {}, depth target changed "
-                    "{}, over {} entries {}; {} moving identities (found moving {:.1f}/frame)",
+                    "{}, over {} entries {} (ID table {} objects); {} moving identities (found moving {:.1f}/frame)",
                     om_tracked_ / f, om_matched_ / f, om_drawn_ / f, om_frames_, om_dedup_ / f, om_static_ / f,
                     (om_tracked_ - om_matched_) / f, om_full_, om_pending_, om_size_miss_, om_key_miss_, kOmMaxEntries,
-                    om_overflow_, om_moving_.size(), om_moving_found_ / f);
+                    om_overflow_, kOmMaxObjects, om_moving_.size(), om_moving_found_ / f);
         om_tracked_ = om_matched_ = om_drawn_ = om_dedup_ = om_static_ = om_full_ = om_pending_ = om_overflow_ = 0;
         om_key_miss_ = om_frames_ = om_moving_found_ = om_size_miss_ = 0;
       }
@@ -8390,10 +8911,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const bool exports = memexport_ && export_shader;
     if (exports && REXCVAR_GET(gow2_renderer_export_prepare_mirror)) MarkExports(r, vsg, true);  // patch 0024
     if (export_shader) backend_->SetGuestWritable(true);
+    if (hl_format_ && up_scene_done_ && !export_shader) HudlessDraw(colour_rt, ps, prim, index_count, depth_writes);
     issue(target, 0);
     if (export_shader) backend_->SetGuestWritable(false);
     if (exports) {
       ++stats_.memexport_draws;
+      if (skin_scan_last_) SkinScan(r, vsg, vs_hash, needs_ps ? ps_hash : 0, 0, index_count, "memexport");
       MarkExports(r, vsg);
       if (needs_ps && psg->memexport) ++stats_.memexport_ps_draws;
     }
@@ -11067,6 +11590,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.srv[0] = resolve_source;
     b.srv_plane[0] = 0;
     b.uav_texture = dest;
+    const gpu::ComputeBindings b_main = b;  // patch 0148: the HUD-less copy is resolved with the same constants
     const gpu::PipelineHandle resolve_pipe = ms_src ? colour_resolve_ms_ : colour_resolve_;
     // Patch 0119: 32 bpp, single-sample source -> the same step as a draw (the destination is a render target then).
     const bool as_draw = colour_resolve_draw_ && !ms_src && !narrow_or_wide && words == 1;
@@ -11100,6 +11624,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     WriteResolveToGuest(dest, info, endian, words, dx, dy, w, h, scaled_mem);
+    if (hl_format_ && hl_taken_ && hl_snap_ && display_ours_ && dest_bytes == 4 && words == 1 && !ms_src &&
+        !narrow_or_wide) {
+      ++hl_st_.res_cands;
+      if (!(rt->key == hl_key_)) ++hl_st_.res_key;
+      else if (resolve_source != rt->texture) ++hl_st_.res_source;
+      else if (rt->width != hl_snap_w_ || rt->height != hl_snap_h_) ++hl_st_.res_size;
+      else if (rt->format != hl_snap_format_) ++hl_st_.res_fmt;
+    }
+    if (hl_format_ && hl_taken_ && hl_snap_ && display_ours_ && dest_bytes == 4 && words == 1 && !ms_src &&
+        !narrow_or_wide && rt->key == hl_key_ && resolve_source == rt->texture && rt->width == hl_snap_w_ &&
+        rt->height == hl_snap_h_ && rt->format == hl_snap_format_)
+      HudlessResolve(b_main, resolve_pipe, info, endian, w, h, dx, dy, sd != nullptr, cross);
     if (display_ours_ && dest_bytes == 4) {  // takeover step 1: remember this frame's colour copies by destination
       DisplaySource& d = display_sources_[info.dest_base];
       d.texture = dest;

@@ -100,6 +100,7 @@ set(GOW3_SOURCES
     src/layer3_gow3/mouse_look.cpp
     src/layer3_gow3/main_menu_exit.cpp
     src/layer3_gow3/mod_chapters.cpp
+    src/layer3_gow3/checkpoint_stream.cpp
     src/layer3_gow3/unlocks.cpp
 )
 if(WIN32)
@@ -141,6 +142,16 @@ set(GN_NVAPI_DIR ${GN_THIRD_PARTY}/nvapi)
 set(GN_NVAPI_FOUND OFF)
 if(WIN32 AND EXISTS ${GN_NVAPI_DIR}/nvapi.h AND EXISTS ${GN_NVAPI_DIR}/amd64/nvapi64.lib)
     set(GN_NVAPI_FOUND ON)
+endif()
+# NVIDIA DLSS frame generation through Streamline (renderer/dlss_framegen.cpp, --gow2_frame_generation=dlss,
+# experimental): the few public Streamline 2.14.16 headers it needs are vendored in src/layer0_xenos/streamline (MIT);
+# there is no library to link - sl.interposer.dll is loaded at run time when the player has put NVIDIA's DLLs next to
+# the exe (never copied by the build). OFF builds keep the same file with empty functions.
+option(GN_WITH_STREAMLINE "Build NVIDIA DLSS frame generation (Streamline, loaded at run time) in" ${WIN32})
+message(STATUS "Gears3-Native: NVIDIA DLSS frame generation (Streamline) ${GN_WITH_STREAMLINE}")
+if(GN_WITH_STREAMLINE AND WIN32)
+    target_compile_definitions(gn_layer0_xenos PRIVATE GN_HAVE_STREAMLINE)
+    target_include_directories(gn_layer0_xenos PRIVATE ${GN_LAYER0_DIR}/streamline/include)
 endif()
 option(GN_WITH_REFLEX "Build NVIDIA Reflex in (needs Gears 2's third_party/nvapi)" ${GN_NVAPI_FOUND})
 set(GN_AL2_DIR ${GN_THIRD_PARTY}/antilag2-sdk)
@@ -197,7 +208,15 @@ if(GN_WITH_FSR AND GN_FFX_FOUND)
         ${GN_FFX_DIR}/framegeneration/include)  # Gears 2 patch 0146: AMD FSR frame generation
     # ffx_api_loader.h is written for MSBuild (it checks _WINDOWS). frame_generation.cpp comes in through the glob above.
     set_source_files_properties(${GN_LAYER0_DIR}/renderer/fsr_upscaler.cpp ${GN_LAYER0_DIR}/renderer/frame_generation.cpp
+        ${GN_LAYER0_DIR}/renderer/frame_generation_vk.cpp
         PROPERTIES COMPILE_DEFINITIONS _WINDOWS)
+    # Notes/83: AMD FSR frame generation on Vulkan - AMD's Vulkan loader and frame-generation DLLs, when the SDK has them.
+    if(EXISTS ${GN_FFX_DIR}/signedbin/amd_fidelityfx_loader_vk.dll AND EXISTS ${GN_FFX_DIR}/signedbin/amd_fidelityfx_framegeneration_vk.dll)
+        add_custom_command(TARGET gow3 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${GN_FFX_DIR}/signedbin/amd_fidelityfx_loader_vk.dll
+                ${GN_FFX_DIR}/signedbin/amd_fidelityfx_framegeneration_vk.dll $<TARGET_FILE_DIR:gow3>
+            COMMENT "Copying the FidelityFX Vulkan loader and frame-generation DLLs next to gow3.exe")
+    endif()
     add_custom_command(TARGET gow3 POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${GN_FFX_DIR}/signedbin/amd_fidelityfx_loader_dx12.dll
             ${GN_FFX_DIR}/signedbin/amd_fidelityfx_upscaler_dx12.dll

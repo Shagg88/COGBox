@@ -4558,3 +4558,12 @@ jump_address_on_true = 0x82241AD4
 address = 0x825BA71C
 name = "Gow1QueryWaitStep"
 registers = []
+
+# GitHub #246: the checkpoint's file name comes from the gamertag's first three letters (sub_821C7350: "save:\\" +
+# XamUserGetName(user, buf + 6, 4)); after that call the name of a checkpoint saved under an earlier nickname is put
+# back (game_patches.cpp, --gow1_keep_checkpoint_name).
+[[entrypoint.midasm_hook]]
+address = 0x821C73A0
+name = "Gow1CheckpointFileName"
+registers = ["r31"]
+after_instruction = true

@@ -846,7 +846,8 @@ void main(uint3 id : SV_DispatchThreadID) {
 )";
 
 // Stage 5C-2: our packed RGB10A2 words (kPresentGammaCs output) into the presenter's R10G10B10A2_UNORM guest-output
-// texture (UAV). n / 1023 stored as UNORM10 gives n back exactly.   c0.xy size
+// texture (UAV). n / 1023 stored as UNORM10 gives n back exactly.   c0.xy size; c0.z != 0: red and blue swapped
+// (patch 0148: bytes laid out as B8G8R8A8 in an R8G8B8A8 texture, for a B8G8R8A8 back buffer)
 constexpr const char* kPresentUnpackCs = R"(
 Texture2D<uint> xe_src : register(t0);
 RWTexture2D<unorm float4> xe_out : register(u0);
@@ -855,8 +856,9 @@ cbuffer XeUnpackConstants : register(b0) { uint4 c0; uint4 c1; uint4 c2; uint4 c
 void main(uint3 id : SV_DispatchThreadID) {
   if (id.x >= c0.x || id.y >= c0.y) return;
   uint v = xe_src.Load(int3(int(id.x), int(id.y), 0));
-  xe_out[id.xy] = float4(float(v & 0x3FFu), float((v >> 10u) & 0x3FFu), float((v >> 20u) & 0x3FFu), 1023.0f) *
-                  (1.0f / 1023.0f);
+  float4 c = float4(float(v & 0x3FFu), float((v >> 10u) & 0x3FFu), float((v >> 20u) & 0x3FFu), 1023.0f) *
+             (1.0f / 1023.0f);
+  xe_out[id.xy] = c0.z != 0u ? c.zyxw : c;
 }
 )";
 

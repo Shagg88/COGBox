@@ -69,6 +69,30 @@ if (-not @(Get-ChildItem -LiteralPath $promptSrc -Filter *.overlay -File -ErrorA
 # assets\glyphs\, serves them all.
 $glyphSrc = Join-Path (Split-Path -Parent $cogbox) 'assets\glyphs'
 foreach ($f in 'LICENSE.txt', 'xbox\a.png') { if (-not (Test-Path (Join-Path $glyphSrc $f))) { $problems += "missing glyph file: $glyphSrc\$f" } }
+# 0.4.8: NVIDIA DLSS frame generation (Streamline 2.14.16, commit 371a409). The port loads sl.interposer.dll from its own
+# folder after checking NVIDIA's signature (dlss_framegen.cpp), and the launcher offers the DLSS-G choices only when all
+# six files are beside the exe (gears_settings.cpp dlss_fg_present). The production (not development) binaries of the
+# Streamline release go beside every port exe built with Streamline (GN_WITH_STREAMLINE: it names sl.interposer.dll).
+# They are copied byte for byte - never patched (the user-name pass below skips them) - and each must carry a valid
+# Authenticode signature from NVIDIA, or nothing is packed.
+$slDir = "$docs\Gears2-Native\third_party\streamline-release\bin\x64"
+$slFiles = @('sl.interposer.dll', 'sl.common.dll', 'sl.dlss_g.dll', 'sl.reflex.dll', 'sl.pcl.dll', 'nvngx_dlssg.dll')
+$slLicenses = @('nvngx_dlss.license.txt', 'reflex.license.txt')   # NVIDIA RTX SDKs licence (nvngx_*), Reflex SDK licence
+$slPattern = '^(sl\..*|nvngx_.*)\.dll$'
+foreach ($p in $ports) { $p.dlssg = $false }
+foreach ($p in $ports) {
+  $e = Join-Path $p.from $p.exe
+  if (Test-Path $e) { $p.dlssg = [Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($e)).Contains('sl.interposer.dll') }
+}
+if (@($ports | Where-Object { $_.dlssg }).Count) {
+  foreach ($f in $slFiles + $slLicenses) { if (-not (Test-Path (Join-Path $slDir $f))) { $problems += "missing Streamline file: $slDir\$f" } }
+  foreach ($f in $slFiles) {
+    $fp = Join-Path $slDir $f
+    if (-not (Test-Path $fp)) { continue }
+    $sig = Get-AuthenticodeSignature -LiteralPath $fp
+    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O="?NVIDIA Corporation') { $problems += "not validly signed by NVIDIA: $fp ($($sig.Status))" }
+  }
+}
 if ($problems.Count) { $problems | ForEach-Object { Write-Host "PROBLEM: $_" }; Write-Host 'RESULT: FAIL (nothing written)'; exit 1 }
 
 $name = "COGBox-$Version"
@@ -157,6 +181,17 @@ foreach ($p in $ports) {
   # 0.2.0 (#9): the Agility SDK's D3D12Core.dll in D3D12\ beside each game (the exe's D3D12SDKPath points there)
   $ag = Join-Path $p.from 'D3D12\D3D12Core.dll'
   New-Item -ItemType Directory -Force (Join-Path $dst 'D3D12') | Out-Null; Copy-Item $ag (Join-Path $dst 'D3D12')
+  # 0.4.8: the Streamline runtime from the release folder (overrides any older copy that sat in the build folder)
+  if ($p.dlssg) { foreach ($f in $slFiles) { Copy-Item (Join-Path $slDir $f) $dst -Force } }
+  # notes/83: AMD FSR frame generation on Vulkan - its two DLLs come from the build folder with the others above (the
+  # games' CMake copies them there); without them the launcher greys the option on Vulkan
+  foreach ($f in 'amd_fidelityfx_loader_vk.dll', 'amd_fidelityfx_framegeneration_vk.dll') {
+    if (-not (Test-Path (Join-Path $dst $f))) { Write-Host "  note: $($p.to) has no $f - no frame generation on Vulkan there" } }
+}
+if (@($ports | Where-Object { $_.dlssg }).Count) {
+  $sld = Join-Path $lic 'streamline-release'; New-Item -ItemType Directory -Force $sld | Out-Null
+  foreach ($f in $slLicenses) { Copy-Item (Join-Path $slDir $f) $sld }
+  Write-Host "  NVIDIA Streamline (DLSS-G) beside: $(($ports | Where-Object { $_.dlssg } | ForEach-Object { $_.to }) -join ', ')"
 }
 
 # ---- Your Windows user name out of the programs (Shagg 20:19 "1. Yes"). The compiler writes source folders such as
@@ -181,7 +216,8 @@ public static class CogBoxPack {
 }
 if ($un -and $un.Length -ge 3) {
   $rep = ('user' + ('1' * 40)).Substring(0, $un.Length)
-  foreach ($f in @(Get-ChildItem -LiteralPath $stage -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' })) {
+  # NVIDIA's signed DLLs are never rewritten (a changed byte breaks the signature the port checks)
+  foreach ($f in @(Get-ChildItem -LiteralPath $stage -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' -and $_.Name -notmatch $slPattern })) {
     $b = [IO.File]::ReadAllBytes($f.FullName); $n = 0
     foreach ($enc in @([Text.Encoding]::ASCII, [Text.Encoding]::Unicode)) {
       $n += [CogBoxPack]::Swap($b, $enc.GetBytes($un.ToLower()), $enc.GetBytes($un.ToUpper()), $enc.GetBytes($rep))
@@ -189,7 +225,7 @@ if ($un -and $un.Length -ge 3) {
     if ($n) { [IO.File]::WriteAllBytes($f.FullName, $b); Write-Host "  user name replaced $n time(s) in $($f.FullName.Substring($stage.Length + 1))" }
   }
   # the check: the name must be gone from every file in the package
-  $left = @(Get-ChildItem -LiteralPath $stage -Recurse -File | Where-Object { $t = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($_.FullName)); $u = [Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($_.FullName)); $t -match [regex]::Escape($un) -or $u -match [regex]::Escape($un) -or $t -match [regex]::Escape($env:COMPUTERNAME) -or $u -match [regex]::Escape($env:COMPUTERNAME) })   # -match ignores case; both names in both encodings
+  $left = @(Get-ChildItem -LiteralPath $stage -Recurse -File | Where-Object { $_.Name -notmatch $slPattern } | Where-Object { $t = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($_.FullName)); $u = [Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($_.FullName)); $t -match [regex]::Escape($un) -or $u -match [regex]::Escape($un) -or $t -match [regex]::Escape($env:COMPUTERNAME) -or $u -match [regex]::Escape($env:COMPUTERNAME) })   # -match ignores case; both names in both encodings
   if ($left.Count) { $left | ForEach-Object { Write-Host "PROBLEM: the user or PC name is still in $($_.FullName)" }; Write-Host 'RESULT: FAIL'; exit 1 }
   Write-Host '  check: no user name or PC name left in any file of the package'
 }

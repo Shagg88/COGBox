@@ -3,6 +3,7 @@
 // starts the right port with them, explains in plain words when a game can't start, keeps itself up to date from
 // GitHub and puts the logs into one zip for a bug report. Built after Athelas (the same author's launcher for the
 // Lord of the Rings games): C++17, Dear ImGui on SDL3, cross-compiled with MinGW.
+#include "stale_files.h"
 #include "app.h"
 #include "theme.h"
 #include "i18n.h"   // 0.2.0
@@ -667,6 +668,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
                 "Judgment\\port, Gears1\\port ...). Some unzip tools flatten folders - KDE's Ark does.\n\nUnzip the release again keeping its "
                 "folders: Windows' Extract All, 7-Zip, or 'unzip' on Linux.", { "OK" });
     }
+    stale_cleanup_startup(a, a.ini.get("Notices", "WhatsNewSeen"));   // 0.4.8: old program files of an earlier release
     startup_notices(a);   // 0.2.0: the language prompt, then the title-update notice
     if (getenv("COGBOX_GETART")) art_download_start();   // test switch
     // 0.2.0: started from a game's desktop shortcut - play it straight away when it's ready, else show its box
@@ -710,7 +712,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             std::string p = a.dropped.front();
             a.dropped.erase(a.dropped.begin());
             std::vector<std::string> dlc;
-            if (dir_exists(p) && !drop_is_game_or_update(p) && !(dlc = dlc_packages_in(p)).empty()) {
+            const int coverGame = a.screen == SCR_PAGE ? a.page : a.front;   // GitHub #241: a picture is that game's cover
+            if (!dir_exists(p) && cover_set_from_file(a, coverGame, p)) {
+                set_message(a, std::string("The picture is now the box art of ") + game_def(coverGame).name + ".", false);
+            } else if (dir_exists(p) && !drop_is_game_or_update(p) && !(dlc = dlc_packages_in(p)).empty()) {
                 a.dropped.insert(a.dropped.begin(), dlc.begin(), dlc.end());
                 set_message(a, std::to_string(dlc.size()) + (dlc.size() == 1 ? " downloadable content package found - adding it." : " downloadable content packages found - adding them one by one."), false);
             } else   // L-8: dropped on a game's settings page, it is for that game (a regional release COGBox doesn't know)

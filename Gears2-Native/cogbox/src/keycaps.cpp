@@ -26,7 +26,8 @@ namespace cogbox {
 namespace gears {
 namespace {
 
-struct Cell { int x0, y0, x1, y1; const char *cvar; };
+// x0..y1: the texels cleared; d*: where the cap is drawn (all 0 = the cleared box itself).
+struct Cell { int x0, y0, x1, y1; const char *cvar; int dx0 = 0, dy0 = 0, dx1 = 0, dy1 = 0; };
 const Cell kG3J[] = {
     { 200, 54, 227, 81, "keybind_a" }, { 227, 54, 254, 81, "keybind_b" }, { 197, 109, 221, 133, "keybind_x" },
     { 222, 109, 248, 133, "keybind_y" }, { 200, 83, 223, 106, "keybind_lstick_press" }, { 223, 83, 248, 106, "keybind_lstick_press" },
@@ -57,10 +58,24 @@ const Cell kG2[] = {
     { 29, 192, 52, 211, "keybind_dpad_right" }, { 81, 192, 99, 216, "keybind_dpad_down" },
     { 79, 168, 110, 191, "move_right" }, { 109, 164, 140, 191, "keybind_rstick_press" },
     { 141, 168, 172, 192, "move_left" }, { 172, 164, 203, 191, "keybind_lstick_press" } };
-struct Sheet { const char *hash; const Cell *cells; size_t count; };
-const Sheet kSheets[] = { { "5D9324DDFEA00FBF", kG3J, sizeof kG3J / sizeof kG3J[0] },
-                          { "A52EE00BE48FE5C5", kG3J, sizeof kG3J / sizeof kG3J[0] },
-                          { "A133822CBA91C272", kG2, sizeof kG2 / sizeof kG2[0] } };
+// GitHub #223: the 512x512 HUD action sheet (Gears 2 CE11E464, Gears 3 A000624A - the hashes and cells of the
+// shared prompt catalog, prompt_atlas_catalog.cpp kHud512Cells). Its buttons are the ones over objects and duels
+// (chainsaw a worm heart's veins, chainsaw duel mashing, kick a door): those kept the pad's buttons with keyboard and
+// mouse, as only the 256x256 font sheets had key caps. Each cell is cleared a texel past its box (as the compositor
+// does) and the cap drawn in the button's own 28x28 square.
+const Cell kHud512[] = {
+    { 176, 314, 209, 377, "keybind_y", 177, 336, 205, 364 }, { 214, 314, 246, 357, "keybind_a", 215, 328, 243, 356 },
+    { 250, 314, 282, 358, "keybind_a", 251, 330, 279, 358 }, { 285, 314, 328, 346, "keybind_b", 298, 315, 326, 343 },
+    { 331, 314, 375, 346, "keybind_x", 331, 315, 359, 343 }, { 378, 314, 420, 346, "keybind_x", 377, 316, 405, 344 },
+    { 390, 423, 423, 463, "keybind_y", 391, 422, 419, 450 },
+    { 426, 423, 460, 477, "keybind_rstick_press", 428, 445, 456, 473 },
+    { 462, 423, 494, 477, "keybind_rstick_press", 463, 446, 491, 474 } };
+struct Sheet { const char *hash; int size; const Cell *cells; size_t count; };
+const Sheet kSheets[] = { { "5D9324DDFEA00FBF", 256, kG3J, sizeof kG3J / sizeof kG3J[0] },
+                          { "A52EE00BE48FE5C5", 256, kG3J, sizeof kG3J / sizeof kG3J[0] },
+                          { "A133822CBA91C272", 256, kG2, sizeof kG2 / sizeof kG2[0] },
+                          { "CE11E464B5064714", 512, kHud512, sizeof kHud512 / sizeof kHud512[0] },
+                          { "A000624A174E08BA", 512, kHud512, sizeof kHud512 / sizeof kHud512[0] } };
 constexpr int kScale = 4;   // the overlay is 4x the sheet
 constexpr int kSS = 4;      // supersampling of each cap
 
@@ -223,13 +238,16 @@ std::string compose(const std::string &promptDir, const std::string &game, const
     const fs::path dir = fs::u8path(promptDir) / ("hires-" + game);
     std::error_code ec;
     fs::create_directories(dir, ec);
-    const int OW = 256 * kScale, OH = 256 * kScale;
     int written = 0;
     for (const Sheet &sh : kSheets) {
+        const int OW = sh.size * kScale, OH = sh.size * kScale;
         std::vector<uint8_t> ov(size_t(OW) * OH * 4, 0);
         for (size_t i = 0; i < sh.count; ++i) {
             const Cell &cl = sh.cells[i];
-            const int x0 = cl.x0 * kScale, y0 = cl.y0 * kScale, w = (cl.x1 - cl.x0) * kScale, h = (cl.y1 - cl.y0) * kScale;
+            const int cx0 = cl.x0 * kScale, cy0 = cl.y0 * kScale, cx1 = std::min(cl.x1, sh.size) * kScale, cy1 = std::min(cl.y1, sh.size) * kScale;
+            const bool own = cl.dx1 > cl.dx0 && cl.dy1 > cl.dy0;
+            const int x0 = (own ? cl.dx0 : cl.x0) * kScale, y0 = (own ? cl.dy0 : cl.y0) * kScale;
+            const int w = ((own ? cl.dx1 : cl.x1) - (own ? cl.dx0 : cl.x0)) * kScale, h = ((own ? cl.dy1 : cl.y1) - (own ? cl.dy0 : cl.y0)) * kScale;
             auto first = [&](const char *cv) {   // the first key bound to a button
                 auto it = keys.find(cv);
                 const std::string v = it != keys.end() ? it->second : "";
@@ -242,8 +260,8 @@ std::string compose(const std::string &promptDir, const std::string &game, const
             else if (cv == "move_left") k = "\x01WASD";   // the launcher's fixed movement keys (W/A/S/D and the arrows)
             else if (cv == "move_right") k = "MOUSE";
             else k = first(cl.cvar);
-            for (int y = y0; y < y0 + h; ++y)
-                for (int x = x0; x < x0 + w; ++x) { uint8_t *p = &ov[(size_t(y) * OW + x) * 4]; p[0] = p[1] = p[2] = 0; p[3] = 1; }
+            for (int y = cy0; y < cy1; ++y)
+                for (int x = cx0; x < cx1; ++x) { uint8_t *p = &ov[(size_t(y) * OW + x) * 4]; p[0] = p[1] = p[2] = 0; p[3] = 1; }
             if (k.empty() || k == "None") continue;   // unbound: the button is just cleared
             const std::vector<uint8_t> cap = draw_cap(w, h, k);
             for (int y = 0; y < h; ++y)

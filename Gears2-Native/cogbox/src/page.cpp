@@ -14,6 +14,7 @@
 #include <objbase.h>
 #include <dxgi.h>
 #include <cmath>
+#include <cwctype>
 #include <cstdio>
 #include <algorithm>
 
@@ -71,6 +72,40 @@ void report_now(App &a, int g, const std::string &session, bool versionOk)
     std::string zip, err;
     if (make_report(a, g, session, "", zip, err)) report_share(a, g, zip, "");
     else set_message(a, "Couldn't make the report: " + err, true);
+}
+
+// ProductName or FileDescription in the file's version resource contains text (case-insensitive). 0.4.8 review: tells
+// the MFG Unlocker's dxgi.dll from ReShade / Special K / DXVK, which use the same file name.
+static bool file_product_has(const std::string &path, const std::string &text)
+{
+    DWORD dummy = 0, size = GetFileVersionInfoSizeW(widen(path).c_str(), &dummy);
+    if (!size || text.empty()) return false;
+    std::vector<char> info(size);
+    if (!GetFileVersionInfoW(widen(path).c_str(), 0, size, info.data())) return false;
+    struct Lang { WORD lang, cp; } *langs = nullptr;
+    UINT n = 0;
+    std::vector<std::wstring> blocks;
+    if (VerQueryValueW(info.data(), L"\\VarFileInfo\\Translation", (void **)&langs, &n) && langs)
+        for (UINT i = 0; i < n / sizeof(Lang); i++) {
+            wchar_t b[16];
+            swprintf(b, 16, L"%04x%04x", langs[i].lang, langs[i].cp);
+            blocks.push_back(b);
+        }
+    blocks.push_back(L"040904b0");
+    blocks.push_back(L"040904e4");
+    std::wstring want = widen(text);
+    for (wchar_t &c : want) c = (wchar_t)towlower(c);
+    for (const std::wstring &b : blocks)
+        for (const wchar_t *key : { L"ProductName", L"FileDescription" }) {
+            std::wstring q = L"\\StringFileInfo\\" + b + L"\\" + key;
+            wchar_t *val = nullptr;
+            UINT len = 0;
+            if (!VerQueryValueW(info.data(), q.c_str(), (void **)&val, &len) || !val || !len) continue;
+            std::wstring v(val, wcsnlen(val, len));
+            for (wchar_t &c : v) c = (wchar_t)towlower(c);
+            if (v.find(want) != std::wstring::npos) return true;
+        }
+    return false;
 }
 
 static bool file_has(const std::string &path, const std::string &needle)
@@ -198,6 +233,13 @@ void env_refresh(App &a, int g)
         std::string shared = join(exe_dir(), "shared");
         return dir_exists(shared) && file_exists(join(shared, name));
     };
+    e.cap.file_product_has = [exe](const std::string &name, const std::string &text) {
+        if (exe.empty()) return false;
+        std::string beside = join(exe.substr(0, exe.find_last_of('\\')), name);
+        if (file_exists(beside) && file_product_has(beside, text)) return true;
+        std::string shared = join(join(exe_dir(), "shared"), name);
+        return file_exists(shared) && file_product_has(shared, text);
+    };
 }
 
 bool settings_save(App &a)
@@ -230,8 +272,7 @@ static void row_label(const char *label, const std::string &desc, bool enabled)
 
 // ---- 0.4.6 (Shagg 5 Nov 18:07: "the whole launcher aesthetically streamlined and simple") - one visual system for
 // every tab: a section is a gap and one heading style; explanations are hover tooltips (ui_tip), never paragraphs;
-// buttons share one height (and a minimum width, so a row of them lines up); rarely used options sit under a
-// collapsed ADVANCED toggle (ui_advanced), which the controller reaches like any button.
+// buttons share one height (and a minimum width, so a row of them lines up).
 void ui_note(const std::string &text_en, ImVec4 c = col::dim);
 static int g_sections;   // sections drawn so far in this tab (no gap above the first)
 
@@ -566,13 +607,17 @@ static void option_row(App &a, int g, const gs::Option &o)
         // Shagg 3 Nov: on Proton / Wine Vulkan is the recommended path (DirectX 12 crashes there), so not "experimental"
         if (o.id == "Api" && a.env[g].wine && items.size() > 1 && items[1] == "Vulkan (experimental)") { items[0] = "DirectX 12"; items[1] = "Vulkan"; }
         for (std::string &it : items) it = tr(it);   // 0.2.0
+        // notes/83: AMD FSR frame generation runs on Vulkan too, experimental there
+        if (o.id == "FrameGen" && items.size() > 1 && gs::runs_vulkan(a.cur[g], a.env[g])) items[1] += std::string(" ") + tr("(experimental on Vulkan)");
         if (ImGui::BeginCombo("##v", items.empty() ? "" : items[idx].c_str())) {
             // 0.2.1: Render resolution lists 1080p in size order; the saved value is still the original index
             std::vector<int> ord;
             for (int i = 0; i < (int)items.size(); i++) ord.push_back(i);
             if (o.id == "Resolution" && items.size() == 6) ord = { 0, 5, 1, 2, 3, 4 };
             for (int i : ord) {
+                if (o.id == "FrameGen" && i != idx && gs::framegen_choice_hidden(i, a.env[g])) continue;   // NVIDIA DLSS FG: only with its DLLs
                 gs::Availability ca = gs::choice_available(o, G, i);
+                if (ca.ok && o.id == "FrameGen") ca = gs::framegen_choice_available(i, a.env[g], gs::runs_vulkan(a.cur[g], a.env[g]));
                 // 0.3.0 (Shagg 14:18): FSR / DLSS / XeSS are DirectX 12 only - greyed while Vulkan is the Graphics API
                 if (ca.ok && o.id == "AAMode" && i >= 2 && i <= 4 && a.cur[g].i("Api") == 1) {   // 5 SMAA T2x: both APIs
                     ca.ok = false;
@@ -615,6 +660,37 @@ static void option_row(App &a, int g, const gs::Option &o)
         if (ImGui::SliderInt("##v", &k, 0, steps, fmt)) {
             nv = o.min + std::max(0, std::min(steps, k)) * st; changed = true;
         }
+        break;
+    }
+    case gs::Kind::Text: {
+        // 0.4.8 (GitHub #229): a one-line text box. Only the option's characters can be typed (gs::text_char_ok) and at
+        // most max_len; the value kept is gs::sanitize_text's (what isn't valid is dropped and said so under the row).
+        static char buf[512];
+        static ImGuiID editing = 0;
+        static int dropped = 0;
+        static std::string droppedFor;
+        const ImGuiID me = ImGui::GetID("##t");
+        const std::string cur = a.cur[g].str(o.id);
+        if (editing != me) snprintf(buf, sizeof buf, "%s", cur.c_str());
+        const int cap = std::max(1, std::min((int)sizeof buf, (o.max_len > 0 ? o.max_len : 255) + 1));
+        auto filter = [](ImGuiInputTextCallbackData *d) -> int {
+            const gs::Option *op = (const gs::Option *)d->UserData;
+            return gs::text_char_ok(*op, (unsigned)d->EventChar) ? 0 : 1;
+        };
+        ImGui::InputTextWithHint("##t", "e.g. 26.10.20.30, 26.10.20.31", buf, (size_t)cap, ImGuiInputTextFlags_CallbackCharFilter,
+                                 filter, (void *)&o);
+        if (ImGui::IsItemActive()) editing = me;
+        if (ImGui::IsItemDeactivated()) {
+            editing = 0;
+            int drop = 0;
+            const std::string clean = gs::sanitize_text(o, buf, &drop);
+            dropped = drop; droppedFor = o.id;
+            if (clean != cur) { a.cur[g].t[o.id] = clean; a.dirty[g] = true; }
+            snprintf(buf, sizeof buf, "%s", clean.c_str());
+        }
+        if (droppedFor == o.id && dropped > 0)
+            ui_note(std::to_string(dropped) + " entr" + (dropped == 1 ? "y was" : "ies were") +
+                    " left out - only IPv4 addresses like 26.10.20.30 work (16 at most).", col::amber);
         break;
     }
     }
@@ -801,9 +877,9 @@ static AutoPlan auto_plan(App &a, int g)
     const int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     // Render resolution: 0 = 1x, 1 = 2x, 4 = match my monitor, 5 = 1080p (720p upscaled)
     int res = p.tier == 2 ? 4 : p.tier == 1 ? (sh <= 1440 ? 4 : 1) : (sw >= 1920 ? 5 : 0);
-    // Frame rate limit (FrameCap indices): 0 = 30, 1 = 45, 2 = 60, 4 = 120. Job 638: the Steam Deck gets 45.
-    int fps = p.tier == 2 ? (hz >= 115 ? 4 : 2) : p.tier == 1 ? (hz >= 115 ? 4 : 2) : (deck ? 1 : 2);
-    if (p.tier == 1 && res == 4 && sh > 1080) fps = 2;   // mid cards at native 1440p: 60
+    // Frame rate limit (FrameCap indices): 0 = 30, 2 = 45, 3 = 60, 5 = 120. Job 638: the Steam Deck gets 45.
+    int fps = p.tier == 2 ? (hz >= 115 ? 5 : 3) : p.tier == 1 ? (hz >= 115 ? 5 : 3) : (deck ? 2 : 3);
+    if (p.tier == 1 && res == 4 && sh > 1080) fps = 3;   // mid cards at native 1440p: 60
     int pool = p.vramMB >= 8000 ? 2 : 1;                   // Large (256 MB) / Standard
     p.set = { { "AAMode", 1 }, { "Resolution", res }, { "FrameCap", fps }, { "Vsync", 1 }, { "Pool", pool },
               { "Aniso", p.tier >= 1 ? 1 : 0 }, { "Trilinear", 1 }, { "FrameGen", 0 }, { "Preset", 3 } };
@@ -1065,44 +1141,42 @@ static void about_tab(App &a, int g)
     bool chk = a.ini.geti("Updates", "Check", 1) != 0;
     if (ImGui::Checkbox(tr("Check GitHub for a newer COGBox at start"), &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
     ui_tip("Only the release page's address is asked for; nothing about you or this PC is sent.");
+
+    // ---- LICENCES (0.4.8): the third-party terms, and NVIDIA's attribution for DLSS / DLSS Frame Generation / Reflex
+    // (NVIDIA RTX SDKs License 7.1(b): attribute the SDK in the application's about box)
+    ui_section("LICENCES");
+    ui_note("COGBox is MIT-licensed. Libraries, fonts and vendor SDKs come under their own terms, in the licenses folder.");
+    ui_note("This product uses the NVIDIA DLSS SDK, the NVIDIA Streamline SDK and the NVIDIA Reflex SDK. NVIDIA, GeForce RTX, "
+            "DLSS and Reflex are trademarks of NVIDIA Corporation.");
+    if (small_button("Licences folder")) {
+        const std::string ld = join(exe_dir(), "licenses");
+        if (dir_exists(ld)) shell_open(ld); else set_message(a, "The licenses folder is missing - unzip the release again.", true);
+    }
 }
 
 // ---- the settings tabs' groups (presentation only: which heading an option shows under) -------------------------------
-struct TabGroups { const char *heading[4]; const char *const *ids[4]; const char *const *advanced; };
-static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", nullptr };
+struct TabGroups { const char *heading[4]; const char *const *ids[4]; };
+static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", "HideNotes", nullptr };
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
-static const char *const k_dispAdv[] = { "HDR", "PaperWhite", "Peak", "HideNotes", nullptr };
-static const char *const k_gfxQuality[] = { "Api", "WineApi", "Preset", "Resolution", "AAMode", nullptr };
-static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "Pool", "DrawDist", "MeshLod", "AO", nullptr };
-static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };
-static const char *const k_gfxAdv[] = { "Sharpen", "SceneMode", "FrameGen", "MipFade", "DofScale", nullptr };
-static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "PadPrompts", nullptr };
+static const char *const k_dispPicture[] = { "Brightness", "HDR", "PaperWhite", "Peak", nullptr };
+static const char *const k_gfxQuality[] = { "Api", "WineApi", "Preset", "Resolution", "AAMode", "Sharpen", "SceneMode", "FrameGen", nullptr };
+static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "MipFade", "Pool", "DrawDist", "MeshLod", "AO", nullptr };
+static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "DofScale", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };
+static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "PadPrompts", "DeadZone", "RadialDZ", "LowLag", nullptr };
 static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", nullptr };
-static const char *const k_ctlAdv[] = { "DeadZone", "RadialDZ", "LowLag", nullptr };
 static const char *const k_playGame[] = { "Version", "Lang", "VoiceLang", "SkipLogos", "Mute", nullptr };
-static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", nullptr };
+static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", "PeerIps", nullptr };
 static const char *const k_playExtras[] = { "UnlockInsane", "Cheats", "Mutators", nullptr };
 static const char *const k_achPopups[] = { "AchievementStyle", "AchievementColour", "AchievementPosition", "AchievementSound",
                                            "HideAchievementPopups", nullptr };   // PR #187
 static const char *const k_none[] = { nullptr };
 static const TabGroups k_groups[5] = {   // one per gs::Tab, in its order
-    { { "SCREEN", "FRAME RATE", nullptr, nullptr }, { k_dispScreen, k_dispFrames, k_none, k_none }, k_dispAdv },
-    { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none }, k_gfxAdv },
-    { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none }, k_ctlAdv },
-    { { "GAME", "PLAYERS", "EXTRAS", nullptr }, { k_playGame, k_playPlayers, k_playExtras, k_none }, k_none },
-    { { "ACHIEVEMENT POPUPS", nullptr, nullptr, nullptr }, { k_achPopups, k_none, k_none, k_none }, k_none },
+    { { "SCREEN", "FRAME RATE", "PICTURE", nullptr }, { k_dispScreen, k_dispFrames, k_dispPicture, k_none } },
+    { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none } },
+    { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none } },
+    { { "GAME", "PLAYERS", "EXTRAS", nullptr }, { k_playGame, k_playPlayers, k_playExtras, k_none } },
+    { { "ACHIEVEMENT POPUPS", nullptr, nullptr, nullptr }, { k_achPopups, k_none, k_none, k_none } },
 };
-
-// the collapsed ADVANCED section at the end of a tab: one button that opens / closes it (kept for the session)
-static bool ui_advanced(bool &open)
-{
-    if (g_sections++) ui_gap();
-    const std::string label = std::string(tr("ADVANCED")) + (open ? "   -" : "   +") + "##adv";
-    if (th_button(label.c_str(), ImVec2(T(160), T(26)), true, F_BOLD)) open = !open;
-    ui_tip("Settings most players never need. Every setting still works the same.");
-    if (open) ImGui::Dummy(ImVec2(0, S(2)));
-    return open;
-}
 
 // ---- the page --------------------------------------------------------------------------------------------------------
 static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "ACHIEVEMENTS", "MODS", "ABOUT" };   // the one sound option is in Gameplay
@@ -1222,8 +1296,8 @@ void page_draw(App &a, ImVec2 size)
             }
             ImGui::Dummy(ImVec2(0, S(4)));
         }
-        // grouped under a few headings (k_groups); the rest under the tab's collapsed ADVANCED. An option not in the
-        // table shows in its tab's first group, so a new option in gears_settings is never hidden.
+        // grouped under a few headings (k_groups). An option not in the table shows in its tab's first group, so a
+        // new option in gears_settings is never hidden.
         std::vector<const gs::Option *> mine;
         for (const gs::Option &o : gs::options((gs::Game)g)) {
             if (o.tab != want) continue;
@@ -1234,7 +1308,6 @@ void page_draw(App &a, ImVec2 size)
         auto group_of = [&](const std::string &id) {
             for (int k = 0; k < 4 && tg.heading[k]; k++)
                 for (const char *const *x = tg.ids[k]; *x; x++) if (id == *x) return k;
-            for (const char *const *x = tg.advanced; *x; x++) if (id == *x) return -1;
             return 0;
         };
         for (int k = 0; k < 4 && tg.heading[k]; k++) {
@@ -1246,13 +1319,8 @@ void page_draw(App &a, ImVec2 size)
         }
         if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
         if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
-        bool anyAdv = false;
-        for (const gs::Option *o : mine) anyAdv |= group_of(o->id) < 0;
-        static bool advOpen[k_tabMods] = {};
-        if (anyAdv && ui_advanced(advOpen[(int)want]))
-            for (const gs::Option *o : mine) if (group_of(o->id) < 0) { option_row(a, g, *o); shown++; }
         if (want == gs::Tab::Achievements) achievements_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // achievements part 4
-        else if (!shown && !anyAdv) ui_note("Nothing to set here yet.");
+        else if (!shown) ui_note("Nothing to set here yet.");
     } else if (a.tab == k_tabMods) mods_tab(a, g);
     else about_tab(a, g);
     ImGui::PopFont();

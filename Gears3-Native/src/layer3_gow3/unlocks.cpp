@@ -9,6 +9,13 @@
 // 0x83396738) is hooked; its first call resolves the C++ getter from the object's vtable (+336) and hooks that, which
 // sets the Insane bit on reads of setting 82 by GearProfileSettings (vtable 0x82247140). Nothing is written to the
 // profile or the saves: only what the screen reads is changed.
+//
+// --gow3_unlock_all_chapters (test): every act/chapter on every difficulty for Chapter Select. The repo does not know
+// which GearProfileSettings ids hold campaign chapter progress (notes/24 names GearCampaignActData:InitializeChapters /
+// CompleteChapterByDifficulty only), so the ids are not hard-coded: --gow3_unlock_chapter_settings="id:mask,..." lists
+// them (decimal or 0x, mask OR-ed into what the screen reads); --gow3_unlock_all_chapters also turns on Insane. Find
+// the ids with --gow3_profile_log: it logs each int setting read (id, value, class, caller) once per change, and
+// marks reads made while the Select Chapter / Campaign menus are being read (one menu visit shows them).
 #include "unlocks.h"
 #include "gow3_addresses.h"
 
@@ -22,12 +29,27 @@
 #include <rex/system/function_dispatcher.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <cstdint>
 #include <mutex>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 // The launcher looks for this description's text in the exe before it passes the option.
 REXCVAR_DEFINE_BOOL(gow3_unlock_insane, false, "Gears3",
                     "GitHub #174: Unlock Insane difficulty from the start (the profile is not changed)");
+
+REXCVAR_DEFINE_BOOL(gow3_unlock_all_chapters, false, "Gears3",
+                    "Test: report all campaign chapters on all difficulties (and Insane) as unlocked to the menus, using "
+                    "the setting ids in gow3_unlock_chapter_settings (the profile is not changed)");
+REXCVAR_DEFINE_STRING(gow3_unlock_chapter_settings, "", "Gears3",
+                      "Test: GearProfileSettings ids holding chapter progress, as id:mask,... (found with "
+                      "gow3_profile_log); mask is OR-ed into what the game reads when gow3_unlock_all_chapters is on");
+REXCVAR_DEFINE_BOOL(gow3_profile_log, false, "Gears3",
+                    "Developers: log each profile setting the game reads (id, value, class, caller) once per change - "
+                    "open Select Chapter to see the chapter progress ids. Read-only");
 
 namespace {
 
@@ -65,6 +87,48 @@ bool IsGearProfileSettings(const uint8_t* base, uint32_t self) {
 #endif
 }
 
+bool g_insane = false, g_log = false;
+std::vector<std::pair<int32_t, uint32_t>> g_chapter_masks;  // id -> mask (gow3_unlock_chapter_settings)
+
+void ParseChapterSettings(const std::string& text) {
+  size_t pos = 0;
+  while (pos < text.size()) {
+    size_t end = text.find(',', pos);
+    if (end == std::string::npos) end = text.size();
+    const std::string item = text.substr(pos, end - pos);
+    pos = end + 1;
+    const size_t colon = item.find(':');
+    if (colon == std::string::npos) continue;
+    char* e1 = nullptr; char* e2 = nullptr;
+    const long id = std::strtol(item.c_str(), &e1, 0);
+    const unsigned long mask = std::strtoul(item.c_str() + colon + 1, &e2, 0);
+    if (e1 == item.c_str() || e2 == item.c_str() + colon + 1 || !mask) continue;
+    g_chapter_masks.emplace_back(int32_t(id), uint32_t(mask));
+  }
+}
+
+// Logs a read once per (class, id, value). "menu" marks reads while a GearProfileSettings read happens with the
+// UI's chapter / campaign screen being built: we can't see the screen, so the caller (lr) is logged and every read
+// within the burst that follows the first read of the unlockables (82, which the campaign menus read) is tagged.
+void LogRead(uint8_t* base, uint32_t self, int32_t id, uint32_t value, uint32_t found, uint32_t lr) {
+  static std::mutex mutex;
+  static std::unordered_map<uint64_t, uint32_t> seen;
+  static int burst = 0;
+  const uint32_t vtable = Load32(base, self);
+  const bool gear = IsGearProfileSettings(base, self);
+  std::lock_guard<std::mutex> lock(mutex);
+  if (gear && id == kUnlockablesSetting) burst = 64;  // campaign / chapter menus read 82 first
+  const bool menu = burst > 0 && gear;
+  if (menu) --burst;
+  const uint64_t key = (uint64_t(vtable) << 32) | uint32_t(id);
+  auto it = seen.find(key);
+  if (it != seen.end() && it->second == value && !menu) return;
+  if (seen.size() >= 4096) return;
+  seen[key] = value;
+  REXLOG_INFO("gow3_profile_log: get int id={} value={} (0x{:08X}) found={} gear={} menu={} object={:08X} vtable={:08X} "
+              "from {:08X}", id, int32_t(value), value, found & 1, gear, menu, self, vtable, lr);
+}
+
 PPCFunc* g_exec_orig = nullptr;
 PPCFunc* g_get_int_orig = nullptr;
 std::atomic<bool> g_inner_resolved{false};
@@ -72,8 +136,21 @@ std::atomic<bool> g_inner_resolved{false};
 void GetValueIntHook(PPCContext& ctx, uint8_t* base) {
   const uint32_t self = ctx.r3.u32, value_addr = ctx.r5.u32;
   const int32_t id = ctx.r4.s32;
+  const uint32_t lr = uint32_t(ctx.lr);
   g_get_int_orig(ctx, base);
-  if (id != kUnlockablesSetting || !value_addr) return;
+  if (!value_addr) return;
+  if (g_log) LogRead(base, self, id, Load32(base, value_addr), ctx.r3.u32, lr);
+  for (const auto& [cid, mask] : g_chapter_masks) {
+    if (cid != id || !IsGearProfileSettings(base, self)) continue;
+    const uint32_t v = Load32(base, value_addr);
+    if ((v & mask) == mask) break;
+    Store32(base, value_addr, v | mask);
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 8)
+      REXLOG_INFO("gow3_unlock_all_chapters: setting {} 0x{:08X} -> 0x{:08X}", id, v, v | mask);
+    break;
+  }
+  if (!g_insane || id != kUnlockablesSetting) return;
   if (!IsGearProfileSettings(base, self)) return;
   const uint32_t unlocks = Load32(base, value_addr);
   if (unlocks & kInsaneUnlockBit) return;
@@ -106,7 +183,16 @@ void ExecHook(PPCContext& ctx, uint8_t* base) {
 }  // namespace
 
 void Gow3InstallUnlocks() {
-  if (!REXCVAR_GET(gow3_unlock_insane)) return;
+  const bool chapters = REXCVAR_GET(gow3_unlock_all_chapters);
+  g_insane = REXCVAR_GET(gow3_unlock_insane) || chapters;
+  g_log = REXCVAR_GET(gow3_profile_log);
+  if (chapters) {
+    ParseChapterSettings(REXCVAR_GET(gow3_unlock_chapter_settings));
+    if (g_chapter_masks.empty())
+      REXLOG_WARN("gow3_unlock_all_chapters: no chapter setting ids (gow3_unlock_chapter_settings) - Insane only; run "
+                  "with --gow3_profile_log=true and open Select Chapter to find them");
+  }
+  if (!g_insane && !g_log && g_chapter_masks.empty()) return;
   rex::Runtime* rt = rex::Runtime::instance();
   auto* d = rt ? rt->function_dispatcher() : nullptr;
   const uint8_t* base = rt ? rt->virtual_membase() : nullptr;

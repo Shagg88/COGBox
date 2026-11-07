@@ -55,6 +55,12 @@ REXCVAR_DEFINE_STRING(ue3_voice_language, "", "Gears2",
 REXCVAR_DEFINE_STRING(ue3_ini_bundle_dir, "GearGame\\CookedXenon", "Gears2",
                       "Folder of the Coalesced_*.bin config bundles, relative to the game data root");
 REXCVAR_DEFINE_BOOL(gow_main_menu_exit, true, "ui", "Add Exit Game to the main menu; restart");
+REXCVAR_DEFINE_BOOL(gow2_horde_bots, false, "Gears2",
+                    "GitHub #237 (francoissubke-blip's tip, as Gears 3's --gow3_horde_bots): Back on the Horde scoreboard "
+                    "adds two bots (local Horde)");
+REXCVAR_DEFINE_BOOL(gow2_split_vertical, false, "Gears2",
+                    "GitHub #237: the two-player split side by side (eSST_2P_VERTICAL) from the start: Default2PSplitType "
+                    "and DesiredSplitscreenType in [Engine.GameViewportClient] of the engine ini (in memory)");
 
 namespace {
 constexpr const char* kGameDevice = "\\Device\\Harddisk0\\Partition1";
@@ -137,6 +143,67 @@ class OverlayDevice : public rex::filesystem::HostPathDevice {
 // 0.2.1: a title update's loose config files (update:\TU__<name>.ini, read after the bundles) can set the same keys
 // again - Gears 2 TU6's TU__GearCamera.ini puts RoadieRunShakyCamDampeningFactor back to 0.6, so camera shake Off did
 // nothing there. The edits are applied to those files too, and update:\ shows the edited copies (a view like the bundles').
+// GitHub #237: the input bindings our options add, in [Engine.PlayerInput] of a GearInput.ini (UE3 looks bindings up
+// from the last one back, so an added one wins over the game's own for that button). Returns how many were added.
+int AddInputBindings(ue3::ConfigFile& f, const char* key) {
+  std::vector<const char*> binds;
+  if (REXCVAR_GET(gow2_horde_bots))
+    binds.push_back("(Name=\"XboxTypeS_Back\",Command=\"Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot 0 3 | AddBot 0 4\")");
+  if (binds.empty()) return 0;
+  const bool wide = f.name.wide;
+  ue3::ConfigSection* sec = nullptr;
+  for (ue3::ConfigSection& c : f.sections)
+    if (Lower(c.name.Utf8()) == "engine.playerinput") sec = &c;
+  if (!sec) {
+    f.sections.push_back({});
+    sec = &f.sections.back();
+    sec->name = ue3::ConfigString::FromUtf8("Engine.PlayerInput", wide);
+  }
+  for (const char* b : binds)
+    sec->keys.push_back({ue3::ConfigString::FromUtf8(key, wide), ue3::ConfigString::FromUtf8(b, wide)});
+  return int(binds.size());
+}
+bool InputBindingsWanted() { return REXCVAR_GET(gow2_horde_bots) || REXCVAR_GET(gow2_split_vertical); }
+
+// GitHub #237: side-by-side split from the start. Sets the viewport client's split defaults in the engine ini
+// (GameViewportClient is config(Engine); a GearGame subclass inherits them unless its own section sets them).
+int SetVerticalSplit(ue3::ConfigFile& f) {
+  if (!REXCVAR_GET(gow2_split_vertical)) return 0;
+  const bool wide = f.name.wide;
+  for (const ue3::ConfigSection& c : f.sections)   // what the game has, for the next fix if this is not the key
+    if (Lower(c.name.Utf8()).find("viewportclient") != std::string::npos)
+      for (const ue3::ConfigKey& k : c.keys)
+        REXLOG_INFO("gow2_split_vertical:   {} [{}] {}={}", f.name.Utf8(), c.name.Utf8(), k.key.Utf8(), k.value.Utf8());
+  int n = 0;
+  for (ue3::ConfigSection& c : f.sections) {
+    if (Lower(c.name.Utf8()).find("viewportclient") == std::string::npos) continue;
+    for (ue3::ConfigKey& k : c.keys) {
+      const std::string kl = Lower(k.key.Utf8());
+      if (kl == "default2psplittype" || kl == "desiredsplitscreentype") {
+        k.value = ue3::ConfigString::FromUtf8("eSST_2P_VERTICAL", wide);
+        ++n;
+      }
+    }
+  }
+  ue3::ConfigSection* sec = nullptr;
+  for (ue3::ConfigSection& c : f.sections)
+    if (Lower(c.name.Utf8()) == "engine.gameviewportclient") sec = &c;
+  if (!sec) {
+    f.sections.push_back({});
+    sec = &f.sections.back();
+    sec->name = ue3::ConfigString::FromUtf8("Engine.GameViewportClient", wide);
+  }
+  for (const char* key : {"Default2PSplitType", "DesiredSplitscreenType"}) {
+    bool have = false;
+    for (const ue3::ConfigKey& k : sec->keys) have |= Lower(k.key.Utf8()) == Lower(key);
+    if (!have) {
+      sec->keys.push_back({ue3::ConfigString::FromUtf8(key, wide), ue3::ConfigString::FromUtf8("eSST_2P_VERTICAL", wide)});
+      ++n;
+    }
+  }
+  return n;
+}
+
 void EditTitleUpdateInis(rex::Runtime* runtime, const std::vector<ue3::ConfigEdit>& edits) {
   namespace fs = std::filesystem;
   const fs::path root = runtime->update_data_root();
@@ -173,7 +240,14 @@ void EditTitleUpdateInis(rex::Runtime* runtime, const std::vector<ue3::ConfigEdi
       f.sections.back().keys.push_back(std::move(k));
     }
     std::vector<std::string> log;
-    if (ue3::ApplyConfigEdits(b, edits, &log) == 0) continue;
+    int tu_changed = edits.empty() ? 0 : ue3::ApplyConfigEdits(b, edits, &log);
+    if (ln.find("gearinput.ini") != std::string::npos) {   // GitHub #237: TU__Xe-GearInput.ini
+      const int added = AddInputBindings(f, "+Bindings");
+      if (added) REXLOG_INFO("gow2 input bindings: title update {}: {} binding(s) added", n, added);
+      tu_changed += added;
+    }
+    if (ln.find("gearengine.ini") != std::string::npos) tu_changed += SetVerticalSplit(f);   // GitHub #237
+    if (tu_changed == 0) continue;
     for (const std::string& l : log) REXLOG_INFO("ue3_ini_edits: title update: {}", l);
     std::string o;
     for (const ue3::ConfigSection& sec : f.sections) {
@@ -740,12 +814,13 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
   } modsAtEnd{runtime, &mods, &modDirs};
   const std::string spec = REXCVAR_GET(ue3_ini_edits);
   const bool exit_menu = REXCVAR_GET(gow_main_menu_exit);
-  if (spec.empty() && !exit_menu) return;
+  const bool binds = InputBindingsWanted();   // GitHub #237
+  if (spec.empty() && !exit_menu && !binds) return;
   std::string error;
   const std::vector<ue3::ConfigEdit> edits = spec.empty() ? std::vector<ue3::ConfigEdit>{} : ue3::ParseConfigEdits(spec, &error);
   if (!error.empty()) REXLOG_WARN("ue3_ini_edits: {}", error);
-  if (edits.empty() && !exit_menu) return;
-  if (!edits.empty()) EditTitleUpdateInis(runtime, edits);   // 0.2.1
+  if (edits.empty() && !exit_menu && !binds) return;
+  if (!edits.empty() || binds) EditTitleUpdateInis(runtime, edits);   // 0.2.1
   std::string rel = REXCVAR_GET(ue3_ini_bundle_dir);
   const fs::path src_dir = runtime->game_data_root() / fs::path(rel);
   const fs::path out_dir = runtime->user_data_root() / "ini-edits";
@@ -789,6 +864,31 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
     int changed = 0;
     if (!edits.empty()) {
       changed += ue3::ApplyConfigEdits(bundle, edits, &log);
+    }
+    if (binds) {   // GitHub #237: the disc bundle's GearInput.ini too (no title update, or one without it)
+      ue3::ConfigFile* target = nullptr;
+      for (ue3::ConfigFile& f : bundle.files) {
+        const std::string fn = Lower(f.name.Utf8());
+        if (fn.find("xe-gearinput.ini") != std::string::npos) { target = &f; break; }
+        if (!target && fn.find("gearinput.ini") != std::string::npos) target = &f;
+      }
+      for (ue3::ConfigFile& f : bundle.files) {   // GitHub #237: side-by-side split
+        const std::string fn = Lower(f.name.Utf8());
+        if (fn.find("xe-gearengine.ini") != std::string::npos || fn.find("xbox360-gearengine.ini") != std::string::npos) {
+          const int v = SetVerticalSplit(f);
+          changed += v;
+          if (v && (n == "Coalesced_int.bin" || written == 0))
+            REXLOG_INFO("gow2_split_vertical: {}: {} key(s) set in {}", n, v, f.name.Utf8());
+        }
+      }
+      if (target) {
+        const int added = AddInputBindings(*target, "Bindings");
+        changed += added;
+        if (n == "Coalesced_int.bin" || written == 0)
+          REXLOG_INFO("gow2 input bindings: {}: {} binding(s) added to {}", n, added, target->name.Utf8());
+      } else if (n == "Coalesced_int.bin") {
+        REXLOG_WARN("gow2 input bindings: {}: no GearInput.ini in the bundle", n);
+      }
     }
     if (exit_menu) {
       const ue3::GameId game = DetermineGameId(runtime);

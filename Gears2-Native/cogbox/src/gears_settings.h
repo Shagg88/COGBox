@@ -16,7 +16,10 @@ enum class Game { Gears2 = 0, Gears3 = 1, Judgment = 2, Gears1 = 3 };
 constexpr int kGameCount = 4;
 enum class Version { TitleUpdate = 0, Disc = 1 };   // PS1 125 $verNames (index 0 = the title update)
 enum class Tab { Display, Graphics, Controls, Gameplay, Achievements };   // = the page's tab index (ABOUT is after)
-enum class Kind { Bool, Choice, Int, Float };
+// Text (0.4.8, GitHub #229): a short line of text (Settings::t), always Scope::Shared, kept in [General] of the settings
+// file; every value goes through sanitize_text() on the way in and out, so only its allowed characters ever reach the
+// file or the command line.
+enum class Kind { Bool, Choice, Int, Float, Text };
 // Where a value is kept (PS1 103-123, 418-441, 446-464, 759-774):
 //   Shared  - one value for all games (PS1 top-level $s keys outside $perKeys)
 //   PerGame - remembered per game in PerGame (PS1 120 $perKeys); a game without its own set starts from the last
@@ -35,6 +38,9 @@ struct Capability {
     std::function<bool(const std::string& needle)> runtime_has;
     // A file of this name is next to the exe (PS1 280, 852-854).
     std::function<bool(const std::string& name)> file_next_to_exe;
+    // A file of this name is next to the exe (as above) and its version resource's ProductName or FileDescription
+    // contains this text (case-insensitive). False when the file has no version resource.
+    std::function<bool(const std::string& name, const std::string& text)> file_product_has;
 };
 
 // Everything about this PC / install for ONE game (the one being shown or started).
@@ -88,6 +94,8 @@ public:
     int i(const std::string& id) const { return static_cast<int>(f(id)); }
     bool b(const std::string& id) const { return f(id) != 0.0; }
     void set(const std::string& id, double x) { v[id] = x; }
+    std::map<std::string, std::string> t;   // Kind::Text values (already sanitised)
+    std::string str(const std::string& id) const { auto it = t.find(id); return it == t.end() ? std::string() : it->second; }
 };
 
 struct Availability {
@@ -104,6 +112,7 @@ struct Option {
     std::vector<std::string> choices;  // Kind::Choice
     double def = 0, min = 0, max = 1, step = 1;
     int decimals = 0;                  // Kind::Float display
+    int max_len = 0;                   // Kind::Text: the most characters kept
     std::string tooltip;               // the PS1's tooltip = the plain-English description
     std::string feature;               // the PS1's Can feature name ("" = always available)
     std::string depends_on;            // another option whose state enables this one ("" = none)
@@ -125,6 +134,14 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
 // A single choice greyed: the FPS counter's "Game's own (column)" in Judgment / Gears 1 (PS1 267, 475), and the game
 // languages Gears 1 has no text for.
 Availability choice_available(const Option& o, Game g, int index);
+// Frame generation choices (FrameGen): 2-5 (NVIDIA DLSS) are not listed at all without the exe's support and NVIDIA's
+// Streamline DLLs next to it; greyed without an RTX 40 (2x) / RTX 50 (3x, 4x, dynamic) card. 1 (AMD) greyed without its DLL.
+bool dlss_fg_present(const Environment& env);
+bool framegen_choice_hidden(int index, const Environment& env);
+// Notes/83: on Vulkan only 1 (AMD, experimental) - with AMD's Vulkan DLLs, the exe's support and SDK patch 69.
+Availability framegen_choice_available(int index, const Environment& env, bool vulkan = false);
+// Notes/83: the game will run on Vulkan (Graphics API, or Proton / Wine's choice).
+bool runs_vulkan(const Settings& s, const Environment& env);
 // The tooltip to show: the reason in front of the description (PS1 412-416, 476-477), the GPU line for AA (PS1 345).
 std::string tooltip_for(const Option& o, Game g, const Availability& a, const Environment& env);
 
@@ -138,6 +155,12 @@ void apply_preset(Settings& s, int preset);
 // Set a value as the UI would: an in_preset option that really changes makes the preset Custom (PS1 588).
 // Setting "Preset" itself applies the preset.
 void set_value(Game g, Settings& s, const std::string& id, double value);
+// Kind::Text (0.4.8): the value as it may be stored and passed on. PeerIps (GitHub #229): IPv4 addresses only (what the
+// runtime's --net_peer_ip reads), separated by ", "; anything else is dropped, duplicates and 0.0.0.0 /
+// 255.255.255.255 too, at most 16 addresses. `dropped` (optional) gets how many entries were left out.
+std::string sanitize_text(const Option& o, const std::string& in, int* dropped = nullptr);
+// The characters a Kind::Text field accepts while typing (the rest are not entered at all).
+bool text_char_ok(const Option& o, unsigned c);
 
 // Monitor list entries (PS1 147).
 std::string monitor_label(int index1, int width, int height, bool primary);
@@ -161,6 +184,7 @@ public:
     std::map<std::string, double> top;               // Shared + PerGame keys (the last game's), and the legacy flags
     std::map<std::string, double> per[kGameCount];   // PerGame sets; empty = the game has none yet
     std::map<std::string, double> own[kGameCount];   // GameOwn values
+    std::map<std::string, std::string> texts;         // Kind::Text values (Shared only, sanitised)
 private:
     void migrate();
 };

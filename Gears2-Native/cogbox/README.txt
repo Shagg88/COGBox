@@ -62,6 +62,24 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 
 
+New in 0.4.8
+------------
+- Frame-rate limits are exact in all four games; new choices 30, 40, 45, 60, 90, 120, 144, 165, 180, Unlimited.
+  With frame generation on, the limit is what you see on screen.
+- AMD FSR frame generation smears the HUD and characters much less (it gets the HUD-less picture and object motion).
+- Experimental: NVIDIA DLSS frame generation (DirectX 12). RTX 20/30 cards can use it with the third-party
+  MFG Unlocker - see the main README.
+- Experimental: AMD FSR frame generation on Vulkan (Steam Deck, Linux, AMD). Characters can ghost slightly when
+  moving fast in Gears 1, Gears 3 and Judgment.
+- Judgment: Brightness setting (Display tab; 100 = original, lower = darker; #185).
+- Judgment: "Depth of field at the render resolution" now covers Judgment too (#105).
+- Gears 1: the Insane checkpoint is kept when your gamer name changes (#246).
+- Gears 2: Horde bots and side-by-side split screen (#237); keyboard prompts on HUD action icons (#223).
+- Gears 3: checkpoint streaming, ultrawide framing, DLC loading and Title Update 6 fixes (#226, #220, #240, #230).
+- Smooth zoomed mouse aim (#228, thanks Flippage).
+- Launcher: no more Advanced sections; drag a picture onto the window for box art (#241); leftover program files
+  from an older COGBox are moved to _old-files, never deleted.
+
 New in 0.4.7
 ------------
 - Vulkan: Judgment and Gears 3 no longer show black or wrong textures (black props, a neon-blue Cole, garbled text;
@@ -237,8 +255,9 @@ New in 0.4.0 - please read
 
 
 Graphics API: DirectX 12 is the default. Vulkan is on each
-game's Graphics tab for testing; FSR / DLSS / XeSS and frame generation are DirectX 12 only. If
-something looks wrong on Vulkan, please send a problem report.
+game's Graphics tab for testing; FSR / DLSS / XeSS and DLSS frame generation are DirectX 12 only;
+AMD FSR frame generation also works on Vulkan (experimental). If something looks wrong on Vulkan,
+please send a problem report.
 
 Fullscreen: F11, or both triggers (LT + RT) together on a controller, from any screen.
 The window: COGBox grows with its window. "Borderless window" on any game's About tab hides the
@@ -295,12 +314,11 @@ work the same way; the steps below use Radmin VPN.
 5. Every player: the game > Settings > Gameplay > tick "System Link - LAN play".
 6. Start the game, host and join exactly as in A, steps 2-5.
 7. If the joining player does not see the host's game after 10-20 seconds, tell each game the other
-   PCs' Radmin addresses: on EACH PC open (or create) the file extra-args.txt in the COGBox folder
-   (next to CogBox.exe) and add one line with the OTHER players' addresses, commas between several:
-       --net_peer_ip=26.10.20.30
-   Save it, restart the game and try again.
-   With --net_peer_ip set, the game sends its "find games" messages only to the addresses listed
-   there, so with 3 or more PCs every PC must list ALL the other PCs (commas between them).
+   PCs' Radmin addresses: on EACH PC, the game > Settings > Gameplay > "Friends' IP addresses"
+   (under the System Link box): type the OTHER players' addresses, commas between several, for
+   example 26.10.20.30. Restart the game and try again.
+   With addresses there, the game sends its "find games" messages only to them, so with 3 or more
+   PCs every PC must list ALL the other PCs.
 
 If it doesn't work
 - Can't select System Link / "No Network Connection": the box in step 1 is not ticked.
@@ -363,6 +381,8 @@ Licences
 --------
 COGBox and the ports' own code are under the MIT licence (LICENSE.txt). The libraries, fonts and
 vendor upscalers included (SDL3, Dear ImGui, miniz, stb, FFmpeg's XMA decoder, the rexglue SDK, AMD FidelityFX, NVIDIA
-DLSS, Intel XeSS, the DirectX Shader Compiler) come under their own terms, in the licenses folder.
+DLSS, DLSS Frame Generation, Streamline and Reflex, Intel XeSS, the DirectX Shader Compiler) come under their own terms, in
+the licenses folder (NVIDIA's: licenses\NVIDIA-Streamline-DLSS-G-NOTICE.txt). This product uses the NVIDIA DLSS SDK, the NVIDIA
+Streamline SDK and the NVIDIA Reflex SDK; NVIDIA, GeForce RTX, DLSS and Reflex are trademarks of NVIDIA Corporation.
 Fonts: Anton, Barlow and Barlow Condensed (the launcher), and Inter (the achievement popups, assets\fonts), under the SIL
 Open Font License 1.1. Achievement sound (assets\sounds\achievement.wav): made with ElevenLabs (elevenlabs.io).

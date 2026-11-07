@@ -35,9 +35,22 @@ struct XenosFgFrame {
   bool reset = true, infinite = false;
   uint64_t frame = 0;      // the renderer's frame number (a gap = an image that was never shown)
   float camera_position[3] = {}, camera_up[3] = {}, camera_right[3] = {}, camera_forward[3] = {};
+  // Patch 0148 (--gow2_frame_generation_hudless): the presented image as it was before the HUD, in the format
+  // XenosFrameGenerationHudlessFormat names, at the presented size; NON_PIXEL_SHADER_RESOURCE; null = none this frame.
+  void* hudless = nullptr;
+  uint32_t hudless_width = 0, hudless_height = 0;
 };
 bool XenosFrameGenerationWanted();
+// Patch 0148: 0 = no HUD-less image wanted; 1 = R8G8B8A8_UNORM, 2 = R10G10B10A2_UNORM (the back buffer's format);
+// 3 = an R8G8B8A8_UNORM texture holding B8G8R8A8 bytes (red/blue swapped) for a B8G8R8A8_UNORM back buffer.
+uint32_t XenosFrameGenerationHudlessFormat();
+// Patch 0148: the size of the last frame's generation rectangle (where the presenter showed the image in the back
+// buffer; the HUD-less image must be exactly this size); false = none yet.
+bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height);
 void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFrame* frame);
+// The renderer destroyed and made again a slot's depth / motion / HUD-less textures: frames handed over before this
+// name freed images (Vulkan frame generation stops re-sending its last frame). Only the Vulkan path acts on it.
+void XenosFrameGenerationSlotsRecreated();
 // --gow2_input_script: a scripted gamepad for unattended tests.
 void XenosAddScriptPadIfRequested(rex::Runtime* runtime);
 // --gow2_dump_image: write the loaded game image for tools/scan_vtables.py.

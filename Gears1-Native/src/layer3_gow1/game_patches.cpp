@@ -9,9 +9,12 @@
 #include <string>
 #include <chrono>
 #include <thread>
+#include <filesystem>
+#include <system_error>
 #include <immintrin.h>
 
 #include <rex/cvar.h>
+#include <rex/filesystem.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 #include <rex/runtime.h>
@@ -19,6 +22,7 @@
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/xmemory.h>
 #include <xenos/dev_tools.h>
+#include <xenos/frame_limiter.h>
 #include <ue3/config_bundle.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -170,6 +174,66 @@ void Gow1StartMemoryGauge() {
 void Gow1StopMemoryGauge() { g_memory_gauge_stop.store(true); }
 void Gow1ApplyUltrawideIfRequested(rex::Runtime*) {}
 
+// GitHub #246: a nickname change hid the campaign checkpoint. Gears 1 names the file inside its checkpoint package
+// after the gamertag: sub_821C7350 (TU5) builds "save:\" + XamUserGetName(user, buf + 6, 4), i.e. the first three
+// letters ("Use" for the default "User"), so with a new --user_gamertag the game looks for another file in
+// default_checkpoint.sav and says "No checkpoint". After that call (midasm hook at 0x821C73A0, gow1_manifest.toml),
+// if the package folder already holds a file under another name and none under the new one, the name of the file
+// that is there is used instead - old saves keep working under any nickname, nothing is moved or renamed.
+// --gow1_keep_checkpoint_name=false = the game's own rule.
+REXCVAR_DEFINE_BOOL(gow1_keep_checkpoint_name, true, "Gears 1",
+                    "GitHub #246: keep finding the campaign checkpoint after a nickname change (the file name the "
+                    "game derives from the gamertag's first letters)");
+namespace {
+uint8_t* g_save_membase = nullptr;
+std::filesystem::path g_save_root;
+std::atomic<bool> g_save_keep{false};
+}  // namespace
+void Gow1InstallCheckpointName(rex::Runtime* runtime) {
+  if (!runtime || !REXCVAR_GET(gow1_keep_checkpoint_name)) return;
+  uint8_t* m = runtime->virtual_membase();
+  if (!m) return;
+  // li r5,4 / addi r4,r31,6 / bl XamUserGetName's thunk (TU5)
+  if (GuestWord(m, 0x821C7394) != 0x38A00004u || GuestWord(m, 0x821C739C) != 0x389F0006u ||
+      GuestWord(m, 0x821C73A0) != 0x4882C4B9u) {
+    REXLOG_WARN("gow1_keep_checkpoint_name: the code at 0x821C7394 is not TU5's - left alone");
+    return;
+  }
+  g_save_membase = m;
+  g_save_root = runtime->user_data_root();
+  g_save_keep.store(true);
+  REXLOG_INFO("gow1_keep_checkpoint_name: on");
+}
+void Gow1CheckpointFileName(PPCRegister& r31) {   // after the bl at 0x821C73A0; r31 = the "save:\" + name buffer
+  if (!g_save_keep.load(std::memory_order_relaxed) || !g_save_membase) return;
+  char* name = reinterpret_cast<char*>(g_save_membase + r31.u32 + 6);
+  const std::string want(name, strnlen(name, 4));
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  std::string other;
+  int others = 0;
+  for (const auto& user : fs::directory_iterator(g_save_root, ec)) {   // <xuid>\4D5307D5\00000001\default_checkpoint.sav
+    if (!user.is_directory(ec) || user.path().filename().native().size() != 16) continue;
+    const fs::path pkg = user.path() / "4D5307D5" / "00000001" / "default_checkpoint.sav";
+    if (!fs::is_directory(pkg, ec)) continue;
+    for (const auto& f : fs::directory_iterator(pkg, ec)) {
+      if (!f.is_regular_file(ec)) continue;
+      const std::string n = rex::path_to_utf8(f.path().filename());
+      if (n == want) return;  // the game's own name is there: nothing to do
+      if (n.empty() || n.size() > 3) continue;
+      other = n;
+      ++others;
+    }
+  }
+  if (others != 1) return;  // nothing saved yet (or more than one choice): the game's own rule
+  std::memcpy(name, other.c_str(), other.size() + 1);
+  static std::atomic<int> logged{0};
+  if (logged.fetch_add(1) < 2)
+    REXLOG_INFO("gow1_keep_checkpoint_name: the checkpoint saved under an earlier nickname is used ({} letters)",
+                other.size());
+}
+
+
 // --gow1_tiling_off (job 680, test): Xenia Canary's "Black Shading Fix" for Gears 1 (boma, game-patches
 // 4D5307D5): "solves most dynamic lighting artifacts caused by an issue with light environments and MSAA tiling" by
 // turning the engine's predicated tiling off - GUseTilingCode = FALSE, GTilingMode = 4. Its addresses are the disc
@@ -218,16 +282,8 @@ void Gow1PresentInterval(PPCRegister& r10) {
   if (n == 1 || n == 600) REXLOG_INFO("gow1_max_fps: present-interval site reached {} time(s) (interval {})", n, uint32_t(r10.u32));
   const int32_t cap = REXCVAR_GET(gow1_max_fps);
   if (cap <= 0) return;
-  using clock = std::chrono::steady_clock;
-  static clock::time_point next{};
-  const auto period = std::chrono::nanoseconds(1000000000LL / cap);
-  auto now = clock::now();
-  if (next.time_since_epoch().count() == 0 || now - next > period * 4) next = now;  // first frame or a long stall
-  if (now < next) {
-    if (next - now > std::chrono::milliseconds(2)) std::this_thread::sleep_for(next - now - std::chrono::milliseconds(1));
-    while (clock::now() < next) std::this_thread::yield();
-  }
-  next += period;
+  static xenos::FrameLimiter limiter;  // shared precise limiter (high-resolution timer + spin; no catch-up bursts)
+  limiter.Wait(double(cap));
   static bool logged = false;
   if (!logged) { logged = true; REXLOG_INFO("gow1_max_fps: on - at most {} fps", cap); }
 }

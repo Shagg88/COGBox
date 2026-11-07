@@ -15,6 +15,8 @@
 // GN_WITH_REFLEX). Without them the functions below are empty and the gow2_reflex setting says so in the log.
 #include <xenos/dev_tools.h>
 
+#include "renderer/dlss_framegen.h"  // NVIDIA DLSS frame generation brings its own Reflex (sl.reflex)
+
 #include <rex/cvar.h>
 #include <rex/frame_hooks.h>
 #include <rex/logging/macros.h>
@@ -164,6 +166,13 @@ Latency g_mode = Latency::kNone;
 
 void XenosLatencyInstall() {
   XenosFrameGenerationInstall();  // patch 0146: its swap-chain hooks are set before the window exists
+  // DLSS-G requires Reflex through Streamline (sl.reflex / sl.pcl markers on the same hooks): NVAPI Reflex and Anti-Lag 2
+  // stay off while it runs. (If DLSS-G then turns out not to run on this card, there is no Reflex for that session.)
+  if (XenosDlssFgOwnsLatency()) {
+    if (REXCVAR_GET(gow2_reflex) || REXCVAR_GET(gow2_antilag2))
+      REXLOG_INFO("gow2_reflex / gow2_antilag2: not used - NVIDIA DLSS frame generation runs Reflex through Streamline");
+    return;
+  }
   if (REXCVAR_GET(gow2_reflex)) {
 #if defined(GN_WITH_REFLEX)
     g_mode = Latency::kReflex;
@@ -195,6 +204,7 @@ void XenosLatencySetDevice(void* d3d12_device) {
 }
 
 void XenosLatencyFrameSubmitted() {
+  XenosDlssFgFrameSubmitted();  // counts frames; RENDERSUBMIT_END through sl.pcl while DLSS-G runs
 #if defined(GN_WITH_REFLEX)
   if (g_mode == Latency::kReflex) ReflexFrameSubmitted();
 #endif

@@ -804,9 +804,28 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
       ue3::ConfigFile* target = nullptr;
       for (ue3::ConfigFile& f : bundle.files) {
         const std::string fn = ue3::AsciiLower(f.name.Utf8());
-        if (fn.size() >= 24 && fn.compare(fn.size() - 24, 24, "tu_xbox360-gearinput.ini") == 0) { target = &f; break; }
-        // the disc bundle names it Xbox360-GearInput.ini (job 1313 log: no "Xe-" file)
-        if (!target && fn.size() >= 13 && fn.compare(fn.size() - 13, 13, "gearinput.ini") == 0) target = &f;
+        // the disc bundle names it Xbox360-GearInput.ini (job 1313 log: no "Xe-" file); the game itself asks for
+        // UPDATE:\TU__xbox360-gearinput.ini_us, so names may carry a region suffix after ".ini" ("_us") - match
+        // "gearinput.ini" anywhere rather than only at the end
+        if (fn.find("tu_xbox360-gearinput.ini") != std::string::npos) { target = &f; break; }
+        if (!target && fn.find("gearinput.ini") != std::string::npos) target = &f;
+        if (!target && fn.find("input.ini") != std::string::npos) target = &f;  // e.g. DefaultInput.ini
+      }
+      if (target && AsciiLower(n) == "coalesced_int.bin") {
+        // GitHub #89 follow-up: show how the bundle spells the input sections and every existing Back binding (key
+        // name "Bindings" vs "+Bindings", which class's section) so the next log tells us where Gears 3 reads them
+        for (const ue3::ConfigFile& f : bundle.files)
+          for (const ue3::ConfigSection& c : f.sections) {
+            const std::string sl = ue3::AsciiLower(c.name.Utf8());
+            const bool inputish = sl.find("input") != std::string::npos;
+            if (&f == target || inputish)
+              REXLOG_INFO("gow3_horde_bots:   [{}] in {} ({} keys)", c.name.Utf8(), f.name.Utf8(), c.keys.size());
+            for (const ue3::ConfigKey& k : c.keys) {
+              const std::string v = k.value.Utf8();
+              if (ue3::AsciiLower(v).find("xboxtypes_back") != std::string::npos)
+                REXLOG_INFO("gow3_horde_bots:     {} [{}] {}={}", f.name.Utf8(), c.name.Utf8(), k.key.Utf8(), v);
+            }
+          }
       }
       if (target) {
         ue3::ConfigSection* sec = nullptr;
@@ -823,7 +842,9 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
         if (AsciiLower(n) == "coalesced_int.bin" || written == 0)
           REXLOG_INFO("gow3_horde_bots: {}: Back adds two bots on the Horde scoreboard ({})", n, target->name.Utf8());
       } else if (AsciiLower(n) == "coalesced_int.bin") {
-        REXLOG_WARN("gow3_horde_bots: {}: no GearInput.ini in the bundle - not added", n);
+        REXLOG_WARN("gow3_horde_bots: {}: no GearInput.ini in the bundle - not added ({} files)", n, bundle.files.size());
+        for (const ue3::ConfigFile& f : bundle.files)  // candidates, for the next fix
+          REXLOG_WARN("gow3_horde_bots:   bundle file: {}", f.name.Utf8());
       }
     }
     if (exit_menu) {

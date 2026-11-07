@@ -255,6 +255,23 @@ std::string report_anonymise(const std::string &text)
         out += "<path>";
         i = last;   // the separator and the name after it are kept
     }
+    // 0.4.8 (GitHub #229): friends' IP addresses (Friends' IP addresses setting, or an extra-args.txt line) are not
+    // theirs to publish - reports go on public GitHub issues. The list after these keys is replaced by how many there were.
+    for (const char *key : { "--net_peer_ip=", "PeerIps=" }) {
+        const size_t kl = strlen(key);
+        for (size_t at = out.find(key); at != std::string::npos; at = out.find(key, at + kl)) {
+            size_t b = at + kl, e = b;
+            while (e < out.size() && out[e] != '\r' && out[e] != '\n' && out[e] != '"' && out[e] != '\'') e++;
+            int n = 0;
+            bool inTok = false;
+            for (size_t k = b; k < e; k++) {
+                const bool sep = out[k] == ',' || out[k] == ' ' || out[k] == ';' || out[k] == '\t';
+                if (!sep && !inTok) n++;
+                inTok = !sep;
+            }
+            out.replace(b, e - b, n ? "<" + std::to_string(n) + " address(es)>" : std::string());
+        }
+    }
     return out;
 }
 

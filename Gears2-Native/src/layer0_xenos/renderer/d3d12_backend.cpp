@@ -2694,7 +2694,12 @@ class D3D12Backend final : public Backend {
     if (!Recording() || !ValidTexture(h) || region.empty()) return 0;
     Texture& t = textures_[h];
     if (IsDepthFormat(t.desc.format) || t.desc.samples > 1) return 0;
-    const uint32_t w = uint32_t(region.x1 - region.x0), hgt = uint32_t(region.y1 - region.y0);
+    Rect clamped = region;  // to the texture, as on Vulkan: an out-of-range box is invalid for CopyTextureRegion
+    clamped.x0 = std::clamp(clamped.x0, 0, int32_t(t.desc.width)), clamped.y0 = std::clamp(clamped.y0, 0, int32_t(t.desc.height));
+    clamped.x1 = std::clamp(clamped.x1, clamped.x0, int32_t(t.desc.width));
+    clamped.y1 = std::clamp(clamped.y1, clamped.y0, int32_t(t.desc.height));
+    if (clamped.empty()) return 0;
+    const uint32_t w = uint32_t(clamped.x1 - clamped.x0), hgt = uint32_t(clamped.y1 - clamped.y0);
     const uint32_t row = (w * BytesPerTexel(t.desc.format) + 255) & ~255u;
     const uint64_t size = uint64_t(row) * hgt;
     ReadbackHandle rh = 0;
@@ -2732,7 +2737,7 @@ class D3D12Backend final : public Backend {
     src.pResource = t.resource;
     src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     src.SubresourceIndex = 0;
-    D3D12_BOX box{UINT(region.x0), UINT(region.y0), 0, UINT(region.x1), UINT(region.y1), 1};
+    D3D12_BOX box{UINT(clamped.x0), UINT(clamped.y0), 0, UINT(clamped.x1), UINT(clamped.y1), 1};
     TsCat();
     list_->CopyTextureRegion(&dst, 0, 0, 0, &src, &box);
     pending_readbacks_.push_back(rh);
