@@ -5985,6 +5985,32 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     void* dev = nullptr;
     void* list = nullptr;
+#if GN_SDK_VULKAN
+    if (presenter_vulkan_) {  // notes/83: the take on Vulkan (1385: every take failed on the D3D12-only copy below)
+      auto copy = reinterpret_cast<PFN_vkCmdCopyImage>(vk_cmd_copy_image_);
+      VkImage vs = VK_NULL_HANDLE, vd = VK_NULL_HANDLE;
+      if (hl_snap_ && copy && backend_->BeginNativeVulkan(&dev, &list)) {
+        vs = reinterpret_cast<VkImage>(backend_->NativeTextureVulkan(c->texture, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL));
+        vd = reinterpret_cast<VkImage>(backend_->NativeTextureVulkan(hl_snap_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL));
+        if (vs && vd) {
+          VkImageCopy r{};
+          r.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+          r.dstSubresource = r.srcSubresource;
+          r.extent = {c->width, c->height, 1};
+          copy(reinterpret_cast<VkCommandBuffer>(list), vs, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vd,
+               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+        }
+      }
+      // the next draw's pass moves the target back to its attachment layout; the copy is read as a texture later
+      if (!vs || !vd) {
+        ++hl_st_.take_fail;
+        hl_taken_ = hl_armed_ = false;
+        return;
+      }
+      ++hl_takes_;
+      return;
+    }
+#endif
     if (!hl_snap_ || !backend_->BeginNative(&dev, &list)) {
       ++hl_st_.take_fail;
       hl_taken_ = false;

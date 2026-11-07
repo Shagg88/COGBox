@@ -1287,7 +1287,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // 237f736 (Shagg: no smearing in Gears 2): generation from the HUD-less colour, with per-object motion; the
         // character-motion pass reads Gears 2's velocity-pass layout (c5-c12), so it is turned on for Gears 2 only
         if (cap_exe(env, "gow2_frame_generation_hudless")) a.push_back("--gow2_frame_generation_hudless=true");  // notes/83: Vulkan too
-        if (cap_exe(env, "gow2_upscale_object_motion")) a.push_back("--gow2_upscale_object_motion=true");
+        // notes/83 (job 1385): on Vulkan the object-motion re-draw cost ~17 ms a frame and gave bad vectors (31 resets,
+        // 393 px/frame centre motion; off: 7.5 ms, 0 resets) - off there for now, also over Gears 3 / Judgment's default
+        if (cap_exe(env, "gow2_upscale_object_motion"))
+            a.push_back(fgVk ? "--gow2_upscale_object_motion=false" : "--gow2_upscale_object_motion=true");
         if (g == Game::Gears2 && cap_exe(env, "gow2_upscale_character_motion"))
             a.push_back("--gow2_upscale_character_motion=true");
     }
