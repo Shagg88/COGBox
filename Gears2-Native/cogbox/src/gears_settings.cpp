@@ -263,7 +263,7 @@ std::vector<Option> make_options(Game g) {
     add(choice("Sharpen", "Upscale sharpening (1080p)", Tab::Graphics, PG, { "Automatic", "On", "Off" }, 0,
                "With the 1080p render resolution: sharpen the upscaled picture. Automatic = on, except on Steam Deck / "
                "Linux (Wine / Proton), where it can make text and some textures look wrong.", 0));
-    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (highly experimental)", g == Game::Gears1 ? "DLSS (NVIDIA RTX, highly experimental)" : "DLSS (NVIDIA RTX)", "XeSS (highly experimental)",   /* 0.4.7: DLSS tested clean in G2/G3/GJ */
+    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR", "DLSS (NVIDIA RTX)", "XeSS (highly experimental)",   /* 0.4.7: DLSS tested clean in G2/G3/GJ */
                  "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX12 GPU. DLSS: the same on "
                "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.\nSMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now.", 346), "", "", true);
@@ -275,13 +275,13 @@ std::vector<Option> make_options(Game g) {
                "resolution 2x (1440p) or 4x; Quality and Ultra performance need 3x (4K).", 351), "scenescale", "AAMode>=2");
     // NVIDIA DLSS frame generation (Streamline, renderer/dlss_framegen.cpp): choices 2-5, listed only when the exe has
     // it and NVIDIA's DLLs are next to it (framegen_choice_hidden); greyed without an RTX 40 / 50 card
-    add(choice("FrameGen", "Frame generation (highly experimental)", Tab::Graphics, SH,
+    add(choice("FrameGen", g == Game::Gears1 ? "Frame generation (experimental)" : "Frame generation", Tab::Graphics, SH,   // Shagg 7 Nov: experimental only in Gears 1
                { "Off", "AMD FSR frame generation", "NVIDIA DLSS frame generation 2x (RTX 40/50, experimental)",
                  "NVIDIA DLSS frame generation 3x (RTX 50, experimental)", "NVIDIA DLSS frame generation 4x (RTX 50, experimental)",
                  "NVIDIA DLSS frame generation dynamic (RTX 50, experimental)" }, 0,
-               "Highly experimental - it's rough for now. Shows a generated frame between each two the game draws: smoother motion on a fast monitor, about one frame more "
-               "input lag. Works best when the game already runs at 60 fps or more. Any DirectX 12 graphics card.\nEarly version: "
-               "the HUD and characters' own movement can smear a little in the in-between frames.\nNVIDIA DLSS frame generation "
+               "Shows a generated frame between each two the game draws: smoother motion on a fast monitor, about one frame more "
+               "input lag. Works best when the game already runs at 60 fps or more. Any DirectX 12 graphics card. In Gears 1 "
+               "(experimental) characters can ghost slightly in dark areas.\nNVIDIA DLSS frame generation "
                "(RTX 40/50 only, experimental): 2x, 3x or 4x the frames the game draws (3x / 4x / dynamic: RTX 50); needs NVIDIA's "
                "Streamline files next to the game. If it can't run, the game uses AMD's instead (or none).", 356), "framegen");
     // Aniso: no PS1 tooltip; text from 59-how-to-play ("16x anisotropic filtering").
@@ -327,11 +327,11 @@ std::vector<Option> make_options(Game g) {
     // be, since every flare would show through the scenery there.
     // Notes/80 (Gears2-Native): XeGTAO screen-space ambient occlusion in place of the game's own (Gears 2), or added
     // where a level has none (Gears 3 s.9: opt-in there, default "Game's own").
-    add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, experimental)", "XeGTAO (ultra, experimental)", "CACAO (experimental)" },
+    add(choice("AO", "Ambient occlusion", Tab::Graphics, PG, { "Off", "Game's own", "XeGTAO (high, highly experimental)", "XeGTAO (ultra, highly experimental)", "CACAO (experimental)" },
                         1,   // Game's own: XeGTAO is opt-in in every game
                "The soft shadowing in corners, creases and where things touch. XeGTAO: a modern full-resolution version "
                "(Intel's XeGTAO) in place of the game's own low-resolution one - exact contact shadows instead of blobs, "
-               "characters included. Experimental (Shagg 3 Nov): in our tests it cost about 5 ms a frame, roughly halving a "
+               "characters included. Highly experimental (Shagg 3 Nov): in our tests it cost about 5 ms a frame, roughly halving a "
                "high frame rate - being worked on. Ultra looks in more directions and catches more small details, for a "
                "little more. Game's own: the original. Off: none.", 0), "ao");
     add(choice("Shake", "Camera shake (roadie run)", Tab::Graphics, PG, { "Original", "Less", "Off" }, 0,
