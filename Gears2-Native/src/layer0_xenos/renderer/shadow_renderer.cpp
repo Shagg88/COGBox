@@ -872,6 +872,11 @@ REXCVAR_DEFINE_BOOL(gow2_upscale_character_motion, false, "Gears2",
                     "c5-c12); on there by gow2_app.h");
 REXCVAR_DEFINE_BOOL(gow2_upscale_object_motion_address_key, false, "Gears2",
                     "Object motion: also key draws by their vertex / index addresses (the first take; Gears 1 characters never matched)");
+REXCVAR_DEFINE_DOUBLE(gow2_upscale_object_motion_match, -1.0, "Gears2",
+                      "Notes/80 s.15: how object motion pairs a draw with last frame's. Below 0: the nearest origin of the same "
+                      "draw identity (0.4.7). 0 or more: by the object rows - same mesh and vertex shader, rotation within ~14 "
+                      "degrees, translation at most this many world units (256 tested in Gears 3, with real depth); Gears 1 keeps "
+                      "the origin rule");
 REXCVAR_DEFINE_BOOL(gow2_upscale_object_motion, false, "Gears2",
                     "#147 / #150 (off by default until tested): DLSS / FSR / XeSS motion vectors per object. Every scene "
                     "draw's own local-to-clip matrix (the camera times its object-to-world rows; Gears 1: its combined "
@@ -5415,10 +5420,23 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // (with the jitter) and depth test, no depth / stencil writes - into the object-ID target with kObjectIdPs, which
   // stores (object number, the depth drawn). kObjectMotionCs then gives those pixels the object's own reprojection
   // prev_L x inverse(L) where the scene depth is still that depth; every other pixel keeps the camera motion.
+  struct OmObj {
+    float r[9] = {};  // rotation rows, each normalised
+    float t[3] = {};  // translation (camera-relative)
+  };
   struct OmEntry {
     uint64_t key = 0;
+    uint64_t loose = 0;  // shape rule: the same mesh and vertex shader, any pixel shader
+    uint64_t prev_key = 0;  // shape rule: the identity of the last-frame draw it was matched to
+    OmObj obj;              // shape rule: the object rows, rotation normalised (Gears 2 / 3 / Judgment)
+    bool has_obj = false;
     rr::upscale::Mat4 now, prev;
     bool has_prev = false;
+    // Shape rule: the camera block and the object rows apart (L = camera x rows), now and of the matched draw, so the
+    // object's own change is taken from the rows in double precision (a far mountain's rows carry ~300000 units of
+    // translation; inverting L in float turns that into pixels of error).
+    rr::upscale::Mat4 cam_now, cam_prev, rows_now, rows_prev;
+    bool split_now = false, split = false;
   };
   static constexpr uint32_t kOmMaxObjects = 4095, kOmMaxEntries = 8192, kOmMovingFrames = 60;
   bool om_on_ = false, om_ids_frame_ = false;
@@ -5429,7 +5447,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   rr::RenderTargetKey om_key_{};
   float om_depth_factor_ = 1.0f;
   std::vector<OmEntry> om_cur_, om_prev_;
-  std::unordered_map<uint64_t, std::vector<uint32_t>> om_prev_index_;
+  std::unordered_map<uint64_t, std::vector<uint32_t>> om_prev_index_, om_prev_loose_index_;
   std::vector<uint8_t> om_prev_used_;
   std::unordered_map<uint64_t, uint64_t> om_moving_;  // identity -> the last frame it was seen moving by itself
   std::unordered_set<uint64_t> om_drawn_geo_;         // this frame's ID draws (geometry + matrix): drawn once
@@ -5438,6 +5456,70 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint64_t om_tracked_ = 0, om_matched_ = 0, om_drawn_ = 0, om_dedup_ = 0, om_static_ = 0, om_full_ = 0, om_pending_ = 0,
            om_overflow_ = 0, om_key_miss_ = 0, om_frames_ = 0, om_moving_found_ = 0, om_size_miss_ = 0;
 
+  // Shape rule (--gow2_upscale_object_motion_match >= 0, notes/80 s.15): draws are matched by their object rows, the
+  // camera-relative object-to-world matrix the game passes beside the camera block (Gears 2 c5-c8, Gears 3 / Judgment
+  // c7-c10). Its rotation (rows normalised, so scale doesn't count) tells apart pieces placed around one pivot however far
+  // away they are, and its translation is compared in world units: no projection, so no viewport size, nothing behind
+  // the camera and no camera turn in the score. A world-still object's translation changes by the camera's own move.
+  static bool OmObjFrom(const float o[16], OmObj& out) {
+    for (int i = 0; i < 3; ++i) {
+      const float x = o[4 * i], y = o[4 * i + 1], z = o[4 * i + 2];
+      const float len = std::sqrt(x * x + y * y + z * z);
+      if (!(len > 1e-6f) || !std::isfinite(len)) return false;
+      out.r[3 * i] = x / len, out.r[3 * i + 1] = y / len, out.r[3 * i + 2] = z / len;
+    }
+    for (int i = 0; i < 3; ++i) {
+      out.t[i] = o[12 + i];
+      if (!std::isfinite(out.t[i])) return false;
+    }
+    return true;
+  }
+  // Translation difference in world units and the largest rotation-element difference (0 = same orientation; a
+  // 90-degree turn gives 1 or more).
+  static void OmObjDiff(const OmObj& a, const OmObj& b, float& move, float& turn) {
+    const float dx = a.t[0] - b.t[0], dy = a.t[1] - b.t[1], dz = a.t[2] - b.t[2];
+    move = std::sqrt(dx * dx + dy * dy + dz * dz);
+    turn = 0.0f;
+    for (int i = 0; i < 9; ++i) turn = std::max(turn, std::fabs(a.r[i] - b.r[i]));
+  }
+  static void OmTakeSplit(OmEntry& e, const OmEntry& p) {
+    e.split = e.split_now && p.split_now;
+    if (e.split) e.cam_prev = p.cam_now, e.rows_prev = p.rows_now;
+  }
+  // The matched draw's local-to-clip with the object's own change done in double: cam_prev x (rows_prev x rows_now^-1),
+  // to pair with cam_now (both affine rows matrices; the change is small for anything that barely moved in the world).
+  static bool OmSplitPrev(const OmEntry& e, rr::upscale::Mat4& out) {
+    double rn[3][3], rp[3][3], tn[3], tp[3];
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) rn[i][j] = e.rows_now(i, j), rp[i][j] = e.rows_prev(i, j);
+      tn[i] = e.rows_now(i, 3), tp[i] = e.rows_prev(i, 3);
+    }
+    const double det = rn[0][0] * (rn[1][1] * rn[2][2] - rn[1][2] * rn[2][1]) -
+                       rn[0][1] * (rn[1][0] * rn[2][2] - rn[1][2] * rn[2][0]) +
+                       rn[0][2] * (rn[1][0] * rn[2][1] - rn[1][1] * rn[2][0]);
+    if (!(std::fabs(det) > 1e-12) || !std::isfinite(det)) return false;
+    double inv[3][3];  // adjugate / det
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j) {
+        const int a = (j + 1) % 3, b = (j + 2) % 3, c = (i + 1) % 3, d = (i + 2) % 3;
+        inv[i][j] = (rn[a][c] * rn[b][d] - rn[a][d] * rn[b][c]) / det;
+      }
+    rr::upscale::Mat4 delta;  // identity
+    for (int i = 0; i < 3; ++i) {
+      double ti = tp[i];
+      for (int j = 0; j < 3; ++j) {
+        double r = 0.0;
+        for (int k = 0; k < 3; ++k) r += rp[i][k] * inv[k][j];
+        delta(i, j) = float(r);
+        ti -= r * tn[j];
+      }
+      delta(i, 3) = float(ti);
+    }
+    for (float x : delta.m)
+      if (!std::isfinite(x)) return false;
+    out = rr::upscale::Multiply(e.cam_prev, delta);
+    return true;
+  }
   static bool OmProject(const rr::upscale::Mat4& m, const float p[4], float out[4]) {
     for (int i = 0; i < 4; ++i) out[i] = m(i, 0) * p[0] + m(i, 1) * p[1] + m(i, 2) * p[2] + m(i, 3) * p[3];
     return out[3] > 1e-6f && std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[3]);
@@ -5457,12 +5539,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     float c[16];
     std::memcpy(c, &r[kRegFloatConstVs + cb * 4], sizeof(c));
     rr::upscale::Mat4 l = rr::upscale::FromConstantsTransposed(c, 0);
+    float o[16] = {};
+    bool have_rows = false;
+    rr::upscale::Mat4 cam_block;
     if (!up_vp_auto_) {  // Gears 2 / 3 / Judgment: camera x the object-to-world rows (camera-relative)
       const uint32_t ob = up_object_base_;
       if (!(vsg.Reads(ob) && vsg.Reads(ob + 1) && vsg.Reads(ob + 2) && vsg.Reads(ob + 3))) return;
-      float o[16];
       std::memcpy(o, &r[kRegFloatConstVs + ob * 4], sizeof(o));
       if (!(o[15] == 1.0f && o[3] == 0.0f && o[7] == 0.0f && o[11] == 0.0f)) return;
+      have_rows = true;
+      cam_block = l;
       l = rr::upscale::Multiply(l, rr::upscale::FromConstantsTransposed(o, 0));
     }
     for (float x : l.m)
@@ -5477,6 +5563,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return;
     }
     OmEntry e;
+    e.has_obj = have_rows && OmObjFrom(o, e.obj);
+    if (have_rows) e.cam_now = cam_block, e.rows_now = rr::upscale::FromConstantsTransposed(o, 0), e.split_now = true;
     // Gears 1 (Shagg 11-06: characters still flicker with object motion on): skinned characters' vertex / index data
     // moves from frame to frame, so a key with the addresses never matched them. The identity is the shaders and the
     // index count; same-looking draws are told apart by where their origin projects (the nearest-candidate rule below).
@@ -5486,11 +5574,47 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const struct { uint32_t count, pad; uint64_t vs, ps; } k2{k.count, 0u, k.vs, k.ps};
       e.key = XXH3_64bits(&k2, sizeof(k2));
     }
+    {
+      const struct { uint32_t count, pad; uint64_t vs; } k3{k.count, 0u, k.vs};
+      e.loose = XXH3_64bits(&k3, sizeof(k3));
+    }
+    static const double om_match_max = REXCVAR_GET(gow2_upscale_object_motion_match);
     e.now = l;
     ++om_tracked_;
-    if (const auto it = om_prev_index_.find(e.key); it != om_prev_index_.end()) {
-      // Several draws can share an identity (the same mesh drawn twice): the unused one whose origin projected last
-      // frame is nearest to this one's now (in NDC); with one candidate it is taken whatever the distance.
+    if (om_match_max >= 0.0 && e.has_obj) {
+      // Shape rule: last frame's draws of the same index count and vertex shader, whatever their pixel shader (Gears 3's
+      // airship hull switches pixel shader from frame to frame, and the one candidate left under its identity was then a
+      // different mesh). The identity's own draws are preferred by a small margin; the best candidate wins otherwise.
+      // With --gow2_upscale_object_motion_address_key this search does not look at the addresses.
+      static constexpr float kTurnMax = 0.25f;       // about 14 degrees a frame
+      static constexpr float kLever = 512.0f;        // world units: weighs a rotation difference against a translation
+      static constexpr float kOtherShader = 4.0f;    // world units added for a different pixel shader
+      if (const auto it = om_prev_loose_index_.find(e.loose); it != om_prev_loose_index_.end()) {
+        int best = -1;
+        float best_d = 1e30f;
+        uint32_t candidates = 0;
+        for (const uint32_t idx : it->second) {
+          if (om_prev_used_[idx] || !om_prev_[idx].has_obj) continue;
+          ++candidates;
+          float move = 0.0f, turn = 0.0f;
+          OmObjDiff(e.obj, om_prev_[idx].obj, move, turn);
+          if (!std::isfinite(move) || !std::isfinite(turn) || move > float(om_match_max) || turn > kTurnMax) continue;
+          const float dd = move + turn * kLever + (om_prev_[idx].key == e.key ? 0.0f : kOtherShader);
+          if (dd < best_d) best_d = dd, best = int(idx);
+        }
+        if (best >= 0) {
+          om_prev_used_[uint32_t(best)] = 1;
+          e.prev = om_prev_[uint32_t(best)].now;
+          e.prev_key = om_prev_[uint32_t(best)].key;
+          OmTakeSplit(e, om_prev_[uint32_t(best)]);
+          e.has_prev = true;
+          ++om_matched_;
+        }
+      }
+    } else if (const auto it = om_prev_index_.find(e.key); it != om_prev_index_.end()) {
+      // Origin rule (0.4.7; Gears 1, whose camera block holds object x camera, has no object rows): the unused draw of
+      // the same identity whose origin projected last frame is nearest to this one's now (in NDC); with one candidate it
+      // is taken whatever the distance.
       static const float kOrigin[4] = {0.0f, 0.0f, 0.0f, 1.0f};
       float a[4], bp[4];
       const bool here = OmProject(l, kOrigin, a);
@@ -5510,6 +5634,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (best >= 0 && (candidates == 1 || best_d < 0.25f)) {
         om_prev_used_[uint32_t(best)] = 1;
         e.prev = om_prev_[uint32_t(best)].now;
+        e.prev_key = om_prev_[uint32_t(best)].key;
+        OmTakeSplit(e, om_prev_[uint32_t(best)]);
         e.has_prev = true;
         ++om_matched_;
       }
@@ -5517,7 +5643,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t entry = uint32_t(om_cur_.size());
     om_cur_.push_back(e);
     if (!e.has_prev) return;
-    const auto mv = om_moving_.find(e.key);
+    auto mv = om_moving_.find(e.key);
+    if (om_match_max >= 0.0 && (mv == om_moving_.end() || frame_ + 1 - mv->second > kOmMovingFrames)) {
+      const auto lv = om_moving_.find(e.prev_key);  // shape rule: moving status follows the matched piece across pixel shaders
+      if (lv != om_moving_.end()) mv = lv;
+    }
     if (mv == om_moving_.end() || frame_ + 1 - mv->second > kOmMovingFrames) {
       ++om_static_;  // the camera's motion is right for it
       return;
@@ -5599,16 +5729,35 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
   // Whether an entry moved by itself: its last-frame matrix against the camera's reprojection c (this frame's clip ->
   // last frame's clip), at its origin and 64 units along each axis, in render pixels.
-  static bool OmMovesByItself(const OmEntry& e, const rr::upscale::Mat4& c, uint32_t rw, uint32_t rh) {
+  // With the shape rule, a mesh whose origin and axis points are all behind the camera (the airship the player rides,
+  // drawn around the camera) is also probed at points on screen: five clip-space points (centre and four around it, at
+  // half depth) taken back into the mesh's own space with the inverse of this frame's matrix. Homogeneous, so a point
+  // whose local w comes out negative still projects the same.
+  static bool OmMovesByItself(const OmEntry& e, const rr::upscale::Mat4& c, uint32_t rw, uint32_t rh, bool screen_probes) {
     static const float kPts[4][4] = {{0, 0, 0, 1}, {64, 0, 0, 1}, {0, 64, 0, 1}, {0, 0, 64, 1}};
-    for (const auto& p : kPts) {
+    int projected = 0;
+    const auto differs = [&](const float p[4]) {
       float a[4], b[4], q[4];
-      if (!OmProject(e.now, p, a)) continue;
+      if (!OmProject(e.now, p, a)) return false;
+      ++projected;
       const bool ob = OmProject(e.prev, p, b), oc = OmProject(c, a, q);
       if (ob != oc) return true;
-      if (!ob) continue;
+      if (!ob) return false;
       const float dx = (b[0] / b[3] - q[0] / q[3]) * 0.5f * float(rw), dy = (b[1] / b[3] - q[1] / q[3]) * 0.5f * float(rh);
-      if (dx * dx + dy * dy > 0.25f) return true;
+      return dx * dx + dy * dy > 0.25f;
+    };
+    for (const auto& p : kPts)
+      if (differs(p)) return true;
+    if (!screen_probes || projected >= 2) return false;
+    rr::upscale::Mat4 inv;
+    if (!rr::upscale::Invert(e.now, inv)) return false;
+    static const float kScreen[5][4] = {{0, 0, 0.5f, 1}, {-0.5f, -0.5f, 0.5f, 1}, {0.5f, -0.5f, 0.5f, 1},
+                                        {-0.5f, 0.5f, 0.5f, 1}, {0.5f, 0.5f, 0.5f, 1}};
+    for (const auto& s : kScreen) {
+      float p[4];
+      for (int i = 0; i < 4; ++i) p[i] = inv(i, 0) * s[0] + inv(i, 1) * s[1] + inv(i, 2) * s[2] + inv(i, 3) * s[3];
+      if (!(std::isfinite(p[0]) && std::isfinite(p[1]) && std::isfinite(p[2]) && std::isfinite(p[3]))) continue;
+      if (differs(p)) return true;
     }
     return false;
   }
@@ -5622,8 +5771,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         rr::upscale::Mat4 t;
         t(0, 3) = move[0], t(1, 3) = move[1], t(2, 3) = move[2];
         const rr::upscale::Mat4 c = rr::upscale::Multiply(prev, rr::upscale::Multiply(t, inv));
+        static const bool screen_probes = REXCVAR_GET(gow2_upscale_object_motion_match) >= 0.0;
         for (const OmEntry& e : om_cur_)
-          if (e.has_prev && OmMovesByItself(e, c, rw, rh)) {
+          if (e.has_prev && OmMovesByItself(e, c, rw, rh, screen_probes)) {
             om_moving_[e.key] = frame_ + 1;
             ++om_moving_found_;
           }
@@ -5642,8 +5792,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const OmEntry& e = om_cur_[om_ids_entry_[i]];
       rr::upscale::Mat4 rep;
       float* row = &t[size_t(i + 1) * kW * 4];
-      if (rr::upscale::ReprojectionMatrix(e.now, e.prev, 1.0f, rep, up_depth_map_.scale, up_depth_map_.offset))
-        std::memcpy(row, rep.m, sizeof(rep.m));  // else all 0: w = 0, the pixel keeps the camera's motion
+      rr::upscale::Mat4 split_prev;
+      static const bool split_on = REXCVAR_GET(gow2_upscale_object_motion_match) >= 0.0;
+      const bool ok = split_on && e.split && OmSplitPrev(e, split_prev)
+                          ? rr::upscale::ReprojectionMatrix(e.cam_now, split_prev, 1.0f, rep, up_depth_map_.scale,
+                                                            up_depth_map_.offset)
+                          : rr::upscale::ReprojectionMatrix(e.now, e.prev, 1.0f, rep, up_depth_map_.scale,
+                                                            up_depth_map_.offset);
+      if (ok) std::memcpy(row, rep.m, sizeof(rep.m));  // else all 0: w = 0, the pixel keeps the camera's motion
     }
     if (!om_table_) {
       gpu::TextureDesc td;
@@ -5668,7 +5824,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     om_prev_.swap(om_cur_);
     om_cur_.clear();
     om_prev_index_.clear();
-    for (uint32_t i = 0; i < om_prev_.size(); ++i) om_prev_index_[om_prev_[i].key].push_back(i);
+    om_prev_loose_index_.clear();
+    static const bool shape_rule = REXCVAR_GET(gow2_upscale_object_motion_match) >= 0.0;
+    for (uint32_t i = 0; i < om_prev_.size(); ++i) {
+      om_prev_index_[om_prev_[i].key].push_back(i);
+      if (shape_rule) om_prev_loose_index_[om_prev_[i].loose].push_back(i);
+    }
     om_prev_used_.assign(om_prev_.size(), 0);
     om_drawn_geo_.clear();
     om_ids_entry_.clear();
