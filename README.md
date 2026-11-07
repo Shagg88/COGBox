@@ -229,8 +229,8 @@ Graphics tab - FSR / DLSS / XeSS and frame generation are Direct3D 12 only. Prob
 
 **DLSS frame generation on RTX 20 / 30 cards (unofficial):** COGBox works with the third-party
 [MFG Unlocker](https://github.com/dashdogy/MFG-Unlocker), which lets older RTX cards use DLSS frame generation. It is not part
-of COGBox and not made or supported by us or NVIDIA - use it at your own risk. We tested it on an RTX 3080 Ti in Gears of War,
-Gears of War 2 and Judgment: 2x and 3x ran well, with only slight flicker on distant textures. To use it:
+of COGBox and not made or supported by us or NVIDIA - use it at your own risk. We tested it on an RTX 3080 Ti in all four
+games: 2x and 3x ran well, with only slight flicker on distant textures. To use it:
 
 1. Download `MFGUnlocker.dll` from the MFG Unlocker's GitHub releases page.
 2. Close COGBox. Copy the DLL into the game's `port` folder, next to the game's exe (for example `COGBox\Judgment\port`,
