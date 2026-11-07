@@ -207,16 +207,34 @@ void WaitForPresents() {
   g_fn.Dispatch(&g_swap_chain_ctx, &w.header);
 }
 
-void WaitForPrepareLists() {
+// A Prepare fence that never signalled: the device is treated as lost. Objects the GPU may still use are leaked, not
+// destroyed, and no new Prepare objects are made.
+bool g_device_lost = false;
+
+// false = a fence wait timed out or failed (device lost): the lists' objects must not be destroyed.
+bool WaitForPrepareLists() {
   for (PrepareList& l : g_lists)
     if (l.pending) {
-      g_vk.WaitForFences(g_device, 1, &l.fence, VK_TRUE, 2000000000ull);  // bounded: a lost device must not hang us
+      // bounded: a lost device must not hang us
+      if (g_vk.WaitForFences(g_device, 1, &l.fence, VK_TRUE, 2000000000ull) != VK_SUCCESS && !g_device_lost) {
+        g_device_lost = true;
+        REXLOG_ERROR("gow2_frame_generation: Vulkan: a Prepare fence did not signal in 2 s; device treated as lost, "
+                     "its command buffers and HUD-less image leaked instead of destroyed");
+      }
       l.pending = false;
     }
+  return !g_device_lost;
 }
 
 void ReleasePrepareObjects() {
-  WaitForPrepareLists();
+  if (!WaitForPrepareLists()) {  // the GPU may still use them: leak
+    g_lists = {};
+    g_pool = VK_NULL_HANDLE;
+    g_hl_image = VK_NULL_HANDLE, g_hl_memory = VK_NULL_HANDLE;
+    g_hl_w = g_hl_h = 0;
+    g_hl_format = VK_FORMAT_UNDEFINED;
+    return;
+  }
   for (PrepareList& l : g_lists) {
     if (l.fence) g_vk.DestroyFence(g_device, l.fence, nullptr);
     l = {};
@@ -236,11 +254,14 @@ bool EnsureHudless() {
   if (g_hl_image && g_hl_w == w && g_hl_h == h && g_hl_format == format) return true;
   if (g_hl_image) {
     WaitForPresents();
-    WaitForPrepareLists();
+    if (!WaitForPrepareLists()) {  // the GPU may still use it: leak, and make no new one
+      g_hl_image = VK_NULL_HANDLE, g_hl_memory = VK_NULL_HANDLE;
+      return false;
+    }
     g_vk.DestroyImage(g_device, g_hl_image, nullptr), g_hl_image = VK_NULL_HANDLE;
     g_vk.FreeMemory(g_device, g_hl_memory, nullptr), g_hl_memory = VK_NULL_HANDLE;
   }
-  if (!g_vk.GetPhysicalDeviceMemoryProperties) return false;
+  if (g_device_lost || !g_vk.GetPhysicalDeviceMemoryProperties) return false;
   VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   ci.imageType = VK_IMAGE_TYPE_2D;
   ci.format = format;
@@ -326,6 +347,7 @@ void RecordHudlessCopy(VkCommandBuffer cb, const XenosFgFrame& f, int32_t x, int
 
 bool EnsurePrepareObjects() {
   if (g_pool) return true;
+  if (g_device_lost) return false;
   VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
   pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
   pi.queueFamilyIndex = g_game_family;
