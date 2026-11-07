@@ -133,8 +133,8 @@ extern "C" void GOW3_NEED_LIVE_FN(PPCContext& ctx, uint8_t* base) {
       const int64_t ago = Gow3MsSinceMediaVerify();
       REXLOG_INFO("MAINMENU: #215 file tracking says level; last menu media check {} ms ago", ago);
       // review: 1.5 s, and no level package opened since that media check (starting a level can't count as menu)
-      const int64_t lv = g_level_open_ms.load();
-      front = ago >= 0 && ago < 1500 && (lv < 0 || NowMs() - lv > ago);
+      const int64_t lv = rex::glue::g_level_open_ms.load();
+      front = ago >= 0 && ago < 1500 && (lv < 0 || rex::glue::NowMs() - lv > ago);
     }
     if (front) {
       REXLOG_INFO("MAINMENU: NeedLiveForDownloadableContent on the front end (lr {:08X})",
