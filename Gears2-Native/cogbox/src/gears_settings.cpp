@@ -294,10 +294,12 @@ std::vector<Option> make_options(Game g) {
     // 2006 engine doesn't have are in its list too, greyed with the reason (0.3.0 left them out).
     add(make("MipFade", "Sharp textures show at once (fast mip fade)", Tab::Graphics, Kind::Bool, PG, 1,
              "A newly loaded sharper texture shows at once instead of fading in over 0.3-2 seconds.", 359), "mipfade", "", true);
-    // GitHub #105: Gears 3's depth of field (its half-size 640-pitch targets) at the render scale, not the console's 720p
+    // GitHub #105: Gears 3's depth of field (its half-size 640-pitch targets) at the render scale, not the console's 720p;
+    // 0.4.8: Judgment too (the same 640 targets plus a quarter-size 320 chain, 185-rdc.log)
     add(make("DofScale", "Depth of field at the render resolution", Tab::Graphics, Kind::Bool, PG, 0,
-             "Gears 3: its depth of field (the blur in front of and behind what you look at) is drawn at the render "
-             "resolution instead of the console's 720p enlarged. Only when the render resolution is above 720p.", 0), "dofscale");
+             "Gears 3 and Judgment: their depth of field (the blur in front of and behind what you look at, used all "
+             "the time in Judgment, its title screen too) is drawn at the render resolution instead of the console's "
+             "half or quarter of 720p enlarged. Only when the render resolution is above 720p.", 0), "dofscale");
     add(choice("Pool", "Texture memory", Tab::Graphics, PG,
                { "Game's own (smallest)", "Standard (196 MB / Gears 3 200 MB)", "Large (256 MB)", "Larger (320 MB, not long-tested)" }, 1,
                "The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory "
@@ -656,7 +658,7 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g != Game::Gears3 && g != Game::Gears2) return no("Gears 2 and 3 only.");
         if (!cap_exe(env, g == Game::Gears2 ? "gow2_horde_bots" : "gow3_horde_bots")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "dofscale") {   // GitHub #105
-        if (g != Game::Gears3) return no("Gears 3 only.");
+        if (g != Game::Gears3 && g != Game::Judgment) return no("Gears 3 and Judgment only.");
         if (!cap_exe(env, "GitHub #105: surface pitches")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "mipfade") {
         if (g == Game::Gears2) return no(not_yet(0, "its config has no mip-fade setting"));
@@ -1336,6 +1338,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (isG3) { a.push_back("--gow3_trilinear=" + fmt_bool(s.b("Trilinear"))); a.push_back("--gow3_fast_mip_fade=" + fmt_bool(s.b("MipFade"))); }
     // 0.3.0 (GitHub #54, soldiermxdeath: Monroe Commons' loading screen ends at 30 fps, not at 60): loading screens at 30
     if (isGJ) a.push_back("--gowj_loading_fps=30");
+    // GitHub #105 (0.4.8): Judgment's post chain has Gears 3's half-size 640-pitch targets and a quarter-size 320-pitch
+    // set (colour, 16-bit and its depth); both stay 1x under the renderer's default 1120 threshold otherwise
+    if (isGJ && scale > 1 && avail("DofScale") && on("DofScale")) a.push_back("--gow2_renderer_resolution_scale_pitches=640,320");
     if (isGJ) { a.push_back("--gowj_trilinear=" + fmt_bool(s.b("Trilinear"))); a.push_back("--gowj_fast_mip_fade=" + fmt_bool(s.b("MipFade"))); }
     if (isG1) {   // only when gow1.exe has the switch (can(): trilinear / mipfade)
         if (avail("Trilinear")) a.push_back("--gow1_trilinear=" + fmt_bool(s.b("Trilinear")));
