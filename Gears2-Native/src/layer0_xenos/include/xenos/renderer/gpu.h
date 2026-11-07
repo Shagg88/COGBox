@@ -636,6 +636,12 @@ class Backend {
   virtual bool BeginNative(void** device, void** command_list) { (void)device; (void)command_list; return false; }
   virtual void* NativeTexture(TextureHandle texture, uint32_t state) { (void)texture; (void)state; return nullptr; }
   virtual void EndNative() {}
+  // Notes/83 (frame generation on Vulkan): the same for the Vulkan backend, kept apart so the D3D12-only SDK paths
+  // above never see Vulkan objects. BeginNativeVulkan ends any pass and returns the VkDevice and the recording
+  // VkCommandBuffer; NativeTextureVulkan moves a texture to `layout` (a VkImageLayout), with the barrier recorded at
+  // once, and returns its VkImage. Recording stays the backend's: nothing to end.
+  virtual bool BeginNativeVulkan(void** device, void** command_buffer) { (void)device; (void)command_buffer; return false; }
+  virtual void* NativeTextureVulkan(TextureHandle texture, uint32_t layout) { (void)texture; (void)layout; return nullptr; }
   // Patch 0032: this process's local video memory use and the OS budget for it (DXGI QueryVideoMemoryInfo). Use over
   // budget means the driver pages resources in and out - everything on the GPU slows down.
   virtual bool VideoMemory(uint64_t* used, uint64_t* budget) { (void)used; (void)budget; return false; }

@@ -30,6 +30,8 @@
 
 #include <string>
 
+REXCVAR_DECLARE(std::string, gow2_renderer_api);  // shadow_renderer.cpp (notes/68); notes/83: Vulkan frame generation
+
 REXCVAR_DEFINE_STRING(gow2_frame_generation, "off", "Gears2",
                       "Patch 0146 / 0147 (frame-rate item 6): frame generation. off = the usual swap chain; swapchain = "
                       "AMD's frame-generation swap chain with frame generation itself off (a test: the picture and "
@@ -726,17 +728,26 @@ static bool FsrFallback(void* factory, void* queue, void* hwnd, const void* desc
   return MakeSwapChain(factory, queue, hwnd, desc, out);
 }
 
+// Notes/83: AMD FSR frame generation on the Vulkan renderer (frame_generation_vk.cpp).
+bool XenosFgVkActive();
+bool XenosFgVkWanted();
+void XenosFgVkSetInputs(void* guest_output_image, const XenosFgFrame* frame);
+bool XenosFgVkInstall(bool hudless);
+
 bool XenosFrameGenerationWanted() {
+  if (XenosFgVkActive()) return XenosFgVkWanted();  // notes/83
   if (XenosDlssFgActive()) return XenosDlssFgWanted();
   return g_inputs_wanted.load(std::memory_order_relaxed);
 }
 
 uint32_t XenosFrameGenerationHudlessFormat() {
+  if (XenosFgVkActive()) return 0u;  // notes/83: no HUD-less image on Vulkan yet
   if (XenosDlssFgActive()) return XenosDlssFgHudlessFormat();
   return g_inputs_wanted.load(std::memory_order_relaxed) ? g_hudless_format.load(std::memory_order_relaxed) : 0u;
 }
 
 bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height) {
+  if (XenosFgVkActive()) return false;  // notes/83
   if (XenosDlssFgActive()) return XenosDlssFgHudlessSize(width, height);
   const uint32_t v = g_hl_rect_size.load(std::memory_order_relaxed);
   width = v >> 16, height = v & 0xFFFFu;
@@ -744,6 +755,7 @@ bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height) {
 }
 
 void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFrame* frame) {
+  if (XenosFgVkActive()) return XenosFgVkSetInputs(guest_output_resource, frame);  // notes/83
   if (XenosDlssFgActive()) return XenosDlssFgSetInputs(guest_output_resource, frame);
   if (!g_generate || !guest_output_resource) return;
   std::lock_guard<std::mutex> lock(g_mutex);
@@ -764,6 +776,16 @@ void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFra
 void XenosFrameGenerationInstall() {
   std::string mode = REXCVAR_GET(gow2_frame_generation);
   if (mode.empty() || mode == "off") return;
+  if (REXCVAR_GET(gow2_renderer_api) == "vulkan") {  // notes/83: AMD's Vulkan swap chain (DLSS-G is DirectX 12 only)
+    if (mode == "dlss") REXLOG_INFO("gow2_frame_generation: NVIDIA DLSS frame generation is DirectX 12 only; AMD FSR "
+                                    "frame generation on Vulkan instead");
+    if (mode != "fsr" && mode != "dlss") {
+      REXLOG_WARN("gow2_frame_generation: '{}' is not available on Vulkan (fsr only); off", mode);
+      return;
+    }
+    XenosFgVkInstall(REXCVAR_GET(gow2_frame_generation_hudless));
+    return;
+  }
   if (mode == "dlss") {  // NVIDIA DLSS frame generation; AMD's when Streamline is not there at all
     if (XenosDlssFgInstall(REXCVAR_GET(gow2_frame_generation_hudless), &FsrFallback)) return;
     REXLOG_INFO("gow2_frame_generation: falling back to AMD FSR frame generation");
