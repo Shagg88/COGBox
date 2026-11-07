@@ -3023,6 +3023,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       DisplayPending p;
       p.src = it->second;
       p.frame = frame_;
+      hl_present_has_ = false;  // patch 0148: this front buffer's HUD-less resolve, the same way as the real one
+      if (auto hl = hl_sources_.find(fb_phys); hl != hl_sources_.end() && present_ours_) {
+        hl_present_src_ = hl->second;
+        hl_present_fb_w_ = fb_width, hl_present_fb_h_ = fb_height;
+        hl_present_has_ = !it->second.scaled || hl->second.scaled;
+        if (it->second.scaled && hl->second.scaled) {
+          DisplaySource& s = hl_present_src_;
+          s.texture = s.scaled;
+          s.rect = {s.rect.x0 * int32_t(res_scale_), s.rect.y0 * int32_t(res_scale_), s.rect.x1 * int32_t(res_scale_),
+                    s.rect.y1 * int32_t(res_scale_)};
+          hl_present_fb_w_ = fb_width * res_scale_, hl_present_fb_h_ = fb_height * res_scale_;
+        }
+      }
       if (present_ours_ && hold_this_frame_) {  // patch 0063: held back - the previous picture stays on screen
         ++display_stats_.dropped;
       } else if (present_ours_ && it->second.scaled) {  // Stage 7: the front buffer at the resolution scale
@@ -3040,6 +3053,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     display_sources_.clear();
+    hl_sources_.clear();  // patch 0148
+    hl_present_has_ = false;
   }
 
   // ---- Stage 5C-1: the swap's gamma pass on our front buffer, compared with the SDK's presented image ----
@@ -3256,6 +3271,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->Dispatch(hdr_encode_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
       table = false;  // 10 bits per channel to the window
     }
+    // Patch 0148: the HUD-less image through the same passes, at the same size (0 = none this frame).
+    const gpu::TextureHandle hl_image =
+        hl_present_has_ && fg_wanted_ && !presenter_vulkan_ ? HudlessChain(regs, w, h, ow, oh) : gpu::TextureHandle(0);
+    hl_present_has_ = false;
     bool wrote = false;
     if (!presenter_) {  // notes/68: Vulkan without a presenter yet - the image is made, nothing is shown
       backend_->Submit();
@@ -3305,7 +3324,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           b.uav_texture = out;
           backend_->Dispatch(present_unpack_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
           backend_->ReleaseImport(out, uint32_t(rex::ui::d3d12::D3D12Presenter::kGuestOutputInternalState));
-          if (fg_wanted_) FgHandOver(c.resource_uav_capable());  // patch 0147: before the Submit that carries the copies
+          if (fg_wanted_) FgHandOver(c.resource_uav_capable(), hl_image, ow, oh);  // patch 0147: before the Submit that carries the copies
           backend_->Submit();
           wrote = true;
           return true;
@@ -4466,10 +4485,36 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     gpu::TextureHandle depth = 0, motion = 0;
     uint32_t width = 0, height = 0;
     uint64_t used = 0;
+    gpu::TextureHandle hudless = 0;  // patch 0148
+    uint32_t hl_width = 0, hl_height = 0, hl_format = 0;
   };
   std::array<FgSlot, 4> fg_slots_{};
   uint64_t fg_slot_clock_ = 0;
   bool fg_wanted_ = false;  // patch 0147: --gow2_frame_generation=fsr and the build has it
+  // Patch 0148 (--gow2_frame_generation_hudless): the frame as it was just before the HUD. Per frame, after the scene
+  // colour resolve: a full-screen opaque quad into a target at least kSceneMinWidth wide arms it (the last post pass,
+  // e.g. tone mapping); the first blended draw into that target after it (the HUD's first element) copies the target
+  // (hl_snap_). When that target is resolved, the copy is resolved too, the same way, into a destination of our own
+  // (hl_sources_); the swap that shows the real resolve runs the same present passes on the copy (hl_image_), and
+  // FgHandOver unpacks it into the slot in the back buffer's format. D3D12 only (frame generation is).
+  uint32_t hl_format_ = 0;  // XenosFrameGenerationHudlessFormat(), read at each frame's end; 0 = all of this off
+  bool hl_armed_ = false, hl_taken_ = false;
+  rr::RenderTargetKey hl_key_{};
+  gpu::TextureHandle hl_snap_ = 0;
+  uint32_t hl_snap_w_ = 0, hl_snap_h_ = 0;
+  gpu::Format hl_snap_format_ = gpu::Format::kUnknown;
+  struct HlDest {
+    gpu::TextureHandle texture = 0;
+    uint32_t width = 0, height = 0;
+  };
+  std::unordered_map<uint64_t, HlDest> hl_dests_;  // dest_base * 2 (+1: at the resolution scale)
+  std::unordered_map<uint32_t, DisplaySource> hl_sources_;  // this frame's HUD-less resolves, by destination
+  bool hl_present_has_ = false;
+  DisplaySource hl_present_src_{};
+  uint32_t hl_present_fb_w_ = 0, hl_present_fb_h_ = 0;
+  gpu::TextureHandle hl_out_ = 0, hl_scaled_ = 0, hl_sharp_ = 0;
+  uint32_t hl_out_w_ = 0, hl_out_h_ = 0, hl_scaled_w_ = 0, hl_scaled_h_ = 0, hl_sharp_w_ = 0, hl_sharp_h_ = 0;
+  uint64_t hl_takes_ = 0, hl_resolves_ = 0, hl_images_ = 0, hl_logged_ = 0;
   FgInputs fg_{};
   uint64_t fg_made_ = 0, fg_resets_ = 0;  // log window
   gpu::PipelineHandle up_depth_pipe_ = 0, up_motion_pipe_ = 0;
@@ -5759,9 +5804,182 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     return up_output_;
   }
 
+  // Patch 0148: the HUD start guess (see hl_format_), before the draw is issued.
+  void HudlessDraw(rr::RenderTarget* const* colour_rt, const rr::PipelineState& ps, uint32_t prim, uint32_t index_count,
+                   bool depth_writes) {
+    rr::RenderTarget* c = colour_rt[0];
+    if (!c || !c->texture || c->key.msaa) return;
+    bool blends = false;
+    for (uint32_t i = 0; i < 4; ++i)
+      if (colour_rt[i] && ps.blend.rt[i].blend_enable) blends = true;
+    const bool quad = prim == 0x08 || index_count <= 6;
+    const bool covers = ps.scissor.x == 0 && ps.scissor.y == 0 && uint64_t(ps.scissor.width) * 10 >= uint64_t(c->width) * 9 &&
+                        uint64_t(ps.scissor.height) * 10 >= uint64_t(c->height) * 9;
+    if (!blends && !depth_writes && quad && covers && c->guest_width >= kSceneMinWidth) {  // a post pass: (re)arm
+      hl_armed_ = true;
+      hl_taken_ = false;
+      hl_key_ = c->key;
+      return;
+    }
+    if (!hl_armed_ || hl_taken_ || !blends || depth_writes || !(c->key == hl_key_)) return;
+    hl_taken_ = true;  // one try per arming
+    if (!hl_snap_ || hl_snap_w_ != c->width || hl_snap_h_ != c->height || hl_snap_format_ != c->format) {
+      if (hl_snap_) backend_->DestroyTexture(hl_snap_), hl_snap_ = 0;
+      gpu::TextureDesc td;
+      td.width = c->width;
+      td.height = c->height;
+      td.format = c->format;
+      td.usage = gpu::kUsageSampled;
+      td.debug_name = "gow2 frame generation HUD-less target copy";
+      hl_snap_ = backend_->CreateTexture(td);
+      hl_snap_w_ = c->width, hl_snap_h_ = c->height, hl_snap_format_ = c->format;
+    }
+    void* dev = nullptr;
+    void* list = nullptr;
+    if (!hl_snap_ || !backend_->BeginNative(&dev, &list)) {
+      hl_taken_ = false;
+      hl_armed_ = false;
+      return;
+    }
+    auto* s = static_cast<ID3D12Resource*>(backend_->NativeTexture(c->texture, D3D12_RESOURCE_STATE_COPY_SOURCE));
+    auto* d = static_cast<ID3D12Resource*>(backend_->NativeTexture(hl_snap_, D3D12_RESOURCE_STATE_COPY_DEST));
+    if (s && d) static_cast<ID3D12GraphicsCommandList*>(list)->CopyResource(d, s);
+    backend_->EndNative();  // our bindings are re-applied; the draw's SetRenderTargets moves the target back
+    if (!s || !d) {
+      hl_taken_ = hl_armed_ = false;
+      return;
+    }
+    ++hl_takes_;
+  }
+
+  HlDest* HudlessDest(uint64_t key, uint32_t w, uint32_t h) {
+    HlDest& d = hl_dests_[key];
+    if (d.texture && d.width == w && d.height == h) return &d;
+    if (d.texture) backend_->DestroyTexture(d.texture), d.texture = 0;
+    gpu::TextureDesc td;
+    td.width = w;
+    td.height = h;
+    td.format = gpu::Format::kR32Uint;
+    td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+    td.debug_name = "gow2 frame generation HUD-less resolve";
+    d.texture = backend_->CreateTexture(td);
+    d.width = w, d.height = h;
+    return d.texture ? &d : nullptr;
+  }
+
+  // Patch 0148: the HUD-less copy resolved like the real resolve (same shader and constants; 32 bpp, single sample).
+  void HudlessResolve(const gpu::ComputeBindings& b_main, gpu::PipelineHandle pipe, const ::xenos::resolve::Info& info,
+                      uint32_t endian, uint32_t w, uint32_t h, uint32_t dx, uint32_t dy, bool scaled, uint32_t cross) {
+    if (hl_dests_.size() > 16) {  // destinations the game no longer uses
+      for (auto& [k, d] : hl_dests_)
+        if (d.texture) backend_->DestroyTexture(d.texture);
+      hl_dests_.clear();
+    }
+    const uint32_t pw = std::max<uint32_t>(info.dest_pitch_aligned_div_32 * 32, 32),
+                   ph = std::max<uint32_t>(info.dest_height_aligned_div_32 * 32, 32);
+    HlDest* plain = HudlessDest(uint64_t(info.dest_base) * 2, pw, ph);
+    if (!plain) return;
+    gpu::ComputeBindings b = b_main;
+    b.srv[0] = hl_snap_;
+    b.uav_texture = plain->texture;
+    ResolveDispatch(pipe, b, (w + 7) / 8, (h + 7) / 8, 1);
+    DisplaySource s;
+    s.texture = plain->texture;
+    s.rect = gpu::Rect{int32_t(dx), int32_t(dy), int32_t(dx + w), int32_t(dy + h)};
+    s.info = info;
+    s.endian = endian;
+    if (scaled) {  // the real resolve also filled a copy at the resolution scale (Stage 7 phase B)
+      HlDest* sc = HudlessDest(uint64_t(info.dest_base) * 2 + 1, pw * res_scale_, ph * res_scale_);
+      if (!sc) return;
+      if (cross) b.constants[12] = res_scale_;
+      b.constants[13] = 1u | (cross << 8);
+      b.uav_texture = sc->texture;
+      ResolveDispatch(pipe, b, (w * res_scale_ + 7) / 8, (h * res_scale_ + 7) / 8, 1);
+      s.scaled = sc->texture;
+    }
+    hl_sources_[info.dest_base] = s;
+    ++hl_resolves_;
+  }
+
+  // Patch 0148: the present passes of PresentOurs (gamma, SMAA, the resize to the window, sharpening, HDR10) on the
+  // HUD-less resolve, into our own textures. The result is the shown image's size (ow x oh) or 0.
+  gpu::TextureHandle HudlessChain(const RegisterFile& regs, uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
+    std::swap(present_out_, hl_out_);
+    std::swap(present_out_w_, hl_out_w_);
+    std::swap(present_out_h_, hl_out_h_);
+    uint32_t hw = 0, hh = 0;
+    bool table = false;
+    bool ok = GammaPass(regs, hl_present_src_, hl_present_fb_w_, hl_present_fb_h_, hw, hh, table) && hw == w && hh == h;
+    if (ok && smaa_) ok = SmaaPass(w, h);
+    std::swap(present_out_, hl_out_);
+    std::swap(present_out_w_, hl_out_w_);
+    std::swap(present_out_h_, hl_out_h_);
+    if (!ok || !hl_out_) return 0;
+    gpu::TextureHandle out = hl_out_;
+    auto ensure = [&](gpu::TextureHandle& t, uint32_t& tw, uint32_t& th, const char* name) {
+      if (t && tw == ow && th == oh) return true;
+      if (t) backend_->DestroyTexture(t), t = 0;
+      gpu::TextureDesc sd;
+      sd.width = ow;
+      sd.height = oh;
+      sd.format = gpu::Format::kR32Uint;
+      sd.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      sd.debug_name = name;
+      t = backend_->CreateTexture(sd);
+      tw = ow, th = oh;
+      return t != 0;
+    };
+    if (ow != w || oh != h) {  // the shown image was resized to the window (present_scaled_)
+      if (!present_resample_ || !ensure(hl_scaled_, hl_scaled_w_, hl_scaled_h_, "gow2 HUD-less at the window's size"))
+        return 0;
+      gpu::ComputeBindings b;
+      b.constants[0] = w;
+      b.constants[1] = h;
+      b.constants[2] = ow;
+      b.constants[3] = oh;
+      b.constants[4] = present_lanczos_ ? 1u : 0u;
+      b.constant_count = 8;
+      b.srv[0] = out;
+      b.uav_texture = hl_scaled_;
+      backend_->Dispatch(present_resample_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
+      out = hl_scaled_;
+    }
+    if (present_sharpen_ && present_sharp_) {
+      if (!ensure(hl_sharp_, hl_sharp_w_, hl_sharp_h_, "gow2 HUD-less sharpened")) return 0;
+      gpu::ComputeBindings b;
+      b.constants[0] = ow;
+      b.constants[1] = oh;
+      b.constants[4] = std::bit_cast<uint32_t>(float(std::clamp(REXCVAR_GET(gow2_present_sharpen), 0.0, 1.0)));
+      b.constant_count = 8;
+      b.srv[0] = out;
+      b.uav_texture = hl_sharp_;
+      backend_->Dispatch(present_sharpen_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
+      out = hl_sharp_;
+    }
+    if (hdr_ && hdr_encode_) {
+      gpu::ComputeBindings b;
+      b.constants[0] = ow;
+      b.constants[1] = oh;
+      b.constants[4] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_paper_white)));
+      b.constants[5] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_peak)));
+      b.constants[6] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_knee)));
+      b.constants[7] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_expand)));
+      b.constant_count = 8;
+      b.uav_texture = out;
+      backend_->Dispatch(hdr_encode_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
+    }
+    ++hl_images_;
+    if (hl_logged_ < 3 || hl_images_ % 600 == 0) {
+      ++hl_logged_;
+      REXLOG_INFO("gow2_frame_generation_hudless: patch 0148: HUD-less image {}x{} (target copies {}, resolves {}, "
+                  "images {})", ow, oh, hl_takes_, hl_resolves_, hl_images_);
+    }
+    return out;
+  }
+
   // Patch 0147: copies this frame's depth / motion into the slot of the presenter image just written and gives frame
   // generation their native resources; null when this frame made none (no 3D scene: frame generation pauses).
-  void FgHandOver(void* guest_output) {
+  void FgHandOver(void* guest_output, gpu::TextureHandle hl_image = 0, uint32_t hl_w = 0, uint32_t hl_h = 0) {
     if (!XenosFrameGenerationWanted()) return;  // AMD's files or swap chain missing: no copies for nothing
     const bool fresh = fg_.frame == frame_ && fg_.depth && fg_.motion && fg_.width && fg_.height;
     if (!fresh) {
@@ -5795,6 +6013,32 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         return;
       }
     }
+    // Patch 0148: the HUD-less image (packed words) unpacked into the slot in the back buffer's format.
+    const uint32_t hl_fmt = hl_image && hl_w && hl_h ? hl_format_ : 0u;
+    bool hl_ok = false;
+    if (hl_fmt) {
+      if (!slot->hudless || slot->hl_width != hl_w || slot->hl_height != hl_h || slot->hl_format != hl_fmt) {
+        if (slot->hudless) backend_->DestroyTexture(slot->hudless), slot->hudless = 0;
+        gpu::TextureDesc td;
+        td.width = hl_w;
+        td.height = hl_h;
+        td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+        td.format = hl_fmt == 1 ? gpu::Format::kR8G8B8A8Unorm : gpu::Format::kR10G10B10A2Unorm;
+        td.debug_name = "gow2 frame generation HUD-less (presented size)";
+        slot->hudless = backend_->CreateTexture(td);
+        slot->hl_width = hl_w, slot->hl_height = hl_h, slot->hl_format = slot->hudless ? hl_fmt : 0u;
+      }
+      if (slot->hudless) {
+        gpu::ComputeBindings b;
+        b.constants[0] = hl_w;
+        b.constants[1] = hl_h;
+        b.constant_count = 4;
+        b.srv[0] = hl_image;
+        b.uav_texture = slot->hudless;
+        backend_->Dispatch(present_unpack_, b, (hl_w + 7) / 8, (hl_h + 7) / 8, 1);
+        hl_ok = true;
+      }
+    }
     void* dev = nullptr;
     void* list = nullptr;
     if (!backend_->BeginNative(&dev, &list)) {
@@ -5804,6 +6048,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     auto* cl = static_cast<ID3D12GraphicsCommandList*>(list);
     void* out_depth = nullptr;
     void* out_motion = nullptr;
+    void* out_hudless =
+        hl_ok ? backend_->NativeTexture(slot->hudless, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) : nullptr;
     for (int i = 0; i < 2; ++i) {
       const gpu::TextureHandle src = i ? fg_.motion : fg_.depth, dst = i ? slot->motion : slot->depth;
       auto* s = static_cast<ID3D12Resource*>(backend_->NativeTexture(src, D3D12_RESOURCE_STATE_COPY_SOURCE));
@@ -5820,6 +6066,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     XenosFgFrame f;
     f.depth = out_depth;
     f.motion = out_motion;
+    if (out_hudless) {  // patch 0148
+      f.hudless = out_hudless;
+      f.hudless_width = hl_w;
+      f.hudless_height = hl_h;
+    }
     f.width = fg_.width;
     f.height = fg_.height;
     f.jitter_x = fg_.jitter_x;
@@ -6554,6 +6805,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     up_objects_.clear();
     up_camera_ = false;
     up_scene_done_ = false;
+    hl_armed_ = hl_taken_ = false;  // patch 0148 (hl_sources_ is cleared by RequestDisplay, which runs after this)
+    hl_format_ = fg_wanted_ && !presenter_vulkan_ ? XenosFrameGenerationHudlessFormat() : 0u;
     up_scene_copy_.EndFrame();  // notes/80 s.11
     up_depth_saved_ = false;  // notes/80 s.6
     if (up_prev_camera_) vel_prev_objs_.swap(vel_objs_);  // notes/80 s.6 (up_camera_ is already reset): this frame's characters, for the camera position
@@ -8390,6 +8643,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const bool exports = memexport_ && export_shader;
     if (exports && REXCVAR_GET(gow2_renderer_export_prepare_mirror)) MarkExports(r, vsg, true);  // patch 0024
     if (export_shader) backend_->SetGuestWritable(true);
+    if (hl_format_ && up_scene_done_ && !export_shader) HudlessDraw(colour_rt, ps, prim, index_count, depth_writes);
     issue(target, 0);
     if (export_shader) backend_->SetGuestWritable(false);
     if (exports) {
@@ -11067,6 +11321,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.srv[0] = resolve_source;
     b.srv_plane[0] = 0;
     b.uav_texture = dest;
+    const gpu::ComputeBindings b_main = b;  // patch 0148: the HUD-less copy is resolved with the same constants
     const gpu::PipelineHandle resolve_pipe = ms_src ? colour_resolve_ms_ : colour_resolve_;
     // Patch 0119: 32 bpp, single-sample source -> the same step as a draw (the destination is a render target then).
     const bool as_draw = colour_resolve_draw_ && !ms_src && !narrow_or_wide && words == 1;
@@ -11100,6 +11355,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     WriteResolveToGuest(dest, info, endian, words, dx, dy, w, h, scaled_mem);
+    if (hl_format_ && hl_taken_ && hl_snap_ && display_ours_ && dest_bytes == 4 && words == 1 && !ms_src &&
+        !narrow_or_wide && rt->key == hl_key_ && resolve_source == rt->texture && rt->width == hl_snap_w_ &&
+        rt->height == hl_snap_h_ && rt->format == hl_snap_format_)
+      HudlessResolve(b_main, resolve_pipe, info, endian, w, h, dx, dy, sd != nullptr, cross);
     if (display_ours_ && dest_bytes == 4) {  // takeover step 1: remember this frame's colour copies by destination
       DisplaySource& d = display_sources_[info.dest_base];
       d.texture = dest;
