@@ -696,7 +696,9 @@ bool XenosDlssFgInstall(bool hudless, XenosDlssFgFallback fallback) {
   pref.numPathsToPlugins = 1;
   pref.logMessageCallback = &SlLog;
   // Manual hooking (only the swap chain goes through Streamline); no over-the-air plugin downloads.
-  pref.flags = sl::PreferenceFlags::eDisableCLStateTracking | sl::PreferenceFlags::eUseManualHooking;
+  // eUseFrameBasedResourceTagging: required for slSetTagForFrame (found by the RTX 30 test, 7 Nov: every tag was refused)
+  pref.flags = sl::PreferenceFlags::eDisableCLStateTracking | sl::PreferenceFlags::eUseManualHooking |
+               sl::PreferenceFlags::eUseFrameBasedResourceTagging;
   pref.featuresToLoad = features;
   pref.numFeaturesToLoad = uint32_t(std::size(features));
   pref.engine = sl::EngineType::eCustom;
