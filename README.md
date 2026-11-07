@@ -225,7 +225,7 @@ last option reaches Library / Save / Play, and B jumps to Library.
 **Quit game**. Most settings take effect when the game restarts; Restart to apply does that for you.
 
 **Graphics API:** Direct3D 12 is the default and the tested renderer. **Vulkan** is on each game's
-Graphics tab - FSR / DLSS / XeSS and frame generation are Direct3D 12 only. Problem reports from Vulkan help a lot.
+Graphics tab - FSR / DLSS / XeSS and DLSS frame generation are DirectX 12 only; AMD FSR frame generation also works on Vulkan (experimental). Problem reports from Vulkan help a lot.
 
 **DLSS frame generation on RTX 20 / 30 cards (unofficial):** COGBox works with the third-party
 [MFG Unlocker](https://github.com/dashdogy/MFG-Unlocker), which lets older RTX cards use DLSS frame generation. It is not part

@@ -255,8 +255,9 @@ New in 0.4.0 - please read
 
 
 Graphics API: DirectX 12 is the default. Vulkan is on each
-game's Graphics tab for testing; FSR / DLSS / XeSS and frame generation are DirectX 12 only. If
-something looks wrong on Vulkan, please send a problem report.
+game's Graphics tab for testing; FSR / DLSS / XeSS and DLSS frame generation are DirectX 12 only;
+AMD FSR frame generation also works on Vulkan (experimental). If something looks wrong on Vulkan,
+please send a problem report.
 
 Fullscreen: F11, or both triggers (LT + RT) together on a controller, from any screen.
 The window: COGBox grows with its window. "Borderless window" on any game's About tab hides the
@@ -313,12 +314,11 @@ work the same way; the steps below use Radmin VPN.
 5. Every player: the game > Settings > Gameplay > tick "System Link - LAN play".
 6. Start the game, host and join exactly as in A, steps 2-5.
 7. If the joining player does not see the host's game after 10-20 seconds, tell each game the other
-   PCs' Radmin addresses: on EACH PC open (or create) the file extra-args.txt in the COGBox folder
-   (next to CogBox.exe) and add one line with the OTHER players' addresses, commas between several:
-       --net_peer_ip=26.10.20.30
-   Save it, restart the game and try again.
-   With --net_peer_ip set, the game sends its "find games" messages only to the addresses listed
-   there, so with 3 or more PCs every PC must list ALL the other PCs (commas between them).
+   PCs' Radmin addresses: on EACH PC, the game > Settings > Gameplay > "Friends' IP addresses"
+   (under the System Link box): type the OTHER players' addresses, commas between several, for
+   example 26.10.20.30. Restart the game and try again.
+   With addresses there, the game sends its "find games" messages only to them, so with 3 or more
+   PCs every PC must list ALL the other PCs.
 
 If it doesn't work
 - Can't select System Link / "No Network Connection": the box in step 1 is not ticked.
