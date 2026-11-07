@@ -500,6 +500,17 @@ int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, st
       // GitHub #145: only a twin with every object this package exports. GearGame_LOC_ESM lacks one sound the other
       // languages' GearGame_LOC have; given it, the game read a null object at start-up. When either table cannot be
       // read, the package keeps its own language.
+      // GitHub #216 / #217 (0.4.6: Gears 2 crashed at start with a voice language): since 0.4.6 can read packages
+      // compressed as a whole, ~170 more twins were swapped in - and one of them gave the game a null object at start-up
+      // (guest write of 0x00000003, as #145). Such packages keep their own language again, as in 0.4.5.
+      {
+        const auto whole = [](const fs::path& f) { return ue3::DescribePackageSummary(f).rfind("compressed as a whole", 0) == 0; };
+        if (whole(p) || whole(twin->second)) {
+          ++kept, ++kept_no_own_table;
+          why(p, "compressed as a whole - keeps its own language (GitHub #216)");
+          continue;
+        }
+      }
       std::set<std::string> mine;
       auto theirs = twinExports.find(twin->second);   // one twin serves every other language: read it once
       if (theirs == twinExports.end()) {
