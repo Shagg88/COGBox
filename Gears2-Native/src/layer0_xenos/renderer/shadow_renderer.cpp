@@ -3028,6 +3028,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         hl_present_src_ = hl->second;
         hl_present_fb_w_ = fb_width, hl_present_fb_h_ = fb_height;
         hl_present_has_ = !it->second.scaled || hl->second.scaled;
+        ++hl_st_.fb_match;
+        if (!hl_present_has_) ++hl_st_.fb_scaled;
         if (it->second.scaled && hl->second.scaled) {
           DisplaySource& s = hl_present_src_;
           s.texture = s.scaled;
@@ -4515,6 +4517,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::TextureHandle hl_out_ = 0, hl_scaled_ = 0, hl_sharp_ = 0;
   uint32_t hl_out_w_ = 0, hl_out_h_ = 0, hl_scaled_w_ = 0, hl_scaled_h_ = 0, hl_sharp_w_ = 0, hl_sharp_h_ = 0;
   uint64_t hl_takes_ = 0, hl_resolves_ = 0, hl_images_ = 0, hl_logged_ = 0;
+  // Stage counters (eb0227f: "given 0, none made 600" - which stage never matches), logged every 600 frames.
+  struct HlStages {
+    uint64_t frames = 0, scene_frames = 0;           // frames with the HUD-less work on; of those, with the scene resolve
+    uint64_t draws = 0, msaa = 0, narrow = 0;        // draws after the scene resolve; skipped as MSAA / below scene width
+    uint64_t no_quad = 0, no_cover = 0, blended = 0, depth = 0;  // why a draw did not arm
+    uint64_t arms = 0, after_arm = 0, other_key = 0, take_fail = 0;  // arming; draws after it; on another target; copy failed
+    uint64_t res_cands = 0, res_key = 0, res_source = 0, res_size = 0, res_fmt = 0;  // resolves after a take; rejects
+    uint64_t fb_match = 0, fb_scaled = 0, chain_fail = 0;  // the front buffer had a HUD-less resolve; scale mismatch
+  } hl_st_;
+  void HlStagesLog() {
+    const HlStages& c = hl_st_;
+    REXLOG_INFO("gow2_frame_generation_hudless: patch 0148 stages: frames {} with scene {}; draws after scene {} (msaa "
+                "{}, narrow {}, not quad {}, not covering {}, blended {}, depth writes {}); armed {}, draws after arm "
+                "{} (other target {}), taken {} (copy failed {}); resolves after take {} (other target {}, upscaler "
+                "source {}, size {}, format {}), replayed {}; front buffer matched {} (scale mismatch {}); images {} "
+                "(chain failed {})",
+                c.frames, c.scene_frames, c.draws, c.msaa, c.narrow, c.no_quad, c.no_cover, c.blended, c.depth, c.arms,
+                c.after_arm, c.other_key, hl_takes_, c.take_fail, c.res_cands, c.res_key, c.res_source, c.res_size,
+                c.res_fmt, hl_resolves_, c.fb_match, c.fb_scaled, hl_images_, c.chain_fail);
+  }
   FgInputs fg_{};
   uint64_t fg_made_ = 0, fg_resets_ = 0;  // log window
   gpu::PipelineHandle up_depth_pipe_ = 0, up_motion_pipe_ = 0;
@@ -5808,14 +5830,29 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void HudlessDraw(rr::RenderTarget* const* colour_rt, const rr::PipelineState& ps, uint32_t prim, uint32_t index_count,
                    bool depth_writes) {
     rr::RenderTarget* c = colour_rt[0];
-    if (!c || !c->texture || c->key.msaa) return;
+    if (!c || !c->texture) return;
+    ++hl_st_.draws;
+    if (c->key.msaa) {
+      ++hl_st_.msaa;
+      return;
+    }
     bool blends = false;
     for (uint32_t i = 0; i < 4; ++i)
       if (colour_rt[i] && ps.blend.rt[i].blend_enable) blends = true;
     const bool quad = prim == 0x08 || (index_count > 0 && index_count <= 6);  // review: a non-indexed draw (0) is not a quad
     const bool covers = ps.scissor.x == 0 && ps.scissor.y == 0 && uint64_t(ps.scissor.width) * 10 >= uint64_t(c->width) * 9 &&
                         uint64_t(ps.scissor.height) * 10 >= uint64_t(c->height) * 9;
+    if (c->guest_width < kSceneMinWidth) ++hl_st_.narrow;
+    else if (!quad) ++hl_st_.no_quad;
+    else if (!covers) ++hl_st_.no_cover;
+    else if (blends) ++hl_st_.blended;
+    else if (depth_writes) ++hl_st_.depth;
+    if (hl_armed_ && !hl_taken_) {
+      ++hl_st_.after_arm;
+      if (!(c->key == hl_key_)) ++hl_st_.other_key;
+    }
     if (!blends && !depth_writes && quad && covers && c->guest_width >= kSceneMinWidth) {  // a post pass: (re)arm
+      ++hl_st_.arms;
       hl_armed_ = true;
       hl_taken_ = false;
       hl_key_ = c->key;
@@ -5837,6 +5874,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     void* dev = nullptr;
     void* list = nullptr;
     if (!hl_snap_ || !backend_->BeginNative(&dev, &list)) {
+      ++hl_st_.take_fail;
       hl_taken_ = false;
       hl_armed_ = false;
       return;
@@ -5846,6 +5884,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (s && d) static_cast<ID3D12GraphicsCommandList*>(list)->CopyResource(d, s);
     backend_->EndNative();  // our bindings are re-applied; the draw's SetRenderTargets moves the target back
     if (!s || !d) {
+      ++hl_st_.take_fail;
       hl_taken_ = hl_armed_ = false;
       return;
     }
@@ -5914,7 +5953,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     std::swap(present_out_, hl_out_);
     std::swap(present_out_w_, hl_out_w_);
     std::swap(present_out_h_, hl_out_h_);
-    if (!ok || !hl_out_) return 0;
+    if (!ok || !hl_out_) {
+      ++hl_st_.chain_fail;
+      return 0;
+    }
     gpu::TextureHandle out = hl_out_;
     auto ensure = [&](gpu::TextureHandle& t, uint32_t& tw, uint32_t& th, const char* name) {
       if (t && tw == ow && th == oh) return true;
@@ -6805,6 +6847,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (up_camera_) up_prev_objects_.swap(up_objects_);
     up_objects_.clear();
     up_camera_ = false;
+    if (hl_format_) {  // patch 0148 stage counters, for the frame that ends here
+      ++hl_st_.frames;
+      if (up_scene_done_) ++hl_st_.scene_frames;
+      if (hl_st_.frames == 60 || hl_st_.frames % 600 == 0) HlStagesLog();
+    }
     up_scene_done_ = false;
     hl_armed_ = hl_taken_ = false;  // patch 0148 (hl_sources_ is cleared by RequestDisplay, which runs after this)
     hl_format_ = fg_wanted_ && !presenter_vulkan_ ? XenosFrameGenerationHudlessFormat() : 0u;
@@ -11356,6 +11403,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     WriteResolveToGuest(dest, info, endian, words, dx, dy, w, h, scaled_mem);
+    if (hl_format_ && hl_taken_ && hl_snap_ && display_ours_ && dest_bytes == 4 && words == 1 && !ms_src &&
+        !narrow_or_wide) {
+      ++hl_st_.res_cands;
+      if (!(rt->key == hl_key_)) ++hl_st_.res_key;
+      else if (resolve_source != rt->texture) ++hl_st_.res_source;
+      else if (rt->width != hl_snap_w_ || rt->height != hl_snap_h_) ++hl_st_.res_size;
+      else if (rt->format != hl_snap_format_) ++hl_st_.res_fmt;
+    }
     if (hl_format_ && hl_taken_ && hl_snap_ && display_ours_ && dest_bytes == 4 && words == 1 && !ms_src &&
         !narrow_or_wide && rt->key == hl_key_ && resolve_source == rt->texture && rt->width == hl_snap_w_ &&
         rt->height == hl_snap_h_ && rt->format == hl_snap_format_)
