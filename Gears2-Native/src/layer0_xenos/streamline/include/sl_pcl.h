@@ -87,7 +87,7 @@ enum class PCLMarker: uint32_t
 };
 
 // c++23 has to_underlying implementation
-#if __cplusplus == 202302L
+#if 0  // COGBox: the C++23 branch is not valid C++ and clang-cl lacks std::to_underlying - always the fallback
 using to_underlying = std::to_underlying;
 #else
 // Return `enum class` member as value of underlying type (i.e. an int).  Basically same as:

@@ -49,15 +49,6 @@ REXCVAR_DEFINE_STRING(gow2_dlss_fg_mode, "2x", "Gears2",
 #include <d3d12.h>
 #include <dxgi1_6.h>
 
-// Streamline's headers use C++23 std::to_underlying; the ports build as C++20 (job 1366).
-#include <type_traits>
-#include <utility>
-#if !defined(__cpp_lib_to_underlying)
-namespace std {
-template <class E>
-constexpr underlying_type_t<E> to_underlying(E e) noexcept { return static_cast<underlying_type_t<E>>(e); }
-}  // namespace std
-#endif
 #include <math.h>  // sl_matrix_helpers.h uses sqrtf unqualified
 
 #include <sl.h>
