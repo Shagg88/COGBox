@@ -71,6 +71,7 @@ New in 0.4.7
 - DLSS / FSR / XeSS in Gears 3 and Judgment: characters and other moving objects get their own motion vectors, so
   they no longer smear or flicker (#150, #147). Gears 1 keeps DLSS experimental (its characters still flicker with
   DLSS; SMAA is clean).
+- DLSS is no longer marked highly experimental in Gears 2, Gears 3 and Judgment (still is in Gears 1).
 - Gears 3: "Horde bots" (Gameplay tab, off by default): in local Horde, press Back / View on the first Horde
   scoreboard to add two bots (thanks to francoissubke-blip for the tip, #89). New - not tested in a full Horde game
   yet.
