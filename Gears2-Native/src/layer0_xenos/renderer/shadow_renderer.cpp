@@ -4606,6 +4606,54 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint64_t up_scene_phase_frames_ = 0, up_no_flip_ = 0;
   gpu::Format up_out_format_ = gpu::Format::kR16G16B16A16Float;
   bool up_camera_ = false, up_prev_camera_ = false, up_scene_done_ = false, up_last_ok_ = false, up_frame_ok_ = false;
+  // Gears 1 (up_vp_auto_): a level where no scene draw shows the camera alone (identity object rows) - Tyro's train,
+  // all of it placed objects - takes the camera from any draw, (object x camera) x object rows^-1. Decided per frame
+  // from the frame before, so levels with level geometry keep the camera off it exactly as before.
+  bool up_rows_camera_ = false, up_identity_seen_ = false;
+  uint32_t up_scene_draws_seen_ = 0;
+  // The frame's draws vote: the first draw's camera can be a special projection (Tyro's backdrop: near ~15000, half the
+  // vertical field of view), so up_vp_ follows the camera most draws agree on (each column within 0.3% of its size).
+  struct RowsCameraVote { float m[16]; double sum[16]; uint32_t n; };
+  std::vector<RowsCameraVote> up_rows_votes_;
+  void VoteRowsCamera(const float d[16]) {
+    float fov = 0.0f, zn = 0.0f;
+    bool inf = false;
+    if (!rr::upscale::PerspectiveParams(rr::upscale::FromConstantsTransposed(d, 0), fov, zn, inf) || !(fov > 0.1f && fov < 3.0f))
+      return;
+    // Column by column (M(i, j) = d[4 j + i]), each against its own size: the translation column is thousands of
+    // units, the others about 1, so one tolerance for the whole matrix let different rotations into one cluster.
+    float col[4] = {};
+    for (int j = 0; j < 4; ++j)
+      for (int i = 0; i < 4; ++i) col[j] = std::max(col[j], std::fabs(d[4 * j + i]));
+    for (float c : col)
+      if (!std::isfinite(c)) return;
+    RowsCameraVote* hit = nullptr;
+    for (RowsCameraVote& v : up_rows_votes_) {
+      bool same = true;
+      for (int j = 0; j < 4 && same; ++j)
+        for (int i = 0; i < 4 && same; ++i) same = std::fabs(v.m[4 * j + i] - d[4 * j + i]) <= 3e-3f * col[j] + 1e-6f;
+      if (same) { hit = &v; break; }
+    }
+    if (!hit) {
+      if (up_rows_votes_.size() >= 8) return;
+      hit = &up_rows_votes_.emplace_back();
+      std::memcpy(hit->m, d, sizeof(hit->m));
+      for (double& x : hit->sum) x = 0.0;
+      hit->n = 0;
+    }
+    ++hit->n;
+    for (int i = 0; i < 16; ++i) hit->sum[i] += d[i];
+    const RowsCameraVote* best = &up_rows_votes_[0];
+    for (const RowsCameraVote& v : up_rows_votes_)
+      if (v.n > best->n) best = &v;
+    float mean[16];  // the cluster's mean: the draws' small differences (~1e-3, their rotations' precision) average out
+    for (int i = 0; i < 16; ++i) mean[i] = float(best->sum[i] / double(best->n));
+    if (std::memcmp(up_vp_, mean, sizeof(up_vp_)) != 0) {
+      std::memcpy(up_vp_, mean, sizeof(up_vp_));
+      up_depth_a_ = rr::upscale::DepthAtInfinity(rr::upscale::FromConstantsTransposed(up_vp_, 0));
+      ao_constants_state_ = 0;
+    }
+  }
   rr::RenderTargetKey up_depth_key_{};
   float up_vp_[16] = {}, up_prev_vp_[16] = {};
   rr::upscale::Jitter up_jitter_{};      // applied to this frame's scene draws
@@ -4839,12 +4887,58 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     static const float kId[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     return std::memcmp(&r[kRegFloatConstVs + ob * 4], kId, sizeof(kId)) == 0;
   }
+  // The camera block (constants layout, as the game's c[b..b+3]) behind a draw's object x camera at c[b..b+3]: that
+  // matrix times the inverse of its object rows' rotation, in double. False without affine rows or a finite result.
+  bool CameraFromRows(const uint32_t* r, const rr::GuestShader& vsg, uint32_t b, float out[16]) const {
+    const uint32_t ob = up_object_base_;
+    if (!(vsg.Reads(ob) && vsg.Reads(ob + 1) && vsg.Reads(ob + 2) && vsg.Reads(ob + 3))) return false;
+    float o[16], l[16];
+    std::memcpy(o, &r[kRegFloatConstVs + ob * 4], sizeof(o));
+    std::memcpy(l, &r[kRegFloatConstVs + b * 4], sizeof(l));
+    if (!(o[15] == 1.0f && o[3] == 0.0f && o[7] == 0.0f && o[11] == 0.0f)) return false;
+    // FromConstantsTransposed: M(i, j) = c[4 j + i]. O = [R t; 0 1] with R(i, j) = o[4 j + i], t(i) = o[12 + i].
+    // Measured in Prison against the level geometry's camera: where c4-c7 is a perspective at all, it is the camera times
+    // the object's rotation only - no scale (a camera taken with the full rows had a near plane of 10 x the object's
+    // scale) and no translation (the shader adds that itself). So each local axis (a column of R) is taken at unit
+    // length and the translation left out; draws whose c4-c7 is something else give no perspective and get no vote.
+    double R[3][3], tv[3], inv[3][3];
+    for (int j = 0; j < 3; ++j) {
+      const double len = std::sqrt(double(o[4 * j]) * o[4 * j] + double(o[4 * j + 1]) * o[4 * j + 1] + double(o[4 * j + 2]) * o[4 * j + 2]);
+      if (!(len > 1e-12) || !std::isfinite(len)) return false;
+      for (int i = 0; i < 3; ++i) R[i][j] = o[4 * j + i] / len;
+    }
+    for (int i = 0; i < 3; ++i) tv[i] = 0.0;
+    const double det = R[0][0] * (R[1][1] * R[2][2] - R[1][2] * R[2][1]) - R[0][1] * (R[1][0] * R[2][2] - R[1][2] * R[2][0]) +
+                       R[0][2] * (R[1][0] * R[2][1] - R[1][1] * R[2][0]);
+    if (!(std::fabs(det) > 1e-12) || !std::isfinite(det)) return false;
+    for (int i = 0; i < 3; ++i)
+      for (int j = 0; j < 3; ++j) {
+        const int a = (j + 1) % 3, bb = (j + 2) % 3, c = (i + 1) % 3, d = (i + 2) % 3;
+        inv[i][j] = (R[a][c] * R[bb][d] - R[a][d] * R[bb][c]) / det;
+      }
+    double oi[4][4] = {};  // O^-1 = [R^-1  -R^-1 t; 0 1]
+    for (int i = 0; i < 3; ++i) {
+      double ti = 0.0;
+      for (int j = 0; j < 3; ++j) oi[i][j] = inv[i][j], ti -= inv[i][j] * tv[j];
+      oi[i][3] = ti;
+    }
+    oi[3][3] = 1.0;
+    for (int i = 0; i < 4; ++i)
+      for (int j = 0; j < 4; ++j) {
+        double v = 0.0;
+        for (int k = 0; k < 4; ++k) v += double(l[4 * k + i]) * oi[k][j];  // L(i, k) = l[4 k + i]
+        out[4 * j + i] = float(v);
+        if (!std::isfinite(out[4 * j + i])) return false;
+      }
+    return true;
+  }
   void FindCameraMatrix(const uint32_t* r, const rr::GuestShader& vsg) {
     if (up_vp_tries_ >= 64) return;
     // Job 716: Gears 1's c4-c7 are the object rows times the camera (job 715's boot: found on a scaled, moved object,
     // so only 5 draws a frame matched). The camera alone is there only on a draw whose object rows are the identity
     // (the level's own geometry), so a draw with other object rows is passed over.
-    if (!ObjectRowsIdentity(r, vsg)) return;
+    const bool rows_identity = ObjectRowsIdentity(r, vsg);
+    if (!rows_identity && !up_rows_camera_) return;
     ++up_vp_tries_;
     if (up_vp_tries_ == 1)  // what the first scene draw reads, so a miss can be worked out from one log
       for (uint32_t b = 0; b + 3 < 64; b += 4) {
@@ -4857,7 +4951,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (b + 3 >= up_object_base_ && b <= up_object_base_ + 3) continue;
       if (!(vsg.Reads(b) && vsg.Reads(b + 1) && vsg.Reads(b + 2) && vsg.Reads(b + 3))) continue;
       float m[16];
-      std::memcpy(m, &r[kRegFloatConstVs + b * 4], sizeof(m));
+      if (rows_identity) std::memcpy(m, &r[kRegFloatConstVs + b * 4], sizeof(m));
+      else if (!CameraFromRows(r, vsg, b, m)) continue;
       bool finite = true;
       for (float x : m) finite = finite && std::isfinite(x);
       if (!finite || (m[3] == 0.0f && m[7] == 0.0f && m[11] == 0.0f)) continue;  // no w from position: not perspective
@@ -4883,6 +4978,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // depth get the jitter besides the camera draws - 1: also those whose vertex shader does not read c0-c3, 2: also
     // those with other c0-c3. A depth prepass drawn jittered and a base pass drawn unjittered fail UE3's depth-equal
     // test in patches (black / missing surfaces).
+    if (up_vp_auto_ && depth_writes && depth->guest_width >= kSceneMinWidth && depth->guest_height >= kSceneMinHeight) {
+      ++up_scene_draws_seen_;
+      if (ObjectRowsIdentity(r, vsg)) up_identity_seen_ = true;
+    }
     if (up_vp_base_ < 0) {  // job 715: find the camera matrix on the first scene draw that has one
       if (!depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < kSceneMinHeight) return;
       FindCameraMatrix(r, vsg);
@@ -4901,6 +5000,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     float c[16];
     std::memcpy(c, &r[kRegFloatConstVs + cb * 4], sizeof(c));
+    bool rows_camera = false;  // c now holds the camera taken from this draw's rows (Tyro)
+    if (up_vp_auto_ && up_rows_camera_ && !up_camera_ && !ObjectRowsIdentity(r, vsg)) rows_camera = CameraFromRows(r, vsg, cb, c);
+    if (up_vp_auto_ && up_rows_camera_ && up_camera_ && depth_writes && IsSceneDepth(*depth) && !ObjectRowsIdentity(r, vsg)) {
+      float d[16];
+      if (CameraFromRows(r, vsg, cb, d)) VoteRowsCamera(d);
+    }
     if (up_camera_ && up_jitter_scope_ >= 2 && IsSceneDepth(*depth) && std::memcmp(c, up_vp_, sizeof(c)) != 0) {
       if (up_last_ok_) {
         v.x += up_jitter_.x;
@@ -4920,7 +5025,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                                          rr::ao::ViewportDepthMap(ps.viewport),
                                                          uint32_t(ps.viewport.width), uint32_t(ps.viewport.height), probe);
       if (!depth_writes || depth->guest_width < kSceneMinWidth || depth->guest_height < kSceneMinHeight ||
-          (up_vp_auto_ && !ObjectRowsIdentity(r, vsg)) || !perspective) {  // job 716: the camera alone, not one object's
+          (up_vp_auto_ && !rows_camera && !ObjectRowsIdentity(r, vsg)) || !perspective) {  // job 716: the camera alone
         // Job 726 (job 725's captures: the lighting on stone changed frame to frame in the INPUT): Gears 1 draws its
         // objects into the scene depth before the first level-geometry draw, so they were drawn unjittered while the
         // later passes were jittered, and UE3's depth-equal light passes failed in patches. Draws into last frame's
@@ -4935,6 +5040,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
       up_camera_ = true;
       ++up_camera_frames_;  // Gears 3 job 054
+      up_rows_votes_.clear();
       if (up_camera_reg_ && vsg.Reads(up_camera_reg_)) {  // Gears 3 job 056: the camera's world position
         std::memcpy(up_cam_pos_, &r[kRegFloatConstVs + up_camera_reg_ * 4], sizeof(float) * 3);
         up_cam_pos_ok_ = std::isfinite(up_cam_pos_[0]) && std::isfinite(up_cam_pos_[1]) && std::isfinite(up_cam_pos_[2]);
@@ -4947,6 +5053,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ao_constants_state_ = 0;
       std::memcpy(up_vp_, c, sizeof(c));
       up_depth_a_ = rr::upscale::DepthAtInfinity(rr::upscale::FromConstantsTransposed(up_vp_, 0));
+      if (rows_camera) VoteRowsCamera(c);
     } else if (!IsSceneDepth(*depth) || std::memcmp(c, up_vp_, sizeof(c)) != 0) {
       return;
     }
@@ -7226,6 +7333,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (up_camera_) std::memcpy(up_prev_vp_, up_vp_, sizeof(up_vp_));
     if (up_camera_) up_prev_objects_.swap(up_objects_);
     up_objects_.clear();
+    if (up_vp_auto_) {
+      const bool rows = !up_identity_seen_ && up_scene_draws_seen_ >= 50;
+      if (rows != up_rows_camera_)
+        REXLOG_INFO("gow2_upscaler: frame {}: {} ({} scene draws, none with identity object rows)", frame_ + 1,
+                    rows ? "camera taken from the object rows (no level geometry drawn alone)" : "camera from level geometry again",
+                    up_scene_draws_seen_);
+      up_rows_camera_ = rows;
+      up_identity_seen_ = false;
+      up_scene_draws_seen_ = 0;
+    }
     up_camera_ = false;
     if (hl_format_) {  // patch 0148 stage counters, for the frame that ends here
       ++hl_st_.frames;
