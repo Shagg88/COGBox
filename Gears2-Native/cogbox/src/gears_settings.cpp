@@ -816,6 +816,7 @@ void Store::remember(Game g, const Settings& s) {   // PS1 450-455
     const int gi = static_cast<int>(g);
     own[gi]["Start"] = s.f("Start"); own[gi]["Aniso"] = s.f("Aniso"); own[gi]["FpsMode"] = s.f("FpsMode");
     if (g != Game::Judgment && g != Game::Gears1) own[gi]["Version"] = s.f("Version");
+    for (const Option& o : options(g)) if (o.scope == Scope::GameOwn && o.id != "Version") own[gi][o.id] = s.f(o.id);   // GitHub #222: AimTurn, HideNotes, UnlockInsane, HordeBots were never kept
     for (const Option& o : options(g)) if (o.scope == Scope::PerGame) per[gi][o.id] = s.f(o.id);   // PS1 419-427
 }
 
@@ -824,6 +825,7 @@ void Store::commit(Game g, const Settings& s, const Environment& env) {   // PS1
     last_game = gi;
     own[gi]["Start"] = s.f("Start"); own[gi]["Aniso"] = s.f("Aniso"); own[gi]["FpsMode"] = s.f("FpsMode");
     if (g != Game::Judgment && g != Game::Gears1 && env.update_ready) own[gi]["Version"] = s.f("Version");   // PS1 761-762
+    for (const Option& o : options(g)) if (o.scope == Scope::GameOwn && o.id != "Version") own[gi][o.id] = s.f(o.id);   // GitHub #222: AimTurn, HideNotes, UnlockInsane, HordeBots were never kept
     for (const Option& o : options(g)) {
         if (o.scope == Scope::GameOwn) continue;
         top[o.id] = s.f(o.id);
