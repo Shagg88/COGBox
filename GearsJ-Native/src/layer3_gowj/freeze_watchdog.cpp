@@ -227,7 +227,17 @@ void Dump(double seconds, uint64_t swaps, bool second) {
     }
   }
 #if defined(_WIN32)
-  DumpHostStacks(guest_of_host);
+  // 0.4.8 AMD / SteamOS review: under Wine / Proton, SuspendThread works through signals and RtlLookupFunctionEntry
+  // takes the loader lock, so a thread suspended while holding it (or inside the Unix side) would deadlock this thread
+  // and leave the game thread suspended for good. The guest report above is enough there; skip the host stacks.
+  static const bool wine = [] {
+    HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+    return nt && GetProcAddress(nt, "wine_get_version") != nullptr;
+  }();
+  if (wine)
+    REXLOG_INFO("gowj_freeze: host thread stacks skipped under Wine / Proton");
+  else
+    DumpHostStacks(guest_of_host);
 #endif
   REXLOG_INFO("gowj_freeze: end of report");
 }
