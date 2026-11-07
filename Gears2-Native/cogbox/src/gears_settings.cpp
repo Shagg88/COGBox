@@ -591,6 +591,7 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1) return no("Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it.");
     } else if (f == "gamma") {   // GitHub #185 (Shagg 7 Nov): Judgment only
         if (g != Game::Judgment) return no("Judgment only.");
+        if (!cap_exe(env, "gow2_present_gamma")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "filmgrain") {
         if (g != Game::Judgment) return no("Judgment only.");
         if (!cap_exe(env, "gowj_no_film_grain")) return no(not_yet(gi, "needs its next build"));
