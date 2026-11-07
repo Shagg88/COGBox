@@ -1465,8 +1465,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             const int top = fgOn ? hz / 2 : hz;
             // review 0.4.6: 60 on a 59 Hz mode (59.94 Hz TVs) is "at the refresh rate" too (GitHub #106) - kept
             if (hz >= 50 && (cap < 0 || cap > top + 1)) cap = top;
-            // review 0158: Gears 3's 60 is its own 62 cap - not with frame generation, where 62 doubled is over the refresh
-            if (isG3 && cap == 60 && !fgOn) cap = 62;
+            // GitHub #225: Gears 3's 60 stays 60 with vsync too (62 on a 60 Hz screen ran at 62 with uneven pacing)
             notes.push_back("launcher: vsync on; " + env.monitor_device + " at " + std::to_string(hz) + " Hz (0 = unknown)" +
                             (fgOn ? ", frame generation on" : "") + " -> frame-rate cap " + std::to_string(cap));
         }
