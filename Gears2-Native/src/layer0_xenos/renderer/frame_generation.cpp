@@ -108,6 +108,22 @@ bool g_hudless_on = false;                  // --gow2_frame_generation_hudless
 std::atomic<uint32_t> g_hudless_format{0};  // for the renderer: 0 none, 1 R8G8B8A8_UNORM, 2 R10G10B10A2_UNORM
 ID3D12Resource* g_hl_tex = nullptr;
 DXGI_FORMAT g_hl_format = DXGI_FORMAT_UNKNOWN;
+bool g_hl_link_failed = false;  // patch 0148: AMD refused the RGBA8 HUD-less format next to a BGRA8 back buffer
+
+// Patch 0148: the HUD-less texture's format for a back buffer format. A B8G8R8A8 back buffer gets an R8G8B8A8 one (the
+// renderer has no BGRA8 format; AMD takes a different HUD-less format through ffxCreateContextDescFrameGenerationHudless,
+// and both are read as RGBA through their views, so no channel swap). UNKNOWN = not handled.
+DXGI_FORMAT HudlessFormatFor(DXGI_FORMAT back) {
+  switch (back) {
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+      return back;
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+      return DXGI_FORMAT_R8G8B8A8_UNORM;
+    default:
+      return DXGI_FORMAT_UNKNOWN;
+  }
+}
 uint32_t g_hl_w = 0, g_hl_h = 0;
 uint64_t g_hl_used = 0, g_hl_missing = 0, g_hl_mismatch = 0;  // log window
 
@@ -265,7 +281,27 @@ bool EnsureFrameGeneration(const XenosFgFrame& f) {
   c.displaySize = {sd.Width, sd.Height};
   c.maxRenderSize = {std::max(f.width, g_fg_render_w), std::max(f.height, g_fg_render_h)};
   c.backBufferFormat = ffxApiGetSurfaceFormatDX12(sd.Format);
-  const ffxReturnCode_t rc = g_fn.CreateContext(&g_fg_ctx, &c.header, nullptr);
+  // Patch 0148: a HUD-less format other than the back buffer's must be named at creation (only with the flag on).
+  ffxCreateContextDescFrameGenerationHudless hl{};
+  const DXGI_FORMAT hl_format = HudlessFormatFor(sd.Format);
+  const bool hl_link = g_hudless_on && !g_hl_link_failed && hl_format != DXGI_FORMAT_UNKNOWN && hl_format != sd.Format;
+  if (hl_link) {
+    hl.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION_HUDLESS;
+    hl.header.pNext = &ver.header;
+    hl.hudlessBackBufferFormat = ffxApiGetSurfaceFormatDX12(hl_format);
+    c.header.pNext = &hl.header;
+  }
+  ffxReturnCode_t rc = g_fn.CreateContext(&g_fg_ctx, &c.header, nullptr);
+  if (hl_link && (rc != FFX_API_RETURN_OK || !g_fg_ctx)) {  // keep frame generation; drop only the HUD-less image
+    REXLOG_WARN("gow2_frame_generation_hudless: AMD refused HUD-less format {} with back buffer format {} (code {}); "
+                "no HUD-less image", uint32_t(hl_format), uint32_t(sd.Format), uint32_t(rc));
+    if (g_fg_ctx) g_fn.DestroyContext(&g_fg_ctx, nullptr);
+    g_fg_ctx = nullptr;
+    g_hl_link_failed = true;
+    g_hudless_format.store(0, std::memory_order_relaxed);
+    c.header.pNext = &ver.header;
+    rc = g_fn.CreateContext(&g_fg_ctx, &c.header, nullptr);
+  }
   if (rc != FFX_API_RETURN_OK || !g_fg_ctx) {
     g_fg_ctx = nullptr;
     g_fg_failed = true;
@@ -289,7 +325,9 @@ bool EnsureFrameGeneration(const XenosFgFrame& f) {
 
 // Patch 0148: the back-buffer-sized HUD-less texture (made again when the back buffer's size or format changes).
 bool EnsureHudless(const DXGI_SWAP_CHAIN_DESC1& sd) {
-  if (g_hl_tex && g_hl_w == sd.Width && g_hl_h == sd.Height && g_hl_format == sd.Format) return true;
+  const DXGI_FORMAT format = HudlessFormatFor(sd.Format);
+  if (format == DXGI_FORMAT_UNKNOWN || g_hl_link_failed) return false;
+  if (g_hl_tex && g_hl_w == sd.Width && g_hl_h == sd.Height && g_hl_format == format) return true;
   WaitForPresents();  // AMD may still read the old one
   WaitForPrepareLists();
   ReleaseHudless();
@@ -302,7 +340,7 @@ bool EnsureHudless(const DXGI_SWAP_CHAIN_DESC1& sd) {
   rd.Height = sd.Height;
   rd.DepthOrArraySize = 1;
   rd.MipLevels = 1;
-  rd.Format = sd.Format;
+  rd.Format = format;
   rd.SampleDesc.Count = 1;
   rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
   D3D12_CLEAR_VALUE* no_clear = nullptr;
@@ -313,7 +351,7 @@ bool EnsureHudless(const DXGI_SWAP_CHAIN_DESC1& sd) {
     return false;
   }
   g_hl_tex->SetName(L"gow2 frame generation HUD-less colour");
-  g_hl_w = sd.Width, g_hl_h = sd.Height, g_hl_format = sd.Format;
+  g_hl_w = sd.Width, g_hl_h = sd.Height, g_hl_format = format;
   return true;
 }
 
@@ -435,11 +473,13 @@ bool MakeSwapChain(void* factory, void* queue, void* hwnd, const void* desc, voi
   }
   g_swap_chain = sc;
   g_fg_failed = false;
-  // Patch 0148: the renderer makes its HUD-less image in the back buffer's format (a straight copy then).
+  // Patch 0148: the renderer makes its HUD-less image in the HUD-less texture's format (a straight copy then).
+  g_hl_link_failed = false;
+  const DXGI_FORMAT hl_format = HudlessFormatFor(g_desc.Format);
   g_hudless_format.store(!g_hudless_on ? 0u
-                         : g_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM    ? 1u
-                         : g_desc.Format == DXGI_FORMAT_R10G10B10A2_UNORM ? 2u
-                                                                          : 0u,
+                         : hl_format == DXGI_FORMAT_R8G8B8A8_UNORM    ? 1u
+                         : hl_format == DXGI_FORMAT_R10G10B10A2_UNORM ? 2u
+                                                                      : 0u,
                          std::memory_order_relaxed);
   if (g_hudless_on && !g_hudless_format.load(std::memory_order_relaxed))
     REXLOG_WARN("gow2_frame_generation_hudless: back buffer format {} not handled; no HUD-less image",
