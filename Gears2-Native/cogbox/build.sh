@@ -38,7 +38,7 @@ for f in src/*.cpp ../src/layer2_ue3/prebuild_lzx.cpp ../src/layer0_xenos/achiev
   $CXX $FLAGS -c $f -o $o
 done
 $CXX -mwindows -static -static-libgcc -static-libstdc++ $([ "$1" = debug ] || echo -s) -o $OUT/CogBox.exe $objs $OUT/obj/cogbox.res.o \
-  $SDL/lib/libSDL3.dll.a -lshell32 -lole32 -luuid -lwinhttp -lbcrypt -ladvapi32 -ldxgi -lcomdlg32
+  $SDL/lib/libSDL3.dll.a -lshell32 -lole32 -luuid -lwinhttp -lbcrypt -ladvapi32 -ldxgi -lcomdlg32 -lversion
 cp $SDL/bin/SDL3.dll $OUT/ 2>/dev/null || true
 cp $FF/bin/avcodec-*.dll $FF/bin/avutil-*.dll $OUT/ 2>/dev/null || true
 ls -la $OUT/CogBox.exe

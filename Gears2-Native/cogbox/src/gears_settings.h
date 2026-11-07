@@ -38,6 +38,9 @@ struct Capability {
     std::function<bool(const std::string& needle)> runtime_has;
     // A file of this name is next to the exe (PS1 280, 852-854).
     std::function<bool(const std::string& name)> file_next_to_exe;
+    // A file of this name is next to the exe (as above) and its version resource's ProductName or FileDescription
+    // contains this text (case-insensitive). False when the file has no version resource.
+    std::function<bool(const std::string& name, const std::string& text)> file_product_has;
 };
 
 // Everything about this PC / install for ONE game (the one being shown or started).

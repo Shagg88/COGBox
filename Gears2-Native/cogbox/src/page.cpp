@@ -14,6 +14,7 @@
 #include <objbase.h>
 #include <dxgi.h>
 #include <cmath>
+#include <cwctype>
 #include <cstdio>
 #include <algorithm>
 
@@ -71,6 +72,40 @@ void report_now(App &a, int g, const std::string &session, bool versionOk)
     std::string zip, err;
     if (make_report(a, g, session, "", zip, err)) report_share(a, g, zip, "");
     else set_message(a, "Couldn't make the report: " + err, true);
+}
+
+// ProductName or FileDescription in the file's version resource contains text (case-insensitive). 0.4.8 review: tells
+// the MFG Unlocker's dxgi.dll from ReShade / Special K / DXVK, which use the same file name.
+static bool file_product_has(const std::string &path, const std::string &text)
+{
+    DWORD dummy = 0, size = GetFileVersionInfoSizeW(widen(path).c_str(), &dummy);
+    if (!size || text.empty()) return false;
+    std::vector<char> info(size);
+    if (!GetFileVersionInfoW(widen(path).c_str(), 0, size, info.data())) return false;
+    struct Lang { WORD lang, cp; } *langs = nullptr;
+    UINT n = 0;
+    std::vector<std::wstring> blocks;
+    if (VerQueryValueW(info.data(), L"\\VarFileInfo\\Translation", (void **)&langs, &n) && langs)
+        for (UINT i = 0; i < n / sizeof(Lang); i++) {
+            wchar_t b[16];
+            swprintf(b, 16, L"%04x%04x", langs[i].lang, langs[i].cp);
+            blocks.push_back(b);
+        }
+    blocks.push_back(L"040904b0");
+    blocks.push_back(L"040904e4");
+    std::wstring want = widen(text);
+    for (wchar_t &c : want) c = (wchar_t)towlower(c);
+    for (const std::wstring &b : blocks)
+        for (const wchar_t *key : { L"ProductName", L"FileDescription" }) {
+            std::wstring q = L"\\StringFileInfo\\" + b + L"\\" + key;
+            wchar_t *val = nullptr;
+            UINT len = 0;
+            if (!VerQueryValueW(info.data(), q.c_str(), (void **)&val, &len) || !val || !len) continue;
+            std::wstring v(val, wcsnlen(val, len));
+            for (wchar_t &c : v) c = (wchar_t)towlower(c);
+            if (v.find(want) != std::wstring::npos) return true;
+        }
+    return false;
 }
 
 static bool file_has(const std::string &path, const std::string &needle)
@@ -197,6 +232,13 @@ void env_refresh(App &a, int g)
         if (file_exists(join(exe.substr(0, exe.find_last_of('\\')), name))) return true;
         std::string shared = join(exe_dir(), "shared");
         return dir_exists(shared) && file_exists(join(shared, name));
+    };
+    e.cap.file_product_has = [exe](const std::string &name, const std::string &text) {
+        if (exe.empty()) return false;
+        std::string beside = join(exe.substr(0, exe.find_last_of('\\')), name);
+        if (file_exists(beside) && file_product_has(beside, text)) return true;
+        std::string shared = join(join(exe_dir(), "shared"), name);
+        return file_exists(shared) && file_product_has(shared, text);
     };
 }
 
