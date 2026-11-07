@@ -68,7 +68,7 @@ class GowjApp : public rex::ReXApp {
     XenosAddScriptPadIfRequested(runtime());
     GowjAddBuiltInIniEdits();  // before the bundle is edited
     GowjInstallProfileLog();   // GitHub #174: --gowj_profile_log (read-only)
-    GowjStartFreezeWatchdog(); // GitHub #219: --gowj_freeze_watchdog_seconds (log-only, default 8 s)
+    GowjStartFreezeWatchdog(); // GitHub #219: --gowj_freeze_watchdog_seconds (log-only, off by default)
     GowjInstallFilmGrainSwitch(runtime());   // --gowj_no_film_grain
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     GowjApplyUltrawideIfRequested(runtime());     // --gowj_ultrawide: the two aspect floats, the present shape

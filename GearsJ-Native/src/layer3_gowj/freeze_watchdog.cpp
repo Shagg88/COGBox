@@ -1,7 +1,7 @@
 // Layer 3 (Judgment): GitHub #219 / #185 - freeze watchdog. Read-only, log-only: it never changes what the game does.
 //
 // A background thread looks at the swap count (layer 0's observer hub, counted for both GPU paths) four times a
-// second. When no frame has been presented for --gowj_freeze_watchdog_seconds (default 8; 0 = off) after the first
+// second. When no frame has been presented for --gowj_freeze_watchdog_seconds (default 0 = off; test with =8) after the first
 // frame, it logs ONE "gowj_freeze:" report for that stall, and one more at 4x the limit, so the two can be compared:
 // a long load shows moving stacks, a deadlock shows the same ones. When frames come back it says how long the stall was.
 // Each report has, for every guest thread (XThread): its id, name, priority, running / suspend state, the PPC context's
@@ -18,6 +18,7 @@
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
+#include <spdlog/fmt/fmt.h>  // fmt::format (the SDK's rex/logging/format.h uses the same header)
 #include <rex/logging/macros.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/thread_state.h>
@@ -34,10 +35,10 @@
 #include <unordered_map>
 #include <vector>
 
-REXCVAR_DEFINE_INT32(gowj_freeze_watchdog_seconds, 8, "Judgment",
+REXCVAR_DEFINE_INT32(gowj_freeze_watchdog_seconds, 0, "Judgment",
                      "GitHub #219: when no frame has been presented for this many seconds, log every guest thread's "
                      "state and every host thread's stack once per stall (read-only; may also fire on a long load). "
-                     "0 = off");
+                     "0 = off (default; test .bat: =8)");
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -58,10 +59,25 @@ std::thread g_thread;
 std::mutex g_mutex;
 std::condition_variable g_cv;
 bool g_stop = false;
+std::atomic<bool> g_stopping{false};  // read inside Dump so a shutdown mid-report does not wait for it
+std::mutex g_sym_mutex;               // DbgHelp is single-threaded
 
-uint32_t Load32(const uint8_t* base, uint32_t a) {
+uint32_t Load32Raw(const uint8_t* base, uint32_t a) {
   const uint8_t* p = base + a;
   return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
+}
+
+// Guest stack read; 0 (ends the walk) if the page is not readable.
+uint32_t Load32(const uint8_t* base, uint32_t a) {
+#if defined(_MSC_VER)
+  __try {
+    return Load32Raw(base, a);
+  } __except (1) {
+    return 0;
+  }
+#else
+  return Load32Raw(base, a);
+#endif
 }
 
 #if defined(_WIN32)
@@ -69,8 +85,12 @@ constexpr int kHostFrames = 24;
 
 int Unwind(CONTEXT ctx, uint64_t* pc) {  // nothing allocated: the target thread may be suspended holding the heap lock
   int n = 0;
+#if defined(_MSC_VER)
+  __try {
+#endif
   while (n < kHostFrames && ctx.Rip && ctx.Rsp) {
     pc[n++] = ctx.Rip;
+    const DWORD64 old_rsp = ctx.Rsp;
     DWORD64 image = 0;
     PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &image, nullptr);
     if (!fn) {  // leaf function: the return address is at the top of the stack
@@ -81,7 +101,12 @@ int Unwind(CONTEXT ctx, uint64_t* pc) {  // nothing allocated: the target thread
     PVOID handler_data = nullptr;
     DWORD64 establisher = 0;
     RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx.Rip, fn, &ctx, &handler_data, &establisher, nullptr);
+    if (ctx.Rsp <= old_rsp) break;  // no progress: a broken frame
   }
+#if defined(_MSC_VER)
+  } __except (1) {  // bad stack memory: keep the frames we have
+  }
+#endif
   return n;
 }
 
@@ -91,6 +116,7 @@ std::string Symbol(uint64_t a) {
   s->SizeOfStruct = sizeof(SYMBOL_INFO);
   s->MaxNameLen = 255;
   DWORD64 disp = 0;
+  std::lock_guard<std::mutex> lock(g_sym_mutex);
   if (SymFromAddr(GetCurrentProcess(), a, &disp, s)) return std::string(s->Name, s->NameLen) + "+0x" + fmt::format("{:X}", disp);
   return fmt::format("0x{:X}", a);
 }
@@ -106,8 +132,10 @@ std::string HostThreadName(HANDLE h) {
 }
 
 void DumpHostStacks(const std::unordered_map<uint32_t, uint32_t>& guest_of_host) {
+  if (g_stopping.load()) return;
   static bool sym_ready = false;
   if (!sym_ready) {
+    std::lock_guard<std::mutex> lock(g_sym_mutex);
     SymSetOptions(SymGetOptions() | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
     SymInitialize(GetCurrentProcess(), nullptr, TRUE);  // may already be initialised (crash handler / profiler): fine
     sym_ready = true;
@@ -123,6 +151,7 @@ void DumpHostStacks(const std::unordered_map<uint32_t, uint32_t>& guest_of_host)
   CloseHandle(snap);
   REXLOG_INFO("gowj_freeze: {} host threads:", tids.size());
   for (DWORD tid : tids) {
+    if (g_stopping.load()) return;
     HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION, FALSE, tid);
     if (!h) continue;
     uint64_t pc[kHostFrames];
@@ -156,6 +185,7 @@ void Dump(double seconds, uint64_t swaps, bool second) {
     auto threads = ks->object_table()->GetObjectsByType<rex::system::XThread>();
     REXLOG_INFO("gowj_freeze: {} guest threads:", threads.size());
     for (auto& t : threads) {
+      if (g_stopping.load()) return;
       if (!t) continue;
       uint32_t host_id = 0;
       if (auto* ht = t->thread()) host_id = ht->system_id();
@@ -230,6 +260,7 @@ void GowjStopFreezeWatchdog() {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_stop = true;
   }
+  g_stopping.store(true);
   g_cv.notify_all();
   g_thread.join();
 }
