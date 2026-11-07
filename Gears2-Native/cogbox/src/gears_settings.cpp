@@ -222,7 +222,8 @@ std::vector<Option> make_options(Game g) {
                "preset shows Custom.", 316));
     // Job 521 (Shagg 19:02): Vulkan opened for testing - the play exes have the full Vulkan renderer.
     // Shagg 3 Nov: experimental again in Gears 3 and Judgment (Gears 3: black eyes on Vulkan, fine on DirectX 12)
-    const bool vkExp = g == Game::Gears3 || g == Game::Judgment;
+    // 0.4.7 (Shagg 6 Nov): not experimental any more - the Vulkan texture fix (#202 / #213 / #131) tested in both games
+    const bool vkExp = false;
     static const char* const kVkTip =
                "Vulkan is a full alternative to DirectX 12, and the usual choice on Steam Deck / Linux. "
                "\n"

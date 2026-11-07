@@ -66,6 +66,7 @@ New in 0.4.7
 ------------
 - Vulkan: Judgment and Gears 3 no longer show black or wrong textures (black props, a neon-blue Cole, garbled text;
   #202, #213, #131). The GPU copies the games use to move textures in memory were being skipped on Vulkan.
+  Vulkan is no longer marked experimental in Gears 3 and Judgment.
 - Gears 3: Exit Game on the main menu works after you have played and gone back to the menu (#215).
 - DLSS / FSR / XeSS in Gears 3 and Judgment: characters and other moving objects get their own motion vectors, so
   they no longer smear or flicker (#150, #147). Gears 1 keeps DLSS experimental (its characters still flicker with
