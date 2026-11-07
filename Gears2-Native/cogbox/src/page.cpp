@@ -1073,7 +1073,7 @@ static void about_tab(App &a, int g)
 struct TabGroups { const char *heading[4]; const char *const *ids[4]; const char *const *advanced; };
 static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", nullptr };
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
-static const char *const k_dispAdv[] = { "HDR", "PaperWhite", "Peak", "HideNotes", nullptr };
+static const char *const k_dispAdv[] = { "Gamma", "HDR", "PaperWhite", "Peak", "HideNotes", nullptr };
 static const char *const k_gfxQuality[] = { "Api", "WineApi", "Preset", "Resolution", "AAMode", nullptr };
 static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "Pool", "DrawDist", "MeshLod", "AO", nullptr };
 static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };

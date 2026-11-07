@@ -495,6 +495,8 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_shader_lookahead, true, "Gears2",
                     "Patch 0051: when a draw has to wait for a shader still compiling, first look up the shaders of the "
                     "draws already queued behind it, so new ones compile on all compile threads at once instead of one "
                     "after another on the draw thread. false = as before");
+REXCVAR_DEFINE_DOUBLE(gow2_present_gamma, 1.0, "Gears2",
+                      "GitHub #185: extra gamma on the game's display ramp at present (1 = original; 1.2 = darker shadows, highlights kept)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_tex_post_constants, true, "Gears2",
                     "Patch 0105 (with --gow2_renderer_tex_num_format, the default): the texture-fetch post-processing "
                     "values that depend only on the fetch constant (per component sign mode, signed mode and fixed "
@@ -3115,6 +3117,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (ramps->table_version != ramp_table_version_ || ramps->pwl_version != ramp_pwl_version_) {
       uint32_t words[256 + 128 * 3];
       std::memcpy(words, ramps->table, sizeof(ramps->table));
+      // GitHub #185: --gow2_present_gamma (launcher "Gamma") bends the game's 256-entry ramp: out = in ^ gamma per
+      // component, so above 1 the shadows and midtones darken and the highlights stay. 1 = the game's own ramp.
+      if (const double g = REXCVAR_GET(gow2_present_gamma); g > 0.0 && std::abs(g - 1.0) > 1e-3) {
+        for (uint32_t& t : words) {
+          if (&t >= words + 256) break;
+          uint32_t o = 0;
+          for (int c = 0; c < 3; ++c) {
+            const uint32_t v = (t >> (10 * c)) & 0x3FF;
+            const uint32_t nv = uint32_t(std::lround(1023.0 * std::pow(v / 1023.0, g)));
+            o |= std::min<uint32_t>(nv, 1023) << (10 * c);
+          }
+          t = (t & 0xC0000000u) | o;
+        }
+      }
       std::memcpy(words + 256, ramps->pwl, sizeof(ramps->pwl));
       backend_->UploadTexture(ramp_texture_, 0, 0, words, uint32_t(sizeof(words)), 1, 1);
       // GitHub #185: what the game's gamma ramp holds (red 10-bit at inputs 0/16/32/64/128/192/255; linear = 4x input).
