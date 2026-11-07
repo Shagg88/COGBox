@@ -742,7 +742,8 @@ void Gow3UltrawideCameraViewportType(rex::Runtime* runtime, float aspect) {
       }
     }
   }
-  static const uint8_t kPair[8] = {0x3F, 0xE4, 0xD5, 0xE7, 0x3F, 0xE2, 0x46, 0x8B};  // 1.7877778f, 1.7677778f (BE)
+  // Gears 3 keeps them the other way round from Gears 2: 1.7677778f then 1.7877778f (TU6 820CE108 / 820CE10C, job 1336 probe).
+  static const uint8_t kPair[8] = {0x3F, 0xE2, 0x46, 0x8B, 0x3F, 0xE4, 0xD5, 0xE7};  // 1.7677778f, 1.7877778f (BE)
   uint32_t found = 0, count = 0;
   for (uint32_t o = lo; hi > lo && hi < 0x02000000u && o + 8 <= hi; o += 4)
     if (std::memcmp(image + o, kPair, 8) == 0) found = 0x82000000u + o, ++count;
@@ -771,7 +772,7 @@ void Gow3UltrawideCameraViewportType(rex::Runtime* runtime, float aspect) {
     }
     return;
   }
-  WriteGuestFloat(runtime, found, 1.7877778f, aspect + 0.05f,
+  WriteGuestFloat(runtime, found + 4, 1.7877778f, aspect + 0.05f,
                   "gow3_aspect: camera widescreen upper bound (GitHub #220: no 4:3 camera offset)");
 }
 }  // namespace
