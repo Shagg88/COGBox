@@ -541,7 +541,10 @@ Availability framegen_choice_available(int index, const Environment& env) {
         const bool rtx40 = icase_search(gpu, "RTX ?40[0-9]0|RTX [0-9]+ Ada");
         // Shagg 7 Nov: the third-party MFG Unlocker (github.com/dashdogy/MFG-Unlocker, its DLL beside the game as
         // dxgi.dll) runs DLSS frame generation on RTX 20 / 30 - tested 2x / 3x on an RTX 3080 Ti. Unofficial.
-        const bool unlocker = cap_file(env, "dxgi.dll") && icase_search(gpu, "RTX");
+        // 0.4.8 AMD / SteamOS review: a dxgi.dll beside the game is also ReShade, Special K or a DXVK copy, so only an
+        // NVIDIA GeForce RTX name on Windows proper counts (under Wine frame generation is off anyway)
+        const bool unlocker = !env.wine && cap_file(env, "dxgi.dll") && icase_search(gpu, "NVIDIA|GeForce") &&
+                              icase_search(gpu, "RTX");
         if (!dlss_fg_present(env)) { a.ok = false; a.why = "Needs NVIDIA's Streamline files next to the game."; }
         else if (unlocker) { /* every multiplier: the unlocker reports what the card can do */ }
         else if (index == 2 && !rtx40 && !rtx50) { a.ok = false; a.why = "Needs an NVIDIA RTX 40 or 50 series graphics card."; }
