@@ -412,6 +412,17 @@ std::vector<Option> make_options(Game g) {
              "such as Radmin VPN, ZeroTier or Hamachi; not internet VPNs like NordVPN). Title Update versions only. Gears of War "
              "and Gears 2 co-op worked in testing; other modes and the other games are less tested. Voice chat is not supported yet. Windows may ask about the firewall: "
              "allow Private networks.", 325), "syslink");
+    // 0.4.8 (GitHub #229, clovis-junior): the other players' addresses, as the reporter's extra-args.txt line
+    // --net_peer_ip=... did (SDK patch 49b / 50) - typed here instead. IPv4 only (Radmin VPN 26.x, ZeroTier, Hamachi).
+    {
+        Option o = make("PeerIps", "Friends' IP addresses", Tab::Gameplay, Kind::Text, SH, 0,
+                        "Optional - for System Link over a VPN such as Radmin VPN when the other player's game doesn't show "
+                        "up. Type the OTHER players' IPv4 addresses (Radmin VPN shows them, e.g. 26.10.20.30), commas between "
+                        "several. With 3 or more PCs every player lists all the others. Empty = find games on the network "
+                        "as usual.", 325);
+        o.max_len = 255;
+        add(std::move(o), "syslinkpeers");
+    }
     add(make("SkipLogos", "Skip the intro logos", Tab::Gameplay, Kind::Bool, PG, 0,
              "Starts at the title screen without the publisher / studio logo films. The loading film and cutscenes still play.", 326),
         "skiplogos");
@@ -464,6 +475,7 @@ double clamp_value(const Option& o, double x, const Environment* env) {
     }
     case Kind::Int: return std::max(o.min, std::min(o.max, std::nearbyint(x)));
     case Kind::Float: return std::max(o.min, std::min(o.max, x));
+    case Kind::Text: return 0;   // the text is in Settings::t
     }
     return x;
 }
@@ -627,6 +639,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "syslink") {   // 0.3.5: SDK patch 49b (the runtime's net_system_link); Gears 2 first
         if (!cap_rt(env, "net_system_link")) return no(not_yet(gi, "needs its next build"));
         if (ver != Version::TitleUpdate) return no("System Link is for the Title Update version only.");   // Shagg 15:53
+    } else if (f == "syslinkpeers") {   // 0.4.8 (GitHub #229): the runtime's net_peer_ip (SDK patch 49b / 50)
+        if (!cap_rt(env, "net_peer_ip")) return no(not_yet(gi, "needs its next build"));
+        if (ver != Version::TitleUpdate) return no("System Link is for the Title Update version only.");
     } else if (f == "framecap") {
         if (g == Game::Gears1 && !cap_exe(env, "gow1_max_fps")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "lang") {   // the SDK runtime's --user_language / --user_country
@@ -714,6 +729,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
     else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
     else if (o.id == "SplitLayout") on = s.i("Players") == 1;                       // GitHub #136: 2 players only
+    else if (o.id == "PeerIps") on = s.b("SystemLink");                              // GitHub #229
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
     else if (o.id == "WineApi") on = env.wine && s.i("Api") == 0;                     // Shagg 13:16, job 643
     a.ok = on;
@@ -797,6 +813,54 @@ void set_value(Game g, Settings& s, const std::string& id, double value) {
     if (o && o->in_preset && old != value && s.i("Preset") != PresetCustom) s.set("Preset", PresetCustom);   // PS1 588
 }
 
+// ---- Kind::Text (0.4.8, GitHub #229) -----------------------------------------------------------------------------------
+// One IPv4 address, dotted decimal: four parts of 1-3 digits, each 0-255, no leading zeros (an "010" could be read as
+// octal elsewhere). Nothing else - no ports, names or IPv6: the runtime's ParseIpv4 skips those anyway.
+static bool parse_ipv4(const std::string& t, unsigned char out[4]) {
+    int part = 0; size_t i = 0;
+    while (part < 4) {
+        size_t st = i; unsigned v = 0;
+        while (i < t.size() && t[i] >= '0' && t[i] <= '9' && i - st < 3) { v = v * 10 + unsigned(t[i] - '0'); ++i; }
+        const size_t len = i - st;
+        if (len == 0 || v > 255 || (len > 1 && t[st] == '0')) return false;
+        out[part++] = static_cast<unsigned char>(v);
+        if (part < 4) { if (i >= t.size() || t[i] != '.') return false; ++i; }
+    }
+    return i == t.size();
+}
+
+bool text_char_ok(const Option& o, unsigned c) {
+    if (o.id == "PeerIps") return (c >= '0' && c <= '9') || c == '.' || c == ',' || c == ' ';
+    return false;   // no other text option: nothing typed is accepted
+}
+
+std::string sanitize_text(const Option& o, const std::string& in, int* dropped) {
+    if (dropped) *dropped = 0;
+    if (o.kind != Kind::Text || o.id != "PeerIps") return std::string();
+    const std::string src = in.size() > 4096 ? in.substr(0, 4096) : in;   // never walk an absurd value
+    std::vector<std::string> keep;
+    size_t at = 0;
+    while (at <= src.size()) {
+        size_t end = src.find_first_of(", ;\t", at);
+        if (end == std::string::npos) end = src.size();
+        const std::string tok = src.substr(at, end - at);
+        at = end + 1;
+        if (tok.empty()) continue;
+        unsigned char b[4];
+        const bool ok = parse_ipv4(tok, b) && !(b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0) &&
+                        !(b[0] == 255 && b[1] == 255 && b[2] == 255 && b[3] == 255);
+        if (!ok || keep.size() >= 16) { if (dropped) ++*dropped; continue; }
+        if (std::find(keep.begin(), keep.end(), tok) == keep.end()) keep.push_back(tok);
+    }
+    std::string out;
+    for (const std::string& k : keep) {
+        const std::string next = out.empty() ? k : out + ", " + k;
+        if (o.max_len > 0 && static_cast<int>(next.size()) > o.max_len) { if (dropped) ++*dropped; continue; }
+        out = next;
+    }
+    return out;
+}
+
 std::string monitor_label(int i, int w, int h, bool primary) {   // PS1 147
     return std::to_string(i) + ": " + std::to_string(w) + "x" + std::to_string(h) + (primary ? " (main)" : "");
 }
@@ -822,7 +886,9 @@ void Store::reset() {
     top.clear();
     for (int g = 0; g < kGameCount; ++g) { per[g].clear(); own[g].clear(); }
     last_game = 0;
-    for (const Option& o : options(Game::Gears2)) if (o.scope != Scope::GameOwn) top[o.id] = o.def;
+    texts.clear();
+    for (const Option& o : options(Game::Gears2)) if (o.kind == Kind::Text) texts[o.id] = std::string();
+    for (const Option& o : options(Game::Gears2)) if (o.scope != Scope::GameOwn && o.kind != Kind::Text) top[o.id] = o.def;
     for (int g = 0; g < kGameCount; ++g)
         for (const Option& o : options(static_cast<Game>(g))) if (o.scope == Scope::GameOwn) own[g][o.id] = o.def;
     // PS1 104-105 / 154 / 157-158: AAMode and the FPS counters start at -1 and are worked out from the older boxes.
@@ -843,6 +909,11 @@ Settings Store::view(Game g, const Environment& env) const {
     const int gi = static_cast<int>(g);
     Settings s;
     for (const Option& o : options(g)) {
+        if (o.kind == Kind::Text) {   // 0.4.8: Shared text, sanitised again on the way out
+            auto t = texts.find(o.id);
+            s.t[o.id] = t == texts.end() ? std::string() : sanitize_text(o, t->second);
+            continue;
+        }
         double x = o.def;
         const std::map<std::string, double>* src = &top;
         if (o.scope == Scope::GameOwn) src = &own[gi];
@@ -877,6 +948,7 @@ void Store::commit(Game g, const Settings& s, const Environment& env) {   // PS1
     for (const Option& o : options(g)) if (o.scope == Scope::GameOwn && o.id != "Version") own[gi][o.id] = s.f(o.id);   // GitHub #222: AimTurn, HideNotes, UnlockInsane, HordeBots were never kept
     for (const Option& o : options(g)) {
         if (o.scope == Scope::GameOwn) continue;
+        if (o.kind == Kind::Text) { texts[o.id] = sanitize_text(o, s.str(o.id)); continue; }
         top[o.id] = s.f(o.id);
         if (o.scope == Scope::PerGame) per[gi][o.id] = s.f(o.id);
     }
@@ -918,6 +990,10 @@ bool Store::load_ini(const std::string& text) {
         size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         std::string key = trim(line.substr(0, eq)), val = trim(line.substr(eq + 1));
+        if (section_game(section) < 0) {   // 0.4.8: a Kind::Text value ([General] only), kept only as sanitised
+            const Option* to = find_option(Game::Gears2, key);
+            if (to && to->kind == Kind::Text) { texts[key] = sanitize_text(*to, val); any = true; continue; }
+        }
         std::string lv = val;
         for (char& c : lv) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         double x = 0;
@@ -994,7 +1070,11 @@ std::string Store::save_ini() const {
     std::ostringstream out;
     out << "; COGBox - Gears of War settings. Boxes: true / false; lists: the position from 0.\n";
     out << "[General]\nGame=" << last_game << "\nFrameCapList=2\n";
-    for (const Option& o : options(Game::Gears2)) if (o.scope != Scope::GameOwn) out << o.id << "=" << val(o, get(top, o)) << "\n";
+    for (const Option& o : options(Game::Gears2)) {
+        if (o.scope == Scope::GameOwn) continue;
+        if (o.kind == Kind::Text) { auto t = texts.find(o.id); out << o.id << "=" << (t == texts.end() ? std::string() : sanitize_text(o, t->second)) << "\n"; continue; }
+        out << o.id << "=" << val(o, get(top, o)) << "\n";
+    }
     for (int g = 0; g < kGameCount; ++g) {
         out << "\n[" << section_name(g) << "]\nFrameCapList=2\n";
         for (const Option& o : options(static_cast<Game>(g))) {
@@ -1428,6 +1508,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         a.push_back((cap_exe(env, "ue3_exec_each_level") ? "--ue3_exec_each_level=" : "--ue3_exec=") +
                     q("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL"));
     if (on("SystemLink")) a.push_back("--net_system_link=true");
+    // GitHub #229: the friends' addresses (sanitised: digits, dots and commas only - nothing that needs quoting)
+    if (on("SystemLink") && avail("PeerIps")) {
+        const Option* po = find_option(g, "PeerIps");
+        std::string peers = po ? sanitize_text(*po, s.str("PeerIps")) : std::string();
+        peers.erase(std::remove(peers.begin(), peers.end(), ' '), peers.end());
+        if (!peers.empty()) a.push_back("--net_peer_ip=" + peers);
+    }
     // GitHub #119: the gamertag the games show for player 1 (CogBox.ini [Profile] Gamertag=). Only with a runtime that
     // has SDK patch 54; it keeps 15 letters / digits / spaces. The profile's save folder is not renamed.
     // 0.4.0: the same rules as the runtime's Player1Gamertag - ASCII letters / digits and single spaces, trimmed, 15 max.

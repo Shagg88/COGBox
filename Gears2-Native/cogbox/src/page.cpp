@@ -619,6 +619,37 @@ static void option_row(App &a, int g, const gs::Option &o)
         }
         break;
     }
+    case gs::Kind::Text: {
+        // 0.4.8 (GitHub #229): a one-line text box. Only the option's characters can be typed (gs::text_char_ok) and at
+        // most max_len; the value kept is gs::sanitize_text's (what isn't valid is dropped and said so under the row).
+        static char buf[512];
+        static ImGuiID editing = 0;
+        static int dropped = 0;
+        static std::string droppedFor;
+        const ImGuiID me = ImGui::GetID("##t");
+        const std::string cur = a.cur[g].str(o.id);
+        if (editing != me) snprintf(buf, sizeof buf, "%s", cur.c_str());
+        const int cap = std::max(1, std::min((int)sizeof buf, (o.max_len > 0 ? o.max_len : 255) + 1));
+        auto filter = [](ImGuiInputTextCallbackData *d) -> int {
+            const gs::Option *op = (const gs::Option *)d->UserData;
+            return gs::text_char_ok(*op, (unsigned)d->EventChar) ? 0 : 1;
+        };
+        ImGui::InputTextWithHint("##t", "e.g. 26.10.20.30, 26.10.20.31", buf, (size_t)cap, ImGuiInputTextFlags_CallbackCharFilter,
+                                 filter, (void *)&o);
+        if (ImGui::IsItemActive()) editing = me;
+        if (ImGui::IsItemDeactivated()) {
+            editing = 0;
+            int drop = 0;
+            const std::string clean = gs::sanitize_text(o, buf, &drop);
+            dropped = drop; droppedFor = o.id;
+            if (clean != cur) { a.cur[g].t[o.id] = clean; a.dirty[g] = true; }
+            snprintf(buf, sizeof buf, "%s", clean.c_str());
+        }
+        if (droppedFor == o.id && dropped > 0)
+            ui_note(std::to_string(dropped) + " entr" + (dropped == 1 ? "y was" : "ies were") +
+                    " left out - only IPv4 addresses like 26.10.20.30 work (16 at most).", col::amber);
+        break;
+    }
     }
     if (!av.ok) ImGui::EndDisabled();
     if (changed && nv != v) {
@@ -1091,7 +1122,7 @@ static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "DofScale", "Blo
 static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "PadPrompts", "DeadZone", "RadialDZ", "LowLag", nullptr };
 static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", nullptr };
 static const char *const k_playGame[] = { "Version", "Lang", "VoiceLang", "SkipLogos", "Mute", nullptr };
-static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", nullptr };
+static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", "PeerIps", nullptr };
 static const char *const k_playExtras[] = { "UnlockInsane", "Cheats", "Mutators", nullptr };
 static const char *const k_achPopups[] = { "AchievementStyle", "AchievementColour", "AchievementPosition", "AchievementSound",
                                            "HideAchievementPopups", nullptr };   // PR #187

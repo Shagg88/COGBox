@@ -16,7 +16,10 @@ enum class Game { Gears2 = 0, Gears3 = 1, Judgment = 2, Gears1 = 3 };
 constexpr int kGameCount = 4;
 enum class Version { TitleUpdate = 0, Disc = 1 };   // PS1 125 $verNames (index 0 = the title update)
 enum class Tab { Display, Graphics, Controls, Gameplay, Achievements };   // = the page's tab index (ABOUT is after)
-enum class Kind { Bool, Choice, Int, Float };
+// Text (0.4.8, GitHub #229): a short line of text (Settings::t), always Scope::Shared, kept in [General] of the settings
+// file; every value goes through sanitize_text() on the way in and out, so only its allowed characters ever reach the
+// file or the command line.
+enum class Kind { Bool, Choice, Int, Float, Text };
 // Where a value is kept (PS1 103-123, 418-441, 446-464, 759-774):
 //   Shared  - one value for all games (PS1 top-level $s keys outside $perKeys)
 //   PerGame - remembered per game in PerGame (PS1 120 $perKeys); a game without its own set starts from the last
@@ -88,6 +91,8 @@ public:
     int i(const std::string& id) const { return static_cast<int>(f(id)); }
     bool b(const std::string& id) const { return f(id) != 0.0; }
     void set(const std::string& id, double x) { v[id] = x; }
+    std::map<std::string, std::string> t;   // Kind::Text values (already sanitised)
+    std::string str(const std::string& id) const { auto it = t.find(id); return it == t.end() ? std::string() : it->second; }
 };
 
 struct Availability {
@@ -104,6 +109,7 @@ struct Option {
     std::vector<std::string> choices;  // Kind::Choice
     double def = 0, min = 0, max = 1, step = 1;
     int decimals = 0;                  // Kind::Float display
+    int max_len = 0;                   // Kind::Text: the most characters kept
     std::string tooltip;               // the PS1's tooltip = the plain-English description
     std::string feature;               // the PS1's Can feature name ("" = always available)
     std::string depends_on;            // another option whose state enables this one ("" = none)
@@ -143,6 +149,12 @@ void apply_preset(Settings& s, int preset);
 // Set a value as the UI would: an in_preset option that really changes makes the preset Custom (PS1 588).
 // Setting "Preset" itself applies the preset.
 void set_value(Game g, Settings& s, const std::string& id, double value);
+// Kind::Text (0.4.8): the value as it may be stored and passed on. PeerIps (GitHub #229): IPv4 addresses only (what the
+// runtime's --net_peer_ip reads), separated by ", "; anything else is dropped, duplicates and 0.0.0.0 /
+// 255.255.255.255 too, at most 16 addresses. `dropped` (optional) gets how many entries were left out.
+std::string sanitize_text(const Option& o, const std::string& in, int* dropped = nullptr);
+// The characters a Kind::Text field accepts while typing (the rest are not entered at all).
+bool text_char_ok(const Option& o, unsigned c);
 
 // Monitor list entries (PS1 147).
 std::string monitor_label(int index1, int width, int height, bool primary);
@@ -166,6 +178,7 @@ public:
     std::map<std::string, double> top;               // Shared + PerGame keys (the last game's), and the legacy flags
     std::map<std::string, double> per[kGameCount];   // PerGame sets; empty = the game has none yet
     std::map<std::string, double> own[kGameCount];   // GameOwn values
+    std::map<std::string, std::string> texts;         // Kind::Text values (Shared only, sanitised)
 private:
     void migrate();
 };

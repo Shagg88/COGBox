@@ -200,6 +200,7 @@ static void write_menu_file(App &a, int g, gs::Version ver, const std::string &l
     t += std::string("game=") + game_def(g).name + "\r\n";
     t += "changes=" + join(logDir, "menu-changes.txt") + "\r\nrestart=" + join(logDir, "menu-restart.flag") + "\r\n";
     for (const gs::Option &o : gs::options(G)) {
+        if (o.kind == gs::Kind::Text) continue;   // 0.4.8: typed in the launcher only (the in-game menu has no text field)
         gs::Availability av = gs::available(o, G, ver, a.cur[g], a.env[g]);
         double v = a.cur[g].has(o.id) ? a.cur[g].f(o.id) : o.def;
         std::vector<std::string> choices = o.id == "Monitor" ? monitor_choices() : o.choices;
