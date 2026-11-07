@@ -3065,6 +3065,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       } else if (present_ours_) {  // 5C-2: straight into the presenter; no readback, no guest-memory front buffer
         PresentOurs(regs, it->second, fb_width, fb_height);
       } else {
+        gpu::TextureDesc td;  // clamped as the backends copy it: the CPU write-back walks this rectangle
+        if (backend_->TextureInfo(p.src.texture, td)) {
+          gpu::Rect& r = p.src.rect;
+          r.x0 = std::clamp(r.x0, 0, int32_t(td.width)), r.y0 = std::clamp(r.y0, 0, int32_t(td.height));
+          r.x1 = std::clamp(r.x1, r.x0, int32_t(td.width)), r.y1 = std::clamp(r.y1, r.y0, int32_t(td.height));
+        }
         p.readback = backend_->ReadbackTexture(p.src.texture, p.src.rect);
         if (p.readback) display_pending_.push_back(p); else ++display_stats_.bad;
         if (present_shadow_) PresentShadow(regs, it->second, fb_width, fb_height);
@@ -3971,7 +3977,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         for (uint32_t x = 0; x < w; ++x) {
           const int64_t off = ::xenos::texture::TiledOffset2D(int32_t(dx0 + x), int32_t(dy0 + y), pitch_blocks,
                                                               in.dest_bpp_log2);
-          if (off < 0) continue;
+          if (off < 0 || uint64_t(fb_phys) + uint64_t(off) + 4 > 0x20000000ull) continue;  // inside 512 MB guest memory
           // Mark: magenta, alpha 255, in 8888 any channel order (R=B=FF, G=00) - only for 8888 destinations.
           const bool mark = display_mark_ && x < 32 && y < 32 && (in.dest_format == 6 || in.dest_format == 50);
           const uint32_t word = Swap32(mark ? 0xFFFF00FFu : row[x], p.src.endian);
