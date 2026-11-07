@@ -272,8 +272,7 @@ static void row_label(const char *label, const std::string &desc, bool enabled)
 
 // ---- 0.4.6 (Shagg 5 Nov 18:07: "the whole launcher aesthetically streamlined and simple") - one visual system for
 // every tab: a section is a gap and one heading style; explanations are hover tooltips (ui_tip), never paragraphs;
-// buttons share one height (and a minimum width, so a row of them lines up); rarely used options sit under a
-// collapsed ADVANCED toggle (ui_advanced), which the controller reaches like any button.
+// buttons share one height (and a minimum width, so a row of them lines up).
 void ui_note(const std::string &text_en, ImVec4 c = col::dim);
 static int g_sections;   // sections drawn so far in this tab (no gap above the first)
 
@@ -1156,7 +1155,7 @@ static void about_tab(App &a, int g)
 }
 
 // ---- the settings tabs' groups (presentation only: which heading an option shows under) -------------------------------
-struct TabGroups { const char *heading[4]; const char *const *ids[4]; const char *const *advanced; };
+struct TabGroups { const char *heading[4]; const char *const *ids[4]; };
 static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", "HideNotes", nullptr };
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
 static const char *const k_dispPicture[] = { "Brightness", "HDR", "PaperWhite", "Peak", nullptr };
@@ -1172,23 +1171,12 @@ static const char *const k_achPopups[] = { "AchievementStyle", "AchievementColou
                                            "HideAchievementPopups", nullptr };   // PR #187
 static const char *const k_none[] = { nullptr };
 static const TabGroups k_groups[5] = {   // one per gs::Tab, in its order
-    { { "SCREEN", "FRAME RATE", "PICTURE", nullptr }, { k_dispScreen, k_dispFrames, k_dispPicture, k_none }, k_none },
-    { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none }, k_none },
-    { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none }, k_none },
-    { { "GAME", "PLAYERS", "EXTRAS", nullptr }, { k_playGame, k_playPlayers, k_playExtras, k_none }, k_none },
-    { { "ACHIEVEMENT POPUPS", nullptr, nullptr, nullptr }, { k_achPopups, k_none, k_none, k_none }, k_none },
+    { { "SCREEN", "FRAME RATE", "PICTURE", nullptr }, { k_dispScreen, k_dispFrames, k_dispPicture, k_none } },
+    { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none } },
+    { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none } },
+    { { "GAME", "PLAYERS", "EXTRAS", nullptr }, { k_playGame, k_playPlayers, k_playExtras, k_none } },
+    { { "ACHIEVEMENT POPUPS", nullptr, nullptr, nullptr }, { k_achPopups, k_none, k_none, k_none } },
 };
-
-// the collapsed ADVANCED section at the end of a tab: one button that opens / closes it (kept for the session)
-static bool ui_advanced(bool &open)
-{
-    if (g_sections++) ui_gap();
-    const std::string label = std::string(tr("ADVANCED")) + (open ? "   -" : "   +") + "##adv";
-    if (th_button(label.c_str(), ImVec2(T(160), T(26)), true, F_BOLD)) open = !open;
-    ui_tip("Settings most players never need. Every setting still works the same.");
-    if (open) ImGui::Dummy(ImVec2(0, S(2)));
-    return open;
-}
 
 // ---- the page --------------------------------------------------------------------------------------------------------
 static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "ACHIEVEMENTS", "MODS", "ABOUT" };   // the one sound option is in Gameplay
@@ -1308,8 +1296,8 @@ void page_draw(App &a, ImVec2 size)
             }
             ImGui::Dummy(ImVec2(0, S(4)));
         }
-        // grouped under a few headings (k_groups); the rest under the tab's collapsed ADVANCED. An option not in the
-        // table shows in its tab's first group, so a new option in gears_settings is never hidden.
+        // grouped under a few headings (k_groups). An option not in the table shows in its tab's first group, so a
+        // new option in gears_settings is never hidden.
         std::vector<const gs::Option *> mine;
         for (const gs::Option &o : gs::options((gs::Game)g)) {
             if (o.tab != want) continue;
@@ -1320,7 +1308,6 @@ void page_draw(App &a, ImVec2 size)
         auto group_of = [&](const std::string &id) {
             for (int k = 0; k < 4 && tg.heading[k]; k++)
                 for (const char *const *x = tg.ids[k]; *x; x++) if (id == *x) return k;
-            for (const char *const *x = tg.advanced; *x; x++) if (id == *x) return -1;
             return 0;
         };
         for (int k = 0; k < 4 && tg.heading[k]; k++) {
@@ -1332,13 +1319,8 @@ void page_draw(App &a, ImVec2 size)
         }
         if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
         if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
-        bool anyAdv = false;
-        for (const gs::Option *o : mine) anyAdv |= group_of(o->id) < 0;
-        static bool advOpen[k_tabMods] = {};
-        if (anyAdv && ui_advanced(advOpen[(int)want]))
-            for (const gs::Option *o : mine) if (group_of(o->id) < 0) { option_row(a, g, *o); shown++; }
         if (want == gs::Tab::Achievements) achievements_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // achievements part 4
-        else if (!shown && !anyAdv) ui_note("Nothing to set here yet.");
+        else if (!shown) ui_note("Nothing to set here yet.");
     } else if (a.tab == k_tabMods) mods_tab(a, g);
     else about_tab(a, g);
     ImGui::PopFont();
