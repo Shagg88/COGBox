@@ -62,6 +62,24 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 
 
+New in 0.4.8
+------------
+- Frame-rate limits are exact in all four games; new choices 30, 40, 45, 60, 90, 120, 144, 165, 180, Unlimited.
+  With frame generation on, the limit is what you see on screen.
+- AMD FSR frame generation smears the HUD and characters much less (it gets the HUD-less picture and object motion).
+- Experimental: NVIDIA DLSS frame generation (DirectX 12). RTX 20/30 cards can use it with the third-party
+  MFG Unlocker - see the main README.
+- Experimental: AMD FSR frame generation on Vulkan (Steam Deck, Linux, AMD). Characters can ghost slightly when
+  moving fast in Gears 1, Gears 3 and Judgment.
+- Judgment: Brightness setting (Display tab; 100 = original, lower = darker; #185).
+- Judgment: "Depth of field at the render resolution" now covers Judgment too (#105).
+- Gears 1: the Insane checkpoint is kept when your gamer name changes (#246).
+- Gears 2: Horde bots and side-by-side split screen (#237); keyboard prompts on HUD action icons (#223).
+- Gears 3: checkpoint streaming, ultrawide framing, DLC loading and Title Update 6 fixes (#226, #220, #240, #230).
+- Smooth zoomed mouse aim (#228, thanks Flippage).
+- Launcher: no more Advanced sections; drag a picture onto the window for box art (#241); leftover program files
+  from an older COGBox are moved to _old-files, never deleted.
+
 New in 0.4.7
 ------------
 - Vulkan: Judgment and Gears 3 no longer show black or wrong textures (black props, a neon-blue Cole, garbled text;
