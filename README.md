@@ -32,7 +32,7 @@ the ports what an emulator can't easily offer:
 - **Smooth play** - the games' shaders are translated straight to Direct3D 12 shader code in under a millisecond each
   (as Xenia Canary does), kept on your PC, and pipelines are made in the background - a new area shows a moment
   later instead of freezing the game.
-- **Vulkan** - a choice on each game's Graphics tab, for testing; close to Direct3D 12 already.
+- **Vulkan** - a choice on each game's Graphics tab; close to Direct3D 12 already.
 - **Screenshots** - press **\\** (backslash) in any game; they go to `Pictures\COGBox\<game>`.
 - **Lower input lag** - one frame in flight, NVIDIA Reflex / AMD Anti-Lag 2 where your GPU has them.
 - **HDR10**, **ultrawide 21:9** (all four games), **16x anisotropic filtering**, field of view, and the games' own motion blur and depth of

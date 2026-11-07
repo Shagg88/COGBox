@@ -1144,4 +1144,4 @@ D-pad choose   A pick   B close = D-pad választás   A kiválaszt   B bezárás
 ICON = IKON
 BACK = VISSZA
 Horde bots = Horda botok
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. = Helyi Horda: nyomd meg a Vissza / Nézet gombot, amikor először megjelenik a Horda eredménytábla, két bot hozzáadásához (újra megnyomva még kettő). Minden hullámban újraélednek.
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Helyi Horda: nyomd meg a Vissza / Nézet gombot, amikor először megjelenik a Horda eredménytábla, két bot hozzáadásához (újra megnyomva még kettő). Minden hullámban újraélednek. Kampányhoz és versushoz kapcsold ki: a Vissza a játék csalás jelzőjét is bekapcsolja.

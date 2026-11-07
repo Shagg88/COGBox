@@ -1144,4 +1144,4 @@ D-pad choose   A pick   B close = Krzyżak wybór   A wybierz   B zamknij
 ICON = IKONA
 BACK = WSTECZ
 Horde bots = Boty w Hordzie
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. = Lokalna Horda: naciśnij Wstecz / Widok, gdy po raz pierwszy pojawi się tablica wyników Hordy, aby dodać dwa boty (naciśnij ponownie, aby dodać dwa kolejne). Odradzają się co falę.
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Lokalna Horda: naciśnij Wstecz / Widok, gdy po raz pierwszy pojawi się tablica wyników Hordy, aby dodać dwa boty (naciśnij ponownie, aby dodać dwa kolejne). Odradzają się co falę. Wyłącz w kampanii i trybie versus: Wstecz włącza też flagę kodów gry.

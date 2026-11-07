@@ -1,5 +1,5 @@
---- a/src/kernel/xam/xam_misc.cpp	2026-11-06 14:52:37.368156314 -0800
-+++ b/src/kernel/xam/xam_misc.cpp	2026-11-06 14:52:37.401537781 -0800
+--- a/src/kernel/xam/xam_misc.cpp
++++ b/src/kernel/xam/xam_misc.cpp
 @@ -11,6 +11,7 @@
  #include <rex/kernel/xam/private.h>
  #include <rex/logging.h>

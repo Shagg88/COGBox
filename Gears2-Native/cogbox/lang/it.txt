@@ -1144,4 +1144,4 @@ D-pad choose   A pick   B close = Croce scegli   A seleziona   B chiudi
 ICON = ICONA
 BACK = INDIETRO
 Horde bots = Bot in Orda
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. = Orda locale: premi Indietro / Visualizza quando compare per la prima volta il tabellone dell'Orda per aggiungere due bot (premi ancora per altri due). Ricompaiono a ogni ondata.
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Orda locale: premi Indietro / Visualizza quando compare per la prima volta il tabellone dell'Orda per aggiungere due bot (premi ancora per altri due). Ricompaiono a ogni ondata. Disattivalo per campagna e versus: Indietro attiva anche il flag dei trucchi del gioco.

@@ -16,7 +16,9 @@
 #endif
 
 #include <atomic>
+#include <cctype>
 #include <cstring>
+#include <string>
 #include <filesystem>
 #include <string_view>
 
@@ -46,8 +48,17 @@ bool GuestUtf16Is(const uint8_t* base, uint32_t addr, const char* text) {
   }
 }
 
+std::atomic<int64_t> g_level_open_ms{-1};  // #215 review: when a level package (*_P.xxx) was last opened
+int64_t NowMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 void OnFileOpened(std::string_view guest_path, const std::filesystem::path*) {
   ue3::NoteFileOpenedForExit(guest_path);
+  if (guest_path.size() > 6) {
+    std::string tail(guest_path.substr(guest_path.size() - 6));
+    for (char& c : tail) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (tail == "_p.xxx") g_level_open_ms = NowMs();
+  }
 }
 
 }  // namespace
@@ -72,7 +83,7 @@ void ExitGame() {
 }  // namespace rex::glue
 
 
-// GitHub #215: when SDK patch 67's xam_media_verify_calls counter last changed (checked from the game tick, 4x a second).
+// GitHub #215: when SDK patch 67's xam_media_verify_calls counter last changed (checked every 15 game ticks).
 static std::atomic<int64_t> g_mv_changed_ms{-1};
 void Gow3MediaVerifyTick() {
   static uint32_t ticks = 0;
@@ -121,7 +132,9 @@ extern "C" void GOW3_NEED_LIVE_FN(PPCContext& ctx, uint8_t* base) {
     if (!front) {
       const int64_t ago = Gow3MsSinceMediaVerify();
       REXLOG_INFO("MAINMENU: #215 file tracking says level; last menu media check {} ms ago", ago);
-      front = ago >= 0 && ago < 3000;
+      // review: 1.5 s, and no level package opened since that media check (starting a level can't count as menu)
+      const int64_t lv = g_level_open_ms.load();
+      front = ago >= 0 && ago < 1500 && (lv < 0 || NowMs() - lv > ago);
     }
     if (front) {
       REXLOG_INFO("MAINMENU: NeedLiveForDownloadableContent on the front end (lr {:08X})",

@@ -1144,4 +1144,4 @@ D-pad choose   A pick   B close = Cruceta elegir   A seleccionar   B cerrar
 ICON = ICONO
 BACK = ATRÁS
 Horde bots = Bots en Horda
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. = Horda local: pulsa Atrás / Vista cuando aparezca por primera vez el marcador de Horda para añadir dos bots (vuelve a pulsar para dos más). Reaparecen en cada oleada.
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Horda local: pulsa Atrás / Vista cuando aparezca por primera vez el marcador de Horda para añadir dos bots (vuelve a pulsar para dos más). Reaparecen en cada oleada. Desactívalo para la campaña y el versus: Atrás también activa el indicador de trucos del juego.
