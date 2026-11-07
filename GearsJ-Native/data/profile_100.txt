@@ -1,0 +1,42 @@
+# gj100: 100% campaign test profile for --gowj_profile_100 (--gowj_profile_100_file=data/profile_100.txt).
+# Ids from GearGame.xxx GearProfileSettings ProfileMappings (gj100_profile_ids.ps1 dump, table at 0xDCC652..0xDEA582).
+# Chapter words are EChapterPoint bitmasks (bit n of word k = chapter 32k+n); exact chapter count unknown, so all bits set.
+66=0xFFFFFFFF
+67=0xFFFFFFFF
+412=0xFFFFFFFF
+68=0xFFFFFFFF
+69=0xFFFFFFFF
+413=0xFFFFFFFF
+70=0xFFFFFFFF
+71=0xFFFFFFFF
+414=0xFFFFFFFF
+72=0xFFFFFFFF
+73=0xFFFFFFFF
+415=0xFFFFFFFF
+74=0xFFFFFFFF
+75=0xFFFFFFFF
+416=0xFFFFFFFF
+76=0xFFFFFFFF
+77=0xFFFFFFFF
+417=0xFFFFFFFF
+78=0xFFFFFFFF
+79=0xFFFFFFFF
+418=0xFFFFFFFF
+80=0xFFFFFFFF
+81=0xFFFFFFFF
+419=0xFFFFFFFF
+87=0xFFFFFFFF
+88=0xFFFFFFFF
+420=0xFFFFFFFF
+313=0xFFFFFFFF
+314=0xFFFFFFFF
+422=0xFFFFFFFF
+95=0xFFFFFFFF
+96=0xFFFFFFFF
+421=0xFFFFFFFF
+61=0xFFFFFFFE   # DiscoverFound1 (bit 0 = GDT_None, as Gears 3)
+62=0xFFFFFFFF   # DiscoverFound2
+63=0            # DiscoverNeedsViewed1
+64=0            # DiscoverNeedsViewed2
+82=0x7FFF       # UnlockedUnlockables 0..14 (Coalesced LastCampaignUnlockable=14; Insane = unlockable 0)
+83=0            # UnlockableNeedsViewed

@@ -54,7 +54,7 @@ REXCVAR_DEFINE_INT32(gowj_unlock_aftermath_mask, 0x7FFF, "Judgment",
 REXCVAR_DEFINE_BOOL(gowj_profile_100, false, "Judgment",
                     "gj100 (test only): write the profile setting values in gowj_profile_100_file into the in-memory "
                     "profile, so the game saves them (100% campaign test profile). Changes the profile when it saves");
-REXCVAR_DEFINE_STRING(gowj_profile_100_file, "", "Judgment",
+REXCVAR_DEFINE_STRING(gowj_profile_100_file, "data/profile_100.txt", "Judgment",
                       "gj100: text file of id=value lines for gowj_profile_100");
 
 namespace {
