@@ -177,7 +177,7 @@ std::vector<Option> make_options(Game g) {
     // GitHub #185 (Shagg 7 Nov): gamma on the game's display ramp. 100 = the game's own; higher = darker shadows and
     // midtones, highlights kept (Judgment looks brighter than Xbox 360 footage to some players).
     add(number("Gamma", "Gamma (100 = original)", Tab::Display, Kind::Int, PG, 70, 200, 5, 100,
-               "Shadow and midtone brightness. 100 = the game's own. Higher darkens shadows (bright areas stay); lower lifts them.", 0));
+               "Shadow and midtone brightness. 100 = the game's own. Higher darkens shadows (bright areas stay); lower lifts them.", 0), "gamma");
     add(make("Vsync", "Vsync (no tearing)", Tab::Display, Kind::Bool, SH, 0,
              "Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen "
              "follows the game below its refresh rate. A frame-rate limit above your screen's refresh rate is lowered to the "
@@ -588,6 +588,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g != Game::Judgment) return no(not_yet(gi));
     } else if (f == "bloom") {   // Canary: Gears 2 / 3 / Judgment; Gears 1's bloom shares its blur (DoF option there)
         if (g == Game::Gears1) return no("Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it.");
+    } else if (f == "gamma") {   // GitHub #185 (Shagg 7 Nov): Judgment only
+        if (g != Game::Judgment) return no("Judgment only.");
     } else if (f == "filmgrain") {
         if (g != Game::Judgment) return no("Judgment only.");
         if (!cap_exe(env, "gowj_no_film_grain")) return no(not_yet(gi, "needs its next build"));
@@ -1331,7 +1333,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     if (on("Ultrawide")) a.push_back(isG3 ? "--gow3_ultrawide=true" : isGJ ? "--gowj_ultrawide=true" : isG1 ? "--gow1_ultrawide=true" : "--gow2_ultrawide=true");
     // GitHub #185: launcher Gamma -> the display ramp
-    if (s.i("Gamma") != 100) {
+    if (avail("Gamma") && s.i("Gamma") != 100) {
         char g[32];
         std::snprintf(g, sizeof(g), "%.2f", s.i("Gamma") / 100.0);
         a.push_back(std::string("--gow2_present_gamma=") + g);
