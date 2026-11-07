@@ -363,6 +363,8 @@ Licences
 --------
 COGBox and the ports' own code are under the MIT licence (LICENSE.txt). The libraries, fonts and
 vendor upscalers included (SDL3, Dear ImGui, miniz, stb, FFmpeg's XMA decoder, the rexglue SDK, AMD FidelityFX, NVIDIA
-DLSS, Intel XeSS, the DirectX Shader Compiler) come under their own terms, in the licenses folder.
+DLSS, DLSS Frame Generation, Streamline and Reflex, Intel XeSS, the DirectX Shader Compiler) come under their own terms, in
+the licenses folder (NVIDIA's: licenses\NVIDIA-Streamline-DLSS-G-NOTICE.txt). This product uses the NVIDIA DLSS SDK, the NVIDIA
+Streamline SDK and the NVIDIA Reflex SDK; NVIDIA, GeForce RTX, DLSS and Reflex are trademarks of NVIDIA Corporation.
 Fonts: Anton, Barlow and Barlow Condensed (the launcher), and Inter (the achievement popups, assets\fonts), under the SIL
 Open Font License 1.1. Achievement sound (assets\sounds\achievement.wav): made with ElevenLabs (elevenlabs.io).

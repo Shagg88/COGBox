@@ -1067,6 +1067,17 @@ static void about_tab(App &a, int g)
     bool chk = a.ini.geti("Updates", "Check", 1) != 0;
     if (ImGui::Checkbox(tr("Check GitHub for a newer COGBox at start"), &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
     ui_tip("Only the release page's address is asked for; nothing about you or this PC is sent.");
+
+    // ---- LICENCES (0.4.8): the third-party terms, and NVIDIA's attribution for DLSS / DLSS Frame Generation / Reflex
+    // (NVIDIA RTX SDKs License 7.1(b): attribute the SDK in the application's about box)
+    ui_section("LICENCES");
+    ui_note("COGBox is MIT-licensed. Libraries, fonts and vendor SDKs come under their own terms, in the licenses folder.");
+    ui_note("This product uses the NVIDIA DLSS SDK, the NVIDIA Streamline SDK and the NVIDIA Reflex SDK. NVIDIA, GeForce RTX, "
+            "DLSS and Reflex are trademarks of NVIDIA Corporation.");
+    if (small_button("Licences folder")) {
+        const std::string ld = join(exe_dir(), "licenses");
+        if (dir_exists(ld)) shell_open(ld); else set_message(a, "The licenses folder is missing - unzip the release again.", true);
+    }
 }
 
 // ---- the settings tabs' groups (presentation only: which heading an option shows under) -------------------------------
