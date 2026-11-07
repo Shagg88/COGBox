@@ -811,6 +811,22 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
         if (!target && fn.find("gearinput.ini") != std::string::npos) target = &f;
         if (!target && fn.find("input.ini") != std::string::npos) target = &f;  // e.g. DefaultInput.ini
       }
+      if (target && AsciiLower(n) == "coalesced_int.bin") {
+        // GitHub #89 follow-up: show how the bundle spells the input sections and every existing Back binding (key
+        // name "Bindings" vs "+Bindings", which class's section) so the next log tells us where Gears 3 reads them
+        for (const ue3::ConfigFile& f : bundle.files)
+          for (const ue3::ConfigSection& c : f.sections) {
+            const std::string sl = ue3::AsciiLower(c.name.Utf8());
+            const bool inputish = sl.find("input") != std::string::npos;
+            if (&f == target || inputish)
+              REXLOG_INFO("gow3_horde_bots:   [{}] in {} ({} keys)", c.name.Utf8(), f.name.Utf8(), c.keys.size());
+            for (const ue3::ConfigKey& k : c.keys) {
+              const std::string v = k.value.Utf8();
+              if (ue3::AsciiLower(v).find("xboxtypes_back") != std::string::npos)
+                REXLOG_INFO("gow3_horde_bots:     {} [{}] {}={}", f.name.Utf8(), c.name.Utf8(), k.key.Utf8(), v);
+            }
+          }
+      }
       if (target) {
         ue3::ConfigSection* sec = nullptr;
         for (ue3::ConfigSection& c : target->sections)
