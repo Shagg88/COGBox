@@ -456,6 +456,18 @@ int AddVoiceLanguage(const std::filesystem::path& game, std::map<std::string, st
   std::string voice = REXCVAR_GET(ue3_voice_language);
   for (char& c : voice) c = char(std::toupper(uint8_t(c)));
   if (voice.size() != 3) return 0;
+  // GitHub #216 / #217: with the text language set to the same language (--user_language), the game already loads that
+  // language's packages and voices itself; swapping the other languages' packages as well crashed it at start-up
+  // (guest write of 0x00000003 right after GearGame_LOC_<voice> opened). Nothing to do then.
+  {
+    const std::string ul = rex::cvar::GetFlagByName("user_language");
+    const char* text = ul == "3" ? "DE" : ul == "4" ? "FR" : ul == "5" ? "ES" : ul == "6" ? "IT" : nullptr;
+    if (text && voice.compare(0, 2, text) == 0) {
+      REXLOG_INFO("ue3_voice_language: {} - the text language (--user_language={}) already gives these voices; no packages "
+                  "swapped (GitHub #216)", voice, ul);
+      return 0;
+    }
+  }
   std::error_code ec;
   if (!fs::is_directory(game, ec)) return 0;
   // folder -> lower-case name -> real path, for the twin lookup

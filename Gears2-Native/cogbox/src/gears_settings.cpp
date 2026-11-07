@@ -222,7 +222,8 @@ std::vector<Option> make_options(Game g) {
                "preset shows Custom.", 316));
     // Job 521 (Shagg 19:02): Vulkan opened for testing - the play exes have the full Vulkan renderer.
     // Shagg 3 Nov: experimental again in Gears 3 and Judgment (Gears 3: black eyes on Vulkan, fine on DirectX 12)
-    const bool vkExp = g == Game::Gears3 || g == Game::Judgment;
+    // 0.4.7 (Shagg 6 Nov): not experimental any more - the Vulkan texture fix (#202 / #213 / #131) tested in both games
+    const bool vkExp = false;
     static const char* const kVkTip =
                "Vulkan is a full alternative to DirectX 12, and the usual choice on Steam Deck / Linux. "
                "\n"
@@ -256,7 +257,7 @@ std::vector<Option> make_options(Game g) {
     add(choice("Sharpen", "Upscale sharpening (1080p)", Tab::Graphics, PG, { "Automatic", "On", "Off" }, 0,
                "With the 1080p render resolution: sharpen the upscaled picture. Automatic = on, except on Steam Deck / "
                "Linux (Wine / Proton), where it can make text and some textures look wrong.", 0));
-    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (highly experimental)", "DLSS (NVIDIA RTX, highly experimental)", "XeSS (highly experimental)",
+    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (highly experimental)", g == Game::Gears1 ? "DLSS (NVIDIA RTX, highly experimental)" : "DLSS (NVIDIA RTX)", "XeSS (highly experimental)",   /* 0.4.7: DLSS tested clean in G2/G3/GJ */
                  "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: temporal anti-aliasing of the 3D scene, any DX12 GPU. DLSS: the same on "
                "NVIDIA RTX cards. XeSS: the same, best on Intel Arc cards.\nSMAA T2x: SMAA plus a temporal pass - smoother edges and much less shimmer, at little cost, any graphics card, DirectX 12 or Vulkan. Gears 2 and Gears 3 for now.", 346), "", "", true);
@@ -405,6 +406,11 @@ std::vector<Option> make_options(Game g) {
     add(make("UnlockInsane", "Unlock Insane from the start", Tab::Gameplay, Kind::Bool, OWN, 0,
              "Insane difficulty can be chosen without finishing the campaign first. Your profile and saves are not changed.", 0),
         "unlockinsane");
+    // GitHub #89 (francoissubke-blip's tip): bots in local Horde
+    add(make("HordeBots", "Horde bots", Tab::Gameplay, Kind::Bool, OWN, 0,
+             "Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). "
+             "They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag.", 0),
+        "hordebots");
     add(make("Cheats", "Cheats (hotkeys F5-F11)", Tab::Gameplay, Kind::Bool, SH, 0,
              "The developers' cheat keys (Gears 3 chat, its notes/25): F5-F11 in game. Achievements and saves are your own "
              "business.", 327), "cheats");
@@ -557,6 +563,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "unlockinsane") {   // GitHub #174: Gears 3 (disc and Title Update 6) so far
         if (g != Game::Gears3) return no(not_yet(gi, "its difficulty check isn't found yet"));
         if (!cap_exe(env, "Unlock Insane difficulty from the start")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "hordebots") {   // GitHub #89
+        if (g != Game::Gears3) return no("Gears 3 only.");
+        if (!cap_exe(env, "gow3_horde_bots")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "dofscale") {   // GitHub #105
         if (g != Game::Gears3) return no("Gears 3 only.");
         if (!cap_exe(env, "GitHub #105: surface pitches")) return no(not_yet(gi, "needs its next build"));
@@ -807,6 +816,7 @@ void Store::remember(Game g, const Settings& s) {   // PS1 450-455
     const int gi = static_cast<int>(g);
     own[gi]["Start"] = s.f("Start"); own[gi]["Aniso"] = s.f("Aniso"); own[gi]["FpsMode"] = s.f("FpsMode");
     if (g != Game::Judgment && g != Game::Gears1) own[gi]["Version"] = s.f("Version");
+    for (const Option& o : options(g)) if (o.scope == Scope::GameOwn && o.id != "Version") own[gi][o.id] = s.f(o.id);   // GitHub #222: AimTurn, HideNotes, UnlockInsane, HordeBots were never kept
     for (const Option& o : options(g)) if (o.scope == Scope::PerGame) per[gi][o.id] = s.f(o.id);   // PS1 419-427
 }
 
@@ -815,6 +825,7 @@ void Store::commit(Game g, const Settings& s, const Environment& env) {   // PS1
     last_game = gi;
     own[gi]["Start"] = s.f("Start"); own[gi]["Aniso"] = s.f("Aniso"); own[gi]["FpsMode"] = s.f("FpsMode");
     if (g != Game::Judgment && g != Game::Gears1 && env.update_ready) own[gi]["Version"] = s.f("Version");   // PS1 761-762
+    for (const Option& o : options(g)) if (o.scope == Scope::GameOwn && o.id != "Version") own[gi][o.id] = s.f(o.id);   // GitHub #222: AimTurn, HideNotes, UnlockInsane, HordeBots were never kept
     for (const Option& o : options(g)) {
         if (o.scope == Scope::GameOwn) continue;
         top[o.id] = s.f(o.id);
@@ -990,6 +1001,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (isG3) {
         if (scale > 1) a.push_back("--gow2_renderer_resolution_scale_threshold=1120");
         if (on("UnlockInsane")) a.push_back("--gow3_unlock_insane=true");   // GitHub #174
+        if (avail("HordeBots") && on("HordeBots")) a.push_back("--gow3_horde_bots=true");   // GitHub #89
         // GitHub #105: the depth-of-field chain's half-size targets (pitch 640) follow the scale despite the threshold
         if (scale > 1 && avail("DofScale") && on("DofScale")) a.push_back("--gow2_renderer_resolution_scale_pitches=640");
         a.push_back("--gow2_renderer_memexport=true");
@@ -1471,8 +1483,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (g == Game::Gears2 && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gow2_max_fps=" + std::to_string(cap)); }
         if (isG3 && fps > 0) {
             a.push_back("--gow2_gpu_vsync=false");
-            // 60 is Gears 3's own setting (no switch); every other limit is passed as it is (vsync may have lowered it).
-            if (cap != k_fpsCaps[fps] || cap != 60) a.push_back("--gow3_max_fps=" + std::to_string(cap));
+            // GitHub #225: always passed - the game's own limit is 62 (MaxSmoothedFrameRate), not 60, so "60" gave 62 fps
+            // and uneven frame pacing on a 60 Hz screen.
+            a.push_back("--gow3_max_fps=" + std::to_string(cap));
         }
         if (isGJ && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gowj_max_fps=" + std::to_string(cap)); }
         if (isG1 && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gow1_max_fps=" + std::to_string(cap)); }

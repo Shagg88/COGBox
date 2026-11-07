@@ -21,7 +21,7 @@ each game. No game files are included or ever will be.
 
 The games' original Xbox 360 code is translated ahead of time into C++ and compiled into ordinary Windows programs -
 no emulator interprets the game while you play. The parts the console's hardware did are supplied by our code,
-most importantly **our own renderer**, which draws every frame on Direct3D 12 (or Vulkan, experimental). That gives
+most importantly **our own renderer**, which draws every frame on Direct3D 12 (or Vulkan). That gives
 the ports what an emulator can't easily offer:
 
 - **Any resolution** - 1x to 4x the original (up to 5K) or matched to your monitor, with real extra detail, not a
@@ -32,7 +32,7 @@ the ports what an emulator can't easily offer:
 - **Smooth play** - the games' shaders are translated straight to Direct3D 12 shader code in under a millisecond each
   (as Xenia Canary does), kept on your PC, and pipelines are made in the background - a new area shows a moment
   later instead of freezing the game.
-- **Vulkan (experimental)** - a choice on each game's Graphics tab, for testing; close to Direct3D 12 already.
+- **Vulkan** - a choice on each game's Graphics tab; close to Direct3D 12 already.
 - **Screenshots** - press **\\** (backslash) in any game; they go to `Pictures\COGBox\<game>`.
 - **Lower input lag** - one frame in flight, NVIDIA Reflex / AMD Anti-Lag 2 where your GPU has them.
 - **HDR10**, **ultrawide 21:9** (all four games), **16x anisotropic filtering**, field of view, and the games' own motion blur and depth of
@@ -224,7 +224,7 @@ last option reaches Library / Save / Play, and B jumps to Library.
 **In the game:** Back + Start (Share + Options on PlayStation, or F1) opens the in-game menu - the same settings, **Resume**, **Restart to apply** and
 **Quit game**. Most settings take effect when the game restarts; Restart to apply does that for you.
 
-**Graphics API:** Direct3D 12 is the default and the tested renderer. **Vulkan (experimental)** is on each game's
+**Graphics API:** Direct3D 12 is the default and the tested renderer. **Vulkan** is on each game's
 Graphics tab - FSR / DLSS / XeSS and frame generation are Direct3D 12 only. Problem reports from Vulkan help a lot.
 
 **Linux and Steam Deck (experimental):** unzip COGBox in your home folder, add `CogBox.exe` to Steam as a non-Steam
@@ -271,7 +271,7 @@ Plans, not promises:
 - **Texture packs** - a texture dumper and replacement packs (mods and DLC are in since 0.2.0).
 - **Mac, Linux, Steamdeck** - Linux and Steam Deck through Proton are in as experimental now; tested support next.
 - **Online Co-Op** - Hopefully.
-- **Vulkan as the default** - it's already a choice (experimental); next: matching Direct3D 12 everywhere, then default.
+- **Vulkan as the default** - it's already a choice; next: matching Direct3D 12 everywhere, then default.
 - **Better frame generation** - an OptiScaler-style frame generation to replace today's experimental AMD FSR one.
 - **Background art read from your own copy of each game** inside COGBox.
 - **Multi-core rendering** (the next step of the speed work) and shaders built at the main menu, for no first-visit hitches.

@@ -1143,3 +1143,5 @@ No pictures found. Add a game, or start one once from COGBox. = Картинки
 D-pad choose   A pick   B close = Крестовина выбор   A выбрать   B закрыть
 ICON = ЗНАЧОК
 BACK = НАЗАД
+Horde bots = Боты в Орде
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Локальная Орда: нажмите «Назад» / «Просмотр», когда впервые появится таблица счёта Орды, чтобы добавить двух ботов (нажмите ещё раз — ещё двух). Они возрождаются каждую волну. Выключайте для кампании и версуса: «Назад» также включает флаг читов игры.

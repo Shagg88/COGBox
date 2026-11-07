@@ -52,6 +52,9 @@ bool ReadPackageExportPaths(const std::filesystem::path& file, std::set<std::str
 REXCVAR_DEFINE_STRING(ue3_ini_edits, "", "Gears3",
                       "Engine config edits, 'file|section|key=value' or 'file|section|key*=factor', ';'-separated, e.g. "
                       "'Xe-GearEngine.ini|SystemSettings|MotionBlur=False' (ue3/config_bundle.h)");
+REXCVAR_DEFINE_BOOL(gow3_horde_bots, false, "Gears3",
+                    "GitHub #89 (from francoissubke-blip's tip): Back / View on the Horde scoreboard adds two bots (local "
+                    "Horde); they respawn every wave");
 REXCVAR_DEFINE_STRING(ue3_mods, "", "Gears3",
                       "Mods (0.2.0): host folders, ';'-separated in load order (a later one wins), each laid out like the game "
                       "data folder; their files replace or add to the game's, read-only, through a folder overlay");
@@ -794,6 +797,34 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
     int changed = 0;
     if (!edits.empty()) {
       changed += ue3::ApplyConfigEdits(bundle, edits, &log);
+    }
+    if (REXCVAR_GET(gow3_horde_bots)) {  // GitHub #89: one more Back binding in the input settings
+      static const char kBind[] =
+          "(Name=\"XboxTypeS_Back\",Command=\"Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot 0 3 | AddBot 0 4\")";
+      ue3::ConfigFile* target = nullptr;
+      for (ue3::ConfigFile& f : bundle.files) {
+        const std::string fn = ue3::AsciiLower(f.name.Utf8());
+        if (fn.size() >= 24 && fn.compare(fn.size() - 24, 24, "tu_xbox360-gearinput.ini") == 0) { target = &f; break; }
+        // the disc bundle names it Xbox360-GearInput.ini (job 1313 log: no "Xe-" file)
+        if (!target && fn.size() >= 13 && fn.compare(fn.size() - 13, 13, "gearinput.ini") == 0) target = &f;
+      }
+      if (target) {
+        ue3::ConfigSection* sec = nullptr;
+        for (ue3::ConfigSection& c : target->sections)
+          if (ue3::AsciiLower(c.name.Utf8()) == "engine.playerinput") sec = &c;
+        const bool wide = target->name.wide;
+        if (!sec) {
+          target->sections.push_back({});
+          sec = &target->sections.back();
+          sec->name = ue3::ConfigString::FromUtf8("Engine.PlayerInput", wide);
+        }
+        sec->keys.push_back({ue3::ConfigString::FromUtf8("Bindings", wide), ue3::ConfigString::FromUtf8(kBind, wide)});
+        ++changed;
+        if (AsciiLower(n) == "coalesced_int.bin" || written == 0)
+          REXLOG_INFO("gow3_horde_bots: {}: Back adds two bots on the Horde scoreboard ({})", n, target->name.Utf8());
+      } else if (AsciiLower(n) == "coalesced_int.bin") {
+        REXLOG_WARN("gow3_horde_bots: {}: no GearInput.ini in the bundle - not added", n);
+      }
     }
     if (exit_menu) {
       const int exit_changed = ue3::ApplyMainMenuExitToBundle(ue3::GameId::Gears3, n, bundle);

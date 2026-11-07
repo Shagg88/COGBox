@@ -15,7 +15,10 @@
 #include <unistd.h>
 #endif
 
+#include <atomic>
+#include <cctype>
 #include <cstring>
+#include <string>
 #include <filesystem>
 #include <string_view>
 
@@ -23,6 +26,10 @@
 #include <rex/logging.h>
 #include <rex/ppc.h>
 #include <ue3/main_menu_exit.h>
+#include <rex/cvar.h>
+
+#include <chrono>
+#include <cstdlib>
 
 void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));  // shader_prebuild.cpp
 
@@ -41,8 +48,17 @@ bool GuestUtf16Is(const uint8_t* base, uint32_t addr, const char* text) {
   }
 }
 
+std::atomic<int64_t> g_level_open_ms{-1};  // #215 review: when a level package (*_P.xxx) was last opened
+int64_t NowMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 void OnFileOpened(std::string_view guest_path, const std::filesystem::path*) {
   ue3::NoteFileOpenedForExit(guest_path);
+  if (guest_path.size() > 6) {
+    std::string tail(guest_path.substr(guest_path.size() - 6));
+    for (char& c : tail) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (tail == "_p.xxx") g_level_open_ms = NowMs();
+  }
 }
 
 }  // namespace
@@ -66,6 +82,27 @@ void ExitGame() {
 
 }  // namespace rex::glue
 
+
+// GitHub #215: when SDK patch 67's xam_media_verify_calls counter last changed (checked every 15 game ticks).
+static std::atomic<int64_t> g_mv_changed_ms{-1};
+void Gow3MediaVerifyTick() {
+  static uint32_t ticks = 0;
+  static long long last = -1;
+  if (++ticks % 15) return;
+  const std::string v = rex::cvar::GetFlagByName("xam_media_verify_calls");
+  if (v.empty()) return;  // a runtime without patch 67
+  const long long n = std::atoll(v.c_str());
+  if (n != last) {
+    last = n;
+    g_mv_changed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  }
+}
+int64_t Gow3MsSinceMediaVerify() {
+  const int64_t t = g_mv_changed_ms.load();
+  if (t < 0) return -1;
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() - t;
+}
+
 void Gow3InstallMainMenuExitIfRequested() {
   if (!REXCVAR_GET(gow_main_menu_exit)) return;
 #if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
@@ -88,7 +125,18 @@ extern "C" void GOW3_NEED_LIVE_IMP(PPCContext& ctx, uint8_t* base);
 
 extern "C" void GOW3_NEED_LIVE_FN(PPCContext& ctx, uint8_t* base) {
   if (REXCVAR_GET(gow_main_menu_exit) && rex::glue::MatchesNeedLive(base, ctx.r5.u32)) {
-    if (ue3::InFrontEndForExit()) {
+    // GitHub #215: back on the main menu after playing, Gears 3 opens no file (the front end stays resident), so the
+    // file-open tracking still says "in a level". The menu calls XamMediaVerificationVerify twice a second (SDK patch
+    // 67 counts it; nothing else does): a call within the last 3 s also means the front end.
+    bool front = ue3::InFrontEndForExit();
+    if (!front) {
+      const int64_t ago = Gow3MsSinceMediaVerify();
+      REXLOG_INFO("MAINMENU: #215 file tracking says level; last menu media check {} ms ago", ago);
+      // review: 1.5 s, and no level package opened since that media check (starting a level can't count as menu)
+      const int64_t lv = rex::glue::g_level_open_ms.load();
+      front = ago >= 0 && ago < 1500 && (lv < 0 || rex::glue::NowMs() - lv > ago);
+    }
+    if (front) {
       REXLOG_INFO("MAINMENU: NeedLiveForDownloadableContent on the front end (lr {:08X})",
                   static_cast<uint32_t>(ctx.lr));
       rex::glue::ExitGame();

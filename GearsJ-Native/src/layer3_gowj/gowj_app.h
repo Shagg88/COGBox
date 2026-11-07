@@ -112,6 +112,8 @@ class GowjApp : public rex::ReXApp {
     game_default("gow2_ao_fog_ps", "724AB5F143DBBFD4");
     game_default("gow2_renderer_memexport", "true");
     game_default("gow2_renderer_resolution_scale_threshold", "1120");
+    //  - per-object motion vectors for DLSS / FSR / XeSS (#147 / #150): on (Shagg 11-06, tested clean); Gears 1 keeps it off
+    game_default("gow2_upscale_object_motion", "true");
     //  - first-visit freezes: the DXBC shader path (shaders ready at once; HLSL spent 221 s of compiler time on University's
     //    first visit, job 017). Holding / waiting for pipelines is layer 0's call: since Gears 2 patch 0132 (Shagg 21:46-22:07,
     //    "brief pop-in", stutter rules lifted) layer 0 defaults to never waiting on the driver - a draw whose pipeline is

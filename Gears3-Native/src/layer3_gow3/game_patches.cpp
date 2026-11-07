@@ -22,6 +22,7 @@
 #include <ue3/objects.h>
 #include <ue3/console.h>  // Ue3ConsoleQueue (GitHub #208)
 #include "mouse_look.h"
+#include "main_menu_exit.h"
 
 #include <algorithm>
 #include <atomic>
@@ -463,6 +464,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   TickTimeline();
   Gow3ModChaptersTick();
   Gow3PathChoiceTick();
+  Gow3MediaVerifyTick();  // GitHub #215
   const int32_t v = REXCVAR_GET(gow3_max_fps);
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)
@@ -715,6 +717,42 @@ void WriteGuestFloat(rex::Runtime* runtime, uint32_t addr, float expected, float
 #endif
   REXLOG_INFO("{}: {:08X} {} -> {}", what, addr, old_value, value);
 }
+// GitHub #220 (as Gears 2's #132): the camera's view offset counts a viewport as widescreen only within 16:9 +- 0.01
+// (.rdata pair 1.7877778 / 1.7677778), so every ultrawide shape got the 4:3 offset - the camera sits higher. With a
+// wider picture the upper bound becomes the shape's aspect + 0.05. Found by value in .rdata, written only if found once.
+void Gow3UltrawideCameraViewportType(rex::Runtime* runtime, float aspect) {
+  const uint8_t* image = runtime->virtual_membase() + 0x82000000u;
+  uint32_t lo = 0, hi = 0;
+  if (image[0] == 'M' && image[1] == 'Z') {
+    uint32_t pe = 0;
+    std::memcpy(&pe, image + 0x3C, 4);
+    if (pe > 0 && pe < 0x1000 && std::memcmp(image + pe, "PE\0\0", 4) == 0) {
+      uint16_t sections = 0, opt = 0;
+      std::memcpy(&sections, image + pe + 6, 2);
+      std::memcpy(&opt, image + pe + 20, 2);
+      for (uint32_t i = 0; i < sections && i < 32; ++i) {
+        const uint8_t* sec = image + pe + 24 + opt + 40 * i;
+        if (std::memcmp(sec, ".rdata", 7) == 0) {
+          uint32_t vsize = 0, va = 0;
+          std::memcpy(&vsize, sec + 8, 4);
+          std::memcpy(&va, sec + 12, 4);
+          lo = va, hi = va + vsize;
+        }
+      }
+    }
+  }
+  static const uint8_t kPair[8] = {0x3F, 0xE4, 0xD5, 0xE7, 0x3F, 0xE2, 0x46, 0x8B};  // 1.7877778f, 1.7677778f (BE)
+  uint32_t found = 0, count = 0;
+  for (uint32_t o = lo; hi > lo && hi < 0x02000000u && o + 8 <= hi; o += 4)
+    if (std::memcmp(image + o, kPair, 8) == 0) found = 0x82000000u + o, ++count;
+  if (count != 1) {
+    REXLOG_INFO("gow3_aspect: camera viewport bounds not found ({} copies in .rdata {:08X}-{:08X}) - left alone "
+                "(GitHub #220)", count, 0x82000000u + lo, 0x82000000u + hi);
+    return;
+  }
+  WriteGuestFloat(runtime, found, 1.7877778f, aspect + 0.05f,
+                  "gow3_aspect: camera widescreen upper bound (GitHub #220: no 4:3 camera offset)");
+}
 }  // namespace
 
 void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
@@ -729,6 +767,7 @@ void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
     const float aspect = WideHeight() == kCanaryUltrawideHeight ? 2.3272f : float(1280.0 / double(WideHeight()));
     WriteGuestFloat(runtime, gow3::addr::kWidescreenAspect, gow3::addr::kWidescreenAspectValue, aspect,
                     "gow3_aspect: widescreen aspect");
+    Gow3UltrawideCameraViewportType(runtime, aspect);
     const bool set = rex::cvar::SetFlagByName("gow2_present_frame_aspect", "true");
     REXLOG_INFO("gow3_aspect: present at the front buffer's own shape {}", set);
   }
