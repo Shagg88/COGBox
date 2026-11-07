@@ -1483,8 +1483,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (g == Game::Gears2 && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gow2_max_fps=" + std::to_string(cap)); }
         if (isG3 && fps > 0) {
             a.push_back("--gow2_gpu_vsync=false");
-            // 60 is Gears 3's own setting (no switch); every other limit is passed as it is (vsync may have lowered it).
-            if (cap != k_fpsCaps[fps] || cap != 60) a.push_back("--gow3_max_fps=" + std::to_string(cap));
+            // GitHub #225: always passed - the game's own limit is 62 (MaxSmoothedFrameRate), not 60, so "60" gave 62 fps
+            // and uneven frame pacing on a 60 Hz screen.
+            a.push_back("--gow3_max_fps=" + std::to_string(cap));
         }
         if (isGJ && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gowj_max_fps=" + std::to_string(cap)); }
         if (isG1 && fps > 0) { a.push_back("--gow2_gpu_vsync=false"); a.push_back("--gow1_max_fps=" + std::to_string(cap)); }
