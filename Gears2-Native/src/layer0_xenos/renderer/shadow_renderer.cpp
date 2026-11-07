@@ -3276,6 +3276,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // Patch 0148: the HUD-less image through the same passes, at the same size (0 = none this frame).
     const gpu::TextureHandle hl_image =
         hl_present_has_ && fg_wanted_ && !presenter_vulkan_ ? HudlessChain(regs, w, h, ow, oh) : gpu::TextureHandle(0);
+    const uint32_t hl_image_w = hl_fit_w_, hl_image_h = hl_fit_h_;  // its size (the generation rectangle's, when known)
     hl_present_has_ = false;
     bool wrote = false;
     if (!presenter_) {  // notes/68: Vulkan without a presenter yet - the image is made, nothing is shown
@@ -3326,7 +3327,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           b.uav_texture = out;
           backend_->Dispatch(present_unpack_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
           backend_->ReleaseImport(out, uint32_t(rex::ui::d3d12::D3D12Presenter::kGuestOutputInternalState));
-          if (fg_wanted_) FgHandOver(c.resource_uav_capable(), hl_image, ow, oh);  // patch 0147: before the Submit that carries the copies
+          if (fg_wanted_) FgHandOver(c.resource_uav_capable(), hl_image, hl_image_w, hl_image_h);  // patch 0147: before the Submit that carries the copies
           backend_->Submit();
           wrote = true;
           return true;
@@ -4514,7 +4515,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool hl_present_has_ = false;
   DisplaySource hl_present_src_{};
   uint32_t hl_present_fb_w_ = 0, hl_present_fb_h_ = 0;
-  gpu::TextureHandle hl_out_ = 0, hl_scaled_ = 0, hl_sharp_ = 0;
+  gpu::TextureHandle hl_out_ = 0, hl_scaled_ = 0, hl_sharp_ = 0, hl_fit_ = 0;
+  gpu::PipelineHandle hl_resample_ = 0;  // the present resample shader, for the fit to the generation rectangle
+  uint32_t hl_fit_w_ = 0, hl_fit_h_ = 0, hl_fit_tex_w_ = 0, hl_fit_tex_h_ = 0, hl_fit_logged_ = 0;
   uint32_t hl_out_w_ = 0, hl_out_h_ = 0, hl_scaled_w_ = 0, hl_scaled_h_ = 0, hl_sharp_w_ = 0, hl_sharp_h_ = 0;
   uint64_t hl_takes_ = 0, hl_resolves_ = 0, hl_images_ = 0, hl_logged_ = 0;
   // Stage counters (eb0227f: "given 0, none made 600" - which stage never matches), logged every 600 frames.
@@ -6033,11 +6036,56 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       b.uav_texture = out;
       backend_->Dispatch(hdr_encode_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
     }
+    // 8b9872a: the presenter stretches our ow x oh image into the back buffer (without "Match my monitor"), so the
+    // generation rectangle is the stretched size: the HUD-less image is resampled to it (the size frame generation
+    // reported last frame), with the present resample pass (box shrink / bilinear enlarge, in linear light).
+    uint32_t gw = 0, gh = 0;
+    hl_fit_w_ = ow, hl_fit_h_ = oh;
+    if (XenosFrameGenerationHudlessSize(gw, gh) && (gw != ow || gh != oh) && gw <= 16384 && gh <= 16384) {
+      if (!hl_resample_) {
+        if (present_resample_) {
+          hl_resample_ = present_resample_;
+        } else {
+          const gpu::ShaderHandle rs =
+              cache_->GetBuiltin("present_resample_cs", rr::builtin::kPresentResampleCs, gpu::ShaderStage::kCompute);
+          hl_resample_ = rs ? backend_->CreateComputePipeline(rs) : 0;
+        }
+      }
+      if (hl_fit_logged_ < 3) {
+        ++hl_fit_logged_;
+        REXLOG_INFO("gow2_frame_generation_hudless: HUD-less image {}x{}, generation rectangle {}x{}: resampled{}", ow,
+                    oh, gw, gh, hl_resample_ ? "" : " - RESAMPLE SHADER MISSING, none given");
+      }
+      if (hl_resample_ && (!hl_fit_ || hl_fit_tex_w_ != gw || hl_fit_tex_h_ != gh)) {
+        if (hl_fit_) backend_->DestroyTexture(hl_fit_), hl_fit_ = 0;
+        gpu::TextureDesc fd;
+        fd.width = gw;
+        fd.height = gh;
+        fd.format = gpu::Format::kR32Uint;
+        fd.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+        fd.debug_name = "gow2 HUD-less at the generation size";
+        hl_fit_ = backend_->CreateTexture(fd);
+        hl_fit_tex_w_ = gw, hl_fit_tex_h_ = gh;
+      }
+      if (!hl_resample_ || !hl_fit_) return 0;
+      gpu::ComputeBindings b;
+      b.constants[0] = ow;
+      b.constants[1] = oh;
+      b.constants[2] = gw;
+      b.constants[3] = gh;
+      b.constants[4] = 0;
+      b.constant_count = 8;
+      b.srv[0] = out;
+      b.uav_texture = hl_fit_;
+      backend_->Dispatch(hl_resample_, b, (gw + 7) / 8, (gh + 7) / 8, 1);
+      out = hl_fit_;
+      hl_fit_w_ = gw, hl_fit_h_ = gh;
+    }
     ++hl_images_;
     if (hl_logged_ < 3 || hl_images_ % 600 == 0) {
       ++hl_logged_;
-      REXLOG_INFO("gow2_frame_generation_hudless: patch 0148: HUD-less image {}x{} (target copies {}, resolves {}, "
-                  "images {})", ow, oh, hl_takes_, hl_resolves_, hl_images_);
+      REXLOG_INFO("gow2_frame_generation_hudless: patch 0148: HUD-less image {}x{} given as {}x{} (target copies {}, "
+                  "resolves {}, images {})", ow, oh, hl_fit_w_, hl_fit_h_, hl_takes_, hl_resolves_, hl_images_);
     }
     return out;
   }

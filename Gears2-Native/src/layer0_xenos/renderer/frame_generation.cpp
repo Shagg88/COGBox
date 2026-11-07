@@ -105,7 +105,8 @@ uint64_t g_list_index = 0;
 // Patch 0148: the HUD-less image at the back buffer's size and format (AMD: "same format and resolution as the
 // backbuffer"); the renderer's image is copied in at the generation rectangle. Rests in NON_PIXEL_SHADER_RESOURCE.
 bool g_hudless_on = false;                  // --gow2_frame_generation_hudless
-std::atomic<uint32_t> g_hudless_format{0};  // for the renderer: 0 none, 1 R8G8B8A8_UNORM, 2 R10G10B10A2_UNORM
+std::atomic<uint32_t> g_hudless_format{0};
+std::atomic<uint32_t> g_hl_rect_size{0};  // patch 0148: last generation rectangle, width << 16 | height  // for the renderer: 0 none, 1 R8G8B8A8_UNORM, 2 R10G10B10A2_UNORM
 ID3D12Resource* g_hl_tex = nullptr;
 DXGI_FORMAT g_hl_format = DXGI_FORMAT_UNKNOWN;
 bool g_hl_link_failed = false;  // patch 0148: AMD refused the RGBA8 HUD-less format next to a BGRA8 back buffer
@@ -653,6 +654,10 @@ bool BeforePresent(void* guest_output, void* queue, const int32_t* rect) {
     // Patch 0148: the HUD-less image, when the renderer made one for this frame at exactly the generation rectangle's
     // size (the presenter shows our image 1:1 there) in the back buffer's format.
     int32_t hl_x = -1, hl_y = -1;
+    if (g_hudless_on && c.generationRect.width > 0 && c.generationRect.height > 0 && c.generationRect.width < 65536 &&
+        c.generationRect.height < 65536)
+      g_hl_rect_size.store((uint32_t(c.generationRect.width) << 16) | uint32_t(c.generationRect.height),
+                           std::memory_order_relaxed);
     if (g_hudless_on && generate) {
       const bool fits = f.hudless && int32_t(f.hudless_width) == c.generationRect.width &&
                         int32_t(f.hudless_height) == c.generationRect.height && c.generationRect.left >= 0 &&
@@ -709,6 +714,12 @@ uint32_t XenosFrameGenerationHudlessFormat() {
   return g_inputs_wanted.load(std::memory_order_relaxed) ? g_hudless_format.load(std::memory_order_relaxed) : 0u;
 }
 
+bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height) {
+  const uint32_t v = g_hl_rect_size.load(std::memory_order_relaxed);
+  width = v >> 16, height = v & 0xFFFFu;
+  return v != 0;
+}
+
 void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFrame* frame) {
   if (!g_generate || !guest_output_resource) return;
   std::lock_guard<std::mutex> lock(g_mutex);
@@ -748,6 +759,7 @@ void XenosFrameGenerationInstall() {
 
 bool XenosFrameGenerationWanted() { return false; }
 uint32_t XenosFrameGenerationHudlessFormat() { return 0; }
+bool XenosFrameGenerationHudlessSize(uint32_t&, uint32_t&) { return false; }
 void XenosFrameGenerationSetInputs(void*, const XenosFgFrame*) {}
 
 void XenosFrameGenerationInstall() {
