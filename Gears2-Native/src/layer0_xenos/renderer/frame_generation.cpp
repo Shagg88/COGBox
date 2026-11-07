@@ -36,6 +36,11 @@ REXCVAR_DEFINE_STRING(gow2_frame_generation, "off", "Gears2",
 REXCVAR_DEFINE_INT32(gow2_fg_debug, 0, "Gears2",
                      "Patch 0147: AMD frame-generation debug drawing, as flags: 1 tear lines, 2 reset indicators, 4 debug "
                      "view (the generated frame shows its inputs), 16 pacing lines");
+REXCVAR_DEFINE_BOOL(gow2_frame_generation_hudless, false, "Gears2",
+                    "Patch 0148 (frame generation step 4, test): with --gow2_frame_generation=fsr, also hand AMD the "
+                    "frame as it was just before the HUD was drawn (HUDLessColor), so the HUD is not smeared in the "
+                    "generated frames. The HUD start is guessed per frame: the first blended draw after the last "
+                    "full-screen opaque pass that follows the scene. Off: nothing changes");
 
 #if defined(GN_HAVE_FSR)
 
@@ -97,6 +102,14 @@ ID3D12Fence* g_fence = nullptr;
 HANDLE g_fence_event = nullptr;
 uint64_t g_fence_value = 0;
 uint64_t g_list_index = 0;
+// Patch 0148: the HUD-less image at the back buffer's size and format (AMD: "same format and resolution as the
+// backbuffer"); the renderer's image is copied in at the generation rectangle. Rests in NON_PIXEL_SHADER_RESOURCE.
+bool g_hudless_on = false;                  // --gow2_frame_generation_hudless
+std::atomic<uint32_t> g_hudless_format{0};  // for the renderer: 0 none, 1 R8G8B8A8_UNORM, 2 R10G10B10A2_UNORM
+ID3D12Resource* g_hl_tex = nullptr;
+DXGI_FORMAT g_hl_format = DXGI_FORMAT_UNKNOWN;
+uint32_t g_hl_w = 0, g_hl_h = 0;
+uint64_t g_hl_used = 0, g_hl_missing = 0, g_hl_mismatch = 0;  // log window
 
 // The inputs per presenter image, newest first served (written by our renderer thread, read at present time).
 struct Inputs {
@@ -155,6 +168,8 @@ void WaitForPrepareLists() {
 }
 
 // Turns frame generation off on the swap chain and destroys its context (before a resize or the swap chain's end).
+void ReleaseHudless();  // patch 0148: defined below
+
 void DestroyFrameGeneration() {
   if (!g_fg_ctx) return;
   if (g_swap_chain_ctx && g_swap_chain) {
@@ -169,13 +184,21 @@ void DestroyFrameGeneration() {
   WaitForPrepareLists();
   g_fn.DestroyContext(&g_fg_ctx, nullptr);
   g_fg_ctx = nullptr;
+  ReleaseHudless();  // patch 0148: sized for the old back buffer
   g_gen_on = false;
   g_have_last_frame = false;
   REXLOG_INFO("gow2_frame_generation: patch 0147: frame-generation context destroyed");
 }
 
+void ReleaseHudless() {  // callers have waited for the queue (presents and Prepare lists)
+  if (g_hl_tex) g_hl_tex->Release(), g_hl_tex = nullptr;
+  g_hl_w = g_hl_h = 0;
+  g_hl_format = DXGI_FORMAT_UNKNOWN;
+}
+
 void ReleasePrepareObjects() {
   WaitForPrepareLists();
+  ReleaseHudless();
   for (PrepareList& l : g_lists)
     if (l.allocator) l.allocator->Release(), l.allocator = nullptr, l.fence_value = 0;
   if (g_list) g_list->Release(), g_list = nullptr;
@@ -264,8 +287,49 @@ bool EnsureFrameGeneration(const XenosFgFrame& f) {
   return true;
 }
 
-// Records and submits the Prepare pass for this frame's inputs; false = generation paused for this frame.
-bool Prepare(const XenosFgFrame& f, uint32_t flags) {
+// Patch 0148: the back-buffer-sized HUD-less texture (made again when the back buffer's size or format changes).
+bool EnsureHudless(const DXGI_SWAP_CHAIN_DESC1& sd) {
+  if (g_hl_tex && g_hl_w == sd.Width && g_hl_h == sd.Height && g_hl_format == sd.Format) return true;
+  WaitForPresents();  // AMD may still read the old one
+  WaitForPrepareLists();
+  ReleaseHudless();
+  if (!g_device) return false;
+  D3D12_HEAP_PROPERTIES hp{};
+  hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+  D3D12_RESOURCE_DESC rd{};
+  rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+  rd.Width = sd.Width;
+  rd.Height = sd.Height;
+  rd.DepthOrArraySize = 1;
+  rd.MipLevels = 1;
+  rd.Format = sd.Format;
+  rd.SampleDesc.Count = 1;
+  rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+  D3D12_CLEAR_VALUE* no_clear = nullptr;
+  if (FAILED(g_device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+                                               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, no_clear,
+                                               IID_PPV_ARGS(&g_hl_tex)))) {
+    g_hl_tex = nullptr;
+    return false;
+  }
+  g_hl_tex->SetName(L"gow2 frame generation HUD-less colour");
+  g_hl_w = sd.Width, g_hl_h = sd.Height, g_hl_format = sd.Format;
+  return true;
+}
+
+void Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to) {
+  D3D12_RESOURCE_BARRIER b{};
+  b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+  b.Transition.pResource = r;
+  b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+  b.Transition.StateBefore = from;
+  b.Transition.StateAfter = to;
+  g_list->ResourceBarrier(1, &b);
+}
+
+// Records and submits the Prepare pass for this frame's inputs; false = generation paused for this frame. hl_x/hl_y:
+// where f.hudless goes in the HUD-less texture (patch 0148; hl_x < 0 = no copy this frame).
+bool Prepare(const XenosFgFrame& f, uint32_t flags, int32_t hl_x = -1, int32_t hl_y = -1) {
   PrepareList& l = g_lists[g_list_index % g_lists.size()];
   if (l.fence_value && g_fence->GetCompletedValue() < l.fence_value) {
     // Outside review: a bounded wait - if the GPU is lost this list never completes; skip generation, don't hang.
@@ -274,6 +338,20 @@ bool Prepare(const XenosFgFrame& f, uint32_t flags) {
       return false;
   }
   if (FAILED(l.allocator->Reset()) || FAILED(g_list->Reset(l.allocator, nullptr))) return false;
+  if (hl_x >= 0 && g_hl_tex && f.hudless) {  // patch 0148: the renderer's HUD-less image into the back-buffer-sized one
+    auto* src = static_cast<ID3D12Resource*>(f.hudless);
+    Transition(src, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    Transition(g_hl_tex, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    D3D12_TEXTURE_COPY_LOCATION d{}, s{};
+    d.pResource = g_hl_tex;
+    d.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    s.pResource = src;
+    s.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    const D3D12_BOX box{0, 0, 0, f.hudless_width, f.hudless_height, 1};
+    g_list->CopyTextureRegion(&d, uint32_t(hl_x), uint32_t(hl_y), 0, &s, &box);
+    Transition(g_hl_tex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Transition(src, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+  }
   ffxDispatchDescFrameGenerationPrepareV2 p{};
   p.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE_V2;
   p.frameID = g_frame_id;
@@ -357,6 +435,15 @@ bool MakeSwapChain(void* factory, void* queue, void* hwnd, const void* desc, voi
   }
   g_swap_chain = sc;
   g_fg_failed = false;
+  // Patch 0148: the renderer makes its HUD-less image in the back buffer's format (a straight copy then).
+  g_hudless_format.store(!g_hudless_on ? 0u
+                         : g_desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM    ? 1u
+                         : g_desc.Format == DXGI_FORMAT_R10G10B10A2_UNORM ? 2u
+                                                                          : 0u,
+                         std::memory_order_relaxed);
+  if (g_hudless_on && !g_hudless_format.load(std::memory_order_relaxed))
+    REXLOG_WARN("gow2_frame_generation_hudless: back buffer format {} not handled; no HUD-less image",
+                uint32_t(g_desc.Format));
   g_inputs_wanted.store(g_generate, std::memory_order_relaxed);
   *out = static_cast<IDXGISwapChain1*>(sc);  // the creation's reference goes to the presenter
   REXLOG_INFO("gow2_frame_generation: patch 0146: AMD frame-generation swap chain made ({}x{}, format {}, flags {:X}); "
@@ -376,6 +463,7 @@ void SwapChainChange(void* swap_chain, bool destroying) {
   g_fn.DestroyContext(&g_swap_chain_ctx, nullptr);
   g_swap_chain_ctx = nullptr;
   g_swap_chain = nullptr;
+  g_hudless_format.store(0, std::memory_order_relaxed);
   REXLOG_INFO("gow2_frame_generation: patch 0146: frame-generation swap chain context destroyed");
 }
 
@@ -436,13 +524,30 @@ bool BeforePresent(void* guest_output, void* queue, const int32_t* rect) {
     if (rect && rect[2] > 0 && rect[3] > 0) c.generationRect = {rect[0], rect[1], rect[2], rect[3]};
     else c.generationRect = {0, 0, int32_t(sd.Width), int32_t(sd.Height)};
     c.frameID = g_frame_id;
+    // Patch 0148: the HUD-less image, when the renderer made one for this frame at exactly the generation rectangle's
+    // size (the presenter shows our image 1:1 there) in the back buffer's format.
+    int32_t hl_x = -1, hl_y = -1;
+    if (g_hudless_on && generate) {
+      const bool fits = f.hudless && int32_t(f.hudless_width) == c.generationRect.width &&
+                        int32_t(f.hudless_height) == c.generationRect.height && c.generationRect.left >= 0 &&
+                        c.generationRect.top >= 0 &&
+                        uint32_t(c.generationRect.left + c.generationRect.width) <= sd.Width &&
+                        uint32_t(c.generationRect.top + c.generationRect.height) <= sd.Height;
+      if (!f.hudless) ++g_hl_missing;
+      else if (!fits) ++g_hl_mismatch;
+      if (fits && EnsureHudless(sd)) {
+        hl_x = c.generationRect.left, hl_y = c.generationRect.top;
+        c.HUDLessColor = ffxApiGetResourceDX12(g_hl_tex, FFX_API_RESOURCE_STATE_COMPUTE_READ);
+        ++g_hl_used;
+      }
+    }
     // Paused and already off: nothing to tell AMD (a disabling Configure waits for queued presents).
     if (!generate && !g_gen_on) {
       ++g_paused;
       return true;
     }
     if (g_fn.Configure(&g_fg_ctx, &c.header) != FFX_API_RETURN_OK) generate = false;
-    if (generate && !Prepare(f, flags)) {
+    if (generate && !Prepare(f, flags, hl_x, hl_y)) {
       ++g_prepare_failed;
       c.frameGenerationEnabled = false;
       g_fn.Configure(&g_fg_ctx, &c.header);
@@ -460,6 +565,10 @@ bool BeforePresent(void* guest_output, void* queue, const int32_t* rect) {
     REXLOG_INFO("gow2_frame_generation: patch 0147: {} frames presented: generation on {} ({} resets), paused {} (no "
                 "scene or not ready), Prepare failed {}, window repaints not presented {}", g_presents, g_generated,
                 g_resets, g_paused, g_prepare_failed, g_repaints_skipped);
+    if (g_hudless_on)
+      REXLOG_INFO("gow2_frame_generation_hudless: patch 0148: HUD-less image given {}, none made {}, size not the "
+                  "generation rectangle's {}", g_hl_used, g_hl_missing, g_hl_mismatch);
+    g_hl_used = g_hl_missing = g_hl_mismatch = 0;
     g_generated = g_paused = g_resets = g_prepare_failed = g_repaints_skipped = 0;
     g_presents = 0;
   }
@@ -469,6 +578,10 @@ bool BeforePresent(void* guest_output, void* queue, const int32_t* rect) {
 }  // namespace
 
 bool XenosFrameGenerationWanted() { return g_inputs_wanted.load(std::memory_order_relaxed); }
+
+uint32_t XenosFrameGenerationHudlessFormat() {
+  return g_inputs_wanted.load(std::memory_order_relaxed) ? g_hudless_format.load(std::memory_order_relaxed) : 0u;
+}
 
 void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFrame* frame) {
   if (!g_generate || !guest_output_resource) return;
@@ -495,6 +608,7 @@ void XenosFrameGenerationInstall() {
     return;
   }
   g_generate = mode == "fsr";
+  g_hudless_on = g_generate && REXCVAR_GET(gow2_frame_generation_hudless);
   g_inputs_wanted.store(g_generate, std::memory_order_relaxed);
   rex::FrameHooks& h = rex::GetFrameHooks();
   h.create_swap_chain.store(&MakeSwapChain, std::memory_order_release);
@@ -507,6 +621,7 @@ void XenosFrameGenerationInstall() {
 #else  // !GN_HAVE_FSR
 
 bool XenosFrameGenerationWanted() { return false; }
+uint32_t XenosFrameGenerationHudlessFormat() { return 0; }
 void XenosFrameGenerationSetInputs(void*, const XenosFgFrame*) {}
 
 void XenosFrameGenerationInstall() {
