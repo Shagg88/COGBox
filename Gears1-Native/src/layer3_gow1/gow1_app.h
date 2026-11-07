@@ -107,6 +107,10 @@ class Gow1App : public rex::ReXApp {
     // Job 716: every object's draw carries its own object x camera matrix, so all perspective draws into the scene
     // depth get the jitter (scope 2), not only the level geometry that shows the camera alone.
     game_default("gow2_upscale_jitter_scope", "2");
+    // The first full-screen scene copy comes before the per-light passes (they redraw the geometry with a depth test,
+    // some with stencil shadows): upscaled there, they were drawn unjittered over the jittered depth and failed in
+    // patches that changed with the jitter phase - the light strobing over characters. The last copy, as Judgment.
+    game_default("gow2_upscale_scene_last_copy", "true");
     game_default("gow2_renderer_resolve_through", "true");
     game_default("gow2_renderer_fused_scaled_resolve", "true");
     game_default("gow2_renderer_fused_scaled_kinds", "1");
