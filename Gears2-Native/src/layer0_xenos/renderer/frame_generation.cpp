@@ -168,6 +168,8 @@ void WaitForPrepareLists() {
 }
 
 // Turns frame generation off on the swap chain and destroys its context (before a resize or the swap chain's end).
+void ReleaseHudless();  // patch 0148: defined below
+
 void DestroyFrameGeneration() {
   if (!g_fg_ctx) return;
   if (g_swap_chain_ctx && g_swap_chain) {

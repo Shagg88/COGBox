@@ -5812,7 +5812,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     bool blends = false;
     for (uint32_t i = 0; i < 4; ++i)
       if (colour_rt[i] && ps.blend.rt[i].blend_enable) blends = true;
-    const bool quad = prim == 0x08 || index_count <= 6;
+    const bool quad = prim == 0x08 || (index_count > 0 && index_count <= 6);  // review: a non-indexed draw (0) is not a quad
     const bool covers = ps.scissor.x == 0 && ps.scissor.y == 0 && uint64_t(ps.scissor.width) * 10 >= uint64_t(c->width) * 9 &&
                         uint64_t(ps.scissor.height) * 10 >= uint64_t(c->height) * 9;
     if (!blends && !depth_writes && quad && covers && c->guest_width >= kSceneMinWidth) {  // a post pass: (re)arm
