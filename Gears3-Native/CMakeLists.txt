@@ -100,6 +100,7 @@ set(GOW3_SOURCES
     src/layer3_gow3/mouse_look.cpp
     src/layer3_gow3/main_menu_exit.cpp
     src/layer3_gow3/mod_chapters.cpp
+    src/layer3_gow3/checkpoint_stream.cpp
     src/layer3_gow3/unlocks.cpp
 )
 if(WIN32)

@@ -385,6 +385,8 @@ void Gow3InstallMenuCap() {
 REXCVAR_DEFINE_INT32(gow3_tick_floor_fps, 0, "Gears3",
                      "With no frame-rate limit: the engine still ticks at most N times a second (no sub-millisecond ticks "
                      "while nothing is presented, e.g. checkpoint saves). 0 = off");
+void Gow3CheckpointStreamTick();        // checkpoint_stream.cpp (GitHub #226)
+void Gow3InstallCheckpointStreamWait();  // checkpoint_stream.cpp
 void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content packages, on the game thread
 
 // Gears 3's path choice (UIScene_PathChoice: "left path / right path") reads the triggers - the left trigger picks the
@@ -466,6 +468,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   Gow3ModChaptersTick();
   Gow3PathChoiceTick();
   Gow3MediaVerifyTick();  // GitHub #215
+  Gow3CheckpointStreamTick();  // GitHub #226
   const int32_t v = REXCVAR_GET(gow3_max_fps);
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)
@@ -532,6 +535,7 @@ REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
                     "play. Not for players: loading screens go black.");
 void Gow3AddBuiltInIniEdits() {
   Gow3InstallMenuCap();  // GitHub #101 (once, at start-up, before the game opens a file)
+  Gow3InstallCheckpointStreamWait();  // GitHub #226
   std::string add;
   if (REXCVAR_GET(cogbox_test_skip_movies)) add += "Xbox360-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;";
   if (REXCVAR_GET(gow3_trilinear)) add += kGow3TrilinearEdits;
