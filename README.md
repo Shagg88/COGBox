@@ -26,9 +26,9 @@ the ports what an emulator can't easily offer:
 
 - **Any resolution** - 1x to 4x the original (up to 5K) or matched to your monitor, with real extra detail, not a
   stretched picture - and a fast **1080p** mode (720p drawn, upscaled and sharpened) for weaker graphics cards.
-- **Anti-aliasing and upscaling** - SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS (FSR / DLSS / XeSS experimental), including upscaling modes for weaker GPUs.
-- **High frame rates** - the 30 fps limit lifted, vsync with a cap matched to your monitor, AMD FSR frame
-  generation (highly experimental for now).
+- **Anti-aliasing and upscaling** - SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS (XeSS highly experimental), including upscaling modes for weaker GPUs.
+- **High frame rates** - the 30 fps limit lifted, exact frame-rate caps (30 to 180, plus 40 / 45 for the Steam Deck), AMD
+  FSR frame generation (experimental in Gears 1) and NVIDIA DLSS frame generation (RTX 40/50, experimental).
 - **Smooth play** - the games' shaders are translated straight to Direct3D 12 shader code in under a millisecond each
   (as Xenia Canary does), kept on your PC, and pipelines are made in the background - a new area shows a moment
   later instead of freezing the game.
@@ -226,6 +226,12 @@ last option reaches Library / Save / Play, and B jumps to Library.
 
 **Graphics API:** Direct3D 12 is the default and the tested renderer. **Vulkan** is on each game's
 Graphics tab - FSR / DLSS / XeSS and frame generation are Direct3D 12 only. Problem reports from Vulkan help a lot.
+
+**DLSS frame generation on RTX 20 / 30 cards (unofficial):** COGBox works with the third-party
+[MFG Unlocker](https://github.com/dashdogy/MFG-Unlocker), which lets older RTX cards use DLSS frame generation. It is not part
+of COGBox and not made or supported by us or NVIDIA - use it at your own risk, following its own instructions (its DLL goes
+next to the game's exe as `dxgi.dll`). We tested it on an RTX 3080 Ti in Judgment: 2x and 3x ran well, with only slight
+flicker on distant textures.
 
 **Linux and Steam Deck (experimental):** unzip COGBox in your home folder, add `CogBox.exe` to Steam as a non-Steam
 game, and in its Properties > Compatibility force **Proton Experimental** (or a recent Proton / GE-Proton). On a small
