@@ -305,7 +305,7 @@ void RecordHudlessCopy(VkCommandBuffer cb, const XenosFgFrame& f, int32_t x, int
     g_vk.CmdClearColorImage(cb, g_hl_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &r);
     ImageBarrier(cb, g_hl_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                  VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);  // clear before the copy (write-after-write)
-    g_hl_fresh = false;
+    // g_hl_fresh is cleared by Prepare once this list is submitted: an unsubmitted clear must be recorded again
   } else {
     ImageBarrier(cb, g_hl_image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                  VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -456,7 +456,11 @@ bool Prepare(const XenosFgFrame& f, uint32_t flags, int32_t hl_x = -1, int32_t h
   VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
   bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   if (g_vk.BeginCommandBuffer(l.cb, &bi) != VK_SUCCESS) return false;
-  if (hl_x >= 0 && g_hl_image && f.hudless) RecordHudlessCopy(l.cb, f, hl_x, hl_y);  // HUD-less colour
+  bool hl_cleared = false;
+  if (hl_x >= 0 && g_hl_image && f.hudless) {  // HUD-less colour
+    hl_cleared = g_hl_fresh;
+    RecordHudlessCopy(l.cb, f, hl_x, hl_y);
+  }
   ffxDispatchDescFrameGenerationPrepareV2 p{};
   p.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE_V2;
   p.frameID = g_frame_id;
@@ -483,6 +487,7 @@ bool Prepare(const XenosFgFrame& f, uint32_t flags, int32_t hl_x = -1, int32_t h
   si.commandBufferCount = 1;
   si.pCommandBuffers = &l.cb;
   if (GameSubmit(1, &si, l.fence) != VK_SUCCESS) return false;
+  if (hl_cleared) g_hl_fresh = false;  // the clear + UNDEFINED transition is on the GPU now
   l.pending = true;
   ++g_list_index;
   return true;
