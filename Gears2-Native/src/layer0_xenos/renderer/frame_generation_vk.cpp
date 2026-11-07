@@ -66,6 +66,14 @@
 #include <vector>
 
 REXCVAR_DECLARE(int32_t, gow2_fg_debug);  // frame_generation.cpp
+// Notes/83 (Judgment freezes, jobs 1389-1390): A/B switches for AMD's Vulkan swap chain; the defaults are 0.4.8's.
+REXCVAR_DEFINE_STRING(gow2_fg_vk_present_queue, "graphics", "Gears2",
+                      "Vulkan frame generation: which spare queue AMD's swap chain presents on - graphics = one of the "
+                      "graphics family's (AMD then composes on it), compute = a compute-only family's when it can "
+                      "present (else as graphics)");
+REXCVAR_DEFINE_STRING(gow2_fg_vk_compose, "auto", "Gears2",
+                      "Vulkan frame generation: where AMD composes the frames it presents - auto = AMD's choice from "
+                      "the present queue, game = on the game queue, present = on the present queue");
 
 namespace fgvk {
 
@@ -513,8 +521,12 @@ bool PickQueues(const rex::VulkanSwapChainHook& io, VkQueueInfoFFXAPI& compute, 
     return false;
   };
   const uint32_t gc = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
-  // Present: a graphics + compute family first (AMD then composes on the present queue), else any that can present.
-  if (!take(present, [&](const auto& q) { return q.present && (q.flags & gc) == gc; }) &&
+  // Present: a graphics + compute family first (AMD then composes on the present queue), else any that can present;
+  // --gow2_fg_vk_present_queue=compute tries a compute-only family that can present first.
+  const bool compute_first = REXCVAR_GET(gow2_fg_vk_present_queue) == "compute";
+  if (!(compute_first &&
+        take(present, [&](const auto& q) { return q.present && (q.flags & VK_QUEUE_COMPUTE_BIT) && !(q.flags & VK_QUEUE_GRAPHICS_BIT); })) &&
+      !take(present, [&](const auto& q) { return q.present && (q.flags & gc) == gc; }) &&
       !take(present, [&](const auto& q) { return q.present; }))
     return false;
   // Async compute: a compute-only family first (the real async queue), else any compute queue.
@@ -603,10 +615,23 @@ bool MakeSwapChain(rex::VulkanSwapChainHook* io) {
   v.version = FFX_FRAMEGENERATION_SWAPCHAIN_VK_VERSION;
   d.header.pNext = &v.header;
 #endif
-  REXLOG_INFO("gow2_frame_generation: Vulkan: making AMD's swap chain ({}x{}, format {}; queues: game family {}, "
-              "compute family {}, present family {}, acquire family {})", g_create_info.imageExtent.width,
-              g_create_info.imageExtent.height, uint32_t(g_create_info.imageFormat), g_game_family,
-              compute.familyIndex, present.familyIndex, acquire.familyIndex);
+  const std::string compose = REXCVAR_GET(gow2_fg_vk_compose);
+#if defined(FFX_API_CREATE_CONTEXT_DESC_TYPE_FGSWAPCHAIN_MODE_VK)
+  ffxCreateContextDescFrameGenerationSwapChainModeVK mode{};
+  if (compose == "game" || compose == "present") {
+    mode.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_FGSWAPCHAIN_MODE_VK;
+    mode.composeOnPresentQueue = compose == "present";
+    mode.header.pNext = d.header.pNext;
+    d.header.pNext = &mode.header;
+  }
+#else
+  if (compose != "auto") REXLOG_WARN("gow2_fg_vk_compose: this FidelityFX SDK has no composition mode; auto");
+#endif
+  REXLOG_INFO("gow2_frame_generation: Vulkan: making AMD's swap chain ({}x{}, format {}, present mode {}; queues: game "
+              "family {}, compute family {}, present family {}, acquire family {}; compose {})",
+              g_create_info.imageExtent.width, g_create_info.imageExtent.height, uint32_t(g_create_info.imageFormat),
+              uint32_t(g_create_info.presentMode), g_game_family, compute.familyIndex, present.familyIndex,
+              acquire.familyIndex, compose);
   const ffxReturnCode_t rc = g_fn.CreateContext(&g_swap_chain_ctx, &d.header, nullptr);
   if (rc != FFX_API_RETURN_OK || !sc || !g_swap_chain_ctx) {
     if (g_swap_chain_ctx) g_fn.DestroyContext(&g_swap_chain_ctx, nullptr);
