@@ -3117,6 +3117,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       std::memcpy(words, ramps->table, sizeof(ramps->table));
       std::memcpy(words + 256, ramps->pwl, sizeof(ramps->pwl));
       backend_->UploadTexture(ramp_texture_, 0, 0, words, uint32_t(sizeof(words)), 1, 1);
+      // GitHub #185: what the game's gamma ramp holds (red 10-bit at inputs 0/16/32/64/128/192/255; linear = 4x input).
+      if (ramp_logs_ < 24) {
+        ++ramp_logs_;
+        auto r = [&](int i) { return (ramps->table[i] >> 20) & 0x3FF; };
+        REXLOG_INFO("gow2_present: gamma ramp (table v{} pwl v{}) red at 0/16/32/64/128/192/255: {} {} {} {} {} {} {}",
+                    ramps->table_version, ramps->pwl_version, r(0), r(16), r(32), r(64), r(128), r(192), r(255));
+      }
       ramp_table_version_ = ramps->table_version;
       ramp_pwl_version_ = ramps->pwl_version;
     }
@@ -3907,6 +3914,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::TextureHandle ramp_texture_ = 0, present_out_ = 0;
   uint32_t present_out_w_ = 0, present_out_h_ = 0;
   uint64_t ramp_table_version_ = ~0ull, ramp_pwl_version_ = ~0ull;
+  uint32_t ramp_logs_ = 0;  // GitHub #185
   std::deque<PresentImage> present_images_;
   PresentStats present_stats_;
   void ShowDisplay(uint32_t fb_phys) {
