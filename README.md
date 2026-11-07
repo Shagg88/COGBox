@@ -229,9 +229,17 @@ Graphics tab - FSR / DLSS / XeSS and frame generation are Direct3D 12 only. Prob
 
 **DLSS frame generation on RTX 20 / 30 cards (unofficial):** COGBox works with the third-party
 [MFG Unlocker](https://github.com/dashdogy/MFG-Unlocker), which lets older RTX cards use DLSS frame generation. It is not part
-of COGBox and not made or supported by us or NVIDIA - use it at your own risk, following its own instructions (its DLL goes
-next to the game's exe as `dxgi.dll`). We tested it on an RTX 3080 Ti in Judgment: 2x and 3x ran well, with only slight
-flicker on distant textures.
+of COGBox and not made or supported by us or NVIDIA - use it at your own risk. We tested it on an RTX 3080 Ti in Gears of War
+and Judgment: 2x and 3x ran well, with only slight flicker on distant textures. To use it:
+
+1. Download `MFGUnlocker.dll` from the MFG Unlocker's GitHub releases page.
+2. Close COGBox. Copy the DLL into the game's `port` folder, next to the game's exe (for example `COGBox\Judgment\port`,
+   beside `gowj.exe`; Gears of War: `Gears1\port`, Gears 2: `Gears2\port-tu6`, Gears 3: `Gears3\port-tu6`), and rename it to
+   `dxgi.dll`. Do it once per game you want it in.
+3. Start COGBox, pick the game, and in **Graphics > Frame generation** choose **NVIDIA DLSS frame generation 2x** (or 3x / 4x).
+   Graphics API must be DirectX 12.
+4. Play. The unlocker's own menu opens with **Backspace** in game; leave its Mode on "Follow game".
+5. To stop using it, delete that `dxgi.dll` (or choose another frame generation option).
 
 **Linux and Steam Deck (experimental):** unzip COGBox in your home folder, add `CogBox.exe` to Steam as a non-Steam
 game, and in its Properties > Compatibility force **Proton Experimental** (or a recent Proton / GE-Proton). On a small
