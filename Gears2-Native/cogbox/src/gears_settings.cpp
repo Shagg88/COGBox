@@ -176,8 +176,8 @@ std::vector<Option> make_options(Game g) {
                "Your screen's peak brightness (see its specs or Windows HDR calibration).", 365), "", "HDR");
     // GitHub #185 (Shagg 7 Nov): gamma on the game's display ramp. 100 = the game's own; higher = darker shadows and
     // midtones, highlights kept (Judgment looks brighter than Xbox 360 footage to some players).
-    add(number("Brightness", "Brightness (100 = original)", Tab::Display, Kind::Int, PG, 50, 150, 5, 100,
-               "Brightness of shadows and midtones. 100 = the game's own. Lower darkens them, higher lifts them; bright areas "
+    add(number("Brightness", "Brightness (100 = original)", Tab::Display, Kind::Int, PG, 50, 150, 5, 65,
+               "Brightness of shadows and midtones. 65 (the default) matches the Xbox 360; 100 = the picture as the game draws it here. Lower darkens them, higher lifts them; bright areas "
                "stay about the same.", 0), "gamma");
     add(make("Vsync", "Vsync (no tearing)", Tab::Display, Kind::Bool, SH, 0,
              "Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen "
