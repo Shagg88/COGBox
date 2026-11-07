@@ -96,6 +96,7 @@ set(GOWJ_SOURCES
     src/layer3_gowj/mouse_look.cpp
     src/layer3_gowj/main_menu_exit.cpp
     src/layer3_gowj/profile_log.cpp
+    src/layer3_gowj/freeze_watchdog.cpp
 )
 if(WIN32)
     add_executable(gowj WIN32 ${GOWJ_SOURCES})
