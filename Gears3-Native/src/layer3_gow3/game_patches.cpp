@@ -35,6 +35,7 @@
 #include <string_view>
 #include <format>
 #include <string>
+#include <cstdio>
 #include <thread>
 #include <vector>
 
@@ -748,6 +749,26 @@ void Gow3UltrawideCameraViewportType(rex::Runtime* runtime, float aspect) {
   if (count != 1) {
     REXLOG_INFO("gow3_aspect: camera viewport bounds not found ({} copies in .rdata {:08X}-{:08X}) - left alone "
                 "(GitHub #220)", count, 0x82000000u + lo, 0x82000000u + hi);
+    // GitHub #220 (0.4.7: not found in Gears 3): log where 16:9-ish floats sit in the whole image, to find Gears 3's bounds.
+    uint32_t pe = 0, size = 0;
+    std::memcpy(&pe, image + 0x3C, 4);
+    if (pe > 0 && pe < 0x1000) std::memcpy(&size, image + pe + 24 + 56, 4);
+    if (size > 0x02000000u) size = 0x02000000u;
+    static const float kProbe[] = {1.7677778f, 1.7877778f, 1.7777778f, 1.7f, 1.76f, 1.77f, 1.78f, 1.8f, 1.5f, 1.3333334f};
+    for (float v : kProbe) {
+      uint32_t bits = 0;
+      std::memcpy(&bits, &v, 4);
+      const uint8_t be[4] = {uint8_t(bits >> 24), uint8_t(bits >> 16), uint8_t(bits >> 8), uint8_t(bits)};
+      std::string hits;
+      uint32_t n = 0;
+      for (uint32_t o = 0; o + 4 <= size; o += 4)
+        if (std::memcmp(image + o, be, 4) == 0 && ++n <= 12) {
+          char b[12];
+          std::snprintf(b, sizeof b, " %08X", 0x82000000u + o);
+          hits += b;
+        }
+      REXLOG_INFO("gow3_aspect: probe {:.7f}: {} hit(s){}", v, n, hits);
+    }
     return;
   }
   WriteGuestFloat(runtime, found, 1.7877778f, aspect + 0.05f,
