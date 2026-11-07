@@ -128,6 +128,7 @@ static const ReportedXexp k_reportedXexp[] = {
     // { G_GEARS3, "d05adc22bff6197229fc3685558ba5bed6b30abf" },   // #84, 1,513,472 bytes (#138)
     { G_GEARS3, "b2a6e5308155650448b27b74e169101596abc98d" },   // #86, Title Update 6, 1,908,736 bytes
     { G_GEARS3, "67b0c9c5fcd8ed15bcc79eb62e273d75e6e1ece6" },   // #109, Title Update 6, 1,908,736 bytes (COGBox 0.3.5)
+    { G_GEARS3, "0260fc74ce836518c9e29f24b36b0e96de30c5c9" },   // #230, Title Update 6, 1,908,736 bytes (COGBox 0.4.7)
 };
 bool xexp_is_tested(const GameDef &d, const std::string &full, const std::string &code)
 {
