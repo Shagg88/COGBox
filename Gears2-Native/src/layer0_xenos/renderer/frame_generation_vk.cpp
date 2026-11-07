@@ -303,6 +303,8 @@ void RecordHudlessCopy(VkCommandBuffer cb, const XenosFgFrame& f, int32_t x, int
     const VkClearColorValue black{{0.0f, 0.0f, 0.0f, 1.0f}};
     const VkImageSubresourceRange r{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     g_vk.CmdClearColorImage(cb, g_hl_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &r);
+    ImageBarrier(cb, g_hl_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                 VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);  // clear before the copy (write-after-write)
     g_hl_fresh = false;
   } else {
     ImageBarrier(cb, g_hl_image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
