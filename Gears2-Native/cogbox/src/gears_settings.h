@@ -125,6 +125,11 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
 // A single choice greyed: the FPS counter's "Game's own (column)" in Judgment / Gears 1 (PS1 267, 475), and the game
 // languages Gears 1 has no text for.
 Availability choice_available(const Option& o, Game g, int index);
+// Frame generation choices (FrameGen): 2-5 (NVIDIA DLSS) are not listed at all without the exe's support and NVIDIA's
+// Streamline DLLs next to it; greyed without an RTX 40 (2x) / RTX 50 (3x, 4x, dynamic) card. 1 (AMD) greyed without its DLL.
+bool dlss_fg_present(const Environment& env);
+bool framegen_choice_hidden(int index, const Environment& env);
+Availability framegen_choice_available(int index, const Environment& env);
 // The tooltip to show: the reason in front of the description (PS1 412-416, 476-477), the GPU line for AA (PS1 345).
 std::string tooltip_for(const Option& o, Game g, const Availability& a, const Environment& env);
 

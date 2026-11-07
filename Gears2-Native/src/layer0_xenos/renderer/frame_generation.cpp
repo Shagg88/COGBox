@@ -22,6 +22,8 @@
 // files (MIT). Our code (MIT).
 #include <xenos/dev_tools.h>
 
+#include "dlss_framegen.h"  // --gow2_frame_generation=dlss (NVIDIA Streamline, experimental)
+
 #include <rex/cvar.h>
 #include <rex/frame_hooks.h>
 #include <rex/logging/macros.h>
@@ -32,7 +34,9 @@ REXCVAR_DEFINE_STRING(gow2_frame_generation, "off", "Gears2",
                       "Patch 0146 / 0147 (frame-rate item 6): frame generation. off = the usual swap chain; swapchain = "
                       "AMD's frame-generation swap chain with frame generation itself off (a test: the picture and "
                       "timing must be unchanged); fsr = AMD FSR frame generation, one generated frame between each two "
-                      "the game draws (any DirectX 12 graphics card)");
+                      "the game draws (any DirectX 12 graphics card); dlss = NVIDIA DLSS frame generation through "
+                      "Streamline (RTX 40/50, experimental; --gow2_dlss_fg_mode; falls back to fsr, or off, when it "
+                      "can't run)");
 REXCVAR_DEFINE_INT32(gow2_fg_debug, 0, "Gears2",
                      "Patch 0147: AMD frame-generation debug drawing, as flags: 1 tear lines, 2 reset indicators, 4 debug "
                      "view (the generated frame shows its inputs), 16 pacing lines");
@@ -708,19 +712,39 @@ bool BeforePresent(void* guest_output, void* queue, const int32_t* rect) {
 
 }  // namespace
 
-bool XenosFrameGenerationWanted() { return g_inputs_wanted.load(std::memory_order_relaxed); }
+// DLSS-G could not run on this PC (found when the swap chain is made): AMD FSR frame generation instead.
+static bool FsrFallback(void* factory, void* queue, void* hwnd, const void* desc, void** out) {
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_generate = true;
+    g_hudless_on = REXCVAR_GET(gow2_frame_generation_hudless);
+    g_inputs_wanted.store(true, std::memory_order_relaxed);
+  }
+  rex::FrameHooks& h = rex::GetFrameHooks();
+  h.swap_chain_change.store(&SwapChainChange, std::memory_order_release);
+  h.before_present.store(&BeforePresent, std::memory_order_release);
+  return MakeSwapChain(factory, queue, hwnd, desc, out);
+}
+
+bool XenosFrameGenerationWanted() {
+  if (XenosDlssFgActive()) return XenosDlssFgWanted();
+  return g_inputs_wanted.load(std::memory_order_relaxed);
+}
 
 uint32_t XenosFrameGenerationHudlessFormat() {
+  if (XenosDlssFgActive()) return XenosDlssFgHudlessFormat();
   return g_inputs_wanted.load(std::memory_order_relaxed) ? g_hudless_format.load(std::memory_order_relaxed) : 0u;
 }
 
 bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height) {
+  if (XenosDlssFgActive()) return XenosDlssFgHudlessSize(width, height);
   const uint32_t v = g_hl_rect_size.load(std::memory_order_relaxed);
   width = v >> 16, height = v & 0xFFFFu;
   return v != 0;
 }
 
 void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFrame* frame) {
+  if (XenosDlssFgActive()) return XenosDlssFgSetInputs(guest_output_resource, frame);
   if (!g_generate || !guest_output_resource) return;
   std::lock_guard<std::mutex> lock(g_mutex);
   Inputs* slot = nullptr;
@@ -738,10 +762,15 @@ void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFra
 }
 
 void XenosFrameGenerationInstall() {
-  const std::string mode = REXCVAR_GET(gow2_frame_generation);
+  std::string mode = REXCVAR_GET(gow2_frame_generation);
   if (mode.empty() || mode == "off") return;
+  if (mode == "dlss") {  // NVIDIA DLSS frame generation; AMD's when Streamline is not there at all
+    if (XenosDlssFgInstall(REXCVAR_GET(gow2_frame_generation_hudless), &FsrFallback)) return;
+    REXLOG_INFO("gow2_frame_generation: falling back to AMD FSR frame generation");
+    mode = "fsr";
+  }
   if (mode != "swapchain" && mode != "fsr") {
-    REXLOG_WARN("gow2_frame_generation: unknown '{}' (off | swapchain | fsr); off", mode);
+    REXLOG_WARN("gow2_frame_generation: unknown '{}' (off | swapchain | fsr | dlss); off", mode);
     return;
   }
   g_generate = mode == "fsr";
@@ -757,13 +786,22 @@ void XenosFrameGenerationInstall() {
 
 #else  // !GN_HAVE_FSR
 
-bool XenosFrameGenerationWanted() { return false; }
-uint32_t XenosFrameGenerationHudlessFormat() { return 0; }
-bool XenosFrameGenerationHudlessSize(uint32_t&, uint32_t&) { return false; }
-void XenosFrameGenerationSetInputs(void*, const XenosFgFrame*) {}
+// Without the FidelityFX SDK only DLSS-G (when built with Streamline) can run; no fallback.
+bool XenosFrameGenerationWanted() { return XenosDlssFgActive() && XenosDlssFgWanted(); }
+uint32_t XenosFrameGenerationHudlessFormat() { return XenosDlssFgActive() ? XenosDlssFgHudlessFormat() : 0u; }
+bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height) {
+  return XenosDlssFgActive() && XenosDlssFgHudlessSize(width, height);
+}
+void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFrame* frame) {
+  if (XenosDlssFgActive()) XenosDlssFgSetInputs(guest_output_resource, frame);
+}
 
 void XenosFrameGenerationInstall() {
   const std::string mode = REXCVAR_GET(gow2_frame_generation);
+  if (mode == "dlss") {
+    XenosDlssFgInstall(REXCVAR_GET(gow2_frame_generation_hudless), nullptr);  // logs why when it can't
+    return;
+  }
   if (!mode.empty() && mode != "off")
     REXLOG_INFO("gow2_frame_generation: this build has no FidelityFX SDK (third_party\\fidelityfx-sdk was missing when "
                 "built); off");
