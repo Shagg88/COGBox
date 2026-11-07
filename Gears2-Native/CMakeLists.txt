@@ -343,8 +343,17 @@ if(GN_WITH_FSR AND GN_FFX_FOUND)
     target_include_directories(gn_layer0_xenos PRIVATE ${GN_FFX_DIR}/api/include ${GN_FFX_DIR}/upscalers/include
         ${GN_FFX_DIR}/framegeneration/include)  # patch 0146: frame generation
     # ffx_api_loader.h is written for MSBuild (it checks _WINDOWS).
+    target_sources(gn_layer0_xenos PRIVATE src/layer0_xenos/renderer/frame_generation_vk.cpp)  # notes/83: FSR frame generation on Vulkan
     set_source_files_properties(src/layer0_xenos/renderer/fsr_upscaler.cpp src/layer0_xenos/renderer/frame_generation.cpp
+        src/layer0_xenos/renderer/frame_generation_vk.cpp
         PROPERTIES COMPILE_DEFINITIONS _WINDOWS)
+    # Notes/83: AMD FSR frame generation on Vulkan - AMD's Vulkan loader and frame-generation DLLs, when the SDK has them.
+    if(EXISTS ${GN_FFX_DIR}/signedbin/amd_fidelityfx_loader_vk.dll AND EXISTS ${GN_FFX_DIR}/signedbin/amd_fidelityfx_framegeneration_vk.dll)
+        add_custom_command(TARGET gow2 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${GN_FFX_DIR}/signedbin/amd_fidelityfx_loader_vk.dll
+                ${GN_FFX_DIR}/signedbin/amd_fidelityfx_framegeneration_vk.dll $<TARGET_FILE_DIR:gow2>
+            COMMENT "Copying the FidelityFX Vulkan loader and frame-generation DLLs next to gow2.exe")
+    endif()
     add_custom_command(TARGET gow2 POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${GN_FFX_DIR}/signedbin/amd_fidelityfx_loader_dx12.dll
             ${GN_FFX_DIR}/signedbin/amd_fidelityfx_upscaler_dx12.dll

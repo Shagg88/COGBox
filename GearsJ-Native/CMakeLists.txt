@@ -163,7 +163,15 @@ if(GN_WITH_FSR AND GN_FFX_FOUND)
         ${GN_FFX_DIR}/framegeneration/include)  # Gears 2 patch 0146: frame generation (job 040 failed without it)
     # ffx_api_loader.h is written for MSBuild (it checks _WINDOWS) - frame_generation.cpp uses it too (as Gears 2's CMake).
     set_source_files_properties(${GN_LAYER0_DIR}/renderer/fsr_upscaler.cpp ${GN_LAYER0_DIR}/renderer/frame_generation.cpp
+        ${GN_LAYER0_DIR}/renderer/frame_generation_vk.cpp
         PROPERTIES COMPILE_DEFINITIONS _WINDOWS)
+    # Notes/83: AMD FSR frame generation on Vulkan - AMD's Vulkan loader and frame-generation DLLs, when the SDK has them.
+    if(EXISTS ${GN_FFX_DIR}/signedbin/amd_fidelityfx_loader_vk.dll AND EXISTS ${GN_FFX_DIR}/signedbin/amd_fidelityfx_framegeneration_vk.dll)
+        add_custom_command(TARGET gowj POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${GN_FFX_DIR}/signedbin/amd_fidelityfx_loader_vk.dll
+                ${GN_FFX_DIR}/signedbin/amd_fidelityfx_framegeneration_vk.dll $<TARGET_FILE_DIR:gowj>
+            COMMENT "Copying the FidelityFX Vulkan loader and frame-generation DLLs next to gowj.exe")
+    endif()
     add_custom_command(TARGET gowj POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${GN_FFX_DIR}/signedbin/amd_fidelityfx_loader_dx12.dll
             ${GN_FFX_DIR}/signedbin/amd_fidelityfx_upscaler_dx12.dll $<TARGET_FILE_DIR:gowj>

@@ -1413,6 +1413,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           vk_external_.instance = dev->vulkan_instance()->instance();
           vk_external_.physical_device = dev->physical_device();
           vk_external_.device = dev->device();
+          // Notes/83: frame generation copies its inputs per presented image (the SDK's table has no vkCmdCopyImage).
+          vk_cmd_copy_image_ = reinterpret_cast<void*>(
+              dev->vulkan_instance()->functions().vkGetDeviceProcAddr(dev->device(), "vkCmdCopyImage"));
           vk_external_.queue_family = fam;
           vk_external_.queue = queue->queue;
           vk_external_.lock_user = queue;
@@ -3309,7 +3312,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     // Patch 0148: the HUD-less image through the same passes, at the same size (0 = none this frame).
     const gpu::TextureHandle hl_image =
-        hl_present_has_ && fg_wanted_ && !presenter_vulkan_ ? HudlessChain(regs, w, h, ow, oh) : gpu::TextureHandle(0);
+        hl_present_has_ && fg_wanted_ ? HudlessChain(regs, w, h, ow, oh) : gpu::TextureHandle(0);  // notes/83: Vulkan too
     const uint32_t hl_image_w = hl_fit_w_, hl_image_h = hl_fit_h_;  // its size (the generation rectangle's, when known)
     hl_present_has_ = false;
     bool wrote = false;
@@ -3342,6 +3345,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
             t.height = oh;
             t.first_write = !v.image_ever_written_previously();
             if (!backend_->PresentPacked(out_tex, ow, oh, &t)) return false;
+            if (fg_wanted_) FgHandOver(reinterpret_cast<void*>(v.image()), hl_image, hl_image_w, hl_image_h);  // notes/83: frame generation's inputs, in the Submit below
             backend_->Submit();  // on the presenter's queue, before the refresher returns
             wrote = true;
             return true;
@@ -3462,6 +3466,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   rex::ui::Presenter* presenter_ = nullptr;  // D3D12Presenter, or VulkanPresenter when presenter_vulkan_ (notes/68 V3)
   bool presenter_vulkan_ = false;
   gpu::VulkanExternal vk_external_;  // notes/68 V3: the SDK device our Vulkan backend runs on (outlives backend_)
+  void* vk_cmd_copy_image_ = nullptr;  // notes/83: PFN_vkCmdCopyImage of that device (frame generation's input copies)
   bool vk_headless_present_ = false;  // notes/68: Vulkan, our present without a presenter (frame shots only)
   bool present_ours_ = false;
   gpu::PipelineHandle present_unpack_ = 0;
@@ -5980,6 +5985,32 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     void* dev = nullptr;
     void* list = nullptr;
+#if GN_SDK_VULKAN
+    if (presenter_vulkan_) {  // notes/83: the take on Vulkan (1385: every take failed on the D3D12-only copy below)
+      auto copy = reinterpret_cast<PFN_vkCmdCopyImage>(vk_cmd_copy_image_);
+      VkImage vs = VK_NULL_HANDLE, vd = VK_NULL_HANDLE;
+      if (hl_snap_ && copy && backend_->BeginNativeVulkan(&dev, &list)) {
+        vs = reinterpret_cast<VkImage>(backend_->NativeTextureVulkan(c->texture, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL));
+        vd = reinterpret_cast<VkImage>(backend_->NativeTextureVulkan(hl_snap_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL));
+        if (vs && vd) {
+          VkImageCopy r{};
+          r.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+          r.dstSubresource = r.srcSubresource;
+          r.extent = {c->width, c->height, 1};
+          copy(reinterpret_cast<VkCommandBuffer>(list), vs, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, vd,
+               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+        }
+      }
+      // the next draw's pass moves the target back to its attachment layout; the copy is read as a texture later
+      if (!vs || !vd) {
+        ++hl_st_.take_fail;
+        hl_taken_ = hl_armed_ = false;
+        return;
+      }
+      ++hl_takes_;
+      return;
+    }
+#endif
     if (!hl_snap_ || !backend_->BeginNative(&dev, &list)) {
       ++hl_st_.take_fail;
       hl_taken_ = false;
@@ -6236,14 +6267,42 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     void* dev = nullptr;
     void* list = nullptr;
+    void* out_depth = nullptr;
+    void* out_motion = nullptr;
+    void* out_hudless = nullptr;
+#if GN_SDK_VULKAN
+    if (presenter_vulkan_) {  // notes/83: the same copies on Vulkan; the images end in SHADER_READ_ONLY_OPTIMAL
+      auto copy = reinterpret_cast<PFN_vkCmdCopyImage>(vk_cmd_copy_image_);
+      if (!copy || !backend_->BeginNativeVulkan(&dev, &list)) {
+        XenosFrameGenerationSetInputs(guest_output, nullptr);
+        return;
+      }
+      for (int i = 0; i < 2; ++i) {
+        const gpu::TextureHandle src = i ? fg_.motion : fg_.depth, dst = i ? slot->motion : slot->depth;
+        auto s = reinterpret_cast<VkImage>(backend_->NativeTextureVulkan(src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL));
+        auto d = reinterpret_cast<VkImage>(backend_->NativeTextureVulkan(dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL));
+        if (s && d) {
+          VkImageCopy r{};
+          r.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+          r.dstSubresource = r.srcSubresource;
+          r.extent = {fg_.width, fg_.height, 1};
+          copy(reinterpret_cast<VkCommandBuffer>(list), s, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, d,
+               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+        }
+        void* ready = s && d ? backend_->NativeTextureVulkan(dst, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) : nullptr;
+        (i ? out_motion : out_depth) = ready;
+      }
+      // notes/83: the HUD-less image too (frame generation copies it into its back-buffer-sized one)
+      out_hudless = hl_ok ? backend_->NativeTextureVulkan(slot->hudless, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) : nullptr;
+    } else
+#endif
+    {
     if (!backend_->BeginNative(&dev, &list)) {
       XenosFrameGenerationSetInputs(guest_output, nullptr);
       return;
     }
     auto* cl = static_cast<ID3D12GraphicsCommandList*>(list);
-    void* out_depth = nullptr;
-    void* out_motion = nullptr;
-    void* out_hudless =
+    out_hudless =
         hl_ok ? backend_->NativeTexture(slot->hudless, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) : nullptr;
     for (int i = 0; i < 2; ++i) {
       const gpu::TextureHandle src = i ? fg_.motion : fg_.depth, dst = i ? slot->motion : slot->depth;
@@ -6254,6 +6313,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       (i ? out_motion : out_depth) = ready;
     }
     backend_->EndNative();
+    }
     if (!out_depth || !out_motion) {
       XenosFrameGenerationSetInputs(guest_output, nullptr);
       return;
@@ -7007,7 +7067,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     up_scene_done_ = false;
     hl_frame_logged_ = hl_frame_takes_ = 0;
     hl_armed_ = hl_taken_ = false;  // patch 0148 (hl_sources_ is cleared by RequestDisplay, which runs after this)
-    hl_format_ = fg_wanted_ && !presenter_vulkan_ ? XenosFrameGenerationHudlessFormat() : 0u;
+    hl_format_ = fg_wanted_ ? XenosFrameGenerationHudlessFormat() : 0u;  // notes/83: Vulkan too
     up_scene_copy_.EndFrame();  // notes/80 s.11
     up_depth_saved_ = false;  // notes/80 s.6
     if (up_prev_camera_) vel_prev_objs_.swap(vel_objs_);  // notes/80 s.6 (up_camera_ is already reset): this frame's characters, for the camera position

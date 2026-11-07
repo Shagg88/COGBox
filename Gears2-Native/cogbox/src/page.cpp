@@ -566,6 +566,8 @@ static void option_row(App &a, int g, const gs::Option &o)
         // Shagg 3 Nov: on Proton / Wine Vulkan is the recommended path (DirectX 12 crashes there), so not "experimental"
         if (o.id == "Api" && a.env[g].wine && items.size() > 1 && items[1] == "Vulkan (experimental)") { items[0] = "DirectX 12"; items[1] = "Vulkan"; }
         for (std::string &it : items) it = tr(it);   // 0.2.0
+        // notes/83: AMD FSR frame generation runs on Vulkan too, experimental there
+        if (o.id == "FrameGen" && items.size() > 1 && gs::runs_vulkan(a.cur[g], a.env[g])) items[1] += std::string(" ") + tr("(experimental on Vulkan)");
         if (ImGui::BeginCombo("##v", items.empty() ? "" : items[idx].c_str())) {
             // 0.2.1: Render resolution lists 1080p in size order; the saved value is still the original index
             std::vector<int> ord;
@@ -574,7 +576,7 @@ static void option_row(App &a, int g, const gs::Option &o)
             for (int i : ord) {
                 if (o.id == "FrameGen" && i != idx && gs::framegen_choice_hidden(i, a.env[g])) continue;   // NVIDIA DLSS FG: only with its DLLs
                 gs::Availability ca = gs::choice_available(o, G, i);
-                if (ca.ok && o.id == "FrameGen") ca = gs::framegen_choice_available(i, a.env[g]);
+                if (ca.ok && o.id == "FrameGen") ca = gs::framegen_choice_available(i, a.env[g], gs::runs_vulkan(a.cur[g], a.env[g]));
                 // 0.3.0 (Shagg 14:18): FSR / DLSS / XeSS are DirectX 12 only - greyed while Vulkan is the Graphics API
                 if (ca.ok && o.id == "AAMode" && i >= 2 && i <= 4 && a.cur[g].i("Api") == 1) {   // 5 SMAA T2x: both APIs
                     ca.ok = false;

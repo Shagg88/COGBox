@@ -135,7 +135,10 @@ Availability choice_available(const Option& o, Game g, int index);
 // Streamline DLLs next to it; greyed without an RTX 40 (2x) / RTX 50 (3x, 4x, dynamic) card. 1 (AMD) greyed without its DLL.
 bool dlss_fg_present(const Environment& env);
 bool framegen_choice_hidden(int index, const Environment& env);
-Availability framegen_choice_available(int index, const Environment& env);
+// Notes/83: on Vulkan only 1 (AMD, experimental) - with AMD's Vulkan DLLs, the exe's support and SDK patch 69.
+Availability framegen_choice_available(int index, const Environment& env, bool vulkan = false);
+// Notes/83: the game will run on Vulkan (Graphics API, or Proton / Wine's choice).
+bool runs_vulkan(const Settings& s, const Environment& env);
 // The tooltip to show: the reason in front of the description (PS1 412-416, 476-477), the GPU line for AA (PS1 345).
 std::string tooltip_for(const Option& o, Game g, const Availability& a, const Environment& env);
 

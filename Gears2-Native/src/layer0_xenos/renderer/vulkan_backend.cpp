@@ -453,6 +453,21 @@ class VulkanBackend final : public Backend {
     cur_view_set_ = VK_NULL_HANDLE;
   }
   TextureHandle ImportTexture(void*, Format, uint32_t) override { NotDone("ImportTexture (V3: the presenter's image)"); return 0; }
+  // Notes/83: native access for frame generation (gpu.h BeginNativeVulkan / NativeTextureVulkan).
+  bool BeginNativeVulkan(void** device, void** command_buffer) override {
+    if (!ready_ || lost_ || !Record()) return false;
+    EndPass(7);
+    if (device) *device = reinterpret_cast<void*>(device_);
+    if (command_buffer) *command_buffer = reinterpret_cast<void*>(C());
+    return true;
+  }
+  void* NativeTextureVulkan(TextureHandle texture, uint32_t layout) override {
+    if (!Valid(texture) || !cmd_) return nullptr;
+    Texture& t = textures_[texture];
+    Transition(t, VkImageLayout(layout));
+    C();  // the barrier goes in now: the caller records straight after it
+    return reinterpret_cast<void*>(t.image);
+  }
   void ReleaseImport(TextureHandle, uint32_t) override {}
 
   // Notes/68 V3: our packed present words into the SDK presenter's guest-output image (colour attachment + sampled
