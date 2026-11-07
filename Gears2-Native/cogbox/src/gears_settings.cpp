@@ -233,13 +233,13 @@ std::vector<Option> make_options(Game g) {
     static const char* const kVkTip =
                "Vulkan is a full alternative to DirectX 12, and the usual choice on Steam Deck / Linux. "
                "\n"
-               "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
-               "are off. If something looks wrong, make a problem report and send it to us.";
+               "On Vulkan, FSR / DLSS / XeSS are not available (SMAA is used), frame generation is AMD FSR only (experimental), "
+               "and Reflex / Anti-Lag are off. If something looks wrong, make a problem report and send it to us.";
     static const char* const kVkTipExp =
                "Experimental in this game - some things still look wrong on Vulkan (in Gears 3, black eyes); DirectX 12 is "
                "the tested renderer.\n"
-               "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
-               "are off. If something looks wrong, make a problem report and send it to us.";
+               "On Vulkan, FSR / DLSS / XeSS are not available (SMAA is used), frame generation is AMD FSR only (experimental), "
+               "and Reflex / Anti-Lag are off. If something looks wrong, make a problem report and send it to us.";
     add(choice("Api", "Graphics API", Tab::Graphics, PG, { "DirectX 12 (recommended)", vkExp ? "Vulkan (experimental)" : "Vulkan" }, 0,
                vkExp ? kVkTipExp : kVkTip, 0));
     // Shagg 13:16: Vulkan is no longer forced under Proton / Wine - this box lets Steam Deck / Linux / CrossOver
@@ -530,8 +530,30 @@ bool dlss_fg_present(const Environment& env) {
 
 bool framegen_choice_hidden(int index, const Environment& env) { return index >= 2 && !dlss_fg_present(env); }
 
-Availability framegen_choice_available(int index, const Environment& env) {
+// Notes/83: the game runs on Vulkan - chosen, or Proton / Wine's Automatic / Vulkan (as in the arguments below)
+bool runs_vulkan(const Settings& s, const Environment& env) {
+    const int wapi = s.i("WineApi");
+    const bool wineDx = env.wine && s.i("Api") == 0 && (wapi == 2 || (wapi == 0 && env.mac));
+    return s.i("Api") == 1 || (env.wine && !wineDx);
+}
+
+Availability framegen_choice_available(int index, const Environment& env, bool vulkan) {
     Availability a;
+    if (vulkan) {   // notes/83: AMD FSR frame generation only (DLSS-G is DirectX 12 only); experimental
+        if (index >= 2) { a.ok = false; a.why = "DirectX 12 only."; }
+        else if (index == 1 && (!cap_file(env, "amd_fidelityfx_framegeneration_vk.dll") ||
+                                !cap_file(env, "amd_fidelityfx_loader_vk.dll"))) {
+            a.ok = false;
+            a.why = "This build has no AMD frame generation files for Vulkan.";
+        } else if (index == 1 && !cap_exe(env, "Vulkan: AMD frame-generation swap chain made")) {
+            a.ok = false;
+            a.why = "On Vulkan this needs the game's next build.";
+        } else if (index == 1 && !cap_rt(env, "SDK patch 69")) {
+            a.ok = false;
+            a.why = "On Vulkan this needs the next runtime (SDK patch 69).";
+        }
+        return a;
+    }
     if (index == 1 && !cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll")) {
         a.ok = false;
         a.why = "This build has no AMD frame generation files.";
@@ -733,7 +755,10 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "PadPrompts") on = s.b("Mnk");                                  // GitHub #104
     else if (o.id == "WalkMode") on = s.b("Mnk");                                    // GitHub #125
     else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("AAMode") <= 4 && s.i("Api") == 0;   // PS1 352, 473; job 521; T2x: no scene scale
-    else if (o.id == "FrameGen" && s.i("Api") != 0) { a.ok = false; a.why = "DirectX 12 only."; return a; }   // job 521
+    else if (o.id == "FrameGen" && runs_vulkan(s, env)) {   // job 521; notes/83: AMD FSR frame generation on Vulkan
+        const Availability v = framegen_choice_available(1, env, true);
+        if (!v.ok) { a.ok = false; a.why = "DirectX 12 only for now. " + v.why; return a; }
+    } else if (o.id == "FrameGen" && env.wine) { a.ok = false; a.why = "Vulkan only on Proton / Wine."; return a; }
     else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
     else if (o.id == "SplitLayout") on = s.i("Players") == 1;                       // GitHub #136: 2 players only
     else if (o.id == "PeerIps") on = s.b("SystemLink");                              // GitHub #229
@@ -755,8 +780,8 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
     std::string base = o.tooltip;
     if (o.id == "Api" && env.wine && (g == Game::Gears3 || g == Game::Judgment))   // Shagg 3 Nov: Vulkan is the Proton path
         base = "On Steam Deck / Linux (Proton) Vulkan is the usual choice - DirectX 12 can crash there.\n"
-               "On Vulkan, FSR / DLSS / XeSS and frame generation are not available (SMAA is used), and Reflex / Anti-Lag "
-               "are off. If something looks wrong, make a problem report and send it to us.";
+               "On Vulkan, FSR / DLSS / XeSS are not available (SMAA is used), frame generation is AMD FSR only (experimental), "
+               "and Reflex / Anti-Lag are off. If something looks wrong, make a problem report and send it to us.";
     if (o.id == "AO")   // notes/81
         base += "\nCACAO: AMD's FidelityFX CACAO at half resolution: costs much less than XeGTAO and shows less grain with DLAA and SMAA T2x, though fine contact detail is softer.";
     if (o.id == "AO" && g == Game::Judgment)   // notes/81
@@ -1185,7 +1210,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // GitHub #36 / #40), Vulkan on SteamOS / Linux (DirectX 12 there still being tested).
         const int wapi = s.i("WineApi");
         const bool wineDx = env.wine && s.i("Api") == 0 && (wapi == 2 || (wapi == 0 && env.mac));
-        const bool vk = s.i("Api") == 1 || (env.wine && !wineDx);
+        const bool vk = runs_vulkan(s, env);
         if (env.wine && s.i("Api") != 1) notes.push_back(wineDx ? (s.i("WineApi") == 0 ? "launcher: Mac (CrossOver) - DirectX 12 (Automatic: Vulkan can't start there)"
                                                                                 : "launcher: Proton / Wine - DirectX 12 (testing, chosen in the launcher)")
                                                                : "launcher: Proton / Wine - Vulkan (Graphics API on Proton / Wine: DirectX 12 is being tested)");
@@ -1232,12 +1257,22 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 857 (0146 / 0147): frame generation
     // FrameGen: 1 AMD FSR; 2-5 NVIDIA DLSS 2x / 3x / 4x / dynamic (falls back to FSR, or off, when not available here)
-    int fgChoice = avail("FrameGen") && s.i("Api") == 0 && !env.wine ? s.i("FrameGen") : 0;   // job 521: DirectX 12 only
+    // job 521: DirectX 12 (not under Proton / Wine); notes/83: AMD's on Vulkan too, Proton / Wine included (Steam Deck)
+    const bool fgVk = runs_vulkan(s, env);
+    int fgChoice = avail("FrameGen") && (fgVk || (s.i("Api") == 0 && !env.wine)) ? s.i("FrameGen") : 0;
+    if (fgVk && fgChoice >= 2) {
+        fgChoice = 1;
+        notes.push_back("launcher: Vulkan - NVIDIA DLSS frame generation is DirectX 12 only -> AMD FSR frame generation (experimental on Vulkan)");
+    }
     if (fgChoice >= 2 && !framegen_choice_available(fgChoice, env).ok) {
         fgChoice = cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll") ? 1 : 0;
         notes.push_back(std::string("launcher: NVIDIA DLSS frame generation is not available here -> ") + (fgChoice ? "AMD FSR frame generation" : "off"));
     }
-    if (fgChoice == 1 && !framegen_choice_available(1, env).ok) fgChoice = 0;
+    if (fgChoice == 1 && !framegen_choice_available(1, env, fgVk).ok) {
+        if (fgVk) notes.push_back("launcher: Vulkan - AMD FSR frame generation is not available here (" +
+                                  framegen_choice_available(1, env, true).why + ") -> off");
+        fgChoice = 0;
+    }
     const bool fgOn = fgChoice >= 1;
     // frames on screen per frame drawn (the frame-rate cap below); dynamic varies - counted as 2x
     const int fgFactor = fgChoice == 3 ? 3 : fgChoice == 4 ? 4 : 2;
@@ -1251,7 +1286,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
         // 237f736 (Shagg: no smearing in Gears 2): generation from the HUD-less colour, with per-object motion; the
         // character-motion pass reads Gears 2's velocity-pass layout (c5-c12), so it is turned on for Gears 2 only
-        if (cap_exe(env, "gow2_frame_generation_hudless")) a.push_back("--gow2_frame_generation_hudless=true");
+        // notes/83: no HUD-less image on Vulkan yet
+        if (!fgVk && cap_exe(env, "gow2_frame_generation_hudless")) a.push_back("--gow2_frame_generation_hudless=true");
         if (cap_exe(env, "gow2_upscale_object_motion")) a.push_back("--gow2_upscale_object_motion=true");
         if (g == Game::Gears2 && cap_exe(env, "gow2_upscale_character_motion"))
             a.push_back("--gow2_upscale_character_motion=true");

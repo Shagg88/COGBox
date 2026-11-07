@@ -183,6 +183,10 @@ foreach ($p in $ports) {
   New-Item -ItemType Directory -Force (Join-Path $dst 'D3D12') | Out-Null; Copy-Item $ag (Join-Path $dst 'D3D12')
   # 0.4.8: the Streamline runtime from the release folder (overrides any older copy that sat in the build folder)
   if ($p.dlssg) { foreach ($f in $slFiles) { Copy-Item (Join-Path $slDir $f) $dst -Force } }
+  # notes/83: AMD FSR frame generation on Vulkan - its two DLLs come from the build folder with the others above (the
+  # games' CMake copies them there); without them the launcher greys the option on Vulkan
+  foreach ($f in 'amd_fidelityfx_loader_vk.dll', 'amd_fidelityfx_framegeneration_vk.dll') {
+    if (-not (Test-Path (Join-Path $dst $f))) { Write-Host "  note: $($p.to) has no $f - no frame generation on Vulkan there" } }
 }
 if (@($ports | Where-Object { $_.dlssg }).Count) {
   $sld = Join-Path $lic 'streamline-release'; New-Item -ItemType Directory -Force $sld | Out-Null
