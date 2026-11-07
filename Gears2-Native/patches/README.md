@@ -84,10 +84,12 @@ Then move the third-party submodules to the tags in `sdk-pins.txt` and configure
   XUID" with 0 for a local profile, **for Gears 3 only** (title 4D5308AB); every other game keeps the old answer, so
   its saves are untouched. Because Gears 3 signs PlayerStorage.dat and its profile settings (63E83FFF + FFE + FFD) with
   SHA-1(online XUID + data), `kernel_state.cpp` converts old COGBox saves once at start-up: a save still signed with
-  the offline XUID is re-signed with 8 zero bytes (data unchanged). The first file is backed up once as
-  `<file>.pre-xuid0` (verified by size before anything is written), and the new file is written to `<file>.cogbox-tmp`
-  and renamed over the original. Logged as `cogbox_save_convert:`. A converted save makes 0.3.x reset it, so restore
-  the `.pre-xuid0` files before going back. Made against the SDK as it was before job 1060 (`xam_net.cpp` / `xam_user.cpp` `.pre1060`, `kernel_state.cpp`
+  the offline XUID is re-signed with 8 zero bytes (data unchanged). The first file is first copied to a fresh
+  `<file>.pre-xuid0-<YYYYMMDD-HHMMSS>` (verified by size before anything is written; an older backup never blocks the
+  conversion), and the new file is written to `<file>.cogbox-tmp`, flushed (`_commit` on Windows) and renamed over the
+  original. A profile set with a file missing is converted as far as it goes and every file left unconverted is
+  logged as a warning. Logged as `cogbox_save_convert:`. A converted save makes 0.3.x reset it, so restore
+  the `.pre-xuid0*` files before going back. Made against the SDK as it was before job 1060 (`xam_net.cpp` / `xam_user.cpp` `.pre1060`, `kernel_state.cpp`
   `.pre1066`); applying it reproduces 1067's three files exactly.
   System Link (patches 49b / 50) finds and connects peers by IP address (XNADDR from the adapter IP) and makes its own
   session IDs / keys with `std::random_device`, so it uses neither XNetRandom nor any XUID. The offline XUIDs were

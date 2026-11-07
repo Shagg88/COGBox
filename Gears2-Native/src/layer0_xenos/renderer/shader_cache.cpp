@@ -559,15 +559,22 @@ void ShaderCache::UcodeWriter() {
       std::vector<char> b;
       std::vector<UcodePackRecord> recs;
       size_t valid = 0;
-      if (ReadWholeFile(pack_path, b)) valid = ParseUcodePack(b, &recs);
+      const bool read_ok = ReadWholeFile(pack_path, b);
+      if (read_ok) valid = ParseUcodePack(b, &recs);
       for (const auto& r : recs) in_pack[r.hash ^ (uint64_t(r.is_vertex) << 63)] = true;
-      if (valid == 0) {
+      // Cut or restart the pack only when it was read and found bad (or is not there at all); a pack that exists but
+      // could not be read (locked, I/O error) is left alone and not recorded to this run.
+      const bool unreadable = !read_ok && std::filesystem::exists(pack_path, ec);
+      if (unreadable) {
+        REXLOG_WARN("gow2_renderer: can't read {}; left as it is, not recorded to this run", rex::path_to_utf8(pack_path));
+      } else if (valid == 0) {
         std::ofstream f(pack_path, std::ios::binary | std::ios::trunc);
         f.write(kUcodePackMagic, 8);
       } else if (valid < b.size()) {
         std::filesystem::resize_file(pack_path, valid, ec);
       }
-      pack.open(pack_path, std::ios::binary | std::ios::app);
+      if (!unreadable) pack.open(pack_path, std::ios::binary | std::ios::app);
+      else pack.setstate(std::ios::failbit);  // "!pack" below: nothing written
     }
     const uint64_t key = item.hash ^ (uint64_t(item.is_vertex) << 63);
     if (!pack || in_pack.count(key) || item.dwords.empty()) continue;

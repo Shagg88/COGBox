@@ -70,17 +70,18 @@ diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
 index b48213f..e1b69e2 100644
 --- a/src/system/kernel_state.cpp
 +++ b/src/system/kernel_state.cpp
-@@ -12,6 +12,9 @@
+@@ -12,6 +12,10 @@
  #include <chrono>
  #include <cstring>
  #include <filesystem>
 +#include <array>
 +#include <cstdio>
++#include <ctime>
 +#include <vector>
  #include <string>
  
  #include <fmt/format.h>
-@@ -46,6 +49,147 @@
+@@ -46,6 +50,186 @@
  #include <rex/system/xthread.h>
  #include <rex/system/xtimer.h>
  
@@ -89,7 +90,11 @@ index b48213f..e1b69e2 100644
 +// PlayerStorage.dat and its profile settings (63E83FFF+63E83FFE+63E83FFD) with SHA-1(online XUID, 8 bytes big-endian +
 +// data) in the first 20 bytes. Before the fix we answered "online XUID" with the offline one, so every COGBox save is
 +// signed with it; now a local profile's online XUID is 0 and the game would wipe them. Saves still signed the old way are
-+// re-signed with 8 zero bytes (data untouched; the old file kept once as <name>.pre-xuid0). Runs once at start-up.
++// re-signed with 8 zero bytes (data untouched; the old file is first copied to a new <name>.pre-xuid0-<time>). Runs once
++// at start-up.
++#if REX_PLATFORM_WIN32
++#include <io.h>  // _commit
++#endif
 +namespace {
 +struct CogSha1 {
 +  uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
@@ -146,7 +151,11 @@ index b48213f..e1b69e2 100644
 +#endif
 +  if (!f) return false;
 +  bool ok = fwrite(v.data(), 1, v.size(), f) == v.size();
-+  fclose(f);
++  ok = fflush(f) == 0 && ok;
++#if REX_PLATFORM_WIN32
++  ok = _commit(_fileno(f)) == 0 && ok;  // on disk before the rename replaces the original
++#endif
++  ok = fclose(f) == 0 && ok;
 +  return ok;
 +}
 +std::array<uint8_t, 20> CogSign(uint64_t key, const uint8_t* body, size_t len) {
@@ -164,20 +173,40 @@ index b48213f..e1b69e2 100644
 +  auto old_sig = CogSign(old_key, all.data() + 20, all.size() - 20);
 +  if (std::memcmp(old_sig.data(), all.data(), 20) != 0) {
 +    auto new_sig = CogSign(0, all.data() + 20, all.size() - 20);
-+    REXLOG_INFO("cogbox_save_convert: {} - {}", rex::path_to_utf8(files[0]),
-+                std::memcmp(new_sig.data(), all.data(), 20) == 0 ? "already converted" : "signature not recognised, left alone");
++    if (std::memcmp(new_sig.data(), all.data(), 20) == 0) {
++      REXLOG_INFO("cogbox_save_convert: {} - already converted", rex::path_to_utf8(files[0]));
++    } else {
++      REXLOG_WARN("cogbox_save_convert: {} - signature not recognised, LEFT UNCONVERTED (Gears 3 may reset it)",
++                  rex::path_to_utf8(files[0]));
++    }
 +    return;
 +  }
 +  auto first = CogReadAll(files[0]);
-+  auto backup = files[0];
-+  backup += ".pre-xuid0";
++  // A fresh, uniquely named backup every time: an older backup (say a .pre-xuid0 of a different size) must never stop
++  // the conversion, or Gears 3 wipes the save.
 +  std::error_code ec;
-+  if (!std::filesystem::exists(backup, ec)) {
++  std::time_t now = std::time(nullptr);
++  std::tm tm{};
++#if REX_PLATFORM_WIN32
++  localtime_s(&tm, &now);
++#else
++  localtime_r(&now, &tm);
++#endif
++  char stamp[32];
++  std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tm);
++  bool backed_up = false;
++  for (int i = 0; i < 100 && !backed_up; ++i) {
++    auto backup = files[0];
++    backup += i ? fmt::format(".pre-xuid0-{}-{}", stamp, i) : fmt::format(".pre-xuid0-{}", stamp);
 +    ec.clear();
-+    std::filesystem::copy_file(files[0], backup, ec);
++    if (std::filesystem::exists(backup, ec) || ec) continue;
++    ec.clear();
++    backed_up = std::filesystem::copy_file(files[0], backup, ec) && !ec &&
++                std::filesystem::file_size(backup, ec) == first.size() && !ec;
 +  }
-+  if (ec || !std::filesystem::exists(backup, ec) || std::filesystem::file_size(backup, ec) != first.size()) {
-+    REXLOG_INFO("cogbox_save_convert: {} - no backup could be made, left alone", rex::path_to_utf8(files[0]));
++  if (!backed_up) {
++    REXLOG_WARN("cogbox_save_convert: {} - no backup could be made, LEFT UNCONVERTED (Gears 3 may reset it)",
++                rex::path_to_utf8(files[0]));
 +    return;
 +  }
 +  auto new_sig = CogSign(0, all.data() + 20, all.size() - 20);
@@ -191,8 +220,12 @@ index b48213f..e1b69e2 100644
 +    ok = !ec;
 +  }
 +  if (!ok) std::filesystem::remove(tmp, ec);
-+  REXLOG_INFO("cogbox_save_convert: {} - re-signed for the signed-out online XUID: {}", rex::path_to_utf8(files[0]),
-+              ok ? "done" : "WRITE FAILED (original untouched)");
++  if (ok) {
++    REXLOG_INFO("cogbox_save_convert: {} - re-signed for the signed-out online XUID: done", rex::path_to_utf8(files[0]));
++  } else {
++    REXLOG_WARN("cogbox_save_convert: {} - WRITE FAILED, LEFT UNCONVERTED (original untouched)",
++                rex::path_to_utf8(files[0]));
++  }
 +}
 +void CogConvertGears3SavesImpl(const std::filesystem::path& root, uint64_t xuid) {
 +  if (root.empty() || !xuid) return;
@@ -207,9 +240,16 @@ index b48213f..e1b69e2 100644
 +    std::error_code dec;
 +    if (!d.is_directory(dec) || dec) continue;
 +    std::vector<std::filesystem::path> files;
++    // Convert whatever of the triplet is there; a missing one is logged (the set then likely stays unconverted).
 +    for (const char* n : {"63E83FFF", "63E83FFE", "63E83FFD"}) {
 +      auto f = d.path() / n;
-+      if (std::filesystem::exists(f, ec)) files.push_back(f); else break;
++      std::error_code fec;
++      if (std::filesystem::exists(f, fec) && !fec) {
++        files.push_back(f);
++      } else {
++        REXLOG_WARN("cogbox_save_convert: {} - missing, profile set incomplete; converting the files present",
++                    rex::path_to_utf8(f));
++      }
 +    }
 +    if (!files.empty()) CogResign(files, xuid);
 +  }
@@ -228,7 +268,7 @@ index b48213f..e1b69e2 100644
  namespace rex::kernel::xam {
  uint32_t LocalPlayersSignedInMask();  // xam_user.cpp (Gears2-Native SDK patch 25)
  }  // namespace rex::kernel::xam
-@@ -80,6 +224,7 @@ KernelState::KernelState(Runtime* emulator)
+@@ -80,6 +264,7 @@ KernelState::KernelState(Runtime* emulator)
      user_data_root = std::filesystem::absolute(user_data_root);
    }
    content_manager_ = std::make_unique<xam::ContentManager>(this, user_data_root);

@@ -56,7 +56,13 @@ $objs = @($inputs -split '\s+' | Where-Object { $_ -and $_ -notmatch "${Exe}_rec
 $libsLine = $link.vars['LINK_LIBRARIES']
 
 # ---- the kit folder
-if (Test-Path $Out) { Remove-Item -LiteralPath $Out -Recurse -Force }
+# only an earlier kit (it has kit.json) or an empty folder is replaced; a mistyped -Out never deletes anything else
+if (Test-Path -LiteralPath $Out) {
+  if (-not (Test-Path -LiteralPath (Join-Path $Out 'kit.json')) -and (Get-ChildItem -LiteralPath $Out -Force | Select-Object -First 1)) {
+    throw "-Out $Out is not empty and is not a build kit (no kit.json): not deleted, pick another folder"
+  }
+  Remove-Item -LiteralPath $Out -Recurse -Force
+}
 foreach ($d in 'bin', 'include', 'obj', 'lib', 'pgo') { New-Item -ItemType Directory -Force (Join-Path $Out $d) | Out-Null }
 $files = [ordered]@{}
 function Put([string]$from, [string]$rel) {

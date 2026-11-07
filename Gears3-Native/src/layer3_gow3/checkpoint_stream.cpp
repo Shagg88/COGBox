@@ -62,9 +62,13 @@ std::atomic<bool> g_new{false};              // packages not handled on the game
 std::set<std::string> g_window;              // streamed packages opened in this window (lower case, no extension)
 std::set<std::string> g_pending;             // of those, not matched to a LevelStreaming object yet
 
-void OnFileOpened(std::string_view guest, const std::filesystem::path*) {
+void OnFileOpened(std::string_view guest, const std::filesystem::path* host) {
   const std::string l = Lower(guest);
   if (l.find("gearscheckpoint") != std::string::npos) {  // read at a load, written at a save (a save streams nothing)
+    // Only a load starts the window. A save opens the file created or truncated (the SDK does that before the
+    // observer is told), so it is empty here; a load opens the full checkpoint.
+    std::error_code ec;
+    if (host && std::filesystem::file_size(*host, ec) == 0 && !ec) return;
     g_checkpoint_ms = NowMs();
     return;
   }
@@ -149,13 +153,13 @@ void Gow3CheckpointStreamTick() {
     std::lock_guard lock(g_mutex);
     window.swap(g_window);
     g_pending.clear();
+    g_last_stream_ms = -1;  // with the swap: a package recorded after it starts a new window, not lost
   }
   std::string names;
   for (const std::string& n : window) names += " " + n;
   REXLOG_INFO("checkpoint restore: waited {} ms for {} streamed packages ({} set to block on load):{}", last - start,
               window.size(), set, names);
   g_blocked.clear();
-  g_last_stream_ms = -1;
 }
 
 void Gow3InstallCheckpointStreamWait() {
