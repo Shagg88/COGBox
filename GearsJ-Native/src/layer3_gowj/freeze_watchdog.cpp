@@ -82,8 +82,26 @@ uint32_t Load32Raw(const uint8_t* base, uint32_t a) {
   return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
 }
 
-// Guest stack read; 0 (ends the walk) if the page is not readable.
+// Guest stack read; 0 (ends the walk) if the page is not readable. Checked with VirtualQuery first (1388 log: ~20
+// "Unhandled guest access violation: read of guest 0x7003..." from this thread - the runtime's vectored exception
+// handler sees a fault before __try does, and the top of an idle thread's guest stack is not committed).
+bool Readable(const void* p, size_t n) {
+#if defined(_WIN32)
+  MEMORY_BASIC_INFORMATION mi{};
+  if (!VirtualQuery(p, &mi, sizeof(mi)) || mi.State != MEM_COMMIT) return false;
+  const DWORD ok = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                   PAGE_EXECUTE_WRITECOPY;
+  if (!(mi.Protect & ok) || (mi.Protect & (PAGE_GUARD | PAGE_NOACCESS))) return false;
+  const auto* end = static_cast<const uint8_t*>(mi.BaseAddress) + mi.RegionSize;
+  return static_cast<const uint8_t*>(p) + n <= end;
+#else
+  (void)p, (void)n;
+  return true;
+#endif
+}
+
 uint32_t Load32(const uint8_t* base, uint32_t a) {
+  if (!Readable(base + a, 4)) return 0;
 #if defined(_MSC_VER)
   __try {
     return Load32Raw(base, a);
