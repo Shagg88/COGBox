@@ -1143,3 +1143,5 @@ No pictures found. Add a game, or start one once from COGBox. = Keine Bilder gef
 D-pad choose   A pick   B close = Steuerkreuz wählen   A übernehmen   B schließen
 ICON = SYMBOL
 BACK = ZURÜCK
+Horde bots = Horde-Bots
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. = Lokale Horde: Drücke Zurück / Ansicht, wenn die Horde-Punktetafel zum ersten Mal erscheint, um zwei Bots hinzuzufügen (erneut drücken für zwei weitere). Sie kehren jede Welle zurück.

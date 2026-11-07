@@ -1143,3 +1143,5 @@ No pictures found. Add a game, or start one once from COGBox. = Nincs kép. Adj 
 D-pad choose   A pick   B close = D-pad választás   A kiválaszt   B bezárás
 ICON = IKON
 BACK = VISSZA
+Horde bots = Horda botok
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. = Helyi Horda: nyomd meg a Vissza / Nézet gombot, amikor először megjelenik a Horda eredménytábla, két bot hozzáadásához (újra megnyomva még kettő). Minden hullámban újraélednek.

@@ -1110,6 +1110,58 @@ void main(uint3 id : SV_DispatchThreadID) {
 }
 )";
 
+// --gow2_upscale_object_motion (#147 / #150): per-object motion vectors. Each scene draw of an object that moves on its
+// own is drawn a second time, right after the game's draw, with the same vertex shader and state into the object-ID
+// target (R32G32F, cleared to 0): this pixel shader writes (1, depth, 0, 0) and the pipeline's blend factor (n, 1, 0, 0)
+// with src factor BLEND_FACTOR / dst ZERO makes it (n, depth) - n the object's row in the table. The input struct is
+// the guest pixel shaders' (hlsl.cpp XePsIn) so it links with every guest vertex shader. dxbc_gen::ObjectIdPixelShader
+// is the same shader as DXBC (a pipeline takes one bytecode kind).
+constexpr const char* kObjectIdPs = R"(
+struct XePsIn {
+  float4 interp[16] : TEXCOORD0;
+  float4 position : SV_Position;
+  bool front_face : SV_IsFrontFace;
+};
+float4 main(XePsIn i) : SV_Target0 { return float4(1.0, i.position.z, 0.0, 0.0); }
+)";
+
+// --gow2_upscale_object_motion: after the camera (and Gears 2 character) motion passes. t1 = the object-ID target (r =
+// object number, g = the depth that draw wrote, host convention); t2 = the table (RGBA32F, 4 wide): row 0 texel 0 =
+// (count, host depth -> guest factor, absolute tolerance, relative tolerance); row n = object n's reprojection
+// (upscale::ReprojectionMatrix of its own local-to-clip now and last frame: (u, v, depth, 1) -> its previous clip
+// position), rows as kMotionVectorsCs's. A pixel keeps the camera's motion unless its object number is set AND the
+// depth that object wrote is still the scene's depth there (something drawn in front later leaves a stale number).
+constexpr const char* kObjectMotionCs = R"(
+Texture2D<float> xe_depth : register(t0);
+Texture2D<float2> xe_ids : register(t1);
+Texture2D<float4> xe_obj : register(t2);
+RWTexture2D<float2> xe_motion : register(u0);
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+  uint w, h;
+  xe_motion.GetDimensions(w, h);
+  if (id.x >= w || id.y >= h) return;
+  uint iw, ih;
+  xe_ids.GetDimensions(iw, ih);
+  if (id.x >= iw || id.y >= ih) return;
+  const float4 hd = xe_obj.Load(int3(0, 0, 0));
+  const float2 ob = xe_ids.Load(int3(id.xy, 0));
+  if (!(ob.x >= 0.5) || !(ob.x < hd.x + 0.5)) return;
+  const int n = int(ob.x + 0.5);
+  const float depth = xe_depth.Load(int3(id.xy, 0));
+  const float drawn = ob.y * hd.y;
+  if (!(abs(drawn - depth) <= hd.z + hd.w * abs(depth))) return;
+  const float2 uv = (float2(id.xy) + 0.5) / float2(w, h);
+  const float4 q = float4(uv, depth, 1.0);
+  const float4 p = float4(dot(xe_obj.Load(int3(0, n, 0)), q), dot(xe_obj.Load(int3(1, n, 0)), q),
+                          dot(xe_obj.Load(int3(2, n, 0)), q), dot(xe_obj.Load(int3(3, n, 0)), q));
+  if (!(p.w > 1e-6)) return;  // behind last frame's camera (or a matrix that failed): the camera's motion stays
+  const float2 prev = float2(p.x / p.w + 1.0, 1.0 - p.y / p.w) * 0.5;
+  if (!all(isfinite(prev))) return;
+  xe_motion[id.xy] = (prev - uv) * float2(w, h);
+}
+)";
+
 // A plain copy of packed words (t0 -> u0), e.g. the sharpened image back into the present image.
 constexpr const char* kCopyWordsCs = R"(
 Texture2D<uint> xe_src : register(t0);

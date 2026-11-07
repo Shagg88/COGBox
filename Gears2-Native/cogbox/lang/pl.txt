@@ -1143,3 +1143,5 @@ No pictures found. Add a game, or start one once from COGBox. = Nie znaleziono o
 D-pad choose   A pick   B close = Krzyżak wybór   A wybierz   B zamknij
 ICON = IKONA
 BACK = WSTECZ
+Horde bots = Boty w Hordzie
+Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. = Lokalna Horda: naciśnij Wstecz / Widok, gdy po raz pierwszy pojawi się tablica wyników Hordy, aby dodać dwa boty (naciśnij ponownie, aby dodać dwa kolejne). Odradzają się co falę.
