@@ -804,9 +804,12 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
       ue3::ConfigFile* target = nullptr;
       for (ue3::ConfigFile& f : bundle.files) {
         const std::string fn = ue3::AsciiLower(f.name.Utf8());
-        if (fn.size() >= 24 && fn.compare(fn.size() - 24, 24, "tu_xbox360-gearinput.ini") == 0) { target = &f; break; }
-        // the disc bundle names it Xbox360-GearInput.ini (job 1313 log: no "Xe-" file)
-        if (!target && fn.size() >= 13 && fn.compare(fn.size() - 13, 13, "gearinput.ini") == 0) target = &f;
+        // the disc bundle names it Xbox360-GearInput.ini (job 1313 log: no "Xe-" file); the game itself asks for
+        // UPDATE:\TU__xbox360-gearinput.ini_us, so names may carry a region suffix after ".ini" ("_us") - match
+        // "gearinput.ini" anywhere rather than only at the end
+        if (fn.find("tu_xbox360-gearinput.ini") != std::string::npos) { target = &f; break; }
+        if (!target && fn.find("gearinput.ini") != std::string::npos) target = &f;
+        if (!target && fn.find("input.ini") != std::string::npos) target = &f;  // e.g. DefaultInput.ini
       }
       if (target) {
         ue3::ConfigSection* sec = nullptr;
@@ -823,7 +826,9 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
         if (AsciiLower(n) == "coalesced_int.bin" || written == 0)
           REXLOG_INFO("gow3_horde_bots: {}: Back adds two bots on the Horde scoreboard ({})", n, target->name.Utf8());
       } else if (AsciiLower(n) == "coalesced_int.bin") {
-        REXLOG_WARN("gow3_horde_bots: {}: no GearInput.ini in the bundle - not added", n);
+        REXLOG_WARN("gow3_horde_bots: {}: no GearInput.ini in the bundle - not added ({} files)", n, bundle.files.size());
+        for (const ue3::ConfigFile& f : bundle.files)  // candidates, for the next fix
+          REXLOG_WARN("gow3_horde_bots:   bundle file: {}", f.name.Utf8());
       }
     }
     if (exit_menu) {
