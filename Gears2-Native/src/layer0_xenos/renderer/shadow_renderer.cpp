@@ -3312,7 +3312,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     // Patch 0148: the HUD-less image through the same passes, at the same size (0 = none this frame).
     const gpu::TextureHandle hl_image =
-        hl_present_has_ && fg_wanted_ && !presenter_vulkan_ ? HudlessChain(regs, w, h, ow, oh) : gpu::TextureHandle(0);
+        hl_present_has_ && fg_wanted_ ? HudlessChain(regs, w, h, ow, oh) : gpu::TextureHandle(0);  // notes/83: Vulkan too
     const uint32_t hl_image_w = hl_fit_w_, hl_image_h = hl_fit_h_;  // its size (the generation rectangle's, when known)
     hl_present_has_ = false;
     bool wrote = false;
@@ -3345,7 +3345,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
             t.height = oh;
             t.first_write = !v.image_ever_written_previously();
             if (!backend_->PresentPacked(out_tex, ow, oh, &t)) return false;
-            if (fg_wanted_) FgHandOver(reinterpret_cast<void*>(v.image()));  // notes/83: frame generation's inputs, in the Submit below
+            if (fg_wanted_) FgHandOver(reinterpret_cast<void*>(v.image()), hl_image, hl_image_w, hl_image_h);  // notes/83: frame generation's inputs, in the Submit below
             backend_->Submit();  // on the presenter's queue, before the refresher returns
             wrote = true;
             return true;
@@ -6266,6 +6266,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         void* ready = s && d ? backend_->NativeTextureVulkan(dst, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) : nullptr;
         (i ? out_motion : out_depth) = ready;
       }
+      // notes/83: the HUD-less image too (frame generation copies it into its back-buffer-sized one)
+      out_hudless = hl_ok ? backend_->NativeTextureVulkan(slot->hudless, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) : nullptr;
     } else
 #endif
     {
@@ -7039,7 +7041,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     up_scene_done_ = false;
     hl_frame_logged_ = hl_frame_takes_ = 0;
     hl_armed_ = hl_taken_ = false;  // patch 0148 (hl_sources_ is cleared by RequestDisplay, which runs after this)
-    hl_format_ = fg_wanted_ && !presenter_vulkan_ ? XenosFrameGenerationHudlessFormat() : 0u;
+    hl_format_ = fg_wanted_ ? XenosFrameGenerationHudlessFormat() : 0u;  // notes/83: Vulkan too
     up_scene_copy_.EndFrame();  // notes/80 s.11
     up_depth_saved_ = false;  // notes/80 s.6
     if (up_prev_camera_) vel_prev_objs_.swap(vel_objs_);  // notes/80 s.6 (up_camera_ is already reset): this frame's characters, for the camera position

@@ -17,8 +17,12 @@
 // AMD submits to the game queue from its own present path; it gets a submit function that takes the SDK's lock for
 // that queue, as everything else that submits there does.
 //
-// Not yet (notes/83): the HUD-less image (the HUD is interpolated with the scene, as on D3D12 without
-// --gow2_frame_generation_hudless), and a repaint of an image already shown can't be dropped on Vulkan (the swap chain
+// HUD-less colour (patch 0148 on Vulkan): the renderer's HUD-less image (the generation rectangle's size, in the
+// back buffer's byte layout - red/blue swapped for a B8G8R8A8 back buffer) is copied in our Prepare command buffer into
+// a back-buffer-sized image of the back buffer's format (vkCmdCopyImage between size-compatible formats copies the
+// bytes), which AMD gets as HUDLessColor.
+//
+// Not yet (notes/83): a repaint of an image already shown can't be dropped on Vulkan (the swap chain
 // image is already acquired when we see it): it is presented, its inputs re-sent with reset.
 //
 // Run time: amd_fidelityfx_loader_vk.dll + amd_fidelityfx_framegeneration_vk.dll next to the exe (AMD's, MIT).
@@ -83,6 +87,8 @@ bool g_load_failed = false;
 // The device and the game queue (from the presenter, SDK patch 69).
 VkDevice g_device = VK_NULL_HANDLE;
 VkPhysicalDevice g_physical = VK_NULL_HANDLE;
+VkInstance g_instance = VK_NULL_HANDLE;
+PFN_vkGetInstanceProcAddr g_gipa = nullptr;
 PFN_vkGetDeviceProcAddr g_gdpa = nullptr;
 VkQueue g_game_queue = VK_NULL_HANDLE;
 uint32_t g_game_family = 0;
@@ -101,7 +107,29 @@ struct Fns {
   PFN_vkDestroyFence DestroyFence = nullptr;
   PFN_vkWaitForFences WaitForFences = nullptr;
   PFN_vkResetFences ResetFences = nullptr;
+  // HUD-less colour
+  PFN_vkCreateImage CreateImage = nullptr;
+  PFN_vkDestroyImage DestroyImage = nullptr;
+  PFN_vkGetImageMemoryRequirements GetImageMemoryRequirements = nullptr;
+  PFN_vkAllocateMemory AllocateMemory = nullptr;
+  PFN_vkFreeMemory FreeMemory = nullptr;
+  PFN_vkBindImageMemory BindImageMemory = nullptr;
+  PFN_vkCmdPipelineBarrier CmdPipelineBarrier = nullptr;
+  PFN_vkCmdCopyImage CmdCopyImage = nullptr;
+  PFN_vkCmdClearColorImage CmdClearColorImage = nullptr;
+  PFN_vkGetPhysicalDeviceMemoryProperties GetPhysicalDeviceMemoryProperties = nullptr;
 } g_vk;
+
+// HUD-less colour (patch 0148 on Vulkan).
+bool g_hudless_on = false;                   // --gow2_frame_generation_hudless
+std::atomic<uint32_t> g_hudless_format{0};   // for the renderer: 0 none, 1 RGBA8, 2 RGB10A2, 3 RGBA8 holding BGRA8 bytes
+std::atomic<uint32_t> g_hl_rect_size{0};     // the last generation rectangle, width << 16 | height
+VkImage g_hl_image = VK_NULL_HANDLE;         // back-buffer size and format; rests in SHADER_READ_ONLY_OPTIMAL
+VkDeviceMemory g_hl_memory = VK_NULL_HANDLE;
+uint32_t g_hl_w = 0, g_hl_h = 0;
+VkFormat g_hl_format = VK_FORMAT_UNDEFINED;
+bool g_hl_fresh = false;                     // just made: contents undefined (cleared on its first use)
+uint64_t g_hl_used = 0, g_hl_missing = 0, g_hl_mismatch = 0;
 
 // The swap chain.
 ffxContext g_swap_chain_ctx = nullptr;
@@ -186,6 +214,104 @@ void ReleasePrepareObjects() {
     l = {};
   }
   if (g_pool) g_vk.DestroyCommandPool(g_device, g_pool, nullptr), g_pool = VK_NULL_HANDLE;
+  if (g_hl_image) g_vk.DestroyImage(g_device, g_hl_image, nullptr), g_hl_image = VK_NULL_HANDLE;  // HUD-less colour
+  if (g_hl_memory) g_vk.FreeMemory(g_device, g_hl_memory, nullptr), g_hl_memory = VK_NULL_HANDLE;
+  g_hl_w = g_hl_h = 0;
+  g_hl_format = VK_FORMAT_UNDEFINED;
+}
+
+// HUD-less colour: the back-buffer-sized image (made again when the swap chain's size or format changes). Callers hold
+// g_mutex; the old one is only freed after the Prepare lists and AMD's presents are done with it.
+bool EnsureHudless() {
+  const VkFormat format = g_create_info.imageFormat;
+  const uint32_t w = g_create_info.imageExtent.width, h = g_create_info.imageExtent.height;
+  if (g_hl_image && g_hl_w == w && g_hl_h == h && g_hl_format == format) return true;
+  if (g_hl_image) {
+    WaitForPresents();
+    WaitForPrepareLists();
+    g_vk.DestroyImage(g_device, g_hl_image, nullptr), g_hl_image = VK_NULL_HANDLE;
+    g_vk.FreeMemory(g_device, g_hl_memory, nullptr), g_hl_memory = VK_NULL_HANDLE;
+  }
+  if (!g_vk.GetPhysicalDeviceMemoryProperties) return false;
+  VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+  ci.imageType = VK_IMAGE_TYPE_2D;
+  ci.format = format;
+  ci.extent = {w, h, 1};
+  ci.mipLevels = 1;
+  ci.arrayLayers = 1;
+  ci.samples = VK_SAMPLE_COUNT_1_BIT;
+  ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+  ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (g_vk.CreateImage(g_device, &ci, nullptr, &g_hl_image) != VK_SUCCESS) {
+    g_hl_image = VK_NULL_HANDLE;
+    return false;
+  }
+  VkMemoryRequirements mr{};
+  g_vk.GetImageMemoryRequirements(g_device, g_hl_image, &mr);
+  VkPhysicalDeviceMemoryProperties mp{};
+  g_vk.GetPhysicalDeviceMemoryProperties(g_physical, &mp);
+  uint32_t type = UINT32_MAX;
+  for (uint32_t i = 0; i < mp.memoryTypeCount && type == UINT32_MAX; ++i)
+    if ((mr.memoryTypeBits & (1u << i)) && (mp.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) type = i;
+  for (uint32_t i = 0; i < mp.memoryTypeCount && type == UINT32_MAX; ++i)
+    if (mr.memoryTypeBits & (1u << i)) type = i;
+  VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+  ai.allocationSize = mr.size;
+  ai.memoryTypeIndex = type;
+  if (type == UINT32_MAX || g_vk.AllocateMemory(g_device, &ai, nullptr, &g_hl_memory) != VK_SUCCESS ||
+      g_vk.BindImageMemory(g_device, g_hl_image, g_hl_memory, 0) != VK_SUCCESS) {
+    if (g_hl_memory) g_vk.FreeMemory(g_device, g_hl_memory, nullptr), g_hl_memory = VK_NULL_HANDLE;
+    g_vk.DestroyImage(g_device, g_hl_image, nullptr), g_hl_image = VK_NULL_HANDLE;
+    REXLOG_WARN("gow2_frame_generation_hudless: Vulkan: no memory for the HUD-less image; none this frame");
+    return false;
+  }
+  g_hl_w = w, g_hl_h = h, g_hl_format = format;
+  g_hl_fresh = true;
+  return true;
+}
+
+void ImageBarrier(VkCommandBuffer cb, VkImage image, VkImageLayout from, VkImageLayout to, VkAccessFlags src_access,
+                  VkAccessFlags dst_access) {
+  VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+  b.srcAccessMask = src_access;
+  b.dstAccessMask = dst_access;
+  b.oldLayout = from;
+  b.newLayout = to;
+  b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  b.image = image;
+  b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+  g_vk.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0,
+                          nullptr, 1, &b);
+}
+
+// Records the HUD-less copy: the renderer's image (SHADER_READ_ONLY_OPTIMAL, given back so) at (x, y) in ours.
+void RecordHudlessCopy(VkCommandBuffer cb, const XenosFgFrame& f, int32_t x, int32_t y) {
+  const auto src = reinterpret_cast<VkImage>(f.hudless);
+  if (g_hl_fresh) {  // first use: defined contents outside the rectangle (black)
+    ImageBarrier(cb, g_hl_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+                 VK_ACCESS_TRANSFER_WRITE_BIT);
+    const VkClearColorValue black{{0.0f, 0.0f, 0.0f, 1.0f}};
+    const VkImageSubresourceRange r{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    g_vk.CmdClearColorImage(cb, g_hl_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &r);
+    g_hl_fresh = false;
+  } else {
+    ImageBarrier(cb, g_hl_image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                 VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+  }
+  ImageBarrier(cb, src, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+               VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+  VkImageCopy c{};
+  c.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+  c.dstSubresource = c.srcSubresource;
+  c.dstOffset = {x, y, 0};
+  c.extent = {f.hudless_width, f.hudless_height, 1};
+  g_vk.CmdCopyImage(cb, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_hl_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+  ImageBarrier(cb, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+               VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT);
+  ImageBarrier(cb, g_hl_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+               VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
 }
 
 bool EnsurePrepareObjects() {
@@ -309,7 +435,7 @@ FfxApiResource InputResource(void* image, VkFormat format, uint32_t width, uint3
 }
 
 // Records and submits the Prepare pass on the game queue; false = generation paused for this frame.
-bool Prepare(const XenosFgFrame& f, uint32_t flags) {
+bool Prepare(const XenosFgFrame& f, uint32_t flags, int32_t hl_x = -1, int32_t hl_y = -1) {
   PrepareList& l = g_lists[g_list_index % g_lists.size()];
   if (l.pending) {
     if (g_vk.WaitForFences(g_device, 1, &l.fence, VK_TRUE, 2000000000ull) != VK_SUCCESS) return false;
@@ -320,6 +446,7 @@ bool Prepare(const XenosFgFrame& f, uint32_t flags) {
   VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
   bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   if (g_vk.BeginCommandBuffer(l.cb, &bi) != VK_SUCCESS) return false;
+  if (hl_x >= 0 && g_hl_image && f.hudless) RecordHudlessCopy(l.cb, f, hl_x, hl_y);  // HUD-less colour
   ffxDispatchDescFrameGenerationPrepareV2 p{};
   p.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE_V2;
   p.frameID = g_frame_id;
@@ -366,6 +493,7 @@ void VKAPI_CALL DestroySwapChain(VkDevice device, VkSwapchainKHR swapchain, cons
   if (g_replace.pOutDestroySwapchainFFXAPI) g_replace.pOutDestroySwapchainFFXAPI(device, swapchain, allocator, nullptr);
   g_swap_chain = VK_NULL_HANDLE;
   g_fg_failed = false;
+  g_hudless_format.store(0, std::memory_order_relaxed);
   REXLOG_INFO("gow2_frame_generation: Vulkan: AMD frame-generation swap chain destroyed");
 }
 
@@ -428,7 +556,21 @@ bool MakeSwapChain(rex::VulkanSwapChainHook* io) {
   GN_VK_FN(DestroyFence);
   GN_VK_FN(WaitForFences);
   GN_VK_FN(ResetFences);
+  GN_VK_FN(CreateImage);
+  GN_VK_FN(DestroyImage);
+  GN_VK_FN(GetImageMemoryRequirements);
+  GN_VK_FN(AllocateMemory);
+  GN_VK_FN(FreeMemory);
+  GN_VK_FN(BindImageMemory);
+  GN_VK_FN(CmdPipelineBarrier);
+  GN_VK_FN(CmdCopyImage);
+  GN_VK_FN(CmdClearColorImage);
 #undef GN_VK_FN
+  g_instance = static_cast<VkInstance>(io->instance);
+  g_gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(io->get_instance_proc_addr);
+  if (g_gipa && g_instance)
+    g_vk.GetPhysicalDeviceMemoryProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(
+        g_gipa(g_instance, "vkGetPhysicalDeviceMemoryProperties"));
   if (!g_vk.QueueSubmit || !g_vk.CreateCommandPool || !g_vk.DestroyCommandPool || !g_vk.AllocateCommandBuffers ||
       !g_vk.ResetCommandBuffer || !g_vk.BeginCommandBuffer || !g_vk.EndCommandBuffer || !g_vk.CreateFence ||
       !g_vk.DestroyFence || !g_vk.WaitForFences || !g_vk.ResetFences)
@@ -488,6 +630,20 @@ bool MakeSwapChain(rex::VulkanSwapChainHook* io) {
   io->acquire_next_image = reinterpret_cast<void*>(g_replace.pOutAcquireNextImageKHR);
   io->queue_present = reinterpret_cast<void*>(g_replace.pOutQueuePresentKHR);
   io->destroy_swapchain = reinterpret_cast<void*>(&DestroySwapChain);
+  // HUD-less colour: the renderer makes its image in the back buffer's byte layout (a straight copy then)
+  const bool hl_fns = g_vk.CreateImage && g_vk.DestroyImage && g_vk.GetImageMemoryRequirements && g_vk.AllocateMemory &&
+                      g_vk.FreeMemory && g_vk.BindImageMemory && g_vk.CmdPipelineBarrier && g_vk.CmdCopyImage &&
+                      g_vk.CmdClearColorImage && g_vk.GetPhysicalDeviceMemoryProperties;
+  const VkFormat bf = g_create_info.imageFormat;
+  g_hudless_format.store(!g_hudless_on || !hl_fns                    ? 0u
+                         : bf == VK_FORMAT_R8G8B8A8_UNORM            ? 1u
+                         : bf == VK_FORMAT_A2B10G10R10_UNORM_PACK32  ? 2u
+                         : bf == VK_FORMAT_B8G8R8A8_UNORM            ? 3u
+                                                                     : 0u,
+                         std::memory_order_relaxed);
+  if (g_hudless_on && !g_hudless_format.load(std::memory_order_relaxed))
+    REXLOG_WARN("gow2_frame_generation_hudless: Vulkan: back buffer format {} not handled{}; no HUD-less image",
+                uint32_t(bf), hl_fns ? "" : " (device functions missing)");
   g_inputs_wanted.store(true, std::memory_order_relaxed);
   REXLOG_INFO("gow2_frame_generation: Vulkan: AMD frame-generation swap chain made; frame generation on its first "
               "scene frame");
@@ -543,8 +699,35 @@ void BeforePresent(void* guest_output, const int32_t* rect) {
     if (rect && rect[2] > 0 && rect[3] > 0) c.generationRect = {rect[0], rect[1], rect[2], rect[3]};
     else c.generationRect = {0, 0, int32_t(g_create_info.imageExtent.width), int32_t(g_create_info.imageExtent.height)};
     c.frameID = g_frame_id;
+    // HUD-less colour: when the renderer made one for this frame at exactly the generation rectangle's size
+    int32_t hl_x = -1, hl_y = -1;
+    const auto& gr = c.generationRect;
+    if (g_hudless_on && gr.width > 0 && gr.height > 0 && gr.width < 65536 && gr.height < 65536)
+      g_hl_rect_size.store((uint32_t(gr.width) << 16) | uint32_t(gr.height), std::memory_order_relaxed);
+    if (g_hudless_on && generate && g_hudless_format.load(std::memory_order_relaxed)) {
+      const bool fits = f.hudless && int32_t(f.hudless_width) == gr.width && int32_t(f.hudless_height) == gr.height &&
+                        gr.left >= 0 && gr.top >= 0 && uint32_t(gr.left + gr.width) <= g_create_info.imageExtent.width &&
+                        uint32_t(gr.top + gr.height) <= g_create_info.imageExtent.height;
+      if (!f.hudless) ++g_hl_missing;
+      else if (!fits) ++g_hl_mismatch;
+      if (fits && EnsureHudless()) {
+        hl_x = gr.left, hl_y = gr.top;
+        VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ci.imageType = VK_IMAGE_TYPE_2D;
+        ci.format = g_hl_format;
+        ci.extent = {g_hl_w, g_hl_h, 1};
+        ci.mipLevels = 1;
+        ci.arrayLayers = 1;
+        ci.samples = VK_SAMPLE_COUNT_1_BIT;
+        ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        c.HUDLessColor = ffxApiGetResourceVK(reinterpret_cast<void*>(g_hl_image),
+                                             ffxApiGetImageResourceDescriptionVK(g_hl_image, ci, 0),
+                                             FFX_API_RESOURCE_STATE_COMPUTE_READ);
+        ++g_hl_used;
+      }
+    }
     if (g_fn.Configure(&g_fg_ctx, &c.header) != FFX_API_RETURN_OK) generate = false;
-    if (generate && !Prepare(f, flags)) {
+    if (generate && !Prepare(f, flags, hl_x, hl_y)) {
       ++g_prepare_failed;
       c.frameGenerationEnabled = false;
       g_fn.Configure(&g_fg_ctx, &c.header);
@@ -562,6 +745,10 @@ void BeforePresent(void* guest_output, const int32_t* rect) {
     REXLOG_INFO("gow2_frame_generation: Vulkan: {} frames presented: generation on {} ({} resets), paused {} (no scene "
                 "or not ready), Prepare failed {}, window repaints presented {}", g_presents, g_generated, g_resets,
                 g_paused, g_prepare_failed, g_repaints);
+    if (g_hudless_on)
+      REXLOG_INFO("gow2_frame_generation_hudless: Vulkan: HUD-less image given {}, none made {}, size not the "
+                  "generation rectangle's {}", g_hl_used, g_hl_missing, g_hl_mismatch);
+    g_hl_used = g_hl_missing = g_hl_mismatch = 0;
     g_presents = g_generated = g_resets = g_paused = g_prepare_failed = g_repaints = 0;
   }
 }
@@ -570,6 +757,15 @@ void BeforePresent(void* guest_output, const int32_t* rect) {
 
 bool XenosFgVkActive() { return fgvk::g_active.load(std::memory_order_relaxed); }
 bool XenosFgVkWanted() { return fgvk::g_inputs_wanted.load(std::memory_order_relaxed); }
+uint32_t XenosFgVkHudlessFormat() {
+  return fgvk::g_inputs_wanted.load(std::memory_order_relaxed) ? fgvk::g_hudless_format.load(std::memory_order_relaxed)
+                                                                : 0u;
+}
+bool XenosFgVkHudlessSize(uint32_t& width, uint32_t& height) {
+  const uint32_t v = fgvk::g_hl_rect_size.load(std::memory_order_relaxed);
+  width = v >> 16, height = v & 0xFFFFu;
+  return v != 0;
+}
 
 void XenosFgVkSetInputs(void* guest_output_image, const XenosFgFrame* frame) {
   if (!guest_output_image) return;
@@ -595,8 +791,7 @@ bool XenosFgVkInstall(bool hudless) {
   h.vk_before_present.store(&fgvk::BeforePresent, std::memory_order_release);
   fgvk::g_inputs_wanted.store(true, std::memory_order_relaxed);
   fgvk::g_active.store(true, std::memory_order_relaxed);
-  if (hudless)
-    REXLOG_INFO("gow2_frame_generation_hudless: not on Vulkan yet (notes/83); the HUD is generated with the scene");
+  fgvk::g_hudless_on = hudless;  // the image's format is known once the swap chain is made
   REXLOG_INFO("gow2_frame_generation: Vulkan: AMD FSR frame generation (experimental, notes/83; SDK patch 69 hooks "
               "installed)");
   return true;
@@ -606,6 +801,8 @@ bool XenosFgVkInstall(bool hudless) {
 
 bool XenosFgVkActive() { return false; }
 bool XenosFgVkWanted() { return false; }
+uint32_t XenosFgVkHudlessFormat() { return 0u; }
+bool XenosFgVkHudlessSize(uint32_t&, uint32_t&) { return false; }
 void XenosFgVkSetInputs(void*, const XenosFgFrame*) {}
 bool XenosFgVkInstall(bool) {
   REXLOG_WARN("gow2_frame_generation: this build has no Vulkan frame generation (the FidelityFX SDK's Vulkan headers, "

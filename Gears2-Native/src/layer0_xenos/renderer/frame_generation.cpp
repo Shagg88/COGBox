@@ -731,6 +731,8 @@ static bool FsrFallback(void* factory, void* queue, void* hwnd, const void* desc
 // Notes/83: AMD FSR frame generation on the Vulkan renderer (frame_generation_vk.cpp).
 bool XenosFgVkActive();
 bool XenosFgVkWanted();
+uint32_t XenosFgVkHudlessFormat();
+bool XenosFgVkHudlessSize(uint32_t& width, uint32_t& height);
 void XenosFgVkSetInputs(void* guest_output_image, const XenosFgFrame* frame);
 bool XenosFgVkInstall(bool hudless);
 
@@ -741,13 +743,13 @@ bool XenosFrameGenerationWanted() {
 }
 
 uint32_t XenosFrameGenerationHudlessFormat() {
-  if (XenosFgVkActive()) return 0u;  // notes/83: no HUD-less image on Vulkan yet
+  if (XenosFgVkActive()) return XenosFgVkHudlessFormat();  // notes/83
   if (XenosDlssFgActive()) return XenosDlssFgHudlessFormat();
   return g_inputs_wanted.load(std::memory_order_relaxed) ? g_hudless_format.load(std::memory_order_relaxed) : 0u;
 }
 
 bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height) {
-  if (XenosFgVkActive()) return false;  // notes/83
+  if (XenosFgVkActive()) return XenosFgVkHudlessSize(width, height);  // notes/83
   if (XenosDlssFgActive()) return XenosDlssFgHudlessSize(width, height);
   const uint32_t v = g_hl_rect_size.load(std::memory_order_relaxed);
   width = v >> 16, height = v & 0xFFFFu;

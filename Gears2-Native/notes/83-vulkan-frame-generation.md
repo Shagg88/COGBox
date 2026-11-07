@@ -13,7 +13,7 @@ generation through AMD's Vulkan frame-generation swap chain. Experimental. The D
 | `renderer/frame_generation.cpp` | Routes: on Vulkan, `XenosFrameGenerationInstall` calls `XenosFgVkInstall`, and the four queries (`Wanted`, `HudlessFormat`, `HudlessSize`, `SetInputs`) answer from the Vulkan side. |
 | `vulkan_backend.cpp` / `gpu.h` | `BeginNativeVulkan` / `NativeTextureVulkan` (VkDevice, our recording VkCommandBuffer, a texture moved to a VkImageLayout). Kept apart from `BeginNative`: the DLSS / FSR / XeSS upscalers cast that one's result to D3D12 objects. |
 | `shadow_renderer.cpp` | `FgHandOver` on Vulkan: after `PresentPacked`, the frame's depth (R32F) and motion (RG16F) are copied with `vkCmdCopyImage` into the slot of the presenter image just written, left in `SHADER_READ_ONLY_OPTIMAL`, and handed over keyed by that image's `VkImage`. |
-| launcher | "AMD FSR frame generation (experimental on Vulkan)"; DLSS choices greyed "DirectX 12 only"; allowed under Proton / Wine on Vulkan (Steam Deck), still off for DirectX 12 under Wine. Needs AMD's two VK DLLs, the exe's text `Vulkan: AMD frame-generation swap chain made` and the runtime's `SDK patch 69`. No `--gow2_frame_generation_hudless` on Vulkan. |
+| launcher | "AMD FSR frame generation (experimental on Vulkan)"; DLSS choices greyed "DirectX 12 only"; allowed under Proton / Wine on Vulkan (Steam Deck), still off for DirectX 12 under Wine. Needs AMD's two VK DLLs, the exe's text `Vulkan: AMD frame-generation swap chain made` and the runtime's `SDK patch 69`. `--gow2_frame_generation_hudless` as on D3D12. |
 | CMake (all four games) | builds `frame_generation_vk.cpp`; copies `amd_fidelityfx_loader_vk.dll` + `amd_fidelityfx_framegeneration_vk.dll` beside the exe. The package takes them from there (it notes a build without them). |
 
 ## Queues
@@ -44,13 +44,19 @@ Cap semantics are the D3D12 ones: the launcher's frame-rate cap is the on-screen
 
 ## Differences from D3D12 / not yet
 
-- **No HUD-less image** (step 4 of the D3D12 plan): the HUD is interpolated with the scene, as on D3D12 without
-  `--gow2_frame_generation_hudless`. The HUD-less chain is still `!presenter_vulkan_` in the renderer.
+- **HUD-less colour** (patch 0148, added after the first test, which showed the HUD and reticle smeared): the same
+  detector and `HudlessChain` as D3D12. `FgHandOver` leaves the slot's HUD-less image (generation-rectangle size; an
+  R8G8B8A8 texture holding B8G8R8A8 bytes for the usual B8G8R8A8 swap chain, format code 3) in
+  `SHADER_READ_ONLY_OPTIMAL`; the Prepare command buffer copies it (`vkCmdCopyImage` between size-compatible formats
+  copies bytes, so no buffer hop as on D3D12) into a back-buffer-sized image of the swap chain's format, cleared black on
+  first use, which AMD gets as `HUDLessColor`. Logged every 600 presents as `HUD-less image given / none made / size not
+  the generation rectangle's`. An RGB10A2 (HDR) back buffer needs storage support for A2B10G10R10 in the unpack pass.
 - **Repaints are presented**: on Vulkan the swap-chain image is already acquired and drawn when the hook runs, so a
   repaint of an image already shown can't be dropped as on D3D12; its inputs are re-sent with reset. Logged as "window
   repaints presented" every 600 presents.
-- **Object motion**: whatever the renderer's motion texture holds (`--gow2_upscale_object_motion` works on the shared
-  passes); not separately checked on Vulkan yet.
+- **Character / object motion**: the velocity-pass copy (`gow2_upscale_character_motion`, on for Gears 2 by
+  gow2_app.h) and the object-motion passes are backend-generic dispatches, so they run on Vulkan unchanged; the first
+  Vulkan run logged `character motion on 93 frames (2.5 characters/frame)`.
 - **Resize**: the presenter destroys AMD's swap chain (our destroy turns generation off, destroys the frame-generation
   context, waits for presents, destroys the swap-chain context, then AMD's destroy) and makes a new one, never passing
   it as `oldSwapchain`.
@@ -64,6 +70,13 @@ refused (then frames shown as drawn); a build without the FFX VK headers, the Vu
 
 Risk: `FrameHooks` grew at the end. An exe built against patch-69 headers must ship with a patch-69 `rexruntime.dll`
 (it writes `vk_all_queues` past an older runtime's struct). Releases ship both; dev builds must not mix.
+
+## First test (Shagg, 7 Nov, Gears 2 TU6, 2560x1440, scale 2)
+
+Swap chain made (queues: game family 0, compute family 2, present / acquire family 0), AMD 3.1.6 on, generation on
+600/600 in play. Seen: HUD / reticle smeared (no HUD-less image then - fixed above), character smear, texture flicker,
+~23-46 game fps: the renderer itself took 30-40 ms of GPU a frame in that scene at scale 2 (`GPU ... ms/frame` lines),
+so the low rate is the Vulkan renderer at 2x, not frame generation. Pacing and resets: being looked at separately.
 
 ## Proton / Steam Deck
 

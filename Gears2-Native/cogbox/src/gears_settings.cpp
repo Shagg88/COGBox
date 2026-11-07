@@ -1286,8 +1286,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
         // 237f736 (Shagg: no smearing in Gears 2): generation from the HUD-less colour, with per-object motion; the
         // character-motion pass reads Gears 2's velocity-pass layout (c5-c12), so it is turned on for Gears 2 only
-        // notes/83: no HUD-less image on Vulkan yet
-        if (!fgVk && cap_exe(env, "gow2_frame_generation_hudless")) a.push_back("--gow2_frame_generation_hudless=true");
+        if (cap_exe(env, "gow2_frame_generation_hudless")) a.push_back("--gow2_frame_generation_hudless=true");  // notes/83: Vulkan too
         if (cap_exe(env, "gow2_upscale_object_motion")) a.push_back("--gow2_upscale_object_motion=true");
         if (g == Game::Gears2 && cap_exe(env, "gow2_upscale_character_motion"))
             a.push_back("--gow2_upscale_character_motion=true");
