@@ -99,6 +99,12 @@ void XenosAoDebugSetMipBias(bool on);  // notes/82: F2
 bool XenosAoDebugMipBias();
 uint32_t XenosAoDebugCacaoBlur();  // 0-8; F8 steps 1, 2, 3, 4, 6, 8 while CACAO is shown
 void XenosAoDebugSetDenoisePasses(uint32_t passes);
+// Notes/80 s.16 (PCSS): the patched shadow shaders' live state (F12 filter, Shift+F12 view, Ctrl+F12 quality, Alt+F12 radius).
+// xe_sys1.z: bit 0 PCSS on, bits 1-2 view (normal / split / coverage), bits 3-4 quality (F12, Shift+F12, Ctrl+F12).
+void XenosPcssSetAvailable(bool on, uint32_t mode, uint32_t quality, float radius);
+float XenosPcssRadius();
+bool XenosPcssTakeTrace();  // Ctrl+Shift+F12 pressed since the last call: trace the next frame  // xe_sys1.w: scales the penumbra, its widest and the blocker search (Alt+F12)
+uint32_t XenosPcssMode();
 // Patch 0163: COGBox's in-game menu (ingame_menu.cpp) - Back + Start or F1 opens it; COGBox's settings for this game
 // (--cogbox_menu=<file>), Resume, Restart to apply, Quit game. Install from OnCreateDialogs (with the app's window and
 // runtime), shut down from OnShutdown.

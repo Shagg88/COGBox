@@ -130,6 +130,13 @@ class ShaderCache {
                          uint32_t tess_quad_segments = 0) {
     return GetImpl(ucode_hash, dwords, dword_count, is_vertex, tess_quad_segments, false);
   }
+  // A vertex shader translated through the HLSL compiler (DXIL) whatever the back end: a pipeline takes one bytecode
+  // kind, so a DXBC vertex shader drawn with an HLSL-path pixel shader (an --gow2_renderer_hlsl_override_dir
+  // replacement, a DXBC fallback) uses this twin. Its own cache key; compiled like any HLSL-path shader.
+  const GuestShader& GetDxilTwin(uint64_t ucode_hash, const uint32_t* dwords, size_t dword_count,
+                                 uint32_t tess_quad_segments = 0) {
+    return GetImpl(ucode_hash, dwords, dword_count, true, tess_quad_segments, false, true);
+  }
   // Patch 0058: a shader already known to this cache (Get or the warm-up), or nullptr - no translation, no queueing.
   const GuestShader* Find(uint64_t ucode_hash, bool is_vertex, uint32_t tess_quad_segments = 0) const {
     const auto& map = shaders_[is_vertex ? 1 : 0];
@@ -223,7 +230,7 @@ class ShaderCache {
     double ms = 0.0;
   };
   const GuestShader& GetImpl(uint64_t ucode_hash, const uint32_t* dwords, size_t dword_count, bool is_vertex,
-                             uint32_t tess_quad_segments, bool warm);
+                             uint32_t tess_quad_segments, bool warm, bool hlsl_path = false);
   void SaveUcode(uint64_t ucode_hash, bool is_vertex, const uint32_t* dwords, size_t dword_count);
   // Patch 0084: a translated DXBC / SPIR-V shader taken into the cache (its module made, stats counted) - one place for
   // GetImpl and the warm-up, which translates on several threads first.

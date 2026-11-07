@@ -1,6 +1,7 @@
 // Layer 0 (game-free): see xenos/renderer/shader_cache.h. Our code (MIT).
 #include <xenos/renderer/shader_cache.h>
 
+#include <xenos/dev_tools.h>
 #include <xenos/dxbc_gen.h>
 #include <xenos/dxbc_spirv.h>
 #include <xenos/hlsl.h>
@@ -26,8 +27,149 @@
 REXCVAR_DEFINE_STRING(gow2_renderer_hlsl_dump_hashes, "", "Gears2",
                       "Developer (notes/80): comma list of shader ucode hashes whose translated HLSL is written out");
 REXCVAR_DEFINE_STRING(gow2_renderer_hlsl_dump_dir, "", "Gears2", "Developer: folder for --gow2_renderer_hlsl_dump_hashes");
+REXCVAR_DEFINE_STRING(gow2_pcss, "off", "Gears2",
+                      "Notes/80 s.16 (Gears 3): soft shadows (PCSS) for the dynamic shadows - off | high (quality high, "
+                      "radius 0.35) | ultra (quality ultra, radius 0.25, the shadow maps drawn at the render scale). The "
+                      "three shadow-projection shaders get a blocker search and a filter as wide as the blocker's distance");
+REXCVAR_DEFINE_INT32(gow2_pcss_mode, 1, "Gears2",
+                     "Notes/80 s.16 (developer): the start-up state of the PCSS shadow shaders - 0 the game's filter, 1 PCSS, "
+                     "2 split view (left the game's, right PCSS), 3 coverage view; F12 toggles the filter, Shift+F12 the view "
+                     "(with --gow2_ao_debug_keys)");
+REXCVAR_DEFINE_INT32(gow2_pcss_quality, 2, "Gears2",
+                     "Notes/80 s.16 (developer): the PCSS quality - 0 low, 1 medium, 2 high, 3 ultra (blocker-search / filter samples "
+                     "8/16, 16/24, 16/32, 32/64); Ctrl+F12 cycles it");
+REXCVAR_DEFINE_DOUBLE(gow2_pcss_radius, 0.5, "Gears2",
+                      "Notes/80 s.16 (developer): the PCSS radius - scales the penumbra, its widest and the blocker search (1.0, 0.75, "
+                      "0.5, 0.35 or 0.25, the nearest is taken); Alt+F12 cycles it");
+REXCVAR_DEFINE_STRING(gow2_renderer_hlsl_override_dir, "", "Gears2",
+                      "Developer (notes/80 s.16): folder of <vs|ps>-<hash>.hlsl files used in place of those shaders' "
+                      "translated HLSL (same resources and constants; the HLSL compiler path, not DXBC)");
 
 namespace xenos::renderer {
+
+// Notes/80 s.16 (--gow2_pcss): Gears 3's three dynamic-shadow projection shaders keep their 9-tap 3x3 filter; PCSS is
+// computed from the same receiver depth and shadow-map coordinate and replaces the filter's combined result (r0.x)
+// before the game's fade / modulate maths. Live state from the system constants: xe_sys1.z bit 0 PCSS on, bits 1-2 the
+// view (0 normal, 1 split: left the game's filter, right PCSS, 2 coverage: the right half shadowed where a shadow pass
+// draws), bits 3-4 the quality (blocker-search texels 16/32/32/64 in gathers of 4, filter samples 16/24/32/64; a pixel
+// whose whole search is blockers skips the filter); xe_sys1.w the radius, which
+// scales the penumbra growth, its widest and the blocker search. Distances in the game's shadow-map texels, so a map
+// drawn at the render scale gives finer samples, not a different shape.
+static std::string PcssBlock(uint32_t slot, const char* sharp, const char* one) {
+  std::string b = R"({  // PCSS (notes/80 s.16)
+  const uint pc_st = xe_sys1.z;
+  const uint pc_view = (pc_st >> 1u) & 3u, pc_q = (pc_st >> 3u) & 3u;
+  const float pc_rs = asfloat(xe_sys1.w) > 0.0 ? asfloat(xe_sys1.w) : 1.0;
+  float2 pc_ssz; xe_tex_2d_0.GetDimensions(pc_ssz.x, pc_ssz.y);
+  const bool pc_right = xe_in.position.x >= pc_ssz.x * 0.5;
+  if (pc_view == 1u ? pc_right : (pc_st & 1u) != 0u) {
+    const uint nb = pc_q == 0u ? 8u : (pc_q == 3u ? 32u : 16u);
+    const uint nf = pc_q == 0u ? 16u : (pc_q == 1u ? 24u : (pc_q == 2u ? 32u : 64u));
+    float2 gsz; xe_tex_2d_@S.GetDimensions(gsz.x, gsz.y);
+    if ((asuint(xe_ndc_offset.w) >> @Su) & 1u) gsz /= xe_ndc_scale.w;
+    const float2 texel = 1.0 / gsz;
+    const float sharp = @K, one = @O;
+    const float spin = frac(sin(dot(floor(xe_in.position.xy), float2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+    // The fetch constant's decode of the depth (its sign mode: a copy or signed offset binary - linear), worked out once.
+    const float dec0 = xe_tex_post(float4(0.0, 0.0, 0.0, 0.0), @Su).x, dec1 = xe_tex_post(float4(1.0, 0.0, 0.0, 0.0), @Su).x - dec0;
+    // Blocker search: a gather per sample (4 texels), half as many samples as texels before the quality's count.
+    const uint ng = max(nb / 2u, 4u);
+    float bsum = 0.0, bn = 0.0, csum = 0.0;
+    [loop] for (uint i = 0u; i < ng; ++i) {
+      const float a = spin + float(i) * 2.39996323, rr = sqrt((float(i) + 0.5) / float(ng));
+      const float2 o = float2(cos(a), sin(a)) * rr * (8.0 * pc_rs) * texel;
+      const float4 g = xe_tex_2d_@S.GatherRed(xe_sampler_@S, pc_uv + o) * dec1 + dec0;
+      const float4 c = saturate((g - pc_recv) * sharp + one);
+      csum += dot(c, 1.0);
+      const float4 blk = float4(c < 0.5);
+      bn += dot(blk, 1.0);
+      bsum += dot(blk, g);
+    }
+    const float nt = float(ng * 4u);
+    float lit = 1.0;
+    if (bn >= nt) {
+      lit = csum / nt;  // every texel searched is a blocker: deep in the shadow, the search's own average, no filter
+    } else if (bn > 0.0) {
+      const float pen = clamp((pc_recv - bsum / bn) * (150.0 * pc_rs), 1.0, max(1.0, 12.0 * pc_rs));
+      float sum = 0.0;
+      [loop] for (uint j = 0u; j < nf; ++j) {
+        const float a = spin + float(j) * 2.39996323, rr = sqrt((float(j) + 0.5) / float(nf));
+        const float2 o = float2(cos(a), sin(a)) * rr * pen * texel;
+        const float d = xe_tex_2d_@S.SampleLevel(xe_sampler_@S, pc_uv + o, 0).x * dec1 + dec0;
+        sum += saturate((d - pc_recv) * sharp + one);
+      }
+      lit = sum / float(nf);
+    }
+    r[0].x = lit;
+  }
+  if (pc_view == 2u && pc_right) r[0].x = 0.0;
+}
+)";
+  const auto put = [&b](const std::string& from, const std::string& to) {
+    for (size_t at = b.find(from); at != std::string::npos; at = b.find(from, at + to.size())) b.replace(at, from.size(), to);
+  };
+  put("@S", std::to_string(slot));
+  put("@K", sharp);
+  put("@O", one);
+  return b;
+}
+
+// The PCSS patch for one of the three shaders (translated HLSL in), or false when the text is not the shape it was
+// written against (a translator change) - the shader then keeps the game's filter.
+static bool ApplyPcss(uint64_t ucode_hash, std::string& hlsl) {
+  const auto once = [&hlsl](const std::string& a) {
+    const size_t at = hlsl.find(a);
+    return at != std::string::npos && hlsl.find(a, at + 1) == std::string::npos;
+  };
+  const auto insert_before = [&hlsl](const std::string& a, const std::string& text) { hlsl.insert(hlsl.find(a), text); };
+  const auto insert_after = [&hlsl](const std::string& a, const std::string& text) { hlsl.insert(hlsl.find(a) + a.size(), text); };
+  if (ucode_hash == 0x3C5E875D17B49A36ull) {  // the light-attenuation buffer: one straight block, cf 2 - cf 7 the filter
+    const std::string cf2 = "    // cf 2\n";
+    const std::string tail = "      {\n        float4 s0 = r[0].xxxx;\n        float4 s1 = r[0].xxxx;\n        float4 s2 = -(xe_c[12].yyyy);";
+    if (!once(cf2) || !once(tail)) return false;
+    insert_before(cf2, "    const float pc_recv = xe_min(r[0].xxxx, xe_c[12].zzzz).x;\n"
+                       "    const float2 pc_uv = r[0].yz * xe_rcp(r[0].w);\n");
+    insert_before(tail, PcssBlock(1, "xe_c[7].z", "xe_c[12].y"));
+    return true;
+  }
+  struct Modulated { uint64_t hash; int reg; const char* clamp; const char* sharp; const char* one; };
+  static const Modulated kModulated[] = {  // modulated shadows: a state machine, the coordinate ready at step 2
+      {0xCA3F4A808B09D6F4ull, 5, "xe_c[18].zzzz", "xe_c[12].z", "xe_c[18].y"},
+      {0x857CECDEB64A657Full, 6, "xe_c[20].zzzz", "xe_c[14].z", "xe_c[20].y"},
+  };
+  for (const Modulated& m : kModulated) {
+    if (ucode_hash != m.hash) continue;
+    const std::string top = "  [loop] while (xe_guard++ < 65536u) {\n";
+    const std::string step2 = "    if (xe_pc == 2u) {\n";
+    const std::string step9_end = "      xe_pc = 10u;\n";
+    if (!once(top) || !once(step2) || !once(step9_end)) return false;
+    const std::string reg = "r[" + std::to_string(m.reg) + "]";
+    insert_before(top, "  float pc_recv = 0.0;\n  float2 pc_uv = float2(0.0, 0.0);\n");
+    insert_after(step2, "      pc_recv = xe_min(" + reg + ".zzzz, " + m.clamp + ").x;\n      pc_uv = " + reg + ".xy * xe_rcp(" +
+                            reg + ".w);\n");
+    insert_before(step9_end, PcssBlock(2, m.sharp, m.one));
+    return true;
+  }
+  return false;
+}
+static bool PcssShader(uint64_t ucode_hash) {
+  return ucode_hash == 0x3C5E875D17B49A36ull || ucode_hash == 0xCA3F4A808B09D6F4ull || ucode_hash == 0x857CECDEB64A657Full;
+}
+static bool PcssOn() {  // --gow2_pcss high / ultra
+  static const bool on = REXCVAR_GET(gow2_pcss) == "high" || REXCVAR_GET(gow2_pcss) == "ultra";
+  return on;
+}
+
+// Developer (--gow2_renderer_hlsl_override_dir): the replacement HLSL for this shader, empty if there is none.
+static std::string HlslOverride(uint64_t ucode_hash, bool is_vertex) {
+  static const std::string dir = REXCVAR_GET(gow2_renderer_hlsl_override_dir);
+  if (dir.empty()) return {};
+  char hex[17];
+  std::snprintf(hex, sizeof(hex), "%016llX", static_cast<unsigned long long>(ucode_hash));
+  std::ifstream f(std::filesystem::path(dir) / ((is_vertex ? "vs-" : "ps-") + std::string(hex) + ".hlsl"), std::ios::binary);
+  if (!f) return {};
+  return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
 
 uint64_t Fnv1a64(const void* data, size_t size, uint64_t seed) {
   uint64_t h = seed;
@@ -818,6 +960,8 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
       for (size_t i; (i = next.fetch_add(1)) < items.size();) {
         const Item& it = items[i];
         if (it.dwords.empty()) continue;
+        if (!HlslOverride(it.hash, it.is_vertex).empty()) continue;  // built on first use, from its replacement
+        if (!it.is_vertex && PcssOn() && PcssShader(it.hash)) continue;  // built on first use, with the PCSS patch
         const auto tm = std::chrono::steady_clock::now();
         auto s = std::make_unique<GuestShader>();
         s->ucode_hash = it.hash;
@@ -922,15 +1066,16 @@ bool ShaderCache::TranslateDxbcOnly(const uint32_t* dwords, size_t dword_count, 
 }
 
 const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwords, size_t dword_count,
-                                        bool is_vertex, uint32_t tess_quad_segments, bool warm) {
+                                        bool is_vertex, uint32_t tess_quad_segments, bool warm, bool hlsl_path) {
   ++stats_.lookups;
   auto& map = shaders_[is_vertex ? 1 : 0];
   // Quad-patch tessellation variants (notes/51 section 10) live under their own key.
-  const uint64_t key = (is_vertex && tess_quad_segments) ? ucode_hash ^ (0x7E55ull << 48) ^ (uint64_t(tess_quad_segments) << 40)
-                                                          : ucode_hash;
+  uint64_t key = (is_vertex && tess_quad_segments) ? ucode_hash ^ (0x7E55ull << 48) ^ (uint64_t(tess_quad_segments) << 40)
+                                                    : ucode_hash;
+  if (hlsl_path) key ^= 0xD1D1ull << 32;  // GetDxilTwin: the HLSL-path twin under its own key
   auto it = map.find(key);
   if (it != map.end()) return *it->second;
-  if (!warm && !(is_vertex && tess_quad_segments)) SaveUcode(ucode_hash, is_vertex, dwords, dword_count);
+  if (!warm && !hlsl_path && !(is_vertex && tess_quad_segments)) SaveUcode(ucode_hash, is_vertex, dwords, dword_count);
   auto s = std::make_unique<GuestShader>();
   s->ucode_hash = ucode_hash;
   s->is_vertex = is_vertex;
@@ -961,8 +1106,22 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
                     std::ios::binary) << dump.hlsl;
     }
   }
+  // Developer: a hand-edited replacement of this shader's HLSL, if the override folder holds one.
+  std::string override_hlsl = HlslOverride(ucode_hash, is_vertex);
+  const bool pcss = !is_vertex && override_hlsl.empty() && PcssOn() && PcssShader(ucode_hash);
+  if (!override_hlsl.empty() || pcss) {  // the preset's quality / radius unless the developer switches were given
+    const bool ultra = REXCVAR_GET(gow2_pcss) == "ultra";
+    const auto given = [](const char* name) { return rex::cvar::GetFlagSource(name) != rex::cvar::Source::kDefault; };
+    const uint32_t quality = given("gow2_pcss_quality") || !PcssOn() ? uint32_t(std::max(0, REXCVAR_GET(gow2_pcss_quality)))
+                                                                    : (ultra ? 3u : 2u);
+    const float radius = given("gow2_pcss_radius") || !PcssOn() ? float(REXCVAR_GET(gow2_pcss_radius)) : (ultra ? 0.25f : 0.35f);
+    XenosPcssSetAvailable(true, uint32_t(std::max(0, REXCVAR_GET(gow2_pcss_mode))), quality, radius);
+  }
+  if (!override_hlsl.empty())
+    REXLOG_INFO("gow2_renderer: {}-{:016X} from the override folder ({} bytes)", is_vertex ? "vs" : "ps", ucode_hash,
+                override_hlsl.size());
   const bool spirv = backend_.GetShaderIL() == gpu::ShaderIL::kSpirv;
-  if (dxbc_ && (backend_.GetShaderIL() == gpu::ShaderIL::kDxil || spirv)) {
+  if (dxbc_ && override_hlsl.empty() && !pcss && !hlsl_path && (backend_.GetShaderIL() == gpu::ShaderIL::kDxil || spirv)) {
     dxbc_gen::DxbcTranslation dt = TranslateDxbcFor(program, options, spirv);  // patch 0084: shared with the warm-up
     stats_.translate_ms += MsSince(t0);
     ++stats_.translated;
@@ -972,6 +1131,13 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
                 ucode_hash, dt.unsupported);
   }
   hlsl::Translation tr = hlsl::TranslateToHlsl(program, options);
+  if (!override_hlsl.empty()) tr.hlsl = std::move(override_hlsl);  // the translation's resource / constant layout stays
+  if (pcss) {
+    if (ApplyPcss(ucode_hash, tr.hlsl))
+      REXLOG_INFO("gow2_pcss: ps-{:016X} has PCSS", ucode_hash);
+    else
+      REXLOG_WARN("gow2_pcss: ps-{:016X} is not the shape the PCSS patch expects - it keeps the game's filter", ucode_hash);
+  }
   stats_.translate_ms += MsSince(t0);
   ++stats_.translated;
   s->texture_slots |= tr.texture_slots_2d | tr.texture_slots_3d | tr.texture_slots_cube;

@@ -14,7 +14,18 @@
 
 #include <imgui.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <atomic>
 #include <cstdio>
 #include <memory>
@@ -39,12 +50,29 @@ std::atomic<bool> g_keys{false}, g_active{false}, g_cacao{false}, g_cacao_availa
 std::atomic<uint32_t> g_cacao_blur{3};  // the passes themselves
 std::atomic<uint32_t> g_show_before_game{0};  // F5: what it returns to
 std::atomic<bool> g_mip_bias{false};  // notes/82: F2
+// Notes/80 s.16 (PCSS): the patched shadow shaders read xe_sys1.z = filter (bit 0: PCSS) | view << 1 | quality << 3.
+// F12: the game's filter <-> PCSS; Shift+F12: normal -> split (left the game's, right PCSS) -> coverage (right shadowed);
+// Ctrl+F12: PCSS quality; Alt+F12: PCSS radius.
+constexpr uint32_t kPcssViews = 3;
+const char* const kPcssViewNames[kPcssViews] = {"normal", "split: game | PCSS", "coverage"};
+std::atomic<bool> g_pcss_on{true};
+std::atomic<uint32_t> g_pcss_view{0};
+// Ctrl+F12: quality - blocker-search / filter samples 8/16, 16/24, 16/32, 32/64 (bits 3-4 of xe_sys1.z).
+constexpr uint32_t kPcssQualities = 4;
+const char* const kPcssQualityNames[kPcssQualities] = {"low", "medium", "high", "ultra"};
+std::atomic<uint32_t> g_pcss_quality{2};
+// Alt+F12: the radius - scales the penumbra, its widest and the blocker search together (xe_sys1.w, a float).
+constexpr float kPcssRadii[] = {1.0f, 0.75f, 0.5f, 0.35f, 0.25f};
+constexpr uint32_t kPcssRadiusCount = sizeof(kPcssRadii) / sizeof(kPcssRadii[0]);
+std::atomic<uint32_t> g_pcss_radius{2};
+std::atomic<bool> g_pcss_available{false};
+std::atomic<bool> g_pcss_trace{false};  // Ctrl+Shift+F12: log the next frame's depth-texture draws (pcss_trace)
 
 class AoLabel final : public rex::ui::ImGuiDialog {
  public:
   explicit AoLabel(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {}
   void OnDraw(ImGuiIO& io) override {
-    char text[256], passes[32];
+    char text[384], passes[32];
     if (g_cacao.load()) std::snprintf(passes, sizeof(passes), "%u blur passes", g_cacao_blur.load());
     else std::snprintf(passes, sizeof(passes), "%s", kDenoiseNames[g_denoise.load() % kDenoiseCount]);
     if (g_active.load())
@@ -54,6 +82,13 @@ class AoLabel final : public rex::ui::ImGuiDialog {
                     kViewNames[g_view.load() % kViewCount], g_mip_bias.load() ? "on" : "off");
     else
       std::snprintf(text, sizeof(text), "AO keys: start with --gow2_ao=gtao");
+    if (g_pcss_available.load()) {
+      const size_t used = std::strlen(text);
+      std::snprintf(text + used, sizeof(text) - used,
+                    "   | shadows: %s %s, radius %.0f%%, view %s (F12 filter, Shift+F12 view, Ctrl+F12 quality, Alt+F12 radius)",
+                    g_pcss_on.load() ? "PCSS" : "game's filter", kPcssQualityNames[g_pcss_quality.load() % kPcssQualities],
+                    kPcssRadii[g_pcss_radius.load() % kPcssRadiusCount] * 100.0f, kPcssViewNames[g_pcss_view.load() % kPcssViews]);
+    }
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
     ImGui::SetNextWindowBgAlpha(0.45f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * scale, 4.0f * scale));
@@ -107,6 +142,21 @@ bool XenosAoDebugMipBias() { return g_mip_bias.load(); }
 uint32_t XenosAoDebugCacaoBlur() { return g_cacao_blur.load(); }
 uint32_t XenosAoDebugDenoisePasses() { return g_denoise.load() % kDenoiseCount + 1; }
 void XenosAoDebugSetDenoisePasses(uint32_t passes) { g_denoise.store(std::clamp(passes, 1u, kDenoiseCount) - 1); }
+void XenosPcssSetAvailable(bool on, uint32_t mode, uint32_t quality, float radius) {  // mode: 0 game, 1 PCSS, 2 split, 3 coverage
+  if (!on || g_pcss_available.exchange(true)) return;
+  uint32_t nearest = 0;
+  for (uint32_t i = 1; i < kPcssRadiusCount; ++i)
+    if (std::fabs(kPcssRadii[i] - radius) < std::fabs(kPcssRadii[nearest] - radius)) nearest = i;
+  g_pcss_radius.store(nearest);
+  g_pcss_on.store(mode != 0);
+  g_pcss_view.store(mode >= 2 ? mode - 1 : 0);
+  g_pcss_quality.store(quality % kPcssQualities);
+}
+bool XenosPcssTakeTrace() { return g_pcss_trace.exchange(false); }
+float XenosPcssRadius() { return kPcssRadii[g_pcss_radius.load() % kPcssRadiusCount]; }
+uint32_t XenosPcssMode() {
+  return (g_pcss_on.load() ? 1u : 0u) | ((g_pcss_view.load() % kPcssViews) << 1) | ((g_pcss_quality.load() % kPcssQualities) << 3);
+}
 
 void XenosInstallAoDebugKeys(rex::ui::ImGuiDrawer* drawer) {
   if (!REXCVAR_GET(gow2_ao_debug_keys)) return;
@@ -131,6 +181,35 @@ void XenosInstallAoDebugKeys(rex::ui::ImGuiDrawer* drawer) {
       g_show.store(0);
     }
     REXLOG_INFO("gow2_ao: shown AO -> {}", name);
+  });
+  rex::ui::RegisterBind("bind_gow2_pcss", "F12", "Shadows (Ctrl+Shift: trace the next frame): game's filter / PCSS; Shift: normal / split / coverage; Ctrl: PCSS quality; Alt: PCSS radius (developer)", [] {
+    if (!g_pcss_available.load()) return;
+#ifdef _WIN32
+    const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0, ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
+               alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+#else
+    const bool shift = false, ctrl = false, alt = false;
+#endif
+    if (ctrl && shift) {
+      g_pcss_trace.store(true);
+      REXLOG_INFO("gow2_pcss: Ctrl+Shift+F12 - the next frame's shadow passes go to the log (pcss_trace)");
+    } else if (alt) {
+      const uint32_t r = (g_pcss_radius.load() + 1) % kPcssRadiusCount;
+      g_pcss_radius.store(r);
+      REXLOG_INFO("gow2_pcss: radius -> {:.0f}%", kPcssRadii[r] * 100.0f);
+    } else if (ctrl) {
+      const uint32_t q = (g_pcss_quality.load() + 1) % kPcssQualities;
+      g_pcss_quality.store(q);
+      REXLOG_INFO("gow2_pcss: quality -> {}", kPcssQualityNames[q]);
+    } else if (shift) {
+      const uint32_t v = (g_pcss_view.load() + 1) % kPcssViews;
+      g_pcss_view.store(v);
+      REXLOG_INFO("gow2_pcss: view -> {}", kPcssViewNames[v]);
+    } else {
+      const bool on = !g_pcss_on.load();
+      g_pcss_on.store(on);
+      REXLOG_INFO("gow2_pcss: filter -> {}", on ? "PCSS" : "the game's");
+    }
   });
   rex::ui::RegisterBind("bind_gow2_mip_bias", "F2", "Upscaler mip bias on / off (developer)", [] {
     const bool on = !g_mip_bias.load();

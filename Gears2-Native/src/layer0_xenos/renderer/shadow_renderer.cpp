@@ -839,6 +839,10 @@ REXCVAR_DEFINE_STRING(gow2_ao_fog_ps, "D58B286B84EE971D", "Gears2",
 REXCVAR_DEFINE_STRING(gow2_ao_skip_ps, "", "Gears2",
                       "Notes/81: pixel shader hashes, comma-separated, of a game's own AO passes that the chain detection does not "
                       "find (Judgment). Skipped while our AO or no AO is shown, drawn again for the game's own, so F5 and F9 work live");
+REXCVAR_DECLARE(std::string, gow2_pcss);  // shader_cache.cpp (notes/80 s.16)
+REXCVAR_DEFINE_STRING(gow2_pcss_trace_frames, "", "Gears2",
+                      "Notes/80 s.16 (developer): frames whose draws that sample a depth-format texture (k_24_8 / k_24_8_FLOAT: shadow "
+                      "maps, the scene depth) are logged with their targets, state, textures and first pixel constants");
 REXCVAR_DEFINE_INT32(gow2_ao_trace_class, -1, "Gears2",
                      "Notes/80 diagnostic: with --gow2_ao_trace_frames, also log every draw whose first colour target has "
                      "this storage class (e.g. 4 = k_16_16, the velocity buffer), not only full-screen passes; -1 = off");
@@ -1306,6 +1310,7 @@ struct FrameStats {
            cosmetic_deferred = 0,  // patch 0052
            prefetched = 0,  // patch 0053
            dxbc_mixed = 0,  // DXBC back end: draws pairing a DXBC shader with a DXIL one
+           dxil_twins = 0,  // ... drawn with the vertex shader's DXIL twin instead (GetDxilTwin)
            vertex_other_type = 0,  // patch 0049
            memexport_readback_waits = 0, export_waits = 0, depth_alias_dropped = 0, vertex_pages_kept_pending = 0, texture_dependent = 0, alias_tiles = 0, alias_events = 0, pending_shaders = 0,
            shader_errors = 0, pipeline_failures = 0, other_failures = 0, copies = 0, depth_resolves = 0, colour_resolves = 0,
@@ -1578,7 +1583,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
                                                    scale_threshold);
     if (res_scale_ > 1 && scale_threshold) {  // GitHub #105
       std::vector<uint32_t> pitches;
-      const std::string list = REXCVAR_GET(gow2_renderer_resolution_scale_pitches);
+      // Notes/80 s.16: --gow2_pcss=ultra draws Gears 3's shadow maps (pitch 1120, the only target that wide) at the scale.
+      const std::string list = REXCVAR_GET(gow2_renderer_resolution_scale_pitches) +
+                               (REXCVAR_GET(gow2_pcss) == "ultra" ? ",1120" : "");
       size_t at = 0;
       while (at < list.size()) {
         const size_t end = std::min(list.find(',', at), list.size());
@@ -2456,6 +2463,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   frame_, stats_draws_, stats_no_colour_);
     }
     ++frame_;
+    if (XenosPcssTakeTrace()) pcss_trace_frame_ = frame_ + 1;  // notes/80 s.16: Ctrl+Shift+F12 traces the next frame
     if (report_first_) ReportFrame();  // patch 0101
     DrainCreatedShaders();  // patch 0066
     DrainPrebuild();        // patch 0068
@@ -7141,6 +7149,38 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
 
+  uint64_t pcss_trace_frame_ = 0;  // Ctrl+Shift+F12: the frame to trace
+  // Notes/80 s.16 (--gow2_pcss_trace_frames, Ctrl+Shift+F12): every draw of those frames that samples a depth-format texture.
+  void PcssTraceDraw(const uint32_t* r, const rr::PipelineState& ps, const rr::RenderTargetKey& k0, uint32_t colour_count,
+                     bool depth_bound, const rr::RenderTargetKey& dk, uint64_t vs_hash, uint64_t ps_hash, uint32_t prim,
+                     uint32_t index_count, uint32_t ps_slots) {
+    static const std::string list = "," + REXCVAR_GET(gow2_pcss_trace_frames) + ",";
+    if (frame_ + 1 != pcss_trace_frame_ &&
+        (list.size() <= 2 || list.find("," + std::to_string(frame_ + 1) + ",") == std::string::npos))
+      return;
+    std::string tex;
+    bool depth_tex = false;
+    for (uint32_t i = 0; i < 32; ++i) {
+      if (!((ps_slots >> i) & 1u)) continue;  // only the fetch constants the pixel shader reads
+      const uint32_t* f = &r[kRegFetchConst + 6 * i];
+      if ((f[0] & 3u) != 2u || !(f[1] & 0xFFFFF000u)) continue;
+      const uint32_t fmt = f[1] & 0x3Fu;
+      depth_tex |= fmt == 22u || fmt == 23u;
+      tex += std::format(" t{}={:08X}:{}x{}:f{}", i, f[1] & 0xFFFFF000u, (f[2] & 0x1FFFu) + 1, ((f[2] >> 13) & 0x1FFFu) + 1, fmt);
+    }
+    if (!depth_tex) return;
+    const rr::RenderTargetBlend& b = ps.blend.rt[0];
+    std::string c;
+    for (uint32_t k = 0; k < 16; ++k)
+      c += std::format(" c{}=({:.5g} {:.5g} {:.5g} {:.5g})", k, std::bit_cast<float>(r[kRegFloatConstPs + 4 * k]),
+                       std::bit_cast<float>(r[kRegFloatConstPs + 4 * k + 1]), std::bit_cast<float>(r[kRegFloatConstPs + 4 * k + 2]),
+                       std::bit_cast<float>(r[kRegFloatConstPs + 4 * k + 3]));
+    REXLOG_INFO("pcss_trace: frame {} draw {} prim {} count {} | vs {:016X} ps {:016X} | rt0 {} base {} pitch {} class {} | "
+                "depth {} base {} pitch {} class {} | depthcontrol {:08X} stencilref {:08X} | blend {} src {} dst {} mask {:X} |{} |{}",
+                frame_ + 1, draw_index_, prim, index_count, vs_hash, ps_hash, colour_count, k0.base_tiles, k0.pitch_pixels,
+                k0.storage_class, depth_bound ? 1 : 0, dk.base_tiles, dk.pitch_pixels, dk.storage_class, r[0x2200], r[0x210C],
+                b.blend_enable ? 1 : 0, uint32_t(b.src_color), uint32_t(b.dst_color), b.write_mask, tex, c);
+  }
   // Notes/80 diagnostic (--gow2_ao_trace_frames): one line per full-screen pass of the listed frames.
   void AoTraceDraw(const uint32_t* r, const rr::PipelineState& ps, const rr::RenderTargetKey& k0, uint32_t colour_count,
                    uint64_t vs_hash, uint64_t ps_hash, uint32_t prim, uint32_t index_count) {
@@ -8237,11 +8277,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       Skip("no vertex shader");
       return;
     }
-    const rr::GuestShader& vsg = cache_->Get(vs_hash, vs_.dwords, vs_.count, true, tess_n);
+    const rr::GuestShader& vsg0 = cache_->Get(vs_hash, vs_.dwords, vs_.count, true, tess_n);
     if (ps.skip) {
-      if (rr::SkipUnlessVertexMemexport(ps.skip_reason) && vsg.memexport) {
+      if (rr::SkipUnlessVertexMemexport(ps.skip_reason) && vsg0.memexport) {
         if (memexport_) {
-          MemexportOnlyDraw(r, vsg, prim, index_count, ib);
+          MemexportOnlyDraw(r, vsg0, prim, index_count, ib);
           return;
         }
         Skip("vertex shader memexport (not supported in M1)");
@@ -8253,6 +8293,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t edram_mode = Bits(r[rr::reg::RB_MODECONTROL], 0, 3);
     const rr::GuestShader* psg =
         ps_.dwords ? &cache_->Get(ps_hash, ps_.dwords, ps_.count, false) : nullptr;
+    // A pipeline takes one bytecode kind: a DXBC vertex shader with an HLSL-path pixel shader (a PCSS replacement, notes/80;
+    // a DXBC fallback) uses the vertex shader's DXIL twin, compiled once like any HLSL-path shader.
+    const bool dxil_twin = psg && vsg0.dxbc && !psg->dxbc;
+    const rr::GuestShader& vsg = dxil_twin ? cache_->GetDxilTwin(vs_hash, vs_.dwords, vs_.count, tess_n) : vsg0;
+    if (dxil_twin) ++stats_.dxil_twins;
     if (rcp_on_ && ps_.dwords && ps_hash != rcp_last_ps_) MarkRecipeChapterHot(ps_hash);  // job 634
 
     // Patch 0025 (Canary render_target_cache.cc Update, 9da693480; Gears 3 review 01-g): a depth target at the same
@@ -8429,6 +8474,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (depth_bound) bound_bases[bound_count++] = key.base_tiles;
     if (colour_count == 1 && up_active_ && !up_camera_only_) VelocityDraw(r, vsg, colour_keys[0], index_count);  // notes/80 s.6
     if (colour_count >= 1 && vel_scan_last_) VelocityScan(r, vsg, colour_keys[0], colour_count, vs_hash, ps_hash, index_count);
+    PcssTraceDraw(r, ps, colour_keys[0], colour_count, depth_bound, key, vs_hash, ps_hash, prim, index_count,
+                  psg ? psg->texture_slots : 0u);  // notes/80 s.16
     if (ao_trace_ && colour_count && (prim == 0x08 || index_count <= 6 || int32_t(colour_keys[0].storage_class) == ao_trace_class_)) AoTraceDraw(r, ps, colour_keys[0], colour_count,
                                                                                    vs_hash, ps_hash, prim, index_count);
     // Notes/80: the game's AO chain while XeGTAO replaces its result - skipped before any ownership or transfer work.
@@ -8984,6 +9031,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // shader writes oC0; a depth-only shader with leftover alpha-test state would otherwise discard every pixel.
     if (alpha_test_rt0_ && psg && !(psg->color_targets_written & 1u)) sc.sys1[0] = uint32_t(rr::CompareFunc::Always);
     sc.sys1[1] = std::bit_cast<uint32_t>(ps.alpha_test.ref);
+    sc.sys1[2] = XenosPcssMode();  // notes/80 s.16: read by the PCSS shadow shaders, unused by every other shader
+    sc.sys1[3] = std::bit_cast<uint32_t>(XenosPcssRadius());
     // Job 177: system and bool/loop constants are the same for both stages - one compare and upload for both.
     if (d.ps) {
       backend_->SetConstantsBoth(gpu::kCbSystem, &sc, sizeof(sc));
@@ -10483,6 +10532,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ++no_shader;
           continue;
         }
+        if (psg && vsg->dxbc != psg->dxbc) {  // a DXBC / DXIL pair (a PCSS shader, notes/80 s.16): the draw builds it with the twin
+          ++no_shader;
+          continue;
+        }
         gpu::GraphicsPipelineDesc d = r.desc;
         d.vs = vsg->handle;
         d.ps = psg ? psg->handle : 0;
@@ -10789,6 +10842,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ++rcp_n_.failed;
           continue;
         }
+        if (vsg && psg && vsg->ready() && psg->ready() && vsg->dxbc != psg->dxbc) {  // left to the draw (DXIL twin)
+          rcp_state_[i] = 2;
+          continue;
+        }
         const bool shaders_ready = vsg && vsg->ready() && (!(r.flags & 1) || (psg && psg->ready()));
         if (!shaders_ready || backend_->PipelineJobsLeft() >= cap) {
           if (shaders_ready && cap) ++cap_blocked;  // 617: ready, only waiting for a free job
@@ -10945,7 +11002,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (!vsg || !vsg->ready()) continue;
       if (r.flags & 1) {
         const rr::GuestShader* psg = cache_->Find(r.ps_hash, false);
-        if (!psg || !psg->ready()) continue;
+        if (!psg || !psg->ready() || psg->dxbc != vsg->dxbc) continue;
       }
       ++n;
     }
@@ -12086,9 +12143,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const rr::ShaderCacheStats& cs = cache_->Stats();
       const xenos::dxbc_gen::RuleHits rh = xenos::dxbc_gen::CanaryRuleHits();  // patch 0087
       REXLOG_INFO("gow2_renderer: DXBC back end: {} shaders made as DXBC so far ({:.1f} ms translating in all), {} left "
-                  "to the HLSL path | {} draws in these frames paired DXBC with DXIL | newer Canary rules (patch 0087), "
-                  "shaders changed: tfetch1D XY {}, mulsc toward zero {}, float16 export NaN {}",
-                  cs.dxbc, cs.translate_ms, cs.dxbc_fallbacks, stats_.dxbc_mixed, rh.tfetch1d_xy,
+                  "to the HLSL path | {} draws in these frames paired DXBC with DXIL, {} drawn with a DXIL twin of the vertex "
+                  "shader | newer Canary rules (patch 0087), shaders changed: tfetch1D XY {}, mulsc toward zero {}, float16 "
+                  "export NaN {}",
+                  cs.dxbc, cs.translate_ms, cs.dxbc_fallbacks, stats_.dxbc_mixed, stats_.dxil_twins, rh.tfetch1d_xy,
                   rh.mulsc_round_toward_zero, rh.memexport_f16_nan_zero);
     }
     if (stats_.pipeline_waits) {  // job 037 (this summary's frames)
