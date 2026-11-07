@@ -641,6 +641,25 @@ void OnPresentBegin() {
 
 void OnPresentEnd() { Marker(sl::PCLMarker::ePresentEnd, g_present_frame.load(std::memory_order_relaxed)); }
 
+// 0.4.8 AMD / SteamOS review: Streamline and NGX are NVIDIA-only, and under Wine / Proton WinVerifyTrust and
+// NVIDIA's DLLs are untested (they may fail, hang or crash). Refuse before touching any of NVIDIA's files unless this is
+// Windows proper with an NVIDIA adapter present.
+const char* NotNvidiaWindowsReason() {
+  if (HMODULE nt = GetModuleHandleW(L"ntdll.dll"); nt && GetProcAddress(nt, "wine_get_version"))
+    return "running under Wine / Proton";
+  IDXGIFactory1* factory = nullptr;
+  if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) || !factory) return "no DXGI factory";
+  bool nvidia = false;
+  IDXGIAdapter1* adapter = nullptr;
+  for (UINT i = 0; !nvidia && factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
+    DXGI_ADAPTER_DESC1 d{};
+    if (SUCCEEDED(adapter->GetDesc1(&d)) && d.VendorId == 0x10DE && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) nvidia = true;
+    adapter->Release();
+  }
+  factory->Release();
+  return nvidia ? nullptr : "no NVIDIA graphics card";
+}
+
 }  // namespace
 
 bool XenosDlssFgInstall(bool hudless, XenosDlssFgFallback fallback) {
@@ -648,6 +667,10 @@ bool XenosDlssFgInstall(bool hudless, XenosDlssFgFallback fallback) {
   g_fallback = fallback;
   g_hudless_on = hudless;
   ParseMode();
+  if (const char* why = NotNvidiaWindowsReason()) {
+    REXLOG_WARN("gow2_frame_generation: NVIDIA DLSS frame generation not used: {}", why);
+    return false;
+  }
   const std::wstring dir = ExeDir();
   if (dir.empty()) {
     REXLOG_WARN("gow2_frame_generation: NVIDIA DLSS frame generation not used: the exe's folder is unknown");
