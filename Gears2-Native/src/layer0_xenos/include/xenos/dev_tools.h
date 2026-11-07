@@ -41,7 +41,8 @@ struct XenosFgFrame {
   uint32_t hudless_width = 0, hudless_height = 0;
 };
 bool XenosFrameGenerationWanted();
-// Patch 0148: 0 = no HUD-less image wanted; 1 = R8G8B8A8_UNORM, 2 = R10G10B10A2_UNORM (the back buffer's format).
+// Patch 0148: 0 = no HUD-less image wanted; 1 = R8G8B8A8_UNORM, 2 = R10G10B10A2_UNORM (the back buffer's format);
+// 3 = an R8G8B8A8_UNORM texture holding B8G8R8A8 bytes (red/blue swapped) for a B8G8R8A8_UNORM back buffer.
 uint32_t XenosFrameGenerationHudlessFormat();
 void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFrame* frame);
 // --gow2_input_script: a scripted gamepad for unattended tests.

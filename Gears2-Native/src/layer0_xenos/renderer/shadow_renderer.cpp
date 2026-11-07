@@ -6023,7 +6023,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         td.width = hl_w;
         td.height = hl_h;
         td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
-        td.format = hl_fmt == 1 ? gpu::Format::kR8G8B8A8Unorm : gpu::Format::kR10G10B10A2Unorm;
+        td.format = hl_fmt == 2 ? gpu::Format::kR10G10B10A2Unorm : gpu::Format::kR8G8B8A8Unorm;  // 3: BGRA8 bytes
         td.debug_name = "gow2 frame generation HUD-less (presented size)";
         slot->hudless = backend_->CreateTexture(td);
         slot->hl_width = hl_w, slot->hl_height = hl_h, slot->hl_format = slot->hudless ? hl_fmt : 0u;
@@ -6032,6 +6032,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         gpu::ComputeBindings b;
         b.constants[0] = hl_w;
         b.constants[1] = hl_h;
+        b.constants[2] = hl_fmt == 3 ? 1u : 0u;  // red/blue swapped: frame generation copies the bytes into BGRA8
         b.constant_count = 4;
         b.srv[0] = hl_image;
         b.uav_texture = slot->hudless;

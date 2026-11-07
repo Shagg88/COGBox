@@ -110,16 +110,20 @@ ID3D12Resource* g_hl_tex = nullptr;
 DXGI_FORMAT g_hl_format = DXGI_FORMAT_UNKNOWN;
 bool g_hl_link_failed = false;  // patch 0148: AMD refused the RGBA8 HUD-less format next to a BGRA8 back buffer
 
-// Patch 0148: the HUD-less texture's format for a back buffer format. A B8G8R8A8 back buffer gets an R8G8B8A8 one (the
-// renderer has no BGRA8 format; AMD takes a different HUD-less format through ffxCreateContextDescFrameGenerationHudless,
-// and both are read as RGBA through their views, so no channel swap). UNKNOWN = not handled.
+ID3D12Resource* g_hl_bytes = nullptr;  // patch 0148: the B8G8R8A8 bytes on their way (a copy through a buffer)
+uint64_t g_hl_bytes_size = 0;
+
+// Patch 0148: the HUD-less texture's format for a back buffer format: always the back buffer's own (c357d5f gave AMD
+// an R8G8B8A8 one beside a B8G8R8A8 back buffer through ffxCreateContextDescFrameGenerationHudless; Shagg's 3.1.6 run
+// then lost the device with INVALID_CALL right after the context was made). For B8G8R8A8 the renderer writes the bytes
+// red/blue swapped into an R8G8B8A8 texture (format 3) and Prepare copies them through a buffer, which has no format,
+// into the B8G8R8A8 texture. UNKNOWN = not handled.
 DXGI_FORMAT HudlessFormatFor(DXGI_FORMAT back) {
   switch (back) {
     case DXGI_FORMAT_R8G8B8A8_UNORM:
     case DXGI_FORMAT_R10G10B10A2_UNORM:
-      return back;
     case DXGI_FORMAT_B8G8R8A8_UNORM:
-      return DXGI_FORMAT_R8G8B8A8_UNORM;
+      return back;
     default:
       return DXGI_FORMAT_UNKNOWN;
   }
@@ -208,6 +212,8 @@ void DestroyFrameGeneration() {
 
 void ReleaseHudless() {  // callers have waited for the queue (presents and Prepare lists)
   if (g_hl_tex) g_hl_tex->Release(), g_hl_tex = nullptr;
+  if (g_hl_bytes) g_hl_bytes->Release(), g_hl_bytes = nullptr;
+  g_hl_bytes_size = 0;
   g_hl_w = g_hl_h = 0;
   g_hl_format = DXGI_FORMAT_UNKNOWN;
 }
@@ -383,6 +389,30 @@ bool EnsureHudless(const DXGI_SWAP_CHAIN_DESC1& sd) {
     return false;
   }
   g_hl_tex->SetName(L"gow2 frame generation HUD-less colour");
+  if (format == DXGI_FORMAT_B8G8R8A8_UNORM) {  // the buffer the swapped bytes go through (Prepare)
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+    UINT64 total = 0;
+    g_device->GetCopyableFootprints(&rd, 0, 1, 0, &fp, nullptr, nullptr, &total);
+    D3D12_RESOURCE_DESC bd{};
+    bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bd.Width = total;
+    bd.Height = 1;
+    bd.DepthOrArraySize = 1;
+    bd.MipLevels = 1;
+    bd.Format = DXGI_FORMAT_UNKNOWN;
+    bd.SampleDesc.Count = 1;
+    bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if (!total || total == UINT64_MAX ||
+        FAILED(g_device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COMMON, nullptr,
+                                                 IID_PPV_ARGS(&g_hl_bytes)))) {
+      g_hl_bytes = nullptr;
+      g_hl_tex->Release(), g_hl_tex = nullptr;
+      REXLOG_WARN("gow2_frame_generation_hudless: the B8G8R8A8 copy buffer was not made; no HUD-less image");
+      return false;
+    }
+    g_hl_bytes->SetName(L"gow2 frame generation HUD-less bytes");
+    g_hl_bytes_size = total;
+  }
   g_hl_w = sd.Width, g_hl_h = sd.Height, g_hl_format = format;
   return true;
 }
@@ -418,7 +448,21 @@ bool Prepare(const XenosFgFrame& f, uint32_t flags, int32_t hl_x = -1, int32_t h
     s.pResource = src;
     s.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
     const D3D12_BOX box{0, 0, 0, f.hudless_width, f.hudless_height, 1};
-    g_list->CopyTextureRegion(&d, uint32_t(hl_x), uint32_t(hl_y), 0, &s, &box);
+    if (g_hl_bytes) {  // B8G8R8A8: the renderer's swapped R8G8B8A8 bytes -> buffer -> the B8G8R8A8 texture
+      const D3D12_RESOURCE_DESC sdesc = src->GetDesc();  // its own size (exactly the HUD-less image's)
+      D3D12_TEXTURE_COPY_LOCATION b{};
+      b.pResource = g_hl_bytes;
+      b.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+      UINT64 total = 0;
+      g_device->GetCopyableFootprints(&sdesc, 0, 1, 0, &b.PlacedFootprint, nullptr, nullptr, &total);
+      g_list->CopyTextureRegion(&b, 0, 0, 0, &s, &box);
+      Transition(g_hl_bytes, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
+      b.PlacedFootprint.Footprint.Format = DXGI_FORMAT_B8G8R8A8_UNORM;  // the same 4-byte texels, read as BGRA
+      g_list->CopyTextureRegion(&d, uint32_t(hl_x), uint32_t(hl_y), 0, &b, &box);
+      // A buffer: promoted from COMMON by the first copy, back to COMMON when the list has run (no barrier needed).
+    } else {
+      g_list->CopyTextureRegion(&d, uint32_t(hl_x), uint32_t(hl_y), 0, &s, &box);
+    }
     Transition(g_hl_tex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(src, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
   }
@@ -443,7 +487,14 @@ bool Prepare(const XenosFgFrame& f, uint32_t flags, int32_t hl_x = -1, int32_t h
   std::memcpy(p.cameraRight, f.camera_right, sizeof(p.cameraRight));
   std::memcpy(p.cameraForward, f.camera_forward, sizeof(p.cameraForward));
   const ffxReturnCode_t rc = g_fn.Dispatch(&g_fg_ctx, &p.header);
-  g_list->Close();
+  const HRESULT closed = g_list->Close();
+  if (FAILED(closed)) {  // never execute a list that failed to close (that removes the device with INVALID_CALL)
+    static uint32_t logged = 0;
+    if (logged < 8)
+      ++logged, REXLOG_WARN("gow2_frame_generation: the Prepare list did not close (0x{:08X}); frame not generated",
+                            uint32_t(closed));
+    return false;
+  }
   if (rc != FFX_API_RETURN_OK) return false;
   ID3D12CommandList* lists[] = {g_list};
   g_queue->ExecuteCommandLists(1, lists);
@@ -511,6 +562,7 @@ bool MakeSwapChain(void* factory, void* queue, void* hwnd, const void* desc, voi
   g_hudless_format.store(!g_hudless_on ? 0u
                          : hl_format == DXGI_FORMAT_R8G8B8A8_UNORM    ? 1u
                          : hl_format == DXGI_FORMAT_R10G10B10A2_UNORM ? 2u
+                         : hl_format == DXGI_FORMAT_B8G8R8A8_UNORM    ? 3u
                                                                       : 0u,
                          std::memory_order_relaxed);
   if (g_hudless_on && !g_hudless_format.load(std::memory_order_relaxed))
