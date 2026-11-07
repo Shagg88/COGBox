@@ -225,23 +225,35 @@ void ReleasePrepareObjects() {
   g_queue = nullptr;
 }
 
+// Review of c357d5f: these failed without a word (a removed device then looked like a silent black screen).
+bool PrepareObjectsFailed(const char* what, HRESULT hr) {
+  static uint32_t logged = 0;
+  if (logged < 8) {
+    ++logged;
+    const HRESULT removed = g_device ? g_device->GetDeviceRemovedReason() : S_OK;
+    REXLOG_WARN("gow2_frame_generation: {} failed (0x{:08X}, device removed reason 0x{:08X}); frames shown as drawn",
+                what, uint32_t(hr), uint32_t(removed));
+  }
+  ReleasePrepareObjects();
+  return false;
+}
+
 bool EnsurePrepareObjects(ID3D12CommandQueue* queue) {
   if (g_list && g_queue == queue) return true;
   ReleasePrepareObjects();
-  if (FAILED(queue->GetDevice(IID_PPV_ARGS(&g_device)))) return false;
+  HRESULT hr = queue->GetDevice(IID_PPV_ARGS(&g_device));
+  if (FAILED(hr)) return PrepareObjectsFailed("GetDevice", hr);
   for (PrepareList& l : g_lists)
-    if (FAILED(g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&l.allocator))))
-      return false;
-  if (FAILED(g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_lists[0].allocator, nullptr,
-                                         IID_PPV_ARGS(&g_list))))
-    return false;
+    if (FAILED(hr = g_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&l.allocator))))
+      return PrepareObjectsFailed("CreateCommandAllocator", hr);
+  if (FAILED(hr = g_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_lists[0].allocator, nullptr,
+                                              IID_PPV_ARGS(&g_list))))
+    return PrepareObjectsFailed("CreateCommandList", hr);
   g_list->Close();
-  if (FAILED(g_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_fence)))) return false;
+  if (FAILED(hr = g_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_fence))))
+    return PrepareObjectsFailed("CreateFence", hr);
   g_fence_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-  if (!g_fence_event) {
-    ReleasePrepareObjects();
-    return false;
-  }
+  if (!g_fence_event) return PrepareObjectsFailed("CreateEventW", HRESULT_FROM_WIN32(GetLastError()));
   g_queue = queue;
   return true;
 }
@@ -259,7 +271,11 @@ ffxReturnCode_t GenerateCallback(ffxDispatchDescFrameGeneration* params, void*) 
 bool EnsureFrameGeneration(const XenosFgFrame& f) {
   if (!g_swap_chain || g_fg_failed) return false;
   DXGI_SWAP_CHAIN_DESC1 sd{};
-  if (FAILED(g_swap_chain->GetDesc1(&sd))) return false;
+  if (FAILED(g_swap_chain->GetDesc1(&sd))) {
+    REXLOG_WARN("gow2_frame_generation: the swap chain gave no description; frames shown as drawn");
+    g_fg_failed = true;
+    return false;
+  }
   // The infinite-depth flag is fixed at creation (review: a heuristic per frame must not rebuild the context).
   if (g_fg_ctx && g_fg_display_w == sd.Width && g_fg_display_h == sd.Height && f.width <= g_fg_render_w &&
       f.height <= g_fg_render_h)
@@ -291,7 +307,21 @@ bool EnsureFrameGeneration(const XenosFgFrame& f) {
     hl.hudlessBackBufferFormat = ffxApiGetSurfaceFormatDX12(hl_format);
     c.header.pNext = &hl.header;
   }
+  if (g_device) {
+    const HRESULT removed = g_device->GetDeviceRemovedReason();
+    if (FAILED(removed)) {
+      REXLOG_WARN("gow2_frame_generation: the D3D12 device was removed (0x{:08X}) before frame generation was made; "
+                  "frames shown as drawn", uint32_t(removed));
+      g_fg_failed = true;
+      return false;
+    }
+  }
+  // Logged before and after: a create that never returns shows as the first line without the second.
+  REXLOG_INFO("gow2_frame_generation: patch 0147: making the frame-generation context (back buffer format {}, HUD-less "
+              "format {})", uint32_t(sd.Format), hl_link ? uint32_t(hl_format) : 0u);
   ffxReturnCode_t rc = g_fn.CreateContext(&g_fg_ctx, &c.header, nullptr);
+  REXLOG_INFO("gow2_frame_generation: patch 0147: ffxCreateContext returned {} (context {})", uint32_t(rc),
+              g_fg_ctx ? "made" : "none");
   if (hl_link && (rc != FFX_API_RETURN_OK || !g_fg_ctx)) {  // keep frame generation; drop only the HUD-less image
     REXLOG_WARN("gow2_frame_generation_hudless: AMD refused HUD-less format {} with back buffer format {} (code {}); "
                 "no HUD-less image", uint32_t(hl_format), uint32_t(sd.Format), uint32_t(rc));
@@ -301,6 +331,8 @@ bool EnsureFrameGeneration(const XenosFgFrame& f) {
     g_hudless_format.store(0, std::memory_order_relaxed);
     c.header.pNext = &ver.header;
     rc = g_fn.CreateContext(&g_fg_ctx, &c.header, nullptr);
+    REXLOG_INFO("gow2_frame_generation: patch 0147: ffxCreateContext without the HUD-less format returned {}",
+                uint32_t(rc));
   }
   if (rc != FFX_API_RETURN_OK || !g_fg_ctx) {
     g_fg_ctx = nullptr;
