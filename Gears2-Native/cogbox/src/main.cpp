@@ -712,7 +712,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             std::string p = a.dropped.front();
             a.dropped.erase(a.dropped.begin());
             std::vector<std::string> dlc;
-            if (dir_exists(p) && !drop_is_game_or_update(p) && !(dlc = dlc_packages_in(p)).empty()) {
+            const int coverGame = a.screen == SCR_PAGE ? a.page : a.front;   // GitHub #241: a picture is that game's cover
+            if (!dir_exists(p) && cover_set_from_file(a, coverGame, p)) {
+                set_message(a, std::string("The picture is now the box art of ") + game_def(coverGame).name + ".", false);
+            } else if (dir_exists(p) && !drop_is_game_or_update(p) && !(dlc = dlc_packages_in(p)).empty()) {
                 a.dropped.insert(a.dropped.begin(), dlc.begin(), dlc.end());
                 set_message(a, std::to_string(dlc.size()) + (dlc.size() == 1 ? " downloadable content package found - adding it." : " downloadable content packages found - adding them one by one."), false);
             } else   // L-8: dropped on a game's settings page, it is for that game (a regional release COGBox doesn't know)

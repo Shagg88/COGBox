@@ -60,6 +60,27 @@ void covers_load(App &a)
     }
 }
 
+// GitHub #241: a picture (.png / .jpg) dropped on the launcher becomes that game's own cover (covers\gears2.png etc.),
+// e.g. a SteamGridDB 600x900 PNG. Any other own cover of that game is replaced. False if it isn't a picture we can read.
+bool cover_set_from_file(App &a, int g, const std::string &path)
+{
+    if (g < 0 || g >= G_COUNT) return false;
+    std::string ext = path.size() > 4 ? path.substr(path.find_last_of('.') == std::string::npos ? path.size() : path.find_last_of('.')) : "";
+    for (char &c : ext) c = (char)tolower((unsigned char)c);
+    if (ext != ".png" && ext != ".jpg" && ext != ".jpeg") return false;
+    std::string data;
+    if (!read_file(path, data, 32u << 20)) return false;
+    int w = 0, h = 0, n = 0;
+    if (!stbi_info_from_memory((const unsigned char *)data.data(), (int)data.size(), &w, &h, &n) || w < 16 || h < 16) return false;
+    std::string dir = join(exe_dir(), "covers"), k = game_def(g).key;
+    make_dirs(dir);
+    if (!write_file(join(dir, k + (ext == ".png" ? ".png" : ".jpg")), data)) return false;
+    for (const char *o : { ".png", ".jpg", ".jpeg" })   // the old own cover in another format would still win over the new one
+        if (std::string(o) != (ext == ".png" ? ".png" : ".jpg")) DeleteFileW(widen(join(dir, k + o)).c_str());
+    covers_load(a);
+    return true;
+}
+
 // ---- Get box art: the Xbox Marketplace's box art and background for each game, from the x360db archive on GitHub
 // (github.com/xenia-manager/x360db - the archive Xenia Manager uses). Only on the player's request; nothing is sent.
 #include <winhttp.h>
@@ -163,6 +184,14 @@ static void draw_cover_flat(App &a, ImDrawList *dl, int g, ImVec2 o, float w, fl
     const Cover &cv = a.cover[g];
     ImU32 shade = U(ImVec4(light, light, light, 1));
     if (cv.tex) {
+        // GitHub #241: a picture of another shape (a SteamGridDB 600x900 is 0.67 wide per 1 high) is cropped to the case
+        // from its middle, not stretched
+        float ua = 0, us = 1, va = 0, vs = 1;
+        if (cv.w > 0 && cv.h > 0 && w > 0 && h > 0) {
+            float img = (float)cv.w / cv.h, box = w / h;
+            if (img > box) { us = box / img; ua = (1 - us) * 0.5f; }
+            else { vs = img / box; va = (1 - vs) * 0.5f; }
+        }
         // thin vertical strips, so the picture bends with the turn instead of skewing as two triangles
         const int strips = 24;
         for (int i = 0; i < strips; i++) {
@@ -170,7 +199,7 @@ static void draw_cover_flat(App &a, ImDrawList *dl, int g, ImVec2 o, float w, fl
             for (int j = 0; j < 4; j++) {
                 float t0 = j / 4.0f, t1 = (j + 1) / 4.0f;
                 dl->AddImage((ImTextureID)(intptr_t)cv.tex, ImVec2(o.x + u0 * w, o.y + t0 * h), ImVec2(o.x + u1 * w, o.y + t1 * h),
-                             ImVec2(u0, t0), ImVec2(u1, t1), shade);
+                             ImVec2(ua + u0 * us, va + t0 * vs), ImVec2(ua + u1 * us, va + t1 * vs), shade);
             }
         }
         return;
@@ -770,7 +799,7 @@ void front_draw(App &a, ImVec2 size)
                 set_message(a, "Getting the box art and backgrounds from the x360db archive on GitHub...", false);
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                ImGui::SetTooltip("Downloads each game's Xbox Marketplace box art and background from the x360db archive on GitHub\n(the one Xenia Manager uses) into the covers folder. Your own covers\\gears2.png etc. still win.");
+                ImGui::SetTooltip("Downloads each game's Xbox Marketplace box art and background from the x360db archive on GitHub\n(the one Xenia Manager uses) into the covers folder. To use your own picture (.png / .jpg, e.g. 600x900),\ndrag it onto this window while that game is in front.");
         }
         // Shagg 1 Nov: ADD GAME (Back / View) - the carousel has no boxes for games not added yet (same import as a drop)
         if (nLib > 0) {

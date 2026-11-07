@@ -128,6 +128,7 @@ void ask(App &a, const std::string &tag, int game, const std::string &title, con
 void front_draw(App &a, ImVec2 size);
 void draw_box(App &a, int g, ImVec2 center, float height, float yawDeg, float light, bool reflection);
 void covers_load(App &a);
+bool cover_set_from_file(App &a, int g, const std::string &path);   // GitHub #241: a dropped picture as the game's cover
 void backdrop_draw(App &a, ImDrawList *dl, ImVec2 size, int g, float alpha);
 // Shagg 1 Nov: the games in the library carousel (added ones only, release order) and a game's place in it (-1: not there)
 std::vector<int> library_games(const App &a);
