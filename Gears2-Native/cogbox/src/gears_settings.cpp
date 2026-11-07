@@ -696,10 +696,12 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
             return no(not_yet(gi, "this build has no AMD or NVIDIA frame generation files"));
     } else if (f == "mute") {
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
-    } else if (f == "ao") {   // notes/80: Gears 2 and Gears 3 (s.9); notes/81: Judgment, with the fog anchor its exe sets
-        if (g != Game::Gears2 && g != Game::Gears3 && g != Game::Judgment) return no(not_yet(gi, "Gears 2 and 3 first"));
-        // job 1272d: the short cvar name is not in gowj.exe as plain text - its description is
-        if (!cap_exe(env, g == Game::Judgment ? "AO passes that the chain detection does not" : "gow2_ao_quality")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "ao") {   // notes/80: Gears 2 and Gears 3 (s.9); notes/81: Judgment, with the fog anchor its exe sets; Gears 1 (s.14)
+        // job 1272d: the short cvar name is not in gowj.exe as plain text - its description is (Gears 1: the scene-copy anchor's)
+        const char* mark = g == Game::Judgment ? "AO passes that the chain detection does not"
+                         : g == Game::Gears1   ? "has no fog pass to anchor ours"
+                                               : "gow2_ao_quality";
+        if (!cap_exe(env, mark)) return no(not_yet(gi, "needs its next build"));
     } else if (f == "realocclusion") {   // PR #43: Gears 3 and Judgment; GitHub #75: Gears 2 too
         // an older Gears 2 exe without strict queries would only warn - keep the box greyed out for it
         if (g == Game::Gears2 && !cap_exe(env, "gow2_renderer_queries")) return no(not_yet(0, "needs its next build"));
@@ -792,6 +794,8 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         base += "\nJudgment: XeGTAO and CACAO replace the game's own AO, which can flicker with DLSS.";
     if (o.id == "DoF" && g == Game::Gears1)   // GitHub #179
         base += "\nGears 1: off turns off the game's blur pass, which the bloom uses too - the glow is softer.";
+    if (o.id == "AO" && g == Game::Gears1)   // notes/80 s.14
+        base += "\nGears 1: the game has no AO of its own - XeGTAO and CACAO add it under the level's lighting, so lit areas keep their light. Off and Game's own are the same here.";
     if (o.id == "AO" && g == Game::Gears3)   // notes/80 s.9
         base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it.";
     if (o.id == "AAMode") {   // PS1 345
@@ -1378,7 +1382,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             }
         }
         // Notes/80; notes/81: Judgment's own AO goes whenever ours is on - ours is added, not swapped in
-        if (avail("AO") && (s.i("AO") == 0 || (g == Game::Judgment && s.i("AO") >= 2)))
+        if (avail("AO") && g != Game::Gears1 && (s.i("AO") == 0 || (g == Game::Judgment && s.i("AO") >= 2)))  // Gears 1 has none
             ini.push_back(ei + "|SystemSettings|AmbientOcclusion=False");
         if (avail("Fov") && s.i("Fov") != 100) {
             std::string k = fmt_double(static_cast<double>(s.i("Fov")) / 100);

@@ -908,6 +908,10 @@ REXCVAR_DEFINE_INT32(gow2_ao_gpu_log, 0, "Gears2",
                      "each denoise pass) from the backend's GPU timestamps. 0 = off. Not while --gow2_renderer_draw_report_frame "
                      "runs (it owns the GPU tags); needs --gow2_renderer_gpu_timestamp_split (the default)");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_power, 2.2, "Gears2", "XeGTAO final value power - higher is darker (XeGTAO's default 2.2)");
+REXCVAR_DEFINE_BOOL(gow2_ao_add_at_scene_copy, false, "Gears2",
+                    "Where the game draws no AO and has no fog pass to anchor ours (Gears 1): XeGTAO / CACAO runs on the "
+                    "scene depth and is multiplied into the scene at the frame's first full-screen scene copy (Gears 1: "
+                    "before its per-light passes). With --gow2_ao=gtao and --gow2_ao_everywhere; gow1.exe sets true");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_add_radius, -1.0, "Gears2",
                       "Notes/80 s.9: XeGTAO's radius where the game draws no AO of its own and ours is added "
                       "(--gow2_ao_everywhere; Gears 3 bakes its AO there - a gentler complement); below 0 = --gow2_ao_radius");
@@ -4511,7 +4515,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t ao_trace_vs_first_ = 1, ao_trace_vs_last_ = 0;  // --gow2_ao_trace_vs (first > last: off)
   int32_t up_capture_raw_class_ = -1;                      // --gow2_upscale_capture_raw_class
   // Notes/80 s.5 (--gow2_ao_everywhere): the multiply pass for frames without the game's AO chain.
-  bool ao_everywhere_ = false, ao_added_frame_ = false;
+  bool ao_everywhere_ = false, ao_added_frame_ = false, ao_add_at_copy_ = false;
   std::string ao_fog_ps_;  // ",HASH,HASH,"
   std::vector<uint64_t> ao_skip_ps_;  // --gow2_ao_skip_ps
   gpu::ShaderHandle ao_multiply_ps_ = 0;
@@ -6695,6 +6699,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ao_show_ = show == "none" ? 1u : show == "game" ? 2u : 0u;
     ao_skip_game_ = uint32_t(std::clamp(REXCVAR_GET(gow2_ao_skip_game), 0, 3));
     ao_everywhere_ = REXCVAR_GET(gow2_ao_everywhere);
+    ao_add_at_copy_ = REXCVAR_GET(gow2_ao_add_at_scene_copy);
     ao_fog_ps_ = "," + REXCVAR_GET(gow2_ao_fog_ps) + ",";
     {
       std::stringstream list(REXCVAR_GET(gow2_ao_skip_ps));
@@ -11793,6 +11798,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (up_cap_left_ > 0 && up_capture_raw_class_ >= 0 && rt->key.storage_class == uint32_t(up_capture_raw_class_))
       CaptureRaw(rt->texture, rt->format, rt->width, rt->height,  // --gow2_upscale_capture_raw_class (notes/80 s.6)
                  std::format("class{}-{:08X}", up_capture_raw_class_, info.dest_base).c_str());
+    // --gow2_ao_add_at_scene_copy (Gears 1): ours into the scene at its first full-screen copy, before the copy reads it.
+    if (ao_add_at_copy_ && ao_everywhere_ && ao_mode_ == rr::ao::Mode::kGtao && ao_show_ == 0 && !ao_added_frame_ &&
+        !ao_detected_frame_ && !ao_final_seen_ && !up_scene_done_ && up_camera_ && !ms_src && rt->key.msaa == 0 &&
+        rt->scale == up_depth_scale_ && IsSceneColourResolve(info, *rt)) {
+      if (!ao_ready_) RunGtao();
+      if (ao_ready_ && ao_final_ && ao_multiply_ps_) AoAddPass(*rt);
+      else ao_added_frame_ = true;  // once a frame either way
+    }
     // Upscalers (notes/64): the frame's scene colour goes through DLSS / FSR, and the resolve reads their output.
     gpu::TextureHandle resolve_source = rt->texture;
     uint32_t source_scale = rt->scale;  // patch 0141: the upscaler's output is at the output scale

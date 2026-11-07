@@ -111,6 +111,10 @@ class Gow1App : public rex::ReXApp {
     // some with stencil shadows): upscaled there, they were drawn unjittered over the jittered depth and failed in
     // patches that changed with the jitter phase - the light strobing over characters. The last copy, as Judgment.
     game_default("gow2_upscale_scene_last_copy", "true");
+    // Gears 1 draws no AO and has no fog pass to anchor ours to: with --gow2_ao=gtao, XeGTAO / CACAO is multiplied into
+    // the scene at its first full-screen scene copy, which comes right before the per-light passes - so only the base
+    // pass's light (lightmaps, ambient) is darkened, not each light's own.
+    game_default("gow2_ao_add_at_scene_copy", "true");
     game_default("gow2_renderer_resolve_through", "true");
     game_default("gow2_renderer_fused_scaled_resolve", "true");
     game_default("gow2_renderer_fused_scaled_kinds", "1");
@@ -148,6 +152,7 @@ class Gow1App : public rex::ReXApp {
     }
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
+    XenosInstallAoDebugKeys(drawer);  // Gears 2 notes/80 s.12, notes/81: F2, F5, F6, F8, F9, F10, F11 (--gow2_ao_debug_keys)
     XenosInstallInGameMenu(drawer, immediate_drawer(), window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
   }
   // --gow1_mute_unfocused (launcher item 8, Gears 2 0130): the SDK's SDL driver reads audio_mute for every buffer, so
@@ -166,6 +171,7 @@ class Gow1App : public rex::ReXApp {
     xenos::display::SetSurfaceSize(pixel_width, pixel_height);
   }
   void OnShutdown() override {
+    XenosShutdownAoDebugKeys();  // Gears 2 notes/80
     Gow1StopMemoryGauge();
     XenosShutdownInGameMenu();  // patch 0163
     XenosDestroyFpsBar();  // before the SDK drops its drawer
