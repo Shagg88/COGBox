@@ -125,7 +125,10 @@ void Profile100Apply(uint8_t* base, uint32_t self, int32_t id, uint32_t value) {
       hit = true, ++written;
       break;
     }
-    if (!hit) ++missing, REXLOG_WARN("gowj_profile_100: id {} not in the settings array", want_id);
+    if (!hit) {
+      ++missing;
+      REXLOG_WARN("gowj_profile_100: id {} not in the settings array", want_id);
+    }
   }
   REXLOG_INFO("gowj_profile_100: {} written, {} missing (array {:08X} x{}); saved with the next profile save", written,
               missing, ptr, cnt);
@@ -204,7 +207,8 @@ void GowjInstallProfileLog() {
   }
   g_p100 = REXCVAR_GET(gowj_profile_100);
   if (g_p100) {
-    std::ifstream in(std::string(REXCVAR_GET(gowj_profile_100_file)));
+    const std::string path = REXCVAR_GET(gowj_profile_100_file);
+    std::ifstream in{path};
     std::string line;
     while (std::getline(in, line)) {
       line = line.substr(0, line.find('#'));
