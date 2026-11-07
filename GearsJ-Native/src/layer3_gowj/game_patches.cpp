@@ -335,6 +335,9 @@ bool LoadingClampActive() {
 // GitHub #77: for a hook on the engine's own loading state (see g_load_flag). Once called, the file-open heuristic is
 // no longer used for the release.
 void GowjSetLoadingState(bool loading) { g_load_flag.store(loading ? 1 : 0, std::memory_order_relaxed); }
+// GitHub #219: the freeze watchdog's thread asks when the last loading screen / level change began (steady_clock ticks,
+// 0 = none seen, or --gowj_loading_fps=0 so no file is watched). A relaxed load, off the game's threads.
+int64_t GowjLastLevelLoadTicks() { return g_load_last_trigger.load(std::memory_order_relaxed); }
 
 void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));  // shader_prebuild.cpp
 

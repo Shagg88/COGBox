@@ -1,7 +1,7 @@
 // Layer 3 (Judgment): GitHub #219 / #185 - freeze watchdog. Read-only, log-only: it never changes what the game does.
 //
 // A background thread looks at the swap count (layer 0's observer hub, counted for both GPU paths) four times a
-// second. When no frame has been presented for --gowj_freeze_watchdog_seconds (default 0 = off; test with =8) after the first
+// second. When no frame has been presented for --gowj_freeze_watchdog_seconds (default 10, 0 = off) after the first
 // frame, it logs ONE "gowj_freeze:" report for that stall, and one more at 4x the limit, so the two can be compared:
 // a long load shows moving stacks, a deadlock shows the same ones. When frames come back it says how long the stall was.
 // Each report has, for every guest thread (XThread): its id, name, priority, running / suspend state, the PPC context's
@@ -12,6 +12,15 @@
 // On Windows, every thread of the process is then suspended for a moment, its host stack unwound (no allocation while
 // suspended, like layer 0's profiler) and resumed, and the frames are printed with PDB names (sub_8XXXXXXX for
 // recompiled guest functions, the SDK's kernel exports such as KeWaitForSingleObject for what it is blocked on).
+//
+// Scope (Shagg, 0.4.8): the #219 freeze - back to the main menu, then loading a checkpoint / chapter, the picture stops
+// while the music plays. So the full report (and the brief thread suspension it needs) is only made for a stall that
+// begins within kLoadWindow of a loading screen or level change (GowjLastLevelLoadTicks: the loading movie's subtitle
+// file or a *_P.xxx being opened - the menu map and every checkpoint load open one). Any other stall gets one log line.
+// Nothing here acts on the game: no thread is killed, no state is changed, the process is never ended - a misfire on a
+// long load (or during a save) costs one log report and a few milliseconds of every thread being paused in turn.
+// Game cost: none per frame beyond the relaxed fetch_add the observer hub already does on each swap; this thread sleeps
+// on a condition variable and reads that counter four times a second.
 #include "freeze_watchdog.h"
 
 #include <xenos/dev_tools.h>
@@ -35,10 +44,10 @@
 #include <unordered_map>
 #include <vector>
 
-REXCVAR_DEFINE_INT32(gowj_freeze_watchdog_seconds, 0, "Judgment",
-                     "GitHub #219: when no frame has been presented for this many seconds, log every guest thread's "
-                     "state and every host thread's stack once per stall (read-only; may also fire on a long load). "
-                     "0 = off (default; test .bat: =8)");
+REXCVAR_DEFINE_INT32(gowj_freeze_watchdog_seconds, 10, "Judgment",
+                     "GitHub #219: when no frame has been presented for this many seconds after a loading screen / "
+                     "level change, log every guest thread's state and every host thread's stack (read-only, log-only; "
+                     "may also fire on a long load). 0 = off");
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -53,7 +62,13 @@ REXCVAR_DEFINE_INT32(gowj_freeze_watchdog_seconds, 0, "Judgment",
 #pragma comment(lib, "dbghelp.lib")
 #endif
 
+int64_t GowjLastLevelLoadTicks();  // game_patches.cpp (0 = none seen)
+
 namespace {
+
+// A stall that starts this long after the last loading screen / level change still counts as #219's case (the reported
+// freeze comes as the checkpoint starts loading, or on the menu right after it was loaded).
+constexpr std::chrono::seconds kLoadWindow{120};
 
 std::thread g_thread;
 std::mutex g_mutex;
@@ -236,6 +251,17 @@ void Run(int limit_s) {
     }
     if (!last) continue;  // not armed before the first frame
     if ((reported == 0 && stalled >= limit_s) || (reported == 1 && stalled >= 4.0 * limit_s)) {
+      // #219 only: a loading screen / level change shortly before (or during) this stall
+      const int64_t load = GowjLastLevelLoadTicks();
+      const bool near_load =
+          load != 0 && clock::time_point(clock::duration(load)) + kLoadWindow >= last_change;
+      if (!near_load) {
+        if (reported == 0)
+          REXLOG_WARN("gowj_freeze: no frame presented for {:.1f} s (swap {}), not after a loading screen - not the "
+                      "#219 case, no thread report", stalled, now_swaps);
+        reported = 2;  // nothing more for this stall
+        continue;
+      }
       lock.unlock();
       Dump(stalled, now_swaps, reported == 1);
       lock.lock();
