@@ -154,6 +154,10 @@ bool g_gen_on = false;
 uint64_t g_frame_id = 0, g_last_shown_frame = 0;
 XenosFgFrame g_last_frame{};
 bool g_have_last_frame = false;
+// Bumped by the renderer when it makes a slot's textures again (XenosFgVkSlotsRecreated): g_last_frame's images are
+// only valid while g_last_frame_generation matches it.
+std::atomic<uint64_t> g_slot_generation{0};
+uint64_t g_last_frame_generation = 0;
 uint32_t g_no_scene_streak = 0;
 constexpr uint32_t kNoSceneFramesBeforeOff = 30;
 
@@ -207,16 +211,34 @@ void WaitForPresents() {
   g_fn.Dispatch(&g_swap_chain_ctx, &w.header);
 }
 
-void WaitForPrepareLists() {
+// A Prepare fence that never signalled: the device is treated as lost. Objects the GPU may still use are leaked, not
+// destroyed, and no new Prepare objects are made.
+bool g_device_lost = false;
+
+// false = a fence wait timed out or failed (device lost): the lists' objects must not be destroyed.
+bool WaitForPrepareLists() {
   for (PrepareList& l : g_lists)
     if (l.pending) {
-      g_vk.WaitForFences(g_device, 1, &l.fence, VK_TRUE, 2000000000ull);  // bounded: a lost device must not hang us
+      // bounded: a lost device must not hang us
+      if (g_vk.WaitForFences(g_device, 1, &l.fence, VK_TRUE, 2000000000ull) != VK_SUCCESS && !g_device_lost) {
+        g_device_lost = true;
+        REXLOG_ERROR("gow2_frame_generation: Vulkan: a Prepare fence did not signal in 2 s; device treated as lost, "
+                     "its command buffers and HUD-less image leaked instead of destroyed");
+      }
       l.pending = false;
     }
+  return !g_device_lost;
 }
 
 void ReleasePrepareObjects() {
-  WaitForPrepareLists();
+  if (!WaitForPrepareLists()) {  // the GPU may still use them: leak
+    g_lists = {};
+    g_pool = VK_NULL_HANDLE;
+    g_hl_image = VK_NULL_HANDLE, g_hl_memory = VK_NULL_HANDLE;
+    g_hl_w = g_hl_h = 0;
+    g_hl_format = VK_FORMAT_UNDEFINED;
+    return;
+  }
   for (PrepareList& l : g_lists) {
     if (l.fence) g_vk.DestroyFence(g_device, l.fence, nullptr);
     l = {};
@@ -236,11 +258,14 @@ bool EnsureHudless() {
   if (g_hl_image && g_hl_w == w && g_hl_h == h && g_hl_format == format) return true;
   if (g_hl_image) {
     WaitForPresents();
-    WaitForPrepareLists();
+    if (!WaitForPrepareLists()) {  // the GPU may still use it: leak, and make no new one
+      g_hl_image = VK_NULL_HANDLE, g_hl_memory = VK_NULL_HANDLE;
+      return false;
+    }
     g_vk.DestroyImage(g_device, g_hl_image, nullptr), g_hl_image = VK_NULL_HANDLE;
     g_vk.FreeMemory(g_device, g_hl_memory, nullptr), g_hl_memory = VK_NULL_HANDLE;
   }
-  if (!g_vk.GetPhysicalDeviceMemoryProperties) return false;
+  if (g_device_lost || !g_vk.GetPhysicalDeviceMemoryProperties) return false;
   VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   ci.imageType = VK_IMAGE_TYPE_2D;
   ci.format = format;
@@ -303,7 +328,9 @@ void RecordHudlessCopy(VkCommandBuffer cb, const XenosFgFrame& f, int32_t x, int
     const VkClearColorValue black{{0.0f, 0.0f, 0.0f, 1.0f}};
     const VkImageSubresourceRange r{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     g_vk.CmdClearColorImage(cb, g_hl_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &r);
-    g_hl_fresh = false;
+    ImageBarrier(cb, g_hl_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                 VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);  // clear before the copy (write-after-write)
+    // g_hl_fresh is cleared by Prepare once this list is submitted: an unsubmitted clear must be recorded again
   } else {
     ImageBarrier(cb, g_hl_image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                  VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -324,6 +351,7 @@ void RecordHudlessCopy(VkCommandBuffer cb, const XenosFgFrame& f, int32_t x, int
 
 bool EnsurePrepareObjects() {
   if (g_pool) return true;
+  if (g_device_lost) return false;
   VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
   pi.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
   pi.queueFamilyIndex = g_game_family;
@@ -454,7 +482,11 @@ bool Prepare(const XenosFgFrame& f, uint32_t flags, int32_t hl_x = -1, int32_t h
   VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
   bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   if (g_vk.BeginCommandBuffer(l.cb, &bi) != VK_SUCCESS) return false;
-  if (hl_x >= 0 && g_hl_image && f.hudless) RecordHudlessCopy(l.cb, f, hl_x, hl_y);  // HUD-less colour
+  bool hl_cleared = false;
+  if (hl_x >= 0 && g_hl_image && f.hudless) {  // HUD-less colour
+    hl_cleared = g_hl_fresh;
+    RecordHudlessCopy(l.cb, f, hl_x, hl_y);
+  }
   ffxDispatchDescFrameGenerationPrepareV2 p{};
   p.header.type = FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE_V2;
   p.frameID = g_frame_id;
@@ -481,6 +513,7 @@ bool Prepare(const XenosFgFrame& f, uint32_t flags, int32_t hl_x = -1, int32_t h
   si.commandBufferCount = 1;
   si.pCommandBuffers = &l.cb;
   if (GameSubmit(1, &si, l.fence) != VK_SUCCESS) return false;
+  if (hl_cleared) g_hl_fresh = false;  // the clear + UNDEFINED transition is on the GPU now
   l.pending = true;
   ++g_list_index;
   return true;
@@ -695,8 +728,11 @@ void BeforePresent(void* guest_output, const int32_t* rect) {
     g_last_shown_frame = f.frame;
     g_last_frame = f;
     g_have_last_frame = true;
+    g_last_frame_generation = g_slot_generation.load(std::memory_order_acquire);
     g_no_scene_streak = 0;
     have = true;
+  } else if (g_have_last_frame && g_last_frame_generation != g_slot_generation.load(std::memory_order_acquire)) {
+    g_have_last_frame = false;  // its images were destroyed with a slot resize: generation skipped
   } else if (g_have_last_frame && ++g_no_scene_streak <= kNoSceneFramesBeforeOff) {
     f = g_last_frame;
     f.reset = true;
@@ -809,6 +845,12 @@ void XenosFgVkSetInputs(void* guest_output_image, const XenosFgFrame* frame) {
   slot->serial = ++fgvk::g_serial;
 }
 
+void XenosFgVkSlotsRecreated() {
+  fgvk::g_slot_generation.fetch_add(1, std::memory_order_acq_rel);
+  std::lock_guard<std::mutex> lock(fgvk::g_mutex);
+  fgvk::g_have_last_frame = false;
+}
+
 bool XenosFgVkInstall(bool hudless) {
   rex::FrameHooks& h = rex::GetFrameHooks();
   h.vk_all_queues.store(true, std::memory_order_release);  // before the Vulkan device is made (OnPostInitLogging)
@@ -829,6 +871,7 @@ bool XenosFgVkWanted() { return false; }
 uint32_t XenosFgVkHudlessFormat() { return 0u; }
 bool XenosFgVkHudlessSize(uint32_t&, uint32_t&) { return false; }
 void XenosFgVkSetInputs(void*, const XenosFgFrame*) {}
+void XenosFgVkSlotsRecreated() {}
 bool XenosFgVkInstall(bool) {
   REXLOG_WARN("gow2_frame_generation: this build has no Vulkan frame generation (the FidelityFX SDK's Vulkan headers, "
               "the Vulkan headers or SDK patch 69 were missing when built); off");

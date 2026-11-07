@@ -48,6 +48,9 @@ uint32_t XenosFrameGenerationHudlessFormat();
 // buffer; the HUD-less image must be exactly this size); false = none yet.
 bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height);
 void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFrame* frame);
+// The renderer destroyed and made again a slot's depth / motion / HUD-less textures: frames handed over before this
+// name freed images (Vulkan frame generation stops re-sending its last frame). Only the Vulkan path acts on it.
+void XenosFrameGenerationSlotsRecreated();
 // --gow2_input_script: a scripted gamepad for unattended tests.
 void XenosAddScriptPadIfRequested(rex::Runtime* runtime);
 // --gow2_dump_image: write the loaded game image for tools/scan_vtables.py.

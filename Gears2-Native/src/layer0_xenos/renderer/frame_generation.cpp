@@ -735,6 +735,11 @@ uint32_t XenosFgVkHudlessFormat();
 bool XenosFgVkHudlessSize(uint32_t& width, uint32_t& height);
 void XenosFgVkSetInputs(void* guest_output_image, const XenosFgFrame* frame);
 bool XenosFgVkInstall(bool hudless);
+void XenosFgVkSlotsRecreated();
+
+void XenosFrameGenerationSlotsRecreated() {
+  if (XenosFgVkActive()) XenosFgVkSlotsRecreated();  // notes/83; D3D12 holds no frame across presents
+}
 
 bool XenosFrameGenerationWanted() {
   if (XenosFgVkActive()) return XenosFgVkWanted();  // notes/83
@@ -819,6 +824,7 @@ bool XenosFrameGenerationHudlessSize(uint32_t& width, uint32_t& height) {
 void XenosFrameGenerationSetInputs(void* guest_output_resource, const XenosFgFrame* frame) {
   if (XenosDlssFgActive()) XenosDlssFgSetInputs(guest_output_resource, frame);
 }
+void XenosFrameGenerationSlotsRecreated() {}
 
 void XenosFrameGenerationInstall() {
   const std::string mode = REXCVAR_GET(gow2_frame_generation);

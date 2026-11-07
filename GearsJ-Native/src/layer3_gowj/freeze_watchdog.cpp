@@ -37,6 +37,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <initializer_list>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -116,12 +117,44 @@ uint32_t Load32(const uint8_t* base, uint32_t a) {
 #if defined(_WIN32)
 constexpr int kHostFrames = 24;
 
-int Unwind(CONTEXT ctx, uint64_t* pc) {  // nothing allocated: the target thread may be suspended holding the heap lock
+constexpr size_t kStackCopy = 256 * 1024;
+
+// Snapshot of a suspended thread: its CONTEXT and the top of its stack. Taken while the thread is suspended with
+// only syscalls (GetThreadContext, VirtualQuery, ReadProcessMemory): no loader / function-table / heap lock, so a
+// thread suspended while holding one of those cannot deadlock the watchdog. Unwinding happens after ResumeThread.
+size_t SnapshotStack(HANDLE h, CONTEXT* ctx, uint8_t* buf) {
+  ctx->ContextFlags = CONTEXT_FULL;
+  if (!GetThreadContext(h, ctx) || !ctx->Rsp) return 0;
+  MEMORY_BASIC_INFORMATION mbi{};
+  if (!VirtualQuery(reinterpret_cast<const void*>(ctx->Rsp), &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT) return 0;
+  const uint64_t end = uint64_t(mbi.BaseAddress) + mbi.RegionSize;
+  size_t len = size_t(end - ctx->Rsp);
+  if (len > kStackCopy) len = kStackCopy;
+  SIZE_T got = 0;
+  ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(ctx->Rsp), buf, len, &got);  // partial is fine
+  return size_t(got);
+}
+
+// Unwinds a snapshot (thread already resumed): stack registers are rebased into the copy, and the walk stops when
+// RSP leaves it. Return addresses are code addresses and need no rebasing.
+int Unwind(CONTEXT ctx, const uint8_t* stack, size_t len, uint64_t* pc) {
   int n = 0;
+  if (len < 8) {
+    if (ctx.Rip) pc[n++] = ctx.Rip;
+    return n;
+  }
+  const DWORD64 lo = ctx.Rsp, hi = ctx.Rsp + len, base = DWORD64(stack);
+  auto rebase = [&] {  // registers restored from the copy hold live-stack addresses: map them into the copy again
+    for (DWORD64* r : {&ctx.Rbp, &ctx.Rbx, &ctx.Rsi, &ctx.Rdi, &ctx.R12, &ctx.R13, &ctx.R14, &ctx.R15})
+      if (*r >= lo && *r < hi) *r = *r - lo + base;
+  };
+  ctx.Rsp = base;
+  rebase();
+  const DWORD64 copy_end = base + len;
 #if defined(_MSC_VER)
   __try {
 #endif
-  while (n < kHostFrames && ctx.Rip && ctx.Rsp) {
+  while (n < kHostFrames && ctx.Rip && ctx.Rsp >= base && ctx.Rsp + 8 <= copy_end) {
     pc[n++] = ctx.Rip;
     const DWORD64 old_rsp = ctx.Rsp;
     DWORD64 image = 0;
@@ -134,6 +167,7 @@ int Unwind(CONTEXT ctx, uint64_t* pc) {  // nothing allocated: the target thread
     PVOID handler_data = nullptr;
     DWORD64 establisher = 0;
     RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, ctx.Rip, fn, &ctx, &handler_data, &establisher, nullptr);
+    rebase();
     if (ctx.Rsp <= old_rsp) break;  // no progress: a broken frame
   }
 #if defined(_MSC_VER)
@@ -189,11 +223,12 @@ void DumpHostStacks(const std::unordered_map<uint32_t, uint32_t>& guest_of_host)
     if (!h) continue;
     uint64_t pc[kHostFrames];
     int n = 0;
+    static uint8_t stack_copy[kStackCopy];  // watchdog thread only
     if (SuspendThread(h) != DWORD(-1)) {
       CONTEXT ctx{};
-      ctx.ContextFlags = CONTEXT_FULL;
-      if (GetThreadContext(h, &ctx)) n = Unwind(ctx, pc);
+      const size_t len = SnapshotStack(h, &ctx, stack_copy);  // syscalls only while suspended
       ResumeThread(h);
+      if (ctx.Rip) n = Unwind(ctx, stack_copy, len, pc);  // RtlLookupFunctionEntry etc. after resume
     }
     auto g = guest_of_host.find(uint32_t(tid));
     std::string head = fmt::format("gowj_freeze: host {} '{}'", tid, HostThreadName(h));
