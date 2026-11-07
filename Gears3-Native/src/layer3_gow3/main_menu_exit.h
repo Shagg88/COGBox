@@ -15,3 +15,6 @@ void ExitGame();
 
 // Tracks the front end (the file-open observer); call once in OnPostSetup, before the game opens a file.
 void Gow3InstallMainMenuExitIfRequested();
+#include <cstdint>
+void Gow3MediaVerifyTick();       // GitHub #215 (game tick)
+int64_t Gow3MsSinceMediaVerify();  // -1 = never seen
