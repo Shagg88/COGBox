@@ -391,7 +391,7 @@ std::vector<Option> make_options(Game g) {
     // once player 1 exists (Gears 3's --ue3_exec); the reporter's Back-button binding showed the game honours it.
     add(choice("SplitLayout", "Two-player split", Tab::Gameplay, PG, { "Top and bottom (game's)", "Side by side" }, 0,
                "Experimental - how the screen is split for 2 players. Side by side suits ultrawide monitors. 3 and 4 players keep "
-               "the game's own split. Gears 2: press Y in game to switch to side by side.", 325), "splitlayout");
+               "the game's own split. Gears 2: side by side from the start.", 325), "splitlayout");
     // 0.3.5 (GitHub #72, SDK patch 49b): System Link over a LAN or a LAN VPN (Radmin VPN, ZeroTier, Hamachi). Off = the
     // runtime behaves exactly as before ("No Network Connection").
     add(make("SystemLink", "System Link - LAN play (experimental)", Tab::Gameplay, Kind::Bool, PG, 0,
