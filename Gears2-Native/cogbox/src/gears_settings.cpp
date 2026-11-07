@@ -1084,7 +1084,15 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     // PS1 857 (0146 / 0147): frame generation
     const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0 && !env.wine;   // job 521: DirectX 12 only
-    if (fgOn) a.push_back("--gow2_frame_generation=fsr");
+    if (fgOn) {
+        a.push_back("--gow2_frame_generation=fsr");
+        // 237f736 (Shagg: no smearing in Gears 2): generation from the HUD-less colour, with per-object motion; the
+        // character-motion pass reads Gears 2's velocity-pass layout (c5-c12), so it is turned on for Gears 2 only
+        if (cap_exe(env, "gow2_frame_generation_hudless")) a.push_back("--gow2_frame_generation_hudless=true");
+        if (cap_exe(env, "gow2_upscale_object_motion")) a.push_back("--gow2_upscale_object_motion=true");
+        if (g == Game::Gears2 && cap_exe(env, "gow2_upscale_character_motion"))
+            a.push_back("--gow2_upscale_character_motion=true");
+    }
     // PR #43 / to-do 23: real (strict) occlusion queries, a fixed value per game (no player setting any more): on in
     // Gears 2, Gears 3 and Judgment on DirectX 12 and not under Wine / Proton; off in Gears 1 (title-screen freeze, 0.3.0)
     // and for a Gears 2 exe without strict queries. The exe's own default is off.
