@@ -68,6 +68,7 @@
 #include <rex/ui/window.h>
 #include <rex/ui/window_listener.h>
 #include <xenos/dev_tools.h>   // PR #134: XenosInGameMenuIsOpen
+#include <ue3/mouse_carry.h>     // GitHub #228
 
 #include <atomic>
 #include <chrono>
@@ -82,17 +83,13 @@ REXCVAR_DEFINE_BOOL(ue3_mouse_look, false, "COGBox",
                     "dead zone, cap or acceleration). Off: the mouse drives the right stick");
 REXCVAR_DEFINE_DOUBLE(ue3_mouse_scale, 1.0, "COGBox", "Native mouse look: multiplier on the mouse counts")
     .range(0.01, 20.0);
-REXCVAR_DEFINE_DOUBLE(ue3_mouse_min_counts, 2.0, "COGBox",
-                      "Native mouse look (GitHub #115): smaller motion waits, per axis, until it reaches this many counts "
-                      "(or --ue3_mouse_hold_ms), so slow zoomed aiming isn't lost to the engine's whole rotation units. 0 = off")
-    .range(0.0, 20.0);
-// GitHub #175: was 25. A small motion sent on its own after the wait was still under one rotation unit when zoomed and
-// was lost (very slow aiming: each count arrived more than 25 ms after the last, so every count went out alone). 0 = it
-// waits, banked, until enough motion has added up - nothing is thrown away.
-REXCVAR_DEFINE_DOUBLE(ue3_mouse_hold_ms, 0.0, "COGBox",
-                      "Native mouse look (GitHub #115/#175): the longest a small motion waits before it is sent anyway "
-                      "(0 = never: it stays banked until it adds up to --ue3_mouse_min_counts, so none is lost)")
-    .range(0.0, 200.0);
+// GitHub #228: replaces --ue3_mouse_min_counts / --ue3_mouse_hold_ms (#115, #175), which held small motion until it
+// reached 2 / sensitivity counts - one step of the same angle at every sensitivity, 50+ pixels in the Longshot's zoom.
+REXCVAR_DEFINE_DOUBLE(ue3_mouse_step_units, 2.0, "COGBox",
+                      "Native mouse look (GitHub #115/#228): motion goes to the engine in whole steps of this many "
+                      "rotation units (65536 = 360 degrees) and the rest is carried to the next frames, so slow zoomed "
+                      "aiming is neither lost to the engine's whole units nor sent in chunks. 0 = send it as it comes")
+    .range(0.0, 50.0);
 REXCVAR_DEFINE_BOOL(ue3_mouse_invert_y, false, "COGBox", "Native mouse look: invert up / down");
 REXCVAR_DEFINE_BOOL(ue3_mouse_aim_assist, false, "COGBox",
                     "Native mouse look (Gears 1 / 2): keep the aim friction for the mouse too");
@@ -152,12 +149,15 @@ inline std::atomic<bool> g_names_bad{false};
 inline thread_local bool g_injecting = false;
 inline std::mutex g_bank_mutex;
 inline double g_bank_dx = 0, g_bank_dy = 0;
+inline ue3::MouseCarry g_carry_x, g_carry_y;  // GitHub #228: turn under one step, sent later (bank mutex)
 inline std::atomic<int64_t> g_last_mouse{0}, g_last_pad{0};
 
 inline void Drain(double* dx, double* dy) {
   std::lock_guard<std::mutex> l(g_bank_mutex);
   *dx = g_bank_dx; *dy = g_bank_dy;
   g_bank_dx = g_bank_dy = 0;
+  g_carry_x.Clear();
+  g_carry_y.Clear();
 }
 
 class Listener : public rex::ui::WindowInputListener {
@@ -202,46 +202,25 @@ inline bool SafeCall(PPCFunc* fn, PPCContext* c, uint8_t* base) {
   }
 }
 
-// The banked motion of this frame, scaled and signed for the game (y up). False when there is none.
+// The motion of this frame, scaled and signed for the game (y up), in whole steps the engine keeps. False when none.
 // GitHub #115: the engine turns the float turn into whole rotation units every frame (UnrealScript's float-to-int when
-// PlayerController.UpdateRotation fills its Rotator), so a frame's turn under one unit is lost. Zoomed (Longshot,
-// FOVScale = FOV / 90 small) and at a high frame rate, slow aiming moves were all under it: a dead zone. A small
-// motion is now kept banked, per axis, until it reaches --ue3_mouse_min_counts or has waited --ue3_mouse_hold_ms, so it
-// arrives in steps the engine keeps. Ordinary motion (above the minimum) goes out the same frame, as before.
-// GitHub #175: the wait no longer ends by sending the small motion anyway (hold_ms is 0 = no limit by default): that was
-// where slow zoomed aiming was still lost - one count, sent alone after 25 ms, truncated to nothing. The leftover now
-// stays banked and is carried into the next frames until it adds up. The minimum is in counts at --ue3_mouse_scale 1;
-// a lower scale makes each count turn less, so the minimum grows by 1 / scale (a higher scale leaves it as it is).
-inline void DrainReady(double* dx, double* dy) {
-  static int64_t held_x = 0, held_y = 0;  // when each axis' banked motion started waiting (0 = nothing waiting)
-  const double scale = REXCVAR_GET(ue3_mouse_scale);
-  const double min_counts = std::fmin(REXCVAR_GET(ue3_mouse_min_counts) / std::fmin(1.0, std::fmax(scale, 0.01)), 20.0);
-  const double hold_ms = REXCVAR_GET(ue3_mouse_hold_ms);
-  const int64_t hold = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                           std::chrono::duration<double, std::milli>(REXCVAR_GET(ue3_mouse_hold_ms))).count();
-  const int64_t now = Now();
-  std::lock_guard<std::mutex> l(g_bank_mutex);
-  auto take = [&](double& bank, int64_t& held, double* out) {
-    *out = 0;
-    if (bank == 0) { held = 0; return; }
-    if (min_counts <= 0 || std::fabs(bank) >= min_counts || (hold_ms > 0 && held && now - held >= hold)) {
-      *out = bank; bank = 0; held = 0;
-    } else if (!held) {
-      held = now;
-    }
-  };
-  take(g_bank_dx, held_x, dx);
-  take(g_bank_dy, held_y, dy);
-}
+// PlayerController.UpdateRotation fills its Rotator), so a frame's turn under one unit is lost - zoomed, slow aiming was
+// a dead zone. GitHub #228: the fix for that held small motion back until it reached 2 / sensitivity mouse counts
+// (#175), so the smallest move was the same angle at every sensitivity and, with "Mouse turn when aiming: Same",
+// 50+ pixels in the Longshot's 10 degree zoom. Now the turn goes out in steps of --ue3_mouse_step_units rotation
+// units (ue3/mouse_carry.h) and only the part under a step is carried to the next frame.
 inline bool Take(double* x, double* y) {
-  double dx, dy;
-  DrainReady(&dx, &dy);
-  if (dx == 0 && dy == 0) return false;
   const double s = REXCVAR_GET(ue3_mouse_scale);
-  *x = dx * s;
-  *y = -dy * s;
-  if (REXCVAR_GET(ue3_mouse_invert_y)) *y = -*y;
-  return true;
+  const double upv = ue3::MouseUnitsPerValue(0.0);  // this port doesn't note the camera FOV: the narrowest is assumed
+  const double step = REXCVAR_GET(ue3_mouse_step_units);
+  const double sy = REXCVAR_GET(ue3_mouse_invert_y) ? s : -s;
+  {
+    std::lock_guard<std::mutex> l(g_bank_mutex);
+    *x = g_carry_x.Take(g_bank_dx * s, upv, step);
+    *y = g_carry_y.Take(g_bank_dy * sy, upv, step);
+    g_bank_dx = g_bank_dy = 0;
+  }
+  return *x != 0 || *y != 0;
 }
 
 // The names are made when the game starts its engine, after the hooks went in: checked at first use. Wrong ones

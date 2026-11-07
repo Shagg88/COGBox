@@ -388,6 +388,7 @@ if(GN_BUILD_TESTS)
         src/layer0_xenos/achievements_browser_model.cpp
         tests/layer0_achievements_data_test.cpp
         src/layer0_xenos/achievements_data.cpp
+        tests/layer2_mouse_carry_test.cpp
         tests/layer2_main_menu_exit_test.cpp
         src/layer2_ue3/main_menu_exit.cpp
         tests/layer2_package_exports_test.cpp
