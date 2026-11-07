@@ -125,7 +125,7 @@ The scene is 1280x550 × scale; the AO chain and velocity are 640x275, copied as
 - Gears 3 per-object motion: done (s.15).
 - DLSS Performance at a 4K output (s.11): map it to a working mode, or grey it out there. A real Performance at 4K needs a fractional scene scale (1.5): the whole-number scale runs through the render targets, EDRAM addressing, the translated shaders' scale field, the resolves and the texture cache (only the scene-to-output copy already handles any ratio). Ultra Performance into a 5K output, shrunk to 4K, would need 4/3 - not a whole number of pixels.
 - Split-screen: one replacement per frame today; untested.
-- PCSS for the dynamic shadows (idea): find each game's shadow projection shaders (`--gow2_ao_trace_vs`) and substitute a blocker-search / penumbra variant by hash; cheaper first steps are higher shadow-map resolution (the shadow targets stay at 1x under the scale threshold) and a better fixed filter.
+- PCSS for the dynamic shadows: done for Gears 3 (s.16). Gears 2 and Judgment untried (Judgment shares Gears 3's fog shader, so possibly its shadow shaders too).
 
 ## 14. Gears 1 (2026-11-07)
 
@@ -147,3 +147,19 @@ The scene is 1280x550 × scale; the AO chain and velocity are 640x275, copied as
 - **Results [V]:** deck motion 0-1.2 px (0.4.7: up to 1032 px); with the camera turning, ragged blocks 12-64% (30-91%) and vectors over 1000 px on 6.5-9% (up to 12%). Tester: "the mountains ARE fixed"; ch1 and fights on the ground good. Judgment with the switch: every draw matched (0.4.7 left ~120 a sequence unmatched), no wrong matches found, the look unchanged.
 - **Defaults:** off in every game (-1 keeps 0.4.7's rule). Tested in Gears 3 with `--gow2_upscale_object_motion_match=256 --gow2_upscale_depth_at_resolve=true`; turning it on there by default is left to the maintainer.
 - **Not motion:** distant fine detail (window frames) shimmers in motion in Judgment with every AA mode, SMAA worst - detail smaller than a pixel.
+
+## 16. Soft shadows (PCSS) for Gears 3's dynamic shadows (2026-11-07)
+
+- **The game's shadows [V]** (a depth-texture trace of whole frames in ch1, 8, 12; `--gow2_pcss_trace_frames`, Ctrl+Shift+F12 on the developer keys). Characters and moving objects render their shadow into one 1120x688 depth buffer (EDRAM base 1440, pitch 1120 - the EDRAM left after the scene, so the game cannot go bigger: `MaxShadowResolution=1120`, and each ch8 shadow already uses 1110x678), resolved to a k_24_8 texture and reused shadow after shadow. Light-volume boxes (`vs B5A1208D037C2F4F`, stencil) project them with one of three pixel shaders, all the same 9-tap 3x3 filter (soft comparison `saturate((d - receiver) * k + 1)`, k = `PerObjectShadowTransition` = 60, bilinear weights - about two texels wide everywhere):
+  - `3C5E875D17B49A36`: into the light-attenuation buffer (most shadows), shadow map in slot 1, k in c7.z;
+  - `CA3F4A808B09D6F4`, `857CECDEB64A657F`: modulated shadows (they multiply the scene), slot 2, k in c12.z / c14.z, the filter interleaved with the light's falloff.
+  - Not shadows: ch1's swinging submarine light throws a projected texture (light functions `FC367470036D7CFE`, `FE7BAA6C8F8E61B5`) - no depth compare, PCSS does not apply.
+- **`--gow2_pcss=off|high|ultra`** (default off; launcher "Soft shadows", Gears 3 only, experimental). The three shaders are translated through the HLSL path with a text patch (`ApplyPcss` in `shader_cache.cpp`; a shape it does not recognise logs a warning and keeps the game's filter). The game's filter still runs; PCSS replaces its combined result before the fade / modulate maths, from the same receiver depth and shadow coordinate:
+  - a blocker search (gathers of 4 texels) around the receiver; no blocker = lit, all blockers = the search's own average (deep shadow, no filter);
+  - a penumbra from the blocker's depth gap (150 texels per unit, 1 to 12 texels), scaled by the radius;
+  - a spiral filter of that width with the game's own soft comparison, rotated per pixel (DLSS / T2x smooth the noise).
+  - Presets: high = quality high (32 search texels, 32 filter samples), radius 0.35; ultra = quality ultra (64 / 64), radius 0.25, and the shadow maps (pitch 1120 - in ch1, 3, 5, 8, 10, 12, 15, 18, 21 the only target that wide) drawn at the scene's render scale. Distances are in the game's texels, so a scaled map gives finer samples, not a different shape. The game's filter on a scaled map pixelates (#212's sun shadow), which is why scaling belongs to PCSS.
+- **One bytecode kind per pipeline:** the patched shaders are DXIL, the rest DXBC, so a draw pairing a DXBC vertex shader with them takes the vertex shader's DXIL twin (`ShaderCache::GetDxilTwin`, compiled once); the pipeline warm-up leaves such recorded pairs to the draw.
+- **Cost [V]** (ch8, 4K DLAA, RTX 5090, per-draw GPU times over 4 frames, 35 projections a frame): the projection 0.25 ms with the game's filter, 0.66 ms high, 0.81 ms ultra; ultra's scaled shadow maps +0.11 ms. Before the gather search and the early-out: 1.38 / 2.28 ms.
+- **Developer:** F12 the game's filter / PCSS, Shift+F12 view (normal / split: left the game's, right PCSS / coverage), Ctrl+F12 quality, Alt+F12 radius (with `--gow2_ao_debug_keys`; the state reaches the shaders in `xe_sys1.z` / `.w`); `--gow2_pcss_mode`, `--gow2_pcss_quality`, `--gow2_pcss_radius` override a preset; `--gow2_renderer_hlsl_override_dir` replaces any shader's HLSL from files.
+- Tester: dynamic shadows look right in ch1, 8 and 12; preferred over the game's.

@@ -336,6 +336,13 @@ std::vector<Option> make_options(Game g) {
                "characters included. Highly experimental (Shagg 3 Nov): in our tests it cost about 5 ms a frame, roughly halving a "
                "high frame rate - being worked on. Ultra looks in more directions and catches more small details, for a "
                "little more. Game's own: the original. Off: none.", 0), "ao");
+    // Notes/80 s.16 (Gears2-Native): PCSS for Gears 3's dynamic shadows (--gow2_pcss), Gears 3 only, opt-in.
+    add(choice("SoftShadows", "Soft shadows", Tab::Graphics, PG, { "Game's own", "PCSS High (experimental)", "PCSS Ultra (experimental)" }, 0,
+               "Contact-hardening soft shadows (PCSS) for the dynamic shadows of characters and moving objects: sharp where a "
+               "shadow touches what casts it, softer further away, instead of the game's same small blur everywhere. Ultra "
+               "takes more samples and draws the shadow maps at the render resolution for finer edges. Experimental: about "
+               "0.4 ms (High) / 0.7 ms (Ultra) a frame at 4K on an RTX 5090 in our tests, more on slower cards. "
+               "Game's own: the original.", 0), "pcss");
     add(choice("Shake", "Camera shake (roadie run)", Tab::Graphics, PG, { "Original", "Less", "Off" }, 0,
                "The camera shake while roadie-running. Less halves the game's own shake; Off removes it.", 373), "iniedit", "", true);
     add(number("Fov", "Field of view (%)", Tab::Graphics, Kind::Int, PG, 80, 130, 5, 100,
@@ -659,6 +666,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "hordebots") {   // GitHub #89 (Gears 3), #237 (Gears 2)
         if (g != Game::Gears3 && g != Game::Gears2) return no("Gears 2 and 3 only.");
         if (!cap_exe(env, g == Game::Gears2 ? "gow2_horde_bots" : "gow3_horde_bots")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "pcss") {   // notes/80 s.16
+        if (g != Game::Gears3) return no("Gears 3 only.");
+        if (!cap_exe(env, "soft shadows (PCSS) for the dynamic shadows")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "dofscale") {   // GitHub #105
         if (g != Game::Gears3 && g != Game::Judgment) return no("Gears 3 and Judgment only.");
         if (!cap_exe(env, "GitHub #105: surface pitches")) return no(not_yet(gi, "needs its next build"));
@@ -796,6 +806,9 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         base += "\nGears 1: off turns off the game's blur pass, which the bloom uses too - the glow is softer.";
     if (o.id == "AO" && g == Game::Gears1)   // notes/80 s.14
         base += "\nGears 1: the game has no AO of its own - XeGTAO and CACAO add it under the level's lighting, so lit areas keep their light. Off and Game's own are the same here.";
+    if (o.id == "SoftShadows")   // notes/80 s.16
+        base += "\nUltra's finer shadow maps follow the scene's render size: with DLSS Ultra Performance the scene is drawn at "
+                "720p and Ultra only adds samples; with DLAA or Quality it pays off.";
     if (o.id == "AO" && g == Game::Gears3)   // notes/80 s.9
         base += "\nGears 3: most levels have their shading baked in and no real-time AO - XeGTAO adds a gentle contact shading there and replaces the game's own where a level has it.";
     if (o.id == "AAMode") {   // PS1 345
@@ -1330,6 +1343,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             }
         }
     }
+    // Notes/80 s.16: PCSS presets (Gears 3)
+    if (avail("SoftShadows") && s.i("SoftShadows") >= 1) a.push_back(s.i("SoftShadows") == 2 ? "--gow2_pcss=ultra" : "--gow2_pcss=high");
     // PS1 858: 16x anisotropic
     if (on("Aniso")) a.push_back(gi == 0 ? "--gow2_patch_aniso16=true" : gi == 1 ? "--gow3_patch_aniso16=true" : isG1 ? "--gow1_aniso16=true" : "--gowj_aniso16=true");
     // PS1 860-864: texture pool (-1 = the port's own default; Judgment then 200)
