@@ -4526,11 +4526,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint64_t res_cands = 0, res_key = 0, res_source = 0, res_size = 0, res_fmt = 0;  // resolves after a take; rejects
     uint64_t fb_match = 0, fb_scaled = 0, chain_fail = 0;  // the front buffer had a HUD-less resolve; scale mismatch
   } hl_st_;
+  uint32_t hl_frame_logged_ = 0, hl_frame_takes_ = 0;  // this frame's geometry lines / target copies
   void HlStagesLog() {
     const HlStages& c = hl_st_;
     REXLOG_INFO("gow2_frame_generation_hudless: patch 0148 stages: frames {} with scene {}; draws after scene {} (msaa "
-                "{}, narrow {}, not quad {}, not covering {}, blended {}, depth writes {}); armed {}, draws after arm "
-                "{} (other target {}), taken {} (copy failed {}); resolves after take {} (other target {}, upscaler "
+                "{}; each counted alone: narrow {}, not quad {}, not covering {}, blended {}, depth writes {}); opaque "
+                "full-screen passes {}, takes started {} (refused by the 4/frame cap {}), taken {} (copy failed {}); resolves after take {} (other target {}, upscaler "
                 "source {}, size {}, format {}), replayed {}; front buffer matched {} (scale mismatch {}); images {} "
                 "(chain failed {})",
                 c.frames, c.scene_frames, c.draws, c.msaa, c.narrow, c.no_quad, c.no_cover, c.blended, c.depth, c.arms,
@@ -5325,7 +5326,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     rr::upscale::Mat4 now, prev;
     bool has_prev = false;
   };
-  static constexpr uint32_t kOmMaxObjects = 2047, kOmMaxEntries = 8192, kOmMovingFrames = 60;
+  static constexpr uint32_t kOmMaxObjects = 4095, kOmMaxEntries = 8192, kOmMovingFrames = 60;
   bool om_on_ = false, om_ids_frame_ = false;
   gpu::ShaderHandle om_ps_hlsl_ = 0, om_ps_dxbc_ = 0;
   gpu::PipelineHandle om_cs_ = 0;
@@ -5842,24 +5843,46 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const bool quad = prim == 0x08 || (index_count > 0 && index_count <= 6);  // review: a non-indexed draw (0) is not a quad
     const bool covers = ps.scissor.x == 0 && ps.scissor.y == 0 && uint64_t(ps.scissor.width) * 10 >= uint64_t(c->width) * 9 &&
                         uint64_t(ps.scissor.height) * 10 >= uint64_t(c->height) * 9;
-    if (c->guest_width < kSceneMinWidth) ++hl_st_.narrow;
-    else if (!quad) ++hl_st_.no_quad;
-    else if (!covers) ++hl_st_.no_cover;
-    else if (blends) ++hl_st_.blended;
-    else if (depth_writes) ++hl_st_.depth;
-    if (hl_armed_ && !hl_taken_) {
-      ++hl_st_.after_arm;
-      if (!(c->key == hl_key_)) ++hl_st_.other_key;
+    const bool wide = c->guest_width >= kSceneMinWidth;
+    // Each property counted on its own (864fac9 counted them as a chain: 'blended' was only after quad and covering).
+    if (!wide) ++hl_st_.narrow;
+    if (!quad) ++hl_st_.no_quad;
+    if (!covers) ++hl_st_.no_cover;
+    if (blends) ++hl_st_.blended;
+    if (depth_writes) ++hl_st_.depth;
+    // The real geometry, for the first 20 scene frames (6 wide-target draws each): what the detector sees.
+    if (wide && hl_st_.scene_frames < 20 && hl_frame_logged_ < 6) {
+      ++hl_frame_logged_;
+      REXLOG_INFO("gow2_frame_generation_hudless: frame {} draw after scene: prim {:02X} count {} scissor {},{} {}x{} "
+                  "target {}x{} (guest {}x{}) format {} tiles {} class {} pitch {}; blend {} depth writes {} -> {}",
+                  frame_, prim, index_count, ps.scissor.x, ps.scissor.y, ps.scissor.width, ps.scissor.height, c->width,
+                  c->height, c->guest_width, c->guest_height, uint32_t(c->format), c->key.base_tiles,
+                  c->key.storage_class, c->key.pitch_pixels, blends, depth_writes,
+                  !blends && !depth_writes && quad && covers ? "opaque full-screen pass (re-arm)"
+                  : blends && !depth_writes ? (hl_taken_ && c->key == hl_key_ ? "blended, already taken" : "blended: take")
+                                            : "ignored");
     }
-    if (!blends && !depth_writes && quad && covers && c->guest_width >= kSceneMinWidth) {  // a post pass: (re)arm
+    if (!wide) return;
+    // UE3 draws its HUD / Canvas / Scaleform alpha-blended with no depth writes, after the last post pass. An opaque
+    // full-screen pass (the post chain) over the taken target means the take was too early: take again at the next
+    // blended draw. A blended draw into another wide target moves the take there (the last target is the one shown; the
+    // resolve replay only uses the take of the target it resolves). At most 4 copies a frame.
+    if (!blends && !depth_writes && quad && covers) {
       ++hl_st_.arms;
-      hl_armed_ = true;
-      hl_taken_ = false;
-      hl_key_ = c->key;
+      if (hl_taken_ && c->key == hl_key_) hl_taken_ = false;
       return;
     }
-    if (!hl_armed_ || hl_taken_ || !blends || depth_writes || !(c->key == hl_key_)) return;
-    hl_taken_ = true;  // one try per arming
+    if (!blends || depth_writes) return;
+    if (hl_taken_ && c->key == hl_key_) return;
+    if (hl_frame_takes_ >= 4) {
+      ++hl_st_.other_key;  // counted as 'other target' (a take refused by the cap)
+      return;
+    }
+    ++hl_st_.after_arm;  // here: blended draws that start a take
+    ++hl_frame_takes_;
+    hl_key_ = c->key;
+    hl_armed_ = true;
+    hl_taken_ = true;
     if (!hl_snap_ || hl_snap_w_ != c->width || hl_snap_h_ != c->height || hl_snap_format_ != c->format) {
       if (hl_snap_) backend_->DestroyTexture(hl_snap_), hl_snap_ = 0;
       gpu::TextureDesc td;
@@ -6853,6 +6876,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (hl_st_.frames == 60 || hl_st_.frames % 600 == 0) HlStagesLog();
     }
     up_scene_done_ = false;
+    hl_frame_logged_ = hl_frame_takes_ = 0;
     hl_armed_ = hl_taken_ = false;  // patch 0148 (hl_sources_ is cleared by RequestDisplay, which runs after this)
     hl_format_ = fg_wanted_ && !presenter_vulkan_ ? XenosFrameGenerationHudlessFormat() : 0u;
     up_scene_copy_.EndFrame();  // notes/80 s.11
@@ -6939,10 +6963,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         REXLOG_INFO("gow2_upscaler: object motion: per frame {:.1f} scene draws tracked, {:.1f} matched to last frame; "
                     "per-object motion {:.1f} draws/frame (on {} frames; {:.1f} repeat passes); camera-only: {:.1f} "
                     "static, {:.1f} not matched, table full {}, pipeline not ready {}, other size {}, depth target changed "
-                    "{}, over {} entries {}; {} moving identities (found moving {:.1f}/frame)",
+                    "{}, over {} entries {} (ID table {} objects); {} moving identities (found moving {:.1f}/frame)",
                     om_tracked_ / f, om_matched_ / f, om_drawn_ / f, om_frames_, om_dedup_ / f, om_static_ / f,
                     (om_tracked_ - om_matched_) / f, om_full_, om_pending_, om_size_miss_, om_key_miss_, kOmMaxEntries,
-                    om_overflow_, om_moving_.size(), om_moving_found_ / f);
+                    om_overflow_, kOmMaxObjects, om_moving_.size(), om_moving_found_ / f);
         om_tracked_ = om_matched_ = om_drawn_ = om_dedup_ = om_static_ = om_full_ = om_pending_ = om_overflow_ = 0;
         om_key_miss_ = om_frames_ = om_moving_found_ = om_size_miss_ = 0;
       }
