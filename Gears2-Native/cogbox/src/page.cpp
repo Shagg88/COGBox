@@ -572,7 +572,9 @@ static void option_row(App &a, int g, const gs::Option &o)
             for (int i = 0; i < (int)items.size(); i++) ord.push_back(i);
             if (o.id == "Resolution" && items.size() == 6) ord = { 0, 5, 1, 2, 3, 4 };
             for (int i : ord) {
+                if (o.id == "FrameGen" && i != idx && gs::framegen_choice_hidden(i, a.env[g])) continue;   // NVIDIA DLSS FG: only with its DLLs
                 gs::Availability ca = gs::choice_available(o, G, i);
+                if (ca.ok && o.id == "FrameGen") ca = gs::framegen_choice_available(i, a.env[g]);
                 // 0.3.0 (Shagg 14:18): FSR / DLSS / XeSS are DirectX 12 only - greyed while Vulkan is the Graphics API
                 if (ca.ok && o.id == "AAMode" && i >= 2 && i <= 4 && a.cur[g].i("Api") == 1) {   // 5 SMAA T2x: both APIs
                     ca.ok = false;
@@ -801,9 +803,9 @@ static AutoPlan auto_plan(App &a, int g)
     const int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     // Render resolution: 0 = 1x, 1 = 2x, 4 = match my monitor, 5 = 1080p (720p upscaled)
     int res = p.tier == 2 ? 4 : p.tier == 1 ? (sh <= 1440 ? 4 : 1) : (sw >= 1920 ? 5 : 0);
-    // Frame rate limit (FrameCap indices): 0 = 30, 1 = 45, 2 = 60, 4 = 120. Job 638: the Steam Deck gets 45.
-    int fps = p.tier == 2 ? (hz >= 115 ? 4 : 2) : p.tier == 1 ? (hz >= 115 ? 4 : 2) : (deck ? 1 : 2);
-    if (p.tier == 1 && res == 4 && sh > 1080) fps = 2;   // mid cards at native 1440p: 60
+    // Frame rate limit (FrameCap indices): 0 = 30, 2 = 45, 3 = 60, 5 = 120. Job 638: the Steam Deck gets 45.
+    int fps = p.tier == 2 ? (hz >= 115 ? 5 : 3) : p.tier == 1 ? (hz >= 115 ? 5 : 3) : (deck ? 2 : 3);
+    if (p.tier == 1 && res == 4 && sh > 1080) fps = 3;   // mid cards at native 1440p: 60
     int pool = p.vramMB >= 8000 ? 2 : 1;                   // Large (256 MB) / Standard
     p.set = { { "AAMode", 1 }, { "Resolution", res }, { "FrameCap", fps }, { "Vsync", 1 }, { "Pool", pool },
               { "Aniso", p.tier >= 1 ? 1 : 0 }, { "Trilinear", 1 }, { "FrameGen", 0 }, { "Preset", 3 } };

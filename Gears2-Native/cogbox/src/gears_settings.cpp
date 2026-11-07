@@ -88,10 +88,11 @@ const char* const k_mapsGJ[18] = { "SP_00_Museum_P", "SP_01_University_P", "SP_0
     "SP_05_CourthouseBoss_P", "SPE_E1_P", "SPE_E2_P", "SPE_E2oilrig_P", "SPE_E3_P", "SPE_E3_Outro_P", "SPE_E4_P", "SPE_E5_P" };
 
 const char* const k_aaNames[6] = { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS", "SMAA T2x" };   // PS1 150; 5: notes/80 s.7
-// Job 638 (Shagg: "90 144 165 and maybe 45 for the Steam Deck"): saved as "FrameCap", in order; the old "Fps" (30 /
-// 60 / 120 / Unlimited) is read once and moved over (Store::load_ini).
-const int k_fpsCaps[8] = { 0, 45, 60, 90, 120, 144, 165, -1 };                               // PS1 159
-const int k_fpsCapCount = 8;
+// Job 638: saved as "FrameCap", in order; the old "Fps" (30 / 60 / 120 / Unlimited) is read once and moved over
+// (Store::load_ini). Shagg: 30, 40, 45, 60, 90, 120, 144, 165, 180, Unlimited (list 2; 40 / 45 for the Steam Deck; list 1 had no 40 / 180 -
+// files without "FrameCapList=2" are moved over once in Store::load_ini).
+const int k_fpsCaps[10] = { 0, 40, 45, 60, 90, 120, 144, 165, 180, -1 };                               // PS1 159
+const int k_fpsCapCount = 10;
 const char* const k_drawScale[3] = { "1", "1.5", "2" };                                      // PS1 163
 const char* const k_shakeValue[3] = { "", "*=0.5", "=0" };   // 0.2.0 (#12): the factor scales the shake - Less halves the game's own, Off is 0                                    // PS1 167
 const int k_poolMb[4] = { 0, -1, 256, 320 };                                                 // PS1 171
@@ -179,8 +180,8 @@ std::vector<Option> make_options(Game g) {
              "refresh rate (half of it with frame generation). Off = frames are shown at once (lowest lag, may tear).", 344), "vsync");
     // Frame rate limit: no PS1 tooltip; text from 59-how-to-play ("The game itself asks for 30 fps").
     add(choice("FrameCap", "Frame rate limit", Tab::Display, PG,
-               { "30 (original)", "45", "60", "90", "120", "144", "165", "Unlimited" }, 0,
-               "The game itself asks for 30 frames per second, as on the console. 60 / 120 lift the limit to that; Unlimited "
+               { "30 (original)", "40", "45", "60", "90", "120", "144", "165", "180", "Unlimited" }, 0,
+               "The game itself asks for 30 frames per second, as on the console. 40 to 180 lift the limit to that (40 / 45 are for the Steam Deck: its LCD at 40 Hz, half of the OLED's 90 Hz); Unlimited "
                "removes it. With V-Sync on, a limit above your monitor's refresh rate is lowered to the refresh rate. The quality "
                "presets leave it as it is.", 341), "framecap", "", false);   // 0.4.6: not part of the presets
     add(choice("FpsMode", "FPS counter", Tab::Display, OWN, { "Off", "Bar at the top", "Bar at the bottom", "Game's own (column)" }, 0,
@@ -267,10 +268,17 @@ std::vector<Option> make_options(Game g) {
                "With FSR, DLSS or XeSS: draw the 3D scene at a lower resolution and let the upscaler fill in the detail - more "
                "frames per second, a little softer. HUD and menus stay at the full resolution.\nPerformance needs render "
                "resolution 2x (1440p) or 4x; Quality and Ultra performance need 3x (4K).", 351), "scenescale", "AAMode>=2");
-    add(choice("FrameGen", "Frame generation (highly experimental)", Tab::Graphics, SH, { "Off", "AMD FSR frame generation" }, 0,
+    // NVIDIA DLSS frame generation (Streamline, renderer/dlss_framegen.cpp): choices 2-5, listed only when the exe has
+    // it and NVIDIA's DLLs are next to it (framegen_choice_hidden); greyed without an RTX 40 / 50 card
+    add(choice("FrameGen", "Frame generation (highly experimental)", Tab::Graphics, SH,
+               { "Off", "AMD FSR frame generation", "NVIDIA DLSS frame generation 2x (RTX 40/50, experimental)",
+                 "NVIDIA DLSS frame generation 3x (RTX 50, experimental)", "NVIDIA DLSS frame generation 4x (RTX 50, experimental)",
+                 "NVIDIA DLSS frame generation dynamic (RTX 50, experimental)" }, 0,
                "Highly experimental - it's rough for now. Shows a generated frame between each two the game draws: smoother motion on a fast monitor, about one frame more "
                "input lag. Works best when the game already runs at 60 fps or more. Any DirectX 12 graphics card.\nEarly version: "
-               "the HUD and characters' own movement can smear a little in the in-between frames.", 356), "framegen");
+               "the HUD and characters' own movement can smear a little in the in-between frames.\nNVIDIA DLSS frame generation "
+               "(RTX 40/50 only, experimental): 2x, 3x or 4x the frames the game draws (3x / 4x / dynamic: RTX 50); needs NVIDIA's "
+               "Streamline files next to the game. If it can't run, the game uses AMD's instead (or none).", 356), "framegen");
     // Aniso: no PS1 tooltip; text from 59-how-to-play ("16x anisotropic filtering").
     add(make("Aniso", "Sharper textures (16x anisotropic)", Tab::Graphics, Kind::Bool, OWN, g == Game::Gears2 ? 1 : 0,
              "16x anisotropic filtering: textures seen at an angle (floors, walls) stay sharp.", 357), "aniso", "", true);
@@ -493,6 +501,34 @@ bool gears1_lang(int idx) {
 
 }  // namespace
 
+// NVIDIA DLSS frame generation: the exe has --gow2_dlss_fg_mode and NVIDIA's Streamline files are next to it (never
+// shipped by us - the player copies them from NVIDIA's Streamline SDK, github.com/NVIDIA-RTX/Streamline, bin/x64)
+bool dlss_fg_present(const Environment& env) {
+    if (!cap_exe(env, "gow2_dlss_fg_mode") && !cap_exe(env, "NVIDIA DLSS frame generation multiplier")) return false;
+    static const char* const k_files[] = { "sl.interposer.dll", "sl.common.dll", "sl.dlss_g.dll", "sl.reflex.dll",
+                                           "sl.pcl.dll", "nvngx_dlssg.dll" };
+    for (const char* f : k_files) if (!cap_file(env, f)) return false;
+    return true;
+}
+
+bool framegen_choice_hidden(int index, const Environment& env) { return index >= 2 && !dlss_fg_present(env); }
+
+Availability framegen_choice_available(int index, const Environment& env) {
+    Availability a;
+    if (index == 1 && !cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll")) {
+        a.ok = false;
+        a.why = "This build has no AMD frame generation files.";
+    } else if (index >= 2) {
+        const std::string gpu = gpu_main(env);
+        const bool rtx50 = icase_search(gpu, "RTX ?50[0-9]0|RTX PRO [0-9]+ Blackwell");
+        const bool rtx40 = icase_search(gpu, "RTX ?40[0-9]0|RTX [0-9]+ Ada");
+        if (!dlss_fg_present(env)) { a.ok = false; a.why = "Needs NVIDIA's Streamline files next to the game."; }
+        else if (index == 2 && !rtx40 && !rtx50) { a.ok = false; a.why = "Needs an NVIDIA RTX 40 or 50 series graphics card."; }
+        else if (index >= 3 && !rtx50) { a.ok = false; a.why = "Needs an NVIDIA RTX 50 series graphics card."; }
+    }
+    return a;
+}
+
 // ---- The model ------------------------------------------------------------------------------------------------------
 const std::vector<Option>& options(Game g) {
     static const std::vector<Option> all[kGameCount] = { make_options(Game::Gears2), make_options(Game::Gears3), make_options(Game::Judgment),
@@ -600,7 +636,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (!cap_exe(env, "gow2_upscale_mode")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "framegen") {
         if (!cap_exe(env, "gow2_frame_generation")) return no(not_yet(gi, "needs its next build"));
-        if (!cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll")) return no(not_yet(gi, "this build has no AMD frame generation files"));
+        if (!cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll") && !dlss_fg_present(env))
+            return no(not_yet(gi, "this build has no AMD or NVIDIA frame generation files"));
     } else if (f == "mute") {
         if (!cap_exe(env, std::string(k_procNames[gi]) + "_mute_unfocused")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "ao") {   // notes/80: Gears 2 and Gears 3 (s.9); notes/81: Judgment, with the fog anchor its exe sets
@@ -732,8 +769,8 @@ void apply_preset(Settings& s, int p) {
     struct P { int res, fps, aa; bool aniso, tri, mip; int pool, draw; bool blur, dof, flare; int shake, fov; };
     static const P v[3] = {        // PS1 579-581
         { 0, 0, 0, false, false, false, 0, 0, true, true, true, 0, 100 },
-        { 1, 2, 1, true, true, true, 1, 1, true, true, true, 0, 100 },   // fps: FrameCap indices (2 = 60, 4 = 120)
-        { 4, 4, 1, true, true, true, 2, 2, true, true, true, 0, 100 },
+        { 1, 3, 1, true, true, true, 1, 1, true, true, true, 0, 100 },   // fps: FrameCap indices (3 = 60, 5 = 120)
+        { 4, 5, 1, true, true, true, 2, 2, true, true, true, 0, 100 },
     };
     const P& x = v[p];
     s.set("Preset", p);
@@ -838,9 +875,15 @@ void Store::commit(Game g, const Settings& s, const Environment& env) {   // PS1
     top["AA"] = s.i("AAMode") == 1 ? 1 : 0;   // PS1 764
 }
 
-// Job 638: the old "Fps" index (0 = 30, 1 = 60, 2 = 120, 3 = Unlimited) as a FrameCap index.
+// Job 638: the old "Fps" index (0 = 30, 1 = 60, 2 = 120, 3 = Unlimited) as a FrameCap index (list 2).
+// FrameCap list 1 { 30, 45, 60, 90, 120, 144, 165, Unlimited } -> list 2 { 30, 40, 45, 60, 90, 120, 144, 165, 180, Unlimited }.
+static double old_cap_list1_to_2(double x) {
+    static const int map[8] = { 0, 2, 3, 4, 5, 6, 7, 9 };
+    return map[std::max(0, std::min(7, static_cast<int>(x)))];
+}
+
 static double old_fps_to_cap(double x) {
-    static const int map[4] = { 0, 2, 4, 7 };
+    static const int map[4] = { 0, 3, 5, 9 };
     return map[std::max(0, std::min(3, static_cast<int>(x)))];
 }
 
@@ -850,6 +893,9 @@ bool Store::load_ini(const std::string& text) {
     std::istringstream in(text);
     std::string line, section;
     bool any = false;
+    // FrameCap list version per section (0 = [General]); only FrameCap values read from a file without
+    // "FrameCapList=2" are moved over, once, after reading (values from the old "Fps" are already list 2).
+    bool capList2[kGameCount + 1] = {}, capRead[kGameCount + 1] = {};
     // The PS1's flat keys (launcher-settings.json converted to key=value) are read in [General] too.
     struct Legacy { const char* key; int game; const char* id; };
     static const Legacy legacy[] = {
@@ -886,6 +932,8 @@ bool Store::load_ini(const std::string& text) {
                 any = true;
                 continue;
             }
+            if (key == "FrameCapList") { capList2[0] = x >= 2; continue; }
+            if (key == "FrameCap") { top["FrameCap"] = x; capRead[0] = true; any = true; continue; }
             if (key == "Fps") {   // job 638: the old 4-step frame rate limit (the shared value)
                 top["FrameCap"] = old_fps_to_cap(x);
                 any = true;
@@ -908,6 +956,8 @@ bool Store::load_ini(const std::string& text) {
                 any = true;
                 continue;
             }
+            if (key == "FrameCapList") { capList2[gsec + 1] = x >= 2; continue; }
+            if (key == "FrameCap") { per[gsec]["FrameCap"] = x; capRead[gsec + 1] = true; any = true; continue; }
             if (key == "Fps") {   // job 638: the old 4-step frame rate limit of this game
                 per[gsec]["FrameCap"] = old_fps_to_cap(x);
                 any = true;
@@ -919,6 +969,9 @@ bool Store::load_ini(const std::string& text) {
             any = true;
         }
     }
+    if (capRead[0] && !capList2[0]) top["FrameCap"] = old_cap_list1_to_2(top["FrameCap"]);
+    for (int g = 0; g < kGameCount; ++g)
+        if (capRead[g + 1] && !capList2[g + 1]) per[g]["FrameCap"] = old_cap_list1_to_2(per[g]["FrameCap"]);
     migrate();
     return any;
 }
@@ -932,10 +985,10 @@ std::string Store::save_ini() const {
     auto get = [](const std::map<std::string, double>& m, const Option& o) { auto it = m.find(o.id); return it == m.end() ? o.def : it->second; };
     std::ostringstream out;
     out << "; COGBox - Gears of War settings. Boxes: true / false; lists: the position from 0.\n";
-    out << "[General]\nGame=" << last_game << "\n";
+    out << "[General]\nGame=" << last_game << "\nFrameCapList=2\n";
     for (const Option& o : options(Game::Gears2)) if (o.scope != Scope::GameOwn) out << o.id << "=" << val(o, get(top, o)) << "\n";
     for (int g = 0; g < kGameCount; ++g) {
-        out << "\n[" << section_name(g) << "]\n";
+        out << "\n[" << section_name(g) << "]\nFrameCapList=2\n";
         for (const Option& o : options(static_cast<Game>(g))) {
             if (o.scope == Scope::GameOwn) out << o.id << "=" << val(o, get(own[g], o)) << "\n";
             else if (o.scope == Scope::PerGame && per[g].count(o.id)) out << o.id << "=" << val(o, per[g].at(o.id)) << "\n";
@@ -1083,9 +1136,24 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
     }
     // PS1 857 (0146 / 0147): frame generation
-    const bool fgOn = avail("FrameGen") && s.i("FrameGen") == 1 && s.i("Api") == 0 && !env.wine;   // job 521: DirectX 12 only
+    // FrameGen: 1 AMD FSR; 2-5 NVIDIA DLSS 2x / 3x / 4x / dynamic (falls back to FSR, or off, when not available here)
+    int fgChoice = avail("FrameGen") && s.i("Api") == 0 && !env.wine ? s.i("FrameGen") : 0;   // job 521: DirectX 12 only
+    if (fgChoice >= 2 && !framegen_choice_available(fgChoice, env).ok) {
+        fgChoice = cap_file(env, "amd_fidelityfx_framegeneration_dx12.dll") ? 1 : 0;
+        notes.push_back(std::string("launcher: NVIDIA DLSS frame generation is not available here -> ") + (fgChoice ? "AMD FSR frame generation" : "off"));
+    }
+    if (fgChoice == 1 && !framegen_choice_available(1, env).ok) fgChoice = 0;
+    const bool fgOn = fgChoice >= 1;
+    // frames on screen per frame drawn (the frame-rate cap below); dynamic varies - counted as 2x
+    const int fgFactor = fgChoice == 3 ? 3 : fgChoice == 4 ? 4 : 2;
     if (fgOn) {
-        a.push_back("--gow2_frame_generation=fsr");
+        if (fgChoice >= 2) {
+            static const char* const k_dlssMode[4] = { "2x", "3x", "4x", "dynamic" };
+            a.push_back("--gow2_frame_generation=dlss");
+            a.push_back(std::string("--gow2_dlss_fg_mode=") + k_dlssMode[fgChoice - 2]);
+        } else {
+            a.push_back("--gow2_frame_generation=fsr");
+        }
         // 237f736 (Shagg: no smearing in Gears 2): generation from the HUD-less colour, with per-object motion; the
         // character-motion pass reads Gears 2's velocity-pass layout (c5-c12), so it is turned on for Gears 2 only
         if (cap_exe(env, "gow2_frame_generation_hudless")) a.push_back("--gow2_frame_generation_hudless=true");
@@ -1484,11 +1552,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             notes.push_back("launcher: vsync on; " + env.monitor_device + " at " + std::to_string(hz) + " Hz (0 = unknown)" +
                             (fgOn ? ", frame generation on" : "") + " -> frame-rate cap " + std::to_string(cap));
         }
-        // Shagg 7 Nov: with frame generation the cap is what's ON SCREEN - the game renders half of it (120 -> 60 + 60 generated)
+        // Shagg 7 Nov: with frame generation the cap is what's ON SCREEN - the game renders half of it (120 -> 60 + 60 generated);
+        // a third / a quarter with DLSS 3x / 4x
         if (fgOn && cap > 0) {
-            cap = std::max(1, cap / 2);
+            cap = std::max(1, cap / fgFactor);
             notes.push_back("launcher: frame generation on -> the game renders at most " + std::to_string(cap) + " fps (" +
-                            std::to_string(cap * 2) + " on screen)");
+                            std::to_string(cap * fgFactor) + " on screen)");
         }
         if (vsync) {
             a.push_back("--d3d12_present_vsync=true");
