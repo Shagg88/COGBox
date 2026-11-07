@@ -853,6 +853,12 @@ REXCVAR_DEFINE_STRING(gow2_velocity_scan_frames, "", "Gears2",
                       "Diagnostic (#147 / #150): frames 'first-last' in which draws into k_16_16 / k_16_16_FLOAT or half-size "
                       "targets are logged once per shader pair with the VS constants they read - finds a game's velocity "
                       "pass for the upscalers' character motion. Empty = off");
+REXCVAR_DEFINE_STRING(gow2_skin_scan_frames, "", "Gears2",
+                      "Diagnostic (Gears 1 character motion): frames 'first-last' in which each distinct scene draw "
+                      "(VS, PS, index count) into the upscalers' depth is logged once with the VS constant ranges it "
+                      "reads (a bone palette shows as a long range), its vertex / index addresses and stride, and again "
+                      "when a later frame draws it from another vertex address (CPU / memexport-skinned data). Also "
+                      "logs memexport draws in those frames. Needs an upscaler or frame generation. Empty = off");
 REXCVAR_DEFINE_BOOL(gow2_upscale_depth_at_resolve, false, "Gears2",
                     "Notes/80 s.6: the upscalers' depth is copied at the game's scene depth resolve (Gears 2 clears that "
                     "depth before the scene colour resolve - on there by gow2_app.h); false: read at the scene colour "
@@ -1680,6 +1686,11 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         vel_scan_first_ = a;
         vel_scan_last_ = z;
         REXLOG_INFO("gow2_velocity_scan: frames {}-{}", a, z);
+      }
+      if (std::sscanf(REXCVAR_GET(gow2_skin_scan_frames).c_str(), "%llu-%llu", &a, &z) == 2 && a >= 1 && a <= z) {
+        skin_scan_first_ = a;
+        skin_scan_last_ = z;
+        REXLOG_INFO("gow2_skin_scan: frames {}-{}", a, z);
       }
     }
     stencil_transfer_bits_ = REXCVAR_GET(gow2_renderer_stencil_transfer_bits) != 0;
@@ -5209,6 +5220,51 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                 index_count, reads.empty() ? std::string("none") : reads, affine2 ? "yes" : "no",
                 vel_scan_lines_ == 600 ? " - last line (gow2_velocity_scan_frames)" : "");
   }
+  // Gears 1 character motion research (--gow2_skin_scan_frames): see the cvar.
+  uint64_t skin_scan_first_ = 0, skin_scan_last_ = 0;
+  uint32_t skin_scan_lines_ = 0;
+  std::unordered_map<uint64_t, uint32_t> skin_scan_vb_;  // draw (VS, PS, count) -> its vertex address when first logged
+  std::unordered_set<uint64_t> skin_scan_moved_;
+  static std::string ConstRanges(const rr::GuestShader& vsg, uint32_t* longest) {
+    std::string reads;
+    *longest = 0;
+    for (uint32_t c = 0; c < 256;) {
+      if (!vsg.Reads(c)) { ++c; continue; }
+      uint32_t e = c;
+      while (e + 1 < 256 && vsg.Reads(e + 1)) ++e;
+      *longest = std::max(*longest, e - c + 1);
+      reads += (reads.empty() ? "c" : ",c") + std::to_string(c) + (e > c ? "-" + std::to_string(e) : std::string());
+      c = e + 1;
+    }
+    return reads.empty() ? std::string("none") : reads;
+  }
+  void SkinScan(const uint32_t* r, const rr::GuestShader& vsg, uint64_t vs_hash, uint64_t ps_hash, uint32_t ib_addr,
+                uint32_t index_count, const char* what) {
+    const uint64_t f = frame_ + 1;
+    if (f < skin_scan_first_ || f > skin_scan_last_ || skin_scan_lines_ >= 800) return;
+    uint32_t vb = 0, vb_dw = 0, fetches = 0;
+    for (uint32_t i = 0; i < 96; ++i)
+      if ((vsg.vfetch_constants[i >> 5] >> (i & 31)) & 1) {
+        ++fetches;
+        if (!vb) vb = r[kRegFetchConst + 2 * i] & 0x1FFFFFFCu, vb_dw = (r[kRegFetchConst + 2 * i + 1] >> 2) & 0xFFFFFFu;
+      }
+    const uint64_t key = (vs_hash * 0x9E3779B97F4A7C15ull ^ ps_hash) + index_count;
+    const auto it = skin_scan_vb_.find(key);
+    if (it == skin_scan_vb_.end()) {
+      skin_scan_vb_.emplace(key, vb);
+      uint32_t longest = 0;
+      const std::string reads = ConstRanges(vsg, &longest);
+      ++skin_scan_lines_;
+      REXLOG_INFO("gow2_skin_scan: frame {} {} vs {:016X} ps {:016X} indices {} vb {:08X} ({} dwords, {} fetch "
+                  "constant(s)) ib {:08X} | VS reads {} (longest run {}){}",
+                  f, what, vs_hash, ps_hash, index_count, vb, vb_dw, fetches, ib_addr, reads, longest,
+                  longest >= 12 ? " - palette-sized" : "");
+    } else if (it->second != vb && skin_scan_moved_.insert(key).second) {
+      ++skin_scan_lines_;
+      REXLOG_INFO("gow2_skin_scan: frame {} vs {:016X} ps {:016X} indices {}: vertex address {:08X} -> {:08X} (data "
+                  "rewritten each frame: CPU / memexport skinning)", f, vs_hash, ps_hash, index_count, it->second, vb);
+    }
+  }
   void VelocityDraw(const uint32_t* r, const rr::GuestShader& vsg, const rr::RenderTargetKey& k0, uint32_t index_count) {
     if (!vel_motion_pipe_ || !up_camera_ || k0.storage_class != rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16))) return;
     for (uint32_t k = 0; k < 13; ++k)  // the camera (c0-c3) and both object-to-world matrices (c5-c12)
@@ -5359,6 +5415,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                      uint64_t vs_hash, uint64_t ps_hash, DrawAgain&& draw_again) {
     if (!target || !target->texture || target->key.msaa != 0 || !(target->key == up_depth_key_)) return;
     if (!d.depth_enable || !d.depth_write || d.samples != 1 || v.xy_divided_by_w || v.clip_disabled) return;
+    if (skin_scan_last_) SkinScan(r, vsg, vs_hash, ps_hash, ib ? (ib->guest_base & 0x1FFFFFFFu) : 0u, index_count, "scene");
     if ((needs_ps && psg && psg->writes_depth) || vsg.memexport || occ_open_.open || up_vp_base_ < 0) return;
     const uint32_t cb = uint32_t(up_vp_base_);
     if (!(vsg.Reads(cb) && vsg.Reads(cb + 1) && vsg.Reads(cb + 2) && vsg.Reads(cb + 3))) return;
@@ -8768,6 +8825,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (export_shader) backend_->SetGuestWritable(false);
     if (exports) {
       ++stats_.memexport_draws;
+      if (skin_scan_last_) SkinScan(r, vsg, vs_hash, needs_ps ? ps_hash : 0, 0, index_count, "memexport");
       MarkExports(r, vsg);
       if (needs_ps && psg->memexport) ++stats_.memexport_ps_draws;
     }
