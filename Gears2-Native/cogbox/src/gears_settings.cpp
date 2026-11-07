@@ -1285,6 +1285,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back(std::string("--gow2_dlss_fg_mode=") + k_dlssMode[fgChoice - 2]);
         } else {
             a.push_back("--gow2_frame_generation=fsr");
+            // Judgment on Vulkan froze inside AMD's swap chain with its own composition (FG-off and compose=game
+            // runs did not freeze, Shagg 2026-11-07) - the game composes the HUD there
+            if (fgVk && g == Game::Judgment && cap_exe(env, "gow2_fg_vk_compose")) a.push_back("--gow2_fg_vk_compose=game");
         }
         // 237f736 (Shagg: no smearing in Gears 2): generation from the HUD-less colour, with per-object motion; the
         // character-motion pass reads Gears 2's velocity-pass layout (c5-c12), so it is turned on for Gears 2 only
