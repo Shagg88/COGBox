@@ -153,13 +153,13 @@ void Gow3CheckpointStreamTick() {
     std::lock_guard lock(g_mutex);
     window.swap(g_window);
     g_pending.clear();
+    g_last_stream_ms = -1;  // with the swap: a package recorded after it starts a new window, not lost
   }
   std::string names;
   for (const std::string& n : window) names += " " + n;
   REXLOG_INFO("checkpoint restore: waited {} ms for {} streamed packages ({} set to block on load):{}", last - start,
               window.size(), set, names);
   g_blocked.clear();
-  g_last_stream_ms = -1;
 }
 
 void Gow3InstallCheckpointStreamWait() {
