@@ -518,8 +518,8 @@ bool gears1_lang(int idx) {
 
 }  // namespace
 
-// NVIDIA DLSS frame generation: the exe has --gow2_dlss_fg_mode and NVIDIA's Streamline files are next to it (never
-// shipped by us - the player copies them from NVIDIA's Streamline SDK, github.com/NVIDIA-RTX/Streamline, bin/x64)
+// NVIDIA DLSS frame generation: the exe has --gow2_dlss_fg_mode and NVIDIA's Streamline files are next to it (shipped
+// with COGBox since 0.4.8)
 bool dlss_fg_present(const Environment& env) {
     if (!cap_exe(env, "gow2_dlss_fg_mode") && !cap_exe(env, "NVIDIA DLSS frame generation multiplier")) return false;
     static const char* const k_files[] = { "sl.interposer.dll", "sl.common.dll", "sl.dlss_g.dll", "sl.reflex.dll",
@@ -539,7 +539,11 @@ Availability framegen_choice_available(int index, const Environment& env) {
         const std::string gpu = gpu_main(env);
         const bool rtx50 = icase_search(gpu, "RTX ?50[0-9]0|RTX PRO [0-9]+ Blackwell");
         const bool rtx40 = icase_search(gpu, "RTX ?40[0-9]0|RTX [0-9]+ Ada");
+        // Shagg 7 Nov: the third-party MFG Unlocker (github.com/dashdogy/MFG-Unlocker, its DLL beside the game as
+        // dxgi.dll) runs DLSS frame generation on RTX 20 / 30 - tested 2x / 3x on an RTX 3080 Ti. Unofficial.
+        const bool unlocker = cap_file(env, "dxgi.dll") && icase_search(gpu, "RTX");
         if (!dlss_fg_present(env)) { a.ok = false; a.why = "Needs NVIDIA's Streamline files next to the game."; }
+        else if (unlocker) { /* every multiplier: the unlocker reports what the card can do */ }
         else if (index == 2 && !rtx40 && !rtx50) { a.ok = false; a.why = "Needs an NVIDIA RTX 40 or 50 series graphics card."; }
         else if (index >= 3 && !rtx50) { a.ok = false; a.why = "Needs an NVIDIA RTX 50 series graphics card."; }
     }
