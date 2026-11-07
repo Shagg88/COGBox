@@ -1071,16 +1071,14 @@ static void about_tab(App &a, int g)
 
 // ---- the settings tabs' groups (presentation only: which heading an option shows under) -------------------------------
 struct TabGroups { const char *heading[4]; const char *const *ids[4]; const char *const *advanced; };
-static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", nullptr };
+static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", "HideNotes", nullptr };
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
-static const char *const k_dispAdv[] = { "Gamma", "HDR", "PaperWhite", "Peak", "HideNotes", nullptr };
-static const char *const k_gfxQuality[] = { "Api", "WineApi", "Preset", "Resolution", "AAMode", nullptr };
-static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "Pool", "DrawDist", "MeshLod", "AO", nullptr };
-static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };
-static const char *const k_gfxAdv[] = { "Sharpen", "SceneMode", "FrameGen", "MipFade", "DofScale", nullptr };
-static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "PadPrompts", nullptr };
+static const char *const k_dispPicture[] = { "Brightness", "HDR", "PaperWhite", "Peak", nullptr };
+static const char *const k_gfxQuality[] = { "Api", "WineApi", "Preset", "Resolution", "AAMode", "Sharpen", "SceneMode", "FrameGen", nullptr };
+static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "MipFade", "Pool", "DrawDist", "MeshLod", "AO", nullptr };
+static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "DofScale", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };
+static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "PadPrompts", "DeadZone", "RadialDZ", "LowLag", nullptr };
 static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", nullptr };
-static const char *const k_ctlAdv[] = { "DeadZone", "RadialDZ", "LowLag", nullptr };
 static const char *const k_playGame[] = { "Version", "Lang", "VoiceLang", "SkipLogos", "Mute", nullptr };
 static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", nullptr };
 static const char *const k_playExtras[] = { "UnlockInsane", "Cheats", "Mutators", nullptr };
@@ -1088,9 +1086,9 @@ static const char *const k_achPopups[] = { "AchievementStyle", "AchievementColou
                                            "HideAchievementPopups", nullptr };   // PR #187
 static const char *const k_none[] = { nullptr };
 static const TabGroups k_groups[5] = {   // one per gs::Tab, in its order
-    { { "SCREEN", "FRAME RATE", nullptr, nullptr }, { k_dispScreen, k_dispFrames, k_none, k_none }, k_dispAdv },
-    { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none }, k_gfxAdv },
-    { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none }, k_ctlAdv },
+    { { "SCREEN", "FRAME RATE", "PICTURE", nullptr }, { k_dispScreen, k_dispFrames, k_dispPicture, k_none }, k_none },
+    { { "QUALITY", "DETAIL", "CAMERA AND EFFECTS", nullptr }, { k_gfxQuality, k_gfxDetail, k_gfxCamera, k_none }, k_none },
+    { { "CONTROLLER", "KEYBOARD AND MOUSE", nullptr, nullptr }, { k_ctlPad, k_ctlMouse, k_none, k_none }, k_none },
     { { "GAME", "PLAYERS", "EXTRAS", nullptr }, { k_playGame, k_playPlayers, k_playExtras, k_none }, k_none },
     { { "ACHIEVEMENT POPUPS", nullptr, nullptr, nullptr }, { k_achPopups, k_none, k_none, k_none }, k_none },
 };

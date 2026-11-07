@@ -176,8 +176,9 @@ std::vector<Option> make_options(Game g) {
                "Your screen's peak brightness (see its specs or Windows HDR calibration).", 365), "", "HDR");
     // GitHub #185 (Shagg 7 Nov): gamma on the game's display ramp. 100 = the game's own; higher = darker shadows and
     // midtones, highlights kept (Judgment looks brighter than Xbox 360 footage to some players).
-    add(number("Gamma", "Gamma (100 = original)", Tab::Display, Kind::Int, PG, 70, 200, 5, 100,
-               "Shadow and midtone brightness. 100 = the game's own. Higher darkens shadows (bright areas stay); lower lifts them.", 0), "gamma");
+    add(number("Brightness", "Brightness (100 = original)", Tab::Display, Kind::Int, PG, 50, 150, 5, 100,
+               "Brightness of shadows and midtones. 100 = the game's own. Lower darkens them, higher lifts them; bright areas "
+               "stay about the same.", 0), "gamma");
     add(make("Vsync", "Vsync (no tearing)", Tab::Display, Kind::Bool, SH, 0,
              "Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen "
              "follows the game below its refresh rate. A frame-rate limit above your screen's refresh rate is lowered to the "
@@ -1333,9 +1334,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     if (on("Ultrawide")) a.push_back(isG3 ? "--gow3_ultrawide=true" : isGJ ? "--gowj_ultrawide=true" : isG1 ? "--gow1_ultrawide=true" : "--gow2_ultrawide=true");
     // GitHub #185: launcher Gamma -> the display ramp
-    if (avail("Gamma") && s.i("Gamma") != 100) {
+    if (avail("Brightness") && s.i("Brightness") != 100) {   // display-ramp gamma = 100 / Brightness (80 -> 1.25, darker)
         char g[32];
-        std::snprintf(g, sizeof(g), "%.2f", s.i("Gamma") / 100.0);
+        std::snprintf(g, sizeof(g), "%.3f", 100.0 / std::max(s.i("Brightness"), 10));
         a.push_back(std::string("--gow2_present_gamma=") + g);
     }
     // PS1 900: HDR
