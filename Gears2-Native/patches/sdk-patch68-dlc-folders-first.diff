@@ -1,0 +1,51 @@
+diff --git a/src/system/xam/content_manager.cpp b/src/system/xam/content_manager.cpp
+index d0c7bfd..ac5a15e 100644
+--- a/src/system/xam/content_manager.cpp
++++ b/src/system/xam/content_manager.cpp
+@@ -26,6 +26,19 @@
+ #include <rex/system/xfile.h>
+ #include <rex/system/xobject.h>
+ 
++#include <algorithm>
++
++#include <rex/cvar.h>
++#include <rex/logging.h>
++
++// Patch 68 (COGBox GitHub #240): Gears 3 mounts its DLC one package at a time in the order it is enumerated. A
++// package with no folders in it (only loose text / ini files, e.g. 025FCF65..., a settings-only package) listed first
++// was the only one the title ever opened: it stopped after it on every pass, so RAAM's Shadow and the other 29 were
++// never mounted. Marketplace packages that hold folders (the real DLC: GearGame\CookedXbox360\...) are now listed
++// first and folder-less ones last, otherwise in the same (name) order. Nothing is left out.
++REXCVAR_DEFINE_BOOL(cogbox_dlc_folders_first, true, "Kernel",
++                    "Patch 68: DLC packages with folders are enumerated before settings-only packages (GitHub #240)");
++
+ namespace rex {
+ namespace system {
+ namespace xam {
+@@ -170,6 +183,26 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(uint32_t device
+     }
+   }
+ 
++  // patch 68 (GitHub #240): DLC with folders first, folder-less (settings-only) packages last, order kept otherwise
++  if (content_type == XContentType::kMarketplaceContent && result.size() > 1 &&
++      REXCVAR_GET(cogbox_dlc_folders_first)) {
++    auto has_folder = [&](const XCONTENT_AGGREGATE_DATA& d) {
++      for (const auto& inner : rex::filesystem::ListFiles(package_root / d.file_name()))
++        if (inner.type == rex::filesystem::FileInfo::Type::kDirectory) return true;
++      return false;
++    };
++    std::vector<XCONTENT_AGGREGATE_DATA> with, without;
++    for (auto& d : result) (has_folder(d) ? with : without).push_back(d);
++    if (!with.empty() && !without.empty()) {
++      std::string moved;
++      for (const auto& d : without) moved += (moved.empty() ? "" : ", ") + d.file_name();
++      REXLOG_INFO("cogbox_content: patch 68: {} package(s) with no folders listed after the other {}: {}",
++                  without.size(), with.size(), moved);
++      with.insert(with.end(), without.begin(), without.end());
++      result = std::move(with);
++    }
++  }
++
+   return result;
+ }
+ 

@@ -104,3 +104,10 @@ Gears 3 and Judgment use the same runtime.
   output device changes (polled about every 5 s; SDL already moves the stream there), the runtime logs the device volume
   and this game's mixer slider, and restores a muted or 0 slider (`--audio_restore_session_volume=false` leaves it). A
   slider moved during play is not touched. Apply it in the SDK root after patch 65 (`git apply --ignore-whitespace`).
+- `sdk-patch68-dlc-folders-first.diff` (GitHub #240, Gears 3 RAAM's Shadow never loads with 31 DLC packages; after 67,
+  NOT BUILT yet - needs a runtime build): the reporter's log shows every DLC pass opening only the first package
+  (025FCF65..., loose GearGame.<lang> / Xbox360-GearGame.ini files, no folders) and never the other 30. Marketplace
+  packages that hold folders (real DLC) are now enumerated first and folder-less ones last, otherwise in name order;
+  nothing is dropped. Logs `cogbox_content: patch 68: ... listed after ...` when it moves any.
+  `--cogbox_dlc_folders_first=false` restores the old order. Apply it in the SDK root (`git apply`); it only touches
+  `src/system/xam/content_manager.cpp` (checked to apply on top of patch 56's change there).
