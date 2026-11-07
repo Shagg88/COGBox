@@ -490,9 +490,11 @@ bool Prepare(const XenosFgFrame& f, uint32_t flags, int32_t hl_x = -1, int32_t h
   const HRESULT closed = g_list->Close();
   if (FAILED(closed)) {  // never execute a list that failed to close (that removes the device with INVALID_CALL)
     static uint32_t logged = 0;
-    if (logged < 8)
-      ++logged, REXLOG_WARN("gow2_frame_generation: the Prepare list did not close (0x{:08X}); frame not generated",
-                            uint32_t(closed));
+    if (logged < 8) {
+      ++logged;
+      REXLOG_WARN("gow2_frame_generation: the Prepare list did not close (0x{:08X}); frame not generated",
+                  uint32_t(closed));
+    }
     return false;
   }
   if (rc != FFX_API_RETURN_OK) return false;
