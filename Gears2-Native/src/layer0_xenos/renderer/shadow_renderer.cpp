@@ -6222,6 +6222,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     slot->used = ++fg_slot_clock_;
     if (slot->width != fg_.width || slot->height != fg_.height || !slot->depth || !slot->motion) {
+      if (slot->depth || slot->motion) XenosFrameGenerationSlotsRecreated();  // a held last frame names these
       for (gpu::TextureHandle* t : {&slot->depth, &slot->motion})
         if (*t) backend_->DestroyTexture(*t), *t = 0;
       gpu::TextureDesc td;
@@ -6243,7 +6244,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     bool hl_ok = false;
     if (hl_fmt) {
       if (!slot->hudless || slot->hl_width != hl_w || slot->hl_height != hl_h || slot->hl_format != hl_fmt) {
-        if (slot->hudless) backend_->DestroyTexture(slot->hudless), slot->hudless = 0;
+        if (slot->hudless) XenosFrameGenerationSlotsRecreated(), backend_->DestroyTexture(slot->hudless), slot->hudless = 0;
         gpu::TextureDesc td;
         td.width = hl_w;
         td.height = hl_h;

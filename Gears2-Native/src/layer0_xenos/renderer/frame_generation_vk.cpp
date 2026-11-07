@@ -154,6 +154,10 @@ bool g_gen_on = false;
 uint64_t g_frame_id = 0, g_last_shown_frame = 0;
 XenosFgFrame g_last_frame{};
 bool g_have_last_frame = false;
+// Bumped by the renderer when it makes a slot's textures again (XenosFgVkSlotsRecreated): g_last_frame's images are
+// only valid while g_last_frame_generation matches it.
+std::atomic<uint64_t> g_slot_generation{0};
+uint64_t g_last_frame_generation = 0;
 uint32_t g_no_scene_streak = 0;
 constexpr uint32_t kNoSceneFramesBeforeOff = 30;
 
@@ -724,8 +728,11 @@ void BeforePresent(void* guest_output, const int32_t* rect) {
     g_last_shown_frame = f.frame;
     g_last_frame = f;
     g_have_last_frame = true;
+    g_last_frame_generation = g_slot_generation.load(std::memory_order_acquire);
     g_no_scene_streak = 0;
     have = true;
+  } else if (g_have_last_frame && g_last_frame_generation != g_slot_generation.load(std::memory_order_acquire)) {
+    g_have_last_frame = false;  // its images were destroyed with a slot resize: generation skipped
   } else if (g_have_last_frame && ++g_no_scene_streak <= kNoSceneFramesBeforeOff) {
     f = g_last_frame;
     f.reset = true;
@@ -838,6 +845,12 @@ void XenosFgVkSetInputs(void* guest_output_image, const XenosFgFrame* frame) {
   slot->serial = ++fgvk::g_serial;
 }
 
+void XenosFgVkSlotsRecreated() {
+  fgvk::g_slot_generation.fetch_add(1, std::memory_order_acq_rel);
+  std::lock_guard<std::mutex> lock(fgvk::g_mutex);
+  fgvk::g_have_last_frame = false;
+}
+
 bool XenosFgVkInstall(bool hudless) {
   rex::FrameHooks& h = rex::GetFrameHooks();
   h.vk_all_queues.store(true, std::memory_order_release);  // before the Vulkan device is made (OnPostInitLogging)
@@ -858,6 +871,7 @@ bool XenosFgVkWanted() { return false; }
 uint32_t XenosFgVkHudlessFormat() { return 0u; }
 bool XenosFgVkHudlessSize(uint32_t&, uint32_t&) { return false; }
 void XenosFgVkSetInputs(void*, const XenosFgFrame*) {}
+void XenosFgVkSlotsRecreated() {}
 bool XenosFgVkInstall(bool) {
   REXLOG_WARN("gow2_frame_generation: this build has no Vulkan frame generation (the FidelityFX SDK's Vulkan headers, "
               "the Vulkan headers or SDK patch 69 were missing when built); off");
