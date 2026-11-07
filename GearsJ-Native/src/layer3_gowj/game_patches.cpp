@@ -16,6 +16,7 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 #include <xenos/dev_tools.h>
+#include <xenos/frame_limiter.h>
 #include <xenos/display_size.h>
 
 #include <algorithm>
@@ -354,6 +355,17 @@ void GowjInstallLoadingClamp() {
 #endif
 }
 
+// Exact cap: the engine's own wait sleeps whole milliseconds (165 gave 162 fps), so with a player's limit the game
+// thread waits here on the host clock (shared precise limiter) and the engine is told "no limit" - it measured the time
+// before this call, so its own wait would come on top.
+static void GowjExactLimit(PPCRegister& f1) {
+  static xenos::FrameLimiter limiter;
+  static std::atomic<bool> s_logged{false};
+  if (!s_logged.exchange(true)) REXLOG_INFO("gowj_max_fps: exact host-side limiter on ({:.0f} fps)", f1.f64);
+  limiter.Wait(f1.f64);
+  f1.f64 = 0.0;
+}
+
 void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E220: f1 = the engine's limit (fps)
   TickTimeline();
   const int32_t cap = REXCVAR_GET(gowj_loading_fps);
@@ -364,6 +376,7 @@ void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E2
     REXLOG_INFO("gowj_max_fps: engine limit {} -> {} fps", was, engine);
   if (cap > 0 && LoadingClampActive()) {
     if (f1.f64 <= 0.0 || f1.f64 > double(cap)) f1.f64 = double(cap);
+    if (REXCVAR_GET(gowj_max_fps) != 0) GowjExactLimit(f1);
     return;
   }
   // GitHub #77: outside a loading screen the game may lower its own limit (30) and keep it; the player's limit wins.
@@ -375,6 +388,7 @@ void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E2
                   f1.f64, want < 0 ? 1000 : want);
     f1.f64 = want < 0 ? 0.0 : double(want);
   }
+  if (want > 0 && f1.f64 > 0.0) GowjExactLimit(f1);
 }
 
 // ---- Engine settings through the game's own config (layer 2 --ue3_ini_edits) ----------------------------------------

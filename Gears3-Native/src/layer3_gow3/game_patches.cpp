@@ -16,6 +16,7 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 #include <xenos/dev_tools.h>
+#include <xenos/frame_limiter.h>
 #include <xenos/display_size.h>
 
 #include "gow3_addresses.h"
@@ -463,6 +464,16 @@ void Gow3PathChoiceTick() {
               open ? right : left, open ? left : right);
 }
 
+// Exact cap (GitHub #225 follow-up: 121-123 at a 120 cap): the engine's own wait sleeps whole milliseconds, so a limit
+// of N gave N +- 2. With a player's limit the game thread waits here on the host clock (shared precise limiter) and the
+// engine is told "no limit" - it measured the time before this call, so its own wait would come on top.
+static void Gow3ExactLimit(PPCRegister& f1) {
+  static xenos::FrameLimiter limiter;
+  GOW3_LOG_ONCE("gow3_max_fps: exact host-side limiter on ({} fps)", f1.f64);
+  limiter.Wait(f1.f64);
+  f1.f64 = 0.0;
+}
+
 void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9B0
   TickTimeline();
   Gow3ModChaptersTick();
@@ -473,6 +484,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)
     f1.f64 = (own <= 0.0 || own > double(m)) ? double(m) : own;
+    if (v != 0) Gow3ExactLimit(f1);
     return;
   }
   const int32_t floor_fps = REXCVAR_GET(gow3_tick_floor_fps);
@@ -483,6 +495,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   GOW3_LOG_ONCE("gow3_max_fps: engine frame-rate limit {} -> {}{}", f1.f64, v < 0 ? std::string("none") : std::to_string(v),
                 v < 0 && floor_fps > 0 ? " (tick floor " + std::to_string(floor_fps) + "/s)" : std::string());
   f1.f64 = v < 0 ? (floor_fps > 0 ? double(floor_fps) : 0.0) : double(v);
+  if (v > 0) Gow3ExactLimit(f1);
 }
 
 // ---- Engine settings through the game's own config (layer 2 --ue3_ini_edits) ----------------------------------------

@@ -19,6 +19,7 @@
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/xmemory.h>
 #include <xenos/dev_tools.h>
+#include <xenos/frame_limiter.h>
 #include <ue3/config_bundle.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -218,16 +219,8 @@ void Gow1PresentInterval(PPCRegister& r10) {
   if (n == 1 || n == 600) REXLOG_INFO("gow1_max_fps: present-interval site reached {} time(s) (interval {})", n, uint32_t(r10.u32));
   const int32_t cap = REXCVAR_GET(gow1_max_fps);
   if (cap <= 0) return;
-  using clock = std::chrono::steady_clock;
-  static clock::time_point next{};
-  const auto period = std::chrono::nanoseconds(1000000000LL / cap);
-  auto now = clock::now();
-  if (next.time_since_epoch().count() == 0 || now - next > period * 4) next = now;  // first frame or a long stall
-  if (now < next) {
-    if (next - now > std::chrono::milliseconds(2)) std::this_thread::sleep_for(next - now - std::chrono::milliseconds(1));
-    while (clock::now() < next) std::this_thread::yield();
-  }
-  next += period;
+  static xenos::FrameLimiter limiter;  // shared precise limiter (high-resolution timer + spin; no catch-up bursts)
+  limiter.Wait(double(cap));
   static bool logged = false;
   if (!logged) { logged = true; REXLOG_INFO("gow1_max_fps: on - at most {} fps", cap); }
 }

@@ -34,6 +34,7 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 #include <xenos/dev_tools.h>
+#include <xenos/frame_limiter.h>
 
 #include "gow2_addresses.h"
 #include "mouse_look.h"  // GitHub #52: CogMouseLookNoteFov
@@ -241,7 +242,12 @@ void Gow2MaxTickRate(PPCRegister& f1) {
     logged = true;
     REXLOG_INFO("gow2_max_fps: engine frame-rate limit {} -> {}", f1.f64, v < 0 ? std::string("none") : std::to_string(v));
   }
-  f1.f64 = v < 0 ? 0.0 : double(v);
+  if (v < 0) { f1.f64 = 0.0; return; }
+  // Exact cap: the engine's own wait sleeps whole milliseconds (N +- 2 fps), so the game thread waits here on the host
+  // clock and the engine is told "no limit" (it measured the time before this call, so its wait would come on top).
+  static xenos::FrameLimiter limiter;
+  limiter.Wait(double(v));
+  f1.f64 = 0.0;
 }
 
 // Stage 7.5 ultrawide hooks (see the top of the file).
