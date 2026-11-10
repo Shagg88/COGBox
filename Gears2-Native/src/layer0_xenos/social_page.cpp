@@ -282,11 +282,11 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
         if (b == 1) g_remove_uuid.clear();
         continue;
       }
-      // only the buttons that do something here: Join when joinable, Invite when online, "..." to remove
+      // only the buttons that do something here: Join when joinable, Invite when online, Remove (asks first)
       std::vector<SlotButton> buttons;
       if (joinable) buttons.push_back({"JOIN", true, true});
       if (!offline) buttons.push_back({"INVITE"});
-      buttons.push_back({"..."});
+      buttons.push_back({"REMOVE"});
       const int b = Row(id.c_str(), f.tag, XenosTr(presence.c_str()), col, col, buttons, s, f.icon);
       if (b < 0) continue;
       const std::string what = buttons[size_t(b)].label;

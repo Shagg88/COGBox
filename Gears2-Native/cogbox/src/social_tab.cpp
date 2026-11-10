@@ -284,11 +284,11 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
             }
             const int fg = game_for_title(f.title_id);
             const bool can_join = joinable && fg >= 0 && a.st[fg].ready == R_READY;
-            // only the buttons that do something here: Join when joinable, Invite when online, "..." to remove
+            // only the buttons that do something here: Join when joinable, Invite when online, Remove (asks first)
             std::vector<LineButton> bs;
             if (joinable) bs.push_back({ "JOIN", can_join, true, can_join ? "Join their game." : "Set up this game in COGBox to join." });
             if (!offline) bs.push_back({ "INVITE", true, false, "Invite them to the game you are hosting." });
-            bs.push_back({ "...", true, false, "Remove this friend" });
+            bs.push_back({ "REMOVE", true, false, "Remove this friend (asks first)." });
             const int b = line_row(a, f.tag, presence, offline ? col::dim : joinable ? col::amber : col::good, offline ? 0 : (joinable ? 2 : 1),
                                    f.icon, x1, bs);
             if (b >= 0) {
