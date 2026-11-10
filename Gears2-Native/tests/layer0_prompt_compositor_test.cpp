@@ -218,7 +218,7 @@ TEST_CASE("PromptOverlayCompositor produces distinct controller & keyboard art w
   CHECK_FALSE(std::ranges::equal(kb_default, ov_kb_custom));
 }
 
-TEST_CASE("Chainsaw Duel overlay clears full box for B and Y cells and preserves outside draw_rect for LT and RT",
+TEST_CASE("Chainsaw Duel overlay clears every cell's whole box and draws inside its draw_rect",
           "[layer0][prompt][compositor]") {
   PromptOverlayCompositor compositor;
   REQUIRE(compositor.Initialize("assets/glyphs"));
@@ -236,53 +236,28 @@ TEST_CASE("Chainsaw Duel overlay clears full box for B and Y cells and preserves
     const std::string_view btn(cell.button);
     INFO("Chainsaw Duel cell: " << btn << " box=[" << cell.box[0] << "," << cell.box[1] << "," << cell.box[2] << ","
                                 << cell.box[3] << "]");
-    if (cell.clear_box) {
-      // B and Y cells have 3 context buttons in `box` outside `draw_rect`; the entire `box` must have alpha >= 1,
-      // and the outer region of `box` outside `draw_rect` must be cleared (alpha == 1).
-      CHECK((btn == "b" || btn == "y"));
-      for (int y = cell.box[1] * 4; y < (cell.box[3] + 1) * 4; ++y) {
-        for (int x = cell.box[0] * 4; x < (cell.box[2] + 1) * 4; ++x) {
-          const uint8_t a = OverlayAlphaAt(ov, ow, x, y);
-          REQUIRE(a >= 1);
-          const bool in_draw = x >= cell.draw_rect[0] * 4 && x < cell.draw_rect[2] * 4 &&
-                               y >= cell.draw_rect[1] * 4 && y < cell.draw_rect[3] * 4;
-          if (!in_draw) {
-            REQUIRE(a == 1);
-          }
+    // GitHub #223: every cell clears its whole box (B / Y take their context dots, LT / RT their bigger pulse frame's
+    // rim): the box has alpha >= 1 throughout, == 1 outside draw_rect, and the glyph is drawn inside draw_rect.
+    REQUIRE(cell.clear_box);
+    int drawn_inside = 0;
+    for (int y = cell.box[1] * 4; y < std::min<int>((cell.box[3] + 1) * 4, oh); ++y) {
+      for (int x = cell.box[0] * 4; x < std::min<int>((cell.box[2] + 1) * 4, ow); ++x) {
+        const uint8_t a = OverlayAlphaAt(ov, ow, x, y);
+        REQUIRE(a >= 1);
+        const bool in_draw = x >= cell.draw_rect[0] * 4 && x < cell.draw_rect[2] * 4 &&
+                             y >= cell.draw_rect[1] * 4 && y < cell.draw_rect[3] * 4;
+        bool in_other_draw = false;
+        for (const PromptCell& other : duel->cells) {
+          in_other_draw |= &other != &cell && x >= other.draw_rect[0] * 4 && x < other.draw_rect[2] * 4 &&
+                           y >= other.draw_rect[1] * 4 && y < other.draw_rect[3] * 4;
         }
-      }
-    } else {
-      // LT and RT cells have `clear_box == false`: pixels inside `box` but outside `draw_rect` must stay alpha == 0.
-      CHECK((btn == "lt" || btn == "rt"));
-      int preserved_zero = 0;
-      int drawn_inside = 0;
-      for (int y = cell.box[1] * 4; y < cell.box[3] * 4; ++y) {
-        for (int x = cell.box[0] * 4; x < cell.box[2] * 4; ++x) {
-          bool in_other_clear_box = false;
-          for (const PromptCell& other : duel->cells) {
-            if (!other.clear_box) continue;
-            if (x >= other.box[0] * 4 && x < (other.box[2] + 1) * 4 &&
-                y >= other.box[1] * 4 && y < (other.box[3] + 1) * 4) {
-              in_other_clear_box = true;
-              break;
-            }
-          }
-          if (in_other_clear_box) continue;
-          const uint8_t a = OverlayAlphaAt(ov, ow, x, y);
-          const bool in_draw = x >= cell.draw_rect[0] * 4 && x < cell.draw_rect[2] * 4 &&
-                               y >= cell.draw_rect[1] * 4 && y < cell.draw_rect[3] * 4;
-          if (!in_draw) {
-            REQUIRE(a == 0);
-            ++preserved_zero;
-          } else {
-            REQUIRE(a >= 1);
-            if (a >= 2) ++drawn_inside;
-          }
+        if (!in_draw && !in_other_draw) {
+          REQUIRE(a == 1);
         }
+        if (in_draw && a >= 2) ++drawn_inside;
       }
-      CHECK(preserved_zero > 0);
-      CHECK(drawn_inside > 0);
     }
+    CHECK(drawn_inside > 0);
   }
 }
 
@@ -430,4 +405,27 @@ TEST_CASE("SetActiveStyle integrates with TextureCache and reuses cached host ha
 
   compositor.ClearAtlasAliases();
   ClearDynamicOverlays();
+}
+
+TEST_CASE("GitHub #223: with the game set, a style builds only that game's atlases", "[layer0][prompt][compositor]") {
+  PromptOverlayCompositor compositor;
+  REQUIRE(compositor.Initialize("assets/glyphs"));
+  constexpr uint64_t kG2Hud = 0xce11e464b5064714ULL, kG3Hud = 0xa000624a174e08baULL;  // one kind, both games
+  constexpr uint64_t kG2Saw = 0x64cd4013fef17653ULL, kJDpad = 0xe44da4591e95fcd3ULL;
+  // No game set: every atlas.
+  CHECK_FALSE(compositor.GetOverlay(kG2Saw, DeviceStyle::kPlayStation).empty());
+  CHECK_FALSE(compositor.GetOverlay(kJDpad, DeviceStyle::kPlayStation).empty());
+  compositor.SetGameTitle(0x4D53082D);  // Gears 2
+  CHECK_FALSE(compositor.GetOverlay(kG2Saw, DeviceStyle::kPlayStation).empty());
+  CHECK_FALSE(compositor.GetOverlay(kG2Hud, DeviceStyle::kPlayStation).empty());
+  CHECK(compositor.GetOverlay(kJDpad, DeviceStyle::kPlayStation).empty());
+  CHECK_FALSE(compositor.GetOverlay(kG2Saw, DeviceStyle::kKeyboard).empty());
+  CHECK(compositor.GetOverlay(kJDpad, DeviceStyle::kKeyboard).empty());
+  // A kind shared with another game is built (its overlay serves every hash of the kind).
+  CHECK_FALSE(compositor.GetOverlay(kG3Hud, DeviceStyle::kPlayStation).empty());
+  compositor.SetGameTitle(0x4D530A26);  // Judgment
+  CHECK(compositor.GetOverlay(kG2Saw, DeviceStyle::kPlayStation).empty());
+  CHECK_FALSE(compositor.GetOverlay(kJDpad, DeviceStyle::kPlayStation).empty());
+  compositor.SetGameTitle(0);  // unknown: every atlas again
+  CHECK_FALSE(compositor.GetOverlay(kG2Saw, DeviceStyle::kPlayStation).empty());
 }

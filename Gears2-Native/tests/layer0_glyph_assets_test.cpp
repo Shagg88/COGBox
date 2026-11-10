@@ -88,7 +88,9 @@ TEST_CASE("Verify required Kenney glyph assets exist and load as valid PNGs", "[
   const char* kCanonicalButtons[] = {
       "a",          "b",         "x",               "y",          "lb",        "rb",           "lt",       "rt",
       "ls",         "rs",        "lspress",         "rspress",    "stickmove", "back",         "start",    "dpad_up",
-      "dpad_down",  "dpad_left", "dpad_right",      "dpad_up_down", "dpad_left_right", "dpad_all"};
+      "dpad_down",  "dpad_left", "dpad_right",      "dpad_up_down", "dpad_left_right", "dpad_all",
+      "rs_up",      "rs_down",   "rs_left",         "rs_right",   "ls_down",   "ls_left",      "ls_right",
+      "dpad_plain", "stick_plain"};
 
   for (const char* profile : kProfiles) {
     for (const char* button : kCanonicalButtons) {

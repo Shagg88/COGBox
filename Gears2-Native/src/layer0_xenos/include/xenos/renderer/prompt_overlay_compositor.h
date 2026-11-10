@@ -77,6 +77,10 @@ class PromptOverlayCompositor {
   void SetActiveStyle(DeviceStyle style, bool hide_disk_overlays = false);
   DeviceStyle ActiveStyle() const;
 
+  // GitHub #223: the running game (its title ID). From then on a style builds only the atlases that game draws
+  // (AtlasLayout::games); styles built before are dropped. Unset or an unknown title: every atlas, as before.
+  void SetGameTitle(uint32_t title_id);
+
   // Re-composes the 4x procedural keyboard/mouse overlays using updated keybind overrides (or current cvars).
   void RebuildKeyboardOverlays(const std::map<std::string, std::string>& keybind_overrides = {});
 
@@ -86,9 +90,10 @@ class PromptOverlayCompositor {
 
  private:
   static constexpr int kStyleCount = 7;
-  static constexpr int kKindCount = 6;  // AtlasKind values (GitHub #214: + kHud512G1; rc6: + kChainsawDuelG2)
+  static constexpr int kKindCount = kAtlasKindCount;  // AtlasKind values (GitHub #214: + kHud512G1; #223: + 2)
 
   const AtlasLayout* ResolveLayoutLocked(uint64_t hash) const;
+  bool KindWantedLocked(AtlasKind kind) const;  // a layout of this kind belongs to the running game (or no game set)
   void ComposeControllerStyleLocked(DeviceStyle style, const std::unordered_map<std::string, Image>& glyphs);
   void ComposeKeyboardStyleLocked(const std::map<std::string, std::string>& keybind_overrides);
   void ApplyActiveStyleLocked();
@@ -100,6 +105,7 @@ class PromptOverlayCompositor {
   DeviceStyle active_style_ = DeviceStyle::kOriginal;
   std::filesystem::path resolved_glyphs_dir_;
   bool hide_disk_overlays_ = false;
+  uint8_t game_bits_ = 0;  // GitHub #223: AtlasLayout::games bit of the running game; 0 = build every atlas
   size_t max_resident_ = 2;
   std::vector<DeviceStyle> resident_order_;  // resident styles, least recently used first
   std::map<std::string, std::string> keybind_overrides_;

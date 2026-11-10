@@ -129,6 +129,7 @@ class Gow2App : public rex::ReXApp {
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
     XenosInstallAoDebugKeys(drawer);  // notes/80 s.12 (--gow2_ao_debug_keys)
+    XenosSetPromptGame(0x4D53082D);  // GitHub #223: build only Gears 2's button-prompt atlases
     XenosInstallInGameMenu(drawer, immediate_drawer(), window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
     XenosSocialStart();  // social step 5: friends, invites and pop-ups when the game runs online
   }

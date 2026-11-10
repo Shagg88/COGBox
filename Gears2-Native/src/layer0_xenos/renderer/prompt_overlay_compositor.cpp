@@ -61,7 +61,11 @@ std::unordered_set<uint64_t> g_global_aliases;
 const char* const kCanonicalButtons[] = {
     "a",          "b",         "x",               "y",            "lb",        "rb",           "lt",       "rt",
     "ls",         "rs",        "lspress",         "rspress",      "stickmove", "back",         "start",    "dpad_up",
-    "dpad_down",  "dpad_left", "dpad_right",      "dpad_up_down", "dpad_left_right", "dpad_all"};
+    "dpad_down",  "dpad_left", "dpad_right",      "dpad_up_down", "dpad_left_right", "dpad_all",
+    // GitHub #223: Gears 1's directional stick glyphs
+    "rs_up",      "rs_down",   "rs_left",         "rs_right",     "ls_down",   "ls_left",      "ls_right",
+    // GitHub #223: Gears 1 / 2's plain d-pad ring and plain thumbsticks
+    "dpad_plain", "stick_plain"};
 
 const std::pair<const char*, const char*> kDefaultKeybinds[] = {
     {"keybind_right_trigger", "LMB"},
@@ -379,6 +383,12 @@ std::string ResolveCellKeyLabel(const char* cvar, const std::map<std::string, st
     return "\x01" + label_of(ResolveSingleKeybind("keybind_dpad_up", overrides)) + "/" +
            label_of(ResolveSingleKeybind("keybind_dpad_down", overrides));
   }
+  if (std::strcmp(cvar, "dpad_any") == 0) {  // GitHub #223: the plain d-pad - all four keys
+    return "\x01" + label_of(ResolveSingleKeybind("keybind_dpad_up", overrides)) + "/" +
+           label_of(ResolveSingleKeybind("keybind_dpad_down", overrides)) + "/" +
+           label_of(ResolveSingleKeybind("keybind_dpad_left", overrides)) + "/" +
+           label_of(ResolveSingleKeybind("keybind_dpad_right", overrides));
+  }
   if (std::strcmp(cvar, "dpad_horizontal") == 0) {
     return "\x01" + label_of(ResolveSingleKeybind("keybind_dpad_left", overrides)) + "/" +
            label_of(ResolveSingleKeybind("keybind_dpad_right", overrides));
@@ -388,6 +398,11 @@ std::string ResolveCellKeyLabel(const char* cvar, const std::map<std::string, st
     if (it != overrides.end() && !it->second.empty()) return "\x01" + it->second;
     return "\x01WASD";
   }
+  // GitHub #223: one direction of the left stick - the launcher's fixed movement keys (W / A / S / D).
+  // ("\x01" "A": split, or the escape would swallow the A / D as hex digits.)
+  if (std::strcmp(cvar, "move_back") == 0) return "\x01" "S";
+  if (std::strcmp(cvar, "strafe_left") == 0) return "\x01" "A";
+  if (std::strcmp(cvar, "strafe_right") == 0) return "\x01" "D";
   if (std::strcmp(cvar, "move_right") == 0) {
     auto it = overrides.find("move_right");
     if (it != overrides.end() && !it->second.empty()) return it->second;
@@ -396,7 +411,15 @@ std::string ResolveCellKeyLabel(const char* cvar, const std::map<std::string, st
   return ResolveSingleKeybind(cvar, overrides);
 }
 
-void ClearCellRectOnOverlay(uint8_t* ov_rgba, int ow, int oh, const AtlasLayout& layout, const PromptCell& cell) {
+// The 4x overlay rect a cell clears: its box (+1 pad on some sheets) or, without clear_box, its draw rect. GitHub
+// #223: the cell's glyph / key cap is drawn only inside it too, so a draw rect reaching past the box never paints
+// over a neighbouring glyph's texels.
+struct CellRect {
+  int x0, y0, x1, y1;
+  bool Has(int x, int y) const { return x >= x0 && x < x1 && y >= y0 && y < y1; }
+};
+
+CellRect CellClearRect(int ow, int oh, const AtlasLayout& layout, const PromptCell& cell) {
   int cx0 = 0, cy0 = 0, cx1 = 0, cy1 = 0;
   if (cell.clear_box) {
     const int pad = (layout.kind == AtlasKind::kHud512 || layout.kind == AtlasKind::kHud512G1 || layout.kind == AtlasKind::kChainsawDuel ||
@@ -411,6 +434,12 @@ void ClearCellRectOnOverlay(uint8_t* ov_rgba, int ow, int oh, const AtlasLayout&
     cx1 = std::clamp(cell.draw_rect[2] * kScale, 0, ow);
     cy1 = std::clamp(cell.draw_rect[3] * kScale, 0, oh);
   }
+  return {cx0, cy0, cx1, cy1};
+}
+
+void ClearCellRectOnOverlay(uint8_t* ov_rgba, int ow, int oh, const AtlasLayout& layout, const PromptCell& cell) {
+  const CellRect r = CellClearRect(ow, oh, layout, cell);
+  const int cx0 = r.x0, cy0 = r.y0, cx1 = r.x1, cy1 = r.y1;
   for (int y = cy0; y < cy1; ++y) {
     for (int x = cx0; x < cx1; ++x) {
       uint8_t* p = &ov_rgba[(size_t(y) * ow + x) * 4];
@@ -556,7 +585,7 @@ bool PromptOverlayCompositor::EnsureStyleLocked(DeviceStyle style) {
     bool revived = true;
     std::shared_ptr<const std::vector<uint8_t>> kept[kKindCount];
     for (int k = 0; k < kKindCount; ++k) {
-      if (!GetLayoutForKind(static_cast<AtlasKind>(k))) continue;
+      if (!GetLayoutForKind(static_cast<AtlasKind>(k)) || !KindWantedLocked(static_cast<AtlasKind>(k))) continue;
       kept[k] = weak_overlays_[s][k].lock();
       overlays_[s][k] = kept[k];
       if (!kept[k]) revived = false;
@@ -597,6 +626,32 @@ bool PromptOverlayCompositor::EnsureStyleLocked(DeviceStyle style) {
   return true;
 }
 
+bool PromptOverlayCompositor::KindWantedLocked(AtlasKind kind) const {
+  if (game_bits_ == 0) return true;
+  for (const auto& layout : GetAllAtlasLayouts()) {
+    if (layout.kind == kind && (layout.games & game_bits_)) return true;
+  }
+  return false;
+}
+
+void PromptOverlayCompositor::SetGameTitle(uint32_t title_id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const uint8_t bits = GameBitForTitle(title_id);
+  REXLOG_INFO("prompt_compositor: game {:08X} - {}", title_id, bits ? "its atlases only" : "every atlas");
+  if (bits == game_bits_) return;
+  game_bits_ = bits;
+  // Styles built for another set of atlases are rebuilt when next needed.
+  for (auto& style_slots : overlays_)
+    for (auto& slot : style_slots) slot.reset();
+  for (auto& style_slots : weak_overlays_)
+    for (auto& slot : style_slots) slot.reset();
+  resident_order_.clear();
+  if (initialized_ && active_style_ != DeviceStyle::kOriginal) {
+    EnsureStyleLocked(active_style_);
+    ApplyActiveStyleLocked();
+  }
+}
+
 bool PromptOverlayCompositor::PrepareStyle(DeviceStyle style) {
   std::lock_guard<std::mutex> lock(mutex_);
   return EnsureStyleLocked(style);
@@ -615,14 +670,15 @@ void PromptOverlayCompositor::SetMaxResidentStyles(size_t count) {
 
 void PromptOverlayCompositor::ComposeControllerStyleLocked(DeviceStyle style,
                                                            const std::unordered_map<std::string, Image>& glyphs) {
-  auto blit_overlay = [](uint8_t* dst_rgba, int dst_w, int dst_h, const Image& src, int dx, int dy, int dw, int dh) {
+  auto blit_overlay = [](uint8_t* dst_rgba, int dst_w, int dst_h, const Image& src, int dx, int dy, int dw, int dh,
+                         const CellRect& clip) {
     if (dw <= 0 || dh <= 0 || src.width <= 0 || src.height <= 0) return;
     for (int y = 0; y < dh; ++y) {
       const int ty = dy + y;
       if (ty < 0 || ty >= dst_h) continue;
       for (int x = 0; x < dw; ++x) {
         const int tx = dx + x;
-        if (tx < 0 || tx >= dst_w) continue;
+        if (tx < 0 || tx >= dst_w || !clip.Has(tx, ty)) continue;
 
         const float fx0 = float(x) * src.width / float(dw);
         const float fx1 = float(x + 1) * src.width / float(dw);
@@ -663,18 +719,10 @@ void PromptOverlayCompositor::ComposeControllerStyleLocked(DeviceStyle style,
     }
   };
 
-  const AtlasKind kKinds[kKindCount] = {
-      AtlasKind::kHud512,
-      AtlasKind::kFont256G3J,
-      AtlasKind::kFont256G2,
-      AtlasKind::kChainsawDuel,
-      AtlasKind::kHud512G1,
-      AtlasKind::kChainsawDuelG2,
-  };
-
-  for (AtlasKind kind : kKinds) {
+  for (int k = 0; k < kKindCount; ++k) {
+    const AtlasKind kind = static_cast<AtlasKind>(k);
     const AtlasLayout* layout = GetLayoutForKind(kind);
-    if (!layout) continue;
+    if (!layout || !KindWantedLocked(kind)) continue;  // GitHub #223: only the running game's atlases
     const uint32_t ow = layout->width * kScale;
     const uint32_t oh = layout->height * kScale;
     auto buf = std::make_shared<std::vector<uint8_t>>(8 + size_t(ow) * oh * 4, 0);
@@ -682,9 +730,10 @@ void PromptOverlayCompositor::ComposeControllerStyleLocked(DeviceStyle style,
     std::memcpy(buf->data() + 4, &oh, 4);
     uint8_t* rgba = buf->data() + 8;
 
-    // Leave safe ~7.5% inner margin (0.85x scale) inside cell bounds so circular buttons and keycaps never
-    // clip against Unreal Engine font quad UV bounds (e.g. font sheet cell tops at Y=54 where quad begins at Y=55.5).
-    constexpr float kGlyphScale = 0.85f;
+    // Font sheets keep a safe ~7.5% inner margin (0.85x) inside cell bounds so circular buttons never clip against
+    // Unreal Engine font quad UV bounds (e.g. font sheet cell tops at Y=54 where quad begins at Y=55.5); GitHub #223
+    // layouts measured to the button's own size fill it (AtlasLayout::glyph_scale).
+    const float kGlyphScale = layout->glyph_scale;
     for (const PromptCell& cell : layout->cells) {
       ClearCellRectOnOverlay(rgba, static_cast<int>(ow), static_cast<int>(oh), *layout, cell);
       auto it = glyphs.find(cell.button);
@@ -699,25 +748,17 @@ void PromptOverlayCompositor::ComposeControllerStyleLocked(DeviceStyle style,
       const int w = std::max(1, int(std::lround(content.width * scale)));
       const int h = std::max(1, int(std::lround(content.height * scale)));
       blit_overlay(rgba, static_cast<int>(ow), static_cast<int>(oh), content, dx0 + (bw - w) / 2, dy0 + (bh - h) / 2,
-                   w, h);
+                   w, h, CellClearRect(static_cast<int>(ow), static_cast<int>(oh), *layout, cell));
     }
     overlays_[static_cast<size_t>(style)][static_cast<size_t>(kind)] = std::move(buf);
   }
 }
 
 void PromptOverlayCompositor::ComposeKeyboardStyleLocked(const std::map<std::string, std::string>& keybind_overrides) {
-  const AtlasKind kKinds[kKindCount] = {
-      AtlasKind::kHud512,
-      AtlasKind::kFont256G3J,
-      AtlasKind::kFont256G2,
-      AtlasKind::kChainsawDuel,
-      AtlasKind::kHud512G1,
-      AtlasKind::kChainsawDuelG2,
-  };
-
-  for (AtlasKind kind : kKinds) {
+  for (int k = 0; k < kKindCount; ++k) {
+    const AtlasKind kind = static_cast<AtlasKind>(k);
     const AtlasLayout* layout = GetLayoutForKind(kind);
-    if (!layout) continue;
+    if (!layout || !KindWantedLocked(kind)) continue;  // GitHub #223: only the running game's atlases
     const uint32_t ow = layout->width * kScale;
     const uint32_t oh = layout->height * kScale;
     auto buf = std::make_shared<std::vector<uint8_t>>(8 + size_t(ow) * oh * 4, 0);
@@ -734,10 +775,11 @@ void PromptOverlayCompositor::ComposeKeyboardStyleLocked(const std::map<std::str
       const int bw = (cell.draw_rect[2] - cell.draw_rect[0]) * kScale;
       const int bh = (cell.draw_rect[3] - cell.draw_rect[1]) * kScale;
       const std::vector<uint8_t> cap = draw_cap(bw, bh, key);
+      const CellRect clip = CellClearRect(static_cast<int>(ow), static_cast<int>(oh), *layout, cell);
       for (int y = 0; y < bh; ++y) {
         if (dy0 + y < 0 || dy0 + y >= static_cast<int>(oh)) continue;
         for (int x = 0; x < bw; ++x) {
-          if (dx0 + x < 0 || dx0 + x >= static_cast<int>(ow)) continue;
+          if (dx0 + x < 0 || dx0 + x >= static_cast<int>(ow) || !clip.Has(dx0 + x, dy0 + y)) continue;
           const uint8_t* s = &cap[(size_t(y) * bw + x) * 4];
           if (s[3] >= 2) {
             std::memcpy(&rgba[(size_t(dy0 + y) * ow + dx0 + x) * 4], s, 4);

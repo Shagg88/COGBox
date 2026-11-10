@@ -137,6 +137,9 @@ uint32_t XenosPcssMode();
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDrawer* immediate, rex::ui::Window* window,
                             rex::Runtime* runtime);
 void XenosShutdownInGameMenu();
+// GitHub #223: the running game's title ID, before XenosInstallInGameMenu: button-prompt overlays are then built only
+// for the atlases that game draws (the dialogs, and with them the prompt monitor, start before the game is loaded).
+void XenosSetPromptGame(uint32_t title_id);
 // PR #134 (Flippage): true while the in-game menu is open - the native mouse look drops mouse motion then.
 bool XenosInGameMenuIsOpen() noexcept;
 // Patch 0062: --gow2_shader_note (default on) - a small "Building shaders N%" note in the bottom-left corner while the

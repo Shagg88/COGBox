@@ -14,6 +14,7 @@
 #include <xenos/input/prompt_device_monitor.h>
 #include <xenos/menu_input.h>
 #include <xenos/menu_look.h>   // 0.4.9: the full-screen look (Noto Sans, the launcher's style)
+#include <xenos/renderer/prompt_overlay_compositor.h>   // GitHub #223: XenosSetPromptGame
 #include <xenos/achievement_popup_assets.h>   // the in-game text's font (CJK / Cyrillic) when translated
 #include <xenos/ui_lang.h>
 #include <xenos/achievement_popup.h>
@@ -1162,6 +1163,10 @@ void IdleCursorWatch() {
   }
 }
 }  // namespace
+
+void XenosSetPromptGame(uint32_t title_id) {
+  ::xenos::renderer::prompt::GlobalPromptCompositor().SetGameTitle(title_id);
+}
 
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDrawer* immediate, rex::ui::Window* window,
                             rex::Runtime* runtime) {
