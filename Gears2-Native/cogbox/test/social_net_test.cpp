@@ -45,10 +45,10 @@ int main() {
 
     // the server address
     {
-        auto u = parse_server_url("http://169.224.226.150:18443");
+        auto u = parse_server_url("http://203.0.113.7:18443");
         CHECK(u.has_value());
         if (u) {
-            CHECK(u->host == L"169.224.226.150");
+            CHECK(u->host == L"203.0.113.7");
             CHECK(u->port == 18443);
             CHECK(!u->secure);
         }
@@ -59,7 +59,7 @@ int main() {
         CHECK(!parse_server_url("").has_value());
         CHECK(!parse_server_url("http://").has_value());
         CHECK(!parse_server_url("http://h:notaport").has_value());
-        CHECK(stun_address("http://169.224.226.150:18443") == "169.224.226.150:3478");
+        CHECK(stun_address("http://203.0.113.7:18443") == "203.0.113.7:3478");
         CHECK(stun_address("") == "");
     }
 
