@@ -488,7 +488,7 @@ Action DrawSettings(const Look& L, SettingsPage& pg) {
   Plate(dl, la, lb, 16 * u, L);
   // the buttons, bottom of the right column
   const float bh = 58 * u, bgap = 14 * u;
-  const int nbuttons = pg.has_file ? 4 : 2;
+  const int nbuttons = (pg.has_file ? 4 : 2) + (pg.has_file && pg.t_social ? 1 : 0);   // social step 5: + Social
   const float buttons_top = rb.y - nbuttons * bh - (nbuttons - 1) * bgap;
   // the status note sits inside the description plate, in its own strip at the bottom (opaque, full panel width)
   const float status_w = right_w - 60 * u;
