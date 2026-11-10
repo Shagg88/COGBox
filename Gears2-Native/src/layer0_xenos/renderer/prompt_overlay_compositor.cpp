@@ -423,7 +423,7 @@ CellRect CellClearRect(int ow, int oh, const AtlasLayout& layout, const PromptCe
   int cx0 = 0, cy0 = 0, cx1 = 0, cy1 = 0;
   if (cell.clear_box) {
     const int pad = (layout.kind == AtlasKind::kHud512 || layout.kind == AtlasKind::kHud512G1 || layout.kind == AtlasKind::kChainsawDuel ||
-                     layout.kind == AtlasKind::kChainsawDuelG2) ? 1 : 0;
+                     layout.kind == AtlasKind::kChainsawG2) ? 1 : 0;
     cx0 = std::clamp(cell.box[0] * kScale, 0, ow);
     cy0 = std::clamp(cell.box[1] * kScale, 0, oh);
     cx1 = std::clamp((cell.box[2] + pad) * kScale, 0, ow);

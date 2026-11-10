@@ -277,7 +277,7 @@ TEST_CASE("GitHub #223: every prompt layout names the games that draw it", "[lay
 TEST_CASE("rc6: Gears 2's 128x256 chainsaw sheet has B, LT and RT cells inside the sheet", "[layer0][prompt][catalog]") {
   const auto* g2 = prompt::GetAtlasLayout(0x64cd4013fef17653ULL);
   REQUIRE(g2 != nullptr);
-  CHECK(g2->kind == prompt::AtlasKind::kChainsawDuelG2);
+  CHECK(g2->kind == prompt::AtlasKind::kChainsawG2);
   CHECK(g2->width == 128);
   CHECK(g2->height == 256);
   REQUIRE(g2->cells.size() == 6);
