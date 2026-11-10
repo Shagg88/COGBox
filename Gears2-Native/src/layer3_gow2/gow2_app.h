@@ -19,6 +19,7 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 #include <ue3/launch.h>
 #include <ue3/shader_prebuild.h>
 #include <xenos/dev_tools.h>
+#include <xenos/social_ingame.h>
 #include <xenos/display_size.h>
 #include <xenos/gpu_system.h>
 #include <xenos/achievements_export.h>
@@ -129,6 +130,7 @@ class Gow2App : public rex::ReXApp {
     XenosCreateFpsBarIfRequested(drawer);
     XenosInstallAoDebugKeys(drawer);  // notes/80 s.12 (--gow2_ao_debug_keys)
     XenosInstallInGameMenu(drawer, immediate_drawer(), window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
+    XenosSocialStart();  // social step 5: friends, invites and pop-ups when the game runs online
   }
   void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
     xenos::display::SetSurfaceSize(pixel_width, pixel_height);

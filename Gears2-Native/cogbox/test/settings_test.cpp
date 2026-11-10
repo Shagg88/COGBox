@@ -264,6 +264,41 @@ int summary() {
             std::string(normal_code_exe_name(Game::Judgment)) != "gowj-normal.exe") { std::cout << "FAIL normal-code exe name\n"; ++fails; }
         if (find_option(Game::Gears3, "FastCode")) { std::cout << "FAIL FastCode should not be a user option\n"; ++fails; }
     }
+    // social step 3: with the multiplayer server enabled the games start online; without, none of it
+    for (int on = 0; on <= 1; ++on) {
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        if (on) { e.online_server = "http://1.2.3.4:18443"; e.online_stun = "1.2.3.4:3478"; }
+        Store st; Settings s = st.view(Game::Gears3, e);
+        const std::vector<std::string> a = build_args(Game::Gears3, Version::TitleUpdate, s, e, nullptr);
+        auto has = [&](const std::string& v) { for (const std::string& x : a) if (x == v) return true; return false; };
+        const bool all = has("--net_online=true") && has("--net_live_emulation=true") &&
+                         has("--net_master_server=\"http://1.2.3.4:18443\"") && has("--net_stun_server=1.2.3.4:3478");
+        const bool any = has("--net_online=true") || has("--net_live_emulation=true");
+        if (on ? !all : any) { std::cout << "FAIL online args (" << (on ? "on" : "off") << ")\n"; ++fails; }
+        e.online_region = "europe";
+        const std::vector<std::string> b = build_args(Game::Gears3, Version::TitleUpdate, s, e, nullptr);
+        const bool sent = std::find(b.begin(), b.end(), "--net_region=europe") != b.end();
+        if (sent != (on != 0)) { std::cout << "FAIL region arg (" << on << ")\n"; ++fails; }
+        e.online_region.clear();
+        const std::vector<std::string> c = build_args(Game::Gears3, Version::TitleUpdate, s, e, nullptr);
+        for (const std::string& x : c) if (x.rfind("--net_region", 0) == 0) { std::cout << "FAIL region arg for Any\n"; ++fails; }
+    }
+    // social step 4: Gears 3 TU6 gets its UE3 GNames / GEngine addresses (the private match lobby fixes), others not
+    for (int gi = 0; gi < 2; ++gi) {
+        const Game g = gi ? Game::Judgment : Game::Gears3;
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        Store st; Settings s = st.view(g, e);
+        const std::vector<std::string> a = build_args(g, Version::TitleUpdate, s, e, nullptr);
+        auto has = [&](const std::string& v) { for (const std::string& x : a) if (x == v) return true; return false; };
+        const bool want = g == Game::Gears3;
+        if (has("--cogbox_ue3_gnames=8344D918") != want || has("--cogbox_ue3_gengine=8343987C") != want) {
+            std::cout << "FAIL UE3 addresses for " << (gi ? "Judgment" : "Gears 3") << "\n"; ++fails;
+        }
+    }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;
 }

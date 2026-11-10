@@ -503,6 +503,7 @@ Action DrawSettings(const Look& L, SettingsPage& pg) {
   btns.push_back({pg.t_resume, true, true, Action::kResume});
   if (pg.has_file) {
     btns.push_back({pg.t_achievements, false, true, Action::kAchievements});
+    if (pg.t_social) btns.push_back({pg.t_social, false, true, Action::kSocial});
     std::string rs = pg.t_restart;
     if (pg.restart_changes) rs += " (" + std::to_string(pg.restart_changes) + ")";
     btns.push_back({rs, false, pg.can_restart && pg.restart_changes > 0, Action::kRestart});

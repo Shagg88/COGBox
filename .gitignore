@@ -4,3 +4,5 @@
 /work/
 *.pre[0-9]*
 /_backups/
+build/
+Testing/

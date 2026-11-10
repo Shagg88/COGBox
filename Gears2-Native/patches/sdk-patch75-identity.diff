@@ -1,0 +1,295 @@
+diff --git a/include/rex/kernel/xam/net/identity.h b/include/rex/kernel/xam/net/identity.h
+new file mode 100644
+index 0000000..febcd52
+--- /dev/null
++++ b/include/rex/kernel/xam/net/identity.h
+@@ -0,0 +1,31 @@
++// COGBox SDK patch 64: the player's online identity (identity.json). The uuid is made here; the discriminator, the
++// online XUID and the signaling token come from the master server's claim. The local profile's XUID is never touched.
++#pragma once
++
++#include <cstdint>
++#include <filesystem>
++#include <string>
++
++namespace rex::kernel::xam::net {
++
++struct ClientIdentity {
++  std::string uuid;
++  std::string display_name;
++  std::string discriminator;     // "8373", empty until claimed
++  uint64_t authoritative_xuid{0};  // 0 until claimed
++  std::string token;             // signaling token, empty until claimed
++
++  std::string FullTag() const { return discriminator.empty() ? display_name : display_name + "#" + discriminator; }
++};
++
++ClientIdentity GetClientIdentity();
++uint64_t GetAuthoritativeOnlineXuid();
++
++// Loads profile_dir/identity.json, or makes a new identity (uuid v4, fallback_gamertag or "Player") and saves it.
++bool LoadOrCreateIdentity(const std::filesystem::path& profile_dir, const std::string& fallback_gamertag);
++bool SaveIdentity(const std::filesystem::path& profile_dir);
++// Stores the master server's claim answer and saves.
++bool ApplyClaim(const std::filesystem::path& profile_dir, const std::string& discriminator, uint64_t xuid,
++                const std::string& token);
++
++}  // namespace rex::kernel::xam::net
+diff --git a/src/kernel/CMakeLists.txt b/src/kernel/CMakeLists.txt
+index 2d43466..1adddab 100644
+--- a/src/kernel/CMakeLists.txt
++++ b/src/kernel/CMakeLists.txt
+@@ -18,6 +18,8 @@ set(REXKERNEL_SOURCES
+     xam/net/stun.cpp
+     xam/net/punch.cpp
+     xam/net/upnp.cpp
++    # COGBox SDK patch 64: client identity
++    xam/net/identity.cpp
+     xam/xam_notify.cpp
+     xam/xam_nui.cpp
+     xam/xam_party.cpp
+diff --git a/src/kernel/xam/net/identity.cpp b/src/kernel/xam/net/identity.cpp
+new file mode 100644
+index 0000000..2b2a321
+--- /dev/null
++++ b/src/kernel/xam/net/identity.cpp
+@@ -0,0 +1,130 @@
++// COGBox SDK patch 64: the player's online identity (identity.json).
++#include <rex/kernel/xam/net/identity.h>
++
++#if defined(_WIN32)
++#include <windows.h>
++#include <bcrypt.h>
++#endif
++
++#include <cstdio>
++#include <fstream>
++#include <mutex>
++#include <random>
++
++#include <nlohmann/json.hpp>
++
++namespace rex::kernel::xam::net {
++
++namespace {
++
++std::mutex g_mutex;
++ClientIdentity g_identity;
++
++void RandomBytes(uint8_t* out, size_t len) {
++#if defined(_WIN32)
++  if (BCRYPT_SUCCESS(BCryptGenRandom(nullptr, out, ULONG(len), BCRYPT_USE_SYSTEM_PREFERRED_RNG))) {
++    return;
++  }
++#endif
++  std::random_device rd;
++  for (size_t i = 0; i < len; ++i) {
++    out[i] = uint8_t(rd());
++  }
++}
++
++std::string NewUuidV4() {
++  uint8_t b[16];
++  RandomBytes(b, sizeof(b));
++  b[6] = uint8_t((b[6] & 0x0F) | 0x40);
++  b[8] = uint8_t((b[8] & 0x3F) | 0x80);
++  char s[37];
++  std::snprintf(s, sizeof(s), "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", b[0], b[1], b[2],
++                b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
++  return s;
++}
++
++std::string StringField(const nlohmann::json& j, const char* key) {
++  auto it = j.find(key);
++  return it != j.end() && it->is_string() ? it->get<std::string>() : std::string();
++}
++
++// Must be called with g_mutex held.
++bool SaveLocked(const std::filesystem::path& dir) {
++  std::error_code ec;
++  std::filesystem::create_directories(dir, ec);
++  nlohmann::json j = {{"uuid", g_identity.uuid},
++                      {"display_name", g_identity.display_name},
++                      {"discriminator", g_identity.discriminator},
++                      {"xuid", std::to_string(g_identity.authoritative_xuid)},
++                      {"token", g_identity.token}};
++  const auto tmp = dir / "identity.json.tmp";
++  {
++    std::ofstream out(tmp, std::ios::trunc);
++    if (!out) {
++      return false;
++    }
++    out << j.dump(2) << '\n';
++    if (!out.good()) {
++      return false;
++    }
++  }
++  std::filesystem::rename(tmp, dir / "identity.json", ec);
++  return !ec;
++}
++
++}  // namespace
++
++ClientIdentity GetClientIdentity() {
++  std::lock_guard<std::mutex> lock(g_mutex);
++  return g_identity;
++}
++
++uint64_t GetAuthoritativeOnlineXuid() {
++  std::lock_guard<std::mutex> lock(g_mutex);
++  return g_identity.authoritative_xuid;
++}
++
++bool SaveIdentity(const std::filesystem::path& profile_dir) {
++  std::lock_guard<std::mutex> lock(g_mutex);
++  return SaveLocked(profile_dir);
++}
++
++bool LoadOrCreateIdentity(const std::filesystem::path& profile_dir, const std::string& fallback_gamertag) {
++  ClientIdentity id;
++  {
++    std::ifstream in(profile_dir / "identity.json");
++    if (in) {
++      nlohmann::json j = nlohmann::json::parse(in, nullptr, false);
++      if (j.is_object()) {
++        id.uuid = StringField(j, "uuid");
++        id.display_name = StringField(j, "display_name");
++        id.discriminator = StringField(j, "discriminator");
++        id.token = StringField(j, "token");
++        const std::string xuid = StringField(j, "xuid");
++        id.authoritative_xuid = xuid.empty() ? 0 : std::strtoull(xuid.c_str(), nullptr, 10);
++      }
++    }
++  }
++  const bool complete = !id.uuid.empty() && !id.display_name.empty();
++  if (id.uuid.empty()) {
++    id = ClientIdentity{};  // unreadable or corrupt: a claim without its uuid is worthless
++    id.uuid = NewUuidV4();
++  }
++  if (id.display_name.empty()) {
++    id.display_name = fallback_gamertag.empty() ? "Player" : fallback_gamertag;
++  }
++  std::lock_guard<std::mutex> lock(g_mutex);
++  g_identity = id;
++  return complete || SaveLocked(profile_dir);
++}
++
++bool ApplyClaim(const std::filesystem::path& profile_dir, const std::string& discriminator, uint64_t xuid,
++                const std::string& token) {
++  std::lock_guard<std::mutex> lock(g_mutex);
++  g_identity.discriminator = discriminator;
++  g_identity.authoritative_xuid = xuid;
++  g_identity.token = token;
++  return SaveLocked(profile_dir);
++}
++
++}  // namespace rex::kernel::xam::net
+diff --git a/src/system/CMakeLists.txt b/src/system/CMakeLists.txt
+index 99e4986..cbc39c6 100644
+--- a/src/system/CMakeLists.txt
++++ b/src/system/CMakeLists.txt
+@@ -112,9 +112,12 @@ endif()
+ if(WIN32)
+     target_link_libraries(rexruntime PRIVATE ws2_32)
+     # COGBox SDK patch 63: online play (UPnP via miniupnpc, adapter list via iphlpapi)
+-    target_link_libraries(rexruntime PRIVATE libminiupnpc-static iphlpapi)
++    target_link_libraries(rexruntime PRIVATE libminiupnpc-static iphlpapi bcrypt)
+ endif()
+ 
++# COGBox SDK patch 64: nlohmann/json (the copy inja carries) for identity.json and the master server
++target_include_directories(rexruntime PRIVATE ${REXGLUE_ROOT}/thirdparty/inja/third_party/include)
++
+ if(WIN32)
+     target_link_libraries(rexruntime PUBLIC dxgi dxguid)
+     target_compile_definitions(rexruntime PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+diff --git a/tests/unit/CMakeLists.txt b/tests/unit/CMakeLists.txt
+index 71acfd8..53fb1d9 100644
+--- a/tests/unit/CMakeLists.txt
++++ b/tests/unit/CMakeLists.txt
+@@ -22,6 +22,7 @@ add_executable(unit_tests
+     codegen/output_stamp_test.cpp
+     net/stun_test.cpp
+     net/punch_test.cpp
++    net/identity_test.cpp
+     net/upnp_test.cpp
+ )
+ 
+diff --git a/tests/unit/net/identity_test.cpp b/tests/unit/net/identity_test.cpp
+new file mode 100644
+index 0000000..6135082
+--- /dev/null
++++ b/tests/unit/net/identity_test.cpp
+@@ -0,0 +1,73 @@
++// COGBox SDK patch 64: client identity tests. Files go to COGBOX_NET_TEST_DIR in the build tree (never AppData).
++#include <catch2/catch_test_macros.hpp>
++
++#include <filesystem>
++#include <fstream>
++#include <regex>
++#include <string>
++
++#include <rex/kernel/xam/net/identity.h>
++
++namespace fs = std::filesystem;
++using namespace rex::kernel::xam::net;
++
++namespace {
++fs::path FreshDir(const char* name) {
++  fs::path dir = fs::path(COGBOX_NET_TEST_DIR) / name;
++  fs::remove_all(dir);
++  fs::create_directories(dir);
++  return dir;
++}
++}  // namespace
++
++TEST_CASE("Identity: a new identity has a uuid v4, the gamertag and no claim yet", "[net][identity]") {
++  auto dir = FreshDir("identity_new");
++  REQUIRE(LoadOrCreateIdentity(dir, "Marcus"));
++  ClientIdentity id = GetClientIdentity();
++  CHECK(std::regex_match(id.uuid, std::regex("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")));
++  CHECK(id.display_name == "Marcus");
++  CHECK(id.discriminator.empty());
++  CHECK(id.authoritative_xuid == 0);
++  CHECK(id.token.empty());
++  CHECK(id.FullTag() == "Marcus");
++  CHECK(GetAuthoritativeOnlineXuid() == 0);
++  CHECK(fs::exists(dir / "identity.json"));
++}
++
++TEST_CASE("Identity: loading again keeps the uuid", "[net][identity]") {
++  auto dir = FreshDir("identity_reload");
++  REQUIRE(LoadOrCreateIdentity(dir, "Marcus"));
++  const std::string uuid = GetClientIdentity().uuid;
++  REQUIRE(LoadOrCreateIdentity(dir, "SomeoneElse"));
++  CHECK(GetClientIdentity().uuid == uuid);
++  CHECK(GetClientIdentity().display_name == "Marcus");
++}
++
++TEST_CASE("Identity: a claim is kept and saved", "[net][identity]") {
++  auto dir = FreshDir("identity_claim");
++  REQUIRE(LoadOrCreateIdentity(dir, "Dom"));
++  REQUIRE(ApplyClaim(dir, "0042", 0x0009123400005678ull, "secret-token"));
++  CHECK(GetAuthoritativeOnlineXuid() == 0x0009123400005678ull);
++  CHECK(GetClientIdentity().FullTag() == "Dom#0042");
++  REQUIRE(LoadOrCreateIdentity(dir, "Dom"));
++  ClientIdentity id = GetClientIdentity();
++  CHECK(id.discriminator == "0042");
++  CHECK(id.authoritative_xuid == 0x0009123400005678ull);
++  CHECK(id.token == "secret-token");
++}
++
++TEST_CASE("Identity: a corrupt file is replaced by a new identity", "[net][identity]") {
++  auto dir = FreshDir("identity_corrupt");
++  { std::ofstream(dir / "identity.json") << "{ not valid json ..."; }
++  REQUIRE(LoadOrCreateIdentity(dir, "Baird"));
++  ClientIdentity id = GetClientIdentity();
++  CHECK_FALSE(id.uuid.empty());
++  CHECK(id.display_name == "Baird");
++  CHECK(id.authoritative_xuid == 0);
++}
++
++TEST_CASE("Identity: an empty gamertag becomes Player", "[net][identity]") {
++  auto dir = FreshDir("identity_empty_name");
++  REQUIRE(LoadOrCreateIdentity(dir, ""));
++  CHECK(GetClientIdentity().display_name == "Player");
++}

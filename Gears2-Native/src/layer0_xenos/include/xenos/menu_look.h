@@ -131,9 +131,10 @@ struct SettingsPage {
              *t_waiting = "Restart required - waits for Restart to apply", *t_no_file = "",
              *t_right = "", *t_quit_confirm = "Quit the game? Changes that wait for a restart are kept for the next start.",
              *t_yes = "Yes", *t_no = "No";
+  const char* t_social = nullptr;   // social step 5: the Social button, when the game runs online
   std::vector<LegendItem> legend;
 };
-enum class Action { kNone, kResume, kAchievements, kRestart, kQuit, kBack };
+enum class Action { kNone, kResume, kAchievements, kRestart, kQuit, kBack, kSocial };
 // Draws the whole page (call inside a window that covers the display, no padding). Returns what was clicked.
 Action DrawSettings(const Look& L, SettingsPage& page);
 

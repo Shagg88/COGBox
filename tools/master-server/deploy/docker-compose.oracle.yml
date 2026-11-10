@@ -1,0 +1,23 @@
+# COGBox master server on the Oracle VM: signaling + lobbies (TCP 18443) and STUN only (UDP 3478). Host networking,
+# so the VM's own firewall rules apply as written. No relay: game traffic never passes through this machine.
+services:
+  master-server:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - NODE_ENV=production
+      - PORT=18443
+      - HOST=0.0.0.0
+      - DB_PATH=/data/master.db
+    volumes:
+      - master-data:/data
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./coturn.conf:/etc/coturn/turnserver.conf:ro
+    command: ["turnserver", "-c", "/etc/coturn/turnserver.conf"]
+volumes:
+  master-data:

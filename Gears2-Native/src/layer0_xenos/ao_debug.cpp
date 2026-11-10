@@ -43,7 +43,6 @@ const char* const kViewNames[kViewCount] = {"normal", "XeGTAO only", "split", "v
 const char* const kQualityNames[kQualityCount] = {"low", "medium", "high", "ultra"};
 constexpr uint32_t kDenoiseCount = 3;
 const char* const kDenoiseNames[kDenoiseCount] = {"1 denoise pass", "2 denoise passes", "3 denoise passes"};
-constexpr uint32_t kBlurSteps[] = {1, 2, 3, 4, 6, 8};  // F8; AMD allows up to 8
 
 std::atomic<uint32_t> g_show{0}, g_view{0}, g_quality{2}, g_denoise{2};  // g_denoise: passes - 1
 std::atomic<bool> g_keys{false}, g_active{false}, g_cacao{false}, g_cacao_available{false};
@@ -238,19 +237,7 @@ void XenosInstallAoDebugKeys(rex::ui::ImGuiDrawer* drawer) {
     g_cacao.store(on);
     REXLOG_INFO("gow2_ao: algorithm -> {}", on ? "CACAO" : "XeGTAO");
   });
-  rex::ui::RegisterBind("bind_gow2_ao_denoise", "F8", "XeGTAO denoise passes (developer)",
-                        [] {
-                          if (g_cacao.load()) {
-                            if (!g_active.load()) return;
-                            uint32_t next = kBlurSteps[0];
-                            for (const uint32_t s : kBlurSteps)
-                              if (s > g_cacao_blur.load()) { next = s; break; }
-                            g_cacao_blur.store(next);
-                            REXLOG_INFO("gow2_ao: CACAO blur -> {} passes", next);
-                          } else {
-                            Cycle(g_denoise, kDenoiseCount, "denoise", kDenoiseNames);
-                          }
-                        });
+  // social step 5 (Flippage + Shagg, 8 Nov): the F8 developer bind "XeGTAO denoise passes" is gone; F8 opens Social.
   if (drawer) g_label = std::make_unique<AoLabel>(drawer);
   REXLOG_INFO("gow2_ao: developer keys on (F9 AO, F10 view, F11 quality, F8 denoise, F6 XeGTAO / CACAO)");
 }
@@ -262,7 +249,6 @@ void XenosShutdownAoDebugKeys() {
   rex::ui::UnregisterBind("bind_gow2_mip_bias");
   rex::ui::UnregisterBind("bind_gow2_ao_view");
   rex::ui::UnregisterBind("bind_gow2_ao_quality");
-  rex::ui::UnregisterBind("bind_gow2_ao_denoise");
   rex::ui::UnregisterBind("bind_gow2_ao_algo");
   g_label.reset();
 }
