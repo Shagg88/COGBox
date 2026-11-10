@@ -5838,7 +5838,7 @@ index 0000000..16750cf
 +
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/xam_msg.cpp b/src/kernel/xam/xam_msg.cpp
-index 6c4c3cd..a0bfda9 100644
+index 6c4c3cd..0c150ae 100644
 --- a/src/kernel/xam/xam_msg.cpp
 +++ b/src/kernel/xam/xam_msg.cpp
 @@ -12,6 +12,7 @@
@@ -6112,11 +6112,11 @@ index 6c4c3cd..a0bfda9 100644
 +      uint32_t data = 0, count = 0, max = 0, first = 0;
 +      if (!GuestRead32(a, &data) || !GuestRead32(a + 4, &count) || !GuestRead32(a + 8, &max)) continue;
 +      if (count < 1000 || count > 4000000 || max < count || !GuestRead32(data, &first) || !first) continue;
-+      int named = 0;  // GObjObjects: most of its first entries are objects whose class has a name
++      int named = 0;  // GObjObjects: most of its first entries are named objects that know their own slot in it (+32)
 +      for (uint32_t k = 0; k < 64; ++k) {
-+        uint32_t o = 0, cls = 0;
-+        if (GuestRead32(data + 4 * k, &o) && o && GuestRead32(o + 52, &cls) && !Ue3ObjectName(gnames, o).empty() &&
-+            !Ue3ObjectName(gnames, cls).empty()) {
++        uint32_t o = 0, cls = 0, slot = 0;
++        if (GuestRead32(data + 4 * k, &o) && o && GuestRead32(o + 52, &cls) && GuestRead32(o + 32, &slot) && slot == k &&
++            !Ue3ObjectName(gnames, o).empty() && !Ue3ObjectName(gnames, cls).empty()) {
 +          ++named;
 +        }
 +      }
