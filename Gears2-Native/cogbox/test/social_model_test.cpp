@@ -20,6 +20,16 @@ static bool same(const SocialCall& c, const char* method, const char* path, cons
 }
 
 int main() {
+    // GitLab review: a join code from the server goes on the game's command line - only COG-XXXX is taken
+    {
+        CHECK(join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-AB12"})").has_value());
+        CHECK(!join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-AB12 --x=1"})").has_value());
+        CHECK(!join_from_answer(409, R"({"title_id":"4D5308AB","room_code":""COG-AB12""})").has_value());
+        CHECK(!join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"cog-ab12"})").has_value());
+        CHECK(safe_room_code("COG-7Z9Q") && !safe_room_code("COG-7Z9") && !safe_room_code("XYZ-1234") && !safe_room_code(""));
+        auto inv = parse_invites(R"({"invites":[{"id":"i1","from":{"uuid":"u","tag":"A#0001"},"title_id":"4D5308AB","room_code":"COG-12 34"}]})");
+        CHECK(inv.size() == 1 && inv[0].room_code.empty());
+    }
     // profile pictures: a friend's, a request's and an inviter's; only the games' own picture names are drawn
     {
         auto l = parse_friends(R"({"friends":[{"uuid":"u1","tag":"A#0001","icon":"icons/4D5308AB/8000.png","presence":{"state":"online"}}],)"

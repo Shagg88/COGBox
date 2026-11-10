@@ -67,6 +67,7 @@ std::vector<SocialInvite> parse_invites(const std::string& body) {
         }
         x.title_id = upper(str(i, "title_id"));
         x.room_code = str(i, "room_code");
+        if (!safe_room_code(x.room_code)) x.room_code.clear();
         if (!x.id.empty()) out.push_back(x);
     }
     return out;
@@ -125,7 +126,7 @@ std::optional<SocialJoin> join_from_answer(int status, const std::string& body) 
     if (status != 409) return std::nullopt;
     const json j = json::parse(body, nullptr, false);
     SocialJoin out{ game_for_title(str(j, "title_id")), str(j, "room_code") };
-    if (out.game < 0 || out.room_code.empty()) return std::nullopt;
+    if (out.game < 0 || !safe_room_code(out.room_code)) return std::nullopt;
     return out;
 }
 
@@ -219,4 +220,11 @@ bool safe_icon_name(const std::string& n) {
     while (i < n.size() && n[i] >= '0' && n[i] <= '9') ++i;
     const size_t digits = i - digits_at;
     return digits >= 1 && digits <= 6 && n.compare(i, std::string::npos, suf) == 0;
+}
+
+bool safe_room_code(const std::string& c) {
+    if (c.size() != 8 || c.compare(0, 4, "COG-") != 0) return false;
+    for (size_t i = 4; i < 8; ++i)
+        if (!((c[i] >= 'A' && c[i] <= 'Z') || (c[i] >= '0' && c[i] <= '9'))) return false;
+    return true;
 }

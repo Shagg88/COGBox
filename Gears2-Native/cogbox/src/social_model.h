@@ -54,6 +54,8 @@ enum class SocialAction { Add, Accept, Decline, Block, Remove, Join, Invite, Inv
 // A profile picture name from the server that is safe to look up under <COGBox>: icons/<8 hex digits>/<1-6 digits>.png
 // (anything else - a path, "..", another file type - is drawn as the letter).
 bool safe_icon_name(const std::string& name);
+// A lobby join code from the server that is safe to put on a game's command line: COG- and four of A-Z / 0-9.
+bool safe_room_code(const std::string& code);
 struct SocialCall {
     std::string method, path, body;
 };

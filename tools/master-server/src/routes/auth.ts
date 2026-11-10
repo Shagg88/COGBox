@@ -71,6 +71,10 @@ export const authRoutes: FastifyPluginAsync<{ db: DatabaseInstance }> = async (f
   fastify.post<{ Body: ClaimBody }>('/claim', async (request, reply) => {
     const { uuid, token, display_name } = request.body || {};
 
+    if (uuid !== undefined && uuid !== null && (typeof uuid !== 'string' ||
+        (uuid.trim() !== '' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid.trim())))) {
+      return reply.status(400).send({ error: 'uuid: a uuid, or empty for a new account' });
+    }
     const targetUuid = uuid && uuid.trim().length > 0 ? uuid.trim() : crypto.randomUUID();
 
     // An existing uuid is only answered for its own token (the uuid alone is not a secret).

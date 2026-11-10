@@ -865,9 +865,9 @@ void front_draw(App &a, ImVec2 size)
             }
             // social step 3: SOCIAL, right of ACHIEVEMENTS, opens the SOCIAL tab (friends, invites, the multiplayer server)
             ImGui::SameLine(0, gap);
-            const bool shit = th_button("SOCIAL", ImVec2(sw, bh), true, F_HEAD, sel3);
+            const bool socialPressed = th_button("SOCIAL", ImVec2(sw, bh), true, F_HEAD, sel3);
             hover_tip(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), tr("Friends, invites and online play."));
-            if (shit || (nav && padA && a.frontSel == 3)) {
+            if (socialPressed || (nav && padA && a.frontSel == 3)) {
                 a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 5; a.barSel = -1;   // page.cpp k_tabSocial
             }
         }

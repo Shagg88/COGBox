@@ -166,6 +166,15 @@ describe('Master Server API', () => {
     expect(cleared.json().icon).toBe('');
   });
 
+  it('claim: a uuid that is not a uuid is refused, not stored', async () => {
+    for (const bad of [7, 'x'.repeat(300), 'a:b', 'has space', '../..']) {
+      const r = await app.inject({ method: 'POST', url: '/api/v1/auth/claim', payload: { uuid: bad, display_name: 'Marcus' } });
+      expect(r.statusCode, String(bad)).toBe(400);
+    }
+    const ok = await app.inject({ method: 'POST', url: '/api/v1/auth/claim', payload: { uuid: '', display_name: 'Marcus' } });
+    expect(ok.statusCode).toBe(200);
+  });
+
   it('renames: same uuid and xuid, discriminator kept when free', async () => {
     const me = await claim('Baird');
     const r = await app.inject({ method: 'POST', url: '/api/v1/auth/rename', headers: auth(me), payload: { display_name: 'Damon Baird' } });

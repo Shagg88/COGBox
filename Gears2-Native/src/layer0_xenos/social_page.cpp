@@ -187,11 +187,11 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
     const std::string tag = v.have_account ? v.my_tag : std::string(XenosTr(v.busy ? "Signing in..." : "Not signed in"));
     const std::string state = v.reachable ? XenosTr("Online") : v.busy ? XenosTr("Connecting...") : XenosTr("Can't reach the online server.");
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float w = ImGui::GetContentRegionAvail().x, h = 52.f * s, pad = 12.f * s;
+    const float w = ImGui::GetContentRegionAvail().x, h = 52.f * s, inset = 12.f * s;
     const ImVec2 p = ImGui::GetCursorScreenPos(), q(p.x + w, p.y + h);
     dl->AddRectFilled(p, q, kPanel, 3.f * s);
     const float r = 17.f * s;
-    const ImVec2 c(p.x + pad + r, p.y + h * 0.5f);
+    const ImVec2 c(p.x + inset + r, p.y + h * 0.5f);
     dl->AddCircleFilled(c, r, kBadge, 32);
     dl->AddCircle(c, r, kCrimson, 32, 2.f * s);
     const std::string letter = tag.empty() ? "?" : std::string(1, char(std::toupper(static_cast<unsigned char>(tag[0]))));
@@ -205,7 +205,7 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
     if (v.have_account) {
       const float add_w = ButtonWidth("ADD", s), kb_w = pad ? ButtonWidth("KEYBOARD", s) : 0.f, box_w = 260.f * s;
       const float by = p.y + (h - ImGui::GetFrameHeight()) * 0.5f;
-      float x = q.x - pad - add_w - 8.f * s - box_w - (pad ? kb_w + 8.f * s : 0.f);
+      float x = q.x - inset - add_w - 8.f * s - box_w - (pad ? kb_w + 8.f * s : 0.f);
       const std::string lbl = XenosTr("Add friend");
       const float lbl_w = popup::TextWidth(false, 15.f * s, lbl);
       popup::Text(dl, false, 15.f * s, ImVec2(x - lbl_w - 12.f * s, ty + 1.f * s), kDim, lbl, lbl_w + 4.f * s);

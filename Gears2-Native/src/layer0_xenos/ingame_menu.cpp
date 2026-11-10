@@ -631,7 +631,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     else io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     const bool key_a = own_nav && (ImGui::IsKeyDown(ImGuiKey_Enter) || ImGui::IsKeyDown(ImGuiKey_KeypadEnter) || ImGui::IsKeyDown(ImGuiKey_Space));
     for (const Map& m : map)
-      io.AddKeyEvent(m.key, (!typing && (live & m.bit) != 0 && !(own_nav && (m.bit & kDirs))) || (m.key == ImGuiKey_GamepadFaceDown && key_a));
+      io.AddKeyEvent(m.key, ((live & m.bit) != 0 && !(typing && (m.bit & kDirs)) && !(own_nav && (m.bit & kDirs))) || (m.key == ImGuiKey_GamepadFaceDown && key_a));
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, !own_nav && lx < -dz, !own_nav && lx < -dz ? -lx : 0.0f);
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, !own_nav && lx > dz, !own_nav && lx > dz ? lx : 0.0f);
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, !own_nav && ly > dz, !own_nav && ly > dz ? ly : 0.0f);
@@ -1241,6 +1241,7 @@ void XenosShutdownInGameMenu() {
   rex::ui::UnregisterBind("bind_cogbox_social");   // social step 5
   rex::kernel::xam::net::SetFriendsUiHandler(nullptr);
   g_browser.reset();
+  g_profile_icons.clear();   // made through g_immediate: freed before it goes
   g_immediate = nullptr;
   g_runtime = nullptr;
   g_drawer = nullptr;
