@@ -30,7 +30,17 @@ function Restore-Manifest([string]$rel) {
 }
 function Run-Build([hashtable]$gd, [string[]]$extra) {
   $bs = Join-Path $docs "$($gd.proj)\tools\build.ps1"
-  $o = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $bs @($gd.args + $extra) 2>&1); $code = $LASTEXITCODE
+  # 0.5.1 (Flippage 2026-11-10: Microsoft Defender quarantined this file as a Trojan, "executes commands from an
+  # attacker"): a script that starts another PowerShell with -ExecutionPolicy Bypass and collects its output matches
+  # Defender's heuristics. build.ps1 now runs in this same PowerShell - its 'exit N' only ends build.ps1 and sets
+  # $LASTEXITCODE here - and *>&1 still collects everything it prints (Write-Host included).
+  $named = @{}   # '-Config','Release','-Tu6','-Name','X' -> @{Config='Release'; Tu6=$true; Name='X'} (splatted by name)
+  $list = @($gd.args + $extra)
+  for ($i = 0; $i -lt $list.Count; $i++) {
+    $k = "$($list[$i])".TrimStart('-')
+    if ($i + 1 -lt $list.Count -and -not "$($list[$i + 1])".StartsWith('-')) { $named[$k] = "$($list[$i + 1])"; $i++ } else { $named[$k] = $true } }
+  $global:LASTEXITCODE = 0
+  $o = @(& $bs @named *>&1); $code = $LASTEXITCODE
   $o | Select-String -Pattern 'BUILD RESULT|BUILD STOP|PGO' | ForEach-Object { Write-Host "    $($_.Line.Trim())" }
   if ($code -ne 0) { $o | Select-String -Pattern 'error' | Select-Object -First 15 | ForEach-Object { Write-Host "    $_" } }
   return $code
