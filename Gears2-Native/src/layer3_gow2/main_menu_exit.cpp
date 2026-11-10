@@ -20,6 +20,8 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
+#include <string>
 #include <cctype>
 #include <filesystem>
 #include <string_view>
@@ -104,19 +106,51 @@ bool MatchesStringNoCase(const uint8_t* base, uint32_t addr, std::string_view te
   return GuestUtf16EqualsNoCase(base, addr, text) || GuestAsciiEqualsNoCase(base, addr, text);
 }
 
+// Shagg 2026-11-10 10:56: in Gears 2 (TU6) Exit Game played the credits instead of quitting. The credits screen is
+// part of the front end already in memory (no SP_Credits_P / ui_scenes_credits file opens: none in that day's logs),
+// so only this Localize hook can see it, and it matched "credits" exactly. Now any section / package that CONTAINS
+// "credit" counts (the Options menu's own label lookup, section OptionsMenu, still does not), and the lookups that
+// mention credits are logged (a few) so a miss shows the real names.
+namespace {
+std::string GuestText(const uint8_t* base, uint32_t addr) {
+  std::string out;
+  if (!base || !addr) return out;
+  for (uint32_t i = 0; i < 64; ++i) {  // UTF-16 BE, ASCII range only
+    const uint16_t c = uint16_t((base[addr + 2 * i] << 8) | base[addr + 2 * i + 1]);
+    if (!c) return out;
+    if (c < 32 || c > 126) { out.clear(); break; }
+    out += char(std::tolower(int(c)));
+  }
+  for (uint32_t i = 0; i < 64; ++i) {  // 8-bit
+    const uint8_t c = base[addr + i];
+    if (!c) return out;
+    if (c < 32 || c > 126) return std::string();
+    out += char(std::tolower(int(c)));
+  }
+  return std::string();
+}
+std::atomic<int> g_credit_logs{0};
+std::atomic<bool> g_hook_seen{false};
+}  // namespace
+
 bool MatchesCredits(const uint8_t* base, const PPCContext& ctx) {
-  if (!base || !ue3::InFrontEndForExit()) {
-    return false;
-  }
-  if (MatchesStringNoCase(base, ctx.r4.u32, "optionsmenu")) {
-    return false;
-  }
-  if (MatchesStringNoCase(base, ctx.r4.u32, "credits") ||
-      MatchesStringNoCase(base, ctx.r6.u32, "credits") ||
-      MatchesStringNoCase(base, ctx.r5.u32, "line_00000")) {
-    return true;
-  }
-  return false;
+  if (!g_hook_seen.exchange(true)) REXLOG_INFO("main_menu_exit: Localize hook active (TU6 sub_8228AF78)");
+  if (!base) return false;
+  const std::string section = GuestText(base, ctx.r4.u32), key = GuestText(base, ctx.r5.u32),
+                    package = GuestText(base, ctx.r6.u32);
+  // The Exit Game row's own label (OptionsMenu / Credits) is looked up when the main menu shows - also when the player
+  // comes back from a level, where GearStart.xxx is not opened again: that arms Exit Game (a level disarms it).
+  if (section == "optionsmenu" && key == "credits") ue3::ArmFrontEndForExit("Exit Game row shown");
+  if (!ue3::InFrontEndForExit()) return false;
+  const bool mentions = section.find("credit") != std::string::npos || package.find("credit") != std::string::npos ||
+                        key.find("credit") != std::string::npos || key == "line_00000";
+  if (!mentions) return false;
+  const bool label = section == "optionsmenu";  // the menu row itself ("Exit Game" and its tip)
+  if (g_credit_logs.fetch_add(1) < 12)
+    REXLOG_INFO("main_menu_exit: Localize section '{}' key '{}' package '{}'{}", section, key, package,
+                label ? " (the menu's own label)" : " -> Exit Game");
+  return !label && (section.find("credit") != std::string::npos || package.find("credit") != std::string::npos ||
+                    key == "line_00000");
 }
 
 }  // namespace rex::glue
