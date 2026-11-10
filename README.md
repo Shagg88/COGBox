@@ -1,6 +1,6 @@
 # Gears of War Native - PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War: Judgment
 
-Hello all, I'm Shagg. These are **native Windows versions** of the four Xbox 360 Gears of War games, made by static
+Hello all, I'm Shagg. These are my personal **native Windows versions** of the four Xbox 360 Gears of War games, made by static
 recompilation, with a launcher called **COGBox** that sets up your own copy of each game and starts it. This franchise
 is one of my favourites, so the project is near and dear to my heart.
 
