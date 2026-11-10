@@ -5838,7 +5838,7 @@ index 0000000..16750cf
 +
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/xam_msg.cpp b/src/kernel/xam/xam_msg.cpp
-index 6c4c3cd..cba4d04 100644
+index 6c4c3cd..a0bfda9 100644
 --- a/src/kernel/xam/xam_msg.cpp
 +++ b/src/kernel/xam/xam_msg.cpp
 @@ -12,6 +12,7 @@
@@ -6089,7 +6089,7 @@ index 6c4c3cd..cba4d04 100644
 +    }
 +  }
 +  const auto now = std::chrono::steady_clock::now();
-+  if (!(gnames && gengine) && (searched == std::chrono::steady_clock::time_point{} || now - searched > std::chrono::seconds(2))) {
++  if ((!(gnames && gengine) || !g_ue3_objects) && (searched == std::chrono::steady_clock::time_point{} || now - searched > std::chrono::seconds(2))) {
 +    searched = now;
 +    try {
 +      if (!REXCVAR_GET(cogbox_ue3_gnames).empty()) gnames = uint32_t(std::stoul(REXCVAR_GET(cogbox_ue3_gnames), nullptr, 16));
@@ -6108,7 +6108,7 @@ index 6c4c3cd..cba4d04 100644
 +      });
 +    }
 +    uint32_t objects = 0, ocount = 0;
-+    for (uint32_t a = gnames + 12; gnames && !gengine && a < gnames + 0x400; a += 4) {
++    for (uint32_t a = gnames + 12; gnames && !g_ue3_objects && a < gnames + 0x400; a += 4) {  // also with the launcher's addresses
 +      uint32_t data = 0, count = 0, max = 0, first = 0;
 +      if (!GuestRead32(a, &data) || !GuestRead32(a + 4, &count) || !GuestRead32(a + 8, &max)) continue;
 +      if (count < 1000 || count > 4000000 || max < count || !GuestRead32(data, &first) || !first) continue;
