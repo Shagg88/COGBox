@@ -10,9 +10,12 @@
 #include "social_client.h"
 #include "social_net.h"
 
+#include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <string>
+#include <vector>
 
 // page.cpp's building blocks, so this tab looks like the others
 void ui_section(const char *title_en);
@@ -36,53 +39,75 @@ bool row_button(const char *label_en, bool enabled, bool red = false)
     return red ? th_button_red(label, sz, enabled, F_BODY, false) : th_button(label, sz, enabled, F_BODY, false);
 }
 
-// a row: their profile picture (the tag's first letter when this PC doesn't have it) with the presence lamp on it, a
-// main line and a dim second line; the buttons go after it on the same line (right side)
-void row_text(App &a, ImU32 main, const std::string &line1, const std::string &line2, int lamp, float width,
-              const std::string &icon = std::string())
+float button_w(const char *label_en) { return std::max(T(84), text_w(F_BODY, FS(F_BODY), tr(label_en)) + S(24)); }
+
+// a profile picture (the tag's first letter when this PC doesn't have it) in a crimson ring, the presence lamp on it
+void avatar(App &a, ImDrawList *dl, ImVec2 c, float r, const std::string &icon, const std::string &tag, int lamp)
 {
-    ImDrawList *dl = ImGui::GetWindowDrawList();
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float rh = T(46), fb = FS(F_BODY), fsm = FS(F_SMALL), r = rh * 0.38f;
-    const ImVec2 c(p.x + S(4) + r, p.y + rh * 0.5f);
     SDL_Texture *pic = safe_icon_name(icon) ? player_icon_texture(a, icon) : nullptr;
     dl->AddCircleFilled(c, r, U(ImVec4(0.05f, 0.05f, 0.06f, 1)), 32);
     if (pic) {
         dl->AddImageRounded((ImTextureID)(intptr_t)pic, ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), ImVec2(0, 0), ImVec2(1, 1),
                             IM_COL32_WHITE, r);
     } else {
-        const std::string letter = line1.empty() ? "?" : std::string(1, char(std::toupper(static_cast<unsigned char>(line1[0]))));
-        const ImVec2 ts = F_BOLD->CalcTextSizeA(FS(F_BOLD), FLT_MAX, 0, letter.c_str());
-        dl->AddText(F_BOLD, FS(F_BOLD), ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), U(col::text), letter.c_str());
+        const std::string letter = tag.empty() ? "?" : std::string(1, char(std::toupper(static_cast<unsigned char>(tag[0]))));
+        const float fs = r * 1.15f;
+        const ImVec2 ts = F_BOLD->CalcTextSizeA(fs, FLT_MAX, 0, letter.c_str());
+        dl->AddText(F_BOLD, fs, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), U(col::text), letter.c_str());
     }
-    dl->AddCircle(c, r, U(col::red), 32, S(1.6f));
-    th_lamp(dl, ImVec2(c.x + r * 0.72f, c.y + r * 0.72f), S(4.5f), lamp);
-    const float tx = c.x + r + S(12);
-    dl->AddText(F_BODY, fb, ImVec2(tx, p.y + S(4)), main, line1.c_str());
-    if (!line2.empty()) dl->AddText(F_SMALL, fsm, ImVec2(tx, p.y + S(4) + fb), U(col::dim), line2.c_str());
-    ImGui::Dummy(ImVec2(width, rh));
+    dl->AddCircle(c, r, U(col::red), 32, S(1.5f));
+    th_lamp(dl, ImVec2(c.x + r * 0.72f, c.y + r * 0.72f), S(3.5f), lamp);
 }
 
-// the buttons of a row, right-aligned on the row just drawn: each one placed at the same height
-struct RowButtons {
-    float x, y;
+// Layout A: one line per entry - picture, tag, its state, and the row's buttons at the right edge (x1). Returns the
+// index of the button pressed, or -1.
+struct LineButton {
+    const char *label;
+    bool enabled = true, red = false;
+    const char *tip = nullptr;
 };
-float button_w(const char *label_en) { return std::max(T(84), text_w(F_BODY, FS(F_BODY), tr(label_en)) + S(24)); }
-RowButtons buttons_at_right(float x1, std::initializer_list<const char *> labels)
+int line_row(App &a, const std::string &tag, const std::string &state, ImVec4 state_col, int lamp, const std::string &icon, float x1,
+             const std::vector<LineButton> &buttons)
 {
-    float w = 0;
-    for (const char *l : labels) w += button_w(l) + ImGui::GetStyle().ItemSpacing.x;
-    return { x1 - w, ImGui::GetItemRectMin().y + (T(46) - T(26)) * 0.5f };
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = T(32), r = h * 0.36f, bh = T(24);
+    const ImVec2 q(x1, p.y + h);
+    const bool hot = ImGui::IsMouseHoveringRect(p, q);
+    dl->AddRectFilled(p, q, U(ImVec4(1, 1, 1, hot ? 0.07f : 0.035f)));
+    const ImVec2 c(p.x + S(6) + r, p.y + h * 0.5f);
+    avatar(a, dl, c, r, icon, tag, lamp);
+    float bw_all = 0;
+    for (const LineButton &b : buttons) bw_all += std::max(T(54), text_w(F_SMALL, FS(F_SMALL), tr(b.label)) + S(18)) + S(6);
+    const float tx = c.x + r + S(10), name_w = std::min(S(170), (x1 - S(6) - bw_all - tx) * 0.45f);
+    const float ty = p.y + (h - FS(F_SMALL)) * 0.5f - S(1);
+    dl->PushClipRect(ImVec2(tx, p.y), ImVec2(tx + name_w, q.y), true);
+    dl->AddText(F_BOLD, FS(F_SMALL), ImVec2(tx, ty), U(col::text), tag.c_str());
+    dl->PopClipRect();
+    const float sx = tx + name_w + S(10);
+    dl->PushClipRect(ImVec2(sx, p.y), ImVec2(std::max(sx, x1 - S(6) - bw_all), q.y), true);
+    dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(sx, ty), U(state_col), state.c_str());
+    dl->PopClipRect();
+    int pressed = -1;
+    float bx = x1 - S(6);
+    for (int i = int(buttons.size()) - 1; i >= 0; --i) {
+        const LineButton &b = buttons[size_t(i)];
+        const float bw = std::max(T(54), text_w(F_SMALL, FS(F_SMALL), tr(b.label)) + S(18));
+        bx -= bw;
+        ImGui::SetCursorScreenPos(ImVec2(bx, p.y + (h - bh) * 0.5f));
+        ImGui::PushID(i);
+        const bool hit = b.red ? th_button_red(tr(b.label), ImVec2(bw, bh), b.enabled, F_SMALL, false)
+                               : th_button(tr(b.label), ImVec2(bw, bh), b.enabled, F_SMALL, false);
+        ImGui::PopID();
+        if (b.tip) ui_tip(b.tip);
+        if (hit) pressed = i;
+        bx -= S(6);
+    }
+    ImGui::SetCursorScreenPos(ImVec2(p.x, q.y + S(3)));
+    ImGui::Dummy(ImVec2(x1 - p.x, 0));
+    return pressed;
 }
-bool row_button_at(RowButtons &r, const char *label_en, bool enabled, bool red = false)
-{
-    ImGui::SetCursorScreenPos(ImVec2(r.x, r.y));
-    const bool hit = row_button(label_en, enabled, red);
-    r.x += button_w(label_en) + ImGui::GetStyle().ItemSpacing.x;
-    return hit;
-}
-// back to the left edge under the row
-void end_row(ImVec2 under) { ImGui::SetCursorScreenPos(under); ImGui::Dummy(ImVec2(0, 0)); }
+
 }  // namespace
 
 void social_restart(App &a)
@@ -169,110 +194,134 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
     }
     const SocialView v = social_view();
 
-    ui_section("YOUR ACCOUNT");
+    // the top strip: your picture and tag, then Add friend on the same line (layout A, as the in-game page)
+    const float x0 = ImGui::GetCursorScreenPos().x;
     {
         ImDrawList *dl = ImGui::GetWindowDrawList();
         const ImVec2 p = ImGui::GetCursorScreenPos();
-        const float h = ImGui::GetTextLineHeight();
-        th_lamp(dl, ImVec2(p.x + S(6), p.y + h * 0.55f), S(4.5f), v.reachable ? 1 : (v.busy ? 0 : 3));
-        ImGui::SetCursorScreenPos(ImVec2(p.x + S(18), p.y));
-        if (v.have_account) ImGui::TextUnformatted(v.my_tag.c_str());
-        else ImGui::TextUnformatted(tr(v.busy ? "Signing in..." : "Can't reach the online server."));
-        if (v.have_account) ui_tip("Your tag: friends add you with it.");
-    }
-    if (v.have_account && !v.reachable && !v.busy) ui_note("Can't reach the online server.", col::amber);
-    if (!v.error.empty()) ui_note(v.error, col::amber);
-    if (!v.have_account) return;
-
-    ui_section("ADD FRIEND");
-    ImGui::SetNextItemWidth(S(260));
-    const bool enter = ImGui::InputTextWithHint("##addfriend", tr("Name#1234"), g_add, sizeof g_add, ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
-    if (row_button("ADD", g_add[0] != 0) || (enter && g_add[0])) {
-        if (valid_tag(g_add)) {
-            social_do(SocialAction::Add, g_add);
-            g_add[0] = 0;
-            g_bad_tag = false;
-        } else {
-            g_bad_tag = true;
+        const float h = T(40), w = rowX1 - p.x, r = h * 0.36f;
+        dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), U(ImVec4(1, 1, 1, 0.04f)));
+        const ImVec2 c(p.x + S(8) + r, p.y + h * 0.5f);
+        const std::string my_icon = a.ini.get(profile_section(), "Icon");
+        const std::string tag = v.have_account ? v.my_tag : std::string(tr(v.busy ? "Signing in..." : "Can't reach the online server."));
+        avatar(a, dl, c, r, my_icon, tag, v.reachable ? 1 : (v.busy ? 0 : 3));
+        const float ty = p.y + (h - FS(F_BODY)) * 0.5f;
+        dl->AddText(F_BOLD, FS(F_BODY), ImVec2(c.x + r + S(12), ty), U(col::text), tag.c_str());
+        const float tag_w = F_BOLD->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, tag.c_str()).x;
+        if (v.have_account)
+            dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(c.x + r + S(24) + tag_w, ty + S(2)), U(v.reachable ? col::good : col::amber),
+                        tr(v.reachable ? "Online" : "Can't reach the online server."));
+        if (v.have_account) {
+            const float add_w = button_w("ADD"), box_w = S(220), by = p.y + (h - T(26)) * 0.5f;
+            float x = p.x + w - S(8) - add_w - S(8) - box_w;
+            const char *lbl = tr("Add friend");
+            const float lw = F_SMALL->CalcTextSizeA(FS(F_SMALL), FLT_MAX, 0, lbl).x;
+            dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(x - lw - S(10), ty + S(2)), U(col::dim), lbl);
+            ImGui::SetCursorScreenPos(ImVec2(x, by));
+            ImGui::SetNextItemWidth(box_w);
+            const bool enter = ImGui::InputTextWithHint("##addfriend", tr("Name#1234"), g_add, sizeof g_add, ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SetCursorScreenPos(ImVec2(x + box_w + S(8), by));
+            if (row_button("ADD", g_add[0] != 0, true) || (enter && g_add[0])) {
+                if (valid_tag(g_add)) {
+                    social_do(SocialAction::Add, g_add);
+                    g_add[0] = 0;
+                    g_bad_tag = false;
+                } else {
+                    g_bad_tag = true;
+                }
+            }
         }
+        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + S(8)));
+        ImGui::Dummy(ImVec2(w, 0));
     }
     if (g_bad_tag) ui_note("Use Name#1234 - the name, # and the four digits.", col::amber);
-
-    if (!v.invites.empty()) {
-        ui_section("INVITES");
-        for (const SocialInvite &i : v.invites) {
-            ImGui::PushID(i.id.c_str());
-            const std::string game = tr(game_name_for_title(i.title_id));
-            row_text(a, U(col::text), i.from_tag, std::string(tr("invited you to")) + " " + game, 1, rowX1 - ImGui::GetCursorScreenPos().x, i.from_icon);
-            const ImVec2 after = ImGui::GetCursorScreenPos();   // under the row
-            RowButtons rb = buttons_at_right(rowX1, { "ACCEPT", "DECLINE" });
-            if (row_button_at(rb, "ACCEPT", true, true)) social_do(SocialAction::InviteAccept, i.id);
-            if (row_button_at(rb, "DECLINE", true)) social_do(SocialAction::InviteDecline, i.id);
-            end_row(after);
-            ImGui::PopID();
-        }
-    }
-
-    if (!v.lists.incoming.empty() || !v.lists.outgoing.empty()) {
-        ui_section("REQUESTS");
-        for (const SocialRequest &r : v.lists.incoming) {
-            ImGui::PushID(r.uuid.c_str());
-            row_text(a, U(col::text), r.tag, tr("wants to be your friend"), 2, rowX1 - ImGui::GetCursorScreenPos().x, r.icon);
-            const ImVec2 after = ImGui::GetCursorScreenPos();   // under the row
-            RowButtons rb = buttons_at_right(rowX1, { "ACCEPT", "DECLINE", "BLOCK" });
-            if (row_button_at(rb, "ACCEPT", true, true)) social_do(SocialAction::Accept, r.uuid);
-            if (row_button_at(rb, "DECLINE", true)) social_do(SocialAction::Decline, r.uuid);
-            if (row_button_at(rb, "BLOCK", true)) social_do(SocialAction::Block, r.uuid);
-            ui_tip("Blocked players can't send you requests again.");
-            end_row(after);
-            ImGui::PopID();
-        }
-        for (const SocialRequest &r : v.lists.outgoing) {
-            ImGui::PushID(r.uuid.c_str());
-            row_text(a, U(col::dim), r.tag, tr("Waiting for them to accept"), 0, rowX1 - ImGui::GetCursorScreenPos().x, r.icon);
-            ImGui::PopID();
-        }
-    }
-
-    ui_section("FRIENDS");
-    if (v.lists.friends.empty()) {
-        ui_note("No friends yet - add one by their tag.");
-        return;
-    }
-    for (const SocialFriend &f : v.lists.friends) {
-        ImGui::PushID(f.uuid.c_str());
-        const bool joinable = f.state == "joinable";
-        std::string presence = presence_text(f);
-        const std::string game = game_name_for_title(f.title_id);
-        if (!game.empty()) {   // the game's name in the launcher's language
-            const size_t at = presence.find(game);
-            if (at != std::string::npos) presence.replace(at, game.size(), tr(game.c_str()));
-        }
-        const int lamp = f.state == "offline" ? 0 : 1;
-        row_text(a, U(f.state == "offline" ? col::dim : col::text), f.tag, presence, lamp, rowX1 - ImGui::GetCursorScreenPos().x, f.icon);
-        const int fg = game_for_title(f.title_id);
-        const bool can_join = joinable && fg >= 0 && a.st[fg].ready == R_READY;
-        const ImVec2 after = ImGui::GetCursorScreenPos();   // under the row
-        RowButtons rb = buttons_at_right(rowX1, { "JOIN", "INVITE", "REMOVE" });
-        if (row_button_at(rb, "JOIN", can_join, true)) social_do(SocialAction::Join, f.uuid);
-        if (joinable && !can_join) ui_tip("Set up this game in COGBox to join.");
-        else ui_tip(joinable ? "Join their game." : "They're not in a game you can join right now.");
-        if (row_button_at(rb, "INVITE", f.state != "offline")) {
-            // an invite needs a game you are hosting: from the launcher alone there is nothing to invite to
-            if (a.run.proc) social_do(SocialAction::Invite, f.uuid);
-            else g_invite_hint = true;
-        }
-        ui_tip("Invite them to the game you are hosting.");
-        if (row_button_at(rb, "REMOVE", true)) {
-            g_remove_uuid = f.uuid;
-            ask(a, "socialremove", g, tr("Remove this friend?"), f.tag, { tr("No"), tr("Yes, remove") });
-        }
-        end_row(after);
-        ImGui::PopID();
-    }
+    if (!v.error.empty()) ui_note(v.error, col::amber);
     if (g_invite_hint) {
         ui_note("Launch the game and invite a friend from the F1 social menu.", col::amber);
         if (a.run.proc) g_invite_hint = false;
     }
+    if (!v.have_account) return;
+
+    // two columns: friends (requests first) on the left, party and match invites on the right
+    const float total = rowX1 - x0, gap = S(18), left_w = std::floor((total - gap) * 0.62f);
+    const float col_h = std::max(T(120), ImGui::GetContentRegionAvail().y - S(4));
+    ImGui::BeginChild("##friends", ImVec2(left_w, col_h), ImGuiChildFlags_NavFlattened);
+    {
+        const float x1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(4);
+        std::string head = std::string(tr("FRIENDS")) + " (" + std::to_string(v.lists.friends.size()) + ")";
+        if (!v.lists.incoming.empty())
+            head += "  " + std::to_string(v.lists.incoming.size()) + " " + tr(v.lists.incoming.size() == 1 ? "request" : "requests");
+        th_heading(head.c_str(), x1);
+        for (const SocialRequest &r : v.lists.incoming) {
+            ImGui::PushID(r.uuid.c_str());
+            const int b = line_row(a, r.tag, tr("wants to be your friend"), col::amber, 2, r.icon, x1,
+                                   { { "ACCEPT", true, true, nullptr }, { "DECLINE", true, false, nullptr },
+                                     { "BLOCK", true, false, "Blocked players can't send you requests again." } });
+            if (b == 0) social_do(SocialAction::Accept, r.uuid);
+            if (b == 1) social_do(SocialAction::Decline, r.uuid);
+            if (b == 2) social_do(SocialAction::Block, r.uuid);
+            ImGui::PopID();
+        }
+        for (const SocialRequest &r : v.lists.outgoing) {
+            ImGui::PushID(r.uuid.c_str());
+            line_row(a, r.tag, tr("Waiting for them to accept"), col::dim, 0, r.icon, x1, {});
+            ImGui::PopID();
+        }
+        if (v.lists.friends.empty()) ui_note("No friends yet - add one by their tag.");
+        // online friends first, then offline
+        std::vector<const SocialFriend *> order;
+        for (const SocialFriend &f : v.lists.friends) if (f.state != "offline") order.push_back(&f);
+        for (const SocialFriend &f : v.lists.friends) if (f.state == "offline") order.push_back(&f);
+        for (const SocialFriend *fp : order) {
+            const SocialFriend &f = *fp;
+            ImGui::PushID(f.uuid.c_str());
+            const bool joinable = f.state == "joinable", offline = f.state == "offline";
+            std::string presence = presence_text(f);
+            const std::string game = game_name_for_title(f.title_id);
+            if (!game.empty()) {   // the game's name in the launcher's language
+                const size_t at = presence.find(game);
+                if (at != std::string::npos) presence.replace(at, game.size(), tr(game.c_str()));
+            }
+            const int fg = game_for_title(f.title_id);
+            const bool can_join = joinable && fg >= 0 && a.st[fg].ready == R_READY;
+            // only the buttons that do something here: Join when joinable, Invite when online, "..." to remove
+            std::vector<LineButton> bs;
+            if (joinable) bs.push_back({ "JOIN", can_join, true, can_join ? "Join their game." : "Set up this game in COGBox to join." });
+            if (!offline) bs.push_back({ "INVITE", true, false, "Invite them to the game you are hosting." });
+            bs.push_back({ "...", true, false, "Remove this friend" });
+            const int b = line_row(a, f.tag, presence, offline ? col::dim : joinable ? col::amber : col::good, offline ? 0 : (joinable ? 2 : 1),
+                                   f.icon, x1, bs);
+            if (b >= 0) {
+                const std::string what = bs[size_t(b)].label;
+                if (what == "JOIN") social_do(SocialAction::Join, f.uuid);
+                else if (what == "INVITE") {
+                    // an invite needs a game you are hosting: from the launcher alone there is nothing to invite to
+                    if (a.run.proc) social_do(SocialAction::Invite, f.uuid);
+                    else g_invite_hint = true;
+                } else {
+                    g_remove_uuid = f.uuid;
+                    ask(a, "socialremove", g, tr("Remove this friend?"), f.tag, { tr("No"), tr("Yes, remove") });
+                }
+            }
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+    ImGui::SameLine(0, gap);
+    ImGui::BeginChild("##invites", ImVec2(0, col_h), ImGuiChildFlags_NavFlattened);
+    {
+        const float x1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(4);
+        th_heading(tr("PARTY AND MATCH INVITES"), x1);
+        if (v.invites.empty()) ui_note("No invites right now.");
+        for (const SocialInvite &i : v.invites) {
+            ImGui::PushID(i.id.c_str());
+            const int b = line_row(a, i.from_tag, tr(game_name_for_title(i.title_id)), col::amber, 1, i.from_icon, x1,
+                                   { { "ACCEPT", true, true, nullptr }, { "DECLINE", true, false, nullptr } });
+            if (b == 0) social_do(SocialAction::InviteAccept, i.id);
+            if (b == 1) social_do(SocialAction::InviteDecline, i.id);
+            ImGui::PopID();
+        }
+        ui_note("You can invite friends while a game hosts a lobby or match.");
+    }
+    ImGui::EndChild();
 }
