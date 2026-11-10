@@ -1,0 +1,26 @@
+diff --git a/include/rex/graphics/draw_observer.h b/include/rex/graphics/draw_observer.h
+index a001c8a..a1135d5 100644
+--- a/include/rex/graphics/draw_observer.h
++++ b/include/rex/graphics/draw_observer.h
+@@ -93,6 +93,9 @@ struct GpuServices {
+   std::function<bool()> running;       // false once the GPU worker is shutting down (leave any wait loop)
+   std::function<void()> make_coherent; // what WAIT_REG_MEM on COHER_STATUS_HOST does
+   std::function<bool()> vsync;         // --vsync (WAIT_REG_MEM sleeps when on, yields when off)
++  // Gears2-Native SDK patch 22 (5B phase 3): the register file itself, so an external processor that runs draws
++  // and shader loads itself can hand the observers the same RegisterFile the SDK would.
++  std::function<const RegisterFile*()> register_file;
+ };
+ GpuServices* GetGpuServices();
+ void SetGpuServices(GpuServices* services);
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index fca4e34..e01cbd7 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -718,6 +718,7 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t wr
+       gpu_services_->running = [this]() { return bool(worker_running_); };
+       gpu_services_->make_coherent = [this]() { MakeCoherent(); };
+       gpu_services_->vsync = []() { return bool(REXCVAR_GET(vsync)); };
++      gpu_services_->register_file = [this]() -> const RegisterFile* { return register_file_; };  // SDK patch 22
+       SetGpuServices(gpu_services_.get());
+     }
+     observer->OnPrimaryRange(primary_buffer_ptr_ & 0x1FFFFFFF, primary_buffer_size_ / sizeof(uint32_t), read_index,

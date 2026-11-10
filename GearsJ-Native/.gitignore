@@ -1,0 +1,15 @@
+# No game data, ever: executables, extracted files, generated code, shader dumps, images.
+*.xex
+*.xexp
+*.iso
+game/
+generated/
+build/
+out/
+third_party/rexglue-install-*/
+*.bin
+*.pak
+*.xxx
+*.dds
+*.so
+__pycache__/

@@ -1,0 +1,51 @@
+diff --git a/src/kernel/xam/xam_net.cpp b/src/kernel/xam/xam_net.cpp
+index 82d4748..98f7f48 100644
+--- a/src/kernel/xam/xam_net.cpp
++++ b/src/kernel/xam/xam_net.cpp
+@@ -64,8 +64,8 @@ REXCVAR_DEFINE_STRING(net_interface_ip, "", "Network",
+                       "of the first net_peer_ip, else the one with the default gateway, else a Radmin VPN, ZeroTier or "
+                       "Hamachi adapter)");
+ REXCVAR_DEFINE_STRING(net_peer_ip, "", "Network",
+-                      "IPv4 addresses of the other PCs, separated by commas. System link broadcasts also go straight to "
+-                      "them, for VPNs that drop broadcasts");
++                      "IPv4 addresses of the other PCs, separated by commas, for VPNs that drop broadcasts. When set, "
++                      "system link broadcasts go only to these PCs, so list every other PC in the game");
+ 
+ namespace rex {
+ namespace kernel {
+@@ -208,7 +208,7 @@ XNetStartupParams xnet_startup_params = {};
+ // COGBox SDK patch 49: system link. Before this patch the XNADDR was always 127.0.0.1, the link status said "cable
+ // unplugged" (the game shows "No Network Connection"), and keys and connections were stubs, so no game could be found
+ // or joined. Now one adapter is chosen once (net_interface_ip, or automatically), the XNADDR carries its IP, a
+-// broadcast goes out on that adapter's subnet (and to each net_peer_ip), and XNetXnAddrToInAddr gives the IP back.
++// broadcast goes out on that adapter's subnet (or to each net_peer_ip), and XNetXnAddrToInAddr gives the IP back.
+ namespace {
+ 
+ static_assert(sizeof(XNADDR) == 36, "XNADDR is 36 bytes");
+@@ -433,8 +433,10 @@ void RandomXnKid(uint8_t* xnkid) {
+ }
+ 
+ // A broadcast (255.255.255.255) goes to the broadcast address of the chosen adapter, or the OS sends it on the
+-// default adapter only and a VPN never sees it, and a copy goes straight to each net_peer_ip. The game stops searching
+-// when a send fails, so success from any copy counts.
++// default adapter only and a VPN never sees it. With net_peer_ip set it goes straight to each peer instead (COGBox SDK
++// patch 50): a subnet broadcast as well would reach a peer twice whenever the VPN does pass broadcasts, and with the
++// search and the reply both doubled, the Join list showed the same game up to four times (GitHub #72). The game stops
++// searching when a send fails, so success from any copy counts.
+ int SendToSystemLink(XSocket* socket, uint8_t* buf, uint32_t buf_len, uint32_t flags, N_XSOCKADDR_IN* to,
+                      uint32_t to_len) {
+   if (!REXCVAR_GET(net_system_link) || uint32_t(to->sin_addr) != INADDR_BROADCAST) {
+@@ -442,8 +444,11 @@ int SendToSystemLink(XSocket* socket, uint8_t* buf, uint32_t buf_len, uint32_t f
+   }
+   const SystemLinkNet& net = GetSystemLinkNet();
+   N_XSOCKADDR_IN target = *to;
+-  target.sin_addr = net.broadcast;
+-  int ret = socket->SendTo(buf, buf_len, flags, &target, to_len);
++  if (net.peers.empty()) {
++    target.sin_addr = net.broadcast;
++    return socket->SendTo(buf, buf_len, flags, &target, to_len);
++  }
++  int ret = -1;
+   for (uint32_t peer : net.peers) {
+     target.sin_addr = peer;
+     const int peer_ret = socket->SendTo(buf, buf_len, flags, &target, to_len);

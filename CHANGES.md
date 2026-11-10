@@ -1,0 +1,92 @@
+# COGBox changes
+
+## 0.5.0
+
+### Important: update by hand this one time
+COGBox now lives on **GitLab**: https://gitlab.com/shagg88/cogbox - downloads, release notes and bug reports (Issues).
+The updater in 0.4.8 and older only knows GitHub, so **download 0.5.0 by hand once** and unpack it over your COGBox folder (or into a new one). From 0.5.0 on, COGBox updates itself from GitLab.
+
+Releases are now **.7z** files. Unpack with [7-Zip](https://www.7-zip.org/) (free) or Windows 11's built-in support.
+
+### Cleaner updates
+When a new version starts for the first time, COGBox tidies up after older ones. Program files, DLLs and shader caches that an older COGBox shipped or made, and that the new version no longer uses, are **moved** to the `_old-files` folder, never deleted. Your saves, settings, mods, covers and your own DLLs (ReShade, a custom DLSS file) are never touched. Old settings are carried over to the new ones, with a backup copy kept.
+
+### A new in-game menu
+The in-game menu (Back + Start, Share + Options on PlayStation, or F1) is redesigned to match the launcher: full screen, the Noto Sans font, and on ultrawide screens a centred 16:9 area.
+- Works fully with a controller: the D-pad moves through the settings, left / right change them, LB / RB switch tabs.
+- **Quit game asks first** (Yes / No), so you can't quit by accident.
+- **Many settings now apply at once**, no restart: frame-rate cap, brightness, mouse, HDR levels, sharpening, FPS bar, popups, sound, vibration, dead zones, vsync (DirectX 12), windowed / borderless and window size, SMAA, button prompt style, and pausing AMD frame generation. Settings that still need a restart are marked "Restart required".
+
+### Controls
+- **Aim sensitivity** and **Zoom sensitivity** (%) for the mouse (Controls tab, and live in the in-game menu): slower or faster turning while aiming and while zoomed through a scope (Longshot). All four games.
+
+### In-game menu: sliders and controls
+- Sliders now move in their own steps in all four games, with the controller or the keyboard (arrows or WASD).
+- The button legend at the bottom follows what you are using: the controller's buttons when you use a controller, keys when you use the keyboard.
+
+### Faster
+- Faster game code in all four games (up to ~5-10% in CPU-limited scenes). Always on; if a game's faster build crashes twice in a row, COGBox quietly switches that game to its normal build.
+- **Smoother play:** far fewer stutters while new areas and textures stream in, in all four games. Textures load and unpack faster and new shaders no longer stall a frame for long. On a Ryzen 7 3700X + RTX 3080 Ti: 1% lows went from 20-26 fps to 28-29 fps in every game, and frames over 50 ms dropped by 30-70%. Gears 1 also runs about 30% faster on average and Gears 3 about 20% faster.
+
+### Insane from the start
+- **All four games:** Insane can be chosen without finishing the campaign first. Prefer the original rule? Turn on **Original unlock rules** (Gameplay tab).
+
+### Sharper keyboard prompts
+- The keyboard and mouse key caps in the games are bigger and sharper, also on small prompts and at 720p.
+
+### Fixes
+- **Slow start with keyboard and mouse:** Gears 2, Gears 3 and Judgment could take about two minutes to start after pressing Play, with the launcher "Not Responding". They start in a few seconds now.
+- **Gears of War 1:** a rare crash at start is fixed. The mouse works again with DLSS frame generation.
+- **Quitting with DLSS frame generation on** (from the in-game menu or by closing the window) no longer crashes or freezes, in all four games.
+- **FPS bar with frame generation:** shows the frame rate you actually see, with the drawn frame rate beside it, e.g. "180 FPS (frame gen; 60 drawn)".
+- **In-game menu:** the Quit box can be answered with the keyboard and controller in every case.
+- **Gears of War 2:** the chainsaw rev prompt shows the right key cap.
+- **PlayStation button prompts on an Xbox controller (#249):** COGBox switched to PlayStation prompts whenever any Sony device was connected (a paired controller, a headset, PS Remote Play, DS4Windows). Now only real controllers count and an Xbox controller wins. PlayStation players using DS4Windows or Steam Input get PlayStation prompts. New launcher setting: **Controls > Button prompt style** (Automatic / Xbox / PlayStation / Switch / Steam Deck).
+- Giving the same game option twice (for example in extra launch options) made the game ignore all its options. Now the last one wins.
+- A custom DLSS file could be moved away by the update cleanup. Fixed.
+- **Gears of War: Judgment brightness:** the default is now 75 (was 65). If yours was still at the old default, it is lifted to 75 once; a value you set yourself is kept.
+- Split-screen: player 2-4's settings are now saved (before, they read player 1's and changes were lost).
+- Safer DLL loading: vendor DLLs load only from the game's folder or COGBox's shared folder, and Intel's must be signed by Intel.
+- The updater can no longer overwrite your mods, saves or achievements folders, and moves old files instead of deleting them.
+
+### Graphics
+- **AMD FSR 4.1** (FidelityFX SDK 2.4). FSR 4 needs a Radeon RX 9000 card; other cards use FSR 3.1. **FSR on Vulkan** is new as an option.
+- **DLSS model choice** (Graphics tab): Automatic, or pick the DLSS preset yourself.
+- **Custom DLSS file:** point COGBox at an official NVIDIA nvngx_dlss.dll you prefer. COGBox keeps its own copy and you can switch back any time.
+- **New, experimental: Intel XeSS frame generation** (Gears of War 2, DirectX 12) with Intel's low-latency mode. Runs on Intel Arc and, per Intel, other recent cards. We tested it on an NVIDIA card only, so please tell us how it runs. If it can't run, the game uses AMD frame generation instead.
+- **Frame generation ghosting:** less smearing of characters in the in-between frames (Gears of War 1 and Gears of War 3).
+- **4:3 aspect ratio** (Display tab) for Gears 2, Gears 3 and Judgment. Auto stays 16:9.
+- Updated components: DirectX 12 Agility SDK 1.620, DirectX Shader Compiler 1.9, XeSS 3.0.2, SDL3, FFmpeg.
+
+### Split-screen
+- With Players set to 2 or more, a **name box for each extra player** appears next to player 1's sign-in.
+- Clearer help: in the game choose **Campaign > Play Split-Screen**; player 2 is signed in automatically. If a controller shows up twice, turn off Steam Input or DS4Windows.
+- The log now lists which controller went to which player.
+
+### Smaller download
+NVIDIA, AMD and Intel files used by all four games are now stored once, in a `shared` folder, instead of four times: about 315 MB less unpacked.
+
+### Library
+- **HD box art and backgrounds:** UPDATE ART now downloads full-size box fronts and 1920x1080 backgrounds from the LaunchBox Games Database (gamesdb.launchbox-app.com) - thanks to LaunchBox and its contributors. Cover artwork belongs to Microsoft / Xbox Game Studios and Epic Games.
+- **Profiles:** each person gets their own name, picture and saves (Profiles on player 1's card); downloaded content is shared. Players 2-4 can be signed out from their cards.
+
+### Known issues
+- **Judgment too bright at higher resolution scales (#185, #250):** we could not reproduce it in 0.5.0 (Onyx Point and the start of Halvo Bay measure the same at scale 1 and 3). If you still see it, please tell us how.
+- **Gears of War 1 split-screen:** Aim / Zoom sensitivity follows the camera drawn last, so player 1's mouse can change speed when player 2 aims.
+- **Judgment, chapter 12 (SPE_E1_P):** a rare crash a few seconds after the chapter starts (about 1 in 16 starts in our tests, older versions too). Start the chapter again.
+- **AMD FSR frame generation on Vulkan can freeze on NVIDIA graphics cards while the NVIDIA overlay (NVIDIA App, Alt+Z) is on** (0.4.8 too). The launcher warns about it. Turn the NVIDIA overlay off, or use **DirectX 12** for frame generation. AMD and Intel cards and the Steam Deck are not affected.
+
+### Also in this release
+- Translations for all new text in all 11 languages (machine-made; corrections welcome). Hungarian corrected by Hevesi J. - thank you!
+
+### Thanks
+- **Flippage** - the gow3-recomp work behind Gears of War 3's Insane unlock and our native mouse look, and the in-game menu's mouse and controller input.
+- **KiltedKernel** - modcore, the mod loading that COGBox's mod support builds on.
+- **Hevesi J.** - the Hungarian translation corrections.
+
+### Licences
+Third-party licences (NVIDIA Streamline, AMD FidelityFX, Intel XeSS, SDL, FFmpeg and others) are in each `licenses\` folder and in `THIRD_PARTY_NOTICES`. The FFmpeg source is offered next to the release.
+
+Contributors: **Flippage**, **KiltedKernel** and **Hevesi J.**
+
+COGBox is not affiliated with Microsoft, Epic Games or The Coalition.

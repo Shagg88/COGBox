@@ -1,0 +1,136 @@
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+index e4c735f..49029b7 100644
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -13,6 +13,7 @@
+ #include <chrono>
+ #include <cmath>
+ #include <cstring>
++#include <string>
+ 
+ #include <rex/dbg.h>
+ #include <rex/input/device_assignment.h>
+@@ -53,10 +54,115 @@ REXCVAR_DEFINE_DOUBLE(pad_look_scale, 1.0, "Input",
+ REXCVAR_DEFINE_DOUBLE(pad_look_deadzone, 0.0, "Input",
+                       "Per-axis right-stick dead zone for controllers only, as a fraction, COGBox patch 38")
+     .range(0.0, 0.9);
++// COGBox SDK patch 55 (GitHub #95 / #97): controllers only (never the keyboard-and-mouse device), before the devices are
++// merged and before patch 38.
++//  - pad_radial_deadzone: a round dead zone on both sticks (the stick's distance from centre, not each axis on its
++//    own), rescaled so movement starts from 0 at its edge - Gears 3's feel for Gears 1 and 2. 0 = off.
++//  - pad_remap: the controller's buttons moved, "src=dst,src=dst" with a b x y lb rb lt rt ls rs back start up down
++//    left right (lt / rt are the triggers, pressed past 12 %); "sticks=swap" swaps the two sticks (southpaw). A
++//    button that is only a source is moved, one that is never named stays. "" = the game's own layout.
++REXCVAR_DEFINE_DOUBLE(pad_radial_deadzone, 0.0, "Input",
++                      "Round dead zone on both controller sticks, as a fraction (0 = off), COGBox patch 55")
++    .range(0.0, 0.9);
++REXCVAR_DEFINE_STRING(pad_remap, "", "Input",
++                      "Controller button layout, e.g. 'a=b,b=a' or 'sticks=swap' (empty = the game's own), COGBox patch 55");
+ namespace rex::input {
+ 
+ namespace {
+ 
++// ---- Patch 55: radial dead zone and button layout (see the cvars above) ----
++struct PadRemap {
++  std::string spec;
++  bool swap_sticks = false;
++  // 18 inputs: 16 button bits (index = bit) + 16 = left trigger, 17 = right trigger. dst[i] < 0: not moved.
++  int dst[18];
++  bool moved[18];
++};
++inline int PadInputIndex(const std::string& n) {
++  static const struct { const char* name; int index; } kNames[] = {
++      {"up", 0}, {"down", 1}, {"left", 2}, {"right", 3}, {"start", 4}, {"back", 5}, {"ls", 6}, {"rs", 7},
++      {"lb", 8}, {"rb", 9}, {"a", 12}, {"b", 13}, {"x", 14}, {"y", 15}, {"lt", 16}, {"rt", 17}};
++  for (const auto& e : kNames)
++    if (n == e.name) return e.index;
++  return -1;
++}
++inline const PadRemap& CurrentPadRemap() {
++  static thread_local PadRemap r{"\x01", false, {}, {}};
++  const std::string spec = REXCVAR_GET(pad_remap);
++  if (spec == r.spec) return r;
++  r.spec = spec;
++  r.swap_sticks = false;
++  for (int i = 0; i < 18; ++i) { r.dst[i] = -1; r.moved[i] = false; }
++  size_t at = 0;
++  while (at <= spec.size()) {
++    size_t end = spec.find(',', at);
++    if (end == std::string::npos) end = spec.size();
++    std::string item = spec.substr(at, end - at);
++    std::erase_if(item, [](char c) { return c == ' '; });
++    for (char& c : item) c = char(std::tolower(static_cast<unsigned char>(c)));
++    const size_t eq = item.find('=');
++    if (item == "sticks=swap") {
++      r.swap_sticks = true;
++    } else if (eq != std::string::npos) {
++      const int src = PadInputIndex(item.substr(0, eq)), dst = PadInputIndex(item.substr(eq + 1));
++      if (src >= 0 && dst >= 0) { r.dst[src] = dst; r.moved[src] = true; }
++    }
++    at = end + 1;
++  }
++  return r;
++}
++inline void ApplyPadLayout(X_INPUT_GAMEPAD& pad) {
++  const double dz = REXCVAR_GET(pad_radial_deadzone);
++  if (dz > 0.0) {
++    auto radial = [dz](auto& ax, auto& ay) {   // big-endian guest fields
++      const double x = double(int16_t(ax)) / 32767.0, y = double(int16_t(ay)) / 32767.0;
++      const double m = std::sqrt(x * x + y * y);
++      double k = 0.0;
++      if (m > dz) k = std::min(1.0, (m - dz) / (1.0 - dz)) / m;
++      ax = static_cast<int16_t>(std::lround(std::clamp(x * k, -1.0, 1.0) * 32767.0));
++      ay = static_cast<int16_t>(std::lround(std::clamp(y * k, -1.0, 1.0) * 32767.0));
++    };
++    radial(pad.thumb_lx, pad.thumb_ly);
++    radial(pad.thumb_rx, pad.thumb_ry);
++  }
++  const PadRemap& r = CurrentPadRemap();
++  if (r.spec.empty()) return;
++  if (r.swap_sticks) {
++    const int16_t lx = pad.thumb_lx, ly = pad.thumb_ly;
++    pad.thumb_lx = int16_t(pad.thumb_rx);
++    pad.thumb_ly = int16_t(pad.thumb_ry);
++    pad.thumb_rx = lx;
++    pad.thumb_ry = ly;
++  }
++  const uint16_t in_buttons = pad.buttons;
++  const uint8_t in_lt = pad.left_trigger, in_rt = pad.right_trigger;
++  auto pressed = [&](int i) {
++    if (i < 16) return (in_buttons & (1u << i)) != 0;
++    return (i == 16 ? in_lt : in_rt) > 30;
++  };
++  uint16_t buttons = 0;
++  uint8_t lt = 0, rt = 0;
++  bool lt_set = false, rt_set = false;
++  for (int i = 0; i < 18; ++i) {
++    if (!r.moved[i]) {   // stays where it is (an analogue trigger keeps its value)
++      if (i < 16) buttons |= in_buttons & (1u << i);
++      else if (i == 16) lt = std::max(lt, in_lt);
++      else rt = std::max(rt, in_rt);
++      continue;
++    }
++    if (!pressed(i)) continue;
++    const int d = r.dst[i];
++    const uint8_t value = i >= 16 ? (i == 16 ? in_lt : in_rt) : uint8_t(255);
++    if (d < 16) buttons |= uint16_t(1u << d);
++    else if (d == 16) { lt = std::max(lt, value); lt_set = true; }
++    else { rt = std::max(rt, value); rt_set = true; }
++  }
++  (void)lt_set; (void)rt_set;
++  pad.buttons = buttons;
++  pad.left_trigger = lt;
++  pad.right_trigger = rt;
++}
++
+ // Synthetic devices are parked past every physical ordinal so they cannot push
+ // a real pad off guest user 0. SlotAssignment routes them by their synthetic
+ // flag and never reads this value.
+@@ -368,6 +474,7 @@ X_RESULT InputSystem::GetStateForUI(uint32_t user_index, X_INPUT_STATE* out_stat
+       continue;
+     }
+     active_devices_.Observe(user_index, id, state.gamepad);
++    if (!dynamic_cast<mnk::MnkInputDriver*>(driver)) ApplyPadLayout(state.gamepad);  // patch 55
+     // Patch 38: a controller's right stick, undoing the mouse-look binding change (see the cvars above).
+     if (REXCVAR_GET(pad_look_scale) < 1.0 && !dynamic_cast<mnk::MnkInputDriver*>(driver)) {
+       const double scale = REXCVAR_GET(pad_look_scale), dz = REXCVAR_GET(pad_look_deadzone);

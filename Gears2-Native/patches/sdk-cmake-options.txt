@@ -1,0 +1,3 @@
+# Gears2-Native: CMake options our SDK build folder (third_party\rexglue-sdk\out\build\win-amd64-llvm23-b) is configured with, beyond the preset.
+# Job 375 (notes/68 stage V3): the SDK's Vulkan provider and presenter, for --gow2_renderer_api=vulkan. D3D12 stays the default.
+REXGLUE_USE_VULKAN=ON

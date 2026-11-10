@@ -1,0 +1,151 @@
+diff --git a/include/rex/audio/sdl/sdl_audio_driver.h b/include/rex/audio/sdl/sdl_audio_driver.h
+index f8949ca..24c21a9 100644
+--- a/include/rex/audio/sdl/sdl_audio_driver.h
++++ b/include/rex/audio/sdl/sdl_audio_driver.h
+@@ -14,6 +14,7 @@
+ #include <mutex>
+ #include <queue>
+ #include <stack>
++#include <string>
+ 
+ #include <rex/audio/audio_driver.h>
+ #include <rex/thread.h>
+@@ -40,6 +41,9 @@ class SDLAudioDriver : public AudioDriver {
+   SDL_AudioStream* sdl_stream_ = nullptr;
+   bool sdl_initialized_ = false;
+   uint8_t sdl_device_channels_ = 0;
++  // COGBox patch 66 (GitHub #203): the Windows default output device last checked, and frames since the last check
++  std::wstring default_endpoint_id_;
++  uint32_t endpoint_check_frames_ = 0;
+ 
+   static const uint32_t frame_frequency_ = 48000;
+   static const uint32_t frame_channels_ = 6;
+diff --git a/src/audio/sdl/sdl_audio_driver.cpp b/src/audio/sdl/sdl_audio_driver.cpp
+index 928b6bb..bb1f074 100644
+--- a/src/audio/sdl/sdl_audio_driver.cpp
++++ b/src/audio/sdl/sdl_audio_driver.cpp
+@@ -25,7 +25,89 @@
+ #include <rex/perf/counter.h>
+ #include <SDL3/SDL.h>
+ 
++#ifdef _WIN32
++#include <windows.h>
++#include <audiopolicy.h>
++#include <endpointvolume.h>
++#include <mmdeviceapi.h>
++#pragma comment(lib, "ole32.lib")
++#endif
++
+ REXCVAR_DEFINE_BOOL(audio_mute, false, "Audio", "Mute audio output");
++// COGBox patch 66 (GitHub #203)
++REXCVAR_DEFINE_BOOL(audio_restore_session_volume, true, "Audio",
++                    "Unmute / restore this game's own Windows volume-mixer slider when it is muted or at 0 on the "
++                    "output device in use (checked at start and whenever the Windows default device changes)");
++
++namespace {
++#ifdef _WIN32
++// COGBox patch 66 (GitHub #203: sound on the monitor's speakers, silence on the desktop speakers, while the log shows
++// the speakers opened normally). Windows keeps a volume-mixer slider and mute for each program on each output device,
++// by the program's path, and keeps it across reboots and reinstalls to the same folder - so a gow3.exe muted (or
++// slid to 0) on one device stays silent there and plays on every other device. SDL's stream is this process's
++// default audio session on the default device; this reads that session's slider and mute (and the device's own
++// volume, for the log), restores a muted / zero slider unless --audio_restore_session_volume=false, and returns the
++// default device's id so a change of default device (SDL moves the stream to it) is noticed and checked again.
++// inspect=false only returns the id (the 5 s poll): a slider the player moves during play is never touched.
++std::wstring CheckDefaultEndpointSession(bool inspect) {
++  std::wstring id_out;
++  const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
++  IMMDeviceEnumerator* en = nullptr;
++  IMMDevice* dev = nullptr;
++  if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
++                                 reinterpret_cast<void**>(&en))) &&
++      SUCCEEDED(en->GetDefaultAudioEndpoint(eRender, eConsole, &dev))) {
++    LPWSTR id = nullptr;
++    if (SUCCEEDED(dev->GetId(&id)) && id) {
++      id_out = id;
++      CoTaskMemFree(id);
++    }
++  }
++  if (dev && inspect) {
++    float dev_vol = -1.0f;
++    BOOL dev_mute = FALSE;
++    IAudioEndpointVolume* ev = nullptr;
++    if (SUCCEEDED(dev->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&ev)))) {
++      ev->GetMasterVolumeLevelScalar(&dev_vol);
++      ev->GetMute(&dev_mute);
++      ev->Release();
++    }
++    float app_vol = -1.0f;
++    BOOL app_mute = FALSE;
++    bool restored = false;
++    IAudioSessionManager* sm = nullptr;
++    ISimpleAudioVolume* sv = nullptr;
++    if (SUCCEEDED(dev->Activate(__uuidof(IAudioSessionManager), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&sm))) &&
++        SUCCEEDED(sm->GetSimpleAudioVolume(nullptr, FALSE, &sv))) {
++      sv->GetMasterVolume(&app_vol);
++      sv->GetMute(&app_mute);
++      if ((app_mute || (app_vol >= 0.0f && app_vol < 0.01f)) && REXCVAR_GET(audio_restore_session_volume)) {
++        restored = (!app_mute || SUCCEEDED(sv->SetMute(FALSE, nullptr))) &&
++                   (app_vol >= 0.01f || SUCCEEDED(sv->SetMasterVolume(1.0f, nullptr)));
++      }
++      sv->Release();
++    }
++    if (sm) sm->Release();
++    const bool silent = app_mute || (app_vol >= 0.0f && app_vol < 0.01f);
++    if (silent) {
++      REXAPU_WARN("audio: this game's own Windows volume-mixer slider on the output device is {} ({}%){}", app_mute ? "MUTED" : "at 0",
++                  static_cast<int>(app_vol * 100.0f + 0.5f),
++                  restored ? " - restored (unmuted, or 0 set to 100%; --audio_restore_session_volume=false keeps it)"
++                           : (REXCVAR_GET(audio_restore_session_volume) ? " - restoring it failed" : " - left as it is"));
++    }
++    {
++      REXAPU_INFO("audio: Windows default output: device volume {}%{}, this game's mixer slider {}%{}",
++                  static_cast<int>(dev_vol * 100.0f + 0.5f), dev_mute ? " (device MUTED)" : "",
++                  static_cast<int>(app_vol * 100.0f + 0.5f), app_mute ? " (muted)" : "");
++    }
++  }
++  if (dev) dev->Release();
++  if (en) en->Release();
++  if (SUCCEEDED(co)) CoUninitialize();
++  return id_out;
++}
++#endif
++}  // namespace
+ 
+ namespace rex::audio::sdl {
+ 
+@@ -134,6 +216,9 @@ bool SDLAudioDriver::Initialize() {
+       REXAPU_WARN("audio: trying the '{}' driver instead", driver);
+     }
+     if (try_open()) {
++#ifdef _WIN32
++      default_endpoint_id_ = CheckDefaultEndpointSession(true);
++#endif
+       if (driver) REXAPU_WARN("audio: running on the '{}' driver{}", driver,
+                               std::string_view(driver) == "dummy" ? " - no sound, but the game runs" : "");
+       return true;
+@@ -158,6 +243,24 @@ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
+ 
+   std::memcpy(output_frame, input_frame, frame_samples_ * sizeof(float));
+ 
++#ifdef _WIN32
++  // Patch 66 (#203): about every 5 s (1000 frames of 256 samples at 48 kHz), notice a new Windows default output
++  // device - SDL has already moved the stream to it - and check this game's mixer slider there too.
++  if (++endpoint_check_frames_ >= 1000) {
++    endpoint_check_frames_ = 0;
++    const std::wstring id = CheckDefaultEndpointSession(false);
++    if (!id.empty() && id != default_endpoint_id_) {
++      const char* name = sdl_stream_ ? SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(sdl_stream_)) : nullptr;
++      SDL_AudioSpec spec = {};
++      const bool have = sdl_stream_ && SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(sdl_stream_), &spec, nullptr);
++      REXAPU_INFO("audio: Windows default output device changed; the stream follows it, now '{}': {} ch, {} Hz", name ? name : "?",
++                  have ? spec.channels : 0, have ? spec.freq : 0);
++      CheckDefaultEndpointSession(true);
++      default_endpoint_id_ = id;
++    }
++  }
++#endif
++
+   static uint32_t sdl_submit_count = 0;
+   if (sdl_submit_count < 10) {
+     REXAPU_DEBUG("SDLAudioDriver::SubmitFrame: frame_ptr={:08X} queued_count={}", frame_ptr,

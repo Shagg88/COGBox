@@ -1,0 +1,728 @@
+// Layer 3 (Gears of War 2): the few xenia-canary game patches worth keeping (D28, notes/40), as switches. Source:
+// xenia-canary/game-patches "4D53082D - Gears of War 2" (authors credited there: boma; Sowa_95, boma). Each site was
+// disassembled from our image dump first; the manifest hooks reproduce the patched instruction's effect:
+//  - --gow2_patch_aniso16: 0x8280E7FC `lwz r5,0x198(r30)` (the anisotropy setting) -> after it, r5 = 16.
+//  - --gow2_patch_skip_coalesced_check: 0x82AA8904 `li r3,1` -> after it, r3 = 0; and 0x827F9148 (function entry,
+//    `mflr r12`) returns at once - lets edited Coalesced (engine .ini) files load without the dirty-disc error.
+//  - --gow2_patch_show_fps: sets the two engine flags at 0x83123468 / 0x83123470 (FPS and frame time) to 1 at load.
+//  - --gow2_patch_texture_pool_mb (Canary "Texture Streaming Fix" part 1, boma; Canary uses 196): 0x8280D534
+//    `lwz r4,80(r1)` in the pool setup 8280D4C8 reads the ini PoolSize in MB (140 on the disc: the pool is 140 MB,
+//    0x8C00000) -> after it, r4 = the switch's value. 0 = the game's own value.
+//  - --gow2_patch_texture_stats_off (part 2): RHIGetTextureMemoryStats 8280DDC8 (a leaf: writes the pool's allocated and
+//    available bytes, returns 1) returns 0 at its first instruction, so the streamer never scales its budget down
+//    ("FudgeFactor" stays 1.0).
+//  - --gow2_ultrawide (Stage 7.5, notes/57; Canary "21:9 Ultrawide Aspect Ratio Support", authors boma and
+//    TudorHorse): the game draws a 21:9 picture. Five sites, as the patch:
+//      0x8252D73C `lfs f0,1032(r7)` (the field-of-view factor) -> after it, f0 = 0.0106355;
+//      0x8252D608 `beq cr6,0x8252D69C` -> always taken (ConstrainAspectRatio off);
+//      0x82806B10 `li r11,720` (the scene buffer height after the video-mode query) -> after it, r11 = 550;
+//      0x826E3728 `bctrl` (the UI scene viewport's height getter) -> after it, r3 = 564 (the patch replaces the call);
+//      the .rdata float at 0x821D0B28 (the widescreen aspect used at 0x82806B04) -> 2.33333, written at load.
+//    The game's front buffer becomes 1280x550 itself (job 200), so the switch also has the window show it at that shape
+//    (--gow2_present_frame_aspect): it fills a 21:9 window and is letterboxed in others.
+//  Why (notes/51, jobs 150-152): when a texture allocation fails, the pool defragmenter 8280D848 (from the allocator
+//  8280DB18) protects the whole pool writable and moves textures; in ch18 it runs ~1 s into the chapter title and the
+//  title's font comes out as garbage. --gow2_log_texture_defrag logs every defrag (entry of 8280D848) with the swap.
+// All off by default except the two texture streaming switches (on since job 154: job 153 passed - notes/51 section 12). The Black Shading Fix lives in untiled.cpp (on by default). The other patches in that file are
+// emulator workarounds or cheap hacks and are deliberately not ported (D28).
+#include <rex/cvar.h>
+#include <rex/filesystem.h>   // rex::path_to_utf8 (#90 log)
+#include <rex/filesystem/vfs.h>
+#include <rex/logging/macros.h>
+#include <rex/ppc/context.h>
+#include <rex/runtime.h>
+#include <rex/system/kernel_state.h>
+#include <rex/system/xmemory.h>
+#include <xenos/dev_tools.h>
+#include <xenos/frame_limiter.h>
+
+#include "gow2_addresses.h"
+#include "mouse_look.h"  // GitHub #52: CogMouseLookNoteFov
+
+#include <atomic>
+#include <chrono>
+#include <mutex>
+#include <thread>
+#include <immintrin.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#include <cctype>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <string>
+#include <string_view>
+#include <algorithm>
+#include <cmath>
+
+REXCVAR_DEFINE_BOOL(gow2_patch_aniso16, false, "Gears2", "Force 16x anisotropic filtering (community patch, boma)");
+REXCVAR_DEFINE_INT32(gow2_patch_query_poll_yield, 0, "Gears2",
+                     "The render thread's GPU query poll: 0 as the title (spins), 1 pause per poll, 2 yield per poll "
+                     "(job 178), 3 sleep until our GPU side writes guest memory after 64 quick polls (as gow2_patch_gpu_wait)");
+REXCVAR_DEFINE_INT32(gow2_patch_gpu_wait, 1, "Gears2",
+                     "Jobs 225/227 (notes/60), default on since job 227: the XDK's wait-for-the-GPU step (sub_82977688) - 0 as the title (its delay "
+                     "loop is empty here, so it spins), 1 sleep until our GPU side writes a fence / the read pointer "
+                     "(after a short spin; 1 ms safety timeout)");
+REXCVAR_DEFINE_INT32(gow2_patch_query_wait, 2, "Gears2",
+                     "Jobs 231/232 (notes/60): sub_82807588 (UE3's block-until-a-query-has-its-answer) polls ONE query in "
+                     "a loop; 1 = after 32 quick polls each retry sleeps until our GPU side writes guest memory (1 ms max); "
+                     "2 (default) = as 1 when the frame rate is capped (vsync on or --gow2_max_fps not -1), else off; 0 = off");
+REXCVAR_DEFINE_BOOL(gow2_patch_skip_coalesced_check, false, "Gears2",
+                    "Skip the Coalesced (engine .ini) hash check so edited files load (community patch, Sowa_95/boma)");
+REXCVAR_DEFINE_BOOL(gow2_patch_show_fps, false, "Gears2", "Turn on the engine's FPS and frame-time display (community patch, Sowa_95)");
+REXCVAR_DEFINE_INT32(gow2_patch_texture_pool_mb, 196, "Gears2",
+                     "Texture pool size in MB (0 = the game's 140; default 196 as Canary's Texture Streaming Fix, boma)");
+REXCVAR_DEFINE_BOOL(gow2_patch_texture_stats_off, true, "Gears2",
+                    "Texture streaming never scales its budget down for a full pool (Canary Texture Streaming Fix, boma)");
+REXCVAR_DEFINE_BOOL(gow2_mute_unfocused, false, "Gears2",
+                    "Patch 0130: mute the sound while another window is in front (sets audio_mute; a player's own "
+                    "--audio_mute=true is left alone)");
+REXCVAR_DEFINE_BOOL(gow2_log_texture_defrag, false, "Gears2", "Log each texture pool defragmentation (8280D848) with the swap");
+REXCVAR_DEFINE_BOOL(gow2_ultrawide, false, "Gears2",
+                    "Stage 7.5: 21:9 ultrawide (Canary patch by boma and TudorHorse): a 1280x550 picture (x the "
+                    "resolution scale) with a wider view; fills a 21:9 window or monitor, letterboxed in others");
+REXCVAR_DEFINE_INT32(gow2_max_fps, 0, "Gears2",
+                     "Stage 7.4: the engine's frame-rate limit (UE3 MaxSmoothedFrameRate, 62 in the game's GearEngine.ini): "
+                     "0 = the game's, N = N fps, -1 = none. Above 30 also needs --gow2_gpu_vsync=false (the game asks for "
+                     "every second vertical blank)");
+// Review 049: the in-game menu's live frame cap (an atomic from the UI thread), else the start-up cvar.
+static int32_t Gow2MaxFps() {
+  int32_t v = 0;
+  return XenosLiveMaxFps(&v) ? v : REXCVAR_GET(gow2_max_fps);
+}
+
+// --gow2_memory_log_seconds (patch 0087; Gears 3's job 113 gauge, Gow3StartMemoryGauge, game-free - Gears 3 mail
+// 23 Oct 21:24): the SDK gives the title 512 MB of "physical" memory (everything the GPU reads: textures, the texture
+// pool, vertex buffers); "virtual" allocations are separate host memory and do not count against it. Logs both and the
+// lowest free physical memory seen, so the texture pool (196 MB) can be sized from a measurement. Starts with the pool.
+REXCVAR_DEFINE_INT32(gow2_memory_log_seconds, 0,  // off for players (outside review: the gauge thread could
+                     // read the kernel during shutdown); 10 is the old diagnostic value
+                      "Gears2",
+                     "Log the game's memory use every N seconds (physical = the 512 MB the GPU sees; virtual = the "
+                     "game's other memory; lowest free physical so far). 0 = off");
+static void Gow2StartMemoryGauge() {
+  const int32_t secs = REXCVAR_GET(gow2_memory_log_seconds);
+  if (secs <= 0) return;
+  std::thread([secs] {
+    uint32_t lowest_free_mb = 0xFFFFFFFFu;
+    for (;;) {
+      std::this_thread::sleep_for(std::chrono::seconds(secs));
+      auto* ks = REX_KERNEL_STATE();
+      auto* mem = ks ? ks->memory() : nullptr;
+      if (!mem) continue;
+      const rex::memory::BaseHeap* phys = mem->GetPhysicalHeap();
+      const rex::memory::BaseHeap* v4k = mem->LookupHeap(0x10000000u);
+      const rex::memory::BaseHeap* v64k = mem->LookupHeap(0x50000000u);
+      if (!phys || !v4k || !v64k) continue;
+      auto used_mb = [](const rex::memory::BaseHeap* h) {
+        return uint32_t((uint64_t(h->reserved_page_count()) * h->page_size()) >> 20);
+      };
+      const uint32_t total_mb = uint32_t((uint64_t(phys->total_page_count()) * phys->page_size()) >> 20);
+      const uint32_t phys_used = used_mb(phys);
+      const uint32_t free_mb = total_mb > phys_used ? total_mb - phys_used : 0;
+      if (free_mb < lowest_free_mb) lowest_free_mb = free_mb;
+      REXLOG_INFO("gow2_memory: physical {} of {} MB used, {} MB free (lowest {} MB) | virtual 4K {} MB, 64K {} MB",
+                  phys_used, total_mb, free_mb, lowest_free_mb, used_mb(v4k), used_mb(v64k));
+    }
+  }).detach();
+}
+
+void Gow2PatchTexturePoolSize(PPCRegister& r4) {
+  static std::atomic<bool> gauge{false};
+  if (!gauge.exchange(true)) Gow2StartMemoryGauge();  // patch 0087
+  const int32_t mb = REXCVAR_GET(gow2_patch_texture_pool_mb);
+  REXLOG_INFO("gow2_patch_texture_pool_mb: texture pool {} MB (game's value {} MB)", mb > 0 ? uint32_t(mb) : r4.u32, r4.u32);
+  if (mb > 0 && mb <= 400) r4.u64 = uint32_t(mb);
+}
+
+bool Gow2PatchTextureStatsOff(PPCRegister& r3) {
+  if (!REXCVAR_GET(gow2_patch_texture_stats_off)) return false;
+  static bool logged = false;
+  if (!logged) { logged = true; REXLOG_INFO("gow2_patch_texture_stats_off: RHIGetTextureMemoryStats returns FALSE"); }
+  r3.u64 = 0;
+  return true;  // return_on_true: return before the function's first instruction
+}
+
+void Gow2NoteTextureDefrag() {
+  if (!REXCVAR_GET(gow2_log_texture_defrag)) return;
+  static std::atomic<uint32_t> n{0};
+  const uint32_t i = n.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (i <= 200) REXLOG_INFO("gow2_texture_defrag: defrag #{} at swap {}", i, XenosSwapCount());
+}
+
+// Job 225: one step of a wait for the GPU. Steps less than 200 us apart belong to the same wait; its first 64 steps
+// only pause (short waits stay fast), later ones sleep until our GPU side writes guest memory (a fence, the read
+// pointer, a query report - XenosNotifyGuestWrite) or 1 ms.
+struct Gow2WaitStreak {
+  uint64_t last_qpc = 0;
+  uint32_t count = 0;
+  uint32_t write_seq = 0;
+};
+static void Gow2SleepStep(Gow2WaitStreak& w, uint32_t quick_steps = 64) {
+  static const uint64_t freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return uint64_t(f.QuadPart); }();
+  LARGE_INTEGER now;
+  QueryPerformanceCounter(&now);
+  if (uint64_t(now.QuadPart) - w.last_qpc > freq / 5000) w.count = 0;
+  if (++w.count <= quick_steps) {
+    for (int i = 0; i < 32; ++i) _mm_pause();
+  } else {
+    // This sequence was sampled before the guest's preceding completion check.
+    // Sampling here can miss a completion between that check and this wait.
+    XenosWaitGuestWrite(w.write_seq, 1);
+  }
+  w.write_seq = XenosGuestWriteSeq();
+  QueryPerformanceCounter(&now);
+  w.last_qpc = uint64_t(now.QuadPart);
+}
+
+// Job 178: the title's render thread polls the GPU (a D3D query's GetData, sub_829783A8, called in a loop by
+// sub_82807588) flat out - ~45% of a core in the call alone. 1: a short pause per poll (frees the core's other
+// hardware thread - our renderer may share the physical core); 2: give up the time slice every poll.
+void Gow2QueryPollYield() {
+  const int mode = REXCVAR_GET(gow2_patch_query_poll_yield);
+  if (mode == 1) {
+    for (int i = 0; i < 32; ++i) _mm_pause();
+  } else if (mode == 2) {
+    SwitchToThread();
+  } else if (mode == 3) {
+    thread_local Gow2WaitStreak streak;
+    Gow2SleepStep(streak);
+  }
+}
+
+// Job 231 (notes/60): sub_82807588 is UE3's wait for one query's answer: GetData(query, out, 4, 0) once, then
+// GetData(..., FLUSH) in a loop (0x828075BC-0x828075D8) until it returns 0, timing the stall into a global counter.
+// Unlike every GetData call (job 227's mode 3, which caught the many queries a frame that answer at once), each pass
+// of this loop is a real wait on the same query, whose answer (a sample-count report or a fence / read pointer) our
+// GPU side writes - so the retry can sleep on XenosNotifyGuestWrite. The hook sits on the loop head (0x828075BC).
+void Gow2QueryWaitStep() {
+  thread_local XenosWaitClock fl_clock;  // the frame log times this wait in every mode (also the spinning ones)
+  XenosFrameWaitStep fl_step(kXenosWaitGameQuery, fl_clock);
+  const int32_t mode = REXCVAR_GET(gow2_patch_query_wait);
+  if (mode == 0) return;
+  // Job 232: uncapped (vsync off and no frame limit) the sleep cost ~2% in job 231; capped it saves ~0.3 of a core.
+  // Job 233: Query<bool> looks the cvar up by name (GetFlagByName) - 4.3% of the game's render thread when this loop
+  // spins uncapped. Read it once per 1024 calls instead (the F4 overlay can still change it while playing).
+  thread_local uint32_t vsync_calls = 0;
+  thread_local bool vsync_on = true;
+  if ((vsync_calls++ & 1023) == 0) vsync_on = rex::cvar::Query<bool>("gow2_gpu_vsync");
+  if (mode == 2 && !vsync_on && Gow2MaxFps() == -1) return;
+  if (mode != 1 && mode != 2) return;
+  static std::atomic<bool> logged{false};
+  if (!logged.exchange(true)) REXLOG_INFO("gow2_patch_query_wait: on - the query wait loop sleeps between polls");
+  thread_local Gow2WaitStreak streak;
+  Gow2SleepStep(streak, 32);
+}
+
+// Job 225 (notes/60): sub_82977688 is one step of the XDK's wait for the GPU (sub_8298C2A0 calls it until the GPU's read
+// pointer passes a point in the ring). On the console the step lowers the hardware thread's priority (cctpl), burns
+// 32 x db16cyc and raises it again (cctpm); recompiled, those are empty, so the game's render thread spins at 100%,
+// also when the frame rate is capped. The hook sits on the cctpl at 0x829776A0 and, when on, replaces the delay loop
+// (jump to the cctpm at 0x829776CC): the first 64 steps of a wait just pause (short waits stay fast), after that each
+// step sleeps until our GPU side writes guest memory (fences, the read pointer - XenosNotifyGuestWrite) or 1 ms. The
+// rest of the step (the GPU-hang check, the read-pointer test in the caller) runs as before.
+bool Gow2GpuWaitStep() {
+  thread_local XenosWaitClock fl_clock;  // the frame log times this wait, patched or not
+  XenosFrameWaitStep fl_step(kXenosWaitGameGpu, fl_clock);
+  if (REXCVAR_GET(gow2_patch_gpu_wait) != 1) return false;
+  static std::atomic<bool> logged{false};
+  if (!logged.exchange(true)) REXLOG_INFO("gow2_patch_gpu_wait: on - the GPU wait sleeps instead of spinning");
+  thread_local Gow2WaitStreak streak;
+  Gow2SleepStep(streak);
+  return true;
+}
+
+// Stage 7.4 (notes/56): sub_824A2E78 is the engine's GetMaxTickRate: with frame-rate smoothing on it loads
+// MaxSmoothedFrameRate (`lfs f1,1284(r3)` at 0x824A2E94) and returns it; this hook runs after that load. The same site is
+// the first half of the community "Unlock FPS" patch (illusion, boma), which nops the load (the default, no limit, is
+// returned then); the second half (swap interval 2 -> 1) is our --gow2_gpu_vsync=false.
+void Gow2MaxTickRate(PPCRegister& f1) {
+  const int32_t v = Gow2MaxFps();
+  if (!v) return;
+  static bool logged = false;
+  if (!logged) {
+    logged = true;
+    REXLOG_INFO("gow2_max_fps: engine frame-rate limit {} -> {}", f1.f64, v < 0 ? std::string("none") : std::to_string(v));
+  }
+  if (v < 0) { f1.f64 = 0.0; return; }
+  // Exact cap: the engine's own wait sleeps whole milliseconds (N +- 2 fps), so the game thread waits here on the host
+  // clock and the engine is told "no limit" (it measured the time before this call, so its wait would come on top).
+  static xenos::FrameLimiter limiter;
+  limiter.Wait(double(v));
+  f1.f64 = 0.0;
+}
+
+// Stage 7.5 ultrawide hooks (see the top of the file).
+// ---- 0.3.0: any ultrawide shape (GitHub #60: 21:9 and 32:9) --------------------------------------------------------
+// --gow2_aspect picks the shape when gow2_ultrawide is on: "" = the Canary patch's own 21:9 (1280x550, unchanged), "auto"
+// = the monitor's shape, or "21:9", "32:9", "3440:1440", "3.56". The scene height is 1280 / aspect (even, 360-720; GitHub #137).
+// The field-of-view factor is Canary's 21:9 value times how much more the shape widens than 21:9 does, at the half
+// angle (34.05 deg) where Canary's 21:9 factor is exact (the hooks don't see the game's own field of view).
+// GitHub #94: the clamp below as a switch, so a PC job can reproduce the 32:9 trap (360) and read where it is.
+// GitHub #137: 0.4.0 fixed the trap (gow2_rt_pool_grow, job 1028d: 32:9 / 360 rows, TU6 and disc, no crash) but the
+// floor stayed 536, so 32:9 was still drawn 2.39:1 and pillarboxed. The floor is now 360 rows (32:9, the shape job
+// 1028d ran) while the pool fix is on; with --gow2_rt_pool_grow=false the old 536 still applies, since narrower than that traps.
+REXCVAR_DEFINE_INT32(gow2_ultrawide_min_rows, 360, "Gears2",
+                     "With --gow2_ultrawide: the fewest scene rows (360 = 32:9, the widest tested; with --gow2_rt_pool_grow=false "
+                     "at least 536 = 3440x1440, as fewer trap in the render-target pool setup - GitHub #94/#137)")
+    .range(320, 720);
+REXCVAR_DEFINE_BOOL(gow2_rt_pool_grow, true, "Gears2",
+                    "GitHub #94: a render target too large for its pool (Gears 2 wider than ~2.39:1) gets memory of its "
+                    "own instead of the game's trap");
+namespace uwshape {
+inline double ParseAspect(const std::string& v) {
+  double a = 0, b = 0;
+  if (std::sscanf(v.c_str(), "%lf:%lf", &a, &b) == 2 && a > 0 && b > 0) return a / b;
+  if (std::sscanf(v.c_str(), "%lf", &a) == 1 && a > 0) return a;
+  return 0.0;
+}
+inline double MonitorAspect() {
+  MONITORINFO mi{sizeof(mi)};
+  HMONITOR m = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+  if (!m || !GetMonitorInfoW(m, &mi)) return 0.0;
+  const double w = double(mi.rcMonitor.right - mi.rcMonitor.left), h = double(mi.rcMonitor.bottom - mi.rcMonitor.top);
+  return h > 0 ? w / h : 0.0;
+}
+// 550 = Canary's shape; another height when --gow2_aspect asks for one
+inline uint32_t Height(const std::string& v, const char* tag) {
+  if (v.empty()) return 550u;
+  const double aspect = v == "auto" ? MonitorAspect() : ParseAspect(v);
+  if (!(aspect > 16.0 / 9.0 + 0.01)) {
+    REXLOG_INFO("{}: aspect '{}' = {:.4f} is not wider than 16:9 - Canary's 21:9 is used", tag, v, aspect);
+    return 550u;
+  }
+  // GitHub #60/#73: below ~536 rows (wider than ~2.39:1) the game's render-target pool setup sub_8281C680 traps
+  // (size from sub_829BABD8, page-aligned, > the pool's capacity at +20 -> sub_82AC6098). 536 = 3440x1440, the widest
+  // shape reported working. Wider monitors get a 1280x536 picture, pillarboxed by gow2_present_frame_aspect.
+  uint32_t kMinRows = uint32_t(REXCVAR_GET(gow2_ultrawide_min_rows));
+  if (!REXCVAR_GET(gow2_rt_pool_grow)) kMinRows = std::max(kMinRows, 536u);   // the trap is back without the pool fix
+  const uint32_t want = uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u;
+  const uint32_t h = std::clamp(want, kMinRows, 720u);
+  if (h != want) REXLOG_INFO("{}: aspect {:.4f} wants {} rows; clamped to {} (pillarboxed)", tag, aspect, want, h);
+  REXLOG_INFO("{}: aspect '{}' = {:.4f} -> scene 1280x{}", tag, v, aspect, h);
+  return h;
+}
+inline double Widen(uint32_t h) { return (1280.0 / double(h)) / (16.0 / 9.0); }
+// how much a shape of height h widens the view, relative to Canary's 550
+inline double FovScale(uint32_t h) {
+  constexpr double kRef = 34.046711 * 3.14159265358979 / 180.0;
+  auto k = [&](double w) { return std::atan(std::tan(kRef) * w) / kRef; };
+  return k(Widen(h)) / k(Widen(550));
+}
+}  // namespace uwshape
+REXCVAR_DEFINE_STRING(gow2_aspect, "", "Gears2",
+                      "With --gow2_ultrawide: the shape. Empty = 21:9 (1280x550, the Canary patch); auto = the monitor's; "
+                      "or e.g. '21:9', '32:9', '3440:1440'");
+namespace {
+uint32_t Gow2WideHeight() {
+  static const uint32_t h = uwshape::Height(REXCVAR_GET(gow2_aspect), "gow2_ultrawide");
+  return h;
+}
+}  // namespace
+// GitHub #74: exact Hor+ (as Gears 3's gow3_ultrawide_fov_exact). Job 1022 (disc sub_8252D1B8, TU6 sub_82531F30):
+// right after this `lfs f0,1032(r7)` the game does `fmuls f1,f30,f0` (0x8252D750 / TU6 0x825324C8) - f30 is the camera's
+// horizontal field of view in degrees and f0 pi/360, so f1 is the half angle passed to the projection (bl 0x82531840).
+// The old fixed factor (Canary's 0.0106355 scaled at a 34.05 degree half angle) was exact only for one camera; every
+// other camera (aiming, cover, the launcher's FOV %) came out Vert- - the view cut at the top and bottom, which looks
+// like a camera placed higher (#74). Now the factor is worked out from f30 for each camera so the vertical view is
+// exactly 16:9's: half' = atan(tan(half) * widen), f0 = half' / fov. --gow2_ultrawide_fov_exact=false = the old factor.
+REXCVAR_DEFINE_BOOL(gow2_ultrawide_fov_exact, true, "Gears2",
+                    "With --gow2_ultrawide: the wider view computed exactly from each camera's field of view, keeping "
+                    "16:9's vertical view (GitHub #74); false = the fixed factor of 0.3.7");
+void Gow2UltrawideFov(PPCRegister& f0, PPCRegister& f30) {
+  CogMouseLookNoteFov(f30.f64);  // GitHub #52: the camera's own FOV, also without ultrawide
+  {  // GitHub #132: with --gow2_renderer_camera_log, every change of the camera's FOV (and the factor) is logged too
+    static const bool camera_log = [] {
+      const std::string v = rex::cvar::GetFlagByName("gow2_renderer_camera_log");
+      return !v.empty() && v != "0";
+    }();
+    static double last_fov = -1.0;
+    static int lines = 0;
+    if (camera_log && f30.f64 != last_fov && lines < 400) {
+      last_fov = f30.f64;
+      ++lines;
+      REXLOG_INFO("gow2_camera_log: camera FOV {:.3f} deg, game factor {} (ultrawide {})", f30.f64, f0.f64,
+                  REXCVAR_GET(gow2_ultrawide) ? "on" : "off");
+    }
+  }
+  if (!REXCVAR_GET(gow2_ultrawide)) return;
+  const double game = f0.f64, fov = f30.f64;
+  double f = double(0.0106355f) * uwshape::FovScale(Gow2WideHeight());
+  if (REXCVAR_GET(gow2_ultrawide_fov_exact) && fov > 1.0 && fov < 170.0 && game > 0.0 && fov * game < 1.5) {
+    f = std::atan(std::tan(fov * game) * uwshape::Widen(Gow2WideHeight())) / fov;  // fov * game = the game's half angle
+  }
+  static std::atomic<int> logged{0};
+  if (logged.fetch_add(1) < 8)
+    REXLOG_INFO("gow2_ultrawide: field of view {:.2f} deg: factor {} -> {} (half angle {:.2f} -> {:.2f} deg)", fov, game, f,
+                fov * game * 57.29578, fov * f * 57.29578);
+  f0.f64 = f;
+}
+
+bool Gow2UltrawideNoConstrain() { return REXCVAR_GET(gow2_ultrawide); }  // jump_address_on_true: the beq is taken
+
+void Gow2UltrawideSceneHeight(PPCRegister& r11, PPCRegister& f13) {
+  if (!REXCVAR_GET(gow2_ultrawide)) return;
+  static bool logged = false;
+  if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: scene buffer height {} -> {} (aspect factor {})", r11.u32, Gow2WideHeight(), f13.f64); }
+  r11.u64 = Gow2WideHeight();
+}
+
+void Gow2UltrawideUiHeight(PPCRegister& r3) {
+  if (!REXCVAR_GET(gow2_ultrawide)) return;
+  static bool logged = false;
+  const uint32_t ui = Gow2WideHeight() == 550 ? 564u : (Gow2WideHeight() * 564u / 550u + 1u) & ~1u;
+  if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: UI viewport height {} -> {}", r3.u32, ui); }
+  r3.u64 = ui;
+}
+
+// GitHub #94 (Gears 2 wider than ~2.39:1 trapped at start-up). sub_8281C680 (TU6; disc sub_8280CAB8) places a render
+// target in a pool: size = sub_829BABD8(w, h, ...) rounded up to 4 KB (r10) against the pool's capacity `lwz r11,20(r31)`;
+// larger -> bl 0x82AC6098 -> the trap. Job 1028: at 32:9 / 360 rows the capacity is 0x1E0000 = 1280 x 384 x 4 (the pool
+// is sized from the scene buffer: 360 rows, tiled to 384) and the 8th target is 800 x 800 (0x271000), which fits a
+// pool sized from 1280 x 512+ rows (536 = the old clamp) but not this one. The target only borrows the pool's memory
+// (`lwz r4,16(r31)` -> sub_829BADF0 sets its base); so a target the pool can't hold gets memory of its own instead:
+// one physical allocation per pool, as large as the largest such target (targets in one pool share it, as they share
+// the pool), and the check is passed (r11 = r10). Nothing changes for a target that fits.
+// Sites (checked against the guest code words before use, else left alone): cmplw cr6,r10,r11 (7F0A5840) then 16 bytes
+// on lwz r4,16(r31) (809F0010): TU6 0x8281C718 / 0x8281C728, disc 0x8280CB4C / 0x8280CB5C (job 1028's shape search).
+// (gow2_rt_pool_grow is defined above, beside gow2_ultrawide_min_rows, which depends on it - GitHub #137)
+namespace rtpool {
+struct Extra { uint32_t pool, size, va; };
+inline std::mutex g_mutex;
+inline Extra g_extra[16];
+inline int g_count = 0;
+inline thread_local uint32_t t_pool = 0, t_size = 0;  // set by the check hook for the lwz hook right after it
+inline bool SiteOk(uint32_t cmp_addr) {
+  static std::atomic<int> ok{-1};
+  int v = ok.load();
+  if (v < 0) {
+    rex::Runtime* rt = rex::Runtime::instance();
+    const uint8_t* b = rt ? rt->virtual_membase() : nullptr;
+    auto w = [&](uint32_t a) { const uint8_t* q = b + a; return (uint32_t(q[0]) << 24) | (uint32_t(q[1]) << 16) | (uint32_t(q[2]) << 8) | q[3]; };
+    v = b && w(cmp_addr) == 0x7F0A5840u && w(cmp_addr + 16) == 0x809F0010u ? 1 : 0;
+    ok.store(v);
+    REXLOG_INFO("gow2_rt_pool: check site {:08X} {}", cmp_addr, v ? "matches" : "does not match this build - left alone");
+  }
+  return v == 1;
+}
+// A guest base for `size` bytes, in the form the pool's own base has (virtual 0xA0000000+ or physical). 0 = none.
+inline uint32_t BaseFor(uint32_t pool, uint32_t size, uint32_t pool_base) {
+  std::lock_guard<std::mutex> l(g_mutex);
+  for (int k = 0; k < g_count; ++k)
+    if (g_extra[k].pool == pool && g_extra[k].size >= size) return g_extra[k].va;
+  auto* ks = REX_KERNEL_STATE();
+  auto* mem = ks ? ks->memory() : nullptr;
+  rex::memory::BaseHeap* heap = mem ? mem->LookupHeapByType(true, 4096) : nullptr;
+  uint32_t va = 0;
+  if (!heap || g_count >= 16 ||
+      !heap->Alloc(size, 0x10000, rex::memory::kMemoryAllocationReserve | rex::memory::kMemoryAllocationCommit,
+                   rex::memory::kMemoryProtectRead | rex::memory::kMemoryProtectWrite, true, &va) || !va)
+    return 0;
+  const uint32_t base = pool_base >= 0xA0000000u ? va : mem->GetPhysicalAddress(va);
+  if (base == UINT32_MAX) return 0;
+  g_extra[g_count++] = {pool, size, base};
+  REXLOG_INFO("gow2_rt_pool: pool {:08X}: a {:#x}-byte target gets its own memory at {:08X} (pool base {:08X})", pool,
+              size, base, pool_base);
+  return base;
+}
+}  // namespace rtpool
+
+void Gow2RtPoolCheck(PPCRegister& r10, PPCRegister& r11, PPCRegister& r28, PPCRegister& r30, PPCRegister& r31) {
+#if defined(GOW2_TU6) && GOW2_TU6
+  constexpr uint32_t kSite = 0x8281C718;
+#else
+  constexpr uint32_t kSite = 0x8280CB4C;
+#endif
+  static std::atomic<int> calls{0}, over{0};
+  rtpool::t_pool = rtpool::t_size = 0;
+  const bool traps = r10.u32 > r11.u32;
+  const int n = calls.fetch_add(1);
+  if (n < 24 || (traps && over.fetch_add(1) < 24))
+    REXLOG_INFO("gow2_rt_pool: call {} pool {:08X} size {:#x} capacity {:#x}{} (args {:08X} {:08X}, scene rows {})", n,
+                r31.u32, r10.u32, r11.u32, traps ? " - too big for the pool" : "", r30.u32, r28.u32,
+                REXCVAR_GET(gow2_ultrawide) ? Gow2WideHeight() : 720u);
+  if (!traps || !REXCVAR_GET(gow2_rt_pool_grow) || !rtpool::SiteOk(kSite)) return;
+  rtpool::t_pool = r31.u32;
+  rtpool::t_size = r10.u32;
+  r11.u64 = r10.u32;  // the check passes (ble taken); the base is replaced right after
+}
+// After `lwz r4,16(r31)`: the pool's base, replaced for a target the check hook let through.
+void Gow2RtPoolBase(PPCRegister& r4, PPCRegister& r31) {
+  if (!rtpool::t_size || rtpool::t_pool != r31.u32) return;
+  const uint32_t size = rtpool::t_size;
+  rtpool::t_pool = rtpool::t_size = 0;
+  if (const uint32_t base = rtpool::BaseFor(r31.u32, size, r4.u32)) r4.u64 = base;
+  else REXLOG_ERROR("gow2_rt_pool: no memory for a {:#x}-byte target - it overlaps the pool's neighbour", size);
+}
+
+// Stage 6 Horde crash (notes/58, jobs 206-208): about 2 s into Horde's first wave countdown the main thread reads through
+// a null pointer in sub_828307A0 (`lwz r11,4(r4)` then `lwz r9,4(r11)`), called from sub_82826EC8 with r4 = the
+// caller's field at +1004. Same on the SDK reference, so not a drawing problem. This hook (the function's first
+// instruction) logs the arguments when that pointer is null; --gow2_patch_horde_guard makes the function return at
+// once then (a test of what follows, not a fix).
+REXCVAR_DEFINE_BOOL(gow2_patch_horde_guard, false, "Gears2",
+                    "Test only: sub_828307A0 returns at once when its second argument's +4 pointer is null (Horde crash, "
+                    "notes/58)");
+static uint8_t* g_gow2_membase = nullptr;
+static uint32_t Gow2Load32(uint32_t a) {
+  const uint8_t* p = g_gow2_membase + a;
+  return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
+}
+static bool Gow2Readable(uint32_t a) { return a >= 0x10000u && a < 0xFFFF0000u; }
+
+bool Gow2HordeGuard(PPCRegister& r3, PPCRegister& r4) {
+  if (!g_gow2_membase) return false;
+  const uint32_t a = r4.u32;
+  if (Gow2Readable(a) && Gow2Readable(Gow2Load32(a + 4))) return false;
+  static std::atomic<uint32_t> n{0};
+  const uint32_t i = n.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (i <= 20) {
+    std::string words;
+    if (Gow2Readable(a))
+      for (uint32_t k = 0; k < 8; ++k) {
+        char w[12];
+        std::snprintf(w, sizeof(w), " %08X", Gow2Load32(a + 4 * k));
+        words += w;
+      }
+    const uint32_t self = r3.u32;
+    REXLOG_INFO("gow2_horde_guard: #{} at swap {}: sub_828307A0(r3 {:08X} vtable {:08X}, r4 {:08X}) - r4+4 is not a "
+                "pointer; r4 words:{}{}",
+                i, XenosSwapCount(), self, Gow2Readable(self) ? Gow2Load32(self) : 0u, a, words.empty() ? " (unreadable)" : words,
+                REXCVAR_GET(gow2_patch_horde_guard) ? " -> returning" : "");
+  }
+  return REXCVAR_GET(gow2_patch_horde_guard);
+}
+
+void Gow2PatchAniso16(PPCRegister& r5) {
+  if (!REXCVAR_GET(gow2_patch_aniso16)) return;
+  static bool logged = false;
+  if (!logged) { logged = true; REXLOG_INFO("gow2_patch_aniso16: anisotropy {} -> 16", r5.u32); }
+  r5.u64 = 16;
+}
+
+void Gow2PatchCoalescedResult(PPCRegister& r3) {
+  if (REXCVAR_GET(gow2_patch_skip_coalesced_check)) r3.u64 = 0;
+}
+
+bool Gow2PatchCoalescedSkip() {
+  if (!REXCVAR_GET(gow2_patch_skip_coalesced_check)) return false;
+  static bool logged = false;
+  if (!logged) { logged = true; REXLOG_INFO("gow2_patch_skip_coalesced_check: hash check skipped"); }
+  return true;  // return_on_true: the function returns before its prologue
+}
+
+// Writes a big-endian float into the loaded image (.rdata may be mapped read-only on the host: lift that for the write).
+static void Gow2WriteGuestFloat(rex::Runtime* runtime, uint32_t addr, float value, const char* what) {
+  uint8_t* p = runtime->memory()->TranslateVirtual<uint8_t*>(addr);
+  uint32_t old_bits = 0, bits = 0;
+  std::memcpy(&bits, &value, 4);
+  for (int i = 0; i < 4; ++i) old_bits = (old_bits << 8) | p[i];
+  float old_value;
+  std::memcpy(&old_value, &old_bits, 4);
+#ifdef _WIN32
+  DWORD old_protect = 0;
+  const bool lifted = VirtualProtect(p, 4, PAGE_READWRITE, &old_protect) != 0;
+#endif
+  for (int i = 0; i < 4; ++i) p[i] = uint8_t(bits >> (24 - 8 * i));
+#ifdef _WIN32
+  if (lifted) VirtualProtect(p, 4, old_protect, &old_protect);
+#endif
+  REXLOG_INFO("{}: {:08X} {} -> {}", what, addr, old_value, value);
+}
+
+// GitHub #132 (ultrawide: the camera sits higher than at 16:9 - Marcus lower in the frame, cut at the chest).
+// The camera's native view offset (disc sub_82886238, run every frame) picks a viewport type from the viewport's shape
+// (sub_82527760): X / Y strictly between the .rdata floats 1.7677778 and 1.7877778 (16:9 +- 0.01; disc 0x821D0D20 /
+// 0x821D0D1C, read only there, 0x828862C0 / 0x828862D0) is widescreen (CVT_16to9_*), anything else CVT_4to3_* - so
+// every ultrawide shape got the 4:3 camera. GearGame.xxx's defaults add ViewOffset_ViewportAdjustments[CVT_4to3_Full]
+// to the camera offset: Z +17 (GameplayCam_Default), +25 (Cover), +3 (Targeting): the camera 17 units higher. That
+// matches Shagg's 16:9 / 21:9 shots (JacintoMed lobby): with the 16:9 shot mapped to 21:9 (x 0.761 about the centre,
+// exact Hor+), the back wall lands ~10 px high and Marcus (~150 units away) 56 px high; 17 units explains both.
+// The property is not config (flags 0x3), so no ini edit reaches it. Fix: with --gow2_ultrawide the upper bound
+// becomes the ultrawide shape's aspect + 0.05, so the full-screen ultrawide viewport counts as widescreen like 16:9.
+// The pair is found by value in .rdata (one copy on the disc; TU6 moves .rdata) and written only if found exactly once.
+static void Gow2UltrawideCameraViewportType(rex::Runtime* runtime) {
+  const uint8_t* image = runtime->virtual_membase() + 0x82000000u;
+  uint32_t lo = 0, hi = 0;  // .rdata, from the PE header (little-endian)
+  if (image[0] == 'M' && image[1] == 'Z') {
+    uint32_t pe = 0;
+    std::memcpy(&pe, image + 0x3C, 4);
+    if (pe > 0 && pe < 0x1000 && std::memcmp(image + pe, "PE\0\0", 4) == 0) {
+      uint16_t sections = 0, opt = 0;
+      std::memcpy(&sections, image + pe + 6, 2);
+      std::memcpy(&opt, image + pe + 20, 2);
+      for (uint32_t i = 0; i < sections && i < 32; ++i) {
+        const uint8_t* s = image + pe + 24 + opt + 40 * i;
+        if (std::memcmp(s, ".rdata", 7) == 0) {
+          uint32_t vsize = 0, va = 0;
+          std::memcpy(&vsize, s + 8, 4);
+          std::memcpy(&va, s + 12, 4);
+          lo = va, hi = va + vsize;
+        }
+      }
+    }
+  }
+  static const uint8_t kPair[8] = {0x3F, 0xE4, 0xD5, 0xE7, 0x3F, 0xE2, 0x46, 0x8B};  // 1.7877778f, 1.7677778f (BE)
+  uint32_t found = 0, count = 0;
+  for (uint32_t o = lo; hi > lo && hi < 0x02000000u && o + 8 <= hi; o += 4)
+    if (std::memcmp(image + o, kPair, 8) == 0) found = 0x82000000u + o, ++count;
+  if (count != 1) {
+    REXLOG_INFO("gow2_ultrawide: camera viewport bounds not found ({} copies in .rdata {:08X}-{:08X}) - left alone "
+                "(GitHub #132)", count, 0x82000000u + lo, 0x82000000u + hi);
+    return;
+  }
+  Gow2WriteGuestFloat(runtime, found, float(1280.0 / Gow2WideHeight() + 0.05),
+                      "gow2_ultrawide: camera widescreen upper bound (GitHub #132: no 4:3 camera offset)");
+}
+
+void Gow2ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
+  if (!runtime || !runtime->memory()) return;
+  g_gow2_membase = runtime->virtual_membase();
+  if (REXCVAR_GET(gow2_patch_show_fps)) {
+    for (uint32_t addr : {gow2::addr::kShowFpsFlag, gow2::addr::kShowFrameTimeFlag}) {
+      *runtime->memory()->TranslateVirtual<uint8_t*>(addr) = 1;
+    }
+    REXLOG_INFO("gow2_patch_show_fps: FPS and frame-time display flags set");
+  }
+  if (REXCVAR_GET(gow2_ultrawide)) {
+    Gow2WriteGuestFloat(runtime, gow2::addr::kWidescreenAspect, Gow2WideHeight() == 550 ? 2.33333f : float(1280.0 / Gow2WideHeight()),
+                        "gow2_ultrawide: widescreen aspect");
+    Gow2UltrawideCameraViewportType(runtime);
+    // Job 200: the front buffer itself becomes 1280x550 (x the resolution scale). Show it at that shape (letterboxed in
+    // a window of another shape) rather than Canary's way (letterbox off, which is right only in a 21:9 window).
+    const bool a = rex::cvar::SetFlagByName("gow2_present_frame_aspect", "true");
+    REXLOG_INFO("gow2_ultrawide: present at the front buffer's own shape {}", a);
+  }
+}
+
+// Patch 0066 (Shagg 19:09-19:23: build new chapters' shaders behind the loading screen): UE3's shader constructors,
+// after each has copied the shader's microcode into its own allocation (disassembled from the image dumps;
+// gow2_manifest.toml / gow2_manifest_tu6.toml):
+//  - pixel shader 82809A38 (TU6 82819608): at 82809BBC (TU6 82819790) `stw r30,8(r31)`, r6 = the microcode it just
+//    stored at header +24 (stw r6,0x18(r30)), r27 = its size in bytes (lwz r27,8(blob));
+//  - vertex shader 828098D0 (TU6 82819440): at 82809A20 (TU6 82819594) `bl 829831F0` (the XDK's vertex-shader
+//    header init, notes/29), r4 = the microcode, r28 = its size in bytes.
+// The renderer translates each one and has the driver build it before its first draw (XenosGuestShaderCreated).
+void Gow2ShaderCreatedPixel(PPCRegister& r6, PPCRegister& r27) { XenosGuestShaderCreated(false, r6.u32, r27.u32); }
+void Gow2ShaderCreatedVertex(PPCRegister& r4, PPCRegister& r28) { XenosGuestShaderCreated(true, r4.u32, r28.u32); }
+
+REXCVAR_DEFINE_BOOL(cogbox_test_skip_movies, false, "COGBox",
+                    "TEST ONLY (scripted test runs): no full-screen movies - the engine's own [FullScreenMovie] "
+                    "bForceNoMovies, so the logos, the loading movie and every pre-rendered (.bik) cutscene are passed as "
+                    "if skipped and a run reaches gameplay without button presses. In-engine (real-time) cutscenes still "
+                    "play. Not for players: loading screens go black.");
+REXCVAR_DECLARE(std::string, ue3_ini_edits);  // layer 2 config_install.cpp
+void Gow2AddTestIniEdits() {
+  if (!REXCVAR_GET(cogbox_test_skip_movies)) return;
+  rex::cvar::SetFlagByName("ue3_ini_edits", "Xe-GearEngine.ini|FullScreenMovie|bForceNoMovies=True;" + REXCVAR_GET(ue3_ini_edits));
+  REXLOG_INFO("cogbox_test_skip_movies: full-screen movies off (bForceNoMovies) - test runs only");
+}
+
+// GitHub #90 (French / Italian voices fall back to English): logging only, nothing changes. Every file the game opens
+// whose name looks localized (_LOC_, _FRA, _ITA, _DEU, _ESN, _INT, or a .int/.fra/.ita/.deu/.esn file) is logged with
+// the language the runtime was given (--user_language), the first 200 of them, so a report shows which language's
+// packages the game asked for.
+REXCVAR_DEFINE_BOOL(gow2_loc_log, true, "Gears2", "GitHub #90: log the localized files the game opens (first 200)");
+
+void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));  // shader_prebuild.cpp
+
+namespace {
+std::atomic<int> g_loc_log_lines{0};
+constexpr int kLocLogMax = 200;
+
+bool Gow2ContainsNoCase(std::string_view s, std::string_view needle) {  // needle in lower case
+  for (size_t i = 0; i + needle.size() <= s.size(); ++i) {
+    size_t k = 0;
+    while (k < needle.size() && std::tolower(static_cast<unsigned char>(s[i + k])) == needle[k]) ++k;
+    if (k == needle.size()) return true;
+  }
+  return false;
+}
+bool Gow2EndsWithNoCase(std::string_view s, std::string_view tail) {  // tail in lower case
+  if (s.size() < tail.size()) return false;
+  for (size_t i = 0; i < tail.size(); ++i)
+    if (std::tolower(static_cast<unsigned char>(s[s.size() - tail.size() + i])) != tail[i]) return false;
+  return true;
+}
+bool Gow2LooksLocalized(std::string_view path) {
+  const size_t slash = path.find_last_of("\\/");
+  const std::string_view name = slash == std::string_view::npos ? path : path.substr(slash + 1);
+  for (const std::string_view tag : {"_loc_", "_fra.", "_ita.", "_deu.", "_esn.", "_int."})
+    if (Gow2ContainsNoCase(name, tag)) return true;
+  for (const std::string_view ext : {".int", ".fra", ".ita", ".deu", ".esn"})
+    if (Gow2EndsWithNoCase(name, ext)) return true;
+  return false;
+}
+// GitHub #103 (Japanese Gears 2: movie voices stay English, with the Japanese disc's own .bik files): logging only. The
+// movie's language is not the file - the installed movies match the Japanese disc byte for byte - so it is the sound
+// track the engine asks Bink for. The first 40 .bik opens are logged with the audio tracks the header lists (count,
+// track IDs, sample rate, stereo), so a Japanese player's log shows whether a Japanese track is in the file and which ID
+// it has; picking it needs that ID and the address of this build's Bink track choice (BinkSetSoundTrack / the BinkOpen
+// track flag), which nobody has yet. Header layout as FFmpeg's Bink demuxer reads it (little-endian).
+void Gow2LogBinkTracks(std::string_view guest_path, const std::filesystem::path* host_path) {
+  static std::atomic<int> lines{0};
+  if (!host_path || lines.fetch_add(1, std::memory_order_relaxed) >= 40) return;
+  auto le32 = [](const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; };
+  uint8_t h[256] = {};
+  size_t got = 0;
+  if (FILE* fp = _wfopen(host_path->c_str(), L"rb")) {
+    got = std::fread(h, 1, sizeof(h), fp);
+    std::fclose(fp);
+  }
+  if (got < 44 || !((h[0] == 'B' && h[1] == 'I' && h[2] == 'K') || (h[0] == 'K' && h[1] == 'B' && h[2] == '2'))) {
+    REXLOG_INFO("gow2_movie_log: opened {} - not a Bink header we know ({} bytes read)", guest_path, got);
+    return;
+  }
+  const uint32_t n = le32(h + 40);
+  // Bink 1 revisions before 'k': the track table follows at once; 'BIKk' and later have 4 more bytes first, Bink 2
+  // ('KB2a', Gears 3 / Judgment) 8 (measured: with 4 the IDs read 1..n and a size - ticket 1).
+  const size_t extra = h[0] == 'K' ? 8 : (h[3] >= 'k' ? 4 : 0);
+  std::string tracks;
+  if (n <= 16 && got >= 44 + extra + 12 * size_t(n)) {
+    const uint8_t* info = h + 44 + extra + 4 * n;  // past each track's largest-packet size
+    const uint8_t* ids = info + 4 * n;
+    for (uint32_t i = 0; i < n; ++i) {
+      const uint32_t rate = uint32_t(info[4 * i]) | uint32_t(info[4 * i + 1]) << 8;
+      const uint32_t flags = uint32_t(info[4 * i + 2]) | uint32_t(info[4 * i + 3]) << 8;
+      tracks += (i ? ", " : " [") + std::string("id ") + std::to_string(le32(ids + 4 * i)) + " " + std::to_string(rate) +
+                " Hz" + ((flags & 0x2000) ? " stereo" : " mono");
+    }
+    if (n) tracks += "]";
+  } else {
+    tracks = " (track table not read)";
+  }
+  char raw[3 * 32 + 1] = {};   // the bytes from the track count on, in case this revision's layout differs
+  for (size_t i = 0; i < 32 && 40 + i < got; ++i) std::snprintf(raw + 3 * i, 4, "%02X ", h[40 + i]);
+  REXLOG_INFO("gow2_movie_log: opened {} - Bink {}{}{}{}, {} audio track(s){} (user_language {}, voice {}) raw@40: {}", guest_path,
+              char(h[0]), char(h[1]), char(h[2]), char(h[3]), n, tracks, rex::cvar::GetFlagByName("user_language"),
+              rex::cvar::GetFlagByName("ue3_voice_language"), raw);
+}
+
+void Gow2OnFileOpenedLoc(std::string_view guest_path, const std::filesystem::path* host_path) {
+  if (Gow2EndsWithNoCase(guest_path, ".bik")) {   // GitHub #103
+    Gow2LogBinkTracks(guest_path, host_path);
+    return;
+  }
+  if (!Gow2LooksLocalized(guest_path)) return;
+  const int n = g_loc_log_lines.fetch_add(1, std::memory_order_relaxed);
+  if (n >= kLocLogMax) return;
+  // 0.4.5 (#90): also the file actually served - with --ue3_voice_language its twin in the voice language
+  REXLOG_INFO("gow2_loc_log: opened {} -> {} (user_language {}, voice {}){}", guest_path,
+              host_path ? rex::path_to_utf8(host_path->filename()) : std::string("?"), rex::cvar::GetFlagByName("user_language"),
+              rex::cvar::GetFlagByName("ue3_voice_language"), n + 1 == kLocLogMax ? " - last line of this log (200)" : "");
+}
+}  // namespace
+
+void Gow2InstallLocLogIfRequested() {
+  if (!REXCVAR_GET(gow2_loc_log)) return;
+#if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
+  Ue3ShaderPrebuildChainFileOpened(&Gow2OnFileOpenedLoc);  // through the shader reader's observer (either order works)
+  REXLOG_INFO("gow2_loc_log: on - user_language {}; localized files the game opens are logged (GitHub #90, first {})",
+              rex::cvar::GetFlagByName("user_language"), kLocLogMax);
+#else
+  REXLOG_WARN("gow2_loc_log: this SDK has no file-open observer (SDK patch 32); localized files are not logged");
+#endif
+}

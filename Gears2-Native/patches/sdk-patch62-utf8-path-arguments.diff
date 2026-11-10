@@ -1,0 +1,64 @@
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -110,14 +110,14 @@
+   std::filesystem::path game_dir;
+   std::string game_data_cvar = REXCVAR_GET(game_data_root);
+   if (!game_data_cvar.empty()) {
+-    game_dir = game_data_cvar;
++    game_dir = rex::to_path(game_data_cvar);   // COGBox SDK patch 62: UTF-8, not the ANSI code page
+   }
+ 
+   // User data: cvar override, or platform user directory
+   std::filesystem::path user_dir;
+   std::string user_data_cvar = REXCVAR_GET(user_data_root);
+   if (!user_data_cvar.empty()) {
+-    user_dir = user_data_cvar;
++    user_dir = rex::to_path(user_data_cvar);
+   } else {
+     user_dir = rex::filesystem::GetUserFolder() / GetName();
+   }
+@@ -126,14 +126,14 @@
+   std::filesystem::path update_dir;
+   std::string update_data_cvar = REXCVAR_GET(update_data_root);
+   if (!update_data_cvar.empty()) {
+-    update_dir = update_data_cvar;
++    update_dir = rex::to_path(update_data_cvar);
+   }
+ 
+   // Cache: cvar override, or user_dir/cache
+   std::filesystem::path cache_dir;
+   std::string cache_root_cvar = REXCVAR_GET(cache_root);
+   if (!cache_root_cvar.empty()) {
+-    cache_dir = cache_root_cvar;
++    cache_dir = rex::to_path(cache_root_cvar);
+   } else {
+     cache_dir = user_dir / "cache";
+   }
+@@ -141,7 +141,7 @@
+   std::filesystem::path metadata_dir;
+   std::string metadata_root_cvar = REXCVAR_GET(metadata_root);
+   if (!metadata_root_cvar.empty()) {
+-    metadata_dir = metadata_root_cvar;
++    metadata_dir = rex::to_path(metadata_root_cvar);
+   }
+ 
+   PathConfig path_config{game_dir,  user_dir,     update_dir,
+--- a/src/core/logging.cpp
++++ b/src/core/logging.cpp
+@@ -26,6 +26,7 @@
+ #include <toml++/toml.hpp>
+ 
+ #include <rex/cvar.h>
++#include <rex/filesystem.h>
+ #include <rex/logging.h>
+ #include <rex/platform.h>
+ #include <rex/platform/env.h>
+@@ -576,7 +577,7 @@
+ 
+ void ApplyLogCvarOverrides(LogConfig& config) {
+   if (rex::cvar::HasNonDefaultValue("log_file")) {
+-    config.log_file = std::string(REXCVAR_GET(log_file));
++    config.log_file = rex::to_path(std::string(REXCVAR_GET(log_file)));   // COGBox SDK patch 62 (UTF-8)
+   }
+   if (rex::cvar::HasNonDefaultValue("log_flush_interval")) {
+     config.flush_interval = std::chrono::seconds(REXCVAR_GET(log_flush_interval));

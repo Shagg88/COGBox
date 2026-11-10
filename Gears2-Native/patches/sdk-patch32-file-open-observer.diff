@@ -1,0 +1,65 @@
+diff --git a/include/rex/filesystem/vfs.h b/include/rex/filesystem/vfs.h
+--- a/include/rex/filesystem/vfs.h
++++ b/include/rex/filesystem/vfs.h
+@@ -11,7 +11,9 @@
+ 
+ #pragma once
+ 
++#include <filesystem>
+ #include <memory>
++#include <string_view>
+ #include <string>
+ #include <unordered_map>
+ #include <vector>
+@@ -26,6 +28,15 @@
+ 
+ namespace rex::filesystem {
+ 
++// Gears2-Native SDK patch 32: an optional observer told about every file the title opens successfully (not
++// directories), on the opening thread, after the open: the guest path (Entry::absolute_path) and, for a file on a host
++// folder device, its host path (else null). For work that follows a file open (a port warming the shaders of a level
++// package the moment the game opens it). One observer; null = none (the default: nothing changes). Keep it cheap:
++// copy what you need and return. REX_FILESYSTEM_FILE_OPEN_OBSERVER tells code built against this SDK that it exists.
++#define REX_FILESYSTEM_FILE_OPEN_OBSERVER 1
++using FileOpenObserver = void (*)(std::string_view guest_path, const std::filesystem::path* host_path);
++void SetFileOpenObserver(FileOpenObserver observer);
++
+ class VirtualFileSystem {
+  public:
+   VirtualFileSystem();
+diff --git a/src/filesystem/virtual_file_system.cpp b/src/filesystem/virtual_file_system.cpp
+--- a/src/filesystem/virtual_file_system.cpp
++++ b/src/filesystem/virtual_file_system.cpp
+@@ -15,6 +15,8 @@
+ 
+ #include <rex/filesystem/devices/host_path_entry.h>
+ 
++#include <atomic>
++
+ REXCVAR_DEFINE_BOOL(allow_game_relative_writes, false, "Filesystem",
+                     "Not useful to non-developers. Allows code to write to paths "
+                     "relative to game://. Used for "
+@@ -22,6 +24,10 @@
+ 
+ namespace rex::filesystem {
+ 
++// Gears2-Native SDK patch 32 (vfs.h).
++static std::atomic<FileOpenObserver> g_file_open_observer{nullptr};
++void SetFileOpenObserver(FileOpenObserver observer) { g_file_open_observer.store(observer); }
++
+ VirtualFileSystem::VirtualFileSystem() {}
+ 
+ VirtualFileSystem::~VirtualFileSystem() {
+@@ -329,6 +335,11 @@
+   auto result = entry->Open(desired_access, out_file);
+   if (XFAILED(result)) {
+     *out_action = FileAction::kDoesNotExist;
++  } else if (const FileOpenObserver observer = g_file_open_observer.load(std::memory_order_relaxed);
++             observer && !(entry->attributes() & kFileAttributeDirectory)) {
++    // Gears2-Native SDK patch 32.
++    const auto* host_entry = dynamic_cast<const HostPathEntry*>(entry);
++    observer(entry->absolute_path(), host_entry ? &host_entry->host_path() : nullptr);
+   }
+   return result;
+ }
+

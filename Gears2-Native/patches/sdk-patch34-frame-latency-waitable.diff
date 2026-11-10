@@ -1,0 +1,99 @@
+diff --git a/include/rex/ui/d3d12/d3d12_presenter.h b/include/rex/ui/d3d12/d3d12_presenter.h
+index 2a50a3b..10a0d18 100644
+--- a/include/rex/ui/d3d12/d3d12_presenter.h
++++ b/include/rex/ui/d3d12/d3d12_presenter.h
+@@ -253,6 +253,10 @@ class D3D12Presenter final : public Presenter {
+     uint32_t swap_chain_width = 0;
+     uint32_t swap_chain_height = 0;
+     bool swap_chain_allows_tearing = false;
++    // Gears2-Native SDK patch 34 (input latency): the flags the swap chain was made with (ResizeBuffers must repeat
++    // them) and its frame latency waitable object (nullptr when off).
++    UINT swap_chain_flags = 0;
++    HANDLE frame_latency_waitable = nullptr;
+     Microsoft::WRL::ComPtr<IDXGISwapChain3> swap_chain;
+     std::array<Microsoft::WRL::ComPtr<ID3D12Resource>, kSwapChainBufferCount> swap_chain_buffers;
+   };
+diff --git a/src/ui/d3d12/d3d12_presenter.cpp b/src/ui/d3d12/d3d12_presenter.cpp
+index d3cfaaf..45733fc 100644
+--- a/src/ui/d3d12/d3d12_presenter.cpp
++++ b/src/ui/d3d12/d3d12_presenter.cpp
+@@ -33,6 +33,11 @@
+ 
+ REXCVAR_DEFINE_BOOL(d3d12_allow_variable_refresh_rate_and_tearing, true, "UI/D3D12",
+                     "Allow variable refresh rate and tearing");
++// Gears2-Native SDK patch 34 (input latency, Shagg 22:10): a frame latency waitable swap chain.
++REXCVAR_DEFINE_INT32(d3d12_max_frame_latency, 1, "UI/D3D12",
++                     "Gears2-Native SDK patch 34: the most frames queued for presentation (DXGI frame latency waitable "
++                     "object; each paint first waits until the queue has room, up to 100 ms). 1 = lowest latency. 0 = as "
++                     "before (no waitable object, DXGI's default of 3)");
+ 
+ namespace rex::ui::d3d12 {
+ 
+@@ -355,6 +360,7 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+       return SurfacePaintConnectResult::kSuccessUnchanged;
+     }
+     paint_context_.AwaitSwapChainUsageCompletion();
++    // SDK patch 34: ResizeBuffers repeats the creation flags (tearing and the frame latency waitable object).
+     // Using the current swap_chain_allows_tearing_ value that's consistent with
+     // the creation of the swap chain because ResizeBuffers can't toggle the
+     // tearing flag.
+@@ -364,7 +370,7 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+     }
+     bool swap_chain_resized = SUCCEEDED(paint_context_.swap_chain->ResizeBuffers(
+         0, UINT(new_swap_chain_width), UINT(new_swap_chain_height), DXGI_FORMAT_UNKNOWN,
+-        paint_context_.swap_chain_allows_tearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0));
++        paint_context_.swap_chain_flags));
+     if (swap_chain_resized) {
+       for (uint32_t i = 0; i < PaintContext::kSwapChainBufferCount; ++i) {
+         if (FAILED(paint_context_.swap_chain->GetBuffer(
+@@ -414,6 +420,11 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+       // rate.
+       swap_chain_desc.Flags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+     }
++    // SDK patch 34: the frame latency waitable object.
++    const int32_t max_latency = REXCVAR_GET(d3d12_max_frame_latency);
++    if (max_latency > 0) {
++      swap_chain_desc.Flags |= DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
++    }
+     IDXGIFactory2* dxgi_factory = provider_.GetDXGIFactory();
+     ID3D12CommandQueue* direct_queue = provider_.GetDirectQueue();
+     Microsoft::WRL::ComPtr<IDXGISwapChain1> swap_chain_1;
+@@ -445,6 +456,15 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+           "interface");
+       return SurfacePaintConnectResult::kFailure;
+     }
++    // SDK patch 34: at most max_latency frames queued; each paint waits for room first.
++    paint_context_.swap_chain_flags = swap_chain_desc.Flags;
++    if (swap_chain_desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT) {
++      const UINT n = UINT(std::min(max_latency, int32_t(16)));
++      const bool set = SUCCEEDED(paint_context_.swap_chain->SetMaximumFrameLatency(n));
++      paint_context_.frame_latency_waitable = paint_context_.swap_chain->GetFrameLatencyWaitableObject();
++      REXLOG_INFO("D3D12Presenter: frame latency waitable swap chain (SDK patch 34): at most {} frame(s) queued{}{}", n,
++                  set ? "" : " - SetMaximumFrameLatency FAILED", paint_context_.frame_latency_waitable ? "" : " - no waitable object");
++    }
+     // Gears2-Native SDK patch 24 (HDR): the HDR10 colour space, when asked for and supported.
+     if (REXCVAR_GET(present_hdr)) {
+       UINT support = 0;
+@@ -567,12 +587,22 @@ void D3D12Presenter::PaintContext::DestroySwapChain() {
+     swap_chain_buffer_ref.Reset();
+   }
+   swap_chain.Reset();
++  if (frame_latency_waitable) {  // SDK patch 34
++    CloseHandle(frame_latency_waitable);
++    frame_latency_waitable = nullptr;
++  }
++  swap_chain_flags = 0;
+   swap_chain_allows_tearing = false;
+   swap_chain_height = 0;
+   swap_chain_width = 0;
+ }
+ 
+ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawers) {
++  // Gears2-Native SDK patch 34: wait until the presentation queue has room (at most d3d12_max_frame_latency frames), so a
++  // frame is not painted - and the game's newest picture not held back - behind frames still waiting to be shown.
++  if (paint_context_.frame_latency_waitable) {
++    WaitForSingleObjectEx(paint_context_.frame_latency_waitable, 100, TRUE);
++  }
+   // Begin the command list with the command allocator not currently potentially
+   // used on the GPU.
+   UINT64 current_paint_submission = paint_context_.paint_submission_tracker.GetCurrentSubmission();

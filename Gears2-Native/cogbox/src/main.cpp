@@ -1,0 +1,865 @@
+// COGBox - a launcher for the Gears of War native PC ports (Gears of War 2, Gears of War 3, Gears of War: Judgment).
+// It finds the player's own copies, sets them up, shows the games as boxes on a carousel, keeps each game's settings,
+// starts the right port with them, explains in plain words when a game can't start, keeps itself up to date from
+// GitHub and puts the logs into one zip for a bug report. Built after Athelas (the same author's launcher for the
+// Lord of the Rings games): C++17, Dear ImGui on SDL3, cross-compiled with MinGW.
+#include "stale_files.h"
+#include "upgrade_cleanup.h"   // cleanup049
+#include "app.h"
+#include "theme.h"
+#include "i18n.h"   // 0.2.0
+#include "update.h"
+#include "report.h"
+#include "legal.h"   // legal050
+#include "imgui_impl_sdl3.h"
+extern int g_lastKeyScancode;   // page.cpp
+#include "imgui_impl_sdlrenderer3.h"
+#include "imgui_internal.h"
+#include "../third_party/miniz/miniz.h"
+
+#include <windows.h>
+#include <shellapi.h>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <algorithm>
+#include <atomic>
+#include <mutex>
+#include <thread>
+#include <functional>
+
+void set_message(App &a, const std::string &m, bool bad)
+{
+    a.message = tr(m);   // 0.2.0
+    a.messageBad = bad;
+    a.messageAt = ImGui::GetTime();
+}
+
+void ask(App &a, const std::string &tag, int game, const std::string &title, const std::string &text, std::vector<std::string> buttons,
+         const std::string &data)
+{
+    a.modal.open = true;
+    a.modal.tag = tag;
+    a.modal.game = game;
+    a.modal.title = tr(title);   // 0.2.0: translated
+    a.modal.text = tr(text);
+    for (std::string &b : buttons) b = tr(b);
+    a.modal.buttons = std::move(buttons);
+    a.modal.answer = -1;
+    a.modal.data = data;
+    a.modal.check.clear();   // 0.2.0: no checkbox unless the asker adds one
+    a.modal.checked = false;
+    a.modal.list.clear();
+    a.modal.listSel = 0;
+}
+
+void refresh_games(App &a, bool hash)
+{
+    for (int g = 0; g < G_COUNT; g++) {
+        game_refresh(g, a.ini, a.st[g], hash);
+        env_refresh(a, g);
+    }
+    if (hash) a.ini.save();
+}
+
+// ---- answers to the questions ----------------------------------------------------------------------------------------
+// GitHub #120 (jojobear69: "Back up saves" froze the launcher; the Saves folder zipped to 2.6 GB): the user folder also
+// holds the installed DLC (content type 00000002, packages of hundreds of MB) and title-update content (000B0000), and
+// the backup read every file into one zip in memory on the UI thread. Now only saves and profiles go in (those two
+// content types are skipped), the zip is written to the file as it is made, and it runs on its own thread; the
+// launcher keeps drawing and says when it is done.
+static size_t zip_write_handle(void *opaque, mz_uint64 ofs, const void *buf, size_t n)
+{
+    HANDLE h = (HANDLE)opaque;
+    LARGE_INTEGER li;
+    li.QuadPart = (LONGLONG)ofs;
+    if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) return 0;
+    DWORD done = 0;
+    return WriteFile(h, buf, (DWORD)n, &done, nullptr) ? done : 0;
+}
+static bool zip_skip_dir(const std::string &name)
+{
+    return _stricmp(name.c_str(), "00000002") == 0 || _stricmp(name.c_str(), "000B0000") == 0;   // DLC, title update
+}
+static bool zip_folder(const std::string &dir, const std::string &zipPath, std::string &err, int &files)
+{
+    HANDLE h = CreateFileW(widen(zipPath).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) { err = "couldn't create " + zipPath; return false; }
+    mz_zip_archive z;
+    memset(&z, 0, sizeof z);
+    z.m_pWrite = zip_write_handle;
+    z.m_pIO_opaque = h;
+    if (!mz_zip_writer_init(&z, 0)) { CloseHandle(h); DeleteFileW(widen(zipPath).c_str()); err = "couldn't start the zip"; return false; }
+    bool ok = true;
+    files = 0;
+    std::vector<std::string> stack = { "" };
+    while (!stack.empty() && ok) {
+        std::string rel = stack.back();
+        stack.pop_back();
+        WIN32_FIND_DATAW fd;
+        HANDLE f = FindFirstFileW(widen(join(join(dir, rel), "*")).c_str(), &fd);
+        if (f == INVALID_HANDLE_VALUE) continue;
+        do {
+            std::string n = narrow(fd.cFileName);
+            if (n == "." || n == "..") continue;
+            std::string r = rel.empty() ? n : rel + "\\" + n;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;   // links aren't followed into the backup (review 11)
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { if (!zip_skip_dir(n)) stack.push_back(r); continue; }
+            std::string data;
+            if (!read_file(join(dir, r), data, 1u << 30)) { ok = false; err = "couldn't read " + r; break; }
+            std::string zn = r;
+            std::replace(zn.begin(), zn.end(), '\\', '/');
+            ok = mz_zip_writer_add_mem(&z, zn.c_str(), data.data(), data.size(), MZ_DEFAULT_COMPRESSION) != 0;
+            if (ok) files++;
+        } while (ok && FindNextFileW(f, &fd));
+        FindClose(f);
+    }
+    if (ok) ok = mz_zip_writer_finalize_archive(&z) != 0;
+    mz_zip_writer_end(&z);
+    CloseHandle(h);
+    if (!ok) { DeleteFileW(widen(zipPath).c_str()); if (err.empty()) err = "couldn't write the zip (is the disk full?)"; }
+    return ok;
+}
+// The backup's thread and its result, read by backup_poll() on the UI thread.
+static std::atomic<int> g_backupState{0};   // 0 idle, 1 running, 2 done
+static std::mutex g_backupMutex;
+static std::string g_backupZip, g_backupErr, g_backupDir;
+static int g_backupGame = -1, g_backupFiles = 0;
+static bool g_backupOk = false;
+static void backup_start(App &a, int g, const std::string &dir, const std::string &zip)
+{
+    if (g_backupState.load() == 1) { set_message(a, "A backup is already running.", false); return; }
+    { std::lock_guard<std::mutex> l(g_backupMutex); g_backupZip = zip; g_backupDir = dir; g_backupGame = g; g_backupErr.clear(); }
+    g_backupState = 1;
+    set_message(a, "Backing up the saves...", false);
+    std::thread([dir, zip] {
+        std::string err;
+        int files = 0;
+        const bool ok = zip_folder(dir, zip, err, files);
+        { std::lock_guard<std::mutex> l(g_backupMutex); g_backupOk = ok; g_backupErr = err; g_backupFiles = files; }
+        g_backupState = 2;
+    }).detach();
+}
+static void backup_poll(App &a)
+{
+    if (g_backupState.load() != 2 || a.modal.open) return;
+    std::lock_guard<std::mutex> l(g_backupMutex);
+    g_backupState = 0;
+    if (g_backupOk)
+        ask(a, "info", g_backupGame, "Back up saves", std::string(a.wine ? tr("Saved in COGBox's backups folder") : "Saved on your desktop") +
+            " (" + std::to_string(g_backupFiles) + " files; installed DLC is not "
+            "included):\n" + shown_path(a, g_backupZip) + "\n\nTo restore: close the game and unzip it into\n" + shown_path(a, g_backupDir), { "OK" });
+    else set_message(a, "Couldn't back up the saves: " + g_backupErr, true);
+}
+
+void startup_notices(App &a);   // 0.2.0, below
+// ---- legal050: the welcome notice (legal.h) --------------------------------------------------------------------------
+static bool g_updateAfterLegal = false;      // the update check waits until the notice is accepted (PRIVACY.md)
+bool legal_notice_due(const App &a)
+{
+    return legal_due(a.ini.get("Notices", "LegalAccepted"), a.ini.get("Notices", "LegalNever"), a.ini.get("Notices", "LegalSeen"),
+                     kLegalNoticeVersion, COGBOX_VERSION);
+}
+void legal_notice_ask(App &a)
+{
+    // Shagg 8 Nov: friendly and short - the player's own copy, their call and responsibility, no piracy, as is
+    ask(a, "legal", -1, "Welcome to COGBox!",
+        "COGBox is a free fan project. It works with your own copies of the games and doesn't include any game files.\n\n"
+        "How you get and use your games is up to you and your responsibility. We don't provide games and don't help with "
+        "or support pirated copies.\n\n"
+        // legal2-050 (Shagg 8 Nov): no warranty line on screen (it stays in LEGAL.md / LICENSE); the affiliation line as Shagg worded it
+        "COGBox isn't affiliated with Microsoft, Epic Games or The Coalition. \"Read more\" opens the full text (LEGAL.md).",
+        { "Accept", "Read more", "Decline" });
+    a.modal.check = "Don't show this again";
+    a.modal.checked = a.ini.get("Notices", "LegalNever") == kLegalNoticeVersion;
+}
+static void answered(App &a)
+{
+    Modal m = a.modal;      // a copy: the answer may ask a new question
+    a.modal.open = false;
+    int g = m.game;
+    const GameDef &d = game_def(g < 0 ? 0 : g);
+    if (m.tag == "legal") {   // legal050: Accept / Read more / Decline
+        if (m.answer == 0) {
+            a.ini.set("Notices", "LegalAccepted", kLegalNoticeVersion);
+            a.ini.set("Notices", "LegalAcceptedOn", now_stamp());
+            a.ini.set("Notices", "LegalSeen", COGBOX_VERSION);
+            if (m.checked) a.ini.set("Notices", "LegalNever", kLegalNoticeVersion); else a.ini.set("Notices", "LegalNever", "");
+            a.ini.save();
+            if (g_updateAfterLegal) { g_updateAfterLegal = false; update_check_start(COGBOX_VERSION); }
+        } else if (m.answer == 1) {
+            const std::string local = join(exe_dir(), "LEGAL.md");
+            shell_open(file_exists(local) ? local : std::string("https://gitlab.com/shagg88/cogbox"));
+        } else {
+            ask(a, "legaldecline", -1, "See you later", "No problem - COGBox will close now. You're welcome back any time.", { "OK" });
+            return;
+        }
+    }
+    else if (m.tag == "legaldecline") { a.quit = true; return; }
+    else if (m.tag == "crash") play_answer(a, m);
+    else if (m.tag == "quit" && m.answer == 0) a.quit = true;   // job 526
+    else if (m.tag == "whatsnew") {   // to-do 13: this version's release notes (legal2-050: on GitLab)
+        a.ini.set("Notices", "WhatsNewSeen", COGBOX_VERSION);
+        a.ini.save();
+        if (m.answer == 0) shell_open(std::string("https://gitlab.com/shagg88/cogbox/-/releases"));
+    }
+    else if (m.tag == "langpick") {   // 0.2.0: the language prompt - Automatic, then languages()
+        const auto &L = languages();
+        const std::string code = m.listSel <= 0 ? std::string("auto") : L[size_t(std::min<int>(m.listSel - 1, (int)L.size() - 1))].code;
+        a.ini.set("Launcher", "Language", code);
+        if (m.checked) a.ini.seti("Notices", "LanguageNever", 1);
+        a.ini.set("Notices", "LanguageSeen", COGBOX_VERSION);
+        a.ini.save();
+        i18n_load(code);
+    }
+    else if (m.tag == "tunotice") {   // 0.2.0: the title-update notice - shown again after the next COGBox update unless ticked
+        if (m.checked) a.ini.seti("Notices", "TitleUpdatesRequiredNever", 1);   // 0.4.0: title updates required
+        a.ini.set("Notices", "TitleUpdatesSeen", COGBOX_VERSION);
+        a.ini.save();
+    }
+    else if (m.tag == "reportexp") {   // Shagg 31 Oct: the About tab report, after the experimental-settings prompt
+        if (m.checked) { a.ini.seti("Notices", "ReportExperimentalNever", 1); a.ini.save(); }
+        if (m.answer == 0) report_now(a, m.game, m.data);
+    }
+    else if (m.tag == "reportver") {   // Shagg 2 Nov: report made anyway with an untested version
+        if (m.answer == 0) report_now(a, m.game, m.data, true);
+    }
+    else if (m.tag == "expnotice") {   // Shagg 31 Oct: experimental settings are for testing, not for regular play
+        if (m.checked) a.ini.seti("Notices", "ExperimentalNever", 1);
+        a.ini.set("Notices", "ExperimentalSeen", COGBOX_VERSION);
+        a.ini.save();
+    }
+    else if (m.tag == "turec") {   // 0.2.0: Gears 2 / 3 without Title Update 6
+        if (m.checked && g >= 0) { a.ini.seti("Notices", std::string("TuRecommendNever_") + game_def(g).key, 1); a.ini.save(); }
+    }
+    else if (m.tag == "replace" && m.answer == 0) install_confirmed(a);
+    else if (m.tag == "dlsscustom" && m.answer == 0) dlss_custom_answer(a, m.game, m.data);   // 0.4.9
+    else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
+    else if (m.tag == "protonrec" || m.tag == "protonfound") linux_answer(a, m);   // proton049
+    else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
+    else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4
+    else if (m.tag == "dlcremove" && m.answer == 0) dlc_remove_confirmed(a);   // 0.2.0
+    else if (m.tag == "backup" && m.answer == 0) {
+        // proton049: under Proton / Wine the "desktop" is inside the game's prefix (or missing) - COGBox's own backups folder
+        const std::string bdir = a.wine ? join(exe_dir(), "backups") : desktop_dir();
+        if (a.wine) make_dirs(bdir);
+        backup_start(a, g, game_user_dir(g), join(bdir, std::string("CogBox-saves-") + d.dir + "-" + now_stamp() + ".zip"));   // #120
+    } else if (m.tag == "clearshaders" && m.answer == 0) {
+        std::string dir = game_shader_dir(g);
+        if (MoveFileExW(widen(dir).c_str(), widen(dir + ".cleared-" + now_stamp()).c_str(), 0)) set_message(a, std::string("Cleared the shaders of ") + d.name + ".", false);
+        else set_message(a, "Couldn't clear them - is the game running?", true);
+    } else if (m.tag == "reset" && m.answer == 0) {
+        std::string p = join(exe_dir(), "settings.ini");
+        if (file_exists(p)) MoveFileExW(widen(p).c_str(), widen(p + ".before-reset-" + now_stamp()).c_str(), MOVEFILE_REPLACE_EXISTING);
+        a.store.reset();
+        for (int i = 0; i < G_COUNT; i++) { a.cur[i] = a.store.view((gs::Game)i, a.env[i]); a.dirty[i] = false; }
+        settings_save(a);
+        set_message(a, "Every setting is back to its default.", false);
+    }
+    startup_notices(a);   // 0.2.0: the next start-up notice, if any
+}
+
+// 0.2.0: on COGBox's first start and after each COGBox update - the language prompt, then the title-update notice; each
+// has "Don't show this again". One at a time: answering one shows the next.
+void startup_notices(App &a)
+{
+    if (a.modal.open || (getenv("COGBOX_SHOT") && !getenv("COGBOX_SHOT_NOTICES"))) return;
+    if (legal_notice_due(a)) { legal_notice_ask(a); return; }   // legal050: first, before every other notice
+    // to-do 13 (Shagg 3 Nov): after an update, say so and offer the changelog (this version's release page). A first
+    // start (no notice seen before) just records the version.
+    if (a.ini.get("Notices", "WhatsNewSeen") != COGBOX_VERSION) {
+        const bool updated = !a.ini.get("Notices", "LanguageSeen").empty() || !a.ini.get("Notices", "WhatsNewSeen").empty();
+        if (!updated) { a.ini.set("Notices", "WhatsNewSeen", COGBOX_VERSION); a.ini.save(); }
+        else {
+            ask(a, "whatsnew", -1, "COGBox updated",
+                "COGBox has been updated. See what's new and what was fixed in this version's changelog.",
+                { "Open the changelog", "Continue" });
+            return;
+        }
+    }
+    if (!a.ini.geti("Notices", "LanguageNever", 0) && a.ini.get("Notices", "LanguageSeen") != COGBOX_VERSION) {
+        ask(a, "langpick", -1, "Language", "Choose COGBox's language. You can change it any time on a game's About tab.", { "Continue" });
+        a.modal.list.push_back(std::string("Automatic (") + tr("Windows' language") + ")");
+        for (const Language &l : languages()) a.modal.list.push_back(l.name);
+        const std::string cur = a.ini.get("Launcher", "Language");
+        a.modal.listSel = 0;
+        for (size_t i = 0; i < languages().size(); i++) if (languages()[i].code == cur) a.modal.listSel = int(i) + 1;
+        a.modal.check = "Don't show this again";
+        return;
+    }
+    // Title updates required (0.4.0): a new "never" key, so a player who ticked the old "recommended" notice away
+    // still sees once that the updates are now required
+    if (!a.ini.geti("Notices", "TitleUpdatesRequiredNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION) {
+        ask(a, "tunotice", -1, "Title updates required",
+            // 0.4.6 (Shagg 4 Nov): short - the steps are in the README
+            "For the smoothest experience, these games require the listed Title Updates. See the README for details.\n\n"
+            "    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4", { "Continue" });
+        a.modal.check = "Don't show this again";
+        return;
+    }
+    if (!a.ini.geti("Notices", "ExperimentalNever", 0) && a.ini.get("Notices", "ExperimentalSeen") != COGBOX_VERSION) {
+        ask(a, "expnotice", -1, "Experimental settings",
+            // 0.4.6 (Shagg 4 Nov): two short sentences
+            "Experimental settings are for testing, logging and debugging - not regular gameplay. They may reduce "
+            "performance, cause visual problems or make the game unstable.", { "Continue" });
+        a.modal.check = "Don't show this again";
+    }
+}
+
+static void draw_modal(App &a, ImVec2 size)
+{
+    Modal &m = a.modal;
+    if (!m.open) return;
+    ImDrawList *fg = ImGui::GetForegroundDrawList();
+    (void)fg;
+    float w = std::min(size.x - S(60), S(620));
+    ImGui::SetNextWindowPos(ImVec2(size.x * 0.5f, size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(w, 0));
+    if (!ImGui::IsPopupOpen("##modal")) ImGui::OpenPopup("##modal");
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(28), S(24)));
+    if (ImGui::BeginPopupModal("##modal", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        ImVec2 p0 = ImGui::GetWindowPos(), p1(p0.x + ImGui::GetWindowSize().x, p0.y + ImGui::GetWindowSize().y);
+        th_plate(ImGui::GetWindowDrawList(), p0, p1, S(14), false);
+        th_heading(m.title.c_str(), p1.x - S(28));
+        ImGui::Dummy(ImVec2(0, S(6)));
+        ImGui::PushTextWrapPos(w - S(28));
+        ImGui::TextUnformatted(m.text.c_str());
+        ImGui::PopTextWrapPos();
+        if (!m.list.empty()) {   // 0.2.0: the language prompt's list
+            ImGui::Dummy(ImVec2(0, S(6)));
+            if (ImGui::BeginListBox("##list", ImVec2(-FLT_MIN, std::min(S(330), ImGui::GetTextLineHeightWithSpacing() * (m.list.size() + 0.4f))))) {
+                for (int i = 0; i < (int)m.list.size(); i++) {
+                    if (ImGui::Selectable(m.list[i].c_str(), m.listSel == i)) m.listSel = i;
+                    if (m.listSel == i && ImGui::IsWindowAppearing()) { ImGui::SetItemDefaultFocus(); ImGui::SetKeyboardFocusHere(-1); }
+                }
+                ImGui::EndListBox();
+            }
+        }
+        if (!m.check.empty()) { ImGui::Dummy(ImVec2(0, S(6))); ImGui::Checkbox(tr(m.check).c_str(), &m.checked); }   // 0.2.0
+        ImGui::Dummy(ImVec2(0, S(10)));
+        float bw = 0;
+        // 0.4.6 (Shagg 5 Nov): one button size - at least S(120) wide, so a dialog's buttons line up
+        auto btn_w = [](const std::string &b) { return std::max(S(120), ImGui::CalcTextSize(b.c_str()).x + S(44)); };
+        for (auto &b : m.buttons) bw += btn_w(b) + S(12);
+        ImGui::SetCursorPosX(std::max(S(28), w - S(28) - bw + S(12)));
+        for (size_t i = 0; i < m.buttons.size(); i++) {
+            if (i) ImGui::SameLine(0, S(12));
+            const std::string &b = m.buttons[i];
+            ImVec2 bs(btn_w(b), S(38));
+            bool hit = i == 0 ? th_button_red(b.c_str(), bs, true, F_BOLD) : th_button(b.c_str(), bs, true, F_BOLD);
+            if (i == 0 && ImGui::IsWindowAppearing() && m.list.empty()) ImGui::SetKeyboardFocusHere(-1);
+            if (hit) m.answer = (int)i;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) m.answer = (int)m.buttons.size() - 1;
+        if (m.answer >= 0) { ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    if (m.answer >= 0) answered(a);
+}
+
+// ---- the whole window ------------------------------------------------------------------------------------------------
+// ---- job 523: the window - zoom with its size, and borderless (our own title strip) ------------------------------
+static std::string g_playArg;       // 0.2.0: --play <game key> from a game's desktop shortcut
+static float g_ui0 = 1.0f;          // g_ui at the starting window size
+static int g_w0 = 1, g_h0 = 1;      // the starting window size
+static App *g_app = nullptr;
+static bool g_dragTop = false;      // last frame: the mouse is over the title strip's empty part
+
+static SDL_HitTestResult window_hit(SDL_Window *w, const SDL_Point *p, void *)
+{
+    if (!g_app || !g_app->borderless) return SDL_HITTEST_NORMAL;
+    if (SDL_GetWindowFlags(w) & SDL_WINDOW_MAXIMIZED) return g_dragTop && p->y < (int)S(20) ? SDL_HITTEST_DRAGGABLE : SDL_HITTEST_NORMAL;
+    int W = 0, H = 0;
+    SDL_GetWindowSize(w, &W, &H);
+    const int e = std::max(4, (int)(6 * g_ui0));
+    const bool l = p->x < e, r = p->x >= W - e, t = p->y < e, b = p->y >= H - e;
+    if (t && l) return SDL_HITTEST_RESIZE_TOPLEFT;
+    if (t && r) return SDL_HITTEST_RESIZE_TOPRIGHT;
+    if (b && l) return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+    if (b && r) return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+    if (t) return SDL_HITTEST_RESIZE_TOP;
+    if (b) return SDL_HITTEST_RESIZE_BOTTOM;
+    if (l) return SDL_HITTEST_RESIZE_LEFT;
+    if (r) return SDL_HITTEST_RESIZE_RIGHT;
+    return g_dragTop && p->y < (int)S(20) ? SDL_HITTEST_DRAGGABLE : SDL_HITTEST_NORMAL;
+}
+
+void set_borderless(App &a, bool on)
+{
+    a.borderless = on;
+    SDL_SetWindowBordered(a.win, !on);
+    a.ini.seti("Window", "Borderless", on ? 1 : 0);
+    a.ini.save();
+}
+
+void set_fullscreen(App &a, bool on)
+{
+    a.fullscreen = on;
+    SDL_SetWindowFullscreen(a.win, on);   // SDL3: borderless, the size of the desktop
+    a.ini.seti("Window", "Fullscreen", on ? 1 : 0);
+    a.ini.save();
+}
+
+// Minimise / maximise / close in the top-right corner when there is no title bar; the strip left of them moves the window.
+static void draw_window_buttons(App &a, ImVec2 size)
+{
+    if (!a.borderless || a.fullscreen) { g_dragTop = false; return; }
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+    const float bw = S(34), bh = S(18), y = S(1);
+    float x = size.x - S(4) - 3 * bw - 2 * S(3);
+    const bool maxed = (SDL_GetWindowFlags(a.win) & SDL_WINDOW_MAXIMIZED) != 0;
+    ImGui::SetCursorScreenPos(ImVec2(x, y));
+    if (th_button("_##wmin", ImVec2(bw, bh), true, F_SMALL)) SDL_MinimizeWindow(a.win);
+    ImGui::SetCursorScreenPos(ImVec2(x + bw + S(3), y));
+    if (th_button(maxed ? "[-]##wmax" : "[ ]##wmax", ImVec2(bw, bh), true, F_SMALL)) { if (maxed) SDL_RestoreWindow(a.win); else SDL_MaximizeWindow(a.win); }
+    ImGui::SetCursorScreenPos(ImVec2(x + 2 * (bw + S(3)), y));
+    if (th_button_red("X##wclose", ImVec2(bw, bh), true, F_SMALL)) a.quit = true;
+    ImGui::PopItemFlag();
+    const ImVec2 m = ImGui::GetIO().MousePos;
+    g_dragTop = m.y >= 0 && m.y < S(20) && m.x < x - S(4) && !ImGui::IsAnyItemHovered() && !a.modal.open;
+}
+
+// Shagg (0.3.7: "a fade to changing screens ... not working correctly or doesn't look good"): a 150 ms cross-fade. After
+// the frame that asked for another screen is drawn, its picture is read back into a texture and the screen switches;
+// the following frames draw the new screen and that picture over it with falling alpha. Another switch during a fade
+// reads back the blended picture, so it carries on without a jump. Nothing is drawn twice and no widget runs twice.
+static SDL_Texture *g_fadeTex = nullptr;
+static double g_fadeStart = -10;
+static void screen_fade_frame_end(App &a, SDL_Renderer *ren)
+{
+    const double len = getenv("COGBOX_SLOW") ? 2.0 : 0.15, t = ImGui::GetTime() - g_fadeStart;
+    SDL_SetRenderClipRect(ren, nullptr);
+    if (g_fadeTex && t < len) {
+        SDL_SetTextureAlphaModFloat(g_fadeTex, (float)(1.0 - t / len));
+        SDL_RenderTexture(ren, g_fadeTex, nullptr, nullptr);
+    } else if (g_fadeTex) {
+        SDL_DestroyTexture(g_fadeTex);
+        g_fadeTex = nullptr;
+    }
+    if (a.zoomTo == a.screen) return;
+    a.screen = a.zoomTo;
+    SDL_Surface *read = SDL_RenderReadPixels(ren, nullptr);
+    // opaque whatever alpha the back buffer read back with (XRGB): the fade is the texture's alpha mod alone
+    SDL_Surface *shot = read ? SDL_ConvertSurface(read, SDL_PIXELFORMAT_XRGB8888) : nullptr;
+    if (read) SDL_DestroySurface(read);
+    if (shot) {
+        if (SDL_Texture *tex = SDL_CreateTextureFromSurface(ren, shot)) {
+            if (g_fadeTex) SDL_DestroyTexture(g_fadeTex);
+            g_fadeTex = tex;
+            SDL_SetTextureBlendMode(g_fadeTex, SDL_BLENDMODE_BLEND);
+            g_fadeStart = ImGui::GetTime();
+        }
+        SDL_DestroySurface(shot);
+    }
+}
+
+static void draw_ui(App &a, ImVec2 size)
+{
+    double now = ImGui::GetTime();
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(size);
+    ImGui::Begin("##root", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollWithMouse);
+    ImDrawList *bg = ImGui::GetBackgroundDrawList();
+    static const ImVec4 tints[G_ALL + 1] = {   // (the last: no game) ImVec4(0.30f, 0.45f, 0.70f, 1), ImVec4(0.75f, 0.50f, 0.22f, 1), ImVec4(0.70f, 0.22f, 0.16f, 1),
+                                         ImVec4(0.45f, 0.52f, 0.40f, 1), ImVec4(0.50f, 0.50f, 0.54f, 1) };
+    // the tint follows the box in front (blended while turning); carPos is a slot of the library carousel (front.cpp)
+    const std::vector<int> lib = library_games(a);
+    const int nLib = std::max(1, (int)lib.size()), s0 = (int)floorf(a.carPos);
+    const int g0 = lib.empty() ? a.front : lib[(s0 % nLib + nLib) % nLib], g1 = lib.empty() ? a.front : lib[((s0 + 1) % nLib + nLib) % nLib];
+    float f = lib.empty() ? 0.0f : a.carPos - floorf(a.carPos);
+    int tg = a.screen == SCR_PAGE ? a.page : -1;
+    ImVec4 tint = tg >= 0 ? tints[tg] : ImVec4(tints[g0].x * (1 - f) + tints[g1].x * f, tints[g0].y * (1 - f) + tints[g1].y * f, tints[g0].z * (1 - f) + tints[g1].z * f, 1);
+    th_background(bg, size, now, tint);
+    // the game's own background art (when downloaded), crossfading with the box in front, darker on a page
+    if (tg >= 0) backdrop_draw(a, bg, size, tg, 0.85f);   // the settings page too shows the game's art (Shagg 18:41)
+    else if (!lib.empty()) { backdrop_draw(a, bg, size, g0, 0.85f * (1 - f)); backdrop_draw(a, bg, size, g1, 0.85f * f); }
+    if (tg < 0) bg->AddRectFilledMultiColor(ImVec2(0, size.y * 0.45f), size, IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 200), IM_COL32(0, 0, 0, 200));
+
+    // Carousel <-> page: the screen changes at the end of the frame that asked for it (screen_fade_frame_end); the
+    // old picture then cross-fades into the new one. (Before 0.3.8: a 0.5 s dip through black - the whole window,
+    // window buttons and background included, went black half way, and the switch waited for it.)
+    if (a.screen == SCR_FRONT) front_draw(a, size);
+    else page_draw(a, size);
+
+    // the message line
+    // L-1: the toast is on the foreground draw list, which is above every window - a dialog would sit under it. It waits
+    // while a dialog is open (its 12 s keep counting).
+    if (!a.message.empty() && now - a.messageAt < 12 && !a.modal.open) {
+        float al = (float)std::min(1.0, (12 - (now - a.messageAt)) / 1.5);
+        ImDrawList *fg = ImGui::GetForegroundDrawList();
+        ImVec2 ts = F_BODY->CalcTextSizeA(FS(F_BODY), size.x - S(120), size.x - S(120), a.message.c_str());
+        float top = a.screen == SCR_FRONT ? S(84) : S(4);   // above the boxes / over the page's frame, never over buttons
+        ImVec2 p0((size.x - ts.x) * 0.5f - S(18), top), p1(p0.x + ts.x + S(36), p0.y + ts.y + S(18));
+        th_plate_fill(fg, p0, p1, S(8), U(ImVec4(0.05f, 0.05f, 0.06f, 0.94f), al));
+        fg->AddRectFilled(ImVec2(p0.x, p0.y), ImVec2(p0.x + S(4), p1.y), U(a.messageBad ? col::bad : col::good, al));
+        fg->AddText(F_BODY, FS(F_BODY), ImVec2(p0.x + S(18), p0.y + S(9)), U(col::text, al), a.message.c_str(), nullptr, size.x - S(120));
+    }
+    // 0.2.2: the old "COGBox x is out - see any game's About tab" corner line is gone - it was drawn over the UPDATE TO
+    // button, which now installs the update itself (front.cpp)
+    install_draw(a, size);
+    draw_modal(a, size);
+    draw_window_buttons(a, size);   // job 523
+    ImGui::End();
+}
+
+const char *pad_name(const App &a, const char *x)
+{
+    if (!a.padPs) return x;
+    static const char *const map[][2] = { { "A", "Cross" }, { "B", "Circle" }, { "X", "Square" }, { "Y", "Triangle" },
+                                          { "LB", "L1" }, { "RB", "R1" }, { "RS", "R3" }, { "LT", "L2" }, { "RT", "R2" }, { "Back", "Share" }, { "Start", "Options" } };
+    for (auto &m : map) if (strcmp(m[0], x) == 0) return m[1];
+    return x;
+}
+
+static void refresh_pads(App &a)
+{
+    int n = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&n);
+    a.padConnected = n > 0;
+    if (getenv("COGBOX_PADPS")) { a.padConnected = true; }   // test switch: shows the PlayStation names
+    a.padPs = false;   // job 523: the first PlayStation pad switches the button names
+    for (int i = 0; i < n; i++) {
+        SDL_GamepadType t = SDL_GetGamepadTypeForID(ids[i]);
+        if (t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5) { a.padPs = true; break; }
+    }
+    if (getenv("COGBOX_PADPS")) a.padPs = true;
+    if (ids) SDL_free(ids);
+}
+
+// Test switches (all off for players): COGBOX_SHOT=<file.bmp> saves the window after COGBOX_SHOT_FRAMES frames (90)
+// and exits (COGBOX_SHOT_NOTICES=1 keeps the startup questions); COGBOX_PAGE=<game>[:<tab>] opens on a page; COGBOX_FRONT=<game> turns the carousel there.
+static void test_shot(App &a)
+{
+    const char *shot = getenv("COGBOX_SHOT");
+    if (!shot) return;
+    const char *fr = getenv("COGBOX_SHOT_FRAMES");
+    if (ImGui::GetFrameCount() != (fr ? atoi(fr) : 90)) return;
+    SDL_Surface *s = SDL_RenderReadPixels(a.ren, nullptr);
+    if (s) { SDL_SaveBMP(s, shot); SDL_DestroySurface(s); }
+    a.quit = true;
+}
+
+// Test switch: CogBox.exe --x360test <source> <out folder or -> <report.txt> - what x360fs makes of a copy: its kind, header,
+// listing, then (with an out folder) the extraction and the SHA-1 of every file written. For checking the reader on real
+// discs and packages; players never see it.
+#include "x360fs.h"
+static int x360test(int argc, wchar_t **argv)
+{
+    if (argc < 5) return 2;
+    std::wstring src = argv[2], out = argv[3], rep = argv[4];
+    std::string r;
+    auto line = [&](const std::string &s) { r += s + "\r\n"; };
+    std::filesystem::path res;
+    x360fs::SourceKind k = x360fs::detect(src, &res);
+    line(std::string("kind: ") + x360fs::source_kind_name(k));
+    line("resolved: " + narrow(res.wstring()));
+    std::string err;
+    std::vector<x360fs::Entry> list;
+    bool listed = false;
+    char b[256];
+    if (k == x360fs::SourceKind::DiscImage) {
+        snprintf(b, sizeof b, "partition offset: 0x%llX", (unsigned long long)x360fs::disc_partition_offset(res)); line(b);
+        x360fs::XexInfo xi;
+        if (x360fs::disc_xex_info(res, xi)) { snprintf(b, sizeof b, "xex title id: %08X media %08X version %s disc %u/%u", xi.title_id, xi.media_id, x360fs::xbox_version_string(xi.version).c_str(), xi.disc_number, xi.disc_count); line(b); }
+        listed = x360fs::list_disc(res, list, err);
+    } else if (k == x360fs::SourceKind::StfsPackage || k == x360fs::SourceKind::GodContainer) {
+        x360fs::PackageInfo pi;
+        if (x360fs::read_package_info(res, pi, err)) {
+            snprintf(b, sizeof b, "package: %s type %08X title %08X version %s base %s", pi.magic.c_str(), pi.content_type, pi.title_id,
+                     x360fs::xbox_version_string(pi.version).c_str(), x360fs::xbox_version_string(pi.base_version).c_str());
+            line(b);
+            line("name: " + pi.display_name + " | " + pi.title_name);
+        } else line("header error: " + err);
+        listed = k == x360fs::SourceKind::StfsPackage ? x360fs::list_stfs(res, list, err) : x360fs::list_god(res, list, err);
+    }
+    uint64_t total = 0;
+    size_t files = 0;
+    for (auto &e : list) if (!e.is_dir) { total += e.size; files++; }
+    snprintf(b, sizeof b, "listing: %s, %zu files, %llu bytes", listed ? "ok" : ("FAILED " + err).c_str(), files, (unsigned long long)total);
+    line(b);
+    bool ok = listed;
+    if (out != L"-" && listed) {
+        DWORD t0 = GetTickCount();
+        err.clear();
+        if (k == x360fs::SourceKind::DiscImage) ok = x360fs::extract_disc(res, out, nullptr, nullptr, err);
+        else if (k == x360fs::SourceKind::StfsPackage) ok = x360fs::extract_stfs(res, out, nullptr, nullptr, err, true);
+        else ok = x360fs::extract_god(res, out, nullptr, nullptr, err);
+        snprintf(b, sizeof b, "extract: %s in %lu s", ok ? "ok" : ("FAILED " + err).c_str(), (unsigned long)((GetTickCount() - t0) / 1000)); line(b);
+        if (ok)
+            for (auto &e : list) {
+                if (e.is_dir) continue;
+                std::filesystem::path p = std::filesystem::path(out) / std::filesystem::u8path(e.path);
+                line(x360fs::sha1_file(p) + "  " + std::to_string(e.size) + "  " + e.path);
+            }
+    }
+    line(ok ? "RESULT: ok" : "RESULT: FAILED");
+    write_file(narrow(rep), r);
+    return ok ? 0 : 1;
+}
+
+static bool g_popupLastFrame = false;   // 0.4.6 review: a popup was open at the end of the last frame
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+{
+    {
+        int argc = 0;
+        wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (argv && argc >= 2 && wcscmp(argv[1], L"--x360test") == 0) return x360test(argc, argv);
+        // the library music's test switches (music.cpp): one game's track from one copy / every long wave in a game folder
+        if (argv && argc >= 5 && wcscmp(argv[1], L"--musictest") == 0) return music_test(narrow(argv[2]), narrow(argv[3]), narrow(argv[4]));
+        if (argv && argc >= 4 && wcscmp(argv[1], L"--musicscan") == 0) return music_scan(narrow(argv[2]), narrow(argv[3]));
+        if (argv && argc >= 4 && wcscmp(argv[1], L"--musicprobe") == 0) return music_probe(narrow(argv[2]), narrow(argv[3]));
+        // 0.4.9: the update check + a dry run of the download (nothing installed) -> the log file; exit 0 none, 1 newer, 2 no source
+        if (argv && argc >= 3 && wcscmp(argv[1], L"--check-update-only") == 0) return update_check_only(COGBOX_VERSION, argv[2]);
+        // proton049: what COGBox sees under Proton / Wine -> a text file (test switch; no window): the detection, the
+        // places "Look for my games" searches, and argv[3...] converted (Linux -> Wine path -> shown path)
+        if (argv && argc >= 3 && wcscmp(argv[1], L"--protoninfo") == 0) {
+            const proton::Info pi = proton::detect_here(report_gpu_names());
+            std::string t = "wine=" + std::to_string(pi.wine) + " proton=" + std::to_string(pi.proton) + " steamDeck=" + std::to_string(pi.steamDeck) +
+                            " oled=" + std::to_string(pi.deckOled) + " lcd=" + std::to_string(pi.deckLcd) + " steamOS=" + std::to_string(pi.steamOS) +
+                            " gamescope=" + std::to_string(pi.gamescope) + " zDrive=" + std::to_string(pi.zDrive) + "\r\n";
+            t += "summary=" + proton::summary(pi) + "\r\nhome=" + pi.home + "\r\nuser=" + pi.user + "\r\n";
+            for (const std::string &l : proton::report_lines(pi)) t += "report: " + l + "\r\n";
+            std::vector<std::filesystem::path> roots;
+            for (const std::string &r : proton::roots_here(pi)) { t += "root: " + r + " -> " + proton::display_path(r, pi.wine) + "\r\n"; roots.push_back(std::filesystem::path(widen(r))); }
+            for (const auto &f : proton::find_copies(roots, [](const std::filesystem::path &p, bool dir) { return proton::quick_candidate(p, dir) && drop_is_game_or_update(narrow(p.wstring())); }, 3, 6000))
+                t += "found: " + proton::display_path(narrow(f.wstring()), pi.wine) + "\r\n";
+            for (int k = 3; k < argc; k++) {
+                const std::string w = proton::to_wine(narrow(argv[k]), pi.home);
+                t += "path: " + narrow(argv[k]) + " -> " + w + " (exists " + std::to_string(!w.empty() && (dir_exists(w) || file_exists(w))) +
+                     ") -> " + proton::display_path(w, pi.wine) + "\r\n";
+            }
+            return write_file(narrow(argv[2]), t) ? 0 : 1;
+        }
+        // 0.2.0: a game's desktop shortcut starts COGBox with --play <gears1 | gears2 | gears3 | judgment>
+        if (argv && argc >= 3 && wcscmp(argv[1], L"--play") == 0) g_playArg = narrow(argv[2]);
+        if (argv) LocalFree(argv);
+    }
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+    SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");
+    SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "1");
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+        MessageBoxA(nullptr, SDL_GetError(), COGBOX_NAME, MB_ICONERROR);
+        return 1;
+    }
+    g_ui = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+    if (g_ui <= 0.0f) g_ui = 1.0f;
+    g_ui *= 0.78f;   // Shagg 18:31: about 25% smaller than the first build
+    int ww = (int)(1280 * g_ui), wh = (int)(800 * g_ui);
+    const SDL_DisplayMode *dm = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
+    if (dm && (ww > dm->w * 0.92f || wh > dm->h * 0.88f)) {
+        float k = std::min(dm->w * 0.92f / ww, dm->h * 0.88f / wh);
+        g_ui *= k; ww = (int)(ww * k); wh = (int)(wh * k);
+    }
+    SDL_Window *win = SDL_CreateWindow(COGBOX_NAME, ww, wh, SDL_WINDOW_RESIZABLE);
+    SDL_Renderer *ren = win ? SDL_CreateRenderer(win, nullptr) : nullptr;
+    if (!ren) { MessageBoxA(nullptr, SDL_GetError(), COGBOX_NAME, MB_ICONERROR); return 1; }
+    SDL_SetRenderVSync(ren, 1);
+    SDL_SetWindowMinimumSize(win, (int)(1100 * g_ui), (int)(700 * g_ui));
+    g_ui0 = g_ui; g_w0 = std::max(1, ww); g_h0 = std::max(1, wh);   // job 523: the zoom's starting point
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO &io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
+    theme_fonts(io);
+    theme_style();
+    ImGui_ImplSDL3_InitForSDLRenderer(win, ren);
+    ImGui_ImplSDLRenderer3_Init(ren);
+
+    App a;
+    a.win = win;
+    a.ren = ren;
+    a.ini.load(join(exe_dir(), "CogBox.ini"));
+    set_current_profile((int)a.ini.geti("Profiles", "Current", 1));   // 0.5.0: profiles
+    i18n_load(a.ini.get("Launcher", "Language").empty() ? "auto" : a.ini.get("Launcher", "Language"));   // 0.2.0
+    a.ini.path = join(exe_dir(), "CogBox.ini");
+    // job 523: Wine / Proton (Linux, Steam Deck) - ntdll has wine_get_version there
+    a.wine = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
+    // job 643: a Mac (CrossOver / Game Porting Toolkit) - Wine's host system is Darwin there. Vulkan can't start on a
+    // Mac (CrossOver offers Vulkan 1.2, the renderer needs 1.3: GitHub #36 / #40), so DirectX 12 (D3DMetal) is its default.
+    if (a.wine) {
+        typedef void(__cdecl * HostVersionFn)(const char **sysname, const char **release);
+        if (HostVersionFn hv = (HostVersionFn)(void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_host_version")) {
+            const char *sys = nullptr, *rel = nullptr;
+            hv(&sys, &rel);
+            a.mac = sys && strcmp(sys, "Darwin") == 0;
+        }
+    }
+    {
+        // a small screen (Steam Deck 1280x800) starts borderless and maximised the first time; then the player's choice
+        const bool small = dm && dm->w <= 1280 && dm->h <= 800;
+        g_app = &a;
+        SDL_SetWindowHitTest(win, window_hit, nullptr);
+        if (a.ini.geti("Window", "Borderless", small ? 1 : 0)) { a.borderless = true; SDL_SetWindowBordered(win, false); }
+        if (small) SDL_MaximizeWindow(win);
+        if (a.ini.geti("Window", "Fullscreen", 0)) { a.fullscreen = true; SDL_SetWindowFullscreen(win, true); }
+    }
+    if (const char *t = getenv("COGBOX_WINDOW")) { int w = 0, h = 0; if (sscanf(t, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) SDL_SetWindowSize(win, w, h); }   // test switch
+    if (getenv("COGBOX_BORDERLESS")) { a.borderless = true; SDL_SetWindowBordered(win, false); }   // test switch (not saved)
+    a.gpus = report_gpu_names();
+    a.proton = proton::detect_here(a.gpus);   // proton049: Proton version, SteamOS, Steam Deck model (empty on Windows)
+    a.hasAvx2 = cpu_has_avx2();
+    refresh_games(a, true);
+    {
+        std::string text;
+        bool had = read_file(join(exe_dir(), "settings.ini"), text, 4 << 20) && a.store.load_ini(text);
+        for (int g = 0; g < G_COUNT; g++) { a.cur[g] = a.store.view((gs::Game)g, a.env[g]); env_refresh(a, g); }
+        bool anyReady = false;
+        for (int g = 0; g < G_COUNT; g++) anyReady |= a.st[g].ready == R_READY;
+        // 0.4.6 (Shagg 4 Nov): no "Welcome!" toast over the first-start dialogs - the empty library screen says it
+        (void)had; (void)anyReady;
+        linux_start(a, had);   // proton049: Proton / Steam Deck first start (never over the player's own settings)
+    }
+    a.front = std::max(0, std::min(G_ALL - 1, a.ini.geti("Front", "Box", 0)));
+    // the first game the player has, if the remembered one isn't ready
+    if (a.st[a.front].ready != R_READY)
+        for (int g = 0; g < G_ALL; g++) if (a.st[g].ready == R_READY) { a.front = g; break; }
+    if (const char *t = getenv("COGBOX_FRONT")) a.front = std::max(0, std::min(G_ALL - 1, atoi(t)));
+    a.carPos = (float)std::max(0, library_slot(a, a.front));
+    if (const char *t = getenv("COGBOX_PAGE")) {
+        a.page = std::max(0, std::min(G_ALL - 1, atoi(t)));
+        const char *c = strchr(t, ':');
+        a.tab = c ? std::max(0, std::min(6, atoi(c + 1))) : 0;   // 0-4 gs::Tab, 5 MODS, 6 ABOUT
+        a.screen = a.zoomTo = SCR_PAGE;
+    }
+    covers_load(a);
+    // 0.2.0 (GitHub #3 / #7): some unzip tools (KDE's Ark) flatten the release's folders; the ports are then "missing"
+    {
+        bool noPort = false;
+        for (int g = 0; g < G_COUNT; g++) noPort |= a.st[g].ready == R_NO_PORT;
+        bool flat = false;
+        for (const char *n : { "gow1.exe", "gow2.exe", "gow3.exe", "gowj.exe" }) flat |= file_exists(join(exe_dir(), n));
+        if (noPort && flat)
+            ask(a, "info", -1, "Unzipped without its folders",
+                "The game programs are directly beside CogBox.exe instead of in their folders (Gears2\\port-tu6, Gears3\\port-tu6, "
+                "Judgment\\port, Gears1\\port ...). Some unzip tools flatten folders - KDE's Ark does.\n\nUnzip the release again keeping its "
+                "folders: Windows' Extract All, 7-Zip, or 'unzip' on Linux.", { "OK" });
+    }
+    stale_cleanup_startup(a, a.ini.get("Notices", "WhatsNewSeen"));   // 0.4.8: old program files of an earlier release
+    upgrade_cleanup_startup(a, a.ini.get("Notices", "WhatsNewSeen"));   // cleanup049: settings.ini + shader caches of an earlier release
+    startup_notices(a);   // 0.2.0: the language prompt, then the title-update notice
+    if (getenv("COGBOX_GETART")) art_download_start();   // test switch
+    // 0.2.0: started from a game's desktop shortcut - play it straight away when it's ready, else show its box
+    if (!g_playArg.empty()) {
+        for (int g = 0; g < G_ALL; g++) {
+            if (g_playArg != game_def(g).key) continue;
+            a.front = g; a.carPos = (float)std::max(0, library_slot(a, g));
+            if (a.st[g].ready == R_READY && !a.modal.open) play_start(a, g);
+        }
+    }
+    refresh_pads(a);
+    update_tidy();
+    if (a.ini.geti("Updates", "Check", 1) && !getenv("COGBOX_SHOT")) {
+        if (a.modal.open && a.modal.tag == "legal") g_updateAfterLegal = true;   // legal050: nothing goes out before Accept
+        else update_check_start(COGBOX_VERSION);
+    }
+
+    while (!a.quit) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            ImGui_ImplSDL3_ProcessEvent(&e);
+            if (e.type == SDL_EVENT_QUIT) a.quit = true;
+            if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && e.window.windowID == SDL_GetWindowID(win)) a.quit = true;
+            if (e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED) refresh_pads(a);
+            // 0.2.0: the hints follow the device used last (stick movement past half way counts, small drift doesn't)
+            if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && abs(e.gaxis.value) > 16000)) a.lastPad = true;
+            if (e.type == SDL_EVENT_KEY_DOWN) g_lastKeyScancode = (int)e.key.scancode;   // the key's position (page.cpp key capture)
+            if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_WHEEL) a.lastPad = false;
+            if (e.type == SDL_EVENT_DROP_FILE && e.drop.data) a.dropped.push_back(e.drop.data);
+            if (e.type == SDL_EVENT_WINDOW_FOCUS_GAINED && !a.run.proc) { refresh_games(a, false); covers_load(a); }
+        }
+        play_poll(a);
+        music_update(a);   // Shagg 1 Nov (music.cpp)
+        switch (art_download_poll()) {
+        case 2: covers_load(a); set_message(a, "Box art and backgrounds are in the covers folder.", false); break;
+        case 3: set_message(a, "The box art couldn't be downloaded - check the internet connection.", true); break;
+        }
+        install_poll(a);
+        linux_poll(a);   // proton049
+        backup_poll(a);   // GitHub #120: the save backup runs on its own thread
+        // 0.2.0 (Shagg 13:18): everything dropped is handled, one after another - several DLC packages, or a folder of
+        // them (a console's ...\<title ID>\00000002, or the title folder), are each added in turn. A folder that isn't a
+        // game copy or a title update is searched for DLC packages.
+        if (!a.dropped.empty() && !a.modal.open && a.job.state.load() != 1) {
+            std::string p = a.dropped.front();
+            a.dropped.erase(a.dropped.begin());
+            std::vector<std::string> dlc;
+            const int coverGame = a.screen == SCR_PAGE ? a.page : a.front;   // GitHub #241: a picture is that game's cover
+            if (!dir_exists(p) && cover_set_from_file(a, coverGame, p)) {
+                set_message(a, std::string("The picture is now the box art of ") + game_def(coverGame).name + ".", false);
+            } else if (dir_exists(p) && !drop_is_game_or_update(p) && !(dlc = dlc_packages_in(p)).empty()) {
+                a.dropped.insert(a.dropped.begin(), dlc.begin(), dlc.end());
+                set_message(a, std::to_string(dlc.size()) + (dlc.size() == 1 ? " downloadable content package found - adding it." : " downloadable content packages found - adding them one by one."), false);
+            } else   // L-8: dropped on a game's settings page, it is for that game (a regional release COGBox doesn't know)
+                install_start(a, p, a.screen == SCR_PAGE && game_is_port(a.page) ? a.page : -1);
+        }
+        if (a.run.proc && (SDL_GetWindowFlags(win) & SDL_WINDOW_MINIMIZED)) { SDL_Delay(100); continue; }   // a game is playing
+        if (SDL_GetWindowFlags(win) & SDL_WINDOW_MINIMIZED) { SDL_Delay(50); continue; }
+        // the controller works the launcher only while it is the window in front
+        // On the front screen the D-pad / arrows turn the carousel and LB / RB choose Play or Settings (front.cpp keeps
+        // that choice itself), so Dear ImGui's own navigation is off there unless a question box is open.
+        bool frontOwn = (a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
+                         !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) ||   // 0.4.6 review: the player-name box takes the pad
+                        (a.screen == SCR_PAGE && a.barSel >= 0 && !a.modal.open);   // also a page's bottom bar (page.cpp)
+        if (!SDL_GetKeyboardFocus() || a.run.proc || frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+        else io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+        { extern int g_padlogFrontOwn; g_padlogFrontOwn = frontOwn ? 1 : 0; }   // COGBOX_PADLOG (front.cpp)
+        if (frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
+        else io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        {   // job 523: everything grows with the window (1x at the starting size, at most 2x)
+            int W = 0, H = 0;
+            SDL_GetWindowSize(win, &W, &H);
+            float z = std::max(1.0f, std::min(2.0f, std::min((float)W / g_w0, (float)H / g_h0)));
+            if (fabsf(z - g_zoom) > 0.005f) {
+                g_zoom = z;
+                g_ui = g_ui0 * z;
+                theme_style();
+                ImGui::GetStyle().FontSizeBase = F_BODY->LegacySize * z;
+            }
+        }
+        ImGui_ImplSDLRenderer3_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
+        {   // job 523 (Shagg 20:29): F11, or both triggers together, switch fullscreen from any screen
+            static bool triggersWere = false;
+            const bool triggers = ImGui::IsKeyDown(ImGuiKey_GamepadL2) && ImGui::IsKeyDown(ImGuiKey_GamepadR2);
+            if (!a.run.proc && SDL_GetKeyboardFocus() &&
+                (ImGui::IsKeyPressed(ImGuiKey_F11, false) || (triggers && !triggersWere))) set_fullscreen(a, !a.fullscreen);
+            triggersWere = triggers;
+        }
+        const bool quitAskable = !a.run.proc && SDL_GetKeyboardFocus() && a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
+                                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.job.state.load() != 1 &&
+                                 !g_popupLastFrame;   // 0.4.6 review: Dear ImGui closes a popup on Esc before this, so the same Esc must not quit
+        draw_ui(a, io.DisplaySize);
+        g_popupLastFrame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+        // job 526: Start (Options) or Esc on the library screen asks to close COGBox (asked after this frame's drawing, so
+        // the same Esc doesn't also answer it)
+        if (quitAskable && !a.modal.open && (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
+            ask(a, "quit", -1, "Quit COGBox?", "Close COGBox?", { "Quit", "Cancel" });
+        ImGui::Render();
+        SDL_SetRenderDrawColor(ren, 8, 8, 10, 255);
+        SDL_RenderClear(ren);
+        ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), ren);
+        test_shot(a);
+        screen_fade_frame_end(a, ren);   // the cross-fade between the carousel and a page
+        SDL_RenderPresent(ren);
+    }
+    if (std::any_of(a.dirty, a.dirty + G_COUNT, [](bool x) { return x; })) settings_save(a);
+    a.ini.save();
+    if (a.job.state.load() == 1) { a.job.cancel = true; }
+    if (a.job.th.joinable()) a.job.th.join();
+    music_stop();
+    for (auto &c : a.cover) if (c.tex) SDL_DestroyTexture(c.tex);
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+    SDL_DestroyRenderer(ren);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    return 0;
+}

@@ -1,0 +1,200 @@
+// gow1 - ReXGlue Recompiled Project. Layer 3: Gears of War (2006) only. Copied from GearsJ-Native's gowj_app.h (Shagg's
+// own project); Judgment's game patches and per-game renderer settings are left out until Gears 1's are measured.
+// Same hook order as Gears 2's Gow2App (layer 0 developer tools and our renderer are installed only when their options
+// are set). Not carried over: layer 1 (Gears 2's D3D resource-call watch and resource check - developer diagnostics
+// tied to XDK 7645 addresses). The renderer's D3D built-in shader hints ARE the same as Gears 2's (see below).
+#pragma once
+
+#include <rex/audio/flags.h>
+#include <rex/cvar.h>
+#include <rex/rex_app.h>
+#include "mouse_look.h"
+
+namespace rex::ui {
+class WindowedAppContext;
+}
+void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp (0.2.1)
+#include <rex/ui/window.h>
+
+#include <ue3/config_bundle.h>
+#include <ue3/launch.h>
+#include <xenos/dev_tools.h>
+#include <xenos/display_size.h>
+#include <xenos/gpu_system.h>
+#include <xenos/achievements_export.h>
+#include <xenos/achievement_popup_assets.h>
+#include <xenos/achievement_popup.h>
+
+#include <rex/system/interfaces/graphics.h>
+
+// notes/78 chapter recipes: Gears 2's package shader reader (Gears2-Native src/layer2_ue3/shader_prebuild.cpp, built
+// into this game's layer 2). Declared here so Gears 2's ue3/ include folder is not needed. After the renderer.
+void Ue3InstallShaderPrebuildIfRequested();
+
+REXCVAR_DECLARE(bool, gow1_mute_unfocused);
+REXCVAR_DECLARE(bool, gow1_tiling_off);  // game_patches.cpp: one pass per frame  // game_patches.cpp
+
+void Gow1AddBuiltInIniEdits();  // game_patches.cpp: the launcher's options
+void Gow1HideLogosIfRequested(rex::Runtime* runtime);  // --gow1_skip_logos
+void Gow1StartMemoryGauge();    // game_patches.cpp: --gow1_memory_log_seconds (physical memory every N s)
+void Gow1StopMemoryGauge();     // stops it before the kernel goes away
+void Gow1InstallPostFxSwitches(rex::Runtime* runtime);  // game_patches.cpp: GitHub #179 motion blur / depth of field
+void Gow1InstallCheckpointName(rex::Runtime* runtime);  // game_patches.cpp: GitHub #246 checkpoint after a nickname change
+void Gow1InstallUnlocks();  // unlocks.cpp: insane050 (--gow1_unlock_insane, --gow1_profile_log)
+void Gow1InstallBootLockWait(rex::Runtime* runtime);  // game_patches.cpp: 0.5.0 job 1507 boot crash (ini loader lock)
+void Gow1ApplyUltrawideIfRequested(rex::Runtime* runtime);  // game_patches.cpp (nothing yet)
+void Gow1ApplyDataPatchesIfRequested(rex::Runtime* runtime);  // game_patches.cpp: --gow1_tiling_off (test)
+
+
+class Gow1App : public rex::ReXApp {
+ public:
+  using rex::ReXApp::ReXApp;
+
+  static std::unique_ptr<rex::ui::WindowedApp> Create(rex::ui::WindowedAppContext& ctx) {
+    return std::unique_ptr<Gow1App>(new Gow1App(ctx, "gow1", PPCImageConfig));
+  }
+
+  // Our own graphics system in place of the SDK's GPU plugin, when asked (layer 0 option).
+  void OnPreSetup(rex::RuntimeConfig& config) override {
+    if (auto ours = XenosCreateOurGpuSystemIfRequested()) config.graphics = std::move(ours);
+  }
+  // XenosLogSystemReport (Gears 2 launcher patch 0131, layer 0 system_report.cpp, picked up by our layer 0 glob): one
+  // read-only report of Windows / CPU / memory / graphics cards + drivers / screens / controllers / build, for problem
+  // reports.
+  void OnPostInitLogging() override {
+    XenosInstallCrashHandler();
+    XenosLogSystemReport("Gears of War");
+    XenosLatencyInstall();  // Gears 2 patch 0135: Reflex / Anti-Lag 2 (only with --gow2_reflex and when the build has it)
+  }
+  void OnPostSetup() override {
+    CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
+    XenosAddScriptPadIfRequested(runtime());
+    Gow1AddBuiltInIniEdits();  // before the bundle is edited
+    Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
+    Gow1HideLogosIfRequested(runtime());
+    Gow1InstallPostFxSwitches(runtime());   // GitHub #179
+    Gow1InstallCheckpointName(runtime());   // GitHub #246
+    Gow1InstallUnlocks();   // insane050
+    Gow1InstallBootLockWait(runtime());     // 0.5.0: job 1507 boot crash
+    Gow1ApplyUltrawideIfRequested(runtime());     // --gow1_ultrawide: the two aspect floats, the present shape
+    XenosInstallDrawStatsIfRequested();
+    XenosInstallPrimDetailIfRequested();
+    XenosInstallFrameCaptureIfRequested();
+    XenosInstallFrameTimesIfRequested();
+    XenosInstallProfilerIfRequested();
+    XenosInstallDrawLogIfRequested();
+    XenosInstallResolveLogIfRequested();
+    XenosInstallBufferDumpIfRequested(runtime());
+    XenosInstallShaderDumpIfRequested();
+    XenosInstallShaderWatchIfRequested();
+    // D3D built-in shaders (fast-clear pair, no-op single-point VS): the same microcode hashes as Gears 2's XDK 7645 -
+    // all three appear in Gears 3's shader cache after job 014 run B (vs-1E6883FCCDE1F688, ps-A4A965C189287B99,
+    // vs-B6C9863F710683EC), so XDK 20500's D3D kept them byte-identical. Without them, clears weren't recognised
+    // (job 014 B: "clears 0").
+    // Per-game settings for the shared renderer: none measured on Gears 1 yet (Judgment's upscaler constants, memexport
+    // and resolution threshold are left out until Gears 1's own runs show what it needs). Each is set only while it
+    // still has its compiled-in default, so a command line, config file or environment variable always wins.
+    const auto game_default = [](const char* name, const char* value) {
+      if (rex::cvar::GetFlagSource(name) == rex::cvar::Source::kDefault) rex::cvar::SetFlagByName(name, value);
+    };
+    game_default("gow2_renderer_shader_backend", "dxbc");
+    // One pass per frame (gow1_tiling_off) drops the game's own 2x MSAA, so edges get SMAA unless the player chose.
+    if (REXCVAR_GET(gow1_tiling_off)) game_default("gow2_present_aa", "smaa");
+    // 30 Oct (Shagg's play test from My Game): blood decals stop z-fighting (job 713, the UE3 decal clamp); resolves write the
+    // texture that reads them (job 047, GPU 8.1 -> 7.2 ms at 1440p); colour resolves fused at 2x and above (job 238/239).
+    game_default("gow2_renderer_decal_min_bias", "0.01");
+    // Job 715 (DLSS / FSR / XeSS): Gears 1's c0-c3 are each object's object-to-world rows (15:16 probe), so the camera
+    // matrix is found on the first scene draw, and the camera move is voted from those object rows.
+    game_default("gow2_upscale_camera_matrix", "-1");
+    game_default("gow2_upscale_object_constants", "0");
+    game_default("gow2_upscale_dejitter_depth", "true");
+    // Job 716: every object's draw carries its own object x camera matrix, so all perspective draws into the scene
+    // depth get the jitter (scope 2), not only the level geometry that shows the camera alone.
+    game_default("gow2_upscale_jitter_scope", "2");
+    // The first full-screen scene copy comes before the per-light passes (they redraw the geometry with a depth test,
+    // some with stencil shadows): upscaled there, they were drawn unjittered over the jittered depth and failed in
+    // patches that changed with the jitter phase - the light strobing over characters. The last copy, as Judgment.
+    game_default("gow2_upscale_scene_last_copy", "true");
+    // Gears 1 draws no AO and has no fog pass to anchor ours to: with --gow2_ao=gtao, XeGTAO / CACAO is multiplied into
+    // the scene at its first full-screen scene copy, which comes right before the per-light passes - so only the base
+    // pass's light (lightmaps, ambient) is darkened, not each light's own.
+    game_default("gow2_ao_add_at_scene_copy", "true");
+    game_default("gow2_renderer_resolve_through", "true");
+    game_default("gow2_renderer_fused_scaled_resolve", "true");
+    game_default("gow2_renderer_fused_scaled_kinds", "1");
+    // Gears 1's D3D (an older XDK) clears with its own shader pair - measured in job 684 (the renderer's learning
+    // switch found 0A6D1DD7767FDF27 / 2E372EA28CC404B7 on 4,800 clears per 300 frames; the other games' pair never appears).
+    // Without it nothing in Gears 1's frames was cleared (shadow maps, the light buffer, depth/stencil). The no-op point VS
+    // is the other games' until Gears 1's is measured.
+    XenosInstallRendererIfRequested(runtime(), {0x0A6D1DD7767FDF27ull, 0x2E372EA28CC404B7ull, 0xB6C9863F710683ECull});
+    Ue3InstallShaderPrebuildIfRequested();  // notes/78: after the renderer (it asks whether the renderer wants them)
+    XenosInstallQueryLogIfRequested(runtime(), {});
+    XenosInstallStateCoverageIfRequested();
+    XenosInstallPm4ShadowIfRequested(runtime());
+  }
+  void OnPostLoadXexImage() override {
+    XenosDumpImageIfRequested(runtime());
+    Gow1ApplyDataPatchesIfRequested(runtime());
+    Gow1StartMemoryGauge();
+  }
+  // Achievements part 2: the popups' fonts (Segoe UI from the PC; CJK from the cached achievement lists).
+  void OnConfigureFonts(ImFontAtlas* atlas) override { XenosConfigureAchievementFonts(atlas); }
+  void OnPreLaunchModule() override {
+    XenosExportAchievements(runtime());  // achievements part 1: the shared catalog + icons
+    Ue3SetLaunchCommandLineIfRequested();
+  }
+  void OnPostLaunchModule(rex::system::XThread* thread) override { XenosHoldGuestIfRequested(thread); }
+  // --gow2_fps_bar (job 052, Gears 2 b3a16da): our frame-rate bar on the SDK's overlay layer.
+  // Achievements part 3: no SDK achievements window; F7 opens COGBox's in-game menu on its Achievements page.
+  std::unique_ptr<rex::ui::ImGuiDialog> CreateAchievementsOverlay() override { return nullptr; }
+  void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
+    // "Match my monitor" (Gears 2 0086, same lines as Gow2App): layer 0 learns the window and its size, for the
+    // renderer's auto scale and exact-size present, and for --gow3_aspect=auto.
+    if (rex::ui::Window* w = window()) {
+      xenos::display::SetWindow(w->GetNativeWindowHandle());
+      xenos::display::SetSurfaceSize(w->GetActualPhysicalWidth(), w->GetActualPhysicalHeight());
+    }
+    if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
+    XenosCreateFpsBarIfRequested(drawer);
+    XenosInstallAoDebugKeys(drawer);  // Gears 2 notes/80 s.12, notes/81: F2, F5, F6, F8, F9, F10, F11 (--gow2_ao_debug_keys)
+    XenosInstallInGameMenu(drawer, immediate_drawer(), window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
+  }
+  // --gow1_mute_unfocused (launcher item 8, Gears 2 0130): the SDK's SDL driver reads audio_mute for every buffer, so
+  // this takes effect at once. A mute the player set themselves is left alone.
+  void OnWindowFocusChanged(bool focused) override {
+    if (!REXCVAR_GET(gow1_mute_unfocused)) return;
+    if (!focused) {
+      if (REXCVAR_GET(audio_mute)) return;
+      we_muted_ = rex::cvar::SetFlagByName("audio_mute", "true");
+    } else if (we_muted_) {
+      rex::cvar::SetFlagByName("audio_mute", "false");
+      we_muted_ = false;
+    }
+  }
+  void OnWindowPixelSizeChanged(uint32_t pixel_width, uint32_t pixel_height) override {
+    xenos::display::SetSurfaceSize(pixel_width, pixel_height);
+  }
+  // Shagg 2026-11-10 (crash when quitting with frame generation): the window's close ends the process the way the
+  // main menu's Exit Game does - no DLL unload, so NVIDIA Streamline cannot crash in it. See XenosQuitWithoutDllUnload.
+  void OnClosing(rex::ui::UIEvent& e) override {
+    (void)e;
+    XenosQuitWithoutDllUnload(runtime());
+  }
+  void OnShutdown() override {
+    XenosShutdownAoDebugKeys();  // Gears 2 notes/80
+    Gow1StopMemoryGauge();
+    XenosShutdownInGameMenu();  // patch 0163
+    XenosDestroyFpsBar();  // before the SDK drops its drawer
+  }
+  // 0054 (Gears 2): the achievement toast is built only when one is shown, so the SDK's always-on toast window no longer
+  // counts as a second presented surface (the NVIDIA overlay showed 2x fps). Same lines as Gow2App.
+  std::unique_ptr<rex::ui::AchievementNotificationDialog> CreateAchievementNotificationDialog() override {
+    // Achievements part 2: COGBox's own popups (Xbox 360 / Xbox / PS5); "Hide achievement popups" is checked per
+    // unlock, so "Hide on-screen notes" no longer hides them.
+    if (!imgui_drawer() || !immediate_drawer() || !runtime()) return nullptr;
+    return std::make_unique<xenos::AchievementPopup>(imgui_drawer(), immediate_drawer(), runtime(), &app_context());
+  }
+
+ private:
+  bool we_muted_ = false;  // audio_mute was set by OnWindowFocusChanged, not by the player
+};

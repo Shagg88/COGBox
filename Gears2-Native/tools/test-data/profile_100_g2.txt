@@ -1,0 +1,19 @@
+# Gears 2 100% test profile (g2-100). GearGame ProfileMappings ids; enum orders from the decompressed GearGame package.
+# Chapters: EChapterPoint 0..28 are the 29 playable chapters (CHAP_Tutorial_Welcome .. CHAP_Closure_Closure; 29 = Gameover)
+66=0x1FFFFFFF   # UnlockedChaptersCasual1
+67=0            # UnlockedChaptersCasual2
+68=0x1FFFFFFF   # UnlockedChaptersNormal1
+69=0
+70=0x1FFFFFFF   # UnlockedChaptersHard1
+71=0
+72=0x1FFFFFFF   # UnlockedChaptersInsane1
+73=0
+95=0x1FFFFFFF   # UnlockedChapterAccess1
+96=0
+79=0x1FFFFFFF   # CoopCompletedChapters1
+80=0
+# Collectables (EGearDiscoverableType 1..41, None = 0): both possible bit orders covered
+61=0xFFFFFFFF   # DiscoverFound1
+62=0x3FF        # DiscoverFound2
+# Unlockables (EGearUnlockable 0..8: Insane + the 8 disc characters; DLC characters 9..13 left alone)
+74=0x1FF        # UnlockedUnlockables

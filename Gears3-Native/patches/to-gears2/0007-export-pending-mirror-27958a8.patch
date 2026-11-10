@@ -1,0 +1,116 @@
+# 0007 (v2, replaces 0007-memexport-readback-guard) - export pending mirror (Gears 3 chat, 2026-10-23; base 27958a8)
+# Gears 3 "vertex explosions" come from random background NPCs (Shagg), in corridors where 10k-38k vertex ranges per
+# 300 frames are read from memexport output (play log 20261023-005759) - NPCs skinned through memexport [G].
+# Race (Gears 2 chat 01:09 + ours, [V by reading code]): exported pages are GPU-current only until a CPU store anywhere
+# in the same 4 MB block (guest_watch.cpp bumps the whole block); UploadVertexSlot then uploads guest memory over them -
+# but guest memory gets the export's bytes only when PollExportReadbacks lands them a frame or more later, so consumer
+# draws read the PRE-export bytes in between.
+# Switch --gow2_renderer_export_pending_mirror (default false = as before). On: pages covered by a readback still in
+# flight keep feeding vertex fetches from the mirror (no upload over them); counted in a summary line.
+# v1's per-page readback guard is dropped: it relied on GpuCurrent(), which the same 4 MB bumps make unreliable.
+# Also corrects PollExportReadbacks' comment: TranslatePhysical writes raise no watch callback [V rexglue xmemory.h].
+# Known gap (left): a late readback still overwrites bytes the CPU wrote after the export (xenia-edge dropped readback).
+# Syntax-checked (Windows), not built or run. Applies on 27958a8 with or without 0004-0006.
+diff -ruN a/src/layer0_xenos/renderer/shadow_renderer.cpp b/src/layer0_xenos/renderer/shadow_renderer.cpp
+--- a/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 01:16:56.089767115 -0700
++++ b/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 01:17:07.873613748 -0700
+@@ -155,6 +155,12 @@
+                     "mirror (u0), export-only draws (no rasterization) run as point lists with no targets, the written "
+                     "ranges become GPU-current and later vertex fetches read them from the mirror. false: such draws "
+                     "are skipped, as before");
++REXCVAR_DEFINE_BOOL(gow2_renderer_export_pending_mirror, false, "Gears2",
++                    "Patch 0007 (Gears 3 2026-10-23, NPC vertex explosions; race found by both chats): while an "
++                    "exported range's readback has not landed in guest memory yet, its pages keep feeding vertex "
++                    "fetches from the mirror (the export's bytes) even when a CPU write elsewhere in the same 4 MB block "
++                    "ended their GPU-current state - instead of re-uploading the pre-export guest bytes over them. "
++                    "false = as before");
+ REXCVAR_DEFINE_BOOL(gow2_renderer_memexport_readback, true, "Gears2",
+                     "With --gow2_renderer_memexport: copy every exported range back into guest memory once the GPU has "
+                     "written it (job 041: Gears 3 moves DXT textures with memexport copies, and DXT textures load from "
+@@ -555,7 +561,7 @@
+            colour_only = 0, pipelines_prewarmed = 0, pipeline_waits = 0, memexport_draws = 0, memexport_only_draws = 0,
+            memexport_ps_draws = 0, memexport_ranges = 0, memexport_bytes = 0, vertex_from_exports = 0,
+            memexport_readbacks = 0, memexport_readback_bytes = 0, memexport_readback_failures = 0,
+-           memexport_readback_waits = 0, texture_dependent = 0, alias_tiles = 0, alias_events = 0, pending_shaders = 0,
++           memexport_readback_waits = 0, vertex_pages_kept_pending = 0, texture_dependent = 0, alias_tiles = 0, alias_events = 0, pending_shaders = 0,
+            shader_errors = 0, pipeline_failures = 0, other_failures = 0, copies = 0, depth_resolves = 0, colour_resolves = 0,
+            vertex_bytes = 0, index_bytes = 0, empty = 0, vertex_skipped_bytes = 0, texture_bytes = 0,
+            vertex_direct_bytes = 0, vertex_reused_bytes = 0, vertex_memo_hits = 0, xfer_px[4] = {},
+@@ -685,6 +691,8 @@
+     fused_kinds_ = uint32_t(REXCVAR_GET(gow2_renderer_fused_scaled_kinds)) & 3u;
+     memexport_ = REXCVAR_GET(gow2_renderer_memexport);
+     memexport_readback_ = memexport_ && REXCVAR_GET(gow2_renderer_memexport_readback);
++    pending_mirror_ = memexport_readback_ && REXCVAR_GET(gow2_renderer_export_pending_mirror);
++    if (pending_mirror_) REXLOG_INFO("gow2_renderer: export pending mirror on (patch 0007)");
+     if (memexport_)
+       REXLOG_INFO("gow2_renderer: memexport on (notes/11), readback to guest memory {}", memexport_readback_ ? "on" : "off");
+     vertex_dedupe_ = REXCVAR_GET(gow2_renderer_vertex_dedupe);
+@@ -4887,9 +4895,11 @@
+     }
+   }
+ 
+-  // Job 041: completed export readbacks into guest memory (bytes as the GPU stored them = guest byte order). The write
+-  // goes through the memory system, so the watch sees a CPU write (the pages stop being GPU-current: both copies now
+-  // hold the same bytes) and the SDK is told the range changed.
++  // Job 041: completed export readbacks into guest memory (bytes as the GPU stored them = guest byte order), and the SDK
++  // is told the range changed. Patch 0007 note [V, rexglue xmemory.h]: TranslatePhysical is the physical mapping, which
++  // the memory system never write-protects, so this copy raises NO watch callback: pages still GPU-current stay so (both
++  // copies now hold the same bytes). Known gap: if the game's CPU rewrote part of the range after the export, this
++  // late copy overwrites those newer bytes (the race xenia-edge removed by dropping readback, a84f4d1ff).
+   // Job 042 (ground flicker): a CPU-path texture load is about to read [start, start + length). If an export readback
+   // over it is still pending, finish the GPU work and write the results into guest memory first - otherwise the load
+   // takes the pre-move bytes for the frame or two until the readback lands.
+@@ -5033,12 +5043,31 @@
+       if (exports_marked_) {
+         constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
+         const uint32_t first = address >> kShift, last = uint32_t((address + size - 1) >> kShift);
++        // Patch 0007: the page spans of readbacks still in flight that overlap this range. Their pages hold export
++        // results only in the mirror until PollExportReadbacks lands them; a CPU store anywhere in the same 4 MB block
++        // ends GpuCurrent() for them (guest_watch.cpp: the whole block is bumped), and uploading guest memory then
++        // would put the PRE-export bytes over the export's results.
++        pending_spans_.clear();
++        if (pending_mirror_)
++          for (const ExportReadback& e : export_readbacks_) {
++            const uint32_t a = e.base >> kShift, b = (e.base + e.size - 1) >> kShift;
++            if (a <= last && b >= first) pending_spans_.push_back({std::max(a, first), std::min(b, last)});
++          }
++        auto keep = [&](uint32_t p) {
++          if (watch_->GpuCurrent(p)) return true;
++          for (const auto& [a, b] : pending_spans_)
++            if (p >= a && p <= b) {
++              ++stats_.vertex_pages_kept_pending;
++              return true;
++            }
++          return false;
++        };
+         bool any_gpu = false;
+-        for (uint32_t p = first; p <= last && !any_gpu; ++p) any_gpu = watch_->GpuCurrent(p);
++        for (uint32_t p = first; p <= last && !any_gpu; ++p) any_gpu = keep(p);
+         if (any_gpu) {
+           uint32_t run = UINT32_MAX;
+           for (uint32_t p = first; p <= last + 1; ++p) {
+-            const bool cpu = p <= last && !watch_->GpuCurrent(p);
++            const bool cpu = p <= last && !keep(p);
+             if (cpu && run == UINT32_MAX) run = p;
+             if (!cpu && run != UINT32_MAX) {
+               const uint32_t a = std::max(run << kShift, address);
+@@ -6113,6 +6142,10 @@
+       summary_backend_draws_ = bs.draws;
+       summary_submits_ = bs.submits;
+     }
++    if (pending_mirror_ && (stats_.vertex_pages_kept_pending || stats_.vertex_from_exports))  // patch 0007
++      REXLOG_INFO("gow2_renderer: export pending mirror: vertex ranges read from exports {}, page checks that kept the "
++                  "mirror because a readback was still in flight {}",
++                  stats_.vertex_from_exports, stats_.vertex_pages_kept_pending);
+     if (stats_.memexport_draws || stats_.memexport_only_draws) {  // notes/11 (this summary's frames)
+       REXLOG_INFO("gow2_renderer: memexport: draws {} (export-only {}, pixel-shader exports {}), ranges marked {} ({:.2f} "
+                   "MB), vertex ranges read from exports {}, readbacks into guest memory {} ({:.2f} MB, {} failed, {} "
+@@ -6428,6 +6461,8 @@
+   bool memexport_ = false;               // --gow2_renderer_memexport (notes/11)
+   bool exports_marked_ = false;          // some memexport range was marked GPU-current (vertex fetch checks pages)
+   bool memexport_readback_ = false;      // --gow2_renderer_memexport_readback (job 041)
++  bool pending_mirror_ = false;          // --gow2_renderer_export_pending_mirror (patch 0007)
++  std::vector<std::pair<uint32_t, uint32_t>> pending_spans_;  // patch 0007: scratch, page spans of in-flight readbacks
+   struct ExportReadback {
+     gpu::ReadbackHandle handle = 0;
+     uint32_t base = 0, size = 0;

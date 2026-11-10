@@ -1,0 +1,89 @@
+# 0011 - scripted pad thumbsticks (Gears 3 chat, 2026-10-23; base Gears2-Native d980aa2; script_pad.cpp only)
+# Why: night test runs (Shagg 01:57 "go on automation tonight") need to WALK into the areas where the bugs show
+# (Shagg 02:03: "just standing still in a room you're not going to see vertex explosions"). New tokens for
+# --gow2_input_script: LUP / LDOWN / LLEFT / LRIGHT, RUP / RDOWN / RLEFT / RRIGHT = that stick fully pushed for the
+# hold, combinable with buttons ("300:LUP+A:600" = roadie run 600 frames). Overlapping steps add (clamped).
+# Packet number changes when a stick changes. Nothing changes for existing scripts. Syntax-checked, not built.
+diff -ruN a/src/layer0_xenos/script_pad.cpp b/src/layer0_xenos/script_pad.cpp
+--- a/src/layer0_xenos/script_pad.cpp	2026-10-23 02:04:08.167214014 -0700
++++ b/src/layer0_xenos/script_pad.cpp	2026-10-23 02:04:08.227523522 -0700
+@@ -2,6 +2,9 @@
+ // --gow2_input_script="35:START, 41:A, 47:DPAD_DOWN+A:0.5" presses those buttons at those seconds after the driver is
+ // added (game start), each held for the given time (default 0.2 s). The pad shows up as an extra controller; the
+ // user's own controllers keep working. Off unless the option is set.
++// Sticks (patch 0011, Gears 3 chat 2026-10-23 - scripted walking for night test runs): LUP / LDOWN / LLEFT / LRIGHT
++// and RUP / RDOWN / RLEFT / RRIGHT push that stick fully for the hold, e.g. "300:LUP:600" walks forward for 600
++// frames, "300:LUP+A:600" roadie-runs, "900:RRIGHT:30" turns right. Overlapping steps add up (clamped).
+ // --gow2_input_frames: times and holds count swaps (finished frames) instead of seconds, so a scripted route presses
+ // its buttons on the same frame every run (needed for repeatable runs, D19). Default hold is then 6 frames.
+ #include <xenos/dev_tools.h>
+@@ -33,7 +36,7 @@
+ constexpr DeviceId kScriptPad = static_cast<DeviceId>(0x47325350);   // "G2SP"
+ constexpr DeviceId kScriptPad2 = static_cast<DeviceId>(0x47325332);  // "G2S2"
+ 
+-struct Step { double at, hold; uint16_t buttons; uint8_t lt, rt; };
++struct Step { double at, hold; uint16_t buttons; uint8_t lt, rt; int16_t lx = 0, ly = 0, rx = 0, ry = 0; };
+ 
+ uint16_t ButtonBit(const std::string& n) {
+   static const struct { const char* name; uint16_t bit; } kMap[] = {
+@@ -53,6 +56,7 @@
+     item.erase(std::remove(item.begin(), item.end(), ' '), item.end());
+     if (item.empty()) continue;
+     Step s{0, REXCVAR_GET(gow2_input_frames) ? 6.0 : 0.2, 0, 0, 0};
++    constexpr int16_t kFull = 32767;
+     std::stringstream parts(item);
+     std::string at, names, hold;
+     std::getline(parts, at, ':'); std::getline(parts, names, ':'); std::getline(parts, hold, ':');
+@@ -62,6 +66,10 @@
+     std::string n;
+     while (std::getline(ns, n, '+')) {
+       if (n == "LT") s.lt = 255; else if (n == "RT") s.rt = 255;
++      else if (n == "LUP") s.ly = kFull; else if (n == "LDOWN") s.ly = -kFull;
++      else if (n == "LLEFT") s.lx = -kFull; else if (n == "LRIGHT") s.lx = kFull;
++      else if (n == "RUP") s.ry = kFull; else if (n == "RDOWN") s.ry = -kFull;
++      else if (n == "RLEFT") s.rx = -kFull; else if (n == "RRIGHT") s.rx = kFull;
+       else if (uint16_t b = ButtonBit(n)) s.buttons |= b;
+       else REXLOG_WARN("gow2_input_script: unknown button '{}'", n);
+     }
+@@ -88,20 +96,32 @@
+     const double t = frames_ ? double(XenosSwapCount())
+                              : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
+     uint16_t buttons = 0; uint8_t lt = 0, rt = 0;
++    int32_t lx = 0, ly = 0, rx = 0, ry = 0;
+     for (size_t i = 0; i < steps_.size(); ++i) {
+       const Step& s = steps_[i];
+       if (t >= s.at && t < s.at + s.hold) {
+         buttons |= s.buttons; lt = std::max(lt, s.lt); rt = std::max(rt, s.rt);
++        lx += s.lx; ly += s.ly; rx += s.rx; ry += s.ry;
+         if (!logged_[i]) { logged_[i] = true; REXLOG_INFO("gow2_input_script{}: t={:.1f}{} press 0x{:04X} for {:.1f}", id_ == kScriptPad2 ? "2" : "", t, frames_ ? " frames" : "s", s.buttons, s.hold); }
+       }
+     }
+-    if (buttons != last_ || lt != last_lt_ || rt != last_rt_) { ++packet_; last_ = buttons; last_lt_ = lt; last_rt_ = rt; }
++    auto clamp16 = [](int32_t v) { return int16_t(std::clamp(v, -32767, 32767)); };
++    const int16_t slx = clamp16(lx), sly = clamp16(ly), srx = clamp16(rx), sry = clamp16(ry);
++    if (buttons != last_ || lt != last_lt_ || rt != last_rt_ || slx != last_lx_ || sly != last_ly_ || srx != last_rx_ ||
++        sry != last_ry_) {
++      ++packet_; last_ = buttons; last_lt_ = lt; last_rt_ = rt;
++      last_lx_ = slx; last_ly_ = sly; last_rx_ = srx; last_ry_ = sry;
++    }
+     if (out) {
+       std::memset(out, 0, sizeof(*out));
+       out->packet_number = packet_;
+       out->gamepad.buttons = buttons;
+       out->gamepad.left_trigger = lt;
+       out->gamepad.right_trigger = rt;
++      out->gamepad.thumb_lx = slx;
++      out->gamepad.thumb_ly = sly;
++      out->gamepad.thumb_rx = srx;
++      out->gamepad.thumb_ry = sry;
+     }
+     return X_ERROR_SUCCESS;
+   }
+@@ -133,6 +153,7 @@
+   uint32_t packet_ = 1;
+   uint16_t last_ = 0;
+   uint8_t last_lt_ = 0, last_rt_ = 0;
++  int16_t last_lx_ = 0, last_ly_ = 0, last_rx_ = 0, last_ry_ = 0;  // patch 0011
+ };
+ 
+ }  // namespace

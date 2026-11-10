@@ -1,0 +1,129 @@
+diff --git a/include/rex/frame_hooks.h b/include/rex/frame_hooks.h
+index 07e6ac2..2f1bedf 100644
+--- a/include/rex/frame_hooks.h
++++ b/include/rex/frame_hooks.h
+@@ -3,6 +3,7 @@
+ #pragma once
+ 
+ #include <atomic>
++#include <cstdint>
+ 
+ namespace rex {
+ 
+@@ -13,6 +14,19 @@ struct FrameHooks {
+   std::atomic<FrameHook> input_read{nullptr};     // guest thread, XamInputGetState for a game pad
+   std::atomic<FrameHook> present_begin{nullptr};  // presenter thread, just before IDXGISwapChain::Present
+   std::atomic<FrameHook> present_end{nullptr};    // presenter thread, just after it
++  // SDK patch 36 (frame generation): when set, the D3D12 presenter makes its swap chain through create_swap_chain
++  // (the same DXGI_SWAP_CHAIN_DESC1, IDXGIFactory2, direct ID3D12CommandQueue and HWND; it returns an IDXGISwapChain1
++  // with one reference for the presenter, or false to have the swap chain made the usual way). swap_chain_change is
++  // called with that swap chain just before the presenter resizes its buffers (destroying = false) or lets go of it
++  // (destroying = true: the hook releases what it made around it before the presenter drops the last reference).
++  std::atomic<bool (*)(void* dxgi_factory2, void* d3d12_queue, void* hwnd, const void* desc1, void** swap_chain1)>
++      create_swap_chain{nullptr};
++  std::atomic<void (*)(void* swap_chain, bool destroying)> swap_chain_change{nullptr};
++  // Presenter thread, after a paint's commands were submitted and before Present: the guest output image the paint
++  // showed (ID3D12Resource*, null = none) and the direct ID3D12CommandQueue. Return false to skip this Present (frame
++  // generation presents once per new game image; a repaint of the same image must not count as a frame).
++  // rect: where the guest output was painted in the back buffer (x, y, width, height; all 0 = not painted).
++  std::atomic<bool (*)(void* guest_output_resource, void* d3d12_queue, const int32_t* rect)> before_present{nullptr};
+ };
+ 
+ // One shared set, defined in the SDK runtime (xboxkrnl_video.cpp).
+diff --git a/src/ui/d3d12/d3d12_presenter.cpp b/src/ui/d3d12/d3d12_presenter.cpp
+index 074d946..5d4aecc 100644
+--- a/src/ui/d3d12/d3d12_presenter.cpp
++++ b/src/ui/d3d12/d3d12_presenter.cpp
+@@ -42,6 +42,9 @@ REXCVAR_DEFINE_INT32(d3d12_max_frame_latency, 1, "UI/D3D12",
+ 
+ namespace rex::ui::d3d12 {
+ 
++// SDK patch 36: set when a paint has waited for the frame latency waitable object and not presented yet.
++static std::atomic<bool> g_latency_turn_held{false};
++
+ // Generated with `xb buildshaders`.
+ namespace shaders {
+ #include "ui/shaders/bytecode/d3d12_5_1/guest_output_bilinear_dither_ps.h"
+@@ -369,6 +372,8 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+          paint_context_.swap_chain_buffers) {
+       swap_chain_buffer_ref.Reset();
+     }
++    if (auto change = rex::GetFrameHooks().swap_chain_change.load(std::memory_order_acquire))  // SDK patch 36
++      change(paint_context_.swap_chain.Get(), false);
+     bool swap_chain_resized = SUCCEEDED(paint_context_.swap_chain->ResizeBuffers(
+         0, UINT(new_swap_chain_width), UINT(new_swap_chain_height), DXGI_FORMAT_UNKNOWN,
+         paint_context_.swap_chain_flags));
+@@ -433,7 +438,15 @@ D3D12Presenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_sur
+ #if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP | WINAPI_PARTITION_GAMES)
+       case Surface::kTypeIndex_Win32Hwnd: {
+         HWND surface_hwnd = static_cast<const Win32HwndSurface&>(new_surface).hwnd();
+-        if (FAILED(dxgi_factory->CreateSwapChainForHwnd(
++        bool hooked = false;  // SDK patch 36: a frame-generation swap chain from the game layer
++        if (auto make = rex::GetFrameHooks().create_swap_chain.load(std::memory_order_acquire)) {
++          void* made = nullptr;
++          hooked = make(dxgi_factory, direct_queue, surface_hwnd, &swap_chain_desc, &made) && made;
++          if (hooked) swap_chain_1.Attach(static_cast<IDXGISwapChain1*>(made));
++          REXLOG_INFO("D3D12Presenter: SDK patch 36: {}", hooked ? "swap chain made by the frame-generation hook"
++                                                                 : "the frame-generation hook declined; usual swap chain");
++        }
++        if (!hooked && FAILED(dxgi_factory->CreateSwapChainForHwnd(
+                 direct_queue, surface_hwnd, &swap_chain_desc, nullptr, nullptr, &swap_chain_1))) {
+           REXLOG_ERROR("D3D12Presenter: Failed to create a swap chain for the HWND");
+           return SurfacePaintConnectResult::kFailure;
+@@ -587,6 +600,9 @@ void D3D12Presenter::PaintContext::DestroySwapChain() {
+   for (Microsoft::WRL::ComPtr<ID3D12Resource>& swap_chain_buffer_ref : swap_chain_buffers) {
+     swap_chain_buffer_ref.Reset();
+   }
++  // SDK patch 36: the frame-generation contexts go first; then the last reference here destroys the proxy swap chain.
++  if (auto change = rex::GetFrameHooks().swap_chain_change.load(std::memory_order_acquire))
++    change(swap_chain.Get(), true);
+   swap_chain.Reset();
+   if (frame_latency_waitable) {  // SDK patch 34
+     CloseHandle(frame_latency_waitable);
+@@ -601,7 +617,9 @@ void D3D12Presenter::PaintContext::DestroySwapChain() {
+ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawers) {
+   // Gears2-Native SDK patch 34: wait until the presentation queue has room (at most d3d12_max_frame_latency frames), so a
+   // frame is not painted - and the game's newest picture not held back - behind frames still waiting to be shown.
+-  if (paint_context_.frame_latency_waitable) {
++  // SDK patch 36: a paint whose Present the frame-generation hook skipped has already taken its turn from the waitable
++  // object - the next paint must not wait for a turn that no Present will give back.
++  if (paint_context_.frame_latency_waitable && !g_latency_turn_held.exchange(true, std::memory_order_relaxed)) {
+     WaitForSingleObjectEx(paint_context_.frame_latency_waitable, 100, TRUE);
+   }
+   // Begin the command list with the command allocator not currently potentially
+@@ -637,6 +655,7 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+   GuestOutputProperties guest_output_properties;
+   GuestOutputPaintConfig guest_output_paint_config;
+   Microsoft::WRL::ComPtr<ID3D12Resource> guest_output_resource;
++  int32_t fg_rect[4] = {};  // SDK patch 36: where the guest output lands in the back buffer (x, y, width, height)
+   {
+     uint32_t guest_output_mailbox_index;
+     std::unique_lock<std::mutex> guest_output_consumer_lock(ConsumeGuestOutput(
+@@ -672,6 +691,10 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+     }
+ 
+     if (guest_output_flow.effect_count) {
++      fg_rect[0] = guest_output_flow.output_x;  // SDK patch 36
++      fg_rect[1] = guest_output_flow.output_y;
++      fg_rect[2] = int32_t(guest_output_flow.effect_output_sizes[guest_output_flow.effect_count - 1].first);
++      fg_rect[3] = int32_t(guest_output_flow.effect_output_sizes[guest_output_flow.effect_count - 1].second);
+       ID3D12DescriptorHeap* view_heap = paint_context_.view_heap.Get();
+       D3D12_CPU_DESCRIPTOR_HANDLE view_heap_cpu_start =
+           view_heap->GetCPUDescriptorHandleForHeapStart();
+@@ -1204,11 +1227,16 @@ Presenter::PaintResult D3D12Presenter::PaintAndPresentImpl(bool execute_ui_drawe
+   // fullscreen is ever used in, the allow tearing flag must not be passed in
+   // fullscreen, but DXGI fullscreen is largely unneeded with the flip
+   // presentation model used in Direct3D 12).
++  // SDK patch 36: frame generation sees the image first (and its Prepare work goes on the queue before the Present).
++  if (auto gate = rex::GetFrameHooks().before_present.load(std::memory_order_acquire)) {
++    if (!gate(guest_output_resource.Get(), provider_.GetDirectQueue(), fg_rect)) return PaintResult::kNotPresented;
++  }
+   rex::CallFrameHook(rex::GetFrameHooks().present_begin);  // SDK patch 35
+   HRESULT present_result = paint_context_.swap_chain->Present(
+       0, DXGI_PRESENT_RESTART |
+              (paint_context_.swap_chain_allows_tearing ? DXGI_PRESENT_ALLOW_TEARING : 0));
+   rex::CallFrameHook(rex::GetFrameHooks().present_end);  // SDK patch 35
++  g_latency_turn_held.store(false, std::memory_order_relaxed);  // SDK patch 36: the Present gives the turn back
+   // Even if presentation has failed, work might have been enqueued anyway
+   // internally before the failure according to Jesse Natalie from the DirectX
+   // Discord server.

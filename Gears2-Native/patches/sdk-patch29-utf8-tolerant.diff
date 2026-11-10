@@ -1,0 +1,39 @@
+diff --git a/include/rex/system/xam/content_manager.h b/include/rex/system/xam/content_manager.h
+index 949d185..4b39722 100644
+--- a/include/rex/system/xam/content_manager.h
++++ b/include/rex/system/xam/content_manager.h
+@@ -69,7 +69,7 @@ struct XCONTENT_DATA {
+ 
+   std::string file_name() const {
+     std::string value;
+-    value.assign(file_name_raw, std::min(strlen(file_name_raw), countof(file_name_raw)));
++    value.assign(file_name_raw, strnlen(file_name_raw, countof(file_name_raw)));  // patch 29: never reads past the field
+     return value;
+   }
+ 
+diff --git a/src/core/utf8.cpp b/src/core/utf8.cpp
+index 4fcfd7b..1aee7ea 100644
+--- a/src/core/utf8.cpp
++++ b/src/core/utf8.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <algorithm>
++#include <iterator>
+ #include <cstdint>
+ #include <locale>
+ #include <numeric>
+@@ -32,7 +33,12 @@ std::string to_utf8(const std::u16string_view source) {
+ }
+ 
+ std::u16string to_utf16(const std::string_view source) {
+-  return utfcpp::utf8to16(source);
++  // Gears2-Native SDK patch 29: bytes that are not valid UTF-8 (a title's content package name, say) become U+FFFD
++  // instead of throwing - a throw here killed the XAM dispatch thread ("Invalid UTF-8", Gears 3 job 016).
++  if (utfcpp::is_valid(source.begin(), source.end())) return utfcpp::utf8to16(source);
++  std::string fixed;
++  utfcpp::replace_invalid(source.begin(), source.end(), std::back_inserter(fixed));
++  return utfcpp::utf8to16(fixed);
+ }
+ 
+ std::string to_string(char32_t c) {

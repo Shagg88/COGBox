@@ -1,0 +1,70 @@
+--- xam_content.orig.cpp	2026-10-31 12:59:50.071873605 -0700
++++ xam_content.cpp	2026-10-31 12:59:50.086125750 -0700
+@@ -22,6 +22,10 @@
+ #include <rex/system/xtypes.h>
+ 
+ REXCVAR_DEFINE_UINT32(license_mask, 0, "Kernel", "Set license mask for activated content");
++// Patch 48 (COGBox GitHub #79: Raam's Shadow DLC sometimes needs 2-3 restarts before Gears 3 sees it): every content
++// enumeration (what the game asked for and the packages it was given) and every content create / open (root, package,
++// result) is logged at info level, so a report from a start where the DLC was missing shows why.
++REXCVAR_DEFINE_BOOL(cogbox_content_log, true, "Kernel", "Log content (DLC / save) enumerations and opens (GitHub #79)");
+ 
+ namespace rex {
+ namespace kernel {
+@@ -65,6 +69,9 @@
+ 
+   auto device_info = device_id == 0 ? nullptr : GetDummyDeviceInfo(device_id);
+   if ((device_id && device_info == nullptr) || !handle_out) {
++    if (REXCVAR_GET(cogbox_content_log))  // patch 48
++      REXLOG_INFO("cogbox_content: enumerate type {:08X} device {} user {} -> invalid argument (unknown device)",
++                  uint32_t(content_type), uint32_t(device_id), uint32_t(user_index));
+     if (buffer_size_ptr) {
+       *buffer_size_ptr = 0;
+     }
+@@ -77,6 +84,7 @@
+ 
+   uint64_t xuid = REX_KERNEL_STATE()->user_profile()->xuid();
+ 
++  std::string names;  // patch 48: the packages handed to the game, for the log
+   auto e = make_object<XStaticEnumerator<XCONTENT_DATA>>(REX_KERNEL_STATE(), items_per_enumerate);
+   auto result = e->Initialize(0xFF, 0xFE, 0x20005, 0x20007, 0);
+   if (XFAILED(result)) {
+@@ -90,6 +98,7 @@
+     for (const auto& content_data : content_datas) {
+       auto item = e->AppendItem();
+       *item = content_data;
++      if (names.size() < 600) names += (names.empty() ? "" : ", ") + content_data.file_name();  // patch 48
+     }
+ 
+     // Also enumerate common content (xuid=0)
+@@ -99,6 +108,7 @@
+       for (const auto& content_data : common_datas) {
+         auto item = e->AppendItem();
+         *item = content_data;
++        if (names.size() < 600) names += (names.empty() ? "" : ", ") + content_data.file_name() + " (common)";  // patch 48
+       }
+     }
+   }
+@@ -108,6 +118,9 @@
+   }
+ 
+   REXKRNL_DEBUG("XamContentCreateEnumerator: added {} items to enumerator", e->item_count());
++  if (REXCVAR_GET(cogbox_content_log))  // patch 48
++    REXLOG_INFO("cogbox_content: enumerate type {:08X} device {} user {} -> {} item(s){}{}", uint32_t(content_type),
++                uint32_t(device_id), uint32_t(user_index), e->item_count(), names.empty() ? "" : ": ", names);
+ 
+   *handle_out = e->handle();
+   return X_ERROR_SUCCESS;
+@@ -224,6 +237,12 @@
+ 
+     extended_error = X_HRESULT_FROM_WIN32(result);
+     length = static_cast<uint32_t>(disposition);
++    if (REXCVAR_GET(cogbox_content_log))  // patch 48
++      REXLOG_INFO("cogbox_content: {} root '{}' package '{}' type {:08X} -> {} result {:08X}",
++                  (flags & 0xF) == 3 ? "open" : (flags & 0xF) == 4 ? "open/create" : "create", root_name,
++                  content_data.file_name(), uint32_t(static_cast<XContentType>(content_data.content_type)),
++                  disposition == kDispositionState::Create ? "created" : disposition == kDispositionState::Open ? "opened" : "not done",
++                  uint32_t(result));
+     return result;
+   };
+ 

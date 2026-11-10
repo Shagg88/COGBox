@@ -1,0 +1,10 @@
+Box art
+
+COGBox does not ship any box art. When you press UPDATE ART, it downloads the front box
+scans and backgrounds for Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
+Judgment from the LaunchBox Games Database (https://gamesdb.launchbox-app.com), with x360db
+(https://github.com/xenia-manager/x360db) as the fallback.
+
+The scans were contributed to the LaunchBox Games Database by its community. Thanks to
+LaunchBox and its contributors. The cover artwork is the property of Microsoft / Xbox Game
+Studios and Epic Games. It is downloaded only for your own library view and stays on your PC.

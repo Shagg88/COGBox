@@ -1,0 +1,30 @@
+diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
+index 57f65c4..f536c21 100644
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -179,6 +179,10 @@ void SDLInputDriver::OnWindowAvailable(rex::ui::Window* window) {
+     attached_window_ = window;
+     window->AddListener(this);
+     window->app_context().CallInUIThreadSynchronous([this]() {
++      // COGBox SDK patch 53 (GitHub #108): SDL drops controller events while our window does not have the focus
++      // (Steam Deck game mode: the pad worked in the launcher, which sets this, and not in the game). Before the
++      // gamepad subsystem starts, as the launcher does.
++      SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+       // Initialize SDL events subsystem
+       if (!SDL_InitSubSystem(SDL_INIT_EVENTS)) {
+         REXLOG_ERROR("SDL: Failed to init events subsystem: {}", SDL_GetError());
+diff --git a/src/ui/rex_app.cpp b/src/ui/rex_app.cpp
+index 9ff54e8..54b610b 100644
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -248,8 +248,8 @@ bool ReXApp::ConstructRuntime(const PathConfig& paths) {
+ 
+   if (auto* input_sys = static_cast<rex::input::InputSystem*>(runtime_->input_system())) {
+     input_sys->SetActiveCallback([this]() {
+-      if (window_ && !window_->HasFocus())
+-        return false;
++      // COGBox SDK patch 53 (GitHub #108): no focus check here - it zeroed the controller while our window was not
++      // focused, so the SDL hint alone did not help. Keyboard and mouse keep their own focus check (mnk_input_driver).
+       if (!imgui_drawer_ ||
+           (!debug_overlay_ && !console_overlay_ && !settings_overlay_ && !achievements_overlay_))
+         return true;

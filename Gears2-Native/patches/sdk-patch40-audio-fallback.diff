@@ -1,0 +1,57 @@
+--- aud.orig	2026-10-27 22:51:52.247494118 -0700
++++ p587/sdl_audio_driver.cpp	2026-10-27 22:51:52.267467170 -0700
+@@ -17,6 +17,7 @@
+ #include <rex/audio/conversion.h>
+ #include <rex/audio/downmix.h>
+ #include <rex/audio/flags.h>
++#include <string_view>
+ #include <rex/audio/sdl/sdl_audio_driver.h>
+ #include <rex/cvar.h>
+ #include <rex/dbg.h>
+@@ -37,6 +38,12 @@
+ }
+ 
+ bool SDLAudioDriver::Initialize() {
++  // Patch 40 (COGBox 0.2.1, GitHub #19): a stream that will not open (WASAPI "can't initialize audio client" on
++  // some PCs) used to leave the guest audio code without a device and the game read a null pointer a moment later.
++  // Now the next driver is tried - DirectSound on Windows - and then SDL's silent dummy driver, which still pulls
++  // the frames at the real rate, so the game always runs (with sound when any driver works). A driver the player
++  // chose with SDL_AUDIO_DRIVER is tried first, as before.
++  auto try_open = [this]() -> bool {
+   // Set audio category for proper OS audio handling
+   SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, "playback");
+ 
+@@ -107,6 +114,33 @@
+   }
+ 
+   return true;
++  };
++  const char* const fallbacks[] = {nullptr,
++#ifdef _WIN32
++                                   "directsound",
++#endif
++                                   "dummy"};
++  for (const char* driver : fallbacks) {
++    if (driver) {
++      if (sdl_stream_) {
++        SDL_DestroyAudioStream(sdl_stream_);
++        sdl_stream_ = nullptr;
++      }
++      if (sdl_initialized_) {
++        SDL_QuitSubSystem(SDL_INIT_AUDIO);
++        sdl_initialized_ = false;
++      }
++      SDL_SetHint(SDL_HINT_AUDIO_DRIVER, driver);
++      REXAPU_WARN("audio: trying the '{}' driver instead", driver);
++    }
++    if (try_open()) {
++      if (driver) REXAPU_WARN("audio: running on the '{}' driver{}", driver,
++                              std::string_view(driver) == "dummy" ? " - no sound, but the game runs" : "");
++      return true;
++    }
++  }
++  return false;
++
+ }
+ 
+ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {

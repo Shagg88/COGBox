@@ -1,0 +1,160 @@
+diff --git a/src/kernel/xam/xam_user.cpp b/src/kernel/xam/xam_user.cpp
+index 7a87cdb..8b93e2f 100644
+--- a/src/kernel/xam/xam_user.cpp
++++ b/src/kernel/xam/xam_user.cpp
+@@ -12,7 +12,11 @@
+ // Disable warnings about unused parameters for kernel functions
+ #pragma GCC diagnostic ignored "-Wunused-parameter"
+ 
++#include <cstdio>
+ #include <cstring>
++#include <filesystem>
++#include <fstream>
++#include <iterator>
+ 
+ #include <rex/cvar.h>
+ #include <rex/kernel/xam/private.h>
+@@ -38,6 +42,11 @@ REXCVAR_DEFINE_UINT32(local_players, 1, "Kernel", "Signed-in local profiles, 1-4
+ // folder (content_manager's ResolveGameUserContentPath uses user_profile()->name()) stays where it was, so settings
+ // and saves are kept. Xbox gamertags: up to 15 characters, letters, digits and spaces; anything else is dropped.
+ REXCVAR_DEFINE_STRING(user_gamertag, "", "Kernel", "Gamertag player 1's profile shows in game (empty: 'User')");
++// COGBox SDK patch 71 (0.4.9 split-screen): the names players 2-4 show in game (the launcher's extra "Player name"
++// boxes). Empty = "Player N" as before; same clean-up as user_gamertag. The XUIDs stay profile XUID + index.
++REXCVAR_DEFINE_STRING(user_gamertag2, "", "Kernel", "Name player 2 shows in game (empty: 'Player 2')");
++REXCVAR_DEFINE_STRING(user_gamertag3, "", "Kernel", "Name player 3 shows in game (empty: 'Player 3')");
++REXCVAR_DEFINE_STRING(user_gamertag4, "", "Kernel", "Name player 4 shows in game (empty: 'Player 4')");
+ 
+ namespace rex {
+ namespace kernel {
+@@ -54,19 +63,76 @@ static bool UserSignedIn(uint32_t user_index) { return user_index < LocalPlayers
+ static uint64_t UserXuid(uint32_t user_index) {
+   return REX_KERNEL_STATE()->user_profile()->xuid() + user_index;
+ }
+-static std::string Player1Gamertag() {
++static std::string CleanGamertag(const std::string& in) {   // patch 71: shared by players 1-4
+   std::string out;
+-  for (const char c : std::string(REXCVAR_GET(user_gamertag))) {
++  for (const char c : in) {
+     const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ';
+     if (ok && !(c == ' ' && (out.empty() || out.back() == ' '))) out += c;
+     if (out.size() == 15) break;
+   }
+   while (!out.empty() && out.back() == ' ') out.pop_back();
++  return out;
++}
++static std::string Player1Gamertag() {
++  const std::string out = CleanGamertag(REXCVAR_GET(user_gamertag));
+   return out.empty() ? REX_KERNEL_STATE()->user_profile()->name() : out;
+ }
+ static std::string UserName(uint32_t user_index) {
+   if (!user_index) return Player1Gamertag();
+-  return "Player " + std::to_string(user_index + 1);
++  std::string out;   // patch 71: --user_gamertag2..4
++  if (user_index == 1) out = CleanGamertag(REXCVAR_GET(user_gamertag2));
++  else if (user_index == 2) out = CleanGamertag(REXCVAR_GET(user_gamertag3));
++  else if (user_index == 3) out = CleanGamertag(REXCVAR_GET(user_gamertag4));
++  return out.empty() ? "Player " + std::to_string(user_index + 1) : out;
++}
++
++// COGBox SDK patch 71 (0.4.9 split-screen): players 2-4 keep their own title-specific profile settings (the game's
++// options / controls blob). Player 1's are the files <setting id> in the game's user content folder (UserProfile::
++// SaveSetting); player N's sit next to them as <setting id>.p<N>. Before: players 2-4 read player 1's settings and
++// their writes were dropped. A player with no file yet reads the setting as unset (the game uses its defaults).
++static std::filesystem::path ExtraUserSettingPath(uint32_t user_index, uint32_t setting_id) {
++  char name[32];
++  std::snprintf(name, sizeof name, "%08X.p%u", setting_id, user_index + 1);
++  return REX_KERNEL_STATE()->content_manager()->ResolveGameUserContentPath() / name;
++}
++// The read's size pass reserves the setting ID's fixed size (Key.size) per setting, so a file longer than that is never
++// handed out (an edited or damaged file): it reads as unset. Shorter is what the game itself wrote and fits.
++static bool LoadExtraUserSetting(uint32_t user_index, uint32_t setting_id, std::vector<uint8_t>* bytes) {
++  std::ifstream f(ExtraUserSettingPath(user_index, setting_id), std::ios::binary);
++  if (!f) return false;
++  UserProfile::Setting::Key key;
++  key.value = setting_id;
++  bytes->assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
++  if (bytes->size() > key.size) {
++    REXKRNL_WARN("SDK patch 71: player {} setting {:08X} file is {} bytes, more than the setting's {} - read as unset",
++                 user_index + 1, setting_id, bytes->size(), static_cast<uint32_t>(key.size));
++    bytes->clear();
++    return false;
++  }
++  return true;
++}
++static void SaveExtraUserSetting(uint32_t user_index, uint32_t setting_id, const std::vector<uint8_t>& bytes) {
++  const auto path = ExtraUserSettingPath(user_index, setting_id);
++  std::error_code ec;
++  std::filesystem::create_directories(path.parent_path(), ec);
++  // Written to <name>.tmp and renamed over the file, so a crash or a full disk mid-write never leaves a cut file.
++  auto tmp = path;
++  tmp += ".tmp";
++  bool ok;
++  {
++    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
++    if (f) f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
++    if (f) f.flush();
++    ok = static_cast<bool>(f);
++  }
++  if (ok) {
++    std::error_code rec;
++    std::filesystem::rename(tmp, path, rec);   // replaces the old file (MoveFileEx REPLACE_EXISTING)
++    ok = !rec;
++  }
++  if (!ok) std::filesystem::remove(tmp, ec);   // the old file stays as it was
++  if (!ok) REXKRNL_ERROR("SDK patch 71: couldn't save player {} setting {:08X}", user_index + 1, setting_id);
++  else REXKRNL_INFO("SDK patch 71: player {} setting {:08X} saved ({} bytes)", user_index + 1, setting_id, bytes.size());
+ }
+ 
+ i32 XamUserGetXUID_entry(u32 user_index, u32 type_mask, mapped_u64 xuid_ptr) {
+@@ -266,6 +332,13 @@ uint32_t XamUserReadProfileSettingsEx(uint32_t title_id, uint32_t user_index, ui
+   }
+ 
+   const auto& user_profile = REX_KERNEL_STATE()->user_profile();
++  // Patch 71: the local player whose settings an entry is, from that entry's own XUID (profile XUID + index) or, without
++  // XUIDs, user_index; 1-3 = players 2-4, anything else = player 1's profile as before. (The SDK clamps xuid_count to 1
++  // above, so the fill below writes one entry per setting, for xuids[0].)
++  auto reader_of = [&](uint64_t xuid) -> uint32_t {
++    const uint64_t d = xuid - user_profile->xuid();
++    return d < LocalPlayers() ? static_cast<uint32_t>(d) : 0u;
++  };
+ 
+   // First call asks for size (fill buffer_size_ptr).
+   // Second call asks for buffer contents with that size.
+@@ -304,6 +377,15 @@ uint32_t XamUserReadProfileSettingsEx(uint32_t title_id, uint32_t user_index, ui
+   for (uint32_t n = 0; n < setting_count; ++n) {
+     uint32_t setting_id = setting_ids[n];
+     auto setting = user_profile->GetSetting(setting_id);
++    // Patch 71: players 2-4 get their own title-specific settings (their .p<N> file), never player 1's.
++    std::unique_ptr<UserProfile::BinarySetting> extra;
++    const uint32_t reader = xuids ? reader_of(static_cast<uint64_t>(xuids[0])) : user_index;
++    if (reader >= 1 && reader < LocalPlayers() && setting && setting->is_title_specific()) {
++      std::vector<uint8_t> bytes;
++      if (LoadExtraUserSetting(reader, setting_id, &bytes))
++        extra = std::make_unique<UserProfile::BinarySetting>(setting_id, bytes);
++      setting = extra.get();   // nullptr = unset: the game uses its defaults
++    }
+ 
+     std::memset(out_setting, 0, sizeof(X_USER_PROFILE_SETTING));
+     out_setting->from = !setting || !setting->is_set ? 0 : setting->is_title_specific() ? 2 : 1;
+@@ -353,8 +435,20 @@ u32 XamUserWriteProfileSettings_entry(u32 title_id, u32 user_index, u32 setting_
+   }
+ 
+   if (user_index) {
+-    // Users 1-3 (patch 25): accepted, not kept.
++    // Users 1-3 (patch 25): accepted. Patch 71: their title-specific binary settings are kept in their own files.
+     const X_RESULT r = UserSignedIn(user_index) ? X_ERROR_SUCCESS : X_ERROR_NO_SUCH_USER;
++    if (r == X_ERROR_SUCCESS) {
++      for (uint32_t n = 0; n < setting_count; ++n) {
++        const X_USER_PROFILE_SETTING& setting = settings[n];
++        const auto type = static_cast<UserProfile::Setting::Type>(setting.data.type);
++        if (type != UserProfile::Setting::Type::BINARY && type != UserProfile::Setting::Type::CONTENT) continue;
++        std::vector<uint8_t> bytes(setting.data.binary.size, 0);
++        if (setting.data.binary.ptr && !bytes.empty())
++          std::memcpy(bytes.data(), REX_KERNEL_MEMORY()->TranslateVirtual(setting.data.binary.ptr), bytes.size());
++        const UserProfile::BinarySetting probe(setting.setting_id, bytes);
++        if (probe.is_title_specific()) SaveExtraUserSetting(user_index, setting.setting_id, bytes);
++      }
++    }
+     if (overlapped) {
+       REX_KERNEL_STATE()->CompleteOverlappedImmediate(overlapped.guest_address(), r);
+       return X_ERROR_IO_PENDING;

@@ -1,0 +1,27 @@
+--- a/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 02:38:14.465104869 -0700
++++ b/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 02:38:14.455132824 -0700
+@@ -140,6 +140,15 @@
+                     "Our renderer reads guest textures through its texture cache (false = white stand-ins, as M1)");
+ REXCVAR_DEFINE_BOOL(gow2_renderer_upload_watch, true, "Gears2",
+                     "Skip re-uploading vertex ranges of 64 KB+ that the guest has not written since (page watch)");
++// Patch 0014 (Gears 3 notes/15, 2026-10-23): our resolves marked their pages GPU-current without arming the write
++// watch there (the memexport path arms first). A later CPU write to those pages - the game reusing the memory, e.g.
++// streaming a texture in - then raised no callback: the pages stayed GPU-current, GPU-path texture loads kept reading
++// our old resolve from the mirror, and CPU-path loads showed up as "CPU-path loads that read our pages (should be 0)"
++// (ch22: 74 at load, 10-20 per 300 gameplay frames).
++REXCVAR_DEFINE_BOOL(gow2_renderer_watch_resolves, false, "Gears2",
++                    "Arm the CPU write watch on the pages each of our resolves writes, so a later CPU write there ends "
++                    "their GPU-current state (use with --gow2_renderer_watch_narrow=true; the old 4 MB widening would "
++                    "drop GPU-current pages the CPU did not write)");
+ REXCVAR_DEFINE_BOOL(gow2_renderer_watch_narrow, false, "Gears2",
+                     "Patch 0008: a CPU write widens the page watch's invalidation like the reference emulator (within "
+                     "256 KB, never across a page our GPU wrote - resolves, memexport) instead of the whole 4 MB block, "
+@@ -2140,6 +2149,8 @@
+     } else {
+       backend_->Dispatch(words_to_guest_, b, (w + 7) / 8, (h + 7) / 8, 1);
+     }
++    if (REXCVAR_GET(gow2_renderer_watch_resolves))  // patch 0014: as the memexport path, arm before marking
++      watch_->Watch(info.dest_extent_start, info.dest_extent_length);
+     watch_->MarkGpuWritten(info.dest_extent_start, info.dest_extent_length, scaled);
+     if (through_on) {
+       textures_->ResolveThroughWritten(through, info.dest_extent_start, info.dest_extent_length);

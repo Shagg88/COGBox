@@ -1,0 +1,241 @@
+diff -ruN a/src/layer0_xenos/include/xenos/renderer/upscaler.h b/src/layer0_xenos/include/xenos/renderer/upscaler.h
+--- a/src/layer0_xenos/include/xenos/renderer/upscaler.h	2026-10-22 22:41:19.314757947 -0700
++++ b/src/layer0_xenos/include/xenos/renderer/upscaler.h	2026-10-22 22:45:17.858053327 -0700
+@@ -47,6 +47,22 @@
+ // The frame's offset: Halton(2, 3) at (frame % phases) + 1, minus 0.5.
+ Jitter JitterOffset(uint64_t frame, uint32_t phase_count);
+ 
++// ---- De-jittered depth resolves (Gears 3 job 058, --gow2_upscale_dejitter_depth) ----
++// With jitter on, the scene is drawn shifted by j (host pixels, +y down, the viewport shift of the frame's scene
++// draws), so depth texel q holds the surface at the unjittered position q - j. A game that rebuilds positions from a
++// resolved depth texture and an unjittered screen position (UE3's shadow projection, fog, AO, DOF) is then j pixels
++// off, which flips whole triangles into self-shadow on close-ups. The resolve instead writes, for texel q, the depth at
++// q + j: a bilinear resample of the 4 texels around it, or the nearest of them across an edge (no in-between depths).
++// The same arithmetic as kDepthResolveCs (builtin_shaders.h) - keep the two identical.
++//   taps: depth (guest convention) at (i, j), (i+1, j), (i, j+1), (i+1, j+1); fx, fy: the position's fraction in that
++//   quad. depth_a: the projection's depth at infinity (depth = a - b / w; DepthAtInfinity), so linear depth is
++//   proportional to 1 / |a - depth|. edge: the largest spread of the 4 taps' linear depths, as a fraction of the
++//   nearest one's, that is still one surface. *nearest_tap: -1 (bilinear) or the tap used (0..3).
++//   (DepthAtInfinity is declared after Mat4 below.)
++float DejitterDepth(const float taps[4], float fx, float fy, float depth_a, float edge, int* nearest_tap = nullptr);
++// The edge fraction kDepthResolveCs uses (a literal there).
++constexpr float kDejitterDepthEdge = 0.05f;
++
+ // ---- Matrices for camera motion ----
+ struct Mat4 {
+   float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};  // row-major
+@@ -59,6 +75,10 @@
+ Mat4 FromConstants(const float* constants, uint32_t first);
+ // The same four constants as columns (clip = x*c[first] + y*c[first+1] + z*c[first+2] + w*c[first+3]).
+ Mat4 FromConstantsTransposed(const float* constants, uint32_t first);
++// a in depth = a - b / w, from a camera matrix read as columns (FromConstantsTransposed's convention: clip z and w are
++// the matrix's rows 2 and 3): the ratio of their x / y / z coefficients (the same for all three in a perspective
++// matrix). 1 for a matrix that doesn't look like that.
++float DepthAtInfinity(const Mat4& view_proj);
+ // Camera parameters FSR wants, read off a perspective matrix (our convention): vertical field of view (radians) from
+ // the y row's length, and the near plane assuming an infinite far plane (clip z = d - near, clip w = d). False when
+ // the matrix doesn't look like that.
+diff -ruN a/src/layer0_xenos/renderer/builtin_shaders.h b/src/layer0_xenos/renderer/builtin_shaders.h
+--- a/src/layer0_xenos/renderer/builtin_shaders.h	2026-10-22 22:41:19.301808087 -0700
++++ b/src/layer0_xenos/renderer/builtin_shaders.h	2026-10-22 22:45:17.853867276 -0700
+@@ -97,6 +97,7 @@
+ //   c0.xy  source origin (pixels), c0.zw size
+ //   c1.xy  destination origin (blocks), c1.z bit 0: D24FS8 (20e4, truncated as Canary's default depth_float24_round =
+ //          false), else D24S8 (unorm24, round to nearest even)
++//   c1.w, c2.xy  de-jitter for the upscalers (see main); c3.xy resolution scale / scaled destination
+ constexpr const char* kDepthResolveCs = R"(
+ Texture2D<float> xe_depth : register(t0);
+ Texture2D<uint2> xe_stencil : register(t1);
+@@ -123,6 +124,34 @@
+   int3 src = int3(int2(full ? c0.xy * rs + id.xy : (c0.xy + id.xy) * rs + rs / 2u), 0);
+   float d = xe_depth.Load(src);
+   uint s = xe_stencil.Load(src).y & 0xFFu;
++  // Upscalers (--gow2_upscale_dejitter_depth; upscale::DejitterDepth is the same arithmetic): c2.xy != 0 = write the
++  // depth at the texel's unjittered centre. c2.xy = the frame's jitter (asfloat, host pixels, +y down), c1.w = asfloat
++  // depth at infinity (a in depth = a - b / w), compared in guest convention; edge fraction 0.05 (kDejitterDepthEdge).
++  // Only the non-fused paths read c2.xy (the job 238 fused path sets c2.zw / c3.zw, not c2.xy or c1.w).
++  if (any(c2.xy != 0u)) {
++    uint tw, th;
++    xe_depth.GetDimensions(tw, th);
++    float2 p = float2(src.xy) + asfloat(c2.xy);
++    int2 i0 = int2(floor(p));
++    float2 f = p - float2(i0);
++    int2 hi = int2(tw, th) - 1;
++    int3 q0 = int3(clamp(i0, 0, hi), 0), q1 = int3(clamp(i0 + int2(1, 0), 0, hi), 0);
++    int3 q2 = int3(clamp(i0 + int2(0, 1), 0, hi), 0), q3 = int3(clamp(i0 + int2(1, 1), 0, hi), 0);
++    float g = (c1.z & 3u) == 3u ? 2.0 : 1.0;  // a float24 target keeps guest * 0.5 (c1.z bit 1)
++    float t0 = xe_depth.Load(q0) * g, t1 = xe_depth.Load(q1) * g, t2 = xe_depth.Load(q2) * g, t3 = xe_depth.Load(q3) * g;
++    float a = asfloat(c1.w);
++    float l0 = 1.0 / max(abs(a - t0), 1e-7), l1 = 1.0 / max(abs(a - t1), 1e-7);
++    float l2 = 1.0 / max(abs(a - t2), 1e-7), l3 = 1.0 / max(abs(a - t3), 1e-7);
++    float lmin = min(min(l0, l1), min(l2, l3)), lmax = max(max(l0, l1), max(l2, l3));
++    if (lmax - lmin <= 0.05 * lmin) {
++      float top = t0 + (t1 - t0) * f.x, bottom = t2 + (t3 - t2) * f.x;
++      d = (top + (bottom - top) * f.y) / g;
++    } else {
++      int3 qn = f.y >= 0.5 ? (f.x >= 0.5 ? q3 : q2) : (f.x >= 0.5 ? q1 : q0);
++      d = xe_depth.Load(qn);
++      s = xe_stencil.Load(qn).y & 0xFFu;
++    }
++  }
+   uint d24;
+   if (c1.z & 1u) {
+     // c1.z bit 1: the host keeps 20e4 depth as guest * 0.5 (the reference's full_float24_in_0_to_1 remap).
+diff -ruN a/src/layer0_xenos/renderer/shadow_renderer.cpp b/src/layer0_xenos/renderer/shadow_renderer.cpp
+--- a/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-22 22:41:19.290615678 -0700
++++ b/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-22 22:45:17.857532407 -0700
+@@ -260,6 +260,11 @@
+ REXCVAR_DEFINE_INT32(gow2_upscale_camera_constant, 0, "Gears2",
+                      "Camera move for DLSS / FSR / XeSS: a vertex constant holding the camera's world position on every "
+                      "scene draw (its change = the move; the sign is learned from the object vote). 0 = none (Gears 3 sets c5)");
++REXCVAR_DEFINE_BOOL(gow2_upscale_dejitter_depth, false, "Gears2",
++                    "Upscalers (Gears 3 job 058): the frame's scene depth resolve is written at the unjittered pixel "
++                    "centres (bilinear, nearest across edges), so the game's passes that rebuild positions from the "
++                    "resolved depth (UE3 shadow projection, fog, AO, DOF) match. Without it, close-up character "
++                    "self-shadows flip whole triangles dark. The upscaler's own depth input stays jittered");
+ REXCVAR_DEFINE_INT32(gow2_upscale_probe, 0, "Gears2",
+                      "Upscaler groundwork (notes/64): every N frames, log the vertex shaders' c0-c3 (the camera matrix "
+                      "candidate) grouped by value for the draws of that frame, with their depth targets and whether they "
+@@ -2198,6 +2203,9 @@
+   rr::RenderTargetKey up_depth_key_{};
+   float up_vp_[16] = {}, up_prev_vp_[16] = {};
+   rr::upscale::Jitter up_jitter_{};      // applied to this frame's scene draws
++  bool up_dejitter_depth_ = false;        // --gow2_upscale_dejitter_depth (Gears 3 job 058)
++  float up_depth_a_ = 1.0f;               // depth at infinity of this frame's camera (DepthAtInfinity)
++  uint64_t up_dejittered_ = 0;            // scene depth resolves written de-jittered (log window)
+   uint64_t up_frames_ = 0, up_ok_ = 0, up_fail_ = 0, up_jittered_ = 0, up_camera_frames_ = 0;
+   // Gears 3 job 056: which constants carry the object rows / the camera position; the camera position this frame and
+   // last, and the sign that maps its change onto the move (learned from frames where the object vote also found one).
+@@ -2241,6 +2249,7 @@
+       return;
+     }
+     up_camera_move_ = REXCVAR_GET(gow2_upscale_camera_move);
++    up_dejitter_depth_ = REXCVAR_GET(gow2_upscale_dejitter_depth);
+     {
+       const int32_t ob = REXCVAR_GET(gow2_upscale_object_constants), cr = REXCVAR_GET(gow2_upscale_camera_constant);
+       up_object_base_ = ob > 0 && ob <= 252 ? uint32_t(ob) : 5u;
+@@ -2270,6 +2279,7 @@
+       }
+       up_depth_key_ = depth->key;
+       std::memcpy(up_vp_, c, sizeof(c));
++      up_depth_a_ = rr::upscale::DepthAtInfinity(rr::upscale::FromConstantsTransposed(up_vp_, 0));
+     } else if (!(depth->key == up_depth_key_) || std::memcmp(c, up_vp_, sizeof(c)) != 0) {
+       return;
+     }
+@@ -2463,9 +2473,13 @@
+     }
+     if (frame_ % uint64_t(log_every_) == 0) {
+       REXLOG_INFO("gow2_upscaler: frames {}-{}: {}; upscaled {} (failed {}), jittered draws {:.0f}/frame, camera found "
+-                  "on {} frames", frame_ - uint64_t(log_every_) + 1, frame_, upscaler_->Status(), up_ok_, up_fail_,
+-                  double(up_jittered_) / log_every_, up_camera_frames_);
++                  "on {} frames{}", frame_ - uint64_t(log_every_) + 1, frame_, upscaler_->Status(), up_ok_, up_fail_,
++                  double(up_jittered_) / log_every_, up_camera_frames_,
++                  up_dejitter_depth_ ? std::format(", scene depth resolves de-jittered {} (depth at infinity {:.6g})",
++                                                   up_dejittered_, up_depth_a_)
++                                     : std::string());
+       up_camera_frames_ = 0;
++      up_dejittered_ = 0;
+       if (up_camera_move_)
+         REXLOG_INFO("gow2_upscaler: camera move found on {} frames (mean {:.2f} units/frame; {} from the camera "
+                     "position, sign {} x{}), not found {}, cuts {}; last frame {} of {} matched objects agreed",
+@@ -5266,6 +5280,17 @@
+     b.constants[5] = dy;
+     b.constants[6] = DepthFlags(rt->key.storage_class);
+     b.constants[12] = rt->scale;  // Stage 7: source pixel = guest pixel x scale (one host sample per guest pixel)
++    // Upscalers (Gears 3 job 058): the frame's scene depth, drawn with this frame's jitter, is resolved at the
++    // unjittered centres - the same shift the scene draws got (UpscaleJitter: the viewport moves by up_jitter_ host
++    // pixels, after --gow2_upscale_jitter_scale). Other depth targets (shadow maps) and frames without jitter: as before.
++    if (upscaler_ && up_dejitter_depth_ && up_last_ok_ && up_camera_ && rt->key == up_depth_key_ &&
++        (up_jitter_.x != 0.0f || up_jitter_.y != 0.0f)) {
++      // c1.w and c2.xy: the only constants no depth-resolve path uses (the fused path sets c2.zw / c3.zw).
++      b.constants[7] = std::bit_cast<uint32_t>(up_depth_a_);
++      b.constants[8] = std::bit_cast<uint32_t>(up_jitter_.x);
++      b.constants[9] = std::bit_cast<uint32_t>(up_jitter_.y);
++      ++up_dejittered_;
++    }
+     b.constant_count = 16;
+     b.srv[0] = rt->texture;
+     b.srv_plane[0] = 0;
+diff -ruN a/src/layer0_xenos/renderer/upscaler.cpp b/src/layer0_xenos/renderer/upscaler.cpp
+--- a/src/layer0_xenos/renderer/upscaler.cpp	2026-10-22 22:41:19.324094013 -0700
++++ b/src/layer0_xenos/renderer/upscaler.cpp	2026-10-22 22:41:19.352186280 -0700
+@@ -65,6 +65,33 @@
+   return {Halton(i, 2) - 0.5f, Halton(i, 3) - 0.5f};
+ }
+ 
++float DejitterDepth(const float taps[4], float fx, float fy, float depth_a, float edge, int* nearest_tap) {
++  float lin_min = 0.0f, lin_max = 0.0f;
++  for (int i = 0; i < 4; ++i) {
++    const float l = 1.0f / std::max(std::fabs(depth_a - taps[i]), 1e-7f);
++    lin_min = i ? std::min(lin_min, l) : l;
++    lin_max = i ? std::max(lin_max, l) : l;
++  }
++  if (lin_max - lin_min <= edge * lin_min) {
++    if (nearest_tap) *nearest_tap = -1;
++    const float top = taps[0] + (taps[1] - taps[0]) * fx, bottom = taps[2] + (taps[3] - taps[2]) * fx;
++    return top + (bottom - top) * fy;
++  }
++  const int t = (fx >= 0.5f ? 1 : 0) + (fy >= 0.5f ? 2 : 0);
++  if (nearest_tap) *nearest_tap = t;
++  return taps[t];
++}
++
++float DepthAtInfinity(const Mat4& m) {
++  int best = -1;
++  float best_w = 0.0f;
++  for (int c = 0; c < 3; ++c)
++    if (std::fabs(m(3, c)) > best_w) best_w = std::fabs(m(3, c)), best = c;
++  if (best < 0 || best_w < 1e-12f) return 1.0f;
++  const float a = m(2, best) / m(3, best);
++  return std::isfinite(a) ? a : 1.0f;
++}
++
+ Mat4 Multiply(const Mat4& a, const Mat4& b) {
+   Mat4 o;
+   for (int r = 0; r < 4; ++r)
+diff -ruN a/tests/layer0_upscaler_test.cpp b/tests/layer0_upscaler_test.cpp
+--- a/tests/layer0_upscaler_test.cpp	2026-10-22 22:41:19.335759827 -0700
++++ b/tests/layer0_upscaler_test.cpp	2026-10-22 22:42:03.677807072 -0700
+@@ -238,3 +238,42 @@
+   CHECK_FALSE(up::CameraMoveFromObjects(p2, c2, got));
+   CHECK_FALSE(up::CameraMoveFromObjects({}, cur, got));
+ }
++
++// De-jittered depth resolves (Gears 3 job 058, --gow2_upscale_dejitter_depth; kDepthResolveCs does the same
++// arithmetic). Jittered texel k holds the surface at k + 0.5 - j; the resolve writes, for texel q, the depth at q + j.
++TEST_CASE("Dejittered depth: a plane comes back unshifted, an edge takes the nearest tap", "[upscaler]") {
++  // A plane's depth (a - b / w) is linear in screen space, so the bilinear resample is exact on it.
++  const auto z = [](float x) { return 0.95f + 0.0004f * x; };
++  for (const float j : {0.25f, -0.25f, 0.4f, -0.45f}) {
++    for (int q = 2; q < 8; ++q) {
++      const float p = float(q) + j;
++      const int i0 = int(std::floor(p));
++      const float f = p - float(i0);
++      const float taps[4] = {z(i0 + 0.5f - j), z(i0 + 1.5f - j), z(i0 + 0.5f - j), z(i0 + 1.5f - j)};
++      int tap = 9;
++      CHECK(up::DejitterDepth(taps, f, 0.0f, 1.0f, 0.05f, &tap) == Approx(z(q + 0.5f)).margin(1e-6));
++      CHECK(tap == -1);
++    }
++  }
++  // A step from a near surface (w ~ 10) to a far one (w ~ 1000): never an in-between depth.
++  const float edge[4] = {0.90f, 0.999f, 0.90f, 0.999f};
++  int tap = 9;
++  CHECK(up::DejitterDepth(edge, 0.25f, 0.0f, 1.0f, 0.05f, &tap) == 0.90f);
++  CHECK(tap == 0);
++  CHECK(up::DejitterDepth(edge, 0.75f, 0.6f, 1.0f, 0.05f, &tap) == 0.999f);
++  CHECK(tap == 3);
++  // No shift (fraction 0): the texel itself.
++  const float flat[4] = {0.97f, 0.971f, 0.972f, 0.973f};
++  CHECK(up::DejitterDepth(flat, 0.0f, 0.0f, 1.0f, 0.05f) == 0.97f);
++}
++
++TEST_CASE("Depth at infinity of a perspective matrix", "[upscaler]") {
++  // Gears 3 ch8's camera (job 058 probe, c0-c3 as UE3 passes them): depth = 0.999 - b / w.
++  const float c[16] = {-1.69415f, -0.0654293f, 0.61226f, 0.612873f, 1.31483f, -0.0843055f, 0.788896f, 0.789686f,
++                       0.0f, 3.81097f, 0.0279635f, 0.0279915f, -0.00837698f, -0.000465388f, -9.9861f, 0.00390625f};
++  CHECK(up::DepthAtInfinity(up::FromConstantsTransposed(c, 0)) == Approx(0.999f).margin(1e-4));
++  // A D3D-style perspective with a far plane: zf / (zf - zn).
++  CHECK(up::DepthAtInfinity(Perspective(1.0f, 16.0f / 9.0f, 10.0f, 10000.0f)) == Approx(10000.0f / 9990.0f).margin(1e-5));
++  // Not a perspective matrix: 1.
++  CHECK(up::DepthAtInfinity(up::Mat4{}) == 1.0f);
++}

@@ -1,0 +1,16 @@
+# What the public source (GitLab, and the release's -source archive via git archive) leaves out:
+# internal developer notes, the developer's own automation scripts and test launchers, old plans and release checklists.
+Gears1-Native/notes export-ignore
+Gears2-Native/notes export-ignore
+Gears3-Native/notes export-ignore
+GearsJ-Native/notes export-ignore
+**/Run-Jobs.bat export-ignore
+**/tools/queue_driver.ps1 export-ignore
+Gears2-Native/tools/job_runner.ps1 export-ignore
+**/tools/sharedpc export-ignore
+Gears3-Native/Play-Scout.bat export-ignore
+Gears3-Native/Play-Patches.bat export-ignore
+docs/plan-*.md export-ignore
+Gears3-Native/Test-DLSS-ch8-*.bat export-ignore
+tools/test_prompt_glyphs.bat export-ignore
+docs/ship-checklist-*.md export-ignore

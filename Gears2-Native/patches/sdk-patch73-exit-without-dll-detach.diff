@@ -1,0 +1,33 @@
+diff --git a/src/ui/rex_app.cpp b/src/ui/rex_app.cpp
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -47,6 +47,15 @@
+ #include <algorithm>
+ #include <filesystem>
+ #include <string_view>
++#if defined(_WIN32)   // COGBox patch 73: TerminateProcess
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#endif
+ 
+ REXCVAR_DEFINE_STRING(gpu_plugin, "", "GPU",
+                       "GPU emulation plugin to load at startup (e.g. 'xenos'); empty disables "
+@@ -535,6 +544,13 @@
+   // reclaims the rest.
+   REXLOG_INFO("Title terminated; hard-exiting process.");
+   rex::FlushLogging();
++#if defined(_WIN32)
++  // COGBox patch 73: end the process without DLL detach. _Exit -> ExitProcess still runs every DLL's
++  // DLL_PROCESS_DETACH after the other threads are gone, and NVIDIA Streamline's sl.dlss_g.dll then shuts DLSS frame
++  // generation down into NGX with its device and threads already dead: an access violation inside the loader's
++  // detach, and the process hangs (Gears 1 quit with DLSS-G, RC6-6). Nothing else runs at this point either way.
++  TerminateProcess(GetCurrentProcess(), 0);
++#endif
+   std::_Exit(0);
+ }
+ 

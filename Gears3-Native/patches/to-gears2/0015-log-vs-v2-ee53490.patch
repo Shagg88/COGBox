@@ -1,0 +1,84 @@
+--- a/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 04:02:29.975980809 -0700
++++ b/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 04:44:57.997743893 -0700
+@@ -174,6 +174,12 @@
+ // Gears 3 notes/15 (black squad): on chosen comparison frames, write each compared colour resolve raw to disk - our
+ // words, the reference's words (same convention), the last-writer draw ID per pixel - plus the frame's draw list, so a
+ // region that differs (a dark character) can be traced to the draw that wrote it. Diagnostic only; off by default.
++// Gears 3 patch 0015 (notes/15, ch2 rainbow: the tone-map draw is issued but rasterizes nothing; its VS takes the
++// position straight from vf0): log the vertex bytes a chosen vertex shader's draws read, as uploaded. Diagnostic only.
++REXCVAR_DEFINE_STRING(gow2_renderer_log_vs, "", "Gears2",
++                      "Vertex shader hash (16 hex digits, e.g. A9C7FE3382D41904): log each of its draws' vertex fetch "
++                      "constants and the first vertices (as floats, after the endian swap) at upload time (empty = off)");
++REXCVAR_DEFINE_INT32(gow2_renderer_log_vs_max, 400, "Gears2", "Most draws --gow2_renderer_log_vs logs");
+ REXCVAR_DEFINE_STRING(gow2_renderer_compare_dump_frames, "", "Gears2",
+                       "Comparison frames (comma list, e.g. 2700,2850) whose colour resolves are written raw to "
+                       "--gow2_renderer_compare_dump_dir: ours, the reference, the last-writer draw ID per pixel and the "
+@@ -761,6 +767,8 @@
+     use_textures_ = REXCVAR_GET(gow2_renderer_textures);
+     upload_watch_ = REXCVAR_GET(gow2_renderer_upload_watch);
+     vertex_direct_ = REXCVAR_GET(gow2_renderer_vertex_direct);
++    log_vs_hash_ = std::strtoull(REXCVAR_GET(gow2_renderer_log_vs).c_str(), nullptr, 16);  // patch 0015
++    log_vs_max_ = REXCVAR_GET(gow2_renderer_log_vs_max);
+     float_constants_trim_ = REXCVAR_GET(gow2_renderer_float_constants_trim);
+     gpu_by_target_ = REXCVAR_GET(gow2_renderer_gpu_by_target);
+     fused_scaled_ = REXCVAR_GET(gow2_renderer_fused_scaled_resolve);
+@@ -3792,6 +3800,14 @@
+     textures_part.Switch(kPartVertex);
+     std::memcpy(fetch_, &r[kRegFetchConst], sizeof(fetch_));
+     UploadVertexData(r, vsg);
++    if (log_vs_hash_ && vs_.hash == log_vs_hash_ && log_vs_logged_ <= log_vs_max_)  // patch 0015 v2: the draw's state
++      REXLOG_INFO("gow2_renderer: vs-log frame {} draw {}: prim {} count {} | viewport {} {} {} {} z {} {} scale {} {} "
++                  "offset {} {} xy_div_w {} clip_disabled {} | scissor {},{} {}x{} | alpha test func {}",
++                  frame_ + 1, draw_index_, prim, index_count, ps.viewport.x, ps.viewport.y, ps.viewport.width,
++                  ps.viewport.height, ps.viewport.z_min, ps.viewport.z_max, ps.viewport.ndc_scale[0],
++                  ps.viewport.ndc_scale[1], ps.viewport.ndc_offset[0], ps.viewport.ndc_offset[1],
++                  ps.viewport.xy_divided_by_w ? 1 : 0, ps.viewport.clip_disabled ? 1 : 0, ps.scissor.x, ps.scissor.y,
++                  ps.scissor.width, ps.scissor.height, int(ps.alpha_test.func));
+     if (needs_ps && (psg->vfetch_constants[0] | psg->vfetch_constants[1] | psg->vfetch_constants[2]))
+       UploadVertexData(r, *psg);
+     textures_part.Switch(kPartConstants);
+@@ -5199,6 +5215,7 @@
+       const uint32_t address = dw0 & 0x1FFFFFFCu;
+       uint64_t size = uint64_t((dw1 >> 2) & 0xFFFFFFu) * 4;
+       if (!size) return;
++      if (log_vs_hash_ && vs_.hash == log_vs_hash_) LogVertexBytes(base, i, address, size, dw1 & 3u);
+       if (address + size > (512ull << 20)) size = (512ull << 20) - address;
+       size = std::min<uint64_t>(size, 64ull << 20);
+       fetch_[2 * i + 1] &= 0x7FFFFFFFu;  // bit 31 is ours (t97); the hardware ignores it
+@@ -5316,6 +5333,27 @@
+     }
+   }
+ 
++  // Patch 0015: the bytes this draw's vertex fetch reads, now (what the upload copies), as up to 24 floats.
++  void LogVertexBytes(const uint8_t* base, uint32_t slot, uint32_t address, uint64_t size, uint32_t endian) {
++    if (log_vs_logged_ >= log_vs_max_ || address + size > (512ull << 20)) return;
++    ++log_vs_logged_;
++    const uint32_t words = uint32_t(std::min<uint64_t>(size / 4, 24));
++    std::string text;
++    for (uint32_t k = 0; k < words; ++k) {
++      uint32_t w;
++      std::memcpy(&w, base + address + 4 * k, 4);
++      w = Swap32(w, endian);
++      text += fmt::format("{}{:.6g}", k % 8 ? " " : (k ? " | " : ""), std::bit_cast<float>(w));
++    }
++    uint32_t gpu_pages = 0;
++    for (uint32_t p = address >> rr::GuestWatch::kPageShift;
++         p <= uint32_t((address + size - 1) >> rr::GuestWatch::kPageShift); ++p)
++      gpu_pages += watch_->GpuCurrent(p) ? 1u : 0u;
++    REXLOG_INFO("gow2_renderer: vs-log frame {} draw {}: vs {:016X} vf{} {:08X} size {} endian {} gpu-current pages {} "
++                "| vertex words as floats: {}",
++                frame_ + 1, draw_index_, vs_.hash, slot, address, size, endian, gpu_pages, text);
++  }
++
+   // Comparison-frame self-check of the upload watch: a skipped range whose bytes changed anyway is "stale".
+   void VerifySkipped(const uint8_t* data, uint64_t size, uint64_t hash) {
+     ++stats_.watch_checked;
+@@ -6652,6 +6690,8 @@
+     gpu::ReadbackHandle readback = 0;
+   };
+   std::bitset<::xenos::edram::kTileCount> trace_tiles_;
++  uint64_t log_vs_hash_ = 0;                         // patch 0015 (set with the other switches)
++  int32_t log_vs_max_ = 0, log_vs_logged_ = 0;
+   bool dump_parsed_ = false;                         // --gow2_renderer_compare_dump_frames
+   std::set<uint64_t> dump_frames_;
+   std::map<uint64_t, size_t> dump_records_written_;

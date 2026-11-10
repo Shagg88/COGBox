@@ -1,0 +1,80 @@
+diff --git a/src/kernel/xam/xam_net.cpp b/src/kernel/xam/xam_net.cpp
+--- a/src/kernel/xam/xam_net.cpp
++++ b/src/kernel/xam/xam_net.cpp
+@@ -643,6 +643,63 @@
+   return XSUCCEEDED(status) ? 0 : -1;
+ }
+ 
++// Gears2-Native SDK patch 26: getsockopt was an export stub that returned without writing the value (the game calls it
++// four times entering a Horde / multiplayer lobby). Reads the host socket's option; 4-byte values go back big-endian.
++u32 NetDll_getsockopt_entry(u32 caller, u32 socket_handle, u32 level, u32 optname,
++                            mapped_void optval_ptr, mapped_u32 optlen_ptr) {
++  auto socket = REX_KERNEL_OBJECTS()->LookupObject<XSocket>(socket_handle);
++  if (!socket) {
++    // WSAENOTSOCK
++    XThread::SetLastError(0x2736);
++    return -1;
++  }
++  if (!optval_ptr || !optlen_ptr) {
++    // WSAEFAULT
++    XThread::SetLastError(0x271E);
++    return -1;
++  }
++  const uint32_t guest_len = *optlen_ptr;
++  void* raw_out = optval_ptr;
++  uint8_t* out = static_cast<uint8_t*>(raw_out);
++  if (level == 0xFFFF && (optname == 0x5801 || optname == 0x5802)) {
++    // The Xbox-only "secure socket" options (set by setsockopt above): report off.
++    if (guest_len < 4) {
++      XThread::SetLastError(0x271E);
++      return -1;
++    }
++    std::memset(out, 0, 4);
++    *optlen_ptr = 4;
++    return 0;
++  }
++  char buf[64] = {};
++  int host_len = int(std::min<uint32_t>(guest_len, sizeof(buf)));
++#if REX_PLATFORM_WIN32
++  int ret = ::getsockopt(SOCKET(socket->native_handle()), int(level), int(optname), buf, &host_len);
++#else
++  socklen_t sl = socklen_t(host_len);
++  int ret = ::getsockopt(int(socket->native_handle()), int(level), int(optname), buf, &sl);
++  host_len = int(sl);
++#endif
++  if (ret < 0) {
++#if REX_PLATFORM_WIN32
++    XThread::SetLastError(WSAGetLastError());
++#else
++    XThread::SetLastError(0x2726);  // WSAEINVAL
++#endif
++    return -1;
++  }
++  if (host_len == 4) {
++    uint32_t v;
++    std::memcpy(&v, buf, 4);
++    const uint32_t be = (v >> 24) | ((v >> 8) & 0xFF00u) | ((v << 8) & 0xFF0000u) | (v << 24);
++    std::memcpy(out, &be, 4);
++  } else {
++    std::memcpy(out, buf, size_t(host_len));
++  }
++  *optlen_ptr = uint32_t(host_len);
++  return 0;
++}
++
+ u32 NetDll_ioctlsocket_entry(u32 caller, u32 socket_handle, u32 cmd, mapped_void arg_ptr) {
+   auto socket = REX_KERNEL_OBJECTS()->LookupObject<XSocket>(socket_handle);
+   if (!socket) {
+@@ -976,6 +1033,7 @@
+ REX_EXPORT(__imp__NetDll_closesocket, rex::kernel::xam::NetDll_closesocket_entry)
+ REX_EXPORT(__imp__NetDll_shutdown, rex::kernel::xam::NetDll_shutdown_entry)
+ REX_EXPORT(__imp__NetDll_setsockopt, rex::kernel::xam::NetDll_setsockopt_entry)
++REX_EXPORT(__imp__NetDll_getsockopt, rex::kernel::xam::NetDll_getsockopt_entry)
+ REX_EXPORT(__imp__NetDll_ioctlsocket, rex::kernel::xam::NetDll_ioctlsocket_entry)
+ REX_EXPORT(__imp__NetDll_bind, rex::kernel::xam::NetDll_bind_entry)
+ REX_EXPORT(__imp__NetDll_connect, rex::kernel::xam::NetDll_connect_entry)
+@@ -1102,4 +1160,3 @@
+ REX_EXPORT_STUB(__imp__NetDll_XnpUpdateConfigParams);
+ REX_EXPORT_STUB(__imp__NetDll_getpeername);
+ REX_EXPORT_STUB(__imp__NetDll_getsockname);
+-REX_EXPORT_STUB(__imp__NetDll_getsockopt);

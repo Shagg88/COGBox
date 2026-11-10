@@ -1,0 +1,34 @@
+NVIDIA DLSS Frame Generation, NVIDIA Streamline and NVIDIA Reflex
+=================================================================
+
+COGBox's ports can use NVIDIA DLSS Super Resolution / DLAA on NVIDIA GeForce RTX graphics cards and NVIDIA DLSS Frame
+Generation (experimental) on GeForce RTX 40 / 50 series cards. This uses the following NVIDIA software, redistributed
+unmodified in object code form in the release's shared\ folder (0.4.9; up to 0.4.8 next to each port program), which
+COGBox puts on each game's search path, as NVIDIA allows:
+
+  nvngx_dlss.dll
+      NVIDIA DLSS Super Resolution (NVIDIA DLSS SDK 310.9.16), Copyright (c) NVIDIA CORPORATION. All rights reserved.
+      NVIDIA RTX SDKs License (v. March 14, 2024) - see licenses\dlss-sdk\LICENSE.txt.
+
+  sl.interposer.dll, sl.common.dll, sl.dlss_g.dll, sl.reflex.dll, sl.pcl.dll
+      NVIDIA Streamline SDK 2.14.16 - Copyright (c) 2023 NVIDIA CORPORATION. All rights reserved.
+      MIT licence - see licenses\streamline-sdk\license.txt (third-party parts of Streamline:
+      licenses\streamline-sdk\3rd-party-licenses.md).
+
+  nvngx_dlssg.dll
+      NVIDIA DLSS Frame Generation (NVIDIA DLSS SDK 310.9.16 / NGX), Copyright (c) NVIDIA CORPORATION. All rights reserved.
+      NVIDIA RTX SDKs License - see licenses\streamline-release\nvngx_dlss.license.txt.
+
+  NVIDIA Reflex (through sl.reflex / sl.pcl)
+      NVIDIA Reflex SDK licence (License Agreement for NVIDIA Software Development Kits, v. December 9, 2020) - see
+      licenses\streamline-release\reflex.license.txt.
+
+This product uses the NVIDIA DLSS SDK, the NVIDIA Streamline SDK and the NVIDIA Reflex SDK.
+NVIDIA, GeForce RTX, DLSS and Reflex are trademarks and/or registered trademarks of NVIDIA Corporation in the U.S. and
+other countries. COGBox is an unofficial fan project and is not endorsed by NVIDIA.
+
+These NVIDIA files are distributed under terms at least as protective as NVIDIA's own: you may not reverse engineer,
+decompile or disassemble them, remove their copyright or other proprietary notices, or redistribute them on their own
+as a stand-alone product. They are provided "as is", without warranty of any kind from NVIDIA or from COGBox.
+The ports check NVIDIA's digital signature on sl.interposer.dll before loading it; if the files are missing or not
+signed, DLSS Frame Generation is simply not offered.

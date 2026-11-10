@@ -1,0 +1,66 @@
+--- a/third_party/rexglue-sdk/src/input/mnk/mnk_input_driver.cpp	2026-10-31 10:53:49.841828302 -0700
++++ b/third_party/rexglue-sdk/src/input/mnk/mnk_input_driver.cpp	2026-10-31 10:53:49.899055212 -0700
+@@ -82,8 +82,8 @@
+ // carrying modifier prefixes: "Q,I" or "Shift+W". Modifier matching is exact,
+ // so "Up" stays silent while Shift is held and "Shift+Up" stays silent without
+ // it. That is what lets the D-pad share the arrow keys. A consequence is
+-// that binding a bare modifier name ("Shift") can never fire, since holding it
+-// makes the live mask non-zero while the bind wants zero.
++// that a bare modifier name ("Shift") is treated as a key of its own: it fires
++// whenever held, and is then ignored by the other binds' modifier match.
+ constexpr uint8_t kModShift = 1u << 0;
+ constexpr uint8_t kModCtrl = 1u << 1;
+ constexpr uint8_t kModAlt = 1u << 2;
+@@ -135,9 +135,32 @@
+   return s;
+ }
+ 
++// The modifier bit a bare modifier key name stands for ("Shift", "Ctrl"...), or 0.
++uint8_t BareModifierBit(std::string_view token) {
++  if (token == "Shift" || token == "LShift" || token == "RShift") return kModShift;
++  if (token == "Ctrl" || token == "Control" || token == "LControl" || token == "RControl") return kModCtrl;
++  if (token == "Alt" || token == "LMenu" || token == "RMenu" || token == "Menu") return kModAlt;
++  return 0;
++}
++
++// Modifiers some bind uses as a key of its own (e.g. keybind_left_shoulder=Shift).
++// Those are left out of the exact modifier match, so holding them neither
++// silences the other binds (W while Shift is held) nor is needed by them.
++uint8_t g_bare_mod_mask = 0;
++
+ bool TokenPressed(const bool (&key_down)[256], std::string_view token, uint8_t live_mods) {
++  if (BareModifierBit(token)) {   // a bare modifier is a key: pressed whatever else is held
++    rex::ui::VirtualKey mvk = rex::ui::ParseVirtualKey(token);
++    if (mvk == rex::ui::VirtualKey::kNone) {
++      const uint8_t bit = BareModifierBit(token);
++      mvk = bit == kModShift ? rex::ui::VirtualKey::kShift
++            : bit == kModCtrl ? rex::ui::VirtualKey::kControl : rex::ui::VirtualKey::kMenu;
++    }
++    const uint16_t midx = static_cast<uint16_t>(mvk);
++    return midx < 256 && key_down[midx];
++  }
+   uint8_t want = TakeModifiers(token);
+-  if (want != live_mods) {
++  if (want != (live_mods & ~(g_bare_mod_mask & ~want))) {
+     return false;
+   }
+   rex::ui::VirtualKey vk = rex::ui::ParseVirtualKey(token);
+@@ -454,6 +477,18 @@
+ 
+   std::lock_guard lock(state_mutex_);
+ 
++  // Which modifiers are bound as keys of their own (live-editable cvars, so per call).
++  g_bare_mod_mask = 0;
++  for (const PadBind& pb : PadBinds()) {
++    std::string_view rest(pb.keys);
++    while (!rest.empty()) {
++      size_t comma = rest.find(',');
++      std::string_view tok = TrimSpaces(rest.substr(0, comma));
++      rest = comma == std::string_view::npos ? std::string_view() : rest.substr(comma + 1);
++      g_bare_mod_mask |= BareModifierBit(tok);
++    }
++  }
++
+   uint16_t buttons = 0;
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_a)))
+     buttons |= X_INPUT_GAMEPAD_A;

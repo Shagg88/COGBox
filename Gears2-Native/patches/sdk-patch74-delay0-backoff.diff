@@ -1,0 +1,47 @@
+diff --git a/src/system/xthread.cpp b/src/system/xthread.cpp
+--- a/src/system/xthread.cpp
++++ b/src/system/xthread.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <chrono>
+ #include <cstring>
+ 
+ #include <fmt/format.h>
+@@ -42,6 +43,15 @@
+ 
+ REXCVAR_DEFINE_BOOL(ignore_thread_affinities, true, "Kernel",
+                     "Ignores game-specified thread affinities");
++// COGBox patch 74 (0.5.1, gameplay diagnostics 10 Nov: Gears 1's main thread spent ~half of its 90% of a core in
++// KeDelayExecutionThread(0) -> SwitchToThread): a thread that keeps asking for a zero delay is polling. After
++// --kernel_delay0_spin_limit zero delays in a row (each within 2 ms of the last) it really sleeps for
++// --kernel_delay0_backoff_ms instead of yielding; a longer gap (not counting our own sleep) resets the count. 0 = off.
++// Milliseconds because Windows Sleep has 1 ms steps (review: a sub-ms sleep became Sleep(0), another yield).
++REXCVAR_DEFINE_INT32(kernel_delay0_spin_limit, 0, "Kernel",
++                     "Patch 74: zero delays in a row before a polling thread sleeps instead of yielding (0 = off, the old behaviour)");
++REXCVAR_DEFINE_INT32(kernel_delay0_backoff_ms, 1, "Kernel",
++                     "Patch 74: how long a polling thread sleeps, in milliseconds (1-5), once kernel_delay0_spin_limit is reached");
+ 
+ namespace rex::system {
+ 
+@@ -1025,7 +1035,18 @@
+     }
+   } else {
+     if (timeout_ms == 0) {
+-      if (priority_ <= rex::thread::ThreadPriority::kBelowNormal) {
++      // patch 74: count zero delays in a row on this thread (thread_local: only this thread polls its own count)
++      thread_local uint32_t zero_run = 0;
++      thread_local std::chrono::steady_clock::time_point last_zero{};
++      const auto now = std::chrono::steady_clock::now();
++      zero_run = (now - last_zero < std::chrono::milliseconds(2)) ? zero_run + 1 : 1;
++      last_zero = now;
++      const int32_t spin_limit = REXCVAR_GET(kernel_delay0_spin_limit);
++      if (spin_limit > 0 && zero_run > uint32_t(spin_limit)) {
++        const int32_t ms = std::min(5, std::max(1, int32_t(REXCVAR_GET(kernel_delay0_backoff_ms))));
++        rex::thread::Sleep(std::chrono::milliseconds(ms));
++        last_zero = std::chrono::steady_clock::now();  // our own sleep doesn't end the polling run
++      } else if (priority_ <= rex::thread::ThreadPriority::kBelowNormal) {
+         rex::thread::Sleep(std::chrono::microseconds(100));
+       } else {
+         rex::thread::MaybeYield();

@@ -1,0 +1,333 @@
+diff --git a/include/rex/frame_hooks.h b/include/rex/frame_hooks.h
+index 2f1bedf..d1a7952 100644
+--- a/include/rex/frame_hooks.h
++++ b/include/rex/frame_hooks.h
+@@ -5,9 +5,13 @@
+ #include <atomic>
+ #include <cstdint>
+ 
++// SDK patch 69: FrameHooks has the Vulkan members (vk_all_queues, vk_create_swap_chain, vk_before_present).
++#define REX_FRAME_HOOKS_VK 1
++
+ namespace rex {
+ 
+ using FrameHook = void (*)();
++struct VulkanSwapChainHook;  // SDK patch 69 (below)
+ 
+ struct FrameHooks {
+   std::atomic<FrameHook> guest_swap{nullptr};     // guest thread, end of VdSwap: one game frame handed to the GPU
+@@ -27,6 +31,55 @@ struct FrameHooks {
+   // generation presents once per new game image; a repaint of the same image must not count as a frame).
+   // rect: where the guest output was painted in the back buffer (x, y, width, height; all 0 = not painted).
+   std::atomic<bool (*)(void* guest_output_resource, void* d3d12_queue, const int32_t* rect)> before_present{nullptr};
++  // SDK patch 69 (frame generation on Vulkan; new members only at the end, so an exe built before this patch still
++  // finds the old ones where they were). vk_all_queues: set before the Vulkan device is made (OnPostInitLogging) - the
++  // device then also creates every queue of each graphics / compute / transfer family (up to 4 a family), for AMD's
++  // frame-generation swap chain, which needs its own async compute, present and image acquire queues.
++  std::atomic<bool> vk_all_queues{false};
++  // When set, the Vulkan presenter makes its swap chain through vk_create_swap_chain (VulkanSwapChainHook below; return
++  // false, or leave swapchain null, to have it made the usual way) and then uses the hook's functions for that swap
++  // chain's images, acquire, present and destroy. A swap chain from the hook is never passed as oldSwapchain: the
++  // presenter destroys it (after its own GPU work on it has finished) before it makes the next one.
++  std::atomic<bool (*)(VulkanSwapChainHook* io)> vk_create_swap_chain{nullptr};
++  // Presenter thread, after a paint's commands were submitted and before Present (Vulkan): the guest output image the
++  // paint showed (VkImage, null = none), and rect as for before_present. Unlike D3D12 a Present can't be skipped here
++  // (the swap chain image is already acquired and drawn): every paint is presented. Work the hook submits goes on the
++  // presenter's graphics queue through the lock it was given at creation. Only called for a hook-made swap chain.
++  std::atomic<void (*)(void* guest_output_image, const int32_t* rect)> vk_before_present{nullptr};
++};
++
++// SDK patch 69: what the Vulkan presenter hands vk_create_swap_chain (Vulkan handles as void*; the game side casts).
++struct VulkanSwapChainHook {
++  // In.
++  void* instance = nullptr;                // VkInstance
++  void* physical_device = nullptr;         // VkPhysicalDevice
++  void* device = nullptr;                  // VkDevice
++  void* get_instance_proc_addr = nullptr;  // PFN_vkGetInstanceProcAddr
++  void* get_device_proc_addr = nullptr;    // PFN_vkGetDeviceProcAddr
++  const void* create_info = nullptr;       // const VkSwapchainCreateInfoKHR* (oldSwapchain is always VK_NULL_HANDLE)
++  // The queue the presenter submits its paints on (graphics + compute family, queue 0) and presents on when the swap
++  // chain came from the hook. Others submit to it too: lock / unlock (with queue_lock_user) around every use.
++  void* game_queue = nullptr;  // VkQueue
++  uint32_t game_family = 0;
++  void* queue_lock_user = nullptr;
++  void (*lock_queue)(void* user) = nullptr;
++  void (*unlock_queue)(void* user) = nullptr;
++  // Every other queue the device has (nobody else uses them): VkQueue, family, VkQueueFlags, and whether the family can
++  // present to this surface.
++  struct Queue {
++    void* queue = nullptr;
++    uint32_t family = 0;
++    uint32_t flags = 0;
++    bool present = false;
++  };
++  Queue queues[32];
++  uint32_t queue_count = 0;
++  // Out.
++  void* swapchain = nullptr;             // VkSwapchainKHR
++  void* get_swapchain_images = nullptr;  // PFN_vkGetSwapchainImagesKHR
++  void* acquire_next_image = nullptr;    // PFN_vkAcquireNextImageKHR
++  void* queue_present = nullptr;         // PFN_vkQueuePresentKHR - called with game_queue, without holding its lock
++  void* destroy_swapchain = nullptr;     // PFN_vkDestroySwapchainKHR
+ };
+ 
+ // One shared set, defined in the SDK runtime (xboxkrnl_video.cpp).
+diff --git a/include/rex/ui/vulkan/presenter.h b/include/rex/ui/vulkan/presenter.h
+index 56ee43b..5e04454 100644
+--- a/include/rex/ui/vulkan/presenter.h
++++ b/include/rex/ui/vulkan/presenter.h
+@@ -349,11 +349,19 @@ class VulkanPresenter final : public Presenter {
+     // call (though it may fail before the vkCreateSwapchainKHR that will
+     // technically retire it, so it will be in an undefined state), and needs to
+     // be destroyed externally no matter what the result is.
++    // SDK patch 69: the functions for a swap chain made by the frame-generation hook (all null = the device's own).
++    struct SwapchainFunctions {
++      PFN_vkGetSwapchainImagesKHR get_images = nullptr;
++      PFN_vkAcquireNextImageKHR acquire = nullptr;
++      PFN_vkQueuePresentKHR present = nullptr;
++      PFN_vkDestroySwapchainKHR destroy = nullptr;
++    };
++
+     static VkSwapchainKHR CreateSwapchainForVulkanSurface(
+         const VulkanDevice* vulkan_device, VkSurfaceKHR surface, uint32_t width, uint32_t height,
+         VkSwapchainKHR old_swapchain, uint32_t& present_queue_family_out,
+         VkFormat& image_format_out, VkExtent2D& image_extent_out, bool& is_fifo_out,
+-        bool& ui_surface_unusable_out);
++        bool& ui_surface_unusable_out, SwapchainFunctions& functions_out);
+ 
+     // Destroys the swapchain and its derivatives, nulls `swapchain` and returns
+     // the original swapchain object, if it existed, for use as oldSwapchain if
+@@ -412,6 +420,7 @@ class VulkanPresenter final : public Presenter {
+     VkSurfaceKHR vulkan_surface = VK_NULL_HANDLE;
+     uint32_t present_queue_family = UINT32_MAX;
+     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
++    SwapchainFunctions swapchain_functions;  // SDK patch 69
+     VkExtent2D swapchain_extent = {};
+     bool swapchain_is_fifo = false;
+     std::vector<VkImage> swapchain_images;
+diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
+index 67dda3c..546049d 100644
+--- a/src/ui/vulkan/vulkan_device.cpp
++++ b/src/ui/vulkan/vulkan_device.cpp
+@@ -20,6 +20,7 @@
+ #include <rex/logging.h>
+ #include <rex/platform.h>
+ #include <rex/string.h>
++#include <rex/frame_hooks.h>  // SDK patch 69
+ #include <rex/ui/vulkan/device.h>
+ 
+ REXCVAR_DEFINE_BOOL(vulkan_require_fragment_stores_and_atomics, true, "UI/Vulkan",
+@@ -492,6 +493,18 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+         size_t(1), device->queue_families_[device->queue_family_sparse_binding_].queues.size()));
+   }
+ 
++  // SDK patch 69: AMD's frame-generation swap chain needs queues of its own (async compute, present, image acquire),
++  // so with the hook's request every graphics / compute / transfer family gets all its queues (at most 4).
++  if (rex::GetFrameHooks().vk_all_queues.load(std::memory_order_acquire)) {
++    for (uint32_t i = 0; i < queue_family_count; ++i) {
++      const VkQueueFamilyProperties& p = queue_families[i];
++      if (!(p.queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT))) continue;
++      std::vector<std::unique_ptr<Queue>>& qs = device->queue_families_[i].queues;
++      qs.resize(std::max(qs.size(), size_t(std::min<uint32_t>(p.queueCount, 4))));
++    }
++    REXLOG_INFO("Vulkan device: SDK patch 69: every queue of each family created (frame generation)");
++  }
++
+   size_t max_enabled_queues_per_family = 0;
+   for (const QueueFamily& queue_family : device->queue_families_) {
+     max_enabled_queues_per_family =
+diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
+index 23645ef..8bd758e 100644
+--- a/src/ui/vulkan/vulkan_presenter.cpp
++++ b/src/ui/vulkan/vulkan_presenter.cpp
+@@ -21,6 +21,7 @@
+ 
+ #include <rex/assert.h>
+ #include <rex/cvar.h>
++#include <rex/frame_hooks.h>  // SDK patch 69
+ #include <rex/logging.h>
+ #include <rex/math.h>
+ #include <rex/platform.h>
+@@ -765,11 +766,22 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+   // GPU.
+   if (paint_context_.vulkan_surface != VK_NULL_HANDLE) {
+     VkSwapchainKHR old_swapchain = paint_context_.PrepareForSwapchainRetirement();
++    // SDK patch 69: a hook-made swap chain is destroyed through the hook's function, and with the hook in place the
++    // old swap chain goes before the new one is made (AMD's swap chain is never made from an old one).
++    if (old_swapchain != VK_NULL_HANDLE &&
++        (paint_context_.swapchain_functions.destroy ||
++         rex::GetFrameHooks().vk_create_swap_chain.load(std::memory_order_acquire))) {
++      (paint_context_.swapchain_functions.destroy ? paint_context_.swapchain_functions.destroy
++                                                  : dfn.vkDestroySwapchainKHR)(device, old_swapchain, nullptr);
++      old_swapchain = VK_NULL_HANDLE;
++    }
++    paint_context_.swapchain_functions = {};
+     bool surface_unusable;
+     paint_context_.swapchain = PaintContext::CreateSwapchainForVulkanSurface(
+         vulkan_device_, paint_context_.vulkan_surface, new_surface_width, new_surface_height,
+         old_swapchain, paint_context_.present_queue_family, new_swapchain_format,
+-        paint_context_.swapchain_extent, paint_context_.swapchain_is_fifo, surface_unusable);
++        paint_context_.swapchain_extent, paint_context_.swapchain_is_fifo, surface_unusable,
++        paint_context_.swapchain_functions);
+     // Destroy the old swapchain that may be retired now.
+     if (old_swapchain != VK_NULL_HANDLE) {
+       dfn.vkDestroySwapchainKHR(device, old_swapchain, nullptr);
+@@ -873,7 +885,8 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+     paint_context_.swapchain = PaintContext::CreateSwapchainForVulkanSurface(
+         vulkan_device_, paint_context_.vulkan_surface, new_surface_width, new_surface_height,
+         VK_NULL_HANDLE, paint_context_.present_queue_family, new_swapchain_format,
+-        paint_context_.swapchain_extent, paint_context_.swapchain_is_fifo, surface_unusable);
++        paint_context_.swapchain_extent, paint_context_.swapchain_is_fifo, surface_unusable,
++        paint_context_.swapchain_functions);
+     if (paint_context_.swapchain == VK_NULL_HANDLE) {
+       // Failed to create the swapchain for the new Vulkan surface - destroy the
+       // Vulkan surface.
+@@ -967,7 +980,9 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+   for (;;) {
+     uint32_t swapchain_image_count = uint32_t(paint_context_.swapchain_images.size());
+     bool swapchain_images_were_empty = !swapchain_image_count;
+-    swapchain_images_get_result = dfn.vkGetSwapchainImagesKHR(
++    swapchain_images_get_result = (paint_context_.swapchain_functions.get_images  // SDK patch 69
++                                       ? paint_context_.swapchain_functions.get_images
++                                       : dfn.vkGetSwapchainImagesKHR)(
+         device, paint_context_.swapchain, &swapchain_image_count,
+         swapchain_images_were_empty ? nullptr : paint_context_.swapchain_images.data());
+     // If the original swapchain image count was 0 (first call), SUCCESS is
+@@ -1109,8 +1124,10 @@ bool VulkanPresenter::RefreshGuestOutputImpl(
+ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
+     const VulkanDevice* vulkan_device, VkSurfaceKHR surface, uint32_t width, uint32_t height,
+     VkSwapchainKHR old_swapchain, uint32_t& present_queue_family_out, VkFormat& image_format_out,
+-    VkExtent2D& image_extent_out, bool& is_fifo_out, bool& ui_surface_unusable_out) {
++    VkExtent2D& image_extent_out, bool& is_fifo_out, bool& ui_surface_unusable_out,
++    SwapchainFunctions& functions_out) {
+   ui_surface_unusable_out = false;
++  functions_out = {};
+ 
+   const VulkanInstance::Functions& ifn = vulkan_device->vulkan_instance()->functions();
+   const VkPhysicalDevice physical_device = vulkan_device->physical_device();
+@@ -1405,8 +1422,60 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
+   }
+   swapchain_create_info.clipped = VK_TRUE;
+   swapchain_create_info.oldSwapchain = old_swapchain;
+-  VkSwapchainKHR swapchain;
+-  if (dfn.vkCreateSwapchainKHR(device, &swapchain_create_info, nullptr, &swapchain) != VK_SUCCESS) {
++  VkSwapchainKHR swapchain = VK_NULL_HANDLE;
++  // SDK patch 69: the frame-generation hook may make the swap chain (AMD's) with the same description.
++  bool hooked = false;
++  if (auto make = rex::GetFrameHooks().vk_create_swap_chain.load(std::memory_order_acquire)) {
++    const VulkanInstance* vulkan_instance = vulkan_device->vulkan_instance();
++    VkSwapchainCreateInfoKHR hook_info = swapchain_create_info;
++    hook_info.oldSwapchain = VK_NULL_HANDLE;
++    rex::VulkanSwapChainHook io;
++    io.instance = vulkan_instance->instance();
++    io.physical_device = physical_device;
++    io.device = device;
++    io.get_instance_proc_addr = reinterpret_cast<void*>(ifn.vkGetInstanceProcAddr);
++    io.get_device_proc_addr = reinterpret_cast<void*>(ifn.vkGetDeviceProcAddr);
++    io.create_info = &hook_info;
++    VulkanDevice::Queue* game_queue = queue_families[queue_family_index_graphics_compute].queues[0].get();
++    io.game_queue = game_queue->queue;
++    io.game_family = queue_family_index_graphics_compute;
++    io.queue_lock_user = game_queue;
++    io.lock_queue = [](void* q) { static_cast<VulkanDevice::Queue*>(q)->mutex.lock(); };
++    io.unlock_queue = [](void* q) { static_cast<VulkanDevice::Queue*>(q)->mutex.unlock(); };
++    uint32_t family_count = 0;
++    ifn.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &family_count, nullptr);
++    std::vector<VkQueueFamilyProperties> family_properties(family_count);
++    ifn.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &family_count, family_properties.data());
++    for (uint32_t f = 0; f < uint32_t(queue_families.size()) && f < family_count; ++f) {
++      VkBool32 can_present = VK_FALSE;
++      if (ifn.vkGetPhysicalDeviceSurfaceSupportKHR(physical_device, f, surface, &can_present) != VK_SUCCESS)
++        can_present = VK_FALSE;
++      for (size_t q = 0; q < queue_families[f].queues.size(); ++q) {
++        if ((f == queue_family_index_graphics_compute && q == 0) || !queue_families[f].queues[q] ||
++            io.queue_count >= uint32_t(rex::countof(io.queues)))
++          continue;
++        rex::VulkanSwapChainHook::Queue& out = io.queues[io.queue_count++];
++        out.queue = queue_families[f].queues[q]->queue;
++        out.family = f;
++        out.flags = uint32_t(family_properties[f].queueFlags);
++        out.present = can_present == VK_TRUE;
++      }
++    }
++    if (make(&io) && io.swapchain && io.get_swapchain_images && io.acquire_next_image && io.queue_present &&
++        io.destroy_swapchain) {
++      swapchain = VkSwapchainKHR(io.swapchain);
++      functions_out.get_images = reinterpret_cast<PFN_vkGetSwapchainImagesKHR>(io.get_swapchain_images);
++      functions_out.acquire = reinterpret_cast<PFN_vkAcquireNextImageKHR>(io.acquire_next_image);
++      functions_out.present = reinterpret_cast<PFN_vkQueuePresentKHR>(io.queue_present);
++      functions_out.destroy = reinterpret_cast<PFN_vkDestroySwapchainKHR>(io.destroy_swapchain);
++      queue_family_index_present = queue_family_index_graphics_compute;  // presented on the game queue
++      hooked = true;
++    }
++    REXLOG_INFO("VulkanPresenter: SDK patch 69: {}", hooked ? "swap chain made by the frame-generation hook"
++                                                            : "the frame-generation hook declined; usual swap chain");
++  }
++  if (!hooked &&
++      dfn.vkCreateSwapchainKHR(device, &swapchain_create_info, nullptr, &swapchain) != VK_SUCCESS) {
+     REXLOG_ERROR("VulkanPresenter: Failed to create a swapchain");
+     return VK_NULL_HANDLE;
+   }
+@@ -1448,9 +1517,11 @@ VkSwapchainKHR VulkanPresenter::PaintContext::PrepareForSwapchainRetirement() {
+ void VulkanPresenter::PaintContext::DestroySwapchainAndVulkanSurface() {
+   VkSwapchainKHR old_swapchain = PrepareForSwapchainRetirement();
+   if (old_swapchain != VK_NULL_HANDLE) {
+-    vulkan_device->functions().vkDestroySwapchainKHR(vulkan_device->device(), old_swapchain,
+-                                                     nullptr);
++    (swapchain_functions.destroy ? swapchain_functions.destroy  // SDK patch 69
++                                 : vulkan_device->functions().vkDestroySwapchainKHR)(
++        vulkan_device->device(), old_swapchain, nullptr);
+   }
++  swapchain_functions = {};
+   present_queue_family = UINT32_MAX;
+   if (vulkan_surface != VK_NULL_HANDLE) {
+     const VulkanInstance* vulkan_instance = vulkan_device->vulkan_instance();
+@@ -1570,8 +1641,10 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+   VkSemaphore acquire_semaphore = paint_submission.acquire_semaphore();
+   uint32_t swapchain_image_index;
+   VkResult acquire_result =
+-      dfn.vkAcquireNextImageKHR(device, paint_context_.swapchain, UINT64_MAX, acquire_semaphore,
+-                                VK_NULL_HANDLE, &swapchain_image_index);
++      (paint_context_.swapchain_functions.acquire ? paint_context_.swapchain_functions.acquire  // SDK patch 69
++                                                  : dfn.vkAcquireNextImageKHR)(
++          device, paint_context_.swapchain, UINT64_MAX, acquire_semaphore, VK_NULL_HANDLE,
++          &swapchain_image_index);
+   switch (acquire_result) {
+     case VK_SUCCESS:
+     case VK_SUBOPTIMAL_KHR:
+@@ -1631,6 +1704,7 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+   GuestOutputProperties guest_output_properties;
+   GuestOutputPaintConfig guest_output_paint_config;
+   std::shared_ptr<GuestOutputImage> guest_output_image;
++  int32_t fg_rect[4] = {};  // SDK patch 69: where the guest output lands in the swap chain image (x, y, width, height)
+   {
+     uint32_t guest_output_mailbox_index;
+     std::unique_lock<std::mutex> guest_output_consumer_lock(ConsumeGuestOutput(
+@@ -1653,6 +1727,10 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+         paint_context_.swapchain_extent.height, max_framebuffer_extent.width,
+         max_framebuffer_extent.height, guest_output_paint_config);
+     if (guest_output_flow.effect_count) {
++      fg_rect[0] = guest_output_flow.output_x;  // SDK patch 69
++      fg_rect[1] = guest_output_flow.output_y;
++      fg_rect[2] = int32_t(guest_output_flow.effect_output_sizes[guest_output_flow.effect_count - 1].first);
++      fg_rect[3] = int32_t(guest_output_flow.effect_output_sizes[guest_output_flow.effect_count - 1].second);
+       // Store the main target reference to the guest output image so it's not
+       // destroyed while it's still potentially in use by main target painting
+       // queued on the GPU.
+@@ -2237,7 +2315,15 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+   present_info.pImageIndices = &swapchain_image_index;
+   present_info.pResults = nullptr;
+   VkResult present_result;
+-  {
++  if (paint_context_.swapchain_functions.present) {
++    // SDK patch 69: the hook's swap chain - frame generation sees the paint first, then its present runs on the game
++    // queue without our lock (AMD submits there through the lock it was given).
++    if (auto gate = rex::GetFrameHooks().vk_before_present.load(std::memory_order_acquire))
++      gate(guest_output_image ? reinterpret_cast<void*>(guest_output_image->image()) : nullptr, fg_rect);
++    const VkQueue game_queue =
++        vulkan_device_->queue_families()[vulkan_device_->queue_family_graphics_compute()].queues[0]->queue;
++    present_result = paint_context_.swapchain_functions.present(game_queue, &present_info);
++  } else {
+     const VulkanDevice::Queue::Acquisition queue_acquisition =
+         vulkan_device_->AcquireQueue(paint_context_.present_queue_family, 0);
+     present_result = dfn.vkQueuePresentKHR(queue_acquisition.queue(), &present_info);

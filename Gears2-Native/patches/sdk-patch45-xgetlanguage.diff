@@ -1,0 +1,45 @@
+--- a/src/kernel/xam/xam_info.cpp	2026-10-29 23:07:26.045913266 -0700
++++ b/src/kernel/xam/xam_info.cpp	2026-10-29 23:07:26.058356624 -0700
+@@ -9,12 +9,14 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <rex/cvar.h>
+ #include <rex/kernel/xam/module.h>
+ #include <rex/kernel/xam/private.h>
+ #include <rex/logging.h>
+ #include <rex/hook.h>
+ #include <rex/types.h>
+ #include <rex/string.h>
++#include <rex/system/flags.h>
+ #include <rex/system/kernel_state.h>
+ #include <rex/system/user_module.h>
+ #include <rex/system/xenumerator.h>
+@@ -182,20 +184,15 @@
+   return xeXGetGameRegion();
+ }
+ 
++// Patch 45 (COGBox GitHub #45): XGetLanguage always answered English, so a game that asks it (Judgment, Gears 3)
++// ignored --user_language and only languages it picks from the country (Polish) worked. It now answers the
++// console's language setting (user_language, the same value XCONFIG_USER_LANGUAGE gives), English when unset.
+ u32 XGetLanguage_entry() {
+-  auto desired_language = XLanguage::kEnglish;
+-
+-  // Switch the language based on game region.
+-  // TODO(benvanik): pull from xex header.
+-  uint32_t game_region = XEX_REGION_NTSCU;
+-  if (game_region & XEX_REGION_NTSCU) {
+-    desired_language = XLanguage::kEnglish;
+-  } else if (game_region & XEX_REGION_NTSCJ) {
+-    desired_language = XLanguage::kJapanese;
++  const uint32_t language = REXCVAR_GET(user_language);
++  if (language >= 1 && language <= 25) {
++    return language;
+   }
+-  // Add more overrides?
+-
+-  return uint32_t(desired_language);
++  return uint32_t(XLanguage::kEnglish);
+ }
+ 
+ u32 XamGetCurrentTitleId_entry() {

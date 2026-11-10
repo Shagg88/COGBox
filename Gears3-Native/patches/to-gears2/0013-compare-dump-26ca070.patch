@@ -1,0 +1,136 @@
+--- a/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 02:34:41.200817927 -0700
++++ b/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 02:34:41.219752839 -0700
+@@ -157,6 +157,15 @@
+                       "event is logged in order on comparison frames: ownership claims (both rules), transfers, draws, "
+                       "resolves, with one sample of our depth target after each (default: ch02 copy 2's resolve rect, "
+                       "shadow target base 1440 pitch 800, tile rows 0-3, columns 0-1)");
++// Gears 3 notes/15 (black squad): on chosen comparison frames, write each compared colour resolve raw to disk - our
++// words, the reference's words (same convention), the last-writer draw ID per pixel - plus the frame's draw list, so a
++// region that differs (a dark character) can be traced to the draw that wrote it. Diagnostic only; off by default.
++REXCVAR_DEFINE_STRING(gow2_renderer_compare_dump_frames, "", "Gears2",
++                      "Comparison frames (comma list, e.g. 2700,2850) whose colour resolves are written raw to "
++                      "--gow2_renderer_compare_dump_dir: ours, the reference, the last-writer draw ID per pixel and the "
++                      "frame's draw list (empty = off)");
++REXCVAR_DEFINE_STRING(gow2_renderer_compare_dump_dir, "compare-dump", "Gears2",
++                      "Folder for --gow2_renderer_compare_dump_frames (relative = to the working directory)");
+ REXCVAR_DEFINE_STRING(gow2_renderer_tile_trace_pixel, "7,0", "Gears2",
+                       "Which pixel of a traced tile is sampled (x,y inside the tile, in the target's host pixels)");
+ REXCVAR_DEFINE_BOOL(gow2_renderer_float24_remap, true, "Gears2",
+@@ -5855,6 +5864,66 @@
+     return m;
+   }
+ 
++  bool DumpFrame(uint64_t frame) {
++    if (!dump_parsed_) {
++      dump_parsed_ = true;
++      const std::string spec = REXCVAR_GET(gow2_renderer_compare_dump_frames);
++      size_t pos = 0;
++      while (pos < spec.size()) {
++        const size_t end = std::min(spec.find(',', pos), spec.size());
++        const std::string part = spec.substr(pos, end - pos);
++        if (!part.empty()) dump_frames_.insert(std::strtoull(part.c_str(), nullptr, 10));
++        pos = end + 1;
++      }
++    }
++    return dump_frames_.count(frame) != 0;
++  }
++
++  // Files: f<frame>-c<copy>.ours.bin / .guest.bin (w*h*words little-endian uint32, our word convention for both),
++  // .id.bin (w*h uint32: 0 not written this frame, 1 transfer, even N = draw record N/2-1, odd N >= 3 = that record
++  // drawn with a texture stand-in), f<frame>-draws.txt (the record list) and index.txt (one line per dumped copy).
++  void WriteCompareDump(const PendingResolve& p, uint32_t w, uint32_t h, const std::vector<uint32_t>& ours,
++                        const std::vector<uint32_t>& guest, const std::vector<uint32_t>& id, const std::string& verdict) {
++    std::error_code ec;
++    const std::filesystem::path dir = REXCVAR_GET(gow2_renderer_compare_dump_dir);
++    std::filesystem::create_directories(dir, ec);
++    char stem[64];
++    std::snprintf(stem, sizeof(stem), "f%06llu-c%03u", static_cast<unsigned long long>(p.frame), p.copy);
++    auto put = [&](const char* ext, const std::vector<uint32_t>& v) {
++      if (FILE* f = std::fopen((dir / (std::string(stem) + ext)).string().c_str(), "wb")) {
++        std::fwrite(v.data(), 4, v.size(), f);
++        std::fclose(f);
++      }
++    };
++    put(".ours.bin", ours);
++    put(".guest.bin", guest);
++    put(".id.bin", id);
++    if (FILE* f = std::fopen((dir / "index.txt").string().c_str(), "ab")) {
++      std::fprintf(f, "%s w %u h %u words %u dest_format %u swap %d draws %u-%u | %s | %s\n", stem, w, h, p.words,
++                   p.dest_format, p.swap ? 1 : 0, p.first_draw, p.last_draw, p.source.c_str(), verdict.c_str());
++      std::fclose(f);
++    }
++    // The frame's record list grows during the frame: rewrite it whenever a later copy sees more records.
++    if (p.records && p.records->size() > dump_records_written_[p.frame]) {
++      dump_records_written_[p.frame] = p.records->size();
++      char name[48];
++      std::snprintf(name, sizeof(name), "f%06llu-draws.txt", static_cast<unsigned long long>(p.frame));
++      if (FILE* f = std::fopen((dir / name).string().c_str(), "wb")) {
++        for (size_t i = 0; i < p.records->size(); ++i) {
++          const DrawRecord& r = (*p.records)[i];
++          std::fprintf(f,
++                       "id %zu draw %u vs %016llX ps %016llX prim %u target %u colour %d mask %X blend %d %u %u %u "
++                       "depth func %u write %d stencil write %d func %u ref %02X stand-in %d vs_relative %d\n",
++                       (i + 1) * 2, r.draw_index, static_cast<unsigned long long>(r.vs),
++                       static_cast<unsigned long long>(r.ps), r.primitive, r.target, r.colour ? 1 : 0, r.colour_mask,
++                       r.colour_blend ? 1 : 0, r.blend_src, r.blend_dst, r.blend_op, r.depth_func, r.depth_write ? 1 : 0,
++                       r.stencil_write ? 1 : 0, r.stencil_func, r.stencil_ref, r.stand_in ? 1 : 0, r.vs_relative ? 1 : 0);
++        }
++        std::fclose(f);
++      }
++    }
++  }
++
+   void CompareColour(const PendingResolve& p) {
+     uint32_t row_pitch = 0;
+     const uint8_t* ours = backend_->ReadbackData(p.readback, row_pitch);
+@@ -5876,6 +5945,13 @@
+       double diff;
+     };
+     std::vector<Example> examples, transferred_examples;
++    // --gow2_renderer_compare_dump_frames: every pixel's two values and last writer, for an offline diff image.
++    std::vector<uint32_t> dump_ours, dump_guest, dump_id;
++    if (ours && !p.guest.empty() && DumpFrame(p.frame)) {
++      dump_ours.assign(size_t(w) * h * p.words, 0u);
++      dump_guest.assign(dump_ours.size(), 0u);
++      dump_id.assign(size_t(w) * h, 0u);
++    }
+     if (ours && !p.guest.empty()) {
+       for (uint32_t y = 0; y < h; ++y) {
+         const auto* row = reinterpret_cast<const uint32_t*>(ours + size_t(y) * row_pitch);
+@@ -5905,6 +5981,18 @@
+               diff = std::max(diff, WordDiff(ours_word, gg[k], p.dest_format));
+             }
+           }
++          if (!dump_ours.empty()) {
++            const size_t i = size_t(y) * w + x;
++            for (uint32_t k = 0; k < p.words; ++k) {
++              dump_ours[i * p.words + k] = og[k];
++              dump_guest[i * p.words + k] = gg[k];
++            }
++            if (cov) {
++              float mf;
++              std::memcpy(&mf, cov + size_t(y) * cov_pitch + size_t(x) * 4, 4);
++              dump_id[i] = mf >= 1.0f && mf < 16777216.0f ? uint32_t(mf) : 0u;
++            }
++          }
+           if (equal) {
+             ++pixels_equal;
+             continue;
+@@ -5995,6 +6083,7 @@
+                 bytes ? 100.0 * double(bytes_equal) / double(bytes) : 0.0, pixels_equal, pixels, max_diff, max_x, max_y,
+                 extra, out_of_range ? ", " + std::to_string(out_of_range) + " px outside the snapshot" : std::string(),
+                 p.not_drawn, verdict);
++    if (!dump_ours.empty()) WriteCompareDump(p, w, h, dump_ours, dump_guest, dump_id, verdict);
+     for (const Example& e : transferred_examples) {
+       // Source pixel (resolve rectangle origin + x/y) and its EDRAM tile, for --gow2_renderer_tile_trace.
+       const uint32_t sx = uint32_t(p.info.x0) + e.x, sy = uint32_t(p.info.y0) + e.y;
+@@ -6545,6 +6634,9 @@
+     gpu::ReadbackHandle readback = 0;
+   };
+   std::bitset<::xenos::edram::kTileCount> trace_tiles_;
++  bool dump_parsed_ = false;                         // --gow2_renderer_compare_dump_frames
++  std::set<uint64_t> dump_frames_;
++  std::map<uint64_t, size_t> dump_records_written_;
+   std::vector<uint32_t> trace_list_;
+   uint32_t trace_px_ = 7, trace_py_ = 0;
+   bool trace_on_ = false;

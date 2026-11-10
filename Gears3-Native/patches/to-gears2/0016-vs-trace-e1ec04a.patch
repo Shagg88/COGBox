@@ -1,0 +1,106 @@
+--- a/src/layer0_xenos/renderer/shadow_renderer.cpp
++++ b/src/layer0_xenos/renderer/shadow_renderer.cpp
+@@ -3069,11 +3069,23 @@
+     }
+   }
+ 
+-  void Skip(const char* reason) { ++stats_.skipped[reason]; }
++  void Skip(const char* reason) {
++    ++stats_.skipped[reason];
++    TraceDraw(reason);  // patch 0016
++  }
++
++  // Patch 0016: where a --gow2_renderer_log_vs draw ends (drawn, or the skip / return that stopped it).
++  void TraceDraw(const char* outcome) {
++    if (!trace_draw_) return;
++    trace_draw_ = false;  // one outcome per draw
++    REXLOG_INFO("gow2_renderer: vs-trace frame {} draw {}: {}", frame_ + 1, draw_index_, outcome);
++  }
+ 
+   void Draw(const uint32_t* r, uint32_t prim, uint32_t index_count, const ObservedIndexBuffer* ib, bool explicit_major) {
+     ++stats_.draws;
+     const uint64_t vs_hash = vs_.dwords ? vs_.hash : 0, ps_hash = ps_.dwords ? ps_.hash : 0;
++    trace_draw_ = log_vs_hash_ && vs_hash == log_vs_hash_ && trace_logged_ < log_vs_max_;  // patch 0016
++    if (trace_draw_) ++trace_logged_;
+     const uint32_t surface_info = r[rr::reg::RB_SURFACE_INFO];
+     const uint32_t msaa = Bits(surface_info, 16, 2);
+     const uint32_t pitch = Bits(surface_info, 0, 14);
+@@ -3384,6 +3396,16 @@
+     // Stage 4 (upl-s4d, job 118): a draw inside an open occlusion query is drawn even when it writes nothing - UE3's
+     // bounding-box proxies test depth with colour and depth writes off, and their passing samples ARE the query's
+     // answer. It is drawn with the game's state (depth test, no writes), never into the comparison draw-ID target.
++    if (trace_draw_) {  // patch 0016
++      const rr::RenderTargetKey k0 = colour_count ? colour_keys[0] : rr::RenderTargetKey{};
++      REXLOG_INFO("gow2_renderer: vs-trace frame {} draw {}: ps {:016X} edram mode {} psg {} (state {}) targets "
++                  "written {:X} mask0 {:X} | colour targets {} key0 base {} class {} pitch {} msaa {} | draw colour {} | "
++                  "depth bound {} writes {} | drawn rect {},{}-{},{} | surface msaa {} pitch {}",
++                  frame_ + 1, draw_index_, ps_hash, edram_mode, psg ? 1 : 0, psg ? int(psg->state) : -1, ps_colour,
++                  ps.blend.rt[0].write_mask, colour_count, k0.base_tiles, k0.storage_class, k0.pitch_pixels, k0.msaa,
++                  draw_colour ? 1 : 0, depth_bound ? 1 : 0, depth_writes ? 1 : 0, own.drawn.x0, own.drawn.y0,
++                  own.drawn.x1, own.drawn.y1, msaa, pitch);
++    }
+     const bool query_proxy = !depth_writes && !draw_colour && occ_open_.open && occ_open_.handle != 0;
+     if (query_proxy) ++occ_stats_.proxies;
+     if (!depth_writes && !draw_colour && !query_proxy) {
+@@ -3392,10 +3414,12 @@
+       if (depth_bound && (own.active[0] || own.active[1]))
+         if (rr::RenderTarget* t = canary_ownership_ ? rts_->Get(key) : rts_->Get(key, false))
+           PrepareDepthTarget(*t, own, false, false);
++      TraceDraw("skipped: nothing we draw (no colour target taken, no depth write)");  // patch 0016
+       ++stats_.colour_only;  // colour into formats not modelled yet (or colour switched off)
+       return;
+     }
+     if (own.drawn.empty()) {
++      TraceDraw("skipped: empty drawn rectangle");  // patch 0016
+       ++stats_.empty;
+       return;
+     }
+@@ -3442,6 +3466,7 @@
+     if (depth_bound) {
+       target = rts_->Get(key);
+       if (!target) {
++        TraceDraw("skipped: no depth target");  // patch 0016
+         ++stats_.other_failures;
+         return;
+       }
+@@ -3695,6 +3720,7 @@
+       return;
+     }
+     if (!pipeline) {
++      TraceDraw("skipped: pipeline failed");  // patch 0016
+       ++stats_.pipeline_failures;
+       ++pipeline_failures_this_frame_;
+       return;
+@@ -3864,6 +3890,7 @@
+     }
+     if (ib) {
+       if (!idx_hit && !ReadIndices(*ib, index_count, reset_index, use_restart)) {
++        TraceDraw("skipped: index read failed");  // patch 0016
+         ++stats_.other_failures;
+         return;
+       }
+@@ -3991,6 +4018,7 @@
+                     ds.single_ref, uint32_t(ds.front.func), uint32_t(ds.front.pass_op));
+       TraceEvent(*target, own.drawn, b);
+     }
++    TraceDraw("DRAWN");  // patch 0016
+     ++stats_.drawn;
+     ++drawn_since_copy_;
+     if (trace_on_)
+@@ -5166,6 +5194,7 @@
+   }
+ 
+   void SkipForShaders(bool pending) {
++    TraceDraw(pending ? "skipped: shader / pipeline pending" : "skipped: shader / pipeline failed");  // patch 0016
+     if (pending) {
+       ++stats_.pending_shaders;
+       ++pending_this_frame_;
+@@ -6704,6 +6733,8 @@
+   std::bitset<::xenos::edram::kTileCount> trace_tiles_;
+   uint64_t log_vs_hash_ = 0;                         // patch 0015 (set with the other switches)
+   int32_t log_vs_max_ = 0, log_vs_logged_ = 0;
++  bool trace_draw_ = false;                          // patch 0016: this draw is traced
++  int32_t trace_logged_ = 0;
+   bool dump_parsed_ = false;                         // --gow2_renderer_compare_dump_frames
+   std::set<uint64_t> dump_frames_;
+   std::map<uint64_t, size_t> dump_records_written_;

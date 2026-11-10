@@ -1,0 +1,51 @@
+diff --git a/include/rex/filesystem/vfs.h b/include/rex/filesystem/vfs.h
+index 461f908..4030ea4 100644
+--- a/include/rex/filesystem/vfs.h
++++ b/include/rex/filesystem/vfs.h
+@@ -36,6 +36,13 @@ namespace rex::filesystem {
+ #define REX_FILESYSTEM_FILE_OPEN_OBSERVER 1
+ using FileOpenObserver = void (*)(std::string_view guest_path, const std::filesystem::path* host_path);
+ void SetFileOpenObserver(FileOpenObserver observer);
++// COGBox SDK patch 52 (GitHub #54): an optional observer told about every file open that fails because the file (or its
++// folder) does not exist: the guest path the title asked for, on the opening thread. Judgment's end-of-chapter loading
++// screen only looks up a LoadingMovie*.txt that is not there, so this is the one sign that screen gives. One observer;
++// null = none (the default). Keep it cheap. REX_FILESYSTEM_FILE_OPEN_FAILED_OBSERVER tells code it exists.
++#define REX_FILESYSTEM_FILE_OPEN_FAILED_OBSERVER 1
++using FileOpenFailedObserver = void (*)(std::string_view guest_path);
++void SetFileOpenFailedObserver(FileOpenFailedObserver observer);
+ 
+ class VirtualFileSystem {
+  public:
+diff --git a/src/filesystem/virtual_file_system.cpp b/src/filesystem/virtual_file_system.cpp
+index df5ccb7..3b57ce1 100644
+--- a/src/filesystem/virtual_file_system.cpp
++++ b/src/filesystem/virtual_file_system.cpp
+@@ -27,6 +27,12 @@ namespace rex::filesystem {
+ // Gears2-Native SDK patch 32 (vfs.h).
+ static std::atomic<FileOpenObserver> g_file_open_observer{nullptr};
+ void SetFileOpenObserver(FileOpenObserver observer) { g_file_open_observer.store(observer); }
++// COGBox SDK patch 52 (vfs.h).
++static std::atomic<FileOpenFailedObserver> g_file_open_failed_observer{nullptr};
++void SetFileOpenFailedObserver(FileOpenFailedObserver observer) { g_file_open_failed_observer.store(observer); }
++static void NotifyFileOpenFailed(std::string_view path) {
++  if (const FileOpenFailedObserver observer = g_file_open_failed_observer.load(std::memory_order_relaxed)) observer(path);
++}
+ 
+ VirtualFileSystem::VirtualFileSystem() {}
+ 
+@@ -226,6 +232,7 @@ X_STATUS VirtualFileSystem::OpenFile(Entry* root_entry, const std::string_view p
+     parent_entry = !root_entry ? ResolvePath(base_path) : root_entry->ResolvePath(base_path);
+     if (!parent_entry) {
+       *out_action = FileAction::kDoesNotExist;
++      NotifyFileOpenFailed(path);  // patch 52
+       return X_STATUS_NO_SUCH_FILE;
+     }
+ 
+@@ -260,6 +267,7 @@ X_STATUS VirtualFileSystem::OpenFile(Entry* root_entry, const std::string_view p
+       // Must exist.
+       if (!entry) {
+         *out_action = FileAction::kDoesNotExist;
++        NotifyFileOpenFailed(path);  // patch 52
+         return X_STATUS_NO_SUCH_FILE;
+       }
+       break;

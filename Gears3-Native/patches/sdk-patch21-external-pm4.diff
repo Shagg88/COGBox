@@ -1,0 +1,121 @@
+diff --git a/include/rex/graphics/command_processor.h b/include/rex/graphics/command_processor.h
+index fed98c1..491c96a 100644
+--- a/include/rex/graphics/command_processor.h
++++ b/include/rex/graphics/command_processor.h
+@@ -39,6 +39,7 @@ namespace rex::graphics {
+ 
+ class GraphicsSystem;
+ class Shader;
++struct GpuServices;  // Gears2-Native SDK patch 21 (draw_observer.h)
+ 
+ enum class ReadbackResolveMode {
+   kDisabled,
+@@ -262,6 +263,8 @@ class CommandProcessor {
+   std::vector<uint32_t> me_bin_;
+ 
+   uint32_t counter_ = 0;
++  std::unique_ptr<GpuServices> gpu_services_;  // Gears2-Native SDK patch 21
++  std::vector<uint32_t> external_packet_;      // SDK patch 21: the packet being run for the observer
+ 
+   uint32_t primary_buffer_ptr_ = 0;
+   uint32_t primary_buffer_size_ = 0;
+diff --git a/include/rex/graphics/draw_observer.h b/include/rex/graphics/draw_observer.h
+index d1f4168..a001c8a 100644
+--- a/include/rex/graphics/draw_observer.h
++++ b/include/rex/graphics/draw_observer.h
+@@ -7,6 +7,8 @@
+  */
+ #pragma once
+ 
++#include <functional>
++
+ #include <cstdint>
+ 
+ #include <rex/graphics/xenos.h>
+@@ -78,6 +80,23 @@ void NotifyGuestRangeWrittenByObserver(uint32_t physical_address, uint32_t lengt
+ using GuestRangeWrittenHandler = void (*)(void* context, uint32_t physical_address, uint32_t length);
+ void SetGuestRangeWrittenHandler(GuestRangeWrittenHandler handler, void* context);
+ 
++// Gears2-Native SDK patch 21 (Stage 5B phase 2): with --gpu_external_pm4 the SDK does not parse the primary ring
++// itself; the draw observer's own PM4 processor does (OnPrimaryRange), using these services for what still lives in
++// the SDK: the register file with its side effects (gamma LUT, scratch write-back, coherency), and single packets it
++// hands back for the SDK to run as usual - draws (observer + IssueDraw), shader loads (the SDK's Shader objects),
++// ZPD (query reports), XE_SWAP (present) and INTERRUPT (the title's callback). Valid on the GPU worker thread only.
++struct GpuServices {
++  std::function<void(uint32_t index, uint32_t value)> write_register;
++  std::function<uint32_t(uint32_t index)> read_register;
++  std::function<void(const uint32_t* big_endian_dwords, uint32_t dword_count)> execute_packet;  // one packet
++  std::function<uint32_t()> counter;   // the vblank/swap counter EVENT_WRITE_SHD writes (bit 31 of the initiator)
++  std::function<bool()> running;       // false once the GPU worker is shutting down (leave any wait loop)
++  std::function<void()> make_coherent; // what WAIT_REG_MEM on COHER_STATUS_HOST does
++  std::function<bool()> vsync;         // --vsync (WAIT_REG_MEM sleeps when on, yields when off)
++};
++GpuServices* GetGpuServices();
++void SetGpuServices(GpuServices* services);
++
+ void SetDrawObserver(DrawObserver* observer);
+ DrawObserver* GetDrawObserver();
+ 
+diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
+index 513b974..fca4e34 100644
+--- a/src/graphics/command_processor.cpp
++++ b/src/graphics/command_processor.cpp
+@@ -39,6 +39,10 @@
+ #include <rex/system/user_module.h>
+ 
+ REXCVAR_DEFINE_BOOL(vsync, true, "GPU", "Enable vertical sync");
++// Gears2-Native SDK patch 21 (Stage 5B phase 2).
++REXCVAR_DEFINE_BOOL(gpu_external_pm4, false, "GPU",
++                    "Gears2-Native: the draw observer's own PM4 processor parses the ring (OnPrimaryRange); the SDK "
++                    "only runs the single packets it hands back (GpuServices)");
+ 
+ // SDK patch 5 (Gears2-Native): single-frame GPU traces in the Xenia .xtr format.
+ REXCVAR_DEFINE_STRING(trace_gpu_frames, "", "GPU",
+@@ -699,8 +703,30 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index, uint32_t wr
+ 
+   // Gears2-Native SDK patch 20: let the draw observer parse the same range first (Stage 5B).
+   if (DrawObserver* observer = GetDrawObserver()) {
++    if (!gpu_services_) {  // SDK patch 21: the services the observer's processor uses in external mode
++      gpu_services_ = std::make_unique<GpuServices>();
++      gpu_services_->write_register = [this](uint32_t i, uint32_t v) { WriteRegister(i, v); };
++      gpu_services_->read_register = [this](uint32_t i) { return ReadRegisterValue(i); };
++      gpu_services_->execute_packet = [this](const uint32_t* dwords, uint32_t count) {
++        if (!count) return;
++        external_packet_.assign(dwords, dwords + count);
++        memory::RingBuffer reader(reinterpret_cast<uint8_t*>(external_packet_.data()), count * sizeof(uint32_t));
++        reader.set_write_offset(count * sizeof(uint32_t));
++        ExecutePacket(&reader);
++      };
++      gpu_services_->counter = [this]() { return counter_; };
++      gpu_services_->running = [this]() { return bool(worker_running_); };
++      gpu_services_->make_coherent = [this]() { MakeCoherent(); };
++      gpu_services_->vsync = []() { return bool(REXCVAR_GET(vsync)); };
++      SetGpuServices(gpu_services_.get());
++    }
+     observer->OnPrimaryRange(primary_buffer_ptr_ & 0x1FFFFFFF, primary_buffer_size_ / sizeof(uint32_t), read_index,
+                              write_index);
++    if (REXCVAR_GET(gpu_external_pm4)) {  // SDK patch 21: the observer's processor ran the range
++      OnPrimaryBufferEnd();
++      trace_writer_.WritePrimaryBufferEnd();
++      return write_index;
++    }
+   }
+ 
+   // Execute commands!
+diff --git a/src/system/draw_observer.cpp b/src/system/draw_observer.cpp
+index 3e9ec0d..e0764ca 100644
+--- a/src/system/draw_observer.cpp
++++ b/src/system/draw_observer.cpp
+@@ -13,6 +13,12 @@ GuestRangeWrittenHandler g_range_handler = nullptr;
+ void* g_range_context = nullptr;
+ }  // namespace
+ 
++namespace {
++GpuServices* g_gpu_services = nullptr;  // SDK patch 21: set by the command processor at setup
++}  // namespace
++GpuServices* GetGpuServices() { return g_gpu_services; }
++void SetGpuServices(GpuServices* services) { g_gpu_services = services; }
++
+ void SetGuestRangeWrittenHandler(GuestRangeWrittenHandler handler, void* context) {
+   g_range_handler = handler;
+   g_range_context = context;

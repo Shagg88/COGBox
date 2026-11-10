@@ -1,0 +1,28 @@
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_video.cpp b/src/kernel/xboxkrnl/xboxkrnl_video.cpp
+index 80cad60..4e27f5b 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_video.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_video.cpp
+@@ -35,6 +35,13 @@
+ #include <rex/system/xtypes.h>
+ #include <rex/ui/flags.h>
+ 
++// SDK patch 70 (COGBox 0.4.9, 4:3 screens): the console's "widescreen" setting. Gears 2 / 3 / Judgment read
++// XGetVideoMode and, when it says not widescreen and the mode is at most 720 lines, make a 4:3 back buffer
++// (width = 720 x width / height, so 960x720 for a 960x720 mode) as on a 4:3 TV. The old answer (width x 3 >=
++// height x 4) called every 4:3 mode widescreen. Default true = unchanged.
++REXCVAR_DEFINE_BOOL(video_mode_widescreen, true, "Display",
++                    "Guest video mode is widescreen (16:9 TV setting); false = a 4:3 TV (use with a 4:3 video_mode_width / height)");
++
+ namespace {
+ // Display gamma type: 0 - linear, 1 - sRGB (CRT), 2 - BT.709 (HDTV), 3 - power
+ constexpr uint32_t kDisplayGammaType = 2;
+@@ -225,7 +232,8 @@ void VdQueryVideoMode(X_VIDEO_MODE* video_mode) {
+   video_mode->display_width = display_width;
+   video_mode->display_height = display_height;
+   video_mode->is_interlaced = 0;
+-  video_mode->is_widescreen = display_width * 3 >= display_height * 4;
++  video_mode->is_widescreen =
++      REXCVAR_GET(video_mode_widescreen) && display_width * 3 >= display_height * 4;  // patch 70
+   video_mode->is_hi_def = display_width >= 1280 || display_height >= 720;
+   video_mode->refresh_rate = refresh_rate_hz;
+   video_mode->video_standard = 1;  // NTSC

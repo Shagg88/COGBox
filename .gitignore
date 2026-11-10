@@ -1,0 +1,6 @@
+# COGBox: what stays on this PC and never goes to the public repository
+/releases/
+/history/
+/work/
+*.pre[0-9]*
+/_backups/

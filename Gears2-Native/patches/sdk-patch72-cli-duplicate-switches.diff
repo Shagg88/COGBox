@@ -1,0 +1,60 @@
+diff --git a/src/core/cvar.cpp b/src/core/cvar.cpp
+index 228728d..7c7a0b5 100644
+--- a/src/core/cvar.cpp
++++ b/src/core/cvar.cpp
+@@ -595,23 +595,35 @@ std::vector<std::string> Init(int argc, char** argv) {
+       app.add_option_function<std::string>(
+           "--" + entry.name,
+           [&entry](const std::string& val) { ApplyFromSource(entry, val, Source::kCommandLine); },
+-          entry.description);
++          entry.description)
++          // COGBox SDK patch 72: the same switch twice (--gow2_max_fps=60 --gow2_max_fps=60, the launcher's extra
++          // arguments box) - the last one wins. CLI11's default (Throw) failed the whole parse: every switch was ignored.
++          ->multi_option_policy(CLI::MultiOptionPolicy::TakeLast);
+     }
+   }
+ 
++  bool parse_failed = false;
+   try {
+     app.parse(argc, argv);
+   } catch (const CLI::ParseError& e) {
+     // TODO(tomc): dumb workaround for the stupid chicken and its egg.
+     //             dont call rex logging funcs here for now.
+     fprintf(stderr, "cvar: CLI11  parse error: %s\n", e.what());
++    parse_failed = true;
++  }
++  // COGBox SDK patch 72: a parse error (an option without its value, ...) no longer drops EVERY switch: the
++  // --name=value / --name / --no-name arguments are applied one by one below (separated "--name value" pairs
++  // can't be told from positionals here and are skipped). The error itself still goes to stderr only.
++  std::vector<std::string> fallback;
++  if (parse_failed) {
++    for (int i = 1; i < argc; ++i) fallback.emplace_back(argv[i] ? argv[i] : "");
+   }
+ 
+   // Stash unrecognized --options for cvars that register later. Supported
+   // forms: --name=value, --name (true), --no-name (false); a separated
+   // "--name value" pair is ambiguous with a positional, so never consumed.
+   std::vector<std::string> positional;
+-  for (const auto& arg : app.remaining()) {
++  for (const auto& arg : parse_failed ? fallback : app.remaining()) {
+     std::string_view view(arg);
+     if (!view.starts_with("--")) {
+       positional.push_back(arg);
+@@ -629,6 +641,17 @@ std::vector<std::string> Init(int argc, char** argv) {
+     } else {
+       name.assign(view);
+     }
++    if (parse_failed) {   // patch 72: a registered cvar takes it now, as CLI11 would have
++      bool applied = false;
++      for (auto& entry : GetRegistryStorage()) {
++        if (entry.name == name) {
++          ApplyFromSource(entry, value, Source::kCommandLine);
++          applied = true;
++          break;
++        }
++      }
++      if (applied) continue;
++    }
+     std::lock_guard lock(GetRegistryMutex());
+     GetPendingValuesStorage()[name].cmdline = std::move(value);
+   }

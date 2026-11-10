@@ -1,0 +1,26 @@
+--- xam_info.orig.cpp	2026-10-31 11:27:47.166038949 -0700
++++ xam_info.cpp	2026-10-31 11:27:59.575367156 -0700
+@@ -30,6 +30,9 @@
+ #include <fmt/format.h>
+ #include <fmt/xchar.h>
+ 
++// Patch 47 (GitHub #76): see xeXGetGameRegion.
++REXCVAR_DEFINE_UINT32(user_game_region, 0, "Kernel", "Game region XGetGameRegion answers (0 = all regions, 0xFFFF; 255 = North America)");
++
+ namespace rex {
+ namespace kernel {
+ namespace xam {
+@@ -176,8 +179,12 @@
+   return 6;
+ }
+ 
++// Patch 47 (COGBox GitHub #76): Gears 1 picks Latin American Spanish (ESM) over Spain's (ESN) only when the game
++// region is North America ((region & 0xFF00) == 0) and the language is Spanish; it never reads the console country.
++// --user_game_region (0 = all regions, 0xFFFF, as before) lets the launcher answer 0x00FF (NTSC-U) for that choice.
+ uint32_t xeXGetGameRegion() {
+-  return 0xFFFFu;
++  const uint32_t r = REXCVAR_GET(user_game_region);
++  return r ? r : 0xFFFFu;
+ }
+ 
+ u32 XGetGameRegion_entry() {

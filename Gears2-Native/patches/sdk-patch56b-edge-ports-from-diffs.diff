@@ -1,0 +1,194 @@
+diff --git a/include/rex/system/save_trace.h b/include/rex/system/save_trace.h
+index c4a1177..ee9875f 100644
+--- a/include/rex/system/save_trace.h
++++ b/include/rex/system/save_trace.h
+@@ -6,11 +6,11 @@
+  *    completion (event set, APC queued, InternalContext before), and per failed root lookup with the mounted roots.
+  *  --cogbox_xam_edge_semantics (default off): (1) the requesting thread is kept beside the overlapped, not written
+  *    into its InternalContext; (2) with a completion routine only the APC is queued, the event is not set; (3) a
+- *    CREATE_NEW / OPEN_ALWAYS on a root still in use closes that root first instead of failing; (4) TRUNCATE_EXISTING
+- *    empties the open package instead of deleting and recreating it; (5) XamContentClose / GetDeviceState failures
+- *    and the generic deferred completion report an HRESULT extended error and length 0.
+- * Written from Edge's commit titles (c7a43fa ad0d187 0028503 4ee7c0f 52f802d 451f915 af53787); their diffs were not
+- * readable when this was written - job 1039 dumps them for a check.
++ *    create on a root still in use makes the package and fails with ERROR_DUP_NAME (an open: ALREADY_EXISTS);
++ *    (4) TRUNCATE_EXISTING empties the package but for its thumbnail and opens it (SHARING_VIOLATION while open); (5) XamContentClose completes with ERROR_FUNCTION_FAILED + the
++ *    error as an HRESULT (or success), length 0; GetDeviceState's unknown device as an HRESULT.
++ * Ported from Edge's diffs (c7a43fa ad0d187 0028503 4ee7c0f 52f802d 451f915 af53787, dumped by job 1039; patch 56b
++ * corrected the first port, which was written from the titles alone).
+  */
+ #pragma once
+ 
+diff --git a/include/rex/system/xam/content_manager.h b/include/rex/system/xam/content_manager.h
+index 949d185..8130d54 100644
+--- a/include/rex/system/xam/content_manager.h
++++ b/include/rex/system/xam/content_manager.h
+@@ -172,6 +172,10 @@ class ContentManager {
+ 
+   std::filesystem::path ResolveGameUserContentPath();
+   bool IsContentOpen(const XCONTENT_AGGREGATE_DATA& data) const;
++  // COGBox patch 56 (Xenia Edge 0028503 / 4ee7c0f): make the package without mounting it; empty it but for its
++  // thumbnail (X_ERROR_SHARING_VIOLATION while it is open).
++  X_RESULT CreatePackage(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data);
++  X_RESULT TruncateContent(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data);
+   void CloseOpenedFilesFromContent(const std::string_view root_name);
+ 
+   // Returns the host filesystem path for an open content package, or empty.
+diff --git a/src/kernel/xam/xam_content.cpp b/src/kernel/xam/xam_content.cpp
+index ae57628..1c8090e 100644
+--- a/src/kernel/xam/xam_content.cpp
++++ b/src/kernel/xam/xam_content.cpp
+@@ -165,10 +165,6 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
+     X_RESULT result = X_ERROR_INVALID_PARAMETER;
+     kDispositionState disposition = kDispositionState::Unknown;
+     const bool edge = REXCVAR_GET(cogbox_xam_edge_semantics);  // patch 56
+-    // patch 56 (Edge 0028503): a create / open on a root still in use reopens it instead of failing with no package
+-    if (edge && ((flags & 0xF) == 1 || (flags & 0xF) == 4) && !content_manager->GetOpenPackagePath(root_name).empty())
+-      content_manager->CloseContent(root_name);
+-    bool truncated = false;
+     switch (flags & 0xF) {
+       case 1:  // CREATE_NEW
+                // Fail if exists.
+@@ -211,10 +207,9 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
+         if (!content_manager->ContentExists(xuid, content_data)) {
+           result = X_ERROR_PATH_NOT_FOUND;
+         } else if (edge) {
+-          // patch 56 (Edge 4ee7c0f): empty the package and open it - its header stays
+-          content_manager->CloseContent(root_name);
+-          disposition = kDispositionState::Open;
+-          truncated = true;
++          // patch 56 (Edge 4ee7c0f): empty the package (not while it is open; its thumbnail stays) and open it
++          result = content_manager->TruncateContent(xuid, content_data);
++          if (result == X_ERROR_SUCCESS) disposition = kDispositionState::Open;
+         } else {
+           content_manager->CloseContent(root_name);
+           if (content_manager->DeleteContent(xuid, content_data) != X_ERROR_SUCCESS) {
+@@ -230,6 +225,19 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
+     }
+ 
+     uint32_t content_license = 0;
++    // patch 56 (Edge 0028503 + its base): the root is mounted after the content is chosen and made. A create on a root
++    // in use still makes the package and fails with ERROR_DUP_NAME; an open fails with ERROR_ALREADY_EXISTS.
++    if (edge && disposition != kDispositionState::Unknown && !content_manager->GetOpenPackagePath(root_name).empty()) {
++      if (disposition == kDispositionState::Create) {
++        if (!content_manager->ContentExists(xuid, content_data) &&
++            content_manager->CreatePackage(xuid, content_data) == X_ERROR_SUCCESS)
++          content_manager->WriteContentHeaderFile(xuid, content_data);
++        result = X_RESULT_FROM_WIN32(0x00000034L);  // ERROR_DUP_NAME
++      } else {
++        result = X_ERROR_ALREADY_EXISTS;
++      }
++      disposition = kDispositionState::Unknown;
++    }
+     if (disposition == kDispositionState::Create) {
+       result = content_manager->CreateContent(root_name, xuid, content_data);
+       if (result == X_ERROR_SUCCESS) {
+@@ -237,12 +245,6 @@ u32 xeXamContentCreate(u32 user_index, mapped_string root_name, mapped_void cont
+       }
+     } else if (disposition == kDispositionState::Open) {
+       result = content_manager->OpenContent(root_name, xuid, content_data, content_license);
+-      if (truncated && result == X_ERROR_SUCCESS) {  // patch 56: TRUNCATE_EXISTING = the package's files removed
+-        std::error_code ec;
+-        const std::filesystem::path dir = content_manager->GetOpenPackagePath(root_name);
+-        if (!dir.empty())
+-          for (const auto& e : std::filesystem::directory_iterator(dir, ec)) std::filesystem::remove_all(e.path(), ec);
+-      }
+     }
+ 
+     if (license_mask_ptr && result == X_ERROR_SUCCESS) {
+@@ -323,9 +325,10 @@ u32 XamContentClose_entry(mapped_string root_name, mapped_void overlapped_ptr) {
+   if (REXCVAR_GET(cogbox_save_trace))  // patch 56
+     REXLOG_INFO("cogbox_save_trace: content close root '{}' -> {:08X}", root_name.value(), uint32_t(result));
+ 
+-  if (overlapped_ptr && REXCVAR_GET(cogbox_xam_edge_semantics) && result != X_ERROR_SUCCESS) {
+-    // patch 56 (Edge 451f915): an HRESULT and no length
+-    REX_KERNEL_STATE()->CompleteOverlappedImmediateEx(overlapped_ptr.guest_address(), result,
++  if (overlapped_ptr && REXCVAR_GET(cogbox_xam_edge_semantics)) {
++    // patch 56 (Edge 52f802d / 451f915): ERROR_FUNCTION_FAILED with the error as an HRESULT, or success; no length
++    REX_KERNEL_STATE()->CompleteOverlappedImmediateEx(overlapped_ptr.guest_address(),
++                                                      result ? X_ERROR_FUNCTION_FAILED : X_ERROR_SUCCESS,
+                                                       X_HRESULT_FROM_WIN32(result), 0);
+     return X_ERROR_IO_PENDING;
+   } else if (overlapped_ptr) {
+diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
+index 9c8669a..b48213f 100644
+--- a/src/system/kernel_state.cpp
++++ b/src/system/kernel_state.cpp
+@@ -1160,7 +1160,8 @@ X_HANDLE TakeOverlappedThread(void* ptr, uint32_t overlapped_ptr) {
+       return h;
+     }
+   }
+-  return XOverlappedGetContext(ptr);
++  // Edge c7a43fa: the completion routine runs on the requester's thread - the current one when nothing was noted
++  return REXCVAR_GET(cogbox_xam_edge_semantics) ? XThread::GetCurrentThreadHandle() : XOverlappedGetContext(ptr);
+ }
+ }  // namespace
+ 
+@@ -1250,9 +1251,7 @@ void KernelState::CompleteOverlappedDeferred(std::function<X_RESULT()> completio
+   CompleteOverlappedDeferredEx(
+       [completion_callback](uint32_t& extended_error, uint32_t& length) -> X_RESULT {
+         auto result = completion_callback();
+-        // patch 56 (Edge 52f802d): an HRESULT, not the raw error
+-        extended_error = REXCVAR_GET(cogbox_xam_edge_semantics) ? X_HRESULT_FROM_WIN32(result)
+-                                                                : static_cast<uint32_t>(result);
++        extended_error = static_cast<uint32_t>(result);
+         length = 0;
+         return result;
+       },
+diff --git a/src/system/xam/content_manager.cpp b/src/system/xam/content_manager.cpp
+index d0c7bfd..c3829de 100644
+--- a/src/system/xam/content_manager.cpp
++++ b/src/system/xam/content_manager.cpp
+@@ -9,6 +9,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <vector>
+ #include <array>
+ #include <cstring>
+ #include <queue>
+@@ -284,6 +285,44 @@ X_RESULT ContentManager::CreateContent(const std::string_view root_name, uint64_
+   return X_ERROR_SUCCESS;
+ }
+ 
++X_RESULT ContentManager::CreatePackage(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data) {  // patch 56
++  auto package_path = ResolvePackagePath(xuid, data);
++  if (std::filesystem::exists(package_path)) {
++    return X_ERROR_ALREADY_EXISTS;
++  }
++  if (!std::filesystem::create_directories(package_path)) {
++    return X_ERROR_ACCESS_DENIED;
++  }
++  return X_ERROR_SUCCESS;
++}
++
++X_RESULT ContentManager::TruncateContent(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data) {  // patch 56
++  if (IsContentOpen(data)) {
++    return X_RESULT_FROM_WIN32(0x00000020L);  // ERROR_SHARING_VIOLATION
++  }
++  auto package_path = ResolvePackagePath(xuid, data);
++  std::error_code ec;
++  if (!std::filesystem::is_directory(package_path, ec)) {  // a container file becomes an empty directory
++    if (!std::filesystem::remove(package_path, ec) || !std::filesystem::create_directory(package_path, ec)) {
++      return X_ERROR_ACCESS_DENIED;
++    }
++    return X_ERROR_SUCCESS;
++  }
++  std::vector<std::filesystem::path> entries;
++  for (const auto& entry : std::filesystem::directory_iterator(package_path, ec)) {
++    if (entry.path().filename() != kThumbnailFileName) entries.push_back(entry.path());
++  }
++  if (ec) {
++    return X_ERROR_ACCESS_DENIED;
++  }
++  for (const auto& entry : entries) {
++    if (std::filesystem::remove_all(entry, ec) == static_cast<std::uintmax_t>(-1)) {
++      return X_ERROR_ACCESS_DENIED;
++    }
++  }
++  return X_ERROR_SUCCESS;
++}
++
+ X_RESULT ContentManager::OpenContent(const std::string_view root_name, uint64_t xuid,
+                                      const XCONTENT_AGGREGATE_DATA& data,
+                                      uint32_t& content_license) {

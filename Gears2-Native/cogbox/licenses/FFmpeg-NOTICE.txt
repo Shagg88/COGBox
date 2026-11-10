@@ -1,0 +1,36 @@
+FFmpeg (avcodec-63.dll, avutil-61.dll)
+
+COGBox's library music decodes the games' own XMA audio, read from your copy of the game, with FFmpeg's
+xma1 / xma2 decoder. FFmpeg is free software under the GNU Lesser General Public License version 2.1 or later
+(FFmpeg-LGPL-2.1.txt). It is used unmodified, as two separate DLLs that CogBox.exe loads when music plays; you
+may replace them with your own build of the same FFmpeg version (libavcodec 63, libavutil 61).
+
+Source: FFmpeg 9.0.2, unmodified. The exact source is in this release's files on GitLab
+(https://gitlab.com/shagg88/cogbox/-/releases, the release's source files): ffmpeg-9.0.2.tar.xz and build_ffmpeg_xma.sh.
+(Upstream: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz, https://github.com/FFmpeg/FFmpeg tag n9.0.2.)
+Built with Gears2-Native/cogbox/tools/build_ffmpeg_xma.sh in the COGBox source:
+  configure --target-os=mingw32 --arch=x86_64 --cross-prefix=x86_64-w64-mingw32- --enable-shared --disable-static
+            --disable-everything --disable-programs --disable-doc --disable-avdevice --disable-avformat
+            --disable-swresample --disable-swscale --disable-avfilter --disable-network
+            --disable-autodetect --disable-iconv --enable-decoder=xma1,xma2 --disable-debug --enable-small
+Its configure line is also stored inside both DLLs (FFmpeg's avcodec_configuration()); both report
+"LGPL version 2.1 or later". No --enable-gpl and no --enable-nonfree: this is not a GPL build.
+
+FFmpeg inside the game runtime (rexruntime.dll)
+-----------------------------------------------
+The ports' runtime, rexruntime.dll (the rexglue SDK, beside each port program), also contains FFmpeg's libavcodec and
+libavutil, linked in statically, for the games' in-game XMA audio. This copy is the Xenia project's FFmpeg fork that the
+rexglue SDK uses (git submodule thirdparty/FFmpeg: https://github.com/wmarti/FFmpeg, branch xenia-ffmpeg-canary-full),
+built by the SDK's own build files; it identifies itself as "FFmpeg version xenia-premake" and reports
+"LGPL version 2.1 or later". Its licence texts are in licenses\rexglue-sdk\thirdparty\FFmpeg\ (that folder also holds
+FFmpeg's GPL texts because they are part of the FFmpeg source tree; no GPL part is built).
+Because this FFmpeg is linked statically, the LGPL lets you relink rexruntime.dll with a modified FFmpeg. The complete
+corresponding source is in this release's files on GitLab (the release's source files):
+  rexglue-FFmpeg-0604b464c7cb.zip      the FFmpeg fork at the commit the SDK pins (0604b464c7cb4ebc94940cf1f324a3b26b87717c)
+  rexglue-sdk-bd833a2ab69d.zip         the rexglue SDK at bd833a2ab69d305f99ddf57418fc38ffec8af93d
+  rexglue-sdk-local-changes.diff       COGBox's changes to the SDK (git apply inside rexglue-sdk/)
+  rexglue-sdk-untracked.zip            files COGBox added to the SDK tree
+To relink: unzip the SDK, apply the diff (git apply rexglue-sdk-local-changes.diff), add the untracked files, unzip the
+FFmpeg fork into rexglue-sdk/thirdparty/FFmpeg (or put your modified FFmpeg there), then build the SDK as its README.md
+describes (CMake presets; COGBox's options: Gears2-Native/patches/sdk-cmake-options.txt in the COGBox source) and put
+the new rexruntime.dll beside the game's exe in place of ours.

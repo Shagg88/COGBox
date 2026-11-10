@@ -1,0 +1,122 @@
+diff --git a/include/rex/ui/d3d12/d3d12_presenter.h b/include/rex/ui/d3d12/d3d12_presenter.h
+--- a/include/rex/ui/d3d12/d3d12_presenter.h
++++ b/include/rex/ui/d3d12/d3d12_presenter.h
+@@ -53,6 +53,8 @@
+ 
+   // The format used internally by Windows composition.
+   static constexpr DXGI_FORMAT kSwapChainFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
++  // Gears2-Native SDK patch 24 (HDR): the swap chain format actually used - R10G10B10A2 with --present_hdr.
++  static DXGI_FORMAT SwapChainFormat();
+ 
+   // The callback must use the main direct queue of the provider.
+   class D3D12GuestOutputRefreshContext final : public GuestOutputRefreshContext {
+diff --git a/include/rex/ui/flags.h b/include/rex/ui/flags.h
+--- a/include/rex/ui/flags.h
++++ b/include/rex/ui/flags.h
+@@ -24,6 +24,9 @@
+ REXCVAR_DECLARE(double, present_fsr_sharpness_reduction);
+ REXCVAR_DECLARE(std::string, present_fsr_quality_mode);
+ REXCVAR_DECLARE(bool, present_dither);
++// Gears2-Native SDK patch 24 (HDR): HDR10 swap chain (R10G10B10A2, ST.2084 / BT.2020); the guest output then holds
++// PQ-encoded BT.2020 values, written by the game side.
++REXCVAR_DECLARE(bool, present_hdr);
+ REXCVAR_DECLARE(bool, present_allow_overscan_cutoff);
+ REXCVAR_DECLARE(bool, host_present_from_non_ui_thread);
+ REXCVAR_DECLARE(int32_t, window_width);
+diff --git a/src/ui/d3d12/d3d12_immediate_drawer.cpp b/src/ui/d3d12/d3d12_immediate_drawer.cpp
+--- a/src/ui/d3d12/d3d12_immediate_drawer.cpp
++++ b/src/ui/d3d12/d3d12_immediate_drawer.cpp
+@@ -153,7 +153,7 @@
+   pipeline_desc.InputLayout.NumElements = UINT(rex::countof(pipeline_input_elements));
+   pipeline_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+   pipeline_desc.NumRenderTargets = 1;
+-  pipeline_desc.RTVFormats[0] = D3D12Presenter::kSwapChainFormat;
++  pipeline_desc.RTVFormats[0] = D3D12Presenter::SwapChainFormat();  // SDK patch 24
+   pipeline_desc.SampleDesc.Count = 1;
+   if (FAILED(
+           device->CreateGraphicsPipelineState(&pipeline_desc, IID_PPV_ARGS(&pipeline_triangle_)))) {
+diff --git a/src/ui/d3d12/d3d12_presenter.cpp b/src/ui/d3d12/d3d12_presenter.cpp
+--- a/src/ui/d3d12/d3d12_presenter.cpp
++++ b/src/ui/d3d12/d3d12_presenter.cpp
+@@ -20,6 +20,7 @@
+ #include <rex/logging.h>
+ #include <rex/math.h>
+ #include <rex/ui/d3d12/d3d12_presenter.h>
++#include <rex/ui/flags.h>  // SDK patch 24: present_hdr
+ #include <rex/ui/d3d12/d3d12_provider.h>
+ #include <rex/ui/d3d12/d3d12_util.h>
+ #include <rex/ui/surface_win.h>
+@@ -390,7 +391,7 @@
+     DXGI_SWAP_CHAIN_DESC1 swap_chain_desc;
+     swap_chain_desc.Width = UINT(new_swap_chain_width);
+     swap_chain_desc.Height = UINT(new_swap_chain_height);
+-    swap_chain_desc.Format = kSwapChainFormat;
++    swap_chain_desc.Format = SwapChainFormat();
+     swap_chain_desc.Stereo = FALSE;
+     swap_chain_desc.SampleDesc.Count = 1;
+     swap_chain_desc.SampleDesc.Quality = 0;
+@@ -444,6 +445,16 @@
+           "interface");
+       return SurfacePaintConnectResult::kFailure;
+     }
++    // Gears2-Native SDK patch 24 (HDR): the HDR10 colour space, when asked for and supported.
++    if (REXCVAR_GET(present_hdr)) {
++      UINT support = 0;
++      const DXGI_COLOR_SPACE_TYPE hdr10 = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
++      const bool can = SUCCEEDED(paint_context_.swap_chain->CheckColorSpaceSupport(hdr10, &support)) &&
++                       (support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) != 0;
++      const bool set = can && SUCCEEDED(paint_context_.swap_chain->SetColorSpace1(hdr10));
++      REXLOG_INFO("D3D12Presenter: HDR10 colour space {} (support flags {:X})",
++                  set ? "set" : can ? "NOT set (SetColorSpace1 failed)" : "not supported by the output", support);
++    }
+     // From now on, in case of any failure, DestroySwapChain must be called
+     // before returning.
+     paint_context_.swap_chain_width = new_swap_chain_width;
+@@ -472,7 +483,7 @@
+   rtv_desc.Texture2D.PlaneSlice = 0;
+   for (uint32_t i = 0; i < PaintContext::kSwapChainBufferCount; ++i) {
+     ID3D12Resource* swap_chain_buffer = paint_context_.swap_chain_buffers[i].Get();
+-    rtv_desc.Format = kSwapChainFormat;
++    rtv_desc.Format = SwapChainFormat();
+     device->CreateRenderTargetView(
+         swap_chain_buffer, &rtv_desc,
+         provider_.OffsetRTVDescriptor(rtv_heap_start, PaintContext::kRTVIndexSwapChainBuffer0 + i));
+@@ -482,6 +493,13 @@
+   return SurfacePaintConnectResult::kSuccess;
+ }
+ 
++DXGI_FORMAT D3D12Presenter::SwapChainFormat() {
++  // Gears2-Native SDK patch 24 (HDR): fixed for the process (present_hdr requires a restart).
++  static const DXGI_FORMAT format =
++      REXCVAR_GET(present_hdr) ? DXGI_FORMAT_R10G10B10A2_UNORM : kSwapChainFormat;
++  return format;
++}
++
+ void D3D12Presenter::DisconnectPaintingFromSurfaceFromUIThreadImpl() {
+   paint_context_.DestroySwapChain();
+ }
+@@ -1426,7 +1444,7 @@
+       }
+     }
+     if (CanGuestOutputPaintEffectBeFinal(guest_output_paint_effect)) {
+-      guest_output_paint_pipeline_desc.RTVFormats[0] = kSwapChainFormat;
++      guest_output_paint_pipeline_desc.RTVFormats[0] = SwapChainFormat();
+       if (FAILED(device->CreateGraphicsPipelineState(
+               &guest_output_paint_pipeline_desc,
+               IID_PPV_ARGS(&guest_output_paint_final_pipelines_[i])))) {
+diff --git a/src/ui/presenter.cpp b/src/ui/presenter.cpp
+--- a/src/ui/presenter.cpp
++++ b/src/ui/presenter.cpp
+@@ -81,6 +81,12 @@
+                     "Enable output dithering in the final present pass")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+ 
++// Gears2-Native SDK patch 24 (HDR).
++REXCVAR_DEFINE_BOOL(present_hdr, false, "UI/Presenter",
++                    "HDR10 output: R10G10B10A2 swap chain in the ST.2084 / BT.2020 colour space, if the display "
++                    "supports it; the guest output must then hold PQ-encoded BT.2020 values")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
+ REXCVAR_DEFINE_BOOL(present_allow_overscan_cutoff, false, "UI/Presenter",
+                     "Allow overscan cutoff based on safe area settings")
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);

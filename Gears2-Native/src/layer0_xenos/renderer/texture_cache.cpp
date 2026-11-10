@@ -1,0 +1,2025 @@
+// Layer 0 (game-free): see xenos/renderer/texture_cache.h. The host-format table and swizzles below are taken from
+// Xenia Canary e6cd2e4 (d3d12/d3d12_texture_cache.h host_formats_), and DecodeCtx1 / DecodeDxt3a follow Canary's
+// shaders/texture_load_ctx1.cs.xesl, texture_load_dxt3a.cs.xesl and pixel_formats.xesli: BSD-3-Clause, Copyright (c)
+// Ben Vanik and Xenia project contributors. All rights reserved. Redistribution and use in source and binary forms,
+// with or without modification, are permitted under the BSD 3-Clause licence (THIRD_PARTY_NOTICES.md). The rest is our
+// code (MIT).
+#include <xenos/renderer/texture_cache.h>
+
+#include <xenos/formats.h>
+#include <xenos/input/prompt_device_monitor.h>
+#include <xenos/renderer/prompt_overlay_compositor.h>
+#include <xenos/texture_layout.h>
+
+#include <rex/cvar.h>
+#include <rex/hash.h>
+#include <rex/logging/macros.h>
+
+#include <algorithm>
+#include <atomic>
+#include <bit>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <thread>
+#include <vector>
+
+// Job 629 (keyboard button prompts, GitHub #41): re-encoding a prompt sheet after our key caps are drawn over it.
+// stb_dxt (public domain, Fabian Giesen / Sean Barrett).
+#define STB_DXT_IMPLEMENTATION
+#define STB_DXT_STATIC
+#include "stb_dxt.h"
+
+// Player options: better texture filtering than the game asks for, on filtered textures that have mip levels.
+REXCVAR_DEFINE_INT32(gow2_renderer_force_aniso, 0, "Gears2",
+                     "Anisotropic filtering at least this much (2, 4, 8 or 16) on filtered, mipmapped textures; 0 = the game's own");
+REXCVAR_DEFINE_BOOL(gow2_renderer_force_trilinear, false, "Gears2",
+                    "Blend between mip levels (trilinear) on filtered, mipmapped textures the game samples with point mips");
+REXCVAR_DEFINE_INT32(gow2_texture_cpu_threads, 0, "Gears2",
+                     "0.5.1: threads for a big CPU-path texture level (0 = automatic, up to 8; 1 = one thread, as before)");
+REXCVAR_DEFINE_DOUBLE(gow2_texture_phase_log_ms, 0.0, "Gears2",
+                      "Diagnostic (job 299): log a frame whose texture loads took longer than this many ms, split into "
+                      "phases - page watch arming, page hashing, host texture creation, GPU-path copy + untile, CPU-path "
+                      "untile, CPU-path upload. 0 = off");
+
+namespace {
+// 0.5.1: run fn(begin, end) over [0, rows) on a few threads when the level is big (rows * cols blocks >= 64K); else inline.
+template <typename Fn>
+void RunRows(uint32_t rows, uint32_t cols, Fn&& fn) {
+  int32_t want = REXCVAR_GET(gow2_texture_cpu_threads);
+  if (want <= 0) want = int32_t(std::min(8u, std::max(1u, std::thread::hardware_concurrency() / 2)));
+  const uint32_t threads = std::min<uint32_t>(uint32_t(want), rows);
+  if (threads <= 1 || uint64_t(rows) * cols < 65536u) { fn(0u, rows); return; }
+  std::vector<std::thread> pool;
+  pool.reserve(threads - 1);
+  const uint32_t step = (rows + threads - 1) / threads;
+  for (uint32_t t = 1; t < threads; ++t) {
+    const uint32_t b = t * step, e = std::min(rows, b + step);
+    if (b < e) pool.emplace_back([&fn, b, e] { fn(b, e); });
+  }
+  fn(0u, std::min(rows, step));
+  for (auto& th : pool) th.join();
+}
+}  // namespace
+
+
+// GitHub #202 / #185 (Judgment at 2x: one texture shows other-surface noise): a block-compressed (BC/DXT) texture
+// loaded on the GPU from the guest-memory mirror keeps the mirror's bytes for pages our own resolve or memexport wrote
+// last (T2), instead of the CPU's. Real DXT data is never a resolve's output, so such a load means the mirror holds a
+// render target where the game now keeps a texture - a CPU / DMA / file write the page watch did not see.
+// --gow2_renderer_bc_gpu_page_log=N logs the first N such loads (base, format, size, pages); off by default.
+// --gow2_renderer_bc_cpu_over_gpu=true takes the CPU bytes for those pages of BC textures (pending memexport readbacks
+// land first); off by default - the 0.4.5 behaviour.
+REXCVAR_DEFINE_INT32(gow2_renderer_bc_gpu_page_log, 0, "Gears2",
+                     "Diagnostic (#202 / #185): log BC texture loads that keep pages our GPU wrote (resolve / memexport) "
+                     "in the mirror, up to N lines (max 500). 0 = off");
+REXCVAR_DEFINE_BOOL(gow2_renderer_bc_cpu_over_gpu, false, "Gears2",
+                    "Experimental (#202): BC textures take the guest CPU bytes even for pages our GPU wrote last "
+                    "(a render target's data is never valid DXT). The pages stay marked GPU-written, so other readers "
+                    "(render-target and 32-bit textures) still take the mirror. false (default) = the mirror's bytes, "
+                    "as 0.4.5");
+
+// GitHub #131 / #59 (Judgment under Proton): the texture cache trusts the page watch - write-protected pages whose
+// first CPU write or kernel file read raises a callback. If that mechanism misses writes (a suspicion for Wine: kernel
+// reads into protected pages, or protection changes it handles otherwise), textures keep old contents. This fallback
+// hashes each texture's guest bytes again when it is used and at least N frames have passed since the last check, and
+// reloads it when the bytes changed although the watch saw nothing. Textures whose pages our GPU wrote are skipped
+// (their newest bytes are in the mirror, not guest memory). 0 = off (the default; the watch alone, as before).
+REXCVAR_DEFINE_INT32(gow2_renderer_texture_verify_frames, 0, "Gears2",
+                     "Fallback for write tracking that misses changes (Proton tests, GitHub #131 / #59): re-hash a texture's "
+                     "guest bytes when it is used at least N frames after its last check, and reload it if they changed "
+                     "unseen. 0 = off (default). Costs CPU time; try 30");
+
+// GitHub #131 diagnostic (Judgment corruption on Vulkan / Proton, AMD): each distinct binding - guest base, guest
+// format, dimension, size, tiling, fetch swizzle and signs, and the host format, view components, signed view, load
+// path and host bytes it was given - logged once, up to N lines, so the same asset can be compared between D3D12 on
+// Windows and Vulkan under Proton. 0 = off (the default); capped at 4000 lines. Logging only: nothing is changed.
+REXCVAR_DEFINE_INT32(gow2_renderer_texture_view_log, 0, "Gears2",
+                     "Diagnostic (GitHub #131): log each distinct texture binding once (guest base / format / size / "
+                     "swizzle -> host format / view components / load path), up to N lines (max 4000). 0 = off");
+
+// Job 620 (GitHub #41 - keyboard button prompts): replace a guest texture by the XXH3 of its base-level guest bytes.
+REXCVAR_DEFINE_STRING(gow2_texture_replace_dir, "", "Gears2",
+                      "Folder of replacement textures (job 620): <hash16>_<level>.bin = that level's host-format data "
+                      "(BC blocks, rows top to bottom) for the guest texture whose base-level guest bytes have that XXH3. "
+                      "Same size and format as the original; such textures load on the CPU path. Empty = off");
+REXCVAR_DEFINE_STRING(gow2_texture_overlay_dir, "", "Gears2",
+                      "Folder of texture overlays (job 629, keyboard button prompts): <hash16>.overlay = 'COGBOXOV', width, "
+                      "height (two little-endian uint32) and width x height RGBA bytes drawn over that DXT5 texture on the "
+                      "player's own copy (alpha 0 keeps the game's pixel, 1 clears it, 2+ draws ours). Job 661: an overlay 2-8 "
+                      "times the texture's size makes the host texture that much bigger (the game's texels upscaled, ours "
+                      "drawn at full detail). Empty = off");
+REXCVAR_DEFINE_STRING(gow2_texture_dump_dir, "", "Gears2",
+                      "Developer (job 620; 628: any format): write each new 2D texture (one layer) of a size in "
+                      "--gow2_texture_dump_sizes as <dir>/tex-<hash16>-f<fmt>-<w>x<h>.bin (level 0, host-format data: "
+                      "BC blocks or texel rows) - to find texture atlases such as button prompts. Empty = off");
+REXCVAR_DEFINE_STRING(gow2_texture_dump_sizes, "128x128,256x256,512x512,1024x1024,512x256,256x512,1024x512,512x1024",
+                      "Gears2", "Sizes --gow2_texture_dump_dir writes (WxH, comma-separated; 'all' = every size from 32x32 up)");
+
+namespace {
+std::atomic<uint64_t> g_overlay_gen{1};
+
+// Job 620: texture replacement / dump state (one TextureCache per process).
+struct TexSwap {
+  mutable std::mutex mutex;
+  bool init = false;
+  std::string replace_dir, dump_dir;
+  std::unordered_set<uint64_t> replace;     // hashes with replacement files
+  std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>> overlay;          // job 629: disk overlays (w, h + RGBA)
+  std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>> dynamic_overlay;  // in-memory overlays
+  bool suppress_disk_prompt_overlays = false;
+  std::atomic<bool> static_on{false};  // PR117 fix: replacements / disk overlays / dumps (fixed at Init)
+  std::atomic<bool> dyn_on{false};     // PR117 fix: dynamic overlays or prompt suppression active now
+  void SyncDyn() { dyn_on.store(!dynamic_overlay.empty() || suppress_disk_prompt_overlays, std::memory_order_release); }  // under mutex
+  std::unordered_set<uint32_t> dump_sizes;  // w << 16 | h
+  bool dump_all = false;                    // job 628: --gow2_texture_dump_sizes=all
+  std::unordered_set<uint64_t> dumped;
+  uint32_t dump_count = 0, replaced = 0;
+  void Init() {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (init) return;
+    init = true;
+    replace_dir = REXCVAR_GET(gow2_texture_replace_dir);
+    dump_dir = REXCVAR_GET(gow2_texture_dump_dir);
+    std::error_code ec;
+    if (!replace_dir.empty()) {
+      for (const auto& f : std::filesystem::directory_iterator(std::filesystem::path(replace_dir), ec)) {
+        const std::string n = f.path().filename().string();
+        if (n.size() >= 18 && n[16] == '_' && f.path().extension() == ".bin") {
+          char* end = nullptr;
+          const uint64_t h = std::strtoull(n.substr(0, 16).c_str(), &end, 16);
+          if (end && *end == 0) replace.insert(h);
+        }
+      }
+      REXLOG_INFO("gow2_texture_replace: {} replaced texture(s) in {}", replace.size(), replace_dir);
+    }
+    const std::string ov_dir = REXCVAR_GET(gow2_texture_overlay_dir);
+    if (!ov_dir.empty()) {
+      for (const auto& f : std::filesystem::directory_iterator(std::filesystem::path(ov_dir), ec)) {
+        const std::string n = f.path().filename().string();
+        if (n.size() != 24 || f.path().extension() != ".overlay") continue;
+        char* end = nullptr;
+        const uint64_t h = std::strtoull(n.substr(0, 16).c_str(), &end, 16);
+        if (!end || *end) continue;
+        std::ifstream in{f.path(), std::ios::binary};
+        std::vector<uint8_t> b((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        uint32_t ow = 0, oh = 0;
+        if (b.size() < 16 || std::memcmp(b.data(), "COGBOXOV", 8) != 0) continue;
+        std::memcpy(&ow, b.data() + 8, 4);
+        std::memcpy(&oh, b.data() + 12, 4);
+        if (ow == 0 || oh == 0 || ow > 4096 || oh > 4096 || b.size() != 16 + size_t(ow) * oh * 4) continue;
+        overlay[h] = std::make_shared<const std::vector<uint8_t>>(b.begin() + 8, b.end());
+      }
+      REXLOG_INFO("gow2_texture_overlay: {} overlay(s) in {}", overlay.size(), ov_dir);
+    }
+    if (!dump_dir.empty()) {
+      std::filesystem::create_directories(std::filesystem::path(dump_dir), ec);
+      const std::string sizes = REXCVAR_GET(gow2_texture_dump_sizes);
+      dump_all = sizes == "all";
+      size_t p = 0;
+      while (p < sizes.size()) {
+        size_t q = sizes.find(',', p);
+        if (q == std::string::npos) q = sizes.size();
+        unsigned w = 0, h = 0;
+        if (std::sscanf(sizes.substr(p, q - p).c_str(), "%ux%u", &w, &h) == 2) dump_sizes.insert((w << 16) | h);
+        p = q + 1;
+      }
+      REXLOG_INFO("gow2_texture_dump: textures of {} to {}", dump_all ? std::string("every size") : std::to_string(dump_sizes.size()) + " size(s)", dump_dir);
+    }
+    static_on.store(!replace.empty() || !overlay.empty() || !dump_sizes.empty() || dump_all, std::memory_order_release);
+  }
+  bool Dumps(uint32_t w, uint32_t h) const { return dump_all ? (w >= 32 && h >= 32) : dump_sizes.count((w << 16) | h) != 0; }
+  // PR117 fix: no lock on the hot path. Entries already carrying an overlay stay candidates through their own flags.
+  bool On() const { return static_on.load(std::memory_order_acquire) || dyn_on.load(std::memory_order_acquire); }
+  bool HasReplace(uint64_t h) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return replace.count(h) != 0;
+  }
+  std::shared_ptr<const std::vector<uint8_t>> FindOverlay(uint64_t h) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    const auto dyn = dynamic_overlay.find(h);
+    if (dyn != dynamic_overlay.end()) return dyn->second;
+    if (suppress_disk_prompt_overlays && ::xenos::renderer::prompt::IsPromptAtlasOrAlias(h)) return nullptr;
+    const auto it = overlay.find(h);
+    if (it != overlay.end()) return it->second;
+    return nullptr;
+  }
+  bool ReadLevel(uint64_t h, uint32_t level, std::vector<uint8_t>& out) const {
+    char leaf[40];
+    std::snprintf(leaf, sizeof(leaf), "%016llX_%u.bin", static_cast<unsigned long long>(h), level);
+    std::ifstream f{std::filesystem::path(replace_dir) / leaf, std::ios::binary};
+    if (!f) return false;
+    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+  }
+} g_swap;
+
+// Job 299 diagnostic: where the recording thread's texture-load time goes (job 295: untiling on worker threads saved
+// only 7% of the 214-228 ms ch10 level-start texture time, so the untile loop is not the main cost).
+struct TexturePhases {
+  double load = 0, watch = 0, hash = 0, create = 0, gpu = 0, cpu = 0, upload = 0;
+  uint32_t loads = 0, creates = 0, gpu_loads = 0, cpu_loads = 0;
+} g_phase;
+double PhaseMs(std::chrono::steady_clock::time_point t0) {
+  return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+struct PhaseScope {
+  double& acc;
+  std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+  explicit PhaseScope(double& a) : acc(a) {}
+  ~PhaseScope() { acc += PhaseMs(t0); }
+};
+}  // namespace
+
+namespace xenos::renderer {
+namespace {
+
+namespace tx = ::xenos::texture;
+
+constexpr uint32_t Bits(uint32_t v, uint32_t shift, uint32_t width) { return (v >> shift) & ((1u << width) - 1u); }
+
+enum class Convert : uint8_t {
+  kNone,          // unsupported
+  kCopy,          // endian swap only
+  kSwapRB565,     // R5G6B5 -> B5G6R5
+  kSwapRB1555,    // R5G5B5A1 -> B5G5R5A1
+  kSwapRB4444,    // R4G4B4A4 -> B4G4R4A4
+  kDxt3aToR8,     // 4-bit alpha blocks -> R8
+  kCtx1ToRG8,     // CTX1 blocks -> R8G8
+  kDepthUnorm,    // 24:8 unorm depth -> R32_FLOAT
+  kDepthFloat,    // 24:8 20e4 depth -> R32_FLOAT
+  kR11G11B10,     // k_10_11_11: R 11 bits low, G 11, B 10 -> RGBA16 unorm
+  kR10G11B11,     // k_11_11_10: R 10 bits low, G 11, B 11 -> RGBA16 unorm
+};
+
+struct HostFormat {
+  gpu::Format format;
+  Convert convert;
+  uint8_t swizzle[4];  // host component for guest component X/Y/Z/W (Canary's XE_GPU_TEXTURE_SWIZZLE_*)
+  bool block_compressed;  // host format is BCn: mip 0 must be 4-aligned
+  uint8_t host_bytes;     // bytes per guest block on the host
+};
+
+constexpr uint8_t kRRRR[4] = {0, 0, 0, 0}, kRGGG[4] = {0, 1, 1, 1}, kRGBB[4] = {0, 1, 2, 2}, kRGBA[4] = {0, 1, 2, 3};
+
+HostFormat Host(uint32_t f) {
+  auto h = [](gpu::Format fmt, Convert c, const uint8_t* s, bool bc, uint8_t bytes) {
+    HostFormat r{fmt, c, {s[0], s[1], s[2], s[3]}, bc, bytes};
+    return r;
+  };
+  using F = gpu::Format;
+  switch (f) {
+    case 2: case 8: case 9: return h(F::kR8Unorm, Convert::kCopy, kRRRR, false, 1);          // k_8, k_8_A, k_8_B (0022)
+    case 3: return h(F::kB5G5R5A1Unorm, Convert::kSwapRB1555, kRGBA, false, 2);               // k_1_5_5_5
+    case 4: return h(F::kB5G6R5Unorm, Convert::kSwapRB565, kRGBB, false, 2);                  // k_5_6_5
+    case 6: case 14: case 50: return h(F::kR8G8B8A8Unorm, Convert::kCopy, kRGBA, false, 4);  // k_8_8_8_8 (+_A, 0022)
+    case 7: case 54: return h(F::kR10G10B10A2Unorm, Convert::kCopy, kRGBA, false, 4);        // k_2_10_10_10
+    case 10: return h(F::kR8G8Unorm, Convert::kCopy, kRGGG, false, 2);                        // k_8_8
+    case 15: return h(F::kB4G4R4A4Unorm, Convert::kSwapRB4444, kRGBA, false, 2);              // k_4_4_4_4
+    case 16: case 55: return h(F::kR16G16B16A16Unorm, Convert::kR11G11B10, kRGBB, false, 8); // k_10_11_11
+    case 17: case 56: return h(F::kR16G16B16A16Unorm, Convert::kR10G11B11, kRGBB, false, 8); // k_11_11_10
+    case 18: case 51: return h(F::kBC1, Convert::kCopy, kRGBA, true, 8);                      // k_DXT1
+    case 19: case 52: return h(F::kBC2, Convert::kCopy, kRGBA, true, 16);                     // k_DXT2_3
+    case 20: case 53: return h(F::kBC3, Convert::kCopy, kRGBA, true, 16);                     // k_DXT4_5
+    case 22: return h(F::kR32Float, Convert::kDepthUnorm, kRRRR, false, 4);                   // k_24_8
+    case 23: return h(F::kR32Float, Convert::kDepthFloat, kRRRR, false, 4);                   // k_24_8_FLOAT
+    case 24: return h(F::kR16Unorm, Convert::kCopy, kRRRR, false, 2);                         // k_16
+    case 25: return h(F::kR16G16Unorm, Convert::kCopy, kRGGG, false, 4);                      // k_16_16
+    case 26: return h(F::kR16G16B16A16Unorm, Convert::kCopy, kRGBA, false, 8);                // k_16_16_16_16
+    case 27: case 30: return h(F::kR16Float, Convert::kCopy, kRRRR, false, 2);                // k_16(_EXPAND|_FLOAT)
+    case 28: case 31: return h(F::kR16G16Float, Convert::kCopy, kRGGG, false, 4);             // k_16_16(...)
+    case 29: case 32: return h(F::kR16G16B16A16Float, Convert::kCopy, kRGBA, false, 8);       // k_16_16_16_16(...)
+    case 36: return h(F::kR32Float, Convert::kCopy, kRRRR, false, 4);                         // k_32_FLOAT
+    case 37: return h(F::kR32G32Float, Convert::kCopy, kRGGG, false, 8);                      // k_32_32_FLOAT
+    case 38: return h(F::kR32G32B32A32Float, Convert::kCopy, kRGBA, false, 16);               // k_32_32_32_32_FLOAT
+    case 49: return h(F::kBC5, Convert::kCopy, kRGGG, true, 16);                              // k_DXN
+    case 58: return h(F::kR8Unorm, Convert::kDxt3aToR8, kRRRR, false, 16);                    // k_DXT3A (16 R8 texels)
+    case 59: return h(F::kBC4, Convert::kCopy, kRRRR, true, 8);                               // k_DXT5A
+    case 60: return h(F::kR8G8Unorm, Convert::kCtx1ToRG8, kRGGG, false, 32);                  // k_CTX1 (16 R8G8)
+    default: return h(F::kUnknown, Convert::kNone, kRGBA, false, 0);
+  }
+}
+
+void SwapUnits(uint8_t* p, uint32_t bytes, uint32_t endian) {
+  if (endian == 1) {  // k8in16
+    for (uint32_t i = 0; i + 1 < bytes; i += 2) std::swap(p[i], p[i + 1]);
+  } else if (endian == 2) {  // k8in32
+    for (uint32_t i = 0; i + 3 < bytes; i += 4) {
+      std::swap(p[i], p[i + 3]);
+      std::swap(p[i + 1], p[i + 2]);
+    }
+  } else if (endian == 3) {  // k16in32
+    for (uint32_t i = 0; i + 3 < bytes; i += 4) {
+      std::swap(p[i], p[i + 2]);
+      std::swap(p[i + 1], p[i + 3]);
+    }
+  }
+}
+
+uint32_t Weights(uint32_t codes) {  // Canary XeDXTHighColorWeights
+  codes = ((codes & 0x55555555u) << 1u) | ((codes & 0xAAAAAAAAu) >> 1u);
+  return codes ^ ((codes & 0xAAAAAAAAu) >> 1u);
+}
+
+// One 4x4 CTX1 block (8 bytes, already endian-swapped as 32-bit words) -> 16 R8G8 texels (row-major).
+void DecodeCtx1(const uint8_t* block, uint8_t* out) {
+  uint32_t d0, d1;
+  std::memcpy(&d0, block, 4);
+  std::memcpy(&d1, block + 4, 4);
+  const uint32_t r0 = (d0 >> 8) & 0xFF, g0 = d0 & 0xFF, r1 = d0 >> 24, g1 = (d0 >> 16) & 0xFF;
+  const uint32_t wh = Weights(d1), wl = ~wh;
+  for (uint32_t i = 0; i < 16; ++i) {
+    const uint32_t a = (wl >> (2 * i)) & 3, b = (wh >> (2 * i)) & 3;
+    out[2 * i] = uint8_t((a * r0 + b * r1) / 3);
+    out[2 * i + 1] = uint8_t((a * g0 + b * g1) / 3);
+  }
+}
+
+// One 4x4 DXT3A block (8 bytes, endian-swapped as 32-bit words) -> 16 R8 texels.
+void DecodeDxt3a(const uint8_t* block, uint8_t* out) {
+  uint32_t d[2];
+  std::memcpy(d, block, 8);
+  for (uint32_t y = 0; y < 4; ++y)
+    for (uint32_t x = 0; x < 4; ++x) {
+      const uint32_t a = (d[y >> 1] >> (16 * (y & 1) + 4 * x)) & 0xF;
+      out[4 * y + x] = uint8_t(a | (a << 4));
+    }
+}
+
+uint16_t Expand(uint32_t v, uint32_t bits) {
+  const uint32_t r = v << (16 - bits);
+  return uint16_t(r | (r >> bits));  // bit replication to 16 bits (exact for 0 and max)
+}
+
+// Job 629: one host BC3 (DXT5) block -> 16 RGBA texels.
+void DecodeBc3(const uint8_t* b, uint8_t* out) {
+  uint8_t al[8] = {b[0], b[1]};
+  if (al[0] > al[1]) for (int i = 1; i < 7; ++i) al[i + 1] = uint8_t(((7 - i) * al[0] + i * al[1]) / 7);
+  else { for (int i = 1; i < 5; ++i) al[i + 1] = uint8_t(((5 - i) * al[0] + i * al[1]) / 5); al[6] = 0; al[7] = 255; }
+  uint64_t abits = 0;
+  for (int i = 0; i < 6; ++i) abits |= uint64_t(b[2 + i]) << (8 * i);
+  const uint16_t c0 = uint16_t(b[8] | (b[9] << 8)), c1 = uint16_t(b[10] | (b[11] << 8));
+  uint8_t c[4][3];
+  auto rgb = [](uint16_t v, uint8_t* o) { o[0] = uint8_t(((v >> 11) & 31) * 255 / 31); o[1] = uint8_t(((v >> 5) & 63) * 255 / 63); o[2] = uint8_t((v & 31) * 255 / 31); };
+  rgb(c0, c[0]); rgb(c1, c[1]);
+  for (int k = 0; k < 3; ++k) { c[2][k] = uint8_t((2 * c[0][k] + c[1][k]) / 3); c[3][k] = uint8_t((c[0][k] + 2 * c[1][k]) / 3); }
+  const uint32_t idx = uint32_t(b[12] | (b[13] << 8) | (b[14] << 16) | (uint32_t(b[15]) << 24));
+  for (int t = 0; t < 16; ++t) {
+    const uint8_t* cc = c[(idx >> (2 * t)) & 3];
+    out[4 * t] = cc[0]; out[4 * t + 1] = cc[1]; out[4 * t + 2] = cc[2];
+    out[4 * t + 3] = al[(abits >> (3 * t)) & 7];
+  }
+}
+
+// kbmicons050: one texel of mip `level` from a full-size overlay: the (1 << level)^2 overlay texels under it are averaged
+// (premultiplied; alpha 1 = clear counts as transparent, alpha 0 = the game's texel `t`), instead of the one nearest
+// texel - the key caps' labels were aliased (thin, broken strokes) wherever the game drew a prompt smaller than the sheet
+// and the GPU picked a lower mip. Returns false (t unchanged) when no overlay texel covers it.
+bool MixOverlayTexel(const uint8_t* opx, uint32_t ow, uint32_t oh, uint32_t x, uint32_t y, uint32_t level, uint8_t* t) {
+  const uint32_t n = 1u << std::min(level, 6u);
+  const uint32_t x0 = std::min(ow - 1, x << level), y0 = std::min(oh - 1, y << level);
+  float acc[4] = {0, 0, 0, 0};
+  uint32_t keep = 0, ours = 0, total = 0;
+  for (uint32_t yy = y0; yy < std::min(oh, y0 + n); ++yy)
+    for (uint32_t xx = x0; xx < std::min(ow, x0 + n); ++xx) {
+      const uint8_t* o = opx + (size_t(yy) * ow + xx) * 4;
+      ++total;
+      if (o[3] == 0) { ++keep; continue; }
+      ++ours;
+      if (o[3] == 1) continue;   // cleared: transparent black
+      const float a = o[3] / 255.0f;
+      acc[0] += o[0] * a; acc[1] += o[1] * a; acc[2] += o[2] * a; acc[3] += o[3];
+    }
+  if (!ours || !total) return false;
+  const float ga = t[3] / 255.0f;
+  acc[0] += t[0] * ga * keep; acc[1] += t[1] * ga * keep; acc[2] += t[2] * ga * keep; acc[3] += t[3] * float(keep);
+  const float a = acc[3] / float(total);
+  t[3] = uint8_t(std::clamp(a + 0.5f, 0.0f, 255.0f));
+  for (int c = 0; c < 3; ++c) t[c] = a > 0.5f ? uint8_t(std::clamp(acc[c] / float(total) / (a / 255.0f) + 0.5f, 0.0f, 255.0f)) : 0;
+  return true;
+}
+
+// Job 629 (keyboard button prompts): draws an overlay over one level of a DXT5 texture held as host BC3 blocks in
+// `level_data` (rows of blocks, `row_bytes` apart): decode, put the overlay's texels in (scaled to the level, nearest),
+// re-encode. Overlay alpha: 0 keeps the game's texel, 1 clears it, 2+ is ours.
+void ApplyOverlay(std::vector<uint8_t>& level_data, const std::vector<uint8_t>& ov, uint32_t level, uint32_t lw, uint32_t lh,
+                  uint32_t row_bytes, uint64_t hash) {
+  uint32_t ow = 0, oh = 0;
+  std::memcpy(&ow, ov.data(), 4);
+  std::memcpy(&oh, ov.data() + 4, 4);
+  const uint8_t* px = ov.data() + 8;
+  const uint32_t bw = (lw + 3) / 4, bh = (lh + 3) / 4;
+  if ((ow >> level) != lw && level == 0) return;  // a different size than the overlay was made for
+  if (row_bytes < bw * 16 || level_data.size() < size_t(row_bytes) * bh) return;
+  uint8_t t[64];
+  for (uint32_t by = 0; by < bh; ++by)
+    for (uint32_t bx = 0; bx < bw; ++bx) {
+      uint8_t* blk = level_data.data() + size_t(by) * row_bytes + bx * 16;
+      DecodeBc3(blk, t);
+      bool changed = false;
+      for (uint32_t i = 0; i < 16; ++i) {
+        const uint32_t x = bx * 4 + (i & 3), y = by * 4 + (i >> 2);
+        if (MixOverlayTexel(px, ow, oh, x, y, level, t + 4 * i)) changed = true;   // kbmicons050: box-filtered per mip
+      }
+      if (changed) stb_compress_dxt_block(blk, t, 1, STB_DXT_HIGHQUAL);
+    }
+  static int logged = 0;
+  if (level == 0 && logged++ < 8) REXLOG_INFO("gow2_texture_overlay: {:016X} ({}x{}) - our key caps drawn in", hash, lw, lh);
+}
+
+
+// Job 661 (Shagg 30 Oct: "make those prompts higher resolution. They look awful and blocky"): an overlay an integer
+// 2-8 times the guest texture's size (the same factor across and down) makes the host texture that much bigger.
+uint32_t OverlayScale(const std::vector<uint8_t>& ov, uint32_t w, uint32_t h) {
+  uint32_t ow = 0, oh = 0;
+  std::memcpy(&ow, ov.data(), 4);
+  std::memcpy(&oh, ov.data() + 4, 4);
+  if (w == 0 || h == 0 || ow % w || oh % h) return 1;
+  const uint32_t s = ow / w;
+  return s >= 2 && s <= 8 && oh / h == s ? s : 1;
+}
+
+// Job 661: one DXT5 level (host BC3 blocks in `src`, lw x lh texels, `row_bytes` apart) made `big_w` x `big_h`: the
+// game's texels upscaled (bilinear, edges clamped), then the overlay drawn in at that size when there is one (overlay
+// texel at x << level, as ApplyOverlay), re-encoded. `out` gets the rows of blocks, ((big_w + 3) / 4) * 16 bytes apart.
+void ScaleBc3Level(const std::vector<uint8_t>& src, uint32_t lw, uint32_t lh, uint32_t row_bytes, uint32_t big_w,
+                   uint32_t big_h, const std::vector<uint8_t>* ov, uint32_t level, std::vector<uint8_t>& out) {
+  const uint32_t bw = (lw + 3) / 4, bh = (lh + 3) / 4;
+  std::vector<uint8_t> img(size_t(bw) * 4 * bh * 4 * 4, 0);
+  const uint32_t iw = bw * 4;
+  uint8_t t[64];
+  for (uint32_t by = 0; by < bh; ++by)
+    for (uint32_t bx = 0; bx < bw; ++bx) {
+      if (size_t(by) * row_bytes + bx * 16 + 16 > src.size()) continue;
+      DecodeBc3(src.data() + size_t(by) * row_bytes + bx * 16, t);
+      for (uint32_t i = 0; i < 16; ++i) std::memcpy(&img[(size_t(by * 4 + (i >> 2)) * iw + bx * 4 + (i & 3)) * 4], t + 4 * i, 4);
+    }
+  uint32_t ow = 0, oh = 0;
+  const uint8_t* opx = nullptr;
+  if (ov) { std::memcpy(&ow, ov->data(), 4); std::memcpy(&oh, ov->data() + 4, 4); opx = ov->data() + 8; }
+  const uint32_t obw = (big_w + 3) / 4, obh = (big_h + 3) / 4;
+  out.assign(size_t(obw) * 16 * obh, 0);
+  // job 662 (Shagg 00:48: "ALL those prompts need to be upscaled"): Catmull-Rom bicubic on premultiplied colour (no dark
+  // fringes at the icons' soft edges), sharper than bilinear; the game's art is only upscaled, never redrawn.
+  std::vector<float> pm(size_t(iw) * bh * 4 * 4);
+  for (size_t i = 0; i < pm.size() / 4; ++i) {
+    const float a = img[i * 4 + 3] / 255.0f;
+    pm[i * 4 + 0] = img[i * 4 + 0] * a; pm[i * 4 + 1] = img[i * 4 + 1] * a; pm[i * 4 + 2] = img[i * 4 + 2] * a; pm[i * 4 + 3] = img[i * 4 + 3];
+  }
+  auto cr = [](float t, float* w) {   // Catmull-Rom weights for the 4 taps around t in [0, 1)
+    const float t2 = t * t, t3 = t2 * t;
+    w[0] = 0.5f * (-t3 + 2 * t2 - t); w[1] = 0.5f * (3 * t3 - 5 * t2 + 2); w[2] = 0.5f * (-3 * t3 + 4 * t2 + t); w[3] = 0.5f * (t3 - t2);
+  };
+  const float fx = float(lw) / float(big_w), fy = float(lh) / float(big_h);
+  for (uint32_t by = 0; by < obh; ++by)
+    for (uint32_t bx = 0; bx < obw; ++bx) {
+      for (uint32_t i = 0; i < 16; ++i) {
+        const uint32_t x = std::min(bx * 4 + (i & 3), big_w - 1), y = std::min(by * 4 + (i >> 2), big_h - 1);
+        const float sx = (float(x) + 0.5f) * fx - 0.5f, sy = (float(y) + 0.5f) * fy - 0.5f;
+        const int ix = int(std::floor(sx)), iy = int(std::floor(sy));
+        float wx[4], wy[4];
+        cr(sx - float(ix), wx);
+        cr(sy - float(iy), wy);
+        float acc[4] = { 0, 0, 0, 0 };
+        for (int ty = 0; ty < 4; ++ty) {
+          const int yy = std::clamp(iy - 1 + ty, 0, int(lh) - 1);
+          for (int tx2 = 0; tx2 < 4; ++tx2) {
+            const int xx = std::clamp(ix - 1 + tx2, 0, int(lw) - 1);
+            const float wgt = wx[tx2] * wy[ty];
+            const float* s = &pm[(size_t(yy) * iw + xx) * 4];
+            for (int ch = 0; ch < 4; ++ch) acc[ch] += s[ch] * wgt;
+          }
+        }
+        const float a = std::clamp(acc[3], 0.0f, 255.0f);
+        t[4 * i + 3] = uint8_t(a + 0.5f);
+        for (int ch = 0; ch < 3; ++ch) t[4 * i + ch] = a > 0.5f ? uint8_t(std::clamp(acc[ch] / (a / 255.0f), 0.0f, 255.0f) + 0.5f) : 0;
+        if (opx) MixOverlayTexel(opx, ow, oh, x, y, level, t + 4 * i);   // kbmicons050: box-filtered per mip
+      }
+      stb_compress_dxt_block(out.data() + (size_t(by) * obw + bx) * 16, t, 1, STB_DXT_HIGHQUAL);
+    }
+}
+
+}  // namespace
+
+uint64_t ComputeRexTextureHash(uint64_t swap_hash, uint32_t w, uint32_t h, uint32_t layers, uint32_t pitch_div_32,
+                               uint32_t format, uint32_t endian, uint32_t dim, bool tiled, bool packed,
+                               uint32_t max_level, uint32_t base_extent_bytes, uint32_t mips_extent_bytes) {
+  const uint64_t rex_words[6] = {
+      swap_hash,
+      uint64_t(w) | (uint64_t(h) << 32),
+      uint64_t(layers) | (uint64_t(pitch_div_32) << 32),
+      uint64_t(format) | (uint64_t(endian) << 32),
+      uint64_t(dim) | (uint64_t(tiled ? 1u : 0u) << 32) | (uint64_t(packed ? 1u : 0u) << 33) |
+          (uint64_t(max_level) << 34),
+      uint64_t(base_extent_bytes) | (uint64_t(mips_extent_bytes) << 32),
+  };
+  return XXH3_64bits(rex_words, sizeof(rex_words));
+}
+
+void SetDynamicOverlay(uint64_t hash, std::vector<uint8_t> overlay_data) {
+  g_swap.Init();
+  {
+    std::lock_guard<std::mutex> lock(g_swap.mutex);
+    if (overlay_data.empty()) {
+      g_swap.dynamic_overlay.erase(hash);
+    } else {
+      if (overlay_data.size() >= 16 && std::memcmp(overlay_data.data(), "COGBOXOV", 8) == 0) {
+        overlay_data.erase(overlay_data.begin(), overlay_data.begin() + 8);
+      }
+      if (overlay_data.size() >= 8) {
+        uint32_t ow = 0, oh = 0;
+        std::memcpy(&ow, overlay_data.data(), 4);
+        std::memcpy(&oh, overlay_data.data() + 4, 4);
+        if (ow > 0 && oh > 0 && ow <= 4096 && oh <= 4096 && overlay_data.size() == 8 + size_t(ow) * oh * 4) {
+          g_swap.dynamic_overlay[hash] = std::make_shared<const std::vector<uint8_t>>(std::move(overlay_data));
+        }
+      }
+    }
+    g_swap.SyncDyn();
+  }
+  g_overlay_gen.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void SetDynamicOverlayShared(uint64_t hash, std::shared_ptr<const std::vector<uint8_t>> overlay_data) {
+  g_swap.Init();
+  {
+    std::lock_guard<std::mutex> lock(g_swap.mutex);
+    if (!overlay_data || overlay_data->size() < 8) {
+      g_swap.dynamic_overlay.erase(hash);
+    } else {
+      uint32_t ow = 0, oh = 0;
+      std::memcpy(&ow, overlay_data->data(), 4);
+      std::memcpy(&oh, overlay_data->data() + 4, 4);
+      if (ow > 0 && oh > 0 && ow <= 4096 && oh <= 4096 && overlay_data->size() == 8 + size_t(ow) * oh * 4) {
+        g_swap.dynamic_overlay[hash] = std::move(overlay_data);
+      }
+    }
+    g_swap.SyncDyn();
+  }
+  g_overlay_gen.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void SetSuppressDiskOverlaysForPrompts(bool suppress) {
+  g_swap.Init();
+  {
+    std::lock_guard<std::mutex> lock(g_swap.mutex);
+    if (g_swap.suppress_disk_prompt_overlays == suppress) return;
+    g_swap.suppress_disk_prompt_overlays = suppress;
+    g_swap.SyncDyn();
+  }
+  g_overlay_gen.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void ClearDynamicOverlays() {
+  g_swap.Init();
+  {
+    std::lock_guard<std::mutex> lock(g_swap.mutex);
+    g_swap.dynamic_overlay.clear();
+    g_swap.suppress_disk_prompt_overlays = false;
+    g_swap.SyncDyn();
+  }
+  g_overlay_gen.fetch_add(1, std::memory_order_acq_rel);
+}
+
+uint64_t BumpOverlayGeneration() { return g_overlay_gen.fetch_add(1, std::memory_order_acq_rel) + 1; }
+
+uint64_t OverlayGeneration() { return g_overlay_gen.load(std::memory_order_acquire); }
+
+void TextureCache::ResetCounters() {
+  const uint64_t textures = stats_.textures, host = stats_.host_bytes;
+  const uint64_t scaled = stats_.scaled_textures, scaled_bytes = stats_.scaled_bytes;
+  // Job 1204b: the texture-time timers are not reset here - the patch 0137 line takes differences between windows
+  const double bind = stats_.bind_ms, lookup = stats_.lookup_ms, load = stats_.load_ms, jobs = stats_.gpu_jobs_ms;
+  const uint64_t epoch_misses = stats_.slot_epoch_misses;
+  const uint64_t rg = stats_.reload_gpu, rv = stats_.reload_volatile, rc = stats_.reload_cpu, rb = stats_.reload_bytes;
+  stats_ = TextureCacheStats{};
+  stats_.bind_ms = bind; stats_.lookup_ms = lookup; stats_.load_ms = load; stats_.gpu_jobs_ms = jobs;
+  stats_.slot_epoch_misses = epoch_misses;
+  stats_.reload_gpu = rg; stats_.reload_volatile = rv; stats_.reload_cpu = rc; stats_.reload_bytes = rb;
+  stats_.textures = textures;
+  stats_.host_bytes = host;
+  stats_.scaled_textures = scaled;
+  stats_.scaled_bytes = scaled_bytes;
+}
+
+void TextureCache::StandIn(const std::string& why) {
+  ++stats_.stand_ins;
+  ++stats_.stand_in_reasons[why];
+}
+
+// Host formats the GPU untile can store (typed UAV stores required on D3D11-class hardware); 0 = CPU path.
+uint32_t UntileCode(gpu::Format f) {
+  switch (f) {
+    case gpu::Format::kR8Unorm: return 1;
+    case gpu::Format::kR8G8Unorm: return 2;
+    case gpu::Format::kR8G8B8A8Unorm: return 3;
+    case gpu::Format::kR16Unorm: return 4;
+    case gpu::Format::kR16G16Unorm: return 5;
+    case gpu::Format::kR16G16B16A16Unorm: return 6;
+    case gpu::Format::kR16Float: return 7;
+    case gpu::Format::kR16G16Float: return 8;
+    case gpu::Format::kR16G16B16A16Float: return 9;
+    case gpu::Format::kR32Float: return 10;
+    case gpu::Format::kR32G32Float: return 11;
+    case gpu::Format::kR32G32B32A32Float: return 12;
+    case gpu::Format::kR10G10B10A2Unorm: return 13;
+    default: return 0;
+  }
+}
+
+uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t slots_cube, uint32_t slots_3d,
+                            uint64_t frame, gpu::TextureView views[96], gpu::SamplerDesc samplers[32]) {
+  PhaseScope bind_time(stats_.bind_ms);  // 0.4.5 texture-time research
+  uint32_t stand_ins = 0;
+  last_scaled_mask_ = 0;
+  const uint64_t epoch = watch_.Epoch();
+  if (epoch != last_bind_epoch_) {  // patch 0137
+    ++stats_.epoch_changes;
+    last_bind_epoch_ = epoch;
+  }
+  const uint64_t ov_gen = OverlayGeneration();
+  if (ov_gen != last_bind_overlay_gen_ || mip_bias_ != last_bind_mip_bias_) {
+    for (SlotCache& sc : slot_cache_) sc.valid = false;
+    last_bind_overlay_gen_ = ov_gen;
+    last_bind_mip_bias_ = mip_bias_;
+  }
+  for (uint32_t k = 0; k < 32; ++k) {
+    const uint32_t kinds = ((slots_2d >> k) & 1) | (((slots_cube >> k) & 1) << 1) | (((slots_3d >> k) & 1) << 2);
+    if (!kinds) continue;
+    const uint32_t* tf = fetch + 6 * k;
+    SlotCache& sc = slot_cache_[k];
+    if (sc.valid && sc.kinds == kinds && sc.epoch == epoch && std::memcmp(sc.tf, tf, sizeof(sc.tf)) == 0) {
+      samplers[k] = sc.sampler;
+      for (uint32_t kind = 0; kind < 3; ++kind)
+        if ((kinds >> kind) & 1) views[kind * 32 + k] = sc.views[kind];
+      for (Entry* e : sc.entries)
+        if (e) e->last_used = frame;
+      if (sc.scaled && (kinds & 1)) {
+        last_scaled_mask_ |= 1u << k;
+        ++stats_.scaled_bound;
+      }
+      stand_ins += sc.stand_ins;
+      stats_.stand_ins += sc.stand_ins;
+      stats_.bound += sc.bound;
+      ++stats_.slot_hits;  // patch 0137
+      continue;
+    }
+    ++stats_.slot_misses;  // patch 0137
+    if (sc.valid && sc.kinds == kinds && sc.epoch != epoch && std::memcmp(sc.tf, tf, sizeof(sc.tf)) == 0) ++stats_.slot_epoch_misses;
+    const uint32_t stand_ins_before = stand_ins;
+    sc.entries[0] = sc.entries[1] = sc.entries[2] = nullptr;
+    sc.scaled = false;
+    const uint64_t bound_before = stats_.bound;
+    // Sampler (shared by all dimensions of the slot).
+    gpu::SamplerDesc& sd = samplers[k];
+    const uint32_t dw3 = tf[3], dw4 = tf[4], dw5 = tf[5];
+    sd.mag_linear = Bits(dw3, 19, 2) == 1;
+    sd.min_linear = Bits(dw3, 21, 2) == 1;
+    const uint32_t mip = Bits(dw3, 23, 2);
+    sd.mip_linear = mip == 1;
+    const uint32_t aniso = Bits(dw3, 25, 3);
+    sd.max_anisotropy = aniso >= 1 && aniso <= 5 ? uint8_t(1u << (aniso - 1)) : 0;
+    auto address = [](uint32_t c) {
+      switch (c) {
+        case 0: return gpu::SamplerAddress::kWrap;
+        case 1: return gpu::SamplerAddress::kMirror;
+        case 2: case 4: return gpu::SamplerAddress::kClamp;   // clamp to edge / clamp to halfway
+        case 6: return gpu::SamplerAddress::kBorder;
+        default: return gpu::SamplerAddress::kMirrorOnce;     // the mirror-clamp modes
+      }
+    };
+    sd.address[0] = address(Bits(tf[0], 10, 3));
+    sd.address[1] = address(Bits(tf[0], 13, 3));
+    sd.address[2] = address(Bits(tf[0], 16, 3));
+    const uint32_t border = Bits(dw5, 0, 2);
+    sd.border = border == 0 ? 0 : border == 1 ? 1 : 2;
+    sd.lod_bias = float(int32_t(dw4 << 10) >> 22) / 32.0f;  // signed 10 bits at 12, 5 fraction bits
+    sd.min_lod = float(Bits(dw4, 2, 4));
+    sd.max_lod = mip == 2 ? sd.min_lod : float(Bits(dw4, 6, 4));  // kBaseMap: no mips
+    if (sd.max_lod < sd.min_lod) sd.max_lod = sd.min_lod;
+    if (sd.min_linear && sd.max_lod > sd.min_lod) {   // the player options above
+      if (REXCVAR_GET(gow2_renderer_force_trilinear)) sd.mip_linear = true;
+      const int32_t fa = REXCVAR_GET(gow2_renderer_force_aniso);
+      if (fa > sd.max_anisotropy) sd.max_anisotropy = uint8_t(std::min(fa, 16));
+      sd.lod_bias += mip_bias_;  // notes/82
+    }
+    // Views: swizzle (fetch constant, then the host format's channel map) and signedness.
+    const HostFormat hf = Host(Bits(tf[1], 0, 6));
+    const uint32_t swz = Bits(dw3, 1, 12);
+    uint8_t comp[4];
+    bool any_signed = false, any_unsigned = false;
+    for (uint32_t i = 0; i < 4; ++i) {
+      const uint32_t s = Bits(swz, 3 * i, 3);
+      comp[i] = s < 4 ? hf.swizzle[s] : (s == 4 ? 4 : 5);
+      if (s < 4) {
+        const uint32_t sign = Bits(tf[0], 2 + 2 * s, 2);
+        (sign == 1 ? any_signed : any_unsigned) = true;
+      }
+    }
+    if (any_signed && any_unsigned) StandIn("mixed signed/unsigned components (signed view used)");
+    for (uint32_t kind = 0; kind < 3; ++kind) {
+      if (!((kinds >> kind) & 1)) continue;
+      const uint32_t reg = kind * 32 + k;  // t(k), t(32+k) cube, t(64+k) 3D
+      gpu::TextureView& v = views[reg];
+      v.dimension = kind == 0 ? gpu::ViewDimension::k2D : kind == 1 ? gpu::ViewDimension::kCube : gpu::ViewDimension::k3D;
+      if (Bits(tf[0], 0, 2) != 2) {  // not a texture fetch constant (kTexture = 2)
+        StandIn("fetch constant is not a texture");
+        ++stand_ins;
+        continue;
+      }
+      // Stage 7: a 2D texture our scaled resolves hold is taken at the resolution scale.
+      if (kind == 0 && scale_ > 1 && scaled_lookup_ && scaled_load_) {
+        if (Entry* se = LookupScaled(tf)) {
+          se->last_used = frame;
+          sc.entries[kind] = se;
+          v.texture = se->texture;
+          for (uint32_t i = 0; i < 4; ++i) v.components[i] = comp[i];
+          v.signed_view = any_signed;
+          ++stats_.bound;
+          ++stats_.scaled_bound;
+          sc.scaled = true;
+          last_scaled_mask_ |= 1u << k;
+          continue;
+        }
+      }
+      Entry& e = Lookup(tf, kind, frame);
+      e.last_used = frame;
+      sc.entries[kind] = &e;
+      if (!e.failure.empty() || !e.texture) {
+        StandIn(e.failure.empty() ? "texture not created" : e.failure);
+        ++stand_ins;
+        if (mismatch_zero_ && e.dimension_mismatch) v.zero = true;
+        continue;
+      }
+      v.texture = e.texture;
+      for (uint32_t i = 0; i < 4; ++i) v.components[i] = comp[i];
+      v.signed_view = any_signed;
+      ++stats_.bound;
+      if (const int32_t view_log = REXCVAR_GET(gow2_renderer_texture_view_log); view_log > 0) {  // GitHub #131
+        static std::mutex m;
+        static std::unordered_set<uint64_t> seen;
+        static uint32_t lines = 0;
+        const uint32_t cap = uint32_t(std::min(view_log, 4000));
+        const uint64_t sig = (uint64_t(tf[1] & 0xFFFFF03Fu) << 32) ^ (uint64_t(tf[2]) << 7) ^ (uint64_t(swz) << 1) ^
+                             (uint64_t(kind) << 60) ^ (uint64_t(Bits(tf[0], 2, 8)) << 50) ^ uint64_t(tf[0] >> 31);
+        std::lock_guard<std::mutex> lock(m);
+        if (lines < cap && seen.insert(sig).second) {
+          ++lines;
+          const uint32_t w = Bits(tf[2], 0, 13) + 1, h = Bits(tf[2], 13, 13) + 1;
+          REXLOG_INFO("gow2_texture_view: frame {} kind {} base {:08X} (+{:X}) mips {:08X} | guest fmt {} endian {} {}x{} "
+                      "dim {} tiled {} swizzle {:03X} signs {:02X} | host fmt {} view {}{}{}{}{} | {} {} bytes, "
+                      "loaded frame {}{}",
+                      frame, kind, e.base_start, e.base_length, e.mip_start, Bits(tf[1], 0, 6), Bits(tf[1], 6, 2), w, h,
+                      Bits(tf[5], 9, 2), Bits(tf[0], 31, 1), swz, Bits(tf[0], 2, 8),
+                      uint32_t(e.format), uint32_t(comp[0]), uint32_t(comp[1]), uint32_t(comp[2]), uint32_t(comp[3]),
+                      any_signed ? " signed" : "", e.gpu_storage ? "GPU untile" : "CPU", e.host_bytes,
+                      e.loaded_frame == ~0ull ? -1ll : (long long)e.loaded_frame,
+                      lines == cap ? " (gow2_renderer_texture_view_log: limit reached)" : "");
+        }
+      }
+    }
+    // Remember the result; a re-upload inside Lookup bumps nothing in the watch, so the epoch read before is valid.
+    sc.valid = true;
+    std::memcpy(sc.tf, tf, sizeof(sc.tf));
+    sc.kinds = kinds;
+    sc.epoch = epoch;
+    sc.sampler = sd;
+    for (uint32_t kind = 0; kind < 3; ++kind)
+      if ((kinds >> kind) & 1) sc.views[kind] = views[kind * 32 + k];
+    sc.stand_ins = stand_ins - stand_ins_before;
+    sc.bound = uint32_t(stats_.bound - bound_before);
+  }
+  RunGpuJobs();  // batched loads: every slot's uploads are recorded; now their untile work
+  return stand_ins;
+}
+
+void TextureCache::RunGpuJobs() {
+  if (gpu_jobs_.empty()) return;
+  PhaseScope jobs_time(stats_.gpu_jobs_ms);  // 0.4.5 texture-time research
+  PhaseScope load(g_phase.load), gpu(g_phase.gpu);  // job 299: still counted as GPU-path load time
+  for (const std::function<void()>& job : gpu_jobs_) job();
+  gpu_jobs_.clear();
+}
+
+TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind, uint64_t frame) {
+  // Content key: everything that changes the texel data or layout (not swizzle, signs, filters or clamps).
+  const uint64_t a = (uint64_t(tf[0] & 0xFFC00000u) << 32) | (tf[1] & 0xFFFFF4FFu);
+  // Patch 0029 (Gears 3 bug hunt E3): the max-level field (dword 4 bits 6-9) moved to bits 2-5 of the key so it no
+  // longer overlaps dword 5 bit 9 (the dimension).
+  const uint64_t b = (uint64_t(tf[2]) << 32) | (tf[5] & 0xFFFFFE00u) | ((tf[4] & 0x3C0u) >> 4) | host_kind;
+  const Key key{a, b};
+  // Job 284 diagnostic: hash a probed texture's bytes at every load (any frame), log lookups inside the frame window.
+  const bool probe_base = !probe_bases_.empty() && Probed(tf, ~0ull);
+  const bool probe = probe_base && Probed(tf, frame);
+  auto done = [&](Entry& r, const char* what) -> Entry& {
+    if (probe) Probe(r, tf, frame, what);
+    return r;
+  };
+  PhaseScope lookup_time(stats_.lookup_ms);  // 0.4.5 texture-time research
+  ++stats_.lookups;  // patch 0137
+  auto it = entries_.find(key);
+  // Patch 0149 (deep-dive review): a texture whose host creation failed (memory pressure) was a stand-in for the rest of
+  // the session; retried every 300 frames now (eviction may have freed memory). Slot caches may point at the entry.
+  // Only after something was freed since the failure (review of 0149: a creation that always fails would otherwise
+  // retry - and log an error - every 300 frames).
+  if (it != entries_.end() && !it->second->texture && it->second->failure == "host texture creation failed" &&
+      frame >= it->second->checked_frame + 300 && it->second->freed_at_load != freed_total_) {
+    entries_.erase(it);
+    it = entries_.end();
+    for (SlotCache& sc : slot_cache_) sc.valid = false;
+    ++create_retries_total_;
+  }
+  if (it == entries_.end()) {
+    const uint64_t epoch_before = watch_.Epoch();  // a write during the load must trigger the next re-check
+    auto e = std::make_unique<Entry>();
+    Load(*e, tf, host_kind);
+    e->loaded_frame = frame;
+    e->freed_at_load = freed_total_;  // patch 0149
+    if (probe_base) e->probe_load_hash = GuestHash(*e);
+    if (load_log_frame_ && frame == load_log_frame_) LogLoad(*e, tf, frame, "new");
+    if (e->texture) {
+      ++stats_.textures;
+      stats_.host_bytes += e->host_bytes;
+    }
+    it = entries_.emplace(key, std::move(e)).first;
+    it->second->checked_frame = frame;
+    it->second->callbacks_at_check = epoch_before;
+    return done(*it->second, "new");
+  }
+  Entry& e = *it->second;
+  if (!e.texture) return done(e, "stand-in");
+  g_swap.Init();
+  const uint64_t ov_gen = OverlayGeneration();
+  if (e.overlay_gen != ov_gen) {
+    const uint32_t format = Bits(tf[1], 0, 6);
+    const uint32_t dim = Bits(tf[5], 9, 2);
+    const bool stacked = Bits(tf[1], 10, 1);
+    const bool overlay_candidate = e.has_overlay || e.ov_scale > 1 || !e.overlay_variants.empty() ||
+                                   e.prompt_known ||
+                                   (g_swap.On() && !e.swap_checked && host_kind == 0 && dim == 1 && !stacked && format == 20);
+    if (overlay_candidate) {
+      const uint64_t epoch_before = watch_.Epoch();
+      e.loaded_frame = frame;
+      Load(e, tf, host_kind);
+      e.verify_hash = 0;  // verify fallback: a new baseline
+      e.checked_frame = frame;
+      e.callbacks_at_check = epoch_before;
+      if (probe_base) e.probe_load_hash = GuestHash(e);
+      if (load_log_frame_ && frame == load_log_frame_) LogLoad(e, tf, frame, "reload: overlay generation changed");
+      return done(e, "reload: overlay generation changed");
+    }
+    e.overlay_gen = ov_gen;
+  }
+  if (const int32_t vf = REXCVAR_GET(gow2_renderer_texture_verify_frames); vf > 0 && frame >= e.verify_frame + uint64_t(vf)) {
+    e.verify_frame = frame;  // GitHub #131 / #59 fallback (see the cvar)
+    bool gpu_pages = false;
+    for (uint32_t p = e.base_start >> GuestWatch::kPageShift;
+         e.base_length && p <= (e.base_start + e.base_length - 1) >> GuestWatch::kPageShift && !gpu_pages; ++p)
+      gpu_pages = !watch_.NeverResolved(p);
+    // Only changes the watch did NOT see: when its pages' versions moved, the normal check below handles them.
+    const bool watch_saw = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length) != e.version;
+    if (watch_saw) e.verify_hash = 0;
+    if (!gpu_pages && !watch_saw) {
+      const uint64_t h = GuestHash(e) ^ (e.mip_length ? XXH3_64bits(guest_ + e.mip_start, e.mip_length) * 31u : 0u);
+      const bool changed = e.verify_hash != 0 && h != e.verify_hash;
+      e.verify_hash = h;
+      if (changed) {
+        ++stats_.verify_reloads;
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1) < 20)
+          REXLOG_INFO("gow2_texture_verify: base {:08X} (+{:X}) format {} changed without a page-watch callback - reloaded",
+                      e.base_start, e.base_length, tf[1] & 0x3Fu);
+        const uint64_t epoch_before = watch_.Epoch();
+        const uint64_t rearmed = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length);
+        watch_.Watch(e.base_start, e.base_length);
+        if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
+        e.loaded_frame = frame;
+        Load(e, tf, host_kind);
+        e.version = rearmed;
+        e.checked_frame = frame;
+        e.callbacks_at_check = epoch_before;
+        return done(e, "reload: bytes changed unseen by the page watch (verify fallback)");
+      }
+    }
+  }
+  // Re-check only when something was written since the last check: the watch epoch advances on every Bump, the
+  // callbacks' and our own resolves' alike (upl-n107: the callback counter alone missed resolves within a frame, so a
+  // texture checked earlier in the frame kept stale content - job 109's green channel).
+  const uint64_t epoch = watch_.Epoch();
+  if (e.callbacks_at_check == epoch) {
+    ++stats_.lookup_epoch_hits;  // patch 0137
+    return done(e, "hit: no write anywhere since its last check");
+  }
+  e.checked_frame = frame;
+  e.callbacks_at_check = epoch;
+  const uint64_t version = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length);
+  stats_.version_pages += ((uint64_t(e.base_length) + 4095) >> 12) + ((uint64_t(e.mip_length) + 4095) >> 12);  // 0137
+  if (version == e.version) {
+    ++stats_.lookup_version_hits;  // patch 0137
+    return done(e, "hit: its pages not written since");
+  }
+  ++stats_.lookup_rechecks;  // patch 0137
+  // Something in its pages was written (or a whole 4 MB block was bumped): re-arm the watch, then compare the bytes of
+  // just the pages that moved. Unchanged bytes keep the upload (upl-n108: job 110's texture cost grew with the cache
+  // because block bumps reloaded every texture in the block).
+  // Patch 0029 (Gears 3 bug hunt E2): read the version BEFORE arming the watch - a write faulting in between then shows
+  // as a newer version at the next check instead of hiding inside the one we keep.
+  const uint64_t rearmed = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length);
+  watch_.Watch(e.base_start, e.base_length);
+  if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
+  const uint64_t gpu_pages0 = stats_.gpu_pages_changed, volatile0 = stats_.volatile_reloads;
+  if (!always_reload_ && !PagesChanged(e)) {
+    e.version = rearmed;
+    ++stats_.content_unchanged;
+    return done(e, "hit: pages written, bytes hashed unchanged");
+  }
+  if (stale_after_ && on_stale_ && e.loaded_frame != ~0ull && frame >= e.loaded_frame + stale_after_) {
+    StaleReload s;
+    s.base_start = e.base_start;
+    s.base_length = e.base_length;
+    s.mip_start = e.mip_start;
+    s.mip_length = e.mip_length;
+    s.guest_format = tf[1] & 0x3Fu;
+    s.width = (tf[2] & 0x1FFFu) + 1;
+    s.height = ((tf[2] >> 13) & 0x1FFFu) + 1;
+    s.frame = frame;
+    s.loaded_frame = e.loaded_frame;
+    for (uint32_t p = e.base_start >> GuestWatch::kPageShift;
+         e.base_length && p <= (e.base_start + e.base_length - 1) >> GuestWatch::kPageShift && !s.gpu_pages; ++p)
+      s.gpu_pages = watch_.GpuCurrent(p);
+    on_stale_(s);
+  }
+  e.loaded_frame = frame;
+  Load(e, tf, host_kind);  // re-upload into the same host texture
+  e.verify_hash = 0;  // --gow2_renderer_texture_verify_frames: the next check takes the new bytes as its baseline
+  if (probe_base) e.probe_load_hash = GuestHash(e);
+  const char* why = stats_.gpu_pages_changed != gpu_pages0 ? "reload: our GPU wrote its pages"
+                    : stats_.volatile_reloads != volatile0 ? "reload: volatile (pages written, not hashed)"
+                                                            : "reload: CPU changed its bytes";
+  if (stats_.gpu_pages_changed != gpu_pages0) ++stats_.reload_gpu;   // job 1207
+  else if (stats_.volatile_reloads != volatile0) ++stats_.reload_volatile;
+  else ++stats_.reload_cpu;
+  stats_.reload_bytes += uint64_t(e.base_length) + e.mip_length;
+  if (load_log_frame_ && frame == load_log_frame_) LogLoad(e, tf, frame, why);
+  return done(e, why);
+}
+
+bool TextureCache::Probed(const uint32_t* tf, uint64_t frame) const {  // frame ~0: any frame
+  if (frame != ~0ull && (frame < probe_first_ || frame > probe_last_)) return false;
+  const uint32_t base = tf[1] & 0xFFFFF000u;
+  return std::find(probe_bases_.begin(), probe_bases_.end(), base) != probe_bases_.end();
+}
+
+uint64_t TextureCache::GuestHash(const Entry& e) const {
+  return e.base_length ? XXH3_64bits(guest_ + e.base_start, e.base_length) : 0;
+}
+
+void TextureCache::Probe(const Entry& e, const uint32_t* tf, uint64_t frame, const char* what) {
+  const uint32_t base = tf[1] & 0xFFFFF000u;
+  for (const auto& d : probe_done_)
+    if (d.first == frame && d.second == base) return;  // once per frame and texture (the first lookup of the frame)
+  probe_done_.push_back({frame, base});
+  const uint64_t now = GuestHash(e);
+  REXLOG_INFO("gow2_texture_probe: frame {} base {:08X} (+{:X}) fmt {} dim {} | {} | loaded frame {} | guest bytes {:016X}, "
+              "at that load {:016X}{}",
+              frame, e.base_start, e.base_length, tf[1] & 0x3Fu, (tf[5] >> 9) & 3u, what,
+              e.loaded_frame == ~0ull ? -1ll : (long long)e.loaded_frame, now, e.probe_load_hash,
+              now == e.probe_load_hash ? " (same)" : " (DIFFERENT: the cache holds other bytes than guest memory)");
+  if (!probe_dir_.empty() && e.base_length) {
+    char leaf[48];
+    std::snprintf(leaf, sizeof(leaf), "/probe-%08X-%06llu.bin", base, static_cast<unsigned long long>(frame));
+    const std::string name = probe_dir_ + leaf;
+    if (FILE* f = std::fopen(name.c_str(), "wb")) {
+      std::fwrite(guest_ + e.base_start, 1, e.base_length, f);
+      std::fclose(f);
+    }
+  }
+}
+
+void TextureCache::LogLoad(const Entry& e, const uint32_t* tf, uint64_t frame, const char* reason) {
+  const uint32_t w = (tf[2] & 0x1FFFu) + 1, h = ((tf[2] >> 13) & 0x1FFFu) + 1;
+  REXLOG_INFO("gow2_renderer: texture load frame {}: {} | base {:08X} (+{:X}) mips {:08X} (+{:X}) format {} {}x{} dim {} "
+              "tiled {} | host {} bytes{}",
+              frame, reason, e.base_start, e.base_length, e.mip_start, e.mip_length, tf[1] & 0x3Fu, w, h,
+              (tf[5] >> 9) & 3u, tf[0] >> 31, e.host_bytes, e.gpu_storage ? " | GPU untile" : " | CPU");
+}
+
+TextureCache::Entry* TextureCache::LookupScaled(const uint32_t* tf) {
+  const uint32_t format = Bits(tf[1], 0, 6), endian = Bits(tf[1], 6, 2);
+  const uint32_t dim = Bits(tf[5], 9, 2);
+  const bool tiled = Bits(tf[0], 31, 1), stacked = Bits(tf[1], 10, 1), packed = Bits(tf[5], 11, 1);
+  const uint32_t base = Bits(tf[1], 12, 20) << 12, mip_base = Bits(tf[5], 12, 20) << 12;
+  const uint32_t w = Bits(tf[2], 0, 13) + 1, h = Bits(tf[2], 13, 13) + 1;
+  const uint32_t pitch_div_32 = Bits(tf[0], 22, 9);
+  // Job 189 diagnostic: why a texture our resolves wrote (any page GPU-current) is not taken at the scale.
+  auto miss = [&](const char* why) -> Entry* {
+    if (!scaled_miss_log_ || !base) return nullptr;  // job 227: the page walk below is the cost; off by default
+    const uint32_t len = std::max<uint32_t>(pitch_div_32 * 32u, w) * h * 4u;
+    bool ours = false;
+    for (uint32_t p = base >> GuestWatch::kPageShift; p <= (base + std::max(len, 1u) - 1) >> GuestWatch::kPageShift && !ours; ++p)
+      ours = watch_.GpuCurrent(p);
+    if (ours) {
+      char b[300];
+      std::snprintf(b, sizeof(b), "%s: base %08X fmt %u %ux%u pitch %u dim %u tiled %u mips %u", why, base, format, w, h,
+                    pitch_div_32 * 32u, dim, tiled ? 1u : 0u, mip_base ? Bits(tf[4], 6, 4) : 0u);
+      ++stats_.scaled_misses[b];
+    }
+    return nullptr;
+  };
+  if (dim != 1 || stacked || !base) return miss("not a single 2D");
+  if (mip_base && Bits(tf[4], 6, 4) != 0) return miss("mip chain");  // not a single resolved level
+  const HostFormat hf = Host(format);
+  const bool depth_convert = hf.convert == Convert::kDepthUnorm || hf.convert == Convert::kDepthFloat;
+  if (!(hf.convert == Convert::kCopy || depth_convert) || hf.block_compressed) return miss("format conversion");
+  const uint32_t code = hf.convert == Convert::kDepthUnorm ? 14u : hf.convert == Convert::kDepthFloat ? 15u
+                                                                                                     : UntileCode(hf.format);
+  if (!code || code == 12u) return miss("no GPU load code");
+  const tx::FormatBlock& fb = tx::GetFormatBlock(format);
+  const uint32_t bpb = fb.bytes_per_block();
+  if ((bpb != 4 && bpb != 8) || fb.block_width != 1 || fb.block_height != 1) return miss("not 32/64 bpp");
+  const tx::GuestLayout layout =
+      tx::GetGuestLayout(tx::Dimension::k2DOrStacked, pitch_div_32, w, h, 1, tiled, format, packed, true, 0);
+  const uint32_t bpb_log2 = tx::Log2Floor(bpb);
+  const uint32_t pitch = layout.base.row_pitch_bytes / bpb;
+  ScaledSource src;
+  if (!scaled_lookup_(base, std::max(layout.base.level_data_extent_bytes, 1u), src) || !src.words) {
+    static const char* kWhy[] = {"no scaled source", "no scaled-memory window holds the extent", "?", "?",
+                                 "pages not scaled-current"};
+    if (src.reason == 4) {
+      char why[128];
+      std::snprintf(why, sizeof(why), "pages not scaled-current (scaled %u, unscaled GPU %u, other %u, first at +%X)",
+                    src.pages_scaled, src.pages_gpu, src.pages_other, src.first_bad);
+      return miss(why);
+    }
+    return miss(kWhy[src.reason < 5 ? src.reason : 0]);
+  }
+  const Key key{(uint64_t(tf[0] & 0xFFC00000u) << 32) | (tf[1] & 0xFFFFF4FFu),
+                (uint64_t(tf[2]) << 32) | (tf[5] & 0xFFFFFE00u) | 8u};
+  auto it = scaled_entries_.find(key);
+  if (it == scaled_entries_.end()) {
+    auto e = std::make_unique<Entry>();
+    gpu::TextureDesc td;
+    td.width = w * scale_;
+    td.height = h * scale_;
+    td.format = hf.format;
+    td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+    td.debug_name = "gow2 scaled resolve texture";
+    e->texture = backend_.CreateTexture(td);
+    if (!e->texture) return nullptr;
+    e->format = hf.format;
+    e->gpu_storage = true;
+    e->host_bytes = uint64_t(td.width) * td.height * hf.host_bytes;
+    ++stats_.scaled_textures;
+    stats_.scaled_bytes += e->host_bytes;
+    it = scaled_entries_.emplace(key, std::move(e)).first;
+  }
+  Entry& e = *it->second;
+  if (e.scaled_gen != src.gen || e.scaled_words != src.words) {
+    gpu::ComputeBindings b;
+    b.constants[0] = base;
+    b.constants[1] = pitch;
+    b.constants[4] = w * scale_;
+    b.constants[5] = h * scale_;
+    b.constants[6] = bpb_log2;
+    b.constants[7] = endian;
+    b.constants[8] = tiled ? 1u : 0u;
+    b.constants[9] = code;
+    b.constants[10] = scale_;
+    b.constants[11] = src.chunk_base;
+    b.constants[12] = src.chunk_width;
+    b.constants[13] = src.chunk_bytes;
+    b.constant_count = 16;
+    b.srv[0] = src.words;
+    b.uav_texture = e.texture;
+    backend_.SetGpuCategory(3);
+    backend_.Dispatch(scaled_load_, b, (w * scale_ + 7) / 8, (h * scale_ + 7) / 8, 1);
+    e.scaled_gen = src.gen;
+    e.scaled_words = src.words;
+    ++stats_.scaled_loads;
+  }
+  return &e;
+}
+
+bool TextureCache::PagesChanged(Entry& e, bool from_check) {
+  bool changed = false;
+  // Volatile after 2 changed checks in a row; every 32nd check of a volatile texture hashes again, so one that settles
+  // returns to content validation.
+  if (from_check) ++e.checks;
+  const bool volatile_check = from_check && e.changed_streak >= 2 && (e.checks & 31u) != 0;
+  if (from_check && e.changed_streak >= 2 && !volatile_check) e.hashes_stale = true;
+  const uint32_t starts[2] = {e.base_start, e.mip_start}, lengths[2] = {e.base_length, e.mip_length};
+  constexpr uint32_t kShift = GuestWatch::kPageShift;
+  for (uint32_t r = 0; r < 2; ++r) {
+    std::vector<uint32_t>& pv = e.page_versions[r];
+    std::vector<uint64_t>& ph = e.page_hashes[r];
+    if (!lengths[r]) {
+      pv.clear();
+      ph.clear();
+      continue;
+    }
+    const uint32_t first = starts[r] >> kShift, last = (starts[r] + lengths[r] - 1) >> kShift;
+    const bool fresh =
+        pv.size() != last - first + 1 || e.hashed_start[r] != starts[r] || e.hashed_length[r] != lengths[r];
+    if (fresh) {
+      pv.assign(last - first + 1, ~0u);
+      ph.assign(last - first + 1, 0);
+      e.hashed_start[r] = starts[r];
+      e.hashed_length[r] = lengths[r];
+      changed = true;
+    }
+    for (uint32_t p = first; p <= last; ++p) {
+      const uint32_t v = watch_.PageVersion(p);  // read before hashing: a write during the hash bumps it again
+      if (v == pv[p - first]) continue;
+      pv[p - first] = v;
+      if (watch_.GpuCurrent(p)) {  // T2: written by our resolve - its CPU bytes don't show the change
+        ++stats_.gpu_pages_changed;
+        changed = true;
+        continue;
+      }
+      if (volatile_check) {
+        // A texture whose bytes changed at its last checks (resolve targets, streamed data): reload without hashing
+        // (upl-n109: job 114 hashed 1.4-2.7 M pages per 300 frames, mostly these). Its hashes are stale until the next
+        // full pass.
+        ++stats_.pages_skipped;
+        changed = true;
+        continue;
+      }
+      const uint32_t a = std::max(p << kShift, starts[r]);
+      const uint32_t b = std::min((p + 1) << kShift, starts[r] + lengths[r]);
+      const uint64_t h = XXH3_64bits(guest_ + a, size_t(b - a));
+      ++stats_.pages_hashed;
+      if (h != ph[p - first]) {
+        ph[p - first] = h;
+        changed = true;
+      }
+    }
+  }
+  if (!from_check) return changed;
+  if (!volatile_check) {
+    // A full pass after stale hashes compares against old content: count it as a change only if it repeats.
+    if (e.hashes_stale && changed) {
+      e.hashes_stale = false;
+      e.changed_streak = 1;
+      return true;
+    }
+    e.hashes_stale = false;
+  }
+  e.changed_streak = changed ? e.changed_streak + 1 : 0;
+  if (volatile_check) ++stats_.volatile_reloads;
+  return changed;
+}
+
+bool TextureCache::FindResolveThrough(uint32_t base, uint32_t pitch, uint32_t bpb_log2, uint32_t dx, uint32_t dy,
+                                      uint32_t w, uint32_t h, ResolveThrough& out) {
+  auto [a, b] = through_.equal_range(base);
+  const uint32_t pitch_aligned = (pitch + 31u) & ~31u;
+  for (auto it = a; it != b; ++it) {
+    Entry& e = *it->second;
+    if (!e.through_ok || !e.texture || e.through_pitch != pitch_aligned || e.through_bpb_log2 != bpb_log2) continue;
+    // Wholly covered: the resolve defines every texel, whatever the texture held. Else it must be current now.
+    const bool covers = dx == 0 && dy == 0 && w >= e.width && h >= e.height;
+    const uint64_t v = watch_.Version(e.base_start, e.base_length);
+    if (!covers && v != e.version) {
+      ++stats_.through_out_of_date;
+      continue;
+    }
+    out.texture = e.texture;
+    out.code = e.through_code;
+    out.endian = e.through_endian;
+    out.width = e.width;
+    out.height = e.height;
+    out.entry = &e;
+    out.version_before = v;
+    out.covers = covers;
+    return true;
+  }
+  return false;
+}
+
+void TextureCache::ResolveThroughWritten(const ResolveThrough& t, uint32_t extent_start, uint32_t extent_length) {
+  Entry& e = *static_cast<Entry*>(t.entry);
+  constexpr uint32_t kShift = GuestWatch::kPageShift;
+  extent_start &= 0x1FFFFFFFu;
+  const uint64_t s0 = std::max<uint64_t>(extent_start, e.base_start);
+  const uint64_t s1 = std::min<uint64_t>(uint64_t(extent_start) + extent_length, uint64_t(e.base_start) + e.base_length);
+  if (s1 <= s0) return;  // the resolve wrote none of its bytes (cannot happen for the same base; keep the reload)
+  const uint32_t first = uint32_t(s0 >> kShift), last = uint32_t((s1 - 1) >> kShift);
+  if (t.covers) {
+    watch_.Watch(e.base_start, e.base_length);  // re-arm: an earlier CPU write may have unwatched its pages
+    e.version = watch_.Version(e.base_start, e.base_length);
+  } else {
+    // MarkGpuWritten bumped each page it wrote once; anything else moved = a write we did not account for.
+    const uint64_t v = watch_.Version(e.base_start, e.base_length);
+    if (v != t.version_before + (last - first + 1)) {
+      ++stats_.through_raced;
+      return;  // version left behind: the next fetch reloads it
+    }
+    e.version = v;
+  }
+  // The pages it wrote: their new versions are accounted for (no "changed" at the next content check, no mirror copy).
+  const uint32_t efirst = e.base_start >> kShift;
+  for (uint32_t p = first; p <= last; ++p) {
+    if (!watch_.GpuCurrent(p)) continue;
+    const uint32_t v = watch_.PageVersion(p);
+    if (e.page_versions[0].size() > p - efirst && e.hashed_start[0] == e.base_start) e.page_versions[0][p - efirst] = v;
+    if (e.copied_pages[0].size() > p - efirst && e.copied_start[0] == e.base_start) e.copied_pages[0][p - efirst] = v;
+  }
+  ++stats_.through_writes;
+}
+
+gpu::TextureHandle TextureCache::UntileCopyForCheck(const ResolveThrough& t, uint32_t& texel_bytes) {
+  const Entry& e = *static_cast<const Entry*>(t.entry);
+  if (!untile_ || !e.width || !e.height) return 0;
+  texel_bytes = uint32_t(e.host_bytes / (uint64_t(e.width) * e.height));
+  gpu::TextureDesc td;
+  td.width = e.width;
+  td.height = e.height;
+  td.format = e.format;
+  td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+  td.debug_name = "gow2 resolve-through check";
+  const gpu::TextureHandle tex = backend_.CreateTexture(td);
+  if (!tex) return 0;
+  gpu::ComputeBindings b;  // as Load's level 0
+  b.constants[0] = e.through_base;
+  b.constants[1] = e.through_pitch;
+  b.constants[4] = e.width;
+  b.constants[5] = e.height;
+  b.constants[6] = e.through_bpb_log2;
+  b.constants[7] = e.through_endian;
+  b.constants[8] = 1u;
+  b.constants[9] = e.through_code;
+  b.constant_count = 12;
+  b.guest_t3 = true;
+  b.uav_texture = tex;
+  backend_.Dispatch(untile_, b, (e.width + 7) / 8, (e.height + 7) / 8, 1);
+  return tex;
+}
+
+void TextureCache::EndFrame(uint64_t frame) {
+  {  // job 299 diagnostic
+    const double limit = REXCVAR_GET(gow2_texture_phase_log_ms);
+    static uint32_t logged = 0;
+    if (limit > 0.0 && g_phase.load > limit && logged < 200) {
+      ++logged;
+      const TexturePhases& t = g_phase;
+      REXLOG_INFO("gow2_textures: frame {}: {} loads {:.1f} ms | watch {:.1f} | hash {:.1f} | create {:.1f} ({}) | GPU path "
+                  "{:.1f} ({}) | CPU untile {:.1f} ({}) | CPU upload {:.1f} | other {:.1f}",
+                  frame, t.loads, t.load, t.watch, t.hash, t.create, t.creates, t.gpu, t.gpu_loads, t.cpu, t.cpu_loads,
+                  t.upload, t.load - t.watch - t.hash - t.create - t.gpu - t.cpu - t.upload);
+    }
+    g_phase = {};
+  }
+  // Patch 0149 (deep-dive review): scaled resolve textures (scale > 1) were never freed and are outside the cap; one
+  // unused for 3600 frames is dropped now (it is made again from its resolve if a draw needs it).
+  if ((frame & 511u) == 0 && frame > 3600 && !scaled_entries_.empty()) {
+    uint32_t dropped = 0;
+    for (auto it = scaled_entries_.begin(); it != scaled_entries_.end();) {
+      if (it->second->last_used + 3600 < frame) {
+        if (it->second->texture) backend_.DestroyTexture(it->second->texture);  // deferred past our GPU by the backend
+        stats_.scaled_bytes -= std::min(stats_.scaled_bytes, it->second->host_bytes);
+        if (stats_.scaled_textures) --stats_.scaled_textures;
+        it = scaled_entries_.erase(it);
+        ++dropped;
+        ++freed_total_;
+      } else {
+        ++it;
+      }
+    }
+    if (dropped) {
+      for (SlotCache& sc : slot_cache_) sc.valid = false;  // they may point at dropped entries
+      scaled_evicted_total_ += dropped;
+    }
+  }
+  if (!cap_bytes_ || stats_.host_bytes <= cap_bytes_) return;
+  std::vector<std::pair<uint64_t, const Key*>> old;
+  for (const auto& [key, e] : entries_)
+    if (e->texture && e->last_used + 1 < frame) old.push_back({e->last_used, &key});
+  std::sort(old.begin(), old.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+  const uint64_t target = cap_bytes_ / 10 * 9;
+  std::vector<Key> evict;
+  uint64_t bytes = stats_.host_bytes;
+  for (const auto& [used, key] : old) {
+    if (bytes <= target) break;
+    bytes -= entries_.at(*key)->TotalHostBytes();
+    evict.push_back(*key);
+  }
+  if (evict.empty()) return;
+  for (const Key& k : evict) {
+    auto it = entries_.find(k);
+    Entry& e = *it->second;
+    if (!e.overlay_variants.empty()) {
+      for (const auto& [_, var] : e.overlay_variants) {
+        if (!var.texture) continue;
+        backend_.DestroyTexture(var.texture);
+        stats_.host_bytes -= std::min(stats_.host_bytes, var.host_bytes);
+        stats_.evicted_bytes += var.host_bytes;
+        if (stats_.textures) --stats_.textures;
+        ++freed_total_;
+      }
+      e.overlay_variants.clear();
+      e.texture = 0;
+    } else {
+      backend_.DestroyTexture(e.texture);  // deferred by the backend until our GPU is past it
+      stats_.host_bytes -= std::min(stats_.host_bytes, e.host_bytes);
+      stats_.evicted_bytes += e.host_bytes;
+      if (stats_.textures) --stats_.textures;
+      ++freed_total_;  // patch 0149
+    }
+    ++stats_.evictions;
+    if (e.through_indexed) {
+      auto [a, b] = through_.equal_range(e.through_base);
+      for (auto t = a; t != b; ++t)
+        if (t->second == &e) {
+          through_.erase(t);
+          break;
+        }
+    }
+    entries_.erase(it);
+  }
+  for (SlotCache& sc : slot_cache_) sc.valid = false;  // they may point at evicted entries
+}
+
+void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
+  PhaseScope phase_load(g_phase.load);  // job 299
+  PhaseScope load_time(stats_.load_ms);  // 0.4.5 texture-time research
+  ++g_phase.loads;
+  const uint32_t format = Bits(tf[1], 0, 6), endian = Bits(tf[1], 6, 2);
+  const HostFormat hf = Host(format);
+  if (hf.convert == Convert::kNone) {
+    e.failure = "unsupported format " + std::to_string(format);
+    return;
+  }
+  const uint32_t dim = Bits(tf[5], 9, 2);  // 0 1D, 1 2D/stacked, 2 3D, 3 cube
+  const bool tiled = Bits(tf[0], 31, 1), stacked = Bits(tf[1], 10, 1), packed = Bits(tf[5], 11, 1);
+  const uint32_t base = Bits(tf[1], 12, 20) << 12, mip_base = Bits(tf[5], 12, 20) << 12;
+  const uint32_t pitch_div_32 = Bits(tf[0], 22, 9);
+  uint32_t w = 1, h = 1, d = 1;
+  tx::Dimension gd = tx::Dimension::k2DOrStacked;
+  if (dim == 0) {
+    w = Bits(tf[2], 0, 24) + 1;
+    gd = tx::Dimension::k1D;
+  } else if (dim == 2) {
+    w = Bits(tf[2], 0, 11) + 1;
+    h = Bits(tf[2], 11, 11) + 1;
+    d = Bits(tf[2], 22, 10) + 1;
+    gd = tx::Dimension::k3D;
+  } else {
+    w = Bits(tf[2], 0, 13) + 1;
+    h = Bits(tf[2], 13, 13) + 1;
+    d = dim == 3 ? 6 : (stacked ? Bits(tf[2], 26, 6) + 1 : 1);
+    gd = dim == 3 ? tx::Dimension::kCube : tx::Dimension::k2DOrStacked;
+  }
+  if (!base) {
+    e.failure = "no base address";
+    return;
+  }
+  // Host shape from how the shader fetches it.
+  if (host_kind == 1 && dim != 3) {
+    e.failure = "cube fetch of a non-cube texture";
+    e.dimension_mismatch = true;
+    return;
+  }
+  if (host_kind != 1 && dim == 3) {
+    e.failure = "2D/3D fetch of a cube texture";
+    e.dimension_mismatch = true;
+    return;
+  }
+  const tx::FormatBlock& fb = tx::GetFormatBlock(format);
+  const uint32_t bpb = fb.bytes_per_block();
+  if (!bpb) {
+    e.failure = "format with no block size";
+    return;
+  }
+  if (hf.block_compressed && ((w & 3) || (h & 3))) {
+    e.failure = "BC texture not 4-aligned (decompression not implemented)";
+    return;
+  }
+  // Patch 0087 (Canary 344fca7, texture_util.cc GetSubresourcesFromFetchConstant): level 0 already packed (no 1D) - the
+  // whole tail is at the base address, also with no mip address (D3D leaves it at 0 then).
+  const bool tail_at_base = packed_tail_at_base_ && packed && dim != 0 && !mip_base && Bits(tf[4], 6, 4) != 0 &&
+                            tx::PackedMipLevel(w, h) == 0;
+  if (tail_at_base) ++stats_.packed_tail_at_base;
+  if (Bits(tf[4], 22, 10) != 0) ++stats_.grad_exp_bias_loads;
+  uint32_t max_level = mip_base || tail_at_base ? Bits(tf[4], 6, 4) : 0;
+  max_level = std::min(max_level, tx::Log2Floor(std::max(std::max(w, h), dim == 2 ? d : 1u)));
+  const tx::GuestLayout layout = tx::GetGuestLayout(gd, pitch_div_32, w, h, d, tiled, format, packed, true, max_level);
+  const uint32_t mips = layout.max_level + 1;
+  {  // Outside review: a fetch constant whose base or mip range runs past the 512 MB guest memory would be hashed and
+    // read out of bounds below - refuse it (the texture is skipped) instead.
+    constexpr uint64_t kGuestBytes = 512ull << 20;
+    const uint64_t mip_at = layout.packed_level == 0 && (mip_base || tail_at_base) ? base : mip_base;
+    if (uint64_t(base) + std::max(layout.base.level_data_extent_bytes, 1u) > kGuestBytes ||
+        (mips > 1 && mip_at + std::max(layout.mips_total_extent_bytes, 1u) > kGuestBytes)) {
+      e.failure = "texture range past the end of guest memory";
+      return;
+    }
+  }
+  const uint32_t layers = gd == tx::Dimension::k3D ? 1 : layout.array_size;
+  const bool host_3d = host_kind == 2;
+  // Job 620: replacement / dump candidates (2D, one layer; job 628: any format) are hashed and kept on the CPU path.
+  g_swap.Init();
+  const uint64_t current_ov_gen = OverlayGeneration();
+  uint64_t swap_hash = 0, rex_hash = 0, matched_hash = 0;
+  bool swap_replace = false, swap_dump = false;
+  std::shared_ptr<const std::vector<uint8_t>> swap_overlay_holder;
+  const std::vector<uint8_t>* swap_overlay = nullptr;  // job 629
+  if ((g_swap.On() || e.has_overlay || e.ov_scale > 1 || !e.overlay_variants.empty()) &&
+      gd == tx::Dimension::k2DOrStacked && layers == 1 && host_kind == 0) {
+    swap_hash = XXH3_64bits(guest_ + base, std::max(layout.base.level_data_extent_bytes, 1u));
+    rex_hash = ComputeRexTextureHash(swap_hash, w, h, layers, pitch_div_32, format, endian, dim, tiled, packed,
+                                     layout.max_level, layout.base.level_data_extent_bytes,
+                                     layout.mips_total_extent_bytes);
+    if (g_swap.HasReplace(swap_hash)) {
+      swap_replace = true;
+      matched_hash = swap_hash;
+    } else if (g_swap.HasReplace(rex_hash)) {
+      swap_replace = true;
+      matched_hash = rex_hash;
+    }
+    if (format == 20) {  // k_DXT4_5 -> host BC3
+      swap_overlay_holder = g_swap.FindOverlay(swap_hash);
+      uint64_t ov_hash = swap_hash;
+      if (!swap_overlay_holder) {
+        swap_overlay_holder = g_swap.FindOverlay(rex_hash);
+        ov_hash = rex_hash;
+      }
+      if (swap_overlay_holder && swap_overlay_holder->size() >= 8) {
+        // Job 666: only an overlay made for this size (1x, or the same whole 2-8x across and down).
+        uint32_t ow = 0, oh = 0;
+        std::memcpy(&ow, swap_overlay_holder->data(), 4);
+        std::memcpy(&oh, swap_overlay_holder->data() + 4, 4);
+        const uint32_t k = w ? ow / w : 0;
+        if (k >= 1 && k <= 8 && ow == w * k && oh == h * k) {
+          swap_overlay = swap_overlay_holder.get();
+          matched_hash = ov_hash;
+        }
+      }
+    }
+    swap_dump = !g_swap.dump_dir.empty() && g_swap.Dumps(w, h) && g_swap.dump_count < 4000 &&
+                g_swap.dumped.insert(swap_hash).second;
+  }
+  if (swap_hash) {  // PR117 fix: remember what this content is, so a generation bump needs no rehash to skip it
+    e.swap_checked = true;
+    e.prompt_known = swap_overlay != nullptr || prompt::IsPromptAtlasOrAlias(swap_hash) || prompt::IsPromptAtlasOrAlias(rex_hash);
+  } else {  // not hashed this time (nothing on): the content may have changed, so it is unknown again
+    e.swap_checked = false;
+    e.prompt_known = false;
+  }
+  const uint32_t ov_scale = swap_overlay ? OverlayScale(*swap_overlay, w, h) : 1u;  // job 661
+  const bool is_prompt_or_overlay =
+      swap_overlay != nullptr || !e.overlay_variants.empty() ||
+      (swap_hash != 0 && (prompt::IsPromptAtlasOrAlias(swap_hash) || prompt::IsPromptAtlasOrAlias(rex_hash)));
+  // job 661: a host texture made bigger for an overlay always reloads on the CPU path (the GPU loads write guest size)
+  const bool swap_cpu = swap_replace || swap_dump || swap_overlay || ov_scale > 1 || is_prompt_or_overlay;
+  const bool replacing_existing = e.texture != 0;
+  const bool cache_overlay_variants =
+      !swap_replace && format == 20 && gd == tx::Dimension::k2DOrStacked && layers == 1 && host_kind == 0 &&
+      swap_hash != 0 && is_prompt_or_overlay;
+  if (swap_hash != e.variant_swap_hash && !e.overlay_variants.empty()) {
+    // Guest memory content changed to a different texture: release any cached style variants other than e.texture.
+    for (const auto& [_, var] : e.overlay_variants) {
+      if (var.texture && var.texture != e.texture) {
+        backend_.DestroyTexture(var.texture);
+        stats_.host_bytes -= std::min(stats_.host_bytes, var.host_bytes);
+        if (stats_.textures) --stats_.textures;
+        ++freed_total_;
+      }
+    }
+    e.overlay_variants.clear();
+  }
+  if (cache_overlay_variants) {
+    e.variant_swap_hash = swap_hash;
+    if (e.overlay_gen != current_ov_gen) {
+      const auto var_it = e.overlay_variants.find(swap_overlay);
+      if (var_it != e.overlay_variants.end() && var_it->second.texture) {
+        const OverlayVariant& var = var_it->second;
+        e.texture = var.texture;
+        e.ov_scale = var.ov_scale;
+        e.host_bytes = var.host_bytes;
+        e.has_overlay = var.has_overlay;
+        e.overlay_gen = current_ov_gen;
+        for (SlotCache& sc : slot_cache_) sc.valid = false;
+        return;
+      }
+      if (!e.overlay_variants.empty()) {
+        // Keep previously uploaded style variants alive in e.overlay_variants; allocate a fresh host texture for this style.
+        e.texture = 0;
+        e.host_bytes = 0;
+        for (SlotCache& sc : slot_cache_) sc.valid = false;
+      }
+    }
+  } else {
+    e.variant_swap_hash = swap_hash;
+  }
+  // GPU path: raw 2D textures (one layer) in a format with typed UAV stores (D3D11-class hardware guarantees these).
+  // Takeover T3: 24:8 depth textures (shadow maps, scene depth - resolve destinations) also load on the GPU, from the
+  // guest-memory mirror where our resolves put them (codes 14/15: the CPU path's kDepthUnorm / kDepthFloat).
+  const uint32_t gpu_code = hf.convert == Convert::kDepthUnorm  ? 14u
+                            : hf.convert == Convert::kDepthFloat ? 15u
+                                                                 : UntileCode(hf.format);
+  const bool depth_convert = hf.convert == Convert::kDepthUnorm || hf.convert == Convert::kDepthFloat;
+  // Gears 3 (job 020): a stacked 2D texture fetched as 3D (host_kind 2) - the 16x16x16 colour-grading table the game
+  // renders and resolves every frame - also loads on the GPU, one layer per z slice (untile3d_), so it reads our
+  // resolves from the mirror instead of stale CPU bytes. Base level only (host_mips is 1 for this case).
+  const bool stacked_3d = untile3d_ && gd == tx::Dimension::k2DOrStacked && host_kind == 2 && layers >= 1;
+  // Patch 0026: true 3D textures fetched as 3D, in a format with a GPU load code, untiled on the GPU (untile_volume_).
+  const bool volume = untile_volume_ && gd == tx::Dimension::k3D && host_kind == 2;
+  const bool gpu = !swap_cpu && untile_ && (hf.convert == Convert::kCopy || depth_convert) && !hf.block_compressed && gpu_code &&
+                   ((gd == tx::Dimension::k2DOrStacked && ((layers == 1 && host_kind == 0) || stacked_3d)) || volume) &&
+                   fb.block_width == 1 && fb.block_height == 1;
+  // Patch 0021 (Canary texture_cache, D36): BC1-5 textures load on the GPU too, from the mirror (where our resolves and
+  // memexports are), not from guest CPU memory: blocks into the backend's scratch buffer, then a buffer->texture copy.
+  // 2D (one layer), arrays fetched per layer are not host-shaped here, so: one layer, or a cube's 6 faces; 3D stays CPU.
+  // Patch 0025: also 32bpp raw-copy cube textures (8888, 2_10_10_10, 16_16, 32_FLOAT ... faces), which the typed-UAV
+  // path above never took (one layer only), so their faces no longer load from guest CPU memory either.
+  const bool gpu_blocks =
+      !gpu && !swap_cpu && untile_blocks_ && hf.convert == Convert::kCopy && gd != tx::Dimension::k3D && !host_3d &&
+      ((hf.block_compressed && (bpb == 8 || bpb == 16) &&
+        ((layers == 1 && host_kind == 0) || (host_kind == 1 && layers == 6))) ||
+       (!hf.block_compressed && bpb == 4 && fb.block_width == 1 && fb.block_height == 1 && host_kind == 1 &&
+        layers == 6 && hf.host_bytes == 4));
+  // Recreate the host texture when an existing slot changes overlay scale (e.g. 1x <-> 4x prompt atlas) or needs UAV
+  // storage it was not created with.
+  if (e.texture && (e.ov_scale != ov_scale || (gpu && !e.gpu_storage))) {
+    for (auto v = e.overlay_variants.begin(); v != e.overlay_variants.end();) {  // PR117 fix: no double destroy
+      if (v->second.texture == e.texture) v = e.overlay_variants.erase(v); else ++v;
+    }
+    backend_.DestroyTexture(e.texture);
+    e.texture = 0;
+    stats_.host_bytes -= std::min(stats_.host_bytes, e.host_bytes);
+    e.host_bytes = 0;
+    if (stats_.textures) --stats_.textures;
+    if (e.through_indexed) {
+      auto [a, b] = through_.equal_range(e.through_base);
+      for (auto t = a; t != b; ++t) {
+        if (t->second == &e) {
+          through_.erase(t);
+          break;
+        }
+      }
+      e.through_indexed = false;
+      e.through_ok = false;
+    }
+    for (SlotCache& sc : slot_cache_) sc.valid = false;
+  }
+  // Host texture (created once; re-loads write into it).
+  if (!e.texture) {
+    gpu::TextureDesc td;
+    td.dimension = host_kind == 1 ? gpu::TextureDimension::kCube
+                   : host_3d      ? gpu::TextureDimension::k3D
+                                  : gpu::TextureDimension::k2D;
+    td.width = w * ov_scale;   // job 661: x1 except for a texture with a bigger overlay
+    td.height = h * ov_scale;
+    td.depth_or_layers = host_3d ? (gd == tx::Dimension::k3D ? d : layers) : (host_kind == 1 ? 6 : 1);
+    td.mips = host_3d && gd != tx::Dimension::k3D ? 1 : mips;  // a stacked texture viewed as 3D: base level only
+    td.format = hf.format;
+    td.usage = gpu::kUsageSampled | (gpu ? gpu::kUsageStorage : 0u);
+    td.debug_name = "gow2 guest texture";
+    {
+      PhaseScope ps(g_phase.create);  // job 299
+      ++g_phase.creates;
+      e.texture = backend_.CreateTexture(td);
+    }
+    if (!e.texture) {
+      e.failure = "host texture creation failed";
+      return;
+    }
+    e.format = hf.format;
+    e.gpu_storage = gpu;
+    e.ov_scale = ov_scale;
+    uint64_t bytes = 0;
+    for (uint32_t m = 0; m < td.mips; ++m)
+      bytes += uint64_t(std::max(td.width >> m, 1u)) * std::max(td.height >> m, 1u) * td.depth_or_layers * hf.host_bytes /
+               (uint64_t(fb.block_width) * fb.block_height);
+    e.host_bytes = bytes;
+    if (replacing_existing) {
+      ++stats_.textures;
+      stats_.host_bytes += e.host_bytes;
+    }
+  }
+  e.overlay_gen = current_ov_gen;
+  e.has_overlay = swap_overlay != nullptr || swap_replace;
+  // Watch the guest ranges before reading them, so a write during the copy bumps the version.
+  e.base_start = base;
+  e.base_length = std::max(layout.base.level_data_extent_bytes, 1u);
+  // Patch 0022 (Canary 344fca7): when level 0 is already the packed tail, the whole tail is at the base address even if
+  // the fetch constant has a mip address - watch the bytes actually read.
+  e.mip_start = layout.packed_level == 0 && (mip_base || tail_at_base) ? base : mip_base;
+  e.mip_length = mips > 1 ? std::max(layout.mips_total_extent_bytes, 1u) : 0;
+  e.version = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length);  // 0029: first
+  {
+    PhaseScope ps(g_phase.watch);  // job 299
+    watch_.Watch(e.base_start, e.base_length);
+    if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
+  }
+  {
+    PhaseScope ps(g_phase.hash);  // job 299
+    (void)PagesChanged(e, false);  // record the page hashes this load reads (a fresh entry hashes every page once)
+  }
+
+  const uint32_t bpb_log2 = tx::Log2Floor(bpb);
+  const uint32_t host_mips = host_3d && gd != tx::Dimension::k3D ? 1 : mips;
+  if ((gpu && e.gpu_storage) || gpu_blocks) {
+    PhaseScope phase_gpu(g_phase.gpu);  // job 299
+    ++g_phase.gpu_loads;
+    // Job 047: may a resolve into this memory write this texture directly?
+    e.through_ok = !gpu_blocks && !stacked_3d && host_kind == 0 && layers == 1 && tiled && !e.mip_length && (bpb_log2 == 2 || bpb_log2 == 3) &&
+                   layout.packed_level != 0;
+    if (e.through_ok) {
+      e.through_base = base;
+      e.through_pitch = ((layout.base.row_pitch_bytes >> bpb_log2) + 31u) & ~31u;
+      e.through_bpb_log2 = bpb_log2;
+      e.through_code = gpu_code;
+      e.through_endian = endian;
+      e.width = w;
+      e.height = h;
+      if (!e.through_indexed) {
+        through_.emplace(base, &e);
+        e.through_indexed = true;
+      }
+    }
+    // Copy the guest bytes to the GPU's guest-memory mirror - only the pages written since the last copy - then
+    // untile each level there.
+    const uint32_t starts[2] = {e.base_start, e.mip_start}, lengths[2] = {e.base_length, e.mip_length};
+    const bool is_bc = fb.block_width > 1;  // #202: block-compressed
+    const bool bc_cpu = is_bc && REXCVAR_GET(gow2_renderer_bc_cpu_over_gpu);
+    uint32_t gpu_pages_seen = 0;
+    if (bc_cpu && before_cpu_load_) {  // pending memexport readbacks land first - only if a page is GPU-written
+      bool any = false;
+      for (uint32_t r = 0; r < 2 && !any; ++r)
+        if (lengths[r])
+          for (uint32_t p = starts[r] >> GuestWatch::kPageShift;
+               p <= (starts[r] + lengths[r] - 1) >> GuestWatch::kPageShift && !any; ++p)
+            any = watch_.GpuCurrent(p);
+      if (any)
+        for (uint32_t r = 0; r < 2; ++r)
+          if (lengths[r]) before_cpu_load_(starts[r], lengths[r]);
+    }
+    for (uint32_t r = 0; r < 2; ++r) {
+      if (!lengths[r]) continue;
+      constexpr uint32_t kShift = GuestWatch::kPageShift;
+      const uint32_t first = starts[r] >> kShift, last = (starts[r] + lengths[r] - 1) >> kShift;
+      std::vector<uint32_t>& pv = e.copied_pages[r];
+      const bool fresh = pv.size() != last - first + 1 || e.copied_start[r] != starts[r] || e.copied_length[r] != lengths[r];
+      if (fresh) pv.assign(last - first + 1, ~0u);
+      e.copied_start[r] = starts[r];
+      e.copied_length[r] = lengths[r];
+      uint32_t run = UINT32_MAX;
+      auto flush = [&](uint32_t end_page) {
+        if (run == UINT32_MAX) return;
+        const uint32_t a = std::max(run << kShift, starts[r]);
+        const uint32_t b = std::min(end_page << kShift, starts[r] + lengths[r]);
+        if (b > a) {
+          backend_.UploadGuestMemory(a, guest_ + a, b - a);
+          stats_.gpu_load_bytes += b - a;
+        }
+        run = UINT32_MAX;
+      };
+      for (uint32_t p = first; p <= last; ++p) {
+        const uint32_t v = watch_.PageVersion(p);
+        if (v != pv[p - first]) {
+          pv[p - first] = v;
+          const bool gpu_page = watch_.GpuCurrent(p);
+          if (gpu_page) ++gpu_pages_seen;
+          if (gpu_page && !bc_cpu) {  // T2: our resolve wrote this page into the mirror; the CPU bytes are older
+            flush(p);
+            ++stats_.gpu_pages_kept;
+            continue;
+          }
+          if (run == UINT32_MAX) run = p;
+        } else {
+          flush(p);
+        }
+      }
+      flush(last + 1);
+    }
+    if (is_bc && gpu_pages_seen) {  // #202 diagnostic
+      const int32_t max = std::min(REXCVAR_GET(gow2_renderer_bc_gpu_page_log), 500);
+      static std::atomic<int32_t> logged{0};
+      if (max > 0 && logged.load(std::memory_order_relaxed) < max) {
+        const int32_t n = logged.fetch_add(1);
+        if (n < max)
+          REXLOG_INFO("gow2_bc_gpu_pages: BC texture base {:08X} (+{:X}) mips {:08X} (+{:X}) format {} {}x{}: {} page(s) "
+                      "last written by our GPU (resolve / memexport) - {}{}",
+                      e.base_start, e.base_length, e.mip_start, e.mip_length, format, w, h, gpu_pages_seen,
+                      bc_cpu ? "re-copied from guest memory (bc_cpu_over_gpu)" : "kept from the mirror",
+                      n + 1 == max ? " - last line (gow2_renderer_bc_gpu_page_log)" : "");
+      }
+    }
+    // The untile work for this texture: now, or (batched loads) at the end of this Bind, after its other uploads.
+    const gpu::TextureHandle tex = e.texture;
+    const tx::FormatBlock block = fb;
+    auto untile = [=, this]() {
+    const tx::FormatBlock& fb = block;
+    for (uint32_t level = 0; level < host_mips; ++level) {
+      const bool in_tail = layout.packed_level != UINT32_MAX && level >= layout.packed_level;
+      const uint32_t storage_level = in_tail ? layout.packed_level : level;
+      const tx::GuestLayout::Level& L = storage_level == 0 ? layout.base : layout.mips[storage_level];
+      const uint32_t storage_base = storage_level == 0 ? base : mip_base + layout.mip_offsets_bytes[storage_level];
+      if (storage_level != 0 && !mip_base) break;
+      uint32_t ox = 0, oy = 0, oz = 0;
+      if (in_tail) tx::PackedMipOffset(w, h, 1, format, level, ox, oy, oz);
+      const uint32_t lw = std::max(w >> level, 1u), lh = std::max(h >> level, 1u);
+      if (gpu_blocks) {  // patch 0021: per layer (cube face), blocks -> scratch buffer -> texture
+        const uint32_t bw = (lw + fb.block_width - 1) / fb.block_width, bh = (lh + fb.block_height - 1) / fb.block_height;
+        for (uint32_t u = 0; u < layers; ++u) {
+          uint32_t row_pitch = 0, rows = 0;
+          if (!backend_.PrepareScratchFor(tex, level, u, row_pitch, rows) || row_pitch < (bw << bpb_log2)) {
+            ++stats_.gpu_block_failures;
+            continue;
+          }
+          gpu::ComputeBindings bb;
+          bb.constants[0] = storage_base + u * L.array_slice_stride_bytes;
+          bb.constants[1] = L.row_pitch_bytes / bpb;
+          bb.constants[2] = ox;
+          bb.constants[3] = oy;
+          bb.constants[4] = bw;
+          bb.constants[5] = std::min(bh, rows);
+          bb.constants[6] = bpb_log2;
+          bb.constants[7] = endian;
+          bb.constants[8] = tiled ? 1u : 0u;
+          bb.constants[9] = row_pitch;
+          bb.constant_count = 12;
+          bb.guest_t3 = true;
+          bb.scratch_u0 = true;
+          backend_.SetGpuCategory(3);
+          backend_.Dispatch(untile_blocks_, bb, (bw + 7) / 8, (std::min(bh, rows) + 7) / 8, 1);
+          backend_.CopyScratchToTexture(tex, level, u);
+          ++stats_.gpu_block_subresources;
+        }
+        continue;
+      }
+      gpu::ComputeBindings b;
+      b.constants[0] = storage_base;
+      b.constants[1] = L.row_pitch_bytes / bpb;
+      b.constants[2] = ox;
+      b.constants[3] = oy;
+      b.constants[4] = lw;
+      b.constants[5] = lh;
+      b.constants[6] = bpb_log2;
+      b.constants[7] = endian;
+      b.constants[8] = tiled ? 1u : 0u;
+      b.constants[9] = gpu_code;
+      b.constant_count = 12;
+      b.guest_t3 = true;
+      b.uav_texture = tex;
+      b.uav_mip = level;
+      b.defer_uav_barrier = batch_loads_;  // the texture's next use (sampling: a transition) waits for the write
+      backend_.SetGpuCategory(3);  // job 177: texture loads (the next draw part sets draws again)
+      if (volume) {  // patch 0026: one dispatch per level, z from the packed-tail offset
+        const uint32_t ld = std::max(d >> level, 1u);
+        uint32_t vx = 0, vy = 0, vz = 0;
+        if (in_tail) tx::PackedMipOffset(w, h, d, format, level, vx, vy, vz);
+        b.constants[2] = vx;
+        b.constants[3] = vy;
+        b.constants[10] = vz;
+        b.constants[11] = ld;
+        b.constants[12] = L.z_slice_stride_block_rows;
+        b.constant_count = 16;
+        backend_.Dispatch(untile_volume_, b, (lw + 3) / 4, (lh + 3) / 4, (ld + 3) / 4);
+        if (level + 1 == host_mips) ++stats_.gpu_volume_loads;
+        continue;
+      }
+      if (stacked_3d) {  // one dispatch per layer: layer z at storage_base + z * slice stride, into host slice z
+        for (uint32_t z = 0; z < layers; ++z) {
+          b.constants[0] = storage_base + z * L.array_slice_stride_bytes;
+          b.constants[10] = z;
+          backend_.Dispatch(untile3d_, b, (lw + 7) / 8, (lh + 7) / 8, 1);
+        }
+        ++stats_.gpu_loads_stacked;
+        break;  // base level only
+      }
+      backend_.Dispatch(untile_, b, (lw + 7) / 8, (lh + 7) / 8, 1);
+    }
+    };
+    if (batch_loads_) gpu_jobs_.push_back(std::move(untile));
+    else untile();
+    if (gpu_blocks) ++stats_.gpu_block_loads;
+    ++stats_.gpu_loads;
+    ++stats_.uploads;
+    return;
+  }
+  {  // T2: a CPU-path load reads CPU bytes; pages our resolves wrote only exist in the GPU mirror
+    const uint32_t starts[2] = {e.base_start, e.mip_start}, lengths[2] = {e.base_length, e.mip_length};
+    bool any = false;
+    for (uint32_t r = 0; r < 2 && !any; ++r)
+      if (lengths[r])
+        for (uint32_t p = starts[r] >> GuestWatch::kPageShift;
+             p <= (starts[r] + lengths[r] - 1) >> GuestWatch::kPageShift && !any; ++p)
+          any = watch_.GpuCurrent(p);
+    if (any && before_cpu_load_) {
+      // Job 042: pending memexport readbacks over these pages land in guest memory now, before the bytes are read.
+      for (uint32_t r = 0; r < 2; ++r)
+        if (lengths[r]) before_cpu_load_(starts[r], lengths[r]);
+    }
+    if (any) {
+      ++stats_.cpu_loads_of_gpu_pages;
+      // Gears 3 job 019: one of these per frame (Gears 2: 0). Name the first few, to see which texture and why it
+      // is not on the GPU path.
+      static int logged = 0;
+      if (logged < 6) {
+        ++logged;
+        REXLOG_INFO("gow2_renderer: CPU-path load reads our resolve pages: base {:08X} (+{:X}) mips {:08X} (+{:X}) "
+                    "format {} {}x{}x{} dim {} kind {} tiled {} layers {} convert {} block {}x{} bc {} untile code {}",
+                    e.base_start, e.base_length, e.mip_start, e.mip_length, format, w, h, d, dim, host_kind,
+                    tiled ? 1 : 0, layers, int(hf.convert), fb.block_width, fb.block_height, hf.block_compressed ? 1 : 0,
+                    gpu_code);
+      }
+    }
+  }
+  ++g_phase.cpu_loads;  // job 299
+  ++stats_.cpu_loads;    // patch 0021
+  const auto cpu_t0 = std::chrono::steady_clock::now();
+  double cpu_upload = 0;
+  for (uint32_t level = 0; level < host_mips; ++level) {
+    const bool in_tail = layout.packed_level != UINT32_MAX && level >= layout.packed_level;
+    const uint32_t storage_level = in_tail ? layout.packed_level : level;
+    const tx::GuestLayout::Level& L = storage_level == 0 ? layout.base : layout.mips[storage_level];
+    const uint32_t storage_base = storage_level == 0 ? base : mip_base + layout.mip_offsets_bytes[storage_level];
+    if (storage_level != 0 && !mip_base) break;
+    uint32_t ox = 0, oy = 0, oz = 0;
+    if (in_tail) tx::PackedMipOffset(w, h, gd == tx::Dimension::k3D ? d : 1, format, level, ox, oy, oz);
+    const uint32_t lw = std::max(w >> level, 1u), lh = std::max(h >> level, 1u);
+    const uint32_t ld = gd == tx::Dimension::k3D ? std::max(d >> level, 1u) : 1u;
+    const uint32_t bw = (lw + fb.block_width - 1) / fb.block_width, bh = (lh + fb.block_height - 1) / fb.block_height;
+    const uint32_t row_pitch_blocks = L.row_pitch_bytes / bpb;
+    // Host rows: for the CPU-decoded block formats a guest block is 4 rows of texels.
+    const bool decoded = hf.convert == Convert::kDxt3aToR8 || hf.convert == Convert::kCtx1ToRG8;
+    const uint32_t texel_bytes = decoded ? hf.host_bytes / 16 : hf.host_bytes;
+    const uint32_t host_w = decoded ? lw : bw, host_h = decoded ? lh : bh;
+    const uint32_t row_bytes = host_w * texel_bytes;
+    const uint32_t slices = host_3d ? (gd == tx::Dimension::k3D ? ld : layers) : 1;
+    // Patch 0024 (Gears 3 review 02-e): the host texture has 6 layers for a cube, else one (2D) - a stacked texture
+    // fetched as 2D uploads only layer 0 (the old loop wrote layers 1+ past the texture: invalid copies).
+    const uint32_t uploads = host_3d ? 1 : (host_kind == 1 ? layers : 1u);
+    for (uint32_t u = 0; u < uploads; ++u) {
+      scratch_.assign(size_t(row_bytes) * host_h * slices, 0);
+      for (uint32_t z = 0; z < slices; ++z) {
+        const uint32_t layer = host_3d ? (gd == tx::Dimension::k3D ? 0 : z) : u;
+        const uint32_t zz = gd == tx::Dimension::k3D ? z : 0;
+        // Fast path (upl-n103 CPU): tiled 2D raw copies move 16-byte runs, the largest pieces Xenos tiling keeps
+        // contiguous (TiledCombine keeps offset bits 0-3), with the endian swap done per run.
+        const bool fast = tiled && gd != tx::Dimension::k3D && hf.convert == Convert::kCopy && bpb <= 16 &&
+                          texel_bytes == bpb;
+        // Contiguous bytes: offset bits 0-3, of which x supplies 3 << bpb_log2 bits (8 bytes at 8bpp).
+        const uint32_t run_bytes = std::min(16u, 8u << bpb_log2);
+        const uint32_t run_blocks = fast ? (run_bytes >> bpb_log2) : 1u;
+        // 0.5.1 (gameplay diagnostics 10 Nov: one CPU-path load took 68 ms of a Judgment frame): rows are independent, so a
+        // big level is split across threads (--gow2_texture_cpu_threads; 1 = one thread, as before).
+        auto decode_rows = [&](uint32_t by_begin, uint32_t by_end) {
+          for (uint32_t by = by_begin; by < by_end; ++by) {
+          for (uint32_t bx = 0; bx < bw; ++bx) {
+            if (fast && ((ox + bx) & (run_blocks - 1)) == 0 && bx + run_blocks <= bw) {
+              const int64_t roff = tx::TiledOffset2D(int32_t(ox + bx), int32_t(oy + by), row_pitch_blocks, bpb_log2);
+              const uint64_t raddr = uint64_t(storage_base) + uint64_t(layer) * L.array_slice_stride_bytes + uint64_t(roff);
+              if (roff >= 0 && raddr + run_bytes <= (512ull << 20)) {
+                uint8_t* dst = scratch_.data() + size_t(z) * row_bytes * host_h + size_t(by) * row_bytes +
+                               size_t(bx) * texel_bytes;
+                std::memcpy(dst, guest_ + raddr, run_bytes);
+                SwapUnits(dst, run_bytes, endian);
+                bx += run_blocks - 1;
+                continue;
+              }
+            }
+            int64_t off;
+            if (tiled) {
+              off = gd == tx::Dimension::k3D
+                        ? tx::TiledOffset3D(int32_t(ox + bx), int32_t(oy + by), int32_t(oz + zz), row_pitch_blocks,
+                                            L.z_slice_stride_block_rows, bpb_log2)
+                        : tx::TiledOffset2D(int32_t(ox + bx), int32_t(oy + by), row_pitch_blocks, bpb_log2);
+            } else {
+              off = int64_t(oz + zz) * L.row_pitch_bytes * L.z_slice_stride_block_rows +
+                    int64_t(oy + by) * L.row_pitch_bytes + int64_t(ox + bx) * bpb;
+            }
+            const uint64_t addr = uint64_t(storage_base) + uint64_t(layer) * L.array_slice_stride_bytes + uint64_t(off);
+            if (off < 0 || addr + bpb > (512ull << 20)) continue;
+            uint8_t block[16];
+            std::memcpy(block, guest_ + addr, std::min<uint32_t>(bpb, 16));
+            SwapUnits(block, bpb, endian);
+            uint8_t* slice_base = scratch_.data() + size_t(z) * row_bytes * host_h;
+            switch (hf.convert) {
+              case Convert::kCopy:
+                std::memcpy(slice_base + size_t(by) * row_bytes + size_t(bx) * texel_bytes, block, texel_bytes);
+                break;
+              case Convert::kSwapRB565: case Convert::kSwapRB1555: case Convert::kSwapRB4444: {
+                uint16_t v;
+                std::memcpy(&v, block, 2);
+                if (hf.convert == Convert::kSwapRB565) v = uint16_t((v & 0x07E0) | ((v & 0x1F) << 11) | (v >> 11));
+                else if (hf.convert == Convert::kSwapRB1555)
+                  v = uint16_t((v & 0x83E0) | ((v & 0x1F) << 10) | ((v >> 10) & 0x1F));
+                else v = uint16_t((v & 0xF0F0) | ((v & 0xF) << 8) | ((v >> 8) & 0xF));
+                std::memcpy(slice_base + size_t(by) * row_bytes + size_t(bx) * 2, &v, 2);
+                break;
+              }
+              case Convert::kDepthUnorm: case Convert::kDepthFloat: {
+                uint32_t v;
+                std::memcpy(&v, block, 4);
+                const float f = hf.convert == Convert::kDepthUnorm ? float(v >> 8) / 16777215.0f
+                                                                   : ::xenos::formats::Float20e4To32(v >> 8);
+                std::memcpy(slice_base + size_t(by) * row_bytes + size_t(bx) * 4, &f, 4);
+                break;
+              }
+              case Convert::kR11G11B10: case Convert::kR10G11B11: {
+                uint32_t v;
+                std::memcpy(&v, block, 4);
+                uint16_t o[4];
+                if (hf.convert == Convert::kR11G11B10) {
+                  o[0] = Expand(v & 0x7FF, 11); o[1] = Expand((v >> 11) & 0x7FF, 11); o[2] = Expand(v >> 22, 10);
+                } else {
+                  o[0] = Expand(v & 0x3FF, 10); o[1] = Expand((v >> 10) & 0x7FF, 11); o[2] = Expand(v >> 21, 11);
+                }
+                o[3] = 0xFFFF;
+                std::memcpy(slice_base + size_t(by) * row_bytes + size_t(bx) * 8, o, 8);
+                break;
+              }
+              case Convert::kDxt3aToR8: case Convert::kCtx1ToRG8: {
+                uint8_t texels[32];
+                if (hf.convert == Convert::kDxt3aToR8) DecodeDxt3a(block, texels);
+                else DecodeCtx1(block, texels);
+                for (uint32_t ty = 0; ty < 4 && by * 4 + ty < lh; ++ty)
+                  for (uint32_t tx2 = 0; tx2 < 4 && bx * 4 + tx2 < lw; ++tx2)
+                    std::memcpy(slice_base + size_t(by * 4 + ty) * row_bytes + size_t(bx * 4 + tx2) * texel_bytes,
+                                texels + (ty * 4 + tx2) * texel_bytes, texel_bytes);
+                break;
+              }
+              case Convert::kNone: break;
+            }
+          }
+        }
+        };
+        RunRows(bh, bw, decode_rows);
+      }
+      if (swap_dump && level == 0 && u == 0) {  // job 620: level 0 as host-format blocks
+        char leaf[96];
+        std::snprintf(leaf, sizeof(leaf), "tex-%016llX-f%u-%ux%u.bin", static_cast<unsigned long long>(swap_hash), format,
+                      w, h);
+        std::ofstream f{std::filesystem::path(g_swap.dump_dir) / leaf, std::ios::binary};
+        f.write(reinterpret_cast<const char*>(scratch_.data()), std::streamsize(scratch_.size()));
+        ++g_swap.dump_count;
+      }
+      uint32_t up_row_bytes = row_bytes, up_rows = host_h;  // job 661: a bigger host texture gets bigger levels
+      const uint64_t active_hash = matched_hash ? matched_hash : swap_hash;
+      if (e.ov_scale > 1 && hf.block_compressed && bpb == 16 && !host_3d && u == 0) {
+        const uint32_t big_w = std::max((w * e.ov_scale) >> level, 1u), big_h = std::max((h * e.ov_scale) >> level, 1u);
+        std::vector<uint8_t> big;
+        ScaleBc3Level(scratch_, lw, lh, row_bytes, big_w, big_h, ov_scale == e.ov_scale ? swap_overlay : nullptr, level, big);
+        scratch_.swap(big);
+        up_row_bytes = ((big_w + 3) / 4) * 16;
+        up_rows = (big_h + 3) / 4;
+        static int logged_big = 0;
+        if (level == 0 && logged_big++ < 8)
+          REXLOG_INFO("gow2_texture_overlay: {:016X} ({}x{}) drawn at {}x{} - our key caps at full detail", active_hash, w, h, big_w, big_h);
+      } else if (swap_overlay && u == 0) {
+        ApplyOverlay(scratch_, *swap_overlay, level, lw, lh, row_bytes, active_hash);  // job 629
+      }
+      if (swap_replace && u == 0) {  // job 620: this level from the replacement file, when its size matches
+        std::vector<uint8_t> rep;
+        if (g_swap.ReadLevel(active_hash, level, rep) && rep.size() == scratch_.size()) {
+          scratch_.swap(rep);
+          if (level == 0 && ++g_swap.replaced <= 20)
+            REXLOG_INFO("gow2_texture_replace: {:016X} ({}x{} format {}) replaced", active_hash, w, h, format);
+        }
+      }
+      {
+        const auto up_t0 = std::chrono::steady_clock::now();
+        backend_.UploadTexture(e.texture, level, host_3d ? 0 : u, scratch_.data(), up_row_bytes, up_rows, slices);
+        cpu_upload += PhaseMs(up_t0);  // job 299
+      }
+      stats_.upload_bytes += scratch_.size();
+    }
+  }
+  if (cache_overlay_variants && e.texture) {
+    e.overlay_variants[swap_overlay] =
+        OverlayVariant{e.texture, e.ov_scale, e.host_bytes, e.has_overlay, swap_overlay_holder};
+  }
+  g_phase.upload += cpu_upload;  // job 299
+  g_phase.cpu += PhaseMs(cpu_t0) - cpu_upload;
+  ++stats_.uploads;
+}
+
+uint32_t TextureCache::DropScaledEntries() {
+  uint32_t dropped = 0;
+  for (auto& [key, e] : scaled_entries_) {
+    if (e->texture) backend_.DestroyTexture(e->texture);  // deferred past our GPU by the backend
+    ++dropped;
+    ++freed_total_;
+  }
+  scaled_entries_.clear();
+  if (dropped) {
+    for (SlotCache& sc : slot_cache_) sc.valid = false;  // they may point at dropped entries
+    scaled_evicted_total_ += dropped;
+  }
+  stats_.scaled_textures = 0;
+  stats_.scaled_bytes = 0;
+  if (dropped) REXLOG_INFO("gow2_textures: scale change: {} scaled textures freed (0.4.9 task 7)", dropped);
+  return dropped;
+}
+
+}  // namespace xenos::renderer

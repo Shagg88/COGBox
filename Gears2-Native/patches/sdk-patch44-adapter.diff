@@ -1,0 +1,45 @@
+--- a/src/ui/d3d12/d3d12_provider.cpp	2026-10-28 10:44:50.822192147 -0700
++++ b/src/ui/d3d12/d3d12_provider.cpp	2026-10-28 10:44:50.834777466 -0700
+@@ -251,6 +251,27 @@
+   }
+ 
+   // Choose the adapter.
++  // Patch 44 (COGBox GitHub #29): "any physical" (-1) used to take the first one Windows lists - on a PC with a CPU's
++  // built-in graphics (Ryzen 7000/9000 "AMD Radeon(TM) Graphics") and a graphics card, often the built-in one, so the
++  // game ran at ~11 fps beside an idle RTX 5070 Ti. Now -1 takes the hardware adapter with the most video memory of
++  // its own; an explicit index (--d3d12_adapter=N) and WARP (-2) are as before.
++  int32_t wanted_adapter = REXCVAR_GET(d3d12_adapter);
++  if (wanted_adapter == -1) {
++    SIZE_T best_memory = 0;
++    IDXGIAdapter1* probe = nullptr;
++    for (uint32_t i = 0; dxgi_factory->EnumAdapters1(i, &probe) == S_OK; ++i) {
++      DXGI_ADAPTER_DESC1 d;
++      if (SUCCEEDED(probe->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) &&
++          SUCCEEDED(pfn_d3d12_create_device_(probe, D3D_FEATURE_LEVEL_11_0, _uuidof(ID3D12Device), nullptr)) &&
++          (wanted_adapter < 0 || d.DedicatedVideoMemory > best_memory)) {
++        wanted_adapter = int32_t(i);
++        best_memory = d.DedicatedVideoMemory;
++      }
++      probe->Release();
++      probe = nullptr;
++    }
++    if (wanted_adapter >= 0) REXLOG_INFO("D3D12: adapter {} chosen (the most video memory of its own: {} MB)", wanted_adapter, best_memory >> 20);
++  }
+   uint32_t adapter_index = 0;
+   IDXGIAdapter1* adapter = nullptr;
+   while (dxgi_factory->EnumAdapters1(adapter_index, &adapter) == S_OK) {
+@@ -258,11 +279,11 @@
+     if (SUCCEEDED(adapter->GetDesc1(&adapter_desc))) {
+       if (SUCCEEDED(pfn_d3d12_create_device_(adapter, D3D_FEATURE_LEVEL_11_0, _uuidof(ID3D12Device),
+                                              nullptr))) {
+-        if (REXCVAR_GET(d3d12_adapter) >= 0) {
+-          if (adapter_index == REXCVAR_GET(d3d12_adapter)) {
++        if (wanted_adapter >= 0) {
++          if (adapter_index == uint32_t(wanted_adapter)) {
+             break;
+           }
+-        } else if (REXCVAR_GET(d3d12_adapter) == -2) {
++        } else if (wanted_adapter == -2) {
+           if (adapter_desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
+             break;
+           }

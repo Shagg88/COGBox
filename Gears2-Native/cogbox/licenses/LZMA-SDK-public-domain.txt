@@ -1,0 +1,21 @@
+LZMA SDK (7z decoder) - used by CogBox.exe to unpack .7z updates
+==================================================================
+
+CogBox.exe contains the 7z decoder C files of the LZMA SDK 23.01 by Igor Pavlov
+(https://www.7-zip.org/sdk.html): 7zArcIn, 7zDec, 7zStream, 7zFile, 7zAlloc, 7zBuf,
+7zCrc, 7zCrcOpt, LzmaDec, Lzma2Dec, Bcj2, Bra, Bra86, BraIA64, Delta, CpuArch
+(copies in Gears2-Native/cogbox/third_party/lzma, unchanged; taken from the Ubuntu
+7zip_23.01+dfsg source package, folder C/).
+
+Every one of these files states at its top:
+
+    Igor Pavlov : Public domain
+
+The LZMA SDK's licence note (SDK distribution, SPDX id LZMA-SDK-9.22):
+
+    LZMA SDK is placed in the public domain.
+    Anyone is free to copy, modify, publish, use, compile, sell, or distribute
+    the original LZMA SDK code, either in source code form or as a compiled
+    binary, for any purpose, commercial or non-commercial, and by any means.
+
+No 7-Zip program (7z.exe / 7zr.exe, LGPL) is shipped or run by COGBox.

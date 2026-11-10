@@ -1,0 +1,22 @@
+Microsoft DirectX redistributable files
+=======================================
+
+COGBox ships these Microsoft files unmodified, in object code form, as "Distributable Code" that Microsoft allows
+applications to redistribute:
+
+  Gears1\port\D3D12\, Gears2\port-tu6\D3D12\, Gears3\port-tu6\D3D12\, Judgment\port\D3D12\:
+      D3D12Core.dll  - DirectX 12 Agility SDK 1.620.1 (Microsoft Corporation)
+      Terms: Microsoft Software License Terms for Microsoft DirectX - licenses\agility-sdk-1.620.1\LICENSE.txt
+      (and LICENSE-CODE.txt, MIT, for the SDK's headers).
+  shared\:
+      dxcompiler.dll, dxil.dll - DirectX Shader Compiler 1.9.2609 (Microsoft Corporation; dxil.dll is Microsoft's
+      signed DXIL validator, shipped exactly as Microsoft built and signed it)
+      Terms: Microsoft Software License Terms for the DirectX Shader Compiler - licenses\dxc-1.9.2609\LICENSE-MS.txt;
+      the compiler's open-source parts: LICENSE-LLVM.txt and LICENCE-MIT.txt in the same folder.
+
+These files are NOT covered by COGBox's MIT licence. They stay under Microsoft's terms above, and anyone who copies or
+uses them agrees to those terms. In particular you may not reverse engineer them (except as applicable law allows),
+remove or change Microsoft's notices in them, or distribute them on their own as a stand-alone offering.
+The software is provided by Microsoft "as is", without warranty from Microsoft or from COGBox.
+Microsoft, DirectX and Direct3D are trademarks of the Microsoft group of companies. COGBox is an unofficial fan project
+and is not endorsed by Microsoft.

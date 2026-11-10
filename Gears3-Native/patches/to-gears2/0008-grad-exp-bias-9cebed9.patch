@@ -1,0 +1,52 @@
+# 0008 - texture gradient exponent bias (Gears 3 chat, 2026-10-23; base Gears2-Native 9cebed9; texture_cache.cpp is
+# unchanged since 27958a8). From the Gears 2 chat's 00:35 research: fetch constant word 4 bits 22-26 (h) / 27-31 (v) are
+# signed 5-bit gradient exponent biases (Canary 0f2980d); layer 0 ignored them. Gears 2 measured all h = v = 0 in ch10.
+#   - Always: the first 16 bindings with a non-zero bias are logged ("gow2_texture: grad exp bias h .. v .."), so a
+#     normal play log shows whether Gears 3 uses it (e.g. on the flickering / black ground).
+#   - --gow2_texture_grad_exp_bias (default false): add max(h, v) to the sampler LOD bias (Canary's implicit-LOD rule).
+# Syntax-checked (Windows), not built or run. Low priority: the log line is the useful part until a session shows
+# non-zero values.
+diff -ruN a/src/layer0_xenos/renderer/texture_cache.cpp b/src/layer0_xenos/renderer/texture_cache.cpp
+--- a/src/layer0_xenos/renderer/texture_cache.cpp	2026-10-23 01:28:31.710966894 -0700
++++ b/src/layer0_xenos/renderer/texture_cache.cpp	2026-10-23 01:28:42.494676117 -0700
+@@ -9,14 +9,24 @@
+ #include <xenos/formats.h>
+ #include <xenos/texture_layout.h>
+ 
++#include <rex/cvar.h>
+ #include <rex/hash.h>
+ #include <rex/logging/macros.h>
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <bit>
+ #include <cstdio>
+ #include <cstring>
+ 
++// Patch 0008 (Gears 3 chat, 2026-10-23; Gears 2 chat's 00:35 research): fetch constant word 4 bits 22-26 / 27-31 are
++// signed 5-bit per-axis gradient exponent biases (Canary 0f2980d). Canary's implicit-LOD path adds max(h, v) to the LOD
++// bias ("exact when both are equal, erring towards a blurrier mip otherwise"); our layer 0 ignored them.
++REXCVAR_DEFINE_BOOL(gow2_texture_grad_exp_bias, false, "Gears2",
++                    "Patch 0008: add the fetch constant's gradient exponent bias (max of the two axes, Canary's implicit-"
++                    "LOD rule) to the sampler LOD bias. The first texture bindings with a non-zero bias are logged either "
++                    "way (gow2_texture: grad exp ...); false = ignored, as before");
++
+ namespace xenos::renderer {
+ namespace {
+ 
+@@ -227,6 +237,15 @@
+     const uint32_t border = Bits(dw5, 0, 2);
+     sd.border = border == 0 ? 0 : border == 1 ? 1 : 2;
+     sd.lod_bias = float(int32_t(dw4 << 10) >> 22) / 32.0f;  // signed 10 bits at 12, 5 fraction bits
++    if (const uint32_t ge = dw4 >> 22) {  // patch 0008: gradient exponent biases, h = bits 22-26, v = bits 27-31
++      const int32_t h = int32_t(ge << 27) >> 27, v = int32_t(ge << 22) >> 27;
++      static std::atomic<uint32_t> logged{0};
++      if (logged.fetch_add(1, std::memory_order_relaxed) < 16)
++        REXLOG_INFO("gow2_texture: grad exp bias h {} v {} on base {:08X} format {} (dw4 {:08X}){}", h, v,
++                    tf[1] & 0xFFFFF000u, Bits(tf[1], 0, 6), dw4,
++                    REXCVAR_GET(gow2_texture_grad_exp_bias) ? " - applied" : " - ignored (patch 0008 off)");
++      if (REXCVAR_GET(gow2_texture_grad_exp_bias)) sd.lod_bias += float(std::max(h, v));
++    }
+     sd.min_lod = float(Bits(dw4, 2, 4));
+     sd.max_lod = mip == 2 ? sd.min_lod : float(Bits(dw4, 6, 4));  // kBaseMap: no mips
+     if (sd.max_lod < sd.min_lod) sd.max_lod = sd.min_lod;

@@ -1,0 +1,22 @@
+--- mnk.orig	2026-10-27 15:20:51.922353875 -0700
++++ mnk_input_driver.cpp	2026-10-27 15:20:51.936775564 -0700
+@@ -29,6 +29,10 @@
+                     "from the keybind_rstick_* keys only");
+ REXCVAR_DEFINE_DOUBLE(mnk_sensitivity, 1.0, "Input", "Mouse sensitivity for right stick")
+     .range(0.01, 10.0);
++// Patch 39 (COGBox 0.2.1, native mouse look): a game that reads the mouse itself through the engine's PC mouse axes
++// turns this off; the mouse stays captured but no longer moves the right stick.
++REXCVAR_DEFINE_BOOL(mnk_mouse_stick, true, "Input",
++                    "Feed mouse motion into the right stick (off: a game that reads the mouse itself)");
+ 
+ REXCVAR_DEFINE_STRING(keybind_a, "Semicolon,Space", "Input/Keybinds/Controller", "A button");
+ REXCVAR_DEFINE_STRING(keybind_b, "Quote,Backspace", "Input/Keybinds/Controller", "B button");
+@@ -507,7 +511,7 @@
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_rstick_down)))
+     ry -= INT16_MAX;
+ 
+-  if (REXCVAR_GET(mnk_mouse) && IsMouseLookActive()) {
++  if (REXCVAR_GET(mnk_mouse) && REXCVAR_GET(mnk_mouse_stick) && IsMouseLookActive()) {
+     double sensitivity = REXCVAR_GET(mnk_sensitivity);
+     constexpr double kBaseScale = 200.0;
+     rx += static_cast<int32_t>(double(mouse_dx_) * sensitivity * kBaseScale);

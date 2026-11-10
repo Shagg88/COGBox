@@ -1,0 +1,26 @@
+diff -ruN a/src/layer0_xenos/renderer/shadow_renderer.cpp b/src/layer0_xenos/renderer/shadow_renderer.cpp
+--- a/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-22 23:28:24.960627013 -0700
++++ b/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-22 23:28:24.979343209 -0700
+@@ -265,6 +265,10 @@
+                     "centres (bilinear, nearest across edges), so the game's passes that rebuild positions from the "
+                     "resolved depth (UE3 shadow projection, fog, AO, DOF) match. Without it, close-up character "
+                     "self-shadows flip whole triangles dark. The upscaler's own depth input stays jittered");
++REXCVAR_DEFINE_BOOL(gow2_upscale_passthrough, false, "Gears2",
++                    "Diagnostic (Gears 3 job 062): everything as with the upscaler (jitter, motion vectors, depth), but its "
++                    "Evaluate is skipped and the jittered scene goes on unchanged - shows whether an artefact is already in "
++                    "the scene the game draws under jitter, or comes from the upscaler's reconstruction");
+ REXCVAR_DEFINE_INT32(gow2_upscale_jitter_scope, 0, "Gears2",
+                      "Diagnostic (Gears 3 job 059): which perspective draws into the scene depth get the upscalers' jitter "
+                      "besides the camera draws (same c0-c3 as the frame's first depth-writing scene draw): 0 = none, 1 = also "
+@@ -2491,6 +2495,11 @@
+     in.camera_near = znear;
+     in.camera_far = infinite ? 1.0e7f : 100000.0f;
+     up_last_time_ = now;
++    if (REXCVAR_GET(gow2_upscale_passthrough)) {  // diagnostic: the jittered scene itself, not the reconstruction
++      ++up_ok_;
++      up_frame_ok_ = true;  // keeps the jitter going
++      return 0;             // 0 = the resolve reads the scene target as it is
++    }
+     if (!upscaler_->Evaluate(*backend_, in)) {
+       ++up_fail_;
+       return 0;

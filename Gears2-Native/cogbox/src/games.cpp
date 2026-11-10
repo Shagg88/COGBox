@@ -1,0 +1,245 @@
+// COGBox - the games (see games.h)
+#include "games.h"
+#include "x360fs.h"
+
+#include <windows.h>
+#include <winioctl.h>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+
+// The fingerprints are the ones Gears2-Native's launcher checks (tools\launcher.ps1, patch 0131): the US discs and the
+// last title updates the ports are made for. Title IDs: x360fs.h (checked on real discs and updates, job 472).
+static const GameDef k_games[G_ALL] = {
+    { G_GEARS2, "Gears of War 2", "Gears 2", "gears2", "Gears2", x360fs::kTitleGears2, "gow2.exe", "gow2.log",
+      "Title Update 6", true, "port-tu6", "port-disc",
+      { 18595840, "b6860bf31e55013467b53eca963d12314c0d78da", "eb8aedd4567c220176ae4e7d95c89f667a361387" }, { 2074624, "8689bf52b2a47908eb9281d05c5e86653db0cf11", "1659a0b7a43256e01ae86960ca11df9b44692a48" },
+      "2008", "Add your copy of the disc to play" },
+    { G_GEARS3, "Gears of War 3", "Gears 3", "gears3", "Gears3", x360fs::kTitleGears3, "gow3.exe", "gow3.log",
+      "Title Update 6", true, "port-tu6", "port-disc",
+      { 21938176, "2450fd8e4c3cf4d772cd471785d1e38cad3888ad", "35bf62c8d47fe948fea0b994a984706c5f6690a6" }, { 1908736, "5c335a50116064d2dc91dce1ec922ec9e1975b62", "3d0a51599c1c63ea929c8a91c7faada8153628f2" },
+      "2011", "Add your copy of the disc to play" },
+    { G_JUDGMENT, "Gears of War: Judgment", "Judgment", "judgment", "Judgment", x360fs::kTitleGearsJudgment, "gowj.exe", "gowj.log",
+      "Title Update 4", false, "", "port",
+      { 22855680, "426c5d27ff73d3ff2af9d404adb49e9a3db18bf1", "8fb96d4149721dc94fc0024b3001d2b734c814df" }, { 1888256, "88e876b10276535379d5524f2bef73ed9195870e", "269c0ae816e077ad37ec945c98abae6f0cafd2a0" },
+      "2013", "Add your copy of the disc to play" },
+    // Gears 1: one build, like Judgment, made from the disc and Title Update 5 together (fingerprints: Gears1-Native
+    // notes/01-release; code = SHA-1 from the XEX's image offset on, as x360fs::xex_code_sha1).
+    { G_GEARS1, "Gears of War", "Gears 1", "gears1", "Gears1", x360fs::kTitleGears1, "gow1.exe", "gow1.log",
+      "Title Update 5", false, "", "port",
+      { 4767744, "ee2f204979f9811e99c4e08b70e11de869d005c0", "1c2701ade85df1fe6a86dad6dcf4e879600c1ba5" }, { 2295808, "01e2fd390bbd96b48a80e3f3559343a397d37356", "66c794cc9f49190becc19d24a1682332efbef572" },
+      "2006", "Add your copy of the disc to play" },
+};
+
+static const int k_slotGame[G_ALL] = { G_GEARS1, G_GEARS2, G_GEARS3, G_JUDGMENT };   // release order
+int game_at_slot(int slot) { return k_slotGame[((slot % G_ALL) + G_ALL) % G_ALL]; }
+int game_slot(int g)
+{
+    for (int s = 0; s < G_ALL; s++) if (k_slotGame[s] == g) return s;
+    return 0;
+}
+
+const GameDef &game_def(int g) { return k_games[g < 0 || g >= G_ALL ? 0 : g]; }
+
+int game_by_title_id(uint32_t tid)
+{
+    for (int g = 0; g < G_COUNT; g++)
+        if (k_games[g].titleId == tid) return g;
+    return -1;
+}
+
+std::string game_root(int g) { return join(exe_dir(), game_def(g).dir); }
+// 0.5.0 (Shagg): profiles - profile 1 keeps <game>\user (every save from before); profile N >= 2 gets <game>\user-pN.
+// Downloaded content (0000000000000000, machine-wide on the console) is shared: profile_link_content() joins it.
+static int g_profile = 1;
+void set_current_profile(int id) { g_profile = id < 1 ? 1 : id; }
+int current_profile() { return g_profile; }
+std::string game_user_dir_for(int g, int profile) { return join(game_root(g), profile <= 1 ? std::string("user") : "user-p" + std::to_string(profile)); }
+std::string game_user_dir(int g) { return game_user_dir_for(g, g_profile); }
+std::string game_content_dir(int g) { return join(game_user_dir_for(g, 1), "0000000000000000"); }   // DLC: always profile 1's
+void profile_link_content(int g)
+{
+    if (g_profile <= 1) return;
+    const std::string shared = game_content_dir(g), mine = join(game_user_dir(g), "0000000000000000");
+    make_dirs(shared);
+    make_dirs(game_user_dir(g));
+    if (GetFileAttributesW(widen(mine).c_str()) != INVALID_FILE_ATTRIBUTES) return;   // there (a link, or the player's own)
+    // a directory junction (no administrator rights needed) so this profile sees the same downloaded content.
+    // 0.5.0 review: made directly (FSCTL_SET_REPARSE_POINT), not through "cmd /c mklink /J" - cmd expanded %...% and ^
+    // in folder names and the launcher waited for it on the window thread.
+    std::wstring target = widen(shared);
+    if (target.rfind(L"\\\\?\\", 0) == 0) target = target.substr(4);   // a \\?\ long path: the bare path
+    target = L"\\??\\" + target;                                        // NT form, as mklink /J writes it
+    if (!CreateDirectoryW(widen(mine).c_str(), nullptr)) return;
+    HANDLE h = CreateFileW(widen(mine).c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                           FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    bool ok = false;
+    if (h != INVALID_HANDLE_VALUE) {
+        const std::wstring print = widen(shared);
+        const USHORT subLen = USHORT(target.size() * sizeof(wchar_t)), prLen = USHORT(print.size() * sizeof(wchar_t));
+        std::vector<BYTE> buf(8 + 8 + subLen + 2 + prLen + 2, 0);
+        auto put16 = [&](size_t at, USHORT v) { memcpy(&buf[at], &v, 2); };
+        const DWORD tag = IO_REPARSE_TAG_MOUNT_POINT;
+        memcpy(&buf[0], &tag, 4);
+        put16(4, USHORT(buf.size() - 8));                 // ReparseDataLength
+        put16(8, 0); put16(10, subLen);                   // SubstituteName offset / length
+        put16(12, USHORT(subLen + 2)); put16(14, prLen);  // PrintName offset / length
+        memcpy(&buf[16], target.data(), subLen);
+        memcpy(&buf[16 + subLen + 2], print.data(), prLen);
+        DWORD got = 0;
+        ok = DeviceIoControl(h, FSCTL_SET_REPARSE_POINT, buf.data(), DWORD(buf.size()), nullptr, 0, &got, nullptr) != 0;
+        CloseHandle(h);
+    }
+    if (!ok) RemoveDirectoryW(widen(mine).c_str());   // the empty folder we just made (never a folder with content)
+}
+std::string game_logs_dir(int g) { return join(game_root(g), "logs"); }
+std::string game_shader_dir(int g) { return join(game_root(g), "shadercache"); }
+std::string game_default_data_dir(int g) { return join(game_root(g), "game\\extracted"); }
+std::string game_default_update_dir(int g) { return join(game_root(g), "game\\update"); }
+
+std::string GameState::versionText() const
+{
+    if (ready != R_READY) return "";
+    return useUpdate ? "Title Update" : "Disc version";
+}
+
+static int64_t file_time(const std::string &p)
+{
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExW(widen(p).c_str(), GetFileExInfoStandard, &d)) return 0;
+    return (int64_t)(((uint64_t)d.ftLastWriteTime.dwHighDateTime << 32) | d.ftLastWriteTime.dwLowDateTime);
+}
+
+std::string cached_sha1(Ini &ini, const std::string &path)
+{
+    uint64_t size = file_size(path);
+    int64_t t = file_time(path);
+    char tag[64];
+    snprintf(tag, sizeof tag, "%llu:%lld:", (unsigned long long)size, (long long)t);
+    std::string have = ini.get("Hashes", path);
+    if (have.size() > 40 && have.compare(0, strlen(tag), tag) == 0) return have.substr(strlen(tag));
+    std::string h = x360fs::sha1_file(widen(path));
+    if (!h.empty()) ini.set("Hashes", path, tag + h);
+    return h;
+}
+
+// Job 647: the program's own fingerprint (the XEX after its header), cached like cached_sha1
+std::string cached_code_sha1(Ini &ini, const std::string &path)
+{
+    uint64_t size = file_size(path);
+    int64_t t = file_time(path);
+    char tag[64];
+    snprintf(tag, sizeof tag, "%llu:%lld:", (unsigned long long)size, (long long)t);
+    std::string have = ini.get("CodeHashes", path);
+    if (have.size() > 40 && have.compare(0, strlen(tag), tag) == 0) return have.substr(strlen(tag));
+    std::string h = x360fs::xex_code_sha1(widen(path));
+    if (!h.empty()) ini.set("CodeHashes", path, tag + h);
+    return h;
+}
+
+static bool fp_match(const Fingerprint &f, const std::string &full, const std::string &code)
+{
+    return (!full.empty() && full == f.sha1) || (!code.empty() && *f.code && code == f.code);
+}
+// Game programs (default.xex) players have reported working, beyond the one each port is made for.
+struct ReportedXex { GameId game; const char *sha1; };
+static const ReportedXex k_reportedXex[] = {
+    { G_GEARS1, "c25a48e7cd98fc61aa4369b614dce782c4cb2152" },   // #127, 13,086,720 bytes (COGBox 0.3.7)
+    { G_GEARS1, "5ed6f2a3746bfe02a994a226a10cdacca142030f" },   // #88, 3,252,224 bytes (COGBox 0.3.0)
+    { G_JUDGMENT, "04f61832c48746df328e93bbeae40e20f72ce721" },   // #189 / #190, 23,150,592 bytes (COGBox 0.4.5)
+};
+bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code)
+{
+    if (fp_match(d.xex, full, code)) return true;
+    for (const ReportedXex &r : k_reportedXex) if (r.game == d.id && !full.empty() && full == r.sha1) return true;
+    return false;
+}
+// Job 648 (Shagg 23:23): a region disc's title update - the same patch after its header counts as the tested one
+// Title updates players have reported working, beyond the one each port is made for (GitHub #51, LeffetheProgrammer:
+// a Gears 2 Title Update 6 of the same size with a different file - probably another region's copy).
+struct ReportedXexp { GameId game; const char *sha1; };
+static const ReportedXexp k_reportedXexp[] = {
+    { G_GEARS2, "acfe0507c5a196eb322b36e91b4ca44233d40da5" },   // #51, 2,074,624 bytes
+    { G_GEARS3, "12cbb408bf77f1fa0ab69e5eb01d5028ce4b2bbf" },   // #56, Title Update 6, 1,908,736 bytes
+    { G_JUDGMENT, "d7c0b9ede168544b9a24d6e5afe3992cd87022ca" }, // #57, Title Update 4, 1,888,256 bytes
+    { G_JUDGMENT, "d7cd928cded5fe3798377b0c26a9591298144f60" }, // #61, Title Update 4, 1,888,256 bytes
+    { G_GEARS3, "20030da09581f4374f2f6820ff9fbf31a35dfffe" },   // #64, Title Update 6, 1,908,736 bytes
+    // GitHub #138: #66 and #84 (Gears 3, 1,513,472 bytes) were reported on 0.2.5 / 0.3.0, when the disc build ran
+    // without the update. They are not Title Update 6 (1,908,736 bytes): the patch makes version 0.0.1.11, so the
+    // TU6-only port (0.4.0+) finds no code at the entry point and Windows ends it (0xC0000374). No longer "tested".
+    // { G_GEARS3, "2b5866d2db5401f266de617679dba5cfd848096e" },   // #66, 1,513,472 bytes
+    { G_JUDGMENT, "75a392f838611700ba8ddc679ad4152f65e851b0" }, // #69, Title Update 4, 1,888,256 bytes
+    { G_JUDGMENT, "730af13877e29b78491fa3df5e07878ffd0426c0" }, // #70, Title Update 4, 1,888,256 bytes
+    // { G_GEARS3, "d05adc22bff6197229fc3685558ba5bed6b30abf" },   // #84, 1,513,472 bytes (#138)
+    { G_GEARS3, "b2a6e5308155650448b27b74e169101596abc98d" },   // #86, Title Update 6, 1,908,736 bytes
+    { G_GEARS3, "67b0c9c5fcd8ed15bcc79eb62e273d75e6e1ece6" },   // #109, Title Update 6, 1,908,736 bytes (COGBox 0.3.5)
+    { G_GEARS3, "0260fc74ce836518c9e29f24b36b0e96de30c5c9" },   // #230, Title Update 6, 1,908,736 bytes (COGBox 0.4.7)
+};
+bool xexp_is_tested(const GameDef &d, const std::string &full, const std::string &code)
+{
+    if (fp_match(d.xexp, full, code)) return true;
+    for (const ReportedXexp &r : k_reportedXexp) if (r.game == d.id && !full.empty() && full == r.sha1) return true;
+    return false;
+}
+
+void game_set_data(Ini &ini, int g, const std::string &dataDir, bool own)
+{
+    const GameDef &d = game_def(g);
+    if (dataDir.empty()) ini.remove(d.key, "GameFolder"); else ini.set(d.key, "GameFolder", dataDir);
+    ini.seti(d.key, "OwnFolder", own ? 1 : 0);
+}
+
+void game_set_update(Ini &ini, int g, const std::string &updateDir)
+{
+    const GameDef &d = game_def(g);
+    if (updateDir.empty()) ini.remove(d.key, "UpdateFolder"); else ini.set(d.key, "UpdateFolder", updateDir);
+}
+
+void game_refresh(int g, Ini &ini, GameState &st, bool hash)
+{
+    const GameDef &d = game_def(g);
+    std::string root = game_root(g);
+    st.portExeTu = *d.portTu ? join(join(root, d.portTu), d.exeName) : "";
+    st.portExeDisc = *d.portDisc ? join(join(root, d.portDisc), d.exeName) : "";
+    // ports chosen by hand (developers: a build folder elsewhere) - [gears2] PortTu = <exe>, PortDisc = <exe>
+    std::string ot = ini.get(d.key, "PortTu"), od = ini.get(d.key, "PortDisc");
+    if (!ot.empty()) st.portExeTu = ot;
+    if (!od.empty()) st.portExeDisc = od;
+    if (!st.portExeTu.empty() && !file_exists(st.portExeTu)) st.portExeTu.clear();
+    if (!st.portExeDisc.empty() && !file_exists(st.portExeDisc)) st.portExeDisc.clear();
+
+    std::string data = ini.get(d.key, "GameFolder");
+    st.dataOwn = ini.geti(d.key, "OwnFolder", 0) != 0;
+    bool remembered = !data.empty();
+    // 0.2.0: also when the remembered folder holds no game (0.2.0's first DLC fix saved the DLC's folder there) but
+    // COGBox's own unpacked copy is in place
+    if ((data.empty() || !file_exists(join(data, "default.xex"))) && file_exists(join(game_default_data_dir(g), "default.xex"))) data = game_default_data_dir(g);
+    st.dataDir = file_exists(join(data, "default.xex")) ? data : "";
+    std::string upd = ini.get(d.key, "UpdateFolder");
+    if (upd.empty()) upd = game_default_update_dir(g);
+    st.updateDir = file_exists(join(upd, "default.xexp")) ? upd : "";
+
+    if (hash) {
+        st.xexKnown = !st.dataDir.empty();
+        const std::string hx = st.xexKnown ? cached_sha1(ini, join(st.dataDir, "default.xex")) : std::string();
+        st.xexMatch = st.xexKnown && (hx == d.xex.sha1 || xex_is_tested(d, hx, cached_code_sha1(ini, join(st.dataDir, "default.xex"))));
+        st.xexConfirmed = st.xexKnown && !st.xexMatch && !hx.empty() && ini.get(d.key, "WorksXex") == hx;
+        st.xexpKnown = !st.updateDir.empty();
+        const std::string hp = st.xexpKnown ? cached_sha1(ini, join(st.updateDir, "default.xexp")) : std::string();
+        st.xexpMatch = st.xexpKnown && (hp == d.xexp.sha1 || xexp_is_tested(d, hp, cached_code_sha1(ini, join(st.updateDir, "default.xexp"))));
+        st.xexpConfirmed = st.xexpKnown && !st.xexpMatch && !hp.empty() && ini.get(d.key, "WorksXexp") == hp;
+    }
+    st.playSeconds = ini.geti64("PlayTime", d.key, 0);
+    st.lastPlayed = ini.geti64("LastPlayed", d.key, 0);
+
+    if (st.portExeTu.empty() && st.portExeDisc.empty()) st.ready = R_NO_PORT;
+    else if (st.dataDir.empty()) st.ready = remembered ? R_COPY_MISSING : R_NO_COPY;
+    else st.ready = R_READY;
+    // The title update build when the update is there; which version Play starts is the settings' Version choice
+    // (gears_settings effective_version), applied by the caller. Gears 2 / 3 without the update need the disc build.
+    st.useUpdate = !st.updateDir.empty() && (d.updateNeeded ? !st.portExeTu.empty() : true);
+    if (st.ready == R_READY && d.updateNeeded && !st.useUpdate && st.portExeDisc.empty()) st.ready = R_NEED_UPDATE;
+    // Title updates required (0.4.0): no game plays from the disc alone any more - Gears 2 / 3 need their title-update
+    // build and Title Update 6, Judgment TU4, Gears 1 TU5 (their one build is made from the disc and the update).
+    if (st.ready == R_READY && game_update_required(g) && !st.useUpdate) st.ready = R_NEED_UPDATE;
+}

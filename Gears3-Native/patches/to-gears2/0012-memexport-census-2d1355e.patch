@@ -1,0 +1,46 @@
+# 0012 - memexport census logging (Gears 3 chat, 2026-10-23; base Gears2-Native 2d1355e; shadow_renderer.cpp only)
+# Why: job 071 [V]: the ch22 black squad is unchanged with light-environment shadows or ALL dynamic shadows off, so it
+# is not a shadow problem; Shagg: NPC explosions and black characters never show together -> suspect the characters'
+# memexport (GPU skinning) data. Today only the first 8 export draws are logged (load-time DXT moves, format 26).
+#   - the first export draw of every vertex shader (up to 96 shaders) is logged too (formats, counts, endian);
+#   - the first draw of every (vertex shader, fetch slot) that reads an export range is logged (address, size, endian,
+#     GPU-current pages) - up to 96 lines.
+# Logging only, no behaviour change. Syntax-checked (only errors: stale local copies of gpu.h / guest_watch.h).
+diff -ruN a/src/layer0_xenos/renderer/shadow_renderer.cpp b/src/layer0_xenos/renderer/shadow_renderer.cpp
+--- a/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 02:06:57.938624489 -0700
++++ b/src/layer0_xenos/renderer/shadow_renderer.cpp	2026-10-23 02:06:57.964807900 -0700
+@@ -4993,7 +4993,10 @@
+     backend_->SetGuestWritable(false);
+     ++stats_.memexport_only_draws;
+     MarkExports(r, vsg);
+-    if (memexport_logged_ < 8) {
++    // Patch 0012: besides the first 8, the first export draw of every vertex shader (up to 96 shaders) is logged, so a
++    // gameplay log shows what the title exports (formats, counts) and not only the load-time texture moves.
++    const bool new_vs = memexport_vs_seen_.size() < 96 && memexport_vs_seen_.insert(vs_.hash).second;
++    if (memexport_logged_ < 8 || new_vs) {
+       ++memexport_logged_;
+       std::string sc_text;
+       for (uint32_t c : vsg.memexport_stream_constants) {
+@@ -5207,6 +5210,13 @@
+             }
+           }
+           ++stats_.vertex_from_exports;
++          if (export_reader_seen_.size() < 96 && export_reader_seen_.insert(vs_.hash ^ (uint64_t(i) << 56)).second) {
++            uint32_t gpu_pages = 0, pages = 0;
++            for (uint32_t p = first; p <= last; ++p, ++pages) gpu_pages += watch_->GpuCurrent(p) ? 1u : 0u;
++            REXLOG_INFO("gow2_renderer: export reader frame {} draw {}: vs {:016X} vf{} {:08X} size {} endian {} | {} of "
++                        "{} pages GPU-current (patch 0012)",
++                        frame_ + 1, draw_index_, vs_.hash, i, address, size, dw1 & 3u, gpu_pages, pages);
++          }
+           return;
+         }
+       }
+@@ -6608,6 +6618,8 @@
+   };
+   std::deque<ExportReadback> export_readbacks_;
+   uint32_t memexport_logged_ = 0;
++  std::unordered_set<uint64_t> memexport_vs_seen_;   // patch 0012: export vertex shaders logged once each
++  std::unordered_set<uint64_t> export_reader_seen_;  // patch 0012: (vs hash, slot) pairs reading export ranges
+   uint64_t summary_barrier_calls_ = 0, summary_barriers_ = 0, summary_dispatches_ = 0, summary_backend_draws_ = 0,
+            summary_submits_ = 0, summary_barrier_batches_ = 0, summary_barriers_merged_ = 0;  // jobs 045/046
+   std::string not_drawn_;
