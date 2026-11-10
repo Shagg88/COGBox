@@ -2,7 +2,15 @@
 // (own tag, add friend, invites, requests, friends with Join / Invite / Remove). Drawn by ingame_menu.cpp, UI thread.
 #pragma once
 
+#include <string>
+
+#include <imgui.h>
+
 namespace xenos::social {
+
+// A friend's profile picture (icons/<TitleID>/<n>.png under the COGBox folder), loaded once; 0 when this PC doesn't
+// have it (a game or DLC it lacks) or the name isn't one of the games' own - the row then shows the letter.
+ImTextureID ProfileIcon(const std::string& name);
 
 // Draws the page in the menu window's remaining space. pad: a controller is in use (the on-screen keyboard for
 // ADD FRIEND). Back: to the settings page. CloseMenu: an invite was accepted or a Join pressed, so the player sees the

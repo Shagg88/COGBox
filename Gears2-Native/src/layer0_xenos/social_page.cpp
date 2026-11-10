@@ -62,17 +62,28 @@ struct SlotButton {
 // Layout A: one line per entry - a presence dot, the tag, its state, and small buttons on the right. Returns the
 // index of the button pressed, or -1.
 int Row(const char* id, const std::string& tag, const std::string& state, ImU32 state_col, ImU32 lamp,
-        const std::vector<SlotButton>& buttons, float s) {
+        const std::vector<SlotButton>& buttons, float s, const std::string& icon = std::string()) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float w = ImGui::GetContentRegionAvail().x, bh = ImGui::GetFrameHeight(), h = bh + 10.f * s, pad = 10.f * s;
   const ImVec2 p = ImGui::GetCursorScreenPos(), q(p.x + w, p.y + h);
   const bool hot = ImGui::IsMouseHoveringRect(p, q);
   dl->AddRectFilled(p, q, kPanel, 3.f * s);
-  const ImVec2 c(p.x + pad + 5.f * s, p.y + h * 0.5f);
-  dl->AddCircleFilled(c, 5.f * s, lamp, 16);
+  const float r = h * 0.36f;
+  const ImVec2 c(p.x + pad + r, p.y + h * 0.5f);
+  dl->AddCircleFilled(c, r, kBadge, 32);
+  if (const ImTextureID pic = ProfileIcon(icon)) {
+    dl->AddImageRounded(pic, ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, r);
+  } else {
+    const std::string letter = tag.empty() ? "?" : std::string(1, char(std::toupper(static_cast<unsigned char>(tag[0]))));
+    const float lw = popup::TextWidth(true, 14.f * s, letter);
+    popup::Text(dl, true, 14.f * s, ImVec2(c.x - lw * 0.5f, c.y - 9.f * s), kText, letter, r * 2);
+  }
+  dl->AddCircle(c, r, kCrimson, 32, 1.5f * s);
+  dl->AddCircleFilled(ImVec2(c.x + r * 0.72f, c.y + r * 0.72f), 4.f * s, lamp, 16);
+  dl->AddCircle(ImVec2(c.x + r * 0.72f, c.y + r * 0.72f), 4.f * s, kPanel, 16, 1.5f * s);
   float buttons_w = 0;
   for (const SlotButton& b : buttons) buttons_w += ButtonWidth(b.label, s) + 6.f * s;
-  const float tx = c.x + 14.f * s, name_w = std::min(190.f * s, (q.x - pad - buttons_w - tx) * 0.45f);
+  const float tx = c.x + r + 12.f * s, name_w = std::min(190.f * s, (q.x - pad - buttons_w - tx) * 0.45f);
   const float ty = p.y + (h - 17.f * s) * 0.5f - 2.f * s;
   popup::Text(dl, true, 16.f * s, ImVec2(tx, ty), kText, tag, name_w);
   popup::Text(dl, false, 15.f * s, ImVec2(tx + name_w + 12.f * s, ty + 1.f * s), state_col, state,
@@ -239,13 +250,13 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
     Section(head.c_str(), s);
     for (const SocialRequest& r : v.lists.incoming) {
       const int b = Row(("req" + r.uuid).c_str(), r.tag, XenosTr("wants to be your friend"), kAmber, kAmber,
-                        {{"ACCEPT", true, true}, {"DECLINE"}, {"BLOCK"}}, s);
+                        {{"ACCEPT", true, true}, {"DECLINE"}, {"BLOCK"}}, s, r.icon);
       if (b == 0) social_do(SocialAction::Accept, r.uuid);
       if (b == 1) social_do(SocialAction::Decline, r.uuid);
       if (b == 2) social_do(SocialAction::Block, r.uuid);
     }
     for (const SocialRequest& r : v.lists.outgoing)
-      Row(("out" + r.uuid).c_str(), r.tag, XenosTr("Waiting for them to accept"), kDim, kDim, {}, s);
+      Row(("out" + r.uuid).c_str(), r.tag, XenosTr("Waiting for them to accept"), kDim, kDim, {}, s, r.icon);
     if (v.lists.friends.empty()) Line(XenosTr("No friends yet - add one by their tag."), kDim, s);
     // online friends first, then offline; each group as the server sorts it
     std::vector<const SocialFriend*> order;
@@ -263,7 +274,7 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
       const ImU32 col = offline ? kDim : joinable ? kAmber : kGreen;
       const std::string id = "fr" + f.uuid;
       if (g_remove_uuid == f.uuid) {
-        const int b = Row(id.c_str(), f.tag, XenosTr("Remove this friend?"), kAmber, col, {{"YES, REMOVE", true, true}, {"NO"}}, s);
+        const int b = Row(id.c_str(), f.tag, XenosTr("Remove this friend?"), kAmber, col, {{"YES, REMOVE", true, true}, {"NO"}}, s, f.icon);
         if (b == 0) {
           social_do(SocialAction::Remove, f.uuid);
           g_remove_uuid.clear();
@@ -276,7 +287,7 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
       if (joinable) buttons.push_back({"JOIN", true, true});
       if (!offline) buttons.push_back({"INVITE"});
       buttons.push_back({"..."});
-      const int b = Row(id.c_str(), f.tag, XenosTr(presence.c_str()), col, col, buttons, s);
+      const int b = Row(id.c_str(), f.tag, XenosTr(presence.c_str()), col, col, buttons, s, f.icon);
       if (b < 0) continue;
       const std::string what = buttons[size_t(b)].label;
       if (what == "JOIN") {
@@ -300,7 +311,7 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
       if (v.invites.empty()) Line(XenosTr("No invites right now."), kDim, s);
       for (const SocialInvite& i : v.invites) {
         const int b = Row(("inv" + i.id).c_str(), i.from_tag, GameName(i.title_id), kAmber, kGreen,
-                          {{"ACCEPT", true, true}, {"DECLINE"}}, s);
+                          {{"ACCEPT", true, true}, {"DECLINE"}}, s, i.from_icon);
         if (b == 0) {
           social_do(SocialAction::InviteAccept, i.id);
           result = PageResult::CloseMenu;

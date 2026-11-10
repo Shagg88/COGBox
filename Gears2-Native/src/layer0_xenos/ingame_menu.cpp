@@ -9,6 +9,9 @@
 // The controller is read with XInput (loaded at run time, nothing to link) on a small polling thread; while the menu is
 // open its buttons are fed to Dear ImGui's gamepad navigation. Our code (MIT).
 #include <xenos/dev_tools.h>
+#include <rex/ui/image_decode.h>
+#include <rex/ui/immediate_drawer.h>
+#include <xenos/achievements_data.h>   // ach::ReadFile: friends' profile pictures
 #include <xenos/achievements_browser.h>   // achievements part 3: the Achievements page
 #include <xenos/achievements_popup_logic.h>   // achievements part 4: popup settings applied at once (LiveCvarFor)
 #include <xenos/input/prompt_device_monitor.h>
@@ -355,6 +358,8 @@ xenos::AchievementsBrowser* Browser() {
   return g_browser.get();
 }
 enum class MenuPage { kSettings, kAchievements, kSocial };   // social step 5: kSocial
+// Friends' profile pictures for the Social page (UI thread): loaded once each, kept while the game runs.
+std::map<std::string, std::unique_ptr<rex::ui::ImmediateTexture>> g_profile_icons;
 void ToggleSocialOnUIThread();   // social step 5: F8 / Guide
 
 void RequestOpenOnUIThread();
@@ -1284,4 +1289,24 @@ bool XenosLiveMaxFps(int32_t* fps) {
   if (v == INT64_MIN) return false;
   *fps = int32_t(v);
   return true;
+}
+
+REXCVAR_DECLARE(std::string, cogbox_dir);  // achievements_export.cpp
+
+ImTextureID xenos::social::ProfileIcon(const std::string& name) {
+  if (!safe_icon_name(name) || !g_immediate) return ImTextureID(0);
+  auto it = g_profile_icons.find(name);
+  if (it == g_profile_icons.end()) {
+    std::unique_ptr<rex::ui::ImmediateTexture> tex;
+    const std::string dir = REXCVAR_GET(cogbox_dir);
+    std::string bytes;
+    if (!dir.empty() && xenos::ach::ReadFile(std::filesystem::path(dir) / name, &bytes)) {
+      int w = 0, h = 0;
+      std::vector<uint8_t> rgba = rex::ui::DecodeImageRGBA(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), w, h);
+      if (!rgba.empty() && w > 0 && h > 0)
+        tex = g_immediate->CreateTexture(uint32_t(w), uint32_t(h), rex::ui::ImmediateTextureFilter::kLinear, false, rgba.data());
+    }
+    it = g_profile_icons.emplace(name, std::move(tex)).first;
+  }
+  return it->second ? reinterpret_cast<ImTextureID>(it->second.get()) : ImTextureID(0);
 }

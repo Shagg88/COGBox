@@ -530,7 +530,7 @@ static float player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav, int slot =
         if (th_button("BACK##profback", ImVec2(S(120), T(28)), true, F_BOLD) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) profView = false;
       } else if (iconView) {
         // 0.4.6: the icon grid (player_icon.cpp). D-pad moves, A picks, B closes (Dear ImGui's own nav cancel).
-        if (player_icon_picker(a, letter)) iconView = false;
+        if (player_icon_picker(a, letter)) { iconView = false; social_send_icon(a); }
         ImGui::TextColored(col::dim, "%s", tr("D-pad choose   A pick   B close"));
         ImGui::Spacing();
         if (th_button("BACK##iconback", ImVec2(S(140), T(28)), true, F_BOLD)) iconView = false;

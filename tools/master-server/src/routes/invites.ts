@@ -44,9 +44,9 @@ export const inviteRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: 
     return u;
   };
   const refOf = (uuid: string): FriendRef => {
-    const r = db.prepare('SELECT display_name, discriminator FROM users WHERE uuid = ?').get(uuid) as
-      { display_name: string; discriminator: string };
-    return { uuid, tag: `${r.display_name}#${r.discriminator}` };
+    const r = db.prepare('SELECT display_name, discriminator, icon FROM users WHERE uuid = ?').get(uuid) as
+      { display_name: string; discriminator: string; icon: string };
+    return { uuid, tag: `${r.display_name}#${r.discriminator}`, icon: r.icon };
   };
   const xuidOf = (uuid: string): string =>
     (db.prepare('SELECT xuid FROM users WHERE uuid = ?').get(uuid) as { xuid: string }).xuid;

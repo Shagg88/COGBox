@@ -20,6 +20,18 @@ static bool same(const SocialCall& c, const char* method, const char* path, cons
 }
 
 int main() {
+    // profile pictures: a friend's, a request's and an inviter's; only the games' own picture names are drawn
+    {
+        auto l = parse_friends(R"({"friends":[{"uuid":"u1","tag":"A#0001","icon":"icons/4D5308AB/8000.png","presence":{"state":"online"}}],)"
+                               R"("incoming":[{"uuid":"u2","tag":"B#0002","icon":"icons/4D530A26/3.png"}],"outgoing":[]})");
+        CHECK(l && l->friends[0].icon == "icons/4D5308AB/8000.png" && l->incoming[0].icon == "icons/4D530A26/3.png");
+        auto inv = parse_invites(R"({"invites":[{"id":"i1","from":{"uuid":"u1","tag":"A#0001","icon":"icons/4D5307D5/12.png"},"title_id":"4d5308ab"}]})");
+        CHECK(inv.size() == 1 && inv[0].from_icon == "icons/4D5307D5/12.png");
+        CHECK(safe_icon_name("icons/4D5308AB/8000.png"));
+        CHECK(!safe_icon_name("") && !safe_icon_name("icons/../x.png") && !safe_icon_name("icons/4D5308AB/8000.jpg") &&
+              !safe_icon_name("C:/icons/4D5308AB/1.png") && !safe_icon_name("icons/4d5308ab/1.png") && !safe_icon_name("icons/4D5308AB/1234567.png"));
+        CHECK(same(call_for(SocialAction::SetIcon, "icons/4D5308AB/8000.png"), "POST", "/api/v1/auth/icon", R"({"icon":"icons/4D5308AB/8000.png"})"));
+    }
     // the friends list
     {
         auto l = parse_friends(R"({"friends":[{"uuid":"u1","tag":"Chud Dumpty#7451","xuid":"5","presence":)"

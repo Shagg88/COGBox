@@ -20,9 +20,9 @@ export const friendRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: 
     return u;
   };
   const refOf = (uuid: string): FriendRef => {
-    const r = db.prepare('SELECT display_name, discriminator FROM users WHERE uuid = ?').get(uuid) as
-      { display_name: string; discriminator: string };
-    return { uuid, tag: `${r.display_name}#${r.discriminator}` };
+    const r = db.prepare('SELECT display_name, discriminator, icon FROM users WHERE uuid = ?').get(uuid) as
+      { display_name: string; discriminator: string; icon: string };
+    return { uuid, tag: `${r.display_name}#${r.discriminator}`, icon: r.icon };
   };
   const friendOf = (uuid: string): Friend => ({
     ...refOf(uuid),
@@ -39,7 +39,8 @@ export const friendRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: 
     const u = me(req, reply);
     if (!u) return reply;
     const l = listFor(db, u.uuid);
-    return { friends: l.friends.map((f) => friendOf(f.uuid)), incoming: l.incoming, outgoing: l.outgoing };
+    return { friends: l.friends.map((f) => friendOf(f.uuid)), incoming: l.incoming.map((r) => refOf(r.uuid)),
+      outgoing: l.outgoing.map((r) => refOf(r.uuid)) };
   });
 
   fastify.post<{ Body: { tag?: unknown } }>('/requests', async (req, reply) => {

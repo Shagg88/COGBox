@@ -148,6 +148,24 @@ describe('Master Server API', () => {
     expect(r.json().display_name).toBe('Hoffman');
   });
 
+  it('icon: a profile picture name is stored and shown with friend requests; anything else is refused', async () => {
+    const a = await claim('Anya');
+    const b = await claim('Benjamin');
+    const set = await app.inject({ method: 'POST', url: '/api/v1/auth/icon', headers: auth(b), payload: { icon: 'icons/4D5308AB/8000.png' } });
+    expect(set.statusCode).toBe(200);
+    expect(set.json().icon).toBe('icons/4D5308AB/8000.png');
+    for (const bad of ['../x.png', 'icons/4D5308AB/8000.jpg', 'icons/zz/1.png', 'C:/icons/4D5308AB/1.png', 7]) {
+      const r = await app.inject({ method: 'POST', url: '/api/v1/auth/icon', headers: auth(b), payload: { icon: bad } });
+      expect(r.statusCode, String(bad)).toBe(400);
+    }
+    expect((await app.inject({ method: 'POST', url: '/api/v1/auth/icon', payload: { icon: '' } })).statusCode).toBe(401);
+    await app.inject({ method: 'POST', url: '/api/v1/friends/requests', headers: auth(b), payload: { tag: `${a.display_name}#${a.discriminator}` } });
+    const list = await app.inject({ method: 'GET', url: '/api/v1/friends', headers: auth(a) });
+    expect(list.json().incoming[0]).toMatchObject({ uuid: b.uuid, icon: 'icons/4D5308AB/8000.png' });
+    const cleared = await app.inject({ method: 'POST', url: '/api/v1/auth/icon', headers: auth(b), payload: { icon: '' } });
+    expect(cleared.json().icon).toBe('');
+  });
+
   it('renames: same uuid and xuid, discriminator kept when free', async () => {
     const me = await claim('Baird');
     const r = await app.inject({ method: 'POST', url: '/api/v1/auth/rename', headers: auth(me), payload: { display_name: 'Damon Baird' } });
@@ -298,7 +316,7 @@ describe('Master Server API', () => {
     const bLauncher = await openSocket(b, '&role=launcher');
     const got = nextOfType(bLauncher, 'friend_request');
     expect((await requestFriend(a, b)).json().status).toBe('pending');
-    expect((await got).from).toEqual({ uuid: a.uuid, tag: tagOf(a) });
+    expect((await got).from).toEqual({ uuid: a.uuid, tag: tagOf(a), icon: "" });   // icon: the profile picture (none set)
     expect((await friendsOf(b)).incoming.map((r: any) => r.uuid)).toEqual([a.uuid]);
     const added = nextOfType(bLauncher, 'friend_added');
     expect((await app.inject({ method: 'POST', url: `/api/v1/friends/${a.uuid}/accept`, headers: auth(b) })).statusCode).toBe(200);

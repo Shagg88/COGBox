@@ -34,6 +34,7 @@ std::optional<SocialLists> parse_friends(const std::string& body) {
         x.uuid = str(f, "uuid");
         x.tag = str(f, "tag");
         x.xuid = str(f, "xuid");
+        x.icon = str(f, "icon");
         if (f.contains("presence") && f["presence"].is_object()) {
             const json& p = f["presence"];
             if (!str(p, "state").empty()) x.state = str(p, "state");
@@ -45,7 +46,7 @@ std::optional<SocialLists> parse_friends(const std::string& body) {
     for (const char* key : { "incoming", "outgoing" }) {
         if (!j.contains(key) || !j[key].is_array()) continue;
         for (const json& r : j[key]) {
-            SocialRequest x{ str(r, "uuid"), str(r, "tag") };
+            SocialRequest x{ str(r, "uuid"), str(r, "tag"), str(r, "icon") };
             if (!x.uuid.empty()) (key[0] == 'i' ? out.incoming : out.outgoing).push_back(x);
         }
     }
@@ -62,6 +63,7 @@ std::vector<SocialInvite> parse_invites(const std::string& body) {
         if (i.contains("from")) {
             x.from_uuid = str(i["from"], "uuid");
             x.from_tag = str(i["from"], "tag");
+            x.from_icon = str(i["from"], "icon");
         }
         x.title_id = upper(str(i, "title_id"));
         x.room_code = str(i, "room_code");
@@ -114,6 +116,7 @@ SocialCall call_for(SocialAction action, const std::string& arg) {
     case SocialAction::InviteAccept: return { "POST", "/api/v1/invites/" + arg + "/accept", "" };
     case SocialAction::InviteDecline: return { "POST", "/api/v1/invites/" + arg + "/decline", "" };
     case SocialAction::Rename: return { "POST", "/api/v1/auth/rename", json{ { "display_name", arg } }.dump() };
+    case SocialAction::SetIcon: return { "POST", "/api/v1/auth/icon", json{ { "icon", arg } }.dump() };
     }
     return {};
 }
@@ -203,4 +206,17 @@ std::string region_or_default(const std::string& saved, int minutes_east) {
 std::string region_label(const SocialRegion& r, const std::map<std::string, int>& counts, const std::string& players) {
     const auto it = counts.find(r.id);
     return it == counts.end() ? std::string(r.name) : std::string(r.name) + ": ~" + std::to_string(it->second) + " " + players;
+}
+
+bool safe_icon_name(const std::string& n) {
+    const std::string pre = "icons/", suf = ".png";
+    if (n.size() < pre.size() + 8 + 1 + 1 + suf.size() || n.compare(0, pre.size(), pre) != 0) return false;
+    size_t i = pre.size();
+    for (size_t k = 0; k < 8; ++k, ++i)
+        if (!((n[i] >= '0' && n[i] <= '9') || (n[i] >= 'A' && n[i] <= 'F'))) return false;
+    if (n[i++] != '/') return false;
+    const size_t digits_at = i;
+    while (i < n.size() && n[i] >= '0' && n[i] <= '9') ++i;
+    const size_t digits = i - digits_at;
+    return digits >= 1 && digits <= 6 && n.compare(i, std::string::npos, suf) == 0;
 }

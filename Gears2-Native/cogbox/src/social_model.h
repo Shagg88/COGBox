@@ -10,14 +10,15 @@
 
 struct SocialFriend {
     std::string uuid, tag, xuid;
+    std::string icon;   // their profile picture: icons/<TitleID>/<n>.png, or "" for the letter
     std::string state = "offline";   // offline | online | playing | joinable
     std::string title_id, lobby_id;
 };
 struct SocialRequest {
-    std::string uuid, tag;
+    std::string uuid, tag, icon;
 };
 struct SocialInvite {
-    std::string id, from_uuid, from_tag, title_id, room_code;
+    std::string id, from_uuid, from_tag, title_id, room_code, from_icon;
 };
 struct SocialLists {
     std::vector<SocialFriend> friends;
@@ -49,7 +50,10 @@ std::string presence_text(const SocialFriend& f);
 // Name#1234: a name of 3-15 letters, digits and spaces, '#', four digits.
 bool valid_tag(const std::string& tag);
 
-enum class SocialAction { Add, Accept, Decline, Block, Remove, Join, Invite, InviteAccept, InviteDecline, Rename };
+enum class SocialAction { Add, Accept, Decline, Block, Remove, Join, Invite, InviteAccept, InviteDecline, Rename, SetIcon };
+// A profile picture name from the server that is safe to look up under <COGBox>: icons/<8 hex digits>/<1-6 digits>.png
+// (anything else - a path, "..", another file type - is drawn as the letter).
+bool safe_icon_name(const std::string& name);
 struct SocialCall {
     std::string method, path, body;
 };

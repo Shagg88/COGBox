@@ -85,6 +85,10 @@ export function initDb(dbPath: string = process.env.DB_PATH || 'master.db'): Dat
   if (!lobbyColumns.includes('qos_data')) {
     db.exec("ALTER TABLE lobbies ADD COLUMN qos_data TEXT NOT NULL DEFAULT ''");
   }
+  const userColumns = (db.prepare('PRAGMA table_info(users)').all() as { name: string }[]).map((c) => c.name);
+  if (!userColumns.includes('icon')) {   // the profile picture's name (icons/<TitleID>/<n>.png), '' for the letter
+    db.exec("ALTER TABLE users ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+  }
   if (!lobbyColumns.includes('invite_only')) {
     db.exec('ALTER TABLE lobbies ADD COLUMN invite_only INTEGER NOT NULL DEFAULT 0');
   }

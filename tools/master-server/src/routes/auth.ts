@@ -53,6 +53,21 @@ export const authRoutes: FastifyPluginAsync<{ db: DatabaseInstance }> = async (f
     return reply.send({ uuid: row.uuid, display_name: name, discriminator, tag: `${name}#${discriminator}`, xuid: row.xuid });
   });
 
+  // The profile picture friends see: the name of one of the games' own pictures (every PC has the same names), or ''
+  // for the letter. Never a path or a file of the player's.
+  fastify.post<{ Body: { icon?: unknown } }>('/icon', async (request, reply) => {
+    const me = checkAuthHeader(db, request.headers.authorization);
+    if (!me) {
+      return reply.status(401).send({ error: 'Authorization: COGBox <uuid>:<token> required' });
+    }
+    const icon = request.body?.icon;
+    if (typeof icon !== 'string' || (icon !== '' && !/^icons\/[0-9A-F]{8}\/[0-9]{1,6}\.png$/.test(icon))) {
+      return reply.status(400).send({ error: "icon: '' or icons/<TitleID>/<number>.png" });
+    }
+    db.prepare('UPDATE users SET icon = ?, last_seen = ? WHERE uuid = ?').run(icon, Date.now(), me.uuid);
+    return reply.send({ icon });
+  });
+
   fastify.post<{ Body: ClaimBody }>('/claim', async (request, reply) => {
     const { uuid, token, display_name } = request.body || {};
 
