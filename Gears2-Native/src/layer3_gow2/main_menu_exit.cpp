@@ -124,6 +124,9 @@ bool MatchesCredits(const uint8_t* base, const PPCContext& ctx) {
   if (!base) {
     return false;
   }
+  // Only the main menu's options list builds this entry: checked in game (Flippage, 0.5.0) - the pause menu's
+  // Options (Game, Video, Audio, Multiplayer, Controller, Storage) has no Credits / Exit Game entry, so the flag can't
+  // be set during a level, and the final level's credits still play.
   if (MatchesStringNoCase(base, ctx.r4.u32, "optionsmenu")) {
     if ((MatchesStringNoCase(base, ctx.r5.u32, "credits") || MatchesStringNoCase(base, ctx.r5.u32, "credits_desc")) &&
         !g_exit_entry_shown.exchange(true)) {

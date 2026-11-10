@@ -24,7 +24,10 @@ int main() {
     {
         CHECK(join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-AB12"})").has_value());
         CHECK(!join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-AB12 --x=1"})").has_value());
-        CHECK(!join_from_answer(409, R"({"title_id":"4D5308AB","room_code":""COG-AB12""})").has_value());
+        // valid JSON with a quote inside the code (an invalid body would fail for another reason)
+        CHECK(join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-AB12"})")->game >= 0);
+        CHECK(!join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-\"B12"})").has_value());
+        CHECK(!join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-A\"12 x"})").has_value());
         CHECK(!join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"cog-ab12"})").has_value());
         CHECK(safe_room_code("COG-7Z9Q") && !safe_room_code("COG-7Z9") && !safe_room_code("XYZ-1234") && !safe_room_code(""));
         auto inv = parse_invites(R"({"invites":[{"id":"i1","from":{"uuid":"u","tag":"A#0001"},"title_id":"4D5308AB","room_code":"COG-12 34"}]})");
