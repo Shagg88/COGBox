@@ -4,6 +4,7 @@
 #include <xenos/social_page.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -175,8 +176,10 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
   ImFont* font = XenosAchievementFontFor(false, 16.f * s);
   if (font) ImGui::PushFont(font, 16.f * s);
   const SocialView v = XenosSocialView();
-  const float bar_h = ImGui::GetFrameHeightWithSpacing() * 1.6f + 22.f * s;
-  if (ImGui::BeginChild("##social", ImVec2(0, ImGui::GetContentRegionAvail().y - bar_h), ImGuiChildFlags_NavFlattened)) {
+  (void)ps_names;   // the frame's legend names the buttons
+  const ImVec2 avail = ImGui::GetContentRegionAvail();
+  const float gap = 24.f * s, left_w = std::floor((avail.x - gap) * 0.58f);
+  if (ImGui::BeginChild("##social", ImVec2(left_w, avail.y), ImGuiChildFlags_NavFlattened)) {
     Section("YOUR ACCOUNT", s);
     {
       const ImU32 lamp = v.reachable ? kGreen : (v.busy ? kDim : kAmber);
@@ -211,19 +214,6 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
       }
       if (g_keyboard) Keyboard(s);
       if (g_bad_tag) Line(XenosTr("Use Name#1234 - the name, # and the four digits."), kAmber, s);
-
-      if (!v.invites.empty()) {
-        Section("INVITES", s);
-        for (const SocialInvite& i : v.invites) {
-          const int b = Slot(("inv" + i.id).c_str(), i.from_tag, std::string(XenosTr("invited you to")) + " " + GameName(i.title_id),
-                             kAmber, kGreen, {{"ACCEPT", true, true}, {"DECLINE"}}, s);
-          if (b == 0) {
-            social_do(SocialAction::InviteAccept, i.id);
-            result = PageResult::CloseMenu;
-          }
-          if (b == 1) social_do(SocialAction::InviteDecline, i.id);
-        }
-      }
 
       if (!v.lists.incoming.empty() || !v.lists.outgoing.empty()) {
         Section("REQUESTS", s);
@@ -277,11 +267,26 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
     }
   }
   ImGui::EndChild();
-  ImGui::Separator();
-  Line(XenosTr(ps_names ? "Circle: back      Invite works while you host a lobby or match"
-                        : "B: back      Invite works while you host a lobby or match"), kDim, s);
-  const float bw = ImGui::GetContentRegionAvail().x;
-  if (ImGui::Button(XenosTr("Back to settings"), ImVec2(bw, 0))) result = PageResult::Back;
+  ImGui::SameLine(0, gap);
+  if (ImGui::BeginChild("##social_invites", ImVec2(0, avail.y), ImGuiChildFlags_NavFlattened)) {
+    Section("PARTY AND MATCH INVITES", s);
+    if (!v.have_account) {
+      Line(XenosTr("Invites show here once you're signed in."), kDim, s);
+    } else {
+      if (v.invites.empty()) Line(XenosTr("No invites right now."), kDim, s);
+      for (const SocialInvite& i : v.invites) {
+        const int b = Slot(("inv" + i.id).c_str(), i.from_tag, std::string(XenosTr("invited you to")) + " " + GameName(i.title_id),
+                           kAmber, kGreen, {{"ACCEPT", true, true}, {"DECLINE"}}, s);
+        if (b == 0) {
+          social_do(SocialAction::InviteAccept, i.id);
+          result = PageResult::CloseMenu;
+        }
+        if (b == 1) social_do(SocialAction::InviteDecline, i.id);
+      }
+    }
+    Line(XenosTr("You can invite friends while you host a lobby or match."), kDim, s);
+  }
+  ImGui::EndChild();
   if (font) ImGui::PopFont();
   return result;
 }
