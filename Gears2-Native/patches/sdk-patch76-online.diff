@@ -5838,7 +5838,7 @@ index 0000000..16750cf
 +
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/xam_msg.cpp b/src/kernel/xam/xam_msg.cpp
-index 6c4c3cd..16b0120 100644
+index 6c4c3cd..cba4d04 100644
 --- a/src/kernel/xam/xam_msg.cpp
 +++ b/src/kernel/xam/xam_msg.cpp
 @@ -12,6 +12,7 @@
@@ -6073,7 +6073,7 @@ index 6c4c3cd..16b0120 100644
 +std::atomic<uint32_t> g_ue3_objects_var{0};   // COGBox trace
 +bool Ue3Globals(uint32_t* gnames_out, uint32_t* gengine_out) {
 +  static std::mutex m;
-+  static std::chrono::steady_clock::time_point searched{};  // the last search (again after 5 s while incomplete)
++  static std::chrono::steady_clock::time_point searched{};  // the last search (again after 2 s while incomplete: hooks wait for it)
 +  static uint32_t gnames = 0, gengine = 0;
 +  static uint32_t engine_obj = 0;               // the GameEngine object found (0 with the cvars)
 +  static std::vector<uint32_t> engine_vars;     // the variables that held it when found
@@ -6089,7 +6089,7 @@ index 6c4c3cd..16b0120 100644
 +    }
 +  }
 +  const auto now = std::chrono::steady_clock::now();
-+  if (!(gnames && gengine) && (searched == std::chrono::steady_clock::time_point{} || now - searched > std::chrono::seconds(30))) {
++  if (!(gnames && gengine) && (searched == std::chrono::steady_clock::time_point{} || now - searched > std::chrono::seconds(2))) {
 +    searched = now;
 +    try {
 +      if (!REXCVAR_GET(cogbox_ue3_gnames).empty()) gnames = uint32_t(std::stoul(REXCVAR_GET(cogbox_ue3_gnames), nullptr, 16));
