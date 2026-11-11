@@ -26,6 +26,7 @@ SDL_Texture *player_icon_texture(App &a, const std::string &rel);   // player_ic
 
 namespace {
 std::string g_remove_uuid;   // the friend REMOVE asked about
+bool g_deleting = false;     // DELETE ONLINE ACCOUNT is waiting for the server (social_delete_poll)
 char g_add[40] = {};
 bool g_bad_tag = false;
 bool g_invite_hint = false;   // INVITE pressed with no game running
@@ -136,13 +137,28 @@ void social_rename(App &a, const std::string &name)
 
 void social_delete_answer(App &a, int answer)
 {
-    if (answer != 1) return;
-    // sent here and waited for, not queued: stopping the worker would drop a queued call before it ran
-    const int status = social_delete_account(5000);
+    if (answer != 1 || g_deleting) return;
+    // sent at once, not queued (stopping the worker would drop a queued call), on its own thread so the launcher
+    // keeps drawing; social_delete_poll picks up the answer
+    g_deleting = true;
+    social_delete_account_start(20000);
+    set_message(a, tr("Deleting your online account..."), false);
+}
+
+void social_delete_poll(App &a)
+{
+    if (!g_deleting) return;
+    const std::optional<int> result = social_delete_account_result();
+    if (!result) return;
+    g_deleting = false;
+    const int status = *result;
     if (status != 200 && status != 401) {   // 401: the server no longer knows this account
         social_restart(a);
-        set_message(a, status == 0 ? tr("Can't reach the online server. Your online account was not deleted.")
-                                   : tr("The online server refused. Your online account was not deleted."), true);
+        if (status == kSocialDeleteUnconfirmed)   // the server may still delete it; asking again tells (401 = gone)
+            set_message(a, tr("The online server hasn't confirmed the delete yet. Press DELETE ONLINE ACCOUNT again in a minute to check."), true);
+        else
+            set_message(a, status == 0 ? tr("Can't reach the online server. Your online account was not deleted.")
+                                       : tr("The online server refused. Your online account was not deleted."), true);
         return;
     }
     const std::string dir = profile_dir(exe_dir(), std::to_string(current_profile()));

@@ -82,8 +82,11 @@ int main() {
         CHECK(offline.load() == 1);
     }
     // deleting the account: the DELETE reaches the server (it used to be queued and then cleared) and its status
-    // comes back; a server that doesn't answer in time gives 0
+    // comes back without blocking the caller; a server still busy at the limit is "unconfirmed", not "no answer"
     {
+        auto finish = [](std::optional<int>* out) {
+            return wait_for([out] { *out = social_delete_account_result(); return out->has_value(); }, 3000);
+        };
         static std::atomic<int> deletes{0};
         static std::atomic<int> answer{200};
         SocialBackend b;
@@ -97,13 +100,21 @@ int main() {
         };
         b.account = [acc] { return std::optional<SocialAccount>(acc); };
         social_start_backend("fake-del", b);
-        CHECK(social_delete_account(1000) == 200);
+        std::optional<int> r;
+        CHECK(!social_delete_account_result());   // nothing started yet
+        const auto t0 = steady_clock::now();
+        social_delete_account_start(1000);
+        CHECK(duration_cast<milliseconds>(steady_clock::now() - t0).count() < 100);   // doesn't wait for the call
+        CHECK(finish(&r) && *r == 200);
         CHECK(deletes.load() == 1);
         CHECK(!social_view().configured);
+        CHECK(!social_delete_account_result());   // a result is given once
         social_start_backend("fake-del2", b);
-        answer = 0;
-        CHECK(social_delete_account(100) == 0);
-        CHECK(social_delete_account(100) == 0);   // nothing running: nothing sent
+        answer = 0;   // the server takes 500 ms
+        social_delete_account_start(100);
+        CHECK(finish(&r) && *r == kSocialDeleteUnconfirmed);
+        social_delete_account_start(100);   // nothing running: nothing sent
+        CHECK(finish(&r) && *r == 0);
         CHECK(deletes.load() == 2);
     }
     if (g_failures == 0) std::printf("social_client_test: all passed\n");

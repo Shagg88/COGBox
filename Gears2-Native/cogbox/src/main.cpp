@@ -786,6 +786,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         install_poll(a);
         linux_poll(a);   // proton049
         backup_poll(a);   // GitHub #120: the save backup runs on its own thread
+        social_delete_poll(a);   // DELETE ONLINE ACCOUNT runs on its own thread too
         // 0.2.0 (Shagg 13:18): everything dropped is handled, one after another - several DLC packages, or a folder of
         // them (a console's ...\<title ID>\00000002, or the title folder), are each added in turn. A folder that isn't a
         // game copy or a title update is searched for DLC packages.

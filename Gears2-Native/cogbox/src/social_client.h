@@ -43,8 +43,13 @@ void social_stop();
 // the answer (0: not at all). Nothing when no account is signed in.
 void social_sign_off(int wait_ms);
 // Deletes the online account (DELETE /api/v1/auth/account) on the running worker's backend, then stops the worker.
-// Waits at most wait_ms; returns the HTTP status (0: no backend, no answer or no answer in time).
-int social_delete_account(int wait_ms);
+// Starts it on its own thread and returns at once (the launcher keeps drawing); social_delete_account_result gives
+// the outcome once: nullopt while the call runs, else the HTTP status, 0 when nothing could be sent or the server
+// didn't answer, or kSocialDeleteUnconfirmed when the call was still running after limit_ms - the server may
+// still delete the account, so the caller can't say either way.
+constexpr int kSocialDeleteUnconfirmed = -1;
+void social_delete_account_start(int limit_ms);
+std::optional<int> social_delete_account_result();
 SocialView social_view();
 // Queues an action (arg: see call_for); the worker runs it and polls again.
 void social_do(SocialAction action, const std::string& arg);

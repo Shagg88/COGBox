@@ -147,7 +147,16 @@ void social_sign_off(int wait_ms) {
     if (wait_ms > 0) finished.wait_for(std::chrono::milliseconds(wait_ms));
 }
 
-int social_delete_account(int wait_ms) {
+namespace {
+struct PendingDelete {
+    std::future<int> status;
+    std::chrono::steady_clock::time_point deadline;
+};
+std::mutex g_delete_mu;
+std::optional<PendingDelete> g_delete;   // the one delete in flight (the launcher allows one at a time)
+}  // namespace
+
+void social_delete_account_start(int limit_ms) {
     Shared& s = sh();
     SocialBackend b;
     {
@@ -155,13 +164,27 @@ int social_delete_account(int wait_ms) {
         if (s.gen != 0) b = s.backend;
     }
     social_stop();   // nothing else is sent for this account
-    if (!b.call || !b.account || !b.account()) return 0;
-    // a detached thread, as in social_sign_off: a slow server must not keep the launcher from carrying on
+    // a detached thread, as in social_sign_off: a slow server (or a slow sign-in) must not hold up the launcher
     auto done = std::make_shared<std::promise<int>>();
-    std::future<int> status = done->get_future();
-    std::thread([b, done] { done->set_value(b.call({ "DELETE", "/api/v1/auth/account", "" }).status); }).detach();
-    if (status.wait_for(std::chrono::milliseconds(wait_ms)) != std::future_status::ready) return 0;
-    return status.get();
+    std::lock_guard<std::mutex> lk(g_delete_mu);
+    g_delete = PendingDelete{ done->get_future(), std::chrono::steady_clock::now() + std::chrono::milliseconds(limit_ms) };
+    std::thread([b, done] {
+        if (!b.call || !b.account || !b.account()) done->set_value(0);
+        else done->set_value(b.call({ "DELETE", "/api/v1/auth/account", "" }).status);
+    }).detach();
+}
+
+std::optional<int> social_delete_account_result() {
+    std::lock_guard<std::mutex> lk(g_delete_mu);
+    if (!g_delete) return std::nullopt;
+    if (g_delete->status.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        const int status = g_delete->status.get();
+        g_delete.reset();
+        return status;
+    }
+    if (std::chrono::steady_clock::now() < g_delete->deadline) return std::nullopt;
+    g_delete.reset();   // the thread still finishes on its own (the promise is shared)
+    return kSocialDeleteUnconfirmed;
 }
 
 void social_start_backend(const std::string& key, SocialBackend backend) {
