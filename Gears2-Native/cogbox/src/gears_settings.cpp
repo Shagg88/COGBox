@@ -349,11 +349,9 @@ std::vector<Option> make_options(Game g) {
                "for the rest of the game.", 360), "pool", "", true);
     add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
                "How far away detail and objects are still drawn.", 361), "drawdist", "", true);
-    // GitHub #113: character / weapon mesh detail. UE3's [SystemSettings] SkeletalMeshLODBias (0 = the game's own);
-    // negative keeps the more detailed versions (hair, faces, armour) to a greater distance. Not in a preset: untested.
-    add(choice("MeshLod", "Character detail (LOD)", Tab::Graphics, PG, { "Original", "Higher", "Highest" }, 0,
-               "Keeps characters' and weapons' detailed models (hair, faces, armour) at a greater distance, for high "
-               "resolutions. Costs some GPU time in crowded scenes. Original = the game's own.", 0), "inifx");
+    // GitHub #113's "Character detail (LOD)" (SkeletalMeshLODBias) was removed in 0.6.0 (Shagg): Highest halved Gears 3's
+    // frame rate (the game thread skins every character at full detail) for detail only seen far away. The game's own
+    // LOD is always used; a saved MeshLod value is ignored.
     // Motion blur: no PS1 tooltip.
     // GitHub #179: Gears 1 through Canary's TU5 patches (illusion, boma) - gow1_no_motion_blur / gow1_no_gaussian_blur
     add(make("MotionBlur", "Motion blur", Tab::Graphics, Kind::Bool, PG, 1, "The blur of fast movement (the game's own setting).", 370),
@@ -1634,8 +1632,6 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             else if (isG1) a.push_back("--gow1_skip_logos=true");
             else a.push_back("--gowj_skip_logos=true");
         }
-        if (avail("MeshLod") && s.i("MeshLod") > 0)   // GitHub #113
-            ini.push_back(ei + "|SystemSettings|SkeletalMeshLODBias=" + (s.i("MeshLod") >= 2 ? "-3" : "-1"));
         int dd = std::max(0, std::min(2, s.i("DrawDist")));
         if (avail("DrawDist") && dd > 0) ini.push_back(ei + "|SystemSettings|MaxDrawDistanceScale=" + k_drawScale[dd]);
         int sh = std::max(0, std::min(2, s.i("Shake")));
