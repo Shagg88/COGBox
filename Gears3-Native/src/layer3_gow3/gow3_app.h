@@ -19,6 +19,7 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 
 #include <ue3/config_bundle.h>
 #include <ue3/launch.h>
+#include <ue3/script_input.h>
 #include <xenos/dev_tools.h>
 #include <xenos/display_size.h>
 #include <xenos/gpu_system.h>
@@ -61,6 +62,7 @@ class Gow3App : public rex::ReXApp {
     XenosAddScriptPadIfRequested(runtime());
     Gow3AddBuiltInIniEdits();  // before the bundle is edited
     Gow3InstallExtras();       // its package patches too
+    Ue3InstallScriptInputIfRequested(runtime());  // developer mode: --cogbox_input_script (ue3/script_input.h)
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     Gow3InstallMainMenuExitIfRequested();  // Exit Game: front-end tracking, before the game opens a level
     Gow3InstallUnlocks();      // GitHub #174: --gow3_unlock_insane (base disc build)
