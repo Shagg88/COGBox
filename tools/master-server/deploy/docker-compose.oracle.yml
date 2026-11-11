@@ -83,8 +83,7 @@ services:
       - STUN_HOST=127.0.0.1
       - STUN_PORT=3478
       - GITLAB_PROJECT=shagg88/cogbox
-      # set to true when the GitHub repository is back
-      - GITHUB_ENABLED=false
+      - GITHUB_ENABLED=true
       - GITHUB_REPO=Shagg88/COGBox
     volumes:
       - status-data:/data
