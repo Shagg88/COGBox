@@ -41,7 +41,9 @@ constexpr DeviceId kScriptDevice = static_cast<DeviceId>(0x5C121700ull);
 // the movement verbs' live stick and buttons (their threads write, the device reads): a non-zero stick wins over the
 // timed events' while it is set
 std::atomic<int16_t> g_lx{0}, g_ly{0}, g_rx{0};
+std::atomic<uint8_t> g_lt{0}, g_rt{0};
 std::atomic<uint16_t> g_buttons{0};
+std::atomic<bool> g_wantsChoice{false}, g_choiceOpen{false};
 
 struct Event {
   double at = 0, until = 0;   // seconds since start
@@ -105,6 +107,8 @@ class ScriptInputDriver final : public rex::input::InputDriver {
     }
     if (const int16_t x = g_lx, y = g_ly; x || y) lx = x, ly = y;
     if (const int16_t x = g_rx; x) rx = x;
+    if (const uint8_t v = g_lt; v) lt = v;
+    if (const uint8_t v = g_rt; v) rt = v;
     buttons |= g_buttons;
     std::memset(out, 0, sizeof(*out));
     out->packet_number = uint32_t(++packet_);
@@ -343,6 +347,21 @@ void RunAction(const std::string& verb, const std::string& args) {
     return;
   }
   std::lock_guard drive(g_drive);
+  if (verb == "choose") {   // waits for the path choice (2 min), then its side's trigger until it closes
+    std::string side;
+    in >> side;
+    const bool left = side == "L" || side == "l";
+    g_wantsChoice = true;
+    const uint64_t t0 = Now();
+    while (!g_choiceOpen && Now() - t0 < 120000) Pause(100);
+    if (!g_choiceOpen) REXLOG_WARN("script_input: choose {}: no path choice came", side);
+    for (int k = 0; k < 10 && g_choiceOpen; k++) {
+      (left ? g_lt : g_rt) = 255; Pause(300); (left ? g_lt : g_rt) = 0; Pause(700);
+    }
+    REXLOG_INFO("script_input: choose {}: {} after {:.1f} s", side, g_choiceOpen ? "still open" : "chosen", double(Now() - t0) / 1000.0);
+    g_wantsChoice = false;
+    return;
+  }
   if (verb == "walkto") { double x = 0, y = 0, s = 20; in >> x >> y >> s; WalkStep(x, y, s); }
   else if (verb == "face") { double x = 0, y = 0; in >> x >> y; Face(x, y); }
   else if (verb == "route") { std::string pts; double s = 0; in >> pts >> s; Route(pts, s); }
@@ -350,6 +369,9 @@ void RunAction(const std::string& verb, const std::string& args) {
 }
 
 }  // namespace
+
+bool Ue3ScriptInputWantsPathChoice() { return g_wantsChoice; }
+void Ue3ScriptInputPathChoiceOpen(bool open) { g_choiceOpen = open; }
 
 void Ue3InstallScriptInputIfRequested(rex::Runtime* runtime, uint32_t names_var, uint32_t objects_var) {
   const std::string path = REXCVAR_GET(cogbox_input_script);
@@ -400,12 +422,7 @@ void Ue3InstallScriptInputIfRequested(rex::Runtime* runtime, uint32_t names_var,
       e.until = t + ms / 1000.0;
     } else if (verb == "capture") {   // gears3-pc's mouse capture: nothing to do here
       continue;
-    } else if (verb == "choose") {    // a path choice's side: its trigger (the choice is on screen by then)
-      std::string side;
-      ls >> side;
-      (side == "L" || side == "l" ? e.lt : e.rt) = 255;
-      e.until = t + 0.3;
-    } else if (verb == "log" || verb == "quit" || verb == "pos" || verb == "teleport" || verb == "walkto" ||
+    } else if (verb == "log" || verb == "choose" || verb == "quit" || verb == "pos" || verb == "teleport" || verb == "walkto" ||
                verb == "face" || verb == "route" || verb == "follow") {
       std::string text;
       std::getline(ls, text);

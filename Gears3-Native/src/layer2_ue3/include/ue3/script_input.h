@@ -9,7 +9,7 @@
 //   <t> trig L|R [ms] [0-255]       a trigger (default 200 ms, fully)
 //   <t> stick L|R <x> <y> [ms]      a stick held at x, y (-1..1; +y is up), default 500 ms
 //   <t> look <y> <ms>               the right stick's y alone (gears3-pc's verb)
-//   <t> choose L|R                  a path choice's side (its trigger)
+//   <t> choose L|R                  a path choice's side: waits for the choice (2 min), then its trigger
 // (gears3-pc scripts also run: their bare-hex pad buttons are read, "capture" is ignored)
 //   <t> log <text>                  a "script_input:" line in the log (to find a moment in it)
 //   <t> quit                        the game ends (the test is over)
@@ -31,6 +31,11 @@
 namespace rex {
 class Runtime;
 }
+
+// The game's path choice (layer 3's Gow3PathChoiceTick watches the scene while a "choose" waits for it, and says
+// whether it is open).
+bool Ue3ScriptInputWantsPathChoice();
+void Ue3ScriptInputPathChoiceOpen(bool open);
 
 // OnPostSetup: reads the script and adds the scripted controller to the input system. Nothing without the switch.
 // names_var / objects_var: the engine's name and object tables (ue3/objects.h), for the movement verbs.

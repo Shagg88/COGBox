@@ -21,6 +21,7 @@
 
 #include "gow3_addresses.h"
 #include <ue3/objects.h>
+#include <ue3/script_input.h>
 #include <ue3/console.h>  // Ue3ConsoleQueue (GitHub #208)
 #include "mouse_look.h"
 #include "main_menu_exit.h"
@@ -405,7 +406,9 @@ void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content pac
 REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, false, "Gears3",
                     "Path choice: the mouse button on a path's side picks that path (the trigger binds swap while it is open)");
 void Gow3PathChoiceTick() {
-  if (!REXCVAR_GET(gow3_path_choice_mouse)) return;
+  // (also while developer mode's scripted controller waits for a path choice: "choose L|R", ue3/script_input.h)
+  const bool mouse = REXCVAR_GET(gow3_path_choice_mouse);
+  if (!mouse && !Ue3ScriptInputWantsPathChoice()) return;
   static uint32_t ticks = 0;
   if (++ticks % 15) return;  // four times a second at 60: the scene stays open for seconds
   namespace obj = ue3::obj;
@@ -452,9 +455,10 @@ void Gow3PathChoiceTick() {
     const uint32_t f = obj::Read32(m + uint32_t(flags));
     if ((f & open_mask) && (!input_mask || (f & input_mask))) open = true;
   }
+  Ue3ScriptInputPathChoiceOpen(open);
   static bool swapped = false;
   static std::string left, right;
-  if (open == swapped) return;
+  if (!mouse || open == swapped) return;
   if (open) {
     left = rex::cvar::GetFlagByName("keybind_left_trigger");
     right = rex::cvar::GetFlagByName("keybind_right_trigger");
