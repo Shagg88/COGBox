@@ -840,10 +840,10 @@ index 0000000..77e8445
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/tunnel_core.h b/include/rex/kernel/xam/net/tunnel_core.h
 new file mode 100644
-index 0000000..a713491
+index 0000000..65a6e55
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/tunnel_core.h
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,110 @@
 +// COGBox SDK patch 79: game TCP connections to an online peer (UE3's party beacon), carried as reliable ordered streams
 +// in UDP frames over the punched path. This is the transport-independent part: frames in, frames out, time passed
 +// in. stream_tunnel.h connects it to real sockets.
@@ -895,6 +895,9 @@ index 0000000..a713491
 +  // two) and all peers together kMaxConns; a Syn past either is refused with Rst.
 +  static constexpr size_t kMaxConnsPerPeer = 16;
 +  static constexpr size_t kMaxConns = 128;
++  // 0.6.0 review: a connection with frames waiting for an ack and nothing heard from the other side for this long is
++  // dropped (the player left or crashed); without it such a connection was resent forever and kept its slot.
++  static constexpr auto kDeadTimeout = std::chrono::seconds(15);
 +
 +  struct Callbacks {
 +    std::function<void(uint32_t vip, const std::vector<uint8_t>& frame)> send_frame;
@@ -932,6 +935,8 @@ index 0000000..a713491
 +    std::deque<uint8_t> to_send;
 +    std::deque<Segment> unacked;
 +    bool close_wanted = false, fin_sent = false;
++    bool inbound = false;              // opened by the other side (only these count toward kMaxConnsPerPeer)
++    Clock::time_point last_heard{};    // last frame from the other side for this connection
 +    uint32_t expected = 1;  // next in-order seq from the other side
 +    std::map<uint32_t, TunnelFrame> early;
 +  };
@@ -4693,10 +4698,10 @@ index 0000000..0c9f758
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/tunnel_core.cpp b/src/kernel/xam/net/tunnel_core.cpp
 new file mode 100644
-index 0000000..790b9bd
+index 0000000..5d815e8
 --- /dev/null
 +++ b/src/kernel/xam/net/tunnel_core.cpp
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,245 @@
 +// COGBox SDK patch 79: reliable ordered streams in UDP frames (see tunnel_core.h).
 +#include <rex/kernel/xam/net/tunnel_core.h>
 +
@@ -4776,6 +4781,7 @@ index 0000000..790b9bd
 +  const uint32_t handle = next_handle_++;
 +  Conn c{vip, next_id_++, port, State::SynSent, now, now};
 +  if (!c.id) c.id = next_id_++;
++  c.last_heard = now;
 +  by_id_[{vip, c.id}] = handle;
 +  Emit(c, TunnelFrameType::Syn, 0);
 +  conns_.emplace(handle, std::move(c));
@@ -4831,7 +4837,7 @@ index 0000000..790b9bd
 +    }
 +    Conn c{from_vip, f->conn, f->port, State::Established, now, now};
 +    const size_t from_peer = size_t(std::count_if(conns_.begin(), conns_.end(),
-+                                                  [&](const auto& kv) { return kv.second.vip == from_vip; }));
++                                                  [&](const auto& kv) { return kv.second.vip == from_vip && kv.second.inbound; }));
 +    if (from_peer >= kMaxConnsPerPeer || conns_.size() >= kMaxConns) {
 +      Emit(c, TunnelFrameType::Rst, 0);  // too many: refused before anything is opened locally
 +      return;
@@ -4841,6 +4847,8 @@ index 0000000..790b9bd
 +      Emit(c, TunnelFrameType::Rst, 0);
 +      return;
 +    }
++    c.inbound = true;
++    c.last_heard = now;
 +    by_id_[{from_vip, f->conn}] = h;
 +    Emit(c, TunnelFrameType::SynAck, 0);
 +    conns_.emplace(h, std::move(c));
@@ -4854,6 +4862,7 @@ index 0000000..790b9bd
 +    return;
 +  }
 +  Conn& c = conns_.at(*handle);
++  c.last_heard = now;
 +  switch (f->type) {
 +    case TunnelFrameType::Rst:
 +      Drop(*handle, true);
@@ -4919,6 +4928,10 @@ index 0000000..790b9bd
 +        c.last_syn = now;
 +        Emit(c, TunnelFrameType::Syn, 0);
 +      }
++      continue;
++    }
++    if (!c.unacked.empty() && now - c.last_heard >= kDeadTimeout) {
++      timed_out.push_back(h);  // the other side is gone: stop resending and free the slot
 +      continue;
 +    }
 +    for (auto& s : c.unacked) {
@@ -7518,10 +7531,10 @@ index cbc39c6..3be804f 100644
  # COGBox SDK patch 78: nlohmann/json (the copy inja carries) for identity.json and the master server
 diff --git a/src/system/cogbox_save_sign.cpp b/src/system/cogbox_save_sign.cpp
 new file mode 100644
-index 0000000..9c24739
+index 0000000..77a0aa7
 --- /dev/null
 +++ b/src/system/cogbox_save_sign.cpp
-@@ -0,0 +1,288 @@
+@@ -0,0 +1,295 @@
 +// COGBox: Gears 3 save signatures (patch 58's converter, moved here and generalised by COGBox SDK patch 79).
 +#include <rex/system/cogbox_save_sign.h>
 +
@@ -7649,24 +7662,31 @@ index 0000000..9c24739
 +    return ResignResult::NotRecognised;
 +  }
 +  auto first = CogReadAll(files[0]);
-+  // 0.6.0 review: the backup must hold exactly this file. An older backup with other contents is kept and this one
-+  // goes next to it as <suffix>.1, .2, ... (never overwritten, never mistaken for this save).
++  // 0.6.0 review: the backup must hold exactly this file. <file><suffix> is the first copy and is never changed; if it
++  // holds something else (an older save, or this save signed the other way after a switch), this file goes to
++  // <file><suffix>.last instead, replaced on each switch. At most two backups, so switching never runs out of names.
 +  std::error_code ec;
-+  std::filesystem::path backup;
-+  for (int n = 0; n < 100 && backup.empty(); ++n) {
-+    auto b = files[0];
-+    b += backup_suffix;
-+    if (n) b += fmt::format(".{}", n);
-+    if (!std::filesystem::exists(b, ec)) {
-+      ec.clear();
-+      std::filesystem::copy_file(files[0], b, ec);
-+      if (!ec) backup = b;
-+      else return ResignResult::NoBackup;
-+    } else if (CogReadAll(b) == first) {
-+      backup = b;  // this very file is already backed up
++  auto backup = files[0];
++  backup += backup_suffix;
++  if (!std::filesystem::exists(backup, ec)) {
++    ec.clear();
++    std::filesystem::copy_file(files[0], backup, ec);
++    if (ec) return ResignResult::NoBackup;
++  } else if (CogReadAll(backup) != first) {
++    backup += ".last";
++    auto btmp = backup;
++    btmp += ".cogbox-tmp";
++    if (!CogWriteAll(btmp, first)) {
++      std::filesystem::remove(btmp, ec);
++      return ResignResult::NoBackup;
++    }
++    std::filesystem::rename(btmp, backup, ec);
++    if (ec) {
++      std::filesystem::remove(btmp, ec);
++      return ResignResult::NoBackup;
 +    }
 +  }
-+  if (backup.empty() || CogReadAll(backup) != first) {
++  if (CogReadAll(backup) != first) {
 +    return ResignResult::NoBackup;
 +  }
 +  std::memcpy(first.data(), to_sig.data(), 20);
@@ -10894,10 +10914,10 @@ index 0000000..2ddcb22
 +}
 diff --git a/tests/unit/net/save_resign_test.cpp b/tests/unit/net/save_resign_test.cpp
 new file mode 100644
-index 0000000..771c46f
+index 0000000..1e2c3e4
 --- /dev/null
 +++ b/tests/unit/net/save_resign_test.cpp
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,182 @@
 +// COGBox SDK patch 79: Gears 3 save signatures (SHA-1(online XUID, 8 bytes big endian + data) in the first 20 bytes)
 +// re-signed between XUID 0 and the online XUID. Files live in COGBOX_NET_TEST_DIR (build tree, never AppData).
 +#include <catch2/catch_test_macros.hpp>
@@ -10993,7 +11013,23 @@ index 0000000..771c46f
 +  WriteFile(fs::path(f) += ".pre-online", stale);
 +  REQUIRE(CogResignSaveFiles({f}, 0, kXuid, ".pre-online") == ResignResult::Resigned);
 +  CHECK(ReadFile(fs::path(f) += ".pre-online") == stale);       // untouched
-+  CHECK(ReadFile(fs::path(f) += ".pre-online.1") == original);  // this save's own backup
++  CHECK(ReadFile(fs::path(f) += ".pre-online.last") == original);  // this save's own backup
++}
++
++TEST_CASE("Save sign: switching on and off many times keeps working with at most two backups", "[net][save]") {
++  const auto original = MakeSave(0);
++  auto f = FreshFile("resign_many", original);
++  uint64_t from = 0, to = kXuid;
++  for (int i = 0; i < 250; ++i) {
++    REQUIRE(CogResignSaveFiles({f}, from, to, ".pre-online") == ResignResult::Resigned);
++    std::swap(from, to);
++  }
++  CHECK(ReadFile(f) == original);                                  // 250 switches: back to offline-signed
++  CHECK(ReadFile(fs::path(f) += ".pre-online") == original);       // the first copy, unchanged
++  CHECK(fs::exists(fs::path(f) += ".pre-online.last"));
++  size_t files = 0;
++  for (auto& e : fs::directory_iterator(fs::path(f).parent_path())) { (void)e; ++files; }
++  CHECK(files == 3);  // the save and its two backups, nothing else
 +}
 +
 +TEST_CASE("Save sign: a read-only save stops the run and stays as it was", "[net][save]") {
@@ -11418,10 +11454,10 @@ index 0000000..f126cc2
 +}
 diff --git a/tests/unit/net/tunnel_core_test.cpp b/tests/unit/net/tunnel_core_test.cpp
 new file mode 100644
-index 0000000..023f676
+index 0000000..6683492
 --- /dev/null
 +++ b/tests/unit/net/tunnel_core_test.cpp
-@@ -0,0 +1,223 @@
+@@ -0,0 +1,246 @@
 +// COGBox SDK patch 79: game TCP connections to a peer's virtual IP, carried as reliable streams in UDP frames.
 +// Two cores are wired through a simulated link that can drop and reorder frames; time is passed in.
 +#include <catch2/catch_test_macros.hpp>
@@ -11644,6 +11680,29 @@ index 0000000..023f676
 +  auto f = EncodeTunnelFrame({TunnelFrameType::Syn, 1, 0, 0, 8700, {}});
 +  link.host.core.OnFrame(kVipOfGuest + 1, f.data(), f.size(), now);
 +  CHECK(link.host.opened.size() == TunnelCore::kMaxConnsPerPeer + 1);
++}
++
++TEST_CASE("Tunnel: a connection whose other side vanished is dropped and frees its slot", "[net][tunnel]") {
++  Link link;
++  auto now = Clock::time_point{} + 100s;
++  const uint32_t c = link.guest.core.Open(kVipOfHost, 8700, now);
++  link.Run(now, 4);
++  REQUIRE(link.guest.established == std::vector<uint32_t>{c});
++  link.drop_every = 1;  // the host is gone
++  link.guest.core.Send(c, Bytes(100, 2).data(), 100, now);
++  link.Run(now, 280);  // 14 s
++  CHECK(link.guest.closed.empty());
++  link.Run(now, 30);
++  CHECK(link.guest.closed == std::vector<uint32_t>{c});
++}
++
++TEST_CASE("Tunnel: our own connections to a player don't use up that player's inbound limit", "[net][tunnel]") {
++  Link link;
++  auto now = Clock::time_point{} + 100s;
++  for (size_t i = 0; i < TunnelCore::kMaxConnsPerPeer + 4; ++i) link.host.core.Open(kVipOfGuest, 9000, now);
++  auto f = EncodeTunnelFrame({TunnelFrameType::Syn, 77, 0, 0, 8700, {}});
++  link.host.core.OnFrame(kVipOfGuest, f.data(), f.size(), now);
++  CHECK(link.host.opened.size() == 1);
 +}
 diff --git a/tests/unit/net/ue3_script_test.cpp b/tests/unit/net/ue3_script_test.cpp
 new file mode 100644
