@@ -653,6 +653,7 @@ class Pm4Execute final : public DrawObserver {
       env.running = s->running;
       env.make_coherent = s->make_coherent;
       env.vsync = s->vsync;
+      env.memory_wait_limit_ms = XenosPm4MemoryWaitLimit();   // 0.6.0: Judgment only
       env.release = [] { XenosRendererRelease(); };  // job 171: our renderer's deferred copies finish first
       const RegisterFile* split_rf = s->register_file ? s->register_file() : nullptr;
       const bool split = REXCVAR_GET(gow2_pm4_split) && REXCVAR_GET(gow2_pm4_own_draws) && split_rf;
@@ -944,3 +945,9 @@ void XenosInstallPm4ShadowIfRequested(rex::Runtime* runtime) {
   XenosRegisterDrawObserver(new Pm4Shadow(memory, every));  // never destroyed (the hub keeps the pointer)
   REXLOG_INFO("gow2_pm4_shadow: on - our PM4 processor runs on every ring range and is compared at every draw");
 }
+
+namespace {
+std::atomic<uint32_t> g_pm4_memory_wait_limit_ms{0};
+}
+void XenosSetPm4MemoryWaitLimit(uint32_t limit_ms) { g_pm4_memory_wait_limit_ms = limit_ms; }
+uint32_t XenosPm4MemoryWaitLimit() { return g_pm4_memory_wait_limit_ms.load(); }

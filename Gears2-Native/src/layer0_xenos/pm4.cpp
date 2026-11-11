@@ -314,11 +314,12 @@ bool Processor::Type3(Reader& r, uint32_t packet, uint32_t depth) {  // ExecuteP
           continue;
         }
         ++stats_.wait_spins;
-        // 0.6.0 (Judgment's freeze back to the main menu): a memory wait whose value never comes - the write it waits
+        // 0.6.0 (Judgment only, env_.memory_wait_limit_ms; its freeze back to the main menu): a memory wait whose value never comes - the write it waits
         // for was lost or went where the wait doesn't look - used to stop the GPU for good, and with it the game's render
         // and main threads waiting on the GPU. After 2 s the wait gives up (once logged per wait) and the stream
         // carries on (counted in wait_timeouts); a real console never waits that long here.
-        if ((info & 0x10) && std::chrono::steady_clock::now() - spun_since > std::chrono::seconds(2)) {
+        if ((info & 0x10) && env_.memory_wait_limit_ms &&
+            std::chrono::steady_clock::now() - spun_since > std::chrono::milliseconds(env_.memory_wait_limit_ms)) {
           ++stats_.wait_timeouts;
           break;
         }

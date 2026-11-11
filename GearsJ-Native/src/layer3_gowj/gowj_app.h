@@ -153,6 +153,7 @@ class GowjApp : public rex::ReXApp {
     if (rex::ui::Window* uw = window()) XenosSetUiContext(&uw->app_context());  // 0.2.1: the shader note's UI thread
     XenosCreateFpsBarIfRequested(drawer);
     XenosInstallAoDebugKeys(drawer);  // Gears 2 notes/80 s.12, notes/81: F2, F5, F6, F8, F9, F10, F11 (--gow2_ao_debug_keys)
+    XenosSetPm4MemoryWaitLimit(2000);  // 0.6.0: the freeze back to the main menu (a GPU wait for a write that never lands)
     XenosSetPromptGame(0x4D530A26);  // GitHub #223: build only Judgment's button-prompt atlases
     XenosInstallInGameMenu(drawer, immediate_drawer(), window(), runtime());  // patch 0163: COGBox's in-game menu (Back + Start or F1)
     XenosSocialStart();  // social step 5: friends, invites and pop-ups when the game runs online
