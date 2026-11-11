@@ -426,11 +426,19 @@ void Gow3PathChoiceTick() {
   static Clock::time_point next_class{};
   static std::vector<uint32_t> instances;
   const Clock::time_point now = Clock::now();
+  // the campaign's scene is UIScene_PathChoiceContent (GearGameContent), which does not derive from GearGame's
+  // UIScene_PathChoice: watching only the latter, the swap never came (2026-11-11: left mouse picked the right path)
+  static uint32_t content = 0;
+  if (!content && scene && now >= next_class) {
+    next_class = now + std::chrono::seconds(5);
+    content = obj::FindClass("UIScene_PathChoiceContent");
+  }
   if (!scene) {
     if (now < next_class) return;
     next_class = now + std::chrono::seconds(5);
     const uint32_t movie = obj::FindClass("GFxMoviePlayer");
     scene = obj::FindClass("UIScene_PathChoice");
+    content = obj::FindClass("UIScene_PathChoiceContent");
     if (!movie || !scene) { scene = 0; return; }
     flags = obj::PropertyOffset(movie, "bMovieIsOpen");
     open_mask = obj::BoolMask(movie, "bMovieIsOpen");
@@ -444,16 +452,19 @@ void Gow3PathChoiceTick() {
     static uint32_t cursor = 0;
     static std::vector<uint32_t> building;
     uint32_t total = 0;
-    for (uint32_t m : obj::FindInstancesOfRange(scene, cursor, 16384, &total)) building.push_back(m);
+    for (uint32_t cls : {scene, content}) {
+      if (!cls) continue;
+      for (uint32_t m : obj::FindInstancesOfRange(cls, cursor, 16384, &total)) building.push_back(m);
+      if (total > 2048)
+        for (uint32_t m : obj::FindInstancesOfRange(cls, total - 2048, 2048, nullptr))
+          if (std::find(instances.begin(), instances.end(), m) == instances.end()) instances.push_back(m);
+    }
     cursor += 16384;
     if (cursor >= total) { instances.swap(building); building.clear(); cursor = 0; }
-    if (total > 2048)
-      for (uint32_t m : obj::FindInstancesOfRange(scene, total - 2048, 2048, nullptr))
-        if (std::find(instances.begin(), instances.end(), m) == instances.end()) instances.push_back(m);
   }
   bool open = false;
   for (uint32_t m : instances) {
-    if (!obj::IsA(m, scene)) continue;  // review L1: a freed / reused slot since it was listed
+    if (!obj::IsA(m, scene) && !(content && obj::IsA(m, content))) continue;  // review L1: a freed / reused slot
     const uint32_t f = obj::Read32(m + uint32_t(flags));
     if ((f & open_mask) && (!input_mask || (f & input_mask))) open = true;
   }

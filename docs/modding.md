@@ -160,3 +160,13 @@ they are given.
 
   Every verb is listed in `Gears3-Native/src/layer2_ue3/include/ue3/script_input.h`. The game's log has a
   `script_input:` line for each step.
+- **See where a level's scripting stops: `--mod_kismet_trace=<part of a package name>`** (`1`: every package). Each
+  Kismet action, condition and event that runs is logged with its package and sequence path, sampled ten times a
+  second:
+
+  ```
+  kismet: [GOW1_SP_Prison_S04_Scripting] G1_SP_Prison_S04_Scripting.towerFalls (Sequence) x1
+  ```
+
+  The last lines before a stall show the op the scripting waits behind: often a touch, a gate, or a spawner's
+  "All Dead".
