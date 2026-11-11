@@ -109,6 +109,9 @@ static void apply_mod_rules(int g, std::vector<ModItem> &out)
                 if (!mine.empty())
                     r.campaign = "Select Chapter: Act " + modcore::ActNumeral(c.act) + " " + c.title + ", chapter " + mine;
             }
+            if (!r.campaign.empty() && m.campaign.max_players > 0)   // ([Campaign] MaxPlayers)
+                r.campaign += m.campaign.max_players == 1 ? " (one player)"
+                                                          : " (co-op up to " + std::to_string(m.campaign.max_players) + ")";
             if (m.Active() && !m.chapters.empty() && r.campaign.empty() && merged.empty())
                 r.notes.push_back("its chapters' place in Select Chapter shows once the game's files are in");
         }

@@ -80,6 +80,7 @@ Title = My Campaign           ; the act's name in Select Chapter
 Order = 50                    ; where it sorts among campaigns (default 100)
 Screenshot = UI_Portraits_G3.SP.T_Portraits_SP_A1C0_Act1
 SquadCatchUp = 800            ; optional adapter (below)
+MaxPlayers = 2                ; optional: co-op players its chapters take (1-4; the game's 4 when not given)
 
 [Chapter.1]                   ; its place in the campaign: shown as "Chapter 1"
 Map = MyCampaign_Ch1_P        ; the chapter's persistent map (in your mod)
@@ -114,6 +115,11 @@ does not do itself.
   search failing (the trilogy's Dom on the prison's hard route), while their scripting still waits for it. An AI that
   is moving, or waiting where the level's scripting put it, is never moved. `--mod_squad_log` logs what it sees every
   10 s.
+
+**Co-op players:** `MaxPlayers = <1-4>` in `[Campaign]`. The game takes four players in a campaign, one for each
+squad slot. A campaign with fewer playable squad members (Gears 1 and 2 have two: Marcus and Dom) declares how many.
+While one of its chapters is loaded, a further player cannot join the game. Any of the campaign's mods may give it;
+the smallest number wins. The Mods tab shows it on the campaign's line.
 
 Older mods that write their own `GearCampaignActData` / `GearCampaignChapterData` fragments still work. Their slots
 are kept free for them.

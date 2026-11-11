@@ -9,6 +9,8 @@
 #include <rex/logging/macros.h>
 #include <rex/string/utf8.h>
 
+#include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iterator>
 #include <mutex>
@@ -170,6 +172,26 @@ int ModSquadCatchUp() {
   for (const modcore::Manifest& m : g_mods)
     if (m.Active()) d = std::max(d, m.campaign.squad_catch_up);
   return d;
+}
+
+int ModMaxPlayersForMap(const std::string& map) {
+  auto same = [](const std::string& a, const std::string& b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+             return std::tolower(uint8_t(x)) == std::tolower(uint8_t(y));
+           });
+  };
+  std::lock_guard lock(g_mutex);
+  std::string campaign;
+  for (const modcore::Manifest& m : g_mods)
+    if (m.Active())
+      for (const modcore::ChapterDecl& c : m.chapters)
+        if (same(c.map, map)) campaign = m.campaign.id;
+  if (campaign.empty()) return 0;
+  int n = 0;
+  for (const modcore::Manifest& m : g_mods)
+    if (m.Active() && m.campaign.id == campaign && m.campaign.max_players > 0)
+      n = n ? std::min(n, m.campaign.max_players) : m.campaign.max_players;
+  return n;
 }
 
 uint64_t ModFingerprint() { return g_fingerprint; }
