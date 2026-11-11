@@ -10,6 +10,7 @@
 #include "mouse_look.h"
 #include "main_menu_exit.h"
 #include "unlocks.h"
+#include "gow3_addresses.h"
 
 namespace rex::ui {
 class WindowedAppContext;
@@ -62,7 +63,7 @@ class Gow3App : public rex::ReXApp {
     XenosAddScriptPadIfRequested(runtime());
     Gow3AddBuiltInIniEdits();  // before the bundle is edited
     Gow3InstallExtras();       // its package patches too
-    Ue3InstallScriptInputIfRequested(runtime());  // developer mode: --cogbox_input_script (ue3/script_input.h)
+    Ue3InstallScriptInputIfRequested(runtime(), gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar);  // developer mode: --cogbox_input_script (ue3/script_input.h)
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     Gow3InstallMainMenuExitIfRequested();  // Exit Game: front-end tracking, before the game opens a level
     Gow3InstallUnlocks();      // GitHub #174: --gow3_unlock_insane (base disc build)
