@@ -73,7 +73,7 @@ async function main() {
   if (!dry && !cfg.webhookUrl) {
     // idle instead of exiting, so a missing status.env never puts the container in a restart loop
     console.error('status-reporter: DISCORD_WEBHOOK_URL is not set (status.env); idle until it is added and the service restarted');
-    await new Promise(() => {});
+    await new Promise(() => setInterval(() => {}, 1 << 30)); // a pending promise alone lets Node exit
   }
   const cache = new Map<string, { at: number; line: Line }>();
   let messageId = dry ? null : readState(cfg.statePath);
