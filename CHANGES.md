@@ -1,5 +1,21 @@
 # COGBox changes
 
+## 0.6.0
+
+### Online play (by Flippage)
+- **Online multiplayer** through COGBox's own matchmaking server. It's off until you turn it on. What is sent and kept is in [PRIVACY.md](PRIVACY.md), and the launcher can delete your online account.
+- **Social**: friends, invites and profile pictures.
+- Gears 3 and Judgment saves keep working when you switch online play on or off. Nothing is deleted, and Gears 3 saves are backed up before they're changed.
+
+### Also new
+- **More button prompts**: extra prompt sheets (GitHub #223).
+
+### Fixes
+- **Judgment:** fixed a freeze where the game waited on the graphics card forever. It now gives up after 2 seconds (by Flippage).
+- **Gears 2:** "Exit Game" in the game's own menu now quits after you've played a level, instead of opening the credits.
+- **Launcher:** COGBox comes back to the front after you quit a game from its in-game menu.
+- **Online safety:** limits on what another player can make your game hold in memory or open.
+
 ## 0.5.0
 
 ### Important: update by hand this one time

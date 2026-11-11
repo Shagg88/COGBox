@@ -1,10 +1,10 @@
 diff --git a/include/rex/kernel/xam/net/identity.h b/include/rex/kernel/xam/net/identity.h
 new file mode 100644
-index 0000000..febcd52
+index 0000000..88a1ea0
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/identity.h
 @@ -0,0 +1,31 @@
-+// COGBox SDK patch 64: the player's online identity (identity.json). The uuid is made here; the discriminator, the
++// COGBox SDK patch 78: the player's online identity (identity.json). The uuid is made here; the discriminator, the
 +// online XUID and the signaling token come from the master server's claim. The local profile's XUID is never touched.
 +#pragma once
 +
@@ -43,18 +43,18 @@ index 2d43466..1adddab 100644
      xam/net/stun.cpp
      xam/net/punch.cpp
      xam/net/upnp.cpp
-+    # COGBox SDK patch 64: client identity
++    # COGBox SDK patch 78: client identity
 +    xam/net/identity.cpp
      xam/xam_notify.cpp
      xam/xam_nui.cpp
      xam/xam_party.cpp
 diff --git a/src/kernel/xam/net/identity.cpp b/src/kernel/xam/net/identity.cpp
 new file mode 100644
-index 0000000..2b2a321
+index 0000000..b95ad21
 --- /dev/null
 +++ b/src/kernel/xam/net/identity.cpp
 @@ -0,0 +1,130 @@
-+// COGBox SDK patch 64: the player's online identity (identity.json).
++// COGBox SDK patch 78: the player's online identity (identity.json).
 +#include <rex/kernel/xam/net/identity.h>
 +
 +#if defined(_WIN32)
@@ -191,12 +191,12 @@ index 99e4986..cbc39c6 100644
 @@ -112,9 +112,12 @@ endif()
  if(WIN32)
      target_link_libraries(rexruntime PRIVATE ws2_32)
-     # COGBox SDK patch 63: online play (UPnP via miniupnpc, adapter list via iphlpapi)
+     # COGBox SDK patch 77: online play (UPnP via miniupnpc, adapter list via iphlpapi)
 -    target_link_libraries(rexruntime PRIVATE libminiupnpc-static iphlpapi)
 +    target_link_libraries(rexruntime PRIVATE libminiupnpc-static iphlpapi bcrypt)
  endif()
  
-+# COGBox SDK patch 64: nlohmann/json (the copy inja carries) for identity.json and the master server
++# COGBox SDK patch 78: nlohmann/json (the copy inja carries) for identity.json and the master server
 +target_include_directories(rexruntime PRIVATE ${REXGLUE_ROOT}/thirdparty/inja/third_party/include)
 +
  if(WIN32)
@@ -216,11 +216,11 @@ index 71acfd8..53fb1d9 100644
  
 diff --git a/tests/unit/net/identity_test.cpp b/tests/unit/net/identity_test.cpp
 new file mode 100644
-index 0000000..6135082
+index 0000000..badf159
 --- /dev/null
 +++ b/tests/unit/net/identity_test.cpp
 @@ -0,0 +1,73 @@
-+// COGBox SDK patch 64: client identity tests. Files go to COGBOX_NET_TEST_DIR in the build tree (never AppData).
++// COGBox SDK patch 78: client identity tests. Files go to COGBOX_NET_TEST_DIR in the build tree (never AppData).
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <filesystem>

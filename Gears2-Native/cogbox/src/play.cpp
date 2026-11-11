@@ -477,7 +477,11 @@ void play_poll(App &a)
         HWND fg = GetForegroundWindow();
         DWORD pid = 0;
         if (fg) GetWindowThreadProcessId(fg, &pid);
-        const bool other = fg && pid != GetCurrentProcessId() && pid != a.raisePid;
+        // 0.6.0 (Shagg: COGBox didn't come back after quitting in game): for the first 1.5 s after the game ends, a
+        // window that grabs the front (the desktop, an overlay, the closing game's helper) doesn't count as the player's
+        // choice; after that a click on another program still stops the retry.
+        const bool settling = SDL_GetTicks() + 1500 < a.raiseUntil;   // raiseUntil = game end + 3000 ms
+        const bool other = !settling && fg && pid != GetCurrentProcessId() && pid != a.raisePid;
         if (a.run.proc || SDL_GetTicks() >= a.raiseUntil || other) a.raiseUntil = 0;
         else if (SDL_GetTicks() >= next) { next = SDL_GetTicks() + 250; if (launcher_to_front(a)) a.raiseUntil = 0; }
     }
