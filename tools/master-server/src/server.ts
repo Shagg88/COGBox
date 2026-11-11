@@ -16,6 +16,11 @@ import { ErrorRing } from './admin/error_ring.js';
 import { buildPrivateApi } from './admin/private_api.js';
 import path from 'node:path';
 
+// The private admin listener stays on loopback unless ADMIN_HOST says otherwise.
+export function adminListenHost(env: NodeJS.ProcessEnv = process.env): string {
+  return env.ADMIN_HOST || '127.0.0.1';
+}
+
 export interface ServerOptions {
   dbPath?: string;
   logger?: boolean;
@@ -131,12 +136,12 @@ if (process.argv[1] && (process.argv[1].endsWith('server.ts') || process.argv[1]
     try {
       await app.listen({ port, host });
       console.log(`[COGBox] Master Server coordinator listening on ${host}:${port}`);
-      // Private listener for the admin panel: only when a secret is set; compose does not publish its port.
+      // Private listener for the admin panel: only when a secret is set, on loopback by default.
       const secret = process.env.ADMIN_SHARED_SECRET;
       if (secret) {
         const adminPort = Number(process.env.ADMIN_PORT) || 8090;
         const priv = await buildPrivateApi({ ...(app as any).adminDeps, secret });
-        await priv.listen({ port: adminPort, host: '0.0.0.0' });
+        await priv.listen({ port: adminPort, host: adminListenHost() });
         console.log(`[COGBox] Admin listener on ${adminPort}`);
       }
     } catch (err) {

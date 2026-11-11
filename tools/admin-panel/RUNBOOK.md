@@ -64,6 +64,6 @@ The secret is generated on the server, in the deploy folder, and never printed:
 
 Check the mode is 600 with `ls -l admin.env`. Never `cat` it, never copy it into the repo (it is in `.gitignore`).
 
-Then: merge the `/admin*` block from `deploy/Caddyfile.example` into the live Caddyfile, run `docker compose up -d --build`, and reload Caddy.
+Then: merge the `/admin*` block from `deploy/Caddyfile.example` into the live Caddyfile, run `docker compose up -d --build`, and reload Caddy. The admin panel, the Docker proxy and the master's private port listen on 127.0.0.1 only, so the firewall stays at 22, 80, 443 and UDP 3478. Do not open 8080, 8090 or 2375.
 
 Add a person: `docker compose exec admin node dist/cli.js add-user <name>`. It prints a one-time password and an enrolment link. Reset: `reset-user`. Remove: `remove-user`.

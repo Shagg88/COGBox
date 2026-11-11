@@ -20,5 +20,4 @@ COPY public/ ./public/
 RUN mkdir -p /data && chown node:node /data
 USER node
 VOLUME ["/data"]
-EXPOSE 8080
 CMD ["node", "dist/main.js"]

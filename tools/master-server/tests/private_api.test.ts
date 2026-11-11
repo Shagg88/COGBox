@@ -114,3 +114,11 @@ describe('private admin api', () => {
     await s.close();
   });
 });
+
+describe('private listener address', () => {
+  it('defaults to loopback and honours ADMIN_HOST', async () => {
+    const { adminListenHost } = await import('../src/server.js');
+    expect(adminListenHost({})).toBe('127.0.0.1');
+    expect(adminListenHost({ ADMIN_HOST: '10.0.0.5' })).toBe('10.0.0.5');
+  });
+});
