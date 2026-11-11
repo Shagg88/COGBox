@@ -48,6 +48,11 @@ describe('master client', () => {
     expect(seen.every((s) => s.secret === 's3cret')).toBe(true);
   });
 
+  it('backup waits longer than the status timeout', async () => {
+    const url = await fake((_q, res) => { setTimeout(() => res.end('{"name":"master-20260101000000.db","size":5}'), 2500); });
+    expect(await createMasterClient(url, 's').backup()).toEqual({ name: 'master-20260101000000.db', size: 5 });
+  }, 10000);
+
   it('master status null on timeout', async () => {
     const url = await fake(() => { /* never answers */ });
     expect(await createMasterClient(url, 's').status()).toBeNull();
@@ -86,6 +91,17 @@ describe('docker client', () => {
     const lines = await createDockerClient(url).logs('master-server', 3);
     expect(lines).toEqual(['one', 'two', 'three']);
     expect(seen).toBe('/containers/cogbox-master-master-server-1/logs?stdout=1&stderr=1&tail=3');
+  });
+
+  it('health reports a restarting or stopped container as down', async () => {
+    const url = await fake((req, res) => {
+      const restarting = req.url!.includes('coturn');
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ State: { Running: restarting, Restarting: restarting, StartedAt: 't' }, RestartCount: 7 }));
+    });
+    const h = await createDockerClient(url).health();
+    expect(h.coturn.up).toBe(false);
+    expect(h['master-server'].up).toBe(false);
   });
 
   it('health reads state, and treats a missing container as down', async () => {

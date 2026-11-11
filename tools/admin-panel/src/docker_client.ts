@@ -33,8 +33,9 @@ export function createDockerClient(baseUrl: string): DockerClient {
         try {
           const res = await call('GET', `/containers/${CONTAINERS[s]}/json`);
           if (!res.ok) throw new Error(String(res.status));
-          const j = (await res.json()) as { State?: { Running?: boolean; StartedAt?: string }; RestartCount?: number };
-          out[s] = { up: Boolean(j.State?.Running), started_at: j.State?.StartedAt ?? '', restarts: j.RestartCount ?? 0 };
+          const j = (await res.json()) as { State?: { Running?: boolean; Restarting?: boolean; StartedAt?: string }; RestartCount?: number };
+          // a crash-looping container reports Running too, so Restarting counts as down
+          out[s] = { up: Boolean(j.State?.Running) && !j.State?.Restarting, started_at: j.State?.StartedAt ?? '', restarts: j.RestartCount ?? 0 };
         } catch {
           out[s] = { up: false, started_at: '', restarts: 0 };   // missing or unreachable counts as down
         }
