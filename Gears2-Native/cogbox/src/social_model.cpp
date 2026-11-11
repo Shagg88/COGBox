@@ -20,8 +20,10 @@ struct Title {
     const char* id;
     const char* name;
 };
+// In the launcher's GameId order (games.h: G_GEARS2, G_GEARS3, G_JUDGMENT, G_GEARS1): game_for_title's answer is
+// what Join hands to play_start. Release order here once made a Gears 3 join start Judgment.
 const Title kTitles[] = {
-    { "4D5307D5", "Gears of War" }, { "4D53082D", "Gears of War 2" }, { "4D5308AB", "Gears of War 3" }, { "4D530A26", "Judgment" },
+    { "4D53082D", "Gears of War 2" }, { "4D5308AB", "Gears of War 3" }, { "4D530A26", "Judgment" }, { "4D5307D5", "Gears of War" },
 };
 }  // namespace
 

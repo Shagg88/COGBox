@@ -73,11 +73,12 @@ int main() {
         online.state = "online";
         CHECK(presence_text(online) == "Online - In Launcher");
     }
-    // games
-    CHECK(game_for_title("4D5307D5") == 0);
-    CHECK(game_for_title("4D53082D") == 1);
-    CHECK(game_for_title("4d5308ab") == 2);
-    CHECK(game_for_title("4D530A26") == 3);
+    // games: the launcher's own numbering (games.h GameId: Gears 2, Gears 3, Judgment, Gears 1)
+    CHECK(game_for_title("4D53082D") == 0);   // G_GEARS2
+    CHECK(game_for_title("4d5308ab") == 1);   // G_GEARS3
+    CHECK(game_for_title("4D530A26") == 2);   // G_JUDGMENT
+    CHECK(game_for_title("4D5307D5") == 3);   // G_GEARS1
+    CHECK(join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-AB12"})")->game == 1);   // Gears 3
     CHECK(game_for_title("FFFFFFFF") == -1);
     // tags
     CHECK(valid_tag("Flapper#4293"));
@@ -121,7 +122,7 @@ int main() {
     // Join / invite accept answers: 409 = that game is not running here, start it with the room code; 200 = told
     {
         auto j = join_from_answer(409, R"({"error":"start the game first","title_id":"4D5308AB","room_code":"COG-ABCD"})");
-        CHECK(j.has_value() && j->game == 2 && j->room_code == "COG-ABCD");
+        CHECK(j.has_value() && j->game == 1 && j->room_code == "COG-ABCD");
         CHECK(!join_from_answer(200, R"({"status":"joining","title_id":"4D5308AB","room_code":"COG-ABCD"})").has_value());
         CHECK(!join_from_answer(404, R"({"error":"no lobby"})").has_value());
         CHECK(!join_from_answer(409, R"({"error":"start the game first","title_id":"FFFFFFFF","room_code":"COG-ABCD"})").has_value());
