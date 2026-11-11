@@ -1599,6 +1599,17 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     {
         const std::string ei = k_engineIni[gi];
         std::vector<std::string> ini;
+        // 0.6.0 (redsit): Gears 1's network ticks are capped for a 30 fps console (NetServerMaxTickRate=30,
+        // LanServerMaxTickRate=35, small client rates, bDynamicNetSpeed). At 90+ fps a System Link client froze at
+        // "Match begins in 1 seconds" and nobody respawned; these values made 120 fps and unlimited work. Sent whenever
+        // the game can play with others here (System Link or the COGBox online server).
+        const bool netPlay = on("SystemLink") || (!env.online_server.empty() && cap_rt(env, "net_master_server"));
+        if (isG1 && netPlay && cap_exe(env, "gow1_ini_edits"))
+            for (const char* e : { "IpDrv.TcpNetDriver|NetServerMaxTickRate=120", "IpDrv.TcpNetDriver|LanServerMaxTickRate=120",
+                                   "IpDrv.TcpNetDriver|MaxClientRate=30000", "IpDrv.TcpNetDriver|MaxInternetClientRate=30000",
+                                   "Engine.Player|ConfiguredLanSpeed=30000", "Engine.Player|ConfiguredInternetSpeed=30000",
+                                   "Engine.PlayerController|bDynamicNetSpeed=False" })
+                ini.push_back(ei + "|" + e);
         if (isG1) {   // GitHub #179: no [SystemSettings] in Gears 1 - Canary's patches as switches
             if (avail("MotionBlur") && !s.b("MotionBlur")) a.push_back("--gow1_no_motion_blur=true");
             if (avail("DoF") && !s.b("DoF")) a.push_back("--gow1_no_gaussian_blur=true");
