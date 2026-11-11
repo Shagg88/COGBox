@@ -54,7 +54,7 @@ REXCVAR_DEFINE_BOOL(gow3_mod_chapters, true, "Gears3",
 REXCVAR_DEFINE_BOOL(gow3_mod_content_packages, true, "Gears3",
                     "Load the content packages mods name (mod.ini content = ...); false to test without them");
 REXCVAR_DEFINE_BOOL(gow3_mod_file_log, false, "Gears3",
-                    "Developers: log every package the game opens (to see where a mod's chapter stops loading)");
+                    "Developers: log every package and texture cache the game opens (to see where a mod's chapter stops loading)");
 
 // layer 2 shader_prebuild.cpp: the one file-open observer, with a listener chained after it
 void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));
@@ -606,7 +606,8 @@ void ContentPackagesTick() {  // game thread
 void Gow3InstallModChapters() {
   if (REXCVAR_GET(gow3_mod_file_log))
     Ue3ShaderPrebuildChainFileOpened([](std::string_view guest, const std::filesystem::path* host) {
-      if (guest.size() > 4 && (guest.ends_with(".xxx") || guest.ends_with(".XXX") || guest.ends_with(".txt")))
+      if (guest.size() > 4 && (guest.ends_with(".xxx") || guest.ends_with(".XXX") || guest.ends_with(".txt") ||
+                                guest.ends_with(".tfc") || guest.ends_with(".TFC")))
         REXLOG_INFO("mod files: opened {}{}", guest, host ? " <- " + rex::path_to_utf8(*host) : std::string());
     });
   if (!REXCVAR_GET(gow3_mod_chapters) || g_started) return;
