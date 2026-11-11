@@ -403,7 +403,9 @@ void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content pac
 // player's own binds, whatever they are). A pad is not affected. From KiltedKernel's Gears 3 port (hid.cpp).
 // 0.4.6 (Shagg 11-06): off by default - the fresh 0.4.6 package still froze at the main menu with it on (job 1294);
 // it comes back on once its object scan no longer stalls the game thread.
-REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, false, "Gears3",
+// (on by default: the launcher has no switch for it, and with the usual binds - LMB fire, RMB aim - the left
+// mouse button picked the right path; only the keyboard and mouse binds are swapped, a controller is untouched)
+REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, true, "Gears3",
                     "Path choice: the mouse button on a path's side picks that path (the trigger binds swap while it is open)");
 void Gow3PathChoiceTick() {
   // (also while developer mode's scripted controller waits for a path choice: "choose L|R", ue3/script_input.h)
