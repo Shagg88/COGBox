@@ -7,11 +7,14 @@ export type Db = ReturnType<typeof Database>;
 export function openDb(dbPath: string): Db {
   if (dbPath !== ':memory:') {
     fs.mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
-    // Create it ourselves first so the file is never readable by others, even briefly.
-    fs.closeSync(fs.openSync(dbPath, 'a', 0o600));
+    // Files created below (db, -wal, -shm) must be owner-only from the start.
+    process.umask(0o077);
   }
   const db = new Database(dbPath);
-  if (dbPath !== ':memory:') db.pragma('journal_mode = WAL');
+  if (dbPath !== ':memory:') {
+    db.pragma('journal_mode = WAL');
+    ownerOnly(dbPath);
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       name TEXT PRIMARY KEY,
@@ -37,5 +40,13 @@ export function openDb(dbPath: string): Db {
       detail TEXT NOT NULL DEFAULT ''
     );
   `);
+  if (dbPath !== ':memory:') ownerOnly(dbPath);
   return db;
+}
+
+// An existing file keeps its old mode, and the -wal/-shm files only exist once WAL is on.
+function ownerOnly(dbPath: string): void {
+  for (const f of [dbPath, dbPath + '-wal', dbPath + '-shm']) {
+    try { fs.chmodSync(f, 0o600); } catch { /* missing file, or Windows */ }
+  }
 }

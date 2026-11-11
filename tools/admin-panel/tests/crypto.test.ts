@@ -14,6 +14,8 @@ describe('totp', () => {
     expect(checkTotp(SECRET, totpCode(SECRET, 2), now, 0)).toBe(2);
     expect(checkTotp(SECRET, totpCode(SECRET, 0), now, -1)).toBe(0);
     expect(checkTotp(SECRET, totpCode(SECRET, 3), now, 0)).toBeNull();
+    expect(checkTotp(SECRET, totpCode(SECRET, 4), 6 * 30 * 1000, 0)).toBeNull(); // cur-2
+    expect(checkTotp(SECRET, totpCode(SECRET, 5), 6 * 30 * 1000, 0)).toBe(5); // cur-1
     expect(checkTotp(SECRET, totpCode(SECRET, 4), 200 * 1000, 0)).toBeNull();
   });
 
