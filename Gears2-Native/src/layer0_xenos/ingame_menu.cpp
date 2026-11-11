@@ -9,14 +9,23 @@
 // The controller is read with XInput (loaded at run time, nothing to link) on a small polling thread; while the menu is
 // open its buttons are fed to Dear ImGui's gamepad navigation. Our code (MIT).
 #include <xenos/dev_tools.h>
+#include <rex/ui/image_decode.h>
+#include <rex/ui/immediate_drawer.h>
+#include <xenos/achievements_data.h>   // ach::ReadFile: friends' profile pictures
 #include <xenos/achievements_browser.h>   // achievements part 3: the Achievements page
 #include <xenos/achievements_popup_logic.h>   // achievements part 4: popup settings applied at once (LiveCvarFor)
 #include <xenos/input/prompt_device_monitor.h>
 #include <xenos/menu_input.h>
 #include <xenos/menu_look.h>   // 0.4.9: the full-screen look (Noto Sans, the launcher's style)
+#include <xenos/renderer/prompt_overlay_compositor.h>   // GitHub #223: XenosSetPromptGame
 #include <xenos/achievement_popup_assets.h>   // the in-game text's font (CJK / Cyrillic) when translated
 #include <xenos/ui_lang.h>
-#include <xenos/achievement_popup.h>   // F-8: XenosAchievementSettingsMutex   // --cogbox_ui_lang: XenosTr
+#include <xenos/achievement_popup.h>
+#include <xenos/guide_button.h>   // social step 5
+#include <xenos/social_ingame.h>
+#include <xenos/social_page.h>
+#include <xenos/social_popup.h>
+#include <rex/kernel/xam/net/social_ui.h>   // social step 5: the game's own Invite button   // F-8: XenosAchievementSettingsMutex   // --cogbox_ui_lang: XenosTr
 #include <rex/cvar.h>
 #include <rex/filesystem.h>   // 0.4.9: rex::path_to_utf8
 #include <rex/logging.h>
@@ -56,6 +65,9 @@ REXCVAR_DEFINE_STRING(cogbox_menu, "", "Gears2",
                       "COGBox's in-game menu: the file COGBox writes with this game's settings (Back + Start or F1 opens "
                       "the menu; without a file it offers Resume and Quit game only)");
 REXCVAR_DEFINE_BOOL(cogbox_menu_enabled, true, "Gears2", "COGBox's in-game menu (Back + Start or F1) on or off");
+REXCVAR_DECLARE(bool, guide_button);   // the SDK's input setting (Guide passed to the game)
+REXCVAR_DEFINE_BOOL(cogbox_social_guide, true, "Gears2",
+                    "Social step 5: the controller's Guide / PS button opens the menu's Social page (when the game runs online)");
 REXCVAR_DEFINE_BOOL(cogbox_menu_ps, false, "Gears2", "Job 523: show PlayStation button names in the in-game menu (COGBox sets it for a PlayStation pad)");
 REXCVAR_DEFINE_BOOL(cogbox_menu_open_at_start, false, "Gears2",
                     "Test switch: open the in-game menu as soon as the window exists");
@@ -345,7 +357,10 @@ xenos::AchievementsBrowser* Browser() {
   if (!g_browser) g_browser = std::make_unique<xenos::AchievementsBrowser>(g_immediate, g_runtime);
   return g_browser.get();
 }
-enum class MenuPage { kSettings, kAchievements };
+enum class MenuPage { kSettings, kAchievements, kSocial };   // social step 5: kSocial
+// Friends' profile pictures for the Social page (UI thread): loaded once each, kept while the game runs.
+std::map<std::string, std::unique_ptr<rex::ui::ImmediateTexture>> g_profile_icons;
+void ToggleSocialOnUIThread();   // social step 5: F8 / Guide
 
 void RequestOpenOnUIThread();
 void ScheduleDrop();
@@ -406,6 +421,7 @@ void PollPads() {
     return;
   }
   bool combo_was = false;
+  xenos::GuideEdge guide;   // social step 5
   while (!g_stop.load()) {
     XINPUT_GAMEPAD pad = {};
     bool connected = false;
@@ -438,6 +454,11 @@ void PollPads() {
     const bool combo = connected && (pad.wButtons & XINPUT_GAMEPAD_BACK) && (pad.wButtons & XINPUT_GAMEPAD_START);
     if (combo && !combo_was && !g_open.load()) RequestOpenOnUIThread();
     combo_was = combo;
+    // social step 5: Guide / PS opens (or closes) the Social page; the game itself never sees Guide (SDK input)
+    if (guide.Pressed(connected && (pad.wButtons & 0x0400) != 0) && REXCVAR_GET(cogbox_social_guide) && !REXCVAR_GET(guide_button) &&
+        XenosSocialAvailable())   // review: with guide_button on the game owns Guide
+      ToggleSocialOnUIThread();
+    XenosPumpSocialPopup();   // social step 5: new invites / requests / friends online -> pop-ups
     std::this_thread::sleep_for(std::chrono::milliseconds(15));
   }
 }
@@ -496,6 +517,8 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     io.MouseDrawCursor = saved_draw_cursor_;
   }
   bool done() const { return done_; }
+  bool OnSocial() const { return page_ == MenuPage::kSocial; }   // social step 5
+  void GoSocial() { ShowPage(MenuPage::kSocial); }
   void Close() { Resume(); }   // F7 while open
 
  protected:
@@ -539,6 +562,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
       menu_root_ = ImGui::GetCurrentContext()->CurrentWindow->RootWindow;   // review 049: whose popups hold B back (OwnPopupOpen)
       ImGui::PushFont(L.fonts.regular, L.px(xenos::menu::kBody));   // widgets (combo boxes, sliders, lists) in Noto Sans
       if (page_ == MenuPage::kAchievements) DrawAchievements(L, scale);
+      else if (page_ == MenuPage::kSocial) DrawSocial(L, scale);
       else DrawSettings(L);
       ImGui::PopFont();
     }
@@ -572,7 +596,10 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
         {XINPUT_GAMEPAD_DPAD_LEFT, ImGuiKey_GamepadDpadLeft}, {XINPUT_GAMEPAD_DPAD_RIGHT, ImGuiKey_GamepadDpadRight},
         {XINPUT_GAMEPAD_LEFT_SHOULDER, ImGuiKey_GamepadL1}, {XINPUT_GAMEPAD_RIGHT_SHOULDER, ImGuiKey_GamepadR1},
         {XINPUT_GAMEPAD_START, ImGuiKey_GamepadStart},      {XINPUT_GAMEPAD_BACK, ImGuiKey_GamepadBack}};
-    const float dz = 0.35f, lx = p.sThumbLX / 32767.0f, ly = p.sThumbLY / 32767.0f;
+    // social step 5 test: keys bound to pad buttons (1-4 = D-pad) moved the focus while typing a tag - while a text box
+    // takes typing, the pad gives Dear ImGui nothing
+    const bool typing = io.WantTextInput;
+    const float dz = 0.35f, lx = typing ? 0.0f : p.sThumbLX / 32767.0f, ly = typing ? 0.0f : p.sThumbLY / 32767.0f;
     // menu4 (RC4-1): the pad state is the SDK's merged player 1 - with keyboard-and-mouse on, the key binds (arrows /
     // WASD -> left stick, Enter / Esc -> Start, Space -> A ...) show up in it. Only a real controller EVENT takes the
     // legend (xenos/menu_input.h), and pad moves made by the keyboard's binds don't step the focus a second time.
@@ -604,7 +631,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     else io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     const bool key_a = own_nav && (ImGui::IsKeyDown(ImGuiKey_Enter) || ImGui::IsKeyDown(ImGuiKey_KeypadEnter) || ImGui::IsKeyDown(ImGuiKey_Space));
     for (const Map& m : map)
-      io.AddKeyEvent(m.key, ((live & m.bit) != 0 && !(own_nav && (m.bit & kDirs))) || (m.key == ImGuiKey_GamepadFaceDown && key_a));
+      io.AddKeyEvent(m.key, ((live & m.bit) != 0 && !(typing && (m.bit & kDirs)) && !(own_nav && (m.bit & kDirs))) || (m.key == ImGuiKey_GamepadFaceDown && key_a));
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, !own_nav && lx < -dz, !own_nav && lx < -dz ? -lx : 0.0f);
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, !own_nav && lx > dz, !own_nav && lx > dz ? lx : 0.0f);
     io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, !own_nav && ly > dz, !own_nav && ly > dz ? ly : 0.0f);
@@ -682,7 +709,9 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
       quit_open_frames_ = 0;
     }
     if (!in_box && !popup && !popup_last_ && !editing && !editing_last_) {   // menu2: B in a slider's edit mode only leaves it
-      if (back && page_ == MenuPage::kAchievements) ShowPage(MenuPage::kSettings);   // B: back to the settings
+      if (back && page_ == MenuPage::kSocial && xenos::social::ConsumeBack(ImGui::IsAnyItemActive())) {
+        // social step 5 review: B / Esc closes the on-screen keyboard or ends typing, the page stays
+      } else if (back && page_ != MenuPage::kSettings) ShowPage(MenuPage::kSettings);   // B: back to the settings
       else if (back || (pressed & XINPUT_GAMEPAD_START)) Resume();               // resume
     }
     popup_last_ = popup;
@@ -712,6 +741,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
   }
 
   void ShowPage(MenuPage page) {
+    if (page_ == MenuPage::kSocial && page != MenuPage::kSocial) xenos::social::OnLeave();   // social step 5
     page_ = page;
     page_first_frame_ = true;
     if (page == MenuPage::kAchievements) Browser()->Reload();
@@ -740,6 +770,23 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
       case xenos::menu::Action::kResume: Resume(); break;
       default: break;
     }
+    page_first_frame_ = false;
+  }
+  // social step 5: the Social page in the menu's own frame
+  void DrawSocial(const xenos::menu::Look& L, float scale) {
+    const xenos::menu::Rect r = xenos::menu::BeginAchievements(L, GameName().c_str(), XenosTr("Social"), "");
+    ImGui::SetCursorScreenPos(r.a);
+    auto result = xenos::social::PageResult::None;
+    if (ImGui::BeginChild("##social_page", ImVec2(r.b.x - r.a.x, r.b.y - r.a.y), ImGuiChildFlags_NavFlattened)) {
+      result = xenos::social::DrawPage(scale, L.pad, REXCVAR_GET(cogbox_menu_ps));
+    }
+    ImGui::EndChild();
+    std::vector<xenos::menu::LegendItem> legend;
+    if (L.pad) legend = {{false, "A", XenosTr("select")}, {false, "B", XenosTr("back to settings")}};
+    else legend = {{true, "Esc", XenosTr("back to settings")}};
+    const xenos::menu::Action a = xenos::menu::EndAchievements(L, XenosTr("Back to settings"), XenosTr("Resume"), legend);
+    if (a == xenos::menu::Action::kBack || result == xenos::social::PageResult::Back) ShowPage(MenuPage::kSettings);
+    if (a == xenos::menu::Action::kResume || result == xenos::social::PageResult::CloseMenu) Resume();
     page_first_frame_ = false;
   }
   static std::string GameName() { return g_file.game.empty() ? std::string(XenosTr("GAME MENU")) : g_file.game; }
@@ -912,6 +959,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     pg.t_yes = XenosTr("Yes");
     pg.t_no = XenosTr("No");
     page_first_frame_ = false;
+    if (XenosSocialAvailable()) pg.t_social = XenosTr("Social");   // social step 5: when the game runs online
     pg.t_resume = XenosTr("Resume"); pg.t_achievements = XenosTr("Achievements"); pg.t_restart = XenosTr("Restart to apply");
     pg.t_quit = XenosTr("Quit game");
     restart_tag_ = XenosTr("Restart required");
@@ -950,6 +998,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     switch (a) {
       case m::Action::kResume: Resume(); break;
       case m::Action::kAchievements: ShowPage(MenuPage::kAchievements); break;
+      case m::Action::kSocial: ShowPage(MenuPage::kSocial); break;
       case m::Action::kRestart: Finish(true); break;
       case m::Action::kQuit: Finish(false); break;
       default: break;
@@ -1040,6 +1089,29 @@ void RequestOpenOnUIThread() {
   if (g_window) g_window->app_context().CallInUIThreadDeferred([] { OpenNow(); });
 }
 
+// Social step 5: F8 / Guide - the menu on its Social page, or closed again when it is showing that page.
+void ToggleSocial() {
+  if (!XenosSocialAvailable()) return;
+  if (g_menu) {
+    if (g_menu->OnSocial()) g_menu->Close();
+    else g_menu->GoSocial();
+  } else if (!g_open.load()) {
+    OpenNow(MenuPage::kSocial);
+  }
+}
+// The game's own Invite / friends button (the Guide's friends screen on a 360): the menu on its Social page.
+void OpenSocialOnUIThread() {
+  if (!g_window) return;
+  g_window->app_context().CallInUIThreadDeferred([] {
+    if (!XenosSocialAvailable()) return;
+    if (g_menu) g_menu->GoSocial();
+    else if (!g_open.load()) OpenNow(MenuPage::kSocial);
+  });
+}
+void ToggleSocialOnUIThread() {
+  if (g_window) g_window->app_context().CallInUIThreadDeferred([] { ToggleSocial(); });
+}
+
 }  // namespace
 
 // GitHub #143: the OS cursor stayed over the game when playing with a controller (keyboard and mouse off, or mouse look
@@ -1097,6 +1169,10 @@ void IdleCursorWatch() {
 }
 }  // namespace
 
+void XenosSetPromptGame(uint32_t title_id) {
+  ::xenos::renderer::prompt::GlobalPromptCompositor().SetGameTitle(title_id);
+}
+
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDrawer* immediate, rex::ui::Window* window,
                             rex::Runtime* runtime) {
   StartPadPump(window, runtime);   // GitHub #108, menu or no menu: pad assignment (+ SDL pump when exported)
@@ -1132,6 +1208,10 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDraw
     if (g_menu) g_menu->Close();
     else if (!g_open.load()) OpenNow(MenuPage::kAchievements);
   });
+  XenosInstallSocialPopup(drawer, window);   // social step 5
+  // Social step 5: F8 opens the menu on its Social page (and closes it again), when the game runs online.
+  rex::kernel::xam::net::SetFriendsUiHandler([] { OpenSocialOnUIThread(); });   // the game's own Invite button
+  rex::ui::RegisterBind("bind_cogbox_social", "F8", "COGBox social (friends, invites)", [] { ToggleSocial(); });
   g_stop.store(false);
   g_poller = std::thread(PollPads);
   if (REXCVAR_GET(cogbox_menu_open_at_start)) RequestOpenOnUIThread();
@@ -1150,6 +1230,7 @@ void XenosShutdownInGameMenu() {
   AllowSetForegroundWindow(ASFW_ANY);   // 0.2.0: any other way out too (window closed, the game's own quit)
   g_stop.store(true);
   if (g_poller.joinable()) g_poller.join();
+  XenosShutdownSocialPopup();   // social step 5 (after the pad thread that feeds it)
   g_menu.reset();
   if (g_open.load()) RestoreMouseState();   // PR #134
   g_unblock_pending.store(false);
@@ -1157,7 +1238,10 @@ void XenosShutdownInGameMenu() {
   BlockGameInput(false);   // 0.2.0
   rex::ui::UnregisterBind("bind_cogbox_menu");
   rex::ui::UnregisterBind("bind_cogbox_achievements");
+  rex::ui::UnregisterBind("bind_cogbox_social");   // social step 5
+  rex::kernel::xam::net::SetFriendsUiHandler(nullptr);
   g_browser.reset();
+  g_profile_icons.clear();   // made through g_immediate: freed before it goes
   g_immediate = nullptr;
   g_runtime = nullptr;
   g_drawer = nullptr;
@@ -1206,4 +1290,24 @@ bool XenosLiveMaxFps(int32_t* fps) {
   if (v == INT64_MIN) return false;
   *fps = int32_t(v);
   return true;
+}
+
+REXCVAR_DECLARE(std::string, cogbox_dir);  // achievements_export.cpp
+
+ImTextureID xenos::social::ProfileIcon(const std::string& name) {
+  if (!safe_icon_name(name) || !g_immediate) return ImTextureID(0);
+  auto it = g_profile_icons.find(name);
+  if (it == g_profile_icons.end()) {
+    std::unique_ptr<rex::ui::ImmediateTexture> tex;
+    const std::string dir = REXCVAR_GET(cogbox_dir);
+    std::string bytes;
+    if (!dir.empty() && xenos::ach::ReadFile(std::filesystem::path(dir) / name, &bytes)) {
+      int w = 0, h = 0;
+      std::vector<uint8_t> rgba = rex::ui::DecodeImageRGBA(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), w, h);
+      if (!rgba.empty() && w > 0 && h > 0)
+        tex = g_immediate->CreateTexture(uint32_t(w), uint32_t(h), rex::ui::ImmediateTextureFilter::kLinear, false, rgba.data());
+    }
+    it = g_profile_icons.emplace(name, std::move(tex)).first;
+  }
+  return it->second ? reinterpret_cast<ImTextureID>(it->second.get()) : ImTextureID(0);
 }

@@ -515,7 +515,7 @@ static float player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav, int slot =
             const std::string lbl = pn + (id == cur ? std::string("   ") + tr("(signed in)") : std::string()) + "###prof" + std::to_string(id);
             if (id == 1 && ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
             if (th_button(lbl.c_str(), ImVec2(S(300), T(30)), id != cur, F_BOLD)) {
-                a.ini.seti("Profiles", "Current", id); a.ini.save(); set_current_profile(id);
+                a.ini.seti("Profiles", "Current", id); a.ini.save(); set_current_profile(id); social_restart(a);
                 set_message(a, std::string(tr("Signed in:")) + " " + pn, false);
                 profView = false; ImGui::CloseCurrentPopup();
             }
@@ -523,14 +523,14 @@ static float player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav, int slot =
         ImGui::Spacing();
         if (count < 8 && th_button("NEW PROFILE##profnew", ImVec2(S(170), T(28)), true, F_BOLD)) {
             const int id = count + 1;
-            a.ini.seti("Profiles", "Count", id); a.ini.seti("Profiles", "Current", id); a.ini.save(); set_current_profile(id);
+            a.ini.seti("Profiles", "Count", id); a.ini.seti("Profiles", "Current", id); a.ini.save(); set_current_profile(id); social_restart(a);
             buf[0] = 0; profView = false;   // straight to its name
         }
         ImGui::SameLine(0, S(10));
         if (th_button("BACK##profback", ImVec2(S(120), T(28)), true, F_BOLD) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) profView = false;
       } else if (iconView) {
         // 0.4.6: the icon grid (player_icon.cpp). D-pad moves, A picks, B closes (Dear ImGui's own nav cancel).
-        if (player_icon_picker(a, letter)) iconView = false;
+        if (player_icon_picker(a, letter)) { iconView = false; social_send_icon(a); }
         ImGui::TextColored(col::dim, "%s", tr("D-pad choose   A pick   B close"));
         ImGui::Spacing();
         if (th_button("BACK##iconback", ImVec2(S(140), T(28)), true, F_BOLD)) iconView = false;
@@ -606,7 +606,7 @@ static float player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav, int slot =
         if (th_button("CANCEL", ImVec2(S(140), T(28)), true, F_BOLD) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ImGui::CloseCurrentPopup();   // 0.4.6 review: B / Esc close it too
-        if (save) { a.ini.set(sec, key, buf); a.ini.save(); ImGui::CloseCurrentPopup(); }
+        if (save) { a.ini.set(sec, key, buf); a.ini.save(); if (slot == 1) social_rename(a, buf); ImGui::CloseCurrentPopup(); }
       }
         ImGui::EndPopup();
     }
@@ -702,7 +702,7 @@ void front_draw(App &a, ImVec2 size)
             if (left) turn(a, -1);
             if (right) turn(a, 1);
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) a.frontSel = std::max(0, a.frontSel - 1);
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) a.frontSel = std::min(2, a.frontSel + 1);
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) a.frontSel = std::min(3, a.frontSel + 1);   // achievements part 4: 3; social step 3: 4
             if (up) a.frontSel = 10;
         }
         if (ImGui::IsWindowHovered() && io.MouseWheel != 0) turn(a, io.MouseWheel > 0 ? -1 : 1);
@@ -829,11 +829,13 @@ void front_draw(App &a, ImVec2 size)
         // the controller's choice shows only while a controller is connected; A presses it
         bool sel0 = a.padConnected && a.frontSel == 0, sel1 = a.padConnected && a.frontSel == 1;
         bool sel2 = a.padConnected && a.frontSel == 2;   // achievements part 4
+        bool sel3 = a.padConnected && a.frontSel == 3;   // social step 3
         bool padA = nav && a.padConnected && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
         // 0.4.6 (Shagg 6 Nov): ACHIEVEMENTS is a third button like the other two, and the row is centred
         const bool achShown = st.ready != R_NO_PORT;
         const float aw = std::max(bw, F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, tr("ACHIEVEMENTS")).x + S(36));
-        const float rowW = bw * 2 + gap + (achShown ? gap + aw : 0);
+        const float sw = std::max(bw, F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, tr("SOCIAL")).x + S(36));   // social step 3
+        const float rowW = bw * 2 + gap + (achShown ? gap + aw + gap + sw : 0);
         ImGui::SetCursorScreenPos(ImVec2(cx - rowW * 0.5f, y));
         if (st.ready == R_READY) {
             // A presses the choice LB / RB made (a.frontSel); Enter plays
@@ -860,6 +862,13 @@ void front_draw(App &a, ImVec2 size)
             if (hit || (nav && padA && a.frontSel == 2)) {
                 a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 4; a.barSel = -1;   // gs::Tab::Achievements
                 achievements_tab_open_all();
+            }
+            // social step 3: SOCIAL, right of ACHIEVEMENTS, opens the SOCIAL tab (friends, invites, the multiplayer server)
+            ImGui::SameLine(0, gap);
+            const bool socialPressed = th_button("SOCIAL", ImVec2(sw, bh), true, F_HEAD, sel3);
+            hover_tip(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), tr("Friends, invites and online play."));
+            if (socialPressed || (nav && padA && a.frontSel == 3)) {
+                a.page = g; a.zoomTo = SCR_PAGE; a.zoomStart = now; a.tab = 5; a.barSel = -1;   // page.cpp k_tabSocial
             }
         }
         // Shagg 1 Nov: the drop tip, under the buttons (and the folder button when it shows)

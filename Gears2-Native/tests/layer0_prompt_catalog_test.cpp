@@ -62,7 +62,7 @@ TEST_CASE("Prompt atlas catalog recognizes all known HUD, Font, and Chainsaw Due
     CHECK(layout->kind == prompt::AtlasKind::kFont256G2);
     CHECK(layout->width == 256);
     CHECK(layout->height == 256);
-    CHECK(layout->cells.size() == 27);
+    CHECK(layout->cells.size() == 29);  // GitHub #223: - wrong d-pad left, + plain d-pad / sticks
   }
 
   {
@@ -83,7 +83,42 @@ TEST_CASE("Prompt atlas catalog recognizes all known HUD, Font, and Chainsaw Due
   CHECK(prompt::GetAtlasLayout(0ULL) == nullptr);
   CHECK(prompt::GetAtlasLayout(0xdeadbeefcafebabeULL) == nullptr);
 
-  CHECK(prompt::GetAllAtlasLayouts().size() == 12);  // GitHub #214: + Gears 1's font and HUD sheets; rc6: + Gears 2's chainsaw sheet
+  CHECK(prompt::GetAllAtlasLayouts().size() == 26);  // GitHub #214: + Gears 1's font and HUD sheets; #223: + 15
+}
+
+TEST_CASE("GitHub #223: Gears 2's chainsaw sheet and weapon icon sheet are cataloged", "[layer0][prompt][catalog]") {
+  const auto* saw = prompt::GetAtlasLayout(0x64cd4013fef17653ULL);  // Warfare_HUD.HUD.HUD_ActionIcons2
+  REQUIRE(saw != nullptr);
+  CHECK(saw->kind == prompt::AtlasKind::kChainsawG2);
+  CHECK(saw->width == 128);
+  CHECK(saw->height == 256);
+  REQUIRE(saw->cells.size() == 6);
+  // Alternating pulse frames, as on the game's sheet.
+  auto area = [](const prompt::PromptCell& c) {
+    return (c.draw_rect[2] - c.draw_rect[0]) * (c.draw_rect[3] - c.draw_rect[1]);
+  };
+  CHECK(area(saw->cells[2]) > area(saw->cells[3]));
+  CHECK(area(saw->cells[4]) < area(saw->cells[5]));
+  int b = 0, lt = 0, rt = 0;
+  for (const auto& cell : saw->cells) {
+    const std::string_view btn = cell.button;
+    b += btn == "b";
+    lt += btn == "lt";
+    rt += btn == "rt";
+    CHECK(cell.clear_box);  // the whole pulse frame goes, not just the draw rect
+  }
+  CHECK(b == 2);
+  CHECK(lt == 2);
+  CHECK(rt == 2);
+
+  const auto* icons = prompt::GetAtlasLayout(0xb9176ddf16f0cf4bULL);  // Warfare_HUD.HUD.Gears_WeaponIcons
+  REQUIRE(icons != nullptr);
+  CHECK(icons->kind == prompt::AtlasKind::kWeaponIcons);
+  CHECK(icons->width == 512);
+  CHECK(icons->height == 512);
+  REQUIRE(icons->cells.size() == 5);
+  CHECK(std::string_view(icons->cells[0].button) == "lspress");
+  CHECK(std::string_view(icons->cells[2].button) == "stickmove");
 }
 
 TEST_CASE("Every cell in every prompt atlas layout has valid coordinates and metadata", "[layer0][prompt][catalog]") {
@@ -129,7 +164,7 @@ TEST_CASE("Every cell in every prompt atlas layout has valid coordinates and met
   }
 }
 
-TEST_CASE("Chainsaw Duel layout includes B, LT, RT, and Y pulsing cells with clear_box on B and Y",
+TEST_CASE("Chainsaw Duel layout includes B, LT, RT, and Y pulsing cells, every box cleared whole",
           "[layer0][prompt][catalog]") {
   const auto* duel = prompt::GetAtlasLayout(0x30d01cc6c7ff5cd3ULL);
   REQUIRE(duel != nullptr);
@@ -149,11 +184,11 @@ TEST_CASE("Chainsaw Duel layout includes B, LT, RT, and Y pulsing cells with cle
       CHECK(std::string_view(cell.cvar) == "keybind_b");
     } else if (btn == "lt") {
       ++count_lt;
-      CHECK_FALSE(cell.clear_box);
+      CHECK(cell.clear_box);  // GitHub #223: the bigger pulse frame's rim went otherwise
       CHECK(std::string_view(cell.cvar) == "keybind_left_trigger");
     } else if (btn == "rt") {
       ++count_rt;
-      CHECK_FALSE(cell.clear_box);
+      CHECK(cell.clear_box);
       CHECK(std::string_view(cell.cvar) == "keybind_right_trigger");
     } else if (btn == "y") {
       ++count_y;
@@ -166,12 +201,83 @@ TEST_CASE("Chainsaw Duel layout includes B, LT, RT, and Y pulsing cells with cle
   CHECK(count_lt == 2);
   CHECK(count_rt == 2);
   CHECK(count_y == 2);
+  // GitHub #223: the pulse frames alternate like the game's - big LT with small RT, then small LT with big RT.
+  auto area = [](const prompt::PromptCell& c) {
+    return (c.draw_rect[2] - c.draw_rect[0]) * (c.draw_rect[3] - c.draw_rect[1]);
+  };
+  REQUIRE(duel->cells.size() == 8);
+  CHECK(area(duel->cells[2]) > area(duel->cells[3]));  // top row: LT big, RT small
+  CHECK(area(duel->cells[4]) < area(duel->cells[5]));  // bottom row: LT small, RT big
+}
+
+TEST_CASE("GitHub #223: the other games' extra prompt textures are cataloged", "[layer0][prompt][catalog]") {
+  struct Want {
+    uint64_t hash;
+    prompt::AtlasKind kind;
+    uint32_t w, h;
+    size_t cells;
+  };
+  const Want wants[] = {
+      {0xd70fe15ad0904b0eULL, prompt::AtlasKind::kWeaponIcons, 512, 512, 5},    // Gears 3 Gears_WeaponIcons
+      {0x900480dd0bd87a5fULL, prompt::AtlasKind::kWeaponIcons, 512, 512, 5},    // Judgment Gears_WeaponIcons
+      {0x656065574df33027ULL, prompt::AtlasKind::kHudAllG1, 512, 512, 5},       // Gears 1 HUD-all-texture
+      {0xb82bdd577a969fa2ULL, prompt::AtlasKind::kWeaponIconsG3, 512, 512, 1},  // Gears 3 Gears3_WeaponIcons (RB)
+      {0x57a224f414d97aa5ULL, prompt::AtlasKind::kWeaponIconsJ, 512, 512, 2},   // Judgment Gears3_WeaponIcons
+      {0xe44da4591e95fcd3ULL, prompt::AtlasKind::kDpadJ, 104, 104, 4},          // Judgment dpad_buttons
+      {0x522e6fd2f52ee997ULL, prompt::AtlasKind::kDirButtonA, 32, 32, 1},
+      {0x472bc22b620a3671ULL, prompt::AtlasKind::kDirButtonB, 32, 32, 1},
+      {0xa89c2617206c928cULL, prompt::AtlasKind::kDirButtonX, 32, 32, 1},
+      {0x13d687fed02db98cULL, prompt::AtlasKind::kDirButtonY, 32, 32, 1},
+      {0x1d2e87d9580cdf06ULL, prompt::AtlasKind::kDirButtonRS, 32, 32, 1},
+      {0x6973365a68ba6ee2ULL, prompt::AtlasKind::kTriggerRT32, 32, 32, 1},
+      {0xf9a7d5b28b365f11ULL, prompt::AtlasKind::kTriggerLT32, 32, 32, 1},
+  };
+  for (const Want& w : wants) {
+    INFO("hash 0x" << std::hex << w.hash);
+    const auto* layout = prompt::GetAtlasLayout(w.hash);
+    REQUIRE(layout != nullptr);
+    CHECK(layout->kind == w.kind);
+    CHECK(layout->width == w.w);
+    CHECK(layout->height == w.h);
+    CHECK(layout->cells.size() == w.cells);
+  }
+  // Gears 1's font: Gears 2's cells plus its seven straight-direction stick glyphs.
+  const auto* g1font = prompt::GetAtlasLayout(0x8c33362ad83f2f11ULL);
+  REQUIRE(g1font != nullptr);
+  CHECK(g1font->kind == prompt::AtlasKind::kFont256G1);
+  CHECK(g1font->cells.size() == prompt::GetAtlasLayout(0xa133822cba91c272ULL)->cells.size() + 8);
+  // Layouts of one kind share one overlay, so they must agree on how big the glyph is drawn.
+  for (const auto& a : prompt::GetAllAtlasLayouts()) {
+    for (const auto& b : prompt::GetAllAtlasLayouts()) {
+      if (a.kind == b.kind) CHECK(a.glyph_scale == b.glyph_scale);
+    }
+  }
+  // Every kind has a layout, so the compositor builds an overlay for each.
+  for (int k = 0; k < prompt::kAtlasKindCount; ++k) {
+    bool found = false;
+    for (const auto& layout : prompt::GetAllAtlasLayouts()) found |= static_cast<int>(layout.kind) == k;
+    INFO("kind " << k);
+    CHECK(found);
+  }
+}
+
+TEST_CASE("GitHub #223: every prompt layout names the games that draw it", "[layer0][prompt][catalog]") {
+  for (const auto& layout : prompt::GetAllAtlasLayouts()) {
+    INFO("hash 0x" << std::hex << layout.hash);
+    CHECK(layout.games != 0);
+    CHECK((layout.games & ~(prompt::kGears1 | prompt::kGears2 | prompt::kGears3 | prompt::kJudgment)) == 0);
+  }
+  CHECK(prompt::GameBitForTitle(0x4D5307D5) == prompt::kGears1);
+  CHECK(prompt::GameBitForTitle(0x4D53082D) == prompt::kGears2);
+  CHECK(prompt::GameBitForTitle(0x4D5308AB) == prompt::kGears3);
+  CHECK(prompt::GameBitForTitle(0x4D530A26) == prompt::kJudgment);
+  CHECK(prompt::GameBitForTitle(0) == 0);
 }
 
 TEST_CASE("rc6: Gears 2's 128x256 chainsaw sheet has B, LT and RT cells inside the sheet", "[layer0][prompt][catalog]") {
   const auto* g2 = prompt::GetAtlasLayout(0x64cd4013fef17653ULL);
   REQUIRE(g2 != nullptr);
-  CHECK(g2->kind == prompt::AtlasKind::kChainsawDuelG2);
+  CHECK(g2->kind == prompt::AtlasKind::kChainsawG2);
   CHECK(g2->width == 128);
   CHECK(g2->height == 256);
   REQUIRE(g2->cells.size() == 6);

@@ -488,7 +488,7 @@ Action DrawSettings(const Look& L, SettingsPage& pg) {
   Plate(dl, la, lb, 16 * u, L);
   // the buttons, bottom of the right column
   const float bh = 58 * u, bgap = 14 * u;
-  const int nbuttons = pg.has_file ? 4 : 2;
+  const int nbuttons = (pg.has_file ? 4 : 2) + (pg.has_file && pg.t_social ? 1 : 0);   // social step 5: + Social
   const float buttons_top = rb.y - nbuttons * bh - (nbuttons - 1) * bgap;
   // the status note sits inside the description plate, in its own strip at the bottom (opaque, full panel width)
   const float status_w = right_w - 60 * u;
@@ -503,6 +503,7 @@ Action DrawSettings(const Look& L, SettingsPage& pg) {
   btns.push_back({pg.t_resume, true, true, Action::kResume});
   if (pg.has_file) {
     btns.push_back({pg.t_achievements, false, true, Action::kAchievements});
+    if (pg.t_social) btns.push_back({pg.t_social, false, true, Action::kSocial});
     std::string rs = pg.t_restart;
     if (pg.restart_changes) rs += " (" + std::to_string(pg.restart_changes) + ")";
     btns.push_back({rs, false, pg.can_restart && pg.restart_changes > 0, Action::kRestart});

@@ -137,6 +137,13 @@ uint32_t XenosPcssMode();
 void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDrawer* immediate, rex::ui::Window* window,
                             rex::Runtime* runtime);
 void XenosShutdownInGameMenu();
+// GitHub #223: the running game's title ID, before XenosInstallInGameMenu: button-prompt overlays are then built only
+// for the atlases that game draws (the dialogs, and with them the prompt monitor, start before the game is loaded).
+void XenosSetPromptGame(uint32_t title_id);
+// 0.6.0: the GPU's memory waits give up after limit_ms (Judgment's freeze back to the main menu: a wait for a write that
+// never lands). 0, the default, waits as long as it takes; only Judgment sets it, before the GPU starts.
+void XenosSetPm4MemoryWaitLimit(uint32_t limit_ms);
+uint32_t XenosPm4MemoryWaitLimit();
 // PR #134 (Flippage): true while the in-game menu is open - the native mouse look drops mouse motion then.
 bool XenosInGameMenuIsOpen() noexcept;
 // Patch 0062: --gow2_shader_note (default on) - a small "Building shaders N%" note in the bottom-left corner while the

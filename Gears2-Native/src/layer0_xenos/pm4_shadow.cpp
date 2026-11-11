@@ -653,6 +653,7 @@ class Pm4Execute final : public DrawObserver {
       env.running = s->running;
       env.make_coherent = s->make_coherent;
       env.vsync = s->vsync;
+      env.memory_wait_limit_ms = XenosPm4MemoryWaitLimit();   // 0.6.0: Judgment only
       env.release = [] { XenosRendererRelease(); };  // job 171: our renderer's deferred copies finish first
       const RegisterFile* split_rf = s->register_file ? s->register_file() : nullptr;
       const bool split = REXCVAR_GET(gow2_pm4_split) && REXCVAR_GET(gow2_pm4_own_draws) && split_rf;
@@ -809,9 +810,9 @@ class Pm4Execute final : public DrawObserver {
     const pm::Stats& s = proc_->GetStats();
     REXLOG_INFO("gow2_pm4_execute: frames 1-{}: packets {}, type3 {}, indirect buffers {}, draws {}, shader loads {} (cached {}), "
                 "swaps {} | handed back to the SDK {} | memory words written by us {} (of {}) | waits {} (loops {}, "
-                "spins {}) | ZPD ours {} (ends {}) | predicated skipped {}, unknown opcodes {} (last 0x{:02X}), errors {} | releases {} (reads {}, waits {}), deferred writes {}{}",
+                "spins {}, given up after 2 s {}) | ZPD ours {} (ends {}) | predicated skipped {}, unknown opcodes {} (last 0x{:02X}), errors {} | releases {} (reads {}, waits {}), deferred writes {}{}",
                 frames_, s.packets, s.type3, s.indirect, s.draws, s.shader_loads, s.shader_loads_cached, s.swaps, s.handed_back,
-                s.memory_writes_done, s.memory_writes_seen, s.waits, s.wait_loops, s.wait_spins, s.zpds, s.zpd_ends,
+                s.memory_writes_done, s.memory_writes_seen, s.waits, s.wait_loops, s.wait_spins, s.wait_timeouts, s.zpds, s.zpd_ends,
                 s.predicated_skipped,
                 s.unknown_opcodes, s.last_unknown_opcode, s.errors, s.releases, s.release_reads, s.release_waits,
                 s.deferred_writes, PipeSummary());
@@ -944,3 +945,9 @@ void XenosInstallPm4ShadowIfRequested(rex::Runtime* runtime) {
   XenosRegisterDrawObserver(new Pm4Shadow(memory, every));  // never destroyed (the hub keeps the pointer)
   REXLOG_INFO("gow2_pm4_shadow: on - our PM4 processor runs on every ring range and is compared at every draw");
 }
+
+namespace {
+std::atomic<uint32_t> g_pm4_memory_wait_limit_ms{0};
+}
+void XenosSetPm4MemoryWaitLimit(uint32_t limit_ms) { g_pm4_memory_wait_limit_ms = limit_ms; }
+uint32_t XenosPm4MemoryWaitLimit() { return g_pm4_memory_wait_limit_ms.load(); }

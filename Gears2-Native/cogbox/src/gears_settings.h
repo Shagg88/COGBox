@@ -49,6 +49,10 @@ struct Environment {
     std::string game_data_root;     // --game_data_root (the game's extracted disc)
     std::string update_data_root;   // --update_data_root (the extracted title update package)
     std::string user_data_root;     // --user_data_root (saves)
+    std::string identity_dir;       // --net_identity_dir (the profile's online account, shared by all games)
+    std::string online_region;      // the region chosen in the SOCIAL tab ("" = Any region)
+    std::string online_server;      // social step 3: the multiplayer server when enabled ("" = offline profiles)
+    std::string online_stun;        // its STUN address (host:3478)
     std::string shader_cache_dir;   // --gow2_shader_cache_dir (every game; Gears 2 since #58)
     std::string log_dir;            // this play session's folder (--log_file, --gow2_crash_dir, {LOG} in extra args)
     char path_sep = '\\';           // used to join log_dir with the log file's name

@@ -91,6 +91,9 @@ struct Environment {
   std::function<bool()> running;
   std::function<void()> make_coherent;
   std::function<bool()> vsync;
+  // 0.6.0: a WAIT_REG_MEM on memory gives up after this many ms (0 = waits as long as it takes, the default). Only
+  // Judgment sets it (XenosSetPm4MemoryWaitLimit): its GPU can wait there for a write that never lands.
+  uint32_t memory_wait_limit_ms = 0;
   // Phase 3: draws and shader loads are ours too. `hash` hashes the ucode as the guest stores it; `own_draw` gets each
   // executed draw/copy after its registers are written (the SDK's dropped draws are dropped here the same way).
   std::function<uint64_t(const uint8_t* big_endian_bytes, size_t size)> hash;
@@ -139,6 +142,7 @@ struct Stats {
   uint64_t shader_loads_cached = 0;  // job 172: IM_LOADs whose bytes matched the cache
   // Phase 2: packets handed back to the host, memory words we wrote, wait loops and the iterations they spun.
   uint64_t handed_back = 0, memory_writes_done = 0, wait_loops = 0, wait_spins = 0;
+  uint64_t wait_timeouts = 0;  // 0.6.0: memory waits given up after 2 s (Judgment freeze)
   uint64_t waits_spun = 0;  // frame log: wait loops that had to spin at all, and the time they took
   double wait_ms = 0.0;
   uint64_t zpds = 0, zpd_ends = 0;

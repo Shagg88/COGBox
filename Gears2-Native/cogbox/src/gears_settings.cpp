@@ -1358,6 +1358,20 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
               "--gow2_shader_cache_dir=" + q(env.shader_cache_dir) };
         if (useUpdate) a.push_back("--update_data_root=" + q(env.update_data_root));
     }
+    // social step 1: one online account per profile for all four games (only a runtime that has the option)
+    if (!env.identity_dir.empty() && cap_rt(env, "net_identity_dir")) a.push_back("--net_identity_dir=" + q(env.identity_dir));
+    // social step 3: the COGBox multiplayer server, when the player enabled it in the SOCIAL tab
+    if (!env.online_server.empty() && cap_rt(env, "net_master_server")) {
+        a.insert(a.end(), { "--net_online=true", "--net_live_emulation=true", "--net_master_server=" + q(env.online_server) });
+        if (!env.online_stun.empty()) a.push_back("--net_stun_server=" + env.online_stun);
+        if (!env.online_region.empty() && cap_rt(env, "net_region")) a.push_back("--net_region=" + env.online_region);
+    }
+    // social step 4: Gears 3 TU6's UE3 GNames / GEngine variables, for the runtime's private match fixes (a friend can
+    // join the pregame lobby); the runtime checks the script bytecode before it changes anything
+    if (isG3 && useUpdate && cap_rt(env, "cogbox_ue3_gnames")) {
+        a.push_back("--cogbox_ue3_gnames=8344D918");
+        a.push_back("--cogbox_ue3_gengine=8343987C");
+    }
     // 0.4.5 (jobs 1198 / 1201): the window's own thread paints and presents the picture, not the game's renderer thread
     // (the presenter waited 0.5-1.4 ms per frame there): Gears 2 1440p 191 -> 195 fps, 1% low 150 -> 160.
     a.push_back("--host_present_from_non_ui_thread=false");

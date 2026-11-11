@@ -2,6 +2,8 @@
 // option list, so a new option there shows up here), the About tab, and a bar with Library, a summary, Save and Play.
 #include <cctype>
 #include "app.h"
+#include "profiles.h"
+#include "social_net.h"   // social step 3: the multiplayer server
 #include "theme.h"
 #include "i18n.h"   // 0.2.0
 #include "update.h"
@@ -192,6 +194,11 @@ void env_refresh(App &a, int g)
     e.game_data_root = safe(st.dataDir);
     e.update_data_root = safe(st.updateDir);
     e.user_data_root = game_user_dir(g);
+    e.identity_dir = profile_dir(exe_dir(), std::to_string(current_profile()));
+    // social step 3: online only when the player enabled the multiplayer server in the SOCIAL tab
+    e.online_server = a.ini.get("Online", "Enabled") == "1" ? a.ini.get("Online", "Server", kCogboxServer) : std::string();
+    e.online_stun = stun_address(e.online_server);
+    e.online_region = e.online_server.empty() ? std::string() : region_or_default(a.ini.get("Online", "Region"), local_utc_minutes());
     e.shader_cache_dir = game_shader_dir(g);
     e.mods = mods_enabled_paths(a, g);   // 0.2.0
     {   // job 620 (#45), GitHub #159: the Lang / VoiceLang choices not on this copy (greyed, and not passed at launch)
@@ -1309,9 +1316,10 @@ static const TabGroups k_groups[5] = {   // one per gs::Tab, in its order
 };
 
 // ---- the page --------------------------------------------------------------------------------------------------------
-static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "ACHIEVEMENTS", "MODS", "ABOUT" };   // the one sound option is in Gameplay
-static const int k_tabCount = 7;
-static const int k_tabMods = 5;   // the tabs before it are gs::Tab's (ACHIEVEMENTS = gs::Tab::Achievements); ABOUT is the last
+static const char *k_tabs[] = { "DISPLAY", "GRAPHICS", "CONTROLS", "GAMEPLAY", "ACHIEVEMENTS", "SOCIAL", "MODS", "ABOUT" };   // the one sound option is in Gameplay
+static const int k_tabCount = 8;
+static const int k_tabSocial = 5;   // social step 3; the tabs before it are gs::Tab's (ACHIEVEMENTS = gs::Tab::Achievements)
+static const int k_tabMods = 6;     // ABOUT is the last
 
 static std::string summary(App &a, int g)
 {
@@ -1416,7 +1424,7 @@ void page_draw(App &a, ImVec2 size)
     g_labelW = std::min(S(500), (c1.x - c0.x) - g_ctrlW - S(40));
     g_rowX1 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(16);
     g_sections = 0;
-    if (a.tab < k_tabMods) {
+    if (a.tab < k_tabSocial) {
         gs::Tab want = (gs::Tab)a.tab;
         int shown = 0;
         if (want == gs::Tab::Graphics) {   // Shagg 29 Oct
@@ -1452,7 +1460,8 @@ void page_draw(App &a, ImVec2 size)
         if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
         if (want == gs::Tab::Achievements) achievements_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // achievements part 4
         else if (!shown) ui_note("Nothing to set here yet.");
-    } else if (a.tab == k_tabMods) mods_tab(a, g);
+    } else if (a.tab == k_tabSocial) social_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // social step 3
+    else if (a.tab == k_tabMods) mods_tab(a, g);
     else about_tab(a, g);
     ImGui::PopFont();
     ImGui::EndChild();

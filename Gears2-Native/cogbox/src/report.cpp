@@ -1,5 +1,6 @@
 // COGBox - a problem report in one zip (adapted from Athelas' report.cpp, same author; see report.h)
 #include "report.h"
+#include "net_scrub.h"
 #include "util.h"
 
 #include <windows.h>
@@ -272,7 +273,8 @@ std::string report_anonymise(const std::string &text)
             out.replace(b, e - b, n ? "<" + std::to_string(n) + " address(es)>" : std::string());
         }
     }
-    return out;
+    // 0.6.0 review: online play - other players' public addresses and the account token never go in a report
+    return scrub_network(out);
 }
 
 // A crash dump can't have its length changed: the user and PC names are overwritten with x's of the same length,

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // gow3 - ReXGlue Recompiled Project
 //
-// Exit Game on the main menu. The Coalesced edit renames the defunct "Xbox LIVE
-// Marketplace" entry; selecting it makes the game look up the "NeedLiveForDownloadableContent"
-// error text (sub_8230CF58 in TU6, Localize) before showing that error. That lookup ends the process
-// instead - only while the front end is loaded (ue3::InFrontEndForExit: GearStart*.xxx is the last level
-// package opened), so the same message in a level can't close the game.
+// Exit Game on the main menu. The Coalesced edit renames the defunct "Xbox LIVE Marketplace" entry, whose script is
+// UIScene_FrontEnd.OpenMarketplaceBlade: one check, then the Marketplace, or an error message keyed
+// "NeedLiveForDownloadableContent". A worker thread patches that one function so it always takes the error path and
+// gives the key a name nothing else uses. When the game looks that name up (sub_8230CF58 in TU6, Localize) the button
+// was pressed, wherever the player has been: no menu or level tracking, and other Marketplace screens are untouched.
 
 #include "main_menu_exit.h"
 
@@ -15,28 +15,23 @@
 #include <unistd.h>
 #endif
 
-#include <atomic>
-#include <cctype>
+#include <chrono>
 #include <cstring>
-#include <string>
-#include <filesystem>
-#include <string_view>
+#include <thread>
 
-#include <rex/filesystem/vfs.h>  // REX_FILESYSTEM_FILE_OPEN_OBSERVER
 #include <rex/logging.h>
 #include <rex/ppc.h>
-#include <ue3/main_menu_exit.h>
 #include <rex/cvar.h>
-
-#include <chrono>
-#include <cstdlib>
-
-void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));  // shader_prebuild.cpp
+#include <rex/kernel/xam/net/ue3_script.h>
 
 namespace rex::glue {
 namespace {
 
-constexpr char kNeedLiveKey[] = "NeedLiveForDownloadableContent";
+constexpr char kOriginalKey[] = "NeedLiveForDownloadableContent";
+constexpr char kExitKey[] = "CogboxExitGame_MainMenuButton_";  // the same length: it replaces the key in place
+static_assert(sizeof(kOriginalKey) == sizeof(kExitKey));
+
+constexpr uint8_t kJumpIfNot = 0x07, kJump = 0x06, kStringConst = 0x1F;
 
 // The whole key, terminator included (wide, as Localize gets it).
 bool GuestUtf16Is(const uint8_t* base, uint32_t addr, const char* text) {
@@ -48,26 +43,30 @@ bool GuestUtf16Is(const uint8_t* base, uint32_t addr, const char* text) {
   }
 }
 
-std::atomic<int64_t> g_level_open_ms{-1};  // #215 review: when a level package (*_P.xxx) was last opened
-int64_t NowMs() {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-void OnFileOpened(std::string_view guest_path, const std::filesystem::path*) {
-  ue3::NoteFileOpenedForExit(guest_path);
-  if (guest_path.size() > 6) {
-    std::string tail(guest_path.substr(guest_path.size() - 6));
-    for (char& c : tail) c = char(std::tolower(static_cast<unsigned char>(c)));
-    if (tail == "_p.xxx") g_level_open_ms = NowMs();
+bool PatchExitButtonImpl() {
+  uint32_t count = 0;
+  uint8_t* code = rex::kernel::xam::net::FindUe3Function("OpenMarketplaceBlade", &count);
+  if (!code) return false;
+  const size_t len = sizeof(kOriginalKey);
+  for (uint32_t s = 1; s + len <= count; ++s) {
+    if (code[s - 1] != kStringConst || std::memcmp(code + s, kOriginalKey, len) != 0 || code[0] != kJumpIfNot) continue;
+    std::memcpy(code + s, kExitKey, len);
+    code[0] = kJump;  // the same target: always the error path
+    REXLOG_INFO("main_menu_exit: Exit Game hooked to the menu button (OpenMarketplaceBlade, {} bytes)", count);
+    return true;
   }
+  REXLOG_WARN("main_menu_exit: OpenMarketplaceBlade is not the expected script; Exit Game is off");
+  return true;  // looking again will not change it
 }
 
 }  // namespace
 
-bool MatchesNeedLive(const uint8_t* base, uint32_t addr) {
+bool PatchExitButton() { return PatchExitButtonImpl(); }
+
+bool MatchesExitButton(const uint8_t* base, uint32_t addr) {
   if (!addr || !base) return false;
-  if (GuestUtf16Is(base, addr, kNeedLiveKey)) return true;
-  // An 8-bit key: the whole key, terminator included.
-  return std::memcmp(base + addr, kNeedLiveKey, sizeof(kNeedLiveKey)) == 0;
+  if (GuestUtf16Is(base, addr, kExitKey)) return true;
+  return std::memcmp(base + addr, kExitKey, sizeof(kExitKey)) == 0;  // an 8-bit key
 }
 
 void ExitGame() {
@@ -82,35 +81,12 @@ void ExitGame() {
 
 }  // namespace rex::glue
 
-
-// GitHub #215: when SDK patch 67's xam_media_verify_calls counter last changed (checked every 15 game ticks).
-static std::atomic<int64_t> g_mv_changed_ms{-1};
-void Gow3MediaVerifyTick() {
-  static uint32_t ticks = 0;
-  static long long last = -1;
-  if (++ticks % 15) return;
-  const std::string v = rex::cvar::GetFlagByName("xam_media_verify_calls");
-  if (v.empty()) return;  // a runtime without patch 67
-  const long long n = std::atoll(v.c_str());
-  if (n != last) {
-    last = n;
-    g_mv_changed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-  }
-}
-int64_t Gow3MsSinceMediaVerify() {
-  const int64_t t = g_mv_changed_ms.load();
-  if (t < 0) return -1;
-  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() - t;
-}
-
 void Gow3InstallMainMenuExitIfRequested() {
   if (!REXCVAR_GET(gow_main_menu_exit)) return;
-#if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
-  Ue3ShaderPrebuildChainFileOpened(&rex::glue::OnFileOpened);
-  REXLOG_INFO("main_menu_exit: file-open hook installed (Exit Game while the front end is loaded)");
-#else
-  REXLOG_WARN("main_menu_exit: this SDK has no file-open observer (SDK patch 32); Exit Game does nothing");
-#endif
+  // Off the game thread: an object scan on it froze the games.
+  std::thread([] {
+    while (!rex::glue::PatchExitButton()) std::this_thread::sleep_for(std::chrono::seconds(3));
+  }).detach();
 }
 
 #if defined(GOW3_TU6)
@@ -124,25 +100,8 @@ void Gow3InstallMainMenuExitIfRequested() {
 extern "C" void GOW3_NEED_LIVE_IMP(PPCContext& ctx, uint8_t* base);
 
 extern "C" void GOW3_NEED_LIVE_FN(PPCContext& ctx, uint8_t* base) {
-  if (REXCVAR_GET(gow_main_menu_exit) && rex::glue::MatchesNeedLive(base, ctx.r5.u32)) {
-    // GitHub #215: back on the main menu after playing, Gears 3 opens no file (the front end stays resident), so the
-    // file-open tracking still says "in a level". The menu calls XamMediaVerificationVerify twice a second (SDK patch
-    // 67 counts it; nothing else does): a call within the last 3 s also means the front end.
-    bool front = ue3::InFrontEndForExit();
-    if (!front) {
-      const int64_t ago = Gow3MsSinceMediaVerify();
-      REXLOG_INFO("MAINMENU: #215 file tracking says level; last menu media check {} ms ago", ago);
-      // review: 1.5 s, and no level package opened since that media check (starting a level can't count as menu)
-      const int64_t lv = rex::glue::g_level_open_ms.load();
-      front = ago >= 0 && ago < 1500 && (lv < 0 || rex::glue::NowMs() - lv > ago);
-    }
-    if (front) {
-      REXLOG_INFO("MAINMENU: NeedLiveForDownloadableContent on the front end (lr {:08X})",
-                  static_cast<uint32_t>(ctx.lr));
-      rex::glue::ExitGame();
-    }
-    REXLOG_INFO("MAINMENU: NeedLiveForDownloadableContent in a level (lr {:08X}) - not Exit Game",
-                static_cast<uint32_t>(ctx.lr));
+  if (REXCVAR_GET(gow_main_menu_exit) && rex::glue::MatchesExitButton(base, ctx.r5.u32)) {
+    rex::glue::ExitGame();
   }
   GOW3_NEED_LIVE_IMP(ctx, base);
 }

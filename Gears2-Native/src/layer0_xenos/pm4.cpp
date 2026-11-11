@@ -314,6 +314,16 @@ bool Processor::Type3(Reader& r, uint32_t packet, uint32_t depth) {  // ExecuteP
           continue;
         }
         ++stats_.wait_spins;
+        // 0.6.0 (Judgment only, env_.memory_wait_limit_ms; its freeze back to the main menu): a memory wait whose value never comes - the write it waits
+        // for was lost or went where the wait doesn't look - used to stop the GPU for good, and with it the game's render
+        // and main threads waiting on the GPU. After the limit (2 s; timed from the
+        // wait's first spin, spun_since, not reset per spin) the wait gives up and the stream carries on. Not logged here
+        // (pm4.cpp has no logger); each give-up counts in stats wait_timeouts. A real console never waits that long here.
+        if ((info & 0x10) && env_.memory_wait_limit_ms &&
+            std::chrono::steady_clock::now() - spun_since > std::chrono::milliseconds(env_.memory_wait_limit_ms)) {
+          ++stats_.wait_timeouts;
+          break;
+        }
         if (env_.running && !env_.running()) break;
         if (wait >= 0x100 && (!env_.vsync || env_.vsync()))
           std::this_thread::sleep_for(std::chrono::milliseconds(wait / 0x100));

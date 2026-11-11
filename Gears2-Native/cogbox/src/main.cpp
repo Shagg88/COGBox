@@ -6,6 +6,7 @@
 #include "stale_files.h"
 #include "upgrade_cleanup.h"   // cleanup049
 #include "app.h"
+#include "social_client.h"
 #include "theme.h"
 #include "i18n.h"   // 0.2.0
 #include "update.h"
@@ -238,6 +239,8 @@ static void answered(App &a)
     else if (m.tag == "protonrec" || m.tag == "protonfound") linux_answer(a, m);   // proton049
     else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
     else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4
+    else if (m.tag == "socialremove") social_remove_answer(m.answer);   // social step 3
+    else if (m.tag == "socialdelete") social_delete_answer(a, m.answer);   // 0.6.0 review: delete the online account
     else if (m.tag == "dlcremove" && m.answer == 0) dlc_remove_confirmed(a);   // 0.2.0
     else if (m.tag == "backup" && m.answer == 0) {
         // proton049: under Proton / Wine the "desktop" is inside the game's prefix (or missing) - COGBox's own backups folder
@@ -678,6 +681,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     set_current_profile((int)a.ini.geti("Profiles", "Current", 1));   // 0.5.0: profiles
     i18n_load(a.ini.get("Launcher", "Language").empty() ? "auto" : a.ini.get("Launcher", "Language"));   // 0.2.0
     a.ini.path = join(exe_dir(), "CogBox.ini");
+    social_restart(a);   // social step 3: the SOCIAL tab's worker, when the multiplayer server is enabled
     // job 523: Wine / Proton (Linux, Steam Deck) - ntdll has wine_get_version there
     a.wine = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
     // job 643: a Mac (CrossOver / Game Porting Toolkit) - Wine's host system is Darwin there. Vulkan can't start on a
@@ -724,7 +728,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (const char *t = getenv("COGBOX_PAGE")) {
         a.page = std::max(0, std::min(G_ALL - 1, atoi(t)));
         const char *c = strchr(t, ':');
-        a.tab = c ? std::max(0, std::min(6, atoi(c + 1))) : 0;   // 0-4 gs::Tab, 5 MODS, 6 ABOUT
+        a.tab = c ? std::max(0, std::min(7, atoi(c + 1))) : 0;   // 0-4 gs::Tab, 5 SOCIAL, 6 MODS, 7 ABOUT
         a.screen = a.zoomTo = SCR_PAGE;
     }
     covers_load(a);
@@ -782,6 +786,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         install_poll(a);
         linux_poll(a);   // proton049
         backup_poll(a);   // GitHub #120: the save backup runs on its own thread
+        social_delete_poll(a);   // DELETE ONLINE ACCOUNT runs on its own thread too
         // 0.2.0 (Shagg 13:18): everything dropped is handled, one after another - several DLC packages, or a folder of
         // them (a console's ...\<title ID>\00000002, or the title folder), are each added in turn. A folder that isn't a
         // game copy or a title update is searched for DLC packages.
@@ -823,6 +828,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             }
         }
         ImGui_ImplSDLRenderer3_NewFrame();
+        {   // social step 5 test: a controller drove launchers in the background while a game was in front (pads only while
+            // COGBox is the focused window; the background-events hint stays for the focused case)
+            static bool padsOn = true;
+            const bool focus = (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+            if (focus != padsOn) {
+                ImGui_ImplSDL3_SetGamepadMode(focus ? ImGui_ImplSDL3_GamepadMode_AutoFirst : ImGui_ImplSDL3_GamepadMode_Manual, nullptr, 0);
+                padsOn = focus;
+            }
+        }
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
         {   // job 523 (Shagg 20:29): F11, or both triggers together, switch fullscreen from any screen
@@ -857,6 +871,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     for (auto &c : a.cover) if (c.tex) SDL_DestroyTexture(c.tex);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
+    social_sign_off(1500);   // friends see this player leave at once (at most 1.5 s when the server is down)
     ImGui::DestroyContext();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

@@ -1,0 +1,618 @@
+diff --git a/include/rex/kernel/xam/net/punch.h b/include/rex/kernel/xam/net/punch.h
+new file mode 100644
+index 0000000..05ac119
+--- /dev/null
++++ b/include/rex/kernel/xam/net/punch.h
+@@ -0,0 +1,27 @@
++// COGBox SDK patch 63: the CGBP punch packet. Sent from the game's own socket to open (and keep open) the NAT path to a
++// peer; never passed to the game.
++#pragma once
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <optional>
++
++namespace rex::kernel::xam::net {
++
++enum class PunchType : uint8_t { Punch = 1, Ack = 2, Keepalive = 3 };
++
++struct PunchPacket {
++  PunchType type;
++  uint64_t token;  // the session token both peers got from the master server
++  uint32_t seq;
++  uint16_t src_port;  // the sender's local game port, so the receiver knows which of the peer's sockets this is
++};
++
++constexpr uint8_t kPunchVersion = 1;
++constexpr size_t kPunchPacketSize = 4 + 1 + 1 + 8 + 4 + 2;  // "CGBP", version, type, token, seq, src_port (big endian)
++
++std::array<uint8_t, kPunchPacketSize> EncodePunch(const PunchPacket& p);
++std::optional<PunchPacket> DecodePunch(const uint8_t* data, size_t len);
++
++}  // namespace rex::kernel::xam::net
+diff --git a/include/rex/kernel/xam/net/sockaddr.h b/include/rex/kernel/xam/net/sockaddr.h
+new file mode 100644
+index 0000000..722e934
+--- /dev/null
++++ b/include/rex/kernel/xam/net/sockaddr.h
+@@ -0,0 +1,10 @@
++// COGBox SDK patch 63: the host sockaddr_in for the COGBox online code.
++#pragma once
++
++#if defined(_WIN32)
++#include <winsock2.h>
++#include <ws2tcpip.h>
++#else
++#include <arpa/inet.h>
++#include <netinet/in.h>
++#endif
+diff --git a/include/rex/kernel/xam/net/stun.h b/include/rex/kernel/xam/net/stun.h
+new file mode 100644
+index 0000000..30b75f9
+--- /dev/null
++++ b/include/rex/kernel/xam/net/stun.h
+@@ -0,0 +1,28 @@
++// COGBox SDK patch 63: STUN (RFC 5389) Binding Request / Response, the only STUN COGBox needs. A game socket asks the
++// STUN server what public address and port its packets come from.
++#pragma once
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <optional>
++#include <vector>
++
++#include <rex/kernel/xam/net/sockaddr.h>
++
++namespace rex::kernel::xam::net {
++
++using StunTxId = std::array<uint8_t, 12>;
++
++constexpr uint32_t kStunMagicCookie = 0x2112A442;
++
++std::vector<uint8_t> BuildStunBindingRequest(const StunTxId& txid);
++
++// A STUN message: at least the 20-byte header, top two bits 0, the magic cookie at [4..8).
++bool IsStunPacket(const uint8_t* data, size_t len);
++
++// The mapped address (XOR-MAPPED-ADDRESS, else MAPPED-ADDRESS) of a Binding success response for txid, in network
++// order. nullopt for anything else or anything malformed.
++std::optional<sockaddr_in> ParseStunBindingResponse(const uint8_t* data, size_t len, const StunTxId& txid);
++
++}  // namespace rex::kernel::xam::net
+diff --git a/include/rex/kernel/xam/net/upnp.h b/include/rex/kernel/xam/net/upnp.h
+new file mode 100644
+index 0000000..4011083
+--- /dev/null
++++ b/include/rex/kernel/xam/net/upnp.h
+@@ -0,0 +1,20 @@
++// COGBox SDK patch 63: UPnP IGD port mapping (optional; most players behind CGNAT have none).
++#pragma once
++
++#include <cstdint>
++#include <string>
++
++namespace rex::kernel::xam::net {
++
++struct UPnPResult {
++  bool success{false};
++  std::string external_ip;
++  uint16_t external_port{0};
++};
++
++// Maps UDP local_port -> the same external port on the gateway. Discovery waits at most 1 s; a missing or refusing
++// gateway returns success=false. multicast_if limits discovery to one local interface (tests pass "127.0.0.1").
++UPnPResult TryUPnPPortMap(uint16_t local_port, uint16_t lease_duration_sec = 3600, const char* multicast_if = nullptr);
++void ReleaseUPnPPortMap(uint16_t local_port);
++
++}  // namespace rex::kernel::xam::net
+diff --git a/src/kernel/CMakeLists.txt b/src/kernel/CMakeLists.txt
+index 984b97d..2d43466 100644
+--- a/src/kernel/CMakeLists.txt
++++ b/src/kernel/CMakeLists.txt
+@@ -14,6 +14,10 @@ set(REXKERNEL_SOURCES
+     xam/xam_locale.cpp
+     xam/xam_msg.cpp
+     xam/xam_net.cpp
++    # COGBox SDK patch 63: online play (STUN, hole punching)
++    xam/net/stun.cpp
++    xam/net/punch.cpp
++    xam/net/upnp.cpp
+     xam/xam_notify.cpp
+     xam/xam_nui.cpp
+     xam/xam_party.cpp
+diff --git a/src/kernel/xam/net/punch.cpp b/src/kernel/xam/net/punch.cpp
+new file mode 100644
+index 0000000..91f4386
+--- /dev/null
++++ b/src/kernel/xam/net/punch.cpp
+@@ -0,0 +1,40 @@
++// COGBox SDK patch 63: the CGBP punch packet.
++#include <rex/kernel/xam/net/punch.h>
++
++namespace rex::kernel::xam::net {
++
++std::array<uint8_t, kPunchPacketSize> EncodePunch(const PunchPacket& p) {
++  std::array<uint8_t, kPunchPacketSize> b{};
++  b[0] = 'C';
++  b[1] = 'G';
++  b[2] = 'B';
++  b[3] = 'P';
++  b[4] = kPunchVersion;
++  b[5] = uint8_t(p.type);
++  for (int i = 0; i < 8; ++i) {
++    b[6 + i] = uint8_t(p.token >> (56 - 8 * i));
++  }
++  for (int i = 0; i < 4; ++i) {
++    b[14 + i] = uint8_t(p.seq >> (24 - 8 * i));
++  }
++  b[18] = uint8_t(p.src_port >> 8);
++  b[19] = uint8_t(p.src_port);
++  return b;
++}
++
++std::optional<PunchPacket> DecodePunch(const uint8_t* d, size_t len) {
++  if (!d || len != kPunchPacketSize || d[0] != 'C' || d[1] != 'G' || d[2] != 'B' || d[3] != 'P' ||
++      d[4] != kPunchVersion || d[5] < uint8_t(PunchType::Punch) || d[5] > uint8_t(PunchType::Keepalive)) {
++    return std::nullopt;
++  }
++  PunchPacket p{PunchType(d[5]), 0, 0, uint16_t(d[18] << 8 | d[19])};
++  for (int i = 0; i < 8; ++i) {
++    p.token = p.token << 8 | d[6 + i];
++  }
++  for (int i = 0; i < 4; ++i) {
++    p.seq = p.seq << 8 | d[14 + i];
++  }
++  return p;
++}
++
++}  // namespace rex::kernel::xam::net
+diff --git a/src/kernel/xam/net/stun.cpp b/src/kernel/xam/net/stun.cpp
+new file mode 100644
+index 0000000..0609ff5
+--- /dev/null
++++ b/src/kernel/xam/net/stun.cpp
+@@ -0,0 +1,86 @@
++// COGBox SDK patch 63: STUN Binding Request / Response.
++#include <rex/kernel/xam/net/stun.h>
++
++#include <cstring>
++
++namespace rex::kernel::xam::net {
++
++namespace {
++
++constexpr uint16_t kBindingRequest = 0x0001;
++constexpr uint16_t kBindingSuccess = 0x0101;
++constexpr uint16_t kAttrMappedAddress = 0x0001;
++constexpr uint16_t kAttrXorMappedAddress = 0x0020;
++constexpr size_t kHeaderSize = 20;
++
++uint16_t Be16(const uint8_t* p) { return uint16_t(p[0] << 8 | p[1]); }
++uint32_t Be32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
++
++// An IPv4 address attribute value: reserved (1), family (1), port (2), address (4). IPv6 is not used.
++std::optional<sockaddr_in> ReadAddress(const uint8_t* v, uint16_t len, bool xored) {
++  if (len < 8 || v[1] != 0x01) {
++    return std::nullopt;
++  }
++  uint16_t port = Be16(v + 2);
++  uint32_t ip = Be32(v + 4);
++  if (xored) {
++    port ^= uint16_t(kStunMagicCookie >> 16);
++    ip ^= kStunMagicCookie;
++  }
++  sockaddr_in out{};
++  out.sin_family = AF_INET;
++  out.sin_port = htons(port);
++  out.sin_addr.s_addr = htonl(ip);
++  return out;
++}
++
++}  // namespace
++
++std::vector<uint8_t> BuildStunBindingRequest(const StunTxId& txid) {
++  std::vector<uint8_t> msg(kHeaderSize, 0);
++  msg[0] = uint8_t(kBindingRequest >> 8);
++  msg[1] = uint8_t(kBindingRequest);
++  msg[4] = uint8_t(kStunMagicCookie >> 24);
++  msg[5] = uint8_t(kStunMagicCookie >> 16);
++  msg[6] = uint8_t(kStunMagicCookie >> 8);
++  msg[7] = uint8_t(kStunMagicCookie);
++  std::memcpy(msg.data() + 8, txid.data(), txid.size());
++  return msg;
++}
++
++bool IsStunPacket(const uint8_t* data, size_t len) {
++  return data && len >= kHeaderSize && (data[0] & 0xC0) == 0 && Be32(data + 4) == kStunMagicCookie;
++}
++
++std::optional<sockaddr_in> ParseStunBindingResponse(const uint8_t* data, size_t len, const StunTxId& txid) {
++  if (!IsStunPacket(data, len) || Be16(data) != kBindingSuccess ||
++      std::memcmp(data + 8, txid.data(), txid.size()) != 0) {
++    return std::nullopt;
++  }
++  const size_t body = Be16(data + 2);
++  if (kHeaderSize + body > len) {
++    return std::nullopt;
++  }
++  std::optional<sockaddr_in> mapped;
++  size_t pos = kHeaderSize;
++  const size_t end = kHeaderSize + body;
++  while (pos + 4 <= end) {
++    const uint16_t type = Be16(data + pos);
++    const uint16_t alen = Be16(data + pos + 2);
++    if (pos + 4 + alen > end) {
++      return std::nullopt;
++    }
++    const uint8_t* value = data + pos + 4;
++    if (type == kAttrXorMappedAddress) {
++      if (auto a = ReadAddress(value, alen, true)) {
++        return a;
++      }
++    } else if (type == kAttrMappedAddress && !mapped) {
++      mapped = ReadAddress(value, alen, false);
++    }
++    pos += 4 + ((alen + 3u) & ~3u);
++  }
++  return mapped;
++}
++
++}  // namespace rex::kernel::xam::net
+diff --git a/src/kernel/xam/net/upnp.cpp b/src/kernel/xam/net/upnp.cpp
+new file mode 100644
+index 0000000..515f138
+--- /dev/null
++++ b/src/kernel/xam/net/upnp.cpp
+@@ -0,0 +1,108 @@
++// COGBox SDK patch 63: UPnP IGD port mapping through miniupnpc.
++#include <rex/kernel/xam/net/upnp.h>
++
++#if defined(_WIN32)
++#include <winsock2.h>
++#include <miniupnpc.h>
++#include <upnpcommands.h>
++#endif
++
++#include <cstdio>
++#include <cstring>
++#include <mutex>
++
++namespace rex::kernel::xam::net {
++
++#if defined(_WIN32)
++namespace {
++
++constexpr const char* kIgdTypes[] = {"urn:schemas-upnp-org:device:InternetGatewayDevice:1",
++                                     "urn:schemas-upnp-org:device:InternetGatewayDevice:2", nullptr};
++
++std::mutex g_mutex;
++std::string g_control_url;
++std::string g_service_type;
++
++void EnsureWinsock() {
++  static const bool started = [] {
++    WSADATA wsa;
++    return WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
++  }();
++  (void)started;
++}
++
++}  // namespace
++
++UPnPResult TryUPnPPortMap(uint16_t local_port, uint16_t lease_duration_sec, const char* multicast_if) {
++  EnsureWinsock();
++  UPnPResult result;
++  int error = 0;
++  // searchalltypes = 1: every M-SEARCH goes out first and the 1 s wait happens once (with 0, miniupnpc waits after
++  // each type; it also raises any delay under 1000 ms to 1000).
++  UPNPDev* devices = upnpDiscoverDevices(kIgdTypes, 1000, multicast_if, nullptr, 0, 0, 2, &error, 1);
++  if (!devices) {
++    return result;
++  }
++  UPNPUrls urls{};
++  IGDdatas data{};
++  char lan[64] = {};
++  char wan[64] = {};
++  const int igd = UPNP_GetValidIGD(devices, &urls, &data, lan, sizeof(lan), wan, sizeof(wan));
++  freeUPNPDevlist(devices);
++  if (igd != UPNP_CONNECTED_IGD) {
++    if (igd != UPNP_NO_IGD) {
++      FreeUPNPUrls(&urls);
++    }
++    return result;
++  }
++  char port[8];
++  char lease[8];
++  std::snprintf(port, sizeof(port), "%u", unsigned(local_port));
++  std::snprintf(lease, sizeof(lease), "%u", unsigned(lease_duration_sec));
++  int r = UPNP_AddPortMapping(urls.controlURL, data.first.servicetype, port, port, lan, "COGBox online", "UDP",
++                              nullptr, lease);
++  if (r != UPNPCOMMAND_SUCCESS) {  // some gateways only take a permanent lease (error 725)
++    r = UPNP_AddPortMapping(urls.controlURL, data.first.servicetype, port, port, lan, "COGBox online", "UDP",
++                            nullptr, "0");
++  }
++  if (r == UPNPCOMMAND_SUCCESS) {
++    char external[40] = {};
++    if (UPNP_GetExternalIPAddress(urls.controlURL, data.first.servicetype, external) == UPNPCOMMAND_SUCCESS &&
++        external[0]) {
++      result.external_ip = external;
++    } else {
++      result.external_ip = wan;
++    }
++    result.success = !result.external_ip.empty();
++    result.external_port = result.success ? local_port : 0;
++    std::lock_guard<std::mutex> lock(g_mutex);
++    g_control_url = urls.controlURL ? urls.controlURL : "";
++    g_service_type = data.first.servicetype;
++  }
++  FreeUPNPUrls(&urls);
++  return result;
++}
++
++void ReleaseUPnPPortMap(uint16_t local_port) {
++  std::string url, type;
++  {
++    std::lock_guard<std::mutex> lock(g_mutex);
++    url = g_control_url;
++    type = g_service_type;
++  }
++  if (url.empty()) {
++    return;  // nothing was mapped
++  }
++  char port[8];
++  std::snprintf(port, sizeof(port), "%u", unsigned(local_port));
++  UPNP_DeletePortMapping(url.c_str(), type.c_str(), port, "UDP", nullptr);
++}
++
++#else
++
++UPnPResult TryUPnPPortMap(uint16_t, uint16_t, const char*) { return {}; }
++void ReleaseUPnPPortMap(uint16_t) {}
++
++#endif
++
++}  // namespace rex::kernel::xam::net
+diff --git a/src/system/CMakeLists.txt b/src/system/CMakeLists.txt
+index 50b7e04..99e4986 100644
+--- a/src/system/CMakeLists.txt
++++ b/src/system/CMakeLists.txt
+@@ -111,6 +111,11 @@ endif()
+ 
+ if(WIN32)
+     target_link_libraries(rexruntime PRIVATE ws2_32)
++    # COGBox SDK patch 63: online play (UPnP via miniupnpc, adapter list via iphlpapi)
++    target_link_libraries(rexruntime PRIVATE libminiupnpc-static iphlpapi)
++endif()
++
++if(WIN32)
+     target_link_libraries(rexruntime PUBLIC dxgi dxguid)
+     target_compile_definitions(rexruntime PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+ endif()
+diff --git a/tests/unit/CMakeLists.txt b/tests/unit/CMakeLists.txt
+index 7bda2ad..71acfd8 100644
+--- a/tests/unit/CMakeLists.txt
++++ b/tests/unit/CMakeLists.txt
+@@ -20,6 +20,9 @@ add_executable(unit_tests
+     codegen/codegen_writer_test.cpp
+     codegen/output_partition_test.cpp
+     codegen/output_stamp_test.cpp
++    net/stun_test.cpp
++    net/punch_test.cpp
++    net/upnp_test.cpp
+ )
+ 
+ target_sources(unit_tests PRIVATE
+@@ -33,10 +36,14 @@ target_include_directories(unit_tests PRIVATE
+     ${CMAKE_CURRENT_SOURCE_DIR}
+ )
+ 
++# COGBox SDK patch 63/64: net tests write only here
++target_compile_definitions(unit_tests PRIVATE COGBOX_NET_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}/net-test-data")
++
+ target_link_libraries(unit_tests PRIVATE
+     rexcodegen
+     rexruntime
+     Catch2::Catch2WithMain
++    $<$<PLATFORM_ID:Windows>:ws2_32>  # COGBox SDK patch 63: net tests
+ )
+ 
+ # ReXApp is shipped as source for recomp projects, rather than compiled into
+diff --git a/tests/unit/net/punch_test.cpp b/tests/unit/net/punch_test.cpp
+new file mode 100644
+index 0000000..afeb6f7
+--- /dev/null
++++ b/tests/unit/net/punch_test.cpp
+@@ -0,0 +1,50 @@
++// COGBox SDK patch 63: CGBP punch packet codec tests.
++#include <catch2/catch_test_macros.hpp>
++
++#include <rex/kernel/xam/net/punch.h>
++
++using namespace rex::kernel::xam::net;
++
++TEST_CASE("Punch packets round trip for every type", "[net][punch]") {
++  for (PunchType t : {PunchType::Punch, PunchType::Ack, PunchType::Keepalive}) {
++    PunchPacket in{t, 0xDEADBEEFCAFEF00Dull, 0x01020304u, 7777};
++    auto bytes = EncodePunch(in);
++    REQUIRE(bytes.size() == kPunchPacketSize);
++    CHECK(bytes[0] == 'C');
++    CHECK(bytes[3] == 'P');
++    CHECK(bytes[4] == 1);  // version
++    auto out = DecodePunch(bytes.data(), bytes.size());
++    REQUIRE(out.has_value());
++    CHECK(out->type == t);
++    CHECK(out->token == in.token);
++    CHECK(out->seq == in.seq);
++    CHECK(out->src_port == 7777);
++  }
++}
++
++TEST_CASE("Punch packets are big endian", "[net][punch]") {
++  auto bytes = EncodePunch(PunchPacket{PunchType::Ack, 0x0102030405060708ull, 0x0A0B0C0Du, 0x1E61});
++  CHECK(bytes[5] == 2);
++  CHECK(bytes[6] == 0x01);
++  CHECK(bytes[13] == 0x08);
++  CHECK(bytes[14] == 0x0A);
++  CHECK(bytes[17] == 0x0D);
++  CHECK(bytes[18] == 0x1E);  // src_port, the sender's local game port
++  CHECK(bytes[19] == 0x61);
++  CHECK(kPunchPacketSize == 20);
++}
++
++TEST_CASE("Punch decode rejects bad magic, version, type and length", "[net][punch]") {
++  auto good = EncodePunch(PunchPacket{PunchType::Punch, 1, 1, 1000});
++  auto bad_magic = good;
++  bad_magic[0] = 'X';
++  CHECK_FALSE(DecodePunch(bad_magic.data(), bad_magic.size()).has_value());
++  auto bad_version = good;
++  bad_version[4] = 2;
++  CHECK_FALSE(DecodePunch(bad_version.data(), bad_version.size()).has_value());
++  auto bad_type = good;
++  bad_type[5] = 9;
++  CHECK_FALSE(DecodePunch(bad_type.data(), bad_type.size()).has_value());
++  CHECK_FALSE(DecodePunch(good.data(), 19).has_value());
++  CHECK_FALSE(DecodePunch(good.data(), 0).has_value());
++}
+diff --git a/tests/unit/net/stun_test.cpp b/tests/unit/net/stun_test.cpp
+new file mode 100644
+index 0000000..ba6ffa4
+--- /dev/null
++++ b/tests/unit/net/stun_test.cpp
+@@ -0,0 +1,82 @@
++// COGBox SDK patch 63: STUN Binding Request / Response codec tests.
++#include <catch2/catch_test_macros.hpp>
++
++#include <cstring>
++#include <vector>
++
++#include <rex/kernel/xam/net/punch.h>
++#include <rex/kernel/xam/net/stun.h>
++
++using namespace rex::kernel::xam::net;
++
++namespace {
++// RFC 5769 section 2.2: sample IPv4 response, mapped address 192.0.2.1:32853.
++const std::vector<uint8_t> kRfc5769Response = {
++    0x01, 0x01, 0x00, 0x3c, 0x21, 0x12, 0xa4, 0x42, 0xb7, 0xe7, 0xa7, 0x01, 0xbc, 0x34, 0xd6, 0x86,
++    0xfa, 0x87, 0xdf, 0xae, 0x80, 0x22, 0x00, 0x0b, 0x74, 0x65, 0x73, 0x74, 0x20, 0x76, 0x65, 0x63,
++    0x74, 0x6f, 0x72, 0x20, 0x00, 0x20, 0x00, 0x08, 0x00, 0x01, 0xa1, 0x47, 0xe1, 0x12, 0xa6, 0x43,
++    0x00, 0x08, 0x00, 0x14, 0x2b, 0x91, 0xf5, 0x99, 0xfd, 0x9e, 0x90, 0xc3, 0x8c, 0x74, 0x89, 0xf9,
++    0x2a, 0xf9, 0xba, 0x53, 0xf0, 0x6b, 0xe7, 0xd7, 0x80, 0x28, 0x00, 0x04, 0xc0, 0x7d, 0x4c, 0x96};
++const StunTxId kRfcTxId = {0xb7, 0xe7, 0xa7, 0x01, 0xbc, 0x34, 0xd6, 0x86, 0xfa, 0x87, 0xdf, 0xae};
++
++uint32_t HostIp(const sockaddr_in& a) { return ntohl(a.sin_addr.s_addr); }
++uint16_t HostPort(const sockaddr_in& a) { return ntohs(a.sin_port); }
++}  // namespace
++
++TEST_CASE("STUN binding request is 20 bytes with type, cookie and txid", "[net][stun]") {
++  StunTxId txid{};
++  for (int i = 0; i < 12; ++i) txid[i] = uint8_t(0x10 + i);
++  auto req = BuildStunBindingRequest(txid);
++  REQUIRE(req.size() == 20);
++  CHECK(req[0] == 0x00);
++  CHECK(req[1] == 0x01);
++  CHECK(req[2] == 0x00);
++  CHECK(req[3] == 0x00);
++  CHECK(req[4] == 0x21);
++  CHECK(req[5] == 0x12);
++  CHECK(req[6] == 0xA4);
++  CHECK(req[7] == 0x42);
++  CHECK(std::memcmp(req.data() + 8, txid.data(), 12) == 0);
++  CHECK(IsStunPacket(req.data(), req.size()));
++}
++
++TEST_CASE("STUN parses the RFC 5769 XOR-MAPPED-ADDRESS sample", "[net][stun]") {
++  auto addr = ParseStunBindingResponse(kRfc5769Response.data(), kRfc5769Response.size(), kRfcTxId);
++  REQUIRE(addr.has_value());
++  CHECK(HostIp(*addr) == 0xC0000201);  // 192.0.2.1
++  CHECK(HostPort(*addr) == 32853);
++}
++
++TEST_CASE("STUN falls back to MAPPED-ADDRESS", "[net][stun]") {
++  StunTxId txid{};
++  std::vector<uint8_t> msg = {0x01, 0x01, 0x00, 0x0c, 0x21, 0x12, 0xa4, 0x42};
++  msg.insert(msg.end(), txid.begin(), txid.end());
++  const uint8_t attr[] = {0x00, 0x01, 0x00, 0x08, 0x00, 0x01, 0x1f, 0x90, 203, 0, 113, 7};
++  msg.insert(msg.end(), attr, attr + sizeof(attr));
++  auto addr = ParseStunBindingResponse(msg.data(), msg.size(), txid);
++  REQUIRE(addr.has_value());
++  CHECK(HostIp(*addr) == 0xCB007107);  // 203.0.113.7
++  CHECK(HostPort(*addr) == 8080);
++}
++
++TEST_CASE("STUN rejects a wrong transaction id", "[net][stun]") {
++  StunTxId other = kRfcTxId;
++  other[0] ^= 0xFF;
++  CHECK_FALSE(ParseStunBindingResponse(kRfc5769Response.data(), kRfc5769Response.size(), other).has_value());
++}
++
++TEST_CASE("STUN rejects a truncated attribute", "[net][stun]") {
++  // Header says 0x3c bytes of attributes, but the buffer ends inside XOR-MAPPED-ADDRESS.
++  CHECK_FALSE(ParseStunBindingResponse(kRfc5769Response.data(), 40, kRfcTxId).has_value());
++  // The header length itself overruns the buffer.
++  std::vector<uint8_t> bad = kRfc5769Response;
++  bad[3] = 0x7c;
++  CHECK_FALSE(ParseStunBindingResponse(bad.data(), bad.size(), kRfcTxId).has_value());
++}
++
++TEST_CASE("IsStunPacket is false for punch packets and short packets", "[net][stun]") {
++  auto punch = EncodePunch(PunchPacket{PunchType::Punch, 0x1122334455667788ull, 7, 1000});
++  CHECK_FALSE(IsStunPacket(punch.data(), punch.size()));
++  const uint8_t tiny[3] = {0, 1, 0};
++  CHECK_FALSE(IsStunPacket(tiny, sizeof(tiny)));
++}
+diff --git a/tests/unit/net/upnp_test.cpp b/tests/unit/net/upnp_test.cpp
+new file mode 100644
+index 0000000..86c5385
+--- /dev/null
++++ b/tests/unit/net/upnp_test.cpp
+@@ -0,0 +1,19 @@
++// COGBox SDK patch 63: UPnP port mapping. Discovery is bound to the loopback interface so the test never reaches (or
++// changes) a real router: no IGD answers, and the call must give up quickly.
++#include <catch2/catch_test_macros.hpp>
++
++#include <chrono>
++
++#include <rex/kernel/xam/net/upnp.h>
++
++using namespace rex::kernel::xam::net;
++
++TEST_CASE("UPnP: no gateway means a quick, clean failure", "[net][upnp]") {
++  auto start = std::chrono::steady_clock::now();
++  UPnPResult r = TryUPnPPortMap(7777, 60, "127.0.0.1");
++  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
++  CHECK_FALSE(r.success);
++  CHECK(r.external_port == 0);
++  CHECK(r.external_ip.empty());
++  CHECK(ms <= 2000);
++}
+diff --git a/thirdparty/CMakeLists.txt b/thirdparty/CMakeLists.txt
+index f102b56..ed57ee1 100644
+--- a/thirdparty/CMakeLists.txt
++++ b/thirdparty/CMakeLists.txt
+@@ -702,3 +702,23 @@ set_target_properties(libavutil libavcodec PROPERTIES
+     C_VISIBILITY_PRESET hidden
+     VISIBILITY_INLINES_HIDDEN ON
+     FOLDER "FFmpeg")
++
++#=============================================================================
++# miniupnpc - UPnP IGD port mapping (COGBox SDK patch 63, online play)
++# Fetched as the release tarball, pinned by hash. A local copy can be used with
++# -DFETCHCONTENT_SOURCE_DIR_MINIUPNPC=<folder holding miniupnpc's own CMakeLists.txt>.
++#=============================================================================
++if(WIN32)
++    include(FetchContent)
++    set(UPNPC_BUILD_STATIC ON CACHE BOOL "" FORCE)
++    set(UPNPC_BUILD_SHARED OFF CACHE BOOL "" FORCE)
++    set(UPNPC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
++    set(UPNPC_BUILD_SAMPLE OFF CACHE BOOL "" FORCE)
++    set(UPNPC_NO_INSTALL ON CACHE BOOL "" FORCE)
++    FetchContent_Declare(miniupnpc
++        URL https://github.com/miniupnp/miniupnp/archive/refs/tags/miniupnpc_2_3_3.tar.gz
++        URL_HASH SHA256=8cf2c833b3e76fc4893ff29c2a376e3394962449e5970e373c0a91421724d222
++        SOURCE_SUBDIR miniupnpc)
++    FetchContent_MakeAvailable(miniupnpc)
++    target_compile_options(libminiupnpc-static PRIVATE -w)
++endif()

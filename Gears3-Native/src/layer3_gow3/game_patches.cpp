@@ -483,7 +483,6 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   TickTimeline();
   Gow3ModChaptersTick();
   Gow3PathChoiceTick();
-  Gow3MediaVerifyTick();  // GitHub #215
   Gow3CheckpointStreamTick();  // GitHub #226
   const int32_t v = LiveMaxFps();
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {

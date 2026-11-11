@@ -76,6 +76,10 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/ao_debug.cpp
     src/layer0_xenos/ingame_menu.cpp
     src/layer0_xenos/menu_look.cpp
+    src/layer0_xenos/social_ingame.cpp
+    src/layer0_xenos/social_page.cpp
+    src/layer0_xenos/social_popup.cpp
+    src/layer0_xenos/social_shared.cpp
     src/layer0_xenos/profiler.cpp
 )
 target_include_directories(gn_layer0_xenos PUBLIC src/layer0_xenos/include)

@@ -100,6 +100,7 @@ struct App {
     bool hasAvx2 = true;
     bool padConnected = false;
     bool lastPad = true;              // 0.2.0: the last input came from a controller (hints follow it), else keyboard / mouse
+    std::string joinLobby[G_COUNT];   // social step 3: the next start of this game joins that room code (Join friend)
     bool tuMismatchOk[G_COUNT] = {};  // TU preflight: "Play anyway" chosen for this game (until the launcher closes)
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
     bool borderless = false;          // job 523: no title bar (COGBox draws its own minimise / maximise / close)
@@ -147,6 +148,14 @@ void page_draw(App &a, ImVec2 size);
 void achievements_tab(App &a, int g, float labelW, float ctrlW, float rowX1);
 void achievements_tab_reload();
 void achievements_tab_open_all();
+// social_tab.cpp (social step 3): the SOCIAL tab, and its worker (re)started from CogBox.ini [Online] and the profile
+void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1);
+void social_restart(App &a);
+void social_send_icon(App &a);   // the profile picture friends see (at sign-in and when it changes)
+void social_remove_answer(int answer);
+void social_delete_answer(App &a, int answer);   // DELETE ONLINE ACCOUNT, after the player confirmed
+void social_delete_poll(App &a);              // each frame: finishes DELETE ONLINE ACCOUNT once the server answered
+void social_rename(App &a, const std::string &name);   // SAVE NAME: the online account takes the new name
 void achievements_reveal_answer(App &a, int answer);
 void env_refresh(App &a, int g);
 bool settings_save(App &a);
