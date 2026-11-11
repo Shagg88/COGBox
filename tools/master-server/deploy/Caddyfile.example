@@ -1,0 +1,10 @@
+# The site block as deployed: the /admin* route goes to the admin panel, everything else to the master server.
+# All on loopback (caddy uses host networking).
+cogbox-mp.duckdns.org {
+	handle /admin* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle {
+		reverse_proxy 127.0.0.1:18443
+	}
+}

@@ -1,0 +1,25 @@
+{
+  "name": "cogbox-admin-panel",
+  "version": "1.0.0",
+  "description": "COGBox server admin panel",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/rate-limit": "^11.2.2",
+    "@fastify/static": "^10.1.10",
+    "@node-rs/argon2": "^2.0.2",
+    "better-sqlite3": "^13.0.3",
+    "fastify": "^5.12.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

@@ -9,9 +9,17 @@ import { signalingRoutes } from './ws/signaling.js';
 import { friendRoutes } from './routes/friends.js';
 import { inviteRoutes } from './routes/invites.js';
 import { checkAuthHeader } from './auth.js';
-import { logSafeRequest } from './log_scrub.js';
+import { logSafeRequest, logSafeText } from './log_scrub.js';
 import { Registry } from './social/registry.js';
 import { notifyPresence } from './social/presence.js';
+import { ErrorRing } from './admin/error_ring.js';
+import { buildPrivateApi } from './admin/private_api.js';
+import path from 'node:path';
+
+// The private admin listener stays on loopback unless ADMIN_HOST says otherwise.
+export function adminListenHost(env: NodeJS.ProcessEnv = process.env): string {
+  return env.ADMIN_HOST || '127.0.0.1';
+}
 
 export interface ServerOptions {
   dbPath?: string;
@@ -21,9 +29,23 @@ export interface ServerOptions {
 }
 
 export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInstance> {
+  const errors = new ErrorRing();
   const server = Fastify({
-    // no token and no player address in the log (log_scrub.ts)
-    logger: opts.logger ? { serializers: { req: logSafeRequest } } : false,
+    // no token and no player address in the log (log_scrub.ts); errors also go to the admin overview, scrubbed
+    logger: opts.logger ? {
+      serializers: { req: logSafeRequest },
+      hooks: {
+        logMethod(this: any, args: any[], method: any, level: number) {
+          if (level >= 50) {
+            const first = args[0];
+            const msg = typeof first === 'string' ? first : first instanceof Error ? first.message
+              : (first?.err?.message ?? first?.msg ?? (typeof args[1] === 'string' ? args[1] : 'error'));
+            errors.push(logSafeText(String(msg)));
+          }
+          return method.apply(this, args);
+        }
+      }
+    } : false,
     trustProxy: '127.0.0.1'   // Caddy on this machine says who the player is; nobody else can
   });
 
@@ -76,8 +98,10 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
     const u = checkAuthHeader(db, request.headers.authorization);
     if (u) registry.seen(u.uuid);
   });
+  const hostChanged = (uuid: string) => notifyPresence(db, registry, uuid);
+  const stats = { pendingInvites: () => 0 };
   await server.register(lobbyRoutes, {
-    prefix: '/api/v1/lobbies', db, onHostChange: (uuid: string) => notifyPresence(db, registry, uuid),
+    prefix: '/api/v1/lobbies', db, onHostChange: hostChanged,
     inContact: (a: string, b: string) => registry.inContact(a, b)
   });
   await server.register(signalingRoutes, { prefix: '/ws', db, registry });
@@ -85,7 +109,14 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   server.get<{ Querystring: { title_id?: string; region?: string } }>('/api/v1/population', async (req) =>
     registry.population(String(req.query.title_id ?? '').toUpperCase(), req.query.region));
   await server.register(friendRoutes, { prefix: '/api/v1/friends', db, registry });
-  await server.register(inviteRoutes, { prefix: '/api/v1/invites', db, registry, now: opts.now ?? Date.now });
+  await server.register(inviteRoutes, { prefix: '/api/v1/invites', db, registry, now: opts.now ?? Date.now, stats });
+
+  // What the private admin listener needs (see the standalone block below)
+  server.decorate('adminDeps', {
+    db, registry, hostChanged, errors, startedAt: Date.now(),
+    pendingInvites: () => stats.pendingInvites(),
+    dataDir: path.dirname(path.resolve(opts.dbPath ?? process.env.DB_PATH ?? 'master.db'))
+  });
 
   // Clean shutdown hook
   server.addHook('onClose', async () => {
@@ -93,6 +124,27 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   });
 
   return server;
+}
+
+// Starts the game listener, then the private admin listener when a secret is set. The admin listener
+// failing (port taken, bad ADMIN_PORT) is logged and ignored: the panel must never take the game down.
+export async function startListeners(app: FastifyInstance, o: {
+  port: number; host: string; env?: NodeJS.ProcessEnv; log?: (msg: string) => void;
+}): Promise<void> {
+  const env = o.env ?? process.env;
+  const log = o.log ?? ((m: string) => console.error(m));
+  await app.listen({ port: o.port, host: o.host });
+  console.log(`[COGBox] Master Server coordinator listening on ${o.host}:${o.port}`);
+  const secret = env.ADMIN_SHARED_SECRET;
+  if (!secret) return;
+  try {
+    const adminPort = Number(env.ADMIN_PORT) || 8090;
+    const priv = await buildPrivateApi({ ...(app as any).adminDeps, secret });
+    await priv.listen({ port: adminPort, host: adminListenHost(env) });
+    console.log(`[COGBox] Admin listener on ${adminPort}`);
+  } catch (err) {
+    log(`[COGBox] Admin listener failed, game server carries on: ${logSafeText(String((err as Error)?.message ?? err))}`);
+  }
 }
 
 // Start standalone server if executed directly
@@ -103,8 +155,7 @@ if (process.argv[1] && (process.argv[1].endsWith('server.ts') || process.argv[1]
 
   buildServer({ dbPath, logger: true }).then(async (app) => {
     try {
-      await app.listen({ port, host });
-      console.log(`[COGBox] Master Server coordinator listening on ${host}:${port}`);
+      await startListeners(app, { port, host });
     } catch (err) {
       app.log.error(err);
       process.exit(1);
