@@ -41,6 +41,8 @@ export function buildEmbed(lines: Line[], nowMs: number, x: Extras = {}): Embed 
     fields.push({ name: '🛠 Last incident', value: clip(lastIncidentText(h, nowMs), 1024) });
   }
   fields.push(...rest.map(field));
+  // an empty line (zero-width space) after each section; Discord packs fields tightly otherwise
+  for (const f of fields.slice(0, -1)) f.value = clip(f.value, 1022) + '\n​';
 
   return {
     title: 'COGBox server status',

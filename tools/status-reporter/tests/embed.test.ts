@@ -56,6 +56,13 @@ describe('buildEmbed', () => {
     expect(buildEmbed(core, 0, { logoUrl: 'https://x/logo.png' }).thumbnail).toEqual({ url: 'https://x/logo.png' });
   });
 
+  it('leaves an empty line after every section except the last', () => {
+    const e = buildEmbed([...core, up('GitLab', 'g'), up('SourceForge', 's')], 0, { history: emptyHistory() });
+    const vals = e.fields.map((f) => f.value);
+    expect(vals.slice(0, -1).every((v) => v.endsWith('\n​'))).toBe(true);
+    expect(vals.at(-1)).toBe('s');
+  });
+
   it('keeps field values inside Discord limits', () => {
     const e = buildEmbed([up('GitLab', 'x'.repeat(3000))], 0);
     expect(e.fields[0].value.length).toBeLessThanOrEqual(1024);
