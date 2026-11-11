@@ -35,8 +35,9 @@ const firstLine = (s: string) => s.split('\n')[0].trim().slice(0, 100);
 export async function checkMaster(f: typeof fetch, baseUrl: string, secret: string): Promise<Line> {
   const name = 'Matchmaking server';
   try {
+    const t0 = performance.now();
     const s = await getJson<{ uptime_s: number }>(f, baseUrl.replace(/\/+$/, '') + '/status', { 'x-admin-secret': secret });
-    return { name, state: 'up', text: `up ${fmtUptime(s.uptime_s)}`, core: true };
+    return { name, state: 'up', text: `up ${fmtUptime(s.uptime_s)}`, core: true, ms: Math.round(performance.now() - t0) };
   } catch {
     return { name, state: 'down', text: 'not answering', core: true };
   }

@@ -1,37 +1,58 @@
 import { describe, expect, it } from 'vitest';
 import { buildEmbed, COLOURS, fmtUptime } from '../src/embed.js';
+import { emptyHistory, record } from '../src/history.js';
 import type { Line } from '../src/types.js';
 
-const up = (name: string, text = 'ok', core = false): Line => ({ name, state: 'up', text, core });
+const up = (name: string, text = 'ok', core = false, ms?: number): Line => ({ name, state: 'up', text, core, ms });
+const core = [up('Matchmaking server', 'up 2d 3h', true, 12), up('STUN (UDP 3478)', 'answering', true, 4)];
 
 describe('buildEmbed', () => {
-  it('is green when every line is up and ends with a relative timestamp', () => {
-    const e = buildEmbed([up('Matchmaking server', 'up', true), up('STUN', 'answers', true)], 1_700_000_000_000);
+  it('is green with an "all systems operational" headline and a relative timestamp', () => {
+    const e = buildEmbed(core, 1_700_000_000_000);
     expect(e.color).toBe(COLOURS.green);
-    expect(e.footer.text).toBe('Last updated');
+    expect(e.description).toContain('All systems operational');
     expect(e.description).toContain('<t:1700000000:R>');
+    expect(e.footer.text).toBe('Last updated');
     expect(e.timestamp).toBe(new Date(1_700_000_000_000).toISOString());
   });
 
-  it('is red when a core service is down', () => {
+  it('is red with an outage headline when a core service is down', () => {
     const e = buildEmbed([{ name: 'STUN', state: 'down', text: 'no answer', core: true }, up('GitLab')], 0);
     expect(e.color).toBe(COLOURS.red);
+    expect(e.description).toContain('Outage');
   });
 
   it('is amber when only a non-core source fails', () => {
-    const e = buildEmbed([up('STUN', 'ok', true), { name: 'GitLab', state: 'unknown', text: 'API error' }], 0);
+    const e = buildEmbed([...core, { name: 'GitLab', state: 'unknown', text: 'API error' }], 0);
     expect(e.color).toBe(COLOURS.amber);
+    expect(e.description).toContain('Degraded');
   });
 
   it('never changes colour for an optional source that is unavailable', () => {
-    const e = buildEmbed([up('STUN', 'ok', true), { name: 'GitHub', state: 'unavailable', text: 'unavailable', optional: true }], 0);
+    const e = buildEmbed([...core, { name: 'GitHub', state: 'unavailable', text: 'unavailable', optional: true }], 0);
     expect(e.color).toBe(COLOURS.green);
   });
 
-  it('puts one field per service with its state icon', () => {
-    const e = buildEmbed([up('Matchmaking server', 'up 2d 3h', true), { name: 'STUN', state: 'down', text: 'no answer', core: true }], 0);
-    expect(e.fields.map((f) => f.name)).toEqual(['🟢 Matchmaking server', '🔴 STUN']);
-    expect(e.fields[0].value).toBe('up 2d 3h');
+  it('puts core services side by side with their response time', () => {
+    const e = buildEmbed(core, 0);
+    expect(e.fields[0]).toMatchObject({ name: '🟢 Matchmaking server', value: 'up 2d 3h\n`12 ms`', inline: true });
+    expect(e.fields[1]).toMatchObject({ name: '🟢 STUN (UDP 3478)', inline: true });
+  });
+
+  it('shows the 24h bars, uptime % and last incident when history is given', () => {
+    const h = emptyHistory();
+    const now = 10 * 3600_000;
+    record(h, 'master', true, now); record(h, 'stun', true, now);
+    const e = buildEmbed(core, now, { history: h });
+    const f = e.fields.find((x) => x.name.startsWith('📈'))!;
+    expect(f.value).toContain('Matchmaking');
+    expect(f.value).toContain('🟩');
+    expect(f.value).toContain('100%');
+    expect(e.fields.find((x) => x.name.startsWith('🛠'))!.value).toBe('No outages recorded');
+  });
+
+  it('shows the logo as a thumbnail when set', () => {
+    expect(buildEmbed(core, 0, { logoUrl: 'https://x/logo.png' }).thumbnail).toEqual({ url: 'https://x/logo.png' });
   });
 
   it('keeps field values inside Discord limits', () => {

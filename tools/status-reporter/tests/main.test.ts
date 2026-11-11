@@ -30,3 +30,25 @@ describe('collect', () => {
     expect(a.map((l) => l.name)).toEqual(['Matchmaking server', 'STUN (UDP 9)', 'GitLab']);
   }, 10_000);
 });
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { readState, track } from '../src/main.js';
+import { emptyHistory, uptimePct } from '../src/history.js';
+
+describe('state', () => {
+  it('reads the old {messageId} file and keeps the message', () => {
+    const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sr-')), 'state.json');
+    fs.writeFileSync(p, JSON.stringify({ messageId: '42' }));
+    const st = readState(p);
+    expect(st.messageId).toBe('42');
+    expect(st.history.buckets).toEqual({});
+  });
+  it('tracks master and STUN results only', () => {
+    const h = emptyHistory();
+    track(h, [{ name: 'Matchmaking server', state: 'down', text: '' }, { name: 'STUN (UDP 3478)', state: 'up', text: '' }, { name: 'GitLab', state: 'down', text: '' }], 0);
+    expect(uptimePct(h, 'master', 24, 0)).toBe(0);
+    expect(uptimePct(h, 'stun', 24, 0)).toBe(100);
+  });
+});

@@ -9,12 +9,14 @@ export interface Line {
   core?: boolean;        // a core service going down turns the whole embed red
   optional?: boolean;    // never changes the embed colour
   retryAfterS?: number;  // the source asked us to slow down
+  ms?: number;           // response time
 }
 
 export interface Embed {
   title: string;
   description: string;
   color: number;
+  thumbnail?: { url: string };
   fields: { name: string; value: string; inline?: boolean }[];
   footer: { text: string };
   timestamp: string;

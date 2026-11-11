@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { checkGithub, checkGitlab, checkMaster, checkSourceforge } from './checks.js';
 import { buildEmbed } from './embed.js';
+import { emptyHistory, record, type History } from './history.js';
 import { checkStun } from './stun.js';
 import type { Line } from './types.js';
 import { publish } from './webhook.js';
@@ -18,6 +19,7 @@ export interface Config {
   githubRepo: string;
   statePath: string;
   intervalS: number;
+  logoUrl?: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -32,7 +34,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     githubEnabled: /^(1|true|yes|on)$/i.test(env.GITHUB_ENABLED ?? ''),
     githubRepo: env.GITHUB_REPO || 'Shagg88/COGBox',
     statePath: env.STATE_PATH || '/data/state.json',
-    intervalS: Math.max(30, Number(env.INTERVAL_S) || 60)
+    intervalS: Math.max(30, Number(env.INTERVAL_S) || 60),
+    logoUrl: env.LOGO_URL || 'https://gitlab.com/shagg88/cogbox/-/raw/main/Gears2-Native/cogbox/art/cogbox-256.png'
   };
 }
 
@@ -57,14 +60,26 @@ export async function collect(cfg: Config, f: typeof fetch, cache: Map<string, {
   return Promise.all(jobs);
 }
 
-const readState = (p: string): string | null => {
-  try { return (JSON.parse(fs.readFileSync(p, 'utf8')) as { messageId?: string }).messageId || null; } catch { return null; }
-};
-const writeState = (p: string, messageId: string) => {
+interface State { messageId: string | null; history: History }
+export function readState(p: string): State {
+  try {
+    const j = JSON.parse(fs.readFileSync(p, 'utf8')) as Partial<State>;
+    return { messageId: j.messageId || null, history: j.history?.buckets ? { ...emptyHistory(), ...j.history } : emptyHistory() };
+  } catch { return { messageId: null, history: emptyHistory() }; }
+}
+const writeState = (p: string, st: State) => {
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p + '.tmp', JSON.stringify({ messageId }));
+  fs.writeFileSync(p + '.tmp', JSON.stringify(st));
   fs.renameSync(p + '.tmp', p);
 };
+
+// feeds the core results into the history; returns the lines unchanged
+export function track(h: History, lines: Line[], now: number): void {
+  for (const l of lines) {
+    if (l.name === 'Matchmaking server') record(h, 'master', l.state === 'up', now);
+    else if (l.name.startsWith('STUN')) record(h, 'stun', l.state === 'up', now);
+  }
+}
 
 async function main() {
   const dry = process.argv.includes('--dry-run');
@@ -76,17 +91,21 @@ async function main() {
     await new Promise(() => setInterval(() => {}, 1 << 30)); // a pending promise alone lets Node exit
   }
   const cache = new Map<string, { at: number; line: Line }>();
-  let messageId = dry ? null : readState(cfg.statePath);
+  const st = readState(cfg.statePath);
+  if (dry) st.messageId = null;
   for (;;) {
     let waitS = cfg.intervalS;
     try {
       const now = Date.now();
-      const embed = buildEmbed(await collect(cfg, fetch, cache, now), now);
+      const lines = await collect(cfg, fetch, cache, now);
+      if (!dry) track(st.history, lines, now);
+      const embed = buildEmbed(lines, now, { history: st.history, logoUrl: cfg.logoUrl });
       if (dry) {
         console.log(JSON.stringify({ embeds: [embed] }, null, 2));
       } else {
-        const r = await publish(fetch, cfg.webhookUrl!, messageId, embed);
-        if (r.messageId && r.messageId !== messageId) { messageId = r.messageId; writeState(cfg.statePath, messageId); }
+        const r = await publish(fetch, cfg.webhookUrl!, st.messageId, embed);
+        if (r.messageId) st.messageId = r.messageId;
+        writeState(cfg.statePath, st);
         if (r.retryAfterS) { waitS = Math.max(waitS, r.retryAfterS); console.error(`status-reporter: Discord rate limit, waiting ${waitS}s`); }
       }
     } catch (err) {

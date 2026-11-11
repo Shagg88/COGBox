@@ -23,9 +23,10 @@ export function checkStun(host: string, port: number, timeoutMs = 3000): Promise
   return new Promise((resolve) => {
     const sock = dgram.createSocket('udp4');
     const req = bindingRequest();
+    const t0 = performance.now();
     const done = (l: Line) => { clearTimeout(t); sock.close(); resolve(l); };
     const t = setTimeout(() => done({ name, state: 'down', text: 'no answer to a binding request', core: true }), timeoutMs);
-    sock.on('message', (m) => { if (isBindingSuccess(m, req)) done({ name, state: 'up', text: 'answering', core: true }); });
+    sock.on('message', (m) => { if (isBindingSuccess(m, req)) done({ name, state: 'up', text: 'answering', core: true, ms: Math.round(performance.now() - t0) }); });
     sock.on('error', () => done({ name, state: 'down', text: 'socket error', core: true }));
     sock.send(req, port, host);
   });
