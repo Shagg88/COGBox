@@ -238,6 +238,7 @@ static void answered(App &a)
     else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
     else if (m.tag == "protonrec" || m.tag == "protonfound") linux_answer(a, m);   // proton049
     else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
+    else if (m.tag == "tumismatch") a.joinLobby[m.game].clear();   // 0.6.0: Cancel drops a pending Join
     else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4
     else if (m.tag == "socialremove") social_remove_answer(m.answer);   // social step 3
     else if (m.tag == "socialdelete") social_delete_answer(a, m.answer);   // 0.6.0 review: delete the online account
