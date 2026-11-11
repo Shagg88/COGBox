@@ -719,7 +719,14 @@ Action DrawSettings(const Look& L, SettingsPage& pg) {
   }
   if (confirming) {
     int& sel = *pg.confirm_sel;
-    if (pg.nav_move || pg.nav_adjust) sel = (pg.nav_move ? pg.nav_move : pg.nav_adjust) < 0 ? 0 : 1;
+    // 0.6.0 (Shagg: "Gears 2 won't let me choose Yes"): Yes and No sit side by side, so only left / right pick one.
+    // Up / down (the stick or D-pad still held from moving down to Quit game) used to pick No the moment the box
+    // opened, and A then answered No. For the first 0.3 s after it opens nothing moves the choice off Yes.
+    static double s_confirm_opened = -1.0;
+    static int s_confirm_seen = -1;
+    if (s_confirm_seen != ImGui::GetFrameCount() - 1) s_confirm_opened = ImGui::GetTime();
+    s_confirm_seen = ImGui::GetFrameCount();
+    if (pg.nav_adjust && ImGui::GetTime() - s_confirm_opened > 0.3) sel = pg.nav_adjust < 0 ? 0 : 1;
     // menu2: the dim is the first thing on the BOX window's own draw list (unclipped, the whole display), so it lies
     // over the menu and its rows child but under the box's plate, text and buttons. (It was on the foreground list,
     // which is drawn over every window - the box too.)
