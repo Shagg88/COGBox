@@ -1271,10 +1271,10 @@ index 0000000..7aa8063
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/system/cogbox_save_sign.h b/include/rex/system/cogbox_save_sign.h
 new file mode 100644
-index 0000000..2652407
+index 0000000..a046583
 --- /dev/null
 +++ b/include/rex/system/cogbox_save_sign.h
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,39 @@
 +// COGBox: Gears 3 save signatures. Gears 3 signs PlayerStorage.dat and its profile settings (63E83FFF + 63E83FFE +
 +// 63E83FFD) with SHA-1(online XUID, 8 bytes big endian + data) in the first 20 bytes. Patch 58 re-signs COGBox's old
 +// saves from the offline XUID to 0; COGBox SDK patch 65 (online play) re-signs them between 0 and the online XUID.
@@ -1301,6 +1301,17 @@ index 0000000..2652407
 +// Every Gears 3 save under user_data_root: the profile's PlayerStorage.dat and each profile-settings set. Never throws.
 +void CogConvertGears3SaveSigning(const std::filesystem::path& user_data_root, uint64_t profile_xuid, uint64_t from_key,
 +                                 uint64_t to_key, const char* backup_suffix);
++
++// Judgment ties PlayerStorage.dat and its profile settings to the sign-in (LIVE or local) in a way we can't re-sign, so
++// switching online play on or off made the game start them fresh. Instead each mode keeps its own copy: on a switch,
++// the files of the mode being left are moved aside as <file>.cogbox-<mode>, and the other mode's copies come back.
++// marker holds the mode the files in place belong to. Nothing is deleted: a copy already set aside is kept as
++// <file>.cogbox-<mode>.old-<n>.
++enum class ModeSwapResult { Marked, Unchanged, Swapped, Failed };
++ModeSwapResult CogSwapModeFiles(const std::vector<std::filesystem::path>& files, const std::filesystem::path& marker,
++                                const char* mode);
++// Judgment's PlayerStorage.dat (with its header) and every profile-settings set under user_data_root. Never throws.
++void CogSwapJudgmentSettings(const std::filesystem::path& user_data_root, uint64_t profile_xuid, bool online);
 +
 +}  // namespace rex::system
 diff --git a/include/rex/system/xam/app_manager.h b/include/rex/system/xam/app_manager.h
@@ -3647,10 +3658,10 @@ index 0000000..2a06a4c
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/online_startup.cpp b/src/kernel/xam/net/online_startup.cpp
 new file mode 100644
-index 0000000..eeabb5f
+index 0000000..5ffbd85
 --- /dev/null
 +++ b/src/kernel/xam/net/online_startup.cpp
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,212 @@
 +// COGBox SDK patch 65: online play at start-up.
 +#include <atomic>
 +#include <cstdlib>
@@ -3854,9 +3865,11 @@ index 0000000..eeabb5f
 +    SetEmulationXuid(xuid);
 +    REXKRNL_INFO("cogbox_online: LIVE emulation with online XUID {:016X}", xuid);
 +    rex::system::CogConvertGears3SaveSigning(user_data_root, profile_xuid, 0, xuid, ".pre-online");
++    rex::system::CogSwapJudgmentSettings(user_data_root, profile_xuid, true);
 +  } else {
 +    SetEmulationXuid(0);
 +    rex::system::CogConvertGears3SaveSigning(user_data_root, profile_xuid, xuid, 0, ".pre-online");
++    rex::system::CogSwapJudgmentSettings(user_data_root, profile_xuid, false);
 +  }
 +}
 +
@@ -7488,15 +7501,16 @@ index cbc39c6..3be804f 100644
  # COGBox SDK patch 64: nlohmann/json (the copy inja carries) for identity.json and the master server
 diff --git a/src/system/cogbox_save_sign.cpp b/src/system/cogbox_save_sign.cpp
 new file mode 100644
-index 0000000..67da31c
+index 0000000..d769d9d
 --- /dev/null
 +++ b/src/system/cogbox_save_sign.cpp
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,278 @@
 +// COGBox: Gears 3 save signatures (patch 58's converter, moved here and generalised by COGBox SDK patch 65).
 +#include <rex/system/cogbox_save_sign.h>
 +
 +#include <cstdio>
 +#include <cstring>
++#include <string>
 +
 +#include <fmt/format.h>
 +#include <rex/logging.h>
@@ -7683,6 +7697,88 @@ index 0000000..67da31c
 +    REXLOG_INFO("cogbox_save_convert: stopped ({}); saves left as they were", e.what());
 +  } catch (...) {
 +    REXLOG_INFO("cogbox_save_convert: stopped; saves left as they were");
++  }
++}
++
++namespace {
++std::string CogReadMode(const std::filesystem::path& marker) {
++  const auto v = CogReadAll(marker);
++  std::string m(v.begin(), v.end());
++  while (!m.empty() && (m.back() == '\n' || m.back() == '\r' || m.back() == ' ')) m.pop_back();
++  return m;
++}
++std::filesystem::path WithSuffix(std::filesystem::path p, const std::string& suffix) {
++  p += suffix;
++  return p;
++}
++}  // namespace
++
++ModeSwapResult CogSwapModeFiles(const std::vector<std::filesystem::path>& files, const std::filesystem::path& marker,
++                                const char* mode) {
++  std::error_code ec;
++  const std::string now = mode, was = CogReadMode(marker);
++  if (was.empty()) {
++    const std::vector<uint8_t> m(now.begin(), now.end());
++    return CogWriteAll(marker, m) ? ModeSwapResult::Marked : ModeSwapResult::Failed;
++  }
++  if (was == now) {
++    return ModeSwapResult::Unchanged;
++  }
++  for (const auto& f : files) {
++    // the files in place belong to the mode being left: aside, keeping any copy already there
++    if (std::filesystem::exists(f, ec)) {
++      const auto aside = WithSuffix(f, ".cogbox-" + was);
++      if (std::filesystem::exists(aside, ec)) {
++        int n = 1;
++        while (std::filesystem::exists(WithSuffix(aside, ".old-" + std::to_string(n)), ec)) ++n;
++        std::filesystem::rename(aside, WithSuffix(aside, ".old-" + std::to_string(n)), ec);
++        if (ec) return ModeSwapResult::Failed;
++      }
++      std::filesystem::rename(f, aside, ec);
++      if (ec) return ModeSwapResult::Failed;
++    }
++    // and the copy kept for the mode being entered comes back (none the first time: the game starts it fresh)
++    const auto back = WithSuffix(f, ".cogbox-" + now);
++    if (std::filesystem::exists(back, ec)) {
++      std::filesystem::rename(back, f, ec);
++      if (ec) return ModeSwapResult::Failed;
++    }
++  }
++  const std::vector<uint8_t> m(now.begin(), now.end());
++  return CogWriteAll(marker, m) ? ModeSwapResult::Swapped : ModeSwapResult::Failed;
++}
++
++void CogSwapJudgmentSettings(const std::filesystem::path& root, uint64_t profile_xuid, bool online) {
++  if (root.empty() || !profile_xuid) {
++    return;
++  }
++  try {
++    std::error_code ec;
++    const auto title = root / "4D530A26";
++    if (!std::filesystem::is_directory(title, ec)) {
++      return;   // Judgment not played with this user folder (or not this game's folder at all)
++    }
++    const auto saves = root / fmt::format("{:016X}", profile_xuid) / "4D530A26";
++    std::vector<std::filesystem::path> files = {saves / "00000001" / "PlayerStorage.dat" / "PlayerStorage.dat",
++                                                saves / "Headers" / "00000001" / "PlayerStorage.dat.header"};
++    const auto prof = title / "profile";
++    if (std::filesystem::is_directory(prof, ec)) {
++      for (auto it = std::filesystem::directory_iterator(prof, ec); !ec && it != std::filesystem::directory_iterator();
++           it.increment(ec)) {
++        std::error_code dec;
++        if (!it->is_directory(dec) || dec) continue;
++        for (const char* n : {"63E83FFF", "63E83FFE", "63E83FFD"}) files.push_back(it->path() / n);
++      }
++    }
++    const char* mode = online ? "online" : "offline";
++    const ModeSwapResult r = CogSwapModeFiles(files, title / "cogbox-settings-mode", mode);
++    if (r == ModeSwapResult::Swapped) {
++      REXLOG_INFO("cogbox_save_convert: Judgment settings: switched to the {} copy", mode);
++    } else if (r == ModeSwapResult::Failed) {
++      REXLOG_INFO("cogbox_save_convert: Judgment settings: could not switch to the {} copy; left as they were", mode);
++    }
++  } catch (...) {
++    REXLOG_INFO("cogbox_save_convert: Judgment settings: stopped; left as they were");
 +  }
 +}
 +
@@ -10771,14 +10867,15 @@ index 0000000..1683789
 +}
 diff --git a/tests/unit/net/save_resign_test.cpp b/tests/unit/net/save_resign_test.cpp
 new file mode 100644
-index 0000000..c706578
+index 0000000..bf5d803
 --- /dev/null
 +++ b/tests/unit/net/save_resign_test.cpp
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,155 @@
 +// COGBox SDK patch 65: Gears 3 save signatures (SHA-1(online XUID, 8 bytes big endian + data) in the first 20 bytes)
 +// re-signed between XUID 0 and the online XUID. Files live in COGBOX_NET_TEST_DIR (build tree, never AppData).
 +#include <catch2/catch_test_macros.hpp>
 +
++#include <cstring>
 +#include <filesystem>
 +#include <fstream>
 +#include <iterator>
@@ -10875,6 +10972,59 @@ index 0000000..c706578
 +TEST_CASE("Save sign: a file too small to hold a signature is left alone", "[net][save]") {
 +  auto f = FreshFile("resign_small", std::vector<uint8_t>(10, 0));
 +  CHECK(CogResignSaveFiles({f}, 0, kXuid, ".pre-online") == ResignResult::TooSmall);
++}
++
++namespace {
++fs::path SwapDir(const char* name) {
++  fs::path dir = fs::path(COGBOX_NET_TEST_DIR) / name;
++  std::error_code ec;
++  fs::remove_all(dir, ec);
++  fs::create_directories(dir);
++  return dir;
++}
++std::vector<uint8_t> Bytes(const char* s) { return std::vector<uint8_t>(s, s + std::strlen(s)); }
++}  // namespace
++
++TEST_CASE("Judgment settings: the first run only notes the mode", "[net][save]") {
++  const fs::path d = SwapDir("swap_first");
++  WriteFile(d / "PlayerStorage.dat", Bytes("offline settings"));
++  CHECK(CogSwapModeFiles({d / "PlayerStorage.dat"}, d / "mode", "offline") == ModeSwapResult::Marked);
++  CHECK(ReadFile(d / "PlayerStorage.dat") == Bytes("offline settings"));
++  CHECK(CogSwapModeFiles({d / "PlayerStorage.dat"}, d / "mode", "offline") == ModeSwapResult::Unchanged);
++}
++
++TEST_CASE("Judgment settings: each mode keeps its own copy across switches", "[net][save]") {
++  const fs::path d = SwapDir("swap_round");
++  const std::vector<fs::path> files = {d / "PlayerStorage.dat", d / "63E83FFF"};
++  WriteFile(files[0], Bytes("offline storage"));
++  WriteFile(files[1], Bytes("offline profile"));
++  REQUIRE(CogSwapModeFiles(files, d / "mode", "offline") == ModeSwapResult::Marked);
++  // online for the first time: the offline files go aside and the game starts fresh (no online copy yet)
++  CHECK(CogSwapModeFiles(files, d / "mode", "online") == ModeSwapResult::Swapped);
++  CHECK_FALSE(fs::exists(files[0]));
++  CHECK(ReadFile(fs::path(files[0]) += ".cogbox-offline") == Bytes("offline storage"));
++  WriteFile(files[0], Bytes("online storage"));   // the game writes its online settings
++  WriteFile(files[1], Bytes("online profile"));
++  // back offline: the offline copy returns, the online one waits
++  CHECK(CogSwapModeFiles(files, d / "mode", "offline") == ModeSwapResult::Swapped);
++  CHECK(ReadFile(files[0]) == Bytes("offline storage"));
++  CHECK(ReadFile(files[1]) == Bytes("offline profile"));
++  CHECK(ReadFile(fs::path(files[0]) += ".cogbox-online") == Bytes("online storage"));
++  // and online again: the online settings are back, not asked for again
++  CHECK(CogSwapModeFiles(files, d / "mode", "online") == ModeSwapResult::Swapped);
++  CHECK(ReadFile(files[0]) == Bytes("online storage"));
++  CHECK(ReadFile(files[1]) == Bytes("online profile"));
++}
++
++TEST_CASE("Judgment settings: a copy already set aside is kept, never overwritten", "[net][save]") {
++  const fs::path d = SwapDir("swap_keep");
++  const fs::path f = d / "PlayerStorage.dat";
++  WriteFile(f, Bytes("now"));
++  WriteFile(fs::path(f) += ".cogbox-offline", Bytes("older offline"));
++  WriteFile(d / "mode", Bytes("offline"));
++  CHECK(CogSwapModeFiles({f}, d / "mode", "online") == ModeSwapResult::Swapped);
++  CHECK(ReadFile(fs::path(f) += ".cogbox-offline") == Bytes("now"));
++  CHECK(ReadFile(fs::path(f) += ".cogbox-offline.old-1") == Bytes("older offline"));
 +}
 diff --git a/tests/unit/net/session_marshal_test.cpp b/tests/unit/net/session_marshal_test.cpp
 new file mode 100644
