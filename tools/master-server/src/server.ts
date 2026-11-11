@@ -9,6 +9,7 @@ import { signalingRoutes } from './ws/signaling.js';
 import { friendRoutes } from './routes/friends.js';
 import { inviteRoutes } from './routes/invites.js';
 import { checkAuthHeader } from './auth.js';
+import { logSafeRequest } from './log_scrub.js';
 import { Registry } from './social/registry.js';
 import { notifyPresence } from './social/presence.js';
 
@@ -21,7 +22,8 @@ export interface ServerOptions {
 
 export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInstance> {
   const server = Fastify({
-    logger: opts.logger ?? false,
+    // no token and no player address in the log (log_scrub.ts)
+    logger: opts.logger ? { serializers: { req: logSafeRequest } } : false,
     trustProxy: '127.0.0.1'   // Caddy on this machine says who the player is; nobody else can
   });
 
