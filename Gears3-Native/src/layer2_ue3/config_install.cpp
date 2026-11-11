@@ -565,7 +565,13 @@ std::map<std::string, std::filesystem::path> CollectMods(std::map<std::string, s
     int n = 0;
     for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
          !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-      if (it->is_symlink(ec)) { it.disable_recursion_pending(); continue; }   // never follow links out of the mod
+      if (it->is_symlink(ec)) {   // never follow links out of the mod
+        // (said, though: a mod whose GearGame folder was a junction served no files, and its chapter never loaded)
+        REXLOG_WARN("ue3_mods: {}: {} is a link (junction or symlink) - not followed, its files are not used", one,
+                    rex::path_to_utf8(fs::relative(it->path(), root, ec)));
+        it.disable_recursion_pending();
+        continue;
+      }
       const fs::path relp = fs::relative(it->path(), root, ec);
       if (ec || relp.empty() || relp.is_absolute() || *relp.begin() == "..") continue;
       const std::string rel = RelKey(rex::path_to_utf8(relp));

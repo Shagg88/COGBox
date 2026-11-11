@@ -17,7 +17,8 @@ mods\MyMod\
 
 Mods made for the Xbox 360 are often shared as bare files. A package (`.xxx`, `.upk`), texture cache (`.tfc`) or
 `Coalesced_*.bin` at the mod's top goes to `GearGame\CookedXbox360`, and a movie (`.bik`) to `GearGame\Movies`.
-Programs (`.xex`, `.dll`, `.exe`) are never used from a mod.
+Programs (`.xex`, `.dll`, `.exe`) are never used from a mod. Folders inside a mod that are links (junctions or
+symlinks) are not followed: copy the files in (the log names any link it skipped).
 
 **Load order:** the Mods tab's order, top to bottom. Where two mods have the same file, the lower one wins.
 
