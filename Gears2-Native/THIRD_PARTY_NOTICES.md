@@ -13,6 +13,8 @@ Gears2-Native's own code is MIT-licensed (`LICENSE`). It contains or builds agai
 | Kenney Input Prompts (`assets/glyphs/`) | Controller and keyboard/mouse prompt glyph icons for Xbox, PlayStation, Nintendo Switch, Steam Deck, and Steam Controller | CC0 1.0 Universal (Public Domain, notice below) |
 | Inter 4.1 (The Inter Project Authors, `assets/fonts/`) | Inter-Regular.ttf and Inter-SemiBold.ttf, the achievement popups' and the in-game Achievements page's font | SIL Open Font License 1.1 (`assets/fonts/Inter-LICENSE.txt`) |
 | LZMA SDK 23.01 7z decoder (Igor Pavlov, `cogbox/third_party/lzma`, unchanged) | CogBox.exe unpacking .7z updates (0.4.9) | Public domain (`cogbox/licenses/LZMA-SDK-public-domain.txt`) |
+| miniupnpc 2.3.3 (Thomas Bernard; release tarball fetched by SDK patch 77, pinned by SHA-256, built into `rexruntime.dll`) | UPnP port mapping for online play (0.6.0) | BSD-3-Clause (`cogbox/licenses/miniupnpc-LICENSE.txt`) |
+| nlohmann/json 3.11 (Niels Lohmann; `cogbox/third_party/nlohmann`, and the copy inja carries inside the SDK for patches 78 / 79) | The launcher's and the runtime's online-play messages (0.6.0) | MIT (`cogbox/licenses/nlohmann-json-LICENSE.txt`) |
 
 No game files are included. Players supply their own copy of Gears of War 2.
 Vendor upscalers ship as the vendors' own binaries next to the exe, under their own terms, and their SDKs are never

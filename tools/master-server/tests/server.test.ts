@@ -175,6 +175,18 @@ describe('Master Server API', () => {
     expect(ok.statusCode).toBe(200);
   });
 
+  it('delete account: the player, their friendships and lobbies go; the tag is free again; only with the token', async () => {
+    const a = await claim('Kait');
+    const b = await claim('Jace');
+    await app.inject({ method: 'POST', url: '/api/v1/friends/requests', headers: auth(b), payload: { tag: `${a.display_name}#${a.discriminator}` } });
+    expect((await app.inject({ method: 'DELETE', url: '/api/v1/auth/account' })).statusCode).toBe(401);
+    const del = await app.inject({ method: 'DELETE', url: '/api/v1/auth/account', headers: auth(a) });
+    expect(del.statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/v1/friends', headers: auth(a) })).statusCode).toBe(401);
+    const theirs = await app.inject({ method: 'GET', url: '/api/v1/friends', headers: auth(b) });
+    expect(theirs.json().outgoing).toEqual([]);
+  });
+
   it('renames: same uuid and xuid, discriminator kept when free', async () => {
     const me = await claim('Baird');
     const r = await app.inject({ method: 'POST', url: '/api/v1/auth/rename', headers: auth(me), payload: { display_name: 'Damon Baird' } });

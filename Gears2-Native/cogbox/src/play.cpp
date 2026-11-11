@@ -342,7 +342,7 @@ void play_start(App &a, int g, bool prepare)
     std::string shared = join(exe_dir(), "shared");
     bool useShared = dir_exists(shared);
     if (useShared) args.push_back("--gow2_dxc_dir=\"" + shared + "\"");
-    // social step 3: Join friend from the SOCIAL tab - the game joins that lobby once it is at its menus (SDK patch 70)
+    // social step 3: Join friend from the SOCIAL tab - the game joins that lobby once it is at its menus (SDK patch 79, --net_join_lobby)
     if (!a.joinLobby[g].empty() && !a.env[g].online_server.empty()) args.push_back("--net_join_lobby=" + a.joinLobby[g]);
     a.joinLobby[g].clear();
     if (prepare) {   // job 641: build every shipped recipe, then the game saves its pipeline library and exits

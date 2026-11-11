@@ -50,7 +50,7 @@ std::string presence_text(const SocialFriend& f);
 // Name#1234: a name of 3-15 letters, digits and spaces, '#', four digits.
 bool valid_tag(const std::string& tag);
 
-enum class SocialAction { Add, Accept, Decline, Block, Remove, Join, Invite, InviteAccept, InviteDecline, Rename, SetIcon };
+enum class SocialAction { Add, Accept, Decline, Block, Remove, Join, Invite, InviteAccept, InviteDecline, Rename, SetIcon, DeleteAccount };
 // A profile picture name from the server that is safe to look up under <COGBox>: icons/<8 hex digits>/<1-6 digits>.png
 // (anything else - a path, "..", another file type - is drawn as the letter).
 bool safe_icon_name(const std::string& name);

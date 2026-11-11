@@ -118,6 +118,7 @@ SocialCall call_for(SocialAction action, const std::string& arg) {
     case SocialAction::InviteDecline: return { "POST", "/api/v1/invites/" + arg + "/decline", "" };
     case SocialAction::Rename: return { "POST", "/api/v1/auth/rename", json{ { "display_name", arg } }.dump() };
     case SocialAction::SetIcon: return { "POST", "/api/v1/auth/icon", json{ { "icon", arg } }.dump() };
+    case SocialAction::DeleteAccount: return { "DELETE", "/api/v1/auth/account", "" };
     }
     return {};
 }

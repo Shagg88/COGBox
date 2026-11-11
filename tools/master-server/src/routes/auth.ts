@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import crypto from 'node:crypto';
 import { DatabaseInstance } from '../db.js';
-import { checkAuthHeader, checkToken, hashToken, newToken } from '../auth.js';
+import { checkAuthHeader, checkToken, forgetAuth, hashToken, newToken } from '../auth.js';
 import { NAME_RULE, normalizeName } from '../names.js';
 
 interface ClaimBody {
@@ -66,6 +66,22 @@ export const authRoutes: FastifyPluginAsync<{ db: DatabaseInstance }> = async (f
     }
     db.prepare('UPDATE users SET icon = ?, last_seen = ? WHERE uuid = ?').run(icon, Date.now(), me.uuid);
     return reply.send({ icon });
+  });
+
+  // Deleting an account (PRIVACY.md): the player's row, their friendships and blocks (the friends table cascades) and
+  // any lobby they host. Pending invites live in memory and lapse within INVITE_LIFETIME_MS. The tag is free again.
+  fastify.delete('/account', async (request, reply) => {
+    const me = checkAuthHeader(db, request.headers.authorization);
+    if (!me) {
+      return reply.status(401).send({ error: 'Authorization: COGBox <uuid>:<token> required' });
+    }
+    db.transaction(() => {
+      db.prepare('DELETE FROM lobbies WHERE host_uuid = ?').run(me.uuid);
+      db.prepare('DELETE FROM friends WHERE user_uuid = ? OR friend_uuid = ?').run(me.uuid, me.uuid);
+      db.prepare('DELETE FROM users WHERE uuid = ?').run(me.uuid);
+    })();
+    forgetAuth(db, me.uuid);
+    return reply.send({ deleted: true });
   });
 
   fastify.post<{ Body: ClaimBody }>('/claim', async (request, reply) => {

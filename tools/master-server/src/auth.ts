@@ -36,6 +36,13 @@ export function checkToken(db: DatabaseInstance, uuid: unknown, token: unknown):
 
 const recentHeaders = new WeakMap<DatabaseInstance, Map<string, { user: AuthedUser; until: number }>>();
 
+// A deleted account's header must stop working at once, not when its 1 s memory runs out.
+export function forgetAuth(db: DatabaseInstance, uuid: string): void {
+  const known = recentHeaders.get(db);
+  if (!known) return;
+  for (const [header, entry] of known) if (entry.user.uuid === uuid) known.delete(header);
+}
+
 // "Authorization: COGBox <uuid>:<token>"
 export function checkAuthHeader(db: DatabaseInstance, header: unknown): AuthedUser | null {
   if (typeof header !== 'string') {

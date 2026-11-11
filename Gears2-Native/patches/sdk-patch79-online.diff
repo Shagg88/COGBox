@@ -335,10 +335,10 @@ index 0000000..dd2d233
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/master_protocol.h b/include/rex/kernel/xam/net/master_protocol.h
 new file mode 100644
-index 0000000..795ab28
+index 0000000..e82a630
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/master_protocol.h
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,85 @@
 +// COGBox SDK patch 65: the master server's JSON (tools/master-server): claim, lobbies and the candidate messages.
 +#pragma once
 +
@@ -410,6 +410,12 @@ index 0000000..795ab28
 +
 +// Percent-encodes everything but A-Z a-z 0-9 - _ . ~
 +std::string UrlEncode(const std::string& s);
++// Logs and problem reports must not carry other players' addresses: a public IPv4 address (host byte order) as
++// "a.x.x.d"; private, loopback and link-local addresses (the virtual 10.254.x.x ones too) in full.
++std::string MaskedIp(uint32_t ip);
++// The signaling token and the candidates must not travel unencrypted: plain http:// is only for a server on this PC
++// (localhost, 127.x.x.x, ::1); anywhere else the master server needs https://.
++bool PlainHttpAllowed(const std::string& host);
 +// The signaling WebSocket's path: /ws/signal?uuid=..&token=..&role=game[&title_id=<8 upper hex>] (title 0: none).
 +// The role and title let the server keep a launcher and a game connection side by side and show friends which game.
 +// A launcher region (oceania, us-e, us-w, europe); anything else is "global", the Any region choice.
@@ -2444,11 +2450,12 @@ index 0000000..8868cea
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/master_client.cpp b/src/kernel/xam/net/master_client.cpp
 new file mode 100644
-index 0000000..a98d898
+index 0000000..a8d3853
 --- /dev/null
 +++ b/src/kernel/xam/net/master_client.cpp
-@@ -0,0 +1,330 @@
+@@ -0,0 +1,335 @@
 +// COGBox SDK patch 65: the master-server client over WinHTTP.
++#include <rex/kernel/xam/net/master_protocol.h>   // MaskedIp / PlainHttpAllowed
 +#include <nlohmann/json.hpp>
 +
 +#include <rex/kernel/xam/net/master_client.h>
@@ -2519,6 +2526,10 @@ index 0000000..a98d898
 +  if (url.empty() || !WinHttpCrackUrl(url.c_str(), DWORD(url.size()), 0, &uc) ||
 +      (uc.nScheme != INTERNET_SCHEME_HTTPS && uc.nScheme != INTERNET_SCHEME_HTTP)) {
 +    REXKRNL_WARN("cogbox_online: master server address '{}' is not http(s)://host[:port]", base_url);
++    return false;
++  }
++  if (uc.nScheme == INTERNET_SCHEME_HTTP && !PlainHttpAllowed(std::string(host, host + wcslen(host)))) {
++    REXKRNL_WARN("cogbox_online: the master server needs https:// (plain http:// is only for a server on this PC); online play stays off");
 +    return false;
 +  }
 +  std::lock_guard<std::mutex> lock(mutex_);
@@ -2780,10 +2791,10 @@ index 0000000..a98d898
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/master_protocol.cpp b/src/kernel/xam/net/master_protocol.cpp
 new file mode 100644
-index 0000000..f047f13
+index 0000000..563473d
 --- /dev/null
 +++ b/src/kernel/xam/net/master_protocol.cpp
-@@ -0,0 +1,303 @@
+@@ -0,0 +1,318 @@
 +// COGBox SDK patch 65: the master server's JSON.
 +#include <rex/kernel/xam/net/master_protocol.h>
 +
@@ -3086,6 +3097,21 @@ index 0000000..f047f13
 +  return path;
 +}
 +
++}  // namespace rex::kernel::xam::net
++
++namespace rex::kernel::xam::net {
++std::string MaskedIp(uint32_t ip) {
++  const bool local = (ip >> 24) == 10 || (ip >> 20) == 0xAC1 || (ip >> 16) == 0xC0A8 || (ip >> 16) == 0xA9FE ||
++                     (ip >> 22) == (0x64400000u >> 22) || (ip >> 24) == 127;
++  const std::string a = std::to_string(ip >> 24), d = std::to_string(ip & 0xFF);
++  if (!local) return a + ".x.x." + d;
++  return a + "." + std::to_string((ip >> 16) & 0xFF) + "." + std::to_string((ip >> 8) & 0xFF) + "." + d;
++}
++
++bool PlainHttpAllowed(const std::string& host) {
++  if (host == "localhost" || host == "::1" || host == "[::1]") return true;
++  return host.rfind("127.", 0) == 0 && host.find_first_not_of("0123456789.") == std::string::npos;
++}
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/online_sessions.cpp b/src/kernel/xam/net/online_sessions.cpp
 new file mode 100644
@@ -4093,11 +4119,12 @@ index 0000000..fa877f4
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/socket_hooks.cpp b/src/kernel/xam/net/socket_hooks.cpp
 new file mode 100644
-index 0000000..121c17e
+index 0000000..2a62b6e
 --- /dev/null
 +++ b/src/kernel/xam/net/socket_hooks.cpp
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,316 @@
 +// COGBox SDK patch 65: the socket hooks for online play.
++#include <rex/kernel/xam/net/master_protocol.h>   // MaskedIp / PlainHttpAllowed
 +#include <set>
 +#include <rex/kernel/xam/net/socket_hooks.h>
 +
@@ -4324,7 +4351,7 @@ index 0000000..121c17e
 +    inet_pton(AF_INET, r.external_ip.c_str(), &a.sin_addr);
 +    a.sin_port = htons(r.external_port);
 +    VirtualPeerManager::Get().AddLocalCandidate(port, {a, Candidate::Upnp});
-+    REXKRNL_INFO("cogbox_online: UPnP mapped port {} as {}:{}", port, r.external_ip, r.external_port);
++    REXKRNL_INFO("cogbox_online: UPnP mapped port {} as {}:{}", port, MaskedIp(ntohl(a.sin_addr.s_addr)), r.external_port);
 +  }).detach();
 +  Worker::Get().EnsureStarted();
 +}
@@ -4978,11 +5005,12 @@ index 0000000..95fb930
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/virtual_peer_manager.cpp b/src/kernel/xam/net/virtual_peer_manager.cpp
 new file mode 100644
-index 0000000..c414372
+index 0000000..e56cb38
 --- /dev/null
 +++ b/src/kernel/xam/net/virtual_peer_manager.cpp
-@@ -0,0 +1,570 @@
+@@ -0,0 +1,568 @@
 +// COGBox SDK patch 65: online peers as virtual IPs and the NAT path to each.
++#include <rex/kernel/xam/net/master_protocol.h>   // MaskedIp / PlainHttpAllowed
 +#include <rex/kernel/xam/net/virtual_peer_manager.h>
 +
 +#include <algorithm>
@@ -5157,8 +5185,7 @@ index 0000000..c414372
 +  Peer& p = peers_[vip];
 +  p.xuid = peer_xuid;
 +  p.token = session_token;
-+  REXKRNL_INFO("cogbox_online: peer {:016X} is 10.254.{}.{} (session token {:016X})", peer_xuid, (vip >> 8) & 0xFF,
-+               vip & 0xFF, session_token);
++  REXKRNL_INFO("cogbox_online: peer {:016X} is 10.254.{}.{}", peer_xuid, (vip >> 8) & 0xFF, vip & 0xFF);
 +  xuid_to_vip_[peer_xuid] = vip;
 +  return vip;
 +}
@@ -5431,10 +5458,8 @@ index 0000000..c414372
 +    if (p.state != PeerState::Connected) {
 +      p.state = PeerState::Connected;
 +      p.last_keepalive = now;
-+      char ip[INET_ADDRSTRLEN] = {};
-+      inet_ntop(AF_INET, &from.sin_addr, ip, sizeof(ip));
 +      REXKRNL_INFO("cogbox_online: 10.254.{}.{} connected through {}:{} (game port {})", (vip >> 8) & 0xFF, vip & 0xFF,
-+                   ip, ntohs(from.sin_port), punch->src_port);
++                   MaskedIp(ntohl(from.sin_addr.s_addr)), ntohs(from.sin_port), punch->src_port);
 +    }
 +    PruneQueue(p, now);
 +    FlushLocked(vip, p, out);
@@ -6641,7 +6666,7 @@ index 6c4c3cd..0c150ae 100644
                                                                          buffer_length);
    if (result == X_E_NOTFOUND) {
 diff --git a/src/kernel/xam/xam_net.cpp b/src/kernel/xam/xam_net.cpp
-index 1e4c699..f53b593 100644
+index 1e4c699..7c96284 100644
 --- a/src/kernel/xam/xam_net.cpp
 +++ b/src/kernel/xam/xam_net.cpp
 @@ -12,10 +12,14 @@
@@ -7003,7 +7028,7 @@ index 1e4c699..f53b593 100644
    X_STATUS status = socket->IOControl(cmd, arg_ptr);
    if (XFAILED(status)) {
      XThread::SetLastError(xboxkrnl::xeRtlNtStatusToDosError(status));
-@@ -1217,8 +1379,20 @@ u32 NetDll_connect_entry(u32 caller, u32 socket_handle, ppc_ptr_t<XSOCKADDR> nam
+@@ -1217,8 +1379,21 @@ u32 NetDll_connect_entry(u32 caller, u32 socket_handle, ppc_ptr_t<XSOCKADDR> nam
  
    N_XSOCKADDR native_name(name);
    X_STATUS status = socket->Connect(&native_name, namelen);
@@ -7014,8 +7039,9 @@ index 1e4c699..f53b593 100644
 +#endif
 +  if (rex::kernel::xam::net::NetTraceOn()) {  // COGBox SDK patch 65
 +    const uint8_t* sa = reinterpret_cast<const uint8_t*>(native_name.sa_data);
-+    REXKRNL_INFO("cogbox_net_trace: connect {:08X} to {}.{}.{}.{}:{} -> {:08X} (error {})", uint32_t(socket_handle),
-+                 sa[2], sa[3], sa[4], sa[5], (sa[0] << 8) | sa[1], uint32_t(status), err);
++    REXKRNL_INFO("cogbox_net_trace: connect {:08X} to {}:{} -> {:08X} (error {})", uint32_t(socket_handle),
++                 LogIp(uint32_t(sa[2]) << 24 | uint32_t(sa[3]) << 16 | uint32_t(sa[4]) << 8 | sa[5]), (sa[0] << 8) | sa[1],
++                 uint32_t(status), err);
 +  }
    if (XFAILED(status)) {
 -    XThread::SetLastError(xboxkrnl::xeRtlNtStatusToDosError(status));
@@ -7025,7 +7051,7 @@ index 1e4c699..f53b593 100644
      return -1;
    }
  
-@@ -1234,17 +1408,28 @@ u32 NetDll_listen_entry(u32 caller, u32 socket_handle, i32 backlog) {
+@@ -1234,17 +1409,28 @@ u32 NetDll_listen_entry(u32 caller, u32 socket_handle, i32 backlog) {
    }
  
    X_STATUS status = socket->Listen(backlog);
@@ -7055,7 +7081,7 @@ index 1e4c699..f53b593 100644
      // WSAEFAULT
      XThread::SetLastError(0x271E);
      return -1;
-@@ -1257,16 +1442,41 @@ u32 NetDll_accept_entry(u32 caller, u32 socket_handle, ppc_ptr_t<XSOCKADDR> addr
+@@ -1257,16 +1443,41 @@ u32 NetDll_accept_entry(u32 caller, u32 socket_handle, ppc_ptr_t<XSOCKADDR> addr
      return -1;
    }
  
@@ -7102,7 +7128,7 @@ index 1e4c699..f53b593 100644
      return -1;
    }
  }
-@@ -1356,8 +1566,29 @@ i32 NetDll_select_entry(i32 caller, i32 nfds, ppc_ptr_t<x_fd_set> readfds,
+@@ -1356,8 +1567,29 @@ i32 NetDll_select_entry(i32 caller, i32 nfds, ppc_ptr_t<x_fd_set> readfds,
                                               reinterpret_cast<int32_t*>(&timeout.tv_usec));
      timeout_in = &timeout;
    }
@@ -7132,7 +7158,7 @@ index 1e4c699..f53b593 100644
    if (readfds) {
      host_readfds.UpdateFrom(&native_readfds);
      host_readfds.Store(readfds);
-@@ -1383,7 +1614,16 @@ u32 NetDll_recv_entry(u32 caller, u32 socket_handle, mapped_void buf_ptr, u32 bu
+@@ -1383,7 +1615,16 @@ u32 NetDll_recv_entry(u32 caller, u32 socket_handle, mapped_void buf_ptr, u32 bu
      return -1;
    }
  
@@ -7150,7 +7176,7 @@ index 1e4c699..f53b593 100644
  }
  
  u32 NetDll_recvfrom_entry(u32 caller, u32 socket_handle, mapped_void buf_ptr, u32 buf_len,
-@@ -1434,7 +1674,16 @@ u32 NetDll_send_entry(u32 caller, u32 socket_handle, mapped_void buf_ptr, u32 bu
+@@ -1434,7 +1675,16 @@ u32 NetDll_send_entry(u32 caller, u32 socket_handle, mapped_void buf_ptr, u32 bu
      return -1;
    }
  
@@ -7168,7 +7194,7 @@ index 1e4c699..f53b593 100644
  }
  
  u32 NetDll_sendto_entry(u32 caller, u32 socket_handle, mapped_void buf_ptr, u32 buf_len, u32 flags,
-@@ -1577,7 +1826,7 @@ REX_EXPORT_STUB(__imp__NetDll_XNetGetSystemLinkPort);
+@@ -1577,7 +1827,7 @@ REX_EXPORT_STUB(__imp__NetDll_XNetGetSystemLinkPort);
  REX_EXPORT_STUB(__imp__NetDll_XNetGetXnAddrPlatform);
  REX_EXPORT_STUB(__imp__NetDll_XNetInAddrToServer);
  REX_EXPORT_STUB(__imp__NetDll_XNetQosGetListenStats);
@@ -8926,10 +8952,10 @@ index 0000000..65f9a8a
 +}
 diff --git a/tests/unit/net/master_protocol_test.cpp b/tests/unit/net/master_protocol_test.cpp
 new file mode 100644
-index 0000000..590d2c2
+index 0000000..965361c
 --- /dev/null
 +++ b/tests/unit/net/master_protocol_test.cpp
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,199 @@
 +// COGBox SDK patch 65: master-server JSON (matches tools/master-server: claim, lobbies, candidates).
 +#include <catch2/catch_test_macros.hpp>
 +
@@ -9109,6 +9135,25 @@ index 0000000..590d2c2
 +  json by_uuid = json::parse(CandidatesJson(m));
 +  CHECK(by_uuid["target_uuid"] == "B");
 +  CHECK_FALSE(by_uuid.contains("target_xuid"));
++}
++
++TEST_CASE("Protocol: public addresses are masked in logs, local ones are not", "[net][master]") {
++  CHECK(MaskedIp(0xCB007107u) == "203.x.x.7");      // 203.0.113.7
++  CHECK(MaskedIp(0x0AFE0102u) == "10.254.1.2");     // the virtual address the game sees
++  CHECK(MaskedIp(0xC0A80105u) == "192.168.1.5");
++  CHECK(MaskedIp(0x7F000001u) == "127.0.0.1");
++  CHECK(MaskedIp(0xAC100001u) == "172.16.0.1");
++  CHECK(MaskedIp(0xAC200001u) == "172.x.x.1");      // 172.32 is public
++}
++
++TEST_CASE("Protocol: plain http is only for a server on this PC", "[net][master]") {
++  CHECK(PlainHttpAllowed("localhost"));
++  CHECK(PlainHttpAllowed("127.0.0.1"));
++  CHECK(PlainHttpAllowed("::1"));
++  CHECK_FALSE(PlainHttpAllowed("203.0.113.7"));
++  CHECK_FALSE(PlainHttpAllowed("cogbox-mp.duckdns.org"));
++  CHECK_FALSE(PlainHttpAllowed("localhost.example.com"));
++  CHECK_FALSE(PlainHttpAllowed(""));
 +}
 diff --git a/tests/unit/net/online_sessions_test.cpp b/tests/unit/net/online_sessions_test.cpp
 new file mode 100644

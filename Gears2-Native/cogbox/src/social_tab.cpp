@@ -134,6 +134,20 @@ void social_rename(App &a, const std::string &name)
     social_do(SocialAction::Rename, name);   // the worker signs in first when it has to
 }
 
+void social_delete_answer(App &a, int answer)
+{
+    if (answer != 1) return;
+    social_do(SocialAction::DeleteAccount, "");
+    social_sign_off(3000);   // waits for the call (and closes the connection)
+    const std::string dir = profile_dir(exe_dir(), std::to_string(current_profile()));
+    const std::wstring f = widen(join(dir, "identity.json"));
+    MoveFileExW(f.c_str(), (f + L".deleted").c_str(), MOVEFILE_REPLACE_EXISTING);
+    a.ini.seti("Online", "Enabled", 0);
+    a.ini.save();
+    social_restart(a);
+    set_message(a, tr("Your online account was deleted. Online play is off for this profile."), false);
+}
+
 void social_remove_answer(int answer)
 {
     if (answer == 1 && !g_remove_uuid.empty()) social_do(SocialAction::Remove, g_remove_uuid);
@@ -193,6 +207,14 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
         }
     }
     const SocialView v = social_view();
+    if (v.have_account) {
+        ImGui::SameLine(0, S(24));
+        if (row_button("DELETE ONLINE ACCOUNT", true))
+            ask(a, "socialdelete", g, tr("Delete your online account?"),
+                tr("Your tag, friends list and picture are removed from the COGBox server. Saves and achievements stay."),
+                { tr("No"), tr("Yes, delete") });
+        ui_tip("Removes this profile's account from the COGBox multiplayer server and turns online play off.");
+    }
 
     // the top strip: your picture and tag, then Add friend on the same line (layout A, as the in-game page)
     const float x0 = ImGui::GetCursorScreenPos().x;

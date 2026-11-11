@@ -43,6 +43,7 @@ int main() {
         CHECK(safe_icon_name("icons/4D5308AB/8000.png"));
         CHECK(!safe_icon_name("") && !safe_icon_name("icons/../x.png") && !safe_icon_name("icons/4D5308AB/8000.jpg") &&
               !safe_icon_name("C:/icons/4D5308AB/1.png") && !safe_icon_name("icons/4d5308ab/1.png") && !safe_icon_name("icons/4D5308AB/1234567.png"));
+        CHECK(same(call_for(SocialAction::DeleteAccount, ""), "DELETE", "/api/v1/auth/account", ""));
         CHECK(same(call_for(SocialAction::SetIcon, "icons/4D5308AB/8000.png"), "POST", "/api/v1/auth/icon", R"({"icon":"icons/4D5308AB/8000.png"})"));
     }
     // the friends list
