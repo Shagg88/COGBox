@@ -1333,3 +1333,10 @@ Aim sensitivity (%) = Sensibilidade ao mirar (%)
 Zoom sensitivity (%) = Sensibilidade com zoom (%)
 Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Velocidade do mouse ao mirar, em porcentagem da velocidade normal. 100 = sem mudança. Só com a visão por mouse nativa.
 Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Velocidade do mouse com zoom de luneta (Longshot, Martelo da Aurora), em porcentagem da velocidade normal. 100 = sem mudança. Só com a visão por mouse nativa.
+# 0.6.0: delete a profile (machine-made translation, please check)
+DELETE THIS PROFILE = EXCLUIR ESTE PERFIL
+DELETE = EXCLUIR
+Delete this profile? = Excluir este perfil?
+Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = Os saves dele em todos os jogos, o nome e o ícone vão para a pasta _old-files do COGBox. O conteúdo baixado fica. Se ele tiver uma conta online, exclua-a primeiro na aba Social.
+Profile deleted: = Perfil excluído:
+Couldn't delete the profile: = Não foi possível excluir o perfil:

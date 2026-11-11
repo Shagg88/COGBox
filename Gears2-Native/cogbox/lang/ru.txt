@@ -1333,3 +1333,10 @@ Aim sensitivity (%) = Чувствительность при прицелива
 Zoom sensitivity (%) = Чувствительность при зуме (%)
 Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при прицеливании, в процентах от обычной. 100 = без изменений. Только с нативным обзором мышью.
 Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при зуме через прицел (Longshot, Молот Зари), в процентах от обычной. 100 = без изменений. Только с нативным обзором мышью.
+# 0.6.0: delete a profile (machine-made translation, please check)
+DELETE THIS PROFILE = УДАЛИТЬ ЭТОТ ПРОФИЛЬ
+DELETE = УДАЛИТЬ
+Delete this profile? = Удалить этот профиль?
+Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = Его сохранения во всех играх, имя и значок будут перемещены в папку _old-files COGBox. Загруженный контент останется. Если у него есть онлайн-аккаунт, сначала удалите его на вкладке Social.
+Profile deleted: = Профиль удалён:
+Couldn't delete the profile: = Не удалось удалить профиль:

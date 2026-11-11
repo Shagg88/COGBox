@@ -1333,3 +1333,10 @@ Aim sensitivity (%) = Célzási érzékenység (%)
 Zoom sensitivity (%) = Zoom érzékenység (%)
 Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Az egér sebessége célzáskor, a normál sebesség százalékában. 100 = változatlan. Csak natív egérnézettel.
 Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Az egér sebessége távcsöves zoomnál (Longshot, Hammer of Dawn), a normál sebesség százalékában. 100 = változatlan. Csak natív egérnézettel.
+# 0.6.0: delete a profile (machine-made translation, please check)
+DELETE THIS PROFILE = PROFIL TÖRLÉSE
+DELETE = TÖRLÉS
+Delete this profile? = Törlöd ezt a profilt?
+Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = A mentései minden játékban, a neve és az ikonja a COGBox _old-files mappájába kerülnek. A letöltött tartalom marad. Ha van online fiókja, előbb azt töröld a Social fülön.
+Profile deleted: = Profil törölve:
+Couldn't delete the profile: = A profilt nem sikerült törölni:

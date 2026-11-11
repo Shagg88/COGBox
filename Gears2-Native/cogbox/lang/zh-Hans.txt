@@ -1333,3 +1333,10 @@ Aim sensitivity (%) = 瞄准灵敏度 (%)
 Zoom sensitivity (%) = 缩放灵敏度 (%)
 Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 瞄准时的鼠标速度，为正常速度的百分比。100 = 不变。仅限原生鼠标视角。
 Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 通过瞄准镜缩放时的鼠标速度（长枪、黎明之锤），为正常速度的百分比。100 = 不变。仅限原生鼠标视角。
+# 0.6.0: delete a profile (machine-made translation, please check)
+DELETE THIS PROFILE = 删除此配置文件
+DELETE = 删除
+Delete this profile? = 删除此配置文件？
+Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = 它在所有游戏中的存档、名称和图标将移到 COGBox 的 _old-files 文件夹。下载的内容会保留。如果它有在线账户，请先在 Social 标签页中删除。
+Profile deleted: = 配置文件已删除：
+Couldn't delete the profile: = 无法删除配置文件：

@@ -151,6 +151,7 @@ void achievements_tab_open_all();
 // social_tab.cpp (social step 3): the SOCIAL tab, and its worker (re)started from CogBox.ini [Online] and the profile
 void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1);
 void social_restart(App &a);
+bool social_delete_busy();   // 0.6.0: DELETE ONLINE ACCOUNT is still waiting for the server
 void social_send_icon(App &a);   // the profile picture friends see (at sign-in and when it changes)
 void social_remove_answer(int answer);
 void social_delete_answer(App &a, int answer);   // DELETE ONLINE ACCOUNT, after the player confirmed

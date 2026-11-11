@@ -1333,3 +1333,10 @@ Aim sensitivity (%) = 조준 감도 (%)
 Zoom sensitivity (%) = 줌 감도 (%)
 Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 조준 중 마우스 속도(일반 속도 대비 %). 100 = 변경 없음. 네이티브 마우스 시점 전용.
 Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 스코프 줌 중 마우스 속도(롱샷, 해머 오브 던)(일반 속도 대비 %). 100 = 변경 없음. 네이티브 마우스 시점 전용.
+# 0.6.0: delete a profile (machine-made translation, please check)
+DELETE THIS PROFILE = 이 프로필 삭제
+DELETE = 삭제
+Delete this profile? = 이 프로필을 삭제할까요?
+Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = 모든 게임의 저장 데이터, 이름, 아이콘이 COGBox의 _old-files 폴더로 이동됩니다. 다운로드한 콘텐츠는 그대로 남습니다. 온라인 계정이 있다면 먼저 Social 탭에서 삭제하세요.
+Profile deleted: = 프로필 삭제됨:
+Couldn't delete the profile: = 프로필을 삭제할 수 없습니다:

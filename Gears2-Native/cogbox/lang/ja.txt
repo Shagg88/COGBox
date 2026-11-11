@@ -1333,3 +1333,10 @@ Aim sensitivity (%) = エイム感度 (%)
 Zoom sensitivity (%) = ズーム感度 (%)
 Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = エイム中のマウス速度（通常速度に対する割合）。100 = 変更なし。ネイティブのマウス視点のみ。
 Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = スコープでズーム中のマウス速度（ロングショット、ハンマー・オブ・ドーン）（通常速度に対する割合）。100 = 変更なし。ネイティブのマウス視点のみ。
+# 0.6.0: delete a profile (machine-made translation, please check)
+DELETE THIS PROFILE = このプロファイルを削除
+DELETE = 削除
+Delete this profile? = このプロファイルを削除しますか？
+Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = すべてのゲームのセーブ、名前、アイコンは COGBox の _old-files フォルダーに移動されます。ダウンロードしたコンテンツは残ります。オンラインアカウントがある場合は、先に Social タブで削除してください。
+Profile deleted: = プロファイルを削除しました:
+Couldn't delete the profile: = プロファイルを削除できませんでした:

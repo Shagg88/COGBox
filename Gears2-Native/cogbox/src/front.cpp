@@ -5,6 +5,8 @@
 #include "theme.h"
 #include "i18n.h"   // 0.2.0
 #include "update.h"
+#include "social_client.h"   // 0.6.0: social_stop (deleting a profile)
+#include "profiles.h"   // 0.6.0: profile_dir (deleting a profile)
 #include "imgui_internal.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -437,6 +439,89 @@ void player_icon_rescan();
 // 0.4.6 (Shagg 6 Nov): the player plate on the front screen - an initial in a crimson ring, PLAYER over the name.
 // Click (or Back / View) opens a small box to change the name: CogBox.ini [Profile] Gamertag, the same rules as the
 // runtime's Player1Gamertag (ASCII letters, digits and spaces, 15 at most; empty means "User").
+// 0.6.0 (Shagg 11 Nov): delete a profile (2..Count; profile 1 holds every old save and the shared downloaded content, so it
+// stays). Nothing is erased: its saves in every game, its online identity folder and its name / icon go to
+// <exe>\_old-files\deleted-profile-<id>-<stamp>. The profiles above it move down one number (folders + CogBox.ini), so the
+// ids stay 1..Count. Only with no game running. Returns "" or what went wrong (nothing is renumbered after a failure).
+// a directory junction (mount point) - never a symlink or a cloud placeholder - so removing it removes only the link
+static bool is_junction(const std::string &path)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(widen(path).c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    FindClose(h);
+    return (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT;
+}
+static std::string profile_delete(App &a, int d)
+{
+    const int count = std::max<int>(1, (int)a.ini.geti("Profiles", "Count", 1));
+    if (d < 2 || d > count) return "this profile can't be deleted";
+    if (a.run.proc) return "close the game first";
+    if (social_delete_busy()) return "wait until the online account delete has finished";
+    const std::string aside = join(join(exe_dir(), "_old-files"), "deleted-profile-" + std::to_string(d) + "-" + now_stamp());
+    if (dir_exists(aside)) return "try again in a second";
+    auto gname = [](int g) { std::string r = game_root(g); return r.substr(r.find_last_of('\\') + 1); };
+    // every move, in order: the profile's own folders out of the way, then each higher profile down one number.
+    // A missing source is skipped; an existing target stops everything before anything moves.
+    std::vector<std::pair<std::string, std::string>> plan;
+    for (int g = 0; g < G_COUNT; g++) {
+        const std::string u = game_user_dir_for(g, d);
+        plan.push_back({ u, join(join(aside, gname(g)), u.substr(u.find_last_of('\\') + 1)) });
+    }
+    plan.push_back({ profile_dir(exe_dir(), std::to_string(d)), join(aside, "online-identity") });
+    for (int k = d + 1; k <= count; k++) {
+        for (int g = 0; g < G_COUNT; g++) plan.push_back({ game_user_dir_for(g, k), game_user_dir_for(g, k - 1) });
+        plan.push_back({ profile_dir(exe_dir(), std::to_string(k)), profile_dir(exe_dir(), std::to_string(k - 1)) });
+    }
+    // the online worker uses the signed-in profile's identity folder: stopped while its folder moves
+    if (!social_stop_wait(5000)) { social_restart(a); return "the online connection is busy - try again in a moment"; }
+    std::vector<std::pair<std::string, std::string>> done;
+    std::string err;
+    for (auto &m : plan) {
+        if (!dir_exists(m.first)) continue;
+        if (dir_exists(m.second)) { err = "a folder is in the way: " + m.second; break; }
+        make_dirs(m.second.substr(0, m.second.find_last_of('\\')));
+        if (!MoveFileExW(widen(m.first).c_str(), widen(m.second).c_str(), 0)) { err = "couldn't move " + m.first + " (is a file in it open?)"; break; }
+        done.push_back(m);
+    }
+    if (!err.empty()) {   // put everything back, newest first; CogBox.ini is untouched
+        std::string stuck;
+        for (auto it = done.rbegin(); it != done.rend(); ++it)
+            if (!MoveFileExW(widen(it->second).c_str(), widen(it->first).c_str(), 0)) stuck += it->second + "  ->  should be  " + it->first + "\r\n";
+        social_restart(a);
+        if (stuck.empty()) return err;
+        make_dirs(join(exe_dir(), "_old-files"));
+        const std::string note = join(join(exe_dir(), "_old-files"), "profile-delete-NOT-UNDONE-" + now_stamp() + ".txt");
+        write_file(note, "Deleting a profile failed (" + err + ") and these folders could not be moved back.\r\nMove each one back by hand (with COGBox closed):\r\n" + stuck);
+        return err + " - and some folders could not be moved back: see " + note;
+    }
+    // the moved-aside saves' links to the shared downloaded content: removed (only the link), so cleaning up _old-files
+    // can never reach the shared content through them
+    std::string linkLeft;
+    for (int g = 0; g < G_COUNT; g++) {
+        const std::string u = game_user_dir_for(g, d);
+        const std::string l = join(join(join(aside, gname(g)), u.substr(u.find_last_of('\\') + 1)), "0000000000000000");
+        if (is_junction(l) && !RemoveDirectoryW(widen(l).c_str())) linkLeft = l;
+    }
+    const std::string sec = "Profile." + std::to_string(d);
+    std::string keep = "[" + sec + "]\r\n";
+    for (auto &kv : a.ini.section(sec)) keep += kv.first + " = " + kv.second + "\r\n";
+    make_dirs(aside); write_file(join(aside, "profile.ini"), keep);
+    if (!linkLeft.empty()) write_file(join(aside, "READ ME - contains a link.txt"), "This folder still has a link to the shared downloaded content:\r\n" + linkLeft + "\r\nDelete only that link (it is not a real folder), never what it shows.\r\n");
+    a.ini.clear_section(sec);
+    for (int k = d + 1; k <= count; k++) {
+        const std::string from = "Profile." + std::to_string(k), to = "Profile." + std::to_string(k - 1);
+        a.ini.clear_section(to);
+        for (auto &kv : a.ini.section(from)) a.ini.set(to, kv.first, kv.second);
+        a.ini.clear_section(from);
+    }
+    const int cur = current_profile();
+    const int now = cur == d ? 1 : cur > d ? cur - 1 : cur;
+    a.ini.seti("Profiles", "Count", count - 1); a.ini.seti("Profiles", "Current", now); a.ini.save();
+    set_current_profile(now); social_restart(a);
+    return "";
+}
+
 // 0.4.9 split-screen: `slot` 2-4 = the extra players' plates (shown when the game in front has Players 2+), [Profile]
 // Gamertag2..4 (--user_gamertag2..4, SDK patch 71); empty means "Player N". Same look; no icon and no D-pad stop for them.
 // Returns the plate's width.
@@ -492,6 +577,7 @@ static float player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav, int slot =
     static char buf[16] = {};
     static bool iconView = false;   // the box shows the ICON grid in place of the name
     static bool profView = false;   // 0.5.0: the box shows the profile list
+    static bool delAsk = false;     // 0.6.0: "Delete this profile" asked, waiting for the second press
     if (click || (slot == 1 && nav && (ImGui::IsKeyPressed(ImGuiKey_GamepadBack, false) ||
                           (psel && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false))))) {
         std::snprintf(buf, sizeof(buf), "%s", name.c_str());
@@ -504,6 +590,7 @@ static float player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav, int slot =
       if (profView) {
         // 0.5.0 (Shagg): profiles - each person's own name, icon and saves (downloaded content is shared). Profile 1 is
         // the one from before (every old save). Switching changes player 1; players 2-4 stay.
+        if (ImGui::IsWindowAppearing()) delAsk = false;   // a confirm left open last time isn't kept
         ImGui::PushFont(F_BOLD, FS(F_BOLD)); ImGui::TextUnformatted(tr("PROFILES")); ImGui::PopFont();
         ImGui::TextColored(col::dim, "%s", tr("Each profile has its own name, icon and saves in every game."));
         ImGui::Spacing();
@@ -527,7 +614,29 @@ static float player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav, int slot =
             buf[0] = 0; profView = false;   // straight to its name
         }
         ImGui::SameLine(0, S(10));
-        if (th_button("BACK##profback", ImVec2(S(120), T(28)), true, F_BOLD) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) profView = false;
+        if (th_button("BACK##profback", ImVec2(S(120), T(28)), true, F_BOLD) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) { profView = false; delAsk = false; }
+        // 0.6.0: delete the signed-in profile (not profile 1), after a second press on a red confirm button
+        if (cur > 1) {
+            ImGui::Spacing();
+            if (!delAsk) {
+                if (th_button("DELETE THIS PROFILE##profdel", ImVec2(S(300), T(28)), !a.run.proc, F_BOLD)) delAsk = true;
+            } else {
+                std::string cn = a.ini.get("Profile." + std::to_string(cur), "Gamertag");
+                if (cn.find_first_not_of(' ') == std::string::npos) cn = std::string(tr("Profile")) + " " + std::to_string(cur);
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + S(300));
+                ImGui::TextColored(col::bad, "%s %s", tr("Delete this profile?"), cn.c_str());
+                ImGui::TextColored(col::dim, "%s", tr("Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab."));
+                ImGui::PopTextWrapPos();
+                if (th_button_red("DELETE##profdelyes", ImVec2(S(140), T(28)), !a.run.proc, F_BOLD)) {
+                    const std::string err = profile_delete(a, cur);
+                    if (err.empty()) set_message(a, std::string(tr("Profile deleted:")) + " " + cn, false);
+                    else set_message(a, std::string(tr("Couldn't delete the profile:")) + " " + err, true);
+                    delAsk = false; profView = false; ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine(0, S(10));
+                if (th_button("CANCEL##profdelno", ImVec2(S(140), T(28)), true, F_BOLD)) delAsk = false;
+            }
+        }
       } else if (iconView) {
         // 0.4.6: the icon grid (player_icon.cpp). D-pad moves, A picks, B closes (Dear ImGui's own nav cancel).
         if (player_icon_picker(a, letter)) { iconView = false; social_send_icon(a); }
