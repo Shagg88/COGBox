@@ -35,7 +35,7 @@ describe('buildEmbed', () => {
 
   it('puts core services side by side with their response time', () => {
     const e = buildEmbed(core, 0);
-    expect(e.fields[0]).toMatchObject({ name: '🟢 Matchmaking server', value: 'up 2d 3h\n`12 ms`', inline: true });
+    expect(e.fields[0]).toMatchObject({ name: '🟢 Matchmaking server', value: 'up 2d 3h\n`12 ms`\n​', inline: true });
     expect(e.fields[1]).toMatchObject({ name: '🟢 STUN (UDP 3478)', inline: true });
   });
 
