@@ -78,7 +78,10 @@ bool Copy(uint32_t address, void* out, size_t size) {
   if (address >= 0x7FC00000 && address < 0x80000000) return false;  // GPU registers
   for (uint32_t page = address & ~4095u; page <= uint32_t(address + size - 1); page += 4096)
     if (!GuestPageReadable(page)) return false;
-  return CopyRaw(out, Host(address), size);
+  if (CopyRaw(out, Host(address), size)) return true;
+  for (uint32_t page = address & ~4095u; page <= uint32_t(address + size - 1); page += 4096)   // freed since: ask again
+    g_readablePages[page >> 17].fetch_and(~(1u << ((page >> 12) & 31)), std::memory_order_relaxed);
+  return false;
 }
 
 template <class F>
@@ -244,17 +247,35 @@ bool Readable(uint32_t address, uint32_t size) {
   return Copy(address, &probe, 1) && Copy(address + size - 1, &probe, 1);
 }
 
+// 0.6.0 review: the readable-page bitmap (GuestPageReadable) never forgets a page, so a page the game freed since it
+// was read still passes Readable; the write itself is caught like CopyRaw's read, and that page is asked about again.
+bool WriteRaw(void* dst, const void* src, size_t size) {
+  __try {
+    std::memcpy(dst, src, size);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
+void ForgetPage(uint32_t address) {
+  if (address < 0xC0000000u) g_readablePages[address >> 17].fetch_and(~(1u << ((address >> 12) & 31)), std::memory_order_relaxed);
+}
+
 bool Write32(uint32_t address, uint32_t value) {
   if (!Readable(address, 4)) return false;
   const uint32_t be = Swap(value);
-  std::memcpy(Host(address), &be, 4);
-  return true;
+  if (WriteRaw(Host(address), &be, 4)) return true;
+  ForgetPage(address);
+  ForgetPage(address + 3);
+  return false;
 }
 
 bool Write8(uint32_t address, uint8_t value) {
   if (!Readable(address, 1)) return false;
-  *Host(address) = value;
-  return true;
+  if (WriteRaw(Host(address), &value, 1)) return true;
+  ForgetPage(address);
+  return false;
 }
 
 std::string Name(uint32_t index) {

@@ -78,6 +78,13 @@ namespace modcore
         bool Active() const { return enabled && problem.empty(); }
     };
 
+    // 0.6.0 review: a path as UTF-8 (path::string() throws on MinGW for a name outside the ANSI code page)
+    inline std::string U8(const std::filesystem::path& p)
+    {
+        const auto u = p.u8string();
+        return std::string(u.begin(), u.end());
+    }
+
     inline std::string Lower(std::string s)
     {
         std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(tolower(c)); });
@@ -95,7 +102,7 @@ namespace modcore
     {
         Manifest m;
         m.dir = dir;
-        m.folder = m.name = dir.filename().string();
+        m.folder = m.name = U8(dir.filename());
         std::ifstream in(dir / "mod.ini");
         std::string line;
         bool first = true;
@@ -318,7 +325,7 @@ namespace modcore
                 continue;
             }
             if (!it->is_regular_file(ec)) continue;
-            const std::string game = GamePath(std::filesystem::relative(it->path(), m.dir, ec).string(), cooked);
+            const std::string game = GamePath(U8(std::filesystem::relative(it->path(), m.dir, ec)), cooked);
             if (!game.empty()) out.emplace_back(game, it->path());
         }
         std::sort(out.begin(), out.end());
@@ -332,7 +339,7 @@ namespace modcore
         std::error_code ec;
         if (m.loose) return out;
         for (const auto& e : std::filesystem::directory_iterator(m.dir / "config", ec))
-            if (e.is_regular_file(ec) && Lower(e.path().extension().string()) == ".ini") out.push_back(e.path());
+            if (e.is_regular_file(ec) && Lower(U8(e.path().extension())) == ".ini") out.push_back(e.path());
         std::sort(out.begin(), out.end());
         return out;
     }
@@ -352,7 +359,7 @@ namespace modcore
             std::error_code ec;
             text += m.name + "|" + m.version + "|";
             for (const auto& [game, file] : Files(m)) text += game + ":" + std::to_string(std::filesystem::file_size(file, ec)) + ";";
-            for (const auto& f : Fragments(m)) text += "config\\" + Lower(f.filename().string()) + ":" + std::to_string(std::filesystem::file_size(f, ec)) + ";";
+            for (const auto& f : Fragments(m)) text += "config\\" + Lower(U8(f.filename())) + ":" + std::to_string(std::filesystem::file_size(f, ec)) + ";";
             text += "\n";
             s.summary += (s.summary.empty() ? "" : ", ") + m.name + (m.version.empty() ? "" : " " + m.version);
         }

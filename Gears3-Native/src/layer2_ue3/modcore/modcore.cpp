@@ -152,7 +152,7 @@ namespace
             if (lineNo == 1 && line.size() >= 3 && (uint8_t)line[0] == 0xEF && (uint8_t)line[1] == 0xBB && (uint8_t)line[2] == 0xBF) line.erase(0, 3);
             line = Trim(line);
             if (line.empty() || line[0] == ';' || (line[0] == '#' && line.rfind("#####", 0) != 0)) continue;
-            auto bad = [&](const char* why) { if (log) log(modName + " " + fragment.filename().string() + ":" + std::to_string(lineNo) + ": " + why); };
+            auto bad = [&](const char* why) { if (log) log(modName + " " + U8(fragment.filename()) + ":" + std::to_string(lineNo) + ": " + why); };
             if (line.rfind("#####", 0) == 0)
             {
                 const std::u16string want = LowerW(Widen(Trim(line.substr(5))));
@@ -218,7 +218,7 @@ std::vector<uint8_t> MergeConfig(const std::vector<uint8_t>& base, const std::ve
     for (const auto& [mod, frag] : fragments)
     {
         const int n = Apply(files, frag, mod, log);
-        if (log) log("config " + frag.filename().string() + " from " + mod + ": " + std::to_string(n) + " lines");
+        if (log) log("config " + U8(frag.filename()) + " from " + mod + ": " + std::to_string(n) + " lines");
     }
     return Write(files);
 }
