@@ -9,6 +9,8 @@ export const IDLE_MS = 30 * 60_000;
 export const MAX_FAILED = 5;
 export const LOCK_MS = 15 * 60_000;
 export const BAD_LOGIN = 'Wrong name, password or code.';
+// The typed name of an unknown account is not stored: it may be a password typed in the wrong field.
+export const UNKNOWN_NAME = '(unknown name)';
 export const LOCKED = 'Locked for 15 minutes after 5 failed sign-ins.';
 
 // Routes a session with must_change set may still use.
@@ -32,7 +34,7 @@ function sameText(a: string, b: string): boolean {
 
 export type LoginResult =
   | { ok: true; id: string; must_change: boolean }
-  | { ok: false; locked: boolean; name: string };
+  | { ok: false; locked: boolean; name: string }; // name is UNKNOWN_NAME for an unknown account
 
 // A hash to verify against for unknown names, so they take as long as known ones.
 let dummyHash: Promise<string> | undefined;
@@ -49,17 +51,21 @@ export async function login(db: Db, body: unknown, now: number): Promise<LoginRe
   const pwOk = await verifyPassword(user ? user.pw_hash : await dummyHash, password);
   const step = user ? checkTotp(user.totp_secret, code, now, user.last_totp_step) : null;
 
-  if (!user || !pwOk || step === null || !password || !code) {
+  // Claim the step in one statement: the row read above is stale after the await, and a concurrent
+  // login with the same code (or a lock set meanwhile) must make this one fail.
+  const claimed = user && pwOk && step !== null && password && code &&
+    db.prepare('UPDATE users SET failed = 0, locked_until = 0, last_totp_step = ? WHERE name = ? AND last_totp_step < ? AND locked_until <= ?')
+      .run(step, name, step, now).changes === 1;
+
+  if (!claimed) {
     if (user) {
-      const failed = user.failed + 1;
+      // Counted in SQL so parallel failures all count.
+      const { failed } = db.prepare('UPDATE users SET failed = failed + 1 WHERE name = ? RETURNING failed').get(name) as { failed: number };
       if (failed >= MAX_FAILED) db.prepare('UPDATE users SET failed = 0, locked_until = ? WHERE name = ?').run(now + LOCK_MS, name);
-      else db.prepare('UPDATE users SET failed = ? WHERE name = ?').run(failed, name);
     }
-    return { ok: false, locked: false, name };
+    return { ok: false, locked: false, name: user ? name : UNKNOWN_NAME };
   }
 
-  // Recording the step makes this code (and any older one) unusable again.
-  db.prepare('UPDATE users SET failed = 0, locked_until = 0, last_totp_step = ? WHERE name = ?').run(step, name);
   const id = randomBytes(32).toString('hex');
   db.prepare('INSERT INTO sessions (id, name, csrf, created, seen) VALUES (?, ?, ?, ?, ?)')
     .run(sessionKey(id), name, randomBytes(32).toString('hex'), now, now);

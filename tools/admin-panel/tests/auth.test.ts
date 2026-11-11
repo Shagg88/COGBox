@@ -166,10 +166,22 @@ describe('auth', () => {
     await app.inject({ method: 'POST', url: '/admin/api/logout', headers: { cookie, 'x-csrf-token': csrf } });
     expect(auditRows()).toEqual([
       { name: 'alice', action: 'login_failed' },
-      { name: 'bob', action: 'login_failed' },
+      { name: '(unknown name)', action: 'login_failed' },
       { name: 'alice', action: 'login' },
       { name: 'alice', action: 'logout' },
     ]);
+  });
+
+  it('concurrent logins with one code: exactly one succeeds', async () => {
+    const c = code();
+    const rs = await Promise.all([login({ name: 'alice', password, code: c }), login({ name: 'alice', password, code: c })]);
+    expect(rs.map((r) => r.statusCode).sort()).toEqual([200, 401]);
+    expect(db.prepare('SELECT count(*) AS n FROM sessions').get()).toEqual({ n: 1 });
+  });
+
+  it('parallel failures all count towards the lock', async () => {
+    await Promise.all(Array.from({ length: 5 }, () => login({ name: 'alice', password: 'nope', code: '000000' })));
+    expect((await login({ name: 'alice', password, code: code() })).statusCode).toBe(423);
   });
 
   it('login is rate limited to 10 a minute', async () => {
