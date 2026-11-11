@@ -5,6 +5,8 @@
 # (127.0.0.1:8090) are loopback only. Caddy on the same host is the only way in. The firewall allows 22, 80, 443
 # and UDP 3478; never open 8080, 8090 or 2375. There are no ports: entries because every service uses host networking.
 # admin.env holds ADMIN_SHARED_SECRET and exists on the server only (see ../../admin-panel/RUNBOOK.md).
+# pinned: the admin panel and the socket-proxy allowlist use the container names cogbox-master-<service>-1
+name: cogbox-master
 services:
   master-server:
     build: .

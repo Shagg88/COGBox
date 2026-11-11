@@ -32,7 +32,7 @@ To restart: press the button, type the word `RESTART`, confirm.
 
 ## Backups
 
-Press **Backup now**. The server keeps the newest 14.
+Press **Back up database now**. The server keeps the newest 14.
 
 Do it:
 - before Flippage updates the server (ask him if unsure),
