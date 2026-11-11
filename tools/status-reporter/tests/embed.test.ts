@@ -48,6 +48,7 @@ describe('buildEmbed', () => {
     expect(f.value).toContain('Matchmaking');
     expect(f.value).toContain('🟩');
     expect(f.value).toContain('100%');
+    expect(f.value).toContain('🟩\n\n**STUN**');
     expect(e.fields.find((x) => x.name.startsWith('🛠'))!.value).toBe('No outages recorded');
   });
 

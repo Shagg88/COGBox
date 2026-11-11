@@ -37,7 +37,7 @@ export function buildEmbed(lines: Line[], nowMs: number, x: Extras = {}): Embed 
     const h = x.history;
     const row = (svc: Svc, label: string) =>
       `**${label}** · 24h ${pct(uptimePct(h, svc, 24, nowMs))} · 7d ${pct(uptimePct(h, svc, 168, nowMs))}\n${bar(h, svc, nowMs)}`;
-    fields.push({ name: '📈 Last 24 hours', value: clip(`${row('master', 'Matchmaking')}\n${row('stun', 'STUN')}`, 1024) });
+    fields.push({ name: '📈 Last 24 hours', value: clip(`${row('master', 'Matchmaking')}\n\n${row('stun', 'STUN')}`, 1024) });
     fields.push({ name: '🛠 Last incident', value: clip(lastIncidentText(h, nowMs), 1024) });
   }
   fields.push(...rest.map(field));
