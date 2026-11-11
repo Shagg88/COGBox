@@ -22,7 +22,7 @@ $VER
 X
 printf '#define VERSION_RC %s,%s,%s,0\n#define VERSION_STR "%s"\n' "$A" "$B" "${C:-0}" "$VER" > res/version_rc.h
 x86_64-w64-mingw32-windres -I res res/cogbox.rc -O coff -o $OUT/obj/cogbox.res.o
-FLAGS="$OPT -std=c++17 -Wall -Wextra -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX -Ithird_party/imgui -I$SDL/include -Ithird_party -Isrc -I../src/layer2_ue3/include -I../src/layer0_xenos/include $FFDEF"
+FLAGS="$OPT -std=c++17 -Wall -Wextra -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX -Ithird_party/imgui -I$SDL/include -Ithird_party -Isrc -I../src/layer2_ue3/include -I../src/layer0_xenos/include -I../../Gears3-Native/src/layer2_ue3 $FFDEF"
 objs=""
 for f in third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp \
          third_party/imgui/imgui_impl_sdl3.cpp third_party/imgui/imgui_impl_sdlrenderer3.cpp; do
@@ -36,7 +36,7 @@ for f in third_party/lzma/*.c; do
   o=$OUT/obj/lzma_$(basename $f .c).o; objs="$objs $o"
   [ -f $o ] && [ $o -nt $f ] || x86_64-w64-mingw32-gcc $OPT -w -DZ7_EXTRACT_ONLY -c $f -o $o
 done
-for f in src/*.cpp ../src/layer2_ue3/prebuild_lzx.cpp ../src/layer0_xenos/achievements_data.cpp \
+for f in src/*.cpp ../src/layer2_ue3/prebuild_lzx.cpp ../src/layer0_xenos/achievements_data.cpp ../../Gears3-Native/src/layer2_ue3/modcore/modcore.cpp \
          ../src/layer0_xenos/achievements_browser_model.cpp ../src/layer0_xenos/achievements_popup_logic.cpp; do   # (the LZX decoder: Gears2-Native's own, MIT)
   case $f in src/hello.cpp) continue;; esac
   o=$OUT/obj/$(basename $f .cpp).o; objs="$objs $o"

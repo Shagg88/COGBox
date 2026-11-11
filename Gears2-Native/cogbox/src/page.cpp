@@ -1057,6 +1057,10 @@ static void mods_tab(App &a, int g)
                 if (th_button(tr("Down"), ImVec2(bw, T(26)), true, F_BODY)) { mods_move(a, g, m.folder, 1); changed = true; }
             }
             if (running) ImGui::EndDisabled();
+            // Gears 3: what the game will make of it (mods.cpp apply_mod_rules)
+            if (m.enabled && !m.problem.empty()) lamp_line(3, "Left out by the game: " + m.problem);
+            else if (m.enabled && !m.campaign.empty()) lamp_line(1, m.campaign);
+            for (const std::string &n : m.notes) ui_note("mod.ini: " + n, col::amber);
             ImGui::PopID();
         }
         ImGui::Dummy(ImVec2(0, S(4)));
