@@ -35,6 +35,7 @@
 #include "gow3_addresses.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <atomic>
 #include <chrono>
@@ -183,6 +184,81 @@ bool FillChapterTable() {
   return true;
 }
 
+// ---- [ClassDefaults]: class defaults a campaign's chapters play with ----------------------------------------------
+// mod.ini `[ClassDefaults] Class.Property = value` (bool true/false, int, float with a '.', byte 0-255): written into
+// Default__Class (and every live instance of the class) when one of the campaign's chapter maps loads, and the old
+// values put back when another map loads. Spawned actors copy their class default, so the next spawn has it.
+// The trilogy: GearPawn_COGMarcusG2MP.bForceStretchToMarcusSkeleton = false - the multiplayer base forces
+// AnimRotationOnly 2 (every animation rotation only, for skeletons other than Marcus's) where the campaign classes use
+// 1 (each AnimSet's own setting); the classic Marcus is Marcus's skeleton, and his arms twitched in the radio stance.
+struct Applied { uint32_t at; uint32_t mask; uint32_t old; std::string what; };   // mask 0: the whole word / byte
+std::vector<Applied> g_applied;
+
+void RestoreClassDefaults() {
+  for (const Applied& a : g_applied) {
+    if (a.mask) obj::Write32(a.at, (obj::Read32(a.at) & ~a.mask) | (a.old & a.mask));
+    else if (a.what == "byte") obj::Write8(a.at, uint8_t(a.old));
+    else obj::Write32(a.at, a.old);
+  }
+  if (!g_applied.empty()) REXLOG_INFO("mod_api: class defaults: {} restored", g_applied.size());
+  g_applied.clear();
+}
+
+void ApplyClassDefaults(const std::string& map) {
+  RestoreClassDefaults();
+  for (const ue3::ClassDefaultEdit& e : ue3::ModClassDefaultsForMap(map)) {
+    const uint32_t cls = obj::FindClass(e.cls.c_str());
+    const uint32_t def = obj::FindObject(("Default__" + e.cls).c_str());
+    const int off = cls ? obj::PropertyOffset(cls, e.prop.c_str()) : -1;
+    if (!cls || !def || off < 0) {
+      REXLOG_WARN("mod_api: class defaults: {}.{} - {} not found", e.cls, e.prop, !cls || !def ? "class" : "property");
+      continue;
+    }
+    const uint32_t mask = obj::BoolMask(cls, e.prop.c_str());
+    const int size = obj::PropertySize(cls, e.prop.c_str());
+    std::string low = e.value;
+    for (char& c : low) c = char(std::tolower(uint8_t(c)));
+    uint32_t word = 0;
+    std::string kind;
+    try {
+    if (mask) {
+      kind = "bool";
+      word = (low == "true" || low == "1") ? mask : 0;
+    } else if (size == 1) {
+      kind = "byte", word = uint32_t(std::stoul(e.value)) & 0xFF;
+    } else if (size == 4 && e.value.find('.') != std::string::npos) {
+      const float f = std::stof(e.value);
+      std::memcpy(&word, &f, 4), kind = "float";
+    } else if (size == 4) {
+      kind = "int", word = uint32_t(std::stol(e.value));
+    } else {
+      REXLOG_WARN("mod_api: class defaults: {}.{} - not a bool, byte, int or float property", e.cls, e.prop);
+      continue;
+    }
+    } catch (const std::exception&) {
+      REXLOG_WARN("mod_api: class defaults: {}.{} = {} - not a number", e.cls, e.prop, e.value);
+      continue;
+    }
+    std::vector<uint32_t> targets{def};
+    for (uint32_t o : obj::FindInstancesOf(cls)) targets.push_back(o);
+    for (uint32_t o : targets) {
+      const uint32_t at = o + uint32_t(off);
+      if (mask) {
+        const uint32_t old = obj::Read32(at);
+        g_applied.push_back({at, mask, old, kind});
+        obj::Write32(at, (old & ~mask) | word);
+      } else if (kind == "byte") {
+        g_applied.push_back({at, 0, obj::Read32(at) >> 24, kind});
+        obj::Write8(at, uint8_t(word));
+      } else {
+        g_applied.push_back({at, 0, obj::Read32(at), kind});
+        obj::Write32(at, word);
+      }
+    }
+    REXLOG_INFO("mod_api: class defaults: {}.{} = {} ({} objects)", e.cls, e.prop, e.value, targets.size());
+  }
+}
+
 // ---- while a new chapter's map is loaded ----------------------------------------------------------------------------
 
 void ChapterKeeper() {
@@ -202,7 +278,11 @@ void ChapterKeeper() {
     if (!gameClass) continue;
     const auto games = obj::FindInstancesOf(gameClass);
     const uint32_t game = games.empty() ? 0 : games.front();
-    if (!game) { lastGame = 0; g_chapterGame = 0; g_chapterCap = 0; continue; }
+    if (!game) {
+      if (lastGame) RestoreClassDefaults();
+      lastGame = 0; g_chapterGame = 0; g_chapterCap = 0;
+      continue;
+    }
     if (game != lastGame) {  // a new map: which chapter's (its package loaded)
       lastGame = game;
       chapter = -1;
@@ -210,6 +290,7 @@ void ChapterKeeper() {
         if (const uint32_t p = obj::FindObject(map.c_str()); p && obj::ObjectName(obj::ClassOf(p)) == "Package") chapter = n;
       g_chapterGame = chapter >= 0 ? game : 0;
       g_chapterCap = chapter >= 0 ? ue3::ModMaxPlayersForMap(g_chapters[chapter]) : 0;
+      ApplyClassDefaults(chapter >= 0 ? g_chapters[chapter] : std::string());
       uint32_t top = game;
       for (int k = 0; k < 8 && obj::Read32(top + 40); k++) top = obj::Read32(top + 40);
       REXLOG_INFO("mod chapters: map {} loaded{}", obj::ObjectName(top), chapter >= 0 ? " (chapter " + std::to_string(chapter) + "'s)" : "");

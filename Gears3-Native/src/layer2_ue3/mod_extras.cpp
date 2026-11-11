@@ -194,6 +194,31 @@ int ModMaxPlayersForMap(const std::string& map) {
   return n;
 }
 
+std::vector<ClassDefaultEdit> ModClassDefaultsForMap(const std::string& map) {
+  auto same = [](const std::string& a, const std::string& b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+             return std::tolower(uint8_t(x)) == std::tolower(uint8_t(y));
+           });
+  };
+  std::lock_guard lock(g_mutex);
+  std::string campaign;
+  for (const modcore::Manifest& m : g_mods)
+    if (m.Active())
+      for (const modcore::ChapterDecl& c : m.chapters)
+        if (same(c.map, map)) campaign = m.campaign.id;
+  std::vector<ClassDefaultEdit> out;
+  if (campaign.empty()) return out;
+  for (const modcore::Manifest& m : g_mods) {
+    if (!m.Active() || m.campaign.id != campaign) continue;
+    for (const auto& d : m.class_defaults) {
+      auto it = std::find_if(out.begin(), out.end(), [&](const ClassDefaultEdit& e) { return same(e.cls, d.cls) && same(e.prop, d.prop); });
+      if (it != out.end()) it->value = d.value;
+      else out.push_back({d.cls, d.prop, d.value});
+    }
+  }
+  return out;
+}
+
 uint64_t ModFingerprint() { return g_fingerprint; }
 
 }  // namespace ue3

@@ -73,6 +73,7 @@ TEST_CASE("modcore campaigns: mod.ini [Campaign] and [Chapter.N]", "[modcore]") 
                            "ContentPackages = MPCH_A, MPCH_B\nSpeed = 2\n"
                            "[Chapter.3]\nTitle = no map\n"
                            "[Chapter.x]\nMap = Bad_P\n"
+                           "[ClassDefaults]\nGearPawn_X.bFlag = false\nnodot = 1\n"
                            "[Other]\npriority = 5\n");
   const modcore::Manifest m = modcore::Read(d);
   CHECK(m.name == "Chapter One");
@@ -83,13 +84,17 @@ TEST_CASE("modcore campaigns: mod.ini [Campaign] and [Chapter.N]", "[modcore]") 
   CHECK(m.campaign.order == 10);
   CHECK(m.campaign.squad_catch_up == 1500);
   CHECK(m.campaign.max_players == 2);
+  REQUIRE(m.class_defaults.size() == 1);
+  CHECK(m.class_defaults[0].cls == "GearPawn_X");
+  CHECK(m.class_defaults[0].prop == "bFlag");
+  CHECK(m.class_defaults[0].value == "false");
   REQUIRE(m.chapters.size() == 2);
   CHECK(m.chapters[0].number == 1);
   CHECK(m.chapters[0].map == "GOW1_SP_Prison_P");
   CHECK(m.chapters[0].location == "Jacinto");
   CHECK(m.chapters[1].number == 2);
   CHECK(m.content == std::vector<std::string>{"MPCH_A", "MPCH_B"});
-  CHECK(m.warnings.size() == 4);  // Colour, Speed, chapter 3 without a map, [Chapter.x]
+  CHECK(m.warnings.size() == 5);  // Colour, Speed, chapter 3 without a map, [Chapter.x], nodot
 }
 
 TEST_CASE("modcore campaigns: an old mod.ini reads as before", "[modcore]") {
