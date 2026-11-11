@@ -256,6 +256,10 @@ bool use_normal_code(const App &a, int g) { return a.ini.get("FastCode", std::st
 void play_start(App &a, int g, bool prepare)
 {
     if (a.run.proc) return;
+    // 0.6.0: a Join's room code is for this one start only - taken now, so a start that stops early (port missing,
+    // update, a question) doesn't leave it for the next ordinary Play, which would then join an old lobby
+    const std::string joinCode = a.joinLobby[g];
+    a.joinLobby[g].clear();
     const GameDef &d = game_def(g);
     refresh_games(a, false);
     GameState &st = a.st[g];
@@ -293,6 +297,7 @@ void play_start(App &a, int g, bool prepare)
                     "\n\n" + tr("Game files") + ": " + x360fs::xbox_version_string(xi.version) + "   " + tr("Title update for") +
                     ": " + x360fs::xbox_version_string(pi.base_version),
                 { tr("Play anyway"), tr("Cancel") });   // Shagg: no disc-version button
+            a.joinLobby[g] = joinCode;   // "Play anyway" starts again and still joins; main.cpp clears it on Cancel
             return;
         }
     }
@@ -343,8 +348,7 @@ void play_start(App &a, int g, bool prepare)
     bool useShared = dir_exists(shared);
     if (useShared) args.push_back("--gow2_dxc_dir=\"" + shared + "\"");
     // social step 3: Join friend from the SOCIAL tab - the game joins that lobby once it is at its menus (SDK patch 79, --net_join_lobby)
-    if (!a.joinLobby[g].empty() && !a.env[g].online_server.empty()) args.push_back("--net_join_lobby=" + a.joinLobby[g]);
-    a.joinLobby[g].clear();
+    if (!joinCode.empty() && !a.env[g].online_server.empty()) args.push_back("--net_join_lobby=" + joinCode);
     if (prepare) {   // job 641: build every shipped recipe, then the game saves its pipeline library and exits
         args.push_back("--gow2_renderer_prepare_all=true");
         DeleteFileW(widen(join(game_shader_dir(g), "prepare-progress.txt")).c_str());
