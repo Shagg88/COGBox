@@ -18,6 +18,7 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 
 #include <ue3/config_bundle.h>
 #include <ue3/launch.h>
+#include <ue3/script_input.h>
 #include <xenos/dev_tools.h>
 #include <xenos/display_size.h>
 #include <xenos/gpu_system.h>
@@ -69,6 +70,11 @@ class Gow1App : public rex::ReXApp {
   void OnPostSetup() override {
     CogMouseLookInstall(window());  // 0.2.1: native mouse look (mouse_look.cpp)
     XenosAddScriptPadIfRequested(runtime());
+    // developer mode: --cogbox_input_script (ue3/script_input.h). The engine's tables are found in memory; its object
+    // layout was (ue3/objects.h Discover, TU5 2026-11-11): the slot at +4, Outer +40, Name +44 (index, number), Class
+    // +52, SuperStruct +60, Children +76, Next +64, ElementSize +72, Offset +96, BitMask +124, 16-bit names at +16
+    Ue3InstallScriptInputIfRequested(runtime(), 0, 0,
+                                     {"WarPC", "WarPawn", "Pawn_Geist", "4,40,44,52,60,76,64,72,96,124,16,1,1"});
     Gow1AddBuiltInIniEdits();  // before the bundle is edited
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     Gow1HideLogosIfRequested(runtime());
