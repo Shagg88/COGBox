@@ -5,6 +5,7 @@ import type { Db } from './db.js';
 import type { DockerClient, MasterClient } from './types.js';
 import { audit } from './audit.js';
 import { setPassword } from './users.js';
+import { registerRoutes } from './routes.js';
 import { ABSOLUTE_MS, BAD_LOGIN, COOKIE, LOCKED, login, makeRequireSession } from './auth.js';
 
 export interface AppOptions {
@@ -71,5 +72,6 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     return { ok: true };
   });
 
+  registerRoutes(app, { db, now, master: opts.master, docker: opts.docker });
   return app;
 }
