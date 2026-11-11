@@ -10,7 +10,9 @@ services:
     build: .
     restart: unless-stopped
     network_mode: host
-    env_file: admin.env
+    env_file:
+      - path: admin.env
+        required: false
     environment:
       - NODE_ENV=production
       - PORT=18443
@@ -37,7 +39,10 @@ services:
     build: ../../admin-panel
     restart: unless-stopped
     network_mode: host
-    env_file: admin.env
+    # optional so a missing file never blocks the stack (compose checks every service); without the secret admin exits
+    env_file:
+      - path: admin.env
+        required: false
     environment:
       - HOST=127.0.0.1
       - PORT=8080
@@ -48,12 +53,14 @@ services:
     volumes:
       - admin-data:/data
   docker-proxy:
+    # The proxy image runs unprivileged: if the host socket is root:docker 660 it needs group_add with the host docker
+    # group id (getent group docker). Check its logs for "socket not available" after the first start.
     image: wollomatic/socket-proxy:1.13.1
     restart: unless-stopped
     network_mode: host
     command:
-      - '-allowGET=/v1\..{1,2}/containers/(cogbox-master-(master-server|coturn|caddy)-1/(json|logs.*))'
-      - '-allowPOST=/v1\..{1,2}/containers/cogbox-master-(master-server|coturn)-1/restart.*'
+      - '-allowGET=/v1\.[0-9]{1,2}/containers/cogbox-master-(master-server|coturn|caddy)-1/(json|logs)'
+      - '-allowPOST=/v1\.[0-9]{1,2}/containers/cogbox-master-(master-server|coturn)-1/restart'
       - '-listenip=127.0.0.1'
       - '-allowfrom=127.0.0.1'
     volumes:

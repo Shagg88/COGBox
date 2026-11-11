@@ -5,15 +5,15 @@ RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt
 COPY package*.json tsconfig.json ./
 RUN npm ci
 COPY src/ ./src/
-RUN npm run build
+RUN npm run build && npm prune --omit=dev
 
+# the runtime image gets the built modules only, no compilers
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV ADMIN_DB=/data/admin.db
-RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
-RUN npm ci --omit=dev
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY public/ ./public/
 # the volume must be owned by the unprivileged user before it is mounted
