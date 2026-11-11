@@ -569,30 +569,47 @@ void Gow3ModFName() {
 // config. Both constants are raised to the mods' act count (acts are numbered 0, 1, 2 ... with no gaps) in the
 // function's script, once, found by pattern (each exactly once in a script buffer of the function object, else
 // nothing is changed). Game thread, before the menu is built.
+//
+// The act row a mod's campaign sits in must also be reachable: every act is added with
+// `CurrentOption.SetBool("bHaltProgression", true)`, and the menu's carousel does not move past a locked act, so on a
+// profile that has not unlocked Acts II-V the mods' act could not be reached at all. That `true` (StringConst
+// 1F "bHaltProgression" 00, then 27 = True) becomes `false` (28): locked acts stay locked (their chapters still cannot
+// be started), the carousel only moves past them.
 void RaiseActCap() {
   const uint32_t fn = obj::FindObject("ConstructActList");
   if (!fn) return;   // not loaded yet
   g_actCapDone = true;
   const int acts = std::min(g_maxAct + 1, 255);  // #205 review: IntConstByte holds one byte
+  static const char kHalt[] = "" "bHaltProgression";   // StringConst, then the NUL and the bool (sizeof: 18)
+  bool capped = false, passable = false;
   for (uint32_t off = 0x20; off < 0x100; off += 4) {
     const uint32_t data = obj::Read32(fn + off), num = obj::Read32(fn + off + 4), cap = obj::Read32(fn + off + 8);
     if (num < 0x200 || num > 0x4000 || cap < num || !obj::Readable(data, num)) continue;
     const uint8_t* s = Mem()->TranslateVirtual<const uint8_t*>(data);
-    std::vector<uint32_t> ints, floats;
-    for (uint32_t i = 0; i + 5 <= num; i++) {
+    std::vector<uint32_t> ints, floats, halts;
+    for (uint32_t i = 0; i + sizeof(kHalt) + 1 <= num; i++) {
       if (s[i] == 0x2C && s[i + 1] == 0x05 && s[i + 2] == 0x16) ints.push_back(i);
       if (s[i] == 0x1E && s[i + 1] == 0x40 && s[i + 2] == 0xA0 && s[i + 3] == 0 && s[i + 4] == 0) floats.push_back(i);
+      if (std::memcmp(s + i, kHalt, sizeof(kHalt)) == 0 && s[i + sizeof(kHalt)] == 0x27) halts.push_back(i + sizeof(kHalt));
     }
-    if (ints.size() != 1 || floats.size() != 1) continue;
-    obj::Write8(data + ints[0] + 1, uint8_t(acts));
-    const float f = float(acts);
-    uint32_t u;
-    std::memcpy(&u, &f, 4);
-    for (int b = 0; b < 4; b++) obj::Write8(data + floats[0] + 1 + b, uint8_t(u >> (24 - 8 * b)));
-    REXLOG_INFO("mod chapters: Select Chapter lists {} acts (TU6's ConstructActList stopped at 5)", acts);
-    return;
+    if (!capped && ints.size() == 1 && floats.size() == 1) {
+      obj::Write8(data + ints[0] + 1, uint8_t(acts));
+      const float f = float(acts);
+      uint32_t u;
+      std::memcpy(&u, &f, 4);
+      for (int b = 0; b < 4; b++) obj::Write8(data + floats[0] + 1 + b, uint8_t(u >> (24 - 8 * b)));
+      REXLOG_INFO("mod chapters: Select Chapter lists {} acts (TU6's ConstructActList stopped at 5)", acts);
+      capped = true;
+    }
+    if (!passable && halts.size() == 1) {
+      obj::Write8(data + halts[0], 0x28);
+      REXLOG_INFO("mod chapters: Select Chapter's act carousel moves past locked acts (the mods' act is reachable)");
+      passable = true;
+    }
   }
-  REXLOG_INFO("mod chapters: ConstructActList has no five-act cap here (the base disc) - acts come from config as they are");
+  if (!capped)
+    REXLOG_INFO("mod chapters: ConstructActList has no five-act cap here (the base disc) - acts come from config as they are");
+  if (!passable) REXLOG_WARN("mod chapters: the act carousel's bHaltProgression not found - locked acts may hide the mods' act");
 }
 
 // Every engine tick, on the game thread (game_patches.cpp, the Gow3MaxTickRate hook)
