@@ -37,13 +37,15 @@ export function uptimePct(h: History, svc: Svc, hours: number, now: number): num
   return total ? (100 * up) / total : null;
 }
 
-// 24 squares, oldest on the left: ⬛ no data, 🟩 all up, 🟨 some failures, 🟥 down more than half the hour
+// 12 squares of 2 hours each (24 do not fit beside the thumbnail), oldest on the left:
+// ⬛ no data, 🟩 all up, 🟨 some failures, 🟥 down more than half the time
 export function bar(h: History, svc: Svc, now: number): string {
   const hour = Math.floor(now / HOUR);
   let s = '';
-  for (let i = hour - 23; i <= hour; i++) {
-    const c = h.buckets[i]?.[svc];
-    s += !c ? '⬛' : c[0] === c[1] ? '🟩' : c[0] * 2 >= c[1] ? '🟨' : '🟥';
+  for (let i = hour - 23; i <= hour; i += 2) {
+    const a = h.buckets[i]?.[svc], b = h.buckets[i + 1]?.[svc];
+    const up = (a?.[0] ?? 0) + (b?.[0] ?? 0), total = (a?.[1] ?? 0) + (b?.[1] ?? 0);
+    s += !total ? '⬛' : up === total ? '🟩' : up * 2 >= total ? '🟨' : '🟥';
   }
   return s;
 }

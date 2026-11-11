@@ -13,17 +13,17 @@ describe('history', () => {
     expect(uptimePct(h, 'master', 24, 180_000)).toBeCloseTo(75);
   });
 
-  it('draws 24 squares, oldest first: no data, all up, some down, mostly down', () => {
+  it('draws 12 two-hour squares, oldest first: no data, all up, some down, mostly down', () => {
     const h = emptyHistory();
-    const now = 23 * H;
-    record(h, 'stun', true, 20 * H);
-    record(h, 'stun', true, 21 * H); record(h, 'stun', false, 21 * H + 1);
-    record(h, 'stun', true, 22 * H); record(h, 'stun', false, 22 * H + 1); record(h, 'stun', false, 22 * H + 2);
+    const now = 23 * H; // squares cover hours 0-1, 2-3 … 22-23
+    record(h, 'stun', true, 16 * H); record(h, 'stun', true, 17 * H);
+    record(h, 'stun', true, 18 * H); record(h, 'stun', false, 19 * H);
+    record(h, 'stun', true, 20 * H); record(h, 'stun', false, 20 * H + 1); record(h, 'stun', false, 21 * H);
     record(h, 'stun', true, 23 * H);
     const b = [...bar(h, 'stun', now)];
-    expect(b.length).toBe(24);
-    expect(b.slice(0, 20).every((c) => c === '⬛')).toBe(true);
-    expect(b.slice(20)).toEqual(['🟩', '🟨', '🟥', '🟩']);
+    expect(b.length).toBe(12);
+    expect(b.slice(0, 8).every((c) => c === '⬛')).toBe(true);
+    expect(b.slice(8)).toEqual(['🟩', '🟨', '🟥', '🟩']);
   });
 
   it('drops buckets older than 7 days', () => {
