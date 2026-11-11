@@ -139,6 +139,7 @@ struct Stats {
   uint64_t shader_loads_cached = 0;  // job 172: IM_LOADs whose bytes matched the cache
   // Phase 2: packets handed back to the host, memory words we wrote, wait loops and the iterations they spun.
   uint64_t handed_back = 0, memory_writes_done = 0, wait_loops = 0, wait_spins = 0;
+  uint64_t wait_timeouts = 0;  // 0.6.0: memory waits given up after 2 s (Judgment freeze)
   uint64_t waits_spun = 0;  // frame log: wait loops that had to spin at all, and the time they took
   double wait_ms = 0.0;
   uint64_t zpds = 0, zpd_ends = 0;

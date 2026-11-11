@@ -1,6 +1,7 @@
 // Layer 0 (game-free): see xenos/pm4.h. Our code (MIT); packet semantics re-expressed from the rexglue SDK's
 // src/graphics/command_processor.cpp (BSD-3-Clause, Copyright (c) Ben Vanik and Xenia project contributors / rexglue
 // contributors), function by function (named in the comments).
+#include <rex/logging.h>
 #include <xenos/pm4.h>
 
 #include <bit>
@@ -314,6 +315,16 @@ bool Processor::Type3(Reader& r, uint32_t packet, uint32_t depth) {  // ExecuteP
           continue;
         }
         ++stats_.wait_spins;
+        // 0.6.0 (Judgment's freeze back to the main menu): a memory wait whose value never comes - the write it waits
+        // for was lost or went where the wait doesn't look - used to stop the GPU for good, and with it the game's render
+        // and main threads waiting on the GPU. After 2 s the wait gives up (once logged per wait) and the stream
+        // carries on; a real console never waits that long here.
+        if ((info & 0x10) && std::chrono::steady_clock::now() - spun_since > std::chrono::seconds(2)) {
+          ++stats_.wait_timeouts;
+          REXLOG_WARN("pm4: WAIT_REG_MEM on memory {:08X} gave up after 2 s (value {:08X}, wants {:08X}, mask {:08X}, "
+                      "function {}); the GPU carries on", poll, value, ref, mask, info & 7);
+          break;
+        }
         if (env_.running && !env_.running()) break;
         if (wait >= 0x100 && (!env_.vsync || env_.vsync()))
           std::this_thread::sleep_for(std::chrono::milliseconds(wait / 0x100));
