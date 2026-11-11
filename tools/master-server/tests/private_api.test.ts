@@ -104,4 +104,13 @@ describe('private admin api', () => {
     expect(r.errors.length).toBe(20);
     expect(r.errors[19].msg).toBe('boom 24');
   });
+
+  it('the logger puts an Error message in the ring, scrubbed', async () => {
+    const s = await buildServer({ dbPath: ':memory:', logger: true });
+    s.log.error(new Error('db failed for 2f27a1b4-0c3d-4e5f-8a9b-1c2d3e4f5a6b'));
+    const got = s.adminDeps.errors.last(1)[0].msg;
+    expect(got).toContain('db failed');
+    expect(got).not.toContain('2f27a1b4');
+    await s.close();
+  });
 });

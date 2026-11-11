@@ -9,7 +9,7 @@ import { signalingRoutes } from './ws/signaling.js';
 import { friendRoutes } from './routes/friends.js';
 import { inviteRoutes } from './routes/invites.js';
 import { checkAuthHeader } from './auth.js';
-import { logSafeRequest, logSafeUrl } from './log_scrub.js';
+import { logSafeRequest, logSafeText } from './log_scrub.js';
 import { Registry } from './social/registry.js';
 import { notifyPresence } from './social/presence.js';
 import { ErrorRing } from './admin/error_ring.js';
@@ -33,8 +33,9 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
         logMethod(this: any, args: any[], method: any, level: number) {
           if (level >= 50) {
             const first = args[0];
-            const msg = typeof first === 'string' ? first : (first?.err?.message ?? first?.msg ?? args[1] ?? 'error');
-            errors.push(logSafeUrl(String(msg)));
+            const msg = typeof first === 'string' ? first : first instanceof Error ? first.message
+              : (first?.err?.message ?? first?.msg ?? (typeof args[1] === 'string' ? args[1] : 'error'));
+            errors.push(logSafeText(String(msg)));
           }
           return method.apply(this, args);
         }
