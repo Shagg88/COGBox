@@ -8,7 +8,7 @@ import type { DockerClient, MasterClient } from './types.js';
 import { audit } from './audit.js';
 import { setPassword } from './users.js';
 import { registerRoutes } from './routes.js';
-import { ABSOLUTE_MS, BAD_LOGIN, COOKIE, LOCKED, login, makeRequireSession } from './auth.js';
+import { ABSOLUTE_MS, BAD_LOGIN, COOKIE, Lockout, login, makeRequireSession } from './auth.js';
 
 export interface AppOptions {
   db: Db;
@@ -25,6 +25,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
 
   // No logger: request logs would carry client addresses. One proxy hop (caddy): the address it adds is the
   // one used for rate limiting; anything further left in X-Forwarded-For is client-supplied.
+  const lockout = new Lockout();
   const app = Fastify({ logger: false, trustProxy: (_addr: string, hop: number) => hop < 1 });
   await app.register(cookie);
   // In-memory only; the address is the key and never stored or logged.
@@ -52,10 +53,10 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
 
     api.post('/login', { config: { public: true, rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
       const t = now();
-      const r = await login(db, req.body, t);
+      const r = await login(db, req.body, t, req.ip, lockout);
       if (!r.ok) {
         audit(db, r.name, 'login_failed', r.locked ? 'locked' : '', t);
-        return r.locked ? reply.status(423).send({ error: LOCKED }) : reply.status(401).send({ error: BAD_LOGIN });
+        return reply.status(401).send({ error: BAD_LOGIN });
       }
       const name = (req.body as { name: string }).name;
       audit(db, name, 'login', '', t);

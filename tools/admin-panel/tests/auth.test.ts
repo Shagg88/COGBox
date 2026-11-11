@@ -84,13 +84,28 @@ describe('auth', () => {
   it('locks after 5 failures for 15 minutes', async () => {
     for (let i = 0; i < 5; i++) expect((await login({ name: 'alice', password: 'nope', code: '000000' })).statusCode).toBe(401);
     const locked = await login({ name: 'alice', password, code: code() });
-    expect(locked.statusCode).toBe(423);
-    expect(locked.json()).toEqual({ error: 'Locked for 15 minutes after 5 failed sign-ins.' });
+    expect(locked.statusCode).toBe(401);
+    expect(locked.json()).toEqual(BAD);
     clock += 15 * MIN - 1000;
-    expect((await login({ name: 'alice', password, code: code() })).statusCode).toBe(423);
+    expect((await login({ name: 'alice', password, code: code() })).statusCode).toBe(401);
     clock += 1000;
     await signIn();
-    expect((db.prepare('SELECT failed FROM users').get() as { failed: number }).failed).toBe(0);
+  });
+
+  it('locked attempt answers like a wrong password', async () => {
+    for (let i = 0; i < 5; i++) await login({ name: 'alice', password: 'nope', code: '000000' });
+    const locked = await login({ name: 'alice', password, code: code() });
+    const wrong = await login({ name: 'bob', password, code: code() });
+    expect([locked.statusCode, locked.json()]).toEqual([wrong.statusCode, wrong.json()]);
+    const last = db.prepare("SELECT name, action, detail FROM audit WHERE name = 'alice' ORDER BY id DESC LIMIT 1").get();
+    expect(last).toEqual({ name: 'alice', action: 'login_failed', detail: 'locked' });
+  });
+
+  it('failures from one address do not lock the account for another address', async () => {
+    const from = (ip: string, body: object) => app.inject({ method: 'POST', url: '/admin/api/login', payload: body, remoteAddress: ip });
+    for (let i = 0; i < 5; i++) await from('198.51.100.9', { name: 'alice', password: 'nope', code: '000000' });
+    expect((await from('198.51.100.9', { name: 'alice', password, code: code() })).statusCode).toBe(401);
+    expect((await from('192.0.2.4', { name: 'alice', password, code: code() })).statusCode).toBe(200);
   });
 
   it('success resets the failure count', async () => {
@@ -181,7 +196,7 @@ describe('auth', () => {
 
   it('parallel failures all count towards the lock', async () => {
     await Promise.all(Array.from({ length: 5 }, () => login({ name: 'alice', password: 'nope', code: '000000' })));
-    expect((await login({ name: 'alice', password, code: code() })).statusCode).toBe(423);
+    expect((await login({ name: 'alice', password, code: code() })).statusCode).toBe(401);
   });
 
   it('login is rate limited to 10 a minute', async () => {

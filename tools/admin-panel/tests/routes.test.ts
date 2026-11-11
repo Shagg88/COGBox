@@ -15,6 +15,7 @@ let statusImpl: () => Promise<Status | null>;
 let restartImpl: (s: string) => Promise<void>;
 let restarts: string[], closed: string[], logCalls: [string, number][];
 
+let logLines = ['line'];
 const master: MasterClient = {
   status: () => statusImpl(),
   lobbies: async () => [LOBBY],
@@ -24,7 +25,7 @@ const master: MasterClient = {
 };
 const docker: DockerClient = {
   health: async () => ({ 'master-server': up, coturn: up, caddy: up }),
-  logs: async (s, n) => { logCalls.push([s, n]); return ['line']; },
+  logs: async (s, n) => { logCalls.push([s, n]); return logLines; },
   restart: async (s) => { await restartImpl(s); restarts.push(s); },
 };
 
@@ -134,6 +135,22 @@ describe('routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ lines: ['line'] });
     expect(logCalls).toEqual([['coturn', 300]]);
+  });
+
+  it('logs come back scrubbed', async () => {
+    logLines = [
+      'session: 001000000000000001: new connection from 203.0.113.7:51234',
+      'error for 2f27a1b4-0c3d-4e5f-8a9b-1c2d3e4f5a6b on /ws/signal?token=abc123',
+    ];
+    try {
+      for (const s of ['coturn', 'master-server']) {
+        const lines = (await get(`/admin/api/logs?service=${s}`)).json().lines as string[];
+        expect(lines.join(' ')).not.toMatch(/203\.0\.113|51234|2f27a1b4|abc123/);
+        expect(lines[0]).toContain('<ip>');
+        expect(lines[1]).toContain('<uuid>');
+        expect(lines[1]).toContain('token=REDACTED');
+      }
+    } finally { logLines = ['line']; }
   });
 
   it('lobbies, backups, backup and audit', async () => {

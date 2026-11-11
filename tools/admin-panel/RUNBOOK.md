@@ -53,11 +53,12 @@ Do it:
 - A card stays red after one restart.
 - The restart count keeps going up.
 - You lost your authenticator app. Flippage resets the login.
+- Five wrong sign-ins in a row lock you out for 15 minutes. The lock is for you on the connection you are using only; others are not affected, and nobody else can lock you out. Sign-in just says the details are wrong while it lasts. If you are stuck, ask Flippage to reset it.
 - Anything not on this page.
 
 ## For Flippage: first setup on the server
 
-The secret is generated on the server, in the deploy folder, and never printed:
+`ADMIN_SHARED_SECRET` must be generated with `openssl rand -hex 32` (32 random bytes), never typed by hand. It is generated on the server, in the deploy folder, and never printed:
 
     umask 077
     printf 'ADMIN_SHARED_SECRET=%s\n' "$(openssl rand -hex 32)" > admin.env
@@ -66,4 +67,4 @@ Check the mode is 600 with `ls -l admin.env`. Never `cat` it, never copy it into
 
 Then: merge the `/admin*` block from `deploy/Caddyfile.example` into the live Caddyfile, run `docker compose up -d --build`, and reload Caddy. The admin panel, the Docker proxy and the master's private port listen on 127.0.0.1 only, so the firewall stays at 22, 80, 443 and UDP 3478. Do not open 8080, 8090 or 2375.
 
-Add a person: `docker compose exec admin node dist/cli.js add-user <name>`. It prints a one-time password and an enrolment link. Reset: `reset-user`. Remove: `remove-user`.
+Add a person: `docker compose exec admin node dist/cli.js add-user <name>`. It prints a one-time password and an enrolment link. Reset: `reset-user`. Remove: `remove-user`. Sign-in locks are held in memory only (never on disk, and the address is never stored); to clear one early, restart the admin panel container (`docker compose restart admin`), which does not touch the game server.

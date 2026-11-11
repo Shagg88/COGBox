@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
 import type { DockerClient, MasterClient } from './types.js';
 import { audit } from './audit.js';
+import { logSafeText } from './scrub.js';
 
 type Svc = 'master-server' | 'coturn';
 const isSvc = (s: unknown): s is Svc => s === 'master-server' || s === 'coturn';
@@ -39,7 +40,8 @@ export function registerRoutes(api: FastifyInstance, o: { db: Db; now: () => num
     const service = (req.query as { service?: unknown }).service;
     if (!isSvc(service)) return reply.status(400).send({ error: 'Unknown service.' });
     try {
-      return { lines: await docker.logs(service, LOG_LINES) };
+      // coturn prints player addresses and the master's raw error text can hold ids: scrub before showing.
+      return { lines: (await docker.logs(service, LOG_LINES)).map(logSafeText) };
     } catch (e) {
       return reply.status(502).send({ error: (e as Error).message });
     }
