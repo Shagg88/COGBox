@@ -1,0 +1,10 @@
+# The admin route as deployed. Merge the handle /admin* block into the live Caddyfile; keep its existing upstream
+# for everything else (the line below is a placeholder for it).
+cogbox-mp.duckdns.org {
+	handle /admin* {
+		reverse_proxy admin:8080
+	}
+	handle {
+		reverse_proxy host.docker.internal:18443
+	}
+}

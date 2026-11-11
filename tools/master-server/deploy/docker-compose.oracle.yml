@@ -1,10 +1,16 @@
 # COGBox master server on the Oracle VM: signaling + lobbies (TCP 18443) and STUN only (UDP 3478). Host networking,
 # so the VM's own firewall rules apply as written. No relay: game traffic never passes through this machine.
+#
+# Admin panel: admin, docker-proxy and caddy share the bridge network admin-net. It is not "internal": caddy needs
+# outbound access for certificates, and admin reaches the host-networked master through the host gateway.
+# Never add a ports: entry for admin (8080), docker-proxy (2375) or the master's private listener (8090).
+# admin.env holds ADMIN_SHARED_SECRET and exists on the server only (see ../../admin-panel/RUNBOOK.md).
 services:
   master-server:
     build: .
     restart: unless-stopped
     network_mode: host
+    env_file: admin.env
     environment:
       - NODE_ENV=production
       - PORT=18443
@@ -19,5 +25,49 @@ services:
     volumes:
       - ./coturn.conf:/etc/coturn/turnserver.conf:ro
     command: ["turnserver", "-c", "/etc/coturn/turnserver.conf"]
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [admin-net]
+  admin:
+    build: ../../admin-panel
+    restart: unless-stopped
+    env_file: admin.env
+    environment:
+      - ADMIN_DB=/data/admin.db
+      # master-server uses host networking, so it is reached through the host gateway, not by container DNS
+      - MASTER_URL=http://master-server:8090
+      # the proxy only allows paths that start with an API version
+      - DOCKER_URL=http://docker-proxy:2375/v1.44
+    extra_hosts:
+      - "master-server:host-gateway"
+    volumes:
+      - admin-data:/data
+    networks: [admin-net]
+  docker-proxy:
+    image: wollomatic/socket-proxy:1.13.1
+    restart: unless-stopped
+    command:
+      - '-allowGET=/v1\..{1,2}/containers/(cogbox-master-(master-server|coturn|caddy)-1/(json|logs.*))'
+      - '-allowPOST=/v1\..{1,2}/containers/cogbox-master-(master-server|coturn)-1/restart.*'
+      - '-listenip=0.0.0.0'
+      - '-allowfrom=admin'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [admin-net]
+networks:
+  admin-net: {}
 volumes:
   master-data:
+  admin-data:
+  caddy-data:
+  caddy-config:

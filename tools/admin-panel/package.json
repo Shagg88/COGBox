@@ -2,10 +2,10 @@
   "name": "cogbox-admin-panel",
   "version": "1.0.0",
   "description": "COGBox server admin panel",
-  "main": "dist/server.js",
+  "main": "dist/main.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node dist/main.js",
     "test": "vitest run"
   },
   "dependencies": {
