@@ -809,9 +809,9 @@ class Pm4Execute final : public DrawObserver {
     const pm::Stats& s = proc_->GetStats();
     REXLOG_INFO("gow2_pm4_execute: frames 1-{}: packets {}, type3 {}, indirect buffers {}, draws {}, shader loads {} (cached {}), "
                 "swaps {} | handed back to the SDK {} | memory words written by us {} (of {}) | waits {} (loops {}, "
-                "spins {}) | ZPD ours {} (ends {}) | predicated skipped {}, unknown opcodes {} (last 0x{:02X}), errors {} | releases {} (reads {}, waits {}), deferred writes {}{}",
+                "spins {}, given up after 2 s {}) | ZPD ours {} (ends {}) | predicated skipped {}, unknown opcodes {} (last 0x{:02X}), errors {} | releases {} (reads {}, waits {}), deferred writes {}{}",
                 frames_, s.packets, s.type3, s.indirect, s.draws, s.shader_loads, s.shader_loads_cached, s.swaps, s.handed_back,
-                s.memory_writes_done, s.memory_writes_seen, s.waits, s.wait_loops, s.wait_spins, s.zpds, s.zpd_ends,
+                s.memory_writes_done, s.memory_writes_seen, s.waits, s.wait_loops, s.wait_spins, s.wait_timeouts, s.zpds, s.zpd_ends,
                 s.predicated_skipped,
                 s.unknown_opcodes, s.last_unknown_opcode, s.errors, s.releases, s.release_reads, s.release_waits,
                 s.deferred_writes, PipeSummary());
