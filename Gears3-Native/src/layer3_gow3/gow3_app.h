@@ -10,6 +10,7 @@
 #include "mouse_look.h"
 #include "main_menu_exit.h"
 #include "unlocks.h"
+#include "gow3_addresses.h"
 
 namespace rex::ui {
 class WindowedAppContext;
@@ -19,6 +20,7 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 
 #include <ue3/config_bundle.h>
 #include <ue3/launch.h>
+#include <ue3/script_input.h>
 #include <xenos/dev_tools.h>
 #include <xenos/social_ingame.h>
 #include <xenos/display_size.h>
@@ -38,6 +40,8 @@ void Gow3AddBuiltInIniEdits();  // game_patches.cpp: --gow3_trilinear, --gow3_fa
 void Gow3StopMemoryGauge();     // game_patches.cpp: --gow3_memory_log_seconds stops before the kernel goes away
 void Gow3InstallExtras();       // extras.cpp: --gow3_cheats, --gow3_unlock_mutators, engine console hotkeys
 void Gow3InstallModChapters();  // mod_chapters.cpp: mods' campaign chapters and content packages
+void Gow3InstallSquadCatchUp();  // squad_catch_up.cpp: the SquadCatchUp adapter ([Campaign] in a mod.ini)
+void Gow3InstallKismetTraceIfRequested();  // kismet_trace.cpp: developer mode, --mod_kismet_trace
 REXCVAR_DECLARE(bool, gow3_mute_unfocused);  // extras.cpp
 
 class Gow3App : public rex::ReXApp {
@@ -62,10 +66,13 @@ class Gow3App : public rex::ReXApp {
     XenosAddScriptPadIfRequested(runtime());
     Gow3AddBuiltInIniEdits();  // before the bundle is edited
     Gow3InstallExtras();       // its package patches too
+    Ue3InstallScriptInputIfRequested(runtime(), gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar);  // developer mode: --cogbox_input_script (ue3/script_input.h)
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     Gow3InstallMainMenuExitIfRequested();  // Exit Game: front-end tracking, before the game opens a level
     Gow3InstallUnlocks();      // GitHub #174: --gow3_unlock_insane (base disc build)
     Gow3InstallModChapters();  // mods' chapters 32-49 and content packages (mod_chapters.cpp), after their config
+    Gow3InstallSquadCatchUp();
+    Gow3InstallKismetTraceIfRequested();
     XenosInstallDrawStatsIfRequested();
     XenosInstallPrimDetailIfRequested();
     XenosInstallFrameCaptureIfRequested();

@@ -40,6 +40,13 @@ std::string ModGameKey(const std::string& rel_in_mod, const std::string& bundle_
 int MergeModConfigFragments(const std::filesystem::path& game_root, const std::string& bundle_rel,
                             const std::filesystem::path& out_dir, std::map<std::string, std::filesystem::path>& files);
 
+// The largest SquadCatchUp an active mod's campaign asks for ([Campaign] SquadCatchUp = <distance>; 0: none).
+int ModSquadCatchUp();
+
+// The co-op players a chapter map takes: its campaign's [Campaign] MaxPlayers (any of the campaign's mods may give it;
+// the smallest wins), 0 for a map no active campaign has, or a campaign that does not say.
+int ModMaxPlayersForMap(const std::string& map);
+
 // The game's own content packages the active mods name (mod.ini content = ...), in load order, without repeats.
 const std::vector<std::string>& ModContentPackages();
 

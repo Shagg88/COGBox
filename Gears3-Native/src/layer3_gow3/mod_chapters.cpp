@@ -66,6 +66,7 @@ std::map<int, std::string> g_chapters;      // chapter number -> map name
 std::atomic<uint32_t> g_types{0};           // Default__GearTypes, once found
 std::atomic<bool> g_tableDone{false};
 std::atomic<uint32_t> g_chapterGame{0};     // the GearGameSP_Base while a new chapter's map is loaded
+std::atomic<int> g_chapterCap{0};           // its campaign's MaxPlayers (0: the game's 4)
 std::atomic<bool> g_restore{false};         // a checkpoint has loaded: its sections back, on the game thread
 std::atomic<bool> g_started{false};
 int g_maxAct = -1;                          // the highest ActNum a mod's config declares (acts count from 0)
@@ -201,13 +202,14 @@ void ChapterKeeper() {
     if (!gameClass) continue;
     const auto games = obj::FindInstancesOf(gameClass);
     const uint32_t game = games.empty() ? 0 : games.front();
-    if (!game) { lastGame = 0; g_chapterGame = 0; continue; }
+    if (!game) { lastGame = 0; g_chapterGame = 0; g_chapterCap = 0; continue; }
     if (game != lastGame) {  // a new map: which chapter's (its package loaded)
       lastGame = game;
       chapter = -1;
       for (auto& [n, map] : g_chapters)
         if (const uint32_t p = obj::FindObject(map.c_str()); p && obj::ObjectName(obj::ClassOf(p)) == "Package") chapter = n;
       g_chapterGame = chapter >= 0 ? game : 0;
+      g_chapterCap = chapter >= 0 ? ue3::ModMaxPlayersForMap(g_chapters[chapter]) : 0;
       uint32_t top = game;
       for (int k = 0; k < 8 && obj::Read32(top + 40); k++) top = obj::Read32(top + 40);
       REXLOG_INFO("mod chapters: map {} loaded{}", obj::ObjectName(top), chapter >= 0 ? " (chapter " + std::to_string(chapter) + "'s)" : "");
@@ -563,37 +565,135 @@ void Gow3ModFName() {
   busy = false;
 }
 
+// TU6 greys the pause menu's "Reload last checkpoint" in the mods' chapters: its patched
+// UIScene_Pause.ShouldOptionBeDisabled disables it when any GearGameSP_Base.PlayerSlots entry has
+// `PawnClass == None || Owner == None` - Gears 3's campaign fills all four squad slots, Gears 1's squad is two (slots 3
+// and 4 empty: {None, None}), so it was always off. (Dom's slot gets its owner once he is spawned.) What the check is for - a squad member who should be there is missing - is
+// `PawnClass != None && Owner == None`: the same length in bytecode, 84 (OrOr) -> 82 (AndAnd) and the first
+// 72 (EqualEqual_ObjectObject) -> 77 (NotEqual_ObjectObject):
+//   84 72 35 <PawnClass> <PlayerSlotInfo> 00 00 10 ... 18 <skip, 2> 72 35 <Owner> <PlayerSlotInfo> 00 00 10
+// (object references are 8 bytes in memory, the 32-bit pointer in the low half) found by that shape (both member accesses on the same struct), exactly once in the function's script, else nothing
+// is changed. Game thread, once the function is loaded.
+std::atomic<bool> g_reloadDone{false};
+
+void AllowCheckpointReload() {
+  // UIScene_Pause's own (other scenes have a ShouldOptionBeDisabled too): found by its owner, once UIScene_Pause is loaded
+  const uint32_t pause = obj::FindClass("UIScene_Pause");
+  if (!pause) return;   // not loaded yet
+  g_reloadDone = true;
+  uint32_t fn = 0;
+  for (uint32_t o : obj::AllObjects())
+    if (obj::Read32(o + kOuter) == pause && obj::ObjectName(o) == "ShouldOptionBeDisabled") { fn = o; break; }
+  if (!fn) { REXLOG_WARN("mod chapters: UIScene_Pause.ShouldOptionBeDisabled not found - Reload last checkpoint left as it is"); return; }
+  for (uint32_t off = 0x20; off < 0x100; off += 4) {
+    const uint32_t data = obj::Read32(fn + off), num = obj::Read32(fn + off + 4), cap = obj::Read32(fn + off + 8);
+    if (num < 0x80 || num > 0x2000 || cap < num || !obj::Readable(data, num)) continue;
+    const uint8_t* s = Mem()->TranslateVirtual<const uint8_t*>(data);
+    auto be32 = [&](uint32_t i) { return uint32_t(s[i]) << 24 | uint32_t(s[i + 1]) << 16 | uint32_t(s[i + 2]) << 8 | s[i + 3]; };
+    std::vector<uint32_t> found;
+    for (uint32_t i = 0; i + 104 <= num; i++) {
+      if (s[i] != 0x84 || s[i + 1] != 0x72 || s[i + 2] != 0x35 || s[i + 21] != 0x10) continue;
+      const uint32_t info = be32(i + 15);   // the struct both member accesses read
+      for (uint32_t j = i + 22; j + 24 <= num && j < i + 80; j++)
+        if (s[j] == 0x18 && s[j + 3] == 0x72 && s[j + 4] == 0x35 && be32(j + 17) == info && s[j + 23] == 0x10) {
+          found.push_back(i);
+          break;
+        }
+    }
+    if (found.size() != 1) continue;
+    obj::Write8(data + found[0], 0x82);
+    obj::Write8(data + found[0] + 1, 0x77);
+    REXLOG_INFO("mod chapters: Reload last checkpoint needs only the squad slots that have a pawn class (TU6 wanted all four)");
+    return;
+  }
+  REXLOG_INFO("mod chapters: ShouldOptionBeDisabled has no squad-slot check here (the base disc) - left as it is");
+}
+
+// [Campaign] MaxPlayers: GearGameSP_Base.AtCapacity is `return NumPlayers >= 4;` (the four squad slots; MaxPlayers is
+// not read), which the game's PreLogin asks before a co-op player joins. While a capped campaign's chapter is loaded
+// its constant (2C 04 16: IntConstByte 4, end of parameters, exactly once in the script) is that campaign's number,
+// and 4 again otherwise. A campaign whose squad is two (Gears 1's: no third and fourth squad member to play) declares
+// MaxPlayers = 2. Game thread, once a second.
+uint32_t g_capByte = 0;                     // the constant's guest address, once found (0xFFFFFFFF: not found)
+
+void ApplyPlayerCap() {
+  if (!g_capByte) {
+    const uint32_t sp = obj::FindClass("GearGameSP_Base");
+    if (!sp) return;   // not loaded yet
+    g_capByte = 0xFFFFFFFF;
+    uint32_t fn = 0;
+    for (uint32_t o : obj::AllObjects())
+      if (obj::Read32(o + kOuter) == sp && obj::ObjectName(o) == "AtCapacity") { fn = o; break; }
+    for (uint32_t off = 0x20; fn && off < 0x100 && g_capByte == 0xFFFFFFFF; off += 4) {
+      const uint32_t data = obj::Read32(fn + off), num = obj::Read32(fn + off + 4), cap = obj::Read32(fn + off + 8);
+      if (num < 8 || num > 0x80 || cap < num || !obj::Readable(data, num)) continue;
+      const uint8_t* s = Mem()->TranslateVirtual<const uint8_t*>(data);
+      std::vector<uint32_t> found;
+      for (uint32_t i = 0; i + 3 <= num; i++)
+        if (s[i] == 0x2C && s[i + 1] == 0x04 && s[i + 2] == 0x16) found.push_back(i);
+      if (found.size() == 1) g_capByte = data + found[0] + 1;
+    }
+    if (g_capByte == 0xFFFFFFFF) { REXLOG_WARN("mod chapters: GearGameSP_Base.AtCapacity not as expected - MaxPlayers not applied"); return; }
+  }
+  if (g_capByte == 0xFFFFFFFF) return;
+  const int want = g_chapterGame && g_chapterCap > 0 ? g_chapterCap.load() : 4;
+  const uint8_t now = uint8_t(obj::Read32(g_capByte) >> 24);
+  if (now == want) return;
+  obj::Write8(g_capByte, uint8_t(want));
+  REXLOG_INFO("mod chapters: co-op players {} ({})", want, want == 4 ? "the game's" : "the campaign's MaxPlayers");
+}
+
 // TU6 hides the mods' acts: its patched UIWidget_MainMenu.ConstructActList (ScriptPatch_GearGame.bin) lists at most
 // five - a row is added `if (I < 5)` (bytecode 2C 05 16: IntConstByte 5) and after the loop
 // `CurrentList.SetFloat('length', 5.0)` (1E 40 A0 00 00) cuts the list; the base disc builds it from every act in
 // config. Both constants are raised to the mods' act count (acts are numbered 0, 1, 2 ... with no gaps) in the
 // function's script, once, found by pattern (each exactly once in a script buffer of the function object, else
 // nothing is changed). Game thread, before the menu is built.
+//
+// The act row a mod's campaign sits in must also be reachable: every act is added with
+// `CurrentOption.SetBool("bHaltProgression", true)`, and the menu's carousel does not move past a locked act, so on a
+// profile that has not unlocked Acts II-V the mods' act could not be reached at all. That `true` (StringConst
+// 1F "bHaltProgression" 00, then 27 = True) becomes `false` (28): locked acts stay locked (their chapters still cannot
+// be started), the carousel only moves past them.
 void RaiseActCap() {
   const uint32_t fn = obj::FindObject("ConstructActList");
   if (!fn) return;   // not loaded yet
   g_actCapDone = true;
   const int acts = std::min(g_maxAct + 1, 255);  // #205 review: IntConstByte holds one byte
+  static const char kHalt[] = "" "bHaltProgression";   // StringConst, then the NUL and the bool (sizeof: 18)
+  bool capped = false, passable = false;
   for (uint32_t off = 0x20; off < 0x100; off += 4) {
     const uint32_t data = obj::Read32(fn + off), num = obj::Read32(fn + off + 4), cap = obj::Read32(fn + off + 8);
     if (num < 0x200 || num > 0x4000 || cap < num || !obj::Readable(data, num)) continue;
     const uint8_t* s = Mem()->TranslateVirtual<const uint8_t*>(data);
-    std::vector<uint32_t> ints, floats;
-    for (uint32_t i = 0; i + 5 <= num; i++) {
+    std::vector<uint32_t> ints, floats, halts;
+    for (uint32_t i = 0; i + sizeof(kHalt) + 1 <= num; i++) {
       if (s[i] == 0x2C && s[i + 1] == 0x05 && s[i + 2] == 0x16) ints.push_back(i);
       if (s[i] == 0x1E && s[i + 1] == 0x40 && s[i + 2] == 0xA0 && s[i + 3] == 0 && s[i + 4] == 0) floats.push_back(i);
+      if (std::memcmp(s + i, kHalt, sizeof(kHalt)) == 0 && s[i + sizeof(kHalt)] == 0x27) halts.push_back(i + sizeof(kHalt));
     }
-    if (ints.size() != 1 || floats.size() != 1) continue;
-    obj::Write8(data + ints[0] + 1, uint8_t(acts));
-    const float f = float(acts);
-    uint32_t u;
-    std::memcpy(&u, &f, 4);
-    for (int b = 0; b < 4; b++) obj::Write8(data + floats[0] + 1 + b, uint8_t(u >> (24 - 8 * b)));
-    REXLOG_INFO("mod chapters: Select Chapter lists {} acts (TU6's ConstructActList stopped at 5)", acts);
-    return;
+    if (!capped && ints.size() == 1 && floats.size() == 1) {
+      obj::Write8(data + ints[0] + 1, uint8_t(acts));
+      const float f = float(acts);
+      uint32_t u;
+      std::memcpy(&u, &f, 4);
+      for (int b = 0; b < 4; b++) obj::Write8(data + floats[0] + 1 + b, uint8_t(u >> (24 - 8 * b)));
+      REXLOG_INFO("mod chapters: Select Chapter lists {} acts (TU6's ConstructActList stopped at 5)", acts);
+      capped = true;
+    }
+    if (!passable && halts.size() == 1) {
+      obj::Write8(data + halts[0], 0x28);
+      REXLOG_INFO("mod chapters: Select Chapter's act carousel moves past locked acts (the mods' act is reachable)");
+      passable = true;
+    }
   }
-  REXLOG_INFO("mod chapters: ConstructActList has no five-act cap here (the base disc) - acts come from config as they are");
+  if (!capped)
+    REXLOG_INFO("mod chapters: ConstructActList has no five-act cap here (the base disc) - acts come from config as they are");
+  if (!passable) REXLOG_WARN("mod chapters: the act carousel's bHaltProgression not found - locked acts may hide the mods' act");
 }
+
+// squad_catch_up.cpp: the game info while a mod chapter's map is loaded (0: none)
+uint32_t Gow3ModChapterGame() { return g_chapterGame; }
 
 // Every engine tick, on the game thread (game_patches.cpp, the Gow3MaxTickRate hook)
 void Gow3ModChaptersTick() {
@@ -607,6 +707,9 @@ void Gow3ModChaptersTick() {
       else g_tableDone = false;
     }
   }
-  if (!g_actCapDone && g_maxAct >= 5) RaiseActCap();
+  // (looked for once a second until the menu's script is loaded: each look searches every object)
+  if (static int tick = 0; !g_actCapDone && g_maxAct >= 5 && ++tick % 60 == 1) RaiseActCap();
+  if (static int tick = 0; !g_reloadDone && !g_chapters.empty() && ++tick % 60 == 2) AllowCheckpointReload();
+  if (static int tick = 0; !g_chapters.empty() && ++tick % 60 == 3) ApplyPlayerCap();
   ContentPackagesTick();
 }
