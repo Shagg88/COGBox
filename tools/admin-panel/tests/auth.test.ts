@@ -137,8 +137,8 @@ describe('auth', () => {
 
   it('must_change blocks other routes until password set', async () => {
     const { cookie, csrf } = await signIn();
-    const other = () => app.inject({ method: 'GET', url: '/admin/api/other', headers: { cookie } });
-    expect((await app.inject({ method: 'GET', url: '/admin/api/other' })).statusCode).toBe(401);
+    const other = () => app.inject({ method: 'GET', url: '/admin/api/audit', headers: { cookie } });
+    expect((await app.inject({ method: 'GET', url: '/admin/api/audit' })).statusCode).toBe(401);
     expect((await other()).statusCode).toBe(403);
     const me = await app.inject({ method: 'GET', url: '/admin/api/me', headers: { cookie } });
     expect(me.json()).toEqual({ name: 'alice', csrf, must_change: true });

@@ -8,10 +8,10 @@ const isSvc = (s: unknown): s is Svc => s === 'master-server' || s === 'coturn';
 const LOG_LINES = 300;
 
 // The session, CSRF and must_change checks are the hook in buildApp; these routes only do the work.
-export function registerRoutes(app: FastifyInstance, o: { db: Db; now: () => number; master: MasterClient; docker: DockerClient }): void {
+export function registerRoutes(api: FastifyInstance, o: { db: Db; now: () => number; master: MasterClient; docker: DockerClient }): void {
   const { db, now, master, docker } = o;
 
-  app.get('/admin/api/overview', async () => {
+  api.get('/overview', async () => {
     // either side may be down; the page shows that instead of failing
     const [health, status] = await Promise.all([
       docker.health().catch(() => null),
@@ -23,9 +23,9 @@ export function registerRoutes(app: FastifyInstance, o: { db: Db; now: () => num
     return { health, status, last_action };
   });
 
-  app.get('/admin/api/lobbies', async () => master.lobbies());
+  api.get('/lobbies', async () => master.lobbies());
 
-  app.post('/admin/api/lobbies/:id/close', async (req, reply) => {
+  api.post('/lobbies/:id/close', async (req, reply) => {
     const { id } = req.params as { id: string };
     if ((req.body as { confirm?: unknown } | undefined)?.confirm !== true) return reply.status(400).send({ error: 'Confirm the close.' });
     const lobby = (await master.lobbies()).find((l) => l.lobby_id === id);
@@ -35,7 +35,7 @@ export function registerRoutes(app: FastifyInstance, o: { db: Db; now: () => num
     return { ok: true };
   });
 
-  app.get('/admin/api/logs', async (req, reply) => {
+  api.get('/logs', async (req, reply) => {
     const service = (req.query as { service?: unknown }).service;
     if (!isSvc(service)) return reply.status(400).send({ error: 'Unknown service.' });
     try {
@@ -45,7 +45,7 @@ export function registerRoutes(app: FastifyInstance, o: { db: Db; now: () => num
     }
   });
 
-  app.post('/admin/api/restart', async (req, reply) => {
+  api.post('/restart', async (req, reply) => {
     const b = (req.body ?? {}) as { service?: unknown; confirm?: unknown };
     if (!isSvc(b.service)) return reply.status(400).send({ error: 'Unknown service.' });
     if (b.confirm !== 'RESTART') return reply.status(400).send({ error: 'Type RESTART to confirm.' });
@@ -61,7 +61,7 @@ export function registerRoutes(app: FastifyInstance, o: { db: Db; now: () => num
     return { ok: true };
   });
 
-  app.post('/admin/api/backup', async (req, reply) => {
+  api.post('/backup', async (req, reply) => {
     try {
       const r = await master.backup();
       audit(db, req.session!.name, 'backup', r.name, now());
@@ -71,8 +71,8 @@ export function registerRoutes(app: FastifyInstance, o: { db: Db; now: () => num
     }
   });
 
-  app.get('/admin/api/backups', async () => master.backups());
+  api.get('/backups', async () => master.backups());
 
-  app.get('/admin/api/audit', async () =>
+  api.get('/audit', async () =>
     db.prepare('SELECT id, time, name, action, detail FROM audit ORDER BY id DESC LIMIT 200').all());
 }

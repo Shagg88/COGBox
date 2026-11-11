@@ -175,3 +175,17 @@ describe('default deny', () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+describe('encoded API paths', () => {
+  for (const [method, url] of [['GET', '/admin/%61pi/audit'], ['GET', '/admin/api%2Faudit'], ['GET', '/admin/%61pi/overview'], ['POST', '/admin/%61pi/restart'], ['GET', '/admin/api%2F..%2Fapi%2Fme']] as const) {
+    it(`${method} ${url} without a session is refused`, async () => {
+      const res = await app.inject({ method, url, payload: method === 'POST' ? { service: 'coturn', confirm: 'RESTART' } : undefined });
+      expect([401, 404]).toContain(res.statusCode);
+      expect(res.body).not.toContain('COGBox Admin');
+      expect(restarts).toEqual([]);
+    });
+  }
+  it('signed in, an unknown API path is 404', async () => {
+    expect((await get('/admin/api/nope')).statusCode).toBe(404);
+  });
+});
