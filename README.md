@@ -6,8 +6,10 @@ is one of my favourites, so the project is near and dear to my heart.
 
 **Fully playable** with a few hiccups - if you hit one, please send a problem report (see below).
 
-**[Download the latest release](https://gitlab.com/shagg88/cogbox/-/releases)** · You need your own copy of each game
+**[Download the latest release](https://github.com/Shagg88/COGBox/releases)** · You need your own copy of each game
 and its title update. No game files are included, ever.
+
+Backup mirrors with the same files: [GitLab](https://gitlab.com/shagg88/cogbox/-/releases) and [SourceForge](https://sourceforge.net/projects/cogbox/files/).
 
 > An unofficial fan project, not affiliated with Microsoft, Epic Games or The Coalition. "Gears of War", "Xbox" and
 > "Xbox 360" are trademarks of Microsoft.
@@ -52,7 +54,7 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 
 ## How to play
 
-1. Download `COGBox-<version>.7z` from [Releases](https://gitlab.com/shagg88/cogbox/-/releases) and unpack the whole
+1. Download `COGBox-<version>.7z` from [Releases](https://github.com/Shagg88/COGBox/releases) and unpack the whole
    folder (7-Zip, or Windows 11 itself) somewhere you can write to, e.g. `C:\Games\COGBox` - not Program Files, and not a OneDrive / Dropbox folder.
 2. Start `CogBox.exe`. If Windows says "Windows protected your PC", choose **More info > Run anyway** (the programs
    aren't code-signed).
@@ -89,7 +91,7 @@ does it in one go.
 
 When a game closes unexpectedly, COGBox explains what happened and offers a **problem report** - one zip with the log,
 your settings and your PC's specs (no saves or game files, and your Windows user name removed). Nothing is sent by
-itself: open a [ticket on GitLab](https://gitlab.com/shagg88/cogbox/-/issues), say what you were doing and attach the
+itself: open a [ticket on GitHub](https://github.com/Shagg88/COGBox/issues), say what you were doing and attach the
 zip.
 
 Common causes: a CPU without AVX2, an old graphics driver, or a different release of the game than the port is made for
@@ -162,7 +164,7 @@ renderer), the console's D3D library, Unreal Engine 3, and each game. Each game 
 COGBox and the ports' own code are under the **MIT licence** ([`LICENSE`](LICENSE)).
 
 **Using our code?** You're welcome to. If you use COGBox's code in your own project, please credit
-**"COGBox by Shagg"** and link to <https://gitlab.com/shagg88/cogbox> in your readme or credits. (The MIT licence
+**"COGBox by Shagg"** and link to <https://github.com/Shagg88/COGBox> in your readme or credits. (The MIT licence
 already asks you to keep the copyright notice in copies of the code.)
 
 Also used, each under its own licence: Xenia / Canary / Edge (BSD-3), the rexglue SDK (BSD-style), FFmpeg (LGPL-2.1+,

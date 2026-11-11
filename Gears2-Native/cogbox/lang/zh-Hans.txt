@@ -1320,13 +1320,13 @@ See you later = 回头见
 No problem - COGBox will close now. You're welcome back any time. = 没问题 - COGBox 现在会关闭。欢迎随时回来。
 # 0.5.0: legal2-050 - notice v2 (no warranty line, new affiliation line), GitLab tickets and updates, player pictures (machine-made translation, please check)
 COGBox is a free fan project. It works with your own copies of the games and doesn't include any game files.\n\nHow you get and use your games is up to you and your responsibility. We don't provide games and don't help with or support pirated copies.\n\nCOGBox isn't affiliated with Microsoft, Epic Games or The Coalition. "Read more" opens the full text (LEGAL.md). = COGBox 是一个免费的粉丝项目。它使用你自己的游戏副本运行,不包含任何游戏文件。\n\n如何获取和使用你的游戏由你决定,也由你负责。我们不提供游戏,也不协助或支持盗版副本。\n\nCOGBox 与 Microsoft、Epic Games 或 The Coalition 无关。“了解更多”会打开完整文本(LEGAL.md)。
-A GitLab ticket page opened and the details are on the clipboard - paste them, attach the zip and submit. = 已打开 GitLab 工单页面,详细信息已复制到剪贴板 - 粘贴后附上 zip 并提交。
-Thanks - this version won't be flagged again. A GitLab ticket page opened and its details are on the clipboard: paste them and submit to let the developer know. = 谢谢 - 此版本不会再被标记。已打开 GitLab 工单页面,详细信息已复制到剪贴板:粘贴并提交,让开发者知道。
-A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitLab ticket. = 问题报告是桌面上的一个 zip,包含上次游戏的日志、设置和这台电脑的描述(不含存档和游戏文件;你的 Windows 用户名会被去除)。不会发送任何内容 - 请把它附加到 GitLab 工单中。
-Open the tickets on GitLab = 打开 GitLab 上的工单
-Translations are written by the project; corrections are welcome in a GitLab ticket. = 翻译由项目编写;欢迎通过 GitLab 工单提交更正。
-Check GitLab for a newer COGBox at start = 启动时在 GitLab 检查新版 COGBox
-System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitLab whether it worked. = System Link - 局域网游戏(实验性,#72):如果你尝试了,请在 GitLab 工单中告诉我们是否成功。
+A GitHub ticket page opened and the details are on the clipboard - paste them, attach the zip and submit. = 已打开 GitHub 工单页面,详细信息已复制到剪贴板 - 粘贴后附上 zip 并提交。
+Thanks - this version won't be flagged again. A GitHub ticket page opened and its details are on the clipboard: paste them and submit to let the developer know. = 谢谢 - 此版本不会再被标记。已打开 GitHub 工单页面,详细信息已复制到剪贴板:粘贴并提交,让开发者知道。
+A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub ticket. = 问题报告是桌面上的一个 zip,包含上次游戏的日志、设置和这台电脑的描述(不含存档和游戏文件;你的 Windows 用户名会被去除)。不会发送任何内容 - 请把它附加到 GitHub 工单中。
+Open the tickets on GitHub = 打开 GitHub 上的工单
+Translations are written by the project; corrections are welcome in a GitHub ticket. = 翻译由项目编写;欢迎通过 GitHub 工单提交更正。
+Check GitHub for a newer COGBox at start = 启动时在 GitHub 检查新版 COGBox
+System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitHub whether it worked. = System Link - 局域网游戏(实验性,#72):如果你尝试了,请在 GitHub 工单中告诉我们是否成功。
 start it once from COGBox to add its pictures. = 从 COGBox 启动一次即可添加它的图片。
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = 瞄准灵敏度 (%)

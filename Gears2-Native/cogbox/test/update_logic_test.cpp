@@ -107,9 +107,11 @@ static void listings()
     CHECK_EQ(urls[1], "https://downloads.sourceforge.net/project/cogbox/0.4.9/COGBox-0.4.9.7z");
     CHECK_EQ(sf_best_release_url("cogbox"), "https://sourceforge.net/projects/cogbox/best_release.json");
     CHECK_EQ(sf_rss_url("cogbox"), "https://sourceforge.net/projects/cogbox/rss?path=/");
-    CHECK_EQ(source_page(kSources[0]), "https://gitlab.com/shagg88/cogbox/-/releases");   // 0.5.0: GitLab first
-    CHECK(kSources[0].kind == SourceKind::GitLab && kSourceCount == 2 && kSources[1].kind == SourceKind::SourceForge);
-    CHECK_EQ(source_page(kSources[1]), "https://sourceforge.net/projects/cogbox/files/");
+    CHECK_EQ(source_page(kSources[0]), "https://github.com/Shagg88/COGBox/releases/latest");   // 0.6.0: GitHub first
+    CHECK(kSources[0].kind == SourceKind::GitHub && kSourceCount == 3 && kSources[1].kind == SourceKind::GitLab
+          && kSources[2].kind == SourceKind::SourceForge);
+    CHECK_EQ(source_page(kSources[1]), "https://gitlab.com/shagg88/cogbox/-/releases");
+    CHECK_EQ(source_page(kSources[2]), "https://sourceforge.net/projects/cogbox/files/");
 }
 
 static void checksums_and_pages()

@@ -30,18 +30,18 @@ static const HelpTest k_helpTest[] = {
     // Shagg 6 Nov: never ask players to do extra work to find data for us - at most "press Report a problem".
     { 2,  "Sudden death / \"cursed\" save, or a teammate killing you (#55, #68, #79, #80): if it happens to you, press Report a problem afterwards - the report has what we need." },
     { 2,  "Raam's Shadow DLC not found (#79): if the game doesn't see your DLC, press Report a problem after that start." },
-    { 15, "System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitLab whether it worked." },
+    { 15, "System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitHub whether it worked." },
     { 15, "Other versions of the game (regional discs, other title updates): if yours isn't the one COGBox expects, tell us whether it works." },
 };
 
 
 // legal2-050: issues live in GitLab's tickets now, which can't be pre-filled from a link - the details go on the
 // clipboard and the new-ticket page opens; the player pastes them.
-static const char *const kTicketsUrl = "https://gitlab.com/shagg88/cogbox/-/issues";   // 0.5.0: GitLab
+static const char *const kTicketsUrl = "https://github.com/Shagg88/COGBox/issues";   // 0.6.0: GitHub (GitLab is the backup)
 static void open_ticket(const std::string &title, const std::string &body)
 {
     SDL_SetClipboardText((title + "\n\n" + body).c_str());
-    shell_open(std::string(kTicketsUrl) + "/new");   // GitLab: .../-/issues/new
+    shell_open(std::string(kTicketsUrl) + "/new");   // GitHub: .../issues/new
 }
 
 // Shagg 2 Nov: "Report a problem" in one go - the ticket page can't take a file from COGBox (that needs the player's
@@ -59,8 +59,8 @@ void report_share(App &a, int g, const std::string &zip, const std::string &what
         "\n\nPlease attach the report zip (" + zip.substr(zip.find_last_of('\\') + 1) + ") before you submit.\n";
     shell_select(zip);
     open_ticket(title, body);
-    if (a.wine) set_message(a, "Report saved in COGBox's reports folder: " + shown_path(a, zip) + ". " + tr("A GitLab ticket page opened and the details are on the clipboard - paste them, attach the zip and submit."), false);   // proton049 path + legal2-050 GitLab
-    else set_message(a, "Report saved: " + zip.substr(zip.find_last_of('\\') + 1) + ". " + tr("A GitLab ticket page opened and the details are on the clipboard - paste them, attach the zip and submit."), false);
+    if (a.wine) set_message(a, "Report saved in COGBox's reports folder: " + shown_path(a, zip) + ". " + tr("A GitHub ticket page opened and the details are on the clipboard - paste them, attach the zip and submit."), false);   // proton049 path + legal2-050 GitHub
+    else set_message(a, "Report saved: " + zip.substr(zip.find_last_of('\\') + 1) + ". " + tr("A GitHub ticket page opened and the details are on the clipboard - paste them, attach the zip and submit."), false);
 }
 
 // Shagg 31 Oct: the About tab's problem report (also after the experimental-settings prompt, main.cpp "reportexp")
@@ -936,7 +936,7 @@ static void confirm_works(App &a, int g, bool update)
                              "\nFile: " + (update ? "default.xexp" : "default.xex") + "\nSHA-1: " + h + "\nSize: " + std::to_string(file_size(file)) +
                              " bytes\n\nWhere it came from (region, disc / Games on Demand / update), and anything that didn't work:\n";
     open_ticket(title, body);
-    set_message(a, "Thanks - this version won't be flagged again. A GitLab ticket page opened and its details are on the clipboard: paste them and submit to let the developer know.", false);
+    set_message(a, "Thanks - this version won't be flagged again. A GitHub ticket page opened and its details are on the clipboard: paste them and submit to let the developer know.", false);
 }
 
 // Shagg 29 Oct: "Detect best settings" (Graphics tab) - the main graphics card's name and video memory (DXGI), the
@@ -1228,7 +1228,7 @@ static void about_tab(App &a, int g)
         } else report_now(a, g, s);
     }
     ui_tip("A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC "
-              "(no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitLab ticket.");
+              "(no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub ticket.");
     // Shagg 31 Oct: what this release needs players to test (k_helpTest, top of this file) - now a dialog
     {
         std::string list;
@@ -1242,7 +1242,7 @@ static void about_tab(App &a, int g)
         }
     }
     ImGui::SameLine();
-    if (small_button("Open the tickets on GitLab")) shell_open(kTicketsUrl);
+    if (small_button("Open the tickets on GitHub")) shell_open(kTicketsUrl);
     ImGui::SameLine();
     if (small_button("Reset settings to defaults...")) ask(a, "reset", g, "Reset to defaults", "Put every setting of every game back to its default? Your saves are not touched.", { "Reset", "Cancel" });
 
@@ -1253,7 +1253,7 @@ static void about_tab(App &a, int g)
         const std::string cur = a.ini.get("Launcher", "Language").empty() ? "auto" : a.ini.get("Launcher", "Language");
         std::string shown = std::string(tr("Automatic")) + " (" + tr("Windows' language") + ")";
         for (const Language &l : L) if (l.code == cur) shown = l.name;
-        row_label("Language", tr("Translations are written by the project; corrections are welcome in a GitLab ticket."), true);
+        row_label("Language", tr("Translations are written by the project; corrections are welcome in a GitHub ticket."), true);
         ImGui::SetNextItemWidth(g_ctrlW);
         if (ImGui::BeginCombo("##lang", shown.c_str())) {
             if (ImGui::Selectable((std::string(tr("Automatic")) + " (" + tr("Windows' language") + ")").c_str(), cur == "auto")) {
@@ -1272,7 +1272,7 @@ static void about_tab(App &a, int g)
     if (ImGui::Checkbox(tr("Borderless window (no title bar)"), &bl)) set_borderless(a, bl);
     ui_tip(k_winTip);
     bool chk = a.ini.geti("Updates", "Check", 1) != 0;
-    if (ImGui::Checkbox(tr("Check GitLab for a newer COGBox at start"), &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
+    if (ImGui::Checkbox(tr("Check GitHub for a newer COGBox at start"), &chk)) { a.ini.seti("Updates", "Check", chk ? 1 : 0); a.ini.save(); }
     ui_tip("Only the release page's address is asked for; nothing about you or this PC is sent.");
 
     // ---- LICENCES (0.4.8): the third-party terms, and NVIDIA's attribution for DLSS / DLSS Frame Generation / Reflex

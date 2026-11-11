@@ -190,7 +190,7 @@ static void answered(App &a)
             if (g_updateAfterLegal) { g_updateAfterLegal = false; update_check_start(COGBOX_VERSION); }
         } else if (m.answer == 1) {
             const std::string local = join(exe_dir(), "LEGAL.md");
-            shell_open(file_exists(local) ? local : std::string("https://gitlab.com/shagg88/cogbox"));
+            shell_open(file_exists(local) ? local : std::string("https://github.com/Shagg88/COGBox"));
         } else {
             ask(a, "legaldecline", -1, "See you later", "No problem - COGBox will close now. You're welcome back any time.", { "OK" });
             return;
@@ -202,7 +202,7 @@ static void answered(App &a)
     else if (m.tag == "whatsnew") {   // to-do 13: this version's release notes (legal2-050: on GitLab)
         a.ini.set("Notices", "WhatsNewSeen", COGBOX_VERSION);
         a.ini.save();
-        if (m.answer == 0) shell_open(std::string("https://gitlab.com/shagg88/cogbox/-/releases"));
+        if (m.answer == 0) shell_open(std::string("https://github.com/Shagg88/COGBox/releases"));
     }
     else if (m.tag == "langpick") {   // 0.2.0: the language prompt - Automatic, then languages()
         const auto &L = languages();

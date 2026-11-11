@@ -1320,13 +1320,13 @@ See you later = 다음에 만나요
 No problem - COGBox will close now. You're welcome back any time. = 괜찮아요 - 이제 COGBox를 닫습니다. 언제든 다시 오세요.
 # 0.5.0: legal2-050 - notice v2 (no warranty line, new affiliation line), GitLab tickets and updates, player pictures (machine-made translation, please check)
 COGBox is a free fan project. It works with your own copies of the games and doesn't include any game files.\n\nHow you get and use your games is up to you and your responsibility. We don't provide games and don't help with or support pirated copies.\n\nCOGBox isn't affiliated with Microsoft, Epic Games or The Coalition. "Read more" opens the full text (LEGAL.md). = COGBox는 무료 팬 프로젝트입니다. 직접 가진 게임 사본으로 작동하며 게임 파일은 전혀 포함되어 있지 않습니다.\n\n게임을 어떻게 구하고 사용하는지는 여러분의 선택이자 책임입니다. 저희는 게임을 제공하지 않으며 불법 복제본을 돕거나 지원하지 않습니다.\n\nCOGBox는 Microsoft, Epic Games, The Coalition과 제휴하지 않았습니다. "자세히 보기"를 누르면 전체 내용(LEGAL.md)이 열립니다.
-A GitLab ticket page opened and the details are on the clipboard - paste them, attach the zip and submit. = GitLab 티켓 페이지가 열렸고 세부 정보가 클립보드에 있습니다. 붙여 넣고 zip을 첨부한 뒤 제출하세요.
-Thanks - this version won't be flagged again. A GitLab ticket page opened and its details are on the clipboard: paste them and submit to let the developer know. = 감사합니다. 이 버전은 다시 표시되지 않습니다. GitLab 티켓 페이지가 열렸고 세부 정보가 클립보드에 있습니다. 붙여 넣고 제출해 개발자에게 알려 주세요.
-A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitLab ticket. = 문제 보고서는 마지막 플레이 로그, 설정, 이 PC의 설명이 담긴 바탕 화면의 zip 파일입니다(저장 데이터나 게임 파일 없음, Windows 사용자 이름은 제거됨). 아무것도 전송되지 않습니다. GitLab 티켓에 첨부하세요.
-Open the tickets on GitLab = GitLab에서 티켓 열기
-Translations are written by the project; corrections are welcome in a GitLab ticket. = 번역은 프로젝트에서 작성합니다. 수정 사항은 GitLab 티켓으로 환영합니다.
-Check GitLab for a newer COGBox at start = 시작할 때 GitLab에서 새 COGBox 확인
-System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitLab whether it worked. = System Link - LAN 플레이(실험적, #72): 사용해 보셨다면 작동했는지 GitLab 티켓으로 알려 주세요.
+A GitHub ticket page opened and the details are on the clipboard - paste them, attach the zip and submit. = GitHub 티켓 페이지가 열렸고 세부 정보가 클립보드에 있습니다. 붙여 넣고 zip을 첨부한 뒤 제출하세요.
+Thanks - this version won't be flagged again. A GitHub ticket page opened and its details are on the clipboard: paste them and submit to let the developer know. = 감사합니다. 이 버전은 다시 표시되지 않습니다. GitHub 티켓 페이지가 열렸고 세부 정보가 클립보드에 있습니다. 붙여 넣고 제출해 개발자에게 알려 주세요.
+A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub ticket. = 문제 보고서는 마지막 플레이 로그, 설정, 이 PC의 설명이 담긴 바탕 화면의 zip 파일입니다(저장 데이터나 게임 파일 없음, Windows 사용자 이름은 제거됨). 아무것도 전송되지 않습니다. GitHub 티켓에 첨부하세요.
+Open the tickets on GitHub = GitHub에서 티켓 열기
+Translations are written by the project; corrections are welcome in a GitHub ticket. = 번역은 프로젝트에서 작성합니다. 수정 사항은 GitHub 티켓으로 환영합니다.
+Check GitHub for a newer COGBox at start = 시작할 때 GitHub에서 새 COGBox 확인
+System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitHub whether it worked. = System Link - LAN 플레이(실험적, #72): 사용해 보셨다면 작동했는지 GitHub 티켓으로 알려 주세요.
 start it once from COGBox to add its pictures. = COGBox에서 한 번 실행하면 그림이 추가됩니다.
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = 조준 감도 (%)
