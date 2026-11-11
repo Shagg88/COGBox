@@ -170,7 +170,9 @@ namespace
             {
                 const std::u16string name = Widen(line.substr(1, line.size() - 2));
                 sec = nullptr;
-                for (Section& s : file->sections) if (s.name == name) { sec = &s; break; }
+                // UE3's config is case-blind: [Objectives] is the game's [OBJECTIVES] (a second section only differing in
+                // case hid the first one's keys from the game: the stock campaign's objectives showed as <?INT?...?>)
+                for (Section& s : file->sections) if (LowerW(s.name) == LowerW(name)) { sec = &s; break; }
                 if (!sec) { file->sections.push_back({ name, {} }); sec = &file->sections.back(); }
                 replaced.clear(); continue;
             }
@@ -178,24 +180,27 @@ namespace
             if (!sec || eq == std::string::npos) { bad("expected [section] or key=value"); continue; }
             const char op = (line[0] == '+' || line[0] == '-' || line[0] == '*') ? line[0] : 0;
             const std::u16string key = Widen(Trim(line.substr(op ? 1 : 0, eq - (op ? 1 : 0)))), value = Widen(line.substr(eq + 1));
+            const std::u16string lowKey = LowerW(key);   // keys are case-blind too
             auto& keys = sec->keys;
+            auto same = [&](const auto& kv) { return LowerW(kv.first) == lowKey; };
             if (op == '+')
             {
-                if (std::find(keys.begin(), keys.end(), std::make_pair(key, value)) == keys.end()) keys.emplace_back(key, value);
+                if (std::find_if(keys.begin(), keys.end(), [&](const auto& kv) { return same(kv) && kv.second == value; }) == keys.end())
+                    keys.emplace_back(key, value);
             }
             else if (op == '-')
-                keys.erase(std::remove(keys.begin(), keys.end(), std::make_pair(key, value)), keys.end());
+                keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const auto& kv) { return same(kv) && kv.second == value; }), keys.end());
             else if (op == '*')
             {
-                auto it = std::find_if(keys.begin(), keys.end(), [&](const auto& kv) { return kv.first == key && FirstField(kv.second) == FirstField(value); });
+                auto it = std::find_if(keys.begin(), keys.end(), [&](const auto& kv) { return same(kv) && FirstField(kv.second) == FirstField(value); });
                 if (it == keys.end()) keys.emplace_back(key, value); else it->second = value;
             }
             else
             {
-                if (std::find(replaced.begin(), replaced.end(), key) == replaced.end())
+                if (std::find(replaced.begin(), replaced.end(), lowKey) == replaced.end())
                 {
-                    keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const auto& kv) { return kv.first == key; }), keys.end());
-                    replaced.push_back(key);
+                    keys.erase(std::remove_if(keys.begin(), keys.end(), same), keys.end());
+                    replaced.push_back(lowKey);
                 }
                 keys.emplace_back(key, value);
             }

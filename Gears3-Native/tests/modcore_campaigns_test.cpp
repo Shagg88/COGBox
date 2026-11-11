@@ -195,3 +195,29 @@ TEST_CASE("modcore campaigns: the fragment merges into the config and reads back
   }
   CHECK(modcore::CampaignFragment(modcore::Allocation{}).empty());
 }
+
+TEST_CASE("modcore config: sections and keys match whatever their case", "[modcore]") {
+  // the trilogy's [Objectives] onto the game's [OBJECTIVES]: one section, the game's keys kept
+  TempDir t("modcore_config_case");
+  const std::vector<uint8_t> base = Pack({{"..\\..\\GearGame\\Localization\\INT\\level_objectives.int",
+                                           {{"OBJECTIVES", {{"NIGHTMARE_OBJ_1", "Follow Anya."}, {"Shared", "old"}}}}}});
+  const fs::path frag = t.path / "objectives.ini";
+  std::ofstream(frag, std::ios::binary) << "##### level_objectives.int\n[Objectives]\nPRISON_OBJ_DOOR=Open the jammed door.\n"
+                                           "shared=new\n";
+  const std::vector<uint8_t> merged = modcore::MergeConfig(base, {{"trilogy", frag}});
+  REQUIRE(!merged.empty());
+  const std::string text(merged.begin(), merged.end());
+  auto count = [&](const std::string& ascii) {   // the merged file is UTF-16: look for the text as UTF-16LE
+    std::string w;
+    for (char c : ascii) { w += c; w += '\0'; }
+    size_t n = 0;
+    for (size_t at = text.find(w); at != std::string::npos; at = text.find(w, at + 1)) n++;
+    return n;
+  };
+  CHECK(count("OBJECTIVES") == 1);
+  CHECK(count("Objectives") == 0);
+  CHECK(count("NIGHTMARE_OBJ_1") == 1);
+  CHECK(count("PRISON_OBJ_DOOR") == 1);
+  CHECK(count("old") == 0);   // shared=new replaced Shared=old
+  CHECK(count("new") == 1);
+}
