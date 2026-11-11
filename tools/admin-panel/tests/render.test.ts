@@ -33,3 +33,10 @@ describe('render', () => {
     expect(h).toContain('data-restart="master-server"');
   });
 });
+
+describe('render times', () => {
+  it('a missing or invalid time renders as a dash', () => {
+    const a = auditHtml([{ id: 1, time: undefined, name: 'a', action: 'login', detail: '' }, { id: 2, time: 'x', name: 'b', action: 'login', detail: '' }]);
+    expect(a.match(/—/g)?.length).toBe(2);
+  });
+});

@@ -132,6 +132,7 @@ const dlg = $('#restart-dlg');
 let restartSvc = '';
 function openRestart(svc) {
   restartSvc = svc;
+  dlg.returnValue = '';   // otherwise Esc after an earlier confirm would still read 'ok'
   $('#restart-svc').textContent = svc;
   $('#restart-word').value = '';
   $('#restart-ok').disabled = true;
@@ -141,6 +142,7 @@ function openRestart(svc) {
 $('#restart-word').addEventListener('input', (ev) => { $('#restart-ok').disabled = ev.target.value !== 'RESTART'; });
 dlg.addEventListener('close', async () => {
   if (dlg.returnValue !== 'ok') return;
+  dlg.returnValue = '';
   const confirmWord = $('#restart-word').value;
   note(`Restarting ${restartSvc}...`);
   try { await api('/restart', { service: restartSvc, confirm: confirmWord }); note(`${restartSvc} restarted.`); } catch (e) { fail(e); }

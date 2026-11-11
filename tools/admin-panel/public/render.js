@@ -16,6 +16,8 @@ export function duration(ms) {
 }
 
 export function when(ms) {
+  // a bad or missing time must not take the whole table down
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || Math.abs(ms) > 8.64e15) return '—';
   return new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
 }
 

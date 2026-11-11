@@ -41,7 +41,8 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   const requireSession = makeRequireSession(db, now);
   // Default-deny: every /admin/api route except login needs a session, including ones added later.
   app.addHook('preHandler', async (req, reply) => {
-    const path = req.routeOptions.url ?? req.url.split('?')[0];
+    // the raw path, not the matched route: the static /admin/* wildcard would otherwise swallow unknown API paths
+    const path = req.url.split('?')[0];
     if (!path.startsWith('/admin/api/') || path === '/admin/api/login') return;
     return requireSession(req, reply);
   });

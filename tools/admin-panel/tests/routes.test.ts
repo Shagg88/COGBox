@@ -168,3 +168,10 @@ describe('pages', () => {
     expect(res.headers['content-security-policy']).toBe("default-src 'self'; frame-ancestors 'none'");
   });
 });
+
+describe('default deny', () => {
+  it('an unknown API path without a session gets 401', async () => {
+    const res = await app.inject({ method: 'GET', url: '/admin/api/nope' });
+    expect(res.statusCode).toBe(401);
+  });
+});
