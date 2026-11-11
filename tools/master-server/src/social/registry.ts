@@ -86,6 +86,16 @@ export class Registry {
     return out;
   }
 
+  // Games online per title (the admin overview).
+  titleCounts(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const e of this.entries.values()) {
+      const t = e.game?.titleId;
+      if (t) out[t] = (out[t] ?? 0) + 1;
+    }
+    return out;
+  }
+
   // Games online in a title: everywhere, and in a region (no region, or Any: the same as everywhere).
   population(titleId: string, region?: string): { worldwide: number; region: number } {
     let worldwide = 0, inRegion = 0;
