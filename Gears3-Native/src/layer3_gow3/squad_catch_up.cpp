@@ -10,7 +10,9 @@
 // units, the last 40 kept: places a pawn stood); a squad AI (a COG pawn under an AI controller, alive) that is farther
 // than the distance from player 1, has not moved 100 units in 6 s and whose last path search failed (its
 // NavigationHandle's LastPathError 2-5: anchor pylon, no path, no valid final destination, no next move location; a
-// waiting AI reads 0 - Gears 3's EPathFindingError has no "none") is put on the trail
+// waiting AI reads 0 - Gears 3's EPathFindingError has no "none"; and recently: LastPathFailTime within 10 s of the
+// world's time - the error stays set after the AI finds its way, and Dom, gone ahead down the prison's hallway to
+// wait where Kismet sent him, was pulled back behind the player every 30 s) is put on the trail
 // point 300-800 units behind player 1. A squad mate that is moving (a scripted path of its own, a split of the squad)
 // or waiting where Kismet put it (its search did not fail: Dom at the prison's first door, waiting for the player) is
 // never moved.
@@ -44,7 +46,7 @@ double Dist2D(const Vec& a, const Vec& b) { return std::hypot(a.x - b.x, a.y - b
 
 struct Props {
   int loc = -1, pawn = -1, controller = -1, health = -1, worldInfo = -1, pawnList = -1, nextPawn = -1, navHandle = -1,
-      pathError = -1;
+      pathError = -1, failTime = -1, timeSeconds = -1;
   uint32_t pc = 0, ai = 0;
   bool Find() {
     if (pc && ai && loc >= 0 && pawn >= 0 && controller >= 0 && worldInfo >= 0 && pawnList >= 0 && nextPawn >= 0) return true;
@@ -60,7 +62,11 @@ struct Props {
     health = obj::PropertyOffset(pawnCls, "Health");
     nextPawn = obj::PropertyOffset(pawnCls, "NextPawn");
     pawnList = obj::PropertyOffset(wi, "PawnList");
-    if (const uint32_t nh = obj::FindClass("NavigationHandle")) pathError = obj::PropertyOffset(nh, "LastPathError");
+    if (const uint32_t nh = obj::FindClass("NavigationHandle")) {
+      pathError = obj::PropertyOffset(nh, "LastPathError");
+      failTime = obj::PropertyOffset(nh, "LastPathFailTime");
+    }
+    timeSeconds = obj::PropertyOffset(wi, "TimeSeconds");
     navHandle = obj::PropertyOffset(ctrl, "NavigationHandle");
     return loc >= 0 && pawn >= 0 && controller >= 0 && worldInfo >= 0 && pawnList >= 0 && nextPawn >= 0;
   }
@@ -69,6 +75,12 @@ struct Props {
     if (navHandle < 0 || pathError < 0) return -1;
     const uint32_t nh = obj::Read32(ctrl + uint32_t(navHandle));
     return nh ? int(obj::Read32(nh + uint32_t(pathError)) >> 24) : -1;
+  }
+  // seconds since that failure, by the world's clock (-1: unknown)
+  double SinceFail(uint32_t ctrl, uint32_t wi) const {
+    if (navHandle < 0 || failTime < 0 || timeSeconds < 0 || !wi) return -1;
+    const uint32_t nh = obj::Read32(ctrl + uint32_t(navHandle));
+    return nh ? obj::ReadFloat(wi + uint32_t(timeSeconds)) - obj::ReadFloat(nh + uint32_t(failTime)) : -1;
   }
   Vec At(uint32_t a) const {
     return {obj::ReadFloat(a + uint32_t(loc)), obj::ReadFloat(a + uint32_t(loc) + 4), obj::ReadFloat(a + uint32_t(loc) + 8)};
@@ -123,12 +135,13 @@ void Run(int distance) {
       const Vec at = g_p.At(p);
       Watch& w = watched.try_emplace(p, Watch{at, now}).first->second;
       if (REXCVAR_GET(mod_squad_log) && now - lastLog > std::chrono::seconds(10))
-        REXLOG_INFO("mod_api: squad: {} at {:.0f},{:.0f} ({:.0f} from player 1 at {:.0f},{:.0f}), still for {:.0f} s, path error {}",
+        REXLOG_INFO("mod_api: squad: {} at {:.0f},{:.0f} ({:.0f} from player 1 at {:.0f},{:.0f}), still for {:.0f} s, path error {} ({:.0f} s ago)",
                     cls, at.x, at.y, Dist2D(at, me), me.x, me.y, std::chrono::duration<double>(now - w.at).count(),
-                    g_p.PathError(ctrl));
+                    g_p.PathError(ctrl), g_p.SinceFail(ctrl, wi));
       if (Dist2D(at, w.since) > 100) { w.since = at, w.at = now; continue; }   // moving: its own way
       if (Dist2D(at, me) <= distance || now - w.at < std::chrono::seconds(6)) continue;
       if (g_p.PathError(ctrl) < 2) continue;   // its search did not fail: waiting where it was told to
+      if (const double ago = g_p.SinceFail(ctrl, wi); ago < 0 || ago > 10) continue;   // (an old failure: found its way since)
       // once in 30 s at most: an AI whose orders send it back where its search fails would be moved again and again
       if (w.moved != Clock::time_point{} && now - w.moved < std::chrono::seconds(30)) continue;
       // stuck and far: the trail point 300-800 units behind player 1 (the farthest such one)
