@@ -42,6 +42,9 @@ void social_stop();
 // Tells the server this player left (POST /api/v1/friends/offline), then stops the worker; waits at most wait_ms for
 // the answer (0: not at all). Nothing when no account is signed in.
 void social_sign_off(int wait_ms);
+// Deletes the online account (DELETE /api/v1/auth/account) on the running worker's backend, then stops the worker.
+// Waits at most wait_ms; returns the HTTP status (0: no backend, no answer or no answer in time).
+int social_delete_account(int wait_ms);
 SocialView social_view();
 // Queues an action (arg: see call_for); the worker runs it and polls again.
 void social_do(SocialAction action, const std::string& arg);

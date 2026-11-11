@@ -133,6 +133,17 @@ describe('join and invites', () => {
     expect((await app.inject({ method: 'POST', url: `/api/v1/invites/${third.id}/accept`, headers: auth(f) })).statusCode).toBe(404);
     hostGame.close(); fLauncher.close(); fGame.close();
   });
+  it('a pending invite from a deleted account drops out instead of breaking the list', async () => {
+    const h = await claim(); const f = await claim();
+    await befriend(h, f);
+    await host(h);
+    const sent = (await app.inject({ method: 'POST', url: '/api/v1/invites', headers: auth(h), payload: { to_uuid: f.uuid } })).json();
+    expect((await app.inject({ method: 'DELETE', url: '/api/v1/auth/account', headers: auth(h) })).statusCode).toBe(200);
+    const list = await app.inject({ method: 'GET', url: '/api/v1/invites', headers: auth(f) });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().invites).toEqual([]);
+    expect((await app.inject({ method: 'POST', url: `/api/v1/invites/${sent.id}/accept`, headers: auth(f) })).statusCode).toBe(404);
+  });
   it('an invite from someone who is no longer a friend cannot be accepted', async () => {
     const h = await claim(); const f = await claim();
     await befriend(h, f);

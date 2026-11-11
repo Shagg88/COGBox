@@ -81,6 +81,31 @@ int main() {
         social_sign_off(100);          // nothing running: nothing sent
         CHECK(offline.load() == 1);
     }
+    // deleting the account: the DELETE reaches the server (it used to be queued and then cleared) and its status
+    // comes back; a server that doesn't answer in time gives 0
+    {
+        static std::atomic<int> deletes{0};
+        static std::atomic<int> answer{200};
+        SocialBackend b;
+        b.call = [](const SocialCall& c) -> HttpResult {
+            if (c.method == "DELETE" && c.path == "/api/v1/auth/account") {
+                ++deletes;
+                if (answer == 0) std::this_thread::sleep_for(milliseconds(500));
+                return { answer.load(), "{}" };
+            }
+            return { 200, c.path == "/api/v1/friends" ? R"({"friends":[],"incoming":[],"outgoing":[]})" : "{}" };
+        };
+        b.account = [acc] { return std::optional<SocialAccount>(acc); };
+        social_start_backend("fake-del", b);
+        CHECK(social_delete_account(1000) == 200);
+        CHECK(deletes.load() == 1);
+        CHECK(!social_view().configured);
+        social_start_backend("fake-del2", b);
+        answer = 0;
+        CHECK(social_delete_account(100) == 0);
+        CHECK(social_delete_account(100) == 0);   // nothing running: nothing sent
+        CHECK(deletes.load() == 2);
+    }
     if (g_failures == 0) std::printf("social_client_test: all passed\n");
     return g_failures;
 }

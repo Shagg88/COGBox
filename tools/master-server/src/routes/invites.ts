@@ -50,7 +50,10 @@ export const inviteRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: 
   };
   const xuidOf = (uuid: string): string =>
     (db.prepare('SELECT xuid FROM users WHERE uuid = ?').get(uuid) as { xuid: string }).xuid;
-  const live = (i: Invite | undefined): i is Invite => !!i && now() - i.created <= INVITE_LIFETIME_MS;
+  // an invite lapses with its lifetime, or at once when either account was deleted (DELETE /auth/account)
+  const exists = (uuid: string) => !!db.prepare('SELECT 1 FROM users WHERE uuid = ?').get(uuid);
+  const live = (i: Invite | undefined): i is Invite =>
+    !!i && now() - i.created <= INVITE_LIFETIME_MS && exists(i.from) && exists(i.to);
   const prune = () => { for (const [id, i] of invites) if (!live(i)) invites.delete(id); };
   const view = (i: Invite) => ({ id: i.id, from: refOf(i.from), title_id: i.title_id, room_code: i.room_code });
 

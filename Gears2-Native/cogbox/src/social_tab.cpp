@@ -137,8 +137,14 @@ void social_rename(App &a, const std::string &name)
 void social_delete_answer(App &a, int answer)
 {
     if (answer != 1) return;
-    social_do(SocialAction::DeleteAccount, "");
-    social_sign_off(3000);   // waits for the call (and closes the connection)
+    // sent here and waited for, not queued: stopping the worker would drop a queued call before it ran
+    const int status = social_delete_account(5000);
+    if (status != 200 && status != 401) {   // 401: the server no longer knows this account
+        social_restart(a);
+        set_message(a, status == 0 ? tr("Can't reach the online server. Your online account was not deleted.")
+                                   : tr("The online server refused. Your online account was not deleted."), true);
+        return;
+    }
     const std::string dir = profile_dir(exe_dir(), std::to_string(current_profile()));
     const std::wstring f = widen(join(dir, "identity.json"));
     MoveFileExW(f.c_str(), (f + L".deleted").c_str(), MOVEFILE_REPLACE_EXISTING);

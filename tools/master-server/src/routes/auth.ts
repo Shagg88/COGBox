@@ -69,7 +69,8 @@ export const authRoutes: FastifyPluginAsync<{ db: DatabaseInstance }> = async (f
   });
 
   // Deleting an account (PRIVACY.md): the player's row, their friendships and blocks (the friends table cascades) and
-  // any lobby they host. Pending invites live in memory and lapse within INVITE_LIFETIME_MS. The tag is free again.
+  // any lobby they host. Pending invites live in memory; the invite routes drop any whose sender or recipient is gone.
+  // The tag is free again.
   fastify.delete('/account', async (request, reply) => {
     const me = checkAuthHeader(db, request.headers.authorization);
     if (!me) {

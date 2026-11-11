@@ -147,6 +147,23 @@ void social_sign_off(int wait_ms) {
     if (wait_ms > 0) finished.wait_for(std::chrono::milliseconds(wait_ms));
 }
 
+int social_delete_account(int wait_ms) {
+    Shared& s = sh();
+    SocialBackend b;
+    {
+        std::lock_guard<std::mutex> lk(s.mu);
+        if (s.gen != 0) b = s.backend;
+    }
+    social_stop();   // nothing else is sent for this account
+    if (!b.call || !b.account || !b.account()) return 0;
+    // a detached thread, as in social_sign_off: a slow server must not keep the launcher from carrying on
+    auto done = std::make_shared<std::promise<int>>();
+    std::future<int> status = done->get_future();
+    std::thread([b, done] { done->set_value(b.call({ "DELETE", "/api/v1/auth/account", "" }).status); }).detach();
+    if (status.wait_for(std::chrono::milliseconds(wait_ms)) != std::future_status::ready) return 0;
+    return status.get();
+}
+
 void social_start_backend(const std::string& key, SocialBackend backend) {
     Shared& s = sh();
     {
