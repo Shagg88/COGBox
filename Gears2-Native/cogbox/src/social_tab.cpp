@@ -27,6 +27,7 @@ SDL_Texture *player_icon_texture(App &a, const std::string &rel);   // player_ic
 namespace {
 std::string g_remove_uuid;   // the friend REMOVE asked about
 bool g_deleting = false;     // DELETE ONLINE ACCOUNT is waiting for the server (social_delete_poll)
+int g_delete_profile = 0;    // the profile whose account DELETE ONLINE ACCOUNT is deleting
 char g_add[40] = {};
 bool g_bad_tag = false;
 bool g_invite_hint = false;   // INVITE pressed with no game running
@@ -141,6 +142,7 @@ void social_delete_answer(App &a, int answer)
     // sent at once, not queued (stopping the worker would drop a queued call), on its own thread so the launcher
     // keeps drawing; social_delete_poll picks up the answer
     g_deleting = true;
+    g_delete_profile = current_profile();   // the account being deleted is this profile's, even if the player switches
     social_delete_account_start(20000);
     set_message(a, tr("Deleting your online account..."), false);
 }
@@ -161,9 +163,14 @@ void social_delete_poll(App &a)
                                        : tr("The online server refused. Your online account was not deleted."), true);
         return;
     }
-    const std::string dir = profile_dir(exe_dir(), std::to_string(current_profile()));
+    // the profile the delete was started for, not the current one: the player may have switched while it ran
+    const std::string dir = profile_dir(exe_dir(), std::to_string(g_delete_profile));
     const std::wstring f = widen(join(dir, "identity.json"));
     MoveFileExW(f.c_str(), (f + L".deleted").c_str(), MOVEFILE_REPLACE_EXISTING);
+    if (current_profile() != g_delete_profile) {   // Online/Enabled is launcher-wide: leave it for the other profile
+        set_message(a, tr("The online account of the profile you switched from was deleted."), false);
+        return;
+    }
     a.ini.seti("Online", "Enabled", 0);
     a.ini.save();
     social_restart(a);
