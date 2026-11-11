@@ -612,6 +612,9 @@ void RaiseActCap() {
   if (!passable) REXLOG_WARN("mod chapters: the act carousel's bHaltProgression not found - locked acts may hide the mods' act");
 }
 
+// squad_catch_up.cpp: the game info while a mod chapter's map is loaded (0: none)
+uint32_t Gow3ModChapterGame() { return g_chapterGame; }
+
 // Every engine tick, on the game thread (game_patches.cpp, the Gow3MaxTickRate hook)
 void Gow3ModChaptersTick() {
   if (!g_started) return;

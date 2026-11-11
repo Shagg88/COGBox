@@ -79,6 +79,7 @@ Id = mycampaign               ; stable id (lower case): chapters in other mods j
 Title = My Campaign           ; the act's name in Select Chapter
 Order = 50                    ; where it sorts among campaigns (default 100)
 Screenshot = UI_Portraits_G3.SP.T_Portraits_SP_A1C0_Act1
+SquadCatchUp = 800            ; optional adapter (below)
 
 [Chapter.1]                   ; its place in the campaign: shown as "Chapter 1"
 Map = MyCampaign_Ch1_P        ; the chapter's persistent map (in your mod)
@@ -105,6 +106,15 @@ How the slots are given out:
 and any `mod.ini` key the game does not understand. The game's log (`Gears3\logs\<session>\gow3.log`) lists every
 decision on the `mod_api:` and `ue3_mods:` lines.
 
+**Engine-difference adapters** (in `[Campaign]`, off unless given): behaviour a converted campaign needs that the game
+does not do itself.
+
+- `SquadCatchUp = <distance>`: a squad AI that is stuck farther than this from player 1 is brought back behind them. It
+  must have stood still for 6 s and its last path search must have failed. Converted levels can leave an AI's path
+  search failing (the trilogy's Dom on the prison's hard route), while their scripting still waits for it. An AI that
+  is moving, or waiting where the level's scripting put it, is never moved. `--mod_squad_log` logs what it sees every
+  10 s.
+
 Older mods that write their own `GearCampaignActData` / `GearCampaignChapterData` fragments still work. Their slots
 are kept free for them.
 
@@ -119,3 +129,34 @@ are kept free for them.
 | More chapters than free slots (49 is the last) | The extra chapters are left out, and shown |
 | Two mods give a campaign the same chapter number | The later mod's chapter is left out, and shown |
 | `Api` higher than this COGBox knows | Loaded, with a note to update COGBox |
+
+## Testing a mod (developer switches)
+
+These are command-line switches for the game (add them in the launcher's extra arguments). They change nothing unless
+they are given.
+
+- **Start straight in a chapter:**
+  `--ue3_exec_at="1500:open GearGame_P?game=geargamecontent.GearGameSP?chapter=32"`
+  - The chapter number is the slot the Mods tab shows ("Select Chapter: ...", or the game's log: `mod_api: campaign ...`).
+  - 1500 is a game tick, about 25 s into the title screen. A mod's content packages are loaded and kept by then; much
+    earlier, the chapter can start before them.
+  - `--ue3_launch=GearGame_P?chapter=N` (at start-up) does not work for mod chapters: the game looks the chapter's map
+    up before COGBox can add it.
+- **Play a test the same way every time: `--cogbox_input_script=<file>`.** A text file of timed controller events is
+  played into player 1's controller, with no keyboard and no window focus needed. Each line starts with the seconds
+  since the game started:
+
+  ```
+  30 pad START 200          # buttons held for ms: A B X Y LB RB LS RS BACK START UP DOWN LEFT RIGHT, '+' joins
+  60 trig R 300             # a trigger
+  70 stick L 0 1 2000       # a stick held (x, y from -1 to 1)
+  90 pos                    # player 1's position in the log (to plan a route)
+  95 walkto 138 1042        # walk there
+  110 follow COGDom 60      # walk after a squad mate
+  140 choose L              # a path choice: waits for it, then that side
+  150 route -950,1150;-1210,1227 20
+  400 quit
+  ```
+
+  Every verb is listed in `Gears3-Native/src/layer2_ue3/include/ue3/script_input.h`. The game's log has a
+  `script_input:` line for each step.

@@ -9,7 +9,7 @@
 //   <t> trig L|R [ms] [0-255]       a trigger (default 200 ms, fully)
 //   <t> stick L|R <x> <y> [ms]      a stick held at x, y (-1..1; +y is up), default 500 ms
 //   <t> look <y> <ms>               the right stick's y alone (gears3-pc's verb)
-//   <t> choose L|R                  a path choice's side: waits for the choice (2 min), then its trigger
+//   <t> choose L|R                  a path choice's side: waits for the choice (5 min), then its trigger
 // (gears3-pc scripts also run: their bare-hex pad buttons are read, "capture" is ignored)
 //   <t> log <text>                  a "script_input:" line in the log (to find a moment in it)
 //   <t> quit                        the game ends (the test is over)
@@ -22,7 +22,7 @@
 //   <t> face <x> <y>                the camera turned toward it
 //   <t> follow <class part> [s] [d] walk after the pawn whose class name has the text (COGDom) for s (60), within d
 //   <t> teleport <x> <y> <z> [cls]  player 1 (or the first pawn of that class) put there (testing)
-// walkto / route / face / follow take turns: a step whose time comes while the one before still runs waits for it.
+// walkto / route / face / follow take turns (choose runs beside them): a step whose time comes while the one before still runs waits for it.
 // Events overlap freely: their buttons add up, a later stick or trigger event wins while it lasts.
 #pragma once
 

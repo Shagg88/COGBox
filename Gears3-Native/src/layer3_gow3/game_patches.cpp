@@ -456,6 +456,8 @@ void Gow3PathChoiceTick() {
     if ((f & open_mask) && (!input_mask || (f & input_mask))) open = true;
   }
   Ue3ScriptInputPathChoiceOpen(open);
+  if (static int n = 0; !mouse && ++n % 20 == 0)   // (debug)
+    REXLOG_INFO("path choice: (debug) {} instance(s), open {}", instances.size(), open);
   static bool swapped = false;
   static std::string left, right;
   if (!mouse || open == swapped) return;

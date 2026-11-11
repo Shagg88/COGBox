@@ -50,6 +50,9 @@ namespace modcore
     {
         std::string id;                              // stable: chapters of one campaign may come from several mods
         std::string title, screenshot;
+        int squad_catch_up = 0;                      // SquadCatchUp = <distance>: an engine-difference adapter (0: off).
+                                                     // A squad AI stuck that far from player 1 is brought behind them
+                                                     // (converted levels whose AI paths do not hold, ue3/squad_catch_up)
         int order = -1;                              // where it sorts among campaigns: the first Order any of its mods
                                                      // gives (100 when none does), then the mods' load order
     };
@@ -146,6 +149,7 @@ namespace modcore
                 else if (key == "title") m.campaign.title = value;
                 else if (key == "order") m.campaign.order = atoi(value.c_str());
                 else if (key == "screenshot") m.campaign.screenshot = value;
+                else if (key == "squadcatchup") m.campaign.squad_catch_up = (std::max)(0, atoi(value.c_str()));
                 else m.warnings.push_back("[Campaign] " + Trim(line.substr(0, eq)) + ": not a campaign key - ignored");
                 continue;
             }

@@ -39,6 +39,7 @@ void Gow3AddBuiltInIniEdits();  // game_patches.cpp: --gow3_trilinear, --gow3_fa
 void Gow3StopMemoryGauge();     // game_patches.cpp: --gow3_memory_log_seconds stops before the kernel goes away
 void Gow3InstallExtras();       // extras.cpp: --gow3_cheats, --gow3_unlock_mutators, engine console hotkeys
 void Gow3InstallModChapters();  // mod_chapters.cpp: mods' campaign chapters and content packages
+void Gow3InstallSquadCatchUp();  // squad_catch_up.cpp: the SquadCatchUp adapter ([Campaign] in a mod.ini)
 REXCVAR_DECLARE(bool, gow3_mute_unfocused);  // extras.cpp
 
 class Gow3App : public rex::ReXApp {
@@ -68,6 +69,7 @@ class Gow3App : public rex::ReXApp {
     Gow3InstallMainMenuExitIfRequested();  // Exit Game: front-end tracking, before the game opens a level
     Gow3InstallUnlocks();      // GitHub #174: --gow3_unlock_insane (base disc build)
     Gow3InstallModChapters();  // mods' chapters 32-49 and content packages (mod_chapters.cpp), after their config
+    Gow3InstallSquadCatchUp();
     XenosInstallDrawStatsIfRequested();
     XenosInstallPrimDetailIfRequested();
     XenosInstallFrameCaptureIfRequested();

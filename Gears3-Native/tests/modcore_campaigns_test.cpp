@@ -67,7 +67,7 @@ TEST_CASE("modcore campaigns: mod.ini [Campaign] and [Chapter.N]", "[modcore]") 
   TempDir t("modcore_campaigns_read");
   const fs::path d = t.Mod("Gears1_Chapter1",
                            "[Mod]\nName = Chapter One\nApi = 1\ncontent = MPCH_A\n"
-                           "[Campaign]\nId = Gears1\nTitle = Gears of War\nOrder = 10\nColour = red\n"
+                           "[Campaign]\nId = Gears1\nTitle = Gears of War\nOrder = 10\nColour = red\nSquadCatchUp = 1500\n"
                            "[Chapter.2]\nMap = Second_P\n"
                            "[Chapter.1]\nMap = GOW1_SP_Prison_P\nTitle = 14 Years After\nLocation = Jacinto\nTime = E-Day + 14\n"
                            "ContentPackages = MPCH_A, MPCH_B\nSpeed = 2\n"
@@ -81,6 +81,7 @@ TEST_CASE("modcore campaigns: mod.ini [Campaign] and [Chapter.N]", "[modcore]") 
   CHECK(m.campaign.id == "gears1");
   CHECK(m.campaign.title == "Gears of War");
   CHECK(m.campaign.order == 10);
+  CHECK(m.campaign.squad_catch_up == 1500);
   REQUIRE(m.chapters.size() == 2);
   CHECK(m.chapters[0].number == 1);
   CHECK(m.chapters[0].map == "GOW1_SP_Prison_P");

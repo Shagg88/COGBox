@@ -164,6 +164,14 @@ int MergeModConfigFragments(const fs::path& game_root, const std::string& bundle
 
 const std::vector<std::string>& ModContentPackages() { return g_content; }
 
+int ModSquadCatchUp() {
+  std::lock_guard lock(g_mutex);
+  int d = 0;
+  for (const modcore::Manifest& m : g_mods)
+    if (m.Active()) d = std::max(d, m.campaign.squad_catch_up);
+  return d;
+}
+
 uint64_t ModFingerprint() { return g_fingerprint; }
 
 }  // namespace ue3

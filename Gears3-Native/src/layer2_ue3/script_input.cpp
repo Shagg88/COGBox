@@ -346,14 +346,15 @@ void RunAction(const std::string& verb, const std::string& args) {
     Teleport(x, y, z, cls);
     return;
   }
-  std::lock_guard drive(g_drive);
-  if (verb == "choose") {   // waits for the path choice (2 min), then its side's trigger until it closes
+  // waits for the path choice (5 min), then its side's trigger until it closes; not one of the driving verbs: the walk
+  // that brings the player to the choice runs meanwhile
+  if (verb == "choose") {
     std::string side;
     in >> side;
     const bool left = side == "L" || side == "l";
     g_wantsChoice = true;
     const uint64_t t0 = Now();
-    while (!g_choiceOpen && Now() - t0 < 120000) Pause(100);
+    while (!g_choiceOpen && Now() - t0 < 300000) Pause(100);
     if (!g_choiceOpen) REXLOG_WARN("script_input: choose {}: no path choice came", side);
     for (int k = 0; k < 10 && g_choiceOpen; k++) {
       (left ? g_lt : g_rt) = 255; Pause(300); (left ? g_lt : g_rt) = 0; Pause(700);
@@ -362,6 +363,7 @@ void RunAction(const std::string& verb, const std::string& args) {
     g_wantsChoice = false;
     return;
   }
+  std::lock_guard drive(g_drive);
   if (verb == "walkto") { double x = 0, y = 0, s = 20; in >> x >> y >> s; WalkStep(x, y, s); }
   else if (verb == "face") { double x = 0, y = 0; in >> x >> y; Face(x, y); }
   else if (verb == "route") { std::string pts; double s = 0; in >> pts >> s; Route(pts, s); }
