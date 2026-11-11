@@ -607,6 +607,7 @@ void Gow3ModChaptersTick() {
       else g_tableDone = false;
     }
   }
-  if (!g_actCapDone && g_maxAct >= 5) RaiseActCap();
+  // (looked for once a second until the menu's script is loaded: each look searches every object)
+  if (static int tick = 0; !g_actCapDone && g_maxAct >= 5 && ++tick % 60 == 1) RaiseActCap();
   ContentPackagesTick();
 }

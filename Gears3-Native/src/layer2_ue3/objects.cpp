@@ -58,12 +58,27 @@ bool CopyRaw(void* out, const void* src, size_t size) {
   }
 }
 
+// guest pages (4 KB) seen readable: a committed page without a guard stays so (one that is freed later is caught by
+// CopyRaw's handler), so each is asked about once. A name lookup alternates between the names table and each name's
+// own allocation, and with only the last region remembered nearly every read was a VirtualQuery: while the title
+// loaded, RaiseActCap's lookups took the game thread 38-63 s.
+std::atomic<uint32_t> g_readablePages[0xC0000000ull / 4096 / 32];
+
+bool GuestPageReadable(uint32_t address) {
+  std::atomic<uint32_t>& word = g_readablePages[address >> 17];
+  const uint32_t bit = 1u << ((address >> 12) & 31);
+  if (word.load(std::memory_order_relaxed) & bit) return true;
+  if (!PageReadable(Host(address))) return false;
+  word.fetch_or(bit, std::memory_order_relaxed);
+  return true;
+}
+
 bool Copy(uint32_t address, void* out, size_t size) {
   if (address < 0x10000 || uint64_t(address) + size > 0xC0000000ull) return false;
   if (address >= 0x7FC00000 && address < 0x80000000) return false;  // GPU registers
-  const uint8_t* host = Host(address);
-  if (!PageReadable(host) || !PageReadable(host + size - 1)) return false;
-  return CopyRaw(out, host, size);
+  for (uint32_t page = address & ~4095u; page <= uint32_t(address + size - 1); page += 4096)
+    if (!GuestPageReadable(page)) return false;
+  return CopyRaw(out, Host(address), size);
 }
 
 template <class F>
