@@ -40,7 +40,7 @@ constexpr DeviceId kScriptDevice = static_cast<DeviceId>(0x5C121700ull);
 
 // the movement verbs' live stick and buttons (their threads write, the device reads): a non-zero stick wins over the
 // timed events' while it is set
-std::atomic<int16_t> g_lx{0}, g_ly{0}, g_rx{0};
+std::atomic<int16_t> g_lx{0}, g_ly{0}, g_rx{0}, g_ry{0};
 std::atomic<uint8_t> g_lt{0}, g_rt{0};
 std::atomic<uint16_t> g_buttons{0};
 std::atomic<bool> g_wantsChoice{false}, g_choiceOpen{false};
@@ -107,6 +107,7 @@ class ScriptInputDriver final : public rex::input::InputDriver {
     }
     if (const int16_t x = g_lx, y = g_ly; x || y) lx = x, ly = y;
     if (const int16_t x = g_rx; x) rx = x;
+    if (const int16_t y = g_ry; y) ry = y;
     if (const uint8_t v = g_lt; v) lt = v;
     if (const uint8_t v = g_rt; v) rt = v;
     buttons |= g_buttons;
@@ -335,6 +336,75 @@ void Position() {
               g_actors.Yaw(pc) * 57.2958);
 }
 
+// "fight <s> [range]" (testing): aim at the nearest living Locust (GearPawn_Locust*, Health > 0, within range, 4000)
+// with the right stick (yaw and pitch), aim and fire while on target, melee under 220 units; a target still up after
+// 5 s: 2 s of walking towards it (round cover). Ends when none is left in range, or at the time.
+void Fight(double seconds, double range) {
+  uint32_t pc = 0, pawn = 0;
+  const uint32_t gearPawn = Ready() ? obj::FindClass("GearPawn") : 0;
+  const int health = gearPawn ? obj::PropertyOffset(gearPawn, "Health") : -1;
+  if (!gearPawn || health < 0 || !g_actors.Find()) { REXLOG_WARN("script_input: fight: no reflection"); return; }
+  if (range <= 0) range = 4000;
+  const uint64_t t0 = Now();
+  uint64_t onSince = 0, lastLog = 0, lastMelee = 0;
+  uint32_t target = 0;
+  int kills = 0;
+  auto release = [] { g_lt = 0, g_rt = 0, g_rx = 0, g_ry = 0; };
+  while (double(Now() - t0) / 1000.0 < seconds) {
+    if (!g_actors.Local(pc, pawn)) { Pause(200); continue; }
+    const double px = g_actors.X(pawn), py = g_actors.Y(pawn), pz = g_actors.Z(pawn) + 60;
+    uint32_t best = 0;
+    double bestD = range;
+    for (uint32_t o : obj::FindInstancesOf(gearPawn)) {
+      if (obj::ObjectName(obj::ClassOf(o)).rfind("GearPawn_Locust", 0) != 0) continue;
+      if (int32_t(obj::Read32(o + uint32_t(health))) <= 0) continue;
+      const double d = std::sqrt(std::pow(g_actors.X(o) - px, 2) + std::pow(g_actors.Y(o) - py, 2) + std::pow(g_actors.Z(o) - pz, 2));
+      if (d < bestD) bestD = d, best = o;
+    }
+    if (!best) {
+      if (target) kills++;
+      release();
+      REXLOG_INFO("script_input: fight: none left in range ({} down)", kills);
+      break;
+    }
+    if (best != target) {
+      if (target) kills++;
+      target = best, onSince = Now();
+    }
+    const double tx = g_actors.X(best), ty = g_actors.Y(best), tz = g_actors.Z(best) + 30;
+    const double yaw = g_actors.Yaw(pc);
+    double pitch = double(int32_t(obj::Read32(pc + uint32_t(g_actors.rot))) & 0xFFFF) / 65536.0 * 2 * 3.14159265358979;
+    if (pitch > 3.14159265358979) pitch -= 2 * 3.14159265358979;
+    const double dyaw = std::remainder(std::atan2(ty - py, tx - px) - yaw, 2 * 3.14159265358979);
+    const double dpitch = std::atan2(tz - pz, std::hypot(tx - px, ty - py)) - pitch;
+    // (at least 0.4: smaller deflections sat in the dead zone while aiming)
+    auto stick = [](double diff) { return std::fabs(diff) < 0.01 ? 0.0 : std::clamp(std::fabs(diff) / 0.5, 0.4, 1.0) * (diff > 0 ? 1 : -1); };
+    g_rx = int16_t(std::lround(stick(dyaw) * 32000));
+    g_ry = int16_t(std::lround(stick(dpitch) * 32000));
+    if (Now() - lastLog > 2000) {
+      lastLog = Now();
+      REXLOG_INFO("script_input: fight: {} at {:.0f}: yaw off {:.2f}, pitch off {:.2f}", obj::ObjectName(best), bestD, dyaw, dpitch);
+    }
+    if (bestD < 220) {   // close up: melee (point-blank fire did not stop a Drone)
+      g_lt = 0, g_rt = 0;
+      if (Now() - lastMelee > 700) { lastMelee = Now(); Tap(0x2000); }
+      Pause(30);
+      continue;
+    }
+    g_lt = 255;
+    g_rt = std::fabs(dyaw) < 0.08 && std::fabs(dpitch) < 0.1 ? 255 : 0;
+    if (Now() - onSince > 5000) {   // behind cover, or the aim off: closer, then aim again
+      release();
+      REXLOG_INFO("script_input: fight: {} still up at {:.0f} units: closing in", obj::ObjectName(best), bestD);
+      WalkStep(tx, ty, 2.0);
+      onSince = Now();
+    }
+    Pause(30);
+  }
+  release();
+  REXLOG_INFO("script_input: fight: ended after {:.0f} s", double(Now() - t0) / 1000.0);
+}
+
 // one movement line, at its time (on a thread of its own; the driving ones take turns)
 void RunAction(const std::string& verb, const std::string& args) {
   std::stringstream in(args);
@@ -367,6 +437,7 @@ void RunAction(const std::string& verb, const std::string& args) {
   if (verb == "walkto") { double x = 0, y = 0, s = 20; in >> x >> y >> s; WalkStep(x, y, s); }
   else if (verb == "face") { double x = 0, y = 0; in >> x >> y; Face(x, y); }
   else if (verb == "route") { std::string pts; double s = 0; in >> pts >> s; Route(pts, s); }
+  else if (verb == "fight") { double sec = 0, range = 0; in >> sec >> range; Fight(sec, range); }
   else if (verb == "follow") { std::string what; double s = 0, keep = 0; in >> what >> s >> keep; Follow(what, s, keep); }
 }
 
@@ -425,7 +496,7 @@ void Ue3InstallScriptInputIfRequested(rex::Runtime* runtime, uint32_t names_var,
     } else if (verb == "capture") {   // gears3-pc's mouse capture: nothing to do here
       continue;
     } else if (verb == "log" || verb == "choose" || verb == "quit" || verb == "pos" || verb == "teleport" || verb == "walkto" ||
-               verb == "face" || verb == "route" || verb == "follow") {
+               verb == "face" || verb == "route" || verb == "follow" || verb == "fight") {
       std::string text;
       std::getline(ls, text);
       notes.push_back({t, verb, text});

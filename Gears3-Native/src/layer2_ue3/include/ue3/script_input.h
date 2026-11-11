@@ -22,7 +22,8 @@
 //   <t> face <x> <y>                the camera turned toward it
 //   <t> follow <class part> [s] [d] walk after the pawn whose class name has the text (COGDom) for s (60), within d
 //   <t> teleport <x> <y> <z> [cls]  player 1 (or the first pawn of that class) put there (testing)
-// walkto / route / face / follow take turns (choose runs beside them): a step whose time comes while the one before still runs waits for it.
+//   <t> fight <s> [range]           aim at the nearest living Locust and fire (melee up close), for s or until none
+// walkto / route / face / follow / fight take turns (choose runs beside them): a step whose time comes while the one before still runs waits for it.
 // Events overlap freely: their buttons add up, a later stick or trigger event wins while it lasts.
 #pragma once
 
