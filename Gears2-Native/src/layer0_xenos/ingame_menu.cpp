@@ -342,7 +342,15 @@ XINPUT_GAMEPAD g_pad = {};  // the first connected controller's latest state
 bool g_pad_connected = false;
 
 std::atomic<bool> g_open{false};          // the menu is showing (the game gets no input)
-std::atomic<bool> g_open_wanted{false};   // a combo / F1 asked for it (the UI thread makes it)
+std::atomic<bool> g_open_wanted{false};
+// 0.6.0 (Shagg: Back + Start opened the Social page): when Back + Start / F1 last asked for the menu (steady ms), and
+// the settings tab last shown. A game's own friends / invite screen asked for in the same moment (its Back button)
+// does not turn that menu into the Social page.
+std::atomic<int64_t> g_plain_open_ms{-100000};
+int g_last_tab = 0;
+int64_t SteadyMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}   // a combo / F1 asked for it (the UI thread makes it)
 std::atomic<bool> g_stop{false};
 std::thread g_poller;
 rex::ui::ImGuiDrawer* g_drawer = nullptr;
@@ -452,7 +460,7 @@ void PollPads() {
       g_pad_connected = connected;
     }
     const bool combo = connected && (pad.wButtons & XINPUT_GAMEPAD_BACK) && (pad.wButtons & XINPUT_GAMEPAD_START);
-    if (combo && !combo_was && !g_open.load()) RequestOpenOnUIThread();
+    if (combo && !combo_was && !g_open.load()) { g_plain_open_ms.store(SteadyMs()); RequestOpenOnUIThread(); }
     combo_was = combo;
     // social step 5: Guide / PS opens (or closes) the Social page; the game itself never sees Guide (SDK input)
     if (guide.Pressed(connected && (pad.wButtons & 0x0400) != 0) && REXCVAR_GET(cogbox_social_guide) && !REXCVAR_GET(guide_button) &&
@@ -491,6 +499,7 @@ float MonitorHeight() {
 class InGameMenu final : public rex::ui::ImGuiDialog {
  public:
   InGameMenu(rex::ui::ImGuiDrawer* drawer, MenuPage page) : ImGuiDialog(drawer) {
+    tab_ = g_last_tab;   // 0.6.0: the settings tab shown last time
     ShowPage(page);
     ImGuiIO& io = GetIO();
     saved_config_ = io.ConfigFlags;
@@ -924,6 +933,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
     pg.has_file = !g_file.tabs.empty();
     if (pg.has_file) {
       tab_ = std::clamp(tab_, 0, int(g_file.tabs.size()) - 1);
+      g_last_tab = tab_;
       for (const std::string& t : g_file.tabs) pg.tabs.push_back(XenosTr(t));
       pg.tab = &tab_;
       for (MenuOption& o : g_file.options) {
@@ -1072,7 +1082,7 @@ void OpenNow(MenuPage page = MenuPage::kSettings) {
   SaveMouseState();
   BlockGameInput(true);
   g_menu = std::make_unique<InGameMenu>(g_drawer, page);
-  REXLOG_INFO("cogbox_menu: opened");
+  REXLOG_INFO("cogbox_menu: opened ({})", page == MenuPage::kSocial ? "Social" : page == MenuPage::kAchievements ? "Achievements" : "Settings");
 }
 
 void ScheduleDrop() {
@@ -1092,6 +1102,7 @@ void RequestOpenOnUIThread() {
 // Social step 5: F8 / Guide - the menu on its Social page, or closed again when it is showing that page.
 void ToggleSocial() {
   if (!XenosSocialAvailable()) return;
+  REXLOG_INFO("cogbox_menu: Social (F8 / Guide)");
   if (g_menu) {
     if (g_menu->OnSocial()) g_menu->Close();
     else g_menu->GoSocial();
@@ -1104,6 +1115,13 @@ void OpenSocialOnUIThread() {
   if (!g_window) return;
   g_window->app_context().CallInUIThreadDeferred([] {
     if (!XenosSocialAvailable()) return;
+    // 0.6.0: Back + Start presses the game's Back too, and some screens answer Back with the friends / invite screen;
+    // that must not turn the menu just opened into the Social page.
+    if (SteadyMs() - g_plain_open_ms.load() < 2000) {
+      REXLOG_INFO("cogbox_menu: the game asked for its friends / invite screen right after Back + Start / F1 - ignored");
+      return;
+    }
+    REXLOG_INFO("cogbox_menu: Social (the game's friends / invite screen)");
     if (g_menu) g_menu->GoSocial();
     else if (!g_open.load()) OpenNow(MenuPage::kSocial);
   });
@@ -1199,6 +1217,7 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDraw
     }
   }
   rex::ui::RegisterBind("bind_cogbox_menu", "F1", "COGBox in-game menu", [] {
+    g_plain_open_ms.store(SteadyMs());
     if (!g_open.load()) OpenNow();
   });
   // Achievements part 3: F7 opens the menu on the Achievements page (and closes it again), instead of the SDK's own
