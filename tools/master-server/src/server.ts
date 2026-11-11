@@ -126,6 +126,27 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   return server;
 }
 
+// Starts the game listener, then the private admin listener when a secret is set. The admin listener
+// failing (port taken, bad ADMIN_PORT) is logged and ignored: the panel must never take the game down.
+export async function startListeners(app: FastifyInstance, o: {
+  port: number; host: string; env?: NodeJS.ProcessEnv; log?: (msg: string) => void;
+}): Promise<void> {
+  const env = o.env ?? process.env;
+  const log = o.log ?? ((m: string) => console.error(m));
+  await app.listen({ port: o.port, host: o.host });
+  console.log(`[COGBox] Master Server coordinator listening on ${o.host}:${o.port}`);
+  const secret = env.ADMIN_SHARED_SECRET;
+  if (!secret) return;
+  try {
+    const adminPort = Number(env.ADMIN_PORT) || 8090;
+    const priv = await buildPrivateApi({ ...(app as any).adminDeps, secret });
+    await priv.listen({ port: adminPort, host: adminListenHost(env) });
+    console.log(`[COGBox] Admin listener on ${adminPort}`);
+  } catch (err) {
+    log(`[COGBox] Admin listener failed, game server carries on: ${logSafeText(String((err as Error)?.message ?? err))}`);
+  }
+}
+
 // Start standalone server if executed directly
 if (process.argv[1] && (process.argv[1].endsWith('server.ts') || process.argv[1].endsWith('server.js'))) {
   const port = Number(process.env.PORT) || 443;
@@ -134,16 +155,7 @@ if (process.argv[1] && (process.argv[1].endsWith('server.ts') || process.argv[1]
 
   buildServer({ dbPath, logger: true }).then(async (app) => {
     try {
-      await app.listen({ port, host });
-      console.log(`[COGBox] Master Server coordinator listening on ${host}:${port}`);
-      // Private listener for the admin panel: only when a secret is set, on loopback by default.
-      const secret = process.env.ADMIN_SHARED_SECRET;
-      if (secret) {
-        const adminPort = Number(process.env.ADMIN_PORT) || 8090;
-        const priv = await buildPrivateApi({ ...(app as any).adminDeps, secret });
-        await priv.listen({ port: adminPort, host: adminListenHost() });
-        console.log(`[COGBox] Admin listener on ${adminPort}`);
-      }
+      await startListeners(app, { port, host });
     } catch (err) {
       app.log.error(err);
       process.exit(1);

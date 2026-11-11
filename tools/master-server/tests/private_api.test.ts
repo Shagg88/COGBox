@@ -122,3 +122,30 @@ describe('private listener address', () => {
     expect(adminListenHost({ ADMIN_HOST: '10.0.0.5' })).toBe('10.0.0.5');
   });
 });
+
+describe('standalone startup', () => {
+  it('a failing private listener leaves the game server listening', async () => {
+    const net = await import('node:net');
+    const { buildServer, startListeners } = await import('../src/server.js');
+    const blocker = net.createServer();
+    await new Promise<void>((r) => blocker.listen(0, '127.0.0.1', () => r()));
+    const busy = (blocker.address() as { port: number }).port;
+    const app = await buildServer({ dbPath: ':memory:' });
+    const logged: string[] = [];
+    try {
+      await startListeners(app, {
+        port: 0, host: '127.0.0.1',
+        env: { ADMIN_SHARED_SECRET: 's'.repeat(64), ADMIN_PORT: String(busy) },
+        log: (m) => logged.push(m),
+      });
+      const addr = app.server.address() as { port: number };
+      const res = await fetch(`http://127.0.0.1:${addr.port}/health`).catch(() => null);
+      expect(app.server.listening).toBe(true);
+      expect(res).not.toBeNull();
+      expect(logged.join(' ')).toMatch(/admin listener failed.*EADDRINUSE/i);
+    } finally {
+      await app.close();
+      blocker.close();
+    }
+  });
+});
