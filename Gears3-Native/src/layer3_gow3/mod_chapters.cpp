@@ -563,6 +563,50 @@ void Gow3ModFName() {
   busy = false;
 }
 
+// TU6 greys the pause menu's "Reload last checkpoint" in the mods' chapters: its patched
+// UIScene_Pause.ShouldOptionBeDisabled disables it when any GearGameSP_Base.PlayerSlots entry has
+// `PawnClass == None || Owner == None` - Gears 3's campaign fills all four squad slots, Gears 1's squad is two (slots 3
+// and 4 empty: {None, None}), so it was always off. (Dom's slot gets its owner once he is spawned.) What the check is for - a squad member who should be there is missing - is
+// `PawnClass != None && Owner == None`: the same length in bytecode, 84 (OrOr) -> 82 (AndAnd) and the first
+// 72 (EqualEqual_ObjectObject) -> 77 (NotEqual_ObjectObject):
+//   84 72 35 <PawnClass> <PlayerSlotInfo> 00 00 10 ... 18 <skip, 2> 72 35 <Owner> <PlayerSlotInfo> 00 00 10
+// (object references are 8 bytes in memory, the 32-bit pointer in the low half) found by that shape (both member accesses on the same struct), exactly once in the function's script, else nothing
+// is changed. Game thread, once the function is loaded.
+std::atomic<bool> g_reloadDone{false};
+
+void AllowCheckpointReload() {
+  // UIScene_Pause's own (other scenes have a ShouldOptionBeDisabled too): found by its owner, once UIScene_Pause is loaded
+  const uint32_t pause = obj::FindClass("UIScene_Pause");
+  if (!pause) return;   // not loaded yet
+  g_reloadDone = true;
+  uint32_t fn = 0;
+  for (uint32_t o : obj::AllObjects())
+    if (obj::Read32(o + kOuter) == pause && obj::ObjectName(o) == "ShouldOptionBeDisabled") { fn = o; break; }
+  if (!fn) { REXLOG_WARN("mod chapters: UIScene_Pause.ShouldOptionBeDisabled not found - Reload last checkpoint left as it is"); return; }
+  for (uint32_t off = 0x20; off < 0x100; off += 4) {
+    const uint32_t data = obj::Read32(fn + off), num = obj::Read32(fn + off + 4), cap = obj::Read32(fn + off + 8);
+    if (num < 0x80 || num > 0x2000 || cap < num || !obj::Readable(data, num)) continue;
+    const uint8_t* s = Mem()->TranslateVirtual<const uint8_t*>(data);
+    auto be32 = [&](uint32_t i) { return uint32_t(s[i]) << 24 | uint32_t(s[i + 1]) << 16 | uint32_t(s[i + 2]) << 8 | s[i + 3]; };
+    std::vector<uint32_t> found;
+    for (uint32_t i = 0; i + 104 <= num; i++) {
+      if (s[i] != 0x84 || s[i + 1] != 0x72 || s[i + 2] != 0x35 || s[i + 21] != 0x10) continue;
+      const uint32_t info = be32(i + 15);   // the struct both member accesses read
+      for (uint32_t j = i + 22; j + 24 <= num && j < i + 80; j++)
+        if (s[j] == 0x18 && s[j + 3] == 0x72 && s[j + 4] == 0x35 && be32(j + 17) == info && s[j + 23] == 0x10) {
+          found.push_back(i);
+          break;
+        }
+    }
+    if (found.size() != 1) continue;
+    obj::Write8(data + found[0], 0x82);
+    obj::Write8(data + found[0] + 1, 0x77);
+    REXLOG_INFO("mod chapters: Reload last checkpoint needs only the squad slots that have a pawn class (TU6 wanted all four)");
+    return;
+  }
+  REXLOG_INFO("mod chapters: ShouldOptionBeDisabled has no squad-slot check here (the base disc) - left as it is");
+}
+
 // TU6 hides the mods' acts: its patched UIWidget_MainMenu.ConstructActList (ScriptPatch_GearGame.bin) lists at most
 // five - a row is added `if (I < 5)` (bytecode 2C 05 16: IntConstByte 5) and after the loop
 // `CurrentList.SetFloat('length', 5.0)` (1E 40 A0 00 00) cuts the list; the base disc builds it from every act in
@@ -629,5 +673,6 @@ void Gow3ModChaptersTick() {
   }
   // (looked for once a second until the menu's script is loaded: each look searches every object)
   if (static int tick = 0; !g_actCapDone && g_maxAct >= 5 && ++tick % 60 == 1) RaiseActCap();
+  if (static int tick = 0; !g_reloadDone && !g_chapters.empty() && ++tick % 60 == 2) AllowCheckpointReload();
   ContentPackagesTick();
 }
