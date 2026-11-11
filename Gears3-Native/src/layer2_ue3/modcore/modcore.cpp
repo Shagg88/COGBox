@@ -1,6 +1,7 @@
 // modcore (modcore.h): the index of the mods' files, configuration fragments, merged tables of contents, hashes.
 // MIT (modcore/LICENSE).
 #include "modcore.h"
+#include "campaigns.h"
 #include <cstring>
 #include <set>
 #include <sstream>
@@ -370,5 +371,171 @@ std::array<uint8_t, 20> Sha1(const uint8_t* data, size_t size)
     std::array<uint8_t, 20> out{};
     for (int i = 0; i < 5; i++) for (int j = 0; j < 4; j++) out[4 * i + j] = uint8_t(h[i] >> (24 - 8 * j));
     return out;
+}
+
+// ---- campaigns (campaigns.h) ----
+
+namespace
+{
+    std::string Narrow(const std::u16string& s)   // the config's names and numbers are ASCII
+    {
+        std::string o;
+        for (char16_t c : s) o += c < 0x80 ? char(c) : '?';
+        return o;
+    }
+    bool EndsWith(const std::string& s, const std::string& end)
+    {
+        return s.size() >= end.size() && s.compare(s.size() - end.size(), end.size(), end) == 0;
+    }
+}
+
+UsedSlots UsedCampaignSlots(const std::vector<uint8_t>& coalesced)
+{
+    UsedSlots u;
+    std::vector<File> files;
+    if (!Parse(coalesced, files)) return u;
+    for (const File& f : files)
+    {
+        if (!EndsWith(Lower(Narrow(f.name)), "xbox360-geargame.ini")) continue;
+        for (const Section& s : f.sections)
+        {
+            const std::string sec = Lower(Narrow(s.name));
+            const bool act = EndsWith(sec, " gearcampaignactdata"), chapter = EndsWith(sec, " gearcampaignchapterdata");
+            if (!act && !chapter) continue;
+            for (const auto& [k, v] : s.keys)
+            {
+                const std::string key = Lower(Narrow(k));
+                if (act && key == "actnum") u.acts.insert(atoi(Narrow(v).c_str()));
+                if (chapter && key == "chapternum") u.chapters.insert(atoi(Narrow(v).c_str()));
+            }
+        }
+    }
+    return u;
+}
+
+std::string LocalizedGearGameFile(const std::vector<uint8_t>& coalesced)
+{
+    std::vector<File> files;
+    if (Parse(coalesced, files))
+        for (const File& f : files)
+        {
+            const std::string name = Narrow(f.name), low = Lower(name);
+            const auto slash = low.find_last_of('\\');
+            const std::string base = slash == std::string::npos ? low : low.substr(slash + 1);
+            if (base.size() == 12 && base.rfind("geargame.", 0) == 0 && base != "geargame.ini") return name.substr(name.size() - 12);
+        }
+    return "GearGame.int";
+}
+
+std::string ActNumeral(int act)
+{
+    static const char* const r[] = { "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII",
+                                     "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX" };
+    return act >= 0 && act < 20 ? r[act] : std::to_string(act + 1);
+}
+
+Allocation AllocateCampaigns(const std::vector<Manifest>& mods, const UsedSlots& used)
+{
+    Allocation a;
+    struct Pending { std::string id; int order; size_t first; PlacedCampaign c; };
+    std::vector<Pending> pending;
+    for (size_t i = 0; i < mods.size(); i++)
+    {
+        const Manifest& m = mods[i];
+        if (!m.Active() || m.campaign.id.empty()) continue;
+        auto it = std::find_if(pending.begin(), pending.end(), [&](const Pending& p) { return p.id == m.campaign.id; });
+        if (it == pending.end())
+        {
+            pending.push_back(Pending{ m.campaign.id, -1, i, {} });
+            it = pending.end() - 1;
+            it->c.id = m.campaign.id;
+        }
+        PlacedCampaign& c = it->c;
+        if (it->order < 0) it->order = m.campaign.order;
+        if (c.title.empty()) c.title = m.campaign.title;
+        if (c.screenshot.empty()) c.screenshot = m.campaign.screenshot;
+        for (const ChapterDecl& d : m.chapters)
+        {
+            const auto twin = std::find_if(c.chapters.begin(), c.chapters.end(), [&](const PlacedChapter& p) { return p.decl.number == d.number; });
+            if (twin != c.chapters.end())
+            {
+                a.problems.push_back(m.name + ": campaign " + c.id + " chapter " + std::to_string(d.number) + " is also " + twin->mod + "'s - left out");
+                continue;
+            }
+            c.chapters.push_back(PlacedChapter{ 0, d, m.name });
+        }
+    }
+    for (Pending& p : pending) if (p.order < 0) p.order = 100;
+    std::stable_sort(pending.begin(), pending.end(), [](const Pending& x, const Pending& y) {
+        return x.order != y.order ? x.order < y.order : x.first < y.first; });
+    int act = used.acts.empty() ? 0 : *used.acts.rbegin() + 1;
+    int slot = kFirstModChapter;
+    for (Pending& p : pending)
+    {
+        PlacedCampaign& c = p.c;
+        std::stable_sort(c.chapters.begin(), c.chapters.end(), [](const PlacedChapter& x, const PlacedChapter& y) {
+            return x.decl.number < y.decl.number; });
+        if (c.title.empty()) c.title = c.id;
+        std::vector<PlacedChapter> kept;
+        for (PlacedChapter& ch : c.chapters)
+        {
+            while (slot <= kLastModChapter && used.chapters.count(slot)) slot++;
+            if (slot > kLastModChapter)
+            {
+                a.problems.push_back(ch.mod + ": campaign " + c.id + " chapter " + std::to_string(ch.decl.number) +
+                                     ": no free chapter slot (" + std::to_string(kFirstModChapter) + "-" +
+                                     std::to_string(kLastModChapter) + " are taken) - left out");
+                continue;
+            }
+            ch.slot = slot++;
+            kept.push_back(ch);
+        }
+        c.chapters = kept;
+        if (c.chapters.empty()) continue;
+        c.act = act++;
+        std::string line = "campaign " + c.id + " '" + c.title + "': act " + ActNumeral(c.act) + " (ActNum " +
+                           std::to_string(c.act) + "), chapters " + std::to_string(c.chapters.front().slot);
+        if (c.chapters.size() > 1) line += "-" + std::to_string(c.chapters.back().slot);
+        a.log.push_back(line);
+        a.campaigns.push_back(c);
+    }
+    return a;
+}
+
+std::string CampaignFragment(const Allocation& a, const std::string& localized)
+{
+    if (a.campaigns.empty()) return {};
+    std::ostringstream o;
+    o << "; written by the campaign registry (modcore campaigns.h) from the mods' [Campaign] / [Chapter.N]\n";
+    o << "##### Xbox360-GearGame.ini\n";
+    for (const PlacedCampaign& c : a.campaigns)
+    {
+        const std::string shot = !c.screenshot.empty() ? c.screenshot : c.chapters.front().decl.screenshot;
+        o << "[Act" << c.act + 1 << " GearCampaignActData]\nActNum=" << c.act << "\nbRequiredActForGameCompletion=false\n";
+        if (!shot.empty()) o << "ScreenshotPathName=" << shot << "\n";
+        for (const PlacedChapter& ch : c.chapters)
+        {
+            o << "[Chapter" << ch.slot << " GearCampaignChapterData]\nChapterNum=" << ch.slot << "\nActNum=" << c.act
+              << "\nMapName=" << ch.decl.map << "\n";
+            const std::string cshot = !ch.decl.screenshot.empty() ? ch.decl.screenshot : shot;
+            if (!cshot.empty()) o << "ScreenshotPathName=" << cshot << "\n";
+            o << "IsAlwaysUnlocked=true\n";
+        }
+    }
+    o << "##### " << localized << "\n";
+    for (const PlacedCampaign& c : a.campaigns)
+    {
+        o << "[Act" << c.act + 1 << " GearCampaignActData]\nListName=" << ActNumeral(c.act) << ": " << c.title
+          << "\nDisplayName=" << c.title << "\n";
+        for (const PlacedChapter& ch : c.chapters)
+        {
+            const std::string title = ch.decl.title.empty() ? ch.decl.map : ch.decl.title;
+            o << "[Chapter" << ch.slot << " GearCampaignChapterData]\nListName=" << ch.decl.number << ": " << title
+              << "\nDisplayName=" << title << "\nChapterNumDesc=Chapter " << ch.decl.number << "\n";
+            if (!ch.decl.location.empty()) o << "ChapterLocation=" << ch.decl.location << "\n";
+            if (!ch.decl.time.empty()) o << "ChapterTime=" << ch.decl.time << "\n";
+        }
+    }
+    return o.str();
 }
 }

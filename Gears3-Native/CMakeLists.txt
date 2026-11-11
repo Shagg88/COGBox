@@ -314,8 +314,10 @@ if(GN_BUILD_TESTS)
         ${GN_LAYER0_TESTS}/layer0_pm4_test.cpp
         ${GN_LAYER0_DIR}/pm4.cpp
         ${GN_LAYER0_TESTS}/layer0_display_gamma_test.cpp
-        ${GN_LAYER0_DIR}/display_gamma.cpp)
-    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS})
+        ${GN_LAYER0_DIR}/display_gamma.cpp
+        tests/modcore_campaigns_test.cpp
+        src/layer2_ue3/modcore/modcore.cpp)
+    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS} src/layer2_ue3)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(gn_tests PRIVATE -ffp-contract=off)
     elseif(MSVC)
