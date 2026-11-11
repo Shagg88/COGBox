@@ -7531,16 +7531,19 @@ index cbc39c6..3be804f 100644
  # COGBox SDK patch 78: nlohmann/json (the copy inja carries) for identity.json and the master server
 diff --git a/src/system/cogbox_save_sign.cpp b/src/system/cogbox_save_sign.cpp
 new file mode 100644
-index 0000000..77a0aa7
+index 0000000..60f4506
 --- /dev/null
 +++ b/src/system/cogbox_save_sign.cpp
-@@ -0,0 +1,295 @@
+@@ -0,0 +1,308 @@
 +// COGBox: Gears 3 save signatures (patch 58's converter, moved here and generalised by COGBox SDK patch 79).
 +#include <rex/system/cogbox_save_sign.h>
 +
 +#include <cstdio>
 +#include <cstring>
 +#include <string>
++#if defined(_WIN32)
++#include <io.h>  // _commit
++#endif
 +
 +#include <fmt/format.h>
 +#include <rex/logging.h>
@@ -7606,7 +7609,11 @@ index 0000000..77a0aa7
 +#endif
 +  if (!f) return false;
 +  bool ok = fwrite(v.data(), 1, v.size(), f) == v.size();
-+  fclose(f);
++  ok = fflush(f) == 0 && ok;
++#if REX_PLATFORM_WIN32
++  ok = _commit(_fileno(f)) == 0 && ok;  // 0.5.0 patch 58: on disk before the rename replaces the original
++#endif
++  ok = fclose(f) == 0 && ok;
 +  return ok;
 +}
 +std::array<uint8_t, 20> CogSign(uint64_t key, const uint8_t* body, size_t len) {
@@ -7629,7 +7636,11 @@ index 0000000..77a0aa7
 +
 +void Convert(const std::vector<std::filesystem::path>& files, uint64_t from_key, uint64_t to_key, const char* suffix) {
 +  const ResignResult r = CogResignSaveFiles(files, from_key, to_key, suffix);
-+  if (r != ResignResult::AlreadyDone) {
++  if (r != ResignResult::AlreadyDone && r != ResignResult::Resigned) {
++    // 0.5.0 patch 58: a save left with the wrong signature may be reset by Gears 3 - a warning, not an info line
++    REXLOG_WARN("cogbox_save_convert: {} - re-sign {:016X} -> {:016X}: {} (LEFT UNCONVERTED, Gears 3 may reset it)",
++                rex::path_to_utf8(files[0]), from_key, to_key, ResultText(r));
++  } else if (r == ResignResult::Resigned) {
 +    REXLOG_INFO("cogbox_save_convert: {} - re-sign {:016X} -> {:016X}: {}", rex::path_to_utf8(files[0]), from_key,
 +                to_key, ResultText(r));
 +  }
@@ -7730,10 +7741,12 @@ index 0000000..77a0aa7
 +      std::vector<std::filesystem::path> files;
 +      for (const char* n : {"63E83FFF", "63E83FFE", "63E83FFD"}) {
 +        auto f = it->path() / n;
-+        if (std::filesystem::exists(f, ec)) {
++        std::error_code fec;  // 0.5.0 patch 58: own error code (the loop's would stop the walk), convert what is there
++        if (std::filesystem::exists(f, fec) && !fec) {
 +          files.push_back(f);
 +        } else {
-+          break;
++          REXLOG_WARN("cogbox_save_convert: {} - missing, profile set incomplete; converting the files present",
++                      rex::path_to_utf8(f));
 +        }
 +      }
 +      if (!files.empty()) {
@@ -7831,10 +7844,10 @@ index 0000000..77a0aa7
 +
 +}  // namespace rex::system
 diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
-index 3c5b6c7..7bad07b 100644
+index a615818..7e2db69 100644
 --- a/src/system/kernel_state.cpp
 +++ b/src/system/kernel_state.cpp
-@@ -31,6 +31,8 @@
+@@ -32,6 +32,8 @@
  #include <rex/system/kernel_module.h>
  #include <rex/system/kernel_state.h>
  #include <rex/system/save_trace.h>
@@ -7843,7 +7856,7 @@ index 3c5b6c7..7bad07b 100644
  #include <mutex>
  #include <unordered_map>
  #include <rex/system/function_dispatcher.h>
-@@ -50,145 +52,8 @@
+@@ -51,184 +53,8 @@
  #include <rex/system/xtimer.h>
  
  
@@ -7851,7 +7864,11 @@ index 3c5b6c7..7bad07b 100644
 -// PlayerStorage.dat and its profile settings (63E83FFF+63E83FFE+63E83FFD) with SHA-1(online XUID, 8 bytes big-endian +
 -// data) in the first 20 bytes. Before the fix we answered "online XUID" with the offline one, so every COGBox save is
 -// signed with it; now a local profile's online XUID is 0 and the game would wipe them. Saves still signed the old way are
--// re-signed with 8 zero bytes (data untouched; the old file kept once as <name>.pre-xuid0). Runs once at start-up.
+-// re-signed with 8 zero bytes (data untouched; the old file is first copied to a new <name>.pre-xuid0-<time>). Runs once
+-// at start-up.
+-#if REX_PLATFORM_WIN32
+-#include <io.h>  // _commit
+-#endif
 -namespace {
 -struct CogSha1 {
 -  uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
@@ -7908,7 +7925,11 @@ index 3c5b6c7..7bad07b 100644
 -#endif
 -  if (!f) return false;
 -  bool ok = fwrite(v.data(), 1, v.size(), f) == v.size();
--  fclose(f);
+-  ok = fflush(f) == 0 && ok;
+-#if REX_PLATFORM_WIN32
+-  ok = _commit(_fileno(f)) == 0 && ok;  // on disk before the rename replaces the original
+-#endif
+-  ok = fclose(f) == 0 && ok;
 -  return ok;
 -}
 -std::array<uint8_t, 20> CogSign(uint64_t key, const uint8_t* body, size_t len) {
@@ -7926,20 +7947,40 @@ index 3c5b6c7..7bad07b 100644
 -  auto old_sig = CogSign(old_key, all.data() + 20, all.size() - 20);
 -  if (std::memcmp(old_sig.data(), all.data(), 20) != 0) {
 -    auto new_sig = CogSign(0, all.data() + 20, all.size() - 20);
--    REXLOG_INFO("cogbox_save_convert: {} - {}", rex::path_to_utf8(files[0]),
--                std::memcmp(new_sig.data(), all.data(), 20) == 0 ? "already converted" : "signature not recognised, left alone");
+-    if (std::memcmp(new_sig.data(), all.data(), 20) == 0) {
+-      REXLOG_INFO("cogbox_save_convert: {} - already converted", rex::path_to_utf8(files[0]));
+-    } else {
+-      REXLOG_WARN("cogbox_save_convert: {} - signature not recognised, LEFT UNCONVERTED (Gears 3 may reset it)",
+-                  rex::path_to_utf8(files[0]));
+-    }
 -    return;
 -  }
 -  auto first = CogReadAll(files[0]);
--  auto backup = files[0];
--  backup += ".pre-xuid0";
+-  // A fresh, uniquely named backup every time: an older backup (say a .pre-xuid0 of a different size) must never stop
+-  // the conversion, or Gears 3 wipes the save.
 -  std::error_code ec;
--  if (!std::filesystem::exists(backup, ec)) {
+-  std::time_t now = std::time(nullptr);
+-  std::tm tm{};
+-#if REX_PLATFORM_WIN32
+-  localtime_s(&tm, &now);
+-#else
+-  localtime_r(&now, &tm);
+-#endif
+-  char stamp[32];
+-  std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tm);
+-  bool backed_up = false;
+-  for (int i = 0; i < 100 && !backed_up; ++i) {
+-    auto backup = files[0];
+-    backup += i ? fmt::format(".pre-xuid0-{}-{}", stamp, i) : fmt::format(".pre-xuid0-{}", stamp);
 -    ec.clear();
--    std::filesystem::copy_file(files[0], backup, ec);
+-    if (std::filesystem::exists(backup, ec) || ec) continue;
+-    ec.clear();
+-    backed_up = std::filesystem::copy_file(files[0], backup, ec) && !ec &&
+-                std::filesystem::file_size(backup, ec) == first.size() && !ec;
 -  }
--  if (ec || !std::filesystem::exists(backup, ec) || std::filesystem::file_size(backup, ec) != first.size()) {
--    REXLOG_INFO("cogbox_save_convert: {} - no backup could be made, left alone", rex::path_to_utf8(files[0]));
+-  if (!backed_up) {
+-    REXLOG_WARN("cogbox_save_convert: {} - no backup could be made, LEFT UNCONVERTED (Gears 3 may reset it)",
+-                rex::path_to_utf8(files[0]));
 -    return;
 -  }
 -  auto new_sig = CogSign(0, all.data() + 20, all.size() - 20);
@@ -7953,8 +7994,12 @@ index 3c5b6c7..7bad07b 100644
 -    ok = !ec;
 -  }
 -  if (!ok) std::filesystem::remove(tmp, ec);
--  REXLOG_INFO("cogbox_save_convert: {} - re-signed for the signed-out online XUID: {}", rex::path_to_utf8(files[0]),
--              ok ? "done" : "WRITE FAILED (original untouched)");
+-  if (ok) {
+-    REXLOG_INFO("cogbox_save_convert: {} - re-signed for the signed-out online XUID: done", rex::path_to_utf8(files[0]));
+-  } else {
+-    REXLOG_WARN("cogbox_save_convert: {} - WRITE FAILED, LEFT UNCONVERTED (original untouched)",
+-                rex::path_to_utf8(files[0]));
+-  }
 -}
 -void CogConvertGears3SavesImpl(const std::filesystem::path& root, uint64_t xuid) {
 -  if (root.empty() || !xuid) return;
@@ -7969,9 +8014,16 @@ index 3c5b6c7..7bad07b 100644
 -    std::error_code dec;
 -    if (!d.is_directory(dec) || dec) continue;
 -    std::vector<std::filesystem::path> files;
+-    // Convert whatever of the triplet is there; a missing one is logged (the set then likely stays unconverted).
 -    for (const char* n : {"63E83FFF", "63E83FFE", "63E83FFD"}) {
 -      auto f = d.path() / n;
--      if (std::filesystem::exists(f, ec)) files.push_back(f); else break;
+-      std::error_code fec;
+-      if (std::filesystem::exists(f, fec) && !fec) {
+-        files.push_back(f);
+-      } else {
+-        REXLOG_WARN("cogbox_save_convert: {} - missing, profile set incomplete; converting the files present",
+-                    rex::path_to_utf8(f));
+-      }
 -    }
 -    if (!files.empty()) CogResign(files, xuid);
 -  }
@@ -7991,12 +8043,12 @@ index 3c5b6c7..7bad07b 100644
  
  namespace rex::kernel::xam {
  uint32_t LocalPlayersSignedInMask();  // xam_user.cpp (Gears2-Native SDK patch 25)
-@@ -224,7 +89,10 @@ KernelState::KernelState(Runtime* emulator)
+@@ -264,7 +90,10 @@ KernelState::KernelState(Runtime* emulator)
      user_data_root = std::filesystem::absolute(user_data_root);
    }
    content_manager_ = std::make_unique<xam::ContentManager>(this, user_data_root);
 -  CogConvertGears3Saves(user_data_root, user_profile_->xuid());  // job 1066
-+  // job 1066: saves signed with the offline XUID are re-signed with 0 (once, backed up as .pre-xuid0).
++  // job 1066: saves signed with the offline XUID are re-signed with 0 (backed up as .pre-xuid0 / .pre-xuid0.last).
 +  CogConvertGears3SaveSigning(user_data_root, user_profile_->xuid(), user_profile_->xuid(), 0, ".pre-xuid0");
 +  // COGBox SDK patch 79: online play - the identity, the LIVE emulation XUID, and the Gears 3 saves signed for it.
 +  rex::kernel::xam::net::OnlineStartup(user_data_root, user_profile_->xuid());
