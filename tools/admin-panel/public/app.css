@@ -1,0 +1,87 @@
+/* The COGBox launcher's palette (Gears2-Native/cogbox/src/theme.cpp). */
+:root {
+  color-scheme: dark;
+  --bg: rgb(8, 8, 9);
+  --panel: rgb(18, 19, 21);
+  --line: rgb(44, 47, 52);
+  --text: rgb(179, 179, 173);
+  --bright: rgb(226, 221, 208);
+  --dim: rgb(120, 118, 112);
+  --accent: rgb(77, 158, 36);
+  --accent-dark: rgb(41, 102, 18);
+  --bad: rgb(224, 74, 64);
+  --amber: rgb(226, 160, 52);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, "Segoe UI", sans-serif; }
+header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 2px solid var(--accent-dark); }
+h1 { margin: 0; font-size: 20px; color: var(--bright); letter-spacing: .04em; }
+h1 span { color: var(--accent); }
+h2 { font-size: 16px; color: var(--bright); margin: 20px 0 8px; }
+h3 { font-size: 13px; margin: 0 0 4px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+p { margin: 4px 0; }
+.dim { color: var(--dim); }
+.err { color: var(--bad); min-height: 1.2em; }
+#msg:empty { display: none; }
+#msg { padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--panel); }
+#msg.bad { border-color: var(--bad); color: var(--bad); }
+
+button, select, input { font: inherit; color: var(--bright); background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 7px 12px; }
+input, select { color: var(--text); }
+input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button { cursor: pointer; background: var(--accent-dark); border-color: var(--accent-dark); }
+button:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+button:disabled { opacity: .45; cursor: default; }
+button.link { background: none; border-color: transparent; color: var(--text); text-decoration: underline; }
+button.danger { background: rgb(120, 22, 22); border-color: rgb(120, 22, 22); }
+button.danger:hover:not(:disabled) { background: var(--bad); border-color: var(--bad); }
+
+.box { max-width: 360px; margin: 40px auto; padding: 20px; background: var(--panel); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+.box h2 { margin-top: 0; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--dim); }
+
+nav { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 14px; overflow-x: auto; }
+nav button { background: none; border: 0; border-bottom: 3px solid transparent; border-radius: 0; color: var(--text); }
+nav button.on { border-bottom-color: var(--accent); color: var(--bright); }
+nav button:hover:not(:disabled) { background: var(--panel); color: var(--bright); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--line); padding: 10px 12px; }
+.card.up { border-left-color: var(--accent); }
+.card.down { border-left-color: var(--bad); }
+.card.unknown { border-left-color: var(--amber); }
+.card .state { font-size: 18px; color: var(--bright); }
+.card.down .state { color: var(--bad); }
+.card.unknown .state { color: var(--amber); }
+.card button { margin-top: 8px; }
+.big { font-size: 28px; color: var(--bright); }
+.counts { list-style: none; margin: 0; padding: 0; }
+.counts li { display: flex; justify-content: space-between; gap: 8px; }
+
+table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+th { color: var(--dim); font-weight: normal; font-size: 13px; }
+tr.old td { background: rgba(226, 160, 52, .12); }
+tr.old td:first-child { box-shadow: inset 3px 0 var(--amber); }
+
+pre.log { background: #000; border: 1px solid var(--line); padding: 10px; max-height: 60vh; overflow: auto; font: 12px/1.4 Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--accent-dark); max-width: 400px; width: calc(100% - 32px); }
+dialog::backdrop { background: rgba(0, 0, 0, .7); }
+dialog input { width: 100%; margin: 8px 0; }
+
+@media (max-width: 600px) {
+  main { padding: 12px; }
+  nav { flex-wrap: wrap; overflow: visible; }
+  nav button { padding: 7px 9px; }
+  .cards { grid-template-columns: 1fr; }
+  thead { display: none; }
+  table, tbody, tr, td { display: block; }
+  tr { border: 1px solid var(--line); margin-bottom: 8px; padding: 4px 0; }
+  td { border: 0; padding: 3px 10px; }
+  td[data-l]::before { content: attr(data-l) ": "; color: var(--dim); }
+  .row > * { flex: 1 1 auto; }
+}

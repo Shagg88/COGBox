@@ -33,7 +33,7 @@ export function tellGameToJoin(registry: Registry, joiner: string, lobby: { titl
   return true;
 }
 
-export const inviteRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: Registry; now: () => number }> =
+export const inviteRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: Registry; now: () => number; stats?: { pendingInvites: () => number } }> =
   async (fastify, opts) => {
   const { db, registry, now } = opts;
   const invites = new Map<string, Invite>();
@@ -55,6 +55,7 @@ export const inviteRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: 
   const live = (i: Invite | undefined): i is Invite =>
     !!i && now() - i.created <= INVITE_LIFETIME_MS && exists(i.from) && exists(i.to);
   const prune = () => { for (const [id, i] of invites) if (!live(i)) invites.delete(id); };
+  if (opts.stats) opts.stats.pendingInvites = () => { prune(); return invites.size; };   // the admin overview
   const view = (i: Invite) => ({ id: i.id, from: refOf(i.from), title_id: i.title_id, room_code: i.room_code });
 
   fastify.post<{ Body: { to_uuid?: unknown; to_xuid?: unknown } }>('/', async (req, reply) => {
