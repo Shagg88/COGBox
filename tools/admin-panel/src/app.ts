@@ -1,6 +1,8 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
+import { join } from 'node:path';
 import type { Db } from './db.js';
 import type { DockerClient, MasterClient } from './types.js';
 import { audit } from './audit.js';
@@ -27,6 +29,14 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   await app.register(cookie);
   // In-memory only; the address is the key and never stored or logged.
   await app.register(rateLimit, { global: false });
+
+  // Pages: plain files, no inline script or style, so the CSP can stay at 'self'.
+  app.addHook('onSend', async (_req, reply) => {
+    reply.header('Content-Security-Policy', "default-src 'self'; frame-ancestors 'none'");
+    reply.header('X-Content-Type-Options', 'nosniff');
+  });
+  await app.register(fastifyStatic, { root: join(__dirname, '..', 'public'), prefix: '/admin/' });
+  app.get('/admin', (_req, reply) => reply.redirect('/admin/'));
 
   const requireSession = makeRequireSession(db, now);
   // Default-deny: every /admin/api route except login needs a session, including ones added later.

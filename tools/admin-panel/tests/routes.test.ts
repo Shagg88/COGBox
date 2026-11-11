@@ -159,3 +159,12 @@ describe('routes', () => {
     }
   });
 });
+
+describe('pages', () => {
+  it('serves the page with the CSP', async () => {
+    const res = await app.inject({ method: 'GET', url: '/admin/' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('COGBox Admin');
+    expect(res.headers['content-security-policy']).toBe("default-src 'self'; frame-ancestors 'none'");
+  });
+});

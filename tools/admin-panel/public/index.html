@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>COGBox Admin</title>
+<link rel="stylesheet" href="app.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header>
+  <h1>COGBox <span>Admin</span></h1>
+  <div id="who" hidden><span id="whoname"></span> <button type="button" id="logout" class="link">Sign out</button></div>
+</header>
+
+<main>
+  <form id="login" class="box" hidden>
+    <h2>Sign in</h2>
+    <label>Name <input name="name" autocomplete="username" required></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>
+    <p class="err" role="alert"></p>
+    <button type="submit">Sign in</button>
+  </form>
+
+  <form id="pwchange" class="box" hidden>
+    <h2>Choose a new password</h2>
+    <p class="dim">Your password must be changed before you go on. At least 12 characters.</p>
+    <label>New password <input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+    <label>Again <input name="again" type="password" autocomplete="new-password" minlength="12" required></label>
+    <p class="err" role="alert"></p>
+    <button type="submit">Save</button>
+  </form>
+
+  <div id="panel" hidden>
+    <nav id="tabs">
+      <button type="button" data-tab="overview" class="on">Overview</button>
+      <button type="button" data-tab="lobbies">Lobbies</button>
+      <button type="button" data-tab="logs">Logs</button>
+      <button type="button" data-tab="actions">Actions</button>
+      <button type="button" data-tab="audit">Audit</button>
+    </nav>
+    <p id="msg" role="status"></p>
+
+    <section data-page="overview"><div id="overview"></div><p class="dim">Refreshes every 10 s.</p></section>
+
+    <section data-page="lobbies" hidden>
+      <button type="button" id="lobbies-refresh">Refresh</button>
+      <div id="lobbies"></div>
+    </section>
+
+    <section data-page="logs" hidden>
+      <div class="row">
+        <select id="log-service"><option value="master-server">master-server</option><option value="coturn">coturn</option></select>
+        <input id="log-filter" type="search" placeholder="Filter">
+        <button type="button" id="logs-refresh">Refresh</button>
+        <button type="button" id="logs-copy">Copy</button>
+      </div>
+      <div id="logs"></div>
+    </section>
+
+    <section data-page="actions" hidden>
+      <h2>Restart</h2>
+      <div class="row">
+        <button type="button" data-restart="master-server">Restart master-server</button>
+        <button type="button" data-restart="coturn">Restart coturn</button>
+      </div>
+      <h2>Backups</h2>
+      <button type="button" id="backup">Back up database now</button>
+      <div id="backups"></div>
+    </section>
+
+    <section data-page="audit" hidden><div id="audit"></div></section>
+  </div>
+</main>
+
+<dialog id="restart-dlg">
+  <form method="dialog">
+    <h2>Restart <span id="restart-svc"></span>?</h2>
+    <p>Players connected to it will be dropped. Type <b>RESTART</b> to confirm.</p>
+    <input id="restart-word" autocomplete="off" spellcheck="false">
+    <div class="row"><button value="cancel" class="link">Cancel</button><button value="ok" id="restart-ok" class="danger" disabled>Restart</button></div>
+  </form>
+</dialog>
+</body>
+</html>
