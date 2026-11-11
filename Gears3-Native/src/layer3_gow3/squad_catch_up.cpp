@@ -86,7 +86,7 @@ void Put(uint32_t actor, const Vec& v) {
 
 void Run(int distance) {
   using Clock = std::chrono::steady_clock;
-  struct Watch { Vec since; Clock::time_point at; };
+  struct Watch { Vec since; Clock::time_point at, moved{}; };   // moved: when catch-up last moved it
   std::map<uint32_t, Watch> watched;   // squad pawn -> where it was when it last moved 100 units, and when
   std::deque<Vec> trail;
   uint32_t player = 0, lastGame = 0;
@@ -126,9 +126,11 @@ void Run(int distance) {
         REXLOG_INFO("mod_api: squad: {} at {:.0f},{:.0f} ({:.0f} from player 1 at {:.0f},{:.0f}), still for {:.0f} s, path error {}",
                     cls, at.x, at.y, Dist2D(at, me), me.x, me.y, std::chrono::duration<double>(now - w.at).count(),
                     g_p.PathError(ctrl));
-      if (Dist2D(at, w.since) > 100) { w = {at, now}; continue; }   // moving: its own way
+      if (Dist2D(at, w.since) > 100) { w.since = at, w.at = now; continue; }   // moving: its own way
       if (Dist2D(at, me) <= distance || now - w.at < std::chrono::seconds(6)) continue;
       if (g_p.PathError(ctrl) < 2) continue;   // its search did not fail: waiting where it was told to
+      // once in 30 s at most: an AI whose orders send it back where its search fails would be moved again and again
+      if (w.moved != Clock::time_point{} && now - w.moved < std::chrono::seconds(30)) continue;
       // stuck and far: the trail point 300-800 units behind player 1 (the farthest such one)
       const Vec* spot = nullptr;
       for (const Vec& t : trail)
@@ -137,7 +139,7 @@ void Run(int distance) {
       REXLOG_INFO("mod_api: squad catch-up: {} stuck {:.0f} away at {:.0f},{:.0f} - moved behind player 1 to {:.0f},{:.0f}",
                   cls, Dist2D(at, me), at.x, at.y, spot->x, spot->y);
       Put(p, *spot);
-      w = {*spot, now};
+      w = {*spot, now, now};
     }
     if (logging) lastLog = now;
   }
