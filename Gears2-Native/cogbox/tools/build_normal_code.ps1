@@ -35,7 +35,7 @@ function Run-Build([hashtable]$gd, [string[]]$extra) {
   # Defender's heuristics. build.ps1 now runs in this same PowerShell - its 'exit N' only ends build.ps1 and sets
   # $LASTEXITCODE here - and *>&1 still collects everything it prints (Write-Host included).
   $named = @{}   # '-Config','Release','-Tu6','-Name','X' -> @{Config='Release'; Tu6=$true; Name='X'} (splatted by name)
-  $list = @($gd.args + $extra)
+  $list = @(@($gd.args) + @($extra) | Where-Object { "$_" -ne '' })   # 0.6.0: an empty extra (Gears 2, no -Name) became -Tu6 ''
   for ($i = 0; $i -lt $list.Count; $i++) {
     $k = "$($list[$i])".TrimStart('-')
     if ($i + 1 -lt $list.Count -and -not "$($list[$i + 1])".StartsWith('-')) { $named[$k] = "$($list[$i + 1])"; $i++ } else { $named[$k] = $true } }
