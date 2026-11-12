@@ -42,6 +42,7 @@ void Gow3InstallExtras();       // extras.cpp: --gow3_cheats, --gow3_unlock_muta
 void Gow3InstallModChapters();  // mod_chapters.cpp: mods' campaign chapters and content packages
 void Gow3InstallSquadCatchUp();  // squad_catch_up.cpp: the SquadCatchUp adapter ([Campaign] in a mod.ini)
 void Gow3InstallKismetTraceIfRequested();  // kismet_trace.cpp: developer mode, --mod_kismet_trace
+void Gow3InstallPropLogIfRequested();      // prop_log.cpp: developer mode, --mod_log_props
 REXCVAR_DECLARE(bool, gow3_mute_unfocused);  // extras.cpp
 
 class Gow3App : public rex::ReXApp {
@@ -73,6 +74,7 @@ class Gow3App : public rex::ReXApp {
     Gow3InstallModChapters();  // mods' chapters 32-49 and content packages (mod_chapters.cpp), after their config
     Gow3InstallSquadCatchUp();
     Gow3InstallKismetTraceIfRequested();
+    Gow3InstallPropLogIfRequested();
     XenosInstallDrawStatsIfRequested();
     XenosInstallPrimDetailIfRequested();
     XenosInstallFrameCaptureIfRequested();

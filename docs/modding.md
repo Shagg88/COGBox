@@ -121,6 +121,19 @@ squad slot. A campaign with fewer playable squad members (Gears 1 and 2 have two
 While one of its chapters is loaded, a further player cannot join the game. Any of the campaign's mods may give it;
 the smallest number wins. The Mods tab shows it on the campaign's line.
 
+**Class defaults:** a `[ClassDefaults]` section changes a class's default values while one of the campaign's chapters
+is loaded, and puts them back when another map loads:
+
+```ini
+[ClassDefaults]
+GearPawn_SomeClass.bSomeFlag = false     ; bool (true / false), byte (0-255), int, or float (with a '.')
+GearPawn_SomeClass.GroundSpeed = 450.0
+```
+
+Actors copy their class's defaults when they spawn, so the next spawn has the new value (actors already alive get it
+too). The log has a `mod_api: class defaults:` line for each one, and says when a class or property is not found.
+`--mod_log_props` (below) shows what a live actor ends up with.
+
 Older mods that write their own `GearCampaignActData` / `GearCampaignChapterData` fragments still work. Their slots
 are kept free for them.
 
@@ -166,6 +179,16 @@ they are given.
 
   Every verb is listed in `Gears3-Native/src/layer2_ue3/include/ue3/script_input.h`. The game's log has a
   `script_input:` line for each step.
+
+  Gears 1 takes the same scripts (`Gears1-Native/src/layer2_ue3/include/ue3/script_input.h`). Its `choose` presses
+  the side's trigger at once, so time it to when the choice is up. Gears 1 and a converted Gears 1 level share map
+  coordinates, so one script's `teleport` and `face` lines give the same view in both: a side-by-side comparison.
+- **See what a live actor holds: `--mod_log_props="Class:Prop,Prop.Sub;Class2:Prop"`.** Every 5 s, each live instance
+  of each class logs those properties. `Prop.Sub` follows an object reference one step:
+
+  ```
+  props: GearPawn_COGMarcusG1_0 Mesh.AnimRotationOnly=1
+  ```
 - **See where a level's scripting stops: `--mod_kismet_trace=<part of a package name>`** (`1`: every package). Each
   Kismet action, condition and event that runs is logged with its package and sequence path, sampled ten times a
   second:
