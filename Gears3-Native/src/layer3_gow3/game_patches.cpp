@@ -94,6 +94,21 @@ void Gow3NoLightEnvShadows(PPCRegister& r9) {  // after `rlwinm r9,r10,0,0,0` at
   GOW3_LOG_ONCE("gow3_patch_no_light_env_shadows: light environment shadows skipped");
   r9.u64 = 0;
 }
+// 0.6.1: Xenia Canary's "Occlusion Query Fix" (boma): "Force occlusion testing against full-resolution depth, reducing
+// geometry popping that sometimes occurs when using strict occlusion queries". Canary writes `li r11,0` over two
+// instructions (TU6 0x827C4F80 / 0x827C9090, disc 0x827B2BD0 / 0x827B6C58); here a hook after each sets r11 = 0.
+// Off by default and not passed by CogBox: an opt-in test for GitHub #255 / #233 (distant things flickering, Gears 3,
+// strict queries on) until an A/B shows it helps.
+REXCVAR_DEFINE_BOOL(gow3_patch_occlusion_full_depth, false, "Gears3",
+                    "Occlusion queries test against the full-resolution depth (Canary's Occlusion Query Fix, boma): "
+                    "less popping of distant objects with --gow2_renderer_queries=strict");
+static void Gow3OcclusionFullDepth(PPCRegister& r11) {
+  if (!REXCVAR_GET(gow3_patch_occlusion_full_depth)) return;
+  GOW3_LOG_ONCE("gow3_patch_occlusion_full_depth: occlusion tests use the full-resolution depth");
+  r11.u64 = 0;
+}
+void Gow3OcclusionFullDepthA(PPCRegister& r11) { Gow3OcclusionFullDepth(r11); }
+void Gow3OcclusionFullDepthB(PPCRegister& r11) { Gow3OcclusionFullDepth(r11); }
 void Gow3NoDynamicShadows(PPCRegister& r11) {  // after `lwz r11,0x414(r21)` at 0x827CE810
   if (!REXCVAR_GET(gow3_patch_no_dynamic_shadows)) return;
   GOW3_LOG_ONCE("gow3_patch_no_dynamic_shadows: dynamic shadows skipped");

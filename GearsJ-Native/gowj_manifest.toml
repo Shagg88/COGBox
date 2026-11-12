@@ -261,6 +261,20 @@ labels = [0x830BF7E0, 0x830BF7E8, 0x830BF7F0, 0x830BF7F8, 0x830BF800, 0x830BF854
 
 # --gowj_patch_query_poll_yield (default 3): the render thread's GPU query wait loop head (`mr r4,r30`; the loop calls
 # 0x82BE44F0 until done). Gears 3 0x82961994, Gears 2 0x828075BC.
+# 0.6.1: Canary's TU4 "Occlusion Query Fix" (boma) - see gowj_patch_occlusion_full_depth in game_patches.cpp. Canary
+# writes `li r11,0` at both addresses; the hooks run after the original instruction and set r11 = 0 when the option is on.
+[[entrypoint.midasm_hook]]
+address = 0x827DE330
+name = "GowjOcclusionFullDepthA"
+registers = ["r11"]
+after_instruction = true
+
+[[entrypoint.midasm_hook]]
+address = 0x827E2540
+name = "GowjOcclusionFullDepthB"
+registers = ["r11"]
+after_instruction = true
+
 [[entrypoint.midasm_hook]]
 address = 0x829933B4
 name = "GowjQueryPollYield"
