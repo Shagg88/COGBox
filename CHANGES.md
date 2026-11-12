@@ -22,7 +22,7 @@
 
 ### Also new
 - **Delete a profile:** sign in to it, then Profiles > **DELETE THIS PROFILE**. Its saves, name and picture move to the `_old-files` folder (nothing is erased); profile 1 can't be deleted.
-- **Gears of War 1 System Link:** smoother network play with higher net speed limits (an idea from Reddit). GitHub #72.
+- **Gears of War 1 System Link:** smoother network play with higher net speed limits. GitHub #72.
 - **In-game menu:** Back + Start (or F1) opens the menu on the tab you last used.
 - **More button prompts**: extra prompt sheets (GitHub #223).
 

@@ -1599,7 +1599,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     {
         const std::string ei = k_engineIni[gi];
         std::vector<std::string> ini;
-        // 0.6.0 (from a Reddit post): Gears 1's network ticks are capped for a 30 fps console (NetServerMaxTickRate=30,
+        // 0.6.0: Gears 1's network ticks are capped for a 30 fps console (NetServerMaxTickRate=30,
         // LanServerMaxTickRate=35, small client rates, bDynamicNetSpeed). At 90+ fps a System Link client froze at
         // "Match begins in 1 seconds" and nobody respawned; these values made 120 fps and unlimited work. Sent whenever
         // the game can play with others here (System Link or the COGBox online server).
