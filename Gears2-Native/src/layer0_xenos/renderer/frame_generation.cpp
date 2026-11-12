@@ -195,9 +195,13 @@ void WaitForPresents() {
 
 void WaitForPrepareLists() {
   if (!g_fence || !g_fence_value) return;
-  if (g_fence->GetCompletedValue() < g_fence_value) {
-    g_fence->SetEventOnCompletion(g_fence_value, g_fence_event);
-    WaitForSingleObject(g_fence_event, INFINITE);  // review: never reuse or free lists the GPU may still read
+  // review: never reuse or free lists the GPU may still read. 0.6.1 (second review F1): the event is shared with
+  // Prepare()'s 2 s wait - after a timeout there it fires later and stays signalled, so one wait here could return
+  // before the fence; and a failed SetEventOnCompletion (device removed) waited for ever. Loop on the fence itself.
+  while (g_fence->GetCompletedValue() < g_fence_value) {  // UINT64_MAX on a removed device ends the loop
+    ResetEvent(g_fence_event);
+    if (FAILED(g_fence->SetEventOnCompletion(g_fence_value, g_fence_event))) break;
+    WaitForSingleObject(g_fence_event, 1000);
   }
 }
 
@@ -469,8 +473,9 @@ bool Prepare(const XenosFgFrame& f, uint32_t flags, int32_t hl_x = -1, int32_t h
   PrepareList& l = g_lists[g_list_index % g_lists.size()];
   if (l.fence_value && g_fence->GetCompletedValue() < l.fence_value) {
     // Outside review: a bounded wait - if the GPU is lost this list never completes; skip generation, don't hang.
+    ResetEvent(g_fence_event);  // 0.6.1 (F1): a late signal from an earlier timed-out wait must not end this one
     if (FAILED(g_fence->SetEventOnCompletion(l.fence_value, g_fence_event)) ||
-        WaitForSingleObject(g_fence_event, 2000) != WAIT_OBJECT_0)
+        WaitForSingleObject(g_fence_event, 2000) != WAIT_OBJECT_0 || g_fence->GetCompletedValue() < l.fence_value)
       return false;
   }
   if (FAILED(l.allocator->Reset()) || FAILED(g_list->Reset(l.allocator, nullptr))) return false;

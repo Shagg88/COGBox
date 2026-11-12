@@ -540,11 +540,16 @@ void ShaderCache::SaveToDisk(const std::string& name, const std::vector<uint8_t>
   // Unique temporary name per thread, then rename: a half-written file is never read.
   const std::filesystem::path tmp =
       dir_ / (name + "." + std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + ".tmp");
+  bool written = false;
   {
     std::ofstream f(tmp, std::ios::binary);
     f.write(reinterpret_cast<const char*>(bytecode.data()), std::streamsize(bytecode.size()));
+    f.flush();
+    written = f.good();
   }
   std::error_code ec;
+  // 0.6.1 (second review S1): a full disk left a cut-off file under the final name, loaded on every later run
+  if (!written) { std::filesystem::remove(tmp, ec); return; }
   std::filesystem::rename(tmp, dir_ / name, ec);
   if (ec) std::filesystem::remove(tmp, ec);
 }
