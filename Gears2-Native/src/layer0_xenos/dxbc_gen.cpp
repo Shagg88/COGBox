@@ -2777,7 +2777,40 @@ struct Gen {
       a.OpNot(R(r, kX), S1(r, 0));
       a.OpAnd(R(r, kX), S1(r, 0), S1(f, 2));
       a.OpDiscard(true, S1(r, 0));
-      for (uint32_t i = 0; i < 4; ++i) a.OpMul(Dest::O(i), S(Oc(i)), Sys(3).Select(i));
+      for (uint32_t i = 0; i < 4; ++i)
+        a.OpMul(Dest::O(i), S(Oc(i)), Sys(3).Select(i), opt.clamp_ui_output);
+      if (opt.native_hdr_linear) {
+        // Same operations as the readable HLSL epilogue: bounded, linear UI;
+        // original scene grading extended above white, with a hue-preserving
+        // shoulder before the UI blend. No expansion of finished SDR pixels.
+        a.OpMul(R(t), S(Oc(0)), Sys(3).Select(0), opt.native_hdr_ui);
+        a.OpMax(R(t, kXYZ), S(t), LF(0.0f));
+        a.OpMin(R(t, kXYZ), S(t), LF(65504.0f));
+        a.OpLog(R(t, kXYZ), S(t));
+        a.OpMul(R(t, kXYZ), S(t), LF(2.2f));
+        a.OpExp(R(t, kXYZ), S(t));
+        if (opt.native_hdr_ui) {
+          a.OpMul(R(t, kXYZ), S(t), Sys(5).Select(1));
+        } else {
+          const uint32_t m = Push(), range = Push(), shoulder = Push();
+          a.OpMax(R(m, kX), S1(t, 0), S1(t, 1));
+          a.OpMax(R(m, kX), S1(m, 0), S1(t, 2));
+          a.OpAdd(R(range, kX), Sys(5).Select(0), LF(-1.0f));
+          a.OpMax(R(range, kX), S1(range, 0), LF(0.0001f));
+          a.OpAdd(R(shoulder, kX), S1(m, 0), LF(-1.0f));
+          a.OpMax(R(shoulder, kX), S1(shoulder, 0), LF(0.0f));
+          a.OpDiv(R(shoulder, kX), S1(shoulder, 0), S1(range, 0));
+          a.OpMul(R(shoulder, kX), S1(shoulder, 0), LF(-1.4426950409f));
+          a.OpExp(R(shoulder, kX), S1(shoulder, 0));
+          a.OpAdd(R(shoulder, kX), LF(1.0f), -S1(shoulder, 0));
+          a.OpMul(R(shoulder, kX), S1(shoulder, 0), S1(range, 0));
+          a.OpAdd(R(shoulder, kX), S1(shoulder, 0), LF(1.0f));
+          a.OpMax(R(m, kX), S1(m, 0), LF(1.0f));
+          a.OpDiv(R(shoulder, kX), S1(shoulder, 0), S1(m, 0));
+          a.OpMul(R(t, kXYZ), S(t), S1(shoulder, 0));
+        }
+        a.OpMov(Dest::O(0), S(t));
+      }
       if (writes_depth_final) {
         const uint32_t dp = PosOrDepth();
         a.OpAnd(R(t, kX), Sys(0).Select(0), LU(64));
@@ -3666,7 +3699,7 @@ DxbcTranslation TranslateToDxbc(const Program& program, const hlsl::HlslOptions&
   out.sampler_registers = g.samplers;
 
   // Declarations + code (SHEX).
-  const uint32_t sys_vectors = (options.vertex_index_clamp && vs) ? 6 : 5;
+  const uint32_t sys_vectors = (options.vertex_index_clamp && vs) || options.native_hdr_linear ? 6 : 5;
   std::vector<uint32_t> shex;
   dx::Statistics stat = g.stat;
   dx::Assembler d(shex, stat);

@@ -505,6 +505,10 @@ target_link_libraries(gn_shader_oracle PRIVATE d3d12 dxgi)
 # translator variant, on this PC's GPU (no game runs). Not part of the normal build: cmake --build <dir> --target gn_pipebench.
 # Notes/68: gn_vktest (tools/vktest) - checks of the Vulkan backend on this PC's GPU, no game. Not in the normal build.
 add_executable(gn_vktest EXCLUDE_FROM_ALL tools/vktest/vktest.cpp)
+add_executable(gn_hdrtest EXCLUDE_FROM_ALL tools/hdrtest/hdrtest.cpp)
+set_target_properties(gn_hdrtest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/hdr-tests")
+target_link_libraries(gn_hdrtest PRIVATE gn_layer0_xenos)
+rexglue_apply_target_settings(gn_hdrtest)
 target_link_libraries(gn_vktest PRIVATE gn_layer0_xenos)
 rexglue_apply_target_settings(gn_vktest)
 if(GN_VULKAN_HEADERS)  # notes/68 V3: its external-device check makes a device of its own

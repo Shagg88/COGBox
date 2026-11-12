@@ -135,7 +135,14 @@ void LogCpuAndMemory() {
 }
 
 void LogGraphicsCards() {
-  HMODULE dxgi = LoadLibraryW(L"dxgi.dll");
+  // This is a hardware query, not renderer creation. Calling an app-local
+  // DXGI proxy here activates DirectX render hooks even for a Vulkan game.
+  // That combination can crash NVIDIA's HDR presentation in DXGI/D3D12.
+  // Use the full system path: the proxy may already be loaded by PE imports.
+  wchar_t directory[MAX_PATH] = {};
+  const UINT length = GetSystemDirectoryW(directory, MAX_PATH);
+  const std::wstring path = length && length < MAX_PATH ? std::wstring(directory) + L"\\dxgi.dll" : L"";
+  HMODULE dxgi = path.empty() ? nullptr : LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
   if (!dxgi) { REXLOG_INFO("pc: graphics cards: dxgi.dll not found"); return; }
   using CreateFn = HRESULT(WINAPI*)(REFIID, void**);
   auto create = reinterpret_cast<CreateFn>(GetProcAddress(dxgi, "CreateDXGIFactory1"));

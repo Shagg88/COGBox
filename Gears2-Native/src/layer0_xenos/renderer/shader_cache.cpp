@@ -5,6 +5,7 @@
 #include <xenos/dxbc_gen.h>
 #include <xenos/dxbc_spirv.h>
 #include <xenos/hlsl.h>
+#include <xenos/renderer/native_hdr.h>
 #include <xenos/ucode.h>
 
 #include <rex/cvar.h>
@@ -1002,7 +1003,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
         s->drawn = true;  // patch 0045: recorded in an earlier session = drawn before
         const ucode::Program program = ucode::Decode(it.dwords.data(), it.dwords.size(), it.is_vertex, decode_options);
         Analyse(program, *s);
-        made[i].dt = TranslateDxbcFor(program, TranslateOptions(it.is_vertex, 0), spirv);
+        made[i].dt = TranslateDxbcFor(program, TranslateOptions(it.is_vertex, 0, it.dwords.data(), it.dwords.size()), spirv);
         made[i].s = std::move(s);
         made[i].ms = MsSince(tm);
       }
@@ -1057,8 +1058,12 @@ ucode::DecodeOptions ShaderCache::DecodeOptions() const {
   decode_options.canary_tfetch1d_two_components = canary_decode_;
   return decode_options;
 }
-hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_quad_segments) const {
+hlsl::HlslOptions ShaderCache::TranslateOptions(bool is_vertex, uint32_t tess_quad_segments,
+                                                const uint32_t* dwords, size_t dword_count) const {
   hlsl::HlslOptions options;
+  // A simple textured shader may also draw scene effects. The UI clamp is
+  // selected by GetNativeHdr only while replaying the identified post-tonemap
+  // Canvas draws; never clamp all uses of a shader by its hash alone.
   if (is_vertex) options.tess_quad_segments = tess_quad_segments;
   options.compact_float_constants = compact_float_constants_;
   options.tex_sign_by_swizzle = tex_sign_by_swizzle_;  // patch 0024
@@ -1092,10 +1097,47 @@ bool ShaderCache::TranslateDxbcOnly(const uint32_t* dwords, size_t dword_count, 
                                     std::vector<uint8_t>& out) {
   if (!dxbc_ || backend_.GetShaderIL() != gpu::ShaderIL::kDxil || !dwords || !dword_count) return false;
   const ucode::Program program = ucode::Decode(dwords, dword_count, is_vertex, DecodeOptions());
-  dxbc_gen::DxbcTranslation dt = dxbc_gen::TranslateToDxbc(program, TranslateOptions(is_vertex, 0));
+  dxbc_gen::DxbcTranslation dt = dxbc_gen::TranslateToDxbc(program, TranslateOptions(is_vertex, 0, dwords, dword_count));
   if (!dt.ok) return false;
   out = std::move(dt.bytecode);
   return true;
+}
+
+gpu::ShaderHandle ShaderCache::GetNativeHdr(uint64_t hash, const uint32_t* dwords, size_t count, bool canvas_material) {
+  if (!dxbc_ || !dwords ||
+      (hash != native_hdr::kScene && !native_hdr::FindUi(hash) && !canvas_material)) return 0;
+  if (const auto it = native_hdr_shaders_.find(hash); it != native_hdr_shaders_.end()) return it->second;
+  auto program = ucode::Decode(dwords, count, false, DecodeOptions());
+  auto options = TranslateOptions(false, 0, dwords, count);
+  const auto* ui = native_hdr::FindUi(hash);
+  const bool canvas = ui != nullptr || canvas_material;
+  if (ui && (count != ui->dwords || Fnv1a64(dwords, count * sizeof(uint32_t)) != ui->fingerprint)) return 0;
+  if (!canvas && !native_hdr::ExtendScene(program)) return 0;
+  options.clamp_ui_output = canvas;
+  options.native_hdr_linear = true;
+  options.native_hdr_ui = canvas;
+  const auto translated = TranslateDxbcFor(program, options, backend_.GetShaderIL() == gpu::ShaderIL::kSpirv);
+  const auto shader = translated.ok ? backend_.CreateShader(gpu::ShaderStage::kPixel,
+      translated.bytecode.data(), translated.bytecode.size()) : 0;
+  native_hdr_shaders_[hash] = shader;
+  REXLOG_INFO("gow2_native_hdr: {} shader {:016X}: {}", canvas ? "bounded Canvas" : "extended scene", hash,
+              shader ? "ready" : "FAILED (reference-white fallback)");
+  return shader;
+}
+
+gpu::ShaderHandle ShaderCache::GetNativeSceneUi(const uint32_t* dwords, size_t count) {
+  if (const auto it = native_hdr_shaders_.find(native_hdr::kSceneUi); it != native_hdr_shaders_.end()) return it->second;
+  const auto* profile = native_hdr::FindUi(native_hdr::kSceneUi);
+  if (!dwords || count != profile->dwords ||
+      Fnv1a64(dwords, count * sizeof(uint32_t)) != profile->fingerprint) return 0;
+  auto options = TranslateOptions(false, 0, dwords, count);
+  options.entry = "xe_scene_ui_material";
+  const auto program = ucode::Decode(dwords, count, false, DecodeOptions());
+  const auto source = native_hdr::SceneUiPairSource(hlsl::TranslateToHlsl(program, options).hlsl);
+  if (source.empty()) return 0;
+  const auto shader = GetBuiltin("native_scene_ui_pair", source, gpu::ShaderStage::kPixel);
+  native_hdr_shaders_[native_hdr::kSceneUi] = shader;
+  return shader;
 }
 
 const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwords, size_t dword_count,
@@ -1120,7 +1162,7 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
   const ucode::DecodeOptions decode_options = DecodeOptions();
   const ucode::Program program = ucode::Decode(dwords, dword_count, is_vertex, decode_options);
   Analyse(program, *s);
-  const hlsl::HlslOptions options = TranslateOptions(is_vertex, tess_quad_segments);
+  const hlsl::HlslOptions options = TranslateOptions(is_vertex, tess_quad_segments, dwords, dword_count);
   // Overhaul option B (--gow2_renderer_shader_backend=dxbc): DXBC made here in well under a millisecond, so the shader
   // is ready at once - no compile queue, no disk cache (the driver compiles it with the pipeline, as for DXIL). The
   // DXBC carries the shader cache's text post-processing below natively (precise everywhere; the depth remap).

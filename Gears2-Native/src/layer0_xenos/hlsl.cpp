@@ -1416,12 +1416,22 @@ Translation TranslateToHlsl(const Program& program, const HlslOptions& options) 
   if (options.tex_sign_by_swizzle) s += "#define XE_SIGN_BY_SWIZZLE 1\n";  // patch 0024
   if (options.tex_num_format) s += "#define XE_TEX_NUM_FORMAT 1\n";  // patch 0040
   if (options.vertex_index_clamp && program.is_vertex_shader) s += "#define XE_VTX_CLAMP 1\n";  // patch 0028
+  if (options.native_hdr_linear) s += "#define XE_NATIVE_HDR 1\n";
   if (!program.is_vertex_shader && g.writes_depth) s += "#define XE_WRITES_DEPTH 1\n";
   if (g.memexport) {
     s += "#define XE_MEMEXPORT 1\n";
     s += "RWByteAddressBuffer xe_memexport_buffer : register(u0, space0);\n";
   }
-  s += CommonPrelude(program.is_vertex_shader);
+  if (options.native_hdr_linear) {
+    auto prelude = CommonPrelude(program.is_vertex_shader);
+    const auto at = prelude.find("#ifdef XE_VTX_CLAMP");
+    if (at != std::string::npos)
+      prelude.replace(at, std::string("#ifdef XE_VTX_CLAMP").size(),
+                      "#if defined(XE_VTX_CLAMP) || defined(XE_NATIVE_HDR)");
+    s += prelude;
+  } else {
+    s += CommonPrelude(program.is_vertex_shader); // retain existing SDR shader-cache keys
+  }
   if (g.memexport) s += kPreludeMemexport;
   out.memexport = g.memexport;
   out.memexport_stream_constants.assign(g.stream_constants.begin(), g.stream_constants.end());
@@ -1510,6 +1520,24 @@ Translation TranslateToHlsl(const Program& program, const HlslOptions& options) 
     s += "  XePsOut o;\n";
     s += "  o.color0 = xe_oc[0] * xe_color_exp_scale.x;\n  o.color1 = xe_oc[1] * xe_color_exp_scale.y;\n";
     s += "  o.color2 = xe_oc[2] * xe_color_exp_scale.z;\n  o.color3 = xe_oc[3] * xe_color_exp_scale.w;\n";
+    if (options.clamp_ui_output) {
+      s += "  // Preserve SDR HUD / reload bounds after an FP16 target upgrade.\n";
+      s += "  o.color0 = saturate(o.color0);\n  o.color1 = saturate(o.color1);\n";
+      s += "  o.color2 = saturate(o.color2);\n  o.color3 = saturate(o.color3);\n";
+    }
+    if (options.native_hdr_linear) {
+      s += "  // Linear-light composition in scene reference-white units.\n";
+      s += "  float3 nativeColor = pow(min(max(o.color0.rgb, 0.0), 65504.0), 2.2);\n";
+      if (options.native_hdr_ui) {
+        s += "  nativeColor *= asfloat(xe_sys2.y); // independent UI white / scene white\n";
+      } else {
+        s += "  float brightest = max(max(nativeColor.r, nativeColor.g), nativeColor.b);\n";
+        s += "  float highlightRange = max(asfloat(xe_sys2.x) - 1.0, 0.0001);\n";
+        s += "  float shoulder = 1.0 + highlightRange * (1.0 - exp(-max(brightest - 1.0, 0.0) / highlightRange));\n";
+        s += "  nativeColor *= shoulder / max(brightest, 1.0);\n";
+      }
+      s += "  o.color0.rgb = nativeColor;\n";
+    }
     if (g.writes_depth) s += "  o.depth = xe_odepth.x;\n";
     s += "  return o;\n";
   }
