@@ -22,6 +22,8 @@
 // package's own objects (Outer = the package) join the root set.
 // --gow3_mod_chapters=false turns all of it off.
 #include <climits>
+#include <cmath>
+#include <cstdint>
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
 #include <rex/logging/macros.h>
@@ -194,12 +196,14 @@ bool FillChapterTable() {
 // 1 (each AnimSet's own setting); the classic Marcus is Marcus's skeleton, and his arms twitched in the radio stance.
 // 0.6.0 review: only the class default is put back - live instances die with their map (their memory may hold
 // something else by then); restored newest first, so two edits of one word come back right.
-struct Applied { uint32_t at; uint32_t mask; uint32_t old; bool byte; };   // mask 0: the whole word / byte
+struct Applied { uint32_t at; uint32_t mask; uint32_t old; bool byte; uint32_t def; std::string cls; };   // mask 0: the whole word / byte
 std::vector<Applied> g_applied;
 
 void RestoreClassDefaults() {
   for (auto it = g_applied.rbegin(); it != g_applied.rend(); ++it) {
     const Applied& a = *it;
+    // the class default still where it was (a chapter's own class may have been unloaded and its memory reused)
+    if (obj::FindObject(("Default__" + a.cls).c_str()) != a.def) continue;
     if (a.mask) obj::Write32(a.at, (obj::Read32(a.at) & ~a.mask) | (a.old & a.mask));
     else if (a.byte) obj::Write8(a.at, uint8_t(a.old));
     else obj::Write32(a.at, a.old);
@@ -252,7 +256,7 @@ void ApplyClassDefaults(const std::string& map) {
       word = uint32_t(int32_t(v));
     } else if (type == "FloatProperty") {
       float f = 0;
-      ok = ParseAll(e.value, [&](const std::string& s, size_t* p) { f = std::stof(s, p); });
+      ok = ParseAll(e.value, [&](const std::string& s, size_t* p) { f = std::stof(s, p); }) && std::isfinite(f);
       std::memcpy(&word, &f, 4);
     } else {
       REXLOG_WARN("mod_api: class defaults: {}.{} is a {} - only bool, byte, int and float properties can be set", e.cls, e.prop,
@@ -274,7 +278,7 @@ void ApplyClassDefaults(const std::string& map) {
       else if (type == "ByteProperty") w = obj::Write8(at, uint8_t(word));
       else w = obj::Write32(at, word);
       if (w) written++;
-      if (w && o == def) g_applied.push_back({at, mask, type == "ByteProperty" ? old >> 24 : old, type == "ByteProperty"});
+      if (w && o == def) g_applied.push_back({at, mask, type == "ByteProperty" ? old >> 24 : old, type == "ByteProperty", def, e.cls});
     }
     REXLOG_INFO("mod_api: class defaults: {}.{} = {} ({} of {} objects)", e.cls, e.prop, e.value, written, targets.size());
   }
