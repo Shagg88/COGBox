@@ -1164,7 +1164,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_display_mark, false, "Gears2",
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_paper_white, 203.0, "Gears2",
                       "Stage 7.3 (--present_hdr): nits of the game's full white (BT.2408 reference white 203)");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_ui_white, 203.0, "Gears2", "Native HDR: independent HUD and reload white in nits");
-REXCVAR_DEFINE_BOOL(gow2_hdr_native, true, "Gears2", "Use the captured Gears 2 TU6 float scene/HUD profile in HDR10");
+REXCVAR_DEFINE_BOOL(gow2_hdr_native, true, "Gears2", "Use the captured Gears 2 / Gears 3 TU6 float scene/HUD profiles in HDR10");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_peak, 1000.0, "Gears2", "Native HDR: display peak in nits for highlight roll-off");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_knee, 0.75, "Gears2",
                       "Legacy compatibility option; unused by native HDR");
@@ -3180,7 +3180,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   };
   // The gamma pass into present_out_ (packed RGB10A2 words, w x h). False when it could not run.
   bool GammaPass(const RegisterFile& regs, const DisplaySource& src, uint32_t fb_width, uint32_t fb_height, uint32_t& w,
-                 uint32_t& h, bool& is_table) {
+                 uint32_t& h, bool& is_table, bool native_output = false) {
     const ::xenos::display_gamma::Ramps* ramps = XenosGammaRamps();
     if (!ramps) {
       ++present_stats_.no_gamma;
@@ -3268,6 +3268,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         return false;
       }
     }
+    // Native HDR overwrites every output pixel from its FP16 source. SMAA still
+    // needs the original gamma image for its edge pass; evaluate this after a
+    // pending AA-setting change above. All reference/HUD-less calls retain it.
+    if (native_output && !smaa_) {
+      ++native_hdr_gamma_skips_;
+      return true;
+    }
     gpu::ComputeBindings b;
     b.constants[0] = w;
     b.constants[1] = h;
@@ -3308,11 +3315,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void PresentOurs(const RegisterFile& regs, const DisplaySource& src, uint32_t fb_width, uint32_t fb_height) {
     uint32_t w = 0, h = 0;
     bool table = false;
-    if (!GammaPass(regs, src, fb_width, fb_height, w, h, table)) {
+    const bool native_frame = hdr_ && hdr_encode_ && native_hdr_valid_ && src.native_hdr_generation == native_hdr_generation_;
+    if (!GammaPass(regs, src, fb_width, fb_height, w, h, table, native_frame)) {
       ++ours_stats_.not_presented;
       return;
     }
-    const bool native_frame = hdr_ && native_hdr_valid_ && src.native_hdr_generation == native_hdr_generation_;
     native_hdr_aa_ready_ = false;
     if (smaa_ && !SmaaPass(w, h, native_frame ? native_hdr_color_ : 0) && !smaa_failed_logged_) {
       smaa_failed_logged_ = true;
@@ -3586,10 +3593,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::TextureHandle native_hdr_color_ = 0, native_hdr_aa_ = 0, native_hdr_reference_ = 0;
   uint32_t native_hdr_w_ = 0, native_hdr_h_ = 0, native_hdr_ref_w_ = 0, native_hdr_ref_h_ = 0;
   uint64_t native_hdr_generation_ = 0;
-  uint64_t native_hdr_frames_ = 0, native_hdr_reference_frames_ = 0;
+  uint64_t native_hdr_frames_ = 0, native_hdr_reference_frames_ = 0, native_hdr_gamma_skips_ = 0;
   std::unordered_set<uint64_t> native_hdr_unknown_writers_;
   rr::RenderTargetKey native_hdr_key_{};
   bool native_hdr_valid_ = false, native_hdr_aa_ready_ = false;
+  rr::native_hdr::Gears3CurveCache native_hdr_curve_cache_;
   gpu::PipelineHandle native_hdr_smaa_blend_ = 0, native_hdr_copy_ = 0;
   gpu::PipelineHandle native_hdr_ui_prepare_pipe_ = 0, native_hdr_ui_copy_pipe_ = 0, native_hdr_ui_blend_pipe_ = 0;
   gpu::TextureHandle native_hdr_ui_proxy_ = 0, native_hdr_ui_high_ = 0, native_hdr_ui_low_ = 0;
@@ -3627,9 +3635,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void EncodeNativeHdr(gpu::TextureHandle output, uint32_t width, uint32_t height, bool native) {
     if (native) ++native_hdr_frames_; else ++native_hdr_reference_frames_;
     if ((native && native_hdr_frames_ <= 3) || (native_hdr_frames_ + native_hdr_reference_frames_) % 300 == 0)
-      REXLOG_INFO("gow2_native_hdr: presentation: {} FP16 frames, {} reference frames; this frame {} {}x{} -> {}x{}",
+      REXLOG_INFO("gow2_native_hdr: presentation: {} FP16 frames, {} reference frames; this frame {} {}x{} -> {}x{}; skipped SDR gamma {}",
                   native_hdr_frames_, native_hdr_reference_frames_, native ? "native" : "reference",
-                  native ? native_hdr_w_ : width, native ? native_hdr_h_ : height, width, height);
+                  native ? native_hdr_w_ : width, native ? native_hdr_h_ : height, width, height, native_hdr_gamma_skips_);
     // Separate packed reference input avoids simultaneous SRV/UAV aliasing.
     if (!native && (!native_hdr_reference_ || native_hdr_ref_w_ != width || native_hdr_ref_h_ != height)) {
       if (native_hdr_reference_) backend_->DestroyTexture(native_hdr_reference_);
@@ -3671,10 +3679,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   template<class Issue>
   void NativeHdrDraw(const gpu::GraphicsPipelineDesc& original, gpu::PipelineHandle original_pipeline,
                      const rr::GuestShader& vertex, const rr::GuestShader& shader, const rr::RenderTarget* target,
-                     const rr::PipelineState& state, const SystemConstants& constants, Issue&& issue) {
+                     const rr::PipelineState& state, const SystemConstants& constants,
+                     const uint32_t* pixel_constants, Issue&& issue) {
     if (!hdr_ || !hdr_encode_ || !REXCVAR_GET(gow2_hdr_native) || !target ||
         !original.color_write_masks[0]) return;
-    const bool scene = shader.ucode_hash == rr::native_hdr::kScene;
+    const bool scene = rr::native_hdr::IsScene(shader.ucode_hash);
+    const bool gears3_scene = shader.ucode_hash == rr::native_hdr::kGears3Scene;
     const auto& blend = original.color_blend[0];
     const bool straight_alpha = blend.enable && blend.src == gpu::BlendFactor::kSrcAlpha &&
         blend.dst == gpu::BlendFactor::kInvSrcAlpha && blend.op == gpu::BlendOp::kAdd;
@@ -3711,7 +3721,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         gpu::TextureDesc td;
         td.width = width; td.height = height; td.format = gpu::Format::kR16G16B16A16Float;
         td.usage = gpu::kUsageSampled | gpu::kUsageRenderTarget | gpu::kUsageStorage;
-        td.debug_name = "Gears 2 native HDR scene and bounded HUD (linear FP16)";
+        td.debug_name = "Native HDR scene and bounded HUD (linear FP16)";
         native_hdr_color_ = backend_->CreateTexture(td);
         native_hdr_w_ = width; native_hdr_h_ = height;
       }
@@ -3724,16 +3734,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     pipeline_desc.ps = pixel;
     pipeline_desc.color_formats[0] = gpu::Format::kR16G16B16A16Float;
     pipeline_desc.depth_format = gpu::Format::kUnknown;
-    if (scene_ui) {
-      if (original.gs || !native_hdr_ui_view_count_ || !native_hdr_ui_views_[0].texture ||
-          !EnsureNativeSceneUi()) { native_hdr_valid_ = false; return; }
+    if (gears3_scene || scene_ui) {
+      if (original.gs) { native_hdr_valid_ = false; return; }
       if (backend_->GetShaderIL() == gpu::ShaderIL::kDxil) {
-        // D3D12 requires matching shader-container kinds across the pipeline.
         const auto& twin = cache_->GetDxilTwin(vs_.hash, vs_.dwords, vs_.count);
         cache_->WaitReady(twin, 100.0);
         if (!twin.handle) { native_hdr_valid_ = false; return; }
         pipeline_desc.vs = twin.handle;
       }
+    }
+    if (scene_ui) {
+      if (original.gs || !native_hdr_ui_view_count_ || !native_hdr_ui_views_[0].texture ||
+          !EnsureNativeSceneUi()) { native_hdr_valid_ = false; return; }
       pipeline_desc.color_count = 2;
       pipeline_desc.color_formats[1] = pipeline_desc.color_formats[0];
       pipeline_desc.color_write_masks[1] = pipeline_desc.color_write_masks[0];
@@ -3759,6 +3771,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     SystemConstants hdr_constants = constants;
     hdr_constants.sys2[0] = std::bit_cast<uint32_t>(HdrPeak() / HdrSceneWhite());
     hdr_constants.sys2[1] = std::bit_cast<uint32_t>(HdrUiWhite() / HdrSceneWhite());
+    if (gears3_scene) {
+      const auto curve = rr::native_hdr::Gears3Curve::FromConstants(pixel_constants);
+      const auto [pivot, slope] = native_hdr_curve_cache_.Get(curve);
+      hdr_constants.sys2[2] = std::bit_cast<uint32_t>(pivot);
+      hdr_constants.sys2[3] = std::bit_cast<uint32_t>(slope);
+      if (native_hdr_generation_ <= 3)
+        REXLOG_INFO("gow2_native_hdr: Gears 3 curve offset {} scale {} blend {}, pivot {} slope {}",
+                    curve.offset, curve.scale, curve.blend, pivot, slope);
+    }
     backend_->SetConstants(gpu::ShaderStage::kPixel, gpu::kCbSystem, &hdr_constants, sizeof(hdr_constants));
     backend_->SetPipeline(pipeline);
     issue(nullptr, 0, scene_ui ? native_hdr_ui_high_ : native_hdr_color_, scene_ui ? native_hdr_ui_low_ : 0);
@@ -9735,7 +9756,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (export_shader) backend_->SetGuestWritable(true);
     if (hl_format_ && up_scene_done_ && !export_shader) HudlessDraw(colour_rt, ps, prim, index_count, depth_writes);
     issue(target, 0);
-    if (psg && !export_shader) NativeHdrDraw(d, pipeline, vsg, *psg, colour_rt[0], ps, sc, issue);
+    if (psg && !export_shader) NativeHdrDraw(d, pipeline, vsg, *psg, colour_rt[0], ps, sc, &r[kRegFloatConstPs], issue);
     if (export_shader) backend_->SetGuestWritable(false);
     if (exports) {
       ++stats_.memexport_draws;

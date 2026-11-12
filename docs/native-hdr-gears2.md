@@ -1,5 +1,7 @@
 # Gears 2 native HDR investigation
 
+The 2026-11-12 optimization update is installed in the existing `gow2.exe`. Valid native HDR frames now skip the SDR presentation-gamma dispatch when presentation SMAA does not require it for edge detection. Reference frames, live AA changes, HUD-less frame generation and guest rendering retain their original processing. The shared 4K D3D12/Vulkan GPU benchmark saved approximately 0.25-0.28 ms in the native presentation chain with all 8,294,400 final pixels identical; this is not a whole-game FPS measurement. Details and benchmark results are recorded in [native-hdr-gears3.md](native-hdr-gears3.md#fade-preservation-and-shared-optimizations).
+
 Measured on Gears 2 TU6 on 2026-11-11/12. Native HDR is implemented in the existing `Gears2-Native/build/Release-tu6/gow2.exe`, using a dedicated FP16 scene/HUD composition. The original capture findings below explain the previous SDR bottlenecks; implementation and validation follow them.
 
 | Role | Live host shader | Guest microcode shader | Evidence |

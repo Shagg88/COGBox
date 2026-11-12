@@ -5,6 +5,7 @@
 #include <xenos/renderer/native_hdr.h>
 #include <rex/cvar.h>
 #include "../../src/layer0_xenos/renderer/native_hdr_shaders.h"
+#include "../../src/layer0_xenos/renderer/builtin_shaders.h"
 #include "../../src/layer0_xenos/renderer/smaa/smaa_passes.h"
 #include <algorithm>
 #include <bit>
@@ -84,18 +85,139 @@ static int UiCompositeCheck(gpu::Backend& backend,xenos::renderer::ShaderCompile
   std::puts("PASS UI isolation: world HDR retained, overbright UI bounded, vanilla tint, partial coverage, negative-safe gamma");
   return 0;
 }
+// Exercise the same source transformation as the captured Gears 3 material,
+// using authored inputs so this test contains no game shader data.
+static int Gears3SceneCheck(gpu::Backend& backend,xenos::renderer::ShaderCompiler& compiler) {
+  for (float exposure : {0.25f, 1.0f, 4.0f}) {
+    const hdr::Gears3Curve curve{exposure,1,0,1,0.45f,1,1};
+    const auto [pivot,slope]=curve.Extension();
+    if(!std::isfinite(pivot)||!std::isfinite(slope)||pivot<=0||slope<=0)return 30;
+    hdr::Gears3CurveCache curveCache;
+    if(curveCache.Get(curve)!=curve.Extension() || curveCache.Get(curve)!=curve.Extension())return 40;
+    // Exposure/curve edits must invalidate the cached tangent immediately.
+    for(unsigned component=0;component<7;++component) {
+      auto changed=curve;
+      float* fields[]={&changed.offset,&changed.scale,&changed.shadow_start,&changed.shadow_scale,
+                       &changed.power,&changed.weight_scale,&changed.blend};
+      *fields[component]+=0.05f;
+      if(curveCache.Get(changed)!=changed.Extension() || curveCache.Get(curve)!=curve.Extension())return 40;
+    }
+    std::string source=R"(
+cbuffer Params : register(b0) { uint4 xe_sys2; float4 xe_color_exp_scale; };
+Texture2D<float4> scene : register(t0);
+RWTexture2D<float4> output : register(u0);
+struct XePsIn { uint pixel; };
+struct XePsOut { float4 color0; };
+static const float4 xe_c[256] = {
+)";
+    for(unsigned i=0;i<256;++i) {
+      if(i==0)source+="float4(1,0,0,0),";
+      else if(i==4)source+="float4("+std::to_string(exposure)+",1,0,1),";
+      else if(i==5)source+="float4(1,0,0,0),";
+      else if(i==252)source+="float4(0,0.45,0,0),";
+      else if(i==253)source+="float4(0,0,1,0),";
+      else source+="float4(0,0,0,0),";
+    }
+    source+=R"(
+};
+XePsOut main(XePsIn xe_in) {
+  float4 r[4];
+  r[3] = scene.Load(int3(xe_in.pixel,0,0)).rbga;
+  {
+    float4 s0 = r[3].xzyy;
+        float4 s1 = xe_c[4].xxxx;
+  }
+  XePsOut o;
+  // An authored neutral LUT response with a fixed tint and a variable linear
+  // fade. Bright scene input stays present even when the graded result is black.
+  float3 nativeColor = pow(float3(0.5,1.0,0.25),2.2) *
+      NativeGears3CurveLinear(max(r[3].x,0.0)) * asfloat(xe_sys2.y);
+  float brightest = max(max(nativeColor.r, nativeColor.g), nativeColor.b);
+  float highlightRange = max(asfloat(xe_sys2.x) - 1.0, 0.0001);
+  float shoulder = 1.0 + highlightRange * (1.0 - exp(-max(brightest - 1.0, 0.0) / highlightRange));
+  nativeColor *= shoulder / max(brightest, 1.0);
+  o.color0=float4(nativeColor,1);
+  return o;
+}
+)";
+    source=hdr::Gears3SceneSource(source,256,256);
+    if(source.empty())return 31;
+    const auto main=source.find("XePsOut main(XePsIn xe_in)");
+    source.replace(main,std::strlen("XePsOut main"),"XePsOut TestMaterial");
+    source+=R"(
+[numthreads(8,1,1)] void main(uint3 id : SV_DispatchThreadID) {
+  if(id.x>=4)return;
+  XePsIn input; input.pixel=id.x;
+  output[id.xy]=TestMaterial(input).color0;
+}
+)";
+    std::vector<uint8_t> bytes;std::string error;
+    if(!compiler.Compile(source,gpu::ShaderStage::kCompute,backend.GetShaderIL(),bytes,error)) {
+      std::printf("FAIL Gears 3 extension compile: %s\n",error.c_str());return 32;
+    }
+    const auto shader=backend.CreateShader(gpu::ShaderStage::kCompute,bytes.data(),bytes.size());
+    const auto pipeline=shader?backend.CreateComputePipeline(shader):0;
+    gpu::TextureDesc desc;desc.width=4;desc.height=1;desc.format=gpu::Format::kR16G16B16A16Float;
+    desc.usage=gpu::kUsageSampled|gpu::kUsageStorage;
+    const auto input=backend.CreateTexture(desc),output=backend.CreateTexture(desc);
+    if(!pipeline||!input||!output)return 33;
+    const float energies[]={-1.0f,pivot*0.5f,exposure*50,exposure*500};
+    uint16_t data[16]{};
+    for(unsigned i=0;i<4;++i)for(unsigned c=0;c<4;++c)data[4*i+c]=ToHalf(energies[i]);
+    backend.UploadTexture(input,0,0,data,32,1,1);
+    for(float peak : {4.0f,19.0f}) {
+      float fullBrightness[16]{};
+      for(float fade : {1.0f,0.5f,0.001f,0.0f}) {
+      gpu::ComputeBindings bindings;bindings.constant_count=8;
+      bindings.constants[0]=std::bit_cast<uint32_t>(peak);
+      bindings.constants[1]=std::bit_cast<uint32_t>(fade);
+      bindings.constants[2]=std::bit_cast<uint32_t>(pivot);bindings.constants[3]=std::bit_cast<uint32_t>(slope);
+      bindings.constants[4]=std::bit_cast<uint32_t>(1.0f);bindings.srv[0]=input;bindings.uav_texture=output;
+      backend.Dispatch(pipeline,bindings,1,1,1);
+      const auto rb=backend.ReadbackTexture(output,{0,0,4,1});backend.WaitForFence(backend.Submit());
+      uint32_t pitch=0;const auto* result=backend.ReadbackData(rb,pitch);uint16_t actual[16]{};
+      if(result)std::memcpy(actual,result,sizeof(actual));backend.ReleaseReadback(rb);if(!result)return 34;
+      for(unsigned i=0;i<4;++i) {
+        const float red=Half(actual[4*i]),green=Half(actual[4*i+1]),blue=Half(actual[4*i+2]);
+        if(!std::isfinite(red)||!std::isfinite(green)||!std::isfinite(blue)||red<0||blue<0||green>peak+0.02f)return 35;
+        if(i<2 && std::abs(green-curve.Linear(std::max(Half(data[4*i]),0.0f))*fade)>0.001f)return 36;
+        // A strongly over-range scene should use the selected peak's headroom
+        // without raising paper white. The original paper-white-only extension
+        // left this input below 25% of a 19x display range.
+        if(i==2 && fade==1.0f && green<peak*0.8f) {
+          std::printf("FAIL Gears 3 highlight headroom: %g of %g\n",green,peak);return 38;
+        }
+        if(i>=2 && fade==1.0f && (green<=1 || std::abs(red/green-std::pow(0.5f,2.2f))>0.002f ||
+                    std::abs(blue/green-std::pow(0.25f,2.2f))>0.002f))return 37;
+        for(unsigned c=0;c<3;++c) {
+          const float value=Half(actual[4*i+c]);
+          if(fade==1.0f)fullBrightness[4*i+c]=value;
+          else if(std::abs(value-fullBrightness[4*i+c]*fade)>std::max(0.004f,peak*0.001f) ||
+                  (fade==0.0f && value!=0.0f)) {
+            std::printf("FAIL Gears 3 fade %.4f pixel %u: %g != %g\n",fade,i,value,fullBrightness[4*i+c]*fade);return 39;
+          }
+        }
+      }
+      }
+    }
+    backend.DestroyTexture(input);backend.DestroyTexture(output);
+    std::printf("PASS Gears 3 extension exposure %.2f: SDR lows, highlight headroom, hue, peak bounds, linear fades, exact black\n",exposure);
+  }
+  return 0;
+}
 int main(int argc,char** argv) {
   const bool vulkan=argc>1&&std::string(argv[1])=="vulkan";
   const std::string mode=argc>2?argv[2]:"off";
   const bool quality=argc>3&&std::string(argv[3])=="quality";
   rex::cvar::SetFlagByName("gow2_fsr_vulkan","true");
   auto backend=vulkan?gpu::CreateVulkanBackend():gpu::CreateD3D12Backend();
-  gpu::BackendOptions options;options.upload_ring_mb=mode=="encoder_bench"?128:32;options.guest_memory_bytes=16ull<<20;
+  gpu::BackendOptions options;options.upload_ring_mb=(mode=="encoder_bench"||mode=="present_bench")?128:32;options.guest_memory_bytes=16ull<<20;
   std::string error;
   if(!backend || !backend->Init(options,error)) { std::printf("FAIL backend: %s\n",error.c_str());return 2; }
   auto compiler=xenos::renderer::CreateDxcCompiler({},error);
   if(!compiler) { std::printf("FAIL compiler: %s\n",error.c_str());return 3; }
   if(mode=="ui")return UiCompositeCheck(*backend,*compiler);
+  if(mode=="gears3")return Gears3SceneCheck(*backend,*compiler);
   auto shader=[&](const char* source,gpu::ShaderStage stage) {
     std::vector<uint8_t> bytes;std::string messages;
     if(!compiler->Compile(source,stage,backend->GetShaderIL(),bytes,messages)) {
@@ -104,8 +226,10 @@ int main(int argc,char** argv) {
     return backend->CreateShader(stage,bytes.data(),bytes.size());
   };
   auto compute=[&](const char* source) {const auto s=shader(source,gpu::ShaderStage::kCompute);return s?backend->CreateComputePipeline(s):0;};
-  if(mode=="encoder_bench" && argc==4) {
-    std::ifstream oldFile(argv[3],std::ios::binary);const std::string oldSource(std::istreambuf_iterator<char>(oldFile),{});
+  if((mode=="encoder_bench" && argc==4) || (mode=="present_bench" && argc==3)) {
+    const bool presentation=mode=="present_bench";
+    std::string oldSource=hdr::MatchingSizeEncoder();
+    if(!presentation){std::ifstream oldFile(argv[3],std::ios::binary);oldSource.assign(std::istreambuf_iterator<char>(oldFile),{});}
     const auto oldPipeline=compute(oldSource.c_str()),newPipeline=compute(hdr::MatchingSizeEncoder().c_str());
     constexpr uint32_t w=3840,h=2160;
     gpu::TextureDesc d;d.width=w;d.height=h;d.format=gpu::Format::kR16G16B16A16Float;d.usage=gpu::kUsageSampled;
@@ -115,11 +239,33 @@ int main(int argc,char** argv) {
     std::vector<uint16_t> data(size_t(w)*h*4);
     for(size_t i=0;i<data.size();i+=4){data[i]=ToHalf(float((i/4)%73)/16);data[i+1]=ToHalf(float((i/4)%31)/32);data[i+2]=ToHalf(float((i/4)%19)/8);data[i+3]=0x3c00;}
     backend->UploadTexture(input,0,0,data.data(),w*8,h,1);backend->WaitForFence(backend->Submit());
+    gpu::PipelineHandle gamma=0;gpu::ComputeBindings gammaBindings;
+    if(presentation) {
+      gamma=compute(xenos::renderer::builtin::kPresentGammaCs);
+      const auto reference=backend->CreateTexture(d);
+      d.width=640;d.height=1;const auto ramp=backend->CreateTexture(d);
+      if(!gamma||!reference||!ramp)return 41;
+      std::vector<uint32_t> words(size_t(w)*h);
+      for(size_t i=0;i<words.size();++i)words[i]=uint32_t(i)*1664525u+1013904223u;
+      backend->UploadTexture(reference,0,0,words.data(),w*4,h,1);backend->WaitForFence(backend->Submit());
+      uint32_t rampWords[640]{};
+      for(unsigned i=0;i<256;++i){const auto v=unsigned(std::round(i*1023.0/255.0));rampWords[i]=v|(v<<10)|(v<<20);}
+      backend->UploadTexture(ramp,0,0,rampWords,sizeof(rampWords),1,1);backend->WaitForFence(backend->Submit());
+      gammaBindings.constants[0]=w;gammaBindings.constants[1]=h;gammaBindings.constants[4]=0x688;
+      gammaBindings.constant_count=8;gammaBindings.srv[0]=reference;gammaBindings.srv[1]=ramp;
+    }
     gpu::ComputeBindings b;b.constants[0]=b.constants[2]=w;b.constants[1]=b.constants[3]=h;
     b.constants[4]=std::bit_cast<uint32_t>(200.f);b.constants[5]=std::bit_cast<uint32_t>(3800.f);b.constants[6]=std::bit_cast<uint32_t>(1.f);b.constant_count=8;b.srv[0]=input;
     for(float sharp:{0.f,.35f}) {
       b.constants[7]=std::bit_cast<uint32_t>(sharp);
-      auto run=[&](gpu::PipelineHandle p,gpu::TextureHandle out,int iterations){b.uav_texture=out;for(int i=0;i<iterations;++i)backend->Dispatch(p,b,(w+7)/8,(h+7)/8,1);backend->WaitForFence(backend->Submit());backend->CompletedFence();};
+      auto run=[&](gpu::PipelineHandle p,gpu::TextureHandle out,int iterations){
+        b.uav_texture=out;gammaBindings.uav_texture=out;
+        for(int i=0;i<iterations;++i){
+          if(presentation&&out==oldOutput)backend->Dispatch(gamma,gammaBindings,(w+7)/8,(h+7)/8,1);
+          backend->Dispatch(p,b,(w+7)/8,(h+7)/8,1);
+        }
+        backend->WaitForFence(backend->Submit());backend->CompletedFence();
+      };
       backend->SetGpuTag(0);run(oldPipeline,oldOutput,80);run(newPipeline,newOutput,80);
       std::vector<double> oldTimes,newTimes;
       std::vector<gpu::GpuTagTime> timings;backend->TakeGpuTagTimes(timings);
@@ -141,21 +287,23 @@ int main(int argc,char** argv) {
       if(!av||!cv){std::string lost;backend->IsLost(&lost);std::printf("FAIL encoder readback: old %llu new %llu; %s\n",static_cast<unsigned long long>(a),static_cast<unsigned long long>(c),lost.c_str());return 27;}
       for(unsigned y=0;y<h;++y)if(std::memcmp(av+size_t(y)*ap,cv+size_t(y)*cp,w*4)){std::printf("FAIL encoder changed pixels at row %u\n",y);return 28;}
       backend->ReleaseReadback(a);backend->ReleaseReadback(c);
-      std::printf("PASS 4K encoder sharp %.2f: identical 8294400 pixels, median GPU %.4f -> %.4f ms (%.1f%% faster)\n",sharp,oldTimes[3],newTimes[3],100*(1-newTimes[3]/oldTimes[3]));
+      std::printf("PASS 4K %s sharp %.2f: identical 8294400 pixels, median GPU %.4f -> %.4f ms (%.1f%% faster)\n",presentation?"native presentation":"encoder",sharp,oldTimes[3],newTimes[3],100*(1-newTimes[3]/oldTimes[3]));
     }
     return 0;
   }
-  if(mode=="profile" && argc==5) {
+  if((mode=="profile" || mode=="scene_profile" || mode=="binary_profile") && argc==5) {
     const auto load=[](const char* path) {std::ifstream file(path,std::ios::binary);return std::string(std::istreambuf_iterator<char>(file),{});};
     const auto vs=load(argv[3]),ps=load(argv[4]);
-    gpu::GraphicsPipelineDesc p;p.vs=shader(vs.c_str(),gpu::ShaderStage::kVertex);p.ps=shader(ps.c_str(),gpu::ShaderStage::kPixel);
-    p.color_count=2;p.depth_clip=false;
-    for(unsigned i=0;i<2;++i) {
+    gpu::GraphicsPipelineDesc p;
+    p.vs=mode=="binary_profile"?backend->CreateShader(gpu::ShaderStage::kVertex,vs.data(),vs.size()):shader(vs.c_str(),gpu::ShaderStage::kVertex);
+    p.ps=mode=="binary_profile"?backend->CreateShader(gpu::ShaderStage::kPixel,ps.data(),ps.size()):shader(ps.c_str(),gpu::ShaderStage::kPixel);
+    p.color_count=mode=="profile"?2:1;p.depth_clip=false;
+    for(unsigned i=0;i<p.color_count;++i) {
       p.color_formats[i]=gpu::Format::kR16G16B16A16Float;p.color_write_masks[i]=7;
-      p.color_blend[i].enable=true;p.color_blend[i].src=gpu::BlendFactor::kSrcAlpha;p.color_blend[i].dst=gpu::BlendFactor::kInvSrcAlpha;
+      p.color_blend[i].enable=mode!="scene_profile";p.color_blend[i].src=gpu::BlendFactor::kSrcAlpha;p.color_blend[i].dst=gpu::BlendFactor::kInvSrcAlpha;
     }
     if(vs.empty()||ps.empty()||!p.vs||!p.ps||!backend->GetGraphicsPipeline(p))return 25;
-    std::puts("PASS captured scene/UI pair: real material, matching vertex shader, FP16 MRT pipeline");return 0;
+    std::printf("PASS captured %s: real material, matching vertex shader, FP16 pipeline\n",mode.c_str());return 0;
   }
   const uint32_t rw=1280,rh=720,ow=quality?1920:rw,oh=quality?1080:rh;
   auto texture=[&](uint32_t w,uint32_t h,gpu::Format format,uint32_t usage) {

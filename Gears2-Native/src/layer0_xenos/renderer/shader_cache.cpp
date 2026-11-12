@@ -1105,17 +1105,27 @@ bool ShaderCache::TranslateDxbcOnly(const uint32_t* dwords, size_t dword_count, 
 
 gpu::ShaderHandle ShaderCache::GetNativeHdr(uint64_t hash, const uint32_t* dwords, size_t count, bool canvas_material) {
   if (!dxbc_ || !dwords ||
-      (hash != native_hdr::kScene && !native_hdr::FindUi(hash) && !canvas_material)) return 0;
+      (!native_hdr::IsScene(hash) && !native_hdr::FindUi(hash) && !canvas_material)) return 0;
   if (const auto it = native_hdr_shaders_.find(hash); it != native_hdr_shaders_.end()) return it->second;
   auto program = ucode::Decode(dwords, count, false, DecodeOptions());
   auto options = TranslateOptions(false, 0, dwords, count);
   const auto* ui = native_hdr::FindUi(hash);
   const bool canvas = ui != nullptr || canvas_material;
   if (ui && (count != ui->dwords || Fnv1a64(dwords, count * sizeof(uint32_t)) != ui->fingerprint)) return 0;
+  if (hash == native_hdr::kGears3Scene) {
+    if (count != 150 || Fnv1a64(dwords, count * sizeof(uint32_t)) != 0x8BA713A2E446A745ull) return 0;
+    options.native_hdr_linear = true;
+    const auto translated = hlsl::TranslateToHlsl(program, options);
+    const auto source = native_hdr::Gears3SceneSource(translated.hlsl, translated.float_constants_low, translated.float_constants_high);
+    const auto shader = source.empty() ? 0 : GetBuiltin("native_hdr_gears3_scene", source, gpu::ShaderStage::kPixel);
+    native_hdr_shaders_[hash] = shader;
+    REXLOG_INFO("gow2_native_hdr: Gears 3 filmic/LUT scene {:016X}: {}", hash, shader ? "ready" : "FAILED");
+    return shader;
+  }
   if (!canvas && !native_hdr::ExtendScene(program)) return 0;
   options.clamp_ui_output = canvas;
   options.native_hdr_linear = true;
-  options.native_hdr_ui = canvas;
+  options.native_hdr_ui = canvas && (!ui || !ui->modulation);
   const auto translated = TranslateDxbcFor(program, options, backend_.GetShaderIL() == gpu::ShaderIL::kSpirv);
   const auto shader = translated.ok ? backend_.CreateShader(gpu::ShaderStage::kPixel,
       translated.bytecode.data(), translated.bytecode.size()) : 0;
