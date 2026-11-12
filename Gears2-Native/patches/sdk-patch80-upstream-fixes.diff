@@ -1,0 +1,86 @@
+diff -ru a/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp b/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp
+--- a/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp	2026-11-11 16:56:35.031347251 -0800
++++ b/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp	2026-11-11 16:56:35.148940455 -0800
+@@ -161,6 +161,10 @@
+     return X_E_FALSE;
+   }
+ 
++  // COGBox patch 80 (Edge 56e9596): the decoder's state is cleared FIRST - the Clear also resets the read offset, which
++  // comes from the init struct (cleared after the store, every sound started at offset 0)
++  StoreXmaContextIndexedRegister(REX_KERNEL_STATE(), 0x1A80, context_ptr.guest_address());
++
+   std::memset(context_ptr, 0, sizeof(XMA_CONTEXT_DATA));
+ 
+   XMA_CONTEXT_DATA context(context_ptr);
+@@ -175,7 +179,7 @@
+ 
+   // context.work_buffer = context_init->work_buffer;  // ?
+   context.subframe_decode_count = context_init->subframe_decode_count;
+-  context.is_stereo = context_init->channel_count >= 1;
++  context.is_stereo = context_init->channel_count & 1;   // patch 80: the channel count is 0-based, only bit 0
+   context.sample_rate = context_init->sample_rate;
+ 
+   context.loop_start = context_init->loop_data.loop_start;
+@@ -186,8 +190,6 @@
+ 
+   context.Store(context_ptr);
+ 
+-  StoreXmaContextIndexedRegister(REX_KERNEL_STATE(), 0x1A80, context_ptr.guest_address());
+-
+   return 0;
+ }
+ 
+@@ -338,17 +340,12 @@
+   return result;
+ }
+ 
++// COGBox patch 80 (Edge 9906014): waits until the decoder isn't working on the context. Was a loop that always ended at
++// once (work_buffer_ptr is never set), so a game could reuse a context the decoder was still reading.
+ u32 XMABlockWhileInUse_entry(mapped_void context_ptr) {
+-  do {
+-    XMA_CONTEXT_DATA context(context_ptr);
+-    if (!context.input_buffer_0_valid && !context.input_buffer_1_valid) {
+-      break;
+-    }
+-    if (!context.work_buffer_ptr) {
+-      break;
+-    }
+-    rex::thread::Sleep(std::chrono::milliseconds(1));
+-  } while (true);
++  static_cast<audio::AudioSystem*>(REX_KERNEL_STATE()->emulator()->audio_system())
++      ->xma_decoder()
++      ->BlockOnContext(context_ptr.guest_address(), false);
+   return 0;
+ }
+ 
+diff -ru a/src/kernel/xboxkrnl/xboxkrnl_io.cpp b/src/kernel/xboxkrnl/xboxkrnl_io.cpp
+--- a/src/kernel/xboxkrnl/xboxkrnl_io.cpp	2026-11-11 16:56:35.027801664 -0800
++++ b/src/kernel/xboxkrnl/xboxkrnl_io.cpp	2026-11-11 16:56:35.148627306 -0800
+@@ -523,7 +523,8 @@
+     return X_STATUS_INVALID_HANDLE;
+   }
+ 
+-  uint64_t timeout_ticks = timeout ? static_cast<uint32_t>(*timeout)
++  // COGBox patch 80 (Edge d287b30): the whole 64-bit timeout (a relative one is negative; as 32 bits it never expired)
++  uint64_t timeout_ticks = timeout ? static_cast<uint64_t>(*timeout)
+                                    : static_cast<uint64_t>(std::numeric_limits<int64_t>::min());
+   XIOCompletion::IONotification notification;
+   if (port->WaitForNotification(timeout_ticks, &notification)) {
+diff -ru a/src/kernel/xboxkrnl/xboxkrnl_memory.cpp b/src/kernel/xboxkrnl/xboxkrnl_memory.cpp
+--- a/src/kernel/xboxkrnl/xboxkrnl_memory.cpp	2026-11-11 16:56:35.034886402 -0800
++++ b/src/kernel/xboxkrnl/xboxkrnl_memory.cpp	2026-11-11 16:56:35.148829307 -0800
+@@ -352,9 +352,11 @@
+                        (uint32_t)min_addr_range, (uint32_t)max_addr_range, (uint32_t)alignment);
+ 
+   // Check protection bits.
+-  if (!(protect_bits & (X_PAGE_READONLY | X_PAGE_READWRITE))) {
+-    REXKRNL_ERROR("MmAllocatePhysicalMemoryEx: bad protection bits");
+-    return 0;
++  // COGBox patch 80 (Canary 838850f): no access mode in the protection bits means read/write (was: allocation refused)
++  if (!(protect_bits & (X_PAGE_READONLY | X_PAGE_READWRITE | X_PAGE_EXECUTE_READ | X_PAGE_EXECUTE_READWRITE))) {
++    REXKRNL_WARN("MmAllocatePhysicalMemoryEx: no access mode in protection bits {:08X} (flags {:08X}, size {:08X}), assuming read/write",
++                 protect_bits, flags, region_size);
++    protect_bits |= X_PAGE_READWRITE;
+   }
+ 
+   // Either may be OR'ed into protect_bits:
