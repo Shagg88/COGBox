@@ -551,7 +551,11 @@ REXCVAR_DEFINE_INT32(gow2_renderer_cpu_split, 0, "Gears2",
                      "every stretch over 50 us summed per source line (patch 0036 detail, as before 0153). Patch 0154: default "
                      "0 (job 461: 1 cost ~3% fps); test jobs that need the CPU split ask for 1");
 REXCVAR_DEFINE_INT32(gow2_renderer_submit_draws, 0, "Gears2",
-                     "Patch 0138: submit our recorded work to the GPU after every N draws (0 = once a frame, as before).");
+                     "Patch 0138: submit our recorded work to the GPU after every N draws (0 = once a frame, as before). "
+                     "-1 (0.6.1) = adaptive: as soon as the GPU has finished everything submitted so far and at least 32 "
+                     "draws are recorded, and at the latest every 256 draws. Measured in Gears 2 at 2x with strict "
+                     "queries (jobs 1679 / 1681): every 100-150 draws = 4.8 ms a frame against 5.95 (the occlusion "
+                     "answers the title waits for come back sooner); every 50 is worse again");
 REXCVAR_DEFINE_INT32(gow2_renderer_frames_in_flight, 1, "Gears2",
                      "Patch 0133 (input latency, Shagg 22:10): the most frames our renderer lets queue on the graphics "
                      "card before it waits (was fixed at 2). 1 = lower input lag (the card works on one frame while the "
@@ -2280,9 +2284,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++draw_index_;
       // Patch 0138: submit part of the frame early so the GPU starts while we record the rest (NVIDIA: 5-10 submits
       // per frame). Off (0) by default until measured; N = after every N draws.
-      if (submit_draws_ && ++draws_since_submit_ >= submit_draws_) {
-        draws_since_submit_ = 0;
-        CountedSubmitEarly(kSubmitEveryNDraws);
+      if (submit_draws_) {
+        if (++draws_since_submit_ >= submit_draws_) CountedSubmitEarly(kSubmitEveryNDraws);
+      } else if (submit_auto_) {
+        // 0.6.1: keep the GPU fed - it idles when it has finished what it was given while we still record. The fence
+        // read is cheap but not free, so it is asked every 8th draw once 32 draws are waiting.
+        ++draws_since_submit_;
+        if (draws_since_submit_ >= 256 ||
+            (draws_since_submit_ >= 32 && (draws_since_submit_ & 7u) == 0 && backend_->CompletedFence() >= last_submit_fence_))
+          CountedSubmitEarly(kSubmitEveryNDraws);
       }
     }
     EndParts();
@@ -2582,6 +2592,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!export_ranges_.empty())  // patch 0042: this frame's merged export readbacks
       FrameStep("export readback copies", [&] { IssueExportReadbacks(); });
     FrameStep("submit", [&] { frame_fences_.push_back(backend_->Submit()); });
+    last_submit_fence_ = frame_fences_.back();  // 0.6.1: adaptive early submits wait for the GPU to finish up to here
     occ_need_submit_ = false;  // PR #43 strict queries: the frame's submit carried any batch still open
     occ_closed_in_batch_ = 0;
     occ_batches_this_frame_ = 0;
@@ -2619,7 +2630,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     pending_this_frame_ = shader_errors_this_frame_ = pipeline_failures_this_frame_ = 0;
     pipeline_wait_ms_frame_ = 0.0;
     frames_in_flight_ = size_t(std::clamp(REXCVAR_GET(gow2_renderer_frames_in_flight), 1, 3));  // patch 0133
-    submit_draws_ = uint32_t(std::max(0, REXCVAR_GET(gow2_renderer_submit_draws)));  // patch 0138
+    {  // patch 0138; 0.6.1: -1 = adaptive
+      const int32_t sd = REXCVAR_GET(gow2_renderer_submit_draws);
+      submit_draws_ = uint32_t(std::max(0, sd));
+      submit_auto_ = sd < 0;
+    }
     draws_since_submit_ = 0;
     depth_wait_left_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_depth_pipeline_wait_ms));  // patch 0132
     shader_wait_left_ms_ = shader_wait_budget_ms_;
@@ -13154,6 +13169,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   rr::TextureCacheStats tex_prev_;  // patch 0137: the counters at the previous log line
   double set_textures_ms_ = 0, set_textures_prev_ms_ = 0;  // 0.4.5 texture-time research
   uint32_t submit_draws_ = 0, draws_since_submit_ = 0;  // patch 0138
+  bool submit_auto_ = false;        // 0.6.1: --gow2_renderer_submit_draws=-1
+  uint64_t last_submit_fence_ = 0;  // the fence of our last submit (early or the frame's)
   uint64_t early_prev_ = 0;  // patch 0138
   bool use_textures_ = true, upload_watch_ = true, vertex_direct_ = true, float_constants_trim_ = true;
   // this draw's fetch constants as the shaders see them (vertex_direct_ rewrites some), then the texture post-processing
@@ -13589,8 +13606,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // SubmitEarly submits nothing when no list is open or the device is lost: count a cause only when it did.
   void CountedSubmitEarly(int site) {
     const uint64_t before = backend_->Stats().submits;
-    backend_->SubmitEarly();
-    if (backend_->Stats().submits != before) ++submit_sites_[site];
+    const uint64_t fence = backend_->SubmitEarly();
+    if (backend_->Stats().submits != before) {
+      ++submit_sites_[site];
+      last_submit_fence_ = fence;  // 0.6.1 (adaptive early submits)
+    }
+    draws_since_submit_ = 0;  // any early submit starts the count again (also the strict-query ones)
   }
   struct OcclusionStats {
     uint64_t ends = 0, ours = 0, incomplete = 0, refused = 0, unended = 0, answered = 0, from_cache = 0, fallback = 0,
