@@ -151,6 +151,7 @@ struct Fetch {
     // in
     HANDLE file = NULL;          // stream the body here (else into body)
     size_t maxBody = 4 << 20;    // to memory: at most this much
+    unsigned long long maxFile = 4ull << 30;   // 0.6.1 (review R1): to a file: at most this much (a release is well under 1 GB)
     bool followPages = false;    // an HTML page instead of the file: follow its refresh / mirror link
     bool rangeHead = false;      // only the first 64 bytes (dry run)
     Hash *sha = nullptr, *md5 = nullptr;
@@ -233,6 +234,7 @@ static bool fetch(std::string url, Fetch &f)
             if (f.rangeHead) { f.body.append(buf.data(), got); if (f.body.size() >= 64) break; continue; }
             if (f.file) {
                 DWORD wrote = 0;
+                if (have > f.maxFile) { readOk = false; ulog("  download too big (over %llu MB) - stopped", f.maxFile >> 20); break; }
                 if (!WriteFile(f.file, buf.data(), got, &wrote, NULL) || wrote != got) { readOk = false; ulog("  write failed (disk full?)"); break; }
             } else {
                 f.body.append(buf.data(), got);
@@ -572,6 +574,11 @@ static bool unpack(const std::wstring &archive, const std::string &ext)
         if (rel.back() == '\\') continue;   // 0.2.0: a folder entry
         if (protected_path(rel)) continue;
         std::wstring target = g_exe_dir + L"\\" + wide(rel), fresh = target + L".new-cogbox";
+        // 0.6.1 (review R1): a second entry with the same name would replace the first one's .old-cogbox backup with
+        // the file just installed, and the undo would then put the new file back instead of the old one.
+        bool twice = false;
+        for (const Done &d : done) if (_wcsicmp(d.target.c_str(), target.c_str()) == 0) { twice = true; break; }
+        if (twice) { ulog("  skipped a second entry for %s", rel.c_str()); continue; }
         make_dirs_for(target);
         const unsigned char *p = NULL;
         size_t size = 0;

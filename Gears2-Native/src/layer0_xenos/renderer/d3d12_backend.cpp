@@ -911,10 +911,12 @@ class CommandListProxy {
   static constexpr size_t kBlockBytes = 32 << 10;  // handed to the recording thread when full (and at Drain)
 
   // ---- encoding (caller's thread) ----
+  // 0.6.1 (review P3): the block is kept at its full size and filled through cur_len_ - before, every field was a
+  // vector::resize (capacity check + zero fill + size update) and then the copy, ~100 times a draw.
   void Bytes(const void* p, size_t n) {
-    const size_t at = cur_.size();
-    cur_.resize(at + n);
-    if (n) std::memcpy(cur_.data() + at, p, n);
+    if (cur_len_ + n > cur_.size()) [[unlikely]] cur_.resize(std::max(cur_len_ + n, cur_.size() * 2));  // a large array
+    if (n) std::memcpy(cur_.data() + cur_len_, p, n);
+    cur_len_ += n;
   }
   template <typename T>
   void Pod(const T& v) {
@@ -927,12 +929,14 @@ class CommandListProxy {
     if (count) Bytes(p, sizeof(T) * count);
   }
   void Put(Op op) {
-    if (cur_.size() >= kBlockBytes) Flush();
-    if (cur_.capacity() < kBlockBytes + 1024) cur_.reserve(kBlockBytes + 4096);
+    if (cur_len_ >= kBlockBytes) Flush();
+    if (cur_.size() < kBlockBytes + 4096) [[unlikely]] cur_.resize(kBlockBytes + 4096);  // a new or recycled block
     Pod(uint32_t(op));
   }
   void Flush() {
-    if (cur_.empty()) return;
+    if (!cur_len_) return;
+    cur_.resize(cur_len_);  // the recording thread replays exactly what was written
+    cur_len_ = 0;
     std::vector<uint8_t> next;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -1191,6 +1195,7 @@ class CommandListProxy {
   bool threaded_ = false;
   std::vector<D3D12_RESOURCE_BARRIER> pending_;  // job 046: queued barriers, emitted together before the next call
   std::vector<uint8_t> cur_;
+  size_t cur_len_ = 0;  // bytes of cur_ in use (cur_.size() is the room)
   std::mutex mutex_;
   std::condition_variable cv_, idle_cv_;
   std::deque<std::vector<uint8_t>> ready_;
@@ -3081,7 +3086,19 @@ class D3D12Backend final : public Backend {
     return value;
   }
 
-  uint64_t CompletedFence() override { return fence_ ? fence_->GetCompletedValue() : 0; }
+  // 0.6.1 (review B3): a removed device answers UINT64_MAX - every fence then looked complete until IsLost's next
+  // 50 ms poll, and unfinished readbacks (resolves, memexport, occlusion counts) were copied into guest memory.
+  uint64_t CompletedFence() override {
+    if (!fence_) return 0;
+    const uint64_t v = fence_->GetCompletedValue();
+    if (v != UINT64_MAX) return v;
+    if (!lost_) {
+      lost_ = true;
+      lost_reason_ = "device removed (fence)";
+      REXLOG_ERROR("gow2_renderer: {}", lost_reason_);
+    }
+    return 0;
+  }
 
   void WaitAt(uint64_t value, uint32_t site) {
     const uint32_t saved = wait_site_;
@@ -3093,19 +3110,31 @@ class D3D12Backend final : public Backend {
     if (!fence_ || lost_) return;
     if (value >= next_fence_) value = Submit();  // waiting on unsubmitted work: submit it first
     if (fence_->GetCompletedValue() >= value) return;
-    fence_->SetEventOnCompletion(value, fence_event_);
+    if (FAILED(fence_->SetEventOnCompletion(value, fence_event_))) {  // 0.6.1 (review B3): only fails on a removed device
+      lost_ = true;
+      lost_reason_ = "device removed (fence wait)";
+      REXLOG_ERROR("gow2_renderer: {}", lost_reason_);
+      return;
+    }
     const auto wait_start = std::chrono::steady_clock::now();
-    const DWORD wait_result = WaitForSingleObject(fence_event_, 10000);
+    // 0.6.1 (review B4): one 10 s timeout used to end the renderer for good, also when the device was fine (a long
+    // driver stall, the PC waking from sleep, a debugger). While the device reports no removal, keep waiting - up to
+    // 2 minutes in all.
+    DWORD wait_result = WaitForSingleObject(fence_event_, 10000);
+    for (int more = 0; wait_result == WAIT_TIMEOUT && more < 11 && device_ && SUCCEEDED(device_->GetDeviceRemovedReason()); ++more) {
+      REXLOG_WARN("gow2_renderer: the GPU has not finished fence {} after {} s - the device is still there, waiting on",
+                  value, 10 * (more + 1));
+      wait_result = WaitForSingleObject(fence_event_, 10000);
+    }
     ++stats_.fence_waits;
     const double waited = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wait_start).count();
     stats_.fence_wait_ms += waited;
     ++stats_.wait_count[wait_site_ % 6];
     stats_.wait_ms[wait_site_ % 6] += waited;
     if (wait_result != WAIT_OBJECT_0) {
+      const HRESULT removed = device_ ? device_->GetDeviceRemovedReason() : E_FAIL;  // (IsLost skipped this once lost_ was set)
       lost_ = true;
-      std::string why;
-      IsLost(&why);
-      lost_reason_ = "GPU timeout (10 s) " + why;
+      lost_reason_ = "GPU timeout " + (FAILED(removed) ? Hr("device", removed) : std::string("(2 min, device not removed)"));
       REXLOG_ERROR("gow2_renderer: {}", lost_reason_);
     }
     Retire();
