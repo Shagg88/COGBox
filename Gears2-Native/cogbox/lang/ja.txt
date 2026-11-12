@@ -1320,16 +1320,23 @@ See you later = またね
 No problem - COGBox will close now. You're welcome back any time. = 大丈夫です - COGBoxを終了します。いつでもまたどうぞ。
 # 0.5.0: legal2-050 - notice v2 (no warranty line, new affiliation line), GitLab tickets and updates, player pictures (machine-made translation, please check)
 COGBox is a free fan project. It works with your own copies of the games and doesn't include any game files.\n\nHow you get and use your games is up to you and your responsibility. We don't provide games and don't help with or support pirated copies.\n\nCOGBox isn't affiliated with Microsoft, Epic Games or The Coalition. "Read more" opens the full text (LEGAL.md). = COGBoxは無料のファンプロジェクトです。お持ちのゲームのコピーで動作し、ゲームファイルは一切含まれていません。\n\nゲームをどのように入手し、どのように使うかはあなた次第で、あなたの責任です。私たちはゲームを提供せず、海賊版の手助けやサポートも行いません。\n\nCOGBoxはMicrosoft、Epic Games、The Coalitionとは提携していません。「詳しく読む」で全文(LEGAL.md)を開きます。
-A GitLab ticket page opened and the details are on the clipboard - paste them, attach the zip and submit. = GitLabのチケットページを開き、詳細をクリップボードにコピーしました。貼り付けてzipを添付し、送信してください。
-Thanks - this version won't be flagged again. A GitLab ticket page opened and its details are on the clipboard: paste them and submit to let the developer know. = ありがとうございます。このバージョンは今後表示されません。GitLabのチケットページを開き、詳細をクリップボードにコピーしました。貼り付けて送信し、開発者に知らせてください。
-A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitLab ticket. = 問題レポートは、前回のプレイのログ、設定、このPCの説明を含むデスクトップ上のzipです(セーブデータやゲームファイルは含まず、Windowsのユーザー名は除去されます)。何も送信されません。GitLabのチケットに添付してください。
-Open the tickets on GitLab = GitLabのチケットを開く
-Translations are written by the project; corrections are welcome in a GitLab ticket. = 翻訳はプロジェクトによるものです。修正はGitLabのチケットで歓迎します。
-Check GitLab for a newer COGBox at start = 起動時にGitLabで新しいCOGBoxを確認
-System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitLab whether it worked. = System Link - LANプレイ(実験的、#72): 試した場合は、動作したかどうかをGitLabのチケットで教えてください。
+A GitHub ticket page opened and the details are on the clipboard - paste them, attach the zip and submit. = GitHubのチケットページを開き、詳細をクリップボードにコピーしました。貼り付けてzipを添付し、送信してください。
+Thanks - this version won't be flagged again. A GitHub ticket page opened and its details are on the clipboard: paste them and submit to let the developer know. = ありがとうございます。このバージョンは今後表示されません。GitHubのチケットページを開き、詳細をクリップボードにコピーしました。貼り付けて送信し、開発者に知らせてください。
+A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub ticket. = 問題レポートは、前回のプレイのログ、設定、このPCの説明を含むデスクトップ上のzipです(セーブデータやゲームファイルは含まず、Windowsのユーザー名は除去されます)。何も送信されません。GitHubのチケットに添付してください。
+Open the tickets on GitHub = GitHubのチケットを開く
+Translations are written by the project; corrections are welcome in a GitHub ticket. = 翻訳はプロジェクトによるものです。修正はGitHubのチケットで歓迎します。
+Check GitHub for a newer COGBox at start = 起動時にGitHubで新しいCOGBoxを確認
+System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitHub whether it worked. = System Link - LANプレイ(実験的、#72): 試した場合は、動作したかどうかをGitHubのチケットで教えてください。
 start it once from COGBox to add its pictures. = COGBoxから一度起動すると画像が追加されます。
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = エイム感度 (%)
 Zoom sensitivity (%) = ズーム感度 (%)
 Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = エイム中のマウス速度（通常速度に対する割合）。100 = 変更なし。ネイティブのマウス視点のみ。
 Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = スコープでズーム中のマウス速度（ロングショット、ハンマー・オブ・ドーン）（通常速度に対する割合）。100 = 変更なし。ネイティブのマウス視点のみ。
+# 0.6.0: delete a profile (machine-made translation, please check)
+DELETE THIS PROFILE = このプロファイルを削除
+DELETE = 削除
+Delete this profile? = このプロファイルを削除しますか？
+Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = すべてのゲームのセーブ、名前、アイコンは COGBox の _old-files フォルダーに移動されます。ダウンロードしたコンテンツは残ります。オンラインアカウントがある場合は、先に Social タブで削除してください。
+Profile deleted: = プロファイルを削除しました:
+Couldn't delete the profile: = プロファイルを削除できませんでした:

@@ -71,6 +71,10 @@ namespace modcore
         int api = 0;                                 // api = the mod API level it was made for (0: before campaigns)
         CampaignDecl campaign;                       // [Campaign] (id empty: none)
         std::vector<ChapterDecl> chapters;           // [Chapter.N], in N order
+        // [ClassDefaults] Class.Property = value: a class default the game uses while one of the mods' campaign
+        // chapters is loaded (an engine-difference adapter, ue3/mod_chapters; bool, int, float or byte properties)
+        struct ClassDefault { std::string cls, prop, value; };
+        std::vector<ClassDefault> class_defaults;
         std::vector<std::string> warnings;           // keys not understood, chapters left out (the mod still loads)
         std::string problem;                         // why a mod that is enabled in its mod.ini is not loaded
         std::filesystem::path dir;
@@ -107,7 +111,7 @@ namespace modcore
         std::string line;
         bool first = true;
         // [Campaign] and [Chapter.N] hold the campaign's keys; any other section (or none) the mod's, as before them
-        enum { ModKeys, CampaignKeys, ChapterKeys, IgnoredKeys } in_section = ModKeys;
+        enum { ModKeys, CampaignKeys, ChapterKeys, ClassDefaultKeys, IgnoredKeys } in_section = ModKeys;
         size_t chapter = 0;                          // m.chapters index while in a [Chapter.N]
         auto list_into = [](const std::string& value, std::vector<std::string>& list) {
             size_t a = 0;
@@ -130,6 +134,7 @@ namespace modcore
                 const std::string sec = Lower(Trim(line.substr(1, line.find(']') == std::string::npos ? std::string::npos : line.find(']') - 1)));
                 in_section = ModKeys;
                 if (sec == "campaign") in_section = CampaignKeys;
+                else if (sec == "classdefaults") in_section = ClassDefaultKeys;
                 else if (sec.rfind("chapter.", 0) == 0)
                 {
                     const std::string num = sec.substr(8);
@@ -169,6 +174,16 @@ namespace modcore
                 continue;
             }
             if (in_section == IgnoredKeys) continue;
+            if (in_section == ClassDefaultKeys)
+            {
+                const std::string raw = Trim(line.substr(0, eq));
+                const size_t dot = raw.find('.');
+                if (dot == std::string::npos || dot == 0 || dot + 1 >= raw.size() || value.empty())
+                    m.warnings.push_back("[ClassDefaults] " + raw + ": must be Class.Property = value - ignored");
+                else
+                    m.class_defaults.push_back({raw.substr(0, dot), raw.substr(dot + 1), value});
+                continue;
+            }
             if (in_section == ChapterKeys)
             {
                 ChapterDecl& c = m.chapters[chapter];

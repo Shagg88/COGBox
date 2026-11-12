@@ -21,6 +21,9 @@
 // UObject::LoadPackageAsync(const FString& r3, callback r4, user data r5, const FGuid* r6, FName type r7) and kept: the
 // package's own objects (Outer = the package) join the root set.
 // --gow3_mod_chapters=false turns all of it off.
+#include <climits>
+#include <cmath>
+#include <cstdint>
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
 #include <rex/logging/macros.h>
@@ -35,6 +38,7 @@
 #include "gow3_addresses.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <atomic>
 #include <chrono>
@@ -53,7 +57,7 @@ REXCVAR_DEFINE_BOOL(gow3_mod_chapters, true, "Gears3",
 REXCVAR_DEFINE_BOOL(gow3_mod_content_packages, true, "Gears3",
                     "Load the content packages mods name (mod.ini content = ...); false to test without them");
 REXCVAR_DEFINE_BOOL(gow3_mod_file_log, false, "Gears3",
-                    "Developers: log every package the game opens (to see where a mod's chapter stops loading)");
+                    "Developers: log every package and texture cache the game opens (to see where a mod's chapter stops loading)");
 
 // layer 2 shader_prebuild.cpp: the one file-open observer, with a listener chained after it
 void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));
@@ -183,6 +187,103 @@ bool FillChapterTable() {
   return true;
 }
 
+// ---- [ClassDefaults]: class defaults a campaign's chapters play with ----------------------------------------------
+// mod.ini `[ClassDefaults] Class.Property = value` (bool true/false, int, float with a '.', byte 0-255): written into
+// Default__Class (and every live instance of the class) when one of the campaign's chapter maps loads, and the old
+// values put back when another map loads. Spawned actors copy their class default, so the next spawn has it.
+// The trilogy: GearPawn_COGMarcusG2MP.bForceStretchToMarcusSkeleton = false - the multiplayer base forces
+// AnimRotationOnly 2 (every animation rotation only, for skeletons other than Marcus's) where the campaign classes use
+// 1 (each AnimSet's own setting); the classic Marcus is Marcus's skeleton, and his arms twitched in the radio stance.
+// 0.6.0 review: only the class default is put back - live instances die with their map (their memory may hold
+// something else by then); restored newest first, so two edits of one word come back right.
+struct Applied { uint32_t at; uint32_t mask; uint32_t old; bool byte; uint32_t def; std::string cls; };   // mask 0: the whole word / byte
+std::vector<Applied> g_applied;
+
+void RestoreClassDefaults() {
+  for (auto it = g_applied.rbegin(); it != g_applied.rend(); ++it) {
+    const Applied& a = *it;
+    // the class default still where it was (a chapter's own class may have been unloaded and its memory reused)
+    if (obj::FindObject(("Default__" + a.cls).c_str()) != a.def) continue;
+    if (a.mask) obj::Write32(a.at, (obj::Read32(a.at) & ~a.mask) | (a.old & a.mask));
+    else if (a.byte) obj::Write8(a.at, uint8_t(a.old));
+    else obj::Write32(a.at, a.old);
+  }
+  if (!g_applied.empty()) REXLOG_INFO("mod_api: class defaults: {} restored", g_applied.size());
+  g_applied.clear();
+}
+
+// the whole text a number (no "1.5abc")
+template <class F>
+bool ParseAll(const std::string& v, F parse) {
+  try {
+    size_t pos = 0;
+    parse(v, &pos);
+    while (pos < v.size() && std::isspace(uint8_t(v[pos]))) pos++;
+    return pos == v.size() && !v.empty();
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
+void ApplyClassDefaults(const std::string& map) {
+  RestoreClassDefaults();
+  for (const ue3::ClassDefaultEdit& e : ue3::ModClassDefaultsForMap(map)) {
+    const uint32_t cls = obj::FindClass(e.cls.c_str());
+    const uint32_t def = obj::FindObject(("Default__" + e.cls).c_str());
+    const int off = cls ? obj::PropertyOffset(cls, e.prop.c_str()) : -1;
+    if (!cls || !def || off < 0) {
+      REXLOG_WARN("mod_api: class defaults: {}.{} - {} not found", e.cls, e.prop, !cls || !def ? "class" : "property");
+      continue;
+    }
+    // the property's own type decides (an object reference or a name is never written)
+    const std::string type = obj::PropertyType(cls, e.prop.c_str());
+    const uint32_t mask = type == "BoolProperty" ? obj::BoolMask(cls, e.prop.c_str()) : 0;
+    std::string low = e.value;
+    for (char& c : low) c = char(std::tolower(uint8_t(c)));
+    while (!low.empty() && std::isspace(uint8_t(low.back()))) low.pop_back();
+    uint32_t word = 0;
+    bool ok = true;
+    if (type == "BoolProperty") {
+      ok = mask != 0 && (low == "true" || low == "1" || low == "false" || low == "0");
+      word = (low == "true" || low == "1") ? mask : 0;
+    } else if (type == "ByteProperty") {
+      long v = -1;
+      ok = ParseAll(e.value, [&](const std::string& s, size_t* p) { v = std::stol(s, p); }) && v >= 0 && v <= 255;
+      word = uint32_t(v);
+    } else if (type == "IntProperty") {
+      long long v = 0;
+      ok = ParseAll(e.value, [&](const std::string& s, size_t* p) { v = std::stoll(s, p); }) && v >= INT32_MIN && v <= INT32_MAX;
+      word = uint32_t(int32_t(v));
+    } else if (type == "FloatProperty") {
+      float f = 0;
+      ok = ParseAll(e.value, [&](const std::string& s, size_t* p) { f = std::stof(s, p); }) && std::isfinite(f);
+      std::memcpy(&word, &f, 4);
+    } else {
+      REXLOG_WARN("mod_api: class defaults: {}.{} is a {} - only bool, byte, int and float properties can be set", e.cls, e.prop,
+                  type.empty() ? "property of unknown type" : type);
+      continue;
+    }
+    if (!ok) {
+      REXLOG_WARN("mod_api: class defaults: {}.{} = {} - not a valid {}", e.cls, e.prop, e.value, type);
+      continue;
+    }
+    std::vector<uint32_t> targets{def};
+    for (uint32_t o : obj::FindInstancesOf(cls)) targets.push_back(o);
+    int written = 0;
+    for (uint32_t o : targets) {
+      const uint32_t at = o + uint32_t(off);
+      const uint32_t old = obj::Read32(at);
+      bool w;
+      if (mask) w = obj::Write32(at, (old & ~mask) | word);
+      else if (type == "ByteProperty") w = obj::Write8(at, uint8_t(word));
+      else w = obj::Write32(at, word);
+      if (w) written++;
+      if (w && o == def) g_applied.push_back({at, mask, type == "ByteProperty" ? old >> 24 : old, type == "ByteProperty", def, e.cls});
+    }
+    REXLOG_INFO("mod_api: class defaults: {}.{} = {} ({} of {} objects)", e.cls, e.prop, e.value, written, targets.size());
+  }
+}
+
 // ---- while a new chapter's map is loaded ----------------------------------------------------------------------------
 
 void ChapterKeeper() {
@@ -202,7 +303,11 @@ void ChapterKeeper() {
     if (!gameClass) continue;
     const auto games = obj::FindInstancesOf(gameClass);
     const uint32_t game = games.empty() ? 0 : games.front();
-    if (!game) { lastGame = 0; g_chapterGame = 0; g_chapterCap = 0; continue; }
+    if (!game) {
+      if (lastGame) RestoreClassDefaults();
+      lastGame = 0; g_chapterGame = 0; g_chapterCap = 0;
+      continue;
+    }
     if (game != lastGame) {  // a new map: which chapter's (its package loaded)
       lastGame = game;
       chapter = -1;
@@ -210,6 +315,7 @@ void ChapterKeeper() {
         if (const uint32_t p = obj::FindObject(map.c_str()); p && obj::ObjectName(obj::ClassOf(p)) == "Package") chapter = n;
       g_chapterGame = chapter >= 0 ? game : 0;
       g_chapterCap = chapter >= 0 ? ue3::ModMaxPlayersForMap(g_chapters[chapter]) : 0;
+      ApplyClassDefaults(chapter >= 0 ? g_chapters[chapter] : std::string());
       uint32_t top = game;
       for (int k = 0; k < 8 && obj::Read32(top + 40); k++) top = obj::Read32(top + 40);
       REXLOG_INFO("mod chapters: map {} loaded{}", obj::ObjectName(top), chapter >= 0 ? " (chapter " + std::to_string(chapter) + "'s)" : "");
@@ -525,7 +631,8 @@ void ContentPackagesTick() {  // game thread
 void Gow3InstallModChapters() {
   if (REXCVAR_GET(gow3_mod_file_log))
     Ue3ShaderPrebuildChainFileOpened([](std::string_view guest, const std::filesystem::path* host) {
-      if (guest.size() > 4 && (guest.ends_with(".xxx") || guest.ends_with(".XXX") || guest.ends_with(".txt")))
+      if (guest.size() > 4 && (guest.ends_with(".xxx") || guest.ends_with(".XXX") || guest.ends_with(".txt") ||
+                                guest.ends_with(".tfc") || guest.ends_with(".TFC")))
         REXLOG_INFO("mod files: opened {}{}", guest, host ? " <- " + rex::path_to_utf8(*host) : std::string());
     });
   if (!REXCVAR_GET(gow3_mod_chapters) || g_started) return;

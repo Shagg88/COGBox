@@ -73,7 +73,8 @@ rexglue_apply_target_settings(gn_layer0_xenos)
 
 # Layer 2: Unreal Engine 3.
 add_library(gn_layer2_ue3 STATIC src/layer2_ue3/launch_command_line.cpp src/layer2_ue3/config_bundle.cpp
-            src/layer2_ue3/config_install.cpp)
+            src/layer2_ue3/config_install.cpp
+            src/layer2_ue3/objects.cpp src/layer2_ue3/script_input.cpp)   # developer mode's scripted controller
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer0_xenos)
 rexglue_apply_target_settings(gn_layer2_ue3)

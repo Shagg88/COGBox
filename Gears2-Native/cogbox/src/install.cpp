@@ -185,7 +185,7 @@ static void worker(App *ap)
         j.result = match ? std::string(d.updateName) + " for " + d.name + " is added and checked." :
                            std::string("This title update for ") + d.name + " hasn't been tested with COGBox (the port is made for " + d.updateName +
                            "). It was added - it may work, but you may experience problems. If the game won't start, please open a ticket on "
-                           "GitLab and attach the problem report (About > Make a problem report).";
+                           "GitHub and attach the problem report (About > Make a problem report).";
     else
         j.result = match ? std::string(d.name) + " is added and checked." :   // 0.4.6: "ready to play" only with its update (below)
                            std::string("This version of ") + d.name + " hasn't been tested with COGBox (the ports are made for the US release). "

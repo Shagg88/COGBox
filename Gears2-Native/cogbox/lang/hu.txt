@@ -1320,16 +1320,23 @@ See you later = Viszlát
 No problem - COGBox will close now. You're welcome back any time. = Semmi gond - a COGBox most bezárul. Bármikor visszajöhetsz.
 # 0.5.0: legal2-050 - notice v2 (no warranty line, new affiliation line), GitLab tickets and updates, player pictures (machine-made translation, please check)
 COGBox is a free fan project. It works with your own copies of the games and doesn't include any game files.\n\nHow you get and use your games is up to you and your responsibility. We don't provide games and don't help with or support pirated copies.\n\nCOGBox isn't affiliated with Microsoft, Epic Games or The Coalition. "Read more" opens the full text (LEGAL.md). = A COGBox egy ingyenes rajongói projekt. A játékok saját példányaival működik, és nem tartalmaz játékfájlokat.\n\nHogy hogyan szerzed be és használod a játékaidat, az a te döntésed és a te felelősséged. Nem biztosítunk játékokat, és nem segítünk a kalózmásolatokkal, és nem is támogatjuk őket.\n\nA COGBox nem kapcsolódik a Microsofthoz, az Epic Gameshez vagy a The Coalitionhöz. A „Bővebben” megnyitja a teljes szöveget (LEGAL.md).
-A GitLab ticket page opened and the details are on the clipboard - paste them, attach the zip and submit. = Megnyílt egy GitLab-jegy oldala, és a részletek a vágólapon vannak - illeszd be őket, csatold a zipet, és küldd el.
-Thanks - this version won't be flagged again. A GitLab ticket page opened and its details are on the clipboard: paste them and submit to let the developer know. = Köszönjük - ezt a verziót többé nem jelöljük meg. Megnyílt egy GitLab-jegy oldala, és a részletek a vágólapon vannak: illeszd be és küldd el, hogy a fejlesztő tudjon róla.
-A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitLab ticket. = A hibajelentés egy zip az asztalodon az utolsó játék naplójával, a beállításokkal és a gép leírásával (mentések és játékfájlok nélkül; a Windows-felhasználóneved eltávolítva). Semmit sem küldünk el - csatold egy GitLab-jegyhez.
-Open the tickets on GitLab = Jegyek megnyitása a GitLab-on
-Translations are written by the project; corrections are welcome in a GitLab ticket. = A fordításokat a projekt készíti; a javításokat szívesen fogadjuk egy GitLab-jegyben.
-Check GitLab for a newer COGBox at start = Induláskor újabb COGBox keresése a GitLab-on
-System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitLab whether it worked. = System Link - LAN-játék (kísérleti, #72): ha kipróbálod, írd meg egy GitLab-jegyben, hogy működött-e.
+A GitHub ticket page opened and the details are on the clipboard - paste them, attach the zip and submit. = Megnyílt egy GitHub-jegy oldala, és a részletek a vágólapon vannak - illeszd be őket, csatold a zipet, és küldd el.
+Thanks - this version won't be flagged again. A GitHub ticket page opened and its details are on the clipboard: paste them and submit to let the developer know. = Köszönjük - ezt a verziót többé nem jelöljük meg. Megnyílt egy GitHub-jegy oldala, és a részletek a vágólapon vannak: illeszd be és küldd el, hogy a fejlesztő tudjon róla.
+A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub ticket. = A hibajelentés egy zip az asztalodon az utolsó játék naplójával, a beállításokkal és a gép leírásával (mentések és játékfájlok nélkül; a Windows-felhasználóneved eltávolítva). Semmit sem küldünk el - csatold egy GitHub-jegyhez.
+Open the tickets on GitHub = Jegyek megnyitása a GitHub-on
+Translations are written by the project; corrections are welcome in a GitHub ticket. = A fordításokat a projekt készíti; a javításokat szívesen fogadjuk egy GitHub-jegyben.
+Check GitHub for a newer COGBox at start = Induláskor újabb COGBox keresése a GitHub-on
+System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitHub whether it worked. = System Link - LAN-játék (kísérleti, #72): ha kipróbálod, írd meg egy GitHub-jegyben, hogy működött-e.
 start it once from COGBox to add its pictures. = indítsd el egyszer a COGBoxból, hogy hozzáadd a képeit.
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = Célzási érzékenység (%)
 Zoom sensitivity (%) = Zoom érzékenység (%)
 Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Az egér sebessége célzáskor, a normál sebesség százalékában. 100 = változatlan. Csak natív egérnézettel.
 Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Az egér sebessége távcsöves zoomnál (Longshot, Hammer of Dawn), a normál sebesség százalékában. 100 = változatlan. Csak natív egérnézettel.
+# 0.6.0: delete a profile (machine-made translation, please check)
+DELETE THIS PROFILE = PROFIL TÖRLÉSE
+DELETE = TÖRLÉS
+Delete this profile? = Törlöd ezt a profilt?
+Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = A mentései minden játékban, a neve és az ikonja a COGBox _old-files mappájába kerülnek. A letöltött tartalom marad. Ha van online fiókja, előbb azt töröld a Social fülön.
+Profile deleted: = Profil törölve:
+Couldn't delete the profile: = A profilt nem sikerült törölni:

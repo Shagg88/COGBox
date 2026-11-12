@@ -47,6 +47,11 @@ int ModSquadCatchUp();
 // the smallest wins), 0 for a map no active campaign has, or a campaign that does not say.
 int ModMaxPlayersForMap(const std::string& map);
 
+// [ClassDefaults] Class.Property = value of the campaign whose chapter this map is (every active mod of the campaign;
+// a later mod's entry for the same property wins). Empty for a map no active campaign has.
+struct ClassDefaultEdit { std::string cls, prop, value; };
+std::vector<ClassDefaultEdit> ModClassDefaultsForMap(const std::string& map);
+
 // The game's own content packages the active mods name (mod.ini content = ...), in load order, without repeats.
 const std::vector<std::string>& ModContentPackages();
 

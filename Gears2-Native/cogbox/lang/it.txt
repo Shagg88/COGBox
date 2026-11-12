@@ -1320,16 +1320,23 @@ See you later = A presto
 No problem - COGBox will close now. You're welcome back any time. = Nessun problema - COGBox ora si chiude. Torna quando vuoi.
 # 0.5.0: legal2-050 - notice v2 (no warranty line, new affiliation line), GitLab tickets and updates, player pictures (machine-made translation, please check)
 COGBox is a free fan project. It works with your own copies of the games and doesn't include any game files.\n\nHow you get and use your games is up to you and your responsibility. We don't provide games and don't help with or support pirated copies.\n\nCOGBox isn't affiliated with Microsoft, Epic Games or The Coalition. "Read more" opens the full text (LEGAL.md). = COGBox è un progetto gratuito fatto da fan. Funziona con le tue copie dei giochi e non include alcun file di gioco.\n\nCome ottieni e usi i tuoi giochi dipende da te ed è una tua responsabilità. Non forniamo giochi e non aiutiamo né supportiamo copie pirata.\n\nCOGBox non è affiliato a Microsoft, Epic Games o The Coalition. "Leggi di più" apre il testo completo (LEGAL.md).
-A GitLab ticket page opened and the details are on the clipboard - paste them, attach the zip and submit. = Si è aperta una pagina di ticket GitLab e i dettagli sono negli appunti: incollali, allega lo zip e invia.
-Thanks - this version won't be flagged again. A GitLab ticket page opened and its details are on the clipboard: paste them and submit to let the developer know. = Grazie, questa versione non verrà più segnalata. Si è aperta una pagina di ticket GitLab e i dettagli sono negli appunti: incollali e invia per avvisare lo sviluppatore.
-A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitLab ticket. = Una segnalazione è uno zip sul desktop con il log dell'ultima partita, le impostazioni e una descrizione di questo PC (niente salvataggi né file di gioco; il tuo nome utente Windows viene tolto). Non viene inviato nulla: allegalo a un ticket GitLab.
-Open the tickets on GitLab = Apri i ticket su GitLab
-Translations are written by the project; corrections are welcome in a GitLab ticket. = Le traduzioni sono del progetto; le correzioni sono benvenute in un ticket GitLab.
-Check GitLab for a newer COGBox at start = Cerca una versione più recente di COGBox su GitLab all'avvio
-System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitLab whether it worked. = System Link - gioco in LAN (sperimentale, #72): se lo provi, dicci in un ticket su GitLab se ha funzionato.
+A GitHub ticket page opened and the details are on the clipboard - paste them, attach the zip and submit. = Si è aperta una pagina di ticket GitHub e i dettagli sono negli appunti: incollali, allega lo zip e invia.
+Thanks - this version won't be flagged again. A GitHub ticket page opened and its details are on the clipboard: paste them and submit to let the developer know. = Grazie, questa versione non verrà più segnalata. Si è aperta una pagina di ticket GitHub e i dettagli sono negli appunti: incollali e invia per avvisare lo sviluppatore.
+A problem report is one zip on your desktop with the last play's log, the settings and a description of this PC (no saves, no game files; your Windows user name is taken out). Nothing is sent - attach it to a GitHub ticket. = Una segnalazione è uno zip sul desktop con il log dell'ultima partita, le impostazioni e una descrizione di questo PC (niente salvataggi né file di gioco; il tuo nome utente Windows viene tolto). Non viene inviato nulla: allegalo a un ticket GitHub.
+Open the tickets on GitHub = Apri i ticket su GitHub
+Translations are written by the project; corrections are welcome in a GitHub ticket. = Le traduzioni sono del progetto; le correzioni sono benvenute in un ticket GitHub.
+Check GitHub for a newer COGBox at start = Cerca una versione più recente di COGBox su GitHub all'avvio
+System Link - LAN play (experimental, #72): if you try it, tell us in a ticket on GitHub whether it worked. = System Link - gioco in LAN (sperimentale, #72): se lo provi, dicci in un ticket su GitHub se ha funzionato.
 start it once from COGBox to add its pictures. = avvialo una volta da COGBox per aggiungere le sue immagini.
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = Sensibilità mira (%)
 Zoom sensitivity (%) = Sensibilità zoom (%)
 Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Velocità del mouse mentre si mira, in percentuale della velocità normale. 100 = invariata. Solo con la visuale mouse nativa.
 Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Velocità del mouse con lo zoom di un mirino (Longshot, Martello dell'Alba), in percentuale della velocità normale. 100 = invariata. Solo con la visuale mouse nativa.
+# 0.6.0: delete a profile (machine-made translation, please check)
+DELETE THIS PROFILE = ELIMINA QUESTO PROFILO
+DELETE = ELIMINA
+Delete this profile? = Eliminare questo profilo?
+Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = I suoi salvataggi in tutti i giochi, il nome e l'icona vengono spostati nella cartella _old-files di COGBox. I contenuti scaricati restano. Se ha un account online, eliminalo prima nella scheda Social.
+Profile deleted: = Profilo eliminato:
+Couldn't delete the profile: = Impossibile eliminare il profilo:

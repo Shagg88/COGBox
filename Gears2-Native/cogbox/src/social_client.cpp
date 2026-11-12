@@ -8,6 +8,7 @@
 
 #include "../third_party/nlohmann/json.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -45,7 +46,10 @@ bool poll(const SocialBackend& b, SocialLists* lists, std::vector<SocialInvite>*
     return true;
 }
 
+std::atomic<int> g_workers{0};   // 0.6.0: running workers (social_stop_wait waits for 0)
+struct WorkerCount { WorkerCount() { ++g_workers; } ~WorkerCount() { --g_workers; } };
 void run(SocialBackend b, uint64_t gen) {
+    WorkerCount alive;
     Shared& s = sh();
     for (int tick = 0;; ++tick) {
         std::optional<std::pair<SocialAction, std::string>> action;
@@ -125,6 +129,18 @@ void social_stop() {
         s.view = SocialView{};
     }
     s.cv.notify_all();
+}
+
+// 0.6.0 (deleting a profile): stop, then wait until no worker is left, so none can still write into the profile's
+// identity folder. False if one was still busy after max_ms (it may be in a slow server request).
+bool social_stop_wait(int max_ms) {
+    social_stop();
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(max_ms);
+    while (g_workers.load() > 0) {
+        if (std::chrono::steady_clock::now() >= end) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return true;
 }
 
 void social_sign_off(int wait_ms) {
