@@ -77,7 +77,7 @@ services:
       - path: status.env
         required: false
     environment:
-      - MASTER_URL=http://127.0.0.1:8080
+      - MASTER_URL=http://127.0.0.1:18443   # the master's game port here (8080 on this server is the admin panel)
       - STUN_HOST=127.0.0.1
       - STUN_PORT=3478
       - GITLAB_PROJECT=shagg88/cogbox

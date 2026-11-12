@@ -24,7 +24,7 @@ export interface Config {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     webhookUrl: env.DISCORD_WEBHOOK_URL || undefined,
-    masterUrl: env.MASTER_URL || 'http://127.0.0.1:8080',
+    masterUrl: env.MASTER_URL || 'http://127.0.0.1:18443',
     stunHost: env.STUN_HOST || '127.0.0.1',
     stunPort: Number(env.STUN_PORT) || 3478,
     gitlabProject: env.GITLAB_PROJECT || 'shagg88/cogbox',
