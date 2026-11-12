@@ -9,7 +9,14 @@ is one of my favourites, so the project is near and dear to my heart.
 **[Download the latest release](https://github.com/Shagg88/COGBox/releases)** · You need your own copy of each game
 and its title update. No game files are included, ever.
 
-Backup mirrors with the same files: [GitLab](https://gitlab.com/shagg88/cogbox/-/releases) and [SourceForge](https://sourceforge.net/projects/cogbox/files/).
+Backup with the same files: [GitLab](https://gitlab.com/shagg88/cogbox/-/releases).
+
+**Online multiplayer is here (0.6.0):** play Gears of War online with friends again, peer to peer through COGBox's own
+matchmaking - no Xbox Live needed. Turn it on in the launcher's Social tab.
+
+**[Join the COGBox Discord](https://discord.gg/Y6qGbzBKQZ)** - find people to play with, get help, share feedback.
+
+<a href="https://recompstore.com"><img src="https://recompstore.com/assets/press/badge-dark.svg" alt="Get it on RecompStore" height="56"></a>
 
 > An unofficial fan project, not affiliated with Microsoft, Epic Games or The Coalition. "Gears of War", "Xbox" and
 > "Xbox 360" are trademarks of Microsoft.
