@@ -659,6 +659,11 @@ class Backend {
   // Patch 0138: a mid-frame submit so the GPU starts on the first part of the frame while the rest is recorded. It
   // does not wait for the recording thread to hand the list over (Submit does, for presentation). Default: Submit.
   virtual uint64_t SubmitEarly() { return Submit(); }
+  // 0.6.1 (review of the adaptive early submit): the fence of the newest submit of any kind (the backend also submits
+  // on its own: full rings, waits, the frame's end), and whether SubmitEarly is a real mid-frame hand-off - Vulkan's is
+  // a full Submit with a bounded number of command slots, so the adaptive form stays off there.
+  virtual uint64_t LastSubmittedFence() { return 0; }
+  virtual bool HasEarlySubmit() const { return false; }
   virtual uint64_t CompletedFence() = 0;
   virtual void WaitForFence(uint64_t fence) = 0;
   // Debug markers (PIX / RenderDoc), no-ops when unsupported.

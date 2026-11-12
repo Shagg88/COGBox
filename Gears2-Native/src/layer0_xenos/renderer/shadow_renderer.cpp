@@ -2289,10 +2289,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       } else if (submit_auto_) {
         // 0.6.1: keep the GPU fed - it idles when it has finished what it was given while we still record. The fence
         // read is cheap but not free, so it is asked every 8th draw once 32 draws are waiting.
+        // Review: at most 12 a frame (a submit drops the list's reuse of state, constants and vertex data, and a query
+        // may span 16 lists), not before 64 draws wait, and "finished" is asked against the backend's newest submit -
+        // it also submits on its own (full rings, waits), which a copy kept here did not see.
         ++draws_since_submit_;
-        if (draws_since_submit_ >= 256 ||
-            (draws_since_submit_ >= 32 && (draws_since_submit_ & 7u) == 0 && backend_->CompletedFence() >= last_submit_fence_))
+        if (auto_submits_this_frame_ < 12 &&
+            (draws_since_submit_ >= 256 || (draws_since_submit_ >= 64 && (draws_since_submit_ & 7u) == 0 &&
+                                            backend_->CompletedFence() >= backend_->LastSubmittedFence()))) {
+          ++auto_submits_this_frame_;
           CountedSubmitEarly(kSubmitEveryNDraws);
+        }
       }
     }
     EndParts();
@@ -2592,7 +2598,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!export_ranges_.empty())  // patch 0042: this frame's merged export readbacks
       FrameStep("export readback copies", [&] { IssueExportReadbacks(); });
     FrameStep("submit", [&] { frame_fences_.push_back(backend_->Submit()); });
-    last_submit_fence_ = frame_fences_.back();  // 0.6.1: adaptive early submits wait for the GPU to finish up to here
     occ_need_submit_ = false;  // PR #43 strict queries: the frame's submit carried any batch still open
     occ_closed_in_batch_ = 0;
     occ_batches_this_frame_ = 0;
@@ -2633,9 +2638,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     {  // patch 0138; 0.6.1: -1 = adaptive
       const int32_t sd = REXCVAR_GET(gow2_renderer_submit_draws);
       submit_draws_ = uint32_t(std::max(0, sd));
-      submit_auto_ = sd < 0;
+      submit_auto_ = sd < 0 && backend_ && backend_->HasEarlySubmit();
     }
     draws_since_submit_ = 0;
+    auto_submits_this_frame_ = 0;
     depth_wait_left_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_depth_pipeline_wait_ms));  // patch 0132
     shader_wait_left_ms_ = shader_wait_budget_ms_;
     standin_wait_left_ms_ = standin_wait_budget_ms_;  // patch 0045
@@ -13170,7 +13176,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   double set_textures_ms_ = 0, set_textures_prev_ms_ = 0;  // 0.4.5 texture-time research
   uint32_t submit_draws_ = 0, draws_since_submit_ = 0;  // patch 0138
   bool submit_auto_ = false;        // 0.6.1: --gow2_renderer_submit_draws=-1
-  uint64_t last_submit_fence_ = 0;  // the fence of our last submit (early or the frame's)
+  uint32_t auto_submits_this_frame_ = 0;
   uint64_t early_prev_ = 0;  // patch 0138
   bool use_textures_ = true, upload_watch_ = true, vertex_direct_ = true, float_constants_trim_ = true;
   // this draw's fetch constants as the shaders see them (vertex_direct_ rewrites some), then the texture post-processing
@@ -13606,10 +13612,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // SubmitEarly submits nothing when no list is open or the device is lost: count a cause only when it did.
   void CountedSubmitEarly(int site) {
     const uint64_t before = backend_->Stats().submits;
-    const uint64_t fence = backend_->SubmitEarly();
+    backend_->SubmitEarly();
     if (backend_->Stats().submits != before) {
       ++submit_sites_[site];
-      last_submit_fence_ = fence;  // 0.6.1 (adaptive early submits)
+      // Review: a closed batch of strict queries went out with this list whatever the cause - asking for another
+      // submit for it would only drop the new list's reuse.
+      if (!occ_open_.open) {
+        occ_need_submit_ = false;
+        occ_closed_in_batch_ = 0;
+      }
     }
     draws_since_submit_ = 0;  // any early submit starts the count again (also the strict-query ones)
   }

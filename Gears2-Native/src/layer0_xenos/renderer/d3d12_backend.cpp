@@ -3088,6 +3088,8 @@ class D3D12Backend final : public Backend {
 
   // 0.6.1 (review B3): a removed device answers UINT64_MAX - every fence then looked complete until IsLost's next
   // 50 ms poll, and unfinished readbacks (resolves, memexport, occlusion counts) were copied into guest memory.
+  uint64_t LastSubmittedFence() override { return last_submitted_; }
+  bool HasEarlySubmit() const override { return true; }
   uint64_t CompletedFence() override {
     if (!fence_) return 0;
     const uint64_t v = fence_->GetCompletedValue();
