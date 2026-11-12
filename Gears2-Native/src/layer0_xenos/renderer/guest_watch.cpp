@@ -83,14 +83,10 @@ void GuestWatch::SetReportRanges(std::vector<std::pair<uint32_t, uint32_t>> rang
 
 GuestWatch::GuestWatch(rex::memory::Memory* memory)
     : memory_(memory),
-      versions_(new std::atomic<uint32_t>[kPages]),
-      gpu_versions_(new std::atomic<uint32_t>[kPages]),
-      scaled_versions_(new std::atomic<uint32_t>[kPages]),
+      pages_(new std::atomic<uint64_t>[kPages]),
       blocks_(new std::atomic<uint64_t>[kPages >> kBlockShift]),
       supers_(new std::atomic<uint64_t>[kPages >> kSuperShift]) {
-  for (uint32_t i = 0; i < kPages; ++i) versions_[i].store(0, std::memory_order_relaxed);
-  for (uint32_t i = 0; i < kPages; ++i) gpu_versions_[i].store(UINT32_MAX, std::memory_order_relaxed);
-  for (uint32_t i = 0; i < kPages; ++i) scaled_versions_[i].store(UINT32_MAX, std::memory_order_relaxed);
+  for (uint32_t i = 0; i < kPages; ++i) pages_[i].store(0, std::memory_order_relaxed);
   for (uint32_t i = 0; i < (kPages >> kBlockShift); ++i) blocks_[i].store(0, std::memory_order_relaxed);
   for (uint32_t i = 0; i < (kPages >> kSuperShift); ++i) supers_[i].store(0, std::memory_order_relaxed);
   if (memory_) memory_->RegisterPhysicalMemoryInvalidationCallback(&GuestWatch::Callback, this);
@@ -151,12 +147,23 @@ std::pair<uint32_t, uint32_t> GuestWatch::Callback(void* context, uint32_t start
   return {0, UINT32_MAX};  // no wish of our own about how much gets unwatched
 }
 
-void GuestWatch::Bump(uint32_t address, uint32_t length) {
+void GuestWatch::BumpPages(uint32_t first, uint32_t last, uint64_t set) {
+  for (uint32_t p = first; p <= last; ++p) {
+    uint64_t old = pages_[p].load(std::memory_order_relaxed);
+    for (;;) {
+      // version + 1 (wrapping within its 32 bits); "ever written by the GPU" stays, the current-flags are replaced
+      const uint64_t next = uint64_t(uint32_t(old) + 1u) | (old & kEverGpuWritten) | set;
+      if (pages_[p].compare_exchange_weak(old, next, std::memory_order_release, std::memory_order_relaxed)) break;
+    }
+  }
+}
+
+void GuestWatch::BumpRange(uint32_t address, uint32_t length, uint64_t set) {
   address &= 0x1FFFFFFFu;
   if (!length) return;
   const uint32_t first = address >> kPageShift;
   const uint32_t last = uint32_t(std::min<uint64_t>((uint64_t(address) + length - 1) >> kPageShift, kPages - 1));
-  for (uint32_t p = first; p <= last; ++p) versions_[p].fetch_add(1, std::memory_order_relaxed);
+  BumpPages(first, last, set);
   // A 256 KB block's (4 MB super-block's) counter is the sum of its page versions, so it goes up by the number of its
   // pages bumped here: one add per block instead of one per page (a 4 MB widening: 1024 + 16 + 1 adds, was 3072).
   // Readers see the same final sums; mid-update they could already see a page ahead of its block before, too.
@@ -173,18 +180,11 @@ void GuestWatch::Bump(uint32_t address, uint32_t length) {
   epoch_.fetch_add(1, std::memory_order_release);
 }
 
+void GuestWatch::Bump(uint32_t address, uint32_t length) { BumpRange(address, length, 0); }
+
+// An unscaled write leaves the scaled copy behind: its new version carries kGpuCurrent only.
 void GuestWatch::MarkGpuWritten(uint32_t address, uint32_t length, bool scaled) {
-  address &= 0x1FFFFFFFu;
-  if (!length) return;
-  Bump(address, length);
-  const uint32_t first = address >> kPageShift;
-  const uint32_t last = uint32_t(std::min<uint64_t>((uint64_t(address) + length - 1) >> kPageShift, kPages - 1));
-  for (uint32_t p = first; p <= last; ++p) {
-    const uint32_t v = versions_[p].load(std::memory_order_acquire);
-    gpu_versions_[p].store(v, std::memory_order_release);
-    // An unscaled write leaves the scaled copy behind: UINT32_MAX never equals a version in practice.
-    scaled_versions_[p].store(scaled ? v : UINT32_MAX, std::memory_order_release);
-  }
+  BumpRange(address, length, kGpuCurrent | kEverGpuWritten | (scaled ? kScaledCurrent : 0));
 }
 
 uint64_t GuestWatch::Version(uint32_t address, uint32_t length) const {
@@ -205,7 +205,7 @@ uint64_t GuestWatch::Version(uint32_t address, uint32_t length) const {
       sum += blocks_[p >> kBlockShift].load(std::memory_order_acquire);
       p += kBlock;
     } else {
-      sum += versions_[p].load(std::memory_order_acquire);
+      sum += uint32_t(pages_[p].load(std::memory_order_acquire));
       ++p;
     }
   }

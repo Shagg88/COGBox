@@ -55,9 +55,12 @@ REXCVAR_DEFINE_INT32(gow2_frame_log_every, 600, "Gears2", "Frame log: frames per
 // perf049: xenos::FrameLimiter (frame_limiter.h, all four games' exact frame caps) sleeps on a high-resolution timer to
 // this many microseconds before each frame's deadline, then yield-spins. 0.4.8 used 1000 (up to ~6% of a core at 60).
 // Below 1000 only takes effect when the high-resolution timer exists (Windows 10 1803+; not under older Wine).
-REXCVAR_DEFINE_INT32(gow2_frame_limiter_spin_us, 1000, "Gears2",
+// 0.6.1 (review P7): default 300 (was 1000 = up to 18 % of a core on the game's main thread at a 180 fps cap). The
+// high-resolution timer wakes within ~100 us; without it the limiter keeps 1000 on its own.
+REXCVAR_DEFINE_INT32(gow2_frame_limiter_spin_us, 300, "Gears2",
                      "Frame cap: microseconds before each frame's deadline the limiter stops sleeping and spins (0-4000; "
-                     "1000 = as 0.4.8; smaller saves CPU, needs the high-resolution timer, else 1000 is kept)");
+                     "300 = default since 0.6.1, 1000 = as 0.4.8-0.6.0; smaller saves CPU, needs the high-resolution "
+                     "timer, else 1000 is kept)");
 REXCVAR_DEFINE_DOUBLE(gow2_frame_log_spike_ms, 0.0, "Gears2",
                       "Frame log: a frame longer than this is a spike (0 = automatic: over 1.5x the running average "
                       "frame time and at least 4 ms over it)");

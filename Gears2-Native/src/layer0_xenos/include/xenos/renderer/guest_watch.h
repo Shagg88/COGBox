@@ -41,18 +41,15 @@ class GuestWatch {
   void MarkGpuWritten(uint32_t address, uint32_t length, bool scaled = false);
   // True while the page's newest content is the one our GPU wrote (no CPU write since).
   bool GpuCurrent(uint32_t page) const {
-    return page < kPages && gpu_versions_[page].load(std::memory_order_acquire) ==
-                                versions_[page].load(std::memory_order_acquire);
+    return page < kPages && (pages_[page].load(std::memory_order_acquire) & kGpuCurrent) != 0;
   }
   // Stage 7: true while the page's newest content came from a resolve that also wrote its scaled copy.
   bool ScaledCurrent(uint32_t page) const {
-    return page < kPages && scaled_versions_[page].load(std::memory_order_acquire) ==
-                                versions_[page].load(std::memory_order_acquire);
+    return page < kPages && (pages_[page].load(std::memory_order_acquire) & kScaledCurrent) != 0;
   }
   // Job 193: the page never held scaled data, nor did our GPU ever write it (no resolve touched it).
   bool NeverResolved(uint32_t page) const {
-    return page < kPages && scaled_versions_[page].load(std::memory_order_acquire) == UINT32_MAX &&
-           gpu_versions_[page].load(std::memory_order_acquire) == UINT32_MAX;
+    return page < kPages && (pages_[page].load(std::memory_order_acquire) & kEverGpuWritten) == 0;
   }
   bool ScaledCurrent(uint32_t address, uint32_t length) const {
     if (!length) return false;
@@ -81,7 +78,7 @@ class GuestWatch {
   uint64_t Epoch() const { return epoch_.load(std::memory_order_acquire); }
   // One 4 KB page's version (page = physical address >> kPageShift).
   uint32_t PageVersion(uint32_t page) const {
-    return page < kPages ? versions_[page].load(std::memory_order_acquire) : 0u;
+    return page < kPages ? uint32_t(pages_[page].load(std::memory_order_acquire)) : 0u;
   }
 
  private:
@@ -90,9 +87,18 @@ class GuestWatch {
   // Per page, and the same sums per 64 pages (256 KB) and per 1024 pages (4 MB), so a Version over a large range
   // reads O(blocks) counters instead of one per page (upl-n102).
   static constexpr uint32_t kBlockShift = 6, kSuperShift = 10;
-  std::unique_ptr<std::atomic<uint32_t>[]> versions_;
-  std::unique_ptr<std::atomic<uint32_t>[]> gpu_versions_;  // T2: version at our last GPU write (UINT32_MAX = never)
-  std::unique_ptr<std::atomic<uint32_t>[]> scaled_versions_;  // Stage 7: version at our last scaled resolve
+  // 0.6.1 (review B1): one word per page - the version in the low 32 bits and, above it, who wrote that version. Before,
+  // the version and "the version at our last GPU write" were two atomics written one after the other, so between
+  // MarkGpuWritten's bump and its store a game thread's write callback saw the page as not GPU-current, widened across
+  // it and bumped it: the resolve's result then counted as older than the guest's bytes (or the page stayed current
+  // but unwatched). A CPU bump and a GPU write are now one compare-exchange each.
+  static constexpr uint64_t kGpuCurrent = 1ull << 32;      // T2: our GPU wrote this version (the mirror holds it)
+  static constexpr uint64_t kScaledCurrent = 1ull << 33;   // Stage 7: ... and its resolution-scaled copy
+  static constexpr uint64_t kEverGpuWritten = 1ull << 34;  // job 193: some resolve wrote this page at some time
+  std::unique_ptr<std::atomic<uint64_t>[]> pages_;
+  // Bumps every page of the range: set = the flags the new version carries (0 for a CPU write).
+  void BumpPages(uint32_t first, uint32_t last, uint64_t set);
+  void BumpRange(uint32_t address, uint32_t length, uint64_t set);
   std::unique_ptr<std::atomic<uint64_t>[]> blocks_;
   std::unique_ptr<std::atomic<uint64_t>[]> supers_;
   std::atomic<uint64_t> epoch_{0};
