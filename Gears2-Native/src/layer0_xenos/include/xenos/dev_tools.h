@@ -202,6 +202,9 @@ void XenosInstallPrimDetailIfRequested();
 struct XenosRendererHints {
   uint64_t clear_vs = 0, clear_ps = 0;
   uint64_t dummy_point_vs = 0;
+  // 0.6.1: this game has captured native-HDR scene / HUD profiles (PR #267: Gears 2, Gears 3 TU6). Without it (Gears 1,
+  // Judgment) HDR10 output keeps the Stage 7.3 encoder of 0.6.0 (paper white, knee, highlight expansion).
+  bool native_hdr = false;
 };
 void XenosInstallRendererIfRequested(rex::Runtime* runtime, const XenosRendererHints& hints = {});
 // A game's loading screen has ended (Judgment: its loading cap release) - starts --gow2_after_load_log_s.

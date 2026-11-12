@@ -1171,9 +1171,9 @@ REXCVAR_DEFINE_DOUBLE(gow2_hdr_ui_white, 203.0, "Gears2", "Native HDR: independe
 REXCVAR_DEFINE_BOOL(gow2_hdr_native, true, "Gears2", "Use the captured Gears 2 / Gears 3 TU6 float scene/HUD profiles in HDR10");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_peak, 1000.0, "Gears2", "Native HDR: display peak in nits for highlight roll-off");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_knee, 0.75, "Gears2",
-                      "Legacy compatibility option; unused by native HDR");
+                      "Stage 7.3 HDR (games without native HDR profiles, or --gow2_hdr_native=false); unused by native HDR");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_expand, 1.0, "Gears2",
-                      "Legacy compatibility option; unused by native HDR");
+                      "Stage 7.3 HDR (games without native HDR profiles, or --gow2_hdr_native=false); unused by native HDR");
 REXCVAR_DEFINE_BOOL(gow2_present_frame_aspect, false, "Gears2",
                     "Stage 7.5: show the front buffer at its own shape (square pixels) instead of the video mode's 16:9 - "
                     "set by --gow2_ultrawide, whose front buffer is 1280x550");
@@ -2094,6 +2094,18 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         hdr_encode_ = he ? backend_->CreateComputePipeline(he) : 0;
         const auto matching = cache_->GetBuiltin("native_hdr_encode_matching_cs", rr::native_hdr::MatchingSizeEncoder(), gpu::ShaderStage::kCompute);
         hdr_encode_matching_size_ = matching ? backend_->CreateComputePipeline(matching) : 0;
+        // 0.6.1 (review of PR #267): games without native profiles, and --gow2_hdr_native=false, keep 0.6.0's encoder
+        // for every frame - the native path's reference-white fallback has no highlight expansion, which would have
+        // changed Gears 1 and Judgment in HDR without anyone asking.
+        hdr_legacy_ = !hints_.native_hdr || !REXCVAR_GET(gow2_hdr_native);
+        if (hdr_legacy_) {
+          const gpu::ShaderHandle le =
+              cache_->GetBuiltin("hdr_encode_cs", rr::builtin::kHdrEncodeCs, gpu::ShaderStage::kCompute);
+          hdr_encode_legacy_ = le ? backend_->CreateComputePipeline(le) : 0;
+          REXLOG_INFO("gow2_present: HDR10 output on (paper white {} nits, peak {}, knee {}, expansion {}){}",
+                      REXCVAR_GET(gow2_hdr_paper_white), REXCVAR_GET(gow2_hdr_peak), REXCVAR_GET(gow2_hdr_knee),
+                      REXCVAR_GET(gow2_hdr_expand), hdr_encode_legacy_ ? "" : " - ENCODE SHADER MISSING");
+        } else
         REXLOG_INFO("gow2_present: native HDR10 (scene white {}, UI white {}, peak {} nits){}",
                     REXCVAR_GET(gow2_hdr_paper_white), REXCVAR_GET(gow2_hdr_ui_white), REXCVAR_GET(gow2_hdr_peak),
                     hdr_encode_ ? "" : " - ENCODE SHADER MISSING");
@@ -3425,7 +3437,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         out_tex = present_sharp_;
       }
     }
-    if (hdr_ && hdr_encode_) {
+    if (hdr_ && hdr_legacy_ && hdr_encode_legacy_) {  // Stage 7.3, as 0.6.0 (see hdr_legacy_)
+      EncodeLegacyHdr(out_tex, ow, oh);
+      table = false;  // 10 bits per channel to the window
+    } else if (hdr_ && !hdr_legacy_ && hdr_encode_) {
       EncodeNativeHdr(out_tex, ow, oh, native_frame);
       table = false;  // 10 bits per channel to the window
     }
@@ -3602,6 +3617,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool smaa_ = false, smaa_failed_logged_ = false, smaa_tables_uploaded_ = false, smaa_ready_ = false;
   bool hdr_ = false;  // Stage 7.3: --present_hdr (SDK patch 24)
   gpu::PipelineHandle hdr_encode_ = 0, hdr_encode_matching_size_ = 0;
+  gpu::PipelineHandle hdr_encode_legacy_ = 0;  // 0.6.1: Stage 7.3's encoder, for games without native profiles
+  bool hdr_legacy_ = false;
   gpu::TextureHandle native_hdr_color_ = 0, native_hdr_aa_ = 0, native_hdr_reference_ = 0;
   uint32_t native_hdr_w_ = 0, native_hdr_h_ = 0, native_hdr_ref_w_ = 0, native_hdr_ref_h_ = 0;
   uint64_t native_hdr_generation_ = 0;
@@ -3640,6 +3657,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       native_hdr_ui_w_ = native_hdr_w_; native_hdr_ui_h_ = native_hdr_h_;
     }
     return native_hdr_ui_proxy_ && native_hdr_ui_high_ && native_hdr_ui_low_;
+  }
+  // Stage 7.3 (0.6.0's HDR10 output): PQ / BT.2020 in place, with highlight expansion above the knee.
+  void EncodeLegacyHdr(gpu::TextureHandle output, uint32_t width, uint32_t height) {
+    gpu::ComputeBindings b;
+    b.constants[0] = width;
+    b.constants[1] = height;
+    b.constants[4] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_paper_white)));
+    b.constants[5] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_peak)));
+    b.constants[6] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_knee)));
+    b.constants[7] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_hdr_expand)));
+    b.constant_count = 8;
+    b.uav_texture = output;
+    backend_->Dispatch(hdr_encode_legacy_, b, (width + 7) / 8, (height + 7) / 8, 1);
   }
   float HdrSceneWhite() const { return float(std::clamp(REXCVAR_GET(gow2_hdr_paper_white), 1.0, 10000.0)); }
   float HdrPeak() const { return float(std::clamp(REXCVAR_GET(gow2_hdr_peak), double(HdrSceneWhite()), 10000.0)); }
@@ -3693,7 +3723,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                      const rr::GuestShader& vertex, const rr::GuestShader& shader, const rr::RenderTarget* target,
                      const rr::PipelineState& state, const SystemConstants& constants,
                      const uint32_t* pixel_constants, Issue&& issue) {
-    if (!hdr_ || !hdr_encode_ || !REXCVAR_GET(gow2_hdr_native) || !target ||
+    if (!hdr_ || hdr_legacy_ || !hdr_encode_ || !REXCVAR_GET(gow2_hdr_native) || !target ||
         !original.color_write_masks[0]) return;
     const bool scene = rr::native_hdr::IsScene(shader.ucode_hash);
     const bool gears3_scene = shader.ucode_hash == rr::native_hdr::kGears3Scene;
@@ -6923,7 +6953,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->Dispatch(present_sharpen_, b, (ow + 7) / 8, (oh + 7) / 8, 1);
       out = hl_sharp_;
     }
-    if (hdr_ && hdr_encode_) EncodeNativeHdr(out, ow, oh, false);
+    if (hdr_ && hdr_legacy_ && hdr_encode_legacy_) EncodeLegacyHdr(out, ow, oh);
+    else if (hdr_ && !hdr_legacy_ && hdr_encode_) EncodeNativeHdr(out, ow, oh, false);
     // 8b9872a: the presenter stretches our ow x oh image into the back buffer (without "Match my monitor"), so the
     // generation rectangle is the stretched size: the HUD-less image is resampled to it (the size frame generation
     // reported last frame), with the present resample pass (box shrink / bilinear enlarge, in linear light).

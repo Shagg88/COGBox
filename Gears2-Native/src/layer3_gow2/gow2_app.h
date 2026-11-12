@@ -81,7 +81,8 @@ class Gow2App : public rex::ReXApp {
     };
     game_default("gow2_upscale_depth_at_resolve", "true");
     game_default("gow2_upscale_character_motion", "true");
-    XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull});
+    XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull,
+                                                true /* native HDR profiles (PR #267) */});
     Gow2InstallLocLogIfRequested();  // GitHub #90: before the game opens its localized packages
     Gow2InstallMainMenuExitIfRequested();
     Gow2InstallUnlocks();  // insane050
