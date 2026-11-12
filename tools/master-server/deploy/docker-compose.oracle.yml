@@ -67,8 +67,29 @@ services:
       - '-allowfrom=127.0.0.1'
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+  status-reporter:
+    # Keeps one status embed up to date in Discord #server-status. Outbound only: no listening port.
+    # status.env (server only, mode 600, never committed) holds DISCORD_WEBHOOK_URL and SOURCEFORGE_PROJECT.
+    build: ../../status-reporter
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - path: admin.env
+        required: false
+      - path: status.env
+        required: false
+    environment:
+      - MASTER_URL=http://127.0.0.1:8090
+      - STUN_HOST=127.0.0.1
+      - STUN_PORT=3478
+      - GITLAB_PROJECT=shagg88/cogbox
+      - GITHUB_ENABLED=true
+      - GITHUB_REPO=Shagg88/COGBox
+    volumes:
+      - status-data:/data
 volumes:
   master-data:
   admin-data:
   caddy-data:
   caddy-config:
+  status-data:
