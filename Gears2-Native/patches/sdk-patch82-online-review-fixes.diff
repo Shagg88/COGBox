@@ -1,0 +1,201 @@
+diff --git a/include/rex/kernel/xam/net/virtual_peer_manager.h b/include/rex/kernel/xam/net/virtual_peer_manager.h
+index c1b480e..2022796 100644
+--- a/include/rex/kernel/xam/net/virtual_peer_manager.h
++++ b/include/rex/kernel/xam/net/virtual_peer_manager.h
+@@ -63,6 +63,7 @@ class VirtualPeerManager {
+   // A local hand-off socket for relayed datagrams from (vip, peer port): packets from it are labelled as that peer's
+   // port and never become a route.
+   void AddRelayEndpoint(const sockaddr_in& local, uint32_t vip, uint16_t peer_port);
++  void RemoveRelayEndpoint(const sockaddr_in& local);   // patch 82: a closed hand-off socket
+   bool IsLocalGamePort(uint16_t local_port) const;
+   // A tunnel frame that arrived on a game socket (sent over a game route, see TunnelRoutes) goes to this.
+   void SetTunnelFrameFn(std::function<void(const sockaddr_in& from, const uint8_t* data, size_t len)> fn);
+diff --git a/include/rex/system/util/object_table.h b/include/rex/system/util/object_table.h
+index e16841a..50e4255 100644
+--- a/include/rex/system/util/object_table.h
++++ b/include/rex/system/util/object_table.h
+@@ -40,6 +40,8 @@ class ObjectTable {
+   // Xbox 360 sockets are not kernel handles, so a game that closes a stale handle number (harmless there) must
+   // not destroy a socket that reuses that number here.
+   static void AllowSocketRelease(bool on);
++  // patch 82 (review of 81): the stale-handle socket guard only while online play runs (off: handles as before)
++  static void EnableSocketGuard(bool on);
+   X_STATUS RemoveHandle(X_HANDLE handle);
+ 
+   bool Save(stream::ByteStream* stream);
+diff --git a/src/kernel/xam/net/online_startup.cpp b/src/kernel/xam/net/online_startup.cpp
+index 5bacaa9..09298b8 100644
+--- a/src/kernel/xam/net/online_startup.cpp
++++ b/src/kernel/xam/net/online_startup.cpp
+@@ -18,6 +18,7 @@
+ #include <rex/kernel/xam/net/socket_hooks.h>
+ #include <rex/kernel/xam/net/stream_tunnel.h>
+ #include <rex/system/kernel_state.h>
++#include <rex/system/util/object_table.h>
+ #include <rex/system/user_module.h>
+ #include <rex/logging.h>
+ #include <rex/system/cogbox_save_sign.h>
+@@ -92,6 +93,7 @@ void StartOnlineServices(const std::filesystem::path& dir) {
+   });
+   VirtualPeerManager::Get().SetPublicAddressFn([](uint16_t port) { Signaling().OfferPort(port); });
+   StreamTunnel::Get().Start();  // its UDP socket joins the punching before any offer goes out
++  rex::system::util::ObjectTable::EnableSocketGuard(true);   // patch 82: only online play keeps stale-handle sockets
+   SetInviteHooks({RunningTitle,
+                   [](uint32_t id) {
+                     if (g_exiting) return;
+diff --git a/src/kernel/xam/net/stream_tunnel.cpp b/src/kernel/xam/net/stream_tunnel.cpp
+index 5d9d2d9..d0d8567 100644
+--- a/src/kernel/xam/net/stream_tunnel.cpp
++++ b/src/kernel/xam/net/stream_tunnel.cpp
+@@ -136,7 +136,24 @@ void StreamTunnel::Run() {
+   TunnelCore core;
+   std::vector<PendingListener> listeners;
+   std::map<uint32_t, SOCKET> bridges;        // tunnel handle -> local TCP socket
+-  std::map<std::pair<uint32_t, uint16_t>, std::pair<SOCKET, sockaddr_in>> handoff;  // (peer, its port) -> local sender
++  // (peer, its port) -> local sender. Patch 82 (review of 81): at most kHandoffsPerPeer per peer (the oldest goes), closed
++  // after kHandoffIdle unused - a peer can't make us open sockets without end.
++  struct Handoff { SOCKET s; sockaddr_in local; Clock::time_point last; };
++  constexpr size_t kHandoffsPerPeer = 8;
++  constexpr auto kHandoffIdle = std::chrono::seconds(60);
++  std::map<std::pair<uint32_t, uint16_t>, Handoff> handoff;
++  auto drop_handoff = [&](std::map<std::pair<uint32_t, uint16_t>, Handoff>::iterator it) {
++    mgr.RemoveRelayEndpoint(it->second.local);
++    closesocket(it->second.s);
++    return handoff.erase(it);
++  };
++  Clock::time_point last_sweep = Clock::now();
++  uint16_t own_port = 0;   // our tunnel socket's port: never a hand-off target (a frame inside a frame)
++  {
++    sockaddr_in me{};
++    int ml = sizeof(me);
++    if (::getsockname(udp, reinterpret_cast<sockaddr*>(&me), &ml) == 0) own_port = ntohs(me.sin_port);
++  }
+   std::map<uint32_t, std::pair<size_t, size_t>> traffic;  // handle -> (bytes to the peer, bytes from the peer)
+ 
+   TunnelCore::Callbacks cb;
+@@ -240,10 +257,17 @@ void StreamTunnel::Run() {
+           // COGBox 0.5.0: a relayed game datagram. Hand it to our game socket on its port from a local socket that
+           // stands for (peer, its port), so the game sees it come from the peer's virtual address.
+           const uint16_t src = uint16_t(f->conn), dst = uint16_t(f->port + BindPortOffset());
+-          if (!mgr.IsLocalGamePort(dst)) return;
++          if (!mgr.IsLocalGamePort(dst) || dst == own_port) return;
+           auto key = std::make_pair(who->first, src);
+           auto h = handoff.find(key);
+           if (h == handoff.end()) {
++            size_t mine = 0;
++            auto oldest = handoff.end();
++            for (auto it = handoff.lower_bound({who->first, 0}); it != handoff.end() && it->first.first == who->first; ++it) {
++              mine++;
++              if (oldest == handoff.end() || it->second.last < oldest->second.last) oldest = it;
++            }
++            if (mine >= kHandoffsPerPeer && oldest != handoff.end()) drop_handoff(oldest);
+             SOCKET hs = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+             sockaddr_in la = Loopback(0);
+             int ll = sizeof(la);
+@@ -253,12 +277,13 @@ void StreamTunnel::Run() {
+               return;
+             }
+             mgr.AddRelayEndpoint(la, who->first, src);
+-            h = handoff.emplace(key, std::make_pair(hs, la)).first;
++            h = handoff.emplace(key, Handoff{hs, la, now}).first;
+             REXKRNL_INFO("cogbox_online: 10.254.{}.{} game port {} relayed through the tunnel to our port {}",
+                          (who->first >> 8) & 0xFF, who->first & 0xFF, src, dst);
+           }
+           sockaddr_in to = Loopback(dst);
+-          ::sendto(h->second.first, reinterpret_cast<const char*>(f->payload.data()), int(f->payload.size()), 0,
++          h->second.last = now;
++          ::sendto(h->second.s, reinterpret_cast<const char*>(f->payload.data()), int(f->payload.size()), 0,
+                    reinterpret_cast<const sockaddr*>(&to), sizeof(to));
+           return;
+         }
+@@ -324,6 +349,10 @@ void StreamTunnel::Run() {
+       }
+     }
+     core.Tick(now);
++    if (now - last_sweep > std::chrono::seconds(10)) {   // patch 82: idle hand-off sockets closed
++      last_sweep = now;
++      for (auto it = handoff.begin(); it != handoff.end();) it = now - it->second.last > kHandoffIdle ? drop_handoff(it) : std::next(it);
++    }
+   }
+ }
+ 
+diff --git a/src/kernel/xam/net/virtual_peer_manager.cpp b/src/kernel/xam/net/virtual_peer_manager.cpp
+index 022339b..59b25d6 100644
+--- a/src/kernel/xam/net/virtual_peer_manager.cpp
++++ b/src/kernel/xam/net/virtual_peer_manager.cpp
+@@ -66,6 +66,11 @@ void VirtualPeerManager::AddRelayEndpoint(const sockaddr_in& local, uint32_t vip
+   relay_endpoints_[EndpointKey(local)] = {vip, peer_port};
+ }
+ 
++void VirtualPeerManager::RemoveRelayEndpoint(const sockaddr_in& local) {
++  std::lock_guard<std::mutex> lock(mutex_);
++  relay_endpoints_.erase(EndpointKey(local));
++}
++
+ void VirtualPeerManager::SetTunnelFrameFn(std::function<void(const sockaddr_in&, const uint8_t*, size_t)> fn) {
+   std::lock_guard<std::mutex> lock(mutex_);
+   tunnel_frame_fn_ = std::move(fn);
+diff --git a/src/system/util/object_table.cpp b/src/system/util/object_table.cpp
+index 7061abd..b6079c0 100644
+--- a/src/system/util/object_table.cpp
++++ b/src/system/util/object_table.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <cstring>
+ 
+ #include <rex/logging.h>
+@@ -159,6 +160,11 @@ X_STATUS ObjectTable::RetainHandle(X_HANDLE handle) {
+ 
+ namespace {
+ thread_local bool t_socket_release_ok = false;
++std::atomic<bool> g_socket_guard{false};   // patch 82: set by online startup only
++}
++
++void ObjectTable::EnableSocketGuard(bool on) {
++  g_socket_guard.store(on, std::memory_order_relaxed);
+ }
+ 
+ void ObjectTable::AllowSocketRelease(bool on) {
+@@ -172,7 +178,8 @@ X_STATUS ObjectTable::ReleaseHandle(X_HANDLE handle) {
+   if (!entry) {
+     return X_STATUS_INVALID_HANDLE;
+   }
+-  if (entry->object && entry->object->type() == XObject::Type::Socket && !t_socket_release_ok) {
++  if (g_socket_guard.load(std::memory_order_relaxed) && entry->object && entry->object->type() == XObject::Type::Socket &&
++      !t_socket_release_ok) {
+     REXLOG_WARN("cogbox_online: kept socket {:08X}: the game closed that handle number as a non-socket handle "
+                 "(a stale handle on the Xbox 360)", handle);
+     return X_STATUS_INVALID_HANDLE;
+diff --git a/tests/unit/kernel/object_table_test.cpp b/tests/unit/kernel/object_table_test.cpp
+index c774394..9551508 100644
+--- a/tests/unit/kernel/object_table_test.cpp
++++ b/tests/unit/kernel/object_table_test.cpp
+@@ -575,6 +575,7 @@ TEST_CASE("ObjectTable keeps a socket handle unless closesocket releases it", "[
+   X_HANDLE handle = 0;
+   table.AddHandle(sock, &handle);
+ 
++  ObjectTable::EnableSocketGuard(true);  // patch 82: the guard is on only while online play runs
+   CHECK(table.ReleaseHandle(handle) == X_STATUS_INVALID_HANDLE);  // e.g. NtClose of a stale handle
+   CHECK(table.LookupObject<XObject>(handle).get() == sock);
+ 
+@@ -582,5 +583,17 @@ TEST_CASE("ObjectTable keeps a socket handle unless closesocket releases it", "[
+   CHECK(table.ReleaseHandle(handle) == X_STATUS_SUCCESS);  // closesocket
+   ObjectTable::AllowSocketRelease(false);
+   CHECK(table.LookupObject<XObject>(handle).get() == nullptr);
++  ObjectTable::EnableSocketGuard(false);
++  table.Reset();
++}
++
++TEST_CASE("ObjectTable releases a socket handle normally when online play is off", "[kernel][object_table][net]") {
++  InitTestLogging();
++  ObjectTable table;
++  auto* sock = new FakeSocket();
++  X_HANDLE handle = 0;
++  table.AddHandle(sock, &handle);
++  CHECK(table.ReleaseHandle(handle) == X_STATUS_SUCCESS);  // patch 82: no guard offline
++  CHECK(table.LookupObject<XObject>(handle).get() == nullptr);
+   table.Reset();
+ }
