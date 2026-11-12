@@ -17,17 +17,21 @@ function fakeFetch(routes: Routes) {
 }
 
 describe('checkMaster', () => {
-  it('shows uptime and version only, never players or lobbies', async () => {
-    const { f, seen } = fakeFetch({ 'http://m/status': { body: { uptime_s: 90000, version: '1.2', players: { total: 7 }, lobbies: 3 } } });
-    const l = await checkMaster(f, 'http://m', 'sek');
+  it('shows uptime only, from the public health endpoint, with no secret', async () => {
+    const { f, seen } = fakeFetch({ 'http://m/api/v1/health': { body: { status: 'ok', timestamp: 1, uptime_s: 90000 } } });
+    const l = await checkMaster(f, 'http://m');
     expect(l.state).toBe('up');
     expect(l.text).toBe('up 1d 1h');
-    expect(l.text).not.toMatch(/7|3 lobb|player/i);
-    expect(seen[0].headers['x-admin-secret']).toBe('sek');
+    expect(seen[0].headers['x-admin-secret']).toBeUndefined();
+  });
+  it('says just "up" when the uptime is missing (no NaN)', async () => {
+    const { f } = fakeFetch({ 'http://m/api/v1/health': { body: { status: 'ok' } } });
+    const l = await checkMaster(f, 'http://m');
+    expect(l).toMatchObject({ state: 'up', text: 'up' });
   });
   it('is down when it does not answer', async () => {
-    const { f } = fakeFetch({ 'http://m/status': new Error('ECONNREFUSED') });
-    const l = await checkMaster(f, 'http://m', 's');
+    const { f } = fakeFetch({ 'http://m/api/v1/health': new Error('ECONNREFUSED') });
+    const l = await checkMaster(f, 'http://m');
     expect(l).toMatchObject({ state: 'down', core: true });
   });
 });

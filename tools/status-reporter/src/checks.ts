@@ -27,17 +27,20 @@ function failLine(name: string, err: unknown, extra: Partial<Line> = {}): Line {
 // One-line Markdown link; strips characters that would break Discord's [text](url) form
 const link = (text: string, url?: string) => {
   const t = text.replace(/[[\]]/g, '');
-  return url && /^https:\/\//.test(url) ? `[${t}](${url.replace(/[()\s]/g, encodeURIComponent)})` : t;
+  return url && /^https:\/\//.test(url) ? `[${t}](${url.replace(/[()\s]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'))})` : t;
 };
 const firstLine = (s: string) => s.split('\n')[0].trim().slice(0, 100);
 
-// Uptime only: the brief rules out player and lobby counts, names and addresses
-export async function checkMaster(f: typeof fetch, baseUrl: string, secret: string): Promise<Line> {
+// Uptime only: the brief rules out player and lobby counts, names and addresses. The public health endpoint is enough,
+// so the reporter needs no admin secret (0.6.0 review).
+export async function checkMaster(f: typeof fetch, baseUrl: string): Promise<Line> {
   const name = 'Matchmaking server';
   try {
     const t0 = performance.now();
-    const s = await getJson<{ uptime_s: number }>(f, baseUrl.replace(/\/+$/, '') + '/status', { 'x-admin-secret': secret });
-    return { name, state: 'up', text: `up ${fmtUptime(s.uptime_s)}`, core: true, ms: Math.round(performance.now() - t0) };
+    const s = await getJson<{ status?: string; uptime_s?: number }>(f, baseUrl.replace(/\/+$/, '') + '/api/v1/health');
+    const ms = Math.round(performance.now() - t0);
+    const up = typeof s.uptime_s === 'number' && Number.isFinite(s.uptime_s) ? `up ${fmtUptime(s.uptime_s)}` : 'up';
+    return { name, state: 'up', text: up, core: true, ms };
   } catch {
     return { name, state: 'down', text: 'not answering', core: true };
   }

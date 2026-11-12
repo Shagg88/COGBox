@@ -74,12 +74,10 @@ services:
     restart: unless-stopped
     network_mode: host
     env_file:
-      - path: admin.env
-        required: false
       - path: status.env
         required: false
     environment:
-      - MASTER_URL=http://127.0.0.1:8090
+      - MASTER_URL=http://127.0.0.1:8080
       - STUN_HOST=127.0.0.1
       - STUN_PORT=3478
       - GITLAB_PROJECT=shagg88/cogbox
@@ -87,6 +85,19 @@ services:
       - GITHUB_REPO=Shagg88/COGBox
     volumes:
       - status-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "3"
 volumes:
   master-data:
   admin-data:

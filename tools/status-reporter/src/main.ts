@@ -10,7 +10,6 @@ import { publish } from './webhook.js';
 export interface Config {
   webhookUrl?: string;
   masterUrl: string;
-  adminSecret: string;
   stunHost: string;
   stunPort: number;
   gitlabProject: string;
@@ -25,8 +24,7 @@ export interface Config {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     webhookUrl: env.DISCORD_WEBHOOK_URL || undefined,
-    masterUrl: env.MASTER_URL || 'http://127.0.0.1:8090',
-    adminSecret: env.ADMIN_SHARED_SECRET || '',
+    masterUrl: env.MASTER_URL || 'http://127.0.0.1:8080',
     stunHost: env.STUN_HOST || '127.0.0.1',
     stunPort: Number(env.STUN_PORT) || 3478,
     gitlabProject: env.GITLAB_PROJECT || 'shagg88/cogbox',
@@ -51,7 +49,7 @@ export async function collect(cfg: Config, f: typeof fetch, cache: Map<string, {
     return line;
   };
   const jobs: Promise<Line>[] = [
-    checkMaster(f, cfg.masterUrl, cfg.adminSecret),
+    checkMaster(f, cfg.masterUrl),
     checkStun(cfg.stunHost, cfg.stunPort),
     cached('gitlab', () => checkGitlab(f, cfg.gitlabProject))
   ];

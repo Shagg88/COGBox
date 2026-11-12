@@ -9,7 +9,8 @@ It shows:
 - **STUN (UDP 3478):** whether it answers a binding request.
 - **GitLab:** the latest release, the pipeline on the default branch, the newest commit and the open issue count. Checked every 5 minutes.
 - **SourceForge:** the latest file, with a link.
-- **GitHub:** off by default. When it's on and can't be reached, it shows "unavailable".
+- **GitHub:** on (`GITHUB_ENABLED=true` in the compose file), checked every 5 minutes (about 48 unauthenticated
+  requests an hour, under GitHub's 60 per address). When it can't be reached, it shows "unavailable".
 
 The colour is red when the matchmaking server or STUN is down, amber when another source has a problem, and green
 otherwise. GitHub never changes the colour. "Last checked … ago" stops moving if the reporter itself stops.
@@ -26,7 +27,7 @@ otherwise. GitHub never changes the colour. "Last checked … ago" stops moving 
 
 Without `status.env` the service stays idle and logs one line saying so.
 
-To turn GitHub on, set `GITHUB_ENABLED=true` in `docker-compose.oracle.yml` and run step 3 again.
+To turn GitHub off, set `GITHUB_ENABLED=false` in `docker-compose.oracle.yml` and run step 3 again.
 
 ## Dry run
 
