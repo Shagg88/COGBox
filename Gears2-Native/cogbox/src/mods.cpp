@@ -288,9 +288,14 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
         std::string nm = names[i];
         if (oneTop) { size_t s = nm.find('/'); nm = s == std::string::npos ? "" : nm.substr(s + 1); }
         if (nm.empty() || nm.back() == '/') continue;
+        // 0.6.1 (review C2): Windows drops trailing dots and spaces when it creates a file, so "x.dll." is x.dll
+        while (!nm.empty() && (nm.back() == '.' || nm.back() == ' ')) nm.pop_back();
+        if (nm.empty() || nm.back() == '/') continue;
         std::string ext = lower(nm.substr(nm.find_last_of('.') == std::string::npos ? nm.size() : nm.find_last_of('.')));
         if (ext == ".xex" || ext == ".xexp" || ext == ".dll" || ext == ".exe") continue;
-        std::string out = part;
+        // 0.6.1 (review C1): the separator was missing - files went to "<name>.partialGearGame\..." beside the mod's
+        // folder, and an empty folder was installed as the mod.
+        std::string out = part + "\\";
         for (char c : nm) out += c == '/' ? '\\' : c;
         make_dirs(out.substr(0, out.find_last_of('\\')));
         size_t sz = 0;
