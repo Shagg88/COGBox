@@ -40,5 +40,6 @@ std::vector<uint32_t> AllObjects();                   // every object in GObjObj
 int PropertyOffset(uint32_t cls, const char* property);  // -1 when not found
 int PropertySize(uint32_t cls, const char* property);    // ElementSize, -1 when not found
 uint32_t BoolMask(uint32_t cls, const char* property);   // 0 for any other property type
+std::string PropertyType(uint32_t cls, const char* property);   // "IntProperty", "FloatProperty"...; "" when not found
 
 }  // namespace ue3::obj

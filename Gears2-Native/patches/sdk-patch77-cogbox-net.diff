@@ -1,10 +1,10 @@
 diff --git a/include/rex/kernel/xam/net/punch.h b/include/rex/kernel/xam/net/punch.h
 new file mode 100644
-index 0000000..05ac119
+index 0000000..3e7af00
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/punch.h
 @@ -0,0 +1,27 @@
-+// COGBox SDK patch 63: the CGBP punch packet. Sent from the game's own socket to open (and keep open) the NAT path to a
++// COGBox SDK patch 77: the CGBP punch packet. Sent from the game's own socket to open (and keep open) the NAT path to a
 +// peer; never passed to the game.
 +#pragma once
 +
@@ -33,11 +33,11 @@ index 0000000..05ac119
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/sockaddr.h b/include/rex/kernel/xam/net/sockaddr.h
 new file mode 100644
-index 0000000..722e934
+index 0000000..ed34ae7
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/sockaddr.h
 @@ -0,0 +1,10 @@
-+// COGBox SDK patch 63: the host sockaddr_in for the COGBox online code.
++// COGBox SDK patch 77: the host sockaddr_in for the COGBox online code.
 +#pragma once
 +
 +#if defined(_WIN32)
@@ -49,11 +49,11 @@ index 0000000..722e934
 +#endif
 diff --git a/include/rex/kernel/xam/net/stun.h b/include/rex/kernel/xam/net/stun.h
 new file mode 100644
-index 0000000..30b75f9
+index 0000000..9613a6d
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/stun.h
 @@ -0,0 +1,28 @@
-+// COGBox SDK patch 63: STUN (RFC 5389) Binding Request / Response, the only STUN COGBox needs. A game socket asks the
++// COGBox SDK patch 77: STUN (RFC 5389) Binding Request / Response, the only STUN COGBox needs. A game socket asks the
 +// STUN server what public address and port its packets come from.
 +#pragma once
 +
@@ -83,11 +83,11 @@ index 0000000..30b75f9
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/upnp.h b/include/rex/kernel/xam/net/upnp.h
 new file mode 100644
-index 0000000..4011083
+index 0000000..88a954c
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/upnp.h
 @@ -0,0 +1,20 @@
-+// COGBox SDK patch 63: UPnP IGD port mapping (optional; most players behind CGNAT have none).
++// COGBox SDK patch 77: UPnP IGD port mapping (optional; most players behind CGNAT have none).
 +#pragma once
 +
 +#include <cstdint>
@@ -115,7 +115,7 @@ index 984b97d..2d43466 100644
      xam/xam_locale.cpp
      xam/xam_msg.cpp
      xam/xam_net.cpp
-+    # COGBox SDK patch 63: online play (STUN, hole punching)
++    # COGBox SDK patch 77: online play (STUN, hole punching)
 +    xam/net/stun.cpp
 +    xam/net/punch.cpp
 +    xam/net/upnp.cpp
@@ -124,11 +124,11 @@ index 984b97d..2d43466 100644
      xam/xam_party.cpp
 diff --git a/src/kernel/xam/net/punch.cpp b/src/kernel/xam/net/punch.cpp
 new file mode 100644
-index 0000000..91f4386
+index 0000000..2783a8a
 --- /dev/null
 +++ b/src/kernel/xam/net/punch.cpp
 @@ -0,0 +1,40 @@
-+// COGBox SDK patch 63: the CGBP punch packet.
++// COGBox SDK patch 77: the CGBP punch packet.
 +#include <rex/kernel/xam/net/punch.h>
 +
 +namespace rex::kernel::xam::net {
@@ -170,11 +170,11 @@ index 0000000..91f4386
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/stun.cpp b/src/kernel/xam/net/stun.cpp
 new file mode 100644
-index 0000000..0609ff5
+index 0000000..9f62daf
 --- /dev/null
 +++ b/src/kernel/xam/net/stun.cpp
 @@ -0,0 +1,86 @@
-+// COGBox SDK patch 63: STUN Binding Request / Response.
++// COGBox SDK patch 77: STUN Binding Request / Response.
 +#include <rex/kernel/xam/net/stun.h>
 +
 +#include <cstring>
@@ -262,11 +262,11 @@ index 0000000..0609ff5
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/upnp.cpp b/src/kernel/xam/net/upnp.cpp
 new file mode 100644
-index 0000000..515f138
+index 0000000..7982c54
 --- /dev/null
 +++ b/src/kernel/xam/net/upnp.cpp
 @@ -0,0 +1,108 @@
-+// COGBox SDK patch 63: UPnP IGD port mapping through miniupnpc.
++// COGBox SDK patch 77: UPnP IGD port mapping through miniupnpc.
 +#include <rex/kernel/xam/net/upnp.h>
 +
 +#if defined(_WIN32)
@@ -382,7 +382,7 @@ index 50b7e04..99e4986 100644
  
  if(WIN32)
      target_link_libraries(rexruntime PRIVATE ws2_32)
-+    # COGBox SDK patch 63: online play (UPnP via miniupnpc, adapter list via iphlpapi)
++    # COGBox SDK patch 77: online play (UPnP via miniupnpc, adapter list via iphlpapi)
 +    target_link_libraries(rexruntime PRIVATE libminiupnpc-static iphlpapi)
 +endif()
 +
@@ -408,24 +408,24 @@ index 7bda2ad..71acfd8 100644
      ${CMAKE_CURRENT_SOURCE_DIR}
  )
  
-+# COGBox SDK patch 63/64: net tests write only here
++# COGBox SDK patch 77/78: net tests write only here
 +target_compile_definitions(unit_tests PRIVATE COGBOX_NET_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}/net-test-data")
 +
  target_link_libraries(unit_tests PRIVATE
      rexcodegen
      rexruntime
      Catch2::Catch2WithMain
-+    $<$<PLATFORM_ID:Windows>:ws2_32>  # COGBox SDK patch 63: net tests
++    $<$<PLATFORM_ID:Windows>:ws2_32>  # COGBox SDK patch 77: net tests
  )
  
  # ReXApp is shipped as source for recomp projects, rather than compiled into
 diff --git a/tests/unit/net/punch_test.cpp b/tests/unit/net/punch_test.cpp
 new file mode 100644
-index 0000000..afeb6f7
+index 0000000..4c9eb0d
 --- /dev/null
 +++ b/tests/unit/net/punch_test.cpp
 @@ -0,0 +1,50 @@
-+// COGBox SDK patch 63: CGBP punch packet codec tests.
++// COGBox SDK patch 77: CGBP punch packet codec tests.
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <rex/kernel/xam/net/punch.h>
@@ -477,11 +477,11 @@ index 0000000..afeb6f7
 +}
 diff --git a/tests/unit/net/stun_test.cpp b/tests/unit/net/stun_test.cpp
 new file mode 100644
-index 0000000..ba6ffa4
+index 0000000..2f7c70e
 --- /dev/null
 +++ b/tests/unit/net/stun_test.cpp
 @@ -0,0 +1,82 @@
-+// COGBox SDK patch 63: STUN Binding Request / Response codec tests.
++// COGBox SDK patch 77: STUN Binding Request / Response codec tests.
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <cstring>
@@ -565,11 +565,11 @@ index 0000000..ba6ffa4
 +}
 diff --git a/tests/unit/net/upnp_test.cpp b/tests/unit/net/upnp_test.cpp
 new file mode 100644
-index 0000000..86c5385
+index 0000000..89a9d0f
 --- /dev/null
 +++ b/tests/unit/net/upnp_test.cpp
 @@ -0,0 +1,19 @@
-+// COGBox SDK patch 63: UPnP port mapping. Discovery is bound to the loopback interface so the test never reaches (or
++// COGBox SDK patch 77: UPnP port mapping. Discovery is bound to the loopback interface so the test never reaches (or
 +// changes) a real router: no IGD answers, and the call must give up quickly.
 +#include <catch2/catch_test_macros.hpp>
 +
@@ -598,7 +598,7 @@ index f102b56..ed57ee1 100644
      FOLDER "FFmpeg")
 +
 +#=============================================================================
-+# miniupnpc - UPnP IGD port mapping (COGBox SDK patch 63, online play)
++# miniupnpc - UPnP IGD port mapping (COGBox SDK patch 77, online play)
 +# Fetched as the release tarball, pinned by hash. A local copy can be used with
 +# -DFETCHCONTENT_SOURCE_DIR_MINIUPNPC=<folder holding miniupnpc's own CMakeLists.txt>.
 +#=============================================================================

@@ -6,8 +6,18 @@ is one of my favourites, so the project is near and dear to my heart.
 
 **Fully playable** with a few hiccups - if you hit one, please send a problem report (see below).
 
-**[Download the latest release](https://gitlab.com/shagg88/cogbox/-/releases)** · You need your own copy of each game
+**COGBox is back on GitHub!** This is our home again, and we're keeping [GitLab](https://gitlab.com/shagg88/cogbox) as a full backup
+with the same releases.
+
+**[Download the latest release](https://github.com/Shagg88/COGBox/releases)** · You need your own copy of each game
 and its title update. No game files are included, ever.
+
+**Online multiplayer is here (0.6.0):** play Gears of War online with friends again, peer to peer through COGBox's own
+matchmaking - no Xbox Live needed. Off until you turn it on in the launcher's Social tab.
+
+**[Join the COGBox Discord](https://discord.gg/Y6qGbzBKQZ)** - find people to play with, get help, share feedback.
+
+<a href="https://recomplauncher.com/game/cogbox"><img src="https://recompstore.com/assets/press/badge-dark.svg" alt="Get it on RecompStore" height="56"></a>
 
 > An unofficial fan project, not affiliated with Microsoft, Epic Games or The Coalition. "Gears of War", "Xbox" and
 > "Xbox 360" are trademarks of Microsoft.
@@ -37,6 +47,7 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 - **Lower input lag:** NVIDIA Reflex and AMD Anti-Lag 2 where your GPU has them.
 - **Keyboard and mouse** or **Xbox / PlayStation controllers**, with button prompts that follow what you use.
 - **Split-screen co-op** in all four games, and **System Link** LAN co-op (experimental).
+- **Online multiplayer** (0.6.0, off by default): peer to peer through COGBox's own matchmaking.
 - **Insane from the start**, **achievements** in all four games, chapter select, and an **in-game menu**
   (Back + Start, or F1) to change settings or quit.
 - **DLC and mods**, every language your copy has, and screenshots with **\\**.
@@ -52,7 +63,7 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 
 ## How to play
 
-1. Download `COGBox-<version>.7z` from [Releases](https://gitlab.com/shagg88/cogbox/-/releases) and unpack the whole
+1. Download `COGBox-<version>.7z` from [Releases](https://github.com/Shagg88/COGBox/releases) and unpack the whole
    folder (7-Zip, or Windows 11 itself) somewhere you can write to, e.g. `C:\Games\COGBox` - not Program Files, and not a OneDrive / Dropbox folder.
 2. Start `CogBox.exe`. If Windows says "Windows protected your PC", choose **More info > Run anyway** (the programs
    aren't code-signed).
@@ -89,7 +100,7 @@ does it in one go.
 
 When a game closes unexpectedly, COGBox explains what happened and offers a **problem report** - one zip with the log,
 your settings and your PC's specs (no saves or game files, and your Windows user name removed). Nothing is sent by
-itself: open a [ticket on GitLab](https://gitlab.com/shagg88/cogbox/-/issues), say what you were doing and attach the
+itself: open a [ticket on GitHub](https://github.com/Shagg88/COGBox/issues), say what you were doing and attach the
 zip.
 
 Common causes: a CPU without AVX2, an old graphics driver, or a different release of the game than the port is made for
@@ -108,7 +119,7 @@ The full text, including takedown requests, is in [`LEGAL.md`](LEGAL.md); what C
 
 ## What's coming
 
-Plans, not promises: online co-op, Vulkan as the default, better frame generation, texture packs, multi-core
+Plans, not promises: Vulkan as the default, better frame generation, texture packs, multi-core
 rendering, more controllers and accessibility options, and tested Linux / Steam Deck support.
 
 ## Community translations
@@ -162,7 +173,7 @@ renderer), the console's D3D library, Unreal Engine 3, and each game. Each game 
 COGBox and the ports' own code are under the **MIT licence** ([`LICENSE`](LICENSE)).
 
 **Using our code?** You're welcome to. If you use COGBox's code in your own project, please credit
-**"COGBox by Shagg"** and link to <https://gitlab.com/shagg88/cogbox> in your readme or credits. (The MIT licence
+**"COGBox by Shagg"** and link to <https://github.com/Shagg88/COGBox> in your readme or credits. (The MIT licence
 already asks you to keep the copyright notice in copies of the code.)
 
 Also used, each under its own licence: Xenia / Canary / Edge (BSD-3), the rexglue SDK (BSD-style), FFmpeg (LGPL-2.1+,
@@ -185,7 +196,7 @@ repository the texts are in `Gears2-Native/THIRD_PARTY_NOTICES.md` and `Gears2-N
 
 | Component (shipped in the download) | Version | Licence | Text in the download |
 |---|---|---|---|
-| COGBox launcher and the ports' own code | 0.5.0 | MIT | `LICENSE.txt` |
+| COGBox launcher and the ports' own code | 0.6.0 | MIT | `LICENSE.txt` |
 | rexglue SDK runtime (`rexruntime.dll`, `rexgpu-xenos.dll`), derived from Xenia | 0.10.0-dev (bd833a2 + our patches) | BSD-3-Clause | `licenses\rexglue-sdk\` (+ its bundled libraries' licences) |
 | Xenia / Canary / Edge code ported into the renderer | Canary e6cd2e4, Edge 5045c19 | BSD-3-Clause | `licenses\Xenia-LICENSE.txt` |
 | FFmpeg XMA decoder (`avcodec-63.dll`, `avutil-61.dll`; also linked into `rexruntime.dll`) | 9.0.2 (launcher); Xenia fork (runtime) | LGPL-2.1-or-later (not a GPL build) | `licenses\FFmpeg-NOTICE.txt`, `FFmpeg-LGPL-2.1.txt` |

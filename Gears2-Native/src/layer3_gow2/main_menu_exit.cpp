@@ -20,6 +20,10 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <string>
 #include <cctype>
 #include <filesystem>
 #include <string_view>
@@ -44,6 +48,9 @@ bool ContainsNoCase(std::string_view s, std::string_view needle) {
   return it != s.end();
 }
 
+// Armed by GearStart.xxx (the front end loaded at start): the Exit Game row's time window does not apply then.
+std::atomic<bool> g_file_armed{false};
+
 void Gow2OnFileOpenedExit(std::string_view guest_path, const std::filesystem::path* host_path) {
   if (!REXCVAR_GET(gow_main_menu_exit)) return;
 
@@ -53,9 +60,11 @@ void Gow2OnFileOpenedExit(std::string_view guest_path, const std::filesystem::pa
                        ContainsNoCase(guest_path, "ui_scenes_credits") ||
                        (host_path && (ContainsNoCase(host_path->string(), "sp_credits_p") ||
                                       ContainsNoCase(host_path->string(), "ui_scenes_credits")));
-    if (match) rex::glue::ExitGame();
+    if (match && !rex::glue::ExitRowShownLongAgo()) rex::glue::ExitGame();
   }
   ue3::NoteFileOpenedForExit(guest_path);
+  if (ContainsNoCase(guest_path, "gearstart") && ue3::InFrontEndForExit()) g_file_armed.store(true);
+  else if (!ue3::InFrontEndForExit()) g_file_armed.store(false);
 }
 
 }  // namespace
@@ -104,19 +113,78 @@ bool MatchesStringNoCase(const uint8_t* base, uint32_t addr, std::string_view te
   return GuestUtf16EqualsNoCase(base, addr, text) || GuestAsciiEqualsNoCase(base, addr, text);
 }
 
+// Shagg 2026-11-10 10:56: in Gears 2 (TU6) Exit Game played the credits instead of quitting. The credits screen is
+// part of the front end already in memory (no SP_Credits_P / ui_scenes_credits file opens: none in that day's logs),
+// so only this Localize hook can see it, and it matched "credits" exactly. Now any section / package that CONTAINS
+// "credit" counts (the Options menu's own label lookup, section OptionsMenu, still does not), and the lookups that
+// mention credits are logged (a few) so a miss shows the real names.
+namespace {
+std::string GuestText(const uint8_t* base, uint32_t addr) {
+  std::string out;
+  if (!base || !addr) return out;
+  for (uint32_t i = 0; i < 64; ++i) {  // UTF-16 BE, ASCII range only
+    const uint16_t c = uint16_t((base[addr + 2 * i] << 8) | base[addr + 2 * i + 1]);
+    if (!c) return out;
+    if (c < 32 || c > 126) { out.clear(); break; }
+    out += char(std::tolower(int(c)));
+  }
+  if (out.size() == 64) return out;  // 64 UTF-16 characters, no end seen: keep them
+  for (uint32_t i = 0; i < 64; ++i) {  // 8-bit
+    const uint8_t c = base[addr + i];
+    if (!c) return out;
+    if (c < 32 || c > 126) return std::string();
+    out += char(std::tolower(int(c)));
+  }
+  return std::string();
+}
+std::atomic<int> g_credit_logs{0};
+std::atomic<bool> g_hook_seen{false};
+std::atomic<int64_t> g_label_seen_ms{-1};  // when the Exit Game row's label was last looked up
+constexpr int64_t kLabelWindowMs = 30000;
+int64_t SteadyMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+}  // namespace
+
+bool ExitRowShownLongAgo() {
+  if (g_file_armed.load()) return false;  // the front end loaded from GearStart.xxx: Exit Game as it always worked
+  const int64_t seen = g_label_seen_ms.load(std::memory_order_relaxed);
+  if (seen < 0 || SteadyMs() - seen <= kLabelWindowMs) return false;
+  REXLOG_INFO("main_menu_exit: credits {} s after the Exit Game row was last shown - not quitting", (SteadyMs() - seen) / 1000);
+  return true;
+}
+
 bool MatchesCredits(const uint8_t* base, const PPCContext& ctx) {
-  if (!base || !ue3::InFrontEndForExit()) {
-    return false;
-  }
+  if (!base) return false;
+  // Review (cc59e80): this runs on every Localize call - cheap compares first, strings only while armed.
+  // The Exit Game row's own label (OptionsMenu / Credits) is looked up when the main menu shows - also when the player
+  // comes back from a level, where GearStart.xxx is not opened again: that arms Exit Game (a level disarms it). The
+  // label never exits by itself.
   if (MatchesStringNoCase(base, ctx.r4.u32, "optionsmenu")) {
+    if (MatchesStringNoCase(base, ctx.r5.u32, "credits")) {
+      g_label_seen_ms.store(SteadyMs(), std::memory_order_relaxed);
+      ue3::ArmFrontEndForExit("Exit Game row shown");
+    }
     return false;
   }
-  if (MatchesStringNoCase(base, ctx.r4.u32, "credits") ||
-      MatchesStringNoCase(base, ctx.r6.u32, "credits") ||
-      MatchesStringNoCase(base, ctx.r5.u32, "line_00000")) {
-    return true;
-  }
-  return false;
+  if (!ue3::InFrontEndForExit()) return false;
+  if (!g_hook_seen.exchange(true)) REXLOG_INFO("main_menu_exit: Localize hook active while armed (TU6 sub_8228AF78)");
+  const std::string section = GuestText(base, ctx.r4.u32), key = GuestText(base, ctx.r5.u32),
+                    package = GuestText(base, ctx.r6.u32);
+  const bool mentions = section.find("credit") != std::string::npos || package.find("credit") != std::string::npos ||
+                        key.find("credit") != std::string::npos || key == "line_00000";
+  if (!mentions) return false;
+  const bool label = section == "optionsmenu";  // the menu row itself ("Exit Game" and its tip)
+  if (g_credit_logs.fetch_add(1) < 12)
+    REXLOG_INFO("main_menu_exit: Localize section '{}' key '{}' package '{}'{}", section, key, package,
+                label ? " (the menu's own label)" : " -> Exit Game");
+  const bool credits = !label && (section.find("credit") != std::string::npos ||
+                                  package.find("credit") != std::string::npos || key == "line_00000");
+  // Review: a pause / options screen in a level might look the label up too and leave Exit Game armed until the
+  // campaign's own end credits. A label seen long ago does not count (Exit Game is picked right after the row shows);
+  // a front end armed by GearStart.xxx with no label seen still does (the first-start case that works today).
+  return credits && !ExitRowShownLongAgo();
 }
 
 }  // namespace rex::glue

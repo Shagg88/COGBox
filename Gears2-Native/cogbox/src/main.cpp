@@ -190,7 +190,7 @@ static void answered(App &a)
             if (g_updateAfterLegal) { g_updateAfterLegal = false; update_check_start(COGBOX_VERSION); }
         } else if (m.answer == 1) {
             const std::string local = join(exe_dir(), "LEGAL.md");
-            shell_open(file_exists(local) ? local : std::string("https://gitlab.com/shagg88/cogbox"));
+            shell_open(file_exists(local) ? local : std::string("https://github.com/Shagg88/COGBox"));
         } else {
             ask(a, "legaldecline", -1, "See you later", "No problem - COGBox will close now. You're welcome back any time.", { "OK" });
             return;
@@ -202,7 +202,7 @@ static void answered(App &a)
     else if (m.tag == "whatsnew") {   // to-do 13: this version's release notes (legal2-050: on GitLab)
         a.ini.set("Notices", "WhatsNewSeen", COGBOX_VERSION);
         a.ini.save();
-        if (m.answer == 0) shell_open(std::string("https://gitlab.com/shagg88/cogbox/-/releases"));
+        if (m.answer == 0) shell_open(std::string("https://github.com/Shagg88/COGBox/releases"));
     }
     else if (m.tag == "langpick") {   // 0.2.0: the language prompt - Automatic, then languages()
         const auto &L = languages();
@@ -238,6 +238,7 @@ static void answered(App &a)
     else if (m.tag == "autoset" && m.answer == 0) auto_settings_apply(a, m.game);   // Shagg 29 Oct
     else if (m.tag == "protonrec" || m.tag == "protonfound") linux_answer(a, m);   // proton049
     else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
+    else if (m.tag == "tumismatch") a.joinLobby[m.game].clear();   // 0.6.0: Cancel drops a pending Join
     else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4
     else if (m.tag == "socialremove") social_remove_answer(m.answer);   // social step 3
     else if (m.tag == "socialdelete") social_delete_answer(a, m.answer);   // 0.6.0 review: delete the online account

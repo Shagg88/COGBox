@@ -112,6 +112,8 @@ int line_row(App &a, const std::string &tag, const std::string &state, ImVec4 st
 
 }  // namespace
 
+bool social_delete_busy() { return g_deleting; }   // 0.6.0: deleting a profile waits for this
+
 void social_restart(App &a)
 {
     const bool on = a.ini.get("Online", "Enabled") == "1";

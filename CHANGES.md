@@ -1,5 +1,42 @@
 # COGBox changes
 
+## 0.6.0
+
+### COGBox is back on GitHub
+- **GitHub is COGBox's home again:** https://github.com/Shagg88/COGBox (downloads, release notes, Issues). GitLab (https://gitlab.com/shagg88/cogbox) is the full backup, with the same releases.
+- The updater checks GitHub first, then GitLab, so updates keep coming even if one site is down. The "open a ticket" buttons and links go to GitHub.
+
+### Online play (by Flippage)
+- **Online multiplayer** through COGBox's own matchmaking server, peer to peer (nothing is relayed through a server). It's off until you turn it on. What is sent and kept is in [PRIVACY.md](PRIVACY.md), and the launcher can delete your online account.
+- **Social**: friends, invites and profile pictures, also as a tab of the in-game menu (F8 opens it there).
+- Works behind strict routers without UPnP: when two players have no direct path, their connection is set up over a route that already works between the players, still peer to peer (no relay server). A party host's join connection is no longer closed by the game right after it opens.
+- Regions: **US**, **OCE** and **Europe** (US West and US East are now one US region).
+- Gears 3 and Judgment saves keep working when you switch online play on or off. Nothing is deleted, and Gears 3 saves are backed up before they're changed.
+- **Online safety:** limits on what another player can make your game hold in memory or open.
+
+### Mods (by KiltedKernel)
+- **Campaign mods:** a mod can add its own campaign with chapters to Select Chapter (Gears 3), without clashing with the game's acts or other mods.
+- **Mods tab:** shows what the game will do with each mod: a mod it leaves out and why, where each campaign chapter goes, and `mod.ini` keys it doesn't understand.
+- Mods can set class defaults (`[ClassDefaults]`), checked against the setting's real type.
+- [docs/modding.md](docs/modding.md): the mod format for creators. Developer tools: a scripted controller (Gears 1 and 3), a property log and a Kismet trace.
+
+### Also new
+- **Delete a profile:** sign in to it, then Profiles > **DELETE THIS PROFILE**. Its saves, name and picture move to the `_old-files` folder (nothing is erased); profile 1 can't be deleted.
+- **Gears of War 1 System Link:** smoother network play with higher net speed limits. GitHub #72.
+- **In-game menu:** Back + Start (or F1) opens the menu on the tab you last used.
+- **More button prompts**: extra prompt sheets (GitHub #223).
+
+### Faster
+- **Gears of War 3:** the Character LOD option is gone; the game always uses its original character detail. The lower settings cost a lot of frame rate.
+
+### Fixes
+- **Gears 2:** "Exit Game" in the game's own menu now quits after you've played a level, instead of opening the credits. The in-game menu's Quit box can be answered Yes again.
+- **Judgment:** fixed a freeze where the game waited on the graphics card forever. It now gives up after 2 seconds (by Flippage).
+- **Sound:** sounds now start where the game asks instead of always from the beginning, and the game no longer reuses a sound the decoder is still reading (from Xenia Edge).
+- **Timeouts:** some timed waits in the games never ran out; they do now (from Xenia Edge).
+- **Launcher:** COGBox comes back to the front after you quit a game from its in-game menu.
+- **Mods:** a game no longer crashes when a mod writes to memory the game has freed; mod folders and files with non-Latin names (Chinese, emoji, etc.) no longer crash the Mods list.
+
 ## 0.5.0
 
 ### Important: update by hand this one time

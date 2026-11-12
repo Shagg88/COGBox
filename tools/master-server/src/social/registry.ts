@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { normalizeRegion } from '../regions.js';
 
 // Who is connected: per account at most one launcher socket and one game socket (the game socket also says which
 // title it runs). A second socket of the same role replaces the first; different roles coexist.
@@ -53,7 +54,7 @@ export class Registry {
     let replaced: WebSocket | undefined;
     if (role === 'game') {
       replaced = e.game?.socket;
-      e.game = { socket, titleId, region };
+      e.game = { socket, titleId, region: normalizeRegion(region) };
     } else {
       replaced = e.launcher;
       e.launcher = socket;
@@ -78,7 +79,7 @@ export class Registry {
 
   // Games online per region, across every game (the launcher's Region dropdown).
   regionCounts(): Record<string, number> {
-    const out: Record<string, number> = { 'us-e': 0, 'us-w': 0, oceania: 0, europe: 0 };
+    const out: Record<string, number> = { us: 0, oceania: 0, europe: 0 };
     for (const e of this.entries.values()) {
       const r = e.game?.region;
       if (r && r in out) ++out[r];
@@ -98,6 +99,7 @@ export class Registry {
 
   // Games online in a title: everywhere, and in a region (no region, or Any: the same as everywhere).
   population(titleId: string, region?: string): { worldwide: number; region: number } {
+    region = normalizeRegion(region);
     let worldwide = 0, inRegion = 0;
     for (const e of this.entries.values()) {
       if (e.game?.titleId !== titleId) continue;

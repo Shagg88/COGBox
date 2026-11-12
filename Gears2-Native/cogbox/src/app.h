@@ -17,7 +17,7 @@
 #include "util.h"
 #include "proton.h"   // proton049
 
-#define COGBOX_VERSION "0.5.0"
+#define COGBOX_VERSION "0.6.0"
 #define COGBOX_NAME "COGBox"
 
 namespace gs = cogbox::gears;
@@ -151,6 +151,7 @@ void achievements_tab_open_all();
 // social_tab.cpp (social step 3): the SOCIAL tab, and its worker (re)started from CogBox.ini [Online] and the profile
 void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1);
 void social_restart(App &a);
+bool social_delete_busy();   // 0.6.0: DELETE ONLINE ACCOUNT is still waiting for the server
 void social_send_icon(App &a);   // the profile picture friends see (at sign-in and when it changes)
 void social_remove_answer(int answer);
 void social_delete_answer(App &a, int answer);   // DELETE ONLINE ACCOUNT, after the player confirmed
@@ -171,7 +172,14 @@ const std::vector<DlcItem> &dlc_list(int game);          // cached; refreshed af
 void dlc_remove_ask(App &a, int game, const DlcItem &item);
 void dlc_remove_confirmed(App &a);   // the "dlcremove" question answered yes
 // 0.2.0: mods (mods.cpp) - <Game>\mods\<mod>\, laid out like the game's data folder
-struct ModItem { std::string folder, path, name, version, author, description; bool enabled = false; };
+struct ModItem {
+    std::string folder, path, name, version, author, description;
+    bool enabled = false;
+    // Gears 3 (the game's own rules, modcore): why the game will leave it out, its campaign's place in Select Chapter,
+    // and what in its mod.ini the game does not understand
+    std::string problem, campaign;
+    std::vector<std::string> notes;
+};
 std::string mods_dir(int game);
 std::vector<ModItem> mods_list(App &a, int game);         // in load order
 void mods_set_enabled(App &a, int game, const std::string &folder, bool on);

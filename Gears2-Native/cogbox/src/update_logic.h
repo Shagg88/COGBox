@@ -19,6 +19,9 @@ static const Source kSources[] = {
     // 0.5.0 (Shagg 9 Nov): GitLab is COGBox's home and update source: releases at gitlab.com/shagg88/cogbox, the files
     // in its generic package registry (packages/generic/cogbox/<version>/COGBox-<version>.7z + .sha256). SourceForge
     // stays as the fallback while it still exists (a source that doesn't answer is simply skipped).
+    // 0.6.0 (Shagg 11 Nov): GitHub is back (account restored) and is COGBox's home again: releases at
+    // github.com/Shagg88/COGBox (the .7z + .sha256 release assets). GitLab is the backup, then SourceForge.
+    { SourceKind::GitHub, "GitHub", "/Shagg88/COGBox" },
     { SourceKind::GitLab, "GitLab", "shagg88/cogbox" },
     { SourceKind::SourceForge, "SourceForge", "cogbox" },
 };

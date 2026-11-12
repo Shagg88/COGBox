@@ -74,7 +74,7 @@ rexglue_apply_target_settings(gn_layer0_xenos)
 # Layer 2: Unreal Engine 3.
 add_library(gn_layer2_ue3 STATIC src/layer2_ue3/launch_command_line.cpp src/layer2_ue3/config_bundle.cpp
             src/layer2_ue3/config_install.cpp src/layer2_ue3/package_patch.cpp src/layer2_ue3/lzx.cpp
-            src/layer2_ue3/console.cpp src/layer2_ue3/mod_extras.cpp src/layer2_ue3/objects.cpp
+            src/layer2_ue3/console.cpp src/layer2_ue3/mod_extras.cpp src/layer2_ue3/objects.cpp src/layer2_ue3/script_input.cpp
             src/layer2_ue3/modcore/modcore.cpp)
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 # modcore (MIT, from KiltedKernel's Gears 3 port): mod.ini rules, config fragments, bare-file mods (ue3/mod_extras.h)
@@ -101,6 +101,9 @@ set(GOW3_SOURCES
     src/layer3_gow3/mouse_look.cpp
     src/layer3_gow3/main_menu_exit.cpp
     src/layer3_gow3/mod_chapters.cpp
+    src/layer3_gow3/squad_catch_up.cpp
+    src/layer3_gow3/kismet_trace.cpp
+    src/layer3_gow3/prop_log.cpp
     src/layer3_gow3/checkpoint_stream.cpp
     src/layer3_gow3/unlocks.cpp
 )
@@ -314,8 +317,10 @@ if(GN_BUILD_TESTS)
         ${GN_LAYER0_TESTS}/layer0_pm4_test.cpp
         ${GN_LAYER0_DIR}/pm4.cpp
         ${GN_LAYER0_TESTS}/layer0_display_gamma_test.cpp
-        ${GN_LAYER0_DIR}/display_gamma.cpp)
-    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS})
+        ${GN_LAYER0_DIR}/display_gamma.cpp
+        tests/modcore_campaigns_test.cpp
+        src/layer2_ue3/modcore/modcore.cpp)
+    target_include_directories(gn_tests PRIVATE ${GN_LAYER0_DIR}/include ${GN_LAYER0_TESTS} src/layer2_ue3)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(gn_tests PRIVATE -ffp-contract=off)
     elseif(MSVC)

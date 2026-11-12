@@ -40,7 +40,7 @@ std::optional<SocialLists> parse_friends(const std::string& body);
 // GET /api/v1/invites (the ones sent to this player); empty when none or not that answer.
 std::vector<SocialInvite> parse_invites(const std::string& body);
 
-// The launcher's game index for a title id (0 Gears of War, 1 Gears 2, 2 Gears 3, 3 Judgment), -1 for another title.
+// The launcher's game index for a title id (GameId order from games.h: 0 Gears 2, 1 Gears 3, 2 Judgment, 3 Gears of War), -1 for another title.
 int game_for_title(const std::string& title_id);
 // The game's name for a title id ("Gears of War 3"), "" for another title. English: the tab translates it.
 const char* game_name_for_title(const std::string& title_id);
@@ -75,16 +75,16 @@ std::string server_error(const std::string& body);
 // The worker claims an account once; it tries again only when the server did not answer (status 0: no account made).
 inline bool claim_retry(int status) { return status == 0; }
 
-// The four matchmaking regions, in the dropdown's order.
+// The three matchmaking regions, in the dropdown's order (US-W and US-E were merged into US).
 struct SocialRegion { const char* id; const char* name; };
-inline constexpr SocialRegion kSocialRegions[] = { { "us-e", "US-E" }, { "us-w", "US-W" }, { "oceania", "OCE" }, { "europe", "Europe" } };
+inline constexpr SocialRegion kSocialRegions[] = { { "us", "US" }, { "oceania", "OCE" }, { "europe", "Europe" } };
 // GET /api/v1/population/regions: region id -> players; empty when the answer is not that.
 std::map<std::string, int> parse_region_counts(const std::string& body);
 // A first guess from the PC's time zone (minutes east of UTC).
 std::string default_region_for_utc(int minutes_east);
 // The saved region, or that guess when none (or an unknown one) is saved.
 std::string region_or_default(const std::string& saved, int minutes_east);
-// "US-E: ~500 <players>"; just the name while the counts are unknown.
+// "US: ~500 <players>"; just the name while the counts are unknown.
 std::string region_label(const SocialRegion& r, const std::map<std::string, int>& counts, const std::string& players);
 
 // Social step 5: the in-game pop-ups, from two polls in a row. Nothing for what the first poll already had; a new

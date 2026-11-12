@@ -82,7 +82,8 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   server.get('/api/v1/health', async () => {
     return {
       status: 'ok',
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      uptime_s: Math.floor(process.uptime())   // for the Discord status reporter (no secret needed)
     };
   });
 

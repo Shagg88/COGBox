@@ -39,6 +39,26 @@ namespace modcore
 
     inline const char* SideName(Side s) { return s == Side::Client ? "client" : s == Side::Host ? "host" : "everyone"; }
 
+    // A campaign a mod adds (mod API level 1, campaigns.h): [Campaign] and its [Chapter.N] sections. Slots (act and
+    // chapter numbers) are given out by AllocateCampaigns, never written by the mod.
+    struct ChapterDecl
+    {
+        int number = 0;                              // N of [Chapter.N]: its place in the campaign and its "Chapter N"
+        std::string map, title, location, time, screenshot;
+    };
+    struct CampaignDecl
+    {
+        std::string id;                              // stable: chapters of one campaign may come from several mods
+        std::string title, screenshot;
+        int squad_catch_up = 0;                      // SquadCatchUp = <distance>: an engine-difference adapter (0: off).
+                                                     // A squad AI stuck that far from player 1 is brought behind them
+                                                     // (converted levels whose AI paths do not hold, ue3/squad_catch_up)
+        int max_players = 0;                         // MaxPlayers = 1-4: co-op players its chapters take (0: the
+                                                     // game's 4; a campaign whose squad is two declares 2)
+        int order = -1;                              // where it sorts among campaigns: the first Order any of its mods
+                                                     // gives (100 when none does), then the mods' load order
+    };
+
     struct Manifest
     {
         std::string folder;                          // the mod's folder name
@@ -47,12 +67,27 @@ namespace modcore
         bool enabled = true;
         Side side = Side::Everyone;
         std::vector<std::string> needs;          // requires = ...
-        std::vector<std::string> content;        // content = ... (package names)
+        std::vector<std::string> content;        // content = ... (package names; chapters' ContentPackages join it)
+        int api = 0;                                 // api = the mod API level it was made for (0: before campaigns)
+        CampaignDecl campaign;                       // [Campaign] (id empty: none)
+        std::vector<ChapterDecl> chapters;           // [Chapter.N], in N order
+        // [ClassDefaults] Class.Property = value: a class default the game uses while one of the mods' campaign
+        // chapters is loaded (an engine-difference adapter, ue3/mod_chapters; bool, int, float or byte properties)
+        struct ClassDefault { std::string cls, prop, value; };
+        std::vector<ClassDefault> class_defaults;
+        std::vector<std::string> warnings;           // keys not understood, chapters left out (the mod still loads)
         std::string problem;                         // why a mod that is enabled in its mod.ini is not loaded
         std::filesystem::path dir;
         bool loose = false;                          // files placed directly in mods\ (no mod.ini)
         bool Active() const { return enabled && problem.empty(); }
     };
+
+    // 0.6.0 review: a path as UTF-8 (path::string() throws on MinGW for a name outside the ANSI code page)
+    inline std::string U8(const std::filesystem::path& p)
+    {
+        const auto u = p.u8string();
+        return std::string(u.begin(), u.end());
+    }
 
     inline std::string Lower(std::string s)
     {
@@ -71,20 +106,98 @@ namespace modcore
     {
         Manifest m;
         m.dir = dir;
-        m.folder = m.name = dir.filename().string();
+        m.folder = m.name = U8(dir.filename());
         std::ifstream in(dir / "mod.ini");
         std::string line;
         bool first = true;
+        // [Campaign] and [Chapter.N] hold the campaign's keys; any other section (or none) the mod's, as before them
+        enum { ModKeys, CampaignKeys, ChapterKeys, ClassDefaultKeys, IgnoredKeys } in_section = ModKeys;
+        size_t chapter = 0;                          // m.chapters index while in a [Chapter.N]
+        auto list_into = [](const std::string& value, std::vector<std::string>& list) {
+            size_t a = 0;
+            while (a <= value.size())
+            {
+                const size_t b = (std::min)(value.find(',', a), value.size());
+                const std::string r = Trim(value.substr(a, b - a));
+                if (!r.empty() && std::find(list.begin(), list.end(), r) == list.end()) list.push_back(r);
+                a = b + 1;
+            }
+        };
         while (std::getline(in, line))
         {
             if (first && line.size() >= 3 && (unsigned char)line[0] == 0xEF && (unsigned char)line[1] == 0xBB) line.erase(0, 3);   // UTF-8 BOM
             first = false;
             line = Trim(line);
-            if (line.empty() || line[0] == ';' || line[0] == '#' || line[0] == '[') continue;
+            if (line.empty() || line[0] == ';' || line[0] == '#') continue;
+            if (line[0] == '[')
+            {
+                const std::string sec = Lower(Trim(line.substr(1, line.find(']') == std::string::npos ? std::string::npos : line.find(']') - 1)));
+                in_section = ModKeys;
+                if (sec == "campaign") in_section = CampaignKeys;
+                else if (sec == "classdefaults") in_section = ClassDefaultKeys;
+                else if (sec.rfind("chapter.", 0) == 0)
+                {
+                    const std::string num = sec.substr(8);
+                    const int n = atoi(num.c_str());
+                    if (n <= 0 || num.empty() || num.find_first_not_of("0123456789") != std::string::npos)
+                    {
+                        m.warnings.push_back("[" + line.substr(1, line.find(']') - 1) + "]: a chapter's number must be 1 or more - left out");
+                        in_section = IgnoredKeys;
+                    }
+                    else
+                    {
+                        chapter = m.chapters.size();
+                        for (size_t i = 0; i < m.chapters.size(); i++) if (m.chapters[i].number == n) chapter = i;
+                        if (chapter == m.chapters.size()) { m.chapters.push_back(ChapterDecl{}); m.chapters.back().number = n; }
+                        in_section = ChapterKeys;
+                    }
+                }
+                continue;
+            }
             const auto eq = line.find('=');
             if (eq == std::string::npos) continue;
             const std::string key = Lower(Trim(line.substr(0, eq))), value = Trim(line.substr(eq + 1)), low = Lower(value);
-            if (key == "name") m.name = value;
+            if (in_section == CampaignKeys)
+            {
+                if (key == "id") m.campaign.id = low;
+                else if (key == "title") m.campaign.title = value;
+                else if (key == "order") m.campaign.order = atoi(value.c_str());
+                else if (key == "screenshot") m.campaign.screenshot = value;
+                else if (key == "squadcatchup") m.campaign.squad_catch_up = (std::max)(0, atoi(value.c_str()));
+                else if (key == "maxplayers")
+                {
+                    const int n = atoi(value.c_str());
+                    if (n >= 1 && n <= 4) m.campaign.max_players = n;
+                    else m.warnings.push_back("[Campaign] MaxPlayers = " + value + ": must be 1 to 4 - ignored");
+                }
+                else m.warnings.push_back("[Campaign] " + Trim(line.substr(0, eq)) + ": not a campaign key - ignored");
+                continue;
+            }
+            if (in_section == IgnoredKeys) continue;
+            if (in_section == ClassDefaultKeys)
+            {
+                const std::string raw = Trim(line.substr(0, eq));
+                const size_t dot = raw.find('.');
+                if (dot == std::string::npos || dot == 0 || dot + 1 >= raw.size() || value.empty())
+                    m.warnings.push_back("[ClassDefaults] " + raw + ": must be Class.Property = value - ignored");
+                else
+                    m.class_defaults.push_back({raw.substr(0, dot), raw.substr(dot + 1), value});
+                continue;
+            }
+            if (in_section == ChapterKeys)
+            {
+                ChapterDecl& c = m.chapters[chapter];
+                if (key == "map") c.map = value;
+                else if (key == "title") c.title = value;
+                else if (key == "location") c.location = value;
+                else if (key == "time") c.time = value;
+                else if (key == "screenshot") c.screenshot = value;
+                else if (key == "contentpackages") list_into(value, m.content);
+                else m.warnings.push_back("[Chapter." + std::to_string(c.number) + "] " + Trim(line.substr(0, eq)) + ": not a chapter key - ignored");
+                continue;
+            }
+            if (key == "api") m.api = atoi(value.c_str());
+            else if (key == "name") m.name = value;
             else if (key == "version") m.version = value;
             else if (key == "author") m.author = value;
             else if (key == "description") m.description = value;
@@ -104,6 +217,17 @@ namespace modcore
                     a = b + 1;
                 }
             }
+        }
+        std::sort(m.chapters.begin(), m.chapters.end(), [](const ChapterDecl& a, const ChapterDecl& b) { return a.number < b.number; });
+        for (size_t i = 0; i < m.chapters.size();)
+        {
+            const ChapterDecl& c = m.chapters[i];
+            std::string why;
+            if (c.map.empty()) why = "has no Map";
+            else if (m.campaign.id.empty()) why = "is in no campaign ([Campaign] Id = ...)";
+            if (why.empty()) { i++; continue; }
+            m.warnings.push_back("[Chapter." + std::to_string(c.number) + "] " + why + " - left out");
+            m.chapters.erase(m.chapters.begin() + long(i));
         }
         return m;
     }
@@ -216,7 +340,7 @@ namespace modcore
                 continue;
             }
             if (!it->is_regular_file(ec)) continue;
-            const std::string game = GamePath(std::filesystem::relative(it->path(), m.dir, ec).string(), cooked);
+            const std::string game = GamePath(U8(std::filesystem::relative(it->path(), m.dir, ec)), cooked);
             if (!game.empty()) out.emplace_back(game, it->path());
         }
         std::sort(out.begin(), out.end());
@@ -230,7 +354,7 @@ namespace modcore
         std::error_code ec;
         if (m.loose) return out;
         for (const auto& e : std::filesystem::directory_iterator(m.dir / "config", ec))
-            if (e.is_regular_file(ec) && Lower(e.path().extension().string()) == ".ini") out.push_back(e.path());
+            if (e.is_regular_file(ec) && Lower(U8(e.path().extension())) == ".ini") out.push_back(e.path());
         std::sort(out.begin(), out.end());
         return out;
     }
@@ -250,7 +374,7 @@ namespace modcore
             std::error_code ec;
             text += m.name + "|" + m.version + "|";
             for (const auto& [game, file] : Files(m)) text += game + ":" + std::to_string(std::filesystem::file_size(file, ec)) + ";";
-            for (const auto& f : Fragments(m)) text += "config\\" + Lower(f.filename().string()) + ":" + std::to_string(std::filesystem::file_size(f, ec)) + ";";
+            for (const auto& f : Fragments(m)) text += "config\\" + Lower(U8(f.filename())) + ":" + std::to_string(std::filesystem::file_size(f, ec)) + ";";
             text += "\n";
             s.summary += (s.summary.empty() ? "" : ", ") + m.name + (m.version.empty() ? "" : " " + m.version);
         }

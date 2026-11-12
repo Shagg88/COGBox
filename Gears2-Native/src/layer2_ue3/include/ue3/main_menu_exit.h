@@ -30,5 +30,8 @@ int ApplyMainMenuExitToBundle(GameId game, std::string_view lang, ConfigBundle& 
 // while GearStart*.xxx (the title screen and its menus) is the last level package the game opened.
 void NoteFileOpenedForExit(std::string_view guest_path);
 bool InFrontEndForExit();
+// Gears 2 (Shagg 2026-11-10): back on the main menu after a level, GearStart.xxx is not opened again, so the file
+// hook above never re-arms. The game's own lookup of the menu row's label (seen by the Localize hook) arms it instead.
+void ArmFrontEndForExit(std::string_view why);
 
 }  // namespace ue3

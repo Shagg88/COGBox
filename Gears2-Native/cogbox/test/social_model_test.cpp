@@ -73,11 +73,12 @@ int main() {
         online.state = "online";
         CHECK(presence_text(online) == "Online - In Launcher");
     }
-    // games
-    CHECK(game_for_title("4D5307D5") == 0);
-    CHECK(game_for_title("4D53082D") == 1);
-    CHECK(game_for_title("4d5308ab") == 2);
-    CHECK(game_for_title("4D530A26") == 3);
+    // games: the launcher's own numbering (games.h GameId: Gears 2, Gears 3, Judgment, Gears 1)
+    CHECK(game_for_title("4D53082D") == 0);   // G_GEARS2
+    CHECK(game_for_title("4d5308ab") == 1);   // G_GEARS3
+    CHECK(game_for_title("4D530A26") == 2);   // G_JUDGMENT
+    CHECK(game_for_title("4D5307D5") == 3);   // G_GEARS1
+    CHECK(join_from_answer(409, R"({"title_id":"4D5308AB","room_code":"COG-AB12"})")->game == 1);   // Gears 3
     CHECK(game_for_title("FFFFFFFF") == -1);
     // tags
     CHECK(valid_tag("Flapper#4293"));
@@ -121,7 +122,7 @@ int main() {
     // Join / invite accept answers: 409 = that game is not running here, start it with the room code; 200 = told
     {
         auto j = join_from_answer(409, R"({"error":"start the game first","title_id":"4D5308AB","room_code":"COG-ABCD"})");
-        CHECK(j.has_value() && j->game == 2 && j->room_code == "COG-ABCD");
+        CHECK(j.has_value() && j->game == 1 && j->room_code == "COG-ABCD");
         CHECK(!join_from_answer(200, R"({"status":"joining","title_id":"4D5308AB","room_code":"COG-ABCD"})").has_value());
         CHECK(!join_from_answer(404, R"({"error":"no lobby"})").has_value());
         CHECK(!join_from_answer(409, R"({"error":"start the game first","title_id":"FFFFFFFF","room_code":"COG-ABCD"})").has_value());
@@ -202,19 +203,21 @@ int main() {
         CHECK(friends_changed(l1, l2));
     }
     {
-        const auto c = parse_region_counts(R"({"us-e":500,"us-w":100,"oceania":50,"europe":1000})");
-        CHECK(c.size() == 4 && c.at("europe") == 1000);
+        const auto c = parse_region_counts(R"({"us":600,"oceania":50,"europe":1000})");
+        CHECK(c.size() == 3 && c.at("europe") == 1000 && c.at("us") == 600);
         CHECK(parse_region_counts("not json").empty());
-        CHECK(region_label(kSocialRegions[0], c, "players") == "US-E: ~500 players");
-        CHECK(region_label(kSocialRegions[2], c, "players") == "OCE: ~50 players");
-        CHECK(region_label(kSocialRegions[0], {}, "players") == "US-E");
-        CHECK(default_region_for_utc(-8 * 60) == "us-w");
-        CHECK(default_region_for_utc(-5 * 60) == "us-e");
+        CHECK(region_label(kSocialRegions[0], c, "players") == "US: ~600 players");
+        CHECK(region_label(kSocialRegions[1], c, "players") == "OCE: ~50 players");
+        CHECK(region_label(kSocialRegions[0], {}, "players") == "US");
+        CHECK(default_region_for_utc(-8 * 60) == "us");
+        CHECK(default_region_for_utc(-5 * 60) == "us");
         CHECK(default_region_for_utc(1 * 60) == "europe");
         CHECK(default_region_for_utc(10 * 60) == "oceania");
         CHECK(region_or_default("europe", 10 * 60) == "europe");
         CHECK(region_or_default("", 10 * 60) == "oceania");
-        CHECK(region_or_default("mars", -5 * 60) == "us-e");
+        CHECK(region_or_default("mars", -5 * 60) == "us");
+        CHECK(region_or_default("us-w", 10 * 60) == "us");  // the old US-W / US-E settings become US
+        CHECK(region_or_default("us-e", 1 * 60) == "us");
     }
     if (g_failures == 0) std::printf("social_model_test: all passed\n");
     return g_failures;

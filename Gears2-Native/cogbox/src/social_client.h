@@ -39,6 +39,7 @@ SocialBackend launcher_backend(const std::string& server_url, const std::string&
 // account gets (the profile's name). Called at start, on a profile switch and when the server option changes.
 void social_start(const std::string& server_url, const std::string& identity_dir, const std::string& name);
 void social_stop();
+bool social_stop_wait(int max_ms);   // 0.6.0: social_stop, then wait for the worker to end (false: still busy)
 // Tells the server this player left (POST /api/v1/friends/offline), then stops the worker; waits at most wait_ms for
 // the answer (0: not at all). Nothing when no account is signed in.
 void social_sign_off(int wait_ms);

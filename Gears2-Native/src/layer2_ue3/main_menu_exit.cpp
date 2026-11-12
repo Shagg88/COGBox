@@ -402,4 +402,8 @@ void NoteFileOpenedForExit(std::string_view guest_path) {
 
 bool InFrontEndForExit() { return g_in_front_end.load(std::memory_order_relaxed); }
 
+void ArmFrontEndForExit(std::string_view why) {
+  if (!g_in_front_end.exchange(true)) REXLOG_INFO("main_menu_exit: front end ({}) - Exit Game armed", why);
+}
+
 }  // namespace ue3

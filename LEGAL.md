@@ -89,7 +89,7 @@ If you believe something in the COGBox project infringes your rights, or you hav
 contact us first. We'd much rather fix things quickly and in good faith.
 
 - **Email:** `[CONTACT EMAIL - Shagg to set up, e.g. a dedicated cogbox.legal@... address]`
-- **Or:** open a ticket on the project's GitLab page (<https://gitlab.com/shagg88/cogbox>) saying only
+- **Or:** open a ticket on the project's GitHub page (<https://github.com/Shagg88/COGBox>) saying only
   that you have a legal concern and how to reach you. Please don't post private details publicly.
 
 Please include:
@@ -104,6 +104,6 @@ Please include:
 **What we do:** we confirm receipt, usually within a few days. While we look at the notice, we can take the material in
 question down; if it's clearly valid we remove it from current releases and the source and tell you when it's done.
 If we believe a notice is a mistake, we'll say why, and where appropriate use the counter-notice process of our host.
-Notices sent to our host (GitLab) are handled under the host's own terms and copyright policy.
+Notices sent to our hosts (GitHub, and GitLab as the backup) are handled under the host's own terms and copyright policy.
 
 Changes to this page are tracked in the project's history.

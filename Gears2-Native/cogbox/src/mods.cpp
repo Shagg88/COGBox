@@ -7,6 +7,7 @@
 // Order and on/off are in CogBox.ini [Mods] <game>Order / <game>Enabled ("name|name|...").
 #include "app.h"
 #include "../third_party/miniz/miniz.h"
+#include "modcore/campaigns.h"
 
 #include <windows.h>
 #include <algorithm>
@@ -53,6 +54,75 @@ static std::string ini_value(const std::string &text, const std::string &key)
     return "";
 }
 
+// KiltedKernel (mod API 1): Gears 3's mods through the game's own rules (modcore, MIT: Gears3-Native's
+// src/layer2_ue3/modcore, compiled into CogBox by build.sh), so the list says what the game will do: a mod left out
+// and why (another game's, a required mod missing or off), the act and chapters the campaign registry gives a
+// campaign, and the mod.ini keys the game does not understand. Worked out again only when the mods, their order or
+// their files change (the list is read every 2 s).
+static void apply_mod_rules(int g, std::vector<ModItem> &out)
+{
+    if (std::string(game_def(g).key) != "gears3") return;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::string sig;
+    for (const ModItem &m : out) {
+        sig += m.folder + (m.enabled ? "+" : "-");
+        const fs::path dir = fs::path(widen(m.path));
+        for (const fs::path &f : { dir / L"mod.ini", dir / L"config" }) {
+            auto t = fs::last_write_time(f, ec);
+            sig += ec ? "|" : "|" + std::to_string((long long)t.time_since_epoch().count());
+        }
+    }
+    struct Result { std::string problem, campaign; std::vector<std::string> notes; };
+    static std::string s_sig;
+    static std::vector<Result> s_res;
+    if (sig != s_sig || s_res.size() != out.size()) {
+        s_sig = sig;
+        s_res.assign(out.size(), Result{});
+        std::vector<fs::path> enabled;
+        for (const ModItem &m : out) if (m.enabled) enabled.push_back(fs::path(widen(m.path)));
+        const std::vector<modcore::Manifest> on = modcore::FromFolders(enabled, "gears3");
+        // the slots: after the acts and chapters the game's config has once the mods' own fragments are in
+        std::string base;
+        read_file(join(game_root(g), "game\\extracted\\GearGame\\CookedXbox360\\Coalesced_INT.bin"), base, 64 << 20);
+        std::vector<std::pair<std::string, fs::path>> fragments;
+        for (const modcore::Manifest &m : on)
+            if (m.Active()) for (const fs::path &f : modcore::Fragments(m)) fragments.emplace_back(m.name, f);
+        const std::vector<uint8_t> merged = modcore::MergeConfig(std::vector<uint8_t>(base.begin(), base.end()), fragments);
+        const modcore::Allocation alloc = merged.empty() ? modcore::Allocation{} : modcore::AllocateCampaigns(on, modcore::UsedCampaignSlots(merged));
+        size_t k = 0;
+        for (size_t i = 0; i < out.size(); i++) {
+            Result &r = s_res[i];
+            const modcore::Manifest m = out[i].enabled ? on[k++] : modcore::Read(fs::path(widen(out[i].path)));
+            r.notes = m.warnings;
+            if (!out[i].enabled) continue;
+            r.problem = m.problem;
+            if (m.api > modcore::kModApiLevel)
+                r.notes.push_back("made for a newer COGBox (mod API " + std::to_string(m.api) + "; this one has " +
+                                  std::to_string(modcore::kModApiLevel) + ")");
+            for (const std::string &p : alloc.problems)
+                if (p.rfind(m.name + ": ", 0) == 0) r.notes.push_back(p.substr(m.name.size() + 2));
+            for (const modcore::PlacedCampaign &c : alloc.campaigns) {
+                std::string mine;
+                for (const modcore::PlacedChapter &ch : c.chapters)
+                    if (ch.mod == m.name) mine += (mine.empty() ? "" : ", ") + std::to_string(ch.decl.number);
+                if (!mine.empty())
+                    r.campaign = "Select Chapter: Act " + modcore::ActNumeral(c.act) + " " + c.title + ", chapter " + mine;
+            }
+            if (!r.campaign.empty() && m.campaign.max_players > 0)   // ([Campaign] MaxPlayers)
+                r.campaign += m.campaign.max_players == 1 ? " (one player)"
+                                                          : " (co-op up to " + std::to_string(m.campaign.max_players) + ")";
+            if (m.Active() && !m.chapters.empty() && r.campaign.empty() && merged.empty())
+                r.notes.push_back("its chapters' place in Select Chapter shows once the game's files are in");
+        }
+    }
+    for (size_t i = 0; i < out.size(); i++) {
+        out[i].problem = s_res[i].problem;
+        out[i].campaign = s_res[i].campaign;
+        out[i].notes = s_res[i].notes;
+    }
+}
+
 std::vector<ModItem> mods_list(App &a, int g)
 {
     const GameDef &d = game_def(g);
@@ -95,6 +165,7 @@ std::vector<ModItem> mods_list(App &a, int g)
         if (m.name.empty()) m.name = x;
         out.push_back(m);
     }
+    apply_mod_rules(g, out);
     return out;
 }
 

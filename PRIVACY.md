@@ -8,11 +8,11 @@ online only for the three things below, and two of them only when you ask.
 
 | When | Where | What is sent | What comes back |
 |---|---|---|---|
-| **Update check** - at start, after you've accepted the welcome notice. Turn it off on any game's About tab ("Check GitLab for a newer COGBox at start"). | `gitlab.com` (if GitLab doesn't answer: `sourceforge.net`, the old home, while it still exists) | An ordinary web request with the user agent `COGBox-launcher/<version>`. Like any web request, the server sees your IP address. No ID, nothing about your PC or games. | The latest version's number and download link |
-| **Downloading an update** - only when you press the update button. | `gitlab.com` and the file-storage host it sends the download to (or `sourceforge.net` / `downloads.sourceforge.net` as above) | Same as above | The new release |
+| **Update check** - at start, after you've accepted the welcome notice. Turn it off on any game's About tab ("Check GitHub for a newer COGBox at start"). | `github.com` (if GitHub doesn't answer: `gitlab.com`, the backup, then `sourceforge.net` while it still exists) | An ordinary web request with the user agent `COGBox-launcher/<version>`. Like any web request, the server sees your IP address. No ID, nothing about your PC or games. | The latest version's number and download link |
+| **Downloading an update** - only when you press the update button. | `github.com` and the file-storage host it sends the download to (or `gitlab.com`, `sourceforge.net` / `downloads.sourceforge.net` as above) | Same as above | The new release |
 | **Get box art** - only when you press it. | `raw.githubusercontent.com` (the community x360db archive) and `images.launchbox-app.com` (the LaunchBox Games Database) | Requests for each game's images by its public title ID (x360db) or by fixed image addresses (LaunchBox). Your IP address is visible to GitHub and LaunchBox. | Box art and backgrounds, saved in COGBox's folder |
 
-The hosts' own privacy policies apply to those requests (GitLab, SourceForge, LaunchBox). Links you click in COGBox (release notes,
+The hosts' own privacy policies apply to those requests (GitHub, GitLab, SourceForge, LaunchBox). Links you click in COGBox (release notes,
 the ticket page) open in your web browser.
 
 The games themselves: the Xbox 360 ports don't connect to the internet unless you turn on online play (below). System
@@ -66,7 +66,7 @@ server runs on your own PC.
 When you make a problem report, COGBox writes **one zip file on your desktop** with the logs, your settings and a
 description of your PC (Windows version, CPU, graphics card and driver, displays). No saves and no game files; your
 Windows user name and PC name are replaced, and so are other players' public IP addresses and your online
-account's token. **Nothing is sent.** COGBox can open a new ticket page on GitLab in
+account's token. **Nothing is sent.** COGBox can open a new ticket page on GitHub in
 your browser and put the report's summary on your clipboard; you decide whether to paste and post it and whether to
 attach the zip. Look inside the zip first if you like.
 Anything you post in a public ticket is public.

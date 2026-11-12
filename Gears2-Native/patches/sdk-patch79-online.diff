@@ -25,7 +25,7 @@ index 3a5ff93..2b726f8 100644
                                  uint32_t buffer_length) override;
 +
 + private:
-+  void WriteEmptySearchResults(uint32_t results_ptr, uint32_t results_size);  // COGBox SDK patch 65
++  void WriteEmptySearchResults(uint32_t results_ptr, uint32_t results_size);  // COGBox SDK patch 79
 +  bool WriteOnlineSearchResults(uint32_t max_results, uint32_t results_ptr, uint32_t results_size);
 +  void TraceSearchQuery(uint32_t proc_index, uint32_t num_props, uint32_t props_ptr, uint32_t num_ctx,
 +                        uint32_t ctx_ptr);
@@ -109,11 +109,11 @@ index febcd52..a3611b3 100644
  }  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/invites.h b/include/rex/kernel/xam/net/invites.h
 new file mode 100644
-index 0000000..bba0cc5
+index 0000000..4ab4751
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/invites.h
 @@ -0,0 +1,91 @@
-+// COGBox SDK patch 65 (social step 4): an accepted game invite or friend join, as the 360 delivered it - the
++// COGBox SDK patch 79 (social step 4): an accepted game invite or friend join, as the 360 delivered it - the
 +// XN_LIVE_INVITE_ACCEPTED notification, then XInviteGetAcceptedInfo (XLIVEBASE 0x00058023) reading an XINVITE_INFO.
 +#pragma once
 +
@@ -206,11 +206,11 @@ index 0000000..bba0cc5
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/live_emulation.h b/include/rex/kernel/xam/net/live_emulation.h
 new file mode 100644
-index 0000000..de98ed0
+index 0000000..97457db
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/live_emulation.h
 @@ -0,0 +1,33 @@
-+// COGBox SDK patch 65: LIVE emulation (--net_live_emulation) and the online trace (--cogbox_net_trace).
++// COGBox SDK patch 79: LIVE emulation (--net_live_emulation) and the online trace (--cogbox_net_trace).
 +//
 +// With emulation on and an online XUID from the master server, a signed-in profile looks signed in to Xbox LIVE
 +// (state 2), online XUID requests get the server XUID (offline ones keep the profile's), and privileges are granted.
@@ -245,11 +245,11 @@ index 0000000..de98ed0
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/master_client.h b/include/rex/kernel/xam/net/master_client.h
 new file mode 100644
-index 0000000..dd2d233
+index 0000000..647835b
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/master_client.h
 @@ -0,0 +1,84 @@
-+// COGBox SDK patch 65: the master-server client over WinHTTP (system TLS; Wine / Proton implement it). REST calls
++// COGBox SDK patch 79: the master-server client over WinHTTP (system TLS; Wine / Proton implement it). REST calls
 +// block for at most 2 s; the signaling WebSocket runs on its own thread and reconnects every 5 s when it drops.
 +#pragma once
 +
@@ -335,11 +335,11 @@ index 0000000..dd2d233
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/master_protocol.h b/include/rex/kernel/xam/net/master_protocol.h
 new file mode 100644
-index 0000000..e82a630
+index 0000000..dccbd3a
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/master_protocol.h
 @@ -0,0 +1,85 @@
-+// COGBox SDK patch 65: the master server's JSON (tools/master-server): claim, lobbies and the candidate messages.
++// COGBox SDK patch 79: the master server's JSON (tools/master-server): claim, lobbies and the candidate messages.
 +#pragma once
 +
 +#include <array>
@@ -426,11 +426,11 @@ index 0000000..e82a630
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/online_sessions.h b/include/rex/kernel/xam/net/online_sessions.h
 new file mode 100644
-index 0000000..0baebc9
+index 0000000..9e26d2d
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/online_sessions.h
 @@ -0,0 +1,124 @@
-+// COGBox SDK patch 65: the games' XSession calls -> master-server lobbies.
++// COGBox SDK patch 79: the games' XSession calls -> master-server lobbies.
 +//
 +// Player 1's contexts / properties (XUserSetContext / XUserSetProperty) go with every lobby. A host session that uses
 +// matchmaking and has public slots is registered (in the background); XSessionDelete names its session only by the
@@ -556,11 +556,11 @@ index 0000000..0baebc9
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/online_signaling.h b/include/rex/kernel/xam/net/online_signaling.h
 new file mode 100644
-index 0000000..24643a6
+index 0000000..a9fadb8
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/online_signaling.h
 @@ -0,0 +1,53 @@
-+// COGBox SDK patch 65: who sends candidates to whom.
++// COGBox SDK patch 79: who sends candidates to whom.
 +//
 +// A guest learns a host from the lobby list (its XUID and uuid). When the game turns the host's XNADDR into a virtual
 +// IP, the guest offers the candidates of each of its game sockets. The host gets an offer from a guest it has never
@@ -615,11 +615,11 @@ index 0000000..24643a6
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/online_startup.h b/include/rex/kernel/xam/net/online_startup.h
 new file mode 100644
-index 0000000..c2af6f0
+index 0000000..2d0e1b0
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/online_startup.h
 @@ -0,0 +1,23 @@
-+// COGBox SDK patch 65: online play at start-up (KernelState): load the identity, choose the LIVE emulation XUID for
++// COGBox SDK patch 79: online play at start-up (KernelState): load the identity, choose the LIVE emulation XUID for
 +// this run and sign the Gears 3 saves for it (or back to 0 when emulation is off).
 +#pragma once
 +
@@ -644,11 +644,11 @@ index 0000000..c2af6f0
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/qos.h b/include/rex/kernel/xam/net/qos.h
 new file mode 100644
-index 0000000..d996c69
+index 0000000..8c3c7c3
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/qos.h
 @@ -0,0 +1,24 @@
-+// COGBox SDK patch 65: the XNetQosLookup answer.
++// COGBox SDK patch 79: the XNetQosLookup answer.
 +//
 +// XNQOS { cxnqos; cxnqosPending; XNQOSINFO axnqosinfo[] } and XNQOSINFO { bFlags; bReserved; cProbesXmit;
 +// cProbesRecv; cbData; pbData; wRttMinInMsecs; wRttMedInMsecs; dwUpBitsPerSec; dwDnBitsPerSec } (24 bytes), big
@@ -674,11 +674,11 @@ index 0000000..d996c69
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/session_marshal.h b/include/rex/kernel/xam/net/session_marshal.h
 new file mode 100644
-index 0000000..e09d4c2
+index 0000000..ff5fd96
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/session_marshal.h
 @@ -0,0 +1,34 @@
-+// COGBox SDK patch 65: lobbies -> an XSessionSearch results buffer (guest memory, big endian).
++// COGBox SDK patch 79: lobbies -> an XSessionSearch results buffer (guest memory, big endian).
 +//
 +// XSESSION_SEARCHRESULT_HEADER { dwSearchResults; pResults } (8), then the XSESSION_SEARCHRESULT array (92 each:
 +// XSESSION_INFO 60, open public / private, filled public / private, cProperties, cContexts, pProperties, pContexts),
@@ -734,11 +734,11 @@ index 0000000..4ea1f68
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/socket_hooks.h b/include/rex/kernel/xam/net/socket_hooks.h
 new file mode 100644
-index 0000000..708000d
+index 0000000..2e3df28
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/socket_hooks.h
 @@ -0,0 +1,55 @@
-+// COGBox SDK patch 65: what xsocket.cpp / xam_net.cpp call for online play. Every function is a no-op (or a
++// COGBox SDK patch 79: what xsocket.cpp / xam_net.cpp call for online play. Every function is a no-op (or a
 +// pass-through) unless --net_online is on.
 +#pragma once
 +
@@ -795,11 +795,11 @@ index 0000000..708000d
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/stream_tunnel.h b/include/rex/kernel/xam/net/stream_tunnel.h
 new file mode 100644
-index 0000000..9cfe5e0
+index 0000000..77e8445
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/stream_tunnel.h
 @@ -0,0 +1,39 @@
-+// COGBox SDK patch 65: game TCP connections to an online peer (UE3's party beacon) over the punched UDP path.
++// COGBox SDK patch 79: game TCP connections to an online peer (UE3's party beacon) over the punched UDP path.
 +//
 +// The tunnel has its own UDP socket, registered like a game socket (STUN, punching, candidates), and one thread.
 +// Guest: a game connect to VIP:port is sent to a local listener on 127.0.0.1; the accepted connection opens a tunnel
@@ -840,11 +840,11 @@ index 0000000..9cfe5e0
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/tunnel_core.h b/include/rex/kernel/xam/net/tunnel_core.h
 new file mode 100644
-index 0000000..4c4638d
+index 0000000..65a6e55
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/tunnel_core.h
-@@ -0,0 +1,100 @@
-+// COGBox SDK patch 65: game TCP connections to an online peer (UE3's party beacon), carried as reliable ordered streams
+@@ -0,0 +1,110 @@
++// COGBox SDK patch 79: game TCP connections to an online peer (UE3's party beacon), carried as reliable ordered streams
 +// in UDP frames over the punched path. This is the transport-independent part: frames in, frames out, time passed
 +// in. stream_tunnel.h connects it to real sockets.
 +//
@@ -890,6 +890,14 @@ index 0000000..4c4638d
 +  static constexpr auto kSynRetry = std::chrono::milliseconds(200);
 +  static constexpr auto kOpenTimeout = std::chrono::seconds(10);
 +  static constexpr size_t kWindow = 32;
++  // COGBox 0.6.0 review: limits on what another player can make us hold. Frames further ahead than the window are
++  // never sent by a real peer and are dropped; a peer can have at most kMaxConnsPerPeer open (UE3's beacon uses one or
++  // two) and all peers together kMaxConns; a Syn past either is refused with Rst.
++  static constexpr size_t kMaxConnsPerPeer = 16;
++  static constexpr size_t kMaxConns = 128;
++  // 0.6.0 review: a connection with frames waiting for an ack and nothing heard from the other side for this long is
++  // dropped (the player left or crashed); without it such a connection was resent forever and kept its slot.
++  static constexpr auto kDeadTimeout = std::chrono::seconds(15);
 +
 +  struct Callbacks {
 +    std::function<void(uint32_t vip, const std::vector<uint8_t>& frame)> send_frame;
@@ -927,6 +935,8 @@ index 0000000..4c4638d
 +    std::deque<uint8_t> to_send;
 +    std::deque<Segment> unacked;
 +    bool close_wanted = false, fin_sent = false;
++    bool inbound = false;              // opened by the other side (only these count toward kMaxConnsPerPeer)
++    Clock::time_point last_heard{};    // last frame from the other side for this connection
 +    uint32_t expected = 1;  // next in-order seq from the other side
 +    std::map<uint32_t, TunnelFrame> early;
 +  };
@@ -946,11 +956,11 @@ index 0000000..4c4638d
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/ue3_script.h b/include/rex/kernel/xam/net/ue3_script.h
 new file mode 100644
-index 0000000..d1742e9
+index 0000000..5ae458d
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/ue3_script.h
 @@ -0,0 +1,38 @@
-+// COGBox SDK patch 65 (social step 4): UE3 script bytecode the private match fixes look for, found by what it does
++// COGBox SDK patch 79 (social step 4): UE3 script bytecode the private match fixes look for, found by what it does
 +// (not by offsets of one game build), so Gears 3 and Judgment share it.
 +#pragma once
 +
@@ -990,11 +1000,11 @@ index 0000000..d1742e9
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/virtual_peer_manager.h b/include/rex/kernel/xam/net/virtual_peer_manager.h
 new file mode 100644
-index 0000000..a85179b
+index 0000000..6874c4c
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/virtual_peer_manager.h
 @@ -0,0 +1,169 @@
-+// COGBox SDK patch 65: online peers as virtual IPs (10.254.0.0/16, a per-PC table) and the NAT path to each.
++// COGBox SDK patch 79: online peers as virtual IPs (10.254.0.0/16, a per-PC table) and the NAT path to each.
 +//
 +// Every path is punched from the game's own UDP sockets: STUN probes tell each socket its public address, punch
 +// packets (punch.h) open the path, and game packets then go straight between the two game sockets. Nothing is relayed.
@@ -1165,11 +1175,11 @@ index 0000000..a85179b
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/xfriends.h b/include/rex/kernel/xam/net/xfriends.h
 new file mode 100644
-index 0000000..a59f24f
+index 0000000..4d4d035
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/xfriends.h
 @@ -0,0 +1,54 @@
-+// COGBox SDK patch 65 (social step 4): the games' Xbox LIVE friends list (XFriendsCreateEnumerator, XLIVEBASE
++// COGBox SDK patch 79 (social step 4): the games' Xbox LIVE friends list (XFriendsCreateEnumerator, XLIVEBASE
 +// 0x00058020) from the master server's friends. Gears 3 checks it before accepting a friend into a "joinable by
 +// friends" lobby (a private match refused a friend while the list was empty).
 +#pragma once
@@ -1225,11 +1235,11 @@ index 0000000..a59f24f
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/xnaddr_online.h b/include/rex/kernel/xam/net/xnaddr_online.h
 new file mode 100644
-index 0000000..7aa8063
+index 0000000..ea61b1d
 --- /dev/null
 +++ b/include/rex/kernel/xam/net/xnaddr_online.h
 @@ -0,0 +1,40 @@
-+// COGBox SDK patch 65: online XNADDRs. A player's XNADDR carries "CGB1" + online XUID + session token (big endian) in
++// COGBox SDK patch 79: online XNADDRs. A player's XNADDR carries "CGB1" + online XUID + session token (big endian) in
 +// abOnline; another PC turns that XNADDR into a virtual IP (virtual_peer_manager.h) and back.
 +#pragma once
 +
@@ -1271,13 +1281,13 @@ index 0000000..7aa8063
 +}  // namespace rex::kernel::xam::net
 diff --git a/include/rex/system/cogbox_save_sign.h b/include/rex/system/cogbox_save_sign.h
 new file mode 100644
-index 0000000..a046583
+index 0000000..7f29af7
 --- /dev/null
 +++ b/include/rex/system/cogbox_save_sign.h
 @@ -0,0 +1,39 @@
 +// COGBox: Gears 3 save signatures. Gears 3 signs PlayerStorage.dat and its profile settings (63E83FFF + 63E83FFE +
 +// 63E83FFD) with SHA-1(online XUID, 8 bytes big endian + data) in the first 20 bytes. Patch 58 re-signs COGBox's old
-+// saves from the offline XUID to 0; COGBox SDK patch 65 (online play) re-signs them between 0 and the online XUID.
++// saves from the offline XUID to 0; COGBox SDK patch 79 (online play) re-signs them between 0 and the online XUID.
 +#pragma once
 +
 +#include <array>
@@ -1322,7 +1332,7 @@ index 84be3e4..90a70d3 100644
                                   uint32_t buffer_length);
  
   private:
-+  // COGBox SDK patch 65: dispatch, logged with --cogbox_net_trace.
++  // COGBox SDK patch 79: dispatch, logged with --cogbox_net_trace.
 +  X_HRESULT TracedDispatch(App* app, uint32_t app_id, uint32_t message, uint32_t buffer_ptr, uint32_t buffer_length);
 +
    std::vector<std::unique_ptr<App>> apps_;
@@ -1336,8 +1346,8 @@ index a1b4443..c6b8ed1 100644
  
    uint64_t native_handle() const { return native_handle_; }
    uint16_t bound_port() const { return bound_port_; }
-+  void MoveToFreePort();  // COGBox SDK patch 65 (xsocket.cpp)
-+  Type type() const { return type_; }  // COGBox SDK patch 65
++  void MoveToFreePort();  // COGBox SDK patch 79 (xsocket.cpp)
++  Type type() const { return type_; }  // COGBox SDK patch 79
  
    X_STATUS Initialize(AddressFamily af, Type type, Protocol proto);
    X_STATUS Close();
@@ -1345,7 +1355,7 @@ index a1b4443..c6b8ed1 100644
  
    bool bound_ = false;  // Explicitly bound to an IP address?
    uint16_t bound_port_ = 0;
-+  bool net_registered_ = false;  // COGBox SDK patch 65: known to the online-play socket hooks
++  bool net_registered_ = false;  // COGBox SDK patch 79: known to the online-play socket hooks
  
    bool broadcast_socket_ = false;
  
@@ -1404,9 +1414,9 @@ index 1adddab..140631c 100644
 +++ b/src/kernel/CMakeLists.txt
 @@ -20,6 +20,25 @@ set(REXKERNEL_SOURCES
      xam/net/upnp.cpp
-     # COGBox SDK patch 64: client identity
+     # COGBox SDK patch 78: client identity
      xam/net/identity.cpp
-+    # COGBox SDK patch 65: online play (virtual peers, socket hooks)
++    # COGBox SDK patch 79: online play (virtual peers, socket hooks)
 +    xam/net/virtual_peer_manager.cpp
 +    xam/net/socket_hooks.cpp
 +    xam/net/xnaddr_online.cpp
@@ -1439,7 +1449,7 @@ index d57caed..7647186 100644
 +
 +#include <array>
 +#include <cstring>
-+#include <rex/kernel/xam/net/live_emulation.h>  // COGBox SDK patch 65: LIVE emulation
++#include <rex/kernel/xam/net/live_emulation.h>  // COGBox SDK patch 79: LIVE emulation
 +#include <rex/kernel/xam/net/identity.h>
 +#include <rex/kernel/xam/net/online_sessions.h>
 +#include <chrono>
@@ -1477,7 +1487,7 @@ index d57caed..7647186 100644
  
  // http://mb.mirage.org/bugzilla/xliveless/main.c
  
-+// COGBox SDK patch 65: with LIVE emulation a search answers "no sessions" (XSESSION_SEARCHRESULT_HEADER
++// COGBox SDK patch 79: with LIVE emulation a search answers "no sessions" (XSESSION_SEARCHRESULT_HEADER
 +// { dwSearchResults = 0; pResults = 0 }) instead of leaving the caller's buffer as it was.
 +void XgiApp::WriteEmptySearchResults(uint32_t results_ptr, uint32_t results_size) {
 +  if (!rex::kernel::xam::net::LiveEmulationOn() || !results_ptr || results_size < 8 ||
@@ -1489,9 +1499,9 @@ index d57caed..7647186 100644
 +  memory::store_and_swap<uint32_t>(p + 4, 0);
 +}
 +
-+// COGBox SDK patch 65: the title's lobbies from the master server, in the caller's buffer. false = not online, or
++// COGBox SDK patch 79: the title's lobbies from the master server, in the caller's buffer. false = not online, or
 +// the buffer is not mapped / too small (then the caller answers "no sessions").
-+// COGBox SDK patch 65: with --cogbox_net_trace, the search's own properties / contexts (what it asks for).
++// COGBox SDK patch 79: with --cogbox_net_trace, the search's own properties / contexts (what it asks for).
 +void XgiApp::TraceSearchQuery(uint32_t proc_index, uint32_t num_props, uint32_t props_ptr, uint32_t num_ctx,
 +                              uint32_t ctx_ptr) {
 +  if (!rex::kernel::xam::net::NetTraceOn()) {
@@ -1546,7 +1556,7 @@ index d57caed..7647186 100644
        uint32_t context_value = memory::load_and_swap<uint32_t>(buffer + 20);
        REXKRNL_DEBUG("XGIUserSetContextEx({:08X}, {:08X}, {:08X})", user_index, context_id,
                      context_value);
-+      if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions()) {  // COGBox SDK patch 65
++      if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions()) {  // COGBox SDK patch 79
 +        sessions->OnSetContext(user_index, context_id, context_value);
 +      }
        return X_E_SUCCESS;
@@ -1556,7 +1566,7 @@ index d57caed..7647186 100644
        uint32_t value_ptr = memory::load_and_swap<uint32_t>(buffer + 24);
        REXKRNL_DEBUG("XGIUserSetPropertyEx({:08X}, {:08X}, {}, {:08X})", user_index, property_id,
                      value_size, value_ptr);
-+      // COGBox SDK patch 65: int32 / int64 properties go with an online lobby.
++      // COGBox SDK patch 79: int32 / int64 properties go with an online lobby.
 +      if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions();
 +          sessions && (value_size == 4 || value_size == 8) && memory_->LookupHeap(value_ptr) &&
 +          memory_->LookupHeap(value_ptr + value_size - 1)) {
@@ -1583,7 +1593,7 @@ index d57caed..7647186 100644
 +          }
            XNetFillHostSessionInfo(memory_->TranslateVirtual(session_info_ptr),
                                    nonce_ok ? memory_->TranslateVirtual(nonce_ptr) : nullptr);
-+          // COGBox SDK patch 65: a public matchmaking host session becomes a master-server lobby.
++          // COGBox SDK patch 79: a public matchmaking host session becomes a master-server lobby.
 +          if (sessions && nonce_ok) {
 +            std::array<uint8_t, 60> info;
 +            std::memcpy(info.data(), memory_->TranslateVirtual(session_info_ptr), info.size());
@@ -1597,7 +1607,7 @@ index d57caed..7647186 100644
        uint64_t session_nonce = memory::load_and_swap<uint64_t>(buffer + 8);
  
        REXKRNL_DEBUG("XGISessionDelete({:08X}, {:08X}, {:016X})", obj_ptr, flags, session_nonce);
-+      if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions()) {  // COGBox SDK patch 65
++      if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions()) {  // COGBox SDK patch 79
 +        sessions->OnDelete(session_nonce, obj_ptr);
 +      }
  
@@ -1613,7 +1623,7 @@ index d57caed..7647186 100644
 +      return X_E_SUCCESS;
 +    }
 +    case 0x000B0013: {
-+      // COGBox SDK patch 65: XSessionLeaveLocal / XSessionLeaveRemote (same layout as the join above). Nothing is
++      // COGBox SDK patch 79: XSessionLeaveLocal / XSessionLeaveRemote (same layout as the join above). Nothing is
 +      // tracked per member, so leaving always succeeds; the games treated the failure as a broken session.
 +      REXKRNL_DEBUG("XGISessionLeave({:08X}, {:08X})", buffer_ptr, buffer_length);
 +      if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions(); sessions && buffer_length >= 12) {
@@ -1630,8 +1640,8 @@ index d57caed..7647186 100644
        uint64_t session_nonce = memory::load_and_swap<uint64_t>(buffer + 8);
  
        REXKRNL_DEBUG("XSessionStart({:08X}, {:08X}, {:016X})", obj_ptr, flags, session_nonce);
-+      rex::kernel::xam::CogboxKeepPrivatePartyJoinable();  // COGBox SDK patch 65 (social step 4), see xam_msg.cpp
-+      if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions()) {  // COGBox SDK patch 65
++      rex::kernel::xam::CogboxKeepPrivatePartyJoinable();  // COGBox SDK patch 79 (social step 4), see xam_msg.cpp
++      if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions()) {  // COGBox SDK patch 79
 +        sessions->OnModify();
 +      }
  
@@ -1663,7 +1673,7 @@ index d57caed..7647186 100644
 -      REXKRNL_DEBUG("XSessionModify({:08X}, {:08X}, {:08X}, {:08X})", obj_ptr, flags,
 +      REXKRNL_INFO("cogbox_online: XSessionModify({:08X}, flags {:08X}, public {}, private {})", obj_ptr, flags,
                      maxPublicSlots, maxPrivateSlots);
-+      if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions()) {  // COGBox SDK patch 65
++      if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions()) {  // COGBox SDK patch 79
 +        sessions->OnSessionFlags(obj_ptr, flags);
 +        sessions->OnModify();
 +      }
@@ -1690,7 +1700,7 @@ index d57caed..7647186 100644
        REXKRNL_DEBUG("XSessionSearchByID({}, {:08X}, {:08X}, {:08X}, {:08X}, {}, {}, {})",
                      user_index, num_session_ids, session_ids_ptr, results_buffer_size,
                      search_results_ptr, reserved1, reserved2, reserved3);
-+      // COGBox SDK patch 65 (social step 4): a game joining an accepted invite looks the host's session up by its
++      // COGBox SDK patch 79 (social step 4): a game joining an accepted invite looks the host's session up by its
 +      // XNKID, carried in the 20-byte request itself; the invited lobby is the answer, marshalled like an
 +      // XSessionSearch result. Any other request layout is left as before (no reads through its fields).
 +      if (rex::kernel::xam::net::NetTraceOn()) {
@@ -1754,7 +1764,7 @@ index 3593403..72e40d0 100644
        return 0x80151802;  // ERROR_CONNECTION_INVALID
      }
      case 0x00058020: {
-+      // COGBox SDK patch 65 (social step 4): XFriendsCreateEnumerator with LIVE emulation: the master server's
++      // COGBox SDK patch 79 (social step 4): XFriendsCreateEnumerator with LIVE emulation: the master server's
 +      // friends. The XDK packs (user, start, count, *cbBuffer, *hEnum) into the parameter block that is the second
 +      // argument (read from Gears 3 TU6 sub_82B1ED78).
 +      if (rex::kernel::xam::net::NetOnline() && rex::kernel::xam::net::LiveEmulationOn() && buffer_length >= 0x10000 &&
@@ -1867,7 +1877,7 @@ index 3593403..72e40d0 100644
 -          "unimplemented",
 -          buffer_ptr, buffer_length);
 -      return X_E_FAIL;
-+      // COGBox SDK patch 65 (social step 4): XInviteGetAcceptedInfo. The XINVITE_INFO goes where the parameter block
++      // COGBox SDK patch 79 (social step 4): XInviteGetAcceptedInfo. The XINVITE_INFO goes where the parameter block
 +      // (the second argument) says - read from the game's own XDK code.
 +      if (rex::kernel::xam::net::NetTraceOn()) {
 +        REXKRNL_INFO("cogbox_net_trace: XInviteGetAcceptedInfo buf {:08X} arg2 {:08X}: {}", buffer_ptr, buffer_length,
@@ -1939,7 +1949,7 @@ index 3593403..72e40d0 100644
 +      return X_E_SUCCESS;
 +    }
 +    case 0x0005800E: {
-+      // COGBox SDK patch 65: called by Gears 3 right after XSessionJoinLocal/Remote (two buffers; likely the mute list
++      // COGBox SDK patch 79: called by Gears 3 right after XSessionJoinLocal/Remote (two buffers; likely the mute list
 +      // query). Succeed and leave the output as the game set it; the input is dumped for the trace.
 +      if (rex::kernel::xam::net::NetTraceOn()) {
 +        REXKRNL_INFO("cogbox_net_trace: XLIVEBASE 0005800E arg1 {}", rex::kernel::xam::net::HexDump(buffer, 64, 64));
@@ -2177,11 +2187,11 @@ index 2b2a321..54df090 100644
    g_identity.token = token;
 diff --git a/src/kernel/xam/net/invites.cpp b/src/kernel/xam/net/invites.cpp
 new file mode 100644
-index 0000000..a1288bf
+index 0000000..2a152d2
 --- /dev/null
 +++ b/src/kernel/xam/net/invites.cpp
 @@ -0,0 +1,182 @@
-+// COGBox SDK patch 65 (social step 4): see invites.h.
++// COGBox SDK patch 79 (social step 4): see invites.h.
 +#include <rex/kernel/xam/net/invites.h>
 +
 +#include <algorithm>
@@ -2365,11 +2375,11 @@ index 0000000..a1288bf
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/live_emulation.cpp b/src/kernel/xam/net/live_emulation.cpp
 new file mode 100644
-index 0000000..8868cea
+index 0000000..a790f6f
 --- /dev/null
 +++ b/src/kernel/xam/net/live_emulation.cpp
 @@ -0,0 +1,90 @@
-+// COGBox SDK patch 65: LIVE emulation and the online trace.
++// COGBox SDK patch 79: LIVE emulation and the online trace.
 +#include <rex/kernel/xam/net/live_emulation.h>
 +
 +#include <atomic>
@@ -2461,11 +2471,11 @@ index 0000000..8868cea
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/master_client.cpp b/src/kernel/xam/net/master_client.cpp
 new file mode 100644
-index 0000000..a8d3853
+index 0000000..782d5d9
 --- /dev/null
 +++ b/src/kernel/xam/net/master_client.cpp
 @@ -0,0 +1,335 @@
-+// COGBox SDK patch 65: the master-server client over WinHTTP.
++// COGBox SDK patch 79: the master-server client over WinHTTP.
 +#include <rex/kernel/xam/net/master_protocol.h>   // MaskedIp / PlainHttpAllowed
 +#include <nlohmann/json.hpp>
 +
@@ -2802,11 +2812,11 @@ index 0000000..a8d3853
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/master_protocol.cpp b/src/kernel/xam/net/master_protocol.cpp
 new file mode 100644
-index 0000000..563473d
+index 0000000..996bbe6
 --- /dev/null
 +++ b/src/kernel/xam/net/master_protocol.cpp
 @@ -0,0 +1,318 @@
-+// COGBox SDK patch 65: the master server's JSON.
++// COGBox SDK patch 79: the master server's JSON.
 +#include <rex/kernel/xam/net/master_protocol.h>
 +
 +#include <cstdio>
@@ -3126,11 +3136,11 @@ index 0000000..563473d
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/online_sessions.cpp b/src/kernel/xam/net/online_sessions.cpp
 new file mode 100644
-index 0000000..c533a20
+index 0000000..176412c
 --- /dev/null
 +++ b/src/kernel/xam/net/online_sessions.cpp
 @@ -0,0 +1,372 @@
-+// COGBox SDK patch 65: the games' XSession calls -> master-server lobbies.
++// COGBox SDK patch 79: the games' XSession calls -> master-server lobbies.
 +#include <rex/kernel/xam/net/online_sessions.h>
 +
 +#include <algorithm>
@@ -3504,11 +3514,11 @@ index 0000000..c533a20
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/online_signaling.cpp b/src/kernel/xam/net/online_signaling.cpp
 new file mode 100644
-index 0000000..2a06a4c
+index 0000000..077ddf4
 --- /dev/null
 +++ b/src/kernel/xam/net/online_signaling.cpp
 @@ -0,0 +1,148 @@
-+// COGBox SDK patch 65: who sends candidates to whom.
++// COGBox SDK patch 79: who sends candidates to whom.
 +#include <rex/kernel/xam/net/online_signaling.h>
 +
 +#include <rex/logging.h>
@@ -3658,11 +3668,11 @@ index 0000000..2a06a4c
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/online_startup.cpp b/src/kernel/xam/net/online_startup.cpp
 new file mode 100644
-index 0000000..5ffbd85
+index 0000000..e963f9d
 --- /dev/null
 +++ b/src/kernel/xam/net/online_startup.cpp
 @@ -0,0 +1,212 @@
-+// COGBox SDK patch 65: online play at start-up.
++// COGBox SDK patch 79: online play at start-up.
 +#include <atomic>
 +#include <cstdlib>
 +#include <rex/kernel/xam/net/host_ban.h>
@@ -3876,11 +3886,11 @@ index 0000000..5ffbd85
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/qos.cpp b/src/kernel/xam/net/qos.cpp
 new file mode 100644
-index 0000000..5231ab9
+index 0000000..522dae1
 --- /dev/null
 +++ b/src/kernel/xam/net/qos.cpp
 @@ -0,0 +1,62 @@
-+// COGBox SDK patch 65: the XNetQosLookup answer.
++// COGBox SDK patch 79: the XNetQosLookup answer.
 +#include <rex/kernel/xam/net/qos.h>
 +
 +#include <cstring>
@@ -3944,11 +3954,11 @@ index 0000000..5231ab9
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/session_marshal.cpp b/src/kernel/xam/net/session_marshal.cpp
 new file mode 100644
-index 0000000..d75c1f5
+index 0000000..a19e446
 --- /dev/null
 +++ b/src/kernel/xam/net/session_marshal.cpp
 @@ -0,0 +1,141 @@
-+// COGBox SDK patch 65: lobbies -> an XSessionSearch results buffer.
++// COGBox SDK patch 79: lobbies -> an XSessionSearch results buffer.
 +#include <rex/kernel/xam/net/session_marshal.h>
 +
 +#include <algorithm>
@@ -4132,11 +4142,11 @@ index 0000000..fa877f4
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/socket_hooks.cpp b/src/kernel/xam/net/socket_hooks.cpp
 new file mode 100644
-index 0000000..2a62b6e
+index 0000000..5ce4b75
 --- /dev/null
 +++ b/src/kernel/xam/net/socket_hooks.cpp
 @@ -0,0 +1,316 @@
-+// COGBox SDK patch 65: the socket hooks for online play.
++// COGBox SDK patch 79: the socket hooks for online play.
 +#include <rex/kernel/xam/net/master_protocol.h>   // MaskedIp / PlainHttpAllowed
 +#include <set>
 +#include <rex/kernel/xam/net/socket_hooks.h>
@@ -4454,11 +4464,11 @@ index 0000000..2a62b6e
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/stream_tunnel.cpp b/src/kernel/xam/net/stream_tunnel.cpp
 new file mode 100644
-index 0000000..cf65394
+index 0000000..0c9f758
 --- /dev/null
 +++ b/src/kernel/xam/net/stream_tunnel.cpp
 @@ -0,0 +1,228 @@
-+// COGBox SDK patch 65: game TCP connections to an online peer over the punched UDP path (see stream_tunnel.h).
++// COGBox SDK patch 79: game TCP connections to an online peer over the punched UDP path (see stream_tunnel.h).
 +#include <rex/kernel/xam/net/stream_tunnel.h>
 +
 +#include <chrono>
@@ -4688,11 +4698,11 @@ index 0000000..cf65394
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/tunnel_core.cpp b/src/kernel/xam/net/tunnel_core.cpp
 new file mode 100644
-index 0000000..018cfdb
+index 0000000..5d815e8
 --- /dev/null
 +++ b/src/kernel/xam/net/tunnel_core.cpp
-@@ -0,0 +1,230 @@
-+// COGBox SDK patch 65: reliable ordered streams in UDP frames (see tunnel_core.h).
+@@ -0,0 +1,245 @@
++// COGBox SDK patch 79: reliable ordered streams in UDP frames (see tunnel_core.h).
 +#include <rex/kernel/xam/net/tunnel_core.h>
 +
 +#include <algorithm>
@@ -4771,6 +4781,7 @@ index 0000000..018cfdb
 +  const uint32_t handle = next_handle_++;
 +  Conn c{vip, next_id_++, port, State::SynSent, now, now};
 +  if (!c.id) c.id = next_id_++;
++  c.last_heard = now;
 +  by_id_[{vip, c.id}] = handle;
 +  Emit(c, TunnelFrameType::Syn, 0);
 +  conns_.emplace(handle, std::move(c));
@@ -4824,12 +4835,20 @@ index 0000000..018cfdb
 +      Emit(conns_.at(*handle), TunnelFrameType::SynAck, 0);
 +      return;
 +    }
-+    const uint32_t h = next_handle_++;
 +    Conn c{from_vip, f->conn, f->port, State::Established, now, now};
++    const size_t from_peer = size_t(std::count_if(conns_.begin(), conns_.end(),
++                                                  [&](const auto& kv) { return kv.second.vip == from_vip && kv.second.inbound; }));
++    if (from_peer >= kMaxConnsPerPeer || conns_.size() >= kMaxConns) {
++      Emit(c, TunnelFrameType::Rst, 0);  // too many: refused before anything is opened locally
++      return;
++    }
++    const uint32_t h = next_handle_++;
 +    if (!cb_.open_local || !cb_.open_local(h, f->port)) {
 +      Emit(c, TunnelFrameType::Rst, 0);
 +      return;
 +    }
++    c.inbound = true;
++    c.last_heard = now;
 +    by_id_[{from_vip, f->conn}] = h;
 +    Emit(c, TunnelFrameType::SynAck, 0);
 +    conns_.emplace(h, std::move(c));
@@ -4843,6 +4862,7 @@ index 0000000..018cfdb
 +    return;
 +  }
 +  Conn& c = conns_.at(*handle);
++  c.last_heard = now;
 +  switch (f->type) {
 +    case TunnelFrameType::Rst:
 +      Drop(*handle, true);
@@ -4862,7 +4882,8 @@ index 0000000..018cfdb
 +        c.state = State::Established;
 +        if (cb_.established) cb_.established(*handle);
 +      }
-+      if (f->seq >= c.expected) {
++      // Only inside the window: a peer never sends further ahead, so anything else would only pile up here.
++      if (f->seq >= c.expected && f->seq - c.expected < kWindow) {
 +        c.early.emplace(f->seq, std::move(*f));
 +      }
 +      bool remote_closed = false;
@@ -4909,6 +4930,10 @@ index 0000000..018cfdb
 +      }
 +      continue;
 +    }
++    if (!c.unacked.empty() && now - c.last_heard >= kDeadTimeout) {
++      timed_out.push_back(h);  // the other side is gone: stop resending and free the slot
++      continue;
++    }
 +    for (auto& s : c.unacked) {
 +      if (now - s.sent >= kRetransmit) {
 +        s.sent = now;
@@ -4924,11 +4949,11 @@ index 0000000..018cfdb
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/ue3_script.cpp b/src/kernel/xam/net/ue3_script.cpp
 new file mode 100644
-index 0000000..95fb930
+index 0000000..19d6649
 --- /dev/null
 +++ b/src/kernel/xam/net/ue3_script.cpp
 @@ -0,0 +1,88 @@
-+// COGBox SDK patch 65 (social step 4): see ue3_script.h.
++// COGBox SDK patch 79 (social step 4): see ue3_script.h.
 +#include <rex/kernel/xam/net/ue3_script.h>
 +
 +#include <cstring>
@@ -5018,11 +5043,11 @@ index 0000000..95fb930
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/virtual_peer_manager.cpp b/src/kernel/xam/net/virtual_peer_manager.cpp
 new file mode 100644
-index 0000000..e56cb38
+index 0000000..257a1ba
 --- /dev/null
 +++ b/src/kernel/xam/net/virtual_peer_manager.cpp
-@@ -0,0 +1,568 @@
-+// COGBox SDK patch 65: online peers as virtual IPs and the NAT path to each.
+@@ -0,0 +1,573 @@
++// COGBox SDK patch 79: online peers as virtual IPs and the NAT path to each.
 +#include <rex/kernel/xam/net/master_protocol.h>   // MaskedIp / PlainHttpAllowed
 +#include <rex/kernel/xam/net/virtual_peer_manager.h>
 +
@@ -5455,6 +5480,11 @@ index 0000000..e56cb38
 +    PortPath& path = p.ports[punch->src_port];
 +    if (!path.selected) {
 +      path.selected = from;  // the first address that answers wins
++    } else if (!SameEndpoint(*path.selected, from) && !endpoint_to_peer_.count(EndpointKey(from))) {
++      // 0.6.0 review: the same player (same match token) answering from a second address. Normal for a NAT that
++      // changes port or a player on a LAN and the internet; worth a line in the log if a match misbehaves.
++      REXKRNL_WARN("cogbox_online: 10.254.{}.{} also answered from {}:{} (still using the first address)",
++                   (vip >> 8) & 0xFF, vip & 0xFF, MaskedIp(ntohl(from.sin_addr.s_addr)), ntohs(from.sin_port));
 +    }
 +    endpoint_to_peer_[EndpointKey(from)] = {vip, punch->src_port};
 +    if (!path.by_socket.count(native_handle)) {
@@ -5592,11 +5622,11 @@ index 0000000..e56cb38
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/xfriends.cpp b/src/kernel/xam/net/xfriends.cpp
 new file mode 100644
-index 0000000..59cae63
+index 0000000..31d17f4
 --- /dev/null
 +++ b/src/kernel/xam/net/xfriends.cpp
 @@ -0,0 +1,146 @@
-+// COGBox SDK patch 65 (social step 4): see xfriends.h.
++// COGBox SDK patch 79 (social step 4): see xfriends.h.
 +#include <rex/kernel/xam/net/xfriends.h>
 +
 +#include <algorithm>
@@ -5744,11 +5774,11 @@ index 0000000..59cae63
 +}  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/xnaddr_online.cpp b/src/kernel/xam/net/xnaddr_online.cpp
 new file mode 100644
-index 0000000..16750cf
+index 0000000..2246171
 --- /dev/null
 +++ b/src/kernel/xam/net/xnaddr_online.cpp
 @@ -0,0 +1,127 @@
-+// COGBox SDK patch 65: online XNADDRs and their virtual IPs.
++// COGBox SDK patch 79: online XNADDRs and their virtual IPs.
 +#include <rex/kernel/xam/net/xnaddr_online.h>
 +
 +#include <atomic>
@@ -5920,7 +5950,7 @@ index 6c4c3cd..0c150ae 100644
  using namespace rex::system;
  using namespace rex::system::xam;
  
-+// COGBox SDK patch 65, trace: who in the game asked for a session leave / delete / end. Walks the guest stack (each
++// COGBox SDK patch 79, trace: who in the game asked for a session leave / delete / end. Walks the guest stack (each
 +// frame's back chain at [r1], the caller's saved LR at [back chain - 8]) from the current LR.
 +#if REX_PLATFORM_WIN32
 +REXCVAR_DEFINE_STRING(cogbox_ue3_gnames, "", "Network",
@@ -6324,7 +6354,7 @@ index 6c4c3cd..0c150ae 100644
 +  return chain;
 +}
 +
-+// COGBox SDK patch 65 (social step 4), Gears 3 / Judgment: a private match's pregame lobby joinable by friends, as on
++// COGBox SDK patch 79 (social step 4), Gears 3 / Judgment: a private match's pregame lobby joinable by friends, as on
 +// a 360 with "Joinable Friends".
 +// - GearPartyGame_Base.OnStartPartyComplete calls SetPartyInviteFlags(false, false, false, NumPublicConnections) once
 +//   the party starts, so GearPersistentPartyBeaconHost.HandleGameSessionJIP refuses every friend (PRR_ReservationDenied)
@@ -6701,7 +6731,7 @@ index 1e4c699..7c96284 100644
  #include <rex/cvar.h>
  #include <rex/kernel/xam/module.h>
  #include <rex/kernel/xam/private.h>
-+#include <rex/kernel/xam/net/identity.h>       // COGBox SDK patch 65: online play
++#include <rex/kernel/xam/net/identity.h>       // COGBox SDK patch 79: online play
 +#include <rex/kernel/xam/net/live_emulation.h>
 +#include <rex/kernel/xam/net/online_sessions.h>
 +#include <rex/kernel/xam/net/online_startup.h>
@@ -6715,7 +6745,7 @@ index 1e4c699..7c96284 100644
    return ret;
  }
  
-+// COGBox SDK patch 65: online play (--net_online) needs the same LAN-mode XNet answers as system link (keys, connects,
++// COGBox SDK patch 79: online play (--net_online) needs the same LAN-mode XNet answers as system link (keys, connects,
 +// link status); broadcasts and SO_BROADCAST stay system link only.
 +bool XNetLanMode() {
 +  return REXCVAR_GET(net_system_link) || rex::kernel::xam::net::NetOnline();
@@ -6767,7 +6797,7 @@ index 1e4c699..7c96284 100644
 -  // As Netplay reports a LAN address.
 -  return XnAddrStatus::XNET_GET_XNADDR_STATIC | XnAddrStatus::XNET_GET_XNADDR_GATEWAY |
 -         XnAddrStatus::XNET_GET_XNADDR_DNS;
-+  // As Netplay reports a LAN address. COGBox SDK patch 65: online, with an XUID from the master server, also "online".
++  // As Netplay reports a LAN address. COGBox SDK patch 79: online, with an XUID from the master server, also "online".
 +  uint32_t status = XnAddrStatus::XNET_GET_XNADDR_STATIC | XnAddrStatus::XNET_GET_XNADDR_GATEWAY |
 +                    XnAddrStatus::XNET_GET_XNADDR_DNS;
 +  if (rex::kernel::xam::net::NetOnline() && rex::kernel::xam::net::GetAuthoritativeOnlineXuid()) {
@@ -6788,7 +6818,7 @@ index 1e4c699..7c96284 100644
    if (!xn_addr || !in_addr) {
      return 10014;  // WSAEFAULT
    }
-+  // COGBox SDK patch 65: an online peer's XNADDR becomes its virtual IP (10.254.x.y, big endian in guest memory).
++  // COGBox SDK patch 79: an online peer's XNADDR becomes its virtual IP (10.254.x.y, big endian in guest memory).
 +  if (rex::kernel::xam::net::NetOnline()) {
 +    if (uint32_t vip = rex::kernel::xam::net::XnAddrToVip(reinterpret_cast<const uint8_t*>(xn_addr.host_address()))) {
 +      const uint32_t be = htonl(vip);
@@ -6813,7 +6843,7 @@ index 1e4c699..7c96284 100644
 +  if (!XNetLanMode()) {
      return 1;
    }
-+  // COGBox SDK patch 65: a virtual IP gives back the online peer's own XNADDR.
++  // COGBox SDK patch 79: a virtual IP gives back the online peer's own XNADDR.
 +  if (rex::kernel::xam::net::NetOnline() && xn_addr &&
 +      rex::kernel::xam::net::VipToXnAddr(uint32_t(in_addr), reinterpret_cast<uint8_t*>(xn_addr.host_address()))) {
 +    if (xid) {
@@ -6853,7 +6883,7 @@ index 1e4c699..7c96284 100644
  
  u32 NetDll_XNetConnect_entry(u32 caller, u32 in_addr) {
 -  return REXCVAR_GET(net_system_link) ? 0 : uint32_t(caller);
-+  // COGBox SDK patch 65: an online peer's punch starts when its candidates arrive; nothing more to do here.
++  // COGBox SDK patch 79: an online peer's punch starts when its candidates arrive; nothing more to do here.
 +  if (rex::kernel::xam::net::NetTraceOn()) {
 +    REXKRNL_INFO("cogbox_net_trace: XNetConnect {}", LogIp(uint32_t(in_addr)));
 +  }
@@ -6861,7 +6891,7 @@ index 1e4c699..7c96284 100644
  }
  
  u32 NetDll_XNetGetConnectStatus_entry(u32 caller, u32 in_addr) {
-+  // COGBox SDK patch 65: an online peer is pending until its path is punched, then connected (lost after 10 s).
++  // COGBox SDK patch 79: an online peer is pending until its path is punched, then connected (lost after 10 s).
 +  if (rex::kernel::xam::net::NetOnline() && rex::kernel::xam::net::VirtualPeerManager::IsVirtualIp(uint32_t(in_addr))) {
 +    const uint32_t status = rex::kernel::xam::net::ConnectStatus(uint32_t(in_addr));
 +    static uint32_t last_status = 0xFFFFFFFF;
@@ -6905,7 +6935,7 @@ index 1e4c699..7c96284 100644
  u32 NetDll_XNetQosListen_entry(u32 caller, mapped_void id, mapped_void data, u32 data_size, u32 r7,
                                 u32 flags) {
 -  return X_ERROR_FUNCTION_FAILED;
-+  // COGBox SDK patch 65: online, the block a host publishes for its session goes with that session's lobby (Gears
++  // COGBox SDK patch 79: online, the block a host publishes for its session goes with that session's lobby (Gears
 +  // puts the host's name there). Offline: the old failure.
 +  auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions();
 +  if (!sessions) {
@@ -6925,7 +6955,7 @@ index 1e4c699..7c96284 100644
 +  return 0;
 +}
 +
-+// COGBox SDK patch 65: XNetQosLookup(xnc, cxna, apxna, apxnkid, apxnkey, cina, aina, adwServiceId, cProbes,
++// COGBox SDK patch 79: XNetQosLookup(xnc, cxna, apxna, apxnkid, apxnkey, cina, aina, adwServiceId, cProbes,
 +// dwBitsPerSec, dwFlags, hEvent, ppxnqos). Online, every host from the last search answers as contacted with its QoS
 +// block (the path to it is punched when the game connects); offline it does what the export stub did (nothing,
 +// returning the first argument).
@@ -6983,7 +7013,7 @@ index 1e4c699..7c96284 100644
  #endif
    }
  
-+  if (rex::kernel::xam::net::NetTraceOn()) {  // COGBox SDK patch 65
++  if (rex::kernel::xam::net::NetTraceOn()) {  // COGBox SDK patch 79
 +    REXKRNL_INFO("cogbox_net_trace: socket type {} protocol {} -> {:08X}", uint32_t(type), uint32_t(protocol),
 +                 socket->handle());
 +  }
@@ -6994,7 +7024,7 @@ index 1e4c699..7c96284 100644
  
  // Gears2-Native SDK patch 26: getsockopt was an export stub that returned without writing the value (the game calls it
  // four times entering a Horde / multiplayer lobby). Reads the host socket's option; 4-byte values go back big-endian.
-+// COGBox SDK patch 65: a rate-limited trace of calls on TCP sockets (one line per call kind and socket every 2 s).
++// COGBox SDK patch 79: a rate-limited trace of calls on TCP sockets (one line per call kind and socket every 2 s).
 +static void TraceTcpCall(const char* what, XSocket* socket, const std::string& detail) {
 +  if (!rex::kernel::xam::net::NetTraceOn() || !socket || socket->type() != XSocket::X_SOCK_STREAM) {
 +    return;
@@ -7050,7 +7080,7 @@ index 1e4c699..7c96284 100644
 +#else
 +  const int err = 0;
 +#endif
-+  if (rex::kernel::xam::net::NetTraceOn()) {  // COGBox SDK patch 65
++  if (rex::kernel::xam::net::NetTraceOn()) {  // COGBox SDK patch 79
 +    const uint8_t* sa = reinterpret_cast<const uint8_t*>(native_name.sa_data);
 +    REXKRNL_INFO("cogbox_net_trace: connect {:08X} to {}:{} -> {:08X} (error {})", uint32_t(socket_handle),
 +                 LogIp(uint32_t(sa[2]) << 24 | uint32_t(sa[3]) << 16 | uint32_t(sa[4]) << 8 | sa[5]), (sa[0] << 8) | sa[1],
@@ -7058,7 +7088,7 @@ index 1e4c699..7c96284 100644
 +  }
    if (XFAILED(status)) {
 -    XThread::SetLastError(xboxkrnl::xeRtlNtStatusToDosError(status));
-+    // COGBox SDK patch 65: the socket's own error (a non-blocking connect is WSAEWOULDBLOCK and completes later), not
++    // COGBox SDK patch 79: the socket's own error (a non-blocking connect is WSAEWOULDBLOCK and completes later), not
 +    // the generic status the game would take as a failed connection.
 +    XThread::SetLastError(err ? uint32_t(err) : xboxkrnl::xeRtlNtStatusToDosError(status));
      return -1;
@@ -7068,14 +7098,14 @@ index 1e4c699..7c96284 100644
    }
  
    X_STATUS status = socket->Listen(backlog);
-+  if (rex::kernel::xam::net::NetTraceOn()) {  // COGBox SDK patch 65
++  if (rex::kernel::xam::net::NetTraceOn()) {  // COGBox SDK patch 79
 +    REXKRNL_INFO("cogbox_net_trace: listen {:08X} -> {:08X}", uint32_t(socket_handle), uint32_t(status));
 +  }
    if (XFAILED(status)) {
      XThread::SetLastError(xboxkrnl::xeRtlNtStatusToDosError(status));
      return -1;
    }
-+  // COGBox SDK patch 65: a UE3 title's lobby is listed once its join beacon listens (OnlineSessions::OnTcpListen).
++  // COGBox SDK patch 79: a UE3 title's lobby is listed once its join beacon listens (OnlineSessions::OnTcpListen).
 +  if (socket->type() == XSocket::X_SOCK_STREAM) {
 +    if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions()) {
 +      sessions->OnTcpListen(uint16_t(socket->bound_port() - rex::kernel::xam::net::BindPortOffset()));
@@ -7088,7 +7118,7 @@ index 1e4c699..7c96284 100644
  u32 NetDll_accept_entry(u32 caller, u32 socket_handle, ppc_ptr_t<XSOCKADDR> addr_ptr,
                          mapped_u32 addrlen_ptr) {
 -  if (!addr_ptr) {
-+  // COGBox SDK patch 65: a null address is allowed (UE3's beacons call accept(s, NULL, NULL)); only a buffer with no
++  // COGBox SDK patch 79: a null address is allowed (UE3's beacons call accept(s, NULL, NULL)); only a buffer with no
 +  // length is a fault.
 +  if (addr_ptr && !addrlen_ptr) {
      // WSAEFAULT
@@ -7105,7 +7135,7 @@ index 1e4c699..7c96284 100644
 +  if (addr_ptr) native_addr = N_XSOCKADDR(addr_ptr);
 +  int native_len = addr_ptr ? int(*addrlen_ptr) : int(sizeof(native_addr));
    auto new_socket = socket->Accept(&native_addr, &native_len);
-+  if (rex::kernel::xam::net::NetTraceOn() && new_socket) {  // COGBox SDK patch 65
++  if (rex::kernel::xam::net::NetTraceOn() && new_socket) {  // COGBox SDK patch 79
 +    REXKRNL_INFO("cogbox_net_trace: accept {:08X} -> new socket", uint32_t(socket_handle));
 +  }
    if (new_socket) {
@@ -7121,7 +7151,7 @@ index 1e4c699..7c96284 100644
      return new_socket->handle();
    } else {
 +#if REX_PLATFORM_WIN32
-+    // COGBox SDK patch 65: the socket's own error. UE3 polls a non-blocking listen socket with accept and stops
++    // COGBox SDK patch 79: the socket's own error. UE3 polls a non-blocking listen socket with accept and stops
 +    // listening on any error other than WSAEWOULDBLOCK; without this the game saw a stale error.
 +    const int err = WSAGetLastError();
 +    XThread::SetLastError(uint32_t(err));
@@ -7149,7 +7179,7 @@ index 1e4c699..7c96284 100644
 +  for (uint32_t i = 0; i < host_writefds.count; ++i) TraceTcpCall("select(write)", host_writefds.sockets[i].get(), "");
    int ret = select(nfds, readfds ? &native_readfds : nullptr, writefds ? &native_writefds : nullptr,
                     exceptfds ? &native_exceptfds : nullptr, timeout_in);
-+  // COGBox SDK patch 65: trace selects that cover a TCP socket (a UE3 beacon polling for connections), at most 1/s.
++  // COGBox SDK patch 79: trace selects that cover a TCP socket (a UE3 beacon polling for connections), at most 1/s.
 +  if (rex::kernel::xam::net::NetTraceOn() && readfds) {
 +    static std::atomic<int64_t> last_ms{0};
 +    const int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -7177,7 +7207,7 @@ index 1e4c699..7c96284 100644
  
 -  return socket->Recv(buf_ptr, buf_len, flags);
 +  const int ret = socket->Recv(buf_ptr, buf_len, flags);
-+  // COGBox SDK patch 65: a failed recv leaves the socket's own error for the game (a non-blocking socket with nothing
++  // COGBox SDK patch 79: a failed recv leaves the socket's own error for the game (a non-blocking socket with nothing
 +  // to read is WSAEWOULDBLOCK, not a broken connection). Before, the error was not set at all, so UE3's party beacon
 +  // saw a stale error and closed its connection. System link / online play only, so nothing else changes.
 +  if (ret < 0 && XNetLanMode()) {
@@ -7195,7 +7225,7 @@ index 1e4c699..7c96284 100644
  
 -  return socket->Send(buf_ptr, buf_len, flags);
 +  const int ret = socket->Send(buf_ptr, buf_len, flags);
-+  // COGBox SDK patch 65: a failed send leaves the socket's own error for the game (a non-blocking socket with nothing
++  // COGBox SDK patch 79: a failed send leaves the socket's own error for the game (a non-blocking socket with nothing
 +  // to read is WSAEWOULDBLOCK, not a broken connection). Before, the error was not set at all, so UE3's party beacon
 +  // saw a stale error and closed its connection. System link / online play only, so nothing else changes.
 +  if (ret < 0 && XNetLanMode()) {
@@ -7280,7 +7310,7 @@ index 8b93e2f..ded1ca6 100644
  #include <iterator>
  
 +#include <rex/kernel/xam/net/identity.h>
-+#include <rex/kernel/xam/net/live_emulation.h>  // COGBox SDK patch 65: LIVE emulation
++#include <rex/kernel/xam/net/live_emulation.h>  // COGBox SDK patch 79: LIVE emulation
  #include <rex/cvar.h>
  #include <rex/kernel/xam/private.h>
  #include <rex/logging.h>
@@ -7290,7 +7320,7 @@ index 8b93e2f..ded1ca6 100644
  static std::string Player1Gamertag() {
 -  const std::string out = CleanGamertag(REXCVAR_GET(user_gamertag));
 -  return out.empty() ? REX_KERNEL_STATE()->user_profile()->name() : out;
-+  // COGBox SDK patch 65: the online account's name once it is claimed (one name per profile in every game).
++  // COGBox SDK patch 79: the online account's name once it is claimed (one name per profile in every game).
 +  const auto id = rex::kernel::xam::net::GetClientIdentity();
 +  return rex::kernel::xam::net::ChoosePlayer1Name(id.authoritative_xuid ? id.display_name : std::string(),
 +                                                  std::string(REXCVAR_GET(user_gamertag)),
@@ -7302,7 +7332,7 @@ index 8b93e2f..ded1ca6 100644
    else REXKRNL_INFO("SDK patch 71: player {} setting {:08X} saved ({} bytes)", user_index + 1, setting_id, bytes.size());
  }
  
-+// COGBox SDK patch 65, experiment: every copy's profile has the same offline XUID (B13EBABEBABEBABE), so two players
++// COGBox SDK patch 79, experiment: every copy's profile has the same offline XUID (B13EBABEBABEBABE), so two players
 +// in one online match share it. With --net_unique_offline_xuid an offline-XUID request under LIVE emulation gets one
 +// equal to the online XUID instead (the ID the join reservation carries). Off by default: Gears 3 signs saves with it.
 +REXCVAR_DEFINE_BOOL(net_unique_offline_xuid, false, "Network",
@@ -7323,7 +7353,7 @@ index 8b93e2f..ded1ca6 100644
        auto type = user_profile->type() & type_mask;
 -      if (type & (2 | 4)) {
 +      if ((type_mask & (2 | 4)) && rex::kernel::xam::net::LiveEmulationOn()) {
-+        // COGBox SDK patch 65: LIVE emulation - any request that accepts an online XUID gets the master server's
++        // COGBox SDK patch 79: LIVE emulation - any request that accepts an online XUID gets the master server's
 +        // XUID (the profile's own XUID is the offline one, the same on every copy).
 +        xuid = rex::kernel::xam::net::EmulatedOnlineXuid(0);
 +        result = X_E_SUCCESS;
@@ -7332,7 +7362,7 @@ index 8b93e2f..ded1ca6 100644
          xuid = UserXuid(user_index);
          result = X_E_SUCCESS;
 +      } else if ((type_mask & (2 | 4)) && rex::kernel::xam::net::LiveEmulationOn()) {
-+        // COGBox SDK patch 65: LIVE emulation - an online XUID request gets the master server's XUID.
++        // COGBox SDK patch 79: LIVE emulation - an online XUID request gets the master server's XUID.
 +        xuid = rex::kernel::xam::net::EmulatedOnlineXuid(0);
 +        result = X_E_SUCCESS;
        } else if (type & 1) {
@@ -7357,7 +7387,7 @@ index 8b93e2f..ded1ca6 100644
      }
    }
 -  return signin_state;
-+  // COGBox SDK patch 65: LIVE emulation reports a signed-in profile as signed in to LIVE (2).
++  // COGBox SDK patch 79: LIVE emulation reports a signed-in profile as signed in to LIVE (2).
 +  const uint32_t answer = rex::kernel::xam::net::EmulatedSigninState(signin_state);
 +  if (rex::kernel::xam::net::NetTraceOn()) {
 +    REXKRNL_INFO("cogbox_net_trace: XamUserGetSigninState user {} -> {} (profile {})", uint32_t(user_index), answer,
@@ -7369,7 +7399,7 @@ index 8b93e2f..ded1ca6 100644
  typedef struct {
    rex::be<uint64_t> xuid;
 -  rex::be<uint32_t> unk08;  // maybe zero?
-+  rex::be<uint32_t> unk08;  // dwInfoFlags: XUSER_INFO_FLAG_LIVE_ENABLED 0x1, _GUEST 0x2 (COGBox SDK patch 65)
++  rex::be<uint32_t> unk08;  // dwInfoFlags: XUSER_INFO_FLAG_LIVE_ENABLED 0x1, _GUEST 0x2 (COGBox SDK patch 79)
    rex::be<uint32_t> signin_state;
    rex::be<uint32_t> unk10;  // ?
    rex::be<uint32_t> unk14;  // ?
@@ -7380,7 +7410,7 @@ index 8b93e2f..ded1ca6 100644
 -    info->xuid = UserXuid(user_index);
 +    info->xuid = CogboxOfflineXuid(user_index, UserXuid(user_index));
 +  }
-+  // COGBox SDK patch 65: LIVE emulation - "online XUID only" (1) and "any" (0) get the master server's XUID, as a LIVE
++  // COGBox SDK patch 79: LIVE emulation - "online XUID only" (1) and "any" (0) get the master server's XUID, as a LIVE
 +  // profile's would; "offline XUID only" keeps the profile's.
 +  if (!(flags & kOfflineXuidOnly) && rex::kernel::xam::net::LiveEmulationOn()) {
 +    info->xuid = rex::kernel::xam::net::EmulatedOnlineXuid(0);
@@ -7407,7 +7437,7 @@ index 8b93e2f..ded1ca6 100644
  
    // If we deny everything, games should hopefully not try to do stuff.
 -  *out_value = 0;
-+  // COGBox SDK patch 65: LIVE emulation grants every privilege (multiplayer, communications, ...).
++  // COGBox SDK patch 79: LIVE emulation grants every privilege (multiplayer, communications, ...).
 +  *out_value = rex::kernel::xam::net::EmulatedPrivilege(0);
 +  if (rex::kernel::xam::net::NetTraceOn()) {
 +    REXKRNL_INFO("cogbox_net_trace: XamUserCheckPrivilege user {} privilege {} -> {}", uint32_t(user_index),
@@ -7486,31 +7516,34 @@ index cbc39c6..3be804f 100644
      achievement_manager.cpp
      achievements.cpp
      kernel_state.cpp
-+    cogbox_save_sign.cpp  # COGBox: Gears 3 save signatures (patch 58, generalised by patch 65)
++    cogbox_save_sign.cpp  # COGBox: Gears 3 save signatures (patch 58, generalised by patch 79)
      xmemory.cpp
      kernel_module.cpp
      user_module.cpp
 @@ -112,7 +113,7 @@ endif()
  if(WIN32)
      target_link_libraries(rexruntime PRIVATE ws2_32)
-     # COGBox SDK patch 63: online play (UPnP via miniupnpc, adapter list via iphlpapi)
+     # COGBox SDK patch 77: online play (UPnP via miniupnpc, adapter list via iphlpapi)
 -    target_link_libraries(rexruntime PRIVATE libminiupnpc-static iphlpapi bcrypt)
 +    target_link_libraries(rexruntime PRIVATE libminiupnpc-static iphlpapi bcrypt winhttp)
  endif()
  
- # COGBox SDK patch 64: nlohmann/json (the copy inja carries) for identity.json and the master server
+ # COGBox SDK patch 78: nlohmann/json (the copy inja carries) for identity.json and the master server
 diff --git a/src/system/cogbox_save_sign.cpp b/src/system/cogbox_save_sign.cpp
 new file mode 100644
-index 0000000..d769d9d
+index 0000000..60f4506
 --- /dev/null
 +++ b/src/system/cogbox_save_sign.cpp
-@@ -0,0 +1,278 @@
-+// COGBox: Gears 3 save signatures (patch 58's converter, moved here and generalised by COGBox SDK patch 65).
+@@ -0,0 +1,308 @@
++// COGBox: Gears 3 save signatures (patch 58's converter, moved here and generalised by COGBox SDK patch 79).
 +#include <rex/system/cogbox_save_sign.h>
 +
 +#include <cstdio>
 +#include <cstring>
 +#include <string>
++#if defined(_WIN32)
++#include <io.h>  // _commit
++#endif
 +
 +#include <fmt/format.h>
 +#include <rex/logging.h>
@@ -7576,7 +7609,11 @@ index 0000000..d769d9d
 +#endif
 +  if (!f) return false;
 +  bool ok = fwrite(v.data(), 1, v.size(), f) == v.size();
-+  fclose(f);
++  ok = fflush(f) == 0 && ok;
++#if REX_PLATFORM_WIN32
++  ok = _commit(_fileno(f)) == 0 && ok;  // 0.5.0 patch 58: on disk before the rename replaces the original
++#endif
++  ok = fclose(f) == 0 && ok;
 +  return ok;
 +}
 +std::array<uint8_t, 20> CogSign(uint64_t key, const uint8_t* body, size_t len) {
@@ -7599,7 +7636,11 @@ index 0000000..d769d9d
 +
 +void Convert(const std::vector<std::filesystem::path>& files, uint64_t from_key, uint64_t to_key, const char* suffix) {
 +  const ResignResult r = CogResignSaveFiles(files, from_key, to_key, suffix);
-+  if (r != ResignResult::AlreadyDone) {
++  if (r != ResignResult::AlreadyDone && r != ResignResult::Resigned) {
++    // 0.5.0 patch 58: a save left with the wrong signature may be reset by Gears 3 - a warning, not an info line
++    REXLOG_WARN("cogbox_save_convert: {} - re-sign {:016X} -> {:016X}: {} (LEFT UNCONVERTED, Gears 3 may reset it)",
++                rex::path_to_utf8(files[0]), from_key, to_key, ResultText(r));
++  } else if (r == ResignResult::Resigned) {
 +    REXLOG_INFO("cogbox_save_convert: {} - re-sign {:016X} -> {:016X}: {}", rex::path_to_utf8(files[0]), from_key,
 +                to_key, ResultText(r));
 +  }
@@ -7632,14 +7673,31 @@ index 0000000..d769d9d
 +    return ResignResult::NotRecognised;
 +  }
 +  auto first = CogReadAll(files[0]);
++  // 0.6.0 review: the backup must hold exactly this file. <file><suffix> is the first copy and is never changed; if it
++  // holds something else (an older save, or this save signed the other way after a switch), this file goes to
++  // <file><suffix>.last instead, replaced on each switch. At most two backups, so switching never runs out of names.
++  std::error_code ec;
 +  auto backup = files[0];
 +  backup += backup_suffix;
-+  std::error_code ec;
 +  if (!std::filesystem::exists(backup, ec)) {
 +    ec.clear();
 +    std::filesystem::copy_file(files[0], backup, ec);
++    if (ec) return ResignResult::NoBackup;
++  } else if (CogReadAll(backup) != first) {
++    backup += ".last";
++    auto btmp = backup;
++    btmp += ".cogbox-tmp";
++    if (!CogWriteAll(btmp, first)) {
++      std::filesystem::remove(btmp, ec);
++      return ResignResult::NoBackup;
++    }
++    std::filesystem::rename(btmp, backup, ec);
++    if (ec) {
++      std::filesystem::remove(btmp, ec);
++      return ResignResult::NoBackup;
++    }
 +  }
-+  if (ec || !std::filesystem::exists(backup, ec) || std::filesystem::file_size(backup, ec) != first.size()) {
++  if (CogReadAll(backup) != first) {
 +    return ResignResult::NoBackup;
 +  }
 +  std::memcpy(first.data(), to_sig.data(), 20);
@@ -7683,10 +7741,12 @@ index 0000000..d769d9d
 +      std::vector<std::filesystem::path> files;
 +      for (const char* n : {"63E83FFF", "63E83FFE", "63E83FFD"}) {
 +        auto f = it->path() / n;
-+        if (std::filesystem::exists(f, ec)) {
++        std::error_code fec;  // 0.5.0 patch 58: own error code (the loop's would stop the walk), convert what is there
++        if (std::filesystem::exists(f, fec) && !fec) {
 +          files.push_back(f);
 +        } else {
-+          break;
++          REXLOG_WARN("cogbox_save_convert: {} - missing, profile set incomplete; converting the files present",
++                      rex::path_to_utf8(f));
 +        }
 +      }
 +      if (!files.empty()) {
@@ -7784,10 +7844,10 @@ index 0000000..d769d9d
 +
 +}  // namespace rex::system
 diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
-index 3c5b6c7..7bad07b 100644
+index a615818..7e2db69 100644
 --- a/src/system/kernel_state.cpp
 +++ b/src/system/kernel_state.cpp
-@@ -31,6 +31,8 @@
+@@ -32,6 +32,8 @@
  #include <rex/system/kernel_module.h>
  #include <rex/system/kernel_state.h>
  #include <rex/system/save_trace.h>
@@ -7796,7 +7856,7 @@ index 3c5b6c7..7bad07b 100644
  #include <mutex>
  #include <unordered_map>
  #include <rex/system/function_dispatcher.h>
-@@ -50,145 +52,8 @@
+@@ -51,184 +53,8 @@
  #include <rex/system/xtimer.h>
  
  
@@ -7804,7 +7864,11 @@ index 3c5b6c7..7bad07b 100644
 -// PlayerStorage.dat and its profile settings (63E83FFF+63E83FFE+63E83FFD) with SHA-1(online XUID, 8 bytes big-endian +
 -// data) in the first 20 bytes. Before the fix we answered "online XUID" with the offline one, so every COGBox save is
 -// signed with it; now a local profile's online XUID is 0 and the game would wipe them. Saves still signed the old way are
--// re-signed with 8 zero bytes (data untouched; the old file kept once as <name>.pre-xuid0). Runs once at start-up.
+-// re-signed with 8 zero bytes (data untouched; the old file is first copied to a new <name>.pre-xuid0-<time>). Runs once
+-// at start-up.
+-#if REX_PLATFORM_WIN32
+-#include <io.h>  // _commit
+-#endif
 -namespace {
 -struct CogSha1 {
 -  uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
@@ -7861,7 +7925,11 @@ index 3c5b6c7..7bad07b 100644
 -#endif
 -  if (!f) return false;
 -  bool ok = fwrite(v.data(), 1, v.size(), f) == v.size();
--  fclose(f);
+-  ok = fflush(f) == 0 && ok;
+-#if REX_PLATFORM_WIN32
+-  ok = _commit(_fileno(f)) == 0 && ok;  // on disk before the rename replaces the original
+-#endif
+-  ok = fclose(f) == 0 && ok;
 -  return ok;
 -}
 -std::array<uint8_t, 20> CogSign(uint64_t key, const uint8_t* body, size_t len) {
@@ -7879,20 +7947,40 @@ index 3c5b6c7..7bad07b 100644
 -  auto old_sig = CogSign(old_key, all.data() + 20, all.size() - 20);
 -  if (std::memcmp(old_sig.data(), all.data(), 20) != 0) {
 -    auto new_sig = CogSign(0, all.data() + 20, all.size() - 20);
--    REXLOG_INFO("cogbox_save_convert: {} - {}", rex::path_to_utf8(files[0]),
--                std::memcmp(new_sig.data(), all.data(), 20) == 0 ? "already converted" : "signature not recognised, left alone");
+-    if (std::memcmp(new_sig.data(), all.data(), 20) == 0) {
+-      REXLOG_INFO("cogbox_save_convert: {} - already converted", rex::path_to_utf8(files[0]));
+-    } else {
+-      REXLOG_WARN("cogbox_save_convert: {} - signature not recognised, LEFT UNCONVERTED (Gears 3 may reset it)",
+-                  rex::path_to_utf8(files[0]));
+-    }
 -    return;
 -  }
 -  auto first = CogReadAll(files[0]);
--  auto backup = files[0];
--  backup += ".pre-xuid0";
+-  // A fresh, uniquely named backup every time: an older backup (say a .pre-xuid0 of a different size) must never stop
+-  // the conversion, or Gears 3 wipes the save.
 -  std::error_code ec;
--  if (!std::filesystem::exists(backup, ec)) {
+-  std::time_t now = std::time(nullptr);
+-  std::tm tm{};
+-#if REX_PLATFORM_WIN32
+-  localtime_s(&tm, &now);
+-#else
+-  localtime_r(&now, &tm);
+-#endif
+-  char stamp[32];
+-  std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tm);
+-  bool backed_up = false;
+-  for (int i = 0; i < 100 && !backed_up; ++i) {
+-    auto backup = files[0];
+-    backup += i ? fmt::format(".pre-xuid0-{}-{}", stamp, i) : fmt::format(".pre-xuid0-{}", stamp);
 -    ec.clear();
--    std::filesystem::copy_file(files[0], backup, ec);
+-    if (std::filesystem::exists(backup, ec) || ec) continue;
+-    ec.clear();
+-    backed_up = std::filesystem::copy_file(files[0], backup, ec) && !ec &&
+-                std::filesystem::file_size(backup, ec) == first.size() && !ec;
 -  }
--  if (ec || !std::filesystem::exists(backup, ec) || std::filesystem::file_size(backup, ec) != first.size()) {
--    REXLOG_INFO("cogbox_save_convert: {} - no backup could be made, left alone", rex::path_to_utf8(files[0]));
+-  if (!backed_up) {
+-    REXLOG_WARN("cogbox_save_convert: {} - no backup could be made, LEFT UNCONVERTED (Gears 3 may reset it)",
+-                rex::path_to_utf8(files[0]));
 -    return;
 -  }
 -  auto new_sig = CogSign(0, all.data() + 20, all.size() - 20);
@@ -7906,8 +7994,12 @@ index 3c5b6c7..7bad07b 100644
 -    ok = !ec;
 -  }
 -  if (!ok) std::filesystem::remove(tmp, ec);
--  REXLOG_INFO("cogbox_save_convert: {} - re-signed for the signed-out online XUID: {}", rex::path_to_utf8(files[0]),
--              ok ? "done" : "WRITE FAILED (original untouched)");
+-  if (ok) {
+-    REXLOG_INFO("cogbox_save_convert: {} - re-signed for the signed-out online XUID: done", rex::path_to_utf8(files[0]));
+-  } else {
+-    REXLOG_WARN("cogbox_save_convert: {} - WRITE FAILED, LEFT UNCONVERTED (original untouched)",
+-                rex::path_to_utf8(files[0]));
+-  }
 -}
 -void CogConvertGears3SavesImpl(const std::filesystem::path& root, uint64_t xuid) {
 -  if (root.empty() || !xuid) return;
@@ -7922,9 +8014,16 @@ index 3c5b6c7..7bad07b 100644
 -    std::error_code dec;
 -    if (!d.is_directory(dec) || dec) continue;
 -    std::vector<std::filesystem::path> files;
+-    // Convert whatever of the triplet is there; a missing one is logged (the set then likely stays unconverted).
 -    for (const char* n : {"63E83FFF", "63E83FFE", "63E83FFD"}) {
 -      auto f = d.path() / n;
--      if (std::filesystem::exists(f, ec)) files.push_back(f); else break;
+-      std::error_code fec;
+-      if (std::filesystem::exists(f, fec) && !fec) {
+-        files.push_back(f);
+-      } else {
+-        REXLOG_WARN("cogbox_save_convert: {} - missing, profile set incomplete; converting the files present",
+-                    rex::path_to_utf8(f));
+-      }
 -    }
 -    if (!files.empty()) CogResign(files, xuid);
 -  }
@@ -7940,18 +8039,18 @@ index 3c5b6c7..7bad07b 100644
 -}
 -}  // namespace
 +// COGBox (jobs 1066/1067): Gears 3 save conversion for the XamUserGetSigninInfo fix (Canary 01aec51 port); the signing
-+// code is in cogbox_save_sign.cpp (COGBox SDK patch 65 moved it there and made it work for any pair of XUIDs).
++// code is in cogbox_save_sign.cpp (COGBox SDK patch 79 moved it there and made it work for any pair of XUIDs).
  
  namespace rex::kernel::xam {
  uint32_t LocalPlayersSignedInMask();  // xam_user.cpp (Gears2-Native SDK patch 25)
-@@ -224,7 +89,10 @@ KernelState::KernelState(Runtime* emulator)
+@@ -264,7 +90,10 @@ KernelState::KernelState(Runtime* emulator)
      user_data_root = std::filesystem::absolute(user_data_root);
    }
    content_manager_ = std::make_unique<xam::ContentManager>(this, user_data_root);
 -  CogConvertGears3Saves(user_data_root, user_profile_->xuid());  // job 1066
-+  // job 1066: saves signed with the offline XUID are re-signed with 0 (once, backed up as .pre-xuid0).
++  // job 1066: saves signed with the offline XUID are re-signed with 0 (backed up as .pre-xuid0 / .pre-xuid0.last).
 +  CogConvertGears3SaveSigning(user_data_root, user_profile_->xuid(), user_profile_->xuid(), 0, ".pre-xuid0");
-+  // COGBox SDK patch 65: online play - the identity, the LIVE emulation XUID, and the Gears 3 saves signed for it.
++  // COGBox SDK patch 79: online play - the identity, the LIVE emulation XUID, and the Gears 3 saves signed for it.
 +  rex::kernel::xam::net::OnlineStartup(user_data_root, user_profile_->xuid());
  
    if (shared_kernel_state_ != nullptr) {
@@ -7967,7 +8066,7 @@ index 9b882af..5d7b088 100644
 +#include <algorithm>
 +#include <vector>
 +
-+#include <rex/kernel/xam/net/live_emulation.h>  // COGBox SDK patch 65: online trace
++#include <rex/kernel/xam/net/live_emulation.h>  // COGBox SDK patch 79: online trace
 +
  namespace rex {
  namespace system {
@@ -7980,7 +8079,7 @@ index 9b882af..5d7b088 100644
 +  return TracedDispatch(app, app_id, message, buffer_ptr, buffer_length);
 +}
 +
-+// COGBox SDK patch 65: with --cogbox_net_trace every XAM app message is logged with its buffer before and after.
++// COGBox SDK patch 79: with --cogbox_net_trace every XAM app message is logged with its buffer before and after.
 +X_HRESULT AppManager::TracedDispatch(App* app, uint32_t app_id, uint32_t message, uint32_t buffer_ptr,
 +                                     uint32_t buffer_length) {
 +  if (!rex::kernel::xam::net::NetTraceOn()) {
@@ -8028,7 +8127,7 @@ index ce500fe..332b946 100644
  #include <rex/platform.h>
  #include <rex/system/kernel_state.h>
  #include <rex/system/xsocket.h>
-+#include <rex/kernel/xam/net/socket_hooks.h>  // COGBox SDK patch 65: online play
++#include <rex/kernel/xam/net/socket_hooks.h>  // COGBox SDK patch 79: online play
 +#include <rex/kernel/xam/net/live_emulation.h>
  // #include <rex/system/xnet.h>
  
@@ -8047,7 +8146,7 @@ index ce500fe..332b946 100644
 +
  namespace rex::system {
  
-+// COGBox SDK patch 65: UDP ports held by online-play game sockets. A game that binds a second socket to a port it
++// COGBox SDK patch 79: UDP ports held by online-play game sockets. A game that binds a second socket to a port it
 +// still holds (Gears 3: the lobby's VDP socket on 1000 stays open when the match opens another on 1000) gets, on
 +// Windows, an arbitrary one of the two for each incoming packet. The newest socket is the one the game reads, so the
 +// older one is moved to a free port (a new native socket swapped in) and the port is the new socket's alone.
@@ -8138,7 +8237,7 @@ index ce500fe..332b946 100644
  }
  
  X_STATUS XSocket::Connect(N_XSOCKADDR* name, int name_len) {
-+  // COGBox SDK patch 65: a TCP connection to an online peer's virtual IP goes through the stream tunnel: the game's
++  // COGBox SDK patch 79: a TCP connection to an online peer's virtual IP goes through the stream tunnel: the game's
 +  // socket connects to the tunnel's local listener, which carries the bytes to the peer over the punched UDP path.
 +  N_XSOCKADDR redirected;
 +  if (type_ == X_SOCK_STREAM && name && rex::kernel::xam::net::NetOnline()) {
@@ -8163,7 +8262,7 @@ index ce500fe..332b946 100644
  }
  
  X_STATUS XSocket::Bind(N_XSOCKADDR_IN* name, int name_len) {
-+  // COGBox SDK patch 65: --net_bind_port_offset (tests with two copies of a game on one PC) moves a UDP game socket's
++  // COGBox SDK patch 79: --net_bind_port_offset (tests with two copies of a game on one PC) moves a UDP game socket's
 +  // fixed port, so the copies do not share it. The other side learns the real port from the candidates.
 +  N_XSOCKADDR_IN moved;
 +  const int offset = rex::kernel::xam::net::BindPortOffset();
@@ -8191,11 +8290,11 @@ index ce500fe..332b946 100644
 +    std::lock_guard<std::mutex> lock(g_port_mutex);
 +    g_port_owner[bound_port_] = this;
 +  }
-+  if (rex::kernel::xam::net::NetOnline()) {  // COGBox SDK patch 65: trace
++  if (rex::kernel::xam::net::NetOnline()) {  // COGBox SDK patch 79: trace
 +    REXLOG_INFO("cogbox_net_trace: bind {:08X} type {} port {} address {:08X}", handle(), uint32_t(type_), uint16_t(name->sin_port), uint32_t(name->sin_addr));
 +  }
 +
-+  // COGBox SDK patch 65: an online-play game socket (UDP / VDP) is probed and punches from here.
++  // COGBox SDK patch 79: an online-play game socket (UDP / VDP) is probed and punches from here.
 +  if (type_ == X_SOCK_DGRAM && rex::kernel::xam::net::NetOnline()) {
 +    rex::kernel::xam::net::OnSocketBound(native_handle_);
 +    net_registered_ = true;
@@ -8255,7 +8354,7 @@ index ce500fe..332b946 100644
    socklen_t nfromlen = sizeof(sockaddr_in);
 -  int ret = recvfrom(native_handle_, reinterpret_cast<char*>(buf), buf_len, flags,
 -                     (sockaddr*)&nfrom, &nfromlen);
-+  // COGBox SDK patch 65: on an online-play socket STUN answers and punch packets are taken out (socket_hooks.h).
++  // COGBox SDK patch 79: on an online-play socket STUN answers and punch packets are taken out (socket_hooks.h).
 +  int ret = net_registered_
 +                ? rex::kernel::xam::net::RecvFromFiltered(native_handle_, buf, buf_len, int(flags), &nfrom, &nfromlen)
 +                : recvfrom(native_handle_, reinterpret_cast<char*>(buf), buf_len, flags, (sockaddr*)&nfrom,
@@ -8267,7 +8366,7 @@ index ce500fe..332b946 100644
      from->sin_addr = ntohl(nfrom.sin_addr.s_addr);  // BE <- BE
      from->sin_port = ntohs(nfrom.sin_port);
      std::memset(from->x_sin_zero, 0, sizeof(from->x_sin_zero));
-+    // COGBox SDK patch 65: a packet from an online peer's path shows as coming from the peer's virtual IP.
++    // COGBox SDK patch 79: a packet from an online peer's path shows as coming from the peer's virtual IP.
 +    if (net_registered_) {
 +      if (auto label = rex::kernel::xam::net::RelabelFrom(nfrom, native_handle_)) {
 +        from->sin_addr = label->first;
@@ -8309,7 +8408,7 @@ index ce500fe..332b946 100644
    }
 +  if (net_registered_ && rex::kernel::xam::net::NetTraceOn() && ret > 0) TraceFirstPackets("in", bound_port_, buf, ret);
 +
-+  // COGBox SDK patch 65, trace: receive errors other than "nothing waiting" and the biggest packet / buffer sizes on
++  // COGBox SDK patch 79, trace: receive errors other than "nothing waiting" and the biggest packet / buffer sizes on
 +  // online game sockets (a buffer smaller than the peer's packet loses that packet with WSAEMSGSIZE).
 +  if (net_registered_ && rex::kernel::xam::net::NetTraceOn()) {
 +    static std::mutex m;
@@ -8339,7 +8438,7 @@ index ce500fe..332b946 100644
  }
  
  int XSocket::Send(const uint8_t* buf, uint32_t buf_len, uint32_t flags) {
-+  // COGBox SDK patch 65 (social step 4): a party beacon join answer (0B) lets a friend in: a private match's pregame
++  // COGBox SDK patch 79 (social step 4): a party beacon join answer (0B) lets a friend in: a private match's pregame
 +  // lobby must then accept that friend's login (see xam_msg.cpp).
 +  // (Gears 3 / Judgment answer 0B, Gears 2 answers 0C)
 +  if (buf_len >= 1 && (buf[0] == 0x0B || buf[0] == 0x0C) && rex::kernel::xam::net::NetOnline()) {
@@ -8359,7 +8458,7 @@ index ce500fe..332b946 100644
  
 -  return sendto(native_handle_, reinterpret_cast<char*>(buf), buf_len, flags,
 -                to ? (sockaddr*)&nto : nullptr, to_len);
-+  // COGBox SDK patch 65: a send to an online peer's virtual IP goes to its punched path, from this same socket.
++  // COGBox SDK patch 79: a send to an online peer's virtual IP goes to its punched path, from this same socket.
 +  if (to && type_ == X_SOCK_DGRAM && rex::kernel::xam::net::NetOnline()) {
 +    auto d = rex::kernel::xam::net::OnSendTo(native_handle_, uint32_t(to->sin_addr), uint16_t(to->sin_port), buf,
 +                                             buf_len);
@@ -8440,7 +8539,7 @@ index 53fb1d9..8fe2438 100644
  target_sources(unit_tests PRIVATE
 @@ -39,6 +58,7 @@ target_include_directories(unit_tests PRIVATE
  
- # COGBox SDK patch 63/64: net tests write only here
+ # COGBox SDK patch 77/78: net tests write only here
  target_compile_definitions(unit_tests PRIVATE COGBOX_NET_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}/net-test-data")
 +target_include_directories(unit_tests PRIVATE ${PROJECT_SOURCE_DIR}/thirdparty/inja/third_party/include)  # nlohmann/json
  
@@ -8451,7 +8550,7 @@ index 53fb1d9..8fe2438 100644
          TIMEOUT 60
  )
 +
-+# COGBox SDK patch 65: a manual MasterClient check against a running master server (not shipped, not run by ctest).
++# COGBox SDK patch 79: a manual MasterClient check against a running master server (not shipped, not run by ctest).
 +add_executable(cogbox_master_cli net/master_client_cli.cpp)
 +target_include_directories(cogbox_master_cli PRIVATE ${PROJECT_SOURCE_DIR}/include)
 +target_link_libraries(cogbox_master_cli PRIVATE rexruntime $<$<PLATFORM_ID:Windows>:ws2_32>)
@@ -8685,11 +8784,11 @@ index 6135082..29d7ce0 100644
 +}
 diff --git a/tests/unit/net/invites_test.cpp b/tests/unit/net/invites_test.cpp
 new file mode 100644
-index 0000000..acf7e3c
+index 0000000..3673237
 --- /dev/null
 +++ b/tests/unit/net/invites_test.cpp
 @@ -0,0 +1,158 @@
-+// COGBox SDK patch 65 (social step 4): the accepted invite a game reads with XInviteGetAcceptedInfo.
++// COGBox SDK patch 79 (social step 4): the accepted invite a game reads with XInviteGetAcceptedInfo.
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <chrono>
@@ -8849,11 +8948,11 @@ index 0000000..acf7e3c
 +}
 diff --git a/tests/unit/net/live_emulation_test.cpp b/tests/unit/net/live_emulation_test.cpp
 new file mode 100644
-index 0000000..30245a8
+index 0000000..b020f14
 --- /dev/null
 +++ b/tests/unit/net/live_emulation_test.cpp
 @@ -0,0 +1,85 @@
-+// COGBox SDK patch 65: LIVE emulation answers (signin state, online XUID, privileges) and the trace hex dump.
++// COGBox SDK patch 79: LIVE emulation answers (signin state, online XUID, privileges) and the trace hex dump.
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <filesystem>
@@ -8959,11 +9058,11 @@ index 0000000..5d5b48a
 +}
 diff --git a/tests/unit/net/master_client_cli.cpp b/tests/unit/net/master_client_cli.cpp
 new file mode 100644
-index 0000000..65f9a8a
+index 0000000..e4f59c2
 --- /dev/null
 +++ b/tests/unit/net/master_client_cli.cpp
 @@ -0,0 +1,83 @@
-+// COGBox SDK patch 65: a manual check of MasterClient against a running master server (not shipped, not a unit test).
++// COGBox SDK patch 79: a manual check of MasterClient against a running master server (not shipped, not a unit test).
 +//   cogbox_master_cli <base_url> <scratch dir>
 +// Two identities claim, A creates a lobby, B finds it by search and by room code, A sends B candidates over signaling,
 +// A deletes the lobby. Prints PASS or the first FAIL.
@@ -9048,11 +9147,11 @@ index 0000000..65f9a8a
 +}
 diff --git a/tests/unit/net/master_protocol_test.cpp b/tests/unit/net/master_protocol_test.cpp
 new file mode 100644
-index 0000000..965361c
+index 0000000..de67382
 --- /dev/null
 +++ b/tests/unit/net/master_protocol_test.cpp
 @@ -0,0 +1,199 @@
-+// COGBox SDK patch 65: master-server JSON (matches tools/master-server: claim, lobbies, candidates).
++// COGBox SDK patch 79: master-server JSON (matches tools/master-server: claim, lobbies, candidates).
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <nlohmann/json.hpp>
@@ -9253,11 +9352,11 @@ index 0000000..965361c
 +}
 diff --git a/tests/unit/net/online_sessions_test.cpp b/tests/unit/net/online_sessions_test.cpp
 new file mode 100644
-index 0000000..4172c0d
+index 0000000..2ebd110
 --- /dev/null
 +++ b/tests/unit/net/online_sessions_test.cpp
 @@ -0,0 +1,415 @@
-+// COGBox SDK patch 65: XSession calls -> master-server lobbies (create / delete by nonce / search).
++// COGBox SDK patch 79: XSession calls -> master-server lobbies (create / delete by nonce / search).
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <map>
@@ -9674,11 +9773,11 @@ index 0000000..4172c0d
 +}
 diff --git a/tests/unit/net/online_signaling_test.cpp b/tests/unit/net/online_signaling_test.cpp
 new file mode 100644
-index 0000000..eb7b119
+index 0000000..4d353fd
 --- /dev/null
 +++ b/tests/unit/net/online_signaling_test.cpp
 @@ -0,0 +1,241 @@
-+// COGBox SDK patch 65: who sends candidates to whom. The guest offers when the game resolves the host's XNADDR; the
++// COGBox SDK patch 79: who sends candidates to whom. The guest offers when the game resolves the host's XNADDR; the
 +// host answers an unknown guest once and starts punching toward it.
 +#include <catch2/catch_test_macros.hpp>
 +
@@ -9921,11 +10020,11 @@ index 0000000..eb7b119
 +}
 diff --git a/tests/unit/net/peer_manager_test.cpp b/tests/unit/net/peer_manager_test.cpp
 new file mode 100644
-index 0000000..b21139a
+index 0000000..6b06d48
 --- /dev/null
 +++ b/tests/unit/net/peer_manager_test.cpp
 @@ -0,0 +1,615 @@
-+// COGBox SDK patch 65: VirtualPeerManager tests. No real sockets: sends go to a recording SendFn, time is passed in.
++// COGBox SDK patch 79: VirtualPeerManager tests. No real sockets: sends go to a recording SendFn, time is passed in.
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <chrono>
@@ -10542,11 +10641,11 @@ index 0000000..b21139a
 +}
 diff --git a/tests/unit/net/punch_loopback_test.cpp b/tests/unit/net/punch_loopback_test.cpp
 new file mode 100644
-index 0000000..a52e79a
+index 0000000..1f518b2
 --- /dev/null
 +++ b/tests/unit/net/punch_loopback_test.cpp
 @@ -0,0 +1,196 @@
-+// COGBox SDK patch 65: two peers punch a path between real UDP sockets on 127.0.0.1, with a fake STUN server, and
++// COGBox SDK patch 79: two peers punch a path between real UDP sockets on 127.0.0.1, with a fake STUN server, and
 +// exchange game packets through it. Candidates are swapped directly (no master server).
 +#include <catch2/catch_test_macros.hpp>
 +
@@ -10744,11 +10843,11 @@ index 0000000..a52e79a
 +}
 diff --git a/tests/unit/net/qos_test.cpp b/tests/unit/net/qos_test.cpp
 new file mode 100644
-index 0000000..1683789
+index 0000000..2ddcb22
 --- /dev/null
 +++ b/tests/unit/net/qos_test.cpp
 @@ -0,0 +1,117 @@
-+// COGBox SDK patch 65: QoS. The host's XNetQosListen block rides with its lobby; XNetQosLookup answers each searched
++// COGBox SDK patch 79: QoS. The host's XNetQosListen block rides with its lobby; XNetQosLookup answers each searched
 +// host as contacted, with that block (XNQOS layout from the XDK: header 8, XNQOSINFO 24 each, big endian).
 +#include <catch2/catch_test_macros.hpp>
 +
@@ -10867,11 +10966,11 @@ index 0000000..1683789
 +}
 diff --git a/tests/unit/net/save_resign_test.cpp b/tests/unit/net/save_resign_test.cpp
 new file mode 100644
-index 0000000..bf5d803
+index 0000000..1e2c3e4
 --- /dev/null
 +++ b/tests/unit/net/save_resign_test.cpp
-@@ -0,0 +1,155 @@
-+// COGBox SDK patch 65: Gears 3 save signatures (SHA-1(online XUID, 8 bytes big endian + data) in the first 20 bytes)
+@@ -0,0 +1,182 @@
++// COGBox SDK patch 79: Gears 3 save signatures (SHA-1(online XUID, 8 bytes big endian + data) in the first 20 bytes)
 +// re-signed between XUID 0 and the online XUID. Files live in COGBOX_NET_TEST_DIR (build tree, never AppData).
 +#include <catch2/catch_test_macros.hpp>
 +
@@ -10958,6 +11057,33 @@ index 0000000..bf5d803
 +  CHECK(ReadFile(fs::path(f) += ".pre-online") == original);
 +}
 +
++TEST_CASE("Save sign: an older backup with other contents is kept and this save gets its own", "[net][save]") {
++  const auto original = MakeSave(0);
++  auto f = FreshFile("resign_stale_backup", original);
++  auto stale = original;
++  stale[100] ^= 0xFF;  // same size, other contents (an older save)
++  WriteFile(fs::path(f) += ".pre-online", stale);
++  REQUIRE(CogResignSaveFiles({f}, 0, kXuid, ".pre-online") == ResignResult::Resigned);
++  CHECK(ReadFile(fs::path(f) += ".pre-online") == stale);       // untouched
++  CHECK(ReadFile(fs::path(f) += ".pre-online.last") == original);  // this save's own backup
++}
++
++TEST_CASE("Save sign: switching on and off many times keeps working with at most two backups", "[net][save]") {
++  const auto original = MakeSave(0);
++  auto f = FreshFile("resign_many", original);
++  uint64_t from = 0, to = kXuid;
++  for (int i = 0; i < 250; ++i) {
++    REQUIRE(CogResignSaveFiles({f}, from, to, ".pre-online") == ResignResult::Resigned);
++    std::swap(from, to);
++  }
++  CHECK(ReadFile(f) == original);                                  // 250 switches: back to offline-signed
++  CHECK(ReadFile(fs::path(f) += ".pre-online") == original);       // the first copy, unchanged
++  CHECK(fs::exists(fs::path(f) += ".pre-online.last"));
++  size_t files = 0;
++  for (auto& e : fs::directory_iterator(fs::path(f).parent_path())) { (void)e; ++files; }
++  CHECK(files == 3);  // the save and its two backups, nothing else
++}
++
 +TEST_CASE("Save sign: a read-only save stops the run and stays as it was", "[net][save]") {
 +  const auto original = MakeSave(0);
 +  auto f = FreshFile("resign_readonly", original);
@@ -11028,11 +11154,11 @@ index 0000000..bf5d803
 +}
 diff --git a/tests/unit/net/session_marshal_test.cpp b/tests/unit/net/session_marshal_test.cpp
 new file mode 100644
-index 0000000..8704ab2
+index 0000000..42b893b
 --- /dev/null
 +++ b/tests/unit/net/session_marshal_test.cpp
 @@ -0,0 +1,155 @@
-+// COGBox SDK patch 65: lobbies -> the XSessionSearch results buffer, in the layout the traces confirmed
++// COGBox SDK patch 79: lobbies -> the XSessionSearch results buffer, in the layout the traces confirmed
 +// (XSESSION_SEARCHRESULT_HEADER, 92-byte results, 24-byte XUSER_PROPERTY, 8-byte XUSER_CONTEXT; all big endian).
 +#include <catch2/catch_test_macros.hpp>
 +
@@ -11211,11 +11337,11 @@ index 0000000..79cdbda
 +}
 diff --git a/tests/unit/net/socket_hooks_test.cpp b/tests/unit/net/socket_hooks_test.cpp
 new file mode 100644
-index 0000000..1c1e277
+index 0000000..f126cc2
 --- /dev/null
 +++ b/tests/unit/net/socket_hooks_test.cpp
 @@ -0,0 +1,163 @@
-+// COGBox SDK patch 65: the socket hooks are pass-throughs with net_online off, and consume only COGBox's own packets
++// COGBox SDK patch 79: the socket hooks are pass-throughs with net_online off, and consume only COGBox's own packets
 +// with it on.
 +#include <catch2/catch_test_macros.hpp>
 +
@@ -11380,11 +11506,11 @@ index 0000000..1c1e277
 +}
 diff --git a/tests/unit/net/tunnel_core_test.cpp b/tests/unit/net/tunnel_core_test.cpp
 new file mode 100644
-index 0000000..a5ac98f
+index 0000000..6683492
 --- /dev/null
 +++ b/tests/unit/net/tunnel_core_test.cpp
-@@ -0,0 +1,176 @@
-+// COGBox SDK patch 65: game TCP connections to a peer's virtual IP, carried as reliable streams in UDP frames.
+@@ -0,0 +1,246 @@
++// COGBox SDK patch 79: game TCP connections to a peer's virtual IP, carried as reliable streams in UDP frames.
 +// Two cores are wired through a simulated link that can drop and reorder frames; time is passed in.
 +#include <catch2/catch_test_macros.hpp>
 +
@@ -11560,13 +11686,83 @@ index 0000000..a5ac98f
 +  link.Run(now, 12);
 +  CHECK(link.guest.closed == std::vector<uint32_t>{c});
 +}
++
++TEST_CASE("Tunnel: frames further ahead than the window are dropped, frames inside it are kept", "[net][tunnel]") {
++  Link link;
++  auto now = Clock::time_point{} + 100s;
++  const uint32_t c = link.guest.core.Open(kVipOfHost, 8700, now);
++  link.Run(now, 4);
++  REQUIRE(link.host.opened.size() == 1);
++  const uint32_t hc = link.host.opened[0].first;
++  // The guest's connection id, from a frame it sends.
++  link.guest.core.Send(c, Bytes(10, 1).data(), 10, now);
++  REQUIRE(!link.wire.empty());
++  const auto id = DecodeTunnelFrame(link.wire.back().second.data(), link.wire.back().second.size())->conn;
++  link.wire.clear();  // seq 1 is now lost; seqs 2.. are injected by hand
++  auto inject = [&](uint32_t seq, uint8_t b) {
++    auto f = EncodeTunnelFrame({TunnelFrameType::Data, id, seq, 0, 8700, {b}});
++    link.host.core.OnFrame(kVipOfGuest, f.data(), f.size(), now);
++  };
++  for (uint32_t s = 1000; s < 1000 + 5000; ++s) inject(s, 0xEE);  // a flood far ahead: none of it is kept
++  inject(uint32_t(1 + TunnelCore::kWindow), 0xCC);                // just past the window: dropped
++  for (uint32_t s = 2; s <= TunnelCore::kWindow; ++s) inject(s, uint8_t(s));
++  CHECK(link.host.received[hc].empty());  // all waiting for seq 1
++  link.Run(now, 10);                      // the guest resends seq 1
++  const auto& got = link.host.received[hc];
++  REQUIRE(got.size() == 10 + (TunnelCore::kWindow - 1));
++  CHECK(std::count(got.begin(), got.end(), uint8_t(0xEE)) == 0);
++  CHECK(std::count(got.begin(), got.end(), uint8_t(0xCC)) == 0);
++  CHECK(got.back() == uint8_t(TunnelCore::kWindow));
++}
++
++TEST_CASE("Tunnel: one peer can't open more than kMaxConnsPerPeer connections", "[net][tunnel]") {
++  Link link;
++  auto now = Clock::time_point{} + 100s;
++  for (uint32_t id = 1; id <= TunnelCore::kMaxConnsPerPeer + 20; ++id) {
++    auto f = EncodeTunnelFrame({TunnelFrameType::Syn, id, 0, 0, 8700, {}});
++    link.host.core.OnFrame(kVipOfGuest, f.data(), f.size(), now);
++  }
++  CHECK(link.host.opened.size() == TunnelCore::kMaxConnsPerPeer);
++  size_t rst = 0;
++  for (auto& [to_host, fr] : link.wire) {
++    if (!to_host && DecodeTunnelFrame(fr.data(), fr.size())->type == TunnelFrameType::Rst) ++rst;
++  }
++  CHECK(rst == 20);
++  // another player still gets in
++  auto f = EncodeTunnelFrame({TunnelFrameType::Syn, 1, 0, 0, 8700, {}});
++  link.host.core.OnFrame(kVipOfGuest + 1, f.data(), f.size(), now);
++  CHECK(link.host.opened.size() == TunnelCore::kMaxConnsPerPeer + 1);
++}
++
++TEST_CASE("Tunnel: a connection whose other side vanished is dropped and frees its slot", "[net][tunnel]") {
++  Link link;
++  auto now = Clock::time_point{} + 100s;
++  const uint32_t c = link.guest.core.Open(kVipOfHost, 8700, now);
++  link.Run(now, 4);
++  REQUIRE(link.guest.established == std::vector<uint32_t>{c});
++  link.drop_every = 1;  // the host is gone
++  link.guest.core.Send(c, Bytes(100, 2).data(), 100, now);
++  link.Run(now, 280);  // 14 s
++  CHECK(link.guest.closed.empty());
++  link.Run(now, 30);
++  CHECK(link.guest.closed == std::vector<uint32_t>{c});
++}
++
++TEST_CASE("Tunnel: our own connections to a player don't use up that player's inbound limit", "[net][tunnel]") {
++  Link link;
++  auto now = Clock::time_point{} + 100s;
++  for (size_t i = 0; i < TunnelCore::kMaxConnsPerPeer + 4; ++i) link.host.core.Open(kVipOfGuest, 9000, now);
++  auto f = EncodeTunnelFrame({TunnelFrameType::Syn, 77, 0, 0, 8700, {}});
++  link.host.core.OnFrame(kVipOfGuest, f.data(), f.size(), now);
++  CHECK(link.host.opened.size() == 1);
++}
 diff --git a/tests/unit/net/ue3_script_test.cpp b/tests/unit/net/ue3_script_test.cpp
 new file mode 100644
-index 0000000..3e91347
+index 0000000..b86b311
 --- /dev/null
 +++ b/tests/unit/net/ue3_script_test.cpp
 @@ -0,0 +1,106 @@
-+// COGBox SDK patch 65 (social step 4): finding the private match checks in UE3 script bytecode by what they do.
++// COGBox SDK patch 79 (social step 4): finding the private match checks in UE3 script bytecode by what they do.
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <rex/kernel/xam/net/ue3_script.h>
@@ -11674,11 +11870,11 @@ index 0000000..3e91347
 +}
 diff --git a/tests/unit/net/xfriends_test.cpp b/tests/unit/net/xfriends_test.cpp
 new file mode 100644
-index 0000000..1acf8b1
+index 0000000..146b350
 --- /dev/null
 +++ b/tests/unit/net/xfriends_test.cpp
 @@ -0,0 +1,112 @@
-+// COGBox SDK patch 65 (social step 4): the games' XFriends list from the master server's friends.
++// COGBox SDK patch 79 (social step 4): the games' XFriends list from the master server's friends.
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <array>
@@ -11792,11 +11988,11 @@ index 0000000..1acf8b1
 +}
 diff --git a/tests/unit/net/xnaddr_online_test.cpp b/tests/unit/net/xnaddr_online_test.cpp
 new file mode 100644
-index 0000000..08dc9f5
+index 0000000..10af3d6
 --- /dev/null
 +++ b/tests/unit/net/xnaddr_online_test.cpp
 @@ -0,0 +1,77 @@
-+// COGBox SDK patch 65: online XNADDRs ("CGB1" + XUID + session token in abOnline) and their virtual IPs.
++// COGBox SDK patch 79: online XNADDRs ("CGB1" + XUID + session token in abOnline) and their virtual IPs.
 +#include <catch2/catch_test_macros.hpp>
 +
 +#include <cstring>
