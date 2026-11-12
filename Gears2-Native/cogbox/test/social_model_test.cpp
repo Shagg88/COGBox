@@ -203,19 +203,21 @@ int main() {
         CHECK(friends_changed(l1, l2));
     }
     {
-        const auto c = parse_region_counts(R"({"us-e":500,"us-w":100,"oceania":50,"europe":1000})");
-        CHECK(c.size() == 4 && c.at("europe") == 1000);
+        const auto c = parse_region_counts(R"({"us":600,"oceania":50,"europe":1000})");
+        CHECK(c.size() == 3 && c.at("europe") == 1000 && c.at("us") == 600);
         CHECK(parse_region_counts("not json").empty());
-        CHECK(region_label(kSocialRegions[0], c, "players") == "US-E: ~500 players");
-        CHECK(region_label(kSocialRegions[2], c, "players") == "OCE: ~50 players");
-        CHECK(region_label(kSocialRegions[0], {}, "players") == "US-E");
-        CHECK(default_region_for_utc(-8 * 60) == "us-w");
-        CHECK(default_region_for_utc(-5 * 60) == "us-e");
+        CHECK(region_label(kSocialRegions[0], c, "players") == "US: ~600 players");
+        CHECK(region_label(kSocialRegions[1], c, "players") == "OCE: ~50 players");
+        CHECK(region_label(kSocialRegions[0], {}, "players") == "US");
+        CHECK(default_region_for_utc(-8 * 60) == "us");
+        CHECK(default_region_for_utc(-5 * 60) == "us");
         CHECK(default_region_for_utc(1 * 60) == "europe");
         CHECK(default_region_for_utc(10 * 60) == "oceania");
         CHECK(region_or_default("europe", 10 * 60) == "europe");
         CHECK(region_or_default("", 10 * 60) == "oceania");
-        CHECK(region_or_default("mars", -5 * 60) == "us-e");
+        CHECK(region_or_default("mars", -5 * 60) == "us");
+        CHECK(region_or_default("us-w", 10 * 60) == "us");  // the old US-W / US-E settings become US
+        CHECK(region_or_default("us-e", 1 * 60) == "us");
     }
     if (g_failures == 0) std::printf("social_model_test: all passed\n");
     return g_failures;

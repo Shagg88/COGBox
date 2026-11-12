@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import crypto from 'node:crypto';
 import { DatabaseInstance } from '../db.js';
 import { checkAuthHeader } from '../auth.js';
+import { normalizeRegion } from '../regions.js';
 
 interface IdValue { id: number; value: number }
 
@@ -87,7 +88,8 @@ export const lobbyRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onHostChang
 
   // Public lobbies of a title (and region).
   fastify.get<{ Querystring: LobbyQuery }>('/', async (request, reply) => {
-    const { title_id, region } = request.query;
+    const { title_id } = request.query;
+    const region = normalizeRegion(request.query.region);
     // Players searching ask every few seconds: one answer per second and per search is enough.
     const key = `${title_id ?? ''}|${region ?? ''}`;
     const cached = searches.get(key);
@@ -155,7 +157,7 @@ export const lobbyRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onHostChang
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       lobbyId, host.uuid, host.xuid, body.title_id.toUpperCase(), roomCode, body.session_info.toLowerCase(),
-      body.region ?? 'global', body.is_public === false ? 0 : 1, body.max_players ?? 8, body.current_players ?? 1,
+      normalizeRegion(body.region) ?? 'global', body.is_public === false ? 0 : 1, body.max_players ?? 8, body.current_players ?? 1,
       JSON.stringify(properties), JSON.stringify(contexts), now, now
     );
     hostChanged(host.uuid);
