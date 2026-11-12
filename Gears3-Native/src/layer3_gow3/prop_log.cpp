@@ -13,6 +13,7 @@
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>

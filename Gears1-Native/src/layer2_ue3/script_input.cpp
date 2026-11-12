@@ -328,6 +328,14 @@ void Teleport(double x, double y, double z, const std::string& cls) {
     pawn = all.empty() ? 0 : all[0];
   }
   if (!pawn) { REXLOG_WARN("script_input: teleport: no {}", cls.empty() ? "player pawn" : cls); return; }
+  // 0.6.0 review: written only into an actor, at an Actor.Location the object layout really gives (a wrong layout -
+  // another game version - finds no Actor class or a different offset, and nothing is written)
+  const uint32_t actor = obj::FindClass("Actor");
+  const int loc = actor ? obj::PropertyOffset(actor, "Location") : -1;
+  if (!actor || loc < 0 || loc > 0x1000 || loc != g_actors.loc || !obj::IsA(pawn, actor)) {
+    REXLOG_WARN("script_input: teleport: refused (Actor.Location not found where the layout says, or {} is not an actor)", obj::ObjectName(pawn));
+    return;
+  }
   const float v[3] = {float(x), float(y), float(z)};
   for (int k = 0; k < 3; k++) {
     uint32_t u;

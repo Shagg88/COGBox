@@ -446,8 +446,15 @@ int PropertySize(uint32_t cls, const char* property) {
 
 uint32_t BoolMask(uint32_t cls, const char* property) {
   const uint32_t p = FindProperty(cls, property);
-  static const uint32_t boolProperty = FindClass("BoolProperty");
-  return p && ClassOf(p) == boolProperty ? Read32(p + 104) : 0;
+  static std::atomic<uint32_t> boolProperty{0};   // 0.6.0 review: looked up until found (was cached as 0 if asked too early)
+  uint32_t bp = boolProperty.load(std::memory_order_relaxed);
+  if (!bp && (bp = FindClass("BoolProperty")) != 0) boolProperty.store(bp, std::memory_order_relaxed);
+  return p && bp && ClassOf(p) == bp ? Read32(p + 104) : 0;
+}
+
+std::string PropertyType(uint32_t cls, const char* property) {
+  const uint32_t p = FindProperty(cls, property);
+  return p ? ObjectName(ClassOf(p)) : std::string();
 }
 
 }  // namespace ue3::obj

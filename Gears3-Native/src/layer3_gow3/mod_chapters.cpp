@@ -21,6 +21,7 @@
 // UObject::LoadPackageAsync(const FString& r3, callback r4, user data r5, const FGuid* r6, FName type r7) and kept: the
 // package's own objects (Outer = the package) join the root set.
 // --gow3_mod_chapters=false turns all of it off.
+#include <climits>
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
 #include <rex/logging/macros.h>
@@ -191,17 +192,33 @@ bool FillChapterTable() {
 // The trilogy: GearPawn_COGMarcusG2MP.bForceStretchToMarcusSkeleton = false - the multiplayer base forces
 // AnimRotationOnly 2 (every animation rotation only, for skeletons other than Marcus's) where the campaign classes use
 // 1 (each AnimSet's own setting); the classic Marcus is Marcus's skeleton, and his arms twitched in the radio stance.
-struct Applied { uint32_t at; uint32_t mask; uint32_t old; std::string what; };   // mask 0: the whole word / byte
+// 0.6.0 review: only the class default is put back - live instances die with their map (their memory may hold
+// something else by then); restored newest first, so two edits of one word come back right.
+struct Applied { uint32_t at; uint32_t mask; uint32_t old; bool byte; };   // mask 0: the whole word / byte
 std::vector<Applied> g_applied;
 
 void RestoreClassDefaults() {
-  for (const Applied& a : g_applied) {
+  for (auto it = g_applied.rbegin(); it != g_applied.rend(); ++it) {
+    const Applied& a = *it;
     if (a.mask) obj::Write32(a.at, (obj::Read32(a.at) & ~a.mask) | (a.old & a.mask));
-    else if (a.what == "byte") obj::Write8(a.at, uint8_t(a.old));
+    else if (a.byte) obj::Write8(a.at, uint8_t(a.old));
     else obj::Write32(a.at, a.old);
   }
   if (!g_applied.empty()) REXLOG_INFO("mod_api: class defaults: {} restored", g_applied.size());
   g_applied.clear();
+}
+
+// the whole text a number (no "1.5abc")
+template <class F>
+bool ParseAll(const std::string& v, F parse) {
+  try {
+    size_t pos = 0;
+    parse(v, &pos);
+    while (pos < v.size() && std::isspace(uint8_t(v[pos]))) pos++;
+    return pos == v.size() && !v.empty();
+  } catch (const std::exception&) {
+    return false;
+  }
 }
 
 void ApplyClassDefaults(const std::string& map) {
@@ -214,48 +231,52 @@ void ApplyClassDefaults(const std::string& map) {
       REXLOG_WARN("mod_api: class defaults: {}.{} - {} not found", e.cls, e.prop, !cls || !def ? "class" : "property");
       continue;
     }
-    const uint32_t mask = obj::BoolMask(cls, e.prop.c_str());
-    const int size = obj::PropertySize(cls, e.prop.c_str());
+    // the property's own type decides (an object reference or a name is never written)
+    const std::string type = obj::PropertyType(cls, e.prop.c_str());
+    const uint32_t mask = type == "BoolProperty" ? obj::BoolMask(cls, e.prop.c_str()) : 0;
     std::string low = e.value;
     for (char& c : low) c = char(std::tolower(uint8_t(c)));
+    while (!low.empty() && std::isspace(uint8_t(low.back()))) low.pop_back();
     uint32_t word = 0;
-    std::string kind;
-    try {
-    if (mask) {
-      kind = "bool";
+    bool ok = true;
+    if (type == "BoolProperty") {
+      ok = mask != 0 && (low == "true" || low == "1" || low == "false" || low == "0");
       word = (low == "true" || low == "1") ? mask : 0;
-    } else if (size == 1) {
-      kind = "byte", word = uint32_t(std::stoul(e.value)) & 0xFF;
-    } else if (size == 4 && e.value.find('.') != std::string::npos) {
-      const float f = std::stof(e.value);
-      std::memcpy(&word, &f, 4), kind = "float";
-    } else if (size == 4) {
-      kind = "int", word = uint32_t(std::stol(e.value));
+    } else if (type == "ByteProperty") {
+      long v = -1;
+      ok = ParseAll(e.value, [&](const std::string& s, size_t* p) { v = std::stol(s, p); }) && v >= 0 && v <= 255;
+      word = uint32_t(v);
+    } else if (type == "IntProperty") {
+      long long v = 0;
+      ok = ParseAll(e.value, [&](const std::string& s, size_t* p) { v = std::stoll(s, p); }) && v >= INT32_MIN && v <= INT32_MAX;
+      word = uint32_t(int32_t(v));
+    } else if (type == "FloatProperty") {
+      float f = 0;
+      ok = ParseAll(e.value, [&](const std::string& s, size_t* p) { f = std::stof(s, p); });
+      std::memcpy(&word, &f, 4);
     } else {
-      REXLOG_WARN("mod_api: class defaults: {}.{} - not a bool, byte, int or float property", e.cls, e.prop);
+      REXLOG_WARN("mod_api: class defaults: {}.{} is a {} - only bool, byte, int and float properties can be set", e.cls, e.prop,
+                  type.empty() ? "property of unknown type" : type);
       continue;
     }
-    } catch (const std::exception&) {
-      REXLOG_WARN("mod_api: class defaults: {}.{} = {} - not a number", e.cls, e.prop, e.value);
+    if (!ok) {
+      REXLOG_WARN("mod_api: class defaults: {}.{} = {} - not a valid {}", e.cls, e.prop, e.value, type);
       continue;
     }
     std::vector<uint32_t> targets{def};
     for (uint32_t o : obj::FindInstancesOf(cls)) targets.push_back(o);
+    int written = 0;
     for (uint32_t o : targets) {
       const uint32_t at = o + uint32_t(off);
-      if (mask) {
-        const uint32_t old = obj::Read32(at);
-        g_applied.push_back({at, mask, old, kind});
-        obj::Write32(at, (old & ~mask) | word);
-      } else if (kind == "byte") {
-        g_applied.push_back({at, 0, obj::Read32(at) >> 24, kind});
-        obj::Write8(at, uint8_t(word));
-      } else {
-        g_applied.push_back({at, 0, obj::Read32(at), kind});
-        obj::Write32(at, word);
-      }
+      const uint32_t old = obj::Read32(at);
+      bool w;
+      if (mask) w = obj::Write32(at, (old & ~mask) | word);
+      else if (type == "ByteProperty") w = obj::Write8(at, uint8_t(word));
+      else w = obj::Write32(at, word);
+      if (w) written++;
+      if (w && o == def) g_applied.push_back({at, mask, type == "ByteProperty" ? old >> 24 : old, type == "ByteProperty"});
     }
-    REXLOG_INFO("mod_api: class defaults: {}.{} = {} ({} objects)", e.cls, e.prop, e.value, targets.size());
+    REXLOG_INFO("mod_api: class defaults: {}.{} = {} ({} of {} objects)", e.cls, e.prop, e.value, written, targets.size());
   }
 }
 
