@@ -19,7 +19,7 @@
 
 #include <rex/cvar.h>
 
-// perf049: how long before the deadline the limiter stops sleeping and spins (frame_log.cpp; default 1000 = as 0.4.8).
+// perf049: how long before the deadline the limiter stops sleeping and spins (frame_log.cpp; default 300 since 0.6.1, 1000 = as 0.4.8-0.6.0).
 REXCVAR_DECLARE(int32_t, gow2_frame_limiter_spin_us);
 
 namespace xenos {

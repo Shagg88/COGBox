@@ -1149,7 +1149,9 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_queries_correct, true, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_queries_idle_submits, 0, "Gears2",
                      "Strict queries: the most extra GPU submissions per frame made while the render thread is idle with "
                      "a closed query batch (0 = no limit, as 0.6.0). Every submission ends the open command list, which "
-                     "resets the per-list reuse of vertex, index, constant and table data (0.6.1 review P1)");
+                     "resets the per-list reuse of vertex, index, constant and table data (0.6.1 review P1). "
+                     "Diagnostic: once the limit is reached a waiting query is only answered at the frame's own "
+                     "submit, or 'visible' after 2 s");
 REXCVAR_DEFINE_INT32(gow2_renderer_queries_log, 0, "Gears2",
                      "Per-query lines (estimate vs our count) for the first N queries of each summary frame (0 = none)");
 // Takeover step 1 (notes/50): show OUR image. At each swap, our resolve of the front buffer (the colour copy whose
@@ -2256,8 +2258,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       // PR #43 (legoliamneeson): a closed batch of queries gets its own submission (at most 4 extra per frame) so the
       // guest waiting on them does not wait for the rest of the frame's GPU work; results are polled every 32 draws.
       if (occ_need_submit_ && !occ_open_.open && occ_closed_in_batch_ && occ_batches_this_frame_ < 4) {
-        backend_->SubmitEarly();
-        ++submit_sites_[kSubmitQueryDraw];
+        CountedSubmitEarly(kSubmitQueryDraw);
         occ_need_submit_ = false;
         occ_closed_in_batch_ = 0;
         ++occ_batches_this_frame_;
@@ -2281,8 +2282,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       // per frame). Off (0) by default until measured; N = after every N draws.
       if (submit_draws_ && ++draws_since_submit_ >= submit_draws_) {
         draws_since_submit_ = 0;
-        backend_->SubmitEarly();
-        ++submit_sites_[kSubmitEveryNDraws];
+        CountedSubmitEarly(kSubmitEveryNDraws);
       }
     }
     EndParts();
@@ -2478,8 +2478,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // the likely source of the ~130 submissions a frame. Counted per cause in the summary; the limit is opt-in.
     const int32_t idle_limit = REXCVAR_GET(gow2_renderer_queries_idle_submits);
     if (occ_need_submit_ && !backend_->IsLost() && (idle_limit <= 0 || occ_idle_submits_this_frame_ < uint32_t(idle_limit))) {
-      backend_->SubmitEarly();
-      ++submit_sites_[kSubmitQueryIdle];
+      CountedSubmitEarly(kSubmitQueryIdle);
       ++occ_idle_submits_this_frame_;
       occ_need_submit_ = false;
       occ_closed_in_batch_ = 0;
@@ -12650,12 +12649,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   double(bs.submits - summary_submits_) / frames);
       // 0.6.1 (review P1): who asked for the submissions we can name; the rest is the frame's own (swap, present) and
       // the backend's (rings full, readbacks).
+      const uint64_t submits_total = bs.submits - summary_submits_;
+      const uint64_t submits_named =
+          submit_sites_[kSubmitQueryIdle] + submit_sites_[kSubmitQueryDraw] + submit_sites_[kSubmitEveryNDraws];
       REXLOG_INFO("gow2_renderer: submits by cause: {:.1f}/frame strict-query idle poll, {:.1f}/frame strict-query "
                   "draw path, {:.1f}/frame every-N-draws; {:.1f}/frame other",
                   double(submit_sites_[kSubmitQueryIdle]) / frames, double(submit_sites_[kSubmitQueryDraw]) / frames,
                   double(submit_sites_[kSubmitEveryNDraws]) / frames,
-                  double(bs.submits - summary_submits_ - submit_sites_[kSubmitQueryIdle] - submit_sites_[kSubmitQueryDraw] -
-                         submit_sites_[kSubmitEveryNDraws]) / frames);
+                  double(submits_total > submits_named ? submits_total - submits_named : 0) / frames);
       submit_sites_[0] = submit_sites_[1] = submit_sites_[2] = 0;
       summary_barrier_calls_ = bs.barrier_calls;
       summary_barrier_batches_ = bs.barrier_batches;
@@ -13585,6 +13586,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t occ_idle_submits_this_frame_ = 0;  // 0.6.1 (review P1)
   enum { kSubmitQueryIdle, kSubmitQueryDraw, kSubmitEveryNDraws, kSubmitSiteCount };
   uint64_t submit_sites_[kSubmitSiteCount] = {};  // since the last summary
+  // SubmitEarly submits nothing when no list is open or the device is lost: count a cause only when it did.
+  void CountedSubmitEarly(int site) {
+    const uint64_t before = backend_->Stats().submits;
+    backend_->SubmitEarly();
+    if (backend_->Stats().submits != before) ++submit_sites_[site];
+  }
   struct OcclusionStats {
     uint64_t ends = 0, ours = 0, incomplete = 0, refused = 0, unended = 0, answered = 0, from_cache = 0, fallback = 0,
              results = 0, zero = 0, samples = 0, latency_frames = 0, corrected = 0, too_late = 0,

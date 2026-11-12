@@ -279,7 +279,9 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
     while (!name.empty() && (name.back() == ' ' || name.back() == '.')) name.pop_back();
     if (name.empty()) name = "mod";
     std::string dest = join(mods_dir(g), name);
-    if (dir_exists(dest)) { mz_zip_reader_end(&z); err = "A mod named \"" + name + "\" is already there - remove or rename it first."; return false; }
+    // 0.6.1: 0.6.0 installed an EMPTY folder for a zip mod (review C1); RemoveDirectoryW only removes an empty one, so
+    // that leftover no longer blocks adding the zip again and a real mod of the same name is still refused.
+    if (dir_exists(dest) && !RemoveDirectoryW(widen(dest).c_str())) { mz_zip_reader_end(&z); err = "A mod named \"" + name + "\" is already there - remove or rename it first."; return false; }
     std::string part = dest + ".partial";
     remove_dir_tree(widen(part));   // what an earlier, failed try left
     make_dirs(part);
