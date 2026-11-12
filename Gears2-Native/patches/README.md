@@ -132,3 +132,7 @@ Gears 3 and Judgment use the same runtime.
   `CoInitializeEx` + `CoCreateInstance(MMDeviceEnumerator)` + `CoUninitialize` on the audio submit path every time
   (milliseconds, sometimes far more - a periodic stall). The calling thread now keeps COM and one enumerator for its
   lifetime. Apply it in the SDK root (`git apply`); it only touches `src/audio/sdl/sdl_audio_driver.cpp`.
+- `sdk-patch86-display-gamma-type.diff` (0.6.1, after 85; NOT BUILT yet - needs a runtime build): `--kernel_display_gamma_type`
+  (0 linear, 1 sRGB, 2 BT.709 = default, 3 power) and `--kernel_display_gamma_power`, as in Xenia Canary; this SDK had the
+  answer of `VdGetCurrentDisplayGamma` fixed at 2 / 2.22222233. Defaults unchanged. A test switch for the Judgment brightness
+  reports (GitHub #185 / #250). Apply it in the SDK root; it only touches `src/kernel/xboxkrnl/xboxkrnl_video.cpp`.

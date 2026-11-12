@@ -1,0 +1,37 @@
+diff --git a/src/kernel/xboxkrnl/xboxkrnl_video.cpp b/src/kernel/xboxkrnl/xboxkrnl_video.cpp
+index 4e27f5b..549fa33 100644
+--- a/src/kernel/xboxkrnl/xboxkrnl_video.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_video.cpp
+@@ -42,11 +42,17 @@
+ REXCVAR_DEFINE_BOOL(video_mode_widescreen, true, "Display",
+                     "Guest video mode is widescreen (16:9 TV setting); false = a 4:3 TV (use with a 4:3 video_mode_width / height)");
+ 
++// COGBox patch 86 (0.6.1): the display gamma type the title's D3D asks for when it builds its gamma ramp, as a
++// switch again (Xenia Canary's kernel_display_gamma_type / kernel_display_gamma_power; this SDK had them fixed at 2 and
++// 2.22222233). Defaults unchanged. For the Judgment brightness reports (GitHub #185 / #250): sRGB and a pure power
++// curve differ most near black.
++REXCVAR_DEFINE_INT32(kernel_display_gamma_type, 2, "Display",
++                     "Display gamma type the title is told: 0 linear, 1 sRGB (CRT), 2 BT.709 (HDTV, default), 3 power "
++                     "(kernel_display_gamma_power)");
++REXCVAR_DEFINE_DOUBLE(kernel_display_gamma_power, 2.22222233, "Display",
++                      "Display gamma power, used with kernel_display_gamma_type 3");
++
+ namespace {
+-// Display gamma type: 0 - linear, 1 - sRGB (CRT), 2 - BT.709 (HDTV), 3 - power
+-constexpr uint32_t kDisplayGammaType = 2;
+-// Display gamma power (used with gamma type 3)
+-constexpr double kDisplayGammaPower = 2.22222233;
+ 
+ void ConfiguredVideoMode(uint32_t& width, uint32_t& height) {
+   int32_t configured_width = REXCVAR_GET(video_mode_width);
+@@ -146,8 +152,8 @@ void VdGetCurrentDisplayGamma_entry(mapped_u32 type_ptr, mapped_f32 power_ptr) {
+   // 3 - use the power written to *power_ptr.
+   // Anything else - linear.
+   // Used in D3D SetGammaRamp/SetPWLGamma to adjust the ramp for the display.
+-  *type_ptr = kDisplayGammaType;
+-  *power_ptr = float(kDisplayGammaPower);
++  *type_ptr = uint32_t(std::clamp(REXCVAR_GET(kernel_display_gamma_type), 0, 3));
++  *power_ptr = float(std::clamp(REXCVAR_GET(kernel_display_gamma_power), 1.0, 4.0));
+ }
+ 
+ struct X_D3DPRIVATE_RECT {
