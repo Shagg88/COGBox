@@ -6,10 +6,11 @@ is one of my favourites, so the project is near and dear to my heart.
 
 **Fully playable** with a few hiccups - if you hit one, please send a problem report (see below).
 
+**COGBox is back on GitHub!** This is our home again, and we're keeping [GitLab](https://gitlab.com/shagg88/cogbox) as a full backup
+with the same releases.
+
 **[Download the latest release](https://github.com/Shagg88/COGBox/releases)** · You need your own copy of each game
 and its title update. No game files are included, ever.
-
-Backup with the same files: [GitLab](https://gitlab.com/shagg88/cogbox/-/releases).
 
 **Online multiplayer is here (0.6.0):** play Gears of War online with friends again, peer to peer through COGBox's own
 matchmaking - no Xbox Live needed. Off until you turn it on in the launcher's Social tab. Confirmed so far:
