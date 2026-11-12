@@ -83,19 +83,6 @@ void GowjInstallFilmGrainSwitch(rex::Runtime* runtime) {
   g_no_film_grain.store(true);
   REXLOG_INFO("gowj_no_film_grain: on");
 }
-// 0.6.1: Xenia Canary's TU4 "Occlusion Query Fix" (boma): "Force occlusion testing against full-resolution depth,
-// reducing geometry popping that sometimes occurs when using strict occlusion queries". Canary writes `li r11,0` at
-// 0x827DE330 and 0x827E2540; here a hook after each sets r11 = 0. Off by default and not passed by CogBox (opt-in test).
-REXCVAR_DEFINE_BOOL(gowj_patch_occlusion_full_depth, false, "Judgment",
-                    "Occlusion queries test against the full-resolution depth (Canary's Occlusion Query Fix, boma): "
-                    "less popping of distant objects with --gow2_renderer_queries=strict");
-static void GowjOcclusionFullDepth(PPCRegister& r11) {
-  if (!REXCVAR_GET(gowj_patch_occlusion_full_depth)) return;
-  GOWJ_LOG_ONCE("gowj_patch_occlusion_full_depth: occlusion tests use the full-resolution depth");
-  r11.u64 = 0;
-}
-void GowjOcclusionFullDepthA(PPCRegister& r11) { GowjOcclusionFullDepth(r11); }
-void GowjOcclusionFullDepthB(PPCRegister& r11) { GowjOcclusionFullDepth(r11); }
 void GowjNoFilmGrain(PPCRegister& f0) {   // before `stfs f0,316(r31)` at 0x8243CF68
   if (g_no_film_grain.load(std::memory_order_relaxed)) f0.f64 = 0.0;
 }

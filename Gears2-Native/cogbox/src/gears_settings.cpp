@@ -1546,9 +1546,6 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     const bool realOcclusion = s.i("Api") == 0 && !env.wine && g != Game::Gears1 &&
                                (g != Game::Gears2 || cap_exe(env, "gow2_renderer_queries"));
     if (realOcclusion) a.push_back("--gow2_renderer_queries=strict");
-    // 0.6.1: --gow3_patch_occlusion_full_depth / --gowj_patch_occlusion_full_depth (Canary's "Occlusion Query Fix",
-    // boma) exist in the exes but are NOT passed here: opt-in through extra-args.txt until an A/B on GitHub #255 / #233
-    // shows they help (Shagg, 12 Nov: nothing that works is replaced without proof).
     // Notes/80: XeGTAO (2 high, 3 ultra); notes/81: CACAO (4); 0 Off goes through the game's own [SystemSettings] below,
     // 1 changes nothing
     if (avail("AO") && s.i("AO") >= 2) {

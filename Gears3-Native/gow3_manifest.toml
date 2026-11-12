@@ -220,20 +220,6 @@ labels = [0x82FDCF48, 0x82FDCF64, 0x82FDD0E4, 0x82FDD264, 0x82FDD3E4, 0x82FDD564
 
 # Game patches (src/layer3_gow3/game_patches.cpp; all off by default). Sites checked in our disassembly (notes/03).
 # Diagnostics for the black characters (notes/15): Canary Performance A (Sowa_95), base-disc sites checked [V].
-# 0.6.1: Canary's "Occlusion Query Fix" (boma) - see gow3_patch_occlusion_full_depth in game_patches.cpp. Canary writes
-# `li r11,0` at both addresses; the hooks run after the original instruction and set r11 = 0 when the option is on.
-[[entrypoint.midasm_hook]]
-address = 0x827B2BD0
-name = "Gow3OcclusionFullDepthA"
-registers = ["r11"]
-after_instruction = true
-
-[[entrypoint.midasm_hook]]
-address = 0x827B6C58
-name = "Gow3OcclusionFullDepthB"
-registers = ["r11"]
-after_instruction = true
-
 [[entrypoint.midasm_hook]]
 address = 0x8236C990
 name = "Gow3NoLightEnvShadows"
