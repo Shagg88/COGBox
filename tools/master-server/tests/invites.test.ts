@@ -301,8 +301,30 @@ describe('join and invites', () => {
     const [wa, wb] = await Promise.all([open(a, `&role=game&title_id=${G3}&region=oceania`), open(b, `&role=game&title_id=${G2}&region=oceania`)]);
     const now = (await app.inject({ method: 'GET', url: '/api/v1/population/regions' })).json();
     expect(now.oceania).toBe(before.oceania + 2);
-    expect(Object.keys(now).sort()).toEqual(['europe', 'oceania', 'us-e', 'us-w']);
+    expect(Object.keys(now).sort()).toEqual(['europe', 'oceania', 'us']);
     await Promise.all([wa, wb].map((w) => new Promise((r) => { w.once('close', r); w.close(); })));
+    await new Promise((r) => setTimeout(r, 100));
+  });
+
+  it('region: US-W and US-E from older launchers count as US', async () => {
+    const mk = async (region: string) => {
+      const h = await claim();
+      return (await app.inject({ method: 'POST', url: '/api/v1/lobbies', headers: auth(h), payload: {
+        title_id: 'CCCCCCCC', session_info: '22'.repeat(60), region, is_public: true, max_players: 10, properties: [], contexts: [] } })).json().lobby_id;
+    };
+    const west = await mk('us-w'); const east = await mk('us-e'); const us = await mk('us');
+    const ids = async (q: string) => (await app.inject({ method: 'GET', url: `/api/v1/lobbies?title_id=CCCCCCCC${q}` })).json().lobbies.map((l: any) => l.lobby_id);
+    for (const q of ['&region=us', '&region=us-w', '&region=us-e']) {
+      const found = await ids(q);
+      expect(found).toEqual(expect.arrayContaining([west, east, us]));
+    }
+    const before = (await app.inject({ method: 'GET', url: '/api/v1/population/regions' })).json();
+    const a = await claim();
+    const wa = await open(a, `&role=game&title_id=CCCCCCCC&region=us-w`);
+    const now = (await app.inject({ method: 'GET', url: '/api/v1/population/regions' })).json();
+    expect(now.us).toBe(before.us + 1);
+    expect((await app.inject({ method: 'GET', url: '/api/v1/population?title_id=CCCCCCCC&region=us' })).json().region).toBe(1);
+    await new Promise((r) => { wa.once('close', r); wa.close(); });
     await new Promise((r) => setTimeout(r, 100));
   });
 

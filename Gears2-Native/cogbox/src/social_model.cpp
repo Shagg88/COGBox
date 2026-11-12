@@ -194,13 +194,13 @@ std::map<std::string, int> parse_region_counts(const std::string& body) {
 }
 
 std::string default_region_for_utc(int minutes_east) {
-    if (minutes_east < -6 * 60 - 30) return "us-w";
-    if (minutes_east < -2 * 60) return "us-e";
+    if (minutes_east < -2 * 60) return "us";
     if (minutes_east < 5 * 60) return "europe";
     return "oceania";
 }
 
 std::string region_or_default(const std::string& saved, int minutes_east) {
+    if (saved == "us-w" || saved == "us-e") return "us";  // US-W and US-E were merged into US
     for (const SocialRegion& r : kSocialRegions) {
         if (saved == r.id) return saved;
     }

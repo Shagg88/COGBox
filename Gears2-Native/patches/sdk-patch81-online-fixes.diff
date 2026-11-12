@@ -1,0 +1,1080 @@
+diff --git a/include/rex/kernel/xam/net/master_protocol.h b/include/rex/kernel/xam/net/master_protocol.h
+index dccbd3a..fc2a60e 100644
+--- a/include/rex/kernel/xam/net/master_protocol.h
++++ b/include/rex/kernel/xam/net/master_protocol.h
+@@ -77,7 +77,7 @@ std::string MaskedIp(uint32_t ip);
+ bool PlainHttpAllowed(const std::string& host);
+ // The signaling WebSocket's path: /ws/signal?uuid=..&token=..&role=game[&title_id=<8 upper hex>] (title 0: none).
+ // The role and title let the server keep a launcher and a game connection side by side and show friends which game.
+-// A launcher region (oceania, us-e, us-w, europe); anything else is "global", the Any region choice.
++// A launcher region (oceania, us, europe; us-e / us-w from older launchers are us); anything else is "global", the Any region choice.
+ std::string NormalizeRegion(const std::string& region);
+ std::string LobbySearchPath(uint32_t title_id, const std::string& region);
+ std::string SignalingPath(const std::string& uuid, const std::string& token, uint32_t title_id, const std::string& region = "global");
+diff --git a/include/rex/kernel/xam/net/socket_hooks.h b/include/rex/kernel/xam/net/socket_hooks.h
+index 2e3df28..bd8bd68 100644
+--- a/include/rex/kernel/xam/net/socket_hooks.h
++++ b/include/rex/kernel/xam/net/socket_hooks.h
+@@ -49,7 +49,12 @@ std::optional<std::pair<uint32_t, uint16_t>> RelabelFrom(const sockaddr_in& from
+ bool HoldUnlabelled(const sockaddr_in& from);
+ // A game socket listening on this local TCP port. The tunnel only opens these: a peer must never reach anything else
+ // listening on this PC's loopback address.
+-void NoteGameListenPort(uint16_t local_port);
++void NoteGameListenPort(uint16_t local_port, uint64_t native = ~0ull);
+ bool IsGameListenPort(uint16_t local_port);
++// COGBox 0.5.0: send one game datagram to (vip, port) over the stream tunnel (SendAction::Relay).
++void RelayDatagram(uint64_t native_handle, uint32_t vip, uint16_t port, const uint8_t* data, size_t len);
++// COGBox 0.5.0 diagnostics: the game's listening socket on a port, or ~0ull once the game closed it
++uint64_t GameListenSocket(uint16_t local_port);
++void ForgetGameListenSocket(uint64_t native);
+ 
+ }  // namespace rex::kernel::xam::net
+diff --git a/include/rex/kernel/xam/net/stream_tunnel.h b/include/rex/kernel/xam/net/stream_tunnel.h
+index 77e8445..0b34b57 100644
+--- a/include/rex/kernel/xam/net/stream_tunnel.h
++++ b/include/rex/kernel/xam/net/stream_tunnel.h
+@@ -7,6 +7,8 @@
+ #pragma once
+ 
+ #include <atomic>
++#include <chrono>
++#include <map>
+ #include <cstdint>
+ #include <mutex>
+ #include <optional>
+@@ -21,6 +23,9 @@ class StreamTunnel {
+   static StreamTunnel& Get();
+   bool Start();  // once; false if the socket could not be made
+   std::optional<sockaddr_in> RedirectConnect(uint32_t vip, uint16_t port);
++  // COGBox 0.5.0: one game UDP datagram from our game port src_port to the peer's game port dst_port, carried over the
++  // tunnel socket (whose path to the peer already works). The peer hands it to its game socket on dst_port.
++  void SendDatagram(uint32_t vip, uint16_t src_port, uint16_t dst_port, const uint8_t* data, size_t len);
+ 
+  private:
+   struct PendingListener {
+@@ -34,6 +39,14 @@ class StreamTunnel {
+   uint64_t udp_ = ~0ull;
+   std::mutex mutex_;
+   std::vector<PendingListener> new_listeners_;
++  // peer VIP -> its tunnel socket's port and last frame (guarded by mutex_)
++  std::map<uint32_t, std::pair<uint16_t, std::chrono::steady_clock::time_point>> tunnel_port_;
++  std::vector<std::pair<uint64_t, sockaddr_in>> PathsTo(uint32_t vip);  // (our socket, address)
++  struct Injected {
++    sockaddr_in from;
++    std::vector<uint8_t> data;
++  };
++  std::vector<Injected> injected_;  // tunnel frames that came in on a game socket (guarded by mutex_)
+ };
+ 
+ }  // namespace rex::kernel::xam::net
+diff --git a/include/rex/kernel/xam/net/tunnel_core.h b/include/rex/kernel/xam/net/tunnel_core.h
+index 65a6e55..e730c19 100644
+--- a/include/rex/kernel/xam/net/tunnel_core.h
++++ b/include/rex/kernel/xam/net/tunnel_core.h
+@@ -19,7 +19,8 @@
+ 
+ namespace rex::kernel::xam::net {
+ 
+-enum class TunnelFrameType : uint8_t { Syn = 1, SynAck = 2, Data = 3, Ack = 4, Fin = 5, Rst = 6 };
++enum class TunnelFrameType : uint8_t { Syn = 1, SynAck = 2, Data = 3, Ack = 4, Fin = 5, Rst = 6,
++  Dgram = 7 /* COGBox 0.5.0: one game UDP datagram, conn = sender's game port, port = receiver's */ };
+ 
+ struct TunnelFrame {
+   TunnelFrameType type;
+@@ -32,6 +33,7 @@ struct TunnelFrame {
+ 
+ constexpr size_t kTunnelHeaderSize = 22;
+ constexpr size_t kTunnelMaxPayload = 1100;
++constexpr size_t kTunnelMaxDatagram = 1450;  // COGBox 0.5.0: a relayed game datagram (Dgram frame), fits a 1500 MTU
+ 
+ std::vector<uint8_t> EncodeTunnelFrame(const TunnelFrame& f);
+ std::optional<TunnelFrame> DecodeTunnelFrame(const uint8_t* data, size_t len);
+diff --git a/include/rex/kernel/xam/net/virtual_peer_manager.h b/include/rex/kernel/xam/net/virtual_peer_manager.h
+index 6874c4c..c1b480e 100644
+--- a/include/rex/kernel/xam/net/virtual_peer_manager.h
++++ b/include/rex/kernel/xam/net/virtual_peer_manager.h
+@@ -32,6 +32,7 @@ enum class SendAction {
+   Routed,       // send to `to` instead
+   Queued,       // held until the path is open; tell the game it was sent
+   Dropped,      // a virtual IP with no peer, or a lost peer; tell the game it was sent
++  Relay,        // COGBox 0.5.0: no direct route from this socket yet; carry it over the tunnel socket
+ };
+ 
+ struct SendDecision {
+@@ -56,6 +57,20 @@ class VirtualPeerManager {
+ 
+   void SetSendFn(SendFn fn);
+   void SetStunServer(const sockaddr_in& server);
++  // COGBox 0.5.0: once a peer is connected, a socket with no direct route of its own to a peer port relays over the
++  // tunnel socket (which the peer's PC hands to its game socket on that port) while it keeps punching.
++  void SetRelayEnabled(bool on);
++  // A local hand-off socket for relayed datagrams from (vip, peer port): packets from it are labelled as that peer's
++  // port and never become a route.
++  void AddRelayEndpoint(const sockaddr_in& local, uint32_t vip, uint16_t peer_port);
++  bool IsLocalGamePort(uint16_t local_port) const;
++  // A tunnel frame that arrived on a game socket (sent over a game route, see TunnelRoutes) goes to this.
++  void SetTunnelFrameFn(std::function<void(const sockaddr_in& from, const uint8_t* data, size_t len)> fn);
++  // Where (from which of our sockets, to which address) tunnel frames for a peer go: the tunnel socket's own paths
++  // once it has a proven route, else one game socket's proven route, else the tunnel socket to every path.
++  std::vector<std::pair<uint64_t, sockaddr_in>> TunnelRoutes(uint32_t vip, uint64_t tunnel_handle,
++                                                             std::optional<uint16_t> tunnel_port) const;           // a registered game socket is bound to it
++  std::optional<uint16_t> LocalPortOf(uint64_t native_handle) const;
+   // Called (without the lock) when STUN finds a new public address for a game socket's port.
+   void SetPublicAddressFn(std::function<void(uint16_t port)> fn);
+ 
+@@ -105,6 +120,9 @@ class VirtualPeerManager {
+   void Tick(Clock::time_point now);
+ 
+  private:
++  bool relay_enabled_ = false;
++  std::function<void(const sockaddr_in&, const uint8_t*, size_t)> tunnel_frame_fn_;
++  std::map<uint64_t, std::pair<uint32_t, uint16_t>> relay_endpoints_;  // EndpointKey -> (vip, peer port)
+   struct Outgoing {
+     uint64_t handle;
+     std::vector<uint8_t> data;
+diff --git a/include/rex/system/util/object_table.h b/include/rex/system/util/object_table.h
+index df9bad4..e16841a 100644
+--- a/include/rex/system/util/object_table.h
++++ b/include/rex/system/util/object_table.h
+@@ -36,6 +36,10 @@ class ObjectTable {
+   X_STATUS DuplicateHandle(X_HANDLE orig, X_HANDLE* out_handle);
+   X_STATUS RetainHandle(X_HANDLE handle);
+   X_STATUS ReleaseHandle(X_HANDLE handle);
++  // COGBox 0.5.0: a socket's handle is released only by closesocket (and socket()'s own failure path). On the
++  // Xbox 360 sockets are not kernel handles, so a game that closes a stale handle number (harmless there) must
++  // not destroy a socket that reuses that number here.
++  static void AllowSocketRelease(bool on);
+   X_STATUS RemoveHandle(X_HANDLE handle);
+ 
+   bool Save(stream::ByteStream* stream);
+diff --git a/include/rex/system/xsocket.h b/include/rex/system/xsocket.h
+index 1216419..5830b57 100644
+--- a/include/rex/system/xsocket.h
++++ b/include/rex/system/xsocket.h
+@@ -99,7 +99,7 @@ class XSocket : public XObject {
+   Type type() const { return type_; }  // COGBox SDK patch 79
+ 
+   X_STATUS Initialize(AddressFamily af, Type type, Protocol proto);
+-  X_STATUS Close();
++  X_STATUS Close(const char* why = "closesocket");
+ 
+   X_STATUS SetOption(uint32_t level, uint32_t optname, void* optval_ptr, uint32_t optlen);
+   X_STATUS IOControl(uint32_t cmd, uint8_t* arg_ptr);
+diff --git a/src/kernel/xam/net/master_protocol.cpp b/src/kernel/xam/net/master_protocol.cpp
+index 996bbe6..1d7ba2e 100644
+--- a/src/kernel/xam/net/master_protocol.cpp
++++ b/src/kernel/xam/net/master_protocol.cpp
+@@ -274,7 +274,8 @@ std::string UrlEncode(const std::string& s) {
+ }
+ 
+ std::string NormalizeRegion(const std::string& region) {
+-  for (const char* r : {"oceania", "us-e", "us-w", "europe"}) {
++  if (region == "us-e" || region == "us-w") return "us";  // US-W and US-E were merged into US
++  for (const char* r : {"oceania", "us", "europe"}) {
+     if (region == r) return region;
+   }
+   return "global";
+diff --git a/src/kernel/xam/net/online_startup.cpp b/src/kernel/xam/net/online_startup.cpp
+index e963f9d..5bacaa9 100644
+--- a/src/kernel/xam/net/online_startup.cpp
++++ b/src/kernel/xam/net/online_startup.cpp
+@@ -27,7 +27,7 @@ REXCVAR_DEFINE_STRING(net_join_lobby, "", "Network",
+                       "COGBox online play: join this lobby (room code COG-XXXX) once the game is at its menus - "
+                       "the game is told it accepted an invite to it.");
+ REXCVAR_DEFINE_STRING(net_region, "", "Network",
+-                      "COGBox online play: matchmaking region (oceania, us-e, us-w, europe). Empty = Any region.");
++                      "COGBox online play: matchmaking region (oceania, us, europe). Empty = Any region.");
+ REXCVAR_DEFINE_STRING(net_identity_dir, "", "Network",
+                       "COGBox online play: the profile folder holding identity.json, shared by all games of a profile. "
+                       "Empty = <user_data_root>\cogbox-online.");
+diff --git a/src/kernel/xam/net/socket_hooks.cpp b/src/kernel/xam/net/socket_hooks.cpp
+index 5ce4b75..cdc81f9 100644
+--- a/src/kernel/xam/net/socket_hooks.cpp
++++ b/src/kernel/xam/net/socket_hooks.cpp
+@@ -154,11 +154,30 @@ int BindPortOffset() {
+ namespace {
+ std::mutex g_listen_mutex;
+ std::set<uint16_t> g_listen_ports;
++std::map<uint16_t, uint64_t> g_listen_sockets;  // port -> the game's listening socket now
+ }  // namespace
+ 
+-void NoteGameListenPort(uint16_t local_port) {
++void NoteGameListenPort(uint16_t local_port, uint64_t native) {
+   std::lock_guard<std::mutex> lock(g_listen_mutex);
+   g_listen_ports.insert(local_port);
++  if (native != ~0ull) g_listen_sockets[local_port] = native;
++}
++
++uint64_t GameListenSocket(uint16_t local_port) {
++  std::lock_guard<std::mutex> lock(g_listen_mutex);
++  auto it = g_listen_sockets.find(local_port);
++  return it == g_listen_sockets.end() ? ~0ull : it->second;
++}
++
++void ForgetGameListenSocket(uint64_t native) {
++  std::lock_guard<std::mutex> lock(g_listen_mutex);
++  for (auto it = g_listen_sockets.begin(); it != g_listen_sockets.end(); ++it) {
++    if (it->second == native) {
++      REXKRNL_INFO("cogbox_online: the game stopped listening on TCP port {}", it->first);
++      g_listen_sockets.erase(it);
++      return;
++    }
++  }
+ }
+ 
+ bool IsGameListenPort(uint16_t local_port) {
+@@ -218,7 +237,7 @@ void OnSocketBound(uint64_t native_handle) {
+   std::thread([port] {
+     UPnPResult r = TryUPnPPortMap(port);
+     if (!r.success) {
+-      REXKRNL_INFO("cogbox_online: no UPnP mapping for port {} (normal behind CGNAT)", port);
++      REXKRNL_INFO("cogbox_online: no UPnP mapping for port {} (the router has UPnP off or does not support it; punching and the relay still connect)", port);
+       return;
+     }
+     sockaddr_in a{};
+@@ -265,6 +284,12 @@ SendDecision OnSendTo(uint64_t native_handle, uint32_t vip, uint16_t port, const
+   return VirtualPeerManager::Get().OnSend(native_handle, vip, port, data, len, Clock::now());
+ }
+ 
++void RelayDatagram(uint64_t native_handle, uint32_t vip, uint16_t port, const uint8_t* data, size_t len) {
++  auto local = VirtualPeerManager::Get().LocalPortOf(native_handle);
++  if (!local) return;
++  StreamTunnel::Get().SendDatagram(vip, uint16_t(*local - BindPortOffset()), port, data, len);
++}
++
+ std::optional<sockaddr_in> RedirectStreamConnect(uint32_t vip, uint16_t port) {
+   if (!NetOnline()) {
+     return std::nullopt;
+@@ -273,7 +298,7 @@ std::optional<sockaddr_in> RedirectStreamConnect(uint32_t vip, uint16_t port) {
+ }
+ 
+ void NoteUdp(const char* what, uint64_t native_handle, uint32_t ip, uint16_t port) {
+-  if (!NetTraceOn() || !VirtualPeerManager::IsVirtualIp(ip)) {
++  if (!VirtualPeerManager::IsVirtualIp(ip)) {  // COGBox 0.5.0: always on (rate-limited to one line per pair every 2 s)
+     return;
+   }
+   static std::mutex m;
+diff --git a/src/kernel/xam/net/stream_tunnel.cpp b/src/kernel/xam/net/stream_tunnel.cpp
+index 0c9f758..5d9d2d9 100644
+--- a/src/kernel/xam/net/stream_tunnel.cpp
++++ b/src/kernel/xam/net/stream_tunnel.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include <chrono>
+ #include <map>
++#include <set>
+ #include <thread>
+ 
+ #include <rex/kernel/xam/net/live_emulation.h>
+@@ -62,10 +63,51 @@ bool StreamTunnel::Start() {
+   SetNonBlocking(s, true);
+   udp_ = uint64_t(s);
+   OnSocketBound(udp_);  // STUN, punching and candidates, like a game socket
++  VirtualPeerManager::Get().SetRelayEnabled(true);
++  VirtualPeerManager::Get().SetTunnelFrameFn([this](const sockaddr_in& from, const uint8_t* d, size_t n) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    if (injected_.size() < 4096) injected_.push_back({from, std::vector<uint8_t>(d, d + n)});
++  });  // COGBox 0.5.0: game ports with no route go through this socket
+   std::thread([this] { Run(); }).detach();
+   return true;
+ }
+ 
++std::vector<std::pair<uint64_t, sockaddr_in>> StreamTunnel::PathsTo(uint32_t vip) {
++  std::optional<uint16_t> port;
++  {
++    std::lock_guard<std::mutex> lock(mutex_);
++    auto known = tunnel_port_.find(vip);
++    if (known != tunnel_port_.end()) {
++      port = VirtualPeerManager::FreshTunnelPort(known->second.first, known->second.second,
++                                                 std::chrono::steady_clock::now());
++    }
++  }
++  return VirtualPeerManager::Get().TunnelRoutes(vip, udp_, port);
++}
++
++void StreamTunnel::SendDatagram(uint32_t vip, uint16_t src_port, uint16_t dst_port, const uint8_t* data, size_t len) {
++  if (udp_ == ~0ull) return;
++  if (len > kTunnelMaxDatagram) {
++    static std::atomic<int> told{0};
++    if (told++ < 5) REXKRNL_WARN("cogbox_online: a {}-byte game packet is too big to relay (port {} -> {})", len, src_port, dst_port);
++    return;
++  }
++  auto frame = EncodeTunnelFrame({TunnelFrameType::Dgram, src_port, 0, 0, dst_port, std::vector<uint8_t>(data, data + len)});
++  {
++    static std::mutex m;
++    static std::set<std::pair<uint32_t, uint32_t>> told;
++    std::lock_guard<std::mutex> lock(m);
++    if (told.insert({vip, (uint32_t(src_port) << 16) | dst_port}).second) {
++      REXKRNL_INFO("cogbox_online: 10.254.{}.{} game port {}: our port {} relays through the tunnel (no direct route yet)",
++                   (vip >> 8) & 0xFF, vip & 0xFF, dst_port, src_port);
++    }
++  }
++  for (const auto& [h, to] : PathsTo(vip)) {
++    ::sendto(SOCKET(h), reinterpret_cast<const char*>(frame.data()), int(frame.size()), 0,
++             reinterpret_cast<const sockaddr*>(&to), sizeof(to));
++  }
++}
++
+ std::optional<sockaddr_in> StreamTunnel::RedirectConnect(uint32_t vip, uint16_t port) {
+   if (udp_ == ~0ull) {
+     return std::nullopt;
+@@ -94,17 +136,13 @@ void StreamTunnel::Run() {
+   TunnelCore core;
+   std::vector<PendingListener> listeners;
+   std::map<uint32_t, SOCKET> bridges;        // tunnel handle -> local TCP socket
+-  std::map<uint32_t, std::pair<uint16_t, Clock::time_point>> tunnel_port;  // peer VIP -> its tunnel socket's port and last frame
++  std::map<std::pair<uint32_t, uint16_t>, std::pair<SOCKET, sockaddr_in>> handoff;  // (peer, its port) -> local sender
+   std::map<uint32_t, std::pair<size_t, size_t>> traffic;  // handle -> (bytes to the peer, bytes from the peer)
+ 
+   TunnelCore::Callbacks cb;
+   cb.send_frame = [&](uint32_t vip, const std::vector<uint8_t>& frame) {
+-    auto known = tunnel_port.find(vip);
+-    const auto port = known == tunnel_port.end()
+-                          ? std::nullopt
+-                          : VirtualPeerManager::FreshTunnelPort(known->second.first, known->second.second, Clock::now());
+-    for (const auto& to : mgr.TunnelPaths(vip, port)) {
+-      ::sendto(udp, reinterpret_cast<const char*>(frame.data()), int(frame.size()), 0,
++    for (const auto& [h, to] : PathsTo(vip)) {
++      ::sendto(SOCKET(h), reinterpret_cast<const char*>(frame.data()), int(frame.size()), 0,
+                reinterpret_cast<const sockaddr*>(&to), sizeof(to));
+     }
+   };
+@@ -113,12 +151,43 @@ void StreamTunnel::Run() {
+       REXKRNL_WARN("cogbox_online: tunnel: refused port {} (not a port the game listens on)", port);
+       return false;
+     }
++    const uint16_t local = uint16_t(port + BindPortOffset());
++    sockaddr_in to = Loopback(local);
+     SOCKET s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+-    sockaddr_in to = Loopback(uint16_t(port + BindPortOffset()));
++    int err = 0;
+     if (s == INVALID_SOCKET || ::connect(s, reinterpret_cast<sockaddr*>(&to), sizeof(to)) != 0) {
++      err = WSAGetLastError();
+       if (s != INVALID_SOCKET) closesocket(s);
+-      REXKRNL_WARN("cogbox_online: tunnel: nothing listens on local port {}", ntohs(to.sin_port));
+-      return false;
++      s = INVALID_SOCKET;
++      // COGBox 0.5.0 diagnostics: say why, and try the address the game's socket is really bound to
++      const uint64_t game = GameListenSocket(local);
++      sockaddr_in at{};
++      int al = sizeof(at);
++      if (game == ~0ull) {
++        REXKRNL_WARN("cogbox_online: tunnel: local port {} refused (Windows error {}); the game has closed its listener there",
++                     local, err);
++      } else if (::getsockname(SOCKET(game), reinterpret_cast<sockaddr*>(&at), &al) != 0) {
++        REXKRNL_WARN("cogbox_online: tunnel: local port {} refused (Windows error {}); the game's listener is gone (Windows error {})",
++                     local, err, WSAGetLastError());
++      } else {
++        const uint32_t a = ntohl(at.sin_addr.s_addr);
++        const char* kind = a == 0 ? "any address" : (a >> 24) == 127 ? "loopback" : "one adapter only";
++        REXKRNL_WARN("cogbox_online: tunnel: local port {} refused (Windows error {}); the game listens on {} port {}",
++                     local, err, kind, ntohs(at.sin_port));
++        if (a != 0 && (a >> 24) != 127) {
++          at.sin_family = AF_INET;
++          s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
++          if (s != INVALID_SOCKET && ::connect(s, reinterpret_cast<sockaddr*>(&at), sizeof(at)) == 0) {
++            REXKRNL_INFO("cogbox_online: tunnel: reached the game through its adapter address instead");
++            to = at;
++          } else {
++            REXKRNL_WARN("cogbox_online: tunnel: its adapter address refused too (Windows error {})", WSAGetLastError());
++            if (s != INVALID_SOCKET) closesocket(s);
++            s = INVALID_SOCKET;
++          }
++        }
++      }
++      if (s == INVALID_SOCKET) return false;
+     }
+     bridges[handle] = s;
+     REXKRNL_INFO("cogbox_online: tunnel: a peer connected to local port {}", ntohs(to.sin_port));
+@@ -160,6 +229,42 @@ void StreamTunnel::Run() {
+     ::select(0, &rd, nullptr, nullptr, &tv);
+     const auto now = Clock::now();
+ 
++    auto handle_frame = [&](const sockaddr_in& from, const uint8_t* data, size_t n, bool via_tunnel_socket) {
++      if (auto who = mgr.Relabel(from)) {
++        if (via_tunnel_socket) {  // a frame that came over a game route says nothing about the peer's tunnel socket
++          std::lock_guard<std::mutex> lock(mutex_);
++          tunnel_port_[who->first] = {who->second, now};
++        }
++        auto f = DecodeTunnelFrame(data, n);
++        if (f && f->type == TunnelFrameType::Dgram) {
++          // COGBox 0.5.0: a relayed game datagram. Hand it to our game socket on its port from a local socket that
++          // stands for (peer, its port), so the game sees it come from the peer's virtual address.
++          const uint16_t src = uint16_t(f->conn), dst = uint16_t(f->port + BindPortOffset());
++          if (!mgr.IsLocalGamePort(dst)) return;
++          auto key = std::make_pair(who->first, src);
++          auto h = handoff.find(key);
++          if (h == handoff.end()) {
++            SOCKET hs = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
++            sockaddr_in la = Loopback(0);
++            int ll = sizeof(la);
++            if (hs == INVALID_SOCKET || ::bind(hs, reinterpret_cast<sockaddr*>(&la), sizeof(la)) != 0 ||
++                ::getsockname(hs, reinterpret_cast<sockaddr*>(&la), &ll) != 0) {
++              if (hs != INVALID_SOCKET) closesocket(hs);
++              return;
++            }
++            mgr.AddRelayEndpoint(la, who->first, src);
++            h = handoff.emplace(key, std::make_pair(hs, la)).first;
++            REXKRNL_INFO("cogbox_online: 10.254.{}.{} game port {} relayed through the tunnel to our port {}",
++                         (who->first >> 8) & 0xFF, who->first & 0xFF, src, dst);
++          }
++          sockaddr_in to = Loopback(dst);
++          ::sendto(h->second.first, reinterpret_cast<const char*>(f->payload.data()), int(f->payload.size()), 0,
++                   reinterpret_cast<const sockaddr*>(&to), sizeof(to));
++          return;
++        }
++        core.OnFrame(who->first, data, n, now);
++      }
++    };
+     if (FD_ISSET(udp, &rd)) {
+       for (;;) {
+         sockaddr_in from{};
+@@ -168,15 +273,20 @@ void StreamTunnel::Run() {
+                                  reinterpret_cast<sockaddr*>(&from), &fl);
+         if (n < 0) break;
+         if (IsTunnelFrame(buf.data(), size_t(n))) {
+-          if (auto who = mgr.Relabel(from)) {
+-            tunnel_port[who->first] = {who->second, now};
+-            core.OnFrame(who->first, buf.data(), size_t(n), now);
+-          }
++          handle_frame(from, buf.data(), size_t(n), true);
+         } else {
+           mgr.OnPacket(udp_, buf.data(), size_t(n), from, now);  // STUN answers, punches
+         }
+       }
+     }
++    {  // tunnel frames that came in on a game socket (the peer had no direct tunnel route)
++      std::vector<Injected> got;
++      {
++        std::lock_guard<std::mutex> lock(mutex_);
++        got.swap(injected_);
++      }
++      for (const auto& g : got) handle_frame(g.from, g.data.data(), g.data.size(), false);
++    }
+     for (auto it = listeners.begin(); it != listeners.end();) {
+       if (!FD_ISSET(SOCKET(it->socket), &rd)) {
+         ++it;
+@@ -221,6 +331,8 @@ void StreamTunnel::Run() {
+ 
+ bool StreamTunnel::Start() { return false; }
+ std::optional<sockaddr_in> StreamTunnel::RedirectConnect(uint32_t, uint16_t) { return std::nullopt; }
++void StreamTunnel::SendDatagram(uint32_t, uint16_t, uint16_t, const uint8_t*, size_t) {}
++std::vector<std::pair<uint64_t, sockaddr_in>> StreamTunnel::PathsTo(uint32_t) { return {}; }
+ void StreamTunnel::Run() {}
+ 
+ #endif
+diff --git a/src/kernel/xam/net/tunnel_core.cpp b/src/kernel/xam/net/tunnel_core.cpp
+index 5d815e8..53bc4b4 100644
+--- a/src/kernel/xam/net/tunnel_core.cpp
++++ b/src/kernel/xam/net/tunnel_core.cpp
+@@ -38,11 +38,11 @@ bool IsTunnelFrame(const uint8_t* d, size_t len) {
+ }
+ 
+ std::optional<TunnelFrame> DecodeTunnelFrame(const uint8_t* d, size_t len) {
+-  if (!IsTunnelFrame(d, len) || d[4] != kVersion || d[5] < 1 || d[5] > 6) {
++  if (!IsTunnelFrame(d, len) || d[4] != kVersion || d[5] < 1 || d[5] > 7) {
+     return std::nullopt;
+   }
+   const uint16_t n = Get16(d + 20);
+-  if (kTunnelHeaderSize + n != len || n > kTunnelMaxPayload) {
++  if (kTunnelHeaderSize + n != len || n > (d[5] == 7 ? kTunnelMaxDatagram : kTunnelMaxPayload)) {
+     return std::nullopt;
+   }
+   TunnelFrame f{TunnelFrameType(d[5]), Get32(d + 6), Get32(d + 10), Get32(d + 14), Get16(d + 18),
+@@ -123,7 +123,7 @@ void TunnelCore::Pump(Conn& c, Clock::time_point now) {
+ 
+ void TunnelCore::OnFrame(uint32_t from_vip, const uint8_t* data, size_t len, Clock::time_point now) {
+   auto f = DecodeTunnelFrame(data, len);
+-  if (!f) return;
++  if (!f || f->type == TunnelFrameType::Dgram) return;  // datagrams are the stream tunnel's, not a connection's
+   auto handle = Find(from_vip, f->conn);
+ 
+   if (f->type == TunnelFrameType::Syn) {
+diff --git a/src/kernel/xam/net/virtual_peer_manager.cpp b/src/kernel/xam/net/virtual_peer_manager.cpp
+index 257a1ba..022339b 100644
+--- a/src/kernel/xam/net/virtual_peer_manager.cpp
++++ b/src/kernel/xam/net/virtual_peer_manager.cpp
+@@ -3,6 +3,7 @@
+ #include <rex/kernel/xam/net/virtual_peer_manager.h>
+ 
+ #include <algorithm>
++#include <set>
+ #include <random>
+ 
+ #include <rex/kernel/xam/net/punch.h>
+@@ -55,6 +56,58 @@ void VirtualPeerManager::SetStunServer(const sockaddr_in& server) {
+   stun_server_ = server;
+ }
+ 
++void VirtualPeerManager::SetRelayEnabled(bool on) {
++  std::lock_guard<std::mutex> lock(mutex_);
++  relay_enabled_ = on;
++}
++
++void VirtualPeerManager::AddRelayEndpoint(const sockaddr_in& local, uint32_t vip, uint16_t peer_port) {
++  std::lock_guard<std::mutex> lock(mutex_);
++  relay_endpoints_[EndpointKey(local)] = {vip, peer_port};
++}
++
++void VirtualPeerManager::SetTunnelFrameFn(std::function<void(const sockaddr_in&, const uint8_t*, size_t)> fn) {
++  std::lock_guard<std::mutex> lock(mutex_);
++  tunnel_frame_fn_ = std::move(fn);
++}
++
++std::vector<std::pair<uint64_t, sockaddr_in>> VirtualPeerManager::TunnelRoutes(uint32_t vip, uint64_t tunnel_handle,
++                                                                               std::optional<uint16_t> tunnel_port) const {
++  std::vector<std::pair<uint64_t, sockaddr_in>> out;
++  bool tunnel_has_route = false;
++  std::optional<std::pair<uint64_t, sockaddr_in>> game_route;
++  {
++    std::lock_guard<std::mutex> lock(mutex_);
++    auto it = peers_.find(vip);
++    if (it != peers_.end()) {
++      for (const auto& [port, path] : it->second.ports) {
++        for (const auto& [h, to] : path.by_socket) {
++          if (h == tunnel_handle) tunnel_has_route = true;
++          else if (!game_route && sockets_.count(h)) game_route = std::make_pair(h, to);
++        }
++      }
++    }
++  }
++  if (!tunnel_has_route && game_route) return {*game_route};
++  for (const auto& to : TunnelPaths(vip, tunnel_port)) out.push_back({tunnel_handle, to});
++  return out;
++}
++
++bool VirtualPeerManager::IsLocalGamePort(uint16_t local_port) const {
++  std::lock_guard<std::mutex> lock(mutex_);
++  for (const auto& [h, s] : sockets_) {
++    if (s.local_port == local_port) return true;
++  }
++  return false;
++}
++
++std::optional<uint16_t> VirtualPeerManager::LocalPortOf(uint64_t native_handle) const {
++  std::lock_guard<std::mutex> lock(mutex_);
++  auto it = sockets_.find(native_handle);
++  if (it == sockets_.end()) return std::nullopt;
++  return it->second.local_port;
++}
++
+ void VirtualPeerManager::RegisterSocket(uint64_t native_handle, uint16_t local_port) {
+   std::lock_guard<std::mutex> lock(mutex_);
+   sockets_[native_handle] = SocketInfo{local_port, {}, std::nullopt};
+@@ -68,6 +121,13 @@ void VirtualPeerManager::SetPublicAddressFn(std::function<void(uint16_t port)> f
+ void VirtualPeerManager::UnregisterSocket(uint64_t native_handle) {
+   std::lock_guard<std::mutex> lock(mutex_);
+   sockets_.erase(native_handle);
++  // COGBox 0.5.0: Windows reuses socket handles; the game's next socket must not inherit this one's routes.
++  for (auto& [vip, p] : peers_) {
++    for (auto& [port, path] : p.ports) {
++      path.by_socket.erase(native_handle);
++      path.punching.erase(native_handle);
++    }
++  }
+ }
+ 
+ void VirtualPeerManager::AddLocalCandidate(uint16_t local_port, const Candidate& c) {
+@@ -219,6 +279,12 @@ std::optional<std::pair<uint32_t, uint16_t>> VirtualPeerManager::Relabel(const s
+   std::optional<std::pair<uint32_t, uint16_t>> label;
+   {
+     std::lock_guard<std::mutex> lock(mutex_);
++    auto relay = relay_endpoints_.find(EndpointKey(from));
++    if (relay != relay_endpoints_.end()) {
++      auto peer = peers_.find(relay->second.first);
++      if (peer != peers_.end() && now > peer->second.last_heard) peer->second.last_heard = now;
++      return relay->second;  // a relayed datagram: labelled, but the hand-off socket is never a route
++    }
+     auto it = endpoint_to_peer_.find(EndpointKey(from));
+     if (it != endpoint_to_peer_.end()) {
+       label = it->second;
+@@ -226,7 +292,9 @@ std::optional<std::pair<uint32_t, uint16_t>> VirtualPeerManager::Relabel(const s
+       if (peer != peers_.end() && now > peer->second.last_heard) peer->second.last_heard = now;
+       if (native_handle && peer != peers_.end()) {
+         PortPath& pp = peer->second.ports[it->second.second];
+-        if (!pp.by_socket.count(native_handle)) {
++        // With relay on, a packet in proves only the way in (a router can let the peer's traffic in and still drop
++        // ours on the way out); a route out comes from an ack to our own punch.
++        if (!relay_enabled_ && !pp.by_socket.count(native_handle)) {
+           pp.by_socket[native_handle] = from;
+           pp.punching.erase(native_handle);
+           FlushLocked(it->second.first, peer->second, out);
+@@ -258,7 +326,7 @@ std::optional<std::pair<uint32_t, uint16_t>> VirtualPeerManager::Relabel(const s
+             PruneQueue(peer, now);
+             FlushLocked(vip, peer, out);
+           }
+-          if (native_handle && !path.by_socket.count(native_handle)) {
++          if (!relay_enabled_ && native_handle && !path.by_socket.count(native_handle)) {
+             path.by_socket[native_handle] = from;
+             path.punching.erase(native_handle);
+             FlushLocked(vip, peer, out);
+@@ -406,7 +474,14 @@ bool VirtualPeerManager::OnPacket(uint64_t native_handle, const uint8_t* data, s
+     return true;
+   }
+   if (IsTunnelFrame(data, len)) {
+-    return true;  // the stream tunnel's frames belong to its own socket; never the game's
++    // never the game's: the stream tunnel's, sent over a game route when its own socket had none
++    std::function<void(const sockaddr_in&, const uint8_t*, size_t)> fn;
++    {
++      std::lock_guard<std::mutex> lock(mutex_);
++      fn = tunnel_frame_fn_;
++    }
++    if (fn) fn(from, data, len);
++    return true;
+   }
+   auto punch = DecodePunch(data, len);
+   if (!punch) {
+@@ -438,10 +513,18 @@ bool VirtualPeerManager::OnPacket(uint64_t native_handle, const uint8_t* data, s
+                    (vip >> 8) & 0xFF, vip & 0xFF, MaskedIp(ntohl(from.sin_addr.s_addr)), ntohs(from.sin_port));
+     }
+     endpoint_to_peer_[EndpointKey(from)] = {vip, punch->src_port};
+-    if (!path.by_socket.count(native_handle)) {
++    const bool proves_out = !relay_enabled_ || punch->type == PunchType::Ack;  // our punch got there and back
++    if (proves_out && !path.by_socket.count(native_handle)) {
+       path.by_socket[native_handle] = from;  // this socket's own route to that port
++      // COGBox 0.5.0 diagnostics: each socket pair as it connects, and whether the peer's router changed its port
++      auto sk = sockets_.find(native_handle);
++      const bool announced = std::any_of(path.candidates.begin(), path.candidates.end(),
++                                         [&](const auto& c) { return SameEndpoint(c.addr, from); });
++      REXKRNL_INFO("cogbox_online: 10.254.{}.{} game port {} reached from our port {} ({})", (vip >> 8) & 0xFF,
++                   vip & 0xFF, punch->src_port, sk == sockets_.end() ? 0 : sk->second.local_port,
++                   announced ? "at an announced address" : "at a port its router chose, not one it announced");
+     }
+-    path.punching.erase(native_handle);
++    if (proves_out) path.punching.erase(native_handle);
+     if (punch->type == PunchType::Punch) {
+       auto sock = sockets_.find(native_handle);
+       const uint16_t local_port = sock == sockets_.end() ? 0 : sock->second.local_port;
+@@ -480,17 +563,36 @@ SendDecision VirtualPeerManager::OnSend(uint64_t native_handle, uint32_t vip, ui
+       return {SendAction::Routed, own->second};
+     }
+     if (path->second.selected) {
+-      // Not proven from this socket yet: the shared route (fine on one PC or a LAN) while this socket punches its own.
++      // Not proven from this socket yet: it punches its own route meanwhile, and the packet goes over the tunnel
++      // (relay on) or the shared route (relay off; fine on one PC or a LAN).
+       if (!path->second.candidates.empty() && sockets_.count(native_handle)) {
+         path->second.punching.emplace(native_handle, now);
+       }
++      if (relay_enabled_ && p.state == PeerState::Connected) return {SendAction::Relay, {}};
+       return {SendAction::Routed, *path->second.selected};
+     }
+   }
++  if (relay_enabled_ && p.state == PeerState::Connected) {
++    // A connected peer's port with no route yet (announced later, or not punched through): over the tunnel now.
++    if (path != p.ports.end() && !path->second.candidates.empty() && sockets_.count(native_handle)) {
++      path->second.punching.emplace(native_handle, now);
++    }
++    return {SendAction::Relay, {}};
++  }
+   if (p.state == PeerState::Lost) {
+     return {SendAction::Dropped, {}};
+   }
+   PruneQueue(p, now);
++  {  // COGBox 0.5.0 diagnostics: the game sends to a peer port with no route yet (once per socket and port)
++    static std::set<std::pair<uint64_t, uint32_t>> told;
++    if (told.insert({native_handle, (vip << 16) ^ port}).second) {
++      auto sk = sockets_.find(native_handle);
++      REXKRNL_INFO("cogbox_online: 10.254.{}.{} game port {}: our port {} sends, no route yet ({}; peer {})",
++                   (vip >> 8) & 0xFF, vip & 0xFF, port, sk == sockets_.end() ? 0 : sk->second.local_port,
++                   path == p.ports.end() ? "port never announced" : "announced, not reached",
++                   p.state == PeerState::Connected ? "connected" : "pending");
++    }
++  }
+   if (p.queue.size() < kQueueMaxPackets) {
+     p.queue.push_back({native_handle, port, std::vector<uint8_t>(data, data + len), now});
+   }
+@@ -536,6 +638,11 @@ void VirtualPeerManager::Tick(Clock::time_point now) {
+         for (auto& [peer_port, path] : p.ports) {
+           for (auto it = path.punching.begin(); it != path.punching.end();) {
+             if (path.by_socket.count(it->first) || !sockets_.count(it->first) || now - it->second >= kPunchTimeout) {
++              if (!path.by_socket.count(it->first) && sockets_.count(it->first)) {  // COGBox 0.5.0 diagnostics
++                REXKRNL_WARN("cogbox_online: 10.254.{}.{} game port {} not reached from our port {} in 10 s ({} candidate(s) tried)",
++                             (vip >> 8) & 0xFF, vip & 0xFF, peer_port, sockets_[it->first].local_port,
++                             path.candidates.size());
++              }
+               it = path.punching.erase(it);
+             } else {
+               ++it;
+diff --git a/src/kernel/xam/xam_net.cpp b/src/kernel/xam/xam_net.cpp
+index 4e5faea..c026ed7 100644
+--- a/src/kernel/xam/xam_net.cpp
++++ b/src/kernel/xam/xam_net.cpp
+@@ -46,6 +46,7 @@
+ #include <rex/string.h>
+ #include <rex/system/kernel_state.h>
+ #include <rex/system/xevent.h>
++#include <rex/system/util/object_table.h>
+ #include <rex/system/xsocket.h>
+ #include <rex/system/xthread.h>
+ #include <rex/system/xtypes.h>
+@@ -1127,7 +1128,9 @@ u32 NetDll_socket_entry(u32 caller, u32 af, u32 type, u32 protocol) {
+                          XSocket::Protocol((uint32_t)protocol));
+ 
+   if (XFAILED(result)) {
++    rex::system::util::ObjectTable::AllowSocketRelease(true);
+     socket->ReleaseHandle();
++    rex::system::util::ObjectTable::AllowSocketRelease(false);
+ 
+     uint32_t error = xboxkrnl::xeRtlNtStatusToDosError(result);
+     XThread::SetLastError(error);
+@@ -1162,8 +1165,10 @@ u32 NetDll_closesocket_entry(u32 caller, u32 socket_handle) {
+ 
+   // TODO: Absolutely delete this object. It is no longer valid after calling
+   // closesocket.
+-  socket->Close();
++  socket->Close("the game's closesocket");
++  rex::system::util::ObjectTable::AllowSocketRelease(true);
+   socket->ReleaseHandle();
++  rex::system::util::ObjectTable::AllowSocketRelease(false);
+   return 0;
+ }
+ 
+diff --git a/src/system/util/object_table.cpp b/src/system/util/object_table.cpp
+index 6fbabd2..7061abd 100644
+--- a/src/system/util/object_table.cpp
++++ b/src/system/util/object_table.cpp
+@@ -157,6 +157,14 @@ X_STATUS ObjectTable::RetainHandle(X_HANDLE handle) {
+   return X_STATUS_SUCCESS;
+ }
+ 
++namespace {
++thread_local bool t_socket_release_ok = false;
++}
++
++void ObjectTable::AllowSocketRelease(bool on) {
++  t_socket_release_ok = on;
++}
++
+ X_STATUS ObjectTable::ReleaseHandle(X_HANDLE handle) {
+   auto global_lock = global_critical_region_.Acquire();
+ 
+@@ -164,6 +172,11 @@ X_STATUS ObjectTable::ReleaseHandle(X_HANDLE handle) {
+   if (!entry) {
+     return X_STATUS_INVALID_HANDLE;
+   }
++  if (entry->object && entry->object->type() == XObject::Type::Socket && !t_socket_release_ok) {
++    REXLOG_WARN("cogbox_online: kept socket {:08X}: the game closed that handle number as a non-socket handle "
++                "(a stale handle on the Xbox 360)", handle);
++    return X_STATUS_INVALID_HANDLE;
++  }
+ 
+   if (--entry->handle_ref_count == 0) {
+     // No more references. Remove it from the table.
+diff --git a/src/system/xsocket.cpp b/src/system/xsocket.cpp
+index da84902..ec58a6e 100644
+--- a/src/system/xsocket.cpp
++++ b/src/system/xsocket.cpp
+@@ -66,7 +66,7 @@ XSocket::XSocket(KernelState* kernel_state, uint64_t native_handle)
+     : XObject(kernel_state, kObjectType), native_handle_(native_handle) {}
+ 
+ XSocket::~XSocket() {
+-  Close();
++  Close("released");
+ }
+ 
+ X_STATUS XSocket::Initialize(AddressFamily af, Type type, Protocol proto) {
+@@ -83,6 +83,9 @@ X_STATUS XSocket::Initialize(AddressFamily af, Type type, Protocol proto) {
+   if (native_handle_ == -1) {
+     return X_STATUS_UNSUCCESSFUL;
+   }
++  if (type_ == X_SOCK_STREAM && rex::kernel::xam::net::NetTraceOn()) {  // COGBox 0.5.0 diagnostics
++    REXLOG_INFO("cogbox_online: TCP socket {:08X} created (native {})", handle(), native_handle_);
++  }
+ 
+   return X_STATUS_SUCCESS;
+ }
+@@ -132,7 +135,12 @@ void XSocket::MoveToFreePort() {
+   }
+ }
+ 
+-X_STATUS XSocket::Close() {
++X_STATUS XSocket::Close(const char* why) {
++  // COGBox 0.5.0 diagnostics: who closes a game TCP socket, and how
++  if (type_ == X_SOCK_STREAM && native_handle_ != uint64_t(-1) && rex::kernel::xam::net::NetTraceOn()) {
++    REXLOG_INFO("cogbox_online: TCP socket {:08X} (port {}, native {}) closed: {}", handle(), uint16_t(bound_port_),
++                native_handle_, why);
++  }
+   {
+     std::lock_guard<std::mutex> lock(g_port_mutex);
+     auto it = g_port_owner.find(bound_port_);
+@@ -144,6 +152,7 @@ X_STATUS XSocket::Close() {
+     return X_STATUS_SUCCESS;
+   }
+ 
++  if (type_ == X_SOCK_STREAM) rex::kernel::xam::net::ForgetGameListenSocket(native_handle_);  // COGBox diagnostics
+   if (net_registered_) {
+     rex::kernel::xam::net::OnSocketClosed(native_handle_);
+     net_registered_ = false;
+@@ -260,9 +269,22 @@ X_STATUS XSocket::Bind(N_XSOCKADDR_IN* name, int name_len) {
+ X_STATUS XSocket::Listen(int backlog) {
+   int ret = listen(native_handle_, backlog);
+   if (ret < 0) {
++    if (rex::kernel::xam::net::NetOnline()) {  // COGBox 0.5.0 diagnostics
++      REXLOG_WARN("cogbox_online: the game could not listen on TCP port {} (backlog {}, Windows error {})",
++                  uint16_t(bound_port_), backlog,
++#if defined(_WIN32)
++                  WSAGetLastError());
++#else
++                  errno);
++#endif
++    }
+     return X_STATUS_UNSUCCESSFUL;
+   }
+-  if (bound_port_ != 0) rex::kernel::xam::net::NoteGameListenPort(uint16_t(bound_port_));  // what the online tunnel may open
++  if (bound_port_ != 0) rex::kernel::xam::net::NoteGameListenPort(uint16_t(bound_port_), native_handle_);  // what the online tunnel may open
++  if (rex::kernel::xam::net::NetOnline()) {
++    REXLOG_INFO("cogbox_online: the game listens on TCP port {} (backlog {}, socket {:08X}, native {})", uint16_t(bound_port_),
++                backlog, handle(), native_handle_);
++  }
+ 
+   return X_STATUS_SUCCESS;
+ }
+@@ -485,11 +507,15 @@ int XSocket::SendTo(uint8_t* buf, uint32_t buf_len, uint32_t flags, N_XSOCKADDR_
+     if (d.action != SendAction::PassThrough) {
+       rex::kernel::xam::net::NoteUdp(d.action == SendAction::Routed   ? "out routed"
+                                      : d.action == SendAction::Queued ? "out queued"
++                                     : d.action == SendAction::Relay  ? "out relayed"
+                                                                       : "out dropped",
+                                      native_handle_, uint32_t(to->sin_addr), uint16_t(to->sin_port));
+     }
+     if (d.action == rex::kernel::xam::net::SendAction::Routed) {
+       nto = d.to;
++    } else if (d.action == rex::kernel::xam::net::SendAction::Relay) {
++      rex::kernel::xam::net::RelayDatagram(native_handle_, uint32_t(to->sin_addr), uint16_t(to->sin_port), buf, buf_len);
++      return int(buf_len);
+     } else if (d.action != rex::kernel::xam::net::SendAction::PassThrough) {
+       return int(buf_len);  // queued until the path opens, or a peer that is gone: the game sees a normal send
+     }
+diff --git a/tests/unit/kernel/object_table_test.cpp b/tests/unit/kernel/object_table_test.cpp
+index 4bb82ab..c774394 100644
+--- a/tests/unit/kernel/object_table_test.cpp
++++ b/tests/unit/kernel/object_table_test.cpp
+@@ -560,3 +560,27 @@ TEST_CASE("ObjectTable GetAllObjects returns all objects", "[kernel][object_tabl
+ // TODO: Test GetObjectsByType<T>() with real typed objects
+ // TODO: Test GetObjectByName with existing object - requires kernel_state for RetainHandle
+ // TODO: Test case-insensitive name lookup via GetObjectByName
++
++// COGBox 0.5.0: a stale non-socket close of a handle number that a socket now uses must not destroy the socket
++class FakeSocket : public XObject {
++ public:
++  static constexpr Type kObjectType = Type::Socket;
++  FakeSocket() : XObject(Type::Socket) {}
++};
++
++TEST_CASE("ObjectTable keeps a socket handle unless closesocket releases it", "[kernel][object_table][net]") {
++  InitTestLogging();
++  ObjectTable table;
++  auto* sock = new FakeSocket();
++  X_HANDLE handle = 0;
++  table.AddHandle(sock, &handle);
++
++  CHECK(table.ReleaseHandle(handle) == X_STATUS_INVALID_HANDLE);  // e.g. NtClose of a stale handle
++  CHECK(table.LookupObject<XObject>(handle).get() == sock);
++
++  ObjectTable::AllowSocketRelease(true);
++  CHECK(table.ReleaseHandle(handle) == X_STATUS_SUCCESS);  // closesocket
++  ObjectTable::AllowSocketRelease(false);
++  CHECK(table.LookupObject<XObject>(handle).get() == nullptr);
++  table.Reset();
++}
+diff --git a/tests/unit/net/master_protocol_test.cpp b/tests/unit/net/master_protocol_test.cpp
+index de67382..d5b3d3c 100644
+--- a/tests/unit/net/master_protocol_test.cpp
++++ b/tests/unit/net/master_protocol_test.cpp
+@@ -148,15 +148,17 @@ TEST_CASE("Protocol: a launch id goes out and comes back; old messages have none
+   CHECK(without->launch_id == 0);
+ }
+ 
+-TEST_CASE("Protocol: only the launcher's four regions count; anything else is Any", "[net][master]") {
+-  for (const char* r : {"oceania", "us-e", "us-w", "europe"}) CHECK(NormalizeRegion(r) == r);
++TEST_CASE("Protocol: only the launcher's regions count; anything else is Any", "[net][master]") {
++  for (const char* r : {"oceania", "us", "europe"}) CHECK(NormalizeRegion(r) == r);
++  CHECK(NormalizeRegion("us-w") == "us");  // US-W and US-E were merged into US
++  CHECK(NormalizeRegion("us-e") == "us");
+   CHECK(NormalizeRegion("") == "global");
+   CHECK(NormalizeRegion("mars") == "global");
+ }
+ 
+ TEST_CASE("Protocol: a region narrows the lobby search; Any does not", "[net][master]") {
+   CHECK(LobbySearchPath(0x4D5308AB, "global") == "/api/v1/lobbies?title_id=4D5308AB");
+-  CHECK(LobbySearchPath(0x4D5308AB, "us-e") == "/api/v1/lobbies?title_id=4D5308AB&region=us-e");
++  CHECK(LobbySearchPath(0x4D5308AB, "us") == "/api/v1/lobbies?title_id=4D5308AB&region=us");
+ }
+ 
+ TEST_CASE("Protocol: the game's socket says its region, unless Any", "[net][master]") {
+diff --git a/tests/unit/net/peer_manager_test.cpp b/tests/unit/net/peer_manager_test.cpp
+index 6b06d48..fc52bf0 100644
+--- a/tests/unit/net/peer_manager_test.cpp
++++ b/tests/unit/net/peer_manager_test.cpp
+@@ -613,3 +613,138 @@ TEST_CASE("Peers: ResetPeer forgets a talking peer's addresses at once", "[net][
+   CHECK_FALSE(f.mgr.Route(vip, kPeerPort).has_value());
+   CHECK(f.mgr.TunnelPaths(vip, kPeerPort).empty());
+ }
++
++// COGBox 0.5.0: relay over the tunnel when a socket pair has no direct route (a strict router on one side)
++TEST_CASE("Peers: with relay on, a socket with no route of its own relays instead of using another socket's route",
++          "[net][peers][relay]") {
++  Fixture f;
++  f.mgr.SetRelayEnabled(true);
++  f.mgr.RegisterSocket(kSock, kLocalPort);
++  f.mgr.RegisterSocket(kSockB, kLocalPortB);
++  uint32_t vip = f.mgr.AddPeer(42, kToken);
++  f.mgr.SetRemoteCandidates(vip, kPeerPort, {{kCandB, Candidate::Srflx}}, f.t0);
++  auto a = PunchFrom(PunchType::Ack, kPeerPort);
++  f.mgr.OnPacket(kSock, a.data(), a.size(), kCandB, f.t0);  // connected through socket A only
++  const uint8_t game[] = {9};
++  CHECK(f.mgr.OnSend(kSock, vip, kPeerPort, game, 1, f.t0).action == SendAction::Routed);
++  CHECK(f.mgr.OnSend(kSockB, vip, kPeerPort, game, 1, f.t0).action == SendAction::Relay);
++  // once socket B proves its own route, it goes direct
++  f.mgr.OnPacket(kSockB, a.data(), a.size(), kCandC, f.t0 + 1s);
++  auto d = f.mgr.OnSend(kSockB, vip, kPeerPort, game, 1, f.t0 + 1s);
++  CHECK(d.action == SendAction::Routed);
++  CHECK(Same(d.to, kCandC));
++}
++
++TEST_CASE("Peers: with relay on, a send to a connected peer's port that has no route yet is relayed, not queued",
++          "[net][peers][relay]") {
++  Fixture f;
++  f.mgr.SetRelayEnabled(true);
++  f.mgr.RegisterSocket(kSock, kLocalPort);
++  uint32_t vip = f.mgr.AddPeer(42, kToken);
++  f.mgr.SetRemoteCandidates(vip, kPeerPort, {{kCandB, Candidate::Srflx}}, f.t0);
++  auto a = PunchFrom(PunchType::Ack, kPeerPort);
++  f.mgr.OnPacket(kSock, a.data(), a.size(), kCandB, f.t0);
++  const uint8_t game[] = {9};
++  CHECK(f.mgr.OnSend(kSock, vip, 58949, game, 1, f.t0).action == SendAction::Relay);
++}
++
++TEST_CASE("Peers: relay is off by default and a pending peer is still queued", "[net][peers][relay]") {
++  Fixture f;
++  f.mgr.RegisterSocket(kSock, kLocalPort);
++  f.mgr.RegisterSocket(kSockB, kLocalPortB);
++  uint32_t vip = f.mgr.AddPeer(42, kToken);
++  f.mgr.SetRemoteCandidates(vip, kPeerPort, {{kCandB, Candidate::Srflx}}, f.t0);
++  const uint8_t game[] = {9};
++  CHECK(f.mgr.OnSend(kSockB, vip, kPeerPort, game, 1, f.t0).action == SendAction::Queued);
++  f.mgr.SetRelayEnabled(true);
++  CHECK(f.mgr.OnSend(kSockB, vip, kPeerPort, game, 1, f.t0).action == SendAction::Queued);  // nothing connected yet
++}
++
++TEST_CASE("Peers: a relayed datagram is labelled with its peer port and never becomes a route", "[net][peers][relay]") {
++  Fixture f;
++  f.mgr.SetRelayEnabled(true);
++  f.mgr.RegisterSocket(kSock, kLocalPort);
++  f.mgr.RegisterSocket(kSockB, kLocalPortB);
++  uint32_t vip = f.mgr.AddPeer(42, kToken);
++  f.mgr.SetRemoteCandidates(vip, kPeerPort, {{kCandB, Candidate::Srflx}}, f.t0);
++  auto a = PunchFrom(PunchType::Ack, kPeerPort);
++  f.mgr.OnPacket(kSock, a.data(), a.size(), kCandB, f.t0);
++  const sockaddr_in loop = Addr(0x7F000001, 61000);  // the local hand-off socket for (peer, port 58949)
++  f.mgr.AddRelayEndpoint(loop, vip, 58949);
++  auto label = f.mgr.Relabel(loop, f.t0, kSockB);
++  REQUIRE(label);
++  CHECK(label->first == vip);
++  CHECK(label->second == 58949);
++  const uint8_t game[] = {9};
++  CHECK(f.mgr.OnSend(kSockB, vip, 58949, game, 1, f.t0).action == SendAction::Relay);  // not routed to 127.0.0.1
++}
++
++// COGBox 0.5.0: tunnel frames ride a game socket's proven route when the tunnel socket has none of its own
++TEST_CASE("Peers: a tunnel frame reaching a game socket is handed to the tunnel, not the game", "[net][peers][relay]") {
++  Fixture f;
++  f.mgr.RegisterSocket(kSock, kLocalPort);
++  int handed = 0;
++  f.mgr.SetTunnelFrameFn([&](const sockaddr_in& from, const uint8_t*, size_t n) {
++    handed += Same(from, kCandB) && n == 22;
++  });
++  const uint8_t frame[22] = {'C', 'G', 'B', 'T', 1, 3};
++  CHECK(f.mgr.OnPacket(kSock, frame, sizeof(frame), kCandB, f.t0));
++  CHECK(handed == 1);
++}
++
++TEST_CASE("Peers: tunnel frames use a game socket's route while the tunnel socket has none", "[net][peers][relay]") {
++  Fixture f;
++  constexpr uint64_t kTunnel = 0x9999;
++  f.mgr.RegisterSocket(kSock, kLocalPort);
++  f.mgr.RegisterSocket(kTunnel, 50111);
++  uint32_t vip = f.mgr.AddPeer(42, kToken);
++  f.mgr.SetRemoteCandidates(vip, kPeerPort, {{kCandB, Candidate::Srflx}}, f.t0);
++  auto a = PunchFrom(PunchType::Ack, kPeerPort);
++  f.mgr.OnPacket(kSock, a.data(), a.size(), kCandB, f.t0);  // only the game socket got through
++  auto r = f.mgr.TunnelRoutes(vip, kTunnel, std::nullopt);
++  REQUIRE(r.size() == 1);
++  CHECK(r[0].first == kSock);
++  CHECK(Same(r[0].second, kCandB));
++  // once the tunnel socket has its own route, it is used
++  f.mgr.OnPacket(kTunnel, a.data(), a.size(), kCandC, f.t0 + 1s);
++  r = f.mgr.TunnelRoutes(vip, kTunnel, std::nullopt);
++  REQUIRE_FALSE(r.empty());
++  for (const auto& [h, to] : r) CHECK(h == kTunnel);
++}
++
++// COGBox 0.5.0: hearing from a peer on a socket proves only the way in; a route out needs the peer's ack
++TEST_CASE("Peers: a punch received on a socket does not make it a route out; an ack does", "[net][peers][relay]") {
++  Fixture f;
++  f.mgr.SetRelayEnabled(true);
++  f.mgr.RegisterSocket(kSock, kLocalPort);
++  f.mgr.RegisterSocket(kSockB, kLocalPortB);
++  uint32_t vip = f.mgr.AddPeer(42, kToken);
++  f.mgr.SetRemoteCandidates(vip, kPeerPort, {{kCandB, Candidate::Srflx}}, f.t0);
++  auto ack = PunchFrom(PunchType::Ack, kPeerPort);
++  f.mgr.OnPacket(kSock, ack.data(), ack.size(), kCandB, f.t0);  // connected through socket A
++  auto punch = PunchFrom(PunchType::Punch, kPeerPort);
++  f.mgr.OnPacket(kSockB, punch.data(), punch.size(), kCandC, f.t0 + 1s);  // the peer's punch got in to socket B
++  const uint8_t game[] = {9};
++  CHECK(f.mgr.OnSend(kSockB, vip, kPeerPort, game, 1, f.t0 + 1s).action == SendAction::Relay);
++  f.mgr.OnPacket(kSockB, ack.data(), ack.size(), kCandC, f.t0 + 2s);  // our punch from B was answered
++  auto d = f.mgr.OnSend(kSockB, vip, kPeerPort, game, 1, f.t0 + 2s);
++  CHECK(d.action == SendAction::Routed);
++  CHECK(Same(d.to, kCandC));
++}
++
++TEST_CASE("Peers: a closed socket's routes go with it; a new socket with the same handle starts with none",
++          "[net][peers][relay]") {
++  Fixture f;
++  f.mgr.SetRelayEnabled(true);
++  f.mgr.RegisterSocket(kSock, kLocalPort);
++  f.mgr.RegisterSocket(kSockB, kLocalPortB);
++  uint32_t vip = f.mgr.AddPeer(42, kToken);
++  f.mgr.SetRemoteCandidates(vip, kPeerPort, {{kCandB, Candidate::Srflx}}, f.t0);
++  auto ack = PunchFrom(PunchType::Ack, kPeerPort);
++  f.mgr.OnPacket(kSock, ack.data(), ack.size(), kCandB, f.t0);
++  f.mgr.OnPacket(kSockB, ack.data(), ack.size(), kCandC, f.t0);
++  f.mgr.UnregisterSocket(kSockB);
++  f.mgr.RegisterSocket(kSockB, 56211);  // Windows reuses the handle for the game's next socket
++  const uint8_t game[] = {9};
++  CHECK(f.mgr.OnSend(kSockB, vip, kPeerPort, game, 1, f.t0 + 1s).action == SendAction::Relay);
++}
+diff --git a/tests/unit/net/tunnel_core_test.cpp b/tests/unit/net/tunnel_core_test.cpp
+index 6683492..d3ce0aa 100644
+--- a/tests/unit/net/tunnel_core_test.cpp
++++ b/tests/unit/net/tunnel_core_test.cpp
+@@ -244,3 +244,28 @@ TEST_CASE("Tunnel: our own connections to a player don't use up that player's in
+   link.host.core.OnFrame(kVipOfGuest, f.data(), f.size(), now);
+   CHECK(link.host.opened.size() == 1);
+ }
++
++// COGBox 0.5.0: a game UDP datagram carried over the tunnel socket when its own socket pair has no route
++TEST_CASE("Tunnel: a datagram frame round trips with its source and destination game ports", "[net][tunnel][relay]") {
++  TunnelFrame f{TunnelFrameType::Dgram, 58949, 0, 0, 1000, {1, 2, 3, 4}};
++  auto bytes = EncodeTunnelFrame(f);
++  auto back = DecodeTunnelFrame(bytes.data(), bytes.size());
++  REQUIRE(back);
++  CHECK(back->type == TunnelFrameType::Dgram);
++  CHECK(back->conn == 58949);  // the sender's game port
++  CHECK(back->port == 1000);   // the receiver's game port
++  CHECK(back->payload == std::vector<uint8_t>{1, 2, 3, 4});
++}
++
++TEST_CASE("Tunnel: a core given a datagram frame ignores it", "[net][tunnel][relay]") {
++  TunnelCore core;
++  int calls = 0;
++  TunnelCore::Callbacks cb;
++  cb.send_frame = [&](uint32_t, const std::vector<uint8_t>&) { ++calls; };
++  cb.open_local = [&](uint32_t, uint16_t) { ++calls; return true; };
++  cb.deliver = [&](uint32_t, const uint8_t*, size_t) { ++calls; };
++  core.SetCallbacks(std::move(cb));
++  auto bytes = EncodeTunnelFrame({TunnelFrameType::Dgram, 1, 0, 0, 1000, {7}});
++  core.OnFrame(kVipOfGuest, bytes.data(), bytes.size(), Clock::now());
++  CHECK(calls == 0);
++}
