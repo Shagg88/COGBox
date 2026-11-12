@@ -106,6 +106,13 @@ struct HlslOptions {
   bool dxbc_fold_modifiers = false;
   // Job 637 (with dxbc_coalesce_moves): consecutive one-component movs between two registers merged into one.
   bool dxbc_merge_movs = false;
+  // Explicit UNORM bounds for identified SDR UI shaders, including their alpha.
+  // Keep this after the target exponent so widening a target cannot expose HDR UI.
+  bool clamp_ui_output = false;
+  // Native HDR replay only: output display-linear reference-white units.
+  // Pixel b0 vector 5 holds (peak / scene white, UI white / scene white, 0, 0).
+  bool native_hdr_linear = false;
+  bool native_hdr_ui = false;
 };
 
 // Patch 0105: the two dwords per fetch slot that tex_post_constants shaders read (fetch = the slot's 6 fetch-constant

@@ -106,6 +106,8 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
 - `sdk-patch16-zpd-pairing-UNBUILT.diff` was never built. It isn't in any release.
 
 Gears 3 and Judgment use the same runtime.
+- `sdk-patch80-hdr-overlays.diff` (native HDR, after 79): D3D12 host UI uses a separate PQ/BT.2020 pixel shader with SDR input bounds and a fixed 203-nit white. Covers FPS text, shader notes, menus and achievements, so SDR white is never written as 10,000-nit PQ white. Includes readable HLSL and an FXC SM5.1 header. Apply in the SDK root and rebuild/install the runtime; copy the new `rexruntime.dll` beside the game after closing it. SDR keeps its original shader.
+- `sdk-patch81-vulkan-hdr.diff` (after 80): request Vulkan swapchain colour-space support, select an advertised 10-bit ST.2084 HDR10 format, and encode host overlays to bounded PQ/BT.2020 with the matching SPIR-V shader. Reports a missing HDR10 surface instead of sending PQ to SDR. Rebuild/install the SDK runtime. Vulkan FSR also needs FSR SDK 2.4 headers and matching signed DLLs selected by the game's `GN_FFX_DIR`; this patch does not add Vulkan DLSS or XeSS.
 - `sdk-patch66-audio-session-volume.diff` (GitHub #203: sound on one output device, silence on another, while the log
   shows the silent device opened normally). Windows keeps a volume-mixer slider and mute for each program on each output
   device, by the exe's path, across reboots and reinstalls to the same folder. At start, and when the Windows default

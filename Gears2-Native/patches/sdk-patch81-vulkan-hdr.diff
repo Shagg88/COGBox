@@ -1,0 +1,214 @@
+diff --git a/include/rex/ui/vulkan/instance.h b/include/rex/ui/vulkan/instance.h
+--- a/include/rex/ui/vulkan/instance.h
++++ b/include/rex/ui/vulkan/instance.h
+@@ -109,6 +109,7 @@
+     bool ext_1_1_KHR_get_physical_device_properties2 = false;  // #60
+     bool ext_EXT_debug_utils = false;                          // #129
+     bool ext_KHR_portability_enumeration = false;              // #395
++    bool ext_EXT_swapchain_colorspace = false;
+   };
+ 
+   const Extensions& extensions() const { return extensions_; }
+diff --git a/src/ui/vulkan/vulkan_instance.cpp b/src/ui/vulkan/vulkan_instance.cpp
+--- a/src/ui/vulkan/vulkan_instance.cpp
++++ b/src/ui/vulkan/vulkan_instance.cpp
+@@ -138,6 +138,8 @@
+   requested_extensions.emplace("VK_KHR_portability_enumeration",
+                                &vulkan_instance->extensions_.ext_KHR_portability_enumeration);
+   if (with_surface) {
++    requested_extensions.emplace("VK_EXT_swapchain_colorspace",
++                                 &vulkan_instance->extensions_.ext_EXT_swapchain_colorspace);
+     // #1.
+     requested_extensions.emplace("VK_KHR_surface", &vulkan_instance->extensions_.ext_KHR_surface);
+ #ifdef VK_USE_PLATFORM_XCB_KHR
+diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
+--- a/src/ui/vulkan/vulkan_presenter.cpp
++++ b/src/ui/vulkan/vulkan_presenter.cpp
+@@ -27,6 +27,7 @@
+ #include <rex/platform.h>
+ #include <rex/ui/vulkan/presenter.h>
+ #include <rex/ui/vulkan/util.h>
++#include <rex/ui/flags.h>
+ 
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+ #include <ffx_api/ffx_api.h>
+@@ -1305,6 +1306,22 @@
+       // Just pick any format.
+       image_format = surface_formats.front();
+     }
++  }
++
++  // The guest image is already BT.2020 / PQ. Negotiate its matching surface
++  // rather than displaying those codes through an SDR colour space.
++  if (REXCVAR_GET(present_hdr)) {
++    const auto hdr = std::find_if(surface_formats.begin(), surface_formats.end(), [](const auto& format) {
++      return format.colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT &&
++             (format.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ||
++              format.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32);
++    });
++    if (hdr == surface_formats.end()) {
++      REXLOG_ERROR("VulkanPresenter: HDR10 requested but no 10-bit ST2084 surface format is available; enable Windows/compositor HDR or disable HDR in COGBox");
++      return VK_NULL_HANDLE;
++    }
++    image_format = *hdr;
++    REXLOG_INFO("VulkanPresenter: HDR10 ST2084 colour space selected (format {})", int(image_format.format));
+   }
+ 
+   // Get presentation modes.
+diff --git a/src/ui/vulkan/vulkan_immediate_drawer.cpp b/src/ui/vulkan/vulkan_immediate_drawer.cpp
+--- a/src/ui/vulkan/vulkan_immediate_drawer.cpp
++++ b/src/ui/vulkan/vulkan_immediate_drawer.cpp
+@@ -20,6 +20,8 @@
+ #include <rex/ui/vulkan/immediate_drawer.h>
+ #include <rex/ui/vulkan/presenter.h>
+ #include <rex/ui/vulkan/util.h>
++#include <rex/cvar.h>
++#include <rex/ui/flags.h>
+ 
+ namespace rex {
+ namespace ui {
+@@ -28,6 +30,7 @@
+ // Generated with `xb buildshaders`.
+ namespace shaders {
+ #include "../shaders/vulkan_spirv/immediate_ps.h"
++#include "../shaders/vulkan_spirv/immediate_hdr_ps.h"
+ #include "../shaders/vulkan_spirv/immediate_vs.h"
+ }  // namespace shaders
+ 
+@@ -562,8 +565,12 @@
+   stages[0].pName = "main";
+   stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+   stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+-  stages[1].module = util::CreateShaderModule(vulkan_device_, shaders::immediate_ps,
+-                                              sizeof(shaders::immediate_ps));
++  const bool hdr_ui = REXCVAR_GET(present_hdr) &&
++      (render_pass_format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ||
++       render_pass_format == VK_FORMAT_A2R10G10B10_UNORM_PACK32);
++  stages[1].module = hdr_ui
++      ? util::CreateShaderModule(vulkan_device_, shaders::immediate_hdr_ps, sizeof(shaders::immediate_hdr_ps))
++      : util::CreateShaderModule(vulkan_device_, shaders::immediate_ps, sizeof(shaders::immediate_ps));
+   if (stages[1].module == VK_NULL_HANDLE) {
+     REXLOG_ERROR("VulkanImmediateDrawer: Failed to create the fragment shader module");
+     dfn.vkDestroyShaderModule(device, stages[0].module, nullptr);
+diff --git a/src/ui/shaders/immediate_hdr.ps.hlsl b/src/ui/shaders/immediate_hdr.ps.hlsl
+--- a/src/ui/shaders/immediate_hdr.ps.hlsl
++++ b/src/ui/shaders/immediate_hdr.ps.hlsl
+@@ -1,8 +1,15 @@
+ // COGBox's host overlays are authored in SDR sRGB. The HDR10 swapchain expects
+ // PQ/BT.2020; writing SDR white (1.0) directly would mean 10,000 nits.
+-Texture2D<float4> uiTexture : register(t0);
+-SamplerState uiSampler : register(s0);
+-float4 main(float2 uv : TEXCOORD0, float4 vertexColor : COLOR0) : SV_Target0 {
++#ifdef __spirv__
++#define UI_BIND [[vk::combinedImageSampler]][[vk::binding(0, 0)]]
++#define UI_LOCATION(n) [[vk::location(n)]]
++#else
++#define UI_BIND
++#define UI_LOCATION(n)
++#endif
++UI_BIND Texture2D<float4> uiTexture : register(t0);
++UI_BIND SamplerState uiSampler : register(s0);
++float4 main(UI_LOCATION(0) float2 uv : TEXCOORD0, UI_LOCATION(1) float4 vertexColor : COLOR0) : SV_Target0 {
+   float4 color = saturate(uiTexture.SampleLevel(uiSampler, uv, 0.0) * vertexColor);
+   color = float4(isfinite(color.r) ? color.r : 0.0,
+                  isfinite(color.g) ? color.g : 0.0,
+diff --git a/src/ui/shaders/vulkan_spirv/immediate_hdr_ps.h b/src/ui/shaders/vulkan_spirv/immediate_hdr_ps.h
+new file mode 100644
+--- /dev/null
++++ b/src/ui/shaders/vulkan_spirv/immediate_hdr_ps.h
+@@ -0,0 +1,95 @@
++// Generated by DXC from ../immediate_hdr.ps.hlsl; Vulkan 1.3, combined sampler at set 0 binding 0.
++const uint32_t immediate_hdr_ps[] = {
++  0x07230203u, 0x00010600u, 0x000E0000u, 0x00000083u, 0x00000000u, 0x00020011u, 0x00000001u, 0x0006000Bu,
++  0x00000001u, 0x4C534C47u, 0x6474732Eu, 0x3035342Eu, 0x00000000u, 0x0003000Eu, 0x00000000u, 0x00000001u,
++  0x0009000Fu, 0x00000004u, 0x00000002u, 0x6E69616Du, 0x00000000u, 0x00000003u, 0x00000004u, 0x00000005u,
++  0x00000006u, 0x00030010u, 0x00000002u, 0x00000007u, 0x00030003u, 0x00000005u, 0x00000294u, 0x00060005u,
++  0x00000007u, 0x65707974u, 0x2E64322Eu, 0x67616D69u, 0x00000065u, 0x00050005u, 0x00000006u, 0x65546975u,
++  0x72757478u, 0x00000065u, 0x00070005u, 0x00000003u, 0x762E6E69u, 0x542E7261u, 0x4F435845u, 0x3044524Fu,
++  0x00000000u, 0x00060005u, 0x00000004u, 0x762E6E69u, 0x432E7261u, 0x524F4C4Fu, 0x00000030u, 0x00070005u,
++  0x00000005u, 0x2E74756Fu, 0x2E726176u, 0x545F5653u, 0x65677261u, 0x00003074u, 0x00040005u, 0x00000002u,
++  0x6E69616Du, 0x00000000u, 0x00070005u, 0x00000008u, 0x65707974u, 0x6D61732Eu, 0x64656C70u, 0x616D692Eu,
++  0x00006567u, 0x00040047u, 0x00000003u, 0x0000001Eu, 0x00000000u, 0x00040047u, 0x00000004u, 0x0000001Eu,
++  0x00000001u, 0x00040047u, 0x00000005u, 0x0000001Eu, 0x00000000u, 0x00040047u, 0x00000006u, 0x00000022u,
++  0x00000000u, 0x00040047u, 0x00000006u, 0x00000021u, 0x00000000u, 0x00030016u, 0x00000009u, 0x00000020u,
++  0x0004002Bu, 0x00000009u, 0x0000000Au, 0x00000000u, 0x00040017u, 0x0000000Bu, 0x00000009u, 0x00000004u,
++  0x0007002Cu, 0x0000000Bu, 0x0000000Cu, 0x0000000Au, 0x0000000Au, 0x0000000Au, 0x0000000Au, 0x0004002Bu,
++  0x00000009u, 0x0000000Du, 0x3F800000u, 0x0007002Cu, 0x0000000Bu, 0x0000000Eu, 0x0000000Du, 0x0000000Du,
++  0x0000000Du, 0x0000000Du, 0x0004002Bu, 0x00000009u, 0x0000000Fu, 0x3D25AEE6u, 0x0004002Bu, 0x00000009u,
++  0x00000010u, 0x3D6147AEu, 0x0004002Bu, 0x00000009u, 0x00000011u, 0x4019999Au, 0x0004002Bu, 0x00000009u,
++  0x00000012u, 0x3F209D8Cu, 0x0004002Bu, 0x00000009u, 0x00000013u, 0x3EA897A6u, 0x0004002Bu, 0x00000009u,
++  0x00000014u, 0x3D31699Au, 0x0004002Bu, 0x00000009u, 0x00000015u, 0x3D8D82BAu, 0x0004002Bu, 0x00000009u,
++  0x00000016u, 0x3F6B66F9u, 0x0004002Bu, 0x00000009u, 0x00000017u, 0x3C3A2454u, 0x0004002Bu, 0x00000009u,
++  0x00000018u, 0x3C8647ADu, 0x0004002Bu, 0x00000009u, 0x00000019u, 0x3DB44044u, 0x0004002Bu, 0x00000009u,
++  0x0000001Au, 0x3F6545B7u, 0x0004002Bu, 0x00000009u, 0x0000001Bu, 0x434B0000u, 0x00040017u, 0x0000001Cu,
++  0x00000009u, 0x00000003u, 0x0006002Cu, 0x0000001Cu, 0x0000001Du, 0x0000000Au, 0x0000000Au, 0x0000000Au,
++  0x0006002Cu, 0x0000001Cu, 0x0000001Eu, 0x0000001Bu, 0x0000001Bu, 0x0000001Bu, 0x0004002Bu, 0x00000009u,
++  0x0000001Fu, 0x3E232000u, 0x0006002Cu, 0x0000001Cu, 0x00000020u, 0x0000001Fu, 0x0000001Fu, 0x0000001Fu,
++  0x0004002Bu, 0x00000009u, 0x00000021u, 0x3F560000u, 0x0006002Cu, 0x0000001Cu, 0x00000022u, 0x00000021u,
++  0x00000021u, 0x00000021u, 0x0004002Bu, 0x00000009u, 0x00000023u, 0x4196D000u, 0x0006002Cu, 0x0000001Cu,
++  0x00000024u, 0x0000000Du, 0x0000000Du, 0x0000000Du, 0x0004002Bu, 0x00000009u, 0x00000025u, 0x41958000u,
++  0x0004002Bu, 0x00000009u, 0x00000026u, 0x429DB000u, 0x0006002Cu, 0x0000001Cu, 0x00000027u, 0x00000026u,
++  0x00000026u, 0x00000026u, 0x00090019u, 0x00000007u, 0x00000009u, 0x00000001u, 0x00000002u, 0x00000000u,
++  0x00000000u, 0x00000001u, 0x00000000u, 0x00040017u, 0x00000028u, 0x00000009u, 0x00000002u, 0x00040020u,
++  0x00000029u, 0x00000001u, 0x00000028u, 0x00040020u, 0x0000002Au, 0x00000001u, 0x0000000Bu, 0x00040020u,
++  0x0000002Bu, 0x00000003u, 0x0000000Bu, 0x00020013u, 0x0000002Cu, 0x00030021u, 0x0000002Du, 0x0000002Cu,
++  0x00040018u, 0x0000002Eu, 0x0000001Cu, 0x00000003u, 0x0003001Bu, 0x00000008u, 0x00000007u, 0x00020014u,
++  0x0000002Fu, 0x0004003Bu, 0x00000029u, 0x00000003u, 0x00000001u, 0x0004003Bu, 0x0000002Au, 0x00000004u,
++  0x00000001u, 0x0004003Bu, 0x0000002Bu, 0x00000005u, 0x00000003u, 0x0006002Cu, 0x0000001Cu, 0x00000030u,
++  0x00000012u, 0x00000013u, 0x00000014u, 0x0006002Cu, 0x0000001Cu, 0x00000031u, 0x00000015u, 0x00000016u,
++  0x00000017u, 0x0006002Cu, 0x0000001Cu, 0x00000032u, 0x00000018u, 0x00000019u, 0x0000001Au, 0x0006002Cu,
++  0x0000002Eu, 0x00000033u, 0x00000030u, 0x00000031u, 0x00000032u, 0x0004002Bu, 0x00000009u, 0x00000034u,
++  0x3F72A76Fu, 0x0004002Bu, 0x00000009u, 0x00000035u, 0x3D9E8391u, 0x0004002Bu, 0x00000009u, 0x00000036u,
++  0x38D1B717u, 0x0006002Cu, 0x0000001Cu, 0x00000037u, 0x00000036u, 0x00000036u, 0x00000036u, 0x00040020u,
++  0x00000038u, 0x00000000u, 0x00000008u, 0x0004003Bu, 0x00000038u, 0x00000006u, 0x00000000u, 0x00050036u,
++  0x0000002Cu, 0x00000002u, 0x00000000u, 0x0000002Du, 0x000200F8u, 0x00000039u, 0x0004003Du, 0x00000028u,
++  0x0000003Au, 0x00000003u, 0x0004003Du, 0x0000000Bu, 0x0000003Bu, 0x00000004u, 0x0004003Du, 0x00000008u,
++  0x0000003Cu, 0x00000006u, 0x00070058u, 0x0000000Bu, 0x0000003Du, 0x0000003Cu, 0x0000003Au, 0x00000002u,
++  0x0000000Au, 0x00050085u, 0x0000000Bu, 0x0000003Eu, 0x0000003Du, 0x0000003Bu, 0x0008000Cu, 0x0000000Bu,
++  0x0000003Fu, 0x00000001u, 0x0000002Bu, 0x0000003Eu, 0x0000000Cu, 0x0000000Eu, 0x00050051u, 0x00000009u,
++  0x00000040u, 0x0000003Fu, 0x00000000u, 0x0004009Cu, 0x0000002Fu, 0x00000041u, 0x00000040u, 0x0004009Du,
++  0x0000002Fu, 0x00000042u, 0x00000040u, 0x000500A6u, 0x0000002Fu, 0x00000043u, 0x00000041u, 0x00000042u,
++  0x000400A8u, 0x0000002Fu, 0x00000044u, 0x00000043u, 0x000600A9u, 0x00000009u, 0x00000045u, 0x00000044u,
++  0x00000040u, 0x0000000Au, 0x00050051u, 0x00000009u, 0x00000046u, 0x0000003Fu, 0x00000001u, 0x0004009Cu,
++  0x0000002Fu, 0x00000047u, 0x00000046u, 0x0004009Du, 0x0000002Fu, 0x00000048u, 0x00000046u, 0x000500A6u,
++  0x0000002Fu, 0x00000049u, 0x00000047u, 0x00000048u, 0x000400A8u, 0x0000002Fu, 0x0000004Au, 0x00000049u,
++  0x000600A9u, 0x00000009u, 0x0000004Bu, 0x0000004Au, 0x00000046u, 0x0000000Au, 0x00050051u, 0x00000009u,
++  0x0000004Cu, 0x0000003Fu, 0x00000002u, 0x0004009Cu, 0x0000002Fu, 0x0000004Du, 0x0000004Cu, 0x0004009Du,
++  0x0000002Fu, 0x0000004Eu, 0x0000004Cu, 0x000500A6u, 0x0000002Fu, 0x0000004Fu, 0x0000004Du, 0x0000004Eu,
++  0x000400A8u, 0x0000002Fu, 0x00000050u, 0x0000004Fu, 0x000600A9u, 0x00000009u, 0x00000051u, 0x00000050u,
++  0x0000004Cu, 0x0000000Au, 0x00050051u, 0x00000009u, 0x00000052u, 0x0000003Fu, 0x00000003u, 0x0004009Cu,
++  0x0000002Fu, 0x00000053u, 0x00000052u, 0x0004009Du, 0x0000002Fu, 0x00000054u, 0x00000052u, 0x000500A6u,
++  0x0000002Fu, 0x00000055u, 0x00000053u, 0x00000054u, 0x000400A8u, 0x0000002Fu, 0x00000056u, 0x00000055u,
++  0x000600A9u, 0x00000009u, 0x00000057u, 0x00000056u, 0x00000052u, 0x0000000Au, 0x000500BCu, 0x0000002Fu,
++  0x00000058u, 0x00000045u, 0x0000000Fu, 0x000300F7u, 0x00000059u, 0x00000000u, 0x000400FAu, 0x00000058u,
++  0x0000005Au, 0x0000005Bu, 0x000200F8u, 0x0000005Au, 0x00050085u, 0x00000009u, 0x0000005Cu, 0x00000045u,
++  0x00000035u, 0x000200F9u, 0x00000059u, 0x000200F8u, 0x0000005Bu, 0x00050081u, 0x00000009u, 0x0000005Du,
++  0x00000045u, 0x00000010u, 0x00050085u, 0x00000009u, 0x0000005Eu, 0x0000005Du, 0x00000034u, 0x0007000Cu,
++  0x00000009u, 0x0000005Fu, 0x00000001u, 0x0000001Au, 0x0000005Eu, 0x00000011u, 0x000200F9u, 0x00000059u,
++  0x000200F8u, 0x00000059u, 0x000700F5u, 0x00000009u, 0x00000060u, 0x0000005Cu, 0x0000005Au, 0x0000005Fu,
++  0x0000005Bu, 0x000500BCu, 0x0000002Fu, 0x00000061u, 0x0000004Bu, 0x0000000Fu, 0x000300F7u, 0x00000062u,
++  0x00000000u, 0x000400FAu, 0x00000061u, 0x00000063u, 0x00000064u, 0x000200F8u, 0x00000063u, 0x00050085u,
++  0x00000009u, 0x00000065u, 0x0000004Bu, 0x00000035u, 0x000200F9u, 0x00000062u, 0x000200F8u, 0x00000064u,
++  0x00050081u, 0x00000009u, 0x00000066u, 0x0000004Bu, 0x00000010u, 0x00050085u, 0x00000009u, 0x00000067u,
++  0x00000066u, 0x00000034u, 0x0007000Cu, 0x00000009u, 0x00000068u, 0x00000001u, 0x0000001Au, 0x00000067u,
++  0x00000011u, 0x000200F9u, 0x00000062u, 0x000200F8u, 0x00000062u, 0x000700F5u, 0x00000009u, 0x00000069u,
++  0x00000065u, 0x00000063u, 0x00000068u, 0x00000064u, 0x000500BCu, 0x0000002Fu, 0x0000006Au, 0x00000051u,
++  0x0000000Fu, 0x000300F7u, 0x0000006Bu, 0x00000000u, 0x000400FAu, 0x0000006Au, 0x0000006Cu, 0x0000006Du,
++  0x000200F8u, 0x0000006Cu, 0x00050085u, 0x00000009u, 0x0000006Eu, 0x00000051u, 0x00000035u, 0x000200F9u,
++  0x0000006Bu, 0x000200F8u, 0x0000006Du, 0x00050081u, 0x00000009u, 0x0000006Fu, 0x00000051u, 0x00000010u,
++  0x00050085u, 0x00000009u, 0x00000070u, 0x0000006Fu, 0x00000034u, 0x0007000Cu, 0x00000009u, 0x00000071u,
++  0x00000001u, 0x0000001Au, 0x00000070u, 0x00000011u, 0x000200F9u, 0x0000006Bu, 0x000200F8u, 0x0000006Bu,
++  0x000700F5u, 0x00000009u, 0x00000072u, 0x0000006Eu, 0x0000006Cu, 0x00000071u, 0x0000006Du, 0x00060050u,
++  0x0000001Cu, 0x00000073u, 0x00000060u, 0x00000069u, 0x00000072u, 0x00050090u, 0x0000001Cu, 0x00000074u,
++  0x00000073u, 0x00000033u, 0x0005008Eu, 0x0000001Cu, 0x00000075u, 0x00000074u, 0x0000001Bu, 0x0008000Cu,
++  0x0000001Cu, 0x00000076u, 0x00000001u, 0x0000002Bu, 0x00000075u, 0x0000001Du, 0x0000001Eu, 0x00050085u,
++  0x0000001Cu, 0x00000077u, 0x00000076u, 0x00000037u, 0x0007000Cu, 0x0000001Cu, 0x00000078u, 0x00000001u,
++  0x0000001Au, 0x00000077u, 0x00000020u, 0x0005008Eu, 0x0000001Cu, 0x00000079u, 0x00000078u, 0x00000023u,
++  0x00050081u, 0x0000001Cu, 0x0000007Au, 0x00000022u, 0x00000079u, 0x0005008Eu, 0x0000001Cu, 0x0000007Bu,
++  0x00000078u, 0x00000025u, 0x00050081u, 0x0000001Cu, 0x0000007Cu, 0x00000024u, 0x0000007Bu, 0x00050088u,
++  0x0000001Cu, 0x0000007Du, 0x0000007Au, 0x0000007Cu, 0x0007000Cu, 0x0000001Cu, 0x0000007Eu, 0x00000001u,
++  0x0000001Au, 0x0000007Du, 0x00000027u, 0x00050051u, 0x00000009u, 0x0000007Fu, 0x0000007Eu, 0x00000000u,
++  0x00050051u, 0x00000009u, 0x00000080u, 0x0000007Eu, 0x00000001u, 0x00050051u, 0x00000009u, 0x00000081u,
++  0x0000007Eu, 0x00000002u, 0x00070050u, 0x0000000Bu, 0x00000082u, 0x0000007Fu, 0x00000080u, 0x00000081u,
++  0x00000057u, 0x0003003Eu, 0x00000005u, 0x00000082u, 0x000100FDu, 0x00010038u,
++};

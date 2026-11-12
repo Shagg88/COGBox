@@ -172,6 +172,10 @@ class ShaderCache {
   // translation options, so the driver later sees identical bytes - without keeping, recording or creating anything.
   // False when the DXBC back end is off or the shader is not translatable to DXBC.
   bool TranslateDxbcOnly(const uint32_t* dwords, size_t dword_count, bool is_vertex, std::vector<uint8_t>& out);
+  // Exact Gears 2 scene / Canvas profile, a DXBC twin for float HDR composition.
+  // Does not replace the guest's normal shader or change its constant layout.
+  gpu::ShaderHandle GetNativeHdr(uint64_t hash, const uint32_t* dwords, size_t count, bool canvas_material = false);
+  gpu::ShaderHandle GetNativeSceneUi(const uint32_t* dwords, size_t count);
   // True when `s` is no longer pending (ready or failed) on return; waits at most budget_ms.
   bool WaitReady(const GuestShader& s, double budget_ms);
   // Our own fixed shaders (rectangle-list geometry shader, resolve compute shaders), compiled synchronously.
@@ -217,7 +221,8 @@ class ShaderCache {
  private:
   // Patch 0068: the decode / translation options of every translation (GetImpl and TranslateDxbcOnly alike).
   ucode::DecodeOptions DecodeOptions() const;
-  hlsl::HlslOptions TranslateOptions(bool is_vertex, uint32_t tess_quad_segments) const;
+  hlsl::HlslOptions TranslateOptions(bool is_vertex, uint32_t tess_quad_segments,
+                                     const uint32_t* dwords, size_t dword_count) const;
   struct Job {
     GuestShader* shader = nullptr;  // only dereferenced on the caller's thread (in Poll)
     std::string name;               // disk file name
@@ -254,6 +259,7 @@ class ShaderCache {
   std::string tag_;
   std::unordered_map<uint64_t, std::unique_ptr<GuestShader>> shaders_[2];  // [vertex]
   std::unordered_map<std::string, gpu::ShaderHandle> builtins_;
+  std::unordered_map<uint64_t, gpu::ShaderHandle> native_hdr_shaders_;
   ShaderCacheStats stats_;
   bool compact_float_constants_ = false;
   bool tex_sign_by_swizzle_ = false;  // patch 0024
