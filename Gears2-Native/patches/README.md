@@ -127,3 +127,8 @@ Gears 3 and Judgment use the same runtime.
   a 4:3 back buffer (720 x width / height wide, at least 900 / 904) when the mode is at most 720 lines, so CogBox sends
   it with `--video_mode_width=960 --video_mode_height=720`. Default true = unchanged. Apply it in the SDK root
   (`git apply`); it only touches `src/kernel/xboxkrnl/xboxkrnl_video.cpp`. See docs/plan-049-4x3.md.
+- `sdk-patch85-audio-endpoint-enumerator.diff` (0.6.1, after 82; NOT BUILT yet - needs a runtime build; 83 and 84 are
+  kept for the native-HDR pull request #267): patch 66's 5 s check for a new Windows default output device ran
+  `CoInitializeEx` + `CoCreateInstance(MMDeviceEnumerator)` + `CoUninitialize` on the audio submit path every time
+  (milliseconds, sometimes far more - a periodic stall). The calling thread now keeps COM and one enumerator for its
+  lifetime. Apply it in the SDK root (`git apply`); it only touches `src/audio/sdl/sdl_audio_driver.cpp`.
