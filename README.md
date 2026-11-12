@@ -12,7 +12,8 @@ and its title update. No game files are included, ever.
 Backup with the same files: [GitLab](https://gitlab.com/shagg88/cogbox/-/releases).
 
 **Online multiplayer is here (0.6.0):** play Gears of War online with friends again, peer to peer through COGBox's own
-matchmaking - no Xbox Live needed. Turn it on in the launcher's Social tab.
+matchmaking - no Xbox Live needed. Off until you turn it on in the launcher's Social tab. Confirmed so far:
+Gears of War 3 Versus; the other games and modes are still being tested.
 
 **[Join the COGBox Discord](https://discord.gg/Y6qGbzBKQZ)** - find people to play with, get help, share feedback.
 
@@ -46,6 +47,8 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 - **Lower input lag:** NVIDIA Reflex and AMD Anti-Lag 2 where your GPU has them.
 - **Keyboard and mouse** or **Xbox / PlayStation controllers**, with button prompts that follow what you use.
 - **Split-screen co-op** in all four games, and **System Link** LAN co-op (experimental).
+- **Online multiplayer** (0.6.0, off by default): peer to peer through COGBox's own matchmaking; Gears of War 3 Versus
+  confirmed so far.
 - **Insane from the start**, **achievements** in all four games, chapter select, and an **in-game menu**
   (Back + Start, or F1) to change settings or quit.
 - **DLC and mods**, every language your copy has, and screenshots with **\\**.
@@ -117,7 +120,7 @@ The full text, including takedown requests, is in [`LEGAL.md`](LEGAL.md); what C
 
 ## What's coming
 
-Plans, not promises: online co-op, Vulkan as the default, better frame generation, texture packs, multi-core
+Plans, not promises: wider online support (other games and modes), Vulkan as the default, better frame generation, texture packs, multi-core
 rendering, more controllers and accessibility options, and tested Linux / Steam Deck support.
 
 ## Community translations
@@ -132,6 +135,7 @@ Thank you to everyone who has contributed code, translations, testing and tips (
 
 - **Flippage**
 - **KiltedKernel**
+- **redsit**
 - **gmihaic**
 - **HubertFer**
 - **Hevesi J.**
@@ -194,7 +198,7 @@ repository the texts are in `Gears2-Native/THIRD_PARTY_NOTICES.md` and `Gears2-N
 
 | Component (shipped in the download) | Version | Licence | Text in the download |
 |---|---|---|---|
-| COGBox launcher and the ports' own code | 0.5.0 | MIT | `LICENSE.txt` |
+| COGBox launcher and the ports' own code | 0.6.0 | MIT | `LICENSE.txt` |
 | rexglue SDK runtime (`rexruntime.dll`, `rexgpu-xenos.dll`), derived from Xenia | 0.10.0-dev (bd833a2 + our patches) | BSD-3-Clause | `licenses\rexglue-sdk\` (+ its bundled libraries' licences) |
 | Xenia / Canary / Edge code ported into the renderer | Canary e6cd2e4, Edge 5045c19 | BSD-3-Clause | `licenses\Xenia-LICENSE.txt` |
 | FFmpeg XMA decoder (`avcodec-63.dll`, `avutil-61.dll`; also linked into `rexruntime.dll`) | 9.0.2 (launcher); Xenia fork (runtime) | LGPL-2.1-or-later (not a GPL build) | `licenses\FFmpeg-NOTICE.txt`, `FFmpeg-LGPL-2.1.txt` |

@@ -9,7 +9,7 @@
 ### Online play (by Flippage)
 - **Online multiplayer** through COGBox's own matchmaking server, peer to peer (nothing is relayed through a server). It's off until you turn it on. What is sent and kept is in [PRIVACY.md](PRIVACY.md), and the launcher can delete your online account.
 - **Social**: friends, invites and profile pictures, also as a tab of the in-game menu (F8 opens it there).
-- Works behind strict routers without UPnP: when two players have no direct path, their traffic goes over a path that already works. A party host's join connection is no longer closed by the game right after it opens.
+- Works behind strict routers without UPnP: when two players have no direct path, their connection is set up over a route that already works between the players, still peer to peer (no relay server). A party host's join connection is no longer closed by the game right after it opens.
 - Regions: **US**, **OCE** and **Europe** (US West and US East are now one US region).
 - Gears 3 and Judgment saves keep working when you switch online play on or off. Nothing is deleted, and Gears 3 saves are backed up before they're changed.
 - **Online safety:** limits on what another player can make your game hold in memory or open.
