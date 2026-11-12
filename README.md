@@ -13,8 +13,7 @@ with the same releases.
 and its title update. No game files are included, ever.
 
 **Online multiplayer is here (0.6.0):** play Gears of War online with friends again, peer to peer through COGBox's own
-matchmaking - no Xbox Live needed. Off until you turn it on in the launcher's Social tab. Confirmed so far:
-Gears of War 3 Versus; the other games and modes are still being tested.
+matchmaking - no Xbox Live needed. Off until you turn it on in the launcher's Social tab.
 
 **[Join the COGBox Discord](https://discord.gg/Y6qGbzBKQZ)** - find people to play with, get help, share feedback.
 
@@ -48,8 +47,7 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 - **Lower input lag:** NVIDIA Reflex and AMD Anti-Lag 2 where your GPU has them.
 - **Keyboard and mouse** or **Xbox / PlayStation controllers**, with button prompts that follow what you use.
 - **Split-screen co-op** in all four games, and **System Link** LAN co-op (experimental).
-- **Online multiplayer** (0.6.0, off by default): peer to peer through COGBox's own matchmaking; Gears of War 3 Versus
-  confirmed so far.
+- **Online multiplayer** (0.6.0, off by default): peer to peer through COGBox's own matchmaking.
 - **Insane from the start**, **achievements** in all four games, chapter select, and an **in-game menu**
   (Back + Start, or F1) to change settings or quit.
 - **DLC and mods**, every language your copy has, and screenshots with **\\**.
@@ -121,7 +119,7 @@ The full text, including takedown requests, is in [`LEGAL.md`](LEGAL.md); what C
 
 ## What's coming
 
-Plans, not promises: wider online support (other games and modes), Vulkan as the default, better frame generation, texture packs, multi-core
+Plans, not promises: Vulkan as the default, better frame generation, texture packs, multi-core
 rendering, more controllers and accessibility options, and tested Linux / Steam Deck support.
 
 ## Community translations
