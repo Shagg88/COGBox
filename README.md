@@ -136,7 +136,6 @@ Thank you to everyone who has contributed code, translations, testing and tips (
 
 - **Flippage**
 - **KiltedKernel**
-- **redsit**
 - **gmihaic**
 - **HubertFer**
 - **Hevesi J.**
