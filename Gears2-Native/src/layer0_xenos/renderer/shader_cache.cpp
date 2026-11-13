@@ -342,6 +342,8 @@ ShaderCache::~ShaderCache() {
   }
   wake_.notify_all();
   for (std::thread& t : workers_) t.join();
+  spv_wake_.notify_all();
+  for (std::thread& t : spv_workers_) t.join();
   {
     std::lock_guard<std::mutex> lock(ucode_mutex_);  // patch 0014: the writer finishes its queue first
     ucode_stop_ = true;
@@ -585,10 +587,19 @@ void ShaderCache::Worker(ShaderCompiler* compiler) {
 
 void ShaderCache::FinishJob(std::unique_ptr<Job> job) {
   --in_flight_;
-  stats_.compile_ms += job->ms;
+  if (job->spirv_job) {  // 0.6.2: a conversion, not a compile - its own counters
+    ++spv_jobs_done_;
+    spv_jobs_ms_ += job->ms;
+    if (!job->ok) ++spv_jobs_failed_;
+    if ((spv_jobs_done_ & (spv_jobs_done_ - 1)) == 0 || in_flight_ == 0)
+      REXLOG_INFO("gow2_renderer: SPIR-V jobs: {} done ({} failed), {:.0f} ms of conversion on the background threads, {} still to do",
+                  spv_jobs_done_, spv_jobs_failed_, spv_jobs_ms_, in_flight_);
+  } else {
+    stats_.compile_ms += job->ms;
+  }
   GuestShader& s = *job->shader;
   if (job->ok && !job->bytecode.empty()) {
-    ++stats_.compiled;
+    if (!job->spirv_job) ++stats_.compiled;
     if (!job->messages.empty() && stats_.compiled <= 3)
       REXLOG_INFO("gow2_renderer: compiler messages for {}: {}", job->name, job->messages.substr(0, 400));
     s.handle = backend_.CreateShader(job->stage, job->bytecode.data(), job->bytecode.size());
@@ -621,6 +632,15 @@ bool ShaderCache::WaitReady(const GuestShader& s, double budget_ms) {
         }
       if (mine) break;
     }
+    if (!mine) {  // 0.6.2: a SPIR-V job is never converted here (45 ms and more against these budgets) - it goes first
+      for (auto it = spv_warm_queue_.begin(); it != spv_warm_queue_.end(); ++it)
+        if ((*it)->shader == &s) {
+          spv_queue_.push_front(std::move(*it));
+          spv_warm_queue_.erase(it);
+          spv_wake_.notify_one();
+          break;
+        }
+    }
   }
   if (mine) {
     if (sync_compiler_) {
@@ -643,6 +663,19 @@ bool ShaderCache::WaitReady(const GuestShader& s, double budget_ms) {
         if (j->shader == &s) return true;
       return false;
     });
+  }
+  {  // its own job first (Poll has a time budget)
+    std::unique_ptr<Job> own;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      for (auto it = done_.begin(); it != done_.end(); ++it)
+        if ((*it)->shader == &s) {
+          own = std::move(*it);
+          done_.erase(it);
+          break;
+        }
+    }
+    if (own) FinishJob(std::move(own));
   }
   Poll();
   return s.state != ShaderState::kPending;
@@ -997,12 +1030,25 @@ void ShaderCache::SetSpirvStore(const std::filesystem::path& dir, uint32_t switc
   g_spv_store.path = p;
   REXLOG_INFO("gow2_renderer: SPIR-V store {}: {} modules, {:.1f} MB", p.string(), g_spv_store.index.size(), double(good) / 1048576.0);
 }
+static std::atomic<bool> g_spv_async{false};
+void ShaderCache::SetSpirvAsync(bool on) { g_spv_async.store(on); }
+// (spv_pending, 0.6.2: given and async on -> a store miss is NOT converted here; the bytecode stays DXBC and
+// *spv_pending is set, for AdoptDxbc to queue the conversion. Null = convert here, as always.)
 static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program, const hlsl::HlslOptions& options,
-                                                  bool spirv) {
+                                                  bool spirv, bool* spv_pending = nullptr) {
   dxbc_gen::DxbcTranslation dt = dxbc_gen::TranslateToDxbc(program, options);
   if (dt.ok && spirv) {
     const uint64_t store_key = SpvKey(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise, g_spv_store.switches);
     dxbc_spirv::SpirvResult sv;
+    if (spv_pending && g_spv_async.load() && g_spv_dump_dir.empty() && g_spv_override_dir.empty()) {
+      if (SpvStoreGet(store_key, sv.words)) {
+        dt.bytecode.resize(sv.words.size() * 4);
+        std::memcpy(dt.bytecode.data(), sv.words.data(), dt.bytecode.size());
+      } else {
+        *spv_pending = true;  // DXBC kept; SpvWorker converts it
+      }
+      return dt;
+    }
     // Review: with patch 0099's dump / replace folders set (a test tool) the store is left out, so those files see
     // the words as converted - their names are hashes of them - exactly as in 0.6.0; the optimiser runs after them.
     // (A store hit skips the conversion, so patch 0102's discard counts only cover shaders converted in this run.)
@@ -1026,8 +1072,88 @@ static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program,
   return dt;
 }
 
+// 0.6.2 (first playthrough, Vulkan): the conversion off the render thread. Live jobs (a draw is waiting) first.
+void ShaderCache::SpvWorker() {
+  for (;;) {
+    std::unique_ptr<Job> job;
+    {
+      std::unique_lock<std::mutex> lock(mutex_);
+      spv_wake_.wait(lock, [this] { return stop_ || !spv_queue_.empty() || !spv_warm_queue_.empty(); });
+      if (stop_) return;
+      auto& q = spv_queue_.empty() ? spv_warm_queue_ : spv_queue_;
+      job = std::move(q.front());
+      q.pop_front();
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    const uint64_t store_key = SpvKey(job->bytecode.data(), job->bytecode.size(), job->spirv_precise, g_spv_store.switches);
+    dxbc_spirv::SpirvResult sv;
+    if (SpvStoreGet(store_key, sv.words)) {  // the same DXBC was converted for another shader meanwhile
+      sv.ok = true;
+    } else {
+      sv = dxbc_spirv::ConvertDxbcToSpirv(job->bytecode.data(), job->bytecode.size(), job->spirv_precise);
+      if (sv.ok) {
+        OptimiseSpirv(sv.words);
+        SpvStorePut(store_key, sv.words);
+      }
+    }
+    job->ok = sv.ok && !sv.words.empty();
+    if (job->ok) {
+      job->bytecode.resize(sv.words.size() * 4);
+      std::memcpy(job->bytecode.data(), sv.words.data(), job->bytecode.size());
+    } else {
+      job->bytecode.clear();
+      job->messages = "DXBC -> SPIR-V conversion failed";
+    }
+    job->ms = MsSince(t0);
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      done_.push_back(std::move(job));
+    }
+    done_cv_.notify_all();
+  }
+}
+void ShaderCache::QueueSpirv(GuestShader& s, const std::vector<uint8_t>& dxbc, bool precise, bool warm) {
+  auto job = std::make_unique<Job>();
+  job->shader = &s;
+  char nm[64];
+  std::snprintf(nm, sizeof(nm), "%s-%016llX (DXBC -> SPIR-V)", s.is_vertex ? "vs" : "ps", static_cast<unsigned long long>(s.ucode_hash));
+  job->name = nm;
+  job->stage = s.is_vertex ? gpu::ShaderStage::kVertex : gpu::ShaderStage::kPixel;
+  job->bytecode = dxbc;
+  job->spirv_job = true;
+  job->spirv_precise = precise;
+  ++in_flight_;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    (warm ? spv_warm_queue_ : spv_queue_).push_back(std::move(job));
+    if (spv_workers_.empty()) {
+      const uint32_t hw = std::thread::hardware_concurrency();
+      const uint32_t n = hw > 3 ? hw - 2 : 1;
+      for (uint32_t i = 0; i < n; ++i) spv_workers_.emplace_back([this] { SpvWorker(); });
+      REXLOG_INFO("gow2_renderer: SPIR-V conversion on {} background thread(s)", n);
+    }
+  }
+  spv_wake_.notify_one();
+}
+void ShaderCache::Promote(const GuestShader& s) {
+  if (s.state != ShaderState::kPending || s.spv_promoted) return;
+  s.spv_promoted = true;
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (auto it = spv_warm_queue_.begin(); it != spv_warm_queue_.end(); ++it) {
+    if ((*it)->shader != &s) continue;
+    spv_queue_.push_front(std::move(*it));
+    spv_warm_queue_.erase(it);
+    break;
+  }
+}
+size_t ShaderCache::SpirvJobsQueued() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return spv_queue_.size() + spv_warm_queue_.size();
+}
+
 const GuestShader& ShaderCache::AdoptDxbc(uint64_t key, std::unique_ptr<GuestShader> s,
-                                          const std::vector<uint8_t>& bytecode, const hlsl::Translation& meta) {
+                                          const std::vector<uint8_t>& bytecode, const hlsl::Translation& meta,
+                                          bool spv_pending, uint32_t spv_flags) {
   const bool spirv = backend_.GetShaderIL() == gpu::ShaderIL::kSpirv;
   const bool is_vertex = s->is_vertex;
   ApplyMeta(*s, meta);
@@ -1037,6 +1163,13 @@ const GuestShader& ShaderCache::AdoptDxbc(uint64_t key, std::unique_ptr<GuestSha
   s->simplifications = uint32_t(meta.simplifications.size());
   s->dxbc = !spirv;  // DXBC bytecode (D3D12; picks the DXBC rectangle-list GS); on Vulkan the module is SPIR-V
   ++stats_.dxbc;
+  GuestShader& ref = *s;
+  if (spv_pending) {  // 0.6.2: everything the renderer needs to know is set; the module comes from SpvWorker (Poll)
+    ref.state = ShaderState::kPending;
+    shaders_[is_vertex ? 1 : 0].emplace(key, std::move(s));
+    QueueSpirv(ref, bytecode, (spv_flags & 1u) != 0, (spv_flags & 2u) != 0);
+    return ref;
+  }
   GuestShader& ref = *s;
   ref.handle = backend_.CreateShader(is_vertex ? gpu::ShaderStage::kVertex : gpu::ShaderStage::kPixel, bytecode.data(),
                                      bytecode.size());
@@ -1167,6 +1300,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     std::unique_ptr<GuestShader> s;
     dxbc_gen::DxbcTranslation dt;
     double ms = 0.0;
+    uint32_t spv_flags = 0;  // 0.6.2: bit 2 = SPIR-V still to be made (async), bit 0 precise, bit 1 warm
   };
   std::vector<Made> made(dxbc_path ? items.size() : 0);
   const auto t2 = std::chrono::steady_clock::now();
@@ -1188,7 +1322,10 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
         s->drawn = true;  // patch 0045: recorded in an earlier session = drawn before
         const ucode::Program program = ucode::Decode(it.dwords.data(), it.dwords.size(), it.is_vertex, decode_options);
         Analyse(program, *s);
-        made[i].dt = TranslateDxbcFor(program, TranslateOptions(it.is_vertex, 0, it.dwords.data(), it.dwords.size()), spirv);
+        const hlsl::HlslOptions wo = TranslateOptions(it.is_vertex, 0, it.dwords.data(), it.dwords.size());
+        bool pending = false;
+        made[i].dt = TranslateDxbcFor(program, wo, spirv, &pending);
+        made[i].spv_flags = (pending ? 4u : 0u) | (wo.spirv_precise ? 1u : 0u) | 2u;
         made[i].s = std::move(s);
         made[i].ms = MsSince(tm);
       }
@@ -1207,7 +1344,8 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
       ++stats_.lookups;
       ++stats_.translated;
       stats_.translate_ms += made[i].ms;
-      const GuestShader& s = AdoptDxbc(it.hash, std::move(made[i].s), made[i].dt.bytecode, made[i].dt.meta);
+      const GuestShader& s = AdoptDxbc(it.hash, std::move(made[i].s), made[i].dt.bytecode, made[i].dt.meta,
+                                       (made[i].spv_flags & 4u) != 0, made[i].spv_flags & 3u);
       if (s.state == ShaderState::kFailed) ++r.failed;
       made[i] = Made{};
     } else {  // not translatable here (the HLSL path logs and queues it) or not on the DXBC path: as before
@@ -1226,13 +1364,20 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
 
 void ShaderCache::Poll() {
   if (!in_flight_) return;  // job 175: nothing compiling (every steady-state frame) - no lock per draw
-  std::deque<std::unique_ptr<Job>> done;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (done_.empty()) return;
-    done.swap(done_);
+  // 0.6.2: at most ~2 ms of finishing a call (each one creates a back-end shader); thousands of SPIR-V jobs can land
+  // together after a start. The rest stays in done_ for the next call (a few thousand a second at 100 fps).
+  const auto t0 = std::chrono::steady_clock::now();
+  for (;;) {
+    std::unique_ptr<Job> job;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (done_.empty()) return;
+      job = std::move(done_.front());
+      done_.pop_front();
+    }
+    FinishJob(std::move(job));
+    if (MsSince(t0) > 2.0) return;
   }
-  for (auto& job : done) FinishJob(std::move(job));
 }
 
 // Patch 0068: one place for the options, so a prebuild translation (TranslateDxbcOnly) makes the same bytes as GetImpl.
@@ -1392,10 +1537,11 @@ const GuestShader& ShaderCache::GetImpl(uint64_t ucode_hash, const uint32_t* dwo
                 override_hlsl.size());
   const bool spirv = backend_.GetShaderIL() == gpu::ShaderIL::kSpirv;
   if (dxbc_ && override_hlsl.empty() && !pcss && !hlsl_path && (backend_.GetShaderIL() == gpu::ShaderIL::kDxil || spirv)) {
-    dxbc_gen::DxbcTranslation dt = TranslateDxbcFor(program, options, spirv);  // patch 0084: shared with the warm-up
+    bool spv_pending = false;  // 0.6.2: on Vulkan a store miss is converted on a background thread, not here
+    dxbc_gen::DxbcTranslation dt = TranslateDxbcFor(program, options, spirv, &spv_pending);  // patch 0084: shared with the warm-up
     stats_.translate_ms += MsSince(t0);
     ++stats_.translated;
-    if (dt.ok) return AdoptDxbc(key, std::move(s), dt.bytecode, dt.meta);
+    if (dt.ok) return AdoptDxbc(key, std::move(s), dt.bytecode, dt.meta, spv_pending, options.spirv_precise ? 1u : 0u);
     ++stats_.dxbc_fallbacks;
     REXLOG_WARN("gow2_renderer: DXBC back end: {}-{:016X} goes through the HLSL path ({})", is_vertex ? "vs" : "ps",
                 ucode_hash, dt.unsupported);

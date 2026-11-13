@@ -476,6 +476,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_float_controls, true, "Gears2",
                     "without a depth test, while depth-only draws match");
 REXCVAR_DEFINE_INT32(gow2_renderer_draw_report_frames, 1, "Gears2",
                      "Patch 0101: how many frames --gow2_renderer_draw_report_frame reports (1-4)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_async_shaders, false, "Gears2",
+                    "0.6.2 (first playthrough, Vulkan): a shader whose SPIR-V is not in the store is converted on "
+                    "background threads; until it is ready its draws are skipped as for any shader still being made, "
+                    "and a draw that needs it moves it to the front. Nothing is converted on the render thread or "
+                    "before the first frame. Off (default until measured in play) = converted where 0.6.0 does it");
 // OFF BY DEFAULT in 0.6.1 (both switches): the conversion still runs before the first frame and, for a shader first
 // seen in play, on the render thread - the optimiser there made a first Vulkan start three times longer (Gears 3
 // 31 -> 106 s) and would add ~100 ms to every first-use hitch. They go on once Vulkan shaders are made on background
@@ -1587,6 +1592,10 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
                           (REXCVAR_GET(gow2_renderer_vulkan_float_controls) ? 4u : 0u);
       const bool vk = backend_ && backend_->GetShaderIL() == gpu::ShaderIL::kSpirv;
       xenos::renderer::ShaderCache::SetSpirvStore(vk && REXCVAR_GET(gow2_renderer_vulkan_spirv_store) ? cache_->Dir() : std::filesystem::path(), sw);
+      // (not in the old "prepare only" mode: it counts the start-up backlog once, right after the warm-up)
+      const bool async = vk && REXCVAR_GET(gow2_renderer_vulkan_async_shaders) && !REXCVAR_GET(gow2_renderer_prepare_only);
+      xenos::renderer::ShaderCache::SetSpirvAsync(async);
+      if (vk) REXLOG_INFO("gow2_renderer: Vulkan shaders made on background threads: {}", async ? "on" : "off");
     }
     xenos::dxbc_spirv::SetDiscardTerminates(REXCVAR_GET(gow2_renderer_vulkan_discard_terminates));  // patch 0102
     xenos::dxbc_spirv::SetFloatControls(REXCVAR_GET(gow2_renderer_vulkan_float_controls));        // patch 0103
@@ -2691,6 +2700,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     draws_since_submit_ = 0;
     auto_submits_this_frame_ = 0;
+    RetryRecordedPipelines();  // 0.6.2 (async SPIR-V)
+    RetryGuessShaders();
     depth_wait_left_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_depth_pipeline_wait_ms));  // patch 0132
     shader_wait_left_ms_ = shader_wait_budget_ms_;
     standin_wait_left_ms_ = standin_wait_budget_ms_;  // patch 0045
@@ -2959,6 +2970,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           gpu::ShaderHandle& partner_slot = c.is_vertex ? guess_vs_ : guess_ps_;  // the first of a stage pairs others
           if (!partner_slot) partner_slot = g.handle;
           guess_waiting_.push_back({c.is_vertex, g.handle});
+        } else if (g.state == rr::ShaderState::kPending) {
+          guess_pending_.push_back(&g);  // 0.6.2 (async SPIR-V): taken in when its conversion is done
         }
       }
       if (MsSince(t0) >= budget) break;
@@ -2988,6 +3001,24 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::mutex created_mutex_;
   std::deque<CreatedShader> created_queue_;                  // filled by the game's loading thread
   std::vector<std::pair<bool, gpu::ShaderHandle>> guess_waiting_;
+  std::vector<const rr::GuestShader*> guess_pending_;  // 0.6.2 (async SPIR-V): created shaders still being converted
+  void RetryGuessShaders() {
+    for (size_t i = 0; i < guess_pending_.size();) {
+      const rr::GuestShader& g = *guess_pending_[i];
+      if (g.state == rr::ShaderState::kPending) {
+        ++i;
+        continue;
+      }
+      if (g.ready() && g.handle) {
+        ++stats_.created_translated;
+        gpu::ShaderHandle& partner_slot = g.is_vertex ? guess_vs_ : guess_ps_;
+        if (!partner_slot) partner_slot = g.handle;
+        guess_waiting_.push_back({g.is_vertex, g.handle});
+      }
+      guess_pending_[i] = guess_pending_.back();
+      guess_pending_.pop_back();
+    }
+  }
   std::unordered_set<uint64_t> created_hashes_;
   gpu::ShaderHandle guess_vs_ = 0, guess_ps_ = 0;
 
@@ -11199,6 +11230,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       for (const PipelineRecord& r : records) {
         const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
         const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
+        // 0.6.2 (async SPIR-V): both shaders are known and one is still being converted - the record waits
+        // (RetryRecordedPipelines) instead of being dropped for this run.
+        const auto pend = [](const rr::GuestShader* g) { return g && g->state == rr::ShaderState::kPending; };
+        if (vsg && (!(r.flags & 1) || psg) && (pend(vsg) || pend(psg)) &&
+            vsg->state != rr::ShaderState::kFailed && (!psg || psg->state != rr::ShaderState::kFailed)) {
+          rec_waiting_.push_back(r);
+          continue;
+        }
         if (!vsg || !vsg->ready() || ((r.flags & 1) && (!psg || !psg->ready()))) {
           ++no_shader;
           continue;
@@ -11221,6 +11260,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         else ++known;
       }
       backend_->SetPipelineBacklog(false);
+      if (!rec_waiting_.empty())
+        REXLOG_INFO("gow2_renderer: recorded pipelines: {} wait for a shader that is still being converted", rec_waiting_.size());
     }
     if (REXCVAR_GET(gow2_renderer_pipeline_record)) {
       // PR #43 (legoliamneeson): written by a background thread, so a new pipeline never waits on the disk here.
@@ -11239,6 +11280,51 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                 records.size(), path.string(), queued, known, no_shader, cache_->Dxbc() ? "" : " - HLSL path: still compiling",
                 no_gs, MsSince(t0), pipeline_list_ ? "; recording new ones" : "");
     if (REXCVAR_GET(gow2_renderer_prepare_only)) PrepareAndExit(queued, records.size());
+  }
+  // 0.6.2 (async SPIR-V): the recorded pipelines whose shaders were still being converted at the start. A slice of
+  // the list each frame; a record goes to the workers as soon as both its shaders are ready (as start-up backlog).
+  std::vector<PipelineRecord> rec_waiting_;
+  size_t rec_wait_at_ = 0;
+  uint64_t rec_wait_queued_ = 0, rec_wait_dropped_ = 0;
+  void RetryRecordedPipelines() {
+    if (rec_waiting_.empty()) return;
+    bool backlog = false;
+    size_t looked = 0;
+    for (; looked < 256 && !rec_waiting_.empty(); ++looked) {
+      if (rec_wait_at_ >= rec_waiting_.size()) rec_wait_at_ = 0;
+      const PipelineRecord& r = rec_waiting_[rec_wait_at_];
+      const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
+      const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
+      const bool gone = !vsg || vsg->state == rr::ShaderState::kFailed ||
+                        ((r.flags & 1) && (!psg || psg->state == rr::ShaderState::kFailed));
+      const bool ready = !gone && vsg->ready() && (!(r.flags & 1) || psg->ready());
+      if (!gone && !ready) {
+        ++rec_wait_at_;
+        continue;
+      }
+      if (ready && !(dxil_twin_on_ && psg && vsg->dxbc != psg->dxbc)) {
+        gpu::GraphicsPipelineDesc d = r.desc;
+        d.vs = vsg->handle;
+        d.ps = psg ? psg->handle : 0;
+        d.gs = (r.flags & 2) ? (vsg->dxbc ? rect_gs_dxbc_ : rect_gs_) : 0;
+        if (!(r.flags & 2) || d.gs) {
+          if (!backlog) backend_->SetPipelineBacklog(true);
+          backlog = true;
+          backend_->GetGraphicsPipeline(d, true, nullptr);
+          ++rec_wait_queued_;
+        } else {
+          ++rec_wait_dropped_;
+        }
+      } else {
+        ++rec_wait_dropped_;
+      }
+      rec_waiting_[rec_wait_at_] = rec_waiting_.back();  // order does not matter
+      rec_waiting_.pop_back();
+      if (rec_waiting_.empty())
+        REXLOG_INFO("gow2_renderer: recorded pipelines: the waiting ones are through - {} queued to the workers, {} dropped",
+                    rec_wait_queued_, rec_wait_dropped_);
+    }
+    if (backlog) backend_->SetPipelineBacklog(false);
   }
   // Patch 0061 ("Preparing shaders"): wait for the start-up backlog, save the library, report, exit. The progress file
   // (one line: "<done> <total> <state> <seconds>") is what the launcher's progress window reads.
@@ -11639,7 +11725,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     // Nothing more can be built: the reading is done, every shader it found is in, nothing waits to be translated or
     // queued (records still waiting are for shaders no package holds), and the workers are idle - for 3 s.
-    const bool quiet = !reading && !inbox && rcp_need_.empty() && rcp_ready_left_ == 0 && left == 0;
+    const bool quiet = !reading && !inbox && rcp_need_.empty() && rcp_ready_left_ == 0 && left == 0 &&
+                       cache_->PendingCount() == 0 && rec_waiting_.empty();  // 0.6.2: no shader still being converted
     if (made != prepare_last_made_ || !quiet) prepare_quiet_since_ = now;
     prepare_last_made_ = made;
     auto write = [&](uint64_t done, const char* state) {
@@ -11744,6 +11831,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   // Shader pop-in: let a draw wait for its still-compiling shader, within this frame's budget.
   void WaitForShader(const rr::GuestShader& s) {
+    if (s.state == rr::ShaderState::kPending) cache_->Promote(s);  // 0.6.2: a draw needs it - its conversion goes first
     if (s.state != rr::ShaderState::kPending || shader_wait_left_ms_ <= 0.0) return;
     QueueUpcomingShaders();  // patch 0051
     const auto t0 = std::chrono::steady_clock::now();

@@ -105,6 +105,7 @@ struct GuestShader {
   // pipeline takes one bytecode kind, so the renderer pairs it with the DXBC rectangle-list geometry shader.
   bool dxbc = false;
   std::string error;             // translation/compile failure, first line
+  mutable bool spv_promoted = false;  // 0.6.2 (async SPIR-V): its job was moved to the front for a draw
 };
 
 struct ShaderCacheStats {
@@ -149,6 +150,13 @@ class ShaderCache {
   // Finishes compiles that are done (creates the backend shaders). Call often on the caller's thread.
   void Poll();
   size_t PendingCount() const { return in_flight_; }
+  // 0.6.2 (first playthrough, Vulkan): with this on, a shader whose SPIR-V is not in the store is adopted PENDING and
+  // converted (and optimised, stored) on background threads - never on the render thread, never before the first
+  // frame. Store hits are ready at once, as before. Off = the conversion where it always ran (0.6.0 / 0.6.1).
+  static void SetSpirvAsync(bool on);
+  // A draw was skipped for this pending shader: its conversion goes to the front of the queue (once per shader).
+  void Promote(const GuestShader& s);
+  size_t SpirvJobsQueued();
   // Shader pop-in (see the header comment).
   void SetUcodeRecord(bool on) { record_ucode_ = on && dir_ok_; }
   // Patch 0015 (stutter): keep compiled shaders in one file, <dir>\shaders.pack, opened once and kept open. Each loose
@@ -242,14 +250,19 @@ class ShaderCache {
     std::vector<uint8_t> bytecode;
     std::string messages;
     double ms = 0.0;
+    bool spirv_job = false;      // 0.6.2: bytecode holds DXBC going in and SPIR-V words coming out (SpvWorker)
+    bool spirv_precise = false;
   };
+  void SpvWorker();
+  void QueueSpirv(GuestShader& s, const std::vector<uint8_t>& dxbc, bool precise, bool warm);
   const GuestShader& GetImpl(uint64_t ucode_hash, const uint32_t* dwords, size_t dword_count, bool is_vertex,
                              uint32_t tess_quad_segments, bool warm, bool hlsl_path = false);
   void SaveUcode(uint64_t ucode_hash, bool is_vertex, const uint32_t* dwords, size_t dword_count);
   // Patch 0084: a translated DXBC / SPIR-V shader taken into the cache (its module made, stats counted) - one place for
   // GetImpl and the warm-up, which translates on several threads first.
+  // (spv_pending: bytecode is still DXBC - adopt pending and queue its conversion; spv_flags bit 0 precise, bit 1 warm)
   const GuestShader& AdoptDxbc(uint64_t key, std::unique_ptr<GuestShader> s, const std::vector<uint8_t>& bytecode,
-                               const hlsl::Translation& meta);
+                               const hlsl::Translation& meta, bool spv_pending = false, uint32_t spv_flags = 0);
   void UcodeWriter();  // patch 0014: writes queued ucode records off the caller's thread
   void FinishJob(std::unique_ptr<Job> job);  // the caller's half of a finished compile (Poll / WaitReady)
   std::string FileName(const std::string& stem, const std::string& hlsl) const;
@@ -293,6 +306,11 @@ class ShaderCache {
   std::condition_variable done_cv_;  // a worker finished a job (WaitReady)
   std::deque<std::unique_ptr<Job>> queue_, done_;
   std::deque<std::unique_ptr<Job>> warm_queue_;  // WarmFromDisk's compiles: taken only when queue_ is empty
+  std::deque<std::unique_ptr<Job>> spv_queue_, spv_warm_queue_;  // 0.6.2: SPIR-V conversions (live first, then the warm-up's)
+  std::condition_variable spv_wake_;
+  std::vector<std::thread> spv_workers_;
+  uint64_t spv_jobs_done_ = 0, spv_jobs_failed_ = 0;
+  double spv_jobs_ms_ = 0.0;
   bool stop_ = false;
   std::vector<std::thread> workers_;
   // Patch 0014 (stutter): ucode records are written by one background thread - creating a file on Windows (with the
