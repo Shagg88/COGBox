@@ -333,7 +333,8 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
       for (const SocialMatch& m : v.matches) {
         const std::string mode = match_mode(m), label = match_label(m);
         std::string details = label.size() > mode.size() + 4 ? label.substr(mode.size() + 4) : label;   // after "<mode> · "
-        details += std::string(" \xC2\xB7 ") + XenosTr(m.full() ? "Full" : m.in_progress ? "In progress" : "In lobby");
+        // "In progress" only when the host says so (patch 84): a host without it never reports a start
+        if (m.full() || m.in_progress) details += std::string(" \xC2\xB7 ") + XenosTr(m.full() ? "Full" : "In progress");
         const ImU32 col = m.full() ? kDim : m.in_progress ? kAmber : kGreen;
         const int b = Row(("om" + m.lobby_id).c_str(), XenosTr(mode.c_str()), details, col, col, {{"JOIN", !m.full(), true}}, s, "");
         if (b == 0) {
