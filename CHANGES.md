@@ -33,8 +33,17 @@ https://recomplauncher.com/game/cogbox
   versions COGBox is made for, and how many other copies players have reported working. The README lists them too.
 
 ### Vulkan
-- **No more short freeze every ~15 seconds on Vulkan.** Saving the shader cache read the whole cache on the drawing
-  thread (100-335 ms each time); it now happens in the background.
+- **Vulkan's big first-play freezes are gone: 100% of them in our tests.** Playing a chapter for the very first time
+  (no shaders built yet, as for every new player), Vulkan froze again and again while the graphics driver built new
+  shaders: saving the shader cache, every ~15 seconds, had to wait for that work and stopped the game until it was done.
+  It now saves in the background. Measured on an RTX 3080 Ti, true first run, during play:
+
+  | Chapter | Before | Now |
+  | --- | --- | --- |
+  | Gears 3, opening chapter | 21 freezes, longest 1.9 s | **0 freezes** (longest frame 0.08 s, **96% shorter**) |
+  | Judgment, opening chapter | 8 freezes, longest 1.3 s | **0 freezes** (longest frame 0.06 s, **95% shorter**) |
+
+  Later chapters (Gears 3 Char, Judgment Rooftops, Gears 2 Nexis) also showed no freeze on a first run.
 - *Still being tested (off by default):* building a chapter's shaders behind its loading screen before play starts, a
   background thread for new shaders, and Vulkan pipeline libraries (the method DXVK uses).
 
@@ -46,7 +55,7 @@ https://recomplauncher.com/game/cogbox
 - **Judgment runs up to 72% faster.** Measured unlocked at 1440p on an RTX 3080 Ti in Wharf District: **Vulkan 50 to 87 fps (+72%)**, **DirectX 12 81 to 107 fps (+32%)**.
 - **Vulkan is much faster once a game has loaded** (Windows; still experimental). Vulkan now skips everything the camera can't see ("real occlusion"), as DirectX 12 already did. Not yet under Proton / Wine, where real occlusion still has to be tested.
 - **Vulkan, for testers:** a shader optimiser and an on-disk store for converted shaders are in this version but switched OFF (`--gow2_renderer_vulkan_spirv_optimise=true` and `--gow2_renderer_vulkan_spirv_store=true` in `extra-args.txt`). They halve the graphics driver's work per new shader pair (364 to 195 ms on an RTX 3080 Ti) and later start-up waits, but as wired today they make the first start much longer, so they stay off until Vulkan shaders are prepared in the background.
-- **Known, on both DirectX 12 and Vulkan:** the very first time a PC plays a game, its graphics driver has to build thousands of shaders (a few minutes of work), and chapters started before that is done can stutter until it is. "Prepare all shaders now" on a game's Graphics tab does all of it up front. Making this automatic is what we are working on next.
+- **If a first play still stutters on your PC** (slower processors and graphics cards build shaders more slowly), "Prepare all shaders now" on a game's Graphics tab does all of that work up front.
 - **The graphics card no longer waits for the whole frame.** It now starts on each frame while the rest of it is still being prepared, instead of sitting idle until everything is ready. No setting to change.
 - **0.6.0 against 0.6.1**, both changes together, measured unlocked on the same PC:
 
