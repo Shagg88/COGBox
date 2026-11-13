@@ -1,0 +1,196 @@
+diff --git a/include/rex/kernel/xam/net/master_client.h b/include/rex/kernel/xam/net/master_client.h
+index 647835b..3f72609 100644
+--- a/include/rex/kernel/xam/net/master_client.h
++++ b/include/rex/kernel/xam/net/master_client.h
+@@ -32,6 +32,7 @@ class MasterClient {
+   bool DeleteLobby(const std::string& lobby_id);
+   bool SetLobbyQos(const std::string& lobby_id, const std::vector<uint8_t>& qos_data);
+   bool SetLobbyInviteOnly(const std::string& lobby_id, bool invite_only);
++  bool SetLobbyInProgress(const std::string& lobby_id, bool in_progress);   // COGBox SDK patch 84
+   bool SetLobbyPlayers(const std::string& lobby_id, uint32_t players);
+   std::optional<std::pair<int, int>> Population(uint32_t title_id);  // games online worldwide, and in our region
+   bool UpdateLobbySettings(const std::string& lobby_id, const std::vector<IdValue>& properties,
+diff --git a/include/rex/kernel/xam/net/online_sessions.h b/include/rex/kernel/xam/net/online_sessions.h
+index 9e26d2d..6709565 100644
+--- a/include/rex/kernel/xam/net/online_sessions.h
++++ b/include/rex/kernel/xam/net/online_sessions.h
+@@ -32,6 +32,8 @@ class SessionBackend {
+   // An Invite Only party: its lobby stays for invites, but Join friend is refused.
+   virtual bool SetLobbyInviteOnly(const std::string& lobby_id, bool invite_only) { return true; }
+   virtual bool SetLobbyPlayers(const std::string& lobby_id, uint32_t players) { return true; }
++  // COGBox SDK patch 84 (open matches): the hosted match has started (XSessionStart) or ended (XSessionEnd).
++  virtual bool SetLobbyInProgress(const std::string& lobby_id, bool in_progress) { return true; }
+ };
+ 
+ // XamSessionRefObjByHandle's made-up session objects: 0xDEADF00D, or one per session. Never memory: the kernel must
+@@ -67,6 +69,9 @@ class OnlineSessions {
+   // XSessionJoinRemote / XSessionLeaveRemote on a session we host: its lobby's player count (the host plus these).
+   void OnMembersJoined(uint32_t handle, const std::vector<uint64_t>& xuids);
+   void OnMembersLeft(uint32_t handle, const std::vector<uint64_t>& xuids);
++  // COGBox SDK patch 84: XSessionStart (true) / XSessionEnd (false) on a session we host, by its object or nonce: the
++  // launcher's open matches list shows it "In progress" (join in progress) instead of "In lobby".
++  void OnStarted(uint32_t handle, uint64_t nonce, bool started);
+   // The game put a TCP socket bound to `port` (before any bind offset) into listen. UE3 titles (Gears 2 / 3 /
+   // Judgment) take joins on a party beacon at TCP 8700, which they open well after creating the session (26 s in a
+   // traced Gears 2 run); a lobby listed before that sends guests to a closed port and they give up. So once a title
+@@ -90,6 +95,7 @@ class OnlineSessions {
+  private:
+   struct Hosted {
+     std::optional<std::string> lobby_id;  // empty until the server answered
++    bool in_progress = false;             // patch 84: started (sent with the lobby once it has an id)
+     std::string room_code;
+     std::array<uint8_t, 8> xnkid{};
+     std::optional<std::vector<uint8_t>> qos;  // set before the server answered: sent with the answer
+diff --git a/src/kernel/xam/apps/xgi_app.cpp b/src/kernel/xam/apps/xgi_app.cpp
+index 7647186..3d8a142 100644
+--- a/src/kernel/xam/apps/xgi_app.cpp
++++ b/src/kernel/xam/apps/xgi_app.cpp
+@@ -301,6 +301,7 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+       rex::kernel::xam::CogboxKeepPrivatePartyJoinable();  // COGBox SDK patch 65 (social step 4), see xam_msg.cpp
+       if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions()) {  // COGBox SDK patch 65
+         sessions->OnModify();
++        sessions->OnStarted(obj_ptr, session_nonce, true);   // COGBox SDK patch 84: open matches "In progress"
+       }
+ 
+       return X_STATUS_SUCCESS;
+@@ -314,6 +315,9 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+       uint64_t session_nonce = memory::load_and_swap<uint64_t>(buffer + 8);
+ 
+       REXKRNL_DEBUG("XSessionEnd({:08X}, {:08X}, {:016X})", obj_ptr, flags, session_nonce);
++      if (auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions()) {  // COGBox SDK patch 84
++        sessions->OnStarted(obj_ptr, session_nonce, false);
++      }
+ 
+       return X_E_SUCCESS;
+     }
+diff --git a/src/kernel/xam/net/master_client.cpp b/src/kernel/xam/net/master_client.cpp
+index 782d5d9..f589461 100644
+--- a/src/kernel/xam/net/master_client.cpp
++++ b/src/kernel/xam/net/master_client.cpp
+@@ -206,6 +206,11 @@ bool MasterClient::SetLobbyInviteOnly(const std::string& lobby_id, bool invite_o
+              .status == 200;
+ }
+ 
++bool MasterClient::SetLobbyInProgress(const std::string& lobby_id, bool in_progress) {   // COGBox SDK patch 84
++  return Request(L"PATCH", "/api/v1/lobbies/" + lobby_id, in_progress ? R"({"in_progress":true})" : R"({"in_progress":false})", true)
++             .status == 200;
++}
++
+ std::optional<std::pair<int, int>> MasterClient::Population(uint32_t title_id) {
+   char path[64];
+   std::snprintf(path, sizeof(path), "/api/v1/population?title_id=%08X", title_id);
+diff --git a/src/kernel/xam/net/online_sessions.cpp b/src/kernel/xam/net/online_sessions.cpp
+index 176412c..cf4fec3 100644
+--- a/src/kernel/xam/net/online_sessions.cpp
++++ b/src/kernel/xam/net/online_sessions.cpp
+@@ -133,7 +133,7 @@ void OnlineSessions::Publish(LobbyInfo l, uint64_t nonce) {
+     auto id = backend_.CreateLobby(l, &room);
+     bool delete_now = false;
+     std::optional<std::vector<uint8_t>> qos;
+-    bool settings = false, invite_only = false;
++    bool settings = false, invite_only = false, in_progress = false;
+     uint32_t players = 1;
+     std::vector<IdValue> props, ctxs;
+     {
+@@ -147,6 +147,7 @@ void OnlineSessions::Publish(LobbyInfo l, uint64_t nonce) {
+         qos = std::move(it->second.qos);
+         it->second.qos.reset();
+         invite_only = it->second.invite_only;
++        in_progress = it->second.in_progress;
+         players = uint32_t(it->second.members.size()) + 1;
+         settings = it->second.settings_dirty;
+         it->second.settings_dirty = false;
+@@ -167,6 +168,9 @@ void OnlineSessions::Publish(LobbyInfo l, uint64_t nonce) {
+     if (id && invite_only) {
+       backend_.SetLobbyInviteOnly(*id, true);
+     }
++    if (id && in_progress) {   // patch 84: started before the server answered
++      backend_.SetLobbyInProgress(*id, true);
++    }
+     if (delete_now) {
+       backend_.DeleteLobby(*id);
+     }
+@@ -274,6 +278,26 @@ void OnlineSessions::MembersChanged(uint32_t handle, const std::vector<uint64_t>
+   }
+ }
+ 
++void OnlineSessions::OnStarted(uint32_t handle, uint64_t nonce, bool started) {
++  std::optional<std::string> id;
++  {
++    std::lock_guard<std::mutex> lock(mutex_);
++    if (!nonce && handle) {
++      auto known = nonce_by_handle_.find(handle);
++      if (known != nonce_by_handle_.end()) nonce = known->second;
++    }
++    auto it = hosted_.find(nonce);
++    if (!nonce || it == hosted_.end() || it->second.in_progress == started) {
++      return;
++    }
++    it->second.in_progress = started;
++    id = it->second.lobby_id;   // none yet: Publish sends it once the server answers
++  }
++  if (id) {
++    run_([this, id, started] { backend_.SetLobbyInProgress(*id, started); });
++  }
++}
++
+ void OnlineSessions::OnMembersJoined(uint32_t handle, const std::vector<uint64_t>& xuids) { MembersChanged(handle, xuids, true); }
+ void OnlineSessions::OnMembersLeft(uint32_t handle, const std::vector<uint64_t>& xuids) { MembersChanged(handle, xuids, false); }
+ 
+diff --git a/src/kernel/xam/net/online_startup.cpp b/src/kernel/xam/net/online_startup.cpp
+index 5bacaa9..670c4d3 100644
+--- a/src/kernel/xam/net/online_startup.cpp
++++ b/src/kernel/xam/net/online_startup.cpp
+@@ -135,6 +135,7 @@ class MasterBackend : public SessionBackend {
+   }
+   bool SetLobbyPlayers(const std::string& id, uint32_t n) override { return MasterClient::Get().SetLobbyPlayers(id, n); }
+   bool SetLobbyInviteOnly(const std::string& id, bool on) override { return MasterClient::Get().SetLobbyInviteOnly(id, on); }
++  bool SetLobbyInProgress(const std::string& id, bool on) override { return MasterClient::Get().SetLobbyInProgress(id, on); }
+   bool UpdateLobbySettings(const std::string& id, const std::vector<IdValue>& props,
+                            const std::vector<IdValue>& ctxs) override {
+     return MasterClient::Get().UpdateLobbySettings(id, props, ctxs);
+diff --git a/tests/unit/net/online_sessions_test.cpp b/tests/unit/net/online_sessions_test.cpp
+index 2ebd110..70c1fe9 100644
+--- a/tests/unit/net/online_sessions_test.cpp
++++ b/tests/unit/net/online_sessions_test.cpp
+@@ -40,6 +40,11 @@ struct FakeBackend : SessionBackend {
+     players.emplace_back(id, n);
+     return true;
+   }
++  std::vector<std::pair<std::string, bool>> in_progress;
++  bool SetLobbyInProgress(const std::string& id, bool on) override {
++    in_progress.emplace_back(id, on);
++    return true;
++  }
+   std::vector<std::pair<std::string, bool>> invite_only;
+   bool SetLobbyInviteOnly(const std::string& id, bool on) override {
+     invite_only.emplace_back(id, on);
+@@ -413,3 +418,28 @@ TEST_CASE("Sessions: a setting changed after the create reaches the lobby straig
+   f.sessions.OnSetContext(1, 4, 9);   // another player's
+   CHECK(f.backend.settings.size() == 2);
+ }
++
++TEST_CASE("Sessions: open matches - XSessionStart / XSessionEnd of a hosted public match mark it in progress",
++          "[net][sessions]") {
++  Fixture f;
++  f.sessions.OnCreate(kTitle, kHostMatchmaking, 10, 0, Info(0x31), 0xC1, 0x100);
++  f.sessions.OnStarted(0x100, 0, true);
++  f.sessions.OnStarted(0x100, 0, true);   // the same state again: nothing more is sent
++  f.sessions.OnStarted(0x100, 0, false);
++  f.sessions.OnStarted(0x999, 0, true);   // not a session we host
++  REQUIRE(f.backend.in_progress.size() == 2);
++  CHECK(f.backend.in_progress[0] == std::make_pair(std::string("lobby-1"), true));
++  CHECK(f.backend.in_progress[1] == std::make_pair(std::string("lobby-1"), false));
++}
++
++TEST_CASE("Sessions: open matches - a match started before the server answered is marked once it does",
++          "[net][sessions]") {
++  FakeBackend backend;
++  std::vector<std::function<void()>> jobs;
++  OnlineSessions sessions{backend, [](uint64_t, const std::string&) {}, [&](std::function<void()> j) { jobs.push_back(j); }};
++  sessions.OnCreate(kTitle, kHostMatchmaking, 10, 0, Info(0x32), 0xC2, 0x200);
++  sessions.OnStarted(0x200, 0, true);   // no lobby id yet: remembered
++  for (size_t i = 0; i < jobs.size(); ++i) jobs[i]();
++  REQUIRE(backend.in_progress.size() == 1);
++  CHECK(backend.in_progress[0].second);
++}

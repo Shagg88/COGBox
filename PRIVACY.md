@@ -38,6 +38,8 @@ and the Social tab don't work until it is back; everything else in COGBox, and o
 **Only while you play:** the lobby you host (its join code, game, region, player count and the game's own session
 details) is kept while your game is connected and removed when it disconnects. Invites are kept in memory for at most
 10 minutes. Whether you are online and which game you are in is shown to your friends and kept in memory only.
+A **public** match you host in Gears 2, Gears 3 or Judgment is listed under Open matches for other signed-in players as
+its game, mode, player count, region and whether it has started - never your name, tag or address.
 
 **Your IP address:** to connect two players directly (there is no relay), the server passes each player's network
 addresses (public IP address and port) to the other player of a match or party. **Players you play with can see your

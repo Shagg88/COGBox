@@ -168,12 +168,15 @@ void OnLeave() {
   g_remove_uuid.clear();
 }
 
+bool g_match_join = false;   // the last Join was from the open matches list (for the note above)
+
 PageResult DrawPage(float scale, bool pad, bool ps_names) {
   PageResult result = PageResult::None;
   // a Join for a game that is not this one: the server answered "start that game" (the launcher does that)
   if (auto j = social_take_join()) {
     (void)j;
-    g_note = XenosTr("They're in another game. Start that game from COGBox to join them.");
+    g_note = XenosTr(g_match_join ? "That match is in another game. Start that game from COGBox to join it."
+                                  : "They're in another game. Start that game from COGBox to join them.");
   }
   const float s = scale * 1.15f;   // the Achievements page's size
   // the Noto achievement font for the widgets too (buttons, the text box)
@@ -292,6 +295,7 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
       const std::string what = buttons[size_t(b)].label;
       if (what == "JOIN") {
         g_note.clear();
+        g_match_join = false;
         social_do(SocialAction::Join, f.uuid);
         result = PageResult::CloseMenu;
       } else if (what == "INVITE") {
@@ -320,6 +324,26 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
       }
     }
     Line(XenosTr("You can invite friends while you host a lobby or match."), kDim, s);
+    // open matches: public matches with real players in them (no names); Join drops you in (join in progress)
+    if (v.have_account) {
+      ImGui::Dummy(ImVec2(0, 10.f * s));
+      Section("OPEN MATCHES", s);
+      if (!v.matches_known) Line(XenosTr("Looking for open matches..."), kDim, s);
+      else if (v.matches.empty()) Line(XenosTr("No open matches right now - host a public match and it shows up here."), kDim, s);
+      for (const SocialMatch& m : v.matches) {
+        const std::string mode = match_mode(m), label = match_label(m);
+        std::string details = label.size() > mode.size() + 4 ? label.substr(mode.size() + 4) : label;   // after "<mode> · "
+        details += std::string(" \xC2\xB7 ") + XenosTr(m.full() ? "Full" : m.in_progress ? "In progress" : "In lobby");
+        const ImU32 col = m.full() ? kDim : m.in_progress ? kAmber : kGreen;
+        const int b = Row(("om" + m.lobby_id).c_str(), XenosTr(mode.c_str()), details, col, col, {{"JOIN", !m.full(), true}}, s, "");
+        if (b == 0) {
+          g_note.clear();
+          g_match_join = true;
+          social_do(SocialAction::JoinMatch, m.lobby_id);
+          result = PageResult::CloseMenu;
+        }
+      }
+    }
   }
   ImGui::EndChild();
   if (font) ImGui::PopFont();

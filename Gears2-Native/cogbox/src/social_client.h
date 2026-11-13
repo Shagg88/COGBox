@@ -21,6 +21,8 @@ struct SocialView {
     SocialLists lists;
     std::vector<SocialInvite> invites;
     std::map<std::string, int> region_counts;   // players per region; empty until the server has answered
+    std::vector<SocialMatch> matches;           // open matches (GET /api/v1/matches, every 10 s)
+    bool matches_known = false;                 // the server has answered that list at least once
 };
 
 // Where the worker gets its account and sends its requests. The launcher: WinHTTP plus a claim (launcher_backend);

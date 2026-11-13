@@ -92,6 +92,9 @@ export function initDb(dbPath: string = process.env.DB_PATH || 'master.db'): Dat
   if (!lobbyColumns.includes('invite_only')) {
     db.exec('ALTER TABLE lobbies ADD COLUMN invite_only INTEGER NOT NULL DEFAULT 0');
   }
+  if (!lobbyColumns.includes('in_progress')) {   // open matches: the host's match has started (XSessionStart)
+    db.exec('ALTER TABLE lobbies ADD COLUMN in_progress INTEGER NOT NULL DEFAULT 0');
+  }
 
   return db;
 }

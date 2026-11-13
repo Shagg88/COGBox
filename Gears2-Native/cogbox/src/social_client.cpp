@@ -69,11 +69,13 @@ void run(SocialBackend b, uint64_t gen) {
         bool reachable = false;
         std::optional<SocialJoin> join;
         std::map<std::string, int> regions;
+        std::optional<std::vector<SocialMatch>> matches;
         std::string tag = acc ? acc->tag() : std::string();
         if (acc) {
             if (action) {
                 const HttpResult r = b.call(call_for(action->first, action->second));
-                if (action->first == SocialAction::Join || action->first == SocialAction::InviteAccept) join = join_from_answer(r.status, r.body);
+                if (action->first == SocialAction::Join || action->first == SocialAction::InviteAccept ||
+                    action->first == SocialAction::JoinMatch) join = join_from_answer(r.status, r.body);
                 if (r.status == 0) error = "Can't reach the online server.";
                 else if (r.status >= 400 && !join) error = server_error(r.body);
                 if (action->first == SocialAction::Rename && r.status == 200) {
@@ -90,6 +92,11 @@ void run(SocialBackend b, uint64_t gen) {
             if (reachable && tick % 6 == 0) {   // the Region dropdown's numbers: every 30 s is plenty
                 const HttpResult p = b.call({ "GET", "/api/v1/population/regions", "" });
                 if (p.status == 200) regions = parse_region_counts(p.body);
+            }
+            // open matches: every 10 s, and straight after a Join from the list (the list may have changed)
+            if (reachable && (tick % 2 == 0 || (action && action->first == SocialAction::JoinMatch))) {
+                const HttpResult m = b.call({ "GET", "/api/v1/matches", "" });
+                if (m.status == 200) matches = parse_matches(m.body);
             }
         }
         {
@@ -109,6 +116,10 @@ void run(SocialBackend b, uint64_t gen) {
                 v.invites = invites;
             }
             if (!regions.empty()) v.region_counts = regions;
+            if (matches) {
+                v.matches = std::move(*matches);
+                v.matches_known = true;
+            }
             if (join) s.join = join;
             // wait 5 s, or less when an action is queued
             s.cv.wait_for(lk, std::chrono::seconds(5), [&] { return s.gen != gen || !s.actions.empty(); });

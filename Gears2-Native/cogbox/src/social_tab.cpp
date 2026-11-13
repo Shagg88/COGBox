@@ -375,6 +375,27 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
             ImGui::PopID();
         }
         ui_note("You can invite friends while a game hosts a lobby or match.");
+
+        // open matches: public matches with real players in them (no names), Join drops you in (join in progress)
+        ImGui::Dummy(ImVec2(0, S(10)));
+        th_heading(tr("OPEN MATCHES"), x1);
+        if (!v.matches_known) ui_note("Looking for open matches...");
+        else if (v.matches.empty()) ui_note("No open matches right now - host a public match and it shows up here.");
+        for (const SocialMatch &m : v.matches) {
+            ImGui::PushID(m.lobby_id.c_str());
+            const std::string mode = match_mode(m), label = match_label(m);
+            std::string details = label.size() > mode.size() + 4 ? label.substr(mode.size() + 4) : label;   // after "<mode> · "
+            details += std::string(" \xC2\xB7 ") + tr(m.full() ? "Full" : m.in_progress ? "In progress" : "In lobby");
+            const bool ready = m.game >= 0 && a.st[m.game].ready == R_READY, can = ready && !m.full();
+            const int b = line_row(a, tr(mode.c_str()), details, m.full() ? col::dim : m.in_progress ? col::amber : col::good,
+                                   m.full() ? 0 : (m.in_progress ? 2 : 1), "", x1,
+                                   { { "JOIN", can, true, m.full() ? "This match is full." :
+                                                          !ready ? "Set up this game in COGBox to join." :
+                                                          m.in_progress ? "Join the match in progress: you take a bot's place." :
+                                                                          "Join this match's lobby." } });
+            if (b == 0) social_do(SocialAction::JoinMatch, m.lobby_id);
+            ImGui::PopID();
+        }
     }
     ImGui::EndChild();
 }

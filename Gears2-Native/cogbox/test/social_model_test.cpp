@@ -219,6 +219,35 @@ int main() {
         CHECK(region_or_default("us-w", 10 * 60) == "us");  // the old US-W / US-E settings become US
         CHECK(region_or_default("us-e", 1 * 60) == "us");
     }
+    // open matches: the server's list, the mode from each game's playlist id, the row text and Join
+    {
+        const auto m = parse_matches(R"({"matches":[)"
+            R"({"lobby_id":"0b6f2c1e-1111-4222-8333-944455556666","title_id":"4D5308AB","region":"us","max_players":10,"current_players":6,"playlist":15,"in_progress":true},)"
+            R"({"lobby_id":"../../x","title_id":"4D5308AB","region":"us","max_players":10,"current_players":1,"playlist":11,"in_progress":false},)"
+            R"({"lobby_id":"aaaaaaaa-1111-4222-8333-944455556666","title_id":"4D5307D5","region":"us","max_players":10,"current_players":1,"playlist":null,"in_progress":false},)"
+            R"({"lobby_id":"bbbbbbbb-1111-4222-8333-944455556666","title_id":"4D530A26","region":"europe","max_players":10,"current_players":10,"playlist":null,"in_progress":false}]})");
+        CHECK(m.size() == 2);   // an unsafe lobby id and Gears 1 are dropped
+        CHECK(m[0].game == 1 && m[0].players == 6 && m[0].max == 10 && m[0].in_progress && m[0].region == "us");
+        CHECK(match_mode(m[0]) == std::string("KOTH"));
+        CHECK(match_label(m[0]) == "KOTH \xC2\xB7 6/10 \xC2\xB7 Gears 3 \xC2\xB7 US");
+        CHECK(match_label(m[1]) == "Match \xC2\xB7 10/10 \xC2\xB7 Judgment \xC2\xB7 Europe");   // no playlist: "Match"
+        CHECK(m[1].full() && !m[0].full());
+        CHECK(parse_matches("not json").empty());
+        SocialMatch g2{}; g2.game = 0;
+        g2.playlist = 44; CHECK(match_mode(g2) == std::string("Guardian"));
+        g2.playlist = 45; CHECK(match_mode(g2) == std::string("Submission"));
+        g2.playlist = 99; CHECK(match_mode(g2) == std::string("Match"));
+        SocialMatch g3{}; g3.game = 1;
+        g3.playlist = 11; CHECK(match_mode(g3) == std::string("Team Deathmatch"));
+        g3.playlist = 36; CHECK(match_mode(g3) == std::string("Beast"));
+        g3.playlist = 80; CHECK(match_mode(g3) == std::string("Guardian"));
+        SocialMatch gj{}; gj.game = 2;
+        gj.playlist = 14; CHECK(match_mode(gj) == std::string("OverRun"));
+        gj.playlist = 5; CHECK(match_mode(gj) == std::string("Survival"));
+        gj.playlist = 112; CHECK(match_mode(gj) == std::string("Domination"));
+        CHECK(same(call_for(SocialAction::JoinMatch, "0b6f2c1e-1111-4222-8333-944455556666"), "POST",
+                   "/api/v1/matches/0b6f2c1e-1111-4222-8333-944455556666/join", ""));
+    }
     if (g_failures == 0) std::printf("social_model_test: all passed\n");
     return g_failures;
 }
