@@ -633,13 +633,19 @@ bool ShaderCache::WaitReady(const GuestShader& s, double budget_ms) {
       if (mine) break;
     }
     if (!mine) {  // 0.6.2: a SPIR-V job is never converted here (45 ms and more against these budgets) - it goes first
-      for (auto it = spv_warm_queue_.begin(); it != spv_warm_queue_.end(); ++it)
-        if ((*it)->shader == &s) {
-          spv_queue_.push_front(std::move(*it));
-          spv_warm_queue_.erase(it);
-          spv_wake_.notify_one();
-          break;
-        }
+      bool moved = false;
+      for (auto* q : {&spv_warm_queue_, &spv_queue_}) {
+        for (auto it = q->begin(); it != q->end() && !moved; ++it)
+          if ((*it)->shader == &s) {
+            std::unique_ptr<Job> job = std::move(*it);
+            q->erase(it);
+            spv_queue_.push_front(std::move(job));
+            spv_wake_.notify_one();
+            moved = true;
+            break;
+          }
+        if (moved) break;
+      }
     }
   }
   if (mine) {
@@ -1032,6 +1038,7 @@ void ShaderCache::SetSpirvStore(const std::filesystem::path& dir, uint32_t switc
 }
 static std::atomic<bool> g_spv_async{false};
 void ShaderCache::SetSpirvAsync(bool on) { g_spv_async.store(on); }
+bool ShaderCache::SpirvAsync() { return g_spv_async.load(); }
 // (spv_pending, 0.6.2: given and async on -> a store miss is NOT converted here; the bytecode stays DXBC and
 // *spv_pending is set, for AdoptDxbc to queue the conversion. Null = convert here, as always.)
 static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program, const hlsl::HlslOptions& options,
@@ -1102,7 +1109,10 @@ void ShaderCache::SpvWorker() {
       std::memcpy(job->bytecode.data(), sv.words.data(), job->bytecode.size());
     } else {
       job->bytecode.clear();
-      job->messages = "DXBC -> SPIR-V conversion failed";
+      // KNOWN GAP (must be closed before this is on by default): the synchronous path fell through to the HLSL
+      // path here; a job has no microcode to do that, so the shader fails for this run. 0 of ~34,000 shaders of the
+      // four games failed this conversion (jobs 1741a-d).
+      job->messages = "DXBC -> SPIR-V conversion failed: " + sv.error;
     }
     job->ms = MsSince(t0);
     {
@@ -1139,11 +1149,15 @@ void ShaderCache::Promote(const GuestShader& s) {
   if (s.state != ShaderState::kPending || s.spv_promoted) return;
   s.spv_promoted = true;
   std::lock_guard<std::mutex> lock(mutex_);
-  for (auto it = spv_warm_queue_.begin(); it != spv_warm_queue_.end(); ++it) {
-    if ((*it)->shader != &s) continue;
-    spv_queue_.push_front(std::move(*it));
-    spv_warm_queue_.erase(it);
-    break;
+  for (auto* q : {&spv_warm_queue_, &spv_queue_}) {  // (a live job that is not at the front moves up too)
+    for (auto it = q->begin(); it != q->end(); ++it) {
+      if ((*it)->shader != &s) continue;
+      std::unique_ptr<Job> job = std::move(*it);
+      q->erase(it);
+      spv_queue_.push_front(std::move(job));
+      spv_wake_.notify_one();
+      return;
+    }
   }
 }
 size_t ShaderCache::SpirvJobsQueued() {
@@ -1170,7 +1184,6 @@ const GuestShader& ShaderCache::AdoptDxbc(uint64_t key, std::unique_ptr<GuestSha
     QueueSpirv(ref, bytecode, (spv_flags & 1u) != 0, (spv_flags & 2u) != 0);
     return ref;
   }
-  GuestShader& ref = *s;
   ref.handle = backend_.CreateShader(is_vertex ? gpu::ShaderStage::kVertex : gpu::ShaderStage::kPixel, bytecode.data(),
                                      bytecode.size());
   ref.state = ref.handle ? ShaderState::kReady : ShaderState::kFailed;
@@ -1347,6 +1360,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
       const GuestShader& s = AdoptDxbc(it.hash, std::move(made[i].s), made[i].dt.bytecode, made[i].dt.meta,
                                        (made[i].spv_flags & 4u) != 0, made[i].spv_flags & 3u);
       if (s.state == ShaderState::kFailed) ++r.failed;
+      if (s.state == ShaderState::kPending) ++r.queued;  // async SPIR-V: converting on the background threads
       made[i] = Made{};
     } else {  // not translatable here (the HLSL path logs and queues it) or not on the DXBC path: as before
       const uint64_t hits = stats_.disk_hits, queued = stats_.queued;
@@ -1366,18 +1380,30 @@ void ShaderCache::Poll() {
   if (!in_flight_) return;  // job 175: nothing compiling (every steady-state frame) - no lock per draw
   // 0.6.2: at most ~2 ms of finishing a call (each one creates a back-end shader); thousands of SPIR-V jobs can land
   // together after a start. The rest stays in done_ for the next call (a few thousand a second at 100 fps).
+  if (!g_spv_async.load()) {  // as always: everything that is done
+    std::deque<std::unique_ptr<Job>> done;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (done_.empty()) return;
+      done.swap(done_);
+    }
+    for (auto& job : done) FinishJob(std::move(job));
+    return;
+  }
+  if (poll_spent_ms_ >= 3.0) return;  // this frame's share is used (NewPollBudget)
   const auto t0 = std::chrono::steady_clock::now();
   for (;;) {
     std::unique_ptr<Job> job;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (done_.empty()) return;
+      if (done_.empty()) break;
       job = std::move(done_.front());
       done_.pop_front();
     }
     FinishJob(std::move(job));
-    if (MsSince(t0) > 2.0) return;
+    if (poll_spent_ms_ + MsSince(t0) >= 3.0) break;
   }
+  poll_spent_ms_ += MsSince(t0);
 }
 
 // Patch 0068: one place for the options, so a prebuild translation (TranslateDxbcOnly) makes the same bytes as GetImpl.

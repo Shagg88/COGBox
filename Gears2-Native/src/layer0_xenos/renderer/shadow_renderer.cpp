@@ -2700,6 +2700,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     draws_since_submit_ = 0;
     auto_submits_this_frame_ = 0;
+    cache_->NewPollBudget();
     RetryRecordedPipelines();  // 0.6.2 (async SPIR-V)
     RetryGuessShaders();
     depth_wait_left_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_depth_pipeline_wait_ms));  // patch 0132
@@ -2970,7 +2971,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           gpu::ShaderHandle& partner_slot = c.is_vertex ? guess_vs_ : guess_ps_;  // the first of a stage pairs others
           if (!partner_slot) partner_slot = g.handle;
           guess_waiting_.push_back({c.is_vertex, g.handle});
-        } else if (g.state == rr::ShaderState::kPending) {
+        } else if (g.state == rr::ShaderState::kPending && xenos::renderer::ShaderCache::SpirvAsync()) {
           guess_pending_.push_back(&g);  // 0.6.2 (async SPIR-V): taken in when its conversion is done
         }
       }
@@ -9366,6 +9367,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const bool writes_depth = depth_bound && ps.depth_stencil.depth_enable && ps.depth_stencil.depth_write;
       const bool full_screen = prim == 0x08 || index_count <= 6;  // rectangle list / a quad
       if (blends && !writes_depth && !full_screen && !(psg && psg->memexport) && !vsg.memexport) {
+        cache_->Promote(vsg);  // 0.6.2 (async SPIR-V): still wanted soon - ahead of the warm-up's backlog
+        if (psg) cache_->Promote(*psg);
         QueueUpcomingShaders();
         ++stats_.cosmetic_deferred;
         SkipForShaders(true);
@@ -11233,7 +11236,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         // 0.6.2 (async SPIR-V): both shaders are known and one is still being converted - the record waits
         // (RetryRecordedPipelines) instead of being dropped for this run.
         const auto pend = [](const rr::GuestShader* g) { return g && g->state == rr::ShaderState::kPending; };
-        if (vsg && (!(r.flags & 1) || psg) && (pend(vsg) || pend(psg)) &&
+        if (xenos::renderer::ShaderCache::SpirvAsync() && vsg && (!(r.flags & 1) || psg) && (pend(vsg) || pend(psg)) &&
             vsg->state != rr::ShaderState::kFailed && (!psg || psg->state != rr::ShaderState::kFailed)) {
           rec_waiting_.push_back(r);
           continue;
@@ -11290,7 +11293,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (rec_waiting_.empty()) return;
     bool backlog = false;
     size_t looked = 0;
-    for (; looked < 256 && !rec_waiting_.empty(); ++looked) {
+    uint32_t rec_wait_queued_this_ = 0;
+    if (backend_->PipelineJobsLeft() >= 256) return;  // the workers have enough for now
+    for (; looked < 256 && !rec_waiting_.empty() && rec_wait_queued_this_ < 64; ++looked) {
       if (rec_wait_at_ >= rec_waiting_.size()) rec_wait_at_ = 0;
       const PipelineRecord& r = rec_waiting_[rec_wait_at_];
       const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
@@ -11312,6 +11317,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           backlog = true;
           backend_->GetGraphicsPipeline(d, true, nullptr);
           ++rec_wait_queued_;
+          ++rec_wait_queued_this_;
         } else {
           ++rec_wait_dropped_;
         }
@@ -11651,6 +11657,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // work. True = more can be done right now (the caller waits ~2 ms and comes back); false = wait for the game as usual.
   bool RecipeIdleWork() {
     if (!rcp_on_) return false;
+    if (xenos::renderer::ShaderCache::SpirvAsync()) {  // 0.6.2: no draws or swaps here - converted shaders are taken in
+      cache_->NewPollBudget();
+      cache_->Poll();
+    }
     const uint64_t t0 = __rdtsc();
     const bool more = DrainRecipePack(true);
     cpu_ms_ += double(__rdtsc() - t0) * MsPerTick();

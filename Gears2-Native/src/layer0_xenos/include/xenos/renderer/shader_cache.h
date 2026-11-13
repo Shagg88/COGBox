@@ -154,6 +154,9 @@ class ShaderCache {
   // converted (and optimised, stored) on background threads - never on the render thread, never before the first
   // frame. Store hits are ready at once, as before. Off = the conversion where it always ran (0.6.0 / 0.6.1).
   static void SetSpirvAsync(bool on);
+  static bool SpirvAsync();
+  // Async SPIR-V: Poll finishes at most ~3 ms of jobs between two calls of this (once a frame, and in idle slices).
+  void NewPollBudget() { poll_spent_ms_ = 0.0; }
   // A draw was skipped for this pending shader: its conversion goes to the front of the queue (once per shader).
   void Promote(const GuestShader& s);
   size_t SpirvJobsQueued();
@@ -310,6 +313,7 @@ class ShaderCache {
   std::condition_variable spv_wake_;
   std::vector<std::thread> spv_workers_;
   uint64_t spv_jobs_done_ = 0, spv_jobs_failed_ = 0;
+  double poll_spent_ms_ = 0.0;
   double spv_jobs_ms_ = 0.0;
   bool stop_ = false;
   std::vector<std::thread> workers_;
