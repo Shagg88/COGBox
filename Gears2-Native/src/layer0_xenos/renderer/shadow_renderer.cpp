@@ -1214,6 +1214,11 @@ REXCVAR_DEFINE_STRING(gow2_renderer_resolve_readback, "auto", "Gears2",
                       "each resolve lands the previous copy of the same destination in guest memory, no stall; the "
                       "first one waits) or full (wait for the GPU at every resolve: exact, slow). Turns on "
                       "--gow2_renderer_resolve_prepare_mirror");
+REXCVAR_DEFINE_INT32(gow2_renderer_resolve_readback_max_kb, -1, "Gears2",
+                     "0.6.1: read back (and prepare the mirror for) only resolves whose destination extent is at most "
+                     "this many KB; 0 = every resolve; -1 (default) = the game's own: 256 where the read-back is on "
+                     "for the game's exposure (Judgment reads small luminance tables, 4 - 64 KB; reading every "
+                     "full-screen resolve back cost 6 ms of CPU a frame, job 1695), 0 otherwise");
 REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_prepare_mirror, false, "Gears2",
                     "Patch 0020 (Canary SharedMemory::RequestRange before a resolve writes): before our resolve writes "
                     "the GPU mirror, its destination pages that the CPU wrote since the mirror last had them get the "
@@ -1864,6 +1869,14 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         if (!by_game && m != "none" && !resolve_readback_)
           REXLOG_WARN("gow2_renderer: unknown --gow2_renderer_resolve_readback '{}' (auto | none | fast | full); none", m);
         prepare_mirror_ = REXCVAR_GET(gow2_renderer_resolve_prepare_mirror) || resolve_readback_ != 0;
+        {  // 0.6.1: size limit (the limit also applies to the mirror preparation that the read-back alone turned on)
+          const int32_t kb = REXCVAR_GET(gow2_renderer_resolve_readback_max_kb);
+          const bool for_exposure = by_game && hints_.exposure_readback && resolve_readback_ == 1;
+          resolve_readback_max_bytes_ = kb > 0 ? uint32_t(std::min(kb, 1 << 20)) * 1024u : kb < 0 && for_exposure ? 256u * 1024u : 0u;
+          prepare_all_ = REXCVAR_GET(gow2_renderer_resolve_prepare_mirror);
+          if (resolve_readback_max_bytes_)
+            REXLOG_INFO("gow2_renderer: resolve read-back only for destinations of at most {} KB", resolve_readback_max_bytes_ / 1024u);
+        }
         if (resolves_to_guest_ && (prepare_mirror_ || resolve_readback_))
           REXLOG_INFO("gow2_renderer: patch 0020 (Canary): resolve destinations prepared in the mirror {}, readback to "
                       "guest memory {}",
@@ -4689,7 +4702,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++t2_stats_.skipped;
       return;
     }
-    if (prepare_mirror_) PrepareMirrorForResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
+    // 0.6.1: with a size limit, a resolve that is not read back is not prepared either (unless the switch asks for all)
+    const bool rb_this = resolve_readback_ && (!resolve_readback_max_bytes_ || info.dest_extent_length <= resolve_readback_max_bytes_);
+    if (prepare_mirror_ && (prepare_all_ || rb_this || !resolve_readback_))
+      PrepareMirrorForResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
     gpu::ComputeBindings b;
     b.constants[0] = info.dest_base;
     b.constants[1] = info.dest_pitch_aligned_div_32 * 32;
@@ -4723,7 +4739,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (REXCVAR_GET(gow2_renderer_watch_resolves) || prepare_mirror_)  // patch 0014 / 0020: arm before marking
       watch_->Watch(info.dest_extent_start, info.dest_extent_length);
     watch_->MarkGpuWritten(info.dest_extent_start, info.dest_extent_length, scaled);
-    if (resolve_readback_) ReadbackResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
+    if (rb_this) ReadbackResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
     if (through_on) {
       textures_->ResolveThroughWritten(through, info.dest_extent_start, info.dest_extent_length);
       if (through_check_frame_ && frame_ + 1 == through_check_frame_ && through_checks_started_ < 12) {
@@ -4814,7 +4830,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool alpha_test_rt0_ = false;        // patch 0027
   // ---- patch 0020: Canary readback_resolve + RequestRange for our T2 resolves ----
   uint32_t resolve_readback_ = 0;  // 0 none, 1 fast, 2 full
-  bool prepare_mirror_ = false;
+  bool prepare_mirror_ = false, prepare_all_ = false;
+  uint32_t resolve_readback_max_bytes_ = 0;  // 0.6.1: 0 = no limit
   std::vector<uint32_t> mirror_versions_;  // per 4 KB page: the watch version the mirror last got CPU bytes at (~0 never)
   struct ResolveReadbackPrev {
     gpu::ReadbackHandle handle = 0;
