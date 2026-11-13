@@ -239,6 +239,8 @@ class PackageScanner {
     offer_[0] = whole;
     offer_[1] = code_only;
   }
+  // 0.6.2: the keys of every pixel shader offered-or-known in the files scanned from now on are added to *keys.
+  void CollectPixelKeys(std::vector<uint64_t>* keys) { keys_ = keys; }
   ScanResult Scan(const std::vector<uint8_t>& b) {
     r_ = {};
     std::vector<uint8_t> all;
@@ -344,7 +346,10 @@ class PackageScanner {
     }
   }
   void Offer(uint32_t variant, const uint8_t* code, uint32_t size) {
-    if (!offer_[variant] || !Fresh(XXH3_64bits(code, size))) return;
+    if (!offer_[variant]) return;
+    const uint64_t key = XXH3_64bits(code, size);
+    if (keys_) keys_->push_back(key);  // 0.6.2: every pixel shader of the file, new or not
+    if (!Fresh(key)) return;
     ++r_.new_pixel;
     ++r_.offered[variant];
     XenosPrebuildPixelShader(code, size, variant);
@@ -402,6 +407,7 @@ class PackageScanner {
   // Job 632: several reader threads at start-up share one set of shaders already handed over.
   static std::mutex& SeenMutex() { static std::mutex m; return m; }
   bool Fresh(uint64_t h) { std::lock_guard<std::mutex> lock(SeenMutex()); return seen_.insert(h).second; }
+  std::vector<uint64_t>* keys_ = nullptr;
   std::vector<uint8_t> scratch_;
   ScanResult r_;
 };
@@ -450,6 +456,10 @@ void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host
   const bool package = name.size() > 4 && name.ends_with(".xxx");
   const bool global_cache = name.ends_with(".bin") && name.find("shadercache") != std::string::npos;
   if (!package && !global_cache) return;
+  // 0.6.2: the renderer hears of every open by the game (its recipe pipelines for this file's shaders are wanted).
+  XenosPrebuildGameOpened(XXH3_64bits(name.data(), name.size()),
+                          package && (name.starts_with("sp_") || name.starts_with("spe_") || name.starts_with("mp_")),
+                          name.c_str());
   {
     std::lock_guard<std::mutex> lock(g_prebuild->mutex);
     if (!g_prebuild->opened.insert(name).second) {
@@ -492,9 +502,16 @@ void ReaderThread() {
       ++g_prebuild->busy;  // job 641: counted with the pop, so no other reader sees an empty queue and nobody busy
     }
     const auto t0 = std::chrono::steady_clock::now();
+    // 0.6.2: the file's pixel-shader keys, sent to the renderer when the file is done (on every path, also unread).
+    std::vector<uint64_t> file_keys;
+    const std::string file_name = Lower(path.filename().string());
+    scanner.CollectPixelKeys(&file_keys);
     // Job 641: when this was the last queued file and no other reader is busy, the start-up reading is done.
     struct BusyGuard {
+      const std::vector<uint64_t>* keys = nullptr;
+      const std::string* name = nullptr;
       ~BusyGuard() {
+        XenosPrebuildFileShaders(XXH3_64bits(name->data(), name->size()), keys->data(), keys->size());
         bool done = false;
         uint64_t files = 0;
         {
@@ -510,6 +527,8 @@ void ReaderThread() {
         if (done) XenosPrebuildAtStartDone(files);
       }
     } busy_guard;
+    busy_guard.keys = &file_keys;
+    busy_guard.name = &file_name;
     std::vector<uint8_t> data;
     {
       std::ifstream f(path, std::ios::binary);

@@ -173,6 +173,11 @@ uint64_t XenosPrebuildVariantHits(uint32_t variant);
 // Job 641: layer 2 says its start-up package reading (--ue3_shader_prebuild_at_start) has read every queued file
 // (`files` read in all). --gow2_renderer_prepare_all waits for it before it can finish.
 void XenosPrebuildAtStartDone(uint64_t files);
+// 0.6.2 (--gow2_renderer_chapter_hold): layer 2's reader has read a package - the keys (XXH3 of the microcode, as
+// XenosPrebuildPixelShader's) of every pixel shader in it, new or not; sent once per file read, also with none.
+void XenosPrebuildFileShaders(uint64_t file_key, const uint64_t* pixel_keys, size_t count);
+// ... and the GAME has opened a package (the same key: XXH3 of its lower-case file name). level: a map's package.
+void XenosPrebuildGameOpened(uint64_t file_key, bool level, const char* name);
 // --gow2_frame_times=N: every N swaps log swap interval (mean/p99/max) and the observer callbacks' own time per frame.
 void XenosInstallFrameTimesIfRequested();
 // --gow2_profile=S (--gow2_profile_start, --gow2_profile_top): sampling profiler of every busy thread (notes/52).
