@@ -11769,7 +11769,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         const bool wanted = chapter_hold_on_ && rcp_rec_want_[i];
         bool blocked = false;
         if (shaders_ready && wanted) {
-          const size_t want_cap = rcp_want_only_ ? 4096 : loading ? 64 : 8;
+          // (review) In a hold enough to keep every worker busy (the hold refills every slice, ~2 ms) - a deep live queue
+          // would be left in front of the draws' own requests if the hold ends early; in play also within the pack's cap.
+          const size_t want_cap = rcp_want_only_ ? 128 : loading ? 64 : std::min<size_t>(8, std::max<uint64_t>(1, cap));
           if (want_pending >= want_cap && !want_pruned) {
             want_pending = PruneWantedJobs();
             want_pruned = true;
@@ -11817,6 +11819,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           }
         } else {
           ++rcp_n_.known;
+          // (review) Already queued - e.g. in the start-up backlog, which the live request just moved to the front: the
+          // hold waits for it too, and it counts against the cap.
+          if (wanted && backend_->PipelinePending(d)) {
+            rcp_want_jobs_.push_back(d);
+            ++want_pending;
+          }
         }
       }
       rcp_waiting_.resize(keep);

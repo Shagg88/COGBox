@@ -3099,9 +3099,9 @@ class VulkanBackend final : public Backend {
       job_cv_.notify_all();
       for (auto& t : workers_) t.join();
       workers_.clear();
-      // 0.6.2: a background save reads the cache itself now - it must be done before the cache is destroyed (60 s at most)
-      for (int i = 0; i < 6000 && cache_saving_.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
-      if (cache_saving_.load()) REXLOG_WARN("gow2_renderer: Vulkan: a pipeline cache save is still running at shutdown");
+      // 0.6.2: a background save reads the cache itself now - it must be done before the cache is destroyed (review: a
+      // join, not a time limit - no time limit can make destroying the cache under it safe)
+      if (cache_thread_.joinable()) cache_thread_.join();
       MaybeSaveCache(true);  // patch 0079
       if (ext_) {  // the device isn't ours: wait for our own work only (vkDeviceWaitIdle would need every queue locked)
         const VkSemaphore sem = timeline_;
@@ -3326,6 +3326,7 @@ class VulkanBackend final : public Backend {
   }
   void MaybeSaveCache(bool now) {
     if (cache_path_.empty() || !pipeline_cache_vk_ || cache_saving_.load()) return;
+    if (cache_thread_.joinable()) cache_thread_.join();  // (review) the last save is done: its thread is joined, not detached
     const uint64_t built = built_async_.load() + stats_.pipelines;
     if (built == cache_saved_built_) return;
     const auto t = std::chrono::steady_clock::now();
@@ -3374,10 +3375,10 @@ class VulkanBackend final : public Backend {
       return;
     }
     cache_saving_.store(true);
-    std::thread([this, write]() {
+    cache_thread_ = std::thread([this, write]() {
       write();
       cache_saving_.store(false);
-    }).detach();
+    });
   }
   void Retire() {
     const uint64_t done = CompletedFence();
@@ -4033,6 +4034,7 @@ class VulkanBackend final : public Backend {
   std::chrono::steady_clock::time_point cache_saved_at_{};
   uint64_t cache_saved_built_ = 0;
   std::atomic<bool> cache_saving_{false};
+  std::thread cache_thread_;  // 0.6.2: the background save (joined before the next one and at shutdown)
   std::vector<IndexBuffer> index_buffers_;
   std::vector<DescriptorPool> pools_;
   uint32_t pool_index_ = UINT32_MAX;
