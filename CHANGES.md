@@ -8,7 +8,7 @@
 
 ### Performance
 - **Judgment runs up to 72% faster.** Measured unlocked at 1440p on an RTX 3080 Ti in Wharf District: **Vulkan 50 to 87 fps (+72%)**, **DirectX 12 81 to 107 fps (+32%)**.
-- **Vulkan closes most of the gap to DirectX 12** (Windows). Vulkan now skips everything the camera can't see ("real occlusion"), as DirectX 12 already did. DirectX 12 is still the faster of the two, but Vulkan is now a comfortable choice in every game. Not yet under Proton / Wine, where it still has to be tested.
+- **Vulkan is much faster once a game has loaded** (Windows; still experimental). Vulkan now skips everything the camera can't see ("real occlusion"), as DirectX 12 already did. DirectX 12 remains the faster and the recommended choice: on Vulkan the first launches of each game build their shaders for several minutes (longest in Gears 3), with a long wait at start and stutter until they are done. Making that as quick as on DirectX 12 is the next thing we are working on. Not yet under Proton / Wine, where real occlusion still has to be tested.
 - **The graphics card no longer waits for the whole frame.** It now starts on each frame while the rest of it is still being prepared, instead of sitting idle until everything is ready. No setting to change.
 - **0.6.0 against 0.6.1**, both changes together, measured unlocked on the same PC:
 
