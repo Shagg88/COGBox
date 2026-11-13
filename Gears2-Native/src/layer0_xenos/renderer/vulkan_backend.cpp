@@ -1369,8 +1369,7 @@ class VulkanBackend final : public Backend {
     // VKP2: a finished readback's buffer is reused (frame captures read back every frame; a new host-visible buffer
     // each time cost ~0.4 ms a frame on Vulkan - D3D12 reuses its readback memory).
     const uint64_t rb_need = uint64_t(pitch) * uint32_t(y1 - y0);
-    for (size_t i = 0; i < readback_pool_.size(); ++i)
-      if (readback_pool_[i].size >= rb_need) { rb.buffer = readback_pool_[i]; readback_pool_.erase(readback_pool_.begin() + i); break; }
+    TakePooledReadback(rb_need, rb.buffer);
     if (!rb.buffer.buffer &&
         !MakeBuffer(rb_need, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, rb.buffer, true,
@@ -1389,7 +1388,11 @@ class VulkanBackend final : public Backend {
     if (!ready_ || lost_ || !size || uint64_t(address) + size > guest_.size || !Record()) return 0;
     Readback rb;
     rb.row_pitch = size;
-    if (!MakeBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    // 0.6.1 (review): from the pool like the texture readbacks - with the resolve read-back on (Judgment's default)
+    // this runs for every resolve of every frame, and each call allocated and mapped host-visible memory.
+    TakePooledReadback(size, rb.buffer);
+    if (!rb.buffer.buffer &&
+        !MakeBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, rb.buffer, true,
                     VK_MEMORY_PROPERTY_HOST_CACHED_BIT))
       return 0;
@@ -1398,6 +1401,16 @@ class VulkanBackend final : public Backend {
     VkBufferCopy c{address, 0, size};
     vk_.vkCmdCopyBuffer(C(VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT), guest_.buffer, rb.buffer.buffer, 1, &c);
     return AddReadback(std::move(rb));
+  }
+  // The smallest pooled readback buffer that holds `need` bytes (none: out stays empty).
+  void TakePooledReadback(uint64_t need, Buffer& out) {
+    size_t best = readback_pool_.size();
+    for (size_t i = 0; i < readback_pool_.size(); ++i)
+      if (readback_pool_[i].size >= need && (best == readback_pool_.size() || readback_pool_[i].size < readback_pool_[best].size))
+        best = i;
+    if (best == readback_pool_.size()) return;
+    out = readback_pool_[best];
+    readback_pool_.erase(readback_pool_.begin() + best);
   }
   // Patch 0021's scratch path (BCn loads written by a compute shader as bytes, then copied into the texture).
   bool PrepareScratchFor(TextureHandle h, uint32_t mip, uint32_t layer, uint32_t& row_pitch, uint32_t& rows) override {
@@ -1455,8 +1468,8 @@ class VulkanBackend final : public Backend {
   void ReleaseReadback(ReadbackHandle h) override {
     if (!h || h >= readbacks_.size() || !readbacks_[h].live) return;
     Readback& rb = readbacks_[h];
-    // VKP2: kept for reuse once the GPU is done with it (still mapped; at most 8 kept)
-    if (rb.fence && CompletedFence() >= rb.fence && rb.buffer.mapped && readback_pool_.size() < 8) {
+    // VKP2: kept for reuse once the GPU is done with it (still mapped; at most 24 kept - 0.6.1: a frame's resolves)
+    if (rb.fence && CompletedFence() >= rb.fence && rb.buffer.mapped && readback_pool_.size() < 24) {
       readback_pool_.push_back(rb.buffer);
       rb = {};
       return;
