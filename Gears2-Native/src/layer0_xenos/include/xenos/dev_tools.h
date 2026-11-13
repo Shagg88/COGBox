@@ -205,6 +205,11 @@ struct XenosRendererHints {
   // 0.6.1: this game has captured native-HDR scene / HUD profiles (PR #267: Gears 2, Gears 3 TU6). Without it (Gears 1,
   // Judgment) HDR10 output keeps the Stage 7.3 encoder of 0.6.0 (paper white, knee, highlight expansion).
   bool native_hdr = false;
+  // 0.6.1 (GitHub #185 / #250, GitLab 4): the game reads a resolved texture back on the CPU to set its exposure
+  // (Judgment's eye adaptation). With --gow2_renderer_resolve_readback left at its default, resolves are then copied
+  // back into guest memory the fast way; without that the game never sees its own measurement and every scene comes
+  // out one stop too bright (measured at Wharf District against Xbox 360 footage: mean 107 -> 68, console 70).
+  bool exposure_readback = false;
 };
 void XenosInstallRendererIfRequested(rex::Runtime* runtime, const XenosRendererHints& hints = {});
 // A game's loading screen has ended (Judgment: its loading cap release) - starts --gow2_after_load_log_s.

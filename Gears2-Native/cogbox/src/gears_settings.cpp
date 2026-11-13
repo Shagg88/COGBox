@@ -13,8 +13,10 @@
 namespace cogbox {
 namespace gears {
 
-// menu5 (0.5.0): Judgment's Brightness default (the launcher's and the in-game menu's scale, 50..150; gamma = 100 / it)
-constexpr int kBrightnessDefault = 75, kBrightnessOldDefault = 65;
+// 0.6.1: Judgment's Brightness setting (GitHub #185, 0.4.8 - 0.6.0) is gone. It bent the display ramp to hide a picture
+// one stop too bright; the cause was the game's exposure never reaching it (the renderer now hands Judgment's resolves
+// back to the game's memory, XenosRendererHints::exposure_readback). A saved "Brightness" / "BrightnessDefault" is read
+// and dropped, and --gow2_present_gamma is no longer passed.
 
 
 namespace {
@@ -180,10 +182,6 @@ std::vector<Option> make_options(Game g) {
                "Your screen's peak brightness (see its specs or Windows HDR calibration).", 365), "", "HDR");
     // GitHub #185 (Shagg 7 Nov): gamma on the game's display ramp. 100 = the game's own; higher = darker shadows and
     // midtones, highlights kept (Judgment looks brighter than Xbox 360 footage to some players).
-    // menu5 (Shagg, RC4-4): the default 65 -> 75 (display-ramp gamma 100 / 75 = 1.333 instead of 1.538: less dark)
-    add(number("Brightness", "Brightness (100 = original)", Tab::Display, Kind::Int, PG, 50, 150, 5, kBrightnessDefault,
-               "Brightness of shadows and midtones. 75 (the default) is close to the Xbox 360; 100 = the picture as the game draws it here. Lower darkens them, higher lifts them; bright areas "
-               "stay about the same.", 0), "gamma");
     add(make("Vsync", "Vsync (no tearing)", Tab::Display, Kind::Bool, SH, 0,
              "Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen "
              "follows the game below its refresh rate. A frame-rate limit above your screen's refresh rate is lowered to the "
@@ -731,9 +729,6 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g != Game::Judgment) return no(not_yet(gi));
     } else if (f == "bloom") {   // Canary: Gears 2 / 3 / Judgment; Gears 1's bloom shares its blur (DoF option there)
         if (g == Game::Gears1) return no("Gears 1: its bloom is drawn with the depth-of-field blur - Depth of field off softens it.");
-    } else if (f == "gamma") {   // GitHub #185 (Shagg 7 Nov): Judgment only
-        if (g != Game::Judgment) return no("Judgment only.");
-        if (!cap_exe(env, "gow2_present_gamma")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "filmgrain") {
         if (g != Game::Judgment) return no("Judgment only.");
         if (!cap_exe(env, "gowj_no_film_grain")) return no(not_yet(gi, "needs its next build"));
@@ -1199,7 +1194,6 @@ bool Store::load_ini(const std::string& text) {
     // FrameCap list version per section (0 = [General]); only FrameCap values read from a file without
     // "FrameCapList=2" are moved over, once, after reading (values from the old "Fps" are already list 2).
     bool capList2[kGameCount + 1] = {}, capRead[kGameCount + 1] = {};
-    bool brightness75 = false;   // menu5: the file was written with Brightness' new default
     // The PS1's flat keys (launcher-settings.json converted to key=value) are read in [General] too.
     struct Legacy { const char* key; int game; const char* id; };
     static const Legacy legacy[] = {
@@ -1241,7 +1235,7 @@ bool Store::load_ini(const std::string& text) {
                 continue;
             }
             if (key == "FrameCapList") { capList2[0] = x >= 2; continue; }
-            if (key == "BrightnessDefault") { brightness75 = x >= kBrightnessDefault; continue; }   // menu5 (0.5.0)
+            if (key == "BrightnessDefault") continue;   // 0.6.1: the setting is gone (see the top of this file)
             if (key == "FrameCap") { top["FrameCap"] = x; capRead[0] = true; any = true; continue; }
             if (key == "Fps") {   // job 638: the old 4-step frame rate limit (the shared value)
                 top["FrameCap"] = old_fps_to_cap(x);
@@ -1281,14 +1275,9 @@ bool Store::load_ini(const std::string& text) {
     if (capRead[0] && !capList2[0]) top["FrameCap"] = old_cap_list1_to_2(top["FrameCap"]);
     for (int g = 0; g < kGameCount; ++g)
         if (capRead[g + 1] && !capList2[g + 1]) per[g]["FrameCap"] = old_cap_list1_to_2(per[g]["FrameCap"]);
-    // menu5 (Shagg, RC4-4): Brightness' default 65 -> 75. A file written before (no "BrightnessDefault=75") always holds
-    // the old default 65 in [General] (save_ini writes every shared value) and in a game's section once its settings were
-    // saved: there 65 is taken as "the default", and becomes the new one. Any other value is the player's and stays.
-    if (!brightness75) {
-        auto lift = [](std::map<std::string, double>& m) { auto it = m.find("Brightness"); if (it != m.end() && it->second == kBrightnessOldDefault) it->second = kBrightnessDefault; };
-        lift(top);
-        for (int g = 0; g < kGameCount; ++g) lift(per[g]);
-    }
+    // 0.6.1: a saved Brightness (shared or per game) is dropped, so it is not written back either.
+    top.erase("Brightness");
+    for (int g = 0; g < kGameCount; ++g) per[g].erase("Brightness");
     migrate();
     return any;
 }
@@ -1302,7 +1291,7 @@ std::string Store::save_ini() const {
     auto get = [](const std::map<std::string, double>& m, const Option& o) { auto it = m.find(o.id); return it == m.end() ? o.def : it->second; };
     std::ostringstream out;
     out << "; COGBox - Gears of War settings. Boxes: true / false; lists: the position from 0.\n";
-    out << "[General]\nGame=" << last_game << "\nFrameCapList=2\nBrightnessDefault=" << kBrightnessDefault << "\n";
+    out << "[General]\nGame=" << last_game << "\nFrameCapList=2\n";
     for (const Option& o : options(Game::Gears2)) {
         if (o.scope == Scope::GameOwn) continue;
         if (o.kind == Kind::Text) { auto t = texts.find(o.id); out << o.id << "=" << (t == texts.end() ? std::string() : sanitize_text(o, t->second)) << "\n"; continue; }
@@ -1736,12 +1725,6 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             if (ar == 0) notes.push_back("launcher: Aspect ratio Auto: " + std::to_string(env.monitor_w) + "x" + std::to_string(env.monitor_h) + " screen -> 4:3");
         }
     }
-    // GitHub #185: launcher Gamma -> the display ramp
-    if (avail("Brightness") && s.i("Brightness") != 100) {   // display-ramp gamma = 100 / Brightness (80 -> 1.25, darker)
-        char g[32];
-        std::snprintf(g, sizeof(g), "%.3f", 100.0 / std::max(s.i("Brightness"), 10));
-        a.push_back(std::string("--gow2_present_gamma=") + g);
-    }
     // PS1 900: HDR
     if (s.b("HDR")) {
         a.push_back("--present_hdr=true");
@@ -2085,7 +2068,6 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
     // stick dead zones, vibration and mnk_walk_toggle per poll / SetState (rexglue-sdk src/input).
     const std::vector<LiveSpec> specs = {
         { "FrameCap", { { p + "_max_fps", "0" } } },
-        { "Brightness", { { "gow2_present_gamma", "1" } } },
         { "PaperWhite", { { "gow2_hdr_paper_white", "203" } } },
         { "Peak", { { "gow2_hdr_peak", "1000" } } },
         { "Sens", { { "mnk_sensitivity", "1" }, { "ue3_mouse_scale", "1" } } },

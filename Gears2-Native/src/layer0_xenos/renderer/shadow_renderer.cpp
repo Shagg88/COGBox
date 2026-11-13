@@ -1208,8 +1208,9 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_resolves_to_guest, false, "Gears2",
 // our T2 resolves is also copied from the GPU mirror back into guest CPU memory, so CPU-path texture loads and pages the
 // CPU touches later see the resolve's bytes (Gears 3 job 087 Z1 [V]: the ch22 black squad needs resolves in CPU memory;
 // our 301 O vs 307 R [V]: the ch10 flash only happens when textures read our resolves).
-REXCVAR_DEFINE_STRING(gow2_renderer_resolve_readback, "none", "Gears2",
-                      "Patch 0020 (Canary readback_resolve, T2 only): none (default, as before), fast (Canary's default: "
+REXCVAR_DEFINE_STRING(gow2_renderer_resolve_readback, "auto", "Gears2",
+                      "Patch 0020 (Canary readback_resolve, T2 only): auto (default: fast in a game that reads its "
+                      "exposure back - Judgment - and none in the others), none, fast (Canary's default: "
                       "each resolve lands the previous copy of the same destination in guest memory, no stall; the "
                       "first one waits) or full (wait for the GPU at every resolve: exact, slow). Turns on "
                       "--gow2_renderer_resolve_prepare_mirror");
@@ -1858,9 +1859,10 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       if (canary_resolve_rules_) REXLOG_INFO("gow2_renderer: patch 0023: colour resolves use Canary's rules");
       {  // patch 0020
         const std::string m = REXCVAR_GET(gow2_renderer_resolve_readback);
-        resolve_readback_ = m == "full" ? 2u : m == "fast" ? 1u : 0u;
-        if (!m.empty() && m != "none" && !resolve_readback_)
-          REXLOG_WARN("gow2_renderer: unknown --gow2_renderer_resolve_readback '{}' (none | fast | full); none", m);
+        const bool by_game = m.empty() || m == "auto";  // 0.6.1: the game's own need (XenosRendererHints)
+        resolve_readback_ = m == "full" ? 2u : m == "fast" || (by_game && hints_.exposure_readback) ? 1u : 0u;
+        if (!by_game && m != "none" && !resolve_readback_)
+          REXLOG_WARN("gow2_renderer: unknown --gow2_renderer_resolve_readback '{}' (auto | none | fast | full); none", m);
         prepare_mirror_ = REXCVAR_GET(gow2_renderer_resolve_prepare_mirror) || resolve_readback_ != 0;
         if (resolves_to_guest_ && (prepare_mirror_ || resolve_readback_))
           REXLOG_INFO("gow2_renderer: patch 0020 (Canary): resolve destinations prepared in the mirror {}, readback to "

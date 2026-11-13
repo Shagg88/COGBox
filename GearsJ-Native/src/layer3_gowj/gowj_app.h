@@ -123,7 +123,9 @@ class GowjApp : public rex::ReXApp {
     //    still building is skipped and pops in. Judgment no longer sets pipeline_wait_ms / play_hold_draws (it set 0 / 8,
     //    and 8 would have brought the hold back - Shagg's 22:00 session froze up to 1 s per backlog).
     game_default("gow2_renderer_shader_backend", "dxbc");
-    XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull});
+    // 0.6.1: no native-HDR profiles yet (false); the game reads its exposure back from a resolve (true) - see the hint.
+    XenosInstallRendererIfRequested(runtime(), {0x1E6883FCCDE1F688ull, 0xA4A965C189287B99ull, 0xB6C9863F710683ECull,
+                                                false, true});
     Ue3InstallShaderPrebuildIfRequested();  // notes/78: after the renderer (it asks whether the renderer wants them)
     XenosInstallQueryLogIfRequested(runtime(), {});
     XenosInstallStateCoverageIfRequested();

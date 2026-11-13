@@ -244,29 +244,18 @@ int main(int argc, char **argv)
             std::printf("%-7s %-7s %5zu %6d %8s  %d\n", t, wayName, moved.size(), cacheMoves, "migrated", slMoves);
         }
     }
-    // menu5 (0.5.0): Judgment's Brightness default 65 -> 75. A file from before keeps every chosen value; its old
-    // default 65 (always written in [General], and in a game's section once that game's settings were saved) becomes 75.
+    // 0.6.1: Judgment's Brightness setting is gone - no such option, and a saved value is dropped, not written back
     {
         namespace gs = cogbox::gears;
-        const gs::Option *bo = gs::find_option(gs::Game::Judgment, "Brightness");
-        CHECK_MSG(bo && bo->def == 75, "Brightness default 75");
+        CHECK_MSG(gs::find_option(gs::Game::Judgment, "Brightness") == nullptr, "no Brightness option");
         gs::Store old;
-        old.load_ini("[General]\nGame=2\nFrameCapList=2\nBrightness=65\n\n[Judgment]\nFrameCapList=2\nBrightness=65\n\n[Gears2]\nBrightness=90\n");
-        gs::Environment env;
-        CHECK_MSG(old.view(gs::Game::Judgment, env).i("Brightness") == 75, "old default in [Judgment] -> 75");
-        CHECK_MSG(old.top["Brightness"] == 75, "old default in [General] -> 75");
-        CHECK_MSG(old.per[0]["Brightness"] == 90, "a chosen value stays");
+        old.load_ini("[General]\nGame=2\nFrameCapList=2\nBrightnessDefault=75\nBrightness=75\n\n[Judgment]\nFrameCapList=2\nBrightness=80\n");
+        CHECK_MSG(old.top.find("Brightness") == old.top.end(), "shared Brightness dropped");
+        bool kept = false;
+        for (const auto& m : old.per) kept = kept || m.find("Brightness") != m.end();
+        CHECK_MSG(!kept, "per-game Brightness dropped");
         const std::string w = old.save_ini();
-        CHECK_MSG(w.find("BrightnessDefault=75") != std::string::npos, "marker written");
-        gs::Store again;   // a file written with the new default: 65 is now the player's choice and stays
-        again.load_ini("[General]\nGame=2\nFrameCapList=2\nBrightnessDefault=75\nBrightness=75\n\n[Judgment]\nFrameCapList=2\nBrightness=65\n");
-        CHECK_MSG(again.view(gs::Game::Judgment, env).i("Brightness") == 65, "65 chosen after 0.5.0 stays");
-        gs::Store fresh;   // no file at all: the default
-        fresh.load_ini("");
-        CHECK_MSG(fresh.view(gs::Game::Judgment, env).i("Brightness") == 75, "no saved setting -> 75");
-        gs::Store other;   // an old file where the player had picked 80: kept
-        other.load_ini("[General]\nBrightness=65\n\n[Judgment]\nBrightness=80\n");
-        CHECK_MSG(other.view(gs::Game::Judgment, env).i("Brightness") == 80, "chosen 80 stays");
+        CHECK_MSG(w.find("Brightness") == std::string::npos, "nothing about Brightness written");
     }
     std::printf("%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
