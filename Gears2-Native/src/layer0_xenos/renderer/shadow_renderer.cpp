@@ -550,9 +550,10 @@ REXCVAR_DEFINE_INT32(gow2_renderer_cpu_split, 0, "Gears2",
                      "1 = part sums and stretches over 20 ms (the CPU split line and HITCH parts, cheap); 2 = also "
                      "every stretch over 50 us summed per source line (patch 0036 detail, as before 0153). Patch 0154: default "
                      "0 (job 461: 1 cost ~3% fps); test jobs that need the CPU split ask for 1");
-REXCVAR_DEFINE_INT32(gow2_renderer_submit_draws, 0, "Gears2",
-                     "Patch 0138: submit our recorded work to the GPU after every N draws (0 = once a frame, as before). "
-                     "-1 (0.6.1) = adaptive: as soon as the GPU has finished everything "
+REXCVAR_DEFINE_INT32(gow2_renderer_submit_draws, -1, "Gears2",
+                     "Patch 0138: submit our recorded work to the GPU after every N draws (0 = once a frame, as before "
+                     "0.6.1). -1 (the default since 0.6.1; Judgment in play at 2x, job 1711: 12.5 -> 11.1 ms a frame on "
+                     "D3D12, 14.6 -> 11.5 on Vulkan, the same picture) = adaptive: as soon as the GPU has finished everything "
                      "submitted so far and at least 64 draws are recorded, at the latest every 256 draws, at most 12 "
                      "a frame. Measured in Gears 2 at 2x with strict "
                      "queries (jobs 1679 / 1681): every 100-150 draws = 4.8 ms a frame against 5.95 (the occlusion "
