@@ -15,6 +15,7 @@
 - **Online privacy:** the games' lobby search no longer shows join codes, and a hosted lobby no longer carries your PC's local network address. The search now signs in, so the server can require it later (see PRIVACY.md).
 - **Matchmaking finds the mode you picked:** searching one playlist (for example Social Guardian) could put you into another mode's lobby (Horde). Searches now only return lobbies of the playlist you chose.
 - **Gears 2 hosting after a quit:** COGBox's 30-minute lift of the game's quit penalty (with its popup) never ran in Gears 2, so a player with a quit could not host versus at all. It works now.
+- **Show ping** (Display tab): your ping to the host of the online match or party, in the FPS bar, or in a bar of its own when the FPS counter is off. When you host, it shows the worst ping among your players.
 - Regions: **US**, **OCE** and **Europe** (US West and US East are now one US region).
 - Gears 3 and Judgment saves keep working when you switch online play on or off. Nothing is deleted, and Gears 3 saves are backed up before they're changed.
 - **Online safety:** limits on what another player can make your game hold in memory or open.

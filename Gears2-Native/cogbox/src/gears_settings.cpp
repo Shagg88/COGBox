@@ -197,6 +197,9 @@ std::vector<Option> make_options(Game g) {
     add(choice("FpsMode", "FPS counter", Tab::Display, OWN, { "Off", "Bar at the top", "Bar at the bottom", "Game's own (column)" }, 0,
                "Bar: one line (FPS, frame time, slowest frame) drawn by the port itself, nothing in the game changed. Game's own: "
                "the game's built-in FPS / frame-time column.", 336));
+    add(make("ShowPing", "Show ping", Tab::Display, Kind::Bool, OWN, 0,
+             "Online: your ping to the host of the match or party, in the FPS bar (or in a bar of its own at the top when "
+             "the FPS counter is off). When you host, the worst ping among your players.", 0));
     // GitHub #121: the port's own notes over the game (shader building / loading) off. Achievement popups have their own
     // setting below (achievements part 2).
     add(make("HideNotes", "Hide on-screen notes", Tab::Display, Kind::Bool, OWN, 0,
@@ -1889,6 +1892,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         a.push_back(std::string("--cogbox_ach_sound=") + (s.b("AchievementSound") ? "true" : "false"));
         a.push_back(std::string("--cogbox_ach_hide=") + (s.b("HideAchievementPopups") ? "true" : "false"));
     }
+    if (s.b("ShowPing") && cap_exe(env, "cogbox_show_ping")) a.push_back("--cogbox_show_ping=true");   // SDK patch 90
     // PS1 929: FPS counter
     switch (s.i("FpsMode")) {
     case 1: a.push_back("--gow2_fps_bar=top"); break;
@@ -2104,6 +2108,7 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
         { "ZoomSens", { { "ue3_mouse_zoom_scale", "1" } } },
         { "Sharpen", { { "gow2_present_sharpen", "0" } } },
         { "FpsMode", { { "gow2_fps_bar", "off" } } },
+        { "ShowPing", { { "cogbox_show_ping", "false" } } },
         { "HideNotes", { { "gow2_hide_onscreen_notes", "false" } } },
         { "Mute", { { p + "_mute_unfocused", "false" } } },
         { "Vibration", { { "vibration", "true" } } },

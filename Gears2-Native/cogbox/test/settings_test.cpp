@@ -306,6 +306,18 @@ int summary() {
             if (on ? !all : any) { std::cout << "FAIL net rates for game " << static_cast<int>(g) << " (" << (on ? "on" : "off") << ")\n"; ++fails; }
         }
     }
+    // Ping in the FPS bar: Show ping sends --cogbox_show_ping=true (the exe must know it); off sends nothing
+    for (int on = 0; on <= 1; ++on) {
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        Store st; Settings s = st.view(Game::Gears3, e);
+        if (!find_option(Game::Gears3, "ShowPing")) { std::cout << "FAIL ShowPing is not an option\n"; ++fails; break; }
+        s.set("ShowPing", on);
+        bool has = false;
+        for (const std::string& x : build_args(Game::Gears3, Version::TitleUpdate, s, e, nullptr)) has = has || x == "--cogbox_show_ping=true";
+        if (has != (on != 0)) { std::cout << "FAIL show ping arg (" << on << ")\n"; ++fails; }
+    }
     // social step 4: Gears 3 TU6 gets its UE3 GNames / GEngine addresses (the private match lobby fixes), others not
     for (int gi = 0; gi < 2; ++gi) {
         const Game g = gi ? Game::Judgment : Game::Gears3;
