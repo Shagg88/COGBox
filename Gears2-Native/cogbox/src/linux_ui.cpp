@@ -1,7 +1,8 @@
 // COGBox - Linux and Steam Deck through Proton / Wine, the launcher's side (proton049, 0.4.9): the recommended settings
 // (first start, or the About tab's button), and adding a copy without drag and drop (the Steam Deck's Game Mode has no
 // file manager to drag from): a folder picker, a pasted Linux path, and a search of the usual Linux folders through
-// Wine's Z: drive. Detection and path conversion are in proton.cpp. Nothing here runs on Windows proper.
+// Wine's Z: drive. Detection and path conversion are in proton.cpp. 0.6.2: the add buttons (linux_copy_buttons) are for
+// every player now; the rest still runs only under Proton / Wine.
 #include "app.h"
 #include "i18n.h"
 #include "proton.h"
@@ -166,7 +167,7 @@ void linux_copy_buttons(App &a)
     if (button("Choose a file...")) {
         // (title updates and DLC packages have no file extension: "All files" first)
         add_path(a, pick_file(L"Choose your disc image, Games on Demand file, title update or DLC package",
-                              L"All files\0*.*\0Disc images (*.iso)\0*.iso\0Game executables (default.xex)\0*.xex\0"));
+                              L"All files\0*.*\0Disc images (*.iso)\0*.iso\0The game's default.xex\0default.xex\0"));
     }
     ui_tip(a.wine ? "A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
                   : "A disc image (.iso), a Games on Demand file, a title update or a DLC package (those two have no file extension).");
@@ -180,9 +181,14 @@ void linux_copy_buttons(App &a)
             char *c = SDL_GetClipboardText();
             std::string text = c ? c : "";
             if (c) SDL_free(c);
-            while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ')) text.pop_back();
-            while (!text.empty() && (text.front() == ' ')) text.erase(text.begin());
-            if (text.size() >= 2 && text.front() == '"' && text.back() == '"') text = text.substr(1, text.size() - 2);
+            auto trim = [](std::string &x) {
+                while (!x.empty() && (x.back() == '\n' || x.back() == '\r' || x.back() == ' ' || x.back() == '\t')) x.pop_back();
+                while (!x.empty() && (x.front() == ' ' || x.front() == '\t')) x.erase(x.begin());
+            };
+            if (const size_t nl = text.find_first_of("\r\n"); nl != std::string::npos && nl + 1 < text.size()) text.resize(nl);  // the first line
+            trim(text);
+            if (text.size() >= 2 && (text.front() == '"' || text.front() == '\'') && text.back() == text.front()) text = text.substr(1, text.size() - 2);
+            trim(text);
             if (text.empty()) set_message(a, "Copy a file's or folder's path first (in File Explorer: Shift + right-click > Copy as path).", true);
             else add_path(a, text);
         }

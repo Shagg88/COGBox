@@ -69,7 +69,43 @@ int main() {
     assert(!ok);
     ok = save_import::import(t / "canary/content/E0300000ABCDEF01/FFFE07D1/00010000/E0300000ABCDEF01/4D5308AB.gpd", title, user2, "s5", r);
     assert(ok && r.saves == 0 && r.settings == 1 && get(user2 / "4D5308AB/profile/User/63E83FFF") == "PROGRESS");
-    assert(get(user2 / "_saves-before-import-s5/profile/63E83FFF").empty() || true);
+    assert(get(user2 / "_saves-before-import-s5/profile/63E83FFF") == "SET-OLD-CHECK" || get(user2 / "_saves-before-import-s5/profile/63E83FFF").empty());
+    // 5. review: a stray profile folder in the user folder doesn't attract the saves; the user folder itself (or a folder
+    // holding it) is never a source; two saves of one name - the first is kept; a failed move undoes everything
+    const fs::path user3 = t / "user3";
+    put(user3 / "E0300000ABCDEF01/4D5308AB/00000001/Stray/x.sav", "stray");
+    put(user3 / "B13EBABEBABEBABE/4D5308AB/00000001/Mine/a.sav", "mine");
+    put(t / "two/a/content/E0300000AAAAAAAA/4D5308AB/00000001/Dup/d.sav", "first");
+    put(t / "two/b/content/E0300000BBBBBBBB/4D5308AB/00000001/Dup/d.sav", "second");
+    put(t / "two/b/content/E0300000BBBBBBBB/4D5308AB/00000001/Dup/only-second.sav", "x");
+    ok = save_import::import(t / "two", title, user3, "s6", r);
+    assert(ok && r.saves == 1);
+    const std::string dup = get(user3 / "B13EBABEBABEBABE/4D5308AB/00000001/Dup/d.sav");
+    assert(dup == "first" || dup == "second");   // one of them, whole - never a mix
+    assert(fs::exists(user3 / "B13EBABEBABEBABE/4D5308AB/00000001/Dup/only-second.sav") == (dup == "second"));
+    assert(!fs::exists(user3 / "E0300000ABCDEF01/4D5308AB/00000001/Dup"));
+    bool noted = false;
+    for (const auto &n : r.notes) if (n.find("second save named Dup") != std::string::npos) noted = true;
+    assert(noted);
+    // a folder holding the user folder: the user folder's own saves are not imported
+    put(t / "holder/user/B13EBABEBABEBABE/4D5308AB/00000001/Own/o.sav", "own");
+    put(t / "holder/xenia/content/4D5308AB/00000001/FromXenia/f.sav", "xenia");
+    ok = save_import::import(t / "holder", title, t / "holder/user", "s7", r);
+    assert(ok && r.saves == 1 && r.names[0] == "FromXenia");
+    ok = save_import::import(t / "holder/user/B13EBABEBABEBABE", title, t / "holder/user", "s8", r);
+    assert(!ok);
+    // an oversized setting is left out
+    put(t / "big/content/4D5308AB/profile/User/63E83FFF", std::string(5000, 'x'));
+    put(t / "big/content/4D5308AB/00000001/S/s.sav", "s");
+    ok = save_import::import(t / "big", title, t / "user4", "s9", r);
+    assert(ok && r.settings == 0 && r.saves == 1);
+    // two imports with the same stamp keep both backups
+    put(t / "again/content/4D5308AB/00000001/S/s.sav", "s2");
+    ok = save_import::import(t / "again", title, t / "user4", "s9", r);
+    assert(ok && r.backup_dir == t / "user4/_saves-before-import-s9");
+    put(t / "again2/content/4D5308AB/00000001/S/s.sav", "s3");
+    ok = save_import::import(t / "again2", title, t / "user4", "s9", r);
+    assert(ok && r.backup_dir == t / "user4/_saves-before-import-s9-2" && get(r.backup_dir / "00000001/S/s.sav") == "s2");
     // 4. a GPD that is not one
     std::vector<std::pair<uint32_t, std::string>> out;
     assert(!save_import::gpd_title_settings(reinterpret_cast<const uint8_t *>("nope"), 4, out));

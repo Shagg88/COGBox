@@ -1,4 +1,8 @@
 // COGBox 0.6.2: "Import saves" (see save_import.h). Our code (MIT).
+//
+// Rules (Shagg: never delete the player's files): nothing outside our own work folder (<user>\_import-<stamp>) is ever
+// removed; whatever an import replaces is moved to <user>\_saves-before-import-<stamp>[-N] first; if putting the new
+// files in place fails, what was moved away is moved back. The source is only read.
 #include "save_import.h"
 
 #include "x360fs.h"
@@ -15,11 +19,22 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// The SDK's one profile: every save lives under this XUID (rex user_profile.cpp; patch 79's online XUID is off by default).
+constexpr const char *kProfileXuid = "B13EBABEBABEBABE";
+constexpr uint64_t kMaxEntries = 200000;  // directory entries looked at, at most (a whole drive is not searched)
+
 std::string lower(std::string s) {
     for (char &c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
     return s;
 }
-std::string name_of(const fs::path &p) { return p.filename().u8string().empty() ? std::string() : std::string(reinterpret_cast<const char *>(p.filename().u8string().c_str())); }
+std::string upper(std::string s) {
+    for (char &c : s) c = char(std::toupper(static_cast<unsigned char>(c)));
+    return s;
+}
+std::string name_of(const fs::path &p) {
+    const auto u = p.filename().u8string();
+    return std::string(reinterpret_cast<const char *>(u.c_str()), u.size());
+}
 bool is_hex(const std::string &s, size_t n) {
     if (s.size() != n) return false;
     for (char c : s) if (!std::isxdigit(static_cast<unsigned char>(c))) return false;
@@ -28,8 +43,20 @@ bool is_hex(const std::string &s, size_t n) {
 uint32_t be32(const uint8_t *p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
 uint64_t be64(const uint8_t *p) { return uint64_t(be32(p)) << 32 | be32(p + 4); }
 bool is_title_setting(uint32_t id) { return id == 0x63E83FFFu || id == 0x63E83FFEu || id == 0x63E83FFDu; }
+// The size the game reserves for a setting (XUSER profile setting IDs: bits 16-27), so a damaged file can't overflow it.
+size_t setting_max(uint32_t id) { return size_t((id >> 16) & 0xFFFu); }
 
-bool read_file(const fs::path &p, std::string &out, uint64_t max = 64ull << 20) {
+// Directory listing without exceptions (a pulled USB stick or a locked folder ends the listing, not the launcher).
+template <class F> void each_entry(const fs::path &dir, F &&f) {
+    std::error_code ec;
+    fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
+    for (; !ec && it != fs::directory_iterator(); it.increment(ec)) f(*it);
+}
+bool is_folder(const fs::path &p) { std::error_code ec; return fs::is_directory(p, ec); }
+bool is_plain_file(const fs::path &p) { std::error_code ec; return fs::is_regular_file(p, ec); }
+bool there(const fs::path &p) { std::error_code ec; return fs::exists(p, ec); }
+
+bool read_file(const fs::path &p, std::string &out, uint64_t max) {
     std::error_code ec;
     const uint64_t size = fs::file_size(p, ec);
     if (ec || size > max) return false;
@@ -52,41 +79,75 @@ bool package_magic(const fs::path &p) {
 bool copy_tree(const fs::path &from, const fs::path &to) {
     std::error_code ec;
     fs::create_directories(to, ec);
-    fs::copy(from, to, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+    if (ec) return false;
+    fs::copy(from, to, fs::copy_options::recursive, ec);
     return !ec;
 }
 bool has_files(const fs::path &dir) {
     std::error_code ec;
-    for (auto it = fs::recursive_directory_iterator(dir, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+    for (auto it = fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
         if (it->is_regular_file(ec)) return true;
     return false;
+}
+fs::path canon(const fs::path &p) {
+    std::error_code ec;
+    fs::path c = fs::weakly_canonical(p, ec);
+    return ec ? p : c;
+}
+std::string path_str(const fs::path &p) {
+    const auto u = p.u8string();
+    return std::string(reinterpret_cast<const char *>(u.c_str()), u.size());
+}
+// a is b or inside b (case-insensitive, as Windows paths are)
+bool within(const fs::path &a, const fs::path &b) {
+    const std::string sa = lower(path_str(canon(a)));
+    std::string sb = lower(path_str(canon(b)));
+    while (!sb.empty() && (sb.back() == '\\' || sb.back() == '/')) sb.pop_back();
+    if (sb.empty()) return false;
+    return sa == sb || (sa.size() > sb.size() && sa.compare(0, sb.size(), sb) == 0 && (sa[sb.size()] == '\\' || sa[sb.size()] == '/'));
 }
 
 struct Work {
     uint32_t title = 0;
-    std::string title_hex;       // lower case
-    fs::path stage;              // <user dir>\_import-<stamp>: saves\<name>\..., settings\<ID>, tmp\...
-    fs::path user_dir;
+    std::string title_hex;          // lower case
+    fs::path stage;                 // <user dir>\_import-<stamp>: saves\<name>\..., settings\<ID>, tmp\...
+    std::vector<fs::path> skip;     // COGBox's own user folders (never a source)
     Result *r = nullptr;
     int tmp_n = 0;
-    uint64_t seen = 0;           // directory entries looked at (a cap against a whole-disk search)
+    uint64_t seen = 0;
+    bool capped = false;
+    std::vector<std::string> taken_settings;
 };
 
+void note_once(Work &w, const std::string &n) {
+    if (std::find(w.r->notes.begin(), w.r->notes.end(), n) == w.r->notes.end()) w.r->notes.push_back(n);
+}
+// A save of this name is staged already (two profiles, or two layouts in one folder): the first one found is kept.
+bool save_taken(Work &w, const std::string &name) {
+    if (!there(w.stage / "saves" / name)) return false;
+    note_once(w, "A second save named " + name + " was found and left out (only the first one is imported).");
+    return true;
+}
+void put_setting(Work &w, uint32_t id, const std::string &data, const std::string &from) {
+    char nm[16];
+    std::snprintf(nm, sizeof(nm), "%08X", id);
+    if (data.size() > setting_max(id)) { note_once(w, std::string("Game progress ") + nm + " in " + from + " is too large - left out."); return; }
+    if (std::find(w.taken_settings.begin(), w.taken_settings.end(), nm) != w.taken_settings.end()) {
+        note_once(w, "Game progress was found in more than one profile; the first one found is imported.");
+        return;
+    }
+    if (write_file(w.stage / "settings" / nm, data)) w.taken_settings.push_back(nm);
+}
 void take_gpd(Work &w, const fs::path &gpd) {
     std::string b;
     std::vector<std::pair<uint32_t, std::string>> set;
-    if (!read_file(gpd, b) || !gpd_title_settings(reinterpret_cast<const uint8_t *>(b.data()), b.size(), set)) {
-        w.r->notes.push_back("The profile file " + name_of(gpd) + " could not be read.");
+    if (!read_file(gpd, b, 64ull << 20) || !gpd_title_settings(reinterpret_cast<const uint8_t *>(b.data()), b.size(), set)) {
+        note_once(w, "The profile file " + name_of(gpd) + " could not be read.");
         return;
     }
-    for (const auto &[id, data] : set) {
-        char nm[16];
-        std::snprintf(nm, sizeof(nm), "%08X", id);
-        write_file(w.stage / "settings" / nm, data);
-    }
+    for (const auto &[id, data] : set) put_setting(w, id, data, name_of(gpd));
 }
-void scan(Work &w, const fs::path &p, int depth);
-
 void take_package(Work &w, const fs::path &file) {
     x360fs::PackageInfo info;
     std::string err;
@@ -95,19 +156,20 @@ void take_package(Work &w, const fs::path &file) {
     const bool profile = info.content_type == 0x00010000u;  // a profile: its <TITLE>.gpd is what we want
     if (!save && !profile) return;
     if (save) {
+        if (save_taken(w, name_of(file))) return;
         const fs::path out = w.stage / "saves" / file.filename();
         if (x360fs::extract_stfs(file, out, nullptr, nullptr, err, true) && has_files(out)) {
             ++w.r->packages;
         } else {
             std::error_code ec;
             fs::remove_all(out, ec);  // (our own work folder)
-            w.r->notes.push_back("The save package " + name_of(file) + " could not be unpacked: " + err);
+            note_once(w, "The save package " + name_of(file) + " could not be unpacked: " + err);
         }
         return;
     }
     const fs::path out = w.stage / "tmp" / std::to_string(w.tmp_n++);
     if (!x360fs::extract_stfs(file, out, nullptr, nullptr, err, true)) {
-        w.r->notes.push_back("The profile package " + name_of(file) + " could not be unpacked: " + err);
+        note_once(w, "The profile package " + name_of(file) + " could not be unpacked: " + err);
         return;
     }
     std::error_code ec;
@@ -119,73 +181,64 @@ void take_package(Work &w, const fs::path &file) {
 }
 // <TITLE>: its 00000001 folder's save folders (Xenia, COGBox) and its profile\<user>\<setting id> files.
 void take_title_dir(Work &w, const fs::path &dir) {
-    std::error_code ec;
-    for (const auto &e : fs::directory_iterator(dir / "00000001", ec)) {
-        if (!e.is_directory(ec) || !has_files(e.path())) continue;
-        copy_tree(e.path(), w.stage / "saves" / e.path().filename());
-    }
-    for (const auto &u : fs::directory_iterator(dir / "profile", ec)) {
-        if (!u.is_directory(ec)) continue;
-        for (const auto &f : fs::directory_iterator(u.path(), ec)) {
-            const std::string n = name_of(f.path());
-            if (!f.is_regular_file(ec) || !is_hex(n, 8) || !is_title_setting(uint32_t(std::stoul(n, nullptr, 16)))) continue;
-            std::string b;
-            if (read_file(f.path(), b, 1 << 20)) {
-                std::string up = n;
-                for (char &c : up) c = char(std::toupper(static_cast<unsigned char>(c)));
-                write_file(w.stage / "settings" / up, b);
-            }
+    each_entry(dir / "00000001", [&](const fs::directory_entry &e) {
+        if (!is_folder(e.path()) || !has_files(e.path())) return;
+        const std::string n = name_of(e.path());
+        if (save_taken(w, n)) return;
+        const fs::path to = w.stage / "saves" / n;
+        if (!copy_tree(e.path(), to)) {
+            std::error_code ec;
+            fs::remove_all(to, ec);  // (our own work folder)
+            note_once(w, "The save " + n + " could not be read completely - left out.");
         }
-    }
+    });
+    each_entry(dir / "profile", [&](const fs::directory_entry &u) {
+        if (!is_folder(u.path())) return;
+        each_entry(u.path(), [&](const fs::directory_entry &f) {
+            const std::string n = name_of(f.path());
+            if (!is_plain_file(f.path()) || !is_hex(n, 8)) return;
+            const uint32_t id = uint32_t(std::stoul(n, nullptr, 16));
+            std::string b;
+            if (is_title_setting(id) && read_file(f.path(), b, 1 << 20)) put_setting(w, id, b, n);
+        });
+    });
 }
-void scan(Work &w, const fs::path &p, int depth) {
-    std::error_code ec;
-    if (++w.seen > 200000) return;
-    if (fs::is_regular_file(p, ec)) {
+void scan(Work &w, const fs::path &p, int depth, bool chosen) {
+    if (++w.seen > kMaxEntries) { w.capped = true; return; }
+    for (const fs::path &s : w.skip) if (within(p, s)) return;  // COGBox's own saves are never a source
+    if (is_plain_file(p)) {
+        // Packages are only looked into where the console keeps them (00000001 saves, 00010000 profiles) or when the
+        // player chose the file itself - an installed game or DLC folder is not opened file by file.
+        const std::string parent = upper(name_of(p.parent_path()));
         if (lower(name_of(p)) == w.title_hex + ".gpd") take_gpd(w, p);
-        else if (package_magic(p)) take_package(w, p);
+        else if ((chosen || parent == "00000001" || parent == "00010000") && package_magic(p)) take_package(w, p);
         return;
     }
-    if (!fs::is_directory(p, ec)) return;
+    if (!is_folder(p)) return;
     if (lower(name_of(p)) == w.title_hex) take_title_dir(w, p);
     if (depth >= 8) return;
-    for (const auto &e : fs::directory_iterator(p, fs::directory_options::skip_permission_denied, ec)) {
+    each_entry(p, [&](const fs::directory_entry &e) {
         const std::string n = name_of(e.path());
-        if (!n.empty() && n[0] == '_' && (n.rfind("_import-", 0) == 0 || n.rfind("_saves-before-import-", 0) == 0)) continue;
-        scan(w, e.path(), depth + 1);
-    }
+        if (n.rfind("_import-", 0) == 0 || n.rfind("_saves-before-import-", 0) == 0) return;
+        scan(w, e.path(), depth + 1, false);
+    });
 }
-// The profile folder the game's saves go under: the one that already holds this game's, else any, else the default.
-std::string xuid_dir(const fs::path &user_dir, const std::string &title_hex) {
+
+struct Moved { fs::path from, to; };  // done moves, to undo
+bool move(const fs::path &from, const fs::path &to, std::vector<Moved> &done) {
     std::error_code ec;
-    std::string any;
-    for (const auto &e : fs::directory_iterator(user_dir, ec)) {
-        const std::string n = name_of(e.path());
-        if (!e.is_directory(ec) || !is_hex(n, 16) || n == "0000000000000000") continue;
-        for (const auto &t : fs::directory_iterator(e.path(), ec))
-            if (lower(name_of(t.path())) == title_hex) return n;
-        if (any.empty()) any = n;
-    }
-    return any.empty() ? "B13EBABEBABEBABE" : any;  // the SDK's (and Xenia's) default profile
-}
-// Moves `from` to `to`; what is at `to` goes to the backup folder first (never deleted).
-bool put(const fs::path &from, const fs::path &to, const fs::path &backup, bool &backed_up) {
-    std::error_code ec;
-    if (fs::exists(to, ec)) {
-        fs::create_directories(backup.parent_path(), ec);
-        fs::rename(to, backup, ec);
-        if (ec) return false;
-        backed_up = true;
-    }
     fs::create_directories(to.parent_path(), ec);
     fs::rename(from, to, ec);
-    if (ec) {  // (another drive is not possible - the work folder is inside the user folder - but be sure)
-        ec.clear();
-        if (fs::is_directory(from, ec)) return copy_tree(from, to);
-        fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
-        return !ec;
-    }
+    if (ec) return false;
+    done.push_back({from, to});
     return true;
+}
+void undo(std::vector<Moved> &done) {
+    for (auto it = done.rbegin(); it != done.rend(); ++it) {
+        std::error_code ec;
+        fs::rename(it->to, it->from, ec);
+    }
+    done.clear();
 }
 
 }  // namespace
@@ -201,7 +254,7 @@ bool gpd_title_settings(const uint8_t *d, size_t n, std::vector<std::pair<uint32
         const uint8_t *e = d + 24 + i * 18;
         const uint32_t ns = uint32_t(e[0]) << 8 | e[1];
         const uint64_t id = be64(e + 2), off = be32(e + 10), len = be32(e + 14);
-        if (ns != 3 || !is_title_setting(uint32_t(id)) || (id >> 32) || base + off + len > n || len < 0x18) continue;
+        if (ns != 3 || (id >> 32) || !is_title_setting(uint32_t(id)) || base + off + len > n || len < 0x18) continue;
         // A setting: id u32, 4 bytes, type u8 (6 = binary), 7 bytes, then for binary: size u32, 4 bytes, the data.
         const uint8_t *s = d + base + off;
         if (be32(s) != uint32_t(id) || s[8] != 6) continue;
@@ -212,64 +265,75 @@ bool gpd_title_settings(const uint8_t *d, size_t n, std::vector<std::pair<uint32
     return true;
 }
 
-bool import(const fs::path &source, uint32_t title_id, const fs::path &user_dir, const std::string &stamp, Result &r) {
+bool import(const fs::path &source, uint32_t title_id, const fs::path &user_dir, const std::string &stamp, Result &r,
+            const std::vector<fs::path> &own_dirs) {
     std::error_code ec;
     r = Result{};
-    if (!fs::exists(source, ec)) { r.error = "That file or folder does not exist."; return false; }
+    if (!there(source)) { r.error = "That file or folder does not exist."; return false; }
     Work w;
     w.title = title_id;
     char hex[16];
     std::snprintf(hex, sizeof(hex), "%08x", title_id);
     w.title_hex = hex;
-    w.user_dir = user_dir;
     w.r = &r;
+    w.skip = own_dirs;
+    w.skip.push_back(user_dir);
+    for (const fs::path &s : w.skip) {
+        if (within(source, s)) {
+            r.error = "That is inside COGBox's own saves folder - choose the Xenia or Xbox 360 folder to import from.";
+            return false;
+        }
+    }
     w.stage = user_dir / ("_import-" + stamp);
     fs::create_directories(w.stage, ec);
     if (ec) { r.error = "The game's saves folder could not be written to."; return false; }
-    const fs::path src_abs = fs::weakly_canonical(source, ec), user_abs = fs::weakly_canonical(user_dir, ec);
-    if (src_abs == user_abs) {
-        fs::remove_all(w.stage, ec);
-        r.error = "That is this game's own COGBox saves folder - choose the Xenia or Xbox 360 folder to import from.";
-        return false;
-    }
-    scan(w, source, 0);
+    scan(w, source, 0, true);
+    if (w.capped) note_once(w, "The search stopped after " + std::to_string(kMaxEntries) + " files and folders - choose the content folder itself, not a whole drive.");
     std::vector<fs::path> saves, settings;
-    for (const auto &e : fs::directory_iterator(w.stage / "saves", ec)) if (e.is_directory(ec) && has_files(e.path())) saves.push_back(e.path());
-    ec.clear();
-    for (const auto &e : fs::directory_iterator(w.stage / "settings", ec)) if (e.is_regular_file(ec)) settings.push_back(e.path());
+    each_entry(w.stage / "saves", [&](const fs::directory_entry &e) { if (is_folder(e.path()) && has_files(e.path())) saves.push_back(e.path()); });
+    each_entry(w.stage / "settings", [&](const fs::directory_entry &e) { if (is_plain_file(e.path())) settings.push_back(e.path()); });
     if (saves.empty() && settings.empty()) {
         fs::remove_all(w.stage, ec);  // (our own work folder)
-        r.error = r.notes.empty() ? "No saves of this game were found there." : "No saves of this game could be read there.";
+        r.error = r.notes.empty() ? "No saves of this game were found there (a regional release keeps its saves under its own title ID, which COGBox doesn't import yet)."
+                                  : "No saves of this game could be read there.";
         return false;
     }
-    std::string up = w.title_hex;
-    for (char &c : up) c = char(std::toupper(static_cast<unsigned char>(c)));
-    const fs::path backup = user_dir / ("_saves-before-import-" + stamp);
-    const fs::path save_root = user_dir / xuid_dir(user_dir, w.title_hex) / up / "00000001";
+    const std::string up = upper(w.title_hex);
+    fs::path backup = user_dir / ("_saves-before-import-" + stamp);
+    for (int n = 2; there(backup); ++n) backup = user_dir / ("_saves-before-import-" + stamp + "-" + std::to_string(n));
+    const fs::path title_root = user_dir / kProfileXuid / up;
+    const fs::path save_root = title_root / "00000001";
+    const fs::path header_root = title_root / "Headers" / "00000001";
     const fs::path set_root = user_dir / up / "profile" / "User";
-    bool backed_up = false, ok = true;
+    std::vector<Moved> done;
+    bool ok = true;
     for (const fs::path &s : saves) {
-        // The game's header file for a save of this name describes the old one: it goes to the backup with it.
-        const fs::path header = save_root.parent_path() / "Headers" / "00000001" / (name_of(s) + ".header");
-        if (fs::exists(header, ec)) {
-            fs::create_directories(backup / "Headers", ec);
-            fs::rename(header, backup / "Headers" / header.filename(), ec);
-            backed_up = true;
-        }
-        if (put(s, save_root / s.filename(), backup / "00000001" / s.filename(), backed_up)) {
-            ++r.saves;
-            r.names.push_back(name_of(s));
-        } else {
-            ok = false;
-        }
+        const std::string n = name_of(s);
+        const fs::path dest = save_root / n, header = header_root / (n + ".header");
+        // the old save and its header go to the backup (the header describes the old one), then the new save goes in
+        if (there(dest) && !move(dest, backup / "00000001" / n, done)) { ok = false; break; }
+        if (there(header) && !move(header, backup / "Headers" / (n + ".header"), done)) { ok = false; break; }
+        if (!move(s, dest, done)) { ok = false; break; }
+        r.names.push_back(n);
     }
-    for (const fs::path &s : settings) {
-        if (put(s, set_root / s.filename(), backup / "profile" / s.filename(), backed_up)) ++r.settings;
-        else ok = false;
+    for (size_t i = 0; ok && i < settings.size(); ++i) {
+        const fs::path &s = settings[i];
+        const fs::path dest = set_root / s.filename();
+        if (there(dest) && !move(dest, backup / "profile" / s.filename(), done)) { ok = false; break; }
+        if (!move(s, dest, done)) { ok = false; break; }
+        ++r.settings;
     }
-    if (backed_up) r.backup_dir = backup;
-    fs::remove_all(w.stage, ec);  // (our own work folder; everything in it was moved out or is a temporary copy)
-    if (!ok) { r.error = "Some files could not be put in place - is the game running?"; return false; }
+    if (!ok) {
+        undo(done);  // everything back where it was
+        fs::remove_all(w.stage, ec);
+        r.names.clear();
+        r.settings = 0;
+        r.error = "The saves could not be put in place (is the game or another program using them?). Nothing was changed.";
+        return false;
+    }
+    r.saves = int(r.names.size());
+    if (there(backup)) r.backup_dir = backup;
+    fs::remove_all(w.stage, ec);  // (our own work folder: what is left are temporary copies)
     return true;
 }
 

@@ -32,10 +32,12 @@ struct Result {
 
 // source: a folder to search (at most 8 levels deep), or one file (a save package, a profile package, a <TITLE>.gpd).
 // title_id: the game's. user_dir: the game's COGBox user folder (game_user_dir). stamp: for the backup / work folder
-// names (yyyymmdd-hhmmss). False (r.error says why) when nothing of this game was found or a write failed; then
-// the user folder is as it was.
+// names (yyyymmdd-hhmmss). False (r.error says why) when nothing of this game was found or a move failed; then
+// the user folder is as it was (moves are undone).
+// own_dirs: COGBox's other user folders of this game (other launcher profiles) - never searched as a source.
+// Saves go under the SDK's one profile (B13EBABEBABEBABE), whatever profile they came from.
 bool import(const std::filesystem::path &source, uint32_t title_id, const std::filesystem::path &user_dir,
-            const std::string &stamp, Result &r);
+            const std::string &stamp, Result &r, const std::vector<std::filesystem::path> &own_dirs = {});
 
 // The title-specific settings (id, bytes) of a GPD file's bytes. False if it is not an XDBF file.
 bool gpd_title_settings(const uint8_t *d, size_t n, std::vector<std::pair<uint32_t, std::string>> &out);

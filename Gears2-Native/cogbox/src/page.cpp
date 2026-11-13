@@ -1201,15 +1201,23 @@ static void about_tab(App &a, int g)
     ImGui::SameLine();
     // 0.6.2 (Shagg 13 Nov): the player's own saves from Xenia or an Xbox 360 (save_import.cpp).
     if (small_button("Import saves...")) {
-        if (running) set_message(a, std::string(d.name) + " is running - close it first.", true);
+        if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
         else {
-            const std::string from = pick_folder(L"Choose your Xenia content folder, or the Content folder copied from your Xbox 360");
+            const std::string from = pick_folder(L"Choose your Xenia content folder, or the Content folder copied from your Xbox 360 (not a whole drive)");
             if (!from.empty()) {
                 save_import::Result r;
                 make_dirs(game_user_dir(g));
-                if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r)) {
-                    std::string m = std::string(d.name) + ": imported " + std::to_string(r.saves) + (r.saves == 1 ? " save" : " saves");
-                    if (r.settings) m += " and the profile's game progress";
+                std::vector<std::filesystem::path> own;   // every launcher profile's saves folder of this game (user, user-pN)
+                {
+                    std::error_code ec;
+                    for (std::filesystem::directory_iterator it(std::filesystem::u8path(game_root(g)), ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
+                        if (it->is_directory(ec) && it->path().filename().string().rfind("user", 0) == 0) own.push_back(it->path());
+                }
+                if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r, own)) {
+                    std::string m = std::string(d.name) + ": imported ";
+                    if (r.saves) m += std::to_string(r.saves) + (r.saves == 1 ? " save" : " saves");
+                    if (r.saves && r.settings) m += " and ";
+                    if (r.settings) m += "the profile's game progress";
                     m += ".";
                     if (!r.backup_dir.empty()) m += " What they replaced is kept in the saves folder, in " + r.backup_dir.filename().string() + ".";
                     for (const std::string &n : r.notes) m += " " + n;

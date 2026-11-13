@@ -90,7 +90,8 @@ profile with their own saves; players 2-4 can be signed out from their cards.
 
 **Saves from Xenia or an Xbox 360:** on a game's About tab, **Import saves...** brings in your own saves of that game
 from Xenia (choose its `content` folder) or from an Xbox 360 (the `Content` folder copied from the console's USB stick
-or hard drive). Saves it would replace are moved to a `_saves-before-import-...` folder next to them, never deleted.
+or hard drive). Whatever it replaces - saves and saved game progress - is moved to a `_saves-before-import-...`
+folder in the game's saves folder (the **Saves** button opens it), never deleted.
 
 **Box art:** press **UPDATE ART** to download HD box art and backgrounds.
 
