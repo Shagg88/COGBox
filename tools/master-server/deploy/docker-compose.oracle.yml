@@ -20,6 +20,8 @@ services:
       - PORT=18443
       - HOST=127.0.0.1
       - DB_PATH=/data/master.db
+      # the games' lobby search needs a signed-in player: a release decision, once most players are past 0.6.0
+      - LOBBY_SEARCH_REQUIRES_SIGN_IN=false
     volumes:
       - master-data:/data
   coturn:

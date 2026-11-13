@@ -77,7 +77,8 @@ function toLobby(row: any) {
   };
 }
 
-export const lobbyRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onHostChange?: (uuid: string) => void; inContact?: (a: string, b: string) => boolean }> =
+export const lobbyRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onHostChange?: (uuid: string) => void; inContact?: (a: string, b: string) => boolean;
+                                             searchRequiresSignIn?: boolean }> =
   async (fastify, opts) => {
   const { db } = opts;
   const hostChanged = (uuid: string) => opts.onHostChange?.(uuid);
@@ -88,6 +89,9 @@ export const lobbyRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onHostChang
 
   // Public lobbies of a title (and region).
   fastify.get<{ Querystring: LobbyQuery }>('/', async (request, reply) => {
+    if (opts.searchRequiresSignIn && !checkAuthHeader(db, request.headers.authorization)) {
+      return reply.status(401).send({ error: 'Authorization: COGBox <uuid>:<token> required' });
+    }
     const { title_id } = request.query;
     const region = normalizeRegion(request.query.region);
     // Players searching ask every few seconds: one answer per second and per search is enough.
@@ -106,7 +110,9 @@ export const lobbyRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onHostChang
     }
     query += ' ORDER BY lobbies.updated_at DESC LIMIT 50';
     const rows = db.prepare(query).all(...params) as any[];
-    const body = JSON.stringify({ lobbies: rows.map(toLobby) });
+    // no room code here: a search never needs it (a found lobby is joined by its session info), and it would let
+    // anyone list every public lobby's join code. The lookup by code (below) still answers with it.
+    const body = JSON.stringify({ lobbies: rows.map((r) => { const { room_code: _, ...l } = toLobby(r); return l; }) });
     if (searches.size >= 1000) searches.clear();
     searches.set(key, { until: Date.now() + 1000, body });
     return reply.type('application/json').send(body);
