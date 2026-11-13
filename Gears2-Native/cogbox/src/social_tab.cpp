@@ -69,7 +69,7 @@ struct LineButton {
     const char *tip = nullptr;
 };
 int line_row(App &a, const std::string &tag, const std::string &state, ImVec4 state_col, int lamp, const std::string &icon, float x1,
-             const std::vector<LineButton> &buttons)
+             const std::vector<LineButton> &buttons, bool fit_name = false)
 {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -78,10 +78,13 @@ int line_row(App &a, const std::string &tag, const std::string &state, ImVec4 st
     const bool hot = ImGui::IsMouseHoveringRect(p, q);
     dl->AddRectFilled(p, q, U(ImVec4(1, 1, 1, hot ? 0.07f : 0.035f)));
     const ImVec2 c(p.x + S(6) + r, p.y + h * 0.5f);
-    avatar(a, dl, c, r, icon, tag, lamp);
+    if (!fit_name) avatar(a, dl, c, r, icon, tag, lamp);   // a match has no picture: the text's colour says its state
     float bw_all = 0;
     for (const LineButton &b : buttons) bw_all += std::max(T(54), text_w(F_SMALL, FS(F_SMALL), tr(b.label)) + S(18)) + S(6);
-    const float tx = c.x + r + S(10), name_w = std::min(S(170), (x1 - S(6) - bw_all - tx) * 0.45f);
+    // fit_name (open matches): the name column is as wide as the name, so the details get the rest of the row
+    const float tx = fit_name ? p.x + S(10) : c.x + r + S(10),
+                name_w = fit_name ? std::min(text_w(F_BOLD, FS(F_SMALL), tag) + S(4), (x1 - S(6) - bw_all - tx) * 0.45f)
+                                  : std::min(S(170), (x1 - S(6) - bw_all - tx) * 0.45f);
     const float ty = p.y + (h - FS(F_SMALL)) * 0.5f - S(1);
     dl->PushClipRect(ImVec2(tx, p.y), ImVec2(tx + name_w, q.y), true);
     dl->AddText(F_BOLD, FS(F_SMALL), ImVec2(tx, ty), U(col::text), tag.c_str());
@@ -392,7 +395,7 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
                                    { { "JOIN", can, true, m.full() ? "This match is full." :
                                                           !ready ? "Set up this game in COGBox to join." :
                                                           m.in_progress ? "Join the match in progress: you take a bot's place." :
-                                                                          "Join this match's lobby." } });
+                                                                          "Join this match's lobby." } }, true);
             if (b == 0) social_do(SocialAction::JoinMatch, m.lobby_id);
             ImGui::PopID();
         }
