@@ -79,6 +79,8 @@ https://recomplauncher.com/game/cogbox
 - **Smoother online and System Link matches in Gears 2, 3 and Judgment:** the games' 2008 Xbox Live network limits (7000 bytes a second per player, 45 updates a second from the host) are raised to 100,000 bytes a second and 60 updates. In testing, the old limit held the game back for about 40% of a round. A full lobby's host may now upload up to about 7 Mbit/s in the busiest moments.
 - **Open matches** (an idea from Shagg): the Social tab and the in-game Social menu list the public matches in Gears 2, Gears 3 and Judgment that have real players in them, such as "KOTH · 6/10 · Gears 3 · US · In progress", with a **Join** button. Join in progress puts you in a bot's place. Only matches are listed, never parties, and no names are shown. Gears 1 isn't included (it has no join in progress).
 - **Online privacy:** the games' lobby search no longer shows join codes, and a hosted lobby no longer carries your PC's local network address. The search now signs in, so the server can require it later (see PRIVACY.md).
+- **Matchmaking finds the mode you picked:** searching one playlist (for example Social Guardian) could put you into another mode's lobby (Horde). Searches now only return lobbies of the playlist you chose.
+- **Gears 2 hosting after a quit:** COGBox's 30-minute lift of the game's quit penalty (with its popup) never ran in Gears 2, so a player with a quit could not host versus at all. It works now.
 
 ### Fixes
 - **Gears 3:** a crash with a "disc read error" when a level or a Horde match starts should be gone (the game was told that parts of the disc had failed a check that has no meaning here). GitHub #271.
