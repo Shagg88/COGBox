@@ -20,6 +20,7 @@
 - **Online privacy:** the games' lobby search no longer shows join codes, and a hosted lobby no longer carries your PC's local network address. The search now signs in, so the server can require it later (see PRIVACY.md).
 
 ### Fixes
+- **Gears 3:** a crash with a "disc read error" when a level or a Horde match starts should be gone (the game was told that parts of the disc had failed a check that has no meaning here). GitHub #271.
 - Mods added from a `.zip` unpack into the mod's own folder.
 - The updater refuses oversized downloads and duplicate files in an update.
 - Safer handling when the graphics device is lost while the game waits for it.

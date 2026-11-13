@@ -1,0 +1,23 @@
+diff --git a/src/kernel/xam/xam_misc.cpp b/src/kernel/xam/xam_misc.cpp
+index 4e3daf7..a1e2179 100644
+--- a/src/kernel/xam/xam_misc.cpp
++++ b/src/kernel/xam/xam_misc.cpp
+@@ -567,7 +567,17 @@ REX_EXPORT_STUB(__imp__XamMarkInternalAccountTrustedOnConsole);
+ REX_EXPORT_STUB(__imp__XamMarketplaceAcquireFreeContent);
+ REX_EXPORT_STUB(__imp__XamMediaVerificationClose);
+ REX_EXPORT_STUB(__imp__XamMediaVerificationCreate);
+-REX_EXPORT_STUB(__imp__XamMediaVerificationFailedBlocks);
++// COGBox patch 90 (0.6.1; GitHub #271, GitLab 5): the number of disc blocks that failed verification. As a plain stub
++// it left r3 as it came in (the caller's first argument), so the game read an arbitrary count. Gears 3 polls it twice
++// a second on its menu and again as a level starts; in #271's log the call at the level start is followed 144 ms later
++// by XamShowDirtyDiscErrorUI and the game stopping, with every game file read without an error. There is no disc, so
++// nothing ever fails: 0. No log line (it was a STUB warning every 0.5 s).
++extern "C" REX_FUNC(__imp__XamMediaVerificationFailedBlocks) {
++  (void)base;
++  ctx.r3.u64 = 0;
++}
++static rex::ppc::detail::PPCFuncRegistrar _ppc_reg___imp__XamMediaVerificationFailedBlocks(
++    "__imp__XamMediaVerificationFailedBlocks", &__imp__XamMediaVerificationFailedBlocks);
+ REX_EXPORT_STUB(__imp__XamMediaVerificationInject);
+ // SDK patch 67 (GitHub #215): Gears 3 calls this twice a second only while its main menu is up (the menu stays
+ // resident after a level, so no file open says so). Counted here so the game can tell it is on the menu; no log line
