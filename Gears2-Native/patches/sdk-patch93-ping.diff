@@ -6,12 +6,12 @@ index 750366a..3f2af0d 100644
    // open matches list shows it "In progress" (join in progress puts a joiner in a bot's place).
    void OnStarted(uint32_t handle, uint64_t nonce, bool started);
    void SetRetryDelayForTest(std::chrono::milliseconds d) { retry_delay_ = d; }
-+  // COGBox SDK patch 90 (the FPS bar's ping): the host of the newest session we joined (from its XNADDR's online
++  // COGBox SDK patch 93 (the FPS bar's ping): the host of the newest session we joined (from its XNADDR's online
 +  // marker), and whether we host one.
 +  std::optional<uint64_t> JoinedHostXuid() const;
 +  bool Hosting() const;
-+  std::vector<uint64_t> HostedMembers() const;      // patch 90: remote players in the sessions we host (no duplicates)
-+  std::optional<uint64_t> TargetHostXuid() const;   // patch 90: the host of the lobby the game last looked up to join
++  std::vector<uint64_t> HostedMembers() const;      // patch 93: remote players in the sessions we host (no duplicates)
++  std::optional<uint64_t> TargetHostXuid() const;   // patch 93: the host of the lobby the game last looked up to join
    // The game put a TCP socket bound to `port` (before any bind offset) into listen. UE3 titles (Gears 2 / 3 /
    // Judgment) take joins on a party beacon at TCP 8700, which they open well after creating the session (26 s in a
    // traced Gears 2 run); a lobby listed before that sends guests to a closed port and they give up. So once a title
@@ -20,7 +20,7 @@ index 750366a..3f2af0d 100644
    RunFn run_;
    mutable std::mutex mutex_;
 +  std::vector<std::pair<uint64_t, uint64_t>> joined_;
-+  std::optional<uint64_t> target_host_;   // patch 90   // patch 90: (nonce, host XUID), newest last
++  std::optional<uint64_t> target_host_;   // patch 93   // patch 93: (nonce, host XUID), newest last
    std::mutex send_mutex_;   // patch 84: one in-progress PATCH at a time
    std::chrono::milliseconds retry_delay_{2000};
    std::map<uint32_t, uint32_t> contexts_;
@@ -32,7 +32,7 @@ index 2d0e1b0..98d7059 100644
  class OnlineSessions;
  OnlineSessions* ActiveOnlineSessions();
  uint64_t NewSessionToken();  // random, non-zero
-+// COGBox SDK patch 90: what the FPS bar's ping shows. ToHost: the round trip to the host of the session we joined;
++// COGBox SDK patch 93: what the FPS bar's ping shows. ToHost: the round trip to the host of the session we joined;
 +// Hosting: we host, ms is the worst round trip among our connected players (players of them measured). ms -1: not
 +// measured yet. None: not online, or in no session.
 +struct PingView {
@@ -52,7 +52,7 @@ index 2022796..11b0ed2 100644
    static constexpr auto kProbeInterval = std::chrono::milliseconds(100);
    static constexpr auto kPunchTimeout = std::chrono::seconds(10);
    static constexpr auto kKeepaliveInterval = std::chrono::seconds(15);
-+  static constexpr auto kPingInterval = std::chrono::seconds(2);   // patch 90: the FPS bar's ping
++  static constexpr auto kPingInterval = std::chrono::seconds(2);   // patch 93: the FPS bar's ping
    static constexpr auto kPeerSilent = std::chrono::seconds(40);  // more than two keepalives missed
    static constexpr auto kQueueMaxAge = std::chrono::seconds(5);
    static constexpr size_t kQueueMaxPackets = 1024;
@@ -60,11 +60,11 @@ index 2022796..11b0ed2 100644
    // place comes from a socket the peer has not announced yet and must not reach the game with its raw address.
    bool IsPeerAddress(const sockaddr_in& from) const;  // selected paths, by peer port
    PeerState State(uint32_t vip) const;
-+  // COGBox SDK patch 90: the smoothed round trip to a peer in ms (by XUID), nullopt until one was measured; and that of
++  // COGBox SDK patch 93: the smoothed round trip to a peer in ms (by XUID), nullopt until one was measured; and that of
 +  // every connected peer that has one (the host's FPS bar shows the worst).
 +  std::optional<int> PingMs(uint64_t peer_xuid) const;
 +  std::vector<int> ConnectedPings() const;
-+  // patch 90: a game packet came from this peer in the last 5 s (punches, acks and keepalives do not count)
++  // patch 93: a game packet came from this peer in the last 5 s (punches, acks and keepalives do not count)
 +  bool RecentGameTraffic(uint64_t peer_xuid, Clock::time_point now) const;
  
    // The data path. OnPacket returns true when the packet was COGBox's own (STUN, punch) and must not reach the game.
@@ -73,8 +73,8 @@ index 2022796..11b0ed2 100644
      Clock::time_point last_heard{};
      uint32_t seq = 0;
      std::deque<Queued> queue;
-+    Clock::time_point last_ping{};                   // patch 90
-+    Clock::time_point last_game{};                   // patch 90: the last game packet from the peer (Relabel)
++    Clock::time_point last_ping{};                   // patch 93
++    Clock::time_point last_game{};                   // patch 93: the last game packet from the peer (Relabel)
 +    std::map<uint32_t, Clock::time_point> pings;     // our timed punches by sequence number, until acked (10 s at most)
 +    std::optional<double> rtt_ms;                    // smoothed
    };
@@ -88,7 +88,7 @@ index a18cd9b..510debf 100644
                 flags, public_slots, private_slots, session_info[0], session_info[1], session_info[2], session_info[3],
                 session_info[4], session_info[5], session_info[6], session_info[7]);
    if (!(flags & kXSessionCreateHost)) {
-+    uint64_t host = 0, token = 0;   // patch 90: whose session this is (the FPS bar's ping)
++    uint64_t host = 0, token = 0;   // patch 93: whose session this is (the FPS bar's ping)
 +    if (ReadOnlineMarker(session_info.data() + 8 + kXnAddrOnlineOffset, &host, &token) && host) {
 +      std::lock_guard<std::mutex> lock(mutex_);
 +      joined_.emplace_back(nonce, host);
@@ -102,7 +102,7 @@ index a18cd9b..510debf 100644
        return;
      }
 +    joined_.erase(std::remove_if(joined_.begin(), joined_.end(), [&](const auto& j) { return j.first == nonce; }),
-+                  joined_.end());   // patch 90
++                  joined_.end());   // patch 93
      if (friends_party_ && *friends_party_ == nonce) {
        friends_party_.reset();
      }
@@ -110,15 +110,15 @@ index a18cd9b..510debf 100644
    std::copy_n(lobby.session_info.begin(), 8, kid.begin());
    std::lock_guard<std::mutex> lock(mutex_);
    searched_qos_[kid] = lobby.qos_data;
-+  if (lobby.host_xuid) target_host_ = lobby.host_xuid;   // patch 90: the host this game is joining
++  if (lobby.host_xuid) target_host_ = lobby.host_xuid;   // patch 93: the host this game is joining
 +}
 +
-+std::optional<uint64_t> OnlineSessions::TargetHostXuid() const {   // patch 90
++std::optional<uint64_t> OnlineSessions::TargetHostXuid() const {   // patch 93
 +  std::lock_guard<std::mutex> lock(mutex_);
 +  return target_host_;
 +}
 +
-+std::vector<uint64_t> OnlineSessions::HostedMembers() const {   // patch 90
++std::vector<uint64_t> OnlineSessions::HostedMembers() const {   // patch 93
 +  std::lock_guard<std::mutex> lock(mutex_);
 +  std::set<uint64_t> all;
 +  for (const auto& [nonce, h] : hosted_) all.insert(h.members.begin(), h.members.end());
@@ -131,13 +131,13 @@ index a18cd9b..510debf 100644
  }
  
 +
-+std::optional<uint64_t> OnlineSessions::JoinedHostXuid() const {   // patch 90
++std::optional<uint64_t> OnlineSessions::JoinedHostXuid() const {   // patch 93
 +  std::lock_guard<std::mutex> lock(mutex_);
 +  if (joined_.empty()) return std::nullopt;
 +  return joined_.back().second;
 +}
 +
-+bool OnlineSessions::Hosting() const {   // patch 90
++bool OnlineSessions::Hosting() const {   // patch 93
 +  std::lock_guard<std::mutex> lock(mutex_);
 +  return !hosted_.empty();
 +}
@@ -163,7 +163,7 @@ index 746a07b..0d0f9b2 100644
  };
  }  // namespace
  
-+PingView CurrentPing() {   // patch 90
++PingView CurrentPing() {   // patch 93
 +  PingView v;
 +  OnlineSessions* s = ActiveOnlineSessions();
 +  if (!s) return v;
@@ -203,7 +203,7 @@ index 59b25d6..16bbdb0 100644
      if (relay != relay_endpoints_.end()) {
        auto peer = peers_.find(relay->second.first);
        if (peer != peers_.end() && now > peer->second.last_heard) peer->second.last_heard = now;
-+      if (peer != peers_.end()) peer->second.last_game = now;   // patch 90
++      if (peer != peers_.end()) peer->second.last_game = now;   // patch 93
        return relay->second;  // a relayed datagram: labelled, but the hand-off socket is never a route
      }
      auto it = endpoint_to_peer_.find(EndpointKey(from));
@@ -211,7 +211,7 @@ index 59b25d6..16bbdb0 100644
        label = it->second;
        auto peer = peers_.find(it->second.first);
        if (peer != peers_.end() && now > peer->second.last_heard) peer->second.last_heard = now;
-+      if (peer != peers_.end()) peer->second.last_game = now;   // patch 90
++      if (peer != peers_.end()) peer->second.last_game = now;   // patch 93
        if (native_handle && peer != peers_.end()) {
          PortPath& pp = peer->second.ports[it->second.second];
          // With relay on, a packet in proves only the way in (a router can let the peer's traffic in and still drop
@@ -219,7 +219,7 @@ index 59b25d6..16bbdb0 100644
        auto ack = EncodePunch({PunchType::Ack, punch->token, punch->seq, local_port});
        out.push_back({native_handle, std::vector<uint8_t>(ack.begin(), ack.end()), from});
      }
-+    if (punch->type == PunchType::Ack) {   // patch 90: the answer to one of our timed punches
++    if (punch->type == PunchType::Ack) {   // patch 93: the answer to one of our timed punches
 +      auto timed = p.pings.find(punch->seq);
 +      if (timed != p.pings.end()) {
 +        const double sample = std::chrono::duration<double, std::milli>(now - timed->second).count();
@@ -231,7 +231,7 @@ index 59b25d6..16bbdb0 100644
      if (p.state != PeerState::Connected) {
        p.state = PeerState::Connected;
        p.last_keepalive = now;
-+      p.last_ping = now;   // patch 90: the first timed punch 2 s after connecting
++      p.last_ping = now;   // patch 93: the first timed punch 2 s after connecting
        REXKRNL_INFO("cogbox_online: 10.254.{}.{} connected through {}:{} (game port {})", (vip >> 8) & 0xFF, vip & 0xFF,
                     MaskedIp(ntohl(from.sin_addr.s_addr)), ntohs(from.sin_port), punch->src_port);
      }
@@ -239,7 +239,7 @@ index 59b25d6..16bbdb0 100644
            }
          }
        }
-+      // patch 90: a timed punch on one proven route every 2 s; the ack's arrival gives the round trip
++      // patch 93: a timed punch on one proven route every 2 s; the ack's arrival gives the round trip
 +      if (p.state == PeerState::Connected && now - p.last_ping >= kPingInterval) {
 +        std::optional<std::pair<uint64_t, sockaddr_in>> via;
 +        for (const auto& [peer_port, path] : p.ports) {
@@ -268,7 +268,7 @@ index 59b25d6..16bbdb0 100644
  }
  
 +
-+std::optional<int> VirtualPeerManager::PingMs(uint64_t peer_xuid) const {   // patch 90
++std::optional<int> VirtualPeerManager::PingMs(uint64_t peer_xuid) const {   // patch 93
 +  std::lock_guard<std::mutex> lock(mutex_);
 +  auto v = xuid_to_vip_.find(peer_xuid);
 +  if (v == xuid_to_vip_.end()) return std::nullopt;
@@ -277,7 +277,7 @@ index 59b25d6..16bbdb0 100644
 +  return int(*p->second.rtt_ms + 0.5);
 +}
 +
-+std::vector<int> VirtualPeerManager::ConnectedPings() const {   // patch 90
++std::vector<int> VirtualPeerManager::ConnectedPings() const {   // patch 93
 +  std::lock_guard<std::mutex> lock(mutex_);
 +  std::vector<int> out;
 +  for (const auto& [vip, p] : peers_) {
@@ -286,7 +286,7 @@ index 59b25d6..16bbdb0 100644
 +  return out;
 +}
 +
-+bool VirtualPeerManager::RecentGameTraffic(uint64_t peer_xuid, Clock::time_point now) const {   // patch 90
++bool VirtualPeerManager::RecentGameTraffic(uint64_t peer_xuid, Clock::time_point now) const {   // patch 93
 +  std::lock_guard<std::mutex> lock(mutex_);
 +  auto v = xuid_to_vip_.find(peer_xuid);
 +  if (v == xuid_to_vip_.end()) return false;
@@ -299,12 +299,12 @@ diff --git a/tests/unit/net/online_sessions_test.cpp b/tests/unit/net/online_ses
 index 4917fd2..65c0a4d 100644
 --- a/tests/unit/net/online_sessions_test.cpp
 +++ b/tests/unit/net/online_sessions_test.cpp
-@@ -533,3 +533,43 @@ TEST_CASE("Sessions: patch 91 - a search returns only lobbies of the playlist it
+@@ -533,3 +533,43 @@ TEST_CASE("Sessions: patch 92 - a search returns only lobbies of the playlist it
    CHECK(hosts(f.sessions.Search(kTitle, 99, 5)) == std::vector<uint64_t>{1, 3});
    CHECK(hosts(f.sessions.Search(kTitle, 99)) == std::vector<uint64_t>{1, 2, 3});     // no playlist in the query
  }
 +
-+TEST_CASE("Sessions: patch 90 - a joined session's host comes from its online marker; deleting it forgets it",
++TEST_CASE("Sessions: patch 93 - a joined session's host comes from its online marker; deleting it forgets it",
 +          "[net][sessions]") {
 +  Fixture f;
 +  std::array<uint8_t, 60> info = Info(0x41);
@@ -321,7 +321,7 @@ index 4917fd2..65c0a4d 100644
 +  CHECK(f.sessions.Hosting());
 +}
 +
-+TEST_CASE("Sessions: patch 90 - the players in our hosted sessions are the ones the game joined, not every peer",
++TEST_CASE("Sessions: patch 93 - the players in our hosted sessions are the ones the game joined, not every peer",
 +          "[net][sessions]") {
 +  Fixture f;
 +  f.sessions.OnCreate(kTitle, kHostMatchmaking, 10, 0, Info(0x51), 0xF1, 0x700);
@@ -333,7 +333,7 @@ index 4917fd2..65c0a4d 100644
 +  CHECK(f.sessions.HostedMembers()[0] == 0x0009000000000022ull);
 +}
 +
-+TEST_CASE("Sessions: patch 90 - a lobby the game looked up to join is the host it plays with", "[net][sessions]") {
++TEST_CASE("Sessions: patch 93 - a lobby the game looked up to join is the host it plays with", "[net][sessions]") {
 +  Fixture f;
 +  CHECK_FALSE(f.sessions.TargetHostXuid().has_value());
 +  LobbyInfo l;
@@ -352,9 +352,9 @@ index fc52bf0..eb468db 100644
    CHECK(f.mgr.OnSend(kSockB, vip, kPeerPort, game, 1, f.t0 + 1s).action == SendAction::Relay);
  }
 +
-+// COGBox SDK patch 90: the ping shown in the FPS bar. A punch on a connected path every 2 s; every COGBox answers a
++// COGBox SDK patch 93: the ping shown in the FPS bar. A punch on a connected path every 2 s; every COGBox answers a
 +// punch with an ack carrying the same sequence number, so the time to that ack is the round trip (0.6.0 peers too).
-+TEST_CASE("Peers: patch 90 - a connected peer is pinged every 2 s and its ack gives the round trip", "[net][peers]") {
++TEST_CASE("Peers: patch 93 - a connected peer is pinged every 2 s and its ack gives the round trip", "[net][peers]") {
 +  Fixture f;
 +  f.mgr.RegisterSocket(kSock, kLocalPort);
 +  uint32_t vip = f.mgr.AddPeer(42, kToken);
@@ -389,7 +389,7 @@ index fc52bf0..eb468db 100644
 +  CHECK(all[0] == 70);
 +}
 +
-+TEST_CASE("Peers: patch 90 - an ack for a punch we never timed changes no ping", "[net][peers]") {
++TEST_CASE("Peers: patch 93 - an ack for a punch we never timed changes no ping", "[net][peers]") {
 +  Fixture f;
 +  f.mgr.RegisterSocket(kSock, kLocalPort);
 +  uint32_t vip = f.mgr.AddPeer(42, kToken);
@@ -400,7 +400,7 @@ index fc52bf0..eb468db 100644
 +  CHECK(f.mgr.ConnectedPings().empty());
 +}
 +
-+TEST_CASE("Peers: patch 90 - game traffic from a peer is recent for 5 s; punches and acks do not count",
++TEST_CASE("Peers: patch 93 - game traffic from a peer is recent for 5 s; punches and acks do not count",
 +          "[net][peers]") {
 +  Fixture f;
 +  f.mgr.RegisterSocket(kSock, kLocalPort);

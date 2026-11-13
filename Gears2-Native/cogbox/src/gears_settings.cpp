@@ -1880,7 +1880,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         a.push_back(std::string("--cogbox_ach_sound=") + (s.b("AchievementSound") ? "true" : "false"));
         a.push_back(std::string("--cogbox_ach_hide=") + (s.b("HideAchievementPopups") ? "true" : "false"));
     }
-    if (s.b("ShowPing") && cap_exe(env, "cogbox_show_ping")) a.push_back("--cogbox_show_ping=true");   // SDK patch 90
+    if (s.b("ShowPing") && cap_exe(env, "cogbox_show_ping")) a.push_back("--cogbox_show_ping=true");   // SDK patch 93
     // PS1 929: FPS counter
     switch (s.i("FpsMode")) {
     case 1: a.push_back("--gow2_fps_bar=top"); break;

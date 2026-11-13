@@ -17,7 +17,7 @@ index ccb03b8..fbd19e8 100644
 -  bool WriteOnlineSearchResults(uint32_t max_results, uint32_t results_ptr, uint32_t results_size);
 +  bool WriteOnlineSearchResults(uint32_t max_results, uint32_t results_ptr, uint32_t results_size,
 +                                std::optional<int64_t> playlist = std::nullopt);
-+  std::optional<int64_t> QueryPlaylist(uint32_t num_props, uint32_t props_ptr);   // patch 91
++  std::optional<int64_t> QueryPlaylist(uint32_t num_props, uint32_t props_ptr);   // patch 92
    void TraceSearchQuery(uint32_t proc_index, uint32_t num_props, uint32_t props_ptr, uint32_t num_ctx,
                          uint32_t ctx_ptr);
  };
@@ -29,7 +29,7 @@ index 916c46a..750366a 100644
  // not look inside them, or it releases whatever object those bytes happen to name.
  constexpr bool IsFakeSessionObject(uint32_t object) { return object == 0xDEADF00Du || (object & 0xFFFF0000u) == 0xDEAD0000u; }
  
-+constexpr uint32_t kPlaylistProperty = 0x1000000B;   // patch 91: Gears 2 / 3 / Judgment's playlist id
++constexpr uint32_t kPlaylistProperty = 0x1000000B;   // patch 92: Gears 2 / 3 / Judgment's playlist id
  constexpr uint32_t kXSessionCreateHost = 0x00000001;
  constexpr uint32_t kXSessionCreateUsesStats = 0x00000004;
  constexpr uint32_t kXSessionCreateUsesMatchmaking = 0x00000008;
@@ -38,7 +38,7 @@ index 916c46a..750366a 100644
    // set most of them after the create).
    void OnModify();
 -  std::vector<LobbyInfo> Search(uint32_t title_id, uint64_t own_xuid);
-+  // COGBox SDK patch 91: playlist = the search's own playlist property (kPlaylistProperty); lobbies of another
++  // COGBox SDK patch 92: playlist = the search's own playlist property (kPlaylistProperty); lobbies of another
 +  // playlist are left out, as Xbox Live's matchmaking did (the game joins whatever a search returns).
 +  std::vector<LobbyInfo> Search(uint32_t title_id, uint64_t own_xuid, std::optional<int64_t> playlist = std::nullopt);
    // A lobby the game found another way (XSessionSearchByID for an accepted invite): its QoS block is answered too.
@@ -53,7 +53,7 @@ index d1b2edd..5dfd1db 100644
  }
  
 -bool XgiApp::WriteOnlineSearchResults(uint32_t max_results, uint32_t results_ptr, uint32_t results_size) {
-+// COGBox SDK patch 91: the playlist property of a search's query, if it has one.
++// COGBox SDK patch 92: the playlist property of a search's query, if it has one.
 +std::optional<int64_t> XgiApp::QueryPlaylist(uint32_t num_props, uint32_t props_ptr) {
 +  if (!num_props || num_props > 32 || !memory_->LookupHeap(props_ptr) || !memory_->LookupHeap(props_ptr + num_props * 24 - 1)) {
 +    return std::nullopt;
@@ -111,7 +111,7 @@ index db90885..5012bc4 100644
 -  for (size_t stride = 16; stride <= 32; stride += 4) {
 -    if (count * stride > bytes) break;
 -    for (size_t id_at = 0; id_at + 12 <= stride && id_at <= 8; id_at += 4) {
-+  // COGBox SDK patch 91: UE3's OnlineProfileSetting is 24 bytes with the id at +4 (value at +12), tried first: another
++  // COGBox SDK patch 92: UE3's OnlineProfileSetting is 24 bytes with the id at +4 (value at +12), tried first: another
 +  // table in the same object can hold both ids by chance at a shorter stride (Gears 2: a table of offsets at stride 16,
 +  // read as penalty 0 while the real settings said otherwise).
 +  static const std::pair<size_t, size_t> kLayouts[] = {{24, 4}, {16, 0}, {16, 4}, {20, 0}, {20, 4}, {20, 8}, {24, 0},
@@ -138,7 +138,7 @@ index 3a7b823..a18cd9b 100644
      if (l.host_xuid == own_xuid) {
        continue;
      }
-+    if (playlist) {   // patch 91: another playlist's lobby (a lobby that names none is kept)
++    if (playlist) {   // patch 92: another playlist's lobby (a lobby that names none is kept)
 +      auto p = std::find_if(l.properties.begin(), l.properties.end(),
 +                            [](const IdValue& v) { return v.id == kPlaylistProperty; });
 +      if (p != l.properties.end() && p->value != *playlist) continue;
@@ -155,7 +155,7 @@ index b573a0a..1f66aa7 100644
        for (uint32_t k = 0; k < 64; ++k) {
          uint32_t o = 0, cls = 0, slot = 0;
 -        if (GuestRead32(data + 4 * k, &o) && o && GuestRead32(o + 52, &cls) && GuestRead32(o + 32, &slot) && slot == k &&
-+        // COGBox SDK patch 91: the object's own index is at +32 in Gears 3 / Judgment and at +4 in Gears 2's older UE3
++        // COGBox SDK patch 92: the object's own index is at +32 in Gears 3 / Judgment and at +4 in Gears 2's older UE3
 +        // (name +44, outer +40 and class +52 in all three); Gears 2's table was never found, so its host-ban watch never ran
 +        uint32_t slot2 = 0;
 +        if (GuestRead32(data + 4 * k, &o) && o && GuestRead32(o + 52, &cls) && GuestRead32(o + 32, &slot) &&
@@ -167,7 +167,7 @@ index b573a0a..1f66aa7 100644
          }
        }
      }
-+    {   // COGBox SDK patch 91: once per run, what the watch found (a tester's log shows why a ban was or wasn't seen)
++    {   // COGBox SDK patch 92: once per run, what the watch found (a tester's log shows why a ban was or wasn't seen)
 +      static bool reported = false;
 +      static const auto first = std::chrono::steady_clock::now();
 +      if (!reported && ((penalty && script_ok()) || std::chrono::steady_clock::now() - first > std::chrono::seconds(60))) {
@@ -188,7 +188,7 @@ index 5311308..048e010 100644
    CHECK(HostBanFile(0x4D530A26).empty());
  }
 +
-+TEST_CASE("HostBan: patch 91 - the real 24-byte entries win over ids that line up at a shorter stride", "[net][hostban]") {
++TEST_CASE("HostBan: patch 92 - the real 24-byte entries win over ids that line up at a shorter stride", "[net][hostban]") {
 +  constexpr uint32_t kGears2 = 0x4D53082D;
 +  // real entries: a quit (0x166 = 1) and no demerits (0x165 = 0)
 +  auto v = Settings({{0x10, 7}, {0x166, 1}, {0x20, 9}, {0x165, 0}, {0x30, 5}, {0x40, 6}});
@@ -217,7 +217,7 @@ index f8b9541..4917fd2 100644
    CHECK(std::equal(info.begin() + 24, info.end(), sent.begin() + 24));        // online marker and key kept
  }
 +
-+TEST_CASE("Sessions: patch 91 - a search returns only lobbies of the playlist it asked for", "[net][sessions]") {
++TEST_CASE("Sessions: patch 92 - a search returns only lobbies of the playlist it asked for", "[net][sessions]") {
 +  Fixture f;
 +  auto lobby = [](uint64_t host, std::optional<int64_t> playlist) {
 +    LobbyInfo l;

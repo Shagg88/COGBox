@@ -15,7 +15,7 @@
 #include <rex/ui/windowed_app_context.h>
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
-#include <rex/kernel/xam/net/online_startup.h>   // SDK patch 90: CurrentPing
+#include <rex/kernel/xam/net/online_startup.h>   // SDK patch 93 (Flippage 90): CurrentPing
 
 #include <imgui.h>
 
@@ -44,7 +44,7 @@ REXCVAR_DEFINE_STRING(gow2_fps_bar, "off", "Gears2",
                       "A one-line frame-rate bar drawn over the game, no game patch: off, top or bottom");
 REXCVAR_DEFINE_BOOL(cogbox_show_ping, false, "Network",
                     "Show the ping to the host of the online match or party in the FPS bar (or a bar of its own when "
-                    "the FPS bar is off); as host, the worst ping among your players (SDK patch 90)");
+                    "the FPS bar is off); as host, the worst ping among your players (SDK patch 93)");
 REXCVAR_DEFINE_BOOL(gow2_shader_note, true, "Gears2",
                     "Patch 0062: a small 'Building shaders N%' note in the bottom-left corner while the renderer's "
                     "pipeline workers have had work queued for more than a second (start-up backlog, new areas)");
@@ -106,7 +106,7 @@ class FpsBar final : public rex::ui::ImGuiDialog {
       std::snprintf(text, sizeof(text), "%.0f FPS     %.1f ms     slowest %.1f ms", fps_, 1000.0 / fps_, shown_worst_);
     else
       std::snprintf(text, sizeof(text), "-- FPS");
-    if (show_ping_) {   // SDK patch 90: the round trip to the host; as host, the worst among the players
+    if (show_ping_) {   // SDK patch 93: the round trip to the host; as host, the worst among the players
       using PV = rex::kernel::xam::net::PingView;
       char ping[64];
       if (ping_.kind == PV::Hosting && ping_.ms >= 0)
