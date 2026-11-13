@@ -258,7 +258,8 @@ struct VulkanExternal {
   bool push_descriptor = false, depth_clamp = false, fill_mode_non_solid = false, anisotropy = false;
   bool texture_compression_bc = false;
   bool occlusion_query_precise = false;  // 0.6.1: exact occlusion counts (the game's queries)
-  // 0.6.2: VK_KHR_pipeline_library + VK_EXT_graphics_pipeline_library enabled, with the graphicsPipelineLibrary feature.
+  // 0.6.2: VK_KHR_pipeline_library + VK_EXT_graphics_pipeline_library enabled, with the graphicsPipelineLibrary feature,
+  // on a device whose graphicsPipelineLibraryFastLinking and ...IndependentInterpolationDecoration properties are true.
   bool graphics_pipeline_library = false;
 };
 // Notes/68 V3: the presenter's guest-output image for Backend::PresentPacked (Vulkan: VkImage + VkImageView, format

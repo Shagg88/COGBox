@@ -2115,8 +2115,10 @@ class VulkanBackend final : public Backend {
       gi.pDynamicState = &dy;
       return CreateLibrary(VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT, gi, &no_formats);
     });
-    // 3. Fragment shader: the pixel shader - compiled here, once per sample count. All depth / stencil state is dynamic.
-    const std::tuple<VkShaderModule, uint32_t> fs_key{job.modules[1], uint32_t(ms.rasterizationSamples)};
+    if (!vi_lib || !pr_lib) return VK_NULL_HANDLE;  // (review: no further compiles after a failure)
+    // 3. Fragment shader: the pixel shader - compiled here, once. All depth / stencil state is dynamic; multisample
+    // state is not part of it (dynamic rendering, no sample shading: review), so the sample count is not in the key.
+    const std::tuple<VkShaderModule, uint32_t> fs_key{job.modules[1], 0u};
     const VkPipeline fs_lib = LibraryFor(lib_fs_, fs_key, [&] {
       const VkPipelineShaderStageCreateInfo st{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, job.modules[1], "main", nullptr};
       VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -2130,10 +2132,10 @@ class VulkanBackend final : public Backend {
       gi.stageCount = 1;
       gi.pStages = &st;
       gi.pDepthStencilState = &ds;
-      gi.pMultisampleState = &ms;
       gi.pDynamicState = &dy;
       return CreateLibrary(VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, gi, &no_formats);
     });
+    if (!fs_lib) return VK_NULL_HANDLE;
     // 4. Fragment output interface: blending, the attachment formats, the sample count. No shader.
     std::string out_key;
     auto put = [&out_key](const void* at, size_t n) { out_key.append(static_cast<const char*>(at), n); };
@@ -2153,7 +2155,7 @@ class VulkanBackend final : public Backend {
       gi.pDynamicState = &dy;
       return CreateLibrary(VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT, gi, &ri);
     });
-    if (!vi_lib || !pr_lib || !fs_lib || !out_lib) return VK_NULL_HANDLE;
+    if (!out_lib) return VK_NULL_HANDLE;
     // The link: no shader is compiled (fast linking; no link-time optimisation asked for).
     const VkPipeline libs[4] = {vi_lib, pr_lib, fs_lib, out_lib};
     VkPipelineLibraryCreateInfoKHR li{VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR};
@@ -2711,6 +2713,8 @@ class VulkanBackend final : public Backend {
       vk_.vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipeline);
       bound_pipeline_ = p.pipeline;
       dirty_sets_ = true;
+      // (review) This relies on every description having its own VkPipeline: if linked pipelines are ever shared by
+      // descriptions that differ only in dynamic state, the state below must be set outside this handle test.
       if (p.linked) {  // 0.6.2 (pipeline libraries): its dynamic state, all of it on every bind (a pipeline built
                        // whole in between has the same state static, which unsets the dynamic values)
         const LinkedState& y = p.dyn;
@@ -2982,6 +2986,8 @@ class VulkanBackend final : public Backend {
     const char* dev_exts[3] = {};
     // 0.6.2: graphics pipeline libraries, where the device offers them (our own device; on the SDK's, its patch 91).
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gl{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
+    if (options_.vk_pipeline_libraries && options_.vk_pipeline_stats)
+      REXLOG_WARN("gow2_renderer: Vulkan: pipeline libraries are off while pipeline statistics are captured");
     if (options_.vk_pipeline_libraries && !options_.vk_pipeline_stats) {
       uint32_t n = 0;
       vk_.vkEnumerateDeviceExtensionProperties(physical_, nullptr, &n, nullptr);
@@ -2997,7 +3003,17 @@ class VulkanBackend final : public Backend {
         VkPhysicalDeviceFeatures2 q2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
         q2.pNext = &q;
         vk_.vkGetPhysicalDeviceFeatures2(physical_, &q2);
-        if (q.graphicsPipelineLibrary) {
+        // (review) Only where a link costs no compile and the stages' interpolation decorations need not match.
+        VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT gp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT};
+        VkPhysicalDeviceProperties2 gp2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        gp2.pNext = &gp;
+        vk_.vkGetPhysicalDeviceProperties2(physical_, &gp2);
+        REXLOG_INFO("gow2_renderer: Vulkan: graphics pipeline libraries offered (feature {}, fast linking {}, independent "
+                    "interpolation decoration {})", q.graphicsPipelineLibrary ? "yes" : "no",
+                    gp.graphicsPipelineLibraryFastLinking ? "yes" : "no",
+                    gp.graphicsPipelineLibraryIndependentInterpolationDecoration ? "yes" : "no");
+        if (q.graphicsPipelineLibrary && gp.graphicsPipelineLibraryFastLinking &&
+            gp.graphicsPipelineLibraryIndependentInterpolationDecoration) {
           gl.graphicsPipelineLibrary = VK_TRUE;
           gl.pNext = e2.pNext;
           e2.pNext = &gl;
@@ -3007,7 +3023,7 @@ class VulkanBackend final : public Backend {
           gpl_ = true;
         }
       }
-      if (!gpl_) REXLOG_WARN("gow2_renderer: Vulkan: VK_EXT_graphics_pipeline_library not offered - pipelines are built whole");
+      if (!gpl_) REXLOG_WARN("gow2_renderer: Vulkan: graphics pipeline libraries not usable on this device (not offered, or no fast linking) - pipelines are built whole");
     }
     if (options_.vk_pipeline_stats) {
       uint32_t n = 0;

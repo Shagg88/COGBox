@@ -294,7 +294,7 @@ int main(int argc, char** argv) {
     const size_t n = more_ms.size();
     std::printf("pipebench RESULT further state combinations of the same shaders (%s): %zu pipelines | ms each: mean %.2f "
                 "median %.2f p90 %.2f max %.2f | %.1f s in all\n",
-                vulkan_gpl ? "linked from libraries" : "built whole", n, sum / double(n), more_ms[n / 2],
+                vulkan_gpl ? "pipeline libraries asked for - see the report line below" : "built whole", n, sum / double(n), more_ms[n / 2],
                 more_ms[std::min(n - 1, n * 9 / 10)], more_ms.back(), sum / 1000.0);
   }
   if (vulkan) std::printf("pipebench: %s\n", backend->PipelineLibraryReport().c_str());
