@@ -28,15 +28,19 @@ export const matchRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: R
     return u;
   };
   const hostPlaying = (row: { host_uuid: string; title_id: string }) => registry.game(row.host_uuid)?.titleId === row.title_id;
+  // a block either way: neither sees nor joins the other's match (as with invites)
+  const BLOCKED = `EXISTS (SELECT 1 FROM friends WHERE status = 'blocked' AND
+                     ((user_uuid = lobbies.host_uuid AND friend_uuid = @me) OR (user_uuid = @me AND friend_uuid = lobbies.host_uuid)))`;
+  const TITLES = [...OPEN_MATCH_TITLES].map((t) => `'${t}'`).join(', ');
 
   fastify.get('/', async (req, reply) => {
     const u = me(req, reply);
     if (!u) return reply;
     const rows = db.prepare(`SELECT lobby_id, host_uuid, title_id, region, max_players, current_players, properties_json,
                                     in_progress, created_at
-                             FROM lobbies WHERE is_public = 1 AND host_uuid != ?
-                             ORDER BY current_players DESC, created_at DESC LIMIT 200`).all(u.uuid) as any[];
-    const matches = rows.filter((r) => OPEN_MATCH_TITLES.has(r.title_id) && hostPlaying(r)).slice(0, 50).map((r) => ({
+                             FROM lobbies WHERE is_public = 1 AND host_uuid != @me AND title_id IN (${TITLES}) AND NOT ${BLOCKED}
+                             ORDER BY current_players DESC, created_at DESC LIMIT 200`).all({ me: u.uuid }) as any[];
+    const matches = rows.filter((r) => hostPlaying(r)).slice(0, 50).map((r) => ({
       lobby_id: r.lobby_id,
       title_id: r.title_id,
       region: r.region,
@@ -53,8 +57,8 @@ export const matchRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: R
   fastify.post<{ Params: { lobby_id: string } }>('/:lobby_id/join', async (req, reply) => {
     const u = me(req, reply);
     if (!u) return reply;
-    const row = db.prepare('SELECT host_uuid, title_id, room_code, is_public, max_players, current_players FROM lobbies WHERE lobby_id = ?')
-      .get(req.params.lobby_id) as any;
+    const row = db.prepare(`SELECT host_uuid, title_id, room_code, is_public, max_players, current_players FROM lobbies
+                            WHERE lobby_id = @id AND NOT ${BLOCKED}`).get({ id: req.params.lobby_id, me: u.uuid }) as any;
     if (!row || !row.is_public || !OPEN_MATCH_TITLES.has(row.title_id) || !hostPlaying(row) || row.host_uuid === u.uuid) {
       return reply.status(404).send({ error: 'that match is no longer open' });
     }

@@ -110,4 +110,29 @@ describe('open matches', () => {
     expect((await app.inject({ method: 'POST', url: `/api/v1/matches/${priv.lobby_id}/join`, headers: auth(j) })).statusCode).toBe(404);
     expect((await app.inject({ method: 'POST', url: '/api/v1/matches/nope/join', headers: auth(j) })).statusCode).toBe(404);
   });
+
+  it('a block either way hides the match and refuses Join', async () => {
+    const h = await claim(); const v = await claim(); const w = await claim();
+    await game(h);
+    const lobby = await host(h);
+    // the host blocks v; w blocks the host
+    await app.inject({ method: 'POST', url: `/api/v1/friends/${v.uuid}/block`, headers: auth(h) });
+    await app.inject({ method: 'POST', url: `/api/v1/friends/${h.uuid}/block`, headers: auth(w) });
+    for (const c of [v, w]) {
+      expect((await list(c)).map((x) => x.lobby_id)).not.toContain(lobby.lobby_id);
+      expect((await app.inject({ method: 'POST', url: `/api/v1/matches/${lobby.lobby_id}/join`, headers: auth(c) })).statusCode).toBe(404);
+    }
+  });
+
+  it('finds the three games\' matches even when many other lobbies are newer', async () => {
+    const v = await claim();
+    const h = await claim(); await game(h);
+    const lobby = await host(h, { players: 1 });
+    for (let i = 0; i < 205; i++) {   // more than the old LIMIT, all of a title that is never listed
+      const o = await claim();
+      await app.inject({ method: 'POST', url: '/api/v1/lobbies', headers: auth(o),
+        payload: { title_id: G1, session_info: SESSION_INFO, is_public: true, region: 'us', max_players: 10, current_players: 5 } });
+    }
+    expect((await list(v)).map((x) => x.lobby_id)).toContain(lobby.lobby_id);
+  }, 30_000);
 });

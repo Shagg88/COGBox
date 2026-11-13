@@ -96,7 +96,8 @@ void run(SocialBackend b, uint64_t gen) {
             // open matches: every 10 s, and straight after a Join from the list (the list may have changed)
             if (reachable && (tick % 2 == 0 || (action && action->first == SocialAction::JoinMatch))) {
                 const HttpResult m = b.call({ "GET", "/api/v1/matches", "" });
-                if (m.status == 200) matches = parse_matches(m.body);
+                // any other answer (an older server without the list, an error) is "none", not "still looking"
+                if (m.status != 0) matches = m.status == 200 ? parse_matches(m.body) : std::vector<SocialMatch>{};
             }
         }
         {
@@ -119,6 +120,9 @@ void run(SocialBackend b, uint64_t gen) {
             if (matches) {
                 v.matches = std::move(*matches);
                 v.matches_known = true;
+            } else if (acc && !reachable) {
+                v.matches.clear();   // no stale rows with live Join buttons while the server can't be reached
+                v.matches_known = false;
             }
             if (join) s.join = join;
             // wait 5 s, or less when an action is queued

@@ -18,6 +18,9 @@
 #include <xenos/ui_lang.h>
 #include "popup_styles.h"                       // popup::Text / TextWidth (the achievement font)
 
+#include <rex/runtime.h>
+#include <rex/system/kernel_state.h>
+
 namespace xenos::social {
 namespace {
 
@@ -328,9 +331,18 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
     if (v.have_account) {
       ImGui::Dummy(ImVec2(0, 10.f * s));
       Section("OPEN MATCHES", s);
+      // only this game's matches: another game's can't be joined from inside this one (the launcher lists them all)
+      std::vector<SocialMatch> here;
+      {
+        rex::Runtime* rt = rex::Runtime::instance();
+        char tid[9] = {};
+        if (rt && rt->kernel_state()) std::snprintf(tid, sizeof tid, "%08X", rt->kernel_state()->title_id());
+        const int game = game_for_title(tid);
+        for (const SocialMatch& m : v.matches) if (game >= 0 && m.game == game) here.push_back(m);
+      }
       if (!v.matches_known) Line(XenosTr("Looking for open matches..."), kDim, s);
-      else if (v.matches.empty()) Line(XenosTr("No open matches right now - host a public match and it shows up here."), kDim, s);
-      for (const SocialMatch& m : v.matches) {
+      else if (here.empty()) Line(XenosTr("No open matches right now - host a public match and it shows up here."), kDim, s);
+      for (const SocialMatch& m : here) {
         const std::string mode = match_mode(m), label = match_label(m);
         std::string details = label.size() > mode.size() + 4 ? label.substr(mode.size() + 4) : label;   // after "<mode> · "
         // "In progress" only when the host says so (patch 84): a host without it never reports a start
