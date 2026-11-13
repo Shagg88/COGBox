@@ -33,20 +33,20 @@ https://recomplauncher.com/game/cogbox
   versions COGBox is made for, and how many other copies players have reported working. The README lists them too.
 
 ### Vulkan
-- **Vulkan's big first-play freezes are gone: 100% of them in our tests.** Playing a chapter for the very first time
-  (no shaders built yet, as for every new player), Vulkan froze again and again while the graphics driver built new
-  shaders: saving the shader cache, every ~15 seconds, had to wait for that work and stopped the game until it was done.
-  It now saves in the background. Measured on an RTX 3080 Ti, true first run, during play:
+- **Vulkan's first-play freezes: up to 100% fewer.** Playing a chapter for the very first time (no shaders built yet,
+  as for every new player), Vulkan froze again and again while the graphics driver built new shaders: saving the
+  shader cache, every ~15 seconds, had to wait for that work and stopped the game until it was done. It now saves in
+  the background. Measured on an RTX 3080 Ti, true first run, during play:
 
-  | Chapter | Before | Now |
+  | Chapter | 0.6.0 | 0.6.1 |
   | --- | --- | --- |
-  | Gears 3, opening chapter | 21 freezes, longest 1.9 s | **0 freezes** (longest frame 0.08 s, **96% shorter**) |
-  | Judgment, opening chapter | 8 freezes, longest 1.3 s | **0 freezes** (longest frame 0.06 s, **95% shorter**) |
-  | Gears 2 | - | **0 freezes** in Nexis, expected about **95% shorter** |
-  | Gears 1 | - | expected about **95% shorter** |
+  | Judgment, opening chapter | 8 freezes, longest 1.3 s | **0 freezes (-100%)**, longest frame 0.06 s (**95% shorter**) |
+  | Gears 3, opening chapter | 21 freezes, longest 1.9 s | **6 freezes (-71%)**, longest 0.76 s (**60% shorter**) |
+  | Gears 2, Nexis | - | **0 freezes** |
+  | Gears 1 | - | expected to improve the same way |
 
-  The fix is in the renderer all four games share, so Gears 2 and Gears 1 get it too. Later chapters (Gears 3 Char,
-  Judgment Rooftops) also showed no freeze on a first run.
+  The fix is in the renderer all four games share. Later chapters (Gears 3 Char, Judgment Rooftops) showed no freeze
+  on a first run either.
 - *Still being tested (off by default):* building a chapter's shaders behind its loading screen before play starts, a
   background thread for new shaders, and Vulkan pipeline libraries (the method DXVK uses).
 
