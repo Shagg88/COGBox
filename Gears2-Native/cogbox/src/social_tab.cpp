@@ -69,30 +69,38 @@ struct LineButton {
     const char *tip = nullptr;
 };
 int line_row(App &a, const std::string &tag, const std::string &state, ImVec4 state_col, int lamp, const std::string &icon, float x1,
-             const std::vector<LineButton> &buttons, bool fit_name = false)
+             const std::vector<LineButton> &buttons, bool two_lines = false)
 {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float h = T(32), r = h * 0.36f, bh = T(24);
+    const float h = two_lines ? T(44) : T(32), r = T(32) * 0.36f, bh = T(24);
     const ImVec2 q(x1, p.y + h);
     const bool hot = ImGui::IsMouseHoveringRect(p, q);
     dl->AddRectFilled(p, q, U(ImVec4(1, 1, 1, hot ? 0.07f : 0.035f)));
     const ImVec2 c(p.x + S(6) + r, p.y + h * 0.5f);
-    if (!fit_name) avatar(a, dl, c, r, icon, tag, lamp);   // a match has no picture: the text's colour says its state
     float bw_all = 0;
     for (const LineButton &b : buttons) bw_all += std::max(T(54), text_w(F_SMALL, FS(F_SMALL), tr(b.label)) + S(18)) + S(6);
-    // fit_name (open matches): the name column is as wide as the name, so the details get the rest of the row
-    const float tx = fit_name ? p.x + S(10) : c.x + r + S(10),
-                name_w = fit_name ? std::min(text_w(F_BOLD, FS(F_SMALL), tag) + S(4), (x1 - S(6) - bw_all - tx) * 0.45f)
-                                  : std::min(S(170), (x1 - S(6) - bw_all - tx) * 0.45f);
-    const float ty = p.y + (h - FS(F_SMALL)) * 0.5f - S(1);
-    dl->PushClipRect(ImVec2(tx, p.y), ImVec2(tx + name_w, q.y), true);
-    dl->AddText(F_BOLD, FS(F_SMALL), ImVec2(tx, ty), U(col::text), tag.c_str());
-    dl->PopClipRect();
-    const float sx = tx + name_w + S(10);
-    dl->PushClipRect(ImVec2(sx, p.y), ImVec2(std::max(sx, x1 - S(6) - bw_all), q.y), true);
-    dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(sx, ty), U(state_col), state.c_str());
-    dl->PopClipRect();
+    if (two_lines) {
+        // open matches: no picture (the text's colour says its state); the name on top, the details under it, each with
+        // the row's whole width up to the buttons
+        const float tx = p.x + S(10), right = std::max(tx, x1 - S(6) - bw_all - S(6));
+        const float gap = S(3), y1 = p.y + (h - FS(F_SMALL) * 2 - gap) * 0.5f - S(1);
+        dl->PushClipRect(ImVec2(tx, p.y), ImVec2(right, q.y), true);
+        dl->AddText(F_BOLD, FS(F_SMALL), ImVec2(tx, y1), U(col::text), tag.c_str());
+        dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(tx, y1 + FS(F_SMALL) + gap), U(state_col), state.c_str());
+        dl->PopClipRect();
+    } else {
+        avatar(a, dl, c, r, icon, tag, lamp);
+        const float tx = c.x + r + S(10), name_w = std::min(S(170), (x1 - S(6) - bw_all - tx) * 0.45f);
+        const float ty = p.y + (h - FS(F_SMALL)) * 0.5f - S(1);
+        dl->PushClipRect(ImVec2(tx, p.y), ImVec2(tx + name_w, q.y), true);
+        dl->AddText(F_BOLD, FS(F_SMALL), ImVec2(tx, ty), U(col::text), tag.c_str());
+        dl->PopClipRect();
+        const float sx = tx + name_w + S(10);
+        dl->PushClipRect(ImVec2(sx, p.y), ImVec2(std::max(sx, x1 - S(6) - bw_all), q.y), true);
+        dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(sx, ty), U(state_col), state.c_str());
+        dl->PopClipRect();
+    }
     int pressed = -1;
     float bx = x1 - S(6);
     for (int i = int(buttons.size()) - 1; i >= 0; --i) {
