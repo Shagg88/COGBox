@@ -476,12 +476,16 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_float_controls, true, "Gears2",
                     "without a depth test, while depth-only draws match");
 REXCVAR_DEFINE_INT32(gow2_renderer_draw_report_frames, 1, "Gears2",
                      "Patch 0101: how many frames --gow2_renderer_draw_report_frame reports (1-4)");
-REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_optimise, true, "Gears2",
+// OFF BY DEFAULT in 0.6.1 (both switches): the conversion still runs before the first frame and, for a shader first
+// seen in play, on the render thread - the optimiser there made a first Vulkan start three times longer (Gears 3
+// 31 -> 106 s) and would add ~100 ms to every first-use hitch. They go on once Vulkan shaders are made on background
+// threads (see CLAUDE-NOTES, 13 Nov).
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_optimise, false, "Gears2",
                     "0.6.1 (Vulkan): each shader converted to SPIR-V goes through SPIRV-Tools' performance passes before "
                     "the driver builds it - about a third of the size and a third less driver time per new pipeline "
                     "(303 -> 193 ms on an RTX 3080 Ti; D3D12 158 ms). Same values (NoContraction and the float controls "
                     "are kept). false = the modules as converted, as 0.6.0");
-REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_store, true, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_store, false, "Gears2",
                     "0.6.1 (Vulkan): converted shaders are kept in <shader cache dir>\\spirv-store.bin, so each shader is "
                     "converted to SPIR-V (and optimised) once and not at every start (Gears 3: half a minute before the "
                     "first frame). false = convert at every start, as 0.6.0");
