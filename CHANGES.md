@@ -56,7 +56,7 @@ https://recomplauncher.com/game/cogbox
 
 ### Performance
 - **Judgment runs up to 72% faster.** Measured unlocked at 1440p on an RTX 3080 Ti in Wharf District: **Vulkan 50 to 87 fps (+72%)**, **DirectX 12 81 to 107 fps (+32%)**.
-- **Vulkan is much faster once a game has loaded** (Windows; still experimental). Vulkan now skips everything the camera can't see ("real occlusion"), as DirectX 12 already did. Not yet under Proton / Wine, where real occlusion still has to be tested.
+- **Vulkan is much faster once a game has loaded** (Windows; still experimental). Vulkan now skips everything the camera can't see ("real occlusion"), as DirectX 12 already did - in Gears 2 and Judgment; Gears 3 on Vulkan keeps it off (its open chapters ran slower with it). Not yet under Proton / Wine, where real occlusion still has to be tested.
 - **Vulkan, for testers:** a shader optimiser and an on-disk store for converted shaders are in this version but switched OFF (`--gow2_renderer_vulkan_spirv_optimise=true` and `--gow2_renderer_vulkan_spirv_store=true` in `extra-args.txt`). They halve the graphics driver's work per new shader pair (364 to 195 ms on an RTX 3080 Ti) and later start-up waits, but as wired today they make the first start much longer, so they stay off until Vulkan shaders are prepared in the background.
 - **If a first play still stutters on your PC** (slower processors and graphics cards build shaders more slowly), "Prepare all shaders now" on a game's Graphics tab does all of that work up front.
 - **The graphics card no longer waits for the whole frame.** It now starts on each frame while the rest of it is still being prepared, instead of sitting idle until everything is ready. No setting to change.
