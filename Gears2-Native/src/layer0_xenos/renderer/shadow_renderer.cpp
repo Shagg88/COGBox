@@ -1504,6 +1504,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           vk_external_.fill_mode_non_solid = pr.fillModeNonSolid;
           vk_external_.anisotropy = pr.samplerAnisotropy;
           vk_external_.texture_compression_bc = pr.textureCompressionBC;
+          vk_external_.occlusion_query_precise = pr.occlusionQueryPrecise;  // 0.6.1
           options.vulkan_external = &vk_external_;
           presenter_ = presenter;
           presenter_vulkan_ = true;

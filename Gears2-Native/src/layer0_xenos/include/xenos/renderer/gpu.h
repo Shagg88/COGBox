@@ -257,6 +257,7 @@ struct VulkanExternal {
   // What the owner enabled on the device (we may use only these): SDK patch 33 turns on what our backend needs.
   bool push_descriptor = false, depth_clamp = false, fill_mode_non_solid = false, anisotropy = false;
   bool texture_compression_bc = false;
+  bool occlusion_query_precise = false;  // 0.6.1: exact occlusion counts (the game's queries)
 };
 // Notes/68 V3: the presenter's guest-output image for Backend::PresentPacked (Vulkan: VkImage + VkImageView, format
 // A2B10G10R10_UNORM_PACK32, usable as a colour attachment). It is left in SHADER_READ_ONLY_OPTIMAL, visible to

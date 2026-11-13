@@ -1530,7 +1530,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // PR #43 / to-do 23: real (strict) occlusion queries, a fixed value per game (no player setting any more): on in
     // Gears 2, Gears 3 and Judgment on DirectX 12 and not under Wine / Proton; off in Gears 1 (title-screen freeze, 0.3.0)
     // and for a Gears 2 exe without strict queries. The exe's own default is off.
-    const bool realOcclusion = s.i("Api") == 0 && !env.wine && g != Game::Gears1 &&
+    // 0.6.1: also on Vulkan on Windows - its backend runs the game's queries on the GPU now (they were stubs: strict
+    // there meant "everything visible"), measured in Judgment at 2x: 20.1 -> 14.6 ms a frame, the same 78 % of queries
+    // hidden as DirectX 12. Only with an exe that has them (told by an option new in 0.6.1), and not under Wine /
+    // Proton, where it is not tested yet.
+    const bool vkQueries = s.i("Api") != 0 && runs_vulkan(s, env) && cap_exe(env, "gow2_renderer_resolve_readback_max_kb");
+    const bool realOcclusion = (s.i("Api") == 0 || vkQueries) && !env.wine && g != Game::Gears1 &&
                                (g != Game::Gears2 || cap_exe(env, "gow2_renderer_queries"));
     if (realOcclusion) a.push_back("--gow2_renderer_queries=strict");
     // Notes/80: XeGTAO (2 high, 3 ultra); notes/81: CACAO (4); 0 Off goes through the game's own [SystemSettings] below,
