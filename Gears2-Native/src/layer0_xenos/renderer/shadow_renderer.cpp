@@ -2717,7 +2717,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     draws_since_submit_ = 0;
     auto_submits_this_frame_ = 0;
     if (xenos::renderer::ShaderCache::SpirvAsync()) {  // 0.6.2: the backlog's threads follow what the game is doing
-      const uint32_t want = fl_draws < 64 ? UINT32_MAX : uint32_t(std::max(1, REXCVAR_GET(gow2_renderer_vulkan_async_play_threads)));
+      // (review) All of them only after 10 frames in a row under 64 draws - one such frame in play (a fade) would start
+      // a job of ~200 ms on every thread - and always for Prepare all shaders.
+      spv_low_frames_ = fl_draws < 64 ? std::min<uint32_t>(spv_low_frames_ + 1, 1000) : 0;
+      const uint32_t want = (spv_low_frames_ >= 10 || prepare_all_) ? UINT32_MAX : uint32_t(std::max(1, REXCVAR_GET(gow2_renderer_vulkan_async_play_threads)));
       if (want != spv_backlog_threads_) cache_->SetSpirvBacklogThreads(spv_backlog_threads_ = want);
     }
     cache_->NewPollBudget();
@@ -11728,6 +11731,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                                         : burst ? REXCVAR_GET(gow2_renderer_recipe_pack_jobs_missing)
                                                                 : REXCVAR_GET(gow2_renderer_recipe_pack_jobs), 1, 64));
       bool backlog = false, want_done = false;
+      uint32_t promoted = 0;
       size_t keep = 0;
       if (rcp_hot_chapters_)  // job 634: the area being played first
         std::stable_partition(rcp_waiting_.begin(), rcp_waiting_.end(), [&](uint32_t i) { return rcp_rec_hot_[i] != 0; });
@@ -11761,9 +11765,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         if (!shaders_ready || backend_->PipelineJobsLeft() >= cap) {
           // 0.6.2 (job 1752: with background conversion the wanted records' shaders sat behind the whole backlog and
           // the draws then waited for them, 1.3 - 2.4 s a time): a wanted record's shaders are converted first.
-          if (!shaders_ready && chapter_hold_on_ && rcp_rec_want_[i]) {
-            if (vsg && vsg->state == rr::ShaderState::kPending) cache_->Promote(*vsg);
-            if (psg && psg->state == rr::ShaderState::kPending) cache_->Promote(*psg);
+          // (review) In play at most 4 a slice: a promoted job runs on every thread at normal priority.
+          if (!shaders_ready && chapter_hold_on_ && rcp_rec_want_[i] && (loading || rcp_want_only_ || promoted < 4)) {
+            for (const rr::GuestShader* g : {vsg, psg})
+              if (g && g->state == rr::ShaderState::kPending && !g->spv_promoted) {
+                cache_->Promote(*g);
+                ++promoted;
+              }
           }
           if (shaders_ready && cap) ++cap_blocked;  // 617: ready, only waiting for a free job
           rcp_waiting_[keep++] = i;
@@ -13900,6 +13908,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // loading run and its budget; the wanted count at the window's last count.
   bool chapter_hold_ = false;
   uint32_t spv_backlog_threads_ = UINT32_MAX;  // what the shader cache was last told (async SPIR-V)
+  uint32_t spv_low_frames_ = 0;                // frames in a row under 64 draws
   uint32_t ch_low_run_ = 0;
   std::chrono::steady_clock::time_point ch_window_until_{};
   double ch_hold_left_ms_ = 0.0;

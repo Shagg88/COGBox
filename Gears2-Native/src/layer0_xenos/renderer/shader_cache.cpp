@@ -1122,9 +1122,13 @@ void ShaderCache::SpvWorker() {
       sv.ok = true;
     } else {
       sv = dxbc_spirv::ConvertDxbcToSpirv(job->bytecode.data(), job->bytecode.size(), job->spirv_precise);
-      if (sv.ok && !job->spirv_urgent) {  // (an urgent one is optimised and stored by a later run's backlog)
+      // An urgent one is neither optimised nor stored (a later run's backlog does both) - unless the optimiser is
+      // off anyway (review). The store's lock is taken at normal priority: the render thread takes it too (review).
+      if (sv.ok && (!job->spirv_urgent || !g_spv_optimise.load())) {
         OptimiseSpirv(sv.words);
+        if (!live) SpvThreadPriority(true);
         SpvStorePut(store_key, sv.words);
+        if (!live) SpvThreadPriority(false);
       }
     }
     job->ok = sv.ok && !sv.words.empty();
@@ -1144,7 +1148,12 @@ void ShaderCache::SpvWorker() {
       done_.push_back(std::move(job));
       if (!live) --spv_warm_active_;
     }
-    if (!live) spv_wake_.notify_one();  // a thread held back by the backlog limit may take the next one
+    if (!live) {
+      spv_wake_.notify_one();  // a thread held back by the backlog limit may take the next one
+      // (review) It waits at normal priority: a job a draw waits for must not first be scheduled at the lowest.
+      SpvThreadPriority(true);
+      live_now = true;
+    }
     done_cv_.notify_all();
   }
 }
