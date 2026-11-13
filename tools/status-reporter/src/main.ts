@@ -39,13 +39,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
 // Public sources are checked less often than the server itself (GitLab allows unauthenticated reads, but not unlimited)
 const PUBLIC_EVERY_S = 300;
+// GitHub allows 60 unauthenticated requests an hour per address and a check is 4 of them: every 15 minutes is 16 an
+// hour, which leaves room for restarts and anything else on the server's address
+const GITHUB_EVERY_S = 900;
 
 export async function collect(cfg: Config, f: typeof fetch, cache: Map<string, { at: number; line: Line }>, nowMs: number): Promise<Line[]> {
-  const cached = async (key: string, run: () => Promise<Line>): Promise<Line> => {
+  // keepLast: when the source refuses a check (GitHub's rate limit), its last good answer stays instead of "unavailable"
+  const cached = async (key: string, run: () => Promise<Line>, everyS = PUBLIC_EVERY_S, keepLast = false): Promise<Line> => {
     const c = cache.get(key);
     if (c && nowMs < c.at) return c.line;
-    const line = await run();
-    cache.set(key, { at: nowMs + 1000 * Math.max(PUBLIC_EVERY_S, line.retryAfterS ?? 0), line });
+    const fresh = await run();
+    const line = keepLast && fresh.state === 'unavailable' && c && c.line.state !== 'unavailable' ? c.line : fresh;
+    cache.set(key, { at: nowMs + 1000 * Math.max(everyS, fresh.retryAfterS ?? 0), line });
     return line;
   };
   const jobs: Promise<Line>[] = [
@@ -54,7 +59,7 @@ export async function collect(cfg: Config, f: typeof fetch, cache: Map<string, {
     cached('gitlab', () => checkGitlab(f, cfg.gitlabProject))
   ];
   if (cfg.sourceforgeProject) jobs.push(cached('sf', () => checkSourceforge(f, cfg.sourceforgeProject!)));
-  if (cfg.githubEnabled) jobs.push(cached('gh', () => checkGithub(f, cfg.githubRepo)));
+  if (cfg.githubEnabled) jobs.push(cached('gh', () => checkGithub(f, cfg.githubRepo), GITHUB_EVERY_S, true));
   return Promise.all(jobs);
 }
 

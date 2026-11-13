@@ -29,7 +29,12 @@ const link = (text: string, url?: string) => {
   const t = text.replace(/[[\]]/g, '');
   return url && /^https:\/\//.test(url) ? `[${t}](${url.replace(/[()\s]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'))})` : t;
 };
-const firstLine = (s: string) => s.split('\n')[0].trim().slice(0, 100);
+// A commit's first line, at most 40 characters (the repository columns are narrow in Discord)
+export const shortTitle = (s: string): string => {
+  const l = s.split('\n')[0].trim();
+  return l.length <= 40 ? l : l.slice(0, 39).trimEnd() + '…';
+};
+const firstLine = shortTitle;
 
 // Uptime only: the brief rules out player and lobby counts, names and addresses. The public health endpoint is enough,
 // so the reporter needs no admin secret (0.6.0 review).
