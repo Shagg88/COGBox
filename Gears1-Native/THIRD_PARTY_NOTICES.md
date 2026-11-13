@@ -19,6 +19,7 @@ committed (`third_party/` is ignored; `notes/65-broad-hardware.md` item 6):
 | AMD FidelityFX SDK (`third_party/fidelityfx-sdk`; `amd_fidelityfx_loader_dx12.dll`, `amd_fidelityfx_upscaler_dx12.dll`) | FSR | The `ffx_api` headers we compile against: MIT (AMD). The signed DLLs: AMD's FidelityFX licence (`docs/license.md`) - redistribution in binary form only, no reverse engineering, and its copyright notice, permission notice and disclaimers reproduced (below) |
 | Intel XeSS SDK (`third_party/xess-sdk`; `libxess.dll`) | XeSS | Intel Simplified Software License (October 2022) - binary-only redistribution without modification, notice reproduced (below) |
 | NVIDIA Streamline SDK (`third_party/streamline-sdk`) | planned: DLSS frame generation, Reflex, DLSS 5 (notes/65) | Its own source: MIT (NVIDIA). Its signed DLLs come from the release package; the DLSS feature DLLs it loads keep the NVIDIA RTX SDKs License. Listed in full when integrated |
+| SPIRV-Tools (Khronos Group; built from the rexglue SDK's vendored source, `third_party/rexglue-sdk/thirdparty/spirv-tools`) | Vulkan: the optimiser run over each shader after it is converted to SPIR-V (0.6.1) | Apache-2.0 (`LICENSE` in that folder; shipped with the SDK licences) |
 
 A release that ships these DLLs must include the notices below (and NVIDIA's DLSS attribution when DLSS ships).
 
