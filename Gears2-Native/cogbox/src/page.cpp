@@ -9,6 +9,8 @@
 #include "update.h"
 #include "report.h"   // report_gpu_names (report_share)
 #include "dlss_custom.h"   // 0.4.9: Custom DLSS file
+#include "save_import.h"   // 0.6.2: Import saves
+#include <filesystem>
 #include "imgui_internal.h"
 
 #include <windows.h>
@@ -1184,6 +1186,32 @@ static void about_tab(App &a, int g)
         else if (!any_files(game_user_dir(g))) set_message(a, std::string(d.name) + " has no saves here yet.", false);
         else ask(a, "backup", g, "Back up saves", std::string("Put a copy of ") + d.name + (a.wine ? "'s saves in a zip in COGBox's backups folder?" : "'s saves in a zip on your desktop?"), { "Back up", "Cancel" });
     }
+    ImGui::SameLine();
+    // 0.6.2 (Shagg 13 Nov): the player's own saves from Xenia or an Xbox 360 (save_import.cpp).
+    if (small_button("Import saves...")) {
+        if (running) set_message(a, std::string(d.name) + " is running - close it first.", true);
+        else {
+            const std::string from = pick_folder(L"Choose your Xenia content folder, or the Content folder copied from your Xbox 360");
+            if (!from.empty()) {
+                save_import::Result r;
+                make_dirs(game_user_dir(g));
+                if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r)) {
+                    std::string m = std::string(d.name) + ": imported " + std::to_string(r.saves) + (r.saves == 1 ? " save" : " saves");
+                    if (r.settings) m += " and the profile's game progress";
+                    m += ".";
+                    if (!r.backup_dir.empty()) m += " What they replaced is kept in the saves folder, in " + r.backup_dir.filename().string() + ".";
+                    for (const std::string &n : r.notes) m += " " + n;
+                    set_message(a, m, false);
+                } else {
+                    std::string m = r.error;
+                    for (const std::string &n : r.notes) m += " " + n;
+                    set_message(a, m, true);
+                }
+            }
+        }
+    }
+    ui_tip("Brings your own saves of this game in from Xenia (its content folder) or from an Xbox 360 (the Content folder "
+           "copied from the console's USB stick or hard disk). Saves it replaces are kept in a folder beside them.");
     ImGui::SameLine();
     if (small_button("Clear shaders...")) {
         if (!dir_exists(game_shader_dir(g))) set_message(a, std::string(d.name) + " has no saved shaders to clear.", false);
