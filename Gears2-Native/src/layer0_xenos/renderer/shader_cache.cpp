@@ -902,16 +902,20 @@ uint64_t SpvKey(const uint8_t* dxbc, size_t n, bool precise, uint32_t switches) 
   uint64_t h = 1469598103934665603ull;
   auto mix = [&h](uint8_t b) { h = (h ^ b) * 1099511628211ull; };
   for (size_t i = 0; i < n; ++i) mix(dxbc[i]);
-  const uint32_t tail[3] = {dxbc_spirv::kConverterVersion, precise ? 1u : 0u, switches};
+  // (kSpvPasses: bump when the optimiser's pass list or the vendored SPIRV-Tools version changes)
+  constexpr uint32_t kSpvPasses = 1;
+  const uint32_t tail[4] = {dxbc_spirv::kConverterVersion, precise ? 1u : 0u, switches, kSpvPasses};
   for (uint32_t t : tail)
     for (int i = 0; i < 4; ++i) mix(uint8_t(t >> (8 * i)));
   return h;
 }
 bool SpvStoreGet(uint64_t key, std::vector<uint32_t>& words) {
   std::pair<uint64_t, uint32_t> at;
+  fs::path path;  // review: a copy - a failed write on another thread clears the store's own
   {
     std::lock_guard<std::mutex> lock(g_spv_store.mutex);
     if (g_spv_store.path.empty()) return false;
+    path = g_spv_store.path;
     auto it = g_spv_store.index.find(key);
     if (it == g_spv_store.index.end()) {
       ++g_spv_store.misses;
@@ -919,11 +923,15 @@ bool SpvStoreGet(uint64_t key, std::vector<uint32_t>& words) {
     }
     at = it->second;
   }
-  std::ifstream f(g_spv_store.path, std::ios::binary);
+  std::ifstream f(path, std::ios::binary);
   std::vector<uint32_t> w(at.second);
   uint32_t sum = 0;
   if (!f || !f.seekg(std::streamoff(at.first - 4)) || !f.read(reinterpret_cast<char*>(&sum), 4) ||
       !f.read(reinterpret_cast<char*>(w.data()), std::streamsize(w.size()) * 4) || SpvSum(w) != sum) {
+    // review: a damaged record leaves the index, so the module converted now is stored again (a new record)
+    std::lock_guard<std::mutex> lock(g_spv_store.mutex);
+    auto it = g_spv_store.index.find(key);
+    if (it != g_spv_store.index.end() && it->second == at) g_spv_store.index.erase(it);
     ++g_spv_store.misses;
     return false;
   }
@@ -995,15 +1003,19 @@ static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program,
   if (dt.ok && spirv) {
     const uint64_t store_key = SpvKey(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise, g_spv_store.switches);
     dxbc_spirv::SpirvResult sv;
-    const bool stored = SpvStoreGet(store_key, sv.words);  // 0.6.1: converted (and optimised) in an earlier run
+    // Review: with patch 0099's dump / replace folders set (a test tool) the store is left out, so those files see
+    // the words as converted - their names are hashes of them - exactly as in 0.6.0; the optimiser runs after them.
+    // (A store hit skips the conversion, so patch 0102's discard counts only cover shaders converted in this run.)
+    const bool files_tool = !g_spv_dump_dir.empty() || !g_spv_override_dir.empty();
+    const bool stored = !files_tool && SpvStoreGet(store_key, sv.words);  // 0.6.1: converted in an earlier run
     if (stored) sv.ok = true;
     else sv = dxbc_spirv::ConvertDxbcToSpirv(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise);
     if (sv.ok) {
       if (!stored) {
-        OptimiseSpirv(sv.words);  // 0.6.1, before the dump / replace files of patch 0099
-        SpvStorePut(store_key, sv.words);
+        SpirvFiles(sv.words);  // patch 0099
+        OptimiseSpirv(sv.words);  // 0.6.1
+        if (!files_tool) SpvStorePut(store_key, sv.words);
       }
-      SpirvFiles(sv.words);  // patch 0099
       dt.bytecode.resize(sv.words.size() * 4);
       std::memcpy(dt.bytecode.data(), sv.words.data(), dt.bytecode.size());
     } else {
