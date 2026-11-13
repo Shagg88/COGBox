@@ -21,6 +21,8 @@ https://recomplauncher.com/game/cogbox
   anything can't be put in place, nothing is changed.
 - **COGBox says when it's in the wrong place:** started from inside its zip, from Program Files or from a folder it
   can't write to, it explains on start-up where to move it (it already warned about OneDrive / Dropbox folders).
+- **Gears 1 has Insane from the start too** (GitHub #284): the game part has worked since 0.5.0, but the launcher still
+  hid the option for Gears 1. It's now offered like in the other three games (Gameplay > Original unlock rules off).
 - **The tested versions are shown:** each game's About tab and the title-update notice name the game and title-update
   versions COGBox is made for, and how many other copies players have reported working. The README lists them too.
 
@@ -65,6 +67,11 @@ https://recomplauncher.com/game/cogbox
 - Mods added from a `.zip` unpack into the mod's own folder.
 - The updater refuses oversized downloads and duplicate files in an update.
 - Safer handling when the graphics device is lost while the game waits for it.
+
+### Known issue
+- **Gears 3: DLC sometimes missing at the main menu** (GitHub #283). With several DLC packages the game can open only the
+  first one at start-up. Workaround: at the main menu open **Options > Storage Location** and pick the storage (the game
+  checks the DLC again), or go back to the main menu once after loading in. Keeping only the DLC you use also helps.
 
 ## 0.6.0
 

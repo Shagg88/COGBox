@@ -125,6 +125,13 @@ zip.
 Common causes: a CPU without AVX2, an old graphics driver, or a different release of the game than the port is made for
 (COGBox warns you when you add it).
 
+**Gears 3 DLC missing at the main menu** (known issue, GitHub #283): with several DLC packages, Gears 3 sometimes opens
+only the first one at start-up, so characters, skins or RAAM's Shadow don't show. Until it's fixed:
+- At the main menu, open **Options > Storage Location** and pick the storage: the game checks the DLC again and it all
+  appears (needed after each start).
+- Or load into anything, go back to the main menu and wait about 20 seconds.
+- Keeping only the DLC you use (fewer packages) makes it load at start-up more often.
+
 ## Legal
 
 - **No game files are included** - not in the download or the source. COGBox never downloads games.

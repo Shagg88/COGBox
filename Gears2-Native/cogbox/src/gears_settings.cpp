@@ -744,8 +744,10 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears2 && !env.g2_disc_ini_edits) return no(not_yet(0, "needs the next Gears 2 build"));
         if (g == Game::Gears1 && !cap_exe(env, f == "skiplogos" ? "gow1_skip_logos" : "gow1_trilinear")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "originalunlocks") {   // insane050: the exe must have the unlock (else the game's own rule applies anyway)
-        // job 1519: Gears 1's execHasCompletedGame hook didn't unlock Insane on the difficulty screen - not done yet
-        if (g == Game::Gears1) return no(not_yet(gi, "its Insane check isn't hooked yet - the game's own rule applies"));
+        // 0.6.1 (GitHub #284): Gears 1's unlock works since 0.5.0 (UIAction_IsInsaneUnlocked hook, checked by Shagg) but
+        // the launcher still hid it from job 1519's first try - offered when the exe has that hook (its log text names it)
+        if (g == Game::Gears1 && !cap_exe(env, "UIAction_IsInsaneUnlocked"))
+            return no(not_yet(gi, "its Insane check isn't hooked in this build - the game's own rule applies"));
         if (!cap_exe(env, "Unlock Insane difficulty from the start")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "hordebots") {   // GitHub #89 (Gears 3), #237 (Gears 2)
         if (g != Game::Gears3 && g != Game::Gears2) return no("Gears 2 and 3 only.");
