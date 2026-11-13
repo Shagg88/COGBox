@@ -81,6 +81,7 @@ https://recomplauncher.com/game/cogbox
 - **Online privacy:** the games' lobby search no longer shows join codes, and a hosted lobby no longer carries your PC's local network address. The search now signs in, so the server can require it later (see PRIVACY.md).
 - **Matchmaking finds the mode you picked:** searching one playlist (for example Social Guardian) could put you into another mode's lobby (Horde). Searches now only return lobbies of the playlist you chose.
 - **Gears 2 hosting after a quit:** COGBox's 30-minute lift of the game's quit penalty (with its popup) never ran in Gears 2, so a player with a quit could not host versus at all. It works now.
+- **Show ping** (Display tab): your ping to the host of the online match or party, in the FPS bar, or in a bar of its own when the FPS counter is off. When you host, it shows the worst ping among your players.
 
 ### Fixes
 - **Gears 3:** a crash with a "disc read error" when a level or a Horde match starts should be gone (the game was told that parts of the disc had failed a check that has no meaning here). GitHub #271.
