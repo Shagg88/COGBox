@@ -1536,10 +1536,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     // there meant "everything visible"), measured in Judgment at 2x: 20.1 -> 14.6 ms a frame, the same 78 % of queries
     // hidden as DirectX 12. Only with an exe that has them (told by an option new in 0.6.1), and not under Wine /
     // Proton, where it is not tested yet.
-    // 0.6.1 (Shagg 14:58, job 1779a): not in Gears 3 - its open chapters hide few objects (23-30 % of the queries, Judgment
-    // 78 %) and Gears 3 on Vulkan measured slower with them (104.2 -> 96.8 fps, 1 % low 86.4 -> 75.4 against 0.6.0)
-    const bool vkQueries = s.i("Api") != 0 && runs_vulkan(s, env) && g != Game::Gears3 &&
-                           cap_exe(env, "gow2_renderer_resolve_readback_max_kb");
+    const bool vkQueries = s.i("Api") != 0 && runs_vulkan(s, env) && cap_exe(env, "gow2_renderer_resolve_readback_max_kb");
     const bool realOcclusion = (s.i("Api") == 0 || vkQueries) && !env.wine && g != Game::Gears1 &&
                                (g != Game::Gears2 || cap_exe(env, "gow2_renderer_queries"));
     if (realOcclusion) a.push_back("--gow2_renderer_queries=strict");
