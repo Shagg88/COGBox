@@ -3,13 +3,13 @@
 ## 0.6.1
 
 ### Judgment
-- **Judgment is no longer too bright.** The game measures how bright each scene is and sets its exposure from that, and that measurement never reached it, so every scene came out about twice as bright as on the Xbox 360 (washed-out skies, grey shadows). It now does, at no cost in frame rate. Checked against Xbox 360 footage. GitHub #185, #250.
+- **Judgment finally looks like it does on the Xbox 360.** The game measures how bright each scene is and sets its exposure from that, and that measurement never reached it, so every scene came out about twice as bright as on the Xbox 360 (washed-out skies, grey shadows). It now does, at no cost in frame rate. Checked against Xbox 360 footage. GitHub #185, #250.
 - The launcher's **Brightness** setting for Judgment is gone: it only existed to hide this, and could not bring back the washed-out highlights. A saved Brightness value is ignored.
 
 ### Performance
-- **Faster in all four games:** the graphics card now starts on each frame while the rest of it is still being prepared, instead of waiting for the whole frame. In Judgment at 1440p this measured about 12% more frames a second on DirectX 12 and 27% on Vulkan. If it ever causes a problem, `--gow2_renderer_submit_draws=0` in `extra-args.txt` turns it off.
-- **Vulkan is much faster and close to DirectX 12** (Windows): it now hides what the camera can't see ("real occlusion"), as DirectX 12 already did. In Judgment at 1440p: 50 to 87 frames a second together with the change above, against 90 on DirectX 12. Not yet under Proton / Wine, where it still has to be tested.
-- Several small renderer costs removed, and a stall when the sound output device is checked.
+- **Up to 74% more frames a second on Vulkan** (Windows): 50 to 87 fps in Judgment at 1440p on an RTX 3080 Ti. Vulkan now hides everything the camera can't see ("real occlusion"), as DirectX 12 already did, and is within a few frames of DirectX 12. You can switch between the two freely. Not yet under Proton / Wine, where it still has to be tested.
+- **A free 10-12% on DirectX 12, in all four games:** 80 to 90 fps in the same test. The graphics card now starts on each frame while the rest of it is still being prepared, instead of sitting idle until the whole frame is ready. No setting to change. (`--gow2_renderer_submit_draws=0` in `extra-args.txt` turns it off if it ever causes a problem.)
+- Smoother sound and frame pacing: a stall when the sound output device is checked is gone, and several small renderer costs were removed.
 
 ### HDR (by legoliamneeson)
 - **Native HDR in Gears 2 and Gears 3:** the picture is carried in high dynamic range from the game's own lighting to the screen, instead of being expanded from the standard picture. Gears 1 and Judgment keep the HDR of 0.6.0. `--gow2_hdr_native=false` goes back to it in every game. GitHub #267.
