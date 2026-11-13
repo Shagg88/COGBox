@@ -1576,6 +1576,11 @@ class VulkanBackend final : public Backend {
   uint64_t Submit() override {
     if (!ready_ || lost_) return submitted_;
     if (!cmd_) return submitted_;  // nothing recorded: the last value is already the right one to wait for
+    using SubClock = std::chrono::steady_clock;  // 0.6.2 (job 1755b): where a slow submit spends its time
+    const auto sub_t0 = SubClock::now();
+    auto sub_ms = [](SubClock::time_point a, SubClock::time_point b) {
+      return std::chrono::duration<double, std::milli>(b - a).count();
+    };
     EndPass(8);
     if (debug_depth_ && vk_.vkCmdEndDebugUtilsLabelEXT)
       for (; debug_depth_; --debug_depth_) vk_.vkCmdEndDebugUtilsLabelEXT(cmd_);
@@ -1595,9 +1600,12 @@ class VulkanBackend final : public Backend {
     si.pCommandBufferInfos = &cb;
     si.signalSemaphoreInfoCount = 1;
     si.pSignalSemaphoreInfos = &sig;
+    const auto sub_t1 = SubClock::now();
     LockQueue();
+    const auto sub_t2 = SubClock::now();
     r = vk_.vkQueueSubmit2(queue_, 1, &si, VK_NULL_HANDLE);
     UnlockQueue();
+    const auto sub_t3 = SubClock::now();
     if (r != VK_SUCCESS) { Fail(VkErr("vkQueueSubmit2", r)); return submitted_; }
     submitted_ = value;
     slots_[slot_].fence = value;
@@ -1622,6 +1630,12 @@ class VulkanBackend final : public Backend {
     MaybeSaveCache(false);
     ++stats_.submits;
     Retire();
+    const auto sub_t4 = SubClock::now();
+    stats_.submit_phase_ms[0] += sub_ms(sub_t0, sub_t1);
+    stats_.submit_phase_ms[1] += sub_ms(sub_t1, sub_t2);
+    stats_.submit_phase_ms[2] += sub_ms(sub_t2, sub_t3);
+    stats_.submit_phase_ms[3] += sub_ms(sub_t3, sub_t4);
+    stats_.submit_max_ms = std::max(stats_.submit_max_ms, sub_ms(sub_t0, sub_t4));
     return value;
   }
   uint64_t CompletedFence() override {

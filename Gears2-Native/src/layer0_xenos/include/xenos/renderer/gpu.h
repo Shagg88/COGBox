@@ -434,6 +434,10 @@ struct BackendStats {
   uint64_t pipeline_memo_hits = 0;
   uint64_t scratch_batches = 0, uav_barriers_deferred = 0;  // batched texture loads: copy batches, barriers left out  // GetGraphicsPipeline answered from its one-entry memo (same as the last draw)
   uint64_t pipelines_loaded = 0, pipelines_stored = 0, pipeline_library_saves = 0;  // saved pipelines (notes/64)
+  // 0.6.2 (job 1755b): the recording thread's ms in Submit by phase - 0 end of the list (barriers, vkEndCommandBuffer),
+  // 1 waiting for the queue lock, 2 the submit call, 3 after it (pipeline cache save, retiring). Vulkan only.
+  double submit_phase_ms[4] = {};
+  double submit_max_ms = 0.0;
   uint64_t pipelines_loaded_async = 0;  // patch 0010: of pipelines_loaded, loaded by a pipeline worker
   // Patch 0057: pipelines the workers created (not loaded): count, CPU ms in CreateGraphicsPipelineState (all workers
   // summed), the slowest one, their VS+PS+GS bytecode bytes, per priority (PipelinePriority), and jobs still queued.

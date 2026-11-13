@@ -8433,7 +8433,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   now.translate_ms - p.translate_ms, now.copies - p.copies,
                   double(now.upload - p.upload) / 1048576.0, double(now.tex_upload - p.tex_upload) / 1048576.0,
                   now.wait_ms - p.wait_ms);
+      // 0.6.2 (job 1755b): the "state" freezes end where a draw's early submit ends - which phase of Submit took it.
+      if (bs.submit_max_ms > 0.0)
+        REXLOG_INFO("gow2_renderer: HITCH frame {} submits: {} | ms: end of list {:.1f}, queue lock {:.1f}, submit call "
+                    "{:.1f}, after (cache save, retire) {:.1f} | slowest submit so far {:.1f} ms",
+                    frame_, bs.submits - hitch_submits_prev_, bs.submit_phase_ms[0] - hitch_submit_prev_[0],
+                    bs.submit_phase_ms[1] - hitch_submit_prev_[1], bs.submit_phase_ms[2] - hitch_submit_prev_[2],
+                    bs.submit_phase_ms[3] - hitch_submit_prev_[3], bs.submit_max_ms);
     }
+    hitch_submits_prev_ = bs.submits;
+    for (int i = 0; i < 4; ++i) hitch_submit_prev_[i] = bs.submit_phase_ms[i];
     hitch_prev_ = now;
     slow_stretches_.clear();  // patch 0033: per frame
     ClearStretchAgg();        // patch 0036
@@ -8445,6 +8454,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint64_t pack_hits = 0;
   };
   HitchCounters hitch_prev_;
+  uint64_t hitch_submits_prev_ = 0;   // 0.6.2 (job 1755b)
+  double hitch_submit_prev_[4] = {};
   uint64_t hitch_ticks_[kPartCount] = {};
   uint32_t hitches_logged_ = 0;
 
