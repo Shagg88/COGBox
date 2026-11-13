@@ -1204,30 +1204,7 @@ static void about_tab(App &a, int g)
         if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
         else {
             const std::string from = pick_folder(L"Choose your Xenia content folder, or the Content folder copied from your Xbox 360 (not a whole drive)");
-            if (!from.empty()) {
-                save_import::Result r;
-                make_dirs(game_user_dir(g));
-                std::vector<std::filesystem::path> own;   // every launcher profile's saves folder of this game (user, user-pN)
-                {
-                    std::error_code ec;
-                    for (std::filesystem::directory_iterator it(std::filesystem::u8path(game_root(g)), ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
-                        if (it->is_directory(ec) && it->path().filename().string().rfind("user", 0) == 0) own.push_back(it->path());
-                }
-                if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r, own)) {
-                    std::string m = std::string(d.name) + ": imported ";
-                    if (r.saves) m += std::to_string(r.saves) + (r.saves == 1 ? " save" : " saves");
-                    if (r.saves && r.settings) m += " and ";
-                    if (r.settings) m += "the profile's game progress";
-                    m += ".";
-                    if (!r.backup_dir.empty()) m += " What they replaced is kept in the saves folder, in " + r.backup_dir.filename().string() + ".";
-                    for (const std::string &n : r.notes) m += " " + n;
-                    set_message(a, m, false);
-                } else {
-                    std::string m = r.error;
-                    for (const std::string &n : r.notes) m += " " + n;
-                    set_message(a, m, true);
-                }
-            }
+            if (!from.empty()) import_saves_from(a, g, from);
         }
     }
     ui_tip("Brings your own saves of this game in from Xenia (its content folder) or from an Xbox 360 (the Content folder "
@@ -1553,4 +1530,33 @@ void page_draw(App &a, ImVec2 size)
         ImGui::SetTooltip("%s", tr(why).c_str());
     }
     ImGui::PopItemFlag();
+}
+
+// 0.6.1: the Import saves button, and a save package dropped onto COGBox (a player drags an Xbox 360 or Xenia save onto
+// the window instead of using the button - save_import takes one save package file as well as a folder).
+void import_saves_from(App &a, int g, const std::string &from)
+{
+    const GameDef &d = game_def(g);
+    save_import::Result r;
+    make_dirs(game_user_dir(g));
+    std::vector<std::filesystem::path> own;   // every launcher profile's saves folder of this game (user, user-pN)
+    {
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(std::filesystem::u8path(game_root(g)), ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
+            if (it->is_directory(ec) && it->path().filename().string().rfind("user", 0) == 0) own.push_back(it->path());
+    }
+    if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r, own)) {
+        std::string m = std::string(d.name) + ": imported ";
+        if (r.saves) m += std::to_string(r.saves) + (r.saves == 1 ? " save" : " saves");
+        if (r.saves && r.settings) m += " and ";
+        if (r.settings) m += "the profile's game progress";
+        m += ".";
+        if (!r.backup_dir.empty()) m += " What they replaced is kept in the saves folder, in " + r.backup_dir.filename().string() + ".";
+        for (const std::string &n : r.notes) m += " " + n;
+        set_message(a, m, false);
+    } else {
+        std::string m = r.error;
+        for (const std::string &n : r.notes) m += " " + n;
+        set_message(a, m, true);
+    }
 }

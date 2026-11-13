@@ -230,7 +230,13 @@ void game_refresh(int g, Ini &ini, GameState &st, bool hash)
     if ((data.empty() || !file_exists(join(data, "default.xex"))) && file_exists(join(game_default_data_dir(g), "default.xex"))) data = game_default_data_dir(g);
     st.dataDir = file_exists(join(data, "default.xex")) ? data : "";
     std::string upd = ini.get(d.key, "UpdateFolder");
-    if (upd.empty()) upd = game_default_update_dir(g);
+    // 0.6.1 (Discord: a COGBox folder set up on one PC and copied to a Steam Deck saw the games and DLC but no title
+    // updates): the remembered folder is the first PC's full path. As for the game copy above, when it holds no update
+    // but COGBox's own unpacked update is in place, that one is used.
+    if (upd.empty() || !file_exists(join(upd, "default.xexp"))) {
+        const std::string own = game_default_update_dir(g);
+        if (upd.empty() || file_exists(join(own, "default.xexp"))) upd = own;
+    }
     st.updateDir = file_exists(join(upd, "default.xexp")) ? upd : "";
 
     if (hash) {

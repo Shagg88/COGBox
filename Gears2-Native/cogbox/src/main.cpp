@@ -299,6 +299,29 @@ void startup_notices(App &a)
         const std::string why = setup_folder_problem();
         if (!why.empty()) { ask(a, "info", -1, "Move the COGBox folder", why, { "OK" }); return; }
     }
+    // 0.6.1 (Discord: "unable to drop anything in the launcher" on Windows): run as administrator, COGBox can't receive
+    // files dragged from Explorer (Windows blocks drag and drop from a normal program into an elevated one). Said once
+    // per start; the add buttons work either way. Not under Wine (no such rule there).
+    if (!a.adminChecked) {
+        a.adminChecked = true;
+        bool elevated = false;
+        HANDLE tok = nullptr;
+        if (!a.wine && OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) {
+            // review: only a split UAC token (elevated with UAC on) blocks drops from Explorer; with UAC off or the
+            // built-in Administrator account (TokenElevationTypeDefault) drag and drop works
+            TOKEN_ELEVATION_TYPE type = TokenElevationTypeDefault;
+            DWORD n = 0;
+            if (GetTokenInformation(tok, TokenElevationType, &type, sizeof type, &n)) elevated = type == TokenElevationTypeFull;
+            CloseHandle(tok);
+        }
+        if (elevated) {
+            ask(a, "info", -1, "Drag and drop is off",
+                "COGBox is running as administrator, so Windows doesn't let you drag files onto it from Explorer. Use "
+                "Choose a file... or Choose a folder... instead, or start COGBox normally (not as administrator) to drag "
+                "and drop again.", { "OK" });
+            return;
+        }
+    }
     // to-do 13 (Shagg 3 Nov): after an update, say so and offer the changelog (this version's release page). A first
     // start (no notice seen before) just records the version.
     if (a.ini.get("Notices", "WhatsNewSeen") != COGBOX_VERSION) {

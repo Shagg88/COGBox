@@ -287,6 +287,16 @@ void install_start(App &a, const std::string &path, int forGame)
         if (p.kind == x360fs::SourceKind::StfsPackage) {
             if (pi.content_type == x360fs::kContentMarketplace) {
                 if (!dlc_plan(p, pi, err)) { set_message(a, err, true); return; }
+            } else if (pi.content_type == x360fs::kContentSavedGame || pi.content_type == 0x00010000u) {
+                // 0.6.1: a save (or a profile) from an Xbox 360 / Xenia dropped onto COGBox - import it, as Import saves does
+                const int g = p.game >= 0 ? p.game : forGame;
+                if (g < 0) {
+                    set_message(a, std::string(pi.content_type == 0x00010000u ? "This is an Xbox 360 profile" : "This is a game save") +
+                                   ", not a game or update. Open the game's page and use Import saves... (or drop it there).", true);
+                    return;
+                }
+                import_saves_from(a, g, narrow(p.resolved));   // review: the game-running / busy checks ran at the top
+                return;
             } else if (!pi.is_title_update()) {
                 set_message(a, "This package isn't a title update or downloadable content (" + (pi.display_name.empty() ? std::string("content type ") + std::to_string(pi.content_type) : pi.display_name) +
                                    ").", true);

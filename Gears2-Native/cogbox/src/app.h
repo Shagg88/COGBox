@@ -111,6 +111,7 @@ struct App {
     bool playWasMax = false;          // job 526: the window as it was when Play was pressed, put back afterwards
     bool wine = false;                // job 523: running under Wine / Proton (Linux, Steam Deck)
     bool setupFolderChecked = false;  // 0.6.1: the unpack-folder check (main.cpp startup_notices) ran this start
+    bool adminChecked = false;        // 0.6.1: the "running as administrator - drag and drop is off" check ran this start
     bool mac = false;                 // job 643: ... on a Mac (CrossOver)
     proton::Info proton;              // proton049: Proton / SteamOS / Steam Deck details (all empty on Windows)
     std::vector<std::string> dropped; // files dropped on the window, handled next frame
@@ -164,6 +165,7 @@ bool settings_save(App &a);
 std::vector<std::string> monitor_choices();   // page.cpp: "Default (main screen)", then each screen
 // install.cpp
 void install_start(App &a, const std::string &path, int forGame);
+void import_saves_from(App &a, int game, const std::string &from);   // 0.6.1: page.cpp (Import saves, or a dropped save package)
 void install_confirmed(App &a);      // the "replace" question answered yes
 bool drop_is_game_or_update(const std::string &folder);          // 0.2.0: a dropped folder COGBox adds as a copy / update
 std::vector<std::string> dlc_packages_in(const std::string &folder);   // 0.2.0: DLC packages in a dropped folder (3 levels)

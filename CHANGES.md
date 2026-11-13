@@ -21,6 +21,12 @@ https://recomplauncher.com/game/cogbox
   anything can't be put in place, nothing is changed.
 - **COGBox says when it's in the wrong place:** started from inside its zip, from Program Files or from a folder it
   can't write to, it explains on start-up where to move it (it already warned about OneDrive / Dropbox folders).
+- **A save dropped onto COGBox is imported:** an Xbox 360 save or profile package (one file) dragged onto the window (or
+  onto a game's page) goes through **Import saves** instead of "This package isn't a title update or downloadable content".
+- **Title updates are found after moving COGBox** (Discord): a COGBox folder set up on one PC and copied to another
+  (a Steam Deck, say) saw the games and DLC but not the title updates, which it looked for at the first PC's path.
+- **COGBox says when drag and drop can't work:** run as administrator, Windows doesn't let Explorer drop files onto
+  it; it now says so on start-up and points to Choose a file... / Choose a folder....
 - **Gears 1 has Insane from the start too** (GitHub #284): the game part has worked since 0.5.0, but the launcher still
   hid the option for Gears 1. It's now offered like in the other three games (Gameplay > Original unlock rules off).
 - **The tested versions are shown:** each game's About tab and the title-update notice name the game and title-update
