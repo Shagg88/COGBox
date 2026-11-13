@@ -197,7 +197,8 @@ void play_answer(App &a, const Modal &m);
 void linux_start(App &a, bool hadSettings);   // first start under Proton: the recommended settings (only without settings.ini)
 void linux_poll(App &a);                      // "Look for my games" finished: the list to choose from
 void linux_answer(App &a, const Modal &m);    // the "protonrec" / "protonfound" questions
-void linux_copy_buttons(App &a);              // Choose a folder... / Paste a Linux path / Look for my games
+float linux_copy_buttons_width(const App &a);
+void linux_copy_buttons(App &a);              // Choose a file... / Choose a folder... / Paste a path (Linux: + Look for my games)
 void linux_recommended_ask(App &a, int g);    // "Use recommended Steam Deck / Proton settings"
 std::string shown_path(const App &a, const std::string &p);   // under Wine Z:\home\... shown as /home/...
 void auto_settings_apply(App &a, int g);    // Shagg 29 Oct: the "Detect best settings" answer (page.cpp)   // the "crash" question answered

@@ -1340,3 +1340,7 @@ Delete this profile? = Excluir este perfil?
 Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = Os saves dele em todos os jogos, o nome e o ícone vão para a pasta _old-files do COGBox. O conteúdo baixado fica. Se ele tiver uma conta online, exclua-a primeiro na aba Social.
 Profile deleted: = Perfil excluído:
 Couldn't delete the profile: = Não foi possível excluir o perfil:
+Choose a file... = Escolher um arquivo...
+Paste a path = Colar um caminho
+Import saves... = Importar saves...
+For the smoothest experience, these games require the listed Title Updates. See the README for details. = Para a experiência mais fluida, estes jogos exigem as Title Updates listadas. Veja o README para detalhes.

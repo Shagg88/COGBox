@@ -1340,3 +1340,7 @@ Delete this profile? = このプロファイルを削除しますか？
 Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = すべてのゲームのセーブ、名前、アイコンは COGBox の _old-files フォルダーに移動されます。ダウンロードしたコンテンツは残ります。オンラインアカウントがある場合は、先に Social タブで削除してください。
 Profile deleted: = プロファイルを削除しました:
 Couldn't delete the profile: = プロファイルを削除できませんでした:
+Choose a file... = ファイルを選択...
+Paste a path = パスを貼り付け
+Import saves... = セーブをインポート...
+For the smoothest experience, these games require the listed Title Updates. See the README for details. = 最も快適にプレイするには、これらのゲームに記載のTitle Updateが必要です。詳しくはREADMEをご覧ください。

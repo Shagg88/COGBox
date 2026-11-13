@@ -26,14 +26,21 @@ matchmaking - no Xbox Live needed. Off until you turn it on in the launcher's So
 
 ## The games
 
-| Game | Needs | Status |
-|---|---|---|
-| Gears of War | Disc + Title Update 5 | Playable |
-| Gears of War 2 | US disc + Title Update 6 | Every chapter plays in testing |
-| Gears of War 3 | Disc + Title Update 6 | Playable |
-| Gears of War: Judgment | Disc + Title Update 4 | Playable |
+| Game | Tested disc | Tested title update | Status |
+|---|---|---|---|
+| Gears of War | Game version 0.0.0.1 | Title Update 5 (version 0.0.5.1) | Playable |
+| Gears of War 2 | US disc, game version 0.0.0.5 | Title Update 6 (version 0.0.6.5) | Every chapter plays in testing |
+| Gears of War 3 | Game version 0.0.0.11 | Title Update 6 (version 0.0.6.11) | Playable |
+| Gears of War: Judgment | Game version 0.0.0.9 | Title Update 4 (version 0.0.4.9) | Playable |
 
-Title updates are required; disc-only copies aren't supported.
+Title updates are required; disc-only copies aren't supported. The versions are the ones the game itself reports
+(with the title update applied, the third number is the update's).
+
+Players have also reported other copies working, most likely other regions' releases: Gears of War, 2 copies of the
+disc; Gears of War 2, 1 of the title update; Gears of War 3, 5 of the title update; Judgment, 1 of the disc and 4 of
+the title update. COGBox checks your copy when you add it: a tested or reported copy is accepted as it is, any other
+copy is marked "untested" - it may work, but please try a tested one before reporting a problem. Each game's page in
+the launcher shows the same versions.
 
 ## Features
 
@@ -67,7 +74,9 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
    folder (7-Zip, or Windows 11 itself) somewhere you can write to, e.g. `C:\Games\COGBox` - not Program Files, and not a OneDrive / Dropbox folder.
 2. Start `CogBox.exe`. If Windows says "Windows protected your PC", choose **More info > Run anyway** (the programs
    aren't code-signed).
-3. Drag your game copy onto the COGBox window, then its title update. COGBox checks and unpacks them.
+3. Drag your game copy onto the COGBox window, then its title update - or, where dragging doesn't work (for example the
+   Steam Deck), use **Choose a file...**, **Choose a folder...** or **Paste a path** in the launcher. COGBox checks and
+   unpacks them.
 4. Press **PLAY**. **SETTINGS** has graphics, controls and gameplay options; rest the mouse on any option to see what
    it does.
 
@@ -78,6 +87,10 @@ the buttons for your controller or keyboard.
 
 **Players and profiles:** click the **PLAYER** plate to set your name and picture. Each person can have their own
 profile with their own saves; players 2-4 can be signed out from their cards.
+
+**Saves from Xenia or an Xbox 360:** on a game's About tab, **Import saves...** brings in your own saves of that game
+from Xenia (choose its `content` folder) or from an Xbox 360 (the `Content` folder copied from the console's USB stick
+or hard drive). Saves it would replace are moved to a `_saves-before-import-...` folder next to them, never deleted.
 
 **Box art:** press **UPDATE ART** to download HD box art and backgrounds.
 

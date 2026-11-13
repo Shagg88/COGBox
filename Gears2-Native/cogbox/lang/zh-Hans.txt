@@ -1340,3 +1340,7 @@ Delete this profile? = 删除此配置文件？
 Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = 它在所有游戏中的存档、名称和图标将移到 COGBox 的 _old-files 文件夹。下载的内容会保留。如果它有在线账户，请先在 Social 标签页中删除。
 Profile deleted: = 配置文件已删除：
 Couldn't delete the profile: = 无法删除配置文件：
+Choose a file... = 选择文件...
+Paste a path = 粘贴路径
+Import saves... = 导入存档...
+For the smoothest experience, these games require the listed Title Updates. See the README for details. = 为获得最流畅的体验，这些游戏需要下列 Title Update。详情请参阅 README。

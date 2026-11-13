@@ -1340,3 +1340,7 @@ Delete this profile? = ¿Borrar este perfil?
 Its saves in every game, name and icon move to COGBox's _old-files folder. Downloaded content stays. If it has an online account, delete that first on the Social tab. = Sus partidas guardadas en todos los juegos, su nombre y su icono se mueven a la carpeta _old-files de COGBox. El contenido descargado se queda. Si tiene una cuenta en línea, bórrala primero en la pestaña Social.
 Profile deleted: = Perfil borrado:
 Couldn't delete the profile: = No se pudo borrar el perfil:
+Choose a file... = Elegir un archivo...
+Paste a path = Pegar una ruta
+Import saves... = Importar partidas...
+For the smoothest experience, these games require the listed Title Updates. See the README for details. = Para la experiencia más fluida, estos juegos necesitan las Title Updates indicadas. Consulta el README para más detalles.

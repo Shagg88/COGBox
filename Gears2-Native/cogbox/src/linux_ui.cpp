@@ -140,18 +140,55 @@ void linux_answer(App &a, const Modal &m)
     }
 }
 
+// 0.6.2 (Shagg 13 Nov: Steam Deck players can't drag and drop - "add the proper buttons necessary to avoid the issue",
+// for anyone): every player gets a file picker, a folder picker and a pasted path - the same import as a drop
+// (a.dropped). Under Proton / Wine the pasted path may be a Linux one, and the search of the Linux folders is offered.
+float linux_copy_buttons_width(const App &a)   // for centring them
+{
+    float w = 0;
+    int n = 0;
+    for (const char *en : { "Choose a file...", "Choose a folder...", a.wine ? "Paste a Linux path" : "Paste a path", a.wine ? "Look for my games" : nullptr }) {
+        if (!en) continue;
+        w += std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, tr(en)).x + S(28));
+        ++n;
+    }
+    return w + ImGui::GetStyle().ItemSpacing.x * float(n - 1);
+}
+
 void linux_copy_buttons(App &a)
 {
-    if (!a.wine) return;
     const bool busy = a.job.state.load() == 1 || a.run.proc != nullptr;
     auto button = [&](const char *en) {
         const char *l = tr(en);
         const float w = std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, l).x + S(28));
         return th_button(l, ImVec2(w, T(26)), !busy, F_BODY);
     };
-    if (button("Choose a folder...")) add_path(a, pick_folder(L"Choose the folder of your game copy, title update or DLC"));
-    ui_tip("A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\\home\\... is /home/...).");
+    if (button("Choose a file...")) {
+        // (title updates and DLC packages have no file extension: "All files" first)
+        add_path(a, pick_file(L"Choose your disc image, Games on Demand file, title update or DLC package",
+                              L"All files\0*.*\0Disc images (*.iso)\0*.iso\0Game executables (default.xex)\0*.xex\0"));
+    }
+    ui_tip(a.wine ? "A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
+                  : "A disc image (.iso), a Games on Demand file, a title update or a DLC package (those two have no file extension).");
     ImGui::SameLine();
+    if (button("Choose a folder...")) add_path(a, pick_folder(L"Choose the folder of your game copy, title update or DLC"));
+    ui_tip(a.wine ? "A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
+                  : "A folder with your game (default.xex), a title update or DLC.");
+    ImGui::SameLine();
+    if (!a.wine) {
+        if (button("Paste a path")) {
+            char *c = SDL_GetClipboardText();
+            std::string text = c ? c : "";
+            if (c) SDL_free(c);
+            while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ')) text.pop_back();
+            while (!text.empty() && (text.front() == ' ')) text.erase(text.begin());
+            if (text.size() >= 2 && text.front() == '"' && text.back() == '"') text = text.substr(1, text.size() - 2);
+            if (text.empty()) set_message(a, "Copy a file's or folder's path first (in File Explorer: Shift + right-click > Copy as path).", true);
+            else add_path(a, text);
+        }
+        ui_tip("Copy the path of your disc image, game folder, title update or DLC (File Explorer: Shift + right-click > Copy as path), then press this.");
+        return;
+    }
     if (button("Paste a Linux path")) {
         char *c = SDL_GetClipboardText();
         const std::string text = c ? c : "";

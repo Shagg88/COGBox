@@ -42,9 +42,18 @@ struct GameDef {
     Fingerprint xexp;          // the title update's default.xexp
     const char *year;
     const char *tagline;       // a line under the box when the game hasn't been added
+    // 0.6.2 (Shagg 13 Nov: show the tested versions): the game versions the port is made for, as the game reports them
+    // (the XEX's version: disc, then with the title update applied - from the games' own logs, "XEX patch applied").
+    const char *discVersion;   // "0.0.0.5"
+    const char *updateVersion; // "0.0.6.5"
 };
 
 const GameDef &game_def(int g);
+// 0.6.2: how many other copies of the game (update = false) or of its title update players have reported working.
+int reported_working_count(int g, bool update);
+// "Title Update 6 (version 0.0.6.5)" / "the disc (version 0.0.0.5)"
+std::string tested_update_text(int g);
+std::string tested_disc_text(int g);
 int game_by_title_id(uint32_t tid);        // -1 if none of ours
 // The front screen's order (release order: Gears 1, 2, 3, Judgment): the game in a carousel slot, and a game's slot.
 int game_at_slot(int slot);

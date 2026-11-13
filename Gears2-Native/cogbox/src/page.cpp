@@ -1139,6 +1139,18 @@ static void about_tab(App &a, int g)
             ImGui::PopID();
         }
     }
+    {   // 0.6.2 (Shagg 13 Nov): the versions COGBox is tested with
+        const int rd = reported_working_count(g, false), ru = reported_working_count(g, true);
+        std::string t = "Tested with " + tested_disc_text(g) + " and " + tested_update_text(g);
+        if (rd || ru) {
+            t += "; players have also reported ";
+            if (rd) t += std::to_string(rd) + (rd == 1 ? " other copy of the game" : " other copies of the game");
+            if (rd && ru) t += " and ";
+            if (ru) t += std::to_string(ru) + (ru == 1 ? " other copy of the title update" : " other copies of the title update");
+            t += " working";
+        }
+        ui_note(t + ".", col::dim);
+    }
     if (st.updateDir.empty())
         lamp_line(2, std::string(d.updateName) + ": not added - required to play");   // title updates required (0.4.0)
     else {
@@ -1170,7 +1182,7 @@ static void about_tab(App &a, int g)
     ImGui::Dummy(ImVec2(0, S(2)));
     ui_note("To add or replace your copy or the title update, drag and drop it onto this window.", col::amber);
     ui_tip("To add downloadable content, drag and drop the package onto this window.");
-    if (a.wine) {   // proton049: no drag and drop in the Steam Deck's Game Mode
+    {   // proton049 / 0.6.2: for everyone - where dragging doesn't work, pick or paste instead
         ImGui::Dummy(ImVec2(0, S(2)));
         linux_copy_buttons(a);
     }

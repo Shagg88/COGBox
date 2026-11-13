@@ -404,8 +404,8 @@ static void empty_draw(App &a, ImVec2 size, bool nav)
     ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
     const bool busy = a.job.state.load() == 1;
     (void)bw; (void)bh; (void)busy; (void)nav;   // 0.4.6 (Shagg 5 Nov): drag and drop only
-    if (a.wine) {   // proton049: the Steam Deck's Game Mode has nothing to drag from - pick, paste or search instead
-        ImGui::SetCursorScreenPos(ImVec2(cx - T(260), y));
+    {   // proton049 / 0.6.2: where dragging doesn't work (Steam Deck Game Mode, some Linux desktops): pick, paste or search
+        ImGui::SetCursorScreenPos(ImVec2(cx - linux_copy_buttons_width(a) * 0.5f, y));
         linux_copy_buttons(a);
     }
 }

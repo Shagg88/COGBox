@@ -294,10 +294,14 @@ void startup_notices(App &a)
     // Title updates required (0.4.0): a new "never" key, so a player who ticked the old "recommended" notice away
     // still sees once that the updates are now required
     if (!a.ini.geti("Notices", "TitleUpdatesRequiredNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION) {
-        ask(a, "tunotice", -1, "Title updates required",
-            // 0.4.6 (Shagg 4 Nov): short - the steps are in the README
-            "For the smoothest experience, these games require the listed Title Updates. See the README for details.\n\n"
-            "    Gears of War - Title Update 5\n    Gears of War 2 - Title Update 6\n    Gears of War 3 - Title Update 6\n    Gears of War: Judgment - Title Update 4", { "Continue" });
+        // 0.4.6 (Shagg 4 Nov): short - the steps are in the README. 0.6.2 (Shagg 13 Nov): with the tested versions.
+        std::string tu = tr("For the smoothest experience, these games require the listed Title Updates. See the README for details.");
+        tu += "\n";
+        for (int slot = 0; slot < G_ALL; slot++) {
+            const int g = game_at_slot(slot);
+            tu += std::string("\n    ") + game_def(g).name + " - " + tested_update_text(g);
+        }
+        ask(a, "tunotice", -1, "Title updates required", tu, { "Continue" });
         a.modal.check = "Don't show this again";
         return;
     }

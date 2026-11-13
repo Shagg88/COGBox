@@ -1422,3 +1422,7 @@ No friends yet - add one by their tag. = Még nincsenek barátaid - adj hozzá e
 Add friend = Barát hozzáadása
 You can invite friends while a game hosts a lobby or match. = Barátokat hívhatsz meg, miközben egy játékban váróterem vagy mérkőzés megy.
 ADD = HOZZÁADÁS
+Choose a file... = Fájl választása...
+Paste a path = Útvonal beillesztése
+Import saves... = Mentések importálása...
+For the smoothest experience, these games require the listed Title Updates. See the README for details. = A legsimább játékhoz ezekhez a játékokhoz a felsorolt Title Update-ek kellenek. Részletek a README-ben.
