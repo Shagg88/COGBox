@@ -180,8 +180,6 @@ std::vector<Option> make_options(Game g) {
                "How bright normal scenes are. 203 is the reference; raise it in a bright room.", 364), "", "HDR");
     add(number("Peak", "HDR peak (nits)", Tab::Display, Kind::Int, PG, 400, 4000, 100, 1000,
                "Your screen's peak brightness (see its specs or Windows HDR calibration).", 365), "", "HDR");
-    // GitHub #185 (Shagg 7 Nov): gamma on the game's display ramp. 100 = the game's own; higher = darker shadows and
-    // midtones, highlights kept (Judgment looks brighter than Xbox 360 footage to some players).
     add(make("Vsync", "Vsync (no tearing)", Tab::Display, Kind::Bool, SH, 0,
              "Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen "
              "follows the game below its refresh rate. A frame-rate limit above your screen's refresh rate is lowered to the "

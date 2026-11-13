@@ -2556,7 +2556,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     FrameStep("export readback results", [&] { PollExportReadbacks(); });  // job 041
     if (!through_checks_.empty()) FrameStep("through checks", [&] { PollThroughChecks(); });  // job 047
     if (!fused_checks_.empty()) FrameStep("fused checks", [&] { PollFusedChecks(); });  // fuse049
-    if (!resolve_readback_retire_.empty())
+    if (!resolve_readback_retire_.empty() || (!resolve_readback_prev_.empty() && (frame_ & 511u) == 0))
       FrameStep("resolve readback retirement", [&] { RetireResolveReadbacks(); });  // patch 0020
     {
       PartScope ps(*this, kPartPoll);
@@ -4616,24 +4616,50 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++rb_stats_.waits;  // first copy of this destination: wait, as Canary does when the previous buffer is missing
       backend_->WaitForFence(backend_->Submit());
       LandResolveReadback(h, start, length);
-      resolve_readback_prev_.emplace(key, h);
+      resolve_readback_prev_.emplace(key, ResolveReadbackPrev{h, frame_, ++resolve_readback_seq_, resolve_readback_seq_});
       return;
     }
-    if (backend_->IsReadbackReady(it->second)) {
-      LandResolveReadback(it->second, start, length);
-      backend_->ReleaseReadback(it->second);
+    ResolveReadbackPrev& prev = it->second;
+    if (backend_->IsReadbackReady(prev.handle)) {
+      LandResolveReadback(prev.handle, start, length);
+      prev.landed_seq = prev.seq;
+      backend_->ReleaseReadback(prev.handle);
     } else {
-      // The previous copy is still in flight (the same destination twice in a frame): it is not landed (Canary would
-      // land that buffer's older contents) and is released at a swap once done, so nothing waits here.
+      // The previous copy is still in flight (the same destination twice in a frame, or a GPU a frame behind): nothing
+      // waits here. 0.6.1 (review): it used to be dropped once done - a destination resolved again before each copy
+      // finished then never reached the game after its first, waited one. It is landed at a swap when it is done and
+      // still newer than what the game has (RetireResolveReadbacks).
       ++rb_stats_.not_ready;
-      resolve_readback_retire_.push_back(it->second);
+      resolve_readback_retire_.push_back(ResolveReadbackRetired{prev.handle, key, prev.seq});
     }
-    it->second = h;
+    prev.handle = h;
+    prev.seq = ++resolve_readback_seq_;
+    prev.last_frame = frame_;
   }
   void RetireResolveReadbacks() {
+    // 0.6.1 (review): a destination not resolved for 3600 frames gives its buffer back (one stayed per distinct
+    // base / length for the whole session - levels move their targets).
+    if ((frame_ & 511u) == 0) {
+      for (auto it = resolve_readback_prev_.begin(); it != resolve_readback_prev_.end();) {
+        if (it->second.last_frame + 3600 < frame_) {
+          resolve_readback_retire_.push_back(ResolveReadbackRetired{it->second.handle, 0, 0});  // released when done, never landed
+          it = resolve_readback_prev_.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
     for (size_t i = 0; i < resolve_readback_retire_.size();) {
-      if (backend_->IsReadbackReady(resolve_readback_retire_[i])) {
-        backend_->ReleaseReadback(resolve_readback_retire_[i]);
+      if (backend_->IsReadbackReady(resolve_readback_retire_[i].handle)) {
+        const ResolveReadbackRetired r = resolve_readback_retire_[i];
+        if (r.seq) {
+          auto it = resolve_readback_prev_.find(r.key);
+          if (it != resolve_readback_prev_.end() && r.seq > it->second.landed_seq) {
+            LandResolveReadback(r.handle, uint32_t(r.key >> 32), uint32_t(r.key));
+            it->second.landed_seq = r.seq;
+          }
+        }
+        backend_->ReleaseReadback(r.handle);
         resolve_readback_retire_[i] = resolve_readback_retire_.back();
         resolve_readback_retire_.pop_back();
       } else {
@@ -4790,8 +4816,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t resolve_readback_ = 0;  // 0 none, 1 fast, 2 full
   bool prepare_mirror_ = false;
   std::vector<uint32_t> mirror_versions_;  // per 4 KB page: the watch version the mirror last got CPU bytes at (~0 never)
-  std::unordered_map<uint64_t, gpu::ReadbackHandle> resolve_readback_prev_;  // fast: (base << 32 | length) -> last copy
-  std::vector<gpu::ReadbackHandle> resolve_readback_retire_;  // fast: replaced copies still in flight
+  struct ResolveReadbackPrev {
+    gpu::ReadbackHandle handle = 0;
+    uint64_t last_frame = 0;         // frame of the newest resolve of this destination
+    uint64_t seq = 0, landed_seq = 0;  // order of this copy / of the newest copy the game has
+  };
+  struct ResolveReadbackRetired {
+    gpu::ReadbackHandle handle = 0;
+    uint64_t key = 0, seq = 0;  // seq 0 = only to be released
+  };
+  std::unordered_map<uint64_t, ResolveReadbackPrev> resolve_readback_prev_;  // fast: (base << 32 | length) -> last copy
+  std::vector<ResolveReadbackRetired> resolve_readback_retire_;  // fast: replaced copies still in flight
+  uint64_t resolve_readback_seq_ = 0;
   struct ReadbackStats {
     uint64_t prepared_bytes = 0, prepared_runs = 0, readbacks = 0, landed = 0, landed_bytes = 0, waits = 0, failed = 0,
              not_ready = 0;
