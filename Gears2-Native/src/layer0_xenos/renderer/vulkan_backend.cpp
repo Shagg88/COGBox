@@ -3099,7 +3099,9 @@ class VulkanBackend final : public Backend {
       job_cv_.notify_all();
       for (auto& t : workers_) t.join();
       workers_.clear();
-      for (int i = 0; i < 500 && cache_saving_.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      // 0.6.2: a background save reads the cache itself now - it must be done before the cache is destroyed (60 s at most)
+      for (int i = 0; i < 6000 && cache_saving_.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      if (cache_saving_.load()) REXLOG_WARN("gow2_renderer: Vulkan: a pipeline cache save is still running at shutdown");
       MaybeSaveCache(true);  // patch 0079
       if (ext_) {  // the device isn't ours: wait for our own work only (vkDeviceWaitIdle would need every queue locked)
         const VkSemaphore sem = timeline_;
@@ -3331,16 +3333,31 @@ class VulkanBackend final : public Backend {
         t - cache_saved_at_ < std::chrono::seconds(options_.pipeline_save_seconds))
       return;
     if (!now && options_.pipeline_save_seconds <= 0) return;
-    size_t n = 0;
-    if (vk_.vkGetPipelineCacheData(device_, pipeline_cache_vk_, &n, nullptr) != VK_SUCCESS || !n) return;
-    auto data = std::make_shared<std::vector<char>>(n);
-    if (vk_.vkGetPipelineCacheData(device_, pipeline_cache_vk_, &n, data->data()) != VK_SUCCESS) return;
-    data->resize(n);
     cache_saved_at_ = t;
     cache_saved_built_ = built;
     ++stats_.pipeline_library_saves;
     const std::filesystem::path path = cache_path_;
-    auto write = [path, data]() {
+    // 0.6.2 (job 1754a: 110-335 ms frames every ~15 s on Vulkan, "library saves 1" in each): the driver serialises the
+    // whole cache (hundreds of MB) in vkGetPipelineCacheData, and that ran on the render thread - only the file write
+    // was in the background. Now both are. The cache is internally synchronised (created without
+    // VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT), so the workers' pipeline builds may go on meanwhile; the
+    // shutdown below waits for a save in progress before the cache is destroyed.
+    const VkDevice dev = device_;
+    const VkPipelineCache cache = pipeline_cache_vk_;
+    const PFN_vkGetPipelineCacheData get_data = vk_.vkGetPipelineCacheData;
+    auto write = [path, dev, cache, get_data]() {
+      // (the workers may add pipelines between the two calls: room to spare, and again on VK_INCOMPLETE)
+      auto data = std::make_shared<std::vector<char>>();
+      VkResult r = VK_INCOMPLETE;
+      for (int tries = 0; tries < 4 && r == VK_INCOMPLETE; ++tries) {
+        size_t n = 0;
+        if (get_data(dev, cache, &n, nullptr) != VK_SUCCESS || !n) return;
+        n += n / 8 + 65536;
+        data->resize(n);
+        r = get_data(dev, cache, &n, data->data());
+        if (r == VK_SUCCESS) data->resize(n);
+      }
+      if (r != VK_SUCCESS) return;
       std::filesystem::path tmp = path;
       tmp += L".tmp";
       {

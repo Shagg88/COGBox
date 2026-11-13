@@ -11730,8 +11730,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                   : uint64_t(std::clamp(loading ? REXCVAR_GET(gow2_renderer_recipe_pack_jobs_load)
                                                         : burst ? REXCVAR_GET(gow2_renderer_recipe_pack_jobs_missing)
                                                                 : REXCVAR_GET(gow2_renderer_recipe_pack_jobs), 1, 64));
-      bool backlog = false, want_done = false;
+      bool backlog = false, want_done = false, want_pruned = false;
       uint32_t promoted = 0;
+      size_t want_pending = rcp_want_jobs_.size();  // (an upper bound until pruned)
       size_t keep = 0;
       if (rcp_hot_chapters_)  // job 634: the area being played first
         std::stable_partition(rcp_waiting_.begin(), rcp_waiting_.end(), [&](uint32_t i) { return rcp_rec_hot_[i] != 0; });
@@ -11762,7 +11763,22 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           continue;
         }
         const bool shaders_ready = vsg && vsg->ready() && (!(r.flags & 1) || (psg && psg->ready()));
-        if (!shaders_ready || backend_->PipelineJobsLeft() >= cap) {
+        // 0.6.2 (job 1754a: a 26 s hold that queued nothing - the start-up backlog's 6,247 recorded pipelines filled the
+        // workers' queue, so the cap below never let a wanted record through): a wanted record is limited only by the
+        // wanted jobs still being built, and goes to the workers' live queue, ahead of every backlog.
+        const bool wanted = chapter_hold_on_ && rcp_rec_want_[i];
+        bool blocked = false;
+        if (shaders_ready && wanted) {
+          const size_t want_cap = rcp_want_only_ ? 4096 : loading ? 64 : 8;
+          if (want_pending >= want_cap && !want_pruned) {
+            want_pending = PruneWantedJobs();
+            want_pruned = true;
+          }
+          blocked = want_pending >= want_cap;
+        } else if (shaders_ready) {
+          blocked = backend_->PipelineJobsLeft() >= cap;
+        }
+        if (!shaders_ready || blocked) {
           // 0.6.2 (job 1752: with background conversion the wanted records' shaders sat behind the whole backlog and
           // the draws then waited for them, 1.3 - 2.4 s a time): a wanted record's shaders are converted first.
           // (review) In play at most 4 a slice: a promoted job runs on every thread at normal priority.
@@ -11786,17 +11802,18 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ++rcp_n_.no_gs;
           continue;
         }
-        if (!backlog) {
-          backend_->SetPipelineBacklog(true);
-          backlog = true;
+        if (backlog == wanted) {  // backlog for the others, the live queue for wanted records (0.6.2)
+          backend_->SetPipelineBacklog(!wanted);
+          backlog = !wanted;
         }
         const uint64_t m = backend_->PipelineMisses();
         backend_->GetGraphicsPipeline(d, true, nullptr);
         if (backend_->PipelineMisses() != m) {
           ++rcp_n_.queued;
-          if (chapter_hold_on_ && rcp_rec_want_[i]) {  // 0.6.2: a hold waits for exactly these
-            if (rcp_want_jobs_.size() >= 2048 && rcp_want_jobs_.size() % 1024 == 0) PruneWantedJobs();
+          if (wanted) {  // 0.6.2: a hold waits for exactly these
+            if (rcp_want_jobs_.size() >= 2048 && rcp_want_jobs_.size() % 1024 == 0) want_pending = PruneWantedJobs();
             rcp_want_jobs_.push_back(d);
+            ++want_pending;
           }
         } else {
           ++rcp_n_.known;
