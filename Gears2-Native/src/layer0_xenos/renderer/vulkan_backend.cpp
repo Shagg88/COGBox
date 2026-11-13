@@ -1390,9 +1390,11 @@ class VulkanBackend final : public Backend {
     rb.row_pitch = size;
     // 0.6.1 (review): from the pool like the texture readbacks - with the resolve read-back on (Judgment's default)
     // this runs for every resolve of every frame, and each call allocated and mapped host-visible memory.
+    // Sizes go up to 64 KB steps (as D3D12's read-back pool) so that resolves of slightly different sizes share buffers.
+    const uint64_t rb_alloc = (uint64_t(size) + 0xFFFFu) & ~uint64_t(0xFFFF);
     TakePooledReadback(size, rb.buffer);
     if (!rb.buffer.buffer &&
-        !MakeBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        !MakeBuffer(rb_alloc, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, rb.buffer, true,
                     VK_MEMORY_PROPERTY_HOST_CACHED_BIT))
       return 0;
@@ -1406,7 +1408,9 @@ class VulkanBackend final : public Backend {
   void TakePooledReadback(uint64_t need, Buffer& out) {
     size_t best = readback_pool_.size();
     for (size_t i = 0; i < readback_pool_.size(); ++i)
-      if (readback_pool_[i].size >= need && (best == readback_pool_.size() || readback_pool_[i].size < readback_pool_[best].size))
+      // not a buffer far larger than asked for (a frame capture's for a 4 KB table): that one stays for its own kind
+      if (readback_pool_[i].size >= need && readback_pool_[i].size <= std::max<uint64_t>(need * 4, 256u << 10) &&
+          (best == readback_pool_.size() || readback_pool_[i].size < readback_pool_[best].size))
         best = i;
     if (best == readback_pool_.size()) return;
     out = readback_pool_[best];

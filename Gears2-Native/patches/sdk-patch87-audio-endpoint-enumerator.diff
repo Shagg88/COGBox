@@ -12,12 +12,12 @@ index bb1f074..a7e30e4 100644
 +struct EndpointEnumerator {
 +  HRESULT co = E_FAIL;
 +  IMMDeviceEnumerator* en = nullptr;
-+  EndpointEnumerator() {
-+    co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
-+                                reinterpret_cast<void**>(&en))))
++  EndpointEnumerator() { co = CoInitializeEx(nullptr, COINIT_MULTITHREADED); }
++  IMMDeviceEnumerator* Get() {  // made at the first poll; a creation that failed is tried again at the next one
++    if (!en && FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
++                                       reinterpret_cast<void**>(&en))))
 +      en = nullptr;
-+  }
++    return en; }
 +  ~EndpointEnumerator() {
 +    if (en) en->Release();
 +    if (SUCCEEDED(co)) CoUninitialize();
@@ -31,7 +31,7 @@ index bb1f074..a7e30e4 100644
 -  const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 -  IMMDeviceEnumerator* en = nullptr;
 +  thread_local EndpointEnumerator holder;
-+  IMMDeviceEnumerator* en = holder.en;
++  IMMDeviceEnumerator* en = holder.Get();
    IMMDevice* dev = nullptr;
 -  if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
 -                                 reinterpret_cast<void**>(&en))) &&

@@ -552,8 +552,9 @@ REXCVAR_DEFINE_INT32(gow2_renderer_cpu_split, 0, "Gears2",
                      "0 (job 461: 1 cost ~3% fps); test jobs that need the CPU split ask for 1");
 REXCVAR_DEFINE_INT32(gow2_renderer_submit_draws, 0, "Gears2",
                      "Patch 0138: submit our recorded work to the GPU after every N draws (0 = once a frame, as before). "
-                     "-1 (0.6.1) = adaptive: as soon as the GPU has finished everything submitted so far and at least 32 "
-                     "draws are recorded, and at the latest every 256 draws. Measured in Gears 2 at 2x with strict "
+                     "-1 (0.6.1) = adaptive, D3D12 only (off on Vulkan): as soon as the GPU has finished everything "
+                     "submitted so far and at least 64 draws are recorded, at the latest every 256 draws, at most 12 "
+                     "a frame. Measured in Gears 2 at 2x with strict "
                      "queries (jobs 1679 / 1681): every 100-150 draws = 4.8 ms a frame against 5.95 (the occlusion "
                      "answers the title waits for come back sooner); every 50 is worse again");
 REXCVAR_DEFINE_INT32(gow2_renderer_frames_in_flight, 1, "Gears2",
@@ -2303,7 +2304,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         if (++draws_since_submit_ >= submit_draws_) CountedSubmitEarly(kSubmitEveryNDraws);
       } else if (submit_auto_) {
         // 0.6.1: keep the GPU fed - it idles when it has finished what it was given while we still record. The fence
-        // read is cheap but not free, so it is asked every 8th draw once 32 draws are waiting.
+        // read is cheap but not free, so it is asked every 8th draw once 64 draws are waiting.
         // Review: at most 12 a frame (a submit drops the list's reuse of state, constants and vertex data, and a query
         // may span 16 lists), not before 64 draws wait, and "finished" is asked against the backend's newest submit -
         // it also submits on its own (full rings, waits), which a copy kept here did not see.
@@ -2654,6 +2655,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const int32_t sd = REXCVAR_GET(gow2_renderer_submit_draws);
       submit_draws_ = uint32_t(std::max(0, sd));
       submit_auto_ = sd < 0 && backend_ && backend_->HasEarlySubmit();
+      if (sd < 0 && !submit_auto_ && !submit_auto_note_) {
+        submit_auto_note_ = true;
+        REXLOG_INFO("gow2_renderer: --gow2_renderer_submit_draws=-1 needs the D3D12 backend - off");
+      }
     }
     draws_since_submit_ = 0;
     auto_submits_this_frame_ = 0;
@@ -3546,7 +3551,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // sharpened - read back on its own, for the screenshot alone (frame shots keep the game's size). HDR10 output is
     // PQ-encoded by now, so there the SDR image before that, at the game's size.
     if (presented_shots_ && !shot_.readback && XenosTakeScreenshotRequest()) {
-      const bool shown = !(hdr_ && hdr_encode_) && out_tex && ow && oh;
+      const bool shown = !(hdr_ && (hdr_legacy_ ? hdr_encode_legacy_ : hdr_encode_)) && out_tex && ow && oh;
       TakeShot(shown ? out_tex : present_out_, shown ? ow : w, shown ? oh : h);
     }
     if (XenosFrameImagesWanted()) {  // frame shots: our presented image, read back (the SDK makes none now)
@@ -4667,8 +4672,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         const ResolveReadbackRetired r = resolve_readback_retire_[i];
         if (r.seq) {
           auto it = resolve_readback_prev_.find(r.key);
-          if (it != resolve_readback_prev_.end() && r.seq > it->second.landed_seq) {
-            LandResolveReadback(r.handle, uint32_t(r.key >> 32), uint32_t(r.key));
+          // Review: only while our GPU's version of every page is still the current one - a CPU write since the
+          // resolve (the game, or a newer copy's owner) must not be overwritten by this older copy.
+          const uint32_t start = uint32_t(r.key >> 32), length = uint32_t(r.key);
+          bool current = length != 0;
+          for (uint32_t p = start >> rr::GuestWatch::kPageShift, e = (start + length - 1) >> rr::GuestWatch::kPageShift;
+               current && p <= e; ++p)
+            current = watch_->GpuCurrent(p);
+          if (it != resolve_readback_prev_.end() && r.seq > it->second.landed_seq && current) {
+            LandResolveReadback(r.handle, start, length);
             it->second.landed_seq = r.seq;
           }
         }
@@ -13232,6 +13244,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t submit_draws_ = 0, draws_since_submit_ = 0;  // patch 0138
   bool submit_auto_ = false;        // 0.6.1: --gow2_renderer_submit_draws=-1
   uint32_t auto_submits_this_frame_ = 0;
+  bool submit_auto_note_ = false;
   uint64_t early_prev_ = 0;  // patch 0138
   bool use_textures_ = true, upload_watch_ = true, vertex_direct_ = true, float_constants_trim_ = true;
   // this draw's fetch constants as the shaders see them (vertex_direct_ rewrites some), then the texture post-processing
