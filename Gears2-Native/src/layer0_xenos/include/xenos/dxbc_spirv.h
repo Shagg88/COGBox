@@ -21,6 +21,10 @@
 
 namespace xenos::dxbc_spirv {
 
+// 0.6.1: BUMP THIS on any change that alters the words ConvertDxbcToSpirv writes for the same DXBC. The renderer keeps
+// converted modules on disk (ShaderCache's SPIR-V store) under a key made of the DXBC bytes, the switches and this.
+inline constexpr uint32_t kConverterVersion = 1;
+
 struct SpirvResult {
   bool ok = false;
   std::string error;            // when !ok: what was not handled

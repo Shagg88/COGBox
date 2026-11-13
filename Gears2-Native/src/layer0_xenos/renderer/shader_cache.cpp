@@ -848,9 +848,9 @@ bool ShaderCache::SetSpirvOptimise(bool on) {
   return false;
 #endif
 }
-static void OptimiseSpirv(std::vector<uint32_t>& words) {
+bool ShaderCache::OptimiseSpirvModule(std::vector<uint32_t>& words) {
 #ifdef GN_SPIRV_OPT
-  if (!g_spv_optimise.load() || words.empty()) return;
+  if (words.empty()) return false;
   spvtools::Optimizer opt(SPV_ENV_VULKAN_1_3);  // (SPIR-V 1.6, what dxbc_spirv writes)
   opt.SetMessageConsumer([](spv_message_level_t, const char*, const spv_position_t&, const char*) {});
   opt.RegisterPerformancePasses();
@@ -859,7 +859,7 @@ static void OptimiseSpirv(std::vector<uint32_t>& words) {
   std::vector<uint32_t> out;
   if (!opt.Run(words.data(), words.size(), &out, oo) || out.size() < 5) {
     ++g_spv_opt_failed;
-    return;
+    return false;
   }
   g_spv_opt_in += words.size() * 4;
   g_spv_opt_out += out.size() * 4;
@@ -868,17 +868,141 @@ static void OptimiseSpirv(std::vector<uint32_t>& words) {
   if ((n & (n - 1)) == 0)
     REXLOG_INFO("gow2_renderer: SPIR-V optimiser: {} modules, {:.1f} MB -> {:.1f} MB, {} left as converted", n,
                 double(g_spv_opt_in.load()) / 1048576.0, double(g_spv_opt_out.load()) / 1048576.0, g_spv_opt_failed.load());
+  return true;
 #else
   (void)words;
+  return false;
 #endif
+}
+static void OptimiseSpirv(std::vector<uint32_t>& words) {
+  if (g_spv_optimise.load()) ShaderCache::OptimiseSpirvModule(words);
+}
+// 0.6.1: the SPIR-V store. One append-only file: "GNSPVST1", then records { u64 key, u32 words, u32 sum } + the words.
+// Key = FNV-1a 64 of the DXBC container (so every translator option and salt is in it) mixed with the converter
+// version, the precise flag and the renderer's switches. Only an index is held in memory; a record is read when asked
+// for. A torn tail (crash while writing) is cut off when the file is opened. A record whose sum is wrong is not used.
+namespace fs = std::filesystem;
+namespace {
+struct SpvStore {
+  std::mutex mutex;
+  fs::path path;
+  uint32_t switches = 0;
+  std::unordered_map<uint64_t, std::pair<uint64_t, uint32_t>> index;  // key -> (offset of the words, count)
+  uint64_t end = 0;
+  std::atomic<uint64_t> hits{0}, misses{0}, stored{0};
+};
+SpvStore g_spv_store;
+constexpr char kSpvMagic[8] = {'G', 'N', 'S', 'P', 'V', 'S', 'T', '1'};
+uint32_t SpvSum(const std::vector<uint32_t>& w) {
+  uint32_t s = 0x9E3779B9u;
+  for (uint32_t x : w) s = (s << 5 | s >> 27) ^ x;
+  return s;
+}
+uint64_t SpvKey(const uint8_t* dxbc, size_t n, bool precise, uint32_t switches) {
+  uint64_t h = 1469598103934665603ull;
+  auto mix = [&h](uint8_t b) { h = (h ^ b) * 1099511628211ull; };
+  for (size_t i = 0; i < n; ++i) mix(dxbc[i]);
+  const uint32_t tail[3] = {dxbc_spirv::kConverterVersion, precise ? 1u : 0u, switches};
+  for (uint32_t t : tail)
+    for (int i = 0; i < 4; ++i) mix(uint8_t(t >> (8 * i)));
+  return h;
+}
+bool SpvStoreGet(uint64_t key, std::vector<uint32_t>& words) {
+  std::pair<uint64_t, uint32_t> at;
+  {
+    std::lock_guard<std::mutex> lock(g_spv_store.mutex);
+    if (g_spv_store.path.empty()) return false;
+    auto it = g_spv_store.index.find(key);
+    if (it == g_spv_store.index.end()) {
+      ++g_spv_store.misses;
+      return false;
+    }
+    at = it->second;
+  }
+  std::ifstream f(g_spv_store.path, std::ios::binary);
+  std::vector<uint32_t> w(at.second);
+  uint32_t sum = 0;
+  if (!f || !f.seekg(std::streamoff(at.first - 4)) || !f.read(reinterpret_cast<char*>(&sum), 4) ||
+      !f.read(reinterpret_cast<char*>(w.data()), std::streamsize(w.size()) * 4) || SpvSum(w) != sum) {
+    ++g_spv_store.misses;
+    return false;
+  }
+  words.swap(w);
+  ++g_spv_store.hits;
+  return true;
+}
+void SpvStorePut(uint64_t key, const std::vector<uint32_t>& words) {
+  std::lock_guard<std::mutex> lock(g_spv_store.mutex);
+  if (g_spv_store.path.empty() || words.empty() || g_spv_store.index.count(key)) return;
+  std::ofstream f(g_spv_store.path, std::ios::binary | std::ios::app);
+  const uint32_t n = uint32_t(words.size()), sum = SpvSum(words);
+  if (!f || !f.write(reinterpret_cast<const char*>(&key), 8) || !f.write(reinterpret_cast<const char*>(&n), 4) ||
+      !f.write(reinterpret_cast<const char*>(&sum), 4) ||
+      !f.write(reinterpret_cast<const char*>(words.data()), std::streamsize(n) * 4) || !f.flush()) {
+    g_spv_store.path.clear();  // disk full or not writable: no store for the rest of this run
+    return;
+  }
+  g_spv_store.index[key] = {g_spv_store.end + 16, n};
+  g_spv_store.end += 16 + uint64_t(n) * 4;
+  ++g_spv_store.stored;
+}
+}  // namespace
+void ShaderCache::SetSpirvStore(const std::filesystem::path& dir, uint32_t switches) {
+  std::lock_guard<std::mutex> lock(g_spv_store.mutex);
+  g_spv_store.index.clear();
+  g_spv_store.path.clear();
+  g_spv_store.switches = switches;
+  if (dir.empty()) return;
+  const fs::path p = dir / "spirv-store.bin";
+  std::error_code ec;
+  uint64_t size = fs::exists(p, ec) ? uint64_t(fs::file_size(p, ec)) : 0;
+  uint64_t good = 0;
+  if (size >= 8) {
+    std::ifstream f(p, std::ios::binary);
+    char magic[8] = {};
+    if (f.read(magic, 8) && std::memcmp(magic, kSpvMagic, 8) == 0) {
+      good = 8;
+      for (;;) {
+        uint64_t key = 0;
+        uint32_t n = 0, sum = 0;
+        if (!f.read(reinterpret_cast<char*>(&key), 8) || !f.read(reinterpret_cast<char*>(&n), 4) ||
+            !f.read(reinterpret_cast<char*>(&sum), 4))
+          break;
+        const uint64_t next = good + 16 + uint64_t(n) * 4;
+        if (n < 5 || n > (64u << 20) || next > size) break;
+        g_spv_store.index[key] = {good + 16, n};
+        good = next;
+        if (!f.seekg(std::streamoff(good))) break;
+      }
+    }
+  }
+  if (good == 0) {  // new, or not ours: start a fresh file (an unreadable old one is kept beside it)
+    if (size) fs::rename(p, dir / "spirv-store.unreadable.bin", ec);
+    std::ofstream f(p, std::ios::binary | std::ios::trunc);
+    if (!f.write(kSpvMagic, 8)) return;
+    good = 8;
+  } else if (good < size) {
+    fs::resize_file(p, good, ec);  // a torn last record
+    if (ec) return;
+  }
+  g_spv_store.end = good;
+  g_spv_store.path = p;
+  REXLOG_INFO("gow2_renderer: SPIR-V store {}: {} modules, {:.1f} MB", p.string(), g_spv_store.index.size(), double(good) / 1048576.0);
 }
 static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program, const hlsl::HlslOptions& options,
                                                   bool spirv) {
   dxbc_gen::DxbcTranslation dt = dxbc_gen::TranslateToDxbc(program, options);
   if (dt.ok && spirv) {
-    dxbc_spirv::SpirvResult sv = dxbc_spirv::ConvertDxbcToSpirv(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise);
+    const uint64_t store_key = SpvKey(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise, g_spv_store.switches);
+    dxbc_spirv::SpirvResult sv;
+    const bool stored = SpvStoreGet(store_key, sv.words);  // 0.6.1: converted (and optimised) in an earlier run
+    if (stored) sv.ok = true;
+    else sv = dxbc_spirv::ConvertDxbcToSpirv(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise);
     if (sv.ok) {
-      OptimiseSpirv(sv.words);  // 0.6.1, before the dump / replace files of patch 0099
+      if (!stored) {
+        OptimiseSpirv(sv.words);  // 0.6.1, before the dump / replace files of patch 0099
+        SpvStorePut(store_key, sv.words);
+      }
       SpirvFiles(sv.words);  // patch 0099
       dt.bytecode.resize(sv.words.size() * 4);
       std::memcpy(dt.bytecode.data(), sv.words.data(), dt.bytecode.size());

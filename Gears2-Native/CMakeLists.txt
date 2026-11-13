@@ -83,6 +83,8 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/profiler.cpp
 )
 target_include_directories(gn_layer0_xenos PUBLIC src/layer0_xenos/include)
+include(${CMAKE_SOURCE_DIR}/cmake/spirv_opt.cmake)  # 0.6.1: SPIRV-Tools' optimiser for the Vulkan shader path
+gn_add_spirv_opt(gn_layer0_xenos ${CMAKE_SOURCE_DIR}/third_party)
 # stb_image_write for PNG frame capture (public domain / MIT), from the pinned FLIP checkout (job 031).
 target_include_directories(gn_layer0_xenos PRIVATE third_party/flip/src/cpp/tool)
 target_link_libraries(gn_layer0_xenos PUBLIC rex::runtime)

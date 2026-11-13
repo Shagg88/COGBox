@@ -481,6 +481,10 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_optimise, true, "Gears2",
                     "the driver builds it - about a third of the size and a third less driver time per new pipeline "
                     "(303 -> 193 ms on an RTX 3080 Ti; D3D12 158 ms). Same values (NoContraction and the float controls "
                     "are kept). false = the modules as converted, as 0.6.0");
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_store, true, "Gears2",
+                    "0.6.1 (Vulkan): converted shaders are kept in <shader cache dir>\\spirv-store.bin, so each shader is "
+                    "converted to SPIR-V (and optimised) once and not at every start (Gears 3: half a minute before the "
+                    "first frame). false = convert at every start, as 0.6.0");
 REXCVAR_DEFINE_STRING(gow2_renderer_vulkan_spirv_dump_dir, "", "Gears2",
                       "Patch 0099 (Vulkan, a measurement): write each shader's SPIR-V from our converter to this folder "
                       "as <hash of its words>.spv");
@@ -1574,6 +1578,11 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       const bool have = xenos::renderer::ShaderCache::SetSpirvOptimise(want);
       if (backend_ && backend_->GetShaderIL() == gpu::ShaderIL::kSpirv)
         REXLOG_INFO("gow2_renderer: Vulkan SPIR-V optimiser: {}", !have ? "not in this build" : want ? "on" : "off (--gow2_renderer_vulkan_spirv_optimise=false)");
+      // the store's key carries every switch that changes the converted words
+      const uint32_t sw = (have && want ? 1u : 0u) | (REXCVAR_GET(gow2_renderer_vulkan_discard_terminates) ? 2u : 0u) |
+                          (REXCVAR_GET(gow2_renderer_vulkan_float_controls) ? 4u : 0u);
+      const bool vk = backend_ && backend_->GetShaderIL() == gpu::ShaderIL::kSpirv;
+      xenos::renderer::ShaderCache::SetSpirvStore(vk && REXCVAR_GET(gow2_renderer_vulkan_spirv_store) ? cache_->Dir() : std::filesystem::path(), sw);
     }
     xenos::dxbc_spirv::SetDiscardTerminates(REXCVAR_GET(gow2_renderer_vulkan_discard_terminates));  // patch 0102
     xenos::dxbc_spirv::SetFloatControls(REXCVAR_GET(gow2_renderer_vulkan_float_controls));        // patch 0103

@@ -36,6 +36,8 @@ file(GLOB GN_LAYER0_SOURCES CONFIGURE_DEPENDS ${GN_LAYER0_DIR}/*.cpp ${GN_LAYER0
 list(FILTER GN_LAYER0_SOURCES EXCLUDE REGEX "(dlss|fsr|xess)_upscaler\\.cpp$")
 add_library(gn_layer0_xenos STATIC ${GN_LAYER0_SOURCES})
 target_include_directories(gn_layer0_xenos PUBLIC ${GN_LAYER0_DIR}/include)
+include(${GN_LAYER0_HOME}/cmake/spirv_opt.cmake)  # 0.6.1: SPIRV-Tools' optimiser for the Vulkan shader path
+gn_add_spirv_opt(gn_layer0_xenos ${GN_THIRD_PARTY})
 target_include_directories(gn_layer0_xenos PRIVATE ${GN_THIRD_PARTY}/flip/src/cpp/tool)
 target_link_libraries(gn_layer0_xenos PUBLIC rex::runtime)
 set(GN_DEPS_THIRD_PARTY ${GN_THIRD_PARTY})

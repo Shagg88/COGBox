@@ -196,6 +196,12 @@ class ShaderCache {
   // 0.6.1 (Vulkan first-run cost): SPIRV-Tools' performance passes over each converted module before the driver
   // sees it. False when this build has no optimiser (GN_SPIRV_OPT not defined) - then nothing changes.
   static bool SetSpirvOptimise(bool on);
+  // The same passes on one module, whatever the switch says (gn_pipebench). False = left as it was.
+  static bool OptimiseSpirvModule(std::vector<uint32_t>& words);
+  // 0.6.1: converted (and optimised) modules kept in <dir>\spirv-store.bin, so a start-up converts each shader once
+  // and not at every launch (Gears 3: 31.6 s of conversion for 8,974 shaders, more with the optimiser). `switches` =
+  // every setting that changes the words (discard form, float controls, optimiser on). Empty dir = no store.
+  static void SetSpirvStore(const std::filesystem::path& dir, uint32_t switches);
   void SetTexNumFormat(bool on) { tex_num_format_ = on; }  // patch 0040
   void SetTexPostConstants(bool on) { tex_post_constants_ = on; }  // patch 0105
   void SetTexPostAffine(bool on) { tex_post_affine_ = on; }        // job 634

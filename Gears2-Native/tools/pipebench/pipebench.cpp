@@ -12,6 +12,7 @@
 #include <xenos/dxbc_spirv.h>
 #include <xenos/hlsl.h>
 #include <xenos/renderer/gpu.h>
+#include <xenos/renderer/shader_cache.h>
 #include <xenos/ucode.h>
 
 #include <algorithm>
@@ -59,7 +60,9 @@ int main(int argc, char** argv) {
   std::printf("pipebench: %zu vertex and %zu pixel shaders in %s\n", vss.size(), pss.size(), dir.string().c_str());
   if (vss.empty() || pss.empty()) return 3;
 
-  const bool vulkan = argc > 4 && std::string(argv[4]) == "vulkan";
+  const bool vulkan_opt = argc > 4 && std::string(argv[4]) == "vulkan-opt";  // through the optimiser the game uses
+  const bool vulkan = vulkan_opt || (argc > 4 && std::string(argv[4]) == "vulkan");
+  uint64_t opt_ok = 0, opt_no = 0;
   const fs::path spv_dump = vulkan && argc > 5 ? fs::path(argv[5]) : fs::path();
   const fs::path spv_replace = vulkan && argc > 6 ? fs::path(argv[6]) : fs::path();
   if (!spv_dump.empty()) fs::create_directories(spv_dump, ec);
@@ -224,6 +227,7 @@ int main(int argc, char** argv) {
             t->ok = false;
             continue;
           }
+          if (vulkan_opt) (xenos::renderer::ShaderCache::OptimiseSpirvModule(sv.words) ? opt_ok : opt_no)++;
           const std::string name = std::to_string(i) + "-" + variants[v].name + "-" + tag + ".spv";
           if (!spv_dump.empty()) {
             std::ofstream f(spv_dump / name, std::ios::binary);
@@ -264,6 +268,7 @@ int main(int argc, char** argv) {
     }
     if ((i + 1) % 25 == 0) std::printf("pipebench: %u / %u pairs\n", i + 1, pairs);
   }
+  if (vulkan_opt) std::printf("pipebench: SPIR-V optimiser: %llu modules optimised, %llu left as converted\n", (unsigned long long)opt_ok, (unsigned long long)opt_no);
   std::ofstream csv(argv[2]);
   csv << "pair,variant,vs,ps,bytes,ms,ok\n";
   for (const Row& r : rows)
