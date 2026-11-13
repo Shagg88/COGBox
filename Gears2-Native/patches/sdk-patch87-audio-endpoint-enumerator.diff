@@ -6,7 +6,7 @@ index bb1f074..a7e30e4 100644
  // volume, for the log), restores a muted / zero slider unless --audio_restore_session_volume=false, and returns the
  // default device's id so a change of default device (SDL moves the stream to it) is noticed and checked again.
  // inspect=false only returns the id (the 5 s poll): a slider the player moves during play is never touched.
-+// COGBox patch 85 (0.6.1, second review K2): the 5 s poll ran CoInitializeEx + CoCreateInstance(MMDeviceEnumerator) +
++// COGBox patch 87 (0.6.1, second review K2): the 5 s poll ran CoInitializeEx + CoCreateInstance(MMDeviceEnumerator) +
 +// CoUninitialize on the audio submit path every time - several milliseconds, now and then far more. The calling
 +// thread now keeps COM and one enumerator for its lifetime; a poll is one GetDefaultAudioEndpoint + GetId.
 +struct EndpointEnumerator {

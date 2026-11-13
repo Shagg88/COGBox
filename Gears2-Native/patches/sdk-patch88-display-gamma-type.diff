@@ -6,7 +6,7 @@ index 4e27f5b..549fa33 100644
  REXCVAR_DEFINE_BOOL(video_mode_widescreen, true, "Display",
                      "Guest video mode is widescreen (16:9 TV setting); false = a 4:3 TV (use with a 4:3 video_mode_width / height)");
  
-+// COGBox patch 86 (0.6.1): the display gamma type the title's D3D asks for when it builds its gamma ramp, as a
++// COGBox patch 88 (0.6.1): the display gamma type the title's D3D asks for when it builds its gamma ramp, as a
 +// switch again (Xenia Canary's kernel_display_gamma_type / kernel_display_gamma_power; this SDK had them fixed at 2 and
 +// 2.22222233). Defaults unchanged. For the Judgment brightness reports (GitHub #185 / #250): sRGB and a pure power
 +// curve differ most near black.

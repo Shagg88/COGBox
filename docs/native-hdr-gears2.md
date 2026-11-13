@@ -69,9 +69,9 @@ Additional Canvas materials use the two captured Canvas vertex shaders (`868DFF1
 
 ## COGBox overlays
 
-SDK patch `Gears2-Native/patches/sdk-patch83-hdr-overlays.diff` adds a separate HDR10 pixel shader to the D3D12 immediate drawer. It bounds SDR input, decodes sRGB and converts to PQ/BT.2020 at a fixed 203-nit white. This covers FPS text, shader-preparation notes, menus, achievements and other host overlays. SDR retains its original shader. The patch includes readable HLSL and its FXC SM5.1 header; rebuilding/installing the SDK and replacing `rexruntime.dll` applies it.
+SDK patch `Gears2-Native/patches/sdk-patch85-hdr-overlays.diff` adds a separate HDR10 pixel shader to the D3D12 immediate drawer. It bounds SDR input, decodes sRGB and converts to PQ/BT.2020 at a fixed 203-nit white. This covers FPS text, shader-preparation notes, menus, achievements and other host overlays. SDR retains its original shader. The patch includes readable HLSL and its FXC SM5.1 header; rebuilding/installing the SDK and replacing `rexruntime.dll` applies it.
 
-SDK patch `sdk-patch84-vulkan-hdr.diff`, applied after 83, requests `VK_EXT_swapchain_colorspace`, selects an advertised 10-bit ST.2084 surface format and uses a matching SPIR-V host-overlay shader. A missing HDR10 surface is reported instead of presenting PQ in an SDR colour space.
+SDK patch `sdk-patch86-vulkan-hdr.diff`, applied after 85, requests `VK_EXT_swapchain_colorspace`, selects an advertised 10-bit ST.2084 surface format and uses a matching SPIR-V host-overlay shader. A missing HDR10 surface is reported instead of presenting PQ in an SDR colour space.
 
 ## AA and Vulkan
 

@@ -107,8 +107,8 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
 - `sdk-patch16-zpd-pairing-UNBUILT.diff` was never built. It isn't in any release.
 
 Gears 3 and Judgment use the same runtime.
-- `sdk-patch83-hdr-overlays.diff` (native HDR, legoliamneeson, PR #267; after 82 - renumbered from 80, which the upstream-fixes patch already had; NOT BUILT into a release yet - needs a runtime build): D3D12 host UI uses a separate PQ/BT.2020 pixel shader with SDR input bounds and a fixed 203-nit white. Covers FPS text, shader notes, menus and achievements, so SDR white is never written as 10,000-nit PQ white. Includes readable HLSL and an FXC SM5.1 header. Apply in the SDK root and rebuild/install the runtime; copy the new `rexruntime.dll` beside the game after closing it. SDR keeps its original shader.
-- `sdk-patch84-vulkan-hdr.diff` (legoliamneeson, PR #267; after 83 - renumbered from 81; NOT BUILT into a release yet): request Vulkan swapchain colour-space support, select an advertised 10-bit ST.2084 HDR10 format, and encode host overlays to bounded PQ/BT.2020 with the matching SPIR-V shader. Reports a missing HDR10 surface instead of sending PQ to SDR. Rebuild/install the SDK runtime. Vulkan FSR also needs FSR SDK 2.4 headers and matching signed DLLs selected by the game's `GN_FFX_DIR`; this patch does not add Vulkan DLSS or XeSS.
+- `sdk-patch85-hdr-overlays.diff` (native HDR, legoliamneeson, PR #267; after 82 - renumbered from 80, then from 83 when PR #272 took 83, which the upstream-fixes patch already had; NOT BUILT into a release yet - needs a runtime build): D3D12 host UI uses a separate PQ/BT.2020 pixel shader with SDR input bounds and a fixed 203-nit white. Covers FPS text, shader notes, menus and achievements, so SDR white is never written as 10,000-nit PQ white. Includes readable HLSL and an FXC SM5.1 header. Apply in the SDK root and rebuild/install the runtime; copy the new `rexruntime.dll` beside the game after closing it. SDR keeps its original shader.
+- `sdk-patch86-vulkan-hdr.diff` (legoliamneeson, PR #267; after 85 - renumbered from 81; NOT BUILT into a release yet): request Vulkan swapchain colour-space support, select an advertised 10-bit ST.2084 HDR10 format, and encode host overlays to bounded PQ/BT.2020 with the matching SPIR-V shader. Reports a missing HDR10 surface instead of sending PQ to SDR. Rebuild/install the SDK runtime. Vulkan FSR also needs FSR SDK 2.4 headers and matching signed DLLs selected by the game's `GN_FFX_DIR`; this patch does not add Vulkan DLSS or XeSS.
 - `sdk-patch66-audio-session-volume.diff` (GitHub #203: sound on one output device, silence on another, while the log
   shows the silent device opened normally). Windows keeps a volume-mixer slider and mute for each program on each output
   device, by the exe's path, across reboots and reinstalls to the same folder. At start, and when the Windows default
@@ -128,12 +128,12 @@ Gears 3 and Judgment use the same runtime.
   a 4:3 back buffer (720 x width / height wide, at least 900 / 904) when the mode is at most 720 lines, so CogBox sends
   it with `--video_mode_width=960 --video_mode_height=720`. Default true = unchanged. Apply it in the SDK root
   (`git apply`); it only touches `src/kernel/xboxkrnl/xboxkrnl_video.cpp`. See docs/plan-049-4x3.md.
-- `sdk-patch85-audio-endpoint-enumerator.diff` (0.6.1, after 82; NOT BUILT yet - needs a runtime build; 83 and 84 are
-  kept for the native-HDR pull request #267): patch 66's 5 s check for a new Windows default output device ran
+- `sdk-patch87-audio-endpoint-enumerator.diff` (0.6.1, after 82; NOT BUILT yet - needs a runtime build; 83 and 84 are
+  Flippage's net-rate trace and open matches, 85 and 86 the native-HDR patches of pull request #267): patch 66's 5 s check for a new Windows default output device ran
   `CoInitializeEx` + `CoCreateInstance(MMDeviceEnumerator)` + `CoUninitialize` on the audio submit path every time
   (milliseconds, sometimes far more - a periodic stall). The calling thread now keeps COM and one enumerator for its
   lifetime. Apply it in the SDK root (`git apply`); it only touches `src/audio/sdl/sdl_audio_driver.cpp`.
-- `sdk-patch86-display-gamma-type.diff` (0.6.1, after 85; NOT BUILT yet - needs a runtime build): `--kernel_display_gamma_type`
+- `sdk-patch88-display-gamma-type.diff` (0.6.1, after 87; NOT BUILT yet - needs a runtime build): `--kernel_display_gamma_type`
   (0 linear, 1 sRGB, 2 BT.709 = default, 3 power) and `--kernel_display_gamma_power`, as in Xenia Canary; this SDK had the
   answer of `VdGetCurrentDisplayGamma` fixed at 2 / 2.22222233. Defaults unchanged. A test switch for the Judgment brightness
   reports (GitHub #185 / #250). Apply it in the SDK root; it only touches `src/kernel/xboxkrnl/xboxkrnl_video.cpp`.
