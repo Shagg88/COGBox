@@ -639,6 +639,7 @@ bool ShaderCache::WaitReady(const GuestShader& s, double budget_ms) {
           if ((*it)->shader == &s) {
             std::unique_ptr<Job> job = std::move(*it);
             q->erase(it);
+            job->spirv_urgent = true;  // job 1752a: a dozen new shaders in one frame waited ~185 ms each with the optimiser
             spv_queue_.push_front(std::move(job));
             spv_wake_.notify_one();
             moved = true;
@@ -1121,7 +1122,7 @@ void ShaderCache::SpvWorker() {
       sv.ok = true;
     } else {
       sv = dxbc_spirv::ConvertDxbcToSpirv(job->bytecode.data(), job->bytecode.size(), job->spirv_precise);
-      if (sv.ok) {
+      if (sv.ok && !job->spirv_urgent) {  // (an urgent one is optimised and stored by a later run's backlog)
         OptimiseSpirv(sv.words);
         SpvStorePut(store_key, sv.words);
       }

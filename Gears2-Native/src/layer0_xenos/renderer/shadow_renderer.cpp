@@ -11759,6 +11759,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         }
         const bool shaders_ready = vsg && vsg->ready() && (!(r.flags & 1) || (psg && psg->ready()));
         if (!shaders_ready || backend_->PipelineJobsLeft() >= cap) {
+          // 0.6.2 (job 1752: with background conversion the wanted records' shaders sat behind the whole backlog and
+          // the draws then waited for them, 1.3 - 2.4 s a time): a wanted record's shaders are converted first.
+          if (!shaders_ready && chapter_hold_on_ && rcp_rec_want_[i]) {
+            if (vsg && vsg->state == rr::ShaderState::kPending) cache_->Promote(*vsg);
+            if (psg && psg->state == rr::ShaderState::kPending) cache_->Promote(*psg);
+          }
           if (shaders_ready && cap) ++cap_blocked;  // 617: ready, only waiting for a free job
           rcp_waiting_[keep++] = i;
           continue;

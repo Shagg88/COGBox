@@ -259,6 +259,7 @@ class ShaderCache {
     double ms = 0.0;
     bool spirv_job = false;      // 0.6.2: bytecode holds DXBC going in and SPIR-V words coming out (SpvWorker)
     bool spirv_precise = false;
+    bool spirv_urgent = false;   // a draw waits for it: converted only (no optimiser, not stored) - 45 ms, not ~200
   };
   void SpvWorker();
   void QueueSpirv(GuestShader& s, const std::vector<uint8_t>& dxbc, bool precise, bool warm);
