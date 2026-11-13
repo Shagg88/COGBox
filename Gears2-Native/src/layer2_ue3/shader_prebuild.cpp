@@ -346,10 +346,10 @@ class PackageScanner {
     }
   }
   void Offer(uint32_t variant, const uint8_t* code, uint32_t size) {
-    if (!offer_[variant]) return;
+    if (!offer_[variant] && !keys_) return;
     const uint64_t key = XXH3_64bits(code, size);
-    if (keys_) keys_->push_back(key);  // 0.6.2: every pixel shader of the file, new or not
-    if (!Fresh(key)) return;
+    if (keys_) keys_->push_back(key);  // 0.6.2: every pixel shader of the file, new or not, whichever form is offered
+    if (!offer_[variant] || !Fresh(key)) return;
     ++r_.new_pixel;
     ++r_.offered[variant];
     XenosPrebuildPixelShader(code, size, variant);

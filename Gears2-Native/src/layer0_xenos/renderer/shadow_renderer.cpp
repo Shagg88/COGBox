@@ -2909,17 +2909,23 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const bool gap = !last_swap_end_.time_since_epoch().count() || now - last_swap_end_ > std::chrono::seconds(1);
     if (draw_index_ < 64) {  // a loading screen, a video, a 2D menu
       if (ch_low_run_ < 1000000) ++ch_low_run_;
+      ch_heavy_run_ = 0;
       return false;
     }
-    if ((ch_low_run_ >= 30 || gap) && ch_level_opened_) {  // a level's loading has just ended: a window and a budget
-      ch_level_opened_ = false;
+    // A level's loading has just ended: a window and a budget. (Review: the level-opened mark is not used up here - one
+    // busy frame in the middle of a loading screen would take it - but after 150 frames of play in a row; and a swap
+    // gap alone, a hitch in play, opens no window: it needs a frame under 64 draws before it, or the very first frame.)
+    const bool first_frame = !last_swap_end_.time_since_epoch().count();
+    if ((ch_low_run_ >= 30 || (gap && (ch_low_run_ || first_frame))) && ch_level_opened_) {
       ch_window_until_ = now + std::chrono::seconds(3);
       ch_hold_left_ms_ = double(std::max(0, REXCVAR_GET(gow2_renderer_chapter_hold_max_ms)));
       ch_want_seen_ = UINT64_MAX;
     }
     ch_low_run_ = 0;
+    if (ch_heavy_run_ < 1000000 && ++ch_heavy_run_ == 150) ch_level_opened_ = false;
     if (now >= ch_window_until_ || !present_ours_ || prepare_all_ || ch_hold_left_ms_ <= 0.0) return false;
-    const bool files = RecipeFilesPending();
+    // (the inbox was emptied earlier in this frame end; what counts is a package the game opened that is still read)
+    const bool files = !rcp_file_wait_.empty();
     if (rcp_want_n_ == ch_want_seen_ && !files) return false;  // counted, and nothing new is wanted since
     ch_want_seen_ = rcp_want_n_;
     uint64_t coming = 0, missing = 0;
@@ -2931,32 +2937,41 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void HoldForChapter() {
     const auto t0 = std::chrono::steady_clock::now();
     auto last_progress = t0, last_count = t0 - std::chrono::seconds(1);
-    uint64_t coming = 0, missing = 0, left = 0, best = UINT64_MAX, total = 0, first = 0;
+    uint64_t coming = 0, missing = 0, left = 0, prev = UINT64_MAX, total = 0, first = 0, jobs = 0, found = 0;
     const uint64_t queued0 = rcp_n_.queued, known0 = rcp_n_.known;
     const char* why = "all built";
     rcp_want_only_ = true;  // the pack translates and queues wanted records only while the frame is held
     for (;;) {
+      // (review) Shaders compiled on the cache's own workers - the HLSL fallback - are only taken in by Poll; with the
+      // background SPIR-V conversion RecipeIdleWork polls itself.
+      if (!xenos::renderer::ShaderCache::SpirvAsync()) cache_->Poll();
       RecipeIdleWork();  // this thread is the pack's: shaders translated (or taken in from the workers), records queued
       const auto now = std::chrono::steady_clock::now();
       if (now - last_count >= std::chrono::milliseconds(100)) {
         last_count = now;
         CountWantedRecipes(coming, missing, true);
+        // (review) Only the jobs this hold is for: the wanted records' pipelines and this frame's own pending ones -
+        // not every job in the queue (other lists' records queued before the hold are not waited for).
+        jobs = PruneWantedJobs();
+        for (const gpu::GraphicsPipelineDesc& d : hold_descs_) jobs += backend_->PipelinePending(d) ? 1 : 0;
         // A wanted record whose shader has not come counts only while a package the game opened is still being read.
-        left = coming + backend_->PipelineJobsLeft() + (RecipeFilesPending() ? std::max<uint64_t>(missing, 1) : 0);
-        if (best == UINT64_MAX) first = left;
+        const bool files = RecipeFilesPending();
+        left = coming + jobs + (files ? std::max<uint64_t>(missing, 1) : 0);
+        const uint64_t found_now = rcp_n_.vs_rebuilt + rcp_n_.ps_found + rcp_file_ps_.size();
+        if (prev == UINT64_MAX) first = left;
         if (!left) break;
-        if (left < best) {
-          best = left;
-          last_progress = now;
-        }
+        if (left != prev || found_now != found) last_progress = now;  // (review: left also grows, when a list arrives)
+        prev = left;
+        found = found_now;
         total = std::max(total, left);
         const double ms = MsSince(t0);
         if (ms >= ch_hold_left_ms_) {
           why = "time limit";
           break;
         }
-        if (now - last_progress >= std::chrono::seconds(10)) {  // a stuck driver job, or a package that is not read
-          why = "no progress for 10 s";
+        // A stuck driver job; or (30 s: the readers run at the lowest priority) a package that is not read.
+        if (now - last_progress >= std::chrono::seconds(files ? 30 : 10)) {
+          why = files ? "no progress for 30 s (a package still being read)" : "no progress for 10 s";
           break;
         }
         if (ms >= 300.0)  // a short one would only flash the indicator
@@ -2973,10 +2988,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ++stats_.load_holds;
     REXLOG_INFO("gow2_renderer: chapter hold (0.6.2): frame {} not shown ({} of {} draws pending) - waited {:.0f} ms, "
                 "{}: {} to do at its start, {} left ({} wanted records still to translate or queue, {} waiting for a "
-                "shader no package has brought, {} pipeline jobs); {} pipelines queued and {} already there meanwhile; "
+                "shader no package has brought, {} of their pipeline jobs); {} pipelines queued and {} already there meanwhile; "
                 "{} records wanted in all, {} of them not handed to the workers; hold time left for this load {:.0f} ms",
                 frame_, pending_this_frame_, draw_index_, ms, why, first, left, coming, missing,
-                backend_->PipelineJobsLeft(), rcp_n_.queued - queued0, rcp_n_.known - known0, rcp_want_n_,
+                jobs, rcp_n_.queued - queued0, rcp_n_.known - known0, rcp_want_n_,
                 rcp_want_left_, std::max(0.0, ch_hold_left_ms_));
   }
   void HoldForPipelines() {
@@ -11754,8 +11769,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         }
         const uint64_t m = backend_->PipelineMisses();
         backend_->GetGraphicsPipeline(d, true, nullptr);
-        if (backend_->PipelineMisses() != m) ++rcp_n_.queued;
-        else ++rcp_n_.known;
+        if (backend_->PipelineMisses() != m) {
+          ++rcp_n_.queued;
+          if (chapter_hold_on_ && rcp_rec_want_[i]) {  // 0.6.2: a hold waits for exactly these
+            if (rcp_want_jobs_.size() >= 2048 && rcp_want_jobs_.size() % 1024 == 0) PruneWantedJobs();
+            rcp_want_jobs_.push_back(d);
+          }
+        } else {
+          ++rcp_n_.known;
+        }
       }
       rcp_waiting_.resize(keep);
       if (backlog) backend_->SetPipelineBacklog(false);
@@ -11907,9 +11929,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint64_t rcp_want_n_ = 0, rcp_want_left_ = 0;  // wanted records; of those, not handed to the pipeline workers yet
   bool rcp_want_dirty_ = false;                  // a wanted record went to the back of the translation queue
   bool rcp_want_only_ = false;                   // in a chapter hold
-  bool rcp_depth_wanted_ = false;
   bool chapter_hold_on_ = false;                 // --gow2_renderer_chapter_hold, with a recipe pack
   bool ch_level_opened_ = false;                 // the game opened a level package since the last loading run's end
+  std::vector<gpu::GraphicsPipelineDesc> rcp_want_jobs_;  // wanted records' pipelines handed to the workers
+  uint64_t rcp_depth_lists_ = UINT64_MAX;                 // chapter lists started when the depth-only records were marked
+  uint32_t ch_heavy_run_ = 0;                             // frames in a row with 64+ draws
+  size_t PruneWantedJobs() {  // drops the built ones; returns how many are still being built
+    size_t keep = 0;
+    for (size_t k = 0; k < rcp_want_jobs_.size(); ++k)
+      if (backend_->PipelinePending(rcp_want_jobs_[k])) {
+        if (keep != k) rcp_want_jobs_[keep] = rcp_want_jobs_[k];
+        ++keep;
+      }
+    rcp_want_jobs_.resize(keep);
+    return keep;
+  }
   void RecipeDone(uint32_t i) {
     if (rcp_state_[i] != 2 && rcp_rec_want_[i] && rcp_want_left_) --rcp_want_left_;
     rcp_state_[i] = 2;
@@ -11957,13 +11991,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (!chapter_hold_on_) continue;
       if (o.level) {
         ch_level_opened_ = true;
-        if (!rcp_depth_wanted_) {
-          rcp_depth_wanted_ = true;
+        if (rcp_depth_lists_ != rcp_n_.chapters_on) {  // (review) of the lists started so far only; again when more start
+          rcp_depth_lists_ = rcp_n_.chapters_on;
           uint32_t n = 0;
           for (uint32_t i = 0; i < uint32_t(rcp_records_.size()); ++i)
-            if (!(rcp_records_[i].flags & 1)) n += WantRecipeRecord(i) ? 1 : 0;
-          REXLOG_INFO("gow2_renderer: chapter recipe pack: a level package is opened ({}) - the {} recipe pipelines "
-                      "without a pixel shader are wanted", o.name, n);
+            if (!(rcp_records_[i].flags & 1) && rcp_active_[i]) n += WantRecipeRecord(i) ? 1 : 0;
+          if (n)
+            REXLOG_INFO("gow2_renderer: chapter recipe pack: a level package is opened ({}) - {} more recipe pipelines "
+                        "without a pixel shader (of the {} lists started) are wanted", o.name, n, rcp_n_.chapters_on);
         }
       }
       const auto it = rcp_file_ps_.find(o.key);

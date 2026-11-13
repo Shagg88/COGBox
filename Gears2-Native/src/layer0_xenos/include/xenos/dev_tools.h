@@ -2,6 +2,7 @@
 // Developer tools that work for any 360 title: crash report, scripted gamepad, image dump.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
