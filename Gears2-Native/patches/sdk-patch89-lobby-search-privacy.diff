@@ -1,0 +1,169 @@
+diff --git a/src/kernel/xam/net/master_client.cpp b/src/kernel/xam/net/master_client.cpp
+index f589461..15b890e 100644
+--- a/src/kernel/xam/net/master_client.cpp
++++ b/src/kernel/xam/net/master_client.cpp
+@@ -225,7 +225,8 @@ std::optional<std::pair<int, int>> MasterClient::Population(uint32_t title_id) {
+ }
+ 
+ std::vector<LobbyInfo> MasterClient::SearchLobbies(uint32_t title_id) {
+-  Response r = Request(L"GET", LobbySearchPath(title_id, region_), "", false);
++  // COGBox SDK patch 89: signed in, so the server can require it once players are past 0.6.0
++  Response r = Request(L"GET", LobbySearchPath(title_id, region_), "", true);
+   return r.status == 200 ? ParseLobbyList(r.body) : std::vector<LobbyInfo>{};
+ }
+ 
+diff --git a/src/kernel/xam/net/online_sessions.cpp b/src/kernel/xam/net/online_sessions.cpp
+index fbfb3a7..3a7b823 100644
+--- a/src/kernel/xam/net/online_sessions.cpp
++++ b/src/kernel/xam/net/online_sessions.cpp
+@@ -4,6 +4,7 @@
+ #include <algorithm>
+ #include <thread>
+ 
++#include <rex/kernel/xam/net/xnaddr_online.h>
+ #include <rex/logging.h>
+ 
+ namespace rex::kernel::xam::net {
+@@ -38,6 +39,23 @@ void OnlineSessions::OnSetProperty(uint32_t user_index, uint32_t id, int64_t val
+   OnModify();
+ }
+ 
++namespace {
++// COGBox SDK patch 89: the session block a lobby is registered with leaves this PC (anyone who searches can read it),
++// so its XNADDR goes without the LAN address: ina is zeroed and the MAC made from that IP (02:00:a.b.c.d) is made from
++// the XUID in the online marker instead (still one per player). Online peers never use either: they reach the host
++// through the marker and its virtual IP. The game's own XNADDR is untouched, so System Link / LAN keep the real IP.
++std::array<uint8_t, 60> WithoutLanAddress(std::array<uint8_t, 60> info) {
++  constexpr size_t kXnAddr = 8, kIna = kXnAddr + 0, kEnet = kXnAddr + 10;
++  std::fill_n(info.begin() + kIna, 4, uint8_t(0));
++  uint64_t xuid = 0, token = 0;
++  ReadOnlineMarker(info.data() + kXnAddr + kXnAddrOnlineOffset, &xuid, &token);
++  info[kEnet + 0] = 0x02;
++  info[kEnet + 1] = 0x00;
++  for (int i = 0; i < 4; ++i) info[kEnet + 2 + i] = uint8_t(xuid >> (8 * (3 - i)));
++  return info;
++}
++}  // namespace
++
+ void OnlineSessions::OnCreate(uint32_t title_id, uint32_t flags, uint32_t public_slots, uint32_t private_slots,
+                               const std::array<uint8_t, 60>& session_info, uint64_t nonce, uint32_t handle) {
+   // Hosted sessions only. A party joinable by friends (join via presence friends-only, Gears 3 / Judgment "Joinable
+@@ -79,7 +97,7 @@ void OnlineSessions::OnCreate(uint32_t title_id, uint32_t flags, uint32_t public
+   LobbyInfo l;
+   l.is_public = is_public;
+   l.title_id = title_id;
+-  l.session_info = session_info;
++  l.session_info = WithoutLanAddress(session_info);   // patch 89
+   l.max_players = slots;
+   l.current_players = 1;
+   {
+diff --git a/tests/unit/net/online_sessions_test.cpp b/tests/unit/net/online_sessions_test.cpp
+index 7a794fb..f8b9541 100644
+--- a/tests/unit/net/online_sessions_test.cpp
++++ b/tests/unit/net/online_sessions_test.cpp
+@@ -1,6 +1,7 @@
+ // COGBox SDK patch 79: XSession calls -> master-server lobbies (create / delete by nonce / search).
+ #include <catch2/catch_test_macros.hpp>
+ 
++#include <algorithm>
+ #include <chrono>
+ #include <functional>
+ #include <map>
+@@ -8,6 +9,7 @@
+ #include <vector>
+ 
+ #include <rex/kernel/xam/net/online_sessions.h>
++#include <rex/kernel/xam/net/xnaddr_online.h>
+ 
+ using namespace rex::kernel::xam::net;
+ 
+@@ -59,6 +61,11 @@ struct FakeBackend : SessionBackend {
+   }
+ };
+ 
++// The same session apart from the LAN address patch 89 leaves out (XNKID, online marker and key kept)
++bool SameSession(const std::array<uint8_t, 60>& a, const std::array<uint8_t, 60>& b) {
++  return std::equal(a.begin(), a.begin() + 8, b.begin()) && std::equal(a.begin() + 24, a.end(), b.begin() + 24);
++}
++
+ std::array<uint8_t, 60> Info(uint8_t seed) {
+   std::array<uint8_t, 60> a{};
+   a.fill(seed);
+@@ -88,7 +95,7 @@ TEST_CASE("Sessions: a public matchmaking host session registers a lobby with it
+   REQUIRE(f.backend.created.size() == 1);
+   const LobbyInfo& l = f.backend.created[0];
+   CHECK(l.title_id == kTitle);
+-  CHECK(l.session_info == Info(0x11));
++  CHECK(SameSession(l.session_info, Info(0x11)));
+   CHECK(l.max_players == 10);
+   CHECK(l.current_players == 1);
+   REQUIRE(l.contexts.size() == 2);
+@@ -128,7 +135,7 @@ TEST_CASE("Sessions: a friends-only party is listed for friends (Join friend joi
+   f.sessions.OnCreate(kTitle, 0x082B, 10, 0, Info(2), 2);  // Gears 3 / Judgment party, "Joinable Friends" (traced)
+   REQUIRE(f.backend.created.size() == 1);
+   CHECK_FALSE(f.backend.created[0].is_public);
+-  CHECK(f.backend.created[0].session_info == Info(2));
++  CHECK(SameSession(f.backend.created[0].session_info, Info(2)));
+   f.sessions.OnCreate(kTitle, 0x002D, 10, 0, Info(3), 3);  // a public match while in that party: listed too
+   f.sessions.OnCreate(kTitle, 0x002F, 8, 0, Info(4), 4);   // Gears 1's match (traced)
+   CHECK(f.backend.created.size() == 3);
+@@ -141,7 +148,7 @@ TEST_CASE("Sessions: Gears 2's party (join via presence disabled) is listed for
+   f.sessions.OnCreate(kTitle, 0x022F, 10, 0, Info(1), 1);  // Gears 2 party (traced)
+   REQUIRE(f.backend.created.size() == 1);
+   CHECK_FALSE(f.backend.created[0].is_public);
+-  CHECK(f.backend.created[0].session_info == Info(1));
++  CHECK(SameSession(f.backend.created[0].session_info, Info(1)));
+   f.sessions.OnCreate(kTitle, 0x002D, 0, 10, Info(2), 2);  // its private match: no second lobby
+   CHECK(f.backend.created.size() == 1);
+   CHECK(f.sessions.HostingPrivateMatch());
+@@ -206,7 +213,7 @@ TEST_CASE("Sessions: a UE3 title's lobby is listed only once its join beacon (TC
+   CHECK(f.backend.created.empty());  // a guest finding it now would knock on a closed door
+   f.sessions.OnTcpListen(8700);
+   REQUIRE(f.backend.created.size() == 1);
+-  CHECK(f.backend.created[0].session_info == Info(1));
++  CHECK(SameSession(f.backend.created[0].session_info, Info(1)));
+   f.sessions.OnCreate(kTitle, kHostMatchmaking, 10, 0, Info(2), 2);  // the beacon is up: listed at once
+   CHECK(f.backend.created.size() == 2);
+ }
+@@ -261,12 +268,12 @@ TEST_CASE("Sessions: a private match is joined through the host's party lobby, n
+   f.sessions.OnCreate(kTitle, 0x082B, 10, 0, Info(1), 1);
+   f.sessions.OnCreate(kTitle, 0x002D, 0, 10, Info(2), 2);
+   REQUIRE(f.backend.created.size() == 1);
+-  CHECK(f.backend.created[0].session_info == Info(1));
++  CHECK(SameSession(f.backend.created[0].session_info, Info(1)));
+   f.sessions.OnDelete(1);  // party gone: a later private match is listed with its own session
+   CHECK(f.backend.deleted.size() == 1);
+   f.sessions.OnCreate(kTitle, 0x002D, 0, 10, Info(3), 3);
+   REQUIRE(f.backend.created.size() == 2);
+-  CHECK(f.backend.created[1].session_info == Info(3));
++  CHECK(SameSession(f.backend.created[1].session_info, Info(3)));
+ }
+ 
+ TEST_CASE("Sessions: the party's QoS data goes out with the party lobby", "[net][sessions]") {
+@@ -482,3 +489,26 @@ TEST_CASE("Sessions: open matches - start and end sent from queued jobs in any o
+   REQUIRE(backend.in_progress.size() == 2);
+   CHECK(backend.in_progress.back().second == false);
+ }
++
++TEST_CASE("Sessions: patch 89 - the session block sent to the server has no LAN address", "[net][sessions]") {
++  Fixture f;
++  std::array<uint8_t, 60> info{};
++  for (size_t i = 0; i < 8; ++i) info[i] = uint8_t(0xA0 + i);                 // XNKID
++  const uint8_t ip[4] = {192, 168, 1, 20};
++  std::copy(ip, ip + 4, info.begin() + 8);                                     // XNADDR.ina
++  const uint8_t mac[6] = {0x02, 0x00, 192, 168, 1, 20};
++  std::copy(mac, mac + 6, info.begin() + 18);                                  // XNADDR.abEnet (made from the IP)
++  WriteOnlineMarker(info.data() + 8 + kXnAddrOnlineOffset, 0x0009000011223344ull, 0x55);  // XNADDR.abOnline
++  for (size_t i = 44; i < 60; ++i) info[i] = uint8_t(i);                       // XNKEY
++  f.sessions.OnCreate(kTitle, kHostMatchmaking, 10, 0, info, 0xD1);
++  REQUIRE(f.backend.created.size() == 1);
++  const auto& sent = f.backend.created[0].session_info;
++  for (size_t i = 8; i < 12; ++i) CHECK(sent[i] == 0);                         // no IP
++  CHECK(sent[18] == 0x02);
++  CHECK(sent[19] == 0x00);
++  CHECK(!(sent[20] == 192 && sent[21] == 168 && sent[22] == 1 && sent[23] == 20));   // no IP in the MAC either
++  CHECK(sent[20] == 0x11);   // made from the XUID instead: still one per player
++  CHECK(sent[23] == 0x44);
++  CHECK(std::equal(info.begin(), info.begin() + 8, sent.begin()));             // XNKID kept
++  CHECK(std::equal(info.begin() + 24, info.end(), sent.begin() + 24));        // online marker and key kept
++}

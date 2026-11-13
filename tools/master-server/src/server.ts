@@ -27,6 +27,9 @@ export interface ServerOptions {
   logger?: boolean;
   rateLimitMax?: number;   // requests per minute per address (tests raise it)
   now?: () => number;      // the clock (tests move it)
+  // The games' lobby search needs a signed-in player. Off by default: 0.6.0 runtimes search without signing in, so it
+  // is turned on as a release decision once most players are past 0.6.0 (LOBBY_SEARCH_REQUIRES_SIGN_IN=true).
+  lobbySearchRequiresSignIn?: boolean;
 }
 
 export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInstance> {
@@ -104,7 +107,8 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   const stats = { pendingInvites: () => 0 };
   await server.register(lobbyRoutes, {
     prefix: '/api/v1/lobbies', db, onHostChange: hostChanged,
-    inContact: (a: string, b: string) => registry.inContact(a, b)
+    inContact: (a: string, b: string) => registry.inContact(a, b),
+    searchRequiresSignIn: opts.lobbySearchRequiresSignIn ?? /^(1|true|yes|on)$/i.test(process.env.LOBBY_SEARCH_REQUIRES_SIGN_IN ?? '')
   });
   await server.register(signalingRoutes, { prefix: '/ws', db, registry });
   server.get('/api/v1/population/regions', async () => registry.regionCounts());
