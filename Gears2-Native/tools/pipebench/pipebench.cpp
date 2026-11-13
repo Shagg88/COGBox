@@ -3,7 +3,13 @@
 // game-derived, local only), translates each one per variant with a unique salt (one dead instruction, so the driver's
 // own shader cache cannot answer), builds one pipeline per VS/PS pair on one thread and times CreateGraphicsPipelineState.
 // Usage: gn_pipebench <ucode dir> <out.csv> [pairs = 150] [reuse]
+// 0.6.1 (Vulkan first-run cost): gn_pipebench <ucode dir> <out.csv> <pairs> vulkan [dump dir] [replace dir] - the same
+// pairs through the Vulkan back end: each DXBC shader converted to SPIR-V (dxbc_spirv, as the game does) and the
+// driver's vkCreateGraphicsPipelines timed. "bytes" is then the SPIR-V size. With a dump dir every module is written
+// as <pair>-<variant>-<vs|ps>.spv; with a replace dir a file of that name there (e.g. the dump after spirv-opt) is
+// used in place of the converter's output, so the driver's time for a smaller module can be measured.
 #include <xenos/dxbc_gen.h>
+#include <xenos/dxbc_spirv.h>
 #include <xenos/hlsl.h>
 #include <xenos/renderer/gpu.h>
 #include <xenos/ucode.h>
@@ -53,13 +59,17 @@ int main(int argc, char** argv) {
   std::printf("pipebench: %zu vertex and %zu pixel shaders in %s\n", vss.size(), pss.size(), dir.string().c_str());
   if (vss.empty() || pss.empty()) return 3;
 
-  auto backend = gpu::CreateD3D12Backend();
+  const bool vulkan = argc > 4 && std::string(argv[4]) == "vulkan";
+  const fs::path spv_dump = vulkan && argc > 5 ? fs::path(argv[5]) : fs::path();
+  const fs::path spv_replace = vulkan && argc > 6 ? fs::path(argv[6]) : fs::path();
+  if (!spv_dump.empty()) fs::create_directories(spv_dump, ec);
+  auto backend = vulkan ? gpu::CreateVulkanBackend() : gpu::CreateD3D12Backend();
   gpu::BackendOptions bo;
   bo.upload_ring_mb = 16;
   bo.guest_memory_bytes = 16ull << 20;
   std::string err;
   if (!backend || !backend->Init(bo, err)) {
-    std::printf("pipebench: D3D12 init failed: %s\n", err.c_str());
+    std::printf("pipebench: %s init failed: %s\n", vulkan ? "Vulkan" : "D3D12", err.c_str());
     return 4;
   }
   std::printf("pipebench: %s\n", backend->Describe().c_str());
@@ -201,9 +211,36 @@ int main(int argc, char** argv) {
       o.dxbc_loop_only_if_needed = o.dxbc_direct_operands = o.dxbc_slim_prologue = variants[v].slim;
       o.dxbc_canary_minmax = variants[v].canary_minmax;
       o.dxbc_salt = salt0 + (i * kV + v) * 2u;
-      const auto vt = dxbc_gen::TranslateToDxbc(vprog, o);
+      auto vt = dxbc_gen::TranslateToDxbc(vprog, o);
       o.dxbc_salt += 1u;
-      const auto pt = dxbc_gen::TranslateToDxbc(pprog, o);
+      auto pt = dxbc_gen::TranslateToDxbc(pprog, o);
+      if (vulkan) {  // as ShaderCache's TranslateDxbcFor: the SPIR-V words take the bytecode's place
+        int stage = 0;
+        for (auto* t : {&vt, &pt}) {
+          const char* tag = stage++ ? "ps" : "vs";
+          if (!t->ok) continue;
+          dxbc_spirv::SpirvResult sv = dxbc_spirv::ConvertDxbcToSpirv(t->bytecode.data(), t->bytecode.size(), true);
+          if (!sv.ok) {
+            t->ok = false;
+            continue;
+          }
+          const std::string name = std::to_string(i) + "-" + variants[v].name + "-" + tag + ".spv";
+          if (!spv_dump.empty()) {
+            std::ofstream f(spv_dump / name, std::ios::binary);
+            f.write(reinterpret_cast<const char*>(sv.words.data()), std::streamsize(sv.words.size() * 4));
+          }
+          if (!spv_replace.empty()) {
+            std::ifstream f(spv_replace / name, std::ios::binary);
+            std::vector<char> b((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            if (b.size() >= 20 && b.size() % 4 == 0) {
+              sv.words.resize(b.size() / 4);
+              std::memcpy(sv.words.data(), b.data(), b.size());
+            }
+          }
+          t->bytecode.resize(sv.words.size() * 4);
+          std::memcpy(t->bytecode.data(), sv.words.data(), t->bytecode.size());
+        }
+      }
       Row r{i, v, vp.filename().string(), pp.filename().string(), vt.bytecode.size() + pt.bytecode.size(), 0, 0.0, false};
       if (!vt.ok || !pt.ok) {
         rows.push_back(r);
