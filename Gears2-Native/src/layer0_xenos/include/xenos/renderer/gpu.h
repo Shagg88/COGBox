@@ -660,8 +660,8 @@ class Backend {
   // does not wait for the recording thread to hand the list over (Submit does, for presentation). Default: Submit.
   virtual uint64_t SubmitEarly() { return Submit(); }
   // 0.6.1 (review of the adaptive early submit): the fence of the newest submit of any kind (the backend also submits
-  // on its own: full rings, waits, the frame's end), and whether SubmitEarly is a real mid-frame hand-off - Vulkan's is
-  // a full Submit with a bounded number of command slots, so the adaptive form stays off there.
+  // on its own: full rings, waits, the frame's end), and whether SubmitEarly is a mid-frame hand-off that does not wait
+  // (both backends; a backend without one leaves the adaptive form off).
   virtual uint64_t LastSubmittedFence() { return 0; }
   virtual bool HasEarlySubmit() const { return false; }
   virtual uint64_t CompletedFence() = 0;

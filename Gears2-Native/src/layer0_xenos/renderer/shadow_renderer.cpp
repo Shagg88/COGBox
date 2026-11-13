@@ -552,7 +552,7 @@ REXCVAR_DEFINE_INT32(gow2_renderer_cpu_split, 0, "Gears2",
                      "0 (job 461: 1 cost ~3% fps); test jobs that need the CPU split ask for 1");
 REXCVAR_DEFINE_INT32(gow2_renderer_submit_draws, 0, "Gears2",
                      "Patch 0138: submit our recorded work to the GPU after every N draws (0 = once a frame, as before). "
-                     "-1 (0.6.1) = adaptive, D3D12 only (off on Vulkan): as soon as the GPU has finished everything "
+                     "-1 (0.6.1) = adaptive: as soon as the GPU has finished everything "
                      "submitted so far and at least 64 draws are recorded, at the latest every 256 draws, at most 12 "
                      "a frame. Measured in Gears 2 at 2x with strict "
                      "queries (jobs 1679 / 1681): every 100-150 draws = 4.8 ms a frame against 5.95 (the occlusion "
@@ -2657,7 +2657,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       submit_auto_ = sd < 0 && backend_ && backend_->HasEarlySubmit();
       if (sd < 0 && !submit_auto_ && !submit_auto_note_) {
         submit_auto_note_ = true;
-        REXLOG_INFO("gow2_renderer: --gow2_renderer_submit_draws=-1 needs the D3D12 backend - off");
+        REXLOG_INFO("gow2_renderer: --gow2_renderer_submit_draws=-1: this backend has no early submit - off");
       }
     }
     draws_since_submit_ = 0;

@@ -1228,11 +1228,73 @@ class VulkanBackend final : public Backend {
     ++stats_.index_buffer_draws;
   }
 
-  // ---- occlusion queries (V4) ----
-  OcclusionHandle BeginOcclusionQuery() override { return 0; }
-  void EndOcclusionQuery(OcclusionHandle) override {}
-  bool GetOcclusionResult(OcclusionHandle, uint64_t*) override { return false; }
-  void ReleaseOcclusionQuery(OcclusionHandle) override {}
+  // ---- occlusion queries (V4; 0.6.1: real ones, as D3D12's - they were stubs that answered nothing, so with strict
+  // queries every object counted as visible and the game drew all of them) ----
+  // A Vulkan query begins and ends inside one render pass, so a query is a sum of parts like D3D12's across command
+  // lists: a part begins at the first draw of a pass (GqTrack) and ends with the pass (EndPass) or the query. Slots
+  // come in blocks of kGqBlock that a command list resets before any pass uses them.
+  OcclusionHandle BeginOcclusionQuery() override {
+    if (!ready_ || lost_ || gq_open_ || !EnsureGameQueries() || !Record()) {
+      ++stats_.occlusion_refused;
+      return 0;
+    }
+    if (gq_block_ == UINT32_MAX || gq_block_used_ >= kGqBlock) {
+      EndPass();  // the reset is recorded outside a pass
+      if (!GqTakeBlock()) {
+        ++stats_.occlusion_refused;
+        return 0;
+      }
+    }
+    OcclusionHandle h;
+    if (!gq_free_handles_.empty()) {
+      h = gq_free_handles_.back();
+      gq_free_handles_.pop_back();
+    } else {
+      if (gq_queries_.empty()) gq_queries_.emplace_back();  // handle 0 = none
+      gq_queries_.emplace_back();
+      h = OcclusionHandle(gq_queries_.size() - 1);
+    }
+    gq_queries_[h] = GameQuery{};
+    gq_queries_[h].in_use = true;
+    gq_open_ = h;
+    ++stats_.occlusion_queries;
+    return h;
+  }
+  void EndOcclusionQuery(OcclusionHandle h) override {
+    if (!h || h != gq_open_) return;
+    if (gq_part_active_) GqEndPart();
+    gq_queries_[h].ended = true;
+    gq_open_ = 0;
+  }
+  // A query without a part (no draw reached a pass between Begin and End) is complete with 0 samples.
+  bool GetOcclusionResult(OcclusionHandle h, uint64_t* samples) override {
+    if (!h || h >= gq_queries_.size() || !gq_pool_ || lost_) return false;
+    const GameQuery& q = gq_queries_[h];
+    if (!q.in_use || !q.ended || q.broken) return false;
+    const uint64_t done = CompletedFence();
+    uint64_t sum = 0;
+    for (uint32_t i = 0; i < q.parts; ++i) {
+      const uint64_t f = gq_block_fence_[q.slot[i] / kGqBlock];
+      if (!f || f == UINT64_MAX || f > done) return false;
+      uint64_t v = 0;
+      if (vk_.vkGetQueryPoolResults(device_, gq_pool_, q.slot[i], 1, sizeof(v), &v, sizeof(v), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS)
+        return false;
+      sum += v;
+    }
+    if (samples) *samples = sum;
+    return true;
+  }
+  void ReleaseOcclusionQuery(OcclusionHandle h) override {
+    if (!h || h >= gq_queries_.size() || !gq_queries_[h].in_use) return;
+    if (h == gq_open_) EndOcclusionQuery(h);
+    GameQuery& q = gq_queries_[h];
+    for (uint32_t i = 0; i < q.parts; ++i) {
+      uint32_t& held = gq_block_held_[q.slot[i] / kGqBlock];
+      if (held) --held;
+    }
+    q.in_use = false;
+    gq_free_handles_.push_back(h);
+  }
 
   // ---- compute (V4) ----
   void Dispatch(PipelineHandle ph, const ComputeBindings& b, uint32_t gx, uint32_t gy, uint32_t gz) override {
@@ -1485,6 +1547,10 @@ class VulkanBackend final : public Backend {
   }
 
   // ---- submission ----
+  // 0.6.1: a mid-frame hand-off is an ordinary Submit here (it never waits; the next list takes a free command slot),
+  // so the adaptive form (--gow2_renderer_submit_draws=-1) may ask for it as on D3D12.
+  uint64_t LastSubmittedFence() override { return submitted_; }
+  bool HasEarlySubmit() const override { return true; }
   uint64_t Submit() override {
     if (!ready_ || lost_) return submitted_;
     if (!cmd_) return submitted_;  // nothing recorded: the last value is already the right one to wait for
@@ -1520,6 +1586,8 @@ class VulkanBackend final : public Backend {
     }
     for (auto& dp : pools_) if (dp.fence == UINT64_MAX) dp.fence = value;
     for (auto& dp : compute_pools_) if (dp.fence == UINT64_MAX) dp.fence = value;
+    for (uint64_t& bf : gq_block_fence_) if (bf == UINT64_MAX) bf = value;  // 0.6.1: this list's game-query blocks
+    gq_block_ = UINT32_MAX;
     used_pools_.clear();
     for (auto& rb : readbacks_)
       if (rb.live && !rb.fence) rb.fence = value;
@@ -2043,6 +2111,7 @@ class VulkanBackend final : public Backend {
     if (why != 1) outside_dirty_ = true;  // patch 0089: GPU work outside a pass follows (or a submit / an unknown)
     if (!in_pass_) return;
     if (occ_active_) OccEnd();  // patch 0098: a query begun in a pass ends in it
+    if (gq_part_active_) GqEndPart();  // 0.6.1: so does a part of the game's query
     ++stats_.vk_pass_end[std::min<uint32_t>(why, 9)];
     vk_.vkCmdEndRendering(cmd_);
     in_pass_ = false;
@@ -2456,6 +2525,7 @@ class VulkanBackend final : public Backend {
       vk_.vkCmdBindDescriptorSets(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &cb_set_, 2 * kCbCount, cb_offset_);
       dirty_cb_ = false;
     }
+    GqTrack();   // 0.6.1: the game's open occlusion query counts this draw
     OccTrack();  // patch 0098
     return true;
   }
@@ -2781,6 +2851,7 @@ class VulkanBackend final : public Backend {
       if (present_pipeline_) vk_.vkDestroyPipeline(device_, present_pipeline_, nullptr);
       if (ts_pool_) vk_.vkDestroyQueryPool(device_, ts_pool_, nullptr);
       if (occ_pool_) vk_.vkDestroyQueryPool(device_, occ_pool_, nullptr);  // patch 0098
+      if (gq_pool_) vk_.vkDestroyQueryPool(device_, gq_pool_, nullptr);    // 0.6.1
       if (present_layout_) vk_.vkDestroyPipelineLayout(device_, present_layout_, nullptr);
       if (present_set_layout_) vk_.vkDestroyDescriptorSetLayout(device_, present_set_layout_, nullptr);
       if (present_pool_) vk_.vkDestroyDescriptorPool(device_, present_pool_, nullptr);
@@ -3075,7 +3146,7 @@ class VulkanBackend final : public Backend {
     for (uint32_t i = 0; i < slots_.size(); ++i)
       if (slots_[i].fence <= done) { slot_ = i; break; }
     if (slot_ == UINT32_MAX) {
-      if (slots_.size() >= 8) {  // bounded: wait for the oldest
+      if (slots_.size() >= 24) {  // bounded: wait for the oldest (0.6.1: 8 -> 24, a frame may hand off 12 lists and more)
         uint64_t oldest = UINT64_MAX;
         for (auto& s : slots_) oldest = std::min(oldest, s.fence);
         WaitForFence(oldest);
@@ -3113,6 +3184,11 @@ class VulkanBackend final : public Backend {
     dirty_views_ = dirty_samplers_ = true;         // and the sets are looked up again, which marks their pools in use
     TsBegin();
     TsCat();
+    // 0.6.1: a new list has no block of game-query slots yet; a query left open by the last list goes on in this one
+    gq_block_ = UINT32_MAX;
+    gq_block_used_ = 0;
+    gq_part_active_ = false;
+    if (gq_open_ && gq_pool_) GqTakeBlock();
     return true;
   }
 
@@ -3151,6 +3227,7 @@ class VulkanBackend final : public Backend {
     return true;
   }
   void OccTrack() {
+    if (gq_part_active_) return;  // 0.6.1: one occlusion query at a time - the game's own comes first
     if (!ts_open_ || !in_pass_ || !occ_pool_ || !ts_cur_.occ_reset) return;
     const uint8_t c = gpu_cat_pending_;
     const uint32_t tag = tag_samples_ ? gpu_tag_pending_ : 0;  // patch 0102: one query per tagged draw
@@ -3549,6 +3626,82 @@ class VulkanBackend final : public Backend {
   std::deque<PipelineJob> jobs_;
   std::deque<PipelineJob> backlog_jobs_;  // patch 0076: start-up backlog / guessed pipelines, after live requests
   bool pipeline_backlog_ = false;
+  // 0.6.1: the game's occlusion queries (see BeginOcclusionQuery).
+  static constexpr uint32_t kGqBlock = 256, kGqBlocks = 128, kGqMaxParts = 16;
+  struct GameQuery {
+    uint32_t slot[kGqMaxParts] = {};
+    uint32_t parts = 0;
+    bool in_use = false, ended = false, broken = false;
+  };
+  bool EnsureGameQueries() {
+    if (gq_pool_) return true;
+    if (gq_failed_) return false;
+    gq_failed_ = true;
+    VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    vk_.vkGetPhysicalDeviceFeatures2(physical_, &f2);
+    gq_precise_ = f2.features.occlusionQueryPrecise == VK_TRUE;
+    VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+    qi.queryType = VK_QUERY_TYPE_OCCLUSION;
+    qi.queryCount = kGqBlock * kGqBlocks;
+    if (vk_.vkCreateQueryPool(device_, &qi, nullptr, &gq_pool_) != VK_SUCCESS) {
+      gq_pool_ = VK_NULL_HANDLE;
+      REXLOG_WARN("gow2_renderer: Vulkan: no query pool for the game's occlusion queries - they stay unanswered");
+      return false;
+    }
+    gq_failed_ = false;
+    REXLOG_INFO("gow2_renderer: Vulkan: the game's occlusion queries run on our GPU ({} counts, {} slots)",
+                gq_precise_ ? "exact" : "0 / non-0 only", kGqBlock * kGqBlocks);
+    return true;
+  }
+  // A block whose last list has finished on the GPU and whose queries were all released, reset for the open list.
+  // Only outside a pass.
+  bool GqTakeBlock() {
+    if (!cmd_ || in_pass_ || !gq_pool_) return false;
+    const uint64_t done = CompletedFence();
+    for (uint32_t i = 0; i < kGqBlocks; ++i) {
+      const uint32_t b = (gq_block_cursor_ + i) % kGqBlocks;
+      if (gq_block_held_[b] || gq_block_fence_[b] == UINT64_MAX || gq_block_fence_[b] > done) continue;
+      vk_.vkCmdResetQueryPool(cmd_, gq_pool_, b * kGqBlock, kGqBlock);
+      gq_block_fence_[b] = UINT64_MAX;  // the open list's until it is submitted
+      gq_block_ = b;
+      gq_block_used_ = 0;
+      gq_block_cursor_ = (b + 1) % kGqBlocks;
+      return true;
+    }
+    return false;
+  }
+  // The open query's next part, at a draw inside a pass. No slot left in the list's block, or too many parts: the
+  // query is broken (never answered; the renderer answers it another way), as on D3D12.
+  void GqTrack() {
+    if (!gq_open_ || gq_part_active_ || !in_pass_) return;
+    GameQuery& q = gq_queries_[gq_open_];
+    if (q.broken) return;
+    if (q.parts >= kGqMaxParts || gq_block_ == UINT32_MAX || gq_block_used_ >= kGqBlock) {
+      q.broken = true;
+      return;
+    }
+    if (occ_active_) OccEnd();  // one occlusion query at a time
+    const uint32_t s = gq_block_ * kGqBlock + gq_block_used_++;
+    vk_.vkCmdBeginQuery(cmd_, gq_pool_, s, gq_precise_ ? VK_QUERY_CONTROL_PRECISE_BIT : 0);
+    q.slot[q.parts++] = s;
+    ++gq_block_held_[gq_block_];
+    gq_part_active_ = true;
+    if (q.parts > 1) ++stats_.occlusion_segments;
+  }
+  void GqEndPart() {
+    const GameQuery& q = gq_queries_[gq_open_];
+    vk_.vkCmdEndQuery(cmd_, gq_pool_, q.slot[q.parts - 1]);
+    gq_part_active_ = false;
+  }
+  VkQueryPool gq_pool_ = VK_NULL_HANDLE;
+  bool gq_failed_ = false, gq_precise_ = false, gq_part_active_ = false;
+  std::vector<GameQuery> gq_queries_;
+  std::vector<OcclusionHandle> gq_free_handles_;
+  OcclusionHandle gq_open_ = 0;
+  uint64_t gq_block_fence_[kGqBlocks] = {};  // 0 = never used, UINT64_MAX = the open list's, else its submission
+  uint32_t gq_block_held_[kGqBlocks] = {};   // parts of queries not released yet
+  uint32_t gq_block_ = UINT32_MAX, gq_block_used_ = 0, gq_block_cursor_ = 0;
+
   // Patch 0077: GPU timestamps.
   VkQueryPool ts_pool_ = VK_NULL_HANDLE;
   VkQueryPool occ_pool_ = VK_NULL_HANDLE;  // patch 0098
