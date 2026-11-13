@@ -285,6 +285,27 @@ int summary() {
         const std::vector<std::string> c = build_args(Game::Gears3, Version::TitleUpdate, s, e, nullptr);
         for (const std::string& x : c) if (x.rfind("--net_region", 0) == 0) { std::cout << "FAIL region arg for Any\n"; ++fails; }
     }
+    // Network rates: online, Gears 2 / 3 / Judgment get 100000 B/s and a 60 Hz host in their own engine ini; offline none
+    for (Game g : { Game::Gears2, Game::Gears3, Game::Judgment }) {
+        for (int on = 0; on <= 1; ++on) {
+            Environment e; e.update_ready = true;
+            e.cap.exe_has = [](const std::string&) { return true; };
+            e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+            if (on) { e.online_server = "http://1.2.3.4:18443"; e.online_stun = "1.2.3.4:3478"; }
+            Store st; Settings s = st.view(g, e);
+            std::string ini;
+            for (const std::string& x : build_args(g, Version::TitleUpdate, s, e, nullptr))
+                if (x.rfind("--ue3_ini_edits=", 0) == 0) ini = x;
+            const std::string ei = g == Game::Gears2 ? "Xe-GearEngine.ini" : "Xbox360-GearEngine.ini";
+            bool all = true;
+            for (const char* k : { "|IpDrv.TcpNetDriver|NetServerMaxTickRate=60", "|IpDrv.TcpNetDriver|MaxInternetClientRate=100000",
+                                   "|IpDrv.TcpNetDriver|MaxClientRate=100000", "|Engine.Player|ConfiguredInternetSpeed=100000",
+                                   "|Engine.Player|ConfiguredLanSpeed=100000", "|IpDrv.TcpNetDriver|LanServerMaxTickRate=60" })
+                all = all && ini.find(ei + k) != std::string::npos;
+            const bool any = ini.find("MaxInternetClientRate") != std::string::npos;
+            if (on ? !all : any) { std::cout << "FAIL net rates for game " << static_cast<int>(g) << " (" << (on ? "on" : "off") << ")\n"; ++fails; }
+        }
+    }
     // social step 4: Gears 3 TU6 gets its UE3 GNames / GEngine addresses (the private match lobby fixes), others not
     for (int gi = 0; gi < 2; ++gi) {
         const Game g = gi ? Game::Judgment : Game::Gears3;
