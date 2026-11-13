@@ -73,6 +73,8 @@ std::unique_ptr<Backend> CreateVulkanBackend() { return nullptr; }
 #include <memory>
 #include <format>
 #include <string>
+#include <tuple>
+#include <iterator>
 #include <vector>
 
 #include "vk_present_spirv.h"
@@ -109,7 +111,10 @@ namespace {
   X(vkCmdBindDescriptorSets) X(vkCmdBindIndexBuffer) X(vkCmdDraw) X(vkCmdDrawIndexed) X(vkCmdSetViewport)              \
   X(vkCmdSetScissor) X(vkCmdSetStencilReference) X(vkCmdSetBlendConstants) X(vkCreateComputePipelines)             \
   X(vkCmdDispatch) X(vkCreateQueryPool) X(vkDestroyQueryPool) X(vkCmdResetQueryPool) X(vkCmdWriteTimestamp2) X(vkCmdBeginQuery) X(vkCmdEndQuery)          \
-  X(vkGetQueryPoolResults)
+  X(vkGetQueryPoolResults)                                                                                           \
+  X(vkCmdSetCullMode) X(vkCmdSetFrontFace) X(vkCmdSetDepthBiasEnable) X(vkCmdSetDepthBias) X(vkCmdSetDepthTestEnable) \
+  X(vkCmdSetDepthWriteEnable) X(vkCmdSetDepthCompareOp) X(vkCmdSetStencilTestEnable) X(vkCmdSetStencilOp)           \
+  X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask)
 #define GN_VK_DEBUG_FUNCS(X) X(vkCmdBeginDebugUtilsLabelEXT) X(vkCmdEndDebugUtilsLabelEXT)
 
 struct Vk {
@@ -217,8 +222,24 @@ struct Shader {
   VkDescriptorType types[10] = {};  // by compute binding (0-9); VK_DESCRIPTOR_TYPE_MAX_ENUM = unused
 };
 
+// 0.6.2 (pipeline libraries): the state a linked pipeline leaves dynamic, set when it is bound.
+struct LinkedState {
+  VkCullModeFlags cull = VK_CULL_MODE_NONE;
+  VkFrontFace front = VK_FRONT_FACE_CLOCKWISE;
+  VkBool32 bias_enable = VK_FALSE, depth_test = VK_FALSE, depth_write = VK_FALSE, stencil_test = VK_FALSE;
+  float bias = 0.0f, bias_slope = 0.0f;
+  VkCompareOp depth_op = VK_COMPARE_OP_ALWAYS;
+  VkStencilOpState stencil_front{}, stencil_back{};
+};
+struct PipelineLib {  // one pipeline library; `done` under the backend's lib_mutex_
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  bool done = false;
+};
+
 struct Pipeline {
   VkPipeline pipeline = VK_NULL_HANDLE;
+  bool linked = false;  // built from pipeline libraries: `dyn` is set at bind (written before `ready`)
+  LinkedState dyn;
   ShaderHandle compute = 0;  // compute pipelines: their shader (layout and binding types)
   std::atomic<bool> ready{true};
   std::atomic<bool> failed{false};
@@ -1638,6 +1659,17 @@ class VulkanBackend final : public Backend {
     --debug_depth_;
   }
   const BackendStats& Stats() const override { return stats_; }
+  std::string PipelineLibraryReport() override {  // 0.6.2
+    if (!gpl_) return "pipeline libraries: off";
+    std::lock_guard<std::mutex> lock(lib_mutex_);
+    const uint64_t links = gpl_links_.load();
+    return std::format("pipeline libraries: {} built ({} vertex input, {} pre-rasterization, {} fragment, {} output), "
+                       "{:.1f} ms each ({:.0f} ms in all); {} pipelines linked, {:.3f} ms each ({:.0f} ms in all); {} built whole after a failure",
+                       gpl_libs_, lib_vi_.size(), lib_pr_.size(), lib_fs_.size(), lib_out_.size(),
+                       gpl_libs_ ? double(gpl_lib_us_) / 1000.0 / double(gpl_libs_) : 0.0, double(gpl_lib_us_) / 1000.0, links,
+                       links ? double(gpl_link_us_.load()) / 1000.0 / double(links) : 0.0, double(gpl_link_us_.load()) / 1000.0,
+                       gpl_fallbacks_.load());
+  }
 
  private:
   // ---- stage V2: binding layout, shaders, pipelines, descriptors, passes ----
@@ -1974,6 +2006,28 @@ class VulkanBackend final : public Backend {
     gi.layout = layout_;
     if (pipeline_stats_) gi.flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;  // patch 0104
     Pipeline& p = *pipelines_[job.handle];
+    // 0.6.2: linked from pipeline libraries where it can be (a pixel shader, no statistics capture).
+    if (gpl_ && !pipeline_stats_ && job.modules[0] && job.modules[1]) {
+      const VkPipeline linked = BuildLinked(job, ia, rs, ms, cb, ri);
+      if (linked) {
+        p.dyn.cull = rs.cullMode;
+        p.dyn.front = rs.frontFace;
+        p.dyn.bias_enable = rs.depthBiasEnable;
+        p.dyn.bias = rs.depthBiasConstantFactor;
+        p.dyn.bias_slope = rs.depthBiasSlopeFactor;
+        p.dyn.depth_test = ds.depthTestEnable;
+        p.dyn.depth_write = ds.depthWriteEnable;
+        p.dyn.depth_op = ds.depthCompareOp;
+        p.dyn.stencil_test = ds.stencilTestEnable;
+        p.dyn.stencil_front = ds.front;
+        p.dyn.stencil_back = ds.back;
+        p.linked = true;
+        p.pipeline = linked;
+        p.ready.store(true, std::memory_order_release);
+        return;
+      }
+      gpl_fallbacks_.fetch_add(1);  // a library or the link failed: built whole, as before
+    }
     const VkResult r = vk_.vkCreateGraphicsPipelines(device_, pipeline_cache_vk_, 1, &gi, nullptr, &p.pipeline);
     if (r != VK_SUCCESS) {
       p.failed.store(true);
@@ -1981,6 +2035,143 @@ class VulkanBackend final : public Backend {
                    d.vs, d.ps, d.gs, uint32_t(d.topology), d.color_count, uint32_t(d.depth_format));
     }
     p.ready.store(true, std::memory_order_release);
+  }
+  // ---- 0.6.2: graphics pipeline libraries (BackendOptions::vk_pipeline_libraries) ----
+  // One library per key, built once: the first asker builds it (outside the lock), the others wait for it.
+  template <class Map, class Key, class Make>
+  VkPipeline LibraryFor(Map& map, const Key& key, Make&& make) {
+    std::unique_lock<std::mutex> lock(lib_mutex_);
+    const auto [it, fresh] = map.try_emplace(key);
+    PipelineLib& e = it->second;  // (node-based maps: the reference stays valid while others insert)
+    if (!fresh) {
+      lib_cv_.wait(lock, [&e] { return e.done; });
+      return e.pipeline;
+    }
+    lock.unlock();
+    const auto t0 = std::chrono::steady_clock::now();
+    const VkPipeline made = make();
+    const uint64_t us = uint64_t(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count());
+    lock.lock();
+    e.pipeline = made;
+    e.done = true;
+    ++gpl_libs_;
+    gpl_lib_us_ += us;
+    lock.unlock();
+    lib_cv_.notify_all();
+    return made;
+  }
+  VkPipeline CreateLibrary(VkGraphicsPipelineLibraryFlagsEXT part, VkGraphicsPipelineCreateInfo gi, const void* next) {
+    VkGraphicsPipelineLibraryCreateInfoEXT li{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT};
+    li.pNext = next;
+    li.flags = part;
+    gi.pNext = &li;
+    gi.flags = VK_PIPELINE_CREATE_LIBRARY_BIT_KHR;
+    gi.layout = layout_;
+    VkPipeline lib = VK_NULL_HANDLE;
+    const VkResult r = vk_.vkCreateGraphicsPipelines(device_, pipeline_cache_vk_, 1, &gi, nullptr, &lib);
+    if (r != VK_SUCCESS) {
+      REXLOG_ERROR("gow2_renderer: Vulkan: pipeline library (part {:#x}) failed ({})", uint32_t(part), VkErr("vkCreateGraphicsPipelines", r));
+      return VK_NULL_HANDLE;
+    }
+    return lib;
+  }
+  // The pipeline of `job`, linked from its four libraries (0 = one of them or the link failed).
+  VkPipeline BuildLinked(const PipelineJob& job, const VkPipelineInputAssemblyStateCreateInfo& ia,
+                         const VkPipelineRasterizationStateCreateInfo& rs, const VkPipelineMultisampleStateCreateInfo& ms,
+                         const VkPipelineColorBlendStateCreateInfo& cb, const VkPipelineRenderingCreateInfo& ri) {
+    VkPipelineRenderingCreateInfo no_formats{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};  // (only the view mask counts here)
+    // 1. Vertex input interface: no vertex buffers (the shaders fetch), so only the topology.
+    const uint32_t vi_key = uint32_t(ia.topology) | (ia.primitiveRestartEnable ? 0x100u : 0u);
+    const VkPipeline vi_lib = LibraryFor(lib_vi_, vi_key, [&] {
+      VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+      VkGraphicsPipelineCreateInfo gi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+      gi.pVertexInputState = &vi;
+      gi.pInputAssemblyState = &ia;
+      return CreateLibrary(VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT, gi, nullptr);
+    });
+    // 2. Pre-rasterization: the vertex (and geometry) shader - compiled here, once. Cull mode, front face and depth
+    // bias are dynamic; depth clamp and the polygon mode are part of the key.
+    const std::tuple<VkShaderModule, VkShaderModule, uint32_t> pr_key{
+        job.modules[0], job.modules[2], (rs.depthClampEnable ? 1u : 0u) | (rs.polygonMode == VK_POLYGON_MODE_LINE ? 2u : 0u)};
+    const VkPipeline pr_lib = LibraryFor(lib_pr_, pr_key, [&] {
+      VkPipelineShaderStageCreateInfo st[2];
+      uint32_t ns = 0;
+      st[ns++] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, job.modules[0], "main", nullptr};
+      if (job.modules[2])
+        st[ns++] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_GEOMETRY_BIT, job.modules[2], "main", nullptr};
+      VkPipelineViewportStateCreateInfo vp{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+      vp.viewportCount = vp.scissorCount = 1;
+      VkPipelineRasterizationStateCreateInfo r2 = rs;  // (the dynamic members are ignored)
+      const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE,
+                                    VK_DYNAMIC_STATE_FRONT_FACE, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE, VK_DYNAMIC_STATE_DEPTH_BIAS};
+      VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+      dy.dynamicStateCount = uint32_t(std::size(dyn));
+      dy.pDynamicStates = dyn;
+      VkGraphicsPipelineCreateInfo gi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+      gi.stageCount = ns;
+      gi.pStages = st;
+      gi.pViewportState = &vp;
+      gi.pRasterizationState = &r2;
+      gi.pDynamicState = &dy;
+      return CreateLibrary(VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT, gi, &no_formats);
+    });
+    // 3. Fragment shader: the pixel shader - compiled here, once per sample count. All depth / stencil state is dynamic.
+    const std::tuple<VkShaderModule, uint32_t> fs_key{job.modules[1], uint32_t(ms.rasterizationSamples)};
+    const VkPipeline fs_lib = LibraryFor(lib_fs_, fs_key, [&] {
+      const VkPipelineShaderStageCreateInfo st{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, job.modules[1], "main", nullptr};
+      VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+      const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE, VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+                                    VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+                                    VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE};
+      VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+      dy.dynamicStateCount = uint32_t(std::size(dyn));
+      dy.pDynamicStates = dyn;
+      VkGraphicsPipelineCreateInfo gi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+      gi.stageCount = 1;
+      gi.pStages = &st;
+      gi.pDepthStencilState = &ds;
+      gi.pMultisampleState = &ms;
+      gi.pDynamicState = &dy;
+      return CreateLibrary(VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, gi, &no_formats);
+    });
+    // 4. Fragment output interface: blending, the attachment formats, the sample count. No shader.
+    std::string out_key;
+    auto put = [&out_key](const void* at, size_t n) { out_key.append(static_cast<const char*>(at), n); };
+    put(&cb.attachmentCount, sizeof(cb.attachmentCount));
+    if (cb.attachmentCount) put(cb.pAttachments, sizeof(VkPipelineColorBlendAttachmentState) * cb.attachmentCount);
+    if (ri.colorAttachmentCount) put(ri.pColorAttachmentFormats, sizeof(VkFormat) * ri.colorAttachmentCount);
+    put(&ri.depthAttachmentFormat, sizeof(VkFormat));
+    put(&ms.rasterizationSamples, sizeof(ms.rasterizationSamples));
+    const VkPipeline out_lib = LibraryFor(lib_out_, out_key, [&] {
+      const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_BLEND_CONSTANTS};
+      VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+      dy.dynamicStateCount = 1;
+      dy.pDynamicStates = dyn;
+      VkGraphicsPipelineCreateInfo gi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+      gi.pColorBlendState = &cb;
+      gi.pMultisampleState = &ms;
+      gi.pDynamicState = &dy;
+      return CreateLibrary(VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT, gi, &ri);
+    });
+    if (!vi_lib || !pr_lib || !fs_lib || !out_lib) return VK_NULL_HANDLE;
+    // The link: no shader is compiled (fast linking; no link-time optimisation asked for).
+    const VkPipeline libs[4] = {vi_lib, pr_lib, fs_lib, out_lib};
+    VkPipelineLibraryCreateInfoKHR li{VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR};
+    li.libraryCount = 4;
+    li.pLibraries = libs;
+    VkGraphicsPipelineCreateInfo gi{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    gi.pNext = &li;
+    gi.layout = layout_;
+    VkPipeline out = VK_NULL_HANDLE;
+    const auto t0 = std::chrono::steady_clock::now();
+    const VkResult r = vk_.vkCreateGraphicsPipelines(device_, pipeline_cache_vk_, 1, &gi, nullptr, &out);
+    gpl_link_us_.fetch_add(uint64_t(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count()));
+    gpl_links_.fetch_add(1);
+    if (r != VK_SUCCESS) {
+      REXLOG_ERROR("gow2_renderer: Vulkan: linking a pipeline from its libraries failed ({})", VkErr("vkCreateGraphicsPipelines", r));
+      return VK_NULL_HANDLE;
+    }
+    return out;
   }
   static bool IntegerFormat(VkFormat f) {
     switch (f) {
@@ -2516,7 +2707,28 @@ class VulkanBackend final : public Backend {
       GqTakeBlock();  // none free: GqTrack marks the query broken (answered another way by the renderer)
     }
     if (!BeginPass()) return false;
-    if (bound_pipeline_ != p.pipeline) { vk_.vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipeline); bound_pipeline_ = p.pipeline; dirty_sets_ = true; }
+    if (bound_pipeline_ != p.pipeline) {
+      vk_.vkCmdBindPipeline(cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS, p.pipeline);
+      bound_pipeline_ = p.pipeline;
+      dirty_sets_ = true;
+      if (p.linked) {  // 0.6.2 (pipeline libraries): its dynamic state, all of it on every bind (a pipeline built
+                       // whole in between has the same state static, which unsets the dynamic values)
+        const LinkedState& y = p.dyn;
+        vk_.vkCmdSetCullMode(cmd_, y.cull);
+        vk_.vkCmdSetFrontFace(cmd_, y.front);
+        vk_.vkCmdSetDepthBiasEnable(cmd_, y.bias_enable);
+        vk_.vkCmdSetDepthBias(cmd_, y.bias, 0.0f, y.bias_slope);
+        vk_.vkCmdSetDepthTestEnable(cmd_, y.depth_test);
+        vk_.vkCmdSetDepthWriteEnable(cmd_, y.depth_write);
+        vk_.vkCmdSetDepthCompareOp(cmd_, y.depth_op);
+        vk_.vkCmdSetStencilTestEnable(cmd_, y.stencil_test);
+        vk_.vkCmdSetStencilOp(cmd_, VK_STENCIL_FACE_FRONT_BIT, y.stencil_front.failOp, y.stencil_front.passOp, y.stencil_front.depthFailOp, y.stencil_front.compareOp);
+        vk_.vkCmdSetStencilOp(cmd_, VK_STENCIL_FACE_BACK_BIT, y.stencil_back.failOp, y.stencil_back.passOp, y.stencil_back.depthFailOp, y.stencil_back.compareOp);
+        vk_.vkCmdSetStencilCompareMask(cmd_, VK_STENCIL_FACE_FRONT_AND_BACK, y.stencil_front.compareMask);
+        vk_.vkCmdSetStencilWriteMask(cmd_, VK_STENCIL_FACE_FRONT_AND_BACK, y.stencil_front.writeMask);
+        dirty_stencil_ = true;  // the reference is dynamic in both kinds; set again to be safe
+      }
+    }
     if (dirty_viewport_) { vk_.vkCmdSetViewport(cmd_, 0, 1, &viewport_); dirty_viewport_ = false; }
     if (dirty_scissor_) { vk_.vkCmdSetScissor(cmd_, 0, 1, &scissor_); dirty_scissor_ = false; }
     if (dirty_stencil_) { vk_.vkCmdSetStencilReference(cmd_, VK_STENCIL_FACE_FRONT_AND_BACK, stencil_ref_); dirty_stencil_ = false; }
@@ -2699,6 +2911,9 @@ class VulkanBackend final : public Backend {
       fill_mode_non_solid_ = ext_->fill_mode_non_solid;
       anisotropy_ = ext_->anisotropy;
       if (!ext_->texture_compression_bc) REXLOG_WARN("gow2_renderer: Vulkan: BC texture formats not enabled on the SDK's device");
+      gpl_ = options_.vk_pipeline_libraries && !options_.vk_pipeline_stats && ext_->graphics_pipeline_library;  // 0.6.2
+      if (options_.vk_pipeline_libraries && !gpl_)
+        REXLOG_WARN("gow2_renderer: Vulkan: graphics pipeline libraries not enabled on the SDK's device - pipelines are built whole");
       return FinishDevice(error);
     }
     VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
@@ -2764,7 +2979,36 @@ class VulkanBackend final : public Backend {
     di.pQueueCreateInfos = &qi;
     // Patch 0104: the driver's per-pipeline statistics (a measurement, own device only).
     VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pe{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
-    const char* dev_exts[1] = {};
+    const char* dev_exts[3] = {};
+    // 0.6.2: graphics pipeline libraries, where the device offers them (our own device; on the SDK's, its patch 91).
+    VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gl{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
+    if (options_.vk_pipeline_libraries && !options_.vk_pipeline_stats) {
+      uint32_t n = 0;
+      vk_.vkEnumerateDeviceExtensionProperties(physical_, nullptr, &n, nullptr);
+      std::vector<VkExtensionProperties> xs(n);
+      vk_.vkEnumerateDeviceExtensionProperties(physical_, nullptr, &n, xs.data());
+      bool has_lib = false, has_gpl = false;
+      for (const auto& x : xs) {
+        if (!std::strcmp(x.extensionName, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME)) has_lib = true;
+        if (!std::strcmp(x.extensionName, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME)) has_gpl = true;
+      }
+      if (has_lib && has_gpl) {
+        VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT q{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
+        VkPhysicalDeviceFeatures2 q2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+        q2.pNext = &q;
+        vk_.vkGetPhysicalDeviceFeatures2(physical_, &q2);
+        if (q.graphicsPipelineLibrary) {
+          gl.graphicsPipelineLibrary = VK_TRUE;
+          gl.pNext = e2.pNext;
+          e2.pNext = &gl;
+          dev_exts[di.enabledExtensionCount++] = VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME;
+          dev_exts[di.enabledExtensionCount++] = VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME;
+          di.ppEnabledExtensionNames = dev_exts;
+          gpl_ = true;
+        }
+      }
+      if (!gpl_) REXLOG_WARN("gow2_renderer: Vulkan: VK_EXT_graphics_pipeline_library not offered - pipelines are built whole");
+    }
     if (options_.vk_pipeline_stats) {
       uint32_t n = 0;
       vk_.vkEnumerateDeviceExtensionProperties(physical_, nullptr, &n, nullptr);
@@ -2776,8 +3020,7 @@ class VulkanBackend final : public Backend {
         pe.pipelineExecutableInfo = VK_TRUE;
         pe.pNext = e2.pNext;
         e2.pNext = &pe;
-        dev_exts[0] = VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME;
-        di.enabledExtensionCount = 1;
+        dev_exts[di.enabledExtensionCount++] = VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME;
         di.ppEnabledExtensionNames = dev_exts;
       } else {
         REXLOG_WARN("gow2_renderer: Vulkan: VK_KHR_pipeline_executable_properties not offered - no pipeline statistics");
@@ -2861,6 +3104,10 @@ class VulkanBackend final : public Backend {
       if (present_pool_) vk_.vkDestroyDescriptorPool(device_, present_pool_, nullptr);
       if (present_view_) vk_.vkDestroyImageView(device_, present_view_, nullptr);
       for (auto& p : pipelines_) if (p && p->pipeline) vk_.vkDestroyPipeline(device_, p->pipeline, nullptr);
+      for (auto& [k, l] : lib_vi_) if (l.pipeline) vk_.vkDestroyPipeline(device_, l.pipeline, nullptr);   // 0.6.2
+      for (auto& [k, l] : lib_pr_) if (l.pipeline) vk_.vkDestroyPipeline(device_, l.pipeline, nullptr);
+      for (auto& [k, l] : lib_fs_) if (l.pipeline) vk_.vkDestroyPipeline(device_, l.pipeline, nullptr);
+      for (auto& [k, l] : lib_out_) if (l.pipeline) vk_.vkDestroyPipeline(device_, l.pipeline, nullptr);
       for (auto& sh : shaders_) if (sh.module) vk_.vkDestroyShaderModule(device_, sh.module, nullptr);
       for (auto& [k, smp] : sampler_objects_) vk_.vkDestroySampler(device_, smp, nullptr);
       for (auto& dp : pools_) vk_.vkDestroyDescriptorPool(device_, dp.pool, nullptr);
@@ -3720,6 +3967,16 @@ class VulkanBackend final : public Backend {
   uint32_t occ_tag_ = 0;      // patch 0102
   bool tag_samples_ = false;  // patch 0102
   bool pipeline_stats_ = false;  // patch 0104
+  // 0.6.2: graphics pipeline libraries (vk_pipeline_libraries, with the extension enabled on the device).
+  bool gpl_ = false;
+  std::mutex lib_mutex_;
+  std::condition_variable lib_cv_;
+  std::map<uint32_t, PipelineLib> lib_vi_;
+  std::map<std::tuple<VkShaderModule, VkShaderModule, uint32_t>, PipelineLib> lib_pr_;
+  std::map<std::tuple<VkShaderModule, uint32_t>, PipelineLib> lib_fs_;
+  std::map<std::string, PipelineLib> lib_out_;
+  uint64_t gpl_libs_ = 0, gpl_lib_us_ = 0;  // under lib_mutex_
+  std::atomic<uint64_t> gpl_links_{0}, gpl_link_us_{0}, gpl_fallbacks_{0};
   PFN_vkGetPipelineExecutablePropertiesKHR get_exec_props_ = nullptr;
   PFN_vkGetPipelineExecutableStatisticsKHR get_exec_stats_ = nullptr;
   bool ts_failed_ = false, ts_open_ = false;

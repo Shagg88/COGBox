@@ -61,7 +61,12 @@ int main(int argc, char** argv) {
   if (vss.empty() || pss.empty()) return 3;
 
   const bool vulkan_opt = argc > 4 && std::string(argv[4]) == "vulkan-opt";  // through the optimiser the game uses
-  const bool vulkan = vulkan_opt || (argc > 4 && std::string(argv[4]) == "vulkan");
+  // 0.6.2: "vulkan-gpl" = through graphics pipeline libraries (BackendOptions::vk_pipeline_libraries); after each
+  // pair's first pipeline, four more of the same two shaders with other state are timed (links only, if it works).
+  const bool vulkan_gpl = argc > 4 && std::string(argv[4]) == "vulkan-gpl";
+  const bool vulkan_more = argc > 4 && std::string(argv[4]) == "vulkan-more";  // the same five pipelines, built whole
+  const bool vulkan = vulkan_opt || vulkan_gpl || vulkan_more || (argc > 4 && std::string(argv[4]) == "vulkan");
+  std::vector<double> more_ms;
   uint64_t opt_ok = 0, opt_no = 0;
   const fs::path spv_dump = vulkan && argc > 5 ? fs::path(argv[5]) : fs::path();
   const fs::path spv_replace = vulkan && argc > 6 ? fs::path(argv[6]) : fs::path();
@@ -70,6 +75,7 @@ int main(int argc, char** argv) {
   gpu::BackendOptions bo;
   bo.upload_ring_mb = 16;
   bo.guest_memory_bytes = 16ull << 20;
+  bo.vk_pipeline_libraries = vulkan_gpl;
   std::string err;
   if (!backend || !backend->Init(bo, err)) {
     std::printf("pipebench: %s init failed: %s\n", vulkan ? "Vulkan" : "D3D12", err.c_str());
@@ -265,10 +271,33 @@ int main(int argc, char** argv) {
       r.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
       r.ok = h != 0;
       rows.push_back(r);
+      if ((vulkan_gpl || vulkan_more) && h) {  // the same shaders, other state: what a game's further combinations cost
+        for (int k = 0; k < 4; ++k) {
+          gpu::GraphicsPipelineDesc e = d;
+          if (k == 0) e.depth_func = gpu::CompareFunc::kLessEqual, e.depth_write = false;
+          if (k == 1) e.cull = gpu::CullMode::kBack;
+          if (k == 2) e.color_blend[0].enable = true, e.color_blend[0].src = gpu::BlendFactor::kSrcAlpha, e.color_blend[0].dst = gpu::BlendFactor::kInvSrcAlpha;
+          if (k == 3) e.depth_enable = false, e.depth_write = false, e.color_formats[0] = gpu::Format::kR16G16B16A16Float;
+          const auto t1 = std::chrono::steady_clock::now();
+          const gpu::PipelineHandle h2 = backend->GetGraphicsPipeline(e, false, nullptr);
+          if (h2) more_ms.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count());
+        }
+      }
     }
     if ((i + 1) % 25 == 0) std::printf("pipebench: %u / %u pairs\n", i + 1, pairs);
   }
   if (vulkan_opt) std::printf("pipebench: SPIR-V optimiser: %llu modules optimised, %llu left as converted\n", (unsigned long long)opt_ok, (unsigned long long)opt_no);
+  if (!more_ms.empty()) {
+    std::sort(more_ms.begin(), more_ms.end());
+    double sum = 0;
+    for (double x : more_ms) sum += x;
+    const size_t n = more_ms.size();
+    std::printf("pipebench RESULT further state combinations of the same shaders (%s): %zu pipelines | ms each: mean %.2f "
+                "median %.2f p90 %.2f max %.2f | %.1f s in all\n",
+                vulkan_gpl ? "linked from libraries" : "built whole", n, sum / double(n), more_ms[n / 2],
+                more_ms[std::min(n - 1, n * 9 / 10)], more_ms.back(), sum / 1000.0);
+  }
+  if (vulkan) std::printf("pipebench: %s\n", backend->PipelineLibraryReport().c_str());
   std::ofstream csv(argv[2]);
   csv << "pair,variant,vs,ps,bytes,ms,ok\n";
   for (const Row& r : rows)

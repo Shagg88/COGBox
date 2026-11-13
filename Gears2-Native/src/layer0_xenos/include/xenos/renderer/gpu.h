@@ -258,6 +258,8 @@ struct VulkanExternal {
   bool push_descriptor = false, depth_clamp = false, fill_mode_non_solid = false, anisotropy = false;
   bool texture_compression_bc = false;
   bool occlusion_query_precise = false;  // 0.6.1: exact occlusion counts (the game's queries)
+  // 0.6.2: VK_KHR_pipeline_library + VK_EXT_graphics_pipeline_library enabled, with the graphicsPipelineLibrary feature.
+  bool graphics_pipeline_library = false;
 };
 // Notes/68 V3: the presenter's guest-output image for Backend::PresentPacked (Vulkan: VkImage + VkImageView, format
 // A2B10G10R10_UNORM_PACK32, usable as a colour attachment). It is left in SHADER_READ_ONLY_OPTIMAL, visible to
@@ -358,6 +360,12 @@ struct BackendOptions {
   // Patch 0104 (Vulkan, own device only - gn_vktest): enable VK_KHR_pipeline_executable_properties and capture each
   // graphics pipeline's driver statistics (registers, instructions...) for Backend::PipelineStatistics.
   bool vk_pipeline_stats = false;
+  // 0.6.2 (Vulkan first-run stutter; the DXVK 2.0 method): graphics pipelines are linked from pipeline libraries - one
+  // per vertex shader (pre-rasterization), one per pixel shader (fragment), one per output state - so the driver
+  // compiles each SHADER once and every further state combination of it is a link (no shader compile). Depth / stencil
+  // state, cull mode, front face and depth bias become dynamic state, set when such a pipeline is bound. Needs
+  // VK_EXT_graphics_pipeline_library; without it (or for pipelines without a pixel shader) pipelines are built whole.
+  bool vk_pipeline_libraries = false;
   // Patch 0107 (Vulkan): the barriers' source stages are the kinds of GPU work recorded since the last barrier
   // (graphics / compute / transfer) instead of ALL_COMMANDS; the destination stays ALL_COMMANDS.
   bool vk_barrier_src_stages = false;
@@ -491,6 +499,8 @@ class Backend {
   // Patch 0058: while on, asynchronous requests are start-up backlog (the recorded pipelines of earlier sessions): the
   // workers take them after every pipeline a live draw is waiting for.
   virtual void SetPipelineBacklog(bool on) { (void)on; }
+  // 0.6.2 (Vulkan, BackendOptions::vk_pipeline_libraries): counts and driver times of the libraries and links so far.
+  virtual std::string PipelineLibraryReport() { return {}; }
   // Patch 0061 ("Preparing shaders"): asynchronous pipeline jobs not finished yet (queued + being built), and a save of
   // the saved-pipeline library now (on this thread) if it has new entries.
   virtual uint64_t PipelineJobsLeft() { return 0; }
