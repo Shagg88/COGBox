@@ -112,3 +112,13 @@ describe('checkSourceforge', () => {
     expect((await checkSourceforge(f, 'cogbox')).state).toBe('unknown');
   });
 });
+
+import { shortTitle } from '../src/checks.js';
+describe('shortTitle', () => {
+  it('keeps a short title and cuts a long one at 40 characters with an ellipsis', () => {
+    expect(shortTitle('Fix the thing\nmore text')).toBe('Fix the thing');
+    const long = "status-reporter: MASTER_URL is the master's game port 18443 on the Oracle server";
+    expect(shortTitle(long)).toBe(long.slice(0, 39).trimEnd() + '…');
+    expect(shortTitle(long).length).toBeLessThanOrEqual(40);
+  });
+});

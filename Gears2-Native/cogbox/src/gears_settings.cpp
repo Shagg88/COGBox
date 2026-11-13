@@ -1597,6 +1597,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                                    "Engine.Player|ConfiguredLanSpeed=30000", "Engine.Player|ConfiguredInternetSpeed=30000",
                                    "Engine.PlayerController|bDynamicNetSpeed=False" })
                 ini.push_back(ei + "|" + e);
+        // Gears 2, 3 and Judgment ship Xbox Live 2008-era limits: 7000 B/s per player each way (MaxInternetClientRate and
+        // the client's own ConfiguredInternetSpeed; the lower one wins) and a 45 Hz host. A traced Gears 3 1v1 stayed
+        // under ~6300 B/s with those and spent ~40% of the round above it once raised, in both directions; both players
+        // found it smoother. Busy seconds used ~5.5 KB/s and peaked near 18 KB/s, so 100000 is headroom, not usage
+        // (a full lobby's host sends at most ~7 Mbit/s).
+        if (!isG1 && netPlay)
+            for (const char* e : { "IpDrv.TcpNetDriver|NetServerMaxTickRate=60", "IpDrv.TcpNetDriver|LanServerMaxTickRate=60",
+                                   "IpDrv.TcpNetDriver|MaxClientRate=100000", "IpDrv.TcpNetDriver|MaxInternetClientRate=100000",
+                                   "Engine.Player|ConfiguredLanSpeed=100000", "Engine.Player|ConfiguredInternetSpeed=100000" })
+                ini.push_back(ei + "|" + e);
         if (isG1) {   // GitHub #179: no [SystemSettings] in Gears 1 - Canary's patches as switches
             if (avail("MotionBlur") && !s.b("MotionBlur")) a.push_back("--gow1_no_motion_blur=true");
             if (avail("DoF") && !s.b("DoF")) a.push_back("--gow1_no_gaussian_blur=true");

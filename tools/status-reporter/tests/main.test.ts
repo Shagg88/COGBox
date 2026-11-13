@@ -29,6 +29,48 @@ describe('collect', () => {
     expect(gitlab).toBe(1);
     expect(a.map((l) => l.name)).toEqual(['Matchmaking server', 'STUN (UDP 9)', 'GitLab']);
   }, 10_000);
+
+  // GitHub allows 60 unauthenticated requests an hour per address and one check is 4: every 15 minutes is 16 an hour
+  const githubFetch = (state: { calls: number; fail: boolean }) => (async (url: string | URL) => {
+    const u = String(url);
+    if (u.includes('api.github.com')) {
+      state.calls++;
+      if (state.fail) return new Response('{"message":"API rate limit exceeded"}', { status: 403 });
+      if (u.endsWith('/repos/o/r')) return Response.json({ default_branch: 'main', open_issues_count: 3 });
+      if (u.includes('/releases/latest')) return Response.json({ tag_name: 'v1', html_url: 'https://github.com/o/r/releases/v1' });
+      if (u.includes('/actions/runs')) return Response.json({ workflow_runs: [] });
+      if (u.includes('/commits')) return Response.json([{ sha: 'abcdef1234', commit: { message: 'hello' } }]);
+    }
+    return new Response('{}', { status: 503 });
+  }) as typeof fetch;
+  const ghCfg = () => ({ ...loadConfig({ GITHUB_ENABLED: 'true', GITHUB_REPO: 'o/r' }), stunPort: 9, stunHost: '127.0.0.1' });
+  const gh = (lines: { name: string; text: string }[]) => lines.find((l) => l.name === 'GitHub')!;
+
+  it('asks GitHub at most once per 15 minutes', async () => {
+    const s = { calls: 0, fail: false };
+    const cache = new Map();
+    await collect(ghCfg(), githubFetch(s), cache, 0);
+    const once = s.calls;
+    await collect(ghCfg(), githubFetch(s), cache, 10 * 60_000);
+    expect(s.calls).toBe(once);
+    await collect(ghCfg(), githubFetch(s), cache, 15 * 60_000);
+    expect(s.calls).toBe(once * 2);
+  }, 10_000);
+
+  it('keeps the last good GitHub answer when GitHub refuses a check', async () => {
+    const s = { calls: 0, fail: false };
+    const cache = new Map();
+    const good = gh(await collect(ghCfg(), githubFetch(s), cache, 0));
+    expect(good.text).toContain('v1');
+    s.fail = true;
+    const later = gh(await collect(ghCfg(), githubFetch(s), cache, 15 * 60_000));
+    expect(later.text).toBe(good.text);
+  }, 10_000);
+
+  it('says unavailable when GitHub never answered', async () => {
+    const s = { calls: 0, fail: true };
+    expect(gh(await collect(ghCfg(), githubFetch(s), new Map(), 0)).text).toBe('unavailable');
+  }, 10_000);
 });
 
 import fs from 'node:fs';
