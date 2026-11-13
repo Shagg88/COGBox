@@ -1100,9 +1100,12 @@ void ShaderCache::SpvWorker() {
     bool live = false;
     {
       std::unique_lock<std::mutex> lock(mutex_);
-      spv_wake_.wait(lock, [this] { return stop_ || !spv_queue_.empty() || !spv_warm_queue_.empty(); });
+      spv_wake_.wait(lock, [this] {
+        return stop_ || !spv_queue_.empty() || (!spv_warm_queue_.empty() && spv_warm_active_ < spv_warm_limit_);
+      });
       if (stop_) return;
       live = !spv_queue_.empty();
+      if (!live) ++spv_warm_active_;
       auto& q = live ? spv_queue_ : spv_warm_queue_;
       job = std::move(q.front());
       q.pop_front();
@@ -1138,9 +1141,21 @@ void ShaderCache::SpvWorker() {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       done_.push_back(std::move(job));
+      if (!live) --spv_warm_active_;
     }
+    if (!live) spv_wake_.notify_one();  // a thread held back by the backlog limit may take the next one
     done_cv_.notify_all();
   }
+}
+void ShaderCache::SetSpirvBacklogThreads(uint32_t n) {
+  n = std::max<uint32_t>(n, 1);
+  bool more = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    more = n > spv_warm_limit_;
+    spv_warm_limit_ = n;
+  }
+  if (more) spv_wake_.notify_all();
 }
 void ShaderCache::QueueSpirv(GuestShader& s, const std::vector<uint8_t>& dxbc, bool precise, bool warm) {
   auto job = std::make_unique<Job>();

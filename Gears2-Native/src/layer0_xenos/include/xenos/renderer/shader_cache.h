@@ -159,6 +159,10 @@ class ShaderCache {
   void NewPollBudget() { poll_spent_ms_ = 0.0; }
   // A draw was skipped for this pending shader: its conversion goes to the front of the queue (once per shader).
   void Promote(const GuestShader& s);
+  // 0.6.2: how many background threads may work on the backlog (the warm-up's shaders) at once - few while the game
+  // draws (job 1750b: at the lowest priority they still cost Judgment 24 ms a frame against 17), all of them on a
+  // loading screen or in a hold. A job a draw waits for is never limited.
+  void SetSpirvBacklogThreads(uint32_t n);
   size_t SpirvJobsQueued();
   // Shader pop-in (see the header comment).
   void SetUcodeRecord(bool on) { record_ucode_ = on && dir_ok_; }
@@ -311,6 +315,7 @@ class ShaderCache {
   std::deque<std::unique_ptr<Job>> warm_queue_;  // WarmFromDisk's compiles: taken only when queue_ is empty
   std::deque<std::unique_ptr<Job>> spv_queue_, spv_warm_queue_;  // 0.6.2: SPIR-V conversions (live first, then the warm-up's)
   std::condition_variable spv_wake_;
+  uint32_t spv_warm_limit_ = UINT32_MAX, spv_warm_active_ = 0;  // under mutex_
   std::vector<std::thread> spv_workers_;
   uint64_t spv_jobs_done_ = 0, spv_jobs_failed_ = 0;
   double poll_spent_ms_ = 0.0;

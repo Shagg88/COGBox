@@ -487,6 +487,10 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_float_controls, true, "Gears2",
                     "without a depth test, while depth-only draws match");
 REXCVAR_DEFINE_INT32(gow2_renderer_draw_report_frames, 1, "Gears2",
                      "Patch 0101: how many frames --gow2_renderer_draw_report_frame reports (1-4)");
+REXCVAR_DEFINE_INT32(gow2_renderer_vulkan_async_play_threads, 2, "Gears2",
+                     "0.6.2 (with --gow2_renderer_vulkan_async_shaders): background threads that convert the shader "
+                     "backlog while the game draws (64+ draws in the frame); on loading screens, menus under 64 draws "
+                     "and in a chapter hold all of them work. A shader a draw waits for is never limited");
 REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_async_shaders, false, "Gears2",
                     "0.6.2 (first playthrough, Vulkan): a shader whose SPIR-V is not in the store is converted on "
                     "background threads; until it is ready its draws are skipped as for any shader still being made, "
@@ -2712,6 +2716,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     draws_since_submit_ = 0;
     auto_submits_this_frame_ = 0;
+    if (xenos::renderer::ShaderCache::SpirvAsync()) {  // 0.6.2: the backlog's threads follow what the game is doing
+      const uint32_t want = fl_draws < 64 ? UINT32_MAX : uint32_t(std::max(1, REXCVAR_GET(gow2_renderer_vulkan_async_play_threads)));
+      if (want != spv_backlog_threads_) cache_->SetSpirvBacklogThreads(spv_backlog_threads_ = want);
+    }
     cache_->NewPollBudget();
     RetryRecordedPipelines();  // 0.6.2 (async SPIR-V)
     RetryGuessShaders();
@@ -2941,6 +2949,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint64_t queued0 = rcp_n_.queued, known0 = rcp_n_.known;
     const char* why = "all built";
     rcp_want_only_ = true;  // the pack translates and queues wanted records only while the frame is held
+    if (xenos::renderer::ShaderCache::SpirvAsync()) cache_->SetSpirvBacklogThreads(spv_backlog_threads_ = UINT32_MAX);
     for (;;) {
       // (review) Shaders compiled on the cache's own workers - the HLSL fallback - are only taken in by Poll; with the
       // background SPIR-V conversion RecipeIdleWork polls itself.
@@ -13884,6 +13893,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // 0.6.2 chapter hold: this frame's hold is the chapter's; frames in a row under 64 draws; the window after a level's
   // loading run and its budget; the wanted count at the window's last count.
   bool chapter_hold_ = false;
+  uint32_t spv_backlog_threads_ = UINT32_MAX;  // what the shader cache was last told (async SPIR-V)
   uint32_t ch_low_run_ = 0;
   std::chrono::steady_clock::time_point ch_window_until_{};
   double ch_hold_left_ms_ = 0.0;
