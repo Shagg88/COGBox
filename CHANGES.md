@@ -42,8 +42,12 @@ https://recomplauncher.com/game/cogbox
   | --- | --- | --- |
   | Gears 3, opening chapter | 21 freezes, longest 1.9 s | **0 freezes** (longest frame 0.08 s, **96% shorter**) |
   | Judgment, opening chapter | 8 freezes, longest 1.3 s | **0 freezes** (longest frame 0.06 s, **95% shorter**) |
+  | Gears 2 | not measured | **0 freezes** in Nexis; expected about **95% shorter** (estimate) |
+  | Gears 1 | not measured | expected about **95% shorter** (estimate) |
 
-  Later chapters (Gears 3 Char, Judgment Rooftops, Gears 2 Nexis) also showed no freeze on a first run.
+  The fix is in the renderer all four games share, so Gears 2 and Gears 1 get it too; their "before" wasn't measured,
+  so those two rows are estimates from the Gears 3 and Judgment results. Later chapters (Gears 3 Char, Judgment
+  Rooftops) also showed no freeze on a first run.
 - *Still being tested (off by default):* building a chapter's shaders behind its loading screen before play starts, a
   background thread for new shaders, and Vulkan pipeline libraries (the method DXVK uses).
 
