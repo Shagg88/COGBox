@@ -1,11 +1,31 @@
 # COGBox changes
 
-## 0.6.1
+## 0.6.2 (in progress - not released)
 
 <a href="https://recomplauncher.com/game/cogbox"><img src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" alt="Get it on RecompLauncher" height="56"></a>
 
 COGBox is on RecompLauncher, the free home for recompiled PC games. Get it straight from its developer:
 https://recomplauncher.com/game/cogbox
+
+### Launcher
+- **Add your game without drag and drop.** Every player now has **Choose a file...**, **Choose a folder...** and
+  **Paste a path** on the main screen and on each game's About tab - for the Steam Deck's Game Mode and the Linux
+  desktops where dragging onto a Proton window doesn't work. Under Linux, **Paste a Linux path** and **Look for my
+  games** are still there.
+- **Import saves...** (a game's About tab): your own saves of that game from Xenia (its `content` folder) or from an
+  Xbox 360 (the `Content` folder copied from the console's USB stick or hard drive), with the profile's game progress.
+  Whatever it replaces is moved to a `_saves-before-import-...` folder in the game's saves folder, never deleted; if
+  anything can't be put in place, nothing is changed.
+- **The tested versions are shown:** each game's About tab and the title-update notice name the game and title-update
+  versions COGBox is made for, and how many other copies players have reported working. The README lists them too.
+
+### Vulkan
+- **No more short freeze every ~15 seconds on Vulkan.** Saving the shader cache read the whole cache on the drawing
+  thread (100-335 ms each time); it now happens in the background.
+- *Still being tested (off by default):* building a chapter's shaders behind its loading screen before play starts, a
+  background thread for new shaders, and Vulkan pipeline libraries (the method DXVK uses).
+
+## 0.6.1
 
 ### Judgment
 - **Judgment finally looks like it does on the Xbox 360.** The game measures how bright each scene is and sets its exposure from that, and that measurement never reached it, so every scene came out about twice as bright as on the Xbox 360 (washed-out skies, grey shadows). It now does, at no cost in frame rate. Checked against Xbox 360 footage. GitHub #185, #250.
