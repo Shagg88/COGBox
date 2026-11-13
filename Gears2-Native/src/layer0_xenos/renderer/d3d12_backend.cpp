@@ -1229,8 +1229,23 @@ class D3D12Backend final : public Backend {
       if (wcsstr(p, L"\\D3D12\\D3D12Core.dll")) runtime = "Agility SDK (bundled)";
     }
     D3D12_FEATURE_DATA_SHADER_MODEL sm{D3D_SHADER_MODEL_6_6};
-    const HRESULT smhr = device_->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm));
-    if (FAILED(smhr) || sm.HighestShaderModel < D3D_SHADER_MODEL_6_6) {
+    HRESULT smhr = device_->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm));
+    // 0.6.1: nothing the renderer compiles needs a Shader Model 6.6 feature (its own HLSL and the HLSL path use none;
+    // the game's shaders are DXBC), so a device with 6.5 at most runs with 6.5 shaders instead of refusing to start.
+    if (FAILED(smhr) || sm.HighestShaderModel < D3D_SHADER_MODEL_6_6 || options.d3d12_force_sm65) {
+      D3D12_FEATURE_DATA_SHADER_MODEL s65{D3D_SHADER_MODEL_6_5};
+      if (SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &s65, sizeof(s65))) &&
+          s65.HighestShaderModel >= D3D_SHADER_MODEL_6_5) {
+        REXLOG_WARN("gow2_renderer: Shader Model 6.6 {} - running with Shader Model 6.5 shaders",
+                    options.d3d12_force_sm65 ? "not used (--gow2_renderer_d3d12_sm65)" : "is not available");
+        sm.HighestShaderModel = D3D_SHADER_MODEL_6_5;
+        smhr = S_OK;
+        g_dxil_shader_model = 65;
+      }
+    } else {
+      g_dxil_shader_model = 66;
+    }
+    if (FAILED(smhr) || sm.HighestShaderModel < D3D_SHADER_MODEL_6_5) {
       // Microsoft's advice: an older runtime rejects a model it doesn't know - ask again with lower ones
       unsigned highest = FAILED(smhr) ? 0u : unsigned(sm.HighestShaderModel);
       for (D3D_SHADER_MODEL m : {D3D_SHADER_MODEL_6_5, D3D_SHADER_MODEL_6_4, D3D_SHADER_MODEL_6_3, D3D_SHADER_MODEL_6_2,
@@ -1240,7 +1255,7 @@ class D3D12Backend final : public Backend {
         if (SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &t, sizeof(t)))) highest = unsigned(t.HighestShaderModel);
       }
       char b[256];
-      std::snprintf(b, sizeof b, "Shader Model 6.6 is not available (query 0x%08X, highest %u.%u, Direct3D 12 runtime: %s)",
+      std::snprintf(b, sizeof b, "Shader Model 6.5 or newer is not available (query 0x%08X, highest %u.%u, Direct3D 12 runtime: %s)",
                     unsigned(smhr), highest >> 4, highest & 15u, runtime.c_str());
       error = b;
       return false;
@@ -1267,7 +1282,7 @@ class D3D12Backend final : public Backend {
           adapter->GetDesc1(&d);
           char name[128] = {};
           WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, name, sizeof(name) - 1, nullptr, nullptr);
-          description_ = std::string("D3D12 ") + name + ", Shader Model 6.6";
+          description_ = std::string("D3D12 ") + name + (g_dxil_shader_model == 65 ? ", Shader Model 6.5" : ", Shader Model 6.6");
           XenosReportD3D12Device(d.VendorId, d.DeviceId, name);  // GitHub #59: the rendering adapter's vendor id
           adapter->QueryInterface(IID_PPV_ARGS(&adapter3_));  // patch 0032: VideoMemory
           adapter->Release();

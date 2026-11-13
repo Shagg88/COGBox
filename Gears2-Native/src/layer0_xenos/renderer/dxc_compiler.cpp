@@ -110,16 +110,18 @@ class DxcCompiler final : public ShaderCompiler {
   std::string Describe() const override { return "DXC " + version_ + " in-process from " + path_; }
 
   std::string CacheTag(gpu::ShaderIL il) const override {
-    return "dxc " + version_ + (il == gpu::ShaderIL::kDxil ? " -HV 2021 -Gis -denorm ftz sm6.6" :
+    return "dxc " + version_ + (il == gpu::ShaderIL::kDxil ? (gpu::g_dxil_shader_model == 65 ? " -HV 2021 -Gis -denorm ftz sm6.5" : " -HV 2021 -Gis -denorm ftz sm6.6") :
                                                         " -HV 2021 -Gis -spirv vulkan1.3 sm6.6 shifts b0 t100 s200 u300 unkfmt");
   }
 
   bool Compile(const std::string& hlsl, gpu::ShaderStage stage, gpu::ShaderIL il, std::vector<uint8_t>& out,
                std::string& messages) override {
-    const wchar_t* profile = stage == gpu::ShaderStage::kVertex   ? L"vs_6_6"
-                             : stage == gpu::ShaderStage::kPixel  ? L"ps_6_6"
-                             : stage == gpu::ShaderStage::kGeometry ? L"gs_6_6"
-                                                             : L"cs_6_6";
+    // 0.6.1: Shader Model 6.5 on a D3D12 device without 6.6 (gpu::g_dxil_shader_model); SPIR-V keeps 6.6's HLSL rules
+    const bool sm65 = il == gpu::ShaderIL::kDxil && gpu::g_dxil_shader_model == 65;
+    const wchar_t* profile = stage == gpu::ShaderStage::kVertex   ? (sm65 ? L"vs_6_5" : L"vs_6_6")
+                             : stage == gpu::ShaderStage::kPixel  ? (sm65 ? L"ps_6_5" : L"ps_6_6")
+                             : stage == gpu::ShaderStage::kGeometry ? (sm65 ? L"gs_6_5" : L"gs_6_6")
+                                                             : (sm65 ? L"cs_6_5" : L"cs_6_6");
     std::vector<const wchar_t*> args = {L"-T", profile, L"-E", L"main", L"-HV", L"2021", L"-Gis"};
     if (il == gpu::ShaderIL::kDxil) {
       args.push_back(L"-denorm");

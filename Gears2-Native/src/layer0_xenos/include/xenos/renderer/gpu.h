@@ -273,6 +273,10 @@ struct VulkanPresentTarget {
   bool first_write = false;
 };
 
+// 0.6.1: the DXIL shader model the D3D12 back end runs with (66 = 6.6, 65 = 6.5); set by its Init before any shader is
+// compiled, read by the DXC compiler (profile and cache tag). Vulkan doesn't use it.
+inline int g_dxil_shader_model = 66;
+
 struct BackendOptions {
   bool debug_layer = false;  // only works if nothing else in the process has created a D3D12 device yet
   uint32_t upload_ring_mb = 256;
@@ -370,6 +374,9 @@ struct BackendOptions {
   // Patch 0107 (Vulkan): the barriers' source stages are the kinds of GPU work recorded since the last barrier
   // (graphics / compute / transfer) instead of ALL_COMMANDS; the destination stays ALL_COMMANDS.
   bool vk_barrier_src_stages = false;
+  // 0.6.1 (a player's card: "Shader Model 6.6 is not available ... highest 6.5"): D3D12 treats the device as Shader
+  // Model 6.5 even when it has more (a test of the 6.5 path on a 6.6 card). Devices with 6.5 at most use 6.5 anyway.
+  bool d3d12_force_sm65 = false;
   // Patch 0108 (Vulkan, a MEASUREMENT mode - may give wrong pictures): memory-only barriers are not sent (image
   // layout transitions still are, with full stages): how much of Vulkan's GPU time the barriers cost.
   bool vk_skip_memory_barriers = false;

@@ -249,6 +249,9 @@ REXCVAR_DEFINE_INT32(gow2_renderer_load_hold_max_ms, 20000, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_load_hold_draws, 1, "Gears2",
                     "Patch 0064: within 20 s after a load, a frame is held when at least this many draws wait for "
                     "their pipeline (0063 used 16; Shagg: a longer hold over stuttering frames)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_d3d12_sm65, false, "Gears2",
+                    "0.6.1 (test): D3D12 runs with Shader Model 6.5 shaders even on a device with 6.6 - the path a card that "
+                    "only has 6.5 takes");
 REXCVAR_DEFINE_BOOL(gow2_renderer_chapter_hold, false, "Gears2",
                     "0.6.1 (test, off by default). The recipe pack's pipelines whose pixel shader is in a package the "
                     "GAME has opened are 'wanted': they are translated and built before every other list's, also "
@@ -1466,6 +1469,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       return false;
     }
     gpu::BackendOptions options;
+    options.d3d12_force_sm65 = REXCVAR_GET(gow2_renderer_d3d12_sm65);  // 0.6.1
     options.threaded_recording = REXCVAR_GET(gow2_renderer_threaded_recording);
     options.gpu_timestamp_split = REXCVAR_GET(gow2_renderer_gpu_timestamp_split);  // patch 0109
     options.copy_threads = uint32_t(std::clamp(REXCVAR_GET(gow2_renderer_copy_threads), 0, 16));
