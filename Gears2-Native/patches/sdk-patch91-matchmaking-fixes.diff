@@ -1,0 +1,238 @@
+diff --git a/include/rex/kernel/xam/apps/xgi_app.h b/include/rex/kernel/xam/apps/xgi_app.h
+index ccb03b8..fbd19e8 100644
+--- a/include/rex/kernel/xam/apps/xgi_app.h
++++ b/include/rex/kernel/xam/apps/xgi_app.h
+@@ -10,6 +10,7 @@
+  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
+  */
+ 
++#include <optional>
+ #include <rex/system/kernel_state.h>
+ #include <rex/system/xam/app_manager.h>
+ 
+@@ -27,7 +28,9 @@ class XgiApp : public system::xam::App {
+ 
+  private:
+   void WriteEmptySearchResults(uint32_t results_ptr, uint32_t results_size);  // COGBox SDK patch 79
+-  bool WriteOnlineSearchResults(uint32_t max_results, uint32_t results_ptr, uint32_t results_size);
++  bool WriteOnlineSearchResults(uint32_t max_results, uint32_t results_ptr, uint32_t results_size,
++                                std::optional<int64_t> playlist = std::nullopt);
++  std::optional<int64_t> QueryPlaylist(uint32_t num_props, uint32_t props_ptr);   // patch 91
+   void TraceSearchQuery(uint32_t proc_index, uint32_t num_props, uint32_t props_ptr, uint32_t num_ctx,
+                         uint32_t ctx_ptr);
+ };
+diff --git a/include/rex/kernel/xam/net/online_sessions.h b/include/rex/kernel/xam/net/online_sessions.h
+index 916c46a..750366a 100644
+--- a/include/rex/kernel/xam/net/online_sessions.h
++++ b/include/rex/kernel/xam/net/online_sessions.h
+@@ -41,6 +41,7 @@ class SessionBackend {
+ // not look inside them, or it releases whatever object those bytes happen to name.
+ constexpr bool IsFakeSessionObject(uint32_t object) { return object == 0xDEADF00Du || (object & 0xFFFF0000u) == 0xDEAD0000u; }
+ 
++constexpr uint32_t kPlaylistProperty = 0x1000000B;   // patch 91: Gears 2 / 3 / Judgment's playlist id
+ constexpr uint32_t kXSessionCreateHost = 0x00000001;
+ constexpr uint32_t kXSessionCreateUsesStats = 0x00000004;
+ constexpr uint32_t kXSessionCreateUsesMatchmaking = 0x00000008;
+@@ -84,7 +85,9 @@ class OnlineSessions {
+   // XSessionModify / XSessionStart: player 1's current properties and contexts go to every hosted lobby (the games
+   // set most of them after the create).
+   void OnModify();
+-  std::vector<LobbyInfo> Search(uint32_t title_id, uint64_t own_xuid);
++  // COGBox SDK patch 91: playlist = the search's own playlist property (kPlaylistProperty); lobbies of another
++  // playlist are left out, as Xbox Live's matchmaking did (the game joins whatever a search returns).
++  std::vector<LobbyInfo> Search(uint32_t title_id, uint64_t own_xuid, std::optional<int64_t> playlist = std::nullopt);
+   // A lobby the game found another way (XSessionSearchByID for an accepted invite): its QoS block is answered too.
+   void AddFound(const LobbyInfo& lobby);
+   std::string RoomCode() const;  // of the newest registered lobby, empty when none
+diff --git a/src/kernel/xam/apps/xgi_app.cpp b/src/kernel/xam/apps/xgi_app.cpp
+index d1b2edd..5dfd1db 100644
+--- a/src/kernel/xam/apps/xgi_app.cpp
++++ b/src/kernel/xam/apps/xgi_app.cpp
+@@ -93,14 +93,29 @@ void XgiApp::TraceSearchQuery(uint32_t proc_index, uint32_t num_props, uint32_t
+   REXKRNL_INFO("cogbox_net_trace: XSessionSearch query {}:{}", proc_index, text);
+ }
+ 
+-bool XgiApp::WriteOnlineSearchResults(uint32_t max_results, uint32_t results_ptr, uint32_t results_size) {
++// COGBox SDK patch 91: the playlist property of a search's query, if it has one.
++std::optional<int64_t> XgiApp::QueryPlaylist(uint32_t num_props, uint32_t props_ptr) {
++  if (!num_props || num_props > 32 || !memory_->LookupHeap(props_ptr) || !memory_->LookupHeap(props_ptr + num_props * 24 - 1)) {
++    return std::nullopt;
++  }
++  const uint8_t* p = memory_->TranslateVirtual(props_ptr);
++  for (uint32_t i = 0; i < num_props; ++i, p += 24) {
++    if (memory::load_and_swap<uint32_t>(p) == rex::kernel::xam::net::kPlaylistProperty) {
++      return int32_t(memory::load_and_swap<uint32_t>(p + 16));
++    }
++  }
++  return std::nullopt;
++}
++
++bool XgiApp::WriteOnlineSearchResults(uint32_t max_results, uint32_t results_ptr, uint32_t results_size,
++                                      std::optional<int64_t> playlist) {
+   auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions();
+   if (!sessions || !results_ptr || results_size < rex::kernel::xam::net::kSearchHeaderSize ||
+       !memory_->LookupHeap(results_ptr) || !memory_->LookupHeap(results_ptr + results_size - 1)) {
+     return false;
+   }
+   const auto lobbies =
+-      sessions->Search(kernel_state_->title_id(), rex::kernel::xam::net::GetAuthoritativeOnlineXuid());
++      sessions->Search(kernel_state_->title_id(), rex::kernel::xam::net::GetAuthoritativeOnlineXuid(), playlist);
+   const auto r = rex::kernel::xam::net::MarshalSearchResults(lobbies, max_results,
+                                                              memory_->TranslateVirtual(results_ptr), results_size,
+                                                              results_ptr);
+@@ -339,7 +354,8 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+                     user_index, num_results, num_props, num_ctx, props_ptr, ctx_ptr,
+                     results_buffer_size, search_results_ptr);
+       TraceSearchQuery(proc_index, num_props, props_ptr, num_ctx, ctx_ptr);
+-      if (!WriteOnlineSearchResults(num_results, search_results_ptr, results_buffer_size)) {
++      if (!WriteOnlineSearchResults(num_results, search_results_ptr, results_buffer_size,
++                                    QueryPlaylist(num_props, props_ptr))) {
+         WriteEmptySearchResults(search_results_ptr, results_buffer_size);
+       }
+       return X_E_SUCCESS;
+@@ -381,7 +397,8 @@ X_HRESULT XgiApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
+       REXKRNL_DEBUG("XSessionSearchEx({}, {}, {}, {}, {}, {:08X}, {:08X}, {}, {:08X}, {})",
+                     proc_index, user_index, num_results, num_props, num_ctx, props_ptr, ctx_ptr,
+                     results_buffer_size, search_results_ptr, num_users);
+-      if (!WriteOnlineSearchResults(num_results, search_results_ptr, results_buffer_size)) {
++      if (!WriteOnlineSearchResults(num_results, search_results_ptr, results_buffer_size,
++                                    QueryPlaylist(num_props, props_ptr))) {
+         WriteEmptySearchResults(search_results_ptr, results_buffer_size);
+       }
+       return X_E_SUCCESS;
+diff --git a/src/kernel/xam/net/host_ban.cpp b/src/kernel/xam/net/host_ban.cpp
+index db90885..5012bc4 100644
+--- a/src/kernel/xam/net/host_ban.cpp
++++ b/src/kernel/xam/net/host_ban.cpp
+@@ -45,9 +45,14 @@ std::optional<int> HostPenaltyFromSettings(const uint8_t* data, size_t bytes, si
+   if (!data || !count) return std::nullopt;
+   const uint32_t kQuitCount = title == kGears2 ? 0x166 : 0x15F;
+   const uint32_t kStandbyDemerits = title == kGears2 ? 0x165 : 0x15E;
+-  for (size_t stride = 16; stride <= 32; stride += 4) {
+-    if (count * stride > bytes) break;
+-    for (size_t id_at = 0; id_at + 12 <= stride && id_at <= 8; id_at += 4) {
++  // COGBox SDK patch 91: UE3's OnlineProfileSetting is 24 bytes with the id at +4 (value at +12), tried first: another
++  // table in the same object can hold both ids by chance at a shorter stride (Gears 2: a table of offsets at stride 16,
++  // read as penalty 0 while the real settings said otherwise).
++  static const std::pair<size_t, size_t> kLayouts[] = {{24, 4}, {16, 0}, {16, 4}, {20, 0}, {20, 4}, {20, 8}, {24, 0},
++                                                       {24, 8}, {28, 0}, {28, 4}, {28, 8}, {32, 0}, {32, 4}, {32, 8}};
++  for (const auto& [stride, id_at] : kLayouts) {
++    if (count * stride > bytes) continue;
++    {
+       std::optional<uint32_t> quits, demerits;
+       for (size_t i = 0; i < count; ++i) {
+         const uint8_t* e = data + i * stride + id_at;
+diff --git a/src/kernel/xam/net/online_sessions.cpp b/src/kernel/xam/net/online_sessions.cpp
+index 3a7b823..a18cd9b 100644
+--- a/src/kernel/xam/net/online_sessions.cpp
++++ b/src/kernel/xam/net/online_sessions.cpp
+@@ -346,13 +346,18 @@ void OnlineSessions::SendInProgress(uint64_t nonce) {
+ void OnlineSessions::OnMembersJoined(uint32_t handle, const std::vector<uint64_t>& xuids) { MembersChanged(handle, xuids, true); }
+ void OnlineSessions::OnMembersLeft(uint32_t handle, const std::vector<uint64_t>& xuids) { MembersChanged(handle, xuids, false); }
+ 
+-std::vector<LobbyInfo> OnlineSessions::Search(uint32_t title_id, uint64_t own_xuid) {
++std::vector<LobbyInfo> OnlineSessions::Search(uint32_t title_id, uint64_t own_xuid, std::optional<int64_t> playlist) {
+   std::vector<LobbyInfo> out;
+   std::map<std::array<uint8_t, 8>, std::vector<uint8_t>> qos;
+   for (auto& l : backend_.SearchLobbies(title_id)) {
+     if (l.host_xuid == own_xuid) {
+       continue;
+     }
++    if (playlist) {   // patch 91: another playlist's lobby (a lobby that names none is kept)
++      auto p = std::find_if(l.properties.begin(), l.properties.end(),
++                            [](const IdValue& v) { return v.id == kPlaylistProperty; });
++      if (p != l.properties.end() && p->value != *playlist) continue;
++    }
+     remember_(l.host_xuid, l.host_uuid);
+     std::array<uint8_t, 8> kid;
+     std::copy_n(l.session_info.begin(), 8, kid.begin());
+diff --git a/src/kernel/xam/xam_msg.cpp b/src/kernel/xam/xam_msg.cpp
+index b573a0a..1f66aa7 100644
+--- a/src/kernel/xam/xam_msg.cpp
++++ b/src/kernel/xam/xam_msg.cpp
+@@ -286,7 +286,11 @@ bool Ue3Globals(uint32_t* gnames_out, uint32_t* gengine_out) {
+       int named = 0;  // GObjObjects: most of its first entries are named objects that know their own slot in it (+32)
+       for (uint32_t k = 0; k < 64; ++k) {
+         uint32_t o = 0, cls = 0, slot = 0;
+-        if (GuestRead32(data + 4 * k, &o) && o && GuestRead32(o + 52, &cls) && GuestRead32(o + 32, &slot) && slot == k &&
++        // COGBox SDK patch 91: the object's own index is at +32 in Gears 3 / Judgment and at +4 in Gears 2's older UE3
++        // (name +44, outer +40 and class +52 in all three); Gears 2's table was never found, so its host-ban watch never ran
++        uint32_t slot2 = 0;
++        if (GuestRead32(data + 4 * k, &o) && o && GuestRead32(o + 52, &cls) && GuestRead32(o + 32, &slot) &&
++            GuestRead32(o + 4, &slot2) && (slot == k || slot2 == k) &&
+             !Ue3ObjectName(gnames, o).empty() && !Ue3ObjectName(gnames, cls).empty()) {
+           ++named;
+         }
+@@ -667,6 +671,15 @@ static void HostBanThread() {
+         }
+       }
+     }
++    {   // COGBox SDK patch 91: once per run, what the watch found (a tester's log shows why a ban was or wasn't seen)
++      static bool reported = false;
++      static const auto first = std::chrono::steady_clock::now();
++      if (!reported && ((penalty && script_ok()) || std::chrono::steady_clock::now() - first > std::chrono::seconds(60))) {
++        reported = true;
++        REXKRNL_INFO("cogbox_online: host ban watch: profile found {}, IsOkayToHost found {}, penalty {}",
++                     profile ? "yes" : "no", script_ok() ? "yes" : "no", penalty ? std::to_string(*penalty) : "unknown");
++      }
++    }
+     if (!penalty || !script_ok()) continue;
+     const int64_t now = std::time(nullptr);
+     const HostBanRecord before = record;
+diff --git a/tests/unit/net/host_ban_test.cpp b/tests/unit/net/host_ban_test.cpp
+index 5311308..048e010 100644
+--- a/tests/unit/net/host_ban_test.cpp
++++ b/tests/unit/net/host_ban_test.cpp
+@@ -119,3 +119,16 @@ TEST_CASE("HostBan: each game keeps its own timer in the shared online folder",
+   SetHostBanFolder({});
+   CHECK(HostBanFile(0x4D530A26).empty());
+ }
++
++TEST_CASE("HostBan: patch 91 - the real 24-byte entries win over ids that line up at a shorter stride", "[net][hostban]") {
++  constexpr uint32_t kGears2 = 0x4D53082D;
++  // real entries: a quit (0x166 = 1) and no demerits (0x165 = 0)
++  auto v = Settings({{0x10, 7}, {0x166, 1}, {0x20, 9}, {0x165, 0}, {0x30, 5}, {0x40, 6}});
++  // read at stride 16 with the id at +0, other fields also spell 0x165 / 0x166 with a value of 0 (Gears 2 has such a
++  // table next to its settings): byte 48 (entry 2's owner) and byte 80 (entry 3's type), values at 56 and 88
++  Put32(v, 48, 0x165);
++  Put32(v, 56, 0);
++  Put32(v, 80, 0x166);
++  Put32(v, 88, 0);
++  CHECK(HostPenaltyFromSettings(v.data(), v.size(), 6, kGears2) == 1);
++}
+diff --git a/tests/unit/net/online_sessions_test.cpp b/tests/unit/net/online_sessions_test.cpp
+index f8b9541..4917fd2 100644
+--- a/tests/unit/net/online_sessions_test.cpp
++++ b/tests/unit/net/online_sessions_test.cpp
+@@ -5,6 +5,7 @@
+ #include <chrono>
+ #include <functional>
+ #include <map>
++#include <optional>
+ #include <tuple>
+ #include <vector>
+ 
+@@ -512,3 +513,23 @@ TEST_CASE("Sessions: patch 89 - the session block sent to the server has no LAN
+   CHECK(std::equal(info.begin(), info.begin() + 8, sent.begin()));             // XNKID kept
+   CHECK(std::equal(info.begin() + 24, info.end(), sent.begin() + 24));        // online marker and key kept
+ }
++
++TEST_CASE("Sessions: patch 91 - a search returns only lobbies of the playlist it asked for", "[net][sessions]") {
++  Fixture f;
++  auto lobby = [](uint64_t host, std::optional<int64_t> playlist) {
++    LobbyInfo l;
++    l.host_xuid = host;
++    l.host_uuid = "u" + std::to_string(host);
++    if (playlist) l.properties.push_back({kPlaylistProperty, *playlist});
++    return l;
++  };
++  f.backend.listed = {lobby(1, 5), lobby(2, 44), lobby(3, std::nullopt)};   // Horde, Guardian, no playlist
++  auto hosts = [](const std::vector<LobbyInfo>& v) {
++    std::vector<uint64_t> h;
++    for (const auto& l : v) h.push_back(l.host_xuid);
++    return h;
++  };
++  CHECK(hosts(f.sessions.Search(kTitle, 99, 44)) == std::vector<uint64_t>{2, 3});   // Guardian asked: no Horde
++  CHECK(hosts(f.sessions.Search(kTitle, 99, 5)) == std::vector<uint64_t>{1, 3});
++  CHECK(hosts(f.sessions.Search(kTitle, 99)) == std::vector<uint64_t>{1, 2, 3});     // no playlist in the query
++}
