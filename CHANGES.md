@@ -8,7 +8,7 @@
 
 ### Performance
 - **Judgment runs up to 72% faster.** Measured unlocked at 1440p on an RTX 3080 Ti in Wharf District: **Vulkan 50 to 87 fps (+72%)**, **DirectX 12 81 to 107 fps (+32%)**.
-- **Vulkan catches up with DirectX 12** (Windows). Vulkan now skips everything the camera can't see ("real occlusion"), as DirectX 12 already did, so you can switch between the two freely. Not yet under Proton / Wine, where it still has to be tested.
+- **Vulkan closes most of the gap to DirectX 12** (Windows). Vulkan now skips everything the camera can't see ("real occlusion"), as DirectX 12 already did. DirectX 12 is still the faster of the two, but Vulkan is now a comfortable choice in every game. Not yet under Proton / Wine, where it still has to be tested.
 - **The graphics card no longer waits for the whole frame.** It now starts on each frame while the rest of it is still being prepared, instead of sitting idle until everything is ready. No setting to change.
 - **0.6.0 against 0.6.1**, both changes together, measured unlocked on the same PC:
 
@@ -19,7 +19,7 @@
   | Gears 2 | 119 to 124 fps (**+4%**) | 106 to 115 fps (**+8%**) |
   | Gears 1 | unchanged | unchanged |
 
-  (`--gow2_renderer_submit_draws=0` in `extra-args.txt` turns it off if it ever causes a problem.)
+  (`--gow2_renderer_submit_draws=0` in `extra-args.txt` turns the early start off if it ever causes a problem.)
 - Smoother sound and frame pacing: a stall when the sound output device is checked is gone, and several small renderer costs were removed.
 
 ### HDR (by legoliamneeson)
