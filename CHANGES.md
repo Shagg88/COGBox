@@ -1,5 +1,28 @@
 # COGBox changes
 
+## 0.6.1
+
+### Judgment
+- **Judgment is no longer too bright.** The game measures how bright each scene is and sets its exposure from that, and that measurement never reached it, so every scene came out about twice as bright as on the Xbox 360 (washed-out skies, grey shadows). It now does, at no cost in frame rate. Checked against Xbox 360 footage. GitHub #185, #250.
+- The launcher's **Brightness** setting for Judgment is gone: it only existed to hide this, and could not bring back the washed-out highlights. A saved Brightness value is ignored.
+
+### Performance
+- **Faster in all four games:** the graphics card now starts on each frame while the rest of it is still being prepared, instead of waiting for the whole frame. In Judgment at 1440p this measured about 12% more frames a second on DirectX 12 and 27% on Vulkan. If it ever causes a problem, `--gow2_renderer_submit_draws=0` in `extra-args.txt` turns it off.
+- **Vulkan is much faster and close to DirectX 12** (Windows): it now hides what the camera can't see ("real occlusion"), as DirectX 12 already did. In Judgment at 1440p: 50 to 87 frames a second together with the change above, against 90 on DirectX 12. Not yet under Proton / Wine, where it still has to be tested.
+- Several small renderer costs removed, and a stall when the sound output device is checked.
+
+### HDR (by legoliamneeson)
+- **Native HDR in Gears 2 and Gears 3:** the picture is carried in high dynamic range from the game's own lighting to the screen, instead of being expanded from the standard picture. Gears 1 and Judgment keep the HDR of 0.6.0. `--gow2_hdr_native=false` goes back to it in every game. GitHub #267.
+
+### Online play (by Flippage)
+- **Smoother online and System Link matches in Gears 2, 3 and Judgment:** the games' 2008 Xbox Live network limits (7000 bytes a second per player, 45 updates a second from the host) are raised to 100,000 bytes a second and 60 updates. In testing, the old limit held the game back for about 40% of a round. A full lobby's host may now upload up to about 7 Mbit/s in the busiest moments.
+- **Open matches** (an idea from Shagg): the Social tab and the in-game Social menu list the public matches in Gears 2, Gears 3 and Judgment that have real players in them, such as "KOTH · 6/10 · Gears 3 · US · In progress", with a **Join** button. Join in progress puts you in a bot's place. Only matches are listed, never parties, and no names are shown. Gears 1 isn't included (it has no join in progress).
+
+### Fixes
+- Mods added from a `.zip` unpack into the mod's own folder.
+- The updater refuses oversized downloads and duplicate files in an update.
+- Safer handling when the graphics device is lost while the game waits for it.
+
 ## 0.6.0
 
 ### COGBox is back on GitHub
@@ -10,8 +33,6 @@
 - **Online multiplayer** through COGBox's own matchmaking server, peer to peer (nothing is relayed through a server). It's off until you turn it on. What is sent and kept is in [PRIVACY.md](PRIVACY.md), and the launcher can delete your online account.
 - **Social**: friends, invites and profile pictures, also as a tab of the in-game menu (F8 opens it there).
 - Works behind strict routers without UPnP: when two players have no direct path, their connection is set up over a route that already works between the players, still peer to peer (no relay server). A party host's join connection is no longer closed by the game right after it opens.
-- **Smoother online and System Link matches in Gears 2, 3 and Judgment:** the games' 2008 Xbox Live network limits (7000 bytes a second per player, 45 updates a second from the host) are raised to 100,000 bytes a second and 60 updates. In testing, the old limit held the game back for about 40% of a round. A full lobby's host may now upload up to about 7 Mbit/s in the busiest moments.
-- **Open matches** (an idea from Shagg): the Social tab and the in-game Social menu list the public matches in Gears 2, Gears 3 and Judgment that have real players in them, such as "KOTH · 6/10 · Gears 3 · US · In progress", with a **Join** button. Join in progress puts you in a bot's place. Only matches are listed, never parties, and no names are shown. Gears 1 isn't included (it has no join in progress).
 - Regions: **US**, **OCE** and **Europe** (US West and US East are now one US region).
 - Gears 3 and Judgment saves keep working when you switch online play on or off. Nothing is deleted, and Gears 3 saves are backed up before they're changed.
 - **Online safety:** limits on what another player can make your game hold in memory or open.

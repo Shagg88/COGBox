@@ -17,7 +17,7 @@
 #include "util.h"
 #include "proton.h"   // proton049
 
-#define COGBOX_VERSION "0.6.0"
+#define COGBOX_VERSION "0.6.1"
 #define COGBOX_NAME "COGBox"
 
 namespace gs = cogbox::gears;
