@@ -1080,16 +1080,36 @@ static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program,
 }
 
 // 0.6.2 (first playthrough, Vulkan): the conversion off the render thread. Live jobs (a draw is waiting) first.
+// Job 1748a (Gears 3, true first run): with every worker at normal priority the 8,971-shader backlog took the CPU from
+// the game for minutes (frames 23-37 ms against 13-19 ms). So the BACKLOG is converted at the lowest thread priority -
+// it gets whatever the game leaves, all of it on loading screens and menus - and only a job a draw waits for runs at
+// normal priority. (The two Win32 calls are declared here; windows.h is not pulled into this file.)
+#ifdef _WIN32
+extern "C" {
+__declspec(dllimport) void* __stdcall GetCurrentThread();
+__declspec(dllimport) int __stdcall SetThreadPriority(void* thread, int priority);
+}
+static void SpvThreadPriority(bool live) { SetThreadPriority(GetCurrentThread(), live ? 0 : -2); }  // NORMAL / LOWEST
+#else
+static void SpvThreadPriority(bool) {}
+#endif
 void ShaderCache::SpvWorker() {
+  bool live_now = true;
   for (;;) {
     std::unique_ptr<Job> job;
+    bool live = false;
     {
       std::unique_lock<std::mutex> lock(mutex_);
       spv_wake_.wait(lock, [this] { return stop_ || !spv_queue_.empty() || !spv_warm_queue_.empty(); });
       if (stop_) return;
-      auto& q = spv_queue_.empty() ? spv_warm_queue_ : spv_queue_;
+      live = !spv_queue_.empty();
+      auto& q = live ? spv_queue_ : spv_warm_queue_;
       job = std::move(q.front());
       q.pop_front();
+    }
+    if (live != live_now) {
+      SpvThreadPriority(live);
+      live_now = live;
     }
     const auto t0 = std::chrono::steady_clock::now();
     const uint64_t store_key = SpvKey(job->bytecode.data(), job->bytecode.size(), job->spirv_precise, g_spv_store.switches);
