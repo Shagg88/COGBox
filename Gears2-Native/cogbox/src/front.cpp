@@ -404,7 +404,7 @@ static void empty_draw(App &a, ImVec2 size, bool nav)
     ImGui::SetCursorScreenPos(ImVec2(cx - bw * 0.5f, y));
     const bool busy = a.job.state.load() == 1;
     (void)bw; (void)bh; (void)busy; (void)nav;   // 0.4.6 (Shagg 5 Nov): drag and drop only
-    {   // proton049 / 0.6.2: where dragging doesn't work (Steam Deck Game Mode, some Linux desktops): pick, paste or search
+    {   // proton049 / 0.6.1: where dragging doesn't work (Steam Deck Game Mode, some Linux desktops): pick, paste or search
         ImGui::SetCursorScreenPos(ImVec2(cx - linux_copy_buttons_width(a) * 0.5f, y));
         linux_copy_buttons(a);
     }

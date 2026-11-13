@@ -73,8 +73,10 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 
 ## How to play
 
-1. Download `COGBox-<version>.7z` from [Releases](https://github.com/Shagg88/COGBox/releases) and unpack the whole
-   folder (7-Zip, or Windows 11 itself) somewhere you can write to, e.g. `C:\Games\COGBox` - not Program Files, and not a OneDrive / Dropbox folder.
+1. Download `COGBox-<version>.zip` from [Releases](https://github.com/Shagg88/COGBox/releases) (the `.7z` is the same,
+   smaller) and unpack the whole folder - right-click it, **Extract All...** - somewhere you can write to, e.g.
+   `C:\Games\COGBox`. Not Program Files, and not a OneDrive / Dropbox folder; COGBox tells you if it's somewhere it
+   can't work.
 2. Start `CogBox.exe`. If Windows says "Windows protected your PC", choose **More info > Run anyway** (the programs
    aren't code-signed).
 3. Drag your game copy onto the COGBox window, then its title update - or, where dragging doesn't work (for example the

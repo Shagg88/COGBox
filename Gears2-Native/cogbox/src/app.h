@@ -110,6 +110,7 @@ struct App {
     unsigned long raisePid = 0;       // the game that just closed (play_poll)          // to-do 20: keep bringing the launcher to the front until then (SDL ticks, ms)
     bool playWasMax = false;          // job 526: the window as it was when Play was pressed, put back afterwards
     bool wine = false;                // job 523: running under Wine / Proton (Linux, Steam Deck)
+    bool setupFolderChecked = false;  // 0.6.1: the unpack-folder check (main.cpp startup_notices) ran this start
     bool mac = false;                 // job 643: ... on a Mac (CrossOver)
     proton::Info proton;              // proton049: Proton / SteamOS / Steam Deck details (all empty on Windows)
     std::vector<std::string> dropped; // files dropped on the window, handled next frame

@@ -265,10 +265,40 @@ static void answered(App &a)
 
 // 0.2.0: on COGBox's first start and after each COGBox update - the language prompt, then the title-update notice; each
 // has "Don't show this again". One at a time: answering one shows the next.
+// 0.6.1 (Shagg 13 Nov, "simplify the setup"): where COGBox was unpacked to can break it - inside the zip (Windows runs
+// it from a temporary folder and the games' files are not there) or a folder it can't write to (Program Files without
+// running as administrator, a read-only folder): saves, shaders and settings can't be kept. Said once per start, first
+// after the welcome notice; "" = the folder is fine. Review: no Program Files name test (Wine prefixes and admin
+// installs can write there) and no 7-Zip / WinRAR folder-name tests (both unpack into %TEMP%, caught below).
+static std::string setup_folder_problem()
+{
+    const std::string dir = exe_dir();
+    auto lower = [](std::string x) { for (char &c : x) c = (char)tolower((unsigned char)c); return x; };
+    const std::string l = lower(dir) + "\\";
+    if (l.find("\\appdata\\local\\temp\\") != std::string::npos || l.find("\\temp1_") != std::string::npos)
+        return "COGBox seems to be running from inside the zip or 7z file it came in. Unpack the whole COGBox folder first "
+               "(right-click the zip > Extract All...), then start CogBox.exe from the unpacked folder.";
+    const std::wstring probe = widen(join(dir, ".cogbox-write-check"));
+    _wremove(probe.c_str());   // review: a leftover (e.g. held by antivirus last time) must not decide it
+    FILE *f = _wfopen(probe.c_str(), L"wb");
+    if (!f)
+        return "COGBox can't write to its own folder (for example a Program Files folder), so your saves, shaders and "
+               "settings can't be kept. Move the whole COGBox folder somewhere of its own, such as C:\\Games\\COGBox, and "
+               "start it from there.";
+    fclose(f);
+    _wremove(probe.c_str());
+    return "";
+}
+
 void startup_notices(App &a)
 {
     if (a.modal.open || (getenv("COGBOX_SHOT") && !getenv("COGBOX_SHOT_NOTICES"))) return;
     if (legal_notice_due(a)) { legal_notice_ask(a); return; }   // legal050: first, before every other notice
+    if (!a.setupFolderChecked) {   // 0.6.1: once per start, first after the welcome notice (review: never before it)
+        a.setupFolderChecked = true;
+        const std::string why = setup_folder_problem();
+        if (!why.empty()) { ask(a, "info", -1, "Move the COGBox folder", why, { "OK" }); return; }
+    }
     // to-do 13 (Shagg 3 Nov): after an update, say so and offer the changelog (this version's release page). A first
     // start (no notice seen before) just records the version.
     if (a.ini.get("Notices", "WhatsNewSeen") != COGBOX_VERSION) {
@@ -294,7 +324,7 @@ void startup_notices(App &a)
     // Title updates required (0.4.0): a new "never" key, so a player who ticked the old "recommended" notice away
     // still sees once that the updates are now required
     if (!a.ini.geti("Notices", "TitleUpdatesRequiredNever", 0) && a.ini.get("Notices", "TitleUpdatesSeen") != COGBOX_VERSION) {
-        // 0.4.6 (Shagg 4 Nov): short - the steps are in the README. 0.6.2 (Shagg 13 Nov): with the tested versions.
+        // 0.4.6 (Shagg 4 Nov): short - the steps are in the README. 0.6.1 (Shagg 13 Nov): with the tested versions.
         std::string tu = tr("For the smoothest experience, these games require the listed Title Updates. See the README for details.");
         tu += "\n";
         for (int slot = 0; slot < G_ALL; slot++) {

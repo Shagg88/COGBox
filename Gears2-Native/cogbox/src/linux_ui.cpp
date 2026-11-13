@@ -1,7 +1,7 @@
 // COGBox - Linux and Steam Deck through Proton / Wine, the launcher's side (proton049, 0.4.9): the recommended settings
 // (first start, or the About tab's button), and adding a copy without drag and drop (the Steam Deck's Game Mode has no
 // file manager to drag from): a folder picker, a pasted Linux path, and a search of the usual Linux folders through
-// Wine's Z: drive. Detection and path conversion are in proton.cpp. 0.6.2: the add buttons (linux_copy_buttons) are for
+// Wine's Z: drive. Detection and path conversion are in proton.cpp. 0.6.1: the add buttons (linux_copy_buttons) are for
 // every player now; the rest still runs only under Proton / Wine.
 #include "app.h"
 #include "i18n.h"
@@ -141,7 +141,7 @@ void linux_answer(App &a, const Modal &m)
     }
 }
 
-// 0.6.2 (Shagg 13 Nov: Steam Deck players can't drag and drop - "add the proper buttons necessary to avoid the issue",
+// 0.6.1 (Shagg 13 Nov: Steam Deck players can't drag and drop - "add the proper buttons necessary to avoid the issue",
 // for anyone): every player gets a file picker, a folder picker and a pasted path - the same import as a drop
 // (a.dropped). Under Proton / Wine the pasted path may be a Linux one, and the search of the Linux folders is offered.
 float linux_copy_buttons_width(const App &a)   // for centring them

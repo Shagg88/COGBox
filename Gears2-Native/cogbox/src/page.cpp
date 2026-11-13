@@ -9,7 +9,7 @@
 #include "update.h"
 #include "report.h"   // report_gpu_names (report_share)
 #include "dlss_custom.h"   // 0.4.9: Custom DLSS file
-#include "save_import.h"   // 0.6.2: Import saves
+#include "save_import.h"   // 0.6.1: Import saves
 #include <filesystem>
 #include "imgui_internal.h"
 
@@ -1139,7 +1139,7 @@ static void about_tab(App &a, int g)
             ImGui::PopID();
         }
     }
-    {   // 0.6.2 (Shagg 13 Nov): the versions COGBox is tested with
+    {   // 0.6.1 (Shagg 13 Nov): the versions COGBox is tested with
         const int rd = reported_working_count(g, false), ru = reported_working_count(g, true);
         std::string t = "Tested with " + tested_disc_text(g) + " and " + tested_update_text(g);
         if (rd || ru) {
@@ -1182,7 +1182,7 @@ static void about_tab(App &a, int g)
     ImGui::Dummy(ImVec2(0, S(2)));
     ui_note("To add or replace your copy or the title update, drag and drop it onto this window.", col::amber);
     ui_tip("To add downloadable content, drag and drop the package onto this window.");
-    {   // proton049 / 0.6.2: for everyone - where dragging doesn't work, pick or paste instead
+    {   // proton049 / 0.6.1: for everyone - where dragging doesn't work, pick or paste instead
         ImGui::Dummy(ImVec2(0, S(2)));
         linux_copy_buttons(a);
     }
@@ -1199,7 +1199,7 @@ static void about_tab(App &a, int g)
         else ask(a, "backup", g, "Back up saves", std::string("Put a copy of ") + d.name + (a.wine ? "'s saves in a zip in COGBox's backups folder?" : "'s saves in a zip on your desktop?"), { "Back up", "Cancel" });
     }
     ImGui::SameLine();
-    // 0.6.2 (Shagg 13 Nov): the player's own saves from Xenia or an Xbox 360 (save_import.cpp).
+    // 0.6.1 (Shagg 13 Nov): the player's own saves from Xenia or an Xbox 360 (save_import.cpp).
     if (small_button("Import saves...")) {
         if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
         else {

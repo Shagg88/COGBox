@@ -1,4 +1,4 @@
-// COGBox 0.6.2 (Shagg 13 Nov): "Import saves" - a player's own saves from Xenia or from an Xbox 360 (a USB stick or
+// COGBox 0.6.1 (Shagg 13 Nov): "Import saves" - a player's own saves from Xenia or from an Xbox 360 (a USB stick or
 // hard-disk copy of the console's Content folder) into a game's COGBox user folder. Our code (MIT). No SDL, no Dear ImGui.
 //
 // What a save is, in all three places:

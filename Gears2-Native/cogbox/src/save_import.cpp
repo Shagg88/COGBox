@@ -1,4 +1,4 @@
-// COGBox 0.6.2: "Import saves" (see save_import.h). Our code (MIT).
+// COGBox 0.6.1: "Import saves" (see save_import.h). Our code (MIT).
 //
 // Rules (Shagg: never delete the player's files): nothing outside our own work folder (<user>\_import-<stamp>) is ever
 // removed; whatever an import replaces is moved to <user>\_saves-before-import-<stamp>[-N] first; if putting the new

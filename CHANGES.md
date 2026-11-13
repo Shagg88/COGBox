@@ -1,6 +1,9 @@
 # COGBox changes
 
-## 0.6.2 (in progress - not released)
+## 0.6.1
+
+**Quick start:** download `COGBox-0.6.1.zip`, right-click it > **Extract All...** to a folder of its own (for example
+`C:\Games\COGBox`), start `CogBox.exe`, and add your game copy and its title update.
 
 <a href="https://recomplauncher.com/game/cogbox"><img src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" alt="Get it on RecompLauncher" height="56"></a>
 
@@ -16,6 +19,8 @@ https://recomplauncher.com/game/cogbox
   Xbox 360 (the `Content` folder copied from the console's USB stick or hard drive), with the profile's game progress.
   Whatever it replaces is moved to a `_saves-before-import-...` folder in the game's saves folder, never deleted; if
   anything can't be put in place, nothing is changed.
+- **COGBox says when it's in the wrong place:** started from inside its zip, from Program Files or from a folder it
+  can't write to, it explains on start-up where to move it (it already warned about OneDrive / Dropbox folders).
 - **The tested versions are shown:** each game's About tab and the title-update notice name the game and title-update
   versions COGBox is made for, and how many other copies players have reported working. The README lists them too.
 
@@ -24,8 +29,6 @@ https://recomplauncher.com/game/cogbox
   thread (100-335 ms each time); it now happens in the background.
 - *Still being tested (off by default):* building a chapter's shaders behind its loading screen before play starts, a
   background thread for new shaders, and Vulkan pipeline libraries (the method DXVK uses).
-
-## 0.6.1
 
 ### Judgment
 - **Judgment finally looks like it does on the Xbox 360.** The game measures how bright each scene is and sets its exposure from that, and that measurement never reached it, so every scene came out about twice as bright as on the Xbox 360 (washed-out skies, grey shadows). It now does, at no cost in frame rate. Checked against Xbox 360 footage. GitHub #185, #250.
