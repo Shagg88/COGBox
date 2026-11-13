@@ -15,6 +15,7 @@
 #include <rex/ui/windowed_app_context.h>
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
+#include <rex/kernel/xam/net/online_startup.h>   // SDK patch 90: CurrentPing
 
 #include <imgui.h>
 
@@ -25,6 +26,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <string>
 
@@ -40,6 +42,9 @@
 
 REXCVAR_DEFINE_STRING(gow2_fps_bar, "off", "Gears2",
                       "A one-line frame-rate bar drawn over the game, no game patch: off, top or bottom");
+REXCVAR_DEFINE_BOOL(cogbox_show_ping, false, "Network",
+                    "Show the ping to the host of the online match or party in the FPS bar (or a bar of its own when "
+                    "the FPS bar is off); as host, the worst ping among your players (SDK patch 90)");
 REXCVAR_DEFINE_BOOL(gow2_shader_note, true, "Gears2",
                     "Patch 0062: a small 'Building shaders N%' note in the bottom-left corner while the renderer's "
                     "pipeline workers have had work queued for more than a second (start-up backlog, new areas)");
@@ -55,7 +60,8 @@ namespace {
 
 class FpsBar final : public rex::ui::ImGuiDialog {
  public:
-  FpsBar(rex::ui::ImGuiDrawer* drawer, bool top) : ImGuiDialog(drawer), top_(top) {}
+  FpsBar(rex::ui::ImGuiDrawer* drawer, bool top, bool fps, bool ping)
+      : ImGuiDialog(drawer), top_(top), show_fps_(fps), show_ping_(ping) {}
   // 0.2.1 (patch 42): the bar is redrawn with each game frame anyway; asking for more made NVIDIA / RTSS count the
   // presenter's extra repaints (monitor rate) instead of the game's frames.
   bool WantsContinuousPaint() const override { return false; }
@@ -88,15 +94,32 @@ class FpsBar final : public rex::ui::ImGuiDialog {
       window_swaps_ = swaps;
       window_shown_ = shown;
       window_generating_ = generating;
+      if (show_ping_) ping_ = rex::kernel::xam::net::CurrentPing();   // twice a second is plenty
     }
     char text[160];
-    if (fps_ > 0.5 && shown_fps_ > fps_ + 0.5)
+    if (!show_fps_)
+      text[0] = 0;
+    else if (fps_ > 0.5 && shown_fps_ > fps_ + 0.5)
       std::snprintf(text, sizeof(text), "%.0f FPS (frame gen; %.0f drawn)     %.1f ms     slowest %.1f ms", shown_fps_,
                     fps_, 1000.0 / fps_, shown_worst_);
     else if (fps_ > 0.5)
       std::snprintf(text, sizeof(text), "%.0f FPS     %.1f ms     slowest %.1f ms", fps_, 1000.0 / fps_, shown_worst_);
     else
       std::snprintf(text, sizeof(text), "-- FPS");
+    if (show_ping_) {   // SDK patch 90: the round trip to the host; as host, the worst among the players
+      using PV = rex::kernel::xam::net::PingView;
+      char ping[64];
+      if (ping_.kind == PV::Hosting && ping_.ms >= 0)
+        std::snprintf(ping, sizeof(ping), "Ping %d ms (worst of %d)", ping_.ms, ping_.players);
+      else if (ping_.kind == PV::Hosting)
+        std::snprintf(ping, sizeof(ping), "Ping -- (hosting)");
+      else if (ping_.kind == PV::ToHost && ping_.ms >= 0)
+        std::snprintf(ping, sizeof(ping), "Ping %d ms", ping_.ms);
+      else
+        std::snprintf(ping, sizeof(ping), "Ping --");
+      const size_t used = std::strlen(text);
+      std::snprintf(text + used, sizeof(text) - used, "%s%s", used ? "     " : "", ping);
+    }
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);  // readable at 1440p / 4K
     ImGui::SetNextWindowBgAlpha(0.45f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * scale, 4.0f * scale));
@@ -121,6 +144,8 @@ class FpsBar final : public rex::ui::ImGuiDialog {
 
  private:
   bool top_;
+  bool show_fps_, show_ping_;
+  rex::kernel::xam::net::PingView ping_;
   double fps_ = 0.0, shown_fps_ = 0.0, worst_ms_ = 0.0, shown_worst_ = 0.0;
   uint64_t last_swaps_ = 0, window_swaps_ = 0, window_shown_ = 0, window_generating_ = 0;
   std::chrono::steady_clock::time_point last_swap_time_{}, window_start_{};
@@ -322,9 +347,10 @@ void XenosCreateFpsBarIfRequested(rex::ui::ImGuiDrawer* drawer) {
     g_note_live.store(g_note.get(), std::memory_order_release);
   }
   const std::string where = REXCVAR_GET(gow2_fps_bar);
-  if (!drawer || (where != "top" && where != "bottom")) return;
+  const bool fps = where == "top" || where == "bottom", ping = REXCVAR_GET(cogbox_show_ping);
+  if (!drawer || (!fps && !ping)) return;   // ping alone: the same bar at the top, with just the ping
   XenosEnsureObserverHub();  // the swap count (with the SDK's GPU plugin it comes from the hub's observer)
-  g_bar = std::make_unique<FpsBar>(drawer, where == "top");
+  g_bar = std::make_unique<FpsBar>(drawer, where != "bottom", fps, ping);
 }
 
 // Shagg 2026-11-10 10:41 / 10:47: quitting with frame generation crashed (Gears 3, crash-20261110-104037: access

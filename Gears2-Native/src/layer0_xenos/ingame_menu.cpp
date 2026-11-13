@@ -869,7 +869,7 @@ class InGameMenu final : public rex::ui::ImGuiDialog {
         }
         REXLOG_INFO("cogbox_menu: live {} -> {}={}", o.id, name, val);
         if (name == "gow2_present_gamma") gamma = true;
-        if (name == "gow2_fps_bar" || name == "gow2_hide_onscreen_notes") overlays = true;
+        if (name == "gow2_fps_bar" || name == "gow2_hide_onscreen_notes" || name == "cogbox_show_ping") overlays = true;
         // 0.4.9 batch 2
         if (name == "gow2_present_aa") XenosPresentAaChanged(val == "smaa");
         if (name == "gow_button_prompts") prompts = true;
