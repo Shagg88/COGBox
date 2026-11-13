@@ -17,7 +17,10 @@ matchmaking - no Xbox Live needed. Off until you turn it on in the launcher's So
 
 **[Join the COGBox Discord](https://discord.gg/Y6qGbzBKQZ)** - find people to play with, get help, share feedback.
 
-<a href="https://recomplauncher.com/game/cogbox"><img src="https://recompstore.com/assets/press/badge-dark.svg" alt="Get it on RecompStore" height="56"></a>
+<a href="https://recomplauncher.com/game/cogbox"><img src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" alt="Get it on RecompLauncher" height="56"></a>
+
+COGBox is on RecompLauncher, the free home for recompiled PC games. Get it straight from its developer:
+https://recomplauncher.com/game/cogbox
 
 > An unofficial fan project, not affiliated with Microsoft, Epic Games or The Coalition. "Gears of War", "Xbox" and
 > "Xbox 360" are trademarks of Microsoft.

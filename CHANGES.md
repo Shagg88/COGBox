@@ -2,6 +2,11 @@
 
 ## 0.6.1
 
+<a href="https://recomplauncher.com/game/cogbox"><img src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" alt="Get it on RecompLauncher" height="56"></a>
+
+COGBox is on RecompLauncher, the free home for recompiled PC games. Get it straight from its developer:
+https://recomplauncher.com/game/cogbox
+
 ### Judgment
 - **Judgment finally looks like it does on the Xbox 360.** The game measures how bright each scene is and sets its exposure from that, and that measurement never reached it, so every scene came out about twice as bright as on the Xbox 360 (washed-out skies, grey shadows). It now does, at no cost in frame rate. Checked against Xbox 360 footage. GitHub #185, #250.
 - The launcher's **Brightness** setting for Judgment is gone: it only existed to hide this, and could not bring back the washed-out highlights. A saved Brightness value is ignored.
