@@ -7,8 +7,18 @@
 - The launcher's **Brightness** setting for Judgment is gone: it only existed to hide this, and could not bring back the washed-out highlights. A saved Brightness value is ignored.
 
 ### Performance
-- **Up to 74% more frames a second on Vulkan** (Windows): 50 to 87 fps in Judgment at 1440p on an RTX 3080 Ti. Vulkan now hides everything the camera can't see ("real occlusion"), as DirectX 12 already did, and is within a few frames of DirectX 12. You can switch between the two freely. Not yet under Proton / Wine, where it still has to be tested.
-- **A free 10-12% on DirectX 12, in all four games:** 80 to 90 fps in the same test. The graphics card now starts on each frame while the rest of it is still being prepared, instead of sitting idle until the whole frame is ready. No setting to change. (`--gow2_renderer_submit_draws=0` in `extra-args.txt` turns it off if it ever causes a problem.)
+- **Judgment runs up to 72% faster.** Measured unlocked at 1440p on an RTX 3080 Ti in Wharf District: **Vulkan 50 to 87 fps (+72%)**, **DirectX 12 81 to 107 fps (+32%)**.
+- **Vulkan catches up with DirectX 12** (Windows). Vulkan now skips everything the camera can't see ("real occlusion"), as DirectX 12 already did, so you can switch between the two freely. Not yet under Proton / Wine, where it still has to be tested.
+- **The graphics card no longer waits for the whole frame.** It now starts on each frame while the rest of it is still being prepared, instead of sitting idle until everything is ready. No setting to change. Measured unlocked on the same PC:
+
+  | Game | DirectX 12 | Vulkan |
+  | --- | --- | --- |
+  | Judgment | 81 to 107 fps (**+32%**) | 50 to 87 fps (**+72%**) |
+  | Gears 3 | 99 to 108 fps (**+9%**), **+21%** in the heaviest stretch (84 to 102) | 85 to 93 fps (**+10%**) |
+  | Gears 2 | 119 to 124 fps (**+4%**) | 106 to 115 fps (**+8%**) |
+  | Gears 1 | unchanged | unchanged |
+
+  (`--gow2_renderer_submit_draws=0` in `extra-args.txt` turns it off if it ever causes a problem.)
 - Smoother sound and frame pacing: a stall when the sound output device is checked is gone, and several small renderer costs were removed.
 
 ### HDR (by legoliamneeson)
