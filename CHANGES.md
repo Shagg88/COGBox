@@ -33,20 +33,19 @@ https://recomplauncher.com/game/cogbox
   versions COGBox is made for, and how many other copies players have reported working. The README lists them too.
 
 ### Vulkan
-- **Vulkan's first-play freezes: up to 100% fewer.** Playing a chapter for the very first time (no shaders built yet,
+- **Vulkan's first-play shader freezes are gone.** Playing a chapter for the very first time (no shaders built yet,
   as for every new player), Vulkan froze again and again while the graphics driver built new shaders: saving the
   shader cache, every ~15 seconds, had to wait for that work and stopped the game until it was done. It now saves in
   the background. Measured on an RTX 3080 Ti, true first run, during play:
 
-  | Chapter | 0.6.0 | 0.6.1 |
+  | Game | 0.6.0 | 0.6.1 |
   | --- | --- | --- |
-  | Judgment, opening chapter | 8 freezes, longest 1.3 s | **0 freezes (-100%)**, longest frame 0.06 s (**95% shorter**) |
-  | Gears 3, opening chapter | 21 freezes, longest 1.9 s | **6 freezes (-71%)**, longest 0.76 s (**60% shorter**) |
-  | Gears 2, Nexis | - | **0 freezes** |
-  | Gears 1 | - | expected to improve the same way |
+  | Gears 3 | 6 freezes, longest 1.4 s | **0 freezes**, longest frame 0.12 s |
+  | Gears 1 | 4 freezes, longest 0.5 s | **0 freezes**, longest frame 0.02 s |
+  | Gears 2 | 2 freezes | **0 freezes** |
+  | Judgment | none | none |
 
-  The fix is in the renderer all four games share. Later chapters (Gears 3 Char, Judgment Rooftops) showed no freeze
-  on a first run either.
+  The fix is in the renderer all four games share.
 - *Still being tested (off by default):* building a chapter's shaders behind its loading screen before play starts, a
   background thread for new shaders, and Vulkan pipeline libraries (the method DXVK uses).
 
@@ -55,21 +54,18 @@ https://recomplauncher.com/game/cogbox
 - The launcher's **Brightness** setting for Judgment is gone: it only existed to hide this, and could not bring back the washed-out highlights. A saved Brightness value is ignored.
 
 ### Performance
-- **Judgment runs up to 72% faster.** Measured unlocked at 1440p on an RTX 3080 Ti in Wharf District: **Vulkan 50 to 87 fps (+72%)**, **DirectX 12 81 to 107 fps (+32%)**.
+- **Up to 77% faster.** Real 0.6.0 release against 0.6.1, same PC (RTX 3080 Ti), 2560x1440, uncapped, vsync off:
+
+  | Game | DirectX 12 | Vulkan (experimental) |
+  | --- | --- | --- |
+  | Judgment | 78 to 105 fps (**+34%**) | 47 to 84 fps (**+77%**) |
+  | Gears 2 | 148 to 174 fps (**+17%**) | 123 to 169 fps (**+38%**) |
+  | Gears 3 | 93 to 101 fps (**+8%**) | 104 to 97 fps (-7%) |
+  | Gears 1 | about the same | 123 to 117 fps (-5%) |
 - **Vulkan is much faster once a game has loaded** (Windows; still experimental). Vulkan now skips everything the camera can't see ("real occlusion"), as DirectX 12 already did. Not yet under Proton / Wine, where real occlusion still has to be tested.
 - **Vulkan, for testers:** a shader optimiser and an on-disk store for converted shaders are in this version but switched OFF (`--gow2_renderer_vulkan_spirv_optimise=true` and `--gow2_renderer_vulkan_spirv_store=true` in `extra-args.txt`). They halve the graphics driver's work per new shader pair (364 to 195 ms on an RTX 3080 Ti) and later start-up waits, but as wired today they make the first start much longer, so they stay off until Vulkan shaders are prepared in the background.
 - **If a first play still stutters on your PC** (slower processors and graphics cards build shaders more slowly), "Prepare all shaders now" on a game's Graphics tab does all of that work up front.
-- **The graphics card no longer waits for the whole frame.** It now starts on each frame while the rest of it is still being prepared, instead of sitting idle until everything is ready. No setting to change.
-- **0.6.0 against 0.6.1**, both changes together, measured unlocked on the same PC:
-
-  | Game | DirectX 12 | Vulkan |
-  | --- | --- | --- |
-  | Judgment | 81 to 107 fps (**+32%**) | 50 to 87 fps (**+72%**) |
-  | Gears 3 | 99 to 108 fps (**+9%**), **+21%** in the heaviest stretch (84 to 102) | 85 to 93 fps (**+10%**) |
-  | Gears 2 | 119 to 124 fps (**+4%**) | 106 to 115 fps (**+8%**) |
-  | Gears 1 | unchanged | unchanged |
-
-  (`--gow2_renderer_submit_draws=0` in `extra-args.txt` turns the early start off if it ever causes a problem.)
+- **The graphics card no longer waits for the whole frame.** It now starts on each frame while the rest of it is still being prepared, instead of sitting idle until everything is ready. No setting to change. (`--gow2_renderer_submit_draws=0` in `extra-args.txt` turns the early start off if it ever causes a problem.)
 - Smoother sound and frame pacing: a stall when the sound output device is checked is gone, and several small renderer costs were removed.
 
 ### HDR (by legoliamneeson)
@@ -90,6 +86,7 @@ https://recomplauncher.com/game/cogbox
 - Safer handling when the graphics device is lost while the game waits for it.
 
 ### Known issue
+- **Gears 3 and Gears 1 on Vulkan** run a few percent below 0.6.0's frame rate; DirectX 12 is the same or faster in every game.
 - **Gears 3: DLC sometimes missing at the main menu** (GitHub #283). With several DLC packages the game can open only the
   first one at start-up. Workaround: at the main menu open **Options > Storage Location** and pick the storage (the game
   checks the DLC again), or go back to the main menu once after loading in. Keeping only the DLC you use also helps.
