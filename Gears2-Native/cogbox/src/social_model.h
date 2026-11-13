@@ -25,6 +25,23 @@ struct SocialLists {
     std::vector<SocialRequest> incoming, outgoing;
 };
 
+// Open matches (Social tab): a public match of Gears 2, Gears 3 or Judgment, as GET /api/v1/matches lists it. The
+// server names nobody: no host, room code or address. game: the launcher's index (as game_for_title).
+struct SocialMatch {
+    std::string lobby_id, region;
+    int game = -1;
+    int players = 0, max = 0;
+    int playlist = -1;   // the game's playlist id, -1 when the lobby did not say
+    bool in_progress = false;
+    bool full() const { return max > 0 && players >= max; }
+};
+// The list; matches of other games or with a lobby id that is not a plain id are dropped.
+std::vector<SocialMatch> parse_matches(const std::string& body);
+// The mode from the game's playlist id (each game's GearPlaylist.ini, title update included), "Match" when unknown.
+const char* match_mode(const SocialMatch& m);
+// "KOTH · 6/10 · Gears 3 · US" (UTF-8 middle dots).
+std::string match_label(const SocialMatch& m);
+
 // The signed-in account (identity.json) and one answer from the server.
 struct SocialAccount {
     std::string uuid, token, name, discriminator, xuid;
@@ -50,7 +67,8 @@ std::string presence_text(const SocialFriend& f);
 // Name#1234: a name of 3-15 letters, digits and spaces, '#', four digits.
 bool valid_tag(const std::string& tag);
 
-enum class SocialAction { Add, Accept, Decline, Block, Remove, Join, Invite, InviteAccept, InviteDecline, Rename, SetIcon, DeleteAccount };
+enum class SocialAction { Add, Accept, Decline, Block, Remove, Join, Invite, InviteAccept, InviteDecline, Rename, SetIcon, DeleteAccount,
+                         JoinMatch };
 // A profile picture name from the server that is safe to look up under <COGBox>: icons/<8 hex digits>/<1-6 digits>.png
 // (anything else - a path, "..", another file type - is drawn as the letter).
 bool safe_icon_name(const std::string& name);
