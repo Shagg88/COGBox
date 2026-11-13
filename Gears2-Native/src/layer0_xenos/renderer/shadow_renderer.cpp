@@ -553,7 +553,7 @@ REXCVAR_DEFINE_INT32(gow2_renderer_cpu_split, 0, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_submit_draws, -1, "Gears2",
                      "Patch 0138: submit our recorded work to the GPU after every N draws (0 = once a frame, as before "
                      "0.6.1). -1 (the default since 0.6.1; Judgment in play at 2x, job 1711: 12.5 -> 11.1 ms a frame on "
-                     "D3D12, 14.6 -> 11.5 on Vulkan, the same picture) = adaptive: as soon as the GPU has finished everything "
+                     "D3D12, 14.6 -> 11.5 on Vulkan, the same picture) = adaptive, with strict queries only: as soon as the GPU has finished everything "
                      "submitted so far and at least 64 draws are recorded, at the latest every 256 draws, at most 12 "
                      "a frame. Measured in Gears 2 at 2x with strict "
                      "queries (jobs 1679 / 1681): every 100-150 draws = 4.8 ms a frame against 5.95 (the occlusion "
@@ -2656,10 +2656,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     {  // patch 0138; 0.6.1: -1 = adaptive
       const int32_t sd = REXCVAR_GET(gow2_renderer_submit_draws);
       submit_draws_ = uint32_t(std::max(0, sd));
-      submit_auto_ = sd < 0 && backend_ && backend_->HasEarlySubmit();
-      if (sd < 0 && !submit_auto_ && !submit_auto_note_) {
+      // The adaptive form pays where the game waits for its occlusion answers (strict queries): Judgment and Gears 3 in
+      // play gained 10 - 27 % (jobs 1711, 1714). Without them (Gears 1; Proton / Wine) there is nothing to bring
+      // forward and the extra lists cost about 2 % (Gears 1, job 1716: 129.7 -> 127.3 fps), so it stays off there.
+      submit_auto_ = sd < 0 && backend_ && backend_->HasEarlySubmit() && queries_mode_ == QueriesMode::kStrict;
+      if (sd < 0 && !submit_auto_ && !submit_auto_note_ && frame_ > 600) {
         submit_auto_note_ = true;
-        REXLOG_INFO("gow2_renderer: --gow2_renderer_submit_draws=-1: this backend has no early submit - off");
+        REXLOG_INFO("gow2_renderer: adaptive early submit off (it needs strict occlusion queries and a backend with an early submit)");
       }
     }
     draws_since_submit_ = 0;
