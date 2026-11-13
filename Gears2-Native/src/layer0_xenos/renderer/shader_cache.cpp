@@ -22,6 +22,9 @@
 #include <iterator>
 #include <thread>
 #include <system_error>
+#ifdef GN_SPIRV_OPT
+#include <spirv-tools/optimizer.hpp>
+#endif
 
 // Notes/80 developer diagnostic: the translated HLSL of the listed shaders (ucode hashes, hex, comma-separated) is written
 // to --gow2_renderer_hlsl_dump_dir as <vs|ps>-<hash>.hlsl, whatever back end compiles them.
@@ -829,12 +832,53 @@ static void SpirvFiles(std::vector<uint32_t>& words) {
 }
 // Patch 0084: DXBC, and on Vulkan its SPIR-V (dxbc_spirv.cpp) in place of it - a pure function of the program and the
 // options, so the warm-up runs it on several threads.
+// 0.6.1 (Vulkan first-run cost; gn_pipebench jobs 1736 / 1737 on an RTX 3080 Ti): dxbc_spirv writes every register as
+// a variable and every instruction as load / all four lanes / masked store - 357 KB of SPIR-V a pipeline against 67 KB
+// of DXBC, and the driver's build took 303 ms against 158 ms on D3D12. SPIRV-Tools' performance passes (the variables
+// become SSA values, dead lanes go) leave 129 KB and 193 ms. The optimiser keeps NoContraction and the float controls,
+// so values are the same; a module it cannot take is used as converted.
+static std::atomic<bool> g_spv_optimise{false};
+static std::atomic<uint64_t> g_spv_opt_done{0}, g_spv_opt_failed{0}, g_spv_opt_in{0}, g_spv_opt_out{0};
+bool ShaderCache::SetSpirvOptimise(bool on) {
+#ifdef GN_SPIRV_OPT
+  g_spv_optimise.store(on);
+  return true;
+#else
+  (void)on;
+  return false;
+#endif
+}
+static void OptimiseSpirv(std::vector<uint32_t>& words) {
+#ifdef GN_SPIRV_OPT
+  if (!g_spv_optimise.load() || words.empty()) return;
+  spvtools::Optimizer opt(SPV_ENV_VULKAN_1_3);  // (SPIR-V 1.6, what dxbc_spirv writes)
+  opt.SetMessageConsumer([](spv_message_level_t, const char*, const spv_position_t&, const char*) {});
+  opt.RegisterPerformancePasses();
+  spvtools::OptimizerOptions oo;
+  oo.set_run_validator(false);  // the converter's output is valid by construction (spirv-val: tests and job 1737)
+  std::vector<uint32_t> out;
+  if (!opt.Run(words.data(), words.size(), &out, oo) || out.size() < 5) {
+    ++g_spv_opt_failed;
+    return;
+  }
+  g_spv_opt_in += words.size() * 4;
+  g_spv_opt_out += out.size() * 4;
+  const uint64_t n = ++g_spv_opt_done;
+  words.swap(out);
+  if ((n & (n - 1)) == 0)
+    REXLOG_INFO("gow2_renderer: SPIR-V optimiser: {} modules, {:.1f} MB -> {:.1f} MB, {} left as converted", n,
+                double(g_spv_opt_in.load()) / 1048576.0, double(g_spv_opt_out.load()) / 1048576.0, g_spv_opt_failed.load());
+#else
+  (void)words;
+#endif
+}
 static dxbc_gen::DxbcTranslation TranslateDxbcFor(const ucode::Program& program, const hlsl::HlslOptions& options,
                                                   bool spirv) {
   dxbc_gen::DxbcTranslation dt = dxbc_gen::TranslateToDxbc(program, options);
   if (dt.ok && spirv) {
     dxbc_spirv::SpirvResult sv = dxbc_spirv::ConvertDxbcToSpirv(dt.bytecode.data(), dt.bytecode.size(), options.spirv_precise);
     if (sv.ok) {
+      OptimiseSpirv(sv.words);  // 0.6.1, before the dump / replace files of patch 0099
       SpirvFiles(sv.words);  // patch 0099
       dt.bytecode.resize(sv.words.size() * 4);
       std::memcpy(dt.bytecode.data(), sv.words.data(), dt.bytecode.size());

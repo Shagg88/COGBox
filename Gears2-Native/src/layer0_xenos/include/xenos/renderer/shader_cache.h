@@ -193,6 +193,9 @@ class ShaderCache {
   void SetSpirvPrecise(bool on) { spirv_precise_ = on; }          // patch 0088 (measurement)
   void SetPsRefactoring(bool on) { ps_refactoring_ = on; }        // patch 0095
   static void SetSpirvFiles(const std::string& dump_dir, const std::string& override_dir);  // patch 0099
+  // 0.6.1 (Vulkan first-run cost): SPIRV-Tools' performance passes over each converted module before the driver
+  // sees it. False when this build has no optimiser (GN_SPIRV_OPT not defined) - then nothing changes.
+  static bool SetSpirvOptimise(bool on);
   void SetTexNumFormat(bool on) { tex_num_format_ = on; }  // patch 0040
   void SetTexPostConstants(bool on) { tex_post_constants_ = on; }  // patch 0105
   void SetTexPostAffine(bool on) { tex_post_affine_ = on; }        // job 634

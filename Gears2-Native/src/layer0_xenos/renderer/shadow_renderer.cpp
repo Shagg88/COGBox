@@ -476,6 +476,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_float_controls, true, "Gears2",
                     "without a depth test, while depth-only draws match");
 REXCVAR_DEFINE_INT32(gow2_renderer_draw_report_frames, 1, "Gears2",
                      "Patch 0101: how many frames --gow2_renderer_draw_report_frame reports (1-4)");
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_optimise, true, "Gears2",
+                    "0.6.1 (Vulkan): each shader converted to SPIR-V goes through SPIRV-Tools' performance passes before "
+                    "the driver builds it - about a third of the size and a third less driver time per new pipeline "
+                    "(303 -> 193 ms on an RTX 3080 Ti; D3D12 158 ms). Same values (NoContraction and the float controls "
+                    "are kept). false = the modules as converted, as 0.6.0");
 REXCVAR_DEFINE_STRING(gow2_renderer_vulkan_spirv_dump_dir, "", "Gears2",
                       "Patch 0099 (Vulkan, a measurement): write each shader's SPIR-V from our converter to this folder "
                       "as <hash of its words>.spv");
@@ -1564,6 +1569,12 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     cache_->SetPsRefactoring(REXCVAR_GET(gow2_renderer_ps_refactoring));                // patch 0095
     xenos::renderer::ShaderCache::SetSpirvFiles(REXCVAR_GET(gow2_renderer_vulkan_spirv_dump_dir),
                                REXCVAR_GET(gow2_renderer_vulkan_spirv_override_dir));  // patch 0099
+    {
+      const bool want = REXCVAR_GET(gow2_renderer_vulkan_spirv_optimise);
+      const bool have = xenos::renderer::ShaderCache::SetSpirvOptimise(want);
+      if (backend_ && backend_->GetShaderIL() == gpu::ShaderIL::kSpirv)
+        REXLOG_INFO("gow2_renderer: Vulkan SPIR-V optimiser: {}", !have ? "not in this build" : want ? "on" : "off (--gow2_renderer_vulkan_spirv_optimise=false)");
+    }
     xenos::dxbc_spirv::SetDiscardTerminates(REXCVAR_GET(gow2_renderer_vulkan_discard_terminates));  // patch 0102
     xenos::dxbc_spirv::SetFloatControls(REXCVAR_GET(gow2_renderer_vulkan_float_controls));        // patch 0103
     {  // patch 0089
