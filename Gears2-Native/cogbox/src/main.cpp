@@ -213,6 +213,9 @@ static void answered(App &a)
         a.ini.save();
         i18n_load(code);
     }
+    else if (m.tag == "adminnote") {   // 0.6.1: the run-as-administrator drag-and-drop notice
+        if (m.checked) { a.ini.seti("Notices", "AdminDropNever", 1); a.ini.save(); }
+    }
     else if (m.tag == "tunotice") {   // 0.2.0: the title-update notice - shown again after the next COGBox update unless ticked
         if (m.checked) a.ini.seti("Notices", "TitleUpdatesRequiredNever", 1);   // 0.4.0: title updates required
         a.ini.set("Notices", "TitleUpdatesSeen", COGBOX_VERSION);
@@ -302,7 +305,7 @@ void startup_notices(App &a)
     // 0.6.1 (Discord: "unable to drop anything in the launcher" on Windows): run as administrator, COGBox can't receive
     // files dragged from Explorer (Windows blocks drag and drop from a normal program into an elevated one). Said once
     // per start; the add buttons work either way. Not under Wine (no such rule there).
-    if (!a.adminChecked) {
+    if (!a.adminChecked && !a.ini.geti("Notices", "AdminDropNever", 0)) {   // review: "Don't show this again"
         a.adminChecked = true;
         bool elevated = false;
         HANDLE tok = nullptr;
@@ -315,10 +318,11 @@ void startup_notices(App &a)
             CloseHandle(tok);
         }
         if (elevated) {
-            ask(a, "info", -1, "Drag and drop is off",
+            ask(a, "adminnote", -1, "Drag and drop is off",
                 "COGBox is running as administrator, so Windows doesn't let you drag files onto it from Explorer. Use "
                 "Choose a file... or Choose a folder... instead, or start COGBox normally (not as administrator) to drag "
                 "and drop again.", { "OK" });
+            a.modal.check = "Don't show this again";
             return;
         }
     }

@@ -250,7 +250,7 @@ REXCVAR_DEFINE_INT32(gow2_renderer_load_hold_draws, 1, "Gears2",
                     "Patch 0064: within 20 s after a load, a frame is held when at least this many draws wait for "
                     "their pipeline (0063 used 16; Shagg: a longer hold over stuttering frames)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_chapter_hold, false, "Gears2",
-                    "0.6.2 (test, off by default). The recipe pack's pipelines whose pixel shader is in a package the "
+                    "0.6.1 (test, off by default). The recipe pack's pipelines whose pixel shader is in a package the "
                     "GAME has opened are 'wanted': they are translated and built before every other list's, also "
                     "during clean play. And where a loading screen ends (30+ frames in a row with fewer than 64 draws, "
                     "or no frame for over a second, then a frame with 64+; a level package opened since the last "
@@ -259,7 +259,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_chapter_hold, false, "Gears2",
                     "when they are built already (a second visit, a checkpoint), nor mid-play. Needs the recipe pack, "
                     "--ue3_shader_prebuild and our own presenter");
 REXCVAR_DEFINE_INT32(gow2_renderer_chapter_hold_max_ms, 120000, "Gears2",
-                    "0.6.2: the longest the frames after one loading screen may be held for the wanted pipelines (ms)");
+                    "0.6.1: the longest the frames after one loading screen may be held for the wanted pipelines (ms)");
 REXCVAR_DEFINE_INT32(gow2_renderer_play_hold_draws, 0, "Gears2",
                     "Patch 0132: 0 by default (no mid-play holds). Patch 0064: outside the load window (mid-play), a frame is held when at least this many draws "
                     "wait for their pipeline; 0 = never hold mid-play (0063's rule)");
@@ -488,11 +488,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_float_controls, true, "Gears2",
 REXCVAR_DEFINE_INT32(gow2_renderer_draw_report_frames, 1, "Gears2",
                      "Patch 0101: how many frames --gow2_renderer_draw_report_frame reports (1-4)");
 REXCVAR_DEFINE_INT32(gow2_renderer_vulkan_async_play_threads, 2, "Gears2",
-                     "0.6.2 (with --gow2_renderer_vulkan_async_shaders): background threads that convert the shader "
+                     "0.6.1 (with --gow2_renderer_vulkan_async_shaders): background threads that convert the shader "
                      "backlog while the game draws (64+ draws in the frame); on loading screens, menus under 64 draws "
                      "and in a chapter hold all of them work. A shader a draw waits for is never limited");
 REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_async_shaders, false, "Gears2",
-                    "0.6.2 (first playthrough, Vulkan): a shader whose SPIR-V is not in the store is converted on "
+                    "0.6.1 (first playthrough, Vulkan): a shader whose SPIR-V is not in the store is converted on "
                     "background threads; until it is ready its draws are skipped as for any shader still being made, "
                     "and a draw that needs it moves it to the front. Nothing is converted on the render thread or "
                     "before the first frame. Off (default until measured in play) = converted where 0.6.0 does it");
@@ -2680,7 +2680,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     double fl_hold_ms = 0.0;  // frame log
     if (hold_this_frame_) {
       const auto th = std::chrono::steady_clock::now();
-      if (chapter_hold_) HoldForChapter();  // 0.6.2
+      if (chapter_hold_) HoldForChapter();  // 0.6.1
       else HoldForPipelines();              // patch 0063
       fl_hold_ms = MsSince(th);
     }
@@ -2716,7 +2716,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     draws_since_submit_ = 0;
     auto_submits_this_frame_ = 0;
-    if (xenos::renderer::ShaderCache::SpirvAsync()) {  // 0.6.2: the backlog's threads follow what the game is doing
+    if (xenos::renderer::ShaderCache::SpirvAsync()) {  // 0.6.1: the backlog's threads follow what the game is doing
       // (review) All of them only after 10 frames in a row under 64 draws - one such frame in play (a fade) would start
       // a job of ~200 ms on every thread - and always for Prepare all shaders.
       spv_low_frames_ = fl_draws < 64 ? std::min<uint32_t>(spv_low_frames_ + 1, 1000) : 0;
@@ -2724,7 +2724,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (want != spv_backlog_threads_) cache_->SetSpirvBacklogThreads(spv_backlog_threads_ = want);
     }
     cache_->NewPollBudget();
-    RetryRecordedPipelines();  // 0.6.2 (async SPIR-V)
+    RetryRecordedPipelines();  // 0.6.1 (async SPIR-V)
     RetryGuessShaders();
     depth_wait_left_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_depth_pipeline_wait_ms));  // patch 0132
     shader_wait_left_ms_ = shader_wait_budget_ms_;
@@ -2886,7 +2886,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       load_window_until_ = now + std::chrono::seconds(20);  // a load (or the first frame)
       hold_left_ms_ = double(REXCVAR_GET(gow2_renderer_load_hold_max_ms));
     }
-    if (chapter_hold_on_ && DecideChapterHold(now)) return;  // 0.6.2
+    if (chapter_hold_on_ && DecideChapterHold(now)) return;  // 0.6.1
     if (!REXCVAR_GET(gow2_renderer_load_hold) || !present_ours_ || hold_descs_.empty()) return;
     const bool scene = pending_this_frame_ >= 200 && uint64_t(pending_this_frame_) * 2 >= draw_index_;
     if (scene && now >= load_window_until_) {  // a new scene mid-play: a window and budget of its own
@@ -2907,7 +2907,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       hold_cap_ms_ = double(std::max(0, REXCVAR_GET(gow2_renderer_play_hold_max_ms)));
     }
   }
-  // ---- 0.6.2: chapter hold (Shagg 13-11: "the first playthrough should be smooth", on both APIs; the way Unleashed
+  // ---- 0.6.1: chapter hold (Shagg 13-11: "the first playthrough should be smooth", on both APIs; the way Unleashed
   // Recompiled does it: an asset is not loaded until its pipelines are). The reactive hold above waits for what one
   // frame happened to draw; this one waits, where a loading screen ends, for every recipe pipeline whose pixel shader
   // is in a package the game has opened ("wanted", see WantRecipeRecord) - so the frames after it find their pipelines
@@ -2998,7 +2998,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ch_hold_left_ms_ -= ms;
     ch_want_seen_ = rcp_want_n_;
     ++stats_.load_holds;
-    REXLOG_INFO("gow2_renderer: chapter hold (0.6.2): frame {} not shown ({} of {} draws pending) - waited {:.0f} ms, "
+    REXLOG_INFO("gow2_renderer: chapter hold (0.6.1): frame {} not shown ({} of {} draws pending) - waited {:.0f} ms, "
                 "{}: {} to do at its start, {} left ({} wanted records still to translate or queue, {} waiting for a "
                 "shader no package has brought, {} of their pipeline jobs); {} pipelines queued and {} already there meanwhile; "
                 "{} records wanted in all, {} of them not handed to the workers; hold time left for this load {:.0f} ms",
@@ -3096,7 +3096,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           if (!partner_slot) partner_slot = g.handle;
           guess_waiting_.push_back({c.is_vertex, g.handle});
         } else if (g.state == rr::ShaderState::kPending && xenos::renderer::ShaderCache::SpirvAsync()) {
-          guess_pending_.push_back(&g);  // 0.6.2 (async SPIR-V): taken in when its conversion is done
+          guess_pending_.push_back(&g);  // 0.6.1 (async SPIR-V): taken in when its conversion is done
         }
       }
       if (MsSince(t0) >= budget) break;
@@ -3126,7 +3126,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::mutex created_mutex_;
   std::deque<CreatedShader> created_queue_;                  // filled by the game's loading thread
   std::vector<std::pair<bool, gpu::ShaderHandle>> guess_waiting_;
-  std::vector<const rr::GuestShader*> guess_pending_;  // 0.6.2 (async SPIR-V): created shaders still being converted
+  std::vector<const rr::GuestShader*> guess_pending_;  // 0.6.1 (async SPIR-V): created shaders still being converted
   void RetryGuessShaders() {
     for (size_t i = 0; i < guess_pending_.size();) {
       const rr::GuestShader& g = *guess_pending_[i];
@@ -8433,7 +8433,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   now.translate_ms - p.translate_ms, now.copies - p.copies,
                   double(now.upload - p.upload) / 1048576.0, double(now.tex_upload - p.tex_upload) / 1048576.0,
                   now.wait_ms - p.wait_ms);
-      // 0.6.2 (job 1755b): the "state" freezes end where a draw's early submit ends - which phase of Submit took it.
+      // 0.6.1 (job 1755b): the "state" freezes end where a draw's early submit ends - which phase of Submit took it.
       if (bs.submit_max_ms > 0.0)
         REXLOG_INFO("gow2_renderer: HITCH frame {} submits: {} | ms: end of list {:.1f}, queue lock {:.1f}, submit call "
                     "{:.1f}, after (cache save, retire) {:.1f} | slowest submit so far {:.1f} ms",
@@ -8454,7 +8454,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint64_t pack_hits = 0;
   };
   HitchCounters hitch_prev_;
-  uint64_t hitch_submits_prev_ = 0;   // 0.6.2 (job 1755b)
+  uint64_t hitch_submits_prev_ = 0;   // 0.6.1 (job 1755b)
   double hitch_submit_prev_[4] = {};
   uint64_t hitch_ticks_[kPartCount] = {};
   uint32_t hitches_logged_ = 0;
@@ -9502,7 +9502,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const bool writes_depth = depth_bound && ps.depth_stencil.depth_enable && ps.depth_stencil.depth_write;
       const bool full_screen = prim == 0x08 || index_count <= 6;  // rectangle list / a quad
       if (blends && !writes_depth && !full_screen && !(psg && psg->memexport) && !vsg.memexport) {
-        cache_->Promote(vsg);  // 0.6.2 (async SPIR-V): still wanted soon - ahead of the warm-up's backlog
+        cache_->Promote(vsg);  // 0.6.1 (async SPIR-V): still wanted soon - ahead of the warm-up's backlog
         if (psg) cache_->Promote(*psg);
         QueueUpcomingShaders();
         ++stats_.cosmetic_deferred;
@@ -11368,7 +11368,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       for (const PipelineRecord& r : records) {
         const rr::GuestShader* vsg = cache_->Find(r.vs_hash, true, r.tess_n);
         const rr::GuestShader* psg = (r.flags & 1) ? cache_->Find(r.ps_hash, false) : nullptr;
-        // 0.6.2 (async SPIR-V): both shaders are known and one is still being converted - the record waits
+        // 0.6.1 (async SPIR-V): both shaders are known and one is still being converted - the record waits
         // (RetryRecordedPipelines) instead of being dropped for this run.
         const auto pend = [](const rr::GuestShader* g) { return g && g->state == rr::ShaderState::kPending; };
         if (xenos::renderer::ShaderCache::SpirvAsync() && vsg && (!(r.flags & 1) || psg) && (pend(vsg) || pend(psg)) &&
@@ -11419,7 +11419,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                 no_gs, MsSince(t0), pipeline_list_ ? "; recording new ones" : "");
     if (REXCVAR_GET(gow2_renderer_prepare_only)) PrepareAndExit(queued, records.size());
   }
-  // 0.6.2 (async SPIR-V): the recorded pipelines whose shaders were still being converted at the start. A slice of
+  // 0.6.1 (async SPIR-V): the recorded pipelines whose shaders were still being converted at the start. A slice of
   // the list each frame; a record goes to the workers as soon as both its shaders are ready (as start-up backlog).
   std::vector<PipelineRecord> rec_waiting_;
   size_t rec_wait_at_ = 0;
@@ -11599,7 +11599,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     rcp_ch_on_.assign(rcp_.chapters.size(), 0);
     rcp_ch_hot_.assign(rcp_.chapters.size(), 0);  // job 634
     rcp_rec_hot_.assign(rcp_records_.size(), 0);
-    rcp_rec_want_.assign(rcp_records_.size(), 0);  // 0.6.2
+    rcp_rec_want_.assign(rcp_records_.size(), 0);  // 0.6.1
     chapter_hold_on_ = REXCVAR_GET(gow2_renderer_chapter_hold) && !REXCVAR_GET(gow2_renderer_prepare_all);
     rcp_vs_found_ = std::make_unique<std::atomic<uint8_t>[]>(std::max<size_t>(1, rcp_.vertex.size()));
     rcp_on_ = true;
@@ -11652,7 +11652,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint64_t cap_blocked = 0;
     const uint64_t done_before = rcp_n_.queued + rcp_n_.known;
     std::deque<RcpShader> in;
-    std::vector<RcpFile> files_in;      // 0.6.2
+    std::vector<RcpFile> files_in;      // 0.6.1
     std::vector<RcpOpened> opened_in;
     {
       std::lock_guard<std::mutex> lock(rcp_mutex_);
@@ -11689,7 +11689,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         }
       }
     }
-    // 0.6.2: the packages' shader lists and the game's own opens (after their shaders above: a file's list is sent
+    // 0.6.1: the packages' shader lists and the game's own opens (after their shaders above: a file's list is sent
     // after its last shader). Wanted records go to the front of the translation queue.
     if (!files_in.empty() || !opened_in.empty()) TakeRecipeFiles(files_in, opened_in);
     if (rcp_want_dirty_) {
@@ -11706,7 +11706,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint32_t made = 0;
     while (!rcp_need_.empty() && (made < 2 || MsSince(t0) < translate_budget_ms)) {
       const uint32_t i = rcp_need_.front();
-      if (rcp_want_only_ && !rcp_rec_want_[i]) break;  // 0.6.2 chapter hold: wanted records only (they are in front)
+      if (rcp_want_only_ && !rcp_rec_want_[i]) break;  // 0.6.1 chapter hold: wanted records only (they are in front)
       rcp_need_.pop_front();
       if (rcp_state_[i] != 1) continue;
       const PipelineRecord& r = rcp_records_[i];
@@ -11729,7 +11729,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       // Never in the first ~60 s after a chapter list starts (Shagg 11:26: a cutscene plays at a clean frame rate, and
       // it is the time the pack needs).
       const bool paused0 = !burst && rcp_clean_frames_ >= 150 && frame_ >= rcp_list_started_frame_ + 1800;
-      // 0.6.2: ... but records the game's own packages ask for are still built then (an area streamed in mid-play),
+      // 0.6.1: ... but records the game's own packages ask for are still built then (an area streamed in mid-play),
       // and only those; in a chapter hold likewise only those.
       const bool want_play = paused0 && chapter_hold_on_ && rcp_want_left_ > 0;
       const bool paused = paused0 && !want_play;
@@ -11747,7 +11747,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       size_t keep = 0;
       if (rcp_hot_chapters_)  // job 634: the area being played first
         std::stable_partition(rcp_waiting_.begin(), rcp_waiting_.end(), [&](uint32_t i) { return rcp_rec_hot_[i] != 0; });
-      if (chapter_hold_on_ && rcp_want_n_)  // 0.6.2: ... and before those, what the game's own packages ask for
+      if (chapter_hold_on_ && rcp_want_n_)  // 0.6.1: ... and before those, what the game's own packages ask for
         std::stable_partition(rcp_waiting_.begin(), rcp_waiting_.end(), [&](uint32_t i) { return rcp_rec_want_[i] != 0; });
       for (size_t k = 0; k < rcp_waiting_.size(); ++k) {
         if (cap_blocked || want_done) {  // 617: no job free - the rest waits for the next slice or frame, unscanned
@@ -11755,7 +11755,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           continue;
         }
         const uint32_t i = rcp_waiting_[k];
-        if (want_only && !rcp_rec_want_[i]) {  // 0.6.2: the other records wait (wanted ones are in front)
+        if (want_only && !rcp_rec_want_[i]) {  // 0.6.1: the other records wait (wanted ones are in front)
           want_done = true;
           rcp_waiting_[keep++] = i;
           continue;
@@ -11774,7 +11774,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           continue;
         }
         const bool shaders_ready = vsg && vsg->ready() && (!(r.flags & 1) || (psg && psg->ready()));
-        // 0.6.2 (job 1754a: a 26 s hold that queued nothing - the start-up backlog's 6,247 recorded pipelines filled the
+        // 0.6.1 (job 1754a: a 26 s hold that queued nothing - the start-up backlog's 6,247 recorded pipelines filled the
         // workers' queue, so the cap below never let a wanted record through): a wanted record is limited only by the
         // wanted jobs still being built, and goes to the workers' live queue, ahead of every backlog.
         const bool wanted = chapter_hold_on_ && rcp_rec_want_[i];
@@ -11792,7 +11792,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           blocked = backend_->PipelineJobsLeft() >= cap;
         }
         if (!shaders_ready || blocked) {
-          // 0.6.2 (job 1752: with background conversion the wanted records' shaders sat behind the whole backlog and
+          // 0.6.1 (job 1752: with background conversion the wanted records' shaders sat behind the whole backlog and
           // the draws then waited for them, 1.3 - 2.4 s a time): a wanted record's shaders are converted first.
           // (review) In play at most 4 a slice: a promoted job runs on every thread at normal priority.
           if (!shaders_ready && chapter_hold_on_ && rcp_rec_want_[i] && (loading || rcp_want_only_ || promoted < 4)) {
@@ -11815,7 +11815,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           ++rcp_n_.no_gs;
           continue;
         }
-        if (backlog == wanted) {  // backlog for the others, the live queue for wanted records (0.6.2)
+        if (backlog == wanted) {  // backlog for the others, the live queue for wanted records (0.6.1)
           backend_->SetPipelineBacklog(!wanted);
           backlog = !wanted;
         }
@@ -11823,7 +11823,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         backend_->GetGraphicsPipeline(d, true, nullptr);
         if (backend_->PipelineMisses() != m) {
           ++rcp_n_.queued;
-          if (wanted) {  // 0.6.2: a hold waits for exactly these
+          if (wanted) {  // 0.6.1: a hold waits for exactly these
             if (rcp_want_jobs_.size() >= 2048 && rcp_want_jobs_.size() % 1024 == 0) want_pending = PruneWantedJobs();
             rcp_want_jobs_.push_back(d);
             ++want_pending;
@@ -11862,7 +11862,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // work. True = more can be done right now (the caller waits ~2 ms and comes back); false = wait for the game as usual.
   bool RecipeIdleWork() {
     if (!rcp_on_) return false;
-    if (xenos::renderer::ShaderCache::SpirvAsync()) {  // 0.6.2: no draws or swaps here - converted shaders are taken in
+    if (xenos::renderer::ShaderCache::SpirvAsync()) {  // 0.6.1: no draws or swaps here - converted shaders are taken in
       cache_->NewPollBudget();
       cache_->Poll();
     }
@@ -11941,7 +11941,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // Nothing more can be built: the reading is done, every shader it found is in, nothing waits to be translated or
     // queued (records still waiting are for shaders no package holds), and the workers are idle - for 3 s.
     const bool quiet = !reading && !inbox && rcp_need_.empty() && rcp_ready_left_ == 0 && left == 0 &&
-                       cache_->PendingCount() == 0 && rec_waiting_.empty();  // 0.6.2: no shader still being converted
+                       cache_->PendingCount() == 0 && rec_waiting_.empty();  // 0.6.1: no shader still being converted
     if (made != prepare_last_made_ || !quiet) prepare_quiet_since_ = now;
     prepare_last_made_ = made;
     auto write = [&](uint64_t done, const char* state) {
@@ -11965,7 +11965,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     std::fflush(nullptr);
     std::_Exit(0);  // like prepare_only: nothing of the process needs a clean shutdown
   }
-  // ---- 0.6.2: wanted records. Layer 2's reader sends, for each package it has read, the keys of the pixel shaders
+  // ---- 0.6.1: wanted records. Layer 2's reader sends, for each package it has read, the keys of the pixel shaders
   // in it (OnPrebuildFileShaders), and tells when the GAME opens a package (OnPrebuildGameOpened). A record whose pixel
   // shader is in a package the game has opened is wanted for good; records without a pixel shader (depth only: cheap
   // for the driver, and no package names them) are all wanted once a level package is opened. ----
@@ -12198,7 +12198,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   // Shader pop-in: let a draw wait for its still-compiling shader, within this frame's budget.
   void WaitForShader(const rr::GuestShader& s) {
-    if (s.state == rr::ShaderState::kPending) cache_->Promote(s);  // 0.6.2: a draw needs it - its conversion goes first
+    if (s.state == rr::ShaderState::kPending) cache_->Promote(s);  // 0.6.1: a draw needs it - its conversion goes first
     if (s.state != rr::ShaderState::kPending || shader_wait_left_ms_ <= 0.0) return;
     QueueUpcomingShaders();  // patch 0051
     const auto t0 = std::chrono::steady_clock::now();
@@ -13940,7 +13940,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   double hold_left_ms_ = 0.0;
   double hold_cap_ms_ = 0.0;     // patch 0064: this hold's longest wait
   bool hold_this_frame_ = false;
-  // 0.6.2 chapter hold: this frame's hold is the chapter's; frames in a row under 64 draws; the window after a level's
+  // 0.6.1 chapter hold: this frame's hold is the chapter's; frames in a row under 64 draws; the window after a level's
   // loading run and its budget; the wanted count at the window's last count.
   bool chapter_hold_ = false;
   uint32_t spv_backlog_threads_ = UINT32_MAX;  // what the shader cache was last told (async SPIR-V)
@@ -14217,10 +14217,10 @@ void XenosPrebuildAtStartDone(uint64_t files) {  // job 641
   }
   REXLOG_INFO("ue3_shader_prebuild_at_start: every queued file read ({} in all)", files);
 }
-void XenosPrebuildFileShaders(uint64_t file_key, const uint64_t* pixel_keys, size_t count) {  // 0.6.2
+void XenosPrebuildFileShaders(uint64_t file_key, const uint64_t* pixel_keys, size_t count) {  // 0.6.1
   if (g_release_target) g_release_target->OnPrebuildFileShaders(file_key, pixel_keys, count);
 }
-void XenosPrebuildGameOpened(uint64_t file_key, bool level, const char* name) {  // 0.6.2
+void XenosPrebuildGameOpened(uint64_t file_key, bool level, const char* name) {  // 0.6.1
   if (g_release_target) g_release_target->OnPrebuildGameOpened(file_key, level, name);
 }
 uint64_t XenosPrebuildVariantHits(uint32_t variant) {                                           // patch 0068

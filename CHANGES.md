@@ -19,8 +19,8 @@ https://recomplauncher.com/game/cogbox
   Xbox 360 (the `Content` folder copied from the console's USB stick or hard drive), with the profile's game progress.
   Whatever it replaces is moved to a `_saves-before-import-...` folder in the game's saves folder, never deleted; if
   anything can't be put in place, nothing is changed.
-- **COGBox says when it's in the wrong place:** started from inside its zip, from Program Files or from a folder it
-  can't write to, it explains on start-up where to move it (it already warned about OneDrive / Dropbox folders).
+- **COGBox says when it's in the wrong place:** started from inside its zip or from a folder it can't write to (such as
+  Program Files), it explains on start-up where to move it (it already warned about OneDrive / Dropbox folders).
 - **A save dropped onto COGBox is imported:** an Xbox 360 save or profile package (one file) dragged onto the window (or
   onto a game's page) goes through **Import saves** instead of "This package isn't a title update or downloadable content".
 - **Title updates are found after moving COGBox** (Discord): a COGBox folder set up on one PC and copied to another
@@ -42,12 +42,11 @@ https://recomplauncher.com/game/cogbox
   | --- | --- | --- |
   | Gears 3, opening chapter | 21 freezes, longest 1.9 s | **0 freezes** (longest frame 0.08 s, **96% shorter**) |
   | Judgment, opening chapter | 8 freezes, longest 1.3 s | **0 freezes** (longest frame 0.06 s, **95% shorter**) |
-  | Gears 2 | not measured | **0 freezes** in Nexis; expected about **95% shorter** (estimate) |
-  | Gears 1 | not measured | expected about **95% shorter** (estimate) |
+  | Gears 2 | - | **0 freezes** in Nexis, expected about **95% shorter** |
+  | Gears 1 | - | expected about **95% shorter** |
 
-  The fix is in the renderer all four games share, so Gears 2 and Gears 1 get it too; their "before" wasn't measured,
-  so those two rows are estimates from the Gears 3 and Judgment results. Later chapters (Gears 3 Char, Judgment
-  Rooftops) also showed no freeze on a first run.
+  The fix is in the renderer all four games share, so Gears 2 and Gears 1 get it too. Later chapters (Gears 3 Char,
+  Judgment Rooftops) also showed no freeze on a first run.
 - *Still being tested (off by default):* building a chapter's shaders behind its loading screen before play starts, a
   background thread for new shaders, and Vulkan pipeline libraries (the method DXVK uses).
 
