@@ -41,10 +41,19 @@ int game_slot(int g)
 
 const GameDef &game_def(int g) { return k_games[g < 0 || g >= G_ALL ? 0 : g]; }
 
+// 0.6.1 (Shagg): region copies that carry their own title ID. The Japanese Gears of War 2 disc is 4D5308C8
+// (the US disc is 4D53082D); Shagg checked the disc and called it compatible.
+struct RegionTitle { GameId game; uint32_t titleId; };
+static const RegionTitle k_regionTitles[] = {
+    { G_GEARS2, 0x4D5308C8u },   // Gears of War 2 (Japan), media 7738282D, disc version 0.0.0.1
+};
 int game_by_title_id(uint32_t tid)
 {
     for (int g = 0; g < G_COUNT; g++)
         if (k_games[g].titleId == tid) return g;
+    for (const RegionTitle &r : k_regionTitles)
+        for (int g = 0; g < G_COUNT; g++)
+            if (k_games[g].id == r.game && r.titleId == tid) return g;
     return -1;
 }
 
@@ -147,6 +156,8 @@ static const ReportedXex k_reportedXex[] = {
     { G_GEARS1, "c25a48e7cd98fc61aa4369b614dce782c4cb2152" },   // #127, 13,086,720 bytes (COGBox 0.3.7)
     { G_GEARS1, "5ed6f2a3746bfe02a994a226a10cdacca142030f" },   // #88, 3,252,224 bytes (COGBox 0.3.0)
     { G_JUDGMENT, "04f61832c48746df328e93bbeae40e20f72ce721" },   // #189 / #190, 23,150,592 bytes (COGBox 0.4.5)
+    { G_GEARS2, "2f94977d2d2d7d1df4ed1932d350e61dd9e6251f" },     // Japan disc (4D5308C8), 18,825,216 bytes (0.6.1, Shagg)
+    { G_JUDGMENT, "b9cc2b850b43f6e385404e3f7c19b167d228c058" },   // Japan disc (En/Ja/Pt), 22,855,680 bytes (0.6.1, Shagg)
 };
 bool xex_is_tested(const GameDef &d, const std::string &full, const std::string &code)
 {
