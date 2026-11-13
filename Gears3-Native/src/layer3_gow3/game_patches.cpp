@@ -406,7 +406,9 @@ void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content pac
 // (KiltedKernel's MR !3 turned it on by default; 0.6.0 review: kept off until a game without mods is seen to reach the
 // main menu and a level with it on - the 0.4.6 freeze was this scan. His UIScene_PathChoiceContent watch stays, so it
 // works when switched on; developer mode's "choose L|R" works either way.)
-REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, false, "Gears3",
+// 0.6.0: on again by default - the freeze is gone (the class lookup retries every 5 s and the instance scan is spread
+// over calls, 16384 slots each), and with it off the left mouse button picked the right path again in the campaign
+REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, true, "Gears3",
                     "Path choice: the mouse button on a path's side picks that path (the trigger binds swap while it is open)");
 void Gow3PathChoiceTick() {
   // (also while developer mode's scripted controller waits for a path choice: "choose L|R", ue3/script_input.h)
