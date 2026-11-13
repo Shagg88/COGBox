@@ -1873,7 +1873,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
           const int32_t kb = REXCVAR_GET(gow2_renderer_resolve_readback_max_kb);
           const bool for_exposure = by_game && hints_.exposure_readback && resolve_readback_ == 1;
           resolve_readback_max_bytes_ = kb > 0 ? uint32_t(std::min(kb, 1 << 20)) * 1024u : kb < 0 && for_exposure ? 256u * 1024u : 0u;
-          prepare_all_ = REXCVAR_GET(gow2_renderer_resolve_prepare_mirror);
+          rb_prepare_every_ = REXCVAR_GET(gow2_renderer_resolve_prepare_mirror);
           if (resolve_readback_max_bytes_)
             REXLOG_INFO("gow2_renderer: resolve read-back only for destinations of at most {} KB", resolve_readback_max_bytes_ / 1024u);
         }
@@ -4704,7 +4704,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     // 0.6.1: with a size limit, a resolve that is not read back is not prepared either (unless the switch asks for all)
     const bool rb_this = resolve_readback_ && (!resolve_readback_max_bytes_ || info.dest_extent_length <= resolve_readback_max_bytes_);
-    if (prepare_mirror_ && (prepare_all_ || rb_this || !resolve_readback_))
+    if (prepare_mirror_ && (rb_prepare_every_ || rb_this || !resolve_readback_))
       PrepareMirrorForResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
     gpu::ComputeBindings b;
     b.constants[0] = info.dest_base;
@@ -4830,7 +4830,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool alpha_test_rt0_ = false;        // patch 0027
   // ---- patch 0020: Canary readback_resolve + RequestRange for our T2 resolves ----
   uint32_t resolve_readback_ = 0;  // 0 none, 1 fast, 2 full
-  bool prepare_mirror_ = false, prepare_all_ = false;
+  bool prepare_mirror_ = false, rb_prepare_every_ = false;
   uint32_t resolve_readback_max_bytes_ = 0;  // 0.6.1: 0 = no limit
   std::vector<uint32_t> mirror_versions_;  // per 4 KB page: the watch version the mirror last got CPU bytes at (~0 never)
   struct ResolveReadbackPrev {
