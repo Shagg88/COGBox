@@ -196,7 +196,7 @@ repository the texts are in `Gears2-Native/THIRD_PARTY_NOTICES.md` and `Gears2-N
 
 | Component (shipped in the download) | Version | Licence | Text in the download |
 |---|---|---|---|
-| COGBox launcher and the ports' own code | 0.6.0 | MIT | `LICENSE.txt` |
+| COGBox launcher and the ports' own code | 0.6.1 | MIT | `LICENSE.txt` |
 | rexglue SDK runtime (`rexruntime.dll`, `rexgpu-xenos.dll`), derived from Xenia | 0.10.0-dev (bd833a2 + our patches) | BSD-3-Clause | `licenses\rexglue-sdk\` (+ its bundled libraries' licences) |
 | Xenia / Canary / Edge code ported into the renderer | Canary e6cd2e4, Edge 5045c19 | BSD-3-Clause | `licenses\Xenia-LICENSE.txt` |
 | FFmpeg XMA decoder (`avcodec-63.dll`, `avutil-61.dll`; also linked into `rexruntime.dll`) | 9.0.2 (launcher); Xenia fork (runtime) | LGPL-2.1-or-later (not a GPL build) | `licenses\FFmpeg-NOTICE.txt`, `FFmpeg-LGPL-2.1.txt` |
