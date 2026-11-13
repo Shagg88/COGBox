@@ -170,7 +170,7 @@ export const lobbyRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onHostChang
     if (!user) {
       return reply.status(401).send({ error: 'Authorization: COGBox <uuid>:<token> required' });
     }
-    const body = (request.body || {}) as { qos_data?: unknown; properties?: unknown; contexts?: unknown; invite_only?: unknown; current_players?: unknown };
+    const body = (request.body || {}) as { qos_data?: unknown; properties?: unknown; contexts?: unknown; invite_only?: unknown; current_players?: unknown; in_progress?: unknown };
     const qos = body.qos_data;
     if (qos !== undefined &&
         (typeof qos !== 'string' || qos.length > 2048 || qos.length % 2 !== 0 || !/^[0-9A-Fa-f]*$/.test(qos))) {
@@ -180,6 +180,10 @@ export const lobbyRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onHostChang
     if (inviteOnly !== undefined && typeof inviteOnly !== 'boolean') {
       return reply.status(400).send({ error: 'invite_only: true or false' });
     }
+    const inProgress = body.in_progress;
+    if (inProgress !== undefined && typeof inProgress !== 'boolean') {
+      return reply.status(400).send({ error: 'in_progress: true or false' });
+    }
     const players = body.current_players;
     if (players !== undefined && (!Number.isInteger(players) || (players as number) < 1 || (players as number) > 64)) {
       return reply.status(400).send({ error: 'current_players: 1 to 64' });
@@ -187,7 +191,7 @@ export const lobbyRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onHostChang
     const properties = body.properties === undefined ? undefined : idValues(body.properties);
     const contexts = body.contexts === undefined ? undefined : idValues(body.contexts);
     if (properties === null || contexts === null ||
-        (qos === undefined && properties === undefined && contexts === undefined && inviteOnly === undefined && players === undefined)) {
+        (qos === undefined && properties === undefined && contexts === undefined && inviteOnly === undefined && players === undefined && inProgress === undefined)) {
       return reply.status(400).send({ error: 'qos_data (hex) and/or properties / contexts ([{ id, value }])' });
     }
     const row = db.prepare('SELECT host_uuid FROM lobbies WHERE lobby_id = ?').get(request.params.lobby_id) as any;
@@ -201,6 +205,9 @@ export const lobbyRoutes: FastifyPluginAsync<{ db: DatabaseInstance; onHostChang
     const id = request.params.lobby_id;
     if (typeof players === 'number') {
       db.prepare('UPDATE lobbies SET current_players = ?, updated_at = ? WHERE lobby_id = ?').run(players, now, id);
+    }
+    if (typeof inProgress === 'boolean') {
+      db.prepare('UPDATE lobbies SET in_progress = ?, updated_at = ? WHERE lobby_id = ?').run(inProgress ? 1 : 0, now, id);
     }
     if (typeof inviteOnly === 'boolean') {
       db.prepare('UPDATE lobbies SET invite_only = ?, updated_at = ? WHERE lobby_id = ?').run(inviteOnly ? 1 : 0, now, id);

@@ -69,27 +69,38 @@ struct LineButton {
     const char *tip = nullptr;
 };
 int line_row(App &a, const std::string &tag, const std::string &state, ImVec4 state_col, int lamp, const std::string &icon, float x1,
-             const std::vector<LineButton> &buttons)
+             const std::vector<LineButton> &buttons, bool two_lines = false)
 {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float h = T(32), r = h * 0.36f, bh = T(24);
+    const float h = two_lines ? T(44) : T(32), r = T(32) * 0.36f, bh = T(24);
     const ImVec2 q(x1, p.y + h);
     const bool hot = ImGui::IsMouseHoveringRect(p, q);
     dl->AddRectFilled(p, q, U(ImVec4(1, 1, 1, hot ? 0.07f : 0.035f)));
     const ImVec2 c(p.x + S(6) + r, p.y + h * 0.5f);
-    avatar(a, dl, c, r, icon, tag, lamp);
     float bw_all = 0;
     for (const LineButton &b : buttons) bw_all += std::max(T(54), text_w(F_SMALL, FS(F_SMALL), tr(b.label)) + S(18)) + S(6);
-    const float tx = c.x + r + S(10), name_w = std::min(S(170), (x1 - S(6) - bw_all - tx) * 0.45f);
-    const float ty = p.y + (h - FS(F_SMALL)) * 0.5f - S(1);
-    dl->PushClipRect(ImVec2(tx, p.y), ImVec2(tx + name_w, q.y), true);
-    dl->AddText(F_BOLD, FS(F_SMALL), ImVec2(tx, ty), U(col::text), tag.c_str());
-    dl->PopClipRect();
-    const float sx = tx + name_w + S(10);
-    dl->PushClipRect(ImVec2(sx, p.y), ImVec2(std::max(sx, x1 - S(6) - bw_all), q.y), true);
-    dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(sx, ty), U(state_col), state.c_str());
-    dl->PopClipRect();
+    if (two_lines) {
+        // open matches: no picture (the text's colour says its state); the name on top, the details under it, each with
+        // the row's whole width up to the buttons
+        const float tx = p.x + S(10), right = std::max(tx, x1 - S(6) - bw_all - S(6));
+        const float gap = S(3), y1 = p.y + (h - FS(F_SMALL) * 2 - gap) * 0.5f - S(1);
+        dl->PushClipRect(ImVec2(tx, p.y), ImVec2(right, q.y), true);
+        dl->AddText(F_BOLD, FS(F_SMALL), ImVec2(tx, y1), U(col::text), tag.c_str());
+        dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(tx, y1 + FS(F_SMALL) + gap), U(state_col), state.c_str());
+        dl->PopClipRect();
+    } else {
+        avatar(a, dl, c, r, icon, tag, lamp);
+        const float tx = c.x + r + S(10), name_w = std::min(S(170), (x1 - S(6) - bw_all - tx) * 0.45f);
+        const float ty = p.y + (h - FS(F_SMALL)) * 0.5f - S(1);
+        dl->PushClipRect(ImVec2(tx, p.y), ImVec2(tx + name_w, q.y), true);
+        dl->AddText(F_BOLD, FS(F_SMALL), ImVec2(tx, ty), U(col::text), tag.c_str());
+        dl->PopClipRect();
+        const float sx = tx + name_w + S(10);
+        dl->PushClipRect(ImVec2(sx, p.y), ImVec2(std::max(sx, x1 - S(6) - bw_all), q.y), true);
+        dl->AddText(F_SMALL, FS(F_SMALL), ImVec2(sx, ty), U(state_col), state.c_str());
+        dl->PopClipRect();
+    }
     int pressed = -1;
     float bx = x1 - S(6);
     for (int i = int(buttons.size()) - 1; i >= 0; --i) {
@@ -375,6 +386,28 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
             ImGui::PopID();
         }
         ui_note("You can invite friends while a game hosts a lobby or match.");
+
+        // open matches: public matches with real players in them (no names), Join drops you in (join in progress)
+        ImGui::Dummy(ImVec2(0, S(10)));
+        th_heading(tr("OPEN MATCHES"), x1);
+        if (!v.matches_known) ui_note("Looking for open matches...");
+        else if (v.matches.empty()) ui_note("No open matches right now - host a public match and it shows up here.");
+        for (const SocialMatch &m : v.matches) {
+            ImGui::PushID(m.lobby_id.c_str());
+            const std::string mode = match_mode(m), label = match_label(m);
+            std::string details = label.size() > mode.size() + 4 ? label.substr(mode.size() + 4) : label;   // after "<mode> · "
+            // "In progress" only when the host says so (patch 84): a host without it never reports a start
+            if (m.full() || m.in_progress) details += std::string(" \xC2\xB7 ") + tr(m.full() ? "Full" : "In progress");
+            const bool ready = m.game >= 0 && a.st[m.game].ready == R_READY, can = ready && !m.full();
+            const int b = line_row(a, tr(mode.c_str()), details, m.full() ? col::dim : m.in_progress ? col::amber : col::good,
+                                   m.full() ? 0 : (m.in_progress ? 2 : 1), "", x1,
+                                   { { "JOIN", can, true, m.full() ? "This match is full." :
+                                                          !ready ? "Set up this game in COGBox to join." :
+                                                          m.in_progress ? "Join the match in progress: you take a bot's place." :
+                                                                          "Join this match." } }, true);
+            if (b == 0) social_do(SocialAction::JoinMatch, m.lobby_id);
+            ImGui::PopID();
+        }
     }
     ImGui::EndChild();
 }
