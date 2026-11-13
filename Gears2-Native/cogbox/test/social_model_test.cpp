@@ -238,7 +238,7 @@ int main() {
         g2.playlist = 45; CHECK(match_mode(g2) == std::string("Submission"));
         g2.playlist = 99; CHECK(match_mode(g2) == std::string("Match"));
         SocialMatch g3{}; g3.game = 1;
-        g3.playlist = 11; CHECK(match_mode(g3) == std::string("Team Deathmatch"));
+        g3.playlist = 11; CHECK(match_mode(g3) == std::string("Casual (under level 3)"));   // the game refuses graduated players
         g3.playlist = 36; CHECK(match_mode(g3) == std::string("Beast"));
         g3.playlist = 80; CHECK(match_mode(g3) == std::string("Guardian"));
         SocialMatch gj{}; gj.game = 2;

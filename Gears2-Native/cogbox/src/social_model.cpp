@@ -244,7 +244,8 @@ const Mode kGears2Modes[] = {
     { 5, "Horde" }, { 20, "Horde" }, { 56, "Horde" }, { 6, "Wingman" }, { 21, "Wingman" }, { 57, "Wingman" },
 };
 const Mode kGears3Modes[] = {
-    { 11, "Team Deathmatch" }, { 21, "Team Deathmatch" }, { 30, "Team Deathmatch" }, { 100, "Team Deathmatch" },
+    { 11, "Casual (under level 3)" }, { 21, "Casual (under level 3)" }, { 30, "Casual (under level 3)" },
+    { 100, "Casual (under level 3)" },   // "Newbie": Casual Versus, which the game closes to players at level 3 and up
     { 12, "Warzone" }, { 22, "Warzone" }, { 31, "Warzone" }, { 13, "Execution" }, { 23, "Execution" }, { 32, "Execution" },
     { 14, "Capture the Leader" }, { 24, "Capture the Leader" }, { 33, "Capture the Leader" },
     { 15, "KOTH" }, { 25, "KOTH" }, { 34, "KOTH" }, { 16, "Horde" }, { 26, "Horde" }, { 35, "Horde" },
