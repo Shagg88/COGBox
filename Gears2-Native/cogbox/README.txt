@@ -2,7 +2,7 @@ COGBox - Gears of War native PC ports
 =====================================
 
 COGBox starts the native PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
-Judgment (Gears of War is new in 0.3.0 and still a preview).
+Judgment. This README is for COGBox 0.6.1.
 These are fan-made ports, rebuilt from the Xbox 360 games' own code by static recompilation. This
 is an unofficial fan project. COGBox isn't affiliated with Microsoft, Epic Games or The
 Coalition.
@@ -14,9 +14,9 @@ What you need
 -------------
 - Windows 10 or 11, 64-bit - or Linux / Steam Deck through Proton (see below, experimental).
 - A CPU with AVX2 (Intel Haswell / AMD Ryzen or newer, about 2013 on).
-- A graphics card with Direct3D 12.
+- A graphics card with DirectX 12 (Shader Model 6.5 or newer) or Vulkan.
 - Your own copy of the game, in one of these forms:
-    * a disc image (.iso) of the US disc,
+    * a disc image (.iso) of the US disc (the Japanese Gears of War 2 and Judgment discs work too),
     * a Games on Demand copy from your console's hard drive, or
     * a folder with the disc's files (default.xex and the rest) that you already extracted.
 - Each game's title update - REQUIRED. Title updates are now required to play; disc-only versions
@@ -34,17 +34,19 @@ What you need
 
 Getting started
 ---------------
-1. Unzip the whole folder somewhere you can write to, for example C:\Games\COGBox. Program Files
-   won't work, because Windows protects it.
+1. Right-click COGBox-0.6.1.zip > Extract All... to a folder of its own that you can write to, for
+   example C:\Games\COGBox. Don't start COGBox from inside the zip, and don't use Program Files
+   (Windows protects it) - COGBox tells you on start-up if it's in such a place.
    Keep the folders when unzipping (Windows' Extract All, 7-Zip, or "unzip" on Linux). Some tools,
    such as KDE's Ark, flatten them - COGBox then can't find the games.
 2. Start CogBox.exe. The programs aren't code-signed, so the first time Windows may show "Windows
    protected your PC": choose "More info", then "Run anyway".
-3. Drag and drop your disc image, Games on Demand file, or extracted game folder onto the
-   COGBox window (this is the only way to add games, title updates and DLC).
+3. Add your disc image, Games on Demand file, or extracted game folder: drag and drop it onto the
+   COGBox window, or use Choose a file... / Choose a folder... / Paste a path on the main screen
+   (drag and drop doesn't work when COGBox runs as administrator).
    COGBox works out which game it is, unpacks it next to itself if needed, and checks it is the
    release the ports are made for.
-4. Add the title update the same way (it's required): drop the package onto the window. COGBox unpacks it into <Game>\game\update
+4. Add the title update the same way (it's required). COGBox unpacks it into <Game>\game\update
    and always plays with it.
 5. Press PLAY. SETTINGS opens the game's page, which has graphics, frame rate, controls and more.
    Every setting has a short description.
@@ -60,6 +62,33 @@ instead of A / B / X / Y, LB / RB.
 In the game: Back + Start (Share + Options on PlayStation, or F1) opens the in-game menu - the same settings, Resume,
 Restart to apply and Quit game. Most settings take effect when the game restarts; Restart to
 apply does that for you.
+
+
+New in 0.6.1
+------------
+- Faster: measured against 0.6.0 at 1440p on an RTX 3080 Ti, DirectX 12 is up to 34% faster
+  (Judgment +34%, Gears 2 +17%, Gears 3 +8%, Gears 1 the same) and Vulkan (experimental) up to 77%
+  (Judgment +77%, Gears 2 +38%; Gears 3 and Gears 1 a few percent slower on Vulkan).
+- Vulkan's first-play shader freezes are gone in all four games.
+- Add games without drag and drop: Choose a file... / Choose a folder... / Paste a path.
+- Import saves... (a game's About tab): your saves from Xenia or an Xbox 360. A save dropped onto
+  COGBox is imported the same way.
+- Online play (by Flippage): matchmaking finds only the playlist you picked, Gears 2 players can host
+  again after a quit, and Show ping (Display tab) shows your ping to the host in the FPS bar.
+- Judgment's brightness now matches the Xbox 360; the launcher's Brightness setting is gone.
+- DirectX 12 runs on graphics cards with Shader Model 6.5; the Japanese Gears 2 and Judgment discs
+  are recognised; Gears 1 offers Insane from the start; COGBox says when it's started from the zip,
+  from a folder it can't write to, or as administrator.
+- Full list: CHANGES.md on GitHub (https://github.com/Shagg88/COGBox).
+
+
+New in 0.6.0
+------------
+- Online multiplayer (by Flippage), off until you turn it on in the Social tab: COGBox's own
+  matchmaking, peer to peer, with friends, invites and profile pictures (also in the in-game menu,
+  F8). Regions US, OCE and Europe. What is sent and kept is in PRIVACY.md.
+- Campaign mods and a Mods tab (by KiltedKernel); delete a profile (Profiles > DELETE THIS PROFILE).
+- COGBox is back on GitHub; the updater checks GitHub first, then GitLab.
 
 
 New in 0.5.0

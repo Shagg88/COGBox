@@ -30,7 +30,7 @@ https://recomplauncher.com/game/cogbox
 - **Gears 1 has Insane from the start too** (GitHub #284): the game part has worked since 0.5.0, but the launcher still
   hid the option for Gears 1. It's now offered like in the other three games (Gameplay > Original unlock rules off).
 - **The tested versions are shown:** each game's About tab and the title-update notice name the game and title-update
-  versions COGBox is made for, and how many other copies players have reported working. The README lists them too.
+  versions COGBox is made for, and how many other copies players have reported working. The README on GitHub lists them too.
 - **Japanese discs:** the Japanese Gears of War 2 and Gears of War: Judgment discs now count as tested (no "untested version" notice), and the Japanese Gears 2 disc is recognised as Gears 2 when you drop it on COGBox.
 
 ### Vulkan
