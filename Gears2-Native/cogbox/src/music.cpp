@@ -155,6 +155,7 @@ void dump(int game, const std::vector<int16_t> &pcm)
 
 struct Track { int game = -1; std::vector<int16_t> pcm; size_t pos = 0; };
 SDL_AudioStream *g_stream = nullptr;
+bool g_audioOk = false;        // 0.6.2: the device opened once (g_stream is closed while silent, see music_update)
 SDL_Mutex *g_lock = nullptr;
 SDL_Condition *g_wake = nullptr;
 SDL_Thread *g_reader = nullptr;
@@ -229,7 +230,7 @@ int SDLCALL reader(void *)
 
 bool music_init()
 {
-    if (g_initTried) return g_stream != nullptr;
+    if (g_initTried) return g_audioOk;
     g_initTried = true;
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) return false;
     g_lock = SDL_CreateMutex();
@@ -237,6 +238,7 @@ bool music_init()
     SDL_AudioSpec spec{ SDL_AUDIO_S16, 2, kRate };
     g_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, nullptr);
     if (!g_stream) return false;
+    g_audioOk = true;
     g_reader = SDL_CreateThread(reader, "music", nullptr);
     SDL_ResumeAudioStreamDevice(g_stream);
     return true;
@@ -252,7 +254,7 @@ void music_play(const Request &r)
     if (r.game == g_want && key == g_wantKey) return;
     if (r.game >= 0 && !music_init()) return;
     g_want = r.game; g_wantKey = key;
-    if (!g_stream) return;
+    if (!g_audioOk) return;
     const int gen = ++g_gen;
     SDL_LockMutex(g_lock);
     if (g_cur) {                                   // what plays fades out now; the new one fades in when it is read
@@ -319,7 +321,20 @@ void music_update(App &a)
         g_enabled = music_on(a);
         g_paused = a.run.proc != nullptr;   // a game is running: silent until it closes, then it fades back in
         g_volume = std::max(0, std::min(100, a.ini.geti("Launcher", "MusicVolume", 42))) / 100.0f;
-        SDL_UnlockMutex(g_lock);
+        // 0.6.2 Proton / CrossOver review (R3, GitHub #261): once the music has faded out (music off, or a game running)
+        // the launcher's audio device is CLOSED instead of being fed silence, so a game never shares the sound output with
+        // a second, silent stream at another rate (CrossOver: two CoreAudio clients at 44.1 / 48 kHz). (Pausing would not
+        // do: SDL keeps the device itself running.) It opens again when there is something to play (fading in as before).
+        const bool silent = (!g_enabled || g_paused) && g_gainCur <= 0.0f && !g_old;
+        SDL_UnlockMutex(g_lock);   // (not held below: closing waits for the callback, which takes the lock)
+        if (g_audioOk && silent && g_stream) {
+            SDL_DestroyAudioStream(g_stream);   // the callback has stopped after this
+            g_stream = nullptr;
+        } else if (g_audioOk && !silent && !g_stream) {
+            SDL_AudioSpec spec{ SDL_AUDIO_S16, 2, kRate };
+            g_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, nullptr);
+            if (g_stream) SDL_ResumeAudioStreamDevice(g_stream);
+        }
     }
 }
 
