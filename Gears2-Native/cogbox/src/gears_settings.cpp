@@ -959,8 +959,8 @@ std::string wine_note(const Option& o, const Environment& env) {
         return "Under Proton / Wine fewer frames wait in line as usual; NVIDIA Reflex and AMD Anti-Lag 2 are not used there.";
     if (o.id == "SystemLink" && !env.mac && env.low_port_start > 1000)   // 0.6.2 Proton review R4
         return "On Linux / Steam Deck: a game you host can't be joined yet - the games host on port 1000, and this PC keeps "
-               "the low ports for administrator programs. Joining others works. A possible fix (not confirmed yet) is in the "
-               "README (Linux and Steam Deck).";
+               "the low ports for administrator programs. Joining others should work. A possible fix (not confirmed yet) is in "
+               "the README (\"Hosting from Linux / Steam Deck\").";
     if (o.id == "FrameCap" && env.steam_deck)
         return "Steam Deck: 60 is the recommended limit. 40, with the screen's refresh rate set to 40 Hz in Steam's Performance menu, saves battery and stays smooth. Leave Steam's own frame limit off when you use this one.";
     return "";

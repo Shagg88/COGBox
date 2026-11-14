@@ -119,9 +119,9 @@ settings are kept.
 The first minutes of each game can stutter while shaders are built; **Prepare all shaders now** on the Graphics tab
 does it in one go.
 
-**Hosting System Link from Linux / Steam Deck (not confirmed yet):** the games host System Link on network port 1000,
+**Hosting from Linux / Steam Deck (not confirmed yet):** the games host System Link on network port 1000,
 and Linux only lets administrator programs use ports below 1024, so a game hosted on Linux can't be joined (joining a
-game hosted elsewhere works). We expect this to fix it, but we haven't been able to test it - please tell us in a
+game hosted elsewhere should work). We expect this to fix it, but we haven't been able to test it - please tell us in a
 GitHub ticket whether it works for you. In a terminal (on a Steam Deck: Desktop Mode, Konsole; `sudo` needs a password
 set with `passwd` first):
 

@@ -299,7 +299,9 @@ void shell_open(const std::string &target)
 {
     const bool url = target.find("://") != std::string::npos || target.rfind("mailto:", 0) == 0;
     if (under_wine() && !url) {
-        const std::wstring arg = L"\"" + widen(target) + L"\"";
+        std::string t = target;   // review r10: a trailing \ would escape the closing quote
+        while (t.size() > 3 && (t.back() == '\\' || t.back() == '/')) t.pop_back();
+        const std::wstring arg = L"\"" + widen(t) + L"\"";
         if ((INT_PTR)ShellExecuteW(nullptr, L"open", L"winebrowser.exe", arg.c_str(), nullptr, SW_SHOWNORMAL) > 32) return;
     }
     ShellExecuteW(nullptr, L"open", widen(target).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
