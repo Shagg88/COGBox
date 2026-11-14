@@ -723,6 +723,10 @@ static void option_row(App &a, int g, const gs::Option &o)
         // Shagg 3 Nov: on Proton / Wine Vulkan is the recommended path (DirectX 12 crashes there), so not "experimental"
         if (o.id == "Api" && a.env[g].wine && items.size() > 1 && items[1] == "Vulkan (experimental)") { items[0] = "DirectX 12"; items[1] = "Vulkan"; }
         for (std::string &it : items) it = tr(it);   // 0.2.0
+        // 0.6.2 Proton review (R11): settings from Windows say DirectX 12, but "Graphics API on Proton / Wine" = Automatic
+        // runs Vulkan - say what the game will actually run
+        if (o.id == "Api" && a.env[g].wine && !a.env[g].mac && idx == 0 && !items.empty() && gs::runs_vulkan(a.cur[g], a.env[g]))
+            items[0] += std::string(" ") + tr("(Proton runs Vulkan)");
         // notes/83: AMD FSR frame generation runs on Vulkan too, experimental there
         if (o.id == "FrameGen" && items.size() > 1 && gs::runs_vulkan(a.cur[g], a.env[g])) items[1] += std::string(" ") + tr("(experimental on Vulkan)");
         if (ImGui::BeginCombo("##v", items.empty() ? "" : items[idx].c_str())) {
@@ -1225,14 +1229,20 @@ static void about_tab(App &a, int g)
     }
     // 0.2.0: desktop shortcuts - COGBox itself, and this game (it opens COGBox and starts the game)
     static const char *k_pinTip = "To pin one to the taskbar or Start, right-click the shortcut and choose Pin (Windows doesn't let programs do that themselves).";
-    if (small_button("Desktop shortcut: COGBox")) {
+    // 0.6.2 Proton / CrossOver review: under Wine a .lnk lands on Wine's own desktop inside the prefix / bottle, which the
+    // player never sees - say how to get a one-game entry instead
+    if (a.wine && a.mac)
+        ui_note(std::string("Desktop shortcuts: in CrossOver, use Run Command, add --play ") + d.key + " after CogBox.exe and choose Save Command as a Launcher - it starts " + d.name + " straight away.");
+    else if (a.wine)
+        ui_note(std::string("Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to --play ") + d.key + " to start " + d.name + " straight away.");
+    else if (small_button("Desktop shortcut: COGBox")) {
         std::string err;
         if (make_shortcut("COGBox", "", "Gears of War native PC ports - launcher", err)) set_message(a, "A COGBox shortcut is on your desktop.", false);
         else set_message(a, "The shortcut couldn't be made: " + err, true);
     }
-    ui_tip(k_pinTip);
-    ImGui::SameLine();
-    {
+    if (!a.wine) {
+        ui_tip(k_pinTip);
+        ImGui::SameLine();
         const std::string label = std::string("Desktop shortcut: ") + d.name;
         if (small_button(label.c_str())) {
             std::string err;

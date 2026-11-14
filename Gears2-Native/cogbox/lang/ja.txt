@@ -1271,6 +1271,7 @@ Can freeze on NVIDIA cards with Vulkan while the NVIDIA overlay (NVIDIA App / Al
 Choose a folder... = フォルダーを選択...
 Paste a Linux path = Linux のパスを貼り付け
 Paste a Mac path = Mac のパスを貼り付け
+(Proton runs Vulkan) = (Proton では Vulkan で動作)
 Look for my games = ゲームを探す
 Looking... = 検索中...
 A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\home\... is /home/...). = ゲーム (default.xex)、タイトルアップデート、または DLC が入ったフォルダー。Linux のフォルダーは Z: の下にあります (Z:\home\... は /home/...)。

@@ -9,6 +9,9 @@
 #include <string.h>
 #include <algorithm>
 #include <vector>
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+#include <cpuid.h>
+#endif
 
 #include "../third_party/miniz/miniz.h"
 
@@ -130,7 +133,26 @@ std::vector<std::string> report_gpu_names()
     return out;
 }
 
-bool cpu_has_avx2() { return IsProcessorFeaturePresent(40) != 0; }   // PF_AVX2_INSTRUCTIONS_AVAILABLE
+// PF_AVX2_INSTRUCTIONS_AVAILABLE first. 0.6.2 Proton / CrossOver review (R2): older Wine / CrossOver builds don't fill that
+// flag, so a real AVX2 CPU (or Rosetta on macOS 15+, which has AVX2) was refused. Then ask the CPU itself: CPUID leaf 7 EBX
+// bit 5 (AVX2), with leaf 1's OSXSAVE + AVX bits and XGETBV saying the system saves the YMM registers.
+bool cpu_has_avx2()
+{
+    if (IsProcessorFeaturePresent(40)) return true;
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+    unsigned a = 0, b = 0, c = 0, d = 0;
+    if (!__get_cpuid(0, &a, &b, &c, &d) || a < 7) return false;
+    if (!__get_cpuid(1, &a, &b, &c, &d)) return false;
+    if (!(c & (1u << 27)) || !(c & (1u << 28))) return false;   // OSXSAVE, AVX
+    unsigned lo = 0, hi = 0;
+    __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    if ((lo & 6) != 6) return false;                             // XMM and YMM state saved by the system
+    __cpuid_count(7, 0, a, b, c, d);
+    return (b & (1u << 5)) != 0;
+#else
+    return false;
+#endif
+}
 
 std::string report_system_text(const std::string &displays)
 {
@@ -182,7 +204,7 @@ static void replace_all_ci(std::string &s, const std::string &from, const std::s
 static bool generic_name(const std::string &n)
 {
     static const char *g[] = { "user", "users", "admin", "administrator", "owner", "guest", "default", "public", "player", "pc",
-                               "steamuser", "crossover", "root" };
+                               "steamuser", "crossover", "root", "deck", "steam", "gamer", "linux", "mac" };   // 0.6.2: the Deck's account is "deck"
     for (const char *x : g) if (_stricmp(n.c_str(), x) == 0) return true;
     return false;
 }

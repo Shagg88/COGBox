@@ -458,7 +458,10 @@ std::vector<std::string> roots_here(const Info &i)
             if (!it->is_directory(e2)) continue;
             const std::string name = utf8(it->path().filename().wstring());
             const std::string u = unixDir + "/" + name;
-            if (unixDir == "/Volumes" && name.rfind("Macintosh HD", 0) == 0) continue;   // the Mac's own disk (= /): too big to search
+            if (unixDir == "/Volumes") {   // the Mac's own disk (= /, any name) is too big to search: it holds macOS itself
+                std::error_code e4;
+                if (name.rfind("Macintosh HD", 0) == 0 || fs::exists(it->path() / L"System" / L"Library" / L"CoreServices", e4)) continue;
+            }
             if (alsoChildren && name == i.user) {   // /run/media/deck/<card label> (SteamOS 3.5+)
                 std::error_code e3;
                 for (fs::directory_iterator c(it->path(), e3); !e3 && c != end; c.increment(e3))

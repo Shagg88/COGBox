@@ -876,7 +876,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "WalkMode") on = s.b("Mnk");                                    // GitHub #125
     else if (o.id == "AimSens") on = s.b("Mnk") && cap_exe(env, "ue3_mouse_aim_scale");    // 0.5.0: games whose exe knows the camera FOV
     else if (o.id == "ZoomSens") on = s.b("Mnk") && cap_exe(env, "ue3_mouse_zoom_scale");
-    else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("AAMode") <= 4 && (s.i("Api") == 0 || (s.i("AAMode") == 2 && fsr_vulkan_on(s, env)));   // PS1 352, 473; job 521; T2x: no scene scale; fsr049: FSR on Vulkan (opt-in)
+    else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("AAMode") <= 4 && (s.i("Api") == 0 || env.mac ||   /* r5: a Mac runs DX12 whatever Api says */ (s.i("AAMode") == 2 && fsr_vulkan_on(s, env)));   // PS1 352, 473; job 521; T2x: no scene scale; fsr049: FSR on Vulkan (opt-in)
     else if (o.id == "DlssModel") on = s.i("AAMode") == 3 && !runs_vulkan(s, env);      // 0.4.9: DLSS only (DirectX 12)
     else if (o.id == "FrameGen" && runs_vulkan(s, env)) {   // job 521; notes/83: AMD FSR frame generation on Vulkan
         const Availability v = framegen_choice_available(1, env, true);
@@ -2079,8 +2079,9 @@ bool blocked_by_cpu(Game g, const Environment& env, std::string* message) {   //
     if (!cap_exe(env, "gn_cpu_level=x86-64-v") || env.has_avx2) return false;
     if (message)
         *message = std::string("This build of ") + k_gameNames[static_cast<int>(g)] + " needs a CPU with AVX2 (Intel Haswell / AMD "
-                   "Ryzen, about 2013 and newer), and this PC's CPU does not report it.\n\nIf this is a virtual machine, turn on "
-                   "passing the host CPU's features through to it.";
+                   "Ryzen, about 2013 and newer), and this PC's CPU does not report it.\n\n" +
+                   std::string(env.mac ? "On a Mac this needs macOS 15 (Sequoia) or newer, whose Rosetta runs AVX2, and an up-to-date CrossOver."
+                                       : "If this is a virtual machine, turn on passing the host CPU's features through to it.");
     return true;
 }
 

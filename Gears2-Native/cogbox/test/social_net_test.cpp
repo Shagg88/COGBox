@@ -82,6 +82,27 @@ int main() {
         CHECK(renamed.has_value() && renamed->tag() == "Guest Two#0002" && renamed->token == "tok" && renamed->xuid == "77");
         CHECK(!update_account_name(d + "\\missing", "X", "0001"));
     }
+
+    // 0.6.2 GitHub #302: a token-less file (a game's claim never completed) is completed, or set aside, never ignored
+    {
+        const std::string p = d + "\\partial";
+        fs::create_directories(dir / "partial");
+        CHECK(!read_account_partial(p).has_value());
+        std::ofstream(dir / "partial" / "identity.json") << R"({"uuid":"u2","display_name":"Tavo","discriminator":"","token":""})";
+        auto part = read_account_partial(p);
+        CHECK(part.has_value() && part->uuid == "u2" && part->token.empty());
+        CHECK(!read_account(p).has_value());
+        SocialAccount c;
+        c.uuid = "u2"; c.token = "t2"; c.name = "Tavo"; c.discriminator = "1234"; c.xuid = "9";
+        CHECK(write_account_replace(p, c));
+        auto full = read_account(p);
+        CHECK(full.has_value() && full->tag() == "Tavo#1234" && full->token == "t2" && full->uuid == "u2");
+        CHECK(account_dir_writable(p));
+        CHECK(!fs::exists(dir / "partial" / "identity.write-test.tmp"));
+        CHECK(set_account_aside(p, "no-token"));
+        CHECK(!fs::exists(dir / "partial" / "identity.json") && fs::exists(dir / "partial" / "identity.json.no-token"));
+        CHECK(!read_account_partial(p).has_value());
+    }
     fs::remove_all(dir);
     if (g_failures == 0) std::printf("social_net_test: all passed\n");
     return g_failures;

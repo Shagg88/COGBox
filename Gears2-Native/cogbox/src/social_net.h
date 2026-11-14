@@ -21,6 +21,14 @@ bool write_account_exclusive(const std::string& identity_dir_utf8, const SocialA
 // After a rename: the existing identity.json takes the new name and number (every other field kept). False when
 // there is no readable identity.json.
 bool update_account_name(const std::string& identity_dir_utf8, const std::string& name, const std::string& discriminator);
+// 0.6.2 (GitHub #302): identity.json as it is, with or without its token (a game writes it before its claim succeeds).
+std::optional<SocialAccount> read_account_partial(const std::string& identity_dir_utf8);
+// The whole account written over identity.json (new file, swapped in) - for a claim that completed a token-less file.
+bool write_account_replace(const std::string& identity_dir_utf8, const SocialAccount& a);
+// identity.json set aside as identity.json.<suffix> (kept, never deleted); true when there is no identity.json after.
+bool set_account_aside(const std::string& identity_dir_utf8, const std::string& suffix);
+// Whether a file can be made in the profile folder (tried with a scratch file, removed again).
+bool account_dir_writable(const std::string& identity_dir_utf8);
 
 // The COGBox multiplayer server (Flippage's Oracle VM; Shagg agreed 2026-11-08). CogBox.ini [Online] Server overrides.
 constexpr const char* kCogboxServer = "https://cogbox-mp.duckdns.org";

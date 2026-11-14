@@ -54,12 +54,61 @@ bool write_account_exclusive(const std::string& identity_dir_utf8, const SocialA
     std::filesystem::create_directories(std::filesystem::path(widen(identity_dir_utf8)), ec);
     const json j = { { "uuid", a.uuid }, { "token", a.token }, { "display_name", a.name },
                      { "discriminator", a.discriminator }, { "xuid", a.xuid } };
-    // "wx": created only when there is none (the games make theirs the same way)
-    FILE* f = _wfopen(identity_file(identity_dir_utf8).c_str(), L"wx");
-    if (!f) return false;
+    // Created only when there is none (the games make theirs the same way, with fopen "wx"). 0.6.2 (GitHub #302): not
+    // _wfopen "wx" here - the launcher links the system msvcrt.dll, whose fopen predates the C11 "x" flag (Wine's
+    // ignores it and overwrites); CREATE_NEW is the same promise from Windows itself.
+    HANDLE h = CreateFileW(identity_file(identity_dir_utf8).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
     const std::string text = j.dump(2);
-    const bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+    DWORD put = 0;
+    const bool ok = WriteFile(h, text.data(), (DWORD)text.size(), &put, nullptr) && put == text.size();
+    CloseHandle(h);
+    return ok;
+}
+
+std::optional<SocialAccount> read_account_partial(const std::string& identity_dir_utf8) {
+    std::ifstream in(identity_file(identity_dir_utf8), std::ios::binary);
+    if (!in) return std::nullopt;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return account_from(json::parse(ss.str(), nullptr, false), false);
+}
+
+bool write_account_replace(const std::string& identity_dir_utf8, const SocialAccount& a) {
+    const std::filesystem::path file = identity_file(identity_dir_utf8);
+    const json j = { { "uuid", a.uuid }, { "token", a.token }, { "display_name", a.name },
+                     { "discriminator", a.discriminator }, { "xuid", a.xuid } };
+    std::filesystem::path tmp = file;
+    tmp += L".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return false;
+        out << j.dump(2);
+        if (!out) return false;
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, file, ec);
+    return !ec;
+}
+
+bool set_account_aside(const std::string& identity_dir_utf8, const std::string& suffix) {
+    const std::filesystem::path file = identity_file(identity_dir_utf8);
+    std::filesystem::path aside = file;
+    aside += widen("." + suffix);
+    MoveFileExW(file.c_str(), aside.c_str(), MOVEFILE_REPLACE_EXISTING);
+    std::error_code ec;
+    return !std::filesystem::exists(file, ec);
+}
+
+bool account_dir_writable(const std::string& identity_dir_utf8) {
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(widen(identity_dir_utf8)), ec);
+    const std::filesystem::path probe = std::filesystem::path(widen(identity_dir_utf8)) / L"identity.write-test.tmp";
+    FILE* f = _wfopen(probe.c_str(), L"wb");
+    if (!f) return false;
+    const bool ok = std::fputs("x", f) >= 0;
     std::fclose(f);
+    std::filesystem::remove(probe, ec);
     return ok;
 }
 
