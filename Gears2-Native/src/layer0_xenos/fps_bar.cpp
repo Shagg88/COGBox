@@ -115,11 +115,14 @@ class FpsBar final : public rex::ui::ImGuiDialog {
         std::snprintf(ping, sizeof(ping), "Ping -- (hosting)");
       else if (ping_.kind == PV::ToHost && ping_.ms >= 0)
         std::snprintf(ping, sizeof(ping), "Ping %d ms", ping_.ms);
-      else
+      else if (ping_.kind == PV::ToHost)
         std::snprintf(ping, sizeof(ping), "Ping --");
+      else
+        ping[0] = 0;   // 0.6.2: not online / in no match - no ping to show (0.6.1 showed "Ping --" offline)
       const size_t used = std::strlen(text);
-      std::snprintf(text + used, sizeof(text) - used, "%s%s", used ? "     " : "", ping);
+      if (ping[0]) std::snprintf(text + used, sizeof(text) - used, "%s%s", used ? "     " : "", ping);
     }
+    if (!text[0]) return;   // FPS counter off and no ping to show: no empty bar
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);  // readable at 1440p / 4K
     ImGui::SetNextWindowBgAlpha(0.45f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * scale, 4.0f * scale));
