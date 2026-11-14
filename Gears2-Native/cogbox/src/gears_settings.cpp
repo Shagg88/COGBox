@@ -1913,7 +1913,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         const int db = std::max(0, std::min(2, s.i("DeadBodies")));
         if (avail("DeadBodies") && db > 0 && (isG3 || isGJ || isG1) && cap_exe(env, "ue3_exec")) {
             const std::string life = std::to_string(k_bodyLife[db]), unseen = std::to_string(k_bodyUnseen[db]);
-            if (isG1) exec.push_back("set WarPawn DurationBeforeDestroyingDueToNotBeingSeen " + unseen);
+            if (isG1) {   // the count cap again as a class default: Gears 1's ini file for it is not confirmed (review r14)
+                exec.push_back("set WarPawn MaxAllowedDeadRagDollPawns " + std::to_string(k_bodyCap[db]));
+                exec.push_back("set WarPawn DurationBeforeDestroyingDueToNotBeingSeen " + unseen);
+            }
             else {
                 exec.push_back("set GearPawn CorpseMaxLifeSpan " + life);
                 exec.push_back("set GearPawn DurationBeforeDestroyingDueToNotBeingSeen " + unseen);

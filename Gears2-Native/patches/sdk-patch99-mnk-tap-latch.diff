@@ -1,20 +1,5 @@
-From 393f6c455121c0889b7e6993c4cc68019d0d7822 Mon Sep 17 00:00:00 2001
 From: Shagg <shagg.dev88@gmail.com>
-Date: Sat, 14 Nov 2026 10:30:05 -0800
-Subject: [PATCH] patch99 (GitHub #305): short key / mouse taps kept until the
- game's own read (mnk_tap_latch_ms)
-
----
- include/rex/input/input_driver.h         | 14 +++++
- include/rex/input/mnk/mnk_input_driver.h |  4 ++
- include/rex/input/tap_latch.h            | 42 ++++++++++++++
- src/input/input_system.cpp               | 20 ++++++-
- src/input/mnk/mnk_input_driver.cpp       | 43 ++++++++++++++
- tests/unit/CMakeLists.txt                |  1 +
- tests/unit/input/tap_latch_test.cpp      | 73 ++++++++++++++++++++++++
- 7 files changed, 196 insertions(+), 1 deletion(-)
- create mode 100644 include/rex/input/tap_latch.h
- create mode 100644 tests/unit/input/tap_latch_test.cpp
+Subject: [PATCH] patch99 (GitHub #305): short key / mouse taps kept until the game's own read (mnk_tap_latch_ms), with review r14 fixes
 
 diff --git a/include/rex/input/input_driver.h b/include/rex/input/input_driver.h
 index 52116f1..02aaeb9 100644
@@ -65,10 +50,10 @@ index 2d36faa..b558a2e 100644
    uint32_t packet_number_ = 0;
 diff --git a/include/rex/input/tap_latch.h b/include/rex/input/tap_latch.h
 new file mode 100644
-index 0000000..7af21d9
+index 0000000..4def5b7
 --- /dev/null
 +++ b/include/rex/input/tap_latch.h
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,45 @@
 +// COGBox SDK patch 99 (GitHub #305): a key or mouse tap shorter than one game read still reaches the game.
 +// The game reads the pad once per frame (about every 33 ms at 30 fps); a tap that goes down and up between two
 +// reads used to be lost. Each pad bind that goes down is kept "pending" until the game's own read (InGuestPoll) has
@@ -99,7 +84,10 @@ index 0000000..7af21d9
 +    uint32_t out = live | pending;
 +    // Pressed again after a read that showed it down (released in between): one read "up" first, so the game sees
 +    // a second press instead of one long one. The new press stays pending for the next read.
-+    out &= ~(reported & pending);
++    // Only for the game's reads: 'reported' is what the game was last shown, which says nothing about a host reader
++    // (review r14: the COGBox menu, open while the game's reads are blocked, would miss a tap of a key the game last saw
++    // held, and RemoveUIInputBlocker would not mask it). Host reads get live | pending.
++    if (guest) out &= ~(reported & pending);
 +    if (guest) {
 +      pending &= ~out;
 +      reported = out;
@@ -112,7 +100,7 @@ index 0000000..7af21d9
 +
 +}  // namespace rex::input
 diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
-index 9f7bde8..0fa191a 100644
+index 9f7bde8..c38160b 100644
 --- a/src/input/input_system.cpp
 +++ b/src/input/input_system.cpp
 @@ -68,6 +68,20 @@ REXCVAR_DEFINE_STRING(pad_remap, "", "Input",
@@ -136,15 +124,17 @@ index 9f7bde8..0fa191a 100644
  namespace {
  
  // ---- Patch 55: radial dead zone and button layout (see the cvars above) ----
-@@ -415,7 +429,11 @@ X_RESULT InputSystem::GetState(uint32_t user_index, X_INPUT_STATE* out_state) {
+@@ -415,7 +429,13 @@ X_RESULT InputSystem::GetState(uint32_t user_index, X_INPUT_STATE* out_state) {
      return X_ERROR_SUCCESS;
    }
  
 -  X_RESULT result = GetStateForUI(user_index, out_state);
 +  X_RESULT result;
-+  {
++  if (out_state) {
 +    GuestPollScope guest_poll;  // patch 99: this read is the game's, so it uses up short taps (mnk driver)
 +    result = GetStateForUI(user_index, out_state);
++  } else {
++    result = GetStateForUI(user_index, out_state);   // a connection check reads nothing: no tap is used up
 +  }
    if (result == X_ERROR_SUCCESS && out_state) {
      out_state->gamepad.buttons = ButtonsForGame(static_cast<uint16_t>(out_state->gamepad.buttons), REXCVAR_GET(guide_button));
@@ -252,10 +242,10 @@ index a198c31..21f28ca 100644
      codegen/output_stamp_test.cpp
 diff --git a/tests/unit/input/tap_latch_test.cpp b/tests/unit/input/tap_latch_test.cpp
 new file mode 100644
-index 0000000..acec3c5
+index 0000000..9eeee05
 --- /dev/null
 +++ b/tests/unit/input/tap_latch_test.cpp
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,83 @@
 +// COGBox SDK patch 99 (GitHub #305): short taps reach the game's next read, once.
 +#include <catch2/catch_test_macros.hpp>
 +
@@ -329,6 +319,13 @@ index 0000000..acec3c5
 +  l.Clear();
 +  CHECK(l.Read(0, true, 33, kExpire) == 0);
 +}
--- 
-2.43.0
-
++
++TEST_CASE("A host read is not held back by what the game last saw (review r14)", "[input]") {
++  TapLatch l;
++  l.Rise(kB, 0);
++  CHECK(l.Read(kB, true, 33, kExpire) == kB);    // the game saw it held
++  l.Rise(kB, 50);                                // released and tapped again while the game's reads are blocked
++  CHECK(l.Read(0, false, 60, kExpire) == kB);    // the host (COGBox menu) sees the tap
++  CHECK(l.Read(0, true, 66, kExpire) == 0);      // the game still gets its 'up' first
++  CHECK(l.Read(0, true, 99, kExpire) == kB);
++}
