@@ -1474,3 +1474,6 @@ Dead bodies = Cadaveri
 More = Di più
 Many = Molti
 How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = Quanti nemici caduti restano a terra e per quanto tempo. Di più e Molti mantengono più corpi più a lungo; costa un po' di prestazioni e memoria. I corpi vengono comunque rimossi durante i filmati.
+# 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
+DualSense adaptive triggers = Grilletti adattivi DualSense
+PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = Solo controller PS5 DualSense (USB o Bluetooth): i grilletti oppongono resistenza, scattano o vibrano in base all'arma impugnata e tremano mentre la motosega gira. Gli altri controller non sono interessati. Se Steam Input è attivo per il controller, i grilletti restano a Steam.

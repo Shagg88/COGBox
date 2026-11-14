@@ -1477,3 +1477,6 @@ Dead bodies = 시체
 More = 많이
 Many = 매우 많이
 How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = 쓰러진 적이 몇 명이나, 얼마나 오래 바닥에 남는지 정합니다. 많이와 매우 많이는 더 많은 시체를 더 오래 남깁니다. 성능과 메모리를 조금 더 사용합니다. 컷신에서는 여전히 시체가 사라집니다.
+# 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
+DualSense adaptive triggers = DualSense 적응형 트리거
+PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = PS5 DualSense 컨트롤러 전용(USB 또는 블루투스): 손에 든 무기에 맞춰 트리거가 저항하거나 딸깍이거나 진동하고, 전기톱이 돌 때 흔들립니다. 다른 컨트롤러에는 영향이 없습니다. 컨트롤러에 Steam Input이 켜져 있으면 트리거는 Steam이 제어합니다.

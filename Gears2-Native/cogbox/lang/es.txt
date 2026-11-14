@@ -1476,3 +1476,6 @@ Dead bodies = Cadáveres
 More = Más
 Many = Muchos
 How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = Cuántos enemigos caídos se quedan en el suelo y durante cuánto tiempo. Más y Muchos conservan más cuerpos durante más tiempo; esto cuesta algo de rendimiento y memoria. Los cuerpos se siguen eliminando en las cinemáticas.
+# 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
+DualSense adaptive triggers = Gatillos adaptativos DualSense
+PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = Solo mandos PS5 DualSense (USB o Bluetooth): los gatillos oponen resistencia, hacen clic o vibran según el arma que llevas, y tiemblan mientras la motosierra ruge. Los demás mandos no se ven afectados. Si Steam Input está activado para el mando, Steam se queda con los gatillos.

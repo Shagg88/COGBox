@@ -1477,3 +1477,6 @@ Dead bodies = 尸体
 More = 更多
 Many = 很多
 How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = 倒下的敌人在地上保留多少、保留多久。“更多”和“很多”会更长时间保留更多尸体，会消耗一些性能和内存。过场动画时尸体仍会被清除。
+# 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
+DualSense adaptive triggers = DualSense 自适应扳机
+PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = 仅限 PS5 DualSense 手柄（USB 或蓝牙）：扳机会根据手中的武器产生阻力、段落感或振动，链锯转动时也会抖动。其他手柄不受影响。如果该手柄开启了 Steam Input，扳机由 Steam 控制。

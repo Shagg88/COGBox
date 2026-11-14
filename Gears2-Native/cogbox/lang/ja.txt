@@ -1477,3 +1477,6 @@ Dead bodies = 死体
 More = 多め
 Many = 非常に多い
 How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = 倒した敵が地面に何体、どれだけの時間残るか。多め・非常に多いでは、より多くの死体がより長く残ります。パフォーマンスとメモリを少し消費します。カットシーンでは死体は消去されます。
+# 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
+DualSense adaptive triggers = DualSense アダプティブトリガー
+PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = PS5 DualSense コントローラーのみ（USB または Bluetooth）：手にした武器に合わせてトリガーが抵抗・クリック・振動し、チェーンソーの回転中は震えます。他のコントローラーには影響しません。コントローラーで Steam Input がオンの場合、トリガーは Steam が制御します。

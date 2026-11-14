@@ -39,9 +39,13 @@ std::string exe_needle(const std::string& alias, int g) {
     if (alias == "aspect") return "gow3_aspect";
     if (alias == "edits") return "'file|section|~=old>new'";
     if (alias == "avx") return "gn_cpu_level=x86-64-v";
+    if (alias == "adt") return "Gears 3 weapon feel for DualSense pads";   // GitHub #245
     return alias;
 }
-std::string rt_needle(const std::string& a) { return a == "vs" ? "d3d12_present_vsync" : a == "lat" ? "d3d12_max_frame_latency" : a; }
+std::string rt_needle(const std::string& a) {
+    if (a == "adt") return "DualSense adaptive triggers: games that support it";   // GitHub #245 (SDK patch 98)
+    return a == "vs" ? "d3d12_present_vsync" : a == "lat" ? "d3d12_max_frame_latency" : a;
+}
 std::string file_name(const std::string& a) {
     if (a == "fsr") return "amd_fidelityfx_loader_dx12.dll";
     if (a == "dlss") return "nvngx_dlss.dll";
@@ -138,6 +142,8 @@ const char* const k_builtin[] = {
     "game=1;FrameCap=2;Vsync=1;rt=vs;hz=144;Ultrawide=1;Resolution=4;FpsMode=3;Aniso=1;Trilinear=0;MipFade=0;Shake=1;DrawDist=1;SkipLogos=1",
     "game=1;FrameCap=4;AAMode=4;files=xess;exe=ups,fif;SceneMode=1;Resolution=2;Players=3;LowLag=0;rt=lat",
     "game=1;FrameCap=7;Vsync=1;rt=vs;hz=240;FrameGen=1;exe=fg;files=fgdll;Fov=80",
+    "game=1;AdaptiveTriggers=1;exe=adt;rt=adt",   // GitHub #245: sent
+    "game=1;AdaptiveTriggers=1;exe=adt",          // runtime without patch 98: greyed, not sent
     "game=2",
     "game=2;upd=1;SkipLogos=1;Pool=1;FpsMode=3;FrameCap=7;Ultrawide=1",
     "game=2;Pool=3;FrameCap=2;Vsync=1;rt=vs;hz=165;FrameGen=1;exe=fg,fif,mute;files=fgdll;Mute=1;LowLag=1;gpus=Intel(R) UHD Graphics/NVIDIA GeForce GTX 1080",
