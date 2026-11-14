@@ -8,7 +8,7 @@
 // FindBestCameraMode picks one each frame). Each mode puts the camera at its ViewOffset (OffsetHigh / OffsetMid /
 // OffsetLow, chosen by the view pitch; X forward, Y right, Z up) from the camera origin. For the walking / crouching /
 // aiming / roadie-run modes only, every live mode object gets all three offsets set to --gow2_first_person_offset
-// (X,Y,Z), its split-screen and 4:3 adjustments (ViewOffset_ViewportAdjustments[0..4]) and its sideways strafe / run
+// (X,Y,Z), its split-screen and 4:3 adjustments (ViewOffset_ViewportAdjustments, every element) and its sideways strafe / run
 // shifts zeroed, and optionally its FOVAngle (--gow2_first_person_fov). Everything else - cover and cover aim, blind
 // fire, executions, chainsaw duels, DBNO, death, mantling, vehicles, turrets, the Brumak, the shield, conversations,
 // cutscenes - keeps the game's own third-person camera, and the game blends between them as usual (cover = third
@@ -245,11 +245,10 @@ void Gow2InstallFirstPerson() {
   if (!REXCVAR_GET(gow2_first_person)) return;
   ReadSettings();
   rex::ui::RegisterBind("bind_cogbox_first_person", "PageUp", "First-person camera off / on (Gears 2)", [] {
-    // review r20 R1: a held key repeats - one switch per 300 ms
+    // review r20 R1: a held key repeats - one switch per press (300 ms quiet before the next)
     static std::atomic<int64_t> last{0};
     const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
-    if (now - last.load(std::memory_order_relaxed) < 300) return;
-    last.store(now, std::memory_order_relaxed);
+    if (now - last.exchange(now, std::memory_order_relaxed) < 300) return;   // r21: every repeat restarts the wait
     g_want.store(!g_want.load(std::memory_order_relaxed), std::memory_order_relaxed);
   });
   REXLOG_INFO("first person: on (experimental) - walking, crouching, aiming and roadie run at eye level; PageUp toggles");
