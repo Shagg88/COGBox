@@ -1462,6 +1462,17 @@ class D3D12Backend final : public Backend {
   std::string Describe() const override { return description_; }
   ShaderIL GetShaderIL() const override { return ShaderIL::kDxil; }
   bool SupportsStencilRefExport() const override { return stencil_ref_export_; }
+  // PR #303 review r13: ask the device (typed UAV store for the view format) instead of the base class's 'true' - the
+  // same answer on Windows for SSIL's formats, and honest under vkd3d-proton (Proton / CrossOver).
+  bool SupportsStorage(Format format) const override {
+    if (!device_) return false;
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT fs{ViewFormat(format), D3D12_FORMAT_SUPPORT1_NONE, D3D12_FORMAT_SUPPORT2_NONE};
+    if (fs.Format == DXGI_FORMAT_UNKNOWN ||
+        FAILED(device_->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &fs, sizeof(fs))))
+      return false;
+    return (fs.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) != 0 &&
+           (fs.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE) != 0;
+  }
 
   bool IsLost(std::string* reason) override {
     // GetDeviceRemovedReason is a kernel call (job 156: ~11% of our GPU thread when asked per draw): ask at most every
