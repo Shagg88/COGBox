@@ -67,8 +67,11 @@ class Gow3App : public rex::ReXApp {
     XenosAddScriptPadIfRequested(runtime());
     Gow3AddBuiltInIniEdits();  // before the bundle is edited
     Gow3InstallExtras();       // its package patches too
-    Ue3InstallScriptInputIfRequested(runtime(), gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar);  // developer mode: --cogbox_input_script (ue3/script_input.h)
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
+    // p20: the input script after the config / package edits - building a patched GearGame.xxx (--gow3_cheats, mutators)
+    // takes many seconds on a fresh user folder, and the script's times count from here (its A presses were spent
+    // before the level and its paused start, so test runs with cheats sat on PAUSED)
+    Ue3InstallScriptInputIfRequested(runtime(), gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar);  // developer mode: --cogbox_input_script (ue3/script_input.h)
     Gow3InstallMainMenuExitIfRequested();  // Exit Game: front-end tracking, before the game opens a level
     Gow3InstallUnlocks();      // GitHub #174: --gow3_unlock_insane (base disc build)
     Gow3InstallModChapters();  // mods' chapters 32-49 and content packages (mod_chapters.cpp), after their config
