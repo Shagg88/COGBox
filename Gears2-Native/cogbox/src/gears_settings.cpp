@@ -755,8 +755,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "hordebots") {   // GitHub #89 (Gears 3), #237 (Gears 2)
         if (g != Game::Gears3 && g != Game::Gears2) return no("Gears 2 and 3 only.");
         if (!cap_exe(env, g == Game::Gears2 ? "gow2_horde_bots" : "gow3_horde_bots")) return no(not_yet(gi, "needs its next build"));
-    } else if (f == "pcss") {   // notes/80 s.16
-        if (g != Game::Gears3) return no("Gears 3 only.");
+    } else if (f == "pcss") {   // notes/80 s.16; Judgment draws its dynamic shadows with the same three shaders as Gears 3
+        if (g != Game::Gears3 && g != Game::Judgment) return no("Gears 3 and Judgment only.");
         if (!cap_exe(env, "soft shadows (PCSS) for the dynamic shadows")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "dofscale") {   // GitHub #105
         if (g != Game::Gears3 && g != Game::Judgment) return no("Gears 3 and Judgment only.");
