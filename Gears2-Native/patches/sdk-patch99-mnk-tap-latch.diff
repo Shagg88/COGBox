@@ -1,0 +1,334 @@
+From 393f6c455121c0889b7e6993c4cc68019d0d7822 Mon Sep 17 00:00:00 2001
+From: Shagg <shagg.dev88@gmail.com>
+Date: Sat, 14 Nov 2026 10:30:05 -0800
+Subject: [PATCH] patch99 (GitHub #305): short key / mouse taps kept until the
+ game's own read (mnk_tap_latch_ms)
+
+---
+ include/rex/input/input_driver.h         | 14 +++++
+ include/rex/input/mnk/mnk_input_driver.h |  4 ++
+ include/rex/input/tap_latch.h            | 42 ++++++++++++++
+ src/input/input_system.cpp               | 20 ++++++-
+ src/input/mnk/mnk_input_driver.cpp       | 43 ++++++++++++++
+ tests/unit/CMakeLists.txt                |  1 +
+ tests/unit/input/tap_latch_test.cpp      | 73 ++++++++++++++++++++++++
+ 7 files changed, 196 insertions(+), 1 deletion(-)
+ create mode 100644 include/rex/input/tap_latch.h
+ create mode 100644 tests/unit/input/tap_latch_test.cpp
+
+diff --git a/include/rex/input/input_driver.h b/include/rex/input/input_driver.h
+index 52116f1..02aaeb9 100644
+--- a/include/rex/input/input_driver.h
++++ b/include/rex/input/input_driver.h
+@@ -27,6 +27,20 @@ namespace rex::input {
+ 
+ class InputSystem;
+ 
++// COGBox SDK patch 99 (GitHub #305): true while InputSystem::GetState reads the drivers for the game (XInputGetState).
++// COGBox's own readers go through GetStateForUI and see false. Set per thread by GuestPollScope.
++bool InGuestPoll();
++class GuestPollScope {
++ public:
++  GuestPollScope();
++  ~GuestPollScope();
++  GuestPollScope(const GuestPollScope&) = delete;
++  GuestPollScope& operator=(const GuestPollScope&) = delete;
++
++ private:
++  bool prev_;
++};
++
+ class InputDriver {
+  public:
+   virtual ~InputDriver() = default;
+diff --git a/include/rex/input/mnk/mnk_input_driver.h b/include/rex/input/mnk/mnk_input_driver.h
+index 2d36faa..b558a2e 100644
+--- a/include/rex/input/mnk/mnk_input_driver.h
++++ b/include/rex/input/mnk/mnk_input_driver.h
+@@ -11,6 +11,7 @@
+ #pragma once
+ 
+ #include <rex/input/input_driver.h>
++#include <rex/input/tap_latch.h>
+ #include <rex/ui/window.h>
+ #include <rex/ui/window_listener.h>
+ 
+@@ -115,6 +116,9 @@ class MnkInputDriver final : public InputDriver,
+   // Which binds were pressed at the last evaluation, to diff against. One bit
+   // per entry of the bind table.
+   uint32_t bound_pressed_ = 0;
++  // Patch 99 (GitHub #305): button / trigger binds (bind table entries 0-15) that went down and that the game has
++  // not read yet. Under state_mutex_.
++  TapLatch tap_latch_;
+ 
+   // Packet number incremented on state change
+   uint32_t packet_number_ = 0;
+diff --git a/include/rex/input/tap_latch.h b/include/rex/input/tap_latch.h
+new file mode 100644
+index 0000000..7af21d9
+--- /dev/null
++++ b/include/rex/input/tap_latch.h
+@@ -0,0 +1,42 @@
++// COGBox SDK patch 99 (GitHub #305): a key or mouse tap shorter than one game read still reaches the game.
++// The game reads the pad once per frame (about every 33 ms at 30 fps); a tap that goes down and up between two
++// reads used to be lost. Each pad bind that goes down is kept "pending" until the game's own read (InGuestPoll) has
++// reported it down once. Host reads (COGBox's menu, the prompt monitor) see it but never use it up.
++#pragma once
++
++#include <cstdint>
++
++namespace rex::input {
++
++struct TapLatch {
++  uint32_t pending = 0;      // binds that went down since the game last read them down
++  uint32_t reported = 0;     // what the game was given at its last read
++  uint64_t since_ms[32] = {};
++
++  // Binds that went from up to down (key / mouse handlers, under the driver's lock).
++  void Rise(uint32_t rose, uint64_t now_ms) {
++    for (uint32_t i = 0; i < 32; ++i)
++      if ((rose & ~pending) >> i & 1u) since_ms[i] = now_ms;
++    pending |= rose;
++  }
++
++  // The binds to report for one read. live = held right now. guest = the game's own read: it uses up what it is
++  // shown. A press the game has not read within expire_ms (loading, a paused poll) is dropped.
++  uint32_t Read(uint32_t live, bool guest, uint64_t now_ms, uint32_t expire_ms) {
++    for (uint32_t i = 0; i < 32; ++i)
++      if ((pending >> i & 1u) && now_ms - since_ms[i] > expire_ms) pending &= ~(1u << i);
++    uint32_t out = live | pending;
++    // Pressed again after a read that showed it down (released in between): one read "up" first, so the game sees
++    // a second press instead of one long one. The new press stays pending for the next read.
++    out &= ~(reported & pending);
++    if (guest) {
++      pending &= ~out;
++      reported = out;
++    }
++    return out;
++  }
++
++  void Clear() { pending = reported = 0; }
++};
++
++}  // namespace rex::input
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+index 9f7bde8..0fa191a 100644
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -68,6 +68,20 @@ REXCVAR_DEFINE_STRING(pad_remap, "", "Input",
+                       "Controller button layout, e.g. 'a=b,b=a' or 'sticks=swap' (empty = the game's own), COGBox patch 55");
+ namespace rex::input {
+ 
++namespace {
++thread_local bool t_guest_poll = false;  // patch 99: see GuestPollScope
++}  // namespace
++
++bool InGuestPoll() {
++  return t_guest_poll;
++}
++GuestPollScope::GuestPollScope() : prev_(t_guest_poll) {
++  t_guest_poll = true;
++}
++GuestPollScope::~GuestPollScope() {
++  t_guest_poll = prev_;
++}
++
+ namespace {
+ 
+ // ---- Patch 55: radial dead zone and button layout (see the cvars above) ----
+@@ -415,7 +429,11 @@ X_RESULT InputSystem::GetState(uint32_t user_index, X_INPUT_STATE* out_state) {
+     return X_ERROR_SUCCESS;
+   }
+ 
+-  X_RESULT result = GetStateForUI(user_index, out_state);
++  X_RESULT result;
++  {
++    GuestPollScope guest_poll;  // patch 99: this read is the game's, so it uses up short taps (mnk driver)
++    result = GetStateForUI(user_index, out_state);
++  }
+   if (result == X_ERROR_SUCCESS && out_state) {
+     out_state->gamepad.buttons = ButtonsForGame(static_cast<uint16_t>(out_state->gamepad.buttons), REXCVAR_GET(guide_button));
+   }
+diff --git a/src/input/mnk/mnk_input_driver.cpp b/src/input/mnk/mnk_input_driver.cpp
+index 2c5d353..de9eb40 100644
+--- a/src/input/mnk/mnk_input_driver.cpp
++++ b/src/input/mnk/mnk_input_driver.cpp
+@@ -18,6 +18,7 @@
+ #include <rex/ui/window.h>
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <cmath>
+ #include <cstdlib>
+ #include <cstring>
+@@ -69,6 +70,12 @@ REXCVAR_DEFINE_BOOL(mnk_walk_toggle, false, "Input", "Walk key toggles walking i
+ REXCVAR_DEFINE_DOUBLE(mnk_walk_scale, 0.5, "Input", "Left stick deflection while walking (0.1 - 1)")
+     .range(0.1, 1.0);
+ 
++// COGBox SDK patch 99 (GitHub #305): a tap shorter than one game frame is kept until the game has read it.
++REXCVAR_DEFINE_INT32(mnk_tap_latch_ms, 250, "Input",
++                     "Keep a key / mouse button press until the game has read it, for up to this many ms "
++                     "(0 = off: a tap between two game reads is lost)")
++    .range(0, 1000);
++
+ REXCVAR_DEFINE_BOOL(mnk_passthrough, false, "Input",
+                     "Surface raw keystrokes to the title instead of emulating a pad, for "
+                     "titles that read a USB keyboard. Enables the device on its own");
+@@ -331,6 +338,21 @@ std::array<PadBind, 24> PadBinds() {
+   }};
+ }
+ 
++// Patch 99: bind table entries 0-15 (buttons and triggers) are latched; the stick directions are not.
++constexpr uint32_t kLatchedBinds = 0xFFFF;
++constexpr uint16_t kLatchButton[16] = {
++    X_INPUT_GAMEPAD_A,          X_INPUT_GAMEPAD_B,           X_INPUT_GAMEPAD_X,         X_INPUT_GAMEPAD_Y,
++    X_INPUT_GAMEPAD_LEFT_SHOULDER, X_INPUT_GAMEPAD_RIGHT_SHOULDER, 0 /* LT */,          0 /* RT */,
++    X_INPUT_GAMEPAD_LEFT_THUMB, X_INPUT_GAMEPAD_RIGHT_THUMB, X_INPUT_GAMEPAD_BACK,      X_INPUT_GAMEPAD_START,
++    X_INPUT_GAMEPAD_DPAD_UP,    X_INPUT_GAMEPAD_DPAD_DOWN,   X_INPUT_GAMEPAD_DPAD_LEFT, X_INPUT_GAMEPAD_DPAD_RIGHT};
++constexpr uint32_t kLatchLt = 1u << 6, kLatchRt = 1u << 7;
++
++uint64_t NowMs() {
++  return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
++                                   std::chrono::steady_clock::now().time_since_epoch())
++                                   .count());
++}
++
+ }  // namespace
+ 
+ void SetMouseLookActive(bool active) {
+@@ -534,6 +556,22 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+   uint8_t lt = IsBindPressed(key_down_, REXCVAR_GET(keybind_left_trigger)) ? 0xFF : 0;
+   uint8_t rt = IsBindPressed(key_down_, REXCVAR_GET(keybind_right_trigger)) ? 0xFF : 0;
+ 
++  // Patch 99 (#305): taps that went down and up since the game's last read are reported down once.
++  if (const int32_t latch_ms = REXCVAR_GET(mnk_tap_latch_ms); latch_ms > 0) {
++    uint32_t live = 0;
++    for (uint32_t i = 0; i < 16; ++i)
++      if (kLatchButton[i] & buttons) live |= 1u << i;
++    if (lt) live |= kLatchLt;
++    if (rt) live |= kLatchRt;
++    const uint32_t out = tap_latch_.Read(live, InGuestPoll(), NowMs(), static_cast<uint32_t>(latch_ms));
++    buttons = 0;
++    for (uint32_t i = 0; i < 16; ++i)
++      if (out >> i & 1u) buttons |= kLatchButton[i];
++    if (IsBindPressed(key_down_, REXCVAR_GET(keybind_guide))) buttons |= X_INPUT_GAMEPAD_GUIDE;  // not latched
++    lt = (out & kLatchLt) ? 0xFF : 0;
++    rt = (out & kLatchRt) ? 0xFF : 0;
++  }
++
+   int32_t lx = 0;
+   int32_t ly = 0;
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_lstick_left)))
+@@ -679,6 +717,10 @@ void MnkInputDriver::RefreshBoundKeystrokesLocked() {
+   // The whole table is diffed rather than the key that moved: binds carry
+   // modifiers, so Shift alone can flip several of them at once.
+   const uint32_t changed = pressed ^ bound_pressed_;
++  // Patch 99 (#305): a bind that went down is kept for the game's next read, even if it goes up first.
++  if (REXCVAR_GET(mnk_tap_latch_ms) > 0) {
++    tap_latch_.Rise(changed & pressed & kLatchedBinds, NowMs());
++  }
+   bound_pressed_ = pressed;
+   if (!changed) {
+     return;
+@@ -909,6 +951,7 @@ void MnkInputDriver::OnLostFocus(rex::ui::UISetupEvent&) {
+     std::memset(key_down_, 0, sizeof(key_down_));
+     // Releases landing on another window never arrive here as key-ups.
+     RefreshBoundKeystrokesLocked();
++    tap_latch_.Clear();  // patch 99: no press from before the switch reaches the game afterwards
+     mouse_dx_ = 0.0f;
+     mouse_dy_ = 0.0f;
+   }
+diff --git a/tests/unit/CMakeLists.txt b/tests/unit/CMakeLists.txt
+index a198c31..21f28ca 100644
+--- a/tests/unit/CMakeLists.txt
++++ b/tests/unit/CMakeLists.txt
+@@ -18,6 +18,7 @@ add_executable(unit_tests
+     system/function_dispatcher_test.cpp
+     input/input_assignment_test.cpp
+     input/guide_for_game_test.cpp
++    input/tap_latch_test.cpp
+     codegen/codegen_writer_test.cpp
+     codegen/output_partition_test.cpp
+     codegen/output_stamp_test.cpp
+diff --git a/tests/unit/input/tap_latch_test.cpp b/tests/unit/input/tap_latch_test.cpp
+new file mode 100644
+index 0000000..acec3c5
+--- /dev/null
++++ b/tests/unit/input/tap_latch_test.cpp
+@@ -0,0 +1,73 @@
++// COGBox SDK patch 99 (GitHub #305): short taps reach the game's next read, once.
++#include <catch2/catch_test_macros.hpp>
++
++#include <cstdint>
++#include <initializer_list>
++
++#include <rex/input/tap_latch.h>
++
++using rex::input::TapLatch;
++
++namespace {
++constexpr uint32_t kB = 1u << 1;
++constexpr uint32_t kExpire = 250;
++}  // namespace
++
++TEST_CASE("A tap between two game reads is reported down once", "[input]") {
++  TapLatch l;
++  CHECK(l.Read(0, true, 0, kExpire) == 0);
++  l.Rise(kB, 10);                                // down at 10 ms, up at 20 ms: no read in between
++  CHECK(l.Read(0, false, 25, kExpire) == kB);    // a host read sees it but does not use it up
++  CHECK(l.Read(0, true, 33, kExpire) == kB);     // the game's read gets it
++  CHECK(l.Read(0, true, 66, kExpire) == 0);      // and the release next frame
++  CHECK(l.Read(0, true, 99, kExpire) == 0);      // never a second time
++}
++
++TEST_CASE("A held key is one press; no extra press on release", "[input]") {
++  TapLatch l;
++  l.Rise(kB, 0);
++  CHECK(l.Read(kB, true, 33, kExpire) == kB);
++  CHECK(l.Read(kB, true, 66, kExpire) == kB);
++  CHECK(l.Read(0, true, 99, kExpire) == 0);
++}
++
++TEST_CASE("Released and pressed again between two reads gives up, then down", "[input]") {
++  TapLatch l;
++  l.Rise(kB, 0);
++  CHECK(l.Read(kB, true, 33, kExpire) == kB);
++  l.Rise(kB, 50);                                 // let go at 40, down again at 50, still held
++  CHECK(l.Read(kB, true, 66, kExpire) == 0);      // one 'up' read
++  CHECK(l.Read(kB, true, 99, kExpire) == kB);     // the second press
++  CHECK(l.Read(0, true, 133, kExpire) == 0);
++}
++
++TEST_CASE("Rising edges seen by the game never outnumber real presses", "[input]") {
++  for (uint64_t period : {40, 60, 100}) {         // a 10 ms tap every 40 / 60 / 100 ms
++    TapLatch l;
++    int real = 0, seen = 0;
++    uint32_t prev = 0;
++    for (uint64_t t = 0; t < 10000; ++t) {
++      if (t % period == 5) { l.Rise(kB, t); ++real; }
++      if (t % 33 == 0) {                          // the game reads every 33 ms
++        const uint32_t out = l.Read(0, true, t, kExpire);
++        if ((out & kB) && !(prev & kB)) ++seen;
++        prev = out;
++      }
++    }
++    CHECK(seen <= real);
++    if (period >= 66) CHECK(seen >= real - 1);    // at most one press per two reads can be shown
++  }
++}
++
++TEST_CASE("A press the game never reads is dropped after the latch time", "[input]") {
++  TapLatch l;
++  l.Rise(kB, 0);
++  CHECK(l.Read(0, true, 300, kExpire) == 0);
++}
++
++TEST_CASE("Clear drops pending presses (focus lost)", "[input]") {
++  TapLatch l;
++  l.Rise(kB, 0);
++  l.Clear();
++  CHECK(l.Read(0, true, 33, kExpire) == 0);
++}
+-- 
+2.43.0
+

@@ -1,0 +1,215 @@
+From e6ccc060d96628939016650c59322abc0563d3d3 Mon Sep 17 00:00:00 2001
+From: Shagg <shagg.dev88@gmail.com>
+Date: Sat, 14 Nov 2026 10:34:46 -0800
+Subject: [PATCH] patch101: Gears 3 save-signing verdict per run (no misleading
+ LEFT UNCONVERTED from the legacy pass)
+
+---
+ include/rex/system/cogbox_save_sign.h |   8 +-
+ src/kernel/xam/net/online_startup.cpp |   3 +
+ src/system/cogbox_save_sign.cpp       | 115 +++++++++++++++++++-------
+ src/system/kernel_state.cpp           |   2 +-
+ 4 files changed, 95 insertions(+), 33 deletions(-)
+
+diff --git a/include/rex/system/cogbox_save_sign.h b/include/rex/system/cogbox_save_sign.h
+index 7f29af7..95b76da 100644
+--- a/include/rex/system/cogbox_save_sign.h
++++ b/include/rex/system/cogbox_save_sign.h
+@@ -22,8 +22,14 @@ ResignResult CogResignSaveFiles(const std::vector<std::filesystem::path>& files,
+                                 const char* backup_suffix);
+ 
+ // Every Gears 3 save under user_data_root: the profile's PlayerStorage.dat and each profile-settings set. Never throws.
++// COGBox SDK patch 101: warn_unrecognised = false for a pass that runs before the right key is known (a save signed
++// with a third key is then only a debug line; CogReportGears3SaveSigning gives the verdict later).
+ void CogConvertGears3SaveSigning(const std::filesystem::path& user_data_root, uint64_t profile_xuid, uint64_t from_key,
+-                                 uint64_t to_key, const char* backup_suffix);
++                                 uint64_t to_key, const char* backup_suffix, bool warn_unrecognised = true);
++// Patch 101: one line per save set - signed for this run (kept), or signed for another key / unknown (Gears 3 will reset
++// it: its options, the brightness screen at start). Never throws.
++void CogReportGears3SaveSigning(const std::filesystem::path& user_data_root, uint64_t profile_xuid, uint64_t run_key,
++                                uint64_t other_key);
+ 
+ // Judgment ties PlayerStorage.dat and its profile settings to the sign-in (LIVE or local) in a way we can't re-sign, so
+ // switching online play on or off made the game start them fresh. Instead each mode keeps its own copy: on a switch,
+diff --git a/src/kernel/xam/net/online_startup.cpp b/src/kernel/xam/net/online_startup.cpp
+index 886362f..ca9a640 100644
+--- a/src/kernel/xam/net/online_startup.cpp
++++ b/src/kernel/xam/net/online_startup.cpp
+@@ -238,16 +238,19 @@ void OnlineStartup(const std::filesystem::path& user_data_root, uint64_t profile
+   MasterClient::Get().SetRegion(std::string(REXCVAR_GET(net_region)));
+   StartOnlineServices(dir);
+   if (!xuid) {
++    rex::system::CogReportGears3SaveSigning(user_data_root, profile_xuid, 0, 0);   // COGBox SDK patch 101
+     return;
+   }
+   if (NetOnline() && REXCVAR_GET(net_live_emulation)) {
+     SetEmulationXuid(xuid);
+     REXKRNL_INFO("cogbox_online: LIVE emulation with online XUID {:016X}", xuid);
+     rex::system::CogConvertGears3SaveSigning(user_data_root, profile_xuid, 0, xuid, ".pre-online");
++    rex::system::CogReportGears3SaveSigning(user_data_root, profile_xuid, xuid, 0);   // patch 101
+     rex::system::CogSwapJudgmentSettings(user_data_root, profile_xuid, true);
+   } else {
+     SetEmulationXuid(0);
+     rex::system::CogConvertGears3SaveSigning(user_data_root, profile_xuid, xuid, 0, ".pre-online");
++    rex::system::CogReportGears3SaveSigning(user_data_root, profile_xuid, 0, xuid);   // patch 101
+     rex::system::CogSwapJudgmentSettings(user_data_root, profile_xuid, false);
+   }
+ }
+diff --git a/src/system/cogbox_save_sign.cpp b/src/system/cogbox_save_sign.cpp
+index 60f4506..cff07be 100644
+--- a/src/system/cogbox_save_sign.cpp
++++ b/src/system/cogbox_save_sign.cpp
+@@ -97,9 +97,15 @@ const char* ResultText(ResignResult r) {
+   }
+ }
+ 
+-void Convert(const std::vector<std::filesystem::path>& files, uint64_t from_key, uint64_t to_key, const char* suffix) {
++void Convert(const std::vector<std::filesystem::path>& files, uint64_t from_key, uint64_t to_key, const char* suffix,
++             bool warn_unrecognised) {
+   const ResignResult r = CogResignSaveFiles(files, from_key, to_key, suffix);
+-  if (r != ResignResult::AlreadyDone && r != ResignResult::Resigned) {
++  if (r == ResignResult::NotRecognised && !warn_unrecognised) {
++    // COGBox SDK patch 101: the legacy offline-XUID pass runs before the online key is known; a save signed for the
++    // online XUID is "not recognised" here but fine (the online pass and CogReportGears3SaveSigning give the verdict).
++    REXLOG_DEBUG("cogbox_save_convert: {} - not signed with {:016X}, left for the next pass", rex::path_to_utf8(files[0]),
++                 from_key);
++  } else if (r != ResignResult::AlreadyDone && r != ResignResult::Resigned) {
+     // 0.5.0 patch 58: a save left with the wrong signature may be reset by Gears 3 - a warning, not an info line
+     REXLOG_WARN("cogbox_save_convert: {} - re-sign {:016X} -> {:016X}: {} (LEFT UNCONVERTED, Gears 3 may reset it)",
+                 rex::path_to_utf8(files[0]), from_key, to_key, ResultText(r));
+@@ -179,43 +185,90 @@ ResignResult CogResignSaveFiles(const std::vector<std::filesystem::path>& files,
+   return ResignResult::Resigned;
+ }
+ 
+-void CogConvertGears3SaveSigning(const std::filesystem::path& root, uint64_t profile_xuid, uint64_t from_key,
+-                                 uint64_t to_key, const char* backup_suffix) {
+-  if (root.empty() || !profile_xuid || from_key == to_key) {
+-    return;
++namespace {
++// Patch 101: the Gears 3 save sets under root (PlayerStorage.dat, then each profile-settings set), in signing order.
++std::vector<std::vector<std::filesystem::path>> Gears3SaveSets(const std::filesystem::path& root, uint64_t profile_xuid,
++                                                                bool warn_missing) {
++  std::vector<std::vector<std::filesystem::path>> sets;
++  std::error_code ec;
++  auto ps = root / fmt::format("{:016X}", profile_xuid) / "4D5308AB" / "00000001" / "PlayerStorage.dat" /
++            "PlayerStorage.dat";
++  if (std::filesystem::exists(ps, ec)) sets.push_back({ps});
++  auto prof = root / "4D5308AB" / "profile";
++  if (!std::filesystem::is_directory(prof, ec)) return sets;
++  for (auto it = std::filesystem::directory_iterator(prof, ec); !ec && it != std::filesystem::directory_iterator();
++       it.increment(ec)) {
++    std::error_code dec;
++    if (!it->is_directory(dec) || dec) continue;
++    std::vector<std::filesystem::path> files;
++    for (const char* n : {"63E83FFF", "63E83FFE", "63E83FFD"}) {
++      auto f = it->path() / n;
++      std::error_code fec;
++      if (std::filesystem::exists(f, fec) && !fec) {
++        files.push_back(f);
++      } else if (warn_missing) {
++        REXLOG_WARN("cogbox_save_convert: {} - missing, profile set incomplete; converting the files present",
++                    rex::path_to_utf8(f));
++      }
++    }
++    if (!files.empty()) sets.push_back(std::move(files));
+   }
++  return sets;
++}
++}  // namespace
++
++void CogReportGears3SaveSigning(const std::filesystem::path& root, uint64_t profile_xuid, uint64_t run_key,
++                                uint64_t other_key) {
++  if (root.empty() || !profile_xuid) return;
+   try {
+-    std::error_code ec;
+-    auto ps = root / fmt::format("{:016X}", profile_xuid) / "4D5308AB" / "00000001" / "PlayerStorage.dat" /
+-              "PlayerStorage.dat";
+-    if (std::filesystem::exists(ps, ec)) {
+-      Convert({ps}, from_key, to_key, backup_suffix);
+-    }
+-    auto prof = root / "4D5308AB" / "profile";
+-    if (!std::filesystem::is_directory(prof, ec)) {
+-      return;
+-    }
+-    for (auto it = std::filesystem::directory_iterator(prof, ec); !ec && it != std::filesystem::directory_iterator();
+-         it.increment(ec)) {
+-      std::error_code dec;
+-      if (!it->is_directory(dec) || dec) {
++    for (const auto& files : Gears3SaveSets(root, profile_xuid, false)) {
++      std::vector<uint8_t> all;
++      for (const auto& f : files) {
++        const auto v = CogReadAll(f);
++        all.insert(all.end(), v.begin(), v.end());
++      }
++      if (all.size() < 21) continue;
++      auto signed_with = [&](uint64_t key) {
++        const auto sig = CogSign(key, all.data() + 20, all.size() - 20);
++        return std::memcmp(sig.data(), all.data(), 20) == 0;
++      };
++      if (signed_with(run_key)) {
++        REXLOG_INFO("cogbox_save_convert: {} - signed for this run (key {:016X}), Gears 3 keeps its settings",
++                    rex::path_to_utf8(files[0]), run_key);
+         continue;
+       }
+-      std::vector<std::filesystem::path> files;
+-      for (const char* n : {"63E83FFF", "63E83FFE", "63E83FFD"}) {
+-        auto f = it->path() / n;
+-        std::error_code fec;  // 0.5.0 patch 58: own error code (the loop's would stop the walk), convert what is there
+-        if (std::filesystem::exists(f, fec) && !fec) {
+-          files.push_back(f);
+-        } else {
+-          REXLOG_WARN("cogbox_save_convert: {} - missing, profile set incomplete; converting the files present",
+-                      rex::path_to_utf8(f));
++      uint64_t found = 0;
++      bool known = false;
++      for (uint64_t k : {uint64_t(0), profile_xuid, other_key}) {
++        if (k != run_key && signed_with(k)) {
++          found = k;
++          known = true;
++          break;
+         }
+       }
+-      if (!files.empty()) {
+-        Convert(files, from_key, to_key, backup_suffix);
++      if (known) {
++        REXLOG_WARN("cogbox_save_convert: {} - signed for {:016X}, this run signs with {:016X}: Gears 3 will reset it "
++                    "(its options and the brightness screen at start)",
++                    rex::path_to_utf8(files[0]), found, run_key);
++      } else {
++        REXLOG_WARN("cogbox_save_convert: {} - signed with a key COGBox doesn't know (another profile or PC?): Gears 3 "
++                    "will reset it",
++                    rex::path_to_utf8(files[0]));
+       }
+     }
++  } catch (...) {
++  }
++}
++
++void CogConvertGears3SaveSigning(const std::filesystem::path& root, uint64_t profile_xuid, uint64_t from_key,
++                                 uint64_t to_key, const char* backup_suffix, bool warn_unrecognised) {
++  if (root.empty() || !profile_xuid || from_key == to_key) {
++    return;
++  }
++  try {
++    for (const auto& files : Gears3SaveSets(root, profile_xuid, true)) {
++      Convert(files, from_key, to_key, backup_suffix, warn_unrecognised);
++    }
+   } catch (const std::exception& e) {
+     REXLOG_INFO("cogbox_save_convert: stopped ({}); saves left as they were", e.what());
+   } catch (...) {
+diff --git a/src/system/kernel_state.cpp b/src/system/kernel_state.cpp
+index 7e2db69..df3dc43 100644
+--- a/src/system/kernel_state.cpp
++++ b/src/system/kernel_state.cpp
+@@ -91,7 +91,7 @@ KernelState::KernelState(Runtime* emulator)
+   }
+   content_manager_ = std::make_unique<xam::ContentManager>(this, user_data_root);
+   // job 1066: saves signed with the offline XUID are re-signed with 0 (backed up as .pre-xuid0 / .pre-xuid0.last).
+-  CogConvertGears3SaveSigning(user_data_root, user_profile_->xuid(), user_profile_->xuid(), 0, ".pre-xuid0");
++  CogConvertGears3SaveSigning(user_data_root, user_profile_->xuid(), user_profile_->xuid(), 0, ".pre-xuid0", false);   // patch 101: quiet
+   // COGBox SDK patch 79: online play - the identity, the LIVE emulation XUID, and the Gears 3 saves signed for it.
+   rex::kernel::xam::net::OnlineStartup(user_data_root, user_profile_->xuid());
+ 
+-- 
+2.43.0
+

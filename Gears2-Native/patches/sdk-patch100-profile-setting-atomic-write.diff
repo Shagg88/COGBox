@@ -1,0 +1,47 @@
+From 87538ddcee2023bfa18f2bfd1c864bb4409e86d8 Mon Sep 17 00:00:00 2001
+From: Shagg <shagg.dev88@gmail.com>
+Date: Sat, 14 Nov 2026 10:30:09 -0800
+Subject: [PATCH] patch100: profile setting files written through a temp file +
+ rename
+
+---
+ src/system/xam/user_profile.cpp | 23 ++++++++++++++++++++---
+ 1 file changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/src/system/xam/user_profile.cpp b/src/system/xam/user_profile.cpp
+index a77f5e6..969e3b4 100644
+--- a/src/system/xam/user_profile.cpp
++++ b/src/system/xam/user_profile.cpp
+@@ -162,9 +162,26 @@ void UserProfile::SaveSetting(UserProfile::Setting* setting) {
+     std::filesystem::create_directories(content_dir);
+     auto setting_id = fmt::format("{:08X}", setting->setting_id);
+     auto file_path = content_dir / setting_id;
+-    auto file = rex::filesystem::OpenFile(file_path, "wb");
+-    fwrite(serialized_setting.data(), 1, serialized_setting.size(), file);
+-    fclose(file);
++    // COGBox SDK patch 100: written to <id>.tmp and renamed over the file (as patch 71's extra settings), so a crash
++    // or a full disk mid-write never leaves a cut setting file (Gears 3 then resets the whole signed profile set:
++    // its brightness screen comes back). A file that can't be opened is logged instead of passed to fwrite.
++    auto tmp_path = file_path;
++    tmp_path += ".tmp";
++    bool ok = false;
++    if (auto file = rex::filesystem::OpenFile(tmp_path, "wb")) {
++      ok = fwrite(serialized_setting.data(), 1, serialized_setting.size(), file) == serialized_setting.size();
++      ok = (fclose(file) == 0) && ok;
++    }
++    std::error_code ec;
++    if (ok) {
++      std::filesystem::rename(tmp_path, file_path, ec);
++      ok = !ec;
++    }
++    if (!ok) {
++      std::filesystem::remove(tmp_path, ec);
++      REXSYS_ERROR("SDK patch 100: couldn't save profile setting {} ({} bytes) - the old one is kept", setting_id,
++                   serialized_setting.size());
++    }
+   } else {
+     // Unsupported for now.  Other settings aren't per-game and need to be
+     // stored some other way.
+-- 
+2.43.0
+
