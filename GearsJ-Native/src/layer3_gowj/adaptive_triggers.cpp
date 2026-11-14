@@ -174,10 +174,13 @@ struct Props {
     pauser = obj::PropertyOffset(worldInfo, "Pauser");
     cinematic = obj::PropertyOffset(playerController, "bCinematicMode");
     cinematicMask = obj::BoolMask(playerController, "bCinematicMode");
+    if (cinematicMask & (cinematicMask - 1)) { REXLOG_WARN("adaptive triggers: {} mask 0x{:X} is not one bit - layout? ignored", "cinematicMask", cinematicMask); cinematicMask = 0; }   // review r19
     meleeing = obj::PropertyOffset(gearPawn, "bDoingMeleeAttack");
     meleeingMask = obj::BoolMask(gearPawn, "bDoingMeleeAttack");
+    if (meleeingMask & (meleeingMask - 1)) { REXLOG_WARN("adaptive triggers: {} mask 0x{:X} is not one bit - layout? ignored", "meleeingMask", meleeingMask); meleeingMask = 0; }   // review r19
     ripping = obj::PropertyOffset(lancer, "bStartedRipping");
     rippingMask = obj::BoolMask(lancer, "bStartedRipping");
+    if (rippingMask & (rippingMask - 1)) { REXLOG_WARN("adaptive triggers: {} mask 0x{:X} is not one bit - layout? ignored", "rippingMask", rippingMask); rippingMask = 0; }   // review r19
     REXLOG_INFO("adaptive triggers: GamePlayers +0x{:X}, Actor +0x{:X}, ControllerId +0x{:X}, Pawn +0x{:X}, Weapon +0x{:X}, "
                 "Health +0x{:X}, Pauser +0x{:X}, bCinematicMode +0x{:X}/{:08X}, bDoingMeleeAttack +0x{:X}/{:08X}, "
                 "bStartedRipping +0x{:X}/{:08X}",
