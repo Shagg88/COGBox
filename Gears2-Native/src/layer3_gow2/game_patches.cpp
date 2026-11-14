@@ -379,6 +379,75 @@ void Gow2UltrawideUiHeight(PPCRegister& r3) {
   r3.u64 = ui;
 }
 
+// GitHub #278 (32:9 menus too large / "zoomed in"): the UI scenes (UE3 UIScene: menus, pause, loading and title screens)
+// lay themselves out in the size UGameUISceneClient::GetViewportSize reports - with ultrawide 1280 x 369 at 32:9 (the
+// height hook above) - so every panel placed or sized in percent of the viewport's width is stretched across the whole
+// 32:9 picture, and art that keeps its shape grows with that width. --gow2_ultrawide_ui_centre (test switch, off) makes
+// the scene client report a 16:9 box instead: size (H * 16/9) x H and origin ((W - that) / 2, 0), so the scenes lay
+// out as on a 16:9 screen in the centre of the wide picture (the HUD is drawn through UCanvas, not here - unchanged).
+// Both are virtuals of the scene client: GetViewportSize (disc sub_826E36C0, TU6 sub_826E9B90: RenderViewport at +64,
+// GetSizeX / GetSizeY into out[0] / out[1]; the height hook above runs inside it) and, in the vtable slot before it,
+// GetViewportOrigin (disc sub_826E2630, TU6 sub_826E8B80: out = (0, 0), returns TRUE; the base class's returns FALSE).
+// [unchecked on the PC: whether the UI adds that origin to its positions - if not, the scenes sit at the left edge and
+// the switch stays off]
+REXCVAR_DEFINE_BOOL(gow2_ultrawide_ui_centre, false, "Gears2",
+                    "GitHub #278 test: with --gow2_ultrawide wider than 16:9, menus and other UI scenes laid out as 16:9 in "
+                    "the centre of the picture instead of stretched across it (the HUD is not changed)");
+namespace uicentre {
+inline std::atomic<float> g_offset_x{0.0f};  // (W - 16:9 width) / 2 of the last size reported
+inline bool On() { return REXCVAR_GET(gow2_ultrawide) && REXCVAR_GET(gow2_ultrawide_ui_centre); }
+inline float LoadF(const uint8_t* base, uint32_t a) {
+  uint32_t v;
+  std::memcpy(&v, base + a, 4);
+  v = __builtin_bswap32(v);
+  float f;
+  std::memcpy(&f, &v, 4);
+  return f;
+}
+inline void StoreF(uint8_t* base, uint32_t a, float f) {
+  uint32_t v;
+  std::memcpy(&v, &f, 4);
+  v = __builtin_bswap32(v);
+  std::memcpy(base + a, &v, 4);
+}
+}  // namespace uicentre
+#if defined(GOW2_TU6) && GOW2_TU6
+#define GOW2_UI_VIEWPORT_SIZE sub_826E9B90
+#define GOW2_UI_VIEWPORT_ORIGIN sub_826E8B80
+#else
+#define GOW2_UI_VIEWPORT_SIZE sub_826E36C0
+#define GOW2_UI_VIEWPORT_ORIGIN sub_826E2630
+#endif
+#define GOW2_UI_JOIN2(a, b) a##b
+#define GOW2_UI_JOIN(a, b) GOW2_UI_JOIN2(a, b)
+extern "C" void GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_SIZE)(PPCContext& __restrict ctx, uint8_t* base);
+extern "C" void GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_ORIGIN)(PPCContext& __restrict ctx, uint8_t* base);
+// UBOOL GetViewportSize(const UUIScene*, FVector2D& out): r5 = out
+extern "C" void GOW2_UI_VIEWPORT_SIZE(PPCContext& __restrict ctx, uint8_t* base) {
+  const uint32_t out = ctx.r5.u32;
+  GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_SIZE)(ctx, base);
+  if (!uicentre::On() || ctx.r3.u32 == 0 || !out) return;
+  const float w = uicentre::LoadF(base, out), h = uicentre::LoadF(base, out + 4);
+  const float w169 = std::round(h * 16.0f / 9.0f / 2.0f) * 2.0f;
+  if (!(h > 0.0f) || !(w169 < w)) {  // not wider than 16:9: as the game had it
+    uicentre::g_offset_x.store(0.0f);
+    return;
+  }
+  uicentre::g_offset_x.store((w - w169) / 2.0f);
+  uicentre::StoreF(base, out, w169);
+  static std::atomic<bool> logged{false};
+  if (!logged.exchange(true))
+    REXLOG_INFO("gow2_ultrawide_ui_centre: UI scenes laid out in {}x{} of {}x{}, from x {}", w169, h, w, h, (w - w169) / 2.0f);
+}
+// UBOOL GetViewportOrigin(const UUIScene*, FVector2D& out): r5 = out
+extern "C" void GOW2_UI_VIEWPORT_ORIGIN(PPCContext& __restrict ctx, uint8_t* base) {
+  const uint32_t out = ctx.r5.u32;
+  GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_ORIGIN)(ctx, base);
+  if (!uicentre::On() || ctx.r3.u32 == 0 || !out) return;
+  const float dx = uicentre::g_offset_x.load();
+  if (dx > 0.0f) uicentre::StoreF(base, out, uicentre::LoadF(base, out) + dx);
+}
+
 // GitHub #94 (Gears 2 wider than ~2.39:1 trapped at start-up). sub_8281C680 (TU6; disc sub_8280CAB8) places a render
 // target in a pool: size = sub_829BABD8(w, h, ...) rounded up to 4 KB (r10) against the pool's capacity `lwz r11,20(r31)`;
 // larger -> bl 0x82AC6098 -> the trap. Job 1028: at 32:9 / 360 rows the capacity is 0x1E0000 = 1280 x 384 x 4 (the pool

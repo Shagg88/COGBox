@@ -32,6 +32,7 @@ void XenosSetUiContext(rex::ui::WindowedAppContext* ui);  // layer 0 fps_bar.cpp
 void Gow2ApplyDataPatchesIfRequested(rex::Runtime* runtime);
 void Gow2InstallLocLogIfRequested();  // game_patches.cpp (GitHub #90)
 void Gow2InstallUnlocks();  // unlocks.cpp (insane050: --gow2_unlock_insane)
+void Gow2InstallCheats();   // cheats.cpp (GitHub #264: --gow2_cheats, --ue3_hotkeys, --ue3_exec)
 void Gow2AddTestIniEdits();  // game_patches.cpp: --cogbox_test_skip_movies
 REXCVAR_DECLARE(bool, gow2_mute_unfocused);  // game_patches.cpp (patch 0130)
 
@@ -86,6 +87,7 @@ class Gow2App : public rex::ReXApp {
     Gow2InstallLocLogIfRequested();  // GitHub #90: before the game opens its localized packages
     Gow2InstallMainMenuExitIfRequested();
     Gow2InstallUnlocks();  // insane050
+    Gow2InstallCheats();   // GitHub #264
     Ue3InstallShaderPrebuildIfRequested();  // patch 0068: after the renderer (it asks whether the renderer wants them)
     XenosInstallQueryLogIfRequested(runtime(), {-32});
     XenosInstallStateCoverageIfRequested();

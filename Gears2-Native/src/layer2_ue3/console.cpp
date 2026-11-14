@@ -1,4 +1,5 @@
-// Layer 2 (Unreal Engine 3): engine console commands from the PC side (ue3/console.h, notes/25). Our code (MIT).
+// Layer 2 (Unreal Engine 3): engine console commands from the PC side (ue3/console.h, notes/25). Shared: Gears 3 builds
+// this file from here (GN_LAYER0_HOME), Gears 2 for --gow2_cheats (GitHub #264). Our code (MIT).
 #include <ue3/console.h>
 
 #include <rex/cvar.h>
@@ -19,13 +20,20 @@
 #include <thread>
 #include <vector>
 
-REXCVAR_DEFINE_STRING(ue3_hotkeys, "", "Gears3",
+// The settings group the options are saved under: Gears 3's own as before (its saved hotkeys stay where they are).
+#if defined(GN_UE3_CONSOLE_GEARS2) && GN_UE3_CONSOLE_GEARS2
+#define GN_UE3_CONSOLE_GROUP "Gears2"
+#else
+#define GN_UE3_CONSOLE_GROUP "Gears3"
+#endif
+
+REXCVAR_DEFINE_STRING(ue3_hotkeys, "", GN_UE3_CONSOLE_GROUP,
                       "Keys that run engine console commands, 'Key=command;Key=cmd A|cmd B' ('|': the key cycles), e.g. "
                       "'F5=God;F6=Slomo 0.25|Slomo 1' (ue3/console.h). Keys can be moved in the SDK settings (bind_ue3_*)");
-REXCVAR_DEFINE_STRING(ue3_exec, "", "Gears3",
+REXCVAR_DEFINE_STRING(ue3_exec, "", GN_UE3_CONSOLE_GROUP,
                       "Engine console commands to run once a player exists, ';'-separated (also from the SDK console: "
                       "ue3_exec God)");
-REXCVAR_DEFINE_STRING(ue3_exec_at, "", "Gears3",
+REXCVAR_DEFINE_STRING(ue3_exec_at, "", GN_UE3_CONSOLE_GROUP,
                       "Scripted console commands, '<game tick>:<command>,...' or '<seconds>s:<command>,...' counted from "
                       "the first engine tick (tests)");
 
@@ -172,6 +180,10 @@ void Ue3ConsoleRunQueued(PPCContext& ctx, uint8_t* base) {
       command = g_queue.front();
     }
     bool handled = false;
+    if (g_target.before_each && *g_target.before_each) {
+      bool ignored = false;
+      if (!ExecNow(ctx, base, g_target.before_each, &ignored)) return;  // no player yet: keep it queued
+    }
     if (!ExecNow(ctx, base, command, &handled)) return;  // no player yet: keep it queued for a later tick
     {
       std::lock_guard<std::mutex> lock(g_mutex);

@@ -650,6 +650,14 @@ REXCVAR_DEFINE_INT32(gow2_renderer_dest_budget_mb, -1, "Gears2",
                      "(not used in the last 30 frames) only when this process uses over 90% of the OS video memory "
                      "budget, down to 80%; N > 0 = keep their total under N MB (0032's 768 churned at 2x scale: "
                      "~300 freed and remade per 300 frames); 0 = no budget (age only)");
+// GitHub #257 (Gears 3 sub-menus: 24 full-screen colour resolves a frame, GPU-bound at 2x): a colour resolve that repeats
+// the previous copy exactly - the same copy / destination / surface / scissor registers and rectangle vertices, no draw
+// of the guest's in between, neither copy clearing - copies the same EDRAM tiles to the same place again, so the
+// destination (texture and guest memory) already holds what it would write. Counted always (the colour line of the
+// stats); skipped only with this switch (each repeat at 2x costs its 1x pass, its scaled pass and its guest-memory write).
+REXCVAR_DEFINE_BOOL(gow2_renderer_skip_repeat_resolves, false, "Gears2",
+                    "GitHub #257 test: a colour resolve identical to the one just before it (no draw between, no clear) "
+                    "is not done again; the repeats are counted in the stats either way");
 REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_view_targets, true, "Gears2",
                     "Colour resolves from a format view no draw used (Gears 3: 7e3 scene resolved as 2_10_10_10 raw) "
                     "create that target and transfer the tiles in, instead of skipping the resolve");
@@ -1424,7 +1432,7 @@ struct FrameStats {
            watch_stale = 0, watch_stale_bytes = 0, unknown_colour_tiles = 0, disagree_tiles = 0, tainted_tiles = 0, colour_to_depth_tiles = 0, transfer_passes = 0,
            unclipped_depth_draws = 0, mrt_duplicates = 0, colour_drawn = 0, colour_transferred_tiles = 0,
            colour_unknown_tiles = 0, resolve_view_targets = 0, msaa_colour_resolves = 0, learned_clears = 0, msaa2x_colour_draws = 0, msaa2x_resolve_clears = 0, msaa2x_twin_clears = 0, msaa_twin_clears = 0, msaa_up_transfers = 0, colour_resolves_compared = 0, fixed16_multiplicative_blends = 0,
-           colour_word_transferred_tiles = 0, colour_clears_resolve = 0;
+           colour_word_transferred_tiles = 0, colour_clears_resolve = 0, repeat_resolves = 0, repeat_resolves_skipped = 0;
   uint64_t colour_not_modelled[16] = {};  // per colour storage class: draws into it we don't render yet
   double cpu_ms = 0.0;
   std::map<std::string, uint64_t> skipped;
@@ -2706,6 +2714,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t fl_draws = uint32_t(draw_index_), fl_skipped = uint32_t(pending_this_frame_);
     draw_index_ = 0;
     copy_index_ = 0;
+    resolve_sig_valid_ = false;  // GitHub #257: repeats are only looked for within a frame
     occ_lines_ = 0;
     pending_this_frame_ = shader_errors_this_frame_ = pipeline_failures_this_frame_ = 0;
     pipeline_wait_ms_frame_ = 0.0;
@@ -12557,6 +12566,38 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++resolve_early_["resolve: not supported by GetResolveInfo rules"];
       return;
     }
+    // GitHub #257: an exact repeat of the previous copy (see gow2_renderer_skip_repeat_resolves)
+    {
+      std::array<uint32_t, kResolveSigWords> sig{};
+      size_t n = 0;
+      const uint8_t* vw = vtx;
+      for (int i = 0; i < 6; ++i) std::memcpy(&sig[n++], vw + 4 * i, 4);
+      for (uint32_t reg : {uint32_t(rr::reg::PA_SU_VTX_CNTL), uint32_t(rr::reg::PA_SU_SC_MODE_CNTL),
+                           uint32_t(rr::reg::PA_SC_WINDOW_OFFSET), uint32_t(rr::reg::PA_SC_WINDOW_SCISSOR_TL),
+                           uint32_t(rr::reg::PA_SC_WINDOW_SCISSOR_BR), uint32_t(rr::reg::PA_SC_SCREEN_SCISSOR_TL),
+                           uint32_t(rr::reg::PA_SC_SCREEN_SCISSOR_BR), uint32_t(rr::reg::RB_SURFACE_INFO), kRegCopyControl,
+                           rr::reg::kColorInfo[0], rr::reg::kColorInfo[1], rr::reg::kColorInfo[2], rr::reg::kColorInfo[3],
+                           uint32_t(rr::reg::RB_DEPTH_INFO), kRegCopyDestBase, kRegCopyDestPitch, kRegCopyDestInfo})
+        sig[n++] = r[reg];
+      static_assert(6 + 17 == kResolveSigWords, "signature size");
+      const bool clears = Bits(cc, 8, 1) || rg.depth_clear_enable;
+      const bool repeat = resolve_sig_valid_ && first_draw == last_draw && !clears && !info.is_depth &&
+                          sig == resolve_sig_ && f1 == resolve_sig_f1_ && !front_bases_.count(info.dest_base);
+      resolve_sig_ = sig;
+      resolve_sig_f1_ = f1;
+      resolve_sig_valid_ = !clears;  // a copy that clears changes its source: the next one is not a repeat of it
+      if (repeat) {
+        ++stats_.repeat_resolves;
+        // Not while features keep per-copy state of their own (the upscaler's scene-copy count, XeGTAO's chain,
+        // the HUD-less copy, motion vectors) or a trace is on.
+        if (REXCVAR_GET(gow2_renderer_skip_repeat_resolves) && !up_active_ && ao_mode_ != rr::ao::Mode::kGtao &&
+            !hl_format_ && !vel_seen_ && !trace_on_) {
+          ++stats_.repeat_resolves_skipped;
+          ++resolve_early_["exact repeat of the previous copy (GitHub #257)"];
+          return;
+        }
+      }
+    }
     // The emulator writes the destination (to guest memory with --readback_resolve): textures and vertex ranges there
     // are stale for us from now on.
     if (info.dest_extent_length) watch_->Bump(info.dest_extent_start, info.dest_extent_length);
@@ -13584,13 +13625,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "duplicate slots dropped {} | colour tiles transferred {} (same format) {} (guest words: other "
                   "format / from depth) unknown source {} | colour -> depth tiles {} | colour resolve-clears {} | 16-bit "
                   "fixed draws blending multiplicatively (1/32 scale wrong there) {} | colour resolves done {}, "
-                  "compared {} matched {} (all time) | resolve-only view targets created {} | as draws (0119) {}",
+                  "compared {} matched {} (all time) | resolve-only view targets created {} | as draws (0119) {} | exact "
+                  "repeats (#257) {} skipped {}",
                   frame_ - uint64_t(log_every_) + 1, frame_, stats_.colour_drawn,
                   not_modelled.empty() ? std::string("none") : not_modelled, stats_.mrt_duplicates,
                   stats_.colour_transferred_tiles, stats_.colour_word_transferred_tiles, stats_.colour_unknown_tiles,
                   stats_.colour_to_depth_tiles, stats_.colour_clears_resolve, stats_.fixed16_multiplicative_blends,
                   stats_.colour_resolves_compared, colour_compared_, colour_matched_, stats_.resolve_view_targets,
-                  stats_.resolve_draws);
+                  stats_.resolve_draws, stats_.repeat_resolves, stats_.repeat_resolves_skipped);
     }
     if (queries_mode_ != QueriesMode::kOff) {  // upl-s4c
       const OcclusionStats& o = occ_stats_;
@@ -13941,6 +13983,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint64_t frame_ = 0, compared_ = 0, matched_ = 0, incomplete_ = 0, explained_ = 0;
   uint64_t colour_compared_ = 0, colour_matched_ = 0;
   uint32_t draw_index_ = 0, copy_index_ = 0, last_copy_draw_ = 0, drawn_since_copy_ = 0;
+  // GitHub #257: the registers (and rectangle vertex words) of the previous copy, to recognise an exact repeat
+  static constexpr size_t kResolveSigWords = 23;
+  std::array<uint32_t, kResolveSigWords> resolve_sig_{};
+  bool resolve_sig_valid_ = false;
+  uint32_t resolve_sig_f1_ = 0;
   uint32_t pending_this_frame_ = 0, shader_errors_this_frame_ = 0, pipeline_failures_this_frame_ = 0;
   double pipeline_wait_ms_frame_ = 0.0;  // job 037: time waited for new pipelines in this frame
   double depth_wait_left_ms_ = 0.0;      // patch 0132: this frame's wait left for depth-only / shadow pipelines

@@ -9,6 +9,8 @@
 //    an SDK keybind (rex::ui::RegisterBind, cvar bind_ue3_<n>), so it can be moved to another key in the SDK settings;
 //  - --ue3_exec="cmd;cmd": run once a player exists (also settable at run time from the SDK console, `ue3_exec God`);
 //  - --ue3_exec_at="<tick>:<cmd>,...": run at that game tick (scripted tests).
+// console.cpp lives in Gears 2's layer 2 (shared: Gears 3 builds it from GN_LAYER0_HOME); this header has a copy in
+// Gears2-Native and Gears3-Native/src/layer2_ue3/include/ue3 - keep the two identical.
 // Our code (MIT).
 #pragma once
 
@@ -24,6 +26,10 @@ struct Ue3ConsoleTarget {
   uint32_t players_num_offset = 0x4A4;   // ... and count
   uint32_t exec_offset = 0x3C;           // FExec subobject inside ULocalPlayer
   uint32_t exec_vtable_slot = 0;         // FExec::Exec
+  // Run (silently) before each queued command, or empty. Gears 2 (--gow2_cheats): "EnableCheats" - its cheat manager is
+  // made per player controller, and only while Engine.GameInfo.AllowCheats says yes (a standalone game: never a System
+  // Link / online host or client).
+  const char* before_each = "";
 };
 
 // Layer 3: where the game keeps these (per game version). Without a target nothing runs.

@@ -145,7 +145,10 @@ add_library(gn_layer2_ue3 STATIC
     src/layer2_ue3/prebuild_lzx.cpp
     src/layer2_ue3/main_menu_exit.cpp
     src/layer2_ue3/package_exports.cpp
+    src/layer2_ue3/console.cpp  # GitHub #264: engine console commands (--gow2_cheats, --ue3_hotkeys, --ue3_exec); Gears 3 builds it too
 )
+# console.cpp's options are saved under Gears2 here (Gears 3 keeps its Gears3 group)
+set_source_files_properties(src/layer2_ue3/console.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_CONSOLE_GEARS2=1)
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 target_link_libraries(gn_layer2_ue3 PUBLIC gn_layer1_xdk7645)
 rexglue_apply_target_settings(gn_layer2_ue3)
@@ -158,6 +161,7 @@ set(GOW2_SOURCES
     src/layer3_gow2/mouse_look.cpp
     src/layer3_gow2/main_menu_exit.cpp
     src/layer3_gow2/unlocks.cpp
+    src/layer3_gow2/cheats.cpp
 )
 if(WIN32)
     add_executable(gow2 WIN32 ${GOW2_SOURCES})
