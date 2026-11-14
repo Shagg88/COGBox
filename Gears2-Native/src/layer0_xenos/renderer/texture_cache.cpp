@@ -1672,15 +1672,22 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       e.copied_start[r] = starts[r];
       e.copied_length[r] = lengths[r];
       uint32_t run = UINT32_MAX;
+      bool run_ever_gpu = false;  // green-vine review: a page of this run was written by our GPU at some time
       auto flush = [&](uint32_t end_page) {
         if (run == UINT32_MAX) return;
         const uint32_t a = std::max(run << kShift, starts[r]);
         const uint32_t b = std::min(end_page << kShift, starts[r] + lengths[r]);
         if (b > a) {
+          // Green-vine review (job 042 / patch 0007 for vertices): guest memory is about to go over the mirror here. A
+          // page that stopped being GPU-current without a CPU write (an exact-range callback: file read next to it,
+          // protect-to-writable, decommit, release) while its memexport read-back is still pending holds the
+          // PRE-export bytes in guest memory - land that read-back first (no-op without an overlapping one).
+          if (run_ever_gpu && before_cpu_load_) before_cpu_load_(a, b - a);
           backend_.UploadGuestMemory(a, guest_ + a, b - a);
           stats_.gpu_load_bytes += b - a;
         }
         run = UINT32_MAX;
+        run_ever_gpu = false;
       };
       for (uint32_t p = first; p <= last; ++p) {
         const uint32_t v = watch_.PageVersion(p);
@@ -1694,6 +1701,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
             continue;
           }
           if (run == UINT32_MAX) run = p;
+          if (!watch_.NeverResolved(p)) run_ever_gpu = true;
         } else {
           flush(p);
         }
@@ -1808,13 +1816,17 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   }
   {  // T2: a CPU-path load reads CPU bytes; pages our resolves wrote only exist in the GPU mirror
     const uint32_t starts[2] = {e.base_start, e.mip_start}, lengths[2] = {e.base_length, e.mip_length};
-    bool any = false;
+    bool any = false, ever = false;
     for (uint32_t r = 0; r < 2 && !any; ++r)
       if (lengths[r])
         for (uint32_t p = starts[r] >> GuestWatch::kPageShift;
-             p <= (starts[r] + lengths[r] - 1) >> GuestWatch::kPageShift && !any; ++p)
+             p <= (starts[r] + lengths[r] - 1) >> GuestWatch::kPageShift && !any; ++p) {
           any = watch_.GpuCurrent(p);
-    if (any && before_cpu_load_) {
+          ever |= !watch_.NeverResolved(p);
+        }
+    // Green-vine review: also when the pages are no longer GPU-current but our GPU wrote them at some time - an
+    // exact-range callback can end GPU-current before the export's read-back has landed.
+    if ((any || ever) && before_cpu_load_) {
       // Job 042: pending memexport readbacks over these pages land in guest memory now, before the bytes are read.
       for (uint32_t r = 0; r < 2; ++r)
         if (lengths[r]) before_cpu_load_(starts[r], lengths[r]);

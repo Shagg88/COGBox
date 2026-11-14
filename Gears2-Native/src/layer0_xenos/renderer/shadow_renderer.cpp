@@ -752,6 +752,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_export_pending_mirror, false, "Gears2",
                     "fetches from the mirror (the export's bytes) even when a CPU write elsewhere in the same 4 MB block "
                     "ended their GPU-current state - instead of re-uploading the pre-export guest bytes over them. "
                     "false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_export_settle, true, "Gears2",
+                    "Green-vine review (job 1844): when a memexport read-back has landed in guest memory, its pages that "
+                    "nothing wrote since stop being GPU-current (guest memory now holds the same bytes), so a texture "
+                    "later loaded there takes guest memory - which also has any CPU / file write the page watch could not "
+                    "see (read-only pages are never watched). false = they stay GPU-current until a seen write, as before");
 REXCVAR_DEFINE_BOOL(gow2_renderer_memexport_readback, true, "Gears2",
                     "With --gow2_renderer_memexport: copy every exported range back into guest memory once the GPU has "
                     "written it (job 041: Gears 3 moves DXT textures with memexport copies, and DXT textures load from "
@@ -1468,6 +1473,8 @@ struct FrameStats {
            memexport_ps_draws = 0, memexport_ranges = 0, memexport_bytes = 0, vertex_from_exports = 0,
            memexport_readbacks = 0, memexport_readback_bytes = 0, memexport_readback_failures = 0,
            memexport_ranges_gathered = 0, memexport_readbacks_issued = 0,  // patch 0042
+           export_pages_settled = 0, export_pages_settle_moved = 0, export_pages_settle_pending = 0,  // green-vine
+           export_pages_unwatchable = 0, export_unwatch_checks = 0,                                  // green-vine
            lookaheads = 0, lookahead_draws = 0, lookahead_queued = 0,  // patch 0051
            pipelines_recorded = 0,  // patch 0058
            load_holds = 0,  // patch 0063: frames held back until their pipelines were built
@@ -1855,6 +1862,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     fused_check_every_ = fused_scaled_ ? uint32_t(std::max(REXCVAR_GET(gow2_renderer_fused_scaled_check), 0)) : 0u;
     memexport_ = REXCVAR_GET(gow2_renderer_memexport);
     memexport_readback_ = memexport_ && REXCVAR_GET(gow2_renderer_memexport_readback);
+    export_settle_ = memexport_readback_ && REXCVAR_GET(gow2_renderer_export_settle);  // green-vine review
     pending_mirror_ = memexport_readback_ && REXCVAR_GET(gow2_renderer_export_pending_mirror);
     if (pending_mirror_) REXLOG_INFO("gow2_renderer: export pending mirror on (patch 0007)");
     if (memexport_)
@@ -2929,12 +2937,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         }
         {  // patch 0008
           const uint64_t lost = watch_->GpuPagesLostToWidening();
-          if (lost != watch_lost_logged_ || REXCVAR_GET(gow2_renderer_watch_narrow))
+          const uint64_t exact = watch_->GpuPagesBumpedExact();  // green-vine review
+          if (lost != watch_lost_logged_ || exact != watch_exact_logged_ || REXCVAR_GET(gow2_renderer_watch_narrow))
             REXLOG_INFO("gow2_renderer: page watch frames {}-{}: GPU-written pages marked CPU-written by the 4 MB "
-                        "widening {} (this range; {} so far){}",
+                        "widening {} (this range; {} so far){} | GPU-current pages ended by exact-range callbacks (file "
+                        "read, protect-to-writable, decommit, release) {} (this range; {} so far)",
                         frame_ + 1 - uint64_t(log_every_), frame_, lost - watch_lost_logged_, lost,
-                        REXCVAR_GET(gow2_renderer_watch_narrow) ? " - narrow widening on" : "");
+                        REXCVAR_GET(gow2_renderer_watch_narrow) ? " - narrow widening on" : "", exact - watch_exact_logged_,
+                        exact);
           watch_lost_logged_ = lost;
+          watch_exact_logged_ = exact;
         }
         if (scaled_resolves_)
           REXLOG_INFO("gow2_renderer: scaled (Stage 7) frames {}-{}: scaled resolves {} (not into scaled memory {}), "
@@ -11741,7 +11753,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     for (const auto& [a, e] : export_ranges_) {  // in address order
       const uint32_t base = uint32_t(a), size = uint32_t(e - a);
       if (const gpu::ReadbackHandle h = backend_->ReadbackGuest(base, size)) {
-        export_readbacks_.push_back({h, base, size});
+        ExportReadback rb{h, base, size, {}};
+        if (export_settle_) {  // green-vine review: the versions this copy holds (recorded after every export so far)
+          constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
+          const uint32_t first = (base & 0x1FFFFFFFu) >> kShift, last = ((base & 0x1FFFFFFFu) + size - 1) >> kShift;
+          rb.versions.resize(last - first + 1);
+          for (uint32_t p = first; p <= last; ++p)
+            rb.versions[p - first] = watch_->GpuCurrent(p) ? watch_->PageVersion(p) : ~0u;
+        }
+        export_readbacks_.push_back(std::move(rb));
         ++stats_.memexport_readbacks_issued;
       } else {
         ++stats_.memexport_readback_failures;
@@ -11756,14 +11776,47 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (!backend_->IsReadbackReady(e.handle)) return;
       uint32_t pitch = 0;
       const uint8_t* data = backend_->ReadbackData(e.handle, pitch);
+      bool landed = false;
       if (uint8_t* dst = data ? memory_->TranslatePhysical<uint8_t*>(e.base) : nullptr) {
         std::memcpy(dst, data, e.size);
         rex::graphics::NotifyGuestRangeWrittenByObserver(e.base, e.size);
         ++stats_.memexport_readbacks;
         stats_.memexport_readback_bytes += e.size;
+        landed = true;
       }
       backend_->ReleaseReadback(e.handle);
+      ExportReadback done = std::move(export_readbacks_.front());
       export_readbacks_.pop_front();
+      if (landed && !done.versions.empty()) SettleExportPages(done);
+    }
+  }
+
+  // Green-vine review (job 1844): a landed export read-back - guest memory now holds the mirror's bytes for its range.
+  // Its pages that are still at the version the copy saw stop being GPU-current, unless another export over the same
+  // page still waits for its own read-back (gathered or in flight: guest memory lacks that part yet). Before, such
+  // pages stayed GPU-current until a write the watch saw - and on pages no guest view maps writable the watch is never
+  // armed (PhysicalHeap::EnableAccessCallbacks), so a texture later streamed into them kept the old export's bytes from
+  // the mirror. Only pages the landed range covers whole are settled.
+  void SettleExportPages(const ExportReadback& e) {
+    constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
+    const uint32_t first = (e.base & 0x1FFFFFFFu) >> kShift;
+    for (uint32_t i = 0; i < e.versions.size(); ++i) {
+      if (e.versions[i] == ~0u) continue;
+      const uint32_t p = first + i;
+      const uint64_t pa = uint64_t(p) << kShift, pb = pa + (1u << kShift);
+      // Only whole pages: the bytes of a partly covered page outside the range may be a resolve's (no read-back).
+      if (pa < (e.base & 0x1FFFFFFFu) || pb > uint64_t(e.base & 0x1FFFFFFFu) + e.size) continue;
+      bool pending = false;
+      for (const ExportReadback& o : export_readbacks_)
+        pending |= pa < uint64_t(o.base & 0x1FFFFFFFu) + o.size && uint64_t(o.base & 0x1FFFFFFFu) < pb;
+      for (const auto& [ra, re] : export_ranges_)
+        pending |= pa < (re & 0x1FFFFFFFull) && (ra & 0x1FFFFFFFull) < pb;
+      if (pending) {
+        ++stats_.export_pages_settle_pending;
+        continue;
+      }
+      if (watch_->SettleGpuPage(p, e.versions[i])) ++stats_.export_pages_settled;
+      else ++stats_.export_pages_settle_moved;
     }
   }
 
@@ -11801,6 +11854,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       watch_->Watch(base, uint32_t(size));
       watch_->MarkGpuWritten(base, uint32_t(size));
       exports_marked_ = true;
+      // Green-vine review (diagnostic): destination pages no guest view maps writable get no write watch (the memory
+      // system skips them), so they stay GPU-current through CPU / file writes until the read-back settles them.
+      if (stats_.export_unwatch_checks < 2048) {  // bounded: QueryProtect takes a heap lock per page and view
+        ++stats_.export_unwatch_checks;
+        if (const uint32_t uw = watch_->UnwatchablePages(base, uint32_t(size))) {
+          stats_.export_pages_unwatchable += uw;
+          if (export_unwatchable_logged_ < 16) {
+            ++export_unwatchable_logged_;
+            REXLOG_INFO("gow2_renderer: memexport frame {} draw {}: {} page(s) of the destination {:08X} (+{:X}) are "
+                        "mapped read-only - the page watch cannot see later CPU or file writes there (green-vine review)",
+                        frame_ + 1, draw_index_, uw, base, uint32_t(size));
+          }
+        }
+      }
       if (memexport_readback_) {
         // Job 041: the exported bytes also go back to guest memory (CPU-path texture loads read it), written by
         // PollExportReadbacks once this submission has completed. Patch 0042: not one readback per draw - Gears 3
@@ -13818,12 +13885,17 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (stats_.memexport_draws || stats_.memexport_only_draws) {  // notes/11 (this summary's frames)
       REXLOG_INFO("gow2_renderer: memexport: draws {} (export-only {}, pixel-shader exports {}), ranges marked {} ({:.2f} "
                   "MB), vertex ranges read from exports {}, readbacks into guest memory {} ({:.2f} MB, {} failed, {} "
-                  "waited for by texture loads; 0042: {} ranges merged into {} readbacks)",
+                  "waited for by texture loads; 0042: {} ranges merged into {} readbacks) | green-vine: pages settled "
+                  "after their read-back {} ({}; not settled: written since {}, another read-back pending {}), "
+                  "destination pages mapped read-only {} (in the first {} export ranges)",
                   stats_.memexport_draws + stats_.memexport_only_draws, stats_.memexport_only_draws,
                   stats_.memexport_ps_draws, stats_.memexport_ranges, double(stats_.memexport_bytes) / 1048576.0,
                   stats_.vertex_from_exports, stats_.memexport_readbacks,
                   double(stats_.memexport_readback_bytes) / 1048576.0, stats_.memexport_readback_failures,
-                  stats_.memexport_readback_waits, stats_.memexport_ranges_gathered, stats_.memexport_readbacks_issued);
+                  stats_.memexport_readback_waits, stats_.memexport_ranges_gathered, stats_.memexport_readbacks_issued,
+                  stats_.export_pages_settled, export_settle_ ? "on" : "off - --gow2_renderer_export_settle=false",
+                  stats_.export_pages_settle_moved, stats_.export_pages_settle_pending, stats_.export_pages_unwatchable,
+                  stats_.export_unwatch_checks);
     }
     if (words_to_guest_through_ && textures_) {  // job 047 (this summary's frames)
       const rr::TextureCacheStats& ts = textures_->Stats();
@@ -14557,7 +14629,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   struct ExportReadback {
     gpu::ReadbackHandle handle = 0;
     uint32_t base = 0, size = 0;
+    std::vector<uint32_t> versions;  // green-vine review: per page from base's page, the GPU-current version copied (~0u: none)
   };
+  bool export_settle_ = false;  // --gow2_renderer_export_settle (green-vine review)
+  uint32_t export_unwatchable_logged_ = 0;
+  uint64_t watch_exact_logged_ = 0;  // GuestWatch::GpuPagesBumpedExact at the last summary
   std::deque<ExportReadback> export_readbacks_;
   std::map<uint64_t, uint64_t> export_ranges_;  // patch 0042: start -> end, gathered this frame, merged
   uint32_t memexport_logged_ = 0;
