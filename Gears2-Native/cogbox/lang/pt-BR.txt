@@ -1480,3 +1480,14 @@ Experimental - the game's own camera moves to your character's eyes while you wa
 # 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
 DualSense adaptive triggers = Gatilhos adaptáveis do DualSense
 PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = Somente controles PS5 DualSense (USB ou Bluetooth): os gatilhos fazem resistência, dão clique ou vibram conforme a arma em mãos, e tremem enquanto a motosserra gira. Outros controles não são afetados. Se o Steam Input estiver ativado para o controle, o Steam fica com os gatilhos.
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  duplicata de "
+" - can be removed = " - pode ser removido
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = Tudo neste pacote também está no outro, com o mesmo conteúdo, então o jogo recebe os mesmos itens duas vezes (por exemplo, a mesma skin duas vezes). Remover remove só a cópia descompactada do COGBox - seu arquivo de pacote não é tocado.
+Remove duplicates = Remover duplicatas
+Remove duplicate downloadable content = Remover conteúdo para download duplicado
+Duplicates found: = Duplicatas encontradas:
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\nTudo o que há neles também está em outro pacote que você mantém, com o mesmo conteúdo, então o jogo só recebe os mesmos itens duas vezes. Removê-los? Só as cópias descompactadas do COGBox são removidas - seus próprios arquivos de pacote não são tocados.
+Duplicates removed: = Duplicatas removidas:
+Some duplicates couldn't be removed completely - is a file from them open? = Algumas duplicatas não puderam ser removidas por completo - algum arquivo delas está aberto?
+No duplicates found. = Nenhuma duplicata encontrada.

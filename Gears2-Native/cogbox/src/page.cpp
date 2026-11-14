@@ -1182,14 +1182,26 @@ static void about_tab(App &a, int g)
                                                      " - unzip the release again, keeping its folders." : "Port: " + shown_path(a, exe));
     // 0.2.0: downloadable content from the player's own console; one compact list under the copy
     const std::vector<DlcItem> &dl = dlc_list(g);
+    int dupes = 0;
     for (size_t i = 0; i < dl.size(); i++) {
         ImGui::PushID((int)i + 7000);
-        lamp_line(1, dl[i].title + (dl[i].title != dl[i].name ? "  (" + dl[i].name + ")" : ""));
+        // GitHub #283: a package another installed one already covers (same files, same contents) is marked
+        const bool dup = !dl[i].dupOfName.empty();
+        dupes += dup;
+        lamp_line(dup ? 2 : 1, dl[i].title + (dl[i].title != dl[i].name ? "  (" + dl[i].name + ")" : "") +
+                                   (dup ? "  -  duplicate of \"" + dl[i].dupOf + "\" - can be removed" : ""),
+                  dup ? "Everything in this package is also in the other one, with the same contents, so the game gets the same items twice "
+                        "(for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched." : "");
         ImGui::SameLine();
         if (busy || running) ImGui::BeginDisabled();
         if (small_button("Remove")) dlc_remove_ask(a, g, dl[i]);
         if (busy || running) ImGui::EndDisabled();
         ImGui::PopID();
+    }
+    if (dupes) {   // GitHub #283: all of them in one go
+        if (busy || running) ImGui::BeginDisabled();
+        if (small_button("Remove duplicates")) dlc_remove_dupes_ask(a, g);
+        if (busy || running) ImGui::EndDisabled();
     }
     // 0.4.6: drag and drop is the only way to add a copy, title update or DLC
     ImGui::Dummy(ImVec2(0, S(2)));

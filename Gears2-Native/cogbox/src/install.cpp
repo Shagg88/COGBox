@@ -6,12 +6,14 @@
 #include "theme.h"
 #include "i18n.h"
 #include "x360fs.h"
+#include "dlc_dupes.h"
 
 #include <windows.h>
 #include <cstdio>
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <map>
 
 namespace {
 struct Plan {
@@ -470,6 +472,11 @@ std::vector<DlcItem> g_dlc[G_COUNT];
 DWORD g_dlcAt[G_COUNT] = {};
 DlcItem g_dlcRemove;
 int g_dlcRemoveGame = -1;
+// GitHub #283: which installed package another one already covers (dlc_dupes.h). Worked out again only when the list
+// of folders (names and times) changes, so the 3-second re-listing never reads the packages' files again.
+std::string g_dupSig[G_COUNT];
+std::map<std::string, std::string> g_dupOf[G_COUNT];   // folder name -> the folder name of the package that covers it
+int g_dupGame = -1;
 
 std::string dlc_root(int g)
 {
@@ -485,6 +492,7 @@ const std::vector<DlcItem> &dlc_list(int g)
     if (g_dlcAt[g] && now - g_dlcAt[g] < 3000) return g_dlc[g];
     g_dlcAt[g] = now ? now : 1;
     std::vector<DlcItem> out;
+    std::string sig;   // GitHub #283: the folders' names and times
     std::string root = dlc_root(g), dir = join(root, "00000002");
     WIN32_FIND_DATAW fd;
     HANDLE f = FindFirstFileW((widen(dir) + L"\\*").c_str(), &fd);
@@ -509,8 +517,41 @@ const std::vector<DlcItem> &dlc_list(int g)
             }
             if (it.title.empty()) it.title = name;
             out.push_back(it);
+            char t[64];
+            snprintf(t, sizeof t, "|%lx.%lx.%lx|", fd.ftCreationTime.dwLowDateTime, fd.ftLastWriteTime.dwHighDateTime, fd.ftLastWriteTime.dwLowDateTime);
+            sig += name + t;
         } while (FindNextFileW(f, &fd));
         FindClose(f);
+    }
+    // GitHub #283: packages whose every file another installed package also has (same path, size and contents)
+    if (sig != g_dupSig[g]) {
+        g_dupSig[g] = sig;
+        g_dupOf[g].clear();
+        std::vector<dlcdup::Package> pk(out.size());
+        for (size_t i = 0; i < out.size(); i++) { pk[i].name = out[i].name; dlcdup::scan(std::filesystem::path(widen(out[i].dir)), pk[i]); }
+        std::map<std::string, std::string> keys;   // full path -> content key (each file read at most once)
+        auto key = [&](int p, const dlcdup::File &fl) {
+            const std::string full = out[p].dir + "\\" + fl.path;
+            auto k = keys.find(full);
+            if (k != keys.end()) return k->second;
+            const std::filesystem::path fp = std::filesystem::path(widen(out[p].dir)) / std::filesystem::path(widen(fl.disk.empty() ? fl.path : fl.disk));
+            return keys[full] = dlcdup::content_key(fp, fl.size);
+        };
+        const std::vector<int> cover = dlcdup::find_covered(pk, [&](int x, const dlcdup::File &fx, int y, const dlcdup::File &fy) {
+            const std::string kx = key(x, fx);
+            return !kx.empty() && kx == key(y, fy);
+        });
+        for (size_t i = 0; i < out.size(); i++)
+            if (cover[i] >= 0) g_dupOf[g][out[i].name] = out[cover[i]].name;
+    }
+    for (DlcItem &it : out) {
+        auto c = g_dupOf[g].find(it.name);
+        if (c == g_dupOf[g].end()) continue;
+        for (const DlcItem &o : out)
+            if (o.name == c->second) {
+                it.dupOfName = o.name;
+                it.dupOf = o.title == it.title ? o.title + " (" + o.name + ")" : o.title;
+            }
     }
     g_dlc[g] = out;
     return g_dlc[g];
@@ -536,6 +577,46 @@ void dlc_remove_confirmed(App &a)
     set_message(a, ok ? "\"" + g_dlcRemove.title + "\" is removed." : "It couldn't be removed completely - is a file from it open?", !ok);
     g_dlcRemoveGame = -1;
     dlc_refresh();
+}
+
+// GitHub #283: every package another installed package already covers, in one go (only COGBox's unpacked copies; the
+// covering package stays, so every file is still there once)
+void dlc_remove_dupes_ask(App &a, int g)
+{
+    g_dupSig[g].clear();   // look again, from the files as they are now
+    dlc_refresh();
+    int n = 0;
+    for (const DlcItem &it : dlc_list(g)) n += !it.dupOfName.empty();
+    if (!n) { set_message(a, "No duplicates found.", false); return; }
+    g_dupGame = g;
+    ask(a, "dlcdupes", g, "Remove duplicate downloadable content",
+        "Duplicates found: " + std::to_string(n) + "\n\nEverything in them is also in another package you keep, with the same contents, so the game "
+        "only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched.",
+        { "Remove", "Cancel" });
+}
+
+void dlc_remove_dupes_confirmed(App &a)
+{
+    const int g = g_dupGame;
+    g_dupGame = -1;
+    if (g < 0) return;
+    if (a.run.proc) { set_message(a, "Close the game first.", true); return; }
+    g_dupSig[g].clear();   // checked again right before anything is removed
+    dlc_refresh();
+    const std::vector<DlcItem> items = dlc_list(g);
+    int done = 0, failed = 0;
+    for (const DlcItem &it : items) {
+        if (it.dupOfName.empty()) continue;
+        // the package that covers it must still be there (it is never itself marked, so it is never removed here)
+        bool coverThere = false;
+        for (const DlcItem &o : items) coverThere |= o.name == it.dupOfName && o.dupOfName.empty() && dir_has_files(o.dir);
+        if (!coverThere) { failed++; continue; }
+        if (remove_tree(widen(it.dir))) { DeleteFileW(widen(it.header).c_str()); done++; }
+        else failed++;
+    }
+    dlc_refresh();
+    if (failed) set_message(a, "Duplicates removed: " + std::to_string(done) + ". Some duplicates couldn't be removed completely - is a file from them open?", true);
+    else set_message(a, "Duplicates removed: " + std::to_string(done) + ".", false);
 }
 
 // ---- 0.2.0: folders of downloadable content dropped on the window ---------------------------------------------------

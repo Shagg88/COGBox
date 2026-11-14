@@ -1483,3 +1483,14 @@ Experimental - the game's own camera moves to your character's eyes while you wa
 # 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
 DualSense adaptive triggers = DualSense 적응형 트리거
 PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = PS5 DualSense 컨트롤러 전용(USB 또는 블루투스): 손에 든 무기에 맞춰 트리거가 저항하거나 딸깍이거나 진동하고, 전기톱이 돌 때 흔들립니다. 다른 컨트롤러에는 영향이 없습니다. 컨트롤러에 Steam Input이 켜져 있으면 트리거는 Steam이 제어합니다.
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  다음과 중복: "
+" - can be removed = " - 제거 가능
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = 이 패키지의 모든 내용이 같은 내용으로 다른 패키지에도 들어 있어, 게임이 같은 항목을 두 번 받습니다(예: 같은 스킨이 두 개). 제거해도 COGBox가 풀어 둔 사본만 제거되며 패키지 파일은 그대로입니다.
+Remove duplicates = 중복 제거
+Remove duplicate downloadable content = 중복된 다운로드 콘텐츠 제거
+Duplicates found: = 찾은 중복:
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\n이 안의 모든 내용이 같은 내용으로 남겨 두는 다른 패키지에도 들어 있어, 게임은 같은 항목을 두 번 받을 뿐입니다. 제거할까요? COGBox가 풀어 둔 사본만 제거되며 내 패키지 파일은 그대로입니다.
+Duplicates removed: = 제거한 중복:
+Some duplicates couldn't be removed completely - is a file from them open? = 일부 중복을 완전히 제거하지 못했습니다 - 그 파일이 열려 있지 않나요?
+No duplicates found. = 중복을 찾지 못했습니다.

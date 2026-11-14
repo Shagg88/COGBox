@@ -1483,3 +1483,14 @@ Experimental - the game's own camera moves to your character's eyes while you wa
 # 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
 DualSense adaptive triggers = Адаптивные триггеры DualSense
 PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = Только контроллеры PS5 DualSense (USB или Bluetooth): триггеры сопротивляются, щёлкают или вибрируют в зависимости от оружия в руках и дрожат, пока работает бензопила. Другие контроллеры не затрагиваются. Если для контроллера включён Steam Input, триггерами управляет Steam.
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  дубликат "
+" - can be removed = " - можно удалить
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = Всё содержимое этого пакета с тем же содержанием есть и в другом, поэтому игра получает одни и те же предметы дважды (например, один и тот же скин дважды). При удалении удаляется только распакованная копия COGBox - ваш файл пакета не затрагивается.
+Remove duplicates = Удалить дубликаты
+Remove duplicate downloadable content = Удалить повторяющийся загружаемый контент
+Duplicates found: = Найдено дубликатов:
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\nВсё, что в них есть, с тем же содержанием есть и в другом пакете, который остаётся, поэтому игра лишь получает одни и те же предметы дважды. Удалить их? Удаляются только распакованные копии COGBox - ваши собственные файлы пакетов не затрагиваются.
+Duplicates removed: = Удалено дубликатов:
+Some duplicates couldn't be removed completely - is a file from them open? = Некоторые дубликаты не удалось удалить полностью - открыт ли какой-то их файл?
+No duplicates found. = Дубликаты не найдены.

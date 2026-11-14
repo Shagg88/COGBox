@@ -1482,3 +1482,14 @@ Experimental - the game's own camera moves to your character's eyes while you wa
 # 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
 DualSense adaptive triggers = Gatillos adaptativos DualSense
 PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = Solo mandos PS5 DualSense (USB o Bluetooth): los gatillos oponen resistencia, hacen clic o vibran según el arma que llevas, y tiemblan mientras la motosierra ruge. Los demás mandos no se ven afectados. Si Steam Input está activado para el mando, Steam se queda con los gatillos.
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  duplicado de "
+" - can be removed = " - se puede quitar
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = Todo lo de este paquete también está en el otro, con el mismo contenido, así que el juego recibe los mismos objetos dos veces (por ejemplo, la misma apariencia dos veces). Al quitarlo solo se quita la copia desempaquetada de COGBox - tu archivo de paquete no se toca.
+Remove duplicates = Quitar duplicados
+Remove duplicate downloadable content = Quitar contenido descargable duplicado
+Duplicates found: = Duplicados encontrados:
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\nTodo lo que contienen también está en otro paquete que conservas, con el mismo contenido, así que el juego solo recibe los mismos objetos dos veces. ¿Quitarlos? Solo se quitan las copias desempaquetadas de COGBox - tus propios archivos de paquete no se tocan.
+Duplicates removed: = Duplicados quitados:
+Some duplicates couldn't be removed completely - is a file from them open? = Algunos duplicados no se pudieron quitar por completo - ¿hay algún archivo suyo abierto?
+No duplicates found. = No se encontraron duplicados.

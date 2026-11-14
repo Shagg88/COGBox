@@ -1481,3 +1481,14 @@ Experimental - the game's own camera moves to your character's eyes while you wa
 # 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
 DualSense adaptive triggers = Gâchettes adaptatives DualSense
 PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = Manettes PS5 DualSense uniquement (USB ou Bluetooth) : les gâchettes résistent, cliquent ou vibrent selon l'arme en main, et tremblent pendant que la tronçonneuse tourne. Les autres manettes ne sont pas concernées. Si Steam Input est activé pour la manette, Steam garde la main sur les gâchettes.
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  doublon de "
+" - can be removed = " - peut être retiré
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = Tout le contenu de ce paquet se trouve aussi, identique, dans l'autre : le jeu reçoit donc les mêmes éléments en double (par exemple le même skin deux fois). Le retirer ne retire que la copie décompressée de COGBox - ton fichier de paquet n'est pas touché.
+Remove duplicates = Retirer les doublons
+Remove duplicate downloadable content = Retirer le contenu téléchargeable en double
+Duplicates found: = Doublons trouvés :
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\nTout leur contenu se trouve aussi, identique, dans un autre paquet que tu gardes : le jeu ne reçoit que les mêmes éléments en double. Les retirer ? Seules les copies décompressées de COGBox sont retirées - tes propres fichiers de paquet ne sont pas touchés.
+Duplicates removed: = Doublons retirés :
+Some duplicates couldn't be removed completely - is a file from them open? = Certains doublons n'ont pas pu être retirés complètement - un de leurs fichiers est-il ouvert ?
+No duplicates found. = Aucun doublon trouvé.

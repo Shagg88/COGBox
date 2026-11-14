@@ -170,10 +170,15 @@ void install_confirmed(App &a);      // the "replace" question answered yes
 bool drop_is_game_or_update(const std::string &folder);          // 0.2.0: a dropped folder COGBox adds as a copy / update
 std::vector<std::string> dlc_packages_in(const std::string &folder);   // 0.2.0: DLC packages in a dropped folder (3 levels)
 // 0.2.0: downloadable content COGBox added (user\0000000000000000\<title>\00000002\<name>)
-struct DlcItem { std::string name, title, dir, header; };
+struct DlcItem {
+    std::string name, title, dir, header;
+    std::string dupOf, dupOfName;   // GitHub #283: set when another installed package already has all of this one's files
+};
 const std::vector<DlcItem> &dlc_list(int game);          // cached; refreshed after an add or remove
 void dlc_remove_ask(App &a, int game, const DlcItem &item);
 void dlc_remove_confirmed(App &a);   // the "dlcremove" question answered yes
+void dlc_remove_dupes_ask(App &a, int game);   // GitHub #283: "Remove duplicates"
+void dlc_remove_dupes_confirmed(App &a);       // the "dlcdupes" question answered yes
 // 0.2.0: mods (mods.cpp) - <Game>\mods\<mod>\, laid out like the game's data folder
 struct ModItem {
     std::string folder, path, name, version, author, description;

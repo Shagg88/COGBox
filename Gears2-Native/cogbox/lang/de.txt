@@ -1478,3 +1478,14 @@ Experimental - the game's own camera moves to your character's eyes while you wa
 # 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
 DualSense adaptive triggers = Adaptive DualSense-Trigger
 PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = Nur PS5-DualSense-Controller (USB oder Bluetooth): Die Trigger leisten Widerstand, klicken oder vibrieren passend zur Waffe in deiner Hand und rütteln, während die Kettensäge läuft. Andere Controller sind nicht betroffen. Ist Steam Input für den Controller aktiv, behält Steam die Trigger.
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  Duplikat von "
+" - can be removed = " - kann entfernt werden
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = Alles in diesem Paket ist mit demselben Inhalt auch im anderen enthalten, daher bekommt das Spiel dieselben Gegenstände doppelt (zum Beispiel denselben Skin zweimal). Beim Entfernen wird nur die entpackte Kopie von COGBox entfernt - deine Paketdatei bleibt unberührt.
+Remove duplicates = Duplikate entfernen
+Remove duplicate downloadable content = Doppelte Download-Inhalte entfernen
+Duplicates found: = Gefundene Duplikate:
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\nAlles darin ist mit demselben Inhalt auch in einem anderen Paket enthalten, das du behältst, daher bekommt das Spiel nur dieselben Gegenstände doppelt. Entfernen? Nur die entpackten Kopien von COGBox werden entfernt - deine eigenen Paketdateien bleiben unberührt.
+Duplicates removed: = Entfernte Duplikate:
+Some duplicates couldn't be removed completely - is a file from them open? = Einige Duplikate konnten nicht vollständig entfernt werden - ist eine Datei davon geöffnet?
+No duplicates found. = Keine Duplikate gefunden.

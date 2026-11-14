@@ -1483,3 +1483,14 @@ Experimental - the game's own camera moves to your character's eyes while you wa
 # 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
 DualSense adaptive triggers = DualSense 自适应扳机
 PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = 仅限 PS5 DualSense 手柄（USB 或蓝牙）：扳机会根据手中的武器产生阻力、段落感或振动，链锯转动时也会抖动。其他手柄不受影响。如果该手柄开启了 Steam Input，扳机由 Steam 控制。
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  与此重复: "
+" - can be removed = " - 可以移除
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = 此包中的所有内容都以相同内容存在于另一个包中，因此游戏会把同样的物品收到两次（例如同一皮肤出现两次）。移除时只会移除 COGBox 解包的副本 - 你的包文件不会被改动。
+Remove duplicates = 移除重复项
+Remove duplicate downloadable content = 移除重复的可下载内容
+Duplicates found: = 找到的重复项:
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\n其中的所有内容都以相同内容存在于你保留的另一个包中，因此游戏只是把同样的物品收到两次。要移除它们吗? 只会移除 COGBox 解包的副本 - 你自己的包文件不会被改动。
+Duplicates removed: = 已移除的重复项:
+Some duplicates couldn't be removed completely - is a file from them open? = 部分重复项未能完全移除 - 其中有文件处于打开状态吗?
+No duplicates found. = 未找到重复项。

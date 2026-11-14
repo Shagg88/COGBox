@@ -1541,3 +1541,14 @@ Experimental - the game's own camera moves to your character's eyes while you wa
 # 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
 DualSense adaptive triggers = DualSense adaptív ravaszok
 PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = Csak PS5 DualSense kontrollerek (USB vagy Bluetooth): a ravaszok a kézben lévő fegyverhez illően ellenállnak, kattannak vagy rezegnek, és remegnek, amíg a láncfűrész pörög. Más kontrollereket nem érint. Ha a Steam Input be van kapcsolva a kontrollerhez, a ravaszokat a Steam kezeli.
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  ennek a másolata: "
+" - can be removed = " - eltávolítható
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = Ennek a csomagnak minden fájlja ugyanazzal a tartalommal a másikban is megvan, így a játék ugyanazokat az elemeket kétszer kapja meg (például ugyanazt a skint kétszer). Eltávolításkor csak a COGBox kicsomagolt másolata törlődik - a csomagfájlodhoz nem nyúl.
+Remove duplicates = Másolatok eltávolítása
+Remove duplicate downloadable content = Duplikált letölthető tartalom eltávolítása
+Duplicates found: = Talált másolatok:
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\nMinden, ami bennük van, ugyanazzal a tartalommal egy másik, megtartott csomagban is megvan, így a játék csak kétszer kapja meg ugyanazokat az elemeket. Eltávolítod őket? Csak a COGBox kicsomagolt másolatai törlődnek - a saját csomagfájljaidhoz nem nyúl.
+Duplicates removed: = Eltávolított másolatok:
+Some duplicates couldn't be removed completely - is a file from them open? = Néhány másolatot nem sikerült teljesen eltávolítani - nyitva van belőlük egy fájl?
+No duplicates found. = Nincs másolat.

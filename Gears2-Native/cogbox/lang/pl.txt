@@ -1480,3 +1480,14 @@ Experimental - the game's own camera moves to your character's eyes while you wa
 # 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
 DualSense adaptive triggers = Adaptacyjne spusty DualSense
 PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = Tylko kontrolery PS5 DualSense (USB lub Bluetooth): spusty stawiają opór, klikają lub wibrują zależnie od broni w ręku i drżą, gdy piła łańcuchowa pracuje. Inne kontrolery nie są objęte. Jeśli Steam Input jest włączony dla kontrolera, spustami steruje Steam.
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  duplikat "
+" - can be removed = " - można usunąć
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = Wszystko z tego pakietu jest też, z tą samą zawartością, w drugim, więc gra dostaje te same przedmioty dwa razy (na przykład tę samą skórkę dwa razy). Usunięcie usuwa tylko rozpakowaną kopię COGBox - twój plik pakietu nie jest ruszany.
+Remove duplicates = Usuń duplikaty
+Remove duplicate downloadable content = Usuń zduplikowaną zawartość do pobrania
+Duplicates found: = Znalezione duplikaty:
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\nWszystko, co w nich jest, jest też, z tą samą zawartością, w innym pakiecie, który zostaje, więc gra dostaje tylko te same przedmioty dwa razy. Usunąć je? Usuwane są tylko rozpakowane kopie COGBox - twoje pliki pakietów nie są ruszane.
+Duplicates removed: = Usunięte duplikaty:
+Some duplicates couldn't be removed completely - is a file from them open? = Niektórych duplikatów nie udało się całkowicie usunąć - czy jakiś ich plik jest otwarty?
+No duplicates found. = Nie znaleziono duplikatów.
