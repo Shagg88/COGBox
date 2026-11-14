@@ -258,17 +258,18 @@ void Gow2MaxTickRate(PPCRegister& f1) {
 // Stage 7.5 ultrawide hooks (see the top of the file).
 // ---- 0.3.0: any ultrawide shape (GitHub #60: 21:9 and 32:9) --------------------------------------------------------
 // --gow2_aspect picks the shape when gow2_ultrawide is on: "" = the Canary patch's own 21:9 (1280x550, unchanged), "auto"
-// = the monitor's shape, or "21:9", "32:9", "3440:1440", "3.56". The scene height is 1280 / aspect (even, 360-720; GitHub #137).
+// = the monitor's shape, or "21:9", "32:9", "3440:1440", "3.56". The scene height is 1280 / aspect (even, 240-720; GitHub #137, #293).
 // The field-of-view factor is Canary's 21:9 value times how much more the shape widens than 21:9 does, at the half
 // angle (34.05 deg) where Canary's 21:9 factor is exact (the hooks don't see the game's own field of view).
 // GitHub #94: the clamp below as a switch, so a PC job can reproduce the 32:9 trap (360) and read where it is.
 // GitHub #137: 0.4.0 fixed the trap (gow2_rt_pool_grow, job 1028d: 32:9 / 360 rows, TU6 and disc, no crash) but the
 // floor stayed 536, so 32:9 was still drawn 2.39:1 and pillarboxed. The floor is now 360 rows (32:9, the shape job
 // 1028d ran) while the pool fix is on; with --gow2_rt_pool_grow=false the old 536 still applies, since narrower than that traps.
-REXCVAR_DEFINE_INT32(gow2_ultrawide_min_rows, 360, "Gears2",
-                     "With --gow2_ultrawide: the fewest scene rows (360 = 32:9, the widest tested; with --gow2_rt_pool_grow=false "
-                     "at least 536 = 3440x1440, as fewer trap in the render-target pool setup - GitHub #94/#137)")
-    .range(320, 720);
+// GitHub #293 (0.6.2): 240 rows = 48:9 (three 16:9 screens side by side), with the pool fix on.
+REXCVAR_DEFINE_INT32(gow2_ultrawide_min_rows, 240, "Gears2",
+                     "With --gow2_ultrawide: the fewest scene rows (240 = 48:9 triple screens; with --gow2_rt_pool_grow=false "
+                     "at least 536 = 3440x1440, as fewer trap in the render-target pool setup - GitHub #94/#137/#293)")
+    .range(240, 720);
 REXCVAR_DEFINE_BOOL(gow2_rt_pool_grow, true, "Gears2",
                     "GitHub #94: a render target too large for its pool (Gears 2 wider than ~2.39:1) gets memory of its "
                     "own instead of the game's trap");

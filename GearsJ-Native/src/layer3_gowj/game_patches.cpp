@@ -711,7 +711,8 @@ inline uint32_t Height(const std::string& v, const char* tag) {
     REXLOG_INFO("{}: aspect '{}' = {:.4f} is not wider than 16:9 - Canary's 21:9 is used", tag, v, aspect);
     return 550u;
   }
-  const uint32_t h = std::clamp(uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u, 320u, 720u);
+  // GitHub #293 (0.6.2): down to 240 rows = 48:9 (three 16:9 screens side by side); 320 (4:1) before
+  const uint32_t h = std::clamp(uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u, 240u, 720u);
   REXLOG_INFO("{}: aspect '{}' = {:.4f} -> scene 1280x{}", tag, v, aspect, h);
   return h;
 }
