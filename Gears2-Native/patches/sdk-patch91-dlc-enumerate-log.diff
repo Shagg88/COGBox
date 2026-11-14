@@ -1,0 +1,48 @@
+diff --git a/src/kernel/xam/xam_content.cpp b/src/kernel/xam/xam_content.cpp
+index 8c98ee4..e733f80 100644
+--- a/src/kernel/xam/xam_content.cpp
++++ b/src/kernel/xam/xam_content.cpp
+@@ -367,6 +367,8 @@ u32 XamContentClose_entry(mapped_string root_name, mapped_void overlapped_ptr) {
+   auto result = REX_KERNEL_STATE()->content_manager()->CloseContent(root_name.value());
+   if (REXCVAR_GET(cogbox_save_trace))  // patch 56
+     REXLOG_INFO("cogbox_save_trace: content close root '{}' -> {:08X}", root_name.value(), uint32_t(result));
++  else if (REXCVAR_GET(cogbox_content_log) && root_name.value().rfind("DLC", 0) == 0)  // patch 91 (GitHub #283)
++    REXLOG_INFO("cogbox_content: close root '{}' -> {:08X}", root_name.value(), uint32_t(result));
+ 
+   if (overlapped_ptr && REXCVAR_GET(cogbox_xam_edge_semantics)) {
+     // patch 56 (Edge 52f802d / 451f915): ERROR_FUNCTION_FAILED with the error as an HRESULT, or success; no length
+diff --git a/src/kernel/xam/xam_enum.cpp b/src/kernel/xam/xam_enum.cpp
+index 669c381..cab2962 100644
+--- a/src/kernel/xam/xam_enum.cpp
++++ b/src/kernel/xam/xam_enum.cpp
+@@ -25,6 +25,11 @@
+ 
+ #include <fmt/format.h>
+ 
++#include <rex/cvar.h>
++#include <rex/system/xam/content_manager.h>
++
++REXCVAR_DECLARE(bool, cogbox_content_log);   // patch 91 (xam_content.cpp defines it)
++
+ namespace rex {
+ namespace kernel {
+ namespace xam {
+@@ -51,6 +56,18 @@ uint32_t xeXamEnumerate(uint32_t handle, uint32_t flags, mapped_void buffer_ptr,
+     }
+     extended_error = X_HRESULT_FROM_WIN32(result);
+     length = item_count;
++    // COGBox SDK patch 91 (GitHub #283): what each DLC XEnumerate step hands the title, so a start that mounts only the
++    // first package shows whether the title asked for the next one and what it got
++    if (e->dlc_fast_complete() && REXCVAR_GET(cogbox_content_log)) {
++      std::string names;
++      if (buffer_ptr && result == X_ERROR_SUCCESS) {
++        const auto* items = buffer_ptr.as<const XCONTENT_DATA*>();
++        for (uint32_t i = 0; i < item_count && i < 8; ++i)
++          names += (names.empty() ? "" : ", ") + items[i].file_name();
++      }
++      REXLOG_INFO("cogbox_content: XEnumerate (DLC) handle {:08X} -> result {:08X}, {} item(s){}{}", e->handle(),
++                  uint32_t(result), item_count, names.empty() ? "" : ": ", names);
++    }
+     return result;
+   };
+ 

@@ -526,12 +526,12 @@ std::vector<Option> make_options(Game g) {
              "to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business.", 327), "cheats");
     add(make("Mutators", "Unlock all mutators", Tab::Gameplay, Kind::Bool, SH, 0,
              "Every mutator (gameplay modifier) available from the start. Writes nothing to your profile.", 328), "mutators");
-    // First-person camera (Gears 3, Gears 2; layer3 first_person.cpp): the game's own camera moved to the eyes for the
-    // walking / crouching / aiming / roadie-run modes; every other camera mode keeps its third-person view
+    // First-person camera (Gears 3, Gears 2, Judgment; layer3 first_person.cpp): the game's own camera moved to the
+    // eyes for the walking / crouching / aiming / roadie-run modes; every other camera mode keeps its third-person view
     add(make("FirstPerson", "First-person camera (experimental)", Tab::Gameplay, Kind::Bool, PG, 0,
              "Experimental - the game's own camera moves to your character's eyes while you walk, crouch, aim and roadie "
              "run. In cover, executions, vehicles, turrets and cutscenes it goes back to the usual over-the-shoulder "
-             "view. Page Up switches it off and on in the game. Gears 2 and Gears 3.", 0), "firstperson");
+             "view. Page Up switches it off and on in the game. Gears 2, Gears 3 and Judgment.", 0), "firstperson");
     // Shagg 31 Oct: the level select menu is no longer offered (the port's --gowj_level_select stays for testing)
     // 0.2.0 (GitHub #4): the game's own language - the runtime's user_language (Xbox language IDs, issue #4's table)
     add(choice("Lang", "Game language", Tab::Gameplay, PG,
@@ -792,9 +792,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1 && !cap_exe(env, "UIAction_IsInsaneUnlocked"))
             return no(not_yet(gi, "its Insane check isn't hooked in this build - the game's own rule applies"));
         if (!cap_exe(env, "Unlock Insane difficulty from the start")) return no(not_yet(gi, "needs its next build"));
-    } else if (f == "firstperson") {   // --gow3_first_person / --gow2_first_person: its option's description (a long
-        // literal - a short name can be built a few letters at a time, cap_exe), the same text in both exes
-        if (g != Game::Gears3 && g != Game::Gears2) return no(not_yet(gi));
+    } else if (f == "firstperson") {   // --gow3_ / --gow2_ / --gowj_first_person: its option's description (a long
+        // literal - a short name can be built a few letters at a time, cap_exe), the same text in all three exes
+        if (g != Game::Gears3 && g != Game::Gears2 && g != Game::Judgment) return no(not_yet(gi));
         if (!cap_exe(env, "First-person camera (experimental): the game's own camera at eye level"))
             return no(not_yet(gi, "needs its next build"));
     } else if (f == "hordebots") {   // GitHub #89 (Gears 3), #237 (Gears 2)
@@ -1675,7 +1675,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (on("Cheats")) a.push_back(g == Game::Gears2 ? "--gow2_cheats=true" : g == Game::Judgment ? "--gowj_cheats=true" :
                                   g == Game::Gears1 ? "--gow1_cheats=true" : "--gow3_cheats=true");   // #264: Gears 2, Judgment, Gears 1 too
     if (on("Mutators")) a.push_back("--gow3_unlock_mutators=true");
-    if (on("FirstPerson")) a.push_back(g == Game::Gears2 ? "--gow2_first_person=true" : "--gow3_first_person=true");
+    if (on("FirstPerson")) a.push_back(g == Game::Gears2 ? "--gow2_first_person=true" : g == Game::Judgment ? "--gowj_first_person=true" :
+                                       "--gow3_first_person=true");
     // PS1 873-898: the game's own engine settings through --ue3_ini_edits
     {
         const std::string ei = k_engineIni[gi];

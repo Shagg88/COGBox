@@ -352,6 +352,21 @@ int summary() {
             std::cout << "FAIL UE3 addresses for " << (gi ? "Judgment" : "Gears 3") << "\n"; ++fails;
         }
     }
+    // first-person camera: each game's own switch (Gears 2, Gears 3, Judgment) when its exe has the option, none in Gears 1
+    for (Game g : { Game::Gears2, Game::Gears3, Game::Judgment, Game::Gears1 }) {
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        Store st; Settings s = st.view(g, e);
+        s.set("FirstPerson", 1);
+        const std::vector<std::string> a = build_args(g, Version::TitleUpdate, s, e, nullptr);
+        const char* want = g == Game::Gears2 ? "--gow2_first_person=true" : g == Game::Gears3 ? "--gow3_first_person=true" :
+                           g == Game::Judgment ? "--gowj_first_person=true" : "";
+        int n = 0; bool ok = true;
+        for (const std::string& x : a)
+            if (x.find("_first_person") != std::string::npos) { ++n; ok = ok && x == want; }
+        if (n != (*want ? 1 : 0) || !ok) { std::cout << "FAIL first person for game " << static_cast<int>(g) << "\n"; ++fails; }
+    }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;
 }
@@ -361,7 +376,9 @@ const char* const k_builtin_first_person[] = {
     "game=1;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Gears 3: sent
     "game=1;FirstPerson=1",                                                                             // older exe: greyed, not sent
     "game=0;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Gears 2: sent
-    "game=2;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Judgment: not yet
+    "game=2;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Judgment: sent
+    "game=2;FirstPerson=1",                                                                             // older Judgment exe: greyed, not sent
+    "game=3;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Gears 1: not yet
 };
 
 }  // namespace

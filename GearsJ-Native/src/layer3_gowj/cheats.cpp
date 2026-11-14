@@ -52,11 +52,14 @@ void GowjInstallCheats() {
 
 // UEngine::GetMaxTickRate, overridden: the original (with the frame-rate hook inside), then queued console commands
 // (ctx is left as the original left it, so f1 - its result - is untouched).
-// The override runs with --gowj_cheats on or off; it also drives the DualSense trigger feel (GitHub #245).
+// The override runs with --gowj_cheats on or off; it also drives the DualSense trigger feel (GitHub #245) and the
+// first-person camera.
 void GowjAdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers)
+void GowjFirstPersonTick();        // first_person.cpp (--gowj_first_person)
 extern "C" void __imp__sub_8255E200(PPCContext& __restrict ctx, uint8_t* base);
 extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
   __imp__sub_8255E200(ctx, base);
   Ue3ConsoleRunQueued(ctx, base);
   GowjAdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
+  GowjFirstPersonTick();        // --gowj_first_person (first_person.cpp; off: one flag test)
 }

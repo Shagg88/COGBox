@@ -1479,7 +1479,7 @@ Many = 很多
 How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = 倒下的敌人在地上保留多少、保留多久。“更多”和“很多”会更长时间保留更多尸体，会消耗一些性能和内存。过场动画时尸体仍会被清除。
 # First-person camera, experimental (machine-made translation, please check)
 First-person camera (experimental) = 第一人称视角（实验性）
-Experimental - the game's own camera moves to your character's eyes while you walk, crouch, aim and roadie run. In cover, executions, vehicles, turrets and cutscenes it goes back to the usual over-the-shoulder view. Page Up switches it off and on in the game. Gears 2 and Gears 3. = 实验性 - 在行走、蹲伏、瞄准和冲刺（Roadie Run）时，游戏自身的镜头会移到角色的眼睛位置。在掩体、处决、载具、炮塔和过场动画中会恢复为常规的越肩视角。游戏中按 Page Up 可关闭或重新开启。适用于 Gears 2 和 Gears 3。
+Experimental - the game's own camera moves to your character's eyes while you walk, crouch, aim and roadie run. In cover, executions, vehicles, turrets and cutscenes it goes back to the usual over-the-shoulder view. Page Up switches it off and on in the game. Gears 2, Gears 3 and Judgment. = 实验性 - 在行走、蹲伏、瞄准和冲刺（Roadie Run）时，游戏自身的镜头会移到角色的眼睛位置。在掩体、处决、载具、炮塔和过场动画中会恢复为常规的越肩视角。游戏中按 Page Up 可关闭或重新开启。适用于 Gears 2、Gears 3 和 Judgment。
 # 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
 DualSense adaptive triggers = DualSense 自适应扳机
 PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = 仅限 PS5 DualSense 手柄（USB 或蓝牙）：扳机会根据手中的武器产生阻力、段落感或振动，链锯转动时也会抖动。其他手柄不受影响。如果该手柄开启了 Steam Input，扳机由 Steam 控制。
