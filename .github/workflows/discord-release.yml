@@ -1,0 +1,78 @@
+# Posts a release announcement to Discord when a GitHub release is published.
+#
+# Setup (repository Settings):
+#   Secrets and variables > Actions > Secrets:
+#     DISCORD_RELEASE_WEBHOOK   the #announcements channel's webhook URL (Edit Channel > Integrations > Webhooks).
+#                               A secret: never put it in the repository.
+#   Secrets and variables > Actions > Variables (optional):
+#     DISCORD_RELEASE_MENTION   text before the embed, e.g. @everyone or <@&ROLE_ID> for a role. Empty: no ping.
+#
+# It can also be run by hand (Actions > Discord release post > Run workflow) for any existing tag: to test it, or to
+# post a release again.
+name: Discord release post
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to post (e.g. v0.6.1)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post the release to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          MENTION: ${{ vars.DISCORD_RELEASE_MENTION }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          LOGO: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.repository.default_branch }}/Gears2-Native/cogbox/art/cogbox-256.png
+        run: |
+          set -euo pipefail
+          if [ -z "$WEBHOOK" ]; then
+            echo "::error::The DISCORD_RELEASE_WEBHOOK secret is not set (repository Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          # The release as GitHub has it (the same for a published event and a manual run).
+          gh api "repos/$REPO/releases/tags/$TAG" > release.json
+
+          jq --arg mention "$MENTION" --arg logo "$LOGO" --arg repo "$REPO" '
+            # Discord: an embed description holds at most 4096 characters; keep the notes well under it.
+            def notes: (.body // "" | gsub("\r"; "")) as $b
+              | if ($b | length) > 3500 then ($b[0:3500] | sub("\n[^\n]*$"; "")) + "\n\n*…the full notes are on GitHub.*" else $b end;
+            def downloads: [.assets[]? | "[\(.name)](\(.browser_download_url)) (\((.size / 1048576) | floor) MB)"] | join("\n");
+            {
+              content: (if $mention == "" then null else $mention end),
+              allowed_mentions: { parse: ["everyone", "roles"] },
+              embeds: [{
+                title: "\(.name // .tag_name) is out",
+                url: .html_url,
+                description: notes,
+                color: (if .prerelease then 15105570 else 12000284 end),
+                thumbnail: { url: $logo },
+                fields: ([
+                  { name: "Version", value: .tag_name, inline: true },
+                  { name: "Type", value: (if .prerelease then "Pre-release" else "Release" end), inline: true }
+                ] + (if (downloads | length) > 0 then [{ name: "Downloads", value: (downloads | .[0:1024]), inline: false }] else [] end)
+                  + [{ name: "Release page", value: "[github.com/\($repo)](\(.html_url))", inline: false }]),
+                footer: { text: "COGBox" },
+                timestamp: (.published_at // .created_at)
+              }]
+            }' release.json > payload.json
+
+          # Discord answers 204 on success; show its reply otherwise.
+          code=$(curl -sS -o reply.txt -w '%{http_code}' -H 'Content-Type: application/json' --data @payload.json "$WEBHOOK")
+          if [ "$code" != "204" ] && [ "$code" != "200" ]; then
+            echo "::error::Discord answered $code"
+            cat reply.txt
+            exit 1
+          fi
+          echo "Posted $TAG to Discord."
