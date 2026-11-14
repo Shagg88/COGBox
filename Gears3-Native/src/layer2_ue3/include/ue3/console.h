@@ -9,8 +9,8 @@
 //    an SDK keybind (rex::ui::RegisterBind, cvar bind_ue3_<n>), so it can be moved to another key in the SDK settings;
 //  - --ue3_exec="cmd;cmd": run once a player exists (also settable at run time from the SDK console, `ue3_exec God`);
 //  - --ue3_exec_at="<tick>:<cmd>,...": run at that game tick (scripted tests).
-// console.cpp lives in Gears 2's layer 2 (shared: Gears 3 and Judgment build it from GN_LAYER0_HOME); this header has a
-// copy in Gears2-Native, Gears3-Native and GearsJ-Native/src/layer2_ue3/include/ue3 - keep the three identical.
+// console.cpp lives in Gears 2's layer 2 (shared: Gears 1, 3 and Judgment build it from GN_LAYER0_HOME); this header
+// has a copy in each game's src/layer2_ue3/include/ue3 - keep the four identical.
 // Our code (MIT).
 #pragma once
 

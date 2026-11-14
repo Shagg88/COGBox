@@ -85,10 +85,14 @@ rexglue_apply_target_settings(gn_layer2_ue3)
 # include folder, so this game's own ue3/ headers are not shadowed.
 target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp)  # GitHub #176 (as #145 / #153)
+    ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp  # GitHub #176 (as #145 / #153)
+    ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp)  # GitHub #264: engine console commands (shared with Gears 2 / 3 / J)
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp PROPERTIES
+    ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp
+    ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
+# its options are saved under Gears 1's settings group
+set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_CONSOLE_GEARS1=1)
 
 # Layer 3: Gears of War (the executable).
 set(GOW1_SOURCES
@@ -96,6 +100,7 @@ set(GOW1_SOURCES
     src/layer3_gow1/game_patches.cpp
     src/layer3_gow1/mouse_look.cpp
     src/layer3_gow1/unlocks.cpp
+    src/layer3_gow1/cheats.cpp  # GitHub #264: --gow1_cheats
 )
 if(WIN32)
     add_executable(gow1 WIN32 ${GOW1_SOURCES})

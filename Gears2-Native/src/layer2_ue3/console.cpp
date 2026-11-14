@@ -1,5 +1,5 @@
 // Layer 2 (Unreal Engine 3): engine console commands from the PC side (ue3/console.h, notes/25). Shared: Gears 3 builds
-// this file from here (GN_LAYER0_HOME), Gears 2 for --gow2_cheats (GitHub #264), Judgment for --gowj_cheats. Our code (MIT).
+// this file from here (GN_LAYER0_HOME), Gears 2 for --gow2_cheats (GitHub #264), Judgment for --gowj_cheats, Gears 1 for --gow1_cheats. Our code (MIT).
 #include <ue3/console.h>
 
 #include <rex/cvar.h>
@@ -25,6 +25,8 @@
 #define GN_UE3_CONSOLE_GROUP "Gears2"
 #elif defined(GN_UE3_CONSOLE_JUDGMENT) && GN_UE3_CONSOLE_JUDGMENT
 #define GN_UE3_CONSOLE_GROUP "Judgment"
+#elif defined(GN_UE3_CONSOLE_GEARS1) && GN_UE3_CONSOLE_GEARS1
+#define GN_UE3_CONSOLE_GROUP "Gears1"
 #else
 #define GN_UE3_CONSOLE_GROUP "Gears3"
 #endif
