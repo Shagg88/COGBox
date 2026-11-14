@@ -39,7 +39,7 @@ std::string exe_needle(const std::string& alias, int g) {
     if (alias == "aspect") return "gow3_aspect";
     if (alias == "edits") return "'file|section|~=old>new'";
     if (alias == "avx") return "gn_cpu_level=x86-64-v";
-    if (alias == "adt") return "Gears 3 weapon feel for DualSense pads";   // GitHub #245
+    if (alias == "adt") return g == 0 ? "Gears 2 weapon feel for DualSense pads" : "Gears 3 weapon feel for DualSense pads";   // GitHub #245
     return alias;
 }
 std::string rt_needle(const std::string& a) {
@@ -149,6 +149,9 @@ const char* const k_builtin[] = {
     "game=2;Pool=3;FrameCap=2;Vsync=1;rt=vs;hz=165;FrameGen=1;exe=fg,fif,mute;files=fgdll;Mute=1;LowLag=1;gpus=Intel(R) UHD Graphics/NVIDIA GeForce GTX 1080",
     "game=2;AAMode=3;gpus=NVIDIA GeForce GTX 1080;files=fsr;FrameCap=4;Shake=2;Fov=125;DoF=0;Cheats=1;Mutators=1",
     "game=2;Resolution=4;Fullscreen=0;WindowSize=5;Mnk=1;Sens=0.1;DeadZone=5;Vibration=0;Monitor=1;screens=1;HDR=1",
+    "game=0;AdaptiveTriggers=1;exe=adt;rt=adt",   // GitHub #245, Gears 2: sent
+    "game=0;AdaptiveTriggers=1;rt=adt",           // Gears 2 exe without the weapon table: greyed, not sent
+    "game=2;AdaptiveTriggers=1;exe=adt;rt=adt",   // Judgment: not yet, not sent
 };
 
 std::string random_case(std::mt19937& r) {
