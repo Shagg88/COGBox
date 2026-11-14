@@ -3415,6 +3415,7 @@ class D3D12Backend final : public Backend {
   // ---- Vendor SDK access (Gears 2 notes/64, Gears 3 job 052): see Backend::BeginNative ----
   bool BeginNative(void** device, void** command_list) override {
     if (native_open_ || !Recording()) return false;
+    TsCat();  // a pending GPU tag / category change is timestamped before the native work, not charged to the last tag
     proxy_.Drain();  // queued barriers emitted, everything encoded so far is on the real list, the recorder is idle
     native_open_ = true;
     if (device) *device = device_;
