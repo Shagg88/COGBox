@@ -1198,7 +1198,8 @@ static void about_tab(App &a, int g)
         if (busy || running) ImGui::EndDisabled();
         ImGui::PopID();
     }
-    if (dupes) {   // GitHub #283: all of them in one go
+    if (dl.size() > 1 && dlc_dupes_checking(g)) lamp_line(0, "Checking for duplicates...");   // r22 R1: on a worker thread
+    else if (dupes) {   // GitHub #283: all of them in one go
         if (busy || running) ImGui::BeginDisabled();
         if (small_button("Remove duplicates")) dlc_remove_dupes_ask(a, g);
         if (busy || running) ImGui::EndDisabled();

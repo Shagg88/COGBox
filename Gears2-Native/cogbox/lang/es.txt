@@ -1493,3 +1493,8 @@ Duplicates found: = Duplicados encontrados:
 Duplicates removed: = Duplicados quitados:
 Some duplicates couldn't be removed completely - is a file from them open? = Algunos duplicados no se pudieron quitar por completo - ¿hay algún archivo suyo abierto?
 No duplicates found. = No se encontraron duplicados.
+# 0.6.3 r22 review: duplicate DLC check on a worker thread, full re-check before removal (machine-made translation, please check)
+Checking for duplicates... = Buscando duplicados...
+Still checking for duplicates - try again in a moment. = Todavía se están buscando duplicados; inténtalo de nuevo en un momento.
+Checking duplicate downloadable content = Comprobando el contenido descargable duplicado
+Left as they are (no longer exact copies, or not fully readable): = Se dejaron como estaban (ya no son copias exactas o no se pudieron leer por completo):

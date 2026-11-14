@@ -1494,3 +1494,8 @@ Duplicates found: = 찾은 중복:
 Duplicates removed: = 제거한 중복:
 Some duplicates couldn't be removed completely - is a file from them open? = 일부 중복을 완전히 제거하지 못했습니다 - 그 파일이 열려 있지 않나요?
 No duplicates found. = 중복을 찾지 못했습니다.
+# 0.6.3 r22 review: duplicate DLC check on a worker thread, full re-check before removal (machine-made translation, please check)
+Checking for duplicates... = 중복 항목 확인 중...
+Still checking for duplicates - try again in a moment. = 아직 중복 항목을 확인하는 중입니다 - 잠시 후 다시 시도하세요.
+Checking duplicate downloadable content = 중복된 다운로드 콘텐츠 확인 중
+Left as they are (no longer exact copies, or not fully readable): = 그대로 둔 항목 (더 이상 정확한 사본이 아니거나 완전히 읽을 수 없음):

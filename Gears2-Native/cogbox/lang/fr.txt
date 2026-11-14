@@ -1492,3 +1492,8 @@ Duplicates found: = Doublons trouvés :
 Duplicates removed: = Doublons retirés :
 Some duplicates couldn't be removed completely - is a file from them open? = Certains doublons n'ont pas pu être retirés complètement - un de leurs fichiers est-il ouvert ?
 No duplicates found. = Aucun doublon trouvé.
+# 0.6.3 r22 review: duplicate DLC check on a worker thread, full re-check before removal (machine-made translation, please check)
+Checking for duplicates... = Recherche de doublons...
+Still checking for duplicates - try again in a moment. = La recherche de doublons est encore en cours - réessaie dans un instant.
+Checking duplicate downloadable content = Vérification du contenu téléchargeable en double
+Left as they are (no longer exact copies, or not fully readable): = Laissés tels quels (ce ne sont plus des copies exactes, ou illisibles en partie) :

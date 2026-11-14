@@ -1552,3 +1552,8 @@ Duplicates found: = Talált másolatok:
 Duplicates removed: = Eltávolított másolatok:
 Some duplicates couldn't be removed completely - is a file from them open? = Néhány másolatot nem sikerült teljesen eltávolítani - nyitva van belőlük egy fájl?
 No duplicates found. = Nincs másolat.
+# 0.6.3 r22 review: duplicate DLC check on a worker thread, full re-check before removal (machine-made translation, please check)
+Checking for duplicates... = Duplikátumok keresése...
+Still checking for duplicates - try again in a moment. = A duplikátumok keresése még tart - próbáld újra egy pillanat múlva.
+Checking duplicate downloadable content = Duplikált letölthető tartalom ellenőrzése
+Left as they are (no longer exact copies, or not fully readable): = Változatlanul hagyva (már nem pontos másolatok, vagy nem olvashatók teljesen):

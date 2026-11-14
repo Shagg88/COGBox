@@ -1494,3 +1494,8 @@ Duplicates found: = Найдено дубликатов:
 Duplicates removed: = Удалено дубликатов:
 Some duplicates couldn't be removed completely - is a file from them open? = Некоторые дубликаты не удалось удалить полностью - открыт ли какой-то их файл?
 No duplicates found. = Дубликаты не найдены.
+# 0.6.3 r22 review: duplicate DLC check on a worker thread, full re-check before removal (machine-made translation, please check)
+Checking for duplicates... = Поиск дубликатов...
+Still checking for duplicates - try again in a moment. = Поиск дубликатов ещё идёт - попробуйте ещё раз через минуту.
+Checking duplicate downloadable content = Проверка повторяющегося загружаемого контента
+Left as they are (no longer exact copies, or not fully readable): = Оставлены как есть (уже не точные копии или не читаются полностью):

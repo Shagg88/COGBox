@@ -1494,3 +1494,8 @@ Duplicates found: = 找到的重复项:
 Duplicates removed: = 已移除的重复项:
 Some duplicates couldn't be removed completely - is a file from them open? = 部分重复项未能完全移除 - 其中有文件处于打开状态吗?
 No duplicates found. = 未找到重复项。
+# 0.6.3 r22 review: duplicate DLC check on a worker thread, full re-check before removal (machine-made translation, please check)
+Checking for duplicates... = 正在检查重复项...
+Still checking for duplicates - try again in a moment. = 仍在检查重复项 - 请稍后再试。
+Checking duplicate downloadable content = 正在检查重复的可下载内容
+Left as they are (no longer exact copies, or not fully readable): = 保持原样 (已不再是完全相同的副本，或无法完整读取):
