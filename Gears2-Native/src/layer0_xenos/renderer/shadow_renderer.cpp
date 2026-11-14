@@ -612,6 +612,11 @@ REXCVAR_DEFINE_DOUBLE(gow2_renderer_fullscreen_wait_ms, 8.0, "Gears2",
                       "frame in total, instead of being skipped - a skipped one leaves its target holding old or empty data "
                       "that the final picture then shows. 0 = off (skip while compiling, as before). Job 632: 8 (was 50 - job 631b's cold "
                       "run froze for up to 2-3 s while full-screen passes waited)");
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_fullscreen_pipeline_wait_ms, 50.0, "Gears2",
+                      "GitHub #287 (D3D12): a full-screen pass whose pipeline is still on a worker after the "
+                      "--gow2_renderer_fullscreen_wait_ms budget waits for it once more, up to this many ms - at most one "
+                      "such wait a frame and one per pipeline: one short hitch instead of several frames without the pass "
+                      "(a Gears 2 cutscene's lightning went black for 4 frames). 0 = off (as 0.6.1)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_standin_new_vs, false, "Gears2",
                     "Patch 0132: also treat 'new vertex shader drawing to a target not drawn in the last 4 frames' as a "
                     "stand-in wait (0045's broad case). Off by default: Shagg's 21:34 session spent 1.8 s in 34 such "
@@ -1452,6 +1457,8 @@ struct FrameStats {
   uint64_t resolve_draws = 0;               // patch 0119
   uint64_t standin_waits = 0, standin_over_budget = 0;  // patch 0045
   uint64_t standin_bounded_waits = 0, standin_bounded_skips = 0, standin_bounded_sync = 0;  // 0.5.1
+  uint64_t fullscreen_long_waits = 0, fullscreen_long_waits_won = 0;  // GitHub #287
+  double fullscreen_long_wait_ms = 0.0;
   uint64_t depth_pipeline_waits = 0, depth_pipeline_waits_won = 0;  // patch 0132
   double depth_pipeline_wait_ms = 0.0;
   double standin_wait_ms = 0.0;
@@ -2817,6 +2824,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     shader_wait_left_ms_ = shader_wait_budget_ms_;
     standin_wait_left_ms_ = standin_wait_budget_ms_;  // patch 0045
     fullscreen_wait_left_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_fullscreen_wait_ms));  // job 621
+    fullscreen_long_wait_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_fullscreen_pipeline_wait_ms));  // GitHub #287
+    fullscreen_long_wait_this_frame_ = false;
     last_copy_draw_ = 0;
     drawn_since_copy_ = 0;
     EndParts();
@@ -10207,6 +10216,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (standin_bounded && pipeline_pending) {  // 0.5.1: wait for the worker, at most this frame's stand-in budget
       if (*standin_left > 0.0 && backend_->WaitGraphicsPipeline(d, *standin_left))
         pipeline = backend_->GetGraphicsPipeline(d, true, &pipeline_pending);
+      // GitHub #287: a full-screen pass still not ready waits once more for its worker, past the frame's budget - at
+      // most one such wait a frame and one per pipeline (its build is under way; skipping it frame after frame until
+      // then showed as a black flash). The time also comes off this frame's full-screen budget below.
+      if (pipeline_pending && standin_left == &fullscreen_wait_left_ms_ && fullscreen_long_wait_ms_ > 0.0 &&
+          !fullscreen_long_wait_this_frame_ && fullscreen_long_waited_.size() < 4096 &&
+          fullscreen_long_waited_.insert(gpu::HashPipelineDesc(d)).second) {
+        fullscreen_long_wait_this_frame_ = true;
+        const auto t1 = std::chrono::steady_clock::now();
+        if (backend_->WaitGraphicsPipeline(d, fullscreen_long_wait_ms_))
+          pipeline = backend_->GetGraphicsPipeline(d, true, &pipeline_pending);
+        ++stats_.fullscreen_long_waits;
+        if (!pipeline_pending) ++stats_.fullscreen_long_waits_won;
+        stats_.fullscreen_long_wait_ms += MsSince(t1);
+      }
       ++stats_.standin_bounded_waits;
       if (pipeline_pending && standin_once) {  // one-shot data: build it now (the old behaviour, for these only)
         pipeline = backend_->GetGraphicsPipeline(d, false, &pipeline_pending);
@@ -13816,6 +13839,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         REXLOG_INFO("gow2_renderer: stand-in pipelines waited on a worker (bounded): {}, not ready in time and skipped {} "
                     "(drawn once ready), built synchronously (memexport) {}",
                     stats_.standin_bounded_waits, stats_.standin_bounded_skips, stats_.standin_bounded_sync);
+      if (stats_.fullscreen_long_waits)  // GitHub #287
+        REXLOG_INFO("gow2_renderer: full-screen passes waited once more for their pipeline (GitHub #287): {}, ready in "
+                    "time {}, {:.1f} ms in total", stats_.fullscreen_long_waits, stats_.fullscreen_long_waits_won,
+                    stats_.fullscreen_long_wait_ms);
     }
     if (stats_.shader_waits) {  // shader pop-in (this summary's frames)
       REXLOG_INFO("gow2_renderer: shader waits (budget {} ms/frame): {} draws waited for their shader, {} got it in "
@@ -14198,6 +14225,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // per render target the frame it was last drawn in and the one before (Edge draw_target_last_frames_).
   double standin_wait_budget_ms_ = 0.0, standin_wait_left_ms_ = 0.0;
   double fullscreen_wait_left_ms_ = 0.0;  // job 621
+  double fullscreen_long_wait_ms_ = 0.0;   // GitHub #287
+  bool fullscreen_long_wait_this_frame_ = false;
+  std::unordered_set<uint64_t> fullscreen_long_waited_;  // pipelines (HashPipelineDesc) that had their one long wait
   std::map<std::string, uint64_t> standin_reasons_;
   std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> standin_target_frames_;
   double shader_wait_left_ms_ = 0.0;    // what is left of it this frame
