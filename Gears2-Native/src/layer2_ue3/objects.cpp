@@ -517,7 +517,13 @@ uint32_t ClassOf(uint32_t object) { return object ? Read32(object + g_L.cls) : 0
 // class word still looks right (Gears 3's obj::IsLive, review r23, with the discovered slot field). The count is the one
 // the last table read saw (Refresh): an object made since then reads as not live until the next read - safe, as every
 // caller only skips or leaves alone what is not live.
-bool IsLive(uint32_t object) { return g_ready.load(std::memory_order_acquire) && g_L.slot && IsObject(object); }
+// r28 B1 (as Gears 3's afa04e2): the table's address and count read now - a map load can move the table, and the
+// remembered copy can list objects freed since
+bool IsLive(uint32_t object) {
+  if (!object || !g_ready.load(std::memory_order_acquire) || !g_L.slot || !g_objectsVar) return false;
+  const uint32_t table = Read32(g_objectsVar), count = Read32(g_objectsVar + 4), s = Read32(object + g_L.slot);
+  return table && s < count && count < 4000000 && Read32(table + 4 * s) == object;
+}
 
 uint32_t FindClass(const char* name) {
   {
