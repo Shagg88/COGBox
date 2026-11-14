@@ -15,6 +15,18 @@
 // GetWeaponStartTraceLocation reads the player's view point), so the crosshair stays true; and the game hides a pawn
 // whose camera is inside its CameraNoRenderCylinder (radius 40) - your own body is not drawn from the inside.
 //
+// Your own weapon (fpgun, agent062-out/fpgun-research.md): the camera's hide puts the pawn in the player controller's
+// per-view HiddenActors list (GearSpectatorCamera.OnBecomeActive undoes exactly that: bIsHiddenByCamera = false,
+// HiddenActors emptied). Every primitive attached to the pawn - the gun is attached to its mesh's hand socket
+// (GearWeapon.PerformWeaponAttachment) - is left out of that view with it, unless the primitive has
+// PrimitiveComponent.bIgnoreHiddenActorsMembership, the engine's own Gears-only exception (the Longshot / Hammer of
+// Dawn aiming beams set it while you aim, GearWeap_HeavySniperBase.RecalculateLaserLocation, GearWeap_HODBase.Tick).
+// --gow3_first_person_weapon (default on) sets that bit on the local player's current weapon mesh and its magazine,
+// muzzle flash and shell-eject / barrel-smoke particles while a first-person mode is the camera's current mode, and
+// clears it again on a weapon change, a third-person mode, PageUp off or a level change. Body, head, holstered guns
+// and helmet stay hidden. The first-person modes also get bDoPredictiveAvoidance cleared, as the game's own eye view
+// (GameplayCam_SniperZoom) has it. --gow3_first_person_diag logs the hide state once a second (log only).
+//
 // No guest address, no hook of our own: reflection (ue3/objects.h) finds the GearGameplayCameraMode objects a slice of
 // the object table per engine tick (16384 slots; a pass over ~168,000 objects takes ~11 ticks), one pass every 2 s, so
 // a level load's new camera (a new PlayerCamera actor) is patched within a few seconds and nothing ever scans the whole
@@ -52,6 +64,12 @@ REXCVAR_DEFINE_STRING(gow3_first_person_offset, "8,0,0", "Gears3",
 REXCVAR_DEFINE_INT32(gow3_first_person_fov, 0, "Gears3",
                      "First-person camera: field of view while walking / crouching (0 = the game's own or the launcher's "
                      "FOV setting; aiming and roadie run keep theirs)");
+REXCVAR_DEFINE_BOOL(gow3_first_person_weapon, true, "Gears3",
+                    "First-person camera: draw your own weapon (the game hides it with your body when the camera is "
+                    "inside you; this sets the engine's bIgnoreHiddenActorsMembership on the weapon's meshes)");
+REXCVAR_DEFINE_BOOL(gow3_first_person_diag, false, "Gears3",
+                    "First-person camera: log the local players' hide state once a second (pawn / weapon flags, "
+                    "HiddenActors, camera and weapon positions) - log only, for tests");
 
 namespace {
 namespace obj = ue3::obj;
@@ -81,6 +99,8 @@ struct ClassInfo {
   int viewOffset = -1, viewportAdj = -1, fovAngle = -1;
   uint32_t viewportCount = 0;   // ViewOffset_ViewportAdjustments' array length, read from the property (review r20 R2)
   std::vector<int> zero;
+  int avoid = -1;               // bDoPredictiveAvoidance (GameThirdPersonCameraMode bitfield word), cleared in FP
+  uint32_t avoidMask = 0;
 };
 std::unordered_map<uint32_t, ClassInfo> g_classes;
 
@@ -132,8 +152,11 @@ const ClassInfo& InfoOf(uint32_t cls) {
   info.fovAngle = at("FOVAngle", 4);
   for (const char* v : kZeroVectors)
     if (const int o = at(v, 12); o >= 0) info.zero.push_back(o);
+  if (const uint32_t m = obj::BoolMask(cls, "bDoPredictiveAvoidance"); m)
+    if ((info.avoid = at("bDoPredictiveAvoidance", 4)) >= 0) info.avoidMask = m;
   REXLOG_INFO("first person: {} - ViewOffset +0x{:X}, viewport adjustments +0x{:X} x{}, FOVAngle +0x{:X}, {} shift(s) "
-              "zeroed", n, info.viewOffset, info.viewportAdj, info.viewportCount, info.fovAngle, info.zero.size());
+              "zeroed, bDoPredictiveAvoidance +0x{:X} mask {:08X}", n, info.viewOffset, info.viewportAdj,
+              info.viewportCount, info.fovAngle, info.zero.size(), info.avoid, info.avoidMask);
   if (info.viewOffset < 0) REXLOG_WARN("first person: {} has no ViewOffset - left as it is", n);
   return info;
 }
@@ -187,6 +210,196 @@ void Apply(uint32_t o, uint32_t cls, const ClassInfo& info) {
                 Float(v[7].original), Float(v[8].original), g_off[0], g_off[1], g_off[2]);
   }
   g_patched[o] = std::move(p);
+}
+
+// ---- single bits (read-modify-write of one bit only; the rest of a bitfield word stays the game's) ----------------
+// A bit we changed is kept with the object's class; it is put back only while the object is still live with that
+// class and the bit still holds our value (obj::IsLive: a freed object's memory is never written).
+struct Bit { uint32_t object, cls, address, mask; bool set, weapon; };   // set = the value we wrote
+std::unordered_map<uint32_t, Bit> g_bits;   // by address (game thread only)
+
+void SetBit(uint32_t object, uint32_t address, uint32_t mask, bool set, bool weapon) {
+  const uint32_t w = obj::Read32(address), cls = obj::ClassOf(object);
+  if (((w & mask) != 0) == set) return;   // already so: ours from before, or the game's own value (nothing to own)
+  if (!obj::Write32(address, set ? (w | mask) : (w & ~mask))) return;
+  if (auto it = g_bits.find(address); it != g_bits.end() && it->second.object == object && it->second.cls == cls &&
+                                      it->second.mask == mask)
+    return;   // ours already (the game had put its value back): keep the record
+  g_bits.insert_or_assign(address, Bit{object, cls, address, mask, set, weapon});   // a new object here: new record
+}
+void RestoreBit(const Bit& b) {
+  if (!obj::IsLive(b.object) || obj::ClassOf(b.object) != b.cls) return;
+  const uint32_t w = obj::Read32(b.address);
+  if (((w & b.mask) != 0) == b.set) obj::Write32(b.address, b.set ? (w & ~b.mask) : (w | b.mask));
+}
+void RestoreBits(uint32_t object = 0) {   // 0 = all
+  for (auto it = g_bits.begin(); it != g_bits.end();)
+    if (!object || it->second.object == object) RestoreBit(it->second), it = g_bits.erase(it);
+    else ++it;
+}
+
+// ---- reflection cache: property offset / bool mask per (class, property) --------------------------------------------
+struct PropKey {
+  uint32_t cls, name; const char* p;
+  bool operator==(const PropKey& o) const { return cls == o.cls && name == o.name && p == o.p; }
+};
+struct PropHash { size_t operator()(const PropKey& k) const { return k.cls * 31u + k.name * 7u + size_t(k.p); } };
+struct PropInfo { int offset = -1; uint32_t mask = 0; };
+std::unordered_map<PropKey, PropInfo, PropHash> g_props;
+PropInfo Prop(uint32_t cls, const char* p) {   // by value: the cache may be cleared
+  if (!cls) return {};
+  const PropKey k{cls, obj::Read32(cls + 44), p};
+  if (auto it = g_props.find(k); it != g_props.end()) return it->second;
+  if (g_props.size() > 4096) g_props.clear();
+  PropInfo i;
+  if (const int o = obj::PropertyOffset(cls, p); o >= 32 && o < 0x4000) i.offset = o, i.mask = obj::BoolMask(cls, p);
+  return g_props[k] = i;
+}
+uint32_t Ptr(uint32_t object, const char* p) {   // an object property's value (0 when absent / unreadable)
+  if (!object) return 0;
+  const uint32_t cls = obj::ClassOf(object);
+  const PropInfo i = Prop(cls, p);
+  return i.offset >= 0 ? obj::Read32(object + uint32_t(i.offset)) : 0;
+}
+int Flag(uint32_t object, const char* p) {   // a bool property: 1 / 0, -1 when absent
+  if (!object) return -1;
+  const uint32_t cls = obj::ClassOf(object);
+  if (!cls) return -1;
+  const PropInfo i = Prop(cls, p);
+  return i.offset >= 0 && i.mask ? int((obj::Read32(object + uint32_t(i.offset)) & i.mask) != 0) : -1;
+}
+
+// ---- the local players' cameras (GearPlayerCamera), found from the first-person mode objects in each pass ---------
+// A mode object is made by its camera (new(self)): its Outer chain reaches the GearPlayerCamera, the object that has
+// both PCOwner and GameplayCam. Up to 4 levels.
+std::vector<uint32_t> g_cams, g_seenCams;
+uint32_t CameraOf(uint32_t mode) {
+  uint32_t o = mode;
+  for (int i = 0; i < 4 && o; i++) {
+    o = obj::Read32(o + 40);   // UObject::Outer
+    const uint32_t cls = o ? obj::ClassOf(o) : 0;
+    if (cls && Prop(cls, "PCOwner").offset >= 0 && Prop(cls, "GameplayCam").offset >= 0) return o;
+  }
+  return 0;
+}
+
+// the weapon's primitives: the mesh, its magazine, its muzzle flash and shell / smoke particles (all attached to the
+// weapon mesh, so all hidden with the pawn); only objects whose class has bIgnoreHiddenActorsMembership are taken
+constexpr const char* kWeaponParts[] = {"Mesh", "MagazineMesh", "PSC_ShellEject", "PSC_ReloadBarrelSmoke"};
+std::vector<uint32_t> WeaponParts(uint32_t weapon) {
+  std::vector<uint32_t> v;
+  const auto add = [&](uint32_t c) {
+    if (c && obj::ClassOf(c) && Prop(obj::ClassOf(c), "bIgnoreHiddenActorsMembership").mask &&
+        std::find(v.begin(), v.end(), c) == v.end())
+      v.push_back(c);
+  };
+  for (const char* p : kWeaponParts) add(Ptr(weapon, p));
+  add(Ptr(Ptr(weapon, "MuzzleFlash"), "MuzFlashEmitter"));
+  return v;
+}
+
+// Every engine tick while first person is on (a few dozen reads per local player): the current weapon of each local
+// player whose camera is in a first-person mode gets bIgnoreHiddenActorsMembership; anything we set it on that is no
+// longer such a part (weapon switched, dropped, holstered, cover / third-person mode, player gone) gets it back.
+std::unordered_set<uint32_t> g_wantParts;
+void WeaponTick() {
+  static const bool weaponOn = REXCVAR_GET(gow3_first_person_weapon);
+  if (!weaponOn) return;
+  g_wantParts.clear();
+  for (uint32_t cam : g_cams) {
+    if (!obj::IsLive(cam)) continue;
+    const uint32_t gc = Ptr(cam, "GameplayCam");
+    const uint32_t mode = Ptr(gc, "CurrentCamMode");
+    // the current mode one of ours (or the property not found: then always, the pawn is only hidden up close)
+    if (gc && Prop(obj::ClassOf(gc), "CurrentCamMode").offset >= 0 && !g_patched.count(mode)) continue;
+    const uint32_t pawn = Ptr(Ptr(cam, "PCOwner"), "MyGearPawn");
+    const uint32_t weapon = Ptr(pawn, "MyGearWeapon");
+    if (!weapon || !obj::IsLive(weapon)) continue;
+    for (uint32_t c : WeaponParts(weapon)) {
+      const PropInfo i = Prop(obj::ClassOf(c), "bIgnoreHiddenActorsMembership");
+      g_wantParts.insert(c);
+      SetBit(c, c + uint32_t(i.offset), i.mask, true, true);
+    }
+  }
+  for (auto it = g_bits.begin(); it != g_bits.end();) {   // ours, no longer wanted (mode-object bits are kept)
+    const Bit& b = it->second;
+    if (b.weapon && !g_wantParts.count(b.object)) RestoreBit(b), it = g_bits.erase(it);
+    else ++it;
+  }
+}
+
+// ---- --gow3_first_person_diag: once a second, per local player, log only --------------------------------------------
+void Vec(uint32_t a, float v[3]) { for (int i = 0; i < 3; i++) v[i] = obj::ReadFloat(a + 4 * i); }
+std::string Parts(uint32_t c) {   // a primitive's hide-related flags and last render time
+  if (!c) return "none";
+  char b[200];
+  std::snprintf(b, sizeof b, "%s HiddenGame %d OwnerNoSee %d OnlyOwnerSee %d IgnoreHiddenActors %d LastRender %.2f",
+                obj::ObjectName(obj::ClassOf(c)).c_str(), Flag(c, "HiddenGame"), Flag(c, "bOwnerNoSee"),
+                Flag(c, "bOnlyOwnerSee"), Flag(c, "bIgnoreHiddenActorsMembership"),
+                Prop(obj::ClassOf(c), "LastRenderTime").offset >= 0
+                    ? obj::ReadFloat(c + uint32_t(Prop(obj::ClassOf(c), "LastRenderTime").offset)) : -1.f);
+  return b;
+}
+void DiagTick() {
+  static const bool on = REXCVAR_GET(gow3_first_person_diag);
+  if (!on) return;
+  static Clock::time_point next{};
+  if (Clock::now() < next) return;
+  next = Clock::now() + std::chrono::seconds(1);
+  if (g_cams.empty()) { REXLOG_INFO("first person diag: no camera yet"); return; }
+  for (uint32_t cam : g_cams) {
+    if (!obj::IsLive(cam)) continue;
+    const uint32_t pc = Ptr(cam, "PCOwner"), pawn = Ptr(pc, "MyGearPawn"), weapon = Ptr(pawn, "MyGearWeapon");
+    const uint32_t gc = Ptr(cam, "GameplayCam"), mode = Ptr(gc, "CurrentCamMode");
+    const uint32_t wmesh = Ptr(weapon, "Mesh");
+    const uint32_t wi = Ptr(pawn, "WorldInfo");
+    const PropInfo ts = Prop(obj::ClassOf(wi), "TimeSeconds");
+    const float now = wi && ts.offset >= 0 ? obj::ReadFloat(wi + uint32_t(ts.offset)) : -1.f;
+    // PCOwner.HiddenActors (TArray: data, count): is the pawn / the weapon actor in it?
+    int hidden = -1; bool pawnIn = false, weapIn = false;
+    if (const PropInfo h = Prop(obj::ClassOf(pc), "HiddenActors"); pc && h.offset >= 0) {
+      const uint32_t data = obj::Read32(pc + uint32_t(h.offset)), n = obj::Read32(pc + uint32_t(h.offset) + 4);
+      hidden = int(std::min<uint32_t>(n, 9999));
+      for (uint32_t i = 0; data && i < std::min<uint32_t>(n, 64); i++) {
+        const uint32_t a = obj::Read32(data + 4 * i);
+        pawnIn |= a && a == pawn, weapIn |= a && a == weapon;
+      }
+    }
+    REXLOG_INFO("first person diag: cam {:08X} mode {} ({}) | pawn {} bIsHiddenByCamera {} | HiddenActors {} pawn {} "
+                "weapon {} | time {:.2f}", cam, mode ? obj::ObjectName(obj::ClassOf(mode)) : "?",
+                g_patched.count(mode) ? "FP" : "3P", pawn ? obj::ObjectName(obj::ClassOf(pawn)) : "none",
+                Flag(pawn, "bIsHiddenByCamera"), hidden, pawnIn, weapIn, now);
+    REXLOG_INFO("first person diag:   pawn mesh {} | weapon {} bHidden {} | weapon mesh {} (owner {}) | magazine {}",
+                Parts(Ptr(pawn, "Mesh")), weapon ? obj::ObjectName(obj::ClassOf(weapon)) : "none", Flag(weapon, "bHidden"),
+                Parts(wmesh), obj::ObjectName(obj::ClassOf(Ptr(wmesh, "Owner"))), Parts(Ptr(weapon, "MagazineMesh")));
+    // camera (CameraCache.POV: TimeStamp, then Location, Rotation, FOV) vs the weapon mesh's bounds centre and the pawn
+    const PropInfo cc = Prop(obj::ClassOf(cam), "CameraCache");
+    const PropInfo bo = Prop(obj::ClassOf(wmesh), "Bounds");
+    const PropInfo lo = Prop(obj::ClassOf(pawn), "Location");
+    if (cc.offset < 0 || bo.offset < 0) continue;
+    float cl[3], wl[3], pl[3] = {0, 0, 0};
+    const uint32_t pov = cam + uint32_t(cc.offset) + 4;
+    Vec(pov, cl);
+    Vec(wmesh + uint32_t(bo.offset), wl);
+    if (lo.offset >= 0) Vec(pawn + uint32_t(lo.offset), pl);
+    const float k = 3.14159265f / 32768.f;
+    const float pitch = float(int16_t(obj::Read32(pov + 12) & 0xFFFF)) * k, yaw = float(int32_t(obj::Read32(pov + 16))) * k;
+    const float fov = obj::ReadFloat(pov + 24);
+    const float fw[3] = {std::cos(pitch) * std::cos(yaw), std::cos(pitch) * std::sin(yaw), std::sin(pitch)};
+    const float rt[3] = {-std::sin(yaw), std::cos(yaw), 0};
+    const float up[3] = {-std::sin(pitch) * std::cos(yaw), -std::sin(pitch) * std::sin(yaw), std::cos(pitch)};
+    const float d[3] = {wl[0] - cl[0], wl[1] - cl[1], wl[2] - cl[2]};
+    const float f = d[0] * fw[0] + d[1] * fw[1] + d[2] * fw[2], r = d[0] * rt[0] + d[1] * rt[1],
+                u = d[0] * up[0] + d[1] * up[1] + d[2] * up[2];
+    const float deg = 180.f / 3.14159265f;
+    const float halfH = fov * 0.5f, halfV = std::atan(std::tan(halfH / deg) * 9.f / 16.f) * deg;
+    REXLOG_INFO("first person diag:   camera ({:.0f}, {:.0f}, {:.0f}) = pawn + ({:.0f}, {:.0f}, {:.0f}), FOV {:.0f} | "
+                "weapon bounds centre in view space fwd {:.0f} right {:.0f} up {:.0f} -> {:.0f} deg right, {:.0f} deg up "
+                "(16:9 half FOV {:.0f} x {:.0f}){}", cl[0], cl[1], cl[2], cl[0] - pl[0], cl[1] - pl[1], cl[2] - pl[2],
+                fov, f, r, u, std::atan2(r, f) * deg, std::atan2(u, f) * deg, halfH, halfV,
+                f > 0 && std::abs(std::atan2(r, f) * deg) < halfH && std::abs(std::atan2(u, f) * deg) < halfV
+                    ? " IN VIEW" : " out of view");
+  }
 }
 
 // Off again (the hotkey): review r20 B1 - only objects still in the engine's object table are written. A mode object
@@ -245,6 +458,10 @@ void Gow3FirstPersonTick() {
       g_restoring = true;
       g_restoreCursor = 0;
       g_restored = 0;
+      const size_t bits = g_bits.size();
+      RestoreBits();   // weapon bIgnoreHiddenActorsMembership and modes' bDoPredictiveAvoidance (live objects only)
+      g_cams.clear();
+      REXLOG_INFO("first person: off - {} flag(s) back", bits);
     }
     if (g_restoring) RestoreSlice();
     return;
@@ -271,6 +488,8 @@ void Gow3FirstPersonTick() {
     if (g_base) REXLOG_INFO("first person: GearGameplayCameraMode found ({})", gow3::addr::kVersion);
     return;
   }
+  WeaponTick();   // the local players' weapons: every tick (a weapon switch shows at once)
+  DiagTick();     // --gow3_first_person_diag: once a second, log only
   if (!g_passActive) {
     const Clock::time_point now = Clock::now();
     if (now < g_nextPass) return;
@@ -278,6 +497,7 @@ void Gow3FirstPersonTick() {
     g_passActive = true;
     g_cursor = 0;
     g_seen.clear();
+    g_seenCams.clear();
     ReadSettings();
   }
   uint32_t total = 0;
@@ -288,6 +508,10 @@ void Gow3FirstPersonTick() {
     if (!info.fp || info.viewOffset < 0) continue;
     g_seen.insert(o);
     Apply(o, cls, info);
+    if (info.avoid >= 0) SetBit(o, o + uint32_t(info.avoid), info.avoidMask, false, false);
+    if (const uint32_t cam = CameraOf(o);
+        cam && std::find(g_seenCams.begin(), g_seenCams.end(), cam) == g_seenCams.end() && g_seenCams.size() < 8)
+      g_seenCams.push_back(cam);
   }
   g_cursor += kSlice;
   if (g_cursor < total) return;
@@ -296,6 +520,12 @@ void Gow3FirstPersonTick() {
   const size_t before = g_patched.size();
   for (auto it = g_patched.begin(); it != g_patched.end();)
     it = g_seen.count(it->first) ? std::next(it) : g_patched.erase(it);
+  for (auto it = g_bits.begin(); it != g_bits.end();)   // mode bits of objects gone: forgotten, never written
+    it = !it->second.weapon && !g_seen.count(it->second.object) ? g_bits.erase(it) : std::next(it);
+  if (g_seenCams != g_cams)
+    REXLOG_INFO("first person: {} local camera(s) for the weapon{}", g_seenCams.size(),
+                REXCVAR_GET(gow3_first_person_weapon) ? "" : " (weapon option off)");
+  g_cams = g_seenCams;
   static size_t logged = size_t(-1);
   if (g_patched.size() != logged) {
     REXLOG_INFO("first person: {} camera mode(s) at eye level ({} dropped)", g_patched.size(), before - g_patched.size());
