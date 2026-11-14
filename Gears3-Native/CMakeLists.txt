@@ -135,6 +135,11 @@ endif()
 # GPU_PLUGINS xenos: the SDK's Xenos GPU emulation, the reference our renderer is compared with (developer builds).
 rexglue_setup_target(gow3 GPU_PLUGINS xenos)
 add_custom_command(TARGET gow3 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:gow3>/licenses
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${GN_G2_DIR}/cogbox/licenses/PsychoV35-LICENSE.txt $<TARGET_FILE_DIR:gow3>/licenses/PsychoV35-LICENSE.txt
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${GN_G2_DIR}/cogbox/licenses/RenoDX-Grading-LICENSE.txt $<TARGET_FILE_DIR:gow3>/licenses/RenoDX-Grading-LICENSE.txt
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${GN_DXC_DIR}/bin/x64/dxcompiler.dll ${GN_DXC_DIR}/bin/x64/dxil.dll $<TARGET_FILE_DIR:gow3>
     COMMAND ${CMAKE_COMMAND} -E copy_directory

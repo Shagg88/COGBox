@@ -2783,7 +2783,7 @@ struct Gen {
         // Same operations as the readable HLSL epilogue: bounded, linear UI;
         // original scene grading extended above white, with a hue-preserving
         // shoulder before the UI blend. No expansion of finished SDR pixels.
-        a.OpMul(R(t), S(Oc(0)), Sys(3).Select(0), opt.native_hdr_ui);
+        a.OpMul(R(t), S(Oc(0)), Sys(3).Select(0), opt.native_hdr_ui || opt.native_hdr_modulation);
         a.OpMax(R(t, kXYZ), S(t), LF(0.0f));
         a.OpMin(R(t, kXYZ), S(t), LF(65504.0f));
         a.OpLog(R(t, kXYZ), S(t));
@@ -2791,7 +2791,7 @@ struct Gen {
         a.OpExp(R(t, kXYZ), S(t));
         if (opt.native_hdr_ui) {
           a.OpMul(R(t, kXYZ), S(t), Sys(5).Select(1));
-        } else {
+        } else if (!opt.native_hdr_modulation) {
           const uint32_t m = Push(), range = Push(), shoulder = Push();
           a.OpMax(R(m, kX), S1(t, 0), S1(t, 1));
           a.OpMax(R(m, kX), S1(m, 0), S1(t, 2));

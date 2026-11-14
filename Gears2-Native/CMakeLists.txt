@@ -274,6 +274,11 @@ else()
 endif()
 # DXC for our renderer's shader cache: copied next to gow2.exe (dxcompiler.dll loads dxil.dll from there to sign DXIL).
 add_custom_command(TARGET gow2 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:gow2>/licenses
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/cogbox/licenses/PsychoV35-LICENSE.txt $<TARGET_FILE_DIR:gow2>/licenses/PsychoV35-LICENSE.txt
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_SOURCE_DIR}/cogbox/licenses/RenoDX-Grading-LICENSE.txt $<TARGET_FILE_DIR:gow2>/licenses/RenoDX-Grading-LICENSE.txt
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${GN_DXC_DIR}/bin/x64/dxcompiler.dll ${GN_DXC_DIR}/bin/x64/dxil.dll $<TARGET_FILE_DIR:gow2>
     COMMAND ${CMAKE_COMMAND} -E copy_directory

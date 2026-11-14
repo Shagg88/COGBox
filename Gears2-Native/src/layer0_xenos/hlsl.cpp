@@ -1527,10 +1527,15 @@ Translation TranslateToHlsl(const Program& program, const HlslOptions& options) 
     }
     if (options.native_hdr_linear) {
       s += "  // Linear-light composition in scene reference-white units.\n";
-      s += "  float3 nativeColor = pow(min(max(o.color0.rgb, 0.0), 65504.0), 2.2);\n";
+      if (options.native_hdr_modulation) {
+        s += "  float3 nativeColor = pow(saturate(o.color0.rgb), 2.2);\n";
+        s += "  o.color0.a = saturate(o.color0.a);\n";
+      } else {
+        s += "  float3 nativeColor = pow(min(max(o.color0.rgb, 0.0), 65504.0), 2.2);\n";
+      }
       if (options.native_hdr_ui) {
         s += "  nativeColor *= asfloat(xe_sys2.y); // independent UI white / scene white\n";
-      } else {
+      } else if (!options.native_hdr_modulation) {
         s += "  float brightest = max(max(nativeColor.r, nativeColor.g), nativeColor.b);\n";
         s += "  float highlightRange = max(asfloat(xe_sys2.x) - 1.0, 0.0001);\n";
         s += "  float shoulder = 1.0 + highlightRange * (1.0 - exp(-max(brightest - 1.0, 0.0) / highlightRange));\n";
