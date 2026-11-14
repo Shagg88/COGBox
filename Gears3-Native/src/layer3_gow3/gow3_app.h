@@ -39,6 +39,7 @@ void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime);
 void Gow3AddBuiltInIniEdits();  // game_patches.cpp: --gow3_trilinear, --gow3_fast_mip_fade
 void Gow3StopMemoryGauge();     // game_patches.cpp: --gow3_memory_log_seconds stops before the kernel goes away
 void Gow3InstallExtras();       // extras.cpp: --gow3_cheats, --gow3_unlock_mutators, engine console hotkeys
+void Gow3InstallFirstPerson();  // first_person.cpp: --gow3_first_person (its hotkey)
 void Gow3InstallModChapters();  // mod_chapters.cpp: mods' campaign chapters and content packages
 void Gow3InstallSquadCatchUp();  // squad_catch_up.cpp: the SquadCatchUp adapter ([Campaign] in a mod.ini)
 void Gow3InstallKismetTraceIfRequested();  // kismet_trace.cpp: developer mode, --mod_kismet_trace
@@ -67,6 +68,7 @@ class Gow3App : public rex::ReXApp {
     XenosAddScriptPadIfRequested(runtime());
     Gow3AddBuiltInIniEdits();  // before the bundle is edited
     Gow3InstallExtras();       // its package patches too
+    Gow3InstallFirstPerson();  // --gow3_first_person: only its hotkey here (the camera is set from the engine tick)
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     // p20: the input script after the config / package edits - building a patched GearGame.xxx (--gow3_cheats, mutators)
     // takes many seconds on a fresh user folder, and the script's times count from here (its A presses were spent

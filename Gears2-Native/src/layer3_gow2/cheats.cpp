@@ -60,6 +60,7 @@ void Gow2InstallCheats() {
 }
 
 void Gow2AdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers)
+void Gow2FirstPersonTick();        // first_person.cpp (--gow2_first_person)
 
 // UEngine::GetMaxTickRate, overridden: the original (with the frame-rate hook inside), then queued console commands and
 // the DualSense trigger effects (ctx is left as the original left it, so f1 - its result - is untouched).
@@ -75,4 +76,5 @@ extern "C" void GOW2_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
   GOW2_JOIN(__imp__, GOW2_MAX_TICK_RATE)(ctx, base);
   Ue3ConsoleRunQueued(ctx, base);
   Gow2AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
+  Gow2FirstPersonTick();        // --gow2_first_person (first_person.cpp; off: one flag test)
 }

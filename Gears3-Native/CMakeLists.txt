@@ -110,6 +110,7 @@ set(GOW3_SOURCES
     src/layer3_gow3/checkpoint_stream.cpp
     src/layer3_gow3/unlocks.cpp
     src/layer3_gow3/adaptive_triggers.cpp  # GitHub #245 (needs SDK patch 98)
+    src/layer3_gow3/first_person.cpp  # --gow3_first_person (experimental first-person camera)
 )
 if(WIN32)
     add_executable(gow3 WIN32 ${GOW3_SOURCES})

@@ -400,6 +400,7 @@ void Gow3CheckpointStreamTick();        // checkpoint_stream.cpp (GitHub #226)
 void Gow3InstallCheckpointStreamWait();  // checkpoint_stream.cpp
 void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content packages, on the game thread
 void Gow3AdaptiveTriggersTick(bool in_front_end);  // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers)
+void Gow3FirstPersonTick();  // first_person.cpp (--gow3_first_person)
 
 // Gears 3's path choice (UIScene_PathChoice: "left path / right path") reads the triggers - the left trigger picks the
 // left path - while the mouse's buttons are bound the other way round for play (keybind_right_trigger = LMB: fire,
@@ -591,6 +592,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   Gow3SplitLayoutTick();       // GitHub #269
   Gow3CheckpointStreamTick();  // GitHub #226
   Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)
+  Gow3FirstPersonTick();       // --gow3_first_person (off: one flag test)
   const int32_t v = LiveMaxFps();
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)

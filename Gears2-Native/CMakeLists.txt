@@ -164,6 +164,7 @@ set(GOW2_SOURCES
     src/layer3_gow2/unlocks.cpp
     src/layer3_gow2/cheats.cpp
     src/layer3_gow2/adaptive_triggers.cpp  # GitHub #245: DualSense trigger effects per weapon (--pad_adaptive_triggers)
+    src/layer3_gow2/first_person.cpp  # --gow2_first_person (experimental first-person camera)
 )
 if(WIN32)
     add_executable(gow2 WIN32 ${GOW2_SOURCES})

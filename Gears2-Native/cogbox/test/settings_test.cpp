@@ -356,10 +356,19 @@ int summary() {
     return fails ? 1 : 0;
 }
 
+// First-person camera (layer3 first_person.cpp): separate from k_builtin so the cases above keep their numbers
+const char* const k_builtin_first_person[] = {
+    "game=1;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Gears 3: sent
+    "game=1;FirstPerson=1",                                                                             // older exe: greyed, not sent
+    "game=0;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Gears 2: sent
+    "game=2;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Judgment: not yet
+};
+
 }  // namespace
 
 int main(int argc, char** argv) {
     std::vector<std::string> cases(std::begin(k_builtin), std::end(k_builtin));
+    cases.insert(cases.end(), std::begin(k_builtin_first_person), std::end(k_builtin_first_person));
     if (argc >= 2 && std::string(argv[1]) == "--summary") return summary();
     if (argc >= 3 && std::string(argv[1]) == "--gen") {
         std::mt19937 r(argc >= 4 ? static_cast<unsigned>(std::atoi(argv[3])) : 59u);

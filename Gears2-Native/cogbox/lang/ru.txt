@@ -1477,6 +1477,9 @@ Dead bodies = Тела
 More = Больше
 Many = Много
 How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = Сколько убитых врагов остаётся на земле и как долго. «Больше» и «Много» оставляют больше тел на дольше; это немного снижает производительность и требует памяти. В заставках тела всё равно убираются.
+# First-person camera, experimental (machine-made translation, please check)
+First-person camera (experimental) = Камера от первого лица (экспериментально)
+Experimental - the game's own camera moves to your character's eyes while you walk, crouch, aim and roadie run. In cover, executions, vehicles, turrets and cutscenes it goes back to the usual over-the-shoulder view. Page Up switches it off and on in the game. Gears 2 and Gears 3. = Экспериментально - камера самой игры переходит к глазам персонажа, когда вы идёте, приседаете, целитесь и бежите (roadie run). В укрытии, при казнях, в технике, у турелей и в роликах она возвращается к обычному виду из-за плеча. Page Up выключает и включает её в игре. Gears 2 и Gears 3.
 # 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
 DualSense adaptive triggers = Адаптивные триггеры DualSense
 PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = Только контроллеры PS5 DualSense (USB или Bluetooth): триггеры сопротивляются, щёлкают или вибрируют в зависимости от оружия в руках и дрожат, пока работает бензопила. Другие контроллеры не затрагиваются. Если для контроллера включён Steam Input, триггерами управляет Steam.
