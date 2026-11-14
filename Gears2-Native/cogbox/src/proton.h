@@ -31,6 +31,7 @@ struct Info {
     std::string protonVersion;  // the Proton tool's version file ("proton-11.0-2", "GE-Proton11-12"), else its folder name
     std::string distro;         // os-release PRETTY_NAME ("SteamOS", "Bazzite", "Ubuntu 24.04 LTS")
     std::string deckModel;      // "Steam Deck OLED" / "Steam Deck LCD" / "Steam Deck" / ""
+    int lowPortStart = -1;      // 0.6.2 (R4): /proc/sys/net/ipv4/ip_unprivileged_port_start on Linux (-1 unknown)
     std::string home, user;     // the Linux home folder and user name (HOME / USER), for the paths below
 };
 

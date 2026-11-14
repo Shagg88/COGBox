@@ -119,6 +119,16 @@ settings are kept.
 The first minutes of each game can stutter while shaders are built; **Prepare all shaders now** on the Graphics tab
 does it in one go.
 
+**Hosting System Link from Linux / Steam Deck (not confirmed yet):** the games host System Link on network port 1000,
+and Linux only lets administrator programs use ports below 1024, so a game hosted on Linux can't be joined (joining a
+game hosted elsewhere works). We expect this to fix it, but we haven't been able to test it - please tell us in a
+GitHub ticket whether it works for you. In a terminal (on a Steam Deck: Desktop Mode, Konsole; `sudo` needs a password
+set with `passwd` first):
+
+    sudo sysctl -w net.ipv4.ip_unprivileged_port_start=1000
+
+This lasts until the next restart. It lets any program on the PC use ports 1000-1023 without administrator rights.
+
 ## Mac (CrossOver, experimental)
 
 Players run COGBox on a Mac with Apple Silicon through CrossOver (community-tested; we have no Mac to test on). The

@@ -18,6 +18,12 @@ bool drop_is_game_or_update(const std::string &folder);   // install.cpp
 
 std::string shown_path(const App &a, const std::string &p) { return proton::display_path(p, a.wine); }
 
+void open_folder(App &a, const std::string &dir)
+{
+    shell_open(dir);
+    if (a.wine) set_message(a, "Folder: " + shown_path(a, dir), false);
+}
+
 // ---- the recommended settings -----------------------------------------------------------------------------------------
 static std::string value_text(const gs::Option &o, double v)
 {

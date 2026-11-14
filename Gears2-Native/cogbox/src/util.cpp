@@ -285,13 +285,33 @@ void Ini::clear_section(const std::string &sec)
 }
 
 // ---- Windows' own boxes ---------------------------------------------------------------------------------------------
+// 0.6.2 review R7: under Wine (Proton, CrossOver) ShellExecute opens a folder or a local file in Wine's own Explorer or
+// Notepad. Wine's winebrowser turns a Windows path (Z:\home\..., or one in the prefix) into its Linux / Mac path and
+// hands it to xdg-open (Linux) or /usr/bin/open (Mac): the player's own file manager or Finder. Web pages keep going
+// through ShellExecute (Wine sends them to winebrowser by itself).
+static bool under_wine()
+{
+    static const bool w = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
+    return w;
+}
+
 void shell_open(const std::string &target)
 {
+    const bool url = target.find("://") != std::string::npos || target.rfind("mailto:", 0) == 0;
+    if (under_wine() && !url) {
+        const std::wstring arg = L"\"" + widen(target) + L"\"";
+        if ((INT_PTR)ShellExecuteW(nullptr, L"open", L"winebrowser.exe", arg.c_str(), nullptr, SW_SHOWNORMAL) > 32) return;
+    }
     ShellExecuteW(nullptr, L"open", widen(target).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 void shell_select(const std::string &file)
 {
+    if (under_wine()) {   // Linux file managers and Finder have no "/select": the file's folder
+        const size_t sl = file.find_last_of("\\/");
+        if (sl != std::string::npos) shell_open(file.substr(0, sl));
+        return;
+    }
     const std::wstring args = L"/select,\"" + widen(file) + L"\"";
     ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
 }

@@ -78,6 +78,7 @@ struct Environment {
     bool mac = false;               // job 643: Wine on a Mac (CrossOver) - DirectX 12 (D3DMetal) by default
     // proton049: a Steam Deck under Proton (proton.h) and its LCD model (no HDR screen). Both false on Windows.
     bool steam_deck = false;
+    int low_port_start = -1;        // 0.6.2 (R4): Linux's first port for normal programs (-1 unknown / not Linux)
     bool deck_lcd = false;
     std::vector<std::string> mods;              // 0.2.0: the enabled mod folders, in load order (--ue3_mods)
     std::map<std::string, std::string> keys;   // 0.2.0: the player's own keyboard keys, cvar -> key (CogBox.ini [Keys])

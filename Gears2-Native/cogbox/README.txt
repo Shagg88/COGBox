@@ -372,8 +372,14 @@ If it doesn't work
   you are in the same Radmin network (green dots), that internet VPNs are off, then try step B7.
 - Please send a problem report (the game's About tab) from BOTH PCs in a GitLab ticket - it lists
   System Link and helps us fix it.
-Not yet: voice chat; hosting from Linux / Steam Deck (joining should work). With the box off the
-game works exactly as before.
+Not yet: voice chat. With the box off the game works exactly as before.
+
+Hosting from Linux / Steam Deck (not confirmed yet): the games host on network port 1000, and Linux
+lets only administrator programs use ports below 1024, so a game hosted on Linux can't be joined
+(joining works). We expect this to fix it but haven't been able to test it - please tell us whether
+it works. In a terminal (Steam Deck: Desktop Mode, Konsole; sudo needs a password set with passwd):
+    sudo sysctl -w net.ipv4.ip_unprivileged_port_start=1000
+It lasts until the next restart, and lets any program use ports 1000-1023 without administrator rights.
 
 Linux and Steam Deck (Proton) - experimental
 ---------------------------------------------

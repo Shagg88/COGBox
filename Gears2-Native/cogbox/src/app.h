@@ -204,6 +204,9 @@ float linux_copy_buttons_width(const App &a);
 void linux_copy_buttons(App &a);              // Choose a file... / Choose a folder... / Paste a path (Linux: + Look for my games)
 void linux_recommended_ask(App &a, int g);    // "Use recommended Steam Deck / Proton settings"
 std::string shown_path(const App &a, const std::string &p);   // under Wine Z:\home\... shown as /home/...
+// 0.6.2 review R7: shell_open(dir), and under Wine also "Folder: /home/..." as the message (Game Mode has no file
+// manager, and inside Steam's container xdg-open may open nothing)
+void open_folder(App &a, const std::string &dir);
 void auto_settings_apply(App &a, int g);    // Shagg 29 Oct: the "Detect best settings" answer (page.cpp)   // the "crash" question answered
 bool make_report(App &a, int g, const std::string &sessionDir, const std::string &what, std::string &zip, std::string &err);
 std::string newest_session(int g);

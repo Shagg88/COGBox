@@ -56,6 +56,26 @@ int main()
     for (const char *p : { "/home/deck/Games/Gears of War 2", "/run/media/mmcblk0p1/x", "/" })   // round trip
         EQ(proton::to_unix(proton::to_wine(p, "")), p);
 
+    // ---- 0.6.2 R4: Linux's first port for normal programs (System Link hosts on 1000)
+    {
+        auto in = inputs({ { "STEAM_COMPAT_DATA_PATH", "/x" } }, { { "/proc/sys/net/ipv4/ip_unprivileged_port_start", "1024\n" } });
+        in.hostSystem = "Linux";
+        const proton::Info i = proton::detect(in);
+        CHECK(i.lowPortStart == 1024);
+        bool line = false;
+        for (const std::string &l : proton::report_lines(i)) line |= l.find("System Link hosting needs 1000 or lower") != std::string::npos;
+        CHECK(line);
+        auto in2 = inputs({ { "STEAM_COMPAT_DATA_PATH", "/x" } }, { { "/proc/sys/net/ipv4/ip_unprivileged_port_start", "1000" } });
+        in2.hostSystem = "Linux";
+        CHECK(proton::detect(in2).lowPortStart == 1000);
+        auto in3 = inputs({ { "STEAM_COMPAT_DATA_PATH", "/x" } }, {});
+        in3.hostSystem = "Linux";
+        CHECK(proton::detect(in3).lowPortStart == -1);
+        auto in4 = inputs({}, { { "/proc/sys/net/ipv4/ip_unprivileged_port_start", "1024" } });
+        in4.hostSystem = "Darwin";
+        CHECK(proton::detect(in4).lowPortStart == -1);
+    }
+
     // ---- detection
     {   // Windows proper: nothing, even with Steam variables around
         proton::Inputs in = inputs({ { "SteamDeck", "1" }, { "STEAM_COMPAT_DATA_PATH", "/x" } }, {}, "");

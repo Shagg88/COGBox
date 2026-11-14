@@ -238,6 +238,7 @@ void env_refresh(App &a, int g)
     e.wine = a.wine;   // job 523
     e.mac = a.mac;     // job 643
     e.steam_deck = a.proton.steamDeck;   // proton049
+    e.low_port_start = a.proton.lowPortStart;   // 0.6.2 R4
     e.deck_lcd = a.proton.deckLcd;
     e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab); GitHub #154: this game's own
     for (const gs::KeyAction &k : gs::key_actions((gs::Game)g)) {
@@ -1091,7 +1092,7 @@ static void mods_tab(App &a, int g)
         ui_tip(ml[g].empty() ? k_noModsTip : k_modsTip);
         if (running) ImGui::EndDisabled();
         ImGui::SameLine();
-        if (small_button("Mods folder")) { make_dirs(mods_dir(g)); shell_open(mods_dir(g)); }
+        if (small_button("Mods folder")) { make_dirs(mods_dir(g)); open_folder(a, mods_dir(g)); }
         ui_tip(k_noModsTip);
         if (changed) { mlAt[g] = 0; env_refresh(a, g); }
     }
@@ -1201,9 +1202,9 @@ static void about_tab(App &a, int g)
 
     // ---- FOLDERS: folders, saves, shaders and desktop shortcuts
     ui_section("FOLDERS");
-    if (small_button("Saves")) { make_dirs(game_user_dir(g)); shell_open(game_user_dir(g)); }
+    if (small_button("Saves")) { make_dirs(game_user_dir(g)); open_folder(a, game_user_dir(g)); }
     ImGui::SameLine();
-    if (small_button("Logs")) { make_dirs(game_logs_dir(g)); shell_open(game_logs_dir(g)); }
+    if (small_button("Logs")) { make_dirs(game_logs_dir(g)); open_folder(a, game_logs_dir(g)); }
     ImGui::SameLine();
     if (small_button("Back up saves")) {
         if (running) set_message(a, std::string(d.name) + " is running - close it first, so the save is complete.", true);
@@ -1334,7 +1335,7 @@ static void about_tab(App &a, int g)
             "Intel and XeSS are trademarks of Intel Corporation or its subsidiaries.");
     if (small_button("Licences folder")) {
         const std::string ld = join(exe_dir(), "licenses");
-        if (dir_exists(ld)) shell_open(ld); else set_message(a, "The licenses folder is missing - unzip the release again.", true);
+        if (dir_exists(ld)) open_folder(a, ld); else set_message(a, "The licenses folder is missing - unzip the release again.", true);
     }
 }
 
