@@ -614,8 +614,8 @@ REXCVAR_DEFINE_DOUBLE(gow2_renderer_fullscreen_wait_ms, 8.0, "Gears2",
                       "run froze for up to 2-3 s while full-screen passes waited)");
 REXCVAR_DEFINE_DOUBLE(gow2_renderer_fullscreen_pipeline_wait_ms, 50.0, "Gears2",
                       "GitHub #287 (D3D12): a full-screen pass whose pipeline is still on a worker after the "
-                      "--gow2_renderer_fullscreen_wait_ms budget waits for it once more, up to this many ms - at most one "
-                      "such wait a frame and one per pipeline: one short hitch instead of several frames without the pass "
+                      "--gow2_renderer_fullscreen_wait_ms budget, and was already skipped once, waits for it once more, up to "
+                      "this many ms - at most one such wait a frame, 4 a second and one per pipeline: one short hitch instead of several frames without the pass "
                       "(a Gears 2 cutscene's lightning went black for 4 frames). 0 = off (as 0.6.1)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_standin_new_vs, false, "Gears2",
                     "Patch 0132: also treat 'new vertex shader drawing to a target not drawn in the last 4 frames' as a "
@@ -10219,10 +10219,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       // GitHub #287: a full-screen pass still not ready waits once more for its worker, past the frame's budget - at
       // most one such wait a frame and one per pipeline (its build is under way; skipping it frame after frame until
       // then showed as a black flash). The time also comes off this frame's full-screen budget below.
-      if (pipeline_pending && standin_left == &fullscreen_wait_left_ms_ && fullscreen_long_wait_ms_ > 0.0 &&
-          !fullscreen_long_wait_this_frame_ && fullscreen_long_waited_.size() < 4096 &&
-          fullscreen_long_waited_.insert(gpu::HashPipelineDesc(d)).second) {
+      // Review r16: only for a pass already skipped once (not every new pipeline of a cold start), and at most 4 such
+      // waits a second, so a level load full of new passes stays a few short hitches, not job 632's 2-3 s.
+      const uint64_t fs_hash = pipeline_pending && standin_left == &fullscreen_wait_left_ms_ ? gpu::HashPipelineDesc(d) : 0;
+      const auto fs_now = std::chrono::steady_clock::now();
+      if (fs_hash && fs_now - fullscreen_long_window_start_ >= std::chrono::seconds(1)) {
+        fullscreen_long_window_start_ = fs_now;
+        fullscreen_long_in_window_ = 0;
+      }
+      if (fs_hash && fullscreen_long_wait_ms_ > 0.0 && !fullscreen_long_wait_this_frame_ &&
+          fullscreen_skipped_once_.count(fs_hash) && fullscreen_long_in_window_ < 4 &&
+          fullscreen_long_waited_.size() < 4096 && fullscreen_long_waited_.insert(fs_hash).second) {
         fullscreen_long_wait_this_frame_ = true;
+        ++fullscreen_long_in_window_;
         const auto t1 = std::chrono::steady_clock::now();
         if (backend_->WaitGraphicsPipeline(d, fullscreen_long_wait_ms_))
           pipeline = backend_->GetGraphicsPipeline(d, true, &pipeline_pending);
@@ -10230,6 +10239,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         if (!pipeline_pending) ++stats_.fullscreen_long_waits_won;
         stats_.fullscreen_long_wait_ms += MsSince(t1);
       }
+      if (fs_hash && pipeline_pending && fullscreen_skipped_once_.size() < 4096) fullscreen_skipped_once_.insert(fs_hash);
       ++stats_.standin_bounded_waits;
       if (pipeline_pending && standin_once) {  // one-shot data: build it now (the old behaviour, for these only)
         pipeline = backend_->GetGraphicsPipeline(d, false, &pipeline_pending);
@@ -14228,6 +14238,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   double fullscreen_long_wait_ms_ = 0.0;   // GitHub #287
   bool fullscreen_long_wait_this_frame_ = false;
   std::unordered_set<uint64_t> fullscreen_long_waited_;  // pipelines (HashPipelineDesc) that had their one long wait
+  std::unordered_set<uint64_t> fullscreen_skipped_once_;  // review r16: full-screen pipelines not ready at least once
+  std::chrono::steady_clock::time_point fullscreen_long_window_start_{};
+  uint32_t fullscreen_long_in_window_ = 0;  // long waits in the current one-second window (at most 4)
   std::map<std::string, uint64_t> standin_reasons_;
   std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> standin_target_frames_;
   double shader_wait_left_ms_ = 0.0;    // what is left of it this frame

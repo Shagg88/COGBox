@@ -1,0 +1,33 @@
+From: Shagg <shagg.dev88@gmail.com>
+Subject: [PATCH] patch102 (GitHub #288, test only): --cpu_count_override - act as a PC with fewer logical processors
+
+diff --git a/src/core/threading.cpp b/src/core/threading.cpp
+index fd06c66..59eb0e6 100644
+--- a/src/core/threading.cpp
++++ b/src/core/threading.cpp
+@@ -11,8 +11,16 @@
+ 
+ #include <thread>
+ 
++#include <rex/cvar.h>
+ #include <rex/thread.h>
+ 
++// COGBox SDK patch 102 (GitHub #288), TEST ONLY: report this many logical processors when fewer than the PC has, so a
++// big PC runs the few-core paths of patches 94 / 96 (no thread pinning, creation priority) like a 4-thread PC. Pair it
++// with a process affinity set after start (the runtime widens the start-up mask). 0 = the real count.
++REXCVAR_DEFINE_INT32(cpu_count_override, 0, "Kernel",
++                     "Test only (GitHub #288): act as if the PC had this many logical processors (fewer than it has); "
++                     "0 = the real count");
++
+ namespace rex::thread {
+ 
+ // =============================================================================
+@@ -23,6 +31,8 @@ uint32_t logical_processor_count() {
+   static uint32_t value = 0;
+   if (!value) {
+     value = std::thread::hardware_concurrency();
++    const int32_t forced = REXCVAR_GET(cpu_count_override);
++    if (forced > 0 && (value == 0 || uint32_t(forced) < value)) value = uint32_t(forced);   // patch 102 (test only)
+   }
+   return value;
+ }
