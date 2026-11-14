@@ -376,6 +376,13 @@ std::vector<Option> make_options(Game g) {
                "characters included. Highly experimental (Shagg 3 Nov): in our tests it cost about 5 ms a frame, roughly halving a "
                "high frame rate - being worked on. Ultra looks in more directions and catches more small details, for a "
                "little more. Game's own: the original. Off: none.", 0), "ao");
+    // Screen-space indirect lighting (--gow2_ssil, ssil_shaders.h): one bounce of light from nearby lit surfaces, opt-in;
+    // it works on XeGTAO's depth pyramid, so it needs Ambient occlusion: XeGTAO.
+    add(choice("Ssil", "Indirect lighting", Tab::Graphics, PG, { "Game's own", "SSIL (experimental)" }, 0,
+               "Light bounced from nearby lit surfaces: walls, floors and lamps brighten what is next to them, with some "
+               "colour bleeding. Most visible in lit interiors and city streets, subtle in open or dark areas. Needs Ambient "
+               "occlusion: XeGTAO. Experimental: about 1 ms a frame at 4K on an RTX 5090 in our tests, more on slower cards. "
+               "Game's own: the original.", 0), "ssil");
     // Notes/80 s.16 (Gears2-Native): PCSS for Gears 3's dynamic shadows (--gow2_pcss), Gears 3 only, opt-in.
     add(choice("SoftShadows", "Soft shadows", Tab::Graphics, PG, { "Game's own", "PCSS High (experimental)", "PCSS Ultra (experimental)" }, 0,
                "Contact-hardening soft shadows (PCSS) for the dynamic shadows of characters and moving objects: sharp where a "
@@ -755,6 +762,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "hordebots") {   // GitHub #89 (Gears 3), #237 (Gears 2)
         if (g != Game::Gears3 && g != Game::Gears2) return no("Gears 2 and 3 only.");
         if (!cap_exe(env, g == Game::Gears2 ? "gow2_horde_bots" : "gow3_horde_bots")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "ssil") {   // screen-space indirect lighting: every game whose exe has it
+        if (!cap_exe(env, "screen-space indirect lighting (SSILVB")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "pcss") {   // notes/80 s.16; Judgment draws its dynamic shadows with the same three shaders as Gears 3
         if (g != Game::Gears3 && g != Game::Judgment) return no("Gears 3 and Judgment only.");
         if (!cap_exe(env, "soft shadows (PCSS) for the dynamic shadows")) return no(not_yet(gi, "needs its next build"));
@@ -872,6 +881,9 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     } else if (o.id == "FrameGen" && env.wine) { a.ok = false; a.why = "Vulkan only on Proton / Wine."; return a; }
     else if (o.id == "FsrVulkan") on = runs_vulkan(s, env) && fsr_vulkan(env);      // review: opt-in, Vulkan builds with AMD's VK DLLs
     else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
+    else if (o.id == "Ssil" && s.i("AO") != 2 && s.i("AO") != 3) {                    // SSIL runs on XeGTAO's depth pyramid
+        a.ok = false; a.why = "Needs Ambient occlusion: XeGTAO (high or ultra)."; return a;
+    }
     else if (o.id == "SplitLayout") on = s.i("Players") == 1;                       // GitHub #136: 2 players only
     else if (o.id == "PeerIps") on = s.b("SystemLink");                              // GitHub #229
     else if (o.id == "Monitor") on = env.screen_count >= 2;                           // PS1 335
@@ -907,6 +919,12 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
         base += "\nGears 1: off turns off the game's blur pass, which the bloom uses too - the glow is softer.";
     if (o.id == "AO" && g == Game::Gears1)   // notes/80 s.14
         base += "\nGears 1: the game has no AO of its own - XeGTAO and CACAO add it under the level's lighting, so lit areas keep their light. Off and Game's own are the same here.";
+    if (o.id == "Ssil") {
+        base += "\nWith DLSS, FSR, XeSS or SMAA T2x it is smoother: each frame's bounce is averaged with the frames before, and "
+                "light can bounce more than once.";
+        if (g == Game::Gears3)
+            base += "\nGears 3 draws its scene in low dynamic range, so the bounce from bright lights is gentler than in the other games.";
+    }
     if (o.id == "SoftShadows")   // notes/80 s.16
         base += "\nUltra's finer shadow maps follow the scene's render size: with DLSS Ultra Performance the scene is drawn at "
                 "720p and Ultra only adds samples; with DLAA or Quality it pays off.";
@@ -1562,6 +1580,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             }
         }
     }
+    // Screen-space indirect lighting, with XeGTAO only (its defaults: strength 1.5, local albedo, temporal and bounces with
+    // an upscaler, the adaptive scale)
+    if (avail("Ssil") && s.i("Ssil") == 1 && avail("AO") && (s.i("AO") == 2 || s.i("AO") == 3)) a.push_back("--gow2_ssil=true");
     // Notes/80 s.16: PCSS presets (Gears 3)
     if (avail("SoftShadows") && s.i("SoftShadows") >= 1) a.push_back(s.i("SoftShadows") == 2 ? "--gow2_pcss=ultra" : "--gow2_pcss=high");
     // PS1 858: 16x anisotropic
