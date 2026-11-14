@@ -1,5 +1,5 @@
 // Layer 2 (Unreal Engine 3): engine console commands from the PC side (ue3/console.h, notes/25). Shared: Gears 3 builds
-// this file from here (GN_LAYER0_HOME), Gears 2 for --gow2_cheats (GitHub #264). Our code (MIT).
+// this file from here (GN_LAYER0_HOME), Gears 2 for --gow2_cheats (GitHub #264), Judgment for --gowj_cheats. Our code (MIT).
 #include <ue3/console.h>
 
 #include <rex/cvar.h>

@@ -501,7 +501,8 @@ std::vector<Option> make_options(Game g) {
     add(make("Cheats", "Cheats (hotkeys F5-F11)", Tab::Gameplay, Kind::Bool, SH, 0,
              "The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera, hide the HUD, all weapons). "
              "Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a "
-             "System Link or online game you host. Achievements and saves are your own business.", 327), "cheats");
+             "System Link or online game you host, where slow motion and the rest affect every player - please keep them "
+             "to your own games. Achievements and saves are your own business.", 327), "cheats");
     add(make("Mutators", "Unlock all mutators", Tab::Gameplay, Kind::Bool, SH, 0,
              "Every mutator (gameplay modifier) available from the start. Writes nothing to your profile.", 328), "mutators");
     // Shagg 31 Oct: the level select menu is no longer offered (the port's --gowj_level_select stays for testing)

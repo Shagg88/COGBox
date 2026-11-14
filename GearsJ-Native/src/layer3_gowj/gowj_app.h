@@ -41,8 +41,8 @@ void GowjAddBuiltInIniEdits();  // game_patches.cpp: --gowj_trilinear, --gowj_fa
 void GowjStartMemoryGauge();    // game_patches.cpp: --gowj_memory_log_seconds (physical memory every N s)
 void GowjStopMemoryGauge();     // stops it before the kernel goes away
 void GowjApplyUltrawideIfRequested(rex::Runtime* runtime);  // game_patches.cpp: --gowj_ultrawide (0.2.0)
-void GowjInstallFilmGrainSwitch(rex::Runtime* runtime);
-void GowjInstallCheats();   // cheats.cpp: GitHub #264  // game_patches.cpp: --gowj_no_film_grain (Canary TU4, boma)
+void GowjInstallFilmGrainSwitch(rex::Runtime* runtime);  // game_patches.cpp: --gowj_no_film_grain (Canary TU4, boma)
+void GowjInstallCheats();   // cheats.cpp: GitHub #264
 
 
 class GowjApp : public rex::ReXApp {
