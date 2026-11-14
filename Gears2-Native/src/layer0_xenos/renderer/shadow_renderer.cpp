@@ -4995,8 +4995,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return;
     }
     // 0.6.1: with a size limit, a resolve that is not read back is not prepared either (unless the switch asks for all)
-    const bool rb_this = resolve_readback_ && (!resolve_readback_max_bytes_ || info.dest_extent_length <= resolve_readback_max_bytes_);
-    if (prepare_mirror_ && (rb_prepare_every_ || rb_this || !resolve_readback_))
+    // Review r12 R-6: with --gow2_renderer_t2_measure_skip the mirror is neither prepared nor read back (it isn't written).
+    const bool rb_this = !t2_measure_skip_ && resolve_readback_ &&
+                         (!resolve_readback_max_bytes_ || info.dest_extent_length <= resolve_readback_max_bytes_);
+    if (!t2_measure_skip_ && prepare_mirror_ && (rb_prepare_every_ || rb_this || !resolve_readback_))
       PrepareMirrorForResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
     gpu::ComputeBindings b;
     b.constants[0] = info.dest_base;
@@ -5013,7 +5015,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // Job 047: the cached texture loaded from this memory, written by the same dispatch (not for scaled resolves, whose
     // textures load from the scaled copy).
     rr::TextureCache::ResolveThrough through;
-    const bool through_on = words_to_guest_through_ && !scaled && (info.dest_bpp_log2 == 2 || info.dest_bpp_log2 == 3) &&
+    bool through_on = words_to_guest_through_ && !scaled && (info.dest_bpp_log2 == 2 || info.dest_bpp_log2 == 3) &&
                             endian <= 3 &&
                             textures_->FindResolveThrough(info.dest_base, info.dest_pitch_aligned_div_32 * 32,
                                                           words == 2 ? 3u : 2u, dx, dy, w, h, through);
@@ -5030,6 +5032,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         ++t2_stats_.measure_through_only;
       } else {
         ++t2_stats_.measure_skipped;
+        through_on = false;   // review r12 R-7: nothing wrote the texture
       }
     } else if (through_on) {
       b.constants[8] = through.code;
