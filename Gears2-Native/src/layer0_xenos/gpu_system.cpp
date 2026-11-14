@@ -41,9 +41,11 @@
 
 #if defined(_WIN32)
 #include <windows.h>  // MonitorFromWindow (xenos/display_size.h)
+#include <dxgi.h>     // GitHub #304: the graphics card choice (DXGI adapters, loaded at run time)
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <bit>
 #include <cstring>
@@ -60,6 +62,11 @@ REXCVAR_DEFINE_BOOL(gow2_gpu_dred, true, "Gears2",
                     "which GPU work was running and any faulting address (Gears 3 2026-10-23: device lost 6 min into the "
                     "Sovereign prologue with no reason in the log). Small GPU cost; off = as before");
 REXCVAR_DECLARE(std::string, gow2_renderer_api);  // shadow_renderer.cpp (notes/68)
+REXCVAR_DEFINE_STRING(gow2_graphics_card, "", "Gears2",
+                      "GitHub #304: the graphics card to use, by (part of) its name, e.g. \"4090\" - the same card for "
+                      "DirectX 12 and Vulkan. Empty: automatic - the card with the most video memory of its own; between "
+                      "cards with about as much, the one a monitor is connected to (an external / second card of the same "
+                      "size used to win). --d3d12_adapter / --vulkan_device still override it");
 
 REXCVAR_DEFINE_BOOL(gow2_high_resolution_timer, true, "Gears2",
                     "Patch 0087 (frame pacing; Canary main_win.cc win32_high_resolution_timer, on by default there): ask "
@@ -92,9 +99,10 @@ class OurGpuSystem final : public rex::system::IGraphicsSystem {
   // the SDK was built with Vulkan; our Vulkan backend then runs on its device. Otherwise D3D12, as before.
   bool CreateProvider() {
     if (provider_) return true;
+    const ChosenCard card = ChooseGraphicsCard();   // GitHub #304
     if (REXCVAR_GET(gow2_renderer_api) == "vulkan") {
 #if GN_SDK_VULKAN
-      PreferDiscreteVulkanDevice();   // GitHub #176
+      if (!card.ok || !UseVulkanDeviceByLuid(card)) PreferDiscreteVulkanDevice();   // GitHub #304, else #176
       provider_ = rex::ui::vulkan::VulkanProvider::Create(true, true);
       if (provider_) {
         provider_api_ = "Vulkan";
@@ -107,11 +115,92 @@ class OurGpuSystem final : public rex::system::IGraphicsSystem {
 #endif
     }
     EnableDred();
+    if (card.ok) {   // GitHub #304, unless the player set --d3d12_adapter
+      const std::string cur = rex::cvar::GetFlagByName("d3d12_adapter");
+      if (cur.empty() || cur == "-1") {
+        rex::cvar::ScopedLifecycleOverride init_only;   // d3d12_adapter is init-only; the device doesn't exist yet
+        if (rex::cvar::SetFlagByName("d3d12_adapter", std::to_string(card.index)))
+          REXLOG_INFO("gow2_gpu: D3D12 on graphics card {} ({})", card.index, card.name);
+        else
+          REXLOG_WARN("gow2_gpu: could not set d3d12_adapter - the SDK chooses (most video memory)");
+      }
+    }
     provider_ = rex::ui::d3d12::D3D12Provider::Create();
     provider_api_ = "D3D12";
     return provider_ != nullptr;
   }
   const char* provider_api_ = "D3D12";
+
+  // GitHub #304 (praudmur: RTX 4090 with the monitors + an RTX 3090 on Oculink - Judgment ran on the 3090; and Shagg's
+  // PC: D3D12 took the 4090, Vulkan the 3080 Ti, so "D3D12 vs Vulkan" timings compared two cards). One choice for both
+  // APIs, made here before the SDK's provider exists: the DXGI adapter named by --gow2_graphics_card, else the hardware
+  // adapter with the most video memory of its own, and among those within 25 % of that the one with a monitor attached
+  // (not "any monitor first": a laptop's built-in screen hangs on the CPU's graphics, which must not win - #29 / #176).
+  // D3D12 gets it as --d3d12_adapter (index), Vulkan as --vulkan_device (the device with the same LUID). The player's
+  // own --d3d12_adapter / --vulkan_device win.
+  struct ChosenCard { bool ok = false; uint32_t index = 0; LUID luid{}; std::string name; };
+  ChosenCard ChooseGraphicsCard() {
+    ChosenCard out;
+#if defined(_WIN32)
+    HMODULE dxgi = LoadLibraryW(L"dxgi.dll");
+    if (!dxgi) return out;
+    using CreateFactory1 = HRESULT(WINAPI*)(REFIID, void**);
+    auto create = reinterpret_cast<CreateFactory1>(GetProcAddress(dxgi, "CreateDXGIFactory1"));
+    IDXGIFactory1* factory = nullptr;
+    if (!create || FAILED(create(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&factory))) || !factory) {
+      FreeLibrary(dxgi);
+      return out;
+    }
+    struct Card { uint32_t index; std::string name; SIZE_T vram; bool monitor; LUID luid; };
+    std::vector<Card> cards;
+    IDXGIAdapter1* a = nullptr;
+    for (uint32_t i = 0; factory->EnumAdapters1(i, &a) == S_OK; ++i) {
+      DXGI_ADAPTER_DESC1 d{};
+      if (SUCCEEDED(a->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+        IDXGIOutput* o = nullptr;
+        const bool monitor = a->EnumOutputs(0, &o) == S_OK;
+        if (o) o->Release();
+        char n[256] = "";
+        WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, n, sizeof n, nullptr, nullptr);
+        cards.push_back({i, n, d.DedicatedVideoMemory, monitor, d.AdapterLuid});
+      }
+      a->Release();
+      a = nullptr;
+    }
+    factory->Release();
+    FreeLibrary(dxgi);
+    for (const Card& c : cards)
+      REXLOG_INFO("gow2_gpu: graphics card {}: {} - {} MB of its own{}", c.index, c.name, c.vram >> 20,
+                  c.monitor ? ", a monitor attached" : "");
+    if (cards.empty()) return out;
+    const Card* pick = nullptr;
+    const char* why = "automatic";
+    std::string want = REXCVAR_GET(gow2_graphics_card);
+    std::transform(want.begin(), want.end(), want.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+    if (!want.empty()) {
+      for (const Card& c : cards) {
+        std::string low = c.name;
+        std::transform(low.begin(), low.end(), low.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+        if (low.find(want) != std::string::npos) { pick = &c; why = "--gow2_graphics_card"; break; }
+      }
+      if (!pick) REXLOG_WARN("gow2_gpu: no graphics card's name contains '{}' - choosing automatically", REXCVAR_GET(gow2_graphics_card));
+    }
+    if (!pick) {
+      SIZE_T most = 0;
+      for (const Card& c : cards) most = std::max(most, c.vram);
+      for (const Card& c : cards) {
+        if (c.vram + c.vram / 3 < most) continue;   // within 25 % of the most (c >= 0.75 x most)
+        if (!pick || (c.monitor && !pick->monitor) || (c.monitor == pick->monitor && c.vram > pick->vram)) pick = &c;
+      }
+    }
+    out.ok = true;
+    out.index = pick->index;
+    out.luid = pick->luid;
+    out.name = pick->name;
+    REXLOG_INFO("gow2_gpu: graphics card {} chosen: {} ({}; GitHub #304)", pick->index, pick->name, why);
+#endif
+    return out;
+  }
 
   // GitHub #176: on a laptop (an RTX card and Intel graphics) the SDK's Vulkan provider took the first device the loader
   // lists - the Intel one. Unless the player set vulkan_device, pick the first discrete GPU (then integrated, then any)
@@ -153,6 +242,52 @@ class OurGpuSystem final : public rex::system::IGraphicsSystem {
       if (destroy) destroy(inst, nullptr);
     }
     FreeLibrary(lib);
+#endif
+  }
+
+  // GitHub #304: the Vulkan device with the chosen DXGI adapter's LUID (VkPhysicalDeviceIDProperties, Vulkan 1.1).
+  bool UseVulkanDeviceByLuid(const ChosenCard& card) {
+#if GN_SDK_VULKAN
+    const std::string cur = rex::cvar::GetFlagByName("vulkan_device");
+    if (!cur.empty() && cur != "-1") return true;   // the player's choice
+    HMODULE lib = LoadLibraryW(L"vulkan-1.dll");
+    if (!lib) return false;
+    bool done = false;
+    auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(lib, "vkGetInstanceProcAddr"));
+    auto create = gipa ? reinterpret_cast<PFN_vkCreateInstance>(gipa(nullptr, "vkCreateInstance")) : nullptr;
+    VkInstance inst = VK_NULL_HANDLE;
+    VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    app.apiVersion = VK_API_VERSION_1_1;
+    VkInstanceCreateInfo ci{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    ci.pApplicationInfo = &app;
+    if (create && create(&ci, nullptr, &inst) == VK_SUCCESS && inst) {
+      auto enumerate = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(gipa(inst, "vkEnumeratePhysicalDevices"));
+      auto props2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(gipa(inst, "vkGetPhysicalDeviceProperties2"));
+      auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(gipa(inst, "vkDestroyInstance"));
+      uint32_t n = 0;
+      if (enumerate && props2 && enumerate(inst, &n, nullptr) == VK_SUCCESS && n) {
+        std::vector<VkPhysicalDevice> devs(n);
+        enumerate(inst, &n, devs.data());
+        for (uint32_t i = 0; i < n && !done; ++i) {
+          VkPhysicalDeviceIDProperties id{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
+          VkPhysicalDeviceProperties2 p{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+          p.pNext = &id;
+          props2(devs[i], &p);
+          if (id.deviceLUIDValid && std::memcmp(id.deviceLUID, &card.luid, sizeof(card.luid)) == 0) {
+            done = rex::cvar::SetFlagByName("vulkan_device", std::to_string(i));
+            if (done)
+              REXLOG_INFO("gow2_gpu: Vulkan device {} ({}) - the same card as DirectX 12 would use (GitHub #304)", i,
+                          p.properties.deviceName);
+          }
+        }
+      }
+      if (destroy) destroy(inst, nullptr);
+    }
+    FreeLibrary(lib);
+    return done;
+#else
+    (void)card;
+    return false;
 #endif
   }
 

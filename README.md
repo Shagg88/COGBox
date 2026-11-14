@@ -146,6 +146,12 @@ zip.
 Common causes: a CPU without AVX2, an old graphics driver, or a different release of the game than the port is made for
 (COGBox warns you when you add it).
 
+**The game uses the wrong graphics card** (PCs with two or more): COGBox picks the card with the most video memory of
+its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and
+Vulkan. To choose one yourself, create a file called `extra-args.txt` next to CogBox.exe with one line naming part of
+the card's name, for example `--gow2_graphics_card=4090` (it applies to all four games; delete it to go back to
+automatic). The game's log lists every card it found.
+
 **Gears 3 DLC missing at the main menu** (known issue, GitHub #283): with several DLC packages, Gears 3 sometimes opens
 only the first one at start-up, so characters, skins or RAAM's Shadow don't show. Until it's fixed:
 - At the main menu, open **Options > Storage Location** and pick the storage: the game checks the DLC again and it all
