@@ -1,5 +1,163 @@
 # COGBox changes
 
+## 0.6.2
+
+**Quick start:** download `COGBox-0.6.2.zip`, right-click it > **Extract All...** to a folder of its own (for example
+`C:\Games\COGBox`), start `CogBox.exe`, and add your game copy and its title update.
+
+<a href="https://recomplauncher.com/game/cogbox"><img src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" alt="Get it on RecompLauncher" height="56"></a>
+
+COGBox is on RecompLauncher, the free home for recompiled PC games. Get it straight from its developer:
+https://recomplauncher.com/game/cogbox
+
+### New and experimental (all off by default)
+- **First-person camera** (Gameplay tab, **experimental**, Gears 3 and Gears 2): the game's own camera moves to your
+  character's eyes while you walk, crouch, aim and roadie run. In cover, executions, when you're down, in vehicles, on
+  turrets and in cutscenes it goes back to the usual over-the-shoulder view. **Page Up** switches it off and on in the
+  game. In Gears 3 you see your own arms, body and gun, while your head is hidden (with the game's own big-head
+  control) so it doesn't fill the view. In Gears 2 you see your body and gun too, but it hasn't been tried in a real
+  play-through yet - please tell us how it goes.
+- **DualSense adaptive triggers** (Controls tab, now **all four games**, **experimental**): with a PS5 DualSense
+  controller (USB or Bluetooth), the triggers push back, click or buzz to match the weapon in your hands, and shake
+  while the chainsaw revs. Other controllers are not touched. If Steam Input is on for the controller, Steam keeps the
+  triggers. **We haven't tried it on a real DualSense yet** - if you have one, please turn it on and tell us on GitHub
+  #245 what you feel (and send the game's log if something is off). Suggested by HubertFer, GitHub #245.
+
+### Launcher
+- **Dead bodies** (Gameplay tab, new, **Game's own** by default): **More** or **Many** keeps more fallen enemies on the
+  ground (with Many, up to 20 in Gears 2 and 32 in the other games), and in Gears 1, Gears 3 and Judgment for longer.
+  Cutscenes still clear them. It costs some performance and memory. All four games. GitHub #306.
+- **Duplicate DLC is marked** (a game's About tab, Downloadable content): a DLC package whose files are all in another
+  package you have installed, with the same contents, is marked "duplicate of ... - can be removed", and a **Remove
+  duplicates** button removes them all after asking. Duplicates give the game the same items twice (for example the
+  same skin twice in Gears 3). Only COGBox's unpacked copy is removed - your own package files are not touched, and the
+  package that covers it is always kept. Thanks to Lerrycapetime for the tip, GitHub #283.
+- **Cheats for Gears 1, Gears 2 and Judgment** (Gameplay tab, off by default): the developers' cheat keys F5-F11 (god
+  mode, slow motion, free camera, hide the HUD, all weapons), as Gears 3 already had. Gears 2: only in games on your
+  own PC, never in System Link or online games. Judgment: also in a System Link or online game you host, where slow
+  motion and the rest affect every player - please keep them to your own games. Gears 1 has no free camera, so its
+  F9 flies you through walls instead; Gears 1 in System Link is not checked yet. GitHub #264.
+- **Controls tab: a clear note when Keyboard and mouse is off.** The key list could be changed while the keyboard was
+  switched off and then did nothing in the game; an amber note above the list now says so. GitHub #281.
+- **More of the launcher is translated:** the Social tab, the Linux System Link note, region names, friends' status
+  and the new 0.6.2 text, in all 11 languages. **These translations are machine-made** - if something reads wrong in
+  your language, please tell us on GitHub or Discord.
+
+### Gears 1
+- **DualSense adaptive triggers**, **Cheats** and **Dead bodies** (see above).
+
+### Gears 2
+- **The green lightning on the way to Nexus** (GitHub #287): in that cutscene the lightning effect could go black for a
+  few frames the first time it played, while the graphics driver was still preparing it. On DirectX 12 the game now
+  waits a moment longer for such a full-screen effect instead of leaving it out - at worst a short hitch the first
+  time, never more than a few a second. (`--gow2_renderer_fullscreen_pipeline_wait_ms=0` in `extra-args.txt` goes back
+  to 0.6.1's behaviour.)
+- **Import saves** also takes saves from the Japanese Gears 2 disc and puts them where your copy looks for them.
+- **First-person camera** (experimental, not tried in play yet), **DualSense adaptive triggers** and **Cheats** (see
+  above).
+
+### Gears 3
+- **DLC at the main menu** (GitHub #283): with many DLC packages, Gears 3 often opened only the first one at start-up.
+  We found why - the game closed something it had finished with a moment late, and COGBox had already reused its number
+  for the DLC search, which ended it - and changed it. It should now open all of them, but we haven't had it confirmed
+  on a big DLC folder yet: if DLC is still missing for you, please tell us on #283. The old workaround (**Options >
+  Storage Location** at the main menu) still works, and the launcher now marks duplicate packages (see Launcher).
+- **RAAM's Shadow: dying no longer restarts the whole checkpoint** (GitHub #273, #226): the wait for the level to finish
+  streaming in, made for this in 0.4.8, had been left out of every build by mistake. It is in now.
+- **"Reload last checkpoint" missing after a death** (GitHub #309, not fixed yet): the game's log now notes the squad
+  slots the game checks before it offers Reload. If it happens to you, please press **Report a problem** on Gears 3's
+  page right after and attach the zip to #309.
+- **Two-player split side by side** (Gameplay > Two-player split): the game put the split back to top and bottom
+  whenever a level started; COGBox now sets it again. GitHub #269.
+- **No more short hitch every 5 seconds in the menus and multiplayer**, caused by COGBox's check for the path-choice
+  mouse fix (GitHub #277).
+- **Your options and brightness are kept after a crash:** a game setting saved at the moment of a crash or with a full
+  disk could be cut short, and Gears 3 then reset all its options and showed the brightness screen again. Settings are
+  now saved in one piece.
+- **First-person camera** (experimental) and **DualSense adaptive triggers** (see above).
+
+### Judgment
+- **Soft shadows (PCSS) in Judgment too** (by gmihaic): Judgment draws its shadows the same way as Gears 3, so the
+  Graphics tab's **Soft shadows** option now works there as well.
+- **Cheats** (see Launcher). Checked on our PC: god mode, all weapons, slow motion and the free camera all work.
+- **DualSense adaptive triggers** (see above).
+
+### Graphics
+- **Indirect lighting (SSIL, experimental, by gmihaic)** (Graphics tab, below Ambient occlusion; **Game's own** by
+  default): light bounced from nearby lit surfaces - walls, floors and lamps brighten what is next to them, with some
+  colour bleeding. Most visible in lit interiors and city streets, subtle in open or dark areas. It needs **Ambient
+  occlusion: XeGTAO (high or ultra)**; with any other Ambient occlusion choice it is greyed out and does nothing. It
+  is smoother with DLSS, FSR, XeSS or SMAA T2x. Gears 3's picture has a lower brightness range, so the bounce is
+  gentler there. Where the graphics card can't run it on a game's picture (for example some setups under Proton), it
+  switches itself off instead of failing. Cost on an RTX 3080 Ti at 2x (1440p): about **+1.6 ms** a frame in Gears 2
+  and **+2.1 ms** in Gears 3.
+- **Soft shadows (PCSS) fixes** (by gmihaic): lit spots just inside a shadow's edge are no longer too dark, and no
+  longer jump when you move. Cost on an RTX 3080 Ti at 2x (1440p):
+
+  | Game | PCSS High | PCSS Ultra |
+  | --- | --- | --- |
+  | Gears 3 | +0.1 ms | +0.6 ms |
+  | Judgment | +0.2 ms | +0.25 ms |
+- **Better HDR in Gears 2 and Gears 3** (by legoliamneeson, PR #295): the native HDR now uses the PsychoV35 tone mapping
+  (by ShortFuse, with mqhaji's edition) and grading from RenoDX. Explosions, muzzle flashes and lights reach your
+  screen's peak brightness more faithfully, while the game's own colours and shadows are kept.
+- **HDR highlights** (Display tab, Gears 2 and Gears 3 with HDR on): **Off / Subtle / Default / Strong** - how much
+  brighter than normal white explosions, flashes and lights get. Default is legoliamneeson's tuned look.
+- **Ultrawide up to 48:9** - three 16:9 screens side by side - in Gears 2, Gears 3 and Judgment. Before, the picture
+  stopped at 32:9 (Gears 2) or 4:1 (Gears 3, Judgment) with black bars beyond. Requested by ciegefaye21, GitHub #293.
+- **The right graphics card on PCs with two or more** (GitHub #304, reported by praudmur): DirectX 12 and Vulkan now
+  always use the same card - the one with the most video memory of its own, and between cards with about as much, the
+  one your monitor is plugged into. A PC with an RTX 4090 and an RTX 3090 could run Judgment on the wrong one, and
+  DirectX 12 and Vulkan could pick different cards. Checked on our two-card PC in all four games, on both. To choose a
+  card yourself, add `--gow2_graphics_card=` and part of its name (for example `--gow2_graphics_card=4090`) to
+  `extra-args.txt` next to CogBox.exe; the game's log lists every card it found.
+
+### Online play
+- **Your Social tab account keeps its #number** (GitHub #302): the launcher could make a new online account at every
+  start, so your #number changed and friends were lost. It now always keeps the one it saved, and if it can't save one
+  (for example a folder it can't write to), the Social tab says why.
+- **Show ping fixes (by Flippage):** the bar shows nothing when you are not in an online match or party (0.6.1 showed
+  "Ping --"); a host that stops answering drops out after a few seconds; when you host, the players in your match
+  count before an old join target.
+- **Private matches in Gears 2** keep their 0.6.1 behaviour until COGBox's private-match changes are tested there (by
+  Flippage).
+
+### Linux, Steam Deck and Mac
+- **Mac (CrossOver)** is now a supported way to play, alongside Proton (community-tested; we have no Mac): COGBox knows
+  it is on a Mac, always runs the games on DirectX 12 there (Vulkan doesn't start under CrossOver), and no longer calls
+  the Mac "Linux". The README has a Mac section, with L33tRonin's fix for a constant bass hum (GitHub #261).
+- **Launcher music no longer holds the sound output while it is silent** (music off, or a game running). This may help
+  with sound problems under CrossOver (GitHub #261) - tell us if it does.
+- **Hosting System Link from Linux / Steam Deck:** Linux keeps the port the games host on for administrator programs,
+  so a game hosted there couldn't be joined. The System Link option now says so, problem reports include the setting,
+  and the README has a fix to try (not confirmed yet - please tell us on GitHub whether it works).
+- **Folders open in your own file manager** (Mods, Saves, Logs, Licences) instead of Wine's, and COGBox also shows the
+  Linux or Mac path - useful in the Steam Deck's Game Mode, which has no file manager.
+- **Desktop shortcuts under Wine** are replaced by how to start one game directly: Steam's Launch Options
+  `--play <game>`, or CrossOver's Run Command saved as a launcher.
+- Under Proton the Graphics API shows "DirectX 12 (Proton runs Vulkan)" when Automatic runs Vulkan; the first-start
+  settings dialog shows the real frame-rate cap (the Steam Deck was told 60 while getting 45); a CPU's AVX2 is now
+  found on older Wine and CrossOver too; "Look for my games" on a Mac searches your drives under /Volumes.
+- **Problem reports** made under Proton or CrossOver remove your Linux or Mac account name, as they already did your
+  Windows user name.
+
+### Fixes
+- **Short key and mouse taps reach the game** (GitHub #305): a tap quicker than the game's own reading of the keys
+  could be lost - for example the fast presses in a chainsaw duel. COGBox now holds each press until the game has
+  read it. All four games.
+- **PCs with fewer than 6 processor threads** (GitHub #288): the game's busy background threads could keep the game
+  itself off the few cores and freeze it; they no longer get extra priority there. The log is also no longer filled
+  with "Too few processor cores" lines (it was written about 1000 times a second). PCs with 6 or more threads are
+  unchanged.
+- The update check falls back to the default proxy setting, as the download already did.
+
+### Known issues
+- **Gears 3: GPU at 100% in some menus and the Horde character select** on mid-range cards at 2x (GitHub #296). 1x
+  render resolution helps; being worked on.
+- **Gears 3: "Reload last checkpoint" sometimes missing in RAAM's Shadow** (GitHub #309): see Gears 3 above - a report
+  zip from 0.6.2 helps.
+- **DualSense adaptive triggers** and the **first-person camera** are experimental and off by default (see above).
+
 ## 0.6.1
 
 **Quick start:** download `COGBox-0.6.1.zip`, right-click it > **Extract All...** to a folder of its own (for example
@@ -89,7 +247,6 @@ https://recomplauncher.com/game/cogbox
 - Safer handling when the graphics device is lost while the game waits for it.
 
 ### Known issue
-- **Gears 3 and Gears 1 on Vulkan** run a few percent below 0.6.0's frame rate; DirectX 12 is the same or faster in every game.
 - **Gears 3: DLC sometimes missing at the main menu** (GitHub #283). With several DLC packages the game can open only the
   first one at start-up. Workaround: at the main menu open **Options > Storage Location** and pick the storage (the game
   checks the DLC again), or go back to the main menu once after loading in. Keeping only the DLC you use also helps.

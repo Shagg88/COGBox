@@ -50,12 +50,17 @@ the launcher shows the same versions.
 The games' Xbox 360 code is translated ahead of time into ordinary Windows programs - no emulator runs while you play -
 and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 
-- **Any resolution** up to 5K, or matched to your monitor, with real extra detail; **ultrawide** and **HDR10**.
+- **Any resolution** up to 5K, or matched to your monitor, with real extra detail; **ultrawide** up to 48:9 (three
+  screens) and **HDR10**.
+- **Modern lighting extras** (experimental, off by default): XeGTAO or CACAO ambient occlusion, PCSS soft shadows
+  (Gears 3 and Judgment) and screen-space indirect lighting.
 - **Upscaling and anti-aliasing:** SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS (experimental).
 - **High frame rates:** the 30 fps limit lifted, frame-rate caps from 30 to 180 (and 40 / 45 for the Steam Deck), and
   frame generation (AMD FSR, NVIDIA DLSS on RTX 40/50; experimental).
 - **Lower input lag:** NVIDIA Reflex and AMD Anti-Lag 2 where your GPU has them.
-- **Keyboard and mouse** or **Xbox / PlayStation controllers**, with button prompts that follow what you use.
+- **Keyboard and mouse** or **Xbox / PlayStation controllers**, with button prompts that follow what you use, and
+  DualSense adaptive triggers in all four games (experimental, off by default).
+- **First-person camera** in Gears 3 and Gears 2 (experimental, off by default; Page Up switches it in the game).
 - **Split-screen co-op** in all four games, and **System Link** LAN co-op (experimental).
 - **Online multiplayer** (0.6.0, off by default): peer to peer through COGBox's own matchmaking.
 - **Insane from the start**, **achievements** in all four games, chapter select, and an **in-game menu**
@@ -152,12 +157,15 @@ Vulkan. To choose one yourself, add a line naming part of the card's name to `ex
 (create the file if it isn't there), for example `--gow2_graphics_card=4090`. It applies to all four games; remove the
 line to go back to automatic. The game's log lists every card it found.
 
-**Gears 3 DLC missing at the main menu** (known issue, GitHub #283): with several DLC packages, Gears 3 sometimes opens
-only the first one at start-up, so characters, skins or RAAM's Shadow don't show. Until it's fixed:
+**Gears 3 DLC missing at the main menu** (GitHub #283): with several DLC packages, Gears 3 sometimes opened only the
+first one at start-up, so characters, skins or RAAM's Shadow didn't show. 0.6.2 changes what caused it, but it isn't
+confirmed on a big DLC folder yet - if it still happens to you, please tell us on #283. Meanwhile:
 - At the main menu, open **Options > Storage Location** and pick the storage: the game checks the DLC again and it all
   appears (needed after each start).
 - Or load into anything, go back to the main menu and wait about 20 seconds.
-- Keeping only the DLC you use (fewer packages) makes it load at start-up more often.
+- Remove duplicate packages: COGBox marks a DLC package whose contents are all in another one you have ("duplicate of
+  ... - can be removed" on the game's About tab), and **Remove duplicates** removes them. Duplicates only give the game
+  the same items twice (for example the same skin twice).
 
 ## Legal
 
@@ -188,6 +196,7 @@ Thank you to everyone who has contributed code, translations, testing and tips (
 - **Flippage**
 - **KiltedKernel**
 - **gmihaic**
+- **legoliamneeson**
 - **HubertFer**
 - **Hevesi J.**
 - **LenzTRO**
@@ -210,6 +219,8 @@ This project stands on the work of many open-source projects and communities:
   **[x360db](https://github.com/xenia-manager/x360db)** for box art and backgrounds.
 - The **Gears community patches** (ultrawide by boma and TudorHorse) and
   **[Xenia Canary's game patches](https://github.com/xenia-canary/game-patches)** (illusion, boma), ported as switches.
+- **PsychoV35** and **[RenoDX](https://github.com/clshortfuse/renodx)** by ShortFuse (with mqhaji's PsychoV35 edition),
+  which Gears 2 and Gears 3's native HDR is built on.
 - The **Anton**, **Barlow**, **Inter** and **Noto** fonts and **[Kenney Input Prompts](https://kenney.nl/assets/input-prompts)**.
 
 If we've missed anyone, please open an issue and we'll add them.
