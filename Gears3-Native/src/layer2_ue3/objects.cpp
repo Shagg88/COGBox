@@ -475,6 +475,11 @@ int PropertySize(uint32_t cls, const char* property) {
   return p ? int(Read32(p + 68)) : -1;
 }
 
+int PropertyArrayDim(uint32_t cls, const char* property) {
+  const uint32_t p = FindProperty(cls, property);
+  return p ? int(Read32(p + 64)) : -1;   // UProperty::ArrayDim, just before ElementSize (+68)
+}
+
 uint32_t BoolMask(uint32_t cls, const char* property) {
   const uint32_t p = FindProperty(cls, property);
   static std::atomic<uint32_t> boolProperty{0};   // 0.6.0 review: looked up until found (was cached as 0 if asked too early)

@@ -703,6 +703,11 @@ int PropertySize(uint32_t cls, const char* property) {
   return p ? int(Read32(p + g_L.elem_size)) : -1;
 }
 
+int PropertyArrayDim(uint32_t cls, const char* property) {
+  const uint32_t p = FindProperty(cls, property);
+  return p && g_L.elem_size >= 4 ? int(Read32(p + g_L.elem_size - 4)) : -1;   // UProperty::ArrayDim, just before ElementSize
+}
+
 uint32_t BoolMask(uint32_t cls, const char* property) {
   const uint32_t p = FindProperty(cls, property);
   static std::atomic<uint32_t> boolProperty{0};   // looked up until found (Gears3-Native's 0.6.0 review: not cached as 0)

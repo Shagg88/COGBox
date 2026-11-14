@@ -64,6 +64,7 @@ std::vector<uint32_t> FindInstancesOfRange(uint32_t cls, uint32_t first, uint32_
 std::vector<uint32_t> AllObjects();                   // every object in GObjObjects
 int PropertyOffset(uint32_t cls, const char* property);  // -1 when not found
 int PropertySize(uint32_t cls, const char* property);    // ElementSize, -1 when not found
+int PropertyArrayDim(uint32_t cls, const char* property);  // static array length (1 = not an array), -1 when not found
 uint32_t BoolMask(uint32_t cls, const char* property);   // 0 for any other property type
 std::string PropertyType(uint32_t cls, const char* property);   // "IntProperty", "FloatProperty"...; "" when not found
 

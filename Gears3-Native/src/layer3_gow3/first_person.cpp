@@ -69,7 +69,6 @@ constexpr Rule kModes[] = {
 // person (12-byte vectors; a name the class doesn't have is skipped)
 constexpr const char* kZeroVectors[] = {"StrafeLeftAdjustment", "StrafeRightAdjustment", "RunFwdAdjustment",
                                         "RunBackAdjustment", "BigHeadViewOffsetAdjustment"};
-constexpr uint32_t kViewportTypes = 5;    // ViewOffset_ViewportAdjustments[0..4]: [4] is in the defaults [V]
 constexpr uint32_t kSlice = 16384;        // object table slots per engine tick while a pass runs
 constexpr auto kPassEvery = std::chrono::seconds(2);
 
@@ -80,6 +79,7 @@ struct ClassInfo {
   uint32_t name = 0;   // the class's name index (a class freed with its package and the address reused: looked up again)
   bool fp = false, fov = false;
   int viewOffset = -1, viewportAdj = -1, fovAngle = -1;
+  uint32_t viewportCount = 0;   // ViewOffset_ViewportAdjustments' array length, read from the property (review r20 R2)
   std::vector<int> zero;
 };
 std::unordered_map<uint32_t, ClassInfo> g_classes;
@@ -120,15 +120,20 @@ const ClassInfo& InfoOf(uint32_t cls) {
   for (const Rule& r : kModes)
     if (n == r.cls) info.fp = true, info.fov = r.fov;
   if (!info.fp) return info;
-  if (obj::PropertySize(cls, "ViewOffset") == 36) info.viewOffset = obj::PropertyOffset(cls, "ViewOffset");
-  if (obj::PropertySize(cls, "ViewOffset_ViewportAdjustments") == 36)
-    info.viewportAdj = obj::PropertyOffset(cls, "ViewOffset_ViewportAdjustments");
-  if (obj::PropertySize(cls, "FOVAngle") == 4) info.fovAngle = obj::PropertyOffset(cls, "FOVAngle");
+  // review r20 R3: a property is used only at a sane place in the object (past the UObject header, within 8 KB)
+  const auto at = [&](const char* p, int size, int dim = 1) {
+    if (obj::PropertySize(cls, p) != size) return -1;
+    const int o = obj::PropertyOffset(cls, p);
+    return o >= 32 && o + size * dim <= 0x2000 ? o : -1;
+  };
+  info.viewOffset = at("ViewOffset", 36);
+  if (const int dim = obj::PropertyArrayDim(cls, "ViewOffset_ViewportAdjustments"); dim >= 1 && dim <= 16)
+    if ((info.viewportAdj = at("ViewOffset_ViewportAdjustments", 36, dim)) >= 0) info.viewportCount = uint32_t(dim);
+  info.fovAngle = at("FOVAngle", 4);
   for (const char* v : kZeroVectors)
-    if (obj::PropertySize(cls, v) == 12)
-      if (const int o = obj::PropertyOffset(cls, v); o >= 0) info.zero.push_back(o);
-  REXLOG_INFO("first person: {} - ViewOffset +0x{:X}, viewport adjustments +0x{:X}, FOVAngle +0x{:X}, {} shift(s) zeroed",
-              n, info.viewOffset, info.viewportAdj, info.fovAngle, info.zero.size());
+    if (const int o = at(v, 12); o >= 0) info.zero.push_back(o);
+  REXLOG_INFO("first person: {} - ViewOffset +0x{:X}, viewport adjustments +0x{:X} x{}, FOVAngle +0x{:X}, {} shift(s) "
+              "zeroed", n, info.viewOffset, info.viewportAdj, info.viewportCount, info.fovAngle, info.zero.size());
   if (info.viewOffset < 0) REXLOG_WARN("first person: {} has no ViewOffset - left as it is", n);
   return info;
 }
@@ -138,7 +143,7 @@ std::vector<std::pair<uint32_t, uint32_t>> Wanted(uint32_t o, const ClassInfo& i
   std::vector<std::pair<uint32_t, uint32_t>> w;
   for (int i = 0; i < 9; i++) w.push_back({o + uint32_t(info.viewOffset) + 4 * i, Bits(g_off[i % 3])});
   if (info.viewportAdj >= 0)
-    for (uint32_t i = 0; i < kViewportTypes * 9; i++) w.push_back({o + uint32_t(info.viewportAdj) + 4 * i, 0});
+    for (uint32_t i = 0; i < info.viewportCount * 9; i++) w.push_back({o + uint32_t(info.viewportAdj) + 4 * i, 0});
   for (int z : info.zero)
     for (int i = 0; i < 3; i++) w.push_back({o + uint32_t(z) + 4 * i, 0});
   if (info.fov && g_fov > 0 && info.fovAngle >= 0) w.push_back({o + uint32_t(info.fovAngle), Bits(float(g_fov))});
@@ -147,22 +152,30 @@ std::vector<std::pair<uint32_t, uint32_t>> Wanted(uint32_t o, const ClassInfo& i
 
 void Apply(uint32_t o, uint32_t cls, const ClassInfo& info) {
   const auto want = Wanted(o, info);
+  // review r20 B2: a word that still holds what we wrote keeps its real original (re-reading it would take our value
+  // as the original and third person could never come back); a word the game has changed since gets the new value
+  std::unordered_map<uint32_t, Word> prev;
   if (auto it = g_patched.find(o); it != g_patched.end()) {
-    bool intact = it->second.cls == cls;   // still holding what we wrote? (else a new object at this address)
-    for (size_t i = 0; intact && i < it->second.words.size(); i++)
-      intact = obj::Read32(it->second.words[i].address) == it->second.words[i].written;
-    if (intact) {
+    if (it->second.cls == cls) {   // else a new object at this address: everything read afresh
       bool same = it->second.words.size() == want.size();
       for (size_t i = 0; same && i < want.size(); i++)
-        same = it->second.words[i].address == want[i].first && it->second.words[i].written == want[i].second;
+        same = it->second.words[i].address == want[i].first && it->second.words[i].written == want[i].second &&
+               obj::Read32(want[i].first) == want[i].second;
       if (same) return;
-      for (const Word& w : it->second.words) obj::Write32(w.address, w.original);   // new settings: from the originals
+      for (const Word& w : it->second.words)
+        if (obj::Read32(w.address) == w.written) prev[w.address] = w;
     }
     g_patched.erase(it);
   }
+  for (const auto& [address, w] : prev)   // a word no longer written (e.g. the FOV switch set back to 0): original back
+    if (std::none_of(want.begin(), want.end(), [a = address](const auto& x) { return x.first == a; }))
+      obj::Write32(address, w.original);
   Patched p{cls, {}};
   p.words.reserve(want.size());
-  for (const auto& [address, value] : want) p.words.push_back({address, obj::Read32(address), value});
+  for (const auto& [address, value] : want) {
+    const auto pv = prev.find(address);
+    p.words.push_back({address, pv != prev.end() ? pv->second.original : obj::Read32(address), value});
+  }
   for (Word& w : p.words)
     if (!obj::Write32(w.address, w.written)) w.written = w.original;
   static std::unordered_set<uint32_t> logged;   // the first object of each class (by name index)
@@ -176,16 +189,32 @@ void Apply(uint32_t o, uint32_t cls, const ClassInfo& info) {
   g_patched[o] = std::move(p);
 }
 
-void RestoreAll() {
-  size_t n = 0;
-  for (auto& [o, p] : g_patched) {
-    if (obj::ClassOf(o) != p.cls) continue;   // freed since
-    for (const Word& w : p.words)
-      if (obj::Read32(w.address) == w.written) obj::Write32(w.address, w.original);
-    n++;
+// Off again (the hotkey): review r20 B1 - only objects still in the engine's object table are written. A mode object
+// freed by a level load can stay in g_patched until a pass ends without it, and the garbage collector does not clear
+// freed memory, so its class word and our values can still be there (or a new allocation can be); the table is the
+// only proof of life. A slice per tick like the patching pass (~11 ticks), objects not met are dropped unwritten.
+bool g_restoring = false;
+uint32_t g_restoreCursor = 0;
+size_t g_restored = 0;
+
+void RestoreSlice() {
+  uint32_t total = 0;
+  if (g_base && !g_patched.empty()) {
+    for (uint32_t o : obj::FindInstancesOfRange(g_base, g_restoreCursor, kSlice, &total)) {
+      const auto it = g_patched.find(o);
+      if (it == g_patched.end() || obj::ClassOf(o) != it->second.cls) continue;
+      for (const Word& w : it->second.words)
+        if (obj::Read32(w.address) == w.written) obj::Write32(w.address, w.original);
+      g_patched.erase(it);
+      g_restored++;
+    }
+    g_restoreCursor += kSlice;
+    if (g_restoreCursor < total) return;
   }
+  REXLOG_INFO("first person: off - {} camera mode(s) back to the game's third-person offsets ({} gone)", g_restored,
+              g_patched.size());
   g_patched.clear();
-  REXLOG_INFO("first person: off - {} camera mode(s) back to the game's third-person offsets", n);
+  g_restoring = false;
 }
 
 }  // namespace
@@ -195,6 +224,11 @@ void Gow3InstallFirstPerson() {
   if (!REXCVAR_GET(gow3_first_person)) return;
   ReadSettings();
   rex::ui::RegisterBind("bind_cogbox_first_person", "PageUp", "First-person camera off / on (Gears 3)", [] {
+    // review r20 R1: a held key repeats - one switch per 300 ms
+    static std::atomic<int64_t> last{0};
+    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+    if (now - last.load(std::memory_order_relaxed) < 300) return;
+    last.store(now, std::memory_order_relaxed);
     g_want.store(!g_want.load(std::memory_order_relaxed), std::memory_order_relaxed);
   });
   REXLOG_INFO("first person: on (experimental) - walking, crouching, aiming and roadie run at eye level; PageUp toggles");
@@ -207,18 +241,27 @@ void Gow3FirstPersonTick() {
   const bool want = g_want.load(std::memory_order_relaxed);
   if (!want) {
     if (g_applied) {
-      RestoreAll();
       g_applied = false;
       g_passActive = false;
+      g_restoring = true;
+      g_restoreCursor = 0;
+      g_restored = 0;
     }
+    if (g_restoring) RestoreSlice();
     return;
   }
   if (!g_applied) {
     g_applied = true;
+    g_restoring = false;   // on again before the restore finished: the objects not yet restored still hold our values
     g_nextPass = Clock::time_point{};   // first person again: a pass right away
     REXLOG_INFO("first person: on again");
   }
-  if (!obj::Ready() && !obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar)) return;
+  if (!obj::Ready()) {   // review r20: tried every 2 s, not every tick
+    static Clock::time_point nextInit{};
+    if (Clock::now() < nextInit) return;
+    nextInit = Clock::now() + std::chrono::seconds(2);
+    if (!obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar)) return;
+  }
   if (!g_base) {   // the mode base class, a slice of the table per tick (it is in GearGame.xxx, loaded at start-up)
     static Clock::time_point next{};
     if (Clock::now() < next) return;
