@@ -408,8 +408,12 @@ void DiagTick() {
         pawnIn |= a && a == pawn, weapIn |= a && a == weapon;
       }
     }
-    REXLOG_INFO("first person diag: cam {:08X} mode {} ({}) | pawn {} bIsHiddenByCamera {} | HiddenActors {} pawn {} "
-                "weapon {} | time {:.2f}", cam, mode ? obj::ObjectName(obj::ClassOf(mode)) : "?",
+    const uint32_t active = Ptr(cam, "CurrentCamera");   // the gate WeaponTick uses (must be the gameplay camera)
+    REXLOG_INFO("first person diag: cam {:08X} active {} | mode {} ({}) | pawn {} bIsHiddenByCamera {} | HiddenActors {} "
+                "pawn {} weapon {} | time {:.2f}", cam,
+                Prop(obj::ClassOf(cam), "CurrentCamera").offset < 0 ? std::string("(no property)")
+                    : active == gc ? std::string("gameplay") : active ? obj::ObjectName(obj::ClassOf(active)) : std::string("none"),
+                mode ? obj::ObjectName(obj::ClassOf(mode)) : "?",
                 g_patched.count(mode) ? "FP" : "3P", pawn ? obj::ObjectName(obj::ClassOf(pawn)) : "none",
                 Flag(pawn, "bIsHiddenByCamera"), hidden, pawnIn, weapIn, now);
     REXLOG_INFO("first person diag:   pawn mesh {} | weapon {} bHidden {} | weapon mesh {} (owner {}) | magazine {}",
