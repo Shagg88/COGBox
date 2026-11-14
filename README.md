@@ -115,6 +115,13 @@ settings are kept.
 The first minutes of each game can stutter while shaders are built; **Prepare all shaders now** on the Graphics tab
 does it in one go.
 
+## Mac (CrossOver, experimental)
+
+Players run COGBox on a Mac through CrossOver; Proton (Linux, Steam Deck) and CrossOver (Mac) are the supported
+ways to play outside Windows. If you hear a constant heavy bass hum (in the games and the launcher's music), open
+**Audio MIDI Setup** on the Mac and set your output device to **96,000 Hz** (or 88,200 Hz): at 44,100 or 48,000 Hz
+CrossOver's audio adds the hum (found by L33tRonin, GitHub #261).
+
 ## If something goes wrong
 
 When a game closes unexpectedly, COGBox explains what happened and offers a **problem report** - one zip with the log,

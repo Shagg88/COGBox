@@ -394,6 +394,13 @@ starts that game straight away with your settings. Adding gow3.exe (or another g
 itself does not work: it stops with "--game_data_root was not provided", because COGBox passes
 it the game folder and your settings.
 
+Mac (CrossOver) - experimental
+------------------------------
+Proton (Linux, Steam Deck) and CrossOver (Mac) are the supported ways to play outside Windows.
+A constant heavy bass hum on a Mac (in the games and the launcher's music): open Audio MIDI Setup
+and set your output device to 96,000 Hz (or 88,200 Hz) - at 44,100 or 48,000 Hz CrossOver's audio
+adds the hum (found by L33tRonin, GitHub #261).
+
 
 Where things are
 ----------------
