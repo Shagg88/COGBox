@@ -1164,6 +1164,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_skip_resolve_dispatches, false, "Gears2",
                     "Patch 0117 (both APIs, a MEASUREMENT switch - wrong pictures): the renderer's compute steps for "
                     "resolves and EDRAM copies to guest memory are not sent (present and upscaler compute stay). Shows "
                     "how much of each API's frame those steps and the render-pass breaks / barriers around them cost");
+REXCVAR_DEFINE_BOOL(gow2_renderer_t2_measure_skip, false, "Gears2",
+                    "#257 / #296 step 1 (both APIs, a MEASUREMENT switch - pictures may be wrong): our resolves are not "
+                    "written into the GPU guest-memory mirror (T2). A resolve-through texture is still written by the same "
+                    "shader without the mirror stores; other T2 dispatches are skipped. Pages stay marked as ours. Shows "
+                    "what T2 and the guest-buffer transitions around it cost (log: 'T2 measure-skip')");
 REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_draws, false, "Gears2",
                     "Patch 0119 (both APIs, test): the colour resolve step for single-sample sources into 32 bpp "
                     "destinations runs as a full-screen draw into the destination (a render target) instead of a "
@@ -1853,6 +1858,10 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     shader_prefetch_ = REXCVAR_GET(gow2_renderer_shader_prefetch);  // patch 0053
     skip_resolve_dispatches_ = REXCVAR_GET(gow2_renderer_skip_resolve_dispatches);  // patch 0117
     resolve_draws_ = REXCVAR_GET(gow2_renderer_resolve_draws);                      // patch 0119
+    t2_measure_skip_ = REXCVAR_GET(gow2_renderer_t2_measure_skip);                  // #257 step 1
+    if (t2_measure_skip_)
+      REXLOG_WARN("gow2_renderer: T2 measure-skip ON (measurement only, pictures may be wrong): resolves are not written "
+                  "into the guest-memory mirror");
     stats_frame_ = REXCVAR_GET(gow2_renderer_target_stats_frame);                   // patch 0121
     stats_each_ = REXCVAR_GET(gow2_renderer_target_stats_each_draw);                // patch 0122
     stats_from_ = std::max(REXCVAR_GET(gow2_renderer_target_stats_each_from), 0);   // patch 0123
@@ -2126,6 +2135,20 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       const gpu::ShaderHandle wtt = cache_->GetBuiltin("words_to_guest_through_cs", rr::builtin::kWordsToGuestThroughCs,
                                                        gpu::ShaderStage::kCompute);
       words_to_guest_through_ = wtt ? backend_->CreateComputePipeline(wtt) : 0;
+      if (words_to_guest_through_ && REXCVAR_GET(gow2_renderer_t2_measure_skip)) {
+        // #257 step 1: the same shader without the guest buffer (u0 unused, so no guest-buffer transition).
+        std::string to = rr::builtin::kWordsToGuestThroughCs;
+        const std::string d = "RWByteAddressBuffer xe_guest : register(u0);\n", s0 = "xe_guest.Store(addr, m0);",
+                          s1 = "xe_guest.Store(addr + 4u, m1);";
+        if (to.find(d) != std::string::npos && to.find(s0) != std::string::npos && to.find(s1) != std::string::npos) {
+          to.replace(to.find(d), d.size(), "");
+          to.replace(to.find(s0), s0.size(), "");
+          to.replace(to.find(s1), s1.size(), "");
+          const gpu::ShaderHandle tos = cache_->GetBuiltin("words_through_only_cs", to, gpu::ShaderStage::kCompute);
+          words_through_only_ = tos ? backend_->CreateComputePipeline(tos) : 0;
+        }
+        REXLOG_INFO("gow2_renderer: T2 measure-skip: through-only shader {}", words_through_only_ ? "ready" : "missing");
+      }
       REXLOG_INFO("gow2_renderer: resolve-through (job 047) {}", words_to_guest_through_ ? "ON" : "shader missing - OFF");
       through_check_frame_ = uint64_t(std::max(REXCVAR_GET(gow2_renderer_resolve_through_check), 0));
       if (through_check_frame_) {
@@ -2864,6 +2887,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     t2_stats_.seen_colour + t2_stats_.seen_depth, t2_stats_.seen_colour,
                     t2_stats_.seen_depth, ts.gpu_pages_kept, ts.gpu_pages_changed,
                     ts.cpu_loads_of_gpu_pages);
+        if (t2_measure_skip_)
+          REXLOG_INFO("gow2_renderer: T2 measure-skip frames {}-{}: through-only {}, skipped {} (mirror not written)",
+                      frame_ + 1 - uint64_t(log_every_), frame_, t2_stats_.measure_through_only,
+                      t2_stats_.measure_skipped);
         {  // patch 0032: resolve destination textures and video memory
           uint64_t one_bytes = 0, scaled_bytes = 0;
           for (const auto& [k, d] : destinations_) one_bytes += d.bytes;
@@ -4990,7 +5017,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                             endian <= 3 &&
                             textures_->FindResolveThrough(info.dest_base, info.dest_pitch_aligned_div_32 * 32,
                                                           words == 2 ? 3u : 2u, dx, dy, w, h, through);
-    if (through_on) {
+    if (t2_measure_skip_) {  // #257 step 1 (measurement): no mirror writes
+      if (through_on && words_through_only_) {
+        b.constants[8] = through.code;
+        b.constants[9] = through.endian;
+        b.constants[10] = through.width;
+        b.constants[11] = through.height;
+        b.constant_count = 12;
+        b.guest_u0 = false;
+        b.uav2_texture = through.texture;
+        ResolveDispatch(words_through_only_, b, (w + 7) / 8, (h + 7) / 8, 1);
+        ++t2_stats_.measure_through_only;
+      } else {
+        ++t2_stats_.measure_skipped;
+      }
+    } else if (through_on) {
       b.constants[8] = through.code;
       b.constants[9] = through.endian;
       b.constants[10] = through.width;
@@ -5088,6 +5129,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   struct T2Stats {
     uint64_t written = 0, skipped = 0, bytes = 0, seen_colour = 0, seen_depth = 0;
     uint64_t skipped_format = 0, skipped_endian = 0;  // patch 0030: colour resolves ResolveColour still skips
+    uint64_t measure_through_only = 0, measure_skipped = 0;  // #257 step 1 (--gow2_renderer_t2_measure_skip)
   };
   bool resolves_to_guest_ = false;
   bool canary_resolve_rules_ = false;  // patch 0023: --gow2_renderer_resolve_rules=canary
@@ -5117,6 +5159,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   ReadbackStats rb_stats_;
   gpu::PipelineHandle words_to_guest_ = 0;
   gpu::PipelineHandle words_to_guest_through_ = 0;  // job 047 resolve-through (0 = off)
+  gpu::PipelineHandle words_through_only_ = 0;      // #257 step 1: the same without the mirror stores
+  bool t2_measure_skip_ = false;                    // #257 step 1: --gow2_renderer_t2_measure_skip
   // ---- Upscaler probe (--gow2_upscale_probe, notes/64): which draws carry the camera matrix ----
   struct ProbeGroup {
     uint64_t hash = 0;
