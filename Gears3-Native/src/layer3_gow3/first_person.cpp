@@ -23,8 +23,9 @@
 // Dawn aiming beams set it while you aim, GearWeap_HeavySniperBase.RecalculateLaserLocation, GearWeap_HODBase.Tick).
 // --gow3_first_person_weapon (default on) sets that bit on the local player's current weapon mesh and its magazine,
 // muzzle flash and shell-eject / barrel-smoke particles while a first-person mode is the camera's current mode, and
-// clears it again on a weapon change, a third-person mode, PageUp off or a level change. Body, head, holstered guns
-// and helmet stay hidden. The first-person modes also get bDoPredictiveAvoidance cleared, as the game's own eye view
+// clears it again on a weapon change, a third-person mode, PageUp off or a level change. --gow3_first_person_body
+// (default on) does the same for the pawn's Mesh and its own primitives: the whole character - arms, shoulders, legs -
+// is drawn as in third person (socket attachments such as a holstered gun or helmet stay as the game has them). The first-person modes also get bDoPredictiveAvoidance cleared, as the game's own eye view
 // (GameplayCam_SniperZoom) has it. --gow3_first_person_diag logs the hide state once a second (log only).
 //
 // No guest address, no hook of our own: reflection (ue3/objects.h) finds the GearGameplayCameraMode objects a slice of
@@ -66,7 +67,8 @@ REXCVAR_DEFINE_INT32(gow3_first_person_fov, 0, "Gears3",
                      "FOV setting; aiming and roadie run keep theirs)");
 REXCVAR_DEFINE_BOOL(gow3_first_person_weapon, true, "Gears3",
                     "First-person camera: draw your own weapon (the game hides it with your body when the camera is "
-                    "inside you; this sets the engine's bIgnoreHiddenActorsMembership on the weapon's meshes)");
+                    "inside you; this sets the engine's bIgnoreHiddenActorsMembership on the weapon's meshes). With "
+                    "--gow3_first_person_body on, the weapon is drawn with the body either way");
 REXCVAR_DEFINE_BOOL(gow3_first_person_body, true, "Gears3",
                     "First-person camera: draw your own body too (arms, shoulders, legs - the game's own model, already "
                     "animated; the same engine flag on your pawn's meshes). Off: only the weapon");
@@ -292,18 +294,19 @@ constexpr const char* kWeaponParts[] = {"Mesh", "MagazineMesh", "PSC_ShellEject"
 std::vector<uint32_t> WeaponParts(uint32_t weapon) {
   std::vector<uint32_t> v;
   const auto add = [&](uint32_t c) {
-    if (c && obj::ClassOf(c) && Prop(obj::ClassOf(c), "bIgnoreHiddenActorsMembership").mask &&
-        std::find(v.begin(), v.end(), c) == v.end())
+    if (c && obj::IsLive(c) && obj::ClassOf(c) && Prop(obj::ClassOf(c), "bIgnoreHiddenActorsMembership").mask &&
+        std::find(v.begin(), v.end(), c) == v.end())   // review r24 B1: only live objects
       v.push_back(c);
   };
   for (const char* p : kWeaponParts) add(Ptr(weapon, p));
-  add(Ptr(Ptr(weapon, "MuzzleFlash"), "MuzFlashEmitter"));
+  if (const uint32_t mf = Ptr(weapon, "MuzzleFlash"); mf && obj::IsLive(mf)) add(Ptr(mf, "MuzFlashEmitter"));
   return v;
 }
 
 // The pawn's own primitives (Shagg 11-14 15:03: the whole character is already drawn and animated in third person -
 // in first person it is only hidden by the camera's HiddenActors list, like the weapon): the pawn's Mesh and every
-// primitive in its Components array that has the flag (helmet / armour / backpack attachments made by the pawn).
+// primitive in its Components array that has the flag (socket attachments such as a helmet are not in that list and
+// stay as the game has them).
 // The camera sits at the face; what is behind it (the inside of the head) is not drawn (back faces, behind the view).
 std::vector<uint32_t> BodyParts(uint32_t pawn) {
   std::vector<uint32_t> v;
@@ -331,11 +334,15 @@ void WeaponTick() {
   g_wantParts.clear();
   for (uint32_t cam : g_cams) {
     if (!obj::IsLive(cam)) continue;
+    // review r24 R1 / R2: only while the gameplay camera is the active one and its current mode is one of ours; a
+    // property not found = nothing un-hidden (the earlier behaviour)
     const uint32_t gc = Ptr(cam, "GameplayCam");
-    const uint32_t mode = Ptr(gc, "CurrentCamMode");
-    // the current mode one of ours (or the property not found: then always, the pawn is only hidden up close)
-    if (gc && Prop(obj::ClassOf(gc), "CurrentCamMode").offset >= 0 && !g_patched.count(mode)) continue;
-    const uint32_t pawn = Ptr(Ptr(cam, "PCOwner"), "MyGearPawn");
+    if (!gc || !obj::IsLive(gc) || Prop(obj::ClassOf(gc), "CurrentCamMode").offset < 0) continue;
+    if (Prop(obj::ClassOf(cam), "CurrentCamera").offset >= 0 && Ptr(cam, "CurrentCamera") != gc) continue;
+    if (!g_patched.count(Ptr(gc, "CurrentCamMode"))) continue;
+    const uint32_t pc = Ptr(cam, "PCOwner");
+    if (!pc || !obj::IsLive(pc)) continue;
+    const uint32_t pawn = Ptr(pc, "MyGearPawn");
     std::vector<uint32_t> parts;
     if (bodyOn && pawn && obj::IsLive(pawn)) parts = BodyParts(pawn);
     if (const uint32_t weapon = Ptr(pawn, "MyGearWeapon"); (weaponOn || bodyOn) && weapon && obj::IsLive(weapon))
@@ -549,7 +556,7 @@ void Gow3FirstPersonTick() {
   for (auto it = g_bits.begin(); it != g_bits.end();)   // mode bits of objects gone: forgotten, never written
     it = !it->second.weapon && !g_seen.count(it->second.object) ? g_bits.erase(it) : std::next(it);
   if (g_seenCams != g_cams)
-    REXLOG_INFO("first person: {} local camera(s) for the weapon{}", g_seenCams.size(),
+    REXLOG_INFO("first person: {} player camera(s) for the body / weapon{}", g_seenCams.size(),
                 REXCVAR_GET(gow3_first_person_weapon) ? "" : " (weapon option off)");
   g_cams = g_seenCams;
   static size_t logged = size_t(-1);
