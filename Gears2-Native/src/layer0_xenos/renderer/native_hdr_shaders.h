@@ -126,13 +126,22 @@ void main(uint3 id : SV_DispatchThreadID) {
   float4 bounded = boundedResult.Load(int3(id.xy, 0));
   float3 h = pow(max(hdrLayer.Load(int3(id.xy, 0)).rgb, 0.0), 2.2);
   float3 s = pow(max(sdrLayer.Load(int3(id.xy, 0)).rgb, 0.0), 2.2);
-  // Equal UI-only emission cancels. Only the material's response to the real
-  // HDR scene survives, added to the game's bounded, vanilla-coloured result.
-  float3 color = pow(max(bounded.rgb, 0.0), 2.2) + (h - s);
+  // Equal UI-only emission cancels. Carry the remaining native scene energy
+  // as positive luminance in the ORIGINAL material's color direction. Adding
+  // h-s per channel can cross zero in just one channel as the effect changes,
+  // turning a red SDR reference cyan for a frame.
+  const float3 luma = float3(0.2126, 0.7152, 0.0722);
+  float3 base = pow(max(bounded.rgb, 0.0), 2.2);
+  float baseY = dot(base, luma);
+  float extraY = max(dot(h - s, luma), 0.0);
+  float3 color = baseY > 1e-6 ? base * (1.0 + extraY / baseY) : base;
   color = float3(isfinite(color.r) ? color.r : 0.0,
                  isfinite(color.g) ? color.g : 0.0,
                  isfinite(color.b) ? color.b : 0.0);
-  outputImage[id.xy] = float4(clamp(color, 0.0, settings.x), bounded.a);
+  float peak = max(settings.x, 1e-6);
+  float brightest = max(color.r, max(color.g, color.b));
+  color *= peak / max(peak, brightest);
+  outputImage[id.xy] = float4(max(color, 0.0), bounded.a);
 }
 )";
 }  // namespace xenos::renderer::native_hdr

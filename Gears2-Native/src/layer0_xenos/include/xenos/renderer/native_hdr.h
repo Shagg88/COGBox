@@ -1,12 +1,9 @@
 // Captured Gears 2 / Gears 3 TU6 HDR profiles; no game shader data.
 #pragma once
 #include <cstddef>
-#include <algorithm>
-#include <bit>
-#include <cmath>
+#include <cstdint>
 #include <string>
-#include <utility>
-#include <xenos/ucode.h>
+#include <xenos/renderer/psychov35_bridge.h>
 
 namespace xenos::renderer::native_hdr {
 inline constexpr uint64_t kScene = 0xB6B6DD4E7D91F3D9ull;
@@ -17,123 +14,6 @@ inline bool IsScene(uint64_t hash) { return hash == kScene || hash == kGears3Sce
 inline bool IsCanvasVertex(uint64_t hash) {
   return hash == 0x868DFF11A6BDEBAAull || hash == 0xE775468CA654846Dull ||
          hash == 0x6F83A894AB66D831ull || hash == 0x2E88B37100D9D0CEull;
-}
-
-struct Gears3Curve {
-  float offset, scale, shadow_start, shadow_scale, power, weight_scale, blend;
-  bool operator==(const Gears3Curve&) const = default;
-  float Linear(float scene) const {
-    const double x = std::max(double(scene), 0.0);
-    const double power_curve = std::pow(std::max(x * std::abs(double(shadow_scale)), 0.0), double(power));
-    const double rational = x * scale / std::max(std::abs(x + offset), 1e-6);
-    const double weight = std::clamp((x - shadow_start) * weight_scale, 0.0, 1.0);
-    const double mixed = power_curve + weight * (rational - power_curve);
-    return float(std::pow(std::clamp(mixed + blend * (rational - mixed), 0.0, 1.0), 2.2));
-  }
-  std::pair<float, float> Extension() const {
-    const float target = float(std::pow(std::clamp(std::abs(double(scale)), 0.01, 1.0) * 0.75, 2.2));
-    float low = 0, high = std::max({std::abs(offset), shadow_start, 1e-4f});
-    for (unsigned i = 0; i < 20 && Linear(high) < target; ++i) high *= 2;
-    for (unsigned i = 0; i < 20; ++i) {
-      const float middle = (low + high) * 0.5f;
-      if (Linear(middle) < target) low = middle; else high = middle;
-    }
-    const float pivot = std::max((low + high) * 0.5f, 1e-5f);
-    const float step = std::max(pivot * 0.001f, 1e-6f);
-    const float slope = std::max((Linear(pivot + step) - Linear(std::max(pivot - step, 0.0f))) / (2 * step), 0.0f);
-    return {pivot, std::isfinite(slope) ? slope : 0.0f};
-  }
-  static Gears3Curve FromConstants(const uint32_t* constants) {
-    const auto value = [=](unsigned reg, unsigned component) { return std::bit_cast<float>(constants[4 * reg + component]); };
-    return {value(4, 0), value(4, 1), value(4, 2), value(4, 3), value(252, 1), value(253, 2), value(5, 0)};
-  }
-};
-
-// Curve constants usually remain unchanged for many frames. Avoid repeating
-// the tangent's root search until any of its seven source parameters changes.
-class Gears3CurveCache {
- public:
-  std::pair<float, float> Get(const Gears3Curve& curve) {
-    if (!valid_ || !(curve == curve_)) {
-      curve_ = curve;
-      extension_ = curve.Extension();
-      valid_ = true;
-    }
-    return extension_;
-  }
- private:
-  Gears3Curve curve_{};
-  std::pair<float, float> extension_{};
-  bool valid_ = false;
-};
-
-// Gears 3 decodes its packed HDR lighting before a filmic curve and a 3D LUT.
-// Retain the complete original shader, including DOF/bloom/grain/LUT grading.
-// Capture its real scene input to the curve, then add a slope-matched highlight
-// extension. A uniform gain retains the LUT's hue instead of stretching white
-// pixels inferred from a finished SDR image. Values below the pivot are exact.
-inline std::string Gears3SceneSource(std::string source, uint32_t low, uint32_t high) {
-  const auto constant = [=](uint32_t index) {
-    if (low != high && index >= high) index = low + index - high;
-    return "xe_c[" + std::to_string(index) + "]";
-  };
-  const auto replace = [&](const std::string& from, const std::string& to) {
-    const auto at = source.find(from);
-    if (at == std::string::npos || source.find(from, at + from.size()) != std::string::npos) return false;
-    source.replace(at, from.size(), to);
-    return true;
-  };
-  const std::string function = "XePsOut main(XePsIn xe_in) {";
-  std::string curve = R"(
-float NativeGears3CurveLinear(float scene) {
-  float4 curve = $C4;
-  float powerCurve = pow(max(scene * abs(curve.w), 0.0), $C252.y);
-  float rationalCurve = scene * $C4.y / max(abs(scene + curve.x), 1e-6);
-  float weight = saturate((scene - curve.z) * $C253.z);
-  float blended = lerp(powerCurve, rationalCurve, weight);
-  return pow(max(saturate(lerp(blended, rationalCurve, $C5.x)), 0.0), 2.2);
-}
-)";
-  for (const auto& item : {std::pair{"$C252", constant(252)}, std::pair{"$C253", constant(253)},
-                           std::pair{"$C4", constant(4)}, std::pair{"$C5", constant(5)}}) {
-    size_t at = 0;
-    while ((at = curve.find(item.first, at)) != std::string::npos) {
-      curve.replace(at, std::string(item.first).size(), item.second); at += item.second.size();
-    }
-  }
-  if (!replace(function, curve + function + "\n  float3 nativeSceneForCurve = 0.0;")) return {};
-  const std::string capture = "float4 s0 = r[3].xzyy;\n        float4 s1 = " + constant(4) + ".xxxx;";
-  if (!replace(capture, "nativeSceneForCurve = max(r[3].xzy, 0.0);\n        " + capture)) return {};
-  const std::string shoulder = "  float brightest = max(max(nativeColor.r, nativeColor.g), nativeColor.b);";
-  const std::string extension = R"(
-  // The CPU finds the 75%-white point of this draw's actual filmic curve and
-  // supplies its tangent once per draw. Exposure changes keep their midtones.
-  float sceneEnergy = max(max(nativeSceneForCurve.r, nativeSceneForCurve.g), nativeSceneForCurve.b);
-  float pivot = max(asfloat(xe_sys2.z), 1e-5);
-  float3 nativeGears3Grade = 1.0;
-  if (sceneEnergy > pivot) {
-    float atPivot = NativeGears3CurveLinear(pivot);
-    float slope = max(asfloat(xe_sys2.w), 0.0);
-    float extended = atPivot + slope * (sceneEnergy - pivot);
-    float referenceCurve = NativeGears3CurveLinear(sceneEnergy);
-    float extra = max(extended - referenceCurve, 0.0);
-    // Retain the LUT and all game fade/output scaling as a throughput factor.
-    // Normalizing by the graded peak would cancel a fade toward black. Apply
-    // this factor AFTER the HDR shoulder so highlights fade proportionally too.
-    nativeGears3Grade = nativeColor / max(referenceCurve, 1e-5);
-    float displayHeadroom = max(asfloat(xe_sys2.x) - 1.0, 0.0);
-    nativeColor = referenceCurve + extra * displayHeadroom;
-  }
-)";
-  if (!replace(shoulder, extension + shoulder)) return {};
-  const std::string rolloff = "  nativeColor *= shoulder / max(brightest, 1.0);";
-  if (!replace(rolloff, rolloff + R"(
-  nativeColor *= nativeGears3Grade;
-  float displayPeak = max(asfloat(xe_sys2.x), 1e-5);
-  float gradedPeak = max(max(nativeColor.r, nativeColor.g), nativeColor.b);
-  nativeColor *= displayPeak / max(displayPeak, gradedPeak);
-)")) return {};
-  return source;
 }
 
 // Evaluate a scene-sampling Canvas material with both the real HDR scene and
@@ -170,6 +50,10 @@ SceneUiPair main(XePsIn input) {
   SceneUiPair output;
   output.hdr = xe_scene_ui_material(input, true).color0;
   output.sdr = xe_scene_ui_material(input, false).color0;
+  // Match the bounded original target's coverage without bounding world RGB.
+  // Use identical coverage for both evaluations; FP16 permits alpha > 1 and
+  // a negative inverse-source-alpha blend factor unless explicitly bounded.
+  output.hdr.a = output.sdr.a = saturate(output.sdr.a);
   return output;
 }
 )";
@@ -179,7 +63,16 @@ SceneUiPair main(XePsIn input) {
 // material samples the same BC3 HUD atlas as kCanvas, plus an 8x128 mask ramp.
 // They must be composed in float too; falling back here would clamp the entire
 // firing frame, including the scene's unrelated HDR muzzle flash.
-struct UiProfile { uint64_t hash; size_t dwords; uint64_t fingerprint; bool modulation = false; };
+struct UiProfile {
+  uint64_t hash;
+  size_t dwords;
+  uint64_t fingerprint;
+  bool modulation = false;
+  // Optional captured vertex pair. Such profiles also require the captured
+  // blend: straight alpha for emission, destination-color/zero for modulation.
+  // A material's other pipeline uses must not inherit the UI emission clamp.
+  uint64_t vertex = 0;
+};
 inline constexpr UiProfile kUiProfiles[] = {
     {kCanvas, 54, 0xD3A4073CB8DAEB0Dull},
     {0x3F3410143BA49FE9ull, 54, 0xBD1EBA583EEF9E4Dull},
@@ -198,35 +91,14 @@ inline constexpr UiProfile kUiProfiles[] = {
     {0x9FCCAF2C4923CA93ull, 129, 0x5CF7251E4670B002ull},  // Gears 3 blood overlay; three BC3 UI textures.
     {0x63C7939AE43787ABull, 54, 0x59ABADA2DC6A676Aull},   // Gears 3 additional damage/reload overlay.
     {0xD2B5DF9B2B04E715ull, 42, 0xFF8DB83E451A0BF5ull},   // Gears 3 solid-color UI; no textures.
+    {0x2C1E4E099E31E037ull, 51, 0xB241E3475A37FF9Cull, false,
+     0x5BF4E342D00F1593ull},  // Gears 3 two-sample UI blend; captured 160x80 BC3 image in both slots.
+    {0x1C0932D0C22ECC2Aull, 21, 0x88FB1A623EDF043Full, true,
+     0x2E88B37100D9D0CEull},  // Gears 3 destination-color UI modulation; captured 68x76 BC1 image.
 };
 inline const UiProfile* FindUi(uint64_t hash) {
   for (const auto& profile : kUiProfiles) if (profile.hash == hash) return &profile;
   return nullptr;
 }
 
-// Retain the game's exposure, DOF, bloom and grading. Extend its two SDR
-// ceilings before gamma, using the original floating-point scene samples.
-// The abs at 72 must become a nonnegative floor: otherwise negative shadow
-// values exposed by removing the first ceiling would turn into positive light.
-inline bool ExtendScene(ucode::Program& program) {
-  ucode::Instruction *first = nullptr, *floor = nullptr, *last = nullptr;
-  for (auto& block : program.control_flow) for (auto& instruction : block.instructions) {
-    if (instruction.address == 70) first = &instruction;
-    if (instruction.address == 72) floor = &instruction;
-    if (instruction.address == 83) last = &instruction;
-  }
-  if (!first || !floor || !last || program.is_vertex_shader ||
-      first->kind != ucode::Instruction::Kind::kAlu ||
-      floor->kind != ucode::Instruction::Kind::kAlu ||
-      last->kind != ucode::Instruction::Kind::kAlu ||
-      first->alu.vector_opcode != ucode::AluVectorOpcode::kMad ||
-      floor->alu.vector_opcode != ucode::AluVectorOpcode::kMax ||
-      last->alu.vector_opcode != ucode::AluVectorOpcode::kMul ||
-      !first->alu.vector_result.clamp || !last->alu.vector_result.clamp ||
-      !floor->alu.vector_operands[0].absolute) return false;
-  first->alu.vector_result.clamp = false;
-  last->alu.vector_result.clamp = false;
-  floor->alu.vector_operands[0].absolute = false;
-  return true;
-}
 }  // namespace xenos::renderer::native_hdr

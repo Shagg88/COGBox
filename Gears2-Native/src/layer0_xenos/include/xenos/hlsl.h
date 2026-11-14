@@ -113,6 +113,9 @@ struct HlslOptions {
   // Pixel b0 vector 5 holds (peak / scene white, UI white / scene white, 0, 0).
   bool native_hdr_linear = false;
   bool native_hdr_ui = false;
+  // A dimensionless scene modulation factor: bounded linear RGB, with no
+  // UI-white gain or scene highlight shoulder.
+  bool native_hdr_modulation = false;
 };
 
 // Patch 0105: the two dwords per fetch slot that tex_post_constants shaders read (fetch = the slot's 6 fetch-constant

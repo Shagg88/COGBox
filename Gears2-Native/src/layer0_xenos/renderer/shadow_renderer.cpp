@@ -3855,7 +3855,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::unordered_set<uint64_t> native_hdr_unknown_writers_;
   rr::RenderTargetKey native_hdr_key_{};
   bool native_hdr_valid_ = false, native_hdr_aa_ready_ = false;
-  rr::native_hdr::Gears3CurveCache native_hdr_curve_cache_;
   gpu::PipelineHandle native_hdr_smaa_blend_ = 0, native_hdr_copy_ = 0;
   gpu::PipelineHandle native_hdr_ui_prepare_pipe_ = 0, native_hdr_ui_copy_pipe_ = 0, native_hdr_ui_blend_pipe_ = 0;
   gpu::TextureHandle native_hdr_ui_proxy_ = 0, native_hdr_ui_high_ = 0, native_hdr_ui_low_ = 0;
@@ -3951,16 +3950,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void NativeHdrDraw(const gpu::GraphicsPipelineDesc& original, gpu::PipelineHandle original_pipeline,
                      const rr::GuestShader& vertex, const rr::GuestShader& shader, const rr::RenderTarget* target,
                      const rr::PipelineState& state, const SystemConstants& constants,
-                     const uint32_t* pixel_constants, Issue&& issue) {
-    if (!hdr_ || hdr_legacy_ || !hdr_encode_ || !REXCVAR_GET(gow2_hdr_native) || !target ||
+                     Issue&& issue) {
+    if (!hdr_ || !hdr_encode_ || !REXCVAR_GET(gow2_hdr_native) || !target ||
         !original.color_write_masks[0]) return;
     const bool scene = rr::native_hdr::IsScene(shader.ucode_hash);
-    const bool gears3_scene = shader.ucode_hash == rr::native_hdr::kGears3Scene;
     const auto& blend = original.color_blend[0];
     const bool straight_alpha = blend.enable && blend.src == gpu::BlendFactor::kSrcAlpha &&
         blend.dst == gpu::BlendFactor::kInvSrcAlpha && blend.op == gpu::BlendOp::kAdd;
+    const bool modulation_blend = blend.enable && blend.src == gpu::BlendFactor::kDestColor &&
+        blend.dst == gpu::BlendFactor::kZero && blend.op == gpu::BlendOp::kAdd;
     const bool canvas_material = rr::native_hdr::IsCanvasVertex(vertex.ucode_hash) && straight_alpha;
-    const bool canvas = rr::native_hdr::FindUi(shader.ucode_hash) != nullptr || canvas_material;
+    const auto* ui_profile = rr::native_hdr::FindUi(shader.ucode_hash);
+    const bool captured_ui_pair = !ui_profile || !ui_profile->vertex ||
+        (vertex.ucode_hash == ui_profile->vertex &&
+         (ui_profile->modulation ? modulation_blend : straight_alpha));
+    const bool canvas = (ui_profile != nullptr || canvas_material) && captured_ui_pair;
     const bool scene_ui = shader.ucode_hash == rr::native_hdr::kSceneUi && straight_alpha;
     if (!scene && (!native_hdr_valid_ || !(target->key == native_hdr_key_))) return;
     // The captured profile owns this exact EDRAM target. Other formats/aliases
@@ -3972,8 +3976,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         target->format == gpu::Format::kR8G8B8A8Unorm;
     if (!supported || (!scene && !canvas)) {
       if (native_hdr_valid_ && native_hdr_unknown_writers_.insert(shader.ucode_hash).second)
-        REXLOG_INFO("gow2_native_hdr: later writer {:016X} (Canvas {}, supported {}): reference fallback until next scene",
-                    shader.ucode_hash, canvas, supported);
+        REXLOG_INFO("gow2_native_hdr: later writer {:016X} (Canvas {}, supported {}): reference fallback until next scene; "
+                    "VS {:016X}, captured pair {}, colors {}, samples {}, depth {}, stencil {}, memexport {}, "
+                    "bytecode {}, base {}, pitch {}, format {}, blend {} ({}/{}/{})",
+                    shader.ucode_hash, canvas, supported, vertex.ucode_hash, captured_ui_pair,
+                    original.color_count, original.samples, original.depth_enable, original.stencil_enable,
+                    shader.memexport, shader.dxbc != 0, target->key.base_tiles, target->key.pitch_pixels,
+                    uint32_t(target->format), blend.enable, uint32_t(blend.src), uint32_t(blend.dst), uint32_t(blend.op));
       native_hdr_valid_ = false;
       return;
     }
@@ -4005,7 +4014,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     pipeline_desc.ps = pixel;
     pipeline_desc.color_formats[0] = gpu::Format::kR16G16B16A16Float;
     pipeline_desc.depth_format = gpu::Format::kUnknown;
-    if (gears3_scene || scene_ui) {
+    if (scene || scene_ui) {
       if (original.gs) { native_hdr_valid_ = false; return; }
       if (backend_->GetShaderIL() == gpu::ShaderIL::kDxil) {
         const auto& twin = cache_->GetDxilTwin(vs_.hash, vs_.dwords, vs_.count);
@@ -4042,15 +4051,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     SystemConstants hdr_constants = constants;
     hdr_constants.sys2[0] = std::bit_cast<uint32_t>(HdrPeak() / HdrSceneWhite());
     hdr_constants.sys2[1] = std::bit_cast<uint32_t>(HdrUiWhite() / HdrSceneWhite());
-    if (gears3_scene) {
-      const auto curve = rr::native_hdr::Gears3Curve::FromConstants(pixel_constants);
-      const auto [pivot, slope] = native_hdr_curve_cache_.Get(curve);
-      hdr_constants.sys2[2] = std::bit_cast<uint32_t>(pivot);
-      hdr_constants.sys2[3] = std::bit_cast<uint32_t>(slope);
-      if (native_hdr_generation_ <= 3)
-        REXLOG_INFO("gow2_native_hdr: Gears 3 curve offset {} scale {} blend {}, pivot {} slope {}",
-                    curve.offset, curve.scale, curve.blend, pivot, slope);
-    }
     backend_->SetConstants(gpu::ShaderStage::kPixel, gpu::kCbSystem, &hdr_constants, sizeof(hdr_constants));
     backend_->SetPipeline(pipeline);
     issue(nullptr, 0, scene_ui ? native_hdr_ui_high_ : native_hdr_color_, scene_ui ? native_hdr_ui_low_ : 0);
@@ -10088,7 +10088,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (export_shader) backend_->SetGuestWritable(true);
     if (hl_format_ && up_scene_done_ && !export_shader) HudlessDraw(colour_rt, ps, prim, index_count, depth_writes);
     issue(target, 0);
-    if (psg && !export_shader) NativeHdrDraw(d, pipeline, vsg, *psg, colour_rt[0], ps, sc, &r[kRegFloatConstPs], issue);
+    if (psg && !export_shader) NativeHdrDraw(d, pipeline, vsg, *psg, colour_rt[0], ps, sc, issue);
     if (export_shader) backend_->SetGuestWritable(false);
     if (exports) {
       ++stats_.memexport_draws;

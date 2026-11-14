@@ -1390,7 +1390,8 @@ class VulkanBackend final : public Backend {
       TextureView v;
       v.texture = th;
       v.plane = uint8_t(b.srv_plane[i]);
-      imgs[binding] = {VK_NULL_HANDLE, SampledView(th, v, ViewDimension::k2D), VK_IMAGE_LAYOUT_GENERAL};
+      const auto dimension = textures_[th].desc.dimension == TextureDimension::k3D ? ViewDimension::k3D : ViewDimension::k2D;
+      imgs[binding] = {VK_NULL_HANDLE, SampledView(th, v, dimension), VK_IMAGE_LAYOUT_GENERAL};
       if (!imgs[binding].imageView) { NotDone("Dispatch: image view creation failed"); return; }  // outside review
       wr.push_back({VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, binding, 0, 1, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, &imgs[binding], nullptr, nullptr});
     }
