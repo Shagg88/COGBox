@@ -292,6 +292,7 @@ REXCVAR_DEFINE_STRING(ue3_exec_each_level, "", "Gears3",
                       "two-player side-by-side split, which the game resets when a level starts");
 namespace {
 std::atomic<bool> g_in_front_end{false};
+std::atomic<uint32_t> g_split_level_serial{0};  // GitHub #269: bumped at every level / front-end open
 bool Gow3NameHas(std::string_view s, std::string_view needle) {
   for (size_t i = 0; i + needle.size() <= s.size(); ++i) {
     size_t k = 0;
@@ -319,6 +320,7 @@ void OnGow3FileOpened(std::string_view path, const std::filesystem::path*) {
   // GitHub #208 / #136: commands run again at every level (the split-screen layout: the game sets its own when a
   // level starts, so --ue3_exec's one run at the front end was overwritten). Queued; run once a player exists.
   if (Gow3IsLevel(path) || front) {
+    g_split_level_serial.fetch_add(1, std::memory_order_relaxed);  // GitHub #269: Gow3SplitLayoutTick
     const std::string each = REXCVAR_GET(ue3_exec_each_level);
     if (!each.empty()) {
       size_t at = 0;
@@ -412,6 +414,78 @@ void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content pac
 // over calls, 16384 slots each), and with it off the left mouse button picked the right path again in the campaign
 REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, true, "Gears3",
                     "Path choice: the mouse button on a path's side picks that path (the trigger binds swap while it is open)");
+// GitHub #269 (was #136 / #208): two-player split side by side. One `set GameViewportClient DesiredSplitscreenType
+// eSST_2P_VERTICAL` when a level package OPENS (--ue3_exec_each_level) ran during the load, before the level's own
+// start-up - which sets the viewport client's split type again, so the game still split top / bottom (the reporter's
+// in-game Back binding, run after the level started, did work). With --gow3_split_vertical the viewport client is
+// watched instead: whenever two players are signed in and its DesiredSplitscreenType is not eSST_2P_VERTICAL, the same
+// console command is run again (rate-limited; it gives up for the level if the game turns it back at once five times).
+// 3 and 4 players and one player are left alone. Off by default (the launcher's "Two-player split: Side by side").
+REXCVAR_DEFINE_BOOL(gow3_split_vertical, false, "Gears3",
+                    "GitHub #269: the two-player split side by side (eSST_2P_VERTICAL), set again whenever the game "
+                    "resets it (each level start)");
+void Gow3SplitLayoutTick() {
+  if (!REXCVAR_GET(gow3_split_vertical)) return;
+  static uint32_t ticks = 0;
+  if (++ticks % 20) return;  // three times a second at 60
+  namespace obj = ue3::obj;
+  if (!obj::Ready() && !obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar)) return;
+  using Clock = std::chrono::steady_clock;
+  static Clock::time_point next_lookup{}, last_set{};
+  static int vp_off = -1, desired_off = -1, active_off = -1, players_off = -1;
+  const Clock::time_point now = Clock::now();
+  if (vp_off < 0 || desired_off < 0 || players_off < 0) {
+    if (now < next_lookup) return;
+    next_lookup = now + std::chrono::seconds(5);   // FindClass misses scan every object: not more often than this
+    const uint32_t engine_cls = obj::FindClass("Engine"), game_engine_cls = obj::FindClass("GameEngine");
+    const uint32_t vpc_cls = obj::FindClass("GameViewportClient");
+    if (!engine_cls || !game_engine_cls || !vpc_cls) return;
+    vp_off = obj::PropertyOffset(game_engine_cls, "GameViewport");
+    players_off = obj::PropertyOffset(engine_cls, "GamePlayers");
+    desired_off = obj::PropertyOffset(vpc_cls, "DesiredSplitscreenType");
+    active_off = obj::PropertyOffset(vpc_cls, "ActiveSplitscreenType");
+    REXLOG_INFO("gow3_split_vertical: GameViewport +0x{:X}, GamePlayers +0x{:X}, DesiredSplitscreenType +0x{:X}, "
+                "ActiveSplitscreenType +0x{:X}", vp_off, players_off, desired_off, active_off);
+    if (vp_off < 0 || desired_off < 0 || players_off < 0) {
+      REXLOG_WARN("gow3_split_vertical: viewport properties not found - the split is left as the game sets it");
+      vp_off = desired_off = players_off = -1;
+      next_lookup = now + std::chrono::hours(24 * 365);
+      return;
+    }
+  }
+  const uint32_t engine = obj::Read32(gow3::addr::kGEngine);
+  if (!engine) return;
+  const uint32_t viewport = obj::Read32(engine + uint32_t(vp_off));
+  const uint32_t players = obj::Read32(engine + uint32_t(players_off) + 4);  // TArray: data, count, max
+  if (!viewport || players != 2) return;
+  auto read8 = [](uint32_t a) { return uint8_t(obj::Read32(a & ~3u) >> (8 * (3 - (a & 3u)))); };
+  // ESplitScreenType (Engine.GameViewportClient): eSST_NONE, eSST_2P_HORIZONTAL, eSST_2P_VERTICAL, eSST_3P_*, eSST_4P
+  constexpr uint8_t kVertical = 2;
+  const uint8_t desired = read8(viewport + uint32_t(desired_off));
+  const uint8_t active = active_off >= 0 ? read8(viewport + uint32_t(active_off)) : 0xFF;
+  static uint8_t logged_desired = 0xFF, logged_active = 0xFF;
+  if (desired != logged_desired || active != logged_active) {
+    REXLOG_INFO("gow3_split_vertical: split type desired {} active {} (2 = side by side)", desired, active);
+    logged_desired = desired;
+    logged_active = active;
+  }
+  if (desired == kVertical) return;
+  // The game turned it back: set it again - but not in a tight fight with the game. Five quick reverts (< 2 s after
+  // our set) and it is left alone until the next level opens.
+  static uint32_t serial_seen = ~0u;
+  static int quick_reverts = 0;
+  const uint32_t serial = g_split_level_serial.load(std::memory_order_relaxed);
+  if (serial != serial_seen) { serial_seen = serial; quick_reverts = 0; }
+  if (quick_reverts >= 5) return;
+  if (last_set != Clock::time_point{} && now - last_set < std::chrono::seconds(2)) {
+    if (++quick_reverts == 5)
+      REXLOG_WARN("gow3_split_vertical: the game keeps resetting the split here - left as the game sets it for this level");
+    return;
+  }
+  last_set = now;
+  Ue3ConsoleQueue("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL");
+}
+
 void Gow3PathChoiceTick() {
   // (also while developer mode's scripted controller waits for a path choice: "choose L|R", ue3/script_input.h)
   const bool mouse = REXCVAR_GET(gow3_path_choice_mouse);
@@ -513,6 +587,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   TickTimeline();
   Gow3ModChaptersTick();
   Gow3PathChoiceTick();
+  Gow3SplitLayoutTick();       // GitHub #269
   Gow3CheckpointStreamTick();  // GitHub #226
   const int32_t v = LiveMaxFps();
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {

@@ -1837,6 +1837,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (avail("Players") && s.i("Players") > 0) a.push_back("--local_players=" + std::to_string(s.i("Players") + 1));
     if (g == Game::Gears2 && avail("SplitLayout") && s.i("SplitLayout") == 1)   // GitHub #237: press Y in game
         a.push_back("--gow2_split_vertical=true");
+    else if (g == Game::Gears3 && avail("SplitLayout") && s.i("SplitLayout") == 1 && cap_exe(env, "gow3_split_vertical"))
+        a.push_back("--gow3_split_vertical=true");   // GitHub #269: set again whenever the game resets it (level start)
     else if (avail("SplitLayout") && s.i("SplitLayout") == 1)   // GitHub #136 (avail: Gears 3, 2 players)
         // GitHub #208: one run at the front end was undone when a level started - again at every level where the exe can
         a.push_back((cap_exe(env, "ue3_exec_each_level") ? "--ue3_exec_each_level=" : "--ue3_exec=") +
