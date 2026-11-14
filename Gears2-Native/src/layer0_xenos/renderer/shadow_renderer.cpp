@@ -54,6 +54,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include "xenos/renderer/ao.h"
 #include "cacao_shaders.h"
 #include "xegtao_shaders.h"
+#include "ssil_shaders.h"
 #include "smaa/smaa_passes.h"
 #include "smaa/smaa_search_tex.h"
 
@@ -999,6 +1000,51 @@ REXCVAR_DEFINE_INT32(gow2_ao_gpu_log, 0, "Gears2",
                      "each denoise pass) from the backend's GPU timestamps. 0 = off. Not while --gow2_renderer_draw_report_frame "
                      "runs (it owns the GPU tags); needs --gow2_renderer_gpu_timestamp_split (the default)");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_power, 2.2, "Gears2", "XeGTAO final value power - higher is darker (XeGTAO's default 2.2)");
+// Screen-space indirect lighting (ssil_shaders.h, a prototype): one diffuse bounce of the frame's own scene colour,
+// added at the scene colour resolve. Needs --gow2_ao=gtao (XeGTAO's view-depth pyramid). The scene copy is the one
+// the upscaler takes (--gow2_upscale_scene_formats): Gears 2's 16-bit float HDR or Gears 3's 10:10:10:2 UNORM.
+REXCVAR_DEFINE_BOOL(gow2_ssil, false, "Gears2",
+                    "Prototype: screen-space indirect lighting (SSILVB, one bounce) added to the scene before bloom / tone "
+                    "map / the upscaler. Needs --gow2_ao=gtao. With --gow2_ao_debug_keys: Insert on / off, Shift+Insert view, "
+                    "Ctrl+Insert strength, Alt+Insert albedo estimate");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_strength, 1.5, "Gears2", "SSIL: how much of the indirect light is added (Ctrl+Insert cycles it)");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_radius, 200.0, "Gears2", "SSIL: how far light bounces from, in world units (UE3: about 2 cm each)");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_thickness, 30.0, "Gears2",
+                      "SSIL: how thick each depth sample is assumed to be (world units) - light passes behind thinner things");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_fade, 6000.0, "Gears2", "SSIL: view distance (world units) where the effect has faded out");
+REXCVAR_DEFINE_INT32(gow2_ssil_slices, 3, "Gears2", "SSIL: directions per pixel (1-8)");
+REXCVAR_DEFINE_INT32(gow2_ssil_steps, 8, "Gears2", "SSIL: samples per direction and side (2-16)");
+REXCVAR_DEFINE_INT32(gow2_ssil_albedo, 3, "Gears2",
+                     "SSIL: the albedo estimate of what the light lands on: 0 = the scene colour's hue at 50%, 1 = grey 50%, "
+                     "2 = the scene colour itself, 3 = local: the scene colour over the brightness around it (Alt+Insert switches "
+                     "between 2 and 3)");
+REXCVAR_DEFINE_INT32(gow2_ssil_log, 600, "Gears2", "SSIL: every N frames, how many frames it ran on (0 = off)");
+REXCVAR_DEFINE_BOOL(gow2_ssil_backface, true, "Gears2",
+                    "SSIL: a surface seen from behind blocks light but sends none (normals from depth; Home toggles it)");
+REXCVAR_DEFINE_BOOL(gow2_ssil_difference, false, "Gears2",
+                    "SSIL: add only the local part - the indirect light minus 80% of its wide blur, so the even bounce the "
+                    "game's baked lighting already has is not added again (Shift+Home toggles it)");
+REXCVAR_DEFINE_BOOL(gow2_ssil_temporal, true, "Gears2",
+                    "SSIL: blend each frame into the last (reprojected with the upscaler's motion vectors) - only while "
+                    "DLSS / FSR / XeSS / SMAA T2x runs (Ctrl+Home toggles it)");
+REXCVAR_DEFINE_BOOL(gow2_ssil_bounces, true, "Gears2",
+                    "SSIL: last frame's indirect light bounces again (several bounces over frames; needs --gow2_ssil_temporal "
+                    "running; Alt+Home toggles it)");
+REXCVAR_DEFINE_BOOL(gow2_ssil_adaptive, true, "Gears2",
+                    "SSIL: the radius, thickness, fade and steps follow the size of the space in view - the median view "
+                    "distance, smoothed over about half a second - from the --gow2_ssil_radius / _thickness / _fade / "
+                    "_steps values (a room) to the --gow2_ssil_far_* ones (open ground). End toggles it");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_far_radius, 600.0, "Gears2", "SSIL adaptive: the radius in open spaces (world units)");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_far_thickness, 60.0, "Gears2", "SSIL adaptive: the thickness in open spaces (world units)");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_far_fade, 15000.0, "Gears2", "SSIL adaptive: the fade-out distance in open spaces");
+REXCVAR_DEFINE_INT32(gow2_ssil_far_steps, 12, "Gears2", "SSIL adaptive: samples per direction and side in open spaces");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_adapt_near, 800.0, "Gears2",
+                      "SSIL adaptive: the median view distance (world units) at and below which the room values apply "
+                      "(measured: Gears 2 ch1 hospital 470-760, ch3 open ground 2600-5300, in cover outdoors 800-1000)");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_adapt_far, 2500.0, "Gears2",
+                      "SSIL adaptive: the median view distance at and above which the open-space values apply (between: "
+                      "in proportion, on a log scale)");
+REXCVAR_DEFINE_INT32(gow2_ssil_view, 0, "Gears2", "SSIL: the starting view - 0 normal, 1 indirect light only, 2 split (left without, right with); Shift+Insert cycles it");
 REXCVAR_DEFINE_BOOL(gow2_ao_add_at_scene_copy, false, "Gears2",
                     "Where the game draws no AO and has no fog pass to anchor ours (Gears 1): XeGTAO / CACAO runs on the "
                     "scene depth and is multiplied into the scene at the frame's first full-screen scene copy (Gears 1: "
@@ -2029,6 +2075,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       REXLOG_INFO("gow2_renderer: resolve draws (patch 0119) {}", colour_resolve_draw_ ? "on" : "OFF (shader or pipeline failed)");
     InitUpscaler();  // --gow2_upscaler (notes/64)
     InitAo();        // --gow2_ao (notes/80), after InitUpscaler set the camera tracking up
+    InitSsil();      // --gow2_ssil (prototype), on XeGTAO's depth pyramid
     if (REXCVAR_GET(gow2_renderer_msaa_colour_resolves)) {
       // Gears 3 (job 025): the same resolve reading a multisample source - c2.z samples (1, 2 or 4), host sample index
       // per selected guest sample in c2.w (4 bits each) - all decoded, then combined by XeColourResolvePixel as for
@@ -5268,7 +5315,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                       cc_upscale_pipe_ = 0;
   gpu::TextureHandle cc_depth_[4] = {}, cc_depth_odd_[4] = {}, cc_ao_[4] = {}, cc_ao2_[4] = {}, cc_normals_ = 0, cc_half_ = 0;
   uint32_t cc_w_ = 0, cc_h_ = 0, cc_step_ = 0, cc_blur_passes_ = 3;
-  std::array<double, 11> ao_pass_ms_{};  // --gow2_ao_pass_times
+  std::array<double, 18> ao_pass_ms_{};  // --gow2_ao_pass_times (1-10 the AO, 11-17 SSIL)
   gpu::PipelineHandle ao_prefilter_pipe_ = 0, ao_main_pipe_ = 0, ao_denoise_pipe_ = 0, ao_debug_pipe_ = 0;
   gpu::PipelineHandle ao_prefilter5_pipe_ = 0;  // --gow2_ao_prefilter_single (CreateComputePipelineMips)
   std::array<gpu::PipelineHandle, 4> ao_main_pipes_{};  // notes/80 s.12: every quality preset, so F11 needs no compile
@@ -5313,6 +5360,36 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::ShaderHandle ao_multiply_ps_ = 0;
   std::unordered_map<uint32_t, gpu::PipelineHandle> ao_multiply_pipes_;  // by target format
   uint64_t ao_added_ = 0;
+  uint64_t ao_depth_frame_ = ~0ull;  // the frame whose view-depth pyramid ao_depth_ holds (XeGTAO's prefilter ran)
+
+  // --gow2_ssil (ssil_shaders.h, a prototype): one bounce of the scene colour, composited into ssil_out_ (a copy of the
+  // scene target) at the scene colour resolve; the resolve and the upscaler read that copy.
+  gpu::PipelineHandle ssil_light_pipe_ = 0, ssil_main_pipe_ = 0, ssil_blur_pipe_ = 0, ssil_apply_pipe_ = 0;
+  gpu::PipelineHandle ssil_normals_pipe_ = 0, ssil_temporal_pipe_ = 0, ssil_diff_pipe_ = 0;
+  gpu::TextureHandle ssil_light_ = 0, ssil_gi_ = 0, ssil_gi2_ = 0, ssil_out_ = 0, ssil_illum_ = 0;
+  gpu::TextureHandle ssil_normal_ = 0, ssil_wide_ = 0, ssil_hist_[2] = {};
+  uint32_t ssil_hist_idx_ = 0;      // ssil_hist_[idx] = last frame's accumulated indirect light
+  bool ssil_hist_valid_ = false;
+  uint64_t ssil_hist_frame_ = ~0ull;  // the frame that wrote it: only the next frame may use it
+  const rr::RenderTarget* ssil_pending_ = nullptr;  // run inside RunUpscaler, after its motion vectors
+  bool ssil_in_upscaler_ = false;   // RunUpscaler ran it (with motion vectors) for this copy
+  // --gow2_ssil_adaptive: the scene's scale (kSsilScaleCs) - a 2x1 texture the main pass reads, kept across frames for
+  // the smoothing; read back every 30 frames for the label and the log.
+  gpu::PipelineHandle ssil_scale_pipe_ = 0;
+  gpu::TextureHandle ssil_scale_ = 0;
+  uint64_t ssil_scale_frame_ = ~0ull;
+  bool ssil_scale_init_ = false;  // the scale texture holds a smoothed median (a frame sentinel: ~0 + 1 wraps at frame 0)
+  std::chrono::steady_clock::time_point ssil_scale_time_{};
+  gpu::ReadbackHandle ssil_scale_rb_ = 0;
+  float ssil_scale_seen_[8] = {};  // the last read back: radius, thickness, fade, steps; median, t, raw median, texels
+  bool ssil_scale_have_ = false;
+  uint64_t ssil_temporal_runs_ = 0;
+  uint32_t ssil_hw_ = 0, ssil_hh_ = 0, ssil_ow_ = 0, ssil_oh_ = 0;
+  gpu::Format ssil_out_format_ = gpu::Format::kUnknown;
+  gpu::Format ssil_no_storage_format_ = gpu::Format::kUnknown;  // the scene format the backend can't store (Vulkan)
+  bool ssil_ok_ = false, ssil_done_frame_ = false, ssil_failed_logged_ = false;
+  uint64_t ssil_runs_ = 0, ssil_misses_ = 0;
+  gpu::TextureHandle up_colour_in_ = 0;  // the upscaler's colour input instead of the scene target (SSIL's copy)
 
   // Patch 0145: the newest frame's frame-generation inputs, at the render size. The textures are rewritten by the next
   // frame's scene resolve, so a consumer copies them before then (the presenter's mailbox slot, plan step 3).
@@ -6919,9 +6996,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (have_rep) CharacterMotion(cur, prev, rw, rh);  // notes/80 s.6
     if (om_on_) ObjectMotion(cur, prev, move_ok ? move : nullptr, cut || !have_rep, rw, rh);  // #147 / #150
+    if (ssil_pending_ == &rt) {  // --gow2_ssil: with this frame's motion vectors (temporal accumulation, bounces)
+      ssil_pending_ = nullptr;
+      ssil_done_frame_ = true;
+      ssil_in_upscaler_ = true;
+      if (RunSsil(rt, up_motion_, rw, rh, cut || !have_rep)) up_colour_in_ = ssil_out_, ++ssil_runs_;
+      else ++ssil_misses_, ssil_in_upscaler_ = false;
+    }
     const auto now = std::chrono::steady_clock::now();
     rr::upscale::FrameInputs in;
-    in.color = rt.texture;
+    in.color = up_colour_in_ ? up_colour_in_ : rt.texture;  // --gow2_ssil: the scene with its indirect light
     in.depth = up_depth_;
     in.motion = up_motion_;
     in.output = up_output_;
@@ -7634,6 +7718,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         backend_->Dispatch(ao_prefilter_pipe_, b, (w + 15) / 16, (h + 15) / 16, 1);
       }
     }
+    ao_depth_frame_ = frame_;  // SSIL reads the pyramid later in the frame
     // 2. The main pass: working AO term + edges.
     AoPassTag(8);
     b.constants[3] = 0;
@@ -7666,8 +7751,296 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     return true;
   }
 
+  // --gow2_ssil (prototype): the four passes built at start; the keys' state starts from the switches.
+  void InitSsil() {
+    if (!REXCVAR_GET(gow2_ssil)) return;
+    if (ao_mode_ != rr::ao::Mode::kGtao) {
+      REXLOG_WARN("gow2_ssil: needs --gow2_ao=gtao (XeGTAO's depth pyramid) - off");
+      return;
+    }
+    const std::string common = rr::builtin::kSsilCommon;
+    auto make = [&](const std::string& name, const std::string& hlsl) -> gpu::PipelineHandle {
+      const gpu::ShaderHandle s = cache_->GetBuiltin(name, hlsl, gpu::ShaderStage::kCompute);
+      return s ? backend_->CreateComputePipeline(s) : 0;
+    };
+    ssil_light_pipe_ = make("ssil_light_cs", common + rr::builtin::kSsilLightCs);
+    ssil_main_pipe_ = make("ssil_main_cs", common + rr::builtin::kSsilMainCs);
+    ssil_blur_pipe_ = make("ssil_blur_cs", common + rr::builtin::kSsilBlurCs);
+    ssil_apply_pipe_ = make("ssil_apply_cs", common + rr::builtin::kSsilApplyCs);
+    ssil_normals_pipe_ = make("ssil_normals_cs", common + rr::builtin::kSsilNormalsCs);
+    ssil_temporal_pipe_ = make("ssil_temporal_cs", common + rr::builtin::kSsilTemporalCs);
+    ssil_diff_pipe_ = make("ssil_diff_cs", common + rr::builtin::kSsilDiffCs);
+    ssil_scale_pipe_ = make("ssil_scale_cs", rr::builtin::kSsilScaleCs);
+    ssil_ok_ = ssil_light_pipe_ && ssil_main_pipe_ && ssil_blur_pipe_ && ssil_apply_pipe_ && ssil_normals_pipe_ &&
+               ssil_temporal_pipe_ && ssil_diff_pipe_ && ssil_scale_pipe_;
+    if (!ssil_ok_) {
+      REXLOG_WARN("gow2_ssil: shaders failed to compile - off");
+      return;
+    }
+    const float strength = float(REXCVAR_GET(gow2_ssil_strength));
+    XenosSsilSetState(true, uint32_t(std::clamp(REXCVAR_GET(gow2_ssil_view), 0, 2)), strength,
+                      uint32_t(std::clamp(REXCVAR_GET(gow2_ssil_albedo), 0, 3)));
+    XenosSsilSetTricks((REXCVAR_GET(gow2_ssil_backface) ? 1u : 0u) | (REXCVAR_GET(gow2_ssil_difference) ? 2u : 0u) |
+                       (REXCVAR_GET(gow2_ssil_temporal) ? 4u : 0u) | (REXCVAR_GET(gow2_ssil_bounces) ? 8u : 0u) |
+                       (REXCVAR_GET(gow2_ssil_adaptive) ? 16u : 0u));
+    REXLOG_INFO("gow2_ssil: on (prototype) - radius {}, thickness {}, {} slices x {} steps per side, strength {}, albedo {}, "
+                "fades out by view z {}", REXCVAR_GET(gow2_ssil_radius), REXCVAR_GET(gow2_ssil_thickness),
+                std::clamp(REXCVAR_GET(gow2_ssil_slices), 1, 8), std::clamp(REXCVAR_GET(gow2_ssil_steps), 2, 16), strength,
+                REXCVAR_GET(gow2_ssil_albedo), REXCVAR_GET(gow2_ssil_fade));
+  }
+
+  // --gow2_ssil: at the scene colour resolve, on this frame's view-depth pyramid (RunGtao) and scene colour, into
+  // ssil_out_ (the whole target, with the indirect light added in the scene). `motion` (render pixels, previous -
+  // current, mw x mh) is the upscaler's when SSIL runs inside RunUpscaler - then the frames accumulate (and bounce);
+  // `reset`: a camera cut, the history is thrown away. Returns false when nothing was made.
+  bool RunSsil(const rr::RenderTarget& rt, gpu::TextureHandle motion, uint32_t mw, uint32_t mh, bool reset) {
+    // SSIL runs only on XeGTAO's depth pyramid (a design choice: no pyramid of its own). None this frame - CACAO chosen
+    // (F6 / F9), or no scene depth - pauses it; the label says so.
+    const bool pyramid = ao_depth_ && ao_depth_frame_ == frame_;
+    XenosSsilSetPaused(!pyramid);
+    if (!ssil_ok_ || !pyramid) return false;
+    const rr::ao::GtaoConstants* k = AoConstants();
+    if (!k) return false;
+    const uint32_t w = ao_w_, h = ao_h_;
+    if (!w || !h || rt.width < w || rt.height < h) return false;
+    const uint32_t hw = std::max(w >> 1, 1u), hh = std::max(h >> 1, 1u);  // = the pyramid's MIP 1
+    if (ssil_hw_ != hw || ssil_hh_ != hh) {
+      for (gpu::TextureHandle* t : {&ssil_light_, &ssil_gi_, &ssil_gi2_, &ssil_illum_, &ssil_normal_, &ssil_wide_,
+                                    &ssil_hist_[0], &ssil_hist_[1]})
+        if (*t) backend_->DestroyTexture(*t), *t = 0;
+      ssil_hw_ = ssil_hh_ = 0;
+      ssil_hist_valid_ = false;
+      gpu::TextureDesc td;
+      td.width = hw;
+      td.height = hh;
+      td.format = gpu::Format::kR16G16B16A16Float;
+      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      td.debug_name = "ssil light";
+      ssil_light_ = backend_->CreateTexture(td);
+      td.debug_name = "ssil indirect";
+      ssil_gi_ = backend_->CreateTexture(td);
+      ssil_gi2_ = backend_->CreateTexture(td);
+      td.debug_name = "ssil local light";
+      ssil_illum_ = backend_->CreateTexture(td);
+      td.debug_name = "ssil wide indirect";
+      ssil_wide_ = backend_->CreateTexture(td);
+      td.debug_name = "ssil history";
+      ssil_hist_[0] = backend_->CreateTexture(td);
+      ssil_hist_[1] = backend_->CreateTexture(td);
+      td.format = gpu::Format::kR32G32B32A32Float;  // the view z in .w needs 32 bits (depth tests against it)
+      td.debug_name = "ssil normals";
+      ssil_normal_ = backend_->CreateTexture(td);
+      if (!ssil_light_ || !ssil_gi_ || !ssil_gi2_ || !ssil_illum_ || !ssil_wide_ || !ssil_hist_[0] || !ssil_hist_[1] ||
+          !ssil_normal_) {
+        if (!ssil_failed_logged_) REXLOG_WARN("gow2_ssil: textures ({}x{}) could not be made", hw, hh);
+        ssil_failed_logged_ = true;
+        return false;
+      }
+      ssil_hw_ = hw, ssil_hh_ = hh;
+    }
+    if (!ssil_scale_) {
+      gpu::TextureDesc td;
+      td.width = 2;
+      td.height = 1;
+      td.format = gpu::Format::kR32G32B32A32Float;
+      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      td.debug_name = "ssil scale";
+      ssil_scale_ = backend_->CreateTexture(td);
+      if (!ssil_scale_) {
+        if (!ssil_failed_logged_) REXLOG_WARN("gow2_ssil: the scale texture could not be made");
+        ssil_failed_logged_ = true;
+        return false;
+      }
+      ssil_scale_init_ = false;  // its contents are undefined: the first frame jumps
+    }
+    if (ssil_ow_ != rt.width || ssil_oh_ != rt.height || ssil_out_format_ != rt.format) {
+      // The composite is a storage image in the scene's format - optional on Vulkan for Gears 3's 10:10:10:2,
+      // and a failed creation there stops the backend. Unsupported: SSIL is skipped (asked once per format).
+      if (rt.format == ssil_no_storage_format_) return false;
+      if (!backend_->SupportsStorage(rt.format)) {
+        ssil_no_storage_format_ = rt.format;
+        REXLOG_WARN("gow2_ssil: this GPU can't write the scene's format ({}) from a compute shader - SSIL is off",
+                    uint32_t(rt.format));
+        return false;
+      }
+      if (ssil_out_) backend_->DestroyTexture(ssil_out_), ssil_out_ = 0;
+      ssil_ow_ = ssil_oh_ = 0;
+      gpu::TextureDesc td;
+      td.width = rt.width;
+      td.height = rt.height;
+      td.format = rt.format;
+      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      td.debug_name = "ssil scene";
+      ssil_out_ = backend_->CreateTexture(td);
+      if (!ssil_out_) {
+        if (!ssil_failed_logged_) REXLOG_WARN("gow2_ssil: the scene copy ({}x{}) could not be made", rt.width, rt.height);
+        ssil_failed_logged_ = true;
+        return false;
+      }
+      ssil_ow_ = rt.width, ssil_oh_ = rt.height, ssil_out_format_ = rt.format;
+    }
+    if (ssil_scale_rb_ && backend_->IsReadbackReady(ssil_scale_rb_)) {
+      uint32_t pitch = 0;
+      if (const uint8_t* d = backend_->ReadbackData(ssil_scale_rb_, pitch)) {
+        std::memcpy(ssil_scale_seen_, d, sizeof(ssil_scale_seen_));
+        ssil_scale_have_ = true;
+        XenosSsilSetScale(ssil_scale_seen_[4], ssil_scale_seen_[0], ssil_scale_seen_[5]);
+      }
+      backend_->ReleaseReadback(ssil_scale_rb_);
+      ssil_scale_rb_ = 0;
+    }
+    const uint32_t tricks = XenosSsilTricks();  // bit 0 back faces, 1 difference, 2 temporal, 3 bounces, 4 adaptive
+    const uint32_t albedo = XenosSsilAlbedo();  // read once: the constant and the pass it needs must agree
+    const bool have_motion = motion && mw == w && mh == h;
+    const bool temporal = (tricks & 4u) && have_motion;
+    // The history is only last frame's: a frame without SSIL (off, no depth pyramid, no camera) in between, a cut, or no
+    // accumulation now throws it away (it used to survive SSIL being switched off and on).
+    if (!temporal || reset || ssil_hist_frame_ + 1 != frame_) ssil_hist_valid_ = false;
+    const bool bounce = (tricks & 8u) && temporal && ssil_hist_valid_;
+    const gpu::TextureHandle hist_prev = ssil_hist_[ssil_hist_idx_], hist_cur = ssil_hist_[ssil_hist_idx_ ^ 1u];
+    gpu::ComputeBindings b;
+    b.constant_count = 16;
+    b.constants[2] = 0;
+    // The noise moves from frame to frame only while our temporal pass averages it (up_active_ is also true for
+    // the AO's camera tracking alone, so it used to move - a shimmer - without an upscaler).
+    b.constants[3] = temporal ? uint32_t(frame_ % 64) : 0u;
+    b.constants[4] = std::bit_cast<uint32_t>(k->tan_half_fov[0]);
+    b.constants[5] = std::bit_cast<uint32_t>(k->tan_half_fov[1]);
+    b.constants[6] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_ssil_radius)));
+    b.constants[7] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_ssil_thickness)));
+    b.constants[8] = std::bit_cast<uint32_t>(XenosSsilStrength());
+    b.constants[9] = XenosSsilView();
+    b.constants[10] = albedo;
+    b.constants[11] = uint32_t(std::clamp(REXCVAR_GET(gow2_ssil_slices), 1, 8));
+    b.constants[12] = uint32_t(std::clamp(REXCVAR_GET(gow2_ssil_steps), 2, 16));
+    b.constants[13] = w;
+    b.constants[14] = h;
+    b.constants[15] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_ssil_fade)));
+    const uint32_t gx = (hw + 7) / 8, gy = (hh + 7) / 8;
+    b.constants[0] = hw, b.constants[1] = hh;
+    auto blur = [&](gpu::TextureHandle src, gpu::TextureHandle dst, uint32_t spacing) {
+      b.srv[0] = src;
+      b.srv[1] = ao_depth_;
+      b.srv[2] = b.srv[3] = 0;
+      b.constants[2] = spacing;
+      b.uav_texture = dst;
+      backend_->Dispatch(ssil_blur_pipe_, b, gx, gy, 1);
+    };
+    // 0. The scene's scale (--gow2_ssil_adaptive): radius, thickness, fade and steps for the main pass.
+    AoPassTag(11);  // --gow2_ao_pass_times: 11 scale + normals, 12 light, 13 main, 14 temporal, 15 blur, 16 difference, 17 composite
+    {
+      const auto now = std::chrono::steady_clock::now();
+      // First use, a gap in the frames or a camera cut (known only with the upscaler's motion): jump; else about 0.5 s
+      // to follow.
+      const bool jump = !ssil_scale_init_ || ssil_scale_frame_ + 1 != frame_ || (have_motion && reset);
+      const double dt = jump ? 1.0 : std::chrono::duration<double>(now - ssil_scale_time_).count();
+      ssil_scale_frame_ = frame_;
+      ssil_scale_time_ = now;
+      ssil_scale_init_ = true;
+      // The end points finite and positive, near first, far strictly above it (log2 of both in the shader).
+      const double adapt_near_in = REXCVAR_GET(gow2_ssil_adapt_near), adapt_far_in = REXCVAR_GET(gow2_ssil_adapt_far);
+      const double adapt_near = std::isfinite(adapt_near_in) ? std::clamp(adapt_near_in, 1.0, 1.0e6) : 800.0;
+      const double adapt_far = std::isfinite(adapt_far_in) ? std::clamp(adapt_far_in, adapt_near * 1.01, 2.0e6) : adapt_near * 3.0;
+      gpu::ComputeBindings sb;
+      sb.constant_count = 16;
+      const float c[16] = {float(REXCVAR_GET(gow2_ssil_radius)), float(REXCVAR_GET(gow2_ssil_far_radius)),
+                           float(REXCVAR_GET(gow2_ssil_fade)), float(REXCVAR_GET(gow2_ssil_far_fade)),
+                           float(REXCVAR_GET(gow2_ssil_thickness)), float(REXCVAR_GET(gow2_ssil_far_thickness)),
+                           float(std::clamp(REXCVAR_GET(gow2_ssil_steps), 2, 16)),
+                           float(std::clamp(REXCVAR_GET(gow2_ssil_far_steps), 2, 16)),
+                           float(adapt_near), float(adapt_far),
+                           float(1.0 - std::exp(-std::clamp(dt, 0.0, 1.0) / 0.5)), jump ? 1.0f : 0.0f,
+                           (tricks & 16u) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+      for (int i = 0; i < 16; ++i) sb.constants[i] = std::bit_cast<uint32_t>(c[i]);
+      sb.srv[0] = ao_depth_;
+      sb.uav_texture = ssil_scale_;
+      backend_->Dispatch(ssil_scale_pipe_, sb, 1, 1, 1);
+      if (!ssil_scale_rb_ && frame_ % 30 == 0) ssil_scale_rb_ = backend_->ReadbackTexture(ssil_scale_, gpu::Rect{0, 0, 2, 1});
+    }
+    // 1. Normals (and view z) at half resolution.
+    b.srv[0] = ao_depth_;
+    b.uav_texture = ssil_normal_;
+    backend_->Dispatch(ssil_normals_pipe_, b, gx, gy, 1);
+    // 2. The light: the scene colour at half resolution (+ last frame's indirect light, bouncing again).
+    AoPassTag(12);
+    b.constants[2] = bounce ? 1u : 0u;
+    b.srv[0] = rt.texture;
+    b.srv[1] = bounce ? hist_prev : 0;
+    b.srv[2] = bounce ? motion : 0;
+    b.srv[3] = ao_depth_;
+    b.uav_texture = ssil_light_;
+    backend_->Dispatch(ssil_light_pipe_, b, gx, gy, 1);
+    // 2b. Albedo "local": the light blurred wide and depth-aware (taps 3, then 9 apart), the brightness around each pixel.
+    if (albedo == 3u) {
+      blur(ssil_light_, ssil_gi2_, 3);
+      blur(ssil_gi2_, ssil_illum_, 9);
+    }
+    // 3. The bounce.
+    AoPassTag(13);
+    b.constants[2] = (tricks & 1u) ? 1u : 0u;
+    b.srv[0] = ao_depth_;
+    b.srv[1] = ssil_light_;
+    b.srv[2] = ssil_normal_;
+    b.srv[3] = ssil_scale_;
+    b.uav_texture = ssil_gi_;
+    backend_->Dispatch(ssil_main_pipe_, b, gx, gy, 1);
+    // 4. Temporal: into this frame's history (the next frame's previous one).
+    gpu::TextureHandle result = ssil_gi_;
+    if (temporal) {
+      AoPassTag(14);
+      b.constants[2] = ssil_hist_valid_ ? 1u : 0u;
+      b.srv[0] = ssil_gi_;
+      b.srv[1] = hist_prev;
+      b.srv[2] = motion;
+      b.srv[3] = ao_depth_;
+      b.uav_texture = hist_cur;
+      backend_->Dispatch(ssil_temporal_pipe_, b, gx, gy, 1);
+      ssil_hist_idx_ ^= 1u;
+      ssil_hist_valid_ = true;
+      ssil_hist_frame_ = frame_;
+      result = hist_cur;
+      ++ssil_temporal_runs_;
+    }
+    // 5. The spatial blur: one pass after the temporal blend, two without it.
+    AoPassTag(15);
+    if (temporal) {
+      blur(result, ssil_gi2_, 1);
+      result = ssil_gi2_;
+    } else {
+      blur(ssil_gi_, ssil_gi2_, 1);
+      blur(ssil_gi2_, ssil_gi_, 2);
+      result = ssil_gi_;
+    }
+    // 6. "Only the difference": minus 80% of the wide blur (taps 3, then 9 apart).
+    if (tricks & 2u) {
+      AoPassTag(16);
+      const gpu::TextureHandle tmp = result == ssil_gi_ ? ssil_gi2_ : ssil_gi_;
+      blur(result, tmp, 3);
+      blur(tmp, ssil_wide_, 9);
+      b.constants[2] = 0;
+      b.srv[0] = result;
+      b.srv[1] = ssil_wide_;
+      b.srv[2] = b.srv[3] = 0;
+      b.uav_texture = tmp;
+      backend_->Dispatch(ssil_diff_pipe_, b, gx, gy, 1);
+      result = tmp;
+    }
+    // 7. The composite, over the whole target.
+    AoPassTag(17);
+    b.constants[0] = rt.width, b.constants[1] = rt.height;
+    b.constants[2] = 0;
+    b.srv[0] = rt.texture;
+    b.srv[1] = result;
+    b.srv[2] = ao_depth_;
+    b.srv[3] = ssil_illum_;
+    b.uav_texture = ssil_out_;
+    backend_->Dispatch(ssil_apply_pipe_, b, (rt.width + 7) / 8, (rt.height + 7) / 8, 1);
+    AoPassTag(0);
+    return true;
+  }
+
   // --gow2_ao_pass_times: tags the GPU stretches of the AO passes; 0 ends the stretch. AoEndFrame adds them up and logs them.
-  static constexpr uint32_t kAoPassTagBase = 0xA0A00000u, kAoPassCount = 11;
+  static constexpr uint32_t kAoPassTagBase = 0xA0A00000u, kAoPassCount = 18;
   void AoPassTag(uint32_t pass) {
     static const bool on = REXCVAR_GET(gow2_ao_pass_times);
     if (on) backend_->SetGpuTag(pass ? kAoPassTagBase + pass : 0u);
@@ -8097,6 +8470,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     "XeGTAO depth {:.3f} main {:.3f} denoise {:.3f} | pack {:.3f}",
                     ao_pass_ms_[1] / n, ao_pass_ms_[2] / n, ao_pass_ms_[3] / n, ao_pass_ms_[4] / n, ao_pass_ms_[5] / n, ao_pass_ms_[6] / n,
                     ao_pass_ms_[7] / n, ao_pass_ms_[8] / n, ao_pass_ms_[9] / n, ao_pass_ms_[10] / n);
+        if (ssil_ok_) {
+          double ssil_total = 0.0;
+          for (int i = 11; i <= 17; ++i) ssil_total += ao_pass_ms_[i];
+          REXLOG_INFO("gow2_ssil: pass ms/frame: scale + normals {:.3f}, light {:.3f}, main {:.3f}, temporal {:.3f}, blur {:.3f}, "
+                      "difference {:.3f}, composite {:.3f} | total {:.3f}", ao_pass_ms_[11] / n, ao_pass_ms_[12] / n,
+                      ao_pass_ms_[13] / n, ao_pass_ms_[14] / n, ao_pass_ms_[15] / n, ao_pass_ms_[16] / n, ao_pass_ms_[17] / n,
+                      ssil_total / n);
+        }
         ao_pass_ms_ = {};
       }
       const uint64_t total = ao_frames_ok_ + ao_frames_none_;
@@ -8123,6 +8504,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ao_denoise_passes_ = std::clamp(XenosAoDebugDenoisePasses(), 1u, 3u);
       ao_use_cacao_ = cc_ok_ && XenosAoDebugCacao();
       cc_blur_passes_ = std::min(XenosAoDebugCacaoBlur(), 8u);
+    }
+    ssil_done_frame_ = false;  // --gow2_ssil: once a frame
+    if (ssil_ok_) {
+      static const int32_t ssil_every = REXCVAR_GET(gow2_ssil_log);
+      if (ssil_every > 0 && frame_ % uint64_t(ssil_every) == 0) {
+        const uint32_t tr = XenosSsilTricks();
+        REXLOG_INFO("gow2_ssil: frame {}: ran on {} frames ({} with temporal accumulation), {} scene copies without it (no "
+                    "depth pyramid / camera); {} {}, strength {}, albedo {}; back faces {}, difference {}, temporal {}, "
+                    "bounces {}, adaptive {}", frame_, ssil_runs_, ssil_temporal_runs_, ssil_misses_,
+                    XenosSsilOn() ? "on" : "off",
+                    XenosSsilView() == 1 ? "indirect only" : XenosSsilView() == 2 ? "split" : "normal", XenosSsilStrength(),
+                    XenosSsilAlbedo(), tr & 1u ? "on" : "off", tr & 2u ? "on" : "off", tr & 4u ? "on" : "off",
+                    tr & 8u ? "on" : "off", tr & 16u ? "on" : "off");
+        if (ssil_scale_have_)
+          REXLOG_INFO("gow2_ssil: scale: median view z {:.0f} (this frame {:.0f}, {:.0f} texels) -> {:.2f} of the way to "
+                      "open ground: radius {:.0f}, thickness {:.0f}, fade {:.0f}, {:.0f} steps", ssil_scale_seen_[4],
+                      ssil_scale_seen_[6], ssil_scale_seen_[7], ssil_scale_seen_[5], ssil_scale_seen_[0], ssil_scale_seen_[1],
+                      ssil_scale_seen_[2], ssil_scale_seen_[3]);
+        ssil_runs_ = ssil_misses_ = ssil_temporal_runs_ = 0;
+      }
     }
     ao_pp_dest_ = ao_pp_count_ = 0;  // notes/80 s.4: the next frame's chain is found afresh
     ao_skipped_frame_ = false;
@@ -13043,17 +13444,41 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (ao_ready_ && ao_final_ && ao_multiply_ps_) AoAddPass(*rt);
       else ao_added_frame_ = true;  // once a frame either way
     }
+    // --gow2_ssil (prototype): the frame's scene copy - the one the upscaler's copy picker takes (the first, or with
+    // --gow2_upscale_scene_last_copy the last: Judgment copies its scene mid-frame for translucency first) - gets the
+    // indirect light; the copy (and the upscaler) read ours. With an upscaler it runs inside RunUpscaler, after the motion
+    // vectors are made (temporal accumulation, bounces); with the camera tracking alone (the AO), at that copy, no motion.
+    gpu::TextureHandle ssil_tex = 0;
+    ssil_pending_ = nullptr;
+    ssil_in_upscaler_ = false;
+    // The scene's format is whatever IsSceneColourResolve takes for this game: Gears 2's 16-bit float HDR, Gears 3's
+    // 10:10:10:2 UNORM (low dynamic range; the composite is written in that format, values above 1 clip).
+    if (ssil_ok_ && !ssil_done_frame_ && XenosSsilOn() && up_camera_ && !ms_src && rt->key.msaa == 0 &&
+        rt->scale == up_depth_scale_ && IsSceneColourResolve(info, *rt)) {
+      if (up_active_ && !up_scene_done_) {
+        ssil_pending_ = rt;  // decided below: only if the copy picker takes this copy
+      } else {
+        ssil_done_frame_ = true;
+        if (RunSsil(*rt, 0, 0, 0, true)) ssil_tex = ssil_out_, ++ssil_runs_;
+        else ++ssil_misses_;
+      }
+    }
     // Upscalers (notes/64): the frame's scene colour goes through DLSS / FSR, and the resolve reads their output.
-    gpu::TextureHandle resolve_source = rt->texture;
+    gpu::TextureHandle resolve_source = ssil_tex ? ssil_tex : rt->texture;
+    up_colour_in_ = ssil_tex;
     uint32_t source_scale = rt->scale;  // patch 0141: the upscaler's output is at the output scale
     // Every scene copy is counted, also after the one that was taken (notes/80 s.11).
+    bool scene_taken = false;  // --gow2_ssil: this is the frame's scene copy
     if (up_active_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt) && up_scene_copy_.Take() && !up_scene_done_) {
       up_scene_done_ = true;
+      scene_taken = true;
       up_output_upscaled_ = false;
       // Notes/80: camera only (the AO) - the scene stays as it is, nothing to run here.
       if (const gpu::TextureHandle o = up_camera_only_ ? gpu::TextureHandle(0) : RunUpscaler(*rt, w, h)) {
         resolve_source = o;
         if (up_output_upscaled_) source_scale = res_scale_;
+      } else if (ssil_in_upscaler_) {
+        resolve_source = ssil_out_;  // the upscaler stopped after SSIL ran: the copy still gets it
       }
       if (up_scale_in_) up_flip_after_resolve_ = true;  // patch 0141: the rest of the frame at the output scale
     } else if (up_active_ && !up_scene_done_ && info.width_div_8 * 8 >= kSceneMinWidth && up_diag_lines_ < 12) {
@@ -13063,6 +13488,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   uint32_t(rt->format), uint32_t(gpu::Format::kR16G16B16A16Float), info.x0, info.y0,
                   info.width_div_8 * 8, info.height_div_8 * 8, rt->scale);
     }
+    // The taken copy, but RunUpscaler stopped before SSIL or wasn't run (the AO's camera tracking alone): without motion.
+    // A copy the picker skipped gets nothing (it used to run here and take the frame's turn - Judgment's mid-frame copy).
+    if (ssil_pending_ == rt && !ssil_in_upscaler_ && scene_taken) {
+      ssil_done_frame_ = true;
+      if (RunSsil(*rt, 0, 0, 0, true)) {
+        if (resolve_source == rt->texture) resolve_source = ssil_out_;
+        ++ssil_runs_;
+      } else {
+        ++ssil_misses_;
+      }
+    }
+    ssil_pending_ = nullptr;
+    up_colour_in_ = 0;
     const gpu::TextureHandle dest = DestinationTexture(info, words);
     if (!dest) return log_not_compared("destination texture");
     const uint32_t dx = info.dest_offset_x_div_8 * 8, dy = info.dest_offset_y_div_8 * 8;

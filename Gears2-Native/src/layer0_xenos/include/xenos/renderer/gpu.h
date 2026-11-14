@@ -582,6 +582,11 @@ class Backend {
   // without programmable sample positions ignore it (SamplePositionsSupported() false).
   virtual void SetSamplePositions(uint32_t count, const int8_t (*positions)[2]) { (void)count; (void)positions; }
   virtual bool SamplePositionsSupported() const { return false; }
+  // Whether a 2D texture of this format can be a compute shader's storage (UAV) target. D3D12: the formats the renderer
+  // creates with kUsageStorage all support typed stores at its feature level. Vulkan: the device says (storage is
+  // optional for some formats, e.g. A2B10G10R10_UNORM) - ask before creating such a texture, since a failed creation
+  // there stops the backend.
+  virtual bool SupportsStorage(Format format) const { (void)format; return true; }
   // Gears 3 (notes/11): the following draws memexport - their shaders write the guest-memory buffer through u0 (and
   // read vertex data through it). Off again with false.
   virtual void SetGuestWritable(bool writable) { (void)writable; }

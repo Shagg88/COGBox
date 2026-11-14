@@ -89,22 +89,18 @@ static std::string PcssBlock(uint32_t slot, const char* sharp, const char* one, 
     const float alpha = persp ? dot(rz, rw) / dot(rw, rw) : 0.0, beta = cz - alpha * cw;  // perspective: depth = alpha * w + beta
     // Blocker search: a gather per sample (4 texels).
     const uint ng = max(nb / 2u, 4u);
-    float bsum = 0.0, bn = 0.0, csum = 0.0;
+    float bsum = 0.0, bn = 0.0;
     [loop] for (uint i = 0u; i < ng; ++i) {
       const float a = spin + float(i) * 2.39996323, rr = sqrt((float(i) + 0.5) / float(ng));
       const float2 o = float2(cos(a), sin(a)) * rr * (8.0 * pc_rs) * texel;
       const float4 g = xe_tex_2d_@S.GatherRed(xe_sampler_@S, pc_uv + o) * dec1 + dec0;
       const float4 c = saturate((g - pc_recv) * sharp + one);
-      csum += dot(c, 1.0);
       const float4 blk = float4(c < 0.5);
       bn += dot(blk, 1.0);
       bsum += dot(blk, g);
     }
-    const float nt = float(ng * 4u);
     float lit = 1.0;
-    if (bn >= nt) {
-      lit = csum / nt;  // every texel searched is a blocker: deep in the shadow, the search's own average, no filter
-    } else if (bn > 0.0) {
+    if (bn > 0.0) {
       // The penumbra in world units at the receiver, then in the game's texels. Orthographic: the depth gap (world) x the
       // light's angular size. Perspective: (receiver - blocker) / blocker distance x the light's size (similar triangles).
       const float db = bsum / bn;
@@ -116,7 +112,9 @@ static std::string PcssBlock(uint32_t slot, const char* sharp, const char* one, 
         pen = max(lr - lb, 0.0) / lb * (40.0 * pc_rs) * ru_len * gsz.x / lr;
       }
       pen = clamp(pen, 1.0, max(1.0, 12.0 * pc_rs));
-      // Filter: bilinear-weighted soft comparisons, a gather each, on a spiral rotated per pixel.
+      // Filter: bilinear-weighted soft comparisons, a gather each, on a spiral rotated per pixel. Always run where the
+      // search found a blocker (an "all blockers" shortcut can't be exact - the search's sparse samples don't
+      // prove that the filter's own samples see no light).
       float sum = 0.0;
       [loop] for (uint j = 0u; j < nf; ++j) {
         const float a = spin + float(j) * 2.39996323, rr = sqrt((float(j) + 0.5) / float(nf));
