@@ -1,8 +1,8 @@
 diff --git a/include/rex/kernel/xam/net/online_sessions.h b/include/rex/kernel/xam/net/online_sessions.h
-index 750366a..3f2af0d 100644
+index 750366a..4705f29 100644
 --- a/include/rex/kernel/xam/net/online_sessions.h
 +++ b/include/rex/kernel/xam/net/online_sessions.h
-@@ -75,6 +75,12 @@ class OnlineSessions {
+@@ -75,6 +75,14 @@ class OnlineSessions {
    // open matches list shows it "In progress" (join in progress puts a joiner in a bot's place).
    void OnStarted(uint32_t handle, uint64_t nonce, bool started);
    void SetRetryDelayForTest(std::chrono::milliseconds d) { retry_delay_ = d; }
@@ -12,15 +12,18 @@ index 750366a..3f2af0d 100644
 +  bool Hosting() const;
 +  std::vector<uint64_t> HostedMembers() const;      // patch 93: remote players in the sessions we host (no duplicates)
 +  std::optional<uint64_t> TargetHostXuid() const;   // patch 93: the host of the lobby the game last looked up to join
++  std::chrono::steady_clock::time_point TargetHostSince() const;
++  void ForgetTargetHost();
    // The game put a TCP socket bound to `port` (before any bind offset) into listen. UE3 titles (Gears 2 / 3 /
    // Judgment) take joins on a party beacon at TCP 8700, which they open well after creating the session (26 s in a
    // traced Gears 2 run); a lobby listed before that sends guests to a closed port and they give up. So once a title
-@@ -123,6 +129,8 @@ class OnlineSessions {
+@@ -123,6 +131,9 @@ class OnlineSessions {
    RememberHostFn remember_;
    RunFn run_;
    mutable std::mutex mutex_;
-+  std::vector<std::pair<uint64_t, uint64_t>> joined_;
-+  std::optional<uint64_t> target_host_;   // patch 93   // patch 93: (nonce, host XUID), newest last
++  std::vector<std::pair<uint64_t, uint64_t>> joined_;   // patch 93: (nonce, host XUID) of sessions we joined, newest last
++  std::optional<uint64_t> target_host_;                 // patch 93: the host of the lobby the game last looked up to join
++  std::chrono::steady_clock::time_point target_since_{};   // when it was looked up
    std::mutex send_mutex_;   // patch 84: one in-progress PATCH at a time
    std::chrono::milliseconds retry_delay_{2000};
    std::map<uint32_t, uint32_t> contexts_;
@@ -45,7 +48,7 @@ index 2d0e1b0..98d7059 100644
  
  }  // namespace rex::kernel::xam::net
 diff --git a/include/rex/kernel/xam/net/virtual_peer_manager.h b/include/rex/kernel/xam/net/virtual_peer_manager.h
-index 2022796..11b0ed2 100644
+index 2022796..01d6b27 100644
 --- a/include/rex/kernel/xam/net/virtual_peer_manager.h
 +++ b/include/rex/kernel/xam/net/virtual_peer_manager.h
 @@ -48,6 +48,7 @@ class VirtualPeerManager {
@@ -56,20 +59,19 @@ index 2022796..11b0ed2 100644
    static constexpr auto kPeerSilent = std::chrono::seconds(40);  // more than two keepalives missed
    static constexpr auto kQueueMaxAge = std::chrono::seconds(5);
    static constexpr size_t kQueueMaxPackets = 1024;
-@@ -112,6 +113,12 @@ class VirtualPeerManager {
+@@ -112,6 +113,11 @@ class VirtualPeerManager {
    // place comes from a socket the peer has not announced yet and must not reach the game with its raw address.
    bool IsPeerAddress(const sockaddr_in& from) const;  // selected paths, by peer port
    PeerState State(uint32_t vip) const;
 +  // COGBox SDK patch 93: the smoothed round trip to a peer in ms (by XUID), nullopt until one was measured; and that of
 +  // every connected peer that has one (the host's FPS bar shows the worst).
-+  std::optional<int> PingMs(uint64_t peer_xuid) const;
-+  std::vector<int> ConnectedPings() const;
++  std::optional<int> PingMs(uint64_t peer_xuid, Clock::time_point now = Clock::now()) const;   // unknown after 6 s unanswered
 +  // patch 93: a game packet came from this peer in the last 5 s (punches, acks and keepalives do not count)
 +  bool RecentGameTraffic(uint64_t peer_xuid, Clock::time_point now) const;
  
    // The data path. OnPacket returns true when the packet was COGBox's own (STUN, punch) and must not reach the game.
    bool OnPacket(uint64_t native_handle, const uint8_t* data, size_t len, const sockaddr_in& from, Clock::time_point now);
-@@ -160,6 +167,10 @@ class VirtualPeerManager {
+@@ -160,6 +166,11 @@ class VirtualPeerManager {
      Clock::time_point last_heard{};
      uint32_t seq = 0;
      std::deque<Queued> queue;
@@ -77,11 +79,12 @@ index 2022796..11b0ed2 100644
 +    Clock::time_point last_game{};                   // patch 93: the last game packet from the peer (Relabel)
 +    std::map<uint32_t, Clock::time_point> pings;     // our timed punches by sequence number, until acked (10 s at most)
 +    std::optional<double> rtt_ms;                    // smoothed
++    Clock::time_point last_rtt{};                    // when the last answer came
    };
  
    static uint64_t EndpointKey(const sockaddr_in& a);
 diff --git a/src/kernel/xam/net/online_sessions.cpp b/src/kernel/xam/net/online_sessions.cpp
-index a18cd9b..510debf 100644
+index a18cd9b..010cdcd 100644
 --- a/src/kernel/xam/net/online_sessions.cpp
 +++ b/src/kernel/xam/net/online_sessions.cpp
 @@ -67,6 +67,12 @@ void OnlineSessions::OnCreate(uint32_t title_id, uint32_t flags, uint32_t public
@@ -106,16 +109,29 @@ index a18cd9b..510debf 100644
      if (friends_party_ && *friends_party_ == nonce) {
        friends_party_.reset();
      }
-@@ -377,6 +385,19 @@ void OnlineSessions::AddFound(const LobbyInfo& lobby) {
+@@ -377,6 +385,32 @@ void OnlineSessions::AddFound(const LobbyInfo& lobby) {
    std::copy_n(lobby.session_info.begin(), 8, kid.begin());
    std::lock_guard<std::mutex> lock(mutex_);
    searched_qos_[kid] = lobby.qos_data;
-+  if (lobby.host_xuid) target_host_ = lobby.host_xuid;   // patch 93: the host this game is joining
++  if (lobby.host_xuid) {   // patch 93: the host this game is joining
++    target_host_ = lobby.host_xuid;
++    target_since_ = std::chrono::steady_clock::now();
++  }
 +}
 +
 +std::optional<uint64_t> OnlineSessions::TargetHostXuid() const {   // patch 93
 +  std::lock_guard<std::mutex> lock(mutex_);
 +  return target_host_;
++}
++
++std::chrono::steady_clock::time_point OnlineSessions::TargetHostSince() const {   // patch 93
++  std::lock_guard<std::mutex> lock(mutex_);
++  return target_since_;
++}
++
++void OnlineSessions::ForgetTargetHost() {   // patch 93
++  std::lock_guard<std::mutex> lock(mutex_);
++  target_host_.reset();
 +}
 +
 +std::vector<uint64_t> OnlineSessions::HostedMembers() const {   // patch 93
@@ -126,7 +142,7 @@ index a18cd9b..510debf 100644
  }
  
  void OnlineSessions::CurrentSettingsLocked(std::vector<IdValue>* properties, std::vector<IdValue>* contexts) const {
-@@ -443,4 +464,16 @@ std::string OnlineSessions::RoomCode() const {
+@@ -443,4 +477,16 @@ std::string OnlineSessions::RoomCode() const {
    return it == hosted_.end() ? std::string() : it->second.room_code;
  }
  
@@ -144,7 +160,7 @@ index a18cd9b..510debf 100644
 +
  }  // namespace rex::kernel::xam::net
 diff --git a/src/kernel/xam/net/online_startup.cpp b/src/kernel/xam/net/online_startup.cpp
-index 746a07b..0d0f9b2 100644
+index 746a07b..d883a6c 100644
 --- a/src/kernel/xam/net/online_startup.cpp
 +++ b/src/kernel/xam/net/online_startup.cpp
 @@ -1,8 +1,11 @@
@@ -159,7 +175,7 @@ index 746a07b..0d0f9b2 100644
  
  #include <rex/cvar.h>
  #include <rex/kernel/xam/net/identity.h>
-@@ -145,6 +148,35 @@ class MasterBackend : public SessionBackend {
+@@ -145,6 +148,43 @@ class MasterBackend : public SessionBackend {
  };
  }  // namespace
  
@@ -168,27 +184,35 @@ index 746a07b..0d0f9b2 100644
 +  OnlineSessions* s = ActiveOnlineSessions();
 +  if (!s) return v;
 +  auto& peers = VirtualPeerManager::Get();
-+  if (auto host = s->JoinedHostXuid()) {   // a session someone else hosts comes first (a party we host may be behind it)
++  const auto now = VirtualPeerManager::Clock::now();
++  if (auto host = s->JoinedHostXuid()) {   // a session someone else hosts that the game joined
 +    v.kind = PingView::ToHost;
-+    if (auto ms = peers.PingMs(*host)) v.ms = *ms;
++    if (auto ms = peers.PingMs(*host, now)) v.ms = *ms;
 +    return v;
 +  }
-+  // a party / co-op join creates no session of its own here: the host whose lobby the game looked up, while its game
-+  // packets still arrive (a failed join stops them at once; its connection itself lingers on keepalives)
-+  if (auto target = s->TargetHostXuid(); target && peers.RecentGameTraffic(*target, VirtualPeerManager::Clock::now())) {
-+    v.kind = PingView::ToHost;
-+    if (auto ms = peers.PingMs(*target)) v.ms = *ms;
-+    return v;
-+  }
-+  if (s->Hosting()) {   // the players the game put in our sessions, not every peer (one we failed to join stays a while)
++  // players the game put in our sessions come before an old join target (someone we once joined may now join us)
++  const std::vector<uint64_t> members = s->Hosting() ? s->HostedMembers() : std::vector<uint64_t>{};
++  if (!members.empty()) {
 +    v.kind = PingView::Hosting;
-+    for (uint64_t xuid : s->HostedMembers()) {
-+      if (auto ms = peers.PingMs(xuid)) {
++    for (uint64_t xuid : members) {
++      if (auto ms = peers.PingMs(xuid, now)) {
 +        ++v.players;
 +        v.ms = std::max(v.ms, *ms);
 +      }
 +    }
++    return v;
 +  }
++  // a party / co-op join creates no session here: the host whose lobby the game looked up, while its game packets
++  // arrive (a failed join stops them at once). Forgotten 30 s after the lookup once its packets have stopped.
++  if (auto target = s->TargetHostXuid()) {
++    if (peers.RecentGameTraffic(*target, now)) {
++      v.kind = PingView::ToHost;
++      if (auto ms = peers.PingMs(*target, now)) v.ms = *ms;
++      return v;
++    }
++    if (std::chrono::steady_clock::now() - s->TargetHostSince() > std::chrono::seconds(30)) s->ForgetTargetHost();
++  }
++  if (s->Hosting()) v.kind = PingView::Hosting;   // on our own: "(hosting)"
 +  return v;
 +}
 +
@@ -196,7 +220,7 @@ index 746a07b..0d0f9b2 100644
    if (!NetOnline() || !LiveEmulationOn() || !MasterClient::Get().Configured()) {
      return nullptr;
 diff --git a/src/kernel/xam/net/virtual_peer_manager.cpp b/src/kernel/xam/net/virtual_peer_manager.cpp
-index 59b25d6..16bbdb0 100644
+index 59b25d6..e262aba 100644
 --- a/src/kernel/xam/net/virtual_peer_manager.cpp
 +++ b/src/kernel/xam/net/virtual_peer_manager.cpp
 @@ -288,6 +288,7 @@ std::optional<std::pair<uint32_t, uint16_t>> VirtualPeerManager::Relabel(const s
@@ -215,7 +239,7 @@ index 59b25d6..16bbdb0 100644
        if (native_handle && peer != peers_.end()) {
          PortPath& pp = peer->second.ports[it->second.second];
          // With relay on, a packet in proves only the way in (a router can let the peer's traffic in and still drop
-@@ -536,10 +538,19 @@ bool VirtualPeerManager::OnPacket(uint64_t native_handle, const uint8_t* data, s
+@@ -536,10 +538,20 @@ bool VirtualPeerManager::OnPacket(uint64_t native_handle, const uint8_t* data, s
        auto ack = EncodePunch({PunchType::Ack, punch->token, punch->seq, local_port});
        out.push_back({native_handle, std::vector<uint8_t>(ack.begin(), ack.end()), from});
      }
@@ -224,6 +248,7 @@ index 59b25d6..16bbdb0 100644
 +      if (timed != p.pings.end()) {
 +        const double sample = std::chrono::duration<double, std::milli>(now - timed->second).count();
 +        p.rtt_ms = p.rtt_ms ? 0.7 * *p.rtt_ms + 0.3 * sample : sample;
++        p.last_rtt = now;
 +        p.pings.erase(timed);
 +      }
 +    }
@@ -235,7 +260,7 @@ index 59b25d6..16bbdb0 100644
        REXKRNL_INFO("cogbox_online: 10.254.{}.{} connected through {}:{} (game port {})", (vip >> 8) & 0xFF, vip & 0xFF,
                     MaskedIp(ntohl(from.sin_addr.s_addr)), ntohs(from.sin_port), punch->src_port);
      }
-@@ -666,6 +677,27 @@ void VirtualPeerManager::Tick(Clock::time_point now) {
+@@ -666,6 +678,27 @@ void VirtualPeerManager::Tick(Clock::time_point now) {
            }
          }
        }
@@ -263,27 +288,19 @@ index 59b25d6..16bbdb0 100644
        if (p.state == PeerState::Connected && now - p.last_keepalive >= kKeepaliveInterval) {
          p.last_keepalive = now;
          for (const auto& [handle, s] : sockets_) {
-@@ -682,4 +714,31 @@ void VirtualPeerManager::Tick(Clock::time_point now) {
+@@ -682,4 +715,23 @@ void VirtualPeerManager::Tick(Clock::time_point now) {
    Send(out);
  }
  
 +
-+std::optional<int> VirtualPeerManager::PingMs(uint64_t peer_xuid) const {   // patch 93
++std::optional<int> VirtualPeerManager::PingMs(uint64_t peer_xuid, Clock::time_point now) const {   // patch 93
 +  std::lock_guard<std::mutex> lock(mutex_);
 +  auto v = xuid_to_vip_.find(peer_xuid);
 +  if (v == xuid_to_vip_.end()) return std::nullopt;
 +  auto p = peers_.find(v->second);
 +  if (p == peers_.end() || p->second.state != PeerState::Connected || !p->second.rtt_ms) return std::nullopt;
++  if (now - p->second.last_rtt > std::chrono::seconds(6)) return std::nullopt;   // answers stopped: no stale number
 +  return int(*p->second.rtt_ms + 0.5);
-+}
-+
-+std::vector<int> VirtualPeerManager::ConnectedPings() const {   // patch 93
-+  std::lock_guard<std::mutex> lock(mutex_);
-+  std::vector<int> out;
-+  for (const auto& [vip, p] : peers_) {
-+    if (p.state == PeerState::Connected && p.rtt_ms) out.push_back(int(*p.rtt_ms + 0.5));
-+  }
-+  return out;
 +}
 +
 +bool VirtualPeerManager::RecentGameTraffic(uint64_t peer_xuid, Clock::time_point now) const {   // patch 93
@@ -296,10 +313,10 @@ index 59b25d6..16bbdb0 100644
 +
  }  // namespace rex::kernel::xam::net
 diff --git a/tests/unit/net/online_sessions_test.cpp b/tests/unit/net/online_sessions_test.cpp
-index 4917fd2..65c0a4d 100644
+index 4917fd2..2a200ea 100644
 --- a/tests/unit/net/online_sessions_test.cpp
 +++ b/tests/unit/net/online_sessions_test.cpp
-@@ -533,3 +533,43 @@ TEST_CASE("Sessions: patch 92 - a search returns only lobbies of the playlist it
+@@ -533,3 +533,54 @@ TEST_CASE("Sessions: patch 92 - a search returns only lobbies of the playlist it
    CHECK(hosts(f.sessions.Search(kTitle, 99, 5)) == std::vector<uint64_t>{1, 3});
    CHECK(hosts(f.sessions.Search(kTitle, 99)) == std::vector<uint64_t>{1, 2, 3});     // no playlist in the query
  }
@@ -343,11 +360,22 @@ index 4917fd2..65c0a4d 100644
 +  REQUIRE(f.sessions.TargetHostXuid().has_value());
 +  CHECK(*f.sessions.TargetHostXuid() == 0x000954F6820B8723ull);
 +}
++
++TEST_CASE("Sessions: patch 93 - the target host is forgotten on request", "[net][sessions]") {
++  Fixture f;
++  LobbyInfo l;
++  l.host_xuid = 0x0009000000000077ull;
++  l.host_uuid = "h";
++  f.sessions.AddFound(l);
++  REQUIRE(f.sessions.TargetHostXuid().has_value());
++  f.sessions.ForgetTargetHost();
++  CHECK_FALSE(f.sessions.TargetHostXuid().has_value());
++}
 diff --git a/tests/unit/net/peer_manager_test.cpp b/tests/unit/net/peer_manager_test.cpp
-index fc52bf0..eb468db 100644
+index fc52bf0..7309c59 100644
 --- a/tests/unit/net/peer_manager_test.cpp
 +++ b/tests/unit/net/peer_manager_test.cpp
-@@ -748,3 +748,66 @@ TEST_CASE("Peers: a closed socket's routes go with it; a new socket with the sam
+@@ -748,3 +748,78 @@ TEST_CASE("Peers: a closed socket's routes go with it; a new socket with the sam
    const uint8_t game[] = {9};
    CHECK(f.mgr.OnSend(kSockB, vip, kPeerPort, game, 1, f.t0 + 1s).action == SendAction::Relay);
  }
@@ -361,7 +389,7 @@ index fc52bf0..eb468db 100644
 +  f.mgr.SetRemoteCandidates(vip, kPeerPort, {{kCandB, Candidate::Srflx}}, f.t0);
 +  auto ack = EncodePunch({PunchType::Ack, kToken, 0, kPeerPort});
 +  f.mgr.OnPacket(kSock, ack.data(), ack.size(), kCandB, f.t0);
-+  CHECK_FALSE(f.mgr.PingMs(42).has_value());   // nothing measured yet
++  CHECK_FALSE(f.mgr.PingMs(42, f.t0).has_value());   // nothing measured yet
 +  f.sent.clear();
 +  f.mgr.Tick(f.t0 + 1s);
 +  CHECK(f.PunchesTo(kCandB).empty());          // not yet
@@ -372,8 +400,8 @@ index fc52bf0..eb468db 100644
 +  auto p = DecodePunch(pings[0].data.data(), pings[0].data.size());
 +  auto reply = EncodePunch({PunchType::Ack, kToken, p->seq, kPeerPort});
 +  f.mgr.OnPacket(kSock, reply.data(), reply.size(), kCandB, f.t0 + 2s + 40ms);
-+  REQUIRE(f.mgr.PingMs(42).has_value());
-+  CHECK(*f.mgr.PingMs(42) == 40);
++  REQUIRE(f.mgr.PingMs(42, f.t0 + 3s).has_value());
++  CHECK(*f.mgr.PingMs(42, f.t0 + 3s) == 40);
 +  // the next one is smoothed: 70 % of the last value, 30 % of the new sample
 +  f.sent.clear();
 +  f.mgr.Tick(f.t0 + 4s + 40ms);
@@ -382,11 +410,8 @@ index fc52bf0..eb468db 100644
 +  p = DecodePunch(pings[0].data.data(), pings[0].data.size());
 +  reply = EncodePunch({PunchType::Ack, kToken, p->seq, kPeerPort});
 +  f.mgr.OnPacket(kSock, reply.data(), reply.size(), kCandB, f.t0 + 4s + 40ms + 140ms);
-+  CHECK(*f.mgr.PingMs(42) == 70);   // 0.7 * 40 + 0.3 * 140
-+  CHECK_FALSE(f.mgr.PingMs(43).has_value());    // not a peer
-+  auto all = f.mgr.ConnectedPings();
-+  REQUIRE(all.size() == 1);
-+  CHECK(all[0] == 70);
++  CHECK(*f.mgr.PingMs(42, f.t0 + 5s) == 70);   // 0.7 * 40 + 0.3 * 140
++  CHECK_FALSE(f.mgr.PingMs(43, f.t0 + 5s).has_value());    // not a peer
 +}
 +
 +TEST_CASE("Peers: patch 93 - an ack for a punch we never timed changes no ping", "[net][peers]") {
@@ -396,8 +421,7 @@ index fc52bf0..eb468db 100644
 +  f.mgr.SetRemoteCandidates(vip, kPeerPort, {{kCandB, Candidate::Srflx}}, f.t0);
 +  auto ack = EncodePunch({PunchType::Ack, kToken, 777, kPeerPort});
 +  f.mgr.OnPacket(kSock, ack.data(), ack.size(), kCandB, f.t0);
-+  CHECK_FALSE(f.mgr.PingMs(42).has_value());
-+  CHECK(f.mgr.ConnectedPings().empty());
++  CHECK_FALSE(f.mgr.PingMs(42, f.t0).has_value());
 +}
 +
 +TEST_CASE("Peers: patch 93 - game traffic from a peer is recent for 5 s; punches and acks do not count",
@@ -413,4 +437,20 @@ index fc52bf0..eb468db 100644
 +  CHECK(f.mgr.RecentGameTraffic(42, f.t0 + 6s));
 +  CHECK_FALSE(f.mgr.RecentGameTraffic(42, f.t0 + 8s));
 +  CHECK_FALSE(f.mgr.RecentGameTraffic(43, f.t0 + 2s));
++}
++
++TEST_CASE("Peers: patch 93 - a ping with no answer for 6 s is unknown again", "[net][peers]") {
++  Fixture f;
++  f.mgr.RegisterSocket(kSock, kLocalPort);
++  uint32_t vip = f.mgr.AddPeer(42, kToken);
++  f.mgr.SetRemoteCandidates(vip, kPeerPort, {{kCandB, Candidate::Srflx}}, f.t0);
++  auto ack = EncodePunch({PunchType::Ack, kToken, 0, kPeerPort});
++  f.mgr.OnPacket(kSock, ack.data(), ack.size(), kCandB, f.t0);
++  f.sent.clear();
++  f.mgr.Tick(f.t0 + 2s);
++  auto p = DecodePunch(f.PunchesTo(kCandB)[0].data.data(), f.PunchesTo(kCandB)[0].data.size());
++  auto reply = EncodePunch({PunchType::Ack, kToken, p->seq, kPeerPort});
++  f.mgr.OnPacket(kSock, reply.data(), reply.size(), kCandB, f.t0 + 2s + 30ms);
++  CHECK(f.mgr.PingMs(42, f.t0 + 5s).has_value());
++  CHECK_FALSE(f.mgr.PingMs(42, f.t0 + 9s).has_value());   // acks stopped: no stale number
 +}

@@ -147,7 +147,7 @@ index 3a7b823..a18cd9b 100644
      std::array<uint8_t, 8> kid;
      std::copy_n(l.session_info.begin(), 8, kid.begin());
 diff --git a/src/kernel/xam/xam_msg.cpp b/src/kernel/xam/xam_msg.cpp
-index b573a0a..1f66aa7 100644
+index b573a0a..cd81622 100644
 --- a/src/kernel/xam/xam_msg.cpp
 +++ b/src/kernel/xam/xam_msg.cpp
 @@ -286,7 +286,11 @@ bool Ue3Globals(uint32_t* gnames_out, uint32_t* gengine_out) {
@@ -163,7 +163,27 @@ index b573a0a..1f66aa7 100644
              !Ue3ObjectName(gnames, o).empty() && !Ue3ObjectName(gnames, cls).empty()) {
            ++named;
          }
-@@ -667,6 +671,15 @@ static void HostBanThread() {
+@@ -552,6 +556,9 @@ void CogboxKeepPrivatePartyJoinable() {
+   g_private_match_party = false;
+   RestorePrivateMatchChanges();
+   if (!rex::kernel::xam::net::NetOnline()) return;
++  // COGBox SDK patch 92: Gears 2's object table is found now, which would switch this on in Gears 2 for the first time
++  // (it never ran there). Off in Gears 2 until it is tested; Gears 3 / Judgment unchanged.
++  if (REX_KERNEL_STATE()->title_id() == 0x4D53082D) return;
+   uint32_t gnames = 0, gengine_var = 0;
+   if (!Ue3Globals(&gnames, &gengine_var)) return;
+   const uint32_t game = Ue3CurrentGame(gnames, gengine_var);
+@@ -587,6 +594,9 @@ void CogboxPrivateMatchAllowLogin() {
+   auto* sessions = rex::kernel::xam::net::ActiveOnlineSessions();
+   const bool private_match = g_private_match_party || (sessions && sessions->HostingPrivateMatch());
+   if (!private_match || g_lobby_invite_check) return;  // not a private match, or already let in
++  // COGBox SDK patch 92: Gears 2's object table is found now, which would switch this on in Gears 2 for the first time
++  // (it never ran there). Off in Gears 2 until it is tested; Gears 3 / Judgment unchanged.
++  if (REX_KERNEL_STATE()->title_id() == 0x4D53082D) return;
+   uint32_t gnames = 0, gengine_var = 0;
+   if (!Ue3Globals(&gnames, &gengine_var)) return;
+   const uint32_t game = Ue3CurrentGame(gnames, gengine_var);
+@@ -667,6 +677,15 @@ static void HostBanThread() {
          }
        }
      }

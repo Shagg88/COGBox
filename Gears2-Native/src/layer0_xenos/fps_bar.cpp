@@ -106,7 +106,9 @@ class FpsBar final : public rex::ui::ImGuiDialog {
       std::snprintf(text, sizeof(text), "%.0f FPS     %.1f ms     slowest %.1f ms", fps_, 1000.0 / fps_, shown_worst_);
     else
       std::snprintf(text, sizeof(text), "-- FPS");
-    if (show_ping_) {   // SDK patch 93: the round trip to the host; as host, the worst among the players
+    // SDK patch 93: the round trip to the host; as host, the worst among the players. Nothing when there is no online
+    // session (offline, single player): a ping-only bar then is not drawn at all.
+    if (show_ping_ && ping_.kind != rex::kernel::xam::net::PingView::None) {
       using PV = rex::kernel::xam::net::PingView;
       char ping[64];
       if (ping_.kind == PV::Hosting && ping_.ms >= 0)
@@ -115,14 +117,12 @@ class FpsBar final : public rex::ui::ImGuiDialog {
         std::snprintf(ping, sizeof(ping), "Ping -- (hosting)");
       else if (ping_.kind == PV::ToHost && ping_.ms >= 0)
         std::snprintf(ping, sizeof(ping), "Ping %d ms", ping_.ms);
-      else if (ping_.kind == PV::ToHost)
+      else   // in a session, not measured yet
         std::snprintf(ping, sizeof(ping), "Ping --");
-      else
-        ping[0] = 0;   // 0.6.2: not online / in no match - no ping to show (0.6.1 showed "Ping --" offline)
       const size_t used = std::strlen(text);
-      if (ping[0]) std::snprintf(text + used, sizeof(text) - used, "%s%s", used ? "     " : "", ping);
+      std::snprintf(text + used, sizeof(text) - used, "%s%s", used ? "     " : "", ping);
     }
-    if (!text[0]) return;   // FPS counter off and no ping to show: no empty bar
+    if (!text[0]) return;   // ping only, and no session to show it for
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);  // readable at 1440p / 4K
     ImGui::SetNextWindowBgAlpha(0.45f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f * scale, 4.0f * scale));
