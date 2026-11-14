@@ -499,10 +499,11 @@ std::vector<Option> make_options(Game g) {
              "They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag.", 0),
         "hordebots");
     add(make("Cheats", "Cheats (hotkeys F5-F11)", Tab::Gameplay, Kind::Bool, SH, 0,
-             "The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera, hide the HUD, all weapons). "
+             "The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - "
+             "hide the HUD, all weapons). "
              "Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a "
              "System Link or online game you host, where slow motion and the rest affect every player - please keep them "
-             "to your own games. Achievements and saves are your own business.", 327), "cheats");
+             "to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business.", 327), "cheats");
     add(make("Mutators", "Unlock all mutators", Tab::Gameplay, Kind::Bool, SH, 0,
              "Every mutator (gameplay modifier) available from the start. Writes nothing to your profile.", 328), "mutators");
     // Shagg 31 Oct: the level select menu is no longer offered (the port's --gowj_level_select stays for testing)
@@ -725,7 +726,7 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
     } else if (f == "aspect43") {   // 0.4.9: SDK patch 70; Gears 1's video-mode code is not checked yet
         if (g == Game::Gears1) return no(not_yet(gi, "not checked yet"));
         if (!cap_rt(env, "video_mode_widescreen")) return no(not_yet(gi, "needs the next runtime (SDK patch 70)"));
-    } else if (f == "cheats" && (g == Game::Gears2 || g == Game::Judgment)) {   // GitHub #264: --gow2_cheats / --gowj_cheats (no package patch, so no TU check)
+    } else if (f == "cheats" && (g == Game::Gears2 || g == Game::Judgment || g == Game::Gears1)) {   // GitHub #264: --gow2_cheats / --gowj_cheats / --gow1_cheats (no package patch, so no TU check)
         // the option's description, a long literal (a short name can be built a few letters at a time - cap_exe)
         if (!cap_exe(env, "GitHub #264: developer cheats on hotkeys")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "cheats" || f == "mutators") {
@@ -1614,7 +1615,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (avail("MipFade")) a.push_back("--gow1_fast_mip_fade=" + fmt_bool(s.b("MipFade")));
     }
     // PS1 869-871: cheats, mutators (level select removed, Shagg 31 Oct)
-    if (on("Cheats")) a.push_back(g == Game::Gears2 ? "--gow2_cheats=true" : g == Game::Judgment ? "--gowj_cheats=true" : "--gow3_cheats=true");   // #264: Gears 2, Judgment too
+    if (on("Cheats")) a.push_back(g == Game::Gears2 ? "--gow2_cheats=true" : g == Game::Judgment ? "--gowj_cheats=true" :
+                                  g == Game::Gears1 ? "--gow1_cheats=true" : "--gow3_cheats=true");   // #264: Gears 2, Judgment, Gears 1 too
     if (on("Mutators")) a.push_back("--gow3_unlock_mutators=true");
     // PS1 873-898: the game's own engine settings through --ue3_ini_edits
     {
