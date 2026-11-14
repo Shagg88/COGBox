@@ -229,7 +229,7 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
         const std::string cur = region_or_default(a.ini.get("Online", "Region"), local_utc_minutes());
         const std::string players = tr("players");
         std::string shown = cur;
-        for (const SocialRegion &r : kSocialRegions) if (cur == r.id) shown = region_label(r, regionView.region_counts, players);
+        for (const SocialRegion &r : kSocialRegions) if (cur == r.id) shown = region_label({ r.id, tr(r.name) }, regionView.region_counts, players);
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(tr("Region"));
         ui_tip("Quick Match only finds players in this region. Joining and inviting friends works in any region. "
@@ -239,7 +239,7 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
         if (ImGui::BeginCombo("##region", shown.c_str())) {
             for (const SocialRegion &r : kSocialRegions) {
                 const bool sel = cur == r.id;
-                if (ImGui::Selectable(region_label(r, regionView.region_counts, players).c_str(), sel)) {
+                if (ImGui::Selectable(region_label({ r.id, tr(r.name) }, regionView.region_counts, players).c_str(), sel)) {
                     a.ini.set("Online", "Region", r.id);
                     a.ini.save();
                 }
@@ -340,7 +340,7 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
             const SocialFriend &f = *fp;
             ImGui::PushID(f.uuid.c_str());
             const bool joinable = f.state == "joinable", offline = f.state == "offline";
-            std::string presence = presence_text(f);
+            std::string presence = tr(presence_text(f));   // whole lines ("Playing Gears of War 3") are lang keys
             const std::string game = game_name_for_title(f.title_id);
             if (!game.empty()) {   // the game's name in the launcher's language
                 const size_t at = presence.find(game);
@@ -396,6 +396,13 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
             ImGui::PushID(m.lobby_id.c_str());
             const std::string mode = match_mode(m), label = match_label(m);
             std::string details = label.size() > mode.size() + 4 ? label.substr(mode.size() + 4) : label;   // after "<mode> · "
+            for (const SocialRegion &r : kSocialRegions) {   // the region, last in the label, in the launcher's language
+                const std::string tail = std::string(" \xC2\xB7 ") + r.name;
+                if (details.size() >= tail.size() && details.compare(details.size() - tail.size(), tail.size(), tail) == 0) {
+                    details.replace(details.size() - tail.size() + 4, std::string::npos, tr(r.name));
+                    break;
+                }
+            }
             // "In progress" only when the host says so (patch 84): a host without it never reports a start
             if (m.full() || m.in_progress) details += std::string(" \xC2\xB7 ") + tr(m.full() ? "Full" : "In progress");
             const bool ready = m.game >= 0 && a.st[m.game].ready == R_READY, can = ready && !m.full();

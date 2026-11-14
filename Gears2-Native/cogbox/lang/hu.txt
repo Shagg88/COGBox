@@ -1452,3 +1452,81 @@ Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to -
 - it starts this game straight away. = - így azonnal ezt a játékot indítja.
 # only with the p3 change (open_folder): "Folder: <path>" under Wine
 Folder: = Mappa:
+# 0.6.2 Social tab + System Link note (machine-made translation, please check)
+# Social tab (social_tab.cpp, front.cpp): texts already passed through tr()
+Play online with friends: an account for this profile on the COGBox server, a friends list, Join and invites. Off: the profile stays offline. = Online játék a barátaiddal: egy fiók ehhez a profilhoz a COGBox szerveren, barátlista, csatlakozás és meghívók. Kikapcsolva: a profil offline marad.
+Online play is off. This profile stays offline. = Az online játék ki van kapcsolva. Ez a profil offline marad.
+Quick Match only finds players in this region. Joining and inviting friends works in any region. Takes effect the next time a game starts. Player counts are approximate. = A Quick Match csak ebben a régióban keres játékosokat. A barátokhoz csatlakozás és a meghívásuk minden régióban működik. A következő játékindításkor lép életbe. A játékosszámok hozzávetőlegesek.
+Deleting your online account... = Online fiók törlése...
+The online server hasn't confirmed the delete yet. Press DELETE ONLINE ACCOUNT again in a minute to check. = Az online szerver még nem erősítette meg a törlést. Egy perc múlva nyomd meg újra az ONLINE FIÓK TÖRLÉSE gombot, hogy ellenőrizd.
+Can't reach the online server. Your online account was not deleted. = Az online szerver nem érhető el. Az online fiókod nem lett törölve.
+The online server refused. Your online account was not deleted. = Az online szerver elutasította. Az online fiókod nem lett törölve.
+The online account of the profile you switched from was deleted. = Annak a profilnak az online fiókja, amelyről átváltottál, törölve lett.
+Your online account was deleted. Online play is off for this profile. = Az online fiókod törölve lett. Az online játék ki van kapcsolva ennél a profilnál.
+Signing in... = Bejelentkezés...
+Can't reach the online server. = Az online szerver nem érhető el.
+Use Name#1234 - the name, # and the four digits. = Használd ezt a formát: Name#1234 - a név, # és a négy számjegy.
+Launch the game and invite a friend from the F1 social menu. = Indítsd el a játékot, és hívj meg egy barátot az F1 közösségi menüből.
+request = kérés
+requests = kérés
+wants to be your friend = barátod szeretne lenni
+ACCEPT = ELFOGADÁS
+DECLINE = ELUTASÍTÁS
+BLOCK = TILTÁS
+Blocked players can't send you requests again. = A letiltott játékosok többé nem küldhetnek neked kérést.
+Waiting for them to accept = Várakozás az elfogadásra
+JOIN = CSATLAKOZÁS
+INVITE = MEGHÍVÁS
+REMOVE = ELTÁVOLÍTÁS
+Join their game. = Csatlakozás a játékához.
+Set up this game in COGBox to join. = Állítsd be ezt a játékot a COGBoxban a csatlakozáshoz.
+Invite them to the game you are hosting. = Meghívás a játékba, amelyet te hosztolsz.
+Remove this friend (asks first). = A barát eltávolítása (előbb rákérdez).
+Remove this friend? = Eltávolítod ezt a barátot?
+Yes, remove = Igen, eltávolítom
+Close the running game first, then press JOIN again. = Előbb zárd be a futó játékot, majd nyomd meg újra a CSATLAKOZÁS gombot.
+That game isn't set up in COGBox yet. = Ez a játék még nincs beállítva a COGBoxban.
+OPEN MATCHES = NYITOTT MÉRKŐZÉSEK
+Looking for open matches... = Nyitott mérkőzések keresése...
+No open matches right now - host a public match and it shows up here. = Jelenleg nincs nyitott mérkőzés - hosztolj egy nyilvános mérkőzést, és itt megjelenik.
+Full = Tele
+In progress = Folyamatban
+This match is full. = Ez a mérkőzés tele van.
+Join the match in progress: you take a bot's place. = Csatlakozás a folyamatban lévő mérkőzéshez: egy bot helyét veszed át.
+Join this match. = Csatlakozás ehhez a mérkőzéshez.
+Match = Mérkőzés
+Casual (under level 3) = Casual (3. szint alatt)
+# online account errors (social_backend.cpp; pieces around the profile folder's path)
+COGBox can't save the online account in the profile folder ( = A COGBox nem tudja menteni az online fiókot a profil mappájába (
+), so friends would be lost at every start. Move COGBox to a folder you can write to (not Program Files). = ), így a barátok minden indításkor elvesznének. Helyezd át a COGBoxot egy írható mappába (ne a Program Files-ba).
+Couldn't save the online account in the profile folder ( = Nem sikerült menteni az online fiókot a profil mappájába (
+The profile's online account file can't be replaced ( = A profil online fiókfájlja nem cserélhető le (
+The profile's online account file can't be read or replaced ( = A profil online fiókfájlja nem olvasható és nem cserélhető le (
+The online server refused the profile's account. = Az online szerver elutasította a profil fiókját.
+The online server refused a new account. = Az online szerver elutasított egy új fiókot.
+# the online server's own answers, shown under the friends list (tools/master-server)
+no player with that tag = nincs játékos ezzel a címkével
+that is you = ez te vagy
+friend or request limit reached = elérted a barát- vagy kéréskorlátot
+at most 10 friend requests a minute = legfeljebb 10 barátkérés percenként
+no request from that player = nincs kérés ettől a játékostól
+no such player = nincs ilyen játékos
+nothing to join = nincs mihez csatlakozni
+no friend to invite, or nothing hosted to invite to = nincs meghívható barát, vagy nincs hosztolt játék, amibe meghívhatnál
+no such invite = nincs ilyen meghívó
+that match is no longer open = ez a mérkőzés már nem nyitott
+that match is full = ez a mérkőzés tele van
+# only with the social_tab.cpp change in p15 (region name, a friend's state)
+Online - In Launcher = Online - a launcherben
+Playing = Játszik
+Playing Gears of War 2 = Játszik: Gears of War 2
+Playing Gears of War 3 = Játszik: Gears of War 3
+Playing Judgment = Játszik: Judgment
+Playing Gears of War = Játszik: Gears of War
+In a game - joinable = Játékban - lehet csatlakozni
+Gears of War 2 - joinable = Gears of War 2 - lehet csatlakozni
+Gears of War 3 - joinable = Gears of War 3 - lehet csatlakozni
+Judgment - joinable = Judgment - lehet csatlakozni
+Gears of War - joinable = Gears of War - lehet csatlakozni
+# System Link under Linux / Steam Deck (gears_settings.cpp wine_note)
+On Linux / Steam Deck: a game you host can't be joined yet - the games host on port 1000, and this PC keeps the low ports for administrator programs. Joining others should work. A possible fix (not confirmed yet) is in the README ("Hosting from Linux / Steam Deck"). = Linuxon / Steam Decken: az általad hosztolt játékhoz még nem lehet csatlakozni - a játékok az 1000-es porton hosztolnak, és ez a gép az alacsony portokat a rendszergazdai programoknak tartja fenn. Másokhoz csatlakozni elvileg működik. Egy lehetséges megoldás (még nincs megerősítve) a README-ben van ("Hosting from Linux / Steam Deck").
