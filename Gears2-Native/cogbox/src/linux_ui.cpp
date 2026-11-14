@@ -148,7 +148,7 @@ float linux_copy_buttons_width(const App &a)   // for centring them
 {
     float w = 0;
     int n = 0;
-    for (const char *en : { "Choose a file...", "Choose a folder...", a.wine ? "Paste a Linux path" : "Paste a path", a.wine ? "Look for my games" : nullptr }) {
+    for (const char *en : { "Choose a file...", "Choose a folder...", a.wine ? (a.mac ? "Paste a Mac path" : "Paste a Linux path") : "Paste a path", a.wine ? "Look for my games" : nullptr }) {
         if (!en) continue;
         w += std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, tr(en)).x + S(28));
         ++n;
@@ -169,11 +169,13 @@ void linux_copy_buttons(App &a)
         add_path(a, pick_file(L"Choose your disc image, Games on Demand file, title update or DLC package",
                               L"All files\0*.*\0Disc images (*.iso)\0*.iso\0The game's default.xex\0default.xex\0"));
     }
-    ui_tip(a.wine ? "A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
+    ui_tip(a.mac ? "A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Mac folders are under Z: (Z:\\Users\\... is /Users/...)."
+       : a.wine ? "A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
                   : "A disc image (.iso), a Games on Demand file, a title update or a DLC package (those two have no file extension).");
     ImGui::SameLine();
     if (button("Choose a folder...")) add_path(a, pick_folder(L"Choose the folder of your game copy, title update or DLC"));
-    ui_tip(a.wine ? "A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
+    ui_tip(a.mac ? "A folder with your game (default.xex), a title update or DLC. Your Mac folders are under Z: (Z:\\Users\\... is /Users/...)."
+       : a.wine ? "A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
                   : "A folder with your game (default.xex), a title update or DLC.");
     ImGui::SameLine();
     if (!a.wine) {
@@ -195,7 +197,7 @@ void linux_copy_buttons(App &a)
         ui_tip("Copy the path of your disc image, game folder, title update or DLC (File Explorer: Shift + right-click > Copy as path), then press this.");
         return;
     }
-    if (button("Paste a Linux path")) {
+    if (button(a.mac ? "Paste a Mac path" : "Paste a Linux path")) {
         char *c = SDL_GetClipboardText();
         const std::string text = c ? c : "";
         if (c) SDL_free(c);

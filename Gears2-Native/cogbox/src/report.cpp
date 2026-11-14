@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <algorithm>
+#include <vector>
 
 #include "../third_party/miniz/miniz.h"
 
@@ -180,9 +181,47 @@ static void replace_all_ci(std::string &s, const std::string &from, const std::s
 // 0.2.2: names Windows gives by default - they say nothing about the player, and as words they appear in our own text
 static bool generic_name(const std::string &n)
 {
-    static const char *g[] = { "user", "users", "admin", "administrator", "owner", "guest", "default", "public", "player", "pc" };
+    static const char *g[] = { "user", "users", "admin", "administrator", "owner", "guest", "default", "public", "player", "pc",
+                               "steamuser", "crossover", "root" };
     for (const char *x : g) if (_stricmp(n.c_str(), x) == 0) return true;
     return false;
+}
+// 0.6.2 (Proton / CrossOver review): under Wine the Windows USERNAME is "steamuser" (Proton) or the bottle's user, not
+// the player's own account. Their Linux / Mac name is in the paths Wine shows (Z:\home\<name>, /Users/<name>) and in the
+// host variables Wine passes through: HOME, WINEHOMEDIR (an NT form of Z:\home\<name>), USER, LOGNAME. On Windows these are
+// normally unset, or hold the same name as USERNAME (Git's HOME), so nothing changes there.
+static std::vector<std::wstring> host_user_names()
+{
+    std::vector<std::wstring> out;
+    wchar_t own[256] = L"";
+    GetEnvironmentVariableW(L"USERNAME", own, 256);
+    auto add = [&](std::wstring n) {
+        while (!n.empty() && (n.back() == L'/' || n.back() == L'\\')) n.pop_back();
+        if (n.size() < 3 || _wcsicmp(n.c_str(), own) == 0) return;
+        char u8[1024] = "";
+        WideCharToMultiByte(CP_UTF8, 0, n.c_str(), -1, u8, sizeof u8, NULL, NULL);
+        if (generic_name(u8)) return;
+        for (const std::wstring &o : out) if (_wcsicmp(o.c_str(), n.c_str()) == 0) return;
+        out.push_back(n);
+    };
+    for (const wchar_t *var : { L"HOME", L"WINEHOMEDIR" }) {
+        wchar_t w[1024] = L"";
+        if (!GetEnvironmentVariableW(var, w, 1024)) continue;
+        std::wstring h = w;
+        while (!h.empty() && (h.back() == L'/' || h.back() == L'\\')) h.pop_back();
+        // only a home folder's own name: /home/<name>, /Users/<name>, /var/home/<name> (Fedora Atomic / Bazzite)
+        size_t cut = h.find_last_of(L"/\\");
+        if (cut == std::wstring::npos || cut == 0) continue;
+        std::wstring parent = h.substr(0, cut);
+        size_t pcut = parent.find_last_of(L"/\\");
+        std::wstring pname = pcut == std::wstring::npos ? parent : parent.substr(pcut + 1);
+        if (_wcsicmp(pname.c_str(), L"home") == 0 || _wcsicmp(pname.c_str(), L"Users") == 0) add(h.substr(cut + 1));
+    }
+    for (const wchar_t *var : { L"USER", L"LOGNAME" }) {
+        wchar_t w[256] = L"";
+        if (GetEnvironmentVariableW(var, w, 256)) add(w);
+    }
+    return out;
 }
 // replace_all_ci for a whole word: not inside a longer word (letters / digits either side) and not inside a %NAME%
 static void replace_word_ci(std::string &s, const std::string &from, const std::string &to)
@@ -238,6 +277,17 @@ std::string report_anonymise(const std::string &text)
         // ("User", "Admin" ...) that identify nobody - a player called "User" got "%%USERNAME%PROFILE%" and
         // "Your Windows %USERNAME% name" in the report
         if (strlen(u8) >= 3 && !generic_name(u8)) replace_word_ci(s, u8, var[0] == L'U' ? "%USERNAME%" : "%COMPUTERNAME%");
+    }
+    // 0.6.2: the Linux / Mac account name under Proton / CrossOver (see host_user_names)
+    for (const std::wstring &w : host_user_names()) {
+        char u8[1024] = "";
+        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, u8, sizeof u8, NULL, NULL);
+        const std::string n = u8;
+        replace_all_ci(s, "/home/" + n, "/home/%USERNAME%");
+        replace_all_ci(s, "\\home\\" + n, "\\home\\%USERNAME%");
+        replace_all_ci(s, "/Users/" + n, "/Users/%USERNAME%");
+        replace_all_ci(s, "\\Users\\" + n, "\\Users\\%USERNAME%");
+        replace_word_ci(s, n, "%USERNAME%");
     }
     // Outside review: other folder paths (another drive, a games folder) say where the player keeps things. Keep only
     // the last part (a file or folder name and what follows it): C:\Games\Gears 2\default.xex -> <path>\default.xex.
@@ -298,16 +348,20 @@ static void blank_pattern(std::string &data, const std::string &pat, size_t unit
 
 static void blank_binary(std::string &data)
 {
+    std::vector<std::wstring> names;
     for (const wchar_t *var : { L"USERNAME", L"COMPUTERNAME" }) {
         wchar_t w[256] = L"";
-        if (!GetEnvironmentVariableW(var, w, 256) || wcslen(w) < 3) continue;
+        if (GetEnvironmentVariableW(var, w, 256) && wcslen(w) >= 3) names.push_back(w);
+    }
+    for (const std::wstring &w : host_user_names()) names.push_back(w);   // 0.6.2: Linux / Mac name under Wine
+    for (const std::wstring &w : names) {
         std::wstring forms[3] = { w, w, w };
         CharLowerBuffW(&forms[1][0], (DWORD)forms[1].size());
         CharUpperBuffW(&forms[2][0], (DWORD)forms[2].size());
         for (const std::wstring &f : forms) blank_pattern(data, std::string((const char *)f.data(), f.size() * 2), 2);
         for (UINT cp : { (UINT)CP_UTF8, (UINT)CP_ACP }) {
             char b[1024] = "";
-            if (WideCharToMultiByte(cp, 0, w, -1, b, sizeof b, NULL, NULL)) blank_pattern(data, b, 1);
+            if (WideCharToMultiByte(cp, 0, w.c_str(), -1, b, sizeof b, NULL, NULL)) blank_pattern(data, b, 1);
         }
     }
 }

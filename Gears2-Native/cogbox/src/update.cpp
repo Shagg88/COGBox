@@ -284,6 +284,7 @@ static bool check_github(const Source &src, SfFile *out)
     // HEAD /releases/latest, not followed: the Location names the tag (unchanged from 0.4.8, so it works if the account returns)
     std::string found;
     HINTERNET s = WinHttpOpen(L"COGBox launcher", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!s) s = WinHttpOpen(L"COGBox launcher", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);   // 0.6.2 review: as fetch() (older Windows, some Wine builds)
     if (s) {
         WinHttpSetTimeouts(s, 5000, 5000, 5000, 5000);
         HINTERNET c = WinHttpConnect(s, L"github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);

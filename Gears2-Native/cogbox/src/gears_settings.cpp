@@ -615,6 +615,7 @@ bool framegen_choice_hidden(int index, const Environment& env) {
 
 // Notes/83: the game runs on Vulkan - chosen, or Proton / Wine's Automatic / Vulkan (as in the arguments below)
 bool runs_vulkan(const Settings& s, const Environment& env) {
+    if (env.mac) return false;   // r4 bug 1: never Vulkan on a Mac (CrossOver's Vulkan 1.2; the renderer needs 1.3)
     const int wapi = s.i("WineApi");
     const bool wineDx = env.wine && s.i("Api") == 0 && (wapi == 2 || (wapi == 0 && env.mac));
     return s.i("Api") == 1 || (env.wine && !wineDx);
@@ -880,7 +881,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "FrameGen" && runs_vulkan(s, env)) {   // job 521; notes/83: AMD FSR frame generation on Vulkan
         const Availability v = framegen_choice_available(1, env, true);
         if (!v.ok) { a.ok = false; a.why = "DirectX 12 only for now. " + v.why; return a; }
-    } else if (o.id == "FrameGen" && env.wine) { a.ok = false; a.why = "Vulkan only on Proton / Wine."; return a; }
+    } else if (o.id == "FrameGen" && env.wine) { a.ok = false; a.why = env.mac ? "Not on a Mac (CrossOver)." : "Vulkan only on Proton / Wine."; return a; }
     else if (o.id == "FsrVulkan") on = runs_vulkan(s, env) && fsr_vulkan(env);      // review: opt-in, Vulkan builds with AMD's VK DLLs
     else if (o.id == "Sharpen") on = s.i("Resolution") == 5;                         // GitHub #59: the 1080p mode only
     else if (o.id == "SplitLayout") on = s.i("Players") == 1;                       // GitHub #136: 2 players only
@@ -905,6 +906,8 @@ Availability choice_available(const Option& o, Game g, int index) {
 
 std::string tooltip_for(const Option& o, Game g, const Availability& a, const Environment& env) {
     std::string base = o.tooltip;
+    if (o.id == "Api" && env.mac)   // 0.6.2 review: CrossOver runs DirectX 12 through D3DMetal; Vulkan does not start there
+        return "On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there.";
     if (o.id == "Api" && env.wine && (g == Game::Gears3 || g == Game::Judgment))   // Shagg 3 Nov: Vulkan is the Proton path
         base = "On Steam Deck / Linux (Proton) Vulkan is the usual choice - DirectX 12 can crash there.\n"
                "On Vulkan, DLSS / XeSS are not available and FSR is experimental (\"FSR on Vulkan (experimental)\"); otherwise SMAA is used, "
@@ -943,6 +946,9 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
 // proton049: the line added under a row's description under Proton / Wine ("" on Windows and for other rows)
 std::string wine_note(const Option& o, const Environment& env) {
     if (!env.wine) return "";
+    // 0.6.2 review: the notes below are about Proton; on a Mac (CrossOver, D3DMetal) these are untested
+    if (env.mac && (o.id == "AAMode" || o.id == "HDR"))
+        return "On a Mac (CrossOver): untested with D3DMetal. If the game doesn't start or looks wrong, use SMAA and leave HDR off.";
     if (o.id == "AAMode")
         return "On Linux / Steam Deck: DLSS needs an NVIDIA RTX card with NVIDIA's own Linux driver and DirectX 12 as the Graphics API on Proton (testing). Proton 9 and newer turn NVIDIA's NVAPI on for most games; if DLSS still doesn't start, add PROTON_ENABLE_NVAPI=1 %command% to the game's launch options in Steam.";
     if (o.id == "HDR")
@@ -970,6 +976,11 @@ Availability wine_choice_available(const Option& o, int index, const Environment
     } else if (o.id == "FrameGen" && index == k_fgXefg) {
         a.ok = false;
         a.why = "Not under Proton / Wine.";
+    } else if (env.mac && ((o.id == "Api" && index == 1) || (o.id == "WineApi" && index == 1))) {
+        // independent review (r4) bug 1: on a Mac Vulkan can't start (CrossOver offers Vulkan 1.2, the renderer needs 1.3,
+        // GitHub #36 / #40), yet it could be picked - or arrive in a settings.ini copied from Windows
+        a.ok = false;
+        a.why = "Not on a Mac: CrossOver's Vulkan is 1.2 and the games need 1.3. DirectX 12 (D3DMetal) is used there.";
     }
     return a;
 }
@@ -1433,9 +1444,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         // Job 643: Automatic = DirectX 12 on a Mac (Vulkan can't start there: CrossOver has 1.2, the renderer needs 1.3,
         // GitHub #36 / #40), Vulkan on SteamOS / Linux (DirectX 12 there still being tested).
         const int wapi = s.i("WineApi");
-        const bool wineDx = env.wine && s.i("Api") == 0 && (wapi == 2 || (wapi == 0 && env.mac));
+        const bool wineDx = env.wine && (env.mac || (s.i("Api") == 0 && wapi == 2));   // r4 bug 1: a Mac is always DirectX 12
         const bool vk = runs_vulkan(s, env);
-        if (env.wine && s.i("Api") != 1) notes.push_back(wineDx ? (s.i("WineApi") == 0 ? "launcher: Mac (CrossOver) - DirectX 12 (Automatic: Vulkan can't start there)"
+        if (env.mac) notes.push_back("launcher: Mac (CrossOver) - DirectX 12 (D3DMetal): Vulkan can't start there");
+        else if (env.wine && s.i("Api") != 1) notes.push_back(wineDx ? (s.i("WineApi") == 0 ? "launcher: Mac (CrossOver) - DirectX 12 (Automatic: Vulkan can't start there)"
                                                                                 : "launcher: Proton / Wine - DirectX 12 (testing, chosen in the launcher)")
                                                                : "launcher: Proton / Wine - Vulkan (Graphics API on Proton / Wine: DirectX 12 is being tested)");
         if (vk) {   // job 521: Vulkan (experimental); the upscalers are DirectX 12 only

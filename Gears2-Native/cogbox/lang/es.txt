@@ -1270,6 +1270,7 @@ Can freeze on NVIDIA cards with Vulkan while the NVIDIA overlay (NVIDIA App / Al
 # 0.4.9: proton049 - Linux / Steam Deck through Proton (machine-made translation, please check)
 Choose a folder... = Elegir una carpeta...
 Paste a Linux path = Pegar una ruta de Linux
+Paste a Mac path = Pegar una ruta de Mac
 Look for my games = Buscar mis juegos
 Looking... = Buscando...
 A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\home\... is /home/...). = Una carpeta con tu juego (default.xex), una actualización de título o DLC. Tus carpetas de Linux están en Z: (Z:\home\... es /home/...).
@@ -1279,6 +1280,7 @@ Use recommended Steam Deck / Proton settings = Usar los ajustes recomendados par
 Vulkan, FSR and no frame generation; on a Steam Deck also borderless on its 1280x800 screen, 60 fps, Steam Deck button prompts and the controller. You see the list before anything changes. = Vulkan, FSR y sin generación de fotogramas; en una Steam Deck también sin bordes en su pantalla de 1280x800, 60 fps, botones de Steam Deck y el mando. Verás la lista antes de que cambie nada.
 STEAM DECK = STEAM DECK
 LINUX = LINUX
+MAC (CROSSOVER) = MAC (CROSSOVER)
 Running through = Ejecutándose con
 plain Wine: COGBox is tested with Steam's Proton (see the README's Linux and Steam Deck section) = Wine normal: COGBox se prueba con Proton de Steam (mira la sección Linux y Steam Deck del README)
 Recommended Steam Deck settings = Ajustes recomendados para Steam Deck

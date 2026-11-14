@@ -56,7 +56,7 @@ void report_share(App &a, int g, const std::string &zip, const std::string &what
     const std::string title = std::string(d.name) + ": " + (what.empty() ? "describe the problem here" : what.substr(0, 80));
     const std::string body = std::string("**What happened:** \n\n**Where in the game (chapter / menu / loading):** \n\n**Does it happen every time?** \n\n---\n") +
         "Game: " + d.name + "\nCOGBox: " COGBOX_VERSION "\nGraphics: " + (gpus.empty() ? "unknown" : gpus) +
-        (a.wine ? "\nLinux / Steam Deck: " + proton::summary(a.proton) : std::string()) +   // proton049
+        (a.wine ? std::string(a.mac ? "\nMac (CrossOver): " : "\nLinux / Steam Deck: ") + proton::summary(a.proton) : std::string()) +   // proton049
         (what.empty() ? "" : "\nThe launcher's reading: " + what) +
         "\n\nPlease attach the report zip (" + zip.substr(zip.find_last_of('\\') + 1) + ") before you submit.\n";
     shell_select(zip);
@@ -1008,12 +1008,14 @@ static AutoPlan auto_plan(App &a, int g)
     if (const auto *ro = gs::find_option((gs::Game)g, "RealOcclusion")) p.set.push_back({ "RealOcclusion", (int)ro->def });   // job 666: the game's default (on in Gears 3 / Judgment)
     static const char *tierName[] = { "entry level / integrated / Steam Deck", "mid range", "high end" };
     static const char *resName[] = { "1x - 720p", "2x - 1440p", "3x - 4K", "4x - 5K", "Match my monitor (native)", "1080p (720p upscaled)" };
-    static const char *fpsName[] = { "30", "45", "60", "90", "120", "144", "165", "Unlimited" };
+    // the Frame rate limit option's own names (a separate list here had no "40" and was off by one from 45 up)
+    std::string fpsText = std::to_string(fps);
+    if (const auto *fc = gs::find_option((gs::Game)g, "FrameCap"); fc && fps >= 0 && fps < (int)fc->choices.size()) fpsText = fc->choices[fps];
     char b[512];
     snprintf(b, sizeof b, "Found: %s (%u MB video memory), screen %dx%d at %d Hz%s - %s.\n\n", p.gpu.empty() ? "an unknown graphics card" : p.gpu.c_str(),
              p.vramMB, sw, sh, hz, a.env[g].wine ? ", Wine / Proton" : "", tierName[p.tier]);
     p.text = b;
-    p.text += std::string("Render resolution: ") + resName[res] + "\nAnti-aliasing: SMAA\nFrame rate limit: " + fpsName[fps] +
+    p.text += std::string("Render resolution: ") + resName[res] + "\nAnti-aliasing: SMAA\nFrame rate limit: " + fpsText +
               "\nVsync: on\nTexture memory: " + (pool == 2 ? "Large (256 MB)" : "Standard") + "\nSharper textures (16x anisotropic): " +
               (p.tier >= 1 ? "on" : "off") + "\nSmooth texture detail steps (trilinear): on\nFrame generation: off" +
               (a.env[g].wine ? "" : "\nGraphics API: DirectX 12") + "\n\nGameplay and controls are not changed. Apply?";
@@ -1118,7 +1120,7 @@ static void about_tab(App &a, int g)
 
     // ---- proton049: LINUX / STEAM DECK - what COGBox found, and the recommended settings
     if (a.wine) {
-        ui_section(a.proton.steamDeck ? "STEAM DECK" : "LINUX");
+        ui_section(a.proton.steamDeck ? "STEAM DECK" : a.mac ? "MAC (CROSSOVER)" : "LINUX");   // 0.6.2 review: not "LINUX" on a Mac
         lamp_line(a.proton.proton || a.mac ? 1 : 2, std::string(tr("Running through")) + " " + proton::summary(a.proton),
                   a.proton.proton || a.mac ? "" : "plain Wine: COGBox is tested with Steam's Proton (see the README's Linux and Steam Deck section)");
         if (!a.mac) {

@@ -64,8 +64,10 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 
 ## What you need
 
-- **Windows 10 or 11, 64-bit** (or Linux / Steam Deck through Proton - experimental).
-- **A CPU with AVX2** (roughly 2013 or newer) and **a DirectX 12 graphics card**.
+- **Windows 10 or 11, 64-bit** (or Linux / Steam Deck through Proton, or a Mac with Apple Silicon through CrossOver -
+  both experimental).
+- **A CPU with AVX2** (roughly 2013 or newer) and **a DirectX 12 graphics card** (under Proton: a graphics driver with
+  Vulkan 1.3, such as a recent Mesa or NVIDIA driver).
 - **Your own copy of each game** - a disc image (.iso), a Games on Demand copy or the disc's extracted files - and its
   **title update**, copied from your console's `Content\0000000000000000\<title ID>\000B0000\` folder
   (Gears of War `4D5307D5`, Gears 2 `4D53082D`, Gears 3 `4D5308AB`, Judgment `4D530A26`).
@@ -80,7 +82,8 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 2. Start `CogBox.exe`. If Windows says "Windows protected your PC", choose **More info > Run anyway** (the programs
    aren't code-signed).
 3. Drag your game copy onto the COGBox window, then its title update - or, where dragging doesn't work (for example the
-   Steam Deck), use **Choose a file...**, **Choose a folder...** or **Paste a path** in the launcher. COGBox checks and
+   Steam Deck), use **Choose a file...**, **Choose a folder...** or **Paste a path** (under Proton: **Paste a Linux path**) in the
+   launcher. COGBox checks and
    unpacks them.
 4. Press **PLAY**. **SETTINGS** has graphics, controls and gameplay options; rest the mouse on any option to see what
    it does.
@@ -107,9 +110,10 @@ settings are kept.
 
 1. Unzip COGBox into your home folder (on a Steam Deck, in Desktop Mode).
 2. In Steam: **Games > Add a Non-Steam Game**, set the file type to **All Files**, and pick `CogBox.exe`.
-3. In its **Properties > Compatibility**, force **Proton 11.0** (or Proton Experimental / GE-Proton).
-4. Start COGBox. It picks suitable settings by itself (Vulkan, FSR, 60 fps on the Steam Deck) and greys out what can't
-   work under Proton, with the reason.
+3. In its **Properties > Compatibility**, force **Proton Experimental** (or a recent Proton such as 11.0, or GE-Proton).
+4. Start COGBox. On its first start under Proton it applies recommended settings (Vulkan, FSR where the build has it,
+   60 fps on the Steam Deck); if you brought settings from Windows, it offers them on the About tab instead. It greys
+   out what can't work under Proton, with the reason.
 5. Add your games with **Look for my games** or **Choose a folder...** (your Linux files are under `Z:`).
 
 The first minutes of each game can stutter while shaders are built; **Prepare all shaders now** on the Graphics tab
@@ -117,8 +121,8 @@ does it in one go.
 
 ## Mac (CrossOver, experimental)
 
-Players run COGBox on a Mac through CrossOver; Proton (Linux, Steam Deck) and CrossOver (Mac) are the supported
-ways to play outside Windows. If you hear a constant heavy bass hum (in the games and the launcher's music), open
+Players run COGBox on a Mac with Apple Silicon through CrossOver (community-tested; we have no Mac to test on). The
+games use DirectX 12 through CrossOver's D3DMetal by themselves - Vulkan does not work there. If you hear a constant heavy bass hum (in the games and the launcher's music), open
 **Audio MIDI Setup** on the Mac and set your output device to **96,000 Hz** (or 88,200 Hz): at 44,100 or 48,000 Hz
 CrossOver's audio adds the hum (found by L33tRonin, GitHub #261).
 

@@ -81,6 +81,8 @@ Case parse_case(const std::string& line) {
     e.update_ready = kv.count("upd") && kv["upd"] == "1";
     e.refresh_hz = kv.count("hz") ? std::atoi(kv["hz"].c_str()) : 0;
     e.screen_count = kv.count("screens") ? std::atoi(kv["screens"].c_str()) : 1;
+    e.wine = kv.count("wine") && kv["wine"] == "1";   // r4 review: Wine / Proton / CrossOver cases
+    e.mac = kv.count("mac") && kv["mac"] == "1";
     if (kv.count("gpus") && !kv["gpus"].empty()) e.gpus = split(kv["gpus"], '/');
     if (kv.count("extra")) e.extra_args_lines = split(kv["extra"], '|');
     if (kv.count("exe") && !kv["exe"].empty()) for (auto& x : split(kv["exe"], ',')) c.exe.insert(exe_needle(x, g));
@@ -90,7 +92,7 @@ Case parse_case(const std::string& line) {
     e.g2_disc_ini_edits = c.exe.count("'file|section|~=old>new'") != 0;
     for (auto& p : kv) {
         if (p.first == "game" || p.first == "upd" || p.first == "hz" || p.first == "screens" || p.first == "gpus" || p.first == "extra" ||
-            p.first == "exe" || p.first == "rt" || p.first == "files" || p.first == "rtfile") continue;
+            p.first == "exe" || p.first == "rt" || p.first == "files" || p.first == "rtfile" || p.first == "wine" || p.first == "mac") continue;
         c.values[p.first] = std::atof(p.second.c_str());
     }
     int mon = c.values.count("Monitor") ? static_cast<int>(c.values["Monitor"]) : 0;

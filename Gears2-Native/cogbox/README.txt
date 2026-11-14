@@ -380,12 +380,13 @@ Linux and Steam Deck (Proton) - experimental
 1. Unzip COGBox somewhere in your home folder.
 2. In Steam: Add a Game > Add a Non-Steam Game > browse to CogBox.exe.
 3. The game's Properties > Compatibility > "Force the use of a specific Steam Play compatibility
-   tool": Proton Experimental (or a recent Proton / GE-Proton).
+   tool": Proton Experimental (or a recent Proton such as 11.0, or GE-Proton).
 4. Start it from Steam. On a small screen like the Steam Deck's, COGBox starts maximised and
    borderless. Add your copy as on Windows.
 Under Proton COGBox skips exclusive fullscreen, Reflex and Anti-Lag (the compositor owns the
-screen). The games use Vulkan there by themselves (DirectX 12 does not start under Proton yet).
-Steam Input should present the controller as a standard gamepad. Problem reports from Linux
+screen). The games use Vulkan there by default; DirectX 12 can be tried with "Graphics API on
+Proton / Wine" (testing). Steam Input should present the controller as a standard gamepad (not
+yet confirmed on a Steam Deck - reports welcome). Problem reports from Linux
 help a lot: "Make a problem report" saves them in COGBox's reports folder (and opens it).
 
 One Steam entry per game (Windows or Linux): add CogBox.exe again for each game and set its
@@ -396,8 +397,8 @@ it the game folder and your settings.
 
 Mac (CrossOver) - experimental
 ------------------------------
-Proton (Linux, Steam Deck) and CrossOver (Mac) are the supported ways to play outside Windows.
-A constant heavy bass hum on a Mac (in the games and the launcher's music): open Audio MIDI Setup
+Community-tested on Macs with Apple Silicon (we have no Mac to test on). The games use DirectX 12
+through CrossOver's D3DMetal by themselves - Vulkan does not work there. A constant heavy bass hum on a Mac (in the games and the launcher's music): open Audio MIDI Setup
 and set your output device to 96,000 Hz (or 88,200 Hz) - at 44,100 or 48,000 Hz CrossOver's audio
 adds the hum (found by L33tRonin, GitHub #261).
 

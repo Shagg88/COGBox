@@ -141,7 +141,7 @@ std::vector<std::string> report_lines(const Info &i)
 {
     std::vector<std::string> v;
     if (!i.wine) return v;
-    v.push_back("Linux / Steam Deck: " + summary(i));
+    v.push_back(std::string(i.hostSystem == "Darwin" ? "Mac (CrossOver): " : "Linux / Steam Deck: ") + summary(i));   // 0.6.2 review
     v.push_back("Wine: " + i.wineVersion + (i.wineBuild.empty() ? "" : " (build " + i.wineBuild + ")") +
                 (i.hostSystem.empty() ? "" : ", host " + i.hostSystem + " " + i.hostRelease));
     v.push_back(std::string("Proton: ") + (i.proton ? (i.protonVersion.empty() ? "yes (version not visible)" : i.protonVersion) : "no (plain Wine)"));
@@ -458,6 +458,7 @@ std::vector<std::string> roots_here(const Info &i)
             if (!it->is_directory(e2)) continue;
             const std::string name = utf8(it->path().filename().wstring());
             const std::string u = unixDir + "/" + name;
+            if (unixDir == "/Volumes" && name.rfind("Macintosh HD", 0) == 0) continue;   // the Mac's own disk (= /): too big to search
             if (alsoChildren && name == i.user) {   // /run/media/deck/<card label> (SteamOS 3.5+)
                 std::error_code e3;
                 for (fs::directory_iterator c(it->path(), e3); !e3 && c != end; c.increment(e3))
@@ -465,9 +466,12 @@ std::vector<std::string> roots_here(const Info &i)
             } else media.push_back(u);   // /run/media/mmcblk0p1 (older SteamOS), other users' drives
         }
     };
-    list_dirs("/run/media", true);
-    if (!i.user.empty()) list_dirs("/media/" + i.user, false);
-    list_dirs("/mnt", false);
+    if (i.hostSystem == "Darwin") list_dirs("/Volumes", false);   // 0.6.2 review: a Mac's external drives (CrossOver)
+    else {
+        list_dirs("/run/media", true);
+        if (!i.user.empty()) list_dirs("/media/" + i.user, false);
+        list_dirs("/mnt", false);
+    }
     std::set<std::string> seen;   // Wine finds names case-insensitively: ~/Games and ~/games can be one folder
     for (const std::string &r : scan_roots(i.home, i.user, libs, media)) {
         const std::string w = to_wine(r, i.home);
