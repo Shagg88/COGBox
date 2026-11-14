@@ -1234,9 +1234,9 @@ static void about_tab(App &a, int g)
     // 0.6.2 Proton / CrossOver review: under Wine a .lnk lands on Wine's own desktop inside the prefix / bottle, which the
     // player never sees - say how to get a one-game entry instead
     if (a.wine && a.mac)
-        ui_note(std::string("Desktop shortcuts: in CrossOver, use Run Command, add --play ") + d.key + " after CogBox.exe and choose Save Command as a Launcher - it starts " + d.name + " straight away.");
+        ui_note(std::string("Desktop shortcuts: in CrossOver, use Run Command, add --play ") + d.key + " after CogBox.exe and choose Save Command as a Launcher - it starts this game straight away.");
     else if (a.wine)
-        ui_note(std::string("Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to --play ") + d.key + " to start " + d.name + " straight away.");
+        ui_note(std::string("Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to --play ") + d.key + " - it starts this game straight away.");
     else if (small_button("Desktop shortcut: COGBox")) {
         std::string err;
         if (make_shortcut("COGBox", "", "Gears of War native PC ports - launcher", err)) set_message(a, "A COGBox shortcut is on your desktop.", false);

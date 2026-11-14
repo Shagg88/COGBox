@@ -1347,3 +1347,26 @@ Choose a file... = Wybierz plik...
 Paste a path = Wklej ścieżkę
 Import saves... = Importuj zapisy...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = Dla najpłynniejszej gry te gry wymagają wymienionych Title Update. Szczegóły w README.
+# 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = Klawisze kodów twórców, F5-F11 w grze (tryb boga, spowolnienie, wolna kamera - w Gears 1 latanie przez ściany - ukrycie HUD, wszystkie bronie). Gears 2: tylko w grach na tym PC - nigdy w grach System Link ani online. Gears 3 i Judgment: także w grze System Link lub online, którą hostujesz, gdzie spowolnienie i reszta działają na wszystkich graczy - używaj ich tylko we własnych grach. Gears 1: jeszcze niesprawdzone w grach System Link. Osiągnięcia i zapisy to twoja sprawa.
+Not on a Mac (CrossOver). = Nie na Macu (CrossOver).
+Vulkan only on Proton / Wine. = Pod Proton / Wine tylko Vulkan.
+On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = Na Macu (CrossOver) gry działają na DirectX 12 przez D3DMetal (Apple Silicon). Vulkan się tam nie uruchamia.
+On a Mac (CrossOver): untested with D3DMetal. If the game doesn't start or looks wrong, use SMAA and leave HDR off. = Na Macu (CrossOver): nietestowane z D3DMetal. Jeśli gra się nie uruchamia lub źle wygląda, użyj SMAA i zostaw HDR wyłączone.
+Not on a Mac: CrossOver's Vulkan is 1.2 and the games need 1.3. DirectX 12 (D3DMetal) is used there. = Nie na Macu: Vulkan w CrossOver to 1.2, a gry wymagają 1.3. Używany jest tam DirectX 12 (D3DMetal).
+needs a CPU with AVX2 (Intel Haswell / AMD Ryzen, about 2013 and newer), and this PC's CPU does not report it.\n\nOn a Mac this needs macOS 15 (Sequoia) or newer, whose Rosetta runs AVX2, and an up-to-date CrossOver. = wymaga procesora z AVX2 (Intel Haswell / AMD Ryzen, około 2013 i nowszy), a procesor tego komputera go nie zgłasza.\n\nNa Macu potrzebny jest macOS 15 (Sequoia) lub nowszy, którego Rosetta obsługuje AVX2, oraz aktualny CrossOver.
+Looking for your games in the usual Mac folders... = Szukam twoich gier w zwykłych folderach Maca...
+No game copies found in the usual Mac folders. Use "Choose a folder..." or "Paste a Mac path". = Nie znaleziono kopii gry w zwykłych folderach Maca. Użyj "Wybierz folder..." lub "Wklej ścieżkę z Maca".
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\home\... is /home/...). = Obraz płyty (.iso), plik Games on Demand, aktualizacja tytułu lub pakiet DLC. Twoje foldery Linuksa są pod Z: (Z:\home\... to /home/...).
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = Obraz płyty (.iso), plik Games on Demand, aktualizacja tytułu lub pakiet DLC. Twoje foldery Maca są pod Z: (Z:\Users\... to /Users/...).
+A folder with your game (default.xex), a title update or DLC. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = Folder z grą (default.xex), aktualizacją tytułu lub DLC. Twoje foldery Maca są pod Z: (Z:\Users\... to /Users/...).
+Copy a folder's or disc image's path first (for example /Users/you/Games/Gears of War 2). = Najpierw skopiuj ścieżkę folderu lub obrazu płyty (np. /Users/you/Games/Gears of War 2).
+Copy a path such as /Users/you/Games/Gears of War 2 or ~/Games/gears2.iso (in Finder: right-click with Option held > Copy as Pathname), then press this. = Skopiuj ścieżkę, np. /Users/you/Games/Gears of War 2 lub ~/Games/gears2.iso (w Finderze: prawy klik z wciśniętym Option > Kopiuj jako nazwę ścieżki), a potem naciśnij tutaj.
+Searches ~/Games, ~/Downloads, ~/Desktop, ~/Documents and external drives (/Volumes) for game copies, disc images and title updates. = Przeszukuje ~/Games, ~/Downloads, ~/Desktop, ~/Documents i dyski zewnętrzne (/Volumes) w poszukiwaniu kopii gry, obrazów płyt i aktualizacji tytułu.
+# desktop shortcut notes under Wine: pieces, only with the page.cpp:1236/1238 change in p4
+Desktop shortcuts: in CrossOver, use Run Command, add --play = Skróty na pulpicie: w CrossOver użyj Run Command i dodaj po CogBox.exe --play
+after CogBox.exe and choose Save Command as a Launcher - it starts this game straight away. = a potem wybierz Save Command as a Launcher - uruchamia to od razu tę grę.
+Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to --play = Skróty na pulpicie: dodaj CogBox.exe ponownie do Steama i ustaw jego Opcje uruchamiania na --play
+- it starts this game straight away. = - wtedy od razu uruchamia tę grę.
+# only with the p3 change (open_folder): "Folder: <path>" under Wine
+Folder: = Folder:

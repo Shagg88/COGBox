@@ -1347,3 +1347,26 @@ Choose a file... = 파일 선택...
 Paste a path = 경로 붙여넣기
 Import saves... = 저장 데이터 가져오기...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = 가장 부드럽게 플레이하려면 이 게임들에 아래 Title Update가 필요합니다. 자세한 내용은 README를 참고하세요.
+# 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = 개발자 치트 키예요. 게임 중 F5-F11 (갓 모드, 슬로 모션, 자유 카메라 - Gears 1에서는 벽 통과 비행 - HUD 숨기기, 모든 무기). Gears 2: 이 PC의 게임에서만 - System Link나 온라인 게임에서는 절대 안 돼요. Gears 3와 Judgment: 직접 호스트하는 System Link나 온라인 게임에서도 작동하고, 슬로 모션 등은 모든 플레이어에게 영향을 줘요 - 본인 게임에서만 써 주세요. Gears 1: System Link 게임에서는 아직 확인하지 않았어요. 업적과 저장 데이터는 사용자 책임이에요.
+Not on a Mac (CrossOver). = Mac(CrossOver)에서는 안 돼요.
+Vulkan only on Proton / Wine. = Proton / Wine에서는 Vulkan만 돼요.
+On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = Mac(CrossOver)에서는 게임이 D3DMetal(Apple Silicon)을 통해 DirectX 12로 실행돼요. Vulkan은 시작되지 않아요.
+On a Mac (CrossOver): untested with D3DMetal. If the game doesn't start or looks wrong, use SMAA and leave HDR off. = Mac(CrossOver): D3DMetal에서 테스트되지 않았어요. 게임이 시작되지 않거나 이상하게 보이면 SMAA를 쓰고 HDR은 꺼 두세요.
+Not on a Mac: CrossOver's Vulkan is 1.2 and the games need 1.3. DirectX 12 (D3DMetal) is used there. = Mac에서는 안 돼요: CrossOver의 Vulkan은 1.2이고 게임에는 1.3이 필요해요. Mac에서는 DirectX 12(D3DMetal)를 사용해요.
+needs a CPU with AVX2 (Intel Haswell / AMD Ryzen, about 2013 and newer), and this PC's CPU does not report it.\n\nOn a Mac this needs macOS 15 (Sequoia) or newer, whose Rosetta runs AVX2, and an up-to-date CrossOver. = 에는 AVX2를 지원하는 CPU (Intel Haswell / AMD Ryzen, 대략 2013년 이후)가 필요한데, 이 PC의 CPU는 이를 보고하지 않습니다.\n\nMac에서는 Rosetta가 AVX2를 실행하는 macOS 15(Sequoia) 이상과 최신 CrossOver가 필요해요.
+Looking for your games in the usual Mac folders... = 일반적인 Mac 폴더에서 게임을 찾는 중...
+No game copies found in the usual Mac folders. Use "Choose a folder..." or "Paste a Mac path". = 일반적인 Mac 폴더에서 게임 사본을 찾지 못했습니다. "폴더 선택..." 또는 "Mac 경로 붙여넣기"를 사용하세요.
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\home\... is /home/...). = 디스크 이미지(.iso), Games on Demand 파일, 타이틀 업데이트 또는 DLC 패키지입니다. Linux 폴더는 Z: 아래에 있습니다(Z:\home\...는 /home/...).
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = 디스크 이미지(.iso), Games on Demand 파일, 타이틀 업데이트 또는 DLC 패키지입니다. Mac 폴더는 Z: 아래에 있습니다(Z:\Users\...는 /Users/...).
+A folder with your game (default.xex), a title update or DLC. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = 게임(default.xex), 타이틀 업데이트 또는 DLC가 있는 폴더입니다. Mac 폴더는 Z: 아래에 있습니다(Z:\Users\...는 /Users/...).
+Copy a folder's or disc image's path first (for example /Users/you/Games/Gears of War 2). = 먼저 폴더나 디스크 이미지의 경로를 복사하세요(예: /Users/you/Games/Gears of War 2).
+Copy a path such as /Users/you/Games/Gears of War 2 or ~/Games/gears2.iso (in Finder: right-click with Option held > Copy as Pathname), then press this. = /Users/you/Games/Gears of War 2 또는 ~/Games/gears2.iso 같은 경로를 복사한 뒤(Finder: Option 키를 누른 채 오른쪽 클릭 > 경로 이름 복사) 이것을 누르세요.
+Searches ~/Games, ~/Downloads, ~/Desktop, ~/Documents and external drives (/Volumes) for game copies, disc images and title updates. = ~/Games, ~/Downloads, ~/Desktop, ~/Documents, 외장 드라이브(/Volumes)에서 게임 사본, 디스크 이미지, 타이틀 업데이트를 찾습니다.
+# desktop shortcut notes under Wine: pieces, only with the page.cpp:1236/1238 change in p4
+Desktop shortcuts: in CrossOver, use Run Command, add --play = 바탕 화면 바로 가기: CrossOver에서 Run Command를 쓰고 CogBox.exe 뒤에 --play
+after CogBox.exe and choose Save Command as a Launcher - it starts this game straight away. = 를 추가한 다음 Save Command as a Launcher를 고르세요 - 이 게임이 바로 시작돼요.
+Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to --play = 바탕 화면 바로 가기: CogBox.exe를 Steam에 다시 추가하고 실행 옵션을 --play
+- it starts this game straight away. = (으)로 설정하세요 - 이 게임이 바로 시작돼요.
+# only with the p3 change (open_folder): "Folder: <path>" under Wine
+Folder: = 폴더:

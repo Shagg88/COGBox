@@ -1347,3 +1347,26 @@ Choose a file... = ファイルを選択...
 Paste a path = パスを貼り付け
 Import saves... = セーブをインポート...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = 最も快適にプレイするには、これらのゲームに記載のTitle Updateが必要です。詳しくはREADMEをご覧ください。
+# 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = 開発者用チートキーです。ゲーム中の F5-F11 (ゴッドモード、スローモーション、フリーカメラ - Gears 1 では壁抜け飛行 - HUD 非表示、全武器)。Gears 2: この PC 上のゲームのみ - System Link やオンラインのゲームでは使えません。Gears 3 と Judgment: 自分がホストする System Link やオンラインのゲームでも有効で、スローモーションなどは全プレイヤーに影響します - 自分だけのゲームで使ってください。Gears 1: System Link のゲームではまだ確認していません。実績とセーブはご自身の責任でどうぞ。
+Not on a Mac (CrossOver). = Mac (CrossOver) では使えません。
+Vulkan only on Proton / Wine. = Proton / Wine では Vulkan のみです。
+On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = Mac (CrossOver) では、ゲームは D3DMetal (Apple Silicon) 経由の DirectX 12 で動きます。Vulkan はそこでは起動しません。
+On a Mac (CrossOver): untested with D3DMetal. If the game doesn't start or looks wrong, use SMAA and leave HDR off. = Mac (CrossOver) では: D3DMetal で未テストです。ゲームが起動しない、または表示がおかしい場合は、SMAA を使い HDR はオフのままにしてください。
+Not on a Mac: CrossOver's Vulkan is 1.2 and the games need 1.3. DirectX 12 (D3DMetal) is used there. = Mac では使えません: CrossOver の Vulkan は 1.2 で、ゲームには 1.3 が必要です。そこでは DirectX 12 (D3DMetal) を使います。
+needs a CPU with AVX2 (Intel Haswell / AMD Ryzen, about 2013 and newer), and this PC's CPU does not report it.\n\nOn a Mac this needs macOS 15 (Sequoia) or newer, whose Rosetta runs AVX2, and an up-to-date CrossOver. = には AVX2 対応の CPU (Intel Haswell / AMD Ryzen、2013年頃以降) が必要ですが、この PC の CPU は AVX2 を報告していません。\n\nMac では、Rosetta が AVX2 を実行できる macOS 15 (Sequoia) 以降と、最新の CrossOver が必要です。
+Looking for your games in the usual Mac folders... = いつもの Mac フォルダーでゲームを探しています...
+No game copies found in the usual Mac folders. Use "Choose a folder..." or "Paste a Mac path". = いつもの Mac フォルダーにゲームのコピーが見つかりませんでした。「フォルダーを選択...」か「Mac のパスを貼り付け」を使ってください。
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\home\... is /home/...). = ディスクイメージ (.iso)、Games on Demand ファイル、タイトルアップデート、または DLC パッケージ。Linux のフォルダーは Z: の下にあります (Z:\home\... は /home/...)。
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = ディスクイメージ (.iso)、Games on Demand ファイル、タイトルアップデート、または DLC パッケージ。Mac のフォルダーは Z: の下にあります (Z:\Users\... は /Users/...)。
+A folder with your game (default.xex), a title update or DLC. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = ゲーム (default.xex)、タイトルアップデート、または DLC が入ったフォルダー。Mac のフォルダーは Z: の下にあります (Z:\Users\... は /Users/...)。
+Copy a folder's or disc image's path first (for example /Users/you/Games/Gears of War 2). = 先にフォルダーかディスクイメージのパスをコピーしてください (例: /Users/you/Games/Gears of War 2)。
+Copy a path such as /Users/you/Games/Gears of War 2 or ~/Games/gears2.iso (in Finder: right-click with Option held > Copy as Pathname), then press this. = /Users/you/Games/Gears of War 2 や ~/Games/gears2.iso のようなパスをコピーして (Finder では Option キーを押しながら右クリック > パス名をコピー)、これを押してください。
+Searches ~/Games, ~/Downloads, ~/Desktop, ~/Documents and external drives (/Volumes) for game copies, disc images and title updates. = ~/Games、~/Downloads、~/Desktop、~/Documents、外部ドライブ (/Volumes) からゲームのコピー、ディスクイメージ、タイトルアップデートを探します。
+# desktop shortcut notes under Wine: pieces, only with the page.cpp:1236/1238 change in p4
+Desktop shortcuts: in CrossOver, use Run Command, add --play = デスクトップショートカット: CrossOver で Run Command を使い、CogBox.exe の後ろに --play
+after CogBox.exe and choose Save Command as a Launcher - it starts this game straight away. = を追加して Save Command as a Launcher を選んでください - このゲームがすぐに起動します。
+Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to --play = デスクトップショートカット: CogBox.exe をもう一度 Steam に追加し、起動オプションを --play
+- it starts this game straight away. = にしてください - このゲームがすぐに起動します。
+# only with the p3 change (open_folder): "Folder: <path>" under Wine
+Folder: = フォルダー:

@@ -1347,3 +1347,26 @@ Choose a file... = 选择文件...
 Paste a path = 粘贴路径
 Import saves... = 导入存档...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = 为获得最流畅的体验，这些游戏需要下列 Title Update。详情请参阅 README。
+# 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = 开发者的作弊键，游戏中按 F5-F11（无敌模式、慢动作、自由视角 - 在 Gears 1 中可穿墙飞行 - 隐藏 HUD、全部武器）。Gears 2：仅限本机上的游戏 - 绝不在 System Link 或在线游戏中。Gears 3 和 Judgment：在你主持的 System Link 或在线游戏中也有效，慢动作等会影响每位玩家 - 请只在你自己的游戏中使用。Gears 1：尚未在 System Link 游戏中检查。成就和存档由你自己负责。
+Not on a Mac (CrossOver). = 不支持 Mac (CrossOver)。
+Vulkan only on Proton / Wine. = 在 Proton / Wine 下仅支持 Vulkan。
+On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = 在 Mac (CrossOver) 上，游戏通过 D3DMetal (Apple Silicon) 以 DirectX 12 运行。Vulkan 在那里无法启动。
+On a Mac (CrossOver): untested with D3DMetal. If the game doesn't start or looks wrong, use SMAA and leave HDR off. = 在 Mac (CrossOver) 上: 未在 D3DMetal 下测试。如果游戏无法启动或显示异常，请使用 SMAA 并保持 HDR 关闭。
+Not on a Mac: CrossOver's Vulkan is 1.2 and the games need 1.3. DirectX 12 (D3DMetal) is used there. = 不支持 Mac: CrossOver 的 Vulkan 是 1.2，而游戏需要 1.3。那里使用 DirectX 12 (D3DMetal)。
+needs a CPU with AVX2 (Intel Haswell / AMD Ryzen, about 2013 and newer), and this PC's CPU does not report it.\n\nOn a Mac this needs macOS 15 (Sequoia) or newer, whose Rosetta runs AVX2, and an up-to-date CrossOver. = 需要支持 AVX2 的 CPU（Intel Haswell / AMD Ryzen，约 2013 年及以后），而这台电脑的 CPU 未报告支持。\n\n在 Mac 上需要 macOS 15 (Sequoia) 或更新版本（其 Rosetta 可运行 AVX2）以及最新的 CrossOver。
+Looking for your games in the usual Mac folders... = 正在常用的 Mac 文件夹中查找你的游戏...
+No game copies found in the usual Mac folders. Use "Choose a folder..." or "Paste a Mac path". = 在常用的 Mac 文件夹中没有找到游戏副本。请使用“选择文件夹...”或“粘贴 Mac 路径”。
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\home\... is /home/...). = 光盘镜像 (.iso)、Games on Demand 文件、游戏更新或 DLC 包。你的 Linux 文件夹在 Z: 下 (Z:\home\... 即 /home/...)。
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = 光盘镜像 (.iso)、Games on Demand 文件、游戏更新或 DLC 包。你的 Mac 文件夹在 Z: 下 (Z:\Users\... 即 /Users/...)。
+A folder with your game (default.xex), a title update or DLC. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = 包含游戏 (default.xex)、游戏更新或 DLC 的文件夹。你的 Mac 文件夹在 Z: 下 (Z:\Users\... 即 /Users/...)。
+Copy a folder's or disc image's path first (for example /Users/you/Games/Gears of War 2). = 请先复制文件夹或光盘镜像的路径 (例如 /Users/you/Games/Gears of War 2)。
+Copy a path such as /Users/you/Games/Gears of War 2 or ~/Games/gears2.iso (in Finder: right-click with Option held > Copy as Pathname), then press this. = 复制一个路径，例如 /Users/you/Games/Gears of War 2 或 ~/Games/gears2.iso (在访达中: 按住 Option 键右键点按 > 拷贝为路径名称)，然后按这里。
+Searches ~/Games, ~/Downloads, ~/Desktop, ~/Documents and external drives (/Volumes) for game copies, disc images and title updates. = 在 ~/Games、~/Downloads、~/Desktop、~/Documents 和外置驱动器 (/Volumes) 中查找游戏副本、光盘镜像和游戏更新。
+# desktop shortcut notes under Wine: pieces, only with the page.cpp:1236/1238 change in p4
+Desktop shortcuts: in CrossOver, use Run Command, add --play = 桌面快捷方式: 在 CrossOver 中使用 Run Command，在 CogBox.exe 后添加 --play
+after CogBox.exe and choose Save Command as a Launcher - it starts this game straight away. = ，然后选择 Save Command as a Launcher - 它会直接启动这个游戏。
+Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to --play = 桌面快捷方式: 再次把 CogBox.exe 添加到 Steam，并将其启动选项设为 --play
+- it starts this game straight away. = - 这样会直接启动这个游戏。
+# only with the p3 change (open_folder): "Folder: <path>" under Wine
+Folder: = 文件夹:
