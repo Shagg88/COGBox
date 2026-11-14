@@ -720,7 +720,9 @@ void AllowCheckpointReload() {
     return;
   }
   REXLOG_INFO("mod chapters: ShouldOptionBeDisabled has no squad-slot check here (the base disc) - left as it is");
-  g_gow3ReloadRule = 2;
+#if !(defined(GOW3_TU6) && GOW3_TU6)
+  g_gow3ReloadRule = 2;   // r25: on TU6 a pattern not found means the game's own check is still there (rule 0)
+#endif
 }
 
 // [Campaign] MaxPlayers: GearGameSP_Base.AtCapacity is `return NumPlayers >= 4;` (the four squad slots; MaxPlayers is

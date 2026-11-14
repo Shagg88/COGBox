@@ -211,8 +211,11 @@ void SquadSlotLog() {
       stride = (stride + 3) & ~3;
       if (slots < 0 || ownerOff < 0 || pawnOff < 0 || ownerSize != 4 || pawnSize != 4 || stride != 8) {
         // review r23 R1: while GearGame loads, the properties can be found before they are set up - tried again later
-        if (static int warned = 0; warned++ < 3)
-          REXLOG_WARN("squad slots: GearGameSP_Base.PlayerSlots not as expected yet - tried again in 5 s (GitHub #309)");
+        static int tries = 0;   // r25: a minute of tries (the properties being set up), then not logged
+        if (++tries > 12) {
+          REXLOG_WARN("squad slots: GearGameSP_Base.PlayerSlots not as expected - not logged (GitHub #309)");
+          return;
+        }
         gameCls = 0;
         continue;
       }
@@ -252,8 +255,9 @@ void SquadSlotLog() {
       verdict = grey.empty() ? std::string("passes the squad-slot check")
                              : "greyed by the squad-slot check (slot" + grey + (rule == 1 ? ", mods' rule)" : ", game's rule)");
     }
-    if (line == last) continue;
-    last = line;
+    if (line.empty()) line = " (no squad slots)";   // r25 (r23 N4)
+    if (line + verdict == last) continue;   // r25: a change of the rule is logged too
+    last = line + verdict;
     static int lines = 0;   // a cap, as kismet_trace's
     if (++lines > 2000) continue;
     REXLOG_INFO("squad slots:{} | Reload last checkpoint {}{}", line, verdict,

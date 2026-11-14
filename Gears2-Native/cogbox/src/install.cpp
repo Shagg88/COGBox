@@ -628,10 +628,18 @@ bool dlc_dupes_checking(int g)
     return !(g_dup->done[g] && g_dup->sig[g] == g_dlcSig[g]);
 }
 
+bool dlc_dupes_running()
+{
+    std::lock_guard<std::mutex> l(g_dup->m);
+    return g_dup->running;
+}
+
 static void dlc_refresh() { for (DWORD &t : g_dlcAt) t = 0; }
 
 void dlc_remove_ask(App &a, int g, const DlcItem &item)
 {
+    // r25: the duplicate check keeps the packages' files open while it reads them - a removal then could stop half way
+    if (dlc_dupes_running()) { set_message(a, "Still checking for duplicates - try again in a moment.", false); return; }
     g_dlcRemove = item;
     g_dlcRemoveGame = g;
     ask(a, "dlcremove", g, "Remove downloadable content",

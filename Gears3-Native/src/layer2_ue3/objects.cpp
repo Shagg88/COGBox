@@ -299,10 +299,10 @@ uint32_t ClassOf(uint32_t object) { return object ? Read32(object + 52) : 0; }
 
 // Still a live object: its index (+32) points at a table slot that holds it. The garbage collector empties the slot
 // before freeing the memory, so a freed (or reused) block fails this even when its class word still looks right.
-bool IsLive(uint32_t object) {
-  if (!object || !g_objects) return false;
-  const uint32_t index = Read32(object + 32);
-  return index < g_objectCount && Read32(g_objects + 4 * index) == object;
+bool IsLive(uint32_t object) {   // r25: the table pointer and count read now (the table can grow and move)
+  if (!object || !g_objectsVar) return false;
+  const uint32_t table = Read32(g_objectsVar), count = Read32(g_objectsVar + 4), index = Read32(object + 32);
+  return table && index < count && count < 4000000 && Read32(table + 4 * index) == object;
 }
 
 uint32_t FindClassRange(const char* name, uint32_t first, uint32_t count, uint32_t* total) {

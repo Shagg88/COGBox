@@ -853,7 +853,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         // 0.2.0 (Shagg 13:18): everything dropped is handled, one after another - several DLC packages, or a folder of
         // them (a console's ...\<title ID>\00000002, or the title folder), are each added in turn. A folder that isn't a
         // game copy or a title update is searched for DLC packages.
-        if (!a.dropped.empty() && !a.modal.open && a.job.state.load() != 1) {
+        if (!a.dropped.empty() && !a.modal.open && a.job.state.load() != 1 && !dlc_dupes_running()) {   // r25: after a duplicate check
             std::string p = a.dropped.front();
             a.dropped.erase(a.dropped.begin());
             std::vector<std::string> dlc;

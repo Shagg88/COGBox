@@ -1193,9 +1193,10 @@ static void about_tab(App &a, int g)
                   dup ? "Everything in this package is also in the other one, with the same contents, so the game gets the same items twice "
                         "(for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched." : "");
         ImGui::SameLine();
-        if (busy || running) ImGui::BeginDisabled();
+        const bool off = busy || running || dlc_dupes_running();   // r25: not while the duplicate check reads the files
+        if (off) ImGui::BeginDisabled();
         if (small_button("Remove")) dlc_remove_ask(a, g, dl[i]);
-        if (busy || running) ImGui::EndDisabled();
+        if (off) ImGui::EndDisabled();
         ImGui::PopID();
     }
     if (dl.size() > 1 && dlc_dupes_checking(g)) lamp_line(0, "Checking for duplicates...");   // r22 R1: on a worker thread

@@ -179,6 +179,7 @@ void dlc_remove_ask(App &a, int game, const DlcItem &item);
 void dlc_remove_confirmed(App &a);   // the "dlcremove" question answered yes
 void dlc_remove_dupes_ask(App &a, int game);   // GitHub #283: "Remove duplicates"
 void dlc_remove_dupes_confirmed(App &a);       // the "dlcdupes" question answered yes (checked again in full on the job thread)
+bool dlc_dupes_running();                        // GitHub #283 (r25): a duplicate check is reading package files now
 bool dlc_dupes_checking(int game);             // GitHub #283 (r22 R1): the duplicate check for the listed folders is still running
 // 0.2.0: mods (mods.cpp) - <Game>\mods\<mod>\, laid out like the game's data folder
 struct ModItem {
