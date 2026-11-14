@@ -216,15 +216,22 @@ rex::input::InputSystem* Input() {
   return input;
 }
 
-// The tables and the layout, on a worker thread: every 2 s while the engine starts (the object table must hold 20,000
-// objects before it is recognised), then every 15 s; given up after ~10 minutes (a warning; triggers left alone).
+// The tables and the layout, on a worker thread: every 2 s while the engine starts, then every 15 s; given up after
+// ~12 minutes (a warning; triggers left alone). Review r18: the first class lookup (a walk of the whole name table)
+// also runs here, and the game thread starts only once that is done (g_objects_warm), so it never stalls a frame.
+std::atomic<bool> g_objects_warm{false};
 void StartObjectsInit() {
   std::thread([] {
     for (int attempt = 0; attempt < 60 && !obj::Ready(); attempt++) {
       if (obj::Init(gow2::addr::kGNamesVar, gow2::addr::kGObjectsVar)) break;
       std::this_thread::sleep_for(std::chrono::seconds(attempt < 15 ? 2 : 15));
     }
-    if (!obj::Ready()) REXLOG_WARN("adaptive triggers: the engine's object tables were not found - triggers left alone");
+    if (!obj::Ready()) {
+      REXLOG_WARN("adaptive triggers: the engine's object tables were not found - triggers left alone");
+      return;
+    }
+    obj::FindClass("BoolProperty");   // warms the name / class caches off the game thread
+    g_objects_warm.store(true, std::memory_order_release);
   }).detach();
 }
 
@@ -240,7 +247,7 @@ void Gow2AdaptiveTriggersTick() {
       StartObjectsInit();
     }
   }
-  if (!enabled || !obj::Ready()) return;
+  if (!enabled || !obj::Ready() || !g_objects_warm.load(std::memory_order_acquire)) return;
   static Clock::time_point next{};
   const Clock::time_point now = Clock::now();
   if (now < next) return;
