@@ -87,10 +87,12 @@ target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/shader_pre
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp  # GitHub #153
     ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp)  # GitHub #264: engine console commands (shared with Gears 2 / 3)
+    ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp  # GitHub #264: engine console commands (shared with Gears 2 / 3)
+    ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp)  # GitHub #245: Gears 2's ue3::obj reflection (Judgment has no other)
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp PROPERTIES
+    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp
+    ${GN_LAYER0_HOME}/src/layer2_ue3/objects.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 # its options are saved under Judgment's settings group
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_CONSOLE_JUDGMENT=1)
@@ -104,7 +106,12 @@ set(GOWJ_SOURCES
     src/layer3_gowj/profile_log.cpp
     src/layer3_gowj/freeze_watchdog.cpp
     src/layer3_gowj/cheats.cpp  # GitHub #264: --gowj_cheats
+    src/layer3_gowj/adaptive_triggers.cpp  # GitHub #245: DualSense trigger feel per weapon (--pad_adaptive_triggers)
 )
+# ue3/objects.h is Gears 2's (its objects.cpp is built in layer 2 above); only this file gets that folder, so this
+# game's own ue3/ headers are not shadowed.
+set_source_files_properties(src/layer3_gowj/adaptive_triggers.cpp PROPERTIES
+    INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 if(WIN32)
     add_executable(gowj WIN32 ${GOWJ_SOURCES})
 else()

@@ -1,14 +1,17 @@
 // Layer 2 (Unreal Engine 3): reading the engine's objects in guest memory - names, classes, properties - for code that
-// works with them by name (Gears 2's DualSense adaptive triggers, GitHub #245). Gears1-Native's ue3/objects.h (the
+// works with them by name (Gears 2's and Judgment's DualSense adaptive triggers, GitHub #245). Gears1-Native's ue3/objects.h (the
 // engine's object layout as data, found in memory by Discover unless given) with Gears3-Native's slice-at-a-time
 // lookups (FindClassRange, FindInstancesOfRange) and PropertyType. From KiltedKernel's Gears 3 port. Our code (MIT).
-// Only Gears 2 builds this file (Gears 1 and 3 have their own; Judgment none) - no shared layer 2 source includes it.
+// Gears 2 and Judgment build this file (Judgment from here, with this include folder on objects.cpp and its
+// adaptive_triggers.cpp only; Gears 1 and 3 have their own) - no other shared layer 2 source includes it.
 //   FNameEntry  {u32 Index (= n * 2, bit 0 = 16-bit text), u32 HashNext, char Name[]} (text at Layout::name_text);
 //               GNames = TArray of entry pointers, its first names the engine's hardcoded ones (None, ByteProperty...)
 //   UObject     ObjectInternalInteger (its own GObjObjects slot), Outer, Name (index, number), Class
 //   UStruct     SuperStruct, Children (first UField; UField Next); UProperty ElementSize, Offset; UBoolProperty BitMask
 // Gears 2 (2008) [code]: slot +4, Name +44 (index, number), Class +52, SuperStruct +60, FNameEntry text +8 - the rest is
 // found at start-up (Discover) and logged ("ue3 objects: layout found: ...").
+// Judgment (2013): Gears 3's layout, given by its caller (layer3_gowj/adaptive_triggers.cpp) - Discover is not used
+// there (with the slot at +32 its Outer search could take ObjectArchetype at +56).
 // Every read is checked (an address that isn't committed reads as 0); safe from any thread.
 #pragma once
 

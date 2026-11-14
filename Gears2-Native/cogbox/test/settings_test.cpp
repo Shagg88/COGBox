@@ -29,7 +29,7 @@ std::vector<std::string> split(const std::string& s, char c) {
 }
 
 std::string exe_needle(const std::string& alias, int g) {
-    static const char* proc[3] = { "gow2", "gow3", "gowj" };
+    static const char* proc[4] = { "gow2", "gow3", "gowj", "gow1" };
     if (alias == "fif") return "gow2_renderer_frames_in_flight";
     if (alias == "ups") return "gow2_upscale_mode";
     if (alias == "fg") return "gow2_frame_generation";
@@ -40,6 +40,11 @@ std::string exe_needle(const std::string& alias, int g) {
     if (alias == "edits") return "'file|section|~=old>new'";
     if (alias == "avx") return "gn_cpu_level=x86-64-v";
     if (alias == "adt") return g == 0 ? "Gears 2 weapon feel for DualSense pads" : "Gears 3 weapon feel for DualSense pads";   // GitHub #245
+    if (alias == "adtg") {   // GitHub #245: each game's own needle (Judgment, Gears 1 too)
+        static const char* adt[4] = { "Gears 2 weapon feel for DualSense pads", "Gears 3 weapon feel for DualSense pads",
+                                      "Judgment weapon feel for DualSense pads", "Gears 1 weapon feel for DualSense pads" };
+        return adt[g];
+    }
     return alias;
 }
 std::string rt_needle(const std::string& a) {
@@ -71,11 +76,11 @@ Case parse_case(const std::string& line) {
     }
     int g = kv.count("game") ? std::atoi(kv["game"].c_str()) : 0;
     c.g = static_cast<Game>(g);
-    const char* roots[3] = { "C:\\P\\Gears2-Native", "C:\\P\\Gears3-Native", "C:\\P\\GearsJ-Native" };
+    const char* roots[4] = { "C:\\P\\Gears2-Native", "C:\\P\\Gears3-Native", "C:\\P\\GearsJ-Native", "C:\\P\\Gears1-Native" };
     const std::string root = roots[0];   // the PS1's $root: saves, logs and shader caches live in Gears2-Native\out
-    const char* udirs[3] = { "\\out\\userdata", "\\out\\gears3-userdata", "\\out\\judgment-userdata" };
-    const char* pre[3] = { "", "gears3-", "judgment-" };
-    const char* tus[3] = { "\\game\\tu6\\package", "\\game\\tu6\\package", "\\game\\tu4\\package" };
+    const char* udirs[4] = { "\\out\\userdata", "\\out\\gears3-userdata", "\\out\\judgment-userdata", "\\out\\gears1-userdata" };
+    const char* pre[4] = { "", "gears3-", "judgment-", "gears1-" };
+    const char* tus[4] = { "\\game\\tu6\\package", "\\game\\tu6\\package", "\\game\\tu4\\package", "\\game\\tu5\\package" };
     Environment& e = c.env;
     e.game_data_root = std::string(roots[g]) + "\\game\\extracted";
     e.update_data_root = std::string(roots[g]) + tus[g];
@@ -151,7 +156,11 @@ const char* const k_builtin[] = {
     "game=2;Resolution=4;Fullscreen=0;WindowSize=5;Mnk=1;Sens=0.1;DeadZone=5;Vibration=0;Monitor=1;screens=1;HDR=1",
     "game=0;AdaptiveTriggers=1;exe=adt;rt=adt",   // GitHub #245, Gears 2: sent
     "game=0;AdaptiveTriggers=1;rt=adt",           // Gears 2 exe without the weapon table: greyed, not sent
-    "game=2;AdaptiveTriggers=1;exe=adt;rt=adt",   // Judgment: not yet, not sent
+    "game=2;AdaptiveTriggers=1;exe=adt;rt=adt",   // Judgment exe without its own weapon table (Gears 3's needle): not sent
+    "game=2;AdaptiveTriggers=1;exe=adtg;rt=adt",  // GitHub #245, Judgment: sent
+    "game=2;AdaptiveTriggers=1;exe=adtg",         // Judgment, runtime without patch 98: greyed, not sent
+    "game=3;AdaptiveTriggers=1;exe=adtg;rt=adt",  // GitHub #245, Gears 1: sent
+    "game=3;AdaptiveTriggers=1;rt=adt",           // Gears 1 exe without the weapon table: greyed, not sent
 };
 
 std::string random_case(std::mt19937& r) {

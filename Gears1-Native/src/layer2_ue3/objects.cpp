@@ -481,6 +481,13 @@ bool Write8(uint32_t address, uint8_t value) {
 }
 
 std::string Name(uint32_t index) {
+  // GitHub #245 (as Gears2-Native's): the names array moves as it grows (a level's new names), so with the engine's
+  // globals given it is read again, at most twice a second per thread (a no-op when the tables were searched for)
+  static thread_local auto last = std::chrono::steady_clock::time_point{};
+  if (g_ready && std::chrono::steady_clock::now() - last > std::chrono::milliseconds(500)) {
+    Refresh();
+    last = std::chrono::steady_clock::now();
+  }
   if (!g_names || index > 2000000) return {};
   return EntryName(Read32(g_names + 4 * index));
 }

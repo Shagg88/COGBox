@@ -101,6 +101,7 @@ set(GOW1_SOURCES
     src/layer3_gow1/mouse_look.cpp
     src/layer3_gow1/unlocks.cpp
     src/layer3_gow1/cheats.cpp  # GitHub #264: --gow1_cheats
+    src/layer3_gow1/adaptive_triggers.cpp  # GitHub #245: DualSense trigger feel per weapon (--pad_adaptive_triggers)
 )
 if(WIN32)
     add_executable(gow1 WIN32 ${GOW1_SOURCES})

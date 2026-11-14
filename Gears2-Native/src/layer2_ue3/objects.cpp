@@ -1,7 +1,8 @@
 // Layer 2 (Unreal Engine 3): the engine's objects in guest memory (ue3/objects.h). Gears1-Native's objects.cpp (the
 // object layout as data, found in memory) for Gears of War 2, with Gears3-Native's slice-at-a-time lookups. Gears 2
 // passes its GNames / GObjObjects globals (layer3_gow2/gow2_addresses.h); the slot field is found from the table and the
-// rest of the layout by Discover. From KiltedKernel's Gears 3 port. Our code (MIT).
+// rest of the layout by Discover. Judgment builds this file too (GearsJ-Native/CMakeLists.txt; its globals and
+// layout, given - no Discover - in layer3_gowj/adaptive_triggers.cpp). From KiltedKernel's Gears 3 port. Our code (MIT).
 #include <ue3/objects.h>
 
 #include <rex/logging/macros.h>

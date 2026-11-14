@@ -451,8 +451,8 @@ std::vector<Option> make_options(Game g) {
                "keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up "
                "down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=.", 0), "padlayout");
     add(make("Vibration", "Controller vibration", Tab::Controls, Kind::Bool, SH, 1, "The controller's rumble.", 383));   // no PS1 tooltip
-    // GitHub #245 (SDK patch 98, --pad_adaptive_triggers): the game sets the DualSense's trigger feel per weapon. Gears 2
-    // and Gears 3; per game, off by default.
+    // GitHub #245 (SDK patch 98, --pad_adaptive_triggers): the game sets the DualSense's trigger feel per weapon. All
+    // four games, each when its exe has the weapon table; per game, off by default.
     add(make("AdaptiveTriggers", "DualSense adaptive triggers", Tab::Controls, Kind::Bool, PG, 0,
              "PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon "
              "in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on "
@@ -820,10 +820,12 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         // nothing there (an unchecked swap crashed the game while loading) - greyed until the reader knows Gears 1
         if (g == Game::Gears1) return no(not_yet(gi, "its voice files can't be checked yet (GitHub #176)"));
     } else if (f == "adaptivetriggers") {   // GitHub #245: the runtime's pad_adaptive_triggers (SDK patch 98) and the
-        // game's weapon table (its log line, a long literal; short names can be split - cap_exe). Gears 3, then Gears 2.
-        if (g != Game::Gears3 && g != Game::Gears2) return no(not_yet(gi));
-        if (!cap_rt(env, "DualSense adaptive triggers: games that support it") ||
-            !cap_exe(env, g == Game::Gears2 ? "Gears 2 weapon feel for DualSense pads" : "Gears 3 weapon feel for DualSense pads"))
+        // game's weapon table (its log line, a long literal; short names can be split - cap_exe). Gears 3, then Gears 2,
+        // then Judgment and Gears 1.
+        static const char* const k_weaponFeel[kGameCount] = {
+            "Gears 2 weapon feel for DualSense pads", "Gears 3 weapon feel for DualSense pads",
+            "Judgment weapon feel for DualSense pads", "Gears 1 weapon feel for DualSense pads"};
+        if (!cap_rt(env, "DualSense adaptive triggers: games that support it") || !cap_exe(env, k_weaponFeel[gi]))
             return no(not_yet(gi, "needs its next build"));
     } else if (f == "padlayout") {   // GitHub #95 / #97: SDK patch 55
         if (!cap_rt(env, "pad_remap")) return no(not_yet(gi, "needs the next runtime (SDK patch 55)"));
