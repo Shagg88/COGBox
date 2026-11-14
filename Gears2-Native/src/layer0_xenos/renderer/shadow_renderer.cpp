@@ -13504,7 +13504,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         rt->scale == up_depth_scale_ && IsSceneColourResolve(info, *rt)) {
       if (up_active_ && !up_scene_done_) {
         ssil_pending_ = rt;  // decided below: only if the copy picker takes this copy
-      } else {
+      } else if (!up_active_) {
+        // Review r13 (PR #303): with the upscaler path active and its scene copy already taken, a later copy would get
+        // the indirect light without motion vectors and not be the copy the upscaler used - so only without it.
         ssil_done_frame_ = true;
         if (RunSsil(*rt, 0, 0, 0, true)) ssil_tex = ssil_out_, ++ssil_runs_;
         else ++ssil_misses_;
