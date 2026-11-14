@@ -1,0 +1,20 @@
+diff --git a/src/system/xthread.cpp b/src/system/xthread.cpp
+index d92e9a4..3d2e992 100644
+--- a/src/system/xthread.cpp
++++ b/src/system/xthread.cpp
+@@ -481,7 +481,14 @@ X_STATUS XThread::Create() {
+   }
+ 
+   if (creation_params_.creation_flags & 0x60) {
+-    thread_->set_priority(creation_params_.creation_flags & 0x20 ? 1 : 0);
++    // COGBox SDK patch 96 (GitHub #288): on a PC with fewer logical processors than the console's six hardware threads, the
++    // guest threads are not pinned (no affinities) and share the few host threads; an above-normal one that polls can
++    // then keep normal ones (the game / render threads) off every core. There, honour --ignore_thread_priorities here
++    // too (its default, true, already applies to every later priority change); 6+ processors: as before.
++    const bool few_cpus = rex::thread::logical_processor_count() < 6;
++    if (!(few_cpus && REXCVAR_GET(ignore_thread_priorities))) {
++      thread_->set_priority(creation_params_.creation_flags & 0x20 ? 1 : 0);
++    }
+   }
+ 
+   // Assign the newly created thread to the logical processor, and also set up
