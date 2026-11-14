@@ -31,6 +31,7 @@ https://recomplauncher.com/game/cogbox
   hid the option for Gears 1. It's now offered like in the other three games (Gameplay > Original unlock rules off).
 - **The tested versions are shown:** each game's About tab and the title-update notice name the game and title-update
   versions COGBox is made for, and how many other copies players have reported working. The README lists them too.
+- **Japanese discs:** the Japanese Gears of War 2 and Gears of War: Judgment discs now count as tested (no "untested version" notice), and the Japanese Gears 2 disc is recognised as Gears 2 when you drop it on COGBox.
 
 ### Vulkan
 - **Vulkan's first-play shader freezes are gone.** Playing a chapter for the very first time (no shaders built yet,
@@ -62,7 +63,7 @@ https://recomplauncher.com/game/cogbox
   | Gears 2 | 148 to 174 fps (**+17%**) | 123 to 169 fps (**+38%**) |
   | Gears 3 | 93 to 101 fps (**+8%**) | 104 to 97 fps (-7%) |
   | Gears 1 | about the same | 123 to 117 fps (-5%) |
-- **Vulkan is much faster once a game has loaded** (Windows; still experimental). Vulkan now skips everything the camera can't see ("real occlusion"), as DirectX 12 already did. Not yet under Proton / Wine, where real occlusion still has to be tested.
+- **Vulkan is much faster once a game has loaded** (Windows; still experimental). Vulkan now skips everything the camera can't see ("real occlusion") in Gears 2, Gears 3 and Judgment, as DirectX 12 already did (Gears 1 keeps it off on both). Not yet under Proton / Wine, where real occlusion still has to be tested.
 - **Vulkan, for testers:** a shader optimiser and an on-disk store for converted shaders are in this version but switched OFF (`--gow2_renderer_vulkan_spirv_optimise=true` and `--gow2_renderer_vulkan_spirv_store=true` in `extra-args.txt`). They halve the graphics driver's work per new shader pair (364 to 195 ms on an RTX 3080 Ti) and later start-up waits, but as wired today they make the first start much longer, so they stay off until Vulkan shaders are prepared in the background.
 - **If a first play still stutters on your PC** (slower processors and graphics cards build shaders more slowly), "Prepare all shaders now" on a game's Graphics tab does all of that work up front.
 - **The graphics card no longer waits for the whole frame.** It now starts on each frame while the rest of it is still being prepared, instead of sitting idle until everything is ready. No setting to change. (`--gow2_renderer_submit_draws=0` in `extra-args.txt` turns the early start off if it ever causes a problem.)
@@ -80,6 +81,8 @@ https://recomplauncher.com/game/cogbox
 - **Show ping** (Display tab): your ping to the host of the online match or party, in the FPS bar, or in a bar of its own when the FPS counter is off. When you host, it shows the worst ping among your players.
 
 ### Fixes
+- **DirectX 12 on graphics cards with Shader Model 6.5:** COGBox no longer refuses to start with "Shader Model 6.6 is not available"; it runs with Shader Model 6.5 shaders instead (cards and drivers that have 6.6 are unchanged).
+- **Gears 3: the path choice follows its prompts with a mouse again** - the left mouse button (fire) had picked the right-hand path; the swap is on by default again (by KiltedKernel).
 - **Gears 3:** a crash with a "disc read error" when a level or a Horde match starts should be gone (the game was told that parts of the disc had failed a check that has no meaning here). GitHub #271.
 - Mods added from a `.zip` unpack into the mod's own folder.
 - The updater refuses oversized downloads and duplicate files in an update.
