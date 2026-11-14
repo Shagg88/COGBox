@@ -331,6 +331,37 @@ bool IsA(uint32_t object, uint32_t cls) {
 
 namespace {
 // "Name" or "Name_<n>" -> (name index, number): the names table searched once per string; -1 when not (yet) a name
+uint32_t FindClassRange(const char* name, uint32_t first, uint32_t count, uint32_t* total) {
+  {
+    std::lock_guard lock(g_mutex);
+    auto it = g_classCache.find(name);
+    if (it != g_classCache.end()) {
+      if (total) *total = g_objectCount;
+      return it->second;
+    }
+  }
+  Refresh();
+  ExtendCount();
+  if (total) *total = g_objectCount;
+  uint32_t index = 0, number = 0, classIndex = 0, classNumber = 0;
+  if (first >= g_objectCount || !NameKey(name, &index, &number) || !NameKey("Class", &classIndex, &classNumber)) return 0;
+  count = std::min(count, g_objectCount - first);
+  std::vector<uint32_t> table(count);
+  if (!count || !Copy(g_objects + 4 * first, table.data(), table.size() * 4)) return 0;
+  uint32_t found = 0;
+  for (uint32_t raw : table) {
+    const uint32_t o = Swap(raw);
+    if (!o || Read32(o + 44) != index || Read32(o + 48) != number) continue;
+    const uint32_t c = ClassOf(o);
+    if (c && Read32(c + 44) == classIndex) { found = o; break; }
+  }
+  if (found) {
+    std::lock_guard lock(g_mutex);
+    g_classCache[name] = found;
+  }
+  return found;
+}
+
 bool NameKey(const std::string& full, uint32_t* index, uint32_t* number) {
   // every name read so far, by text: the table only grows, so each call reads only the names added since the last
   // (a name looked up before it exists - Default__GearTypes while GearGame.xxx loads - costs little to ask again)

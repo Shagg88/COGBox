@@ -27,6 +27,7 @@
 #include "main_menu_exit.h"
 
 #include <algorithm>
+#include <tuple>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -424,25 +425,33 @@ void Gow3PathChoiceTick() {
   // 0.4.6 freeze (Shagg 11-06: Gears 3 stopped at the menu): FindClass caches hits only, so while
   // UIScene_PathChoice is not loaded (the menus) every call scanned all ~168,000 objects through checked reads -
   // four times a second, which stalled the game thread to a standstill (so did the full FindInstancesOf per call).
-  // A miss is now retried every 5 s, and the instances are found by a scan spread over calls (below).
-  using Clock = std::chrono::steady_clock;
-  static Clock::time_point next_class{};
+  // A miss was then retried every 5 s (a full scan, still a hitch); 0.6.2 spreads the class search over calls as well,
+  // and the instances are found by a scan spread over calls (below).
   static std::vector<uint32_t> instances;
-  const Clock::time_point now = Clock::now();
   // the campaign's scene is UIScene_PathChoiceContent (GearGameContent), which does not derive from GearGame's
   // UIScene_PathChoice: watching only the latter, the swap never came (2026-11-11: left mouse picked the right path)
   static uint32_t content = 0;
-  if (!content && scene && now >= next_class) {
-    next_class = now + std::chrono::seconds(5);
-    content = obj::FindClass("UIScene_PathChoiceContent");
+  // 0.6.2 (0.6.1 review of #277): a class that is not loaded yet is looked for 16384 table slots per call, like the
+  // instances below, not by a full scan of all ~168,000 objects every 5 s (three of them per try: a hitch each time).
+  static uint32_t class_cursor = 0, movie = 0;
+  const auto class_step = [&](const char* name) {
+    uint32_t total = 0;
+    const uint32_t c = obj::FindClassRange(name, class_cursor, 16384, &total);
+    return std::make_pair(c, total);
+  };
+  if (!content && scene) {
+    const auto [c, total] = class_step("UIScene_PathChoiceContent");
+    content = c;
+    class_cursor = c || class_cursor + 16384 >= total ? 0 : class_cursor + 16384;
   }
   if (!scene) {
-    if (now < next_class) return;
-    next_class = now + std::chrono::seconds(5);
-    const uint32_t movie = obj::FindClass("GFxMoviePlayer");
-    scene = obj::FindClass("UIScene_PathChoice");
-    content = obj::FindClass("UIScene_PathChoiceContent");
+    uint32_t total = 0;
+    if (!movie) std::tie(movie, total) = class_step("GFxMoviePlayer");
+    if (!scene) { const auto r = class_step("UIScene_PathChoice"); scene = r.first; total = std::max(total, r.second); }
+    if (!content) { const auto r = class_step("UIScene_PathChoiceContent"); content = r.first; total = std::max(total, r.second); }
+    class_cursor = class_cursor + 16384 >= total ? 0 : class_cursor + 16384;
     if (!movie || !scene) { scene = 0; return; }
+    class_cursor = 0;
     flags = obj::PropertyOffset(movie, "bMovieIsOpen");
     open_mask = obj::BoolMask(movie, "bMovieIsOpen");
     input_mask = obj::BoolMask(movie, "bAllowInput");

@@ -30,6 +30,10 @@ std::string Name(uint32_t index);
 std::string ObjectName(uint32_t object);              // "Name" or "Name_<n>"
 uint32_t ClassOf(uint32_t object);
 uint32_t FindClass(const char* name);                 // the UClass object
+// 0.6.2 (0.6.1 review of #277): FindClass over table slots [first, first + count) only - for a class that may not be
+// loaded yet, so a caller polling for it spreads each pass over several frames instead of scanning all ~168,000
+// objects per miss. A hit is cached like FindClass's. *total = the table's slot count now.
+uint32_t FindClassRange(const char* name, uint32_t first, uint32_t count, uint32_t* total);
 bool IsA(uint32_t object, uint32_t cls);              // object's class is cls or derives from it
 uint32_t FindObject(const char* name);                // the first object of that name (Default__X included)
 std::vector<uint32_t> FindInstancesOf(uint32_t cls);  // every non-default instance of cls or a subclass
