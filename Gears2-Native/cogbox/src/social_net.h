@@ -25,10 +25,15 @@ bool update_account_name(const std::string& identity_dir_utf8, const std::string
 std::optional<SocialAccount> read_account_partial(const std::string& identity_dir_utf8);
 // The whole account written over identity.json (new file, swapped in) - for a claim that completed a token-less file.
 bool write_account_replace(const std::string& identity_dir_utf8, const SocialAccount& a);
-// identity.json set aside as identity.json.<suffix> (kept, never deleted); true when there is no identity.json after.
+// identity.json set aside as identity.json.<suffix>-<date-time> (kept, never deleted or replaced); true when there is
+// no identity.json after.
 bool set_account_aside(const std::string& identity_dir_utf8, const std::string& suffix);
 // Whether a file can be made in the profile folder (tried with a scratch file, removed again).
 bool account_dir_writable(const std::string& identity_dir_utf8);
+// identity.json's read-only flag cleared (a game or a copy may have set it).
+void clear_account_read_only(const std::string& identity_dir_utf8);
+// Seconds since identity.json was last written; -1 when there is none (a date in the future counts as long ago).
+int account_file_age_seconds(const std::string& identity_dir_utf8);
 
 // The COGBox multiplayer server (Flippage's Oracle VM; Shagg agreed 2026-11-08). CogBox.ini [Online] Server overrides.
 constexpr const char* kCogboxServer = "https://cogbox-mp.duckdns.org";

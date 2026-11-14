@@ -723,13 +723,14 @@ static void option_row(App &a, int g, const gs::Option &o)
         // Shagg 3 Nov: on Proton / Wine Vulkan is the recommended path (DirectX 12 crashes there), so not "experimental"
         if (o.id == "Api" && a.env[g].wine && items.size() > 1 && items[1] == "Vulkan (experimental)") { items[0] = "DirectX 12"; items[1] = "Vulkan"; }
         for (std::string &it : items) it = tr(it);   // 0.2.0
-        // 0.6.2 Proton review (R11): settings from Windows say DirectX 12, but "Graphics API on Proton / Wine" = Automatic
-        // runs Vulkan - say what the game will actually run
-        if (o.id == "Api" && a.env[g].wine && !a.env[g].mac && idx == 0 && !items.empty() && gs::runs_vulkan(a.cur[g], a.env[g]))
-            items[0] += std::string(" ") + tr("(Proton runs Vulkan)");
         // notes/83: AMD FSR frame generation runs on Vulkan too, experimental there
         if (o.id == "FrameGen" && items.size() > 1 && gs::runs_vulkan(a.cur[g], a.env[g])) items[1] += std::string(" ") + tr("(experimental on Vulkan)");
-        if (ImGui::BeginCombo("##v", items.empty() ? "" : items[idx].c_str())) {
+        // 0.6.2 Proton review (R11): settings from Windows say DirectX 12, but "Graphics API on Proton / Wine" = Automatic
+        // runs Vulkan - the closed box says what the game will actually run
+        std::string preview = items.empty() ? std::string() : items[idx];   // (the closed box; the list keeps the plain names)
+        if (o.id == "Api" && a.env[g].wine && a.proton.proton && !a.env[g].mac && idx == 0 && gs::runs_vulkan(a.cur[g], a.env[g]))
+            preview += std::string(" ") + tr("(Proton runs Vulkan)");
+        if (ImGui::BeginCombo("##v", preview.c_str())) {
             // 0.2.1: Render resolution lists 1080p in size order; the saved value is still the original index
             std::vector<int> ord;
             for (int i = 0; i < (int)items.size(); i++) ord.push_back(i);

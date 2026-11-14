@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <winhttp.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -93,11 +94,35 @@ bool write_account_replace(const std::string& identity_dir_utf8, const SocialAcc
 
 bool set_account_aside(const std::string& identity_dir_utf8, const std::string& suffix) {
     const std::filesystem::path file = identity_file(identity_dir_utf8);
-    std::filesystem::path aside = file;
-    aside += widen("." + suffix);
-    MoveFileExW(file.c_str(), aside.c_str(), MOVEFILE_REPLACE_EXISTING);
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char stamp[32];
+    snprintf(stamp, sizeof stamp, "-%04u%02u%02u-%02u%02u%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    for (int k = 0; k < 100; k++) {   // never over an earlier one (two in one second: -2, -3 ...)
+        std::filesystem::path aside = file;
+        aside += widen("." + suffix + stamp + (k ? "-" + std::to_string(k + 1) : std::string()));
+        if (MoveFileExW(file.c_str(), aside.c_str(), 0)) break;
+        if (GetLastError() != ERROR_ALREADY_EXISTS && GetLastError() != ERROR_FILE_EXISTS) break;
+    }
     std::error_code ec;
     return !std::filesystem::exists(file, ec);
+}
+
+void clear_account_read_only(const std::string& identity_dir_utf8) {
+    const std::wstring f = identity_file(identity_dir_utf8).wstring();
+    const DWORD at = GetFileAttributesW(f.c_str());
+    if (at != INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_READONLY)) SetFileAttributesW(f.c_str(), at & ~FILE_ATTRIBUTE_READONLY);
+}
+
+int account_file_age_seconds(const std::string& identity_dir_utf8) {
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExW(identity_file(identity_dir_utf8).c_str(), GetFileExInfoStandard, &d)) return -1;
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    const unsigned long long a = (unsigned long long)d.ftLastWriteTime.dwHighDateTime << 32 | d.ftLastWriteTime.dwLowDateTime;
+    const unsigned long long b = (unsigned long long)now.dwHighDateTime << 32 | now.dwLowDateTime;
+    if (a > b + 600000000ULL) return 1 << 30;   // over a minute in the future: a clock set back - counts as old
+    return b <= a ? 0 : (int)std::min<unsigned long long>((b - a) / 10000000ULL, 1u << 30);
 }
 
 bool account_dir_writable(const std::string& identity_dir_utf8) {

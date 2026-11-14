@@ -12,9 +12,9 @@ namespace {
 std::mutex g_name_mu;
 std::string g_claim_name;   // the profile's name for a claim (SAVE NAME changes it before the claim is made)
 
-// The launcher's account: the profile's identity.json (a game may have made it), else ONE claim under the profile's
-// name. Kept in memory even when the file can't be written: never a second account. Retried only when the server did
-// not answer (no account was made then).
+// The launcher's account: the profile's identity.json (a game may have made it, or left it without its token), else
+// ONE claim under the profile's name, used only once it is saved there (0.6.2, GitHub #302). Asked again on later
+// calls while a game may be writing the file or the server did not answer.
 struct LauncherAccount {
     std::mutex mu;
     std::optional<ServerUrl> url;
@@ -44,17 +44,28 @@ SocialBackend launcher_backend(const std::string& server_url, const std::string&
         }
         if (n.empty()) n = "Player";
         // 0.6.2 GitHub #302 (a new #number - a new account - every start, friends gone): an account the launcher can't
-        // keep in identity.json is a new one at every start. Two ways that happened:
-        // 1. identity.json without its token: a game writes the file before its claim, and a claim that never completed
-        //    (server not reached, game closed) leaves it so. The launcher's own claim then failed to write ("wx": the
-        //    file exists) and ran on an account kept in memory only. Now the launcher completes that file: a claim for
-        //    its uuid (the server makes the account under it, with a token) written over the file. If the server already
-        //    knows that uuid (its token is lost), the file is set aside (kept) and a new account is made and saved.
-        // 2. A profile folder that can't be written: no claim at all (each start would leave another account on the
-        //    server) - the reason is shown on the Social tab instead.
+        // keep in identity.json is a new one at every start, so the launcher never runs on an account it hasn't saved:
+        // 1. A folder that can't be written: no claim at all (each start would leave another account on the server);
+        //    the reason is shown on the Social tab.
+        // 2. identity.json without its token: a game writes the file before its claim, and a claim that never completed
+        //    (server not reached, game closed) leaves it so. The launcher completes it with a claim for its own uuid. A
+        //    file changed in the last 30 s is left alone (a game's claim may be on its way; this is asked again later).
+        //    If the server already knows that uuid and the file still has no token, it is set aside (kept) and a new
+        //    account is made.
+        // 3. An unreadable identity.json is set aside (kept) before a new account is made.
+        if (!account_dir_writable(st->dir)) {
+            st->given_up = true;
+            st->error = "COGBox can't save the online account in the profile folder (" + st->dir + "), so friends would be "
+                        "lost at every start. Move COGBox to a folder you can write to (not Program Files).";
+            return st->acc;
+        }
+        const int age = account_file_age_seconds(st->dir);
         if (auto part = read_account_partial(st->dir); part && part->token.empty()) {
+            if (age >= 0 && age < 30) return st->acc;   // a game may be claiming it right now
+            clear_account_read_only(st->dir);   // r6 RC2: a read-only file would take the claim and not its token
             const std::string body = nlohmann::json{ { "uuid", part->uuid }, { "display_name", n } }.dump();
             const HttpResult r = social_http(*st->url, { "POST", "/api/v1/auth/claim", body }, nullptr);
+            if (auto f = read_account(st->dir)) { st->acc = f; return st->acc; }   // a game completed it meanwhile: its own
             if (auto c = r.status == 200 ? parse_claim(r.body) : std::nullopt) {
                 if (!write_account_replace(st->dir, *c)) {
                     st->given_up = true;
@@ -72,24 +83,33 @@ SocialBackend launcher_backend(const std::string& server_url, const std::string&
                 }
                 return st->acc;
             }
+            const auto again = read_account_partial(st->dir);
+            if (!again || again->uuid != part->uuid || !again->token.empty()) return st->acc;   // changed meanwhile: look again later
             if (!set_account_aside(st->dir, "no-token")) {
                 st->given_up = true;
                 st->error = "The profile's online account file can't be replaced (" + st->dir + "\\identity.json).";
                 return st->acc;
             }
-        }
-        if (!account_dir_writable(st->dir)) {
-            st->given_up = true;
-            st->error = "COGBox can't save the online account in the profile folder (" + st->dir + "), so friends would be "
-                        "lost at every start. Move COGBox to a folder you can write to (not Program Files).";
-            return st->acc;
+        } else if (!part && age >= 0) {   // there, but unreadable (or not an account)
+            // (a file dated in the future - a clock set back - counts as old)
+            if (age < 30) return st->acc;   // (a game may be writing it)
+            if (!set_account_aside(st->dir, "unreadable")) {
+                st->given_up = true;
+                st->error = "The profile's online account file can't be read or replaced (" + st->dir + "\\identity.json).";
+                return st->acc;
+            }
         }
         const std::string body = nlohmann::json{ { "display_name", n } }.dump();
         const HttpResult r = social_http(*st->url, { "POST", "/api/v1/auth/claim", body }, nullptr);
         if (auto c = r.status == 200 ? parse_claim(r.body) : std::nullopt) {
             if (!write_account_exclusive(st->dir, *c)) {
-                if (auto f = read_account(st->dir)) c = f;   // a game made one at the same moment: its own wins
-                else if (!write_account_replace(st->dir, *c)) st->error = "Couldn't save the online account in the profile folder.";
+                // a game made one at the same moment: its own wins (a token-less one is completed on a later call)
+                if (auto f = read_account(st->dir)) st->acc = f;
+                else if (!read_account_partial(st->dir)) {   // r6 RC1: nothing usable there and it can't be made - never claim again
+                    st->given_up = true;
+                    st->error = "Couldn't save the online account in the profile folder (" + st->dir + "\\identity.json).";
+                }
+                return st->acc;
             }
             st->acc = c;
         } else if (!claim_retry(r.status)) {

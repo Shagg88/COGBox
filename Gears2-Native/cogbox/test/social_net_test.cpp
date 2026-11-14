@@ -99,9 +99,14 @@ int main() {
         CHECK(full.has_value() && full->tag() == "Tavo#1234" && full->token == "t2" && full->uuid == "u2");
         CHECK(account_dir_writable(p));
         CHECK(!fs::exists(dir / "partial" / "identity.write-test.tmp"));
+        CHECK(account_file_age_seconds(p) >= 0 && account_file_age_seconds(p) < 30);
         CHECK(set_account_aside(p, "no-token"));
-        CHECK(!fs::exists(dir / "partial" / "identity.json") && fs::exists(dir / "partial" / "identity.json.no-token"));
+        CHECK(!fs::exists(dir / "partial" / "identity.json"));
+        int asides = 0;
+        for (const auto& e : fs::directory_iterator(dir / "partial")) asides += e.path().filename().wstring().rfind(L"identity.json.no-token-", 0) == 0;
+        CHECK(asides == 1);
         CHECK(!read_account_partial(p).has_value());
+        CHECK(account_file_age_seconds(p) == -1);
     }
     fs::remove_all(dir);
     if (g_failures == 0) std::printf("social_net_test: all passed\n");
