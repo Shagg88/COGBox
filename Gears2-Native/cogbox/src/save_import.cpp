@@ -111,6 +111,8 @@ bool within(const fs::path &a, const fs::path &b) {
 struct Work {
     uint32_t title = 0;
     std::string title_hex;          // lower case
+    std::vector<uint32_t> from_titles;      // title IDs whose saves are taken: the game's own + its regional copies
+    std::vector<std::string> from_hex;      // the same, lower-case hex
     fs::path stage;                 // <user dir>\_import-<stamp>: saves\<name>\..., settings\<ID>, tmp\...
     std::vector<fs::path> skip;     // COGBox's own user folders (never a source)
     Result *r = nullptr;
@@ -120,6 +122,12 @@ struct Work {
     std::vector<std::string> taken_settings;
 };
 
+// <TITLE>.gpd of the game or of one of its regional copies
+bool is_from_gpd(const Work &w, const std::string &file_name) {
+    const std::string n = lower(file_name);
+    for (const std::string &h : w.from_hex) if (n == h + ".gpd") return true;
+    return false;
+}
 void note_once(Work &w, const std::string &n) {
     if (std::find(w.r->notes.begin(), w.r->notes.end(), n) == w.r->notes.end()) w.r->notes.push_back(n);
 }
@@ -152,7 +160,8 @@ void take_package(Work &w, const fs::path &file) {
     x360fs::PackageInfo info;
     std::string err;
     if (!x360fs::read_package_info(file, info, err) || info.is_svod()) return;
-    const bool save = info.content_type == x360fs::kContentSavedGame && info.title_id == w.title;
+    const bool save = info.content_type == x360fs::kContentSavedGame &&
+        std::find(w.from_titles.begin(), w.from_titles.end(), info.title_id) != w.from_titles.end();
     const bool profile = info.content_type == 0x00010000u;  // a profile: its <TITLE>.gpd is what we want
     if (!save && !profile) return;
     if (save) {
@@ -174,7 +183,7 @@ void take_package(Work &w, const fs::path &file) {
     }
     std::error_code ec;
     for (auto it = fs::recursive_directory_iterator(out, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
-        if (it->is_regular_file(ec) && lower(name_of(it->path())) == w.title_hex + ".gpd") {
+        if (it->is_regular_file(ec) && is_from_gpd(w, name_of(it->path()))) {
             take_gpd(w, it->path());
             ++w.r->packages;
         }
@@ -210,12 +219,12 @@ void scan(Work &w, const fs::path &p, int depth, bool chosen) {
         // Packages are only looked into where the console keeps them (00000001 saves, 00010000 profiles) or when the
         // player chose the file itself - an installed game or DLC folder is not opened file by file.
         const std::string parent = upper(name_of(p.parent_path()));
-        if (lower(name_of(p)) == w.title_hex + ".gpd") take_gpd(w, p);
+        if (is_from_gpd(w, name_of(p))) take_gpd(w, p);
         else if ((chosen || parent == "00000001" || parent == "00010000") && package_magic(p)) take_package(w, p);
         return;
     }
     if (!is_folder(p)) return;
-    if (lower(name_of(p)) == w.title_hex) take_title_dir(w, p);
+    if (std::find(w.from_hex.begin(), w.from_hex.end(), lower(name_of(p))) != w.from_hex.end()) take_title_dir(w, p);
     if (depth >= 8) return;
     each_entry(p, [&](const fs::directory_entry &e) {
         const std::string n = name_of(e.path());
@@ -266,7 +275,7 @@ bool gpd_title_settings(const uint8_t *d, size_t n, std::vector<std::pair<uint32
 }
 
 bool import(const fs::path &source, uint32_t title_id, const fs::path &user_dir, const std::string &stamp, Result &r,
-            const std::vector<fs::path> &own_dirs) {
+            const std::vector<fs::path> &own_dirs, const std::vector<uint32_t> &region_titles) {
     std::error_code ec;
     r = Result{};
     if (!there(source)) { r.error = "That file or folder does not exist."; return false; }
@@ -275,6 +284,11 @@ bool import(const fs::path &source, uint32_t title_id, const fs::path &user_dir,
     char hex[16];
     std::snprintf(hex, sizeof(hex), "%08x", title_id);
     w.title_hex = hex;
+    // 0.6.2: saves of the game's regional copies (the Japanese Gears 2 disc, 4D5308C8) go in under the game's own ID,
+    // as the same port plays both discs.
+    w.from_titles.push_back(title_id);
+    for (uint32_t t : region_titles) if (t != title_id) w.from_titles.push_back(t);
+    for (uint32_t t : w.from_titles) { std::snprintf(hex, sizeof(hex), "%08x", t); w.from_hex.push_back(hex); }
     w.r = &r;
     w.skip = own_dirs;
     w.skip.push_back(user_dir);
@@ -294,7 +308,7 @@ bool import(const fs::path &source, uint32_t title_id, const fs::path &user_dir,
     each_entry(w.stage / "settings", [&](const fs::directory_entry &e) { if (is_plain_file(e.path())) settings.push_back(e.path()); });
     if (saves.empty() && settings.empty()) {
         fs::remove_all(w.stage, ec);  // (our own work folder)
-        r.error = r.notes.empty() ? "No saves of this game were found there (a regional release keeps its saves under its own title ID, which COGBox doesn't import yet)."
+        r.error = r.notes.empty() ? "No saves of this game were found there."
                                   : "No saves of this game could be read there.";
         return false;
     }

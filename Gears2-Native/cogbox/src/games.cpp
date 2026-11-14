@@ -57,6 +57,14 @@ int game_by_title_id(uint32_t tid)
     return -1;
 }
 
+std::vector<uint32_t> region_title_ids(int g)
+{
+    std::vector<uint32_t> out;
+    for (const RegionTitle &r : k_regionTitles)
+        if (k_games[g < 0 || g >= G_ALL ? 0 : g].id == r.game) out.push_back(r.titleId);
+    return out;
+}
+
 std::string game_root(int g) { return join(exe_dir(), game_def(g).dir); }
 // 0.5.0 (Shagg): profiles - profile 1 keeps <game>\user (every save from before); profile N >= 2 gets <game>\user-pN.
 // Downloaded content (0000000000000000, machine-wide on the console) is shared: profile_link_content() joins it.

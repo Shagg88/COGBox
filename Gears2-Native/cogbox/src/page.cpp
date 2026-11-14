@@ -1545,7 +1545,8 @@ void import_saves_from(App &a, int g, const std::string &from)
         for (std::filesystem::directory_iterator it(std::filesystem::u8path(game_root(g)), ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
             if (it->is_directory(ec) && it->path().filename().string().rfind("user", 0) == 0) own.push_back(it->path());
     }
-    if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r, own)) {
+    if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r, own,
+                            region_title_ids(g))) {
         std::string m = std::string(d.name) + ": imported ";
         if (r.saves) m += std::to_string(r.saves) + (r.saves == 1 ? " save" : " saves");
         if (r.saves && r.settings) m += " and ";
