@@ -56,6 +56,13 @@ REXCVAR_DEFINE_BOOL(gow3_squad_slot_log, true, "Gears3",
                     "GitHub #309: log each change of the campaign's squad slots (GearGameSP_Base.PlayerSlots) and whether "
                     "the game would grey Reload last checkpoint");
 
+extern std::atomic<int> g_gow3ReloadRule;   // mod_chapters.cpp
+#if defined(GOW3_TU6) && GOW3_TU6
+constexpr bool kTu6Build = true;   // TU6's ShouldOptionBeDisabled has the squad-slot check; the base disc's doesn't
+#else
+constexpr bool kTu6Build = false;
+#endif
+
 void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));  // shader_prebuild.cpp
 
 namespace {
@@ -202,14 +209,17 @@ void SquadSlotLog() {
       const int ownerSize = obj::PropertySize(slotStruct, "Owner"), pawnSize = obj::PropertySize(slotStruct, "PawnClass");
       stride = std::max(ownerOff + ownerSize, pawnOff + pawnSize);
       stride = (stride + 3) & ~3;
-      if (slots < 0 || ownerOff < 0 || pawnOff < 0 || ownerSize != 4 || pawnSize != 4) {
-        REXLOG_WARN("squad slots: GearGameSP_Base.PlayerSlots not as expected - not logged (GitHub #309)");
-        return;
+      if (slots < 0 || ownerOff < 0 || pawnOff < 0 || ownerSize != 4 || pawnSize != 4 || stride != 8) {
+        // review r23 R1: while GearGame loads, the properties can be found before they are set up - tried again later
+        if (static int warned = 0; warned++ < 3)
+          REXLOG_WARN("squad slots: GearGameSP_Base.PlayerSlots not as expected yet - tried again in 5 s (GitHub #309)");
+        gameCls = 0;
+        continue;
       }
       REXLOG_INFO("squad slots: PlayerSlots +0x{:X}, PlayerSlotInfo Owner +{} PawnClass +{}, {} bytes each", slots, ownerOff,
                   pawnOff, stride);
     }
-    if (!game || !obj::IsA(game, gameCls)) {   // (a freed slot or a new map: look again)
+    if (!game || !obj::IsLive(game) || !obj::IsA(game, gameCls)) {   // freed or a new map: look again (review r23 B1)
       game = 0;
       if (!last.empty()) { REXLOG_INFO("squad slots: no campaign game info (map unloaded)"); last.clear(); }
       if (now < nextLookup) continue;
@@ -220,18 +230,34 @@ void SquadSlotLog() {
     }
     const uint32_t data = obj::Read32(game + uint32_t(slots)), count = obj::Read32(game + uint32_t(slots) + 4);
     if (count > 8) continue;   // (being written)
-    std::string line, empty;
+    std::string line;
     for (uint32_t i = 0; i < count; ++i) {
       const uint32_t e = data + i * uint32_t(stride);
       const uint32_t pawnClass = obj::Read32(e + uint32_t(pawnOff)), owner = obj::Read32(e + uint32_t(ownerOff));
       line += std::format(" [{}] {} / {}", i + 1, pawnClass ? obj::ObjectName(pawnClass) : std::string("None"),
                           owner ? obj::ObjectName(owner) : std::string("None"));
-      if (!pawnClass || !owner) empty += " " + std::to_string(i + 1);
+    }
+    // review r23 B2: the verdict is the squad-slot check's only (the screen also needs a chapter, and a co-op client
+    // has its own rules), under the rule in effect: the game's (TU6), the mods' (mod_chapters) or none (base disc)
+    const int rule = kTu6Build ? g_gow3ReloadRule.load() : 2;
+    std::string verdict;
+    if (rule == 2) verdict = "not affected (no squad-slot check in this game version)";
+    else {
+      std::string grey;
+      for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t e = data + i * uint32_t(stride);
+        const uint32_t pc = obj::Read32(e + uint32_t(pawnOff)), ow = obj::Read32(e + uint32_t(ownerOff));
+        if (rule == 1 ? (pc && !ow) : (!pc || !ow)) grey += " " + std::to_string(i + 1);
+      }
+      verdict = grey.empty() ? std::string("passes the squad-slot check")
+                             : "greyed by the squad-slot check (slot" + grey + (rule == 1 ? ", mods' rule)" : ", game's rule)");
     }
     if (line == last) continue;
     last = line;
-    REXLOG_INFO("squad slots:{} | Reload last checkpoint {}", line,
-                empty.empty() ? std::string("available") : "greyed by the squad-slot check (slot" + empty + " empty)");
+    static int lines = 0;   // a cap, as kismet_trace's
+    if (++lines > 2000) continue;
+    REXLOG_INFO("squad slots:{} | Reload last checkpoint {}{}", line, verdict,
+                lines == 2000 ? " - last line (2000)" : "");
   }
 }
 }  // namespace

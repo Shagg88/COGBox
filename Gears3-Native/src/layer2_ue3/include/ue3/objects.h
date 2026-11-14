@@ -29,6 +29,7 @@ bool Write8(uint32_t address, uint8_t value);
 std::string Name(uint32_t index);
 std::string ObjectName(uint32_t object);              // "Name" or "Name_<n>"
 uint32_t ClassOf(uint32_t object);
+bool IsLive(uint32_t object);                         // still in the object table (not freed / reused)
 uint32_t FindClass(const char* name);                 // the UClass object
 // 0.6.2 (0.6.1 review of #277): FindClass over table slots [first, first + count) only - for a class that may not be
 // loaded yet, so a caller polling for it spreads each pass over several frames instead of scanning all ~168,000

@@ -52,6 +52,11 @@
 #include <thread>
 #include <vector>
 
+// Which rule UIScene_Pause.ShouldOptionBeDisabled's squad-slot check uses now (read by checkpoint_stream.cpp's #309
+// log): 0 the game's own (TU6: every slot needs a pawn class and an owner), 1 the mods' (only slots with a pawn class
+// need an owner), 2 no squad-slot check in the function (the base disc).
+std::atomic<int> g_gow3ReloadRule{0};
+
 REXCVAR_DEFINE_BOOL(gow3_mod_chapters, true, "Gears3",
                     "Mods' campaign chapters (32-49) and content packages (KiltedKernel's mod support)");
 REXCVAR_DEFINE_BOOL(gow3_mod_content_packages, true, "Gears3",
@@ -711,9 +716,11 @@ void AllowCheckpointReload() {
     obj::Write8(data + found[0], 0x82);
     obj::Write8(data + found[0] + 1, 0x77);
     REXLOG_INFO("mod chapters: Reload last checkpoint needs only the squad slots that have a pawn class (TU6 wanted all four)");
+    g_gow3ReloadRule = 1;
     return;
   }
   REXLOG_INFO("mod chapters: ShouldOptionBeDisabled has no squad-slot check here (the base disc) - left as it is");
+  g_gow3ReloadRule = 2;
 }
 
 // [Campaign] MaxPlayers: GearGameSP_Base.AtCapacity is `return NumPlayers >= 4;` (the four squad slots; MaxPlayers is
