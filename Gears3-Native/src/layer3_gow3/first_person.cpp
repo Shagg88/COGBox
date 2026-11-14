@@ -278,6 +278,16 @@ int Flag(uint32_t object, const char* p) {   // a bool property: 1 / 0, -1 when 
 // A mode object is made by its camera (new(self)): its Outer chain reaches the GearPlayerCamera, the object that has
 // both PCOwner and GameplayCam. Up to 4 levels.
 std::vector<uint32_t> g_cams, g_seenCams;
+uint32_t g_camCls = 0;   // GearPlayerCamera (job 1850: the modes' Outer chain did not reach it - found directly)
+// a local player's camera: its PCOwner's Player is a LocalPlayer (a co-op host also has the remote players' cameras)
+bool LocalCamera(uint32_t cam) {
+  if (!cam || !obj::IsLive(cam)) return false;
+  const uint32_t pc = Ptr(cam, "PCOwner");
+  if (!pc || !obj::IsLive(pc)) return false;
+  if (Prop(obj::ClassOf(pc), "Player").offset < 0) return true;   // (not found: taken as local)
+  const uint32_t player = Ptr(pc, "Player");
+  return player && obj::ObjectName(obj::ClassOf(player)).find("LocalPlayer") != std::string::npos;
+}
 uint32_t CameraOf(uint32_t mode) {
   uint32_t o = mode;
   for (int i = 0; i < 4 && o; i++) {
@@ -532,6 +542,10 @@ void Gow3FirstPersonTick() {
     g_seen.clear();
     g_seenCams.clear();
     ReadSettings();
+    if (!g_camCls) {   // once per pass until found (a full-table lookup: at most every 2 s)
+      static int tries = 0;
+      if (tries++ < 30) g_camCls = obj::FindClass("GearPlayerCamera");
+    }
   }
   uint32_t total = 0;
   for (uint32_t o : obj::FindInstancesOfRange(g_base, g_cursor, kSlice, &total)) {
@@ -543,9 +557,15 @@ void Gow3FirstPersonTick() {
     Apply(o, cls, info);
     if (info.avoid >= 0) SetBit(o, o + uint32_t(info.avoid), info.avoidMask, false, false);
     if (const uint32_t cam = CameraOf(o);
-        cam && std::find(g_seenCams.begin(), g_seenCams.end(), cam) == g_seenCams.end() && g_seenCams.size() < 8)
+        cam && LocalCamera(cam) && std::find(g_seenCams.begin(), g_seenCams.end(), cam) == g_seenCams.end() &&
+        g_seenCams.size() < 8)
       g_seenCams.push_back(cam);
   }
+  if (g_camCls)   // the same slice of the table, for the cameras themselves
+    for (uint32_t cam : obj::FindInstancesOfRange(g_camCls, g_cursor, kSlice, nullptr))
+      if (LocalCamera(cam) && std::find(g_seenCams.begin(), g_seenCams.end(), cam) == g_seenCams.end() &&
+          g_seenCams.size() < 8)
+        g_seenCams.push_back(cam);
   g_cursor += kSlice;
   if (g_cursor < total) return;
   // pass over: forget objects no longer in the table (a level unloaded); log when the set changes
