@@ -17,6 +17,7 @@
 // Uncertain: whether this engine build flushes an async load already in flight when bShouldBlockOnLoad is set after the
 // request (UE3 flushes on the next UpdateLevelStreaming in the builds we know); the log line says how many were set.
 #include <rex/cvar.h>
+#include <rex/filesystem/vfs.h>   // REX_FILESYSTEM_FILE_OPEN_OBSERVER (GitHub #273: without it this file built with the wait off)
 #include <rex/logging/macros.h>
 
 #include <ue3/objects.h>
