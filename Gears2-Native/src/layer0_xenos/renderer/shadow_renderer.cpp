@@ -1950,6 +1950,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     }
     if (memexport_readback_)  // job 042: moved textures load their new bytes, not the old ones for a frame
       textures_->SetBeforeCpuLoadOfGpuPages([this](uint32_t start, uint32_t length) { FlushExportReadbacksFor(start, length); });
+      textures_->SetFlushEverGpuWritten(export_settle_);  // r26 R1: the green-vine flushes go with the settle switch
     if (const int stale = REXCVAR_GET(gow2_renderer_texture_stale_log); stale > 0) {
       textures_->SetStaleReloadReport(uint32_t(stale), [this](const rr::TextureCache::StaleReload& s) { ReportStale(s); });
       REXLOG_INFO("gow2_renderer: texture stale-reload log on: textures unchanged for {} frames that get new bytes",
@@ -11797,6 +11798,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // pages stayed GPU-current until a write the watch saw - and on pages no guest view maps writable the watch is never
   // armed (PhysicalHeap::EnableAccessCallbacks), so a texture later streamed into them kept the old export's bytes from
   // the mirror. Only pages the landed range covers whole are settled.
+  struct ExportReadback;  // (defined with the members below; r26 B1: named in a parameter type here)
   void SettleExportPages(const ExportReadback& e) {
     constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
     const uint32_t first = (e.base & 0x1FFFFFFFu) >> kShift;
@@ -11806,12 +11808,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const uint64_t pa = uint64_t(p) << kShift, pb = pa + (1u << kShift);
       // Only whole pages: the bytes of a partly covered page outside the range may be a resolve's (no read-back).
       if (pa < (e.base & 0x1FFFFFFFu) || pb > uint64_t(e.base & 0x1FFFFFFFu) + e.size) continue;
-      bool pending = false;
-      for (const ExportReadback& o : export_readbacks_)
-        pending |= pa < uint64_t(o.base & 0x1FFFFFFFu) + o.size && uint64_t(o.base & 0x1FFFFFFFu) < pb;
-      for (const auto& [ra, re] : export_ranges_)
-        pending |= pa < (re & 0x1FFFFFFFull) && (ra & 0x1FFFFFFFull) < pb;
-      if (pending) {
+      // r26 R3: no scan of the other read-backs - a later export over this page bumped its version (MarkGpuWritten),
+      // so the version check below already leaves it GPU-current. r26 R4: a page that holds a resolution-scaled copy
+      // keeps it (settling would drop the 2x copy for the 1x guest bytes).
+      if (watch_->ScaledCurrent(p)) {
         ++stats_.export_pages_settle_pending;
         continue;
       }
@@ -13886,7 +13886,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       REXLOG_INFO("gow2_renderer: memexport: draws {} (export-only {}, pixel-shader exports {}), ranges marked {} ({:.2f} "
                   "MB), vertex ranges read from exports {}, readbacks into guest memory {} ({:.2f} MB, {} failed, {} "
                   "waited for by texture loads; 0042: {} ranges merged into {} readbacks) | green-vine: pages settled "
-                  "after their read-back {} ({}; not settled: written since {}, another read-back pending {}), "
+                  "after their read-back {} ({}; not settled: written since {}, scaled copy kept {}), "
                   "destination pages mapped read-only {} (in the first {} export ranges)",
                   stats_.memexport_draws + stats_.memexport_only_draws, stats_.memexport_only_draws,
                   stats_.memexport_ps_draws, stats_.memexport_ranges, double(stats_.memexport_bytes) / 1048576.0,

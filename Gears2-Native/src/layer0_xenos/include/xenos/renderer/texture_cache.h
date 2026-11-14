@@ -134,6 +134,9 @@ class TextureCache {
     probe_last_ = last;
     probe_dir_ = std::move(dir);
   }
+  // r26 R1: also flush before loads over pages our GPU wrote at some time (not only GPU-current ones) - with
+  // --gow2_renderer_export_settle (the green-vine change); off = as before
+  void SetFlushEverGpuWritten(bool on) { flush_ever_gpu_ = on; }
   void SetBeforeCpuLoadOfGpuPages(std::function<void(uint32_t start, uint32_t length)> hook) {
     before_cpu_load_ = std::move(hook);
   }
@@ -346,6 +349,7 @@ class TextureCache {
   uint32_t stale_after_ = 0;
   std::function<void(const StaleReload&)> on_stale_;
   std::function<void(uint32_t start, uint32_t length)> before_cpu_load_;
+  bool flush_ever_gpu_ = false;  // SetFlushEverGpuWritten (r26 R1)
   uint64_t load_log_frame_ = 0;
   void LogLoad(const Entry& e, const uint32_t* tf, uint64_t frame, const char* reason);
   std::vector<uint32_t> probe_bases_;
