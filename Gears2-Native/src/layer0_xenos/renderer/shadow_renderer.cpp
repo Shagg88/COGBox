@@ -752,7 +752,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_export_pending_mirror, false, "Gears2",
                     "fetches from the mirror (the export's bytes) even when a CPU write elsewhere in the same 4 MB block "
                     "ended their GPU-current state - instead of re-uploading the pre-export guest bytes over them. "
                     "false = as before");
-REXCVAR_DEFINE_BOOL(gow2_renderer_export_settle, true, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_export_settle, false, "Gears2",   // parked (Shagg 11-14 15:32): off until proven
                     "Green-vine review (job 1844): when a memexport read-back has landed in guest memory, its pages that "
                     "nothing wrote since stop being GPU-current (guest memory now holds the same bytes), so a texture "
                     "later loaded there takes guest memory - which also has any CPU / file write the page watch could not "
