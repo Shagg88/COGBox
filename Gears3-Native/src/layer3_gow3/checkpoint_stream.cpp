@@ -24,15 +24,18 @@
 
 #include "gow3_addresses.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <mutex>
 #include <set>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 REXCVAR_DEFINE_BOOL(gow3_checkpoint_stream_wait, true, "Gears3",
@@ -40,6 +43,18 @@ REXCVAR_DEFINE_BOOL(gow3_checkpoint_stream_wait, true, "Gears3",
                     "before the world goes on");
 REXCVAR_DEFINE_INT32(gow3_checkpoint_stream_wait_ms, 3000, "Gears3",
                      "GitHub #226: how long after a checkpoint file open streamed sections are made to block on load");
+
+// GitHub #309 (RAAM's Shadow ch.4: after a death "under the shadow" the game-over screen's Reload Checkpoint was greyed).
+// The game-over screen is UIScene_GameOver, a UIScene_Pause: its options come from UIScene_Pause.PopulateOptionsList,
+// which greys an option when ShouldOptionBeDisabled says so. The function the game runs (mod_chapters.cpp,
+// AllowCheckpointReload) greys EPO_LoadCheckpoint while any GearGameSP_Base.PlayerSlots entry has PawnClass == None or
+// Owner == None. Kismet empties slots itself: SeqAct_ClearPlayerSlot sets both to None, SeqAct_AIFactory's
+// AssignToPlayerSlot destroys the slot's AI and sets Owner = None until the new one takes it. Read-only: every change
+// of the four squad slots is logged with that verdict, so a death with Reload greyed shows which slot was empty and
+// since when (and the Kismet trace, --mod_kismet_trace=CityHall, shows which op emptied it).
+REXCVAR_DEFINE_BOOL(gow3_squad_slot_log, true, "Gears3",
+                    "GitHub #309: log each change of the campaign's squad slots (GearGameSP_Base.PlayerSlots) and whether "
+                    "the game would grey Reload last checkpoint");
 
 void Ue3ShaderPrebuildChainFileOpened(void (*listener)(std::string_view, const std::filesystem::path*));  // shader_prebuild.cpp
 
@@ -163,7 +178,66 @@ void Gow3CheckpointStreamTick() {
   g_blocked.clear();
 }
 
+namespace {
+// Worker thread, twice a second; reads only (checked reads, safe off the game thread). The game info is looked up again
+// (a full object scan) at most every 5 s, and only while the cached one is gone (a new map).
+void SquadSlotLog() {
+  while (!obj::Ready() && !obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar))
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  uint32_t gameCls = 0, slotStruct = 0, game = 0;
+  int slots = -1, ownerOff = -1, pawnOff = -1, stride = 0;
+  int64_t nextLookup = 0;
+  std::string last;
+  for (;; std::this_thread::sleep_for(std::chrono::milliseconds(500))) {
+    const int64_t now = NowMs();
+    if (!gameCls) {
+      if (now < nextLookup) continue;
+      nextLookup = now + 5000;
+      gameCls = obj::FindClass("GearGameSP_Base");
+      slotStruct = obj::FindObject("PlayerSlotInfo");
+      if (!gameCls || !slotStruct) { gameCls = 0; continue; }
+      slots = obj::PropertyOffset(gameCls, "PlayerSlots");
+      ownerOff = obj::PropertyOffset(slotStruct, "Owner");
+      pawnOff = obj::PropertyOffset(slotStruct, "PawnClass");
+      const int ownerSize = obj::PropertySize(slotStruct, "Owner"), pawnSize = obj::PropertySize(slotStruct, "PawnClass");
+      stride = std::max(ownerOff + ownerSize, pawnOff + pawnSize);
+      stride = (stride + 3) & ~3;
+      if (slots < 0 || ownerOff < 0 || pawnOff < 0 || ownerSize != 4 || pawnSize != 4) {
+        REXLOG_WARN("squad slots: GearGameSP_Base.PlayerSlots not as expected - not logged (GitHub #309)");
+        return;
+      }
+      REXLOG_INFO("squad slots: PlayerSlots +0x{:X}, PlayerSlotInfo Owner +{} PawnClass +{}, {} bytes each", slots, ownerOff,
+                  pawnOff, stride);
+    }
+    if (!game || !obj::IsA(game, gameCls)) {   // (a freed slot or a new map: look again)
+      game = 0;
+      if (!last.empty()) { REXLOG_INFO("squad slots: no campaign game info (map unloaded)"); last.clear(); }
+      if (now < nextLookup) continue;
+      nextLookup = now + 5000;
+      const auto games = obj::FindInstancesOf(gameCls);
+      if (games.empty()) continue;
+      game = games.front();
+    }
+    const uint32_t data = obj::Read32(game + uint32_t(slots)), count = obj::Read32(game + uint32_t(slots) + 4);
+    if (count > 8) continue;   // (being written)
+    std::string line, empty;
+    for (uint32_t i = 0; i < count; ++i) {
+      const uint32_t e = data + i * uint32_t(stride);
+      const uint32_t pawnClass = obj::Read32(e + uint32_t(pawnOff)), owner = obj::Read32(e + uint32_t(ownerOff));
+      line += std::format(" [{}] {} / {}", i + 1, pawnClass ? obj::ObjectName(pawnClass) : std::string("None"),
+                          owner ? obj::ObjectName(owner) : std::string("None"));
+      if (!pawnClass || !owner) empty += " " + std::to_string(i + 1);
+    }
+    if (line == last) continue;
+    last = line;
+    REXLOG_INFO("squad slots:{} | Reload last checkpoint {}", line,
+                empty.empty() ? std::string("available") : "greyed by the squad-slot check (slot" + empty + " empty)");
+  }
+}
+}  // namespace
+
 void Gow3InstallCheckpointStreamWait() {
+  if (REXCVAR_GET(gow3_squad_slot_log)) std::thread(SquadSlotLog).detach();   // GitHub #309 (read-only)
   if (!REXCVAR_GET(gow3_checkpoint_stream_wait)) return;
 #if defined(REX_FILESYSTEM_FILE_OPEN_OBSERVER)
   Ue3ShaderPrebuildChainFileOpened(&OnFileOpened);
