@@ -86,11 +86,14 @@ rexglue_apply_target_settings(gn_layer2_ue3)
 target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp  # GitHub #153
-    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp)
+    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp
+    ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp)  # GitHub #264: engine console commands (shared with Gears 2 / 3)
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp PROPERTIES
+    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
+# its options are saved under Judgment's settings group
+set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_CONSOLE_JUDGMENT=1)
 
 # Layer 3: Gears of War: Judgment (the executable).
 set(GOWJ_SOURCES
@@ -100,6 +103,7 @@ set(GOWJ_SOURCES
     src/layer3_gowj/main_menu_exit.cpp
     src/layer3_gowj/profile_log.cpp
     src/layer3_gowj/freeze_watchdog.cpp
+    src/layer3_gowj/cheats.cpp  # GitHub #264: --gowj_cheats
 )
 if(WIN32)
     add_executable(gowj WIN32 ${GOWJ_SOURCES})

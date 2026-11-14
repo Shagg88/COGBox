@@ -23,6 +23,8 @@
 // The settings group the options are saved under: Gears 3's own as before (its saved hotkeys stay where they are).
 #if defined(GN_UE3_CONSOLE_GEARS2) && GN_UE3_CONSOLE_GEARS2
 #define GN_UE3_CONSOLE_GROUP "Gears2"
+#elif defined(GN_UE3_CONSOLE_JUDGMENT) && GN_UE3_CONSOLE_JUDGMENT
+#define GN_UE3_CONSOLE_GROUP "Judgment"
 #else
 #define GN_UE3_CONSOLE_GROUP "Gears3"
 #endif
