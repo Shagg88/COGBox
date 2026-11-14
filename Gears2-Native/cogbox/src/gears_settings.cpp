@@ -180,6 +180,10 @@ std::vector<Option> make_options(Game g) {
                "How bright normal scenes are. 203 is the reference; raise it in a bright room.", 364), "", "HDR");
     add(number("Peak", "HDR peak (nits)", Tab::Display, Kind::Int, PG, 400, 4000, 100, 1000,
                "Your screen's peak brightness (see its specs or Windows HDR calibration).", 365), "", "HDR");
+    // 0.6.2 (PR #294, legoliamneeson's PsychoV35 HDR): how hard Gears 2 / Gears 3 push highlights above normal white
+    add(choice("HdrHighlights", "HDR highlights", Tab::Display, PG, { "Off", "Subtle", "Default", "Strong" }, 2,
+               "Gears 2 and Gears 3: how much brighter than normal white explosions, muzzle flashes and lights get. "
+               "Default is the tuned look; Off keeps highlights at the plain tone-mapped level.", 0), "hdrhighlights", "HDR");
     add(make("Vsync", "Vsync (no tearing)", Tab::Display, Kind::Bool, SH, 0,
              "Each frame waits for your screen's next refresh, so the picture never tears. With G-Sync / FreeSync the screen "
              "follows the game below its refresh rate. A frame-rate limit above your screen's refresh rate is lowered to the "
@@ -707,6 +711,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
             return no(not_yet(gi, f == "start" ? "its chapter list is coming" : "needs its chapter list"));
     } else if (f == "achpopups") {   // achievements part 2: the text is in cogbox_ach_style's description
         if (!cap_exe(env, "COGBox achievement popups")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "hdrhighlights") {   // 0.6.2: the native HDR scene (PsychoV35) of Gears 2 and Gears 3 only
+        if (g != Game::Gears2 && g != Game::Gears3) return no("Gears 2 and Gears 3 only (their native HDR).");
+        if (!cap_exe(env, "gow2_hdr_highlights")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "gamefps") {
         if (g == Game::Judgment || g == Game::Gears1) return no(not_yet(gi, "game's own counter"));
     } else if (f == "ultrawide") {   // 0.2.0: Judgment too (--gowj_ultrawide, a new build); Gears 1 when gow1.exe has it
@@ -859,7 +866,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     if (!a.ok) return a;
     bool on = true;
     if (o.id == "WindowSize") on = s.i("Fullscreen") == 0;                             // PS1 333: windowed only
-    else if (o.id == "PaperWhite" || o.id == "Peak") on = s.b("HDR");                 // PS1 366
+    else if (o.id == "PaperWhite" || o.id == "Peak" || o.id == "HdrHighlights") on = s.b("HDR");   // PS1 366; 0.6.2
     else if (o.id == "PadPrompts") on = s.b("Mnk");                                  // GitHub #104
     else if (o.id == "WalkMode") on = s.b("Mnk");                                    // GitHub #125
     else if (o.id == "AimSens") on = s.b("Mnk") && cap_exe(env, "ue3_mouse_aim_scale");    // 0.5.0: games whose exe knows the camera FOV
@@ -1748,6 +1755,10 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         a.push_back("--present_hdr=true");
         a.push_back("--gow2_hdr_paper_white=" + std::to_string(s.i("PaperWhite")));
         a.push_back("--gow2_hdr_peak=" + std::to_string(s.i("Peak")));
+        if ((g == Game::Gears2 || g == Game::Gears3) && cap_exe(env, "gow2_hdr_highlights") && s.i("HdrHighlights") != 2) {
+            static const char* const k_strength[] = { "0", "0.5", "1", "1.5" };
+            a.push_back(std::string("--gow2_hdr_highlights=") + k_strength[std::max(0, std::min(3, s.i("HdrHighlights")))]);
+        }
     }
     // PS1 901-902: fullscreen / window size
     // job 523: under Wine / Proton the compositor (gamescope on a Steam Deck) owns the screen - no exclusive fullscreen
@@ -2089,6 +2100,7 @@ std::map<std::string, std::vector<std::string>> live_lines(Game g, Version ver, 
         { "FrameCap", { { p + "_max_fps", "0" } } },
         { "PaperWhite", { { "gow2_hdr_paper_white", "203" } } },
         { "Peak", { { "gow2_hdr_peak", "1000" } } },
+        { "HdrHighlights", { { "gow2_hdr_highlights", "1" } } },   // 0.6.2: read per HDR scene draw
         { "Sens", { { "mnk_sensitivity", "1" }, { "ue3_mouse_scale", "1" } } },
         { "AimTurn", { { "ue3_mouse_fov_constant", "true" } } },
         { "AimSens", { { "ue3_mouse_aim_scale", "1" } } },

@@ -1214,6 +1214,10 @@ REXCVAR_DEFINE_DOUBLE(gow2_hdr_paper_white, 203.0, "Gears2",
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_ui_white, 203.0, "Gears2", "Native HDR: independent HUD and reload white in nits");
 REXCVAR_DEFINE_BOOL(gow2_hdr_native, true, "Gears2", "Use the captured Gears 2 / Gears 3 TU6 float scene/HUD profiles in HDR10");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_peak, 1000.0, "Gears2", "Native HDR: display peak in nits for highlight roll-off");
+// 0.6.2: how much the Gears 2 / Gears 3 native HDR scene (PsychoV35, PR #294) boosts highlights above SDR white. 1 =
+// the tuned look (RenoDX's smoothed-power boost); 0 = no extra boost (the mapper alone); up to 2.
+REXCVAR_DEFINE_DOUBLE(gow2_hdr_highlights, 1.0, "Gears2",
+                      "Native HDR (Gears 2 / Gears 3): highlight boost strength - 0 none, 0.5 subtle, 1 default, 1.5 strong");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_knee, 0.75, "Gears2",
                       "Stage 7.3 HDR (games without native HDR profiles, or --gow2_hdr_native=false); unused by native HDR");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_expand, 1.0, "Gears2",
@@ -3902,6 +3906,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   float HdrSceneWhite() const { return float(std::clamp(REXCVAR_GET(gow2_hdr_paper_white), 1.0, 10000.0)); }
   float HdrPeak() const { return float(std::clamp(REXCVAR_GET(gow2_hdr_peak), double(HdrSceneWhite()), 10000.0)); }
   float HdrUiWhite() const { return float(std::clamp(REXCVAR_GET(gow2_hdr_ui_white), 1.0, double(HdrPeak()))); }
+  // 0.6.2: sent as strength + 1, so a zero constant (tools, older paths) means the default 1
+  float HdrHighlights() const { return float(std::clamp(REXCVAR_GET(gow2_hdr_highlights), 0.0, 2.0)) + 1.0f; }
   void EncodeNativeHdr(gpu::TextureHandle output, uint32_t width, uint32_t height, bool native) {
     if (native) ++native_hdr_frames_; else ++native_hdr_reference_frames_;
     if ((native && native_hdr_frames_ <= 3) || (native_hdr_frames_ + native_hdr_reference_frames_) % 300 == 0)
@@ -4051,6 +4057,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     SystemConstants hdr_constants = constants;
     hdr_constants.sys2[0] = std::bit_cast<uint32_t>(HdrPeak() / HdrSceneWhite());
     hdr_constants.sys2[1] = std::bit_cast<uint32_t>(HdrUiWhite() / HdrSceneWhite());
+    hdr_constants.sys2[2] = std::bit_cast<uint32_t>(HdrHighlights());   // 0.6.2: highlight strength + 1
+    hdr_constants.sys2[3] = 0;
     backend_->SetConstants(gpu::ShaderStage::kPixel, gpu::kCbSystem, &hdr_constants, sizeof(hdr_constants));
     backend_->SetPipeline(pipeline);
     issue(nullptr, 0, scene_ui ? native_hdr_ui_high_ : native_hdr_color_, scene_ui ? native_hdr_ui_low_ : 0);
