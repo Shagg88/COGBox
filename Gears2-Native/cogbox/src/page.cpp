@@ -560,6 +560,11 @@ static void keys_section(App &a, int g)
         a.ini.save();
         env_refresh(a, g);
     };
+    // GitHub #281: the keys were shown (and could be changed) with Keyboard and mouse off - the player pressed the key the
+    // list showed at the title screen and nothing happened. Say so above the list while it is off.
+    if (!a.cur[g].b("Mnk"))
+        ui_note("Keyboard and mouse is off - these keys do nothing in the game until it is turned on (Keyboard and mouse, "
+                "above).", col::amber);
     if (!keyNote.empty()) ui_note(keyNote, col::amber);
     const bool capturing = capture >= 0;
     if (capturing) ImGui::BeginDisabled();   // while waiting for a key, Space / Enter mustn't press a button
