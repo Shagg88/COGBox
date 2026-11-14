@@ -1471,3 +1471,8 @@ Judgment - joinable = Judgment - se puede unir
 Gears of War - joinable = Gears of War - se puede unir
 # System Link under Linux / Steam Deck (gears_settings.cpp wine_note)
 On Linux / Steam Deck: a game you host can't be joined yet - the games host on port 1000, and this PC keeps the low ports for administrator programs. Joining others should work. A possible fix (not confirmed yet) is in the README ("Hosting from Linux / Steam Deck"). = En Linux / Steam Deck: todavía nadie puede unirse a una partida que alojes - los juegos alojan en el puerto 1000, y este PC reserva los puertos bajos para los programas de administrador. Unirse a otros debería funcionar. Hay una posible solución (aún sin confirmar) en el README ("Hosting from Linux / Steam Deck").
+# 0.6.2 GitHub #306 Dead bodies option (machine-made translation, please check)
+Dead bodies = Cadáveres
+More = Más
+Many = Muchos
+How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = Cuántos enemigos caídos se quedan en el suelo y durante cuánto tiempo. Más y Muchos conservan más cuerpos durante más tiempo; esto cuesta algo de rendimiento y memoria. Los cuerpos se siguen eliminando en las cinemáticas.

@@ -1530,3 +1530,8 @@ Judgment - joinable = Judgment - lehet csatlakozni
 Gears of War - joinable = Gears of War - lehet csatlakozni
 # System Link under Linux / Steam Deck (gears_settings.cpp wine_note)
 On Linux / Steam Deck: a game you host can't be joined yet - the games host on port 1000, and this PC keeps the low ports for administrator programs. Joining others should work. A possible fix (not confirmed yet) is in the README ("Hosting from Linux / Steam Deck"). = Linuxon / Steam Decken: az általad hosztolt játékhoz még nem lehet csatlakozni - a játékok az 1000-es porton hosztolnak, és ez a gép az alacsony portokat a rendszergazdai programoknak tartja fenn. Másokhoz csatlakozni elvileg működik. Egy lehetséges megoldás (még nincs megerősítve) a README-ben van ("Hosting from Linux / Steam Deck").
+# 0.6.2 GitHub #306 Dead bodies option (machine-made translation, please check)
+Dead bodies = Holttestek
+More = Több
+Many = Sok
+How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = Hány elesett ellenség marad a földön, és meddig. A Több és a Sok több testet tart meg tovább; ez némi teljesítménybe és memóriába kerül. Az átvezető jeleneteknél a testek így is eltűnnek.

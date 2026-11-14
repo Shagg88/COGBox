@@ -100,6 +100,8 @@ const char* const k_aaNames[6] = { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "X
 const int k_fpsCaps[10] = { 0, 40, 45, 60, 90, 120, 144, 165, 180, -1 };                               // PS1 159
 const int k_fpsCapCount = 10;
 const char* const k_drawScale[3] = { "1", "1.5", "2" };                                      // PS1 163
+const int k_bodyCap[3] = { 0, 16, 32 }, k_bodyCapG2[3] = { 0, 12, 20 };   // GitHub #306 (Gears 2 lower: its memory)
+const int k_bodyLife[3] = { 0, 60, 300 }, k_bodyUnseen[3] = { 0, 20, 60 };  // #306, seconds (game: 20 / 8; Gears 1 5)
 const char* const k_shakeValue[3] = { "", "*=0.5", "=0" };   // 0.2.0 (#12): the factor scales the shake - Less halves the game's own, Off is 0                                    // PS1 167
 const int k_poolMb[4] = { 0, -1, 256, 320 };                                                 // PS1 171
 const int k_winSizes[6][2] = { { 0, 0 }, { 1280, 720 }, { 1600, 900 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 } };   // PS1 174
@@ -491,6 +493,11 @@ std::vector<Option> make_options(Game g) {
         o.max_len = 255;
         add(std::move(o), "syslinkpeers");
     }
+    // GitHub #306: keep fallen enemies longer - the game's corpse count cap (ini) and, where the script has them, its
+    // corpse timers (console 'set'); "Game's own" sends nothing. Cutscenes still clear bodies.
+    add(choice("DeadBodies", "Dead bodies", Tab::Gameplay, PG, { "Game's own", "More", "Many" }, 0,
+               "How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; "
+               "this costs some performance and memory. Bodies are still cleared at cutscenes.", 0), "iniedit");
     add(make("SkipLogos", "Skip the intro logos", Tab::Gameplay, Kind::Bool, PG, 0,
              "Starts at the title screen without the publisher / studio logo films. The loading film and cutscenes still play.", 326),
         "skiplogos");
@@ -1711,6 +1718,18 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             else if (isG3) { for (const char* pf : { "GearPawn.ini", "GearPawnMP.ini" }) ini.push_back(std::string(pf) + "|GearGame.GearPawn|RoadieRunShakyCamDampeningFactor" + v); }
             else { for (const char* pf : { "GearPawn.ini", "GearPawnMP.ini", "GearPawnFFA.ini" }) ini.push_back(std::string(pf) + "|GearGame.GearPawn|RoadieRunShakyCamDampeningFactor" + v); }
         }
+        const int db = std::max(0, std::min(2, s.i("DeadBodies")));
+        if (avail("DeadBodies") && db > 0) {   // GitHub #306: the corpse count cap (a config property in every game)
+            const std::string n = std::to_string(g == Game::Gears2 ? k_bodyCapG2[db] : k_bodyCap[db]);
+            if (isG1) {   // one flat Coalesced.ini: wherever the key already is, and WarPawn.ini's section if that file is there
+                ini.push_back(".ini|*|MaxAllowedDeadRagDollPawns=" + n);
+                ini.push_back("WarPawn.ini|WarfareGame.WarPawn|MaxAllowedDeadRagDollPawns=" + n);
+            } else if (g == Game::Gears2 || isG3) {
+                for (const char* pf : { "GearPawn.ini", "GearPawnMP.ini" }) ini.push_back(std::string(pf) + "|GearGame.GearPawn|MaxAllowedDeadRagDollPawns=" + n);
+            } else {
+                for (const char* pf : { "GearPawn.ini", "GearPawnMP.ini", "GearPawnFFA.ini" }) ini.push_back(std::string(pf) + "|GearGame.GearPawn|MaxAllowedDeadRagDollPawns=" + n);
+            }
+        }
         if (g == Game::Gears2 && on("Trilinear")) ini.push_back(ei + "|SystemSettings|~=MipFilter=point>MipFilter=linear");   // PS1 897
         // 0.2.0 mouse look (GitHub #2): the mouse reaches the game as the right stick. The game's look binding has a dead
         // zone (Gears 2 30 %, Judgment 20 %) that swallows small mouse movements, and its Speed caps the turn rate at a
@@ -1883,10 +1902,29 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         a.push_back("--gow2_split_vertical=true");
     else if (g == Game::Gears3 && avail("SplitLayout") && s.i("SplitLayout") == 1 && cap_exe(env, "gow3_split_vertical"))
         a.push_back("--gow3_split_vertical=true");   // GitHub #269: set again whenever the game resets it (level start)
-    else if (avail("SplitLayout") && s.i("SplitLayout") == 1)   // GitHub #136 (avail: Gears 3, 2 players)
+    // One --ue3_exec(_each_level) for every console command (a second flag of the same name would replace the first).
+    std::vector<std::string> exec;
+    if (!(g == Game::Gears2 && avail("SplitLayout") && s.i("SplitLayout") == 1) &&
+        !(g == Game::Gears3 && avail("SplitLayout") && s.i("SplitLayout") == 1 && cap_exe(env, "gow3_split_vertical")) &&
+        avail("SplitLayout") && s.i("SplitLayout") == 1)   // GitHub #136 (avail: Gears 3, 2 players)
         // GitHub #208: one run at the front end was undone when a level started - again at every level where the exe can
-        a.push_back((cap_exe(env, "ue3_exec_each_level") ? "--ue3_exec_each_level=" : "--ue3_exec=") +
-                    q("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL"));
+        exec.push_back("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL");
+    {   // GitHub #306: the corpse timers, as class defaults (Gears 3 / Judgment; Gears 1 only has the not-seen timer)
+        const int db = std::max(0, std::min(2, s.i("DeadBodies")));
+        if (avail("DeadBodies") && db > 0 && (isG3 || isGJ || isG1) && cap_exe(env, "ue3_exec")) {
+            const std::string life = std::to_string(k_bodyLife[db]), unseen = std::to_string(k_bodyUnseen[db]);
+            if (isG1) exec.push_back("set WarPawn DurationBeforeDestroyingDueToNotBeingSeen " + unseen);
+            else {
+                exec.push_back("set GearPawn CorpseMaxLifeSpan " + life);
+                exec.push_back("set GearPawn DurationBeforeDestroyingDueToNotBeingSeen " + unseen);
+            }
+        }
+    }
+    if (!exec.empty()) {
+        std::string j;
+        for (size_t i = 0; i < exec.size(); ++i) j += (i ? ";" : "") + exec[i];
+        a.push_back((cap_exe(env, "ue3_exec_each_level") ? "--ue3_exec_each_level=" : "--ue3_exec=") + q(j));
+    }
     if (on("SystemLink")) a.push_back("--net_system_link=true");
     // GitHub #229: the friends' addresses (sanitised: digits, dots and commas only - nothing that needs quoting)
     if (on("SystemLink") && avail("PeerIps")) {
