@@ -512,6 +512,13 @@ std::string ObjectName(uint32_t object) {
 
 uint32_t ClassOf(uint32_t object) { return object ? Read32(object + g_L.cls) : 0; }
 
+// Still a live object: its own slot index (Layout::slot, found at start-up) points at a table slot that holds it. The
+// garbage collector empties the slot before freeing the memory, so a freed (or reused) block fails this even when its
+// class word still looks right (Gears 3's obj::IsLive, review r23, with the discovered slot field). The count is the one
+// the last table read saw (Refresh): an object made since then reads as not live until the next read - safe, as every
+// caller only skips or leaves alone what is not live.
+bool IsLive(uint32_t object) { return g_ready.load(std::memory_order_acquire) && g_L.slot && IsObject(object); }
+
 uint32_t FindClass(const char* name) {
   {
     std::lock_guard lock(g_mutex);

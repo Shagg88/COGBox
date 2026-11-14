@@ -50,6 +50,7 @@ bool Write8(uint32_t address, uint8_t value);
 std::string Name(uint32_t index);
 std::string ObjectName(uint32_t object);              // "Name" or "Name_<n>"
 uint32_t ClassOf(uint32_t object);
+bool IsLive(uint32_t object);                         // still in the object table at its own slot (not freed / reused)
 uint32_t SuperOf(uint32_t structure);                 // UStruct's SuperStruct (0 at the top)
 uint32_t FindClass(const char* name);                 // the UClass object
 // FindClass over table slots [first, first + count) only - for a class that may not be loaded yet, so a caller polling
