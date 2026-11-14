@@ -331,9 +331,13 @@ void music_update(App &a)
             SDL_DestroyAudioStream(g_stream);   // the callback has stopped after this
             g_stream = nullptr;
         } else if (g_audioOk && !silent && !g_stream) {
-            SDL_AudioSpec spec{ SDL_AUDIO_S16, 2, kRate };
-            g_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, nullptr);
-            if (g_stream) SDL_ResumeAudioStreamDevice(g_stream);
+            static Uint64 nextTry = 0;   // review: no output device (unplugged, remote session) - try again every 2 s, not every frame
+            if (SDL_GetTicks() >= nextTry) {
+                SDL_AudioSpec spec{ SDL_AUDIO_S16, 2, kRate };
+                g_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed, nullptr);
+                if (g_stream) SDL_ResumeAudioStreamDevice(g_stream);
+                else nextTry = SDL_GetTicks() + 2000;
+            }
         }
     }
 }
