@@ -12,6 +12,7 @@
   #77 - not confirmed yet): COGBox now asks the game itself whether its loading screen is still up, and keeps the
   frame rate at 30 for exactly that long (before, it guessed from the files being read and could let go after
   5 seconds). Your own frame-rate limit comes back as soon as the loading screen ends.
+- **Judgment: blue / purple blocks on surfaces (#315)**, mostly seen on AMD graphics cards at high frame rates and building up over a session: a texture the game had just moved in video memory could be loaded from the old copy and keep it. It now waits for the moved copy first. (Not yet confirmed by the reporter.)
 
 ## 0.6.2
 

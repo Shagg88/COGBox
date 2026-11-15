@@ -2581,6 +2581,16 @@ class D3D12Backend final : public Backend {
         device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(scratch_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
       }
     } else if (b.guest_u0 && guest_uav_ >= 0) {
+      // GitHub #315 (Judgment, AMD: blue / purple blocks): a dispatch that writes guest memory (a resolve to guest) right
+      // after another write to it - a memory-export draw or the previous resolve - got no barrier when the buffer was
+      // already in UAV state, so the two could overlap or finish out of order (NVIDIA serialises them anyway; AMD does
+      // not). A UAV barrier orders them, as the memexport draw path already does.
+      if (guest_state_ == D3D12_RESOURCE_STATE_UNORDERED_ACCESS) {
+        D3D12_RESOURCE_BARRIER ub{};
+        ub.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        ub.UAV.pResource = guest_;
+        list_->ResourceBarrier(1, &ub);
+      }
       TransitionGuest(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
       device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(guest_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     } else if (uav_slot >= 0) {
