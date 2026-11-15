@@ -14,6 +14,9 @@ namespace gears {
 // Gears1 is the last index (added after the others) so saved settings keep their meaning.
 enum class Game { Gears2 = 0, Gears3 = 1, Judgment = 2, Gears1 = 3 };
 constexpr int kGameCount = 4;
+// 0.6.2 (Shagg 11-14 17:18): the first-person camera ships as a hidden tester option - no launcher option; testers turn it
+// on with --gow3_first_person=true / --gow2_ / --gowj_ in extra-args.txt. true = the Gameplay tab offers it again.
+constexpr bool kOfferFirstPerson = false;
 enum class Version { TitleUpdate = 0, Disc = 1 };   // PS1 125 $verNames (index 0 = the title update)
 enum class Tab { Display, Graphics, Controls, Gameplay, Achievements };   // = the page's tab index (ABOUT is after)
 // Text (0.4.8, GitHub #229): a short line of text (Settings::t), always Scope::Shared, kept in [General] of the settings

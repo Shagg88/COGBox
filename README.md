@@ -60,7 +60,6 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 - **Lower input lag:** NVIDIA Reflex and AMD Anti-Lag 2 where your GPU has them.
 - **Keyboard and mouse** or **Xbox / PlayStation controllers**, with button prompts that follow what you use, and
   DualSense adaptive triggers in all four games (experimental, off by default).
-- **First-person camera** in Gears 3, Gears 2 and Judgment (experimental, off by default; Page Up switches it in the game).
 - **Split-screen co-op** in all four games, and **System Link** LAN co-op (experimental).
 - **Online multiplayer** (0.6.0, off by default): peer to peer through COGBox's own matchmaking.
 - **Insane from the start**, **achievements** in all four games, chapter select, and an **in-game menu**

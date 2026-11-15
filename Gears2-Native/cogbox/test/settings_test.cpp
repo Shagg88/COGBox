@@ -354,6 +354,7 @@ int summary() {
     }
     // first-person camera: each game's own switch (Gears 2, Gears 3, Judgment) when its exe has the option, none in Gears 1
     for (Game g : { Game::Gears2, Game::Gears3, Game::Judgment, Game::Gears1 }) {
+        if (!kOfferFirstPerson) break;   // 0.6.2: hidden tester option, not in the launcher
         Environment e; e.update_ready = true;
         e.cap.exe_has = [](const std::string&) { return true; };
         e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
@@ -385,7 +386,7 @@ const char* const k_builtin_first_person[] = {
 
 int main(int argc, char** argv) {
     std::vector<std::string> cases(std::begin(k_builtin), std::end(k_builtin));
-    cases.insert(cases.end(), std::begin(k_builtin_first_person), std::end(k_builtin_first_person));
+    if (kOfferFirstPerson) cases.insert(cases.end(), std::begin(k_builtin_first_person), std::end(k_builtin_first_person));
     if (argc >= 2 && std::string(argv[1]) == "--summary") return summary();
     if (argc >= 3 && std::string(argv[1]) == "--gen") {
         std::mt19937 r(argc >= 4 ? static_cast<unsigned>(std::atoi(argv[3])) : 59u);

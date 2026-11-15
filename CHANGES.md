@@ -11,12 +11,6 @@ COGBox is on RecompLauncher, the free home for recompiled PC games. Get it strai
 https://recomplauncher.com/game/cogbox
 
 ### New and experimental (all off by default)
-- **First-person camera** (Gameplay tab, **experimental**, Gears 3, Gears 2 and Judgment): the game's own camera moves
-  to your character's eyes while you walk, crouch and aim. In roadie run, cover, executions, when you're down, in vehicles, on
-  turrets and in cutscenes it goes back to the usual over-the-shoulder view. **Page Up** switches it off and on in the
-  game. In Gears 3 you see your own arms, body and gun, while your head is hidden (with the game's own big-head
-  control) so it doesn't fill the view; Judgment works the same way. In Gears 2 you see your body and gun too. Gears 2
-  and Judgment haven't been tried in a real play-through yet - please tell us how it goes.
 - **DualSense adaptive triggers** (Controls tab, now **all four games**, **experimental**): with a PS5 DualSense
   controller (USB or Bluetooth), the triggers push back, click or buzz to match the weapon in your hands, and shake
   while the chainsaw revs. Other controllers are not touched. If Steam Input is on for the controller, Steam keeps the
@@ -53,8 +47,7 @@ https://recomplauncher.com/game/cogbox
   time, never more than a few a second. (`--gow2_renderer_fullscreen_pipeline_wait_ms=0` in `extra-args.txt` goes back
   to 0.6.1's behaviour.)
 - **Import saves** also takes saves from the Japanese Gears 2 disc and puts them where your copy looks for them.
-- **First-person camera** (experimental, not tried in play yet), **DualSense adaptive triggers** and **Cheats** (see
-  above).
+- **DualSense adaptive triggers** and **Cheats** (see above).
 
 ### Gears 3
 - **DLC at the main menu** (GitHub #283): with many DLC packages, Gears 3 often opened only the first one at start-up.
@@ -74,7 +67,7 @@ https://recomplauncher.com/game/cogbox
 - **Your options and brightness are kept after a crash:** a game setting saved at the moment of a crash or with a full
   disk could be cut short, and Gears 3 then reset all its options and showed the brightness screen again. Settings are
   now saved in one piece.
-- **First-person camera** (experimental) and **DualSense adaptive triggers** (see above).
+- **DualSense adaptive triggers** (see above).
 
 ### Judgment
 - **Soft shadows (PCSS) in Judgment too** (by gmihaic): Judgment draws its shadows the same way as Gears 3, so the
@@ -156,7 +149,7 @@ https://recomplauncher.com/game/cogbox
   render resolution helps; being worked on.
 - **Gears 3: "Reload last checkpoint" sometimes missing in RAAM's Shadow** (GitHub #309): see Gears 3 above - a report
   zip from 0.6.2 helps.
-- **DualSense adaptive triggers** and the **first-person camera** are experimental and off by default (see above).
+- **DualSense adaptive triggers** are experimental and off by default (see above).
 
 ## 0.6.1
 

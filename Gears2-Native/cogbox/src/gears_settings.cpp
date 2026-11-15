@@ -528,7 +528,7 @@ std::vector<Option> make_options(Game g) {
              "Every mutator (gameplay modifier) available from the start. Writes nothing to your profile.", 328), "mutators");
     // First-person camera (Gears 3, Gears 2, Judgment; layer3 first_person.cpp): the game's own camera moved to the
     // eyes for the walking / crouching / aiming modes (roadie run stays third person); every other camera mode keeps its third-person view
-    add(make("FirstPerson", "First-person camera (experimental)", Tab::Gameplay, Kind::Bool, PG, 0,
+    if (kOfferFirstPerson) add(make("FirstPerson", "First-person camera (experimental)", Tab::Gameplay, Kind::Bool, PG, 0,
              "Experimental - the game's own camera moves to your character's eyes while you walk, crouch and aim. In "
              "roadie run, cover, executions, vehicles, turrets and cutscenes it goes back to the usual over-the-shoulder "
              "view. Page Up switches it off and on in the game. Gears 2, Gears 3 and Judgment.", 0), "firstperson");
@@ -1675,7 +1675,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (on("Cheats")) a.push_back(g == Game::Gears2 ? "--gow2_cheats=true" : g == Game::Judgment ? "--gowj_cheats=true" :
                                   g == Game::Gears1 ? "--gow1_cheats=true" : "--gow3_cheats=true");   // #264: Gears 2, Judgment, Gears 1 too
     if (on("Mutators")) a.push_back("--gow3_unlock_mutators=true");
-    if (on("FirstPerson")) a.push_back(g == Game::Gears2 ? "--gow2_first_person=true" : g == Game::Judgment ? "--gowj_first_person=true" :
+    if (kOfferFirstPerson && on("FirstPerson")) a.push_back(g == Game::Gears2 ? "--gow2_first_person=true" : g == Game::Judgment ? "--gowj_first_person=true" :
                                        "--gow3_first_person=true");
     // PS1 873-898: the game's own engine settings through --ue3_ini_edits
     {
