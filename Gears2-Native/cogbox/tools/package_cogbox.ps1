@@ -90,6 +90,18 @@ if (($sdlv -replace '[ ,]+', '.') -notlike "$launcherSdl*") { $problems += "laun
 # FFmpeg: the DLL names (library majors) must be the ones licenses\FFmpeg-NOTICE.txt names (LGPL: the source we name)
 $ffNotice = Get-Content -Raw (Join-Path $cogbox 'licenses\FFmpeg-NOTICE.txt')
 foreach ($f in @(Get-ChildItem $launcher -Filter 'av*-*.dll' -ErrorAction SilentlyContinue)) { if (-not $ffNotice.Contains($f.Name)) { $problems += "launcher $($f.Name) is not the FFmpeg build licenses\FFmpeg-NOTICE.txt describes" } }
+# 0.6.3: 0.6.2 shipped silent - its CogBox.exe asked for avcodec-61.dll / avutil-59.dll (built against FFmpeg 7's headers)
+# beside FFmpeg 9.0.2's avcodec-63.dll / avutil-61.dll. The exe names the DLLs it loads ('cogbox-ffmpeg-dlls: ...'); they must
+# be exactly the av*.dll files beside it, which are packaged. Checked here, before anything is written (review r47).
+$exeBytes = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes((Join-Path $launcher 'CogBox.exe')))
+$haveFf = @(Get-ChildItem $launcher -Filter 'av*-*.dll' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+$m = [regex]::Match($exeBytes, 'cogbox-ffmpeg-dlls: (avcodec-\d+\.dll) (avutil-\d+\.dll)')
+if (-not $m.Success) { $problems += 'launcher CogBox.exe does not name the FFmpeg DLLs it loads (built without FFmpeg, or from a source before 0.6.3) - the library music cannot be checked' }
+else {
+  $wantFf = @($m.Groups[1].Value, $m.Groups[2].Value)
+  foreach ($n in $wantFf) { if ($haveFf -notcontains $n) { $problems += "launcher CogBox.exe loads $n, but beside it are $($haveFf -join ', ') - the library music would be silent (rebuild CogBox.exe with FFMPEG_DIR set to the FFmpeg those DLLs come from)" } }
+  foreach ($n in $haveFf) { if ($wantFf -notcontains $n) { $problems += "launcher $n is beside CogBox.exe, which does not load it (it loads $($wantFf -join ', '))" } }
+  if (-not ($problems -match 'FFmpeg|av[a-z]+-\d+\.dll')) { Write-Host "  library music: CogBox.exe loads $($wantFf -join ' + '), both beside it" } }
 # 0.2.2 (Shagg: developer tools never ship): no profiler, debug runtime, symbols or test program in any port folder, and
 # no shipped program may load Tracy (TracyClient*.dll opens a network port; antivirus flags it, GitHub #24).
 $deny = '^(TracyClient.*\.dll|rexruntimerd\.dll|rexgpu-.*rd\.dll|.*\.pdb|.*\.ilk|.*\.exp|.*\.lib|gn_tests\.exe|.*\.pre.*|.*\.old-.*|.*\.bak)$'
@@ -206,25 +218,15 @@ New-Item -ItemType Directory -Force $Out | Out-Null
 
 # ---- Copy -----------------------------------------------------------------------------------------------------------
 Copy-Item (Join-Path $launcher 'CogBox.exe'), (Join-Path $launcher 'SDL3.dll') $stage
-# The library music's XMA decoder (FFmpeg, LGPL 2.1, separate DLLs; licenses\FFmpeg-*.txt): optional - without them the
-# library is silent, so a build without them still packages (with a warning).
+# The library music's XMA decoder (FFmpeg, LGPL 2.1, separate DLLs; licenses\FFmpeg-*.txt): checked above (0.6.3) - the
+# DLLs CogBox.exe loads must be beside it, so they are always packaged.
 $ff = @(Get-ChildItem $launcher -Filter 'av*-*.dll' -ErrorAction SilentlyContinue)
-if ($ff.Count -ge 2) { $ff | Copy-Item -Destination $stage } else { Write-Warning 'no avcodec / avutil DLLs in cogbox\build: the library music will be silent' }
+if ($ff.Count -ge 2) { $ff | Copy-Item -Destination $stage } else { throw 'no avcodec / avutil DLLs in cogbox\build: the library music would be silent' }
 # GitHub #151: 0.4.1 - 0.4.3 shipped a CogBox.exe built without FFmpeg (no headers in that clone), so the library was
 # silent although the DLLs were there. A launcher built that way is no longer packaged.
 $exeText = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes((Join-Path $launcher 'CogBox.exe')))
 if ($exeText.Contains('built without FFmpeg') -or -not $exeText.Contains('avcodec_find_decoder')) {
   throw 'CogBox.exe was built without FFmpeg (no library music) - rebuild it with FFMPEG_DIR set (cogbox\build.sh)' }
-# 0.6.3: 0.6.2 shipped silent - its CogBox.exe asked for avcodec-61.dll / avutil-59.dll (built against FFmpeg 7's headers)
-# beside FFmpeg 9.0.2's avcodec-63.dll / avutil-61.dll. The exe now names the DLLs it loads ('cogbox-ffmpeg-dlls: ...');
-# every one must be among the DLLs packaged, and every packaged av*.dll must be one it loads.
-$m = [regex]::Match($exeText, 'cogbox-ffmpeg-dlls: (avcodec-\d+\.dll) (avutil-\d+\.dll)')
-if (-not $m.Success) { throw 'CogBox.exe does not name the FFmpeg DLLs it loads (built from a source before 0.6.3?) - cannot check the library music' }
-$wantFf = @($m.Groups[1].Value, $m.Groups[2].Value)
-$haveFf = @($ff | ForEach-Object { $_.Name })
-foreach ($n in $wantFf) { if ($haveFf -notcontains $n) { throw "CogBox.exe loads $n, but the package has $($haveFf -join ', ') - the library music would be silent (rebuild CogBox.exe with FFMPEG_DIR set to the FFmpeg the DLLs come from)" } }
-foreach ($n in $haveFf) { if ($wantFf -notcontains $n) { throw "the package has $n, which CogBox.exe does not load (it loads $($wantFf -join ', '))" } }
-Write-Host "  library music: CogBox.exe loads $($wantFf -join ' + '), both packaged"
 Copy-Item (Join-Path $cogbox 'README.txt') $stage
 # Launcher translations (0.2.0): cogbox\lang\<code>.txt -> lang\ beside CogBox.exe.
 $langSrc = Join-Path $cogbox 'lang'

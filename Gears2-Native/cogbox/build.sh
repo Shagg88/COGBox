@@ -52,5 +52,6 @@ done
 $CXX -mwindows -static -static-libgcc -static-libstdc++ $([ "$1" = debug ] || echo -s) -o $OUT/CogBox.exe $objs $OUT/obj/cogbox.res.o \
   $SDL/lib/libSDL3.dll.a -lshell32 -lole32 -luuid -lwinhttp -lbcrypt -ladvapi32 -ldxgi -lcomdlg32 -lversion -lwintrust -lcrypt32
 cp $SDL/bin/SDL3.dll $OUT/ 2>/dev/null || true
+rm -f $OUT/avcodec-*.dll $OUT/avutil-*.dll   # 0.6.3 (review r47): no older FFmpeg's DLLs left beside the new exe
 cp $FF/bin/avcodec-*.dll $FF/bin/avutil-*.dll $OUT/ 2>/dev/null || true
 ls -la $OUT/CogBox.exe
