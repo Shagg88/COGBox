@@ -39,6 +39,7 @@ struct Ini {
     void remove(const std::string &sec, const std::string &key);
     std::vector<std::pair<std::string, std::string>> section(const std::string &sec) const;
     void clear_section(const std::string &sec);
+    void remove_section(const std::string &sec);   // 0.6.3: the [sec] line too, and everything under it
 };
 
 // Opens a folder or a web page with Windows' own handler.

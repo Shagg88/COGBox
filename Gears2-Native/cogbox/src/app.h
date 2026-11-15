@@ -46,7 +46,6 @@ struct Running {
     int64_t started = 0;
     std::string logDir;
     std::string exe;        // GitHub #194: the port program started (play_poll's missing-DLL check)
-    bool fastCode = true;   // Shagg 10 Nov: the faster build was started (its crashes count towards the fallback)
     bool prepare = false;   // job 641: a "Prepare all shaders" run (the game builds the pack, then exits)
 };
 
@@ -216,7 +215,6 @@ bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err
 void install_poll(App &a);
 void install_draw(App &a, ImVec2 size);
 // play.cpp
-bool use_normal_code(const App &a, int g);   // play.cpp: the faster build crashed twice -> the normal one
 void play_start(App &a, int g, bool prepare = false);   // prepare: job 641's Prepare all shaders
 void play_poll(App &a);
 void play_answer(App &a, const Modal &m);

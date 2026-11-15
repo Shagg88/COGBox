@@ -10,6 +10,8 @@
 //    [Cleanup] CacheKey) those files move to _old-files\shadercache-from-<prev>\<Game>\ with prepare-progress.txt, so
 //    the launcher offers "Prepare all shaders" again. ucode\ (the game's recorded shader microcode, which preparing
 //    rebuilds from) stays. Nothing is deleted.
+//  - CogBox.ini [FastCode] (0.5.0 - 0.6.2's crash fallback to <stem>-normal.exe, gone in 0.6.3): dropped, its values
+//    logged. Nothing reads it any more, so a launcher that never gets here ignores it anyway.
 // Program files (.exe / .dll) of older releases are stale_files.cpp's job; the updater's own leftovers (*.old-cogbox,
 // *.new-cogbox, CogBox-update.*.part) are update.cpp update_tidy's.
 #pragma once
