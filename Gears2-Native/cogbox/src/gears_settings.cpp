@@ -952,8 +952,10 @@ void sync_shared(const Store& st, const Environment* envs, Settings* pages, cons
             if (o.kind == Kind::Text) {
                 auto it = s.t.find(o.id);
                 if (it != s.t.end() && it->second != stored.str(o.id)) t[o.id] = it->second;
-            } else if (o.scope == Scope::Shared && s.has(o.id) && (!stored.has(o.id) || stored.f(o.id) != s.f(o.id))) {
-                v[o.id] = s.f(o.id);
+            } else if (o.scope == Scope::Shared && s.has(o.id)) {
+                // review r51 #1: compared as view() would show it - a stale Monitor above the screen count isn't an edit
+                const double x = clamp_value(o, s.f(o.id), &envs[g]);
+                if (!stored.has(o.id) || stored.f(o.id) != x) v[o.id] = x;
             }
         }
     };
@@ -968,7 +970,9 @@ void sync_shared(const Store& st, const Environment* envs, Settings* pages, cons
                 if (it != t.end() && pages[g].str(o.id) != it->second) { pages[g].t[o.id] = it->second; changed[g] = true; }
             } else if (o.scope == Scope::Shared) {
                 auto it = v.find(o.id);
-                if (it != v.end() && (!pages[g].has(o.id) || pages[g].f(o.id) != it->second)) { pages[g].v[o.id] = it->second; changed[g] = true; }
+                if (it == v.end()) continue;
+                const double x = clamp_value(o, it->second, &envs[g]);   // r51 #3: as this game's view() would hold it
+                if (!pages[g].has(o.id) || pages[g].f(o.id) != x) { pages[g].v[o.id] = x; changed[g] = true; }
             }
         }
     }

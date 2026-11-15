@@ -1372,6 +1372,7 @@ void IdleCursorWatch() {
       const char* why = !front ? "another window in front" : clicked ? "mouse button" : "mouse moved";
       IdlePost(w, [why] { IdleShowNow(why); });
       verify_pending = false;
+      logged_skip = nullptr;   // r56 A: the hide was ours, so a reason that comes back afterwards is logged again
       continue;
     }
     if (moved || clicked || !front) continue;
@@ -1393,6 +1394,8 @@ void IdleCursorWatch() {
       // back are counted into the next line.
       if (skip != logged_skip) {
         if (now - skip_logged_at >= std::chrono::seconds(2)) {
+          // r56 B: the last held reason, if it is this one, was only delayed - it is this line, not one more
+          if (skip == held_skip) --skip_held;
           if (skip_held) REXLOG_INFO("cogbox_cursor: not hiding - {} [{} more not logged]", skip, skip_held);
           else REXLOG_INFO("cogbox_cursor: not hiding - {}", skip);
           logged_skip = skip;

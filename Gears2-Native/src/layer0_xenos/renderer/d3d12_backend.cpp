@@ -4848,6 +4848,11 @@ class D3D12Backend final : public Backend {
         ~ClearBuilder() { if (p) p->backlog_builder.store(nullptr); }
       } clear_builder{backlog_job ? job->target : nullptr};
       PrioScope backlog_prio{worker_prio_, backlog_job ? backlog_prio_ : worker_prio_};
+      // r63 A / r67 1: lowered after the unlock (a holder of job_mutex_ that lowers itself can be preempted and stall
+      // the render thread), so a draw may have promoted this job just before. PromoteBacklogJob sets backlog_class to
+      // 0xFF before it raises: seen here, raise again ourselves; else its raise comes after this lowering and sticks.
+      if (backlog_job && backlog_prio_ != worker_prio_ && job->target->backlog_class.load() == 0xFF)
+        SetThreadPriority(GetCurrentThread(), PrioScope::Win(worker_prio_));
       ID3D12PipelineState* pso = nullptr;
       Pipeline& p = *job->target;
       // Patch 0010: a pipeline already saved loads from the library here, off the recording thread. Each pipeline has

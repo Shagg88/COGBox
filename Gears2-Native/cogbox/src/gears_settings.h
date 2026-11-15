@@ -250,9 +250,10 @@ const std::vector<KeyAction> &key_actions(Game g = Game::Gears2);
 constexpr const char *kWindowKeyDefault = "Alt+Return";
 std::string window_key(const Environment &env);
 // 0.6.3 (reviews r49 / r50): one value for all games - the Shared options and the text ones (kept once, Store::texts).
-// Before a save, each unsaved page's Shared / text values that differ from what the store holds (its edits) go to every
-// page, so a change on one page shows on the others and committing another page can't put the old value back - and two
-// unsaved pages' edits to different options are both kept. On the same option the `prefer` page (the one being saved)
+// Before a save, each unsaved page's Shared / text values that differ from what the store holds (its edits; compared after
+// that game's clamp, as view() shows them - r51) go to every page (clamped for each game), so a change on one page shows
+// on the others and committing another page can't put the old value back - and two unsaved pages' edits to different
+// options are both kept. On the same option the `prefer` page (the one being saved)
 // wins, else the later game. GameOwn / PerGame values are left alone. changed[k] = page k's values changed.
 void sync_shared(const Store& st, const Environment* envs, Settings* pages, const bool* dirty, int prefer,
                  bool* changed);   // (all arrays kGameCount long)

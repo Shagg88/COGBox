@@ -326,4 +326,6 @@ bool PrebuildLzxDecode(const uint8_t* in, size_t in_len, uint8_t* out, size_t ou
   return true;
 }
 
+const char* PrebuildLzxBuildId() { return __DATE__ " " __TIME__; }
+
 }  // namespace ue3::prebuild
