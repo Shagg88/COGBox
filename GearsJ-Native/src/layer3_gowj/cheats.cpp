@@ -56,8 +56,12 @@ void GowjInstallCheats() {
 // first-person camera.
 void GowjAdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers)
 void GowjFirstPersonTick();        // first_person.cpp (--gowj_first_person)
+void GowjPollLoadingMovie(PPCContext& ctx, uint8_t* base);  // game_patches.cpp (GitHub #318, --gowj_loading_fps)
 extern "C" void __imp__sub_8255E200(PPCContext& __restrict ctx, uint8_t* base);
 extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
+  // GitHub #318: ask the game whether its loading movie is up BEFORE the original runs, so the loading-screen cap
+  // (decided by the GowjMaxTickRate hook inside it) follows this tick's answer. ctx is restored afterwards.
+  GowjPollLoadingMovie(ctx, base);
   __imp__sub_8255E200(ctx, base);
   Ue3ConsoleRunQueued(ctx, base);
   GowjAdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)

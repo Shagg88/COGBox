@@ -1,5 +1,13 @@
 # COGBox changes
 
+## 0.6.3 (not released)
+
+### Fixes
+- **Judgment: the loading screen after Monroe Commons no longer hangs above 30 fps** (GitHub #318, also #54 / #38 /
+  #77 - not confirmed yet): COGBox now asks the game itself whether its loading screen is still up, and keeps the
+  frame rate at 30 for exactly that long (before, it guessed from the files being read and could let go after
+  5 seconds). Your own frame-rate limit comes back as soon as the loading screen ends.
+
 ## 0.6.2
 
 **Quick start:** download `COGBox-0.6.2.7z`, right-click it > **Extract All...** (Windows 11; on Windows 10 use 7-Zip) to a folder of its own (for example
