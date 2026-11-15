@@ -10,6 +10,7 @@
 // Device creation follows tools/gn_shader_oracle_d3d12.cpp (works on the RTX 3080 Ti, Shader Model 6.6, job 088).
 // Our code (MIT).
 #include <xenos/renderer/gpu.h>
+#include <xenos/dev_tools.h>  // 0.6.3: XenosUsableProcessors
 
 #include <xenos/renderer/queries.h>
 #include <cstring>
@@ -4703,7 +4704,8 @@ class D3D12Backend final : public Backend {
   bool StartPipelineWorkers() {
     if (!workers_.empty()) return true;
     // Patch 0056: Canary's count (75% of the logical processors) unless set; the old count was min(4, a quarter).
-    const uint32_t hw = std::max(1u, std::thread::hardware_concurrency());
+    // 0.6.3: the processors this process may use (its affinity mask), so a limited process does not over-subscribe.
+    const uint32_t hw = XenosUsableProcessors();
     const int want = options_.pipeline_threads;
     const uint32_t n = want < 0    ? std::max(1u, hw * 3 / 4)
                        : want == 0 ? std::max(1u, std::min(4u, hw / 4))

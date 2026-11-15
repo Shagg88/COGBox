@@ -982,7 +982,7 @@ void Ue3InstallShaderPrebuildIfRequested() {
   int readers = 1;
   // 0.6.3: small CPUs (8 logical processors or fewer - the report's i5-10300H has 4 cores / 8 threads) keep their cores
   // for the game's own threads, its renderer and the pipeline workers.
-  const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+  const unsigned hw = XenosUsableProcessors();  // the process's affinity mask, else hardware_concurrency
   const bool small_cpu = hw <= 8;
   {
     const int pace = REXCVAR_GET(ue3_shader_prebuild_play_pace);

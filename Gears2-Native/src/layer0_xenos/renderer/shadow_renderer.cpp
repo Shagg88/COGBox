@@ -14980,6 +14980,30 @@ bool XenosPrebuildPixelWanted(uint64_t key) {  // 0.6.3
   return g_release_target && g_release_target->PrebuildPixelWanted(key);
 }
 uint64_t XenosPrebuildSelectiveKey() { return g_release_target ? g_release_target->PrebuildSelectiveKey() : 0; }  // 0.6.3
+uint32_t XenosUsableProcessors() {  // 0.6.3
+  static const uint32_t n = [] {
+    const uint32_t hw = std::max(1u, std::thread::hardware_concurrency());
+    uint32_t count = 0;
+    const char* source = "hardware_concurrency";
+#ifdef _WIN32
+    DWORD_PTR process_mask = 0, system_mask = 0;
+    if (GetProcessAffinityMask(GetCurrentProcess(), &process_mask, &system_mask) && process_mask) {
+      count = uint32_t(std::popcount(uint64_t(process_mask)));
+      source = "process affinity mask";
+    }
+#endif
+    // A mask covers one processor group (64 at most): a bigger PC whose mask shows its whole group is not "small".
+    if (!count || (count >= 64 && hw > count)) {
+      count = hw;
+      source = "hardware_concurrency";
+    }
+    REXLOG_INFO("pc: {} logical processor(s) usable by this process (from the {}; {} in the PC) - small-CPU defaults "
+                "(8 or fewer) for the shader prebuild and pipeline workers {}",
+                count, source, hw, count <= 8 ? "ON" : "off");
+    return count;
+  }();
+  return n;
+}
 bool XenosRendererInPlay() {  // 0.6.3
   const int64_t last = g_play_frame_ms.load(std::memory_order_relaxed);
   return last && PlayClockMs() - last < 500;

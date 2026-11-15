@@ -198,6 +198,10 @@ uint64_t XenosPrebuildSelectiveKey();
 // 0.6.3: true while the game is being played - a frame with 64+ draws ended within the last half second (the same line
 // the renderer draws between play and a loading screen / video / 2D menu). Any thread; false before the first frame.
 bool XenosRendererInPlay();
+// 0.6.3: the logical processors this process may run on - the popcount of its affinity mask (GetProcessAffinityMask),
+// else std::thread::hardware_concurrency() - so a PC limited by an affinity mask gets the small-CPU defaults (prebuild
+// readers and pacing, pipeline workers and their backlog limits). Logged once (count and source). Any thread; >= 1.
+uint32_t XenosUsableProcessors();
 uint64_t XenosPrebuildVariantHits(uint32_t variant);
 // Job 641: layer 2 says its start-up package reading (--ue3_shader_prebuild_at_start) has read every queued file
 // (`files` read in all). --gow2_renderer_prepare_all waits for it before it can finish.
