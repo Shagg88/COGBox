@@ -11,7 +11,8 @@ namespace rex::system { class XThread; }
 namespace rex::graphics { class DrawObserver; class RegisterFile; struct ObservedIndexBuffer; }
 namespace rex::ui { class ImGuiDrawer; class ImmediateDrawer; class Window; }
 
-// Crash report (unwound stack + minidump) for unhandled host exceptions; --gow2_crash_dir.
+// Crash report (unwound stack, every thread's state and stack, minidump) for unhandled host exceptions, written by a
+// helper thread made here without CRT / heap / logger locks (GitHub #286); --gow2_crash_dir, --gow2_crash_test.
 void XenosInstallCrashHandler();
 // A line the next crash report prints under "notes:" (e.g. a game file the start-up scan found damaged), so a report
 // whose stack is deep in the game's own code still says what was wrong. Thread-safe; the first 16 notes are kept.
