@@ -29,8 +29,11 @@
 // gameplay camera's current mode and the gameplay camera is the player camera's CurrentCamera, and clears it again on a
 // weapon change, a third-person mode, PageUp off or a level change. --gow2_first_person_body (default on) does the same
 // for the pawn's Mesh and its own primitives (Actor.Components). Only objects still in the object table (obj::IsLive)
-// are read or written; a property not found = nothing un-hidden. --gow2_first_person_diag logs the hide state once a
-// second (log only; with the pause state, for unattended tests).
+// are read or written; a property not found = nothing un-hidden. With the body drawn, your own head
+// (--gow2_first_person_head, default off = hidden) is collapsed by the game's headshot-pop skeletal control (NeckScale,
+// BoneScale 0.01) for a single local player, and put back exactly when first person ends (HeadTick below).
+// --gow2_first_person_diag logs the hide state once a second (log only; with the pause state, for unattended tests),
+// and once per pawn every part drawn, the AnimTree's skeletal controls and the bones nearest the camera.
 //
 // No guest address, no hook of our own: reflection (ue3/objects.h) finds the GearGameplayCameraMode objects a slice of
 // the object table per engine tick (16384 slots per tick), one pass every 2 s, so a level load's new camera (a new
@@ -47,6 +50,8 @@
 #include "gow2_addresses.h"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -74,9 +79,18 @@ REXCVAR_DEFINE_BOOL(gow2_first_person_weapon, true, "Gears2",
                     "First-person camera: draw your own weapon (the game hides it with your body when the camera is "
                     "inside you; this sets the engine's bIgnoreHiddenActorsMembership on the weapon's meshes). With "
                     "--gow2_first_person_body on, the weapon is drawn with the body either way");
-REXCVAR_DEFINE_BOOL(gow2_first_person_body, false, "Gears2",   // job 1857: no head hiding in Gears 2 yet - the head fills the view
+REXCVAR_DEFINE_BOOL(gow2_first_person_body, false, "Gears2",   // job 1857: the head filled the view - off until the
+                                                               // head hiding (NeckScale) is seen on the PC
                     "First-person camera: draw your own body too (arms, shoulders, legs - the game's own model, already "
                     "animated; the same engine flag on your pawn's meshes). Off: only the weapon");
+REXCVAR_DEFINE_BOOL(gow2_first_person_head, false, "Gears2",
+                    "First-person camera: draw your own head too (off, the default: hidden while the body is drawn in "
+                    "first person - the game's own headshot control, NeckScale, set to bone scale 0; one local player "
+                    "only, as the scale shows in every view)");
+REXCVAR_DEFINE_STRING(gow2_first_person_head_control, "", "Gears2",
+                      "First-person camera, for tests: the skeletal control that hides your head - empty = NeckScale "
+                      "(the game's headshot pop), else a control name or 'bone:<BoneName>' (the first control on that "
+                      "bone; --gow2_first_person_diag lists them)");
 REXCVAR_DEFINE_BOOL(gow2_first_person_diag, false, "Gears2",
                     "First-person camera: log the local players' hide state once a second (pawn / weapon flags, "
                     "HiddenActors, camera and weapon positions, paused) - log only, for tests");
@@ -84,6 +98,8 @@ REXCVAR_DEFINE_BOOL(gow2_first_person_diag, false, "Gears2",
 namespace {
 namespace obj = ue3::obj;
 using Clock = std::chrono::steady_clock;
+const obj::Layout& L() { return obj::CurrentLayout(); }   // Gears 2's object layout, discovered at start-up
+uint32_t NameOf(uint32_t object) { return obj::Read32(object + L().name); }   // its FName's index
 
 // The modes moved to the eyes (exact class names, Gears 2's GearGame script; a subclass not listed stays as it is).
 // fov: --gow2_first_person_fov applies (aiming keeps its zoom).
@@ -322,7 +338,8 @@ std::vector<uint32_t> WeaponParts(uint32_t weapon) {
 }
 // The pawn's own primitives: its Mesh (Pawn.Mesh) and every primitive in its Components array (Actor.Components) that
 // has the flag (socket attachments such as a helmet are not in that list and stay as the game has them). The camera
-// sits at the face; what is behind it (the inside of the head) is not drawn (back faces, behind the view).
+// sits inside the head: job 1857 showed the inside of Marcus's head / mouth, so the head is collapsed separately
+// (HeadTick, --gow2_first_person_head).
 std::vector<uint32_t> BodyParts(uint32_t pawn) {
   std::vector<uint32_t> v;
   AddPart(v, Ptr(pawn, "Mesh"));
@@ -334,6 +351,515 @@ std::vector<uint32_t> BodyParts(uint32_t pawn) {
   return v;
 }
 
+// ---- your own head (--gow2_first_person_head off, the default; agent062-out/g2head-notes.md) ----------------------
+// With the body drawn, the camera sits inside the head (job 1857: the inside of Marcus's head and mouth fill the view).
+// Gears 3 / Judgment collapse it with the big-head mutator's 'HeadScaler' control; Gears 2 has no big-head mutator and
+// no SetHeadScale (no 'HeadScaler' name anywhere in its GearGame / Engine script [package]). What it has is the
+// headshot pop: GearPawn.PlayHeadShotDeath (Gears 2's bytecode, [package]) does Mesh.FindSkelControl('NeckScale').
+// SetSkelControlActive(true), then attaches HeadShotNeckGoreAttachment and spawns head chunks - so every pawn AnimTree
+// that can lose its head has a pre-authored 'NeckScale' control whose BoneScale collapses the head into the neck.
+// SkelControlBase.BoneScale (Gears 2's Engine: SkelControlBase has BoneScale, ControlStrength, StrengthTarget,
+// ControlName, NextControl, SkelComponent [package]) scales the bone and every child bone. That control is used here,
+// exactly as Gears 3 uses HeadScaler: BoneScale 0.01, ControlStrength / StrengthTarget 1, the originals kept and put
+// back when first person ends. No script is called and nothing else of the pawn is touched.
+// --gow2_first_person_head_control picks another control for a test: a ControlName, or 'bone:<BoneName>' (the first
+// control in that bone's list - any SkelControlBase scales its bone the same way); the diag lists every control.
+// A headshot death while ours (GearPawn.bHasPlayedHeadShotDeath set): the strength words are left as the game wants them
+// (head popped), only BoneScale is put back.
+constexpr const char* kHeadControls[] = {"HeadScaler", "NeckScale"};   // HeadScaler: none in Gears 2's script, kept for
+                                                                       // content that has one
+struct HeadWord { uint32_t address, original, written; };
+struct HeadState {
+  uint32_t mesh = 0, tree = 0, ctrl = 0, cls = 0, pawn = 0;   // the control found for this mesh / AnimTree instance
+  std::string control;                                       // which control, on which bone
+  std::vector<HeadWord> words;                               // what we wrote (BoneScale; ControlStrength / StrengthTarget if < 1)
+  Clock::time_point retry{};                                 // not found: looked for again after this
+  const char* state = "not wanted";                          // for the diag log
+  int listsVia = -1;                                         // 1 = SkelControlListHead by reflection, 0 = UE3 layout (16 / +8)
+};
+HeadState g_head;
+
+// A property object (UStruct super / first child, UField Next - the discovered layout's), for an array's element struct;
+// obj::PropertyOffset gives offsets only.
+uint32_t PropertyObject(uint32_t cls, const char* p) {
+  for (uint32_t c = cls, guard = 0; c && guard < 64; c = obj::Read32(c + L().super), guard++)
+    for (uint32_t f = obj::Read32(c + L().children), n = 0; f && n < 10000; f = obj::Read32(f + L().next), n++)
+      if (obj::ObjectName(f) == p) return f;
+  return 0;
+}
+
+// AnimTree.SkelControlLists' element size and ControlHead offset: from the ArrayProperty's Inner (StructProperty, at the
+// layout's bool_mask - the first field after UProperty, like UBoolProperty's BitMask) and its Struct (the same field),
+// each checked by name, its ElementSize at the layout's elem_size; else Gears 2's own Engine layout (BoneName 8,
+// ControlHead +8, DrawY +12: 16 bytes [package]).
+struct ListLayout { uint32_t stride = 16, head = 8; int via = 0; };
+ListLayout ListsLayout(uint32_t treeCls) {
+  static uint32_t cachedCls = 0, cachedName = 0;
+  static ListLayout cached;
+  if (treeCls == cachedCls && NameOf(treeCls) == cachedName) return cached;
+  ListLayout l;
+  if (L().bool_mask && L().elem_size)
+    if (const uint32_t arr = PropertyObject(treeCls, "SkelControlLists"); arr && obj::ObjectName(obj::ClassOf(arr)) == "ArrayProperty")
+      if (const uint32_t inner = obj::Read32(arr + L().bool_mask); inner && obj::ObjectName(obj::ClassOf(inner)) == "StructProperty")
+        if (const uint32_t st = obj::Read32(inner + L().bool_mask); st && obj::ObjectName(st) == "SkelControlListHead") {
+          const uint32_t size = obj::Read32(inner + L().elem_size);
+          const int head = obj::PropertyOffset(st, "ControlHead");
+          if (size >= 12 && size <= 64 && head >= 0 && uint32_t(head) + 4 <= size) l = {size, uint32_t(head), 1};
+        }
+  REXLOG_INFO("first person: AnimTree.SkelControlLists element {} bytes, ControlHead +{} ({})", l.stride, l.head,
+              l.via ? "reflection" : "UE3 layout, reflection not matched");
+  cachedCls = treeCls, cachedName = NameOf(treeCls), cached = l;
+  return l;
+}
+
+// a control's ControlName ("" when absent or numbered)
+std::string ControlName(uint32_t c) {
+  const PropInfo cn = Prop(obj::ClassOf(c), "ControlName");
+  if (cn.offset < 0 || (L().name_number && obj::Read32(c + uint32_t(cn.offset) + 4) != 0)) return {};
+  return obj::Name(obj::Read32(c + uint32_t(cn.offset)));
+}
+
+// The mesh's head control (0 = none): every list's chain - by ControlName, first of kHeadControls, or the
+// --gow2_first_person_head_control choice (a name, or 'bone:<BoneName>' = the first control of that bone's list).
+uint32_t FindHeadControl(uint32_t mesh, uint32_t& tree, std::string& which) {
+  static const std::string choice = REXCVAR_GET(gow2_first_person_head_control);
+  const bool byBone = choice.rfind("bone:", 0) == 0;
+  tree = Ptr(mesh, "Animations");
+  if (!tree || !obj::IsLive(tree)) return 0;
+  const uint32_t tcls = obj::ClassOf(tree);
+  const PropInfo lists = Prop(tcls, "SkelControlLists");
+  if (lists.offset < 0) return 0;
+  const ListLayout l = ListsLayout(tcls);
+  g_head.listsVia = l.via;
+  const uint32_t data = obj::Read32(tree + uint32_t(lists.offset)), n = obj::Read32(tree + uint32_t(lists.offset) + 4);
+  if (!data || !n || n > 512 || !obj::Readable(data, n * l.stride)) return 0;
+  std::vector<std::pair<uint32_t, uint32_t>> found;   // (control, bone) per wanted entry, in order of preference
+  std::vector<std::string> wanted;
+  if (choice.empty()) wanted.assign(std::begin(kHeadControls), std::end(kHeadControls));
+  else wanted.push_back(byBone ? choice.substr(5) : choice);
+  found.resize(wanted.size());
+  for (uint32_t i = 0; i < n; i++) {
+    uint32_t c = obj::Read32(data + i * l.stride + l.head);
+    const uint32_t bone = obj::Read32(data + i * l.stride);   // SkelControlListHead.BoneName (index)
+    if (byBone) {
+      if (c && obj::IsLive(c) && !found[0].first && obj::Name(bone) == wanted[0]) found[0] = {c, bone};
+      continue;
+    }
+    for (int k = 0; c && k < 64; k++, c = Ptr(c, "NextControl")) {
+      if (!obj::IsLive(c)) break;
+      const std::string name = ControlName(c);
+      for (size_t j = 0; j < wanted.size(); j++)
+        if (!found[j].first && name == wanted[j]) found[j] = {c, bone};
+    }
+  }
+  for (const auto& [c, bone] : found)
+    if (c) {
+      // the control belongs to this mesh (SkelControlBase.SkelComponent, when the class has it and it is set)
+      const uint32_t sc = Ptr(c, "SkelComponent");
+      if (sc && sc != mesh) continue;
+      which = "'" + ControlName(c) + "' on bone " + obj::Name(bone) + (choice.empty() ? "" : " (chosen: " + choice + ")");
+      return c;
+    }
+  return 0;
+}
+
+void RestoreHead() {
+  const bool live = g_head.ctrl && obj::IsLive(g_head.ctrl) && obj::ClassOf(g_head.ctrl) == g_head.cls;
+  // a headshot death while hidden: the game has made the control active (PlayHeadShotDeath) - its strength stays
+  const bool popped = g_head.pawn && obj::IsLive(g_head.pawn) && Flag(g_head.pawn, "bHasPlayedHeadShotDeath") == 1;
+  const PropInfo bs = live ? Prop(g_head.cls, "BoneScale") : PropInfo{};
+  size_t back = 0;
+  if (live)
+    for (const HeadWord& w : g_head.words)
+      if ((!popped || (bs.offset >= 0 && w.address == g_head.ctrl + uint32_t(bs.offset))) &&
+          obj::Read32(w.address) == w.written && obj::Write32(w.address, w.original))
+        back++;
+  if (!g_head.words.empty())
+    REXLOG_INFO("first person: head shown again ({} of {} value(s) put back{}{})", back, g_head.words.size(),
+                live ? "" : ", control gone", popped ? ", headshot death: strength left to the game" : "");
+  g_head = HeadState{};
+}
+
+// Every tick: mesh = the one local first-person pawn's Mesh (pawn: its pawn), or 0 (not wanted: restore).
+void HeadTick(uint32_t mesh, uint32_t pawn, const char* why) {
+  if (!mesh) {
+    if (g_head.mesh || !g_head.words.empty()) RestoreHead();
+    g_head.state = why;
+    return;
+  }
+  // a new mesh, a new AnimTree instance or the control freed: put back what still can be, look again
+  if (g_head.mesh && (g_head.mesh != mesh || Ptr(mesh, "Animations") != g_head.tree ||
+                      (g_head.ctrl && (!obj::IsLive(g_head.ctrl) || obj::ClassOf(g_head.ctrl) != g_head.cls))))
+    RestoreHead();
+  if (!g_head.ctrl) {
+    if (g_head.mesh == mesh && Clock::now() < g_head.retry) return;   // not found: every 2 s
+    g_head.mesh = mesh, g_head.pawn = pawn;
+    g_head.retry = Clock::now() + std::chrono::seconds(2);
+    std::string which;
+    uint32_t tree = 0;
+    const uint32_t c = FindHeadControl(mesh, tree, which);
+    g_head.tree = tree;
+    if (!c) {
+      static int warned = 0;
+      if (warned++ < 3)
+        REXLOG_WARN("first person: no head control ({}) in the pawn's AnimTree {:08X} - head left as it is",
+                    REXCVAR_GET(gow2_first_person_head_control).empty() ? std::string("HeadScaler / NeckScale")
+                                                                          : REXCVAR_GET(gow2_first_person_head_control),
+                    tree);
+      g_head.state = "no control";
+      return;
+    }
+    g_head.ctrl = c, g_head.cls = obj::ClassOf(c), g_head.control = which;
+    REXLOG_INFO("first person: head control {} ({} {:08X}) - head hidden while the body is drawn", which,
+                obj::ObjectName(g_head.cls), c);
+  }
+  g_head.pawn = pawn;
+  const uint32_t c = g_head.ctrl, cls = g_head.cls;
+  // each a 4-byte FloatProperty (checked once per class)
+  static uint32_t checkedCls = 0;
+  static bool floatsOk = false, strengthOk = false;
+  if (cls != checkedCls) {
+    const auto isFloat = [cls](const char* p) {
+      return obj::PropertySize(cls, p) == 4 && obj::PropertyType(cls, p) == "FloatProperty";
+    };
+    checkedCls = cls, floatsOk = isFloat("BoneScale"), strengthOk = isFloat("ControlStrength") && isFloat("StrengthTarget");
+  }
+  const PropInfo bs = Prop(cls, "BoneScale");
+  const PropInfo cs = strengthOk ? Prop(cls, "ControlStrength") : PropInfo{}, st = strengthOk ? Prop(cls, "StrengthTarget") : PropInfo{};
+  if (bs.offset < 0 || !floatsOk) { g_head.state = "no BoneScale"; return; }
+  // the words wanted: BoneScale 0.01 (not 0: the bone's matrix stays invertible); the strength 1 when it is below
+  // (SetSkelControlActive(true)'s target) or ours
+  std::vector<std::pair<uint32_t, uint32_t>> want{{c + uint32_t(bs.offset), Bits(0.01f)}};
+  for (const PropInfo* p : {&cs, &st})
+    if (p->offset >= 0) {
+      const uint32_t a = c + uint32_t(p->offset);
+      const bool ours = std::any_of(g_head.words.begin(), g_head.words.end(), [a](const HeadWord& w) { return w.address == a; });
+      if (ours || obj::ReadFloat(a) < 0.999f) want.push_back({a, Bits(1.f)});
+    }
+  for (const auto& [a, v] : want) {
+    const uint32_t now = obj::Read32(a);
+    auto it = std::find_if(g_head.words.begin(), g_head.words.end(), [a = a](const HeadWord& w) { return w.address == a; });
+    if (it != g_head.words.end() && now == it->written) continue;   // still ours
+    if (now == v) continue;   // already so (the game's own value): nothing to own
+    if (!obj::IsLive(c) || !obj::Write32(a, v)) continue;
+    // a new word, or the game changed it since (e.g. head tracking on a 'bone:' choice): its value now is the one to put back
+    if (it != g_head.words.end()) it->original = now;
+    else g_head.words.push_back({a, now, v});
+  }
+  g_head.state = "hidden";
+}
+
+// the discovered layout's fields the dump below reads
+uint32_t OuterOff() { return L().outer; }
+uint32_t InnerOff() { return L().bool_mask; }   // ArrayProperty Inner / StructProperty Struct
+uint32_t ElemSizeOff() { return L().elem_size; }
+
+// ---- one-time dump (--gow2_first_person_diag): what is drawn near the eye camera ---------------------------------
+// For what is left at the screen edges with the body drawn and the head hidden (job 1857: Judgment's two dark shapes at
+// the top-right / left edges; Gears 3's left shoulder pad at the bottom left) and for where the real eyes are: once per
+// pawn mesh (at most 4 a run), about 1.5 s after its camera first enters a first-person mode (the camera has settled at
+// the eyes) and before its head is hidden (WeaponTick holds the head back until then, so the eye bones are not yet
+// collapsed into the head bone) -
+//   1. every primitive we un-hide (pawn mesh, the pawn's Components, the weapon's parts) and every attachment of the
+//      pawn mesh (SkeletalMeshComponent.Attachments: socket / bone attachments, which we never un-hide): class, name,
+//      asset (SkeletalMesh / StaticMesh / Template), the bone it is attached to, ParentAnimComponent, bounds in view
+//      space and the hide flags;
+//   2. the AnimTree's skeletal controls, one line per bone list (bone, then each control: name, class, strength /
+//      target, BoneScale) - which bones a control could scale;
+//   3. the skeleton (SkeletalMeshComponent.SpaceBases x LocalToWorld, in the camera's view space): the 20 bones nearest
+//      the camera, then every head / eye / neck / jaw / shoulder / clavicle / armour bone by name, then the mesh's
+//      sockets (SkeletalMesh.Sockets) with an eye / camera / head / view / helmet name - where the real eyes are versus
+//      the camera, and which bone a shoulder pad or collar hangs on. Bone names come from the SkeletalMesh's native bone
+//      table, found by a checked search (indices only when not found).
+// Log only: nothing is written.
+void Vec3(uint32_t a, float v[3]) { for (int i = 0; i < 3; i++) v[i] = obj::ReadFloat(a + 4 * i); }
+struct View { float c[3] = {}, fw[3] = {}, rt[3] = {}, up[3] = {}; float fov = 0; bool ok = false; };
+View ViewOf(uint32_t cam) {   // CameraCache.POV: TimeStamp, then Location, Rotation, FOV (as DiagTick reads it)
+  View v;
+  const PropInfo cc = Prop(obj::ClassOf(cam), "CameraCache");
+  if (cc.offset < 0) return v;
+  const uint32_t pov = cam + uint32_t(cc.offset) + 4;
+  Vec3(pov, v.c);
+  const float k = 3.14159265f / 32768.f;
+  const float pitch = float(int16_t(obj::Read32(pov + 12) & 0xFFFF)) * k, yaw = float(int32_t(obj::Read32(pov + 16))) * k;
+  v.fov = obj::ReadFloat(pov + 24);
+  const float fw[3] = {std::cos(pitch) * std::cos(yaw), std::cos(pitch) * std::sin(yaw), std::sin(pitch)};
+  const float rt[3] = {-std::sin(yaw), std::cos(yaw), 0};
+  const float up[3] = {-std::sin(pitch) * std::cos(yaw), -std::sin(pitch) * std::sin(yaw), std::cos(pitch)};
+  std::memcpy(v.fw, fw, sizeof fw), std::memcpy(v.rt, rt, sizeof rt), std::memcpy(v.up, up, sizeof up);
+  v.ok = true;
+  return v;
+}
+// a world point in view space: "fwd F right R up U dist D (in view / out)"
+std::string InView(const View& v, const float p[3]) {
+  const float d[3] = {p[0] - v.c[0], p[1] - v.c[1], p[2] - v.c[2]};
+  const float f = d[0] * v.fw[0] + d[1] * v.fw[1] + d[2] * v.fw[2], r = d[0] * v.rt[0] + d[1] * v.rt[1],
+              u = d[0] * v.up[0] + d[1] * v.up[1] + d[2] * v.up[2];
+  const float deg = 180.f / 3.14159265f, halfH = v.fov * 0.5f,
+              halfV = std::atan(std::tan(halfH / deg) * 9.f / 16.f) * deg;
+  const bool in = f > 0 && std::abs(std::atan2(r, f) * deg) < halfH && std::abs(std::atan2(u, f) * deg) < halfV;
+  char b[128];
+  std::snprintf(b, sizeof b, "fwd %.0f right %.0f up %.0f dist %.0f%s", f, r, u, std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]),
+                in ? " IN VIEW" : "");
+  return b;
+}
+std::string FullName(uint32_t o) {   // Outer.Outer.Name (3 levels at most)
+  std::string s;
+  for (int i = 0; o && i < 3; i++, o = obj::Read32(o + OuterOff())) s = s.empty() ? obj::ObjectName(o) : obj::ObjectName(o) + "." + s;
+  return s.empty() ? "-" : s;
+}
+std::string Asset(uint32_t c) {
+  for (const char* p : {"SkeletalMesh", "StaticMesh", "Template"})
+    if (Prop(obj::ClassOf(c), p).offset >= 0) return std::string(p) + " " + FullName(Ptr(c, p));
+  return "no asset";
+}
+// an array-of-struct property's element: its struct object and ElementSize (ArrayProperty Inner -> StructProperty Struct,
+// both at the first field after UProperty; 0 when not matched)
+struct StructArray { uint32_t st = 0, stride = 0; };
+StructArray ArrayOf(uint32_t cls, const char* p) {
+  StructArray a;
+  const uint32_t arr = PropertyObject(cls, p);
+  if (!arr || obj::ObjectName(obj::ClassOf(arr)) != "ArrayProperty") return a;
+  const uint32_t inner = obj::Read32(arr + InnerOff());
+  if (!inner || obj::ObjectName(obj::ClassOf(inner)) != "StructProperty") return a;
+  const uint32_t st = obj::Read32(inner + InnerOff()), size = obj::Read32(inner + ElemSizeOff());
+  if (st && size >= 4 && size <= 256) a.st = st, a.stride = size;
+  return a;
+}
+// the pawn mesh's attachments: component -> bone (SkeletalMeshComponent.Attachments: Component, BoneName, ...)
+std::vector<std::pair<uint32_t, std::string>> Attachments(uint32_t mesh) {
+  std::vector<std::pair<uint32_t, std::string>> v;
+  const uint32_t cls = obj::ClassOf(mesh);
+  const PropInfo at = Prop(cls, "Attachments");
+  const StructArray a = ArrayOf(cls, "Attachments");
+  if (at.offset < 0 || !a.st) return v;
+  const int comp = obj::PropertyOffset(a.st, "Component"), bone = obj::PropertyOffset(a.st, "BoneName");
+  const uint32_t data = obj::Read32(mesh + uint32_t(at.offset)), n = obj::Read32(mesh + uint32_t(at.offset) + 4);
+  if (comp < 0 || bone < 0 || !data || n > 64 || !obj::Readable(data, n * a.stride)) return v;
+  for (uint32_t i = 0; i < n; i++)
+    v.push_back({obj::Read32(data + i * a.stride + uint32_t(comp)), obj::Name(obj::Read32(data + i * a.stride + uint32_t(bone)))});
+  return v;
+}
+void DumpPart(const View& v, uint32_t mesh, const std::vector<std::pair<uint32_t, std::string>>& att, const char* role,
+              uint32_t c) {
+  const uint32_t cls = obj::ClassOf(c);
+  std::string bone = "-";
+  for (const auto& [comp, b] : att)
+    if (comp == c) bone = b;
+  const uint32_t parent = Ptr(c, "ParentAnimComponent");
+  std::string where = "no bounds";
+  if (const PropInfo bo = Prop(cls, "Bounds"); bo.offset >= 0 && v.ok) {
+    float o[3];
+    Vec3(c + uint32_t(bo.offset), o);
+    char r[32];
+    std::snprintf(r, sizeof r, " radius %.0f", obj::ReadFloat(c + uint32_t(bo.offset) + 24));
+    where = "bounds centre " + InView(v, o) + r;
+  }
+  REXLOG_INFO("first person diag: part {} {} {:08X} | {} | bone {} | ParentAnimComponent {} | {} | HiddenGame {} "
+              "OwnerNoSee {} OnlyOwnerSee {} IgnoreHiddenActors {}", role, obj::ObjectName(cls) + " " + obj::ObjectName(c),
+              c, Asset(c), bone, !parent ? "none" : parent == mesh ? "= pawn mesh" : FullName(parent), where,
+              Flag(c, "HiddenGame"), Flag(c, "bOwnerNoSee"), Flag(c, "bOnlyOwnerSee"), Flag(c, "bIgnoreHiddenActorsMembership"));
+}
+void DumpControls(uint32_t mesh) {
+  const uint32_t tree = Ptr(mesh, "Animations");
+  if (!tree || !obj::IsLive(tree)) { REXLOG_INFO("first person diag: skel controls: no AnimTree"); return; }
+  const uint32_t tcls = obj::ClassOf(tree);
+  const PropInfo lists = Prop(tcls, "SkelControlLists");
+  const ListLayout l = ListsLayout(tcls);
+  const uint32_t data = lists.offset >= 0 ? obj::Read32(tree + uint32_t(lists.offset)) : 0,
+                 n = lists.offset >= 0 ? obj::Read32(tree + uint32_t(lists.offset) + 4) : 0;
+  REXLOG_INFO("first person diag: skel controls of AnimTree {} {:08X}: {} bone list(s)", FullName(tree), tree, n);
+  if (!data || n > 512 || !obj::Readable(data, n * l.stride)) return;
+  for (uint32_t i = 0; i < n && i < 96; i++) {
+    std::string line;
+    uint32_t c = obj::Read32(data + i * l.stride + l.head);
+    for (int k = 0; c && k < 16 && obj::IsLive(c); k++, c = Ptr(c, "NextControl")) {
+      const uint32_t cls = obj::ClassOf(c);
+      const PropInfo cn = Prop(cls, "ControlName");
+      const auto f = [&](const char* p) { const PropInfo q = Prop(cls, p); return q.offset >= 0 ? obj::ReadFloat(c + uint32_t(q.offset)) : -1.f; };
+      char b[96];
+      std::snprintf(b, sizeof b, " (%s strength %.2f/%.2f BoneScale %.2f)", obj::ObjectName(cls).c_str(),
+                    f("ControlStrength"), f("StrengthTarget"), f("BoneScale"));
+      line += std::string(k ? " ->" : "") + " '" + (cn.offset >= 0 ? obj::Name(obj::Read32(c + uint32_t(cn.offset))) : "?") + "'" + b;
+    }
+    REXLOG_INFO("first person diag:   bone {}:{}", obj::Name(obj::Read32(data + i * l.stride)), line.empty() ? " none" : line);
+  }
+}
+// The SkeletalMesh's bone table (native RefSkeleton: TArray<FMeshBone>, FName first in each element) - not a script
+// property, so it is searched for: a TArray in the first 1 KB of the SkeletalMesh with exactly the mesh's bone count
+// whose elements, at one stride, all start with a distinct identifier-like name. Empty when not found.
+std::vector<std::string> BoneNames(uint32_t skel, uint32_t count) {
+  std::vector<std::string> names;
+  if (!skel || count < 8 || count > 400) return names;
+  const auto ident = [](const std::string& s) {
+    if (s.empty() || s.size() > 64) return false;
+    for (char ch : s)
+      if (!std::isalnum(uint8_t(ch)) && ch != '_') return false;
+    return true;
+  };
+  for (uint32_t off = 32; off < 0x400; off += 4) {
+    const uint32_t data = obj::Read32(skel + off), n = obj::Read32(skel + off + 4), max = obj::Read32(skel + off + 8);
+    if (n != count || max < n || !data) continue;
+    for (uint32_t stride = 8; stride <= 128; stride += 4) {
+      if (!obj::Readable(data, n * stride)) break;
+      std::vector<std::string> v;
+      std::unordered_set<std::string> seen;
+      for (uint32_t i = 0; i < n; i++) {
+        std::string s = obj::Name(obj::Read32(data + i * stride));
+        if (!ident(s) || !seen.insert(s).second) break;
+        v.push_back(std::move(s));
+      }
+      if (v.size() == n) {
+        REXLOG_INFO("first person diag: bone names: SkeletalMesh +0x{:X}, {} bytes per bone", off, stride);
+        return v;
+      }
+    }
+  }
+  REXLOG_INFO("first person diag: bone names: the SkeletalMesh's bone table was not found (indices only)");
+  return names;
+}
+
+// a bone's mesh-space transform from SpaceBases: an FMatrix (rows X, Y, Z, origin) or an FBoneAtom (Rotation quat,
+// Translation, Scale) - made into rows
+struct Bones {
+  uint32_t data = 0, n = 0, stride = 0;
+  int rot = -1, tr = -1, sc = -1;   // FBoneAtom fields (-1: FMatrix)
+  float l2w[16] = {};
+  bool ok = false;
+};
+Bones BonesOf(uint32_t mesh) {
+  Bones b;
+  const uint32_t cls = obj::ClassOf(mesh);
+  const PropInfo sb = Prop(cls, "SpaceBases"), lw = Prop(cls, "LocalToWorld");
+  const StructArray a = ArrayOf(cls, "SpaceBases");
+  if (sb.offset < 0 || lw.offset < 0 || obj::PropertySize(cls, "LocalToWorld") != 64 || !a.st) return b;
+  const std::string st = obj::ObjectName(a.st);
+  if (st == "Matrix" && a.stride == 64) {
+  } else {
+    b.rot = obj::PropertyOffset(a.st, "Rotation"), b.tr = obj::PropertyOffset(a.st, "Translation");
+    b.sc = obj::PropertyOffset(a.st, "Scale");
+    if (b.rot < 0 || b.tr < 0 || uint32_t(b.rot) + 16 > a.stride || uint32_t(b.tr) + 12 > a.stride) return b;
+  }
+  b.data = obj::Read32(mesh + uint32_t(sb.offset)), b.n = obj::Read32(mesh + uint32_t(sb.offset) + 4), b.stride = a.stride;
+  if (!b.data || !b.n || b.n > 400 || !obj::Readable(b.data, b.n * b.stride)) return b;
+  for (int i = 0; i < 16; i++) b.l2w[i] = obj::ReadFloat(mesh + uint32_t(lw.offset) + 4 * i);
+  b.ok = true;
+  return b;
+}
+// the world position of a point given in bone i's space (0,0,0 = the bone itself); row vectors: p x M
+void BonePoint(const Bones& b, uint32_t i, const float local[3], float out[3]) {
+  const uint32_t e = b.data + i * b.stride;
+  float m[12];   // rows X, Y, Z, origin (3 floats each)
+  if (b.rot < 0) {
+    for (int r = 0; r < 4; r++)
+      for (int k = 0; k < 3; k++) m[r * 3 + k] = obj::ReadFloat(e + uint32_t(r * 16 + k * 4));
+  } else {   // FBoneAtom: quaternion (x, y, z, w), uniform scale
+    const float x = obj::ReadFloat(e + uint32_t(b.rot)), y = obj::ReadFloat(e + uint32_t(b.rot) + 4),
+                z = obj::ReadFloat(e + uint32_t(b.rot) + 8), w = obj::ReadFloat(e + uint32_t(b.rot) + 12);
+    const float s = b.sc >= 0 ? obj::ReadFloat(e + uint32_t(b.sc)) : 1.f;
+    const float q[9] = {1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y),
+                        2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x),
+                        2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)};
+    for (int k = 0; k < 9; k++) m[k] = q[k] * s;
+    for (int k = 0; k < 3; k++) m[9 + k] = obj::ReadFloat(e + uint32_t(b.tr) + 4 * uint32_t(k));
+  }
+  float p[3];
+  for (int k = 0; k < 3; k++) p[k] = local[0] * m[k] + local[1] * m[3 + k] + local[2] * m[6 + k] + m[9 + k];
+  for (int k = 0; k < 3; k++) out[k] = p[0] * b.l2w[k] + p[1] * b.l2w[4 + k] + p[2] * b.l2w[8 + k] + b.l2w[12 + k];
+}
+bool NameHas(std::string s, std::initializer_list<const char*> keys) {
+  for (char& ch : s) ch = char(std::tolower(uint8_t(ch)));
+  for (const char* k : keys)
+    if (s.find(k) != std::string::npos) return true;
+  return false;
+}
+void DumpBones(const View& v, uint32_t mesh) {
+  const Bones b = BonesOf(mesh);
+  if (!v.ok || !b.ok) {
+    REXLOG_INFO("first person diag: bones: SpaceBases / LocalToWorld not readable");
+    return;
+  }
+  const std::vector<std::string> names = BoneNames(Ptr(mesh, "SkeletalMesh"), b.n);
+  const auto nameOf = [&](uint32_t i) { return i < names.size() ? names[i] : std::string("?"); };
+  const float zero[3] = {0, 0, 0};
+  std::vector<std::pair<float, uint32_t>> nearest;   // distance to the camera, bone index
+  std::vector<std::array<float, 3>> world(b.n);
+  for (uint32_t i = 0; i < b.n; i++) {
+    BonePoint(b, i, zero, world[i].data());
+    const float d[3] = {world[i][0] - v.c[0], world[i][1] - v.c[1], world[i][2] - v.c[2]};
+    nearest.push_back({std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]), i});
+  }
+  std::sort(nearest.begin(), nearest.end());
+  REXLOG_INFO("first person diag: bones nearest the camera ({} bones, {}, names {}):", b.n,
+              b.rot < 0 ? "FMatrix" : "FBoneAtom", names.empty() ? "not found" : "found");
+  for (size_t k = 0; k < nearest.size() && k < 20 && nearest[k].first < 80.f; k++)
+    REXLOG_INFO("first person diag:   bone #{} {} | {}", nearest[k].second, nameOf(nearest[k].second),
+                InView(v, world[nearest[k].second].data()));
+  // the bones the eye camera and the shapes at the edges are about (by name)
+  for (uint32_t i = 0; i < names.size(); i++)
+    if (NameHas(names[i], {"head", "eye", "neck", "jaw", "cam", "clav", "shoulder", "sho", "armor", "armour", "pad",
+                           "collar", "scarf", "hood", "spine3", "spine_3"}))
+      REXLOG_INFO("first person diag:   named bone #{} {} | {}", i, names[i], InView(v, world[i].data()));
+  // the mesh's sockets (SkeletalMesh.Sockets: SkeletalMeshSocket objects - SocketName, BoneName, RelativeLocation)
+  const uint32_t skel = Ptr(mesh, "SkeletalMesh");
+  const PropInfo so = Prop(obj::ClassOf(skel), "Sockets");
+  if (!skel || so.offset < 0) { REXLOG_INFO("first person diag: sockets: none readable"); return; }
+  const uint32_t data = obj::Read32(skel + uint32_t(so.offset)), n = obj::Read32(skel + uint32_t(so.offset) + 4);
+  if (!data || n > 128 || !obj::Readable(data, n * 4)) return;
+  std::string all;
+  for (uint32_t k = 0; k < n; k++) {
+    const uint32_t s = obj::Read32(data + 4 * k);
+    if (!s || !obj::IsLive(s)) continue;
+    const PropInfo sn = Prop(obj::ClassOf(s), "SocketName"), bn = Prop(obj::ClassOf(s), "BoneName"),
+                   rl = Prop(obj::ClassOf(s), "RelativeLocation");
+    if (sn.offset < 0 || bn.offset < 0) continue;
+    const std::string sname = obj::Name(obj::Read32(s + uint32_t(sn.offset))), bone = obj::Name(obj::Read32(s + uint32_t(bn.offset)));
+    all += " " + sname + "@" + bone;
+    if (!NameHas(sname, {"eye", "cam", "head", "view", "helmet", "hat", "face"})) continue;
+    const auto it = std::find(names.begin(), names.end(), bone);
+    if (it == names.end() || rl.offset < 0) { REXLOG_INFO("first person diag:   socket {} on {} (bone not resolved)", sname, bone); continue; }
+    float rel[3], w[3];
+    Vec3(s + uint32_t(rl.offset), rel);
+    BonePoint(b, uint32_t(it - names.begin()), rel, w);
+    REXLOG_INFO("first person diag:   socket {} on {} (+{:.1f}, {:.1f}, {:.1f}) | {}", sname, bone, rel[0], rel[1], rel[2],
+                InView(v, w));
+  }
+  REXLOG_INFO("first person diag: sockets ({}):{}", n, all.empty() ? " none" : all);
+}
+
+// Pawn meshes not dumped yet (diag on): first seen in first person at; WeaponTick holds their head back until the dump.
+std::unordered_map<uint32_t, Clock::time_point> g_fpSince;
+std::unordered_set<uint32_t> g_dumped;
+bool DumpPending(uint32_t mesh) {
+  static const bool on = REXCVAR_GET(gow2_first_person_diag);
+  if (!on || !mesh || g_dumped.count(mesh) || g_dumped.size() >= 4) return false;
+  g_fpSince.try_emplace(mesh, Clock::now());
+  return true;
+}
+void DumpOnce(uint32_t cam, uint32_t pawn, uint32_t weapon) {
+  const uint32_t mesh = Ptr(pawn, "Mesh");
+  const auto since = g_fpSince.find(mesh);
+  if (!mesh || !obj::IsLive(mesh) || g_dumped.count(mesh) || since == g_fpSince.end() ||
+      Clock::now() - since->second < std::chrono::milliseconds(1500))
+    return;
+  g_dumped.insert(mesh);
+  const View v = ViewOf(cam);
+  const auto att = Attachments(mesh);
+  REXLOG_INFO("first person diag: ---- parts of {} {:08X} (mesh {}, {} mesh attachment(s)) seen from camera ({:.0f}, "
+              "{:.0f}, {:.0f}) FOV {:.0f}, head not hidden yet ----", obj::ObjectName(obj::ClassOf(pawn)), pawn,
+              Asset(mesh), att.size(), v.c[0], v.c[1], v.c[2], v.fov);
+  std::vector<uint32_t> done;
+  for (uint32_t c : BodyParts(pawn)) DumpPart(v, mesh, att, c == mesh ? "pawn-mesh" : "pawn-component", c), done.push_back(c);
+  if (weapon && obj::IsLive(weapon))
+    for (uint32_t c : WeaponParts(weapon)) DumpPart(v, mesh, att, "weapon", c), done.push_back(c);
+  for (const auto& [c, b] : att)
+    if (c && obj::IsLive(c) && std::find(done.begin(), done.end(), c) == done.end())
+      DumpPart(v, mesh, att, "mesh-attachment(not un-hidden by us)", c);
+  DumpControls(mesh);
+  DumpBones(v, mesh);
+  REXLOG_INFO("first person diag: ---- end of parts ----");
+}
+
 // Every engine tick while first person is on (a few dozen reads per local player): the current weapon (and body) of
 // each local player whose camera is in a first-person mode gets bIgnoreHiddenActorsMembership; anything we set it on
 // that is no longer such a part (weapon switched, dropped, holstered, cover / third-person mode, player gone) gets it
@@ -341,10 +867,14 @@ std::vector<uint32_t> BodyParts(uint32_t pawn) {
 std::unordered_set<uint32_t> g_wantParts;
 void WeaponTick() {
   static const bool weaponOn = REXCVAR_GET(gow2_first_person_weapon), bodyOn = REXCVAR_GET(gow2_first_person_body);
+  static const bool headOn = REXCVAR_GET(gow2_first_person_head);
   if (!weaponOn && !bodyOn) return;
   g_wantParts.clear();
+  uint32_t headMesh = 0, headPawn = 0;
+  int liveCams = 0;
   for (uint32_t cam : g_cams) {
     if (!obj::IsLive(cam)) continue;
+    liveCams++;
     // only while the gameplay camera is the active one and its current mode is one of ours; a property not found =
     // nothing un-hidden
     const uint32_t gc = Ptr(cam, "GameplayCam");
@@ -354,9 +884,13 @@ void WeaponTick() {
     const uint32_t pc = Ptr(cam, "PCOwner");
     if (!pc || !obj::IsLive(pc)) continue;
     const uint32_t pawn = Ptr(pc, "MyGearPawn");
+    if (pawn && obj::IsLive(pawn)) DumpPending(Ptr(pawn, "Mesh"));   // --gow2_first_person_diag: the one-time dump
     if (!pawn || !obj::IsLive(pawn)) continue;
     std::vector<uint32_t> parts;
-    if (bodyOn) parts = BodyParts(pawn);
+    if (bodyOn) {
+      parts = BodyParts(pawn);
+      if (const uint32_t mesh = Ptr(pawn, "Mesh"); mesh && obj::IsLive(mesh)) headMesh = mesh, headPawn = pawn;
+    }
     if (const uint32_t weapon = Ptr(pawn, "MyGearWeapon"); weapon && obj::IsLive(weapon))
       for (uint32_t c : WeaponParts(weapon)) parts.push_back(c);
     for (uint32_t c : parts) {
@@ -370,6 +904,12 @@ void WeaponTick() {
     if (!g_wantParts.count(it->second.object)) RestoreBit(it->second), it = g_bits.erase(it);
     else ++it;
   }
+  // your own head: hidden only with the body drawn, for a single local player (split screen: every view would show it)
+  // (--gow2_first_person_diag: a pawn mesh not dumped yet keeps its head ~1.5 s longer, so the dump sees the real eyes)
+  const bool dumpFirst = liveCams == 1 && headMesh && DumpPending(headMesh);
+  if (bodyOn && !headOn)
+    HeadTick(liveCams == 1 && !dumpFirst ? headMesh : 0, headPawn, dumpFirst ? "diag: parts dump first"
+             : liveCams > 1 ? "split screen (shown)" : "not first person");
 }
 
 // ---- --gow2_first_person_diag: once a second, per local player, log only --------------------------------------------
@@ -422,6 +962,8 @@ void DiagTick() {
     REXLOG_INFO("first person diag:   pawn mesh {} | weapon {} bHidden {} | weapon mesh {} (owner {}) | magazine {}",
                 Parts(Ptr(pawn, "Mesh")), weapon ? obj::ObjectName(obj::ClassOf(weapon)) : "none", Flag(weapon, "bHidden"),
                 Parts(wmesh), obj::ObjectName(obj::ClassOf(Ptr(wmesh, "Owner"))), Parts(Ptr(weapon, "MagazineMesh")));
+    // once per pawn mesh, ~1.5 s into first person: every part, the skeletal controls, the bones / sockets near the camera
+    if (g_patched.count(mode) && pawn && obj::IsLive(pawn)) DumpOnce(cam, pawn, weapon);
     // camera (CameraCache.POV: TimeStamp, then Location, Rotation, FOV) vs the weapon mesh's bounds centre and the pawn
     const PropInfo cc = Prop(obj::ClassOf(cam), "CameraCache");
     const PropInfo bo = Prop(obj::ClassOf(wmesh), "Bounds");
@@ -450,6 +992,31 @@ void DiagTick() {
                 f > 0 && std::abs(std::atan2(r, f) * deg) < halfH && std::abs(std::atan2(u, f) * deg) < halfV
                     ? " IN VIEW" : " out of view");
   }
+  // the head (--gow2_first_person_head off): the control and its values now, what we will put back
+  if (!REXCVAR_GET(gow2_first_person_body) || REXCVAR_GET(gow2_first_person_head)) {
+    REXLOG_INFO("first person diag:   head drawn (option{})", REXCVAR_GET(gow2_first_person_body) ? "" : ": body off");
+    return;
+  }
+  const uint32_t c = g_head.ctrl, cls = c ? obj::ClassOf(c) : 0;
+  const auto f = [&](const char* p) {
+    const PropInfo i = Prop(cls, p);
+    return c && i.offset >= 0 ? obj::ReadFloat(c + uint32_t(i.offset)) : -1.f;
+  };
+  std::string orig;
+  for (const HeadWord& w : g_head.words) {
+    char b[48];
+    std::snprintf(b, sizeof b, " +0x%X %.3f->%.3f", w.address - c, Float(w.original), Float(w.written));
+    orig += b;
+  }
+  const uint32_t sc = c ? Ptr(c, "SkelComponent") : 0;
+  REXLOG_INFO("first person diag:   head {} | control {} {} {:08X} (lists via {}) | BoneScale {:.3f} ControlStrength {:.3f} "
+              "StrengthTarget {:.3f} BlendTimeToGo {:.3f} bSetStrengthFromAnimNode {} | SkelComponent {} | mesh {:08X} "
+              "tree {:08X} | headshot death {} | ours:{}", g_head.state,
+              g_head.control.empty() ? "-" : g_head.control, c ? obj::ObjectName(cls) : "-", c,
+              g_head.listsVia < 0 ? "-" : g_head.listsVia ? "reflection" : "UE3 layout", f("BoneScale"),
+              f("ControlStrength"), f("StrengthTarget"), f("BlendTimeToGo"), Flag(c, "bSetStrengthFromAnimNode"),
+              !c ? "-" : sc == g_head.mesh ? "= mesh" : sc ? "OTHER" : "none", g_head.mesh, g_head.tree,
+              Flag(g_head.pawn, "bHasPlayedHeadShotDeath"), orig.empty() ? " none" : orig);
 }
 
 // Off again (the hotkey): review r20 B1 - only objects still in the engine's object table are written. A mode object
@@ -529,6 +1096,7 @@ void Gow2FirstPersonTick() {
       g_restored = 0;
       const size_t bits = g_bits.size();
       RestoreBits();   // bIgnoreHiddenActorsMembership on the weapon / body parts (live objects only)
+      RestoreHead();   // the head control's BoneScale / strength (live control only)
       g_cams.clear();
       REXLOG_INFO("first person: off - {} flag(s) back", bits);
     }
