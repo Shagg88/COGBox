@@ -47,7 +47,8 @@ REXCVAR_DEFINE_STRING(gow2_crash_minidump, "auto", "Gears2",
                       "Crash minidump: auto = written by COGBox from outside the game (or, without COGBox, by the game "
                       "after its lock checks; left to Windows Error Reporting when an HKLM LocalDumps key points at the "
                       "crash folder); game = always written by the game itself; windows = never by the game or COGBox. "
-                      "A crashed game can wait up to ~3 minutes for its report and dump before it closes");
+                      "A crashed game can wait up to ~4.5 minutes for its report and dump before it closes (only when "
+                      "something hangs)");
 REXCVAR_DEFINE_STRING(gow2_crash_test, "", "Gears2",
                       "Test the crash report 10 s after start: av (access violation), stack (stack overflow), abort, "
                       "heaplock (crash while holding the process heap lock: the report must still be written and the "
@@ -79,13 +80,15 @@ volatile LONG g_note_count = 0;
 constexpr ULONG_PTR kReasonMark = 0x6F77326661696C;
 constexpr DWORD kFailFast = 0xC0000409;  // STATUS_STACK_BUFFER_OVERRUN, the code the CRT's fail-fast paths end with
 constexpr DWORD kReportWaitMs = 30000;    // the crashing thread waits at most this long for the report
-constexpr DWORD kDumpWaitMs = 150000;     // ... and this much more while a minidump is being written
+constexpr DWORD kDumpWaitMs = 240000;     // ... and this much more while the minidump step runs (COGBox's ack 3 s +
+                                          // its dump 120 s + the lock probes 4 s + the game's own dump)
 constexpr DWORD kAckWaitMs = 3000;        // COGBox answers a dump request within this, or the game dumps itself
 constexpr DWORD kLauncherDumpMs = 120000; // COGBox's minidump
 
 // GitHub #286 / r75: COGBox writes the minidump from outside (xenos/crash_dump_ipc.h), made at start.
 xenos_crash_ipc::CrashDumpInfo* g_ipc_info = nullptr;
 HANDLE g_ipc_req = nullptr, g_ipc_ack = nullptr, g_ipc_done = nullptr;
+HANDLE g_parent = nullptr;  // r76 L2: the process that started the game (COGBox): its end stops the waits for it
 constexpr DWORD kProbeWaitMs = 2000;      // heap / loader lock probes
 
 HANDLE g_go = nullptr, g_done = nullptr, g_probe_go = nullptr, g_probe_ok = nullptr, g_helper = nullptr;
@@ -93,7 +96,7 @@ DWORD g_helper_tid = 0, g_prober_tid = 0;
 EXCEPTION_POINTERS* volatile g_ep = nullptr;
 volatile DWORD g_crash_tid = 0;
 volatile LONG g_owner = 0;    // the thread whose crash is being reported
-volatile LONG g_dumping = 0;  // the helper is inside MiniDumpWriteDump
+volatile LONG g_dumping = 0;  // the helper is in the minidump step (COGBox's request, the probes, the dump)
 
 // The helper's own copy of the exception (r74 L1: the crashing thread's EXCEPTION_POINTERS may live on a stack that is
 // reused once it stops waiting).
@@ -430,6 +433,10 @@ void PutWerDump() {
 
 // COGBox writes the minidump from outside the game. kNoLauncher: nobody answered (run without COGBox, or an older one).
 enum { kNoLauncher, kLauncherWritten, kLauncherFailed, kLauncherStuck };
+DWORD WaitOrParent(HANDLE h, DWORD ms) {  // WAIT_OBJECT_0: h; WAIT_OBJECT_0 + 1: COGBox ended
+  HANDLE w[2] = {h, g_parent};
+  return WaitForMultipleObjects(g_parent ? 2 : 1, w, FALSE, ms);
+}
 int AskLauncher(const wchar_t* name, DWORD tid) {
   namespace ipc = xenos_crash_ipc;
   if (!g_ipc_info || !g_ipc_req || !g_ipc_ack || !g_ipc_done) return kNoLauncher;
@@ -450,16 +457,22 @@ int AskLauncher(const wchar_t* name, DWORD tid) {
   ResetEvent(g_ipc_ack);
   ResetEvent(g_ipc_done);
   SetEvent(g_ipc_req);
-  if (WaitForSingleObject(g_ipc_ack, kAckWaitMs) != WAIT_OBJECT_0) {
-    in->magic = 0;
-    ResetEvent(g_ipc_req);
-    return kNoLauncher;
+  if (WaitOrParent(g_ipc_ack, kAckWaitMs) != WAIT_OBJECT_0) {
+    // r76 L3: take the request back atomically - unless COGBox claimed it just now (then it writes, we wait)
+    const LONG was = InterlockedCompareExchange(reinterpret_cast<volatile LONG*>(&in->magic), 0,
+                                                static_cast<LONG>(ipc::kMagic));
+    if (was != static_cast<LONG>(ipc::kTaken)) {
+      ResetEvent(g_ipc_req);
+      return kNoLauncher;
+    }
   }
   Put("COGBox (the launcher) is writing it from outside the game ... ");
   Section();
-  InterlockedExchange(&g_dumping, 1);
-  const DWORD w = WaitForSingleObject(g_ipc_done, kLauncherDumpMs);
-  InterlockedExchange(&g_dumping, 0);
+  const DWORD w = WaitOrParent(g_ipc_done, kLauncherDumpMs);
+  if (w == WAIT_OBJECT_0 + 1) {
+    Put("COGBox ended during it; ");
+    return kLauncherFailed;
+  }
   if (w != WAIT_OBJECT_0) return kLauncherStuck;
   if (in->result == ipc::kResultWritten) return kLauncherWritten;
   Put("failed, error ");
@@ -548,6 +561,7 @@ void WriteReport(EXCEPTION_POINTERS* ep, DWORD tid) {
   // any probe), so COGBox writes it from outside the game when it is there; else the game, after the lock probes.
   Put("minidump: ");
   name[22] = L'd'; name[23] = L'm'; name[24] = L'p';
+  InterlockedExchange(&g_dumping, 1);  // r76 L1: the crashing thread's longer wait covers the whole step
   const int launcher = g_minidump_mode == 0 && !g_wer_here ? AskLauncher(name, tid) : kNoLauncher;
   if (g_minidump_mode == 2 || (g_minidump_mode == 0 && g_wer_here)) {
     if (g_minidump_mode == 2) Put("not written by the game (--gow2_crash_minidump=windows); ");
@@ -566,13 +580,11 @@ void WriteReport(EXCEPTION_POINTERS* ep, DWORD tid) {
     HANDLE h;
     if (OpenNt(name, false, false, false, &h)) {
       MINIDUMP_EXCEPTION_INFORMATION mei{tid, &g_ep_copy, FALSE};
-      InterlockedExchange(&g_dumping, 1);
       const BOOL ok = MiniDumpWriteDump(
           GetCurrentProcess(), GetCurrentProcessId(), h,
           static_cast<MINIDUMP_TYPE>(MiniDumpWithThreadInfo | MiniDumpWithIndirectlyReferencedMemory), &mei, nullptr,
           nullptr);
       const DWORD err = GetLastError();
-      InterlockedExchange(&g_dumping, 0);
       CloseHandle(h);
       if (ok) {
         Put("done\n");
@@ -585,6 +597,7 @@ void WriteReport(EXCEPTION_POINTERS* ep, DWORD tid) {
       Put("the file could not be made\n");
     }
   }
+  InterlockedExchange(&g_dumping, 0);
   Section();
   if (g_txt != INVALID_HANDLE_VALUE) CloseHandle(g_txt);
   g_txt = INVALID_HANDLE_VALUE;
@@ -613,7 +626,11 @@ LONG WINAPI OnCrash(EXCEPTION_POINTERS* ep) {
     g_crash_tid = me;
     SetEvent(g_go);
     // bounded: then Windows Error Reporting takes over (longer while a minidump is still being written)
-    if (WaitForSingleObject(g_done, kReportWaitMs) == WAIT_TIMEOUT && g_dumping) WaitForSingleObject(g_done, kDumpWaitMs);
+    const ULONGLONG t0 = GetTickCount64();
+    while (WaitForSingleObject(g_done, 1000) == WAIT_TIMEOUT) {
+      const ULONGLONG ms = GetTickCount64() - t0;
+      if (ms >= kReportWaitMs && (!g_dumping || ms >= ULONGLONG(kReportWaitMs) + kDumpWaitMs)) break;
+    }
   } else {
     WriteReport(ep, me);  // the helper couldn't be made at start
     if (g_done) SetEvent(g_done);
@@ -767,7 +784,14 @@ void XenosInstallCrashHandler() {
     const DWORD pid = GetCurrentProcessId();
     wchar_t nm[64];
     ipc::Name(nm, 64, pid, L"info");
-    if (HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(ipc::CrashDumpInfo), nm))
+    HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(ipc::CrashDumpInfo), nm);
+    if (map && GetLastError() == ERROR_ALREADY_EXISTS) {
+      // r76 M1: only the game makes this block (COGBox makes the events), so someone else's: not used - in-process
+      CloseHandle(map);
+      map = nullptr;
+      REXLOG_WARN("crash report: {} already existed - the minidump is written by the game itself", "the dump request block");
+    }
+    if (map)
       g_ipc_info = static_cast<ipc::CrashDumpInfo*>(MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(ipc::CrashDumpInfo)));
     ipc::Name(nm, 64, pid, L"req");
     g_ipc_req = CreateEventW(nullptr, FALSE, FALSE, nm);
@@ -775,6 +799,30 @@ void XenosInstallCrashHandler() {
     g_ipc_ack = CreateEventW(nullptr, TRUE, FALSE, nm);
     ipc::Name(nm, 64, pid, L"done");
     g_ipc_done = CreateEventW(nullptr, TRUE, FALSE, nm);
+    // r76 L2: the parent (COGBox when it started the game), checked to be older than the game (a reused pid isn't)
+    using NtQueryInformationProcessFn = NTSTATUS(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    struct Pbi {
+      NTSTATUS exit_status;
+      PVOID peb;
+      ULONG_PTR affinity;
+      LONG base_priority;
+      ULONG_PTR pid, parent_pid;
+    } pbi{};
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    auto query = ntdll ? reinterpret_cast<NtQueryInformationProcessFn>(
+                             reinterpret_cast<void*>(GetProcAddress(ntdll, "NtQueryInformationProcess")))
+                       : nullptr;
+    if (query && query(GetCurrentProcess(), 0 /*ProcessBasicInformation*/, &pbi, sizeof(pbi), nullptr) >= 0 &&
+        pbi.parent_pid) {
+      if (HANDLE h = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(pbi.parent_pid))) {
+        FILETIME pc{}, me{}, x{}, y{}, z{}, k{};
+        if (GetProcessTimes(h, &pc, &x, &y, &z) && GetProcessTimes(GetCurrentProcess(), &me, &x, &y, &k) &&
+            CompareFileTime(&pc, &me) <= 0)
+          g_parent = h;
+        else
+          CloseHandle(h);
+      }
+    }
   }
 
   g_done = CreateEventW(nullptr, TRUE, FALSE, nullptr);

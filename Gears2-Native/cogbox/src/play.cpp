@@ -435,7 +435,10 @@ void play_start(App &a, int g, bool prepare)
         return;
     }
     CloseHandle(pi.hThread);
-    crash_dump_watch(pi.hProcess, pi.dwProcessId);   // GitHub #286: a crash's minidump written from out here
+    // GitHub #286: a crash's minidump written from out here (only into this play's folder)
+    a.run.crashDump = crash_dump_watch(pi.hProcess, pi.dwProcessId, logDir);
+    if (!a.run.crashDump)
+        append_line(join(logDir, "args.txt"), "launcher: the crash minidump watcher couldn't be started (the game writes its own)");
     a.run.proc = pi.hProcess;
     a.run.game = g;
     a.run.started = unix_now();
@@ -542,6 +545,12 @@ void play_poll(App &a)
     std::vector<std::string> crash = crash_files(a.run.logDir);
     append_line(join(a.run.logDir, "args.txt"), "launcher: the game ended after " + std::to_string(secs) + " s, exit code " +
                                                     (known ? hex32(code) : std::string("unknown")) + ", crash reports " + std::to_string(crash.size()));
+    if (a.run.crashDump && a.run.crashDump->state != CrashDumpStatus::kWatching)   // r76 L4: the watcher's outcome
+        append_line(join(a.run.logDir, "args.txt"), a.run.crashDump->state == CrashDumpStatus::kWritten
+                                                        ? std::string("launcher: crash minidump written by COGBox")
+                                                        : "launcher: COGBox couldn't write the crash minidump, error " +
+                                                              hex32(a.run.crashDump->error) + " (the game writes its own)");
+    a.run.crashDump.reset();
     bool restart = apply_menu_changes(a, g, a.run.logDir);
     // Shagg 10 Nov: silent fallback - two crashes in a row of the faster build -> the normal build for this game until
     // the next COGBox version. A clean exit resets the count. Only real crashes count (a crash report, or a Windows

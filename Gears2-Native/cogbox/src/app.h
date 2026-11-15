@@ -39,6 +39,8 @@ struct InstallJob {
     std::thread th;
 };
 
+struct CrashDumpStatus;   // crash_dump.h
+
 // A game that is running.
 struct Running {
     HANDLE proc = nullptr;
@@ -48,6 +50,7 @@ struct Running {
     std::string exe;        // GitHub #194: the port program started (play_poll's missing-DLL check)
     bool fastCode = true;   // Shagg 10 Nov: the faster build was started (its crashes count towards the fallback)
     bool prepare = false;   // job 641: a "Prepare all shaders" run (the game builds the pack, then exits)
+    std::shared_ptr<CrashDumpStatus> crashDump;   // GitHub #286: the crash minidump watcher (crash_dump.h)
 };
 
 enum Screen { SCR_FRONT, SCR_PAGE };

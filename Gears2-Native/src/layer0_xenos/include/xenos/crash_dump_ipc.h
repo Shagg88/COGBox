@@ -1,11 +1,13 @@
-// GitHub #286 (review r75): the game's crash minidump written by the launcher (COGBox) from outside the game, where
+// GitHub #286 (reviews r75 / r76): the game's crash minidump written by the launcher (COGBox) from outside the game, where
 // no lock inside the frozen game can hang it. Shared by the game (layer 0 crash_report.cpp) and COGBox
 // (cogbox/src/crash_dump.cpp), so both build the same names and read the same block. Windows-only, header-only.
 //
 // Per game process (pid): a shared memory block "Local\cogbox-crash-<pid>-info" (CrashDumpInfo, made by the game at
-// start) and three events, made by whichever side comes first (CreateEvent opens an existing one):
+// start; if it already existed, someone else made it, and the game doesn't use it) and three events, made by
+// whichever side comes first (CreateEvent opens an existing one):
 //   req  (auto-reset)   game -> launcher: the info block is filled, write the dump
-//   ack  (manual-reset) launcher -> game: request taken (no ack within a few seconds: no launcher, the game dumps)
+//   ack  (manual-reset) launcher -> game: request claimed (kTaken; no ack within a few seconds and the game takes
+//                       the request back: no launcher, the game dumps)
 //   done (manual-reset) launcher -> game: finished; CrashDumpInfo::result says how
 #pragma once
 
@@ -14,7 +16,12 @@
 
 namespace xenos_crash_ipc {
 
-constexpr uint32_t kMagic = 0x31445243;  // "CRD1"
+constexpr uint32_t kMagic = 0x31445243;  // "CRD1": a request waiting (CrashDumpInfo::magic)
+constexpr uint32_t kTaken = 0x4B415443;  // "CTAK": COGBox claimed it (InterlockedCompareExchange from kMagic; the
+                                         // game takes a request back the same way, kMagic -> 0, when no ack came)
+// The only dump flags COGBox uses (MiniDumpWithIndirectlyReferencedMemory | MiniDumpWithThreadInfo), whatever the
+// block says (review r76 M1).
+constexpr uint32_t kDumpTypeAllowed = 0x00000040 | 0x00001000;
 constexpr uint32_t kResultNone = 0, kResultWritten = 1, kResultFailed = 2;
 constexpr size_t kPathChars = 1100;
 
@@ -26,7 +33,7 @@ struct CrashDumpInfo {
   uint32_t result;              // launcher: kResultWritten / kResultFailed
   uint32_t error;               // launcher: GetLastError() of the failure
   uint32_t reserved;
-  wchar_t path[kPathChars];     // the .dmp to write, "\\?\" form, ends in ".dmp"
+  wchar_t path[kPathChars];     // the .dmp to write: "\\?\<the play's folder>\crash-YYYYMMDD-HHMMSS.dmp"
 };
 
 // "Local\cogbox-crash-<pid>-<what>" into out (no allocation). what: "info", "req", "ack", "done".
@@ -41,15 +48,6 @@ inline void Name(wchar_t* out, size_t cap, uint32_t pid, const wchar_t* what) {
   if (n + 1 < cap) out[n++] = L'-';
   for (; *what && n + 1 < cap; ++what) out[n++] = *what;
   out[n] = 0;
-}
-
-// The launcher writes only a path the game gave that names a .dmp file.
-inline bool PathOk(const wchar_t* p) {
-  size_t n = 0;
-  while (n < kPathChars && p[n]) ++n;
-  if (n < 5 || n >= kPathChars) return false;
-  const wchar_t* e = p + n - 4;
-  return e[0] == L'.' && (e[1] | 0x20) == L'd' && (e[2] | 0x20) == L'm' && (e[3] | 0x20) == L'p';
 }
 
 }  // namespace xenos_crash_ipc
