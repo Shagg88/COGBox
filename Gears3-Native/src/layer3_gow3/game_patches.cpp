@@ -619,10 +619,10 @@ void Gow3PathChoiceTick() {
 // of N gave N +- 2. With a player's limit the game thread waits here on the host clock (shared precise limiter) and the
 // engine is told "no limit" - it measured the time before this call, so its own wait would come on top.
 // 0.6.3: wait = false for UWorld::ServerTickClients' call (host with remote players): it only reads the value, and a
-// second wait in the same frame halved the player's limit (60 -> 30, 144 -> 72). It gets the limit itself (1/limit is
-// about this frame's DeltaSeconds, what it used when the engine was told "no limit").
+// second wait in the same frame halved the player's limit (60 -> 30, 144 -> 72). It gets 0 ("no limit"), exactly what
+// it got in 0.6.2 after the wait (review r62 M1: the limit itself would change its CPU-saturated test).
 static void Gow3ExactLimit(PPCRegister& f1, bool wait = true) {
-  if (!wait) return;
+  if (!wait) { f1.f64 = 0.0; return; }
   static xenos::FrameLimiter limiter;
   GOW3_LOG_ONCE("gow3_max_fps: exact host-side limiter on ({} fps)", f1.f64);
   limiter.Wait(f1.f64);

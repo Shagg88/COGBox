@@ -532,7 +532,8 @@ bool GowjNoteTickCall(uint32_t caller) {  // read-only (frame_limiter.h): logs t
 // thread waits here on the host clock (shared precise limiter) and the engine is told "no limit" - it measured the time
 // before this call, so its own wait would come on top.
 static void GowjExactLimit(PPCRegister& f1) {
-  if (g_gowj_tick_caller.load(std::memory_order_relaxed) == kServerTickClientsTickRateRet) return;  // f1 = the limit, no wait
+  // ServerTickClients (host with remote players): no second wait, and 0 as in 0.6.2 (review r62 M1)
+  if (g_gowj_tick_caller.load(std::memory_order_relaxed) == kServerTickClientsTickRateRet) { f1.f64 = 0.0; return; }
   static xenos::FrameLimiter limiter;
   static std::atomic<bool> s_logged{false};
   if (!s_logged.exchange(true)) REXLOG_INFO("gowj_max_fps: exact host-side limiter on ({:.0f} fps)", f1.f64);

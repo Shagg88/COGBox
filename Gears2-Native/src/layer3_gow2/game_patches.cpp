@@ -260,7 +260,8 @@ void Gow2MaxTickRate(PPCRegister& f1) {
   // Exact cap: the engine's own wait sleeps whole milliseconds (N +- 2 fps), so the game thread waits here on the host
   // clock and the engine is told "no limit" (it measured the time before this call, so its wait would come on top).
   if (g_gow2_tick_caller.load(std::memory_order_relaxed) == gow2::addr::kServerTickClientsTickRateRet) {
-    f1.f64 = double(v);  // ServerTickClients only reads it (1/v ~ this frame's DeltaSeconds); the engine loop waited
+    f1.f64 = 0.0;  // ServerTickClients: no second wait; 0 = what it got in 0.6.2 (review r62 M1: v would change its
+                   // CPU-saturated test and the WorldInfo flags it clears); the engine loop's call did the waiting
     return;
   }
   static xenos::FrameLimiter limiter;
