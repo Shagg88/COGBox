@@ -34,13 +34,15 @@
 //   pixel shaders and the vertex-shader regions that rebuild one of its vertex shaders (their bytes kept once each, a
 //   few MB). At the next start such a package is not read: those shaders are handed over from the list (instant), the
 //   same as reading it would. The list is valid for one recipe pack (its file's hash), one build of this reader and of
-//   the renderer's matching, and one format; any change starts it again. Without a recipe pack only packages that offered nothing are listed. A changed, damaged
-//   or unreadable file is always read again. --ue3_shader_prebuild_done_list=false: as before.
+//   the renderer's matching, and one format; any change starts it again. Without a recipe pack only packages that
+//   offered nothing are listed. A changed, damaged or unreadable file is always read again.
+//   --ue3_shader_prebuild_done_list=false: as before.
 // - On 8 usable logical processors or fewer (the process's affinity mask, XenosUsableProcessors): one reader thread,
 //   and while the game is being played (frames of 64+ draws, xenos/dev_tools.h XenosRendererInPlay) the start-up list
 //   is paced to a quarter of one thread (--ue3_shader_prebuild_play_pace), all at the lowest priority; packages the
 //   game opens itself (the area being loaded) are never paced, and a paced read in progress when the game opens one
-//   finishes at normal priority. A rest ends when play does: loading screens, menus and videos read at full speed. Bigger CPUs: as before unless the cvars say otherwise.
+//   finishes at below-normal priority. A rest ends when play does: loading screens, menus and videos read at full
+//   speed. Bigger CPUs: as before unless the cvars say otherwise.
 #include <ue3/shader_prebuild.h>
 
 #include <ue3/prebuild_lzx.h>
@@ -604,10 +606,13 @@ std::string Lower(std::string s) {
 // caught, not read as "a package that gave nothing"). Little-endian (the PC). Every 'B' is also checked against its key;
 // a file whose shaders are not all there is read again. The load stops at the first bad record and the file is cut
 // there, so the next write goes after the good part. The context is the renderer's list identity
-// (XenosPrebuildSelectiveKey: the recipe pack and the renderer build) mixed with this file's build (r61 #6).
+// (XenosPrebuildSelectiveKey: the recipe pack and the renderer build) mixed with this file's build and
+// prebuild_lzx.cpp's (r61 #6, r63 C).
 constexpr char kDoneMagic[8] = {'G', 'N', 'P', 'B', 'D', 'O', 'N', 'E'};
 // Bump when what is taken from a package can change for the same recipe pack: this scanner (containers, variants,
-// LZX / LZO) or the renderer's matching (OfferRecipePixel / OnPrebuildVertexShader, recipe_pack.h MatchVertex).
+// LZX / LZO) or the renderer's matching (OfferRecipePixel / OnPrebuildVertexShader, recipe_pack.h MatchVertex). The
+// build ids in the context (r61 #6, r63 C) change only when shader_prebuild.cpp, prebuild_lzx.cpp or
+// shadow_renderer.cpp is compiled again - bump this for a change that recompiles none of them.
 constexpr uint32_t kDoneVersion = 2;
 
 std::string PathKey(const std::filesystem::path& p) {  // lower-case UTF-8, forward slashes
@@ -786,14 +791,17 @@ std::mutex g_chain_mutex;
 std::vector<FileOpenListener> g_chain_listeners;
 
 // 0.6.3 (review r61 #4): the game has asked for a package - a reader in the middle of a paced start-up file finishes it
-// at normal priority, so the game's file (queued in front) is not left behind a starved read.
+// at a higher priority, so the game's file (queued in front) is not left behind a starved read. r63 B: below normal,
+// not normal - above the lowest (CPU time beside the pipeline workers), but behind the game's own threads, so the rest
+// of a large start-up package doesn't compete with level streaming. (Dropping and re-queueing the paced file instead
+// would throw away the decoding done, with its shaders already claimed and offered.)
 void RaisePacedReaders() {
   std::lock_guard<std::mutex> lock(g_prebuild->mutex);
   for (Prebuild::ReaderSlot& r : g_prebuild->readers) {
     if (!r.paced_read || r.raised) continue;
     r.raised = true;
 #ifdef _WIN32
-    if (r.thread) SetThreadPriority(static_cast<HANDLE>(r.thread), THREAD_PRIORITY_NORMAL);
+    if (r.thread) SetThreadPriority(static_cast<HANDLE>(r.thread), THREAD_PRIORITY_BELOW_NORMAL);
 #endif
   }
 }
@@ -873,7 +881,7 @@ void ReaderThread() {
     bool urgent = false;
     {
       std::unique_lock<std::mutex> lock(g_prebuild->mutex);
-      // 0.6.3: a file the game asks for ends the rest at once; r61 #6: so does the end of play (a loading screen, a
+      // 0.6.3: a file the game asks for ends the rest at once; r61 #7: so does the end of play (a loading screen, a
       // menu - full speed there), looked at every 250 ms.
       for (auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(int64_t(rest_ms));
            rest_ms > 0.0 && g_prebuild->urgent.empty() && XenosRendererInPlay();) {
@@ -1091,9 +1099,10 @@ void Ue3InstallShaderPrebuildIfRequested() {
     g_prebuild->selective = selective != 0;
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::u8path(cache), ec);
-    // r61 #6: this file's build too (the scanner): a new build starts the list again.
-    static constexpr char kBuild[] = __DATE__ " " __TIME__;
-    const uint64_t context = XXH3_64bits(kBuild, sizeof(kBuild) - 1) ^ (selective * 0x9E3779B97F4A7C15ull);
+    // r61 #6: this file's build too (the scanner), and (r63 C) the LZX decoder's, a file of its own: a new build of
+    // either starts the list again.
+    const std::string build = std::string(__DATE__ " " __TIME__ "|") + ue3::prebuild::PrebuildLzxBuildId();
+    const uint64_t context = XXH3_64bits(build.data(), build.size()) ^ (selective * 0x9E3779B97F4A7C15ull);
     LoadDoneList(*g_prebuild, std::filesystem::u8path(cache) / "prebuild-done.bin", context);
   }
   if (!at_start_dirs.empty()) {   // job 632: more readers at start-up (the videos and menus leave the CPU idle)

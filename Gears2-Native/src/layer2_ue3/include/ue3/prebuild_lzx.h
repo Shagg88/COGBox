@@ -15,4 +15,8 @@ inline constexpr size_t kPrebuildLzxMaxOutput = size_t(1) << 24;
 bool PrebuildLzxDecode(const uint8_t* in, size_t in_len, uint8_t* out, size_t out_len, int window_bits,
                        bool* needed_padding = nullptr);
 
+// This file's build (__DATE__ __TIME__): shader_prebuild.cpp mixes it into its done-list context, so a decoder change
+// built incrementally (without recompiling shader_prebuild.cpp) still starts the list again (review r63 C).
+const char* PrebuildLzxBuildId();
+
 }  // namespace ue3::prebuild

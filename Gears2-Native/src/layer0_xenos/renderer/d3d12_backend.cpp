@@ -4745,7 +4745,10 @@ class D3D12Backend final : public Backend {
   struct PrioScope {
     int from, to;
     static int Win(int p) { return p == 0 ? THREAD_PRIORITY_NORMAL : p == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST; }
-    PrioScope(int f, int t) : from(f), to(t) { if (to != from) SetThreadPriority(GetCurrentThread(), Win(to)); }
+    // set_now = false: the caller has set `to` already (r63 A), this only restores `from`
+    PrioScope(int f, int t, bool set_now = true) : from(f), to(t) {
+      if (to != from && set_now) SetThreadPriority(GetCurrentThread(), Win(to));
+    }
     ~PrioScope() { if (to != from) SetThreadPriority(GetCurrentThread(), Win(from)); }
   };
   static int64_t SteadyNowMs() {
@@ -4806,6 +4809,8 @@ class D3D12Backend final : public Backend {
         ++(job->target ? jobs_busy_ : warm_busy_);
         if (job->target && job->priority < kPipelineClasses) {  // 0.6.3
           ++backlog_busy_;
+          // r63 A: lowered here, before the mark and under job_mutex_, so a PromoteBacklogJob raise can't be undone by it
+          if (backlog_prio_ != worker_prio_) SetThreadPriority(GetCurrentThread(), PrioScope::Win(backlog_prio_));
           if (self) job->target->backlog_builder.store(self);  // (r61 #3, under job_mutex_ as PromoteBacklogJob looks)
         }
       }
@@ -4847,7 +4852,7 @@ class D3D12Backend final : public Backend {
         Pipeline* p;
         ~ClearBuilder() { if (p) p->backlog_builder.store(nullptr); }
       } clear_builder{backlog_job ? job->target : nullptr};
-      PrioScope backlog_prio{worker_prio_, backlog_job ? backlog_prio_ : worker_prio_};
+      PrioScope backlog_prio{worker_prio_, backlog_job ? backlog_prio_ : worker_prio_, false};  // (lowered under the lock)
       ID3D12PipelineState* pso = nullptr;
       Pipeline& p = *job->target;
       // Patch 0010: a pipeline already saved loads from the library here, off the recording thread. Each pipeline has
