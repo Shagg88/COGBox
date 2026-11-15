@@ -26,6 +26,20 @@
 // XMemCompress form first and the CAB-style pad only as a second attempt; the log line counts what each fix added.
 // Also from PR #43: the bytes between and around compressed chunks are scanned for containers too, and a fully
 // compressed file of which no chunk decoded is logged as unreadable instead of passing as a package without shaders.
+//
+// 0.6.3 (player report: Gears 3 on a 4-core / 8-thread laptop stuttered for minutes - two readers decompressing 4 GB of
+// packages beside the game on every launch, since nothing of the reading was kept):
+// - Done-list (<shader cache>\prebuild-done.bin): a package read to the end without a damaged chunk is remembered by
+//   path, size and modification time, with exactly what the renderer took from it - with a recipe pack only the pack's
+//   pixel shaders and the vertex-shader regions that rebuild one of its vertex shaders (their bytes kept once each, a
+//   few MB). At the next start such a package is not read: those shaders are handed over from the list (instant), the
+//   same as reading it would. The list is valid for one recipe pack (its file's hash) and this reader's format; either
+//   changing starts it again. Without a recipe pack only packages that offered nothing are listed. A changed, damaged
+//   or unreadable file is always read again. --ue3_shader_prebuild_done_list=false: as before.
+// - On 8 logical processors or fewer: one reader thread, and while the game is being played (frames of 64+ draws,
+//   xenos/dev_tools.h XenosRendererInPlay) the start-up list is read at idle priority and paced to a quarter of one
+//   thread (--ue3_shader_prebuild_play_pace); packages the game opens itself (the area being loaded) are never paced,
+//   and loading screens, menus and videos read at full speed. Bigger CPUs: as before unless the cvars say otherwise.
 #include <ue3/shader_prebuild.h>
 
 #include <ue3/prebuild_lzx.h>
@@ -50,6 +64,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -77,8 +92,18 @@ REXCVAR_DEFINE_STRING(ue3_shader_prebuild_at_start, "", "Gears2",
                       "built. Same low-priority reader thread. Empty = only the packages the game opens");
 
 REXCVAR_DEFINE_INT32(ue3_shader_prebuild_threads, 0, "Gears2",
-                     "Job 632: reader threads with --ue3_shader_prebuild_at_start (0 = a quarter of the CPU threads, 2 to 4): "
-                     "the videos and menus leave the CPU idle; all at the lowest priority, so the game still comes first");
+                     "Job 632: reader threads with --ue3_shader_prebuild_at_start (0 = auto: 1 on 8 logical processors or "
+                     "fewer, 2 on up to 12, else a quarter of them, 2 to 4): the videos and menus leave the CPU idle; all "
+                     "at the lowest priority, so the game still comes first");
+REXCVAR_DEFINE_INT32(ue3_shader_prebuild_play_pace, -1, "Gears2",
+                     "0.6.3: while the game is being played, how much of each reader thread's time goes to the start-up "
+                     "list (percent; it reads a file, then rests 3x as long at 25). Packages the game opens itself are "
+                     "never paced; loading screens, menus and videos read at full speed. -1 = auto (25 on 8 logical "
+                     "processors or fewer, with the start-up list at idle priority during play; else 100 = as before)");
+REXCVAR_DEFINE_BOOL(ue3_shader_prebuild_done_list, true, "Gears2",
+                    "0.6.3: remember packages read to the end (<shader cache>\\prebuild-done.bin: path, size, date, and "
+                    "the recipe pack's shaders found in them) so the next start does not read them again; a changed or "
+                    "damaged file is read again. false = every package is read at every start, as before");
 
 namespace {
 
@@ -231,9 +256,58 @@ bool Lzo1x(const uint8_t* in, size_t in_len, uint8_t* out, size_t out_len) {
   }
 }
 
+// 0.6.3 (done-list): what the renderer took from one package - pixel shaders it wants (key = XXH3 of the bytes, as the
+// renderer's) and vertex-shader regions that rebuild a recipe vertex shader (key = XXH3 ^ kVertexSalt, as Fresh's).
+constexpr uint64_t kVertexSalt = 0x5653ull;
+struct Taken {
+  uint8_t kind = 0;  // 0 / 1: pixel shader variant (see PackageScanner::Add), 2: vertex-shader region
+  uint64_t key = 0;
+  std::vector<uint8_t> bytes;  // big-endian microcode, as stored in the package
+};
+
 class PackageScanner {
  public:
-  explicit PackageScanner(std::unordered_set<uint64_t>& seen) : seen_(seen) {}
+  // vertex_relevant (0.6.3, shared by the readers): vertex-shader region key -> 0 being looked at by a reader, 1 not a
+  // recipe vertex shader, 2 one.
+  PackageScanner(std::unordered_set<uint64_t>& seen, std::unordered_map<uint64_t, uint8_t>& vertex_relevant)
+      : seen_(seen), vrel_(vertex_relevant) {}
+  // 0.6.3: collect what the renderer takes from the files scanned from now on (Taken; per file, see TakeCollected).
+  // selective = the renderer wants a fixed list (XenosPrebuildSelectiveKey): the bytes are kept; otherwise only
+  // whether anything was wanted.
+  void Collect(bool on, bool selective) {
+    collect_ = on;
+    selective_ = selective;
+  }
+  // 0.6.3: the file just scanned - what was taken from it; false = it cannot go on the done-list (a wanted pixel shader
+  // without a recipe list, or a vertex region another reader was still looking at).
+  bool TakeCollected(std::vector<Taken>& out) {
+    out.swap(taken_);
+    taken_.clear();
+    taken_keys_.clear();
+    const bool ok = !uncertain_;
+    uncertain_ = false;
+    return ok;
+  }
+  // 0.6.3: a done-list package - hand over what the list kept for it, exactly as Add/Offer would have. Returns the new
+  // pixel shaders handed over.
+  uint32_t Replay(const std::vector<const Taken*>& items) {
+    uint32_t fresh = 0;
+    for (const Taken* t : items) {
+      if (t->kind == 2) {
+        bool first = false;
+        {
+          std::lock_guard<std::mutex> lock(SeenMutex());
+          first = vrel_.emplace(t->key, uint8_t(2)).second;
+        }
+        if (first) XenosPrebuildVertexShader(t->bytes.data(), uint32_t(t->bytes.size()));
+        continue;
+      }
+      if (!offer_[t->kind & 1] || !Fresh(t->key)) continue;
+      ++fresh;
+      XenosPrebuildPixelShader(t->bytes.data(), uint32_t(t->bytes.size()), t->kind & 1);
+    }
+    return fresh;
+  }
   // Which variants to hand over (Containers); both by default.
   void SetVariants(bool whole, bool code_only) {
     offer_[0] = whole;
@@ -332,7 +406,28 @@ class PackageScanner {
     if (vertex) {
       ++r_.vertex;
       // notes/78 C3: the renderer rebuilds recipe vertex shaders from these (a no-op without a recipe pack).
-      if (Fresh(XXH3_64bits(rec + off, size) ^ 0x5653ull)) XenosPrebuildVertexShader(rec + off, size);
+      const uint64_t key = XXH3_64bits(rec + off, size) ^ kVertexSalt;
+      if (!collect_) {
+        if (Fresh(key)) XenosPrebuildVertexShader(rec + off, size);
+        return;
+      }
+      // 0.6.3: once per region in the session as before, now also remembering whether it rebuilds a recipe vertex
+      // shader, so every file holding one keeps it on the done-list (not only the first file read).
+      uint8_t state = 0;
+      bool first = false;
+      {
+        std::lock_guard<std::mutex> lock(SeenMutex());
+        const auto [it, added] = vrel_.emplace(key, uint8_t(0));
+        first = added;
+        state = it->second;
+      }
+      if (first) {
+        state = XenosPrebuildVertexShader(rec + off, size, true) ? 2 : 1;
+        std::lock_guard<std::mutex> lock(SeenMutex());
+        vrel_[key] = state;
+      }
+      if (state == 0) uncertain_ = true;  // another reader is looking at it right now
+      else if (state == 2) Keep(2, key, rec + off, size);
       return;
     }
     ++r_.pixel;
@@ -349,6 +444,10 @@ class PackageScanner {
     if (!offer_[variant] && !keys_) return;
     const uint64_t key = XXH3_64bits(code, size);
     if (keys_) keys_->push_back(key);  // 0.6.2: every pixel shader of the file, new or not, whichever form is offered
+    if (collect_ && XenosPrebuildPixelWanted(key)) {  // 0.6.3: new or not - each file keeps its own on the done-list
+      if (selective_) Keep(uint8_t(variant & 1), key, code, size);
+      else uncertain_ = true;  // every pixel shader is wanted: the file is read at every start
+    }
     if (!offer_[variant] || !Fresh(key)) return;
     ++r_.new_pixel;
     ++r_.offered[variant];
@@ -402,7 +501,19 @@ class PackageScanner {
       }
     }
   }
+  void Keep(uint8_t kind, uint64_t key, const uint8_t* bytes, uint32_t size) {  // 0.6.3
+    if (!taken_keys_.insert(key).second) return;
+    Taken t;
+    t.kind = kind;
+    t.key = key;
+    t.bytes.assign(bytes, bytes + size);
+    taken_.push_back(std::move(t));
+  }
   std::unordered_set<uint64_t>& seen_;
+  std::unordered_map<uint64_t, uint8_t>& vrel_;  // under SeenMutex
+  bool collect_ = false, selective_ = false, uncertain_ = false;
+  std::vector<Taken> taken_;
+  std::unordered_set<uint64_t> taken_keys_;
   bool offer_[2] = {true, true};
   // Job 632: several reader threads at start-up share one set of shaders already handed over.
   static std::mutex& SeenMutex() { static std::mutex m; return m; }
@@ -423,16 +534,196 @@ struct Prebuild {
   std::filesystem::path shader_files;      // job 632: <shader cache>\prebuild-files.txt - packages that held shaders
   std::unordered_set<std::string> known;   // ... their lower-case names (read at start, added to as found)
   std::unordered_set<uint64_t> seen;  // reader thread: pixel shader hashes already handed over
+  std::unordered_map<uint64_t, uint8_t> vertex_relevant;  // 0.6.3 (PackageScanner)
   // Job 641 (under mutex): readers busy with a file, files read, the start-up list queued, the start-up reading done.
   int busy = 0;
   uint64_t files_read = 0;
   bool at_start_listed = false, at_start_done = false;
+  // 0.6.3 (under mutex): lower-case names of queued files the GAME asked for (never paced), and a reader resting
+  // between start-up files wakes when one comes.
+  std::unordered_set<std::string> urgent;
+  int pace = 100;                // percent of a reader's time on start-up files during play (100 = no pacing)
+  bool idle_in_play = false;     // start-up files at idle priority during play
+  // 0.6.3 done-list (under done_mutex).
+  struct DoneFile {
+    uint64_t size = 0;
+    int64_t mtime = 0;
+    std::vector<uint64_t> keys;  // Taken keys (pixel, then vertex)
+  };
+  std::mutex done_mutex;
+  bool done_on = false, selective = false;
+  std::filesystem::path done_path;
+  std::ofstream done_out;
+  std::unordered_map<std::string, DoneFile> done;   // lower-case generic UTF-8 path -> what it gave
+  std::unordered_map<uint64_t, Taken> blobs;        // Taken key -> its bytes (once each)
+  uint64_t done_skipped = 0, done_skipped_bytes = 0, done_added = 0, done_read = 0, done_read_bytes = 0;
+  bool done_write_failed = false;
 };
 Prebuild* g_prebuild = nullptr;  // never destroyed (the thread runs until the process exits)
 
 std::string Lower(std::string s) {
   for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
   return s;
+}
+
+// ---- 0.6.3 done-list file: "GNPBDONE" u32 version u64 context, then records appended as files are read:
+// 'B' u8 kind u64 key u32 size bytes  - one shader's bytes (written once, before the first file that lists it)
+// 'F' u16 n name u64 size i64 mtime u32 count u64 keys[count]  - one package read to the end (a later one wins)
+// Little-endian (the PC). Every 'B' is checked against its key when loaded; a file whose shaders are not all there is
+// read again. A torn last record (a crash mid-write) ends the load there; the next write goes after the good part.
+constexpr char kDoneMagic[8] = {'G', 'N', 'P', 'B', 'D', 'O', 'N', 'E'};
+// Bump when what is taken from a package can change for the same recipe pack: this scanner (containers, variants,
+// LZX / LZO) or the renderer's matching (OfferRecipePixel / OnPrebuildVertexShader, recipe_pack.h MatchVertex).
+constexpr uint32_t kDoneVersion = 1;
+
+std::string PathKey(const std::filesystem::path& p) {  // lower-case UTF-8, forward slashes
+  const std::u8string u = p.generic_u8string();
+  return Lower(std::string(u.begin(), u.end()));
+}
+// Size and modification time; false if either is unknown (then the file is never skipped or listed).
+bool FileIdentity(const std::filesystem::path& p, uint64_t& size, int64_t& mtime) {
+  std::error_code ec;
+  const uintmax_t sz = std::filesystem::file_size(p, ec);
+  if (ec) return false;
+  const auto t = std::filesystem::last_write_time(p, ec);
+  if (ec) return false;
+  size = uint64_t(sz);
+  mtime = int64_t(t.time_since_epoch().count());
+  return true;
+}
+bool TakenValid(const Taken& t) {
+  if (t.kind > 2 || t.bytes.empty() || t.bytes.size() > 262144 || (t.bytes.size() & 3)) return false;
+  return (XXH3_64bits(t.bytes.data(), t.bytes.size()) ^ (t.kind == 2 ? kVertexSalt : 0)) == t.key;
+}
+// Load (or start) the done-list; under nothing (install, before the readers).
+void LoadDoneList(Prebuild& pb, const std::filesystem::path& path, uint64_t context) {
+  pb.done_path = path;
+  std::vector<uint8_t> b;
+  {
+    std::ifstream f(path, std::ios::binary);
+    if (f) b.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+  }
+  size_t good = 0;
+  bool fresh = true;
+  uint64_t superseded = 0;
+  if (b.size() >= 20 && std::memcmp(b.data(), kDoneMagic, 8) == 0) {
+    uint32_t ver = 0;
+    uint64_t ctx = 0;
+    std::memcpy(&ver, b.data() + 8, 4);
+    std::memcpy(&ctx, b.data() + 12, 8);
+    if (ver == kDoneVersion && ctx == context) {
+      fresh = false;
+      size_t p = 20;
+      good = p;
+      auto have = [&](size_t n) { return p + n <= b.size(); };
+      for (;;) {
+        if (!have(1)) break;
+        const uint8_t tag = b[p];
+        if (tag == 'B') {
+          if (!have(1 + 1 + 8 + 4)) break;
+          Taken t;
+          t.kind = b[p + 1];
+          std::memcpy(&t.key, &b[p + 2], 8);
+          uint32_t n = 0;
+          std::memcpy(&n, &b[p + 10], 4);
+          if (n > 262144 || !have(14 + size_t(n))) break;
+          t.bytes.assign(b.begin() + p + 14, b.begin() + p + 14 + n);
+          p += 14 + n;
+          if (TakenValid(t)) pb.blobs.emplace(t.key, std::move(t));
+        } else if (tag == 'F') {
+          if (!have(3)) break;
+          uint16_t nl = 0;
+          std::memcpy(&nl, &b[p + 1], 2);
+          if (!have(3 + size_t(nl) + 8 + 8 + 4)) break;
+          std::string name(reinterpret_cast<const char*>(&b[p + 3]), nl);
+          size_t q = p + 3 + nl;
+          Prebuild::DoneFile f;
+          uint32_t count = 0;
+          std::memcpy(&f.size, &b[q], 8);
+          std::memcpy(&f.mtime, &b[q + 8], 8);
+          std::memcpy(&count, &b[q + 16], 4);
+          q += 20;
+          if (count > 1000000 || q + size_t(count) * 8 > b.size()) break;
+          f.keys.resize(count);
+          if (count) std::memcpy(f.keys.data(), &b[q], size_t(count) * 8);
+          p = q + size_t(count) * 8;
+          if (!pb.done.insert_or_assign(std::move(name), std::move(f)).second) ++superseded;
+        } else {
+          break;
+        }
+        good = p;
+      }
+    }
+  }
+  if (fresh) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f.write(kDoneMagic, 8);
+    f.write(reinterpret_cast<const char*>(&kDoneVersion), 4);
+    f.write(reinterpret_cast<const char*>(&context), 8);
+    good = 20;
+    if (!f) pb.done_write_failed = true;
+  } else if (good < b.size()) {
+    std::error_code ec;
+    std::filesystem::resize_file(path, good, ec);  // drop a torn tail, so appends follow good records
+  }
+  pb.done_out.open(path, std::ios::binary | std::ios::app);
+  pb.done_on = bool(pb.done_out) && !pb.done_write_failed;
+  uint64_t blob_bytes = 0;
+  for (const auto& [k, t] : pb.blobs) blob_bytes += t.bytes.size();
+  REXLOG_INFO("ue3_shader_prebuild: done-list {}: {} - {} package(s) remembered, {} shader(s) kept ({:.1f} MB){}{}",
+              path.filename().string(),
+              fresh ? (b.empty() ? "new" : "started again (other recipe pack, other version or not a done-list)")
+                    : "loaded",
+              pb.done.size(), pb.blobs.size(), double(blob_bytes) / 1048576.0,
+              superseded ? fmt::format(", {} older entr(ies) replaced", superseded) : std::string(),
+              pb.done_on ? "" : " - CANNOT BE WRITTEN, every package is read as before");
+}
+// The entry for a file if it is unchanged and every shader it lists is kept; under done_mutex.
+const Prebuild::DoneFile* DoneHit(Prebuild& pb, const std::string& key, uint64_t size, int64_t mtime) {
+  const auto it = pb.done.find(key);
+  if (it == pb.done.end() || it->second.size != size || it->second.mtime != mtime) return nullptr;
+  for (uint64_t k : it->second.keys)
+    if (!pb.blobs.count(k)) return nullptr;
+  return &it->second;
+}
+// Append a file read to the end (and the shaders not kept yet); under done_mutex.
+void AddDone(Prebuild& pb, const std::string& key, uint64_t size, int64_t mtime, std::vector<Taken>& taken) {
+  if (!pb.done_on || key.size() > 4096) return;
+  std::string rec;
+  Prebuild::DoneFile f;
+  f.size = size;
+  f.mtime = mtime;
+  auto put = [&rec](const void* p, size_t n) { rec.append(static_cast<const char*>(p), n); };
+  for (Taken& t : taken) {
+    f.keys.push_back(t.key);
+    if (pb.blobs.count(t.key)) continue;
+    const uint32_t n = uint32_t(t.bytes.size());
+    rec.push_back('B');
+    rec.push_back(char(t.kind));
+    put(&t.key, 8);
+    put(&n, 4);
+    put(t.bytes.data(), n);
+    pb.blobs.emplace(t.key, std::move(t));
+  }
+  const uint16_t nl = uint16_t(key.size());
+  const uint32_t count = uint32_t(f.keys.size());
+  rec.push_back('F');
+  put(&nl, 2);
+  put(key.data(), nl);
+  put(&size, 8);
+  put(&mtime, 8);
+  put(&count, 4);
+  if (count) put(f.keys.data(), size_t(count) * 8);
+  pb.done_out.write(rec.data(), std::streamsize(rec.size()));
+  pb.done_out.flush();
+  if (!pb.done_out) {
+    REXLOG_WARN("ue3_shader_prebuild: done-list {}: a write failed - no more packages are added this session",
+                pb.done_path.filename().string());
+    pb.done_on = false;
+    return;
+  }
+  pb.done.insert_or_assign(key, std::move(f));
+  ++pb.done_added;
 }
 
 // The opening thread (the game's loader): copy the path and return.
@@ -466,6 +757,7 @@ void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host
       // Job 630: queued at start-up and not read yet - the game wants it now, so it goes to the front.
       // Job 666: only looked for when it is still waiting (a package read already costs nothing here).
       if (!g_prebuild->waiting.count(name)) return;
+      g_prebuild->urgent.insert(name);  // 0.6.3: never paced
       auto& q = g_prebuild->queue;
       for (auto it = q.begin(); it != q.end(); ++it)
         if (Lower(it->filename().string()) == name) {
@@ -474,12 +766,13 @@ void OnFileOpened(std::string_view guest_path, const std::filesystem::path* host
           q.push_front(std::move(moved));
           break;
         }
-      return;
+    } else {
+      g_prebuild->waiting.insert(name);
+      g_prebuild->urgent.insert(name);             // 0.6.3: never paced
+      g_prebuild->queue.push_front(*host_path);   // job 630: what the game opens now comes before the start-up list
     }
-    g_prebuild->waiting.insert(name);
-    g_prebuild->queue.push_front(*host_path);   // job 630: what the game opens now comes before the start-up list
   }
-  g_prebuild->cv.notify_one();
+  g_prebuild->cv.notify_all();  // 0.6.3: also wakes a reader resting between start-up files
 }
 
 void ReaderThread() {
@@ -488,19 +781,42 @@ void ReaderThread() {
   // priority it only takes CPU time the game, the renderer and the pipeline workers leave free (Gears 3 ch11's
   // opening was ~5,000 skipped draws worse with it on).
   SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+  int thread_priority = THREAD_PRIORITY_LOWEST;
 #endif
-  PackageScanner scanner(g_prebuild->seen);
+  PackageScanner scanner(g_prebuild->seen, g_prebuild->vertex_relevant);
+  bool collect = false;
+  {
+    std::lock_guard<std::mutex> lock(g_prebuild->done_mutex);
+    collect = g_prebuild->done_on;
+    scanner.Collect(collect, g_prebuild->selective);
+  }
   uint64_t files = 0, pixel = 0, fresh = 0;
+  double rest_ms = 0.0;  // 0.6.3: pacing during play, taken before the next file
   for (;;) {
     std::filesystem::path path;
+    bool urgent = false;
     {
       std::unique_lock<std::mutex> lock(g_prebuild->mutex);
+      if (rest_ms > 0.0)  // 0.6.3: a file the game asks for ends the rest at once
+        g_prebuild->cv.wait_for(lock, std::chrono::milliseconds(int64_t(rest_ms)), [] { return !g_prebuild->urgent.empty(); });
+      rest_ms = 0.0;
       g_prebuild->cv.wait(lock, [] { return !g_prebuild->queue.empty(); });
       path = std::move(g_prebuild->queue.front());
       g_prebuild->queue.pop_front();
-      g_prebuild->waiting.erase(Lower(path.filename().string()));   // job 666
+      const std::string name = Lower(path.filename().string());
+      g_prebuild->waiting.erase(name);   // job 666
+      urgent = g_prebuild->urgent.erase(name) != 0;  // 0.6.3
       ++g_prebuild->busy;  // job 641: counted with the pop, so no other reader sees an empty queue and nobody busy
     }
+    // 0.6.3: a start-up file during play is paced (and on small CPUs read at idle priority); the game's own are not.
+    const bool paced = !urgent && g_prebuild->pace < 100 && XenosRendererInPlay();
+#ifdef _WIN32
+    const int want_priority = paced && g_prebuild->idle_in_play ? THREAD_PRIORITY_IDLE : THREAD_PRIORITY_LOWEST;
+    if (want_priority != thread_priority) {
+      SetThreadPriority(GetCurrentThread(), want_priority);
+      thread_priority = want_priority;
+    }
+#endif
     const auto t0 = std::chrono::steady_clock::now();
     // 0.6.2: the file's pixel-shader keys, sent to the renderer when the file is done (on every path, also unread).
     std::vector<uint64_t> file_keys;
@@ -524,11 +840,46 @@ void ReaderThread() {
             files = g_prebuild->files_read;
           }
         }
-        if (done) XenosPrebuildAtStartDone(files);
+        if (done) {
+          XenosPrebuildAtStartDone(files);
+          std::lock_guard<std::mutex> l(g_prebuild->done_mutex);  // 0.6.3: what the done-list saved this time
+          if (g_prebuild->done_on || g_prebuild->done_skipped || g_prebuild->done_read)
+            REXLOG_INFO("ue3_shader_prebuild: done-list: {} package(s) not read ({:.0f} MB; their shaders from the list), "
+                        "{} read ({:.0f} MB), {} of them added to the list ({} remembered in all)",
+                        g_prebuild->done_skipped, double(g_prebuild->done_skipped_bytes) / 1048576.0,
+                        g_prebuild->done_read, double(g_prebuild->done_read_bytes) / 1048576.0,
+                        g_prebuild->done_added, g_prebuild->done.size());
+        }
       }
     } busy_guard;
     busy_guard.keys = &file_keys;
     busy_guard.name = &file_name;
+    // Once enough new draws have used prebuilt shaders, stop offering a variant this game never draws (under 5%).
+    const uint64_t h0 = XenosPrebuildVariantHits(0), h1 = XenosPrebuildVariantHits(1), hn = h0 + h1;
+    scanner.SetVariants(hn < 32 || h0 * 20 >= hn, hn < 32 || h1 * 20 >= hn);
+    // 0.6.3 done-list: an unchanged package read to the end at an earlier start - what it gave is handed over from the
+    // list, and the file is not read.
+    uint64_t file_size = 0;
+    int64_t file_mtime = 0;
+    const bool identified = collect && FileIdentity(path, file_size, file_mtime);
+    const std::string path_key = identified ? PathKey(path) : std::string();
+    if (identified) {
+      std::lock_guard<std::mutex> lock(g_prebuild->done_mutex);
+      if (const Prebuild::DoneFile* hit = DoneHit(*g_prebuild, path_key, file_size, file_mtime)) {
+        std::vector<const Taken*> items;
+        items.reserve(hit->keys.size());
+        for (uint64_t k : hit->keys) {
+          const Taken& t = g_prebuild->blobs.at(k);
+          items.push_back(&t);
+          if (t.kind != 2) file_keys.push_back(k);
+        }
+        fresh += scanner.Replay(items);
+        ++g_prebuild->done_skipped;
+        g_prebuild->done_skipped_bytes += file_size;
+        ++files;
+        continue;  // (BusyGuard sends the file's pixel keys)
+      }
+    }
     std::vector<uint8_t> data;
     {
       std::ifstream f(path, std::ios::binary);
@@ -540,10 +891,22 @@ void ReaderThread() {
       f.seekg(0, std::ios::beg);
       if (!f.read(reinterpret_cast<char*>(data.data()), size)) continue;
     }
-    // Once enough new draws have used prebuilt shaders, stop offering a variant this game never draws (under 5%).
-    const uint64_t h0 = XenosPrebuildVariantHits(0), h1 = XenosPrebuildVariantHits(1), hn = h0 + h1;
-    scanner.SetVariants(hn < 32 || h0 * 20 >= hn, hn < 32 || h1 * 20 >= hn);
     const ScanResult r = scanner.Scan(data);
+    {  // 0.6.3: a file read to the end, nothing damaged, nothing uncertain -> on the done-list
+      std::vector<Taken> taken;
+      const bool sure = scanner.TakeCollected(taken);
+      if (identified) {
+        std::lock_guard<std::mutex> lock(g_prebuild->done_mutex);
+        ++g_prebuild->done_read;
+        g_prebuild->done_read_bytes += data.size();
+        if (sure && !r.unreadable && !r.failed_chunks && data.size() == file_size)
+          AddDone(*g_prebuild, path_key, file_size, file_mtime, taken);
+      }
+    }
+    if (paced) {  // 0.6.3: rest (100 - pace) / pace times as long as this file took, at most 5 s
+      const double took = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+      rest_ms = std::min(5000.0, took * double(100 - g_prebuild->pace) / double(std::max(1, g_prebuild->pace)));
+    }
     if ((r.pixel || r.vertex) && !g_prebuild->shader_files.empty()) {  // job 632: remembered for the next start-up
       const std::string name = Lower(path.filename().string());
       std::lock_guard<std::mutex> lock(g_prebuild->mutex);
@@ -617,18 +980,40 @@ void Ue3InstallShaderPrebuildIfRequested() {
   g_prebuild = new Prebuild();
   const std::string at_start_dirs = REXCVAR_GET(ue3_shader_prebuild_at_start);
   int readers = 1;
+  // 0.6.3: small CPUs (8 logical processors or fewer - the report's i5-10300H has 4 cores / 8 threads) keep their cores
+  // for the game's own threads, its renderer and the pipeline workers.
+  const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+  const bool small_cpu = hw <= 8;
+  {
+    const int pace = REXCVAR_GET(ue3_shader_prebuild_play_pace);
+    g_prebuild->pace = pace < 0 ? (small_cpu ? 25 : 100) : std::clamp(pace, 1, 100);
+    g_prebuild->idle_in_play = pace < 0 && small_cpu;
+  }
+  const std::string cache = rex::cvar::GetFlagByName("gow2_shader_cache_dir");
+  if (REXCVAR_GET(ue3_shader_prebuild_done_list) && !cache.empty()) {  // 0.6.3
+    const uint64_t selective = XenosPrebuildSelectiveKey();
+    g_prebuild->selective = selective != 0;
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::u8path(cache), ec);
+    LoadDoneList(*g_prebuild, std::filesystem::u8path(cache) / "prebuild-done.bin", selective);
+  }
   if (!at_start_dirs.empty()) {   // job 632: more readers at start-up (the videos and menus leave the CPU idle)
     readers = REXCVAR_GET(ue3_shader_prebuild_threads);
-    if (readers <= 0) readers = std::clamp(int(std::thread::hardware_concurrency() / 4), 2, 4);   // each holds a whole package in memory
+    if (readers <= 0)   // each holds a whole package in memory
+      readers = small_cpu ? 1 : hw <= 12 ? 2 : std::clamp(int(hw / 4), 2, 4);
     readers = std::min(readers, 16);
-    const std::string cache = rex::cvar::GetFlagByName("gow2_shader_cache_dir");
     if (!cache.empty()) {
       g_prebuild->shader_files = std::filesystem::u8path(cache) / "prebuild-files.txt";
       std::ifstream f(g_prebuild->shader_files);
       for (std::string l; std::getline(f, l);) if (!l.empty()) g_prebuild->known.insert(Lower(l));
     }
-    REXLOG_INFO("ue3_shader_prebuild_at_start: {} reader thread(s), {} package(s) known to hold shaders", readers,
-                g_prebuild->known.size());
+    REXLOG_INFO("ue3_shader_prebuild_at_start: {} reader thread(s) ({} logical processors), {} package(s) known to hold "
+                "shaders; during play the start-up list is read {} (0.6.3: ue3_shader_prebuild_threads / "
+                "ue3_shader_prebuild_play_pace)",
+                readers, hw, g_prebuild->known.size(),
+                g_prebuild->pace >= 100 ? std::string("at full speed, lowest priority")
+                                        : fmt::format("at {}% of a thread, {} priority", g_prebuild->pace,
+                                                      g_prebuild->idle_in_play ? "idle" : "lowest"));
   }
   g_prebuild->thread = std::thread(ReaderThread);   // after the list above is read (the readers add to it)
   for (int i = 1; i < readers; ++i) std::thread(ReaderThread).detach();
@@ -644,7 +1029,16 @@ void Ue3InstallShaderPrebuildIfRequested() {
       known = g_prebuild->known;
     }
     std::thread([at_start, known = std::move(known)] {
-      std::vector<std::pair<std::filesystem::path, uintmax_t>> caches, packages;
+      std::vector<std::pair<std::filesystem::path, uintmax_t>> listed, caches, packages;
+      // 0.6.3: packages on the done-list (unchanged since) first - they cost no reading, so the renderer has all their
+      // shaders within a moment of the start.
+      auto on_done_list = [](const std::filesystem::path& path) {
+        uint64_t size = 0;
+        int64_t mtime = 0;
+        if (!FileIdentity(path, size, mtime)) return false;
+        std::lock_guard<std::mutex> lock(g_prebuild->done_mutex);
+        return g_prebuild->done_on && DoneHit(*g_prebuild, PathKey(path), size, mtime) != nullptr;
+      };
       size_t p = 0;
       while (p <= at_start.size()) {
         size_t q = at_start.find(';', p);
@@ -657,7 +1051,10 @@ void Ue3InstallShaderPrebuildIfRequested() {
           if (!it->is_regular_file(ec)) continue;
           const std::string name = Lower(it->path().filename().string());
           const uintmax_t size = it->file_size(ec);
-          if (name.ends_with(".bin") && name.find("shadercache") != std::string::npos) caches.emplace_back(it->path(), size);
+          const bool cache_file = name.ends_with(".bin") && name.find("shadercache") != std::string::npos;
+          if ((cache_file || (name.size() > 4 && name.ends_with(".xxx"))) && on_done_list(it->path()))
+            listed.emplace_back(it->path(), size);   // 0.6.3
+          else if (cache_file) caches.emplace_back(it->path(), size);
           else if (name.size() > 4 && name.ends_with(".xxx")) {
             if (known.count(name)) caches.emplace_back(it->path(), size);   // job 632: held shaders last time
             else packages.emplace_back(it->path(), size);
@@ -665,11 +1062,12 @@ void Ue3InstallShaderPrebuildIfRequested() {
         }
       }
       std::sort(packages.begin(), packages.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
-      uintmax_t bytes = 0;
+      uintmax_t bytes = 0, listed_bytes = 0;
       size_t queued = 0;
+      for (const auto& [path, size] : listed) listed_bytes += size;
       {
         std::lock_guard<std::mutex> lock(g_prebuild->mutex);
-        for (const auto* list : {&caches, &packages})
+        for (const auto* list : {&listed, &caches, &packages})
           for (const auto& [path, size] : *list)
             if (g_prebuild->opened.insert(Lower(path.filename().string())).second) {
               g_prebuild->waiting.insert(Lower(path.filename().string()));   // job 666
@@ -687,8 +1085,10 @@ void Ue3InstallShaderPrebuildIfRequested() {
         }
       }
       g_prebuild->cv.notify_all();
-      REXLOG_INFO("ue3_shader_prebuild_at_start: {} file(s) queued ({} shader cache(s) / known shader packages first, {:.0f} MB in all) from {}", queued,
-                  caches.size(), double(bytes) / 1048576.0, at_start);
+      REXLOG_INFO("ue3_shader_prebuild_at_start: {} file(s) queued ({} on the done-list first - not read, {:.0f} MB; then "
+                  "{} shader cache(s) / known shader packages; {:.0f} MB to read) from {}",
+                  queued, listed.size(), double(listed_bytes) / 1048576.0, caches.size(),
+                  double(bytes > listed_bytes ? bytes - listed_bytes : 0) / 1048576.0, at_start);
     }).detach();
   }
 #else

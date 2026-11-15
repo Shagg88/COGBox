@@ -157,6 +157,17 @@ REXCVAR_DEFINE_INT32(gow2_renderer_pipeline_thread_priority, 0, "Gears2",  // jo
                      "its renderer and the audio keep their CPU time during a burst of first-visit builds - Shagg's "
                      "Gears 2 audio crackled while 12 normal-priority workers filled 16 logical processors), 0 = normal, "
                      "-2 = lowest");
+REXCVAR_DEFINE_INT32(gow2_renderer_backlog_priority, -3, "Gears2",
+                     "0.6.3 (4-core laptop stuttering while the start-up backlog built): Windows priority of a pipeline "
+                     "worker while it builds a start-up backlog pipeline (recorded pipelines, the recipe pack; a pipeline "
+                     "a draw asks for is moved to the live queue first and keeps the workers' own priority): -3 = auto "
+                     "(below normal on 8 logical processors or fewer, else the workers' own), -2 = lowest, -1 = below "
+                     "normal, 0 = the workers' own (gow2_renderer_pipeline_thread_priority). D3D12");
+REXCVAR_DEFINE_INT32(gow2_renderer_backlog_play_workers, -1, "Gears2",
+                     "0.6.3: the most pipeline workers on start-up backlog pipelines at once while the game is being "
+                     "played (frames of 64+ draws); loading screens, menus and videos keep every worker, and pipelines a "
+                     "draw asks for are never limited. -1 = auto (half the workers on 8 logical processors or fewer, "
+                     "else no limit), 0 = no limit, N = N. D3D12");
 REXCVAR_DEFINE_INT32(gow2_renderer_pipeline_save_seconds, 15, "Gears2",
                      "Patch 0056: seconds between saves of the pipeline library while it grows (was 60; a quit or a "
                      "hard exit lost everything since the last save). Minimum 5");
@@ -1386,6 +1397,12 @@ constexpr uint32_t kRegFetchConst = 0x4800;    // SHADER_CONSTANT_FETCH_00_0
 constexpr uint32_t kRegBoolConst = 0x4900;     // SHADER_CONSTANT_BOOL_000_031, then 32 loop constants at 0x4908
 // --gow2_after_load_log_s: steady_clock ticks of the last XenosNoteLoadEnded (a game's loading screen ended); 0 = none.
 std::atomic<int64_t> g_load_ended_ticks{0};
+// 0.6.3 (XenosRendererInPlay): steady-clock ms of the end of the last frame with 64+ draws (play, not a loading screen,
+// a video or a 2D menu); 0 = none yet.
+int64_t PlayClockMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+std::atomic<int64_t> g_play_frame_ms{0};
 
 constexpr uint32_t Bits(uint32_t v, uint32_t shift, uint32_t width) { return (v >> shift) & ((1u << width) - 1u); }
 constexpr int32_t SignExtend(uint32_t v, uint32_t width) {
@@ -1580,6 +1597,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     }
     options.warm_workers = uint32_t(std::max(1, REXCVAR_GET(gow2_renderer_shader_prebuild_workers)));  // patch 0069
     options.warm_thread_priority = std::clamp(REXCVAR_GET(gow2_renderer_shader_prebuild_priority), -2, 0);  // PR #43
+    options.backlog_thread_priority = std::clamp(REXCVAR_GET(gow2_renderer_backlog_priority), -3, 0);  // 0.6.3
+    options.backlog_play_workers = REXCVAR_GET(gow2_renderer_backlog_play_workers);                // 0.6.3
     options.debug_layer = REXCVAR_GET(gow2_renderer_debug);
     options.placed_textures = REXCVAR_GET(gow2_renderer_placed_textures);  // patch 0017
     options.batch_texture_loads = REXCVAR_GET(gow2_renderer_texture_batch) && !vulkan;  // 2026-10-29
@@ -2817,6 +2836,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     const double fl_pipe_wait_ms = pipeline_wait_ms_frame_;  // frame log: this frame's, before the reset below
     const uint32_t fl_draws = uint32_t(draw_index_), fl_skipped = uint32_t(pending_this_frame_);
+    // 0.6.3 (low-core CPUs): a frame of play (64+ draws, the line DecideChapterHold and the recipe pack draw between
+    // play and a loading screen / video / 2D menu). Layer 2's package reader paces itself by it (XenosRendererInPlay),
+    // and the pipeline workers keep part of themselves free of the start-up backlog for the next half second.
+    if (fl_draws >= 64 && !prepare_all_) {
+      g_play_frame_ms.store(PlayClockMs(), std::memory_order_relaxed);
+      backend_->NotePlayFrame();
+    }
     draw_index_ = 0;
     copy_index_ = 0;
     resolve_sig_valid_ = false;  // GitHub #257: repeats are only looked for within a frame
@@ -3314,6 +3340,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // XDK patches vertex shaders at bind, so their microcode in the files never matches a draw's (job 367).
  public:
   bool PrebuildWanted() const { return prebuild_on_; }
+  // 0.6.3 (layer 2's done-list): the pixel shaders this renderer takes from the packages (the sets are read-only after
+  // Init, which runs before layer 2's reader starts), and an identity of that list (0 = every pixel shader).
+  bool PrebuildPixelWanted(uint64_t h) const {
+    if (!prebuild_on_) return false;
+    if (rcp_on_) return rcp_ps_.count(h) != 0;
+    if (!recipe_ps_.empty()) return recipe_ps_.count(h) != 0;
+    return true;
+  }
+  uint64_t PrebuildSelectiveKey() const { return prebuild_on_ ? prebuild_selective_key_ : 0; }
   void OnPrebuildPixelShader(const void* be_ucode, uint32_t size, uint32_t variant) {  // any thread (layer 2's reader)
     if (rcp_on_) {  // notes/78 C3: the recipe pack decides (the 0068 warm-only path is not used with it)
       OfferRecipePixel(be_ucode, size);
@@ -3348,6 +3383,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!prebuild_on_) {
       if (!recipe_ps_.empty()) REXLOG_INFO("gow2_renderer: chapter recipes not used - our renderer is not on the DXBC path");
       return;
+    }
+    // 0.6.3: what layer 2's done-list is valid for - the recipe pack file, or the sorted chapter-recipe fingerprints.
+    if (rcp_on_) {
+      prebuild_selective_key_ = rcp_pack_hash_ ? rcp_pack_hash_ : 1;
+    } else if (!recipe_ps_.empty()) {
+      std::vector<uint64_t> keys(recipe_ps_.begin(), recipe_ps_.end());
+      std::sort(keys.begin(), keys.end());
+      prebuild_selective_key_ = XXH3_64bits(keys.data(), keys.size() * sizeof(uint64_t)) | 1;
     }
     LoadVariantCounts();  // patch 0069
     prebuild_thread_ = std::thread([this] { PrebuildThread(); });  // lives as long as the renderer (never destroyed)
@@ -3430,6 +3473,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
   bool prebuild_on_ = false;
+  uint64_t prebuild_selective_key_ = 0;  // 0.6.3 (PrebuildSelectiveKey; set in Init)
+  uint64_t rcp_pack_hash_ = 0;           // 0.6.3: XXH3 of the recipe pack file (LoadRecipePack)
   // notes/78: chapter recipes - the pixel-shader fingerprints to build (written once in Init, then only read).
   std::unordered_set<uint64_t> recipe_ps_;
   std::atomic<uint64_t> prebuild_not_recipe_{0};
@@ -12146,14 +12191,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!rcp_ps_found_.insert(h).second) return;
     rcp_in_.push_back(std::move(s));
   }
-  void OnPrebuildVertexShader(const void* be_ucode, uint32_t size) {  // any thread (layer 2's reader)
-    if (!rcp_on_ || !be_ucode || !size || size > 256u * 1024u || (size & 3)) return;
+  // 0.6.3: report = true -> returns whether this region rebuilds one of the pack's vertex shaders (found now or earlier)
+  // - layer 2's done-list keeps those regions; so a vertex shader already found is not skipped then (a few dwords of
+  // probe per candidate). report = false: as before (found ones skipped), returns whether one was found now.
+  bool OnPrebuildVertexShader(const void* be_ucode, uint32_t size, bool report) {  // any thread (layer 2's reader)
+    if (!rcp_on_ || !be_ucode || !size || size > 256u * 1024u || (size & 3)) return false;
     rcp_vs_offered_.fetch_add(1, std::memory_order_relaxed);
     thread_local std::vector<uint8_t> scratch;
+    bool matched = false;
     rcp_.MatchVertex(
         static_cast<const uint8_t*>(be_ucode), size / 4, scratch,
-        [this](uint32_t id) { return rcp_vs_found_[id].load(std::memory_order_relaxed) != 0; },
-        [this](const xenos::recipes::VertexFix& v, const std::vector<uint8_t>& bytes) {
+        [this, report](uint32_t id) { return !report && rcp_vs_found_[id].load(std::memory_order_relaxed) != 0; },
+        [this, &matched](const xenos::recipes::VertexFix& v, const std::vector<uint8_t>& bytes) {
+          matched = true;
           if (rcp_vs_found_[v.id].exchange(1)) return;
           RcpShader s;
           s.hash = v.hash;
@@ -12162,6 +12212,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           std::lock_guard<std::mutex> lock(rcp_mutex_);
           rcp_in_.push_back(std::move(s));
         });
+    return matched;
   }
 
  private:
@@ -12194,6 +12245,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       rcp_ = {};
       return;
     }
+    rcp_pack_hash_ = XXH3_64bits(b.data(), b.size());  // 0.6.3
     rcp_records_.resize(rcp_.records.size());
     for (size_t i = 0; i < rcp_records_.size(); ++i)
       std::memcpy(&rcp_records_[i], rcp_.records[i].data(), sizeof(PipelineRecord));
@@ -14921,8 +14973,16 @@ bool XenosPrebuildWanted() { return g_release_target && g_release_target->Prebui
 void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant) {     // patch 0068
   if (g_release_target) g_release_target->OnPrebuildPixelShader(be_ucode, size_bytes, variant);
 }
-void XenosPrebuildVertexShader(const void* be_ucode, uint32_t size_bytes) {  // notes/78 C3
-  if (g_release_target) g_release_target->OnPrebuildVertexShader(be_ucode, size_bytes);
+bool XenosPrebuildVertexShader(const void* be_ucode, uint32_t size_bytes, bool report_match) {  // notes/78 C3
+  return g_release_target && g_release_target->OnPrebuildVertexShader(be_ucode, size_bytes, report_match);
+}
+bool XenosPrebuildPixelWanted(uint64_t key) {  // 0.6.3
+  return g_release_target && g_release_target->PrebuildPixelWanted(key);
+}
+uint64_t XenosPrebuildSelectiveKey() { return g_release_target ? g_release_target->PrebuildSelectiveKey() : 0; }  // 0.6.3
+bool XenosRendererInPlay() {  // 0.6.3
+  const int64_t last = g_play_frame_ms.load(std::memory_order_relaxed);
+  return last && PlayClockMs() - last < 500;
 }
 void XenosPrebuildAtStartDone(uint64_t files) {  // job 641
   if (g_release_target) {

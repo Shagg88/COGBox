@@ -4710,22 +4710,68 @@ class D3D12Backend final : public Backend {
                                    : std::clamp(uint32_t(want), 1u, hw);
     // Patch 0162: below normal priority by default, so a burst of builds can't starve the game's own threads or the audio.
     const int prio = std::clamp(options_.pipeline_thread_priority, -2, 0);
+    // 0.6.3 (player report: i5-10300H, 4 cores / 8 threads, Gears 3 stuttering for minutes while 6 workers at normal
+    // priority built the 2,036 recorded pipelines and the recipe pack beside the game's own threads): on 8 logical
+    // processors or fewer, start-up backlog jobs (nothing draws with them yet) run below normal, and while the game is
+    // being played at most half the workers take them. A job a draw asks for is moved to the live queue before it is
+    // taken (PromoteBacklogJob) and is never limited. Bigger CPUs: unchanged unless the cvars say otherwise.
+    const bool small_cpu = hw <= 8;
+    worker_prio_ = prio;
+    backlog_prio_ = options_.backlog_thread_priority <= -3 ? (small_cpu ? std::min(prio, -1) : prio)
+                                                           : std::min(prio, std::clamp(options_.backlog_thread_priority, -2, 0));
+    const int bw = options_.backlog_play_workers;
+    backlog_play_limit_ = bw < 0 ? (small_cpu && n > 1 ? std::max(1u, n / 2) : 0u) : std::min(uint32_t(bw), n);
+    if (backlog_play_limit_ >= n) backlog_play_limit_ = 0;  // no limit at all
     for (uint32_t i = 0; i < n; ++i)
       workers_.emplace_back([this, prio] {
         if (prio != 0) SetThreadPriority(GetCurrentThread(), prio == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST);
         PipelineWorker();
       });
-    REXLOG_INFO("gow2_renderer: pipeline workers: {} thread(s) ({} logical processors), priority {}", n, hw,
-                prio == 0 ? "normal" : prio == -1 ? "below normal" : "lowest");  // patch 0056 / 0162
+    auto prio_name = [](int p) { return p == 0 ? "normal" : p == -1 ? "below normal" : "lowest"; };
+    REXLOG_INFO("gow2_renderer: pipeline workers: {} thread(s) ({} logical processors), priority {}; start-up backlog "
+                "jobs at {} priority, at most {} of them at once during play (0.6.3; gow2_renderer_backlog_priority / "
+                "gow2_renderer_backlog_play_workers)",
+                n, hw, prio_name(prio), prio_name(backlog_prio_),
+                backlog_play_limit_ ? std::to_string(backlog_play_limit_) : std::string("all"));  // patch 0056 / 0162
     return !workers_.empty();
+  }
+  // 0.6.3: Windows priority for one job, back to the worker's own afterwards (-2 lowest, -1 below normal, 0 normal).
+  struct PrioScope {
+    int from, to;
+    static int Win(int p) { return p == 0 ? THREAD_PRIORITY_NORMAL : p == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST; }
+    PrioScope(int f, int t) : from(f), to(t) { if (to != from) SetThreadPriority(GetCurrentThread(), Win(to)); }
+    ~PrioScope() { if (to != from) SetThreadPriority(GetCurrentThread(), Win(from)); }
+  };
+  static int64_t SteadyNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  }
+  // 0.6.3 (under job_mutex_): start-up backlog jobs are held back now - the game is being played and enough workers
+  // are on backlog jobs already.
+  bool BacklogCapped() const {
+    return backlog_play_limit_ && backlog_busy_ >= backlog_play_limit_ &&
+           SteadyNowMs() < play_until_ms_.load(std::memory_order_relaxed);
+  }
+  bool BacklogQueued() const {  // under job_mutex_
+    for (uint32_t p = 0; p < kPipelineClasses; ++p)
+      if (!jobs_[p].empty()) return true;
+    return false;
+  }
+  void NotePlayFrame() override {  // 0.6.3 (recording thread)
+    if (backlog_play_limit_) play_until_ms_.store(SteadyNowMs() + 500, std::memory_order_relaxed);
   }
   void PipelineWorker() {
     for (;;) {
       std::unique_ptr<PipelineJob> job;
       {
         std::unique_lock<std::mutex> lock(job_mutex_);
-        job_cv_.wait(lock, [this] { return stop_workers_ || JobsQueued(); });
+        // 0.6.3: while backlog jobs are held back only by the play limit, look again every 100 ms (the limit ends half
+        // a second after the last frame of play, with no notification).
+        while (!stop_workers_ && !JobsQueued()) {
+          if (BacklogQueued()) job_cv_.wait_for(lock, std::chrono::milliseconds(100));
+          else job_cv_.wait(lock);
+        }
         if (stop_workers_ && !JobsQueued()) return;
+        const bool backlog_capped = BacklogCapped();  // 0.6.3
         for (uint32_t p = kPipelinePriorities; p-- > 0;) {  // patch 0057: highest priority first, FIFO within one
           // Patch 0068: warm-only jobs after every live request, before the start-up backlog.
           // Patch 0069: and only while fewer than warm_workers_ workers are on warm jobs.
@@ -4735,33 +4781,36 @@ class D3D12Backend final : public Backend {
             break;
           }
           if (jobs_[p].empty()) continue;
+          if (p < kPipelineClasses && backlog_capped) continue;  // 0.6.3: start-up backlog held back during play
           job = std::move(jobs_[p].front());
           jobs_[p].pop_front();
           break;
         }
+        // 0.6.3: nothing could be taken after all (the play limit began between the wait and the look) - wait again.
+        if (!job) continue;
         // Patch 0061: under job_mutex_, so PipelineJobsLeft never sees a job in neither place (0068: warm jobs apart).
         ++(job->target ? jobs_busy_ : warm_busy_);
+        if (job->target && job->priority < kPipelineClasses) ++backlog_busy_;  // 0.6.3
       }
+      const bool backlog_job = job->target && job->priority < kPipelineClasses;  // 0.6.3
       struct BusyDone {  // patch 0061: whatever path the job leaves by
         D3D12Backend* b;
         uint64_t* counter;
+        bool backlog;
         ~BusyDone() {
           {
             std::lock_guard<std::mutex> l(b->job_mutex_);
             --*counter;
+            if (backlog) --b->backlog_busy_;  // 0.6.3
           }
-          if (counter == &b->warm_busy_) b->job_cv_.notify_one();  // patch 0069: a warm slot is free again
+          // patch 0069: a warm slot is free again; 0.6.3: a backlog slot
+          if (counter == &b->warm_busy_ || (backlog && b->backlog_play_limit_)) b->job_cv_.notify_one();
         }
-      } busy_done{this, job->target ? &jobs_busy_ : &warm_busy_};
+      } busy_done{this, job->target ? &jobs_busy_ : &warm_busy_, backlog_job};
       if (!job->target) {  // patch 0068: warm-only - put the pixel shader through the driver, keep nothing
         // PR #43 (legoliamneeson): at the warm-only priority for this build only (StartPipelineWorkers set the
         // worker's own), restored whichever way the job ends.
-        struct PrioScope {
-          int from, to;
-          static int Win(int p) { return p == 0 ? THREAD_PRIORITY_NORMAL : p == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST; }
-          PrioScope(int f, int t) : from(f), to(t) { if (to != from) SetThreadPriority(GetCurrentThread(), Win(to)); }
-          ~PrioScope() { if (to != from) SetThreadPriority(GetCurrentThread(), Win(from)); }
-        } prio_scope{std::clamp(options_.pipeline_thread_priority, -2, 0), std::clamp(options_.warm_thread_priority, -2, 0)};
+        PrioScope prio_scope{std::clamp(options_.pipeline_thread_priority, -2, 0), std::clamp(options_.warm_thread_priority, -2, 0)};
         const auto w0 = std::chrono::steady_clock::now();
         ID3D12PipelineState* warm = nullptr;
         const HRESULT whr = device_->CreateGraphicsPipelineState(&job->desc, IID_PPV_ARGS(&warm));
@@ -4775,6 +4824,8 @@ class D3D12Backend final : public Backend {
         }
         continue;
       }
+      // 0.6.3: a start-up backlog job at the backlog priority (gow2_renderer_backlog_priority), restored afterwards.
+      PrioScope backlog_prio{worker_prio_, backlog_job ? backlog_prio_ : worker_prio_};
       ID3D12PipelineState* pso = nullptr;
       Pipeline& p = *job->target;
       // Patch 0010: a pipeline already saved loads from the library here, off the recording thread. Each pipeline has
@@ -4942,6 +4993,11 @@ class D3D12Backend final : public Backend {
   bool pipeline_backlog_ = false;
   uint64_t PipelineMisses() const override { return pipeline_misses_; }
   uint64_t jobs_busy_ = 0;  // patch 0061: jobs taken by a worker and not finished (under job_mutex_)
+  // 0.6.3 (StartPipelineWorkers; the play limit and priorities are fixed before the workers start).
+  uint64_t backlog_busy_ = 0;          // start-up backlog jobs being built (under job_mutex_)
+  uint32_t backlog_play_limit_ = 0;    // 0 = no limit
+  int worker_prio_ = 0, backlog_prio_ = 0;
+  std::atomic<int64_t> play_until_ms_{0};
   uint64_t PipelineJobsLeft() override {  // patch 0061
     std::lock_guard<std::mutex> lock(job_mutex_);
     uint64_t q = jobs_busy_;
@@ -5030,8 +5086,9 @@ class D3D12Backend final : public Backend {
   std::vector<std::thread> workers_;
   std::deque<std::unique_ptr<PipelineJob>> jobs_[kPipelinePriorities];  // patch 0057: by PipelinePriority
   bool JobsQueued() const {  // under job_mutex_
-    for (const auto& q : jobs_)
-      if (!q.empty()) return true;
+    for (uint32_t p = kPipelineClasses; p < kPipelinePriorities; ++p)  // the live queues
+      if (!jobs_[p].empty()) return true;
+    if (BacklogQueued() && !BacklogCapped()) return true;  // 0.6.3: the start-up backlog, unless held back during play
     return !warm_jobs_.empty() && warm_busy_ < warm_workers_;  // patch 0068 (0069: only while a warm slot is free)
   }
   // Patch 0068 (gpu.h SetWarmTemplate / WarmPixelShader): warm-only pipelines.
