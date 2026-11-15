@@ -12,7 +12,8 @@
 // Camera.PCOwner, GamePlayerCamera.CurrentCamera, GameThirdPersonCamera.CurrentCamMode, GearPC.MyGearPawn,
 // GearPawn.MyGearWeapon / bIsHiddenByCamera / SetHeadScale, GearWeapon.MagazineMesh / PSC_ShellEject /
 // PSC_ReloadBarrelSmoke / MuzzleFlash, GearMuzzleFlash.MuzFlashEmitter. Judgment's own modes (GameplayCam_Passenger,
-// _PassengerTargeting) stay third person.
+// _PassengerTargeting) stay third person. Roadie run and the like: Gears 3's AsideTick (GearPawn.SpecialMove and
+// enum ESpecialMove under the same names and values, FindBestCameraMode the same; agent062-out/roadie-notes.md).
 //
 // The object reflection is Gears 2's (Gears2-Native/src/layer2_ue3/objects.cpp, built into this game's layer 2: its
 // obj::IsLive, FindClassRange, FindInstancesOfRange, PropertyArrayDim), opened with Judgment's globals and Gears 3's
@@ -36,6 +37,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iterator>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -63,6 +65,11 @@ REXCVAR_DEFINE_BOOL(gowj_first_person_head, false, "Judgment",
                     "First-person camera: draw your own head too (off, the default: hidden while the body is drawn in "
                     "first person - the game's own big-head control, HeadScaler, set to bone scale 0; one local player "
                     "only, as the scale shows in every view)");
+REXCVAR_DEFINE_STRING(gowj_first_person_third_person_moves, "", "Judgment",
+                      "First-person camera, for tests: more special moves (GearPawn ESpecialMove names, comma separated, "
+                      "e.g. SM_EvadeFwd,SM_EvadeBwd,SM_EvadeLt,SM_EvadeRt) during which the camera goes back to "
+                      "third person, as it does for roadie run, the dash and slide into cover and the roadie-run "
+                      "stabs");
 REXCVAR_DEFINE_BOOL(gowj_first_person_diag, false, "Judgment",
                     "First-person camera: log the local players' hide state once a second (pawn / weapon flags, "
                     "HiddenActors, camera and weapon positions) - log only, for tests");
@@ -511,6 +518,8 @@ void HeadTick(uint32_t mesh, const char* why) {
 uint32_t OuterOff() { return L().outer; }
 uint32_t InnerOff() { return L().bool_mask; }   // ArrayProperty Inner / StructProperty Struct
 uint32_t ElemSizeOff() { return L().elem_size; }
+uint32_t NextOff() { return L().next; }   // UField Next
+uint32_t NameStride() { return L().name_number ? 8 : 4; }   // FName: index (, number)
 
 // ---- one-time dump (--gowj_first_person_diag): what is drawn near the eye camera ---------------------------------
 // For what is left at the screen edges with the body drawn and the head hidden (job 1857: Judgment's two dark shapes at
@@ -818,6 +827,164 @@ void DumpOnce(uint32_t cam, uint32_t pawn, uint32_t weapon) {
   REXLOG_INFO("first person diag: ---- end of parts ----");
 }
 
+// ---- third-person moves: roadie run and the like step first person aside (Shagg 11-14: roadie run in third person) ----
+// Each game's GearGameplayCamera.FindBestCameraMode (decompiled from its GearGame script; Gears 2, 3 and Judgment alike,
+// agent062-out/roadie-notes.md) picks GearCamRoadie (GameplayCam_RoadieRun, never patched) only when
+// GearPawn.SpecialMove == SM_RoadieRun and no zoom, crouch or cover check won first. The dash to cover (SM_CoverRun),
+// the slide into cover or the stop that ends a run (SM_Run2MidCov / SM_Run2StdCov / SM_Run2Idle) and the roadie-run
+// stabs keep GameplayCam_Default, and aiming while running (bCanRoadieRunWhileTargeting) picks GameplayCam_Targeting -
+// modes of ours. So the pawn's own state decides: while a local player's pawn does one of kAsideMoves (GearPawn.
+// SpecialMove, a byte of enum ESpecialMove; the values are taken from the enum's names in memory), every patched mode
+// object of that player's GearGameplayCamera (its current mode and every mode whose GameplayCam is it) gets its
+// original words back as on PageUp off (only a word that still holds our value, only while the object is live with its
+// class; bDoPredictiveAvoidance too) and is left out of the pass, and WeaponTick un-hides nothing for that player, so
+// the head is shown again: the game's own third-person pawn. When the move ends those modes are patched again at once
+// (Apply reads their originals afresh). SpecialMove not found or not a byte: nothing is stepped aside.
+constexpr const char* kAsideMoves[] = {"SM_RoadieRun", "SM_CoverRun", "SM_Run2MidCov", "SM_Run2StdCov", "SM_Run2Idle",
+                                       "SM_RoadieRunStab", "SM_RoadieRunCleaverStab", "SM_RoadieRunHitReactionStumble"};
+// the enum's names not readable: the values every game's script has for the first five (ESpecialMove 3, 4, 12, 13, 14)
+constexpr uint8_t kAsideFallback[] = {3, 4, 12, 13, 14};
+
+struct MoveTable {
+  uint32_t name = 0;                // the pawn class's name index (a class freed and the address reused: looked up again)
+  int offset = -1;                  // GearPawn.SpecialMove (a 1-byte ByteProperty), -1 = not found
+  std::vector<std::string> names;   // ESpecialMove's names (empty: not read)
+  std::vector<bool> aside;          // by value: a third-person move
+};
+std::unordered_map<uint32_t, MoveTable> g_moves;   // by pawn class
+
+// ESpecialMove's names: the ByteProperty's Enum (its first field after UProperty, like an ArrayProperty's Inner) ->
+// UEnum.Names (TArray<FName>, right after UField; Next + 4, or + 8 where UField also has a SuperField), checked by
+// class and object name and by its first entries
+std::vector<std::string> EnumNames(uint32_t cls) {
+  std::vector<std::string> v;
+  const uint32_t p = PropertyObject(cls, "SpecialMove");
+  if (!p || obj::ObjectName(obj::ClassOf(p)) != "ByteProperty") return v;
+  const uint32_t e = obj::Read32(p + InnerOff());
+  if (!e || obj::ObjectName(obj::ClassOf(e)) != "Enum" || obj::ObjectName(e) != "ESpecialMove") return v;
+  for (uint32_t at : {NextOff() + 4, NextOff() + 8}) {
+    const uint32_t data = obj::Read32(e + at), n = obj::Read32(e + at + 4), stride = NameStride();
+    if (!data || n < 16 || n > 512 || !obj::Readable(data, n * stride)) continue;
+    v.clear();
+    for (uint32_t i = 0; i < n; i++) v.push_back(obj::Name(obj::Read32(data + i * stride)));
+    if (v[0] == "SM_None" && v[4] == "SM_RoadieRun") return v;
+  }
+  return {};
+}
+
+const MoveTable& MovesOf(uint32_t cls) {
+  static const std::string extra = REXCVAR_GET(gowj_first_person_third_person_moves);
+  const uint32_t name = NameOf(cls);
+  if (auto it = g_moves.find(cls); it != g_moves.end() && it->second.name == name) return it->second;
+  if (g_moves.size() > 64) g_moves.clear();
+  MoveTable& t = g_moves[cls];
+  t = MoveTable{};
+  t.name = name;
+  if (obj::PropertyType(cls, "SpecialMove") != "ByteProperty" || obj::PropertySize(cls, "SpecialMove") != 1 ||
+      (t.offset = Prop(cls, "SpecialMove").offset) < 0) {
+    t.offset = -1;
+    REXLOG_WARN("first person: {} has no SpecialMove byte - roadie run is left to the game's camera modes",
+                obj::ObjectName(cls));
+    return t;
+  }
+  t.names = EnumNames(cls);
+  t.aside.assign(256, false);
+  std::string list;
+  if (t.names.empty()) {
+    for (uint8_t v : kAsideFallback) t.aside[v] = true, list += " " + std::to_string(v);
+  } else {
+    std::vector<std::string> want(std::begin(kAsideMoves), std::end(kAsideMoves));
+    std::stringstream in(extra);   // --gowj_first_person_third_person_moves: more names, comma separated
+    for (std::string s; std::getline(in, s, ',');) {
+      s.erase(std::remove_if(s.begin(), s.end(), [](unsigned char c) { return std::isspace(c); }), s.end());
+      if (!s.empty()) want.push_back(s);
+    }
+    for (const std::string& w : want)
+      if (const auto it = std::find(t.names.begin(), t.names.end(), w); it != t.names.end() && it - t.names.begin() < 256)
+        t.aside[size_t(it - t.names.begin())] = true, list += " " + w + "=" + std::to_string(it - t.names.begin());
+  }
+  REXLOG_INFO("first person: {}.SpecialMove +0x{:X} - third person while:{} ({})", obj::ObjectName(cls), t.offset,
+              list.empty() ? " none" : list,
+              t.names.empty() ? "ESpecialMove not read: the script's values" : "names from ESpecialMove");
+  return t;
+}
+
+// the pawn's special move now (-1: no pawn / no SpecialMove byte)
+int MoveOf(uint32_t pawn) {
+  if (!pawn || !obj::IsLive(pawn)) return -1;
+  const MoveTable& t = MovesOf(obj::ClassOf(pawn));
+  return t.offset < 0 ? -1 : int(obj::Read32(pawn + uint32_t(t.offset)) >> 24);   // the byte at the offset
+}
+bool IsAsideMove(uint32_t pawn, int move) {
+  return move >= 0 && MovesOf(obj::ClassOf(pawn)).aside[size_t(move)];
+}
+std::string MoveText(uint32_t pawn) {   // for the diag: "SM_RoadieRun (4), third person"
+  const int move = MoveOf(pawn);
+  if (move < 0) return "-";
+  const MoveTable& t = MovesOf(obj::ClassOf(pawn));
+  return (size_t(move) < t.names.size() ? t.names[size_t(move)] : "#" + std::to_string(move)) + " (" +
+         std::to_string(move) + ")" + (t.aside[size_t(move)] ? ", third person" : "");
+}
+
+struct Aside { uint32_t cam, cls; };
+std::unordered_map<uint32_t, Aside> g_aside;   // mode object stepped aside (original words back) -> camera, class
+std::unordered_set<uint32_t> g_asideCams;     // local cameras whose pawn does a third-person move now
+
+// one patched mode object back to the game's words (the exact restore of PageUp off; a dead object is only forgotten)
+bool StepAside(uint32_t o, uint32_t cam) {
+  const auto it = g_patched.find(o);
+  if (it == g_patched.end()) return false;
+  const uint32_t cls = it->second.cls;
+  const bool live = obj::IsLive(o) && obj::ClassOf(o) == cls;
+  if (live)
+    for (const Word& w : it->second.words)
+      if (obj::Read32(w.address) == w.written) obj::Write32(w.address, w.original);
+  g_patched.erase(it);
+  if (!live) return false;
+  RestoreBits(o);   // its bDoPredictiveAvoidance
+  g_aside[o] = {cam, cls};
+  return true;
+}
+
+// Every tick before WeaponTick: which local players do a third-person move; their modes stepped aside, or patched again.
+void AsideTick() {
+  g_asideCams.clear();
+  for (uint32_t cam : g_cams) {
+    if (!obj::IsLive(cam)) continue;
+    const uint32_t pc = Ptr(cam, "PCOwner");
+    const uint32_t pawn = pc && obj::IsLive(pc) ? Ptr(pc, "MyGearPawn") : 0;
+    const int move = MoveOf(pawn);
+    if (!IsAsideMove(pawn, move)) continue;
+    g_asideCams.insert(cam);
+    const uint32_t gc = Ptr(cam, "GameplayCam");
+    if (!gc || !obj::IsLive(gc)) continue;
+    std::vector<uint32_t> modes;
+    if (const uint32_t cur = Ptr(gc, "CurrentCamMode"); g_patched.count(cur)) modes.push_back(cur);
+    for (const auto& [o, p] : g_patched)   // the camera's other modes (GearGameplayCamera.CreateCameraMode sets this)
+      if (Ptr(o, "GameplayCam") == gc && std::find(modes.begin(), modes.end(), o) == modes.end()) modes.push_back(o);
+    size_t n = 0;
+    for (uint32_t o : modes) n += StepAside(o, cam);
+    static int logged = 0;
+    if (n && logged++ < 20)
+      REXLOG_INFO("first person: {} - third person ({} camera mode(s) back to the game's offsets)", MoveText(pawn), n);
+  }
+  size_t back = 0;
+  for (auto it = g_aside.begin(); it != g_aside.end();) {
+    if (g_asideCams.count(it->second.cam)) { ++it; continue; }
+    const uint32_t o = it->first, cls = it->second.cls;
+    it = g_aside.erase(it);
+    if (!obj::IsLive(o) || obj::ClassOf(o) != cls) continue;   // gone: forgotten, never written
+    const ClassInfo& info = InfoOf(cls);
+    if (!info.fp || info.viewOffset < 0) continue;
+    Apply(o, cls, info);
+    if (info.avoid >= 0) SetBit(o, o + uint32_t(info.avoid), info.avoidMask, false, false);
+    back++;
+  }
+  static int loggedBack = 0;
+  if (back && loggedBack++ < 20)
+    REXLOG_INFO("first person: the move is over - {} camera mode(s) at eye level again", back);
+}
+
 // Every engine tick while first person is on (a few dozen reads per local player): the current weapon of each local
 // player whose camera is in a first-person mode gets bIgnoreHiddenActorsMembership; anything we set it on that is no
 // longer such a part (weapon switched, dropped, holstered, cover / third-person mode, player gone) gets it back.
@@ -832,6 +999,7 @@ void WeaponTick() {
   for (uint32_t cam : g_cams) {
     if (!obj::IsLive(cam)) continue;
     liveCams++;
+    if (g_asideCams.count(cam)) continue;   // roadie run and the like: the game's third-person pawn
     // review r24 R1 / R2: only while the gameplay camera is the active one and its current mode is one of ours; a
     // property not found = nothing un-hidden (the earlier behaviour)
     const uint32_t gc = Ptr(cam, "GameplayCam");
@@ -866,7 +1034,8 @@ void WeaponTick() {
   const bool dumpFirst = liveCams == 1 && headMesh && DumpPending(headMesh);
   if (bodyOn && !headOn)
     HeadTick(liveCams == 1 && !dumpFirst ? headMesh : 0, dumpFirst ? "diag: parts dump first"
-             : liveCams > 1 ? "split screen (shown)" : "not first person");
+             : liveCams > 1 ? "split screen (shown)" : !g_asideCams.empty() ? "third-person move (roadie run...)"
+             : "not first person");
 }
 
 // ---- --gowj_first_person_diag: once a second, per local player, log only --------------------------------------------
@@ -910,12 +1079,13 @@ void DiagTick() {
     }
     const uint32_t active = Ptr(cam, "CurrentCamera");   // the gate WeaponTick uses (must be the gameplay camera)
     REXLOG_INFO("first person diag: cam {:08X} active {} | mode {} ({}) | pawn {} bIsHiddenByCamera {} | HiddenActors {} "
-                "pawn {} weapon {} | time {:.2f} paused {}", cam,
+                "pawn {} weapon {} | special move {} | time {:.2f} paused {}", cam,
                 Prop(obj::ClassOf(cam), "CurrentCamera").offset < 0 ? std::string("(no property)")
                     : active == gc ? std::string("gameplay") : active ? obj::ObjectName(obj::ClassOf(active)) : std::string("none"),
                 mode ? obj::ObjectName(obj::ClassOf(mode)) : "?",
-                g_patched.count(mode) ? "FP" : "3P", pawn ? obj::ObjectName(obj::ClassOf(pawn)) : "none",
-                Flag(pawn, "bIsHiddenByCamera"), hidden, pawnIn, weapIn, now, paused);
+                g_patched.count(mode) ? "FP" : g_aside.count(mode) ? "3P, stepped aside" : "3P",
+                pawn ? obj::ObjectName(obj::ClassOf(pawn)) : "none",
+                Flag(pawn, "bIsHiddenByCamera"), hidden, pawnIn, weapIn, MoveText(pawn), now, paused);
     REXLOG_INFO("first person diag:   pawn mesh {} | weapon {} bHidden {} | weapon mesh {} (owner {}) | magazine {}",
                 Parts(Ptr(pawn, "Mesh")), weapon ? obj::ObjectName(obj::ClassOf(weapon)) : "none", Flag(weapon, "bHidden"),
                 Parts(wmesh), obj::ObjectName(obj::ClassOf(Ptr(wmesh, "Owner"))), Parts(Ptr(weapon, "MagazineMesh")));
@@ -1059,6 +1229,7 @@ void GowjFirstPersonTick() {
       RestoreBits();   // weapon bIgnoreHiddenActorsMembership and modes' bDoPredictiveAvoidance (live objects only)
       RestoreHead();   // the head control's BoneScale / strength (live control only)
       g_cams.clear();
+      g_aside.clear(), g_asideCams.clear();   // their words are the game's already
       REXLOG_INFO("first person: off - {} flag(s) back", bits);
     }
     if (g_restoring) RestoreSlice();
@@ -1081,6 +1252,7 @@ void GowjFirstPersonTick() {
     if (g_base) REXLOG_INFO("first person: GearGameplayCameraMode found (Judgment {})", kVersion);
     return;
   }
+  AsideTick();    // roadie run and the like: that player's modes back to third person while it lasts
   WeaponTick();   // the local players' weapons: every tick (a weapon switch shows at once)
   DiagTick();     // --gowj_first_person_diag: once a second, log only
   if (!g_passActive) {
@@ -1106,6 +1278,7 @@ void GowjFirstPersonTick() {
     const ClassInfo& info = InfoOf(cls);
     if (!info.fp || info.viewOffset < 0) continue;
     g_seen.insert(o);
+    if (g_aside.count(o)) continue;   // stepped aside for a third-person move (AsideTick puts it back)
     Apply(o, cls, info);
     if (info.avoid >= 0) SetBit(o, o + uint32_t(info.avoid), info.avoidMask, false, false);
     if (const uint32_t cam = CameraOf(o);
@@ -1125,6 +1298,8 @@ void GowjFirstPersonTick() {
   const size_t before = g_patched.size();
   for (auto it = g_patched.begin(); it != g_patched.end();)
     it = g_seen.count(it->first) ? std::next(it) : g_patched.erase(it);
+  for (auto it = g_aside.begin(); it != g_aside.end();)   // stepped-aside objects gone: forgotten, never written
+    it = g_seen.count(it->first) ? std::next(it) : g_aside.erase(it);
   for (auto it = g_bits.begin(); it != g_bits.end();)   // mode bits of objects gone: forgotten, never written
     it = !it->second.weapon && !g_seen.count(it->second.object) ? g_bits.erase(it) : std::next(it);
   if (g_seenCams != g_cams)
