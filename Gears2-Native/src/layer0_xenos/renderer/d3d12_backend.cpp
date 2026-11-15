@@ -314,6 +314,7 @@ struct Texture {
   int32_t heap = -1;  // patch 0017: placed in tex_heaps_[heap] at heap_offset (heap_size bytes); -1 = committed
   uint64_t heap_offset = 0, heap_size = 0;
   bool scratch_pending = false;  // batched texture loads: a scratch copy into it is queued (FlushScratchCopies)
+  bool recycled = false;  // 0.6.2 (#311): placed in a heap range that held another texture before (not-zeroed memory)
   uint64_t uav_unbarriered = 0;  // batched texture loads: mips written as a UAV with the barrier left out (bit = mip)
 };
 
@@ -1625,13 +1626,15 @@ class D3D12Backend final : public Backend {
         const uint64_t size = (ai.SizeInBytes + kTexturePlacedAlign - 1) & ~(kTexturePlacedAlign - 1);
         int32_t heap = -1;
         uint64_t offset = 0;
-        if (AllocTextureRange(size, heap, offset)) {
+        bool recycled = false;
+        if (AllocTextureRange(size, heap, offset, recycled)) {
           hr = device_->CreatePlacedResource(tex_heaps_[size_t(heap)].heap, offset, &rd, initial, nullptr,
                                              IID_PPV_ARGS(&t.resource));
           if (SUCCEEDED(hr)) {
             t.heap = heap;
             t.heap_offset = offset;
             t.heap_size = size;
+            t.recycled = recycled;  // 0.6.2 (#311)
             ++stats_.textures_placed;
             placed_live_bytes_ += size;  // job 306
             ++placed_live_count_;
@@ -2064,12 +2067,19 @@ class D3D12Backend final : public Backend {
 
   // ---- guest memory ----
   void UploadGuestMemory(uint32_t guest_physical, const void* data, uint32_t size) override {
-    if (!OpenList() || !size) return;  // batched texture loads: touches neither the scratch buffer nor a texture
+    if (!size) return;
+    if (!OpenList()) {  // batched texture loads: touches neither the scratch buffer nor a texture
+      NoteLoadDrop(stats_.tex_drop_mirror, "guest-memory mirror upload: no command list", 0);  // 0.6.2 (#311)
+      return;
+    }
     guest_physical &= 0x1FFFFFFFu;
     if (uint64_t(guest_physical) + size > options_.guest_memory_bytes) size = uint32_t(options_.guest_memory_bytes - guest_physical);
     uint64_t offset;
     uint8_t* dst = AllocUpload(size, 16, offset);
-    if (!dst) return;
+    if (!dst) {
+      NoteLoadDrop(stats_.tex_drop_mirror, "guest-memory mirror upload: no upload-ring space", 0);  // 0.6.2 (#311)
+      return;
+    }
     copies_.Copy(dst, data, size);
     TransitionGuest(D3D12_RESOURCE_STATE_COPY_DEST);
     TsCat();
@@ -2317,6 +2327,7 @@ class D3D12Backend final : public Backend {
   }
 
   void NextFrame() override {
+    zeroed_this_frame_ = 0;  // 0.6.2 (#311)
     if (!ready_ || lost_) return;
     if (list_open_) Submit();
     cur_pool_ = (cur_pool_ + 1) % kSamplerPools;
@@ -2456,7 +2467,11 @@ class D3D12Backend final : public Backend {
 
   void UploadTexture(TextureHandle h, uint32_t mip, uint32_t layer, const void* data, uint32_t row_bytes, uint32_t rows,
                      uint32_t slices) override {
-    if (!Recording() || !ValidTexture(h) || !data) return;
+    if (!ValidTexture(h) || !data) return;
+    if (!Recording()) {
+      NoteLoadDrop(stats_.tex_drop_upload_list, "texture upload: no command list", h);  // 0.6.2 (#311)
+      return;
+    }
     Texture& t = textures_[h];
     D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
     // Patch 0024: never a copy into a subresource the texture doesn't have (a device-removal risk).
@@ -2472,7 +2487,10 @@ class D3D12Backend final : public Backend {
     device_->GetCopyableFootprints(&rd, sub, 1, 0, &fp, &num_rows, &row_size, &total);
     uint64_t offset;
     uint8_t* dst = AllocUpload(total, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT, offset);
-    if (!dst) return;
+    if (!dst) {
+      NoteLoadDrop(stats_.tex_drop_upload_ring, "texture upload: no upload-ring space", h);  // 0.6.2 (#311)
+      return;
+    }
     const auto* src = static_cast<const uint8_t*>(data);
     const UINT depth = std::min<UINT>(fp.Footprint.Depth, std::max<uint32_t>(slices, 1));
     const UINT copy_rows = std::min<UINT>(num_rows, rows);
@@ -2502,15 +2520,23 @@ class D3D12Backend final : public Backend {
     // mirror and writes its own scratch region or its own (not queued) texture.
     const bool scratch_batch = options_.batch_texture_loads && b.scratch_u0;
     const bool load_batch = scratch_batch || (options_.batch_texture_loads && b.defer_uav_barrier);
-    if (!(load_batch ? OpenList() : Recording()) || !p || p >= pipelines_.size() || !pipelines_[p].compute || !gx ||
-        !gy || !gz)
+    // 0.6.2 (#311): a texture-load dispatch (into a scratch region or a texture) that is dropped is counted, and the
+    // scratch region it should have filled is no longer the one CopyScratchToTexture would copy.
+    const bool tex_load = (b.scratch_u0 && scratch_) || (!b.guest_u0 && !b.scratch_u0 && ValidTexture(b.uav_texture) && b.guest_t3);
+    if (!(load_batch ? OpenList() : Recording()) || !p || p >= pipelines_.size() || !pipelines_[p].compute) {
+      if (tex_load) DropTextureDispatch(b, stats_.tex_drop_dispatch_list, "dispatch: no command list / pipeline");
       return;
+    }
+    if (!gx || !gy || !gz) return;
     if (pipelines_[p].mips) {
       DispatchMips(p, b, gx, gy, gz);
       return;
     }
     const uint32_t base = AllocShaderDescriptors(kComputeSrvCount + 2);
-    if (base == UINT32_MAX) return;
+    if (base == UINT32_MAX) {
+      if (tex_load) DropTextureDispatch(b, stats_.tex_drop_dispatch_desc, "dispatch: no shader descriptors");
+      return;
+    }
     D3D12_CPU_DESCRIPTOR_HANDLE cpu = shader_heap_->GetCPUDescriptorHandleForHeapStart();
     for (uint32_t i = 0; i < kComputeSrvCount; ++i) {
       D3D12_CPU_DESCRIPTOR_HANDLE dst{cpu.ptr + SIZE_T(base + i) * view_increment_};
@@ -2865,6 +2891,7 @@ class D3D12Backend final : public Backend {
     scratch_fp_ = fp;
     scratch_fp_.Offset = at;
     scratch_sub_ = sub;
+    scratch_for_ = h;  // 0.6.2 (#311): for the drop warnings
     scratch_head_ = at + total;
     row_pitch = fp.Footprint.RowPitch;
     rows = num_rows;
@@ -2872,11 +2899,19 @@ class D3D12Backend final : public Backend {
   }
   void CopyScratchToTexture(TextureHandle h, uint32_t mip, uint32_t layer) override {
     const bool batch = options_.batch_texture_loads;
-    if (!(batch ? OpenList() : Recording()) || !ValidTexture(h) || !scratch_) return;
+    if (!ValidTexture(h) || !scratch_) return;
+    if (!(batch ? OpenList() : Recording())) {
+      NoteLoadDrop(stats_.tex_drop_copy_list, "scratch copy: no command list", h);  // 0.6.2 (#311)
+      return;
+    }
     Texture& t = textures_[h];
     D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
     const UINT sub = mip + layer * rd.MipLevels;
-    if (sub != scratch_sub_) return;  // PrepareScratchFor was for another subresource
+    if (sub != scratch_sub_) {  // PrepareScratchFor was for another subresource - or its dispatch was dropped (counted)
+      if (scratch_sub_ != UINT_MAX) NoteLoadDrop(stats_.tex_drop_copy_sub, "scratch copy: prepared for another subresource", h);
+      return;
+    }
+    scratch_sub_ = UINT_MAX;  // 0.6.2 (#311): consumed - a later copy without a fresh PrepareScratchFor+Dispatch must not reuse it
     if (batch) {  // queued: recorded with the others by FlushScratchCopies
       scratch_copies_.push_back({h, t.serial, sub, scratch_fp_});
       t.scratch_pending = true;
@@ -2895,6 +2930,95 @@ class D3D12Backend final : public Backend {
     TsCat();
     list_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
     ++stats_.scratch_texture_copies;
+  }
+  // 0.6.2 (GitHub #311): a texture-load operation that was dropped. Counted, and the first of each kind is logged with
+  // the texture's size and format - it used to vanish without a trace and leave the texture looking loaded.
+  void NoteLoadDrop(uint64_t& counter, const char* what, TextureHandle h) {
+    ++load_drops_total_;
+    if (++counter != 1) return;
+    if (ValidTexture(h)) {
+      const TextureDesc& d = textures_[h].desc;
+      REXLOG_WARN("gow2_renderer: texture load dropped (first of its kind, GitHub #311): {} - texture {}x{}x{} mips {} format {} "
+                  "(the texture cache loads it again on its next use)",
+                  what, d.width, d.height, d.depth_or_layers, d.mips, uint32_t(d.format));
+    } else {
+      REXLOG_WARN("gow2_renderer: texture load dropped (first of its kind, GitHub #311): {} (the texture cache loads it "
+                  "again on its next use)", what);
+    }
+  }
+  void DropTextureDispatch(const ComputeBindings& b, uint64_t& counter, const char* what) {
+    NoteLoadDrop(counter, what, b.scratch_u0 ? scratch_for_ : b.uav_texture);
+    if (b.scratch_u0) scratch_sub_ = UINT_MAX;  // the scratch region was not filled: CopyScratchToTexture must not copy it
+  }
+  uint64_t TextureLoadDrops() const override { return load_drops_total_; }
+
+  // 0.6.2 (GitHub #311): zero contents for a placed texture whose heap range held another texture (the heaps are
+  // created NOT_ZEROED). Vulkan does the same for block-compressed images at creation (VKA3). One copy per subresource
+  // from a zero-filled upload buffer; bounded per frame (kZeroBudgetPerFrame) unless `force`.
+  bool ZeroTexture(TextureHandle h, bool force) override {
+    if (!ValidTexture(h)) return false;
+    Texture& t = textures_[h];
+    if (t.heap < 0 || (!t.recycled && !force)) return false;  // committed resources are zeroed by D3D12
+    if (t.desc.samples > 1 || (t.desc.usage & (kUsageRenderTarget | kUsageDepthStencil))) return false;
+    if (!OpenList()) return false;
+    const D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
+    const UINT layers = rd.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ? 1u : rd.DepthOrArraySize;
+    const UINT count = UINT(rd.MipLevels) * layers;
+    if (!count || count > 512) return false;
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> fps(count);
+    UINT64 need = 0, bytes = 0;
+    for (UINT i = 0; i < count; ++i) {
+      UINT rows = 0;
+      UINT64 row_size = 0, total = 0;
+      device_->GetCopyableFootprints(&rd, i, 1, 0, &fps[i], &rows, &row_size, &total);
+      need = std::max<UINT64>(need, total);
+      bytes += total;
+    }
+    if (!need || need > (64ull << 20)) return false;
+    if (!force && zeroed_this_frame_ + bytes > kZeroBudgetPerFrame) {
+      ++stats_.tex_zero_skipped;
+      return false;
+    }
+    if (zero_src_size_ < need) {
+      if (zero_src_) deferred_releases_.push_back({zero_src_, next_fence_});  // earlier copies in the open list read it
+      zero_src_ = nullptr;
+      zero_src_size_ = 0;
+      const UINT64 size = std::max<UINT64>((need + 0x3FFFFF) & ~UINT64(0x3FFFFF), 4ull << 20);
+      std::string error;
+      if (!CreateBuffer(size, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ, &zero_src_,
+                        error)) {
+        REXLOG_ERROR("gow2_renderer: texture zero buffer ({} MB): {}", size >> 20, error);
+        zero_src_ = nullptr;
+        return false;
+      }
+      void* mapped = nullptr;
+      const D3D12_RANGE none{0, 0};
+      if (FAILED(zero_src_->Map(0, &none, &mapped)) || !mapped) {
+        SafeRelease(zero_src_);
+        return false;
+      }
+      std::memset(mapped, 0, size_t(size));
+      zero_src_->Unmap(0, nullptr);
+      zero_src_size_ = size;
+    }
+    Transition(t, D3D12_RESOURCE_STATE_COPY_DEST);
+    for (UINT i = 0; i < count; ++i) {
+      D3D12_TEXTURE_COPY_LOCATION dl{};
+      dl.pResource = t.resource;
+      dl.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+      dl.SubresourceIndex = i;
+      D3D12_TEXTURE_COPY_LOCATION sl{};
+      sl.pResource = zero_src_;
+      sl.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+      sl.PlacedFootprint = fps[i];
+      sl.PlacedFootprint.Offset = 0;
+      TsCat();
+      list_->CopyTextureRegion(&dl, 0, 0, 0, &sl, nullptr);
+    }
+    zeroed_this_frame_ += bytes;
+    ++stats_.tex_zeroed;
+    stats_.tex_zeroed_bytes += bytes;
+    return true;
   }
   // Batched texture loads: records the queued scratch copies - the scratch buffer's one transition, every target's
   // transition (consecutive barriers: the proxy sends them as one batch), then the copies.
@@ -3202,6 +3326,7 @@ class D3D12Backend final : public Backend {
   struct TextureHeap {
     ID3D12Heap* heap = nullptr;
     std::map<uint64_t, uint64_t> free;
+    uint64_t fresh_from = 0;  // 0.6.2 (#311): bytes from here on were never handed to a texture
   };
   static constexpr uint64_t kTextureHeapBytes = 64ull << 20;
   static constexpr uint64_t kTexturePlacedMax = 16ull << 20;
@@ -3211,7 +3336,8 @@ class D3D12Backend final : public Backend {
   };
   std::unordered_map<uint64_t, AllocInfoEntry> alloc_info_cache_;
   static constexpr uint64_t kTexturePlacedAlign = 64ull << 10;
-  bool AllocTextureRange(uint64_t size, int32_t& heap, uint64_t& offset) {
+  bool AllocTextureRange(uint64_t size, int32_t& heap, uint64_t& offset, bool& recycled) {
+    recycled = false;
     for (size_t h = 0; h < tex_heaps_.size(); ++h) {
       auto& f = tex_heaps_[h].free;
       for (auto it = f.begin(); it != f.end(); ++it) {
@@ -3221,6 +3347,8 @@ class D3D12Backend final : public Backend {
         f.erase(it);
         if (rest) f.emplace(offset + size, rest);
         heap = int32_t(h);
+        recycled = offset < tex_heaps_[h].fresh_from;  // 0.6.2 (#311): the range held a texture before
+        tex_heaps_[h].fresh_from = std::max(tex_heaps_[h].fresh_from, offset + size);
         return true;
       }
     }
@@ -3246,6 +3374,7 @@ class D3D12Backend final : public Backend {
     }
     th.heap->SetName(L"gow2 texture heap");
     th.free.emplace(size, kTextureHeapBytes - size);
+    th.fresh_from = size;
     tex_heaps_.push_back(std::move(th));
     ++stats_.texture_heaps;
     uint64_t free_bytes = 0, largest_free = 0;
@@ -3325,6 +3454,7 @@ class D3D12Backend final : public Backend {
     SafeRelease(real_list_);
     SafeRelease(guest_);
     SafeRelease(scratch_);  // patch 0021
+    SafeRelease(zero_src_);  // 0.6.2 (#311)
     SafeRelease(upload_);
     SafeRelease(zero_cb_);
     SafeRelease(shader_heap_);
@@ -4527,6 +4657,12 @@ class D3D12Backend final : public Backend {
   D3D12_RESOURCE_STATES scratch_state_ = D3D12_RESOURCE_STATE_COMMON;
   D3D12_PLACED_SUBRESOURCE_FOOTPRINT scratch_fp_{};
   UINT scratch_sub_ = UINT_MAX;
+  uint64_t load_drops_total_ = 0;  // 0.6.2 (#311): see TextureLoadDrops
+  static constexpr uint64_t kZeroBudgetPerFrame = 256ull << 20;  // 0.6.2 (#311): zero-filled texture bytes per frame
+  uint64_t zeroed_this_frame_ = 0;
+  ID3D12Resource* zero_src_ = nullptr;  // 0.6.2 (#311): zero-filled upload buffer, the source of ZeroTexture's copies
+  UINT64 zero_src_size_ = 0;
+  TextureHandle scratch_for_ = 0;  // 0.6.2 (#311): the texture PrepareScratchFor was last called for
   // Batched texture loads: the next free byte of the scratch buffer and the copies queued out of it.
   struct ScratchCopy {
     TextureHandle texture = 0;
