@@ -283,7 +283,7 @@ bool LocalCamera(uint32_t cam) {
   if (!cam || !obj::IsLive(cam)) return false;
   const uint32_t pc = Ptr(cam, "PCOwner");
   if (!pc || !obj::IsLive(pc)) return false;
-  if (Prop(obj::ClassOf(pc), "Player").offset < 0) return true;   // (not found: taken as local)
+  if (Prop(obj::ClassOf(pc), "Player").offset < 0) return false;   // (not found: not taken - r29 R2)
   const uint32_t player = Ptr(pc, "Player");
   return player && obj::ObjectName(obj::ClassOf(player)).find("LocalPlayer") != std::string::npos;
 }

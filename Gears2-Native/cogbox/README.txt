@@ -66,10 +66,10 @@ apply does that for you.
 
 New in 0.6.2
 ------------
-- First-person camera (Gameplay tab, experimental, off by default), Gears 3 and Gears 2: the game's
-  camera at your character's eyes while you walk, crouch, aim and roadie run; cover, executions,
+- First-person camera (Gameplay tab, experimental, off by default), Gears 3, Gears 2, Judgment: the
+  game's camera at your character's eyes while you walk, crouch, aim and roadie run; cover, executions,
   vehicles, turrets and cutscenes stay over the shoulder. Page Up switches it in the game. You see
-  your own body and gun in both (Gears 3 hides your head); Gears 2 hasn't been tried in a real
+  your own body and gun (Gears 3 and Judgment hide your head); Gears 2 and Judgment haven't been tried in a real
   play-through yet.
 - DualSense adaptive triggers in all four games (Controls tab, experimental, off by default, #245).
   Not tried on a real DualSense yet - please tell us how it feels.

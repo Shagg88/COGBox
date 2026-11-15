@@ -11,12 +11,12 @@ COGBox is on RecompLauncher, the free home for recompiled PC games. Get it strai
 https://recomplauncher.com/game/cogbox
 
 ### New and experimental (all off by default)
-- **First-person camera** (Gameplay tab, **experimental**, Gears 3 and Gears 2): the game's own camera moves to your
-  character's eyes while you walk, crouch, aim and roadie run. In cover, executions, when you're down, in vehicles, on
+- **First-person camera** (Gameplay tab, **experimental**, Gears 3, Gears 2 and Judgment): the game's own camera moves
+  to your character's eyes while you walk, crouch, aim and roadie run. In cover, executions, when you're down, in vehicles, on
   turrets and in cutscenes it goes back to the usual over-the-shoulder view. **Page Up** switches it off and on in the
   game. In Gears 3 you see your own arms, body and gun, while your head is hidden (with the game's own big-head
-  control) so it doesn't fill the view. In Gears 2 you see your body and gun too, but it hasn't been tried in a real
-  play-through yet - please tell us how it goes.
+  control) so it doesn't fill the view; Judgment works the same way. In Gears 2 you see your body and gun too. Gears 2
+  and Judgment haven't been tried in a real play-through yet - please tell us how it goes.
 - **DualSense adaptive triggers** (Controls tab, now **all four games**, **experimental**): with a PS5 DualSense
   controller (USB or Bluetooth), the triggers push back, click or buzz to match the weapon in your hands, and shake
   while the chainsaw revs. Other controllers are not touched. If Steam Input is on for the controller, Steam keeps the

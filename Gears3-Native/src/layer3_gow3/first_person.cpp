@@ -290,7 +290,7 @@ bool LocalCamera(uint32_t cam) {
   if (!cam || !obj::IsLive(cam)) return false;
   const uint32_t pc = Ptr(cam, "PCOwner");
   if (!pc || !obj::IsLive(pc)) return false;
-  if (Prop(obj::ClassOf(pc), "Player").offset < 0) return true;   // (not found: taken as local)
+  if (Prop(obj::ClassOf(pc), "Player").offset < 0) return false;   // (not found: not taken - r29 R2)
   const uint32_t player = Ptr(pc, "Player");
   return player && obj::ObjectName(obj::ClassOf(player)).find("LocalPlayer") != std::string::npos;
 }
@@ -529,7 +529,7 @@ void WeaponTick() {
     // property not found = nothing un-hidden (the earlier behaviour)
     const uint32_t gc = Ptr(cam, "GameplayCam");
     if (!gc || !obj::IsLive(gc) || Prop(obj::ClassOf(gc), "CurrentCamMode").offset < 0) continue;
-    if (Prop(obj::ClassOf(cam), "CurrentCamera").offset >= 0 && Ptr(cam, "CurrentCamera") != gc) continue;
+    if (Prop(obj::ClassOf(cam), "CurrentCamera").offset < 0 || Ptr(cam, "CurrentCamera") != gc) continue;   // r29 R1
     if (!g_patched.count(Ptr(gc, "CurrentCamMode"))) continue;
     const uint32_t pc = Ptr(cam, "PCOwner");
     if (!pc || !obj::IsLive(pc)) continue;
