@@ -58,8 +58,8 @@ constexpr const char* kDefaultHotkeys =
     "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F8=ToggleDebugCamera;F9=PlayersOnly;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
 
 // 0.6.3 (ue3/match_guard.h): cheats run in the campaign (and Arcade), Horde, Beast and the front end only - every other game
-// type is Versus (review r41: an allow-list, so a DLC mode such as Guardian is refused). The party / pre-game lobbies are
-// Versus's: refused.
+// type is Versus (review r41: an allow-list, so a DLC mode such as Guardian is refused). The party / pre-game lobbies (and
+// the front end, which runs as one): refused.
 constexpr const char* kAllowed[] = {"GearGameSP_Base", "GearGameWaveBased", "GearMenuGame", nullptr};
 constexpr const char* kDenied[] = {"GearPartyGame_Base", nullptr};
 bool OpenObjects() { return ue3::obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar); }

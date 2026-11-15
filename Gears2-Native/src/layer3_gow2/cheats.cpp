@@ -50,7 +50,7 @@ constexpr uint32_t kGLog = 0x830CF548u;
 constexpr const char* kDefaultHotkeys =
     "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F9=ToggleDebugCamera;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
 // 0.6.3 (ue3/match_guard.h): cheats run in the campaign, Horde and the front end only - every other game type is Versus
-// (review r41: an allow-list, so a mode nobody listed is refused). The party / pre-game lobbies are Versus's: refused.
+// (review r41: an allow-list, so a mode nobody listed is refused). The party / pre-game lobbies: refused.
 constexpr const char* kAllowed[] = {"GearGameSP_Base", "GearGameHorde_Base", "GearMenuGame", nullptr};
 constexpr const char* kDenied[] = {"GearPartyGame_Base", nullptr};
 bool OpenObjects() { return ue3::obj::Init(gow2::addr::kGNamesVar, gow2::addr::kGObjectsVar); }

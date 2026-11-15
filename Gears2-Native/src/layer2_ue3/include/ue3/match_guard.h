@@ -7,9 +7,10 @@
 //   PC runs or hosts - the campaign, local split screen, System Link / online host) or, with no GameInfo (a client in
 //   someone else's game), WorldInfo.GRI -> GameClass (the GameReplicationInfo's copy of the GameInfo's class).
 // Cheats run only in the game types each game lists as allowed (the campaign, Horde, Beast, Survival, the front end), minus
-// any listed as denied under them (the Versus party / pre-game lobbies); every other class counts as Versus - a game type
+// any listed as denied under them (the party / pre-game lobbies - in Gears 3 and Judgment the front end and every lobby
+// run as one, so cheats are off there too); every other class counts as Versus - a game type
 // nobody listed (a DLC mode, a Gears 1 mode whose parent class was never read) is refused, never let through (review r41).
-// Per-game lists are in each game's cheats.cpp, with where the names come from. Classes that cannot be read (no GameInfo
+// Per-game lists are in each game's cheats.cpp (Gears 3: extras.cpp), with where the names come from. Classes that cannot be read (no GameInfo
 // and no GRI class) are treated as Versus.
 //
 // Header only (included by each game's cheats.cpp, which compiles against that game's own ue3/objects.h; the four copies of
@@ -67,22 +68,27 @@ inline void Resolve() {
   for (int attempt = 0; attempt < 60; attempt++) {
     if (attempt) std::this_thread::sleep_for(std::chrono::seconds(attempt < 15 ? 2 : 15));
     if (!obj::Ready() && !(s.spec.open_objects && s.spec.open_objects())) continue;
-    // The first allowed name (the campaign class) must be found: it says the game's script package is loaded (else try
-    // again). The others are looked up once it is; one not found is logged and left out - a missing allowed class only
-    // refuses that mode (the safe side), a missing denied class lets that lobby keep the cheats.
-    std::vector<uint32_t> allowed, denied;
+    // Every listed name must be found while the engine starts (the first 30 s of tries): some are script classes that only
+    // exist once the game's script package is loaded (review r42). After that, the first allowed name (the campaign class)
+    // is enough; any other not found is logged and left out - a missing allowed class only refuses that mode (the safe
+    // side), a missing denied class lets that lobby keep the cheats.
+    std::vector<uint32_t> found[2];
     std::string missing;
-    bool all = s.spec.allowed && s.spec.allowed[0] && obj::FindClass(s.spec.allowed[0]) != 0;
-    for (const char* const* lists[] = {s.spec.allowed, s.spec.denied}; const char* const* l : lists)
-      for (const char* const* n = l; all && n && *n; ++n) {
+    const char* const* lists[2] = {s.spec.allowed, s.spec.denied};
+    for (int k = 0; k < 2; k++)
+      for (const char* const* n = lists[k]; n && *n; ++n) {
         const uint32_t c = obj::FindClass(*n);
-        if (!c) missing += std::string(missing.empty() ? "" : " ") + *n;
-        else (l == s.spec.allowed ? allowed : denied).push_back(c);
+        if (c) found[k].push_back(c);
+        else missing += std::string(missing.empty() ? "" : " ") + *n;
       }
+    const bool first = s.spec.allowed && s.spec.allowed[0] && obj::FindClass(s.spec.allowed[0]) != 0;
+    const bool all = first && (missing.empty() || attempt >= 15);
+    std::vector<uint32_t>& allowed = found[0];
+    std::vector<uint32_t>& denied = found[1];
     const uint32_t engine = obj::FindClass("GameEngine"), local_player = obj::FindClass("LocalPlayer"),
                    actor = obj::FindClass("Actor"), world = obj::FindClass("WorldInfo"),
                    gri = obj::FindClass("GameReplicationInfo");
-    if (!all || allowed.empty() || !engine || !local_player || !actor || !world || !gri) continue;
+    if (!all || !engine || !local_player || !actor || !world || !gri) continue;
     const int players = obj::PropertyOffset(engine, "GamePlayers");
     const int off_actor = obj::PropertyOffset(local_player, "Actor"), off_world = obj::PropertyOffset(actor, "WorldInfo"),
               off_game = obj::PropertyOffset(world, "Game"), off_gri = obj::PropertyOffset(world, "GRI"),
@@ -149,7 +155,7 @@ inline int Check() {
   }
   // once per match: a different world / GameInfo than the last refusal, or the first refusal after a command that ran
   if (!s.last_refused || world != s.last_world || key != s.last_key) {
-    if (cls) REXLOG_WARN("Cheats are off in Versus (game type {})", obj::ObjectName(cls));
+    if (cls) REXLOG_WARN("Cheats are off in Versus and in the lobbies (game type {})", obj::ObjectName(cls));
     else REXLOG_WARN("Cheats are off in Versus (the game type is not known yet)");
   }
   s.last_refused = true, s.last_world = world, s.last_key = key;

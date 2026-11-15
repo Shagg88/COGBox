@@ -45,7 +45,8 @@ constexpr uint32_t kGNamesVar = 0x8355A328u;
 constexpr uint32_t kGObjectsVar = 0x8355A368u;
 constexpr const char* kLayout = "32,40,44,52,64,68,60,68,84,104,8,0,1";   // ue3::obj::LayoutText order
 // Cheats run in the campaign (and Declassified), Horde, Survival (HvB_Coop), the wave modes and the front end only - every
-// other game type is Versus, OverRun included (review r41: an allow-list). The party / pre-game lobbies: refused.
+// other game type is Versus, OverRun included (review r41: an allow-list). The party / pre-game lobbies (and the front
+// end, which runs as one): refused.
 constexpr const char* kAllowed[] = {"GearGameSP_Base", "GearGameWaveBased", "GearGameHvB_Coop_Base", "GearMenuGame", nullptr};
 constexpr const char* kDenied[] = {"GearPartyGame_Base", nullptr};
 bool OpenObjects() {
