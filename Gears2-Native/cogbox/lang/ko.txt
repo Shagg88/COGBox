@@ -1499,3 +1499,8 @@ Checking for duplicates... = 중복 항목 확인 중...
 Still checking for duplicates - try again in a moment. = 아직 중복 항목을 확인하는 중입니다 - 잠시 후 다시 시도하세요.
 Checking duplicate downloadable content = 중복된 다운로드 콘텐츠 확인 중
 Left as they are (no longer exact copies, or not fully readable): = 그대로 둔 항목 (더 이상 정확한 사본이 아니거나 완전히 읽을 수 없음):
+# 0.6.2 (GitHub #304): Graphics card
+Graphics card = 그래픽 카드
+Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = 그래픽 카드가 둘 이상인 PC(노트북의 내장 그래픽과 별도 카드, 또는 카드 두 장)에서 게임이 사용할 카드를 정합니다. 자동은 전용 비디오 메모리가 가장 많은 카드를 고르고, 메모리가 비슷한 카드끼리라면 모니터가 연결된 카드를 고릅니다(DirectX 12와 Vulkan에서 같은 카드). 카드를 선택하면 대신 그 카드를 사용합니다. 선택한 카드가 이 PC에 더 이상 없으면 자동이 사용됩니다.
+(not found - Automatic is used) = (찾을 수 없음 - 자동 사용)
+The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = 선택한 그래픽 카드가 현재 이 PC에 없습니다 - 게임이 카드를 직접 고릅니다(자동).

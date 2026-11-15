@@ -133,6 +133,35 @@ std::vector<std::string> report_gpu_names()
     return out;
 }
 
+std::vector<GpuCard> report_gpu_cards()
+{
+    std::vector<GpuCard> out;
+    HMODULE dx = LoadLibraryA("dxgi.dll");
+    if (!dx) return out;
+    typedef HRESULT(WINAPI * CreateFn)(REFIID, void **);
+    CreateFn create = (CreateFn)(void *)GetProcAddress(dx, "CreateDXGIFactory1");
+    IDXGIFactory1 *fac = nullptr;
+    if (create && SUCCEEDED(create(__uuidof(IDXGIFactory1), (void **)&fac))) {
+        IDXGIAdapter1 *ad = nullptr;
+        for (UINT i = 0; fac->EnumAdapters1(i, &ad) != DXGI_ERROR_NOT_FOUND && i < 8; i++) {
+            DXGI_ADAPTER_DESC1 d;
+            if (SUCCEEDED(ad->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+                std::string s = wide_utf8(d.Description);
+                std::string low = s;
+                for (char &c : low) c = (char)tolower((unsigned char)c);
+                const bool basic = low.find("microsoft basic") != std::string::npos;   // Basic Render Driver / Display Adapter
+                bool dup = false;
+                for (const GpuCard &c : out) dup |= c.name == s;
+                if (!s.empty() && !basic && !dup) out.push_back({ s, (unsigned)(d.DedicatedVideoMemory >> 20) });
+            }
+            ad->Release();
+        }
+        fac->Release();
+    }
+    FreeLibrary(dx);
+    return out;
+}
+
 // PF_AVX2_INSTRUCTIONS_AVAILABLE first. 0.6.2 Proton / CrossOver review (R2): older Wine / CrossOver builds don't fill that
 // flag, so a real AVX2 CPU (or Rosetta on macOS 15+, which has AVX2) was refused. Then ask the CPU itself: CPUID leaf 7 EBX
 // bit 5 (AVX2), with leaf 1's OSXSAVE + AVX bits and XGETBV saying the system saves the YMM registers.

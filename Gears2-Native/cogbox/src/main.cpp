@@ -769,6 +769,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (const char *t = getenv("COGBOX_WINDOW")) { int w = 0, h = 0; if (sscanf(t, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) SDL_SetWindowSize(win, w, h); }   // test switch
     if (getenv("COGBOX_BORDERLESS")) { a.borderless = true; SDL_SetWindowBordered(win, false); }   // test switch (not saved)
     a.gpus = report_gpu_names();
+    a.gpuCards = report_gpu_cards();   // 0.6.2 (GitHub #304)
     a.proton = proton::detect_here(a.gpus);   // proton049: Proton version, SteamOS, Steam Deck model (empty on Windows)
     a.hasAvx2 = cpu_has_avx2();
     refresh_games(a, true);

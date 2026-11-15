@@ -5,7 +5,8 @@
 //   settings_test --gen N [SEED]       print the built-in cases plus N random ones (a cases file)
 //   settings_test --summary            the option model (counts per game / tab) and the self-checks
 // Case keys: game, upd (title update ready), hz, screens, gpus (a/b), exe / rt / files (aliases below), rtfile,
-// extra (lines split by |), and any option id (the setting's value).
+// extra (lines split by |), cards (the graphics cards the PC has, a/b - 0.6.2), and any option id (the setting's value; for
+// a text option such as GraphicsCard its text).
 #include "../src/gears_settings.h"
 
 #include <cstdio>
@@ -30,6 +31,7 @@ std::vector<std::string> split(const std::string& s, char c) {
 
 std::string exe_needle(const std::string& alias, int g) {
     static const char* proc[4] = { "gow2", "gow3", "gowj", "gow1" };
+    if (alias == "gpucard") return "gow2_graphics_card";   // 0.6.2 (GitHub #304)
     if (alias == "fif") return "gow2_renderer_frames_in_flight";
     if (alias == "ups") return "gow2_upscale_mode";
     if (alias == "fg") return "gow2_frame_generation";
@@ -63,6 +65,7 @@ struct Case {
     Game g = Game::Gears2;
     Environment env;
     std::map<std::string, double> values;
+    std::map<std::string, std::string> texts;   // Kind::Text options (GraphicsCard)
     std::set<std::string> exe, rt, files;
 };
 
@@ -93,6 +96,7 @@ Case parse_case(const std::string& line) {
     e.wine = kv.count("wine") && kv["wine"] == "1";   // r4 review: Wine / Proton / CrossOver cases
     e.mac = kv.count("mac") && kv["mac"] == "1";
     if (kv.count("gpus") && !kv["gpus"].empty()) e.gpus = split(kv["gpus"], '/');
+    if (kv.count("cards") && !kv["cards"].empty()) e.graphics_cards = split(kv["cards"], '/');   // 0.6.2 (GitHub #304)
     if (kv.count("extra")) e.extra_args_lines = split(kv["extra"], '|');
     if (kv.count("exe") && !kv["exe"].empty()) for (auto& x : split(kv["exe"], ',')) c.exe.insert(exe_needle(x, g));
     if (kv.count("rt") && !kv["rt"].empty()) for (auto& x : split(kv["rt"], ',')) c.rt.insert(rt_needle(x));
@@ -101,7 +105,9 @@ Case parse_case(const std::string& line) {
     e.g2_disc_ini_edits = c.exe.count("'file|section|~=old>new'") != 0;
     for (auto& p : kv) {
         if (p.first == "game" || p.first == "upd" || p.first == "hz" || p.first == "screens" || p.first == "gpus" || p.first == "extra" ||
-            p.first == "exe" || p.first == "rt" || p.first == "files" || p.first == "rtfile" || p.first == "wine" || p.first == "mac") continue;
+            p.first == "exe" || p.first == "rt" || p.first == "files" || p.first == "rtfile" || p.first == "wine" || p.first == "mac" || p.first == "cards") continue;
+        const Option* to = find_option(c.g, p.first);
+        if (to && to->kind == Kind::Text) { c.texts[p.first] = p.second; continue; }
         c.values[p.first] = std::atof(p.second.c_str());
     }
     int mon = c.values.count("Monitor") ? static_cast<int>(c.values["Monitor"]) : 0;
@@ -124,6 +130,7 @@ void run_case(int n, const std::string& line) {
         if (!o) { std::fprintf(stderr, "unknown option %s\n", p.first.c_str()); std::exit(2); }
         if (o->scope == Scope::GameOwn) st.own[gi][p.first] = p.second; else st.top[p.first] = p.second;
     }
+    for (auto& p : c.texts) st.texts[p.first] = p.second;
     Settings s = st.view(c.g, c.env);
     Version ver = effective_version(c.g, s, c.env);
     std::vector<std::string> notes;
@@ -161,6 +168,17 @@ const char* const k_builtin[] = {
     "game=2;AdaptiveTriggers=1;exe=adtg",         // Judgment, runtime without patch 98: greyed, not sent
     "game=3;AdaptiveTriggers=1;exe=adtg;rt=adt",  // GitHub #245, Gears 1: sent
     "game=3;AdaptiveTriggers=1;rt=adt",           // Gears 1 exe without the weapon table: greyed, not sent
+    // 0.6.2 (GitHub #304): Graphics card - sent for every game when the card is in the PC; not when missing / Automatic / no support
+    "game=0;exe=gpucard;cards=NVIDIA GeForce RTX 4090/NVIDIA GeForce RTX 3090;GraphicsCard=NVIDIA GeForce RTX 3090",
+    "game=1;exe=gpucard;cards=NVIDIA GeForce RTX 4090/NVIDIA GeForce RTX 3090;GraphicsCard=NVIDIA GeForce RTX 3090",
+    "game=2;exe=gpucard;cards=NVIDIA GeForce RTX 4090/NVIDIA GeForce RTX 3090;GraphicsCard=nvidia geforce rtx 4090",
+    "game=3;exe=gpucard;cards=NVIDIA GeForce RTX 4090/NVIDIA GeForce RTX 3090;GraphicsCard=NVIDIA GeForce RTX 3090",
+    "game=0;exe=gpucard;cards=NVIDIA GeForce RTX 4090;GraphicsCard=NVIDIA GeForce RTX 3090",          // missing: not sent, a note
+    "game=0;exe=gpucard;GraphicsCard=NVIDIA GeForce RTX 3090",                                          // no card list: not sent
+    "game=0;exe=gpucard;cards=NVIDIA GeForce RTX 4090/NVIDIA GeForce RTX 3090",                         // Automatic: nothing
+    "game=0;cards=NVIDIA GeForce RTX 4090;GraphicsCard=NVIDIA GeForce RTX 4090",                        // older exe: greyed, not sent
+    "game=0;exe=gpucard;cards=NVIDIA GeForce RTX 3080/NVIDIA GeForce RTX 3080 Ti;GraphicsCard=NVIDIA GeForce RTX 3080",   // name inside another's: a note
+    "game=1;exe=gpucard;cards=AMD Radeon(TM) Graphics/AMD Radeon RX 7900 XTX;GraphicsCard=  AMD Radeon RX 7900 XTX  ",   // the name is trimmed
 };
 
 std::string random_case(std::mt19937& r) {
@@ -190,6 +208,7 @@ std::string random_case(std::mt19937& r) {
         switch (op.kind) {
         case Kind::Bool: v = pick(2); break;
         case Kind::Choice: v = op.id == "Monitor" ? pick(screens + 1) : pick(static_cast<int>(op.choices.size())); break;
+        case Kind::Text: break;   // (typed text: not in the random cases)
         case Kind::Int: case Kind::Float: {
             int steps = static_cast<int>((op.max - op.min) / op.step + 0.5);
             v = op.min + pick(steps + 1) * op.step;
@@ -350,6 +369,52 @@ int summary() {
         const bool want = g == Game::Gears3;
         if (has("--cogbox_ue3_gnames=8344D918") != want || has("--cogbox_ue3_gengine=8343987C") != want) {
             std::cout << "FAIL UE3 addresses for " << (gi ? "Judgment" : "Gears 3") << "\n"; ++fails;
+        }
+    }
+    // 0.6.2 (GitHub #304): Graphics card - Automatic sends nothing; a card that is in the PC is sent by name to every game; one that
+    // is not (removed, other PC, no list) falls back to Automatic; an exe without the switch greys the option; the name survives the ini
+    {
+        const std::string k_4090 = "NVIDIA GeForce RTX 4090", k_3090 = "NVIDIA GeForce RTX 3090";
+        for (Game g : { Game::Gears2, Game::Gears3, Game::Judgment, Game::Gears1 }) {
+            const int gi = static_cast<int>(g);
+            Environment e; e.update_ready = true;
+            e.graphics_cards = { k_4090, k_3090 };
+            e.cap.exe_has = [](const std::string& n) { return n == "gow2_graphics_card"; };
+            e.cap.runtime_has = [](const std::string&) { return false; }; e.cap.file_next_to_exe = e.cap.runtime_has;
+            auto card_args = [&](const Environment& env, const std::string& name) {
+                Store st; st.texts["GraphicsCard"] = name;
+                Settings s = st.view(g, env);
+                std::vector<std::string> out;
+                for (const std::string& x : build_args(g, Version::TitleUpdate, s, env, nullptr))
+                    if (x.find("graphics_card") != std::string::npos) out.push_back(x);
+                return out;
+            };
+            const std::string want = "--gow2_graphics_card=\"" + k_3090 + "\"";
+            if (!card_args(e, "").empty()) { std::cout << "FAIL graphics card Automatic sends something (game " << gi << ")\n"; ++fails; }
+            const auto sent = card_args(e, k_3090);
+            if (sent.size() != 1 || sent[0] != want) { std::cout << "FAIL graphics card not sent (game " << gi << ")\n"; ++fails; }
+            const auto lower = card_args(e, "nvidia geforce rtx 3090");
+            if (lower.size() != 1 || lower[0] != "--gow2_graphics_card=\"nvidia geforce rtx 3090\"") { std::cout << "FAIL graphics card case (game " << gi << ")\n"; ++fails; }
+            if (!card_args(e, "AMD Radeon RX 7900 XTX").empty()) { std::cout << "FAIL missing graphics card is sent (game " << gi << ")\n"; ++fails; }
+            Environment none = e; none.graphics_cards.clear();
+            if (!card_args(none, k_3090).empty()) { std::cout << "FAIL graphics card sent without a card list (game " << gi << ")\n"; ++fails; }
+            Environment old = e; old.cap.exe_has = [](const std::string&) { return false; };
+            if (!card_args(old, k_3090).empty()) { std::cout << "FAIL graphics card sent to an exe without it (game " << gi << ")\n"; ++fails; }
+        }
+        const Option* o = find_option(Game::Gears1, "GraphicsCard");
+        if (!o || o->kind != Kind::Text || o->tab != Tab::Graphics || o->label != "Graphics card") { std::cout << "FAIL graphics card option\n"; ++fails; }
+        else {
+            if (sanitize_text(*o, "  NVIDIA \"GeForce\"\tRTX 4090\n ") != "NVIDIA GeForceRTX 4090") { std::cout << "FAIL graphics card sanitise\n"; ++fails; }
+            if (static_cast<int>(sanitize_text(*o, std::string(500, 'x')).size()) != o->max_len) { std::cout << "FAIL graphics card length\n"; ++fails; }
+            Environment e; e.update_ready = true; e.graphics_cards = { k_4090 };
+            Store st; Settings s = st.view(Game::Gears2, e);
+            s.t["GraphicsCard"] = k_4090;
+            st.commit(Game::Gears2, s, e);
+            const std::string ini = st.save_ini();
+            Store st2; st2.load_ini(ini);
+            if (st2.view(Game::Gears3, e).str("GraphicsCard") != k_4090 || st2.save_ini() != ini ||
+                ini.find("GraphicsCard=" + k_4090) == std::string::npos) { std::cout << "FAIL graphics card ini\n"; ++fails; }
+            Store st3; if (!st3.view(Game::Gears2, e).str("GraphicsCard").empty()) { std::cout << "FAIL graphics card default\n"; ++fails; }
         }
     }
     // first-person camera: each game's own switch (Gears 2, Gears 3, Judgment) when its exe has the option, none in Gears 1

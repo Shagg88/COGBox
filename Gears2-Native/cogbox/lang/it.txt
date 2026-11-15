@@ -1496,3 +1496,8 @@ Checking for duplicates... = Ricerca di duplicati...
 Still checking for duplicates - try again in a moment. = La ricerca di duplicati è ancora in corso - riprova tra un momento.
 Checking duplicate downloadable content = Controllo dei contenuti scaricabili duplicati
 Left as they are (no longer exact copies, or not fully readable): = Lasciati come sono (non più copie esatte, o non leggibili del tutto):
+# 0.6.2 (GitHub #304): Graphics card
+Graphics card = Scheda grafica
+Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = Quale scheda grafica usa il gioco su un PC che ne ha più di una (la grafica integrata di un portatile e la sua scheda dedicata, oppure due schede). Automatica sceglie la scheda con più memoria video propria e, tra schede con una quantità simile, quella a cui è collegato il monitor - la stessa scheda per DirectX 12 e Vulkan. Scegli una scheda per usare quella al suo posto. Se la scheda scelta non è più in questo PC, viene usata Automatica.
+(not found - Automatic is used) = (non trovata - viene usata Automatica)
+The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = La scheda grafica scelta al momento non è in questo PC - il gioco sceglie da solo la scheda (Automatica).

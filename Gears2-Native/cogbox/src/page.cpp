@@ -220,6 +220,8 @@ void env_refresh(App &a, int g)
     e.g2_disc_ini_edits = g == G_GEARS2 && !st.portExeDisc.empty() && file_has(st.portExeDisc, "~=");
     e.gpus = a.gpus;
     e.gpu_name = gs::main_gpu(a.gpus);
+    e.graphics_cards.clear();   // 0.6.2 (GitHub #304)
+    for (const GpuCard &c : a.gpuCards) e.graphics_cards.push_back(c.name);
     int n = 0;
     SDL_DisplayID *ids = SDL_GetDisplays(&n);
     e.screen_count = std::max(1, n);
@@ -788,6 +790,33 @@ static void option_row(App &a, int g, const gs::Option &o)
         break;
     }
     case gs::Kind::Text: {
+        if (o.id == "GraphicsCard") {
+            // 0.6.2 (GitHub #304): a list of the PC's graphics cards, by name. Automatic = nothing saved (the game picks).
+            // A saved card this PC doesn't have (any more) shows as missing and is not sent - Automatic is used instead.
+            const std::string cur = a.cur[g].str(o.id);
+            auto label = [](const GpuCard &c) {
+                char b[48];
+                if (c.mb >= 1024) snprintf(b, sizeof b, " (%.0f GB)", c.mb / 1024.0); else snprintf(b, sizeof b, " (%u MB)", c.mb);
+                return c.name + b;
+            };
+            std::string preview = tr("Automatic");
+            bool known = cur.empty();
+            for (const GpuCard &c : a.gpuCards)
+                if (!cur.empty() && gs::graphics_card_present(a.env[g], cur) && _stricmp(c.name.c_str(), cur.c_str()) == 0) { preview = label(c); known = true; }
+            if (!known) preview = cur + " " + tr("(not found - Automatic is used)");
+            if (ImGui::BeginCombo("##v", preview.c_str())) {
+                if (ImGui::Selectable(tr("Automatic"), cur.empty())) { if (!cur.empty()) { a.cur[g].t[o.id] = std::string(); a.dirty[g] = true; } }
+                for (const GpuCard &c : a.gpuCards) {
+                    ImGui::PushID(c.name.c_str());
+                    const bool sel = !cur.empty() && _stricmp(c.name.c_str(), cur.c_str()) == 0;
+                    if (ImGui::Selectable(label(c).c_str(), sel)) { if (c.name != cur) { a.cur[g].t[o.id] = c.name; a.dirty[g] = true; } }
+                    ImGui::PopID();
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            break;
+        }
         // 0.4.8 (GitHub #229): a one-line text box. Only the option's characters can be typed (gs::text_char_ok) and at
         // most max_len; the value kept is gs::sanitize_text's (what isn't valid is dropped and said so under the row).
         static char buf[512];
@@ -845,6 +874,12 @@ static void option_row(App &a, int g, const gs::Option &o)
             ImGui::EndTooltip();
         }
     } else if (tipRow == id) tipRow = 0;
+    // 0.6.2 (GitHub #304): a card saved before that this PC doesn't have now (removed, or a different PC) - say so, and what happens
+    if (av.ok && o.id == "GraphicsCard") {
+        const std::string cur = a.cur[g].str(o.id);
+        if (!cur.empty() && !gs::graphics_card_present(a.env[g], cur))
+            ui_note("The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic).", col::amber);
+    }
     // GitHub #90: a language saved before (or from another copy) that this copy doesn't have - say so before the launch,
     // with what the game uses instead (the launcher doesn't pass it, gears_settings build_args)
     if (av.ok && (o.id == "Lang" || o.id == "VoiceLang")) {
@@ -1358,7 +1393,7 @@ struct TabGroups { const char *heading[4]; const char *const *ids[4]; };
 static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", "AspectRatio", "HideNotes", nullptr };
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
 static const char *const k_dispPicture[] = { "HDR", "PaperWhite", "Peak", nullptr };
-static const char *const k_gfxQuality[] = { "Api", "WineApi", "Preset", "Resolution", "AAMode", "DlssModel", "Sharpen", "SceneMode", "FrameGen", nullptr };
+static const char *const k_gfxQuality[] = { "GraphicsCard", "Api", "WineApi", "Preset", "Resolution", "AAMode", "DlssModel", "Sharpen", "SceneMode", "FrameGen", nullptr };
 static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "MipFade", "Pool", "DrawDist", "AO", nullptr };
 static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "DofScale", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };
 static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "AdaptiveTriggers", "PadPrompts", "PromptStyle", "DeadZone", "RadialDZ", "LowLag", nullptr };

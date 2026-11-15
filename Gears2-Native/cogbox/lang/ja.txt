@@ -1499,3 +1499,8 @@ Checking for duplicates... = 重複を確認しています...
 Still checking for duplicates - try again in a moment. = 重複の確認がまだ終わっていません。少し待ってからもう一度お試しください。
 Checking duplicate downloadable content = 重複したダウンロードコンテンツを確認しています
 Left as they are (no longer exact copies, or not fully readable): = そのまま残したもの (完全なコピーではなくなった、または完全に読み取れない):
+# 0.6.2 (GitHub #304): Graphics card
+Graphics card = グラフィックスカード
+Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = 複数のグラフィックスカードがあるPC（ノートPCの内蔵グラフィックスと専用カード、またはカード2枚）で、ゲームがどのカードを使うかを選びます。「自動」は、専用ビデオメモリが最も多いカードを選び、メモリ量がほぼ同じカード同士ならモニターが接続されているカードを選びます（DirectX 12とVulkanで同じカード）。カードを選ぶと、代わりにそのカードを使います。選んだカードがこのPCにない場合は「自動」が使われます。
+(not found - Automatic is used) = （見つかりません - 自動を使用）
+The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = 選択したグラフィックスカードは現在このPCにありません - ゲームが自動でカードを選びます（自動）。

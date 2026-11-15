@@ -69,6 +69,10 @@ struct Environment {
     // if gpu_name is empty and gpus is not, main_gpu(gpus) is used).
     std::vector<std::string> gpus;
     std::string gpu_name;
+    // 0.6.2 (GitHub #304): the graphics cards the game can choose from - the DXGI hardware adapters' names, as the game
+    // reads them (no software adapters, no Microsoft Basic Render Driver). The Graphics card option is sent only when its
+    // saved name is one of these. Empty = not worked out (the option sends nothing: Automatic).
+    std::vector<std::string> graphics_cards;
     int screen_count = 1;           // PS1 146 (Monitor is greyed with fewer than 2)
     // PS1 947-948: the screen the game uses - Monitor 1..N if within screen_count, else the main screen - its refresh
     // rate now (0 = unknown) and its device name (only for the note).
@@ -200,12 +204,15 @@ void set_value(Game g, Settings& s, const std::string& id, double value);
 // Kind::Text (0.4.8): the value as it may be stored and passed on. PeerIps (GitHub #229): IPv4 addresses only (what the
 // runtime's --net_peer_ip reads), separated by ", "; anything else is dropped, duplicates and 0.0.0.0 /
 // 255.255.255.255 too, at most 16 addresses. `dropped` (optional) gets how many entries were left out.
+// GraphicsCard (0.6.2, GitHub #304): an adapter's name - control characters and quotes dropped, trimmed, at most max_len bytes.
 std::string sanitize_text(const Option& o, const std::string& in, int* dropped = nullptr);
 // The characters a Kind::Text field accepts while typing (the rest are not entered at all).
 bool text_char_ok(const Option& o, unsigned c);
 
 // Monitor list entries (PS1 147).
 std::string monitor_label(int index1, int width, int height, bool primary);
+// 0.6.2 (GitHub #304): the Graphics card option's saved name is one of env.graphics_cards (same letters, any case).
+bool graphics_card_present(const Environment& env, const std::string& name);
 // PS1 152: the main graphics card of a list.
 std::string main_gpu(const std::vector<std::string>& gpus);
 // PS1 141: the start URL for a chapter (0-based).

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "imgui.h"
+#include "report.h"   // GpuCard (0.6.2)
 #include "games.h"
 #include "gears_settings.h"
 #include "util.h"
@@ -97,6 +98,7 @@ struct App {
     InstallJob job;
     Running run;
     std::vector<std::string> gpus;    // graphics cards (DXGI)
+    std::vector<GpuCard> gpuCards;    // 0.6.2 (#304): the cards the Graphics card option offers (name + video memory)
     bool hasAvx2 = true;
     bool padConnected = false;
     bool lastPad = true;              // 0.2.0: the last input came from a controller (hints follow it), else keyboard / mouse

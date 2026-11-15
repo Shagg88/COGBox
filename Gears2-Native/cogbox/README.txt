@@ -77,8 +77,8 @@ New in 0.6.2
 - Dead bodies (Gameplay tab): keep more fallen enemies, for longer (#306).
 - Cheats (F5-F11) in Gears 1, Gears 2 and Judgment too (#264).
 - Ultrawide up to 48:9 (three screens) in Gears 2, Gears 3 and Judgment (#293).
-- PCs with two graphics cards: DirectX 12 and Vulkan use the same, right card (#304). To pick one:
-  --gow2_graphics_card=4090 (part of its name) in extra-args.txt.
+- PCs with two graphics cards: DirectX 12 and Vulkan use the same, right card (#304). To pick one: the Graphics card list on the Graphics tab
+  (or --gow2_graphics_card=4090, part of its name, in extra-args.txt).
 - Duplicate DLC packages are marked on a game's About tab, with a Remove duplicates button (#283).
 - Gears 3: DLC at the main menu should all open at start-up now (#283 - tell us if not), RAAM's
   Shadow checkpoint (#273), two-player side by side (#269), no hitch every 5 s in the menus.
@@ -463,9 +463,11 @@ anywhere. Attach it to a ticket at https://github.com/Shagg88/COGBox/issues
 
 The game uses the wrong graphics card (PCs with two or more): COGBox picks the card with the most
 video memory of its own, and between cards with about as much, the one your monitor is plugged
-into - the same card for DirectX 12 and Vulkan. To choose one yourself, add a line such as
---gow2_graphics_card=4090 (part of the card's name) to extra-args.txt next to CogBox.exe. Remove
-the line to go back to automatic. The game's log lists every card it found.
+into - the same card for DirectX 12 and Vulkan. To choose one yourself, pick it in the Graphics
+card list on the Graphics tab (Automatic is the default; all four games). If that card is no
+longer in the PC, the game picks automatically. Or add a line such as --gow2_graphics_card=4090
+(part of the card's name) to extra-args.txt next to CogBox.exe. Remove the line to go back to
+automatic. The game's log lists every card it found.
 
 
 Licences

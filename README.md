@@ -152,9 +152,11 @@ Common causes: a CPU without AVX2, an old graphics driver, or a different releas
 
 **The game uses the wrong graphics card** (PCs with two or more): COGBox picks the card with the most video memory of
 its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and
-Vulkan. To choose one yourself, add a line naming part of the card's name to `extra-args.txt` next to CogBox.exe
-(create the file if it isn't there), for example `--gow2_graphics_card=4090`. It applies to all four games; remove the
-line to go back to automatic. The game's log lists every card it found.
+Vulkan. To choose one yourself, open a game's **Graphics** tab and pick the card in the **Graphics card** list
+(**Automatic** is the default); it applies to all four games. If the card you picked is no longer in the PC, COGBox says
+so and the game picks automatically. If you prefer a file (or the list doesn't show your card), add a line naming part of
+the card's name to `extra-args.txt` next to CogBox.exe (create the file if it isn't there), for example
+`--gow2_graphics_card=4090`; remove the line to go back to automatic. The game's log lists every card it found.
 
 **Gears 3 DLC missing at the main menu** (GitHub #283): with several DLC packages, Gears 3 sometimes opened only the
 first one at start-up, so characters, skins or RAAM's Shadow didn't show. 0.6.2 changes what caused it, but it isn't

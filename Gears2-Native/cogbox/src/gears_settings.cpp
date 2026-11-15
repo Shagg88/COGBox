@@ -277,6 +277,19 @@ std::vector<Option> make_options(Game g) {
                "Steam Deck, Linux and Mac (CrossOver) only. Automatic = the one that works best there now: DirectX 12 "
                "(D3DMetal) on a Mac, where Vulkan can't start, and Vulkan on Steam Deck / Linux, where DirectX 12 is still "
                "being tested. If the game closes or looks wrong, make a problem report and send it to us.", 0));
+    // 0.6.2 (GitHub #304): the graphics card, by name. Automatic (empty) = the game picks (the most video memory of its own,
+    // then the one a monitor is on); a name = --gow2_graphics_card=<name>, which every game's renderer reads. Kept as the
+    // adapter's name, not a list position, so it survives a card being added or removed; the Graphics tab draws it as a list.
+    {
+        Option o = make("GraphicsCard", "Graphics card", Tab::Graphics, Kind::Text, SH, 0,
+                        "Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its "
+                        "own card, or two cards). Automatic picks the card with the most video memory of its own, and "
+                        "between cards with about as much, the one your monitor is plugged into - the same card for "
+                        "DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in "
+                        "this PC any more, Automatic is used.", 0);
+        o.max_len = 160;
+        add(std::move(o), "gpucard");
+    }
     // Render resolution: no PS1 tooltip; text from 59-how-to-play's Picture table.
     add(choice("Resolution", "Render resolution", Tab::Graphics, PG,
                { "1x - 720p (original)", "2x - 1440p", "3x - 4K", "4x - 5K (supersampling, heavy)", "Match my monitor (native)", "1080p" }, 0,
@@ -840,6 +853,9 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
             return no(not_yet(gi, "needs its next build"));
     } else if (f == "padlayout") {   // GitHub #95 / #97: SDK patch 55
         if (!cap_rt(env, "pad_remap")) return no(not_yet(gi, "needs the next runtime (SDK patch 55)"));
+    } else if (f == "gpucard") {   // 0.6.2 (GitHub #304): every game's renderer reads --gow2_graphics_card (layer 0)
+        if (!cap_exe(env, "gow2_graphics_card") && !cap_exe(env, "the graphics card to use, by (part of) its name"))
+            return no(not_yet(gi, "needs its next build"));
     } else if (f == "lowlag") {
         if (!cap_exe(env, "gow2_renderer_frames_in_flight")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "scenescale") {
@@ -1130,11 +1146,23 @@ static bool parse_ipv4(const std::string& t, unsigned char out[4]) {
 
 bool text_char_ok(const Option& o, unsigned c) {
     if (o.id == "PeerIps") return (c >= '0' && c <= '9') || c == '.' || c == ',' || c == ' ';
+    if (o.id == "GraphicsCard") return c >= 0x20 && c != 0x7f && c != '"';
     return false;   // no other text option: nothing typed is accepted
 }
 
 std::string sanitize_text(const Option& o, const std::string& in, int* dropped) {
     if (dropped) *dropped = 0;
+    if (o.kind == Kind::Text && o.id == "GraphicsCard") {   // 0.6.2 (GitHub #304): an adapter's name, kept as the game reads it
+        std::string out;
+        for (unsigned char ch : in) if (ch >= 0x20 && ch != 0x7f && ch != '"') out += static_cast<char>(ch);
+        out = trim(out);
+        if (o.max_len > 0 && static_cast<int>(out.size()) > o.max_len) {
+            size_t cut = static_cast<size_t>(o.max_len);
+            while (cut > 0 && (static_cast<unsigned char>(out[cut]) & 0xC0) == 0x80) --cut;   // not inside a UTF-8 character
+            out = trim(out.substr(0, cut));
+        }
+        return out;
+    }
     if (o.kind != Kind::Text || o.id != "PeerIps") return std::string();
     const std::string src = in.size() > 4096 ? in.substr(0, 4096) : in;   // never walk an absurd value
     std::vector<std::string> keep;
@@ -1163,6 +1191,14 @@ std::string sanitize_text(const Option& o, const std::string& in, int* dropped) 
 std::string monitor_label(int i, int w, int h, bool primary) {   // PS1 147
     return std::to_string(i) + ": " + std::to_string(w) + "x" + std::to_string(h) + (primary ? " (main)" : "");
 }
+bool graphics_card_present(const Environment& env, const std::string& name) {   // 0.6.2 (GitHub #304)
+    auto low = [](std::string t) { for (char& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return t; };
+    if (name.empty()) return false;
+    const std::string want = low(name);
+    for (const std::string& n : env.graphics_cards) if (low(n) == want) return true;
+    return false;
+}
+
 std::string main_gpu(const std::vector<std::string>& gpus) {     // PS1 152
     for (const std::string& n : gpus) if (icase_search(n, "NVIDIA|GeForce|Quadro|AMD|Radeon|Intel.*Arc")) return n;
     for (const std::string& n : gpus) if (!n.empty()) return n;
@@ -1922,6 +1958,30 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             if (vo) notes.push_back("launcher: Voice language " + vo->choices[v] + " is not on this copy of the game - the game language's voices instead");
         } else {
             a.push_back(std::string("--ue3_voice_language=") + k_voice[v]);
+        }
+    }
+    // 0.6.2 (GitHub #304): the graphics card chosen on the Graphics tab, by its name. Automatic (empty) sends nothing, and so
+    // does a card that is not in this PC any more (the game then picks the card itself). The game matches part of the name,
+    // case-insensitively; the whole name is sent. Every game (the renderer is shared).
+    if (avail("GraphicsCard")) {
+        const Option* co = find_option(g, "GraphicsCard");
+        const std::string card = co ? sanitize_text(*co, s.str("GraphicsCard")) : std::string();
+        if (!card.empty()) {
+            if (!graphics_card_present(env, card)) {
+                notes.push_back("launcher: Graphics card " + card + " is not in this PC (or not found) - the game picks its card itself");
+            } else {
+                a.push_back("--gow2_graphics_card=" + q(card));
+                // the game takes the first card whose name CONTAINS this text: a card whose name is part of another card's
+                // name ("RTX 3080" and "RTX 3080 Ti") may not be the one it takes
+                std::string lc = card;
+                for (char& c : lc) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                for (const std::string& n : env.graphics_cards) {
+                    std::string ln = n;
+                    for (char& c : ln) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    if (ln != lc && ln.find(lc) != std::string::npos)
+                        notes.push_back("launcher: Graphics card " + card + " is part of the name of " + n + " - the game may take that one");
+                }
+            }
         }
     }
     if (s.i("Monitor") > 0) a.push_back("--monitor=" + std::to_string(s.i("Monitor")));

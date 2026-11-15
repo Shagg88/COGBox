@@ -1499,3 +1499,8 @@ Checking for duplicates... = Поиск дубликатов...
 Still checking for duplicates - try again in a moment. = Поиск дубликатов ещё идёт - попробуйте ещё раз через минуту.
 Checking duplicate downloadable content = Проверка повторяющегося загружаемого контента
 Left as they are (no longer exact copies, or not fully readable): = Оставлены как есть (уже не точные копии или не читаются полностью):
+# 0.6.2 (GitHub #304): Graphics card
+Graphics card = Видеокарта
+Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = Какую видеокарту использует игра на ПК, где их несколько (встроенная графика ноутбука и его собственная карта или две карты). «Автоматически» выбирает карту с наибольшим объёмом собственной видеопамяти, а среди карт с примерно равным объёмом - ту, к которой подключён монитор; для DirectX 12 и Vulkan выбирается одна и та же карта. Выберите карту, чтобы использовать её вместо этого. Если выбранной карты больше нет в этом ПК, используется «Автоматически».
+(not found - Automatic is used) = (не найдена - используется «Автоматически»)
+The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = Выбранной видеокарты сейчас нет в этом ПК - игра выбирает карту сама («Автоматически»).

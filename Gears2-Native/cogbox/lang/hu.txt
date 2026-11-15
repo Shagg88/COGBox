@@ -1557,3 +1557,8 @@ Checking for duplicates... = Duplikátumok keresése...
 Still checking for duplicates - try again in a moment. = A duplikátumok keresése még tart - próbáld újra egy pillanat múlva.
 Checking duplicate downloadable content = Duplikált letölthető tartalom ellenőrzése
 Left as they are (no longer exact copies, or not fully readable): = Változatlanul hagyva (már nem pontos másolatok, vagy nem olvashatók teljesen):
+# 0.6.2 (GitHub #304): Graphics card
+Graphics card = Videókártya
+Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = Melyik videókártyát használja a játék olyan számítógépen, amelyben több is van (egy laptop beépített grafikája és saját kártyája, vagy két kártya). Az Automatikus a legtöbb saját videómemóriával rendelkező kártyát választja, nagyjából egyforma memóriájú kártyák között pedig azt, amelyhez a monitor csatlakozik - DirectX 12 és Vulkan esetén ugyanazt a kártyát. Válassz egy kártyát, hogy helyette azt használja. Ha a választott kártya már nincs a gépben, az Automatikus lesz használatban.
+(not found - Automatic is used) = (nem található - Automatikus lesz használatban)
+The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = A választott videókártya jelenleg nincs ebben a gépben - a játék maga választ kártyát (Automatikus).

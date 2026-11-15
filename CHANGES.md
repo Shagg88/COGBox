@@ -102,8 +102,11 @@ https://recomplauncher.com/game/cogbox
   always use the same card - the one with the most video memory of its own, and between cards with about as much, the
   one your monitor is plugged into. A PC with an RTX 4090 and an RTX 3090 could run Judgment on the wrong one, and
   DirectX 12 and Vulkan could pick different cards. Checked on our two-card PC in all four games, on both. To choose a
-  card yourself, add `--gow2_graphics_card=` and part of its name (for example `--gow2_graphics_card=4090`) to
-  `extra-args.txt` next to CogBox.exe; the game's log lists every card it found.
+  card yourself, use the new **Graphics card** list on a game's **Graphics** tab: **Automatic** (the default) or one of
+  your PC's graphics cards, shown with its name and video memory. The choice is kept by the card's name for all four
+  games; if that card is not in the PC any more, the list shows it as not found and Automatic is used. (Still possible
+  by hand: `--gow2_graphics_card=` and part of the card's name in `extra-args.txt`; the game's log lists every card it
+  found.)
 
 ### Online play
 - **Your Social tab account keeps its #number** (GitHub #302): the launcher could make a new online account at every
