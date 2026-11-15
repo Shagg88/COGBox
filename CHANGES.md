@@ -146,6 +146,11 @@ https://recomplauncher.com/game/cogbox
   Windows user name.
 
 ### Fixes
+- **White or flickering surfaces on DirectX 12** (GitHub #311, #282, #255, #297, Judgment #315 / #243 - not confirmed yet):
+  a texture whose loading was cut short on DirectX 12 could be shown with whatever an earlier texture had left in that
+  memory - white floors, bright blue blocks. It is now loaded again, and new textures start out clean, as on Vulkan.
+  We couldn't reproduce these here (they were reported on AMD cards), so please tell us whether they are gone. All four
+  games. (`--gow2_renderer_zero_new_textures=false` in `extra-args.txt` turns the clean start off.)
 - **No more crash at the start on a PC without speakers or headphones** (GitHub #312): with no sound output device, the
   sound start-up failed and the game crashed a few seconds after the Epic logo. The game now runs silently instead, and
   picks up sound by itself when a device is plugged in. All four games.
