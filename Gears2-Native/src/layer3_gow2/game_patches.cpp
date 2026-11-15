@@ -37,6 +37,7 @@
 #include <xenos/frame_limiter.h>
 
 #include "gow2_addresses.h"
+#include <ue3/objects.h>  // GitHub #313 pace check: ue3::obj::Read32 (safe guest reads; no table lookup)
 #include "mouse_look.h"  // GitHub #52: CogMouseLookNoteFov
 
 #include <atomic>
@@ -243,13 +244,28 @@ bool Gow2GpuWaitStep() {
 // cheats.cpp's override before the original runs (game thread). UWorld::ServerTickClients' call (every frame on a host
 // with remote players; gow2_addresses.h) gets the limit without the wait - a second wait per frame halved the limit.
 std::atomic<uint32_t> g_gow2_tick_caller{0};
+// GitHub #313 pace check (xenos::PaceCheck; game thread only): the engine loop's limiter wait in this frame (ms), < 0
+// until the hook below runs in it - set back to -1 after each engine-loop call.
+static double g_gow2_frame_wait_ms = -1.0;
 void Gow2NoteTickCall(uint32_t caller) {  // after the original returned; read-only (frame_limiter.h)
   static xenos::TickCallSites sites;
-  sites.Note("gow2_max_fps", caller, caller != gow2::addr::kServerTickClientsTickRateRet);
+  const bool main = caller != gow2::addr::kServerTickClientsTickRateRet;
+  sites.Note("gow2_max_fps", caller, main);
+  if (!main) return;
+  // GitHub #313 (a 120 limit "stops working" in split screen): engine frames / frames shown / limiter waits, every 10 s
+  // while 2+ local players are in. Local players: UGameEngine::GamePlayers count (GEngine + 816, the console target's).
+  static xenos::PaceCheck pace;
+  pace.Tick("gow2_max_fps", Gow2MaxFps(), g_gow2_frame_wait_ms, XenosSwapCount(), [] {
+    const uint32_t engine = ue3::obj::Read32(gow2::addr::kGEngine);
+    return engine ? int(ue3::obj::Read32(engine + 816)) : -1;
+  });
+  g_gow2_frame_wait_ms = -1.0;
 }
 
 void Gow2MaxTickRate(PPCRegister& f1) {
   const int32_t v = Gow2MaxFps();
+  if (g_gow2_tick_caller.load(std::memory_order_relaxed) != gow2::addr::kServerTickClientsTickRateRet)
+    g_gow2_frame_wait_ms = 0.0;  // GitHub #313 pace check: the hook ran in this engine frame (the wait, if any, below)
   if (!v) return;
   static bool logged = false;
   if (!logged) {
@@ -265,7 +281,7 @@ void Gow2MaxTickRate(PPCRegister& f1) {
     return;
   }
   static xenos::FrameLimiter limiter;
-  limiter.Wait(double(v));
+  g_gow2_frame_wait_ms = limiter.Wait(double(v));
   f1.f64 = 0.0;
 }
 
