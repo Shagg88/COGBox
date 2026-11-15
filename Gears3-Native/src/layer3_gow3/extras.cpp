@@ -112,10 +112,16 @@ void Gow3Tu6PackageHashOk(PPCRegister& r9) {
 #define GOW3_JOIN(a, b) GOW3_JOIN2(a, b)
 extern "C" void GOW3_JOIN(__imp__, GOW3_MAX_TICK_RATE)(PPCContext& __restrict ctx, uint8_t* base);
 extern std::atomic<uint32_t> g_tick_hook_hits;                           // game_patches.cpp (GitHub #313)
-void Gow3NoteTickCall(uint32_t hits_before, double result);               // game_patches.cpp
+extern std::atomic<uint32_t> g_tick_caller;                              // game_patches.cpp (0.6.3 host fps)
+void Gow3NoteTickCall(uint32_t hits_before, double result, uint32_t caller);  // game_patches.cpp
 extern "C" void GOW3_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
+  // 0.6.3: who asks (the guest return address). A host with remote players asks twice per frame - the engine loop and
+  // UWorld::ServerTickClients; the limiter hook inside the original waits only for the engine loop's call.
+  const uint32_t caller = uint32_t(ctx.lr);
+  g_tick_caller.store(caller, std::memory_order_relaxed);
   const uint32_t hits_before = g_tick_hook_hits.load(std::memory_order_relaxed);
   GOW3_JOIN(__imp__, GOW3_MAX_TICK_RATE)(ctx, base);
-  Gow3NoteTickCall(hits_before, ctx.f1.f64);  // read-only: counts the ticks that did not reach the limiter hook
+  Gow3NoteTickCall(hits_before, ctx.f1.f64, caller);  // read-only: counts the ticks that did not reach the limiter hook
+  if (caller == gow3::addr::kServerTickClientsTickRateRet) return;  // once per engine frame (the engine loop's call)
   Ue3ConsoleRunQueued(ctx, base);
 }
