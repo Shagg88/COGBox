@@ -3392,6 +3392,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       std::sort(keys.begin(), keys.end());
       prebuild_selective_key_ = XXH3_64bits(keys.data(), keys.size() * sizeof(uint64_t)) | 1;
     }
+    // (review r61 #6) ... and this build of the matching (OfferRecipePixel / MatchVertex are compiled into this file):
+    // a new build starts the list again, one full read per release.
+    if (prebuild_selective_key_) {
+      static constexpr char kBuild[] = __DATE__ " " __TIME__;
+      prebuild_selective_key_ = (XXH3_64bits(kBuild, sizeof(kBuild) - 1) ^ (prebuild_selective_key_ * 0x9E3779B97F4A7C15ull)) | 1;
+    }
     LoadVariantCounts();  // patch 0069
     prebuild_thread_ = std::thread([this] { PrebuildThread(); });  // lives as long as the renderer (never destroyed)
     REXLOG_INFO("gow2_renderer: shader prebuild at package open on (patch 0068), up to {} warm-only pipelines queued",
@@ -12179,6 +12185,30 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // used only when they hash to the recipe's fingerprint. Each shader goes into the shader cache as a draw's would
   // (ShaderCache::Get), and each recorded pipeline is queued once both its shaders are ready.
  public:
+  // 0.6.3 (review r61 #2): a batch from layer 2's reader - hashing, filtering and the byte swap outside rcp_mutex_,
+  // which is then taken once (the recording thread takes it every frame; the reader runs at low priority).
+  void OnPrebuildPixelShaders(const XenosPrebuildShaderRef* items, size_t count) {  // any thread
+    if (!rcp_on_) {
+      for (size_t i = 0; i < count; ++i) OnPrebuildPixelShader(items[i].be_ucode, items[i].size_bytes, items[i].variant);
+      return;
+    }
+    std::vector<RcpShader> found;
+    for (size_t i = 0; i < count; ++i) {
+      const uint32_t size = items[i].size_bytes;
+      if (!items[i].be_ucode || !size || size > 256u * 1024u || (size & 3)) continue;
+      const uint64_t h = XXH3_64bits(items[i].be_ucode, size);
+      if (!rcp_ps_.count(h)) continue;  // read-only after Init
+      RcpShader sh;
+      sh.hash = h;
+      sh.vertex = false;
+      RcpToHost(static_cast<const uint8_t*>(items[i].be_ucode), size, sh.dwords);
+      found.push_back(std::move(sh));
+    }
+    if (found.empty()) return;
+    std::lock_guard<std::mutex> lock(rcp_mutex_);
+    for (RcpShader& sh : found)
+      if (rcp_ps_found_.insert(sh.hash).second) rcp_in_.push_back(std::move(sh));
+  }
   void OfferRecipePixel(const void* be_ucode, uint32_t size) {  // any thread (layer 2's reader)
     if (!be_ucode || !size || size > 256u * 1024u || (size & 3)) return;
     const uint64_t h = XXH3_64bits(be_ucode, size);  // the draws' key
@@ -14972,6 +15002,9 @@ ShadowRenderer* g_release_target = nullptr;  // job 171: set once at install, li
 bool XenosPrebuildWanted() { return g_release_target && g_release_target->PrebuildWanted(); }  // patch 0068
 void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant) {     // patch 0068
   if (g_release_target) g_release_target->OnPrebuildPixelShader(be_ucode, size_bytes, variant);
+}
+void XenosPrebuildPixelShaders(const XenosPrebuildShaderRef* items, size_t count) {  // 0.6.3 (r61 #2)
+  if (g_release_target && items && count) g_release_target->OnPrebuildPixelShaders(items, count);
 }
 bool XenosPrebuildVertexShader(const void* be_ucode, uint32_t size_bytes, bool report_match) {  // notes/78 C3
   return g_release_target && g_release_target->OnPrebuildVertexShader(be_ucode, size_bytes, report_match);

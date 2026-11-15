@@ -329,6 +329,10 @@ struct Pipeline {
   // Patch 0062: the start-up backlog class this pipeline's job was queued in (0xFF = not a waiting backlog job). A draw
   // that needs it moves the job to the front (PromoteBacklogJob) instead of waiting behind the whole recorded set.
   std::atomic<uint8_t> backlog_class{0xFF};
+  // 0.6.3 (review r61 #3): the worker thread building this pipeline as a start-up backlog job at the lower backlog
+  // priority (a real thread handle; null otherwise). Set under job_mutex_ when the job is taken; a draw that starts
+  // waiting on it raises that thread to the workers' own priority (PromoteBacklogJob).
+  std::atomic<HANDLE> backlog_builder{nullptr};
 };
 // One asynchronous pipeline creation (upl-n108): the description with its own copies of the bytecode.
 struct PipelineJob {
@@ -4762,6 +4766,14 @@ class D3D12Backend final : public Backend {
     if (backlog_play_limit_) play_until_ms_.store(SteadyNowMs() + 500, std::memory_order_relaxed);
   }
   void PipelineWorker() {
+    // 0.6.3 (r61 #3): a real handle to this thread, so a draw waiting on its backlog build can raise it.
+    HANDLE self = backlog_prio_ != worker_prio_ ? OpenThread(THREAD_SET_INFORMATION | THREAD_QUERY_INFORMATION, FALSE,
+                                                             GetCurrentThreadId())
+                                                : nullptr;
+    struct CloseSelf {
+      HANDLE h;
+      ~CloseSelf() { if (h) CloseHandle(h); }
+    } close_self{self};
     for (;;) {
       std::unique_ptr<PipelineJob> job;
       {
@@ -4792,7 +4804,10 @@ class D3D12Backend final : public Backend {
         if (!job) continue;
         // Patch 0061: under job_mutex_, so PipelineJobsLeft never sees a job in neither place (0068: warm jobs apart).
         ++(job->target ? jobs_busy_ : warm_busy_);
-        if (job->target && job->priority < kPipelineClasses) ++backlog_busy_;  // 0.6.3
+        if (job->target && job->priority < kPipelineClasses) {  // 0.6.3
+          ++backlog_busy_;
+          if (self) job->target->backlog_builder.store(self);  // (r61 #3, under job_mutex_ as PromoteBacklogJob looks)
+        }
       }
       const bool backlog_job = job->target && job->priority < kPipelineClasses;  // 0.6.3
       struct BusyDone {  // patch 0061: whatever path the job leaves by
@@ -4826,7 +4841,12 @@ class D3D12Backend final : public Backend {
         }
         continue;
       }
-      // 0.6.3: a start-up backlog job at the backlog priority (gow2_renderer_backlog_priority), restored afterwards.
+      // 0.6.3: a start-up backlog job at the backlog priority (gow2_renderer_backlog_priority), restored afterwards
+      // (also when a draw raised it meanwhile, PromoteBacklogJob); the builder mark is cleared first.
+      struct ClearBuilder {
+        Pipeline* p;
+        ~ClearBuilder() { if (p) p->backlog_builder.store(nullptr); }
+      } clear_builder{backlog_job ? job->target : nullptr};
       PrioScope backlog_prio{worker_prio_, backlog_job ? backlog_prio_ : worker_prio_};
       ID3D12PipelineState* pso = nullptr;
       Pipeline& p = *job->target;
@@ -5069,18 +5089,27 @@ class D3D12Backend final : public Backend {
   void PromoteBacklogJob(PipelineHandle handle, Pipeline& p) {
     const uint8_t c = p.backlog_class.exchange(0xFF);
     if (c >= kPipelineClasses) return;  // not a waiting backlog job (or already moved)
-    std::lock_guard<std::mutex> lock(job_mutex_);
-    auto& from = jobs_[c];
-    for (auto it = from.begin(); it != from.end(); ++it) {
-      if ((*it)->handle != handle) continue;
-      std::unique_ptr<PipelineJob> job = std::move(*it);
-      from.erase(it);
-      job->priority = uint8_t(c + kPipelineClasses);
-      jobs_[job->priority].push_back(std::move(job));
-      ++stats_.pipelines_promoted;
-      return;
+    bool moved = false;
+    {
+      std::lock_guard<std::mutex> lock(job_mutex_);
+      auto& from = jobs_[c];
+      for (auto it = from.begin(); it != from.end(); ++it) {
+        if ((*it)->handle != handle) continue;
+        std::unique_ptr<PipelineJob> job = std::move(*it);
+        from.erase(it);
+        job->priority = uint8_t(c + kPipelineClasses);
+        jobs_[job->priority].push_back(std::move(job));
+        ++stats_.pipelines_promoted;
+        moved = true;
+        break;
+      }
+      // Not found: a worker already took it (it is being built now). 0.6.3 (r61 #3): if it builds it at the lower
+      // backlog priority, raise it to the workers' own for the rest of this build (its PrioScope restores it after).
+      if (!moved)
+        if (HANDLE h = p.backlog_builder.load()) SetThreadPriority(h, PrioScope::Win(worker_prio_));
     }
-    // Not found: a worker already took it (it is being built now).
+    // 0.6.3 (r61 #1): a worker may be waiting only because the backlog is held back during play - wake one for it.
+    if (moved) job_cv_.notify_one();
   }
   uint64_t loaded_async_counted_ = 0;
   uint64_t graphics_root_hash_ = 0;

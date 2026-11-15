@@ -182,6 +182,14 @@ void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t si
 // prebuilt one of that variant, so layer 2 can stop offering a variant a game never draws.
 bool XenosPrebuildWanted();
 void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant);
+// 0.6.3 (review r61 #2): the same for several at once - the renderer takes its lock once for the batch, so a reader at
+// low priority holds it only briefly. Any thread; copies the bytes.
+struct XenosPrebuildShaderRef {
+  const void* be_ucode;
+  uint32_t size_bytes;
+  uint32_t variant;
+};
+void XenosPrebuildPixelShaders(const XenosPrebuildShaderRef* items, size_t count);
 // notes/78 C3: a vertex shader found in a package (its record's whole microcode region, big-endian). Used only with
 // --gow2_renderer_recipe_pack: the recipe vertex shaders it rebuilds exactly are prepared. Any thread; copies.
 // 0.6.3: report_match = true -> returns whether this region rebuilds one of the pack's vertex shaders (found now or
