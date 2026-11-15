@@ -29,6 +29,7 @@
 #include <xenos/renderer/guest_watch.h>
 #include <xenos/renderer/shader_cache.h>
 #include <xenos/renderer/native_hdr.h>
+#include <xenos/renderer/hdr_transport.h>
 #include <xenos/renderer/texture_cache.h>
 #include <xenos/renderer/queries.h>
 #include <xenos/renderer/recipe_pack.h>
@@ -1213,6 +1214,7 @@ REXCVAR_DEFINE_DOUBLE(gow2_hdr_paper_white, 203.0, "Gears2",
                       "Stage 7.3 (--present_hdr): nits of the game's full white (BT.2408 reference white 203)");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_ui_white, 203.0, "Gears2", "Native HDR: independent HUD and reload white in nits");
 REXCVAR_DEFINE_BOOL(gow2_hdr_native, true, "Gears2", "Use the captured Gears 2 / Gears 3 TU6 float scene/HUD profiles in HDR10");
+REXCVAR_DEFINE_INT32(gow2_hdr_companion_mb, 512, "Gears2", "HDR companion cache budget in MiB; images in active use are retained");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_peak, 1000.0, "Gears2", "Native HDR: display peak in nits for highlight roll-off");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_knee, 0.75, "Gears2",
                       "Stage 7.3 HDR (games without native HDR profiles, or --gow2_hdr_native=false); unused by native HDR");
@@ -2637,6 +2639,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   frame_, stats_draws_, stats_no_colour_);
     }
     ++frame_;
+    TrimNativeCompanions();
     if (XenosPcssTakeTrace()) pcss_trace_frame_ = frame_ + 1;  // notes/80 s.16: Ctrl+Shift+F12 traces the next frame
     if (report_first_) ReportFrame();  // patch 0101
     DrainCreatedShaders();  // patch 0066
@@ -2665,6 +2668,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     DecideLoadHold();  // patch 0063
     if (display_ours_) FrameStep("present image", [&] { RequestDisplay(regs, frontbuffer_ptr & 0x1FFFFFFFu, fb_width, fb_height); });
     native_hdr_valid_ = false; // never reuse another frame's scene during menus/loading
+    native_hdr_failure_ = rr::native_hdr::FallbackReason::kNoScene;
     if (!export_ranges_.empty())  // patch 0042: this frame's merged export readbacks
       FrameStep("export readback copies", [&] { IssueExportReadbacks(); });
     FrameStep("submit", [&] { frame_fences_.push_back(backend_->Submit()); });
@@ -3568,10 +3572,33 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void PresentOurs(const RegisterFile& regs, const DisplaySource& src, uint32_t fb_width, uint32_t fb_height) {
     uint32_t w = 0, h = 0;
     bool table = false;
-    const bool native_frame = hdr_ && hdr_encode_ && native_hdr_valid_ && src.native_hdr_generation == native_hdr_generation_;
-    if (!GammaPass(regs, src, fb_width, fb_height, w, h, table, native_frame)) {
+    bool native_frame = false;
+    const auto resolved = native_hdr_transport_.resolves.find(src.info.dest_base);
+    if (hdr_ && hdr_encode_ && src.native_hdr_generation && resolved != native_hdr_transport_.resolves.end()) {
+      const auto& image = resolved->second;
+      if (image.generation == src.native_hdr_generation &&
+          native_hdr_transport_.CurrentResolve(src.info.dest_base, watch_->Version(image.start,image.length),
+                                               src.info.dest_format,src.endian)) {
+        // Present the exact resolved resource version, even when the game
+        // intentionally holds it through a pause/menu frame without a new scene.
+        native_hdr_color_ = image.texture; native_hdr_w_ = image.width; native_hdr_h_ = image.height;
+        native_hdr_generation_ = image.generation; native_hdr_valid_ = true; native_frame = true;
+      }
+    }
+    if (!GammaPass(regs, src, fb_width, fb_height, w, h, table, false)) {
       ++ours_stats_.not_presented;
       return;
+    }
+    if (native_frame) {
+      auto& image=resolved->second;
+      // Gamma/reference output can change without changing the resolved HDR resource.
+      image.view_generation=0;
+      const uint32_t scale=src.scaled?res_scale_:1;
+      const uint32_t d1=regs.values[0x4801],d3=regs.values[0x4803];
+      const uint32_t swizzle=rr::native_hdr::PresentCompanionSwizzle((d3>>1)&0xfff,src.endian,(d1>>6)&3);
+      const auto view=src.endian<=3?NativeResolvedView(image,present_out_,w,h,scale,true,swizzle):0;
+      if(view) { native_hdr_color_=view; native_hdr_w_=w; native_hdr_h_=h; }
+      else native_frame=false;
     }
     native_hdr_aa_ready_ = false;
     if (smaa_ && !SmaaPass(w, h, native_frame ? native_hdr_color_ : 0) && !smaa_failed_logged_) {
@@ -3851,8 +3878,29 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::TextureHandle native_hdr_color_ = 0, native_hdr_aa_ = 0, native_hdr_reference_ = 0;
   uint32_t native_hdr_w_ = 0, native_hdr_h_ = 0, native_hdr_ref_w_ = 0, native_hdr_ref_h_ = 0;
   uint64_t native_hdr_generation_ = 0;
+  uint64_t native_hdr_serial_ = 0;
+  uint64_t native_hdr_shared_resolve_count_=0;
+  uint64_t native_hdr_resolve_count_=0,native_hdr_effect_count_=0,native_hdr_alias_count_=0,native_hdr_region_count_=0;
+  rr::native_hdr::CompanionStore native_hdr_transport_;
+  rr::native_hdr::CompanionPool native_hdr_pool_;
+  uint32_t native_hdr_pending_target_ = 0;
   uint64_t native_hdr_frames_ = 0, native_hdr_reference_frames_ = 0, native_hdr_gamma_skips_ = 0;
   std::unordered_set<uint64_t> native_hdr_unknown_writers_;
+  rr::native_hdr::StencilReplayTarget native_hdr_stencil_replay_;
+  rr::native_hdr::StencilReplayTarget native_hdr_pair_stencil_low_;
+  rr::native_hdr::FallbackReason native_hdr_failure_ = rr::native_hdr::FallbackReason::kNoScene;
+  std::array<uint64_t, size_t(rr::native_hdr::FallbackReason::kCount)> native_hdr_failures_{};
+  uint64_t native_hdr_stencil_draws_ = 0;
+  uint64_t native_hdr_failure_shader_ = 0;
+  void FailNativeHdr(rr::native_hdr::FallbackReason reason, uint64_t shader) {
+    native_hdr_failure_ = reason;
+    native_hdr_failure_shader_ = shader;
+    native_hdr_valid_ = false;
+    const uint64_t signature = shader ^ (uint64_t(reason) << 56);
+    if (native_hdr_unknown_writers_.insert(signature).second)
+      REXLOG_INFO("gow2_native_hdr: failure {} PS {:016X}, frame {}, generation {}",
+                  rr::native_hdr::kFallbackNames[size_t(reason)], shader, frame_, native_hdr_generation_);
+  }
   rr::RenderTargetKey native_hdr_key_{};
   bool native_hdr_valid_ = false, native_hdr_aa_ready_ = false;
   gpu::PipelineHandle native_hdr_smaa_blend_ = 0, native_hdr_copy_ = 0;
@@ -3861,6 +3909,401 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::TextureView native_hdr_ui_views_[96];
   gpu::SamplerDesc native_hdr_ui_samplers_[32];
   uint32_t native_hdr_ui_view_count_ = 0, native_hdr_ui_sampler_count_ = 0;
+  uint32_t native_hdr_ui_render_sources_ = 0;
+  uint32_t native_hdr_ui_current_sources_ = 0;
+  bool native_hdr_ui_sources_ready_ = false;
+  uint32_t native_hdr_source_fetch_[192]{};
+  gpu::PipelineHandle native_hdr_scene_background_ = 0;
+  bool native_hdr_pending_scene_pair_ = false;
+  gpu::Rect native_hdr_pair_region_{};
+  struct NativeInputProxy {
+    gpu::TextureHandle texture=0,reference=0;
+    uint32_t width=0,height=0;
+    uint64_t used_frame=0,generation=0;
+  };
+  std::array<NativeInputProxy,32> native_hdr_input_proxies_{};
+  gpu::PipelineHandle native_hdr_proxy_ = 0;
+  gpu::PipelineHandle native_hdr_seed_ = 0;
+  gpu::PipelineHandle native_hdr_alias_ = 0;
+  gpu::PipelineHandle native_hdr_resolve_ = 0, native_hdr_resolved_view_ = 0;
+
+  void TrimNativeCompanions() {
+    const uint64_t budget=uint64_t(std::max(64,REXCVAR_GET(gow2_hdr_companion_mb)))*1024*1024;
+    struct Candidate { uint32_t id; bool resolved; uint64_t used,bytes; };
+    std::vector<Candidate> candidates;
+    uint64_t total=0;
+    for(const auto& [id,image]:native_hdr_transport_.targets) {
+      const uint64_t bytes=uint64_t(image.width)*image.height*8;
+      if(image.used_frame+2<frame_) candidates.push_back({id,false,image.used_frame,bytes});
+    }
+    for(const auto& [id,image]:native_hdr_transport_.resolves) {
+      const uint64_t bytes=uint64_t(image.width)*image.height*8+uint64_t(image.view_width)*image.view_height*8;
+      total+=uint64_t(image.view_width)*image.view_height*8;
+      if(image.used_frame+2<frame_) candidates.push_back({id,true,image.used_frame,bytes});
+    }
+    for(auto& proxy:native_hdr_input_proxies_) if(proxy.texture && proxy.used_frame+2<frame_) {
+      backend_->DestroyTexture(proxy.texture); proxy={};
+    }
+    std::sort(candidates.begin(),candidates.end(),[](const auto& a,const auto& b){return a.used<b.used;});
+    native_hdr_pool_.Collect(*backend_,frame_,budget);
+    total+=native_hdr_pool_.Bytes();
+    for(const auto& item:candidates) {
+      if(total<=budget && native_hdr_transport_.targets.size()+native_hdr_transport_.resolves.size()<=64) break;
+      if(item.resolved) {
+        auto& image=native_hdr_transport_.resolves.at(item.id);
+        image.ownership.reset(); image.texture=0;
+        if(image.view_texture) backend_->DestroyTexture(image.view_texture);
+        native_hdr_transport_.resolves.erase(item.id);
+      } else {
+        auto& image=native_hdr_transport_.targets.at(item.id);
+        image.ownership.reset(); image.texture=0;
+        native_hdr_transport_.targets.erase(item.id);
+      }
+      native_hdr_pool_.Collect(*backend_,frame_,budget);
+      total=native_hdr_pool_.Bytes();
+      for(const auto& [base,image]:native_hdr_transport_.resolves)
+        total+=uint64_t(image.view_width)*image.view_height*8;
+    }
+    native_hdr_pool_.Collect(*backend_,frame_,budget);
+  }
+
+  bool WritableNativeTarget(rr::native_hdr::CompanionImage& image,bool preserve) {
+    if(preserve && !native_hdr_ui_copy_pipe_) {
+      const auto shader=cache_->GetBuiltin("native_ui_copy_cs",rr::native_hdr::kCopyForUiCs,gpu::ShaderStage::kCompute);
+      if(shader) native_hdr_ui_copy_pipe_=backend_->CreateComputePipeline(shader);
+    }
+    return rr::native_hdr::WritableCompanion(*backend_,native_hdr_pool_,native_hdr_ui_copy_pipe_,image,frame_,preserve);
+  }
+
+  bool EnsureNativeSeed() {
+    if (!native_hdr_seed_) {
+      const auto shader = cache_->GetBuiltin("hdr_companion_reference", rr::native_hdr::kSeedReferenceCs, gpu::ShaderStage::kCompute);
+      if (shader) native_hdr_seed_ = backend_->CreateComputePipeline(shader);
+    }
+    return native_hdr_seed_ != 0;
+  }
+
+  bool BindNativeSceneInputs(uint32_t mask,uint32_t used) {
+    if(!native_hdr_proxy_) {
+      const auto shader=cache_->GetBuiltin("hdr_transport_proxy",rr::native_hdr::kSceneProxyCs,gpu::ShaderStage::kCompute);
+      if(shader) native_hdr_proxy_=backend_->CreateComputePipeline(shader);
+    }
+    if(!native_hdr_proxy_) return false;
+    const auto slots=rr::native_hdr::SceneProxySlots(mask,used);
+    gpu::TextureView views[96]; std::copy_n(native_hdr_ui_views_,96,views);
+    for(uint32_t i=0;i<32;++i) if(mask&(1u<<i)) {
+      if(slots[i]==255) return false;
+      const auto source=NativeSceneInput(i);
+      gpu::TextureDesc desc;
+      if(!source || !backend_->TextureInfo(native_hdr_ui_views_[i].texture,desc)) return false;
+      auto& proxy=native_hdr_input_proxies_[i];
+      proxy.used_frame=frame_;
+      if(!proxy.texture || proxy.width!=desc.width || proxy.height!=desc.height) {
+        if(proxy.texture) backend_->DestroyTexture(proxy.texture);
+        desc.format=gpu::Format::kR16G16B16A16Float; desc.mips=1;
+        desc.usage=gpu::kUsageSampled|gpu::kUsageStorage;
+        desc.debug_name="Versioned HDR material input (extended gamma)";
+        proxy.texture=backend_->CreateTexture(desc); proxy.width=desc.width; proxy.height=desc.height; proxy.generation=0;
+      }
+      if(!proxy.texture) return false;
+      auto& image=native_hdr_transport_.resolves.at(native_hdr_source_fetch_[i*6+1]&0xfffff000u);
+      if(proxy.generation!=image.generation || proxy.reference!=native_hdr_ui_views_[i].texture) {
+        gpu::ComputeBindings b;
+        const uint32_t guest_width=(native_hdr_source_fetch_[i*6+2]&0x1fff)+1;
+        b.constants[0]=proxy.width;b.constants[1]=proxy.height;b.constants[2]=image.scale;b.constants[3]=proxy.width/guest_width;
+        b.constants[4]=image.whole_image?1:0;b.constants[5]=image.storage_swap?1:0;
+        b.constants[6]=image.width;b.constants[7]=image.height;b.constants[8]=std::bit_cast<uint32_t>(image.storage_gain);
+        b.constant_count=12;b.srv[0]=source;b.srv[1]=native_hdr_ui_views_[i].texture;b.uav_texture=proxy.texture;
+        backend_->Dispatch(native_hdr_proxy_,b,(proxy.width+7)/8,(proxy.height+7)/8,1);
+        proxy.generation=image.generation;proxy.reference=native_hdr_ui_views_[i].texture;
+      }
+      views[slots[i]]=views[i];views[slots[i]].texture=proxy.texture;
+    }
+    backend_->SetTextures(views,native_hdr_ui_samplers_,96,native_hdr_ui_sampler_count_);
+    tex_memo_valid_=false;
+    return true;
+  }
+
+  bool AdoptNativeTarget(const rr::RenderTarget& target) {
+    auto* image = native_hdr_transport_.CurrentTarget(target.id, target.write_gen);
+    if (!image) return native_hdr_valid_ = false;
+    image->used_frame = frame_;
+    native_hdr_color_ = image->texture;
+    native_hdr_w_ = image->width; native_hdr_h_ = image->height;
+    native_hdr_generation_ = image->generation; native_hdr_key_ = target.key;
+    return native_hdr_valid_ = true;
+  }
+
+  bool SeedNativeTarget(const rr::RenderTarget& target, uint32_t width, uint32_t height, bool from_reference,
+                        uint64_t preserve_version = 0) {
+    if (!width || !height || target.key.msaa || target.format != gpu::Format::kR8G8B8A8Unorm) return false;
+    if (!EnsureNativeSeed()) return false;
+    auto& image = native_hdr_transport_.targets[target.id];
+    const bool shared=image.ownership && image.ownership.use_count()>1;
+    const auto previous=image;
+    const bool preserve=from_reference && image.texture && image.generation &&
+        image.write_version==(preserve_version?preserve_version:target.write_gen);
+    if(preserve) { width=std::max(width,image.width); height=std::max(height,image.height); }
+    if(preserve && !shared && width==image.width && height==image.height) {
+      image.write_version=target.write_gen;return AdoptNativeTarget(target);
+    }
+    bool resized=false;
+    if (!image.texture || shared || image.width != width || image.height != height) {
+      if(preserve && !native_hdr_ui_copy_pipe_) {
+        const auto shader=cache_->GetBuiltin("native_ui_copy_cs",rr::native_hdr::kCopyForUiCs,gpu::ShaderStage::kCompute);
+        if(shader) native_hdr_ui_copy_pipe_=backend_->CreateComputePipeline(shader);
+        if(!native_hdr_ui_copy_pipe_) return false;
+      }
+      gpu::TextureDesc desc;
+      desc.width = width; desc.height = height; desc.format = gpu::Format::kR16G16B16A16Float;
+      desc.usage = gpu::kUsageSampled | gpu::kUsageRenderTarget | gpu::kUsageStorage;
+      desc.debug_name = "Versioned native HDR render-target companion";
+      auto replacement=native_hdr_pool_.Acquire(*backend_,target.width,target.height,frame_);
+      if(!replacement.texture) return false;
+      replacement.width=width;replacement.height=height;
+      static_cast<rr::native_hdr::CompanionImage&>(image)=std::move(replacement);
+      resized=true;
+    }
+    if (!image.texture) return false;
+    if (from_reference) {
+      gpu::ComputeBindings b;
+      b.constants[0] = width; b.constants[1] = height; b.constant_count = 4;
+      b.srv[0] = target.texture; b.uav_texture = image.texture;
+      backend_->Dispatch(native_hdr_seed_, b, (width+7)/8, (height+7)/8, 1);
+      if(preserve && resized) {
+        if(native_hdr_ui_copy_pipe_) rr::native_hdr::StencilReplayTarget::Copy(*backend_,native_hdr_ui_copy_pipe_,
+            previous.texture,image.texture,std::min(width,previous.width),std::min(height,previous.height));
+      }
+    }
+    image.generation = ++native_hdr_serial_; image.write_version = target.write_gen;
+    return AdoptNativeTarget(target);
+  }
+
+  void CommitNativeTarget(const rr::RenderTarget& target) {
+    auto& image = native_hdr_transport_.targets[target.id];
+    image.texture = native_hdr_color_; image.width = native_hdr_w_; image.height = native_hdr_h_;
+    image.generation = native_hdr_generation_ = ++native_hdr_serial_;
+    image.write_version = target.write_gen; image.used_frame = frame_;
+    native_hdr_pending_target_ = 0;
+  }
+
+  void SyncNativeReferenceRegion(const rr::RenderTarget& target, uint64_t previous_version, const gpu::Rect& region) {
+    auto* image = native_hdr_transport_.CurrentTarget(target.id, previous_version);
+    if (!image || !EnsureNativeSeed()) return;
+    if(region.x0<=0 && region.y0<=0 && region.x1>=int32_t(image->width) && region.y1>=int32_t(image->height)) {
+      // The whole colour was cleared/reinterpreted. Detach this target while
+      // resolves keep their immutable old allocation; the next scene replaces it.
+      image->generation=0;image->write_version=target.write_gen;image->ownership.reset();image->texture=0;
+      ++native_hdr_region_count_;return;
+    }
+    if(!WritableNativeTarget(*image,true)) {image->generation=0;return;}
+    const int32_t x0 = std::clamp(region.x0,0,int32_t(image->width)), y0 = std::clamp(region.y0,0,int32_t(image->height));
+    const int32_t x1 = std::clamp(region.x1,x0,int32_t(image->width)), y1 = std::clamp(region.y1,y0,int32_t(image->height));
+    if (x1 > x0 && y1 > y0) {
+      gpu::ComputeBindings b;
+      b.constants[0] = x1-x0; b.constants[1] = y1-y0; b.constants[2] = x0; b.constants[3] = y0; b.constant_count = 4;
+      b.srv[0] = target.texture; b.uav_texture = image->texture;
+      backend_->Dispatch(native_hdr_seed_, b, (x1-x0+7)/8, (y1-y0+7)/8, 1);
+    }
+    image->write_version = target.write_gen; image->generation = ++native_hdr_serial_;
+    image->used_frame=frame_;
+    ++native_hdr_region_count_;
+  }
+
+  void TransferNativeColour(const rr::RenderTarget& source, const rr::RenderTarget& target,
+                            uint64_t previous_version, const gpu::Rect& region) {
+    auto* input = native_hdr_transport_.CurrentTarget(source.id, source.write_gen);
+    if (!input || source.key.storage_class != target.key.storage_class || source.key.msaa || target.key.msaa) {
+      SyncNativeReferenceRegion(target, previous_version, region);
+      return;
+    }
+    input->used_frame=frame_;
+    if (!native_hdr_alias_) {
+      const auto shader=cache_->GetBuiltin("hdr_colour_alias",rr::native_hdr::kTransferCompanionPs,gpu::ShaderStage::kPixel);
+      gpu::GraphicsPipelineDesc desc;
+      desc.vs = transfer_vs_; desc.ps = shader; desc.depth_clip = false;
+      desc.color_count = 1; desc.color_formats[0] = gpu::Format::kR16G16B16A16Float; desc.color_write_masks[0] = 15;
+      native_hdr_alias_ = backend_->GetGraphicsPipeline(desc);
+    }
+    if (!native_hdr_alias_) return;
+    const uint32_t height = std::min(target.height, std::max(uint32_t(std::max(0,region.y1)),input->height * target.scale / source.scale));
+    auto* prior=native_hdr_transport_.CurrentTarget(target.id,previous_version);
+    if(!prior || prior->width<target.width || prior->height<height)
+      if(!SeedNativeTarget(target,target.width,height,true,previous_version)) return;
+    auto& output = native_hdr_transport_.targets[target.id];
+    if(!WritableNativeTarget(output,true)) {output.generation=0;return;}
+    gpu::TextureView views[96]; views[0].texture = input->texture; views[1].texture=source.texture;
+    gpu::SamplerDesc samplers[32];
+    backend_->SetTextures(views,samplers,2,1); tex_memo_valid_ = false;
+    backend_->SetRenderTargets(1,&output.texture,0);
+    backend_->SetViewport({0,0,float(target.width),float(target.height),0,1});
+    backend_->SetScissor({std::max(0,region.x0),std::max(0,region.y0),
+        std::min(region.x1,int32_t(output.width)),std::min(region.y1,int32_t(output.height))});
+    uint32_t c[16] = {target.key.base_tiles,target.pitch_tiles,source.key.base_tiles,source.pitch_tiles,
+        rr::RenderTargetCache::Is64bpp(target) ? 40u : 80u,0,0,0,0,0,0,0,target.scale,source.scale};
+    c[10]=input->width;c[11]=input->height;
+    backend_->SetConstants(gpu::ShaderStage::kPixel,gpu::kCbSystem,c,sizeof(c));
+    backend_->SetPipeline(native_hdr_alias_); backend_->Draw(3);
+    output.write_version = target.write_gen; output.generation = ++native_hdr_serial_; output.used_frame = frame_;
+    ++native_hdr_alias_count_;
+  }
+
+  gpu::TextureHandle NativeResolvedView(rr::native_hdr::ResolveCompanion& image,
+      gpu::TextureHandle reference, uint32_t width, uint32_t height, uint32_t scale, bool packed,
+      uint32_t swizzle=0x688) {
+    if (!image.texture || !image.generation || !reference || !width || !height || !scale) return 0;
+    image.used_frame = frame_;
+    if(image.storage_swap) {
+      uint32_t mapped=0;
+      for(unsigned c=0;c<4;++c) {
+        uint32_t selector=(swizzle>>(c*3))&7;
+        if(selector==0 || selector==2) selector^=2;
+        mapped|=selector<<(c*3);
+      }
+      swizzle=mapped;
+    }
+    // A whole immutable version already in the view's RGB order needs no
+    // intermediate texture or dispatch. Alpha is obtained from SDR by material
+    // proxies and is irrelevant to the final HDR encoder.
+    if(image.whole_image && image.width==width && image.height==height && image.scale==scale &&
+        image.storage_gain==1.f && (swizzle&0x1ff)==0x088) return image.texture;
+    if (image.view_texture && image.view_generation == image.generation && image.view_reference == reference &&
+        image.view_width == width && image.view_height == height && image.view_scale == scale &&
+        image.view_packed == packed && image.view_swizzle==swizzle)
+      return image.view_texture;
+    if (!native_hdr_resolved_view_) {
+      const auto shader = cache_->GetBuiltin("hdr_resolved_view", rr::native_hdr::kResolvedViewCs, gpu::ShaderStage::kCompute);
+      if (shader) native_hdr_resolved_view_ = backend_->CreateComputePipeline(shader);
+    }
+    if (!native_hdr_resolved_view_) return 0;
+    if (!image.view_texture || image.view_width != width || image.view_height != height) {
+      if (image.view_texture) backend_->DestroyTexture(image.view_texture);
+      gpu::TextureDesc desc;
+      desc.width=width; desc.height=height; desc.format=gpu::Format::kR16G16B16A16Float;
+      desc.usage=gpu::kUsageSampled|gpu::kUsageStorage;
+      desc.debug_name="HDR resolved view with authoritative SDR gaps";
+      image.view_texture=backend_->CreateTexture(desc);
+      image.view_width=width; image.view_height=height;
+    }
+    if (!image.view_texture) return 0;
+    gpu::ComputeBindings b;
+    b.constants[0]=width; b.constants[1]=height; b.constants[2]=image.scale; b.constants[3]=scale;
+    b.constants[4]=packed?1:0; b.constants[5]=swizzle; b.constants[6]=image.whole_image?1:0;
+    b.constants[8]=std::bit_cast<uint32_t>(image.storage_gain);
+    b.constants[12]=image.width;b.constants[13]=image.height;b.constant_count=16;
+    b.srv[0]=image.texture; b.srv[packed?2:1]=reference; b.uav_texture=image.view_texture;
+    backend_->Dispatch(native_hdr_resolved_view_,b,(width+7)/8,(height+7)/8,1);
+    image.view_generation=image.generation; image.view_reference=reference;
+    image.view_scale=scale; image.view_packed=packed;
+    image.view_swizzle=swizzle;
+    return image.view_texture;
+  }
+
+  uint64_t PublishNativeResolve(const rr::RenderTarget& target, const ::xenos::resolve::Info& info,
+      uint32_t source_scale, uint32_t destination_scale, uint32_t dx, uint32_t dy, uint32_t width, uint32_t height,
+      uint32_t endian, int32_t exp_bias, bool swap, bool compatible) {
+    if (!hdr_ || !info.dest_extent_length) return 0;
+    auto* input=compatible?native_hdr_transport_.CurrentTarget(target.id,target.write_gen):nullptr;
+    if(input) input->used_frame=frame_;
+    auto existing=native_hdr_transport_.resolves.find(info.dest_base);
+    if (!input && (existing==native_hdr_transport_.resolves.end() || !existing->second.patchable)) return 0;
+    auto& image=native_hdr_transport_.resolves[info.dest_base];
+    const uint32_t dw=std::max(info.dest_pitch_aligned_div_32*32,32u)*destination_scale;
+    const uint32_t dh=std::max(info.dest_height_aligned_div_32*32,32u)*destination_scale;
+    const bool preserve=image.patchable && image.format==info.dest_format &&
+        image.endian==endian && image.scale==destination_scale && image.start==info.dest_extent_start && image.length==info.dest_extent_length;
+    const float gain=std::exp2(float(exp_bias)*2.2f);
+    const bool whole=input && !dx && !dy && !info.x0 && !info.y0 && source_scale==destination_scale &&
+        width*source_scale>=input->width && height*source_scale>=input->height;
+    if(whole) {
+      // Pin the exact allocation. The next writer detaches or copies it; full
+      // scene replacement and full clears require no preservation copy.
+      static_cast<rr::native_hdr::CompanionImage&>(image)=*input;
+      image.whole_image=true;image.storage_gain=gain;image.storage_swap=swap;
+      ++native_hdr_shared_resolve_count_;
+    } else {
+      if (!native_hdr_resolve_) {
+        const auto shader=cache_->GetBuiltin("hdr_resolve_companion",rr::native_hdr::kResolveCompanionCs,gpu::ShaderStage::kCompute);
+        if(shader) native_hdr_resolve_=backend_->CreateComputePipeline(shader);
+      }
+      if(!native_hdr_resolve_) return 0;
+      const auto previous=image;
+      const bool replace=!image.texture || image.whole_image || image.width!=dw || image.height!=dh ||
+          (image.ownership && image.ownership.use_count()>2);
+      if(replace) {
+        auto replacement=native_hdr_pool_.Acquire(*backend_,dw,dh,frame_);
+        if(!replacement.texture)return 0;
+        static_cast<rr::native_hdr::CompanionImage&>(image)=std::move(replacement);
+      }
+      if(!preserve) {const float zero[4]{};backend_->ClearColor(image.texture,zero);}
+      else if(previous.whole_image) {
+        gpu::ComputeBindings init;
+        init.constants[0]=dw;init.constants[1]=dh;
+        init.constants[6]=init.constants[7]=destination_scale;
+        init.constants[8]=previous.width;init.constants[9]=previous.height;init.constants[10]=1;
+        init.constants[12]=std::bit_cast<uint32_t>(previous.storage_gain);
+        init.constants[13]=std::bit_cast<uint32_t>(previous.storage_swap?1.f:0.f);init.constant_count=16;
+        init.srv[0]=previous.texture;init.uav_texture=image.texture;
+        backend_->Dispatch(native_hdr_resolve_,init,(dw+7)/8,(dh+7)/8,1);
+      } else if(replace) {
+        if(!native_hdr_ui_copy_pipe_) {
+          const auto shader=cache_->GetBuiltin("native_ui_copy_cs",rr::native_hdr::kCopyForUiCs,gpu::ShaderStage::kCompute);
+          if(shader)native_hdr_ui_copy_pipe_=backend_->CreateComputePipeline(shader);
+        }
+        if(!native_hdr_ui_copy_pipe_)return 0;
+        rr::native_hdr::StencilReplayTarget::Copy(*backend_,native_hdr_ui_copy_pipe_,previous.texture,image.texture,
+            std::min(dw,previous.width),std::min(dh,previous.height));
+      }
+      gpu::ComputeBindings b;
+      b.constants[0]=width*destination_scale;b.constants[1]=height*destination_scale;
+      b.constants[2]=dx*destination_scale;b.constants[3]=dy*destination_scale;
+      b.constants[4]=uint32_t(info.x0);b.constants[5]=uint32_t(info.y0);
+      b.constants[6]=source_scale;b.constants[7]=destination_scale;
+      b.constants[8]=input?input->width:0;b.constants[9]=input?input->height:0;b.constants[10]=input?1:0;
+      b.constants[12]=std::bit_cast<uint32_t>(gain);b.constants[13]=std::bit_cast<uint32_t>(swap?1.f:0.f);b.constant_count=16;
+      b.srv[0]=input?input->texture:0;b.uav_texture=image.texture;
+      backend_->Dispatch(native_hdr_resolve_,b,(width*destination_scale+7)/8,(height*destination_scale+7)/8,1);
+      image.whole_image=false;image.storage_gain=1.f;image.storage_swap=false;
+    }
+    image.start=info.dest_extent_start; image.length=info.dest_extent_length; image.format=info.dest_format;
+    image.endian=endian; image.scale=destination_scale; image.version=watch_->Version(image.start,image.length);
+    image.frame=image.used_frame=frame_; image.pending=image.patchable=false; image.generation=++native_hdr_serial_;
+    ++native_hdr_resolve_count_;
+    return image.generation;
+  }
+
+  gpu::TextureHandle NativeSceneInput(uint32_t slot = 0) {
+    if (!native_hdr_ui_sources_ready_ || slot>=32 || slot>=native_hdr_ui_view_count_) return 0;
+    const auto* fetch=native_hdr_source_fetch_+slot*6;
+    const auto& view=native_hdr_ui_views_[slot];
+    if (!view.texture || view.zero || view.signed_view || view.bits_view ||
+        ((fetch[5]>>9)&3)!=1 || ((fetch[4]>>6)&15)!=0) return 0;
+    auto found=native_hdr_transport_.resolves.find(fetch[1]&0xFFFFF000u);
+    if(found==native_hdr_transport_.resolves.end()) return 0;
+    auto& source=found->second;
+    if(!native_hdr_transport_.CurrentResolve(found->first,watch_->Version(source.start,source.length),
+        fetch[1]&63,(fetch[1]>>6)&3)) return 0;
+    gpu::TextureDesc desc;
+    const uint32_t guest_width=(fetch[2]&0x1fffu)+1;
+    const uint32_t guest_height=((fetch[2]>>13)&0x1fffu)+1;
+    if(!backend_->TextureInfo(view.texture,desc) || desc.format!=gpu::Format::kR8G8B8A8Unorm ||
+        desc.dimension!=gpu::TextureDimension::k2D || desc.mips!=1 || desc.width%guest_width || desc.height%guest_height ||
+        desc.width/guest_width!=desc.height/guest_height) return 0;
+    source.used_frame=frame_;
+    return source.texture;
+  }
+
+  void FinishNativeSceneOverlay(const rr::RenderTarget& target) {
+    gpu::ComputeBindings mix;
+    const auto& region=native_hdr_pair_region_;
+    mix.constants[0] = region.x1-region.x0; mix.constants[1] = region.y1-region.y0;
+    mix.constants[2] = region.x0; mix.constants[3] = region.y0;
+    mix.constants[4] = std::bit_cast<uint32_t>(HdrPeak() / HdrSceneWhite()); mix.constant_count = 8;
+    mix.srv[0] = native_hdr_ui_high_; mix.srv[1] = native_hdr_ui_low_; mix.srv[2] = target.texture;
+    mix.uav_texture = native_hdr_color_;
+    backend_->Dispatch(native_hdr_ui_blend_pipe_, mix, (region.x1-region.x0+7)/8, (region.y1-region.y0+7)/8, 1);
+    native_hdr_pending_scene_pair_ = false;
+  }
   uint32_t native_hdr_ui_w_ = 0, native_hdr_ui_h_ = 0;
   bool EnsureNativeSceneUi() {
     if (!native_hdr_ui_prepare_pipe_ || !native_hdr_ui_copy_pipe_ || !native_hdr_ui_blend_pipe_) {
@@ -3904,10 +4347,25 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   float HdrUiWhite() const { return float(std::clamp(REXCVAR_GET(gow2_hdr_ui_white), 1.0, double(HdrPeak()))); }
   void EncodeNativeHdr(gpu::TextureHandle output, uint32_t width, uint32_t height, bool native) {
     if (native) ++native_hdr_frames_; else ++native_hdr_reference_frames_;
+    if (!native) ++native_hdr_failures_[size_t(native_hdr_valid_ ?
+        rr::native_hdr::FallbackReason::kGeneration : native_hdr_failure_)];
     if ((native && native_hdr_frames_ <= 3) || (native_hdr_frames_ + native_hdr_reference_frames_) % 300 == 0)
       REXLOG_INFO("gow2_native_hdr: presentation: {} FP16 frames, {} reference frames; this frame {} {}x{} -> {}x{}; skipped SDR gamma {}",
                   native_hdr_frames_, native_hdr_reference_frames_, native ? "native" : "reference",
                   native ? native_hdr_w_ : width, native ? native_hdr_h_ : height, width, height, native_hdr_gamma_skips_);
+    if ((native_hdr_frames_ + native_hdr_reference_frames_) % 300 == 0)
+      REXLOG_INFO("gow2_native_hdr: transport: {} snapshots ({} shared), {} scene effects, {} colour aliases, {} regional syncs; {} targets, {} resolves cached",
+                  native_hdr_resolve_count_,native_hdr_shared_resolve_count_,native_hdr_effect_count_,native_hdr_alias_count_,native_hdr_region_count_,
+                  native_hdr_transport_.targets.size(),native_hdr_transport_.resolves.size());
+    if ((native_hdr_frames_ + native_hdr_reference_frames_) % 300 == 0)
+      REXLOG_INFO("gow2_native_hdr: allocation pool: {} created, {} reused, {} MiB resident",
+                  native_hdr_pool_.Created(),native_hdr_pool_.Reused(),native_hdr_pool_.Bytes()/(1024*1024));
+    if ((native_hdr_frames_ + native_hdr_reference_frames_) % 300 == 0)
+      REXLOG_INFO("gow2_native_hdr: reference reasons: no scene {}, generation {}, target {}, depth/stencil {}, "
+                  "material {}, scene setup {}, shader/pipeline {}, resource {}, vertex {}; padded stencil replays {}; last rejected PS {:016X}",
+                  native_hdr_failures_[0], native_hdr_failures_[1], native_hdr_failures_[2], native_hdr_failures_[3],
+                  native_hdr_failures_[4], native_hdr_failures_[5], native_hdr_failures_[6], native_hdr_failures_[7],
+                  native_hdr_failures_[8], native_hdr_stencil_draws_, native_hdr_failure_shader_);
     // Separate packed reference input avoids simultaneous SRV/UAV aliasing.
     if (!native && (!native_hdr_reference_ || native_hdr_ref_w_ != width || native_hdr_ref_h_ != height)) {
       if (native_hdr_reference_) backend_->DestroyTexture(native_hdr_reference_);
@@ -3950,9 +4408,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   void NativeHdrDraw(const gpu::GraphicsPipelineDesc& original, gpu::PipelineHandle original_pipeline,
                      const rr::GuestShader& vertex, const rr::GuestShader& shader, const rr::RenderTarget* target,
                      const rr::PipelineState& state, const SystemConstants& constants,
-                     Issue&& issue) {
+                     Issue&& issue, bool before_original = false, rr::RenderTarget* depth_target = nullptr) {
+    if (before_original) native_hdr_pending_scene_pair_ = false;
     if (!hdr_ || !hdr_encode_ || !REXCVAR_GET(gow2_hdr_native) || !target ||
         !original.color_write_masks[0]) return;
+    if (!before_original && native_hdr_pending_target_ == target->id) {
+      if (native_hdr_pending_scene_pair_) FinishNativeSceneOverlay(*target);
+      CommitNativeTarget(*target);
+      return;
+    }
+    if (before_original) {
+      native_hdr_pending_target_ = 0;
+      AdoptNativeTarget(*target);
+    }
     const bool scene = rr::native_hdr::IsScene(shader.ucode_hash);
     const auto& blend = original.color_blend[0];
     const bool straight_alpha = blend.enable && blend.src == gpu::BlendFactor::kSrcAlpha &&
@@ -3961,78 +4429,166 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         blend.dst == gpu::BlendFactor::kZero && blend.op == gpu::BlendOp::kAdd;
     const bool canvas_material = rr::native_hdr::IsCanvasVertex(vertex.ucode_hash) && straight_alpha;
     const auto* ui_profile = rr::native_hdr::FindUi(shader.ucode_hash);
+    const bool profile_matches = rr::native_hdr::MatchesUiProfile(ui_profile, ps_.dwords, ps_.count);
     const bool captured_ui_pair = !ui_profile || !ui_profile->vertex ||
         (vertex.ucode_hash == ui_profile->vertex &&
          (ui_profile->modulation ? modulation_blend : straight_alpha));
-    const bool canvas = (ui_profile != nullptr || canvas_material) && captured_ui_pair;
-    const bool scene_ui = shader.ucode_hash == rr::native_hdr::kSceneUi && straight_alpha;
+    const bool canvas = (profile_matches || canvas_material) && captured_ui_pair;
+    uint32_t hdr_inputs=0;
+    if(!scene) for(uint32_t slots=shader.texture_slots_2d;slots;slots&=slots-1) {
+      const uint32_t slot=uint32_t(std::countr_zero(slots));
+      if(NativeSceneInput(slot)) hdr_inputs|=1u<<slot;
+    }
+    if(!scene && !native_hdr_valid_ && hdr_inputs) {
+      const uint32_t width=std::min(target->width,uint32_t(std::max(0.f,state.viewport.x+state.viewport.width)));
+      const uint32_t height=std::min(target->height,uint32_t(std::max(0.f,state.viewport.y+state.viewport.height)));
+      SeedNativeTarget(*target,width,height,true);
+    }
+    const bool scene_ui = shader.ucode_hash == rr::native_hdr::kSceneUi && straight_alpha && !hdr_inputs;
     if (!scene && (!native_hdr_valid_ || !(target->key == native_hdr_key_))) return;
+    rr::native_hdr::OverlayInputs overlay_inputs;
+    overlay_inputs.owned_target = !scene && !scene_ui && native_hdr_valid_ && target->key == native_hdr_key_;
+    overlay_inputs.screen_vertex = overlay_inputs.owned_target || canvas || rr::native_hdr::IsCanvasVertex(vertex.ucode_hash) ||
+        rr::native_hdr::PackedUiVertex(vertex.vfetch_formats, vertex.texture_slots, vertex.memexport) ||
+        (fill_geom_.valid && shader.ucode_hash == rr::native_hdr::kColorFill.hash &&
+         vertex.ucode_hash == rr::native_hdr::kColorFill.vertex && !shader.texture_slots &&
+         rr::native_hdr::MatchesUiProfile(&rr::native_hdr::kColorFill, ps_.dwords, ps_.count));
+    overlay_inputs.textures_available = !shader.texture_slots || native_hdr_ui_sources_ready_;
+    // Resource lineage, not page history or a pixel-shader list, determines
+    // whether this material receives real scene HDR. Other post-scene layers
+    // retain their authored bounded emission, coverage and geometry.
+    overlay_inputs.scene_texture = hdr_inputs != 0;
+    overlay_inputs.cube_or_volume = shader.texture_slots_cube || shader.texture_slots_3d;
+    overlay_inputs.shader_side_effects = shader.memexport || vertex.memexport || shader.writes_depth || vertex.texture_slots;
+    overlay_inputs.color_outputs = shader.color_targets_written;
+    const auto overlay_mode = rr::native_hdr::ClassifyOverlay(overlay_inputs, blend);
+    const bool overlay = overlay_mode != rr::native_hdr::OverlayMode::kNone;
+    rr::native_hdr::OverlayInputs pair_inputs{true,true,true,false,false,false,1};
+    const bool pair_blend=rr::native_hdr::ClassifyOverlay(pair_inputs,blend)!=rr::native_hdr::OverlayMode::kNone;
+    const bool scene_pair = !scene && !scene_ui && native_hdr_valid_ && target->key == native_hdr_key_ && hdr_inputs &&
+        !overlay_inputs.shader_side_effects && shader.color_targets_written == 1 &&
+        pair_blend && !original.gs;
+    // Independent overlays replay against the same pre-draw depth/stencil
+    // state. Scene materials retain their existing
+    // post-draw path, which needs the original bounded result for comparison.
+    if (before_original != (overlay || scene_pair)) return;
+    if((overlay || scene_pair || scene_ui) && native_hdr_valid_) {
+      auto& image=native_hdr_transport_.targets.at(target->id);
+      if(!WritableNativeTarget(image,true)) {FailNativeHdr(rr::native_hdr::FallbackReason::kResource,shader.ucode_hash);return;}
+      native_hdr_color_=image.texture;
+    }
+    const bool has_tests = original.depth_enable || original.stencil_enable;
+    const bool depth_compatible = !has_tests || (depth_target && depth_target->texture &&
+        rr::native_hdr::CompatibleOverlayDepth(native_hdr_w_, native_hdr_h_, original.samples,
+          target->width, target->height, depth_target->width, depth_target->height));
     // The captured profile owns this exact EDRAM target. Other formats/aliases
     // retain the normal renderer; an unknown later writer invalidates the take.
     const bool supported = original.color_count == 1 &&
         (shader.dxbc || backend_->GetShaderIL() == gpu::ShaderIL::kSpirv) && original.samples == 1 &&
-        !original.depth_enable && !original.stencil_enable && !shader.memexport &&
-        target->key.base_tiles == 720 && target->key.pitch_pixels == 1280 &&
+        (overlay || scene_pair ? depth_compatible : !has_tests) && !shader.memexport &&
         target->format == gpu::Format::kR8G8B8A8Unorm;
-    if (!supported || (!scene && !canvas)) {
-      if (native_hdr_valid_ && native_hdr_unknown_writers_.insert(shader.ucode_hash).second)
-        REXLOG_INFO("gow2_native_hdr: later writer {:016X} (Canvas {}, supported {}): reference fallback until next scene; "
+    if (!supported || (!scene && !scene_ui && !overlay && !scene_pair)) {
+      const auto reason = !depth_compatible ? rr::native_hdr::FallbackReason::kDepth :
+          !supported ? rr::native_hdr::FallbackReason::kTarget : rr::native_hdr::FallbackReason::kMaterial;
+      const uint64_t signature = shader.ucode_hash ^ (uint64_t(reason) << 56) ^
+          (uint64_t(native_hdr_ui_render_sources_) << 17) ^ (uint64_t(has_tests) << 55);
+      if (native_hdr_valid_ && native_hdr_unknown_writers_.insert(signature).second) {
+        REXLOG_INFO("gow2_native_hdr: later writer {:016X} (Canvas {}, supported {}): companion invalidated for this resource version; "
                     "VS {:016X}, captured pair {}, colors {}, samples {}, depth {}, stencil {}, memexport {}, "
                     "bytecode {}, base {}, pitch {}, format {}, blend {} ({}/{}/{})",
                     shader.ucode_hash, canvas, supported, vertex.ucode_hash, captured_ui_pair,
                     original.color_count, original.samples, original.depth_enable, original.stencil_enable,
                     shader.memexport, shader.dxbc != 0, target->key.base_tiles, target->key.pitch_pixels,
                     uint32_t(target->format), blend.enable, uint32_t(blend.src), uint32_t(blend.dst), uint32_t(blend.op));
-      native_hdr_valid_ = false;
+        REXLOG_INFO("gow2_native_hdr: rejection {}: visible {}x{}, allocation {}x{}, depth {}x{}; "
+                    "UI vertex {}, ready {}, rendered slots {:08X}, current slots {:08X}, sampled slots {:08X}, outputs {:X}, side effects {}, "
+                    "cube/volume {}, scene clamp-free {}, kills {}, alpha-test {}, GS {}, scene input {}; source0 {:08X}",
+                    rr::native_hdr::kFallbackNames[size_t(reason)], native_hdr_w_, native_hdr_h_, target->width, target->height,
+                    depth_target ? depth_target->width : 0, depth_target ? depth_target->height : 0,
+                    overlay_inputs.screen_vertex, overlay_inputs.textures_available, native_hdr_ui_render_sources_, native_hdr_ui_current_sources_,
+                    shader.texture_slots_2d, shader.color_targets_written, overlay_inputs.shader_side_effects,
+                    overlay_inputs.cube_or_volume, shader.scene_overlay_clamp_free, shader.kills,
+                    (constants.sys0[0] & 32u) != 0, original.gs != 0, NativeSceneInput() != 0, native_hdr_source_fetch_[1]);
+        for (uint32_t slots = shader.texture_slots_2d; slots; slots &= slots - 1) {
+          const uint32_t slot = uint32_t(std::countr_zero(slots));
+          gpu::TextureDesc desc;
+          const auto texture = slot < native_hdr_ui_view_count_ ? native_hdr_ui_views_[slot].texture : 0;
+          const bool available = texture && backend_->TextureInfo(texture, desc);
+          REXLOG_INFO("gow2_native_hdr: rejected input PS {:016X} slot {}: texture {}, available {}, format {}, "
+                      "{}x{} mips {}, historical {}, current {}", shader.ucode_hash, slot, texture, available,
+                      uint32_t(desc.format), desc.width, desc.height, desc.mips,
+                      (native_hdr_ui_render_sources_ & (1u << slot)) != 0,
+                      (native_hdr_ui_current_sources_ & (1u << slot)) != 0);
+        }
+      }
+      FailNativeHdr(reason, shader.ucode_hash);
       return;
     }
     if (scene) {
       native_hdr_valid_ = false;
-      ++native_hdr_generation_;
       if (original.color_blend[0].enable || state.scissor.x || state.scissor.y ||
-          state.viewport.x != 0 || state.viewport.y != 0) return;
+          state.viewport.x != 0 || state.viewport.y != 0) {
+        FailNativeHdr(rr::native_hdr::FallbackReason::kSceneSetup, shader.ucode_hash); return;
+      }
       const uint32_t width = target->width;
       const uint32_t height = std::min<uint32_t>(target->height, state.scissor.height);
       if (!width || !height || state.scissor.width < width || state.viewport.width < float(width) ||
-          state.viewport.height < float(height)) return;
-      if (!native_hdr_color_ || native_hdr_w_ != width || native_hdr_h_ != height) {
-        if (native_hdr_color_) backend_->DestroyTexture(native_hdr_color_);
-        if (native_hdr_aa_) backend_->DestroyTexture(native_hdr_aa_), native_hdr_aa_ = 0;
-        gpu::TextureDesc td;
-        td.width = width; td.height = height; td.format = gpu::Format::kR16G16B16A16Float;
-        td.usage = gpu::kUsageSampled | gpu::kUsageRenderTarget | gpu::kUsageStorage;
-        td.debug_name = "Native HDR scene and bounded HUD (linear FP16)";
-        native_hdr_color_ = backend_->CreateTexture(td);
-        native_hdr_w_ = width; native_hdr_h_ = height;
+          state.viewport.height < float(height)) {
+        FailNativeHdr(rr::native_hdr::FallbackReason::kSceneSetup, shader.ucode_hash); return;
       }
-      if (!native_hdr_color_) return;
+      if (!SeedNativeTarget(*target, width, height, false)) {
+        FailNativeHdr(rr::native_hdr::FallbackReason::kResource, shader.ucode_hash); return;
+      }
       native_hdr_key_ = target->key;
     }
-    const auto pixel = scene_ui ? cache_->GetNativeSceneUi(ps_.dwords, ps_.count) :
+    const auto pixel = scene_pair ? cache_->GetNativeSceneOverlay(shader.ucode_hash, ps_.dwords, ps_.count, hdr_inputs) :
+        overlay ? cache_->GetNativeOverlay(shader.ucode_hash, ps_.dwords, ps_.count, overlay_mode) :
+        scene_ui ? cache_->GetNativeSceneUi(ps_.dwords, ps_.count) :
         cache_->GetNativeHdr(shader.ucode_hash, ps_.dwords, ps_.count, canvas_material);
-    auto pipeline_desc = original;
+    auto pipeline_desc = overlay || scene_pair ? rr::native_hdr::OverlayPipeline(original, overlay_mode) : original;
     pipeline_desc.ps = pixel;
     pipeline_desc.color_formats[0] = gpu::Format::kR16G16B16A16Float;
-    pipeline_desc.depth_format = gpu::Format::kUnknown;
-    if (scene || scene_ui) {
-      if (original.gs) { native_hdr_valid_ = false; return; }
+    if (!(overlay || scene_pair) || !has_tests) pipeline_desc.depth_format = gpu::Format::kUnknown;
+    if (scene || scene_ui || scene_pair) {
+      if (original.gs) { FailNativeHdr(rr::native_hdr::FallbackReason::kSceneSetup, shader.ucode_hash); return; }
       if (backend_->GetShaderIL() == gpu::ShaderIL::kDxil) {
         const auto& twin = cache_->GetDxilTwin(vs_.hash, vs_.dwords, vs_.count);
         cache_->WaitReady(twin, 100.0);
-        if (!twin.handle) { native_hdr_valid_ = false; return; }
+        if (!twin.handle) { FailNativeHdr(rr::native_hdr::FallbackReason::kVertex, shader.ucode_hash); return; }
         pipeline_desc.vs = twin.handle;
       }
     }
-    if (scene_ui) {
+    if (scene_ui || scene_pair) {
       if (original.gs || !native_hdr_ui_view_count_ || !native_hdr_ui_views_[0].texture ||
-          !EnsureNativeSceneUi()) { native_hdr_valid_ = false; return; }
+          !EnsureNativeSceneUi()) { FailNativeHdr(rr::native_hdr::FallbackReason::kResource, shader.ucode_hash); return; }
       pipeline_desc.color_count = 2;
       pipeline_desc.color_formats[1] = pipeline_desc.color_formats[0];
       pipeline_desc.color_write_masks[1] = pipeline_desc.color_write_masks[0];
       pipeline_desc.color_blend[1] = pipeline_desc.color_blend[0];
     }
     const auto pipeline = pixel ? backend_->GetGraphicsPipeline(pipeline_desc) : 0;
-    if (!pipeline) { native_hdr_valid_ = false; return; }
+    if (!pipeline) { FailNativeHdr(rr::native_hdr::FallbackReason::kShader, shader.ucode_hash); return; }
+    if (scene_pair) {
+      if (!native_hdr_scene_background_) {
+        const auto shader = cache_->GetBuiltin("native_scene_overlay_background", rr::native_hdr::kPrepareSceneOverlayCs, gpu::ShaderStage::kCompute);
+        if (shader) native_hdr_scene_background_ = backend_->CreateComputePipeline(shader);
+      }
+      if (!native_hdr_scene_background_) { FailNativeHdr(rr::native_hdr::FallbackReason::kResource, shader.ucode_hash); return; }
+      native_hdr_pair_region_={int32_t(std::min(state.scissor.x,native_hdr_w_)),int32_t(std::min(state.scissor.y,native_hdr_h_)),
+          int32_t(std::min(state.scissor.x+state.scissor.width,native_hdr_w_)),
+          int32_t(std::min(state.scissor.y+state.scissor.height,native_hdr_h_))};
+      const auto& region=native_hdr_pair_region_;
+      if(region.x1<=region.x0 || region.y1<=region.y0) {native_hdr_pending_target_=target->id;return;}
+      gpu::ComputeBindings prepare;
+      prepare.constants[0]=region.x1-region.x0;prepare.constants[1]=region.y1-region.y0;
+      prepare.constants[2]=region.x0;prepare.constants[3]=region.y0;prepare.constant_count=4;
+      prepare.srv[0] = native_hdr_color_; prepare.srv[1] = target->texture;
+      prepare.uav_texture = native_hdr_ui_high_; prepare.uav2_texture = native_hdr_ui_low_;
+      backend_->Dispatch(native_hdr_scene_background_, prepare, (region.x1-region.x0+7)/8, (region.y1-region.y0+7)/8, 1);
+      if(!BindNativeSceneInputs(hdr_inputs,shader.texture_slots_2d)) {
+        FailNativeHdr(rr::native_hdr::FallbackReason::kResource,shader.ucode_hash);return;
+      }
+    }
     if (scene_ui) {
       gpu::ComputeBindings prepare;
       prepare.constants[0] = native_hdr_w_; prepare.constants[1] = native_hdr_h_; prepare.constant_count = 4;
@@ -4048,12 +4604,48 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       native_hdr_ui_views_[31].bits_view = false;
       backend_->SetTextures(native_hdr_ui_views_, native_hdr_ui_samplers_, 32, native_hdr_ui_sampler_count_);
     }
+    gpu::TextureDesc replay_desc;
+    const bool replay_known=backend_->TextureInfo(scene_pair?native_hdr_ui_high_:native_hdr_color_,replay_desc);
+    const bool padded_stencil = (overlay || scene_pair) && has_tests && (!replay_known ||
+        depth_target->width != replay_desc.width || depth_target->height != replay_desc.height);
+    if (padded_stencil) {
+      if (!native_hdr_ui_copy_pipe_) {
+        const auto copy = cache_->GetBuiltin("native_ui_copy_cs", rr::native_hdr::kCopyForUiCs, gpu::ShaderStage::kCompute);
+        if (copy) native_hdr_ui_copy_pipe_ = backend_->CreateComputePipeline(copy);
+      }
+      const gpu::Rect region{int32_t(state.scissor.x), int32_t(state.scissor.y),
+          int32_t(state.scissor.x + state.scissor.width), int32_t(state.scissor.y + state.scissor.height)};
+      if (!native_hdr_stencil_replay_.Prepare(*backend_, native_hdr_ui_copy_pipe_, scene_pair ? native_hdr_ui_high_ : native_hdr_color_,
+          native_hdr_w_, native_hdr_h_, depth_target->width, depth_target->height, &region)) {
+        FailNativeHdr(rr::native_hdr::FallbackReason::kResource, shader.ucode_hash); return;
+      }
+      if(scene_pair && !native_hdr_pair_stencil_low_.Prepare(*backend_,native_hdr_ui_copy_pipe_,native_hdr_ui_low_,
+          native_hdr_w_,native_hdr_h_,depth_target->width,depth_target->height,&region)) {
+        FailNativeHdr(rr::native_hdr::FallbackReason::kResource,shader.ucode_hash);return;
+      }
+      ++native_hdr_stencil_draws_;
+    }
     SystemConstants hdr_constants = constants;
     hdr_constants.sys2[0] = std::bit_cast<uint32_t>(HdrPeak() / HdrSceneWhite());
     hdr_constants.sys2[1] = std::bit_cast<uint32_t>(HdrUiWhite() / HdrSceneWhite());
     backend_->SetConstants(gpu::ShaderStage::kPixel, gpu::kCbSystem, &hdr_constants, sizeof(hdr_constants));
     backend_->SetPipeline(pipeline);
-    issue(nullptr, 0, scene_ui ? native_hdr_ui_high_ : native_hdr_color_, scene_ui ? native_hdr_ui_low_ : 0);
+    issue((overlay || scene_pair) && has_tests ? depth_target : nullptr, 0,
+          padded_stencil ? native_hdr_stencil_replay_.texture : scene_ui || scene_pair ? native_hdr_ui_high_ : native_hdr_color_,
+          scene_pair && padded_stencil ? native_hdr_pair_stencil_low_.texture : scene_ui || scene_pair ? native_hdr_ui_low_ : 0);
+    if (padded_stencil) {
+      const auto& region = native_hdr_stencil_replay_.region;
+      rr::native_hdr::StencilReplayTarget::Copy(*backend_, native_hdr_ui_copy_pipe_, native_hdr_stencil_replay_.texture,
+          scene_pair ? native_hdr_ui_high_ : native_hdr_color_, region.x1-region.x0, region.y1-region.y0, region.x0, region.y0);
+      if(scene_pair) rr::native_hdr::StencilReplayTarget::Copy(*backend_,native_hdr_ui_copy_pipe_,native_hdr_pair_stencil_low_.texture,
+          native_hdr_ui_low_,region.x1-region.x0,region.y1-region.y0,region.x0,region.y0);
+    }
+    if (scene_pair) {
+      native_hdr_pending_scene_pair_ = true;
+      ++native_hdr_effect_count_;
+      backend_->SetTextures(native_hdr_ui_views_, native_hdr_ui_samplers_, native_hdr_ui_view_count_, native_hdr_ui_sampler_count_);
+      tex_memo_valid_ = false;
+    }
     if (scene_ui) {
       gpu::ComputeBindings mix;
       mix.constants[0] = native_hdr_w_; mix.constants[1] = native_hdr_h_;
@@ -4068,6 +4660,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     backend_->SetConstants(gpu::ShaderStage::kPixel, gpu::kCbSystem, &constants, sizeof(constants));
     backend_->SetPipeline(original_pipeline);
     native_hdr_valid_ = true;
+    if (before_original) native_hdr_pending_target_ = target->id;
+    else CommitNativeTarget(*target);
   }
   gpu::PipelineHandle smaa_edge_ = 0, smaa_weight_ = 0, smaa_blend_ = 0;
   gpu::TextureHandle smaa_color_ = 0, smaa_edges_ = 0, smaa_weights_ = 0, smaa_area_ = 0, smaa_search_ = 0;
@@ -4180,7 +4774,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (!native_hdr_smaa_blend_) {
         gpu::GraphicsPipelineDesc d;
         d.vs = cache_->GetBuiltin("smaa_blend_vs", rr::smaa::Source(rr::smaa::kBlendVs), gpu::ShaderStage::kVertex);
-        d.ps = cache_->GetBuiltin("native_hdr_smaa_ps", rr::smaa::Source(rr::smaa::kT2xBlendPs), gpu::ShaderStage::kPixel);
+        d.ps = cache_->GetBuiltin("native_hdr_smaa_padded_ps", rr::smaa::NativeHdrBlendSource(), gpu::ShaderStage::kPixel);
         d.depth_clip = false; d.color_count = 1;
         d.color_formats[0] = gpu::Format::kR16G16B16A16Float; d.color_write_masks[0] = 15;
         if (d.vs && d.ps) native_hdr_smaa_blend_ = backend_->GetGraphicsPipeline(d);
@@ -9583,7 +10177,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const uint32_t sampler_count = 32u - uint32_t(std::countl_zero(t2d | tcube | t3d));  // fetch slot = sampler
       const auto st_t0 = std::chrono::steady_clock::now();  // 0.4.5 texture-time research
       backend_->SetTextures(views, samplers, count, sampler_count);
-      if (scene_ui_bind) {
+      if (hdr_ && needs_ps) {
         native_hdr_ui_view_count_ = count;
         native_hdr_ui_sampler_count_ = sampler_count;
         std::copy_n(views, count, native_hdr_ui_views_);
@@ -9609,11 +10203,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     } else {
       tex_memo_valid_ = false;
       backend_->SetTextures(nullptr, nullptr);
-      if (scene_ui_bind) native_hdr_ui_view_count_ = 0;
+      if (hdr_ && needs_ps) native_hdr_ui_view_count_ = native_hdr_ui_sampler_count_ = 0;
       if (report_on_ || StatsTexturesNow()) RepNoteTextures(nullptr, nullptr, 0, 0);  // patch 0101, 0124
       if (t2d | tcube | t3d) stand_ins = uint32_t(std::popcount(t2d | tcube | t3d));  // texture cache switched off
     }
     if (stand_ins) ++stats_.texture_dependent;  // some slot read the white stand-in
+    if (hdr_ && needs_ps) {
+      std::copy_n(&r[kRegFetchConst], 192, native_hdr_source_fetch_);
+      native_hdr_ui_sources_ready_ = use_textures_ && !stand_ins;
+      native_hdr_ui_render_sources_ = 0;
+      native_hdr_ui_current_sources_ = 0;
+      if (psg->texture_slots_2d) {
+        native_hdr_ui_render_sources_ = textures_->RenderSourceMask(psg->texture_slots_2d);
+        native_hdr_ui_current_sources_ = textures_->RenderSourceMask(psg->texture_slots_2d, false);
+      }
+    }
     textures_part.Switch(kPartState);  // the pipeline description
 
     // Pipeline.
@@ -10016,7 +10620,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       for (uint32_t i = 0; i < 4; ++i) rts[i] = colour_rt[i] ? colour_rt[i]->texture : 0;
       if (hdr_target) rts[0] = hdr_target;
       if (hdr_second) rts[1] = hdr_second;
-      if (stats_frame_ && frame_ == uint64_t(stats_frame_)) {  // patch 0121
+      if (!hdr_target && stats_frame_ && frame_ == uint64_t(stats_frame_)) {  // patch 0121
         std::vector<const rr::RenderTarget*> now;
         for (uint32_t i = 0; i < 4; ++i) if (colour_rt[i]) now.push_back(colour_rt[i]);
         // Patch 0122: after each of the first N draws too (the previous draw's targets, before this one is issued).
@@ -10087,8 +10691,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (exports && REXCVAR_GET(gow2_renderer_export_prepare_mirror)) MarkExports(r, vsg, true);  // patch 0024
     if (export_shader) backend_->SetGuestWritable(true);
     if (hl_format_ && up_scene_done_ && !export_shader) HudlessDraw(colour_rt, ps, prim, index_count, depth_writes);
+    if (psg && !export_shader) NativeHdrDraw(d, pipeline, vsg, *psg, colour_rt[0], ps, sc, issue, true, target);
     issue(target, 0);
-    if (psg && !export_shader) NativeHdrDraw(d, pipeline, vsg, *psg, colour_rt[0], ps, sc, issue);
+    if (psg && !export_shader) NativeHdrDraw(d, pipeline, vsg, *psg, colour_rt[0], ps, sc, issue, false, target);
     if (export_shader) backend_->SetGuestWritable(false);
     if (exports) {
       ++stats_.memexport_draws;
@@ -10532,6 +11137,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
 
   bool WordTransfer(const rr::RenderTarget& src, rr::RenderTarget& dst, const gpu::Rect& rect) {
+    const uint64_t previous_version = dst.write_gen;
     const bool dst_bits = BitsClass(dst.key.storage_class);
     auto& cache = dst_bits ? word_transfer_bits_pipelines_ : word_transfer_pipelines_;
     auto it = cache.find(dst.format);
@@ -10579,6 +11185,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     backend_->SetConstants(gpu::ShaderStage::kPixel, gpu::kCbSystem, c, sizeof(c));
     backend_->Draw(3);
     Wrote(dst);  // job 182
+    SyncNativeReferenceRegion(dst, previous_version, rect);
     ++stats_.transfer_passes;
     return true;
   }
@@ -10629,6 +11236,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
 
   bool ColourTransfer(const rr::RenderTarget& src, rr::RenderTarget& dst, const gpu::Rect& rect) {
+    const uint64_t previous_version = dst.write_gen;
     const bool bits = BitsClass(dst.key.storage_class);  // same storage class on both sides
     auto& cache = bits ? colour_transfer_bits_pipelines_ : colour_transfer_pipelines_;
     auto it = cache.find(dst.format);
@@ -10662,6 +11270,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     backend_->SetConstants(gpu::ShaderStage::kPixel, gpu::kCbSystem, c, sizeof(c));
     backend_->Draw(3);
     Wrote(dst);  // job 182
+    TransferNativeColour(src, dst, previous_version, rect);
     ++stats_.transfer_passes;
     return true;
   }
@@ -12551,7 +13160,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     // The emulator writes the destination (to guest memory with --readback_resolve): textures and vertex ranges there
     // are stale for us from now on.
-    if (info.dest_extent_length) watch_->Bump(info.dest_extent_start, info.dest_extent_length);
+    if (info.dest_extent_length) {
+      native_hdr_transport_.BeginWrite(info.dest_extent_start, info.dest_extent_length,
+          [&](uint32_t start,uint32_t length) { return watch_->Version(start,length); });
+      watch_->Bump(info.dest_extent_start, info.dest_extent_length);
+    }
     if (ProbeFrame() && probe_resolves_.size() < 64)
       probe_resolves_.push_back(std::format("resolve {} after draw {}: {} {}x{} colour fmt {} base {} -> dest {:08X} fmt {} "
                                             "exp {}", copy, draw_index_, info.is_depth ? "depth" : "colour",
@@ -12904,8 +13517,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const rr::PixelRect pr = HostRect(*rt, info.x0, info.y0, info.x1, info.y1);
     PrepareColourTarget(*rt, OwnershipForRect(pr), false, 0);
     const gpu::Rect rect = ToGpuRect(pr);
+    const uint64_t previous_version = rt->write_gen;
     backend_->ClearColor(rt->texture, rgba, &rect, 1);
     Wrote(*rt);
+    SyncNativeReferenceRegion(*rt, previous_version, rect);
     ++stats_.colour_clears_resolve;
     if (trace_on_) TraceEvent(*rt, pr, "resolve clear (colour)");
   }
@@ -13123,10 +13738,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       d.info = info;
       d.endian = endian;
       d.scaled = sd ? sd->texture : 0;
-      d.native_hdr_generation = 0;
-      if (native_hdr_valid_ && rt->key == native_hdr_key_ && resolve_source == rt->texture &&
-          !ms_src && !dx && !dy && w * source_scale == native_hdr_w_ && h * source_scale == native_hdr_h_)
-        d.native_hdr_generation = native_hdr_generation_;
+      d.native_hdr_generation = PublishNativeResolve(*rt,info,source_scale,
+          scaled_mem?res_scale_:1,dx,dy,w,h,endian,exp_bias,swap,
+          resolve_source==rt->texture && !ms_src && info.dest_format==6 && !narrow_or_wide &&
+          Bits(dinfo,13,3)==0);
     }
   }
   static bool rt_msaa_(uint32_t msaa) { return msaa != 0; }

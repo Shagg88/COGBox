@@ -834,7 +834,8 @@ struct Gen {
       }
       (void)replicate;
       Line("float4 vr = " + e + ";");
-      if (a.vector_result.clamp) Line("vr = xe_sat4(vr);");
+      if (a.vector_result.clamp) Line(a.vector_result.hdr_upper_extension ?
+          "vr = float4(hdrScene ? max(vr.xyz, 0.0) : saturate(vr.xyz), saturate(vr.w));" : "vr = xe_sat4(vr);");
       vr = "vr";
       if (a.vector_opcode >= AluVectorOpcode::kKillEq && a.vector_opcode <= AluVectorOpcode::kKillNe) EmitKill("vr.x != 0.0");
     }
@@ -901,7 +902,8 @@ struct Gen {
       if (sets_ps) Line("ps = " + e + ";");
       if (a.scalar_opcode >= AluScalarOpcode::kKillsEq && a.scalar_opcode <= AluScalarOpcode::kKillsOne) EmitKill("ps != 0.0");
       // The clamp applies to the written value; ps keeps the unclamped result.
-      Line(std::string("float sr = ") + (a.scalar_result.clamp ? "xe_sat(ps)" : "ps") + ";");
+      Line(std::string("float sr = ") + (a.scalar_result.clamp ?
+          (a.scalar_result.hdr_upper_extension ? "(hdrScene ? max(ps, 0.0) : xe_sat(ps))" : "xe_sat(ps)") : "ps") + ";");
     }
 
     // Writes.
@@ -1527,8 +1529,17 @@ Translation TranslateToHlsl(const Program& program, const HlslOptions& options) 
     }
     if (options.native_hdr_linear) {
       s += "  // Linear-light composition in scene reference-white units.\n";
-      if (options.native_hdr_modulation) {
-        s += "  float3 nativeColor = pow(saturate(o.color0.rgb), 2.2);\n";
+      if (options.native_hdr_premultiplied) {
+        s += "  float uiAlpha = saturate(o.color0.a);\n";
+        s += "  float3 coveredEncoded = min(saturate(o.color0.rgb), uiAlpha);\n";
+        s += "  float3 additiveEncoded = max(saturate(o.color0.rgb) - uiAlpha, 0.0);\n";
+        s += "  float3 nativeColor = pow(max(coveredEncoded / max(uiAlpha, 1e-6), 0.0), 2.2) * uiAlpha\n";
+        s += "                     + pow(max(additiveEncoded, 0.0), 2.2);\n";
+        s += "  o.color0.a = uiAlpha;\n";
+      } else if (options.native_hdr_modulation) {
+        s += options.native_hdr_modulation_x2
+            ? "  float3 nativeColor = pow(max(saturate(o.color0.rgb) * 2.0, 0.0), 2.2);\n"
+            : "  float3 nativeColor = pow(saturate(o.color0.rgb), 2.2);\n";
         s += "  o.color0.a = saturate(o.color0.a);\n";
       } else {
         s += "  float3 nativeColor = pow(min(max(o.color0.rgb, 0.0), 65504.0), 2.2);\n";

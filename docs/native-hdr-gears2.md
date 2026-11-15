@@ -259,3 +259,11 @@ Live DevKit evidence confirms the dedicated 3840x2160 FP16 image and HDR10 swapc
 The `gn_hdrtest` utility (an excluded test target, not an alternate game executable) checks the real AA wrappers, native encoder and damage/UI composite. Readbacks verify retained HDR scene energy, cancellation of overbright UI-only emission, original tint, partial coverage and negative-safe gamma on both APIs. The captured damage material and matching vertex shader also compile into FP16 MRT pipelines on both APIs. The AA fixture's real RGB `(4,2,1)` survives above reference white.
 
 The latest damage/popup and reload-firing changes still require an in-game check after restarting the rebuilt executable. Vulkan window presentation passes the isolated reproduction above; the complete rebuilt Vulkan game still needs its next launch check. Other tone-map permutations and HDR frame generation remain unvalidated. This profile does not claim complete scene coverage or measured exact SDR grading parity.
+
+## Automatic overlay coverage
+
+Common late UI materials now use render-state and resource-provenance rules
+instead of requiring a new pixel-shader profile for each instance. A guarded
+scene-reading path also preserves HDR through eligible post effects. See
+[automatic HDR overlays](automatic-hdr-overlays.md) for supported blends,
+clipping behavior, validation and remaining fallback cases.

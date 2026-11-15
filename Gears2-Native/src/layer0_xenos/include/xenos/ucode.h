@@ -105,6 +105,8 @@ struct Result {
   // Write mask exactly as in the microcode (components the target may not have are kept).
   uint32_t write_mask = 0;
   Swizzle components[4] = {Swizzle::kX, Swizzle::kY, Swizzle::kZ, Swizzle::kW};
+  // Authored HDR-pair IR only. Original decoding never sets this flag.
+  bool hdr_upper_extension = false;
 };
 
 struct Operand {

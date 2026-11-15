@@ -40,6 +40,7 @@
 
 #include <xenos/hlsl.h>
 #include <xenos/renderer/gpu.h>
+#include <xenos/renderer/hdr_overlay.h>
 #include <xenos/ucode.h>
 
 namespace xenos::renderer {
@@ -97,6 +98,7 @@ struct GuestShader {
   // register_static_address_bound / uses_register_dynamic_addressing, for the pixel interpolator mask).
   uint32_t register_bound = 0;
   bool dynamic_addressing = false;
+  bool scene_overlay_clamp_free = true;
   uint32_t simplifications = 0;  // count of per-shader translator simplifications (hlsl.h)
   // Patch 0045 (Edge): a vertex shader some draw has used (or that the start-up warm-up brought from an earlier
   // session). A new one drawing to a render target not drawn recently makes the draw wait for its shaders.
@@ -191,6 +193,9 @@ class ShaderCache {
   // Does not replace the guest's normal shader or change its constant layout.
   gpu::ShaderHandle GetNativeHdr(uint64_t hash, const uint32_t* dwords, size_t count, bool canvas_material = false);
   gpu::ShaderHandle GetNativeSceneUi(const uint32_t* dwords, size_t count);
+  gpu::ShaderHandle GetNativeOverlay(uint64_t hash, const uint32_t* dwords, size_t count,
+                                     native_hdr::OverlayMode mode);
+  gpu::ShaderHandle GetNativeSceneOverlay(uint64_t hash, const uint32_t* dwords, size_t count, uint32_t hdr_mask = 1);
   // True when `s` is no longer pending (ready or failed) on return; waits at most budget_ms.
   bool WaitReady(const GuestShader& s, double budget_ms);
   // Our own fixed shaders (rectangle-list geometry shader, resolve compute shaders), compiled synchronously.
@@ -290,6 +295,8 @@ class ShaderCache {
   std::unordered_map<uint64_t, std::unique_ptr<GuestShader>> shaders_[2];  // [vertex]
   std::unordered_map<std::string, gpu::ShaderHandle> builtins_;
   std::unordered_map<uint64_t, gpu::ShaderHandle> native_hdr_shaders_;
+  std::unordered_map<uint64_t, std::unordered_map<uint8_t, gpu::ShaderHandle>> native_hdr_overlay_shaders_;
+  std::unordered_map<uint64_t, std::unordered_map<uint32_t,gpu::ShaderHandle>> native_hdr_scene_overlays_;
   ShaderCacheStats stats_;
   bool compact_float_constants_ = false;
   bool tex_sign_by_swizzle_ = false;  // patch 0024

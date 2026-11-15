@@ -2784,11 +2784,29 @@ struct Gen {
         // original scene grading extended above white, with a hue-preserving
         // shoulder before the UI blend. No expansion of finished SDR pixels.
         a.OpMul(R(t), S(Oc(0)), Sys(3).Select(0), opt.native_hdr_ui || opt.native_hdr_modulation);
-        a.OpMax(R(t, kXYZ), S(t), LF(0.0f));
-        a.OpMin(R(t, kXYZ), S(t), LF(65504.0f));
-        a.OpLog(R(t, kXYZ), S(t));
-        a.OpMul(R(t, kXYZ), S(t), LF(2.2f));
-        a.OpExp(R(t, kXYZ), S(t));
+        if (opt.native_hdr_modulation_x2) a.OpMul(R(t, kXYZ), S(t), LF(2.0f));
+        if (opt.native_hdr_premultiplied) {
+          const uint32_t covered = Push(), additive = Push(), alpha = Push();
+          a.OpMax(R(alpha, kX), S1(t, 3), LF(1e-6f));
+          a.OpMin(R(covered, kXYZ), S(t), S1(t, 3));
+          a.OpAdd(R(additive, kXYZ), S(t), -S1(t, 3));
+          a.OpMax(R(additive, kXYZ), S(additive), LF(0.0f));
+          a.OpDiv(R(covered, kXYZ), S(covered), S1(alpha, 0));
+          a.OpLog(R(covered, kXYZ), S(covered));
+          a.OpMul(R(covered, kXYZ), S(covered), LF(2.2f));
+          a.OpExp(R(covered, kXYZ), S(covered));
+          a.OpMul(R(covered, kXYZ), S(covered), S1(t, 3));
+          a.OpLog(R(additive, kXYZ), S(additive));
+          a.OpMul(R(additive, kXYZ), S(additive), LF(2.2f));
+          a.OpExp(R(additive, kXYZ), S(additive));
+          a.OpAdd(R(t, kXYZ), S(covered), S(additive));
+        } else {
+          a.OpMax(R(t, kXYZ), S(t), LF(0.0f));
+          a.OpMin(R(t, kXYZ), S(t), LF(65504.0f));
+          a.OpLog(R(t, kXYZ), S(t));
+          a.OpMul(R(t, kXYZ), S(t), LF(2.2f));
+          a.OpExp(R(t, kXYZ), S(t));
+        }
         if (opt.native_hdr_ui) {
           a.OpMul(R(t, kXYZ), S(t), Sys(5).Select(1));
         } else if (!opt.native_hdr_modulation) {

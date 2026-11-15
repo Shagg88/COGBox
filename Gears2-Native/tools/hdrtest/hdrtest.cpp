@@ -16,6 +16,10 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <d3d12.h>
+#include <d3d12sdklayers.h>
+#endif
 
 namespace gpu = xenos::renderer::gpu;
 namespace up = xenos::renderer::upscale;
@@ -116,11 +120,19 @@ static int UiCompositeCheck(gpu::Backend& backend,xenos::renderer::ShaderCompile
 }
 #include "psychov35_checks.h"
 #include "modulation_checks.h"
+#include "automatic_overlay_checks.h"
+#include "transport_checks.h"
 int main(int argc,char** argv) {
   const bool vulkan=argc>1&&std::string(argv[1])=="vulkan";
   const std::string mode=argc>2?argv[2]:"off";
   const bool quality=argc>3&&std::string(argv[3])=="quality";
   rex::cvar::SetFlagByName("gow2_fsr_vulkan","true");
+#ifdef _WIN32
+  if(!vulkan && argc>3 && std::string(argv[3])=="debug") {
+    ID3D12Debug* debug=nullptr;
+    if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) { debug->EnableDebugLayer();debug->Release(); }
+  }
+#endif
   auto backend=vulkan?gpu::CreateVulkanBackend():gpu::CreateD3D12Backend();
   gpu::BackendOptions options;options.upload_ring_mb=(mode=="encoder_bench"||mode=="present_bench")?128:32;options.guest_memory_bytes=16ull<<20;
   std::string error;
@@ -128,6 +140,11 @@ int main(int argc,char** argv) {
   auto compiler=xenos::renderer::CreateDxcCompiler({},error);
   if(!compiler) { std::printf("FAIL compiler: %s\n",error.c_str());return 3; }
   if(mode=="ui")return UiCompositeCheck(*backend,*compiler);
+  if(mode=="automatic_overlays")return AutomaticOverlayCheck(*backend,*compiler);
+  if(mode=="padded_stencil")return PaddedStencilOverlayCheck(*backend,*compiler);
+  if(mode=="automatic_scene")return AutomaticSceneOverlayCheck(*backend,*compiler);
+  if(mode=="hdr_transport")return HdrTransportCheck(*backend,*compiler);
+  if(mode=="transport_bench")return HdrTransportBench(*backend,*compiler);
   if(mode=="modulation_values" && argc==4)return ModulationValuesCheck(*backend,*compiler,argv[3]);
   if(mode=="gears2" || mode=="gears3")return Psycho35SceneCheck(*backend,*compiler,mode=="gears3");
   auto shader=[&](const char* source,gpu::ShaderStage stage) {

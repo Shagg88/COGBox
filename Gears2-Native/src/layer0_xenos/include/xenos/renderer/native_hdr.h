@@ -13,14 +13,15 @@ inline constexpr uint64_t kGears3Scene = 0x2F284B68A112ED3Eull;
 inline bool IsScene(uint64_t hash) { return hash == kScene || hash == kGears3Scene; }
 inline bool IsCanvasVertex(uint64_t hash) {
   return hash == 0x868DFF11A6BDEBAAull || hash == 0xE775468CA654846Dull ||
-         hash == 0x6F83A894AB66D831ull || hash == 0x2E88B37100D9D0CEull;
+         hash == 0x6F83A894AB66D831ull || hash == 0x2E88B37100D9D0CEull ||
+         hash == 0xE49D26F998B9A5B3ull || hash == 0xF9EBE3D4293EC775ull; // Gears 3 menu Canvas
 }
 
 // Evaluate a scene-sampling Canvas material with both the real HDR scene and
 // its original SDR resolve. The difference is scene energy, not UI emission.
 // The generated game program stays transient; this contains only translator
 // interface names and authored glue. Fail closed if that interface changes.
-inline std::string SceneUiPairSource(std::string material) {
+inline std::string SceneUiPairSource(std::string material, bool general = false) {
   const auto replace = [&](const std::string& from, const std::string& to) {
     const auto at = material.find(from);
     if (at == std::string::npos) return false;
@@ -36,6 +37,18 @@ inline std::string SceneUiPairSource(std::string material) {
                "float xe_degamma1(float g) {\n"
                "  if (g > 1.0) return (1016.0 / 1023.0) * pow(max(g, 0.0), 2.2);")) return {};
   const std::string sample = "xe_tex_2d_0.Sample(xe_sampler_0, tc)";
+  if (general) {
+    // Never partially redirect a material that also reads scene0 by another
+    // sampling operation. Texture dimensions may still come from the original
+    // resource, whose extent is checked against the native proxy by the caller.
+    size_t cursor = 0;
+    while ((cursor = material.find("xe_tex_2d_0.", cursor)) != std::string::npos) {
+      if (material.compare(cursor, sample.size(), sample) != 0 &&
+          material.compare(cursor, sizeof("xe_tex_2d_0.GetDimensions(") - 1,
+                           "xe_tex_2d_0.GetDimensions(") != 0) return {};
+      cursor += 12;
+    }
+  }
   size_t at = 0, samples = 0;
   while ((at = material.find(sample, at)) != std::string::npos) {
     const std::string pair = "(hdrScene ? xe_hdr_scene.Sample(xe_sampler_0, tc) : " + sample + ")";
@@ -43,7 +56,7 @@ inline std::string SceneUiPairSource(std::string material) {
     at += pair.size();
     ++samples;
   }
-  if (samples != 4) return {};
+  if ((!general && samples != 4) || (general && !samples)) return {};
   material += R"(
 struct SceneUiPair { float4 hdr : SV_Target0; float4 sdr : SV_Target1; };
 SceneUiPair main(XePsIn input) {
@@ -95,10 +108,28 @@ inline constexpr UiProfile kUiProfiles[] = {
      0x5BF4E342D00F1593ull},  // Gears 3 two-sample UI blend; captured 160x80 BC3 image in both slots.
     {0x1C0932D0C22ECC2Aull, 21, 0x88FB1A623EDF043Full, true,
      0x2E88B37100D9D0CEull},  // Gears 3 destination-color UI modulation; captured 68x76 BC1 image.
+    {0xA1960D34295C6114ull, 135, 0xD2EDE72A3297542Bull, false,
+     0x0D6CF2CCA4EA03FBull}, // Captured late effect: BC3 128x128 + two mipmapped BC1 256x256 inputs.
 };
 inline const UiProfile* FindUi(uint64_t hash) {
   for (const auto& profile : kUiProfiles) if (profile.hash == hash) return &profile;
   return nullptr;
 }
+
+inline bool MatchesUiProfile(const UiProfile* profile, const uint32_t* dwords, size_t count) {
+  if (!profile || !dwords || count != profile->dwords) return false;
+  uint64_t fingerprint = 1469598103934665603ull; // existing ShaderCache profile seed
+  const auto* bytes = reinterpret_cast<const uint8_t*>(dwords);
+  for (size_t i = 0; i < count * sizeof(uint32_t); ++i) {
+    fingerprint ^= bytes[i];
+    fingerprint *= 0x100000001B3ull;
+  }
+  return fingerprint == profile->fingerprint;
+}
+
+// The shared rectangle-fill pixel program forwards vertex color only. It is
+// eligible only with its matching VS and renderer-validated screen geometry.
+inline constexpr UiProfile kColorFill{0xA4A965C189287B99ull, 9, 0xA68F00446E79F015ull,
+    false, 0x1E6883FCCDE1F688ull};
 
 }  // namespace xenos::renderer::native_hdr

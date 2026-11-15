@@ -180,6 +180,12 @@ class TextureCache {
   uint32_t DropScaledEntries();
   // Slots (bit k = fetch constant k) whose 2D view the last Bind took from a scaled texture.
   uint32_t LastScaledMask() const { return last_scaled_mask_; }
+  // Conservative provenance for the currently bound 2D textures. A source
+  // whose guest pages have held render/resolve data remains guarded unless
+  // all bytes match a previously proven CPU baseline. Without history, return
+  // only currently GPU-backed inputs (for fingerprint-verified UI profiles).
+  // Results are cached by the entry's content version.
+  uint32_t RenderSourceMask(uint32_t slots_2d, bool include_history = true);
 
   // Job 047 (resolve-through): a resolve into tiled guest memory at `base` (pitch in texels, 4 or 8 bytes per texel)
   // can write the cached texture that the GPU untile would load from those bytes, if one exists (single level, same
@@ -230,6 +236,11 @@ class TextureCache {
     gpu::Format format = gpu::Format::kUnknown;
     uint32_t base_start = 0, base_length = 0, mip_start = 0, mip_length = 0;
     uint64_t version = ~0ull;
+    uint64_t hdr_provenance_version = ~0ull;
+    bool hdr_render_source = true;
+    bool hdr_gpu_source = true;
+    uint64_t hdr_cpu_base_hash = 0, hdr_cpu_mip_hash = 0;
+    bool hdr_cpu_baseline = false;
     uint64_t checked_frame = ~0ull, callbacks_at_check = 0;
     uint64_t host_bytes = 0;
     uint64_t last_used = 0;  // frame of the last Bind

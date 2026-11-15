@@ -634,6 +634,70 @@ uint32_t UntileCode(gpu::Format f) {
   }
 }
 
+uint32_t TextureCache::RenderSourceMask(uint32_t slots_2d, bool include_history) {
+  uint32_t mask = last_scaled_mask_ & slots_2d;
+  for (uint32_t bits = slots_2d; bits; bits &= bits - 1) {
+    const uint32_t slot = uint32_t(std::countr_zero(bits));
+    auto* entry = slot_cache_[slot].entries[0];
+    if (!entry || !entry->texture || !entry->base_length) { mask |= 1u << slot; continue; }
+    if (entry->hdr_provenance_version != entry->version) {
+      bool gpu_current = false;
+      const auto rendered = [&](uint32_t start, uint32_t length) {
+        if (!length) return false;
+        const uint64_t end = uint64_t(start) + length;
+        bool history = false;
+        for (uint32_t page = start >> GuestWatch::kPageShift;
+             (uint64_t(page) << GuestWatch::kPageShift) < end; ++page) {
+          history |= !watch_.NeverResolved(page);
+          gpu_current |= watch_.GpuCurrent(page);
+        }
+        return history;
+      };
+      // Inspect both ranges even when the base has history: a mip may still
+      // contain current GPU data. A page invalidation alone cannot prove that
+      // the CPU replaced its entire contents.
+      const bool base_rendered = rendered(entry->base_start, entry->base_length);
+      const bool mip_rendered = rendered(entry->mip_start, entry->mip_length);
+      entry->hdr_render_source = base_rendered || mip_rendered;
+      entry->hdr_gpu_source = gpu_current;
+      const uint64_t version = watch_.Version(entry->base_start, entry->base_length) +
+                               watch_.Version(entry->mip_start, entry->mip_length);
+      if (version != entry->version) {
+        entry->hdr_render_source = entry->hdr_gpu_source = true;
+        entry->hdr_provenance_version = ~0ull;
+        mask |= 1u << slot;
+        continue;
+      }
+      if (!gpu_current && version == entry->version &&
+          (!entry->hdr_render_source || entry->hdr_cpu_baseline)) {
+        const uint64_t base_hash = XXH3_64bits(guest_ + entry->base_start, entry->base_length);
+        const uint64_t mip_hash = entry->mip_length ? XXH3_64bits(guest_ + entry->mip_start, entry->mip_length) : 0;
+        if (version == watch_.Version(entry->base_start, entry->base_length) +
+                       watch_.Version(entry->mip_start, entry->mip_length)) {
+          if (!entry->hdr_render_source) {
+            entry->hdr_cpu_base_hash = base_hash;
+            entry->hdr_cpu_mip_hash = mip_hash;
+            entry->hdr_cpu_baseline = true;
+          } else if (entry->hdr_cpu_base_hash == base_hash && entry->hdr_cpu_mip_hash == mip_hash) {
+            // The full allocation matches this texture's previously proven
+            // CPU-authored contents, including mips. Reused render memory no
+            // longer makes the restored atlas a scene input forever.
+            entry->hdr_render_source = false;
+          }
+        } else {
+          entry->hdr_render_source = entry->hdr_gpu_source = true;
+          entry->hdr_provenance_version = ~0ull;
+          mask |= 1u << slot;
+          continue;
+        }
+      }
+      entry->hdr_provenance_version = version == entry->version ? version : ~0ull;
+    }
+    if (include_history ? entry->hdr_render_source : entry->hdr_gpu_source) mask |= 1u << slot;
+  }
+  return mask;
+}
+
 uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t slots_cube, uint32_t slots_3d,
                             uint64_t frame, gpu::TextureView views[96], gpu::SamplerDesc samplers[32]) {
   PhaseScope bind_time(stats_.bind_ms);  // 0.4.5 texture-time research

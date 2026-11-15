@@ -6,6 +6,7 @@
 #include <xenos/dxbc_spirv.h>
 #include <xenos/hlsl.h>
 #include <xenos/renderer/native_hdr.h>
+#include <xenos/renderer/hdr_transport.h>
 #include <xenos/ucode.h>
 
 #include <rex/cvar.h>
@@ -237,6 +238,9 @@ void Analyse(const ucode::Program& program, GuestShader& s) {
   int color0_writes = 0;
   int32_t color0_constant = -1;
   auto result = [&](const ucode::Result& r) {
+    // Extending an arbitrary upper RGB clip would change the effect's
+    // semantics. Such scene-reading programs keep the explicit fallback.
+    if (r.clamp && (r.write_mask & 7)) s.scene_overlay_clamp_free = false;
     if (r.target == Target::kRegister && r.write_mask) reg(r.index, r.addressing);
     if (r.target == Target::kColor && r.index == 0 && r.write_mask) ++color0_writes;
     switch (r.target) {
@@ -251,6 +255,10 @@ void Analyse(const ucode::Program& program, GuestShader& s) {
       switch (ins.kind) {
         case Instruction::Kind::kAlu: {
           const ucode::Alu& a = ins.alu;
+          if (a.vector_opcode == ucode::AluVectorOpcode::kMin && (a.vector_result.write_mask & 7))
+            s.scene_overlay_clamp_free = false;
+          if (a.scalar_opcode == ucode::AluScalarOpcode::kMins && (a.scalar_result.write_mask & 7))
+            s.scene_overlay_clamp_free = false;
           const uint32_t v = uint32_t(a.vector_opcode);
           if (!a.IsVectorOpDefaultNop()) {
             if (v >= uint32_t(ucode::AluVectorOpcode::kKillEq) && v <= uint32_t(ucode::AluVectorOpcode::kKillNe))
@@ -1512,7 +1520,7 @@ gpu::ShaderHandle ShaderCache::GetNativeHdr(uint64_t hash, const uint32_t* dword
   auto options = TranslateOptions(false, 0, dwords, count);
   const auto* ui = native_hdr::FindUi(hash);
   const bool canvas = ui != nullptr || canvas_material;
-  if (ui && (count != ui->dwords || Fnv1a64(dwords, count * sizeof(uint32_t)) != ui->fingerprint)) return 0;
+  if (ui && !native_hdr::MatchesUiProfile(ui, dwords, count)) return 0;
   if (native_hdr::IsScene(hash)) {
     const bool gears3 = hash == native_hdr::kGears3Scene;
     if (count != (gears3 ? 150u : 282u) || Fnv1a64(dwords, count * sizeof(uint32_t)) !=
@@ -1538,6 +1546,52 @@ gpu::ShaderHandle ShaderCache::GetNativeHdr(uint64_t hash, const uint32_t* dword
   native_hdr_shaders_[hash] = shader;
   REXLOG_INFO("gow2_native_hdr: {} shader {:016X}: {}", canvas ? "bounded Canvas" : "extended scene", hash,
               shader ? "ready" : "FAILED (reference-white fallback)");
+  return shader;
+}
+
+gpu::ShaderHandle ShaderCache::GetNativeOverlay(uint64_t hash, const uint32_t* dwords, size_t count,
+                                                native_hdr::OverlayMode mode) {
+  if (!dxbc_ || !dwords || !count || mode == native_hdr::OverlayMode::kNone) return 0;
+  // A shader may be used as emission and as modulation. Its variants must not
+  // share a hash-only cache entry, and a failed variant is not retried per draw.
+  auto& variants = native_hdr_overlay_shaders_[hash];
+  const auto key = uint8_t(mode);
+  if (const auto found = variants.find(key); found != variants.end()) return found->second;
+  auto options = TranslateOptions(false, 0, dwords, count);
+  options.clamp_ui_output = true;
+  options.native_hdr_linear = true;
+  options.native_hdr_modulation = mode == native_hdr::OverlayMode::kModulation ||
+                                  mode == native_hdr::OverlayMode::kModulation2x;
+  options.native_hdr_ui = !options.native_hdr_modulation;
+  options.native_hdr_modulation_x2 = mode == native_hdr::OverlayMode::kModulation2x;
+  options.native_hdr_premultiplied = mode == native_hdr::OverlayMode::kPremultiplied;
+  const auto program = ucode::Decode(dwords, count, false, DecodeOptions());
+  const auto translated = TranslateDxbcFor(program, options, backend_.GetShaderIL() == gpu::ShaderIL::kSpirv);
+  const auto shader = translated.ok ? backend_.CreateShader(gpu::ShaderStage::kPixel,
+      translated.bytecode.data(), translated.bytecode.size()) : 0;
+  variants[key] = shader;
+  REXLOG_INFO("gow2_native_hdr: automatic overlay {:016X} mode {}: {}", hash, key,
+              shader ? "ready" : "FAILED (reference-white fallback)");
+  return shader;
+}
+
+gpu::ShaderHandle ShaderCache::GetNativeSceneOverlay(uint64_t hash, const uint32_t* dwords, size_t count, uint32_t hdr_mask) {
+  if (!dwords || !count) return 0;
+  auto& variants=native_hdr_scene_overlays_[hash];
+  if (const auto found = variants.find(hdr_mask); found != variants.end()) return found->second;
+  auto options = TranslateOptions(false, 0, dwords, count);
+  options.entry = "xe_scene_ui_material";
+  auto program = ucode::Decode(dwords, count, false, DecodeOptions());
+  uint32_t used_mask=0;
+  for(const auto& cf:program.control_flow) for(const auto& instruction:cf.instructions)
+    if(instruction.kind==ucode::Instruction::Kind::kTextureFetch && instruction.tfetch.has_fetch_constant &&
+       instruction.tfetch.dimension==ucode::FetchDimension::k2D) used_mask|=1u<<instruction.tfetch.fetch_constant;
+  native_hdr::ExtendSceneClamps(program,hdr_mask);
+  const auto source = native_hdr::TransportScenePairSource(hlsl::TranslateToHlsl(program, options).hlsl,hdr_mask,used_mask);
+  const auto shader = source.empty() ? 0 : GetBuiltin("hdr_transport_effect_" + std::to_string(hash)+"_"+std::to_string(hdr_mask), source, gpu::ShaderStage::kPixel);
+  variants[hdr_mask] = shader;
+  REXLOG_INFO("gow2_native_hdr: transported scene effect {:016X} inputs {:08X}: {}", hash,hdr_mask,
+              shader ? "ready" : "FAILED (resource transport)");
   return shader;
 }
 

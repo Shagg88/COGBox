@@ -267,3 +267,11 @@ contents in that same shader path therefore uses the current game grade.
 Different final-post-process shader permutations still need captures and
 profiles. Chapter access helps collect that evidence; it does not establish
 whole-game or multiplayer-map HDR coverage by itself.
+
+## Automatic overlay coverage
+
+Common late UI materials now use render-state and resource-provenance rules
+instead of requiring a new pixel-shader profile for each instance. A guarded
+scene-reading path also preserves HDR through eligible post effects. See
+[automatic HDR overlays](automatic-hdr-overlays.md) for supported blends,
+clipping behavior, validation and remaining fallback cases.
