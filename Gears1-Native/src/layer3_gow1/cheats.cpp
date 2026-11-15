@@ -77,7 +77,7 @@ void Gow1InstallCheats() {
 
 // FEngineLoop::Tick, overridden: the original, then queued console commands (ctx left as the original left it). The
 // override runs with --gow1_cheats on or off; it also drives the DualSense trigger feel (GitHub #245).
-void Gow1AdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers)
+void Gow1AdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers, --pad_trigger_rumble)
 extern "C" void __imp__sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base);
 extern "C" void sub_8222A6E0(PPCContext& __restrict ctx, uint8_t* base) {
   __imp__sub_8222A6E0(ctx, base);

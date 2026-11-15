@@ -144,3 +144,16 @@ Gears 3 and Judgment use the same runtime.
   (0 linear, 1 sRGB, 2 BT.709 = default, 3 power) and `--kernel_display_gamma_power`, as in Xenia Canary; this SDK had the
   answer of `VdGetCurrentDisplayGamma` fixed at 2 / 2.22222233. Defaults unchanged. A test switch for the Judgment brightness
   reports (GitHub #185 / #250). Apply it in the SDK root; it only touches `src/kernel/xboxkrnl/xboxkrnl_video.cpp`.
+- `sdk-patch104-xbox-impulse-triggers.diff` (0.6.3, GitHub #245; after 103, NOT BUILT yet - needs a runtime build and the
+  games' exes built against its headers): Xbox One / Series impulse triggers. `InputSystem::SetTriggerRumble(user, left,
+  right, ms)` sends `SDL_RumbleGamepadTriggers` to that player's SDL pads that report trigger motors
+  (`SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN`); nothing while `--vibration` is off, COGBox's UI is open or the window is
+  not in front. `--pad_trigger_rumble` (off by default) also turns on SDL's raw input controller driver on Windows: SDL
+  3.4's default Xbox path there is XInput, which has no trigger motors; SDL reaches them only through Windows.Gaming.Input
+  or GameInput, and its raw input driver (which pairs each pad with its WGI gamepad) is the one used here - the
+  stand-alone WGI and GameInput drivers are off by default as well. SDL turned the raw input driver off by default in May
+  2025 (Windows could stop delivering raw controller input until a reboot), which is why the option is off by default.
+  With it on, every XInput-class pad (Xbox 360, X-mode pads, Steam Input's virtual pad) moves to raw input: other SDL
+  GUIDs, a combined trigger axis, no Guide and no rumble until the pad's first input (a failed rumble is sent again with
+  that input), and pads added in raw input's order (split screen may differ from the ring lights). Over Bluetooth
+  Windows may drive no trigger motors even where SDL reports them. Apply it in the SDK root (`git apply`).

@@ -1,0 +1,382 @@
+From: Shagg <shagg.dev88@gmail.com>
+Subject: [PATCH] patch104 (GitHub #245): Xbox One / Series impulse triggers - InputSystem::SetTriggerRumble (--pad_trigger_rumble, off by default)
+
+SDL_RumbleGamepadTriggers on the SDL pads of one player that report SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN (others:
+no write); strengths 0-65535 and a duration SDL times (1 ms - 1 s; 0, 0 = stop). Nothing is sent - and a running pulse
+is stopped - while --vibration is off, while COGBox's UI blocks input, or while the game's window is not in front.
+On Windows the cvar also sets SDL_HINT_JOYSTICK_RAWINPUT before the gamepad subsystem starts: SDL 3.4's default Xbox
+path is XInput, which has no trigger motors; its raw input driver drives them through Windows.Gaming.Input (SDL
+disabled it by default in May 2025 because Windows could stop delivering raw controller input until a reboot - hence
+off by default). With it on, every XInput-class pad (Xbox 360, X-mode pads, Steam Input's virtual pad) is read by
+raw input: other SDL GUIDs, a combined trigger axis, no Guide and no rumble until the pad's first input pairs it with
+XInput / WGI (a failed rumble is sent again with that input), and pads in raw input's order (split screen may differ
+from the ring lights). Over Bluetooth Windows may drive no trigger motors even where SDL reports them.
+One log line per pad says whether its trigger motors are reachable (with SDL's path: "XInput#n" = the XInput
+driver), one when the first pulse lands, one (per pad) when a pulse fails.
+New exports: InputSystem::SetTriggerRumble, InputSystem::TriggerRumbleEnabled - ship the runtime with the exe.
+New members are appended after patch 98's (InputSystem, SDLInputDriver); InputDriver's vtable is unchanged.
+
+diff --git a/include/rex/input/flags.h b/include/rex/input/flags.h
+index eb2ff98..ee27f13 100644
+--- a/include/rex/input/flags.h
++++ b/include/rex/input/flags.h
+@@ -17,5 +17,7 @@ REXCVAR_DECLARE(bool, guide_button);
+ REXCVAR_DECLARE(std::string, hid_mappings_file);
+ REXCVAR_DECLARE(std::string, input_backend);
+ REXCVAR_DECLARE(bool, vibration);
++// COGBox SDK patch 104 (GitHub #245): Xbox One / Series impulse triggers (input_system.cpp)
++REXCVAR_DECLARE(bool, pad_trigger_rumble);
+ REXCVAR_DECLARE(double, left_stick_deadzone_percentage);
+ REXCVAR_DECLARE(double, right_stick_deadzone_percentage);
+diff --git a/include/rex/input/input_system.h b/include/rex/input/input_system.h
+index e0305d0..ec28929 100644
+--- a/include/rex/input/input_system.h
++++ b/include/rex/input/input_system.h
+@@ -63,6 +63,16 @@ class InputSystem : public system::IInputSystem {
+   X_RESULT SetTriggerEffect(uint32_t user_index, const uint8_t* right11, const uint8_t* left11);
+   /// --pad_adaptive_triggers, for game code (whose exe cannot read the runtime's cvar directly).
+   static bool AdaptiveTriggersEnabled();
++  /// COGBox SDK patch 104 (GitHub #245): Xbox One / Series impulse triggers - the small motors in the triggers - on
++  /// every pad of this player that has them. left / right 0-65535; the pulse stops by itself after duration_ms (SDL
++  /// times it); 0, 0 stops it now. Independent of SetState's two big motors. Pads without trigger motors (anything
++  /// opened through XInput, which has no way to drive them; PS pads; the keyboard / mouse and script devices) are never
++  /// written to. Nothing is sent - and a running pulse is stopped - while COGBox's Vibration setting (--vibration) is
++  /// off, while COGBox's own UI blocks input, or while the game's window is not in front. Does nothing
++  /// (X_ERROR_FUNCTION_FAILED) unless --pad_trigger_rumble.
++  X_RESULT SetTriggerRumble(uint32_t user_index, uint16_t left, uint16_t right, uint32_t duration_ms);
++  /// --pad_trigger_rumble, for game code (whose exe cannot read the runtime's cvar directly).
++  static bool TriggerRumbleEnabled();
+   X_RESULT GetKeystroke(uint32_t user_index, uint32_t flags, X_INPUT_KEYSTROKE* out_keystroke);
+ 
+   /// While any blocker is held the guest reads a neutral pad. Buttons still
+@@ -132,6 +142,12 @@ class InputSystem : public system::IInputSystem {
+   size_t ApplyTriggerEffectLocked(uint32_t user_index, bool force);
+   /// After a UI blocker came or went: every player's pads to "off" or back to the game's effect.
+   void ReapplyTriggerEffects();
++
++  // COGBox SDK patch 104 (GitHub #245), after patch 98's members for the same reason. Guarded by mutex_.
++  // A player's trigger motors may be running (a pulse was sent and not stopped), so a stop is sent to them.
++  std::array<bool, kMaxGuestUsers> trigger_rumble_running_ = {};
++  /// Stops every player's trigger motors (UI opened, Vibration turned off).
++  void StopTriggerRumble();
+ };
+ 
+ /// Create a default InputSystem with SDL + MnK + NOP drivers.
+diff --git a/include/rex/input/sdl/sdl_input_driver.h b/include/rex/input/sdl/sdl_input_driver.h
+index ed8c13e..7d1b054 100644
+--- a/include/rex/input/sdl/sdl_input_driver.h
++++ b/include/rex/input/sdl/sdl_input_driver.h
+@@ -44,6 +44,11 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+   /// purpose: InputSystem calls it on the SDL driver it made itself, so InputDriver's vtable (which game-side drivers -
+   /// script pads - derive from in exes built against older headers) is unchanged.
+   X_RESULT SetDeviceTriggerEffect(DeviceId id, const uint8_t* right11, const uint8_t* left11);
++  /// COGBox SDK patch 104 (GitHub #245): the trigger motors (Xbox One / Series impulse triggers) through
++  /// SDL_RumbleGamepadTriggers, 0-65535 each, for duration_ms (0 with 0, 0 = stop). Only pads SDL reports with
++  /// SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN; X_ERROR_FUNCTION_FAILED (no write) for any other. While the game's
++  /// window is not in front every request is sent as a stop. Not virtual, as SetDeviceTriggerEffect.
++  X_RESULT SetDeviceTriggerRumble(DeviceId id, uint16_t left, uint16_t right, uint32_t duration_ms);
+   X_RESULT GetDeviceKeystroke(DeviceId id, uint32_t flags,
+                               X_INPUT_KEYSTROKE* out_keystroke) override;
+   void OnWindowAvailable(rex::ui::Window* window) override;
+@@ -74,6 +79,14 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+     KeystrokeState keystroke;
+     // COGBox SDK patch 98: an adaptive-trigger effect was sent, so the triggers are reset when the window closes.
+     bool trigger_effect_sent;
++    // COGBox SDK patch 104: the "trigger rumble active" / "failed" log lines were written for this pad.
++    bool trigger_rumble_active_logged;
++    bool trigger_rumble_failed_logged;
++    // COGBox SDK patch 104 (with --pad_trigger_rumble): the game's last rumble (the two big motors) failed - with SDL's
++    // raw input driver that happens until the pad's first input pairs it with XInput / WGI - so it is sent again with
++    // the pad's next input event (RetryRumbleLocked).
++    bool rumble_retry;
++    uint16_t rumble_low, rumble_high;
+   };
+ 
+   // WindowListener
+@@ -97,6 +110,7 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+   bool TestSDLVersion() const;
+   void UpdateXCapabilities(ControllerState& state);
+   void QueueControllerUpdate();
++  void RetryRumbleLocked(ControllerState& controller);   // COGBox SDK patch 104
+ 
+   rex::ui::Window* attached_window_ = nullptr;
+   bool sdl_events_initialized_;
+@@ -111,6 +125,8 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+   std::vector<SDL_Event> pending_events_;
+   // Never rewound, so a handle held past a disconnect resolves to nothing.
+   uint64_t next_device_id_ = 1;
++  // COGBox SDK patch 104: the game's window is in front (OnGotFocus / OnLostFocus). No trigger rumble while it is not.
++  std::atomic<bool> has_focus_{true};
+ };
+ 
+ }  // namespace rex::input::sdl
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+index e92b3ae..6a90321 100644
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -39,6 +39,13 @@ REXCVAR_DEFINE_BOOL(vibration, true, "Input", "Enable controller vibration");
+ REXCVAR_DEFINE_BOOL(pad_adaptive_triggers, false, "Input",
+                     "DualSense adaptive triggers: games that support it give the triggers a feel per weapon (PS5 pads "
+                     "through SDL only; other controllers are never written to)");
++// COGBox SDK patch 104 (GitHub #245). Read when the gamepad subsystem starts (sdl_input_driver.cpp: the raw input hint)
++// and on every SetTriggerRumble call.
++REXCVAR_DEFINE_BOOL(pad_trigger_rumble, false, "Input",
++                    "Xbox impulse triggers: games that support it pulse the trigger motors of Xbox One / Series "
++                    "controllers, e.g. a short kick per shot (Windows: switches SDL to its raw input controller driver, "
++                    "which reaches the trigger motors through Windows.Gaming.Input; pads without trigger motors are never "
++                    "written to)");
+ REXCVAR_DEFINE_BOOL(menu_combo_guard, true, "Input",
+                     "Patch 43: Back + Start together (COGBox's in-game menu) never reach the game; Back or Start alone "
+                     "reaches it 0.12 s late (a quick tap is still delivered)");
+@@ -563,6 +570,7 @@ void InputSystem::AddUIInputBlocker() {
+   // a system dialog)
+   if (ui_input_blockers_.fetch_add(1) == 0) {
+     ReapplyTriggerEffects();
++    StopTriggerRumble();   // patch 104: the trigger motors too (new pulses are refused while it is open)
+   }
+ }
+ 
+@@ -593,6 +601,7 @@ void InputSystem::ToggleVibration() {
+   for (uint32_t user_index = 0; user_index < kMaxGuestUsers; user_index++) {
+     SetState(user_index, &silence);
+   }
++  StopTriggerRumble();   // patch 104 (with vibration off a running pulse is stopped; on, nothing is running)
+ }
+ 
+ void InputSystem::AdjustDeadzoneLevels(uint32_t user_index, X_INPUT_GAMEPAD* gamepad) const {
+@@ -718,6 +727,65 @@ void InputSystem::ReapplyTriggerEffects() {
+   }
+ }
+ 
++bool InputSystem::TriggerRumbleEnabled() { return REXCVAR_GET(pad_trigger_rumble); }
++
++// COGBox SDK patch 104 (GitHub #245): Xbox impulse triggers. The game calls this per event (a shot) or, for a continuous
++// action (the chainsaw), again every few frames with a short duration, so a pulse always ends by itself - even if the
++// game stops calling. SDL times the pulse (SDL_UpdateJoysticks, pumped every 1 ms while a pad is open) and writes
++// nothing when the same strengths are sent again (it only moves the end time).
++X_RESULT InputSystem::SetTriggerRumble(uint32_t user_index, uint16_t left, uint16_t right, uint32_t duration_ms) {
++  if (!REXCVAR_GET(pad_trigger_rumble)) {
++    return X_ERROR_FUNCTION_FAILED;
++  }
++  if (user_index >= kMaxGuestUsers) {
++    return X_ERROR_BAD_ARGUMENTS;
++  }
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
++  if (!assignment_ || !g_trigger_driver) {
++    return X_ERROR_DEVICE_NOT_CONNECTED;
++  }
++  // COGBox's Vibration setting off, or COGBox's in-game menu / a system dialog open: the motors stay still.
++  if (!REXCVAR_GET(vibration) || ui_input_blockers_.load() > 0) {
++    left = 0;
++    right = 0;
++  }
++  const bool stop = left == 0 && right == 0;
++  if (stop && !trigger_rumble_running_[user_index]) {
++    return X_ERROR_SUCCESS;   // nothing running: no write
++  }
++  // SDL takes 0 as "until told otherwise" - never asked for here: 1 ms to 1 s, a longer action is sent again.
++  duration_ms = stop ? 0 : std::clamp<uint32_t>(duration_ms, 1, 1000);
++  RefreshDevices();
++  std::vector<DeviceId> ids;
++  assignment_->DevicesForUser(user_index, ids);
++  bool any = false;
++  for (DeviceId id : ids) {
++    // Only the SDL driver's own devices: never the keyboard / mouse, NOP or a game's script pad. A pad without trigger
++    // motors answers X_ERROR_FUNCTION_FAILED without a write.
++    if (DriverForDevice(id) != g_trigger_driver) {
++      continue;
++    }
++    if (g_trigger_driver->SetDeviceTriggerRumble(id, left, right, duration_ms) == X_ERROR_SUCCESS) {
++      any = true;
++    }
++  }
++  trigger_rumble_running_[user_index] = !stop && any;
++  return any ? X_ERROR_SUCCESS : X_ERROR_FUNCTION_FAILED;
++}
++
++void InputSystem::StopTriggerRumble() {
++  if (!REXCVAR_GET(pad_trigger_rumble)) {
++    return;
++  }
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
++  for (uint32_t user_index = 0; user_index < kMaxGuestUsers; user_index++) {
++    if (trigger_rumble_running_[user_index]) {
++      // (with a blocker held or vibration off, SetTriggerRumble turns any strength into a stop)
++      SetTriggerRumble(user_index, 0, 0, 0);
++    }
++  }
++}
++
+ X_RESULT InputSystem::SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration) {
+   std::lock_guard<std::recursive_mutex> lock(mutex_);
+   SCOPE_profile_cpu_f("hid");
+diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
+index 30e77a1..0a0d4d6 100644
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -243,6 +243,26 @@ void SDLInputDriver::OnWindowAvailable(rex::ui::Window* window) {
+           },
+           this);
+ 
++#ifdef SDL_PLATFORM_WINDOWS
++      // COGBox SDK patch 104 (GitHub #245): Xbox impulse triggers. SDL 3.4's default Windows path for Xbox pads is
++      // XInput, which has no trigger motors (SDL_RumbleGamepadTriggers: "unsupported", the pad's
++      // SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN false). SDL's raw input driver reads the same pads and drives all
++      // four motors through Windows.Gaming.Input once it has matched the pad to its WGI gamepad (the first button
++      // press or stick move). SDL turned it off by default in May 2025 ("Disable SDL_HINT_JOYSTICK_RAWINPUT by
++      // default": Windows could stop delivering raw controller input until a reboot) - so only with
++      // --pad_trigger_rumble, which is off by default. It then reads EVERY XInput-class pad (Xbox 360, Xbox One /
++      // Series, third-party pads in X-mode, Steam Input's virtual pad): other SDL GUIDs; one combined trigger axis, no
++      // Guide button and no rumble (retried: rumble_retry) until the pad's first input pairs it with XInput / WGI; pads
++      // added in raw input's order, so split-screen players may get them in another order than the ring lights show.
++      // Before the gamepad subsystem starts; an SDL_JOYSTICK_RAWINPUT environment variable still wins.
++      if (REXCVAR_GET(pad_trigger_rumble)) {
++        SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT, "1");
++        const char* raw = SDL_GetHint(SDL_HINT_JOYSTICK_RAWINPUT);
++        REXLOG_INFO("SDL: impulse triggers on (--pad_trigger_rumble): raw input controller driver {} (hint {})",
++                    SDL_GetHintBoolean(SDL_HINT_JOYSTICK_RAWINPUT, false) ? "on" : "OFF - no trigger rumble",
++                    raw ? raw : "unset");
++      }
++#endif
+       // Initialize game controller subsystem
+       if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
+         REXLOG_ERROR("SDL: Failed to init gamecontroller subsystem: {}", SDL_GetError());
+@@ -302,9 +322,23 @@ void SDLInputDriver::OnClosing(rex::ui::UIEvent&) {
+   }
+ }
+ 
+-void SDLInputDriver::OnLostFocus(rex::ui::UISetupEvent&) {}
++// COGBox SDK patch 104 (GitHub #245): no trigger rumble while the game's window is not in front - a running pulse is
++// stopped now, and later ones are sent as stops until it comes back (the game keeps sending them: it does not know).
++void SDLInputDriver::OnLostFocus(rex::ui::UISetupEvent&) {
++  has_focus_.store(false);
++  if (!REXCVAR_GET(pad_trigger_rumble) || !sdl_events_initialized_ || !SDL_Gamepad_initialized_) {
++    return;
++  }
++  auto guard = DrainAndLock();
++  for (auto& controller : controllers_) {
++    if (SDL_GetBooleanProperty(SDL_GetGamepadProperties(controller.sdl), SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN,
++                               false)) {
++      SDL_RumbleGamepadTriggers(controller.sdl, 0, 0, 0);   // (no write when they are already still)
++    }
++  }
++}
+ 
+-void SDLInputDriver::OnGotFocus(rex::ui::UISetupEvent&) {}
++void SDLInputDriver::OnGotFocus(rex::ui::UISetupEvent&) { has_focus_.store(true); }
+ 
+ void SDLInputDriver::EnumerateDevices(std::vector<DeviceInfo>& out) {
+   // Polling can start before the window exists and the subsystems are up.
+@@ -416,10 +450,25 @@ X_RESULT SDLInputDriver::SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* vibr
+   // XInput vibration holds until the guest changes it, but SDL rumble expires,
+   // and a zero duration expires on the next SDL_UpdateJoysticks. Arm it for
+   // SDL's maximum instead; each call cancels the previous effect anyway.
+-  return SDL_RumbleGamepad(controller->sdl, vibration->left_motor_speed,
+-                           vibration->right_motor_speed, kRumbleDurationMs)
+-             ? X_ERROR_SUCCESS
+-             : X_ERROR_FUNCTION_FAILED;
++  const bool rumbled = SDL_RumbleGamepad(controller->sdl, vibration->left_motor_speed,
++                                         vibration->right_motor_speed, kRumbleDurationMs);
++  // Patch 104: with SDL's raw input driver (--pad_trigger_rumble) a pad cannot rumble until its first input pairs it
++  // with XInput / WGI ("isn't correlated yet"); the game may not ask again, so the last request is kept for that input.
++  controller->rumble_retry = !rumbled && REXCVAR_GET(pad_trigger_rumble);
++  controller->rumble_low = vibration->left_motor_speed;
++  controller->rumble_high = vibration->right_motor_speed;
++  return rumbled ? X_ERROR_SUCCESS : X_ERROR_FUNCTION_FAILED;
++}
++
++// COGBox SDK patch 104: see ControllerState::rumble_retry. Called with controllers_mutex_ held, from the pad's input
++// events (after SDL has seen that input, so the pad is paired if it can be); a newer SetDeviceVibration replaces it.
++void SDLInputDriver::RetryRumbleLocked(ControllerState& controller) {
++  if (!controller.rumble_retry) {
++    return;
++  }
++  if (SDL_RumbleGamepad(controller.sdl, controller.rumble_low, controller.rumble_high, kRumbleDurationMs)) {
++    controller.rumble_retry = false;
++  }
+ }
+ 
+ // COGBox SDK patch 98 (GitHub #245): see SendDs5TriggerEffect above. InputSystem calls this with its own mutex held, as
+@@ -455,6 +504,46 @@ X_RESULT SDLInputDriver::SetDeviceTriggerEffect(DeviceId id, const uint8_t* righ
+   return X_ERROR_SUCCESS;
+ }
+ 
++// COGBox SDK patch 104 (GitHub #245): see SetDeviceTriggerRumble in the header. Same lock order as SetDeviceVibration.
++// SDL keeps the trigger motors apart from the two big ones (its own end times; the WGI / GameInput / Xbox HIDAPI backends
++// send all four in one command and remember the other pair), so the game's own rumble keeps going under a pulse.
++X_RESULT SDLInputDriver::SetDeviceTriggerRumble(DeviceId id, uint16_t left, uint16_t right, uint32_t duration_ms) {
++  if (!sdl_events_initialized_ || !SDL_Gamepad_initialized_) {
++    return X_ERROR_DEVICE_NOT_CONNECTED;
++  }
++  auto guard = DrainAndLock();
++  auto controller = FindController(id);
++  if (!controller) {
++    return X_ERROR_DEVICE_NOT_CONNECTED;
++  }
++  if (!SDL_GetBooleanProperty(SDL_GetGamepadProperties(controller->sdl), SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN,
++                              false)) {
++    return X_ERROR_FUNCTION_FAILED;   // no trigger motors SDL can reach (logged once when the pad was added)
++  }
++  if (!has_focus_.load()) {
++    left = 0;
++    right = 0;
++    duration_ms = 0;
++  }
++  const char* name = SDL_GetGamepadName(controller->sdl);
++  if (!SDL_RumbleGamepadTriggers(controller->sdl, left, right, duration_ms)) {
++    // e.g. the raw input driver before the pad is matched to its WGI gamepad ("Controller isn't correlated yet") -
++    // the next pulse tries again
++    if (!controller->trigger_rumble_failed_logged) {
++      controller->trigger_rumble_failed_logged = true;
++      REXLOG_WARN("SDL: impulse trigger pulse not sent to \"{}\" (device {}): {} (logged once per pad)",
++                  name ? name : "?", static_cast<uint64_t>(id), SDL_GetError());
++    }
++    return X_ERROR_FUNCTION_FAILED;
++  }
++  if ((left || right) && !controller->trigger_rumble_active_logged) {
++    controller->trigger_rumble_active_logged = true;
++    REXLOG_INFO("SDL: impulse triggers active on \"{}\" (device {}), first pulse L {} R {} for {} ms",
++                name ? name : "?", static_cast<uint64_t>(id), left, right, duration_ms);
++  }
++  return X_ERROR_SUCCESS;
++}
++
+ X_RESULT SDLInputDriver::GetDeviceKeystroke(DeviceId id, uint32_t flags,
+                                             X_INPUT_KEYSTROKE* out_keystroke) {
+   // TODO(JoelLinn): Figure out the flags
+@@ -712,6 +801,19 @@ void SDLInputDriver::OnControllerDeviceAddedLocked(const SDL_Event& event) {
+ 
+   REXLOG_INFO("SDL OnControllerDeviceAdded: connection order {}, device {}.", ordinal,
+               static_cast<uint64_t>(state.id));
++  if (REXCVAR_GET(pad_trigger_rumble)) {
++    // COGBox SDK patch 104 (GitHub #245): once per pad, whether the game's trigger pulses can reach it. The path says
++    // which SDL driver opened it ("XInput#n": the XInput driver - no trigger motors; "\\?\HID#...": raw input or HIDAPI).
++    const bool has = SDL_GetBooleanProperty(SDL_GetGamepadProperties(controller),
++                                            SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN, false);
++    const char* path = SDL_GetGamepadPath(controller);
++    const char* name = SDL_GetGamepadName(controller);
++    REXLOG_INFO("SDL: impulse triggers on \"{}\" (device {}): {}; SDL path {}", name ? name : "?",
++                static_cast<uint64_t>(state.id),
++                has ? "available (as SDL sees it; over Bluetooth Windows may still drive no trigger motors)"
++                    : "not available (no trigger motors SDL can reach on this pad - left alone)",
++                path ? path : "?");
++  }
+   const char* mapping = SDL_GetGamepadMapping(controller);
+   REXLOG_INFO("SDL Controller {}: {}", ordinal, mapping ? mapping : "<none>");
+ }
+@@ -748,6 +850,7 @@ void SDLInputDriver::OnControllerDeviceAxisMotionLocked(const SDL_Event& event)
+     // The pad can be removed between the event being posted and drained.
+     return;
+   }
++  RetryRumbleLocked(controllers_.at(*idx));   // patch 104
+   auto& pad = controllers_.at(*idx).state.gamepad;
+   switch (event.gaxis.axis) {
+     case SDL_GAMEPAD_AXIS_LEFTX:
+@@ -817,6 +920,7 @@ void SDLInputDriver::OnControllerDeviceButtonChangedLocked(const SDL_Event& even
+     return;
+   }
+   auto& controller = controllers_.at(*idx);
++  RetryRumbleLocked(controller);   // patch 104
+ 
+   uint16_t xbuttons = controller.state.gamepad.buttons;
+   // Lookup the XInput button code.

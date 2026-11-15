@@ -471,6 +471,20 @@ std::vector<Option> make_options(Game g) {
              "PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon "
              "in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on "
              "for the controller, Steam keeps the triggers.", 0), "adaptivetriggers");
+    // 0.6.3 (GitHub #245, SDK patch 104, --pad_trigger_rumble): Xbox One / Series impulse triggers, from the same weapon
+    // table. Shared (one controller, one choice for every game); off by default: the runtime switches SDL to its raw
+    // input controller driver for it, which SDL itself turned off by default in May 2025 ("Disable
+    // SDL_HINT_JOYSTICK_RAWINPUT by default": Windows could stop delivering raw controller input until a reboot).
+    add(make("TriggerRumble", "Trigger rumble (Xbox controllers)", Tab::Controls, Kind::Bool, SH, 0,
+             "Xbox One and Series controllers over USB or the Xbox Wireless Adapter (Bluetooth may give none), with Steam"
+             " Input off for the controller: the motors in the triggers kick with each shot (harder for shotguns and "
+             "heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while "
+             "Controller vibration is off, here or in the game's options. While this is on, every Xbox-style controller "
+             "(Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press the "
+             "triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in"
+             " another order, and rarely Windows stops sending controller input until the PC restarts - untick this if a "
+             "controller misbehaves. PlayStation controllers are not affected.", 0), "triggerrumble",
+        "Vibration");
     add(make("LowLag", "Lower input lag", Tab::Controls, Kind::Bool, SH, 1,
              "Fewer frames waiting in line between the game and your screen, so the controller feels quicker. May cost a few "
              "fps on a busy graphics card; untick to compare.", 385), "lowlag");
@@ -853,6 +867,15 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
             "Judgment weapon feel for DualSense pads", "Gears 1 weapon feel for DualSense pads"};
         if (!cap_rt(env, "DualSense adaptive triggers: games that support it") || !cap_exe(env, k_weaponFeel[gi]))
             return no(not_yet(gi, "needs its next build"));
+    } else if (f == "triggerrumble") {   // 0.6.3 (GitHub #245): the runtime's pad_trigger_rumble (SDK patch 104) and the
+        // game's trigger pulses (its log line, a long literal - cap_exe). Windows only: under Wine / Proton the raw input
+        // driver it switches to is not Windows' own.
+        static const char* const k_pulses[kGameCount] = {
+            "Gears 2 trigger pulses for Xbox pads", "Gears 3 trigger pulses for Xbox pads",
+            "Judgment trigger pulses for Xbox pads", "Gears 1 trigger pulses for Xbox pads"};
+        if (!cap_rt(env, "Xbox impulse triggers: games that support it") || !cap_exe(env, k_pulses[gi]))
+            return no(not_yet(gi, "needs its next build"));
+        if (env.wine) return no("Not under Proton / Wine.");
     } else if (f == "padlayout") {   // GitHub #95 / #97: SDK patch 55
         if (!cap_rt(env, "pad_remap")) return no(not_yet(gi, "needs the next runtime (SDK patch 55)"));
     } else if (f == "gpucard") {   // 0.6.2 (GitHub #304): every game's renderer reads --gow2_graphics_card (layer 0)
@@ -1086,6 +1109,7 @@ Availability available(const Option& o, Game g, Version ver, const Settings& s, 
     else if (o.id == "PaperWhite" || o.id == "Peak" || o.id == "HdrHighlights") on = s.b("HDR");   // PS1 366; 0.6.2
     else if (o.id == "PadPrompts") on = s.b("Mnk");                                  // GitHub #104
     else if (o.id == "WalkMode") on = s.b("Mnk");                                    // GitHub #125
+    else if (o.id == "TriggerRumble") on = s.b("Vibration");                         // 0.6.3: no rumble, no trigger rumble
     else if (o.id == "AimSens") on = s.b("Mnk") && cap_exe(env, "ue3_mouse_aim_scale");    // 0.5.0: games whose exe knows the camera FOV
     else if (o.id == "ZoomSens") on = s.b("Mnk") && cap_exe(env, "ue3_mouse_zoom_scale");
     else if (o.id == "SceneMode") on = s.i("AAMode") >= 2 && s.i("AAMode") <= 4 && (s.i("Api") == 0 || env.mac ||   /* r5: a Mac runs DX12 whatever Api says */ (s.i("AAMode") == 2 && fsr_vulkan_on(s, env)));   // PS1 352, 473; job 521; T2x: no scene scale; fsr049: FSR on Vulkan (opt-in)
@@ -2054,6 +2078,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     }
     if (!s.b("Vibration")) a.push_back("--vibration=false");
     if (on("AdaptiveTriggers")) a.push_back("--pad_adaptive_triggers=true");   // GitHub #245 (greyed: never sent)
+    if (on("TriggerRumble")) a.push_back("--pad_trigger_rumble=true");         // 0.6.3, GitHub #245 (greyed: never sent)
     // GitHub #95 / #97 (SDK patch 55): radial dead zone and controller layout
     if (avail("RadialDZ")) {
         static const double k_radial[6] = { 0, 0.08, 0.12, 0.16, 0.20, 0.25 };

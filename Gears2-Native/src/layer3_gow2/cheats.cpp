@@ -81,7 +81,7 @@ void Gow2InstallCheats() {
   }
 }
 
-void Gow2AdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers)
+void Gow2AdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers, --pad_trigger_rumble)
 void Gow2FirstPersonTick();        // first_person.cpp (--gow2_first_person)
 
 // UEngine::GetMaxTickRate, overridden: the original (with the frame-rate hook inside), then queued console commands and
