@@ -26,6 +26,10 @@ struct LauncherAccount {
 };
 }  // namespace
 
+namespace {
+const char* const kBusyError = "The online account file is busy right now (OneDrive or a virus scanner may be holding it). COGBox will try again.";
+}  // namespace
+
 SocialBackend launcher_backend(const std::string& server_url, const std::string& identity_dir, const std::string& name) {
     auto st = std::make_shared<LauncherAccount>();
     st->url = parse_server_url(server_url);
@@ -35,8 +39,16 @@ SocialBackend launcher_backend(const std::string& server_url, const std::string&
     b.account = [st]() -> std::optional<SocialAccount> {
         std::lock_guard<std::mutex> lk(st->mu);   // the worker is the only caller; the lock guards `renamed`
         if (st->acc || !st->url) return st->acc;
-        st->acc = read_account(st->dir);
-        if (st->acc || st->given_up) return st->acc;
+        // 0.6.2 (#302 hardening): a file that exists but could not be read just now (OneDrive / antivirus holding it) is
+        // "unknown", not "no account": nothing is claimed, set aside or replaced for it - this is asked again later.
+        bool busy = false;
+        st->acc = read_account(st->dir, &busy);
+        if (st->acc || st->given_up) { if (st->acc) st->error.clear(); return st->acc; }
+        if (busy) {
+            st->error = kBusyError;
+            return st->acc;
+        }
+        if (st->error == kBusyError) st->error.clear();
         std::string n;
         {
             std::lock_guard<std::mutex> g(g_name_mu);
@@ -60,7 +72,13 @@ SocialBackend launcher_backend(const std::string& server_url, const std::string&
             return st->acc;
         }
         const int age = account_file_age_seconds(st->dir);
-        if (auto part = read_account_partial(st->dir); part && part->token.empty()) {
+        bool part_busy = false;
+        const auto part = read_account_partial(st->dir, &part_busy);
+        if (part_busy) {   // it was readable a moment ago and is held now: never "unreadable", never set aside
+            st->error = kBusyError;
+            return st->acc;
+        }
+        if (part && part->token.empty()) {
             if (age >= 0 && age < 30) return st->acc;   // a game may be claiming it right now
             clear_account_read_only(st->dir);   // r6 RC2: a read-only file would take the claim and not its token
             const std::string body = nlohmann::json{ { "uuid", part->uuid }, { "display_name", n } }.dump();
@@ -83,7 +101,9 @@ SocialBackend launcher_backend(const std::string& server_url, const std::string&
                 }
                 return st->acc;
             }
-            const auto again = read_account_partial(st->dir);
+            bool again_busy = false;
+            const auto again = read_account_partial(st->dir, &again_busy);
+            if (again_busy) return st->acc;   // held right now: look again later
             if (!again || again->uuid != part->uuid || !again->token.empty()) return st->acc;   // changed meanwhile: look again later
             if (!set_account_aside(st->dir, "no-token")) {
                 st->given_up = true;
@@ -104,8 +124,9 @@ SocialBackend launcher_backend(const std::string& server_url, const std::string&
         if (auto c = r.status == 200 ? parse_claim(r.body) : std::nullopt) {
             if (!write_account_exclusive(st->dir, *c)) {
                 // a game made one at the same moment: its own wins (a token-less one is completed on a later call)
-                if (auto f = read_account(st->dir)) st->acc = f;
-                else if (!read_account_partial(st->dir)) {   // r6 RC1: nothing usable there and it can't be made - never claim again
+                bool b1 = false, b2 = false;
+                if (auto f = read_account(st->dir, &b1)) st->acc = f;
+                else if (!b1 && !read_account_partial(st->dir, &b2) && !b2) {   // r6 RC1: nothing usable there and it can't be made - never claim again
                     st->given_up = true;
                     st->error = "Couldn't save the online account in the profile folder (" + st->dir + "\\identity.json).";
                 }

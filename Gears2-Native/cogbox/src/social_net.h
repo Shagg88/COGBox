@@ -12,7 +12,9 @@ int local_utc_minutes();
 
 
 // <identity_dir>\identity.json as the games write it; nullopt when missing, unreadable or without uuid / token.
-std::optional<SocialAccount> read_account(const std::string& identity_dir_utf8);
+// busy (when given) is set when identity.json exists but could not be read in a few tries (OneDrive / antivirus holding
+// it): the answer is then "unknown", not "no account" - the caller must not make a new account for it.
+std::optional<SocialAccount> read_account(const std::string& identity_dir_utf8, bool* busy = nullptr);
 // The claim answer (POST /api/v1/auth/claim for a new account): uuid, token, display_name, discriminator, xuid.
 std::optional<SocialAccount> parse_claim(const std::string& body);
 // Writes <identity_dir>\identity.json only when there is none (a game starting at the same moment may have made one:
@@ -22,8 +24,9 @@ bool write_account_exclusive(const std::string& identity_dir_utf8, const SocialA
 // there is no readable identity.json.
 bool update_account_name(const std::string& identity_dir_utf8, const std::string& name, const std::string& discriminator);
 // 0.6.2 (GitHub #302): identity.json as it is, with or without its token (a game writes it before its claim succeeds).
-std::optional<SocialAccount> read_account_partial(const std::string& identity_dir_utf8);
-// The whole account written over identity.json (new file, swapped in) - for a claim that completed a token-less file.
+std::optional<SocialAccount> read_account_partial(const std::string& identity_dir_utf8, bool* busy = nullptr);
+// The whole account written over identity.json (a new file in the same folder, flushed, then moved over it with
+// MoveFileExW replace + write-through, a few short retries when the file is held open by a scan or sync) - for a claim that completed a token-less file.
 bool write_account_replace(const std::string& identity_dir_utf8, const SocialAccount& a);
 // identity.json set aside as identity.json.<suffix>-<date-time> (kept, never deleted or replaced); true when there is
 // no identity.json after.

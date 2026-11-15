@@ -62,6 +62,11 @@ https://recomplauncher.com/game/cogbox
   page right after and attach the zip to #309.
 - **Two-player split side by side** (Gameplay > Two-player split): the game put the split back to top and bottom
   whenever a level started; COGBox now sets it again. GitHub #269.
+  It no longer gives up for the rest of a level when the game puts the split back right after COGBox set it: it tries
+  again, waiting longer each time (up to 30 seconds). GitHub #313.
+- **Frame limit in split screen** (GitHub #313, not reproduced yet): Gears 3's log now says how many game ticks did
+  not reach COGBox's frame limiter and how many players are in, so a report from split screen shows why the limit did
+  not hold.
 - **No more short hitch every 5 seconds in the menus and multiplayer**, caused by COGBox's check for the path-choice
   mouse fix (GitHub #277).
 - **Your options and brightness are kept after a crash:** a game setting saved at the moment of a crash or with a full
@@ -112,6 +117,9 @@ https://recomplauncher.com/game/cogbox
 - **Your Social tab account keeps its #number** (GitHub #302): the launcher could make a new online account at every
   start, so your #number changed and friends were lost. It now always keeps the one it saved, and if it can't save one
   (for example a folder it can't write to), the Social tab says why.
+  OneDrive or a virus scanner holding the file for a moment no longer counts as "no account": the file is saved as a whole
+  new file moved into place with a few short retries, read with retries too, and when it is busy the launcher waits and
+  tries again instead of making a new account.
 - **Show ping fixes (by Flippage):** the bar shows nothing when you are not in an online match or party (0.6.1 showed
   "Ping --"); a host that stops answering drops out after a few seconds; when you host, the players in your match
   count before an old join target.
