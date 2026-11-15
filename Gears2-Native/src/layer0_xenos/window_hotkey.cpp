@@ -11,7 +11,8 @@
 // The renderer's "match my monitor" image is made again at the window's new size (xenos::display::SetSurfaceSize).
 //
 // Not while the window is not in focus, not for the key's auto-repeat, and not while a text field wants the keys
-// (Window::IsTextInputActive: Dear ImGui's text input, e.g. a field in the in-game menu). Our code (MIT).
+// (Window::IsTextInputActive: Dear ImGui's text input, e.g. a field in the in-game menu). A press's auto-repeat is
+// swallowed until the key comes up, even if a modifier is let go first. Our code (MIT).
 #include <xenos/window_hotkey.h>
 
 #include <rex/cvar.h>
@@ -26,6 +27,8 @@
 REXCVAR_DEFINE_STRING(bind_cogbox_fullscreen, "Alt+Return", "Input/Keybinds/System",
                       "GitHub #316: switch the game window between windowed and borderless full screen - the key, with "
                       "optional Alt+ / Ctrl+ / Shift+ in front (Alt+Return, F11, Ctrl+Shift+F11); None turns it off");
+
+REXCVAR_DECLARE(bool, fullscreen_exclusive);   // the SDK's (ui/window.cpp): full screen changes the display mode
 
 namespace {
 
@@ -47,23 +50,36 @@ class WindowModeListener final : public rex::ui::WindowInputListener {
       }
       return;
     }
+    // r40: once a press of the key was ours, its auto-repeat stays ours until the key comes up, even if Alt (or Ctrl,
+    // Shift) is let go first - otherwise the repeats would reach the game as plain Enter (its Start button).
+    if (swallowing_ != rex::ui::VirtualKey::kNone && e.virtual_key() == swallowing_ && e.prev_state()) {
+      e.set_handled(true);
+      return;
+    }
     if (!hk::Matches(chord, e.virtual_key(), e.is_alt_pressed(), e.is_ctrl_pressed(), e.is_shift_pressed())) return;
     // A text field wants this key press (and a window without focus gets no key events, but is not asked to switch).
     if (!window->HasFocus() || window->IsTextInputActive()) return;
     // From here the key is ours: the game does not get it (Alt+Enter would be its Start button as well).
     e.set_handled(true);
+    swallowing_ = e.virtual_key();
     if (e.prev_state()) return;   // the key's auto-repeat (it was already down): one press, one switch
     window->app_context().CallInUIThreadDeferred([] {
       rex::ui::Window* w = g_window.load();   // cleared at shutdown: the window may be gone by now
       if (!w) return;
       const bool full = !w->IsFullscreen();
       w->SetFullscreen(full);
-      REXLOG_INFO("window hotkey: {}", full ? "borderless full screen" : "windowed");
+      REXLOG_INFO("window hotkey: {}",
+                  !full ? "windowed" : (REXCVAR_GET(fullscreen_exclusive) ? "exclusive full screen" : "borderless full screen"));
     });
+  }
+
+  void OnKeyUp(rex::ui::KeyEvent& e) override {
+    if (e.virtual_key() == swallowing_) swallowing_ = rex::ui::VirtualKey::kNone;   // the next press is a new press
   }
 
  private:
   std::string last_bad_;
+  rex::ui::VirtualKey swallowing_ = rex::ui::VirtualKey::kNone;   // UI thread only, like the key events
 };
 
 WindowModeListener g_listener;

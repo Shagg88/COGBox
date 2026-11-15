@@ -665,7 +665,9 @@ static void window_key_section(App &a, int g)
     for (size_t i = 0; i <= key.size(); i++) {
         if (i < key.size() && key[i] != '+') { tok += key[i]; continue; }
         if (!tok.empty()) {
-            shown += (shown.empty() ? "" : " + ") + tr(tok == "None" ? std::string("Off") : key_shown(tok));
+            // "Ctrl" is shown as the Keys list's "Control", the name the lang files translate (r40)
+            shown += (shown.empty() ? "" : " + ") +
+                     tr(tok == "None" ? std::string("Off") : tok == "Ctrl" || tok == "ctrl" ? std::string("Control") : key_shown(tok));
         }
         tok.clear();
     }

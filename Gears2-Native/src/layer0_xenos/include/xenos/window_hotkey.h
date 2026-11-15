@@ -40,6 +40,12 @@ inline bool EqualsNoCase(std::string_view a, std::string_view b) {
 }
 // The key's name as the SDK spells it, or as typed in lower case / upper case ("return", "f11").
 inline rex::ui::VirtualKey ParseKeyName(std::string_view name) {
+  // "Enter" is what the key says on it (and what the launcher shows), but the SDK's name is Return (r40)
+  if (name.size() == 5) {
+    std::string low(name);
+    for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (low == "enter") return rex::ui::VirtualKey::kReturn;
+  }
   rex::ui::VirtualKey vk = rex::ui::ParseVirtualKey(name);
   if (vk != rex::ui::VirtualKey::kNone) return vk;
   std::string s(name);

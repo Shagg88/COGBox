@@ -21,6 +21,13 @@ TEST_CASE("window hotkey: the default Alt+Return and other key texts parse", "[w
   CHECK(c.key == VK::kReturn);
   CHECK(c.alt);
 
+  REQUIRE(ParseChord("Alt+Enter", c));   // the name on the key works too (r40)
+  CHECK(c.key == VK::kReturn);
+  CHECK(c.alt);
+  REQUIRE(ParseChord("alt+ENTER", c));
+  CHECK(c.key == VK::kReturn);
+  CHECK_FALSE(ParseChord("Alt+Enterr", c));
+
   REQUIRE(ParseChord("F11", c));
   CHECK(c.key == VK::kF11);
   CHECK_FALSE(c.alt);
