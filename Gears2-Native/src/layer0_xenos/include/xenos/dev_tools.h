@@ -182,9 +182,34 @@ void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t si
 // prebuilt one of that variant, so layer 2 can stop offering a variant a game never draws.
 bool XenosPrebuildWanted();
 void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant);
+// 0.6.3 (review r61 #2): the same for several at once - the renderer takes its lock once for the batch, so a reader at
+// low priority holds it only briefly. Any thread; copies the bytes.
+struct XenosPrebuildShaderRef {
+  const void* be_ucode;
+  uint32_t size_bytes;
+  uint32_t variant;
+};
+void XenosPrebuildPixelShaders(const XenosPrebuildShaderRef* items, size_t count);
 // notes/78 C3: a vertex shader found in a package (its record's whole microcode region, big-endian). Used only with
 // --gow2_renderer_recipe_pack: the recipe vertex shaders it rebuilds exactly are prepared. Any thread; copies.
-void XenosPrebuildVertexShader(const void* be_ucode, uint32_t size_bytes);
+// 0.6.3: report_match = true -> returns whether this region rebuilds one of the pack's vertex shaders (found now or
+// earlier in the session; layer 2's done-list keeps exactly those regions). false -> as before (shaders already found
+// are not looked at again; slightly cheaper), and the result only says whether one was found now.
+bool XenosPrebuildVertexShader(const void* be_ucode, uint32_t size_bytes, bool report_match = false);
+// 0.6.3 (prebuild done-list, layer 2): does the renderer want this pixel shader (XXH3 key as above)? With a recipe pack
+// (or chapter recipes) only the listed ones; otherwise every one. Any thread (the sets are read-only after Init).
+bool XenosPrebuildPixelWanted(uint64_t key);
+// 0.6.3: non-zero while the renderer wants only a fixed list of shaders (a recipe pack or chapter recipes): an identity
+// of that list (XXH3 of the pack file / of the sorted fingerprints). 0 = every pixel shader is wanted. Layer 2 keeps
+// the shaders it found per package on disk only in the first case, and starts its done-list again when this changes.
+uint64_t XenosPrebuildSelectiveKey();
+// 0.6.3: true while the game is being played - a frame with 64+ draws ended within the last half second (the same line
+// the renderer draws between play and a loading screen / video / 2D menu). Any thread; false before the first frame.
+bool XenosRendererInPlay();
+// 0.6.3: the logical processors this process may run on - the popcount of its affinity mask (GetProcessAffinityMask),
+// else std::thread::hardware_concurrency() - so a PC limited by an affinity mask gets the small-CPU defaults (prebuild
+// readers and pacing, pipeline workers and their backlog limits). Logged once (count and source). Any thread; >= 1.
+uint32_t XenosUsableProcessors();
 uint64_t XenosPrebuildVariantHits(uint32_t variant);
 // Job 641: layer 2 says its start-up package reading (--ue3_shader_prebuild_at_start) has read every queued file
 // (`files` read in all). --gow2_renderer_prepare_all waits for it before it can finish.
