@@ -476,11 +476,14 @@ std::vector<Option> make_options(Game g) {
     // input controller driver for it, which SDL itself turned off by default in May 2025 ("Disable
     // SDL_HINT_JOYSTICK_RAWINPUT by default": Windows could stop delivering raw controller input until a reboot).
     add(make("TriggerRumble", "Trigger rumble (Xbox controllers)", Tab::Controls, Kind::Bool, SH, 0,
-             "Xbox One and Series controllers: the motors in the triggers kick with each shot (harder for shotguns and "
-             "heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while Controller "
-             "vibration is off, here or in the game's options. To reach the trigger motors the game reads controllers "
-             "through Windows raw input; rarely, Windows then stops sending controller input until the PC restarts - "
-             "untick this if a controller stops responding. Other controllers are not affected.", 0), "triggerrumble",
+             "Xbox One and Series controllers over USB or the Xbox Wireless Adapter (Bluetooth may give none), with Steam"
+             " Input off for the controller: the motors in the triggers kick with each shot (harder for shotguns and "
+             "heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while "
+             "Controller vibration is off, here or in the game's options. While this is on, every Xbox-style controller "
+             "(Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press the "
+             "triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in"
+             " another order, and rarely Windows stops sending controller input until the PC restarts - untick this if a "
+             "controller misbehaves. PlayStation controllers are not affected.", 0), "triggerrumble",
         "Vibration");
     add(make("LowLag", "Lower input lag", Tab::Controls, Kind::Bool, SH, 1,
              "Fewer frames waiting in line between the game and your screen, so the controller feels quicker. May cost a few "

@@ -7,8 +7,12 @@ is stopped - while --vibration is off, while COGBox's UI blocks input, or while 
 On Windows the cvar also sets SDL_HINT_JOYSTICK_RAWINPUT before the gamepad subsystem starts: SDL 3.4's default Xbox
 path is XInput, which has no trigger motors; its raw input driver drives them through Windows.Gaming.Input (SDL
 disabled it by default in May 2025 because Windows could stop delivering raw controller input until a reboot - hence
-off by default). One log line per pad says whether its trigger motors are reachable (with SDL's path: "XInput#n" =
-the XInput driver), one when the first pulse lands, one (per pad) when a pulse fails.
+off by default). With it on, every XInput-class pad (Xbox 360, X-mode pads, Steam Input's virtual pad) is read by
+raw input: other SDL GUIDs, a combined trigger axis, no Guide and no rumble until the pad's first input pairs it with
+XInput / WGI (a failed rumble is sent again with that input), and pads in raw input's order (split screen may differ
+from the ring lights). Over Bluetooth Windows may drive no trigger motors even where SDL reports them.
+One log line per pad says whether its trigger motors are reachable (with SDL's path: "XInput#n" = the XInput
+driver), one when the first pulse lands, one (per pad) when a pulse fails.
 New exports: InputSystem::SetTriggerRumble, InputSystem::TriggerRumbleEnabled - ship the runtime with the exe.
 New members are appended after patch 98's (InputSystem, SDLInputDriver); InputDriver's vtable is unchanged.
 
@@ -59,7 +63,7 @@ index e0305d0..ec28929 100644
  
  /// Create a default InputSystem with SDL + MnK + NOP drivers.
 diff --git a/include/rex/input/sdl/sdl_input_driver.h b/include/rex/input/sdl/sdl_input_driver.h
-index ed8c13e..627fbfe 100644
+index ed8c13e..7d1b054 100644
 --- a/include/rex/input/sdl/sdl_input_driver.h
 +++ b/include/rex/input/sdl/sdl_input_driver.h
 @@ -44,6 +44,11 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
@@ -74,17 +78,30 @@ index ed8c13e..627fbfe 100644
    X_RESULT GetDeviceKeystroke(DeviceId id, uint32_t flags,
                                X_INPUT_KEYSTROKE* out_keystroke) override;
    void OnWindowAvailable(rex::ui::Window* window) override;
-@@ -74,6 +79,9 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+@@ -74,6 +79,14 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
      KeystrokeState keystroke;
      // COGBox SDK patch 98: an adaptive-trigger effect was sent, so the triggers are reset when the window closes.
      bool trigger_effect_sent;
 +    // COGBox SDK patch 104: the "trigger rumble active" / "failed" log lines were written for this pad.
 +    bool trigger_rumble_active_logged;
 +    bool trigger_rumble_failed_logged;
++    // COGBox SDK patch 104 (with --pad_trigger_rumble): the game's last rumble (the two big motors) failed - with SDL's
++    // raw input driver that happens until the pad's first input pairs it with XInput / WGI - so it is sent again with
++    // the pad's next input event (RetryRumbleLocked).
++    bool rumble_retry;
++    uint16_t rumble_low, rumble_high;
    };
  
    // WindowListener
-@@ -111,6 +119,8 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+@@ -97,6 +110,7 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+   bool TestSDLVersion() const;
+   void UpdateXCapabilities(ControllerState& state);
+   void QueueControllerUpdate();
++  void RetryRumbleLocked(ControllerState& controller);   // COGBox SDK patch 104
+ 
+   rex::ui::Window* attached_window_ = nullptr;
+   bool sdl_events_initialized_;
+@@ -111,6 +125,8 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
    std::vector<SDL_Event> pending_events_;
    // Never rewound, so a handle held past a disconnect resolves to nothing.
    uint64_t next_device_id_ = 1;
@@ -194,10 +211,10 @@ index e92b3ae..6a90321 100644
    std::lock_guard<std::recursive_mutex> lock(mutex_);
    SCOPE_profile_cpu_f("hid");
 diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
-index 30e77a1..ebbd35d 100644
+index 30e77a1..0a0d4d6 100644
 --- a/src/input/sdl/sdl_input_driver.cpp
 +++ b/src/input/sdl/sdl_input_driver.cpp
-@@ -243,6 +243,23 @@ void SDLInputDriver::OnWindowAvailable(rex::ui::Window* window) {
+@@ -243,6 +243,26 @@ void SDLInputDriver::OnWindowAvailable(rex::ui::Window* window) {
            },
            this);
  
@@ -208,8 +225,11 @@ index 30e77a1..ebbd35d 100644
 +      // four motors through Windows.Gaming.Input once it has matched the pad to its WGI gamepad (the first button
 +      // press or stick move). SDL turned it off by default in May 2025 ("Disable SDL_HINT_JOYSTICK_RAWINPUT by
 +      // default": Windows could stop delivering raw controller input until a reboot) - so only with
-+      // --pad_trigger_rumble, which is off by default. Before the gamepad subsystem starts; an SDL_JOYSTICK_RAWINPUT
-+      // environment variable still wins.
++      // --pad_trigger_rumble, which is off by default. It then reads EVERY XInput-class pad (Xbox 360, Xbox One /
++      // Series, third-party pads in X-mode, Steam Input's virtual pad): other SDL GUIDs; one combined trigger axis, no
++      // Guide button and no rumble (retried: rumble_retry) until the pad's first input pairs it with XInput / WGI; pads
++      // added in raw input's order, so split-screen players may get them in another order than the ring lights show.
++      // Before the gamepad subsystem starts; an SDL_JOYSTICK_RAWINPUT environment variable still wins.
 +      if (REXCVAR_GET(pad_trigger_rumble)) {
 +        SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT, "1");
 +        const char* raw = SDL_GetHint(SDL_HINT_JOYSTICK_RAWINPUT);
@@ -221,7 +241,7 @@ index 30e77a1..ebbd35d 100644
        // Initialize game controller subsystem
        if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
          REXLOG_ERROR("SDL: Failed to init gamecontroller subsystem: {}", SDL_GetError());
-@@ -302,9 +319,23 @@ void SDLInputDriver::OnClosing(rex::ui::UIEvent&) {
+@@ -302,9 +322,23 @@ void SDLInputDriver::OnClosing(rex::ui::UIEvent&) {
    }
  }
  
@@ -247,7 +267,37 @@ index 30e77a1..ebbd35d 100644
  
  void SDLInputDriver::EnumerateDevices(std::vector<DeviceInfo>& out) {
    // Polling can start before the window exists and the subsystems are up.
-@@ -455,6 +486,46 @@ X_RESULT SDLInputDriver::SetDeviceTriggerEffect(DeviceId id, const uint8_t* righ
+@@ -416,10 +450,25 @@ X_RESULT SDLInputDriver::SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* vibr
+   // XInput vibration holds until the guest changes it, but SDL rumble expires,
+   // and a zero duration expires on the next SDL_UpdateJoysticks. Arm it for
+   // SDL's maximum instead; each call cancels the previous effect anyway.
+-  return SDL_RumbleGamepad(controller->sdl, vibration->left_motor_speed,
+-                           vibration->right_motor_speed, kRumbleDurationMs)
+-             ? X_ERROR_SUCCESS
+-             : X_ERROR_FUNCTION_FAILED;
++  const bool rumbled = SDL_RumbleGamepad(controller->sdl, vibration->left_motor_speed,
++                                         vibration->right_motor_speed, kRumbleDurationMs);
++  // Patch 104: with SDL's raw input driver (--pad_trigger_rumble) a pad cannot rumble until its first input pairs it
++  // with XInput / WGI ("isn't correlated yet"); the game may not ask again, so the last request is kept for that input.
++  controller->rumble_retry = !rumbled && REXCVAR_GET(pad_trigger_rumble);
++  controller->rumble_low = vibration->left_motor_speed;
++  controller->rumble_high = vibration->right_motor_speed;
++  return rumbled ? X_ERROR_SUCCESS : X_ERROR_FUNCTION_FAILED;
++}
++
++// COGBox SDK patch 104: see ControllerState::rumble_retry. Called with controllers_mutex_ held, from the pad's input
++// events (after SDL has seen that input, so the pad is paired if it can be); a newer SetDeviceVibration replaces it.
++void SDLInputDriver::RetryRumbleLocked(ControllerState& controller) {
++  if (!controller.rumble_retry) {
++    return;
++  }
++  if (SDL_RumbleGamepad(controller.sdl, controller.rumble_low, controller.rumble_high, kRumbleDurationMs)) {
++    controller.rumble_retry = false;
++  }
+ }
+ 
+ // COGBox SDK patch 98 (GitHub #245): see SendDs5TriggerEffect above. InputSystem calls this with its own mutex held, as
+@@ -455,6 +504,46 @@ X_RESULT SDLInputDriver::SetDeviceTriggerEffect(DeviceId id, const uint8_t* righ
    return X_ERROR_SUCCESS;
  }
  
@@ -294,7 +344,7 @@ index 30e77a1..ebbd35d 100644
  X_RESULT SDLInputDriver::GetDeviceKeystroke(DeviceId id, uint32_t flags,
                                              X_INPUT_KEYSTROKE* out_keystroke) {
    // TODO(JoelLinn): Figure out the flags
-@@ -712,6 +783,18 @@ void SDLInputDriver::OnControllerDeviceAddedLocked(const SDL_Event& event) {
+@@ -712,6 +801,19 @@ void SDLInputDriver::OnControllerDeviceAddedLocked(const SDL_Event& event) {
  
    REXLOG_INFO("SDL OnControllerDeviceAdded: connection order {}, device {}.", ordinal,
                static_cast<uint64_t>(state.id));
@@ -307,9 +357,26 @@ index 30e77a1..ebbd35d 100644
 +    const char* name = SDL_GetGamepadName(controller);
 +    REXLOG_INFO("SDL: impulse triggers on \"{}\" (device {}): {}; SDL path {}", name ? name : "?",
 +                static_cast<uint64_t>(state.id),
-+                has ? "available" : "not available (no trigger motors SDL can reach on this pad - left alone)",
++                has ? "available (as SDL sees it; over Bluetooth Windows may still drive no trigger motors)"
++                    : "not available (no trigger motors SDL can reach on this pad - left alone)",
 +                path ? path : "?");
 +  }
    const char* mapping = SDL_GetGamepadMapping(controller);
    REXLOG_INFO("SDL Controller {}: {}", ordinal, mapping ? mapping : "<none>");
  }
+@@ -748,6 +850,7 @@ void SDLInputDriver::OnControllerDeviceAxisMotionLocked(const SDL_Event& event)
+     // The pad can be removed between the event being posted and drained.
+     return;
+   }
++  RetryRumbleLocked(controllers_.at(*idx));   // patch 104
+   auto& pad = controllers_.at(*idx).state.gamepad;
+   switch (event.gaxis.axis) {
+     case SDL_GAMEPAD_AXIS_LEFTX:
+@@ -817,6 +920,7 @@ void SDLInputDriver::OnControllerDeviceButtonChangedLocked(const SDL_Event& even
+     return;
+   }
+   auto& controller = controllers_.at(*idx);
++  RetryRumbleLocked(controller);   // patch 104
+ 
+   uint16_t xbuttons = controller.state.gamepad.buttons;
+   // Lookup the XInput button code.

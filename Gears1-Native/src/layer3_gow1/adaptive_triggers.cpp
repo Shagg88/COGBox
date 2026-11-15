@@ -255,21 +255,22 @@ struct Seen {
   bool vibration = true;
 };
 
-// The game's own Vibration option [G]: Gears 1's script was not read for it; UE3's ForceFeedbackManager.
-// bAllowsForceFeedback (what Gears 3 and Judgment set from the profile) when the game has it, else
-// PlayerReplicationInfo.bControllerVibrationAllowed (Gears 2's). Neither found: allowed (COGBox's own Vibration
-// setting still applies).
+// The game's own Vibration option [G]: Gears 1's script was not read for it, so both of UE3's flags are read and either
+// one saying off is off (review r70): ForceFeedbackManager.bAllowsForceFeedback (what Gears 3 and Judgment set from the
+// profile) and PlayerReplicationInfo.bControllerVibrationAllowed (Gears 2's). Neither found: allowed (COGBox's own
+// Vibration setting still applies).
 constexpr bool kVibrationFromManager = true, kVibrationFromPri = true;
-bool VibrationAllowed(uint32_t pc) {
+bool VibrationAllowed(uint32_t pc) {   // (every flag read must allow it)
+  bool allowed = true;
   if (kVibrationFromManager && g_p.ffm >= 0 && g_p.ffmAllowsMask) {
     const uint32_t manager = obj::Read32(pc + uint32_t(g_p.ffm));
-    if (manager && obj::IsA(manager, g_p.ffmClass)) return g_p.Flag(manager, g_p.ffmAllows, g_p.ffmAllowsMask);
+    if (manager && obj::IsA(manager, g_p.ffmClass)) allowed = g_p.Flag(manager, g_p.ffmAllows, g_p.ffmAllowsMask);
   }
   if (kVibrationFromPri && g_p.pri >= 0 && g_p.priVibrationMask) {
     const uint32_t pri = obj::Read32(pc + uint32_t(g_p.pri));
-    if (pri && obj::IsA(pri, g_p.priClass)) return g_p.Flag(pri, g_p.priVibration, g_p.priVibrationMask);
+    if (pri && obj::IsA(pri, g_p.priClass)) allowed = allowed && g_p.Flag(pri, g_p.priVibration, g_p.priVibrationMask);
   }
-  return true;
+  return allowed;
 }
 
 // One local player's effect now
@@ -334,9 +335,9 @@ void StartObjectsInit() {
 // engine's own per-shot signals on the player's pawn: Pawn.FlashCount (a byte the projectile / grenade / burst weapons
 // step once per shot, 0 when firing stops) and Pawn.FlashLocation (the instant-hit weapons' hit point - a new one each
 // shot, (0,0,0) when firing stops); a weapon whose flash signals never moved (a client whose shots are decided by the
-// host) uses its AmmoUsedCount going up instead. A shot is one kick (the row's Kick); a hold weapon buzzes while its
-// shots keep coming (one in the last 250 ms - not "a flash signal is set", which a game might never clear); the
-// chainsaw buzzes both triggers while it revs. Nothing - and a running pulse stopped -
+// host) uses its AmmoUsedCount going up instead (a hold weapon always counts it too). A shot is one kick (the row's
+// Kick); a hold weapon buzzes while its shots keep coming (one in the last 250 ms - not "a flash signal is set", which
+// a game might never clear); the chainsaw buzzes both triggers while it revs. Nothing - and a running pulse stopped -
 // while the player is not playing (the DualSense "off" cases: menus, pause, cutscenes, death, no weapon) or has
 // vibration off in the game's options. The runtime adds COGBox's Vibration setting, its menus and the window focus, and
 // writes only to pads that have trigger motors. Per player (split screen: each pad its own).
@@ -368,11 +369,15 @@ void ImpulseTick(rex::input::InputSystem* input, uint32_t user, const Seen& s, C
   const bool located = ((location[0] | location[1] | location[2]) & 0x7FFFFFFFu) != 0;   // (-0.0 is 0.0; unset)
   const uint32_t ammo = g_p.ammoUsed >= 0 && obj::IsA(s.weapon, g_p.ammoClass)
                             ? obj::Read32(s.weapon + uint32_t(g_p.ammoUsed)) : 0;
+  const Kick& k = FeelFor(s.feel).kick;
   bool fired = false;
   if (p.pawn == s.pawn && p.weapon == s.weapon) {   // (a new pawn or weapon: counters taken, no kick)
     const bool flash = (count && count != p.flashCount) || (located && location != p.flashLocation);
     p.flashMoved = p.flashMoved || flash;
-    fired = flash || (!p.flashMoved && int32_t(ammo - p.ammo) > 0);
+    // a hold weapon also counts its ammo going up after its flash signals moved (one that steps them once per pull
+    // and then holds them would otherwise stop buzzing while it still fires); a kick weapon does not, or a client
+    // whose host's count arrives later would kick twice
+    fired = flash || ((!p.flashMoved || k.hold) && int32_t(ammo - p.ammo) > 0);
   } else {
     p.flashMoved = false;
     p.lastShot = {};
@@ -380,7 +385,6 @@ void ImpulseTick(rex::input::InputSystem* input, uint32_t user, const Seen& s, C
   if (fired) p.lastShot = now;
   p.pawn = s.pawn, p.weapon = s.weapon, p.flashCount = count, p.flashLocation = location, p.ammo = ammo;
 
-  const Kick& k = FeelFor(s.feel).kick;
   const bool firing = p.lastShot != Clock::time_point{} && now - p.lastShot < std::chrono::milliseconds(250);
   const bool continuous = (s.feel == kChainsaw || (k.hold && firing)) && (k.right || k.left);
   if (continuous || (fired && !k.hold && (k.right || k.left))) {

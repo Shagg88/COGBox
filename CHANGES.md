@@ -12,9 +12,12 @@
   the small motors in the triggers give a short kick with each shot - harder for the Gnasher, Boomshot and heavy
   weapons - and buzz while the chainsaw revs or a Mulcher, Troika or Scorcher fires. Nothing in menus, cutscenes, while
   paused or dead, with the game window in the background, or while vibration is off (COGBox's Controller vibration or
-  the game's own option). To reach the trigger motors the game reads controllers through Windows raw input; in rare
-  cases Windows then stops sending controller input until the PC restarts - turn the option off if a controller stops
-  responding. Xbox 360, PlayStation and other controllers are not affected; DualSense adaptive triggers work as before.
+  the game's own option). For USB or the Xbox Wireless Adapter (Bluetooth may give none) with Steam Input off for the
+  controller. Only Xbox One / Series controllers get trigger pulses, but while the option is on every Xbox-style
+  controller (Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press
+  the triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in
+  another order, and in rare cases Windows stops sending controller input until the PC restarts - turn the option off
+  if a controller misbehaves. PlayStation controllers are not affected; DualSense adaptive triggers work as before.
   **Not tried with an Xbox controller yet.** GitHub #245.
 
 ### Fixes

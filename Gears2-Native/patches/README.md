@@ -153,4 +153,7 @@ Gears 3 and Judgment use the same runtime.
   or GameInput, and its raw input driver (which pairs each pad with its WGI gamepad) is the one used here - the
   stand-alone WGI and GameInput drivers are off by default as well. SDL turned the raw input driver off by default in May
   2025 (Windows could stop delivering raw controller input until a reboot), which is why the option is off by default.
-  Apply it in the SDK root (`git apply`).
+  With it on, every XInput-class pad (Xbox 360, X-mode pads, Steam Input's virtual pad) moves to raw input: other SDL
+  GUIDs, a combined trigger axis, no Guide and no rumble until the pad's first input (a failed rumble is sent again with
+  that input), and pads added in raw input's order (split screen may differ from the ring lights). Over Bluetooth
+  Windows may drive no trigger motors even where SDL reports them. Apply it in the SDK root (`git apply`).
