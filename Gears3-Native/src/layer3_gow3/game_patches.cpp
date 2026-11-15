@@ -621,16 +621,21 @@ void Gow3PathChoiceTick() {
 // 0.6.3: wait = false for UWorld::ServerTickClients' call (host with remote players): it only reads the value, and a
 // second wait in the same frame halved the player's limit (60 -> 30, 144 -> 72). It gets 0 ("no limit"), exactly what
 // it got in 0.6.2 after the wait (review r62 M1: the limit itself would change its CPU-saturated test).
+// GitHub #313 pace check (xenos::PaceCheck): the engine loop's limiter wait in this frame, ms (game thread only; set to 0
+// by Gow3MaxTickRate for each engine-loop call, read by Gow3NoteTickCall after the original returned).
+static double g_frame_wait_ms = 0.0;
 static void Gow3ExactLimit(PPCRegister& f1, bool wait = true) {
   if (!wait) { f1.f64 = 0.0; return; }
   static xenos::FrameLimiter limiter;
   GOW3_LOG_ONCE("gow3_max_fps: exact host-side limiter on ({} fps)", f1.f64);
-  limiter.Wait(f1.f64);
+  g_frame_wait_ms = limiter.Wait(f1.f64);
   f1.f64 = 0.0;
 }
 
-// GitHub #313 ("the fps limit stops working in split screen", reporter's game not stated; not reproduced). The limiter
-// lives in Gow3MaxTickRate, which runs only where UEngine::GetMaxTickRate loads MaxSmoothedFrameRate (frame-rate
+// GitHub #313 ("the fps limit stops working in split screen": Gears 2 and 3, a 120 limit, vsync on or off; not
+// reproduced). 0.6.3: the smoothing flag GetMaxTickRate tests (disc 0x8343F7D4, TU6 0x8344FFA4) is written once, at
+// start-up (disc sub_82960BE8), so the count below should stay 0 in split screen too; xenos::PaceCheck (every 10 s with
+// 2+ local players: engine frames, frames shown, limiter waits) tells the other cases apart. The limiter lives in Gow3MaxTickRate, which runs only where UEngine::GetMaxTickRate loads MaxSmoothedFrameRate (frame-rate
 // smoothing on); extras.cpp wraps the whole function. If the game takes another way through it while two players are in
 // (no smoothing -> no hook -> no limit), the two counts below differ. These lines show it in a report: how many engine
 // ticks did not reach the limiter, what the function returned for them, the limit asked, and the number of local players.
@@ -673,6 +678,8 @@ void Gow3NoteTickCall(uint32_t hits_before, double result, uint32_t caller) {
   ++calls, ++window_calls;
   if (!hooked) ++skipped, ++window_skipped;
   const int32_t asked = LiveMaxFps();
+  static xenos::PaceCheck pace;  // GitHub #313: engine frames / frames shown / limiter waits, every 10 s in split screen
+  pace.Tick("gow3_max_fps", asked, hooked ? g_frame_wait_ms : -1.0, XenosSwapCount(), [] { return Gow3LocalPlayers(); });
   // a change between "reached the limiter" and "did not", each way: the first 12 only
   if (hooked != last_hooked && flips < 12) {
     ++flips;
@@ -703,6 +710,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   // value, no wait, and none of the per-frame ticks below (they ran twice per frame on a host before).
   const bool engine_loop = g_tick_caller.load(std::memory_order_relaxed) != gow3::addr::kServerTickClientsTickRateRet;
   if (engine_loop) {
+    g_frame_wait_ms = 0.0;  // GitHub #313 pace check: set by Gow3ExactLimit when it waits in this frame
     TickTimeline();
     Gow3ModChaptersTick();
     Gow3PathChoiceTick();
