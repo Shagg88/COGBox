@@ -243,6 +243,12 @@ struct KeyAction { const char *cvar; const char *pad; const char *what; const ch
 // GitHub #208: per game - Judgment throws grenades with LB and opens the tactical display with D-pad down (the other
 // three the other way round), so its two rows are named and given their default keys (Tab / 4) by what they do there.
 const std::vector<KeyAction> &key_actions(Game g = Game::Gears2);
+// 0.6.3 (GitHub #316): the key that switches the game window between windowed and borderless full screen - the same in
+// all four games (the games' bind_cogbox_fullscreen). Not F11: the cheat keys (and the AO debug keys) have it. Shown on the
+// Controls tab; window_key() is what a --bind_cogbox_fullscreen=<key> line in extra-args.txt changes it to (the last line
+// wins; "None" = off), else the default. The key text is the games' own: [Alt+][Ctrl+][Shift+]<key name>.
+constexpr const char *kWindowKeyDefault = "Alt+Return";
+std::string window_key(const Environment &env);
 // Job 661: draws the keyboard button prompts (key caps over each game's controller-button sheet, 4x the sheet's size) for
 // these keys (cvar -> "Key[,Key2]") into <promptDir>\hires-<game>; returns that folder or "" (keycaps.cpp sets it).
 using PromptComposer = std::string (*)(const std::string &promptDir, const std::string &game,

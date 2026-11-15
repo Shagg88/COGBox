@@ -75,6 +75,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/fps_bar.cpp
     src/layer0_xenos/ao_debug.cpp
     src/layer0_xenos/ingame_menu.cpp
+    src/layer0_xenos/window_hotkey.cpp   # GitHub #316
     src/layer0_xenos/menu_look.cpp
     src/layer0_xenos/social_ingame.cpp
     src/layer0_xenos/social_page.cpp
@@ -446,6 +447,7 @@ if(GN_BUILD_TESTS)
         tests/layer0_prompt_compositor_test.cpp
         src/layer0_xenos/renderer/prompt_overlay_compositor.cpp
         tests/layer0_device_monitor_test.cpp
+        tests/layer0_window_hotkey_test.cpp   # GitHub #316 (header only)
         src/layer0_xenos/input/prompt_device_monitor.cpp
         tests/layer0_ao_test.cpp
         tests/layer2_config_bundle_test.cpp

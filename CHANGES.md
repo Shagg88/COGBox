@@ -1,5 +1,12 @@
 # COGBox changes
 
+## 0.6.3 (not released)
+
+- **Windowed / borderless full screen key, all four games:** **Alt+Enter** in the game window switches between a window
+  and borderless full screen on the monitor the game is on, and back to the window's size and place. It is not F11
+  (F11 is the cheat keys' "all weapons"); change it with a `--bind_cogbox_fullscreen=<key>` line in `extra-args.txt`
+  (`None` turns it off). The key is shown on the Controls tab. Suggested in GitHub #316.
+
 ## 0.6.2
 
 **Quick start:** download `COGBox-0.6.2.7z`, right-click it > **Extract All...** (Windows 11; on Windows 10 use 7-Zip) to a folder of its own (for example
