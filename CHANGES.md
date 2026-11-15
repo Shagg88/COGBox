@@ -7,6 +7,7 @@
   (F11 is the cheat keys' "all weapons"); change it with a `--bind_cogbox_fullscreen=<key>` line in `extra-args.txt`
   (`None` turns it off). The key is shown on the Controls tab. Suggested in GitHub #316.
 - **Cheats are off in Versus** (all four games): the cheat keys (F5-F11, `--gowX_cheats`) no longer work in any Versus match - online, System Link, private matches and local split screen, with or without bots. They still work in the campaign (solo and co-op) and in Horde, Beast and Survival. Any game type not on that list is treated as Versus. Other console commands from `--ue3_hotkeys` / `--ue3_exec` are refused in Versus too (the launcher's own display settings still apply). The Horde-bots button (Back, Gears 2 and 3) is not blocked: it turns the game's cheat flag on and adds bots, so switch it off for Versus. Cheats are also off in the menus and lobbies.
+
 ### Fixes
 - **Judgment: the loading screen after Monroe Commons no longer hangs above 30 fps** (GitHub #318, also #54 / #38 /
   #77 - not confirmed yet): COGBox now asks the game itself whether its loading screen is still up, and keeps the
