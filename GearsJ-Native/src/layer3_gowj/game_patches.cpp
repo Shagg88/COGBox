@@ -430,6 +430,11 @@ void GowjPollLoadingMovie(PPCContext& ctx, uint8_t* base) {
   constexpr uint32_t kGFullScreenMovie = 0x835462BCu;       // the movie player global it reads first
   static PPCFunc* s_fn = nullptr;
   static int s_state = 0;  // 0 = not checked yet, 1 = in use, -1 = not used (file-open heuristic only)
+  // Review r43: the game thread only (as layer 2's console exec): the first caller is the game's engine tick; a call
+  // from any other thread is ignored.
+  static std::thread::id s_thread;
+  if (s_thread == std::thread::id()) s_thread = std::this_thread::get_id();
+  if (std::this_thread::get_id() != s_thread) return;
   if (s_state == 0) {      // the game thread is the only caller
     s_state = -1;
     if (REXCVAR_GET(gowj_loading_fps) <= 0 || !base) return;
@@ -468,7 +473,22 @@ void GowjPollLoadingMovie(PPCContext& ctx, uint8_t* base) {
   if (was == -1)
     REXLOG_INFO("gowj_loading_fps: first engine answer - the loading movie {}; file opens no longer start "
                 "the cap", playing ? "is playing" : "is not playing");
-  GowjSetLoadingState(playing);
+  // Review r43: "not playing" must hold for 250 ms before the cap is released, so a one-tick blip (a movie restart,
+  // seamless travel) neither drops the cap for a few uncapped ticks nor logs an off / on pair. "Playing" applies at once.
+  static LoadClock::time_point s_false_since{};
+  if (playing) {
+    s_false_since = {};
+    GowjSetLoadingState(true);
+  } else if (was != 1) {
+    GowjSetLoadingState(false);
+  } else {
+    const auto now = LoadClock::now();
+    if (s_false_since == LoadClock::time_point{}) s_false_since = now;
+    if (now - s_false_since >= std::chrono::milliseconds(250)) {
+      s_false_since = {};
+      GowjSetLoadingState(false);
+    }
+  }
 }
 // GitHub #219: the freeze watchdog's thread asks when the last loading screen / level change began (steady_clock ticks,
 // 0 = none seen, or --gowj_loading_fps=0 so no file is watched). A relaxed load, off the game's threads.
