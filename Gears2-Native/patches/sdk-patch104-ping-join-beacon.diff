@@ -1,0 +1,125 @@
+diff --git a/include/rex/kernel/xam/net/online_sessions.h b/include/rex/kernel/xam/net/online_sessions.h
+index 4fc1390..0114d8a 100644
+--- a/include/rex/kernel/xam/net/online_sessions.h
++++ b/include/rex/kernel/xam/net/online_sessions.h
+@@ -83,6 +83,9 @@ class OnlineSessions {
+   std::optional<uint64_t> TargetHostXuid() const;   // patch 93: the host of the lobby the game last looked up to join
+   std::chrono::steady_clock::time_point TargetHostSince() const;
+   void ForgetTargetHost();
++  // COGBox SDK patch 104: the game connected to a peer's join beacon (TCP 8700, or 8675 for Gears 3's Ranked): matchmaking
++  // put us in that host's match, which creates no session here, so it is the join target as a looked-up lobby is.
++  void OnBeaconConnect(uint64_t host_xuid);
+   // The game put a TCP socket bound to `port` (before any bind offset) into listen. UE3 titles (Gears 2 / 3 /
+   // Judgment) take joins on a party beacon at TCP 8700, which they open well after creating the session (26 s in a
+   // traced Gears 2 run); a lobby listed before that sends guests to a closed port and they give up. So once a title
+diff --git a/include/rex/kernel/xam/net/virtual_peer_manager.h b/include/rex/kernel/xam/net/virtual_peer_manager.h
+index 314754c..e3799db 100644
+--- a/include/rex/kernel/xam/net/virtual_peer_manager.h
++++ b/include/rex/kernel/xam/net/virtual_peer_manager.h
+@@ -118,6 +118,8 @@ class VirtualPeerManager {
+   std::optional<int> PingMs(uint64_t peer_xuid, Clock::time_point now = Clock::now()) const;   // unknown after 6 s unanswered
+   // patch 93: a game packet came from this peer in the last 5 s (punches, acks and keepalives do not count)
+   bool RecentGameTraffic(uint64_t peer_xuid, Clock::time_point now) const;
++  // COGBox SDK patch 104: the peer a virtual IP stands for (its XUID); nullopt for an address no peer has.
++  std::optional<uint64_t> XuidOfVip(uint32_t vip) const;
+ 
+   // The data path. OnPacket returns true when the packet was COGBox's own (STUN, punch) and must not reach the game.
+   bool OnPacket(uint64_t native_handle, const uint8_t* data, size_t len, const sockaddr_in& from, Clock::time_point now);
+diff --git a/src/kernel/xam/net/online_sessions.cpp b/src/kernel/xam/net/online_sessions.cpp
+index e1231d8..51875fa 100644
+--- a/src/kernel/xam/net/online_sessions.cpp
++++ b/src/kernel/xam/net/online_sessions.cpp
+@@ -391,6 +391,13 @@ void OnlineSessions::AddFound(const LobbyInfo& lobby) {
+   }
+ }
+ 
++void OnlineSessions::OnBeaconConnect(uint64_t host_xuid) {   // patch 104
++  if (!host_xuid) return;
++  std::lock_guard<std::mutex> lock(mutex_);
++  target_host_ = host_xuid;
++  target_since_ = std::chrono::steady_clock::now();
++}
++
+ std::optional<uint64_t> OnlineSessions::TargetHostXuid() const {   // patch 93
+   std::lock_guard<std::mutex> lock(mutex_);
+   return target_host_;
+diff --git a/src/kernel/xam/net/socket_hooks.cpp b/src/kernel/xam/net/socket_hooks.cpp
+index 3aca20e..7b9768d 100644
+--- a/src/kernel/xam/net/socket_hooks.cpp
++++ b/src/kernel/xam/net/socket_hooks.cpp
+@@ -19,6 +19,8 @@
+ #include <rex/cvar.h>
+ #include <rex/kernel/xam/net/live_emulation.h>
+ #include <rex/kernel/xam/net/stream_tunnel.h>
++#include <rex/kernel/xam/net/online_sessions.h>   // patch 104
++#include <rex/kernel/xam/net/online_startup.h>    // patch 104: ActiveOnlineSessions
+ #include <rex/kernel/xam/net/upnp.h>
+ #include <rex/logging.h>
+ 
+@@ -295,6 +297,12 @@ std::optional<sockaddr_in> RedirectStreamConnect(uint32_t vip, uint16_t port) {
+   if (!NetOnline()) {
+     return std::nullopt;
+   }
++  // COGBox SDK patch 104: a connect to a peer's join beacon names the host matchmaking put us with (the FPS bar's ping)
++  if (port == OnlineSessions::kBeaconPort || port == OnlineSessions::kRankedBeaconPort) {
++    if (auto xuid = VirtualPeerManager::Get().XuidOfVip(vip)) {
++      if (OnlineSessions* s = ActiveOnlineSessions()) s->OnBeaconConnect(*xuid);
++    }
++  }
+   return StreamTunnel::Get().RedirectConnect(vip, port);
+ }
+ 
+diff --git a/src/kernel/xam/net/virtual_peer_manager.cpp b/src/kernel/xam/net/virtual_peer_manager.cpp
+index 2a2a4e6..7477151 100644
+--- a/src/kernel/xam/net/virtual_peer_manager.cpp
++++ b/src/kernel/xam/net/virtual_peer_manager.cpp
+@@ -726,6 +726,13 @@ std::optional<int> VirtualPeerManager::PingMs(uint64_t peer_xuid, Clock::time_po
+   return int(*p->second.rtt_ms + 0.5);
+ }
+ 
++std::optional<uint64_t> VirtualPeerManager::XuidOfVip(uint32_t vip) const {   // patch 104
++  std::lock_guard<std::mutex> lock(mutex_);
++  auto p = peers_.find(vip);
++  if (p == peers_.end()) return std::nullopt;
++  return p->second.xuid;
++}
++
+ bool VirtualPeerManager::RecentGameTraffic(uint64_t peer_xuid, Clock::time_point now) const {   // patch 93
+   std::lock_guard<std::mutex> lock(mutex_);
+   auto v = xuid_to_vip_.find(peer_xuid);
+diff --git a/tests/unit/net/online_sessions_test.cpp b/tests/unit/net/online_sessions_test.cpp
+index d10af7a..1642da6 100644
+--- a/tests/unit/net/online_sessions_test.cpp
++++ b/tests/unit/net/online_sessions_test.cpp
+@@ -584,3 +584,15 @@ TEST_CASE("Sessions: patch 93 - the target host is forgotten on request", "[net]
+   f.sessions.ForgetTargetHost();
+   CHECK_FALSE(f.sessions.TargetHostXuid().has_value());
+ }
++
++TEST_CASE("Sessions: patch 104 - a join beacon the game connects to is the host it plays with", "[net][sessions]") {
++  Fixture f;
++  f.sessions.OnCreate(kTitle, kHostMatchmaking, 10, 0, Info(0x52), 0xF2, 0x701);   // our own party, still hosted
++  const auto before = std::chrono::steady_clock::now();
++  f.sessions.OnBeaconConnect(0x0009111111111111ull);   // matchmaking put us in someone else's match (TCP to its 8700)
++  REQUIRE(f.sessions.TargetHostXuid().has_value());
++  CHECK(*f.sessions.TargetHostXuid() == 0x0009111111111111ull);
++  CHECK(f.sessions.TargetHostSince() >= before);   // forgotten 30 s after its game packets stop, as a looked-up host
++  f.sessions.OnBeaconConnect(0);                    // no peer known for that address: nothing changes
++  CHECK(*f.sessions.TargetHostXuid() == 0x0009111111111111ull);
++}
+diff --git a/tests/unit/net/peer_manager_test.cpp b/tests/unit/net/peer_manager_test.cpp
+index 99a0bf3..dda198d 100644
+--- a/tests/unit/net/peer_manager_test.cpp
++++ b/tests/unit/net/peer_manager_test.cpp
+@@ -823,3 +823,11 @@ TEST_CASE("Peers: patch 93 - a ping with no answer for 6 s is unknown again", "[
+   CHECK(f.mgr.PingMs(42, f.t0 + 5s).has_value());
+   CHECK_FALSE(f.mgr.PingMs(42, f.t0 + 9s).has_value());   // acks stopped: no stale number
+ }
++
++TEST_CASE("Peers: patch 104 - a virtual IP names its peer's XUID", "[net][peers]") {
++  VirtualPeerManager mgr;
++  uint32_t a = mgr.AddPeer(0x0009000000000001ull, 1);
++  REQUIRE(mgr.XuidOfVip(a).has_value());
++  CHECK(*mgr.XuidOfVip(a) == 0x0009000000000001ull);
++  CHECK_FALSE(mgr.XuidOfVip(a + 1).has_value());
++}

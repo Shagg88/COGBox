@@ -1,5 +1,12 @@
 # COGBox changes
 
+## 0.6.3 (not released yet)
+
+### Online play
+- **Show ping after a matchmaking join** (by Flippage): joining a match through playlist matchmaking showed
+  "Ping -- (hosting)" instead of your ping to the host. It now shows the host's ping, as joins from an invite, Join
+  friend or the open matches list already did. SDK patch 104.
+
 ## 0.6.2
 
 **Quick start:** download `COGBox-0.6.2.7z`, right-click it > **Extract All...** (Windows 11; on Windows 10 use 7-Zip) to a folder of its own (for example
