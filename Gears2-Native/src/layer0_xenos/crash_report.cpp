@@ -10,14 +10,18 @@
 //   - everything the crash path needs is made at start: the folder as an NT path, a fixed text buffer, two threads;
 //   - the crashing thread only hands its exception over and waits (bounded): no stack used there, so a stack overflow
 //     is reported as well (and threads with a normal-sized stack keep --gow2_crash_stack_guarantee_kb for it);
-//   - a helper thread made at start writes the .txt with NtCreateFile / WriteFile through to the disk (no CRT, no heap,
-//     no logger, no loader lock), section by section, so whatever it got to is on the disk;
-//   - it lists every other thread's state, wait reason, CPU time and stack (suspended one at a time);
-//   - only then the minidump - and only when a probe thread can still take the process heap and the loader lock,
-//     else the .txt says so and the crash goes on to Windows Error Reporting, whose LocalDumps (set by COGBox for this
-//     play's folder) writes its dump from outside the process.
+//   - a helper thread made at start copies the exception, then writes the .txt with NtCreateFile / WriteFile through
+//     to the disk (no CRT, no heap, no logger), section by section, so whatever it got to is on the disk;
+//   - stacks as GearsJ's freeze watchdog reads them (r74): a thread is suspended only to copy its context and stack top
+//     (syscalls only), resumed, and the copy unwound afterwards, each step SEH-guarded as in the profiler and stopping
+//     at the first address outside every image; under Wine / Proton (where the unwinder takes the loader lock) other
+//     threads' stacks are skipped and the crashing thread's only read when the loader lock is free;
+//   - the minidump: left to Windows Error Reporting when COGBox set LocalDumps for this very folder (written from
+//     outside the game, so it can't hang it); otherwise in-process, only when the process heap lock and the loader
+//     lock can be taken (--gow2_crash_minidump).
 #include <xenos/dev_tools.h>
 #include <rex/cvar.h>
+#include <rex/logging/macros.h>
 
 #include <csignal>
 #include <cstdint>
@@ -37,10 +41,14 @@ REXCVAR_DEFINE_STRING(gow2_crash_dir, "", "Gears2", "Folder for crash reports (d
 REXCVAR_DEFINE_INT32(gow2_crash_stack_guarantee_kb, 32, "Gears2",
                      "Stack kept back in each thread with a stack of 512 KB or more, so a stack overflow can still be "
                      "reported (SetThreadStackGuarantee). 0 = Windows' default");
+REXCVAR_DEFINE_STRING(gow2_crash_minidump, "auto", "Gears2",
+                      "Crash minidump: auto = left to Windows Error Reporting when its LocalDumps is set for the crash "
+                      "folder (COGBox does), else written by the game; game = always written by the game; windows = "
+                      "never by the game");
 REXCVAR_DEFINE_STRING(gow2_crash_test, "", "Gears2",
                       "Test the crash report 10 s after start: av (access violation), stack (stack overflow), abort, "
-                      "heaplock (crash while holding the process heap lock: the report must still be written, the "
-                      "minidump left to Windows). Empty = off");
+                      "heaplock (crash while holding the process heap lock: the report must still be written and the "
+                      "game must not hang). Empty = off");
 
 namespace {
 
@@ -51,10 +59,13 @@ NtCreateFileFn g_nt_create_file = nullptr;
 NtQuerySystemInformationFn g_nt_query_system = nullptr;
 
 constexpr int kPath = 1024;
-wchar_t g_nt_dir[kPath];  // \??\<absolute crash folder>
+wchar_t g_nt_dir[kPath];  // \??\<absolute crash folder>, no trailing separator
 size_t g_nt_dir_len = 0;
 char g_exe_name[MAX_PATH];
 DWORD64 g_exe_base = 0;
+bool g_wine = false;
+bool g_wer_here = false;     // LocalDumps for this exe points at the crash folder (COGBox sets it per play)
+int g_minidump_mode = 0;     // 0 auto, 1 game, 2 windows
 
 // XenosCrashNote: fixed storage, so the crash handler reads it without allocating.
 constexpr int kNotes = 16, kNoteLen = 240;
@@ -65,27 +76,35 @@ volatile LONG g_note_count = 0;
 constexpr ULONG_PTR kReasonMark = 0x6F77326661696C;
 constexpr DWORD kFailFast = 0xC0000409;  // STATUS_STACK_BUFFER_OVERRUN, the code the CRT's fail-fast paths end with
 constexpr DWORD kReportWaitMs = 30000;    // the crashing thread waits at most this long for the report
-constexpr DWORD kProbeWaitMs = 2000;      // heap + loader lock probe before the minidump
+constexpr DWORD kDumpWaitMs = 90000;      // ... and this much more while a minidump is being written
+constexpr DWORD kProbeWaitMs = 2000;      // heap / loader lock probes
 
 HANDLE g_go = nullptr, g_done = nullptr, g_probe_go = nullptr, g_probe_ok = nullptr, g_helper = nullptr;
 DWORD g_helper_tid = 0, g_prober_tid = 0;
 EXCEPTION_POINTERS* volatile g_ep = nullptr;
 volatile DWORD g_crash_tid = 0;
-volatile LONG g_owner = 0;  // the thread whose crash is being reported
+volatile LONG g_owner = 0;    // the thread whose crash is being reported
+volatile LONG g_dumping = 0;  // the helper is inside MiniDumpWriteDump
+
+// The helper's own copy of the exception (r74 L1: the crashing thread's EXCEPTION_POINTERS may live on a stack that is
+// reused once it stops waiting).
+EXCEPTION_RECORD g_er;
+alignas(16) CONTEXT g_ctx;
+EXCEPTION_POINTERS g_ep_copy{&g_er, &g_ctx};
 
 // ---- the text, written through to the disk (no CRT, no heap) ----------------------------------------------------
 char g_text[32768];
 size_t g_len = 0;
 HANDLE g_txt = INVALID_HANDLE_VALUE;
 
-void Write() {
+void Write() {  // the handle is write-through: on the disk when this returns
   if (g_txt != INVALID_HANDLE_VALUE && g_len) {
     DWORD done = 0;
     WriteFile(g_txt, g_text, static_cast<DWORD>(g_len), &done, nullptr);
   }
   g_len = 0;
 }
-void Section() {  // what the report has so far is on the disk
+void Section() {
   Write();
   if (g_txt != INVALID_HANDLE_VALUE) FlushFileBuffers(g_txt);
 }
@@ -114,10 +133,8 @@ bool OpenNt(const wchar_t* name, bool dir, bool append, bool through, HANDLE* ou
   wchar_t p[kPath + 64];
   size_t n = 0;
   for (size_t i = 0; i < g_nt_dir_len; ++i) p[n++] = g_nt_dir[i];
-  if (name) {
-    p[n++] = L'\\';
-    for (; *name && n < kPath + 62; ++name) p[n++] = *name;
-  }
+  if (name || (n && p[n - 1] == L':')) p[n++] = L'\\';  // r74 L3: a drive root is "\??\C:\", not the volume "\??\C:"
+  for (; name && *name && n < kPath + 62; ++name) p[n++] = *name;
   p[n] = 0;
   UNICODE_STRING us{static_cast<USHORT>(n * 2), static_cast<USHORT>(n * 2 + 2), p};
   OBJECT_ATTRIBUTES oa;
@@ -137,56 +154,149 @@ bool OpenNt(const wchar_t* name, bool dir, bool append, bool through, HANDLE* ou
   return s >= 0;
 }
 
-// ---- stacks (lock-free: no loader calls, the module name comes from the image's own export directory) ------------
-bool Readable(DWORD64 a, size_t n) {
-  MEMORY_BASIC_INFORMATION mi;
-  if (!VirtualQuery(reinterpret_cast<void*>(a), &mi, sizeof(mi)) || mi.State != MEM_COMMIT) return false;
-  if (mi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) return false;
-  return a + n <= reinterpret_cast<DWORD64>(mi.BaseAddress) + mi.RegionSize;
+// ---- locks -----------------------------------------------------------------------------------------------------
+// The loader lock, tried without waiting (PEB->LoaderLock, x64 PEB + 0x110; Wine's PEB has it in the same place).
+bool LoaderLockFree() {
+  const char* peb = *reinterpret_cast<char* const*>(reinterpret_cast<const char*>(NtCurrentTeb()) + 0x60);
+  auto* cs = peb ? *reinterpret_cast<CRITICAL_SECTION* const*>(peb + 0x110) : nullptr;
+  if (!cs) return false;
+  for (DWORD waited = 0; waited < kProbeWaitMs; waited += 10) {
+    if (TryEnterCriticalSection(cs)) {
+      LeaveCriticalSection(cs);
+      return true;
+    }
+    Sleep(10);
+  }
+  return false;
 }
-const char* ImageName(void* base) {
-  if (reinterpret_cast<DWORD64>(base) == g_exe_base) return g_exe_name;
-  const auto* b = static_cast<const char*>(base);
-  const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(b);
-  if (dos->e_magic != IMAGE_DOS_SIGNATURE) return "?";
-  const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(b + dos->e_lfanew);
-  if (nt->Signature != IMAGE_NT_SIGNATURE) return "?";
-  const IMAGE_DATA_DIRECTORY& d = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
-  if (!d.VirtualAddress || !d.Size) return "?";
-  const auto* ex = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(b + d.VirtualAddress);
-  return ex->Name ? b + ex->Name : "?";
+// The process heap's lock (the CRT allocates there too): HeapLock waits for exactly that lock - a small HeapAlloc
+// would be served by the low-fragmentation front end without it (r74 H2). On the prober, so the wait is bounded.
+DWORD WINAPI ProberMain(void*) {
+  for (;;) {
+    WaitForSingleObject(g_probe_go, INFINITE);
+    HANDLE heap = GetProcessHeap();
+    if (HeapLock(heap)) HeapUnlock(heap);
+    SetEvent(g_probe_ok);
+  }
 }
-void PutFrame(int i, DWORD64 rip) {
+bool HeapLockFree() {
+  if (!g_probe_go) return false;
+  ResetEvent(g_probe_ok);
+  SetEvent(g_probe_go);
+  return WaitForSingleObject(g_probe_ok, kProbeWaitMs) == WAIT_OBJECT_0;
+}
+
+// ---- stacks: copy, then unwind the copy (GearsJ freeze_watchdog.cpp), each step SEH-guarded (profiler.cpp) -------
+constexpr size_t kStackCopy = 256 * 1024;
+uint8_t g_stack_copy[kStackCopy];  // helper thread only
+
+// Syscalls only (the thread may be suspended): its stack from RSP to the end of that committed region.
+size_t CopyStack(const CONTEXT& c, uint8_t* buf) {
+  if (!c.Rsp) return 0;
+  MEMORY_BASIC_INFORMATION mi{};
+  if (!VirtualQuery(reinterpret_cast<const void*>(c.Rsp), &mi, sizeof(mi)) || mi.State != MEM_COMMIT) return 0;
+  size_t len = static_cast<size_t>(reinterpret_cast<DWORD64>(mi.BaseAddress) + mi.RegionSize - c.Rsp);
+  if (len > kStackCopy) len = kStackCopy;
+  SIZE_T got = 0;
+  ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(c.Rsp), buf, len, &got);  // partial is fine
+  return static_cast<size_t>(got);
+}
+
+bool UnwindStep(CONTEXT* c) {  // no C++ objects here (SEH)
+#if defined(_MSC_VER)
+  __try {
+#endif
+    DWORD64 image_base = 0;
+    PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(c->Rip, &image_base, nullptr);
+    if (!fn) {  // leaf function: the return address is at the top of the stack
+      c->Rip = *reinterpret_cast<const DWORD64*>(c->Rsp);
+      c->Rsp += 8;
+    } else {
+      PVOID handler_data = nullptr;
+      DWORD64 frame = 0;
+      RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, c->Rip, fn, c, &handler_data, &frame, nullptr);
+    }
+    return true;
+#if defined(_MSC_VER)
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+#endif
+}
+void* ImageOf(DWORD64 pc) {
   void* base = nullptr;
-  RtlPcToFileHeader(reinterpret_cast<void*>(rip), &base);
+  RtlPcToFileHeader(reinterpret_cast<void*>(pc), &base);
+  return base;
+}
+void Rebase(CONTEXT* c, DWORD64 lo, DWORD64 hi, DWORD64 base) {  // registers restored from the copy hold live-stack
+  DWORD64* regs[] = {&c->Rbp, &c->Rbx, &c->Rsi, &c->Rdi, &c->R12, &c->R13, &c->R14, &c->R15};  // addresses
+  for (DWORD64* r : regs)
+    if (*r >= lo && *r < hi) *r = *r - lo + base;
+}
+// Unwinds a copy made by CopyStack; stops when RSP leaves the copy, and at the first address outside every image
+// (JIT code or a broken stack), so dynamic function tables are never looked up.
+int Unwind(CONTEXT c, const uint8_t* stack, size_t len, DWORD64* pc, int max) {
+  int n = 0;
+  if (len < 8) {
+    if (c.Rip) pc[n++] = c.Rip;
+    return n;
+  }
+  const DWORD64 lo = c.Rsp, hi = c.Rsp + len, base = reinterpret_cast<DWORD64>(stack), end = base + len;
+  c.Rsp = base;
+  Rebase(&c, lo, hi, base);
+  while (n < max && c.Rip && c.Rsp >= base && c.Rsp + 8 <= end) {
+    pc[n++] = c.Rip;
+    if (!ImageOf(c.Rip)) break;
+    const DWORD64 rsp = c.Rsp;
+    if (!UnwindStep(&c)) break;
+    Rebase(&c, lo, hi, base);
+    if (c.Rsp <= rsp) break;  // no progress: a broken frame
+  }
+  return n;
+}
+
+// The module's name from its own export directory (no loader call), copied under SEH (an image being unloaded).
+void ImageName(void* base, char* out, size_t cap) {
+  out[0] = '?';
+  out[1] = 0;
+  if (reinterpret_cast<DWORD64>(base) == g_exe_base) {
+    strncpy_s(out, cap, g_exe_name, _TRUNCATE);
+    return;
+  }
+#if defined(_MSC_VER)
+  __try {
+#endif
+    const auto* b = static_cast<const char*>(base);
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(b);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(b + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return;
+    const IMAGE_DATA_DIRECTORY& d = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (!d.VirtualAddress || !d.Size) return;
+    const auto* ex = reinterpret_cast<const IMAGE_EXPORT_DIRECTORY*>(b + d.VirtualAddress);
+    if (!ex->Name) return;
+    size_t i = 0;
+    for (const char* s = b + ex->Name; *s && i + 1 < cap; ++s) out[i++] = *s;
+    out[i] = 0;
+#if defined(_MSC_VER)
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    out[0] = '?';
+    out[1] = 0;
+  }
+#endif
+}
+void PutFrame(int i, DWORD64 rip, bool modules) {
+  void* base = modules ? ImageOf(rip) : nullptr;
+  char name[MAX_PATH];
+  if (base) ImageName(base, name, sizeof(name));
   Put("  #");
   if (i < 10) Put("0");
   PutDec(i);
   Put(" ");
-  Put(base ? ImageName(base) : "?");
+  Put(base ? name : "?");
   Put(" ");
   PutHex(rip - reinterpret_cast<DWORD64>(base));
   Put("\n");
-}
-int Walk(CONTEXT* c, DWORD64* out, int max) {
-  int n = 0;
-  while (n < max && c->Rip) {
-    out[n++] = c->Rip;
-    const DWORD64 rsp = c->Rsp;
-    if (!Readable(rsp, 64)) break;
-    DWORD64 image_base = 0;
-    PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(c->Rip, &image_base, nullptr);
-    if (fn) {
-      PVOID handler_data = nullptr;
-      DWORD64 frame = 0;
-      RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, c->Rip, fn, c, &handler_data, &frame, nullptr);
-    } else {
-      c->Rip = *reinterpret_cast<DWORD64*>(rsp);
-      c->Rsp += 8;
-    }
-    if (c->Rsp <= rsp) break;  // a damaged stack: stop instead of reading garbage
-  }
-  return n;
 }
 
 // ---- every other thread: state, wait reason, CPU time, stack ----------------------------------------------------
@@ -213,7 +323,8 @@ const char* WaitReason(ULONG r) {
 }
 
 void PutThreads(DWORD crash_tid) {
-  Put("threads (where each one was; suspended one at a time to read its stack):\n");
+  Put("threads (where each one was; suspended one at a time only to copy its stack):\n");
+  if (g_wine) Put("  (stacks skipped under Wine / Proton: the unwinder there takes the loader lock)\n");
   if (!g_nt_query_system) return;
   void* buf = nullptr;
   ULONG size = 1 << 20;
@@ -260,18 +371,24 @@ void PutThreads(DWORD crash_tid) {
           continue;
         }
         Put("\n");
+        Write();  // r74 M2: on the disk before this thread is suspended, so a hang there names it
+        if (g_wine) continue;
         DWORD64 frames[16];
         int n = 0;
-        if (HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, tid)) {
-          if (SuspendThread(h) != static_cast<DWORD>(-1)) {
+        if (HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION,
+                                  FALSE, tid)) {
+          if (GetProcessIdOfThread(h) == pid && SuspendThread(h) != static_cast<DWORD>(-1)) {  // r74 L2: still ours
             alignas(16) CONTEXT c{};
             c.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
-            if (GetThreadContext(h, &c)) n = Walk(&c, frames, 16);
+            size_t len = 0;
+            const bool ok = GetThreadContext(h, &c) != 0;
+            if (ok) len = CopyStack(c, g_stack_copy);  // syscalls only while suspended
             ResumeThread(h);
+            if (ok) n = Unwind(c, g_stack_copy, len, frames, 16);  // after the resume
           }
           CloseHandle(h);
         }
-        for (int f = 0; f < n; ++f) PutFrame(f, frames[f]);
+        for (int f = 0; f < n; ++f) PutFrame(f, frames[f], true);
       }
     }
     if (!next) break;
@@ -280,26 +397,26 @@ void PutThreads(DWORD crash_tid) {
   VirtualFree(buf, 0, MEM_RELEASE);
 }
 
-// The minidump only when another thread can still take the process heap and the loader lock: dbghelp needs both,
-// and with either held for good (a frozen thread, or the crash itself inside the heap) it would hang the game.
-bool LocksFree() {
-  if (!g_probe_go) return false;
-  ResetEvent(g_probe_ok);
-  SetEvent(g_probe_go);
-  return WaitForSingleObject(g_probe_ok, kProbeWaitMs) == WAIT_OBJECT_0;
-}
-DWORD WINAPI ProberMain(void*) {
-  for (;;) {
-    WaitForSingleObject(g_probe_go, INFINITE);
-    HANDLE heap = GetProcessHeap();
-    HeapFree(heap, 0, HeapAlloc(heap, 0, 64));
-    wchar_t path[MAX_PATH];
-    GetModuleFileNameW(nullptr, path, MAX_PATH);  // walks the loader's module list under the loader lock
-    SetEvent(g_probe_ok);
+void PutWerDump() {
+  if (g_wer_here) {
+    Put("Windows Error Reporting (LocalDumps, set by COGBox for this folder) writes ");
+    Put(g_exe_name);
+    Put(".");
+    PutDec(GetCurrentProcessId());
+    Put(".dmp here from outside the game\n");
+  } else if (g_wine) {
+    Put("Wine / Proton has no Windows Error Reporting: no minidump\n");
+  } else {
+    Put("Windows Error Reporting's LocalDumps isn't set for this folder (COGBox sets it): no minidump\n");
   }
 }
 
 void WriteReport(EXCEPTION_POINTERS* ep, DWORD tid) {
+  // first of all: our own copy of the exception (the crashing thread's may go away after its wait)
+  g_er = *ep->ExceptionRecord;
+  g_er.ExceptionRecord = nullptr;
+  g_ctx = *ep->ContextRecord;
+
   SYSTEMTIME st;
   GetLocalTime(&st);
   wchar_t name[40] = L"crash-00000000-000000.txt";  // %Y%m%d-%H%M%S, as before
@@ -312,29 +429,29 @@ void WriteReport(EXCEPTION_POINTERS* ep, DWORD tid) {
   OpenNt(name, false, false, true, &g_txt);
   g_len = 0;
 
-  const EXCEPTION_RECORD* er = ep->ExceptionRecord;
+  const EXCEPTION_RECORD& er = g_er;
   Put("exception ");
-  PutHex(er->ExceptionCode);
+  PutHex(er.ExceptionCode);
   Put(" at ");
-  PutHex(reinterpret_cast<DWORD64>(er->ExceptionAddress));
+  PutHex(reinterpret_cast<DWORD64>(er.ExceptionAddress));
   Put(" thread ");
   PutDec(tid);
   Put("\n");
-  if (er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2) {
-    const ULONG_PTR k = er->ExceptionInformation[0];
+  if (er.ExceptionCode == EXCEPTION_ACCESS_VIOLATION && er.NumberParameters >= 2) {
+    const ULONG_PTR k = er.ExceptionInformation[0];
     Put("access violation: ");
     Put(k == 0 ? "read" : k == 1 ? "write" : "execute");
     Put(" address ");
-    PutHex(er->ExceptionInformation[1]);
+    PutHex(er.ExceptionInformation[1]);
     Put("\n");
   }
-  if (er->ExceptionCode == EXCEPTION_STACK_OVERFLOW) Put("stack overflow\n");
-  if (er->NumberParameters == 2 && er->ExceptionInformation[1] == kReasonMark) {
+  if (er.ExceptionCode == EXCEPTION_STACK_OVERFLOW) Put("stack overflow\n");
+  if (er.NumberParameters == 2 && er.ExceptionInformation[1] == kReasonMark) {
     Put("fail-fast: ");
-    Put(reinterpret_cast<const char*>(er->ExceptionInformation[0]));
+    Put(reinterpret_cast<const char*>(er.ExceptionInformation[0]));  // a string literal
     Put("\n");
   }
-  const CONTEXT& r = *ep->ContextRecord;
+  const CONTEXT& r = g_ctx;
   const struct { const char* n; DWORD64 v; } regs[] = {
       {"rax ", r.Rax}, {" rbx ", r.Rbx}, {" rcx ", r.Rcx}, {" rdx ", r.Rdx}, {" rsi ", r.Rsi}, {" rdi ", r.Rdi},
       {" rsp ", r.Rsp}, {" rbp ", r.Rbp}, {"\nr8 ", r.R8}, {" r9 ", r.R9}, {" r10 ", r.R10}, {" r11 ", r.R11},
@@ -353,39 +470,49 @@ void WriteReport(EXCEPTION_POINTERS* ep, DWORD tid) {
       Put("\n");
     }
   }
+  Section();  // r74 M1: the exception, registers and notes are on the disk before any stack is read
+
   Put("stack (module offset):\n");
   {
-    alignas(16) CONTEXT c = r;
+    // under Wine the unwinder and RtlPcToFileHeader take the loader lock, which the crashing thread may hold
+    const bool lookups = !g_wine || LoaderLockFree();
+    if (!lookups) Put("  (loader lock taken: only the faulting address)\n");
     DWORD64 frames[48];
-    const int n = Walk(&c, frames, 48);
-    for (int i = 0; i < n; ++i) PutFrame(i, frames[i]);
+    const size_t len = lookups ? CopyStack(r, g_stack_copy) : 0;
+    const int n = lookups ? Unwind(r, g_stack_copy, len, frames, 48) : (frames[0] = r.Rip, 1);
+    for (int i = 0; i < n; ++i) PutFrame(i, frames[i], lookups);
   }
   Section();
 
   PutThreads(tid);
   Section();
 
+  // r74 M3: an in-process minidump can still hang (dbghelp suspends threads; one may take the heap lock after any
+  // probe), so when Windows Error Reporting will write one from outside the process (COGBox's LocalDumps for this
+  // folder) the game leaves it to that. Under Wine, or run without COGBox, there is no other dump: written here.
   Put("minidump: ");
-  if (!LocksFree()) {
-    Put("not written - the process heap or the loader lock stays taken by another thread (a minidump made inside "
-        "the game would hang here); Windows Error Reporting writes ");
-    Put(g_exe_name);
-    Put(".");
-    PutDec(GetCurrentProcessId());
-    Put(".dmp in this folder when it is allowed to\n");
-    Section();
+  const bool in_process = g_minidump_mode == 1 || (g_minidump_mode == 0 && !g_wer_here);
+  if (!in_process) {
+    if (g_minidump_mode == 2) Put("not written by the game (--gow2_crash_minidump=windows); ");
+    PutWerDump();
+  } else if (!HeapLockFree() || !LoaderLockFree()) {
+    Put("not written - the process heap lock or the loader lock stays taken by a thread (a minidump made inside the "
+        "game would hang here); ");
+    PutWerDump();
   } else {
     name[22] = L'd'; name[23] = L'm'; name[24] = L'p';
     Put("writing ... ");
     Section();  // if it hangs, the report says where
     HANDLE h;
     if (OpenNt(name, false, false, false, &h)) {
-      MINIDUMP_EXCEPTION_INFORMATION mei{tid, ep, FALSE};
+      MINIDUMP_EXCEPTION_INFORMATION mei{tid, &g_ep_copy, FALSE};
+      InterlockedExchange(&g_dumping, 1);
       const BOOL ok = MiniDumpWriteDump(
           GetCurrentProcess(), GetCurrentProcessId(), h,
           static_cast<MINIDUMP_TYPE>(MiniDumpWithThreadInfo | MiniDumpWithIndirectlyReferencedMemory), &mei, nullptr,
           nullptr);
       const DWORD err = GetLastError();
+      InterlockedExchange(&g_dumping, 0);
       CloseHandle(h);
       if (ok) {
         Put("done\n");
@@ -397,8 +524,8 @@ void WriteReport(EXCEPTION_POINTERS* ep, DWORD tid) {
     } else {
       Put("the file could not be made\n");
     }
-    Section();
   }
+  Section();
   if (g_txt != INVALID_HANDLE_VALUE) CloseHandle(g_txt);
   g_txt = INVALID_HANDLE_VALUE;
 }
@@ -414,17 +541,19 @@ LONG WINAPI OnCrash(EXCEPTION_POINTERS* ep) {
   // Nothing on the crashing thread's stack beyond this: it may have overflowed.
   const DWORD me = GetCurrentThreadId();
   if (me == g_helper_tid || me == g_prober_tid) return EXCEPTION_CONTINUE_SEARCH;  // the report itself failed
-  if (InterlockedCompareExchange(&g_owner, static_cast<LONG>(me), 0) != 0) {
-    // a report is being written (another thread's crash, or this thread's fail-fast after its crash): let it finish
-    // before Windows ends the process
-    if (g_done) WaitForSingleObject(g_done, kReportWaitMs);
+  const LONG owner = InterlockedCompareExchange(&g_owner, static_cast<LONG>(me), 0);
+  if (owner != 0) {
+    // a report is being written: another thread's crash - let it finish before Windows ends the process. This
+    // thread's own (a fail-fast after its crash, after its wait ended): no second wait.
+    if (owner != static_cast<LONG>(me) && g_done) WaitForSingleObject(g_done, kReportWaitMs);
     return EXCEPTION_CONTINUE_SEARCH;
   }
   if (g_helper) {
     g_ep = ep;
     g_crash_tid = me;
     SetEvent(g_go);
-    WaitForSingleObject(g_done, kReportWaitMs);  // bounded: then Windows Error Reporting takes over
+    // bounded: then Windows Error Reporting takes over (longer while a minidump is still being written)
+    if (WaitForSingleObject(g_done, kReportWaitMs) == WAIT_TIMEOUT && g_dumping) WaitForSingleObject(g_done, kDumpWaitMs);
   } else {
     WriteReport(ep, me);  // the helper couldn't be made at start
     if (g_done) SetEvent(g_done);
@@ -487,6 +616,24 @@ void NTAPI CrashTlsCallback(PVOID, DWORD reason, PVOID) {
   if (reason == DLL_THREAD_ATTACH) ApplyStackGuarantee();
 }
 
+// LocalDumps for this exe pointing at the crash folder (COGBox writes it per play, HKCU; HKLM is Windows' documented
+// place). Read at start: the registry isn't touched at crash time.
+bool WerDumpsHere(const std::wstring& exe_name, const std::wstring& folder) {
+  const std::wstring key = L"Software\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\" + exe_name;
+  for (HKEY root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE}) {
+    wchar_t v[kPath];
+    DWORD bytes = sizeof(v);
+    if (RegGetValueW(root, key.c_str(), L"DumpFolder", RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, v, &bytes) !=
+        ERROR_SUCCESS)
+      continue;
+    std::wstring d = v;
+    while (!d.empty() && (d.back() == L'\\' || d.back() == L'/')) d.pop_back();
+    for (wchar_t& c : d) if (c == L'/') c = L'\\';
+    if (_wcsicmp(d.c_str(), folder.c_str()) == 0) return true;
+  }
+  return false;
+}
+
 // --gow2_crash_test
 char g_test[16];
 int (*volatile g_recurse)(int);
@@ -522,34 +669,37 @@ void XenosCrashNote(const std::string& note) {
 }
 
 void XenosInstallCrashHandler() {
-  std::string dir = REXCVAR_GET(gow2_crash_dir);
-  std::wstring folder;
+  const std::string dir = REXCVAR_GET(gow2_crash_dir);
   wchar_t exe[MAX_PATH];
   GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  if (dir.empty()) {
-    folder = (std::filesystem::path(exe).parent_path() / L"crashes").wstring();
-  } else {
-    folder = std::filesystem::path(dir).wstring();
-  }
+  // r74 M4: cvars are UTF-8 (a non-ASCII play folder was mangled through the ANSI code page)
+  const std::filesystem::path folder =
+      dir.empty() ? std::filesystem::path(exe).parent_path() / L"crashes" : std::filesystem::u8path(dir);
   // made now, used at crash time without allocating: the folder as an absolute NT path, the exe's name and base
   std::error_code ec;
   std::wstring abs = std::filesystem::absolute(folder, ec).wstring();
-  if (ec) abs = folder;
-  while (abs.size() > 3 && (abs.back() == L'\\' || abs.back() == L'/')) abs.pop_back();
+  if (ec) abs = folder.wstring();
+  for (wchar_t& c : abs) if (c == L'/') c = L'\\';
+  while (!abs.empty() && abs.back() == L'\\') abs.pop_back();  // r74 L3: also a drive root ("C:\" -> "C:")
   std::wstring nt;
   if (abs.rfind(L"\\\\?\\", 0) == 0 || abs.rfind(L"\\??\\", 0) == 0) nt = L"\\??\\" + abs.substr(4);
   else if (abs.rfind(L"\\\\", 0) == 0) nt = L"\\??\\UNC\\" + abs.substr(2);
   else nt = L"\\??\\" + abs;
-  for (wchar_t& c : nt) if (c == L'/') c = L'\\';
   g_nt_dir_len = nt.size() < kPath ? nt.size() : kPath - 1;
   wmemcpy(g_nt_dir, nt.c_str(), g_nt_dir_len);
   const wchar_t* slash = wcsrchr(exe, L'\\');
-  WideCharToMultiByte(CP_UTF8, 0, slash ? slash + 1 : exe, -1, g_exe_name, sizeof(g_exe_name), nullptr, nullptr);
+  const std::wstring exe_name = slash ? slash + 1 : exe;
+  WideCharToMultiByte(CP_UTF8, 0, exe_name.c_str(), -1, g_exe_name, sizeof(g_exe_name), nullptr, nullptr);
   g_exe_base = reinterpret_cast<DWORD64>(GetModuleHandleW(nullptr));
   if (HMODULE ntdll = GetModuleHandleW(L"ntdll.dll")) {
     g_nt_create_file = reinterpret_cast<NtCreateFileFn>(GetProcAddress(ntdll, "NtCreateFile"));
     g_nt_query_system = reinterpret_cast<NtQuerySystemInformationFn>(GetProcAddress(ntdll, "NtQuerySystemInformation"));
+    g_wine = GetProcAddress(ntdll, "wine_get_version") != nullptr;
   }
+  g_wer_here = !g_wine && WerDumpsHere(exe_name, abs);
+  const std::string mode = REXCVAR_GET(gow2_crash_minidump);
+  g_minidump_mode = mode == "game" ? 1 : mode == "windows" ? 2 : 0;
+
   g_done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   g_go = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   g_probe_go = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -557,7 +707,7 @@ void XenosInstallCrashHandler() {
   if (g_go && g_done) g_helper = CreateThread(nullptr, 256 * 1024, HelperMain, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, &g_helper_tid);
   if (g_probe_go && g_probe_ok) {
     if (HANDLE t = CreateThread(nullptr, 64 * 1024, ProberMain, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, &g_prober_tid)) CloseHandle(t);
-    else g_probe_go = nullptr;  // no probe: no in-process minidump (Windows Error Reporting's instead)
+    else g_probe_go = nullptr;  // no probe: no in-process minidump
   }
 
   const int kb = REXCVAR_GET(gow2_crash_stack_guarantee_kb);
@@ -571,8 +721,11 @@ void XenosInstallCrashHandler() {
   std::set_terminate(OnTerminate);
 
   const std::string test = REXCVAR_GET(gow2_crash_test);
-  if (!test.empty()) {
+  if (test == "av" || test == "stack" || test == "abort" || test == "heaplock") {
     strncpy_s(g_test, sizeof(g_test), test.c_str(), _TRUNCATE);
+    REXLOG_WARN("gow2_crash_test: a test crash ({}) in 10 s", test);
     if (HANDLE t = CreateThread(nullptr, 0, CrashTestMain, nullptr, 0, nullptr)) CloseHandle(t);
+  } else if (!test.empty()) {
+    REXLOG_WARN("gow2_crash_test: '{}' isn't one of av, stack, abort, heaplock - no test crash", test);
   }
 }
