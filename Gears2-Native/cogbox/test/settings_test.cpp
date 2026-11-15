@@ -534,6 +534,20 @@ int summary() {
         const Option* o = find_option(Game::Gears2, "PadLayout");
         if (!o || o->scope != Scope::Shared || o->choices.size() != 5 || o->choices[4] != "Custom (choose below)") bad("option");
     }
+    // 0.6.3 (review r49): a Shared value changed on one page goes to the others (copy_shared) - PerGame / GameOwn ones don't
+    {
+        Environment e; e.update_ready = true;
+        Store st; Settings g2 = st.view(Game::Gears2, e), g3 = st.view(Game::Gears3, e);
+        g2.set("PadLayout", 4); g2.set("Fullscreen", g3.i("Fullscreen") + 1); g2.t["GraphicsCard"] = "NVIDIA GeForce RTX 4090";
+        const Option* fo = find_option(Game::Gears2, "Fullscreen");
+        const int fsBefore = g3.i("Fullscreen");
+        if (!copy_shared(Game::Gears3, g2, g3) || g3.i("PadLayout") != 4 || g3.str("GraphicsCard") != "NVIDIA GeForce RTX 4090" ||
+            (fo && fo->scope == Scope::PerGame && g3.i("Fullscreen") != fsBefore))
+            { std::cout << "FAIL copy_shared\n"; ++fails; }
+        if (copy_shared(Game::Gears3, g2, g3)) { std::cout << "FAIL copy_shared twice\n"; ++fails; }
+        st.commit(Game::Gears3, g3, e); st.commit(Game::Gears2, g2, e);   // a later commit of the other page keeps it
+        if (st.view(Game::Gears1, e).i("PadLayout") != 4) { std::cout << "FAIL copy_shared commit\n"; ++fails; }
+    }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;
 }

@@ -622,24 +622,14 @@ static void pad_press_event(App &a, const SDL_Event &e, bool focused)
     a.padPressSeq++;
 }
 
-// r48: any controller button, trigger or stick still held (after the controller layout took a press)
+// r48 / r49: any controller button, trigger or stick still held after the controller layout took a press - as Dear
+// ImGui sees them (its stick and trigger keys go down from its own dead zones), so a resting thumb that would make Dear
+// ImGui repeat a move also keeps the hold. Last frame's state (asked before NewFrame): at most one frame longer.
 static bool any_pad_held()
 {
-    int n = 0;
-    bool held = false;
-    SDL_JoystickID *ids = SDL_GetGamepads(&n);
-    for (int i = 0; ids && i < n && !held; i++) {
-        SDL_Gamepad *gp = SDL_GetGamepadFromID(ids[i]);
-        if (!gp) continue;
-        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT && !held; b++) held = SDL_GetGamepadButton(gp, (SDL_GamepadButton)b);
-        for (int x = 0; x < SDL_GAMEPAD_AXIS_COUNT && !held; x++) {
-            const int v = SDL_GetGamepadAxis(gp, (SDL_GamepadAxis)x);
-            const bool trig = x == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || x == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
-            held = trig ? v > 8000 : abs(v) > 16000;
-        }
-    }
-    if (ids) SDL_free(ids);
-    return held;
+    for (int k = ImGuiKey_GamepadStart; k <= ImGuiKey_GamepadRStickDown; k++)
+        if (ImGui::IsKeyDown((ImGuiKey)k)) return true;
+    return false;
 }
 
 static void refresh_pads(App &a)
@@ -937,8 +927,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         bool frontOwn = (a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
                          !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) ||   // 0.4.6 review: the player-name box takes the pad
                         (a.screen == SCR_PAGE && a.barSel >= 0 && !a.modal.open);   // also a page's bottom bar (page.cpp)
-        if (a.padCaptureHold) {   // r48: off until the button that was set (or anything else) is let go
-            if (any_pad_held()) a.padCaptureFrame = ImGui::GetFrameCount();
+        if (a.padCaptureHold) {   // r48: off until the button that was set (or anything else) is let go - r49: 2.5 s at most
+            if (any_pad_held() && ImGui::GetTime() - a.padCaptureHoldAt < 2.5) a.padCaptureFrame = ImGui::GetFrameCount();
             else a.padCaptureHold = false;
         }
         if (!SDL_GetKeyboardFocus() || a.run.proc || frontOwn || pad_capturing(a)) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;

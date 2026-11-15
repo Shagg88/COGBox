@@ -305,6 +305,13 @@ void env_refresh(App &a, int g)
 
 bool settings_save(App &a)
 {
+    // 0.6.3 (review r49): the values all games share go from the page being saved (else the first unsaved one) to every
+    // other page first - so they show there, and committing another game's page can't put an old value back
+    int from = a.page >= 0 && a.page < G_COUNT && a.dirty[a.page] ? a.page : -1;
+    for (int g = 0; g < G_COUNT && from < 0; g++) if (a.dirty[g]) from = g;
+    if (from >= 0)
+        for (int g = 0; g < G_COUNT; g++)
+            if (g != from && gs::copy_shared((gs::Game)g, a.cur[from], a.cur[g])) env_refresh(a, g);
     for (int g = 0; g < G_COUNT; g++)
         if (a.dirty[g]) { a.store.commit((gs::Game)g, a.cur[g], a.env[g]); a.dirty[g] = false; }
     a.store.last_game = a.page;
@@ -748,10 +755,11 @@ static void pad_layout_section(App &a, int g)
         settings_save(a);
         savesSeen = a.saves;   // (our own save keeps the Undo)
     };
-    auto end_capture = [&]() { capture = -1; a.padCaptureHold = true; };   // the launcher's pad stays off while held (main.cpp)
+    auto end_capture = [&]() { capture = -1; a.padCaptureHold = true; a.padCaptureHoldAt = ImGui::GetTime(); };   // the launcher's pad stays off while held (main.cpp)
     const int layout = std::max(0, std::min(4, a.cur[g].has("PadLayout") ? a.cur[g].i("PadLayout") : (int)o->def));
     if (layout != 4) {   // a ready-made layout: Customise starts the Custom one from it
         capture = -1;
+        undo.on = false;   // r49: a layout chosen in the list ends the Undo (it can't come back with Custom later)
         a.padCaptureActive = false;
         ImGui::Dummy(ImVec2(0, 0));
         ImGui::SameLine(g_labelW);
@@ -781,9 +789,9 @@ static void pad_layout_section(App &a, int g)
     if (undo.on) {
         if (undo.replaced) ui_note("Your earlier custom layout was replaced.", col::amber);
         if (capturing) ImGui::BeginDisabled();
-        const bool back = small_button("Undo");
+        const bool back = small_button("Undo Customise");
         if (capturing) ImGui::EndDisabled();
-        if (!capturing) ui_tip("Back to the layout chosen before Customise (and its CogBox.ini line).");
+        if (!capturing) ui_tip("Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line).");
         if (back) {
             pad_remap_save(a, undo.remap);
             save_layout(undo.layout);
@@ -1083,8 +1091,8 @@ static void option_row(App &a, int g, const gs::Option &o)
         const bool seed = o.id == "PadLayout" && (int)nv == 4 && v >= 1 && v <= 3 && a.ini.get("Pad", "Remap").empty();
         if (seed) pad_remap_save(a, gs::pad_layout_preset((int)v));
         gs::set_value(G, a.cur[g], o.id, nv);
-        if (seed) { a.dirty[g] = true; settings_save(a); }   // r48: the choice is saved with the Remap it wrote
         a.dirty[g] = true;
+        if (seed) settings_save(a);   // r48: the choice is saved with the Remap it wrote
         if (o.id == "Version" || o.id == "Monitor") env_refresh(a, g);
     }
     // the description as a tooltip: the mouse resting on the row (label or control) for a second (greyed rows lead with why)
@@ -1808,8 +1816,8 @@ void page_draw(App &a, ImVec2 size)
     bool barA = a.barSel >= 0 && padNav && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);   // the controller reaches the bar through a.barSel, not Dear ImGui
     if (th_button("LIBRARY", ImVec2(S(130), S(40)), true, F_HEAD, a.barSel == 0) || (barA && a.barSel == 0) ||
-        (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !a.modal.open &&
-         !pad_capturing(a))) {   // r48: not the Esc that cancelled a controller button press (the key list's: key owner)
+        (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !a.modal.open)) {
+        // (r48: an Esc that cancelled a key or controller-button wait was taken for this frame - SetKeyOwner)
         a.barSel = -1;
         if (std::any_of(a.dirty, a.dirty + G_COUNT, [](bool x) { return x; })) settings_save(a);
         a.zoomTo = SCR_FRONT; a.zoomStart = ImGui::GetTime();

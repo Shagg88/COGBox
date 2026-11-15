@@ -940,6 +940,22 @@ std::string window_key(const Environment& env)
     return key;
 }
 
+bool copy_shared(Game to, const Settings& src, Settings& dst)
+{
+    bool changed = false;
+    for (const Option& o : options(to)) {
+        if (o.scope == Scope::GameOwn) continue;
+        if (o.kind == Kind::Text) {   // (all texts are kept once for all games)
+            auto it = src.t.find(o.id);
+            if (it != src.t.end() && dst.str(o.id) != it->second) { dst.t[o.id] = it->second; changed = true; }
+            continue;
+        }
+        if (o.scope != Scope::Shared || !src.has(o.id)) continue;
+        if (!dst.has(o.id) || dst.f(o.id) != src.f(o.id)) { dst.v[o.id] = src.f(o.id); changed = true; }
+    }
+    return changed;
+}
+
 // ---- 0.6.3: the Custom controller layout (see the header; the runtime's reader is input_system.cpp CurrentPadRemap) ----
 namespace {
 struct PadName { const char* token; const char* label; };

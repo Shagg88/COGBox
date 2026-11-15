@@ -249,6 +249,11 @@ const std::vector<KeyAction> &key_actions(Game g = Game::Gears2);
 // wins; "None" = off), else the default. The key text is the games' own: [Alt+][Ctrl+][Shift+]<key name>.
 constexpr const char *kWindowKeyDefault = "Alt+Return";
 std::string window_key(const Environment &env);
+// 0.6.3 (review r49): one value for all games - the Shared options and the text ones (kept once, Store::texts) - copied
+// from one game's page values into another's, so a change on one page shows on the others and a later save of another
+// page can't put the old value back. GameOwn / PerGame values are left alone. True = something in `dst` changed.
+bool copy_shared(Game to, const Settings& src, Settings& dst);
+
 // 0.6.3: the Custom controller layout (Controller layout = Custom; CogBox.ini [Pad] Remap=, shared by all four games),
 // edited on the Controls tab. The runtime's pad_remap (SDK patch 55, input_system.cpp) reads "src=dst" pairs, comma
 // separated, spaces dropped, any case: the controller's src button presses the game's dst button. A button that is only
