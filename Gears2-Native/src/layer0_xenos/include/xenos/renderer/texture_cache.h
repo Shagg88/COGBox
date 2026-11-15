@@ -48,6 +48,9 @@ struct TextureCacheStats {
   uint64_t textures = 0, uploads = 0, upload_bytes = 0, bound = 0, stand_ins = 0;
   uint64_t gpu_loads = 0, gpu_load_bytes = 0, gpu_loads_stacked = 0;
   uint64_t gpu_block_loads = 0, gpu_block_subresources = 0, gpu_block_failures = 0, cpu_loads = 0;  // patch 0021
+  // 0.6.2 (#311): loads that did not complete (the backend dropped part of them; the texture is loaded again) and the
+  // loads repeated for that reason.
+  uint64_t load_failures = 0, load_retries = 0;
   // Patch 0087: loads whose packed mip tail (level 0 packed, mip address 0) was read from the base address (Canary
   // 344fca7), and loads whose fetch constant has a per-axis gradient exponent bias (dword 4 bits 22-31; not applied).
   uint64_t packed_tail_at_base = 0, grad_exp_bias_loads = 0;
@@ -241,6 +244,9 @@ class TextureCache {
     uint64_t probe_load_hash = 0;   // job 284: XXH3 of the guest bytes at the last (re)load (probed textures only)
     uint64_t verify_hash = 0, verify_frame = 0;  // --gow2_renderer_texture_verify_frames (#131 / #59 Proton fallback)
     std::string failure;  // non-empty: this guest texture can't be represented (stand-in)
+    bool load_failed = false;  // 0.6.2 (#311): the last Load did not complete; Lookup loads it again (once a frame)
+    uint64_t retry_frame = ~0ull;
+    uint32_t retry_count = 0;
     bool dimension_mismatch = false;  // the failure is a fetch-dimension mismatch (zero view, see SetMismatchZero)
     bool gpu_storage = false;  // created with UAV access: loads go through the GPU untile
     uint32_t ov_scale = 1;     // job 661: an overlay N times the guest size made the host texture N times bigger
@@ -284,6 +290,7 @@ class TextureCache {
   // 0 = 2D, 1 = cube, 2 = 3D host texture.
   Entry& Lookup(const uint32_t* tf, uint32_t host_kind, uint64_t frame);
   void Load(Entry& e, const uint32_t* tf, uint32_t host_kind);
+  void FailLoad(Entry& e, gpu::TextureHandle tex, bool created, const char* why);  // 0.6.2 (#311)
   void StandIn(const std::string& why);
 
   gpu::Backend& backend_;

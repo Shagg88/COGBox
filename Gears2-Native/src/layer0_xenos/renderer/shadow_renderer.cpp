@@ -2858,6 +2858,31 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     ts.gpu_block_failures, ts.gpu_volume_loads, ts.cpu_loads, backend_->Stats().scratch_texture_copies,
                     backend_->Stats().scratch_batches, backend_->Stats().uav_barriers_deferred);
       }
+      {  // 0.6.2 (GitHub #311): texture loads the backend dropped, loads repeated for it, textures given zero contents
+        const gpu::BackendStats& bs = backend_->Stats();
+        const rr::TextureCacheStats& ts = textures_ ? textures_->Stats() : tex_prev_;
+        const uint64_t drops = bs.tex_drop_dispatch_list + bs.tex_drop_dispatch_desc + bs.tex_drop_copy_list +
+                               bs.tex_drop_copy_sub + bs.tex_drop_upload_list + bs.tex_drop_upload_ring + bs.tex_drop_mirror;
+        if (drops != tl_prev_.drops || ts.load_failures != tl_prev_.failures || bs.tex_zeroed != tl_prev_.zeroed ||
+            bs.tex_zero_skipped != tl_prev_.zero_skipped) {
+          REXLOG_INFO("gow2_renderer: texture loads (#311) frames {}-{}: dropped by the backend {} (dispatch: no list {}, no "
+                      "descriptors {} | copy: no list {}, wrong subresource {} | upload: no list {}, no ring space {} | "
+                      "mirror {}), loads not completed {}, repeated {} | zeroed textures {} ({:.1f} MB, over budget {}) "
+                      "(totals: {} dropped, {} not completed, {} zeroed, {:.1f} MB)",
+                      frame_ + 1 - uint64_t(log_every_), frame_, drops - tl_prev_.drops,
+                      bs.tex_drop_dispatch_list - tl_prev_.k[0], bs.tex_drop_dispatch_desc - tl_prev_.k[1],
+                      bs.tex_drop_copy_list - tl_prev_.k[2], bs.tex_drop_copy_sub - tl_prev_.k[3],
+                      bs.tex_drop_upload_list - tl_prev_.k[4], bs.tex_drop_upload_ring - tl_prev_.k[5],
+                      bs.tex_drop_mirror - tl_prev_.k[6], ts.load_failures - tl_prev_.failures,
+                      ts.load_retries - tl_prev_.retries, bs.tex_zeroed - tl_prev_.zeroed,
+                      double(bs.tex_zeroed_bytes - tl_prev_.zeroed_bytes) / 1048576.0,
+                      bs.tex_zero_skipped - tl_prev_.zero_skipped, drops, ts.load_failures, bs.tex_zeroed,
+                      double(bs.tex_zeroed_bytes) / 1048576.0);
+        }
+        tl_prev_ = {drops, ts.load_failures, ts.load_retries, bs.tex_zeroed, bs.tex_zeroed_bytes, bs.tex_zero_skipped,
+                    {bs.tex_drop_dispatch_list, bs.tex_drop_dispatch_desc, bs.tex_drop_copy_list, bs.tex_drop_copy_sub,
+                     bs.tex_drop_upload_list, bs.tex_drop_upload_ring, bs.tex_drop_mirror}};
+      }
       if (submit_draws_) {  // patch 0138
         const uint64_t es = backend_->Stats().early_submits;
         REXLOG_INFO("gow2_renderer: patch 0138 frames {}-{}: early submits {:.1f} per frame (every {} draws)",
@@ -14380,6 +14405,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::unique_ptr<rr::GuestWatch> watch_;
   std::unique_ptr<rr::TextureCache> textures_;
   rr::TextureCacheStats tex_prev_;  // patch 0137: the counters at the previous log line
+  struct TextureLoadLogPrev {  // 0.6.2 (#311): the counters at the previous log line
+    uint64_t drops = 0, failures = 0, retries = 0, zeroed = 0, zeroed_bytes = 0, zero_skipped = 0;
+    uint64_t k[7] = {};
+  } tl_prev_;
   double set_textures_ms_ = 0, set_textures_prev_ms_ = 0;  // 0.4.5 texture-time research
   uint32_t submit_draws_ = 0, draws_since_submit_ = 0;  // patch 0138
   bool submit_auto_ = false;        // 0.6.1: --gow2_renderer_submit_draws=-1

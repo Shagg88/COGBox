@@ -86,6 +86,18 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_bc_cpu_over_gpu, false, "Gears2",
                     "(render-target and 32-bit textures) still take the mirror. false (default) = the mirror's bytes, "
                     "as 0.4.5");
 
+// GitHub #311 / #282 / #255 / #297 (Gears 3: distant floors white or flickering, D3D12 only, AMD) and #315 / #243
+// (Judgment: white surfaces, blue / purple blocks): the D3D12 texture heaps are created not-zeroed and their ranges
+// are recycled, so a texture level that a load did not write shows the previous tenant's bytes (Vulkan zeroes
+// block-compressed images at creation, VKA3). A new texture whose first load can leave levels unwritten (a BC texture
+// loaded through the scratch buffer, or a mip chain with no mip address) is given zero contents first, on D3D12 in a
+// recycled heap range only. Default on; false = the 0.6.1 behaviour. (Failed loads are separately retried, always.)
+REXCVAR_DEFINE_BOOL(gow2_renderer_zero_new_textures, true, "Gears2",
+                    "GitHub #311 (white / flickering floors, D3D12): newly created placed D3D12 textures whose first load can "
+                    "leave levels unwritten (BC textures loaded on the GPU, mip chains without a mip address) start with "
+                    "zero contents when their heap range was used before, as Vulkan does. false = off (A/B test). "
+                    "Vulkan is not affected");
+
 // GitHub #131 / #59 (Judgment under Proton): the texture cache trusts the page watch - write-protected pages whose
 // first CPU write or kernel file read raises a callback. If that mechanism misses writes (a suspicion for Wine: kernel
 // reads into protected pages, or protection changes it handles otherwise), textures keep old contents. This fallback
@@ -655,7 +667,12 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
     if (!kinds) continue;
     const uint32_t* tf = fetch + 6 * k;
     SlotCache& sc = slot_cache_[k];
-    if (sc.valid && sc.kinds == kinds && sc.epoch == epoch && std::memcmp(sc.tf, tf, sizeof(sc.tf)) == 0) {
+    // 0.6.2 (#311): a slot whose texture's load did not complete goes through Lookup again (which loads it again).
+    bool slot_load_failed = false;
+    if (sc.valid)
+      for (const Entry* se : sc.entries)
+        if (se && se->load_failed) slot_load_failed = true;
+    if (sc.valid && !slot_load_failed && sc.kinds == kinds && sc.epoch == epoch && std::memcmp(sc.tf, tf, sizeof(sc.tf)) == 0) {
       samplers[k] = sc.sampler;
       for (uint32_t kind = 0; kind < 3; ++kind)
         if ((kinds >> kind) & 1) views[kind * 32 + k] = sc.views[kind];
@@ -855,6 +872,26 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   }
   Entry& e = *it->second;
   if (!e.texture) return done(e, "stand-in");
+  if (e.load_failed && e.retry_count >= 16) e.load_failed = false;  // a failure that repeats: stop trying (and logging)
+  if (e.load_failed && e.retry_frame != frame) {
+    // 0.6.2 (#311): the last load did not complete (the backend dropped part of it) - load it again, once a frame, up
+    // to 16 times for one texture.
+    e.retry_frame = frame;
+    ++e.retry_count;
+    ++stats_.load_retries;
+    const uint64_t epoch_before = watch_.Epoch();
+    const uint64_t rearmed = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length);
+    watch_.Watch(e.base_start, e.base_length);
+    if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
+    e.load_failed = false;
+    e.loaded_frame = frame;
+    Load(e, tf, host_kind);
+    e.version = rearmed;
+    e.verify_hash = 0;
+    e.checked_frame = frame;
+    e.callbacks_at_check = epoch_before;
+    return done(e, "reload: its last load did not complete");
+  }
   g_swap.Init();
   const uint64_t ov_gen = OverlayGeneration();
   if (e.overlay_gen != ov_gen) {
@@ -1346,6 +1383,26 @@ void TextureCache::EndFrame(uint64_t frame) {
   for (SlotCache& sc : slot_cache_) sc.valid = false;  // they may point at evicted entries
 }
 
+// 0.6.2 (GitHub #311): a load that did not complete - the backend dropped a dispatch, copy or upload (D3D12: no command
+// list, no descriptors, no upload-ring space), or a scratch region could not be prepared. The texture is NOT left looking
+// loaded: Lookup loads it again on its next use (once a frame). Before, such a load kept whatever the texture held - on
+// D3D12 the previous tenant of a not-zeroed heap range.
+void TextureCache::FailLoad(Entry& e, gpu::TextureHandle tex, bool created, const char* why) {
+  e.load_failed = true;
+  ++stats_.load_failures;
+  // Pages already copied to the guest-memory mirror by this load may have been dropped with it: copy them all again.
+  e.copied_pages[0].clear();
+  e.copied_pages[1].clear();
+  // A texture made by this load holds nothing valid: zeros, not the last tenant's bytes, until the reload (a reload of
+  // an existing texture keeps its older, real content).
+  if (created && tex && REXCVAR_GET(gow2_renderer_zero_new_textures)) backend_.ZeroTexture(tex, true);
+  static std::atomic<int> logged{0};
+  if (logged.fetch_add(1) < 4)
+    REXLOG_WARN("gow2_renderer: texture load did not complete ({}; GitHub #311): base {:08X} (+{:X}) mips {:08X} (+{:X}), host "
+                "format {}, {} KB - loaded again on its next use",
+                why, e.base_start, e.base_length, e.mip_start, e.mip_length, uint32_t(e.format), e.host_bytes >> 10);
+}
+
 void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   PhaseScope phase_load(g_phase.load);  // job 299
   PhaseScope load_time(stats_.load_ms);  // 0.4.5 texture-time research
@@ -1570,6 +1627,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     for (SlotCache& sc : slot_cache_) sc.valid = false;
   }
   // Host texture (created once; re-loads write into it).
+  bool created_texture = false;  // 0.6.2 (#311): made by this Load (nothing valid in it yet)
   if (!e.texture) {
     gpu::TextureDesc td;
     td.dimension = host_kind == 1 ? gpu::TextureDimension::kCube
@@ -1594,6 +1652,14 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     e.format = hf.format;
     e.gpu_storage = gpu;
     e.ov_scale = ov_scale;
+    created_texture = true;
+    // 0.6.2 (#311): levels this load may not write start as zeros, not the last tenant's bytes (the D3D12 heaps are
+    // not zeroed; a no-op for committed textures, fresh heap ranges and Vulkan). A BC texture loaded through the
+    // scratch buffer can lose a whole subresource to a dropped dispatch / copy; a mip chain without a mip address
+    // (storage level != 0, mip_base 0, tail not at the base) never writes its small levels.
+    if (REXCVAR_GET(gow2_renderer_zero_new_textures) &&
+        ((gpu_blocks && hf.block_compressed) || (td.mips > 1 && !mip_base && layout.packed_level != 0)))
+      backend_.ZeroTexture(e.texture, false);
     uint64_t bytes = 0;
     for (uint32_t m = 0; m < td.mips; ++m)
       bytes += uint64_t(std::max(td.width >> m, 1u)) * std::max(td.height >> m, 1u) * td.depth_or_layers * hf.host_bytes /
@@ -1626,6 +1692,8 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
 
   const uint32_t bpb_log2 = tx::Log2Floor(bpb);
   const uint32_t host_mips = host_3d && gd != tx::Dimension::k3D ? 1 : mips;
+  const uint64_t drops_at_start = backend_.TextureLoadDrops();  // 0.6.2 (#311): anything the backend drops from here
+  Entry* const entry_ptr = &e;
   if ((gpu && e.gpu_storage) || gpu_blocks) {
     PhaseScope phase_gpu(g_phase.gpu);  // job 299
     ++g_phase.gpu_loads;
@@ -1726,6 +1794,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     const tx::FormatBlock block = fb;
     auto untile = [=, this]() {
     const tx::FormatBlock& fb = block;
+    bool level_failed = false;  // 0.6.2 (#311)
     for (uint32_t level = 0; level < host_mips; ++level) {
       const bool in_tail = layout.packed_level != UINT32_MAX && level >= layout.packed_level;
       const uint32_t storage_level = in_tail ? layout.packed_level : level;
@@ -1741,6 +1810,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
           uint32_t row_pitch = 0, rows = 0;
           if (!backend_.PrepareScratchFor(tex, level, u, row_pitch, rows) || row_pitch < (bw << bpb_log2)) {
             ++stats_.gpu_block_failures;
+            level_failed = true;
             continue;
           }
           gpu::ComputeBindings bb;
@@ -1806,6 +1876,10 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       }
       backend_.Dispatch(untile_, b, (lw + 7) / 8, (lh + 7) / 8, 1);
     }
+    // r38: only a drop the backend counted fails the load (D3D12 counts an unprepared scratch too); a backend that
+    // can't prepare a scratch for other reasons (Vulkan, a format) keeps its old behaviour - the stat only
+    if (backend_.TextureLoadDrops() != drops_at_start)
+      FailLoad(*entry_ptr, tex, created_texture, level_failed ? "scratch buffer not prepared" : "backend dropped part of it");
     };
     if (batch_loads_) gpu_jobs_.push_back(std::move(untile));
     else untile();
@@ -2014,6 +2088,8 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   g_phase.upload += cpu_upload;  // job 299
   g_phase.cpu += PhaseMs(cpu_t0) - cpu_upload;
   ++stats_.uploads;
+  if (backend_.TextureLoadDrops() != drops_at_start)  // 0.6.2 (#311)
+    FailLoad(e, e.texture, created_texture, "backend dropped part of it");
 }
 
 uint32_t TextureCache::DropScaledEntries() {
