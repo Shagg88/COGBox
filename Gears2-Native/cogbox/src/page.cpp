@@ -365,12 +365,18 @@ static bool small_button(const char *label_en)
 }
 
 // one short line of feedback or status, small and dim (instead of a paragraph)
+static void ui_note_shown(const std::string &text, ImVec4 c);
 void ui_note(const std::string &text_en, ImVec4 c)   // (also achievements_tab.cpp)
+{
+    ui_note_shown(tr(text_en), c);
+}
+// ui_note for a text already in the player's language (put together from translated pieces)
+static void ui_note_shown(const std::string &text, ImVec4 c)
 {
     ImGui::PushFont(F_SMALL, FS(F_SMALL) * k_rowText);
     ImGui::PushStyleColor(ImGuiCol_Text, c);
     ImGui::PushTextWrapPos(row_wrap_x());
-    ImGui::TextUnformatted(tr(text_en).c_str());
+    ImGui::TextUnformatted(text.c_str());
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
     ImGui::PopFont();
@@ -679,6 +685,154 @@ static void window_key_section(App &a, int g)
            "extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off).");
 }
 
+// ---- 0.6.3: the Custom controller layout (Controller layout = Custom) --------------------------------------------------
+// One layout for all four games, as the Controller layout choice itself (Shared): CogBox.ini [Pad] Remap=, the runtime's
+// pad_remap text (gs::PadMap). Each row is one of the game's buttons; its box shows the controller button(s) that press
+// it. With a controller connected the box waits for a press (SDL's gamepad events, main.cpp pad_press_event); without one
+// it is a list. A controller button belongs to one game button: taking it leaves the old one to the button it replaced
+// (a swap, gs::pad_assign), and the note under the list says what moved.
+static void pad_remap_save(App &a, const std::string &spec)
+{
+    a.ini.set("Pad", "Remap", spec);
+    a.ini.save();
+    for (int k = 0; k < G_COUNT; k++) a.env[k].pad_remap = spec;   // (env_refresh reads the same line)
+}
+
+// A controller button's name: the pad's own (A / Cross, LB / L1 ... - pad_name), the stick clicks and D-pad translated
+static std::string pad_button_name(const App &a, int i)
+{
+    const char *l = gs::pad_input_label(i);
+    if (!l) return "?";
+    if (i <= gs::PadRT || i == gs::PadBack || i == gs::PadStart) return pad_name(a, l);
+    return tr(l);
+}
+
+// "{1} now does the game's {2}." with the pieces put in after the translation (word order is the language's)
+static std::string fill_in(std::string t, const std::vector<std::string> &v)
+{
+    for (size_t i = 0; i < v.size(); i++) {
+        const std::string k = "{" + std::to_string(i + 1) + "}";
+        for (size_t p = t.find(k); p != std::string::npos; p = t.find(k, p + v[i].size())) t.replace(p, k.size(), v[i]);
+    }
+    return t;
+}
+
+static void pad_layout_section(App &a, int g)
+{
+    const gs::Game G = (gs::Game)g;
+    const gs::Option *o = gs::find_option(G, "PadLayout");
+    if (!o || !gs::available(*o, G, gs::effective_version(G, a.cur[g], a.env[g]), a.cur[g], a.env[g]).ok) return;
+    static int capture = -1, captureFrame = 0, padGame = -1;
+    static unsigned captureSeq = 0;
+    static double captureAt = 0;
+    static std::string note, undo;   // what the last change moved besides its own button; the layout Customise replaced
+    if (padGame != g) { padGame = g; capture = -1; note.clear(); undo.clear(); }
+    const int layout = std::max(0, std::min(4, a.cur[g].has("PadLayout") ? a.cur[g].i("PadLayout") : (int)o->def));
+    if (layout != 4) {   // a ready-made layout: Customise starts the Custom one from it
+        capture = -1;
+        ImGui::Dummy(ImVec2(0, 0));
+        ImGui::SameLine(g_labelW);
+        if (small_button("Customise...")) {
+            const std::string before = a.ini.get("Pad", "Remap"), start = gs::pad_layout_preset(layout);
+            const gs::PadMap was = gs::parse_pad_remap(before);
+            if (!before.empty() && (!was.same_layout(gs::parse_pad_remap(start)) || !was.unknown.empty())) undo = before;
+            pad_remap_save(a, start);
+            gs::set_value(G, a.cur[g], "PadLayout", 4);
+            a.dirty[g] = true;
+            note.clear();
+        }
+        ui_tip("Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above.");
+        return;
+    }
+    gs::PadMap m = gs::parse_pad_remap(a.ini.get("Pad", "Remap"));
+    auto apply = [&](const gs::PadMap &nm) { pad_remap_save(a, gs::format_pad_remap(nm)); undo.clear(); };
+    auto said = [&](int game, int pad, const gs::PadAssign &r) {
+        std::string t = fill_in(tr("{1} now does the game's {2}."), { pad_button_name(a, pad), pad_button_name(a, game) });
+        if (r.swapped >= 0)
+            t += " " + fill_in(tr("{1} does the game's {2} instead."), { pad_button_name(a, r.swapped), pad_button_name(a, r.took_from) });
+        else if (r.left_empty)
+            t += " " + fill_in(tr("No button does the game's {1} now."), { pad_button_name(a, r.took_from) });
+        return t;
+    };
+    if (!undo.empty()) {
+        ui_note("Your earlier custom layout was replaced.", col::amber);
+        if (small_button("Undo")) { pad_remap_save(a, undo); undo.clear(); note.clear(); return; }
+    }
+    if (!m.unknown.empty()) {   // a hand-written Remap= with parts the game ignores: kept, and said
+        std::string list;
+        for (const std::string &u : m.unknown) list += (list.empty() ? "" : ", ") + u;
+        ui_note_shown(std::string(tr("In CogBox.ini but not understood by the game (kept as written):")) + " " + list, col::amber);
+    }
+    ui_note("Left: the game's buttons. Right: the controller button that does each one.");
+    if (!note.empty()) ui_note_shown(note, col::amber);
+    const bool pad = a.padConnected, capturing = capture >= 0;
+    const char *tip = pad ? "Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). "
+                            "A controller button does one thing: if it already did another, the two swap."
+                          : "No controller connected - choose the controller button from the list. A controller button does "
+                            "one thing: if it already did another, the two swap.";
+    if (capturing) ImGui::BeginDisabled();   // while waiting, a press mustn't work the page
+    for (int i = 0; i < gs::kPadInputs; i++) {
+        ImGui::PushID(i);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(pad_button_name(a, i).c_str());
+        ImGui::SameLine(g_labelW);
+        std::string shown;
+        for (int b : gs::pad_sources(m, i)) shown += (shown.empty() ? "" : " / ") + pad_button_name(a, b);
+        if (shown.empty()) shown = tr("Nothing");
+        if (capture == i) shown = tr("Press a button...");
+        if (pad) {
+            if (th_button((shown + "##b").c_str(), ImVec2(g_ctrlW, T(26)), true, F_BODY, capture == i)) {
+                capture = i;
+                captureFrame = ImGui::GetFrameCount();
+                captureSeq = a.padPressSeq;   // (the press that chose the row is already counted)
+                captureAt = ImGui::GetTime();
+                note.clear();
+            }
+        } else {
+            ImGui::SetNextItemWidth(g_ctrlW);
+            if (ImGui::BeginCombo("##b", shown.c_str())) {
+                for (int b = 0; b < gs::kPadInputs; b++) {
+                    ImGui::PushID(b);
+                    if (ImGui::Selectable(pad_button_name(a, b).c_str(), m.to[b] == i)) {
+                        const gs::PadAssign r = gs::pad_assign(m, i, b);
+                        if (r.changed) { note = said(i, b, r); apply(m); }
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndCombo();
+            }
+        }
+        if (!capturing) ui_tip(tip);
+        ImGui::PopID();
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(tr("Swap sticks"));
+    ImGui::SameLine(g_labelW);
+    bool sticks = m.sticks_swapped;
+    if (ImGui::Checkbox("##sticks", &sticks)) { m.sticks_swapped = sticks; note.clear(); apply(m); }
+    if (!capturing) ui_tip("The left stick moves the camera and the right stick moves you (southpaw).");
+    if (capturing) ImGui::EndDisabled();
+    ImGui::Dummy(ImVec2(0, S(4)));
+    if (capturing) ImGui::BeginDisabled();
+    if (small_button("Reset to the game's own")) { apply(gs::PadMap()); note.clear(); }
+    if (capturing) ImGui::EndDisabled();
+    ImGui::Dummy(ImVec2(0, S(4)));
+    // the press: a controller button pressed after the row was chosen. Esc, a mouse click, the controller going away or
+    // 10 seconds with no press cancel (B can't: it is a button to choose).
+    if (capture >= 0) {
+        a.padCaptureFrame = ImGui::GetFrameCount();   // the launcher's own controller uses are off (pad_capturing)
+        const bool late = ImGui::GetFrameCount() > captureFrame + 1;
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || !a.padConnected || ImGui::GetTime() - captureAt > 10.0 ||
+            (late && (ImGui::IsMouseClicked(0) || ImGui::IsMouseClicked(1))))
+            capture = -1;
+        else if (a.padPressSeq != captureSeq && a.padPress >= 0) {
+            const gs::PadAssign r = gs::pad_assign(m, capture, a.padPress);
+            if (r.changed) { note = said(capture, a.padPress, r); apply(m); }
+            capture = -1;
+        }
+    }
+}
+
 // Job 620 (GitHub #45): a game language whose text isn't on the player's copy can't be chosen - the game would fall
 // back to English (the US Judgment disc has 11 languages, not German, Italian, Spanish (Spain), Russian, Portuguese
 // or Japanese). Decided by the copy's Coalesced_<code>.bin; a code we don't know, or an unknown folder, stays allowed.
@@ -879,6 +1033,9 @@ static void option_row(App &a, int g, const gs::Option &o)
     if (o.id == "FrameGen" && av.ok && gs::fg_vk_nvidia_warning(a.cur[g], a.env[g]))   // vkfreeze049
         ui_note(gs::k_fgVkNvidiaWarning, col::amber);
     if (changed && nv != v) {
+        // 0.6.3: Custom chosen with no custom layout saved yet starts from the layout that was chosen (Southpaw ...)
+        if (o.id == "PadLayout" && (int)nv == 4 && v >= 1 && v <= 3 && a.ini.get("Pad", "Remap").empty())
+            pad_remap_save(a, gs::pad_layout_preset((int)v));
         gs::set_value(G, a.cur[g], o.id, nv);
         a.dirty[g] = true;
         if (o.id == "Version" || o.id == "Monitor") env_refresh(a, g);
@@ -1507,7 +1664,9 @@ void page_draw(App &a, ImVec2 size)
     // The controller and the bottom bar (Shagg 22:23): D-pad down past the last row goes to the bar (Play chosen); there
     // D-pad left / right or LB / RB choose Library, Save or Play, A presses it, D-pad up goes back to the rows. Dear
     // ImGui's own navigation is off while the bar is chosen (main.cpp) and the bar's buttons are not in it.
-    bool padNav = a.padConnected && !a.modal.open && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.zoomTo == SCR_PAGE;
+    // 0.6.3: not while the controller layout list waits for a button (pad_layout_section) - that press only sets the button
+    const bool padCap = pad_capturing(a);
+    bool padNav = a.padConnected && !a.modal.open && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && a.zoomTo == SCR_PAGE && !padCap;
     if (!padNav || ImGui::IsMouseClicked(0)) a.barSel = -1;
     // B goes to the bar's Library button (Shagg 22:26), not straight back to the library: A there goes back, or move to
     // Save / Play. (A B that just closed a drop-down list was for the list, so it is left alone.)
@@ -1534,8 +1693,8 @@ void page_draw(App &a, ImVec2 size)
         }
     }
     // LB / RB switch tabs while the bar is not chosen
-    if (a.barSel < 0 && ImGui::IsKeyPressed(ImGuiKey_GamepadL1)) a.tab = (a.tab + k_tabCount - 1) % k_tabCount;
-    if (a.barSel < 0 && ImGui::IsKeyPressed(ImGuiKey_GamepadR1)) a.tab = (a.tab + 1) % k_tabCount;
+    if (a.barSel < 0 && !padCap && ImGui::IsKeyPressed(ImGuiKey_GamepadL1)) a.tab = (a.tab + k_tabCount - 1) % k_tabCount;
+    if (a.barSel < 0 && !padCap && ImGui::IsKeyPressed(ImGuiKey_GamepadR1)) a.tab = (a.tab + 1) % k_tabCount;
     dl->AddLine(ImVec2(p0.x + S(24), ty + tabH), ImVec2(p1.x - S(24), ty + tabH), U(col::redHi, 0.7f), S(2));
 
     // the rows
@@ -1577,7 +1736,11 @@ void page_draw(App &a, ImVec2 size)
             for (const gs::Option *o : mine) any |= group_of(o->id) == k;
             if (!any) continue;
             ui_section(tg.heading[k]);
-            for (const gs::Option *o : mine) if (group_of(o->id) == k) { option_row(a, g, *o); shown++; }
+            for (const gs::Option *o : mine) if (group_of(o->id) == k) {
+                option_row(a, g, *o);
+                shown++;
+                if (o->id == "PadLayout") pad_layout_section(a, g);   // 0.6.3: the Custom layout's buttons
+            }
         }
         if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
         if (want == gs::Tab::Controls) window_key_section(a, g);   // 0.6.3, GitHub #316
@@ -1612,7 +1775,7 @@ void page_draw(App &a, ImVec2 size)
     if (th_button(anyDirty ? "SAVE *" : "SAVE", ImVec2(S(130), S(40)), true, F_HEAD, a.barSel == 1) || (barA && a.barSel == 1)) { if (settings_save(a)) set_message(a, "Saved.", false); }
     ImGui::SameLine(0, S(20));
     bool ready = a.st[g].ready == R_READY && !a.run.proc && a.job.state.load() != 1;
-    if (th_button_red("PLAY", ImVec2(S(130), S(40)), ready, F_HEAD, a.barSel == 2) || (ready && ((barA && a.barSel == 2) || ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false)))) {
+    if (th_button_red("PLAY", ImVec2(S(130), S(40)), ready, F_HEAD, a.barSel == 2) || (ready && ((barA && a.barSel == 2) || (!pad_capturing(a) && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false))))) {
         settings_save(a);
         play_start(a, g);
     }

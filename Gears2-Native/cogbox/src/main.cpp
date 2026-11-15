@@ -581,6 +581,42 @@ const char *pad_name(const App &a, const char *x)
     return x;
 }
 
+bool pad_capturing(const App &a) { return ImGui::GetFrameCount() <= a.padCaptureFrame + 1; }
+
+// 0.6.3: a controller button pressed, as the game's runtime names it (SDL's positions: South = A / Cross)
+static void pad_press_event(App &a, const SDL_Event &e)
+{
+    int b = -1;
+    if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+        switch (e.gbutton.button) {
+        case SDL_GAMEPAD_BUTTON_SOUTH: b = gs::PadA; break;
+        case SDL_GAMEPAD_BUTTON_EAST: b = gs::PadB; break;
+        case SDL_GAMEPAD_BUTTON_WEST: b = gs::PadX; break;
+        case SDL_GAMEPAD_BUTTON_NORTH: b = gs::PadY; break;
+        case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: b = gs::PadLB; break;
+        case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: b = gs::PadRB; break;
+        case SDL_GAMEPAD_BUTTON_LEFT_STICK: b = gs::PadLS; break;
+        case SDL_GAMEPAD_BUTTON_RIGHT_STICK: b = gs::PadRS; break;
+        case SDL_GAMEPAD_BUTTON_BACK: b = gs::PadBack; break;
+        case SDL_GAMEPAD_BUTTON_START: b = gs::PadStart; break;
+        case SDL_GAMEPAD_BUTTON_DPAD_UP: b = gs::PadUp; break;
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: b = gs::PadDown; break;
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT: b = gs::PadLeft; break;
+        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: b = gs::PadRight; break;
+        default: break;   // Guide, paddles, touchpad: the games don't have them
+        }
+    } else if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION &&
+               (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)) {
+        static bool down[2];   // a press = past half way, after being let go below a quarter
+        const int t = e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? 0 : 1;
+        if (!down[t] && e.gaxis.value > 16000) { down[t] = true; b = t ? gs::PadRT : gs::PadLT; }
+        else if (down[t] && e.gaxis.value < 8000) down[t] = false;
+    }
+    if (b < 0) return;
+    a.padPress = b;
+    a.padPressSeq++;
+}
+
 static void refresh_pads(App &a)
 {
     int n = 0;
@@ -836,6 +872,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             if (e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED) refresh_pads(a);
             // 0.2.0: the hints follow the device used last (stick movement past half way counts, small drift doesn't)
             if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && abs(e.gaxis.value) > 16000)) a.lastPad = true;
+            pad_press_event(a, e);   // 0.6.3: for the controller layout's "press a button"
             if (e.type == SDL_EVENT_KEY_DOWN) g_lastKeyScancode = (int)e.key.scancode;   // the key's position (page.cpp key capture)
             if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_WHEEL) a.lastPad = false;
             if (e.type == SDL_EVENT_DROP_FILE && e.drop.data) a.dropped.push_back(e.drop.data);
@@ -875,7 +912,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         bool frontOwn = (a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
                          !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) ||   // 0.4.6 review: the player-name box takes the pad
                         (a.screen == SCR_PAGE && a.barSel >= 0 && !a.modal.open);   // also a page's bottom bar (page.cpp)
-        if (!SDL_GetKeyboardFocus() || a.run.proc || frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+        if (!SDL_GetKeyboardFocus() || a.run.proc || frontOwn || pad_capturing(a)) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
         else io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
         { extern int g_padlogFrontOwn; g_padlogFrontOwn = frontOwn ? 1 : 0; }   // COGBOX_PADLOG (front.cpp)
         if (frontOwn) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
@@ -907,7 +944,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             static bool triggersWere = false;
             const bool triggers = ImGui::IsKeyDown(ImGuiKey_GamepadL2) && ImGui::IsKeyDown(ImGuiKey_GamepadR2);
             if (!a.run.proc && SDL_GetKeyboardFocus() &&
-                (ImGui::IsKeyPressed(ImGuiKey_F11, false) || (triggers && !triggersWere))) set_fullscreen(a, !a.fullscreen);
+                (ImGui::IsKeyPressed(ImGuiKey_F11, false) || (triggers && !triggersWere && !pad_capturing(a)))) set_fullscreen(a, !a.fullscreen);
             triggersWere = triggers;
         }
         const bool quitAskable = !a.run.proc && SDL_GetKeyboardFocus() && a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&

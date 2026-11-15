@@ -93,7 +93,7 @@ struct Environment {
     std::string prompt_dir;                    // job 629: <COGBox>\prompts\keyboard (key-cap overlays), "" = none
     // PS1 960-961: the lines of out\extra-args.txt (raw; empty = no file). Trimmed, '#' lines skipped, {LOG} = log_dir.
     std::vector<std::string> extra_args_lines;
-    std::string pad_remap;  // GitHub #97: CogBox.ini [Pad] Remap= (the Custom controller layout, SDK patch 55)
+    std::string pad_remap;  // GitHub #97: CogBox.ini [Pad] Remap= (the Custom controller layout, SDK patch 55; PadMap below)
     std::string gamertags[3];   // 0.4.9 split-screen: [Profile] Gamertag2..4 (--user_gamertag2..4, SDK patch 71); "" = "Player N"
     std::string gamertag;   // GitHub #119: CogBox.ini [Profile] Gamertag= (--user_gamertag, SDK patch 54); "" = the runtime's "User"
     // GitHub #159: the Lang / VoiceLang choices (by index) whose files are not on the player's copy, found by the
@@ -249,6 +249,41 @@ const std::vector<KeyAction> &key_actions(Game g = Game::Gears2);
 // wins; "None" = off), else the default. The key text is the games' own: [Alt+][Ctrl+][Shift+]<key name>.
 constexpr const char *kWindowKeyDefault = "Alt+Return";
 std::string window_key(const Environment &env);
+// 0.6.3: the Custom controller layout (Controller layout = Custom; CogBox.ini [Pad] Remap=, shared by all four games),
+// edited on the Controls tab. The runtime's pad_remap (SDK patch 55, input_system.cpp) reads "src=dst" pairs, comma
+// separated, spaces dropped, any case: the controller's src button presses the game's dst button. A button that is only
+// a source no longer presses its own; one never named as a source stays itself; two sources may press one dst. There is
+// no "nothing": every controller button presses some game button. "sticks=swap" swaps the two sticks. Anything else (an
+// unknown name, "a=", "a=b=c") is ignored by the runtime; the editor keeps such text as it was and says so.
+enum PadInput { PadA, PadB, PadX, PadY, PadLB, PadRB, PadLT, PadRT, PadLS, PadRS, PadBack, PadStart,
+                PadUp, PadDown, PadLeft, PadRight, kPadInputs };
+const char* pad_input_token(int i);   // the runtime's name: "a", "lb", "ls", "back", "up" ... (nullptr out of range)
+const char* pad_input_label(int i);   // the launcher's: "A", "LB", "Left stick click", "Back", "D-pad up" ...
+int pad_input_from_token(const std::string& token);   // any case; -1 = not a name the runtime knows
+struct PadMap {
+    int to[kPadInputs];                 // to[controller button] = the game button it presses (to[i] == i: unchanged)
+    bool sticks_swapped = false;
+    std::vector<std::string> unknown;   // parts of the text the runtime ignores, kept as written
+    PadMap() { for (int i = 0; i < kPadInputs; ++i) to[i] = i; }
+    bool same_layout(const PadMap& o) const;   // same buttons and sticks (unknown parts not compared)
+};
+// What the launcher hands the runtime (build_args): only letters, digits, '=' and ','.
+std::string pad_remap_clean(const std::string& spec);
+PadMap parse_pad_remap(const std::string& spec);    // as the runtime reads it (the last pair for a button wins)
+std::string format_pad_remap(const PadMap& m);      // only the moved buttons, in pad_input order; "" = the game's own
+const char* pad_layout_preset(int layout);          // Controller layout 0-3's text ("" "sticks=swap" "a=b,b=a" ...)
+std::vector<int> pad_sources(const PadMap& m, int game_button);   // the controller buttons that press it
+// The controller button `pad` now presses game button `game`. If that leaves the game button it pressed before with no
+// controller button, the buttons swap: a button that pressed `game` until now takes it over (as the keyboard keys'
+// "was taken from"). Returned: what changed besides `pad` itself, for the note under the list.
+struct PadAssign {
+    bool changed = false;
+    int took_from = -1;     // the game button `pad` pressed before
+    int swapped = -1;       // the controller button that now presses took_from instead (-1: none)
+    bool left_empty = false;   // took_from has no controller button now (no button could take it over)
+};
+PadAssign pad_assign(PadMap& m, int game, int pad);
+
 // Job 661: draws the keyboard button prompts (key caps over each game's controller-button sheet, 4x the sheet's size) for
 // these keys (cvar -> "Key[,Key2]") into <promptDir>\hires-<game>; returns that folder or "" (keycaps.cpp sets it).
 using PromptComposer = std::string (*)(const std::string &promptDir, const std::string &game,

@@ -1016,8 +1016,7 @@ Controller layout = Controller-Belegung
 Southpaw (sticks swapped) = Southpaw (Sticks getauscht)
 A and B swapped = A und B getauscht
 Bumpers and triggers swapped = Bumper und Trigger getauscht
-Custom (CogBox.ini [Pad] Remap=) = Benutzerdefiniert (CogBox.ini [Pad] Remap=)
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = Verlegt die Tasten und Sticks des Controllers, bevor das Spiel sie sieht, sodass die Tastensymbole des Spiels weiter die ursprünglichen Tasten zeigen. Benutzerdefiniert: Schreibe src=dst-Paare (a b x y lb rb lt rt ls rs back start up down left right, oder sticks=swap) in CogBox.ini unter [Pad] Remap=.
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = Verlegt die Tasten und Sticks des Controllers, bevor das Spiel sie sieht, sodass die Tastensymbole des Spiels weiter die ursprünglichen Tasten zeigen. Benutzerdefiniert: Wähle in der Liste darunter für jede Taste des Spiels die Controller-Taste (eine Belegung für alle vier Spiele, gespeichert in CogBox.ini unter [Pad] Remap=).
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = Title Updates sind jetzt erforderlich: Jedes Spiel läuft mit seinem letzten Patch von Epic (Gears 2 und 3: TU6, Judgment: TU4, Gears 1: TU5). Reine Disc-Versionen werden nicht mehr unterstützt.
 Two-player split = Teilung für zwei Spieler
 Top and bottom (game's) = Oben und unten (des Spiels)
@@ -1503,3 +1502,21 @@ The graphics card you chose is not in this PC at the moment - the game picks its
 GAME WINDOW = SPIELFENSTER
 Windowed / full screen key = Taste für Fenster / Vollbild
 Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = Schaltet das Spielfenster auf dem Monitor, auf dem es sich befindet, zwischen Fenster und Vollbild um (rahmenlos, oder exklusiv, falls du das gewählt hast) und wieder zurück auf Fenstergröße und -position. Funktioniert im Spielfenster in allen vier Spielen, mit oder ohne Tastatur und Maus. Für eine andere Taste füge in extra-args.txt eine Zeile wie --bind_cogbox_fullscreen=F12 hinzu (ein Tastenname, auf Wunsch mit Alt+, Ctrl+ oder Shift+ davor; None schaltet die Taste aus).
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = Benutzerdefiniert (unten wählen)
+Customise... = Anpassen...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = Wähle selbst die Controller-Taste für jede Taste des Spiels, ausgehend von der oben gewählten Belegung.
+Left: the game's buttons. Right: the controller button that does each one. = Links: die Tasten des Spiels. Rechts: die Controller-Taste, die sie jeweils auslöst.
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = Wähle eine Taste des Spiels und drücke dann die Controller-Taste, die sie auslösen soll (Esc bricht ab). Eine Controller-Taste hat nur eine Aufgabe: Hatte sie schon eine andere, tauschen die beiden.
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = Kein Controller verbunden - wähle die Controller-Taste aus der Liste. Eine Controller-Taste hat nur eine Aufgabe: Hatte sie schon eine andere, tauschen die beiden.
+Press a button... = Drücke eine Taste...
+Nothing = Keine
+Swap sticks = Sticks tauschen
+The left stick moves the camera and the right stick moves you (southpaw). = Der linke Stick bewegt die Kamera, der rechte bewegt dich (Southpaw).
+Reset to the game's own = Auf die Belegung des Spiels zurücksetzen
+{1} now does the game's {2}. = {1} löst jetzt {2} des Spiels aus.
+{1} does the game's {2} instead. = {1} löst stattdessen {2} des Spiels aus.
+No button does the game's {1} now. = Keine Taste löst jetzt {1} des Spiels aus.
+Your earlier custom layout was replaced. = Deine bisherige benutzerdefinierte Belegung wurde ersetzt.
+Undo = Rückgängig
+In CogBox.ini but not understood by the game (kept as written): = In CogBox.ini, aber vom Spiel nicht verstanden (unverändert behalten):

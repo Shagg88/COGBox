@@ -448,6 +448,92 @@ int summary() {
             if (x.find("_first_person") != std::string::npos) { ++n; ok = ok && x == want; }
         if (n != (*want ? 1 : 0) || !ok) { std::cout << "FAIL first person for game " << static_cast<int>(g) << "\n"; ++fails; }
     }
+    // 0.6.3: the Custom controller layout editor - CogBox.ini [Pad] Remap= read as the runtime reads pad_remap (SDK patch 55),
+    // written back with only the moved buttons; a controller button taken by another game button swaps with it
+    {
+        auto bad = [&](const std::string& what) { std::cout << "FAIL pad layout: " << what << "\n"; ++fails; };
+        PadMap id;
+        if (format_pad_remap(id) != "" || !parse_pad_remap("").same_layout(id) || !parse_pad_remap("").unknown.empty()) bad("empty");
+        if (pad_input_from_token("LB") != PadLB || pad_input_from_token("Start") != PadStart || pad_input_from_token("l3") != -1) bad("names");
+        for (int i = 0; i < kPadInputs; ++i)
+            if (pad_input_from_token(pad_input_token(i)) != i || !pad_input_label(i)) bad(std::string("token ") + pad_input_token(i));
+        // the presets read back as written (pairs in the list's order) and send what they always sent
+        const char* want[4] = { "", "sticks=swap", "a=b,b=a", "lb=lt,rb=rt,lt=lb,rt=rb" };
+        for (int l = 0; l < 4; ++l) {
+            const PadMap m = parse_pad_remap(pad_layout_preset(l));
+            if (format_pad_remap(m) != want[l] || !m.unknown.empty()) bad(std::string("preset ") + std::to_string(l));
+        }
+        {
+            const PadMap m = parse_pad_remap(pad_layout_preset(3));
+            if (m.to[PadLB] != PadLT || m.to[PadLT] != PadLB || m.to[PadRB] != PadRT || m.to[PadRT] != PadRB || m.to[PadA] != PadA) bad("preset 3 map");
+        }
+        // hand-written: any case, spaces, empty parts, identity pairs, the last pair for a button wins, unknown parts kept
+        {
+            const PadMap m = parse_pad_remap(" A = B , b=a,,x=x, Sticks=Swap, y=lb, y=rt, l3=a, a=, up=down=left, foo ");
+            if (m.to[PadA] != PadB || m.to[PadB] != PadA || m.to[PadX] != PadX || m.to[PadY] != PadRT || !m.sticks_swapped) bad("hand-written map");
+            if (m.unknown != std::vector<std::string>({ "l3=a", "a=", "up=down=left", "foo" })) bad("unknown parts");
+            const std::string f = format_pad_remap(m);
+            if (f != "a=b,b=a,y=rt,sticks=swap,l3=a,a=,up=down=left,foo") bad("hand-written format: " + f);
+            const PadMap again = parse_pad_remap(f);   // round trip: same layout, same text the second time
+            if (!again.same_layout(m) || again.unknown != m.unknown || format_pad_remap(again) != f) bad("round trip");
+            // what the runtime is given (build_args) reads as the same layout
+            if (!parse_pad_remap(pad_remap_clean(f)).same_layout(m)) bad("clean");
+        }
+        // two controller buttons on one game button, a game button with none: shown and kept
+        {
+            const PadMap m = parse_pad_remap("a=b");
+            if (pad_sources(m, PadB) != std::vector<int>({ PadA, PadB }) || !pad_sources(m, PadA).empty()) bad("sources");
+            if (format_pad_remap(m) != "a=b") bad("many to one format");
+        }
+        // assigning: B pressed for the game's A swaps A and B; again is no change; back again is the game's own
+        {
+            PadMap m;
+            PadAssign r = pad_assign(m, PadA, PadB);
+            if (!r.changed || r.took_from != PadB || r.swapped != PadA || r.left_empty || format_pad_remap(m) != "a=b,b=a") bad("swap A B");
+            if (pad_assign(m, PadA, PadB).changed || format_pad_remap(m) != "a=b,b=a") bad("same again");
+            r = pad_assign(m, PadA, PadA);
+            if (!r.changed || r.took_from != PadB || r.swapped != PadB || format_pad_remap(m) != "") bad("swap back: " + format_pad_remap(m));
+            // a chain: LT for the game's RB (RB takes LT), then RT for the game's LT (RB, which did LT, takes RT): one button each
+            pad_assign(m, PadRB, PadLT);
+            pad_assign(m, PadLT, PadRT);
+            for (int i = 0; i < kPadInputs; ++i) if (pad_sources(m, i).size() != 1) bad(std::string("chain ") + pad_input_token(i));
+            if (format_pad_remap(m) != "rb=rt,lt=rb,rt=lt") bad("chain format: " + format_pad_remap(m));
+            // sticks stay as they are
+            PadMap s2 = parse_pad_remap("sticks=swap");
+            pad_assign(s2, PadX, PadY);
+            if (!s2.sticks_swapped || format_pad_remap(s2) != "x=y,y=x,sticks=swap") bad("sticks kept");
+        }
+        // from a hand-written layout where the game's A has no button: taking the only button of the game's B leaves B empty
+        {
+            PadMap m = parse_pad_remap("a=b");                         // A and B both press B; nothing presses A
+            PadAssign r = pad_assign(m, PadA, PadB);                   // B for the game's A: the game's B keeps A
+            if (!r.changed || r.swapped != -1 || r.left_empty || format_pad_remap(m) != "a=b,b=a") bad("fill the empty one");
+            PadMap n = parse_pad_remap("a=b,b=x");                     // nothing presses A or B... A presses B, B presses X
+            r = pad_assign(n, PadY, PadA);                             // A for the game's Y: the game's B has no button, nor had Y another
+            if (!r.changed || r.took_from != PadB || r.swapped != PadY || n.to[PadY] != PadB) bad("swap into a moved layout");
+            PadMap e = parse_pad_remap("a=b,y=b");                     // the game's A: no button; the game's Y: no button
+            r = pad_assign(e, PadA, PadX);                             // X for A: the game's X had only X, and A had none to give
+            if (!r.changed || !r.left_empty || r.swapped != -1 || !pad_sources(e, PadX).empty()) bad("left empty");
+        }
+        if (pad_assign(id, -1, PadA).changed || pad_assign(id, PadA, kPadInputs).changed) bad("out of range");
+        // build_args: Custom sends the saved text cleaned (no spaces), a preset its own text, Game's own nothing
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        auto remap_arg = [&](int layout, const std::string& ini) {
+            Environment env = e; env.pad_remap = ini;
+            Store st; Settings s = st.view(Game::Gears2, env);
+            s.set("PadLayout", layout);
+            std::string out;
+            for (const std::string& x : build_args(Game::Gears2, Version::TitleUpdate, s, env, nullptr))
+                if (x.rfind("--pad_remap=", 0) == 0) out = x;
+            return out;
+        };
+        if (remap_arg(4, " a = b, b = a ") != "--pad_remap=a=b,b=a" || remap_arg(1, "x=y") != "--pad_remap=sticks=swap" ||
+            remap_arg(0, "x=y") != "" || remap_arg(4, "") != "" || remap_arg(3, "") != "--pad_remap=lb=lt,lt=lb,rb=rt,rt=rb") bad("build_args");
+        const Option* o = find_option(Game::Gears2, "PadLayout");
+        if (!o || o->scope != Scope::Shared || o->choices.size() != 5 || o->choices[4] != "Custom (choose below)") bad("option");
+    }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;
 }

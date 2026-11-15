@@ -1016,8 +1016,7 @@ Controller layout = Раскладка контроллера
 Southpaw (sticks swapped) = Для левшей (стики поменяны)
 A and B swapped = A и B поменяны
 Bumpers and triggers swapped = Бамперы и курки поменяны
-Custom (CogBox.ini [Pad] Remap=) = Своя (CogBox.ini [Pad] Remap=)
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = Переназначает кнопки и стики контроллера до того, как их увидит игра, поэтому подсказки кнопок в игре по-прежнему показывают исходные кнопки. Своя: впишите пары src=dst (a b x y lb rb lt rt ls rs back start up down left right или sticks=swap) в CogBox.ini, в строку Remap= раздела [Pad].
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = Переназначает кнопки и стики контроллера до того, как их увидит игра, поэтому подсказки кнопок в игре по-прежнему показывают исходные кнопки. Своя: в списке ниже выберите кнопку контроллера для каждой кнопки игры (одна раскладка для всех четырёх игр, хранится в CogBox.ini, в строке Remap= раздела [Pad]).
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = Обновления теперь обязательны: каждая игра запускается с последним патчем от Epic (Gears 2 и 3: TU6, Judgment: TU4, Gears 1: TU5). Версии только с диска больше не поддерживаются.
 Two-player split = Разделение на двоих
 Top and bottom (game's) = Сверху и снизу (как в игре)
@@ -1508,3 +1507,21 @@ The graphics card you chose is not in this PC at the moment - the game picks its
 GAME WINDOW = ОКНО ИГРЫ
 Windowed / full screen key = Клавиша окно / полный экран
 Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = Переключает окно игры между оконным режимом и полным экраном (без рамки или эксклюзивным, если вы его выбрали) на том мониторе, где оно находится, и возвращает его к прежнему размеру и положению окна. Работает в окне игры во всех четырёх играх, с включённой или выключенной Клавиатурой и мышью. Чтобы использовать другую клавишу, добавьте в extra-args.txt строку вроде --bind_cogbox_fullscreen=F12 (название клавиши, при желании с Alt+, Ctrl+ или Shift+ перед ним; None отключает клавишу).
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = Своя (выбор ниже)
+Customise... = Настроить...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = Выберите сами кнопку контроллера для каждой кнопки игры, начиная с раскладки, выбранной выше.
+Left: the game's buttons. Right: the controller button that does each one. = Слева: кнопки игры. Справа: кнопка контроллера, которая их нажимает.
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = Выберите кнопку игры, затем нажмите кнопку контроллера, которая будет её нажимать (Esc отменяет). У кнопки контроллера одна задача: если у неё уже была другая, они меняются местами.
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = Контроллер не подключён - выберите кнопку контроллера из списка. У кнопки контроллера одна задача: если у неё уже была другая, они меняются местами.
+Press a button... = Нажмите кнопку...
+Nothing = Нет
+Swap sticks = Поменять стики местами
+The left stick moves the camera and the right stick moves you (southpaw). = Левый стик управляет камерой, а правый - движением (для левшей).
+Reset to the game's own = Сбросить на раскладку игры
+{1} now does the game's {2}. = {1} теперь нажимает {2} игры.
+{1} does the game's {2} instead. = {1} вместо этого нажимает {2} игры.
+No button does the game's {1} now. = Теперь ни одна кнопка не нажимает {1} игры.
+Your earlier custom layout was replaced. = Ваша прежняя своя раскладка заменена.
+Undo = Отменить
+In CogBox.ini but not understood by the game (kept as written): = Есть в CogBox.ini, но игра это не понимает (оставлено как есть):
