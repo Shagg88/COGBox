@@ -150,7 +150,7 @@ class OverlayDevice : public rex::filesystem::HostPathDevice {
 int AddInputBindings(ue3::ConfigFile& f, const char* key) {
   std::vector<const char*> binds;
   if (REXCVAR_GET(gow2_horde_bots))
-    binds.push_back("(Name=\"XboxTypeS_Back\",Command=\"Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot 0 3 | AddBot 0 4\")");
+    binds.push_back("(Name=\"XboxTypeS_Back\",Command=\"Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot 0 | AddBot 0\")");
   if (binds.empty()) return 0;
   const bool wide = f.name.wide;
   ue3::ConfigSection* sec = nullptr;

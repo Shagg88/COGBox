@@ -806,7 +806,7 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
     }
     if (REXCVAR_GET(gow3_horde_bots)) {  // GitHub #89: one more Back binding in the input settings
       static const char kBind[] =
-          "(Name=\"XboxTypeS_Back\",Command=\"Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot 0 3 | AddBot 0 4\")";
+          "(Name=\"XboxTypeS_Back\",Command=\"Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot 0 | AddBot 0\")";
       ue3::ConfigFile* target = nullptr;
       for (ue3::ConfigFile& f : bundle.files) {
         const std::string fn = ue3::AsciiLower(f.name.Utf8());
