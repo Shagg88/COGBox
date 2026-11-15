@@ -39,8 +39,10 @@ constexpr uint32_t kGLog = 0x82F98D98u;
 constexpr uint32_t kGNamesVar = 0x82FED4F0u;
 constexpr uint32_t kGObjectsVar = 0x82FDD1C4u;
 constexpr const char* kLayout = "4,40,44,52,60,76,64,72,96,124,16,1,1";   // ue3::obj::LayoutText order
-constexpr const char* kVersusBases[] = {"WarGame", nullptr};
-constexpr const char* kPveExceptions[] = {"WarGameSP", nullptr};
+// Cheats run in WarGameSP only (the campaign, co-op and the front end: DefaultGame=WarfareGame.WarGameSP); every other game
+// type - WarGameMP / TDM / Resurrection and anything else - is refused (review r41: their parent classes were never read).
+constexpr const char* kAllowed[] = {"WarGameSP", nullptr};
+constexpr const char* kDenied[] = {nullptr};
 bool OpenObjects() {
   ue3::obj::Layout layout;
   ue3::obj::ParseLayout(kLayout, &layout);
@@ -61,7 +63,7 @@ void Gow1InstallCheats() {
   target.exec_vtable_slot = 0;
   const bool cheats = REXCVAR_GET(gow1_cheats);
   if (cheats) target.before_each = "EnableCheats";
-  ue3::match::Configure({"Gears 1", kVersusBases, kPveExceptions, target.engine_global, target.players_data_offset,
+  ue3::match::Configure({"Gears 1", kAllowed, kDenied, target.engine_global, target.players_data_offset,
                          target.players_num_offset, &OpenObjects});
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);

@@ -2,7 +2,7 @@
 
 ## 0.6.3 (not released)
 
-- **Cheats are off in Versus** (all four games): the cheat keys (F5-F11, `--gowX_cheats`) no longer work in any Versus match - online, System Link, private matches and local split screen, with or without bots. They still work in the campaign (solo and co-op) and in Horde, Beast and Survival.
+- **Cheats are off in Versus** (all four games): the cheat keys (F5-F11, `--gowX_cheats`) no longer work in any Versus match - online, System Link, private matches and local split screen, with or without bots. They still work in the campaign (solo and co-op) and in Horde, Beast and Survival. Any game type not on that list is treated as Versus. Other console commands from `--ue3_hotkeys` / `--ue3_exec` are refused in Versus too (the launcher's own display settings still apply). The Horde-bots button (Back) is not a cheat key and is not blocked: switch it off for Versus.
 
 ## 0.6.2
 

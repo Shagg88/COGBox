@@ -6,9 +6,11 @@
 //   GEngine -> GamePlayers[0] (ULocalPlayer) -> Actor (its PlayerController) -> WorldInfo -> Game (the GameInfo: a game this
 //   PC runs or hosts - the campaign, local split screen, System Link / online host) or, with no GameInfo (a client in
 //   someone else's game), WorldInfo.GRI -> GameClass (the GameReplicationInfo's copy of the GameInfo's class).
-// The class is Versus when it derives from one of the game's Versus base classes and from none of its exceptions (the
-// PvE game types that sit under the same base: Horde, Beast, Survival). Per-game lists are in each game's cheats.cpp, with
-// where the names come from. Classes that cannot be read (no GameInfo and no GRI class) are treated as Versus.
+// Cheats run only in the game types each game lists as allowed (the campaign, Horde, Beast, Survival, the front end), minus
+// any listed as denied under them (the Versus party / pre-game lobbies); every other class counts as Versus - a game type
+// nobody listed (a DLC mode, a Gears 1 mode whose parent class was never read) is refused, never let through (review r41).
+// Per-game lists are in each game's cheats.cpp, with where the names come from. Classes that cannot be read (no GameInfo
+// and no GRI class) are treated as Versus.
 //
 // Header only (included by each game's cheats.cpp, which compiles against that game's own ue3/objects.h; the four copies of
 // this file and of console.h are kept identical). Our code (MIT).
@@ -29,8 +31,8 @@ namespace ue3::match {
 
 struct Spec {
   const char* game;                        // for the log
-  const char* const* versus_bases;         // nullptr-terminated: classes whose subclasses are Versus game types
-  const char* const* pve_exceptions;       // nullptr-terminated: subclasses of those that are not (Horde, Beast, Survival)
+  const char* const* allowed;              // nullptr-terminated: game types (and their subclasses) where cheats run
+  const char* const* denied;               // nullptr-terminated: subclasses of those where they do not (Versus lobbies)
   uint32_t engine_global;                  // GEngine's address
   uint32_t players_data_offset;            // UGameEngine::GamePlayers data pointer / count (the console target's)
   uint32_t players_num_offset;
@@ -40,7 +42,7 @@ struct Spec {
 namespace detail {
 struct Resolved {
   Spec spec{};
-  std::vector<uint32_t> bases, exceptions;
+  std::vector<uint32_t> allowed, denied;
   int off_actor = -1, off_world = -1, off_game = -1, off_gri = -1, off_game_class = -1;
   std::atomic<bool> ready{false}, failed{false};
   // game thread only
@@ -65,20 +67,22 @@ inline void Resolve() {
   for (int attempt = 0; attempt < 60; attempt++) {
     if (attempt) std::this_thread::sleep_for(std::chrono::seconds(attempt < 15 ? 2 : 15));
     if (!obj::Ready() && !(s.spec.open_objects && s.spec.open_objects())) continue;
-    std::vector<uint32_t> bases, exceptions;
-    bool all = true;
-    for (const char* const* n = s.spec.versus_bases; n && *n; ++n) {
-      const uint32_t c = obj::FindClass(*n);
-      if (c) bases.push_back(c); else all = false;
-    }
-    for (const char* const* n = s.spec.pve_exceptions; n && *n; ++n) {
-      const uint32_t c = obj::FindClass(*n);
-      if (c) exceptions.push_back(c); else all = false;
-    }
+    // The first allowed name (the campaign class) must be found: it says the game's script package is loaded (else try
+    // again). The others are looked up once it is; one not found is logged and left out - a missing allowed class only
+    // refuses that mode (the safe side), a missing denied class lets that lobby keep the cheats.
+    std::vector<uint32_t> allowed, denied;
+    std::string missing;
+    bool all = s.spec.allowed && s.spec.allowed[0] && obj::FindClass(s.spec.allowed[0]) != 0;
+    for (const char* const* lists[] = {s.spec.allowed, s.spec.denied}; const char* const* l : lists)
+      for (const char* const* n = l; all && n && *n; ++n) {
+        const uint32_t c = obj::FindClass(*n);
+        if (!c) missing += std::string(missing.empty() ? "" : " ") + *n;
+        else (l == s.spec.allowed ? allowed : denied).push_back(c);
+      }
     const uint32_t engine = obj::FindClass("GameEngine"), local_player = obj::FindClass("LocalPlayer"),
                    actor = obj::FindClass("Actor"), world = obj::FindClass("WorldInfo"),
                    gri = obj::FindClass("GameReplicationInfo");
-    if (!all || !engine || !local_player || !actor || !world || !gri) continue;
+    if (!all || allowed.empty() || !engine || !local_player || !actor || !world || !gri) continue;
     const int players = obj::PropertyOffset(engine, "GamePlayers");
     const int off_actor = obj::PropertyOffset(local_player, "Actor"), off_world = obj::PropertyOffset(actor, "WorldInfo"),
               off_game = obj::PropertyOffset(world, "Game"), off_gri = obj::PropertyOffset(world, "GRI"),
@@ -90,16 +94,18 @@ inline void Resolve() {
       return;
     }
     if (off_actor < 0 || off_world < 0 || off_game < 0) continue;   // (GRI.GameClass is the client path only)
-    s.bases = bases, s.exceptions = exceptions;
+    s.allowed = allowed, s.denied = denied;
     s.off_actor = off_actor, s.off_world = off_world, s.off_game = off_game, s.off_gri = off_gri,
     s.off_game_class = off_game_class;
     s.ready.store(true, std::memory_order_release);
+    if (!missing.empty()) REXLOG_WARN("match guard ({}): game type(s) not found, left out: {}", s.spec.game, missing);
     REXLOG_INFO("match guard ({}): ready - cheats are refused in Versus (LocalPlayer.Actor +{}, Actor.WorldInfo +{}, "
                 "WorldInfo.Game +{}, .GRI +{}, GameReplicationInfo.GameClass +{})",
                 s.spec.game, off_actor, off_world, off_game, off_gri, off_game_class);
     return;
   }
-  REXLOG_WARN("match guard ({}): the engine's classes were not found - cheats stay off", State().spec.game);
+  REXLOG_WARN("match guard ({}): the engine's classes (or {}) were not found - cheats stay off", State().spec.game,
+              State().spec.allowed && State().spec.allowed[0] ? State().spec.allowed[0] : "the campaign class");
   State().failed = true;
 }
 }  // namespace detail
@@ -136,7 +142,7 @@ inline int Check() {
     const uint32_t gri = obj::Read32(world + uint32_t(s.off_gri));   // a client: the host's GameInfo class, replicated
     if (gri) cls = obj::Read32(gri + uint32_t(s.off_game_class)), key = gri;
   }
-  const bool versus = !cls || (detail::Derives(cls, s.bases) && !detail::Derives(cls, s.exceptions));
+  const bool versus = !cls || !detail::Derives(cls, s.allowed) || detail::Derives(cls, s.denied);
   if (!versus) {
     s.last_refused = false;
     return 0;

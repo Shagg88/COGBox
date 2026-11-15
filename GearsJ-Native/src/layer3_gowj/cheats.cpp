@@ -44,8 +44,10 @@ constexpr uint32_t kGLog = 0x834B5684u;
 constexpr uint32_t kGNamesVar = 0x8355A328u;
 constexpr uint32_t kGObjectsVar = 0x8355A368u;
 constexpr const char* kLayout = "32,40,44,52,64,68,60,68,84,104,8,0,1";   // ue3::obj::LayoutText order
-constexpr const char* kVersusBases[] = {"GearGameMP_Base", nullptr};
-constexpr const char* kPveExceptions[] = {"GearGameWaveBased", "GearGameHvB_Coop_Base", nullptr};
+// Cheats run in the campaign (and Declassified), Horde, Survival (HvB_Coop), the wave modes and the front end only - every
+// other game type is Versus, OverRun included (review r41: an allow-list). The party / pre-game lobbies: refused.
+constexpr const char* kAllowed[] = {"GearGameSP_Base", "GearGameWaveBased", "GearGameHvB_Coop_Base", "GearMenuGame", nullptr};
+constexpr const char* kDenied[] = {"GearPartyGame_Base", nullptr};
 bool OpenObjects() {
   ue3::obj::Layout layout;
   ue3::obj::ParseLayout(kLayout, &layout);
@@ -65,7 +67,7 @@ void GowjInstallCheats() {
   target.players_num_offset = 1192;
   target.exec_offset = 60;
   target.exec_vtable_slot = 0;
-  ue3::match::Configure({"Judgment", kVersusBases, kPveExceptions, target.engine_global, target.players_data_offset,
+  ue3::match::Configure({"Judgment", kAllowed, kDenied, target.engine_global, target.players_data_offset,
                          target.players_num_offset, &OpenObjects});
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);

@@ -49,9 +49,10 @@ constexpr uint32_t kGLog = 0x830CF548u;
 // F7 (achievements) and F8 (COGBox social) are the in-game menu's; F1-F4 the SDK's / ours.
 constexpr const char* kDefaultHotkeys =
     "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F9=ToggleDebugCamera;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
-// 0.6.3 (ue3/match_guard.h): the Versus game types are everything below GearGameMP_Base except Horde.
-constexpr const char* kVersusBases[] = {"GearGameMP_Base", nullptr};
-constexpr const char* kPveExceptions[] = {"GearGameHorde_Base", nullptr};
+// 0.6.3 (ue3/match_guard.h): cheats run in the campaign, Horde and the front end only - every other game type is Versus
+// (review r41: an allow-list, so a mode nobody listed is refused). The party / pre-game lobbies are Versus's: refused.
+constexpr const char* kAllowed[] = {"GearGameSP_Base", "GearGameHorde_Base", "GearMenuGame", nullptr};
+constexpr const char* kDenied[] = {"GearPartyGame_Base", nullptr};
 bool OpenObjects() { return ue3::obj::Init(gow2::addr::kGNamesVar, gow2::addr::kGObjectsVar); }
 }  // namespace
 
@@ -66,7 +67,7 @@ void Gow2InstallCheats() {
   target.exec_vtable_slot = 0;
   const bool cheats = REXCVAR_GET(gow2_cheats);
   if (cheats) target.before_each = "EnableCheats";
-  ue3::match::Configure({"Gears 2", kVersusBases, kPveExceptions, target.engine_global, target.players_data_offset,
+  ue3::match::Configure({"Gears 2", kAllowed, kDenied, target.engine_global, target.players_data_offset,
                          target.players_num_offset, &OpenObjects});
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);

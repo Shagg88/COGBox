@@ -57,9 +57,11 @@ constexpr const char* kMutatorsPatch =
 constexpr const char* kDefaultHotkeys =
     "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F8=ToggleDebugCamera;F9=PlayersOnly;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
 
-// 0.6.3 (ue3/match_guard.h): the Versus game types are everything below GearGameMP_Base except Horde and Beast.
-constexpr const char* kVersusBases[] = {"GearGameMP_Base", nullptr};
-constexpr const char* kPveExceptions[] = {"GearGameWaveBased", nullptr};
+// 0.6.3 (ue3/match_guard.h): cheats run in the campaign (and Arcade), Horde, Beast and the front end only - every other game
+// type is Versus (review r41: an allow-list, so a DLC mode such as Guardian is refused). The party / pre-game lobbies are
+// Versus's: refused.
+constexpr const char* kAllowed[] = {"GearGameSP_Base", "GearGameWaveBased", "GearMenuGame", nullptr};
+constexpr const char* kDenied[] = {"GearPartyGame_Base", nullptr};
 bool OpenObjects() { return ue3::obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar); }
 
 void AddPackagePatch(const char* patch) {
@@ -73,7 +75,7 @@ void Gow3InstallExtras() {
   Ue3ConsoleTarget target;
   target.engine_global = gow3::addr::kGEngine;
   target.log_global = gow3::addr::kGLog;
-  ue3::match::Configure({"Gears 3", kVersusBases, kPveExceptions, target.engine_global, target.players_data_offset,
+  ue3::match::Configure({"Gears 3", kAllowed, kDenied, target.engine_global, target.players_data_offset,
                          target.players_num_offset, &OpenObjects});
   target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
