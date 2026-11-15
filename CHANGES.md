@@ -16,6 +16,7 @@
   #77 - not confirmed yet): COGBox now asks the game itself whether its loading screen is still up, and keeps the
   frame rate at 30 for exactly that long (before, it guessed from the files being read and could let go after
   5 seconds). Your own frame-rate limit comes back as soon as the loading screen ends.
+- **The mouse cursor now hides when you play with a controller** (all four games, GitHub #320): the GitHub #143 fix most likely never hid it. While the cursor is over the game window, it now hides as soon as you use the controller (otherwise after 3 seconds without mouse movement), and COGBox checks that Windows really hid it and tries again if not. Tiny mouse movements of 1-2 pixels no longer bring it back - a real movement or a click does. It is left alone while the in-game menu is open or mouse look has the mouse. (Not yet confirmed by the reporter.)
 - **Judgment: blue / purple blocks on surfaces (#315)**, mostly seen on AMD graphics cards at high frame rates and building up over a session: a texture the game had just moved in video memory could be loaded from the old copy and keep it. It now waits for the moved copy first, also when the game moves the same texture again. (Not yet confirmed by the reporter.)
 
 ## 0.6.2
