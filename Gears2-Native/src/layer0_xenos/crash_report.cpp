@@ -16,10 +16,12 @@
 //     (syscalls only), resumed, and the copy unwound afterwards, each step SEH-guarded as in the profiler and stopping
 //     at the first address outside every image; under Wine / Proton (where the unwinder takes the loader lock) other
 //     threads' stacks are skipped and the crashing thread's only read when the loader lock is free;
-//   - the minidump: left to Windows Error Reporting when COGBox set LocalDumps for this very folder (written from
-//     outside the game, so it can't hang it); otherwise in-process, only when the process heap lock and the loader
-//     lock can be taken (--gow2_crash_minidump).
+//   - the minidump (--gow2_crash_minidump): written by COGBox from outside the game, where no lock of the game's can
+//     hang it (xenos/crash_dump_ipc.h; review r75); without COGBox (no answer within 3 s) in-process, only when the
+//     process heap lock and the loader lock can be taken. Left to Windows Error Reporting only when LocalDumps
+//     (HKLM: Microsoft documents the HKCU key COGBox also writes as unsupported) points at the crash folder.
 #include <xenos/dev_tools.h>
+#include <xenos/crash_dump_ipc.h>
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 
@@ -42,9 +44,10 @@ REXCVAR_DEFINE_INT32(gow2_crash_stack_guarantee_kb, 32, "Gears2",
                      "Stack kept back in each thread with a stack of 512 KB or more, so a stack overflow can still be "
                      "reported (SetThreadStackGuarantee). 0 = Windows' default");
 REXCVAR_DEFINE_STRING(gow2_crash_minidump, "auto", "Gears2",
-                      "Crash minidump: auto = left to Windows Error Reporting when its LocalDumps is set for the crash "
-                      "folder (COGBox does), else written by the game; game = always written by the game; windows = "
-                      "never by the game");
+                      "Crash minidump: auto = written by COGBox from outside the game (or, without COGBox, by the game "
+                      "after its lock checks; left to Windows Error Reporting when an HKLM LocalDumps key points at the "
+                      "crash folder); game = always written by the game itself; windows = never by the game or COGBox. "
+                      "A crashed game can wait up to ~3 minutes for its report and dump before it closes");
 REXCVAR_DEFINE_STRING(gow2_crash_test, "", "Gears2",
                       "Test the crash report 10 s after start: av (access violation), stack (stack overflow), abort, "
                       "heaplock (crash while holding the process heap lock: the report must still be written and the "
@@ -64,7 +67,7 @@ size_t g_nt_dir_len = 0;
 char g_exe_name[MAX_PATH];
 DWORD64 g_exe_base = 0;
 bool g_wine = false;
-bool g_wer_here = false;     // LocalDumps for this exe points at the crash folder (COGBox sets it per play)
+bool g_wer_here = false;     // an HKLM LocalDumps key for this exe points at the crash folder
 int g_minidump_mode = 0;     // 0 auto, 1 game, 2 windows
 
 // XenosCrashNote: fixed storage, so the crash handler reads it without allocating.
@@ -76,7 +79,13 @@ volatile LONG g_note_count = 0;
 constexpr ULONG_PTR kReasonMark = 0x6F77326661696C;
 constexpr DWORD kFailFast = 0xC0000409;  // STATUS_STACK_BUFFER_OVERRUN, the code the CRT's fail-fast paths end with
 constexpr DWORD kReportWaitMs = 30000;    // the crashing thread waits at most this long for the report
-constexpr DWORD kDumpWaitMs = 90000;      // ... and this much more while a minidump is being written
+constexpr DWORD kDumpWaitMs = 150000;     // ... and this much more while a minidump is being written
+constexpr DWORD kAckWaitMs = 3000;        // COGBox answers a dump request within this, or the game dumps itself
+constexpr DWORD kLauncherDumpMs = 120000; // COGBox's minidump
+
+// GitHub #286 / r75: COGBox writes the minidump from outside (xenos/crash_dump_ipc.h), made at start.
+xenos_crash_ipc::CrashDumpInfo* g_ipc_info = nullptr;
+HANDLE g_ipc_req = nullptr, g_ipc_ack = nullptr, g_ipc_done = nullptr;
 constexpr DWORD kProbeWaitMs = 2000;      // heap / loader lock probes
 
 HANDLE g_go = nullptr, g_done = nullptr, g_probe_go = nullptr, g_probe_ok = nullptr, g_helper = nullptr;
@@ -340,6 +349,7 @@ void PutThreads(DWORD crash_tid) {
   }
   if (!buf) return;
   const DWORD pid = GetCurrentProcessId();
+  int unwritten = 0, batch = 1;
   for (const char* p = static_cast<const char*>(buf);;) {
     const ULONG next = *reinterpret_cast<const ULONG*>(p);
     const ULONG count = *reinterpret_cast<const ULONG*>(p + 4);
@@ -371,7 +381,14 @@ void PutThreads(DWORD crash_tid) {
           continue;
         }
         Put("\n");
-        Write();  // r74 M2: on the disk before this thread is suspended, so a hang there names it
+        // r74 M2: on the disk before this thread is suspended, so a hang there names it; r75: every 8 threads when
+        // the disk is slow (a write over 50 ms), to keep within the crashing thread's wait
+        if (++unwritten >= batch) {
+          const ULONGLONG t0 = GetTickCount64();
+          Write();
+          unwritten = 0;
+          if (GetTickCount64() - t0 > 50) batch = 8;
+        }
         if (g_wine) continue;
         DWORD64 frames[16];
         int n = 0;
@@ -399,7 +416,7 @@ void PutThreads(DWORD crash_tid) {
 
 void PutWerDump() {
   if (g_wer_here) {
-    Put("Windows Error Reporting (LocalDumps, set by COGBox for this folder) writes ");
+    Put("Windows Error Reporting (LocalDumps, HKLM, for this folder) writes ");
     Put(g_exe_name);
     Put(".");
     PutDec(GetCurrentProcessId());
@@ -407,8 +424,48 @@ void PutWerDump() {
   } else if (g_wine) {
     Put("Wine / Proton has no Windows Error Reporting: no minidump\n");
   } else {
-    Put("Windows Error Reporting's LocalDumps isn't set for this folder (COGBox sets it): no minidump\n");
+    Put("Windows Error Reporting's LocalDumps (HKLM) isn't set for this folder: no minidump\n");
   }
+}
+
+// COGBox writes the minidump from outside the game. kNoLauncher: nobody answered (run without COGBox, or an older one).
+enum { kNoLauncher, kLauncherWritten, kLauncherFailed, kLauncherStuck };
+int AskLauncher(const wchar_t* name, DWORD tid) {
+  namespace ipc = xenos_crash_ipc;
+  if (!g_ipc_info || !g_ipc_req || !g_ipc_ack || !g_ipc_done) return kNoLauncher;
+  ipc::CrashDumpInfo* in = g_ipc_info;
+  size_t n = 0;
+  for (const wchar_t* s = L"\\\\?\\"; *s; ++s) in->path[n++] = *s;  // \\?\ + the folder after "\??\"
+  for (size_t i = 4; i < g_nt_dir_len && n < ipc::kPathChars - 40; ++i) in->path[n++] = g_nt_dir[i];
+  in->path[n++] = L'\\';
+  for (; *name && n < ipc::kPathChars - 1; ++name) in->path[n++] = *name;
+  in->path[n] = 0;
+  in->thread_id = tid;
+  in->exception_pointers = reinterpret_cast<uint64_t>(&g_ep_copy);
+  in->dump_type = MiniDumpWithThreadInfo | MiniDumpWithIndirectlyReferencedMemory;
+  in->result = ipc::kResultNone;
+  in->error = 0;
+  MemoryBarrier();
+  in->magic = ipc::kMagic;
+  ResetEvent(g_ipc_ack);
+  ResetEvent(g_ipc_done);
+  SetEvent(g_ipc_req);
+  if (WaitForSingleObject(g_ipc_ack, kAckWaitMs) != WAIT_OBJECT_0) {
+    in->magic = 0;
+    ResetEvent(g_ipc_req);
+    return kNoLauncher;
+  }
+  Put("COGBox (the launcher) is writing it from outside the game ... ");
+  Section();
+  InterlockedExchange(&g_dumping, 1);
+  const DWORD w = WaitForSingleObject(g_ipc_done, kLauncherDumpMs);
+  InterlockedExchange(&g_dumping, 0);
+  if (w != WAIT_OBJECT_0) return kLauncherStuck;
+  if (in->result == ipc::kResultWritten) return kLauncherWritten;
+  Put("failed, error ");
+  PutHex(in->error);
+  Put("; ");
+  return kLauncherFailed;
 }
 
 void WriteReport(EXCEPTION_POINTERS* ep, DWORD tid) {
@@ -487,21 +544,24 @@ void WriteReport(EXCEPTION_POINTERS* ep, DWORD tid) {
   PutThreads(tid);
   Section();
 
-  // r74 M3: an in-process minidump can still hang (dbghelp suspends threads; one may take the heap lock after any
-  // probe), so when Windows Error Reporting will write one from outside the process (COGBox's LocalDumps for this
-  // folder) the game leaves it to that. Under Wine, or run without COGBox, there is no other dump: written here.
+  // r74 M3 / r75: an in-process minidump can still hang (dbghelp suspends threads; one may take the heap lock after
+  // any probe), so COGBox writes it from outside the game when it is there; else the game, after the lock probes.
   Put("minidump: ");
-  const bool in_process = g_minidump_mode == 1 || (g_minidump_mode == 0 && !g_wer_here);
-  if (!in_process) {
+  name[22] = L'd'; name[23] = L'm'; name[24] = L'p';
+  const int launcher = g_minidump_mode == 0 && !g_wer_here ? AskLauncher(name, tid) : kNoLauncher;
+  if (g_minidump_mode == 2 || (g_minidump_mode == 0 && g_wer_here)) {
     if (g_minidump_mode == 2) Put("not written by the game (--gow2_crash_minidump=windows); ");
     PutWerDump();
+  } else if (launcher == kLauncherWritten) {
+    Put("done (written by COGBox)\n");
+  } else if (launcher == kLauncherStuck) {
+    Put("not finished after 120 s (the .dmp may be cut short)\n");
   } else if (!HeapLockFree() || !LoaderLockFree()) {
     Put("not written - the process heap lock or the loader lock stays taken by a thread (a minidump made inside the "
         "game would hang here); ");
     PutWerDump();
   } else {
-    name[22] = L'd'; name[23] = L'm'; name[24] = L'p';
-    Put("writing ... ");
+    Put(launcher == kLauncherFailed ? "the game writes it itself ... " : "writing (by the game) ... ");
     Section();  // if it hangs, the report says where
     HANDLE h;
     if (OpenNt(name, false, false, false, &h)) {
@@ -616,11 +676,12 @@ void NTAPI CrashTlsCallback(PVOID, DWORD reason, PVOID) {
   if (reason == DLL_THREAD_ATTACH) ApplyStackGuarantee();
 }
 
-// LocalDumps for this exe pointing at the crash folder (COGBox writes it per play, HKCU; HKLM is Windows' documented
-// place). Read at start: the registry isn't touched at crash time.
+// An HKLM LocalDumps key for this exe pointing at the crash folder. Only HKLM: Microsoft documents every LocalDumps
+// value as "not supported in the HKEY_CURRENT_USER registry hive" (review r75; COGBox's HKCU key is ignored here).
+// Read at start: the registry isn't touched at crash time.
 bool WerDumpsHere(const std::wstring& exe_name, const std::wstring& folder) {
   const std::wstring key = L"Software\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\" + exe_name;
-  for (HKEY root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE}) {
+  for (HKEY root : {HKEY_LOCAL_MACHINE}) {
     wchar_t v[kPath];
     DWORD bytes = sizeof(v);
     if (RegGetValueW(root, key.c_str(), L"DumpFolder", RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, v, &bytes) !=
@@ -699,6 +760,22 @@ void XenosInstallCrashHandler() {
   g_wer_here = !g_wine && WerDumpsHere(exe_name, abs);
   const std::string mode = REXCVAR_GET(gow2_crash_minidump);
   g_minidump_mode = mode == "game" ? 1 : mode == "windows" ? 2 : 0;
+  if (mode != "auto" && mode != "game" && mode != "windows")
+    REXLOG_WARN("gow2_crash_minidump: '{}' isn't one of auto, game, windows - auto", mode);
+  {  // r75: the dump request block and events for COGBox (xenos/crash_dump_ipc.h); CreateEvent opens COGBox's
+    namespace ipc = xenos_crash_ipc;
+    const DWORD pid = GetCurrentProcessId();
+    wchar_t nm[64];
+    ipc::Name(nm, 64, pid, L"info");
+    if (HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(ipc::CrashDumpInfo), nm))
+      g_ipc_info = static_cast<ipc::CrashDumpInfo*>(MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(ipc::CrashDumpInfo)));
+    ipc::Name(nm, 64, pid, L"req");
+    g_ipc_req = CreateEventW(nullptr, FALSE, FALSE, nm);
+    ipc::Name(nm, 64, pid, L"ack");
+    g_ipc_ack = CreateEventW(nullptr, TRUE, FALSE, nm);
+    ipc::Name(nm, 64, pid, L"done");
+    g_ipc_done = CreateEventW(nullptr, TRUE, FALSE, nm);
+  }
 
   g_done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   g_go = CreateEventW(nullptr, TRUE, FALSE, nullptr);

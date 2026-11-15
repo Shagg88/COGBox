@@ -5877,7 +5877,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         out[(size_t(y) * w + x) * 2] = v[0];
         out[(size_t(y) * w + x) * 2 + 1] = v[1];
       }
-    if (FILE* fp = std::fopen(path.c_str(), "wb")) {
+    // r75: the folder is a UTF-8 cvar - opened by its wide name (a narrow fopen reads the ANSI code page)
+#ifdef _WIN32
+    FILE* fp = _wfopen(std::filesystem::u8path(path).c_str(), L"wb");
+#else
+    FILE* fp = std::fopen(path.c_str(), "wb");
+#endif
+    if (fp) {
       const int32_t hd[3] = {int32_t(w), int32_t(h), int32_t(f)};
       std::fwrite(hd, sizeof(hd), 1, fp);
       std::fwrite(out.data(), sizeof(float), out.size(), fp);
