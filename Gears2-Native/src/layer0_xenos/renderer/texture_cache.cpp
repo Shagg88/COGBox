@@ -646,6 +646,37 @@ uint32_t UntileCode(gpu::Format f) {
   }
 }
 
+uint32_t TextureCache::IndependentUiMask(uint32_t slots) {
+  uint32_t independent=0;
+  for(uint32_t bits=slots;bits;bits&=bits-1) {
+    const unsigned slot=uint32_t(std::countr_zero(bits));
+    const auto* entry=slot_cache_[slot].entries[0];
+    if(!entry || !entry->texture || entry->load_failed || entry->dimension_mismatch || !entry->failure.empty())continue;
+    // Scalar masks and block-compressed UI cannot carry the RGBA8 scene resolve.
+    // The caller separately proves screen-space geometry, blend and shader state.
+    const auto format=entry->format;
+    if(format==gpu::Format::kR8Unorm || format==gpu::Format::kR8G8Unorm ||
+       format==gpu::Format::kBC1 || format==gpu::Format::kBC2 || format==gpu::Format::kBC3 ||
+       format==gpu::Format::kBC4 || format==gpu::Format::kBC5) {
+      independent|=1u<<slot;continue;
+    }
+    if(format!=gpu::Format::kR8G8B8A8Unorm || (last_scaled_mask_&(1u<<slot)))continue;
+    auto& e=*slot_cache_[slot].entries[0];
+    if(e.ui_checked_version!=e.version) {
+      e.ui_cpu_authored=true;
+      const auto cpu_only=[&](uint32_t start,uint32_t length) {
+        for(uint32_t page=start>>GuestWatch::kPageShift;uint64_t(page)*(1u<<GuestWatch::kPageShift)<uint64_t(start)+length;++page)
+          if(!watch_.NeverResolved(page))return false;
+        return true;
+      };
+      e.ui_cpu_authored=e.base_length && cpu_only(e.base_start,e.base_length) && cpu_only(e.mip_start,e.mip_length);
+      e.ui_checked_version=e.version;
+    }
+    if(e.ui_cpu_authored)independent|=1u<<slot;
+  }
+  return independent;
+}
+
 uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t slots_cube, uint32_t slots_3d,
                             uint64_t frame, gpu::TextureView views[96], gpu::SamplerDesc samplers[32]) {
   PhaseScope bind_time(stats_.bind_ms);  // 0.4.5 texture-time research

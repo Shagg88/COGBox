@@ -16,6 +16,10 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#include <d3dcompiler.h>
+#endif
 
 namespace gpu = xenos::renderer::gpu;
 namespace up = xenos::renderer::upscale;
@@ -116,6 +120,8 @@ static int UiCompositeCheck(gpu::Backend& backend,xenos::renderer::ShaderCompile
 }
 #include "psychov35_checks.h"
 #include "modulation_checks.h"
+#include "automatic_overlay_checks.h"
+#include "direct_ui_checks.h"
 int main(int argc,char** argv) {
   const bool vulkan=argc>1&&std::string(argv[1])=="vulkan";
   const std::string mode=argc>2?argv[2]:"off";
@@ -127,6 +133,10 @@ int main(int argc,char** argv) {
   if(!backend || !backend->Init(options,error)) { std::printf("FAIL backend: %s\n",error.c_str());return 2; }
   auto compiler=xenos::renderer::CreateDxcCompiler({},error);
   if(!compiler) { std::printf("FAIL compiler: %s\n",error.c_str());return 3; }
+  if(mode=="ui_cache" && argc==4)return AsyncUiCacheCheck(*backend,*compiler,argv[3]);
+  if(mode=="ui_direct")return DirectUiAttachmentCheck(*backend,*compiler);
+  if(mode=="ui_padding_bench")return UiPaddingBench(*backend,*compiler);
+  if(mode=="ui_automatic")return AutomaticOverlayCheck(*backend,*compiler);
   if(mode=="ui")return UiCompositeCheck(*backend,*compiler);
   if(mode=="modulation_values" && argc==4)return ModulationValuesCheck(*backend,*compiler,argv[3]);
   if(mode=="gears2" || mode=="gears3")return Psycho35SceneCheck(*backend,*compiler,mode=="gears3");

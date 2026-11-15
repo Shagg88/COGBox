@@ -39,6 +39,7 @@
 #include <vector>
 
 #include <xenos/hlsl.h>
+#include <xenos/renderer/hdr_overlay.h>
 #include <xenos/renderer/gpu.h>
 #include <xenos/ucode.h>
 
@@ -190,6 +191,9 @@ class ShaderCache {
   // Exact Gears 2 scene / Canvas profile, a DXBC twin for float HDR composition.
   // Does not replace the guest's normal shader or change its constant layout.
   gpu::ShaderHandle GetNativeHdr(uint64_t hash, const uint32_t* dwords, size_t count, bool canvas_material = false);
+  const GuestShader& GetNativeOverlay(uint64_t hash, const uint32_t* dwords, size_t count,
+                                      native_hdr::OverlayMode mode, bool warm = false);
+  void SetPrepareNativeUi(bool on) { prepare_native_ui_ = on; }
   gpu::ShaderHandle GetNativeSceneUi(const uint32_t* dwords, size_t count);
   // True when `s` is no longer pending (ready or failed) on return; waits at most budget_ms.
   bool WaitReady(const GuestShader& s, double budget_ms);
@@ -257,6 +261,10 @@ class ShaderCache {
     std::vector<uint8_t> bytecode;
     std::string messages;
     double ms = 0.0;
+    bool overlay_job = false, overlay_warm = false;
+    std::vector<uint32_t> overlay_dwords;
+    hlsl::HlslOptions overlay_options;
+    ucode::DecodeOptions overlay_decode;
     bool spirv_job = false;      // 0.6.2: bytecode holds DXBC going in and SPIR-V words coming out (SpvWorker)
     bool spirv_precise = false;
     bool spirv_urgent = false;   // a draw waits for it: converted only (no optimiser, not stored) - 45 ms, not ~200
@@ -290,6 +298,8 @@ class ShaderCache {
   std::unordered_map<uint64_t, std::unique_ptr<GuestShader>> shaders_[2];  // [vertex]
   std::unordered_map<std::string, gpu::ShaderHandle> builtins_;
   std::unordered_map<uint64_t, gpu::ShaderHandle> native_hdr_shaders_;
+  std::unordered_map<uint64_t, std::unordered_map<uint8_t, std::unique_ptr<GuestShader>>> native_hdr_overlays_;
+  bool prepare_native_ui_ = false;
   ShaderCacheStats stats_;
   bool compact_float_constants_ = false;
   bool tex_sign_by_swizzle_ = false;  // patch 0024

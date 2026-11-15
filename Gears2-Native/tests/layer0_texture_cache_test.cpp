@@ -14,6 +14,7 @@
 #include <xenos/renderer/gpu.h>
 #include <xenos/renderer/guest_watch.h>
 #include <xenos/renderer/texture_cache.h>
+#include <xenos/renderer/hdr_overlay.h>
 
 // Stub for guest_watch.cpp's diagnostic log when observer_hub.cpp is not linked into gn_tests.
 uint64_t XenosSwapCount() { return 0; }
@@ -44,6 +45,9 @@ class MockBackend final : public gpu::Backend {
   std::vector<UploadRecord> uploads;
   std::unordered_map<gpu::TextureHandle, gpu::TextureDesc> live_textures;
   gpu::BackendStats stats{};
+  bool drop_upload=false;
+  uint64_t load_drops=0;
+  uint64_t TextureLoadDrops() const override { return load_drops; }
 
   bool Init(const gpu::BackendOptions&, std::string&) override { return true; }
   std::string Describe() const override { return "MockBackend"; }
@@ -78,6 +82,7 @@ class MockBackend final : public gpu::Backend {
   void SetTextures(const gpu::TextureView*, const gpu::SamplerDesc*, uint32_t, uint32_t) override {}
   void UploadTexture(gpu::TextureHandle texture, uint32_t mip, uint32_t layer, const void* data, uint32_t row_bytes,
                      uint32_t rows, uint32_t slices) override {
+    if(drop_upload){++load_drops;return;}
     const size_t total = size_t(row_bytes) * rows * slices;
     const auto* p = static_cast<const uint8_t*>(data);
     uploads.push_back({texture, mip, layer, row_bytes, rows, slices, std::vector<uint8_t>(p, p + total)});
@@ -311,4 +316,56 @@ TEST_CASE("texture_cache: both swap_hash and rex_hash match registered overlays"
   CHECK((backend.uploads.back().bytes != baseline));
 
   ClearDynamicOverlays();
+}
+
+TEST_CASE("HDR UI: normalized masks are independent but failed loads are not", "[texture_cache][hdr]") {
+  ClearDynamicOverlays();
+  std::vector<uint8_t> memory(1u<<20,0x55);MockBackend backend;GuestWatch watch(nullptr);
+  TextureCache cache(backend,memory.data(),watch);
+  uint32_t fetch[192]{};MakeLinearDxt5Fetch(fetch,0x1000,32,32);
+  gpu::TextureView views[96]{};gpu::SamplerDesc samplers[32]{};
+  REQUIRE(cache.Bind(fetch,1,0,0,1,views,samplers)==0);
+  CHECK(cache.IndependentUiMask(1)==1);
+  watch.MarkGpuWritten(0x1000,4096,false);
+  REQUIRE(cache.Bind(fetch,1,0,0,2,views,samplers)==0);
+  CHECK(cache.IndependentUiMask(1)==1);
+  // R8 mask: bounded coverage remains valid even on previously rendered pages.
+  fetch[1]=(fetch[1]&~63u)|2u;
+  REQUIRE(cache.Bind(fetch,1,0,0,3,views,samplers)==0);
+  CHECK(cache.IndependentUiMask(1)==1);
+  backend.drop_upload=true;fetch[1]=0x8000|2u;
+  REQUIRE(cache.Bind(fetch,1,0,0,4,views,samplers)==0);
+  CHECK(cache.IndependentUiMask(1)==0);
+  CHECK(cache.Stats().load_failures>0);
+  backend.drop_upload=false;
+  REQUIRE(cache.Bind(fetch,1,0,0,5,views,samplers)==0);
+  CHECK(cache.IndependentUiMask(1)==1);
+  ClearDynamicOverlays();
+}
+TEST_CASE("HDR UI: CPU RGBA8 proof is revoked by render provenance", "[texture_cache][hdr]") {
+  ClearDynamicOverlays();std::vector<uint8_t> memory(1u<<20,0x55);
+  MockBackend backend;GuestWatch watch(nullptr);TextureCache cache(backend,memory.data(),watch);
+  uint32_t fetch[192]{};MakeLinearDxt5Fetch(fetch,0x1000,32,32);fetch[1]=(fetch[1]&~63u)|6u;
+  gpu::TextureView views[96]{};gpu::SamplerDesc samplers[32]{};
+  REQUIRE(cache.Bind(fetch,1,0,0,1,views,samplers)==0);CHECK(cache.IndependentUiMask(1)==1);
+  watch.MarkGpuWritten(0x1000,4096,false);
+  REQUIRE(cache.Bind(fetch,1,0,0,2,views,samplers)==0);CHECK(cache.IndependentUiMask(1)==0);
+  // A page-level CPU invalidation alone is not proof of a complete replacement.
+  watch.Bump(0x1000,4096);
+  REQUIRE(cache.Bind(fetch,1,0,0,3,views,samplers)==0);CHECK(cache.IndependentUiMask(1)==0);
+  CHECK(cache.IndependentUiMask(0)==0);ClearDynamicOverlays();
+}
+TEST_CASE("HDR UI: geometry and state bound eligibility; replay preserves original tests", "[hdr]") {
+  namespace hdr=xenos::renderer::native_hdr;using M=hdr::OverlayMode;using F=gpu::BlendFactor;
+  hdr::OverlayInputs input{true,true,true,false,false,false,1};gpu::GraphicsPipelineDesc original;
+  original.depth_enable=original.depth_write=original.stencil_enable=true;original.stencil_write_mask=255;
+  original.stencil_front.pass=original.stencil_back.pass=gpu::StencilOp::kIncrSat;
+  original.color_blend[0].enable=true;original.color_blend[0].src=F::kOne;original.color_blend[0].dst=F::kInvSrcAlpha;
+  REQUIRE(hdr::ClassifyOverlay(input,original.color_blend[0])==M::kPremultiplied);
+  const auto replay=hdr::OverlayPipeline(original,M::kPremultiplied);
+  CHECK(replay.depth_enable);CHECK_FALSE(replay.depth_write);CHECK(replay.stencil_enable);CHECK(replay.stencil_write_mask==0);
+  CHECK(replay.stencil_front.pass==gpu::StencilOp::kKeep);CHECK(original.depth_write);CHECK(original.stencil_write_mask==255);
+  input.scene_texture=true;CHECK(hdr::ClassifyOverlay(input,original.color_blend[0])==M::kNone);
+  input.scene_texture=false;input.shader_side_effects=true;CHECK(hdr::ClassifyOverlay(input,original.color_blend[0])==M::kNone);
+  input.shader_side_effects=false;input.screen_vertex=false;CHECK(hdr::ClassifyOverlay(input,original.color_blend[0])==M::kNone);
 }

@@ -570,9 +570,14 @@ void ShaderCache::Worker(ShaderCompiler* compiler) {
       q.pop_front();
     }
     const auto t0 = std::chrono::steady_clock::now();
-    job->ok = compiler->Compile(job->hlsl, job->stage, backend_.GetShaderIL(), job->bytecode, job->messages);
+    if(job->overlay_job) {
+      const auto program=ucode::Decode(job->overlay_dwords.data(),job->overlay_dwords.size(),false,job->overlay_decode);
+      auto translated=dxbc_gen::TranslateToDxbc(program,job->overlay_options);
+      job->ok=translated.ok;job->bytecode=std::move(translated.bytecode);job->messages=translated.unsupported;
+      job->overlay_dwords.clear();
+    } else job->ok = compiler->Compile(job->hlsl, job->stage, backend_.GetShaderIL(), job->bytecode, job->messages);
     job->ms = MsSince(t0);
-    SaveToDisk(job->name, job->bytecode, job->hlsl, job->messages, job->ok);
+    if(!job->overlay_job) SaveToDisk(job->name, job->bytecode, job->hlsl, job->messages, job->ok);
     job->hlsl.clear();
     job->hlsl.shrink_to_fit();
     {
@@ -585,6 +590,13 @@ void ShaderCache::Worker(ShaderCompiler* compiler) {
 
 void ShaderCache::FinishJob(std::unique_ptr<Job> job) {
   --in_flight_;
+  if(job->overlay_job && job->ok && backend_.GetShaderIL()==gpu::ShaderIL::kSpirv) {
+    // Reuse upstream's low-priority, concurrency-limited conversion backlog.
+    // Native UI must not bypass those frame-pacing safeguards during warm-up.
+    job->shader->spv_promoted=false;
+    QueueSpirv(*job->shader,job->bytecode,job->overlay_options.spirv_precise,job->overlay_warm);
+    return;
+  }
   if (job->spirv_job) {  // 0.6.2: a conversion, not a compile - its own counters
     ++spv_jobs_done_;
     spv_jobs_ms_ += job->ms;
@@ -623,7 +635,7 @@ bool ShaderCache::WaitReady(const GuestShader& s, double budget_ms) {
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto* q : {&queue_, &warm_queue_}) {
       for (auto it = q->begin(); it != q->end(); ++it)
-        if ((*it)->shader == &s) {
+        if ((*it)->shader == &s && !(*it)->overlay_job) {
           mine = std::move(*it);
           q->erase(it);
           break;
@@ -1396,6 +1408,8 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
   for (size_t i = 0; i < items.size(); ++i) {
     Item& it = items[i];
     if (it.dwords.empty()) continue;
+    if(prepare_native_ui_ && !it.is_vertex && native_hdr::FindUi(it.hash) && it.hash!=native_hdr::kSceneUi)
+      GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kUi,true);
     if (dxbc_path && made[i].s && made[i].dt.ok && !shaders_[it.is_vertex ? 1 : 0].count(it.hash)) {
       ++stats_.lookups;
       ++stats_.translated;
@@ -1537,6 +1551,44 @@ gpu::ShaderHandle ShaderCache::GetNativeHdr(uint64_t hash, const uint32_t* dword
   REXLOG_INFO("gow2_native_hdr: {} shader {:016X}: {}", canvas ? "bounded Canvas" : "extended scene", hash,
               shader ? "ready" : "FAILED (reference-white fallback)");
   return shader;
+}
+
+const GuestShader& ShaderCache::GetNativeOverlay(uint64_t hash,const uint32_t* dwords,size_t count,
+                                                native_hdr::OverlayMode mode, bool warm) {
+  auto& variants=native_hdr_overlays_[hash];
+  const uint8_t key=uint8_t(mode);
+  if(const auto found=variants.find(key);found!=variants.end()) {
+    auto& shader=*found->second;
+    if(!warm && shader.state==ShaderState::kPending) {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for(auto it=warm_queue_.begin();it!=warm_queue_.end();++it)if((*it)->shader==&shader) {
+          auto job=std::move(*it);warm_queue_.erase(it);job->overlay_warm=false;
+          queue_.push_front(std::move(job));wake_.notify_one();break;
+        }
+      }
+      Promote(shader);
+    }
+    return shader;
+  }
+  auto shader=std::make_unique<GuestShader>();shader->ucode_hash=hash;shader->is_vertex=false;
+  auto& result=*shader;variants[key]=std::move(shader);
+  if(!dxbc_ || !dwords || !count || mode==native_hdr::OverlayMode::kNone) {
+    result.state=ShaderState::kFailed;result.error="ineligible HDR UI variant";return result;
+  }
+  auto job=std::make_unique<Job>();job->shader=&result;job->overlay_job=true;job->overlay_warm=warm;
+  job->name="native-ui-"+std::to_string(hash)+"-"+std::to_string(key);
+  job->stage=gpu::ShaderStage::kPixel;job->overlay_decode=DecodeOptions();
+  job->overlay_dwords.assign(dwords,dwords+count);
+  auto& options=job->overlay_options;options=TranslateOptions(false,0,dwords,count);
+  options.clamp_ui_output=options.native_hdr_linear=true;
+  options.native_hdr_modulation=mode==native_hdr::OverlayMode::kModulation || mode==native_hdr::OverlayMode::kModulation2x;
+  options.native_hdr_ui=!options.native_hdr_modulation;
+  options.native_hdr_premultiplied=mode==native_hdr::OverlayMode::kPremultiplied;
+  options.native_hdr_modulation_x2=mode==native_hdr::OverlayMode::kModulation2x;
+  result.state=ShaderState::kPending;
+  {std::lock_guard<std::mutex> lock(mutex_);(warm?warm_queue_:queue_).push_back(std::move(job));}
+  ++in_flight_;++stats_.queued;wake_.notify_one();return result;
 }
 
 gpu::ShaderHandle ShaderCache::GetNativeSceneUi(const uint32_t* dwords, size_t count) {

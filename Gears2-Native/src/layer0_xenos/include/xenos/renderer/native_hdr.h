@@ -16,6 +16,12 @@ inline bool IsCanvasVertex(uint64_t hash) {
          hash == 0x6F83A894AB66D831ull || hash == 0x2E88B37100D9D0CEull;
 }
 
+// Additional captured Gears 3 menu vertices. These are evidence only for the
+// automatic UI path, which still checks actual inputs, blend and side effects.
+inline bool IsAdditionalUiVertex(uint64_t hash) {
+  return hash==0xE49D26F998B9A5B3ull || hash==0xF9EBE3D4293EC775ull || hash==0x6EB1D77A55840B2Dull;
+}
+
 // Evaluate a scene-sampling Canvas material with both the real HDR scene and
 // its original SDR resolve. The difference is scene energy, not UI emission.
 // The generated game program stays transient; this contains only translator

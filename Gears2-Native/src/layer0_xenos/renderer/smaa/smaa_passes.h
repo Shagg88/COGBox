@@ -212,4 +212,22 @@ inline std::string Source(const char* body, bool t2x = false) {
   return s;
 }
 
+inline std::string NativeHdrBlendSource() {
+  std::string source=Source(kT2xBlendPs);
+  source.insert(std::char_traits<char>::length(kSmaaPrefix),R"(
+float4 XeNativeSmaaColor(Texture2D tex,float2 uv) {
+  uint width,height;tex.GetDimensions(width,height);
+  float2 logical=xe_smaa_rt.zw;
+  uv=clamp(uv,0.5/logical,1.0-0.5/logical);
+  return tex.SampleLevel(xe_smaa_linear,uv*logical/float2(width,height),0);
+}
+)");
+  const std::string original="SMAASampleLevelZero(colorTex,";
+  size_t position=0;
+  while((position=source.find(original,position))!=std::string::npos) {
+    source.replace(position,original.size(),"XeNativeSmaaColor(colorTex,");position+=26;
+  }
+  return source;
+}
+
 }  // namespace xenos::renderer::smaa
