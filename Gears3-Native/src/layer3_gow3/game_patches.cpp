@@ -27,6 +27,7 @@
 #include "main_menu_exit.h"
 
 #include <algorithm>
+#include <tuple>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -157,7 +158,8 @@ uint32_t WideHeight() {
       REXLOG_INFO("gow3_aspect: '{}' = {:.4f}, not wider than 16:9 - the game's 16:9 picture is kept", v, aspect);
       return 0u;
     }
-    const uint32_t h = std::clamp(uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u, 320u, 720u);
+    // GitHub #293 (0.6.2): down to 240 rows = 48:9 (three 16:9 screens side by side); 320 (4:1) before
+    const uint32_t h = std::clamp(uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u, 240u, 720u);
     REXLOG_INFO("gow3_aspect: '{}' = {:.4f} -> scene 1280x{} ({:.4f})", v, aspect, h, 1280.0 / h);
     return h;
   }();
@@ -290,6 +292,7 @@ REXCVAR_DEFINE_STRING(ue3_exec_each_level, "", "Gears3",
                       "two-player side-by-side split, which the game resets when a level starts");
 namespace {
 std::atomic<bool> g_in_front_end{false};
+std::atomic<uint32_t> g_split_level_serial{0};  // GitHub #269: bumped at every level / front-end open
 bool Gow3NameHas(std::string_view s, std::string_view needle) {
   for (size_t i = 0; i + needle.size() <= s.size(); ++i) {
     size_t k = 0;
@@ -317,6 +320,7 @@ void OnGow3FileOpened(std::string_view path, const std::filesystem::path*) {
   // GitHub #208 / #136: commands run again at every level (the split-screen layout: the game sets its own when a
   // level starts, so --ue3_exec's one run at the front end was overwritten). Queued; run once a player exists.
   if (Gow3IsLevel(path) || front) {
+    g_split_level_serial.fetch_add(1, std::memory_order_relaxed);  // GitHub #269: Gow3SplitLayoutTick
     const std::string each = REXCVAR_GET(ue3_exec_each_level);
     if (!each.empty()) {
       size_t at = 0;
@@ -395,6 +399,8 @@ REXCVAR_DEFINE_INT32(gow3_tick_floor_fps, 0, "Gears3",
 void Gow3CheckpointStreamTick();        // checkpoint_stream.cpp (GitHub #226)
 void Gow3InstallCheckpointStreamWait();  // checkpoint_stream.cpp
 void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content packages, on the game thread
+void Gow3AdaptiveTriggersTick(bool in_front_end);  // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers)
+void Gow3FirstPersonTick();  // first_person.cpp (--gow3_first_person)
 
 // Gears 3's path choice (UIScene_PathChoice: "left path / right path") reads the triggers - the left trigger picks the
 // left path - while the mouse's buttons are bound the other way round for play (keybind_right_trigger = LMB: fire,
@@ -410,6 +416,118 @@ void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content pac
 // over calls, 16384 slots each), and with it off the left mouse button picked the right path again in the campaign
 REXCVAR_DEFINE_BOOL(gow3_path_choice_mouse, true, "Gears3",
                     "Path choice: the mouse button on a path's side picks that path (the trigger binds swap while it is open)");
+// GitHub #269 (was #136 / #208): two-player split side by side. One `set GameViewportClient DesiredSplitscreenType
+// eSST_2P_VERTICAL` when a level package OPENS (--ue3_exec_each_level) ran during the load, before the level's own
+// start-up - which sets the viewport client's split type again, so the game still split top / bottom (the reporter's
+// in-game Back binding, run after the level started, did work). With --gow3_split_vertical the viewport client is
+// watched instead: whenever two players are signed in and its DesiredSplitscreenType is not eSST_2P_VERTICAL, the same
+// console command is run again (rate-limited, with a longer wait after each quick reset by the game, 30 s at most).
+// 3 and 4 players and one player are left alone. Off by default (the launcher's "Two-player split: Side by side").
+REXCVAR_DEFINE_BOOL(gow3_split_vertical, false, "Gears3",
+                    "GitHub #269: the two-player split side by side (eSST_2P_VERTICAL), set again whenever the game "
+                    "resets it (each level start)");
+void Gow3SplitLayoutTick() {
+  if (!REXCVAR_GET(gow3_split_vertical)) return;
+  static uint32_t ticks = 0;
+  if (++ticks % 20) return;  // three times a second at 60
+  namespace obj = ue3::obj;
+  if (!obj::Ready() && !obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar)) return;
+  using Clock = std::chrono::steady_clock;
+  static Clock::time_point next_lookup{}, last_set{};
+  static int vp_off = -1, desired_off = -1, active_off = -1, players_off = -1;
+  static uint32_t serial_seen = ~0u;
+  static int fails = 0;
+  static Clock::time_point vertical_since{};
+  static bool in_flight = false, warned = false;
+  const Clock::time_point now = Clock::now();
+  if (vp_off < 0 || desired_off < 0 || players_off < 0) {
+    if (now < next_lookup) return;
+    next_lookup = now + std::chrono::seconds(5);   // FindClass misses scan every object: not more often than this
+    const uint32_t engine_cls = obj::FindClass("Engine"), game_engine_cls = obj::FindClass("GameEngine");
+    const uint32_t vpc_cls = obj::FindClass("GameViewportClient");
+    if (!engine_cls || !game_engine_cls || !vpc_cls) return;
+    vp_off = obj::PropertyOffset(game_engine_cls, "GameViewport");
+    players_off = obj::PropertyOffset(engine_cls, "GamePlayers");
+    desired_off = obj::PropertyOffset(vpc_cls, "DesiredSplitscreenType");
+    active_off = obj::PropertyOffset(vpc_cls, "ActiveSplitscreenType");
+    REXLOG_INFO("gow3_split_vertical: GameViewport +0x{:X}, GamePlayers +0x{:X}, DesiredSplitscreenType +0x{:X}, "
+                "ActiveSplitscreenType +0x{:X}", vp_off, players_off, desired_off, active_off);
+    if (vp_off < 0 || desired_off < 0 || players_off < 0) {
+      REXLOG_WARN("gow3_split_vertical: viewport properties not found - the split is left as the game sets it");
+      vp_off = desired_off = players_off = -1;
+      next_lookup = now + std::chrono::hours(24 * 365);
+      return;
+    }
+  }
+  const uint32_t engine = obj::Read32(gow3::addr::kGEngine);
+  if (!engine) return;
+  const uint32_t viewport = obj::Read32(engine + uint32_t(vp_off));
+  const uint32_t players = obj::Read32(engine + uint32_t(players_off) + 4);  // TArray: data, count, max
+  if (!viewport || players != 2) {  // not two players: nothing to keep; a later start counts afresh
+    vertical_since = {};
+    in_flight = false;
+    return;
+  }
+  auto read8 = [](uint32_t a) { return uint8_t(obj::Read32(a & ~3u) >> (8 * (3 - (a & 3u)))); };
+  // ESplitScreenType (Engine.GameViewportClient): eSST_NONE, eSST_2P_HORIZONTAL, eSST_2P_VERTICAL, eSST_3P_*, eSST_4P
+  constexpr uint8_t kVertical = 2;
+  const uint8_t desired = read8(viewport + uint32_t(desired_off));
+  const uint8_t active = active_off >= 0 ? read8(viewport + uint32_t(active_off)) : 0xFF;
+  static uint8_t logged_desired = 0xFF, logged_active = 0xFF;
+  static int split_lines = 0;   // r36: every split log line is capped (a game that keeps resetting it cannot flood the log)
+  if ((desired != logged_desired || active != logged_active) && ++split_lines <= 300) {
+    REXLOG_INFO("gow3_split_vertical: split type desired {} active {} (2 = side by side)", desired, active);
+    logged_desired = desired;
+    logged_active = active;
+  }
+  // 0.6.2 (GitHub #313): the layout is kept, not given up on. The first version of this watch counted every check within 2 s
+  // of a set as a "quick revert" while the layout was still not side by side - one set that took longer than that to
+  // run (the console queue waits for a player; a slow level start-up), or one reset by the game's own level start-up,
+  // gave the level up for good and the split went back to top / bottom ("worked only for a brief moment"). Now:
+  //  - a set is "in flight" until the layout is seen side by side; a set that does not show within 3 s was lost or
+  //    overwritten and is made again;
+  //  - a "quick revert" is only counted when the layout WAS seen side by side and the game turned it back within 10 s;
+  //  - after quick reverts (or lost sets) the wait before the next set doubles (2, 4, 8, 16, then 30 s at most), so the
+  //    game is never fought every frame, but it is never left alone for the rest of the level either; the count starts
+  //    again after 10 s of a layout that held, or at the next level.
+  const uint32_t serial = g_split_level_serial.load(std::memory_order_relaxed);
+  if (serial != serial_seen) {
+    serial_seen = serial;
+    fails = 0; in_flight = false; warned = false; vertical_since = {}; last_set = {};
+  }
+  if (desired == kVertical) {
+    if (vertical_since == Clock::time_point{}) vertical_since = now;
+    if (in_flight) {
+      in_flight = false;
+      if (++split_lines <= 300) REXLOG_INFO("gow3_split_vertical: side by side after {} ms", std::chrono::duration_cast<std::chrono::milliseconds>(now - last_set).count());
+    }
+    if (fails && now - vertical_since >= std::chrono::seconds(10)) fails = 0;  // it holds
+    return;
+  }
+  if (vertical_since != Clock::time_point{}) {  // it was side by side a moment ago: the game turned it back
+    const auto held = now - vertical_since;
+    vertical_since = {};
+    // r36: a reset within 10 s of holding counts (a game that resets the split every few seconds backs this off too;
+    // a layout that held longer was changed for a reason of the game's own and is simply set again)
+    if (held < std::chrono::seconds(10)) {
+      ++fails;
+      if (++split_lines <= 300) REXLOG_INFO("gow3_split_vertical: the game turned the split back after {} ms ({} quick reset(s) in a row)",
+                  std::chrono::duration_cast<std::chrono::milliseconds>(held).count(), fails);
+    }
+  }
+  if (in_flight && now - last_set < std::chrono::seconds(3)) return;  // the command has not run yet
+  if (in_flight) { in_flight = false; ++fails; }                       // it never showed: lost or overwritten
+  if (fails >= 5 && !warned) {
+    warned = true;
+    REXLOG_WARN("gow3_split_vertical: the game keeps resetting the split here - setting it again only every 30 s");
+  }
+  const auto gap = std::chrono::seconds(fails <= 0 ? 0 : std::min(30, 1 << std::min(fails, 5)));
+  if (last_set != Clock::time_point{} && now - last_set < gap) return;
+  last_set = now;
+  in_flight = true;
+  Ue3ConsoleQueue("set GameViewportClient DesiredSplitscreenType eSST_2P_VERTICAL");
+}
+
 void Gow3PathChoiceTick() {
   // (also while developer mode's scripted controller waits for a path choice: "choose L|R", ue3/script_input.h)
   const bool mouse = REXCVAR_GET(gow3_path_choice_mouse);
@@ -424,25 +542,33 @@ void Gow3PathChoiceTick() {
   // 0.4.6 freeze (Shagg 11-06: Gears 3 stopped at the menu): FindClass caches hits only, so while
   // UIScene_PathChoice is not loaded (the menus) every call scanned all ~168,000 objects through checked reads -
   // four times a second, which stalled the game thread to a standstill (so did the full FindInstancesOf per call).
-  // A miss is now retried every 5 s, and the instances are found by a scan spread over calls (below).
-  using Clock = std::chrono::steady_clock;
-  static Clock::time_point next_class{};
+  // A miss was then retried every 5 s (a full scan, still a hitch); 0.6.2 spreads the class search over calls as well,
+  // and the instances are found by a scan spread over calls (below).
   static std::vector<uint32_t> instances;
-  const Clock::time_point now = Clock::now();
   // the campaign's scene is UIScene_PathChoiceContent (GearGameContent), which does not derive from GearGame's
   // UIScene_PathChoice: watching only the latter, the swap never came (2026-11-11: left mouse picked the right path)
   static uint32_t content = 0;
-  if (!content && scene && now >= next_class) {
-    next_class = now + std::chrono::seconds(5);
-    content = obj::FindClass("UIScene_PathChoiceContent");
+  // 0.6.2 (0.6.1 review of #277): a class that is not loaded yet is looked for 16384 table slots per call, like the
+  // instances below, not by a full scan of all ~168,000 objects every 5 s (three of them per try: a hitch each time).
+  static uint32_t class_cursor = 0, movie = 0;
+  const auto class_step = [&](const char* name) {
+    uint32_t total = 0;
+    const uint32_t c = obj::FindClassRange(name, class_cursor, 16384, &total);
+    return std::make_pair(c, total);
+  };
+  if (!content && scene) {
+    const auto [c, total] = class_step("UIScene_PathChoiceContent");
+    content = c;
+    class_cursor = c || class_cursor + 16384 >= total ? 0 : class_cursor + 16384;
   }
   if (!scene) {
-    if (now < next_class) return;
-    next_class = now + std::chrono::seconds(5);
-    const uint32_t movie = obj::FindClass("GFxMoviePlayer");
-    scene = obj::FindClass("UIScene_PathChoice");
-    content = obj::FindClass("UIScene_PathChoiceContent");
+    uint32_t total = 0;
+    if (!movie) std::tie(movie, total) = class_step("GFxMoviePlayer");
+    if (!scene) { const auto r = class_step("UIScene_PathChoice"); scene = r.first; total = std::max(total, r.second); }
+    if (!content) { const auto r = class_step("UIScene_PathChoiceContent"); content = r.first; total = std::max(total, r.second); }
+    class_cursor = class_cursor + 16384 >= total ? 0 : class_cursor + 16384;
     if (!movie || !scene) { scene = 0; return; }
+    class_cursor = 0;
     flags = obj::PropertyOffset(movie, "bMovieIsOpen");
     open_mask = obj::BoolMask(movie, "bMovieIsOpen");
     input_mask = obj::BoolMask(movie, "bAllowInput");
@@ -499,11 +625,76 @@ static void Gow3ExactLimit(PPCRegister& f1) {
   f1.f64 = 0.0;
 }
 
+// GitHub #313 ("the fps limit stops working in split screen", reporter's game not stated; not reproduced). The limiter
+// lives in Gow3MaxTickRate, which runs only where UEngine::GetMaxTickRate loads MaxSmoothedFrameRate (frame-rate
+// smoothing on); extras.cpp wraps the whole function. If the game takes another way through it while two players are in
+// (no smoothing -> no hook -> no limit), the two counts below differ. These lines show it in a report: how many engine
+// ticks did not reach the limiter, what the function returned for them, the limit asked, and the number of local players.
+std::atomic<uint32_t> g_tick_hook_hits{0};
+namespace {
+// Local players (Engine.GamePlayers count) or -1. Read-only; class / property lookups are cached and retried 5 s apart.
+int Gow3LocalPlayers() {
+  namespace obj = ue3::obj;
+  if (!obj::Ready()) return -1;
+  using Clock = std::chrono::steady_clock;
+  static Clock::time_point next_lookup{};
+  static int players_off = -1;
+  if (players_off < 0) {
+    const Clock::time_point now = Clock::now();
+    if (now < next_lookup) return -1;
+    next_lookup = now + std::chrono::seconds(5);
+    const uint32_t engine_cls = obj::FindClass("Engine");
+    if (!engine_cls) return -1;
+    players_off = obj::PropertyOffset(engine_cls, "GamePlayers");
+    if (players_off < 0) return -1;
+  }
+  const uint32_t engine = obj::Read32(gow3::addr::kGEngine);
+  return engine ? int(obj::Read32(engine + uint32_t(players_off) + 4)) : -1;  // TArray: data, count, max
+}
+}  // namespace
+// Game thread, from extras.cpp's GetMaxTickRate wrapper once the original has returned: hits_before = g_tick_hook_hits
+// when the call began, result = the value it returned (0 = no limit left for the engine's own wait).
+void Gow3NoteTickCall(uint32_t hits_before, double result) {
+  static uint64_t calls = 0, skipped = 0, window_calls = 0, window_skipped = 0, flips = 0;
+  static int last_players = -2;
+  static bool last_hooked = true;
+  const bool hooked = g_tick_hook_hits.load(std::memory_order_relaxed) != hits_before;
+  ++calls, ++window_calls;
+  if (!hooked) ++skipped, ++window_skipped;
+  const int32_t asked = LiveMaxFps();
+  // a change between "reached the limiter" and "did not", each way: the first 12 only
+  if (hooked != last_hooked && flips < 12) {
+    ++flips;
+    REXLOG_INFO("gow3_max_fps: engine tick {}: GetMaxTickRate {} the limiter hook (returned {:.1f}; limit asked {}; local players {})",
+                calls, hooked ? "reaches" : "did NOT reach", result, asked, Gow3LocalPlayers());
+  }
+  last_hooked = hooked;
+  if (calls % 60 == 0) {  // a change in the number of local players, with the limit that is in force
+    const int players = Gow3LocalPlayers();
+    if (players != last_players && players >= 0) {
+      last_players = players;
+      REXLOG_INFO("gow3_max_fps: local players {} (limit asked {}, front end {}, last tick returned {:.1f})", players, asked,
+                  g_in_front_end.load(std::memory_order_relaxed), result);
+    }
+  }
+  if (window_calls >= 1800) {  // every 1800 ticks (30 s at 60): only when some did not reach the hook
+    static int summaries = 0;   // r36: capped (smoothing off = every window skips)
+    if (window_skipped && ++summaries <= 60)
+      REXLOG_INFO("gow3_max_fps: {} of the last {} engine ticks did not reach the limiter hook ({} of {} so far)", window_skipped,
+                  window_calls, skipped, calls);
+    window_calls = window_skipped = 0;
+  }
+}
+
 void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9B0
+  g_tick_hook_hits.fetch_add(1, std::memory_order_relaxed);
   TickTimeline();
   Gow3ModChaptersTick();
   Gow3PathChoiceTick();
+  Gow3SplitLayoutTick();       // GitHub #269
   Gow3CheckpointStreamTick();  // GitHub #226
+  Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)
+  Gow3FirstPersonTick();       // --gow3_first_person (off: one flag test)
   const int32_t v = LiveMaxFps();
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)

@@ -1,0 +1,18 @@
+diff --git a/src/system/xthread.cpp b/src/system/xthread.cpp
+index fe0796a..d92e9a4 100644
+--- a/src/system/xthread.cpp
++++ b/src/system/xthread.cpp
+@@ -909,7 +909,12 @@ void XThread::SetActiveCpu(uint8_t cpu_index) {
+       thread_->set_affinity_mask(uint64_t(1) << cpu_index);
+     }
+   } else {
+-    REXSYS_WARN("Too few processor cores - scheduling will be wonky");
++    // COGBox SDK patch 94 (GitHub #288): once per run. Called on every guest CPU change, this filled the log ~1000
++    // times a second on 4- and 5-thread processors - work and disk writes on exactly the PCs with the least to spare.
++    static std::atomic<bool> warned{false};
++    if (!warned.exchange(true))
++      REXSYS_WARN("Too few processor cores ({} logical, 6 wanted) - thread affinities are not set; scheduling will be wonky",
++                  rex::thread::logical_processor_count());
+   }
+ }
+ 

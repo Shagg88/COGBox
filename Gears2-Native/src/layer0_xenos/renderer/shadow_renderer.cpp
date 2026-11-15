@@ -55,6 +55,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include "xenos/renderer/ao.h"
 #include "cacao_shaders.h"
 #include "xegtao_shaders.h"
+#include "ssil_shaders.h"
 #include "smaa/smaa_passes.h"
 #include "smaa/smaa_search_tex.h"
 
@@ -612,6 +613,11 @@ REXCVAR_DEFINE_DOUBLE(gow2_renderer_fullscreen_wait_ms, 8.0, "Gears2",
                       "frame in total, instead of being skipped - a skipped one leaves its target holding old or empty data "
                       "that the final picture then shows. 0 = off (skip while compiling, as before). Job 632: 8 (was 50 - job 631b's cold "
                       "run froze for up to 2-3 s while full-screen passes waited)");
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_fullscreen_pipeline_wait_ms, 50.0, "Gears2",
+                      "GitHub #287 (D3D12): a full-screen pass whose pipeline is still on a worker after the "
+                      "--gow2_renderer_fullscreen_wait_ms budget, and was already skipped once, waits for it once more, up to "
+                      "this many ms - at most one such wait a frame, 4 a second and one per pipeline: one short hitch instead of several frames without the pass "
+                      "(a Gears 2 cutscene's lightning went black for 4 frames). 0 = off (as 0.6.1)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_standin_new_vs, false, "Gears2",
                     "Patch 0132: also treat 'new vertex shader drawing to a target not drawn in the last 4 frames' as a "
                     "stand-in wait (0045's broad case). Off by default: Shagg's 21:34 session spent 1.8 s in 34 such "
@@ -651,6 +657,14 @@ REXCVAR_DEFINE_INT32(gow2_renderer_dest_budget_mb, -1, "Gears2",
                      "(not used in the last 30 frames) only when this process uses over 90% of the OS video memory "
                      "budget, down to 80%; N > 0 = keep their total under N MB (0032's 768 churned at 2x scale: "
                      "~300 freed and remade per 300 frames); 0 = no budget (age only)");
+// GitHub #257 (Gears 3 sub-menus: 24 full-screen colour resolves a frame, GPU-bound at 2x): a colour resolve that repeats
+// the previous copy exactly - the same copy / destination / surface / scissor registers and rectangle vertices, no draw
+// of the guest's in between, neither copy clearing - copies the same EDRAM tiles to the same place again, so the
+// destination (texture and guest memory) already holds what it would write. Counted always (the colour line of the
+// stats); skipped only with this switch (each repeat at 2x costs its 1x pass, its scaled pass and its guest-memory write).
+REXCVAR_DEFINE_BOOL(gow2_renderer_skip_repeat_resolves, false, "Gears2",
+                    "GitHub #257 test: a colour resolve identical to the one just before it (no draw between, no clear) "
+                    "is not done again; the repeats are counted in the stats either way");
 REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_view_targets, true, "Gears2",
                     "Colour resolves from a format view no draw used (Gears 3: 7e3 scene resolved as 2_10_10_10 raw) "
                     "create that target and transfer the tiles in, instead of skipping the resolve");
@@ -739,6 +753,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_export_pending_mirror, false, "Gears2",
                     "fetches from the mirror (the export's bytes) even when a CPU write elsewhere in the same 4 MB block "
                     "ended their GPU-current state - instead of re-uploading the pre-export guest bytes over them. "
                     "false = as before");
+REXCVAR_DEFINE_BOOL(gow2_renderer_export_settle, false, "Gears2",   // parked (Shagg 11-14 15:32): off until proven
+                    "Green-vine review (job 1844): when a memexport read-back has landed in guest memory, its pages that "
+                    "nothing wrote since stop being GPU-current (guest memory now holds the same bytes), so a texture "
+                    "later loaded there takes guest memory - which also has any CPU / file write the page watch could not "
+                    "see (read-only pages are never watched). false = they stay GPU-current until a seen write, as before");
 REXCVAR_DEFINE_BOOL(gow2_renderer_memexport_readback, true, "Gears2",
                     "With --gow2_renderer_memexport: copy every exported range back into guest memory once the GPU has "
                     "written it (job 041: Gears 3 moves DXT textures with memexport copies, and DXT textures load from "
@@ -992,6 +1011,51 @@ REXCVAR_DEFINE_INT32(gow2_ao_gpu_log, 0, "Gears2",
                      "each denoise pass) from the backend's GPU timestamps. 0 = off. Not while --gow2_renderer_draw_report_frame "
                      "runs (it owns the GPU tags); needs --gow2_renderer_gpu_timestamp_split (the default)");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_power, 2.2, "Gears2", "XeGTAO final value power - higher is darker (XeGTAO's default 2.2)");
+// Screen-space indirect lighting (ssil_shaders.h, a prototype): one diffuse bounce of the frame's own scene colour,
+// added at the scene colour resolve. Needs --gow2_ao=gtao (XeGTAO's view-depth pyramid). The scene copy is the one
+// the upscaler takes (--gow2_upscale_scene_formats): Gears 2's 16-bit float HDR or Gears 3's 10:10:10:2 UNORM.
+REXCVAR_DEFINE_BOOL(gow2_ssil, false, "Gears2",
+                    "Prototype: screen-space indirect lighting (SSILVB, one bounce) added to the scene before bloom / tone "
+                    "map / the upscaler. Needs --gow2_ao=gtao. With --gow2_ao_debug_keys: Insert on / off, Shift+Insert view, "
+                    "Ctrl+Insert strength, Alt+Insert albedo estimate");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_strength, 1.5, "Gears2", "SSIL: how much of the indirect light is added (Ctrl+Insert cycles it)");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_radius, 200.0, "Gears2", "SSIL: how far light bounces from, in world units (UE3: about 2 cm each)");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_thickness, 30.0, "Gears2",
+                      "SSIL: how thick each depth sample is assumed to be (world units) - light passes behind thinner things");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_fade, 6000.0, "Gears2", "SSIL: view distance (world units) where the effect has faded out");
+REXCVAR_DEFINE_INT32(gow2_ssil_slices, 3, "Gears2", "SSIL: directions per pixel (1-8)");
+REXCVAR_DEFINE_INT32(gow2_ssil_steps, 8, "Gears2", "SSIL: samples per direction and side (2-16)");
+REXCVAR_DEFINE_INT32(gow2_ssil_albedo, 3, "Gears2",
+                     "SSIL: the albedo estimate of what the light lands on: 0 = the scene colour's hue at 50%, 1 = grey 50%, "
+                     "2 = the scene colour itself, 3 = local: the scene colour over the brightness around it (Alt+Insert switches "
+                     "between 2 and 3)");
+REXCVAR_DEFINE_INT32(gow2_ssil_log, 600, "Gears2", "SSIL: every N frames, how many frames it ran on (0 = off)");
+REXCVAR_DEFINE_BOOL(gow2_ssil_backface, true, "Gears2",
+                    "SSIL: a surface seen from behind blocks light but sends none (normals from depth; Home toggles it)");
+REXCVAR_DEFINE_BOOL(gow2_ssil_difference, false, "Gears2",
+                    "SSIL: add only the local part - the indirect light minus 80% of its wide blur, so the even bounce the "
+                    "game's baked lighting already has is not added again (Shift+Home toggles it)");
+REXCVAR_DEFINE_BOOL(gow2_ssil_temporal, true, "Gears2",
+                    "SSIL: blend each frame into the last (reprojected with the upscaler's motion vectors) - only while "
+                    "DLSS / FSR / XeSS / SMAA T2x runs (Ctrl+Home toggles it)");
+REXCVAR_DEFINE_BOOL(gow2_ssil_bounces, true, "Gears2",
+                    "SSIL: last frame's indirect light bounces again (several bounces over frames; needs --gow2_ssil_temporal "
+                    "running; Alt+Home toggles it)");
+REXCVAR_DEFINE_BOOL(gow2_ssil_adaptive, true, "Gears2",
+                    "SSIL: the radius, thickness, fade and steps follow the size of the space in view - the median view "
+                    "distance, smoothed over about half a second - from the --gow2_ssil_radius / _thickness / _fade / "
+                    "_steps values (a room) to the --gow2_ssil_far_* ones (open ground). End toggles it");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_far_radius, 600.0, "Gears2", "SSIL adaptive: the radius in open spaces (world units)");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_far_thickness, 60.0, "Gears2", "SSIL adaptive: the thickness in open spaces (world units)");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_far_fade, 15000.0, "Gears2", "SSIL adaptive: the fade-out distance in open spaces");
+REXCVAR_DEFINE_INT32(gow2_ssil_far_steps, 12, "Gears2", "SSIL adaptive: samples per direction and side in open spaces");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_adapt_near, 800.0, "Gears2",
+                      "SSIL adaptive: the median view distance (world units) at and below which the room values apply "
+                      "(measured: Gears 2 ch1 hospital 470-760, ch3 open ground 2600-5300, in cover outdoors 800-1000)");
+REXCVAR_DEFINE_DOUBLE(gow2_ssil_adapt_far, 2500.0, "Gears2",
+                      "SSIL adaptive: the median view distance at and above which the open-space values apply (between: "
+                      "in proportion, on a log scale)");
+REXCVAR_DEFINE_INT32(gow2_ssil_view, 0, "Gears2", "SSIL: the starting view - 0 normal, 1 indirect light only, 2 split (left without, right with); Shift+Insert cycles it");
 REXCVAR_DEFINE_BOOL(gow2_ao_add_at_scene_copy, false, "Gears2",
                     "Where the game draws no AO and has no fog pass to anchor ours (Gears 1): XeGTAO / CACAO runs on the "
                     "scene depth and is multiplied into the scene at the frame's first full-screen scene copy (Gears 1: "
@@ -1111,6 +1175,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_skip_resolve_dispatches, false, "Gears2",
                     "Patch 0117 (both APIs, a MEASUREMENT switch - wrong pictures): the renderer's compute steps for "
                     "resolves and EDRAM copies to guest memory are not sent (present and upscaler compute stay). Shows "
                     "how much of each API's frame those steps and the render-pass breaks / barriers around them cost");
+REXCVAR_DEFINE_BOOL(gow2_renderer_t2_measure_skip, false, "Gears2",
+                    "#257 / #296 step 1 (both APIs, a MEASUREMENT switch - pictures may be wrong): our resolves are not "
+                    "written into the GPU guest-memory mirror (T2). A resolve-through texture is still written by the same "
+                    "shader without the mirror stores; other T2 dispatches are skipped. Pages stay marked as ours. Shows "
+                    "what T2 and the guest-buffer transitions around it cost (log: 'T2 measure-skip')");
 REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_draws, false, "Gears2",
                     "Patch 0119 (both APIs, test): the colour resolve step for single-sample sources into 32 bpp "
                     "destinations runs as a full-screen draw into the destination (a render target) instead of a "
@@ -1216,6 +1285,10 @@ REXCVAR_DEFINE_DOUBLE(gow2_hdr_ui_white, 203.0, "Gears2", "Native HDR: independe
 REXCVAR_DEFINE_BOOL(gow2_hdr_native, true, "Gears2", "Use the captured Gears 2 / Gears 3 TU6 float scene/HUD profiles in HDR10");
 REXCVAR_DEFINE_INT32(gow2_hdr_companion_mb, 512, "Gears2", "HDR companion cache budget in MiB; images in active use are retained");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_peak, 1000.0, "Gears2", "Native HDR: display peak in nits for highlight roll-off");
+// 0.6.2: how much the Gears 2 / Gears 3 native HDR scene (PsychoV35, PR #294) boosts highlights above SDR white. 1 =
+// the tuned look (RenoDX's smoothed-power boost); 0 = no extra boost (the mapper alone); up to 2.
+REXCVAR_DEFINE_DOUBLE(gow2_hdr_highlights, 1.0, "Gears2",
+                      "Native HDR (Gears 2 / Gears 3): highlight boost strength - 0 none, 0.5 subtle, 1 default, 1.5 strong");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_knee, 0.75, "Gears2",
                       "Stage 7.3 HDR (games without native HDR profiles, or --gow2_hdr_native=false); unused by native HDR");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_expand, 1.0, "Gears2",
@@ -1391,6 +1464,8 @@ struct FrameStats {
   uint64_t resolve_draws = 0;               // patch 0119
   uint64_t standin_waits = 0, standin_over_budget = 0;  // patch 0045
   uint64_t standin_bounded_waits = 0, standin_bounded_skips = 0, standin_bounded_sync = 0;  // 0.5.1
+  uint64_t fullscreen_long_waits = 0, fullscreen_long_waits_won = 0;  // GitHub #287
+  double fullscreen_long_wait_ms = 0.0;
   uint64_t depth_pipeline_waits = 0, depth_pipeline_waits_won = 0;  // patch 0132
   double depth_pipeline_wait_ms = 0.0;
   double standin_wait_ms = 0.0;
@@ -1400,6 +1475,8 @@ struct FrameStats {
            memexport_ps_draws = 0, memexport_ranges = 0, memexport_bytes = 0, vertex_from_exports = 0,
            memexport_readbacks = 0, memexport_readback_bytes = 0, memexport_readback_failures = 0,
            memexport_ranges_gathered = 0, memexport_readbacks_issued = 0,  // patch 0042
+           export_pages_settled = 0, export_pages_settle_moved = 0, export_pages_settle_pending = 0,  // green-vine
+           export_pages_unwatchable = 0, export_unwatch_checks = 0,                                  // green-vine
            lookaheads = 0, lookahead_draws = 0, lookahead_queued = 0,  // patch 0051
            pipelines_recorded = 0,  // patch 0058
            load_holds = 0,  // patch 0063: frames held back until their pipelines were built
@@ -1422,7 +1499,7 @@ struct FrameStats {
            watch_stale = 0, watch_stale_bytes = 0, unknown_colour_tiles = 0, disagree_tiles = 0, tainted_tiles = 0, colour_to_depth_tiles = 0, transfer_passes = 0,
            unclipped_depth_draws = 0, mrt_duplicates = 0, colour_drawn = 0, colour_transferred_tiles = 0,
            colour_unknown_tiles = 0, resolve_view_targets = 0, msaa_colour_resolves = 0, learned_clears = 0, msaa2x_colour_draws = 0, msaa2x_resolve_clears = 0, msaa2x_twin_clears = 0, msaa_twin_clears = 0, msaa_up_transfers = 0, colour_resolves_compared = 0, fixed16_multiplicative_blends = 0,
-           colour_word_transferred_tiles = 0, colour_clears_resolve = 0;
+           colour_word_transferred_tiles = 0, colour_clears_resolve = 0, repeat_resolves = 0, repeat_resolves_skipped = 0;
   uint64_t colour_not_modelled[16] = {};  // per colour storage class: draws into it we don't render yet
   double cpu_ms = 0.0;
   std::map<std::string, uint64_t> skipped;
@@ -1787,6 +1864,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     fused_check_every_ = fused_scaled_ ? uint32_t(std::max(REXCVAR_GET(gow2_renderer_fused_scaled_check), 0)) : 0u;
     memexport_ = REXCVAR_GET(gow2_renderer_memexport);
     memexport_readback_ = memexport_ && REXCVAR_GET(gow2_renderer_memexport_readback);
+    export_settle_ = memexport_readback_ && REXCVAR_GET(gow2_renderer_export_settle);  // green-vine review
     pending_mirror_ = memexport_readback_ && REXCVAR_GET(gow2_renderer_export_pending_mirror);
     if (pending_mirror_) REXLOG_INFO("gow2_renderer: export pending mirror on (patch 0007)");
     if (memexport_)
@@ -1797,6 +1875,10 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     shader_prefetch_ = REXCVAR_GET(gow2_renderer_shader_prefetch);  // patch 0053
     skip_resolve_dispatches_ = REXCVAR_GET(gow2_renderer_skip_resolve_dispatches);  // patch 0117
     resolve_draws_ = REXCVAR_GET(gow2_renderer_resolve_draws);                      // patch 0119
+    t2_measure_skip_ = REXCVAR_GET(gow2_renderer_t2_measure_skip);                  // #257 step 1
+    if (t2_measure_skip_)
+      REXLOG_WARN("gow2_renderer: T2 measure-skip ON (measurement only, pictures may be wrong): resolves are not written "
+                  "into the guest-memory mirror");
     stats_frame_ = REXCVAR_GET(gow2_renderer_target_stats_frame);                   // patch 0121
     stats_each_ = REXCVAR_GET(gow2_renderer_target_stats_each_draw);                // patch 0122
     stats_from_ = std::max(REXCVAR_GET(gow2_renderer_target_stats_each_from), 0);   // patch 0123
@@ -1870,6 +1952,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     }
     if (memexport_readback_)  // job 042: moved textures load their new bytes, not the old ones for a frame
       textures_->SetBeforeCpuLoadOfGpuPages([this](uint32_t start, uint32_t length) { FlushExportReadbacksFor(start, length); });
+      textures_->SetFlushEverGpuWritten(export_settle_);  // r26 R1: the green-vine flushes go with the settle switch
     if (const int stale = REXCVAR_GET(gow2_renderer_texture_stale_log); stale > 0) {
       textures_->SetStaleReloadReport(uint32_t(stale), [this](const rr::TextureCache::StaleReload& s) { ReportStale(s); });
       REXLOG_INFO("gow2_renderer: texture stale-reload log on: textures unchanged for {} frames that get new bytes",
@@ -2019,6 +2102,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       REXLOG_INFO("gow2_renderer: resolve draws (patch 0119) {}", colour_resolve_draw_ ? "on" : "OFF (shader or pipeline failed)");
     InitUpscaler();  // --gow2_upscaler (notes/64)
     InitAo();        // --gow2_ao (notes/80), after InitUpscaler set the camera tracking up
+    InitSsil();      // --gow2_ssil (prototype), on XeGTAO's depth pyramid
     if (REXCVAR_GET(gow2_renderer_msaa_colour_resolves)) {
       // Gears 3 (job 025): the same resolve reading a multisample source - c2.z samples (1, 2 or 4), host sample index
       // per selected guest sample in c2.w (4 bits each) - all decoded, then combined by XeColourResolvePixel as for
@@ -2069,6 +2153,20 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       const gpu::ShaderHandle wtt = cache_->GetBuiltin("words_to_guest_through_cs", rr::builtin::kWordsToGuestThroughCs,
                                                        gpu::ShaderStage::kCompute);
       words_to_guest_through_ = wtt ? backend_->CreateComputePipeline(wtt) : 0;
+      if (words_to_guest_through_ && REXCVAR_GET(gow2_renderer_t2_measure_skip)) {
+        // #257 step 1: the same shader without the guest buffer (u0 unused, so no guest-buffer transition).
+        std::string to = rr::builtin::kWordsToGuestThroughCs;
+        const std::string d = "RWByteAddressBuffer xe_guest : register(u0);\n", s0 = "xe_guest.Store(addr, m0);",
+                          s1 = "xe_guest.Store(addr + 4u, m1);";
+        if (to.find(d) != std::string::npos && to.find(s0) != std::string::npos && to.find(s1) != std::string::npos) {
+          to.replace(to.find(d), d.size(), "");
+          to.replace(to.find(s0), s0.size(), "");
+          to.replace(to.find(s1), s1.size(), "");
+          const gpu::ShaderHandle tos = cache_->GetBuiltin("words_through_only_cs", to, gpu::ShaderStage::kCompute);
+          words_through_only_ = tos ? backend_->CreateComputePipeline(tos) : 0;
+        }
+        REXLOG_INFO("gow2_renderer: T2 measure-skip: through-only shader {}", words_through_only_ ? "ready" : "missing");
+      }
       REXLOG_INFO("gow2_renderer: resolve-through (job 047) {}", words_to_guest_through_ ? "ON" : "shader missing - OFF");
       through_check_frame_ = uint64_t(std::max(REXCVAR_GET(gow2_renderer_resolve_through_check), 0));
       if (through_check_frame_) {
@@ -2706,6 +2804,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t fl_draws = uint32_t(draw_index_), fl_skipped = uint32_t(pending_this_frame_);
     draw_index_ = 0;
     copy_index_ = 0;
+    resolve_sig_valid_ = false;  // GitHub #257: repeats are only looked for within a frame
     occ_lines_ = 0;
     pending_this_frame_ = shader_errors_this_frame_ = pipeline_failures_this_frame_ = 0;
     pipeline_wait_ms_frame_ = 0.0;
@@ -2738,6 +2837,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     shader_wait_left_ms_ = shader_wait_budget_ms_;
     standin_wait_left_ms_ = standin_wait_budget_ms_;  // patch 0045
     fullscreen_wait_left_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_fullscreen_wait_ms));  // job 621
+    fullscreen_long_wait_ms_ = std::max(0.0, REXCVAR_GET(gow2_renderer_fullscreen_pipeline_wait_ms));  // GitHub #287
+    fullscreen_long_wait_this_frame_ = false;
     last_copy_draw_ = 0;
     drawn_since_copy_ = 0;
     EndParts();
@@ -2760,6 +2861,31 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     frame_ + 1 - uint64_t(log_every_), frame_, ts.gpu_block_loads, ts.gpu_block_subresources,
                     ts.gpu_block_failures, ts.gpu_volume_loads, ts.cpu_loads, backend_->Stats().scratch_texture_copies,
                     backend_->Stats().scratch_batches, backend_->Stats().uav_barriers_deferred);
+      }
+      {  // 0.6.2 (GitHub #311): texture loads the backend dropped, loads repeated for it, textures given zero contents
+        const gpu::BackendStats& bs = backend_->Stats();
+        const rr::TextureCacheStats& ts = textures_ ? textures_->Stats() : tex_prev_;
+        const uint64_t drops = bs.tex_drop_dispatch_list + bs.tex_drop_dispatch_desc + bs.tex_drop_copy_list +
+                               bs.tex_drop_copy_sub + bs.tex_drop_upload_list + bs.tex_drop_upload_ring + bs.tex_drop_mirror;
+        if (drops != tl_prev_.drops || ts.load_failures != tl_prev_.failures || bs.tex_zeroed != tl_prev_.zeroed ||
+            bs.tex_zero_skipped != tl_prev_.zero_skipped) {
+          REXLOG_INFO("gow2_renderer: texture loads (#311) frames {}-{}: dropped by the backend {} (dispatch: no list {}, no "
+                      "descriptors {} | copy: no list {}, wrong subresource {} | upload: no list {}, no ring space {} | "
+                      "mirror {}), loads not completed {}, repeated {} | zeroed textures {} ({:.1f} MB, over budget {}) "
+                      "(totals: {} dropped, {} not completed, {} zeroed, {:.1f} MB)",
+                      frame_ + 1 - uint64_t(log_every_), frame_, drops - tl_prev_.drops,
+                      bs.tex_drop_dispatch_list - tl_prev_.k[0], bs.tex_drop_dispatch_desc - tl_prev_.k[1],
+                      bs.tex_drop_copy_list - tl_prev_.k[2], bs.tex_drop_copy_sub - tl_prev_.k[3],
+                      bs.tex_drop_upload_list - tl_prev_.k[4], bs.tex_drop_upload_ring - tl_prev_.k[5],
+                      bs.tex_drop_mirror - tl_prev_.k[6], ts.load_failures - tl_prev_.failures,
+                      ts.load_retries - tl_prev_.retries, bs.tex_zeroed - tl_prev_.zeroed,
+                      double(bs.tex_zeroed_bytes - tl_prev_.zeroed_bytes) / 1048576.0,
+                      bs.tex_zero_skipped - tl_prev_.zero_skipped, drops, ts.load_failures, bs.tex_zeroed,
+                      double(bs.tex_zeroed_bytes) / 1048576.0);
+        }
+        tl_prev_ = {drops, ts.load_failures, ts.load_retries, bs.tex_zeroed, bs.tex_zeroed_bytes, bs.tex_zero_skipped,
+                    {bs.tex_drop_dispatch_list, bs.tex_drop_dispatch_desc, bs.tex_drop_copy_list, bs.tex_drop_copy_sub,
+                     bs.tex_drop_upload_list, bs.tex_drop_upload_ring, bs.tex_drop_mirror}};
       }
       if (submit_draws_) {  // patch 0138
         const uint64_t es = backend_->Stats().early_submits;
@@ -2808,6 +2934,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     t2_stats_.seen_colour + t2_stats_.seen_depth, t2_stats_.seen_colour,
                     t2_stats_.seen_depth, ts.gpu_pages_kept, ts.gpu_pages_changed,
                     ts.cpu_loads_of_gpu_pages);
+        if (t2_measure_skip_)
+          REXLOG_INFO("gow2_renderer: T2 measure-skip frames {}-{}: through-only {}, skipped {} (mirror not written)",
+                      frame_ + 1 - uint64_t(log_every_), frame_, t2_stats_.measure_through_only,
+                      t2_stats_.measure_skipped);
         {  // patch 0032: resolve destination textures and video memory
           uint64_t one_bytes = 0, scaled_bytes = 0;
           for (const auto& [k, d] : destinations_) one_bytes += d.bytes;
@@ -2837,12 +2967,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         }
         {  // patch 0008
           const uint64_t lost = watch_->GpuPagesLostToWidening();
-          if (lost != watch_lost_logged_ || REXCVAR_GET(gow2_renderer_watch_narrow))
+          const uint64_t exact = watch_->GpuPagesBumpedExact();  // green-vine review
+          if (lost != watch_lost_logged_ || exact != watch_exact_logged_ || REXCVAR_GET(gow2_renderer_watch_narrow))
             REXLOG_INFO("gow2_renderer: page watch frames {}-{}: GPU-written pages marked CPU-written by the 4 MB "
-                        "widening {} (this range; {} so far){}",
+                        "widening {} (this range; {} so far){} | GPU-current pages ended by exact-range callbacks (file "
+                        "read, protect-to-writable, decommit, release) {} (this range; {} so far)",
                         frame_ + 1 - uint64_t(log_every_), frame_, lost - watch_lost_logged_, lost,
-                        REXCVAR_GET(gow2_renderer_watch_narrow) ? " - narrow widening on" : "");
+                        REXCVAR_GET(gow2_renderer_watch_narrow) ? " - narrow widening on" : "", exact - watch_exact_logged_,
+                        exact);
           watch_lost_logged_ = lost;
+          watch_exact_logged_ = exact;
         }
         if (scaled_resolves_)
           REXLOG_INFO("gow2_renderer: scaled (Stage 7) frames {}-{}: scaled resolves {} (not into scaled memory {}), "
@@ -4345,6 +4479,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   float HdrSceneWhite() const { return float(std::clamp(REXCVAR_GET(gow2_hdr_paper_white), 1.0, 10000.0)); }
   float HdrPeak() const { return float(std::clamp(REXCVAR_GET(gow2_hdr_peak), double(HdrSceneWhite()), 10000.0)); }
   float HdrUiWhite() const { return float(std::clamp(REXCVAR_GET(gow2_hdr_ui_white), 1.0, double(HdrPeak()))); }
+  // 0.6.2: sent as strength + 1, so a zero constant (tools, older paths) means the default 1
+  float HdrHighlights() const { return float(std::clamp(REXCVAR_GET(gow2_hdr_highlights), 0.0, 2.0)) + 1.0f; }
   void EncodeNativeHdr(gpu::TextureHandle output, uint32_t width, uint32_t height, bool native) {
     if (native) ++native_hdr_frames_; else ++native_hdr_reference_frames_;
     if (!native) ++native_hdr_failures_[size_t(native_hdr_valid_ ?
@@ -4628,6 +4764,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     SystemConstants hdr_constants = constants;
     hdr_constants.sys2[0] = std::bit_cast<uint32_t>(HdrPeak() / HdrSceneWhite());
     hdr_constants.sys2[1] = std::bit_cast<uint32_t>(HdrUiWhite() / HdrSceneWhite());
+    hdr_constants.sys2[2] = std::bit_cast<uint32_t>(HdrHighlights());   // 0.6.2: highlight strength + 1
+    hdr_constants.sys2[3] = 0;
     backend_->SetConstants(gpu::ShaderStage::kPixel, gpu::kCbSystem, &hdr_constants, sizeof(hdr_constants));
     backend_->SetPipeline(pipeline);
     issue((overlay || scene_pair) && has_tests ? depth_target : nullptr, 0,
@@ -5498,8 +5636,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       return;
     }
     // 0.6.1: with a size limit, a resolve that is not read back is not prepared either (unless the switch asks for all)
-    const bool rb_this = resolve_readback_ && (!resolve_readback_max_bytes_ || info.dest_extent_length <= resolve_readback_max_bytes_);
-    if (prepare_mirror_ && (rb_prepare_every_ || rb_this || !resolve_readback_))
+    // Review r12 R-6: with --gow2_renderer_t2_measure_skip the mirror is neither prepared nor read back (it isn't written).
+    const bool rb_this = !t2_measure_skip_ && resolve_readback_ &&
+                         (!resolve_readback_max_bytes_ || info.dest_extent_length <= resolve_readback_max_bytes_);
+    if (!t2_measure_skip_ && prepare_mirror_ && (rb_prepare_every_ || rb_this || !resolve_readback_))
       PrepareMirrorForResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
     gpu::ComputeBindings b;
     b.constants[0] = info.dest_base;
@@ -5516,11 +5656,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     // Job 047: the cached texture loaded from this memory, written by the same dispatch (not for scaled resolves, whose
     // textures load from the scaled copy).
     rr::TextureCache::ResolveThrough through;
-    const bool through_on = words_to_guest_through_ && !scaled && (info.dest_bpp_log2 == 2 || info.dest_bpp_log2 == 3) &&
+    bool through_on = words_to_guest_through_ && !scaled && (info.dest_bpp_log2 == 2 || info.dest_bpp_log2 == 3) &&
                             endian <= 3 &&
                             textures_->FindResolveThrough(info.dest_base, info.dest_pitch_aligned_div_32 * 32,
                                                           words == 2 ? 3u : 2u, dx, dy, w, h, through);
-    if (through_on) {
+    if (t2_measure_skip_) {  // #257 step 1 (measurement): no mirror writes
+      if (through_on && words_through_only_) {
+        b.constants[8] = through.code;
+        b.constants[9] = through.endian;
+        b.constants[10] = through.width;
+        b.constants[11] = through.height;
+        b.constant_count = 12;
+        b.guest_u0 = false;
+        b.uav2_texture = through.texture;
+        ResolveDispatch(words_through_only_, b, (w + 7) / 8, (h + 7) / 8, 1);
+        ++t2_stats_.measure_through_only;
+      } else {
+        ++t2_stats_.measure_skipped;
+        through_on = false;   // review r12 R-7: nothing wrote the texture
+      }
+    } else if (through_on) {
       b.constants[8] = through.code;
       b.constants[9] = through.endian;
       b.constants[10] = through.width;
@@ -5618,6 +5773,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   struct T2Stats {
     uint64_t written = 0, skipped = 0, bytes = 0, seen_colour = 0, seen_depth = 0;
     uint64_t skipped_format = 0, skipped_endian = 0;  // patch 0030: colour resolves ResolveColour still skips
+    uint64_t measure_through_only = 0, measure_skipped = 0;  // #257 step 1 (--gow2_renderer_t2_measure_skip)
   };
   bool resolves_to_guest_ = false;
   bool canary_resolve_rules_ = false;  // patch 0023: --gow2_renderer_resolve_rules=canary
@@ -5647,6 +5803,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   ReadbackStats rb_stats_;
   gpu::PipelineHandle words_to_guest_ = 0;
   gpu::PipelineHandle words_to_guest_through_ = 0;  // job 047 resolve-through (0 = off)
+  gpu::PipelineHandle words_through_only_ = 0;      // #257 step 1: the same without the mirror stores
+  bool t2_measure_skip_ = false;                    // #257 step 1: --gow2_renderer_t2_measure_skip
   // ---- Upscaler probe (--gow2_upscale_probe, notes/64): which draws carry the camera matrix ----
   struct ProbeGroup {
     uint64_t hash = 0;
@@ -5845,7 +6003,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                       cc_upscale_pipe_ = 0;
   gpu::TextureHandle cc_depth_[4] = {}, cc_depth_odd_[4] = {}, cc_ao_[4] = {}, cc_ao2_[4] = {}, cc_normals_ = 0, cc_half_ = 0;
   uint32_t cc_w_ = 0, cc_h_ = 0, cc_step_ = 0, cc_blur_passes_ = 3;
-  std::array<double, 11> ao_pass_ms_{};  // --gow2_ao_pass_times
+  std::array<double, 18> ao_pass_ms_{};  // --gow2_ao_pass_times (1-10 the AO, 11-17 SSIL)
   gpu::PipelineHandle ao_prefilter_pipe_ = 0, ao_main_pipe_ = 0, ao_denoise_pipe_ = 0, ao_debug_pipe_ = 0;
   gpu::PipelineHandle ao_prefilter5_pipe_ = 0;  // --gow2_ao_prefilter_single (CreateComputePipelineMips)
   std::array<gpu::PipelineHandle, 4> ao_main_pipes_{};  // notes/80 s.12: every quality preset, so F11 needs no compile
@@ -5890,6 +6048,36 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   gpu::ShaderHandle ao_multiply_ps_ = 0;
   std::unordered_map<uint32_t, gpu::PipelineHandle> ao_multiply_pipes_;  // by target format
   uint64_t ao_added_ = 0;
+  uint64_t ao_depth_frame_ = ~0ull;  // the frame whose view-depth pyramid ao_depth_ holds (XeGTAO's prefilter ran)
+
+  // --gow2_ssil (ssil_shaders.h, a prototype): one bounce of the scene colour, composited into ssil_out_ (a copy of the
+  // scene target) at the scene colour resolve; the resolve and the upscaler read that copy.
+  gpu::PipelineHandle ssil_light_pipe_ = 0, ssil_main_pipe_ = 0, ssil_blur_pipe_ = 0, ssil_apply_pipe_ = 0;
+  gpu::PipelineHandle ssil_normals_pipe_ = 0, ssil_temporal_pipe_ = 0, ssil_diff_pipe_ = 0;
+  gpu::TextureHandle ssil_light_ = 0, ssil_gi_ = 0, ssil_gi2_ = 0, ssil_out_ = 0, ssil_illum_ = 0;
+  gpu::TextureHandle ssil_normal_ = 0, ssil_wide_ = 0, ssil_hist_[2] = {};
+  uint32_t ssil_hist_idx_ = 0;      // ssil_hist_[idx] = last frame's accumulated indirect light
+  bool ssil_hist_valid_ = false;
+  uint64_t ssil_hist_frame_ = ~0ull;  // the frame that wrote it: only the next frame may use it
+  const rr::RenderTarget* ssil_pending_ = nullptr;  // run inside RunUpscaler, after its motion vectors
+  bool ssil_in_upscaler_ = false;   // RunUpscaler ran it (with motion vectors) for this copy
+  // --gow2_ssil_adaptive: the scene's scale (kSsilScaleCs) - a 2x1 texture the main pass reads, kept across frames for
+  // the smoothing; read back every 30 frames for the label and the log.
+  gpu::PipelineHandle ssil_scale_pipe_ = 0;
+  gpu::TextureHandle ssil_scale_ = 0;
+  uint64_t ssil_scale_frame_ = ~0ull;
+  bool ssil_scale_init_ = false;  // the scale texture holds a smoothed median (a frame sentinel: ~0 + 1 wraps at frame 0)
+  std::chrono::steady_clock::time_point ssil_scale_time_{};
+  gpu::ReadbackHandle ssil_scale_rb_ = 0;
+  float ssil_scale_seen_[8] = {};  // the last read back: radius, thickness, fade, steps; median, t, raw median, texels
+  bool ssil_scale_have_ = false;
+  uint64_t ssil_temporal_runs_ = 0;
+  uint32_t ssil_hw_ = 0, ssil_hh_ = 0, ssil_ow_ = 0, ssil_oh_ = 0;
+  gpu::Format ssil_out_format_ = gpu::Format::kUnknown;
+  gpu::Format ssil_no_storage_format_ = gpu::Format::kUnknown;  // the scene format the backend can't store (Vulkan)
+  bool ssil_ok_ = false, ssil_done_frame_ = false, ssil_failed_logged_ = false;
+  uint64_t ssil_runs_ = 0, ssil_misses_ = 0;
+  gpu::TextureHandle up_colour_in_ = 0;  // the upscaler's colour input instead of the scene target (SSIL's copy)
 
   // Patch 0145: the newest frame's frame-generation inputs, at the render size. The textures are rewritten by the next
   // frame's scene resolve, so a consumer copies them before then (the presenter's mailbox slot, plan step 3).
@@ -7496,9 +7684,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (have_rep) CharacterMotion(cur, prev, rw, rh);  // notes/80 s.6
     if (om_on_) ObjectMotion(cur, prev, move_ok ? move : nullptr, cut || !have_rep, rw, rh);  // #147 / #150
+    if (ssil_pending_ == &rt) {  // --gow2_ssil: with this frame's motion vectors (temporal accumulation, bounces)
+      ssil_pending_ = nullptr;
+      ssil_done_frame_ = true;
+      ssil_in_upscaler_ = true;
+      if (RunSsil(rt, up_motion_, rw, rh, cut || !have_rep)) up_colour_in_ = ssil_out_, ++ssil_runs_;
+      else ++ssil_misses_, ssil_in_upscaler_ = false;
+    }
     const auto now = std::chrono::steady_clock::now();
     rr::upscale::FrameInputs in;
-    in.color = rt.texture;
+    in.color = up_colour_in_ ? up_colour_in_ : rt.texture;  // --gow2_ssil: the scene with its indirect light
     in.depth = up_depth_;
     in.motion = up_motion_;
     in.output = up_output_;
@@ -8211,6 +8406,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         backend_->Dispatch(ao_prefilter_pipe_, b, (w + 15) / 16, (h + 15) / 16, 1);
       }
     }
+    ao_depth_frame_ = frame_;  // SSIL reads the pyramid later in the frame
     // 2. The main pass: working AO term + edges.
     AoPassTag(8);
     b.constants[3] = 0;
@@ -8243,8 +8439,296 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     return true;
   }
 
+  // --gow2_ssil (prototype): the four passes built at start; the keys' state starts from the switches.
+  void InitSsil() {
+    if (!REXCVAR_GET(gow2_ssil)) return;
+    if (ao_mode_ != rr::ao::Mode::kGtao) {
+      REXLOG_WARN("gow2_ssil: needs --gow2_ao=gtao (XeGTAO's depth pyramid) - off");
+      return;
+    }
+    const std::string common = rr::builtin::kSsilCommon;
+    auto make = [&](const std::string& name, const std::string& hlsl) -> gpu::PipelineHandle {
+      const gpu::ShaderHandle s = cache_->GetBuiltin(name, hlsl, gpu::ShaderStage::kCompute);
+      return s ? backend_->CreateComputePipeline(s) : 0;
+    };
+    ssil_light_pipe_ = make("ssil_light_cs", common + rr::builtin::kSsilLightCs);
+    ssil_main_pipe_ = make("ssil_main_cs", common + rr::builtin::kSsilMainCs);
+    ssil_blur_pipe_ = make("ssil_blur_cs", common + rr::builtin::kSsilBlurCs);
+    ssil_apply_pipe_ = make("ssil_apply_cs", common + rr::builtin::kSsilApplyCs);
+    ssil_normals_pipe_ = make("ssil_normals_cs", common + rr::builtin::kSsilNormalsCs);
+    ssil_temporal_pipe_ = make("ssil_temporal_cs", common + rr::builtin::kSsilTemporalCs);
+    ssil_diff_pipe_ = make("ssil_diff_cs", common + rr::builtin::kSsilDiffCs);
+    ssil_scale_pipe_ = make("ssil_scale_cs", rr::builtin::kSsilScaleCs);
+    ssil_ok_ = ssil_light_pipe_ && ssil_main_pipe_ && ssil_blur_pipe_ && ssil_apply_pipe_ && ssil_normals_pipe_ &&
+               ssil_temporal_pipe_ && ssil_diff_pipe_ && ssil_scale_pipe_;
+    if (!ssil_ok_) {
+      REXLOG_WARN("gow2_ssil: shaders failed to compile - off");
+      return;
+    }
+    const float strength = float(REXCVAR_GET(gow2_ssil_strength));
+    XenosSsilSetState(true, uint32_t(std::clamp(REXCVAR_GET(gow2_ssil_view), 0, 2)), strength,
+                      uint32_t(std::clamp(REXCVAR_GET(gow2_ssil_albedo), 0, 3)));
+    XenosSsilSetTricks((REXCVAR_GET(gow2_ssil_backface) ? 1u : 0u) | (REXCVAR_GET(gow2_ssil_difference) ? 2u : 0u) |
+                       (REXCVAR_GET(gow2_ssil_temporal) ? 4u : 0u) | (REXCVAR_GET(gow2_ssil_bounces) ? 8u : 0u) |
+                       (REXCVAR_GET(gow2_ssil_adaptive) ? 16u : 0u));
+    REXLOG_INFO("gow2_ssil: on (prototype) - radius {}, thickness {}, {} slices x {} steps per side, strength {}, albedo {}, "
+                "fades out by view z {}", REXCVAR_GET(gow2_ssil_radius), REXCVAR_GET(gow2_ssil_thickness),
+                std::clamp(REXCVAR_GET(gow2_ssil_slices), 1, 8), std::clamp(REXCVAR_GET(gow2_ssil_steps), 2, 16), strength,
+                REXCVAR_GET(gow2_ssil_albedo), REXCVAR_GET(gow2_ssil_fade));
+  }
+
+  // --gow2_ssil: at the scene colour resolve, on this frame's view-depth pyramid (RunGtao) and scene colour, into
+  // ssil_out_ (the whole target, with the indirect light added in the scene). `motion` (render pixels, previous -
+  // current, mw x mh) is the upscaler's when SSIL runs inside RunUpscaler - then the frames accumulate (and bounce);
+  // `reset`: a camera cut, the history is thrown away. Returns false when nothing was made.
+  bool RunSsil(const rr::RenderTarget& rt, gpu::TextureHandle motion, uint32_t mw, uint32_t mh, bool reset) {
+    // SSIL runs only on XeGTAO's depth pyramid (a design choice: no pyramid of its own). None this frame - CACAO chosen
+    // (F6 / F9), or no scene depth - pauses it; the label says so.
+    const bool pyramid = ao_depth_ && ao_depth_frame_ == frame_;
+    XenosSsilSetPaused(!pyramid);
+    if (!ssil_ok_ || !pyramid) return false;
+    const rr::ao::GtaoConstants* k = AoConstants();
+    if (!k) return false;
+    const uint32_t w = ao_w_, h = ao_h_;
+    if (!w || !h || rt.width < w || rt.height < h) return false;
+    const uint32_t hw = std::max(w >> 1, 1u), hh = std::max(h >> 1, 1u);  // = the pyramid's MIP 1
+    if (ssil_hw_ != hw || ssil_hh_ != hh) {
+      for (gpu::TextureHandle* t : {&ssil_light_, &ssil_gi_, &ssil_gi2_, &ssil_illum_, &ssil_normal_, &ssil_wide_,
+                                    &ssil_hist_[0], &ssil_hist_[1]})
+        if (*t) backend_->DestroyTexture(*t), *t = 0;
+      ssil_hw_ = ssil_hh_ = 0;
+      ssil_hist_valid_ = false;
+      gpu::TextureDesc td;
+      td.width = hw;
+      td.height = hh;
+      td.format = gpu::Format::kR16G16B16A16Float;
+      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      td.debug_name = "ssil light";
+      ssil_light_ = backend_->CreateTexture(td);
+      td.debug_name = "ssil indirect";
+      ssil_gi_ = backend_->CreateTexture(td);
+      ssil_gi2_ = backend_->CreateTexture(td);
+      td.debug_name = "ssil local light";
+      ssil_illum_ = backend_->CreateTexture(td);
+      td.debug_name = "ssil wide indirect";
+      ssil_wide_ = backend_->CreateTexture(td);
+      td.debug_name = "ssil history";
+      ssil_hist_[0] = backend_->CreateTexture(td);
+      ssil_hist_[1] = backend_->CreateTexture(td);
+      td.format = gpu::Format::kR32G32B32A32Float;  // the view z in .w needs 32 bits (depth tests against it)
+      td.debug_name = "ssil normals";
+      ssil_normal_ = backend_->CreateTexture(td);
+      if (!ssil_light_ || !ssil_gi_ || !ssil_gi2_ || !ssil_illum_ || !ssil_wide_ || !ssil_hist_[0] || !ssil_hist_[1] ||
+          !ssil_normal_) {
+        if (!ssil_failed_logged_) REXLOG_WARN("gow2_ssil: textures ({}x{}) could not be made", hw, hh);
+        ssil_failed_logged_ = true;
+        return false;
+      }
+      ssil_hw_ = hw, ssil_hh_ = hh;
+    }
+    if (!ssil_scale_) {
+      gpu::TextureDesc td;
+      td.width = 2;
+      td.height = 1;
+      td.format = gpu::Format::kR32G32B32A32Float;
+      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      td.debug_name = "ssil scale";
+      ssil_scale_ = backend_->CreateTexture(td);
+      if (!ssil_scale_) {
+        if (!ssil_failed_logged_) REXLOG_WARN("gow2_ssil: the scale texture could not be made");
+        ssil_failed_logged_ = true;
+        return false;
+      }
+      ssil_scale_init_ = false;  // its contents are undefined: the first frame jumps
+    }
+    if (ssil_ow_ != rt.width || ssil_oh_ != rt.height || ssil_out_format_ != rt.format) {
+      // The composite is a storage image in the scene's format - optional on Vulkan for Gears 3's 10:10:10:2,
+      // and a failed creation there stops the backend. Unsupported: SSIL is skipped (asked once per format).
+      if (rt.format == ssil_no_storage_format_) return false;
+      if (!backend_->SupportsStorage(rt.format)) {
+        ssil_no_storage_format_ = rt.format;
+        REXLOG_WARN("gow2_ssil: this GPU can't write the scene's format ({}) from a compute shader - SSIL is off",
+                    uint32_t(rt.format));
+        return false;
+      }
+      if (ssil_out_) backend_->DestroyTexture(ssil_out_), ssil_out_ = 0;
+      ssil_ow_ = ssil_oh_ = 0;
+      gpu::TextureDesc td;
+      td.width = rt.width;
+      td.height = rt.height;
+      td.format = rt.format;
+      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      td.debug_name = "ssil scene";
+      ssil_out_ = backend_->CreateTexture(td);
+      if (!ssil_out_) {
+        if (!ssil_failed_logged_) REXLOG_WARN("gow2_ssil: the scene copy ({}x{}) could not be made", rt.width, rt.height);
+        ssil_failed_logged_ = true;
+        return false;
+      }
+      ssil_ow_ = rt.width, ssil_oh_ = rt.height, ssil_out_format_ = rt.format;
+    }
+    if (ssil_scale_rb_ && backend_->IsReadbackReady(ssil_scale_rb_)) {
+      uint32_t pitch = 0;
+      if (const uint8_t* d = backend_->ReadbackData(ssil_scale_rb_, pitch)) {
+        std::memcpy(ssil_scale_seen_, d, sizeof(ssil_scale_seen_));
+        ssil_scale_have_ = true;
+        XenosSsilSetScale(ssil_scale_seen_[4], ssil_scale_seen_[0], ssil_scale_seen_[5]);
+      }
+      backend_->ReleaseReadback(ssil_scale_rb_);
+      ssil_scale_rb_ = 0;
+    }
+    const uint32_t tricks = XenosSsilTricks();  // bit 0 back faces, 1 difference, 2 temporal, 3 bounces, 4 adaptive
+    const uint32_t albedo = XenosSsilAlbedo();  // read once: the constant and the pass it needs must agree
+    const bool have_motion = motion && mw == w && mh == h;
+    const bool temporal = (tricks & 4u) && have_motion;
+    // The history is only last frame's: a frame without SSIL (off, no depth pyramid, no camera) in between, a cut, or no
+    // accumulation now throws it away (it used to survive SSIL being switched off and on).
+    if (!temporal || reset || ssil_hist_frame_ + 1 != frame_) ssil_hist_valid_ = false;
+    const bool bounce = (tricks & 8u) && temporal && ssil_hist_valid_;
+    const gpu::TextureHandle hist_prev = ssil_hist_[ssil_hist_idx_], hist_cur = ssil_hist_[ssil_hist_idx_ ^ 1u];
+    gpu::ComputeBindings b;
+    b.constant_count = 16;
+    b.constants[2] = 0;
+    // The noise moves from frame to frame only while our temporal pass averages it (up_active_ is also true for
+    // the AO's camera tracking alone, so it used to move - a shimmer - without an upscaler).
+    b.constants[3] = temporal ? uint32_t(frame_ % 64) : 0u;
+    b.constants[4] = std::bit_cast<uint32_t>(k->tan_half_fov[0]);
+    b.constants[5] = std::bit_cast<uint32_t>(k->tan_half_fov[1]);
+    b.constants[6] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_ssil_radius)));
+    b.constants[7] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_ssil_thickness)));
+    b.constants[8] = std::bit_cast<uint32_t>(XenosSsilStrength());
+    b.constants[9] = XenosSsilView();
+    b.constants[10] = albedo;
+    b.constants[11] = uint32_t(std::clamp(REXCVAR_GET(gow2_ssil_slices), 1, 8));
+    b.constants[12] = uint32_t(std::clamp(REXCVAR_GET(gow2_ssil_steps), 2, 16));
+    b.constants[13] = w;
+    b.constants[14] = h;
+    b.constants[15] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_ssil_fade)));
+    const uint32_t gx = (hw + 7) / 8, gy = (hh + 7) / 8;
+    b.constants[0] = hw, b.constants[1] = hh;
+    auto blur = [&](gpu::TextureHandle src, gpu::TextureHandle dst, uint32_t spacing) {
+      b.srv[0] = src;
+      b.srv[1] = ao_depth_;
+      b.srv[2] = b.srv[3] = 0;
+      b.constants[2] = spacing;
+      b.uav_texture = dst;
+      backend_->Dispatch(ssil_blur_pipe_, b, gx, gy, 1);
+    };
+    // 0. The scene's scale (--gow2_ssil_adaptive): radius, thickness, fade and steps for the main pass.
+    AoPassTag(11);  // --gow2_ao_pass_times: 11 scale + normals, 12 light, 13 main, 14 temporal, 15 blur, 16 difference, 17 composite
+    {
+      const auto now = std::chrono::steady_clock::now();
+      // First use, a gap in the frames or a camera cut (known only with the upscaler's motion): jump; else about 0.5 s
+      // to follow.
+      const bool jump = !ssil_scale_init_ || ssil_scale_frame_ + 1 != frame_ || (have_motion && reset);
+      const double dt = jump ? 1.0 : std::chrono::duration<double>(now - ssil_scale_time_).count();
+      ssil_scale_frame_ = frame_;
+      ssil_scale_time_ = now;
+      ssil_scale_init_ = true;
+      // The end points finite and positive, near first, far strictly above it (log2 of both in the shader).
+      const double adapt_near_in = REXCVAR_GET(gow2_ssil_adapt_near), adapt_far_in = REXCVAR_GET(gow2_ssil_adapt_far);
+      const double adapt_near = std::isfinite(adapt_near_in) ? std::clamp(adapt_near_in, 1.0, 1.0e6) : 800.0;
+      const double adapt_far = std::isfinite(adapt_far_in) ? std::clamp(adapt_far_in, adapt_near * 1.01, 2.0e6) : adapt_near * 3.0;
+      gpu::ComputeBindings sb;
+      sb.constant_count = 16;
+      const float c[16] = {float(REXCVAR_GET(gow2_ssil_radius)), float(REXCVAR_GET(gow2_ssil_far_radius)),
+                           float(REXCVAR_GET(gow2_ssil_fade)), float(REXCVAR_GET(gow2_ssil_far_fade)),
+                           float(REXCVAR_GET(gow2_ssil_thickness)), float(REXCVAR_GET(gow2_ssil_far_thickness)),
+                           float(std::clamp(REXCVAR_GET(gow2_ssil_steps), 2, 16)),
+                           float(std::clamp(REXCVAR_GET(gow2_ssil_far_steps), 2, 16)),
+                           float(adapt_near), float(adapt_far),
+                           float(1.0 - std::exp(-std::clamp(dt, 0.0, 1.0) / 0.5)), jump ? 1.0f : 0.0f,
+                           (tricks & 16u) ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+      for (int i = 0; i < 16; ++i) sb.constants[i] = std::bit_cast<uint32_t>(c[i]);
+      sb.srv[0] = ao_depth_;
+      sb.uav_texture = ssil_scale_;
+      backend_->Dispatch(ssil_scale_pipe_, sb, 1, 1, 1);
+      if (!ssil_scale_rb_ && frame_ % 30 == 0) ssil_scale_rb_ = backend_->ReadbackTexture(ssil_scale_, gpu::Rect{0, 0, 2, 1});
+    }
+    // 1. Normals (and view z) at half resolution.
+    b.srv[0] = ao_depth_;
+    b.uav_texture = ssil_normal_;
+    backend_->Dispatch(ssil_normals_pipe_, b, gx, gy, 1);
+    // 2. The light: the scene colour at half resolution (+ last frame's indirect light, bouncing again).
+    AoPassTag(12);
+    b.constants[2] = bounce ? 1u : 0u;
+    b.srv[0] = rt.texture;
+    b.srv[1] = bounce ? hist_prev : 0;
+    b.srv[2] = bounce ? motion : 0;
+    b.srv[3] = ao_depth_;
+    b.uav_texture = ssil_light_;
+    backend_->Dispatch(ssil_light_pipe_, b, gx, gy, 1);
+    // 2b. Albedo "local": the light blurred wide and depth-aware (taps 3, then 9 apart), the brightness around each pixel.
+    if (albedo == 3u) {
+      blur(ssil_light_, ssil_gi2_, 3);
+      blur(ssil_gi2_, ssil_illum_, 9);
+    }
+    // 3. The bounce.
+    AoPassTag(13);
+    b.constants[2] = (tricks & 1u) ? 1u : 0u;
+    b.srv[0] = ao_depth_;
+    b.srv[1] = ssil_light_;
+    b.srv[2] = ssil_normal_;
+    b.srv[3] = ssil_scale_;
+    b.uav_texture = ssil_gi_;
+    backend_->Dispatch(ssil_main_pipe_, b, gx, gy, 1);
+    // 4. Temporal: into this frame's history (the next frame's previous one).
+    gpu::TextureHandle result = ssil_gi_;
+    if (temporal) {
+      AoPassTag(14);
+      b.constants[2] = ssil_hist_valid_ ? 1u : 0u;
+      b.srv[0] = ssil_gi_;
+      b.srv[1] = hist_prev;
+      b.srv[2] = motion;
+      b.srv[3] = ao_depth_;
+      b.uav_texture = hist_cur;
+      backend_->Dispatch(ssil_temporal_pipe_, b, gx, gy, 1);
+      ssil_hist_idx_ ^= 1u;
+      ssil_hist_valid_ = true;
+      ssil_hist_frame_ = frame_;
+      result = hist_cur;
+      ++ssil_temporal_runs_;
+    }
+    // 5. The spatial blur: one pass after the temporal blend, two without it.
+    AoPassTag(15);
+    if (temporal) {
+      blur(result, ssil_gi2_, 1);
+      result = ssil_gi2_;
+    } else {
+      blur(ssil_gi_, ssil_gi2_, 1);
+      blur(ssil_gi2_, ssil_gi_, 2);
+      result = ssil_gi_;
+    }
+    // 6. "Only the difference": minus 80% of the wide blur (taps 3, then 9 apart).
+    if (tricks & 2u) {
+      AoPassTag(16);
+      const gpu::TextureHandle tmp = result == ssil_gi_ ? ssil_gi2_ : ssil_gi_;
+      blur(result, tmp, 3);
+      blur(tmp, ssil_wide_, 9);
+      b.constants[2] = 0;
+      b.srv[0] = result;
+      b.srv[1] = ssil_wide_;
+      b.srv[2] = b.srv[3] = 0;
+      b.uav_texture = tmp;
+      backend_->Dispatch(ssil_diff_pipe_, b, gx, gy, 1);
+      result = tmp;
+    }
+    // 7. The composite, over the whole target.
+    AoPassTag(17);
+    b.constants[0] = rt.width, b.constants[1] = rt.height;
+    b.constants[2] = 0;
+    b.srv[0] = rt.texture;
+    b.srv[1] = result;
+    b.srv[2] = ao_depth_;
+    b.srv[3] = ssil_illum_;
+    b.uav_texture = ssil_out_;
+    backend_->Dispatch(ssil_apply_pipe_, b, (rt.width + 7) / 8, (rt.height + 7) / 8, 1);
+    AoPassTag(0);
+    return true;
+  }
+
   // --gow2_ao_pass_times: tags the GPU stretches of the AO passes; 0 ends the stretch. AoEndFrame adds them up and logs them.
-  static constexpr uint32_t kAoPassTagBase = 0xA0A00000u, kAoPassCount = 11;
+  static constexpr uint32_t kAoPassTagBase = 0xA0A00000u, kAoPassCount = 18;
   void AoPassTag(uint32_t pass) {
     static const bool on = REXCVAR_GET(gow2_ao_pass_times);
     if (on) backend_->SetGpuTag(pass ? kAoPassTagBase + pass : 0u);
@@ -8674,6 +9158,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                     "XeGTAO depth {:.3f} main {:.3f} denoise {:.3f} | pack {:.3f}",
                     ao_pass_ms_[1] / n, ao_pass_ms_[2] / n, ao_pass_ms_[3] / n, ao_pass_ms_[4] / n, ao_pass_ms_[5] / n, ao_pass_ms_[6] / n,
                     ao_pass_ms_[7] / n, ao_pass_ms_[8] / n, ao_pass_ms_[9] / n, ao_pass_ms_[10] / n);
+        if (ssil_ok_) {
+          double ssil_total = 0.0;
+          for (int i = 11; i <= 17; ++i) ssil_total += ao_pass_ms_[i];
+          REXLOG_INFO("gow2_ssil: pass ms/frame: scale + normals {:.3f}, light {:.3f}, main {:.3f}, temporal {:.3f}, blur {:.3f}, "
+                      "difference {:.3f}, composite {:.3f} | total {:.3f}", ao_pass_ms_[11] / n, ao_pass_ms_[12] / n,
+                      ao_pass_ms_[13] / n, ao_pass_ms_[14] / n, ao_pass_ms_[15] / n, ao_pass_ms_[16] / n, ao_pass_ms_[17] / n,
+                      ssil_total / n);
+        }
         ao_pass_ms_ = {};
       }
       const uint64_t total = ao_frames_ok_ + ao_frames_none_;
@@ -8700,6 +9192,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ao_denoise_passes_ = std::clamp(XenosAoDebugDenoisePasses(), 1u, 3u);
       ao_use_cacao_ = cc_ok_ && XenosAoDebugCacao();
       cc_blur_passes_ = std::min(XenosAoDebugCacaoBlur(), 8u);
+    }
+    ssil_done_frame_ = false;  // --gow2_ssil: once a frame
+    if (ssil_ok_) {
+      static const int32_t ssil_every = REXCVAR_GET(gow2_ssil_log);
+      if (ssil_every > 0 && frame_ % uint64_t(ssil_every) == 0) {
+        const uint32_t tr = XenosSsilTricks();
+        REXLOG_INFO("gow2_ssil: frame {}: ran on {} frames ({} with temporal accumulation), {} scene copies without it (no "
+                    "depth pyramid / camera); {} {}, strength {}, albedo {}; back faces {}, difference {}, temporal {}, "
+                    "bounces {}, adaptive {}", frame_, ssil_runs_, ssil_temporal_runs_, ssil_misses_,
+                    XenosSsilOn() ? "on" : "off",
+                    XenosSsilView() == 1 ? "indirect only" : XenosSsilView() == 2 ? "split" : "normal", XenosSsilStrength(),
+                    XenosSsilAlbedo(), tr & 1u ? "on" : "off", tr & 2u ? "on" : "off", tr & 4u ? "on" : "off",
+                    tr & 8u ? "on" : "off", tr & 16u ? "on" : "off");
+        if (ssil_scale_have_)
+          REXLOG_INFO("gow2_ssil: scale: median view z {:.0f} (this frame {:.0f}, {:.0f} texels) -> {:.2f} of the way to "
+                      "open ground: radius {:.0f}, thickness {:.0f}, fade {:.0f}, {:.0f} steps", ssil_scale_seen_[4],
+                      ssil_scale_seen_[6], ssil_scale_seen_[7], ssil_scale_seen_[5], ssil_scale_seen_[0], ssil_scale_seen_[1],
+                      ssil_scale_seen_[2], ssil_scale_seen_[3]);
+        ssil_runs_ = ssil_misses_ = ssil_temporal_runs_ = 0;
+      }
     }
     ao_pp_dest_ = ao_pp_count_ = 0;  // notes/80 s.4: the next frame's chain is found afresh
     ao_skipped_frame_ = false;
@@ -10346,6 +10858,30 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (standin_bounded && pipeline_pending) {  // 0.5.1: wait for the worker, at most this frame's stand-in budget
       if (*standin_left > 0.0 && backend_->WaitGraphicsPipeline(d, *standin_left))
         pipeline = backend_->GetGraphicsPipeline(d, true, &pipeline_pending);
+      // GitHub #287: a full-screen pass still not ready waits once more for its worker, past the frame's budget - at
+      // most one such wait a frame and one per pipeline (its build is under way; skipping it frame after frame until
+      // then showed as a black flash). The time also comes off this frame's full-screen budget below.
+      // Review r16: only for a pass already skipped once (not every new pipeline of a cold start), and at most 4 such
+      // waits a second, so a level load full of new passes stays a few short hitches, not job 632's 2-3 s.
+      const uint64_t fs_hash = pipeline_pending && standin_left == &fullscreen_wait_left_ms_ ? gpu::HashPipelineDesc(d) : 0;
+      const auto fs_now = std::chrono::steady_clock::now();
+      if (fs_hash && fs_now - fullscreen_long_window_start_ >= std::chrono::seconds(1)) {
+        fullscreen_long_window_start_ = fs_now;
+        fullscreen_long_in_window_ = 0;
+      }
+      if (fs_hash && fullscreen_long_wait_ms_ > 0.0 && !fullscreen_long_wait_this_frame_ &&
+          fullscreen_skipped_once_.count(fs_hash) && fullscreen_long_in_window_ < 4 &&
+          fullscreen_long_waited_.size() < 4096 && fullscreen_long_waited_.insert(fs_hash).second) {
+        fullscreen_long_wait_this_frame_ = true;
+        ++fullscreen_long_in_window_;
+        const auto t1 = std::chrono::steady_clock::now();
+        if (backend_->WaitGraphicsPipeline(d, fullscreen_long_wait_ms_))
+          pipeline = backend_->GetGraphicsPipeline(d, true, &pipeline_pending);
+        ++stats_.fullscreen_long_waits;
+        if (!pipeline_pending) ++stats_.fullscreen_long_waits_won;
+        stats_.fullscreen_long_wait_ms += MsSince(t1);
+      }
+      if (fs_hash && pipeline_pending && fullscreen_skipped_once_.size() < 4096) fullscreen_skipped_once_.insert(fs_hash);
       ++stats_.standin_bounded_waits;
       if (pipeline_pending && standin_once) {  // one-shot data: build it now (the old behaviour, for these only)
         pipeline = backend_->GetGraphicsPipeline(d, false, &pipeline_pending);
@@ -11852,7 +12388,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     for (const auto& [a, e] : export_ranges_) {  // in address order
       const uint32_t base = uint32_t(a), size = uint32_t(e - a);
       if (const gpu::ReadbackHandle h = backend_->ReadbackGuest(base, size)) {
-        export_readbacks_.push_back({h, base, size});
+        ExportReadback rb{h, base, size, {}};
+        if (export_settle_) {  // green-vine review: the versions this copy holds (recorded after every export so far)
+          constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
+          const uint32_t first = (base & 0x1FFFFFFFu) >> kShift, last = ((base & 0x1FFFFFFFu) + size - 1) >> kShift;
+          rb.versions.resize(last - first + 1);
+          for (uint32_t p = first; p <= last; ++p)
+            rb.versions[p - first] = watch_->GpuCurrent(p) ? watch_->PageVersion(p) : ~0u;
+        }
+        export_readbacks_.push_back(std::move(rb));
         ++stats_.memexport_readbacks_issued;
       } else {
         ++stats_.memexport_readback_failures;
@@ -11867,14 +12411,46 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (!backend_->IsReadbackReady(e.handle)) return;
       uint32_t pitch = 0;
       const uint8_t* data = backend_->ReadbackData(e.handle, pitch);
+      bool landed = false;
       if (uint8_t* dst = data ? memory_->TranslatePhysical<uint8_t*>(e.base) : nullptr) {
         std::memcpy(dst, data, e.size);
         rex::graphics::NotifyGuestRangeWrittenByObserver(e.base, e.size);
         ++stats_.memexport_readbacks;
         stats_.memexport_readback_bytes += e.size;
+        landed = true;
       }
       backend_->ReleaseReadback(e.handle);
+      ExportReadback done = std::move(export_readbacks_.front());
       export_readbacks_.pop_front();
+      if (landed && !done.versions.empty()) SettleExportPages(done);
+    }
+  }
+
+  // Green-vine review (job 1844): a landed export read-back - guest memory now holds the mirror's bytes for its range.
+  // Its pages that are still at the version the copy saw stop being GPU-current, unless another export over the same
+  // page still waits for its own read-back (gathered or in flight: guest memory lacks that part yet). Before, such
+  // pages stayed GPU-current until a write the watch saw - and on pages no guest view maps writable the watch is never
+  // armed (PhysicalHeap::EnableAccessCallbacks), so a texture later streamed into them kept the old export's bytes from
+  // the mirror. Only pages the landed range covers whole are settled.
+  struct ExportReadback;  // (defined with the members below; r26 B1: named in a parameter type here)
+  void SettleExportPages(const ExportReadback& e) {
+    constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
+    const uint32_t first = (e.base & 0x1FFFFFFFu) >> kShift;
+    for (uint32_t i = 0; i < e.versions.size(); ++i) {
+      if (e.versions[i] == ~0u) continue;
+      const uint32_t p = first + i;
+      const uint64_t pa = uint64_t(p) << kShift, pb = pa + (1u << kShift);
+      // Only whole pages: the bytes of a partly covered page outside the range may be a resolve's (no read-back).
+      if (pa < (e.base & 0x1FFFFFFFu) || pb > uint64_t(e.base & 0x1FFFFFFFu) + e.size) continue;
+      // r26 R3: no scan of the other read-backs - a later export over this page bumped its version (MarkGpuWritten),
+      // so the version check below already leaves it GPU-current. r26 R4: a page that holds a resolution-scaled copy
+      // keeps it (settling would drop the 2x copy for the 1x guest bytes).
+      if (watch_->ScaledCurrent(p)) {
+        ++stats_.export_pages_settle_pending;
+        continue;
+      }
+      if (watch_->SettleGpuPage(p, e.versions[i])) ++stats_.export_pages_settled;
+      else ++stats_.export_pages_settle_moved;
     }
   }
 
@@ -11912,6 +12488,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       watch_->Watch(base, uint32_t(size));
       watch_->MarkGpuWritten(base, uint32_t(size));
       exports_marked_ = true;
+      // Green-vine review (diagnostic): destination pages no guest view maps writable get no write watch (the memory
+      // system skips them), so they stay GPU-current through CPU / file writes until the read-back settles them.
+      if (stats_.export_unwatch_checks < 2048) {  // bounded: QueryProtect takes a heap lock per page and view
+        ++stats_.export_unwatch_checks;
+        if (const uint32_t uw = watch_->UnwatchablePages(base, uint32_t(size))) {
+          stats_.export_pages_unwatchable += uw;
+          if (export_unwatchable_logged_ < 16) {
+            ++export_unwatchable_logged_;
+            REXLOG_INFO("gow2_renderer: memexport frame {} draw {}: {} page(s) of the destination {:08X} (+{:X}) are "
+                        "mapped read-only - the page watch cannot see later CPU or file writes there (green-vine review)",
+                        frame_ + 1, draw_index_, uw, base, uint32_t(size));
+          }
+        }
+      }
       if (memexport_readback_) {
         // Job 041: the exported bytes also go back to guest memory (CPU-path texture loads read it), written by
         // PollExportReadbacks once this submission has completed. Patch 0042: not one readback per draw - Gears 3
@@ -13158,6 +13748,38 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++resolve_early_["resolve: not supported by GetResolveInfo rules"];
       return;
     }
+    // GitHub #257: an exact repeat of the previous copy (see gow2_renderer_skip_repeat_resolves)
+    {
+      std::array<uint32_t, kResolveSigWords> sig{};
+      size_t n = 0;
+      const uint8_t* vw = vtx;
+      for (int i = 0; i < 6; ++i) std::memcpy(&sig[n++], vw + 4 * i, 4);
+      for (uint32_t reg : {uint32_t(rr::reg::PA_SU_VTX_CNTL), uint32_t(rr::reg::PA_SU_SC_MODE_CNTL),
+                           uint32_t(rr::reg::PA_SC_WINDOW_OFFSET), uint32_t(rr::reg::PA_SC_WINDOW_SCISSOR_TL),
+                           uint32_t(rr::reg::PA_SC_WINDOW_SCISSOR_BR), uint32_t(rr::reg::PA_SC_SCREEN_SCISSOR_TL),
+                           uint32_t(rr::reg::PA_SC_SCREEN_SCISSOR_BR), uint32_t(rr::reg::RB_SURFACE_INFO), kRegCopyControl,
+                           rr::reg::kColorInfo[0], rr::reg::kColorInfo[1], rr::reg::kColorInfo[2], rr::reg::kColorInfo[3],
+                           uint32_t(rr::reg::RB_DEPTH_INFO), kRegCopyDestBase, kRegCopyDestPitch, kRegCopyDestInfo})
+        sig[n++] = r[reg];
+      static_assert(6 + 17 == kResolveSigWords, "signature size");
+      const bool clears = Bits(cc, 8, 1) || rg.depth_clear_enable;
+      const bool repeat = resolve_sig_valid_ && first_draw == last_draw && !clears && !info.is_depth &&
+                          sig == resolve_sig_ && f1 == resolve_sig_f1_ && !front_bases_.count(info.dest_base);
+      resolve_sig_ = sig;
+      resolve_sig_f1_ = f1;
+      resolve_sig_valid_ = !clears;  // a copy that clears changes its source: the next one is not a repeat of it
+      if (repeat) {
+        ++stats_.repeat_resolves;
+        // Not while features keep per-copy state of their own (the upscaler's scene-copy count, XeGTAO's chain,
+        // the HUD-less copy, motion vectors) or a trace is on.
+        if (REXCVAR_GET(gow2_renderer_skip_repeat_resolves) && !up_active_ && ao_mode_ != rr::ao::Mode::kGtao &&
+            !hl_format_ && !vel_seen_ && !trace_on_) {
+          ++stats_.repeat_resolves_skipped;
+          ++resolve_early_["exact repeat of the previous copy (GitHub #257)"];
+          return;
+        }
+      }
+    }
     // The emulator writes the destination (to guest memory with --readback_resolve): textures and vertex ranges there
     // are stale for us from now on.
     if (info.dest_extent_length) {
@@ -13609,17 +14231,43 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (ao_ready_ && ao_final_ && ao_multiply_ps_) AoAddPass(*rt);
       else ao_added_frame_ = true;  // once a frame either way
     }
+    // --gow2_ssil (prototype): the frame's scene copy - the one the upscaler's copy picker takes (the first, or with
+    // --gow2_upscale_scene_last_copy the last: Judgment copies its scene mid-frame for translucency first) - gets the
+    // indirect light; the copy (and the upscaler) read ours. With an upscaler it runs inside RunUpscaler, after the motion
+    // vectors are made (temporal accumulation, bounces); with the camera tracking alone (the AO), at that copy, no motion.
+    gpu::TextureHandle ssil_tex = 0;
+    ssil_pending_ = nullptr;
+    ssil_in_upscaler_ = false;
+    // The scene's format is whatever IsSceneColourResolve takes for this game: Gears 2's 16-bit float HDR, Gears 3's
+    // 10:10:10:2 UNORM (low dynamic range; the composite is written in that format, values above 1 clip).
+    if (ssil_ok_ && !ssil_done_frame_ && XenosSsilOn() && up_camera_ && !ms_src && rt->key.msaa == 0 &&
+        rt->scale == up_depth_scale_ && IsSceneColourResolve(info, *rt)) {
+      if (up_active_ && !up_scene_done_) {
+        ssil_pending_ = rt;  // decided below: only if the copy picker takes this copy
+      } else if (!up_active_) {
+        // Review r13 (PR #303): with the upscaler path active and its scene copy already taken, a later copy would get
+        // the indirect light without motion vectors and not be the copy the upscaler used - so only without it.
+        ssil_done_frame_ = true;
+        if (RunSsil(*rt, 0, 0, 0, true)) ssil_tex = ssil_out_, ++ssil_runs_;
+        else ++ssil_misses_;
+      }
+    }
     // Upscalers (notes/64): the frame's scene colour goes through DLSS / FSR, and the resolve reads their output.
-    gpu::TextureHandle resolve_source = rt->texture;
+    gpu::TextureHandle resolve_source = ssil_tex ? ssil_tex : rt->texture;
+    up_colour_in_ = ssil_tex;
     uint32_t source_scale = rt->scale;  // patch 0141: the upscaler's output is at the output scale
     // Every scene copy is counted, also after the one that was taken (notes/80 s.11).
+    bool scene_taken = false;  // --gow2_ssil: this is the frame's scene copy
     if (up_active_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt) && up_scene_copy_.Take() && !up_scene_done_) {
       up_scene_done_ = true;
+      scene_taken = true;
       up_output_upscaled_ = false;
       // Notes/80: camera only (the AO) - the scene stays as it is, nothing to run here.
       if (const gpu::TextureHandle o = up_camera_only_ ? gpu::TextureHandle(0) : RunUpscaler(*rt, w, h)) {
         resolve_source = o;
         if (up_output_upscaled_) source_scale = res_scale_;
+      } else if (ssil_in_upscaler_) {
+        resolve_source = ssil_out_;  // the upscaler stopped after SSIL ran: the copy still gets it
       }
       if (up_scale_in_) up_flip_after_resolve_ = true;  // patch 0141: the rest of the frame at the output scale
     } else if (up_active_ && !up_scene_done_ && info.width_div_8 * 8 >= kSceneMinWidth && up_diag_lines_ < 12) {
@@ -13629,6 +14277,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   uint32_t(rt->format), uint32_t(gpu::Format::kR16G16B16A16Float), info.x0, info.y0,
                   info.width_div_8 * 8, info.height_div_8 * 8, rt->scale);
     }
+    // The taken copy, but RunUpscaler stopped before SSIL or wasn't run (the AO's camera tracking alone): without motion.
+    // A copy the picker skipped gets nothing (it used to run here and take the frame's turn - Judgment's mid-frame copy).
+    if (ssil_pending_ == rt && !ssil_in_upscaler_ && scene_taken) {
+      ssil_done_frame_ = true;
+      if (RunSsil(*rt, 0, 0, 0, true)) {
+        if (resolve_source == rt->texture) resolve_source = ssil_out_;
+        ++ssil_runs_;
+      } else {
+        ++ssil_misses_;
+      }
+    }
+    ssil_pending_ = nullptr;
+    up_colour_in_ = 0;
     const gpu::TextureHandle dest = DestinationTexture(info, words);
     if (!dest) return log_not_compared("destination texture");
     const uint32_t dx = info.dest_offset_x_div_8 * 8, dy = info.dest_offset_y_div_8 * 8;
@@ -13864,12 +14525,17 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (stats_.memexport_draws || stats_.memexport_only_draws) {  // notes/11 (this summary's frames)
       REXLOG_INFO("gow2_renderer: memexport: draws {} (export-only {}, pixel-shader exports {}), ranges marked {} ({:.2f} "
                   "MB), vertex ranges read from exports {}, readbacks into guest memory {} ({:.2f} MB, {} failed, {} "
-                  "waited for by texture loads; 0042: {} ranges merged into {} readbacks)",
+                  "waited for by texture loads; 0042: {} ranges merged into {} readbacks) | green-vine: pages settled "
+                  "after their read-back {} ({}; not settled: written since {}, scaled copy kept {}), "
+                  "destination pages mapped read-only {} (in the first {} export ranges)",
                   stats_.memexport_draws + stats_.memexport_only_draws, stats_.memexport_only_draws,
                   stats_.memexport_ps_draws, stats_.memexport_ranges, double(stats_.memexport_bytes) / 1048576.0,
                   stats_.vertex_from_exports, stats_.memexport_readbacks,
                   double(stats_.memexport_readback_bytes) / 1048576.0, stats_.memexport_readback_failures,
-                  stats_.memexport_readback_waits, stats_.memexport_ranges_gathered, stats_.memexport_readbacks_issued);
+                  stats_.memexport_readback_waits, stats_.memexport_ranges_gathered, stats_.memexport_readbacks_issued,
+                  stats_.export_pages_settled, export_settle_ ? "on" : "off - --gow2_renderer_export_settle=false",
+                  stats_.export_pages_settle_moved, stats_.export_pages_settle_pending, stats_.export_pages_unwatchable,
+                  stats_.export_unwatch_checks);
     }
     if (words_to_guest_through_ && textures_) {  // job 047 (this summary's frames)
       const rr::TextureCacheStats& ts = textures_->Stats();
@@ -13895,6 +14561,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         REXLOG_INFO("gow2_renderer: stand-in pipelines waited on a worker (bounded): {}, not ready in time and skipped {} "
                     "(drawn once ready), built synchronously (memexport) {}",
                     stats_.standin_bounded_waits, stats_.standin_bounded_skips, stats_.standin_bounded_sync);
+      if (stats_.fullscreen_long_waits)  // GitHub #287
+        REXLOG_INFO("gow2_renderer: full-screen passes waited once more for their pipeline (GitHub #287): {}, ready in "
+                    "time {}, {:.1f} ms in total", stats_.fullscreen_long_waits, stats_.fullscreen_long_waits_won,
+                    stats_.fullscreen_long_wait_ms);
     }
     if (stats_.shader_waits) {  // shader pop-in (this summary's frames)
       REXLOG_INFO("gow2_renderer: shader waits (budget {} ms/frame): {} draws waited for their shader, {} got it in "
@@ -14191,13 +14861,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "duplicate slots dropped {} | colour tiles transferred {} (same format) {} (guest words: other "
                   "format / from depth) unknown source {} | colour -> depth tiles {} | colour resolve-clears {} | 16-bit "
                   "fixed draws blending multiplicatively (1/32 scale wrong there) {} | colour resolves done {}, "
-                  "compared {} matched {} (all time) | resolve-only view targets created {} | as draws (0119) {}",
+                  "compared {} matched {} (all time) | resolve-only view targets created {} | as draws (0119) {} | exact "
+                  "repeats (#257) {} skipped {}",
                   frame_ - uint64_t(log_every_) + 1, frame_, stats_.colour_drawn,
                   not_modelled.empty() ? std::string("none") : not_modelled, stats_.mrt_duplicates,
                   stats_.colour_transferred_tiles, stats_.colour_word_transferred_tiles, stats_.colour_unknown_tiles,
                   stats_.colour_to_depth_tiles, stats_.colour_clears_resolve, stats_.fixed16_multiplicative_blends,
                   stats_.colour_resolves_compared, colour_compared_, colour_matched_, stats_.resolve_view_targets,
-                  stats_.resolve_draws);
+                  stats_.resolve_draws, stats_.repeat_resolves, stats_.repeat_resolves_skipped);
     }
     if (queries_mode_ != QueriesMode::kOff) {  // upl-s4c
       const OcclusionStats& o = occ_stats_;
@@ -14276,6 +14947,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // per render target the frame it was last drawn in and the one before (Edge draw_target_last_frames_).
   double standin_wait_budget_ms_ = 0.0, standin_wait_left_ms_ = 0.0;
   double fullscreen_wait_left_ms_ = 0.0;  // job 621
+  double fullscreen_long_wait_ms_ = 0.0;   // GitHub #287
+  bool fullscreen_long_wait_this_frame_ = false;
+  std::unordered_set<uint64_t> fullscreen_long_waited_;  // pipelines (HashPipelineDesc) that had their one long wait
+  std::unordered_set<uint64_t> fullscreen_skipped_once_;  // review r16: full-screen pipelines not ready at least once
+  std::chrono::steady_clock::time_point fullscreen_long_window_start_{};
+  uint32_t fullscreen_long_in_window_ = 0;  // long waits in the current one-second window (at most 4)
   std::map<std::string, uint64_t> standin_reasons_;
   std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> standin_target_frames_;
   double shader_wait_left_ms_ = 0.0;    // what is left of it this frame
@@ -14343,6 +15020,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::unique_ptr<rr::GuestWatch> watch_;
   std::unique_ptr<rr::TextureCache> textures_;
   rr::TextureCacheStats tex_prev_;  // patch 0137: the counters at the previous log line
+  struct TextureLoadLogPrev {  // 0.6.2 (#311): the counters at the previous log line
+    uint64_t drops = 0, failures = 0, retries = 0, zeroed = 0, zeroed_bytes = 0, zero_skipped = 0;
+    uint64_t k[7] = {};
+  } tl_prev_;
   double set_textures_ms_ = 0, set_textures_prev_ms_ = 0;  // 0.4.5 texture-time research
   uint32_t submit_draws_ = 0, draws_since_submit_ = 0;  // patch 0138
   bool submit_auto_ = false;        // 0.6.1: --gow2_renderer_submit_draws=-1
@@ -14548,6 +15229,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint64_t frame_ = 0, compared_ = 0, matched_ = 0, incomplete_ = 0, explained_ = 0;
   uint64_t colour_compared_ = 0, colour_matched_ = 0;
   uint32_t draw_index_ = 0, copy_index_ = 0, last_copy_draw_ = 0, drawn_since_copy_ = 0;
+  // GitHub #257: the registers (and rectangle vertex words) of the previous copy, to recognise an exact repeat
+  static constexpr size_t kResolveSigWords = 23;
+  std::array<uint32_t, kResolveSigWords> resolve_sig_{};
+  bool resolve_sig_valid_ = false;
+  uint32_t resolve_sig_f1_ = 0;
   uint32_t pending_this_frame_ = 0, shader_errors_this_frame_ = 0, pipeline_failures_this_frame_ = 0;
   double pipeline_wait_ms_frame_ = 0.0;  // job 037: time waited for new pipelines in this frame
   double depth_wait_left_ms_ = 0.0;      // patch 0132: this frame's wait left for depth-only / shadow pipelines
@@ -14587,7 +15273,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   struct ExportReadback {
     gpu::ReadbackHandle handle = 0;
     uint32_t base = 0, size = 0;
+    std::vector<uint32_t> versions;  // green-vine review: per page from base's page, the GPU-current version copied (~0u: none)
   };
+  bool export_settle_ = false;  // --gow2_renderer_export_settle (green-vine review)
+  uint32_t export_unwatchable_logged_ = 0;
+  uint64_t watch_exact_logged_ = 0;  // GuestWatch::GpuPagesBumpedExact at the last summary
   std::deque<ExportReadback> export_readbacks_;
   std::map<uint64_t, uint64_t> export_ranges_;  // patch 0042: start -> end, gathered this frame, merged
   uint32_t memexport_logged_ = 0;

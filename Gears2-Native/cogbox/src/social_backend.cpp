@@ -6,15 +6,16 @@
 #include "../third_party/nlohmann/json.hpp"
 
 #include <memory>
+#include <chrono>
 #include <mutex>
 
 namespace {
 std::mutex g_name_mu;
 std::string g_claim_name;   // the profile's name for a claim (SAVE NAME changes it before the claim is made)
 
-// The launcher's account: the profile's identity.json (a game may have made it), else ONE claim under the profile's
-// name. Kept in memory even when the file can't be written: never a second account. Retried only when the server did
-// not answer (no account was made then).
+// The launcher's account: the profile's identity.json (a game may have made it, or left it without its token), else
+// ONE claim under the profile's name, used only once it is saved there (0.6.2, GitHub #302). Asked again on later
+// calls while a game may be writing the file or the server did not answer.
 struct LauncherAccount {
     std::mutex mu;
     std::optional<ServerUrl> url;
@@ -23,7 +24,17 @@ struct LauncherAccount {
     std::optional<SocialAccount> acc;
     bool given_up = false;
     std::string error;
+    std::optional<SocialAccount> unsaved;   // r36: claimed, but its file couldn't be written yet (held): written later
+    std::chrono::steady_clock::time_point busy_since{};   // r36: the file has been held since (permissions after 60 s)
 };
+}  // namespace
+
+namespace {
+const char* const kBusyError = "The online account file is busy right now (OneDrive or a virus scanner may be holding it). COGBox will try again.";
+const char* const kHeldError = "COGBox still can't read the online account file (identity.json in the profile folder). Check that "
+                               "your Windows user may read it (Properties > Security) and that no other program keeps it open.";
+const char* const kUnsavedError = "The online account is in use but its file couldn't be saved yet (OneDrive or a virus scanner "
+                                  "may be holding it). COGBox will save it again shortly - keep COGBox open a moment.";
 }  // namespace
 
 SocialBackend launcher_backend(const std::string& server_url, const std::string& identity_dir, const std::string& name) {
@@ -34,20 +45,109 @@ SocialBackend launcher_backend(const std::string& server_url, const std::string&
     SocialBackend b;
     b.account = [st]() -> std::optional<SocialAccount> {
         std::lock_guard<std::mutex> lk(st->mu);   // the worker is the only caller; the lock guards `renamed`
-        if (st->acc || !st->url) return st->acc;
-        st->acc = read_account(st->dir);
-        if (st->acc || st->given_up) return st->acc;
+        if (st->acc) {   // r36: a claimed account whose file couldn't be written is saved as soon as it can be
+            if (st->unsaved && write_account_replace(st->dir, *st->unsaved)) { st->unsaved.reset(); if (st->error == kUnsavedError) st->error.clear(); }
+            return st->acc;
+        }
+        if (!st->url) return st->acc;
+        // 0.6.2 (#302 hardening): a file that exists but could not be read just now (OneDrive / antivirus holding it) is
+        // "unknown", not "no account": nothing is claimed, set aside or replaced for it - this is asked again later.
+        bool busy = false;
+        st->acc = read_account(st->dir, &busy);
+        if (st->acc || st->given_up) { if (st->acc) st->error.clear(); return st->acc; }
+        if (busy) {   // never claims, sets aside or replaces; after a minute held the message names permissions too
+            const auto now = std::chrono::steady_clock::now();
+            if (st->busy_since == std::chrono::steady_clock::time_point{}) st->busy_since = now;
+            st->error = now - st->busy_since > std::chrono::seconds(60) ? kHeldError : kBusyError;
+            return st->acc;
+        }
+        st->busy_since = {};
+        if (st->error == kBusyError || st->error == kHeldError) st->error.clear();
         std::string n;
         {
             std::lock_guard<std::mutex> g(g_name_mu);
             n = !g_claim_name.empty() ? g_claim_name : *st->name;
         }
-        const std::string body = nlohmann::json{ { "display_name", n.empty() ? std::string("Player") : n } }.dump();
+        if (n.empty()) n = "Player";
+        // 0.6.2 GitHub #302 (a new #number - a new account - every start, friends gone): an account the launcher can't
+        // keep in identity.json is a new one at every start, so the launcher never runs on an account it hasn't saved:
+        // 1. A folder that can't be written: no claim at all (each start would leave another account on the server);
+        //    the reason is shown on the Social tab.
+        // 2. identity.json without its token: a game writes the file before its claim, and a claim that never completed
+        //    (server not reached, game closed) leaves it so. The launcher completes it with a claim for its own uuid. A
+        //    file changed in the last 30 s is left alone (a game's claim may be on its way; this is asked again later).
+        //    If the server already knows that uuid and the file still has no token, it is set aside (kept) and a new
+        //    account is made.
+        // 3. An unreadable identity.json is set aside (kept) before a new account is made.
+        if (!account_dir_writable(st->dir)) {
+            st->given_up = true;
+            st->error = "COGBox can't save the online account in the profile folder (" + st->dir + "), so friends would be "
+                        "lost at every start. Move COGBox to a folder you can write to (not Program Files).";
+            return st->acc;
+        }
+        const int age = account_file_age_seconds(st->dir);
+        bool part_busy = false;
+        const auto part = read_account_partial(st->dir, &part_busy);
+        if (part_busy) {   // it was readable a moment ago and is held now: never "unreadable", never set aside
+            st->error = kBusyError;
+            return st->acc;
+        }
+        if (part && part->token.empty()) {
+            if (age >= 0 && age < 30) return st->acc;   // a game may be claiming it right now
+            clear_account_read_only(st->dir);   // r6 RC2: a read-only file would take the claim and not its token
+            const std::string body = nlohmann::json{ { "uuid", part->uuid }, { "display_name", n } }.dump();
+            const HttpResult r = social_http(*st->url, { "POST", "/api/v1/auth/claim", body }, nullptr);
+            if (auto f = read_account(st->dir)) { st->acc = f; return st->acc; }   // a game completed it meanwhile: its own
+            if (auto c = r.status == 200 ? parse_claim(r.body) : std::nullopt) {
+                if (!write_account_replace(st->dir, *c)) {
+                    // r36 B1: the claim succeeded - dropping its token would make the server refuse this uuid next start
+                    // and a new #number would follow (#302). Keep it for this session and write the file again later.
+                    st->acc = c;
+                    st->unsaved = c;
+                    st->error = kUnsavedError;
+                    return st->acc;
+                }
+                st->acc = c;
+                return st->acc;
+            }
+            if (r.status != 401) {   // not reached, or refused for another reason: the file stays as it is
+                if (!claim_retry(r.status)) {
+                    st->given_up = true;
+                    st->error = server_error(r.body);
+                    if (st->error.empty()) st->error = "The online server refused the profile's account.";
+                }
+                return st->acc;
+            }
+            bool again_busy = false;
+            const auto again = read_account_partial(st->dir, &again_busy);
+            if (again_busy) return st->acc;   // held right now: look again later
+            if (!again || again->uuid != part->uuid || !again->token.empty()) return st->acc;   // changed meanwhile: look again later
+            if (!set_account_aside(st->dir, "no-token")) {
+                st->given_up = true;
+                st->error = "The profile's online account file can't be replaced (" + st->dir + "\\identity.json).";
+                return st->acc;
+            }
+        } else if (!part && age >= 0) {   // there, but unreadable (or not an account)
+            // (a file dated in the future - a clock set back - counts as old)
+            if (age < 30) return st->acc;   // (a game may be writing it)
+            if (!set_account_aside(st->dir, "unreadable")) {
+                st->given_up = true;
+                st->error = "The profile's online account file can't be read or replaced (" + st->dir + "\\identity.json).";
+                return st->acc;
+            }
+        }
+        const std::string body = nlohmann::json{ { "display_name", n } }.dump();
         const HttpResult r = social_http(*st->url, { "POST", "/api/v1/auth/claim", body }, nullptr);
         if (auto c = r.status == 200 ? parse_claim(r.body) : std::nullopt) {
             if (!write_account_exclusive(st->dir, *c)) {
-                if (auto f = read_account(st->dir)) c = f;   // a game made one at the same moment: its own wins
-                else st->error = "Couldn't save the online account in the profile folder.";
+                // a game made one at the same moment: its own wins (a token-less one is completed on a later call)
+                bool b1 = false, b2 = false;
+                if (auto f = read_account(st->dir, &b1)) st->acc = f;
+                else if (!b1 && !read_account_partial(st->dir, &b2) && !b2) {   // r6 RC1: nothing usable there and it can't be made - never claim again
+                    st->given_up = true;
+                    st->error = "Couldn't save the online account in the profile folder (" + st->dir + "\\identity.json).";
+                }
+                return st->acc;
             }
             st->acc = c;
         } else if (!claim_retry(r.status)) {

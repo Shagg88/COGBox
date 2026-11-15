@@ -21,6 +21,7 @@
 
 #include "gow3_addresses.h"
 
+#include <atomic>
 #include <string>
 
 REXCVAR_DEFINE_BOOL(gow3_cheats, false, "Gears3",
@@ -87,7 +88,11 @@ void Gow3Tu6PackageHashOk(PPCRegister& r9) {
 #define GOW3_JOIN2(a, b) a##b
 #define GOW3_JOIN(a, b) GOW3_JOIN2(a, b)
 extern "C" void GOW3_JOIN(__imp__, GOW3_MAX_TICK_RATE)(PPCContext& __restrict ctx, uint8_t* base);
+extern std::atomic<uint32_t> g_tick_hook_hits;                           // game_patches.cpp (GitHub #313)
+void Gow3NoteTickCall(uint32_t hits_before, double result);               // game_patches.cpp
 extern "C" void GOW3_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
+  const uint32_t hits_before = g_tick_hook_hits.load(std::memory_order_relaxed);
   GOW3_JOIN(__imp__, GOW3_MAX_TICK_RATE)(ctx, base);
+  Gow3NoteTickCall(hits_before, ctx.f1.f64);  // read-only: counts the ticks that did not reach the limiter hook
   Ue3ConsoleRunQueued(ctx, base);
 }

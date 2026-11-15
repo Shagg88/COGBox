@@ -56,7 +56,7 @@ void report_share(App &a, int g, const std::string &zip, const std::string &what
     const std::string title = std::string(d.name) + ": " + (what.empty() ? "describe the problem here" : what.substr(0, 80));
     const std::string body = std::string("**What happened:** \n\n**Where in the game (chapter / menu / loading):** \n\n**Does it happen every time?** \n\n---\n") +
         "Game: " + d.name + "\nCOGBox: " COGBOX_VERSION "\nGraphics: " + (gpus.empty() ? "unknown" : gpus) +
-        (a.wine ? "\nLinux / Steam Deck: " + proton::summary(a.proton) : std::string()) +   // proton049
+        (a.wine ? std::string(a.mac ? "\nMac (CrossOver): " : "\nLinux / Steam Deck: ") + proton::summary(a.proton) : std::string()) +   // proton049
         (what.empty() ? "" : "\nThe launcher's reading: " + what) +
         "\n\nPlease attach the report zip (" + zip.substr(zip.find_last_of('\\') + 1) + ") before you submit.\n";
     shell_select(zip);
@@ -220,6 +220,8 @@ void env_refresh(App &a, int g)
     e.g2_disc_ini_edits = g == G_GEARS2 && !st.portExeDisc.empty() && file_has(st.portExeDisc, "~=");
     e.gpus = a.gpus;
     e.gpu_name = gs::main_gpu(a.gpus);
+    e.graphics_cards.clear();   // 0.6.2 (GitHub #304)
+    for (const GpuCard &c : a.gpuCards) e.graphics_cards.push_back(c.name);
     int n = 0;
     SDL_DisplayID *ids = SDL_GetDisplays(&n);
     e.screen_count = std::max(1, n);
@@ -238,6 +240,7 @@ void env_refresh(App &a, int g)
     e.wine = a.wine;   // job 523
     e.mac = a.mac;     // job 643
     e.steam_deck = a.proton.steamDeck;   // proton049
+    e.low_port_start = a.proton.lowPortStart;   // 0.6.2 R4
     e.deck_lcd = a.proton.deckLcd;
     e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab); GitHub #154: this game's own
     for (const gs::KeyAction &k : gs::key_actions((gs::Game)g)) {
@@ -560,6 +563,11 @@ static void keys_section(App &a, int g)
         a.ini.save();
         env_refresh(a, g);
     };
+    // GitHub #281: the keys were shown (and could be changed) with Keyboard and mouse off - the player pressed the key the
+    // list showed at the title screen and nothing happened. Say so above the list while it is off.
+    if (!a.cur[g].b("Mnk"))
+        ui_note("Keyboard and mouse is off - these keys do nothing in the game until it is turned on (Keyboard and mouse, "
+                "above).", col::amber);
     if (!keyNote.empty()) ui_note(keyNote, col::amber);
     const bool capturing = capture >= 0;
     if (capturing) ImGui::BeginDisabled();   // while waiting for a key, Space / Enter mustn't press a button
@@ -720,7 +728,12 @@ static void option_row(App &a, int g, const gs::Option &o)
         for (std::string &it : items) it = tr(it);   // 0.2.0
         // notes/83: AMD FSR frame generation runs on Vulkan too, experimental there
         if (o.id == "FrameGen" && items.size() > 1 && gs::runs_vulkan(a.cur[g], a.env[g])) items[1] += std::string(" ") + tr("(experimental on Vulkan)");
-        if (ImGui::BeginCombo("##v", items.empty() ? "" : items[idx].c_str())) {
+        // 0.6.2 Proton review (R11): settings from Windows say DirectX 12, but "Graphics API on Proton / Wine" = Automatic
+        // runs Vulkan - the closed box says what the game will actually run
+        std::string preview = items.empty() ? std::string() : items[idx];   // (the closed box; the list keeps the plain names)
+        if (o.id == "Api" && a.env[g].wine && a.proton.proton && !a.env[g].mac && idx == 0 && gs::runs_vulkan(a.cur[g], a.env[g]))
+            preview += std::string(" ") + tr("(Proton runs Vulkan)");
+        if (ImGui::BeginCombo("##v", preview.c_str())) {
             // 0.2.1: Render resolution lists 1080p in size order; the saved value is still the original index
             std::vector<int> ord;
             for (int i = 0; i < (int)items.size(); i++) ord.push_back(i);
@@ -777,6 +790,33 @@ static void option_row(App &a, int g, const gs::Option &o)
         break;
     }
     case gs::Kind::Text: {
+        if (o.id == "GraphicsCard") {
+            // 0.6.2 (GitHub #304): a list of the PC's graphics cards, by name. Automatic = nothing saved (the game picks).
+            // A saved card this PC doesn't have (any more) shows as missing and is not sent - Automatic is used instead.
+            const std::string cur = a.cur[g].str(o.id);
+            auto label = [](const GpuCard &c) {
+                char b[48];
+                if (c.mb >= 1024) snprintf(b, sizeof b, " (%.0f GB)", c.mb / 1024.0); else snprintf(b, sizeof b, " (%u MB)", c.mb);
+                return c.name + b;
+            };
+            std::string preview = tr("Automatic");
+            bool known = cur.empty();
+            for (const GpuCard &c : a.gpuCards)
+                if (!cur.empty() && gs::graphics_card_present(a.env[g], cur) && _stricmp(c.name.c_str(), cur.c_str()) == 0) { preview = label(c); known = true; }
+            if (!known) preview = cur + " " + tr("(not found - Automatic is used)");
+            if (ImGui::BeginCombo("##v", preview.c_str())) {
+                if (ImGui::Selectable(tr("Automatic"), cur.empty())) { if (!cur.empty()) { a.cur[g].t[o.id] = std::string(); a.dirty[g] = true; } }
+                for (const GpuCard &c : a.gpuCards) {
+                    ImGui::PushID(c.name.c_str());
+                    const bool sel = !cur.empty() && _stricmp(c.name.c_str(), cur.c_str()) == 0;
+                    if (ImGui::Selectable(label(c).c_str(), sel)) { if (c.name != cur) { a.cur[g].t[o.id] = c.name; a.dirty[g] = true; } }
+                    ImGui::PopID();
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            break;
+        }
         // 0.4.8 (GitHub #229): a one-line text box. Only the option's characters can be typed (gs::text_char_ok) and at
         // most max_len; the value kept is gs::sanitize_text's (what isn't valid is dropped and said so under the row).
         static char buf[512];
@@ -834,6 +874,12 @@ static void option_row(App &a, int g, const gs::Option &o)
             ImGui::EndTooltip();
         }
     } else if (tipRow == id) tipRow = 0;
+    // 0.6.2 (GitHub #304): a card saved before that this PC doesn't have now (removed, or a different PC) - say so, and what happens
+    if (av.ok && o.id == "GraphicsCard") {
+        const std::string cur = a.cur[g].str(o.id);
+        if (!cur.empty() && !gs::graphics_card_present(a.env[g], cur))
+            ui_note("The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic).", col::amber);
+    }
     // GitHub #90: a language saved before (or from another copy) that this copy doesn't have - say so before the launch,
     // with what the game uses instead (the launcher doesn't pass it, gears_settings build_args)
     if (av.ok && (o.id == "Lang" || o.id == "VoiceLang")) {
@@ -1003,12 +1049,14 @@ static AutoPlan auto_plan(App &a, int g)
     if (const auto *ro = gs::find_option((gs::Game)g, "RealOcclusion")) p.set.push_back({ "RealOcclusion", (int)ro->def });   // job 666: the game's default (on in Gears 3 / Judgment)
     static const char *tierName[] = { "entry level / integrated / Steam Deck", "mid range", "high end" };
     static const char *resName[] = { "1x - 720p", "2x - 1440p", "3x - 4K", "4x - 5K", "Match my monitor (native)", "1080p (720p upscaled)" };
-    static const char *fpsName[] = { "30", "45", "60", "90", "120", "144", "165", "Unlimited" };
+    // the Frame rate limit option's own names (a separate list here had no "40" and was off by one from 45 up)
+    std::string fpsText = std::to_string(fps);
+    if (const auto *fc = gs::find_option((gs::Game)g, "FrameCap"); fc && fps >= 0 && fps < (int)fc->choices.size()) fpsText = fc->choices[fps];
     char b[512];
     snprintf(b, sizeof b, "Found: %s (%u MB video memory), screen %dx%d at %d Hz%s - %s.\n\n", p.gpu.empty() ? "an unknown graphics card" : p.gpu.c_str(),
              p.vramMB, sw, sh, hz, a.env[g].wine ? ", Wine / Proton" : "", tierName[p.tier]);
     p.text = b;
-    p.text += std::string("Render resolution: ") + resName[res] + "\nAnti-aliasing: SMAA\nFrame rate limit: " + fpsName[fps] +
+    p.text += std::string("Render resolution: ") + resName[res] + "\nAnti-aliasing: SMAA\nFrame rate limit: " + fpsText +
               "\nVsync: on\nTexture memory: " + (pool == 2 ? "Large (256 MB)" : "Standard") + "\nSharper textures (16x anisotropic): " +
               (p.tier >= 1 ? "on" : "off") + "\nSmooth texture detail steps (trilinear): on\nFrame generation: off" +
               (a.env[g].wine ? "" : "\nGraphics API: DirectX 12") + "\n\nGameplay and controls are not changed. Apply?";
@@ -1079,7 +1127,7 @@ static void mods_tab(App &a, int g)
         ui_tip(ml[g].empty() ? k_noModsTip : k_modsTip);
         if (running) ImGui::EndDisabled();
         ImGui::SameLine();
-        if (small_button("Mods folder")) { make_dirs(mods_dir(g)); shell_open(mods_dir(g)); }
+        if (small_button("Mods folder")) { make_dirs(mods_dir(g)); open_folder(a, mods_dir(g)); }
         ui_tip(k_noModsTip);
         if (changed) { mlAt[g] = 0; env_refresh(a, g); }
     }
@@ -1113,7 +1161,7 @@ static void about_tab(App &a, int g)
 
     // ---- proton049: LINUX / STEAM DECK - what COGBox found, and the recommended settings
     if (a.wine) {
-        ui_section(a.proton.steamDeck ? "STEAM DECK" : "LINUX");
+        ui_section(a.proton.steamDeck ? "STEAM DECK" : a.mac ? "MAC (CROSSOVER)" : "LINUX");   // 0.6.2 review: not "LINUX" on a Mac
         lamp_line(a.proton.proton || a.mac ? 1 : 2, std::string(tr("Running through")) + " " + proton::summary(a.proton),
                   a.proton.proton || a.mac ? "" : "plain Wine: COGBox is tested with Steam's Proton (see the README's Linux and Steam Deck section)");
         if (!a.mac) {
@@ -1169,14 +1217,28 @@ static void about_tab(App &a, int g)
                                                      " - unzip the release again, keeping its folders." : "Port: " + shown_path(a, exe));
     // 0.2.0: downloadable content from the player's own console; one compact list under the copy
     const std::vector<DlcItem> &dl = dlc_list(g);
+    int dupes = 0;
     for (size_t i = 0; i < dl.size(); i++) {
         ImGui::PushID((int)i + 7000);
-        lamp_line(1, dl[i].title + (dl[i].title != dl[i].name ? "  (" + dl[i].name + ")" : ""));
+        // GitHub #283: a package another installed one already covers (same files, same contents) is marked
+        const bool dup = !dl[i].dupOfName.empty();
+        dupes += dup;
+        lamp_line(dup ? 2 : 1, dl[i].title + (dl[i].title != dl[i].name ? "  (" + dl[i].name + ")" : "") +
+                                   (dup ? "  -  duplicate of \"" + dl[i].dupOf + "\" - can be removed" : ""),
+                  dup ? "Everything in this package is also in the other one, with the same contents, so the game gets the same items twice "
+                        "(for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched." : "");
         ImGui::SameLine();
-        if (busy || running) ImGui::BeginDisabled();
+        const bool off = busy || running || dlc_dupes_running();   // r25: not while the duplicate check reads the files
+        if (off) ImGui::BeginDisabled();
         if (small_button("Remove")) dlc_remove_ask(a, g, dl[i]);
-        if (busy || running) ImGui::EndDisabled();
+        if (off) ImGui::EndDisabled();
         ImGui::PopID();
+    }
+    if (dl.size() > 1 && dlc_dupes_checking(g)) lamp_line(0, "Checking for duplicates...");   // r22 R1: on a worker thread
+    else if (dupes) {   // GitHub #283: all of them in one go
+        if (busy || running) ImGui::BeginDisabled();
+        if (small_button("Remove duplicates")) dlc_remove_dupes_ask(a, g);
+        if (busy || running) ImGui::EndDisabled();
     }
     // 0.4.6: drag and drop is the only way to add a copy, title update or DLC
     ImGui::Dummy(ImVec2(0, S(2)));
@@ -1189,9 +1251,9 @@ static void about_tab(App &a, int g)
 
     // ---- FOLDERS: folders, saves, shaders and desktop shortcuts
     ui_section("FOLDERS");
-    if (small_button("Saves")) { make_dirs(game_user_dir(g)); shell_open(game_user_dir(g)); }
+    if (small_button("Saves")) { make_dirs(game_user_dir(g)); open_folder(a, game_user_dir(g)); }
     ImGui::SameLine();
-    if (small_button("Logs")) { make_dirs(game_logs_dir(g)); shell_open(game_logs_dir(g)); }
+    if (small_button("Logs")) { make_dirs(game_logs_dir(g)); open_folder(a, game_logs_dir(g)); }
     ImGui::SameLine();
     if (small_button("Back up saves")) {
         if (running) set_message(a, std::string(d.name) + " is running - close it first, so the save is complete.", true);
@@ -1218,14 +1280,20 @@ static void about_tab(App &a, int g)
     }
     // 0.2.0: desktop shortcuts - COGBox itself, and this game (it opens COGBox and starts the game)
     static const char *k_pinTip = "To pin one to the taskbar or Start, right-click the shortcut and choose Pin (Windows doesn't let programs do that themselves).";
-    if (small_button("Desktop shortcut: COGBox")) {
+    // 0.6.2 Proton / CrossOver review: under Wine a .lnk lands on Wine's own desktop inside the prefix / bottle, which the
+    // player never sees - say how to get a one-game entry instead
+    if (a.wine && a.mac)
+        ui_note(std::string("Desktop shortcuts: in CrossOver, use Run Command, add --play ") + d.key + " after CogBox.exe and choose Save Command as a Launcher - it starts this game straight away.");
+    else if (a.wine)
+        ui_note(std::string("Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to --play ") + d.key + " - it starts this game straight away.");
+    else if (small_button("Desktop shortcut: COGBox")) {
         std::string err;
         if (make_shortcut("COGBox", "", "Gears of War native PC ports - launcher", err)) set_message(a, "A COGBox shortcut is on your desktop.", false);
         else set_message(a, "The shortcut couldn't be made: " + err, true);
     }
-    ui_tip(k_pinTip);
-    ImGui::SameLine();
-    {
+    if (!a.wine) {
+        ui_tip(k_pinTip);
+        ImGui::SameLine();
         const std::string label = std::string("Desktop shortcut: ") + d.name;
         if (small_button(label.c_str())) {
             std::string err;
@@ -1316,7 +1384,7 @@ static void about_tab(App &a, int g)
             "Intel and XeSS are trademarks of Intel Corporation or its subsidiaries.");
     if (small_button("Licences folder")) {
         const std::string ld = join(exe_dir(), "licenses");
-        if (dir_exists(ld)) shell_open(ld); else set_message(a, "The licenses folder is missing - unzip the release again.", true);
+        if (dir_exists(ld)) open_folder(a, ld); else set_message(a, "The licenses folder is missing - unzip the release again.", true);
     }
 }
 
@@ -1325,10 +1393,10 @@ struct TabGroups { const char *heading[4]; const char *const *ids[4]; };
 static const char *const k_dispScreen[] = { "Fullscreen", "WindowSize", "Monitor", "Ultrawide", "AspectRatio", "HideNotes", nullptr };
 static const char *const k_dispFrames[] = { "Vsync", "FrameCap", "FpsMode", nullptr };
 static const char *const k_dispPicture[] = { "HDR", "PaperWhite", "Peak", nullptr };
-static const char *const k_gfxQuality[] = { "Api", "WineApi", "Preset", "Resolution", "AAMode", "DlssModel", "Sharpen", "SceneMode", "FrameGen", nullptr };
+static const char *const k_gfxQuality[] = { "GraphicsCard", "Api", "WineApi", "Preset", "Resolution", "AAMode", "DlssModel", "Sharpen", "SceneMode", "FrameGen", nullptr };
 static const char *const k_gfxDetail[] = { "Aniso", "Trilinear", "MipFade", "Pool", "DrawDist", "AO", nullptr };
 static const char *const k_gfxCamera[] = { "MotionBlur", "DoF", "DofScale", "Bloom", "FilmGrain", "Shake", "Fov", nullptr };
-static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "PadPrompts", "PromptStyle", "DeadZone", "RadialDZ", "LowLag", nullptr };
+static const char *const k_ctlPad[] = { "PadLayout", "Vibration", "AdaptiveTriggers", "PadPrompts", "PromptStyle", "DeadZone", "RadialDZ", "LowLag", nullptr };
 static const char *const k_ctlMouse[] = { "Mnk", "Sens", "AimTurn", "WalkMode", nullptr };
 static const char *const k_playGame[] = { "Version", "Lang", "VoiceLang", "SkipLogos", "Mute", nullptr };
 static const char *const k_playPlayers[] = { "Players", "SplitLayout", "SystemLink", "PeerIps", nullptr };
@@ -1545,7 +1613,8 @@ void import_saves_from(App &a, int g, const std::string &from)
         for (std::filesystem::directory_iterator it(std::filesystem::u8path(game_root(g)), ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
             if (it->is_directory(ec) && it->path().filename().string().rfind("user", 0) == 0) own.push_back(it->path());
     }
-    if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r, own)) {
+    if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r, own,
+                            region_title_ids(g))) {
         std::string m = std::string(d.name) + ": imported ";
         if (r.saves) m += std::to_string(r.saves) + (r.saves == 1 ? " save" : " saves");
         if (r.saves && r.settings) m += " and ";

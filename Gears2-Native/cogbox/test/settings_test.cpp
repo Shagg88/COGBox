@@ -5,7 +5,8 @@
 //   settings_test --gen N [SEED]       print the built-in cases plus N random ones (a cases file)
 //   settings_test --summary            the option model (counts per game / tab) and the self-checks
 // Case keys: game, upd (title update ready), hz, screens, gpus (a/b), exe / rt / files (aliases below), rtfile,
-// extra (lines split by |), and any option id (the setting's value).
+// extra (lines split by |), cards (the graphics cards the PC has, a/b - 0.6.2), and any option id (the setting's value; for
+// a text option such as GraphicsCard its text).
 #include "../src/gears_settings.h"
 
 #include <cstdio>
@@ -29,7 +30,8 @@ std::vector<std::string> split(const std::string& s, char c) {
 }
 
 std::string exe_needle(const std::string& alias, int g) {
-    static const char* proc[3] = { "gow2", "gow3", "gowj" };
+    static const char* proc[4] = { "gow2", "gow3", "gowj", "gow1" };
+    if (alias == "gpucard") return "gow2_graphics_card";   // 0.6.2 (GitHub #304)
     if (alias == "fif") return "gow2_renderer_frames_in_flight";
     if (alias == "ups") return "gow2_upscale_mode";
     if (alias == "fg") return "gow2_frame_generation";
@@ -39,9 +41,18 @@ std::string exe_needle(const std::string& alias, int g) {
     if (alias == "aspect") return "gow3_aspect";
     if (alias == "edits") return "'file|section|~=old>new'";
     if (alias == "avx") return "gn_cpu_level=x86-64-v";
+    if (alias == "adt") return g == 0 ? "Gears 2 weapon feel for DualSense pads" : "Gears 3 weapon feel for DualSense pads";   // GitHub #245
+    if (alias == "adtg") {   // GitHub #245: each game's own needle (Judgment, Gears 1 too)
+        static const char* adt[4] = { "Gears 2 weapon feel for DualSense pads", "Gears 3 weapon feel for DualSense pads",
+                                      "Judgment weapon feel for DualSense pads", "Gears 1 weapon feel for DualSense pads" };
+        return adt[g];
+    }
     return alias;
 }
-std::string rt_needle(const std::string& a) { return a == "vs" ? "d3d12_present_vsync" : a == "lat" ? "d3d12_max_frame_latency" : a; }
+std::string rt_needle(const std::string& a) {
+    if (a == "adt") return "DualSense adaptive triggers: games that support it";   // GitHub #245 (SDK patch 98)
+    return a == "vs" ? "d3d12_present_vsync" : a == "lat" ? "d3d12_max_frame_latency" : a;
+}
 std::string file_name(const std::string& a) {
     if (a == "fsr") return "amd_fidelityfx_loader_dx12.dll";
     if (a == "dlss") return "nvngx_dlss.dll";
@@ -54,6 +65,7 @@ struct Case {
     Game g = Game::Gears2;
     Environment env;
     std::map<std::string, double> values;
+    std::map<std::string, std::string> texts;   // Kind::Text options (GraphicsCard)
     std::set<std::string> exe, rt, files;
 };
 
@@ -67,11 +79,11 @@ Case parse_case(const std::string& line) {
     }
     int g = kv.count("game") ? std::atoi(kv["game"].c_str()) : 0;
     c.g = static_cast<Game>(g);
-    const char* roots[3] = { "C:\\P\\Gears2-Native", "C:\\P\\Gears3-Native", "C:\\P\\GearsJ-Native" };
+    const char* roots[4] = { "C:\\P\\Gears2-Native", "C:\\P\\Gears3-Native", "C:\\P\\GearsJ-Native", "C:\\P\\Gears1-Native" };
     const std::string root = roots[0];   // the PS1's $root: saves, logs and shader caches live in Gears2-Native\out
-    const char* udirs[3] = { "\\out\\userdata", "\\out\\gears3-userdata", "\\out\\judgment-userdata" };
-    const char* pre[3] = { "", "gears3-", "judgment-" };
-    const char* tus[3] = { "\\game\\tu6\\package", "\\game\\tu6\\package", "\\game\\tu4\\package" };
+    const char* udirs[4] = { "\\out\\userdata", "\\out\\gears3-userdata", "\\out\\judgment-userdata", "\\out\\gears1-userdata" };
+    const char* pre[4] = { "", "gears3-", "judgment-", "gears1-" };
+    const char* tus[4] = { "\\game\\tu6\\package", "\\game\\tu6\\package", "\\game\\tu4\\package", "\\game\\tu5\\package" };
     Environment& e = c.env;
     e.game_data_root = std::string(roots[g]) + "\\game\\extracted";
     e.update_data_root = std::string(roots[g]) + tus[g];
@@ -81,7 +93,10 @@ Case parse_case(const std::string& line) {
     e.update_ready = kv.count("upd") && kv["upd"] == "1";
     e.refresh_hz = kv.count("hz") ? std::atoi(kv["hz"].c_str()) : 0;
     e.screen_count = kv.count("screens") ? std::atoi(kv["screens"].c_str()) : 1;
+    e.wine = kv.count("wine") && kv["wine"] == "1";   // r4 review: Wine / Proton / CrossOver cases
+    e.mac = kv.count("mac") && kv["mac"] == "1";
     if (kv.count("gpus") && !kv["gpus"].empty()) e.gpus = split(kv["gpus"], '/');
+    if (kv.count("cards") && !kv["cards"].empty()) e.graphics_cards = split(kv["cards"], '/');   // 0.6.2 (GitHub #304)
     if (kv.count("extra")) e.extra_args_lines = split(kv["extra"], '|');
     if (kv.count("exe") && !kv["exe"].empty()) for (auto& x : split(kv["exe"], ',')) c.exe.insert(exe_needle(x, g));
     if (kv.count("rt") && !kv["rt"].empty()) for (auto& x : split(kv["rt"], ',')) c.rt.insert(rt_needle(x));
@@ -90,7 +105,9 @@ Case parse_case(const std::string& line) {
     e.g2_disc_ini_edits = c.exe.count("'file|section|~=old>new'") != 0;
     for (auto& p : kv) {
         if (p.first == "game" || p.first == "upd" || p.first == "hz" || p.first == "screens" || p.first == "gpus" || p.first == "extra" ||
-            p.first == "exe" || p.first == "rt" || p.first == "files" || p.first == "rtfile") continue;
+            p.first == "exe" || p.first == "rt" || p.first == "files" || p.first == "rtfile" || p.first == "wine" || p.first == "mac" || p.first == "cards") continue;
+        const Option* to = find_option(c.g, p.first);
+        if (to && to->kind == Kind::Text) { c.texts[p.first] = p.second; continue; }
         c.values[p.first] = std::atof(p.second.c_str());
     }
     int mon = c.values.count("Monitor") ? static_cast<int>(c.values["Monitor"]) : 0;
@@ -113,6 +130,7 @@ void run_case(int n, const std::string& line) {
         if (!o) { std::fprintf(stderr, "unknown option %s\n", p.first.c_str()); std::exit(2); }
         if (o->scope == Scope::GameOwn) st.own[gi][p.first] = p.second; else st.top[p.first] = p.second;
     }
+    for (auto& p : c.texts) st.texts[p.first] = p.second;
     Settings s = st.view(c.g, c.env);
     Version ver = effective_version(c.g, s, c.env);
     std::vector<std::string> notes;
@@ -136,11 +154,31 @@ const char* const k_builtin[] = {
     "game=1;FrameCap=2;Vsync=1;rt=vs;hz=144;Ultrawide=1;Resolution=4;FpsMode=3;Aniso=1;Trilinear=0;MipFade=0;Shake=1;DrawDist=1;SkipLogos=1",
     "game=1;FrameCap=4;AAMode=4;files=xess;exe=ups,fif;SceneMode=1;Resolution=2;Players=3;LowLag=0;rt=lat",
     "game=1;FrameCap=7;Vsync=1;rt=vs;hz=240;FrameGen=1;exe=fg;files=fgdll;Fov=80",
+    "game=1;AdaptiveTriggers=1;exe=adt;rt=adt",   // GitHub #245: sent
+    "game=1;AdaptiveTriggers=1;exe=adt",          // runtime without patch 98: greyed, not sent
     "game=2",
     "game=2;upd=1;SkipLogos=1;Pool=1;FpsMode=3;FrameCap=7;Ultrawide=1",
     "game=2;Pool=3;FrameCap=2;Vsync=1;rt=vs;hz=165;FrameGen=1;exe=fg,fif,mute;files=fgdll;Mute=1;LowLag=1;gpus=Intel(R) UHD Graphics/NVIDIA GeForce GTX 1080",
     "game=2;AAMode=3;gpus=NVIDIA GeForce GTX 1080;files=fsr;FrameCap=4;Shake=2;Fov=125;DoF=0;Cheats=1;Mutators=1",
     "game=2;Resolution=4;Fullscreen=0;WindowSize=5;Mnk=1;Sens=0.1;DeadZone=5;Vibration=0;Monitor=1;screens=1;HDR=1",
+    "game=0;AdaptiveTriggers=1;exe=adt;rt=adt",   // GitHub #245, Gears 2: sent
+    "game=0;AdaptiveTriggers=1;rt=adt",           // Gears 2 exe without the weapon table: greyed, not sent
+    "game=2;AdaptiveTriggers=1;exe=adt;rt=adt",   // Judgment exe without its own weapon table (Gears 3's needle): not sent
+    "game=2;AdaptiveTriggers=1;exe=adtg;rt=adt",  // GitHub #245, Judgment: sent
+    "game=2;AdaptiveTriggers=1;exe=adtg",         // Judgment, runtime without patch 98: greyed, not sent
+    "game=3;AdaptiveTriggers=1;exe=adtg;rt=adt",  // GitHub #245, Gears 1: sent
+    "game=3;AdaptiveTriggers=1;rt=adt",           // Gears 1 exe without the weapon table: greyed, not sent
+    // 0.6.2 (GitHub #304): Graphics card - sent for every game when the card is in the PC; not when missing / Automatic / no support
+    "game=0;exe=gpucard;cards=NVIDIA GeForce RTX 4090/NVIDIA GeForce RTX 3090;GraphicsCard=NVIDIA GeForce RTX 3090",
+    "game=1;exe=gpucard;cards=NVIDIA GeForce RTX 4090/NVIDIA GeForce RTX 3090;GraphicsCard=NVIDIA GeForce RTX 3090",
+    "game=2;exe=gpucard;cards=NVIDIA GeForce RTX 4090/NVIDIA GeForce RTX 3090;GraphicsCard=nvidia geforce rtx 4090",
+    "game=3;exe=gpucard;cards=NVIDIA GeForce RTX 4090/NVIDIA GeForce RTX 3090;GraphicsCard=NVIDIA GeForce RTX 3090",
+    "game=0;exe=gpucard;cards=NVIDIA GeForce RTX 4090;GraphicsCard=NVIDIA GeForce RTX 3090",          // missing: not sent, a note
+    "game=0;exe=gpucard;GraphicsCard=NVIDIA GeForce RTX 3090",                                          // no card list: not sent
+    "game=0;exe=gpucard;cards=NVIDIA GeForce RTX 4090/NVIDIA GeForce RTX 3090",                         // Automatic: nothing
+    "game=0;cards=NVIDIA GeForce RTX 4090;GraphicsCard=NVIDIA GeForce RTX 4090",                        // older exe: greyed, not sent
+    "game=0;exe=gpucard;cards=NVIDIA GeForce RTX 3080/NVIDIA GeForce RTX 3080 Ti;GraphicsCard=NVIDIA GeForce RTX 3080",   // name inside another's: a note
+    "game=1;exe=gpucard;cards=AMD Radeon(TM) Graphics/AMD Radeon RX 7900 XTX;GraphicsCard=  AMD Radeon RX 7900 XTX  ",   // the name is trimmed
 };
 
 std::string random_case(std::mt19937& r) {
@@ -170,6 +208,7 @@ std::string random_case(std::mt19937& r) {
         switch (op.kind) {
         case Kind::Bool: v = pick(2); break;
         case Kind::Choice: v = op.id == "Monitor" ? pick(screens + 1) : pick(static_cast<int>(op.choices.size())); break;
+        case Kind::Text: break;   // (typed text: not in the random cases)
         case Kind::Int: case Kind::Float: {
             int steps = static_cast<int>((op.max - op.min) / op.step + 0.5);
             v = op.min + pick(steps + 1) * op.step;
@@ -332,14 +371,87 @@ int summary() {
             std::cout << "FAIL UE3 addresses for " << (gi ? "Judgment" : "Gears 3") << "\n"; ++fails;
         }
     }
+    // 0.6.2 (GitHub #304): Graphics card - Automatic sends nothing; a card that is in the PC is sent by name to every game; one that
+    // is not (removed, other PC, no list) falls back to Automatic; an exe without the switch greys the option; the name survives the ini
+    {
+        const std::string k_4090 = "NVIDIA GeForce RTX 4090", k_3090 = "NVIDIA GeForce RTX 3090";
+        for (Game g : { Game::Gears2, Game::Gears3, Game::Judgment, Game::Gears1 }) {
+            const int gi = static_cast<int>(g);
+            Environment e; e.update_ready = true;
+            e.graphics_cards = { k_4090, k_3090 };
+            e.cap.exe_has = [](const std::string& n) { return n == "gow2_graphics_card"; };
+            e.cap.runtime_has = [](const std::string&) { return false; }; e.cap.file_next_to_exe = e.cap.runtime_has;
+            auto card_args = [&](const Environment& env, const std::string& name) {
+                Store st; st.texts["GraphicsCard"] = name;
+                Settings s = st.view(g, env);
+                std::vector<std::string> out;
+                for (const std::string& x : build_args(g, Version::TitleUpdate, s, env, nullptr))
+                    if (x.find("graphics_card") != std::string::npos) out.push_back(x);
+                return out;
+            };
+            const std::string want = "--gow2_graphics_card=\"" + k_3090 + "\"";
+            if (!card_args(e, "").empty()) { std::cout << "FAIL graphics card Automatic sends something (game " << gi << ")\n"; ++fails; }
+            const auto sent = card_args(e, k_3090);
+            if (sent.size() != 1 || sent[0] != want) { std::cout << "FAIL graphics card not sent (game " << gi << ")\n"; ++fails; }
+            const auto lower = card_args(e, "nvidia geforce rtx 3090");
+            if (lower.size() != 1 || lower[0] != "--gow2_graphics_card=\"nvidia geforce rtx 3090\"") { std::cout << "FAIL graphics card case (game " << gi << ")\n"; ++fails; }
+            if (!card_args(e, "AMD Radeon RX 7900 XTX").empty()) { std::cout << "FAIL missing graphics card is sent (game " << gi << ")\n"; ++fails; }
+            Environment none = e; none.graphics_cards.clear();
+            if (!card_args(none, k_3090).empty()) { std::cout << "FAIL graphics card sent without a card list (game " << gi << ")\n"; ++fails; }
+            Environment old = e; old.cap.exe_has = [](const std::string&) { return false; };
+            if (!card_args(old, k_3090).empty()) { std::cout << "FAIL graphics card sent to an exe without it (game " << gi << ")\n"; ++fails; }
+        }
+        const Option* o = find_option(Game::Gears1, "GraphicsCard");
+        if (!o || o->kind != Kind::Text || o->tab != Tab::Graphics || o->label != "Graphics card") { std::cout << "FAIL graphics card option\n"; ++fails; }
+        else {
+            if (sanitize_text(*o, "  NVIDIA \"GeForce\"\tRTX 4090\n ") != "NVIDIA GeForceRTX 4090") { std::cout << "FAIL graphics card sanitise\n"; ++fails; }
+            if (static_cast<int>(sanitize_text(*o, std::string(500, 'x')).size()) != o->max_len) { std::cout << "FAIL graphics card length\n"; ++fails; }
+            Environment e; e.update_ready = true; e.graphics_cards = { k_4090 };
+            Store st; Settings s = st.view(Game::Gears2, e);
+            s.t["GraphicsCard"] = k_4090;
+            st.commit(Game::Gears2, s, e);
+            const std::string ini = st.save_ini();
+            Store st2; st2.load_ini(ini);
+            if (st2.view(Game::Gears3, e).str("GraphicsCard") != k_4090 || st2.save_ini() != ini ||
+                ini.find("GraphicsCard=" + k_4090) == std::string::npos) { std::cout << "FAIL graphics card ini\n"; ++fails; }
+            Store st3; if (!st3.view(Game::Gears2, e).str("GraphicsCard").empty()) { std::cout << "FAIL graphics card default\n"; ++fails; }
+        }
+    }
+    // first-person camera: each game's own switch (Gears 2, Gears 3, Judgment) when its exe has the option, none in Gears 1
+    for (Game g : { Game::Gears2, Game::Gears3, Game::Judgment, Game::Gears1 }) {
+        if (!kOfferFirstPerson) break;   // 0.6.2: hidden tester option, not in the launcher
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string&) { return true; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        Store st; Settings s = st.view(g, e);
+        s.set("FirstPerson", 1);
+        const std::vector<std::string> a = build_args(g, Version::TitleUpdate, s, e, nullptr);
+        const char* want = g == Game::Gears2 ? "--gow2_first_person=true" : g == Game::Gears3 ? "--gow3_first_person=true" :
+                           g == Game::Judgment ? "--gowj_first_person=true" : "";
+        int n = 0; bool ok = true;
+        for (const std::string& x : a)
+            if (x.find("_first_person") != std::string::npos) { ++n; ok = ok && x == want; }
+        if (n != (*want ? 1 : 0) || !ok) { std::cout << "FAIL first person for game " << static_cast<int>(g) << "\n"; ++fails; }
+    }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;
 }
+
+// First-person camera (layer3 first_person.cpp): separate from k_builtin so the cases above keep their numbers
+const char* const k_builtin_first_person[] = {
+    "game=1;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Gears 3: sent
+    "game=1;FirstPerson=1",                                                                             // older exe: greyed, not sent
+    "game=0;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Gears 2: sent
+    "game=2;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Judgment: sent
+    "game=2;FirstPerson=1",                                                                             // older Judgment exe: greyed, not sent
+    "game=3;FirstPerson=1;exe=First-person camera (experimental): the game's own camera at eye level",   // Gears 1: not yet
+};
 
 }  // namespace
 
 int main(int argc, char** argv) {
     std::vector<std::string> cases(std::begin(k_builtin), std::end(k_builtin));
+    if (kOfferFirstPerson) cases.insert(cases.end(), std::begin(k_builtin_first_person), std::end(k_builtin_first_person));
     if (argc >= 2 && std::string(argv[1]) == "--summary") return summary();
     if (argc >= 3 && std::string(argv[1]) == "--gen") {
         std::mt19937 r(argc >= 4 ? static_cast<unsigned>(std::atoi(argv[3])) : 59u);

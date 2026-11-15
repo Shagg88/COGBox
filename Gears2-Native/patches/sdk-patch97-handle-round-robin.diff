@@ -1,0 +1,23 @@
+diff --git a/src/system/util/object_table.cpp b/src/system/util/object_table.cpp
+index b6079c0..e33b7f0 100644
+--- a/src/system/util/object_table.cpp
++++ b/src/system/util/object_table.cpp
+@@ -52,6 +52,10 @@ X_STATUS ObjectTable::FindFreeSlot(uint32_t* out_slot) {
+     ObjectTableEntry& entry = table_[slot];
+     if (!entry.object) {
+       *out_slot = slot;
++      // COGBox SDK patch 97 (GitHub #283, trace job 1802b): the next search starts after this slot, so a
++      // closed handle number is not handed out again until the table has gone round (it was always the lowest free
++      // slot - a title's late close of a number it no longer owns then destroyed whatever had just been created)
++      last_free_entry_ = slot + 1 < table_capacity_ ? slot + 1 : 1;
+       return X_STATUS_SUCCESS;
+     }
+     scan_count++;
+@@ -72,6 +76,7 @@ X_STATUS ObjectTable::FindFreeSlot(uint32_t* out_slot) {
+   // Never allow 0 handles.
+   slot = ++last_free_entry_;
+   *out_slot = slot;
++  ++last_free_entry_;  // (the round-robin above: the next search starts after this one)
+ 
+   return X_STATUS_SUCCESS;
+ }

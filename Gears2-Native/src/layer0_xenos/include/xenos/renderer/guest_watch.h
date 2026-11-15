@@ -68,6 +68,21 @@ class GuestWatch {
   // only within the enclosing 64-page (256 KB) block, never across a GPU-current page, and returns that range to the
   // memory system as the most it may unprotect.
   uint64_t GpuPagesLostToWidening() const { return gpu_lost_.load(std::memory_order_relaxed); }
+  // Green-vine review (job 1844): GPU-current pages that an exact-range callback bumped - a kernel file read into them,
+  // a protect-to-writable, a decommit or a release (always on, diagnostic). After such a bump the next texture upload
+  // copies guest memory over the mirror; if a memexport read-back over the page had not landed yet, that is the
+  // pre-export content.
+  uint64_t GpuPagesBumpedExact() const { return gpu_exact_.load(std::memory_order_relaxed); }
+  // Green-vine review: pages of [address, address + length) that no guest view maps writable. The memory system arms
+  // no write watch on such pages (PhysicalHeap::EnableAccessCallbacks skips read-only and no-access pages), so Watch()
+  // does nothing there and a later protect-to-writable or CPU / file write raises no callback. Diagnostic; takes the
+  // heap locks, so only for small ranges (memexport destinations).
+  uint32_t UnwatchablePages(uint32_t address, uint32_t length) const;
+  // Green-vine review: our memexport's read-back landed, so guest memory now holds what the mirror holds for this page.
+  // If the page is still GPU-current at `version` (no write of any kind since the read-back was recorded), its
+  // GPU-current state ends with a version bump (one more reload, of the same bytes). From then on loads take guest
+  // memory, which also carries CPU writes the watch could not see (UnwatchablePages). Returns false if nothing changed.
+  bool SettleGpuPage(uint32_t page, uint32_t version);
   void SetNarrowWidening(bool on) { narrow_ = on; }
   // Job 151 diagnostic: log every memory-system write callback that overlaps one of these physical ranges (start,
   // length): its exact range or page, the swap count and the guest thread (first 120). Set before the game runs.
@@ -104,6 +119,7 @@ class GuestWatch {
   std::atomic<uint64_t> epoch_{0};
   std::atomic<uint64_t> callbacks_{0};
   std::atomic<uint64_t> gpu_lost_{0};  // patch 0008
+  std::atomic<uint64_t> gpu_exact_{0};  // green-vine review: GPU-current pages bumped by exact-range callbacks
   bool narrow_ = false;                // patch 0008 (set before the game runs)
   std::vector<std::pair<uint32_t, uint32_t>> report_;
   std::atomic<uint32_t> report_lines_{0};

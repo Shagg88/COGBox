@@ -246,6 +246,7 @@ static void answered(App &a)
     else if (m.tag == "socialremove") social_remove_answer(m.answer);   // social step 3
     else if (m.tag == "socialdelete") social_delete_answer(a, m.answer);   // 0.6.0 review: delete the online account
     else if (m.tag == "dlcremove" && m.answer == 0) dlc_remove_confirmed(a);   // 0.2.0
+    else if (m.tag == "dlcdupes" && m.answer == 0) dlc_remove_dupes_confirmed(a);   // GitHub #283
     else if (m.tag == "backup" && m.answer == 0) {
         // proton049: under Proton / Wine the "desktop" is inside the game's prefix (or missing) - COGBox's own backups folder
         const std::string bdir = a.wine ? join(exe_dir(), "backups") : desktop_dir();
@@ -768,6 +769,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (const char *t = getenv("COGBOX_WINDOW")) { int w = 0, h = 0; if (sscanf(t, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) SDL_SetWindowSize(win, w, h); }   // test switch
     if (getenv("COGBOX_BORDERLESS")) { a.borderless = true; SDL_SetWindowBordered(win, false); }   // test switch (not saved)
     a.gpus = report_gpu_names();
+    a.gpuCards = report_gpu_cards();   // 0.6.2 (GitHub #304)
     a.proton = proton::detect_here(a.gpus);   // proton049: Proton version, SteamOS, Steam Deck model (empty on Windows)
     a.hasAvx2 = cpu_has_avx2();
     refresh_games(a, true);
@@ -852,7 +854,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         // 0.2.0 (Shagg 13:18): everything dropped is handled, one after another - several DLC packages, or a folder of
         // them (a console's ...\<title ID>\00000002, or the title folder), are each added in turn. A folder that isn't a
         // game copy or a title update is searched for DLC packages.
-        if (!a.dropped.empty() && !a.modal.open && a.job.state.load() != 1) {
+        if (!a.dropped.empty() && !a.modal.open && a.job.state.load() != 1 && !dlc_dupes_running()) {   // r25: after a duplicate check
             std::string p = a.dropped.front();
             a.dropped.erase(a.dropped.begin());
             std::vector<std::string> dlc;

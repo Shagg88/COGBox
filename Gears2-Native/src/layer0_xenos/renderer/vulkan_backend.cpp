@@ -363,6 +363,14 @@ class VulkanBackend final : public Backend {
                        device_name_, driver_name_);
   }
   ShaderIL GetShaderIL() const override { return ShaderIL::kSpirv; }
+  bool SupportsStorage(Format format) const override {  // gpu.h: the device's storage-image feature for the format
+    if (!ready_ || physical_ == VK_NULL_HANDLE) return false;
+    const FormatInfo fi = Info(format);
+    if (fi.format == VK_FORMAT_UNDEFINED || fi.depth) return false;
+    VkFormatProperties fp{};
+    vk_.vkGetPhysicalDeviceFormatProperties(physical_, fi.format, &fp);
+    return (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
+  }
   bool IsLost(std::string* reason) override {
     if (lost_ && reason) *reason = lost_reason_;
     return lost_;

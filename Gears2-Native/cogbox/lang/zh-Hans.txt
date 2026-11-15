@@ -1270,6 +1270,8 @@ Can freeze on NVIDIA cards with Vulkan while the NVIDIA overlay (NVIDIA App / Al
 # 0.4.9: proton049 - Linux / Steam Deck through Proton (machine-made translation, please check)
 Choose a folder... = 选择文件夹...
 Paste a Linux path = 粘贴 Linux 路径
+Paste a Mac path = 粘贴 Mac 路径
+(Proton runs Vulkan) = (Proton 使用 Vulkan)
 Look for my games = 查找我的游戏
 Looking... = 正在查找...
 A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\home\... is /home/...). = 包含游戏 (default.xex)、游戏更新或 DLC 的文件夹。你的 Linux 文件夹在 Z: 下 (Z:\home\... 即 /home/...)。
@@ -1279,6 +1281,7 @@ Use recommended Steam Deck / Proton settings = 使用推荐的 Steam Deck / Prot
 Vulkan, FSR and no frame generation; on a Steam Deck also borderless on its 1280x800 screen, 60 fps, Steam Deck button prompts and the controller. You see the list before anything changes. = Vulkan、FSR、不使用帧生成；在 Steam Deck 上还会在 1280x800 屏幕上无边框、60 fps、Steam Deck 按键提示和手柄。更改前会先显示列表。
 STEAM DECK = STEAM DECK
 LINUX = LINUX
+MAC (CROSSOVER) = MAC (CROSSOVER)
 Running through = 运行环境:
 plain Wine: COGBox is tested with Steam's Proton (see the README's Linux and Steam Deck section) = 普通 Wine: COGBox 使用 Steam 的 Proton 测试 (见 README 的 Linux 和 Steam Deck 部分)
 Recommended Steam Deck settings = 推荐的 Steam Deck 设置
@@ -1344,3 +1347,160 @@ Choose a file... = 选择文件...
 Paste a path = 粘贴路径
 Import saves... = 导入存档...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = 为获得最流畅的体验，这些游戏需要下列 Title Update。详情请参阅 README。
+# 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = 开发者的作弊键，游戏中按 F5-F11（无敌模式、慢动作、自由视角 - 在 Gears 1 中可穿墙飞行 - 隐藏 HUD、全部武器）。Gears 2：仅限本机上的游戏 - 绝不在 System Link 或在线游戏中。Gears 3 和 Judgment：在你主持的 System Link 或在线游戏中也有效，慢动作等会影响每位玩家 - 请只在你自己的游戏中使用。Gears 1：尚未在 System Link 游戏中检查。成就和存档由你自己负责。
+Not on a Mac (CrossOver). = 不支持 Mac (CrossOver)。
+Vulkan only on Proton / Wine. = 在 Proton / Wine 下仅支持 Vulkan。
+On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = 在 Mac (CrossOver) 上，游戏通过 D3DMetal (Apple Silicon) 以 DirectX 12 运行。Vulkan 在那里无法启动。
+On a Mac (CrossOver): untested with D3DMetal. If the game doesn't start or looks wrong, use SMAA and leave HDR off. = 在 Mac (CrossOver) 上: 未在 D3DMetal 下测试。如果游戏无法启动或显示异常，请使用 SMAA 并保持 HDR 关闭。
+Not on a Mac: CrossOver's Vulkan is 1.2 and the games need 1.3. DirectX 12 (D3DMetal) is used there. = 不支持 Mac: CrossOver 的 Vulkan 是 1.2，而游戏需要 1.3。那里使用 DirectX 12 (D3DMetal)。
+needs a CPU with AVX2 (Intel Haswell / AMD Ryzen, about 2013 and newer), and this PC's CPU does not report it.\n\nOn a Mac this needs macOS 15 (Sequoia) or newer, whose Rosetta runs AVX2, and an up-to-date CrossOver. = 需要支持 AVX2 的 CPU（Intel Haswell / AMD Ryzen，约 2013 年及以后），而这台电脑的 CPU 未报告支持。\n\n在 Mac 上需要 macOS 15 (Sequoia) 或更新版本（其 Rosetta 可运行 AVX2）以及最新的 CrossOver。
+Looking for your games in the usual Mac folders... = 正在常用的 Mac 文件夹中查找你的游戏...
+No game copies found in the usual Mac folders. Use "Choose a folder..." or "Paste a Mac path". = 在常用的 Mac 文件夹中没有找到游戏副本。请使用“选择文件夹...”或“粘贴 Mac 路径”。
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\home\... is /home/...). = 光盘镜像 (.iso)、Games on Demand 文件、游戏更新或 DLC 包。你的 Linux 文件夹在 Z: 下 (Z:\home\... 即 /home/...)。
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = 光盘镜像 (.iso)、Games on Demand 文件、游戏更新或 DLC 包。你的 Mac 文件夹在 Z: 下 (Z:\Users\... 即 /Users/...)。
+A folder with your game (default.xex), a title update or DLC. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = 包含游戏 (default.xex)、游戏更新或 DLC 的文件夹。你的 Mac 文件夹在 Z: 下 (Z:\Users\... 即 /Users/...)。
+Copy a folder's or disc image's path first (for example /Users/you/Games/Gears of War 2). = 请先复制文件夹或光盘镜像的路径 (例如 /Users/you/Games/Gears of War 2)。
+Copy a path such as /Users/you/Games/Gears of War 2 or ~/Games/gears2.iso (in Finder: right-click with Option held > Copy as Pathname), then press this. = 复制一个路径，例如 /Users/you/Games/Gears of War 2 或 ~/Games/gears2.iso (在访达中: 按住 Option 键右键点按 > 拷贝为路径名称)，然后按这里。
+Searches ~/Games, ~/Downloads, ~/Desktop, ~/Documents and external drives (/Volumes) for game copies, disc images and title updates. = 在 ~/Games、~/Downloads、~/Desktop、~/Documents 和外置驱动器 (/Volumes) 中查找游戏副本、光盘镜像和游戏更新。
+# desktop shortcut notes under Wine: pieces, only with the page.cpp:1236/1238 change in p4
+Desktop shortcuts: in CrossOver, use Run Command, add --play = 桌面快捷方式: 在 CrossOver 中使用 Run Command，在 CogBox.exe 后添加 --play
+after CogBox.exe and choose Save Command as a Launcher - it starts this game straight away. = ，然后选择 Save Command as a Launcher - 它会直接启动这个游戏。
+Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to --play = 桌面快捷方式: 再次把 CogBox.exe 添加到 Steam，并将其启动选项设为 --play
+- it starts this game straight away. = - 这样会直接启动这个游戏。
+# only with the p3 change (open_folder): "Folder: <path>" under Wine
+Folder: = 文件夹:
+# 0.6.2 Social tab + System Link note (machine-made translation, please check)
+# Social tab (social_tab.cpp, front.cpp): texts already passed through tr()
+SOCIAL = 社交
+Friends, invites and online play. = 好友、邀请和在线游戏。
+ONLINE PLAY = 在线游戏
+Use the COGBox multiplayer server = 使用 COGBox 多人游戏服务器
+Play online with friends: an account for this profile on the COGBox server, a friends list, Join and invites. Off: the profile stays offline. = 与好友在线游戏：此档案在 COGBox 服务器上的账户、好友列表、加入和邀请。关闭：此档案保持离线。
+Online play is off. This profile stays offline. = 在线游戏已关闭。此档案保持离线。
+Region = 地区
+Quick Match only finds players in this region. Joining and inviting friends works in any region. Takes effect the next time a game starts. Player counts are approximate. = Quick Match 只查找此地区的玩家。加入好友和邀请好友在任何地区都可以。下次启动游戏时生效。玩家数量为近似值。
+players = 名玩家
+DELETE ONLINE ACCOUNT = 删除在线账户
+Removes this profile's account from the COGBox multiplayer server and turns online play off. = 从 COGBox 多人游戏服务器删除此档案的账户，并关闭在线游戏。
+Delete your online account? = 删除你的在线账户？
+Your tag, friends list and picture are removed from the COGBox server. Saves and achievements stay. = 你的标签、好友列表和头像将从 COGBox 服务器删除。存档和成就会保留。
+Yes, delete = 是，删除
+Deleting your online account... = 正在删除你的在线账户...
+The online server hasn't confirmed the delete yet. Press DELETE ONLINE ACCOUNT again in a minute to check. = 在线服务器尚未确认删除。请一分钟后再次按“删除在线账户”进行检查。
+Can't reach the online server. Your online account was not deleted. = 无法连接在线服务器。你的在线账户没有被删除。
+The online server refused. Your online account was not deleted. = 在线服务器拒绝了。你的在线账户没有被删除。
+The online account of the profile you switched from was deleted. = 你切换前那个档案的在线账户已删除。
+Your online account was deleted. Online play is off for this profile. = 你的在线账户已删除。此档案的在线游戏已关闭。
+Signing in... = 正在登录...
+Can't reach the online server. = 无法连接在线服务器。
+Online = 在线
+Add friend = 添加好友
+ADD = 添加
+Use Name#1234 - the name, # and the four digits. = 请使用 Name#1234 格式：名字、# 和四位数字。
+Launch the game and invite a friend from the F1 social menu. = 启动游戏，然后从 F1 社交菜单邀请好友。
+FRIENDS = 好友
+request = 个请求
+requests = 个请求
+wants to be your friend = 想加你为好友
+ACCEPT = 接受
+DECLINE = 拒绝
+BLOCK = 屏蔽
+Blocked players can't send you requests again. = 被屏蔽的玩家无法再向你发送请求。
+Waiting for them to accept = 等待对方接受
+No friends yet - add one by their tag. = 还没有好友 - 用对方的标签添加一个。
+JOIN = 加入
+INVITE = 邀请
+REMOVE = 移除
+Join their game. = 加入对方的游戏。
+Set up this game in COGBox to join. = 在 COGBox 中设置此游戏后即可加入。
+Invite them to the game you are hosting. = 邀请对方加入你主持的游戏。
+Remove this friend (asks first). = 移除此好友（会先确认）。
+Remove this friend? = 移除此好友？
+Yes, remove = 是，移除
+Close the running game first, then press JOIN again. = 请先关闭正在运行的游戏，然后再按“加入”。
+That game isn't set up in COGBox yet. = 该游戏尚未在 COGBox 中设置。
+PARTY AND MATCH INVITES = 小队和比赛邀请
+No invites right now. = 目前没有邀请。
+You can invite friends while a game hosts a lobby or match. = 游戏主持大厅或比赛时，你可以邀请好友。
+OPEN MATCHES = 公开比赛
+Looking for open matches... = 正在查找公开比赛...
+No open matches right now - host a public match and it shows up here. = 目前没有公开比赛 - 主持一场公开比赛，它就会显示在这里。
+Full = 已满
+In progress = 进行中
+This match is full. = 此比赛已满。
+Join the match in progress: you take a bot's place. = 加入进行中的比赛：你将取代一个机器人的位置。
+Join this match. = 加入此比赛。
+Match = 比赛
+Casual (under level 3) = Casual（3 级以下）
+# deleting a profile while its online account is busy (front.cpp: pieces after "Couldn't delete the profile:")
+wait until the online account delete has finished = 请等待在线账户删除完成
+the online connection is busy - try again in a moment = 在线连接正忙 - 请稍后再试
+# online account errors (social_backend.cpp; pieces around the profile folder's path)
+COGBox can't save the online account in the profile folder ( = COGBox 无法将在线账户保存到档案文件夹 (
+), so friends would be lost at every start. Move COGBox to a folder you can write to (not Program Files). = )，这样每次启动都会丢失好友。请把 COGBox 移到你可以写入的文件夹（不要放在 Program Files）。
+Couldn't save the online account in the profile folder ( = 无法将在线账户保存到档案文件夹 (
+The profile's online account file can't be replaced ( = 无法替换此档案的在线账户文件 (
+The profile's online account file can't be read or replaced ( = 无法读取或替换此档案的在线账户文件 (
+The online server refused the profile's account. = 在线服务器拒绝了此档案的账户。
+The online server refused a new account. = 在线服务器拒绝了新账户。
+# the online server's own answers, shown under the friends list (tools/master-server)
+no player with that tag = 没有使用该标签的玩家
+that is you = 那是你自己
+friend or request limit reached = 已达到好友或请求上限
+at most 10 friend requests a minute = 每分钟最多 10 个好友请求
+no request from that player = 该玩家没有发来请求
+no such player = 没有这个玩家
+nothing to join = 没有可加入的游戏
+no friend to invite, or nothing hosted to invite to = 没有可邀请的好友，或没有主持可供邀请的游戏
+no such invite = 没有这个邀请
+that match is no longer open = 该比赛已不再开放
+that match is full = 该比赛已满
+# only with the social_tab.cpp change in p15 (region name, a friend's state)
+Europe = 欧洲
+Offline = 离线
+Online - In Launcher = 在线 - 在启动器中
+Playing = 游戏中
+Playing Gears of War 2 = 正在玩 Gears of War 2
+Playing Gears of War 3 = 正在玩 Gears of War 3
+Playing Judgment = 正在玩 Judgment
+Playing Gears of War = 正在玩 Gears of War
+In a game - joinable = 游戏中 - 可加入
+Gears of War 2 - joinable = Gears of War 2 - 可加入
+Gears of War 3 - joinable = Gears of War 3 - 可加入
+Judgment - joinable = Judgment - 可加入
+Gears of War - joinable = Gears of War - 可加入
+# System Link under Linux / Steam Deck (gears_settings.cpp wine_note)
+On Linux / Steam Deck: a game you host can't be joined yet - the games host on port 1000, and this PC keeps the low ports for administrator programs. Joining others should work. A possible fix (not confirmed yet) is in the README ("Hosting from Linux / Steam Deck"). = 在 Linux / Steam Deck 上：你主持的游戏暂时无法被加入 - 游戏在端口 1000 上主持，而这台电脑把低端口留给管理员程序。加入别人的游戏应该可以。可能的解决方法（尚未确认）见 README 中的 "Hosting from Linux / Steam Deck"。
+# 0.6.2 GitHub #306 Dead bodies option (machine-made translation, please check)
+Dead bodies = 尸体
+More = 更多
+Many = 很多
+How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = 倒下的敌人在地上保留多少、保留多久。“更多”和“很多”会更长时间保留更多尸体，会消耗一些性能和内存。过场动画时尸体仍会被清除。
+# First-person camera, experimental (machine-made translation, please check)
+First-person camera (experimental) = 第一人称视角（实验性）
+Experimental - the game's own camera moves to your character's eyes while you walk, crouch and aim. In roadie run, cover, executions, vehicles, turrets and cutscenes it goes back to the usual over-the-shoulder view. Page Up switches it off and on in the game. Gears 2, Gears 3 and Judgment. = 实验性 - 在行走、蹲伏和瞄准时，游戏自身的镜头会移到角色的眼睛位置。在冲刺（Roadie Run）、掩体、处决、载具、炮塔和过场动画中会恢复为常规的越肩视角。游戏中按 Page Up 可关闭或重新开启。适用于 Gears 2、Gears 3 和 Judgment。
+# 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
+DualSense adaptive triggers = DualSense 自适应扳机
+PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = 仅限 PS5 DualSense 手柄（USB 或蓝牙）：扳机会根据手中的武器产生阻力、段落感或振动，链锯转动时也会抖动。其他手柄不受影响。如果该手柄开启了 Steam Input，扳机由 Steam 控制。
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  与此重复: "
+" - can be removed = " - 可以移除
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = 此包中的所有内容都以相同内容存在于另一个包中，因此游戏会把同样的物品收到两次（例如同一皮肤出现两次）。移除时只会移除 COGBox 解包的副本 - 你的包文件不会被改动。
+Remove duplicates = 移除重复项
+Remove duplicate downloadable content = 移除重复的可下载内容
+Duplicates found: = 找到的重复项:
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\n其中的所有内容都以相同内容存在于你保留的另一个包中，因此游戏只是把同样的物品收到两次。要移除它们吗? 只会移除 COGBox 解包的副本 - 你自己的包文件不会被改动。
+Duplicates removed: = 已移除的重复项:
+Some duplicates couldn't be removed completely - is a file from them open? = 部分重复项未能完全移除 - 其中有文件处于打开状态吗?
+No duplicates found. = 未找到重复项。
+# 0.6.3 r22 review: duplicate DLC check on a worker thread, full re-check before removal (machine-made translation, please check)
+Checking for duplicates... = 正在检查重复项...
+Still checking for duplicates - try again in a moment. = 仍在检查重复项 - 请稍后再试。
+Checking duplicate downloadable content = 正在检查重复的可下载内容
+Left as they are (no longer exact copies, or not fully readable): = 保持原样 (已不再是完全相同的副本，或无法完整读取):
+# 0.6.2 (GitHub #304): Graphics card
+Graphics card = 显卡
+Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = 在有多块显卡的电脑上（笔记本的内置显卡和独立显卡，或两块显卡），选择游戏使用哪一块。“自动”会选择自带显存最多的显卡；显存相近时，选择连接着显示器的那一块——DirectX 12 和 Vulkan 使用同一块显卡。选择某块显卡则改用该显卡。如果所选显卡已不在这台电脑中，则使用“自动”。
+(not found - Automatic is used) = （未找到 - 使用“自动”）
+The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = 你选择的显卡目前不在这台电脑中——游戏将自行选择显卡（自动）。

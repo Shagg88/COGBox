@@ -8,6 +8,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <algorithm>
+#include <vector>
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+#include <cpuid.h>
+#endif
 
 #include "../third_party/miniz/miniz.h"
 
@@ -80,7 +84,7 @@ static std::vector<std::string> adapters_text()
     IDXGIFactory1 *fac = nullptr;
     if (create && SUCCEEDED(create(__uuidof(IDXGIFactory1), (void **)&fac))) {
         IDXGIAdapter1 *ad = nullptr;
-        for (UINT i = 0; fac->EnumAdapters1(i, &ad) != DXGI_ERROR_NOT_FOUND && i < 8; i++) {
+        for (UINT i = 0; i < 8 && SUCCEEDED(fac->EnumAdapters1(i, &ad)) && ad; i++) {   // r35: any failure ends the walk (no null use)
             DXGI_ADAPTER_DESC1 d;
             if (SUCCEEDED(ad->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
                 std::string s = wide_utf8(d.Description);
@@ -115,7 +119,7 @@ std::vector<std::string> report_gpu_names()
     IDXGIFactory1 *fac = nullptr;
     if (create && SUCCEEDED(create(__uuidof(IDXGIFactory1), (void **)&fac))) {
         IDXGIAdapter1 *ad = nullptr;
-        for (UINT i = 0; fac->EnumAdapters1(i, &ad) != DXGI_ERROR_NOT_FOUND && i < 8; i++) {
+        for (UINT i = 0; i < 8 && SUCCEEDED(fac->EnumAdapters1(i, &ad)) && ad; i++) {   // r35: any failure ends the walk (no null use)
             DXGI_ADAPTER_DESC1 d;
             if (SUCCEEDED(ad->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
                 std::string s = wide_utf8(d.Description);
@@ -129,7 +133,69 @@ std::vector<std::string> report_gpu_names()
     return out;
 }
 
-bool cpu_has_avx2() { return IsProcessorFeaturePresent(40) != 0; }   // PF_AVX2_INSTRUCTIONS_AVAILABLE
+std::vector<GpuCard> report_gpu_cards()
+{
+    std::vector<GpuCard> out;
+    HMODULE dx = LoadLibraryA("dxgi.dll");
+    if (!dx) return out;
+    // r35: the games only use cards that run DirectX 12 at feature level 11_0 (gpu_system.cpp): list only those.
+    // D3D12CreateDevice with no device pointer only answers whether it could be made. No d3d12.dll: no filter.
+    typedef HRESULT(WINAPI * D3D12CreateFn)(IUnknown *, int, REFIID, void **);
+    HMODULE d12 = LoadLibraryA("d3d12.dll");
+    D3D12CreateFn d12create = d12 ? (D3D12CreateFn)(void *)GetProcAddress(d12, "D3D12CreateDevice") : nullptr;
+    typedef HRESULT(WINAPI * CreateFn)(REFIID, void **);
+    CreateFn create = (CreateFn)(void *)GetProcAddress(dx, "CreateDXGIFactory1");
+    IDXGIFactory1 *fac = nullptr;
+    if (create && SUCCEEDED(create(__uuidof(IDXGIFactory1), (void **)&fac))) {
+        IDXGIAdapter1 *ad = nullptr;
+        for (UINT i = 0; i < 8 && SUCCEEDED(fac->EnumAdapters1(i, &ad)) && ad; i++) {   // r35: any failure ends the walk (no null use)
+            DXGI_ADAPTER_DESC1 d;
+            if (SUCCEEDED(ad->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
+                // r35: the name as the settings keep it (sanitize_text for GraphicsCard: no control characters or
+                // quotes, trimmed), so a saved choice always equals its list entry
+                std::string s;
+                for (unsigned char ch : wide_utf8(d.Description)) if (ch >= 0x20 && ch != 0x7f && ch != '"') s += (char)ch;
+                while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
+                while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
+                // 0x0000b000 = D3D_FEATURE_LEVEL_11_0; IID of ID3D12Device {189819f1-1db6-4b57-be54-1821339b85f7}
+                static const GUID kIidD3D12Device = { 0x189819f1, 0x1db6, 0x4b57, { 0xbe, 0x54, 0x18, 0x21, 0x33, 0x9b, 0x85, 0xf7 } };
+                const bool d12ok = !d12create || SUCCEEDED(d12create(ad, 0xb000, kIidD3D12Device, nullptr));
+                std::string low = s;
+                for (char &c : low) c = (char)tolower((unsigned char)c);
+                const bool basic = low.find("microsoft basic") != std::string::npos;   // Basic Render Driver / Display Adapter
+                bool dup = false;
+                for (const GpuCard &c : out) dup |= c.name == s;
+                if (!s.empty() && !basic && !dup && d12ok) out.push_back({ s, (unsigned)(d.DedicatedVideoMemory >> 20) });
+            }
+            ad->Release();
+        }
+        fac->Release();
+    }
+    if (d12) FreeLibrary(d12);
+    FreeLibrary(dx);
+    return out;
+}
+
+// PF_AVX2_INSTRUCTIONS_AVAILABLE first. 0.6.2 Proton / CrossOver review (R2): older Wine / CrossOver builds don't fill that
+// flag, so a real AVX2 CPU (or Rosetta on macOS 15+, which has AVX2) was refused. Then ask the CPU itself: CPUID leaf 7 EBX
+// bit 5 (AVX2), with leaf 1's OSXSAVE + AVX bits and XGETBV saying the system saves the YMM registers.
+bool cpu_has_avx2()
+{
+    if (IsProcessorFeaturePresent(40)) return true;
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+    unsigned a = 0, b = 0, c = 0, d = 0;
+    if (!__get_cpuid(0, &a, &b, &c, &d) || a < 7) return false;
+    if (!__get_cpuid(1, &a, &b, &c, &d)) return false;
+    if (!(c & (1u << 27)) || !(c & (1u << 28))) return false;   // OSXSAVE, AVX
+    unsigned lo = 0, hi = 0;
+    __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    if ((lo & 6) != 6) return false;                             // XMM and YMM state saved by the system
+    __cpuid_count(7, 0, a, b, c, d);
+    return (b & (1u << 5)) != 0;
+#else
+    return false;
+#endif
+}
 
 std::string report_system_text(const std::string &displays)
 {
@@ -180,9 +246,47 @@ static void replace_all_ci(std::string &s, const std::string &from, const std::s
 // 0.2.2: names Windows gives by default - they say nothing about the player, and as words they appear in our own text
 static bool generic_name(const std::string &n)
 {
-    static const char *g[] = { "user", "users", "admin", "administrator", "owner", "guest", "default", "public", "player", "pc" };
+    static const char *g[] = { "user", "users", "admin", "administrator", "owner", "guest", "default", "public", "player", "pc",
+                               "steamuser", "crossover", "root", "deck", "steam", "gamer", "linux", "mac" };   // 0.6.2: the Deck's account is "deck"
     for (const char *x : g) if (_stricmp(n.c_str(), x) == 0) return true;
     return false;
+}
+// 0.6.2 (Proton / CrossOver review): under Wine the Windows USERNAME is "steamuser" (Proton) or the bottle's user, not
+// the player's own account. Their Linux / Mac name is in the paths Wine shows (Z:\home\<name>, /Users/<name>) and in the
+// host variables Wine passes through: HOME, WINEHOMEDIR (an NT form of Z:\home\<name>), USER, LOGNAME. On Windows these are
+// normally unset, or hold the same name as USERNAME (Git's HOME), so nothing changes there.
+static std::vector<std::wstring> host_user_names()
+{
+    std::vector<std::wstring> out;
+    wchar_t own[256] = L"";
+    GetEnvironmentVariableW(L"USERNAME", own, 256);
+    auto add = [&](std::wstring n) {
+        while (!n.empty() && (n.back() == L'/' || n.back() == L'\\')) n.pop_back();
+        if (n.size() < 3 || _wcsicmp(n.c_str(), own) == 0) return;
+        char u8[1024] = "";
+        WideCharToMultiByte(CP_UTF8, 0, n.c_str(), -1, u8, sizeof u8, NULL, NULL);
+        if (generic_name(u8)) return;
+        for (const std::wstring &o : out) if (_wcsicmp(o.c_str(), n.c_str()) == 0) return;
+        out.push_back(n);
+    };
+    for (const wchar_t *var : { L"HOME", L"WINEHOMEDIR" }) {
+        wchar_t w[1024] = L"";
+        if (!GetEnvironmentVariableW(var, w, 1024)) continue;
+        std::wstring h = w;
+        while (!h.empty() && (h.back() == L'/' || h.back() == L'\\')) h.pop_back();
+        // only a home folder's own name: /home/<name>, /Users/<name>, /var/home/<name> (Fedora Atomic / Bazzite)
+        size_t cut = h.find_last_of(L"/\\");
+        if (cut == std::wstring::npos || cut == 0) continue;
+        std::wstring parent = h.substr(0, cut);
+        size_t pcut = parent.find_last_of(L"/\\");
+        std::wstring pname = pcut == std::wstring::npos ? parent : parent.substr(pcut + 1);
+        if (_wcsicmp(pname.c_str(), L"home") == 0 || _wcsicmp(pname.c_str(), L"Users") == 0) add(h.substr(cut + 1));
+    }
+    for (const wchar_t *var : { L"USER", L"LOGNAME" }) {
+        wchar_t w[256] = L"";
+        if (GetEnvironmentVariableW(var, w, 256)) add(w);
+    }
+    return out;
 }
 // replace_all_ci for a whole word: not inside a longer word (letters / digits either side) and not inside a %NAME%
 static void replace_word_ci(std::string &s, const std::string &from, const std::string &to)
@@ -238,6 +342,17 @@ std::string report_anonymise(const std::string &text)
         // ("User", "Admin" ...) that identify nobody - a player called "User" got "%%USERNAME%PROFILE%" and
         // "Your Windows %USERNAME% name" in the report
         if (strlen(u8) >= 3 && !generic_name(u8)) replace_word_ci(s, u8, var[0] == L'U' ? "%USERNAME%" : "%COMPUTERNAME%");
+    }
+    // 0.6.2: the Linux / Mac account name under Proton / CrossOver (see host_user_names)
+    for (const std::wstring &w : host_user_names()) {
+        char u8[1024] = "";
+        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, u8, sizeof u8, NULL, NULL);
+        const std::string n = u8;
+        replace_all_ci(s, "/home/" + n, "/home/%USERNAME%");
+        replace_all_ci(s, "\\home\\" + n, "\\home\\%USERNAME%");
+        replace_all_ci(s, "/Users/" + n, "/Users/%USERNAME%");
+        replace_all_ci(s, "\\Users\\" + n, "\\Users\\%USERNAME%");
+        replace_word_ci(s, n, "%USERNAME%");
     }
     // Outside review: other folder paths (another drive, a games folder) say where the player keeps things. Keep only
     // the last part (a file or folder name and what follows it): C:\Games\Gears 2\default.xex -> <path>\default.xex.
@@ -298,16 +413,20 @@ static void blank_pattern(std::string &data, const std::string &pat, size_t unit
 
 static void blank_binary(std::string &data)
 {
+    std::vector<std::wstring> names;
     for (const wchar_t *var : { L"USERNAME", L"COMPUTERNAME" }) {
         wchar_t w[256] = L"";
-        if (!GetEnvironmentVariableW(var, w, 256) || wcslen(w) < 3) continue;
+        if (GetEnvironmentVariableW(var, w, 256) && wcslen(w) >= 3) names.push_back(w);
+    }
+    for (const std::wstring &w : host_user_names()) names.push_back(w);   // 0.6.2: Linux / Mac name under Wine
+    for (const std::wstring &w : names) {
         std::wstring forms[3] = { w, w, w };
         CharLowerBuffW(&forms[1][0], (DWORD)forms[1].size());
         CharUpperBuffW(&forms[2][0], (DWORD)forms[2].size());
         for (const std::wstring &f : forms) blank_pattern(data, std::string((const char *)f.data(), f.size() * 2), 2);
         for (UINT cp : { (UINT)CP_UTF8, (UINT)CP_ACP }) {
             char b[1024] = "";
-            if (WideCharToMultiByte(cp, 0, w, -1, b, sizeof b, NULL, NULL)) blank_pattern(data, b, 1);
+            if (WideCharToMultiByte(cp, 0, w.c_str(), -1, b, sizeof b, NULL, NULL)) blank_pattern(data, b, 1);
         }
     }
 }

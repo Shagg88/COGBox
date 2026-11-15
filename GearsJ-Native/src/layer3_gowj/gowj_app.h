@@ -42,6 +42,8 @@ void GowjStartMemoryGauge();    // game_patches.cpp: --gowj_memory_log_seconds (
 void GowjStopMemoryGauge();     // stops it before the kernel goes away
 void GowjApplyUltrawideIfRequested(rex::Runtime* runtime);  // game_patches.cpp: --gowj_ultrawide (0.2.0)
 void GowjInstallFilmGrainSwitch(rex::Runtime* runtime);  // game_patches.cpp: --gowj_no_film_grain (Canary TU4, boma)
+void GowjInstallCheats();   // cheats.cpp: GitHub #264
+void GowjInstallFirstPerson();  // first_person.cpp (--gowj_first_person: its hotkey, the object tables)
 
 
 class GowjApp : public rex::ReXApp {
@@ -71,6 +73,8 @@ class GowjApp : public rex::ReXApp {
     GowjInstallProfileLog();   // GitHub #174: --gowj_profile_log (read-only)
     GowjStartFreezeWatchdog(); // GitHub #219: --gowj_freeze_watchdog_seconds (log-only, after loads only)
     GowjInstallFilmGrainSwitch(runtime());   // --gowj_no_film_grain
+    GowjInstallCheats();                     // GitHub #264: --gowj_cheats, --ue3_hotkeys / --ue3_exec (cheats.cpp)
+    GowjInstallFirstPerson();  // --gowj_first_person (the camera itself is set from the engine tick)
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (job 050): before the game reads its config
     GowjApplyUltrawideIfRequested(runtime());     // --gowj_ultrawide: the two aspect floats, the present shape
     XenosInstallDrawStatsIfRequested();

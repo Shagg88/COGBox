@@ -18,6 +18,12 @@ bool drop_is_game_or_update(const std::string &folder);   // install.cpp
 
 std::string shown_path(const App &a, const std::string &p) { return proton::display_path(p, a.wine); }
 
+void open_folder(App &a, const std::string &dir)
+{
+    shell_open(dir);
+    if (a.wine) set_message(a, "Folder: " + shown_path(a, dir), false);
+}
+
 // ---- the recommended settings -----------------------------------------------------------------------------------------
 static std::string value_text(const gs::Option &o, double v)
 {
@@ -98,7 +104,7 @@ static void scan_start(App &a)
     std::vector<std::string> roots = proton::roots_here(a.proton);
     if (roots.empty()) { set_message(a, "The Linux folders can't be reached from here (no Z: drive).", true); return; }
     g_scan = 1;
-    set_message(a, "Looking for your games in the usual Linux folders...", false);
+    set_message(a, a.mac ? "Looking for your games in the usual Mac folders..." : "Looking for your games in the usual Linux folders...", false);
     std::thread(scan_thread, std::move(roots)).detach();
 }
 
@@ -112,7 +118,8 @@ void linux_poll(App &a)
         found.swap(g_found);
     }
     if (found.empty()) {
-        set_message(a, "No game copies found in the usual Linux folders. Use \"Choose a folder...\" or \"Paste a Linux path\".", true);
+        set_message(a, a.mac ? "No game copies found in the usual Mac folders. Use \"Choose a folder...\" or \"Paste a Mac path\"."
+                             : "No game copies found in the usual Linux folders. Use \"Choose a folder...\" or \"Paste a Linux path\".", true);
         return;
     }
     std::string data;
@@ -148,7 +155,7 @@ float linux_copy_buttons_width(const App &a)   // for centring them
 {
     float w = 0;
     int n = 0;
-    for (const char *en : { "Choose a file...", "Choose a folder...", a.wine ? "Paste a Linux path" : "Paste a path", a.wine ? "Look for my games" : nullptr }) {
+    for (const char *en : { "Choose a file...", "Choose a folder...", a.wine ? (a.mac ? "Paste a Mac path" : "Paste a Linux path") : "Paste a path", a.wine ? "Look for my games" : nullptr }) {
         if (!en) continue;
         w += std::max(T(90), F_BODY->CalcTextSizeA(FS(F_BODY), FLT_MAX, 0, tr(en)).x + S(28));
         ++n;
@@ -169,11 +176,13 @@ void linux_copy_buttons(App &a)
         add_path(a, pick_file(L"Choose your disc image, Games on Demand file, title update or DLC package",
                               L"All files\0*.*\0Disc images (*.iso)\0*.iso\0The game's default.xex\0default.xex\0"));
     }
-    ui_tip(a.wine ? "A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
+    ui_tip(a.mac ? "A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Mac folders are under Z: (Z:\\Users\\... is /Users/...)."
+       : a.wine ? "A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
                   : "A disc image (.iso), a Games on Demand file, a title update or a DLC package (those two have no file extension).");
     ImGui::SameLine();
     if (button("Choose a folder...")) add_path(a, pick_folder(L"Choose the folder of your game copy, title update or DLC"));
-    ui_tip(a.wine ? "A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
+    ui_tip(a.mac ? "A folder with your game (default.xex), a title update or DLC. Your Mac folders are under Z: (Z:\\Users\\... is /Users/...)."
+       : a.wine ? "A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\\home\\... is /home/...)."
                   : "A folder with your game (default.xex), a title update or DLC.");
     ImGui::SameLine();
     if (!a.wine) {
@@ -195,17 +204,20 @@ void linux_copy_buttons(App &a)
         ui_tip("Copy the path of your disc image, game folder, title update or DLC (File Explorer: Shift + right-click > Copy as path), then press this.");
         return;
     }
-    if (button("Paste a Linux path")) {
+    if (button(a.mac ? "Paste a Mac path" : "Paste a Linux path")) {
         char *c = SDL_GetClipboardText();
         const std::string text = c ? c : "";
         if (c) SDL_free(c);
         const std::string w = proton::to_wine(text, a.proton.home);
-        if (proton::clean_pasted(text).empty()) set_message(a, "Copy a folder's or disc image's path first (for example /home/deck/Games/Gears of War 2).", true);
+        if (proton::clean_pasted(text).empty()) set_message(a, a.mac ? "Copy a folder's or disc image's path first (for example /Users/you/Games/Gears of War 2)."
+                                                                : "Copy a folder's or disc image's path first (for example /home/deck/Games/Gears of War 2).", true);
         else if (w.empty()) set_message(a, "That isn't a folder path: " + proton::clean_pasted(text), true);
         else add_path(a, w);
     }
-    ui_tip("Copy a path such as /home/deck/Games/Gears of War 2 or ~/Games/gears2.iso (from Dolphin: right-click > Copy Location), then press this.");
+    ui_tip(a.mac ? "Copy a path such as /Users/you/Games/Gears of War 2 or ~/Games/gears2.iso (in Finder: right-click with Option held > Copy as Pathname), then press this."
+                 : "Copy a path such as /home/deck/Games/Gears of War 2 or ~/Games/gears2.iso (from Dolphin: right-click > Copy Location), then press this.");
     ImGui::SameLine();
     if (button(g_scan == 1 ? "Looking..." : "Look for my games") && g_scan != 1) scan_start(a);
-    ui_tip("Searches ~/Games, ~/Downloads, ~/Desktop, your Steam library folders, SD cards and USB drives (/run/media) and ~/.local/share for game copies, disc images and title updates.");
+    ui_tip(a.mac ? "Searches ~/Games, ~/Downloads, ~/Desktop, ~/Documents and external drives (/Volumes) for game copies, disc images and title updates."
+                 : "Searches ~/Games, ~/Downloads, ~/Desktop, your Steam library folders, SD cards and USB drives (/run/media) and ~/.local/share for game copies, disc images and title updates.");
 }

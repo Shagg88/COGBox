@@ -36,8 +36,10 @@ struct Result {
 // the user folder is as it was (moves are undone).
 // own_dirs: COGBox's other user folders of this game (other launcher profiles) - never searched as a source.
 // Saves go under the SDK's one profile (B13EBABEBABEBABE), whatever profile they came from.
+// region_titles: other title IDs of the same game (regional discs) whose saves are imported too, under title_id.
 bool import(const std::filesystem::path &source, uint32_t title_id, const std::filesystem::path &user_dir,
-            const std::string &stamp, Result &r, const std::vector<std::filesystem::path> &own_dirs = {});
+            const std::string &stamp, Result &r, const std::vector<std::filesystem::path> &own_dirs = {},
+            const std::vector<uint32_t> &region_titles = {});
 
 // The title-specific settings (id, bytes) of a GPD file's bytes. False if it is not an XDBF file.
 bool gpd_title_settings(const uint8_t *d, size_t n, std::vector<std::pair<uint32_t, std::string>> &out);

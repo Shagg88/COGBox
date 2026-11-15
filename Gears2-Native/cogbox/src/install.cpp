@@ -6,12 +6,17 @@
 #include "theme.h"
 #include "i18n.h"
 #include "x360fs.h"
+#include "dlc_dupes.h"
 
 #include <windows.h>
 #include <cstdio>
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <thread>
 
 namespace {
 struct Plan {
@@ -35,6 +40,10 @@ struct Plan {
 };
 Plan g_plan;
 }
+// GitHub #283 (r22 R1): the job thread is checking and removing duplicate DLC (install_poll reports it, not g_plan)
+static bool g_dupJob = false;
+static bool g_dupJobBad = false;   // set by that job under j.m
+static void dlc_refresh();
 
 static uint64_t free_space(const std::string &dir)
 {
@@ -392,6 +401,13 @@ void install_poll(App &a)
     if (s < 2) return;
     if (j.th.joinable()) j.th.join();
     std::lock_guard<std::mutex> l(j.m);
+    if (g_dupJob) {   // GitHub #283: Remove duplicates
+        g_dupJob = false;
+        set_message(a, j.result, g_dupJobBad);
+        dlc_refresh();
+        j.state = 0;
+        return;
+    }
     if (s == 2) {
         // 0.2.0: downloadable content is not the game's copy or update - its folder is never remembered as either
         if (g_plan.dlc) {}
@@ -468,8 +484,25 @@ void install_draw(App &a, ImVec2 size)
 namespace {
 std::vector<DlcItem> g_dlc[G_COUNT];
 DWORD g_dlcAt[G_COUNT] = {};
+std::string g_dlcSig[G_COUNT];   // GitHub #283: the folder list g_dlc was made from (names, times, links)
 DlcItem g_dlcRemove;
 int g_dlcRemoveGame = -1;
+// GitHub #283 / r22 R1: which installed package another one already covers (dlc_dupes.h), worked out on a worker
+// thread (never on the UI thread) and only when the list of folders changes; the content keys are kept across
+// checks (by path, size and time), so the re-check before a removal reads only what changed. The thread holds its own
+// reference, so closing the launcher while it runs is safe.
+struct DupShared {
+    std::mutex m;
+    bool running = false;                              // one check at a time
+    std::string sig[G_COUNT];                          // the folder list each result belongs to
+    bool done[G_COUNT] = {};
+    std::map<std::string, std::string> of[G_COUNT];    // folder name -> the folder name of the package that covers it
+    bool fresh[G_COUNT] = {};                          // a result came in: list again now
+    dlcdup::KeyCache keys;
+};
+std::shared_ptr<DupShared> g_dup = std::make_shared<DupShared>();
+std::vector<dlcdup::Pair> g_dupShown;   // r22 R4: the pairs the "Remove duplicates" question counted
+int g_dupGame = -1;
 
 std::string dlc_root(int g)
 {
@@ -477,49 +510,136 @@ std::string dlc_root(int g)
     snprintf(tid, sizeof tid, "%08X", game_def(g).titleId);
     return join(game_content_dir(g), tid);
 }
+
+// The packages in root\00000002 (no globals: also used by the worker). 'link': the folder is a junction / symlink /
+// reparse point - listed (its own Remove takes only the link away) but never part of the duplicate check (r22 B1).
+void dlc_enum(const std::string &root, std::vector<DlcItem> &out, std::vector<bool> &link, std::string &sig)
+{
+    const std::string dir = join(root, "00000002");
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((widen(dir) + L"\\*").c_str(), &fd);
+    if (f == INVALID_HANDLE_VALUE) return;
+    do {
+        std::wstring n = fd.cFileName;
+        if (n == L"." || n == L".." || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+        std::string name = narrow(n);
+        if (name.find(".partial") != std::string::npos || name.find(".old-") != std::string::npos) continue;
+        DlcItem it;
+        it.name = name;
+        it.dir = join(dir, name);
+        it.header = join(join(join(root, "Headers"), "00000002"), name + ".header");
+        uint8_t h[0x108] = {};
+        if (FILE *hf = _wfopen(widen(it.header).c_str(), L"rb")) {
+            if (fread(h, 1, sizeof h, hf) == sizeof h) {
+                std::wstring w;
+                for (int i = 0; i < 127; i++) { wchar_t c = wchar_t((h[8 + 2 * i] << 8) | h[9 + 2 * i]); if (!c) break; w += c; }
+                it.title = narrow(w);
+            }
+            fclose(hf);
+        }
+        if (it.title.empty()) it.title = name;
+        out.push_back(it);
+        const bool l = (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+        link.push_back(l);
+        char t[64];
+        snprintf(t, sizeof t, "|%lx.%lx.%lx%s|", fd.ftCreationTime.dwLowDateTime, fd.ftLastWriteTime.dwHighDateTime, fd.ftLastWriteTime.dwLowDateTime,
+                 l ? "L" : "");
+        sig += name + t;
+    } while (FindNextFileW(f, &fd));
+    FindClose(f);
+}
+
+using DupDirs = std::vector<std::pair<std::string, std::filesystem::path>>;
+DupDirs dup_dirs(const std::vector<DlcItem> &items, const std::vector<bool> &link)
+{
+    DupDirs d;
+    for (size_t i = 0; i < items.size(); i++)
+        if (!link[i]) d.push_back({ items[i].name, std::filesystem::path(widen(items[i].dir)) });
+    return d;
+}
+
+void dup_mark_thread(std::shared_ptr<DupShared> s, int g, std::string sig, DupDirs dirs)
+{
+    std::map<std::string, std::string> of;
+    try {
+        std::vector<dlcdup::Package> pk;
+        const std::vector<int> cover = dlcdup::mark(dirs, s->keys, pk);
+        for (size_t i = 0; i < dirs.size(); i++)
+            if (cover[i] >= 0) of[dirs[i].first] = dirs[cover[i]].first;
+    } catch (...) {
+        of.clear();   // nothing marked
+    }
+    std::lock_guard<std::mutex> l(s->m);
+    s->sig[g] = sig;
+    s->of[g] = std::move(of);
+    s->done[g] = true;
+    s->running = false;
+    for (bool &f : s->fresh) f = true;   // this game's marks, and any other game waiting for its check
+}
 }  // namespace
 
 const std::vector<DlcItem> &dlc_list(int g)
 {
     DWORD now = GetTickCount();
-    if (g_dlcAt[g] && now - g_dlcAt[g] < 3000) return g_dlc[g];
+    bool fresh;
+    { std::lock_guard<std::mutex> l(g_dup->m); fresh = g_dup->fresh[g]; g_dup->fresh[g] = false; }
+    if (!fresh && g_dlcAt[g] && now - g_dlcAt[g] < 3000) return g_dlc[g];
     g_dlcAt[g] = now ? now : 1;
     std::vector<DlcItem> out;
-    std::string root = dlc_root(g), dir = join(root, "00000002");
-    WIN32_FIND_DATAW fd;
-    HANDLE f = FindFirstFileW((widen(dir) + L"\\*").c_str(), &fd);
-    if (f != INVALID_HANDLE_VALUE) {
-        do {
-            std::wstring n = fd.cFileName;
-            if (n == L"." || n == L".." || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-            std::string name = narrow(n);
-            if (name.find(".partial") != std::string::npos || name.find(".old-") != std::string::npos) continue;
-            DlcItem it;
-            it.name = name;
-            it.dir = join(dir, name);
-            it.header = join(join(join(root, "Headers"), "00000002"), name + ".header");
-            uint8_t h[0x108] = {};
-            if (FILE *hf = _wfopen(widen(it.header).c_str(), L"rb")) {
-                if (fread(h, 1, sizeof h, hf) == sizeof h) {
-                    std::wstring w;
-                    for (int i = 0; i < 127; i++) { wchar_t c = wchar_t((h[8 + 2 * i] << 8) | h[9 + 2 * i]); if (!c) break; w += c; }
-                    it.title = narrow(w);
-                }
-                fclose(hf);
+    std::vector<bool> link;
+    std::string sig;   // GitHub #283: the folders' names and times
+    dlc_enum(dlc_root(g), out, link, sig);
+    g_dlcSig[g] = sig;
+    // GitHub #283: packages whose every file another installed package also has (same path, size and contents)
+    bool start = false;
+    {
+        std::lock_guard<std::mutex> l(g_dup->m);
+        if (!(g_dup->done[g] && g_dup->sig[g] == sig)) {
+            if (out.size() < 2) { g_dup->sig[g] = sig; g_dup->of[g].clear(); g_dup->done[g] = true; }   // nothing to compare
+            else if (!g_dup->running) { g_dup->running = true; g_dup->done[g] = false; start = true; }
+        }
+        if (g_dup->done[g] && g_dup->sig[g] == sig)
+            for (DlcItem &it : out) {
+                auto c = g_dup->of[g].find(it.name);
+                if (c == g_dup->of[g].end()) continue;
+                for (const DlcItem &o : out)
+                    if (o.name == c->second) {
+                        it.dupOfName = o.name;
+                        it.dupOf = o.title == it.title ? o.title + " (" + o.name + ")" : o.title;
+                    }
             }
-            if (it.title.empty()) it.title = name;
-            out.push_back(it);
-        } while (FindNextFileW(f, &fd));
-        FindClose(f);
+    }
+    if (start) {
+        try {
+            std::thread(dup_mark_thread, g_dup, g, sig, dup_dirs(out, link)).detach();
+        } catch (...) {   // no thread: nothing is marked
+            std::lock_guard<std::mutex> l(g_dup->m);
+            g_dup->running = false;
+            g_dup->sig[g] = sig; g_dup->of[g].clear(); g_dup->done[g] = true;
+        }
     }
     g_dlc[g] = out;
     return g_dlc[g];
+}
+
+bool dlc_dupes_checking(int g)
+{
+    std::lock_guard<std::mutex> l(g_dup->m);
+    return !(g_dup->done[g] && g_dup->sig[g] == g_dlcSig[g]);
+}
+
+bool dlc_dupes_running()
+{
+    std::lock_guard<std::mutex> l(g_dup->m);
+    return g_dup->running;
 }
 
 static void dlc_refresh() { for (DWORD &t : g_dlcAt) t = 0; }
 
 void dlc_remove_ask(App &a, int g, const DlcItem &item)
 {
+    // r25: the duplicate check keeps the packages' files open while it reads them - a removal then could stop half way
+    if (dlc_dupes_running()) { set_message(a, "Still checking for duplicates - try again in a moment.", false); return; }
     g_dlcRemove = item;
     g_dlcRemoveGame = g;
     ask(a, "dlcremove", g, "Remove downloadable content",
@@ -536,6 +656,91 @@ void dlc_remove_confirmed(App &a)
     set_message(a, ok ? "\"" + g_dlcRemove.title + "\" is removed." : "It couldn't be removed completely - is a file from it open?", !ok);
     g_dlcRemoveGame = -1;
     dlc_refresh();
+}
+
+// GitHub #283: every package another installed package already covers, in one go (only COGBox's unpacked copies; the
+// covering package stays, so every file is still there once). r22: the question counts the marks the list shows (the
+// worker's result, no new check on the UI thread); Remove then checks those pairs again, in full, on the job thread.
+void dlc_remove_dupes_ask(App &a, int g)
+{
+    const std::vector<DlcItem> &items = dlc_list(g);
+    if (dlc_dupes_checking(g)) { set_message(a, "Still checking for duplicates - try again in a moment.", false); return; }
+    g_dupShown.clear();
+    for (const DlcItem &it : items)
+        if (!it.dupOfName.empty()) g_dupShown.push_back({ it.name, it.dupOfName });
+    if (g_dupShown.empty()) { set_message(a, "No duplicates found.", false); return; }
+    g_dupGame = g;
+    ask(a, "dlcdupes", g, "Remove duplicate downloadable content",
+        "Duplicates found: " + std::to_string(g_dupShown.size()) + "\n\nEverything in them is also in another package you keep, with the same contents, so the game "
+        "only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched.",
+        { "Remove", "Cancel" });
+}
+
+// The job thread: the shown pairs checked again in full (dlcdup::verify: still marked the same way, every file of both
+// whole-file SHA-1, not one folder / file under two names), then only those removed.
+static void dup_remove_worker(App *ap, std::string root, std::vector<dlcdup::Pair> shown, std::shared_ptr<DupShared> s)
+{
+    InstallJob &j = ap->job;
+    std::vector<DlcItem> items;
+    std::vector<bool> link;
+    std::string sig;
+    dlc_enum(root, items, link, sig);
+    dlcdup::Verified v;
+    try {
+        v = dlcdup::verify(dup_dirs(items, link), shown, s->keys, [&](uint64_t done, uint64_t total, const std::string &file) {
+            j.done = done; j.total = total;
+            std::lock_guard<std::mutex> l(j.m);
+            j.current = file;
+            return !j.cancel.load();
+        });
+    } catch (...) {
+        v = dlcdup::Verified();
+        for (const dlcdup::Pair &p : shown) v.skipped.push_back(p.name);
+    }
+    int done = 0, failed = 0;
+    if (!v.cancelled)
+        for (const dlcdup::Pair &p : v.ok) {
+            if (j.cancel) { v.cancelled = true; break; }
+            const DlcItem *it = nullptr, *cv = nullptr;
+            for (const DlcItem &o : items) { if (o.name == p.name) it = &o; if (o.name == p.cover) cv = &o; }
+            // right before: neither folder became a link, and the package that covers it is still there
+            if (!it || !cv || dlcdup::is_link(std::filesystem::path(widen(it->dir))) || dlcdup::is_link(std::filesystem::path(widen(cv->dir))) ||
+                !dir_has_files(cv->dir)) { failed++; continue; }
+            { std::lock_guard<std::mutex> l(j.m); j.current = it->name; }
+            if (remove_tree(widen(it->dir))) { DeleteFileW(widen(it->header).c_str()); done++; }
+            else failed++;
+        }
+    std::lock_guard<std::mutex> l(j.m);
+    if (v.cancelled && !done) { j.result = "Cancelled - nothing was changed."; g_dupJobBad = false; }
+    else {
+        j.result = "Duplicates removed: " + std::to_string(done) + ".";
+        if (failed) j.result += " Some duplicates couldn't be removed completely - is a file from them open?";
+        if (!v.skipped.empty())
+            j.result += " Left as they are (no longer exact copies, or not fully readable): " + std::to_string(v.skipped.size()) + ".";
+        g_dupJobBad = failed || !v.skipped.empty();
+    }
+    j.state = v.cancelled ? 4 : 2;
+}
+
+void dlc_remove_dupes_confirmed(App &a)
+{
+    const int g = g_dupGame;
+    g_dupGame = -1;
+    if (g < 0) return;
+    if (a.run.proc) { set_message(a, "Close the game first.", true); return; }
+    InstallJob &j = a.job;
+    if (j.state.load() == 1) return;   // one at a time
+    if (j.th.joinable()) j.th.join();
+    j.cancel = false; j.done = 0; j.total = 0;
+    {
+        std::lock_guard<std::mutex> l(j.m);
+        j.what = std::string("Checking duplicate downloadable content - ") + game_def(g).name;
+        j.current.clear(); j.error.clear(); j.result.clear();
+    }
+    j.game = g;
+    g_dupJob = true;
+    j.state = 1;
+    j.th = std::thread(dup_remove_worker, &a, dlc_root(g), g_dupShown, g_dup);
 }
 
 // ---- 0.2.0: folders of downloadable content dropped on the window ---------------------------------------------------

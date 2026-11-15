@@ -12,7 +12,9 @@ int local_utc_minutes();
 
 
 // <identity_dir>\identity.json as the games write it; nullopt when missing, unreadable or without uuid / token.
-std::optional<SocialAccount> read_account(const std::string& identity_dir_utf8);
+// busy (when given) is set when identity.json exists but could not be read in a few tries (OneDrive / antivirus holding
+// it): the answer is then "unknown", not "no account" - the caller must not make a new account for it.
+std::optional<SocialAccount> read_account(const std::string& identity_dir_utf8, bool* busy = nullptr);
 // The claim answer (POST /api/v1/auth/claim for a new account): uuid, token, display_name, discriminator, xuid.
 std::optional<SocialAccount> parse_claim(const std::string& body);
 // Writes <identity_dir>\identity.json only when there is none (a game starting at the same moment may have made one:
@@ -21,6 +23,20 @@ bool write_account_exclusive(const std::string& identity_dir_utf8, const SocialA
 // After a rename: the existing identity.json takes the new name and number (every other field kept). False when
 // there is no readable identity.json.
 bool update_account_name(const std::string& identity_dir_utf8, const std::string& name, const std::string& discriminator);
+// 0.6.2 (GitHub #302): identity.json as it is, with or without its token (a game writes it before its claim succeeds).
+std::optional<SocialAccount> read_account_partial(const std::string& identity_dir_utf8, bool* busy = nullptr);
+// The whole account written over identity.json (a new file in the same folder, flushed, then moved over it with
+// MoveFileExW replace + write-through, a few short retries when the file is held open by a scan or sync) - for a claim that completed a token-less file.
+bool write_account_replace(const std::string& identity_dir_utf8, const SocialAccount& a);
+// identity.json set aside as identity.json.<suffix>-<date-time> (kept, never deleted or replaced); true when there is
+// no identity.json after.
+bool set_account_aside(const std::string& identity_dir_utf8, const std::string& suffix);
+// Whether a file can be made in the profile folder (tried with a scratch file, removed again).
+bool account_dir_writable(const std::string& identity_dir_utf8);
+// identity.json's read-only flag cleared (a game or a copy may have set it).
+void clear_account_read_only(const std::string& identity_dir_utf8);
+// Seconds since identity.json was last written; -1 when there is none (a date in the future counts as long ago).
+int account_file_age_seconds(const std::string& identity_dir_utf8);
 
 // The COGBox multiplayer server (Flippage's Oracle VM; Shagg agreed 2026-11-08). CogBox.ini [Online] Server overrides.
 constexpr const char* kCogboxServer = "https://cogbox-mp.duckdns.org";

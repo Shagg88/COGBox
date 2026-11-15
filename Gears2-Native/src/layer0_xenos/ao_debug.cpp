@@ -66,12 +66,32 @@ constexpr uint32_t kPcssRadiusCount = sizeof(kPcssRadii) / sizeof(kPcssRadii[0])
 std::atomic<uint32_t> g_pcss_radius{2};
 std::atomic<bool> g_pcss_available{false};
 std::atomic<bool> g_pcss_trace{false};  // Ctrl+Shift+F12: log the next frame's depth-texture draws (pcss_trace)
+// --gow2_ssil (prototype): Insert on / off, Shift+Insert view, Ctrl+Insert strength, Alt+Insert albedo estimate.
+constexpr uint32_t kSsilViews = 3, kSsilAlbedos = 4;
+const char* const kSsilViewNames[kSsilViews] = {"normal", "indirect only", "split: without | with"};
+const char* const kSsilAlbedoNames[kSsilAlbedos] = {"hue 50%", "grey 50%", "scene colour", "local"};
+constexpr float kSsilStrengths[] = {0.25f, 0.5f, 1.0f, 1.5f, 2.0f, 4.0f};
+constexpr uint32_t kSsilStrengthCount = sizeof(kSsilStrengths) / sizeof(kSsilStrengths[0]);
+std::atomic<bool> g_ssil_available{false}, g_ssil_on{true};
+std::atomic<uint32_t> g_ssil_view{0}, g_ssil_strength{3}, g_ssil_albedo{0};
+// The tricks (bits): 0 back faces (Home), 1 only the difference (Shift+Home), 2 temporal (Ctrl+Home), 3 bounces
+// (Alt+Home), 4 adaptive scale (End).
+std::atomic<uint32_t> g_ssil_tricks{1u | 4u | 8u | 16u};
+constexpr const char* kSsilTrickNames[5] = {"back faces", "only the difference", "temporal", "bounces", "adaptive scale"};
+std::atomic<float> g_ssil_median{0.0f}, g_ssil_radius{0.0f}, g_ssil_t{0.0f};  // the last scale read back
+std::atomic<bool> g_ssil_paused{false};  // on, but no XeGTAO depth pyramid this frame (CACAO chosen)
+void SsilToggle(uint32_t bit) {
+  if (!g_ssil_available.load()) return;
+  const uint32_t now = g_ssil_tricks.load() ^ (1u << bit);
+  g_ssil_tricks.store(now);
+  REXLOG_INFO("gow2_ssil: {} -> {}", kSsilTrickNames[bit], (now >> bit) & 1u ? "on" : "off");
+}
 
 class AoLabel final : public rex::ui::ImGuiDialog {
  public:
   explicit AoLabel(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {}
   void OnDraw(ImGuiIO& io) override {
-    char text[384], passes[32];
+    char text[768], passes[32];
     if (g_cacao.load()) std::snprintf(passes, sizeof(passes), "%u blur passes", g_cacao_blur.load());
     else std::snprintf(passes, sizeof(passes), "%s", kDenoiseNames[g_denoise.load() % kDenoiseCount]);
     if (g_active.load())
@@ -87,6 +107,20 @@ class AoLabel final : public rex::ui::ImGuiDialog {
                     "   | shadows: %s %s, radius %.0f%%, view %s (F12 filter, Shift+F12 view, Ctrl+F12 quality, Alt+F12 radius)",
                     g_pcss_on.load() ? "PCSS" : "game's filter", kPcssQualityNames[g_pcss_quality.load() % kPcssQualities],
                     kPcssRadii[g_pcss_radius.load() % kPcssRadiusCount] * 100.0f, kPcssViewNames[g_pcss_view.load() % kPcssViews]);
+    }
+    if (g_ssil_available.load()) {
+      const size_t used = std::strlen(text);
+      std::snprintf(text + used, sizeof(text) - used, "   | SSIL: %s x%.2f, albedo %s, view %s (Insert on/off, Shift+Insert view, Ctrl+Insert strength, Alt+Insert albedo: scene colour / local)",
+                    !g_ssil_on.load() ? "off" : g_ssil_paused.load() ? "PAUSED - needs XeGTAO (F6 / F9)" : "on",
+                    kSsilStrengths[g_ssil_strength.load() % kSsilStrengthCount],
+                    kSsilAlbedoNames[g_ssil_albedo.load() % kSsilAlbedos], kSsilViewNames[g_ssil_view.load() % kSsilViews]);
+      const uint32_t tr = g_ssil_tricks.load();
+      const size_t used2 = std::strlen(text);
+      std::snprintf(text + used2, sizeof(text) - used2,
+                    "\n   SSIL tricks: back faces %s (Home), difference %s (Shift+Home), temporal %s (Ctrl+Home, needs an upscaler), "
+                    "bounces %s (Alt+Home), adaptive %s (End): median %.0f -> radius %.0f (%.0f%% open)",
+                    tr & 1u ? "on" : "off", tr & 2u ? "on" : "off", tr & 4u ? "on" : "off", tr & 8u ? "on" : "off",
+                    tr & 16u ? "on" : "off", g_ssil_median.load(), g_ssil_radius.load(), g_ssil_t.load() * 100.0f);
     }
     const float scale = std::max(1.0f, io.DisplaySize.y / 1080.0f);
     ImGui::SetNextWindowBgAlpha(0.45f);
@@ -153,6 +187,28 @@ void XenosPcssSetAvailable(bool on, uint32_t mode, uint32_t quality, float radiu
 }
 bool XenosPcssTakeTrace() { return g_pcss_trace.exchange(false); }
 float XenosPcssRadius() { return kPcssRadii[g_pcss_radius.load() % kPcssRadiusCount]; }
+void XenosSsilSetState(bool on, uint32_t view, float strength, uint32_t albedo) {
+  uint32_t nearest = 0;
+  for (uint32_t i = 1; i < kSsilStrengthCount; ++i)
+    if (std::fabs(kSsilStrengths[i] - strength) < std::fabs(kSsilStrengths[nearest] - strength)) nearest = i;
+  g_ssil_strength.store(nearest);
+  g_ssil_on.store(on);
+  g_ssil_view.store(view % kSsilViews);
+  g_ssil_albedo.store(albedo % kSsilAlbedos);
+  g_ssil_available.store(true);
+}
+bool XenosSsilOn() { return g_ssil_on.load(); }
+void XenosSsilSetTricks(uint32_t bits) { g_ssil_tricks.store(bits & 31u); }
+void XenosSsilSetPaused(bool paused) { g_ssil_paused.store(paused); }
+void XenosSsilSetScale(float median, float radius, float t) {
+  g_ssil_median.store(median);
+  g_ssil_radius.store(radius);
+  g_ssil_t.store(t);
+}
+uint32_t XenosSsilTricks() { return g_ssil_tricks.load(); }
+uint32_t XenosSsilView() { return g_ssil_view.load() % kSsilViews; }
+float XenosSsilStrength() { return kSsilStrengths[g_ssil_strength.load() % kSsilStrengthCount]; }
+uint32_t XenosSsilAlbedo() { return g_ssil_albedo.load() % kSsilAlbedos; }
 uint32_t XenosPcssMode() {
   return (g_pcss_on.load() ? 1u : 0u) | ((g_pcss_view.load() % kPcssViews) << 1) | ((g_pcss_quality.load() % kPcssQualities) << 3);
 }
@@ -160,6 +216,46 @@ uint32_t XenosPcssMode() {
 void XenosInstallAoDebugKeys(rex::ui::ImGuiDrawer* drawer) {
   if (!REXCVAR_GET(gow2_ao_debug_keys)) return;
   g_keys.store(true);
+  // --gow2_ssil (prototype): Insert on / off; Shift+Insert view, Ctrl+Insert strength, Alt+Insert albedo estimate. (The
+  // F keys are all taken: the SDK has F3 debug overlay, F4 settings, F7 achievements. --bind_gow2_ssil=<key> moves it.)
+  rex::ui::RegisterBind("bind_gow2_ssil", "Insert", "SSIL on / off; Shift: view, Ctrl: strength, Alt: albedo estimate (developer)", [] {
+    if (!g_ssil_available.load()) return;
+#ifdef _WIN32
+    const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0, ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
+               alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+#else
+    const bool shift = false, ctrl = false, alt = false;
+#endif
+    if (alt) {  // scene colour <-> local (hue / grey only from --gow2_ssil_albedo)
+      const uint32_t a = g_ssil_albedo.load() % kSsilAlbedos == 2u ? 3u : 2u;
+      g_ssil_albedo.store(a);
+      REXLOG_INFO("gow2_ssil: albedo -> {}", kSsilAlbedoNames[a]);
+    } else if (ctrl) {
+      const uint32_t s = (g_ssil_strength.load() + 1) % kSsilStrengthCount;
+      g_ssil_strength.store(s);
+      REXLOG_INFO("gow2_ssil: strength -> {}", kSsilStrengths[s]);
+    } else if (shift) {
+      const uint32_t v = (g_ssil_view.load() + 1) % kSsilViews;
+      g_ssil_view.store(v);
+      REXLOG_INFO("gow2_ssil: view -> {}", kSsilViewNames[v]);
+    } else {
+      const bool on = !g_ssil_on.load();
+      g_ssil_on.store(on);
+      REXLOG_INFO("gow2_ssil: {}", on ? "on" : "off");
+    }
+  });
+  // The SSIL tricks: Home back faces, Shift+Home only the difference, Ctrl+Home temporal, Alt+Home bounces; End the
+  // adaptive scale.
+  rex::ui::RegisterBind("bind_gow2_ssil_tricks", "Home", "SSIL back faces; Shift: only the difference, Ctrl: temporal, Alt: bounces (developer)", [] {
+#ifdef _WIN32
+    const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0, ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
+               alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+#else
+    const bool shift = false, ctrl = false, alt = false;
+#endif
+    SsilToggle(alt ? 3u : ctrl ? 2u : shift ? 1u : 0u);
+  });
+  rex::ui::RegisterBind("bind_gow2_ssil_adaptive", "End", "SSIL adaptive scale (developer)", [] { SsilToggle(4u); });
   rex::ui::RegisterBind("bind_gow2_ao_show", "F9", "AO: XeGTAO / CACAO / the game's own / none (developer)", [] {
     if (!g_active.load()) return;
     // g_show: 0 ours, 1 none, 2 the game's own.
@@ -245,6 +341,9 @@ void XenosInstallAoDebugKeys(rex::ui::ImGuiDrawer* drawer) {
 void XenosShutdownAoDebugKeys() {
   if (!g_keys.exchange(false)) return;
   rex::ui::UnregisterBind("bind_gow2_ao_show");
+  rex::ui::UnregisterBind("bind_gow2_ssil");
+  rex::ui::UnregisterBind("bind_gow2_ssil_tricks");
+  rex::ui::UnregisterBind("bind_gow2_ssil_adaptive");
   rex::ui::UnregisterBind("bind_gow2_ao_game");
   rex::ui::UnregisterBind("bind_gow2_mip_bias");
   rex::ui::UnregisterBind("bind_gow2_ao_view");

@@ -43,6 +43,7 @@ void Gow1StopMemoryGauge();     // stops it before the kernel goes away
 void Gow1InstallPostFxSwitches(rex::Runtime* runtime);  // game_patches.cpp: GitHub #179 motion blur / depth of field
 void Gow1InstallCheckpointName(rex::Runtime* runtime);  // game_patches.cpp: GitHub #246 checkpoint after a nickname change
 void Gow1InstallUnlocks();  // unlocks.cpp: insane050 (--gow1_unlock_insane, --gow1_profile_log)
+void Gow1InstallCheats();   // cheats.cpp: GitHub #264 (--gow1_cheats, --ue3_hotkeys / --ue3_exec)
 void Gow1InstallBootLockWait(rex::Runtime* runtime);  // game_patches.cpp: 0.5.0 job 1507 boot crash (ini loader lock)
 void Gow1ApplyUltrawideIfRequested(rex::Runtime* runtime);  // game_patches.cpp (nothing yet)
 void Gow1ApplyDataPatchesIfRequested(rex::Runtime* runtime);  // game_patches.cpp: --gow1_tiling_off (test)
@@ -82,6 +83,7 @@ class Gow1App : public rex::ReXApp {
     Gow1InstallPostFxSwitches(runtime());   // GitHub #179
     Gow1InstallCheckpointName(runtime());   // GitHub #246
     Gow1InstallUnlocks();   // insane050
+    Gow1InstallCheats();    // GitHub #264
     Gow1InstallBootLockWait(runtime());     // 0.5.0: job 1507 boot crash
     Gow1ApplyUltrawideIfRequested(runtime());     // --gow1_ultrawide: the two aspect floats, the present shape
     XenosInstallDrawStatsIfRequested();

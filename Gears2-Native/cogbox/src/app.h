@@ -12,12 +12,13 @@
 #include <vector>
 
 #include "imgui.h"
+#include "report.h"   // GpuCard (0.6.2)
 #include "games.h"
 #include "gears_settings.h"
 #include "util.h"
 #include "proton.h"   // proton049
 
-#define COGBOX_VERSION "0.6.1"
+#define COGBOX_VERSION "0.6.2"
 #define COGBOX_NAME "COGBox"
 
 namespace gs = cogbox::gears;
@@ -97,6 +98,7 @@ struct App {
     InstallJob job;
     Running run;
     std::vector<std::string> gpus;    // graphics cards (DXGI)
+    std::vector<GpuCard> gpuCards;    // 0.6.2 (#304): the cards the Graphics card option offers (name + video memory)
     bool hasAvx2 = true;
     bool padConnected = false;
     bool lastPad = true;              // 0.2.0: the last input came from a controller (hints follow it), else keyboard / mouse
@@ -170,10 +172,17 @@ void install_confirmed(App &a);      // the "replace" question answered yes
 bool drop_is_game_or_update(const std::string &folder);          // 0.2.0: a dropped folder COGBox adds as a copy / update
 std::vector<std::string> dlc_packages_in(const std::string &folder);   // 0.2.0: DLC packages in a dropped folder (3 levels)
 // 0.2.0: downloadable content COGBox added (user\0000000000000000\<title>\00000002\<name>)
-struct DlcItem { std::string name, title, dir, header; };
+struct DlcItem {
+    std::string name, title, dir, header;
+    std::string dupOf, dupOfName;   // GitHub #283: set when another installed package already has all of this one's files
+};
 const std::vector<DlcItem> &dlc_list(int game);          // cached; refreshed after an add or remove
 void dlc_remove_ask(App &a, int game, const DlcItem &item);
 void dlc_remove_confirmed(App &a);   // the "dlcremove" question answered yes
+void dlc_remove_dupes_ask(App &a, int game);   // GitHub #283: "Remove duplicates"
+void dlc_remove_dupes_confirmed(App &a);       // the "dlcdupes" question answered yes (checked again in full on the job thread)
+bool dlc_dupes_running();                        // GitHub #283 (r25): a duplicate check is reading package files now
+bool dlc_dupes_checking(int game);             // GitHub #283 (r22 R1): the duplicate check for the listed folders is still running
 // 0.2.0: mods (mods.cpp) - <Game>\mods\<mod>\, laid out like the game's data folder
 struct ModItem {
     std::string folder, path, name, version, author, description;
@@ -204,6 +213,9 @@ float linux_copy_buttons_width(const App &a);
 void linux_copy_buttons(App &a);              // Choose a file... / Choose a folder... / Paste a path (Linux: + Look for my games)
 void linux_recommended_ask(App &a, int g);    // "Use recommended Steam Deck / Proton settings"
 std::string shown_path(const App &a, const std::string &p);   // under Wine Z:\home\... shown as /home/...
+// 0.6.2 review R7: shell_open(dir), and under Wine also "Folder: /home/..." as the message (Game Mode has no file
+// manager, and inside Steam's container xdg-open may open nothing)
+void open_folder(App &a, const std::string &dir);
 void auto_settings_apply(App &a, int g);    // Shagg 29 Oct: the "Detect best settings" answer (page.cpp)   // the "crash" question answered
 bool make_report(App &a, int g, const std::string &sessionDir, const std::string &what, std::string &zip, std::string &err);
 std::string newest_session(int g);

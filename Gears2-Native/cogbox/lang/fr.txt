@@ -1270,6 +1270,8 @@ Can freeze on NVIDIA cards with Vulkan while the NVIDIA overlay (NVIDIA App / Al
 # 0.4.9: proton049 - Linux / Steam Deck through Proton (machine-made translation, please check)
 Choose a folder... = Choisir un dossier...
 Paste a Linux path = Coller un chemin Linux
+Paste a Mac path = Coller un chemin Mac
+(Proton runs Vulkan) = (Proton utilise Vulkan)
 Look for my games = Chercher mes jeux
 Looking... = Recherche...
 A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\home\... is /home/...). = Un dossier avec ton jeu (default.xex), une mise à jour du titre ou un DLC. Tes dossiers Linux sont sous Z: (Z:\home\... correspond à /home/...).
@@ -1279,6 +1281,7 @@ Use recommended Steam Deck / Proton settings = Utiliser les réglages recommand�
 Vulkan, FSR and no frame generation; on a Steam Deck also borderless on its 1280x800 screen, 60 fps, Steam Deck button prompts and the controller. You see the list before anything changes. = Vulkan, FSR et pas de génération d'images ; sur un Steam Deck aussi sans bordure sur son écran 1280x800, 60 fps, les boutons Steam Deck et la manette. Tu vois la liste avant tout changement.
 STEAM DECK = STEAM DECK
 LINUX = LINUX
+MAC (CROSSOVER) = MAC (CROSSOVER)
 Running through = Fonctionne via
 plain Wine: COGBox is tested with Steam's Proton (see the README's Linux and Steam Deck section) = Wine simple : COGBox est testé avec Proton de Steam (voir la section Linux et Steam Deck du README)
 Recommended Steam Deck settings = Réglages recommandés Steam Deck
@@ -1344,3 +1347,158 @@ Choose a file... = Choisir un fichier...
 Paste a path = Coller un chemin
 Import saves... = Importer des sauvegardes...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = Pour une expérience la plus fluide possible, ces jeux nécessitent les Title Updates indiquées. Voir le README pour les détails.
+# 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = Les touches de triche des développeurs, F5-F11 en jeu (mode dieu, ralenti, caméra libre - dans Gears 1, traverser les murs en volant - masquer le HUD, toutes les armes). Gears 2 : uniquement dans les parties sur ce PC - jamais en System Link ni en ligne. Gears 3 et Judgment : aussi dans une partie System Link ou en ligne que tu héberges, où le ralenti et le reste touchent tous les joueurs - garde-les pour tes propres parties. Gears 1 : pas encore vérifié en System Link. Les succès et les sauvegardes, c'est ton affaire.
+Not on a Mac (CrossOver). = Pas sur un Mac (CrossOver).
+Vulkan only on Proton / Wine. = Vulkan uniquement sous Proton / Wine.
+On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = Sur un Mac (CrossOver), les jeux tournent en DirectX 12 via D3DMetal (Apple Silicon). Vulkan n'y démarre pas.
+On a Mac (CrossOver): untested with D3DMetal. If the game doesn't start or looks wrong, use SMAA and leave HDR off. = Sur un Mac (CrossOver) : non testé avec D3DMetal. Si le jeu ne démarre pas ou s'affiche mal, utilise SMAA et laisse le HDR désactivé.
+Not on a Mac: CrossOver's Vulkan is 1.2 and the games need 1.3. DirectX 12 (D3DMetal) is used there. = Pas sur un Mac : le Vulkan de CrossOver est en 1.2 et les jeux ont besoin de 1.3. DirectX 12 (D3DMetal) y est utilisé.
+needs a CPU with AVX2 (Intel Haswell / AMD Ryzen, about 2013 and newer), and this PC's CPU does not report it.\n\nOn a Mac this needs macOS 15 (Sequoia) or newer, whose Rosetta runs AVX2, and an up-to-date CrossOver. = nécessite un processeur avec AVX2 (Intel Haswell / AMD Ryzen, vers 2013 et plus récents), et le processeur de ce PC ne l'indique pas.\n\nSur un Mac, il faut macOS 15 (Sequoia) ou plus récent, dont Rosetta exécute AVX2, et un CrossOver à jour.
+Looking for your games in the usual Mac folders... = Recherche de tes jeux dans les dossiers Mac habituels...
+No game copies found in the usual Mac folders. Use "Choose a folder..." or "Paste a Mac path". = Aucune copie du jeu trouvée dans les dossiers Mac habituels. Utilise "Choisir un dossier..." ou "Coller un chemin Mac".
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\home\... is /home/...). = Une image disque (.iso), un fichier Games on Demand, une mise à jour du titre ou un paquet DLC. Tes dossiers Linux sont sous Z: (Z:\home\... correspond à /home/...).
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = Une image disque (.iso), un fichier Games on Demand, une mise à jour du titre ou un paquet DLC. Tes dossiers Mac sont sous Z: (Z:\Users\... correspond à /Users/...).
+A folder with your game (default.xex), a title update or DLC. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = Un dossier avec ton jeu (default.xex), une mise à jour du titre ou un DLC. Tes dossiers Mac sont sous Z: (Z:\Users\... correspond à /Users/...).
+Copy a folder's or disc image's path first (for example /Users/you/Games/Gears of War 2). = Copie d'abord le chemin d'un dossier ou d'une image disque (par exemple /Users/you/Games/Gears of War 2).
+Copy a path such as /Users/you/Games/Gears of War 2 or ~/Games/gears2.iso (in Finder: right-click with Option held > Copy as Pathname), then press this. = Copie un chemin comme /Users/you/Games/Gears of War 2 ou ~/Games/gears2.iso (dans le Finder : clic droit en maintenant Option > Copier en tant que nom de chemin), puis appuie ici.
+Searches ~/Games, ~/Downloads, ~/Desktop, ~/Documents and external drives (/Volumes) for game copies, disc images and title updates. = Cherche des copies du jeu, images disque et mises à jour du titre dans ~/Games, ~/Downloads, ~/Desktop, ~/Documents et les disques externes (/Volumes).
+# desktop shortcut notes under Wine: pieces, only with the page.cpp:1236/1238 change in p4
+Desktop shortcuts: in CrossOver, use Run Command, add --play = Raccourcis sur le bureau : dans CrossOver, utilise Run Command et ajoute après CogBox.exe --play
+after CogBox.exe and choose Save Command as a Launcher - it starts this game straight away. = puis choisis Save Command as a Launcher - il lance ce jeu directement.
+Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to --play = Raccourcis sur le bureau : ajoute encore CogBox.exe à Steam et mets dans ses options de lancement --play
+- it starts this game straight away. = - il lance alors ce jeu directement.
+# only with the p3 change (open_folder): "Folder: <path>" under Wine
+Folder: = Dossier :
+# 0.6.2 Social tab + System Link note (machine-made translation, please check)
+# Social tab (social_tab.cpp, front.cpp): texts already passed through tr()
+Friends, invites and online play. = Amis, invitations et jeu en ligne.
+ONLINE PLAY = JEU EN LIGNE
+Use the COGBox multiplayer server = Utiliser le serveur multijoueur COGBox
+Play online with friends: an account for this profile on the COGBox server, a friends list, Join and invites. Off: the profile stays offline. = Jouez en ligne avec vos amis : un compte pour ce profil sur le serveur COGBox, une liste d'amis, Rejoindre et les invitations. Désactivé : le profil reste hors ligne.
+Online play is off. This profile stays offline. = Le jeu en ligne est désactivé. Ce profil reste hors ligne.
+Region = Région
+Quick Match only finds players in this region. Joining and inviting friends works in any region. Takes effect the next time a game starts. Player counts are approximate. = Quick Match ne trouve que les joueurs de cette région. Rejoindre et inviter des amis fonctionne dans toutes les régions. Prend effet au prochain lancement d'un jeu. Les nombres de joueurs sont approximatifs.
+players = joueurs
+DELETE ONLINE ACCOUNT = SUPPRIMER LE COMPTE EN LIGNE
+Removes this profile's account from the COGBox multiplayer server and turns online play off. = Supprime le compte de ce profil du serveur multijoueur COGBox et désactive le jeu en ligne.
+Delete your online account? = Supprimer votre compte en ligne ?
+Your tag, friends list and picture are removed from the COGBox server. Saves and achievements stay. = Votre tag, votre liste d'amis et votre image sont supprimés du serveur COGBox. Les sauvegardes et les succès restent.
+Yes, delete = Oui, supprimer
+Deleting your online account... = Suppression de votre compte en ligne...
+The online server hasn't confirmed the delete yet. Press DELETE ONLINE ACCOUNT again in a minute to check. = Le serveur en ligne n'a pas encore confirmé la suppression. Appuyez de nouveau sur SUPPRIMER LE COMPTE EN LIGNE dans une minute pour vérifier.
+Can't reach the online server. Your online account was not deleted. = Impossible de joindre le serveur en ligne. Votre compte en ligne n'a pas été supprimé.
+The online server refused. Your online account was not deleted. = Le serveur en ligne a refusé. Votre compte en ligne n'a pas été supprimé.
+The online account of the profile you switched from was deleted. = Le compte en ligne du profil que vous avez quitté a été supprimé.
+Your online account was deleted. Online play is off for this profile. = Votre compte en ligne a été supprimé. Le jeu en ligne est désactivé pour ce profil.
+Signing in... = Connexion...
+Can't reach the online server. = Impossible de joindre le serveur en ligne.
+Online = En ligne
+Add friend = Ajouter un ami
+ADD = AJOUTER
+Use Name#1234 - the name, # and the four digits. = Utilisez Name#1234 : le nom, # et les quatre chiffres.
+Launch the game and invite a friend from the F1 social menu. = Lancez le jeu et invitez un ami depuis le menu social F1.
+FRIENDS = AMIS
+request = demande
+requests = demandes
+wants to be your friend = veut devenir votre ami
+ACCEPT = ACCEPTER
+DECLINE = REFUSER
+BLOCK = BLOQUER
+Blocked players can't send you requests again. = Les joueurs bloqués ne peuvent plus vous envoyer de demandes.
+Waiting for them to accept = En attente de son acceptation
+No friends yet - add one by their tag. = Pas encore d'amis - ajoutez-en un avec son tag.
+JOIN = REJOINDRE
+INVITE = INVITER
+REMOVE = RETIRER
+Join their game. = Rejoindre sa partie.
+Set up this game in COGBox to join. = Configurez ce jeu dans COGBox pour rejoindre.
+Invite them to the game you are hosting. = L'inviter dans la partie que vous hébergez.
+Remove this friend (asks first). = Retirer cet ami (demande d'abord).
+Remove this friend? = Retirer cet ami ?
+Yes, remove = Oui, retirer
+Close the running game first, then press JOIN again. = Fermez d'abord le jeu en cours, puis appuyez de nouveau sur REJOINDRE.
+That game isn't set up in COGBox yet. = Ce jeu n'est pas encore configuré dans COGBox.
+PARTY AND MATCH INVITES = INVITATIONS DE GROUPE ET DE PARTIE
+No invites right now. = Aucune invitation pour le moment.
+You can invite friends while a game hosts a lobby or match. = Vous pouvez inviter des amis pendant qu'un jeu héberge un salon ou une partie.
+OPEN MATCHES = PARTIES OUVERTES
+Looking for open matches... = Recherche de parties ouvertes...
+No open matches right now - host a public match and it shows up here. = Aucune partie ouverte pour le moment - hébergez une partie publique et elle apparaîtra ici.
+Full = Pleine
+In progress = En cours
+This match is full. = Cette partie est pleine.
+Join the match in progress: you take a bot's place. = Rejoindre la partie en cours : vous prenez la place d'un bot.
+Join this match. = Rejoindre cette partie.
+Match = Partie
+Casual (under level 3) = Casual (sous le niveau 3)
+# deleting a profile while its online account is busy (front.cpp: pieces after "Couldn't delete the profile:")
+wait until the online account delete has finished = attendez que la suppression du compte en ligne soit terminée
+the online connection is busy - try again in a moment = la connexion en ligne est occupée - réessayez dans un instant
+# online account errors (social_backend.cpp; pieces around the profile folder's path)
+COGBox can't save the online account in the profile folder ( = COGBox ne peut pas enregistrer le compte en ligne dans le dossier du profil (
+), so friends would be lost at every start. Move COGBox to a folder you can write to (not Program Files). = ), donc les amis seraient perdus à chaque démarrage. Déplacez COGBox dans un dossier où vous pouvez écrire (pas Program Files).
+Couldn't save the online account in the profile folder ( = Impossible d'enregistrer le compte en ligne dans le dossier du profil (
+The profile's online account file can't be replaced ( = Le fichier du compte en ligne du profil ne peut pas être remplacé (
+The profile's online account file can't be read or replaced ( = Le fichier du compte en ligne du profil ne peut être ni lu ni remplacé (
+The online server refused the profile's account. = Le serveur en ligne a refusé le compte du profil.
+The online server refused a new account. = Le serveur en ligne a refusé un nouveau compte.
+# the online server's own answers, shown under the friends list (tools/master-server)
+no player with that tag = aucun joueur avec ce tag
+that is you = c'est vous
+friend or request limit reached = limite d'amis ou de demandes atteinte
+at most 10 friend requests a minute = au maximum 10 demandes d'ami par minute
+no request from that player = aucune demande de ce joueur
+no such player = ce joueur n'existe pas
+nothing to join = rien à rejoindre
+no friend to invite, or nothing hosted to invite to = aucun ami à inviter, ou rien d'hébergé où inviter
+no such invite = cette invitation n'existe pas
+that match is no longer open = cette partie n'est plus ouverte
+that match is full = cette partie est pleine
+# only with the social_tab.cpp change in p15 (region name, a friend's state)
+Offline = Hors ligne
+Online - In Launcher = En ligne - dans le launcher
+Playing = En jeu
+Playing Gears of War 2 = Joue à Gears of War 2
+Playing Gears of War 3 = Joue à Gears of War 3
+Playing Judgment = Joue à Judgment
+Playing Gears of War = Joue à Gears of War
+In a game - joinable = Dans une partie - peut être rejointe
+Gears of War 2 - joinable = Gears of War 2 - peut être rejointe
+Gears of War 3 - joinable = Gears of War 3 - peut être rejointe
+Judgment - joinable = Judgment - peut être rejointe
+Gears of War - joinable = Gears of War - peut être rejointe
+# System Link under Linux / Steam Deck (gears_settings.cpp wine_note)
+On Linux / Steam Deck: a game you host can't be joined yet - the games host on port 1000, and this PC keeps the low ports for administrator programs. Joining others should work. A possible fix (not confirmed yet) is in the README ("Hosting from Linux / Steam Deck"). = Sous Linux / Steam Deck : personne ne peut encore rejoindre une partie que vous hébergez - les jeux hébergent sur le port 1000, et ce PC réserve les ports bas aux programmes administrateur. Rejoindre les autres devrait fonctionner. Une solution possible (pas encore confirmée) se trouve dans le README ("Hosting from Linux / Steam Deck").
+# 0.6.2 GitHub #306 Dead bodies option (machine-made translation, please check)
+Dead bodies = Cadavres
+More = Plus
+Many = Beaucoup
+How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = Combien d'ennemis abattus restent au sol, et combien de temps. Plus et Beaucoup gardent plus de corps plus longtemps ; cela coûte un peu de performances et de mémoire. Les corps disparaissent toujours lors des cinématiques.
+# First-person camera, experimental (machine-made translation, please check)
+First-person camera (experimental) = Caméra à la première personne (expérimental)
+Experimental - the game's own camera moves to your character's eyes while you walk, crouch and aim. In roadie run, cover, executions, vehicles, turrets and cutscenes it goes back to the usual over-the-shoulder view. Page Up switches it off and on in the game. Gears 2, Gears 3 and Judgment. = Expérimental - la caméra du jeu se place aux yeux de votre personnage quand vous marchez, vous accroupissez et visez. En course (roadie run), à couvert, pendant les exécutions, dans les véhicules, aux tourelles et dans les cinématiques, elle revient à la vue habituelle par-dessus l'épaule. Page préc. la désactive et la réactive en jeu. Gears 2, Gears 3 et Judgment.
+# 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
+DualSense adaptive triggers = Gâchettes adaptatives DualSense
+PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = Manettes PS5 DualSense uniquement (USB ou Bluetooth) : les gâchettes résistent, cliquent ou vibrent selon l'arme en main, et tremblent pendant que la tronçonneuse tourne. Les autres manettes ne sont pas concernées. Si Steam Input est activé pour la manette, Steam garde la main sur les gâchettes.
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  doublon de "
+" - can be removed = " - peut être retiré
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = Tout le contenu de ce paquet se trouve aussi, identique, dans l'autre : le jeu reçoit donc les mêmes éléments en double (par exemple le même skin deux fois). Le retirer ne retire que la copie décompressée de COGBox - ton fichier de paquet n'est pas touché.
+Remove duplicates = Retirer les doublons
+Remove duplicate downloadable content = Retirer le contenu téléchargeable en double
+Duplicates found: = Doublons trouvés :
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\nTout leur contenu se trouve aussi, identique, dans un autre paquet que tu gardes : le jeu ne reçoit que les mêmes éléments en double. Les retirer ? Seules les copies décompressées de COGBox sont retirées - tes propres fichiers de paquet ne sont pas touchés.
+Duplicates removed: = Doublons retirés :
+Some duplicates couldn't be removed completely - is a file from them open? = Certains doublons n'ont pas pu être retirés complètement - un de leurs fichiers est-il ouvert ?
+No duplicates found. = Aucun doublon trouvé.
+# 0.6.3 r22 review: duplicate DLC check on a worker thread, full re-check before removal (machine-made translation, please check)
+Checking for duplicates... = Recherche de doublons...
+Still checking for duplicates - try again in a moment. = La recherche de doublons est encore en cours - réessaie dans un instant.
+Checking duplicate downloadable content = Vérification du contenu téléchargeable en double
+Left as they are (no longer exact copies, or not fully readable): = Laissés tels quels (ce ne sont plus des copies exactes, ou illisibles en partie) :
+# 0.6.2 (GitHub #304): Graphics card
+Graphics card = Carte graphique
+Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = Quelle carte graphique le jeu utilise sur un PC qui en a plusieurs (le graphisme intégré d'un portable et sa propre carte, ou deux cartes). Automatique choisit la carte qui a le plus de mémoire vidéo à elle, et, entre des cartes ayant à peu près autant, celle à laquelle votre écran est branché - la même carte pour DirectX 12 et Vulkan. Choisissez une carte pour utiliser celle-ci à la place. Si la carte choisie n'est plus dans ce PC, Automatique est utilisé.
+(not found - Automatic is used) = (introuvable - Automatique est utilisé)
+The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = La carte graphique choisie n'est pas dans ce PC pour le moment - le jeu choisit lui-même sa carte (Automatique).

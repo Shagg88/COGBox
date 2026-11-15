@@ -101,6 +101,14 @@ Info detect(const Inputs &in)
     if (i.distro.empty()) i.distro = os_release_value(osr, "NAME");
     i.steamOS = env("SteamOS") == "1" || lower(os_release_value(osr, "ID")) == "steamos";
 
+    // 0.6.2 Proton review R4: System Link hosts on port 1000, and Linux lets normal programs use ports only from this one
+    // up (default 1024) - the SDK then binds another port (NetDll_bind, patch 38) and joiners can't reach the host
+    if (in.hostSystem != "Darwin") {
+        const std::string v = first_line(read("/proc/sys/net/ipv4/ip_unprivileged_port_start"));
+        if (!v.empty() && v.size() < 7 && std::all_of(v.begin(), v.end(), [](unsigned char c) { return std::isdigit(c) != 0; }))
+            i.lowPortStart = std::stoi(v);
+    }
+
     // The Steam Deck: Valve's DMI names, Steam's own variable, or the Deck's APU
     const std::string vendor = lower(first_line(read("/sys/devices/virtual/dmi/id/sys_vendor")));
     const std::string product = lower(first_line(read("/sys/devices/virtual/dmi/id/product_name")));
@@ -141,10 +149,13 @@ std::vector<std::string> report_lines(const Info &i)
 {
     std::vector<std::string> v;
     if (!i.wine) return v;
-    v.push_back("Linux / Steam Deck: " + summary(i));
+    v.push_back(std::string(i.hostSystem == "Darwin" ? "Mac (CrossOver): " : "Linux / Steam Deck: ") + summary(i));   // 0.6.2 review
     v.push_back("Wine: " + i.wineVersion + (i.wineBuild.empty() ? "" : " (build " + i.wineBuild + ")") +
                 (i.hostSystem.empty() ? "" : ", host " + i.hostSystem + " " + i.hostRelease));
     v.push_back(std::string("Proton: ") + (i.proton ? (i.protonVersion.empty() ? "yes (version not visible)" : i.protonVersion) : "no (plain Wine)"));
+    if (i.lowPortStart >= 0)
+        v.push_back("Ports for normal programs from: " + std::to_string(i.lowPortStart) +
+                    (i.lowPortStart > 1000 ? " (System Link hosting needs 1000 or lower)" : ""));
     v.push_back(std::string("Steam Deck: ") + (i.steamDeck ? i.deckModel : "no") + (i.steamOS ? ", SteamOS" : "") +
                 (i.gamescope ? ", in gamescope (Game Mode)" : "") + (i.zDrive ? "" : ", no Z: drive"));
     return v;
@@ -458,6 +469,10 @@ std::vector<std::string> roots_here(const Info &i)
             if (!it->is_directory(e2)) continue;
             const std::string name = utf8(it->path().filename().wstring());
             const std::string u = unixDir + "/" + name;
+            if (unixDir == "/Volumes") {   // the Mac's own disk (= /, any name) is too big to search: it holds macOS itself
+                std::error_code e4;
+                if (name.rfind("Macintosh HD", 0) == 0 || fs::exists(it->path() / L"System" / L"Library" / L"CoreServices", e4)) continue;
+            }
             if (alsoChildren && name == i.user) {   // /run/media/deck/<card label> (SteamOS 3.5+)
                 std::error_code e3;
                 for (fs::directory_iterator c(it->path(), e3); !e3 && c != end; c.increment(e3))
@@ -465,9 +480,12 @@ std::vector<std::string> roots_here(const Info &i)
             } else media.push_back(u);   // /run/media/mmcblk0p1 (older SteamOS), other users' drives
         }
     };
-    list_dirs("/run/media", true);
-    if (!i.user.empty()) list_dirs("/media/" + i.user, false);
-    list_dirs("/mnt", false);
+    if (i.hostSystem == "Darwin") list_dirs("/Volumes", false);   // 0.6.2 review: a Mac's external drives (CrossOver)
+    else {
+        list_dirs("/run/media", true);
+        if (!i.user.empty()) list_dirs("/media/" + i.user, false);
+        list_dirs("/mnt", false);
+    }
     std::set<std::string> seen;   // Wine finds names case-insensitively: ~/Games and ~/games can be one folder
     for (const std::string &r : scan_roots(i.home, i.user, libs, media)) {
         const std::string w = to_wine(r, i.home);

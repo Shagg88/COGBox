@@ -14,6 +14,9 @@ namespace gears {
 // Gears1 is the last index (added after the others) so saved settings keep their meaning.
 enum class Game { Gears2 = 0, Gears3 = 1, Judgment = 2, Gears1 = 3 };
 constexpr int kGameCount = 4;
+// 0.6.2 (Shagg 11-14 17:18): the first-person camera ships as a hidden tester option - no launcher option; testers turn it
+// on with --gow3_first_person=true / --gow2_ / --gowj_ in extra-args.txt. true = the Gameplay tab offers it again.
+constexpr bool kOfferFirstPerson = false;
 enum class Version { TitleUpdate = 0, Disc = 1 };   // PS1 125 $verNames (index 0 = the title update)
 enum class Tab { Display, Graphics, Controls, Gameplay, Achievements };   // = the page's tab index (ABOUT is after)
 // Text (0.4.8, GitHub #229): a short line of text (Settings::t), always Scope::Shared, kept in [General] of the settings
@@ -66,6 +69,10 @@ struct Environment {
     // if gpu_name is empty and gpus is not, main_gpu(gpus) is used).
     std::vector<std::string> gpus;
     std::string gpu_name;
+    // 0.6.2 (GitHub #304): the graphics cards the game can choose from - the DXGI hardware adapters' names, as the game
+    // reads them (no software adapters, no Microsoft Basic Render Driver). The Graphics card option is sent only when its
+    // saved name is one of these. Empty = not worked out (the option sends nothing: Automatic).
+    std::vector<std::string> graphics_cards;
     int screen_count = 1;           // PS1 146 (Monitor is greyed with fewer than 2)
     // PS1 947-948: the screen the game uses - Monitor 1..N if within screen_count, else the main screen - its refresh
     // rate now (0 = unknown) and its device name (only for the note).
@@ -78,6 +85,7 @@ struct Environment {
     bool mac = false;               // job 643: Wine on a Mac (CrossOver) - DirectX 12 (D3DMetal) by default
     // proton049: a Steam Deck under Proton (proton.h) and its LCD model (no HDR screen). Both false on Windows.
     bool steam_deck = false;
+    int low_port_start = -1;        // 0.6.2 (R4): Linux's first port for normal programs (-1 unknown / not Linux)
     bool deck_lcd = false;
     std::vector<std::string> mods;              // 0.2.0: the enabled mod folders, in load order (--ue3_mods)
     std::map<std::string, std::string> keys;   // 0.2.0: the player's own keyboard keys, cvar -> key (CogBox.ini [Keys])
@@ -196,12 +204,15 @@ void set_value(Game g, Settings& s, const std::string& id, double value);
 // Kind::Text (0.4.8): the value as it may be stored and passed on. PeerIps (GitHub #229): IPv4 addresses only (what the
 // runtime's --net_peer_ip reads), separated by ", "; anything else is dropped, duplicates and 0.0.0.0 /
 // 255.255.255.255 too, at most 16 addresses. `dropped` (optional) gets how many entries were left out.
+// GraphicsCard (0.6.2, GitHub #304): an adapter's name - control characters and quotes dropped, trimmed, at most max_len bytes.
 std::string sanitize_text(const Option& o, const std::string& in, int* dropped = nullptr);
 // The characters a Kind::Text field accepts while typing (the rest are not entered at all).
 bool text_char_ok(const Option& o, unsigned c);
 
 // Monitor list entries (PS1 147).
 std::string monitor_label(int index1, int width, int height, bool primary);
+// 0.6.2 (GitHub #304): the Graphics card option's saved name is one of env.graphics_cards (same letters, any case).
+bool graphics_card_present(const Environment& env, const std::string& name);
 // PS1 152: the main graphics card of a list.
 std::string main_gpu(const std::vector<std::string>& gpus);
 // PS1 141: the start URL for a chapter (0-based).

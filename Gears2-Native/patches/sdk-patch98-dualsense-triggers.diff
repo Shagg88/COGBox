@@ -1,0 +1,340 @@
+Subject: [PATCH] patch98 (GitHub #245): DualSense adaptive triggers - InputSystem::SetTriggerEffect (--pad_adaptive_triggers, off by default)
+
+SDL_SendGamepadEffect with the DS5 effects body (enable bits 0x04/0x08, right effect at 10, left at 21) to PS5 pads
+of one player; remembered per player (repeats write nothing, reconnected pads get it back), off while COGBox UI blocks
+input, reset when the window closes. No InputDriver vtable change (non-virtual call on the runtime's own SDL driver).
+New exports: InputSystem::SetTriggerEffect, InputSystem::AdaptiveTriggersEnabled - ship the runtime with the exe.
+
+diff --git a/include/rex/input/input_system.h b/include/rex/input/input_system.h
+index 80c3fa3..e0305d0 100644
+--- a/include/rex/input/input_system.h
++++ b/include/rex/input/input_system.h
+@@ -53,6 +53,16 @@ class InputSystem : public system::IInputSystem {
+   /// GetState for the emulator's own UI, which reads while the guest is blocked.
+   X_RESULT GetStateForUI(uint32_t user_index, X_INPUT_STATE* out_state);
+   X_RESULT SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration);
++  /// COGBox SDK patch 98 (GitHub #245): DualSense adaptive triggers for every pad of this player. 11 bytes per trigger in
++  /// the pad's own format (byte 0 = mode; {0x05, 0...} = off); nullptr keeps that trigger's last effect. The effect is
++  /// remembered per player: a call with the same effect for the same pads writes nothing, a pad that reconnects (or
++  /// joins the player) gets it on the next call, COGBox's own UI (in-game menu, system dialogs) turns the triggers off
++  /// while it is open and puts them back after, and the pads are reset when the window closes. Pads other than PS5
++  /// ones (DualSense, DualSense Edge) through SDL, and the keyboard / mouse and script devices, are never written to.
++  /// Does nothing (X_ERROR_FUNCTION_FAILED) unless --pad_adaptive_triggers.
++  X_RESULT SetTriggerEffect(uint32_t user_index, const uint8_t* right11, const uint8_t* left11);
++  /// --pad_adaptive_triggers, for game code (whose exe cannot read the runtime's cvar directly).
++  static bool AdaptiveTriggersEnabled();
+   X_RESULT GetKeystroke(uint32_t user_index, uint32_t flags, X_INPUT_KEYSTROKE* out_keystroke);
+ 
+   /// While any blocker is held the guest reads a neutral pad. Buttons still
+@@ -106,6 +116,22 @@ class InputSystem : public system::IInputSystem {
+   std::atomic<int> ui_input_blockers_{0};
+   // Masked out per user until the guest sees them released.
+   std::array<uint16_t, kMaxGuestUsers> consumed_buttons_ = {};
++
++  // COGBox SDK patch 98 (GitHub #245). Kept LAST: game exes inline the accessors above, so their members keep their
++  // offsets. Guarded by mutex_.
++  struct TriggerEffect {
++    std::array<uint8_t, 11> right = {0x05};   // the pad's "off"
++    std::array<uint8_t, 11> left = {0x05};
++    bool set = false;                         // a game asked for an effect for this player since start
++    bool applied_off = false;                 // what the pads were last sent was "off" (UI open), not this effect
++    std::vector<DeviceId> sent_to;            // the pads that have this effect (or the UI's "off")
++  };
++  std::array<TriggerEffect, kMaxGuestUsers> trigger_effects_ = {};
++  /// Sends player user_index's effect (or "off" while a UI blocker is held) to its PS5 pads that don't have it yet;
++  /// force: to all of them. Returns how many of the player's pads now hold it.
++  size_t ApplyTriggerEffectLocked(uint32_t user_index, bool force);
++  /// After a UI blocker came or went: every player's pads to "off" or back to the game's effect.
++  void ReapplyTriggerEffects();
+ };
+ 
+ /// Create a default InputSystem with SDL + MnK + NOP drivers.
+diff --git a/include/rex/input/sdl/sdl_input_driver.h b/include/rex/input/sdl/sdl_input_driver.h
+index be1f9b8..ed8c13e 100644
+--- a/include/rex/input/sdl/sdl_input_driver.h
++++ b/include/rex/input/sdl/sdl_input_driver.h
+@@ -39,6 +39,11 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+   X_RESULT GetDeviceCapabilities(DeviceId id, uint32_t flags,
+                                  X_INPUT_CAPABILITIES* out_caps) override;
+   X_RESULT SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* vibration) override;
++  /// COGBox SDK patch 98 (GitHub #245): a DualSense adaptive-trigger effect (11 bytes per trigger, the pad's format;
++  /// nullptr leaves that trigger alone). PS5 pads only; X_ERROR_FUNCTION_FAILED for any other pad. Not virtual on
++  /// purpose: InputSystem calls it on the SDL driver it made itself, so InputDriver's vtable (which game-side drivers -
++  /// script pads - derive from in exes built against older headers) is unchanged.
++  X_RESULT SetDeviceTriggerEffect(DeviceId id, const uint8_t* right11, const uint8_t* left11);
+   X_RESULT GetDeviceKeystroke(DeviceId id, uint32_t flags,
+                               X_INPUT_KEYSTROKE* out_keystroke) override;
+   void OnWindowAvailable(rex::ui::Window* window) override;
+@@ -67,6 +72,8 @@ class SDLInputDriver final : public InputDriver, public rex::ui::WindowListener
+     DeviceId id;
+     // Per pad rather than per guest user, so it survives reassignment.
+     KeystrokeState keystroke;
++    // COGBox SDK patch 98: an adaptive-trigger effect was sent, so the triggers are reset when the window closes.
++    bool trigger_effect_sent;
+   };
+ 
+   // WindowListener
+diff --git a/src/input/input_system.cpp b/src/input/input_system.cpp
+index c38160b..e92b3ae 100644
+--- a/src/input/input_system.cpp
++++ b/src/input/input_system.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <algorithm>
++#include <array>
+ #include <chrono>
+ #include <cmath>
+ #include <cstring>
+@@ -34,6 +35,10 @@ REXCVAR_DEFINE_STRING(input_backend, "sdl", "Input", "Input backend: sdl, xinput
+ REXCVAR_DEFINE_BOOL(guide_button, false, "Input", "Enable guide button pass-through");
+ 
+ REXCVAR_DEFINE_BOOL(vibration, true, "Input", "Enable controller vibration");
++// COGBox SDK patch 98 (GitHub #245)
++REXCVAR_DEFINE_BOOL(pad_adaptive_triggers, false, "Input",
++                    "DualSense adaptive triggers: games that support it give the triggers a feel per weapon (PS5 pads "
++                    "through SDL only; other controllers are never written to)");
+ REXCVAR_DEFINE_BOOL(menu_combo_guard, true, "Input",
+                     "Patch 43: Back + Start together (COGBox's in-game menu) never reach the game; Back or Start alone "
+                     "reaches it 0.12 s late (a quick tap is still delivered)");
+@@ -187,6 +192,14 @@ constexpr uint32_t kXNotificationSystemInputDevicesChanged = 0x00000012;
+ 
+ }  // namespace
+ 
++// COGBox SDK patch 98 (GitHub #245): the SDL driver CreateDefaultInputSystem made - the only driver trigger effects are
++// sent to (a non-virtual call, so InputDriver's vtable stays as game-side drivers know it). One InputSystem per process;
++// guarded by its mutex_.
++namespace {
++sdl::SDLInputDriver* g_trigger_driver = nullptr;
++constexpr std::array<uint8_t, 11> kTriggerOff = {0x05};   // DS5 trigger mode 0x05: no effect
++}  // namespace
++
+ InputSystem::InputSystem(rex::ui::Window* window) : window_(window) {}
+ 
+ InputSystem::~InputSystem() = default;
+@@ -196,6 +209,11 @@ X_STATUS InputSystem::Setup() {
+ }
+ 
+ void InputSystem::Shutdown() {
++  {
++    // Patch 98: no more effects (the SDL driver reset its pads' triggers when the window closed - OnClosing)
++    std::lock_guard<std::recursive_mutex> lock(mutex_);
++    g_trigger_driver = nullptr;
++  }
+   // device_owners_ holds raw driver pointers.
+   devices_.clear();
+   device_owners_.clear();
+@@ -541,7 +559,11 @@ X_RESULT InputSystem::GetStateForUI(uint32_t user_index, X_INPUT_STATE* out_stat
+ }
+ 
+ void InputSystem::AddUIInputBlocker() {
+-  ui_input_blockers_.fetch_add(1);
++  // Patch 98: the first blocker turns the adaptive triggers off (the game is not being played behind COGBox's menu or
++  // a system dialog)
++  if (ui_input_blockers_.fetch_add(1) == 0) {
++    ReapplyTriggerEffects();
++  }
+ }
+ 
+ void InputSystem::RemoveUIInputBlocker() {
+@@ -554,7 +576,10 @@ void InputSystem::RemoveUIInputBlocker() {
+     }
+   }
+ 
+-  ui_input_blockers_.fetch_sub(1);
++  // Patch 98: the last one gives the game's effects back
++  if (ui_input_blockers_.fetch_sub(1) == 1) {
++    ReapplyTriggerEffects();
++  }
+ }
+ 
+ bool InputSystem::GetVibrationEnabled() const {
+@@ -617,6 +642,82 @@ X_INPUT_VIBRATION InputSystem::ModifyVibrationLevel(const X_INPUT_VIBRATION* vib
+   return modified;
+ }
+ 
++bool InputSystem::AdaptiveTriggersEnabled() { return REXCVAR_GET(pad_adaptive_triggers); }
++
++// COGBox SDK patch 98 (GitHub #245). The game's call is cheap when nothing changed (no HID write): it may call every
++// few hundred ms, which is also how a reconnected pad (a new DeviceId) gets the effect back.
++X_RESULT InputSystem::SetTriggerEffect(uint32_t user_index, const uint8_t* right11, const uint8_t* left11) {
++  if (!REXCVAR_GET(pad_adaptive_triggers)) {
++    return X_ERROR_FUNCTION_FAILED;
++  }
++  if (user_index >= kMaxGuestUsers) {
++    return X_ERROR_BAD_ARGUMENTS;
++  }
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
++  if (!assignment_ || !g_trigger_driver) {
++    return X_ERROR_DEVICE_NOT_CONNECTED;
++  }
++  TriggerEffect& e = trigger_effects_[user_index];
++  bool changed = !e.set;
++  e.set = true;
++  if (right11 && std::memcmp(e.right.data(), right11, e.right.size()) != 0) {
++    std::memcpy(e.right.data(), right11, e.right.size());
++    changed = true;
++  }
++  if (left11 && std::memcmp(e.left.data(), left11, e.left.size()) != 0) {
++    std::memcpy(e.left.data(), left11, e.left.size());
++    changed = true;
++  }
++  RefreshDevices();
++  return ApplyTriggerEffectLocked(user_index, changed) ? X_ERROR_SUCCESS : X_ERROR_DEVICE_NOT_CONNECTED;
++}
++
++size_t InputSystem::ApplyTriggerEffectLocked(uint32_t user_index, bool force) {
++  TriggerEffect& e = trigger_effects_[user_index];
++  if (!e.set || !g_trigger_driver || !assignment_) {
++    return 0;
++  }
++  const bool off = ui_input_blockers_.load() > 0;
++  if (off != e.applied_off) {
++    force = true;    // UI opened or closed: every pad gets "off" / the effect back
++  } else if (off) {
++    force = false;   // a new effect while the UI is open waits for it to close (the pads already hold "off")
++  }
++  std::vector<DeviceId> ids;
++  assignment_->DevicesForUser(user_index, ids);
++  std::vector<DeviceId> holding;
++  for (DeviceId id : ids) {
++    // Only the SDL driver's own devices: never the keyboard / mouse, NOP or a game's script pad.
++    if (DriverForDevice(id) != g_trigger_driver) {
++      continue;
++    }
++    if (!force && std::find(e.sent_to.begin(), e.sent_to.end(), id) != e.sent_to.end()) {
++      holding.push_back(id);
++      continue;
++    }
++    // Not a PS5 pad: X_ERROR_FUNCTION_FAILED without a write; asked again on the next call (cheap, no I/O).
++    if (g_trigger_driver->SetDeviceTriggerEffect(id, off ? kTriggerOff.data() : e.right.data(),
++                                                 off ? kTriggerOff.data() : e.left.data()) == X_ERROR_SUCCESS) {
++      holding.push_back(id);
++    }
++  }
++  e.sent_to = std::move(holding);
++  e.applied_off = off;
++  return e.sent_to.size();
++}
++
++void InputSystem::ReapplyTriggerEffects() {
++  if (!REXCVAR_GET(pad_adaptive_triggers)) {
++    return;
++  }
++  std::lock_guard<std::recursive_mutex> lock(mutex_);
++  for (uint32_t user_index = 0; user_index < kMaxGuestUsers; user_index++) {
++    if (trigger_effects_[user_index].set) {
++      ApplyTriggerEffectLocked(user_index, false);   // forced by itself when "off" changed
++    }
++  }
++}
++
+ X_RESULT InputSystem::SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration) {
+   std::lock_guard<std::recursive_mutex> lock(mutex_);
+   SCOPE_profile_cpu_f("hid");
+@@ -721,6 +822,7 @@ std::unique_ptr<InputSystem> CreateDefaultInputSystem(bool tool_mode) {
+     if (REXCVAR_GET(input_backend) == "sdl") {
+       auto sdl_driver = std::make_unique<sdl::SDLInputDriver>(nullptr, 0);
+       if (sdl_driver->Setup() == X_STATUS_SUCCESS) {
++        g_trigger_driver = sdl_driver.get();   // patch 98: the driver trigger effects go to
+         input->AddDriver(std::move(sdl_driver));
+       }
+     }
+diff --git a/src/input/sdl/sdl_input_driver.cpp b/src/input/sdl/sdl_input_driver.cpp
+index 7f5ab19..30e77a1 100644
+--- a/src/input/sdl/sdl_input_driver.cpp
++++ b/src/input/sdl/sdl_input_driver.cpp
+@@ -14,6 +14,7 @@
+ #include <chrono>
+ #include <array>
+ #include <cctype>
++#include <cstring>
+ #include <filesystem>
+ #include <string_view>
+ 
+@@ -155,6 +156,31 @@ uint8_t GamepadSubType(SDL_Gamepad* gamepad) {
+                                 SDL_GetGamepadName(gamepad));
+ }
+ 
++// COGBox SDK patch 98 (GitHub #245): DualSense adaptive triggers. SDL_SendGamepadEffect on a PS5 pad takes the body of
++// the DS5 output report; SDL's HIDAPI PS5 driver adds the report id (USB 0x02; Bluetooth 0x31 + its 0x02 tag and the
++// CRC) and queues it on its rumble thread, so the call does not wait for the pad. Body layout = SDL 3.4's own
++// test/testcontroller.c (DS5EffectsState_t, CyclePS5TriggerEffect):
++//   [0] enable bits 1: 0x04 = right trigger effect is valid, 0x08 = left (0x01 / 0x02 rumble - not set here, so the
++//       motors, lights and audio keep whatever SDL last sent)
++//   [1] enable bits 2, [2..9] rumble / audio / mic (left 0)
++//   [10..20] right trigger effect (11 bytes: mode, parameters)
++//   [21..31] left trigger effect
++//   [32..46] LEDs etc. (left 0, not enabled)
++// The pad keeps a trigger effect until it is sent another (or loses power), so the effect is sent only when it changes.
++constexpr int kDs5EffectsSize = 47;
++bool SendDs5TriggerEffect(SDL_Gamepad* gamepad, const uint8_t* right11, const uint8_t* left11) {
++  uint8_t report[kDs5EffectsSize] = {};
++  if (right11) {
++    report[0] |= 0x04;
++    std::memcpy(&report[10], right11, 11);
++  }
++  if (left11) {
++    report[0] |= 0x08;
++    std::memcpy(&report[21], left11, 11);
++  }
++  return !report[0] || SDL_SendGamepadEffect(gamepad, report, kDs5EffectsSize);
++}
++
+ }  // namespace
+ 
+ SDLInputDriver::SDLInputDriver(rex::ui::Window* window, size_t window_z_order)
+@@ -254,6 +280,13 @@ void SDLInputDriver::OnClosing(rex::ui::UIEvent&) {
+           [this]() { attached_window_->app_context().ExecutePendingFunctionsFromUIThread(); });
+     }
+     for (auto& controller : controllers_) {
++      // Patch 98: a DualSense keeps a trigger effect after the game is gone - reset it (SDL's close waits briefly
++      // for queued effect writes).
++      if (controller.trigger_effect_sent) {
++        static constexpr uint8_t kOff[11] = {0x05};
++        SendDs5TriggerEffect(controller.sdl, kOff, kOff);
++        controller.trigger_effect_sent = false;
++      }
+       SDL_CloseGamepad(controller.sdl);
+     }
+     controllers_.clear();
+@@ -389,6 +422,39 @@ X_RESULT SDLInputDriver::SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* vibr
+              : X_ERROR_FUNCTION_FAILED;
+ }
+ 
++// COGBox SDK patch 98 (GitHub #245): see SendDs5TriggerEffect above. InputSystem calls this with its own mutex held, as
++// SetDeviceVibration (same lock order: InputSystem, then controllers_mutex_).
++X_RESULT SDLInputDriver::SetDeviceTriggerEffect(DeviceId id, const uint8_t* right11, const uint8_t* left11) {
++  if (!sdl_events_initialized_ || !SDL_Gamepad_initialized_) {
++    return X_ERROR_DEVICE_NOT_CONNECTED;
++  }
++  auto guard = DrainAndLock();
++  auto controller = FindController(id);
++  if (!controller) {
++    return X_ERROR_DEVICE_NOT_CONNECTED;
++  }
++  // The pad's real type, not a mapping's (DualSense and DualSense Edge are both PS5). A DualSense that Steam Input
++  // shows as an Xbox pad is not one here - Steam owns its triggers then.
++  if (SDL_GetRealGamepadType(controller->sdl) != SDL_GAMEPAD_TYPE_PS5) {
++    return X_ERROR_FUNCTION_FAILED;
++  }
++  const char* name = SDL_GetGamepadName(controller->sdl);
++  if (!SendDs5TriggerEffect(controller->sdl, right11, left11)) {
++    static std::atomic<bool> warned{false};
++    if (!warned.exchange(true)) {
++      REXLOG_WARN("SDL: DualSense adaptive-trigger effect not sent to \"{}\": {}", name ? name : "?", SDL_GetError());
++    }
++    return X_ERROR_FUNCTION_FAILED;
++  }
++  if (!controller->trigger_effect_sent) {
++    controller->trigger_effect_sent = true;
++    REXLOG_INFO("SDL: DualSense adaptive triggers on \"{}\" (device {}), first effect R {:02X} L {:02X}",
++                name ? name : "?", static_cast<uint64_t>(id), right11 ? right11[0] : 0,
++                left11 ? left11[0] : 0);
++  }
++  return X_ERROR_SUCCESS;
++}
++
+ X_RESULT SDLInputDriver::GetDeviceKeystroke(DeviceId id, uint32_t flags,
+                                             X_INPUT_KEYSTROKE* out_keystroke) {
+   // TODO(JoelLinn): Figure out the flags

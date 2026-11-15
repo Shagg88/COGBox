@@ -2,7 +2,7 @@ COGBox - Gears of War native PC ports
 =====================================
 
 COGBox starts the native PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
-Judgment. This README is for COGBox 0.6.1.
+Judgment. This README is for COGBox 0.6.2.
 These are fan-made ports, rebuilt from the Xbox 360 games' own code by static recompilation. This
 is an unofficial fan project. COGBox isn't affiliated with Microsoft, Epic Games or The
 Coalition.
@@ -34,11 +34,12 @@ What you need
 
 Getting started
 ---------------
-1. Right-click COGBox-0.6.1.zip > Extract All... to a folder of its own that you can write to, for
-   example C:\Games\COGBox. Don't start COGBox from inside the zip, and don't use Program Files
-   (Windows protects it) - COGBox tells you on start-up if it's in such a place.
-   Keep the folders when unzipping (Windows' Extract All, 7-Zip, or "unzip" on Linux). Some tools,
-   such as KDE's Ark, flatten them - COGBox then can't find the games.
+1. Right-click COGBox-0.6.2.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
+   7-zip.org) to a folder of its own that you can write to, for example C:\Games\COGBox. Don't start
+   COGBox from inside the archive, and don't use Program Files (Windows protects it) - COGBox tells
+   you on start-up if it's in such a place.
+   Keep the folders when unpacking (Windows' Extract All, 7-Zip, or 7z / your archive manager on
+   Linux). Some tools, such as KDE's Ark, flatten them - COGBox then can't find the games.
 2. Start CogBox.exe. The programs aren't code-signed, so the first time Windows may show "Windows
    protected your PC": choose "More info", then "Run anyway".
 3. Add your disc image, Games on Demand file, or extracted game folder: drag and drop it onto the
@@ -64,11 +65,35 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 
 
+New in 0.6.2
+------------
+- DualSense adaptive triggers in all four games (Controls tab, experimental, off by default, #245).
+  Not tried on a real DualSense yet - please tell us how it feels.
+- Indirect lighting (SSIL, experimental, by gmihaic): Graphics tab, below Ambient occlusion. Light
+  bounced from nearby lit surfaces. Needs Ambient occlusion: XeGTAO (high or ultra); off by default.
+- Soft shadows (PCSS) in Judgment too, and PCSS fixes (by gmihaic).
+- Better HDR in Gears 2 and Gears 3 (by legoliamneeson), and an HDR highlights setting (Display
+  tab).
+- Dead bodies (Gameplay tab): keep more fallen enemies, for longer (#306).
+- Cheats (F5-F11) in Gears 1, Gears 2 and Judgment too (#264).
+- Ultrawide up to 48:9 (three screens) in Gears 2, Gears 3 and Judgment (#293).
+- PCs with two graphics cards: DirectX 12 and Vulkan use the same, right card (#304). To pick one: the Graphics card list on the Graphics tab
+  (or --gow2_graphics_card=4090, part of its name, in extra-args.txt).
+- Duplicate DLC packages are marked on a game's About tab, with a Remove duplicates button (#283).
+- Gears 3: DLC at the main menu should all open at start-up now (#283 - tell us if not), RAAM's
+  Shadow checkpoint (#273), two-player side by side (#269), no hitch every 5 s in the menus.
+- Short key / mouse taps no longer lost (#305); fewer freezes on PCs with under 6 processor threads
+  (#288).
+- Your Social tab #number stays the same (#302). Mac (CrossOver) supported - see below.
+- More of the launcher translated (machine-made translations - please report mistakes).
+- Full list: CHANGES.md on GitHub (https://github.com/Shagg88/COGBox).
+
+
 New in 0.6.1
 ------------
 - Faster: measured against 0.6.0 at 1440p on an RTX 3080 Ti, DirectX 12 is up to 34% faster
   (Judgment +34%, Gears 2 +17%, Gears 3 +8%, Gears 1 the same) and Vulkan (experimental) up to 77%
-  (Judgment +77%, Gears 2 +38%; Gears 3 and Gears 1 a few percent slower on Vulkan).
+  (Judgment +77%, Gears 2 +38%).
 - Vulkan's first-play shader freezes are gone in all four games.
 - Add games without drag and drop: Choose a file... / Choose a folder... / Paste a path.
 - Import saves... (a game's About tab): your saves from Xenia or an Xbox 360. A save dropped onto
@@ -322,7 +347,7 @@ Play the games' System Link modes (co-op and the other System Link modes) with o
 same house, or over the internet with a free "LAN VPN". Thanks to HubertFer, whose patch made this
 possible. Tested so far: Gears of War 2 campaign co-op, and Gears of War co-op (two PCs, about an
 hour, no problems; thanks to LenzTRO, #209). The games' other modes, Gears of War 3 and Judgment
-are less tested - please try them and tell us (a GitLab ticket; it was GitHub issue #72).
+are less tested - please try them and tell us (on GitHub, issue #72).
 
 What every player needs
 - The same COGBox version on every PC (0.4.0) and your own copy of the game with its title update.
@@ -330,7 +355,7 @@ What every player needs
 - Gears 3 on 0.4.0: System Link needs a two-PC test. The friendly-fire fix (#68) changes the random
   numbers and the "online ID" Gears 3 sees. COGBox's own System Link code finds PCs by their IP address
   and doesn't use those IDs, but Gears 3 co-op on 0.4.0 hasn't been tried on two PCs yet - please
-  tell us how it goes in a GitLab ticket.
+  tell us how it goes in a GitHub issue.
 - Turn OFF internet VPNs such as NordVPN, ExpressVPN or Surfshark while you play. They do not link
   PCs together, and they can make System Link use the wrong network.
 
@@ -370,22 +395,29 @@ If it doesn't work
 - Can't select System Link / "No Network Connection": the box in step 1 is not ticked.
 - The host's game never shows up: check the firewall (Private network, game allowed), that both of
   you are in the same Radmin network (green dots), that internet VPNs are off, then try step B7.
-- Please send a problem report (the game's About tab) from BOTH PCs in a GitLab ticket - it lists
+- Please send a problem report (the game's About tab) from BOTH PCs in a GitHub issue - it lists
   System Link and helps us fix it.
-Not yet: voice chat; hosting from Linux / Steam Deck (joining should work). With the box off the
-game works exactly as before.
+Not yet: voice chat. With the box off the game works exactly as before.
+
+Hosting from Linux / Steam Deck (not confirmed yet): the games host on network port 1000, and Linux
+lets only administrator programs use ports below 1024, so a game hosted on Linux can't be joined
+(joining should work). We expect this to fix it but haven't been able to test it - please tell us whether
+it works. In a terminal (Steam Deck: Desktop Mode, Konsole; sudo needs a password set with passwd):
+    sudo sysctl -w net.ipv4.ip_unprivileged_port_start=1000
+It lasts until the next restart, and lets any program use ports 1000-1023 without administrator rights.
 
 Linux and Steam Deck (Proton) - experimental
 ---------------------------------------------
-1. Unzip COGBox somewhere in your home folder.
+1. Unpack the COGBox .7z somewhere in your home folder (7z x, or your archive manager).
 2. In Steam: Add a Game > Add a Non-Steam Game > browse to CogBox.exe.
 3. The game's Properties > Compatibility > "Force the use of a specific Steam Play compatibility
-   tool": Proton Experimental (or a recent Proton / GE-Proton).
+   tool": Proton Experimental (or a recent Proton such as 11.0, or GE-Proton).
 4. Start it from Steam. On a small screen like the Steam Deck's, COGBox starts maximised and
    borderless. Add your copy as on Windows.
 Under Proton COGBox skips exclusive fullscreen, Reflex and Anti-Lag (the compositor owns the
-screen). The games use Vulkan there by themselves (DirectX 12 does not start under Proton yet).
-Steam Input should present the controller as a standard gamepad. Problem reports from Linux
+screen). The games use Vulkan there by default; DirectX 12 can be tried with "Graphics API on
+Proton / Wine" (testing). Steam Input should present the controller as a standard gamepad (not
+yet confirmed on a Steam Deck - reports welcome). Problem reports from Linux
 help a lot: "Make a problem report" saves them in COGBox's reports folder (and opens it).
 
 One Steam entry per game (Windows or Linux): add CogBox.exe again for each game and set its
@@ -393,6 +425,13 @@ Launch Options to --play gears1, --play gears2, --play gears3 or --play judgment
 starts that game straight away with your settings. Adding gow3.exe (or another game program)
 itself does not work: it stops with "--game_data_root was not provided", because COGBox passes
 it the game folder and your settings.
+
+Mac (CrossOver) - experimental
+------------------------------
+Community-tested on Macs with Apple Silicon (we have no Mac to test on). The games use DirectX 12
+through CrossOver's D3DMetal by themselves - Vulkan does not work there. A constant heavy bass hum on a Mac (in the games and the launcher's music): open Audio MIDI Setup
+and set your output device to 96,000 Hz (or 88,200 Hz) - at 44,100 or 48,000 Hz CrossOver's audio
+adds the hum (found by L33tRonin, GitHub #261).
 
 
 Where things are
@@ -411,8 +450,8 @@ Everything stays inside the COGBox folder:
   covers\               put your own box art here as gears2.png, gears3.png and judgment.png
                         (or .jpg). Without them, COGBox draws its own covers.
 
-To update, use the UPDATE TO button on the main screen (or the one on any game's About tab), or unzip a new release over the folder. Your
-games, saves and settings are not in the zip, so they are kept.
+To update, use the UPDATE TO button on the main screen (or the one on any game's About tab), or unpack a new release over the folder. Your
+games, saves and settings are not in the .7z, so they are kept.
 
 
 When something goes wrong
@@ -420,13 +459,22 @@ When something goes wrong
 If a game closes unexpectedly, COGBox says what the exit code means. It also offers to make a
 problem report: one zip on your desktop with the log, the settings and a description of your PC.
 It has no saves and no game files, and your Windows user name is taken out. Nothing is sent
-anywhere. Attach it to a ticket at https://gitlab.com/shagg88/cogbox/-/issues
+anywhere. Attach it to a ticket at https://github.com/Shagg88/COGBox/issues
+
+The game uses the wrong graphics card (PCs with two or more): COGBox picks the card with the most
+video memory of its own, and between cards with about as much, the one your monitor is plugged
+into - the same card for DirectX 12 and Vulkan. To choose one yourself, pick it in the Graphics
+card list on the Graphics tab (Automatic is the default; all four games). If that card is no
+longer in the PC, the game picks automatically. Or add a line such as --gow2_graphics_card=4090
+(part of the card's name) to extra-args.txt next to CogBox.exe. Remove the line to go back to
+automatic. The game's log lists every card it found.
 
 
 Licences
 --------
 COGBox and the ports' own code are under the MIT licence (LICENSE.txt). The libraries, fonts and
-vendor upscalers included (SDL3, Dear ImGui, miniz, stb, FFmpeg's XMA decoder (LGPL 2.1+, licenses\FFmpeg-NOTICE.txt), the
+vendor upscalers included (SDL3, Dear ImGui, miniz, stb, PsychoV35 and RenoDX's HDR grading (MIT, in the Gears 2 and Gears 3
+licenses folders), FFmpeg's XMA decoder (LGPL 2.1+, licenses\FFmpeg-NOTICE.txt), the
 rexglue SDK and Xenia code (BSD-3, licenses\Xenia-LICENSE.txt), modcore (MIT), AMD FidelityFX and Anti-Lag 2, NVIDIA DLSS,
 DLSS Frame Generation, Streamline and Reflex, Intel XeSS, XeSS Frame Generation and XeLL, the DirectX 12 Agility SDK and
 the DirectX Shader Compiler (licenses\Microsoft-DirectX-redist-NOTICE.txt)) come under their own terms, in the licenses

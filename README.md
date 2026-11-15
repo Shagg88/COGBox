@@ -50,12 +50,16 @@ the launcher shows the same versions.
 The games' Xbox 360 code is translated ahead of time into ordinary Windows programs - no emulator runs while you play -
 and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 
-- **Any resolution** up to 5K, or matched to your monitor, with real extra detail; **ultrawide** and **HDR10**.
+- **Any resolution** up to 5K, or matched to your monitor, with real extra detail; **ultrawide** up to 48:9 (three
+  screens) and **HDR10**.
+- **Modern lighting extras** (experimental, off by default): XeGTAO or CACAO ambient occlusion, PCSS soft shadows
+  (Gears 3 and Judgment) and screen-space indirect lighting.
 - **Upscaling and anti-aliasing:** SMAA, AMD FSR, NVIDIA DLSS and Intel XeSS (experimental).
 - **High frame rates:** the 30 fps limit lifted, frame-rate caps from 30 to 180 (and 40 / 45 for the Steam Deck), and
   frame generation (AMD FSR, NVIDIA DLSS on RTX 40/50; experimental).
 - **Lower input lag:** NVIDIA Reflex and AMD Anti-Lag 2 where your GPU has them.
-- **Keyboard and mouse** or **Xbox / PlayStation controllers**, with button prompts that follow what you use.
+- **Keyboard and mouse** or **Xbox / PlayStation controllers**, with button prompts that follow what you use, and
+  DualSense adaptive triggers in all four games (experimental, off by default).
 - **Split-screen co-op** in all four games, and **System Link** LAN co-op (experimental).
 - **Online multiplayer** (0.6.0, off by default): peer to peer through COGBox's own matchmaking.
 - **Insane from the start**, **achievements** in all four games, chapter select, and an **in-game menu**
@@ -64,8 +68,10 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 
 ## What you need
 
-- **Windows 10 or 11, 64-bit** (or Linux / Steam Deck through Proton - experimental).
-- **A CPU with AVX2** (roughly 2013 or newer) and **a DirectX 12 graphics card**.
+- **Windows 10 or 11, 64-bit** (or Linux / Steam Deck through Proton, or a Mac with Apple Silicon through CrossOver -
+  both experimental).
+- **A CPU with AVX2** (roughly 2013 or newer) and **a DirectX 12 graphics card** (under Proton: a graphics driver with
+  Vulkan 1.3, such as a recent Mesa or NVIDIA driver).
 - **Your own copy of each game** - a disc image (.iso), a Games on Demand copy or the disc's extracted files - and its
   **title update**, copied from your console's `Content\0000000000000000\<title ID>\000B0000\` folder
   (Gears of War `4D5307D5`, Gears 2 `4D53082D`, Gears 3 `4D5308AB`, Judgment `4D530A26`).
@@ -73,14 +79,15 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 
 ## How to play
 
-1. Download `COGBox-<version>.zip` from [Releases](https://github.com/Shagg88/COGBox/releases) (the `.7z` is the same,
-   smaller) and unpack the whole folder - right-click it, **Extract All...** - somewhere you can write to, e.g.
+1. Download `COGBox-<version>.7z` from [Releases](https://github.com/Shagg88/COGBox/releases) and unpack the whole
+   folder - right-click it, **Extract All...** (Windows 11; on Windows 10 use [7-Zip](https://www.7-zip.org)) - somewhere you can write to, e.g.
    `C:\Games\COGBox`. Not Program Files, and not a OneDrive / Dropbox folder; COGBox tells you if it's somewhere it
    can't work.
 2. Start `CogBox.exe`. If Windows says "Windows protected your PC", choose **More info > Run anyway** (the programs
    aren't code-signed).
 3. Drag your game copy onto the COGBox window, then its title update - or, where dragging doesn't work (for example the
-   Steam Deck), use **Choose a file...**, **Choose a folder...** or **Paste a path** in the launcher. COGBox checks and
+   Steam Deck), use **Choose a file...**, **Choose a folder...** or **Paste a path** (under Proton: **Paste a Linux path**) in the
+   launcher. COGBox checks and
    unpacks them.
 4. Press **PLAY**. **SETTINGS** has graphics, controls and gameplay options; rest the mouse on any option to see what
    it does.
@@ -100,20 +107,38 @@ folder in the game's saves folder (the **Saves** button opens it), never deleted
 
 **Box art:** press **UPDATE ART** to download HD box art and backgrounds.
 
-**Updating:** use the update button in COGBox, or unzip a new release over the old folder - your games, saves and
+**Updating:** use the update button in COGBox, or unpack a new release over the old folder - your games, saves and
 settings are kept.
 
 ## Linux and Steam Deck (experimental)
 
-1. Unzip COGBox into your home folder (on a Steam Deck, in Desktop Mode).
+1. Unpack the COGBox `.7z` into your home folder (on a Steam Deck, in Desktop Mode).
 2. In Steam: **Games > Add a Non-Steam Game**, set the file type to **All Files**, and pick `CogBox.exe`.
-3. In its **Properties > Compatibility**, force **Proton 11.0** (or Proton Experimental / GE-Proton).
-4. Start COGBox. It picks suitable settings by itself (Vulkan, FSR, 60 fps on the Steam Deck) and greys out what can't
-   work under Proton, with the reason.
+3. In its **Properties > Compatibility**, force **Proton Experimental** (or a recent Proton such as 11.0, or GE-Proton).
+4. Start COGBox. On its first start under Proton it applies recommended settings (Vulkan, FSR where the build has it,
+   60 fps on the Steam Deck); if you brought settings from Windows, it offers them on the About tab instead. It greys
+   out what can't work under Proton, with the reason.
 5. Add your games with **Look for my games** or **Choose a folder...** (your Linux files are under `Z:`).
 
 The first minutes of each game can stutter while shaders are built; **Prepare all shaders now** on the Graphics tab
 does it in one go.
+
+**Hosting from Linux / Steam Deck (not confirmed yet):** the games host System Link on network port 1000,
+and Linux only lets administrator programs use ports below 1024, so a game hosted on Linux can't be joined (joining a
+game hosted elsewhere should work). We expect this to fix it, but we haven't been able to test it - please tell us in a
+GitHub ticket whether it works for you. In a terminal (on a Steam Deck: Desktop Mode, Konsole; `sudo` needs a password
+set with `passwd` first):
+
+    sudo sysctl -w net.ipv4.ip_unprivileged_port_start=1000
+
+This lasts until the next restart. It lets any program on the PC use ports 1000-1023 without administrator rights.
+
+## Mac (CrossOver, experimental)
+
+Players run COGBox on a Mac with Apple Silicon through CrossOver (community-tested; we have no Mac to test on). The
+games use DirectX 12 through CrossOver's D3DMetal by themselves - Vulkan does not work there. If you hear a constant heavy bass hum (in the games and the launcher's music), open
+**Audio MIDI Setup** on the Mac and set your output device to **96,000 Hz** (or 88,200 Hz): at 44,100 or 48,000 Hz
+CrossOver's audio adds the hum (found by L33tRonin, GitHub #261).
 
 ## If something goes wrong
 
@@ -125,12 +150,23 @@ zip.
 Common causes: a CPU without AVX2, an old graphics driver, or a different release of the game than the port is made for
 (COGBox warns you when you add it).
 
-**Gears 3 DLC missing at the main menu** (known issue, GitHub #283): with several DLC packages, Gears 3 sometimes opens
-only the first one at start-up, so characters, skins or RAAM's Shadow don't show. Until it's fixed:
+**The game uses the wrong graphics card** (PCs with two or more): COGBox picks the card with the most video memory of
+its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and
+Vulkan. To choose one yourself, open a game's **Graphics** tab and pick the card in the **Graphics card** list
+(**Automatic** is the default); it applies to all four games. If the card you picked is no longer in the PC, COGBox says
+so and the game picks automatically. If you prefer a file (or the list doesn't show your card), add a line naming part of
+the card's name to `extra-args.txt` next to CogBox.exe (create the file if it isn't there), for example
+`--gow2_graphics_card=4090`; remove the line to go back to automatic. The game's log lists every card it found.
+
+**Gears 3 DLC missing at the main menu** (GitHub #283): with several DLC packages, Gears 3 sometimes opened only the
+first one at start-up, so characters, skins or RAAM's Shadow didn't show. 0.6.2 changes what caused it, but it isn't
+confirmed on a big DLC folder yet - if it still happens to you, please tell us on #283. Meanwhile:
 - At the main menu, open **Options > Storage Location** and pick the storage: the game checks the DLC again and it all
   appears (needed after each start).
 - Or load into anything, go back to the main menu and wait about 20 seconds.
-- Keeping only the DLC you use (fewer packages) makes it load at start-up more often.
+- Remove duplicate packages: COGBox marks a DLC package whose contents are all in another one you have ("duplicate of
+  ... - can be removed" on the game's About tab), and **Remove duplicates** removes them. Duplicates only give the game
+  the same items twice (for example the same skin twice).
 
 ## Legal
 
@@ -161,6 +197,7 @@ Thank you to everyone who has contributed code, translations, testing and tips (
 - **Flippage**
 - **KiltedKernel**
 - **gmihaic**
+- **legoliamneeson**
 - **HubertFer**
 - **Hevesi J.**
 - **LenzTRO**
@@ -183,6 +220,8 @@ This project stands on the work of many open-source projects and communities:
   **[x360db](https://github.com/xenia-manager/x360db)** for box art and backgrounds.
 - The **Gears community patches** (ultrawide by boma and TudorHorse) and
   **[Xenia Canary's game patches](https://github.com/xenia-canary/game-patches)** (illusion, boma), ported as switches.
+- **PsychoV35** and **[RenoDX](https://github.com/clshortfuse/renodx)** by ShortFuse (with mqhaji's PsychoV35 edition),
+  which Gears 2 and Gears 3's native HDR is built on.
 - The **Anton**, **Barlow**, **Inter** and **Noto** fonts and **[Kenney Input Prompts](https://kenney.nl/assets/input-prompts)**.
 
 If we've missed anyone, please open an issue and we'll add them.
@@ -203,7 +242,7 @@ COGBox and the ports' own code are under the **MIT licence** ([`LICENSE`](LICENS
 already asks you to keep the copyright notice in copies of the code.)
 
 Also used, each under its own licence: Xenia / Canary / Edge (BSD-3), the rexglue SDK (BSD-style), FFmpeg (LGPL-2.1+,
-for XMA music and in-game audio), SDL3 (zlib), Dear ImGui (MIT), SMAA (MIT), xxHash (BSD-2), miniz (MIT), stb (MIT), the DirectX
+for XMA music and in-game audio), SDL3 (zlib), Dear ImGui (MIT), SMAA (MIT), PsychoV35 and RenoDX's HDR grading (MIT), xxHash (BSD-2), miniz (MIT), stb (MIT), the DirectX
 Shader Compiler, the Vulkan Headers, AMD FidelityFX and Anti-Lag 2, NVIDIA DLSS, DLSS Frame Generation, Streamline (MIT) and
 Reflex (NVIDIA RTX SDKs License / Reflex SDK licence), Intel XeSS, and the
 Anton / Barlow / Inter fonts (SIL OFL). Full texts are in [`THIRD_PARTY_NOTICES.md`](Gears2-Native/THIRD_PARTY_NOTICES.md)
@@ -222,13 +261,14 @@ repository the texts are in `Gears2-Native/THIRD_PARTY_NOTICES.md` and `Gears2-N
 
 | Component (shipped in the download) | Version | Licence | Text in the download |
 |---|---|---|---|
-| COGBox launcher and the ports' own code | 0.6.1 | MIT | `LICENSE.txt` |
+| COGBox launcher and the ports' own code | 0.6.2 | MIT | `LICENSE.txt` |
 | rexglue SDK runtime (`rexruntime.dll`, `rexgpu-xenos.dll`), derived from Xenia | 0.10.0-dev (bd833a2 + our patches) | BSD-3-Clause | `licenses\rexglue-sdk\` (+ its bundled libraries' licences) |
 | Xenia / Canary / Edge code ported into the renderer | Canary e6cd2e4, Edge 5045c19 | BSD-3-Clause | `licenses\Xenia-LICENSE.txt` |
 | FFmpeg XMA decoder (`avcodec-63.dll`, `avutil-61.dll`; also linked into `rexruntime.dll`) | 9.0.2 (launcher); Xenia fork (runtime) | LGPL-2.1-or-later (not a GPL build) | `licenses\FFmpeg-NOTICE.txt`, `FFmpeg-LGPL-2.1.txt` |
 | SDL3 (`SDL3.dll`) | 3.4.20 | zlib | `licenses\SDL3-LICENSE.txt` |
 | Dear ImGui, miniz, stb (stb_image, stb_dxt), LZMA SDK 7z decoder | - | MIT / MIT / MIT or public domain / public domain | `licenses\` |
 | SMAA, XeGTAO, FidelityFX CACAO, modcore (KiltedKernel), native mouse look (gow2/gow3-recomp) | - | MIT / MIT / MIT / MIT / BSD-3-Clause | `licenses\Gears2-Native-THIRD_PARTY_NOTICES.md`, `licenses\modcore-LICENSE.txt` (in this repository: `Gears2-Native/THIRD_PARTY_NOTICES.md`) |
+| PsychoV35 HDR tone mapping (Carlos Lopez / ShortFuse; self-contained edition by mqhaji) and RenoDX grading code (ShortFuse and the RenoDX contributors) - Gears 2 and Gears 3 native HDR | - | MIT / MIT | `PsychoV35-LICENSE.txt`, `RenoDX-Grading-LICENSE.txt` in the Gears 2 and Gears 3 folders' `licenses` |
 | NVIDIA DLSS Super Resolution and Frame Generation (`nvngx_dlss.dll`, `nvngx_dlssg.dll`) | 310.9.16 | NVIDIA RTX SDKs License (v. March 14, 2024), proprietary | `licenses\NVIDIA-Streamline-DLSS-G-NOTICE.txt`, `licenses\dlss-sdk\` |
 | NVIDIA Streamline (`sl.*.dll`) and Reflex | 2.14.16 | MIT (Streamline); NVIDIA Reflex SDK licence | `licenses\streamline-sdk\`, `licenses\streamline-release\` |
 | AMD FidelityFX SDK: FSR upscaler, frame generation, loaders (DX12 and Vulkan) | SDK 2.4.0 (upscaler 4.1.2, FG 4.0.2) | AMD FidelityFX licence (binary-only redistribution) | `licenses\AMD-FidelityFX-SDK-LICENSE.md`, `licenses\fidelityfx-sdk\` |

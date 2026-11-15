@@ -38,13 +38,14 @@ float NativeGears3RenoDxBoost(float value, float power = 0.40) {
   return max(value, lerp(value, expanded, weight));
 }
 
-float3 NativeGears3HdrBoost(float3 color, float power = 0.40) {
+float3 NativeGears3HdrBoost(float3 color, float power = 0.40, float strength = 1.0) {
   color = max(color, 0.0);
   // Apply the sample's scalar boost to luminance in this shader's linear
   // BT.709 working space; one RGB scale retains the extended LUT's color.
   float y = dot(color, float3(0.2126, 0.7152, 0.0722));
   if (y <= 0.0) return color;
-  return color * (NativeGears3RenoDxBoost(y, power) / y);
+  // COGBox 0.6.2: strength scales the added gain (1 = this tuned boost, 0 = none)
+  return color * (1.0 + (NativeGears3RenoDxBoost(y, power) / y - 1.0) * max(strength, 0.0));
 }
 
 float3 NativeGears3Neutral(float3 scene) {
@@ -145,7 +146,7 @@ float NativeGears2RenoDxBoost(float value, float power = 0.40) {
   return max(value, lerp(value, expanded, weight));
 }
 
-float3 NativeGears2PeakInput(float3 graded, float peak) {
+float3 NativeGears2PeakInput(float3 graded, float peak, float strength = 1.0) {
   graded = max(graded, 0.0);
   float intensity = dot(graded, float3(0.2126, 0.7152, 0.0722));
   if (intensity <= 1.0 || peak <= 1.0) return graded;
@@ -157,7 +158,8 @@ float3 NativeGears2PeakInput(float3 graded, float peak) {
   float maximumGain = min(max(peak, 1.0), 4.0);
   float headroom = maximumGain - 1.0;
   float boundedDelta = headroom * delta / (headroom + delta);
-  float gain = 1.0 + smoothstep(1.0, 4.0, intensity) * boundedDelta;
+  // COGBox 0.6.2: strength scales the added gain (1 = this tuned boost, 0 = none)
+  float gain = 1.0 + smoothstep(1.0, 4.0, intensity) * boundedDelta * max(strength, 0.0);
   return graded * gain;
 }
 )";
@@ -202,9 +204,10 @@ XePsOut main(XePsIn xe_in) {
   source.replace(start, finish + end.size() - start,
       "  // Extended game curve / LUT, followed by primary PsychoV35.\n"
       "  float nativePeak = max(asfloat(xe_sys2.x), 1e-4);\n"
+      "  float nativeHighlights = xe_sys2.z != 0u ? asfloat(xe_sys2.z) - 1.0 : 1.0;   // COGBox 0.6.2: strength + 1\n"
       "  float3 nativeExtendedGrade = " + std::string(gears3 ?
-          "NativeGears3HdrBoost(NativeGears3ExtendedGrade(nativeScene, r[2].w))" :
-          "NativeGears2PeakInput(NativeGears2ExtendedGrade(nativeScene), nativePeak)") + ";\n"
+          "NativeGears3HdrBoost(NativeGears3ExtendedGrade(nativeScene, r[2].w), 0.40, nativeHighlights)" :
+          "NativeGears2PeakInput(NativeGears2ExtendedGrade(nativeScene), nativePeak, nativeHighlights)") + ";\n"
       "  float3 nativeVanillaGrade = pow(max(nativeEncodedGrade, 0.0), 2.2);\n"
       + std::string(gears3 ? "" : "  if (!nativeSceneHasCoverage) nativeVanillaGrade = NativeGears2Grade(nativeScene);\n") +
       "  float nativeFade = pow(max(" + constant(0) + ".x * xe_color_exp_scale.x, 0.0), 2.2);\n"

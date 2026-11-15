@@ -9,6 +9,10 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
+#include <chrono>
+
+#include <windows.h>
 
 static int g_failures = 0;
 #define CHECK(cond)                                                      \
@@ -81,6 +85,101 @@ int main() {
         auto renamed = read_account(d + "\\new");
         CHECK(renamed.has_value() && renamed->tag() == "Guest Two#0002" && renamed->token == "tok" && renamed->xuid == "77");
         CHECK(!update_account_name(d + "\\missing", "X", "0001"));
+    }
+
+    // 0.6.2 GitHub #302: a token-less file (a game's claim never completed) is completed, or set aside, never ignored
+    {
+        const std::string p = d + "\\partial";
+        fs::create_directories(dir / "partial");
+        CHECK(!read_account_partial(p).has_value());
+        std::ofstream(dir / "partial" / "identity.json") << R"({"uuid":"u2","display_name":"Tavo","discriminator":"","token":""})";
+        auto part = read_account_partial(p);
+        CHECK(part.has_value() && part->uuid == "u2" && part->token.empty());
+        CHECK(!read_account(p).has_value());
+        SocialAccount c;
+        c.uuid = "u2"; c.token = "t2"; c.name = "Tavo"; c.discriminator = "1234"; c.xuid = "9";
+        CHECK(write_account_replace(p, c));
+        auto full = read_account(p);
+        CHECK(full.has_value() && full->tag() == "Tavo#1234" && full->token == "t2" && full->uuid == "u2");
+        CHECK(account_dir_writable(p));
+        CHECK(!fs::exists(dir / "partial" / "identity.write-test.tmp"));
+        CHECK(account_file_age_seconds(p) >= 0 && account_file_age_seconds(p) < 30);
+        CHECK(set_account_aside(p, "no-token"));
+        CHECK(!fs::exists(dir / "partial" / "identity.json"));
+        int asides = 0;
+        for (const auto& e : fs::directory_iterator(dir / "partial")) asides += e.path().filename().wstring().rfind(L"identity.json.no-token-", 0) == 0;
+        CHECK(asides == 1);
+        CHECK(!read_account_partial(p).has_value());
+        CHECK(account_file_age_seconds(p) == -1);
+    }
+
+    // 0.6.2 GitHub #302 hardening: a file held open for a moment (OneDrive / antivirus) is "busy", never "no account"; the
+    // save is a whole new file moved over the old, with retries
+    {
+        const std::string p = d + "\\held";
+        fs::create_directories(dir / "held");
+        SocialAccount c;
+        c.uuid = "u3"; c.token = "t3"; c.name = "Held"; c.discriminator = "7"; c.xuid = "3";
+        CHECK(write_account_exclusive(p, c));
+        CHECK(!write_account_exclusive(p, c));   // a file is there: kept
+        int tmps = 0;
+        for (const auto& e : fs::directory_iterator(dir / "held")) tmps += e.path().filename().wstring().find(L".tmp-") != std::wstring::npos;
+        CHECK(tmps == 0);                          // no scratch file left behind, not even after the refusal
+        // held with no sharing at all for 150 ms: a read waits it out
+        {
+            HANDLE h = CreateFileW((dir / "held" / "identity.json").c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+            CHECK(h != INVALID_HANDLE_VALUE);
+            std::thread t([h] { Sleep(150); CloseHandle(h); });
+            bool busy = true;
+            auto a = read_account(p, &busy);
+            t.join();
+            CHECK(a.has_value() && a->token == "t3" && !busy);
+        }
+        // held for good (longer than the retries): busy, and not an account that is missing
+        {
+            HANDLE h = CreateFileW((dir / "held" / "identity.json").c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+            CHECK(h != INVALID_HANDLE_VALUE);
+            bool busy = false, pbusy = false;
+            CHECK(!read_account(p, &busy).has_value() && busy);
+            CHECK(!read_account_partial(p, &pbusy).has_value() && pbusy);
+            CloseHandle(h);
+        }
+        // a missing file is not busy
+        {
+            bool busy = true;
+            CHECK(!read_account(d + "\\nothing-here", &busy).has_value() && !busy);
+        }
+        // the swap-in while a scan holds the old file (shared for reading only): done once it lets go
+        {
+            HANDLE h = CreateFileW((dir / "held" / "identity.json").c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+            CHECK(h != INVALID_HANDLE_VALUE);
+            std::thread t([h] { Sleep(120); CloseHandle(h); });
+            SocialAccount n = c;
+            n.name = "Renamed"; n.discriminator = "8";
+            CHECK(write_account_replace(p, n));
+            t.join();
+            auto back = read_account(p);
+            CHECK(back.has_value() && back->tag() == "Renamed#8" && back->token == "t3");
+            CHECK(update_account_name(p, "Again", "9"));
+            back = read_account(p);
+            CHECK(back.has_value() && back->tag() == "Again#9");
+            int left = 0;
+            for (const auto& e : fs::directory_iterator(dir / "held")) left += e.path().filename().wstring().find(L".tmp-") != std::wstring::npos;
+            CHECK(left == 0);
+        }
+        // held for good: the old file is untouched and no scratch file stays
+        {
+            HANDLE h = CreateFileW((dir / "held" / "identity.json").c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+            SocialAccount n = c;
+            n.name = "Never";
+            CHECK(!write_account_replace(p, n));
+            CloseHandle(h);
+            auto back = read_account(p);
+            CHECK(back.has_value() && back->tag() == "Again#9");
+            int left = 0;
+            for (const auto& e : fs::directory_iterator(dir / "held")) left += e.path().filename().wstring().find(L".tmp-") != std::wstring::npos;
+            CHECK(left == 0);
+        }
     }
     fs::remove_all(dir);
     if (g_failures == 0) std::printf("social_net_test: all passed\n");

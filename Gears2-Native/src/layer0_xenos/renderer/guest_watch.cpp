@@ -111,6 +111,13 @@ std::pair<uint32_t, uint32_t> GuestWatch::Callback(void* context, uint32_t start
       }
     }
   }
+  if (exact_range && length) {  // green-vine review (diagnostic): GPU-current pages this exact bump ends
+    const uint32_t first = start >> kPageShift;
+    const uint32_t last = uint32_t(std::min<uint64_t>((uint64_t(start) + length - 1) >> kPageShift, kPages - 1));
+    uint64_t n = 0;
+    for (uint32_t p = first; p <= last; ++p) n += self->GpuCurrent(p) ? 1u : 0u;
+    if (n) self->gpu_exact_.fetch_add(n, std::memory_order_relaxed);
+  }
   if (!exact_range) {
     const uint32_t ex_first = start >> kPageShift;
     const uint32_t ex_last =
@@ -185,6 +192,47 @@ void GuestWatch::Bump(uint32_t address, uint32_t length) { BumpRange(address, le
 // An unscaled write leaves the scaled copy behind: its new version carries kGpuCurrent only.
 void GuestWatch::MarkGpuWritten(uint32_t address, uint32_t length, bool scaled) {
   BumpRange(address, length, kGpuCurrent | kEverGpuWritten | (scaled ? kScaledCurrent : 0));
+}
+
+bool GuestWatch::SettleGpuPage(uint32_t page, uint32_t version) {
+  if (page >= kPages) return false;
+  uint64_t old = pages_[page].load(std::memory_order_relaxed);
+  for (;;) {
+    if (uint32_t(old) != version || !(old & kGpuCurrent)) return false;  // written since (CPU or GPU): leave it
+    const uint64_t next = uint64_t(uint32_t(old) + 1u) | (old & kEverGpuWritten);
+    if (pages_[page].compare_exchange_weak(old, next, std::memory_order_release, std::memory_order_relaxed)) break;
+  }
+  // The block sums follow the page (as BumpRange), then the epoch.
+  blocks_[page >> kBlockShift].fetch_add(1, std::memory_order_relaxed);
+  supers_[page >> kSuperShift].fetch_add(1, std::memory_order_relaxed);
+  epoch_.fetch_add(1, std::memory_order_release);
+  return true;
+}
+
+uint32_t GuestWatch::UnwatchablePages(uint32_t address, uint32_t length) const {
+  address &= 0x1FFFFFFFu;
+  if (!memory_ || !length) return 0;
+  const uint32_t first = address >> kPageShift;
+  const uint32_t last = uint32_t(std::min<uint64_t>((uint64_t(address) + length - 1) >> kPageShift, kPages - 1));
+  uint32_t n = 0;
+  for (uint32_t p = first; p <= last; ++p) {
+    const uint32_t phys = p << kPageShift;
+    bool writable = false;
+    // The three physical views (xmemory.cpp PhysicalHeap::GetPhysicalAddress: E0000000 is offset by 0x1000).
+    const uint32_t views[3] = {0xA0000000u + phys, 0xC0000000u + phys, phys >= 0x1000u ? 0xE0000000u + phys - 0x1000u : 0u};
+    for (uint32_t v : views) {
+      if (!v) continue;
+      rex::memory::BaseHeap* heap = memory_->LookupHeap(v);
+      uint32_t protect = 0;
+      if (heap && heap->heap_type() == rex::memory::HeapType::kGuestPhysical && heap->QueryProtect(v, &protect) &&
+          (protect & rex::memory::kMemoryProtectWrite)) {
+        writable = true;
+        break;
+      }
+    }
+    if (!writable) ++n;
+  }
+  return n;
 }
 
 uint64_t GuestWatch::Version(uint32_t address, uint32_t length) const {

@@ -131,6 +131,21 @@ void XenosPcssSetAvailable(bool on, uint32_t mode, uint32_t quality, float radiu
 float XenosPcssRadius();
 bool XenosPcssTakeTrace();  // Ctrl+Shift+F12 pressed since the last call: trace the next frame  // xe_sys1.w: scales the penumbra, its widest and the blocker search (Alt+F12)
 uint32_t XenosPcssMode();
+// --gow2_ssil (prototype): screen-space indirect lighting's live state - Insert on / off, Shift+Insert view (normal,
+// indirect only, split), Ctrl+Insert strength, Alt+Insert albedo estimate (0 hue, 1 grey, 2 scene colour, 3 local).
+void XenosSsilSetState(bool on, uint32_t view, float strength, uint32_t albedo);
+bool XenosSsilOn();
+uint32_t XenosSsilView();
+float XenosSsilStrength();
+uint32_t XenosSsilAlbedo();
+// The tricks (bits): 0 back faces (Home), 1 only the difference (Shift+Home), 2 temporal (Ctrl+Home), 3 bounces
+// (Alt+Home), 4 adaptive scale (End).
+void XenosSsilSetTricks(uint32_t bits);
+uint32_t XenosSsilTricks();
+// The adaptive scale last read back (median view distance, radius, 0..1 from room to open ground), for the label.
+void XenosSsilSetScale(float median, float radius, float t);
+// SSIL is on but this frame had no XeGTAO depth pyramid (CACAO chosen, or no scene depth): the label says it is paused.
+void XenosSsilSetPaused(bool paused);
 // Patch 0163: COGBox's in-game menu (ingame_menu.cpp) - Back + Start or F1 opens it; COGBox's settings for this game
 // (--cogbox_menu=<file>), Resume, Restart to apply, Quit game. Install from OnCreateDialogs (with the app's window and
 // runtime), shut down from OnShutdown.

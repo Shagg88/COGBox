@@ -258,17 +258,18 @@ void Gow2MaxTickRate(PPCRegister& f1) {
 // Stage 7.5 ultrawide hooks (see the top of the file).
 // ---- 0.3.0: any ultrawide shape (GitHub #60: 21:9 and 32:9) --------------------------------------------------------
 // --gow2_aspect picks the shape when gow2_ultrawide is on: "" = the Canary patch's own 21:9 (1280x550, unchanged), "auto"
-// = the monitor's shape, or "21:9", "32:9", "3440:1440", "3.56". The scene height is 1280 / aspect (even, 360-720; GitHub #137).
+// = the monitor's shape, or "21:9", "32:9", "3440:1440", "3.56". The scene height is 1280 / aspect (even, 240-720; GitHub #137, #293).
 // The field-of-view factor is Canary's 21:9 value times how much more the shape widens than 21:9 does, at the half
 // angle (34.05 deg) where Canary's 21:9 factor is exact (the hooks don't see the game's own field of view).
 // GitHub #94: the clamp below as a switch, so a PC job can reproduce the 32:9 trap (360) and read where it is.
 // GitHub #137: 0.4.0 fixed the trap (gow2_rt_pool_grow, job 1028d: 32:9 / 360 rows, TU6 and disc, no crash) but the
 // floor stayed 536, so 32:9 was still drawn 2.39:1 and pillarboxed. The floor is now 360 rows (32:9, the shape job
 // 1028d ran) while the pool fix is on; with --gow2_rt_pool_grow=false the old 536 still applies, since narrower than that traps.
-REXCVAR_DEFINE_INT32(gow2_ultrawide_min_rows, 360, "Gears2",
-                     "With --gow2_ultrawide: the fewest scene rows (360 = 32:9, the widest tested; with --gow2_rt_pool_grow=false "
-                     "at least 536 = 3440x1440, as fewer trap in the render-target pool setup - GitHub #94/#137)")
-    .range(320, 720);
+// GitHub #293 (0.6.2): 240 rows = 48:9 (three 16:9 screens side by side), with the pool fix on.
+REXCVAR_DEFINE_INT32(gow2_ultrawide_min_rows, 240, "Gears2",
+                     "With --gow2_ultrawide: the fewest scene rows (240 = 48:9 triple screens; with --gow2_rt_pool_grow=false "
+                     "at least 536 = 3440x1440, as fewer trap in the render-target pool setup - GitHub #94/#137/#293)")
+    .range(240, 720);
 REXCVAR_DEFINE_BOOL(gow2_rt_pool_grow, true, "Gears2",
                     "GitHub #94: a render target too large for its pool (Gears 2 wider than ~2.39:1) gets memory of its "
                     "own instead of the game's trap");
@@ -376,6 +377,75 @@ void Gow2UltrawideUiHeight(PPCRegister& r3) {
   const uint32_t ui = Gow2WideHeight() == 550 ? 564u : (Gow2WideHeight() * 564u / 550u + 1u) & ~1u;
   if (!logged) { logged = true; REXLOG_INFO("gow2_ultrawide: UI viewport height {} -> {}", r3.u32, ui); }
   r3.u64 = ui;
+}
+
+// GitHub #278 (32:9 menus too large / "zoomed in"): the UI scenes (UE3 UIScene: menus, pause, loading and title screens)
+// lay themselves out in the size UGameUISceneClient::GetViewportSize reports - with ultrawide 1280 x 369 at 32:9 (the
+// height hook above) - so every panel placed or sized in percent of the viewport's width is stretched across the whole
+// 32:9 picture, and art that keeps its shape grows with that width. --gow2_ultrawide_ui_centre (test switch, off) makes
+// the scene client report a 16:9 box instead: size (H * 16/9) x H and origin ((W - that) / 2, 0), so the scenes lay
+// out as on a 16:9 screen in the centre of the wide picture (the HUD is drawn through UCanvas, not here - unchanged).
+// Both are virtuals of the scene client: GetViewportSize (disc sub_826E36C0, TU6 sub_826E9B90: RenderViewport at +64,
+// GetSizeX / GetSizeY into out[0] / out[1]; the height hook above runs inside it) and, in the vtable slot before it,
+// GetViewportOrigin (disc sub_826E2630, TU6 sub_826E8B80: out = (0, 0), returns TRUE; the base class's returns FALSE).
+// [unchecked on the PC: whether the UI adds that origin to its positions - if not, the scenes sit at the left edge and
+// the switch stays off]
+REXCVAR_DEFINE_BOOL(gow2_ultrawide_ui_centre, false, "Gears2",
+                    "GitHub #278 test: with --gow2_ultrawide wider than 16:9, menus and other UI scenes laid out as 16:9 in "
+                    "the centre of the picture instead of stretched across it (the HUD is not changed)");
+namespace uicentre {
+inline std::atomic<float> g_offset_x{0.0f};  // (W - 16:9 width) / 2 of the last size reported
+inline bool On() { return REXCVAR_GET(gow2_ultrawide) && REXCVAR_GET(gow2_ultrawide_ui_centre); }
+inline float LoadF(const uint8_t* base, uint32_t a) {
+  uint32_t v;
+  std::memcpy(&v, base + a, 4);
+  v = __builtin_bswap32(v);
+  float f;
+  std::memcpy(&f, &v, 4);
+  return f;
+}
+inline void StoreF(uint8_t* base, uint32_t a, float f) {
+  uint32_t v;
+  std::memcpy(&v, &f, 4);
+  v = __builtin_bswap32(v);
+  std::memcpy(base + a, &v, 4);
+}
+}  // namespace uicentre
+#if defined(GOW2_TU6) && GOW2_TU6
+#define GOW2_UI_VIEWPORT_SIZE sub_826E9B90
+#define GOW2_UI_VIEWPORT_ORIGIN sub_826E8B80
+#else
+#define GOW2_UI_VIEWPORT_SIZE sub_826E36C0
+#define GOW2_UI_VIEWPORT_ORIGIN sub_826E2630
+#endif
+#define GOW2_UI_JOIN2(a, b) a##b
+#define GOW2_UI_JOIN(a, b) GOW2_UI_JOIN2(a, b)
+extern "C" void GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_SIZE)(PPCContext& __restrict ctx, uint8_t* base);
+extern "C" void GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_ORIGIN)(PPCContext& __restrict ctx, uint8_t* base);
+// UBOOL GetViewportSize(const UUIScene*, FVector2D& out): r5 = out
+extern "C" void GOW2_UI_VIEWPORT_SIZE(PPCContext& __restrict ctx, uint8_t* base) {
+  const uint32_t out = ctx.r5.u32;
+  GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_SIZE)(ctx, base);
+  if (!uicentre::On() || ctx.r3.u32 == 0 || !out) return;
+  const float w = uicentre::LoadF(base, out), h = uicentre::LoadF(base, out + 4);
+  const float w169 = std::round(h * 16.0f / 9.0f / 2.0f) * 2.0f;
+  if (!(h > 0.0f) || !(w169 < w)) {  // not wider than 16:9: as the game had it
+    uicentre::g_offset_x.store(0.0f);
+    return;
+  }
+  uicentre::g_offset_x.store((w - w169) / 2.0f);
+  uicentre::StoreF(base, out, w169);
+  static std::atomic<bool> logged{false};
+  if (!logged.exchange(true))
+    REXLOG_INFO("gow2_ultrawide_ui_centre: UI scenes laid out in {}x{} of {}x{}, from x {}", w169, h, w, h, (w - w169) / 2.0f);
+}
+// UBOOL GetViewportOrigin(const UUIScene*, FVector2D& out): r5 = out
+extern "C" void GOW2_UI_VIEWPORT_ORIGIN(PPCContext& __restrict ctx, uint8_t* base) {
+  const uint32_t out = ctx.r5.u32;
+  GOW2_UI_JOIN(__imp__, GOW2_UI_VIEWPORT_ORIGIN)(ctx, base);
+  if (!uicentre::On() || ctx.r3.u32 == 0 || !out) return;
+  const float dx = uicentre::g_offset_x.load();
+  if (dx > 0.0f) uicentre::StoreF(base, out, uicentre::LoadF(base, out) + dx);
 }
 
 // GitHub #94 (Gears 2 wider than ~2.39:1 trapped at start-up). sub_8281C680 (TU6; disc sub_8280CAB8) places a render

@@ -611,7 +611,7 @@ void play_answer(App &a, const Modal &m)
         std::string zip, err;
         if (make_report(a, m.game, dir, what, zip, err)) report_share(a, m.game, zip, what);
         else set_message(a, "Couldn't make the report: " + err, true);
-    } else if (m.answer == 1) shell_open(dir);
+    } else if (m.answer == 1) open_folder(a, dir);
 }
 
 std::string newest_session(int g)

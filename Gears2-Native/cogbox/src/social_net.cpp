@@ -7,6 +7,8 @@
 #include <windows.h>
 #include <winhttp.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -34,15 +36,94 @@ std::optional<SocialAccount> account_from(const json& j, bool need_token) {
 std::filesystem::path identity_file(const std::string& dir) {
     return std::filesystem::path(widen(dir)) / L"identity.json";
 }
+
+// 0.6.2 (GitHub #302 hardening): OneDrive, antivirus and backup tools hold a file open for a moment while they scan or
+// sync it. Their lock ends in milliseconds; a read or a swap-in that gives up at the first refusal makes the launcher
+// think the account is gone (and a new account is a new #number). So both retry a few times, 15 ms longer each time
+// (about 0.4 s in all), and only then report "busy" - which the launcher answers by trying again later, never by
+// making a new account.
+bool lock_like(DWORD e) {
+    return e == ERROR_SHARING_VIOLATION || e == ERROR_LOCK_VIOLATION || e == ERROR_ACCESS_DENIED || e == ERROR_USER_MAPPED_FILE ||
+           e == ERROR_BUSY || e == ERROR_DELETE_PENDING;
+}
+constexpr int kTries = 8;
+
+enum class Read { Ok, Missing, Busy };
+// identity.json whole. Missing: there is no file (nothing else can be meant by those two errors). Busy: there is one and
+// it could not be read in kTries tries.
+Read read_identity_text(const std::filesystem::path& file, std::string* text) {
+    for (int k = 0; k < kTries; k++) {
+        if (k) Sleep(15 * k);
+        HANDLE h = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) {
+            const DWORD e = GetLastError();
+            if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) return Read::Missing;
+            continue;   // locked, or any other refusal: again a moment later
+        }
+        std::string got;
+        char buf[4096];
+        DWORD n = 0;
+        bool ok = true;
+        while (true) {
+            if (!ReadFile(h, buf, sizeof buf, &n, nullptr)) { ok = false; break; }
+            if (!n) break;
+            got.append(buf, n);
+            if (got.size() > (1u << 20)) break;   // an account file is a few hundred bytes
+        }
+        CloseHandle(h);
+        if (!ok) continue;
+        *text = std::move(got);
+        return Read::Ok;
+    }
+    return Read::Busy;
+}
+
+std::atomic<unsigned> g_tmp_serial{0};
+// A whole new identity.json, never half of one: the text goes to a file of its own in the same folder (so the swap stays
+// on one volume), is flushed to disk, and then moved over the real name in one step with MoveFileExW. A game or an
+// antivirus scan that has identity.json open at that moment makes the move fail with a sharing violation: tried again a
+// few times. replace=false (a new account): the move does not replace, so it fails when a file is there - a game that
+// made its own a moment earlier keeps it - and nothing is retried for that.
+bool put_identity_text(const std::filesystem::path& file, const std::string& text, bool replace) {
+    std::filesystem::path tmp = file;
+    tmp += L".tmp-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(g_tmp_serial.fetch_add(1));
+    HANDLE h = INVALID_HANDLE_VALUE;
+    for (int k = 0; k < kTries && h == INVALID_HANDLE_VALUE; k++) {
+        if (k) Sleep(15 * k);
+        h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE && !lock_like(GetLastError())) break;
+    }
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD put = 0;
+    bool ok = WriteFile(h, text.data(), (DWORD)text.size(), &put, nullptr) && put == text.size() && FlushFileBuffers(h);
+    CloseHandle(h);
+    if (ok) {
+        ok = false;
+        for (int k = 0; k < kTries; k++) {
+            if (k) Sleep(15 * k);
+            if (MoveFileExW(tmp.c_str(), file.c_str(), (replace ? MOVEFILE_REPLACE_EXISTING : 0) | MOVEFILE_WRITE_THROUGH)) { ok = true; break; }
+            const DWORD e = GetLastError();
+            if (!replace && (e == ERROR_ALREADY_EXISTS || e == ERROR_FILE_EXISTS)) break;   // a file is there: it stays
+            if (!lock_like(e)) break;
+            if (replace && e == ERROR_ACCESS_DENIED) {   // a read-only identity.json (a copy, a game) takes the new one too
+                const DWORD at = GetFileAttributesW(file.c_str());
+                if (at != INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_READONLY)) SetFileAttributesW(file.c_str(), at & ~FILE_ATTRIBUTE_READONLY);
+            }
+        }
+    }
+    if (!ok) DeleteFileW(tmp.c_str());
+    return ok;
+}
 }  // namespace
 
-std::optional<SocialAccount> read_account(const std::string& identity_dir_utf8) {
-    std::ifstream in(identity_file(identity_dir_utf8), std::ios::binary);
-    if (!in) return std::nullopt;
-    std::stringstream ss;
-    ss << in.rdbuf();
-    const json j = json::parse(ss.str(), nullptr, false);
-    return account_from(j, true);
+std::optional<SocialAccount> read_account(const std::string& identity_dir_utf8, bool* busy) {
+    if (busy) *busy = false;
+    std::string text;
+    const Read r = read_identity_text(identity_file(identity_dir_utf8), &text);
+    if (r == Read::Busy && busy) *busy = true;
+    if (r != Read::Ok) return std::nullopt;
+    return account_from(json::parse(text, nullptr, false), true);
 }
 
 std::optional<SocialAccount> parse_claim(const std::string& body) {
@@ -54,38 +135,83 @@ bool write_account_exclusive(const std::string& identity_dir_utf8, const SocialA
     std::filesystem::create_directories(std::filesystem::path(widen(identity_dir_utf8)), ec);
     const json j = { { "uuid", a.uuid }, { "token", a.token }, { "display_name", a.name },
                      { "discriminator", a.discriminator }, { "xuid", a.xuid } };
-    // "wx": created only when there is none (the games make theirs the same way)
-    FILE* f = _wfopen(identity_file(identity_dir_utf8).c_str(), L"wx");
+    // Created only when there is none (the games make theirs the same way, with fopen "wx"). 0.6.2 (GitHub #302): not
+    // _wfopen "wx" here - the launcher links the system msvcrt.dll, whose fopen predates the C11 "x" flag (Wine's
+    // ignores it and overwrites). The text goes to a file of its own first and is moved to identity.json without
+    // replacing (Windows refuses when one is there: the same promise as CREATE_NEW, and nobody ever reads half a file).
+    return put_identity_text(identity_file(identity_dir_utf8), j.dump(2), false);
+}
+
+std::optional<SocialAccount> read_account_partial(const std::string& identity_dir_utf8, bool* busy) {
+    if (busy) *busy = false;
+    std::string text;
+    const Read r = read_identity_text(identity_file(identity_dir_utf8), &text);
+    if (r == Read::Busy && busy) *busy = true;
+    if (r != Read::Ok) return std::nullopt;
+    return account_from(json::parse(text, nullptr, false), false);
+}
+
+bool write_account_replace(const std::string& identity_dir_utf8, const SocialAccount& a) {
+    const json j = { { "uuid", a.uuid }, { "token", a.token }, { "display_name", a.name },
+                     { "discriminator", a.discriminator }, { "xuid", a.xuid } };
+    return put_identity_text(identity_file(identity_dir_utf8), j.dump(2), true);
+}
+
+bool set_account_aside(const std::string& identity_dir_utf8, const std::string& suffix) {
+    const std::filesystem::path file = identity_file(identity_dir_utf8);
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char stamp[32];
+    snprintf(stamp, sizeof stamp, "-%04u%02u%02u-%02u%02u%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    for (int k = 0; k < 100; k++) {   // never over an earlier one (two in one second: -2, -3 ...)
+        std::filesystem::path aside = file;
+        aside += widen("." + suffix + stamp + (k ? "-" + std::to_string(k + 1) : std::string()));
+        if (MoveFileExW(file.c_str(), aside.c_str(), 0)) break;
+        if (GetLastError() != ERROR_ALREADY_EXISTS && GetLastError() != ERROR_FILE_EXISTS) break;
+    }
+    std::error_code ec;
+    return !std::filesystem::exists(file, ec);
+}
+
+void clear_account_read_only(const std::string& identity_dir_utf8) {
+    const std::wstring f = identity_file(identity_dir_utf8).wstring();
+    const DWORD at = GetFileAttributesW(f.c_str());
+    if (at != INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_READONLY)) SetFileAttributesW(f.c_str(), at & ~FILE_ATTRIBUTE_READONLY);
+}
+
+int account_file_age_seconds(const std::string& identity_dir_utf8) {
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExW(identity_file(identity_dir_utf8).c_str(), GetFileExInfoStandard, &d)) return -1;
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    const unsigned long long a = (unsigned long long)d.ftLastWriteTime.dwHighDateTime << 32 | d.ftLastWriteTime.dwLowDateTime;
+    const unsigned long long b = (unsigned long long)now.dwHighDateTime << 32 | now.dwLowDateTime;
+    if (a > b + 600000000ULL) return 1 << 30;   // over a minute in the future: a clock set back - counts as old
+    return b <= a ? 0 : (int)std::min<unsigned long long>((b - a) / 10000000ULL, 1u << 30);
+}
+
+bool account_dir_writable(const std::string& identity_dir_utf8) {
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(widen(identity_dir_utf8)), ec);
+    const std::filesystem::path probe = std::filesystem::path(widen(identity_dir_utf8)) / L"identity.write-test.tmp";
+    FILE* f = _wfopen(probe.c_str(), L"wb");
     if (!f) return false;
-    const std::string text = j.dump(2);
-    const bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+    const bool ok = std::fputs("x", f) >= 0;
     std::fclose(f);
+    std::filesystem::remove(probe, ec);
     return ok;
 }
 
 bool update_account_name(const std::string& identity_dir_utf8, const std::string& name, const std::string& discriminator) {
     const std::filesystem::path file = identity_file(identity_dir_utf8);
-    std::ifstream in(file, std::ios::binary);
-    if (!in) return false;
-    std::stringstream ss;
-    ss << in.rdbuf();
-    in.close();
-    json j = json::parse(ss.str(), nullptr, false);
+    std::string text;
+    if (read_identity_text(file, &text) != Read::Ok) return false;
+    json j = json::parse(text, nullptr, false);
     if (!j.is_object()) return false;
     j["display_name"] = name;
     j["discriminator"] = discriminator;
     // a new file, then swapped in: a game reading it at that moment sees the old or the new one, never half of one
-    std::filesystem::path tmp = file;
-    tmp += L".tmp";
-    {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out) return false;
-        out << j.dump(2);
-        if (!out) return false;
-    }
-    std::error_code ec;
-    std::filesystem::rename(tmp, file, ec);
-    return !ec;
+    return put_identity_text(file, j.dump(2), true);
 }
 
 std::optional<ServerUrl> parse_server_url(const std::string& url) {

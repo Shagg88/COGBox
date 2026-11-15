@@ -76,7 +76,7 @@ rexglue_apply_target_settings(gn_layer0_xenos)
 # Layer 2: Unreal Engine 3.
 add_library(gn_layer2_ue3 STATIC src/layer2_ue3/launch_command_line.cpp src/layer2_ue3/config_bundle.cpp
             src/layer2_ue3/config_install.cpp src/layer2_ue3/package_patch.cpp src/layer2_ue3/lzx.cpp
-            src/layer2_ue3/console.cpp src/layer2_ue3/mod_extras.cpp src/layer2_ue3/objects.cpp src/layer2_ue3/script_input.cpp
+            src/layer2_ue3/mod_extras.cpp src/layer2_ue3/objects.cpp src/layer2_ue3/script_input.cpp
             src/layer2_ue3/modcore/modcore.cpp)
 target_include_directories(gn_layer2_ue3 PUBLIC src/layer2_ue3/include)
 # modcore (MIT, from KiltedKernel's Gears 3 port): mod.ini rules, config fragments, bare-file mods (ue3/mod_extras.h)
@@ -89,10 +89,11 @@ rexglue_apply_target_settings(gn_layer2_ue3)
 target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp  # GitHub #153
-    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp)
+    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp
+    ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp)  # GitHub #264: shared with Gears 2 (--gow2_cheats); was ours
 set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp
-    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp PROPERTIES
+    ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
 
 # Layer 3: Gears of War 3 (the executable).
@@ -108,6 +109,8 @@ set(GOW3_SOURCES
     src/layer3_gow3/prop_log.cpp
     src/layer3_gow3/checkpoint_stream.cpp
     src/layer3_gow3/unlocks.cpp
+    src/layer3_gow3/adaptive_triggers.cpp  # GitHub #245 (needs SDK patch 98)
+    src/layer3_gow3/first_person.cpp  # --gow3_first_person (experimental first-person camera)
 )
 if(WIN32)
     add_executable(gow3 WIN32 ${GOW3_SOURCES})

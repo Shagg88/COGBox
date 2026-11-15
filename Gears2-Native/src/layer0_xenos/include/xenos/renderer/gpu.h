@@ -410,6 +410,15 @@ struct BackendStats {
   uint64_t scratch_texture_copies = 0;
   uint64_t early_submits = 0;  // patch 0138: mid-frame submits (gow2_renderer_submit_draws)
   uint64_t texture_uploads_refused = 0;
+  // 0.6.2 (GitHub #311): texture-load operations the D3D12 backend dropped without writing (each one used to leave
+  // the texture - or a stale scratch buffer - looking loaded): a dispatch with no recording list / pipeline, a dispatch
+  // with no shader descriptors, a scratch copy with no list, a scratch copy for a subresource other than the prepared
+  // one, a texture upload with no list, a texture upload with no upload-ring space, a guest-mirror upload that failed.
+  uint64_t tex_drop_dispatch_list = 0, tex_drop_dispatch_desc = 0, tex_drop_copy_list = 0, tex_drop_copy_sub = 0;
+  uint64_t tex_drop_upload_list = 0, tex_drop_upload_ring = 0, tex_drop_mirror = 0;
+  // 0.6.2 (#311): placed textures given zero contents (recycled heap range), their bytes, and ones skipped by the
+  // per-frame budget.
+  uint64_t tex_zeroed = 0, tex_zeroed_bytes = 0, tex_zero_skipped = 0;
   uint64_t redone_after_submit = 0;  // patch 0029: draws whose textures/constants were rebuilt after a forced submit  // patch 0024: uploads into a mip / layer the texture doesn't have  // patch 0021: GPU-loaded BCn subresources copied in from the scratch buffer
   uint64_t textures_placed = 0, texture_heaps = 0;  // patch 0017: placed textures created, 64 MB heaps made
   uint64_t vk_targets_made_mutable = 0, vk_views_refused = 0;  // patch 0087 (Vulkan)
@@ -582,6 +591,11 @@ class Backend {
   // without programmable sample positions ignore it (SamplePositionsSupported() false).
   virtual void SetSamplePositions(uint32_t count, const int8_t (*positions)[2]) { (void)count; (void)positions; }
   virtual bool SamplePositionsSupported() const { return false; }
+  // Whether a 2D texture of this format can be a compute shader's storage (UAV) target. D3D12: the formats the renderer
+  // creates with kUsageStorage all support typed stores at its feature level. Vulkan: the device says (storage is
+  // optional for some formats, e.g. A2B10G10R10_UNORM) - ask before creating such a texture, since a failed creation
+  // there stops the backend.
+  virtual bool SupportsStorage(Format format) const { (void)format; return true; }
   // Gears 3 (notes/11): the following draws memexport - their shaders write the guest-memory buffer through u0 (and
   // read vertex data through it). Off again with false.
   virtual void SetGuestWritable(bool writable) { (void)writable; }
@@ -670,6 +684,17 @@ class Backend {
   }
   virtual void CopyScratchToTexture(TextureHandle texture, uint32_t mip, uint32_t layer) {
     (void)texture; (void)mip; (void)layer;
+  }
+  // 0.6.2 (GitHub #311): a running total of texture-load operations the backend dropped (see BackendStats::tex_drop_*).
+  // The texture cache reads it around a load: a load during which it grew did not complete, so its texture is not
+  // marked loaded. Backends that never drop silently (Vulkan) return 0.
+  virtual uint64_t TextureLoadDrops() const { return 0; }
+  // 0.6.2 (#311): gives a texture zero contents when its memory may hold another texture's bytes (D3D12: a placed
+  // texture in a recycled, not-zeroed heap range; `force` also for a fresh range). True when a clear was recorded.
+  // Default: nothing (Vulkan zeroes block-compressed images itself at creation).
+  virtual bool ZeroTexture(TextureHandle texture, bool force) {
+    (void)texture; (void)force;
+    return false;
   }
   // True once the submission containing the copy has completed (never waits).
   virtual bool IsReadbackReady(ReadbackHandle readback) = 0;

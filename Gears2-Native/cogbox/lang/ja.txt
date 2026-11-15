@@ -1270,6 +1270,8 @@ Can freeze on NVIDIA cards with Vulkan while the NVIDIA overlay (NVIDIA App / Al
 # 0.4.9: proton049 - Linux / Steam Deck through Proton (machine-made translation, please check)
 Choose a folder... = フォルダーを選択...
 Paste a Linux path = Linux のパスを貼り付け
+Paste a Mac path = Mac のパスを貼り付け
+(Proton runs Vulkan) = (Proton では Vulkan で動作)
 Look for my games = ゲームを探す
 Looking... = 検索中...
 A folder with your game (default.xex), a title update or DLC. Your Linux folders are under Z: (Z:\home\... is /home/...). = ゲーム (default.xex)、タイトルアップデート、または DLC が入ったフォルダー。Linux のフォルダーは Z: の下にあります (Z:\home\... は /home/...)。
@@ -1279,6 +1281,7 @@ Use recommended Steam Deck / Proton settings = Steam Deck / Proton の推奨設�
 Vulkan, FSR and no frame generation; on a Steam Deck also borderless on its 1280x800 screen, 60 fps, Steam Deck button prompts and the controller. You see the list before anything changes. = Vulkan、FSR、フレーム生成なし。Steam Deck ではさらに 1280x800 画面でボーダーレス、60 fps、Steam Deck のボタン表示、コントローラー。変更の前に一覧が表示されます。
 STEAM DECK = STEAM DECK
 LINUX = LINUX
+MAC (CROSSOVER) = MAC (CROSSOVER)
 Running through = 実行環境:
 plain Wine: COGBox is tested with Steam's Proton (see the README's Linux and Steam Deck section) = 通常の Wine: COGBox は Steam の Proton でテストされています (README の Linux と Steam Deck の章を参照)
 Recommended Steam Deck settings = Steam Deck の推奨設定
@@ -1344,3 +1347,160 @@ Choose a file... = ファイルを選択...
 Paste a path = パスを貼り付け
 Import saves... = セーブをインポート...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = 最も快適にプレイするには、これらのゲームに記載のTitle Updateが必要です。詳しくはREADMEをご覧ください。
+# 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = 開発者用チートキーです。ゲーム中の F5-F11 (ゴッドモード、スローモーション、フリーカメラ - Gears 1 では壁抜け飛行 - HUD 非表示、全武器)。Gears 2: この PC 上のゲームのみ - System Link やオンラインのゲームでは使えません。Gears 3 と Judgment: 自分がホストする System Link やオンラインのゲームでも有効で、スローモーションなどは全プレイヤーに影響します - 自分だけのゲームで使ってください。Gears 1: System Link のゲームではまだ確認していません。実績とセーブはご自身の責任でどうぞ。
+Not on a Mac (CrossOver). = Mac (CrossOver) では使えません。
+Vulkan only on Proton / Wine. = Proton / Wine では Vulkan のみです。
+On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = Mac (CrossOver) では、ゲームは D3DMetal (Apple Silicon) 経由の DirectX 12 で動きます。Vulkan はそこでは起動しません。
+On a Mac (CrossOver): untested with D3DMetal. If the game doesn't start or looks wrong, use SMAA and leave HDR off. = Mac (CrossOver) では: D3DMetal で未テストです。ゲームが起動しない、または表示がおかしい場合は、SMAA を使い HDR はオフのままにしてください。
+Not on a Mac: CrossOver's Vulkan is 1.2 and the games need 1.3. DirectX 12 (D3DMetal) is used there. = Mac では使えません: CrossOver の Vulkan は 1.2 で、ゲームには 1.3 が必要です。そこでは DirectX 12 (D3DMetal) を使います。
+needs a CPU with AVX2 (Intel Haswell / AMD Ryzen, about 2013 and newer), and this PC's CPU does not report it.\n\nOn a Mac this needs macOS 15 (Sequoia) or newer, whose Rosetta runs AVX2, and an up-to-date CrossOver. = には AVX2 対応の CPU (Intel Haswell / AMD Ryzen、2013年頃以降) が必要ですが、この PC の CPU は AVX2 を報告していません。\n\nMac では、Rosetta が AVX2 を実行できる macOS 15 (Sequoia) 以降と、最新の CrossOver が必要です。
+Looking for your games in the usual Mac folders... = いつもの Mac フォルダーでゲームを探しています...
+No game copies found in the usual Mac folders. Use "Choose a folder..." or "Paste a Mac path". = いつもの Mac フォルダーにゲームのコピーが見つかりませんでした。「フォルダーを選択...」か「Mac のパスを貼り付け」を使ってください。
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Linux folders are under Z: (Z:\home\... is /home/...). = ディスクイメージ (.iso)、Games on Demand ファイル、タイトルアップデート、または DLC パッケージ。Linux のフォルダーは Z: の下にあります (Z:\home\... は /home/...)。
+A disc image (.iso), a Games on Demand file, a title update or a DLC package. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = ディスクイメージ (.iso)、Games on Demand ファイル、タイトルアップデート、または DLC パッケージ。Mac のフォルダーは Z: の下にあります (Z:\Users\... は /Users/...)。
+A folder with your game (default.xex), a title update or DLC. Your Mac folders are under Z: (Z:\Users\... is /Users/...). = ゲーム (default.xex)、タイトルアップデート、または DLC が入ったフォルダー。Mac のフォルダーは Z: の下にあります (Z:\Users\... は /Users/...)。
+Copy a folder's or disc image's path first (for example /Users/you/Games/Gears of War 2). = 先にフォルダーかディスクイメージのパスをコピーしてください (例: /Users/you/Games/Gears of War 2)。
+Copy a path such as /Users/you/Games/Gears of War 2 or ~/Games/gears2.iso (in Finder: right-click with Option held > Copy as Pathname), then press this. = /Users/you/Games/Gears of War 2 や ~/Games/gears2.iso のようなパスをコピーして (Finder では Option キーを押しながら右クリック > パス名をコピー)、これを押してください。
+Searches ~/Games, ~/Downloads, ~/Desktop, ~/Documents and external drives (/Volumes) for game copies, disc images and title updates. = ~/Games、~/Downloads、~/Desktop、~/Documents、外部ドライブ (/Volumes) からゲームのコピー、ディスクイメージ、タイトルアップデートを探します。
+# desktop shortcut notes under Wine: pieces, only with the page.cpp:1236/1238 change in p4
+Desktop shortcuts: in CrossOver, use Run Command, add --play = デスクトップショートカット: CrossOver で Run Command を使い、CogBox.exe の後ろに --play
+after CogBox.exe and choose Save Command as a Launcher - it starts this game straight away. = を追加して Save Command as a Launcher を選んでください - このゲームがすぐに起動します。
+Desktop shortcuts: add CogBox.exe to Steam again and set its Launch Options to --play = デスクトップショートカット: CogBox.exe をもう一度 Steam に追加し、起動オプションを --play
+- it starts this game straight away. = にしてください - このゲームがすぐに起動します。
+# only with the p3 change (open_folder): "Folder: <path>" under Wine
+Folder: = フォルダー:
+# 0.6.2 Social tab + System Link note (machine-made translation, please check)
+# Social tab (social_tab.cpp, front.cpp): texts already passed through tr()
+SOCIAL = ソーシャル
+Friends, invites and online play. = フレンド、招待、オンラインプレイ。
+ONLINE PLAY = オンラインプレイ
+Use the COGBox multiplayer server = COGBox マルチプレイヤーサーバーを使う
+Play online with friends: an account for this profile on the COGBox server, a friends list, Join and invites. Off: the profile stays offline. = フレンドとオンラインでプレイ: COGBox サーバー上のこのプロフィールのアカウント、フレンドリスト、参加と招待。オフ: プロフィールはオフラインのままです。
+Online play is off. This profile stays offline. = オンラインプレイはオフです。このプロフィールはオフラインのままです。
+Region = 地域
+Quick Match only finds players in this region. Joining and inviting friends works in any region. Takes effect the next time a game starts. Player counts are approximate. = Quick Match はこの地域のプレイヤーだけを探します。フレンドへの参加や招待はどの地域でもできます。次にゲームを起動したときから有効です。プレイヤー数はおおよその値です。
+players = 人
+DELETE ONLINE ACCOUNT = オンラインアカウントを削除
+Removes this profile's account from the COGBox multiplayer server and turns online play off. = このプロフィールのアカウントを COGBox マルチプレイヤーサーバーから削除し、オンラインプレイをオフにします。
+Delete your online account? = オンラインアカウントを削除しますか?
+Your tag, friends list and picture are removed from the COGBox server. Saves and achievements stay. = タグ、フレンドリスト、画像が COGBox サーバーから削除されます。セーブと実績は残ります。
+Yes, delete = はい、削除します
+Deleting your online account... = オンラインアカウントを削除しています...
+The online server hasn't confirmed the delete yet. Press DELETE ONLINE ACCOUNT again in a minute to check. = オンラインサーバーはまだ削除を確認していません。1 分後にもう一度「オンラインアカウントを削除」を押して確認してください。
+Can't reach the online server. Your online account was not deleted. = オンラインサーバーに接続できません。オンラインアカウントは削除されていません。
+The online server refused. Your online account was not deleted. = オンラインサーバーに拒否されました。オンラインアカウントは削除されていません。
+The online account of the profile you switched from was deleted. = 切り替える前のプロフィールのオンラインアカウントを削除しました。
+Your online account was deleted. Online play is off for this profile. = オンラインアカウントを削除しました。このプロフィールのオンラインプレイはオフです。
+Signing in... = サインイン中...
+Can't reach the online server. = オンラインサーバーに接続できません。
+Online = オンライン
+Add friend = フレンドを追加
+ADD = 追加
+Use Name#1234 - the name, # and the four digits. = Name#1234 の形で入力してください - 名前、#、4 桁の数字です。
+Launch the game and invite a friend from the F1 social menu. = ゲームを起動し、F1 のソーシャルメニューからフレンドを招待してください。
+FRIENDS = フレンド
+request = 件のリクエスト
+requests = 件のリクエスト
+wants to be your friend = フレンド申請が届いています
+ACCEPT = 承認
+DECLINE = 拒否
+BLOCK = ブロック
+Blocked players can't send you requests again. = ブロックしたプレイヤーはもうリクエストを送れません。
+Waiting for them to accept = 承認待ち
+No friends yet - add one by their tag. = まだフレンドがいません - タグで追加してください。
+JOIN = 参加
+INVITE = 招待
+REMOVE = 削除
+Join their game. = 相手のゲームに参加します。
+Set up this game in COGBox to join. = 参加するには COGBox でこのゲームをセットアップしてください。
+Invite them to the game you are hosting. = あなたがホストしているゲームに招待します。
+Remove this friend (asks first). = このフレンドを削除します (先に確認します)。
+Remove this friend? = このフレンドを削除しますか?
+Yes, remove = はい、削除します
+Close the running game first, then press JOIN again. = 先に起動中のゲームを閉じてから、もう一度「参加」を押してください。
+That game isn't set up in COGBox yet. = そのゲームはまだ COGBox でセットアップされていません。
+PARTY AND MATCH INVITES = パーティーとマッチの招待
+No invites right now. = 今は招待はありません。
+You can invite friends while a game hosts a lobby or match. = ゲームがロビーやマッチをホストしている間、フレンドを招待できます。
+OPEN MATCHES = オープンマッチ
+Looking for open matches... = オープンマッチを探しています...
+No open matches right now - host a public match and it shows up here. = 今はオープンマッチはありません - 公開マッチをホストするとここに表示されます。
+Full = 満員
+In progress = 進行中
+This match is full. = このマッチは満員です。
+Join the match in progress: you take a bot's place. = 進行中のマッチに参加します: ボットの枠に入ります。
+Join this match. = このマッチに参加します。
+Match = マッチ
+Casual (under level 3) = Casual (レベル 3 未満)
+# deleting a profile while its online account is busy (front.cpp: pieces after "Couldn't delete the profile:")
+wait until the online account delete has finished = オンラインアカウントの削除が終わるまでお待ちください
+the online connection is busy - try again in a moment = オンライン接続が使用中です - 少ししてからもう一度試してください
+# online account errors (social_backend.cpp; pieces around the profile folder's path)
+COGBox can't save the online account in the profile folder ( = COGBox はオンラインアカウントをプロフィールフォルダーに保存できません (
+), so friends would be lost at every start. Move COGBox to a folder you can write to (not Program Files). = )。このままでは起動のたびにフレンドが失われます。COGBox を書き込みできるフォルダー (Program Files 以外) に移動してください。
+Couldn't save the online account in the profile folder ( = オンラインアカウントをプロフィールフォルダーに保存できませんでした (
+The profile's online account file can't be replaced ( = プロフィールのオンラインアカウントファイルを置き換えられません (
+The profile's online account file can't be read or replaced ( = プロフィールのオンラインアカウントファイルを読み込みも置き換えもできません (
+The online server refused the profile's account. = オンラインサーバーがプロフィールのアカウントを拒否しました。
+The online server refused a new account. = オンラインサーバーが新しいアカウントを拒否しました。
+# the online server's own answers, shown under the friends list (tools/master-server)
+no player with that tag = そのタグのプレイヤーはいません
+that is you = それはあなたです
+friend or request limit reached = フレンドまたはリクエストの上限に達しました
+at most 10 friend requests a minute = フレンドリクエストは 1 分に 10 件までです
+no request from that player = そのプレイヤーからのリクエストはありません
+no such player = そのプレイヤーはいません
+nothing to join = 参加できるものがありません
+no friend to invite, or nothing hosted to invite to = 招待できるフレンドがいないか、招待先としてホストしているものがありません
+no such invite = その招待はありません
+that match is no longer open = そのマッチはもう募集していません
+that match is full = そのマッチは満員です
+# only with the social_tab.cpp change in p15 (region name, a friend's state)
+Europe = ヨーロッパ
+Offline = オフライン
+Online - In Launcher = オンライン - ランチャー
+Playing = プレイ中
+Playing Gears of War 2 = Gears of War 2 をプレイ中
+Playing Gears of War 3 = Gears of War 3 をプレイ中
+Playing Judgment = Judgment をプレイ中
+Playing Gears of War = Gears of War をプレイ中
+In a game - joinable = ゲーム中 - 参加可能
+Gears of War 2 - joinable = Gears of War 2 - 参加可能
+Gears of War 3 - joinable = Gears of War 3 - 参加可能
+Judgment - joinable = Judgment - 参加可能
+Gears of War - joinable = Gears of War - 参加可能
+# System Link under Linux / Steam Deck (gears_settings.cpp wine_note)
+On Linux / Steam Deck: a game you host can't be joined yet - the games host on port 1000, and this PC keeps the low ports for administrator programs. Joining others should work. A possible fix (not confirmed yet) is in the README ("Hosting from Linux / Steam Deck"). = Linux / Steam Deck では: あなたがホストするゲームにはまだ参加できません - ゲームはポート 1000 でホストしますが、この PC は低い番号のポートを管理者用プログラムのために確保しています。他の人のゲームへの参加は動作するはずです。考えられる対処法 (まだ未確認) は README の "Hosting from Linux / Steam Deck" にあります。
+# 0.6.2 GitHub #306 Dead bodies option (machine-made translation, please check)
+Dead bodies = 死体
+More = 多め
+Many = 非常に多い
+How many fallen enemies stay on the ground, and for how long. More and Many keep more bodies for longer; this costs some performance and memory. Bodies are still cleared at cutscenes. = 倒した敵が地面に何体、どれだけの時間残るか。多め・非常に多いでは、より多くの死体がより長く残ります。パフォーマンスとメモリを少し消費します。カットシーンでは死体は消去されます。
+# First-person camera, experimental (machine-made translation, please check)
+First-person camera (experimental) = 一人称カメラ（実験的）
+Experimental - the game's own camera moves to your character's eyes while you walk, crouch and aim. In roadie run, cover, executions, vehicles, turrets and cutscenes it goes back to the usual over-the-shoulder view. Page Up switches it off and on in the game. Gears 2, Gears 3 and Judgment. = 実験的機能 - 歩行、しゃがみ、エイムの間、ゲーム本来のカメラがキャラクターの目の位置に移動します。ロードラン、カバー中、処刑、乗り物、タレット、カットシーンではいつもの肩越し視点に戻ります。ゲーム中に Page Up でオン／オフを切り替えます。Gears 2、Gears 3、Judgment。
+# 0.6.3 GitHub #245 DualSense adaptive triggers (machine-made translation, please check)
+DualSense adaptive triggers = DualSense アダプティブトリガー
+PS5 DualSense controllers only (USB or Bluetooth): the triggers push back, click or buzz to match the weapon in your hands, and shake while the chainsaw revs. Other controllers are not affected. If Steam Input is on for the controller, Steam keeps the triggers. = PS5 DualSense コントローラーのみ（USB または Bluetooth）：手にした武器に合わせてトリガーが抵抗・クリック・振動し、チェーンソーの回転中は震えます。他のコントローラーには影響しません。コントローラーで Steam Input がオンの場合、トリガーは Steam が制御します。
+# 0.6.3 GitHub #283 duplicate DLC packages (machine-made translation, please check)
+-  duplicate of " = -  次と重複: "
+" - can be removed = " - 削除できます
+Everything in this package is also in the other one, with the same contents, so the game gets the same items twice (for example the same skin twice). Removing it removes only COGBox's unpacked copy - your package file is not touched. = このパッケージの中身はすべて、同じ内容でもう一方にも入っているため、ゲームは同じアイテムを二重に受け取ります（例: 同じスキンが2つ）。削除しても COGBox が展開したコピーだけが削除され、パッケージファイル自体はそのままです。
+Remove duplicates = 重複を削除
+Remove duplicate downloadable content = 重複したダウンロードコンテンツを削除
+Duplicates found: = 見つかった重複:
+\n\nEverything in them is also in another package you keep, with the same contents, so the game only gets the same items twice. Remove them? Only COGBox's unpacked copies are removed - your own package files are not touched. = \n\nこれらの中身はすべて、残す別のパッケージにも同じ内容で入っているため、ゲームは同じアイテムを二重に受け取るだけです。削除しますか? COGBox が展開したコピーだけが削除され、お持ちのパッケージファイルはそのままです。
+Duplicates removed: = 削除した重複:
+Some duplicates couldn't be removed completely - is a file from them open? = 一部の重複を完全には削除できませんでした - そのファイルが開いていませんか?
+No duplicates found. = 重複は見つかりませんでした。
+# 0.6.3 r22 review: duplicate DLC check on a worker thread, full re-check before removal (machine-made translation, please check)
+Checking for duplicates... = 重複を確認しています...
+Still checking for duplicates - try again in a moment. = 重複の確認がまだ終わっていません。少し待ってからもう一度お試しください。
+Checking duplicate downloadable content = 重複したダウンロードコンテンツを確認しています
+Left as they are (no longer exact copies, or not fully readable): = そのまま残したもの (完全なコピーではなくなった、または完全に読み取れない):
+# 0.6.2 (GitHub #304): Graphics card
+Graphics card = グラフィックスカード
+Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = 複数のグラフィックスカードがあるPC（ノートPCの内蔵グラフィックスと専用カード、またはカード2枚）で、ゲームがどのカードを使うかを選びます。「自動」は、専用ビデオメモリが最も多いカードを選び、メモリ量がほぼ同じカード同士ならモニターが接続されているカードを選びます（DirectX 12とVulkanで同じカード）。カードを選ぶと、代わりにそのカードを使います。選んだカードがこのPCにない場合は「自動」が使われます。
+(not found - Automatic is used) = （見つかりません - 自動を使用）
+The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = 選択したグラフィックスカードは現在このPCにありません - ゲームが自動でカードを選びます（自動）。

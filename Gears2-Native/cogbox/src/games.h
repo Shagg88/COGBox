@@ -13,6 +13,7 @@
 #pragma once
 #include <string>
 #include <cstdint>
+#include <vector>
 #include "util.h"
 
 // Gears 1 (2006) was added after the others: it is the last index so saved settings / CogBox.ini keep their meaning;
@@ -55,6 +56,7 @@ int reported_working_count(int g, bool update);
 std::string tested_update_text(int g);
 std::string tested_disc_text(int g);
 int game_by_title_id(uint32_t tid);        // -1 if none of ours
+std::vector<uint32_t> region_title_ids(int g);   // other title IDs of game g's regional discs (none for most)
 // The front screen's order (release order: Gears 1, 2, 3, Judgment): the game in a carousel slot, and a game's slot.
 int game_at_slot(int slot);
 int game_slot(int g);
