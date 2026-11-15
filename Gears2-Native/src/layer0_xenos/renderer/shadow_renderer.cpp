@@ -757,6 +757,21 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_export_settle, false, "Gears2",   // parked (S
                     "nothing wrote since stop being GPU-current (guest memory now holds the same bytes), so a texture "
                     "later loaded there takes guest memory - which also has any CPU / file write the page watch could not "
                     "see (read-only pages are never watched). false = they stay GPU-current until a seen write, as before");
+// GitHub #315 (Judgment, AMD RX 7900 XT at 165 fps: blue / purple blocks that build up chapter after chapter): hole H2 of
+// the green-vine review (agent062-out/green-vine.md section 4). Judgment / Gears 3 move a streamed texture's small mips
+// with memexport copies; the export is read back into guest memory at the end of the frame. An exact-range callback
+// (a file read next to it, protect-to-writable, decommit, release) can end the pages' GPU-current state BEFORE that
+// read-back lands; a texture loaded then takes guest memory - the pre-move bytes - and the read-back, landing later
+// through the physical mapping, bumps nothing, so the texture keeps the wrong small mips for good. With this on, a texture
+// load over pages our GPU ever wrote first lands any pending read-back over them (FlushExportReadbacksFor: no-op and no
+// wait when none overlaps). It was tied to --gow2_renderer_export_settle (review r26 R1, for a clean A/B), which stays
+// parked off; r26 found this part safe to have on (stalls only when a load overlaps an export still in flight; inert in
+// Gears 1 / 2, which move no textures with memexport). The #315 log (0.6.2): 1922 GPU-current pages ended by exact-range
+// callbacks in one 28-minute session (how many of them before their read-back landed is not logged).
+REXCVAR_DEFINE_BOOL(gow2_renderer_texture_land_exports, true, "Gears2",
+                    "GitHub #315 (blue / purple blocks, Judgment): before a texture loads from guest memory pages our GPU "
+                    "once wrote, land any memexport read-back still pending over them (else the texture can keep the "
+                    "bytes from before the game moved it). false = only while the pages are still GPU-current (0.6.2)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_memexport_readback, true, "Gears2",
                     "With --gow2_renderer_memexport: copy every exported range back into guest memory once the GPU has "
                     "written it (job 041: Gears 3 moves DXT textures with memexport copies, and DXT textures load from "
@@ -1950,7 +1965,9 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     }
     if (memexport_readback_)  // job 042: moved textures load their new bytes, not the old ones for a frame
       textures_->SetBeforeCpuLoadOfGpuPages([this](uint32_t start, uint32_t length) { FlushExportReadbacksFor(start, length); });
-      textures_->SetFlushEverGpuWritten(export_settle_);  // r26 R1: the green-vine flushes go with the settle switch
+    // GitHub #315: the H2 flush has its own switch (on by default); --gow2_renderer_export_settle keeps it on too.
+    textures_->SetFlushEverGpuWritten(memexport_readback_ &&
+                                      (REXCVAR_GET(gow2_renderer_texture_land_exports) || export_settle_));
     if (const int stale = REXCVAR_GET(gow2_renderer_texture_stale_log); stale > 0) {
       textures_->SetStaleReloadReport(uint32_t(stale), [this](const rr::TextureCache::StaleReload& s) { ReportStale(s); });
       REXLOG_INFO("gow2_renderer: texture stale-reload log on: textures unchanged for {} frames that get new bytes",
