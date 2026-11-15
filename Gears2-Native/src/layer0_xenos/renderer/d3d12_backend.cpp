@@ -2844,7 +2844,11 @@ class D3D12Backend final : public Backend {
   bool PrepareScratchFor(TextureHandle h, uint32_t mip, uint32_t layer, uint32_t& row_pitch, uint32_t& rows) override {
     row_pitch = rows = 0;
     const bool batch = options_.batch_texture_loads;
-    if (!(batch ? OpenList() : Recording()) || !ValidTexture(h)) return false;
+    if (!ValidTexture(h)) return false;
+    if (!(batch ? OpenList() : Recording())) {   // r38: a dropped load like the others (the cache retries it), D3D12 only
+      NoteLoadDrop(stats_.tex_drop_dispatch_list, "scratch prepare: no command list", h);
+      return false;
+    }
     Texture& t = textures_[h];
     D3D12_RESOURCE_DESC rd = t.resource->GetDesc();
     if (mip >= rd.MipLevels || layer >= rd.DepthOrArraySize) return false;
@@ -2965,7 +2969,8 @@ class D3D12Backend final : public Backend {
     const UINT layers = rd.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ? 1u : rd.DepthOrArraySize;
     const UINT count = UINT(rd.MipLevels) * layers;
     if (!count || count > 512) return false;
-    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> fps(count);
+    zero_fps_.resize(count);   // r38: reused (no allocation per texture once grown)
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT* const fps = zero_fps_.data();
     UINT64 need = 0, bytes = 0;
     for (UINT i = 0; i < count; ++i) {
       UINT rows = 0;
@@ -4658,7 +4663,8 @@ class D3D12Backend final : public Backend {
   D3D12_PLACED_SUBRESOURCE_FOOTPRINT scratch_fp_{};
   UINT scratch_sub_ = UINT_MAX;
   uint64_t load_drops_total_ = 0;  // 0.6.2 (#311): see TextureLoadDrops
-  static constexpr uint64_t kZeroBudgetPerFrame = 256ull << 20;  // 0.6.2 (#311): zero-filled texture bytes per frame
+  std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> zero_fps_;  // r38: ZeroTexture's footprints, reused
+  static constexpr uint64_t kZeroBudgetPerFrame = 64ull << 20;  // r38: 64 MB (was 256) - bounded copy work per frame  // 0.6.2 (#311): zero-filled texture bytes per frame
   uint64_t zeroed_this_frame_ = 0;
   ID3D12Resource* zero_src_ = nullptr;  // 0.6.2 (#311): zero-filled upload buffer, the source of ZeroTexture's copies
   UINT64 zero_src_size_ = 0;

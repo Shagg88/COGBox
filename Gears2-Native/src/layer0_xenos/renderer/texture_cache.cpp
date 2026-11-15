@@ -1876,7 +1876,9 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
       }
       backend_.Dispatch(untile_, b, (lw + 7) / 8, (lh + 7) / 8, 1);
     }
-    if (level_failed || backend_.TextureLoadDrops() != drops_at_start)
+    // r38: only a drop the backend counted fails the load (D3D12 counts an unprepared scratch too); a backend that
+    // can't prepare a scratch for other reasons (Vulkan, a format) keeps its old behaviour - the stat only
+    if (backend_.TextureLoadDrops() != drops_at_start)
       FailLoad(*entry_ptr, tex, created_texture, level_failed ? "scratch buffer not prepared" : "backend dropped part of it");
     };
     if (batch_loads_) gpu_jobs_.push_back(std::move(untile));
