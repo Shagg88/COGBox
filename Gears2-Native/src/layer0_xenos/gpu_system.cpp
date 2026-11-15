@@ -221,11 +221,14 @@ class OurGpuSystem final : public rex::system::IGraphicsSystem {
     std::string want = REXCVAR_GET(gow2_graphics_card);
     std::transform(want.begin(), want.end(), want.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
     if (!want.empty()) {
-      for (const Card& c : cards) {
-        std::string low = c.name;
-        std::transform(low.begin(), low.end(), low.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
-        if (low.find(want) != std::string::npos) { pick = &c; why = "--gow2_graphics_card"; break; }
-      }
+      // the whole name first (the launcher's Graphics card option saves it: "RTX 3080" must not take an "RTX 3080 Ti"),
+      // then any card whose name contains the text (a hand-written --gow2_graphics_card=4090)
+      for (int exact = 1; exact >= 0 && !pick; exact--)
+        for (const Card& c : cards) {
+          std::string low = c.name;
+          std::transform(low.begin(), low.end(), low.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+          if (exact ? low == want : low.find(want) != std::string::npos) { pick = &c; why = "--gow2_graphics_card"; break; }
+        }
       if (!pick) REXLOG_WARN("gow2_gpu: no graphics card's name contains '{}' - choosing automatically", REXCVAR_GET(gow2_graphics_card));
     }
     if (!pick) {
