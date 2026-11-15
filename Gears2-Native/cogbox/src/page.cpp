@@ -652,6 +652,33 @@ static void keys_section(App &a, int g)
     }
 }
 
+// 0.6.3 (GitHub #316): the game window's own key - windowed <-> borderless full screen, in every game and whatever
+// Keyboard and mouse says (it is the window's, not an action of the game). Shown here; changed with a
+// --bind_cogbox_fullscreen=<key> line in extra-args.txt, like the game's other system keys.
+static void window_key_section(App &a, int g)
+{
+    ui_section("GAME WINDOW");
+    row_label("Windowed / full screen key", "", true);
+    // "Alt+Return" -> "Alt + Enter", each part in the launcher's language (the key names the Keys list uses)
+    std::string shown, tok;
+    const std::string key = gs::window_key(a.env[g]);
+    for (size_t i = 0; i <= key.size(); i++) {
+        if (i < key.size() && key[i] != '+') { tok += key[i]; continue; }
+        if (!tok.empty()) {
+            // "Ctrl" is shown as the Keys list's "Control", the name the lang files translate (r40)
+            shown += (shown.empty() ? "" : " + ") +
+                     tr(tok == "None" ? std::string("Off") : tok == "Ctrl" || tok == "ctrl" ? std::string("Control") : key_shown(tok));
+        }
+        tok.clear();
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(shown.c_str());
+    ui_tip("Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the "
+           "monitor it is on, and back to its window size and place. Works in the game window in all four games, with or "
+           "without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to "
+           "extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off).");
+}
+
 // Job 620 (GitHub #45): a game language whose text isn't on the player's copy can't be chosen - the game would fall
 // back to English (the US Judgment disc has 11 languages, not German, Italian, Spanish (Spain), Russian, Portuguese
 // or Japanese). Decided by the copy's Coalesced_<code>.bin; a code we don't know, or an unknown folder, stays allowed.
@@ -1553,6 +1580,7 @@ void page_draw(App &a, ImVec2 size)
             for (const gs::Option *o : mine) if (group_of(o->id) == k) { option_row(a, g, *o); shown++; }
         }
         if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
+        if (want == gs::Tab::Controls) window_key_section(a, g);   // 0.6.3, GitHub #316
         if (want == gs::Tab::Graphics) dlss_file_section(a, g);   // 0.4.9
         if (want == gs::Tab::Graphics) prepare_section(a, g);   // job 641
         if (want == gs::Tab::Achievements) achievements_tab(a, g, g_labelW, g_ctrlW, g_rowX1);   // achievements part 4

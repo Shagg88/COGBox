@@ -63,6 +63,8 @@ instead of A / B / X / Y, LB / RB.
 In the game: Back + Start (Share + Options on PlayStation, or F1) opens the in-game menu - the same settings, Resume,
 Restart to apply and Quit game. Most settings take effect when the game restarts; Restart to
 apply does that for you.
+Alt+Enter in the game window switches between windowed and borderless full screen (all four games; another key:
+--bind_cogbox_fullscreen=<key> in extra-args.txt, None = off).
 
 
 New in 0.6.2

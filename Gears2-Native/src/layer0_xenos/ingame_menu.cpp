@@ -16,6 +16,7 @@
 #include <xenos/achievements_popup_logic.h>   // achievements part 4: popup settings applied at once (LiveCvarFor)
 #include <xenos/input/prompt_device_monitor.h>
 #include <xenos/menu_input.h>
+#include <xenos/window_hotkey.h>   // GitHub #316: Alt+Enter (bind_cogbox_fullscreen) - windowed / borderless full screen
 #include <xenos/menu_look.h>   // 0.4.9: the full-screen look (Noto Sans, the launcher's style)
 #include <xenos/renderer/prompt_overlay_compositor.h>   // GitHub #223: XenosSetPromptGame
 #include <xenos/achievement_popup_assets.h>   // the in-game text's font (CJK / Cyrillic) when translated
@@ -1196,6 +1197,7 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDraw
   StartPadPump(window, runtime);   // GitHub #108, menu or no menu: pad assignment (+ SDL pump when exported)
   // Shagg 3 Nov: \ is the screenshot key in every game, menu or no menu (frame_capture.cpp saves the next frame)
   rex::ui::RegisterBind("bind_cogbox_screenshot", "Backslash", "COGBox screenshot (Pictures\\COGBox)", [] { XenosRequestScreenshot(); });
+  XenosInstallWindowHotkey(window);   // GitHub #316: windowed <-> borderless full screen, every game, menu or no menu
   if (window && !g_idle_thread.joinable()) {   // GitHub #143, menu or no menu
     g_idle_window.store(window);
     g_idle_stop.store(false);
@@ -1240,6 +1242,7 @@ void XenosInstallInGameMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::ImmediateDraw
 void XenosShutdownInGameMenu() {
   StopPadPump();   // GitHub #108
   rex::ui::UnregisterBind("bind_cogbox_screenshot");
+  XenosShutdownWindowHotkey();   // GitHub #316
   g_idle_stop.store(true);   // GitHub #143
   if (g_idle_thread.joinable()) g_idle_thread.join();
   if (rex::ui::Window* w = g_idle_window.exchange(nullptr); w && g_idle_hidden.load()) w->SetCursorVisibility(g_idle_before);

@@ -924,6 +924,20 @@ const std::vector<KeyAction> &key_actions(Game g)
     return v;
 }
 
+std::string window_key(const Environment& env)
+{
+    static const std::string pre = "--bind_cogbox_fullscreen=";
+    std::string key = kWindowKeyDefault;
+    for (const std::string& raw : env.extra_args_lines) {   // as build_args reads extra-args.txt: one switch per line, # = comment
+        const std::string l = trim(raw);
+        if (l.compare(0, pre.size(), pre) != 0) continue;
+        std::string v = trim(l.substr(pre.size()));
+        if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = trim(v.substr(1, v.size() - 2));
+        key = v.empty() ? std::string("None") : v;   // no value: the game has no key then
+    }
+    return key;
+}
+
 Availability available(const Option& o, Game g, Version ver, const Settings& s, const Environment& env) {
     Availability a;
     if (!o.feature.empty()) a = can(g, o.feature, ver, env);

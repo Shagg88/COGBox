@@ -265,6 +265,21 @@ int summary() {
         if (st2.view(Game::Gears3, e).i("Fov") != 110 || st2.view(Game::Gears2, e).i("Fov") != 90) { std::cout << "FAIL per-game memory\n"; ++fails; }
         std::cout << "--- ini after a Gears 3 save ---\n" << ini;
     }
+    // GitHub #316: the window-mode key shown on the Controls tab: Alt+Return unless extra-args.txt changes it
+    {
+        Environment e;
+        auto key = [&](std::vector<std::string> lines) { e.extra_args_lines = std::move(lines); return window_key(e); };
+        const std::pair<std::vector<std::string>, const char*> want[] = {
+            { {}, "Alt+Return" },
+            { { "# --bind_cogbox_fullscreen=F11", "--gow2_cheats=true" }, "Alt+Return" },   // a comment, another switch
+            { { "--bind_cogbox_fullscreen=F12" }, "F12" },
+            { { "  --bind_cogbox_fullscreen=\"Ctrl+Shift+F11\"  " }, "Ctrl+Shift+F11" },
+            { { "--bind_cogbox_fullscreen=F10", "--bind_cogbox_fullscreen=None" }, "None" },   // the last line wins
+            { { "--bind_cogbox_fullscreen=" }, "None" } };
+        for (const auto& w : want)
+            if (key(w.first) != w.second) { std::cout << "FAIL window key, want " << w.second << " got " << key(w.first) << "\n"; ++fails; }
+        if (std::string(kWindowKeyDefault) != "Alt+Return") { std::cout << "FAIL window key default\n"; ++fails; }
+    }
     // Achievements part 4: the popup settings are on their own tab, with these labels
     {
         const std::pair<const char*, const char*> want[] = {

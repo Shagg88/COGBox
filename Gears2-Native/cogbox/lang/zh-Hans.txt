@@ -1504,3 +1504,7 @@ Graphics card = 显卡
 Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = 在有多块显卡的电脑上（笔记本的内置显卡和独立显卡，或两块显卡），选择游戏使用哪一块。“自动”会选择自带显存最多的显卡；显存相近时，选择连接着显示器的那一块——DirectX 12 和 Vulkan 使用同一块显卡。选择某块显卡则改用该显卡。如果所选显卡已不在这台电脑中，则使用“自动”。
 (not found - Automatic is used) = （未找到 - 使用“自动”）
 The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = 你选择的显卡目前不在这台电脑中——游戏将自行选择显卡（自动）。
+# 0.6.3 (GitHub #316): the window key
+GAME WINDOW = 游戏窗口
+Windowed / full screen key = 窗口 / 全屏切换键
+Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = 在游戏窗口所在的显示器上，在窗口和全屏（无边框，若你选择了独占则为独占）之间切换，切回时恢复原来的窗口大小和位置。在四款游戏的游戏窗口中均可使用，无论键盘和鼠标是否开启。若要使用其他按键，请在 extra-args.txt 中添加类似 --bind_cogbox_fullscreen=F12 的一行（按键名称，可在前面加上 Alt+、Ctrl+ 或 Shift+；None 表示关闭该按键）。
