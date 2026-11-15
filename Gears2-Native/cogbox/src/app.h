@@ -178,7 +178,7 @@ void social_delete_poll(App &a);              // each frame: finishes DELETE ONL
 void social_rename(App &a, const std::string &name);   // SAVE NAME: the online account takes the new name
 void achievements_reveal_answer(App &a, int answer);
 void env_refresh(App &a, int g);
-bool settings_save(App &a);
+bool settings_save(App &a, int prefer = -1);   // prefer: the game whose page is saved (default: the open page)
 std::vector<std::string> monitor_choices();   // page.cpp: "Default (main screen)", then each screen
 // install.cpp
 void install_start(App &a, const std::string &path, int forGame);

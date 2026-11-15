@@ -705,7 +705,7 @@ static float player_plate(App &a, ImDrawList *dl, ImVec2 o, bool nav, int slot =
                 if (g >= 0 && g < G_COUNT && game_is_port(g)) {
                     a.cur[g].set("Players", slot - 2);   // Players = extra players; slot 2 out -> 0 (one player)
                     a.dirty[g] = true;
-                    settings_save(a);
+                    settings_save(a, g);
                     set_message(a, std::string(tr("Signed out:")) + " " + shown + (slot < 4 ? std::string(" ") + tr("(and any players after them)") : std::string()), false);
                 }
                 ImGui::CloseCurrentPopup();

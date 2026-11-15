@@ -940,20 +940,38 @@ std::string window_key(const Environment& env)
     return key;
 }
 
-bool copy_shared(Game to, const Settings& src, Settings& dst)
+void sync_shared(const Store& st, const Environment* envs, Settings* pages, const bool* dirty, int prefer, bool* changed)
 {
-    bool changed = false;
-    for (const Option& o : options(to)) {
-        if (o.scope == Scope::GameOwn) continue;
-        if (o.kind == Kind::Text) {   // (all texts are kept once for all games)
-            auto it = src.t.find(o.id);
-            if (it != src.t.end() && dst.str(o.id) != it->second) { dst.t[o.id] = it->second; changed = true; }
-            continue;
+    std::map<std::string, double> v;        // the edits, merged: a later page overwrites, `prefer` goes last
+    std::map<std::string, std::string> t;
+    auto collect = [&](int g) {
+        const Settings stored = st.view(static_cast<Game>(g), envs[g]);
+        const Settings& s = pages[g];
+        for (const Option& o : options(static_cast<Game>(g))) {
+            if (o.scope == Scope::GameOwn) continue;
+            if (o.kind == Kind::Text) {
+                auto it = s.t.find(o.id);
+                if (it != s.t.end() && it->second != stored.str(o.id)) t[o.id] = it->second;
+            } else if (o.scope == Scope::Shared && s.has(o.id) && (!stored.has(o.id) || stored.f(o.id) != s.f(o.id))) {
+                v[o.id] = s.f(o.id);
+            }
         }
-        if (o.scope != Scope::Shared || !src.has(o.id)) continue;
-        if (!dst.has(o.id) || dst.f(o.id) != src.f(o.id)) { dst.v[o.id] = src.f(o.id); changed = true; }
+    };
+    for (int g = 0; g < kGameCount; ++g) if (dirty[g] && g != prefer) collect(g);
+    if (prefer >= 0 && prefer < kGameCount && dirty[prefer]) collect(prefer);
+    for (int g = 0; g < kGameCount; ++g) {
+        changed[g] = false;
+        for (const Option& o : options(static_cast<Game>(g))) {
+            if (o.scope == Scope::GameOwn) continue;
+            if (o.kind == Kind::Text) {
+                auto it = t.find(o.id);
+                if (it != t.end() && pages[g].str(o.id) != it->second) { pages[g].t[o.id] = it->second; changed[g] = true; }
+            } else if (o.scope == Scope::Shared) {
+                auto it = v.find(o.id);
+                if (it != v.end() && (!pages[g].has(o.id) || pages[g].f(o.id) != it->second)) { pages[g].v[o.id] = it->second; changed[g] = true; }
+            }
+        }
     }
-    return changed;
 }
 
 // ---- 0.6.3: the Custom controller layout (see the header; the runtime's reader is input_system.cpp CurrentPadRemap) ----

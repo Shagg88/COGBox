@@ -303,15 +303,16 @@ void env_refresh(App &a, int g)
     };
 }
 
-bool settings_save(App &a)
+bool settings_save(App &a, int prefer)
 {
-    // 0.6.3 (review r49): the values all games share go from the page being saved (else the first unsaved one) to every
-    // other page first - so they show there, and committing another game's page can't put an old value back
-    int from = a.page >= 0 && a.page < G_COUNT && a.dirty[a.page] ? a.page : -1;
-    for (int g = 0; g < G_COUNT && from < 0; g++) if (a.dirty[g]) from = g;
-    if (from >= 0)
-        for (int g = 0; g < G_COUNT; g++)
-            if (g != from && gs::copy_shared((gs::Game)g, a.cur[from], a.cur[g])) env_refresh(a, g);
+    // 0.6.3 (reviews r49 / r50): the values all games share - each unsaved page's edits go to every page first (on the same
+    // option the page being saved wins), so they show everywhere and committing one page can't put another's back
+    {
+        static_assert(G_COUNT == gs::kGameCount, "one page per game");
+        bool changed[G_COUNT] = {};
+        gs::sync_shared(a.store, a.env, a.cur, a.dirty, prefer >= 0 ? prefer : a.page, changed);
+        for (int g = 0; g < G_COUNT; g++) if (changed[g]) env_refresh(a, g);   // (Monitor is Shared)
+    }
     for (int g = 0; g < G_COUNT; g++)
         if (a.dirty[g]) { a.store.commit((gs::Game)g, a.cur[g], a.env[g]); a.dirty[g] = false; }
     a.store.last_game = a.page;

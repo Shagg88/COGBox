@@ -534,19 +534,46 @@ int summary() {
         const Option* o = find_option(Game::Gears2, "PadLayout");
         if (!o || o->scope != Scope::Shared || o->choices.size() != 5 || o->choices[4] != "Custom (choose below)") bad("option");
     }
-    // 0.6.3 (review r49): a Shared value changed on one page goes to the others (copy_shared) - PerGame / GameOwn ones don't
+    // 0.6.3 (reviews r49 / r50): Shared values edited on one page go to every page before a save (sync_shared). The r50 case:
+    // Gears 3's page has unsaved Shared edits while Gears 2's in-game menu changes others and saves - both are kept; on the
+    // same option the page being saved (Gears 2) wins. PerGame values stay on their own page.
     {
-        Environment e; e.update_ready = true;
-        Store st; Settings g2 = st.view(Game::Gears2, e), g3 = st.view(Game::Gears3, e);
-        g2.set("PadLayout", 4); g2.set("Fullscreen", g3.i("Fullscreen") + 1); g2.t["GraphicsCard"] = "NVIDIA GeForce RTX 4090";
-        const Option* fo = find_option(Game::Gears2, "Fullscreen");
-        const int fsBefore = g3.i("Fullscreen");
-        if (!copy_shared(Game::Gears3, g2, g3) || g3.i("PadLayout") != 4 || g3.str("GraphicsCard") != "NVIDIA GeForce RTX 4090" ||
-            (fo && fo->scope == Scope::PerGame && g3.i("Fullscreen") != fsBefore))
-            { std::cout << "FAIL copy_shared\n"; ++fails; }
-        if (copy_shared(Game::Gears3, g2, g3)) { std::cout << "FAIL copy_shared twice\n"; ++fails; }
-        st.commit(Game::Gears3, g3, e); st.commit(Game::Gears2, g2, e);   // a later commit of the other page keeps it
-        if (st.view(Game::Gears1, e).i("PadLayout") != 4) { std::cout << "FAIL copy_shared commit\n"; ++fails; }
+        Environment envs[kGameCount];
+        for (Environment& e : envs) e.update_ready = true;
+        Store st;
+        Settings pages[kGameCount];
+        for (int g = 0; g < kGameCount; ++g) { pages[g] = st.view(static_cast<Game>(g), envs[g]); st.commit(static_cast<Game>(g), pages[g], envs[g]); }
+        const int G2 = static_cast<int>(Game::Gears2), G3 = static_cast<int>(Game::Gears3), GJ = static_cast<int>(Game::Judgment);
+        const int fs3 = pages[G3].i("Fullscreen"), fs2 = pages[G2].i("Fullscreen");
+        // Gears 3 (open page, unsaved): Vibration off, a graphics card, Extra dead zone 2, its own display mode
+        pages[G3].set("Vibration", 0); pages[G3].t["GraphicsCard"] = "NVIDIA GeForce RTX 4090"; pages[G3].set("DeadZone", 2);
+        pages[G3].set("Fullscreen", fs3 == 0 ? 1 : 0);
+        // Gears 2 (in-game menu, then Restart to apply): mouse sensitivity and Extra dead zone 4
+        pages[G2].set("Sens", 1.2); pages[G2].set("DeadZone", 4);
+        bool dirty[kGameCount] = {}; dirty[G2] = dirty[G3] = true;
+        bool changed[kGameCount] = {};
+        sync_shared(st, envs, pages, dirty, G2, changed);
+        auto bad = [&](const std::string& w) { std::cout << "FAIL sync_shared: " << w << "\n"; ++fails; };
+        for (int g : { G2, G3, GJ }) {
+            if (pages[g].i("Vibration") != 0 || pages[g].f("Sens") != 1.2 || pages[g].str("GraphicsCard") != "NVIDIA GeForce RTX 4090")
+                bad("edits of both pages on game " + std::to_string(g));
+            if (pages[g].i("DeadZone") != 4) bad("the saved page wins on game " + std::to_string(g));
+        }
+        if (pages[G2].i("Fullscreen") != fs2 || pages[G3].i("Fullscreen") == fs3) bad("PerGame value moved");
+        if (!changed[G2] || !changed[G3] || !changed[GJ]) bad("changed flags");
+        bool again[kGameCount] = {};
+        sync_shared(st, envs, pages, dirty, G2, again);
+        for (bool c : again) if (c) bad("second sync changed something");
+        st.commit(Game::Gears2, pages[G2], envs[G2]); st.commit(Game::Gears3, pages[G3], envs[G3]);   // either order keeps it
+        const Settings g1 = st.view(Game::Gears1, envs[static_cast<int>(Game::Gears1)]);
+        if (g1.i("Vibration") != 0 || g1.f("Sens") != 1.2 || g1.i("DeadZone") != 4) bad("store after both commits");
+        // nothing unsaved: nothing moves
+        bool none[kGameCount] = {};
+        Settings fresh[kGameCount];
+        for (int g = 0; g < kGameCount; ++g) fresh[g] = st.view(static_cast<Game>(g), envs[g]);
+        fresh[G3].set("Sens", 0.3);   // not dirty: not an edit to share
+        sync_shared(st, envs, fresh, none, G3, changed);
+        if (fresh[G2].f("Sens") != 1.2) bad("a page that isn't dirty was shared");
     }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;
