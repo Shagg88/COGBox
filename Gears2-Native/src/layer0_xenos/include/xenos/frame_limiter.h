@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <thread>
 
 #ifdef _WIN32
@@ -18,6 +20,7 @@
 #endif
 
 #include <rex/cvar.h>
+#include <rex/logging/macros.h>
 
 // perf049: how long before the deadline the limiter stops sleeping and spins (frame_log.cpp; default 1000 = as 0.4.8).
 REXCVAR_DECLARE(int32_t, gow2_frame_limiter_spin_us);
@@ -76,6 +79,55 @@ class FrameLimiter {
   }
   std::chrono::steady_clock::time_point next_{};
   double fps_ = 0.0;
+};
+
+// 0.6.3 (Discord, Gears 3 host: 60 -> 30, 144 -> 72 while a friend is in the match; unlimited not affected): UE3 asks
+// GEngine->GetMaxTickRate twice per frame on a host with remote players - once from the engine loop (the frame wait) and
+// once from UWorld::ServerTickClients, which runs only while NetDriver->ClientConnections is non-empty and uses the value
+// only for the replication interval ("ServerTickTime": 0 -> DeltaSeconds, else 1/x). The exact limiters waited a full
+// frame on every call, so a host waited twice per frame. The games now pass the guest return address of each call
+// (the GetMaxTickRate override's ctx.lr) and skip the wait (and the per-frame ticks) for the ServerTickClients one.
+// This counter logs each call site once, and - only when more than one site is in use - how many calls each made per
+// window of engine-loop calls, so a report shows a second caller. Game thread only. Read-only.
+class TickCallSites {
+ public:
+  // lr: the call's guest return address; main: it is an engine-loop call (the one that waits).
+  void Note(const char* tag, uint32_t lr, bool main) {
+    int i = 0;
+    while (i < n_ && site_[i] != lr) ++i;
+    if (i == n_) {
+      if (n_ == kMax) return;  // more sites than kept: not counted (logged below once)
+      site_[n_] = lr, count_[n_] = 0, main_[n_] = main, ++n_;
+      REXLOG_INFO("{}: GetMaxTickRate called from 0x{:08X} ({})", tag, lr,
+                  main ? "engine loop - the frame-rate limit waits here" : "UWorld::ServerTickClients (host with remote "
+                  "players) - no wait, the limit is only reported");
+      if (n_ == kMax) REXLOG_INFO("{}: {} GetMaxTickRate call sites seen - later new ones are not counted", tag, kMax);
+    }
+    ++count_[i];
+    if (main && ++frames_ >= kWindow) {
+      if (n_ > 1 && lines_ < 30) {
+        ++lines_;
+        std::string s;
+        for (int k = 0; k < n_; ++k) s += std::string(k ? ", " : "") + Hex(site_[k]) + (main_[k] ? "=" : " (server)=") + std::to_string(count_[k]);
+        REXLOG_INFO("{}: GetMaxTickRate calls in the last {} engine-loop calls: {}", tag, frames_, s);
+      }
+      frames_ = 0;
+      for (int k = 0; k < n_; ++k) count_[k] = 0;
+    }
+  }
+
+ private:
+  static std::string Hex(uint32_t v) {
+    char b[12];
+    std::snprintf(b, sizeof b, "0x%08X", unsigned(v));
+    return b;
+  }
+  static constexpr int kMax = 8;
+  static constexpr uint32_t kWindow = 1800;  // 30 s at 60
+  uint32_t site_[kMax] = {}, count_[kMax] = {};
+  bool main_[kMax] = {};
+  int n_ = 0, lines_ = 0;
+  uint32_t frames_ = 0;
 };
 
 }  // namespace xenos

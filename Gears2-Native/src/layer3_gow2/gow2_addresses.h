@@ -18,6 +18,9 @@ inline constexpr const char* kVersion = "TU6 (0.0.6.5)";
 inline constexpr uint32_t kGNamesVar = 0x83158BC8u;     // disc 0x83136834 (+140180)
 inline constexpr uint32_t kGObjectsVar = 0x83158BF4u;   // disc 0x83136860 (+140180)
 inline constexpr uint32_t kGEngine = 0x831455CCu;       // disc 0x8312327C (as cheats.cpp's)
+// 0.6.3 host frame-rate halving: return address of UWorld::ServerTickClients' `GEngine->GetMaxTickRate(DeltaSeconds)`
+// (vtable +284, `bctrl` in sub_824D49E8; disc sub_824CFBF0). The engine loop's call (disc) returns to 0x8283F984.
+inline constexpr uint32_t kServerTickClientsTickRateRet = 0x824D4DD0u;  // disc 0x824CFFD4
 #else
 inline constexpr uint32_t kShowFpsFlag = 0x83123468u;
 inline constexpr uint32_t kShowFrameTimeFlag = 0x83123470u;
@@ -27,5 +30,6 @@ inline constexpr const char* kVersion = "disc (0.0.0.5)";
 inline constexpr uint32_t kGNamesVar = 0x83136834u;
 inline constexpr uint32_t kGObjectsVar = 0x83136860u;
 inline constexpr uint32_t kGEngine = 0x8312327Cu;
+inline constexpr uint32_t kServerTickClientsTickRateRet = 0x824CFFD4u;
 #endif
 }  // namespace gow2::addr

@@ -514,10 +514,25 @@ void GowjInstallLoadingClamp() {
 #endif
 }
 
+// 0.6.3 host frame-rate halving (as Gears 3): the guest return address of the GetMaxTickRate call in progress, set by
+// cheats.cpp's override before the original runs (game thread). UE3 asks twice per frame on a host with remote players:
+// the engine loop (returns to 0x829D8C44 / 0x82515478) and UWorld::ServerTickClients (vtable +308 in sub_825A1908, which
+// only reads the value: 0 -> DeltaSeconds, else 1/x). That one gets the limit without the wait - a second wait per frame
+// halved the player's limit - and without the per-frame work.
+constexpr uint32_t kServerTickClientsTickRateRet = 0x825A1CB0u;
+std::atomic<uint32_t> g_gowj_tick_caller{0};
+bool GowjNoteTickCall(uint32_t caller) {  // read-only (frame_limiter.h): logs the call sites
+  static xenos::TickCallSites sites;
+  const bool main = caller != kServerTickClientsTickRateRet;
+  sites.Note("gowj_max_fps", caller, main);
+  return main;
+}
+
 // Exact cap: the engine's own wait sleeps whole milliseconds (165 gave 162 fps), so with a player's limit the game
 // thread waits here on the host clock (shared precise limiter) and the engine is told "no limit" - it measured the time
 // before this call, so its own wait would come on top.
 static void GowjExactLimit(PPCRegister& f1) {
+  if (g_gowj_tick_caller.load(std::memory_order_relaxed) == kServerTickClientsTickRateRet) return;  // f1 = the limit, no wait
   static xenos::FrameLimiter limiter;
   static std::atomic<bool> s_logged{false};
   if (!s_logged.exchange(true)) REXLOG_INFO("gowj_max_fps: exact host-side limiter on ({:.0f} fps)", f1.f64);
@@ -526,7 +541,7 @@ static void GowjExactLimit(PPCRegister& f1) {
 }
 
 void GowjMaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4CC(r3)` at 0x8255E220: f1 = the engine's limit (fps)
-  TickTimeline();
+  if (g_gowj_tick_caller.load(std::memory_order_relaxed) != kServerTickClientsTickRateRet) TickTimeline();  // once per frame
   const int32_t cap = REXCVAR_GET(gowj_loading_fps);
   // GitHub #77 (report 20261031-105629): every change of the engine's own limit is logged, so a report names it.
   static std::atomic<int32_t> s_last_engine{-1000};

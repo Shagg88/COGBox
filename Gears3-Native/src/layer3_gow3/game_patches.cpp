@@ -618,7 +618,11 @@ void Gow3PathChoiceTick() {
 // Exact cap (GitHub #225 follow-up: 121-123 at a 120 cap): the engine's own wait sleeps whole milliseconds, so a limit
 // of N gave N +- 2. With a player's limit the game thread waits here on the host clock (shared precise limiter) and the
 // engine is told "no limit" - it measured the time before this call, so its own wait would come on top.
-static void Gow3ExactLimit(PPCRegister& f1) {
+// 0.6.3: wait = false for UWorld::ServerTickClients' call (host with remote players): it only reads the value, and a
+// second wait in the same frame halved the player's limit (60 -> 30, 144 -> 72). It gets the limit itself (1/limit is
+// about this frame's DeltaSeconds, what it used when the engine was told "no limit").
+static void Gow3ExactLimit(PPCRegister& f1, bool wait = true) {
+  if (!wait) return;
   static xenos::FrameLimiter limiter;
   GOW3_LOG_ONCE("gow3_max_fps: exact host-side limiter on ({} fps)", f1.f64);
   limiter.Wait(f1.f64);
@@ -631,6 +635,9 @@ static void Gow3ExactLimit(PPCRegister& f1) {
 // (no smoothing -> no hook -> no limit), the two counts below differ. These lines show it in a report: how many engine
 // ticks did not reach the limiter, what the function returned for them, the limit asked, and the number of local players.
 std::atomic<uint32_t> g_tick_hook_hits{0};
+// 0.6.3 host frame-rate halving: the guest return address of the GetMaxTickRate call in progress (set by extras.cpp's
+// wrapper before the original runs; game thread). The ServerTickClients one (gow3_addresses.h) gets no wait / ticks.
+std::atomic<uint32_t> g_tick_caller{0};
 namespace {
 // Local players (Engine.GamePlayers count) or -1. Read-only; class / property lookups are cached and retried 5 s apart.
 int Gow3LocalPlayers() {
@@ -654,7 +661,11 @@ int Gow3LocalPlayers() {
 }  // namespace
 // Game thread, from extras.cpp's GetMaxTickRate wrapper once the original has returned: hits_before = g_tick_hook_hits
 // when the call began, result = the value it returned (0 = no limit left for the engine's own wait).
-void Gow3NoteTickCall(uint32_t hits_before, double result) {
+void Gow3NoteTickCall(uint32_t hits_before, double result, uint32_t caller) {
+  static xenos::TickCallSites sites;
+  const bool server = caller == gow3::addr::kServerTickClientsTickRateRet;
+  sites.Note("gow3_max_fps", caller, !server);
+  if (server) return;  // not an engine tick: the counts below are the engine loop's
   static uint64_t calls = 0, skipped = 0, window_calls = 0, window_skipped = 0, flips = 0;
   static int last_players = -2;
   static bool last_hooked = true;
@@ -688,18 +699,23 @@ void Gow3NoteTickCall(uint32_t hits_before, double result) {
 
 void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9B0
   g_tick_hook_hits.fetch_add(1, std::memory_order_relaxed);
-  TickTimeline();
-  Gow3ModChaptersTick();
-  Gow3PathChoiceTick();
-  Gow3SplitLayoutTick();       // GitHub #269
-  Gow3CheckpointStreamTick();  // GitHub #226
-  Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)
-  Gow3FirstPersonTick();       // --gow3_first_person (off: one flag test)
+  // 0.6.3: UWorld::ServerTickClients' call (a host with remote players, every frame after the engine loop's): the same
+  // value, no wait, and none of the per-frame ticks below (they ran twice per frame on a host before).
+  const bool engine_loop = g_tick_caller.load(std::memory_order_relaxed) != gow3::addr::kServerTickClientsTickRateRet;
+  if (engine_loop) {
+    TickTimeline();
+    Gow3ModChaptersTick();
+    Gow3PathChoiceTick();
+    Gow3SplitLayoutTick();       // GitHub #269
+    Gow3CheckpointStreamTick();  // GitHub #226
+    Gow3AdaptiveTriggersTick(g_in_front_end.load(std::memory_order_relaxed));  // GitHub #245 (off: one flag test)
+    Gow3FirstPersonTick();       // --gow3_first_person (off: one flag test)
+  }
   const int32_t v = LiveMaxFps();
   if (const int32_t m = REXCVAR_GET(gow3_menu_fps); m > 0 && g_in_front_end.load(std::memory_order_relaxed)) {
     const double own = v < 0 ? 0.0 : (v > 0 ? double(v) : f1.f64);  // the limit that would apply (0 = none)
     f1.f64 = (own <= 0.0 || own > double(m)) ? double(m) : own;
-    if (v != 0) Gow3ExactLimit(f1);
+    if (v != 0) Gow3ExactLimit(f1, engine_loop);
     return;
   }
   const int32_t floor_fps = REXCVAR_GET(gow3_tick_floor_fps);
@@ -710,7 +726,7 @@ void Gow3MaxTickRate(PPCRegister& f1) {  // after `lfs f1,0x4C8(r3)` at 0x8253D9
   GOW3_LOG_ONCE("gow3_max_fps: engine frame-rate limit {} -> {}{}", f1.f64, v < 0 ? std::string("none") : std::to_string(v),
                 v < 0 && floor_fps > 0 ? " (tick floor " + std::to_string(floor_fps) + "/s)" : std::string());
   f1.f64 = v < 0 ? (floor_fps > 0 ? double(floor_fps) : 0.0) : double(v);
-  if (v > 0) Gow3ExactLimit(f1);
+  if (v > 0) Gow3ExactLimit(f1, engine_loop);
 }
 
 // ---- Engine settings through the game's own config (layer 2 --ue3_ini_edits) ----------------------------------------

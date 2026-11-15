@@ -24,6 +24,8 @@
 // King of the Hill), GearGameCTM_Base (Meatflag), GearGameHorde_Base (Horde), GearGameTDM_Base (Warzone, Execution;
 // GearGameWingman_Base: Wingman) }, with Assassination = GearGameContent.GearGameKTL (a TDM). GearGameSP_Base (the campaign,
 // co-op too), GearMenuGame and its lobby classes are not under GearGameMP_Base. Horde is the one PvE game type below it.
+#include <atomic>
+
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
@@ -92,8 +94,17 @@ void Gow2FirstPersonTick();        // first_person.cpp (--gow2_first_person)
 #define GOW2_JOIN2(a, b) a##b
 #define GOW2_JOIN(a, b) GOW2_JOIN2(a, b)
 extern "C" void GOW2_JOIN(__imp__, GOW2_MAX_TICK_RATE)(PPCContext& __restrict ctx, uint8_t* base);
+void Gow2NoteTickCall(uint32_t caller);  // game_patches.cpp (0.6.3 host fps)
+extern std::atomic<uint32_t> g_gow2_tick_caller;  // game_patches.cpp
 extern "C" void GOW2_MAX_TICK_RATE(PPCContext& __restrict ctx, uint8_t* base) {
+  // 0.6.3: who asks (the guest return address). A host with remote players asks twice per frame - the engine loop and
+  // UWorld::ServerTickClients; the limiter hook inside the original waits only for the engine loop's call, and the
+  // per-frame work below runs only for it.
+  const uint32_t caller = uint32_t(ctx.lr);
+  g_gow2_tick_caller.store(caller, std::memory_order_relaxed);
   GOW2_JOIN(__imp__, GOW2_MAX_TICK_RATE)(ctx, base);
+  Gow2NoteTickCall(caller);
+  if (caller == gow2::addr::kServerTickClientsTickRateRet) return;
   Ue3ConsoleRunQueued(ctx, base);
   Gow2AdaptiveTriggersTick();   // GitHub #245 (adaptive_triggers.cpp; off: one flag test)
   Gow2FirstPersonTick();        // --gow2_first_person (first_person.cpp; off: one flag test)

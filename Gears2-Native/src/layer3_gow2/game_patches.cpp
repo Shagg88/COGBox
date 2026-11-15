@@ -239,6 +239,15 @@ bool Gow2GpuWaitStep() {
 // MaxSmoothedFrameRate (`lfs f1,1284(r3)` at 0x824A2E94) and returns it; this hook runs after that load. The same site is
 // the first half of the community "Unlock FPS" patch (illusion, boma), which nops the load (the default, no limit, is
 // returned then); the second half (swap interval 2 -> 1) is our --gow2_gpu_vsync=false.
+// 0.6.3 host frame-rate halving (as Gears 3): the guest return address of the GetMaxTickRate call in progress, set by
+// cheats.cpp's override before the original runs (game thread). UWorld::ServerTickClients' call (every frame on a host
+// with remote players; gow2_addresses.h) gets the limit without the wait - a second wait per frame halved the limit.
+std::atomic<uint32_t> g_gow2_tick_caller{0};
+void Gow2NoteTickCall(uint32_t caller) {  // after the original returned; read-only (frame_limiter.h)
+  static xenos::TickCallSites sites;
+  sites.Note("gow2_max_fps", caller, caller != gow2::addr::kServerTickClientsTickRateRet);
+}
+
 void Gow2MaxTickRate(PPCRegister& f1) {
   const int32_t v = Gow2MaxFps();
   if (!v) return;
@@ -250,6 +259,10 @@ void Gow2MaxTickRate(PPCRegister& f1) {
   if (v < 0) { f1.f64 = 0.0; return; }
   // Exact cap: the engine's own wait sleeps whole milliseconds (N +- 2 fps), so the game thread waits here on the host
   // clock and the engine is told "no limit" (it measured the time before this call, so its wait would come on top).
+  if (g_gow2_tick_caller.load(std::memory_order_relaxed) == gow2::addr::kServerTickClientsTickRateRet) {
+    f1.f64 = double(v);  // ServerTickClients only reads it (1/v ~ this frame's DeltaSeconds); the engine loop waited
+    return;
+  }
   static xenos::FrameLimiter limiter;
   limiter.Wait(double(v));
   f1.f64 = 0.0;

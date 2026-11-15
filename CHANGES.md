@@ -10,6 +10,10 @@
 - **Cheats are off in Versus** (all four games): the cheat keys (F5-F11, `--gowX_cheats`) no longer work in any Versus match - online, System Link, private matches and local split screen, with or without bots. They still work in the campaign (solo and co-op) and in Horde, Beast and Survival. Any game type not on that list is treated as Versus. Other console commands from `--ue3_hotkeys` / `--ue3_exec` are refused in Versus too (the launcher's own display settings still apply). The Horde-bots button (Back, Gears 2 and 3) is not blocked: it turns the game's cheat flag on and adds bots, so switch it off for Versus. Cheats are also off in the menus and lobbies.
 
 ### Fixes
+- **Hosting no longer halves your frame-rate limit** (Gears 2, Gears 3 and Judgment): while friends were in a match you
+  hosted, a limit of 60 gave 30 (144 gave 72) until they left. The game asks for the limit a second time each frame
+  when it sends updates to other players, and COGBox waited a whole frame both times; it now waits once per frame.
+  Unlimited was not affected, and neither was Gears 1. (Found from the code; not yet tested with a second player.)
 - **Gears 3: Horde bots are no longer always Dom and Carmine.** The Horde-bots button (Back) asked the game for those two characters by number every time; it now lets the game pick each bot's character at random, the way the game picks bots for its own matches. (Gears 2's bots were already random; its two unused numbers are dropped.) GitHub #270; not tested on PC yet.
 - **Launcher: the library music plays again** (silent in 0.6.2: that launcher was built against the wrong FFmpeg version and could not find the music decoder shipped beside it). The build and the packager now check that the launcher and the decoder DLLs match, so it cannot ship silent again.
 - **Judgment: the loading screen after Monroe Commons no longer hangs above 30 fps** (GitHub #318, also #54 / #38 /

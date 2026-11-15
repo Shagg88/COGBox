@@ -25,6 +25,8 @@
 //   GearGameHvB_Base > GearGameHvB_Coop_Base (the "survival" alias: waves of AI Locusts against the players).
 // Campaign (GearGameSP_Base > GearGameAID_Base, Declassified too), GearMenuGame and the lobby classes are not under
 // GearGameMP_Base. Not Versus, so cheats as before: everything under GearGameWaveBased and GearGameHvB_Coop_Base.
+#include <atomic>
+
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
@@ -88,7 +90,18 @@ void GowjAdaptiveTriggersTick();   // adaptive_triggers.cpp (GitHub #245, --pad_
 void GowjFirstPersonTick();        // first_person.cpp (--gowj_first_person)
 void GowjPollLoadingMovie(PPCContext& ctx, uint8_t* base);  // game_patches.cpp (GitHub #318, --gowj_loading_fps)
 extern "C" void __imp__sub_8255E200(PPCContext& __restrict ctx, uint8_t* base);
+extern std::atomic<uint32_t> g_gowj_tick_caller;  // game_patches.cpp (0.6.3 host fps)
+bool GowjNoteTickCall(uint32_t caller);            // game_patches.cpp: true = the engine loop's call
 extern "C" void sub_8255E200(PPCContext& __restrict ctx, uint8_t* base) {
+  // 0.6.3: who asks (the guest return address). A host with remote players asks twice per frame - the engine loop and
+  // UWorld::ServerTickClients; the limiter hook inside the original waits only for the engine loop's call, and the
+  // per-frame work here runs only for it.
+  const uint32_t caller = uint32_t(ctx.lr);
+  g_gowj_tick_caller.store(caller, std::memory_order_relaxed);
+  if (!GowjNoteTickCall(caller)) {
+    __imp__sub_8255E200(ctx, base);
+    return;
+  }
   // GitHub #318: ask the game whether its loading movie is up BEFORE the original runs, so the loading-screen cap
   // (decided by the GowjMaxTickRate hook inside it) follows this tick's answer. ctx is restored afterwards.
   GowjPollLoadingMovie(ctx, base);
