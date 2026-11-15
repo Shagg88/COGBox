@@ -537,6 +537,11 @@ bool PromptDeviceMonitor::IsKeyboardMouseInUse(uint64_t now_ms) const {
   return last_kbm_ms_ != 0 && now_ms < last_kbm_ms_ + kKbmRecentMs;
 }
 
+uint64_t PromptDeviceMonitor::LastGamepadActivityMs() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return last_pad_ms_;
+}
+
 void PromptDeviceMonitor::NotifyKeyboardMouseActivity(uint64_t timestamp_ms) {
   if (timestamp_ms == 0) timestamp_ms = NowMs();
   std::lock_guard<std::mutex> lock(mutex_);

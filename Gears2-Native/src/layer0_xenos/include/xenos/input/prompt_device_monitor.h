@@ -92,6 +92,8 @@ class PromptDeviceMonitor {
   // Is the player pressing keys / mouse buttons, or did so in the last kKbmRecentMs? Held keys and buttons are only
   // checked with GetAsyncKeyState while the game window is in front (a click in another app is not the game's).
   bool IsKeyboardMouseInUse(uint64_t now_ms = 0) const;
+  // GitHub #320: when a pad was last used (NowMs() time; 0 = never, or the monitor is not running). Any thread.
+  uint64_t LastGamepadActivityMs() const;
 
   // Pad activity for a classified pad.
   void NotifyGamepadActivity(DeviceStyle pad_style, uint64_t timestamp_ms = 0);

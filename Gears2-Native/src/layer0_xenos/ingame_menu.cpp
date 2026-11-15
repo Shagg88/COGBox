@@ -1137,53 +1137,223 @@ void ToggleSocialOnUIThread() {
 // not active). A watcher hides it after 3 s without mouse movement while the game is in front, and shows it again on the
 // first movement. Mouse look (the driver hides the cursor itself) and the open menu (it draws its own) are left alone.
 // Visibility is changed on the UI thread only; what was there before is put back.
+// GitHub #320: SDL only applies SDL_HideCursor while it has mouse focus, which it gets from a mouse move over the window;
+// started from the launcher with the pad (or after an exclusive full-screen switch / Alt+Tab) the hide did nothing, and
+// the watcher never tried again. Now, on the UI thread (it owns the window), the cursor is also set to none with
+// ::SetCursor(nullptr) while it is over our client area, our window procedure answers WM_SETCURSOR with "no cursor"
+// while the hide is ours (Windows and SDL would put the arrow back), and the watcher checks with GetCursorInfo and tries
+// again on the next poll while the OS still shows it. Moves of 2 px or less (sensor noise, a desk shaken by rumble) are
+// ignored; pad input after the last real move hides it at once (0.4 s) instead of after 3 s. Each hide / show is logged
+// (rate-limited), and why a hide is held back.
 namespace {
 std::atomic<rex::ui::Window*> g_idle_window{nullptr};
 std::atomic<bool> g_idle_stop{false};
 std::thread g_idle_thread;
-std::atomic<bool> g_idle_hidden{false};   // set / cleared on the UI thread; the watcher reads it
+std::atomic<bool> g_idle_hidden{false};   // set / cleared on the UI thread; the watcher and our window procedure read it
+std::atomic<bool> g_idle_post_pending{false};   // a hide / show is queued on the UI thread (no pile-up while it is busy)
 rex::ui::Window::CursorVisibility g_idle_before = rex::ui::Window::CursorVisibility::kVisible;
+HWND g_idle_hwnd = nullptr;   // UI thread: the window our WM_SETCURSOR handler is installed on
+WNDPROC g_idle_prev_proc = nullptr;   // UI thread (read by our window procedure, which runs on it too)
+constexpr LONG kIdleJitterPx = 2;
+constexpr auto kIdleDelay = std::chrono::seconds(3);
+constexpr auto kIdlePadDelay = std::chrono::milliseconds(400);
+
+// At most one line per kind every 10 s; the lines held back are counted into the next one.
+struct IdleRateLog {
+  std::chrono::steady_clock::time_point last{};
+  int held = 0;
+  bool Allow() {
+    const auto now = std::chrono::steady_clock::now();
+    if (last.time_since_epoch().count() != 0 && now - last < std::chrono::seconds(10)) {
+      ++held;
+      return false;
+    }
+    last = now;
+    return true;
+  }
+  int TakeHeld() { const int h = held; held = 0; return h; }
+};
+
+bool IdleCursorOwnedElsewhere() { return g_open.load() || rex::input::mnk::IsMouseLookActive(); }
+
+// The OS draws a cursor right now (any thread; GetCursorInfo is global).
+bool OsCursorShowing() {
+  CURSORINFO ci{};
+  ci.cbSize = sizeof(ci);
+  if (!GetCursorInfo(&ci)) return false;
+  return (ci.flags & CURSOR_SHOWING) != 0 && ci.hCursor != nullptr;
+}
+
+// The point is over our window's client area (not on another monitor, the title bar or another window on top).
+bool CursorOverClient(HWND hwnd, POINT p) {
+  if (!hwnd || !IsWindow(hwnd)) return false;
+  HWND under = WindowFromPoint(p);
+  if (!under || GetAncestor(under, GA_ROOT) != GetAncestor(hwnd, GA_ROOT)) return false;
+  RECT rc{};
+  if (!GetClientRect(hwnd, &rc)) return false;
+  POINT c = p;
+  if (!ScreenToClient(hwnd, &c)) return false;
+  return c.x >= rc.left && c.x < rc.right && c.y >= rc.top && c.y < rc.bottom;
+}
+
+LRESULT CALLBACK IdleCursorWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+  // While the hide is ours, the client area has no cursor: SDL's own WM_SETCURSOR would draw its default arrow when it
+  // has no mouse focus. A real movement shows it again through the watcher (within one poll).
+  if (msg == WM_SETCURSOR && LOWORD(lp) == HTCLIENT && g_idle_hidden.load() && !IdleCursorOwnedElsewhere()) {
+    ::SetCursor(nullptr);
+    return TRUE;
+  }
+  return CallWindowProcW(g_idle_prev_proc, hwnd, msg, wp, lp);
+}
+
+// UI thread. Our WM_SETCURSOR handler goes in front of SDL's window procedure (once per window; it passes everything
+// on, and does nothing while the hide is not ours).
+void IdleInstallCursorProc(HWND hwnd) {
+  if (!hwnd || hwnd == g_idle_hwnd || !IsWindow(hwnd)) return;
+  if (reinterpret_cast<WNDPROC>(GetWindowLongPtrW(hwnd, GWLP_WNDPROC)) == IdleCursorWndProc) return;
+  SetLastError(0);
+  auto prev = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(IdleCursorWndProc)));
+  if (!prev && GetLastError() != 0) {
+    REXLOG_WARN("cogbox_cursor: could not install the WM_SETCURSOR handler (error {})", GetLastError());
+    return;
+  }
+  g_idle_prev_proc = prev;
+  g_idle_hwnd = hwnd;
+}
+
+// UI thread: hide (or, already hidden by us, apply the hide again).
+void IdleHideNow(const char* why) {
+  static IdleRateLog log_hide, log_retry, log_skip;
+  g_idle_post_pending = false;
+  rex::ui::Window* uw = g_idle_window.load();
+  if (!uw) return;
+  if (IdleCursorOwnedElsewhere()) {
+    if (log_skip.Allow())
+      REXLOG_INFO("cogbox_cursor: hide skipped - {}", g_open.load() ? "the in-game menu is open" : "mouse look is on");
+    return;
+  }
+  HWND hwnd = static_cast<HWND>(uw->GetNativeWindowHandle());
+  IdleInstallCursorProc(hwnd);
+  const bool again = g_idle_hidden.load();
+  if (!again) {
+    g_idle_before = uw->GetCursorVisibility();
+    if (g_idle_before != rex::ui::Window::CursorVisibility::kHidden)
+      uw->SetCursorVisibility(rex::ui::Window::CursorVisibility::kHidden);   // SDL's state (applied once it has focus)
+    g_idle_hidden = true;
+  }
+  POINT p{};
+  GetCursorPos(&p);
+  if (CursorOverClient(hwnd, p)) ::SetCursor(nullptr);   // our thread owns the window: takes effect without SDL focus
+  if (!again) {
+    if (log_hide.Allow()) {
+      if (const int held = log_hide.TakeHeld()) REXLOG_INFO("cogbox_cursor: hidden ({}) [{} more not logged]", why, held);
+      else REXLOG_INFO("cogbox_cursor: hidden ({})", why);
+    }
+  } else if (log_retry.Allow()) {
+    if (const int held = log_retry.TakeHeld())
+      REXLOG_INFO("cogbox_cursor: the OS still showed the cursor - hidden again [{} more not logged]", held);
+    else REXLOG_INFO("cogbox_cursor: the OS still showed the cursor - hidden again");
+  }
+}
+
+// UI thread: put back what was there before the hide.
+void IdleShowNow(const char* why) {
+  static IdleRateLog log_show;
+  g_idle_post_pending = false;
+  // Review 1186: with the menu open or mouse look on, the hide stays ours (the flag kept), so the next movement after
+  // they end still puts the cursor back - clearing it here left the cursor hidden for good.
+  rex::ui::Window* uw = g_idle_window.load();
+  if (!uw || !g_idle_hidden.load() || IdleCursorOwnedElsewhere()) return;
+  uw->SetCursorVisibility(g_idle_before);
+  g_idle_hidden = false;
+  if (g_idle_before != rex::ui::Window::CursorVisibility::kHidden && ::GetCursor() == nullptr) {
+    HWND hwnd = static_cast<HWND>(uw->GetNativeWindowHandle());
+    POINT p{};
+    GetCursorPos(&p);
+    // Without SDL mouse focus SDL_ShowCursor sets nothing either; the system arrow (the player's own scheme) it is.
+    if (CursorOverClient(hwnd, p)) ::SetCursor(LoadCursor(nullptr, IDC_ARROW));
+  }
+  if (log_show.Allow()) {
+    if (const int held = log_show.TakeHeld()) REXLOG_INFO("cogbox_cursor: shown again ({}) [{} more not logged]", why, held);
+    else REXLOG_INFO("cogbox_cursor: shown again ({})", why);
+  }
+}
 
 void IdleCursorWatch() {
+  auto& monitor = ::xenos::input::GlobalPromptDeviceMonitor();
   POINT last{};
   GetCursorPos(&last);
   auto moved_at = std::chrono::steady_clock::now();
-  bool hide_sent = false;
+  uint64_t moved_ms = ::xenos::input::PromptDeviceMonitor::NowMs();
+  bool show_wanted = false;   // a real movement / click / another app in front since our hide
+  bool verify_pending = false;   // check (and log) what the OS shows on the poll after a hide
+  const char* last_skip = nullptr;
+  IdleRateLog log_skip, log_verify;
   while (!g_idle_stop.load()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     rex::ui::Window* w = g_idle_window.load();
     if (!w) continue;
     POINT p{};
     GetCursorPos(&p);
+    HWND hwnd = static_cast<HWND>(w->GetNativeWindowHandle());
     DWORD pid = 0;
     if (HWND fg = GetForegroundWindow()) GetWindowThreadProcessId(fg, &pid);
     const bool front = pid == GetCurrentProcessId();
     const auto now = std::chrono::steady_clock::now();
-    if (p.x != last.x || p.y != last.y || !front) {
-      last = p;
+    const bool moved = std::abs(p.x - last.x) > kIdleJitterPx || std::abs(p.y - last.y) > kIdleJitterPx;
+    const bool clicked = front && ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 ||
+                                   (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0 ||
+                                   (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0);
+    if (moved || clicked || !front) {
+      last = p;   // only a real move moves the anchor, so jitter of 2 px or less never adds up to one
       moved_at = now;
-      if (hide_sent || g_idle_hidden.load()) {   // review 1188: while the hide is ours, every movement asks to restore
-        hide_sent = false;
-        w->app_context().CallInUIThreadDeferred([] {
-          // Review 1186: with the menu open or mouse look on, the hide stays ours (the flag kept), so the next
-          // movement after they end still puts the cursor back - clearing it here left the cursor hidden for good.
-          rex::ui::Window* uw = g_idle_window.load();
-          if (!uw || !g_idle_hidden.load() || g_open.load() || rex::input::mnk::IsMouseLookActive()) return;
-          uw->SetCursorVisibility(g_idle_before);
-          g_idle_hidden = false;
-        });
-      }
-    } else if (!hide_sent && now - moved_at >= std::chrono::seconds(3) && !g_open.load()) {
-      hide_sent = true;
-      w->app_context().CallInUIThreadDeferred([] {
-        rex::ui::Window* uw = g_idle_window.load();
-        if (!uw || g_idle_hidden.load() || g_open.load() || rex::input::mnk::IsMouseLookActive()) return;
-        if (uw->GetCursorVisibility() == rex::ui::Window::CursorVisibility::kHidden) return;
-        g_idle_before = uw->GetCursorVisibility();
-        uw->SetCursorVisibility(rex::ui::Window::CursorVisibility::kHidden);
-        g_idle_hidden = true;
-      });
+      moved_ms = ::xenos::input::PromptDeviceMonitor::NowMs();
+      if (g_idle_hidden.load()) show_wanted = true;
     }
+    if (!g_idle_hidden.load()) show_wanted = false;
+    if (show_wanted) {   // review 1188: while the hide is ours, movement asks to show it (again until it is shown)
+      if (!g_idle_post_pending.exchange(true)) {
+        const char* why = !front ? "another window in front" : clicked ? "mouse button" : "mouse moved";
+        w->app_context().CallInUIThreadDeferred([why] { IdleShowNow(why); });
+      }
+      verify_pending = false;
+      continue;
+    }
+    if (moved || clicked || !front) continue;
+    // Still. Pad input since the last real movement: the controller is what is being played with - hide at once.
+    const bool pad_since = monitor.LastGamepadActivityMs() > moved_ms;
+    const std::chrono::steady_clock::duration delay =
+        pad_since ? std::chrono::steady_clock::duration(kIdlePadDelay) : std::chrono::steady_clock::duration(kIdleDelay);
+    if (now - moved_at < delay) continue;
+    const char* skip = nullptr;
+    if (g_open.load()) skip = "the in-game menu is open";
+    else if (rex::input::mnk::IsMouseLookActive()) skip = "mouse look is on";
+    else if (monitor.IsKeyboardMouseInUse()) skip = "keyboard / mouse in use";
+    else if (!CursorOverClient(hwnd, p)) skip = "the cursor is not over the game window";
+    if (skip) {
+      if (skip != last_skip && log_skip.Allow()) REXLOG_INFO("cogbox_cursor: not hiding - {}", skip);
+      last_skip = skip;
+      continue;
+    }
+    last_skip = nullptr;
+    if (!g_idle_hidden.load()) {
+      if (!g_idle_post_pending.exchange(true)) {
+        const char* why = pad_since ? "controller in use, mouse still" : "mouse still for 3 s";
+        w->app_context().CallInUIThreadDeferred([why] { IdleHideNow(why); });
+        verify_pending = true;
+      }
+      continue;
+    }
+    // Ours and should be hidden: does the OS agree? If not (SDL or Windows put the arrow back), try again.
+    const bool showing = OsCursorShowing();
+    if (verify_pending && !g_idle_post_pending.load()) {
+      verify_pending = false;
+      if (log_verify.Allow())
+        REXLOG_INFO("cogbox_cursor: after the hide the OS reports the cursor {}",
+                    showing ? "still showing - trying again" : "hidden");
+    }
+    if (showing && !g_idle_post_pending.exchange(true))
+      w->app_context().CallInUIThreadDeferred([] { IdleHideNow("again"); });
   }
 }
 }  // namespace
