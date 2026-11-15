@@ -215,6 +215,16 @@ if ($ff.Count -ge 2) { $ff | Copy-Item -Destination $stage } else { Write-Warnin
 $exeText = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes((Join-Path $launcher 'CogBox.exe')))
 if ($exeText.Contains('built without FFmpeg') -or -not $exeText.Contains('avcodec_find_decoder')) {
   throw 'CogBox.exe was built without FFmpeg (no library music) - rebuild it with FFMPEG_DIR set (cogbox\build.sh)' }
+# 0.6.3: 0.6.2 shipped silent - its CogBox.exe asked for avcodec-61.dll / avutil-59.dll (built against FFmpeg 7's headers)
+# beside FFmpeg 9.0.2's avcodec-63.dll / avutil-61.dll. The exe now names the DLLs it loads ('cogbox-ffmpeg-dlls: ...');
+# every one must be among the DLLs packaged, and every packaged av*.dll must be one it loads.
+$m = [regex]::Match($exeText, 'cogbox-ffmpeg-dlls: (avcodec-\d+\.dll) (avutil-\d+\.dll)')
+if (-not $m.Success) { throw 'CogBox.exe does not name the FFmpeg DLLs it loads (built from a source before 0.6.3?) - cannot check the library music' }
+$wantFf = @($m.Groups[1].Value, $m.Groups[2].Value)
+$haveFf = @($ff | ForEach-Object { $_.Name })
+foreach ($n in $wantFf) { if ($haveFf -notcontains $n) { throw "CogBox.exe loads $n, but the package has $($haveFf -join ', ') - the library music would be silent (rebuild CogBox.exe with FFMPEG_DIR set to the FFmpeg the DLLs come from)" } }
+foreach ($n in $haveFf) { if ($wantFf -notcontains $n) { throw "the package has $n, which CogBox.exe does not load (it loads $($wantFf -join ', '))" } }
+Write-Host "  library music: CogBox.exe loads $($wantFf -join ' + '), both packaged"
 Copy-Item (Join-Path $cogbox 'README.txt') $stage
 # Launcher translations (0.2.0): cogbox\lang\<code>.txt -> lang\ beside CogBox.exe.
 $langSrc = Join-Path $cogbox 'lang'

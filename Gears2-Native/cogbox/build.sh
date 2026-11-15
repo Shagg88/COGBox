@@ -12,6 +12,13 @@ FF=${FFMPEG_DIR:-third_party/ffmpeg-xma}   # (not committed: .gitignore)
 # GitHub #151: 0.4.1 - 0.4.3 were built from a clone without these headers and shipped without library music. A build
 # without them now stops, unless COGBOX_NO_FFMPEG=1 asks for a silent library on purpose.
 if [ -f $FF/include/libavcodec/avcodec.h ]; then FFDEF="-isystem $FF/include"
+  # 0.6.3 (0.6.2 shipped silent): the headers decide which DLLs CogBox.exe loads (avcodec-<major>.dll); they must be the
+  # FFmpeg the package ships, as named in licenses/FFmpeg-NOTICE.txt. Another FFmpeg's headers: stop.
+  AVC=$(sed -n 's/^#define LIBAVCODEC_VERSION_MAJOR *\([0-9]*\).*/\1/p' $FF/include/libavcodec/version_major.h $FF/include/libavcodec/version.h 2>/dev/null | head -1)
+  AVU=$(sed -n 's/^#define LIBAVUTIL_VERSION_MAJOR *\([0-9]*\).*/\1/p' $FF/include/libavutil/version.h 2>/dev/null | head -1)
+  if ! head -1 licenses/FFmpeg-NOTICE.txt | grep -q "avcodec-$AVC.dll, avutil-$AVU.dll"; then
+    echo "build.sh: the FFmpeg headers in $FF are avcodec-$AVC / avutil-$AVU, but licenses/FFmpeg-NOTICE.txt ships $(head -1 licenses/FFmpeg-NOTICE.txt) - set FFMPEG_DIR to that FFmpeg (tools/build_ffmpeg_xma.sh)" >&2; exit 1
+  fi
 elif [ "$COGBOX_NO_FFMPEG" = 1 ]; then FFDEF="-DCOGBOX_NO_FFMPEG"
 else echo "build.sh: no FFmpeg headers in $FF (tools/build_ffmpeg_xma.sh) - set FFMPEG_DIR, or COGBOX_NO_FFMPEG=1 for no music" >&2; exit 1; fi
 CXX=x86_64-w64-mingw32-g++
