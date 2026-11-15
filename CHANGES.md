@@ -2,7 +2,7 @@
 
 ## 0.6.2
 
-**Quick start:** download `COGBox-0.6.2.zip`, right-click it > **Extract All...** to a folder of its own (for example
+**Quick start:** download `COGBox-0.6.2.7z`, right-click it > **Extract All...** (Windows 11; on Windows 10 use 7-Zip) to a folder of its own (for example
 `C:\Games\COGBox`), start `CogBox.exe`, and add your game copy and its title update.
 
 <a href="https://recomplauncher.com/game/cogbox"><img src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" alt="Get it on RecompLauncher" height="56"></a>

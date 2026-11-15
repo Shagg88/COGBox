@@ -79,8 +79,8 @@ and our own renderer draws every frame on Direct3D 12 (or Vulkan).
 
 ## How to play
 
-1. Download `COGBox-<version>.zip` from [Releases](https://github.com/Shagg88/COGBox/releases) (the `.7z` is the same,
-   smaller) and unpack the whole folder - right-click it, **Extract All...** - somewhere you can write to, e.g.
+1. Download `COGBox-<version>.7z` from [Releases](https://github.com/Shagg88/COGBox/releases) and unpack the whole
+   folder - right-click it, **Extract All...** (Windows 11; on Windows 10 use [7-Zip](https://www.7-zip.org)) - somewhere you can write to, e.g.
    `C:\Games\COGBox`. Not Program Files, and not a OneDrive / Dropbox folder; COGBox tells you if it's somewhere it
    can't work.
 2. Start `CogBox.exe`. If Windows says "Windows protected your PC", choose **More info > Run anyway** (the programs
@@ -107,12 +107,12 @@ folder in the game's saves folder (the **Saves** button opens it), never deleted
 
 **Box art:** press **UPDATE ART** to download HD box art and backgrounds.
 
-**Updating:** use the update button in COGBox, or unzip a new release over the old folder - your games, saves and
+**Updating:** use the update button in COGBox, or unpack a new release over the old folder - your games, saves and
 settings are kept.
 
 ## Linux and Steam Deck (experimental)
 
-1. Unzip COGBox into your home folder (on a Steam Deck, in Desktop Mode).
+1. Unpack the COGBox `.7z` into your home folder (on a Steam Deck, in Desktop Mode).
 2. In Steam: **Games > Add a Non-Steam Game**, set the file type to **All Files**, and pick `CogBox.exe`.
 3. In its **Properties > Compatibility**, force **Proton Experimental** (or a recent Proton such as 11.0, or GE-Proton).
 4. Start COGBox. On its first start under Proton it applies recommended settings (Vulkan, FSR where the build has it,

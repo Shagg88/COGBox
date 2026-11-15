@@ -1,7 +1,8 @@
-﻿# CogBox: assemble the player zip (CogBox-<version>.zip + .sha256) from the launcher and the four ports' builds.
+﻿# CogBox: assemble the player archive (COGBox-<version>.7z + .sha256; Shagg 11-14: 7z only, no zip) from the launcher and
+# the four ports' builds.
 # Run on the PC: pwsh -File cogbox\tools\package_cogbox.ps1 [-Version 0.1.0] [-Out <folder>] [-WhatIf]
-# The zip and its .sha256 land in COGBox-Project\releases\<version>\; the
-# unzipped working copy is built in Gears2-Native\out\pack\. A new build of the same version replaces the old files.
+# The .7z and its .sha256 land in COGBox-Project\releases\<version>\; the
+# unpacked working copy is built in Gears2-Native\out\pack\. A new build of the same version replaces the old files.
 # Nothing of the games goes in: the script refuses to pack any .xex / .xexp / .iso / disc folder, and only copies the
 # files named in the lists below (never a whole build folder, so test exes, logs, saves and shader caches stay out).
 param(
@@ -155,6 +156,8 @@ function Add-PastSums([string]$text, [string]$from) {
 foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $cogbox 'test\stale_releases') -Filter '*.txt' -File -ErrorAction SilentlyContinue)) { Add-PastSums (Get-Content -Raw -LiteralPath $f.FullName) "test\stale_releases\$($f.Name)"; $pastLists++ }
 $relRoot = Join-Path $docs 'releases'
 $unread = @()
+$sevenZip = @("$env:ProgramFiles\7-Zip\7z.exe", "${env:ProgramFiles(x86)}\7-Zip\7z.exe", (Join-Path $PSScriptRoot '..\..\third_party\7zip\7z.exe')) |
+  Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 foreach ($relDir in @(Get-ChildItem -LiteralPath $relRoot -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne $Version })) {
   foreach ($f in @(Get-ChildItem -LiteralPath $relDir.FullName -Filter 'SHA256SUMS*.txt' -File -Recurse -Depth 2 -ErrorAction SilentlyContinue)) { Add-PastSums (Get-Content -Raw -LiteralPath $f.FullName) $f.FullName; $pastLists++ }
@@ -165,6 +168,12 @@ foreach ($relDir in @(Get-ChildItem -LiteralPath $relRoot -Directory -ErrorActio
       if ($ent) { $rs = New-Object IO.StreamReader($ent.Open()); Add-PastSums $rs.ReadToEnd() $arc.FullName; $rs.Dispose(); $pastLists++ } else { $unread += "$($arc.FullName) (no SHA256SUMS.txt inside)" }
       $za0.Dispose()
     } catch { $unread += "$($arc.FullName) ($($_.Exception.Message))" }
+  }
+  # 0.6.2 on: releases are .7z only - their SHA256SUMS.txt is read with 7-Zip (the copy beside each is read above too)
+  foreach ($arc in @(Get-ChildItem -LiteralPath $relDir.FullName -File | Where-Object { $_.Name -match '^COGBox-[0-9.]+\.7z(\.old-\d+|\.\d+)?$' })) {
+    if (-not $sevenZip) { $unread += "$($arc.FullName) (no 7z.exe)"; continue }
+    $txt = (& $sevenZip e -so -bd $arc.FullName 'SHA256SUMS.txt' 2>$null) -join "`n"
+    if ($LASTEXITCODE -eq 0 -and $txt) { Add-PastSums $txt $arc.FullName; $pastLists++ } else { $unread += "$($arc.FullName) (no SHA256SUMS.txt inside)" }
   }
 }
 $uncovered = @($past.Keys | Where-Object { -not $known.ContainsKey($_) } | Sort-Object)
@@ -185,7 +194,6 @@ if ($problems.Count) { $problems | ForEach-Object { Write-Host "PROBLEM: $_" }; 
 $name = "COGBox-$Version"
 if (-not $Out) { $Out = Join-Path $docs "releases\$Version" }
 $stage = Join-Path (Split-Path -Parent $cogbox) "out\pack\$name"
-$zip = Join-Path $Out "$name.zip"
 Write-Host "Packing $name into $Out"
 if ($WhatIf) {
   foreach ($p in $ports) { Write-Host "  $($p.to)  <=  $($p.from) ($($p.exe) + $(@(Get-ChildItem -LiteralPath $p.from -Filter *.dll -File).Count) DLLs)" }
@@ -193,7 +201,6 @@ if ($WhatIf) {
 }
 # a new build of the same version replaces the old one (Shagg: always put / replace new builds in COGBox-Releases)
 if (Test-Path $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
-foreach ($f in $zip, "$zip.sha256") { if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force } }
 New-Item -ItemType Directory -Force $stage | Out-Null
 New-Item -ItemType Directory -Force $Out | Out-Null
 
@@ -385,28 +392,11 @@ foreach ($f in @(Get-ChildItem -LiteralPath $stage -Recurse -File | Where-Object
   $sums += "$h  $($f.FullName.Substring($stage.Length + 1))"
 }
 Set-Content (Join-Path $stage 'SHA256SUMS.txt') $sums
-# 0.2.0 (job 583): files only, names with / - Compress-Archive also wrote folder entries named with \ ("licenses\fidelityfx-sdk\"),
-# which 0.1.0's updater took for files and could not replace ("Couldn't replace licenses\fidelityfx-sdk\"), and \ names
-# are not folders to unzip tools on Linux / the Steam Deck
-Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
-$zfs = [IO.File]::Open($zip, [IO.FileMode]::CreateNew)
-$za = New-Object IO.Compression.ZipArchive($zfs, [IO.Compression.ZipArchiveMode]::Create)
-foreach ($f in (Get-ChildItem -LiteralPath $stage -Recurse -File | Sort-Object FullName)) {
-  $rel = $f.FullName.Substring($stage.TrimEnd('\').Length + 1).Replace('\', '/')
-  [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($za, $f.FullName, $rel, [IO.Compression.CompressionLevel]::Optimal)
-}
-$za.Dispose(); $zfs.Dispose()
-$zh = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
 Copy-Item -LiteralPath (Join-Path $stage 'SHA256SUMS.txt') (Join-Path $Out 'SHA256SUMS.txt') -Force   # cleanup049: the next release's old-files check reads it
-Set-Content "$zip.sha256" "$zh  $name.zip"
-$mb = [Math]::Round((Get-Item $zip).Length / 1MB)
-Write-Host "zip: $zip ($mb MB), SHA-256 $zh"
-if ($mb -ge 2000) { Remove-Item -LiteralPath $zip, "$zip.sha256" -ErrorAction SilentlyContinue; Write-Host 'PROBLEM: over GitHub''s 2 GB limit for one release file (zip removed)'; Write-Host 'RESULT: FAIL'; exit 1 }
+# Shagg 11-14: no zip any more (0.6.2 on) - the .7z is the one archive (COGBox's updater reads .7z first, then .zip)
 # 0.4.9 review: the .7z (smaller download; COGBox's updater reads it too). Solid blocks bounded at 64 MB (-ms=64m), so the
 # launcher never has to unpack more than one 64 MB block in memory per file it extracts (archive7z.cpp refuses blocks over
 # 512 MB). The same switches as the ship checklist; 7-Zip from Program Files or third_party\7zip.
-$sevenZip = @("$env:ProgramFiles\7-Zip\7z.exe", "${env:ProgramFiles(x86)}\7-Zip\7z.exe", (Join-Path $PSScriptRoot '..\..\third_party\7zip\7z.exe')) |
-  Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 $sz = Join-Path $Out "$name.7z"
 if (-not $sevenZip) { Write-Host 'PROBLEM: no 7z.exe (Program Files\7-Zip or third_party\7zip) - no .7z made'; Write-Host 'RESULT: FAIL'; exit 1 }
 if (Test-Path -LiteralPath $sz) { Write-Host "PROBLEM: ${sz} already exists"; Write-Host 'RESULT: FAIL'; exit 1 }
@@ -416,6 +406,8 @@ $szt = @(& $sevenZip t -bd $sz 2>&1 | ForEach-Object { "$_" })
 if ($LASTEXITCODE -ne 0) { $szt | Select-Object -Last 10 | ForEach-Object { Write-Host "    $_" }; Write-Host 'PROBLEM: 7z t failed on the new .7z'; Write-Host 'RESULT: FAIL'; exit 1 }
 $sh = (Get-FileHash -Algorithm SHA256 -LiteralPath $sz).Hash.ToLower()
 Set-Content "$sz.sha256" "$sh  $name.7z"
-Write-Host "7z: $sz ($([Math]::Round((Get-Item $sz).Length / 1MB)) MB, solid blocks <= 64 MB), SHA-256 $sh"
+$mb7 = [Math]::Round((Get-Item $sz).Length / 1MB)
+Write-Host "7z: $sz ($mb7 MB, solid blocks <= 64 MB), SHA-256 $sh"
+if ($mb7 -ge 2000) { Write-Host 'PROBLEM: over GitHub''s 2 GB limit for one release file'; Write-Host 'RESULT: FAIL'; exit 1 }
 Write-Host 'RESULT: PASS'
 # END-OF-JOB

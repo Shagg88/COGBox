@@ -34,11 +34,12 @@ What you need
 
 Getting started
 ---------------
-1. Right-click COGBox-0.6.2.zip > Extract All... to a folder of its own that you can write to, for
-   example C:\Games\COGBox. Don't start COGBox from inside the zip, and don't use Program Files
-   (Windows protects it) - COGBox tells you on start-up if it's in such a place.
-   Keep the folders when unzipping (Windows' Extract All, 7-Zip, or "unzip" on Linux). Some tools,
-   such as KDE's Ark, flatten them - COGBox then can't find the games.
+1. Right-click COGBox-0.6.2.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
+   7-zip.org) to a folder of its own that you can write to, for example C:\Games\COGBox. Don't start
+   COGBox from inside the archive, and don't use Program Files (Windows protects it) - COGBox tells
+   you on start-up if it's in such a place.
+   Keep the folders when unpacking (Windows' Extract All, 7-Zip, or 7z / your archive manager on
+   Linux). Some tools, such as KDE's Ark, flatten them - COGBox then can't find the games.
 2. Start CogBox.exe. The programs aren't code-signed, so the first time Windows may show "Windows
    protected your PC": choose "More info", then "Run anyway".
 3. Add your disc image, Games on Demand file, or extracted game folder: drag and drop it onto the
@@ -407,7 +408,7 @@ It lasts until the next restart, and lets any program use ports 1000-1023 withou
 
 Linux and Steam Deck (Proton) - experimental
 ---------------------------------------------
-1. Unzip COGBox somewhere in your home folder.
+1. Unpack the COGBox .7z somewhere in your home folder (7z x, or your archive manager).
 2. In Steam: Add a Game > Add a Non-Steam Game > browse to CogBox.exe.
 3. The game's Properties > Compatibility > "Force the use of a specific Steam Play compatibility
    tool": Proton Experimental (or a recent Proton such as 11.0, or GE-Proton).
@@ -449,8 +450,8 @@ Everything stays inside the COGBox folder:
   covers\               put your own box art here as gears2.png, gears3.png and judgment.png
                         (or .jpg). Without them, COGBox draws its own covers.
 
-To update, use the UPDATE TO button on the main screen (or the one on any game's About tab), or unzip a new release over the folder. Your
-games, saves and settings are not in the zip, so they are kept.
+To update, use the UPDATE TO button on the main screen (or the one on any game's About tab), or unpack a new release over the folder. Your
+games, saves and settings are not in the .7z, so they are kept.
 
 
 When something goes wrong
