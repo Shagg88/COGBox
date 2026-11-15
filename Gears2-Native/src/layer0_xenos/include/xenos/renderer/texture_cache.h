@@ -64,6 +64,9 @@ struct TextureCacheStats {
   // Takeover T2: pages our resolves wrote on the GPU - kept (not re-uploaded from CPU bytes), counted as changed - and
   // CPU-path loads that read such pages (their CPU bytes are not ours: shown as a count, should stay 0).
   uint64_t gpu_pages_kept = 0, gpu_pages_changed = 0, cpu_loads_of_gpu_pages = 0;
+  // GitHub #315 (review r44): texture uploads over pages our GPU once wrote but no longer GPU-current, for which pending
+  // memexport read-backs were landed first (--gow2_renderer_texture_land_exports); this window.
+  uint64_t land_export_calls = 0;
   // Stage 7: textures loaded at the resolution scale from our scaled resolves (live entries, loads, bound slots).
   uint64_t scaled_textures = 0, scaled_loads = 0, scaled_bound = 0, scaled_bytes = 0;
   std::map<std::string, uint64_t> scaled_misses;  // job 189: resolve-written textures not taken at the scale, by reason
