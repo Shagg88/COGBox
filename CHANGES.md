@@ -146,6 +146,9 @@ https://recomplauncher.com/game/cogbox
   Windows user name.
 
 ### Fixes
+- **No more crash at the start on a PC without speakers or headphones** (GitHub #312): with no sound output device, the
+  sound start-up failed and the game crashed a few seconds after the Epic logo. The game now runs silently instead, and
+  picks up sound by itself when a device is plugged in. All four games.
 - **Short key and mouse taps reach the game** (GitHub #305): a tap quicker than the game's own reading of the keys
   could be lost - for example the fast presses in a chainsaw duel. COGBox now holds each press until the game has
   read it. All four games.

@@ -1,0 +1,368 @@
+From: Shagg <shagg.dev88@gmail.com>
+Subject: [PATCH] patch103 (GitHub #312): a PC with no audio output device runs silent (own sink) instead of crashing; the audio-driver hint is never left on a fallback; null-safe client calls; --audio_force_silent (test only); r37: the stream is published only once it plays
+
+diff --git a/include/rex/audio/sdl/sdl_audio_driver.h b/include/rex/audio/sdl/sdl_audio_driver.h
+index 24c21a9..32bf802 100644
+--- a/include/rex/audio/sdl/sdl_audio_driver.h
++++ b/include/rex/audio/sdl/sdl_audio_driver.h
+@@ -11,10 +11,12 @@
+ 
+ #pragma once
+ 
++#include <atomic>
+ #include <mutex>
+ #include <queue>
+ #include <stack>
+ #include <string>
++#include <thread>
+ 
+ #include <rex/audio/audio_driver.h>
+ #include <rex/thread.h>
+@@ -36,9 +38,21 @@ class SDLAudioDriver : public AudioDriver {
+   static void SDLCallback(void* userdata, SDL_AudioStream* stream, int additional_amount,
+                           int total_amount);
+ 
++  // COGBox SDK patch 103 (GitHub #312): the one attempt to open an SDL output (default driver first, then DirectSound
++  // on Windows); false leaves SDL shut down. And the silent sink that stands in when no output opens.
++  bool TryOpenSdl(bool allow_fallbacks);
++  bool OpenSdlOutput(const char* driver);
++  void CloseSdlOutput();
++  bool log_failures_ = true;  // false while the silent sink retries (a failed try every 5 s is not worth a log line)
++  void StartSilentSink(bool allow_retry);
++  void SilentSinkLoop(bool allow_retry);
++
+   rex::thread::Semaphore* semaphore_ = nullptr;
+ 
+-  SDL_AudioStream* sdl_stream_ = nullptr;
++  std::atomic<SDL_AudioStream*> sdl_stream_{nullptr};
++  // Patch 103: the silent sink thread (consumes the queued frames at the real-time rate when there is no output)
++  std::thread silent_thread_;
++  std::atomic<bool> silent_stop_{false};
+   bool sdl_initialized_ = false;
+   uint8_t sdl_device_channels_ = 0;
+   // COGBox patch 66 (GitHub #203): the Windows default output device last checked, and frames since the last check
+diff --git a/src/audio/audio_system.cpp b/src/audio/audio_system.cpp
+index 7a711a8..38ea51c 100644
+--- a/src/audio/audio_system.cpp
++++ b/src/audio/audio_system.cpp
+@@ -234,6 +234,9 @@ X_STATUS AudioSystem::RegisterClient(uint32_t callback, uint32_t callback_arg, s
+ 
+   auto index = FindFreeClient();
+   assert_true(index >= 0);
++  if (index < 0) {  // COGBox patch 103: all clients busy - an error for the game, not a write to clients_[-1]
++    return X_STATUS_UNSUCCESSFUL;
++  }
+   REXAPU_DEBUG("AudioSystem::RegisterClient: using client index={} queued_frames={}", index,
+                queued_frames_);
+ 
+@@ -273,6 +276,9 @@ void AudioSystem::SubmitFrame(size_t index, uint32_t samples_ptr) {
+   auto global_lock = global_critical_region_.Acquire();
+   assert_true(index < kMaximumClientCount);
+   assert_true(clients_[index].driver != NULL);
++  // COGBox patch 103 (GitHub #312): a frame for a client that is not registered (a game that went on after a failed
++  // XAudioRegisterRenderDriverClient) is dropped, not written through a null driver.
++  if (index >= kMaximumClientCount || !clients_[index].driver) return;
+   (clients_[index].driver)->SubmitFrame(samples_ptr);
+ }
+ 
+@@ -281,6 +287,7 @@ void AudioSystem::UnregisterClient(size_t index) {
+ 
+   auto global_lock = global_critical_region_.Acquire();
+   assert_true(index < kMaximumClientCount);
++  if (index >= kMaximumClientCount || !clients_[index].driver) return;  // COGBox patch 103 (GitHub #312)
+   DestroyDriver(clients_[index].driver);
+   memory()->SystemHeapFree(clients_[index].wrapped_callback_arg);
+   clients_[index] = {nullptr, 0, 0, 0, false};
+diff --git a/src/audio/sdl/sdl_audio_driver.cpp b/src/audio/sdl/sdl_audio_driver.cpp
+index e54eab2..d46f9e9 100644
+--- a/src/audio/sdl/sdl_audio_driver.cpp
++++ b/src/audio/sdl/sdl_audio_driver.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <chrono>
+ #include <cstring>
+ 
+ #include <rex/assert.h>
+@@ -34,6 +35,10 @@
+ #endif
+ 
+ REXCVAR_DEFINE_BOOL(audio_mute, false, "Audio", "Mute audio output");
++// COGBox patch 103 (GitHub #312)
++REXCVAR_DEFINE_BOOL(audio_force_silent, false, "Audio",
++                    "Test only (GitHub #312): do not open any sound device; run the silent sink that a PC with no "
++                    "output device gets, so the game runs with no sound");
+ // COGBox patch 66 (GitHub #203)
+ REXCVAR_DEFINE_BOOL(audio_restore_session_volume, true, "Audio",
+                     "Unmute / restore this game's own Windows volume-mixer slider when it is muted or at 0 on the "
+@@ -131,17 +136,20 @@ SDLAudioDriver::SDLAudioDriver(memory::Memory* memory, rex::thread::Semaphore* s
+     : AudioDriver(memory), semaphore_(semaphore) {}
+ 
+ SDLAudioDriver::~SDLAudioDriver() {
++  silent_stop_ = true;
++  if (silent_thread_.joinable()) silent_thread_.join();
+   assert_true(frames_queued_.empty());
+   assert_true(frames_unused_.empty());
+ }
+ 
+-bool SDLAudioDriver::Initialize() {
+-  // Patch 40 (COGBox 0.2.1, GitHub #19): a stream that will not open (WASAPI "can't initialize audio client" on
+-  // some PCs) used to leave the guest audio code without a device and the game read a null pointer a moment later.
+-  // Now the next driver is tried - DirectSound on Windows - and then SDL's silent dummy driver, which still pulls
+-  // the frames at the real rate, so the game always runs (with sound when any driver works). A driver the player
+-  // chose with SDL_AUDIO_DRIVER is tried first, as before.
+-  auto try_open = [this]() -> bool {
++// Patch 103 (COGBox 0.6.2, GitHub #312): the old chain ended in SDL's 'dummy' driver, which on a PC with no output
++// device failed too ("Audio target 'dummy' not available", and the hint stayed set to it, so a later init failed
++// at once as well); the init then returned false, the guest's XAudioRegisterRenderDriverClient got an error, and the
++// game read a null pointer of its own audio engine 3 s later. Now the init never fails: when no SDL output opens
++// (no device, audio service off) our own silent sink pulls the frames at the real-time rate, exactly as the SDL
++// callback does for the game, so the guest audio code runs on; and the sink tries SDL again every 5 s, so a device
++// plugged in later gets sound. --audio_force_silent=true takes the silent path on purpose (test only).
++bool SDLAudioDriver::OpenSdlOutput([[maybe_unused]] const char* driver) {
+   // Set audio category for proper OS audio handling
+   SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, "playback");
+ 
+@@ -149,7 +157,7 @@ bool SDLAudioDriver::Initialize() {
+   SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_NAME_STRING, "rexglue");
+ 
+   if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+-    REXAPU_ERROR("SDL_InitSubSystem(SDL_INIT_AUDIO) failed: {}", SDL_GetError());
++    if (log_failures_) REXAPU_ERROR("SDL_InitSubSystem(SDL_INIT_AUDIO) failed: {}", SDL_GetError());
+     return false;
+   }
+   sdl_initialized_ = true;
+@@ -160,41 +168,44 @@ bool SDLAudioDriver::Initialize() {
+   desired_spec.format = SDL_AUDIO_F32LE;
+   desired_spec.channels = frame_channels_;
+   sdl_device_channels_ = frame_channels_;
+-  sdl_stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec,
+-                                          SDLCallback, this);
+-  if (!sdl_stream_) {
+-    REXAPU_ERROR("SDL_OpenAudioDeviceStream() failed: {}", SDL_GetError());
++  // r37: the stream is published to sdl_stream_ only once it plays (SubmitFrame on the game thread reads it); until then
++  // it is this function's own, and every failure below destroys it here
++  SDL_AudioStream* stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec,
++                                                      SDLCallback, this);
++  auto fail = [&stream]() { if (stream) { SDL_DestroyAudioStream(stream); stream = nullptr; } return false; };
++  if (!stream) {
++    if (log_failures_) REXAPU_ERROR("SDL_OpenAudioDeviceStream() failed: {}", SDL_GetError());
+     return false;
+   }
+ 
+-  SDL_AudioDeviceID sdl_device = SDL_GetAudioStreamDevice(sdl_stream_);
++  SDL_AudioDeviceID sdl_device = SDL_GetAudioStreamDevice(stream);
+   if (!sdl_device) {
+-    REXAPU_ERROR("SDL_GetAudioStreamDevice() failed: {}", SDL_GetError());
+-    return false;
++    if (log_failures_) REXAPU_ERROR("SDL_GetAudioStreamDevice() failed: {}", SDL_GetError());
++    return fail();
+   }
+ 
+   if (!SDL_GetAudioDeviceFormat(sdl_device, &obtained_spec, NULL)) {
+-    REXAPU_WARN("SDL_GetAudioDeviceFormat() failed: {}", SDL_GetError());
++    if (log_failures_) REXAPU_WARN("SDL_GetAudioDeviceFormat() failed: {}", SDL_GetError());
+     obtained_spec = desired_spec;
+   }
+ 
+   // A 1-channel device gets the stereo fold too, then SDL collapses to mono.
+   // Handing it a 6ch stream instead would use SDL's own downmix.
+   if (obtained_spec.channels <= 2) {
+-    SDL_DestroyAudioStream(sdl_stream_);
+-    sdl_stream_ = nullptr;
++    SDL_DestroyAudioStream(stream);
++    stream = nullptr;
+     desired_spec.channels = 2;
+     sdl_device_channels_ = 2;
+-    sdl_stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec,
+-                                            SDLCallback, this);
+-    if (!sdl_stream_) {
+-      REXAPU_ERROR("SDL_OpenAudioDeviceStream() stereo fallback failed: {}", SDL_GetError());
++    stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec,
++                                       SDLCallback, this);
++    if (!stream) {
++      if (log_failures_) REXAPU_ERROR("SDL_OpenAudioDeviceStream() stereo fallback failed: {}", SDL_GetError());
+       return false;
+     }
+-    sdl_device = SDL_GetAudioStreamDevice(sdl_stream_);
++    sdl_device = SDL_GetAudioStreamDevice(stream);
+     if (!sdl_device) {
+-      REXAPU_ERROR("SDL_GetAudioStreamDevice() failed after stereo fallback: {}", SDL_GetError());
+-      return false;
++      if (log_failures_) REXAPU_ERROR("SDL_GetAudioStreamDevice() failed after stereo fallback: {}", SDL_GetError());
++      return fail();
+     }
+   }
+ 
+@@ -207,41 +218,108 @@ bool SDLAudioDriver::Initialize() {
+               static_cast<uint32_t>(obtained_spec.format), static_cast<int>(sdl_device_channels_));
+ 
+   if (!SDL_ResumeAudioDevice(sdl_device)) {
+-    REXAPU_ERROR("SDL_ResumeAudioDevice() failed: {}", SDL_GetError());
+-    return false;
++    if (log_failures_) REXAPU_ERROR("SDL_ResumeAudioDevice() failed: {}", SDL_GetError());
++    return fail();
+   }
+ 
++  sdl_stream_.store(stream);
+   return true;
+-  };
+-  const char* const fallbacks[] = {nullptr,
++}
++
++void SDLAudioDriver::CloseSdlOutput() {
++  if (SDL_AudioStream* stream = sdl_stream_.exchange(nullptr)) SDL_DestroyAudioStream(stream);
++  if (sdl_initialized_) {
++    SDL_QuitSubSystem(SDL_INIT_AUDIO);
++    sdl_initialized_ = false;
++  }
++}
++
++bool SDLAudioDriver::TryOpenSdl(bool allow_fallbacks) {
++  // The player's own choice (SDL_AUDIO_DRIVER) or SDL's default order first, as before.
++  bool ok = OpenSdlOutput(nullptr);
+ #ifdef _WIN32
+-                                   "directsound",
++  if (!ok && allow_fallbacks) {
++    CloseSdlOutput();
++    SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "directsound");
++    REXAPU_WARN("audio: trying the 'directsound' driver instead");
++    ok = OpenSdlOutput("directsound");
++    // Never leave the fallback in the hint: a later init (the next client, or the retry) starts from the default.
++    SDL_ResetHint(SDL_HINT_AUDIO_DRIVER);
++    if (ok) REXAPU_WARN("audio: running on the 'directsound' driver");
++  }
++#else
++  (void)allow_fallbacks;
+ #endif
+-                                   "dummy"};
+-  for (const char* driver : fallbacks) {
+-    if (driver) {
+-      if (sdl_stream_) {
+-        SDL_DestroyAudioStream(sdl_stream_);
+-        sdl_stream_ = nullptr;
++  if (!ok) CloseSdlOutput();
++  return ok;
++}
++
++void SDLAudioDriver::StartSilentSink(bool allow_retry) {
++  static std::atomic<bool> logged{false};
++  if (!logged.exchange(true)) {
++    REXAPU_WARN("audio: no output device - running silent{}",
++                allow_retry ? " (a device plugged in later is picked up)" : " (--audio_force_silent)");
++  }
++  silent_stop_ = false;
++  silent_thread_ = std::thread([this, allow_retry]() { SilentSinkLoop(allow_retry); });
++}
++
++void SDLAudioDriver::SilentSinkLoop(bool allow_retry) {
++  using clock = std::chrono::steady_clock;
++  // One frame is channel_samples_ samples at frame_frequency_: 256 / 48000 s = 5.33 ms.
++  const auto period = std::chrono::nanoseconds(1000000000LL * channel_samples_ / frame_frequency_);
++  auto next = clock::now() + period;
++  auto next_retry = clock::now() + std::chrono::seconds(5);
++  while (!silent_stop_) {
++    auto now = clock::now();
++    if (now < next) {
++      std::this_thread::sleep_for(std::min<clock::duration>(next - now, std::chrono::milliseconds(20)));
++      continue;
++    }
++    if (now - next > std::chrono::milliseconds(250)) next = now;  // a stall: do not replay it
++    uint32_t consumed = 0;
++    {
++      // What SDLCallback does with a queued frame, minus the mixing: the buffer goes back to frames_unused_ and the
++      // game's semaphore is released once for it. No queued frame = silence for that slot, nothing released.
++      std::unique_lock<std::mutex> guard(frames_mutex_);
++      for (; next <= now; next += period) {
++        if (frames_queued_.empty()) continue;
++        frames_unused_.push(frames_queued_.front());
++        frames_queued_.pop();
++        ++consumed;
+       }
+-      if (sdl_initialized_) {
+-        SDL_QuitSubSystem(SDL_INIT_AUDIO);
+-        sdl_initialized_ = false;
++    }
++    for (uint32_t i = 0; i < consumed; ++i) {
++      const bool ret = semaphore_->Release(1, nullptr);
++      assert_true(ret);
++      (void)ret;
++    }
++    if (allow_retry && clock::now() >= next_retry) {
++      log_failures_ = false;
++      const bool ok = TryOpenSdl(false);
++      log_failures_ = true;
++      if (ok) {
++        REXAPU_INFO("audio: an output device is available now - sound is on");
++        return;  // SDLCallback takes over the queued frames
+       }
+-      SDL_SetHint(SDL_HINT_AUDIO_DRIVER, driver);
+-      REXAPU_WARN("audio: trying the '{}' driver instead", driver);
++      next_retry = clock::now() + std::chrono::seconds(5);
+     }
+-    if (try_open()) {
++  }
++}
++
++bool SDLAudioDriver::Initialize() {
++  if (REXCVAR_GET(audio_force_silent)) {
++    StartSilentSink(false);
++    return true;
++  }
++  if (TryOpenSdl(true)) {
+ #ifdef _WIN32
+-      default_endpoint_id_ = CheckDefaultEndpointSession(true);
++    default_endpoint_id_ = CheckDefaultEndpointSession(true);
+ #endif
+-      if (driver) REXAPU_WARN("audio: running on the '{}' driver{}", driver,
+-                              std::string_view(driver) == "dummy" ? " - no sound, but the game runs" : "");
+-      return true;
+-    }
++    return true;
+   }
+-  return false;
+-
++  StartSilentSink(true);
++  return true;
+ }
+ 
+ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
+@@ -262,13 +340,15 @@ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
+ #ifdef _WIN32
+   // Patch 66 (#203): about every 5 s (1000 frames of 256 samples at 48 kHz), notice a new Windows default output
+   // device - SDL has already moved the stream to it - and check this game's mixer slider there too.
+-  if (++endpoint_check_frames_ >= 1000) {
++  // r37: the stream is read once (the silent sink may hand over to a new one); frames are only counted while one plays
++  SDL_AudioStream* const live_stream = sdl_stream_.load();
++  if (live_stream && ++endpoint_check_frames_ >= 1000) {
+     endpoint_check_frames_ = 0;
+     const std::wstring id = CheckDefaultEndpointSession(false);
+     if (!id.empty() && id != default_endpoint_id_) {
+-      const char* name = sdl_stream_ ? SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(sdl_stream_)) : nullptr;
++      const char* name = SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(live_stream));
+       SDL_AudioSpec spec = {};
+-      const bool have = sdl_stream_ && SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(sdl_stream_), &spec, nullptr);
++      const bool have = SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(live_stream), &spec, nullptr);
+       REXAPU_INFO("audio: Windows default output device changed; the stream follows it, now '{}': {} ch, {} Hz", name ? name : "?",
+                   have ? spec.channels : 0, have ? spec.freq : 0);
+       CheckDefaultEndpointSession(true);
+@@ -292,14 +372,10 @@ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
+ }
+ 
+ void SDLAudioDriver::Shutdown() {
+-  if (sdl_stream_) {
+-    SDL_DestroyAudioStream(sdl_stream_);
+-    sdl_stream_ = nullptr;
+-  }
+-  if (sdl_initialized_) {
+-    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+-    sdl_initialized_ = false;
+-  }
++  // The silent sink first (it may be in the middle of opening SDL), then the SDL stream.
++  silent_stop_ = true;
++  if (silent_thread_.joinable()) silent_thread_.join();
++  CloseSdlOutput();
+   std::unique_lock<std::mutex> guard(frames_mutex_);
+   while (!frames_unused_.empty()) {
+     delete[] frames_unused_.top();
