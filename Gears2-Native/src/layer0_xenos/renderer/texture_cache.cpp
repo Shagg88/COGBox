@@ -1750,7 +1750,10 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
           // page that stopped being GPU-current without a CPU write (an exact-range callback: file read next to it,
           // protect-to-writable, decommit, release) while its memexport read-back is still pending holds the
           // PRE-export bytes in guest memory - land that read-back first (no-op without an overlapping one).
-          if (run_ever_gpu && flush_ever_gpu_ && before_cpu_load_) before_cpu_load_(a, b - a);
+          if (run_ever_gpu && flush_ever_gpu_ && before_cpu_load_) {
+            ++stats_.land_export_calls;  // #315
+            before_cpu_load_(a, b - a);
+          }
           backend_.UploadGuestMemory(a, guest_ + a, b - a);
           stats_.gpu_load_bytes += b - a;
         }
@@ -1901,6 +1904,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     // Green-vine review: also when the pages are no longer GPU-current but our GPU wrote them at some time - an
     // exact-range callback can end GPU-current before the export's read-back has landed.
     if ((any || (ever && flush_ever_gpu_)) && before_cpu_load_) {
+      if (!any) ++stats_.land_export_calls;  // #315: only because the pages were GPU-written once
       // Job 042: pending memexport readbacks over these pages land in guest memory now, before the bytes are read.
       for (uint32_t r = 0; r < 2; ++r)
         if (lengths[r]) before_cpu_load_(starts[r], lengths[r]);

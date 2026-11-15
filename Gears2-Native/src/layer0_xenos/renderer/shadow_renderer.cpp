@@ -746,12 +746,13 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_memexport, false, "Gears2",
                     "mirror (u0), export-only draws (no rasterization) run as point lists with no targets, the written "
                     "ranges become GPU-current and later vertex fetches read them from the mirror. false: such draws "
                     "are skipped, as before");
-REXCVAR_DEFINE_BOOL(gow2_renderer_export_pending_mirror, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_export_pending_mirror, true, "Gears2",   // #315 (review r44 R1): on by default
                     "Patch 0007 (Gears 3 2026-10-23, NPC vertex explosions; race found by both chats): while an "
                     "exported range's readback has not landed in guest memory yet, its pages keep feeding vertex "
                     "fetches from the mirror (the export's bytes) even when a CPU write elsewhere in the same 4 MB block "
-                    "ended their GPU-current state - instead of re-uploading the pre-export guest bytes over them. "
-                    "false = as before");
+                    "ended their GPU-current state - instead of re-uploading the pre-export guest bytes over them. On by "
+                    "default since 0.6.3 (GitHub #315: a texture moved twice copies its source through this path). "
+                    "false = as 0.6.2");
 REXCVAR_DEFINE_BOOL(gow2_renderer_export_settle, false, "Gears2",   // parked (Shagg 11-14 15:32): off until proven
                     "Green-vine review (job 1844): when a memexport read-back has landed in guest memory, its pages that "
                     "nothing wrote since stop being GPU-current (guest memory now holds the same bytes), so a texture "
@@ -765,13 +766,14 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_export_settle, false, "Gears2",   // parked (S
 // through the physical mapping, bumps nothing, so the texture keeps the wrong small mips for good. With this on, a texture
 // load over pages our GPU ever wrote first lands any pending read-back over them (FlushExportReadbacksFor: no-op and no
 // wait when none overlaps). It was tied to --gow2_renderer_export_settle (review r26 R1, for a clean A/B), which stays
-// parked off; r26 found this part safe to have on (stalls only when a load overlaps an export still in flight; inert in
+// parked off; r26 / r44: correct, waits only when a load overlaps an export still in flight (to be measured on a streaming run; inert in
 // Gears 1 / 2, which move no textures with memexport). The #315 log (0.6.2): 1922 GPU-current pages ended by exact-range
 // callbacks in one 28-minute session (how many of them before their read-back landed is not logged).
 REXCVAR_DEFINE_BOOL(gow2_renderer_texture_land_exports, true, "Gears2",
                     "GitHub #315 (blue / purple blocks, Judgment): before a texture loads from guest memory pages our GPU "
                     "once wrote, land any memexport read-back still pending over them (else the texture can keep the "
-                    "bytes from before the game moved it). false = only while the pages are still GPU-current (0.6.2)");
+                    "bytes from before the game moved it). false = only while the pages are still GPU-current (0.6.2), unless "
+                    "--gow2_renderer_export_settle is on");
 REXCVAR_DEFINE_BOOL(gow2_renderer_memexport_readback, true, "Gears2",
                     "With --gow2_renderer_memexport: copy every exported range back into guest memory once the GPU has "
                     "written it (job 041: Gears 3 moves DXT textures with memexport copies, and DXT textures load from "
@@ -2941,12 +2943,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         const rr::TextureCacheStats& ts = textures_->Stats();
         REXLOG_INFO("gow2_renderer: resolves to guest (T2) frames {}-{}: our resolves written {} ({:.1f} MB), skipped "
                     "{} (format {}, endian {}) | resolves seen {} (colour {}, depth {}) | texture pages from our resolves kept {} / "
-                    "counted changed {} (this range) | CPU-path loads that read our pages {} (this range, should be 0)",
+                    "counted changed {} (this range) | CPU-path loads that read our pages {} (this range, should be 0) | "
+                    "#315 texture loads that landed export read-backs first {} (this range; the waits are in the memexport line)",
                     frame_ + 1 - uint64_t(log_every_), frame_, t2_stats_.written, double(t2_stats_.bytes) / 1048576.0,
                     t2_stats_.skipped, t2_stats_.skipped_format, t2_stats_.skipped_endian,
                     t2_stats_.seen_colour + t2_stats_.seen_depth, t2_stats_.seen_colour,
                     t2_stats_.seen_depth, ts.gpu_pages_kept, ts.gpu_pages_changed,
-                    ts.cpu_loads_of_gpu_pages);
+                    ts.cpu_loads_of_gpu_pages, ts.land_export_calls);
         if (t2_measure_skip_)
           REXLOG_INFO("gow2_renderer: T2 measure-skip frames {}-{}: through-only {}, skipped {} (mirror not written)",
                       frame_ + 1 - uint64_t(log_every_), frame_, t2_stats_.measure_through_only,

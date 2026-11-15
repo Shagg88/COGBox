@@ -2,7 +2,7 @@
 
 ## 0.6.3 (not released)
 
-- **Judgment: blue / purple blocks on surfaces (#315)**, mostly seen on AMD graphics cards at high frame rates and building up over a session: a texture the game had just moved in video memory could be loaded from the old copy and keep it. It now waits for the moved copy first. (Not yet confirmed by the reporter.)
+- **Judgment: blue / purple blocks on surfaces (#315)**, mostly seen on AMD graphics cards at high frame rates and building up over a session: a texture the game had just moved in video memory could be loaded from the old copy and keep it. It now waits for the moved copy first, also when the game moves the same texture again. (Not yet confirmed by the reporter.)
 
 ## 0.6.2
 
