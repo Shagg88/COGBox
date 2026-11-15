@@ -7,7 +7,7 @@
 // one mode object per state (GameplayCam_Default, _Targeting, _RoadieRun, _Cover, _Mantle, ...; GearGameplayCamera.
 // FindBestCameraMode picks one each frame). Each mode puts the camera at its ViewOffset (OffsetHigh / OffsetMid /
 // OffsetLow, chosen by the view pitch; X forward, Y right, Z up) from the camera origin. For the walking / crouching /
-// aiming / roadie-run modes only, every live mode object gets all three offsets set to --gow2_first_person_offset
+// aiming modes only (roadie run stays third person), every live mode object gets all three offsets set to --gow2_first_person_offset
 // (X,Y,Z), its split-screen and 4:3 adjustments (ViewOffset_ViewportAdjustments, every element) and its sideways strafe / run
 // shifts zeroed, and optionally its FOVAngle (--gow2_first_person_fov). Everything else - cover and cover aim, blind
 // fire, executions, chainsaw duels, DBNO, death, mantling, vehicles, turrets, the Brumak, the shield, conversations,
@@ -62,14 +62,14 @@
 
 REXCVAR_DEFINE_BOOL(gow2_first_person, false, "Gears2",
                     "First-person camera (experimental): the game's own camera at eye level while walking, crouching, "
-                    "aiming and roadie running; cover, executions, vehicles, turrets and cutscenes stay third person. "
+                    "aiming; roadie run, cover, executions, vehicles, turrets and cutscenes stay third person. "
                     "PageUp switches it off and on in the game (bind_cogbox_first_person)");
 REXCVAR_DEFINE_STRING(gow2_first_person_offset, "8,0,0", "Gears2",
                       "First-person camera: where the camera sits from the game's camera origin, 'forward,right,up' "
                       "(game units; read again every 2 s, so it can be tuned from the SDK console)");
 REXCVAR_DEFINE_INT32(gow2_first_person_fov, 0, "Gears2",
                      "First-person camera: field of view while walking / crouching (0 = the game's own or the launcher's "
-                     "FOV setting; aiming and roadie run keep theirs)");
+                     "FOV setting; aiming keeps its zoom)");
 REXCVAR_DEFINE_BOOL(gow2_first_person_weapon, true, "Gears2",
                     "First-person camera: draw your own weapon (the game hides it with your body when the camera is "
                     "inside you; this sets the engine's bIgnoreHiddenActorsMembership on the weapon's meshes). With "
@@ -86,11 +86,12 @@ namespace obj = ue3::obj;
 using Clock = std::chrono::steady_clock;
 
 // The modes moved to the eyes (exact class names, Gears 2's GearGame script; a subclass not listed stays as it is).
-// fov: --gow2_first_person_fov applies (aiming keeps its zoom, roadie run its wider view).
+// fov: --gow2_first_person_fov applies (aiming keeps its zoom).
 struct Rule { const char* cls; bool fov; };
 constexpr Rule kModes[] = {
     {"GameplayCam_Default", true}, {"GameplayCam_Crouch", true}, {"GameplayCam_Targeting", false},
-    {"GameplayCam_TargetingGrenade", false}, {"GameplayCam_RoadieRun", false},
+    {"GameplayCam_TargetingGrenade", false},
+    // roadie run stays third person (Shagg 11-14 16:26: a first-person roadie run would make people sick)
 };
 // sideways / forward shifts the camera adds while strafing or running (Default: strafe +-15 right, run +20 / -30
 // forward [V package defaults]): zeroed in first person (12-byte vectors; a name the class doesn't have is skipped)
@@ -510,7 +511,7 @@ void Gow2InstallFirstPerson() {
     if (now - last.exchange(now, std::memory_order_relaxed) < 300) return;   // r21: every repeat restarts the wait
     g_want.store(!g_want.load(std::memory_order_relaxed), std::memory_order_relaxed);
   });
-  REXLOG_INFO("first person: on (experimental) - walking, crouching, aiming and roadie run at eye level; PageUp toggles");
+  REXLOG_INFO("first person: on (experimental) - walking, crouching and aiming at eye level; PageUp toggles");
   StartObjectsInit();
 }
 

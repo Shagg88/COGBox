@@ -12,7 +12,7 @@ https://recomplauncher.com/game/cogbox
 
 ### New and experimental (all off by default)
 - **First-person camera** (Gameplay tab, **experimental**, Gears 3, Gears 2 and Judgment): the game's own camera moves
-  to your character's eyes while you walk, crouch, aim and roadie run. In cover, executions, when you're down, in vehicles, on
+  to your character's eyes while you walk, crouch and aim. In roadie run, cover, executions, when you're down, in vehicles, on
   turrets and in cutscenes it goes back to the usual over-the-shoulder view. **Page Up** switches it off and on in the
   game. In Gears 3 you see your own arms, body and gun, while your head is hidden (with the game's own big-head
   control) so it doesn't fill the view; Judgment works the same way. In Gears 2 you see your body and gun too. Gears 2

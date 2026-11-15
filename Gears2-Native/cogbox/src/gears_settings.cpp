@@ -527,10 +527,10 @@ std::vector<Option> make_options(Game g) {
     add(make("Mutators", "Unlock all mutators", Tab::Gameplay, Kind::Bool, SH, 0,
              "Every mutator (gameplay modifier) available from the start. Writes nothing to your profile.", 328), "mutators");
     // First-person camera (Gears 3, Gears 2, Judgment; layer3 first_person.cpp): the game's own camera moved to the
-    // eyes for the walking / crouching / aiming / roadie-run modes; every other camera mode keeps its third-person view
+    // eyes for the walking / crouching / aiming modes (roadie run stays third person); every other camera mode keeps its third-person view
     add(make("FirstPerson", "First-person camera (experimental)", Tab::Gameplay, Kind::Bool, PG, 0,
-             "Experimental - the game's own camera moves to your character's eyes while you walk, crouch, aim and roadie "
-             "run. In cover, executions, vehicles, turrets and cutscenes it goes back to the usual over-the-shoulder "
+             "Experimental - the game's own camera moves to your character's eyes while you walk, crouch and aim. In "
+             "roadie run, cover, executions, vehicles, turrets and cutscenes it goes back to the usual over-the-shoulder "
              "view. Page Up switches it off and on in the game. Gears 2, Gears 3 and Judgment.", 0), "firstperson");
     // Shagg 31 Oct: the level select menu is no longer offered (the port's --gowj_level_select stays for testing)
     // 0.2.0 (GitHub #4): the game's own language - the runtime's user_language (Xbox language IDs, issue #4's table)

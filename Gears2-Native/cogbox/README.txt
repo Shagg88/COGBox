@@ -67,7 +67,7 @@ apply does that for you.
 New in 0.6.2
 ------------
 - First-person camera (Gameplay tab, experimental, off by default), Gears 3, Gears 2, Judgment: the
-  game's camera at your character's eyes while you walk, crouch, aim and roadie run; cover, executions,
+  game's camera at your character's eyes while you walk, crouch and aim; roadie run, cover, executions,
   vehicles, turrets and cutscenes stay over the shoulder. Page Up switches it in the game. You see
   your own body and gun (Gears 3 and Judgment hide your head); Gears 2 and Judgment haven't been tried in a real
   play-through yet.
