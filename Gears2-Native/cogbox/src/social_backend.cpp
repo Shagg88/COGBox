@@ -6,6 +6,7 @@
 #include "../third_party/nlohmann/json.hpp"
 
 #include <memory>
+#include <chrono>
 #include <mutex>
 
 namespace {
@@ -23,11 +24,17 @@ struct LauncherAccount {
     std::optional<SocialAccount> acc;
     bool given_up = false;
     std::string error;
+    std::optional<SocialAccount> unsaved;   // r36: claimed, but its file couldn't be written yet (held): written later
+    std::chrono::steady_clock::time_point busy_since{};   // r36: the file has been held since (permissions after 60 s)
 };
 }  // namespace
 
 namespace {
 const char* const kBusyError = "The online account file is busy right now (OneDrive or a virus scanner may be holding it). COGBox will try again.";
+const char* const kHeldError = "COGBox still can't read the online account file (identity.json in the profile folder). Check that "
+                               "your Windows user may read it (Properties > Security) and that no other program keeps it open.";
+const char* const kUnsavedError = "The online account is in use but its file couldn't be saved yet (OneDrive or a virus scanner "
+                                  "may be holding it). COGBox will save it again shortly - keep COGBox open a moment.";
 }  // namespace
 
 SocialBackend launcher_backend(const std::string& server_url, const std::string& identity_dir, const std::string& name) {
@@ -38,17 +45,24 @@ SocialBackend launcher_backend(const std::string& server_url, const std::string&
     SocialBackend b;
     b.account = [st]() -> std::optional<SocialAccount> {
         std::lock_guard<std::mutex> lk(st->mu);   // the worker is the only caller; the lock guards `renamed`
-        if (st->acc || !st->url) return st->acc;
+        if (st->acc) {   // r36: a claimed account whose file couldn't be written is saved as soon as it can be
+            if (st->unsaved && write_account_replace(st->dir, *st->unsaved)) { st->unsaved.reset(); if (st->error == kUnsavedError) st->error.clear(); }
+            return st->acc;
+        }
+        if (!st->url) return st->acc;
         // 0.6.2 (#302 hardening): a file that exists but could not be read just now (OneDrive / antivirus holding it) is
         // "unknown", not "no account": nothing is claimed, set aside or replaced for it - this is asked again later.
         bool busy = false;
         st->acc = read_account(st->dir, &busy);
         if (st->acc || st->given_up) { if (st->acc) st->error.clear(); return st->acc; }
-        if (busy) {
-            st->error = kBusyError;
+        if (busy) {   // never claims, sets aside or replaces; after a minute held the message names permissions too
+            const auto now = std::chrono::steady_clock::now();
+            if (st->busy_since == std::chrono::steady_clock::time_point{}) st->busy_since = now;
+            st->error = now - st->busy_since > std::chrono::seconds(60) ? kHeldError : kBusyError;
             return st->acc;
         }
-        if (st->error == kBusyError) st->error.clear();
+        st->busy_since = {};
+        if (st->error == kBusyError || st->error == kHeldError) st->error.clear();
         std::string n;
         {
             std::lock_guard<std::mutex> g(g_name_mu);
@@ -86,8 +100,11 @@ SocialBackend launcher_backend(const std::string& server_url, const std::string&
             if (auto f = read_account(st->dir)) { st->acc = f; return st->acc; }   // a game completed it meanwhile: its own
             if (auto c = r.status == 200 ? parse_claim(r.body) : std::nullopt) {
                 if (!write_account_replace(st->dir, *c)) {
-                    st->given_up = true;
-                    st->error = "Couldn't save the online account in the profile folder (" + st->dir + ").";
+                    // r36 B1: the claim succeeded - dropping its token would make the server refuse this uuid next start
+                    // and a new #number would follow (#302). Keep it for this session and write the file again later.
+                    st->acc = c;
+                    st->unsaved = c;
+                    st->error = kUnsavedError;
                     return st->acc;
                 }
                 st->acc = c;

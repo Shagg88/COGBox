@@ -474,7 +474,8 @@ void Gow3SplitLayoutTick() {
   const uint8_t desired = read8(viewport + uint32_t(desired_off));
   const uint8_t active = active_off >= 0 ? read8(viewport + uint32_t(active_off)) : 0xFF;
   static uint8_t logged_desired = 0xFF, logged_active = 0xFF;
-  if (desired != logged_desired || active != logged_active) {
+  static int split_lines = 0;   // r36: every split log line is capped (a game that keeps resetting it cannot flood the log)
+  if ((desired != logged_desired || active != logged_active) && ++split_lines <= 300) {
     REXLOG_INFO("gow3_split_vertical: split type desired {} active {} (2 = side by side)", desired, active);
     logged_desired = desired;
     logged_active = active;
@@ -485,7 +486,7 @@ void Gow3SplitLayoutTick() {
   // gave the level up for good and the split went back to top / bottom ("worked only for a brief moment"). Now:
   //  - a set is "in flight" until the layout is seen side by side; a set that does not show within 3 s was lost or
   //    overwritten and is made again;
-  //  - a "quick revert" is only counted when the layout WAS seen side by side and the game turned it back within 2 s;
+  //  - a "quick revert" is only counted when the layout WAS seen side by side and the game turned it back within 10 s;
   //  - after quick reverts (or lost sets) the wait before the next set doubles (2, 4, 8, 16, then 30 s at most), so the
   //    game is never fought every frame, but it is never left alone for the rest of the level either; the count starts
   //    again after 10 s of a layout that held, or at the next level.
@@ -498,7 +499,7 @@ void Gow3SplitLayoutTick() {
     if (vertical_since == Clock::time_point{}) vertical_since = now;
     if (in_flight) {
       in_flight = false;
-      REXLOG_INFO("gow3_split_vertical: side by side after {} ms", std::chrono::duration_cast<std::chrono::milliseconds>(now - last_set).count());
+      if (++split_lines <= 300) REXLOG_INFO("gow3_split_vertical: side by side after {} ms", std::chrono::duration_cast<std::chrono::milliseconds>(now - last_set).count());
     }
     if (fails && now - vertical_since >= std::chrono::seconds(10)) fails = 0;  // it holds
     return;
@@ -506,9 +507,11 @@ void Gow3SplitLayoutTick() {
   if (vertical_since != Clock::time_point{}) {  // it was side by side a moment ago: the game turned it back
     const auto held = now - vertical_since;
     vertical_since = {};
-    if (held < std::chrono::seconds(2)) {
+    // r36: a reset within 10 s of holding counts (a game that resets the split every few seconds backs this off too;
+    // a layout that held longer was changed for a reason of the game's own and is simply set again)
+    if (held < std::chrono::seconds(10)) {
       ++fails;
-      REXLOG_INFO("gow3_split_vertical: the game turned the split back after {} ms ({} quick reset(s) in a row)",
+      if (++split_lines <= 300) REXLOG_INFO("gow3_split_vertical: the game turned the split back after {} ms ({} quick reset(s) in a row)",
                   std::chrono::duration_cast<std::chrono::milliseconds>(held).count(), fails);
     }
   }
@@ -675,7 +678,8 @@ void Gow3NoteTickCall(uint32_t hits_before, double result) {
     }
   }
   if (window_calls >= 1800) {  // every 1800 ticks (30 s at 60): only when some did not reach the hook
-    if (window_skipped)
+    static int summaries = 0;   // r36: capped (smoothing off = every window skips)
+    if (window_skipped && ++summaries <= 60)
       REXLOG_INFO("gow3_max_fps: {} of the last {} engine ticks did not reach the limiter hook ({} of {} so far)", window_skipped,
                   window_calls, skipped, calls);
     window_calls = window_skipped = 0;
