@@ -404,16 +404,17 @@ uint32_t FindHeadControl(uint32_t mesh, uint32_t& tree, std::string& which) {
   g_head.listsVia = l.via;
   const uint32_t data = obj::Read32(tree + uint32_t(lists.offset)), n = obj::Read32(tree + uint32_t(lists.offset) + 4);
   if (!data || !n || n > 512 || !obj::Readable(data, n * l.stride)) return 0;
-  uint32_t found[std::size(kHeadControls)] = {};
+  uint32_t found[std::size(kHeadControls)] = {}, foundBone[std::size(kHeadControls)] = {};
   for (uint32_t i = 0; i < n; i++) {
     uint32_t c = obj::Read32(data + i * l.stride + l.head);
+    const uint32_t bone = obj::Read32(data + i * l.stride);   // SkelControlListHead.BoneName (index; r27: which bone)
     for (int k = 0; c && k < 64; k++, c = Ptr(c, "NextControl")) {
       if (!obj::IsLive(c)) break;
       const PropInfo cn = Prop(obj::ClassOf(c), "ControlName");
       if (cn.offset < 0 || obj::Read32(c + uint32_t(cn.offset) + 4) != 0) continue;
       const std::string name = obj::Name(obj::Read32(c + uint32_t(cn.offset)));
       for (size_t j = 0; j < std::size(kHeadControls); j++)
-        if (!found[j] && name == kHeadControls[j]) found[j] = c;
+        if (!found[j] && name == kHeadControls[j]) found[j] = c, foundBone[j] = bone;
     }
   }
   for (size_t j = 0; j < std::size(kHeadControls); j++)
@@ -421,7 +422,7 @@ uint32_t FindHeadControl(uint32_t mesh, uint32_t& tree, std::string& which) {
       // the control belongs to this mesh (SkelControlBase.SkelComponent, when the class has it and it is set)
       const uint32_t sc = Ptr(found[j], "SkelComponent");
       if (sc && sc != mesh) continue;
-      which = kHeadControls[j];
+      which = std::string(kHeadControls[j]) + " on bone " + obj::Name(foundBone[j]);
       return found[j];
     }
   return 0;
@@ -470,10 +471,21 @@ void HeadTick(uint32_t mesh, const char* why) {
                 obj::ObjectName(g_head.cls), c);
   }
   const uint32_t c = g_head.ctrl, cls = g_head.cls;
-  const PropInfo bs = Prop(cls, "BoneScale"), cs = Prop(cls, "ControlStrength"), st = Prop(cls, "StrengthTarget");
-  if (bs.offset < 0) { g_head.state = "no BoneScale"; return; }
+  // review r27 R5: each a 4-byte FloatProperty (checked once per class)
+  static uint32_t checkedCls = 0;
+  static bool floatsOk = false, strengthOk = false;
+  if (cls != checkedCls) {
+    const auto isFloat = [cls](const char* p) {
+      return obj::PropertySize(cls, p) == 4 && obj::PropertyType(cls, p) == "FloatProperty";
+    };
+    checkedCls = cls, floatsOk = isFloat("BoneScale"), strengthOk = isFloat("ControlStrength") && isFloat("StrengthTarget");
+  }
+  const PropInfo bs = Prop(cls, "BoneScale");
+  const PropInfo cs = strengthOk ? Prop(cls, "ControlStrength") : PropInfo{}, st = strengthOk ? Prop(cls, "StrengthTarget") : PropInfo{};
+  if (bs.offset < 0 || !floatsOk) { g_head.state = "no BoneScale"; return; }
   // the words wanted: BoneScale 0; the strength 1 when it is below (SetHeadScale's SetSkelControlStrength(1, 0)) or ours
-  std::vector<std::pair<uint32_t, uint32_t>> want{{c + uint32_t(bs.offset), Bits(0.f)}};
+  // review r27 R1: 0.01, not 0 - the same picture, but the bone's matrix stays invertible (headshot direction, face IK)
+  std::vector<std::pair<uint32_t, uint32_t>> want{{c + uint32_t(bs.offset), Bits(0.01f)}};
   for (const PropInfo* p : {&cs, &st})
     if (p->offset >= 0) {
       const uint32_t a = c + uint32_t(p->offset);
