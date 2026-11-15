@@ -2176,6 +2176,13 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         for (const std::string &m : env.mods) j += (j.empty() ? "" : ";") + m;
         a.push_back("--ue3_mods=" + q(j));
     }
+    // KiltedKernel: texture packs - the enabled mods' folders again, the one loaded last first (it wins, as its files do);
+    // the renderer takes the DDS files named by texture hash in them (layer0_xenos/renderer/texture_pack.cpp)
+    if (!env.mods.empty() && cap_exe(env, "gow2_texture_pack_dirs")) {
+        std::string j;
+        for (auto m = env.mods.rbegin(); m != env.mods.rend(); ++m) j += (j.empty() ? "" : ";") + *m;
+        a.push_back("--gow2_texture_pack_dirs=" + q(j));
+    }
     // PS1 940-958 (launcher patches 0155 / 0158): frame rate. 0.4.6 (Shagg 5 Nov: "FPS cap needs to be 60"): the cap the
     // player picks is the cap. With vsync, only a cap ABOVE the refresh rate (or Unlimited) is brought down - to the refresh
     // rate itself (half of it with frame generation), no longer to 3 under it (60 on a 60 Hz screen stays 60; 120 on a

@@ -1110,6 +1110,8 @@ static void mods_tab(App &a, int g)
             // Gears 3: what the game will make of it (mods.cpp apply_mod_rules)
             if (m.enabled && !m.problem.empty()) lamp_line(3, "Left out by the game: " + m.problem);
             else if (m.enabled && !m.campaign.empty()) lamp_line(1, m.campaign);
+            if (m.textures) lamp_line(m.enabled ? 1 : 0, "Texture pack: " + std::to_string(m.textures) + " texture" +
+                                                             (m.textures == 1 ? "" : "s"));
             for (const std::string &n : m.notes) ui_note("mod.ini: " + n, col::amber);
             ImGui::PopID();
         }

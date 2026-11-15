@@ -160,6 +160,7 @@ DXGI_FORMAT ResourceFormat(Format f) {
     case Format::kBC3: return DXGI_FORMAT_BC3_UNORM;
     case Format::kBC4: return DXGI_FORMAT_BC4_UNORM;
     case Format::kBC5: return DXGI_FORMAT_BC5_UNORM;
+    case Format::kBC7: return DXGI_FORMAT_BC7_UNORM;
     case Format::kD32FloatS8X24: return DXGI_FORMAT_R32G8X24_TYPELESS;
     case Format::kD24UnormS8: return DXGI_FORMAT_R24G8_TYPELESS;
     default: return DXGI_FORMAT_UNKNOWN;
