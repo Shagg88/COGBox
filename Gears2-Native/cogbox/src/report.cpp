@@ -84,7 +84,7 @@ static std::vector<std::string> adapters_text()
     IDXGIFactory1 *fac = nullptr;
     if (create && SUCCEEDED(create(__uuidof(IDXGIFactory1), (void **)&fac))) {
         IDXGIAdapter1 *ad = nullptr;
-        for (UINT i = 0; fac->EnumAdapters1(i, &ad) != DXGI_ERROR_NOT_FOUND && i < 8; i++) {
+        for (UINT i = 0; i < 8 && SUCCEEDED(fac->EnumAdapters1(i, &ad)) && ad; i++) {   // r35: any failure ends the walk (no null use)
             DXGI_ADAPTER_DESC1 d;
             if (SUCCEEDED(ad->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
                 std::string s = wide_utf8(d.Description);
@@ -119,7 +119,7 @@ std::vector<std::string> report_gpu_names()
     IDXGIFactory1 *fac = nullptr;
     if (create && SUCCEEDED(create(__uuidof(IDXGIFactory1), (void **)&fac))) {
         IDXGIAdapter1 *ad = nullptr;
-        for (UINT i = 0; fac->EnumAdapters1(i, &ad) != DXGI_ERROR_NOT_FOUND && i < 8; i++) {
+        for (UINT i = 0; i < 8 && SUCCEEDED(fac->EnumAdapters1(i, &ad)) && ad; i++) {   // r35: any failure ends the walk (no null use)
             DXGI_ADAPTER_DESC1 d;
             if (SUCCEEDED(ad->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
                 std::string s = wide_utf8(d.Description);
@@ -138,26 +138,40 @@ std::vector<GpuCard> report_gpu_cards()
     std::vector<GpuCard> out;
     HMODULE dx = LoadLibraryA("dxgi.dll");
     if (!dx) return out;
+    // r35: the games only use cards that run DirectX 12 at feature level 11_0 (gpu_system.cpp): list only those.
+    // D3D12CreateDevice with no device pointer only answers whether it could be made. No d3d12.dll: no filter.
+    typedef HRESULT(WINAPI * D3D12CreateFn)(IUnknown *, int, REFIID, void **);
+    HMODULE d12 = LoadLibraryA("d3d12.dll");
+    D3D12CreateFn d12create = d12 ? (D3D12CreateFn)(void *)GetProcAddress(d12, "D3D12CreateDevice") : nullptr;
     typedef HRESULT(WINAPI * CreateFn)(REFIID, void **);
     CreateFn create = (CreateFn)(void *)GetProcAddress(dx, "CreateDXGIFactory1");
     IDXGIFactory1 *fac = nullptr;
     if (create && SUCCEEDED(create(__uuidof(IDXGIFactory1), (void **)&fac))) {
         IDXGIAdapter1 *ad = nullptr;
-        for (UINT i = 0; fac->EnumAdapters1(i, &ad) != DXGI_ERROR_NOT_FOUND && i < 8; i++) {
+        for (UINT i = 0; i < 8 && SUCCEEDED(fac->EnumAdapters1(i, &ad)) && ad; i++) {   // r35: any failure ends the walk (no null use)
             DXGI_ADAPTER_DESC1 d;
             if (SUCCEEDED(ad->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
-                std::string s = wide_utf8(d.Description);
+                // r35: the name as the settings keep it (sanitize_text for GraphicsCard: no control characters or
+                // quotes, trimmed), so a saved choice always equals its list entry
+                std::string s;
+                for (unsigned char ch : wide_utf8(d.Description)) if (ch >= 0x20 && ch != 0x7f && ch != '"') s += (char)ch;
+                while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
+                while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
+                // 0x0000b000 = D3D_FEATURE_LEVEL_11_0; IID of ID3D12Device {189819f1-1db6-4b57-be54-1821339b85f7}
+                static const GUID kIidD3D12Device = { 0x189819f1, 0x1db6, 0x4b57, { 0xbe, 0x54, 0x18, 0x21, 0x33, 0x9b, 0x85, 0xf7 } };
+                const bool d12ok = !d12create || SUCCEEDED(d12create(ad, 0xb000, kIidD3D12Device, nullptr));
                 std::string low = s;
                 for (char &c : low) c = (char)tolower((unsigned char)c);
                 const bool basic = low.find("microsoft basic") != std::string::npos;   // Basic Render Driver / Display Adapter
                 bool dup = false;
                 for (const GpuCard &c : out) dup |= c.name == s;
-                if (!s.empty() && !basic && !dup) out.push_back({ s, (unsigned)(d.DedicatedVideoMemory >> 20) });
+                if (!s.empty() && !basic && !dup && d12ok) out.push_back({ s, (unsigned)(d.DedicatedVideoMemory >> 20) });
             }
             ad->Release();
         }
         fac->Release();
     }
+    if (d12) FreeLibrary(d12);
     FreeLibrary(dx);
     return out;
 }
