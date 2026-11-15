@@ -19,7 +19,7 @@
   another order, and in rare cases Windows stops sending controller input until the PC restarts - turn the option off
   if a controller misbehaves. PlayStation controllers are not affected; DualSense adaptive triggers work as before.
   **Not tried with an Xbox controller yet.** GitHub #245.
-- **About 50 MB smaller download:** COGBox no longer ships a second, slower copy of each game (`gow2-normal.exe` and
+- **Smaller download:** COGBox no longer ships a second, slower copy of each game (`gow2-normal.exe` and
   so on) that it switched to by itself after a game crashed twice in a row. In the crash reports since 0.5.0 that
   happened twice, and the slower copy crashed the same way both times, so it did not help. Each game now has just the
   one, faster program. When you update, the old copies are moved to the `_old-files` folder like other old program files

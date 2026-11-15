@@ -30,7 +30,7 @@ Gears 1, 3 and Judgment build on Gears 2's shared code (`Gears2-Native\src\layer
 four project folders side by side as they are here.
 
 Each game ships one build, made with the faster recompiler options its manifest turns on. (0.5.0 - 0.6.2 also shipped
-a `<exe>-normal.exe` built without them, as a crash fallback; it and its `tools\build_normal_code.ps1` were removed in
+a `<stem>-normal.exe` built without them, as a crash fallback; it and its `tools\build_normal_code.ps1` were removed in
 0.6.3 and are in the git history.)
 
 ## Building the launcher (COGBox)
