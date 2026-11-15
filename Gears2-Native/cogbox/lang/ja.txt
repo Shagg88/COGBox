@@ -1527,3 +1527,6 @@ Undo Customise = カスタマイズを元に戻す
 In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = CogBox.ini にありますが、ゲームが理解できない部分（スペースと記号を除いて残します）:
 Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = カスタマイズ以降の変更をすべて元に戻し、その前に選んでいた配置（と CogBox.ini の行）に戻します。
 Or choose it from the list. = または一覧から選びます。
+# 0.6.3 GitHub #245 Xbox trigger rumble (machine-made translation, please check)
+Trigger rumble (Xbox controllers) = トリガー振動（Xbox コントローラー）
+Xbox One and Series controllers: the motors in the triggers kick with each shot (harder for shotguns and heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while Controller vibration is off, here or in the game's options. To reach the trigger motors the game reads controllers through Windows raw input; rarely, Windows then stops sending controller input until the PC restarts - untick this if a controller stops responding. Other controllers are not affected. = Xbox One / Series コントローラー：射撃ごとにトリガー内のモーターが短く振動し（ショットガンや重火器ではより強く）、チェーンソーの回転中やミニガン・火炎放射器の発射中は震え続けます。コントローラーの振動がオフのとき（ここでもゲームのオプションでも）は何も起きません。トリガーのモーターを動かすため、ゲームは Windows の Raw Input でコントローラーを読み取ります。まれに、その後 PC を再起動するまで Windows がコントローラーの入力を送らなくなることがあります。コントローラーが反応しなくなったらオフにしてください。他のコントローラーには影響しません。

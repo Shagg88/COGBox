@@ -8,6 +8,14 @@
   (`None` turns it off). The key is shown on the Controls tab. Suggested in GitHub #316.
 - **Custom controller layout in the launcher:** Controls tab > Controller layout > **Customise...** (or **Custom**) lists the game's buttons; click one and press the controller button you want for it (without a controller, pick it from a list), with **Swap sticks** and **Reset to the game's own**. A button already in use swaps with the old one. One layout for all four games, still saved as `[Pad] Remap=` in `CogBox.ini` - no more editing it by hand (a hand-written line is read and kept).
 - **Cheats are off in Versus** (all four games): the cheat keys (F5-F11, `--gowX_cheats`) no longer work in any Versus match - online, System Link, private matches and local split screen, with or without bots. They still work in the campaign (solo and co-op) and in Horde, Beast and Survival. Any game type not on that list is treated as Versus. Other console commands from `--ue3_hotkeys` / `--ue3_exec` are refused in Versus too (the launcher's own display settings still apply). The Horde-bots button (Back, Gears 2 and 3) is not blocked: it turns the game's cheat flag on and adds bots, so switch it off for Versus. Cheats are also off in the menus and lobbies.
+- **Trigger rumble for Xbox One / Series controllers** (Controls tab, all four games, **experimental**, off by default):
+  the small motors in the triggers give a short kick with each shot - harder for the Gnasher, Boomshot and heavy
+  weapons - and buzz while the chainsaw revs or a Mulcher, Troika or Scorcher fires. Nothing in menus, cutscenes, while
+  paused or dead, with the game window in the background, or while vibration is off (COGBox's Controller vibration or
+  the game's own option). To reach the trigger motors the game reads controllers through Windows raw input; in rare
+  cases Windows then stops sending controller input until the PC restarts - turn the option off if a controller stops
+  responding. Xbox 360, PlayStation and other controllers are not affected; DualSense adaptive triggers work as before.
+  **Not tried with an Xbox controller yet.** GitHub #245.
 
 ### Fixes
 - **Hosting no longer halves your frame-rate limit** (Gears 2, Gears 3 and Judgment): while friends were in a match you

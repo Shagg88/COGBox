@@ -47,10 +47,16 @@ std::string exe_needle(const std::string& alias, int g) {
                                       "Judgment weapon feel for DualSense pads", "Gears 1 weapon feel for DualSense pads" };
         return adt[g];
     }
+    if (alias == "trr") {   // 0.6.3 (GitHub #245): each game's trigger pulses (Xbox impulse triggers)
+        static const char* trr[4] = { "Gears 2 trigger pulses for Xbox pads", "Gears 3 trigger pulses for Xbox pads",
+                                      "Judgment trigger pulses for Xbox pads", "Gears 1 trigger pulses for Xbox pads" };
+        return trr[g];
+    }
     return alias;
 }
 std::string rt_needle(const std::string& a) {
     if (a == "adt") return "DualSense adaptive triggers: games that support it";   // GitHub #245 (SDK patch 98)
+    if (a == "trr") return "Xbox impulse triggers: games that support it";        // 0.6.3, GitHub #245 (SDK patch 104)
     return a == "vs" ? "d3d12_present_vsync" : a == "lat" ? "d3d12_max_frame_latency" : a;
 }
 std::string file_name(const std::string& a) {
@@ -179,6 +185,15 @@ const char* const k_builtin[] = {
     "game=0;cards=NVIDIA GeForce RTX 4090;GraphicsCard=NVIDIA GeForce RTX 4090",                        // older exe: greyed, not sent
     "game=0;exe=gpucard;cards=NVIDIA GeForce RTX 3080/NVIDIA GeForce RTX 3080 Ti;GraphicsCard=NVIDIA GeForce RTX 3080",   // name inside another's: a note
     "game=1;exe=gpucard;cards=AMD Radeon(TM) Graphics/AMD Radeon RX 7900 XTX;GraphicsCard=  AMD Radeon RX 7900 XTX  ",   // the name is trimmed
+    // 0.6.3 (GitHub #245): Trigger rumble (Xbox controllers) - sent with the runtime's patch 104 and the game's trigger pulses
+    "game=0;TriggerRumble=1;exe=trr;rt=trr",                                   // Gears 2: sent
+    "game=1;TriggerRumble=1;AdaptiveTriggers=1;exe=trr,adt;rt=trr,adt",       // Gears 3: both trigger options sent
+    "game=2;TriggerRumble=1;exe=trr;rt=trr",                                   // Judgment: sent
+    "game=3;TriggerRumble=1;exe=trr;rt=trr",                                   // Gears 1: sent
+    "game=1;TriggerRumble=1;exe=trr",                                          // runtime without patch 104: greyed, not sent
+    "game=1;TriggerRumble=1;rt=trr",                                           // exe without trigger pulses: greyed, not sent
+    "game=1;TriggerRumble=1;exe=trr;rt=trr;Vibration=0",                       // Controller vibration off: greyed, not sent
+    "game=1;TriggerRumble=1;exe=trr;rt=trr;wine=1",                            // Proton / Wine: greyed, not sent
 };
 
 std::string random_case(std::mt19937& r) {
@@ -574,6 +589,56 @@ int summary() {
         fresh[G3].set("Sens", 0.3);   // not dirty: not an edit to share
         sync_shared(st, envs, fresh, none, G3, changed);
         if (fresh[G2].f("Sens") != 1.2) bad("a page that isn't dirty was shared");
+    }
+    // 0.6.3 (GitHub #245): Trigger rumble (Xbox controllers) - Shared, off by default, on the Controls tab; sent only with
+    // the runtime's pad_trigger_rumble (SDK patch 104) and the game's trigger pulses, not under Wine / Proton, and not while
+    // Controller vibration is off; one setting for all four games.
+    {
+        auto bad = [&](const std::string& w) { std::cout << "FAIL TriggerRumble: " << w << "\n"; ++fails; };
+        static const char* pulses[kGameCount] = { "Gears 2 trigger pulses for Xbox pads", "Gears 3 trigger pulses for Xbox pads",
+                                                  "Judgment trigger pulses for Xbox pads", "Gears 1 trigger pulses for Xbox pads" };
+        for (int g = 0; g < kGameCount; ++g) {
+            const Game game = static_cast<Game>(g);
+            const Option* o = find_option(game, "TriggerRumble");
+            if (!o || o->scope != Scope::Shared || o->def != 0 || o->tab != Tab::Controls || o->kind != Kind::Bool ||
+                o->label != "Trigger rumble (Xbox controllers)")
+                { bad("option on game " + std::to_string(g)); continue; }
+            // rt: the runtime has patch 104; exe: this game's pulses (or another game's); wine; vibration; the value
+            auto sent = [&](bool rt, int exe_game, bool wine, bool vibration, bool value) {
+                Environment e; e.update_ready = true; e.wine = wine;
+                const std::string needle = exe_game >= 0 ? pulses[exe_game] : "";
+                e.cap.exe_has = [needle](const std::string& n) { return !needle.empty() && n == needle; };
+                e.cap.runtime_has = [rt](const std::string& n) { return rt && n == "Xbox impulse triggers: games that support it"; };
+                e.cap.file_next_to_exe = [](const std::string&) { return false; };
+                Store st; Settings s = st.view(game, e);
+                s.set("Vibration", vibration ? 1 : 0);
+                if (value) s.set("TriggerRumble", 1);
+                int n = 0;
+                for (const std::string& x : build_args(game, effective_version(game, s, e), s, e, nullptr))
+                    if (x == "--pad_trigger_rumble=true") ++n;
+                    else if (x.find("pad_trigger_rumble") != std::string::npos) n += 100;   // any other form: wrong
+                return n;
+            };
+            const std::string gs = " (game " + std::to_string(g) + ")";
+            if (sent(true, g, false, true, true) != 1) bad("not sent" + gs);
+            if (sent(true, g, false, true, false) != 0) bad("sent while off (the default)" + gs);
+            if (sent(false, g, false, true, true) != 0) bad("sent to a runtime without patch 104" + gs);
+            if (sent(true, -1, false, true, true) != 0) bad("sent to an exe without trigger pulses" + gs);
+            if (sent(true, (g + 1) % kGameCount, false, true, true) != 0) bad("another game's needle accepted" + gs);
+            if (sent(true, g, true, true, true) != 0) bad("sent under Wine / Proton" + gs);
+            if (sent(true, g, false, false, true) != 0) bad("sent with Controller vibration off" + gs);
+        }
+        // Shared: ticked on Gears 3's page, every game's page has it after the save
+        Environment envs[kGameCount];
+        for (Environment& e : envs) e.update_ready = true;
+        Store st;
+        Settings g3 = st.view(Game::Gears3, envs[static_cast<int>(Game::Gears3)]);
+        g3.set("TriggerRumble", 1);
+        st.commit(Game::Gears3, g3, envs[static_cast<int>(Game::Gears3)]);
+        for (int g = 0; g < kGameCount; ++g)
+            if (st.view(static_cast<Game>(g), envs[g]).i("TriggerRumble") != 1) bad("not shared to game " + std::to_string(g));
+        Store st2; st2.load_ini(st.save_ini());
+        if (st2.view(Game::Gears1, envs[static_cast<int>(Game::Gears1)]).i("TriggerRumble") != 1) bad("ini round trip");
     }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;

@@ -399,7 +399,8 @@ REXCVAR_DEFINE_INT32(gow3_tick_floor_fps, 0, "Gears3",
 void Gow3CheckpointStreamTick();        // checkpoint_stream.cpp (GitHub #226)
 void Gow3InstallCheckpointStreamWait();  // checkpoint_stream.cpp
 void Gow3ModChaptersTick();  // mod_chapters.cpp: mods' chapters and content packages, on the game thread
-void Gow3AdaptiveTriggersTick(bool in_front_end);  // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers)
+void Gow3AdaptiveTriggersTick(bool in_front_end);  // adaptive_triggers.cpp (GitHub #245, --pad_adaptive_triggers /
+                                                   // --pad_trigger_rumble)
 void Gow3FirstPersonTick();  // first_person.cpp (--gow3_first_person)
 
 // Gears 3's path choice (UIScene_PathChoice: "left path / right path") reads the triggers - the left trigger picks the

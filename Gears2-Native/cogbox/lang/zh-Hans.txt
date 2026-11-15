@@ -1527,3 +1527,6 @@ Undo Customise = 撤销自定义
 In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = 在 CogBox.ini 中但游戏无法识别（已保留，去掉了空格和符号）：
 Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = 撤销自“自定义”以来的所有更改：恢复为之前选择的布局（及其 CogBox.ini 中的行）。
 Or choose it from the list. = 或从列表中选择。
+# 0.6.3 GitHub #245 Xbox trigger rumble (machine-made translation, please check)
+Trigger rumble (Xbox controllers) = 扳机震动（Xbox 手柄）
+Xbox One and Series controllers: the motors in the triggers kick with each shot (harder for shotguns and heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while Controller vibration is off, here or in the game's options. To reach the trigger motors the game reads controllers through Windows raw input; rarely, Windows then stops sending controller input until the PC restarts - untick this if a controller stops responding. Other controllers are not affected. = Xbox One 和 Series 手柄：每次射击时扳机内的马达会短促震动一下（霰弹枪和重武器更强），链锯转动或转管机枪、火焰喷射器开火时持续震动。手柄震动关闭时（在这里或游戏选项中）不会有任何效果。为驱动扳机马达，游戏会通过 Windows 原始输入（Raw Input）读取手柄；极少数情况下，Windows 之后会在电脑重启前停止发送手柄输入——如果手柄没有反应，请取消勾选此项。其他手柄不受影响。
