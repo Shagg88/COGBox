@@ -536,7 +536,8 @@ std::vector<Option> make_options(Game g) {
              "hide the HUD, all weapons). "
              "Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a "
              "System Link or online game you host, where slow motion and the rest affect every player - please keep them "
-             "to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business.", 327), "cheats");
+             "to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business."
+             " They do not work in Versus matches - only in the campaign and the wave modes (Horde, Beast, Survival).", 327), "cheats");
     add(make("Mutators", "Unlock all mutators", Tab::Gameplay, Kind::Bool, SH, 0,
              "Every mutator (gameplay modifier) available from the start. Writes nothing to your profile.", 328), "mutators");
     // First-person camera (Gears 3, Gears 2, Judgment; layer3 first_person.cpp): the game's own camera moved to the

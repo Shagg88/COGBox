@@ -1,5 +1,9 @@
 # COGBox changes
 
+## 0.6.3 (not released)
+
+- **Cheats are off in Versus** (all four games): the cheat keys (F5-F11, `--gowX_cheats`) no longer work in any Versus match - online, System Link, private matches and local split screen, with or without bots. They still work in the campaign (solo and co-op) and in Horde, Beast and Survival.
+
 ## 0.6.2
 
 **Quick start:** download `COGBox-0.6.2.7z`, right-click it > **Extract All...** (Windows 11; on Windows 10 use 7-Zip) to a folder of its own (for example

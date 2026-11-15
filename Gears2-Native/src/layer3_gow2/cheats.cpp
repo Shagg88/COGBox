@@ -3,7 +3,7 @@
 //
 // No package patch: Gears 2's Engine.GameInfo.AllowCheats is the stock `return WorldInfo.NetMode == NM_Standalone`
 // (GearGame does not override it), so PlayerController.EnableCheats makes a cheat manager in a standalone game - the
-// campaign, local split screen, Horde / versus against bots on one console - and never in a System Link or online game
+// campaign, local split screen, Horde / versus against bots on one console (versus: not any more, see below) - and never in a System Link or online game
 // (a host is a listen server, a client has no GameInfo at all). The retail EnableCheats binding of our Horde-bots option
 // (layer2 config_install.cpp, "Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot ...") already works that way.
 // We never touch NetMode here. Each hotkey runs "EnableCheats" first (ue3/console.h before_each): the cheat manager
@@ -15,15 +15,27 @@
 // `lwz r5,GLog`, `bctrl` on vtable slot 0). They run on the game thread from our override of UEngine::GetMaxTickRate
 // (disc sub_824A2E78, TU6 sub_824A2F88 - the function whose `lfs f1,1284(r3)` Gow2MaxTickRate hooks; the hook still
 // runs inside the original). Our code (MIT).
+//
+// 0.6.3: no cheat command runs in a Versus match (ue3/match_guard.h, asked from the console before every command): campaign
+// (solo / co-op), Horde (Invasion) and the menus keep them, every Versus game type - on this PC, split screen, System Link or
+// online, with or without bots - does not. NetMode is no help here (local split-screen Versus against bots is standalone, and
+// the Horde-bots binding below sets NM_Standalone in any game), so the guard reads the GameInfo class. Gears 2's GearGame
+// package (disc GearGame.xxx, class export table): Engine.GameInfo > GearGame.GearGameMP_Base > { GearGameAnnex_Base (Annex,
+// King of the Hill), GearGameCTM_Base (Meatflag), GearGameHorde_Base (Horde), GearGameTDM_Base (Warzone, Execution;
+// GearGameWingman_Base: Wingman) }, with Assassination = GearGameContent.GearGameKTL (a TDM). GearGameSP_Base (the campaign,
+// co-op too), GearMenuGame and its lobby classes are not under GearGameMP_Base. Horde is the one PvE game type below it.
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 
 #include <ue3/console.h>
+#include <ue3/match_guard.h>
+
+#include "gow2_addresses.h"
 
 REXCVAR_DEFINE_BOOL(gow2_cheats, false, "Gears2",
-                    "GitHub #264: developer cheats on hotkeys, in games on this PC only (never System Link / online): F5 "
-                    "god mode, F6 slow motion (cycles 1/2, 1/4, normal), F9 free camera, F10 hide the HUD, F11 all weapons "
+                    "GitHub #264: developer cheats on hotkeys, in games on this PC only (never System Link / online), and "
+                    "never in a Versus match (campaign and Horde only): F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F9 free camera, F10 hide the HUD, F11 all weapons "
                     "and ammo (keys can be changed with --ue3_hotkeys)");
 
 namespace {
@@ -37,6 +49,10 @@ constexpr uint32_t kGLog = 0x830CF548u;
 // F7 (achievements) and F8 (COGBox social) are the in-game menu's; F1-F4 the SDK's / ours.
 constexpr const char* kDefaultHotkeys =
     "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F9=ToggleDebugCamera;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
+// 0.6.3 (ue3/match_guard.h): the Versus game types are everything below GearGameMP_Base except Horde.
+constexpr const char* kVersusBases[] = {"GearGameMP_Base", nullptr};
+constexpr const char* kPveExceptions[] = {"GearGameHorde_Base", nullptr};
+bool OpenObjects() { return ue3::obj::Init(gow2::addr::kGNamesVar, gow2::addr::kGObjectsVar); }
 }  // namespace
 
 // OnPostSetup. Without --gow2_cheats only what --ue3_hotkeys / --ue3_exec name runs, and nothing enables cheats.
@@ -50,10 +66,13 @@ void Gow2InstallCheats() {
   target.exec_vtable_slot = 0;
   const bool cheats = REXCVAR_GET(gow2_cheats);
   if (cheats) target.before_each = "EnableCheats";
+  ue3::match::Configure({"Gears 2", kVersusBases, kPveExceptions, target.engine_global, target.players_data_offset,
+                         target.players_num_offset, &OpenObjects});
+  target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
   if (cheats) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
-    REXLOG_INFO("gow2_cheats: developer cheats on hotkeys (standalone games only: the game's own AllowCheats)");
+    REXLOG_INFO("gow2_cheats: developer cheats on hotkeys (standalone games only: the game's own AllowCheats; never in Versus)");
   } else {
     Ue3ConsoleInstallHotkeys();  // only what --ue3_hotkeys names
   }

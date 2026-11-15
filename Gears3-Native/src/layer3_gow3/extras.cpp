@@ -13,11 +13,24 @@
 // Console commands reach the engine through ue3/console.h, run from our override of UEngine::GetMaxTickRate (once per
 // engine loop on the game thread; disc sub_8253D990, TU6 sub_8254E488 - the function whose `lfs f1,0x4C8(r3)` the
 // frame-rate hook patches). Our code (MIT).
+//
+// 0.6.3: no cheat command runs in a Versus match (ue3/match_guard.h, asked from the console before every command): the
+// campaign (solo and co-op), Horde and Beast keep the cheats, every Versus game type - local split screen, System Link, online,
+// private matches, with or without bots - does not, although the patched AllowCheats would let the engine allow them. Gears 3's
+// GearGame package (disc and TU6 GearGame.xxx, class export table): Engine.GameInfo > GearGame.GearGameMP_Base, whose
+// subclasses are GearGameTDM_Base (Team Deathmatch, Warzone, Execution - the "tdm" / "warzone" aliases of Coalesced.ini's
+// GameInfoClassAliases - and GearGameHunter, GearGameKTL_Base > GearGameCTL_Base, GearGameTDM_Newb, GearGameWingman_Base),
+// GearGameRing_Base (GearGameAnnex_Base, GearGameKOTH_Base), GearGameBombDelivery and GearGameWaveBased (GearGameHorde_Base,
+// GearGameSiege_Base: the "horde" and "siege" / "beast" aliases; GearGameContent.GearGameSuperHorde is in the content package,
+// not in this one - not checked, taken as a Horde variant by its name). Campaign
+// (GearGameSP_Base, GearGameSP_Arcade), GearMenuGame and the lobby classes are not under GearGameMP_Base. Not Versus, so
+// cheats as before: everything under GearGameWaveBased.
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 
 #include <ue3/console.h>
+#include <ue3/match_guard.h>
 
 #include "gow3_addresses.h"
 
@@ -25,7 +38,7 @@
 #include <string>
 
 REXCVAR_DEFINE_BOOL(gow3_cheats, false, "Gears3",
-                    "Developer cheats on, with hotkeys: F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F8 free "
+                    "Developer cheats on (never in a Versus match), with hotkeys: F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F8 free "
                     "camera (photo mode), F9 freeze the world, F10 hide the HUD, F11 all weapons and ammo (keys can be "
                     "changed with --ue3_hotkeys)");
 REXCVAR_DEFINE_BOOL(gow3_unlock_mutators, false, "Gears3",
@@ -44,6 +57,11 @@ constexpr const char* kMutatorsPatch =
 constexpr const char* kDefaultHotkeys =
     "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F8=ToggleDebugCamera;F9=PlayersOnly;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
 
+// 0.6.3 (ue3/match_guard.h): the Versus game types are everything below GearGameMP_Base except Horde and Beast.
+constexpr const char* kVersusBases[] = {"GearGameMP_Base", nullptr};
+constexpr const char* kPveExceptions[] = {"GearGameWaveBased", nullptr};
+bool OpenObjects() { return ue3::obj::Init(gow3::addr::kGNamesVar, gow3::addr::kGObjectsVar); }
+
 void AddPackagePatch(const char* patch) {
   const std::string now = REXCVAR_GET(ue3_package_patches);
   rex::cvar::SetFlagByName("ue3_package_patches", now.empty() ? std::string(patch) : now + ";" + patch);
@@ -55,11 +73,14 @@ void Gow3InstallExtras() {
   Ue3ConsoleTarget target;
   target.engine_global = gow3::addr::kGEngine;
   target.log_global = gow3::addr::kGLog;
+  ue3::match::Configure({"Gears 3", kVersusBases, kPveExceptions, target.engine_global, target.players_data_offset,
+                         target.players_num_offset, &OpenObjects});
+  target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
   if (REXCVAR_GET(gow3_cheats)) {
     AddPackagePatch(kCheatsPatch);
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
-    REXLOG_INFO("gow3_cheats: developer cheats on");
+    REXLOG_INFO("gow3_cheats: developer cheats on (never in a Versus match)");
   } else {
     Ue3ConsoleInstallHotkeys();  // only what --ue3_hotkeys names
   }
