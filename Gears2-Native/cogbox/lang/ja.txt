@@ -1524,4 +1524,6 @@ Reset to the game's own = ゲーム標準に戻す
 No button does the game's {1} now. = ゲームの {1} を押すボタンがなくなりました。
 Your earlier custom layout was replaced. = 以前のカスタム配置は置き換えられました。
 Undo = 元に戻す
-In CogBox.ini but not understood by the game (kept as written): = CogBox.ini にありますが、ゲームが理解できない部分（そのまま残します）:
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = CogBox.ini にありますが、ゲームが理解できない部分（スペースと記号を除いて残します）:
+Back to the layout chosen before Customise (and its CogBox.ini line). = カスタマイズ前に選んでいた配置（と CogBox.ini の行）に戻します。
+Or choose it from the list. = または一覧から選びます。

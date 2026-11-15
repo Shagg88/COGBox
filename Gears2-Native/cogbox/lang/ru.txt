@@ -1524,4 +1524,6 @@ Reset to the game's own = Сбросить на раскладку игры
 No button does the game's {1} now. = Теперь ни одна кнопка не нажимает {1} игры.
 Your earlier custom layout was replaced. = Ваша прежняя своя раскладка заменена.
 Undo = Отменить
-In CogBox.ini but not understood by the game (kept as written): = Есть в CogBox.ini, но игра это не понимает (оставлено как есть):
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = Есть в CogBox.ini, но игра это не понимает (оставлено, без пробелов и символов):
+Back to the layout chosen before Customise (and its CogBox.ini line). = Вернуть раскладку, выбранную до «Настроить» (и её строку в CogBox.ini).
+Or choose it from the list. = Или выберите из списка.

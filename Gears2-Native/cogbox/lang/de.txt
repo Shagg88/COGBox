@@ -1519,4 +1519,6 @@ Reset to the game's own = Auf die Belegung des Spiels zurücksetzen
 No button does the game's {1} now. = Keine Taste löst jetzt {1} des Spiels aus.
 Your earlier custom layout was replaced. = Deine bisherige benutzerdefinierte Belegung wurde ersetzt.
 Undo = Rückgängig
-In CogBox.ini but not understood by the game (kept as written): = In CogBox.ini, aber vom Spiel nicht verstanden (unverändert behalten):
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = In CogBox.ini, aber vom Spiel nicht verstanden (behalten, Leerzeichen und Symbole entfernt):
+Back to the layout chosen before Customise (and its CogBox.ini line). = Zurück zur Belegung, die vor „Anpassen“ gewählt war (und ihrer Zeile in CogBox.ini).
+Or choose it from the list. = Oder wähle sie aus der Liste.

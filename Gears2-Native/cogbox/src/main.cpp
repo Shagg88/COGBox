@@ -20,6 +20,7 @@ extern int g_lastKeyScancode;   // page.cpp
 
 #include <windows.h>
 #include <shellapi.h>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -584,8 +585,12 @@ const char *pad_name(const App &a, const char *x)
 bool pad_capturing(const App &a) { return ImGui::GetFrameCount() <= a.padCaptureFrame + 1; }
 
 // 0.6.3: a controller button pressed, as the game's runtime names it (SDL's positions: South = A / Cross)
-static void pad_press_event(App &a, const SDL_Event &e)
+// r48: only presses in the launcher's own window count (background events are on for the window's other uses); triggers
+// are tracked per pad and forgotten when it is unplugged.
+static std::map<SDL_JoystickID, std::array<bool, 2>> g_padTriggers;
+static void pad_press_event(App &a, const SDL_Event &e, bool focused)
 {
+    if (e.type == SDL_EVENT_GAMEPAD_REMOVED) { g_padTriggers.erase(e.gdevice.which); return; }
     int b = -1;
     if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
         switch (e.gbutton.button) {
@@ -607,14 +612,34 @@ static void pad_press_event(App &a, const SDL_Event &e)
         }
     } else if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION &&
                (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)) {
-        static bool down[2];   // a press = past half way, after being let go below a quarter
+        std::array<bool, 2> &down = g_padTriggers[e.gaxis.which];   // a press = past half way, after being let go below a quarter
         const int t = e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? 0 : 1;
         if (!down[t] && e.gaxis.value > 16000) { down[t] = true; b = t ? gs::PadRT : gs::PadLT; }
         else if (down[t] && e.gaxis.value < 8000) down[t] = false;
     }
-    if (b < 0) return;
+    if (b < 0 || !focused) return;
     a.padPress = b;
     a.padPressSeq++;
+}
+
+// r48: any controller button, trigger or stick still held (after the controller layout took a press)
+static bool any_pad_held()
+{
+    int n = 0;
+    bool held = false;
+    SDL_JoystickID *ids = SDL_GetGamepads(&n);
+    for (int i = 0; ids && i < n && !held; i++) {
+        SDL_Gamepad *gp = SDL_GetGamepadFromID(ids[i]);
+        if (!gp) continue;
+        for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT && !held; b++) held = SDL_GetGamepadButton(gp, (SDL_GamepadButton)b);
+        for (int x = 0; x < SDL_GAMEPAD_AXIS_COUNT && !held; x++) {
+            const int v = SDL_GetGamepadAxis(gp, (SDL_GamepadAxis)x);
+            const bool trig = x == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || x == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
+            held = trig ? v > 8000 : abs(v) > 16000;
+        }
+    }
+    if (ids) SDL_free(ids);
+    return held;
 }
 
 static void refresh_pads(App &a)
@@ -872,7 +897,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             if (e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED) refresh_pads(a);
             // 0.2.0: the hints follow the device used last (stick movement past half way counts, small drift doesn't)
             if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && abs(e.gaxis.value) > 16000)) a.lastPad = true;
-            pad_press_event(a, e);   // 0.6.3: for the controller layout's "press a button"
+            pad_press_event(a, e, (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0);   // 0.6.3: the controller layout's "press a button"
             if (e.type == SDL_EVENT_KEY_DOWN) g_lastKeyScancode = (int)e.key.scancode;   // the key's position (page.cpp key capture)
             if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_WHEEL) a.lastPad = false;
             if (e.type == SDL_EVENT_DROP_FILE && e.drop.data) a.dropped.push_back(e.drop.data);
@@ -912,6 +937,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         bool frontOwn = (a.screen == SCR_FRONT && a.zoomTo == SCR_FRONT && !a.modal.open &&
                          !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) ||   // 0.4.6 review: the player-name box takes the pad
                         (a.screen == SCR_PAGE && a.barSel >= 0 && !a.modal.open);   // also a page's bottom bar (page.cpp)
+        if (a.padCaptureHold) {   // r48: off until the button that was set (or anything else) is let go
+            if (any_pad_held()) a.padCaptureFrame = ImGui::GetFrameCount();
+            else a.padCaptureHold = false;
+        }
         if (!SDL_GetKeyboardFocus() || a.run.proc || frontOwn || pad_capturing(a)) io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
         else io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
         { extern int g_padlogFrontOwn; g_padlogFrontOwn = frontOwn ? 1 : 0; }   // COGBOX_PADLOG (front.cpp)
@@ -940,6 +969,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         }
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
+        if (a.padCaptureActive && pad_capturing(a)) {   // r48: a click while a controller button is awaited only cancels
+            static const ImGuiKey k_mouse[3] = { ImGuiKey_MouseLeft, ImGuiKey_MouseRight, ImGuiKey_MouseMiddle };
+            for (int b = 0; b < 3; b++)
+                if (ImGui::IsMouseClicked(b)) {
+                    ImGui::SetKeyOwner(k_mouse[b], ImHashStr("##padcapclick"), ImGuiInputFlags_LockUntilRelease);
+                    a.padCaptureClickFrame = ImGui::GetFrameCount();
+                }
+        }
         {   // job 523 (Shagg 20:29): F11, or both triggers together, switch fullscreen from any screen
             static bool triggersWere = false;
             const bool triggers = ImGui::IsKeyDown(ImGuiKey_GamepadL2) && ImGui::IsKeyDown(ImGuiKey_GamepadR2);

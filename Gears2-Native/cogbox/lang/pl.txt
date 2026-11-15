@@ -1521,4 +1521,6 @@ Reset to the game's own = Przywróć układ gry
 No button does the game's {1} now. = Żaden przycisk nie wykonuje teraz {1} gry.
 Your earlier custom layout was replaced. = Twój poprzedni własny układ został zastąpiony.
 Undo = Cofnij
-In CogBox.ini but not understood by the game (kept as written): = W CogBox.ini, ale gra tego nie rozumie (zachowane bez zmian):
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = W CogBox.ini, ale gra tego nie rozumie (zachowane, bez spacji i symboli):
+Back to the layout chosen before Customise (and its CogBox.ini line). = Wraca do układu wybranego przed Dostosuj (i jego wiersza w CogBox.ini).
+Or choose it from the list. = Albo wybierz go z listy.

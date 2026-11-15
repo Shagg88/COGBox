@@ -310,6 +310,7 @@ bool settings_save(App &a)
     a.store.last_game = a.page;
     bool ok = write_file(join(exe_dir(), "settings.ini"), a.store.save_ini());
     if (!ok) set_message(a, "The settings couldn't be saved - is the COGBox folder read-only?", true);
+    a.saves++;   // 0.6.3 r48: the controller layout's Undo lasts until a save
     return ok;
 }
 
@@ -604,7 +605,12 @@ static void keys_section(App &a, int g)
     // the press that sets the key: a frame after the click that chose the row, so that click isn't taken as the key
     if (capture >= 0 && ImGui::GetFrameCount() > captureFrame + 1) {
         const char *name = nullptr;
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) { capture = -1; return; }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            // r48: Esc only cancels - the bar's LIBRARY (Esc) later this frame doesn't see it
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::SetKeyOwner(ImGuiKey_Escape, ImGui::GetID("##keycap"), ImGuiInputFlags_LockThisFrame);
+            capture = -1;
+            return;
+        }
         if (ImGui::IsMouseClicked(0)) name = "LMB";
         else if (ImGui::IsMouseClicked(1)) name = "RMB";
         else if (ImGui::IsMouseClicked(2)) name = "MMB";
@@ -704,6 +710,7 @@ static std::string pad_button_name(const App &a, int i)
     const char *l = gs::pad_input_label(i);
     if (!l) return "?";
     if (i <= gs::PadRT || i == gs::PadBack || i == gs::PadStart) return pad_name(a, l);
+    if (a.padPs && (i == gs::PadLS || i == gs::PadRS)) return i == gs::PadLS ? "L3" : "R3";   // r48: PlayStation names
     return tr(l);
 }
 
@@ -722,30 +729,46 @@ static void pad_layout_section(App &a, int g)
     const gs::Game G = (gs::Game)g;
     const gs::Option *o = gs::find_option(G, "PadLayout");
     if (!o || !gs::available(*o, G, gs::effective_version(G, a.cur[g], a.env[g]), a.cur[g], a.env[g]).ok) return;
-    static int capture = -1, captureFrame = 0, padGame = -1;
-    static unsigned captureSeq = 0;
+    static int capture = -1, captureFrame = 0, padGame = -1, lastDrawn = -10;
+    static unsigned captureSeq = 0, savesSeen = 0;
     static double captureAt = 0;
-    static std::string note, undo;   // what the last change moved besides its own button; the layout Customise replaced
-    if (padGame != g) { padGame = g; capture = -1; note.clear(); undo.clear(); }
+    static std::string note;   // what the last change moved besides its own button
+    // r48: Customise can be undone - its Remap and layout choice from before - until the player leaves the Controls tab
+    // (or this page) or saves
+    static struct { bool on = false; std::string remap; int layout = 0; bool replaced = false; } undo;
+    const int frame = ImGui::GetFrameCount();
+    if (padGame != g || frame > lastDrawn + 1 || a.saves != savesSeen) {
+        padGame = g; capture = -1; note.clear(); undo.on = false; savesSeen = a.saves;
+    }
+    lastDrawn = frame;
+    // r48: the layout choice is saved together with Remap (no Custom-without-its-layout or the other way round)
+    auto save_layout = [&](int l) {
+        gs::set_value(G, a.cur[g], "PadLayout", l);
+        a.dirty[g] = true;
+        settings_save(a);
+        savesSeen = a.saves;   // (our own save keeps the Undo)
+    };
+    auto end_capture = [&]() { capture = -1; a.padCaptureHold = true; };   // the launcher's pad stays off while held (main.cpp)
     const int layout = std::max(0, std::min(4, a.cur[g].has("PadLayout") ? a.cur[g].i("PadLayout") : (int)o->def));
     if (layout != 4) {   // a ready-made layout: Customise starts the Custom one from it
         capture = -1;
+        a.padCaptureActive = false;
         ImGui::Dummy(ImVec2(0, 0));
         ImGui::SameLine(g_labelW);
         if (small_button("Customise...")) {
             const std::string before = a.ini.get("Pad", "Remap"), start = gs::pad_layout_preset(layout);
             const gs::PadMap was = gs::parse_pad_remap(before);
-            if (!before.empty() && (!was.same_layout(gs::parse_pad_remap(start)) || !was.unknown.empty())) undo = before;
+            undo.on = true; undo.remap = before; undo.layout = layout;
+            undo.replaced = !before.empty() && (!was.same_layout(gs::parse_pad_remap(start)) || !was.unknown.empty());
             pad_remap_save(a, start);
-            gs::set_value(G, a.cur[g], "PadLayout", 4);
-            a.dirty[g] = true;
+            save_layout(4);
             note.clear();
         }
         ui_tip("Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above.");
         return;
     }
     gs::PadMap m = gs::parse_pad_remap(a.ini.get("Pad", "Remap"));
-    auto apply = [&](const gs::PadMap &nm) { pad_remap_save(a, gs::format_pad_remap(nm)); undo.clear(); };
+    auto apply = [&](const gs::PadMap &nm) { pad_remap_save(a, gs::format_pad_remap(nm)); };
     auto said = [&](int game, int pad, const gs::PadAssign &r) {
         std::string t = fill_in(tr("{1} now does the game's {2}."), { pad_button_name(a, pad), pad_button_name(a, game) });
         if (r.swapped >= 0)
@@ -754,23 +777,47 @@ static void pad_layout_section(App &a, int g)
             t += " " + fill_in(tr("No button does the game's {1} now."), { pad_button_name(a, r.took_from) });
         return t;
     };
-    if (!undo.empty()) {
-        ui_note("Your earlier custom layout was replaced.", col::amber);
-        if (small_button("Undo")) { pad_remap_save(a, undo); undo.clear(); note.clear(); return; }
+    const bool capturing = capture >= 0;
+    if (undo.on) {
+        if (undo.replaced) ui_note("Your earlier custom layout was replaced.", col::amber);
+        if (capturing) ImGui::BeginDisabled();
+        const bool back = small_button("Undo");
+        if (capturing) ImGui::EndDisabled();
+        if (!capturing) ui_tip("Back to the layout chosen before Customise (and its CogBox.ini line).");
+        if (back) {
+            pad_remap_save(a, undo.remap);
+            save_layout(undo.layout);
+            undo.on = false; note.clear();
+            return;
+        }
     }
     if (!m.unknown.empty()) {   // a hand-written Remap= with parts the game ignores: kept, and said
         std::string list;
         for (const std::string &u : m.unknown) list += (list.empty() ? "" : ", ") + u;
-        ui_note_shown(std::string(tr("In CogBox.ini but not understood by the game (kept as written):")) + " " + list, col::amber);
+        ui_note_shown(std::string(tr("In CogBox.ini but not understood by the game (kept, spaces and symbols removed):")) + " " + list, col::amber);
     }
     ui_note("Left: the game's buttons. Right: the controller button that does each one.");
     if (!note.empty()) ui_note_shown(note, col::amber);
-    const bool pad = a.padConnected, capturing = capture >= 0;
+    const bool pad = a.padConnected;
     const char *tip = pad ? "Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). "
                             "A controller button does one thing: if it already did another, the two swap."
                           : "No controller connected - choose the controller button from the list. A controller button does "
                             "one thing: if it already did another, the two swap.";
-    if (capturing) ImGui::BeginDisabled();   // while waiting, a press mustn't work the page
+    // while waiting, a press mustn't work the page - but the rows aren't dimmed (the waiting one is lit)
+    ImGui::PushStyleVar(ImGuiStyleVar_DisabledAlpha, 1.0f);
+    if (capturing) ImGui::BeginDisabled();
+    auto choose_list = [&](int i, const char *id, const char *preview, ImGuiComboFlags flags) {
+        if (!ImGui::BeginCombo(id, preview, flags)) return;
+        for (int b = 0; b < gs::kPadInputs; b++) {
+            ImGui::PushID(b);
+            if (ImGui::Selectable(pad_button_name(a, b).c_str(), m.to[b] == i)) {
+                const gs::PadAssign r = gs::pad_assign(m, i, b);
+                if (r.changed) { note = said(i, b, r); apply(m); }
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    };
     for (int i = 0; i < gs::kPadInputs; i++) {
         ImGui::PushID(i);
         ImGui::AlignTextToFramePadding();
@@ -780,29 +827,24 @@ static void pad_layout_section(App &a, int g)
         for (int b : gs::pad_sources(m, i)) shown += (shown.empty() ? "" : " / ") + pad_button_name(a, b);
         if (shown.empty()) shown = tr("Nothing");
         if (capture == i) shown = tr("Press a button...");
-        if (pad) {
-            if (th_button((shown + "##b").c_str(), ImVec2(g_ctrlW, T(26)), true, F_BODY, capture == i)) {
+        if (pad) {   // press to set; the arrow beside it is the list, for the mouse
+            const float arrow = ImGui::GetFrameHeight();
+            if (th_button((shown + "##b").c_str(), ImVec2(g_ctrlW - arrow - S(4), T(26)), true, F_BODY, capture == i)) {
                 capture = i;
-                captureFrame = ImGui::GetFrameCount();
+                captureFrame = frame;
                 captureSeq = a.padPressSeq;   // (the press that chose the row is already counted)
                 captureAt = ImGui::GetTime();
                 note.clear();
             }
+            if (!capturing) ui_tip(tip);
+            ImGui::SameLine(0, S(4));
+            choose_list(i, "##l", "", ImGuiComboFlags_NoPreview);
+            if (!capturing) ui_tip("Or choose it from the list.");
         } else {
             ImGui::SetNextItemWidth(g_ctrlW);
-            if (ImGui::BeginCombo("##b", shown.c_str())) {
-                for (int b = 0; b < gs::kPadInputs; b++) {
-                    ImGui::PushID(b);
-                    if (ImGui::Selectable(pad_button_name(a, b).c_str(), m.to[b] == i)) {
-                        const gs::PadAssign r = gs::pad_assign(m, i, b);
-                        if (r.changed) { note = said(i, b, r); apply(m); }
-                    }
-                    ImGui::PopID();
-                }
-                ImGui::EndCombo();
-            }
+            choose_list(i, "##b", shown.c_str(), 0);
+            if (!capturing) ui_tip(tip);
         }
-        if (!capturing) ui_tip(tip);
         ImGui::PopID();
     }
     ImGui::AlignTextToFramePadding();
@@ -811,26 +853,30 @@ static void pad_layout_section(App &a, int g)
     bool sticks = m.sticks_swapped;
     if (ImGui::Checkbox("##sticks", &sticks)) { m.sticks_swapped = sticks; note.clear(); apply(m); }
     if (!capturing) ui_tip("The left stick moves the camera and the right stick moves you (southpaw).");
-    if (capturing) ImGui::EndDisabled();
     ImGui::Dummy(ImVec2(0, S(4)));
-    if (capturing) ImGui::BeginDisabled();
     if (small_button("Reset to the game's own")) { apply(gs::PadMap()); note.clear(); }
     if (capturing) ImGui::EndDisabled();
+    ImGui::PopStyleVar();
     ImGui::Dummy(ImVec2(0, S(4)));
-    // the press: a controller button pressed after the row was chosen. Esc, a mouse click, the controller going away or
+    // the press: a controller button pressed after the row was chosen, in this window. Esc, a mouse click (which does
+    // nothing else - main.cpp takes it), the controller going away, the window losing focus, a question box opening or
     // 10 seconds with no press cancel (B can't: it is a button to choose).
     if (capture >= 0) {
-        a.padCaptureFrame = ImGui::GetFrameCount();   // the launcher's own controller uses are off (pad_capturing)
-        const bool late = ImGui::GetFrameCount() > captureFrame + 1;
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || !a.padConnected || ImGui::GetTime() - captureAt > 10.0 ||
-            (late && (ImGui::IsMouseClicked(0) || ImGui::IsMouseClicked(1))))
-            capture = -1;
+        a.padCaptureFrame = frame;   // the launcher's own controller uses are off (pad_capturing)
+        const bool late = frame > captureFrame + 1;
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            ImGui::SetKeyOwner(ImGuiKey_Escape, ImGui::GetID("##padcap"), ImGuiInputFlags_LockThisFrame);   // not also LIBRARY
+            end_capture();
+        } else if (!a.padConnected || !SDL_GetKeyboardFocus() || a.modal.open || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) ||
+                   ImGui::GetTime() - captureAt > 10.0 || (late && a.padCaptureClickFrame == frame))
+            end_capture();
         else if (a.padPressSeq != captureSeq && a.padPress >= 0) {
             const gs::PadAssign r = gs::pad_assign(m, capture, a.padPress);
             if (r.changed) { note = said(capture, a.padPress, r); apply(m); }
-            capture = -1;
+            end_capture();
         }
     }
+    a.padCaptureActive = capture >= 0;
 }
 
 // Job 620 (GitHub #45): a game language whose text isn't on the player's copy can't be chosen - the game would fall
@@ -1034,9 +1080,10 @@ static void option_row(App &a, int g, const gs::Option &o)
         ui_note(gs::k_fgVkNvidiaWarning, col::amber);
     if (changed && nv != v) {
         // 0.6.3: Custom chosen with no custom layout saved yet starts from the layout that was chosen (Southpaw ...)
-        if (o.id == "PadLayout" && (int)nv == 4 && v >= 1 && v <= 3 && a.ini.get("Pad", "Remap").empty())
-            pad_remap_save(a, gs::pad_layout_preset((int)v));
+        const bool seed = o.id == "PadLayout" && (int)nv == 4 && v >= 1 && v <= 3 && a.ini.get("Pad", "Remap").empty();
+        if (seed) pad_remap_save(a, gs::pad_layout_preset((int)v));
         gs::set_value(G, a.cur[g], o.id, nv);
+        if (seed) { a.dirty[g] = true; settings_save(a); }   // r48: the choice is saved with the Remap it wrote
         a.dirty[g] = true;
         if (o.id == "Version" || o.id == "Monitor") env_refresh(a, g);
     }
@@ -1761,7 +1808,8 @@ void page_draw(App &a, ImVec2 size)
     bool barA = a.barSel >= 0 && padNav && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
     ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);   // the controller reaches the bar through a.barSel, not Dear ImGui
     if (th_button("LIBRARY", ImVec2(S(130), S(40)), true, F_HEAD, a.barSel == 0) || (barA && a.barSel == 0) ||
-        (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !a.modal.open)) {
+        (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !a.modal.open &&
+         !pad_capturing(a))) {   // r48: not the Esc that cancelled a controller button press (the key list's: key owner)
         a.barSel = -1;
         if (std::any_of(a.dirty, a.dirty + G_COUNT, [](bool x) { return x; })) settings_save(a);
         a.zoomTo = SCR_FRONT; a.zoomStart = ImGui::GetTime();

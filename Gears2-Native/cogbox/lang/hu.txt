@@ -1582,4 +1582,6 @@ Reset to the game's own = Visszaállítás a játék sajátjára
 No button does the game's {1} now. = Most egyik gomb sem csinálja a játék {1} gombját.
 Your earlier custom layout was replaced. = A korábbi egyéni kiosztásod lecserélődött.
 Undo = Visszavonás
-In CogBox.ini but not understood by the game (kept as written): = A CogBox.ini fájlban van, de a játék nem érti (változatlanul megtartva):
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = A CogBox.ini fájlban van, de a játék nem érti (megtartva, szóközök és jelek nélkül):
+Back to the layout chosen before Customise (and its CogBox.ini line). = Vissza a Testreszabás előtt választott kiosztásra (és a CogBox.ini sorára).
+Or choose it from the list. = Vagy válaszd ki a listából.

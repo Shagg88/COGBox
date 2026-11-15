@@ -112,6 +112,12 @@ struct App {
     int padPress = -1;
     unsigned padPressSeq = 0;
     int padCaptureFrame = -100;
+    // r48: padCaptureActive = a row is waiting now (a mouse click then only cancels: main.cpp takes the click, and
+    // padCaptureClickFrame says which frame); padCaptureHold = after a press is set or the wait ends, padCaptureFrame is
+    // kept fresh while any controller button, trigger or stick is still held, so a held LB / D-pad doesn't work the page
+    bool padCaptureActive = false, padCaptureHold = false;
+    int padCaptureClickFrame = -100;
+    unsigned saves = 0;   // settings_save calls (the controller layout's Undo lasts until a save)
     bool borderless = false;          // job 523: no title bar (COGBox draws its own minimise / maximise / close)
     bool fullscreen = false;          // job 523: COGBox fills the screen (F11, or LT + RT together)
     bool tuTold[G_COUNT] = {};            // 0.4.6: "Title update needed" said for this game this session (front.cpp, install.cpp)
