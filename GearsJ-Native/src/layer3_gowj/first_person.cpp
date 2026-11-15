@@ -954,7 +954,13 @@ void AsideTick() {
     const uint32_t pc = Ptr(cam, "PCOwner");
     const uint32_t pawn = pc && obj::IsLive(pc) ? Ptr(pc, "MyGearPawn") : 0;
     const int move = MoveOf(pawn);
-    if (!IsAsideMove(pawn, move)) continue;
+    // review r31: 0.5 s more after the move ends (a run, its stop, a tap and run again stay one third-person stretch)
+    static std::unordered_map<uint32_t, Clock::time_point> lastAside;
+    if (IsAsideMove(pawn, move)) lastAside[cam] = Clock::now();
+    else if (auto it = lastAside.find(cam); it == lastAside.end() || Clock::now() - it->second > std::chrono::milliseconds(500)) {
+      if (it != lastAside.end()) lastAside.erase(it);
+      continue;
+    }
     g_asideCams.insert(cam);
     const uint32_t gc = Ptr(cam, "GameplayCam");
     if (!gc || !obj::IsLive(gc)) continue;
@@ -1278,13 +1284,13 @@ void GowjFirstPersonTick() {
     const ClassInfo& info = InfoOf(cls);
     if (!info.fp || info.viewOffset < 0) continue;
     g_seen.insert(o);
-    if (g_aside.count(o)) continue;   // stepped aside for a third-person move (AsideTick puts it back)
-    Apply(o, cls, info);
-    if (info.avoid >= 0) SetBit(o, o + uint32_t(info.avoid), info.avoidMask, false, false);
     if (const uint32_t cam = CameraOf(o);
         cam && LocalCamera(cam) && std::find(g_seenCams.begin(), g_seenCams.end(), cam) == g_seenCams.end() &&
         g_seenCams.size() < 8)
-      g_seenCams.push_back(cam);
+      g_seenCams.push_back(cam);   // r31 R2: before the stepped-aside skip, so a running player's camera is kept
+    if (g_aside.count(o)) continue;   // stepped aside for a third-person move (AsideTick puts it back)
+    Apply(o, cls, info);
+    if (info.avoid >= 0) SetBit(o, o + uint32_t(info.avoid), info.avoidMask, false, false);
   }
   if (g_camCls)   // the same slice of the table, for the cameras themselves
     for (uint32_t cam : obj::FindInstancesOfRange(g_camCls, g_cursor, kSlice, nullptr))
