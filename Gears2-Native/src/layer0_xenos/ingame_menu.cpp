@@ -1373,7 +1373,6 @@ void IdleCursorWatch() {
       IdlePost(w, [why] { IdleShowNow(why); });
       verify_pending = false;
       logged_skip = nullptr;   // r56 A: the hide was ours, so a reason that comes back afterwards is logged again
-      held_skip = nullptr;
       continue;
     }
     if (moved || clicked || !front) continue;
