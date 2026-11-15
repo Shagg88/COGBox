@@ -74,7 +74,7 @@ REXCVAR_DEFINE_BOOL(gow2_first_person_weapon, true, "Gears2",
                     "First-person camera: draw your own weapon (the game hides it with your body when the camera is "
                     "inside you; this sets the engine's bIgnoreHiddenActorsMembership on the weapon's meshes). With "
                     "--gow2_first_person_body on, the weapon is drawn with the body either way");
-REXCVAR_DEFINE_BOOL(gow2_first_person_body, true, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_first_person_body, false, "Gears2",   // job 1857: no head hiding in Gears 2 yet - the head fills the view
                     "First-person camera: draw your own body too (arms, shoulders, legs - the game's own model, already "
                     "animated; the same engine flag on your pawn's meshes). Off: only the weapon");
 REXCVAR_DEFINE_BOOL(gow2_first_person_diag, false, "Gears2",
