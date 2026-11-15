@@ -243,8 +243,16 @@ void SquadSlotLog() {
     // review r23 B2: the verdict is the squad-slot check's only (the screen also needs a chapter, and a co-op client
     // has its own rules), under the rule in effect: the game's (TU6), the mods' (mod_chapters) or none (base disc)
     const int rule = kTu6Build ? g_gow3ReloadRule.load() : 2;
+    // job 1876: while a checkpoint reload rebuilds the level, the new game info briefly holds its default slots (Marcus /
+    // Dom, no controllers) - no player is in any slot then and no menu can be open, so that state gets no verdict
+    bool player = false;
+    for (uint32_t i = 0; i < count && !player; ++i) {
+      const uint32_t ow = obj::Read32(data + i * uint32_t(stride) + uint32_t(ownerOff));
+      player = ow && obj::ObjectName(ow).starts_with("GearPC");
+    }
     std::string verdict;
-    if (rule == 2) verdict = "not affected (no squad-slot check in this game version)";
+    if (!player && rule != 2) verdict = "not judged (no player in any slot yet - the level is being set up)";
+    else if (rule == 2) verdict = "not affected (no squad-slot check in this game version)";
     else {
       std::string grey;
       for (uint32_t i = 0; i < count; ++i) {
