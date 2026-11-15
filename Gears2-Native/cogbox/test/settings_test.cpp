@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <set>
 #include <sstream>
@@ -574,6 +575,82 @@ int summary() {
         fresh[G3].set("Sens", 0.3);   // not dirty: not an edit to share
         sync_shared(st, envs, fresh, none, G3, changed);
         if (fresh[G2].f("Sens") != 1.2) bad("a page that isn't dirty was shared");
+    }
+    // review r51: the cases r50 / r51 left out - Monitor's clamp, an edit changed back, a text conflict between two unsaved
+    // pages, and a save from a page with no unsaved edits
+    {
+        const int G2 = static_cast<int>(Game::Gears2), G3 = static_cast<int>(Game::Gears3), GJ = static_cast<int>(Game::Judgment),
+                  G1 = static_cast<int>(Game::Gears1);
+        auto bad = [&](const std::string& w) { std::cout << "FAIL sync_shared (r51): " << w << "\n"; ++fails; };
+        struct World { Environment envs[kGameCount]; Store st; Settings pages[kGameCount]; bool dirty[kGameCount] = {};
+                       bool changed[kGameCount] = {}; };
+        auto world = [&](int screens, double monitor) {   // every page saved, nothing unsaved
+            auto w = std::make_unique<World>();
+            for (Environment& e : w->envs) { e.update_ready = true; e.screen_count = screens; }
+            for (int g = 0; g < kGameCount; ++g) {
+                w->pages[g] = w->st.view(static_cast<Game>(g), w->envs[g]);
+                w->pages[g].set("Monitor", monitor);
+                w->st.commit(static_cast<Game>(g), w->pages[g], w->envs[g]);
+            }
+            return w;
+        };
+        // 1. Monitor 3 saved on 3 screens, then a screen goes: Gears 2's unsaved page still holds 3 (view now shows 2) -
+        //    not an edit, so Judgment's Monitor 1 is kept when Gears 2 saves
+        {
+            auto w = world(3, 3);
+            for (Environment& e : w->envs) e.screen_count = 2;
+            w->pages[G2].set("Sens", 0.7); w->dirty[G2] = true;   // dirty for another reason
+            w->pages[GJ].set("Monitor", 1); w->dirty[GJ] = true;
+            sync_shared(w->st, w->envs, w->pages, w->dirty, G2, w->changed);
+            for (int g = 0; g < kGameCount; ++g)
+                if (w->pages[g].i("Monitor") != 1 || w->pages[g].f("Sens") != 0.7) bad("Monitor clamp on game " + std::to_string(g));
+            w->st.commit(Game::Gears2, w->pages[G2], w->envs[G2]);
+            if (w->st.view(Game::Gears3, w->envs[G3]).i("Monitor") != 1) bad("Monitor clamp: store after the save");
+        }
+        // 1b. (r51 #3) a Monitor edit copied to a game whose screen count is lower gets that game's clamp
+        {
+            auto w = world(3, 0);
+            w->envs[G1].screen_count = 2;
+            w->pages[G3].set("Monitor", 3); w->dirty[G3] = true;
+            sync_shared(w->st, w->envs, w->pages, w->dirty, G3, w->changed);
+            if (w->pages[G2].i("Monitor") != 3 || w->pages[G1].i("Monitor") != 2) bad("Monitor clamp when copied");
+            bool again[kGameCount] = {};
+            sync_shared(w->st, w->envs, w->pages, w->dirty, G3, again);
+            for (bool c : again) if (c) bad("Monitor clamp: second sync changed something");
+        }
+        // 2. the page being saved changes Extra dead zone and back: not an edit, so Gears 3's unsaved 2 is kept (by design)
+        {
+            auto w = world(1, 0);
+            const int dz = w->pages[G2].i("DeadZone"), other = dz == 2 ? 3 : 2;
+            w->pages[G2].set("DeadZone", dz + 1); w->pages[G2].set("DeadZone", dz); w->pages[G2].set("Sens", 0.7);
+            w->dirty[G2] = true;
+            w->pages[G3].set("DeadZone", other); w->dirty[G3] = true;
+            sync_shared(w->st, w->envs, w->pages, w->dirty, G2, w->changed);
+            for (int g = 0; g < kGameCount; ++g)
+                if (w->pages[g].i("DeadZone") != other || w->pages[g].f("Sens") != 0.7) bad("reverted edit on game " + std::to_string(g));
+        }
+        // 3. two unsaved pages with different graphics cards: the page being saved wins either way round
+        for (int prefer : { G3, GJ }) {
+            auto w = world(1, 0);
+            w->pages[G3].t["GraphicsCard"] = "Card A"; w->dirty[G3] = true;
+            w->pages[GJ].t["GraphicsCard"] = "Card B"; w->dirty[GJ] = true;
+            sync_shared(w->st, w->envs, w->pages, w->dirty, prefer, w->changed);
+            const std::string want = prefer == G3 ? "Card A" : "Card B";
+            for (int g = 0; g < kGameCount; ++g)
+                if (w->pages[g].str("GraphicsCard") != want) bad("text conflict, prefer " + std::to_string(prefer) + ", game " + std::to_string(g));
+        }
+        // 4. saved from Gears 2, which has no unsaved edits: the other pages' edits still reach it; on a conflict the later
+        //    game wins (Judgment after Gears 3)
+        {
+            auto w = world(1, 0);
+            const int vib = w->pages[G2].i("Vibration");
+            w->pages[G3].set("Vibration", vib ? 0 : 1); w->pages[G3].t["GraphicsCard"] = "Card A"; w->dirty[G3] = true;
+            w->pages[GJ].t["GraphicsCard"] = "Card B"; w->dirty[GJ] = true;
+            sync_shared(w->st, w->envs, w->pages, w->dirty, G2, w->changed);
+            if (w->pages[G2].i("Vibration") == vib || w->pages[G2].str("GraphicsCard") != "Card B" || !w->changed[G2])
+                bad("save from a page with no edits");
+            if (w->pages[G3].str("GraphicsCard") != "Card B") bad("no edits on the saved page: game order");
+        }
     }
     std::cout << (fails ? "SELF-CHECKS FAILED\n" : "self-checks ok\n");
     return fails ? 1 : 0;
