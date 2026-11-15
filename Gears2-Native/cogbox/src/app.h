@@ -105,6 +105,20 @@ struct App {
     std::string joinLobby[G_COUNT];   // social step 3: the next start of this game joins that room code (Join friend)
     bool tuMismatchOk[G_COUNT] = {};  // TU preflight: "Play anyway" chosen for this game (until the launcher closes)
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
+    // 0.6.3: the Custom controller layout's "press a button" (page.cpp pad_layout_section). padPress = the last controller
+    // button pressed (a gs::PadInput, from SDL's gamepad events; LT / RT past half way), padPressSeq counts the presses.
+    // padCaptureFrame = the last frame the list waited for a press: then and the frame after, the controller's own uses in
+    // the launcher (menu navigation, LB / RB tabs, Start = Play, LT + RT = full screen) are off, so the press only sets.
+    int padPress = -1;
+    unsigned padPressSeq = 0;
+    int padCaptureFrame = -100;
+    // r48: padCaptureActive = a row is waiting now (a mouse click then only cancels: main.cpp takes the click, and
+    // padCaptureClickFrame says which frame); padCaptureHold = after a press is set or the wait ends, padCaptureFrame is
+    // kept fresh while any controller button, trigger or stick is still held, so a held LB / D-pad doesn't work the page
+    bool padCaptureActive = false, padCaptureHold = false;
+    double padCaptureHoldAt = 0;   // r49: when the hold began - it lasts 2.5 s at most (a drifting stick can't keep it on)
+    int padCaptureClickFrame = -100;
+    unsigned saves = 0;   // settings_save calls (the controller layout's Undo lasts until a save)
     bool borderless = false;          // job 523: no title bar (COGBox draws its own minimise / maximise / close)
     bool fullscreen = false;          // job 523: COGBox fills the screen (F11, or LT + RT together)
     bool tuTold[G_COUNT] = {};            // 0.4.6: "Title update needed" said for this game this session (front.cpp, install.cpp)
@@ -128,6 +142,7 @@ bool untested_version(const App &a, int g);
 void report_share(App &a, int g, const std::string &zip, const std::string &what);
 // Job 523: a controller button's name for the connected pad - "A" on Xbox, "Cross" on PlayStation (A B X Y LB RB Back Start).
 const char *pad_name(const App &a, const char *xbox);
+bool pad_capturing(const App &a);   // 0.6.3: the controller layout list is waiting for a button (see App::padCaptureFrame)
 void set_borderless(App &a, bool on);   // job 523: saved in CogBox.ini [Window] Borderless
 void set_fullscreen(App &a, bool on);   // job 523: saved in CogBox.ini [Window] Fullscreen
 void ask(App &a, const std::string &tag, int game, const std::string &title, const std::string &text,
@@ -163,7 +178,7 @@ void social_delete_poll(App &a);              // each frame: finishes DELETE ONL
 void social_rename(App &a, const std::string &name);   // SAVE NAME: the online account takes the new name
 void achievements_reveal_answer(App &a, int answer);
 void env_refresh(App &a, int g);
-bool settings_save(App &a);
+bool settings_save(App &a, int prefer = -1);   // prefer: the game whose page is saved (default: the open page)
 std::vector<std::string> monitor_choices();   // page.cpp: "Default (main screen)", then each screen
 // install.cpp
 void install_start(App &a, const std::string &path, int forGame);

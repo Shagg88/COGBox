@@ -1016,8 +1016,7 @@ Controller layout = Distribución del mando
 Southpaw (sticks swapped) = Zurdo (sticks intercambiados)
 A and B swapped = A y B intercambiados
 Bumpers and triggers swapped = Botones superiores y gatillos intercambiados
-Custom (CogBox.ini [Pad] Remap=) = Personalizada (CogBox.ini [Pad] Remap=)
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = Cambia los botones y sticks del mando antes de que el juego los vea, así los iconos de botones del juego siguen mostrando los botones originales. Personalizada: escribe pares src=dst (a b x y lb rb lt rt ls rs back start up down left right, o sticks=swap) en CogBox.ini bajo [Pad] Remap=.
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = Cambia los botones y sticks del mando antes de que el juego los vea, así los iconos de botones del juego siguen mostrando los botones originales. Personalizada: elige en la lista de abajo el botón del mando para cada botón del juego (una distribución para los cuatro juegos, guardada en CogBox.ini bajo [Pad] Remap=).
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = Ahora las actualizaciones de título son obligatorias: cada juego se ejecuta con su último parche de Epic (Gears 2 y 3: TU6, Judgment: TU4, Gears 1: TU5). Las versiones solo de disco ya no son compatibles.
 Two-player split = División para dos jugadores
 Top and bottom (game's) = Arriba y abajo (del juego)
@@ -1507,3 +1506,23 @@ The graphics card you chose is not in this PC at the moment - the game picks its
 GAME WINDOW = VENTANA DEL JUEGO
 Windowed / full screen key = Tecla de ventana / pantalla completa
 Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = Cambia la ventana del juego entre ventana y pantalla completa (sin bordes, o exclusiva si la elegiste) en el monitor en el que está, y de vuelta a su tamaño y posición de ventana. Funciona en la ventana del juego en los cuatro juegos, con o sin Teclado y ratón. Para usar otra tecla, añade a extra-args.txt una línea como --bind_cogbox_fullscreen=F12 (el nombre de una tecla, con Alt+, Ctrl+ o Shift+ delante si quieres; None desactiva la tecla).
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = Personalizada (elige abajo)
+Customise... = Personalizar...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = Elige tú mismo el botón del mando para cada botón del juego, partiendo de la distribución elegida arriba.
+Left: the game's buttons. Right: the controller button that does each one. = Izquierda: los botones del juego. Derecha: el botón del mando que hace cada uno.
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = Elige uno de los botones del juego y pulsa el botón del mando que debe hacerlo (Esc cancela). Un botón del mando hace una sola cosa: si ya hacía otra, los dos se intercambian.
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = No hay ningún mando conectado: elige el botón del mando en la lista. Un botón del mando hace una sola cosa: si ya hacía otra, los dos se intercambian.
+Press a button... = Pulsa un botón...
+Nothing = Ninguno
+Swap sticks = Intercambiar sticks
+The left stick moves the camera and the right stick moves you (southpaw). = El stick izquierdo mueve la cámara y el derecho te mueve a ti (zurdo).
+Reset to the game's own = Restablecer la del propio juego
+{1} now does the game's {2}. = {1} ahora hace el {2} del juego.
+{1} does the game's {2} instead. = {1} hace el {2} del juego en su lugar.
+No button does the game's {1} now. = Ningún botón hace ahora el {1} del juego.
+Your earlier custom layout was replaced. = Tu distribución personalizada anterior se ha sustituido.
+Undo Customise = Deshacer Personalizar
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = En CogBox.ini, pero el juego no lo entiende (se conserva, sin espacios ni símbolos):
+Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = Deshace todos los cambios desde Personalizar: vuelve a la distribución elegida antes (y a su línea de CogBox.ini).
+Or choose it from the list. = O elígelo de la lista.

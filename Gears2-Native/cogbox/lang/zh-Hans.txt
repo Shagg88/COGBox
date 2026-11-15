@@ -1016,8 +1016,7 @@ Controller layout = 手柄布局
 Southpaw (sticks swapped) = 左撇子（摇杆互换）
 A and B swapped = A 和 B 互换
 Bumpers and triggers swapped = 肩键和扳机互换
-Custom (CogBox.ini [Pad] Remap=) = 自定义（CogBox.ini [Pad] Remap=）
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = 在游戏读取之前调换手柄的按键和摇杆，因此游戏自带的按键提示仍显示原来的按键。自定义：在 CogBox.ini 的 [Pad] 下的 Remap= 中写入 src=dst 对（a b x y lb rb lt rt ls rs back start up down left right，或 sticks=swap）。
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = 在游戏读取之前调换手柄的按键和摇杆，因此游戏自带的按键提示仍显示原来的按键。自定义：在下方列表中为游戏的每个按键选择手柄按键（四款游戏共用一个布局，保存在 CogBox.ini 的 [Pad] 下的 Remap= 中）。
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = 现在必须安装标题更新：每款游戏都使用 Epic 的最后一个补丁运行（Gears 2 和 3：TU6，Judgment：TU4，Gears 1：TU5）。不再支持仅光盘版本。
 Two-player split = 双人分屏
 Top and bottom (game's) = 上下（游戏自带）
@@ -1508,3 +1507,23 @@ The graphics card you chose is not in this PC at the moment - the game picks its
 GAME WINDOW = 游戏窗口
 Windowed / full screen key = 窗口 / 全屏切换键
 Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = 在游戏窗口所在的显示器上，在窗口和全屏（无边框，若你选择了独占则为独占）之间切换，切回时恢复原来的窗口大小和位置。在四款游戏的游戏窗口中均可使用，无论键盘和鼠标是否开启。若要使用其他按键，请在 extra-args.txt 中添加类似 --bind_cogbox_fullscreen=F12 的一行（按键名称，可在前面加上 Alt+、Ctrl+ 或 Shift+；None 表示关闭该按键）。
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = 自定义（在下方选择）
+Customise... = 自定义...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = 以上方选择的布局为起点，自己为游戏的每个按键选择手柄按键。
+Left: the game's buttons. Right: the controller button that does each one. = 左：游戏的按键。右：触发该按键的手柄按键。
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = 选择游戏的一个按键，然后按下要用来触发它的手柄按键（Esc 取消）。一个手柄按键只做一件事：如果它原本已有其他作用，两者会互换。
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = 未连接手柄 - 请从列表中选择手柄按键。一个手柄按键只做一件事：如果它原本已有其他作用，两者会互换。
+Press a button... = 请按一个按键...
+Nothing = 无
+Swap sticks = 互换摇杆
+The left stick moves the camera and the right stick moves you (southpaw). = 左摇杆控制视角，右摇杆控制移动（左撇子）。
+Reset to the game's own = 恢复为游戏自带
+{1} now does the game's {2}. = {1} 现在触发游戏的 {2}。
+{1} does the game's {2} instead. = 改由 {1} 触发游戏的 {2}。
+No button does the game's {1} now. = 现在没有按键触发游戏的 {1}。
+Your earlier custom layout was replaced. = 之前的自定义布局已被替换。
+Undo Customise = 撤销自定义
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = 在 CogBox.ini 中但游戏无法识别（已保留，去掉了空格和符号）：
+Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = 撤销自“自定义”以来的所有更改：恢复为之前选择的布局（及其 CogBox.ini 中的行）。
+Or choose it from the list. = 或从列表中选择。

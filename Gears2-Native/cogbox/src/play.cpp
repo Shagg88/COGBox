@@ -243,7 +243,7 @@ static bool apply_menu_changes(App &a, int g, const std::string &logDir)
         }
         if (n) {
             a.dirty[g] = true;
-            settings_save(a);
+            settings_save(a, g);   // r50: this game's in-game changes win over another page's unsaved ones
             append_line(join(logDir, "args.txt"), "launcher: the in-game menu changed " + std::to_string(n) + " setting(s)");
         }
     }
@@ -568,7 +568,7 @@ void play_poll(App &a)
     if (known && code == 0xE0C0B00Au) {
         a.cur[g].set("AAMode", 1);
         a.dirty[g] = true;
-        settings_save(a);
+        settings_save(a, g);
         ask(a, "info", g, "FSR turned off",
             std::string(d.name) + " closed because AMD FSR crashed inside the graphics driver. COGBox has switched its "
             "anti-aliasing to SMAA. A newer graphics driver may fix FSR - you can turn it back on in the Graphics tab.", { "OK" });

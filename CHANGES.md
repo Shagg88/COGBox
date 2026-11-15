@@ -6,6 +6,7 @@
   and borderless full screen on the monitor the game is on, and back to the window's size and place. It is not F11
   (F11 is the cheat keys' "all weapons"); change it with a `--bind_cogbox_fullscreen=<key>` line in `extra-args.txt`
   (`None` turns it off). The key is shown on the Controls tab. Suggested in GitHub #316.
+- **Custom controller layout in the launcher:** Controls tab > Controller layout > **Customise...** (or **Custom**) lists the game's buttons; click one and press the controller button you want for it (without a controller, pick it from a list), with **Swap sticks** and **Reset to the game's own**. A button already in use swaps with the old one. One layout for all four games, still saved as `[Pad] Remap=` in `CogBox.ini` - no more editing it by hand (a hand-written line is read and kept).
 - **Cheats are off in Versus** (all four games): the cheat keys (F5-F11, `--gowX_cheats`) no longer work in any Versus match - online, System Link, private matches and local split screen, with or without bots. They still work in the campaign (solo and co-op) and in Horde, Beast and Survival. Any game type not on that list is treated as Versus. Other console commands from `--ue3_hotkeys` / `--ue3_exec` are refused in Versus too (the launcher's own display settings still apply). The Horde-bots button (Back, Gears 2 and 3) is not blocked: it turns the game's cheat flag on and adds bots, so switch it off for Versus. Cheats are also off in the menus and lobbies.
 
 ### Fixes

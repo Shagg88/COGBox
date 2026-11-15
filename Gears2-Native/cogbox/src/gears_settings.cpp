@@ -456,13 +456,14 @@ std::vector<Option> make_options(Game g) {
                "A round dead zone on both sticks (measured from the centre, not per axis), so small diagonal aim moves "
                "are not swallowed. Gears 1 and 2's own square dead zone on the camera is removed with it. Game's own = "
                "unchanged.", 0), "padlayout");
-    // GitHub #97: controller layouts (SDK patch 55, pad_remap). Custom = CogBox.ini [Pad] Remap=, e.g. "a=b,b=a".
+    // GitHub #97: controller layouts (SDK patch 55, pad_remap). Custom = CogBox.ini [Pad] Remap=, e.g. "a=b,b=a" - 0.6.3:
+    // edited on the Controls tab (page.cpp pad_layout_section, PadMap in the header).
     add(choice("PadLayout", "Controller layout", Tab::Controls, SH,
                { "Game's own", "Southpaw (sticks swapped)", "A and B swapped", "Bumpers and triggers swapped",
-                 "Custom (CogBox.ini [Pad] Remap=)" }, 0,
+                 "Custom (choose below)" }, 0,
                "Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts "
-               "keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up "
-               "down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=.", 0), "padlayout");
+               "keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list "
+               "below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=).", 0), "padlayout");
     add(make("Vibration", "Controller vibration", Tab::Controls, Kind::Bool, SH, 1, "The controller's rumble.", 383));   // no PS1 tooltip
     // GitHub #245 (SDK patch 98, --pad_adaptive_triggers): the game sets the DualSense's trigger feel per weapon. All
     // four games, each when its exe has the weapon table; per game, off by default.
@@ -937,6 +938,139 @@ std::string window_key(const Environment& env)
         key = v.empty() ? std::string("None") : v;   // no value: the game has no key then
     }
     return key;
+}
+
+void sync_shared(const Store& st, const Environment* envs, Settings* pages, const bool* dirty, int prefer, bool* changed)
+{
+    std::map<std::string, double> v;        // the edits, merged: a later page overwrites, `prefer` goes last
+    std::map<std::string, std::string> t;
+    auto collect = [&](int g) {
+        const Settings stored = st.view(static_cast<Game>(g), envs[g]);
+        const Settings& s = pages[g];
+        for (const Option& o : options(static_cast<Game>(g))) {
+            if (o.scope == Scope::GameOwn) continue;
+            if (o.kind == Kind::Text) {
+                auto it = s.t.find(o.id);
+                if (it != s.t.end() && it->second != stored.str(o.id)) t[o.id] = it->second;
+            } else if (o.scope == Scope::Shared && s.has(o.id) && (!stored.has(o.id) || stored.f(o.id) != s.f(o.id))) {
+                v[o.id] = s.f(o.id);
+            }
+        }
+    };
+    for (int g = 0; g < kGameCount; ++g) if (dirty[g] && g != prefer) collect(g);
+    if (prefer >= 0 && prefer < kGameCount && dirty[prefer]) collect(prefer);
+    for (int g = 0; g < kGameCount; ++g) {
+        changed[g] = false;
+        for (const Option& o : options(static_cast<Game>(g))) {
+            if (o.scope == Scope::GameOwn) continue;
+            if (o.kind == Kind::Text) {
+                auto it = t.find(o.id);
+                if (it != t.end() && pages[g].str(o.id) != it->second) { pages[g].t[o.id] = it->second; changed[g] = true; }
+            } else if (o.scope == Scope::Shared) {
+                auto it = v.find(o.id);
+                if (it != v.end() && (!pages[g].has(o.id) || pages[g].f(o.id) != it->second)) { pages[g].v[o.id] = it->second; changed[g] = true; }
+            }
+        }
+    }
+}
+
+// ---- 0.6.3: the Custom controller layout (see the header; the runtime's reader is input_system.cpp CurrentPadRemap) ----
+namespace {
+struct PadName { const char* token; const char* label; };
+const PadName k_padNames[kPadInputs] = {
+    { "a", "A" }, { "b", "B" }, { "x", "X" }, { "y", "Y" }, { "lb", "LB" }, { "rb", "RB" }, { "lt", "LT" }, { "rt", "RT" },
+    { "ls", "Left stick click" }, { "rs", "Right stick click" }, { "back", "Back" }, { "start", "Start" },
+    { "up", "D-pad up" }, { "down", "D-pad down" }, { "left", "D-pad left" }, { "right", "D-pad right" } };
+}  // namespace
+
+const char* pad_input_token(int i) { return i >= 0 && i < kPadInputs ? k_padNames[i].token : nullptr; }
+const char* pad_input_label(int i) { return i >= 0 && i < kPadInputs ? k_padNames[i].label : nullptr; }
+
+int pad_input_from_token(const std::string& token)
+{
+    std::string t;
+    for (char c : token) t += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (int i = 0; i < kPadInputs; ++i) if (t == k_padNames[i].token) return i;
+    return -1;
+}
+
+bool PadMap::same_layout(const PadMap& o) const
+{
+    if (sticks_swapped != o.sticks_swapped) return false;
+    for (int i = 0; i < kPadInputs; ++i) if (to[i] != o.to[i]) return false;
+    return true;
+}
+
+std::string pad_remap_clean(const std::string& spec)
+{
+    std::string clean;
+    for (char c : spec) if (std::isalnum(static_cast<unsigned char>(c)) || c == '=' || c == ',') clean += c;
+    return clean;
+}
+
+PadMap parse_pad_remap(const std::string& spec)
+{
+    PadMap m;
+    const std::string clean = pad_remap_clean(spec);   // what the runtime is given
+    size_t at = 0;
+    while (at <= clean.size()) {
+        size_t end = clean.find(',', at);
+        if (end == std::string::npos) end = clean.size();
+        const std::string item = clean.substr(at, end - at);
+        at = end + 1;
+        if (item.empty()) continue;   // ",," or a trailing comma: nothing to keep
+        std::string low;
+        for (char c : item) low += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (low == "sticks=swap") { m.sticks_swapped = true; continue; }
+        const size_t eq = low.find('=');
+        const int src = eq == std::string::npos ? -1 : pad_input_from_token(low.substr(0, eq));
+        const int dst = eq == std::string::npos ? -1 : pad_input_from_token(low.substr(eq + 1));
+        if (src >= 0 && dst >= 0) m.to[src] = dst;   // a later pair for the same button wins, as in the runtime
+        else m.unknown.push_back(item);
+    }
+    return m;
+}
+
+std::string format_pad_remap(const PadMap& m)
+{
+    std::string out;
+    auto put = [&](const std::string& s) { out += (out.empty() ? "" : ",") + s; };
+    for (int i = 0; i < kPadInputs; ++i)
+        if (m.to[i] != i && m.to[i] >= 0 && m.to[i] < kPadInputs) put(std::string(k_padNames[i].token) + "=" + k_padNames[m.to[i]].token);
+    if (m.sticks_swapped) put("sticks=swap");
+    for (const std::string& u : m.unknown) put(u);
+    return out;
+}
+
+const char* pad_layout_preset(int layout)
+{
+    static const char* const k_layouts[4] = { "", "sticks=swap", "a=b,b=a", "lb=lt,lt=lb,rb=rt,rt=rb" };
+    return layout >= 0 && layout < 4 ? k_layouts[layout] : "";
+}
+
+std::vector<int> pad_sources(const PadMap& m, int game_button)
+{
+    std::vector<int> v;
+    for (int i = 0; i < kPadInputs; ++i) if (m.to[i] == game_button) v.push_back(i);
+    return v;
+}
+
+PadAssign pad_assign(PadMap& m, int game, int pad)
+{
+    PadAssign r;
+    if (game < 0 || game >= kPadInputs || pad < 0 || pad >= kPadInputs || m.to[pad] == game) return r;
+    r.changed = true;
+    r.took_from = m.to[pad];
+    const std::vector<int> before = pad_sources(m, game);   // the buttons that pressed `game` until now
+    m.to[pad] = game;
+    if (!pad_sources(m, r.took_from).empty()) return r;     // something else still presses it
+    // a swap: the button that pressed `game` takes over took_from - the game button's own first (the usual case)
+    int q = -1;
+    for (int b : before) if (b == game) q = b;
+    if (q < 0 && !before.empty()) q = before.front();
+    if (q >= 0) { m.to[q] = r.took_from; r.swapped = q; }
+    else r.left_empty = true;
+    return r;
 }
 
 Availability available(const Option& o, Game g, Version ver, const Settings& s, const Environment& env) {
@@ -1923,11 +2057,8 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         if (r > 0) a.push_back("--pad_radial_deadzone=" + fmt_double(k_radial[r]));
     }
     if (avail("PadLayout")) {
-        static const char* k_layouts[4] = { "", "sticks=swap", "a=b,b=a", "lb=lt,lt=lb,rb=rt,rt=rb" };
         const int l = std::max(0, std::min(4, s.i("PadLayout")));
-        std::string spec = l < 4 ? k_layouts[l] : env.pad_remap;
-        std::string clean;
-        for (char c : spec) if (std::isalnum(static_cast<unsigned char>(c)) || c == '=' || c == ',') clean += c;
+        const std::string clean = pad_remap_clean(l < 4 ? std::string(pad_layout_preset(l)) : env.pad_remap);   // 0.6.3: shared
         if (!clean.empty()) a.push_back("--pad_remap=" + clean);
     }
     // PS1 911-925 (patches 0133 / 0135 / 0136 / 0152): lower input lag; Reflex / Anti-Lag 2 by the main card's maker

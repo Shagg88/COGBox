@@ -1016,8 +1016,7 @@ Controller layout = コントローラーの配置
 Southpaw (sticks swapped) = サウスポー（スティック入れ替え）
 A and B swapped = A と B を入れ替え
 Bumpers and triggers swapped = バンパーとトリガーを入れ替え
-Custom (CogBox.ini [Pad] Remap=) = カスタム（CogBox.ini [Pad] Remap=）
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = ゲームが受け取る前にコントローラーのボタンとスティックを入れ替えるため、ゲーム内のボタン表示は元のボタンのままです。カスタム: CogBox.ini の [Pad] Remap= に src=dst の組（a b x y lb rb lt rt ls rs back start up down left right、または sticks=swap）を書きます。
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = ゲームが受け取る前にコントローラーのボタンとスティックを入れ替えるため、ゲーム内のボタン表示は元のボタンのままです。カスタム: 下の一覧で、ゲームの各ボタンに使うコントローラーのボタンを選びます（4 作品共通の配置で、CogBox.ini の [Pad] Remap= に保存されます）。
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = タイトルアップデートが必須になりました。すべてのゲームは Epic の最終パッチで動作します（Gears 2 と 3: TU6、Judgment: TU4、Gears 1: TU5）。ディスクのみのバージョンはサポートされなくなりました。
 Two-player split = 2 人プレイの画面分割
 Top and bottom (game's) = 上下（ゲーム本来）
@@ -1508,3 +1507,23 @@ The graphics card you chose is not in this PC at the moment - the game picks its
 GAME WINDOW = ゲームウィンドウ
 Windowed / full screen key = ウィンドウ / フルスクリーン切り替えキー
 Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = ゲームのウィンドウを、表示されているモニター上でウィンドウとフルスクリーン（ボーダーレス、または選択した場合は排他的）に切り替え、戻すときは元のウィンドウのサイズと位置に戻します。4つのゲームすべてのゲームウィンドウで、キーボードとマウスのオン・オフに関係なく使えます。別のキーを使うには、extra-args.txt に --bind_cogbox_fullscreen=F12 のような行を追加します（キー名。必要なら前に Alt+、Ctrl+、Shift+ を付けられます。None でキーを無効にします）。
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = カスタム（下で選択）
+Customise... = カスタマイズ...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = 上で選んだ配置をもとに、ゲームの各ボタンに使うコントローラーのボタンを自分で選びます。
+Left: the game's buttons. Right: the controller button that does each one. = 左: ゲームのボタン。右: それを押すコントローラーのボタン。
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = ゲームのボタンを選び、それに使うコントローラーのボタンを押してください（Esc で取り消し）。コントローラーのボタンは 1 つの役割だけ: すでに別の役割があった場合は 2 つが入れ替わります。
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = コントローラーが接続されていません - 一覧からコントローラーのボタンを選んでください。コントローラーのボタンは 1 つの役割だけ: すでに別の役割があった場合は 2 つが入れ替わります。
+Press a button... = ボタンを押してください...
+Nothing = なし
+Swap sticks = スティックを入れ替える
+The left stick moves the camera and the right stick moves you (southpaw). = 左スティックでカメラ、右スティックで移動します（サウスポー）。
+Reset to the game's own = ゲーム標準に戻す
+{1} now does the game's {2}. = {1} がゲームの {2} になりました。
+{1} does the game's {2} instead. = 代わりに {1} がゲームの {2} になりました。
+No button does the game's {1} now. = ゲームの {1} を押すボタンがなくなりました。
+Your earlier custom layout was replaced. = 以前のカスタム配置は置き換えられました。
+Undo Customise = カスタマイズを元に戻す
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = CogBox.ini にありますが、ゲームが理解できない部分（スペースと記号を除いて残します）:
+Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = カスタマイズ以降の変更をすべて元に戻し、その前に選んでいた配置（と CogBox.ini の行）に戻します。
+Or choose it from the list. = または一覧から選びます。

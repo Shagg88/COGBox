@@ -1022,8 +1022,7 @@ Controller layout = Kontroller kiosztás
 Southpaw (sticks swapped) = Balkezes (karok felcserélve)
 A and B swapped = A és B felcserélve
 Bumpers and triggers swapped = Bumperek és ravaszok felcserélve
-Custom (CogBox.ini [Pad] Remap=) = Egyéni (CogBox.ini [Pad] Remap=)
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = Átrendezi a kontroller gombjait és karjait, mielőtt a játék megkapná őket, így a játék saját gombjelzései továbbra is az eredeti gombokat mutatják. Egyéni: írj src=dst párokat (a b x y lb rb lt rt ls rs back start up down left right, vagy sticks=swap) a CogBox.ini fájlba, a [Pad] alatti Remap= sorba.
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = Átrendezi a kontroller gombjait és karjait, mielőtt a játék megkapná őket, így a játék saját gombjelzései továbbra is az eredeti gombokat mutatják. Egyéni: az alábbi listában válaszd ki a játék minden gombjához a kontroller gombját (egy kiosztás mind a négy játékhoz, a CogBox.ini [Pad] alatti Remap= sorában tárolva).
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = A Title Update-ek mostantól kötelezőek: minden játék az Epic utolsó javításával fut (Gears 2 és 3: TU6, Judgment: TU4, Gears 1: TU5). A csak lemezes verziók már nem támogatottak.
 Two-player split = Kétjátékos osztás
 Top and bottom (game's) = Fent és lent (a játéké)
@@ -1566,3 +1565,23 @@ The graphics card you chose is not in this PC at the moment - the game picks its
 GAME WINDOW = JÁTÉKABLAK
 Windowed / full screen key = Ablak / teljes képernyő billentyű
 Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = A játékablakot ablak és teljes képernyő között váltja (keret nélküli, vagy exkluzív, ha azt választottad) azon a monitoron, amelyen éppen van, majd vissza az ablak méretére és helyére. Mind a négy játékban működik a játékablakban, Billentyűzet és egér mellett és nélkül is. Másik billentyű használatához adj az extra-args.txt fájlhoz egy ilyen sort: --bind_cogbox_fullscreen=F12 (egy billentyűnév, kívánság szerint Alt+, Ctrl+ vagy Shift+ előtaggal; a None kikapcsolja a billentyűt).
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = Egyéni (lent választható)
+Customise... = Testreszabás...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = Válaszd ki magad a játék minden gombjához a kontroller gombját, a fent választott kiosztásból kiindulva.
+Left: the game's buttons. Right: the controller button that does each one. = Bal oldalt: a játék gombjai. Jobb oldalt: a kontroller gombja, amely mindegyiket csinálja.
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = Válaszd ki a játék egyik gombját, majd nyomd meg a kontroller azon gombját, amelyik azt csinálja (Esc: mégse). Egy kontrollergomb egy dolgot csinál: ha már mást csinált, a kettő helyet cserél.
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = Nincs kontroller csatlakoztatva - válaszd ki a kontroller gombját a listából. Egy kontrollergomb egy dolgot csinál: ha már mást csinált, a kettő helyet cserél.
+Press a button... = Nyomj meg egy gombot...
+Nothing = Semmi
+Swap sticks = Karok felcserélése
+The left stick moves the camera and the right stick moves you (southpaw). = A bal kar a kamerát mozgatja, a jobb kar téged (balkezes).
+Reset to the game's own = Visszaállítás a játék sajátjára
+{1} now does the game's {2}. = {1} most a játék {2} gombját csinálja.
+{1} does the game's {2} instead. = {1} helyette a játék {2} gombját csinálja.
+No button does the game's {1} now. = Most egyik gomb sem csinálja a játék {1} gombját.
+Your earlier custom layout was replaced. = A korábbi egyéni kiosztásod lecserélődött.
+Undo Customise = Testreszabás visszavonása
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = A CogBox.ini fájlban van, de a játék nem érti (megtartva, szóközök és jelek nélkül):
+Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = A Testreszabás óta tett összes változtatást visszavonja: vissza az előtte választott kiosztásra (és a CogBox.ini sorára).
+Or choose it from the list. = Vagy válaszd ki a listából.
