@@ -329,10 +329,9 @@ int summary() {
             std::cout << "FAIL languages not on the copy (" << (miss ? "missing" : "present") << ")\n"; ++fails;
         }
     }
-    {   // cg050: the -normal exe's name; no user option any more (Shagg 10 Nov: automatic fallback in the launcher)
-        if (normal_code_exe("C:\\COGBox\\Gears2\\port-tu6\\gow2.exe") != "C:\\COGBox\\Gears2\\port-tu6\\gow2-normal.exe" ||
-            std::string(normal_code_exe_name(Game::Judgment)) != "gowj-normal.exe") { std::cout << "FAIL normal-code exe name\n"; ++fails; }
-        if (find_option(Game::Gears3, "FastCode")) { std::cout << "FAIL FastCode should not be a user option\n"; ++fails; }
+    {   // cg050: "Faster game code" is no user option; 0.6.3: no -normal exe or crash fallback either (one build per game)
+        for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
+            if (find_option(g, "FastCode")) { std::cout << "FAIL FastCode should not be a user option\n"; ++fails; }
     }
     // social step 3: with the multiplayer server enabled the games start online; without, none of it
     for (int on = 0; on <= 1; ++on) {

@@ -250,9 +250,6 @@ static bool apply_menu_changes(App &a, int g, const std::string &logDir)
     return file_exists(join(logDir, "menu-restart.flag"));
 }
 
-// Shagg 10 Nov: the -normal build only after the faster one crashed twice in a row in this COGBox version
-bool use_normal_code(const App &a, int g) { return a.ini.get("FastCode", std::string(game_def(g).key) + "Fallback", "") == COGBOX_VERSION; }
-
 void play_start(App &a, int g, bool prepare)
 {
     if (a.run.proc) return;
@@ -269,14 +266,6 @@ void play_start(App &a, int g, bool prepare)
     gs::Version ver = gs::effective_version(G, a.cur[g], a.env[g]);
     std::string exe = gs::exe_for_update(G, ver, a.env[g]) ? st.portExeTu : st.portExeDisc;
     if (exe.empty()) exe = st.portExeDisc.empty() ? st.portExeTu : st.portExeDisc;
-    // cg050: the faster build unless it crashed twice in a row in this COGBox version - then, silently, the same folder's
-    // build without the faster recompiler options (args.txt names the exe)
-    a.run.fastCode = true;
-    bool normalMissing = false;   // review: the fallback is due but this folder has no normal build
-    if (!exe.empty() && use_normal_code(a, g)) {
-        if (file_exists(gs::normal_code_exe(exe))) { exe = gs::normal_code_exe(exe); a.run.fastCode = false; }
-        else normalMissing = true;
-    }
     if (exe.empty() || !file_exists(exe)) { set_message(a, "The port program is missing - unzip the COGBox release again.", true); return; }
     std::string why;
     if (gs::blocked_by_cpu(G, a.env[g], &why)) {
@@ -371,7 +360,6 @@ void play_start(App &a, int g, bool prepare)
     std::string argText;
     for (auto &s : args) argText += s + "\r\n";
     argText += "launcher: COGBox " COGBOX_VERSION ", game " + std::string(d.name) + ", exe " + exe + "\r\n";
-    if (normalMissing) argText += "launcher: the faster build crashed twice, but this folder has no normal build (" + gs::normal_code_exe(exe) + ") - the faster one runs\r\n";
     argText += "launcher: graphics card(s): ";
     for (size_t i = 0; i < a.gpus.size(); i++) argText += (i ? " / " : "") + a.gpus[i];
     argText += "\r\n";
@@ -539,27 +527,6 @@ void play_poll(App &a)
     append_line(join(a.run.logDir, "args.txt"), "launcher: the game ended after " + std::to_string(secs) + " s, exit code " +
                                                     (known ? hex32(code) : std::string("unknown")) + ", crash reports " + std::to_string(crash.size()));
     bool restart = apply_menu_changes(a, g, a.run.logDir);
-    // Shagg 10 Nov: silent fallback - two crashes in a row of the faster build -> the normal build for this game until
-    // the next COGBox version. A clean exit resets the count. Only real crashes count (a crash report, or a Windows
-    // exception code); not a forced close (Task Manager: exit 1 / 0xFFFFFFFF), not the FSR driver crash or a missing DLL
-    // (the normal build would hit those too). The count carries the COGBox version, so an old count never adds up.
-    {
-        const std::string ck = std::string(d.key) + "Crashes", fk = std::string(d.key) + "Fallback";
-        const bool realCrash = !crash.empty() || (known && code >= 0xC0000000u && code != 0xC0000135u && code != 0xC000013Au &&
-                                                  code != 0xE0C0B00Au && code != 0xFFFFFFFFu);
-        std::string prev = a.ini.get("FastCode", ck);   // "<COGBox version>:<count>"
-        const size_t colon = prev.find(':');
-        int n = (colon != std::string::npos && prev.substr(0, colon) == COGBOX_VERSION) ? atoi(prev.c_str() + colon + 1) : 0;
-        if (known && code == 0 && crash.empty()) n = 0;
-        else if (a.run.fastCode && realCrash) {
-            if (++n >= 2) {
-                a.ini.set("FastCode", fk, COGBOX_VERSION);
-                append_line(join(a.run.logDir, "args.txt"), "launcher: the faster game code crashed twice in a row - the normal game code from now on (this COGBox version)");
-            }
-        }
-        a.ini.set("FastCode", ck, std::string(COGBOX_VERSION) + ":" + std::to_string(n));
-        a.ini.save();
-    }
     if (known && code == 0 && crash.empty()) {
         if (restart) { append_line(join(a.run.logDir, "args.txt"), "launcher: restarting the game (in-game menu)"); play_start(a, g); }
         return;

@@ -29,7 +29,10 @@ static Release load_rel(const std::string &p)
     Release r;
     std::istringstream in(slurp(p));
     std::string line;
-    while (std::getline(in, line)) if (line.size() > 66) r.files.push_back({ line.substr(66), lower(line.substr(0, 64)) });
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();   // 0.6.1.txt has Windows line ends
+        if (line.size() > 66) r.files.push_back({ line.substr(66), lower(line.substr(0, 64)) });
+    }
     return r;
 }
 
@@ -149,6 +152,40 @@ int main(int argc, char **argv)
         CHECK_MSG(moved.size() == 15, "0.4.8 -> 0.4.9 moved " + std::to_string(moved.size()));
         std::printf("0.4.8->0.4.9 shared049: %zu moves (nvngx_dlss %d, dxil %d, AMD Vulkan %d); Streamline + player files kept\n",
                     moved.size(), dlss, dxil, amd);
+    }
+    // 0.6.3 (Shagg 11-15): the "-normal" exes (0.5.0 - 0.6.2: the crash fallback's second build of each game) no longer
+    // ship. Unzipped over 0.6.0 / 0.6.1 (real lists and hashes): exactly the four <stem>-normal.exe move, nothing else.
+    // Over 0.6.2 (its hashes not in this test's lists): moved when known - from stale_known.h (package_cogbox.ps1 adds
+    // every past release's) or the _old-files\shipped\SHA256SUMS-0.6.2.txt that 0.6.2 saved at its first start ('extra') -
+    // and kept when unknown (a player's own file of that name).
+    {
+        const std::set<std::string> normals = { "gears1\\port\\gow1-normal.exe", "gears2\\port-tu6\\gow2-normal.exe",
+                                                "gears3\\port-tu6\\gow3-normal.exe", "judgment\\port\\gowj-normal.exe" };
+        for (const char *t : { "0.6.0", "0.6.1" }) {
+            Release r = load_rel(dir + "/" + t + ".txt");
+            CHECK_MSG(r.files.size() > 30, t);
+            std::string sums063;
+            int k = 0, hadNormal = 0;
+            for (auto &f : r.files) {
+                if (normals.count(lower(f.first))) { hadNormal++; continue; }
+                sums063 += fake_hash(40000 + k++) + "  " + f.first + "\r\n";
+            }
+            CHECK_MSG(hadNormal == 4, std::string(t) + " shipped " + std::to_string(hadNormal) + " -normal exes");
+            ShippedList now063;
+            CHECK_MSG(parse_shipped(sums063, now063), "parse 0.6.3");
+            std::map<std::string, std::string> disk;
+            for (auto &f : r.files) disk[lower(f.first)] = now063.files.count(lower(f.first)) ? "new" : f.second;
+            std::set<std::string> moved;
+            for (auto &d : disk) if (stale_path_ok(d.first, now063) && known_old_program(d.second, noExtra)) moved.insert(d.first);
+            CHECK_MSG(moved == normals, std::string(t) + " -> 0.6.3 moved " + std::to_string(moved.size()) + " files, not the four -normal exes");
+            std::printf("%s->0.6.3 no -normal exes: %zu moves (the four <stem>-normal.exe)\n", t, moved.size());
+        }
+        ShippedList now063;
+        CHECK_MSG(parse_shipped(fake_hash(41000) + "  CogBox.exe\r\n" + fake_hash(41001) + "  Gears2\\port-tu6\\gow2.exe\r\n", now063), "parse");
+        const std::string h062 = fake_hash(41002);   // stands for 0.6.2's gow2-normal.exe
+        CHECK_MSG(stale_path_ok("Gears2\\port-tu6\\gow2-normal.exe", now063), "-normal exe: place allows moving");
+        CHECK_MSG(known_old_program(h062, { h062 }), "0.6.2's -normal exe known from its saved list -> moved");
+        CHECK_MSG(!known_old_program(h062, noExtra), "an unknown gow2-normal.exe (the player's) -> kept");
     }
     // single rules
     std::string why;

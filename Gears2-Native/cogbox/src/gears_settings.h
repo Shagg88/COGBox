@@ -188,13 +188,6 @@ std::string tooltip_for(const Option& o, Game g, const Availability& a, const En
 Version effective_version(Game g, const Settings& s, const Environment& env);
 // Play starts the title update exe (Gears 2 / 3: TU6 build; Judgment: its only exe, with TU4 when present).
 bool exe_for_update(Game g, Version ver, const Environment& env);
-// cg050: faster game code (no user option since Shagg 10 Nov). Each game's title-update port folder holds
-// two builds of the same game code: <exe> (gow2.exe ...) made with the faster recompiler options (Gears 3: cr_as_local;
-// Gears 1 / 2 / Judgment: non_volatile_as_local) and <stem>-normal.exe (gow2-normal.exe ...) made without them. The
-// launcher starts the faster one, and silently the -normal one after the faster one crashed twice in a row
-// (play.cpp use_normal_code, CogBox.ini [FastCode] <game>Crashes / <game>Fallback = the COGBox version).
-const char* normal_code_exe_name(Game g);                     // "gow2-normal.exe"
-std::string normal_code_exe(const std::string& exePath);      // "...\gow2.exe" -> "...\gow2-normal.exe"
 
 // Presets (PS1 573-592). apply_preset sets the 13 preset boxes and Preset; Custom changes nothing.
 void apply_preset(Settings& s, int preset);

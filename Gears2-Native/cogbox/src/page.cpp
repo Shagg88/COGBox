@@ -269,7 +269,6 @@ void env_refresh(App &a, int g)
     if (exe.empty()) exe = st.portExeDisc.empty() ? st.portExeTu : st.portExeDisc;
     st.useUpdate = !st.portExeTu.empty() && exe == st.portExeTu && !st.updateDir.empty();
     if (game_update_required(g)) st.useUpdate = !st.updateDir.empty() && (!game_def(g).updateNeeded || !st.portExeTu.empty());   // title updates required
-    if (use_normal_code(a, g) && file_exists(gs::normal_code_exe(exe))) exe = gs::normal_code_exe(exe);   // cg050
     // 0.5.0 (Play took 2+ minutes in Gears 2 / 3 / Judgment): writing the in-game menu file asks these ~10,000-12,000
     // times (live_lines runs build_args for every value of every live option). Each answer is now worked out once per
     // env (the files are checked when the env is built) and then read from memory - no file-system call per question.

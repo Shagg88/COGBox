@@ -499,8 +499,8 @@ std::vector<Option> make_options(Game g) {
                     // (the PS1 has G3Version = 1, the disc; Gears 3's chat built both its exes with PGO, job 143)
                "Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: "
                "TU4, Gears 1: TU5). Disc-only versions are no longer supported.", 324), "version");
-    // cg050 / Shagg 10 Nov: no "Faster game code" option - the faster build always runs, and the launcher falls back to
-    // the -normal one by itself after the faster one crashes twice in a row (play.cpp use_normal_code)
+    // cg050: no "Faster game code" option. 0.6.3 (Shagg 11-15): the faster build is the only one shipped - no -normal
+    // exe, no crash fallback (CogBox.ini [FastCode] of 0.5.0-0.6.2 is ignored; upgrade_cleanup.cpp drops it)
     add(choice("Players", "Players", Tab::Gameplay, PG, { "1", "2 (split-screen)", "3 (split-screen)", "4 (split-screen)" }, 0,
                "Local split-screen co-op, one controller each. In the game, choose Campaign > Play Split-Screen; player 2 is "
                "signed in automatically. If a controller shows up twice, turn off Steam Input or DS4Windows.", 325), "players");
@@ -1264,19 +1264,6 @@ Version effective_version(Game g, const Settings& s, const Environment& env) {  
 bool exe_for_update(Game g, Version ver, const Environment& env) {   // PS1 442-445, 804, 809, 821
     if (g == Game::Judgment || g == Game::Gears1) return env.update_ready;
     return env.update_ready && ver == Version::TitleUpdate;
-}
-const char* normal_code_exe_name(Game g) {   // cg050
-    switch (g) {
-    case Game::Gears2: return "gow2-normal.exe";
-    case Game::Gears3: return "gow3-normal.exe";
-    case Game::Judgment: return "gowj-normal.exe";
-    default: return "gow1-normal.exe";
-    }
-}
-std::string normal_code_exe(const std::string& exePath) {
-    const size_t dot = exePath.find_last_of('.'), sep = exePath.find_last_of("\\/");
-    if (dot == std::string::npos || (sep != std::string::npos && dot < sep)) return exePath + "-normal";
-    return exePath.substr(0, dot) + "-normal" + exePath.substr(dot);
 }
 
 // ---- Presets (PS1 573-592) ------------------------------------------------------------------------------------------
