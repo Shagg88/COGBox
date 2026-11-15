@@ -1155,7 +1155,7 @@ std::atomic<bool> g_idle_post_pending{false};   // a hide / show is queued on th
 // ue3_mouse_look.h) - IsMouseLookActive() alone is true from the start, so the hide never happened (#143 and #320).
 // The capture count belongs to the UI thread: it is read there and mirrored here for the watcher.
 std::atomic<bool> g_idle_look_owned{false};
-std::atomic<HWND> g_idle_hwnd_cached{nullptr};   // r54: the game window's handle, read on the UI thread only
+std::atomic<HWND> g_idle_hwnd_cached{nullptr};   // r54: the game window's handle, written on the UI thread only (read by the watcher)
 rex::ui::Window::CursorVisibility g_idle_before = rex::ui::Window::CursorVisibility::kVisible;
 HWND g_idle_hwnd = nullptr;   // UI thread: the window our WM_SETCURSOR handler is installed on
 WNDPROC g_idle_prev_proc = nullptr;   // UI thread (read by our window procedure, which runs on it too)
@@ -1271,19 +1271,19 @@ void IdleUninstallCursorProc() {
 
 // UI thread: hide (or, already hidden by us, apply the hide again).
 void IdleHideNow(const char* why) {
-  static IdleRateLog log_hide, log_retry, log_skip;
+  static IdleRateLog log_hide, log_retry;
+  static const char* logged_skip = nullptr;   // r55: a skip is logged when its reason changes, not again while steady
   IdlePostDone done;
   rex::ui::Window* uw = g_idle_window.load();
   if (!uw) return;
   HWND hwnd = IdleCacheHwnd(uw);
   if (IdleCursorOwnedElsewhere(uw)) {
-    if (log_skip.Allow()) {
-      const char* skip = g_open.load() ? "the in-game menu is open" : "mouse look has the mouse";
-      if (const int held = log_skip.TakeHeld()) REXLOG_INFO("cogbox_cursor: hide skipped - {} [{} more not logged]", skip, held);
-      else REXLOG_INFO("cogbox_cursor: hide skipped - {}", skip);
-    }
+    const char* skip = g_open.load() ? "the in-game menu is open" : "mouse look has the mouse";
+    if (skip != logged_skip) REXLOG_INFO("cogbox_cursor: hide skipped - {}", skip);
+    logged_skip = skip;
     return;
   }
+  logged_skip = nullptr;
   IdleInstallCursorProc(hwnd);
   const bool again = g_idle_hidden.load();
   if (!again) {
@@ -1311,7 +1311,7 @@ void IdleHideNow(const char* why) {
 void IdleShowNow(const char* why) {
   static IdleRateLog log_show;
   IdlePostDone done;
-  // Review 1186: with the menu open or mouse look on, the hide stays ours (the flag kept), so the next movement after
+  // Review 1186: with the menu open or mouse look having the mouse, the hide stays ours (the flag kept), so the next movement after
   // they end still puts the cursor back - clearing it here left the cursor hidden for good.
   rex::ui::Window* uw = g_idle_window.load();
   if (!uw) return;
@@ -1342,7 +1342,8 @@ void IdleCursorWatch() {
   bool verify_pending = false;   // check (and log) what the OS shows on the poll after a hide
   const char* logged_skip = nullptr;   // the hold-back reason last logged
   auto skip_logged_at = std::chrono::steady_clock::time_point{};
-  int skip_held = 0;
+  int skip_held = 0;   // r55: reasons (log lines) held back, not polls
+  const char* held_skip = nullptr;
   auto look_checked_at = std::chrono::steady_clock::time_point{};
   IdleRateLog log_verify;
   while (!g_idle_stop.load()) {
@@ -1397,13 +1398,16 @@ void IdleCursorWatch() {
           logged_skip = skip;
           skip_logged_at = now;
           skip_held = 0;
-        } else {
+          held_skip = nullptr;
+        } else if (skip != held_skip) {
           ++skip_held;
+          held_skip = skip;
         }
       }
       continue;
     }
-    logged_skip = nullptr;
+    // r55: the logged reason is kept while a hide is only being asked for (with KB+M set up, mouse look keeps the
+    // mouse and the UI thread skips it every second); it is cleared once a hide is really ours.
     if (!g_idle_hidden.load()) {
       const char* why = pad_since ? "controller in use, mouse still" : "mouse still for 3 s";
       if (IdlePost(w, [why] { IdleHideNow(why); })) {
@@ -1412,6 +1416,8 @@ void IdleCursorWatch() {
       }
       continue;
     }
+    logged_skip = nullptr;
+    held_skip = nullptr;
     // Ours and should be hidden: does the OS agree? If not (SDL or Windows put the arrow back), try again.
     const bool showing = OsCursorShowing();
     if (verify_pending && !g_idle_post_pending.load()) {
