@@ -46,6 +46,7 @@ std::string ObjectName(uint32_t object);              // "Name" or "Name_<n>"
 uint32_t ClassOf(uint32_t object);
 uint32_t FindClass(const char* name);                 // the UClass object
 bool IsA(uint32_t object, uint32_t cls);              // object's class is cls or derives from it
+bool ClassIsA(uint32_t cls, uint32_t base);       // 0.6.3: the UClass `cls` is `base` or derives from it (a class value, e.g. GameReplicationInfo.GameClass)
 uint32_t FindObject(const char* name);                // the first object of that name (Default__X included)
 std::vector<uint32_t> FindInstancesOf(uint32_t cls);  // every non-default instance of cls or a subclass
 std::vector<uint32_t> AllObjects();                   // every object in GObjObjects

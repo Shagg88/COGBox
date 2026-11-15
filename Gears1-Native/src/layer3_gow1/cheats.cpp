@@ -10,20 +10,44 @@
 // engine's own DeferredCommands loop in FEngineLoop::Tick agrees. The commands run from our override of FEngineLoop::Tick (sub_8222A6E0, called once per frame from GuardedMain's loop at
 // 0x8222B560), after the original. Each hotkey runs "EnableCheats" first (the cheat manager belongs to the player
 // controller, which a new level replaces), as in Gears 2. Research: r7 (2026-11-14). Our code (MIT).
+//
+// 0.6.3: no cheat command runs in a Versus match (ue3/match_guard.h, asked from the console before every command): the campaign
+// (solo and co-op) and the menus keep the cheats, every Versus game type - local split screen, System Link, online, with or
+// without bots - does not. Gears 1's WarfareGame package (TU5 WarfareGame.xxx, class export table and the Coalesced.ini
+// sections): Engine.GameInfo > WarfareGame.WarGame > WarfareGame.WarGameSP (DefaultGame / DefaultServerGame = WarGameSP: the
+// campaign, co-op and the menus); the Versus game types are WarfareGameContent's WarGameMP, WarGameTDM (Warzone, Execution,
+// Assassination are its settings) and WarGameResurrection, which extend WarGame beside WarGameSP. So: Versus = WarGame minus
+// WarGameSP. (Only the WarfareGame package is loaded at start-up, so the content classes are not looked up by name; the export
+// table's WarGameSP has the export that the table puts at WarGame's place as its super; names found in the package: WarGame,
+// WarGameSP, WarGameKillTheLeader, WarGameResurrection. Gears 1 has no Horde / Beast.)
 #include <rex/cvar.h>
 #include <rex/logging/macros.h>
 #include <rex/ppc/context.h>
 
 #include <ue3/console.h>
+#include <ue3/match_guard.h>
 
 REXCVAR_DEFINE_BOOL(gow1_cheats, false, "Gears1",
-                    "GitHub #264: developer cheats on hotkeys: F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F9 "
+                    "GitHub #264: developer cheats on hotkeys (never in a Versus match): F5 god mode, F6 slow motion (cycles 1/2, 1/4, normal), F9 "
                     "fly through walls (on / off), F10 hide the HUD, F11 all weapons and ammo (keys can be changed with "
                     "--ue3_hotkeys)");
 
 namespace {
 constexpr uint32_t kGEngine = 0x82FCDD50u;
 constexpr uint32_t kGLog = 0x82F98D98u;
+// 0.6.3 (ue3/match_guard.h): the object tables as adaptive_triggers.cpp opens them (its notes: the globals, the layout given).
+constexpr uint32_t kGNamesVar = 0x82FED4F0u;
+constexpr uint32_t kGObjectsVar = 0x82FDD1C4u;
+constexpr const char* kLayout = "4,40,44,52,60,76,64,72,96,124,16,1,1";   // ue3::obj::LayoutText order
+// Cheats run in WarGameSP only (the campaign, co-op and the front end: DefaultGame=WarfareGame.WarGameSP); every other game
+// type - WarGameMP / TDM / Resurrection and anything else - is refused (review r41: their parent classes were never read).
+constexpr const char* kAllowed[] = {"WarGameSP", nullptr};
+constexpr const char* kDenied[] = {nullptr};
+bool OpenObjects() {
+  ue3::obj::Layout layout;
+  ue3::obj::ParseLayout(kLayout, &layout);
+  return ue3::obj::Init(kGNamesVar, kGObjectsVar, &layout);
+}
 constexpr const char* kDefaultHotkeys =
     "F5=God;F6=Slomo 0.5|Slomo 0.25|Slomo 1;F9=Ghost|Walk;F10=ToggleHUD;F11=AllWeapons|AllAmmo";
 }  // namespace
@@ -39,10 +63,13 @@ void Gow1InstallCheats() {
   target.exec_vtable_slot = 0;
   const bool cheats = REXCVAR_GET(gow1_cheats);
   if (cheats) target.before_each = "EnableCheats";
+  ue3::match::Configure({"Gears 1", kAllowed, kDenied, target.engine_global, target.players_data_offset,
+                         target.players_num_offset, &OpenObjects});
+  target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
   Ue3ConsoleSetTarget(target);
   if (cheats) {
     Ue3ConsoleInstallHotkeys(kDefaultHotkeys);
-    REXLOG_INFO("gow1_cheats: developer cheats on hotkeys");
+    REXLOG_INFO("gow1_cheats: developer cheats on hotkeys (never in a Versus match)");
   } else {
     Ue3ConsoleInstallHotkeys();  // only what --ue3_hotkeys names
   }
