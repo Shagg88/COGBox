@@ -8,6 +8,10 @@ describe('log scrubbing', () => {
       .toBe('/ws/signal?uuid=2f27&token=REDACTED&role=game');
     expect(logSafeUrl('/ws/signal?token=abc123')).toBe('/ws/signal?token=REDACTED');
   });
+  it('hides a Fabricator download address', () => {
+    expect(logSafeUrl(`/api/v1/fabricator/files/${'ab'.repeat(32)}`)).toBe('/api/v1/fabricator/files/REDACTED');
+    expect(logSafeText(`GET /api/v1/fabricator/files/${'ab'.repeat(32)} failed`)).not.toContain('abab');
+  });
   it('leaves other urls alone', () => {
     expect(logSafeUrl('/api/v1/friends')).toBe('/api/v1/friends');
     expect(logSafeUrl('/api/v1/lobbies?title_id=4D5308AB')).toBe('/api/v1/lobbies?title_id=4D5308AB');

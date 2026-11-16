@@ -9,6 +9,7 @@ import {
   canPublish, cancelUpload, chunkCount, expireUploads, finishUpload, getUpload, normalizeMeta, ownLiveMod,
   putChunk, putScreen, startUpload, uploadProblems, MAX_SCREENS, type UploadRow,
 } from './publish.js';
+import { addToLibrary, DownloadTokens, issueDownload, library, modIsLive, rate, removeFromLibrary, report, REPORT_TEXT_MAX } from './player.js';
 
 export interface FabRouteOptions { db: DatabaseInstance; store: FabStore; settings: FabSettings; now: () => number }
 
@@ -19,10 +20,30 @@ const EXPIRE_EVERY_MS = 10 * 60 * 1000;
 const SORTS = new Set<string>(['popular', 'rating', 'new', 'updated', 'name']);
 const IMAGE_KEY = /^[0-9a-f]{64}\.png$/;
 const AUTH_ERROR = { error: 'Authorization: COGBox <uuid>:<token> required' };
+const TOKEN = /^[0-9a-f]{64}$/;
+const MOD_ID = /^\d{1,9}$/;
+
+// One byte range from a Range header against a file of `size` bytes: { start, end } (inclusive), null when there is
+// no header, or 'bad' for anything unsatisfiable or not a single bytes range (bytes=a-, bytes=a-b, bytes=-n).
+export function parseRange(header: string | undefined, size: number): { start: number; end: number } | null | 'bad' {
+  if (header === undefined) return null;
+  const m = /^bytes=(\d{0,15})-(\d{0,15})$/.exec(header.trim());
+  if (!m || (m[1] === '' && m[2] === '')) return 'bad';
+  if (m[1] === '') {
+    const n = Number(m[2]);
+    if (n === 0 || size === 0) return 'bad';
+    return { start: Math.max(0, size - n), end: size - 1 };
+  }
+  const start = Number(m[1]);
+  const end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+  if (start >= size || start > end) return 'bad';
+  return { start, end };
+}
 
 // The Fabricator API (mounted at /api/v1/fabricator). Log lines never carry tokens, uuids, addresses or paths.
 export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fastify, opts) => {
   const { db, store, settings: s, now } = opts;
+  const tokens = new DownloadTokens();
 
   let timer: NodeJS.Timeout | null = null;
   fastify.addHook('onReady', async () => {
@@ -61,6 +82,82 @@ export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fast
     if (!fs.existsSync(file)) return reply.status(404).send({ error: 'image not found' });
     reply.header('Cache-Control', 'public, max-age=86400');
     return reply.type('image/png').send(fs.createReadStream(file));
+  });
+
+  // A download address: no sign-in, the token is the key. Stops working when it expires or the mod is taken down.
+  fastify.get<{ Params: { token: string } }>('/files/:token', async (req, reply) => {
+    if (!TOKEN.test(req.params.token)) return reply.status(404).send({ error: 'download not found' });
+    const grant = tokens.get(req.params.token, now());
+    if (!grant) return reply.status(410).send({ error: 'download address expired: ask for a new one' });
+    if (!modIsLive(db, grant.modId)) return reply.status(410).send({ error: 'mod taken down' });
+    const file = store.pathOf(grant.key);
+    let size: number;
+    try { size = (await fs.promises.stat(file)).size; } catch { return reply.status(410).send({ error: 'file no longer available' }); }
+    reply.header('Accept-Ranges', 'bytes').header('Cache-Control', 'no-store');
+    const range = parseRange(req.headers.range, size);
+    if (range === 'bad') return reply.status(416).header('Content-Range', `bytes */${size}`).send({ error: 'bad range' });
+    reply.type('application/zip').header('Content-Disposition', 'attachment; filename="mod.zip"');
+    if (range === null) {
+      reply.header('Content-Length', size);
+      return reply.send(fs.createReadStream(file));
+    }
+    reply.status(206).header('Content-Range', `bytes ${range.start}-${range.end}/${size}`).header('Content-Length', range.end - range.start + 1);
+    return reply.send(fs.createReadStream(file, { start: range.start, end: range.end }));
+  });
+
+  // The library, download addresses, ratings and reports: a signed-in account.
+  await fastify.register(async (pl) => {
+    const users = new WeakMap<FastifyRequest, AuthedUser>();
+    pl.addHook('onRequest', async (req, reply) => {
+      const me = checkAuthHeader(db, req.headers.authorization);
+      if (!me) return reply.status(401).send(AUTH_ERROR);
+      users.set(req, me);
+    });
+    const me = (req: FastifyRequest) => (users.get(req) as AuthedUser).uuid;
+    const modId = (id: string): number | null => (MOD_ID.test(id) ? Number(id) : null);
+    const exists = (id: number) => !!db.prepare("SELECT 1 FROM fab_mods WHERE id = ? AND state != 'removed'").get(id);
+
+    pl.get('/library', async (req) => ({ mods: library(db, me(req)) }));
+
+    pl.post<{ Params: { id: string } }>('/library/:id', async (req, reply) => {
+      const id = modId(req.params.id);
+      if (id === null || !addToLibrary(db, me(req), id, now())) return reply.status(404).send({ error: 'mod not found' });
+      return reply.status(204).send();
+    });
+
+    pl.delete<{ Params: { id: string } }>('/library/:id', async (req, reply) => {
+      const id = modId(req.params.id);
+      if (id !== null) removeFromLibrary(db, me(req), id);
+      return reply.status(204).send();
+    });
+
+    pl.post<{ Params: { id: string } }>('/mods/:id/download', async (req, reply) => {
+      const id = modId(req.params.id);
+      const r = id === null ? { error: 'not_found' as const } : issueDownload(db, s, me(req), id, now(), tokens);
+      if (!('error' in r)) return r;
+      if (r.error === 'taken_down') return reply.status(410).send({ error: 'taken_down' });
+      if (r.error === 'rate_limited') return reply.status(429).send({ error: 'rate_limited' });
+      return reply.status(404).send({ error: 'not_found' });
+    });
+
+    pl.post<{ Params: { id: string }; Body: { stars?: unknown } }>('/mods/:id/rating', async (req, reply) => {
+      const id = modId(req.params.id);
+      const r = id === null ? 'not_in_library' : rate(db, me(req), id, req.body?.stars, now());
+      if (r === 'bad_stars') return reply.status(400).send({ error: 'stars must be a whole number from 1 to 5' });
+      if (r === 'not_in_library') return reply.status(403).send({ error: 'not_in_library' });
+      return reply.status(204).send();
+    });
+
+    pl.post<{ Params: { id: string }; Body: { reason?: unknown; text?: unknown } }>('/mods/:id/report', async (req, reply) => {
+      const id = modId(req.params.id);
+      if (id === null || !exists(id)) return reply.status(404).send({ error: 'mod not found' });
+      const text = req.body?.text ?? '';
+      if (typeof text !== 'string' || text.length > REPORT_TEXT_MAX) return reply.status(400).send({ error: `text must be up to ${REPORT_TEXT_MAX} characters` });
+      const r = report(db, me(req), id, req.body?.reason, text, now());
+      if (r === 'bad_reason') return reply.status(400).send({ error: 'reason must be malware, stolen, broken, offensive or other' });
+      if (r === 'already') return reply.status(409).send({ error: 'already reported' });
+      return reply.status(204).send();
+    });
   });
 
   // Upload sessions: every route needs a signed-in account, checked before any body is read.

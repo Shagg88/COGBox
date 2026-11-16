@@ -1,7 +1,8 @@
 // What the request log may hold (PRIVACY.md): the method and the path, with any sign-in token hidden. The games
 // sign in to /ws/signal with ?token=..., which the default log line printed in full along with the player's address.
+// A Fabricator download address (/files/<token>) is a key too.
 export function logSafeUrl(url: string): string {
-  return url.replace(/([?&]token=)[^&#]*/gi, '$1REDACTED');
+  return url.replace(/([?&]token=)[^&#]*/gi, '$1REDACTED').replace(/(\/fabricator\/files\/)[^/?#\s]+/gi, '$1REDACTED');
 }
 
 export function logSafeRequest(req: { method: string; url: string }): { method: string; url: string } {
