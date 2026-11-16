@@ -92,6 +92,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include <array>
 #include <bit>
 #include <bitset>
+#include <cctype>
 #include <cstdio>
 #include <atomic>
 #include <chrono>
@@ -960,6 +961,7 @@ REXCVAR_DEFINE_STRING(gow2_ao_skip_ps, "", "Gears2",
                       "Notes/81: pixel shader hashes, comma-separated, of a game's own AO passes that the chain detection does not "
                       "find (Judgment). Skipped while our AO or no AO is shown, drawn again for the game's own, so F5 and F9 work live");
 REXCVAR_DECLARE(std::string, gow2_pcss);  // shader_cache.cpp (notes/80 s.16)
+REXCVAR_DECLARE(std::string, gow2_renderer_bc_cpu_over_gpu);  // texture_cache.cpp (#202 / #315)
 REXCVAR_DEFINE_STRING(gow2_pcss_trace_frames, "", "Gears2",
                       "Notes/80 s.16 (developer): frames whose draws that sample a depth-format texture (k_24_8 / k_24_8_FLOAT: shadow "
                       "maps, the scene depth) are logged with their targets, state, textures and first pixel constants");
@@ -1989,6 +1991,17 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     // GitHub #315: the H2 flush has its own switch (on by default); --gow2_renderer_export_settle keeps it on too.
     textures_->SetFlushEverGpuWritten(memexport_readback_ &&
                                       (REXCVAR_GET(gow2_renderer_texture_land_exports) || export_settle_));
+    {  // GitHub #315 (0.6.3): BC textures take guest memory over the mirror for GPU-current pages - auto = where pending
+       // memexport read-backs can be landed first (texture_cache.cpp, the cvar's comment)
+      std::string mode = REXCVAR_GET(gow2_renderer_bc_cpu_over_gpu);
+      for (char& c : mode) c = char(std::tolower(static_cast<unsigned char>(c)));
+      const bool on = mode == "auto" || mode.empty() ? memexport_readback_
+                                                     : mode == "true" || mode == "1" || mode == "on" || mode == "yes";
+      textures_->SetBcGuestOverMirror(on);
+      if (on || memexport_)
+        REXLOG_INFO("gow2_renderer: BC textures over pages our GPU wrote last: {} (--gow2_renderer_bc_cpu_over_gpu={}, #315)",
+                    on ? "guest memory, pending memexport read-backs landed first" : "the mirror's bytes", mode);
+    }
     if (const int stale = REXCVAR_GET(gow2_renderer_texture_stale_log); stale > 0) {
       textures_->SetStaleReloadReport(uint32_t(stale), [this](const rr::TextureCache::StaleReload& s) { ReportStale(s); });
       REXLOG_INFO("gow2_renderer: texture stale-reload log on: textures unchanged for {} frames that get new bytes",
@@ -2970,12 +2983,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         REXLOG_INFO("gow2_renderer: resolves to guest (T2) frames {}-{}: our resolves written {} ({:.1f} MB), skipped "
                     "{} (format {}, endian {}) | resolves seen {} (colour {}, depth {}) | texture pages from our resolves kept {} / "
                     "counted changed {} (this range) | CPU-path loads that read our pages {} (this range, should be 0) | "
-                    "#315 texture loads that landed export read-backs first {} (this range; the waits are in the memexport line)",
+                    "#315 texture loads that landed export read-backs first {} (this range; the waits are in the memexport line) | "
+                    "#315 BC pages taken from guest memory over the mirror {} in {} loads (this range)",
                     frame_ + 1 - uint64_t(log_every_), frame_, t2_stats_.written, double(t2_stats_.bytes) / 1048576.0,
                     t2_stats_.skipped, t2_stats_.skipped_format, t2_stats_.skipped_endian,
                     t2_stats_.seen_colour + t2_stats_.seen_depth, t2_stats_.seen_colour,
                     t2_stats_.seen_depth, ts.gpu_pages_kept, ts.gpu_pages_changed,
-                    ts.cpu_loads_of_gpu_pages, ts.land_export_calls);
+                    ts.cpu_loads_of_gpu_pages, ts.land_export_calls, ts.bc_guest_pages, ts.bc_guest_loads);
         if (t2_measure_skip_)
           REXLOG_INFO("gow2_renderer: T2 measure-skip frames {}-{}: through-only {}, skipped {} (mirror not written)",
                       frame_ + 1 - uint64_t(log_every_), frame_, t2_stats_.measure_through_only,

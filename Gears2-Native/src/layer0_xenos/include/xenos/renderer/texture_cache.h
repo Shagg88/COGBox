@@ -67,6 +67,9 @@ struct TextureCacheStats {
   // GitHub #315 (review r44): texture uploads over pages our GPU once wrote but no longer GPU-current, for which pending
   // memexport read-backs were landed first (--gow2_renderer_texture_land_exports); this window.
   uint64_t land_export_calls = 0;
+  // GitHub #315 (0.6.3, --gow2_renderer_bc_cpu_over_gpu auto): BC texture loads over GPU-current pages that took guest
+  // memory for them (pending memexport read-backs landed first), and those pages; this window.
+  uint64_t bc_guest_loads = 0, bc_guest_pages = 0;
   // Stage 7: textures loaded at the resolution scale from our scaled resolves (live entries, loads, bound slots).
   uint64_t scaled_textures = 0, scaled_loads = 0, scaled_bound = 0, scaled_bytes = 0;
   std::map<std::string, uint64_t> scaled_misses;  // job 189: resolve-written textures not taken at the scale, by reason
@@ -143,6 +146,9 @@ class TextureCache {
   // r26 R1: also flush before loads over pages our GPU wrote at some time (not only GPU-current ones) - with
   // --gow2_renderer_export_settle (the green-vine change); off = as before
   void SetFlushEverGpuWritten(bool on) { flush_ever_gpu_ = on; }
+  // GitHub #315 (#202): BC textures take guest memory for pages our GPU wrote last, after landing pending memexport
+  // read-backs over them (--gow2_renderer_bc_cpu_over_gpu, resolved by the renderer); off = the mirror's bytes
+  void SetBcGuestOverMirror(bool on) { bc_guest_over_mirror_ = on; }
   void SetBeforeCpuLoadOfGpuPages(std::function<void(uint32_t start, uint32_t length)> hook) {
     before_cpu_load_ = std::move(hook);
   }
@@ -360,6 +366,7 @@ class TextureCache {
   std::function<void(const StaleReload&)> on_stale_;
   std::function<void(uint32_t start, uint32_t length)> before_cpu_load_;
   bool flush_ever_gpu_ = false;  // SetFlushEverGpuWritten (r26 R1)
+  bool bc_guest_over_mirror_ = false;  // SetBcGuestOverMirror (#315)
   uint64_t load_log_frame_ = 0;
   void LogLoad(const Entry& e, const uint32_t* tf, uint64_t frame, const char* reason);
   std::vector<uint32_t> probe_bases_;

@@ -48,6 +48,10 @@
   5 seconds). Your own frame-rate limit comes back as soon as the loading screen ends.
 - **The mouse cursor now hides when you play with a controller** (all four games, GitHub #320): the GitHub #143 fix most likely never hid it. While the cursor is over the game window, it now hides as soon as you use the controller (otherwise after 3 seconds without mouse movement), and COGBox checks that Windows really hid it and tries again if not. Tiny mouse movements of 1-2 pixels no longer bring it back - a real movement or a click does. It is left alone while the in-game menu is open or mouse look has the mouse. (Not yet confirmed by the reporter.)
 - **Judgment: blue / purple blocks on surfaces (#315)**, mostly seen on AMD graphics cards at high frame rates and building up over a session: a texture the game had just moved in video memory could be loaded from the old copy and keep it. It now waits for the moved copy first, also when the game moves the same texture again. (Not yet confirmed by the reporter.)
+  Also (Judgment and Gears 3): compressed textures the game streams into memory our graphics card wrote last now take
+  the game's own bytes (after any pending move has landed) - what the test line `--gow2_renderer_bc_cpu_over_gpu=true`
+  did in 0.6.2, which made the reporter's campaign run clean. It is now the default there; you can remove that line
+  from `extra-args.txt` (`--gow2_renderer_bc_cpu_over_gpu=false` gives the 0.6.2 behaviour). Gears 1 and 2 are not changed.
 
 ## 0.6.2
 
