@@ -657,6 +657,25 @@ void ClearDynamicOverlays() {
   g_overlay_gen.fetch_add(1, std::memory_order_acq_rel);
 }
 
+void SetTexturePacksForTests(const std::string& pack_dirs, const std::string& pack_dump_dir) {
+  g_swap.Init();
+  std::lock_guard<std::mutex> lock(g_swap.mutex);
+  g_swap.packs = texpack::PackIndex{};
+  g_swap.packs.Build(pack_dirs);
+  g_swap.pack_dump_dir = pack_dump_dir;
+  g_swap.pack_dump_path = texpack::PathFromUtf8(pack_dump_dir);
+  std::error_code ec;
+  if (!pack_dump_dir.empty()) std::filesystem::create_directories(g_swap.pack_dump_path, ec);
+  g_swap.pack_dumped.clear();
+  g_swap.pack_refused.clear();
+  g_swap.pack_bad.clear();
+  g_swap.pack_dump_count = 0;
+  g_swap.pack_loaded = 0;
+  g_swap.static_on.store(!g_swap.replace.empty() || !g_swap.overlay.empty() || !g_swap.dump_sizes.empty() || g_swap.dump_all ||
+                             !g_swap.packs.empty() || !g_swap.pack_dump_dir.empty(),
+                         std::memory_order_release);
+}
+
 uint64_t BumpOverlayGeneration() { return g_overlay_gen.fetch_add(1, std::memory_order_acq_rel) + 1; }
 
 uint64_t OverlayGeneration() { return g_overlay_gen.load(std::memory_order_acquire); }

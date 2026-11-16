@@ -4,8 +4,12 @@
 // gow3-recomp contributors (THIRD_PARTY_NOTICES.md). The rest is our code (MIT).
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -14,6 +18,7 @@
 #include <xenos/renderer/gpu.h>
 #include <xenos/renderer/guest_watch.h>
 #include <xenos/renderer/texture_cache.h>
+#include <xenos/renderer/texture_pack.h>
 
 // Stub for guest_watch.cpp's diagnostic log when observer_hub.cpp is not linked into gn_tests.
 uint64_t XenosSwapCount() { return 0; }
@@ -311,4 +316,118 @@ TEST_CASE("texture_cache: both swap_hash and rex_hash match registered overlays"
   CHECK((backend.uploads.back().bytes != baseline));
 
   ClearDynamicOverlays();
+}
+
+// 0.6.4 (GitHub #341): texture packs - one host texture per pack file, shared by every guest address that holds the same
+// content; kept (counted) when nothing shows it, reused when the content comes back, freed only when the cap needs it.
+TEST_CASE("texture_cache: a pack texture is read once and shared across guest addresses", "[texture_cache][texture_pack]") {
+  namespace fs = std::filesystem;
+  ClearDynamicOverlays();
+  const fs::path tmp = fs::temp_directory_path() / "gn_tests_pack341";
+  std::error_code ec;
+  fs::remove_all(tmp, ec);
+  const fs::path dump = tmp / "dump", pack = tmp / "pack";
+  fs::create_directories(pack, ec);
+
+  constexpr uint32_t kW = 256, kH = 256, kBytes = (kW / 4) * (kH / 4) * 16;  // 65536
+  constexpr uint32_t kA = 0x10000, kB = 0x40000;
+  std::vector<uint8_t> guest(0x80000, 0);
+  std::vector<uint8_t> content(kBytes);
+  for (size_t i = 0; i < content.size(); ++i) content[i] = uint8_t(i * 13 + 5);
+  std::memcpy(guest.data() + kA, content.data(), kBytes);
+  std::memcpy(guest.data() + kB, content.data(), kBytes);
+  uint32_t fa[192] = {}, fb[192] = {};
+  MakeLinearDxt5Fetch(fa, kA, kW, kH);
+  MakeLinearDxt5Fetch(fb, kB, kW, kH);
+  gpu::TextureView views[96] = {};
+  gpu::SamplerDesc samplers[32] = {};
+
+  // 1. The pack's name for this content: the renderer's own pack dump (as a pack maker gets it).
+  SetTexturePacksForTests("", dump.string());
+  {
+    MockBackend backend;
+    GuestWatch watch(nullptr);
+    TextureCache cache(backend, guest.data(), watch);
+    REQUIRE(cache.Bind(fa, 1u, 0u, 0u, 1, views, samplers) == 0);
+  }
+  std::string name;
+  for (const auto& f : fs::directory_iterator(dump, ec)) name = f.path().filename().string();
+  REQUIRE(name.size() > 17);
+  REQUIRE(name[16] == '_');
+
+  // 2. A 4x replacement (1024x1024 BC3) under that name.
+  std::vector<uint8_t> big(size_t(1024 / 4) * (1024 / 4) * 16, 0x5A);
+  const std::vector<uint8_t> dds = texpack::WriteDds(gpu::Format::kBC3, 1024, 1024, big.data(), big.size());
+  REQUIRE(!dds.empty());
+  { std::ofstream out(pack / (name.substr(0, 16) + "_4x.dds"), std::ios::binary); out.write(reinterpret_cast<const char*>(dds.data()), std::streamsize(dds.size())); }
+  SetTexturePacksForTests(pack.string(), "");
+
+  MockBackend backend;
+  GuestWatch watch(nullptr);
+  TextureCache cache(backend, guest.data(), watch);
+  cache.SetHostMemoryCap(64ull << 20);
+
+  // 3. Address A: the file is read and uploaded once - a 1024x1024 host texture.
+  REQUIRE(cache.Bind(fa, 1u, 0u, 0u, 1, views, samplers) == 0);
+  REQUIRE(backend.created.size() == 1);
+  CHECK(backend.created[0].desc.width == 1024);
+  const gpu::TextureHandle shared = views[0].texture;
+  CHECK(shared == backend.created[0].handle);
+  CHECK(backend.uploads.size() == 1);
+  CHECK(cache.Stats().host_bytes == big.size());
+  CHECK(cache.Stats().textures == 1);
+
+  // 4. Address B, same content (the game's pool moved it): the same host texture, no new texture, no upload.
+  REQUIRE(cache.Bind(fb, 1u, 0u, 0u, 2, views, samplers) == 0);
+  CHECK(views[0].texture == shared);
+  CHECK(backend.created.size() == 1);
+  CHECK(backend.uploads.size() == 1);
+  CHECK(cache.Stats().host_bytes == big.size());  // counted once
+  CHECK(cache.Stats().textures == 2);             // two entries show it
+
+  // 5. Both addresses get other content: guest textures load there; the pack texture is NOT destroyed (kept for later).
+  std::memset(guest.data() + kA, 0x21, kBytes);
+  watch.Bump(kA, kBytes);
+  std::memset(guest.data() + kB, 0x43, kBytes);
+  watch.Bump(kB, kBytes);
+  REQUIRE(cache.Bind(fa, 1u, 0u, 0u, 3, views, samplers) == 0);
+  CHECK(views[0].texture != shared);
+  REQUIRE(cache.Bind(fb, 1u, 0u, 0u, 3, views, samplers) == 0);
+  CHECK(views[0].texture != shared);
+  CHECK(std::find(backend.destroyed.begin(), backend.destroyed.end(), shared) == backend.destroyed.end());
+  CHECK(backend.live_textures.count(shared) == 1);
+  CHECK(cache.Stats().host_bytes == big.size() + 2 * uint64_t(kBytes));  // the kept pack texture + two guest textures
+  const size_t uploads_before = backend.uploads.size(), created_before = backend.created.size();
+
+  // 6. The content comes back at A: the kept texture again - no file read, no new texture, no upload.
+  std::memcpy(guest.data() + kA, content.data(), kBytes);
+  watch.Bump(kA, kBytes);
+  REQUIRE(cache.Bind(fa, 1u, 0u, 0u, 4, views, samplers) == 0);
+  CHECK(views[0].texture == shared);
+  CHECK(backend.created.size() == created_before);
+  CHECK(backend.uploads.size() == uploads_before);
+
+  // 7. Unused again, and the cap needs the memory: the pack texture is freed (once), guest textures in use are kept.
+  std::memset(guest.data() + kA, 0x65, kBytes);
+  watch.Bump(kA, kBytes);
+  REQUIRE(cache.Bind(fa, 1u, 0u, 0u, 5, views, samplers) == 0);
+  CHECK(views[0].texture != shared);
+  cache.SetHostMemoryCap(512ull << 10);  // 512 KB: under the 1 MB pack texture
+  cache.EndFrame(6);
+  CHECK(std::count(backend.destroyed.begin(), backend.destroyed.end(), shared) == 1);
+  CHECK(backend.live_textures.count(shared) == 0);
+  CHECK(cache.Stats().host_bytes <= (512ull << 10) / 10 * 9 + 2 * uint64_t(kBytes));
+
+  // 8. Back again after the free: read from the file once more (a new texture), shared as before.
+  std::memcpy(guest.data() + kA, content.data(), kBytes);
+  watch.Bump(kA, kBytes);
+  const size_t created_8 = backend.created.size();
+  REQUIRE(cache.Bind(fa, 1u, 0u, 0u, 7, views, samplers) == 0);
+  CHECK(backend.created.size() == created_8 + 1);
+  CHECK(backend.created.back().desc.width == 1024);
+  CHECK(views[0].texture == backend.created.back().handle);
+
+  SetTexturePacksForTests("", "");
+  ClearDynamicOverlays();
+  fs::remove_all(tmp, ec);
 }

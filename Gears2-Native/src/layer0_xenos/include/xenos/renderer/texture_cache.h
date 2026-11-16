@@ -42,6 +42,9 @@ void SetDynamicOverlay(uint64_t hash, std::vector<uint8_t> overlay_data);
 void SetDynamicOverlayShared(uint64_t hash, std::shared_ptr<const std::vector<uint8_t>> overlay_data);
 void SetSuppressDiskOverlaysForPrompts(bool suppress);
 void ClearDynamicOverlays();
+// Unit tests only (0.6.4, GitHub #341): the texture-pack folders and the pack dump folder, as --gow2_texture_pack_dirs /
+// --gow2_texture_pack_dump_dir would give them at start-up ("" = none); what was refused or dumped before is forgotten.
+void SetTexturePacksForTests(const std::string& pack_dirs, const std::string& pack_dump_dir);
 uint64_t BumpOverlayGeneration();
 uint64_t OverlayGeneration();
 
