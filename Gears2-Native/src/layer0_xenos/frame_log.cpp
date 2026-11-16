@@ -328,7 +328,7 @@ class FrameLog {
       path = lp.parent_path() / (lp.stem().string() + "-frames.csv");
     } else {
       const std::string dir = REXCVAR_GET(gow2_crash_dir);
-      path = dir.empty() ? std::filesystem::path("frames.csv") : std::filesystem::path(dir) / "frames.csv";
+      path = dir.empty() ? std::filesystem::path("frames.csv") : std::filesystem::u8path(dir) / "frames.csv";  // r75: UTF-8
     }
     REXLOG_INFO("gow2_frame_log: per-frame CSV {} (frame times, cause per frame; stall=2 / spike=1 in the spike "
                 "column)", path.string());

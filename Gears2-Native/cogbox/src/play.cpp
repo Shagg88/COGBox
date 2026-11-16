@@ -6,6 +6,7 @@
 #include "theme.h"
 #include "i18n.h"
 #include "x360fs.h"
+#include "crash_dump.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -296,8 +297,10 @@ void play_start(App &a, int g, bool prepare)
     write_file(join(logDir, "args.txt"), "launcher: preparing the start (COGBox " COGBOX_VERSION ")\r\n");
     const Uint64 prep0 = SDL_GetTicks();   // 0.5.0: how long the start took to prepare (the Gears 2 / 3 / J key-cap hang)   // 0.5.0 review: shows how far a stuck start got
     // P0-2: a real fail-fast (__fastfail, 0xC0000409) ends the game before any handler of its own runs. Windows Error
-    // Reporting's LocalDumps writes a minidump for it - asked for this exe, into this play's folder. HKCU (no admin);
-    // Windows documents the HKLM key, recent versions read the per-user one too - if not, nothing changes.
+    // Reporting's LocalDumps writes a minidump for it - asked for this exe, into this play's folder. HKCU (no admin).
+    // Review r75: Microsoft documents LocalDumps as HKLM only ("not supported in the HKEY_CURRENT_USER hive"), so this
+    // probably does nothing; kept because it costs nothing. The game's own crashes get their dump from
+    // crash_dump_watch below (GitHub #286), not from this.
     {
         const std::wstring key = L"Software\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\" +
                                  widen(exe.substr(exe.find_last_of("\\/") + 1));
@@ -420,6 +423,10 @@ void play_start(App &a, int g, bool prepare)
         return;
     }
     CloseHandle(pi.hThread);
+    // GitHub #286: a crash's minidump written from out here (only into this play's folder)
+    a.run.crashDump = crash_dump_watch(pi.hProcess, pi.dwProcessId, logDir);
+    if (!a.run.crashDump)
+        append_line(join(logDir, "args.txt"), "launcher: the crash minidump watcher couldn't be started (the game writes its own)");
     a.run.proc = pi.hProcess;
     a.run.game = g;
     a.run.started = unix_now();
@@ -526,6 +533,12 @@ void play_poll(App &a)
     std::vector<std::string> crash = crash_files(a.run.logDir);
     append_line(join(a.run.logDir, "args.txt"), "launcher: the game ended after " + std::to_string(secs) + " s, exit code " +
                                                     (known ? hex32(code) : std::string("unknown")) + ", crash reports " + std::to_string(crash.size()));
+    if (a.run.crashDump && a.run.crashDump->state != CrashDumpStatus::kWatching)   // r76 L4: the watcher's outcome
+        append_line(join(a.run.logDir, "args.txt"), a.run.crashDump->state == CrashDumpStatus::kWritten
+                                                        ? std::string("launcher: crash minidump written by COGBox")
+                                                        : "launcher: COGBox couldn't write the crash minidump, error " +
+                                                              hex32(a.run.crashDump->error) + " (the game writes its own)");
+    a.run.crashDump.reset();
     bool restart = apply_menu_changes(a, g, a.run.logDir);
     if (known && code == 0 && crash.empty()) {
         if (restart) { append_line(join(a.run.logDir, "args.txt"), "launcher: restarting the game (in-game menu)"); play_start(a, g); }
