@@ -1565,3 +1565,4 @@ The saves could not be moved (is the game or another program using them?). Nothi
 A backup of the saves is still being made - try again when it's done. = 存档备份仍在进行中，请完成后再试。
 Switch weapon = 切换武器
 Pistol = 手枪
+anti-aliasing only at this render resolution = 在此渲染分辨率下仅抗锯齿

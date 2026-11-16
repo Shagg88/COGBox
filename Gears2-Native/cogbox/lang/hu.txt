@@ -1572,3 +1572,4 @@ The saves could not be moved (is the game or another program using them?). Nothi
 A backup of the saves is still being made - try again when it's done. = A mentések biztonsági mentése még folyamatban van – próbáld újra, ha elkészült.
 Switch weapon = Fegyverváltás
 Pistol = Pisztoly
+anti-aliasing only at this render resolution = ennél a renderfelbontásnál csak élsimítás

@@ -1562,3 +1562,4 @@ The saves could not be moved (is the game or another program using them?). Nothi
 A backup of the saves is still being made - try again when it's done. = È ancora in corso un backup dei salvataggi: riprova quando è finito.
 Switch weapon = Cambia arma
 Pistol = Pistola
+anti-aliasing only at this render resolution = solo anti-aliasing a questa risoluzione di rendering

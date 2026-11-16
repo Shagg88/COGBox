@@ -1569,3 +1569,4 @@ The saves could not be moved (is the game or another program using them?). Nothi
 A backup of the saves is still being made - try again when it's done. = Резервная копия сохранений ещё создаётся — попробуйте снова, когда она будет готова.
 Switch weapon = Смена оружия
 Pistol = Пистолет
+anti-aliasing only at this render resolution = при этом разрешении рендеринга только сглаживание

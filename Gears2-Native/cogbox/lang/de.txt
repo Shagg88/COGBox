@@ -1560,3 +1560,4 @@ The saves could not be moved (is the game or another program using them?). Nothi
 A backup of the saves is still being made - try again when it's done. = Eine Sicherung der Spielstände wird noch erstellt – versuche es danach noch einmal.
 Switch weapon = Waffe wechseln
 Pistol = Pistole
+anti-aliasing only at this render resolution = bei dieser Renderauflösung nur Kantenglättung

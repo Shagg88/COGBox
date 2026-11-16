@@ -1565,3 +1565,4 @@ The saves could not be moved (is the game or another program using them?). Nothi
 A backup of the saves is still being made - try again when it's done. = 세이브 백업을 아직 만드는 중입니다. 끝난 뒤 다시 시도하세요.
 Switch weapon = 무기 전환
 Pistol = 권총
+anti-aliasing only at this render resolution = 이 렌더 해상도에서는 안티에일리어싱만

@@ -648,6 +648,15 @@ bool fsr_vulkan(const Environment& e) {
 }
 // Review: and the player turned "FSR on Vulkan (experimental)" on (--gow2_fsr_vulkan defaults to false)
 bool fsr_vulkan_on(const Settings& s, const Environment& e) { return s.b("FsrVulkan") && fsr_vulkan(e); }
+int expected_render_scale(const Settings& s, const Environment& e) {
+    const int r = s.i("Resolution") + 1;   // 1-4 = 1x-4x, 5 = Match my monitor, 6 = 1080p (drawn at 1x)
+    if (r >= 1 && r <= 4) return r;
+    if (r != 5) return 1;
+    if (e.monitor_w <= 0 || e.monitor_h <= 0) return 2;   // as the game does without a monitor size
+    // as shadow_renderer.cpp's "Match my monitor": by width for a wider game image, else the 16:9 shape
+    const double need = s.b("Ultrawide") ? e.monitor_w / 1280.0 : std::min(e.monitor_w / 1280.0, e.monitor_h / 720.0);
+    return std::clamp(static_cast<int>(std::ceil(need - 1e-9)), 1, 4);
+}
 namespace {
 
 std::vector<std::string> gpu_list(const Environment& env) {
@@ -1786,11 +1795,11 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         }
         // GitHub #98 (Gears 1 "DLSS" runs were DLAA): the scene scale is a whole number of times smaller than the render
         // resolution only for Performance at 2x / 4x and Quality / Ultra performance at 3x; any other pairing (and every
-        // 720p or "1080p" render resolution, both drawn at 1x) runs as native anti-aliasing. Say so before launch. Fixed
-        // scales only - "Match my monitor" picks its scale in the game (its log names the result).
-        if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4 && s.i("Resolution") + 1 != 5) {
-            const int out = scale;
-            const bool fits = (m == 2 && (out == 2 || out == 4)) || ((m == 1 || m == 3) && out == 3);
+        // 720p or "1080p" render resolution, both drawn at 1x) runs as native anti-aliasing. Say so before launch.
+        // #345: "Match my monitor" too, with the scale the game will pick (4K: 3x, so Performance there was DLAA unsaid).
+        if (aa >= 2 && aa <= 4 && avail("SceneMode") && m > 0 && m < 4) {
+            const int out = expected_render_scale(s, env);
+            const bool fits = scene_mode_fits(m, out);
             if (!fits) {
                 static const char* const mname[4] = { "", "Quality", "Performance", "Ultra performance" };
                 notes.push_back(std::string("launcher: Scene resolution ") + mname[m] + " has no whole-number scene size at render "

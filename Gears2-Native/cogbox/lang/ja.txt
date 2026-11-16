@@ -1565,3 +1565,4 @@ The saves could not be moved (is the game or another program using them?). Nothi
 A backup of the saves is still being made - try again when it's done. = セーブのバックアップを作成中です。完了してからもう一度お試しください。
 Switch weapon = 武器の切り替え
 Pistol = ピストル
+anti-aliasing only at this render resolution = この描画解像度ではアンチエイリアスのみ
