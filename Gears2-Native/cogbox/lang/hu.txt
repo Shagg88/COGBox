@@ -1481,6 +1481,7 @@ Join their game. = Csatlakozás a játékához.
 Set up this game in COGBox to join. = Állítsd be ezt a játékot a COGBoxban a csatlakozáshoz.
 Invite them to the game you are hosting. = Meghívás a játékba, amelyet te hosztolsz.
 Remove this friend (asks first). = A barát eltávolítása (előbb rákérdez).
+Take back your friend request. = Barátkérésed visszavonása.
 Remove this friend? = Eltávolítod ezt a barátot?
 Yes, remove = Igen, eltávolítom
 Close the running game first, then press JOIN again. = Előbb zárd be a futó játékot, majd nyomd meg újra a CSATLAKOZÁS gombot.

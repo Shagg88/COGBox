@@ -1413,6 +1413,7 @@ Join their game. = Unisciti alla sua partita.
 Set up this game in COGBox to join. = Configura questo gioco in COGBox per partecipare.
 Invite them to the game you are hosting. = Invitalo alla partita che stai ospitando.
 Remove this friend (asks first). = Rimuovi questo amico (chiede prima).
+Take back your friend request. = Ritira la tua richiesta di amicizia.
 Remove this friend? = Rimuovere questo amico?
 Yes, remove = Sì, rimuovi
 Close the running game first, then press JOIN again. = Chiudi prima il gioco in esecuzione, poi premi di nuovo PARTECIPA.

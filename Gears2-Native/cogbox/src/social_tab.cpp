@@ -328,7 +328,11 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
         }
         for (const SocialRequest &r : v.lists.outgoing) {
             ImGui::PushID(r.uuid.c_str());
-            line_row(a, r.tag, tr("Waiting for them to accept"), col::dim, 0, r.icon, x1, {});
+            // GitHub #332: a request sent can be taken back (DELETE /api/v1/friends/<uuid>, the server's remove: it
+            // drops requests either way) - one to an account nobody uses any more no longer waits for ever
+            if (line_row(a, r.tag, tr("Waiting for them to accept"), col::dim, 0, r.icon, x1,
+                         { { "CANCEL", true, false, "Take back your friend request." } }) == 0)
+                social_do(SocialAction::Remove, r.uuid);
             ImGui::PopID();
         }
         if (v.lists.friends.empty()) ui_note("No friends yet - add one by their tag.");
