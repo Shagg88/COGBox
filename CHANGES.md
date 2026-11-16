@@ -50,8 +50,11 @@
 - **Judgment: blue / purple blocks on surfaces (#315)**, mostly seen on AMD graphics cards at high frame rates and building up over a session: a texture the game had just moved in video memory could be loaded from the old copy and keep it. It now waits for the moved copy first, also when the game moves the same texture again. (Not yet confirmed by the reporter.)
   Also (Judgment and Gears 3): compressed textures the game streams into memory our graphics card wrote last now take
   the game's own bytes (after any pending move has landed) - what the test line `--gow2_renderer_bc_cpu_over_gpu=true`
-  did in 0.6.2, which made the reporter's campaign run clean. It is now the default there; you can remove that line
-  from `extra-args.txt` (`--gow2_renderer_bc_cpu_over_gpu=false` gives the 0.6.2 behaviour). Gears 1 and 2 are not changed.
+  did in 0.6.2, which made the reporter's campaign run clean. Which writes it catches there is not known yet (the
+  0.6.2 logs ruled out one candidate, read-only memory; `--gow2_renderer_bc_gpu_page_log=200` now names the others). It
+  is now the default there; you can remove that line from `extra-args.txt` (`--gow2_renderer_bc_cpu_over_gpu=false` or
+  `--no-gow2_renderer_bc_cpu_over_gpu` gives the 0.6.2 behaviour; an unknown value is logged and treated as the
+  default). Gears 1 and 2 are not changed.
 
 ## 0.6.2
 

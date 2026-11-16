@@ -67,9 +67,11 @@ struct TextureCacheStats {
   // GitHub #315 (review r44): texture uploads over pages our GPU once wrote but no longer GPU-current, for which pending
   // memexport read-backs were landed first (--gow2_renderer_texture_land_exports); this window.
   uint64_t land_export_calls = 0;
-  // GitHub #315 (0.6.3, --gow2_renderer_bc_cpu_over_gpu auto): BC texture loads over GPU-current pages that took guest
-  // memory for them (pending memexport read-backs landed first), and those pages; this window.
-  uint64_t bc_guest_loads = 0, bc_guest_pages = 0;
+  // GitHub #315 (0.6.3, --gow2_renderer_bc_cpu_over_gpu auto): GPU-current pages of BC textures that took guest memory
+  // over the mirror (pending memexport read-backs landed first), and the loads with at least one such page (r80 L3:
+  // both count the same pages - changed since the entry's last copy); this window. bc_guest_failed_loads: BC loads that
+  // kept the mirror instead because a memexport read-back over them failed (r80 L6).
+  uint64_t bc_guest_loads = 0, bc_guest_pages = 0, bc_guest_failed_loads = 0;
   // Stage 7: textures loaded at the resolution scale from our scaled resolves (live entries, loads, bound slots).
   uint64_t scaled_textures = 0, scaled_loads = 0, scaled_bound = 0, scaled_bytes = 0;
   std::map<std::string, uint64_t> scaled_misses;  // job 189: resolve-written textures not taken at the scale, by reason
@@ -149,9 +151,13 @@ class TextureCache {
   // GitHub #315 (#202): BC textures take guest memory for pages our GPU wrote last, after landing pending memexport
   // read-backs over them (--gow2_renderer_bc_cpu_over_gpu, resolved by the renderer); off = the mirror's bytes
   void SetBcGuestOverMirror(bool on) { bc_guest_over_mirror_ = on; }
-  void SetBeforeCpuLoadOfGpuPages(std::function<void(uint32_t start, uint32_t length)> hook) {
+  // The hook returns false when a memexport read-back over the range failed (guest memory lacks the export there).
+  void SetBeforeCpuLoadOfGpuPages(std::function<bool(uint32_t start, uint32_t length)> hook) {
     before_cpu_load_ = std::move(hook);
   }
+  // #315 diagnostic (--gow2_renderer_bc_gpu_page_log): who wrote a GPU-current page last, kGpuPage* bits (0 = unknown).
+  static constexpr uint8_t kGpuPageResolve = 1, kGpuPageExport = 2, kGpuPageExportPartial = 4, kGpuPageExportRefused = 8;
+  void SetGpuPageOrigin(std::function<uint8_t(uint32_t page)> origin) { gpu_page_origin_ = std::move(origin); }
   void SetStaleReloadReport(uint32_t frames, std::function<void(const StaleReload&)> report) {
     stale_after_ = frames;
     on_stale_ = std::move(report);
@@ -364,7 +370,8 @@ class TextureCache {
   bool packed_tail_at_base_ = true;  // patch 0087
   uint32_t stale_after_ = 0;
   std::function<void(const StaleReload&)> on_stale_;
-  std::function<void(uint32_t start, uint32_t length)> before_cpu_load_;
+  std::function<bool(uint32_t start, uint32_t length)> before_cpu_load_;
+  std::function<uint8_t(uint32_t page)> gpu_page_origin_;  // SetGpuPageOrigin (#315 diagnostic)
   bool flush_ever_gpu_ = false;  // SetFlushEverGpuWritten (r26 R1)
   bool bc_guest_over_mirror_ = false;  // SetBcGuestOverMirror (#315)
   uint64_t load_log_frame_ = 0;
