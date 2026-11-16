@@ -1566,3 +1566,5 @@ A backup of the saves is still being made - try again when it's done. = セー�
 Switch weapon = 武器の切り替え
 Pistol = ピストル
 anti-aliasing only at this render resolution = この描画解像度ではアンチエイリアスのみ
+This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = このタイトルアップデートは、ゲームの別の default.xex（ゲームの別のプレス版または別の版）用に作られており、ゲームは起動時にクラッシュする可能性が高いです。
+Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = ディスクから取り出したままのゲームファイル（または Games on Demand 版）と、それに合ったタイトルアップデートを使ってください。

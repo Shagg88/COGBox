@@ -1563,3 +1563,5 @@ A backup of the saves is still being made - try again when it's done. = Um backu
 Switch weapon = Trocar de arma
 Pistol = Pistola
 anti-aliasing only at this render resolution = apenas antisserrilhamento nesta resolução de renderização
+This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = Esta atualização de título foi feita para outra cópia do default.xex do jogo (outra prensagem ou edição do jogo), e o jogo provavelmente vai travar ao iniciar.
+Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = Use os arquivos do jogo como vieram do disco (ou sua cópia Games on Demand), com uma atualização de título feita para eles.

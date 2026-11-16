@@ -936,6 +936,34 @@ static void test_god()
           err.find("not a Games on Demand") != std::string::npos);
 }
 
+// GitHub #346: a default.xex's signature digest and a title update's base-signature digest
+static void test_xex_signature()
+{
+    Bytes base = make_xex(kTitleGears2, 0x20000000, 0x800);
+    put_be32(&base[0x10], 0x400);                        // security info at 0x400: sizes, then the RSA signature
+    for (int i = 0; i < 0x100; i++) base[0x408 + i] = uint8_t(i * 7 + 3);
+    XexInfo b;
+    CHECK(parse_xex_info(base.data(), base.size(), b) && b.has_signature && !b.has_patch_source && b.title_id == kTitleGears2);
+    uint8_t want[20];
+    sha1_raw(&base[0x408], 0x100, want);
+    CHECK(std::memcmp(b.signature_sha1, want, 20) == 0);
+    // a title update: three optional headers, the delta patch descriptor (0x5FF) at 0x300 naming that signature
+    Bytes tu = make_xex(kTitleGears2, 0x20000006, 0x800);
+    put_be32(&tu[0x14], 3);
+    put_be32(&tu[0x28], 0x000005FF); put_be32(&tu[0x2C], 0x300);
+    put_be32(&tu[0x300], 0x60);
+    std::memcpy(&tu[0x30C], want, 20);
+    XexInfo p;
+    CHECK(parse_xex_info(tu.data(), tu.size(), p) && p.has_patch_source && p.title_id == kTitleGears2 && p.version == 0x20000006);
+    CHECK(std::memcmp(p.patch_source_sha1, b.signature_sha1, 20) == 0);
+    base[0x408] ^= 1;                                    // another print / a changed default.xex
+    CHECK(parse_xex_info(base.data(), base.size(), b) && std::memcmp(p.patch_source_sha1, b.signature_sha1, 20) != 0);
+    // a header too short for the security info: no signature, still parsed
+    Bytes small(base.begin(), base.begin() + 0x200);
+    put_be32(&small[0x10], 0x180);
+    CHECK(parse_xex_info(small.data(), small.size(), b) && !b.has_signature);
+}
+
 int main(int argc, char **argv)
 {
     W = argc > 1 ? fs::path(argv[1]) : fs::temp_directory_path() / "x360fs_test";
@@ -943,6 +971,7 @@ int main(int argc, char **argv)
     fs::create_directories(W);
     std::printf("work folder: %s\n", W.string().c_str());
     test_sha1();
+    test_xex_signature();
     test_disc();
     test_disc_hostile();
     test_stfs();

@@ -1570,3 +1570,5 @@ A backup of the saves is still being made - try again when it's done. = Резе
 Switch weapon = Смена оружия
 Pistol = Пистолет
 anti-aliasing only at this render resolution = при этом разрешении рендеринга только сглаживание
+This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = Это обновление игры сделано для другой копии default.xex (другого тиража или издания игры), и игра, скорее всего, вылетит при запуске.
+Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = Используйте файлы игры в том виде, в каком они сняты с диска (или вашу копию Games on Demand), с обновлением, сделанным для них.

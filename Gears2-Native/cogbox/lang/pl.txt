@@ -1563,3 +1563,5 @@ A backup of the saves is still being made - try again when it's done. = Kopia za
 Switch weapon = Zmiana broni
 Pistol = Pistolet
 anti-aliasing only at this render resolution = przy tej rozdzielczości renderowania tylko wygładzanie krawędzi
+This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = Ta aktualizacja tytułu została przygotowana dla innej kopii pliku default.xex gry (innego tłoczenia lub wydania gry), więc gra najprawdopodobniej ulegnie awarii przy starcie.
+Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = Użyj plików gry w takiej postaci, w jakiej pochodzą z płyty (lub kopii Games on Demand), z aktualizacją tytułu przygotowaną dla nich.

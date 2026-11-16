@@ -1207,12 +1207,27 @@ bool parse_xex_info(const uint8_t *d, size_t n, XexInfo &info)
 {
     info = XexInfo();
     if (n < 0x18 || std::memcmp(d, "XEX2", 4)) return false;
+    // GitHub #346: the security info (offset at 0x10): header size, image size, then the 0x100-byte RSA signature
+    const uint32_t sec = be32(d + 0x10);
+    if (uint64_t(sec) + 8 + 0x100 <= n) {
+        const std::string h = sha1_hex(d + sec + 8, 0x100);
+        for (int i = 0; i < 20; i++) info.signature_sha1[i] = uint8_t(std::stoul(h.substr(size_t(i) * 2, 2), nullptr, 16));
+        info.has_signature = true;
+    }
+    bool exec = false;
     uint32_t count = be32(d + 0x14);
     for (uint32_t i = 0; i < count && i < 4096; i++) {
         size_t o = 0x18 + size_t(i) * 8;
         if (o + 8 > n) break;
-        if (be32(d + o) != 0x00040006) continue;   // execution info: media id, version, base version, title id, ...
-        uint32_t at = be32(d + o + 4);
+        const uint32_t key = be32(d + o), at = be32(d + o + 4);
+        if (key == 0x000005FF) {   // delta patch descriptor (a title update): the base default.xex's signature digest at +0xC
+            if (uint64_t(at) + 0x20 <= n) {
+                std::memcpy(info.patch_source_sha1, d + at + 0xC, 20);
+                info.has_patch_source = true;
+            }
+            continue;
+        }
+        if (key != 0x00040006 || exec) continue;   // execution info: media id, version, base version, title id, ...
         if (uint64_t(at) + 24 > n) return false;
         const uint8_t *e = d + at;
         info.media_id = be32(e);
@@ -1221,9 +1236,9 @@ bool parse_xex_info(const uint8_t *d, size_t n, XexInfo &info)
         info.title_id = be32(e + 12);
         info.disc_number = e[18];
         info.disc_count = e[19];
-        return true;
+        exec = true;
     }
-    return false;
+    return exec;
 }
 
 bool read_xex_info(const fs::path &xex, XexInfo &info)
