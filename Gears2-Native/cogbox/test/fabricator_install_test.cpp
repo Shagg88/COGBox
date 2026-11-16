@@ -171,6 +171,58 @@ int main()
         CHECK(text_of(join(bak, "GearGame\\CookedXenon\\a.xxx")) == "v2");
         CHECK(!exists(hb + ".partial"));
     }
+    // a move that fails (a file in the installed folder held open) keeps the older backup, and the installed version
+    {
+        HANDLE held = CreateFileW(widen(join(hb, "GearGame\\CookedXenon\\a.xxx")).c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        CHECK(held != INVALID_HANDLE_VALUE);
+        FabLibraryItem v4 = item;
+        v4.version_id = 10; v4.version = "1.3";
+        std::string z = put_zip("hb4.zip", {{"Horde Bank/GearGame/CookedXenon/a.xxx", "v4"}});
+        CHECK(fab_update(a, g, v4, z) != "");
+        CHECK(text_of(join(bak, "GearGame\\CookedXenon\\a.xxx")) == "v2");   // the older backup is still there
+        CHECK(!exists(join(join(mods, ".fabricator-backup"), "Horde Bank.old")));
+        CHECK(!exists(hb + ".partial"));
+        CHECK(fab_uninstall(a, g, 42) != "");
+        CHECK(text_of(join(bak, "GearGame\\CookedXenon\\a.xxx")) == "v2");
+        CloseHandle(held);
+        CHECK(text_of(join(hb, "GearGame\\CookedXenon\\a.xxx")) == "v3");
+        auto r = fab_read_record(hb);
+        CHECK(r && r->version == 9);
+        CHECK(index_of(mods_list(a, g), "Horde Bank") == 0);
+    }
+    // while the game runs, nothing is installed, updated, uninstalled or added
+    {
+        a.run.proc = GetCurrentProcess();
+        FabLibraryItem other;
+        other.id = 70; other.version_id = 1; other.name = "Running Mod"; other.game = "gears2";
+        std::string z = put_zip("run.zip", {{"Running Mod/GearGame/r.xxx", "r"}});
+        CHECK(fab_install(a, g, other, z) == "Close the game first.");
+        FabLibraryItem v5 = item;
+        v5.version_id = 11;
+        std::string z5 = put_zip("hb5.zip", {{"Horde Bank/GearGame/CookedXenon/a.xxx", "v5"}});
+        CHECK(fab_update(a, g, v5, z5) == "Close the game first.");
+        CHECK(fab_uninstall(a, g, 42) == "Close the game first.");
+        std::string err;
+        CHECK(!mods_add_zip(a, g, z, err));
+        CHECK(err == "Close the game first.");
+        a.run.proc = nullptr;
+        CHECK(!exists(join(mods, "Running Mod")));
+        CHECK(!exists(join(mods, "Running Mod.partial")));
+        CHECK(text_of(join(hb, "GearGame\\CookedXenon\\a.xxx")) == "v3");
+        CHECK(text_of(join(bak, "GearGame\\CookedXenon\\a.xxx")) == "v2");
+        CHECK(mods_list(a, g).size() == 2);
+    }
+    // the hidden-name guard runs after the character rule: "!.hidden" is the visible folder "hidden"
+    {
+        FabLibraryItem h;
+        h.id = 80; h.version_id = 1; h.name = "!.hidden"; h.game = "gears2";
+        std::string z = put_zip("hidden.zip", {{"GearGame/h.xxx", "h"}, {"readme.txt", "r"}});
+        CHECK(fab_install(a, g, h, z) == "");
+        CHECK(text_of(join(mods, "hidden\\GearGame\\h.xxx")) == "h");
+        CHECK(index_of(mods_list(a, g), "hidden") >= 0);
+        CHECK(fab_uninstall(a, g, 80) == "");
+        CHECK(mods_list(a, g).size() == 2);
+    }
 
     // ---- a zip with a program is refused, nothing made ----
     {

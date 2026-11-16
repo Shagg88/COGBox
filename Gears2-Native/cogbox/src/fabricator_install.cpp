@@ -87,24 +87,36 @@ static std::string to_backup(int g, const std::string &folder)
     const DWORD ra = attrs_of(root);
     if (ra != INVALID_FILE_ATTRIBUTES && !plain_dir(ra)) return "The Fabricator's backup folder isn't a plain folder - nothing changed.";
     if (ra == INVALID_FILE_ATTRIBUTES && !make_dirs(root)) return "Couldn't make the Fabricator's backup folder (is the disk full?).";
-    if (present(bak)) {
-        // only a backup COGBox made (it has a record) is replaced
+    // an older backup (only one COGBox made: it has a record) is put aside as <folder>.old until the move worked, and
+    // put back if it didn't
+    const std::string old = bak + ".old";
+    const bool hadOld = present(bak);
+    if (hadOld) {
         if (!plain_dir(attrs_of(bak)) || !fab_read_record(bak))
             return "The Fabricator's backup folder has a \"" + folder + "\" COGBox didn't make - move it away first.";
-        mods_remove_tree(widen(bak));
-        if (present(bak)) return "Couldn't remove the older backup of \"" + folder + "\" (is a file in it open?).";
+        if (present(old)) {   // what an earlier, interrupted try left
+            if (!plain_dir(attrs_of(old)) || !fab_read_record(old))
+                return "The Fabricator's backup folder has a \"" + folder + ".old\" COGBox didn't make - move it away first.";
+            mods_remove_tree(widen(old));
+        }
+        if (!MoveFileExW(widen(bak).c_str(), widen(old).c_str(), 0))
+            return "Couldn't put the older backup of \"" + folder + "\" aside (is a file in it open?).";
     }
-    if (!MoveFileExW(widen(join(mods_dir(g), folder)).c_str(), widen(bak).c_str(), 0))
+    if (!MoveFileExW(widen(join(mods_dir(g), folder)).c_str(), widen(bak).c_str(), 0)) {
+        if (hadOld) MoveFileExW(widen(old).c_str(), widen(bak).c_str(), 0);
         return "Couldn't move \"" + folder + "\" to the backup folder (is a file in it open?).";
+    }
+    if (hadOld) mods_remove_tree(widen(old));
     return "";
 }
 
 std::string fab_install(App &a, int g, const FabLibraryItem &item, const std::string &zip_path)
 {
+    if (a.run.proc) return "Close the game first.";   // the game reads the mods folder while it runs
     std::string e = check(g, item, zip_path);
     if (!e.empty()) return e;
     if (!installed_folder(g, item.id).empty()) return fab_update(a, g, item, zip_path);
-    std::string base = item.name;
+    std::string base = mod_folder_chars(item.name);   // the character rule first, then the hidden-name guard
     while (!base.empty() && (base[0] == '.' || base[0] == ' ')) base.erase(0, 1);   // a name starting with '.' is hidden
     if (hidden_name(base) && !base.empty()) base += " mod";                       // ... and so is "<name>.partial"
     const std::string folder = fab_folder_name(base, mods_entries(g), item.id, [&](const std::string &f) { return record_in(g, f); });
@@ -123,6 +135,7 @@ std::string fab_install(App &a, int g, const FabLibraryItem &item, const std::st
 
 std::string fab_update(App &a, int g, const FabLibraryItem &item, const std::string &zip_path)
 {
+    if (a.run.proc) return "Close the game first.";
     std::string e = check(g, item, zip_path);
     if (!e.empty()) return e;
     const std::string folder = installed_folder(g, item.id);
@@ -144,6 +157,7 @@ std::string fab_update(App &a, int g, const FabLibraryItem &item, const std::str
 
 std::string fab_uninstall(App &a, int g, int64_t mod_id)
 {
+    if (a.run.proc) return "Close the game first.";
     const std::string folder = installed_folder(g, mod_id);
     if (folder.empty()) return "This mod isn't installed from the Fabricator.";
     const std::string e = to_backup(g, folder);

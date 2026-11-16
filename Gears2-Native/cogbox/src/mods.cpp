@@ -388,6 +388,7 @@ bool mods_unpack_zip(App &a, int g, const std::string &zipPath, const std::strin
 // folders is taken as the mod's folder), through <name>.partial so a failure leaves no half mod.
 bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
 {
+    if (a.run.proc) { err = "Close the game first."; return false; }   // the game reads the mods folder while it runs
     std::string top;
     {
         ZipReader zr(zipPath);
