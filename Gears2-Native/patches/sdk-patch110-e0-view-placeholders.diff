@@ -199,7 +199,7 @@ index 9a668e94..26305c7e 100644
    return UnmapViewOfFile(base_address) ? true : false;
  }
 diff --git a/src/system/xmemory.cpp b/src/system/xmemory.cpp
-index 76cc8776..4047dd3a 100644
+index 76cc8776..d3eea628 100644
 --- a/src/system/xmemory.cpp
 +++ b/src/system/xmemory.cpp
 @@ -10,6 +10,7 @@
@@ -249,7 +249,7 @@ index 76cc8776..4047dd3a 100644
    system_page_size_ = uint32_t(rex::memory::page_size());
    system_allocation_granularity_ = uint32_t(rex::memory::allocation_granularity());
    assert_zero(active_memory_);
-@@ -170,12 +202,45 @@ bool Memory::Initialize() {
+@@ -170,12 +202,50 @@ bool Memory::Initialize() {
    }
    if (!mapping_base_) {
      REXSYS_ERROR("Unable to find a continuous block in the 64bit address space.");
@@ -276,17 +276,22 @@ index 76cc8776..4047dd3a 100644
 +      ok = rex::memory::AllocFixed(e0_page, 0x1000, rex::memory::AllocationType::kCommit,
 +                                   rex::memory::PageAccess::kReadWrite) != nullptr;
 +    }
++    // VOLATILE: the two pointers are mapping_base_ + two different constants, so the compiler may treat them as different
++    // memory - job 1934: with plain memcpy, clang dropped the marker store (the page is zeroed right after) and read the
++    // other view before anything was written, so the check failed on a correct mapping.
++    static constexpr uint32_t kMarker = 0x52455845u;  // "REXE"
++    uint32_t seen = 0;
 +    if (ok) {
-+      static constexpr uint32_t kMarker = 0x52455845u;  // "REXE"
-+      std::memcpy(phys_page + 16, &kMarker, sizeof(kMarker));
-+      uint32_t seen = 0;
-+      std::memcpy(&seen, e0_page + 16, sizeof(seen));
++      volatile uint32_t* const write_at = reinterpret_cast<volatile uint32_t*>(phys_page + 16);
++      volatile uint32_t* const read_at = reinterpret_cast<volatile uint32_t*>(e0_page + 16);
++      *write_at = kMarker;
++      seen = *read_at;
 +      ok = seen == kMarker;
-+      std::memset(phys_page, 0, 0x1000);
++      *write_at = 0;  // the page was all zero (freshly committed)
 +    }
 +    if (!ok) {
-+      REXSYS_ERROR("Memory: the 0xE0000000 view does not start at physical 0x1000 on this host (COGBox patch 110 layout); "
-+                   "this game build cannot run here.");
++      REXSYS_ERROR("Memory: the 0xE0000000 view does not start at physical 0x1000 on this host (COGBox patch 110 layout; "
++                   "marker 0x{:08X}, read back 0x{:08X}); this game build cannot run here.", kMarker, seen);
 +      return false;
 +    }
 +    REXSYS_INFO("Memory: 0xE0000000 view mapped at physical 0x1000 (patch 110), checked");
@@ -295,7 +300,7 @@ index 76cc8776..4047dd3a 100644
  
    REXSYS_INFO("Guest memory arena mapped: virtual base 0x{:016X}, physical base 0x{:016X}",
                reinterpret_cast<uintptr_t>(virtual_membase_),
-@@ -362,12 +427,18 @@ int Memory::MapViews(uint8_t* mapping_base) {
+@@ -362,12 +432,18 @@ int Memory::MapViews(uint8_t* mapping_base) {
    assert_true(rex::countof(map_info) == rex::countof(views_.all_views));
    // 0xE0000000 4 KB offset is emulated via host_address_offset and on the CPU
    // side if system allocation granularity is bigger than 4 KB.
@@ -319,7 +324,7 @@ index 76cc8776..4047dd3a 100644
      if (!views_.all_views[n]) {
        // Failed, so bail and try again.
        UnmapViews();
-@@ -382,6 +453,7 @@ void Memory::UnmapViews() {
+@@ -382,6 +458,7 @@ void Memory::UnmapViews() {
      if (views_.all_views[n]) {
        size_t length = map_info[n].virtual_address_end - map_info[n].virtual_address_start + 1;
        rex::memory::UnmapFileView(mapping_, views_.all_views[n], length);
@@ -327,7 +332,7 @@ index 76cc8776..4047dd3a 100644
      }
    }
  }
-@@ -1873,7 +1945,8 @@ void PhysicalHeap::Initialize(memory::Memory* memory, uint8_t* membase, HeapType
+@@ -1873,7 +1950,8 @@ void PhysicalHeap::Initialize(memory::Memory* memory, uint8_t* membase, HeapType
                                uint32_t heap_base, uint32_t heap_size, uint32_t page_size,
                                VirtualHeap* parent_heap) {
    uint32_t host_address_offset;
