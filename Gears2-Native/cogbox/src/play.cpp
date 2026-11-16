@@ -10,6 +10,7 @@
 
 #include <windows.h>
 #include <cstdio>
+#include <cstring>
 #include <algorithm>
 
 static std::string hex32(DWORD c) { char b[16]; snprintf(b, sizeof b, "0x%08lX", (unsigned long)c); return b; }
@@ -278,9 +279,21 @@ void play_start(App &a, int g, bool prepare)
     // the game stop itself at start. Asked before the launch instead of letting it crash.
     if (gs::exe_for_update(G, ver, a.env[g]) && !st.updateDir.empty() && !a.tuMismatchOk[g]) {
         x360fs::XexInfo xi, pi;
-        if (x360fs::read_xex_info(widen(join(st.dataDir, "default.xex")), xi) &&
-            x360fs::read_xex_info(widen(join(st.updateDir, "default.xexp")), pi) && pi.base_version &&
-            (pi.title_id != xi.title_id || pi.base_version != xi.version)) {
+        const bool both = x360fs::read_xex_info(widen(join(st.dataDir, "default.xex")), xi) &&
+                          x360fs::read_xex_info(widen(join(st.updateDir, "default.xexp")), pi);
+        // GitHub #346: same version, but the title update was made for another default.xex (another print of the disc,
+        // or a default.xex a tool changed) - the runtime only warns and the game crashes while patching
+        if (both && pi.title_id == xi.title_id && pi.base_version == xi.version && pi.has_patch_source && xi.has_signature &&
+            std::memcmp(pi.patch_source_sha1, xi.signature_sha1, 20) != 0) {
+            ask(a, "tumismatch", g, tr("The title update doesn't match your game files"),
+                std::string(tr("This title update was made for another copy of the game's default.xex (another print of the "
+                               "disc, or a default.xex changed by a tool), and the game would most likely crash at start.")) +
+                    " " + tr("Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them."),
+                { tr("Play anyway"), tr("Cancel") });
+            a.joinLobby[g] = joinCode;
+            return;
+        }
+        if (both && pi.base_version && (pi.title_id != xi.title_id || pi.base_version != xi.version)) {
             ask(a, "tumismatch", g, tr("The title update doesn't match your game files"),
                 std::string(tr("This title update is for another release of the game, and the game would most likely stop at start.")) +
                     " " + tr("Add the title update that matches your copy.") +

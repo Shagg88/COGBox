@@ -1560,3 +1560,5 @@ Not now = Agora não
 No saves to bring in were found in the saves folder. = Nenhum save para trazer foi encontrado na pasta de saves.
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = Não foi possível mover os saves (o jogo ou outro programa está usando-os?). Nada foi alterado.
 A backup of the saves is still being made - try again when it's done. = Um backup dos saves ainda está sendo feito - tente de novo quando terminar.
+This title update was made for another copy of the game's default.xex (another print of the disc, or a default.xex changed by a tool), and the game would most likely crash at start. = Esta atualização de título foi feita para outra cópia do default.xex do jogo (outra prensagem do disco, ou um default.xex alterado por uma ferramenta), e o jogo provavelmente vai travar ao iniciar.
+Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = Use os arquivos do jogo como vieram do disco (ou sua cópia Games on Demand), com uma atualização de título feita para eles.
