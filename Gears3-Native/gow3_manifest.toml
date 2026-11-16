@@ -10,7 +10,7 @@ game_root = "game/extracted"
 file_path = "game/extracted/default.xex"
 out_directory_path = "generated/default"
 # SDK patches 110 + 111 (game side): the codegen templates in ../Gears2-Native/codegen-templates (see its README). The
-# disc build is not shipped, but the 0.6.4 code generator emits REX_STVLX / REX_STVRX, which only these templates define.
+# disc build is not shipped; it takes patch 110's templates too, so it matches the 064c runtime and the 110 headers.
 template_dir = "../Gears2-Native/codegen-templates"
 includes = []
 
