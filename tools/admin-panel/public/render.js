@@ -96,3 +96,37 @@ export function auditHtml(rows) {
     rows.map((r) => `<tr><td data-l="Time">${esc(when(r.time))}</td><td data-l="User">${esc(r.name)}</td>` +
       `<td data-l="Action">${esc(r.action)}</td><td data-l="Detail">${esc(r.detail)}</td></tr>`).join('') + '</tbody></table>';
 }
+
+// ---- Fabricator ----
+// Mod names, report texts and tags are written by players: every one goes through esc().
+const GB = 1073741824;
+const GAMES = { gears1: 'Gears of War', gears2: 'Gears of War 2', gears3: 'Gears of War 3', judgment: 'Gears of War: Judgment' };
+const STATES = { live: 'Live', taken_down: 'Taken down', removed: 'Removed' };
+
+export function fabStatsHtml(s) {
+  const used = (s.disk.total - s.disk.free) / GB;
+  const pct = s.disk.total > 0 ? Math.round(((s.disk.total - s.disk.free) / s.disk.total) * 100) : 0;
+  return '<section class="cards">' +
+    `<div class="card"><h3>Disk</h3><p class="big">${esc(pct)}%</p><p class="dim">${esc(used.toFixed(1))} of ${esc((s.disk.total / GB).toFixed(1))} GB used</p></div>` +
+    `<div class="card"><h3>Uploaded, last 30 days</h3><p class="big">${esc((s.month_bytes / GB).toFixed(2))} GB</p></div>` +
+    `<div class="card"><h3>Live mods</h3><p class="big">${esc(s.mods)}</p></div>` +
+    `<div class="card"><h3>Creators</h3><p class="big">${esc(s.creators)}</p></div>` +
+    `<div class="card"><h3>Open reports</h3><p class="big">${esc(s.open_reports)}</p></div></section>`;
+}
+
+export function fabReportsHtml(groups, now = Date.now()) {
+  if (!groups.length) return '<p class="dim">No open reports.</p>';
+  return groups.map(({ mod, reports }) => {
+    const id = esc(mod.id);
+    const btn = (action, label, cls = '') =>
+      `<button type="button"${cls ? ` class="${cls}"` : ''} data-fab-action="${action}" data-mod="${id}" data-name="${esc(mod.name)}">${label}</button>`;
+    const buttons = (mod.state === 'taken_down' ? btn('restore', 'Restore') : btn('takedown', 'Take down', 'danger')) +
+      btn('delete-files', 'Delete files', 'danger') +
+      `<button type="button" class="danger" data-fab-stop="${esc(mod.author)}">Stop publishing</button>`;
+    return `<div class="card report"><h3>${esc(mod.name)} <span class="dim">${esc(GAMES[mod.game] ?? mod.game)}, by ${esc(mod.author)}, ${esc(STATES[mod.state] ?? mod.state)}</span></h3>` +
+      '<table><thead><tr><th>Reason</th><th>Text</th><th>Reporter</th><th>Age</th></tr></thead><tbody>' +
+      reports.map((r) => `<tr><td data-l="Reason">${esc(r.reason)}</td><td data-l="Text">${esc(r.text)}</td>` +
+        `<td data-l="Reporter">${esc(r.reporter)}</td><td data-l="Age">${esc(duration(now - r.created_at))}</td></tr>`).join('') +
+      `</tbody></table><div class="row">${buttons}</div></div>`;
+  }).join('');
+}

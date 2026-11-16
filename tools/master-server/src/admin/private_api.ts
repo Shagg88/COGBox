@@ -5,6 +5,9 @@ import path from 'node:path';
 import { DatabaseInstance } from '../db.js';
 import { Registry } from '../social/registry.js';
 import { ErrorRing } from './error_ring.js';
+import type { FabStore } from '../fabricator/store.js';
+import type { FabSettings } from '../fabricator/settings.js';
+import { reportsQueue, takeDown, restore, deleteFiles, setPublishing, fabStats } from '../fabricator/moderation.js';
 
 export interface PrivateApiDeps {
   db: DatabaseInstance;
@@ -15,6 +18,9 @@ export interface PrivateApiDeps {
   dataDir: string;
   secret: string;
   startedAt: number;
+  store: FabStore;
+  settings: FabSettings;
+  now?: () => number;
 }
 
 const KEEP_BACKUPS = 14;
@@ -104,6 +110,37 @@ export async function buildPrivateApi(deps: PrivateApiDeps): Promise<FastifyInst
   });
 
   app.get('/backups', async () => ({ backups: backups() }));
+
+  // ---- Fabricator moderation (`who` is the panel's signed-in admin name) ----
+  const now = deps.now ?? Date.now;
+  const whoOf = (b: unknown): string | null => {
+    const w = (b as { who?: unknown } | null)?.who;
+    return typeof w === 'string' && w.length > 0 && w.length <= 64 ? w : null;
+  };
+  const MOD_ACTIONS: Record<string, (id: number, who: string) => boolean> = {
+    takedown: (id, who) => takeDown(db, id, who, now()),
+    restore: (id, who) => restore(db, id, who, now()),
+    'delete-files': (id, who) => deleteFiles(db, deps.store, id, who, now()),
+  };
+
+  app.get('/fabricator/reports', async () => ({ reports: reportsQueue(db) }));
+  app.get('/fabricator/stats', async () => fabStats(db, deps.store, now()));
+
+  app.post<{ Params: { id: string; action: string } }>('/fabricator/mods/:id/:action', async (req, reply) => {
+    const act = Object.hasOwn(MOD_ACTIONS, req.params.action) ? MOD_ACTIONS[req.params.action] : undefined;
+    if (!act) return reply.status(404).send({ error: 'not_found' });
+    const who = whoOf(req.body);
+    if (!who) return reply.status(400).send({ error: 'who is required' });
+    const id = Number(req.params.id);
+    return { ok: Number.isSafeInteger(id) && id > 0 ? act(id, who) : false };
+  });
+
+  app.post<{ Params: { tag: string } }>('/fabricator/creators/:tag/publishing', async (req, reply) => {
+    const who = whoOf(req.body);
+    const allowed = (req.body as { allowed?: unknown } | null)?.allowed;
+    if (!who || typeof allowed !== 'boolean') return reply.status(400).send({ error: 'allowed and who are required' });
+    return { ok: setPublishing(db, req.params.tag, allowed, who, now()) };
+  });
 
   return app;
 }

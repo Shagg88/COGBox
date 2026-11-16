@@ -39,6 +39,7 @@
       <button type="button" data-tab="lobbies">Lobbies</button>
       <button type="button" data-tab="logs">Logs</button>
       <button type="button" data-tab="actions">Actions</button>
+      <button type="button" data-tab="fabricator">Fabricator</button>
       <button type="button" data-tab="audit">Audit</button>
     </nav>
     <p id="msg" role="status"></p>
@@ -69,6 +70,13 @@
       <h2>Backups</h2>
       <button type="button" id="backup">Back up database now</button>
       <div id="backups"></div>
+    </section>
+
+    <section data-page="fabricator" hidden>
+      <button type="button" id="fab-refresh">Refresh</button>
+      <div id="fab-stats"></div>
+      <h2>Reports</h2>
+      <div id="fab-reports"></div>
     </section>
 
     <section data-page="audit" hidden><div id="audit"></div></section>

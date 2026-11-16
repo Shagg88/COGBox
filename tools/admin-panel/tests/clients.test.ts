@@ -48,6 +48,32 @@ describe('master client', () => {
     expect(seen.every((s) => s.secret === 's3cret')).toBe(true);
   });
 
+  it('fabricator calls send the secret and a JSON body', async () => {
+    const seen: { method?: string; url?: string; secret?: string | string[]; body: string }[] = [];
+    const url = await fake((req, res) => {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        seen.push({ method: req.method, url: req.url, secret: req.headers['x-admin-secret'], body });
+        res.setHeader('content-type', 'application/json');
+        if (req.url === '/fabricator/reports') return res.end('{"reports":[]}');
+        if (req.url === '/fabricator/stats') return res.end('{"disk":{"total":1,"free":1},"month_bytes":0,"mods":0,"creators":0,"open_reports":0}');
+        res.end('{"ok":true}');
+      });
+    });
+    const c = createMasterClient(url, 's3cret');
+    expect(await c.fabReports()).toEqual([]);
+    expect((await c.fabStats()).mods).toBe(0);
+    expect(await c.fabAction(7, 'delete-files', 'alice')).toBe(true);
+    expect(await c.fabPublishing('Baird#1234', false, 'alice')).toBe(true);
+    expect(seen.map((s) => [s.method, s.url, s.body])).toEqual([
+      ['GET', '/fabricator/reports', ''], ['GET', '/fabricator/stats', ''],
+      ['POST', '/fabricator/mods/7/delete-files', '{"who":"alice"}'],
+      ['POST', '/fabricator/creators/Baird%231234/publishing', '{"allowed":false,"who":"alice"}'],
+    ]);
+    expect(seen.every((s) => s.secret === 's3cret')).toBe(true);
+  });
+
   it('backup waits longer than the status timeout', async () => {
     const url = await fake((_q, res) => { setTimeout(() => res.end('{"name":"master-20260101000000.db","size":5}'), 2500); });
     expect(await createMasterClient(url, 's').backup()).toEqual({ name: 'master-20260101000000.db', size: 5 });

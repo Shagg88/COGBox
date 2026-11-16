@@ -139,7 +139,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
 
   // What the private admin listener needs (see the standalone block below)
   server.decorate('adminDeps', {
-    db, registry, hostChanged, errors, startedAt: Date.now(),
+    db, registry, hostChanged, errors, startedAt: Date.now(), store: fabStore, settings: fabSettings, now: opts.now ?? Date.now,
     pendingInvites: () => stats.pendingInvites(),
     dataDir: path.dirname(path.resolve(dbFile))
   });

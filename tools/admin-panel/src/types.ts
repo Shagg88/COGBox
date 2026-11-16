@@ -20,12 +20,32 @@ export interface Lobby {
 
 export interface Backup { name: string; size: number; mtime: number }
 
+export interface FabStats {
+  disk: { total: number; free: number };
+  month_bytes: number;   // bytes of versions published in the last 30 days
+  mods: number;
+  creators: number;
+  open_reports: number;
+}
+
+// Open reports for one mod; players are tags (display_name#discriminator), never uuids.
+export interface FabReportGroup {
+  mod: { id: number; name: string; game: string; author: string; state: string };
+  reports: { id: number; reason: string; text: string; reporter: string; created_at: number }[];
+}
+
+export type FabAction = 'takedown' | 'restore' | 'delete-files';
+
 export interface MasterClient {
   status(): Promise<Status | null>; // null when no answer within 2 s
   lobbies(): Promise<Lobby[]>;
   closeLobby(id: string): Promise<boolean>;
   backup(): Promise<{ name: string; size: number }>;
   backups(): Promise<Backup[]>;
+  fabReports(): Promise<FabReportGroup[]>;
+  fabStats(): Promise<FabStats>;
+  fabAction(id: number, action: FabAction, who: string): Promise<boolean>;      // false: no such mod, or not in a state for it
+  fabPublishing(tag: string, allowed: boolean, who: string): Promise<boolean>;  // false: no account has that tag
 }
 
 export type Service = 'master-server' | 'coturn' | 'caddy';

@@ -147,7 +147,7 @@ function dropImageIfUnused(db: DatabaseInstance, store: FabStore, key: string): 
   if (!used) store.remove(key);
 }
 
-function dropFileIfUnused(db: DatabaseInstance, store: FabStore, key: string): void {
+export function dropFileIfUnused(db: DatabaseInstance, store: FabStore, key: string): void {
   if (!db.prepare("SELECT 1 FROM fab_versions WHERE file_key = ? AND state = 'live' LIMIT 1").get(key)) store.remove(key);
 }
 

@@ -4,7 +4,7 @@ import { buildApp } from '../src/app.js';
 import { openDb, type Db } from '../src/db.js';
 import { addUser } from '../src/users.js';
 import { totpCode } from '../src/crypto.js';
-import type { DockerClient, Lobby, MasterClient, ServiceHealth, Status } from '../src/types.js';
+import type { DockerClient, FabReportGroup, FabStats, Lobby, MasterClient, ServiceHealth, Status } from '../src/types.js';
 
 const up: ServiceHealth = { up: true, started_at: 'x', restarts: 0 };
 const STATUS: Status = { uptime_s: 5, version: '1', players: { total: 0, by_title: {}, by_region: {} }, lobbies: 1, pending_invites: 0, errors: [] };
@@ -14,6 +14,10 @@ let db: Db, app: FastifyInstance, clock: number, secret: string, password: strin
 let statusImpl: () => Promise<Status | null>;
 let restartImpl: (s: string) => Promise<void>;
 let restarts: string[], closed: string[], logCalls: [string, number][];
+let fabCalls: unknown[][];
+const FAB_STATS: FabStats = { disk: { total: 100, free: 40 }, month_bytes: 5, mods: 2, creators: 1, open_reports: 1 };
+const FAB_REPORTS: FabReportGroup[] = [{ mod: { id: 7, name: 'Alpha', game: 'gears3', author: 'Baird#1234', state: 'live' },
+  reports: [{ id: 1, reason: 'broken', text: 'crashes', reporter: 'Cole#0001', created_at: 1 }] }];
 
 let logLines = ['line'];
 const master: MasterClient = {
@@ -22,6 +26,10 @@ const master: MasterClient = {
   closeLobby: async (id) => { closed.push(id); return true; },
   backup: async () => ({ name: 'master-20261111000000.db', size: 10 }),
   backups: async () => [{ name: 'master-20261111000000.db', size: 10, mtime: 1 }],
+  fabReports: async () => FAB_REPORTS,
+  fabStats: async () => FAB_STATS,
+  fabAction: async (id, action, who) => { fabCalls.push([id, action, who]); return id === 7; },
+  fabPublishing: async (tag, allowed, who) => { fabCalls.push([tag, allowed, who]); return tag === 'Baird#1234'; },
 };
 const docker: DockerClient = {
   health: async () => ({ 'master-server': up, coturn: up, caddy: up }),
@@ -38,7 +46,7 @@ beforeEach(async () => {
   clock = 1_800_000_000_000;
   statusImpl = async () => STATUS;
   restartImpl = async () => {};
-  restarts = []; closed = []; logCalls = [];
+  restarts = []; closed = []; logCalls = []; fabCalls = [];
   app = await buildApp({ db, now: () => clock, master, docker, secureCookie: false });
 });
 afterEach(async () => { await app.close(); db.close(); });
@@ -169,11 +177,44 @@ describe('routes', () => {
       ['GET', '/admin/api/overview'], ['GET', '/admin/api/lobbies'], ['POST', '/admin/api/lobbies/L1/close'],
       ['GET', '/admin/api/logs?service=coturn'], ['POST', '/admin/api/restart'], ['POST', '/admin/api/backup'],
       ['GET', '/admin/api/backups'], ['GET', '/admin/api/audit'],
+      ['GET', '/admin/api/fabricator/reports'], ['GET', '/admin/api/fabricator/stats'],
+      ['POST', '/admin/api/fabricator/mods/7/takedown'], ['POST', '/admin/api/fabricator/creators/Baird%231234/publishing'],
     ];
     for (const [method, url] of cases) {
       const res = await app.inject({ method: method as 'GET' | 'POST', url });
       expect([url, res.statusCode]).toEqual([url, 401]);
     }
+  });
+});
+
+describe('fabricator routes', () => {
+  it('reports and stats come from the master', async () => {
+    expect((await get('/admin/api/fabricator/reports')).json()).toEqual(FAB_REPORTS);
+    expect((await get('/admin/api/fabricator/stats')).json()).toEqual(FAB_STATS);
+  });
+
+  it('mod actions need confirm, pass the signed-in admin as who and are audited', async () => {
+    expect((await post('/admin/api/fabricator/mods/7/takedown', {})).statusCode).toBe(400);
+    expect((await post('/admin/api/fabricator/mods/7/explode', { confirm: true })).statusCode).toBe(400);
+    expect(fabCalls).toEqual([]);
+    for (const a of ['takedown', 'restore', 'delete-files']) {
+      expect((await post(`/admin/api/fabricator/mods/7/${a}`, { confirm: true })).statusCode).toBe(200);
+    }
+    expect(fabCalls).toEqual([[7, 'takedown', 'alice'], [7, 'restore', 'alice'], [7, 'delete-files', 'alice']]);
+    expect(rows()).toEqual([
+      { action: 'fab_takedown', detail: 'mod 7' }, { action: 'fab_restore', detail: 'mod 7' }, { action: 'fab_delete_files', detail: 'mod 7' },
+    ]);
+    expect((await post('/admin/api/fabricator/mods/8/takedown', { confirm: true })).statusCode).toBe(404);
+    expect(rows()).toHaveLength(3);
+  });
+
+  it('publishing takes a tag and is audited', async () => {
+    expect((await post('/admin/api/fabricator/creators/Baird%231234/publishing', { confirm: true })).statusCode).toBe(400);
+    const r = await post('/admin/api/fabricator/creators/Baird%231234/publishing', { allowed: false, confirm: true });
+    expect(r.statusCode).toBe(200);
+    expect(fabCalls).toEqual([['Baird#1234', false, 'alice']]);
+    expect(rows()).toEqual([{ action: 'fab_publishing', detail: 'Baird#1234 stopped' }]);
+    expect((await post('/admin/api/fabricator/creators/Nobody%230000/publishing', { allowed: true, confirm: true })).statusCode).toBe(404);
   });
 });
 

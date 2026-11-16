@@ -1,4 +1,4 @@
-import { auditHtml, backupsHtml, lobbiesHtml, logsHtml, overviewHtml } from './render.js';
+import { auditHtml, backupsHtml, fabReportsHtml, fabStatsHtml, lobbiesHtml, logsHtml, overviewHtml } from './render.js';
 
 const $ = (s) => document.querySelector(s);
 const API = '/admin/api';
@@ -37,7 +37,7 @@ function note(text, bad = false) {
 const fail = (e) => { if (e.status !== 401) note(e.message, true); };
 
 let current = 'overview';
-const loaders = { overview: loadOverview, lobbies: loadLobbies, logs: loadLogs, actions: loadBackups, audit: loadAudit };
+const loaders = { overview: loadOverview, lobbies: loadLobbies, logs: loadLogs, actions: loadBackups, fabricator: loadFabricator, audit: loadAudit };
 function tab(name) {
   current = name;
   for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('on', b.dataset.tab === name);
@@ -50,6 +50,13 @@ async function loadOverview() { try { $('#overview').innerHTML = overviewHtml(aw
 async function loadLobbies() { try { $('#lobbies').innerHTML = lobbiesHtml(await api('/lobbies'), Date.now()); } catch (e) { fail(e); } }
 async function loadBackups() { try { $('#backups').innerHTML = backupsHtml(await api('/backups')); } catch (e) { fail(e); } }
 async function loadAudit() { try { $('#audit').innerHTML = auditHtml(await api('/audit')); } catch (e) { fail(e); } }
+async function loadFabricator() {
+  try {
+    const [stats, reports] = await Promise.all([api('/fabricator/stats'), api('/fabricator/reports')]);
+    $('#fab-stats').innerHTML = fabStatsHtml(stats);
+    $('#fab-reports').innerHTML = fabReportsHtml(reports, Date.now());
+  } catch (e) { fail(e); }
+}
 async function loadLogs() {
   try {
     logLines = (await api('/logs?service=' + encodeURIComponent($('#log-service').value))).lines;
@@ -100,6 +107,7 @@ $('#logout').addEventListener('click', async () => {
 
 $('#tabs').addEventListener('click', (ev) => { const t = ev.target.closest('button[data-tab]'); if (t) tab(t.dataset.tab); });
 $('#lobbies-refresh').addEventListener('click', loadLobbies);
+$('#fab-refresh').addEventListener('click', loadFabricator);
 $('#logs-refresh').addEventListener('click', loadLogs);
 $('#log-service').addEventListener('change', loadLogs);
 $('#log-filter').addEventListener('input', drawLogs);
@@ -122,6 +130,25 @@ document.addEventListener('click', async (ev) => {
     if (!confirm(`Close lobby ${close.dataset.room}? Its players are sent back as if the host left.`)) return;
     try { await api(`/lobbies/${encodeURIComponent(close.dataset.close)}/close`, { confirm: true }); note(`Closed lobby ${close.dataset.room}.`); } catch (e) { fail(e); }
     loadLobbies();
+    return;
+  }
+  const fab = ev.target.closest('button[data-fab-action]');
+  if (fab) {
+    const { fabAction: action, mod, name } = fab.dataset;
+    const ask = { takedown: `Take down "${name}"? It is hidden from the store and its downloads stop.`,
+      restore: `Restore "${name}" to the store?`,
+      'delete-files': `Delete every file of "${name}"? This cannot be undone.` }[action];
+    if (!ask || !confirm(ask)) return;
+    try { await api(`/fabricator/mods/${encodeURIComponent(mod)}/${encodeURIComponent(action)}`, { confirm: true }); note(`Done: ${action} "${name}".`); } catch (e) { fail(e); }
+    loadFabricator();
+    return;
+  }
+  const stop = ev.target.closest('button[data-fab-stop]');
+  if (stop) {
+    const tag = stop.dataset.fabStop;
+    if (!confirm(`Stop ${tag} from publishing? Their mods stay up.`)) return;
+    try { await api(`/fabricator/creators/${encodeURIComponent(tag)}/publishing`, { allowed: false, confirm: true }); note(`${tag} can no longer publish.`); } catch (e) { fail(e); }
+    loadFabricator();
     return;
   }
   const r = ev.target.closest('button[data-restart]');

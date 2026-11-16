@@ -1,12 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
-import type { DockerClient, MasterClient } from './types.js';
+import type { DockerClient, FabAction, MasterClient } from './types.js';
 import { audit } from './audit.js';
 import { logSafeText } from './scrub.js';
 
 type Svc = 'master-server' | 'coturn';
 const isSvc = (s: unknown): s is Svc => s === 'master-server' || s === 'coturn';
 const LOG_LINES = 300;
+const FAB_AUDIT = { takedown: 'fab_takedown', restore: 'fab_restore', 'delete-files': 'fab_delete_files' } as const;
+const isFabAction = (a: string): a is FabAction => Object.hasOwn(FAB_AUDIT, a);
 
 // The session, CSRF and must_change checks are the hook in buildApp; these routes only do the work.
 export function registerRoutes(api: FastifyInstance, o: { db: Db; now: () => number; master: MasterClient; docker: DockerClient }): void {
@@ -74,6 +76,44 @@ export function registerRoutes(api: FastifyInstance, o: { db: Db; now: () => num
   });
 
   api.get('/backups', async () => master.backups());
+
+  // ---- Fabricator moderation: the master does the work, `who` is the signed-in admin ----
+  const masterDown = (reply: { status(n: number): { send(b: unknown): unknown } }, e: unknown) =>
+    reply.status(502).send({ error: logSafeText((e as Error).message) });
+
+  api.get('/fabricator/reports', async (_req, reply) => {
+    try { return await master.fabReports(); } catch (e) { return masterDown(reply, e); }
+  });
+
+  api.get('/fabricator/stats', async (_req, reply) => {
+    try { return await master.fabStats(); } catch (e) { return masterDown(reply, e); }
+  });
+
+  api.post('/fabricator/mods/:id/:action', async (req, reply) => {
+    const { id, action } = req.params as { id: string; action: string };
+    const modId = Number(id);
+    if (!isFabAction(action) || !Number.isSafeInteger(modId) || modId < 1) return reply.status(400).send({ error: 'Unknown action.' });
+    if ((req.body as { confirm?: unknown } | undefined)?.confirm !== true) return reply.status(400).send({ error: 'Confirm the action.' });
+    const name = req.session!.name;
+    let ok: boolean;
+    try { ok = await master.fabAction(modId, action, name); } catch (e) { return masterDown(reply, e); }
+    if (!ok) return reply.status(404).send({ error: 'No such mod, or it is not in a state for that.' });
+    audit(db, name, FAB_AUDIT[action], `mod ${modId}`, now());
+    return { ok: true };
+  });
+
+  api.post('/fabricator/creators/:tag/publishing', async (req, reply) => {
+    const { tag } = req.params as { tag: string };
+    const b = (req.body ?? {}) as { allowed?: unknown; confirm?: unknown };
+    if (typeof b.allowed !== 'boolean') return reply.status(400).send({ error: 'Say whether publishing is allowed.' });
+    if (b.confirm !== true) return reply.status(400).send({ error: 'Confirm the action.' });
+    const name = req.session!.name;
+    let ok: boolean;
+    try { ok = await master.fabPublishing(tag, b.allowed, name); } catch (e) { return masterDown(reply, e); }
+    if (!ok) return reply.status(404).send({ error: 'No account has that tag.' });
+    audit(db, name, 'fab_publishing', `${tag} ${b.allowed ? 'allowed' : 'stopped'}`, now());
+    return { ok: true };
+  });
 
   api.get('/audit', async () =>
     db.prepare('SELECT id, time, name, action, detail FROM audit ORDER BY id DESC LIMIT 200').all());
