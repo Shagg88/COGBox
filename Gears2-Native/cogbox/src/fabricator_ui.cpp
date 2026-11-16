@@ -39,6 +39,8 @@ const char *const kSideNames[] = { "Everyone (every player needs it)", "Host onl
 const char *const kReasonKeys[] = { "malware", "stolen", "broken", "offensive", "other" };
 const char *const kReasonNames[] = { "Malware or a harmful file", "Stolen work", "Broken - doesn't work", "Offensive", "Something else" };
 const char *const kSignInTip = "Sign in on the SOCIAL tab to get mods";
+const char *const kOnlineOff = "Turn on Online play on the SOCIAL tab to use the store.";   // [Online] Enabled = 0: no network at all
+bool g_refreshLocal = false;   // read the mods folders again at the start of the next frame (never while rows point into them)
 const int kGames = 4, kTypes = 6, kSorts = 5, kSides = 3, kReasons = 5;
 
 ImVec4 hexc(unsigned v, float a = 1) { return ImVec4(((v >> 16) & 255) / 255.f, ((v >> 8) & 255) / 255.f, (v & 255) / 255.f, a); }
@@ -171,18 +173,40 @@ void heading(const char *text_en)
     th_heading(text_en, ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x - S(4));
     ImGui::Dummy(ImVec2(0, S(2)));
 }
+// A selectable line whose text is drawn as given: a mod's name may hold "##", which in an ImGui label would hide the
+// rest, so the item's label is only "##<id>" and the text is drawn over it.
+bool text_selectable(const std::string &text, const std::string &id, bool selected, ImVec4 c, float w = 0)
+{
+    ImGui::PushID(id.c_str());
+    const ImVec2 ts = ImGui::CalcTextSize(text.c_str());
+    const bool hit = ImGui::Selectable("##sel", selected, 0, ImVec2(w > 0 ? w : ts.x, ts.y));
+    ImGui::GetWindowDrawList()->AddText(ImGui::GetItemRectMin(), U(c), text.c_str());
+    ImGui::PopID();
+    return hit;
+}
 bool link(const std::string &text, const char *id)   // amber text that opens something (reachable with the pad)
 {
-    ImGui::PushStyleColor(ImGuiCol_Text, col::amber);
-    const ImVec2 ts = ImGui::CalcTextSize(text.c_str());
-    const bool hit = ImGui::Selectable((text + "##" + id).c_str(), false, 0, ts);
+    const bool hit = text_selectable(text, id, false, col::amber);
     if (ImGui::IsItemHovered()) {
         const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
         ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x, b.y), b, U(col::amber, 0.8f), S(1));
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
-    ImGui::PopStyleColor();
     return hit;
+}
+// text cut to at most max UTF-16 units (how the server counts), never inside a character
+void cut_utf16(std::string &s, size_t max)
+{
+    size_t units = 0, i = 0;
+    while (i < s.size()) {
+        const unsigned char c = (unsigned char)s[i];
+        const size_t len = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 1;
+        const size_t u = len == 4 ? 2 : 1;
+        if (units + u > max || i + len > s.size()) break;
+        units += u;
+        i += len;
+    }
+    s.resize(i);
 }
 
 // a state word in a rounded box; kind: 0 grey, 1 green (installed and on), 2 amber (update), 3 red (taken down,
@@ -218,10 +242,11 @@ float stars(ImDrawList *dl, ImVec2 p, float r, double value)
 }
 
 // a picture filling p0-p1 (cropped to keep its shape), or a dark placeholder while it loads
-void picture(App &a, ImDrawList *dl, const std::string &key, ImVec2 p0, ImVec2 p1, float round = 0)
+// (local: a file the player chose for an upload - only the upload form passes true; store data is a store image path)
+void picture(App &a, ImDrawList *dl, const std::string &key, ImVec2 p0, ImVec2 p1, float round = 0, bool local = false)
 {
     int w = 0, h = 0;
-    SDL_Texture *t = key.empty() ? nullptr : fab_image(a, key, &w, &h);
+    SDL_Texture *t = key.empty() ? nullptr : local ? fab_local_image(a, key, &w, &h) : fab_image(a, key, &w, &h);
     if (!t || w <= 0 || h <= 0) {
         dl->AddRectFilledMultiColor(p0, p1, U(hexc(0x3a1d1f)), U(hexc(0x2a2024)), U(hexc(0x1d2226)), U(hexc(0x241d20)));
         th_cog(dl, ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f), std::min(p1.x - p0.x, p1.y - p0.y) * 0.2f, 8, 0,
@@ -510,7 +535,8 @@ void library_row(App &a, const FabView &v, const LibRow &r, int idx)
         const std::string b = btns[i];
         const bool needsGameClosed = b == "Install" || b == "Update" || b == "Turn on" || b == "Turn off" || b == "Uninstall";
         const bool needsSignIn = b == "Install" || b == "Update";
-        const bool en = !(needsSignIn && !v.signed_in) && !(needsGameClosed && gameRuns && b != "Install" && b != "Update");
+        const bool needsOnline = needsSignIn || b == "Page";
+        const bool en = !(needsOnline && !v.online) && !(needsSignIn && !v.signed_in) && !(needsGameClosed && gameRuns && b != "Install" && b != "Update");
         if (btn(btns[i], en)) {
             if (b == "Install" || b == "Update") fab_get(r.item, r.g, b == "Update");
             else if (b == "Cancel") fab_cancel(t);
@@ -528,7 +554,7 @@ void library_row(App &a, const FabView &v, const LibRow &r, int idx)
                 fab_mark_local_change();
             }
         }
-        if (!en) tip(needsSignIn && !v.signed_in ? kSignInTip : "Close the game first.");
+        if (!en) tip(needsOnline && !v.online ? kOnlineOff : needsSignIn && !v.signed_in ? kSignInTip : "Close the game first.");
         else if (b == "Install" && gameRuns) tip("It downloads now and installs when the game closes.");
     }
     ImGui::SetCursorScreenPos(r0);
@@ -588,13 +614,14 @@ void library_tab(App &a, const FabView &v, ImVec2 c0, ImVec2 c1)
     if (ImGui::Selectable(l2.c_str(), g_libState == 2)) g_libState = g_libState == 2 ? 0 : 2;
     if (ImGui::Selectable(l3.c_str(), g_libState == 3)) g_libState = g_libState == 3 ? 0 : 3;
     ImGui::Dummy(ImVec2(0, S(16)));
-    if (btn("Refresh")) { fab_load_library(); local_refresh(a, true); }
+    if (btn("Refresh")) { fab_load_library(); g_refreshLocal = true; }   // (next frame: this one's rows point into g_local)
     tip("Ask the store again (a mod taken down or updated shows here).");
     ImGui::EndChild();
 
     ImGui::SetCursorScreenPos(ImVec2(c0.x + sideW + S(14), c0.y));
     ImGui::BeginChild("fabLibRows", ImVec2(c1.x - c0.x - sideW - S(14), c1.y - c0.y), ImGuiChildFlags_NavFlattened);
-    if (!v.signed_in && v.account_checked) note(std::string(kSignInTip) + " - your local mods are listed below.", col::amber);
+    if (!v.online) note(std::string(kOnlineOff) + " Your local mods are listed below.", col::amber);
+    else if (!v.signed_in && v.account_checked) note(std::string(kSignInTip) + " - your local mods are listed below.", col::amber);
     if (!v.library_error.empty()) note(v.library_error, col::bad);
     if (v.library_loading && !v.library_loaded) note("Asking the store for your library...");
     if (shown.empty() && (v.library_loaded || !v.signed_in))
@@ -1075,7 +1102,7 @@ void upload_form(App &a, const FabView &v)
             const ImVec2 q = ImGui::GetCursorScreenPos();
             ImGui::InvisibleButton("##sc", ImVec2(sw, shh));
             const bool hov = ImGui::IsItemHovered();
-            picture(a, dl, "file:" + f.screens[i], q, ImVec2(q.x + sw, q.y + shh), S(3));
+            picture(a, dl, f.screens[i], q, ImVec2(q.x + sw, q.y + shh), S(3), true);
             tip(base_name(f.screens[i]) + " - click to take it out");
             if (hov) dl->AddRectFilled(q, ImVec2(q.x + sw, q.y + shh), U(col::shadow, 0.5f), S(3));
             if (hov) dl->AddText(ImVec2(q.x + sw * 0.5f - S(4), q.y + shh * 0.5f - ImGui::GetTextLineHeight() * 0.5f), U(col::text), "x");
@@ -1108,7 +1135,7 @@ void upload_form(App &a, const FabView &v)
     ImGui::SameLine(0, S(4));
     if (link("LEGAL.md", "legal")) {
         const std::string local = join(exe_dir(), "LEGAL.md");
-        shell_open(file_exists(local) ? local : std::string("https://github.com/Shagg88/COGBox"));
+        shell_open(file_exists(local) ? local : std::string("https://github.com/Shagg88/COGBox/blob/main/LEGAL.md"));
     }
     ImGui::Dummy(ImVec2(0, S(4)));
     const std::string reason = publish_reason(v.limits.can_publish);
@@ -1152,7 +1179,8 @@ void creator_tab(App &a, const FabView &v, ImVec2 c0, ImVec2 c1)
         std::string line = m.name;
         for (const FabCreatorVersion &cv : m.versions) if (cv.state == "live") { line += " \xC2\xB7 v" + cv.version; break; }
         if (m.state != "live") line += " \xC2\xB7 " + std::string(tr(state_word(m.state)));
-        if (ImGui::Selectable((fit(F_BODY, ImGui::GetFontSize(), line, sideW - S(24)) + "##cm" + std::to_string(m.id)).c_str(), g_creatorSel == m.id) &&
+        if (text_selectable(fit(F_BODY, ImGui::GetFontSize(), line, sideW - S(24)), "cm" + std::to_string(m.id), g_creatorSel == m.id, col::text,
+                            ImGui::GetContentRegionAvail().x) &&
             g_creatorSel != m.id) {
             g_creatorSel = m.id;
             form_reset(m.id, m.name, m.game);
@@ -1207,7 +1235,7 @@ void popups(const FabView &v)
         for (int i = 0; i < kReasons; i++) ImGui::RadioButton(tr(kReasonNames[i]), &g_reportReason, i);
         ImGui::TextDisabled("%s", tr("What's wrong (up to 500 characters)"));
         input_multi("##reptext", g_reportText, ImVec2(S(490), T(70)));
-        if (g_reportText.size() > 500) g_reportText.resize(500);
+        cut_utf16(g_reportText, 500);
         if (btn("Send")) {
             fab_report(g_reportMod, kReasonKeys[g_reportReason], g_reportText);
             ImGui::CloseCurrentPopup();
@@ -1234,6 +1262,7 @@ void popups(const FabView &v)
 void fabricator_drop(App &a, const std::string &path)
 {
     const FabView v = fab_view();
+    if (!v.online) { set_message(a, kOnlineOff, true); return; }
     if (!v.signed_in) { set_message(a, "Sign in on the SOCIAL tab to publish mods.", true); return; }
     a.fabTab = 2;
     const bool folder = dir_exists(path);
@@ -1246,7 +1275,8 @@ void fabricator_draw(App &a, ImVec2 size)
 {
     const double now = ImGui::GetTime();
     const bool online = a.ini.get("Online", "Enabled") == "1";
-    fab_configure(a.ini.get("Online", "Server", kCogboxServer), online ? profile_dir(exe_dir(), std::to_string(current_profile())) : "");
+    // as the SOCIAL tab reads it (social_restart); off, fab_configure leaves the workers no server and no account
+    fab_configure(a.ini.get("Online", "Server", kCogboxServer), profile_dir(exe_dir(), std::to_string(current_profile())), online);
     static int lastFrame = -10;
     static double accountAt = 0;
     const bool opened = ImGui::GetFrameCount() - lastFrame > 2;
@@ -1254,7 +1284,7 @@ void fabricator_draw(App &a, ImVec2 size)
     if (opened) {
         fab_refresh_account();
         fab_load_library();
-        local_refresh(a, true);
+        g_refreshLocal = true;
         if (a.fabTab == 2) fab_load_creator();
         accountAt = now;
         static bool testPage = true;   // the COGBOX_FABRICATOR=<tab>:<mod id> test switch (main.cpp)
@@ -1266,7 +1296,8 @@ void fabricator_draw(App &a, ImVec2 size)
         }
     }
     if (now - accountAt > 10) { accountAt = now; fab_refresh_account(); }   // the SOCIAL worker may make the account meanwhile
-    local_refresh(a, false);   // the mods folders (every 3 s, and after an install)
+    local_refresh(a, g_refreshLocal);   // the mods folders (every 3 s, after an install, or when asked); before any row is built
+    g_refreshLocal = false;
     FabView v = fab_view();
     {
         static bool wasSigned = false;
@@ -1276,8 +1307,8 @@ void fabricator_draw(App &a, ImVec2 size)
             if (v.signed_in) fab_load_creator();
         }
     }
-    if (a.fabTab == 1 && !v.store_asked) { fab_store_query(v.query); v = fab_view(); }
-    if (a.fabTab == 2 && !v.signed_in && v.account_checked) a.fabTab = 0;
+    if (online && a.fabTab == 1 && !v.store_asked) { fab_store_query(v.query); v = fab_view(); }
+    if (online && a.fabTab == 2 && !v.signed_in && v.account_checked) a.fabTab = 0;
 
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const float pw = std::min(size.x - S(40), S(1200)), ph = std::min(size.y - S(40), S(820));
@@ -1289,9 +1320,10 @@ void fabricator_draw(App &a, ImVec2 size)
     th_cog(dl, ImVec2(p0.x + S(52), p0.y + S(52)), S(26), 10, (float)now * 0.12f, U(col::redHi, 0.9f), U(ImVec4(0.03f, 0.03f, 0.035f, 1)));
     dl->AddText(F_TITLE, FS(F_TITLE), ImVec2(p0.x + S(92), p0.y + S(20)), U(col::text), tr("FABRICATOR"));
     {
-        const std::string sub = v.signed_in ? std::string(tr("The COGBox mod store")) + "   |   " + tr("Signed in as") + " " + v.tag
-                                            : std::string(tr("The COGBox mod store")) + "   |   " + tr(kSignInTip);
-        dl->AddText(F_BODY, FS(F_BODY), ImVec2(p0.x + S(94), p0.y + S(22) + FS(F_TITLE)), U(v.signed_in || !v.account_checked ? col::dim : col::amber), sub.c_str());
+        const std::string sub = std::string(tr("The COGBox mod store")) + "   |   " +
+                                (!online ? std::string(tr(kOnlineOff)) : v.signed_in ? std::string(tr("Signed in as")) + " " + v.tag : std::string(tr(kSignInTip)));
+        dl->AddText(F_BODY, FS(F_BODY), ImVec2(p0.x + S(94), p0.y + S(22) + FS(F_TITLE)),
+                    U(online && (v.signed_in || !v.account_checked) ? col::dim : col::amber), sub.c_str());
     }
     bool back = false;
     ImGui::SetCursorScreenPos(ImVec2(p1.x - S(24) - S(130), p0.y + S(26)));
@@ -1304,10 +1336,10 @@ void fabricator_draw(App &a, ImVec2 size)
     static const char *const kTabs[] = { "LIBRARY", "STORE", "CREATOR" };
     for (int i = 0; i < 3; i++) {
         ImGui::SetCursorScreenPos(ImVec2(tx + i * (tw + S(4)), ty));
-        const bool off = i == 2 && !v.signed_in;
+        const bool off = i == 2 && online && !v.signed_in;   // (Online play off: the tab opens and says so)
         if (th_tab(kTabs[i], a.fabTab == i, ImVec2(tw, tabH)) && !off) {
             a.fabTab = i;
-            if (i == 0) { fab_load_library(); local_refresh(a, true); }
+            if (i == 0) { fab_load_library(); g_refreshLocal = true; }
             if (i == 2) fab_load_creator();
         }
         if (off) {
@@ -1337,10 +1369,10 @@ void fabricator_draw(App &a, ImVec2 size)
             int n = a.fabTab;
             for (int k = 0; k < 3; k++) {
                 n = (n + d + 3) % 3;
-                if (n != 2 || v.signed_in) break;
+                if (n != 2 || v.signed_in || !online) break;
             }
             a.fabTab = n;
-            if (n == 0) { fab_load_library(); local_refresh(a, true); }
+            if (n == 0) { fab_load_library(); g_refreshLocal = true; }
             if (n == 2) fab_load_creator();
         };
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) step(-1);
@@ -1352,6 +1384,7 @@ void fabricator_draw(App &a, ImVec2 size)
     const ImVec2 c0(p0.x + S(26), ty + tabH + S(12)), c1(p1.x - S(26), p1.y - S(22));
     ImGui::PushFont(F_BODY, FS(F_BODY) * 0.9f);
     if (a.fabTab == 0) library_tab(a, v, c0, c1);
+    else if (!online) { ImGui::SetCursorScreenPos(c0); note(kOnlineOff, col::amber); }   // Store and Creator: nothing goes out
     else if (a.fabTab == 1) store_tab(a, v, c0, c1);
     else creator_tab(a, v, c0, c1);
     popups(v);

@@ -67,12 +67,13 @@ struct FabTransfer {
     bool told_close = false;   // "Close the game first." said for this install (UI thread)
     FabLibraryItem item;       // a Get: what fab_install gets (version, version_id, sha256 from the download answer)
     std::string zip;           // a Get: the downloaded zip; a publish: the zip sent
-    bool zip_made = false;     // a publish: COGBox packed the zip from a folder (deleted afterwards)
+    std::atomic<bool> zip_made{false};   // a publish: COGBox packed the zip from a folder (deleted afterwards)
     std::atomic<int> failed_phase{Queued};   // the phase it failed in (a publish: Packing, Checking = local checks, Uploading)
     std::vector<std::string> problems_;   // why it failed: written under the state's lock, read with fab_transfer_problems
 };
 
 struct FabView {
+    bool online = false;          // CogBox.ini [Online] Enabled = 1 (off: the Fabricator makes no network call at all)
     bool configured = false;      // a server address is set
     bool signed_in = false;       // the profile's online account is there (Online play on, identity.json)
     bool account_checked = false;
@@ -102,9 +103,10 @@ struct FabView {
     std::map<int64_t, int> my_ratings;   // stars this player gave (remembered in <state dir>\ratings.json)
 };
 
-// The server (CogBox.ini [Online] Server) and the profile folder whose identity.json is the account ("" when online
-// play is off: signed out). Called by the screen each frame; a change asks the account again.
-void fab_configure(const std::string &server_url, const std::string &identity_dir);
+// The server (CogBox.ini [Online] Server), the profile folder whose identity.json is the account, and whether online
+// play is on ([Online] Enabled, as the SOCIAL tab reads it): off, no call or transfer goes out (running ones are
+// cancelled). Called by the screen each frame; a change asks the account again.
+void fab_configure(const std::string &server_url, const std::string &identity_dir, bool online);
 FabView fab_view();
 void fab_refresh_account();
 void fab_store_query(const FabQuery &q);
@@ -138,9 +140,12 @@ int fab_transfer_percent();
 uint64_t fab_local_changes();
 void fab_mark_local_change();
 
-// A picture as a texture: a store path ("/api/v1/fabricator/images/<key>") or a local file ("file:<path>"). nullptr
-// while it loads (asked on the picture worker) or when it can't be read. Cached by key, at most 120, least used first out.
-SDL_Texture *fab_image(App &a, const std::string &key, int *w = nullptr, int *h = nullptr);
+// A store picture as a texture: only "/api/v1/fabricator/images/<64 hex>.png" (anything else the server sends is
+// ignored). nullptr while it loads (on the picture worker), when it can't be read, or over 3840 x 2160. Cached by key,
+// at most 120 (least used first out, never one drawn this frame); freed when the screen closes.
+SDL_Texture *fab_image(App &a, const std::string &path, int *w = nullptr, int *h = nullptr);
+// A picture the player chose for an upload (a local file): the upload form's previews only, never store data.
+SDL_Texture *fab_local_image(App &a, const std::string &file, int *w = nullptr, int *h = nullptr);
 void fab_images_free();
 
 // Once a frame on the UI thread (main.cpp): finished downloads installed, messages shown, pictures freed when the

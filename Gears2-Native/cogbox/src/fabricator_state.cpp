@@ -11,6 +11,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -82,7 +83,7 @@ struct Img {
     std::vector<unsigned char> px;
     int w = 0, h = 0;
     SDL_Texture *tex = nullptr;
-    uint64_t used = 0;
+    uint64_t used = 0, used_frame = 0;
 };
 
 struct Shared {
@@ -93,6 +94,7 @@ struct Shared {
     uint64_t store_gen = 0, page_gen = 0, library_gen = 0, creator_gen = 0;
     std::map<std::string, Img> imgs;
     uint64_t img_clock = 0;
+    uint64_t frame = 0;   // fab_state_poll's count: a texture used this frame is never evicted
     std::vector<std::pair<std::string, bool>> messages;   // for set_message on the UI thread
     uint64_t local_changes = 0;
 };
@@ -220,31 +222,52 @@ size_t read_piece(void *opaque, mz_uint64 ofs, void *buf, size_t n)
     c->p->done += (int64_t)got;
     return got;
 }
-void list_files(const std::string &root, const std::string &rel, std::vector<std::pair<std::string, uint64_t>> &out)
+// What goes into the zip: every file under the folder except what COGBox itself keeps beside a mod (fabricator.json,
+// '.'-named entries such as .fabricator-backup, unfinished .partial unpackings). Links (junctions / symlinks) are
+// listed in links: they aren't followed or packed, and the publish says so.
+bool skipped_name(const std::string &n)
+{
+    std::string low = n;
+    for (char &c : low) c = (char)tolower((unsigned char)c);
+    return n.empty() || n[0] == '.' || low == "fabricator.json" || (low.size() >= 8 && low.compare(low.size() - 8, 8, ".partial") == 0);
+}
+void list_files(const std::string &root, const std::string &rel, std::vector<std::pair<std::string, uint64_t>> &out,
+                std::vector<std::string> &links, size_t maxFiles)
 {
     WIN32_FIND_DATAW fd;
     HANDLE f = FindFirstFileW(widen(join(rel.empty() ? root : join(root, rel), "*")).c_str(), &fd);
     if (f == INVALID_HANDLE_VALUE) return;
     do {
         const std::string n = narrow(fd.cFileName);
-        if (n == "." || n == "..") continue;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;   // links aren't followed
+        if (n == "." || n == ".." || skipped_name(n)) continue;
         const std::string r = rel.empty() ? n : rel + "\\" + n;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) list_files(root, r, out);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) { links.push_back(r); continue; }
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) list_files(root, r, out, links, maxFiles);
         else out.push_back({ r, ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow });
-    } while (FindNextFileW(f, &fd));
+    } while (out.size() <= maxFiles && FindNextFileW(f, &fd));
     FindClose(f);
 }
-// "" when written; "cancelled"; else what went wrong (no paths)
+// "" when written; "cancelled"; else what went wrong (no paths, only names inside the mod). The store's limits
+// (fab_check_zip / checks.ts: 50 000 files, 8 GiB unpacked, 4 GiB packed) stop it early.
 std::string zip_folder(const std::string &dir, const std::string &zip, FabProgress &p)
 {
+    const size_t kMaxFiles = 50000;
+    const uint64_t kMaxUnpacked = 8ull << 30, kMaxPacked = 4ull << 30;
     std::vector<std::pair<std::string, uint64_t>> files;
-    list_files(dir, "", files);
+    std::vector<std::string> links;
+    list_files(dir, "", files, links, kMaxFiles);
+    if (!links.empty()) {
+        std::string s = "The folder has links (junctions or symlinks), which aren't packed - copy the files in instead: " + links[0];
+        for (size_t i = 1; i < links.size() && i < 3; i++) s += ", " + links[i];
+        return s + (links.size() > 3 ? ", ..." : "");
+    }
     if (files.empty()) return "The folder is empty.";
-    int64_t total = 0;
-    for (auto &f : files) total += (int64_t)f.second;
+    if (files.size() > kMaxFiles) return "The folder has over 50000 files - the store's limit.";
+    uint64_t total = 0;
+    for (auto &f : files) total += f.second;
+    if (total > kMaxUnpacked) return "The folder is over 8 GB - the store's limit for a mod unpacked.";
     p.done = 0;
-    p.total = total;
+    p.total = (int64_t)total;
     FILE *out = _wfopen(widen(zip).c_str(), L"wb");
     if (!out) return "The zip for the upload couldn't be made (is the disk full?).";
     mz_zip_archive z;
@@ -253,6 +276,7 @@ std::string zip_folder(const std::string &dir, const std::string &zip, FabProgre
     std::string err;
     for (size_t i = 0; ok && i < files.size(); i++) {
         if (p.cancel) { err = "cancelled"; ok = false; break; }
+        if (z.m_archive_size > kMaxPacked) { err = "The zip is over 4 GB - the store's limit."; ok = false; break; }
         std::string name = files[i].first;
         for (char &c : name) if (c == '\\') c = '/';
         FILE *in = _wfopen(widen(join(dir, files[i].first)).c_str(), L"rb");
@@ -264,6 +288,7 @@ std::string zip_folder(const std::string &dir, const std::string &zip, FabProgre
         if (!ok) err = p.cancel ? "cancelled" : "The zip for the upload couldn't be written (is the disk full?).";
     }
     if (ok) ok = mz_zip_writer_finalize_archive(&z) != 0;
+    if (ok && z.m_archive_size > kMaxPacked) { err = "The zip is over 4 GB - the store's limit."; ok = false; }
     if (!ok && err.empty()) err = "The zip for the upload couldn't be written (is the disk full?).";
     mz_zip_writer_end(&z);
     fclose(out);
@@ -316,6 +341,7 @@ void run_get(const std::shared_ptr<FabTransfer> &t)
 
 void run_publish(const std::shared_ptr<FabTransfer> &t, const FabPublish &p)
 {
+    if (t->progress.cancel) { t->phase = FabTransfer::Cancelled; return; }
     Ctx c = ctx();
     if (!c.server || !c.acct) { fail(t, { "Sign in on the SOCIAL tab to publish mods" }); return; }
     std::string zip = p.source;
@@ -361,7 +387,9 @@ void run_publish(const std::shared_ptr<FabTransfer> &t, const FabPublish &p)
     fail(t, lines);
 }
 
-void run_image(const std::string &key)
+// key: the cache's key; source: a store image path (local = false) or a file the player chose (local = true).
+// Only the upload form passes local = true (fab_local_image); store data never reaches it.
+void run_image(const std::string &key, const std::string &source, bool local)
 {
     {
         std::lock_guard<std::mutex> l(sh().mu);
@@ -370,20 +398,23 @@ void run_image(const std::string &key)
     }
     std::string data;
     bool ok = false;
-    if (key.rfind("file:", 0) == 0) ok = read_file(key.substr(5), data, kMaxImageBytes);
-    else if (key.rfind(kImages, 0) == 0) {
+    if (local) ok = read_file(source, data, kMaxImageBytes);
+    else {
         std::string url;
         {
             std::lock_guard<std::mutex> l(sh().mu);
             url = sh().server_url;
         }
         if (auto s = parse_server_url(url)) {
-            HttpResult r = fab_get_file(*s, key, kMaxImageBytes);
+            HttpResult r = fab_get_file(*s, source, kMaxImageBytes);
             ok = r.status == 200;
             data = std::move(r.body);
         }
     }
     int w = 0, h = 0, n = 0;
+    // the size first: nothing over the store's 3840 x 2160 is decoded
+    if (ok && (!stbi_info_from_memory((const unsigned char *)data.data(), (int)data.size(), &w, &h, &n) || w <= 0 || h <= 0 || w > 3840 || h > 2160))
+        ok = false;
     unsigned char *px = ok ? stbi_load_from_memory((const unsigned char *)data.data(), (int)data.size(), &w, &h, &n, 4) : nullptr;
     std::vector<unsigned char> out;
     if (px) {
@@ -452,16 +483,24 @@ std::vector<std::string> fab_transfer_problems(const FabTransfer &t)
     return t.problems_;
 }
 
-void fab_configure(const std::string &server_url, const std::string &identity_dir)
+void fab_configure(const std::string &server_in, const std::string &identity_in, bool online)
 {
+    // Online play off: no server and no account, so no worker job can reach the network; running transfers stop
+    const std::string server_url = online ? server_in : std::string(), identity_dir = online ? identity_in : std::string();
     {
         std::lock_guard<std::mutex> l(sh().mu);
+        if (sh().v.online != online) {
+            sh().v.online = online;
+            if (!online) for (auto &t : sh().v.transfers) t->progress.cancel = true;
+        }
         if (sh().configured_once && sh().server_url == server_url && sh().identity_dir == identity_dir) return;
         const bool serverChanged = sh().server_url != server_url;
         sh().configured_once = true;
         sh().server_url = server_url;
         sh().identity_dir = identity_dir;
         sh().v.account_checked = false;
+        sh().store_gen++; sh().page_gen++; sh().library_gen++; sh().creator_gen++;   // answers to the old settings are dropped
+        sh().v.store_loading = sh().v.page_loading = sh().v.library_loading = sh().v.creator_loading = false;
         sh().v.library_loaded = false;
         sh().v.library.clear();
         sh().v.creator_loaded = false;
@@ -769,24 +808,36 @@ uint64_t fab_local_changes()
     return sh().local_changes;
 }
 
-SDL_Texture *fab_image(App &a, const std::string &key, int *w, int *h)
+namespace {
+bool store_image_path(const std::string &p)   // /api/v1/fabricator/images/<64 hex>.png and nothing else
 {
-    if (key.empty()) return nullptr;
+    const size_t n = strlen(kImages);
+    if (p.size() != n + 64 + 4 || p.compare(0, n, kImages) != 0 || p.compare(n + 64, 4, ".png") != 0) return false;
+    for (size_t i = n; i < n + 64; i++) if (!((p[i] >= '0' && p[i] <= '9') || (p[i] >= 'a' && p[i] <= 'f'))) return false;
+    return true;
+}
+SDL_Texture *image(App &a, const std::string &key, const std::string &source, bool local, int *w, int *h)
+{
     std::lock_guard<std::mutex> l(sh().mu);
     auto it = sh().imgs.find(key);
     if (it == sh().imgs.end()) {
-        while (sh().imgs.size() >= kMaxImages) {   // the least used one goes
-            auto old = sh().imgs.begin();
-            for (auto j = sh().imgs.begin(); j != sh().imgs.end(); ++j) if (j->second.used < old->second.used) old = j;
+        while (sh().imgs.size() >= kMaxImages) {   // the least used one goes - never one drawn this frame
+            auto old = sh().imgs.end();
+            for (auto j = sh().imgs.begin(); j != sh().imgs.end(); ++j)
+                if (j->second.used_frame != sh().frame && (old == sh().imgs.end() || j->second.used < old->second.used)) old = j;
+            if (old == sh().imgs.end()) break;   // all on screen: over the cap for now
             if (old->second.tex) SDL_DestroyTexture(old->second.tex);
             sh().imgs.erase(old);
         }
-        sh().imgs[key].used = ++sh().img_clock;
-        pictures().post([key] { run_image(key); });
+        Img &m = sh().imgs[key];
+        m.used = ++sh().img_clock;
+        m.used_frame = sh().frame;
+        pictures().post([key, source, local] { run_image(key, source, local); });
         return nullptr;
     }
     Img &m = it->second;
     m.used = ++sh().img_clock;
+    m.used_frame = sh().frame;
     if (m.state == 1) {
         m.tex = SDL_CreateTexture(a.ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, m.w, m.h);
         if (m.tex) {
@@ -801,6 +852,19 @@ SDL_Texture *fab_image(App &a, const std::string &key, int *w, int *h)
     if (w) *w = m.w;
     if (h) *h = m.h;
     return m.tex;
+}
+}  // namespace
+
+SDL_Texture *fab_image(App &a, const std::string &path, int *w, int *h)
+{
+    if (!store_image_path(path)) return nullptr;   // anything else from the server is ignored (the placeholder shows)
+    return image(a, "s:" + path, path, false, w, h);
+}
+
+SDL_Texture *fab_local_image(App &a, const std::string &file, int *w, int *h)
+{
+    if (file.empty()) return nullptr;
+    return image(a, "l:" + file, file, true, w, h);
 }
 
 void fab_images_free()
@@ -821,6 +885,10 @@ void fab_state_poll(App &a)
         ts = sh().v.transfers;
     }
     for (auto &m : msgs) set_message(a, m.first, m.second);
+    {
+        std::lock_guard<std::mutex> l(sh().mu);
+        sh().frame++;
+    }
     for (auto &t : ts) {
         if (t->kind != FabTransfer::Download) continue;
         const int ph = t->phase;

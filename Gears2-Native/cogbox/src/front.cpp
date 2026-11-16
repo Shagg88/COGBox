@@ -812,7 +812,7 @@ void front_draw(App &a, ImVec2 size)
             if (left) turn(a, -1);
             if (right) turn(a, 1);
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) a.frontSel = std::max(0, a.frontSel - 1);
-            if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) a.frontSel = std::min(4, a.frontSel + 1);   // achievements part 4: 3; social step 3: 4; the Fabricator: 5
+            if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) a.frontSel = std::min(4, a.frontSel + 1);   // achievements part 4: 3 buttons; social step 3: 4; the Fabricator: 5 buttons, frontSel 0-4
             if (up) a.frontSel = 10;
         }
         if (ImGui::IsWindowHovered() && io.MouseWheel != 0) turn(a, io.MouseWheel > 0 ? -1 : 1);
@@ -947,18 +947,22 @@ void front_draw(App &a, ImVec2 size)
         const float aw = std::max(bw, F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, tr("ACHIEVEMENTS")).x + S(36));
         const float sw = std::max(bw, F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, tr("SOCIAL")).x + S(36));   // social step 3
         const float fw = std::max(bw, F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, tr("FABRICATOR")).x + S(36));   // Task 12
-        const float rowW = bw * 2 + gap + (achShown ? gap + aw + gap + sw + gap + fw : 0);
+        // Task 12 review: the first button's label ("DROP THE UPDATE HERE" ...) gets the same width rule as the others
+        const char *firstLabel = st.ready == R_READY ? (running ? "RUNNING" : "PLAY")
+                               : st.ready == R_NO_PORT ? "PLAY" : st.ready == R_NEED_UPDATE ? "DROP THE UPDATE HERE" : "DROP YOUR COPY HERE";
+        const float pw = std::max(bw, F_HEAD->CalcTextSizeA(FS(F_HEAD), FLT_MAX, 0, tr(firstLabel)).x + S(36));
+        const float rowW = pw + bw + gap + (achShown ? gap + aw + gap + sw + gap + fw : 0);
         ImGui::SetCursorScreenPos(ImVec2(cx - rowW * 0.5f, y));
         if (st.ready == R_READY) {
             // A presses the choice LB / RB made (a.frontSel); Enter plays
-            if (th_button_red(running ? "RUNNING" : "PLAY", ImVec2(bw, bh), !running && !busy, F_HEAD, sel0) ||
+            if (th_button_red(firstLabel, ImVec2(pw, bh), !running && !busy, F_HEAD, sel0) ||
                 (nav && !running && !busy && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || (padA && a.frontSel == 0))))
                 play_start(a, g);
         } else if (st.ready != R_NO_PORT) {
             // 0.4.6 (Shagg 5 Nov): drag and drop is the only way to add a copy, update or DLC
-            th_button_red(st.ready == R_NEED_UPDATE ? "DROP THE UPDATE HERE" : "DROP YOUR COPY HERE", ImVec2(bw, bh), false, F_HEAD, sel0);
+            th_button_red(firstLabel, ImVec2(pw, bh), false, F_HEAD, sel0);
         } else {
-            th_button_red("PLAY", ImVec2(bw, bh), false, F_HEAD, sel0);
+            th_button_red(firstLabel, ImVec2(pw, bh), false, F_HEAD, sel0);
         }
         ImGui::SameLine(0, gap);
         if (th_button("SETTINGS", ImVec2(bw, bh), st.ready != R_NO_PORT, F_HEAD, sel1) ||
