@@ -77,7 +77,7 @@ New in 0.6.3
   again. Cancel a friend request you sent (#332).
 - Trigger rumble for Xbox One / Series controllers (Controls tab, experimental, off by default, #245).
 - Thanks to KiltedKernel, Flippage and Hevesi J. for their code and translation, and to everyone who
-  reported bugs and tested (names in CHANGES.md).
+  reported issues on GitHub and tested in the Discord.
 - Full list: CHANGES.md on GitHub (https://github.com/Shagg88/COGBox).
 
 
