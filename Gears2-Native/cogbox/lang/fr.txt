@@ -1562,4 +1562,4 @@ No saves to bring in were found in the saves folder. = Aucune sauvegarde à int�
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = Les sauvegardes n'ont pas pu être déplacées (le jeu ou un autre programme les utilise-t-il ?). Rien n'a été modifié.
 A backup of the saves is still being made - try again when it's done. = Une sauvegarde des sauvegardes est encore en cours - réessayez quand elle sera terminée.
 Switch weapon = Changer d'arme
-Not used in Judgment = Non utilisé dans Judgment
+Pistol = Pistolet

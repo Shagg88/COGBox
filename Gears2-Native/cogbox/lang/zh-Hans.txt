@@ -1564,4 +1564,4 @@ No saves to bring in were found in the saves folder. = 存档文件夹中没有�
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = 无法移动存档（游戏或其他程序正在使用它们吗？）。未做任何更改。
 A backup of the saves is still being made - try again when it's done. = 存档备份仍在进行中，请完成后再试。
 Switch weapon = 切换武器
-Not used in Judgment = Judgment 中未使用
+Pistol = 手枪

@@ -952,27 +952,28 @@ const std::vector<KeyAction> &key_actions(Game g)
         { "keybind_left_shoulder", "LB", "Tactical display", "Tab" },
         { "keybind_dpad_left", "D-pad left", "Weapon (left)", "1" },
         { "keybind_dpad_right", "D-pad right", "Weapon (right)", "2" },
-        { "keybind_dpad_up", "D-pad up", "Weapon (up)", "3" },
-        { "keybind_dpad_down", "D-pad down", "Grenades", "4" },
+        // GitHub #350 (the games' own bindings, Coalesced_INT.bin: Gears 2 / 3 DPad_Up = GBA_Grenades, DPad_Down =
+        // GBA_Pistols; Gears 1 the same per its manual): the rows said "Weapon (up)" on 3 and "Grenades" on 4, so 3 threw a
+        // grenade and 4 drew the pistol. Shagg 16 Nov: 4 = grenade, 3 = pistol (as the labels promised; Judgment's too).
+        { "keybind_dpad_up", "D-pad up", "Grenades", "4" },
+        { "keybind_dpad_down", "D-pad down", "Pistol", "3" },
         { "keybind_rstick_press", "Right stick click", "Zoom", "MMB,Z" },
         { "keybind_lstick_press", "Left stick click", "Left stick click", "C" },
         { "keybind_start", "Start", "Pause menu", "Escape,Return" },
         { "keybind_back", "Back", "Back / scores", "Backspace" },
         { "keybind_walk", "-", "Walk", "None" },   // SDK patch 60: no key until chosen
     };
-    // GitHub #208: Judgment's LB is the grenade and D-pad down the tactical display - the same keys (Tab, 4) keep
-    // their meaning, so the two rows swap names and default keys.
-    // GitHub #350: Judgment carries two weapons - Y switches between them (no D-pad weapon slots) and D-pad up is the
-    // point of interest. Same rule: Q stays the point of interest, the weapon keys 1 / 2 switch weapons; D-pad left /
-    // right do nothing in Judgment's own controls, so no key by default.
+    // Judgment's own bindings (its Coalesced_INT.bin): LB = GBA_Grenades, Y = GBA_SwitchWeapon, D-pad up = GBA_POI, D-pad
+    // down = GBA_Taccom, D-pad left / right = GBA_Weap2 / GBA_Weap1 (as the other games). GitHub #208 / #350: each key
+    // keeps its meaning - 4 grenade, Q point of interest, Tab tactical display, 1 / 2 the weapons; Y (switch weapon) gets
+    // 3 (Shagg 16 Nov).
     static const std::vector<KeyAction> judgment = [] {
         std::vector<KeyAction> j = v;
         for (KeyAction &k : j) {
             if (!strcmp(k.cvar, "keybind_left_shoulder")) { k.what = "Grenades"; k.def = "4"; }
             else if (!strcmp(k.cvar, "keybind_dpad_down")) { k.what = "Tactical display"; k.def = "Tab"; }
-            else if (!strcmp(k.cvar, "keybind_y")) { k.what = "Switch weapon"; k.def = "1,2"; }
+            else if (!strcmp(k.cvar, "keybind_y")) { k.what = "Switch weapon"; k.def = "3"; }
             else if (!strcmp(k.cvar, "keybind_dpad_up")) { k.what = "Look at / point of interest"; k.def = "Q"; }
-            else if (!strcmp(k.cvar, "keybind_dpad_left") || !strcmp(k.cvar, "keybind_dpad_right")) { k.what = "Not used in Judgment"; k.def = "None"; }
         }
         return j;
     }();

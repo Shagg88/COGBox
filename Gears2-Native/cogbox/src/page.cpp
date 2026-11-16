@@ -255,6 +255,18 @@ void env_refresh(App &a, int g)
     e.steam_deck = a.proton.steamDeck;   // proton049
     e.low_port_start = a.proton.lowPortStart;   // 0.6.2 R4
     e.deck_lcd = a.proton.deckLcd;
+    // GitHub #350: Judgment's keys saved before 0.6.4 hold the old layout (Y = Q, D-pad up = 3), which now meets the new
+    // defaults (D-pad up = Q, Y = 3) - Q or 3 would press two buttons. Once: a Y / D-pad up pair that is the old layout
+    // (each either saved as it was or not saved) is moved to the new one; anything the player chose is left alone.
+    if (g == G_JUDGMENT && a.ini.get("Notices", "JudgmentKeys064") != "1") {
+        const std::string y = key_get(a, g, "keybind_y"), up = key_get(a, g, "keybind_dpad_up");
+        if ((y == "Q" || y.empty()) && (up == "3" || up.empty()) && !(y.empty() && up.empty())) {
+            a.ini.set(keys_section_name(g), "keybind_y", "3");
+            a.ini.set(keys_section_name(g), "keybind_dpad_up", "Q");
+        }
+        a.ini.set("Notices", "JudgmentKeys064", "1");
+        a.ini.save();
+    }
     e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab); GitHub #154: this game's own
     for (const gs::KeyAction &k : gs::key_actions((gs::Game)g)) {
         std::string v = key_get(a, g, k.cvar);

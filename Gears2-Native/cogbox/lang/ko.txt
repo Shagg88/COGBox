@@ -1564,4 +1564,4 @@ No saves to bring in were found in the saves folder. = 세이브 폴더에서 �
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = 세이브를 옮기지 못했습니다(게임이나 다른 프로그램이 사용 중인가요?). 아무것도 바뀌지 않았습니다.
 A backup of the saves is still being made - try again when it's done. = 세이브 백업을 아직 만드는 중입니다. 끝난 뒤 다시 시도하세요.
 Switch weapon = 무기 전환
-Not used in Judgment = Judgment에서는 사용 안 함
+Pistol = 권총
