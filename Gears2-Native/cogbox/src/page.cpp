@@ -1019,13 +1019,13 @@ static void option_row(App &a, int g, const gs::Option &o)
         // #345 / GitHub #98: a Scene resolution with no whole-number scene size at the render resolution (Match my monitor
         // included: 4K picks 3x) only anti-aliases - said in the list and the closed box
         if (o.id == "SceneMode" && items.size() == 4) {
-            const int out = gs::expected_render_scale(a.cur[g], a.env[g]);
+            const int out = gs::expected_render_scale((gs::Game)g, a.cur[g], a.env[g]);
             for (int i = 1; i < 4; ++i)
                 if (!gs::scene_mode_fits(i, out)) items[i] += std::string(" - ") + tr("anti-aliasing only at this render resolution");
         }
         // 0.6.2 Proton review (R11): settings from Windows say DirectX 12, but "Graphics API on Proton / Wine" = Automatic
         // runs Vulkan - the closed box says what the game will actually run
-        std::string preview = items.empty() ? std::string() : items[idx];   // (the closed box; the list keeps the plain names)
+        std::string preview = items.empty() ? std::string() : items[idx];   // (the closed box; Scene resolution's note shows in both)
         if (o.id == "Api" && a.env[g].wine && a.proton.proton && !a.env[g].mac && idx == 0 && gs::runs_vulkan(a.cur[g], a.env[g]))
             preview += std::string(" ") + tr("(Proton runs Vulkan)");
         if (ImGui::BeginCombo("##v", preview.c_str())) {
