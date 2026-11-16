@@ -196,17 +196,38 @@ void social_remove_answer(int answer)
     g_remove_uuid.clear();
 }
 
+// 0.6.4 (Gears 3 Open matches): the game's own matchmaking finds the match (SDK patch 112), so the host's game picks
+// the joiner's team - only with a gow3.exe that has it (its --net_prefer_lobby description); otherwise the invite join.
+static bool joins_through_matchmaking(const App &a, int game)
+{
+    const gs::Environment &e = a.env[game];
+    return game == G_GEARS3 && e.cap.exe_has && e.cap.exe_has("its own Social matchmaking finds only this match");
+}
+
+// "In Gears 3, choose Versus > Social > <mode> ..." for a matchmaking join.
+static std::string matchmaking_note(const SocialJoin &j)
+{
+    SocialMatch m;
+    m.game = j.game;
+    m.playlist = j.playlist;
+    const std::string mode = match_mode(m);
+    return trf("Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and the host's game picks "
+               "your team.", { j.playlist < 0 || mode == "Match" ? tr("the match's playlist") : tr(mode) });
+}
+
 void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
 {
     (void)labelW;
     (void)ctrlW;
     // a Join / invite Accept for a game that is not running here: start it, joining that lobby
     if (auto j = social_take_join()) {
-        if (a.run.proc) set_message(a, tr("Close the running game first, then press JOIN again."), true);
+        if (j->told) set_message(a, matchmaking_note(*j));   // the running game was told: the player picks the playlist
+        else if (a.run.proc) set_message(a, tr("Close the running game first, then press JOIN again."), true);
         else if (a.st[j->game].ready != R_READY) set_message(a, tr("That game isn't set up in COGBox yet."), true);
         else {
-            a.joinLobby[j->game] = j->room_code;
+            a.joinLobby[j->game] = (j->search ? std::string(kPreferLobbyPrefix) : std::string()) + j->room_code;
             play_start(a, j->game);
+            if (j->search && a.run.proc) set_message(a, matchmaking_note(*j));
         }
     }
 
@@ -396,6 +417,10 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
         th_heading(tr("OPEN MATCHES"), x1);
         if (!v.matches_known) ui_note("Looking for open matches...");
         else if (v.matches.empty()) ui_note("No open matches right now - host a public match and it shows up here.");
+        // 0.6.4: the game's own way to choose a side (no code of ours: patch 79 keeps the private party joinable; its
+        // party lobby's Y "SWITCH TEAM" is in Gears 3's own strings)
+        if (a.st[G_GEARS3].ready == R_READY) ui_note("Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. "
+                "In the lobby, press Y to switch team.");
         for (const SocialMatch &m : v.matches) {
             ImGui::PushID(m.lobby_id.c_str());
             const std::string mode = match_mode(m), label = match_label(m);
@@ -410,13 +435,16 @@ void social_tab(App &a, int g, float labelW, float ctrlW, float rowX1)
             // "In progress" only when the host says so (patch 84): a host without it never reports a start
             if (m.full() || m.in_progress) details += std::string(" \xC2\xB7 ") + tr(m.full() ? "Full" : "In progress");
             const bool ready = m.game >= 0 && a.st[m.game].ready == R_READY, can = ready && !m.full();
+            // a match in progress keeps the invite join until a test shows the host's beacon seats matchmaking mid-match
+            const bool search = ready && !m.in_progress && joins_through_matchmaking(a, m.game);
             const int b = line_row(a, tr(mode.c_str()), details, m.full() ? col::dim : m.in_progress ? col::amber : col::good,
                                    m.full() ? 0 : (m.in_progress ? 2 : 1), "", x1,
                                    { { "JOIN", can, true, m.full() ? "This match is full." :
                                                           !ready ? "Set up this game in COGBox to join." :
+                                                          search ? "Join through Gears 3's own matchmaking: the host's game picks your team." :
                                                           m.in_progress ? "Join the match in progress: you take a bot's place." :
                                                                           "Join this match." } }, true);
-            if (b == 0) social_do(SocialAction::JoinMatch, m.lobby_id);
+            if (b == 0) social_do(search ? SocialAction::JoinMatchSearch : SocialAction::JoinMatch, m.lobby_id);
             ImGui::PopID();
         }
     }

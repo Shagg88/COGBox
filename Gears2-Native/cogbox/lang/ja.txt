@@ -1568,3 +1568,7 @@ Pistol = ピストル
 anti-aliasing only at this render resolution = この描画解像度ではアンチエイリアスのみ
 This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = このタイトルアップデートは、ゲームの別の default.xex（ゲームの別のプレス版または別の版）用に作られており、ゲームは起動時にクラッシュする可能性が高いです。
 Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = ディスクから取り出したままのゲームファイル（または Games on Demand 版）と、それに合ったタイトルアップデートを使ってください。
+Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and the host's game picks your team. = Gears 3: 今すぐ Versus > Social > {1} を選んでください。マッチメイキングがそのマッチを見つけ、ホストのゲームがあなたのチームを決めます。
+the match's playlist = そのマッチのプレイリスト
+Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: COG か Locust を選ぶには、Versus > Private をホストし、ほかのプレイヤーにルームコードまたはフレンドに参加で入ってもらいます。ロビーで Y を押すとチームを切り替えられます。
+Join through Gears 3's own matchmaking: the host's game picks your team. = Gears 3 のマッチメイキングで参加します。ホストのゲームがあなたのチームを決めます。

@@ -1568,3 +1568,7 @@ Pistol = 권총
 anti-aliasing only at this render resolution = 이 렌더 해상도에서는 안티에일리어싱만
 This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = 이 타이틀 업데이트는 게임의 다른 default.xex(게임의 다른 판 또는 다른 출시본)용으로 만들어져, 게임이 시작할 때 충돌할 가능성이 큽니다.
 Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = 디스크에서 꺼낸 그대로의 게임 파일(또는 Games on Demand 사본)과 그에 맞는 타이틀 업데이트를 사용하세요.
+Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and the host's game picks your team. = Gears 3: 지금 Versus > Social > {1}(으)로 가세요. 매치메이킹이 그 매치를 찾고, 호스트의 게임이 팀을 정합니다.
+the match's playlist = 매치의 플레이리스트
+Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: COG 또는 Locust를 고르려면 Versus > Private을 호스트하고 다른 플레이어는 방 코드나 친구 참가로 들어오게 하세요. 로비에서 Y를 눌러 팀을 바꿀 수 있습니다.
+Join through Gears 3's own matchmaking: the host's game picks your team. = Gears 3의 매치메이킹으로 참가: 호스트의 게임이 팀을 정합니다.

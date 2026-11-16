@@ -7,6 +7,7 @@
 #include "i18n.h"
 #include "x360fs.h"
 #include "crash_dump.h"
+#include "social_model.h"   // kPreferLobbyPrefix (0.6.4)
 
 #include <windows.h>
 #include <cstdio>
@@ -377,7 +378,12 @@ void play_start(App &a, int g, bool prepare)
     bool useShared = dir_exists(shared);
     if (useShared) args.push_back("--gow2_dxc_dir=\"" + shared + "\"");
     // social step 3: Join friend from the SOCIAL tab - the game joins that lobby once it is at its menus (SDK patch 79, --net_join_lobby)
-    if (!joinCode.empty() && !a.env[g].online_server.empty()) args.push_back("--net_join_lobby=" + joinCode);
+    if (!joinCode.empty() && !a.env[g].online_server.empty()) {
+        // 0.6.4 (Gears 3 Open matches, SDK patch 112): "prefer:<code>" = the game's own matchmaking finds that match
+        const std::string pre = kPreferLobbyPrefix;
+        if (joinCode.compare(0, pre.size(), pre) == 0) args.push_back("--net_prefer_lobby=" + joinCode.substr(pre.size()));
+        else args.push_back("--net_join_lobby=" + joinCode);
+    }
     if (prepare) {   // job 641: build every shipped recipe, then the game saves its pipeline library and exits
         args.push_back("--gow2_renderer_prepare_all=true");
         DeleteFileW(widen(join(game_shader_dir(g), "prepare-progress.txt")).c_str());

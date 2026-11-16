@@ -1575,3 +1575,7 @@ Pistol = Pisztoly
 anti-aliasing only at this render resolution = ennél a renderfelbontásnál csak élsimítás
 This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = Ez a címfrissítés a játék egy másik default.xex fájljához készült (a játék egy másik kiadásához), és a játék nagy valószínűséggel összeomlana indításkor.
 Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = Használd a játékfájlokat úgy, ahogy a lemezről származnak (vagy a Games on Demand példányodat), egy hozzájuk készült címfrissítéssel.
+Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and the host's game picks your team. = Gears 3: most lépj a Versus > Social > {1} menübe. A játék keresése megtalálja ezt a mérkőzést, és a házigazda játéka választja ki a csapatodat.
+the match's playlist = a mérkőzés játéklistája
+Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3: ha a COG vagy a Locust oldalt szeretnéd választani, indíts Versus > Private mérkőzést, és a többiek szobakóddal vagy Barát csatlakozással lépjenek be. A váróban az Y gombbal válthatsz csapatot.
+Join through Gears 3's own matchmaking: the host's game picks your team. = Csatlakozás a Gears 3 saját keresésével: a házigazda játéka választja ki a csapatodat.

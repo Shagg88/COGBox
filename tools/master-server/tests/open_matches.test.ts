@@ -100,6 +100,44 @@ describe('open matches', () => {
     expect((await told).room_code).toBe(lobby.room_code);
   });
 
+  it('Join via matchmaking (Gears 3): the game is told to find the match, never an invite; 409 names the playlist', async () => {
+    const h = await claim(); const j = await claim();
+    await game(h);
+    const lobby = await host(h, { playlist: 20 });
+    const url = `/api/v1/matches/${lobby.lobby_id}/join?via=matchmaking`;
+    const started = await app.inject({ method: 'POST', url, headers: auth(j) });
+    expect(started.statusCode).toBe(409);
+    expect(started.json()).toMatchObject({ title_id: G3, room_code: lobby.room_code, via: 'matchmaking', playlist: 20 });
+    const jg = await game(j);
+    const invites: any[] = [];
+    jg.on('message', (d: any) => { const m = JSON.parse(d.toString()); if (m.type === 'join') invites.push(m); });
+    const told = next(jg, 'prefer');
+    const r = await app.inject({ method: 'POST', url, headers: auth(j) });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ status: 'search', title_id: G3, room_code: lobby.room_code, playlist: 20 });
+    expect(await told).toEqual({ type: 'prefer', room_code: lobby.room_code, playlist: 20 });
+    await new Promise((res) => setTimeout(res, 100));
+    expect(invites).toEqual([]);
+    // the same checks as Join: a full match is refused
+    const k = await claim(); await game(k);
+    const full = await host(k, { players: 10, max: 10 });
+    expect((await app.inject({ method: 'POST', url: `/api/v1/matches/${full.lobby_id}/join?via=matchmaking`, headers: auth(j) })).statusCode).toBe(403);
+  });
+
+  it('Join via matchmaking for Gears 2 and Judgment keeps the invite join', async () => {
+    for (const title of ['4D53082D', '4D530A26']) {
+      const h = await claim(); const j = await claim();
+      await game(h, title);
+      const lobby = await host(h, { title });
+      const jg = await game(j, title);
+      const told = next(jg, 'join');
+      const r = await app.inject({ method: 'POST', url: `/api/v1/matches/${lobby.lobby_id}/join?via=matchmaking`, headers: auth(j) });
+      expect(r.statusCode).toBe(200);
+      expect(r.json().status).toBe('joining');
+      expect((await told).room_code).toBe(lobby.room_code);
+    }
+  });
+
   it('Join refuses a full match, a private lobby and one that is gone', async () => {
     const h = await claim(); const j = await claim();
     await game(h);
