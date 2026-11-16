@@ -4,10 +4,10 @@
 // No package patch: Gears 2's Engine.GameInfo.AllowCheats is the stock `return WorldInfo.NetMode == NM_Standalone`
 // (GearGame does not override it), so PlayerController.EnableCheats makes a cheat manager in a standalone game - the
 // campaign, local split screen, Horde / versus against bots on one console (versus: not any more, see below) - and never in a System Link or online game
-// (a host is a listen server, a client has no GameInfo at all). The retail EnableCheats binding of our Horde-bots option
-// (layer2 config_install.cpp, "Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot ...") already works that way.
-// We never touch NetMode here. Each hotkey runs "EnableCheats" first (ue3/console.h before_each): the cheat manager
-// belongs to the player controller, which a new level replaces.
+// (a host is a listen server, a client has no GameInfo at all). (Before the 0.6.3 fix our Horde-bots option's Back
+// binding forced NM_Standalone and ran EnableCheats; it is now "GBA_Scoreboard | Friends" and touches neither - layer2
+// config_install.cpp.) We never touch NetMode here. Each hotkey runs "EnableCheats" first (ue3/console.h before_each):
+// the cheat manager belongs to the player controller, which a new level replaces.
 //
 // Console commands go through the engine's own path (layer 2 console.cpp): GEngine -> GamePlayers(0) -> its FExec
 // subobject -> vtable slot 0, output device GLog - read from the engine's "-EXEC=" start-up code (disc 0x82840BA0..
@@ -19,7 +19,7 @@
 // 0.6.3: no cheat command runs in a Versus match (ue3/match_guard.h, asked from the console before every command): campaign
 // (solo / co-op), Horde (Invasion) and the menus keep them, every Versus game type - on this PC, split screen, System Link or
 // online, with or without bots - does not. NetMode is no help here (local split-screen Versus against bots is standalone, and
-// the Horde-bots binding below sets NM_Standalone in any game), so the guard reads the GameInfo class. Gears 2's GearGame
+// a hosted Horde is a listen server), so the guard reads the GameInfo class. Gears 2's GearGame
 // package (disc GearGame.xxx, class export table): Engine.GameInfo > GearGame.GearGameMP_Base > { GearGameAnnex_Base (Annex,
 // King of the Hill), GearGameCTM_Base (Meatflag), GearGameHorde_Base (Horde), GearGameTDM_Base (Warzone, Execution;
 // GearGameWingman_Base: Wingman) }, with Assassination = GearGameContent.GearGameKTL (a TDM). GearGameSP_Base (the campaign,

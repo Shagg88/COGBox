@@ -1142,7 +1142,7 @@ D-pad choose   A pick   B close = Krzyżak wybór   A wybierz   B zamknij
 ICON = IKONA
 BACK = WSTECZ
 Horde bots = Boty w Hordzie
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Lokalna Horda: naciśnij Wstecz / Widok, gdy po raz pierwszy pojawi się tablica wyników Hordy, aby dodać dwa boty (naciśnij ponownie, aby dodać dwa kolejne). Odradzają się co falę. Wyłącz w kampanii i trybie versus: Wstecz włącza też flagę kodów gry.
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = Wstecz / Widok jak zwykle pokazuje tablicę wyników, a w grze w Hordę, którą hostujesz, dodatkowo uzupełnia twoją drużynę botami do pięciu (odradzają się co falę). W Versus, w poczekalniach ani w cudzej grze nic nie robi. Boty w Versus ustawisz w opcjach botów poczekalni.
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = Wł.

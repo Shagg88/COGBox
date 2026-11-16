@@ -1142,7 +1142,7 @@ D-pad choose   A pick   B close = 十字キー 選択   A 決定   B 閉じる
 ICON = アイコン
 BACK = 戻る
 Horde bots = ホードのボット
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = ローカルのホード：ホードのスコアボードが最初に表示されたときに「戻る / ビュー」を押すとボットが2体追加されます（もう一度押すとさらに2体）。ボットは毎ウェーブ復活します。 キャンペーンと対戦ではオフにしてください：「戻る」でゲームのチートフラグもオンになります。
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = Back / ビューボタンは通常どおりスコアボードを表示し、あなたがホストするホードのゲームではチームをボットで5人まで埋めます（ボットはウェーブごとに復活します）。対戦、ロビー、他のプレイヤーのゲームでは何も起きません。対戦でボットを使うには、ロビーのボット設定を使ってください。
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = オン

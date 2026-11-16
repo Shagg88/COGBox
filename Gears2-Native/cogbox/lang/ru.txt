@@ -1142,7 +1142,7 @@ D-pad choose   A pick   B close = Крестовина выбор   A выбра
 ICON = ЗНАЧОК
 BACK = НАЗАД
 Horde bots = Боты в Орде
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Локальная Орда: нажмите «Назад» / «Просмотр», когда впервые появится таблица счёта Орды, чтобы добавить двух ботов (нажмите ещё раз — ещё двух). Они возрождаются каждую волну. Выключайте для кампании и версуса: «Назад» также включает флаг читов игры.
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = Back / View, как обычно, показывает таблицу счёта, а в игре «Орда», которую вы проводите сами, ещё и добирает вашу команду ботами до пяти (они возрождаются каждую волну). В режиме Versus, в лобби и в чужой игре ничего не делает. Для ботов в Versus используйте настройку ботов в самом лобби.
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = Вкл.
