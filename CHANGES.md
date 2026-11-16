@@ -1,6 +1,6 @@
 # COGBox changes
 
-## 0.6.3 (not released)
+## 0.6.3
 
 - **Windowed / borderless full screen key, all four games:** **Alt+Enter** in the game window switches between a window
   and borderless full screen on the monitor the game is on, and back to the window's size and place. It is not F11
@@ -66,7 +66,7 @@
 - **Hosting no longer halves your frame-rate limit** (Gears 2, Gears 3 and Judgment): while friends were in a match you
   hosted, a limit of 60 gave 30 (144 gave 72) until they left. The game asks for the limit a second time each frame
   when it sends updates to other players, and COGBox waited a whole frame both times; it now waits once per frame.
-  Unlimited was not affected, and neither was Gears 1. (Found from the code; not yet tested with a second player.)
+  Unlimited was not affected, and neither was Gears 1. (Tested on PC with two copies of the game: a 60 limit stayed at 60.)
 - **Frame-rate limit in split screen (GitHub #313, Gears 2 and 3): not fixed yet, more detail in the log.** In both
   games' code the limit is applied once per frame however many players are in, so the cause is not known yet. While
   two or more players are in, the log now shows every 10 seconds how many frames the game makes, how many reach the
