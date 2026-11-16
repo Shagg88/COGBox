@@ -5,10 +5,10 @@
 - **Built for AVX2 CPUs only** (all four games): the game code now uses the AVX2 / FMA / BMI2 instructions of Intel Core
   (Haswell, 2013) and AMD Ryzen / Excavator (2015) CPUs and newer, instead of the 2003-era baseline every PC has. Why:
   - **It is faster in every game.** The recompiled Xbox 360 code is full of 128-bit vector maths, bit masks and
-    rotates, and these instructions do that work in fewer steps. Measured on one PC, an early 0.6.4 build that differed
-    from 0.6.3 mainly by AVX2 (before the memory change below), frame time: Gears 3 6.1% less (159 -> 170 fps),
-    Judgment 4.7% less (175 -> 184 fps), Gears 1 3.4% less (123 -> 128 fps), Gears 2 1.4% less (297 -> 301 fps);
-    every AVX2 run beat every 0.6.3 run.
+    rotates, and these instructions do that work in fewer steps. Measured on one PC with an early 0.6.4 build that
+    differed from 0.6.3 mainly by AVX2 (before the memory change below), frame time was: Gears 3 6.1% less
+    (159 -> 170 fps), Judgment 4.7% less (175 -> 184 fps), Gears 1 3.4% less (123 -> 128 fps), Gears 2 1.4% less
+    (297 -> 301 fps); every AVX2 run beat every 0.6.3 run.
   - **One build to test and support:** a second, slower build for older CPUs would double every build and test run.
     The README already listed an AVX2 CPU (roughly 2013 or newer) as needed.
   - **The results don't change:** a multiply and an add stay separate, as in the Xbox 360 code (no fused multiply-add
@@ -30,7 +30,7 @@
   progress still joins the old way for now. Friends' joins and invites still put you with your friend. To pick COG or
   Locust yourself, host Versus > Private and have players join by room code or Join friend, then press Y in the lobby
   to switch team. Needs the updated online server; until then JOIN works as before.
-- **Saves** (Gameplay tab): a SAVES section with Import saves and Back up saves (moved from the About tab) and Open
+- **Saves** (Gameplay tab): a SAVES section with Import saves, Back up saves (both moved from the About tab) and Open
   saves folder. Saves copied in by hand - from another profile, an older Xenia, or console save packages dropped in -
   are found; COGBox offers to bring them in (moving the originals aside first, never deleting them) and asks only once
   per set.
@@ -45,10 +45,10 @@
 - **Game sound decoder brought up to Xenia Edge's** (all four games): looping sounds, one-shot sounds, seeks, stereo
   streams and sounds split across buffers decode the way the Xbox 360 does them (Edge's 24 XMA fixes and the matching
   FFmpeg ones). Not tested on PC yet.
-- **Sharper textures with DLSS and FSR** (all four games): the texture detail bias NVIDIA's and AMD's guides ask for
-  (XeSS keeps Intel's). The launcher also marks Scene resolution choices that can't upscale at your resolution as
-  "anti-aliasing only at this render resolution" (for example Performance at 4K runs as DLAA). DLSS is marked
-  experimental again.
+- **Sharper textures with DLSS and FSR** (all four games): textures now use the detail bias NVIDIA's and AMD's guides
+  ask for, one step sharper (XeSS keeps Intel's). The launcher also marks Scene resolution choices that can't upscale at
+  your resolution as "anti-aliasing only at this render resolution" (for example Performance at 4K runs as DLAA). DLSS
+  is marked experimental again.
 
 ### Fixes
 - **Gears 3: DLSS really works now** (GitHub #345): with DLSS Quality or Ultra Quality, Gears 3 never upscaled - the
