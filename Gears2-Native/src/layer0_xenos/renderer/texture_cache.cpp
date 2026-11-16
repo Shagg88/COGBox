@@ -74,17 +74,33 @@ void RunRows(uint32_t rows, uint32_t cols, Fn&& fn) {
 // loaded on the GPU from the guest-memory mirror keeps the mirror's bytes for pages our own resolve or memexport wrote
 // last (T2), instead of the CPU's. Real DXT data is never a resolve's output, so such a load means the mirror holds a
 // render target where the game now keeps a texture - a CPU / DMA / file write the page watch did not see.
-// --gow2_renderer_bc_gpu_page_log=N logs the first N such loads (base, format, size, pages); off by default.
-// --gow2_renderer_bc_cpu_over_gpu=true takes the CPU bytes for those pages of BC textures (pending memexport readbacks
-// land first); off by default - the 0.4.5 behaviour.
+// --gow2_renderer_bc_gpu_page_log=N logs the first N such loads (base, format, size, pages, and who wrote those pages
+// last: resolve / export / export of part of the page / export draw the backend refused); off by default.
+// --gow2_renderer_bc_cpu_over_gpu takes the CPU bytes for those pages of BC textures (pending memexport readbacks
+// land first). GitHub #315 (0.6.3): "auto", the default, turns it on where those read-backs exist (memexport with its
+// read-back: Gears 3 and Judgment). Why: the mirror's copy of an export is right (the export draw is recorded before
+// the load, and the load's dispatch moves the mirror out of UAV state, which waits for it), so the read-back landed by
+// the switch holds the same bytes; what the switch adds is guest memory where the mirror is older than it for a
+// GPU-current page. WHICH such pages Judgment's campaign hit is not proven (review r80): "destination pages mapped
+// read-only" (green-vine H1) was 0 in all three #315 logs (144722 with the switch, 081000 / 102209 without), so H1 is
+// not it - export_settle is no replacement for this switch. Candidates left: resolve pages reused for texture data
+// through a write the watch missed (#202's reading), and the parts of an exported page the export did not write
+// (unlikely: every logged range was whole pages). Export draws the backend refused are NOT something this switch fixes
+// (review r84): MarkExports still marks their pages, but the read-back copies the same stale mirror bytes into guest
+// memory, so the load gets them either way - a separate bug; the page log counts them ("refused") so a 0.6.3 log shows
+// whether it happens. --gow2_renderer_bc_gpu_page_log=N tells the cases apart. The
+// 0.6.2 #315 run with the switch on: Judgment's campaign clean (34 min), 37 loads waited for a read-back in 324k
+// frames. Gears 1 / 2 (no memexport) keep the mirror's bytes, as before. A read-back over the load that failed keeps
+// the mirror for that load (r80 L6).
 REXCVAR_DEFINE_INT32(gow2_renderer_bc_gpu_page_log, 0, "Gears2",
                      "Diagnostic (#202 / #185): log BC texture loads that keep pages our GPU wrote (resolve / memexport) "
                      "in the mirror, up to N lines (max 500). 0 = off");
-REXCVAR_DEFINE_BOOL(gow2_renderer_bc_cpu_over_gpu, false, "Gears2",
-                    "Experimental (#202): BC textures take the guest CPU bytes even for pages our GPU wrote last "
-                    "(a render target's data is never valid DXT). The pages stay marked GPU-written, so other readers "
-                    "(render-target and 32-bit textures) still take the mirror. false (default) = the mirror's bytes, "
-                    "as 0.4.5");
+REXCVAR_DEFINE_STRING(gow2_renderer_bc_cpu_over_gpu, "auto", "Gears2",
+                      "#202 / #315: BC textures take the guest CPU bytes even for pages our GPU wrote last (pending "
+                      "memexport read-backs over them land first; a render target's data is never valid DXT). The pages "
+                      "stay marked GPU-written. auto (default, 0.6.3) = on when memexport read-backs are on (Gears 3, "
+                      "Judgment), off otherwise; true = always; false = the mirror's bytes (0.4.5 - 0.6.2). Also "
+                      "1 / on / yes and 0 / off / no; an unknown value warns and is auto");
 
 // GitHub #311 / #282 / #255 / #297 (Gears 3: distant floors white or flickering, D3D12 only, AMD) and #315 / #243
 // (Judgment: white surfaces, blue / purple blocks): the D3D12 texture heaps are created not-zeroed and their ranges
@@ -1717,8 +1733,10 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     // untile each level there.
     const uint32_t starts[2] = {e.base_start, e.mip_start}, lengths[2] = {e.base_length, e.mip_length};
     const bool is_bc = fb.block_width > 1;  // #202: block-compressed
-    const bool bc_cpu = is_bc && REXCVAR_GET(gow2_renderer_bc_cpu_over_gpu);
-    uint32_t gpu_pages_seen = 0;
+    bool bc_cpu = is_bc && bc_guest_over_mirror_;  // #315: SetBcGuestOverMirror (--gow2_renderer_bc_cpu_over_gpu)
+    uint32_t gpu_pages_seen = 0, guest_pages = 0, page_kinds[5] = {};  // #315: resolve, export, partial, refused, unknown
+    bool readback_failed = false;  // r80 L6
+    const bool kinds_on = is_bc && gpu_page_origin_ && REXCVAR_GET(gow2_renderer_bc_gpu_page_log) > 0;
     if (bc_cpu && before_cpu_load_) {  // pending memexport readbacks land first - only if a page is GPU-written
       bool any = false;
       for (uint32_t r = 0; r < 2 && !any; ++r)
@@ -1726,9 +1744,14 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
           for (uint32_t p = starts[r] >> GuestWatch::kPageShift;
                p <= (starts[r] + lengths[r] - 1) >> GuestWatch::kPageShift && !any; ++p)
             any = watch_.GpuCurrent(p);
-      if (any)
+      if (any) {
         for (uint32_t r = 0; r < 2; ++r)
-          if (lengths[r]) before_cpu_load_(starts[r], lengths[r]);
+          if (lengths[r] && !before_cpu_load_(starts[r], lengths[r])) readback_failed = true;
+        if (readback_failed) {  // r80 L6: guest memory lacks the export there - keep the mirror, as with the switch off
+          bc_cpu = false;
+          ++stats_.bc_guest_failed_loads;
+        }
+      }
     }
     for (uint32_t r = 0; r < 2; ++r) {
       if (!lengths[r]) continue;
@@ -1766,18 +1789,32 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
           pv[p - first] = v;
           const bool gpu_page = watch_.GpuCurrent(p);
           if (gpu_page) ++gpu_pages_seen;
+          if (gpu_page && kinds_on) {
+            const uint8_t o = gpu_page_origin_(p);
+            ++page_kinds[o & kGpuPageExportRefused ? 3
+                         : o & kGpuPageExportPartial ? 2
+                         : o & kGpuPageExport ? 1
+                         : o & kGpuPageResolve ? 0 : 4];
+          }
+          if (gpu_page && bc_cpu) ++guest_pages;  // #315: guest bytes go over the mirror's for this page
           if (gpu_page && !bc_cpu) {  // T2: our resolve wrote this page into the mirror; the CPU bytes are older
             flush(p);
             ++stats_.gpu_pages_kept;
             continue;
           }
           if (run == UINT32_MAX) run = p;
-          if (!watch_.NeverResolved(p)) run_ever_gpu = true;
+          // r80 M2: only pages no longer GPU-current take the H2 path (and its counter); bc_cpu's GPU-current pages
+          // already landed their read-backs above.
+          if (!gpu_page && !watch_.NeverResolved(p)) run_ever_gpu = true;
         } else {
           flush(p);
         }
       }
       flush(last + 1);
+    }
+    if (guest_pages) {  // #315 (r80 L3: loads counted from the pages)
+      stats_.bc_guest_pages += guest_pages;
+      ++stats_.bc_guest_loads;
     }
     if (is_bc && gpu_pages_seen) {  // #202 diagnostic
       const int32_t max = std::min(REXCVAR_GET(gow2_renderer_bc_gpu_page_log), 500);
@@ -1786,9 +1823,12 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         const int32_t n = logged.fetch_add(1);
         if (n < max)
           REXLOG_INFO("gow2_bc_gpu_pages: BC texture base {:08X} (+{:X}) mips {:08X} (+{:X}) format {} {}x{}: {} page(s) "
-                      "last written by our GPU (resolve / memexport) - {}{}",
+                      "last written by our GPU (resolve {}, export {}, export of part of the page {}, export draw "
+                      "refused {}, unknown {}) - {}{}{}",
                       e.base_start, e.base_length, e.mip_start, e.mip_length, format, w, h, gpu_pages_seen,
+                      page_kinds[0], page_kinds[1], page_kinds[2], page_kinds[3], page_kinds[4],
                       bc_cpu ? "re-copied from guest memory (bc_cpu_over_gpu)" : "kept from the mirror",
+                      readback_failed ? " (a memexport read-back over it failed)" : "",
                       n + 1 == max ? " - last line (gow2_renderer_bc_gpu_page_log)" : "");
       }
     }

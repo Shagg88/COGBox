@@ -92,6 +92,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include <array>
 #include <bit>
 #include <bitset>
+#include <cctype>
 #include <cstdio>
 #include <atomic>
 #include <chrono>
@@ -960,6 +961,8 @@ REXCVAR_DEFINE_STRING(gow2_ao_skip_ps, "", "Gears2",
                       "Notes/81: pixel shader hashes, comma-separated, of a game's own AO passes that the chain detection does not "
                       "find (Judgment). Skipped while our AO or no AO is shown, drawn again for the game's own, so F5 and F9 work live");
 REXCVAR_DECLARE(std::string, gow2_pcss);  // shader_cache.cpp (notes/80 s.16)
+REXCVAR_DECLARE(std::string, gow2_renderer_bc_cpu_over_gpu);  // texture_cache.cpp (#202 / #315)
+REXCVAR_DECLARE(int32_t, gow2_renderer_bc_gpu_page_log);       // texture_cache.cpp (#202 / #315)
 REXCVAR_DEFINE_STRING(gow2_pcss_trace_frames, "", "Gears2",
                       "Notes/80 s.16 (developer): frames whose draws that sample a depth-format texture (k_24_8 / k_24_8_FLOAT: shadow "
                       "maps, the scene depth) are logged with their targets, state, textures and first pixel constants");
@@ -1985,10 +1988,54 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       textures_->SetProbe(std::move(bases), first, last, REXCVAR_GET(gow2_renderer_texture_probe_dir));
     }
     if (memexport_readback_)  // job 042: moved textures load their new bytes, not the old ones for a frame
-      textures_->SetBeforeCpuLoadOfGpuPages([this](uint32_t start, uint32_t length) { FlushExportReadbacksFor(start, length); });
+      textures_->SetBeforeCpuLoadOfGpuPages([this](uint32_t start, uint32_t length) { return FlushExportReadbacksFor(start, length); });
     // GitHub #315: the H2 flush has its own switch (on by default); --gow2_renderer_export_settle keeps it on too.
     textures_->SetFlushEverGpuWritten(memexport_readback_ &&
                                       (REXCVAR_GET(gow2_renderer_texture_land_exports) || export_settle_));
+    {  // GitHub #315 (0.6.3): BC textures take guest memory over the mirror for GPU-current pages - auto = where pending
+       // memexport read-backs can be landed first (texture_cache.cpp, the cvar's comment)
+      std::string mode = REXCVAR_GET(gow2_renderer_bc_cpu_over_gpu);
+      while (!mode.empty() && std::isspace(static_cast<unsigned char>(mode.back()))) mode.pop_back();
+      for (char& c : mode) c = char(std::tolower(static_cast<unsigned char>(c)));
+#ifdef _WIN32
+      // r80 L4: as a bool the cvar took --no-gow2_renderer_bc_cpu_over_gpu (CLI11 "!--no-"); a string cvar's --no- form
+      // only reaches the SDK's pending store (never applied - the cvar is registered before the command line is read).
+      if (rex::cvar::GetFlagSource("gow2_renderer_bc_cpu_over_gpu") == rex::cvar::Source::kDefault) {
+        const std::wstring_view cl = GetCommandLineW();
+        constexpr std::wstring_view kNo = L"--no-gow2_renderer_bc_cpu_over_gpu";
+        for (size_t at = cl.find(kNo); at != std::wstring_view::npos; at = cl.find(kNo, at + 1)) {
+          const size_t end = at + kNo.size();
+          if ((at == 0 || cl[at - 1] == L' ' || cl[at - 1] == L'"' || cl[at - 1] == L'\t') &&
+              (end == cl.size() || cl[end] == L' ' || cl[end] == L'"' || cl[end] == L'\t'))
+            mode = "false";
+        }
+      }
+#endif
+      const bool is_auto = mode == "auto" || mode.empty();
+      const bool is_on = mode == "true" || mode == "1" || mode == "on" || mode == "yes";
+      const bool is_off = mode == "false" || mode == "0" || mode == "off" || mode == "no";
+      if (!is_auto && !is_on && !is_off)  // r80 L1: a typo must not silently turn it off where auto would be on
+        REXLOG_WARN("gow2_renderer: unknown --gow2_renderer_bc_cpu_over_gpu '{}' (auto | true | false); auto", mode);
+      const bool on = is_on || (!is_off && memexport_readback_);
+      textures_->SetBcGuestOverMirror(on);
+      if (on && memexport_ && !memexport_readback_)  // r80 L2: nothing lands first - exported bytes can be replaced
+        REXLOG_WARN("gow2_renderer: BC textures over pages our GPU wrote last: guest memory, but memexport read-backs are "
+                    "off (--gow2_renderer_memexport_readback=false), so pending exports do NOT land first - the mirror's "
+                    "exported bytes can be replaced by older guest bytes (--gow2_renderer_bc_cpu_over_gpu={}, #315)", mode);
+      else if (on || memexport_)
+        REXLOG_INFO("gow2_renderer: BC textures over pages our GPU wrote last: {} (--gow2_renderer_bc_cpu_over_gpu={}, #315)",
+                    !on ? "the mirror's bytes"
+                    : memexport_readback_ ? "guest memory, pending memexport read-backs landed first"
+                                          : "guest memory (no memexport here)",
+                    mode);
+      if (REXCVAR_GET(gow2_renderer_bc_gpu_page_log) > 0) {
+        // #315 diagnostic: the page log names who wrote each GPU-current page last (TagGpuPages)
+        gpu_page_origin_ = std::make_unique<uint8_t[]>(rr::GuestWatch::kPages);
+        textures_->SetGpuPageOrigin([this](uint32_t page) {
+          return page < rr::GuestWatch::kPages ? gpu_page_origin_[page] : uint8_t(0);
+        });
+      }
+    }
     if (const int stale = REXCVAR_GET(gow2_renderer_texture_stale_log); stale > 0) {
       textures_->SetStaleReloadReport(uint32_t(stale), [this](const rr::TextureCache::StaleReload& s) { ReportStale(s); });
       REXLOG_INFO("gow2_renderer: texture stale-reload log on: textures unchanged for {} frames that get new bytes",
@@ -2970,12 +3017,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         REXLOG_INFO("gow2_renderer: resolves to guest (T2) frames {}-{}: our resolves written {} ({:.1f} MB), skipped "
                     "{} (format {}, endian {}) | resolves seen {} (colour {}, depth {}) | texture pages from our resolves kept {} / "
                     "counted changed {} (this range) | CPU-path loads that read our pages {} (this range, should be 0) | "
-                    "#315 texture loads that landed export read-backs first {} (this range; the waits are in the memexport line)",
+                    "#315 texture loads that landed export read-backs first {} (this range; the waits are in the memexport line) | "
+                    "#315 BC pages taken from guest memory over the mirror {} in {} loads, BC loads that kept the mirror "
+                    "after a failed read-back {} (this range)",
                     frame_ + 1 - uint64_t(log_every_), frame_, t2_stats_.written, double(t2_stats_.bytes) / 1048576.0,
                     t2_stats_.skipped, t2_stats_.skipped_format, t2_stats_.skipped_endian,
                     t2_stats_.seen_colour + t2_stats_.seen_depth, t2_stats_.seen_colour,
                     t2_stats_.seen_depth, ts.gpu_pages_kept, ts.gpu_pages_changed,
-                    ts.cpu_loads_of_gpu_pages, ts.land_export_calls);
+                    ts.cpu_loads_of_gpu_pages, ts.land_export_calls, ts.bc_guest_pages, ts.bc_guest_loads,
+                    ts.bc_guest_failed_loads);
         if (t2_measure_skip_)
           REXLOG_INFO("gow2_renderer: T2 measure-skip frames {}-{}: through-only {}, skipped {} (mirror not written)",
                       frame_ + 1 - uint64_t(log_every_), frame_, t2_stats_.measure_through_only,
@@ -5165,6 +5215,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (REXCVAR_GET(gow2_renderer_watch_resolves) || prepare_mirror_)  // patch 0014 / 0020: arm before marking
       watch_->Watch(info.dest_extent_start, info.dest_extent_length);
+    TagGpuPages(info.dest_extent_start, info.dest_extent_length, 0);  // #315 diagnostic (bc_gpu_page_log)
     watch_->MarkGpuWritten(info.dest_extent_start, info.dest_extent_length, scaled);
     if (rb_this) ReadbackResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
     if (through_on) {
@@ -10700,13 +10751,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (exports && REXCVAR_GET(gow2_renderer_export_prepare_mirror)) MarkExports(r, vsg, true);  // patch 0024
     if (export_shader) backend_->SetGuestWritable(true);
     if (hl_format_ && up_scene_done_ && !export_shader) HudlessDraw(colour_rt, ps, prim, index_count, depth_writes);
+    const uint64_t draws_before = backend_->Stats().draws;  // #315 diagnostic: did the backend record the export draw?
     issue(target, 0);
+    const bool export_refused = backend_->Stats().draws == draws_before;
     if (psg && !export_shader) NativeHdrDraw(d, pipeline, vsg, *psg, colour_rt[0], ps, sc, issue);
     if (export_shader) backend_->SetGuestWritable(false);
     if (exports) {
       ++stats_.memexport_draws;
       if (skin_scan_last_) SkinScan(r, vsg, vs_hash, needs_ps ? ps_hash : 0, 0, index_count, "memexport");
-      MarkExports(r, vsg);
+      MarkExports(r, vsg, false, export_refused);
       if (needs_ps && psg->memexport) ++stats_.memexport_ps_draws;
     }
     if (om_on_ && up_active_ && !up_camera_only_ && !up_scene_done_ && !export_shader) {  // #147 / #150
@@ -11779,11 +11832,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     backend_->SetScissor({0, 0, 1, 1});
     if (REXCVAR_GET(gow2_renderer_export_prepare_mirror)) MarkExports(r, vsg, true);  // patch 0024
     backend_->SetGuestWritable(true);
+    const uint64_t draws_before = backend_->Stats().draws;  // #315 diagnostic: did the backend record the export draw?
     if (indexed) backend_->DrawIndexed(index_ptr_->data(), uint32_t(index_ptr_->size()));
     else backend_->Draw(index_count);
     backend_->SetGuestWritable(false);
     ++stats_.memexport_only_draws;
-    MarkExports(r, vsg);
+    MarkExports(r, vsg, false, backend_->Stats().draws == draws_before);
     // Patch 0012: besides the first 8, the first export draw of every vertex shader (up to 96 shaders) is logged, so a
     // gameplay log shows what the title exports (formats, counts) and not only the load-time texture moves.
     const bool new_vs = memexport_vs_seen_.size() < 96 && memexport_vs_seen_.insert(vs_.hash).second;
@@ -11815,7 +11869,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Job 042 (ground flicker): a CPU-path texture load is about to read [start, start + length). If an export readback
   // over it is still pending, finish the GPU work and write the results into guest memory first - otherwise the load
   // takes the pre-move bytes for the frame or two until the readback lands.
-  void FlushExportReadbacksFor(uint32_t start, uint32_t length) {
+  // Returns false if a read-back over the range failed (now or before, its pages still GPU-current): guest memory lacks
+  // the export there (r80 L6 - the bc_cpu_over_gpu load keeps the mirror then).
+  bool FlushExportReadbacksFor(uint32_t start, uint32_t length) {
     for (const auto& [a, e] : export_ranges_)  // patch 0042: gathered, not issued yet
       if (start < e && a < start + uint64_t(length)) {
         IssueExportReadbacks();
@@ -11824,10 +11880,52 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     bool overlap = false;
     for (const ExportReadback& e : export_readbacks_)
       overlap |= start < e.base + e.size && e.base < start + length;
-    if (!overlap) return;
-    ++stats_.memexport_readback_waits;
-    backend_->WaitForFence(backend_->Submit());
-    PollExportReadbacks();
+    if (overlap) {
+      ++stats_.memexport_readback_waits;
+      backend_->WaitForFence(backend_->Submit());
+      PollExportReadbacks();
+    }
+    bool failed = false;
+    for (size_t i = 0; i < export_readback_failed_.size();) {
+      const uint32_t b = export_readback_failed_[i].base, size = export_readback_failed_[i].size;
+      constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
+      bool live = false;  // a page of it still GPU-current: guest memory may still lack that export
+      for (uint32_t p = (b & 0x1FFFFFFFu) >> kShift; p <= ((b & 0x1FFFFFFFu) + size - 1) >> kShift && !live; ++p)
+        live = watch_->GpuCurrent(p);
+      if (!live) {
+        export_readback_failed_.erase(export_readback_failed_.begin() + ptrdiff_t(i));
+        continue;
+      }
+      failed |= start < b + uint64_t(size) && b < start + uint64_t(length);
+      ++i;
+    }
+    return !failed;
+  }
+  // r80 L6: a read-back that failed (not issued, or not landed), kept while a page of it is GPU-current (bounded).
+  // r84 L2: an identical range is kept once, so a range that fails every frame cannot push other entries out.
+  // r85: seq = the newest read-back sequence number this failure is not covered by (only a read-back issued after it,
+  // seq > this, holds the exports the failed copy missed).
+  void NoteReadbackFailed(uint32_t base, uint32_t size, uint64_t seq) {
+    for (auto& f : export_readback_failed_)
+      if (f.base == base && f.size == size) {
+        f.seq = std::max(f.seq, seq);
+        return;
+      }
+    if (export_readback_failed_.size() >= 64) export_readback_failed_.erase(export_readback_failed_.begin());
+    export_readback_failed_.push_back({base, size, seq});
+  }
+  // r84 L2: a landed read-back put the mirror's current bytes into guest memory over [base, base + size), so a failure
+  // recorded earlier inside that range no longer applies (without this, one transient failure left the switch off over
+  // re-exported pages - which stay GPU-current - for the rest of the session).
+  void ClearReadbackFailedCoveredBy(uint32_t base, uint32_t size, uint64_t seq) {
+    const uint64_t a = base, e = uint64_t(base) + size;
+    for (size_t i = 0; i < export_readback_failed_.size();) {
+      const auto& f = export_readback_failed_[i];
+      if (f.seq < seq && f.base >= a && uint64_t(f.base) + f.size <= e)
+        export_readback_failed_.erase(export_readback_failed_.begin() + ptrdiff_t(i));
+      else
+        ++i;
+    }
   }
 
   // Patch 0042: an exported range [base, base + size) for the end-of-frame readback, merged with any gathered range it
@@ -11856,7 +11954,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     for (const auto& [a, e] : export_ranges_) {  // in address order
       const uint32_t base = uint32_t(a), size = uint32_t(e - a);
       if (const gpu::ReadbackHandle h = backend_->ReadbackGuest(base, size)) {
-        ExportReadback rb{h, base, size, {}};
+        ExportReadback rb{h, base, size, {}, ++export_readback_seq_};
         if (export_settle_) {  // green-vine review: the versions this copy holds (recorded after every export so far)
           constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
           const uint32_t first = (base & 0x1FFFFFFFu) >> kShift, last = ((base & 0x1FFFFFFFu) + size - 1) >> kShift;
@@ -11868,6 +11966,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         ++stats_.memexport_readbacks_issued;
       } else {
         ++stats_.memexport_readback_failures;
+        NoteReadbackFailed(base, size, export_readback_seq_);  // read-backs issued so far predate this export
       }
     }
     export_ranges_.clear();
@@ -11890,6 +11989,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->ReleaseReadback(e.handle);
       ExportReadback done = std::move(export_readbacks_.front());
       export_readbacks_.pop_front();
+      if (!landed) NoteReadbackFailed(done.base, done.size, done.seq);
+      else ClearReadbackFailedCoveredBy(done.base, done.size, done.seq);
       if (landed && !done.versions.empty()) SettleExportPages(done);
     }
   }
@@ -11922,10 +12023,30 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
 
+  // #315 diagnostic (--gow2_renderer_bc_gpu_page_log only): who writes the pages of [address, address + length) - call
+  // before MarkGpuWritten. how: 0 = a resolve, 1 = an export draw, 2 = an export draw the backend refused. A page an
+  // export covers only in part keeps its earlier bits while it is GPU-current (its other bytes are that writer's).
+  void TagGpuPages(uint32_t address, uint32_t length, int how) {
+    if (!gpu_page_origin_ || !length) return;
+    constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
+    const uint64_t a = address & 0x1FFFFFFFu, b = a + length;
+    for (uint64_t p = a >> kShift; p <= (b - 1) >> kShift && p < rr::GuestWatch::kPages; ++p) {
+      uint8_t& o = gpu_page_origin_[p];
+      if (!how) {
+        o = rr::TextureCache::kGpuPageResolve;
+        continue;
+      }
+      const uint8_t refused = how == 2 ? rr::TextureCache::kGpuPageExportRefused : 0;
+      if ((p << kShift) >= a && ((p + 1) << kShift) <= b) o = uint8_t(rr::TextureCache::kGpuPageExport | refused);
+      else o = uint8_t((watch_->GpuCurrent(uint32_t(p)) ? o : 0) | rr::TextureCache::kGpuPageExportPartial | refused);
+    }
+  }
+
   // The guest memory a memexporting draw writes, from its stream constant(s) (the SDK's draw_util::AddMemExportRanges):
   // marked GPU-current (the mirror holds the newer bytes) and watched, so a later CPU write ends that.
   // prepare_only (patch 0024): before the draw, only make the export ranges' pages current in the mirror.
-  void MarkExports(const uint32_t* r, const rr::GuestShader& s, bool prepare_only = false) {
+  // refused (#315 diagnostic): the backend recorded no draw for it (the pages are still marked - see TagGpuPages).
+  void MarkExports(const uint32_t* r, const rr::GuestShader& s, bool prepare_only = false, bool refused = false) {
     for (uint32_t c : s.memexport_stream_constants) {
       if (c >= 256) continue;
       const uint32_t* w = &r[kRegFloatConstVs + 4 * c];
@@ -11954,6 +12075,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         continue;
       }
       watch_->Watch(base, uint32_t(size));
+      TagGpuPages(base, uint32_t(size), refused ? 2 : 1);  // #315 diagnostic (bc_gpu_page_log)
       watch_->MarkGpuWritten(base, uint32_t(size));
       exports_marked_ = true;
       // Green-vine review (diagnostic): destination pages no guest view maps writable get no write watch (the memory
@@ -14767,12 +14889,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     gpu::ReadbackHandle handle = 0;
     uint32_t base = 0, size = 0;
     std::vector<uint32_t> versions;  // green-vine review: per page from base's page, the GPU-current version copied (~0u: none)
+    uint64_t seq = 0;                // r85: issue order (export_readback_seq_)
   };
   bool export_settle_ = false;  // --gow2_renderer_export_settle (green-vine review)
   uint32_t export_unwatchable_logged_ = 0;
   uint64_t watch_exact_logged_ = 0;  // GuestWatch::GpuPagesBumpedExact at the last summary
   std::deque<ExportReadback> export_readbacks_;
   std::map<uint64_t, uint64_t> export_ranges_;  // patch 0042: start -> end, gathered this frame, merged
+  struct FailedReadback {
+    uint32_t base, size;
+    uint64_t seq;  // r85: only a landed read-back with a larger seq clears it
+  };
+  std::vector<FailedReadback> export_readback_failed_;  // r80 L6: NoteReadbackFailed
+  uint64_t export_readback_seq_ = 0;                    // r85: ExportReadback::seq of the last issued read-back
+  std::unique_ptr<uint8_t[]> gpu_page_origin_;  // #315 diagnostic: per page, TextureCache::kGpuPage* (TagGpuPages)
   uint32_t memexport_logged_ = 0;
   std::unordered_set<uint64_t> memexport_vs_seen_;   // patch 0012: export vertex shaders logged once each
   std::unordered_set<uint64_t> export_reader_seen_;  // patch 0012: (vs hash, slot) pairs reading export ranges
