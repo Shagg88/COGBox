@@ -198,6 +198,9 @@ describe('fabricator upload routes', () => {
     expect(total).toBe(1);
     expect(mods[0].author).toMatch(/^Baird#\d+$/);
     expect(JSON.stringify(list.json())).not.toContain(me.uuid);
+    const huge = await app.inject({ method: 'GET', url: `${API}/mods?page=1e300` });
+    expect(huge.statusCode).toBe(200);
+    expect(huge.json().mods).toEqual([]);
     const page = await app.inject({ method: 'GET', url: `${API}/mods/${mods[0].id}` });
     expect(page.statusCode).toBe(200);
     expect(page.json().versions.length).toBe(1);

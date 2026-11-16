@@ -38,9 +38,9 @@ const SELECT = `
     (SELECT COALESCE(SUM(stars), 0) FROM fab_ratings WHERE mod_id = m.id) AS stars,
     (SELECT COUNT(*) FROM fab_downloads WHERE mod_id = m.id) AS downloads,
     (SELECT COUNT(*) FROM fab_downloads WHERE mod_id = m.id AND at > :since) AS recent,
-    COALESCE((SELECT version FROM fab_versions WHERE mod_id = m.id ORDER BY created_at DESC, id DESC LIMIT 1), '') AS version,
-    COALESCE((SELECT size FROM fab_versions WHERE mod_id = m.id ORDER BY created_at DESC, id DESC LIMIT 1), 0) AS size,
-    COALESCE((SELECT MAX(created_at) FROM fab_versions WHERE mod_id = m.id), m.updated_at) AS latest
+    COALESCE((SELECT version FROM fab_versions WHERE mod_id = m.id AND state = 'live' ORDER BY created_at DESC, id DESC LIMIT 1), '') AS version,
+    COALESCE((SELECT size FROM fab_versions WHERE mod_id = m.id AND state = 'live' ORDER BY created_at DESC, id DESC LIMIT 1), 0) AS size,
+    COALESCE((SELECT MAX(created_at) FROM fab_versions WHERE mod_id = m.id AND state = 'live'), m.updated_at) AS latest
   FROM fab_mods m LEFT JOIN users u ON u.uuid = m.owner`;
 
 interface CardRow {
@@ -101,7 +101,7 @@ export function modPage(db: DatabaseInstance, id: number, now: number = Date.now
   });
   const screens = (db.prepare('SELECT image_key FROM fab_screens WHERE mod_id = ? ORDER BY pos').all(id) as { image_key: string }[])
     .map((s) => IMAGE_PATH + s.image_key);
-  const versions = db.prepare('SELECT id, version, notes, created_at, size, sha256 FROM fab_versions WHERE mod_id = ? ORDER BY created_at DESC, id DESC')
+  const versions = db.prepare("SELECT id, version, notes, created_at, size, sha256 FROM fab_versions WHERE mod_id = ? AND state = 'live' ORDER BY created_at DESC, id DESC")
     .all(id) as ModVersionInfo[];
   const others = (db.prepare(`${SELECT} WHERE m.owner = :owner AND m.id != :id AND m.state = 'live' ORDER BY m.updated_at DESC, m.id DESC LIMIT 6`)
     .all({ owner: m.owner, id, since }) as CardRow[]).map(card);

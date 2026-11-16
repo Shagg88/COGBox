@@ -60,6 +60,8 @@ export function initFabricatorSchema(db: DatabaseInstance): void {
       PRIMARY KEY (account, mod_id)
     );
 
+    CREATE INDEX IF NOT EXISTS idx_fab_downloads_mod ON fab_downloads(mod_id, at);
+
     CREATE TABLE IF NOT EXISTS fab_ratings (
       account TEXT NOT NULL,
       mod_id INTEGER NOT NULL REFERENCES fab_mods(id),
@@ -67,6 +69,8 @@ export function initFabricatorSchema(db: DatabaseInstance): void {
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (account, mod_id)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_fab_ratings_mod ON fab_ratings(mod_id, stars);
 
     CREATE TABLE IF NOT EXISTS fab_reports (
       id INTEGER PRIMARY KEY,

@@ -43,7 +43,7 @@ export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fast
     reply.header('Cache-Control', 'public, max-age=60');
     return listMods(db, {
       search: text(q.search), game: text(q.game, 24), type: text(q.type, 24), sort,
-      page: Number.isFinite(page) ? page : 1, perPage: Number.isFinite(perPage) && perPage > 0 ? perPage : 24,
+      page: Number.isFinite(page) ? Math.min(10000, Math.max(1, Math.floor(page))) : 1, perPage: Number.isFinite(perPage) && perPage > 0 ? perPage : 24,
     }, now());
   });
 

@@ -143,4 +143,21 @@ describe('fabricator catalog', () => {
     expect(modPage(db, r)).toBeNull();
     expect(modPage(db, 12345)).toBeNull();
   });
+  it('shows only live versions', () => {
+    const a = user('Marcus');
+    const id = mod(a, 'Main');
+    db.prepare("INSERT INTO fab_versions (mod_id, version, notes, size, sha256, file_key, state, created_at) VALUES (?, '2.0', '', 999, ?, 'k2', 'files_deleted', 50)").run(id, 'c'.repeat(64));
+    const p = modPage(db, id) as any;
+    expect(p.versions.map((v: any) => v.version)).toEqual(['1.0']);
+    expect(p.version).toBe('1.0');
+    expect(listMods(db, q({ sort: 'updated' }), NOW).mods[0]).toMatchObject({ version: '1.0', size: 100 });
+  });
+
+  it('listing aggregates use the mod_id indexes', () => {
+    const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT (SELECT COUNT(*) FROM fab_downloads WHERE mod_id = m.id AND at > 5),
+      (SELECT SUM(stars) FROM fab_ratings WHERE mod_id = m.id) FROM fab_mods m`).all().map((r: any) => r.detail).join(' | ');
+    expect(plan).not.toMatch(/SCAN (fab_downloads|fab_ratings)/);
+    expect(plan).toContain('idx_fab_downloads_mod');
+    expect(plan).toContain('idx_fab_ratings_mod');
+  });
 });
