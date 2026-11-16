@@ -108,6 +108,14 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
   Same bytes as the loop in 256,000 checked cases (and a reviewer's 61,440). Gears 3 TU6, job 1936: patch 110 0.7 %
   and 110 + 111 1.4 % less frame time than 0.6.4 without them (PGO off, three runs each, every 110 + 111 run faster).
   Needs a code generator built with it (`work\t1932\tool-T1` on the build PC) in each game's SDK prefix.
+- `sdk-patch109-codegen-fixes.diff` (0.6.4, after 111; the code generator `rexglue.exe`, not the runtime; jobs 1941 /
+  1942): three of rexglue's code generator fixes brought over. fctid / fctidz: a value of 2^63 or more saturates to the
+  largest integer (c9f1938); srad / sraw: a shift of 64 / 32 or more sets CA from the sign (02a002f); vcmpbfp: a NaN sets
+  both bound bits and the record form never sets CR6 bit 0 (ab61f2e). Checked against the PowerPC ISA. Gears 3 TU6
+  codegen, job 1941: 164 of 459 files differ, every differing line one of these forms (554 fctid / fctidz, 145 srad /
+  sraw, 271 + 271 vcmpbfp), none of the old forms left; a tool built from the tree without it gives the same code as
+  before. Needs a code generator built with it (`work\t1941\tool-T2` on the build PC, sha256 95ac2e21...) in each game's
+  SDK prefix (job 1942 put it there).
 - `sdk-patch108-xma-edge-decoder.diff` + `sdk-patch108-ffmpeg-xmaframes.diff` (0.6.4, after 107; the two go together):
   the XMA audio decoder follows Xenia Edge's (has207, edge b9a46a3, commits 37bf631..0ce969b: multi-stream buffer
   switches, loop end frames cut at their end subframe, seeks to a subframe (DWORD1 bits 24-26 = decode_subframe, which
