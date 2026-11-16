@@ -9,6 +9,9 @@ game_root = "game/extracted"
 [entrypoint]
 file_path = "game/extracted/default.xex"
 out_directory_path = "generated/default"
+# SDK patches 110 + 111 (game side): the codegen templates in ../Gears2-Native/codegen-templates (see its README). The
+# disc build is not shipped, but the 0.6.4 code generator emits REX_STVLX / REX_STVRX, which only these templates define.
+template_dir = "../Gears2-Native/codegen-templates"
 includes = []
 
 [entrypoint.functions]
