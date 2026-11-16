@@ -29,6 +29,7 @@ extern int g_lastKeyScancode;   // page.cpp
 #include <mutex>
 #include <thread>
 #include <functional>
+#include <initializer_list>
 
 void set_message(App &a, const std::string &m, bool bad)
 {
