@@ -7,7 +7,7 @@
   the final scene, so the upscaler was rebuilt each time (about 33 ms, 50+ times in one Blood Drive match). It now
   keeps to the scene copy's format and is built once (and learns it again if the scene's format really changes). The
   first copy of each new resolve destination also no longer waits for the GPU (patch 0020 read-back) unless it is
-  small (4 KB or less, such as the exposure value); it lands a frame or two later like every other copy
+  small (one 32 x 32 tile, such as a value the game reads back, at most two a frame); it lands a frame or two later like every other copy
   (`--gow2_renderer_resolve_readback_first_wait=true` brings the old wait back for all).
 - **French achievement wording now matches the French Xbox 360** (by IamBugReporter, GitHub #339): "déverrouillé" instead of
   "débloqué", "Succès caché" for secret achievements and "Gamerscore" instead of "Score".
