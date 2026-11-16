@@ -26,6 +26,21 @@
   (safe to delete).
 
 ### Fixes
+- **Gears 3 no longer throws away its campaign progress and options when your online account changes** (GitHub #329):
+  Gears 3 ties its progress and options to the online account they were saved with. After a new online account (a new
+  #number, a deleted account, online play turned off without one) or with saves from another PC or an old backup, COGBox
+  left them as they were and Gears 3 started over with the brightness screen, writing fresh files over the old ones
+  (checkpoints were kept). COGBox now remembers the account your saves were last used with and moves them to the new
+  one with a check. Saves from an account it can't check (another PC, an old backup) are moved too, as long as they
+  are complete and look like real Gears 3 saves; a copy of each file COGBox changes is kept as it was
+  (`.cogbox-adopted-<date>`). Before any start whose account differs from the last one, COGBox also copies the Gears 3
+  and Judgment saves to `user\_cogbox-save-backups` (a copy is only removed when a newer one holds the same saves, and
+  folders you put there yourself are never touched). Saves that Gears 3 already reset can be put back and will now load.
+  Close the game first. `PlayerStorage.dat` can come from a backup or from its `.pre-online` copy. The three profile
+  files `63E83FFF`, `63E83FFE` and `63E83FFD` must go back together, from one backup that holds all three (your own, or
+  a folder in `user\_cogbox-save-backups`); a `.pre-online` copy of `63E83FFF` alone won't load. Judgment's saves can't
+  be moved to a new account the same way: with a new online account Judgment's online progress still starts fresh, but
+  its old files are in that backup folder (and its offline progress comes back whenever online play is off).
 - **Crash reports are no longer empty** (all four games, GitHub #286): a game that froze before crashing could leave an
   empty `crash-*.txt` and a cut-off `.dmp`. The crash report is now written without touching anything the frozen game
   might be holding, lists where every thread was stuck, and the crash dump is written by COGBox from outside the game
