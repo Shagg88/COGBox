@@ -367,6 +367,15 @@ std::vector<Option> make_options(Game g) {
                "for the rest of the game.", 360), "pool", "", true);
     add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
                "How far away detail and objects are still drawn.", 361), "drawdist", "", true);
+    // 0.6.4 (Shagg 16 Nov: boma's "Smart Shadow Cuts" done our own way): the engine's own shadow-size limits
+    // ([SystemSettings] MinShadowResolution / ShadowFadeResolution and the pre-shadow pair). A shadow's size comes from how
+    // big its caster is on screen; below the minimum it isn't drawn and up to the fade size it fades in. Raising both
+    // drops small and far shadows first, with the game's own fade - large and close ones (characters, cutscenes) stay.
+    add(choice("ShadowDetail", "Shadow detail", Tab::Graphics, PG, { "Full (original)", "Balanced", "Performance" }, 0,
+               "Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). "
+               "Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. "
+               "Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows.", 362),
+        "shadowdetail");
     // GitHub #113's "Character detail (LOD)" (SkeletalMeshLODBias) was removed in 0.6.0 (Shagg): Highest halved Gears 3's
     // frame rate (the game thread skins every character at full detail) for detail only seen far away. The game's own
     // LOD is always used; a saved MeshLod value is ignored.
@@ -809,6 +818,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
             return no(not_yet(gi, "needs its next build"));
     } else if (f == "inifx") {   // motion blur, depth of field, lens flares: [SystemSettings] switches
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no setting for this.");
+    } else if (f == "shadowdetail") {   // 0.6.4: [SystemSettings] shadow sizes (Gears 1's 2006 engine has none there)
+        if (g == Game::Gears1) return no("Gears 1's engine (2006) has no shadow-size setting.");
     } else if (f == "drawdist") {
         if (g == Game::Gears2) return no(not_yet(0, "its config has no draw-distance setting"));
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no draw-distance setting.");
@@ -1936,6 +1947,16 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             else if (isG3) ini.push_back(ei + "|FullScreenMovie|-StartupMovies=Open_Logos");
             else if (isG1) a.push_back("--gow1_skip_logos=true");
             else a.push_back("--gowj_skip_logos=true");
+        }
+        // 0.6.4 Shadow detail: the engine's own minimum and fade-in sizes for per-object shadows and pre-shadows, scaled
+        // (the games' values: Gears 2 64 / 128; Gears 3 and Judgment 64 / 128 and pre-shadows 8 / 16). Missing keys are
+        // left alone (a scale only changes a key the game has).
+        const int sd = std::max(0, std::min(2, s.i("ShadowDetail")));
+        if (avail("ShadowDetail") && sd > 0) {
+            const char* f = sd == 1 ? "2" : "3";
+            for (const char* k : { "MinShadowResolution", "ShadowFadeResolution", "MinPreShadowResolution", "PreShadowFadeResolution" })
+                ini.push_back(ei + "|SystemSettings|" + k + "*=" + f);
+            if (sd == 2) ini.push_back(ei + "|SystemSettings|ShadowTexelsPerPixel*=0.75");
         }
         int dd = std::max(0, std::min(2, s.i("DrawDist")));
         if (avail("DrawDist") && dd > 0) ini.push_back(ei + "|SystemSettings|MaxDrawDistanceScale=" + k_drawScale[dd]);

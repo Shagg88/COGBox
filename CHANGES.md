@@ -2,6 +2,9 @@
 
 ## 0.6.4 (in progress)
 
+- **Shadow detail** (Graphics tab; Gears 2, 3 and Judgment; off by default): Balanced or Performance draws fewer small and
+  distant shadows for a higher frame rate in busy fights, through the game's own shadow-size settings - close and large
+  shadows, characters and cutscenes keep theirs. Inspired by boma's "Smart Shadow Cuts" patch, done a different way.
 - **Steadier speed with the game window covered or minimised on Windows 11** (all four games): Windows 11 could drop
   the fine timer the games ask for back to its 15.6 ms tick while the window was hidden; COGBox now opts out of that
   (as Xenia Canary does).

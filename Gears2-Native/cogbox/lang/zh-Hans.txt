@@ -1531,3 +1531,9 @@ Or choose it from the list. = 或从列表中选择。
 # 0.6.3 GitHub #245 Xbox trigger rumble (machine-made translation, please check)
 Trigger rumble (Xbox controllers) = 扳机震动（Xbox 手柄）
 Xbox One and Series controllers over USB or the Xbox Wireless Adapter (Bluetooth may give none), with Steam Input off for the controller: the motors in the triggers kick with each shot (harder for shotguns and heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while Controller vibration is off, here or in the game's options. While this is on, every Xbox-style controller (Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press the triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in another order, and rarely Windows stops sending controller input until the PC restarts - untick this if a controller misbehaves. PlayStation controllers are not affected. = 通过 USB 或 Xbox 无线适配器连接的 Xbox One 和 Series 手柄（蓝牙可能无效），且该手柄未开启 Steam Input：每次射击时扳机内的马达会短促震动一下（霰弹枪和重武器更强），链锯转动或转管机枪、火焰喷射器开火时持续震动。手柄震动关闭时（在这里或游戏选项中）不会有任何效果。开启期间，所有 Xbox 类手柄（包括 Xbox 360 和处于 XInput 模式的手柄）都会通过 Windows 原始输入（Raw Input）读取：在第一次按键之前，扳机、导航键和震动可能不正常，分屏时玩家分到的手柄顺序可能不同，极少数情况下 Windows 会在电脑重启前停止发送手柄输入——如果手柄表现异常，请取消勾选此项。PlayStation 手柄不受影响。
+# 0.6.4 Shadow detail (machine-made translation, please check)
+Shadow detail = 阴影细节
+Full (original) = 完整（原版）
+Balanced = 平衡
+Performance = 性能
+Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows. = 在阴影拖慢游戏的场景（激烈战斗）中减少小型和远处的阴影以提高帧率。近处和大型阴影、角色和过场动画的阴影保持不变；其余阴影以游戏自身的淡出效果消失。平衡：游戏最小阴影尺寸的两倍。性能：三倍，并且阴影稍微柔和一些。

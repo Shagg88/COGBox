@@ -1,0 +1,145 @@
+--- a/libavcodec/wmaprodec.c
++++ b/libavcodec/wmaprodec.c
+@@ -158,6 +158,7 @@
+     float*   coeffs;                                  ///< pointer to the subframe decode buffer
+     uint16_t num_vec_coeffs;                          ///< number of vector coded coefficients
+     DECLARE_ALIGNED(32, float, out)[WMAPRO_BLOCK_MAX_SIZE + WMAPRO_BLOCK_MAX_SIZE / 2]; ///< output buffer
++    float    cut_tail[WMAPRO_BLOCK_MIN_SIZE];         ///< overlap tail a cut frame started from (COGBox, Edge FFmpeg 9307052)
+ } WMAProChannelCtx;
+ 
+ /**
+@@ -197,6 +198,8 @@
+     uint8_t          subframe_len_bits;             ///< number of bits used for the subframe length
+     uint8_t          max_subframe_len_bit;          ///< flag indicating that the subframe is of maximum size when the first subframe length bit is 1
+     uint16_t         min_samples_per_subframe;
++    uint16_t         output_offset;                 ///< where in out[] a frame's samples start (COGBox, Edge FFmpeg 3913ff9)
++    uint8_t          cut_frame;                     ///< xmaframes frame is cut short and isn't the next frame's overlap
+     int8_t           num_sfb[WMAPRO_BLOCK_SIZES];   ///< scale factor bands per block size
+     int16_t          sfb_offsets[WMAPRO_BLOCK_SIZES][MAX_BANDS];                    ///< scale factor band offsets (multiples of 4)
+     int8_t           sf_offsets[WMAPRO_BLOCK_SIZES][WMAPRO_BLOCK_SIZES][MAX_BANDS]; ///< scale factor resample matrix
+@@ -1440,6 +1443,15 @@
+ 
+     ff_dlog(s->avctx, "decoding frame with length %x\n", len);
+ 
++    /** COGBox (Edge FFmpeg 9307052): a cut frame hands the next frame the tail it started from */
++    if (s->cut_frame) {
++        const int half = s->min_samples_per_subframe >> 1;
++        for (i = 0; i < s->nb_channels; i++)
++            memcpy(s->channel[i].cut_tail,
++                   &s->channel[i].out[(s->samples_per_frame >> 1) - half],
++                   half * sizeof(*s->channel[i].cut_tail));
++    }
++
+     /** decode tile information */
+     if (decode_tilehdr(s)) {
+         s->packet_loss = 1;
+@@ -1498,11 +1510,21 @@
+         }
+     }
+ 
+-    /** copy samples to the output buffer */
++    /** copy samples to the output buffer (COGBox, Edge FFmpeg 3913ff9: from output_offset, 0 except xmaframes) */
+     for (i = 0; i < s->nb_channels; i++)
+-        memcpy(frame->extended_data[i], s->channel[i].out,
++        memcpy(frame->extended_data[i], s->channel[i].out + s->output_offset,
+                s->samples_per_frame * sizeof(*s->channel[i].out));
+ 
++    if (s->cut_frame) {
++        const int half = s->min_samples_per_subframe >> 1;
++        for (i = 0; i < s->nb_channels; i++)
++            memcpy(&s->channel[i].out[s->samples_per_frame +
++                                      (s->samples_per_frame >> 1) - half],
++                   s->channel[i].cut_tail,
++                   half * sizeof(*s->channel[i].out));
++        s->cut_frame = 0;
++    }
++
+     for (i = 0; i < s->nb_channels; i++) {
+         /** reuse second half of the IMDCT output for the next frame */
+         memcpy(&s->channel[i].out[0],
+@@ -1519,7 +1541,11 @@
+     }
+ 
+     if (s->len_prefix) {
+-        if (len != (get_bits_count(gb) - s->frame_offset) + 2) {
++        const int used = get_bits_count(gb) - s->frame_offset;
++        /** COGBox (Edge FFmpeg dfc5a39): the XMA decoder plays a frame whose data ends before its length and skips
++         *  the rest */
++        if (s->avctx->codec_id == AV_CODEC_ID_XMAFRAMES ? used + 2 > len
++                                                        : used + 2 != len) {
+             /** FIXME: not sure if this is always an error */
+             av_log(s->avctx, AV_LOG_ERROR,
+                    "frame[%"PRIu32"] would have to skip %i bits\n",
+@@ -2021,8 +2047,29 @@
+ static av_cold int xmaframes_decode_init(AVCodecContext* avctx)
+ {
+     WMAProDecodeCtx *s = avctx->priv_data;
++    int ret = decode_init(s, avctx, 0);
+ 
+-    return decode_init(s, avctx, 0);
++    /* COGBox (Edge FFmpeg 3913ff9): XMA frames use minimum-length subframes, which overlap the next frame by one
++     * subframe. Their samples are final up to half a subframe before the frame end. Output those instead of stopping
++     * half a frame before (the caller no longer carries the 192-sample tail itself). */
++    if (ret >= 0)
++        s->output_offset = (s->samples_per_frame - s->min_samples_per_subframe) >> 1;
++    return ret;
++}
++
++/**
++ * COGBox (Edge FFmpeg c4f4407): flush for xmaframes. Each packet is independently decodable, so only the overlap
++ * carried in out[] is dropped (no skip_frame warm-up as in wmapro_flush()).
++ */
++static av_cold void xmaframes_flush(AVCodecContext *avctx)
++{
++    WMAProDecodeCtx *s = avctx->priv_data;
++    int i;
++
++    for (i = 0; i < s->nb_channels; i++)
++        memset(s->channel[i].out, 0, s->samples_per_frame *
++               sizeof(*s->channel[i].out));
++    s->cut_frame = 0;
+ }
+ 
+ static av_cold int xmaframes_decode_end(AVCodecContext* avctx)
+@@ -2062,7 +2109,9 @@
+     /** get padding sizes from first byte */
+     padding_start = get_bits(gb, 3);
+     padding_end = get_bits(gb, 3);
+-    skip_bits(gb, 2);
++    skip_bits(gb, 1);
++    /** COGBox (Edge FFmpeg 9307052): the frame is cut short, so the next frame overlaps the one before it */
++    s->cut_frame = get_bits1(gb);
+ 
+     /** move bit reader to start of xma frame */
+     skip_bits(gb, padding_start);
+@@ -2079,6 +2128,11 @@
+       return AVERROR_INVALIDDATA;
+     }
+ 
++    /** COGBox (Edge FFmpeg c4f4407): each packet holds one complete frame, so no bitstream error carries over between
++     *  packets. decode_init() sets packet_loss and only decode_packet() (not used here) clears it. Reset it before
++     *  save_bits() so its own overflow signal is still caught, and report a frame that failed to decode. */
++    s->packet_loss = 0;
++
+     save_bits(s, gb, xma_frame_len, 0);
+ 
+     /** get output buffer */
+@@ -2089,6 +2143,10 @@
+     }
+ 
+     decode_frame(s, data, got_frame_ptr);
++    if (s->packet_loss) {
++        *got_frame_ptr = 0;
++        return AVERROR_INVALIDDATA;
++    }
+ 
+     return avpkt->size;
+ }
+@@ -2152,6 +2210,7 @@
+     .init           = xmaframes_decode_init,
+     .close          = xmaframes_decode_end,
+     .decode         = xmaframes_decode_packet,
++    .flush          = xmaframes_flush,
+     .capabilities   = AV_CODEC_CAP_DR1,
+     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
+     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
