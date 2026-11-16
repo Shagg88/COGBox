@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import { initFabricatorSchema } from './fabricator/schema.js';
 
 export type DatabaseInstance = ReturnType<typeof Database>;
 
@@ -95,6 +96,8 @@ export function initDb(dbPath: string = process.env.DB_PATH || 'master.db'): Dat
   if (!lobbyColumns.includes('in_progress')) {   // open matches: the host's match has started (XSessionStart)
     db.exec('ALTER TABLE lobbies ADD COLUMN in_progress INTEGER NOT NULL DEFAULT 0');
   }
+
+  initFabricatorSchema(db);
 
   return db;
 }
