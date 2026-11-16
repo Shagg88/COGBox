@@ -122,6 +122,7 @@ struct Work {
     int tmp_n = 0;
     uint64_t seen = 0;
     bool capped = false;
+    bool loose_top = false;         // import_misplaced: files right in the source folder are packages the player dropped there
     std::vector<std::string> taken_settings;
 };
 
@@ -220,10 +221,11 @@ void scan(Work &w, const fs::path &p, int depth, bool chosen) {
     for (const fs::path &s : w.skip) if (within(p, s)) return;  // COGBox's own saves are never a source
     if (is_plain_file(p)) {
         // Packages are only looked into where the console keeps them (00000001 saves, 00010000 profiles) or when the
-        // player chose the file itself - an installed game or DLC folder is not opened file by file.
+        // player chose the file itself (or, for hand-copied saves, dropped it loose in the saves folder: review r1946) -
+        // an installed game or DLC folder is not opened file by file.
         const std::string parent = upper(name_of(p.parent_path()));
         if (is_from_gpd(w, name_of(p))) take_gpd(w, p);
-        else if ((chosen || parent == "00000001" || parent == "00010000") && package_magic(p)) take_package(w, p);
+        else if ((chosen || (depth == 1 && w.loose_top) || parent == "00000001" || parent == "00010000") && package_magic(p)) take_package(w, p);
         return;
     }
     if (!is_folder(p)) return;
@@ -241,11 +243,27 @@ struct Moved { fs::path from, to; };  // done moves, to undo
 bool is_reparse(const fs::path &p) {
 #ifdef _WIN32
     const DWORD a = GetFileAttributesW(p.c_str());
-    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT);
+    if (a == INVALID_FILE_ATTRIBUTES || !(a & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
+    // review r1946: only a junction or a symbolic link - a OneDrive / cloud file is a reparse point too, and is a
+    // real file or folder here
+    WIN32_FIND_DATAW fd;
+    const HANDLE h = FindFirstFileW(p.c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    FindClose(h);
+    return fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT || fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
 #else
     std::error_code ec;
     return fs::is_symlink(p, ec);
 #endif
+}
+// review r1946: a junction / link anywhere between `root` and `p` (or `p` itself)
+bool reparse_on_way(const fs::path &root, const fs::path &p) {
+    fs::path cur = root;
+    for (const fs::path &c : p.lexically_relative(root)) {
+        cur /= c;
+        if (is_reparse(cur)) return true;
+    }
+    return false;
 }
 // removes `dir` and the folders under it when they hold no file at all (bottom-up); never removes a file
 bool remove_empty_dirs(const fs::path &dir) {
@@ -275,6 +293,9 @@ void undo(std::vector<Moved> &done) {
 }
 
 }  // namespace
+
+static bool import_from(const fs::path &source, uint32_t title_id, const fs::path &user_dir, const std::string &stamp, Result &r,
+                        const std::vector<fs::path> &own_dirs, const std::vector<uint32_t> &region_titles, bool loose_top);
 
 std::vector<fs::path> find_misplaced(const fs::path &user_dir, const std::vector<uint32_t> &title_ids) {
     std::vector<fs::path> out;
@@ -334,6 +355,9 @@ std::vector<fs::path> find_misplaced(const fs::path &user_dir, const std::vector
         }
         each_entry(p, [&](const fs::directory_entry &f) { if (gpd(f.path())) out.push_back(f.path()); });   // a folder with a .gpd in it
     });
+    // review r1946: nothing reached through a link the player made (a junction to a Xenia folder, say) - it is never
+    // moved out of its place
+    out.erase(std::remove_if(out.begin(), out.end(), [&](const fs::path &f) { return reparse_on_way(user_dir, f); }), out.end());
     return out;
 }
 
@@ -357,7 +381,7 @@ bool import_misplaced(const fs::path &user_dir, uint32_t title_id, const std::st
             return false;
         }
     }
-    if (!import(hold, title_id, user_dir, stamp, r, own_dirs, region_titles)) {
+    if (!import_from(hold, title_id, user_dir, stamp, r, own_dirs, region_titles, true)) {
         const std::string why = r.error;
         undo(done);   // everything back where it was
         remove_empty_dirs(hold);  // the folders the moves made (empty again); a file left in it keeps it
@@ -392,6 +416,11 @@ bool gpd_title_settings(const uint8_t *d, size_t n, std::vector<std::pair<uint32
 
 bool import(const fs::path &source, uint32_t title_id, const fs::path &user_dir, const std::string &stamp, Result &r,
             const std::vector<fs::path> &own_dirs, const std::vector<uint32_t> &region_titles) {
+    return import_from(source, title_id, user_dir, stamp, r, own_dirs, region_titles, false);
+}
+
+static bool import_from(const fs::path &source, uint32_t title_id, const fs::path &user_dir, const std::string &stamp, Result &r,
+                        const std::vector<fs::path> &own_dirs, const std::vector<uint32_t> &region_titles, bool loose_top) {
     std::error_code ec;
     r = Result{};
     if (!there(source)) { r.error = "That file or folder does not exist."; return false; }
@@ -406,6 +435,7 @@ bool import(const fs::path &source, uint32_t title_id, const fs::path &user_dir,
     for (uint32_t t : region_titles) if (t != title_id) w.from_titles.push_back(t);
     for (uint32_t t : w.from_titles) { std::snprintf(hex, sizeof(hex), "%08x", t); w.from_hex.push_back(hex); }
     w.r = &r;
+    w.loose_top = loose_top;
     w.skip = own_dirs;
     w.skip.push_back(user_dir);
     for (const fs::path &s : w.skip) {

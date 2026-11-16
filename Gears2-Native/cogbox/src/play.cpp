@@ -298,7 +298,7 @@ void play_start(App &a, int g, bool prepare)
         if (!found.empty()) {
             std::string sig;
             const std::filesystem::path ud = std::filesystem::u8path(game_user_dir(g));
-            for (const auto &f : found) sig += f.lexically_relative(ud).generic_string() + "|";
+            for (const auto &f : found) sig += f.lexically_relative(ud).generic_u8string() + "|";   // (review r1946: no throw on odd names)
             sig = std::to_string(found.size()) + ":" + std::to_string(std::hash<std::string>{}(sig));
             if (a.ini.get("Saves", found_not_now_key(g)) != sig && !a.misplacedAsked[g]) {
                 a.misplacedAsked[g] = true;

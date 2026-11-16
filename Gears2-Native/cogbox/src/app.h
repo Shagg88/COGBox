@@ -191,7 +191,7 @@ void import_saves_from(App &a, int game, const std::string &from);   // 0.6.1: p
 // (save_import::find_misplaced). misplaced_saves: what is there now (cached a few seconds); import_misplaced_saves: brings
 // them in (a message says how it went).
 std::vector<std::filesystem::path> misplaced_saves(App &a, int game);
-void import_misplaced_saves(App &a, int game);
+bool import_misplaced_saves(App &a, int game);   // false: not done (a message says why)
 // the CogBox.ini [Saves] key that remembers "Not now" for this game and launcher profile
 std::string found_not_now_key(int game);
 bool backup_running();   // main.cpp: "Back up saves" is zipping

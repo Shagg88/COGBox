@@ -246,9 +246,11 @@ static void answered(App &a)
     else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
     else if (m.tag == "tumismatch") a.joinLobby[m.game].clear();   // 0.6.0: Cancel drops a pending Join
     else if (m.tag == "foundsaves") {   // 0.6.4: hand-copied saves; either answer then starts the game
-        if (m.answer == 0) import_misplaced_saves(a, m.game);
+        bool start = true;
+        if (m.answer == 0) start = import_misplaced_saves(a, m.game);   // review r1946: not done -> no start, its message stays
         else { a.ini.set("Saves", found_not_now_key(m.game), m.data); a.ini.save(); }   // (closing the question = Not now)
-        play_start(a, m.game);
+        if (start) play_start(a, m.game);
+        else a.joinLobby[m.game].clear();
         a.misplacedAsked[m.game] = false;
     }
     else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4

@@ -161,6 +161,16 @@ int main() {
         put(u / "E0300000ABCDEF02/4D5308C8/00000001/Japan/j.sav", "jp");
         assert(save_import::find_misplaced(u, { title }).empty());
         assert(save_import::find_misplaced(u, { title, 0x4D5308C8u }).size() == 1);
+        // review r1946: a link below the top (another profile's <TITLE> folder linked to a Xenia folder) is never moved
+        fs::remove_all(u / "E0300000ABCDEF02");
+        put(t / "xenia-elsewhere/00000001/Linked/l.sav", "linked");
+        fs::create_directories(u / "E0300000ABCDEF03");
+        std::error_code lec;
+        fs::create_directory_symlink(t / "xenia-elsewhere", u / "E0300000ABCDEF03/4D5308AB", lec);
+        if (!lec) {
+            assert(save_import::find_misplaced(u, { title }).empty());
+            assert(fs::is_symlink(u / "E0300000ABCDEF03/4D5308AB"));
+        }
     }
     // 4. a GPD that is not one
     std::vector<std::pair<uint32_t, std::string>> out;
