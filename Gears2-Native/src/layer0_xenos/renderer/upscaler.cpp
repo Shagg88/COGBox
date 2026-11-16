@@ -80,6 +80,34 @@ bool FitCreationSize(uint32_t w, uint32_t h, uint32_t nominal_w, uint32_t nomina
   return changed;
 }
 
+CreationChange UpdateCreationSize(CreationSize& s, uint32_t w, uint32_t h, uint32_t nominal_w, uint32_t nominal_h,
+                                  uint32_t shrink_after) {
+  if (FitCreationSize(w, h, nominal_w, nominal_h, s.w, s.h)) {
+    if (s.shrunk)  // a shrink undone: the next one waits twice as long
+      s.wait = uint32_t(std::min<uint64_t>(uint64_t(s.wait ? s.wait : shrink_after) * 2, uint64_t(1) << 24));
+    s.shrunk = false;
+    s.run = s.run_w = s.run_h = 0;
+    return CreationChange::kGrow;
+  }
+  if (!shrink_after) return CreationChange::kNone;
+  // At least 1/8 smaller in area than the creation size.
+  const auto smaller = [&](uint32_t bw, uint32_t bh) { return uint64_t(bw) * bh * 8 <= uint64_t(s.w) * s.h * 7; };
+  const uint32_t bw = std::max(s.run_w, w), bh = std::max(s.run_h, h);
+  if (smaller(bw, bh)) {
+    s.run_w = bw, s.run_h = bh, ++s.run;
+  } else if (smaller(w, h)) {  // the run so far needs more: a new one starts with this frame
+    s.run_w = w, s.run_h = h, s.run = 1;
+  } else {
+    s.run = s.run_w = s.run_h = 0;
+    return CreationChange::kNone;
+  }
+  if (s.run < (s.wait ? s.wait : shrink_after)) return CreationChange::kNone;
+  s.w = s.run_w, s.h = s.run_h;
+  s.shrunk = true;
+  s.run = s.run_w = s.run_h = 0;
+  return CreationChange::kShrink;
+}
+
 float ResizedMotion(float motion, float pos, uint32_t size, uint32_t prev_size) {
   if (!size || !prev_size) return motion;
   const float k = float(prev_size) / float(size);

@@ -159,9 +159,27 @@ bool CameraMotion(const Mat4& reprojection, float u, float v, float depth, uint3
 // The guest size to create for: keeps cw x ch (0 x 0: none yet - then the frame's own size, so a game whose scene is
 // always smaller than nominal is never padded) while w x h fits in it; an axis the frame exceeds grows to at least the
 // frame and at least the nominal (the game's full scene, 1280 x 720), so a game that started narrower re-creates once
-// more, not at every step. Never shrinks (a smaller frame costs at most what the full size already did). True when it
-// changed, i.e. the feature must be re-created.
+// more, not at every step. Never shrinks by itself (UpdateCreationSize below does, slowly). True when it changed, i.e.
+// the feature must be re-created.
 bool FitCreationSize(uint32_t w, uint32_t h, uint32_t nominal_w, uint32_t nominal_h, uint32_t& cw, uint32_t& ch);
+// FitCreationSize plus a slow shrink (r83 L2): one taller or wider frame (a 720-high scene in an ultrawide 1280 x 550
+// session, say) must not pin a larger feature, and the padding it needs, for the rest of the session. Hysteresis both
+// ways, so the size cannot oscillate:
+// - a shrink needs `shrink_after` frames in a row that all fit a box at least 1/8 smaller in area (Gears 2's 1216-wide
+//   steps never qualify, and one full-size frame starts the count again); the box is the largest of those frames;
+// - a grow that undoes a shrink doubles the frames the next shrink needs (up to 2^24), so a scene that keeps coming
+//   back to the larger size re-creates a few times at most, ever further apart.
+struct CreationSize {
+  uint32_t w = 0, h = 0;          // the guest size created for (0 x 0: none yet)
+  uint32_t run_w = 0, run_h = 0;  // the box the frames of the current run fit in (what a shrink would make)
+  uint32_t run = 0;               // frames in the run
+  uint32_t wait = 0;              // frames a shrink needs (0: shrink_after)
+  bool shrunk = false;            // the last change was a shrink
+};
+enum class CreationChange : uint32_t { kNone, kGrow, kShrink };  // kGrow includes the first frame's
+// shrink_after = 0: never shrinks (FitCreationSize alone).
+CreationChange UpdateCreationSize(CreationSize& s, uint32_t w, uint32_t h, uint32_t nominal_w, uint32_t nominal_h,
+                                  uint32_t shrink_after);
 // The motion (render pixels, previous - current, one axis) of the pixel whose centre is at `pos` in a frame `size`
 // pixels across, for an upscaler whose history is the last frame drawn `prev_size` across in the same pixel grid
 // (left / top aligned: the game draws the same view narrower, it does not crop it): the previous position
@@ -171,10 +189,13 @@ float ResizedMotion(float motion, float pos, uint32_t size, uint32_t prev_size);
 
 enum class ResizeMode : uint32_t {
   kRecreate,  // Configure with every frame's size (ours: SMAA T2x - its textures are cheap to remake)
-  kPerFrame,  // FSR: created for the largest size; renderSize / upscaleSize per dispatch below it
-  kPadded,    // DLSS, XeSS: the output size is fixed at creation (NGX takes a render subrect, but its output always
-              // fills the target), so the renderer pads the frame's colour / depth / motion to the creation size
-              // (edges repeated) and reads its own part of the output - the same pixels at the same place as before
+  kPerFrame,  // FSR without the padding shader: created for the largest size; renderSize / upscaleSize per dispatch
+              // below it (history reset on a size change)
+  kPadded,    // DLSS, XeSS, FSR: created once, always given the creation size (NGX takes a render subrect, but its
+              // output always fills the target; XeSS likewise; FSR 4 / older FSR 3.1 providers are not known to honour
+              // an upscaleSize below the maximum - r83 M1), so the renderer pads the frame's colour / depth / motion to
+              // the creation size (edges repeated) and reads its own part of the output - the same pixels at the same
+              // place as before
 };
 
 // ---- The upscaler ----
@@ -211,6 +232,9 @@ class Upscaler {
   virtual std::string Status() const = 0;
   // GitHub #323: how a frame smaller than the Configure size is handed over (ResizeMode above).
   virtual ResizeMode Resize() const { return ResizeMode::kRecreate; }
+  // What kPadded falls back to when the padding shader or its textures are not available: kRecreate, or kPerFrame for
+  // an SDK that takes a smaller size per dispatch (FSR).
+  virtual ResizeMode ResizeFallback() const { return ResizeMode::kRecreate; }
 };
 
 // Null when that SDK was not built in (or kind == kNone).

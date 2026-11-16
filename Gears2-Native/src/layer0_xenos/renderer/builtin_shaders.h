@@ -1104,11 +1104,12 @@ void main(uint3 id : SV_DispatchThreadID) {
 }
 )";
 
-// GitHub #323 (upscale::ResizeMode::kPadded): an upscaler input padded to the size the DLSS / XeSS feature was made
-// for. c0.xy = the frame's size in t0: texel p of u0 reads t0 at min(p, c0.xy - 1) (the edge repeats - no stale pixels
-// beyond it). c0.zw = asfloat k per axis, the last frame's size / this frame's: .xy becomes .xy * k + (q + 0.5) * (k - 1)
-// at the texel q read (upscale::ResizedMotion - keep the two identical), the motion re-expressed for a history drawn at
-// the last frame's size. Colour and depth pass k = 1: an exact copy. u0 may have fewer channels (R32 / R16G16).
+// GitHub #323 (upscale::ResizeMode::kPadded): an upscaler input padded to the size the DLSS / XeSS / FSR feature was
+// made for (D3D12 and Vulkan: u0 is a formatless storage image in SPIR-V, the view's format). c0.xy = the frame's
+// size in t0: texel p of u0 reads t0 at min(p, c0.xy - 1) (the edge repeats - no stale pixels beyond it). c0.zw =
+// asfloat k per axis, the last frame's size / this frame's: .xy becomes .xy * k + (q + 0.5) * (k - 1) at the texel q
+// read (upscale::ResizedMotion - keep the two identical), the motion re-expressed for a history drawn at the last
+// frame's size. Colour and depth pass k = 1: an exact copy. u0 may have fewer channels (R32 / R16G16).
 constexpr const char* kUpscalePadCs = R"(
 Texture2D<float4> xe_src : register(t0);
 RWTexture2D<float4> xe_out : register(u0);

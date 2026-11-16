@@ -50,8 +50,10 @@
 - **No more stutter with DLSS, FSR or XeSS when Gears 2 changes how wide it draws** (GitHub #323): in heavy views (for
   example in Nexus right after the "Reinforced" cutscene) the game narrows its picture by itself, many times a second,
   and COGBox set the upscaler up again from scratch each time (about 20 ms, so 30-40 ms frames). It is now set up once
-  for the full width (DLSS and XeSS also keep their history when the width changes). The log's upscaler line counts the size changes and set-ups. All four
-  games use the same code. Not tested on PC yet.
+  for the full width and keeps its history when the width changes (DLSS, XeSS and FSR, also with Vulkan). If one
+  view made it larger (in an ultrawide session, say), it is set up for the smaller size again after about 600 frames
+  that fit it. The log's upscaler line counts the size changes and set-ups. All four games use the same code. Not
+  tested on PC yet.
 - **Judgment: blue / purple blocks on surfaces (#315)**, mostly seen on AMD graphics cards at high frame rates and building up over a session: a texture the game had just moved in video memory could be loaded from the old copy and keep it. It now waits for the moved copy first, also when the game moves the same texture again. (Not yet confirmed by the reporter.)
 
 ## 0.6.2

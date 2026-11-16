@@ -131,9 +131,13 @@ class FsrUpscaler final : public Upscaler {
   }
   Kind kind() const override { return Kind::kFsr; }
   std::string Status() const override { return status_; }
-  // GitHub #323: the context is made for the largest size (maxRenderSize / maxUpscaleSize); each dispatch gives the
-  // frame's renderSize and upscaleSize (Evaluate below), so a narrower scene needs no new context.
-  ResizeMode Resize() const override { return ResizeMode::kPerFrame; }
+  // GitHub #323: the context is made once for the creation size. Padded like DLSS / XeSS (r83 M1): every dispatch
+  // gets renderSize / upscaleSize = maxRenderSize / maxUpscaleSize, so nothing depends on a provider (FSR 4, an older
+  // 3.1.x pinned with --gow2_fsr_version) honouring an upscaleSize below the maximum, and the history is kept.
+  // Without the padding shader: the frame's renderSize / upscaleSize per dispatch (Evaluate below), history reset on
+  // a size change.
+  ResizeMode Resize() const override { return ResizeMode::kPadded; }
+  ResizeMode ResizeFallback() const override { return ResizeMode::kPerFrame; }
 
   bool Configure(gpu::Backend& backend, uint32_t render_width, uint32_t render_height, uint32_t output_width,
                  uint32_t output_height, bool hdr, bool depth_infinite, bool depth_inverted) override {

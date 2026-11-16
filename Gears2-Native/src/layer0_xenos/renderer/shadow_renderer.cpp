@@ -1144,7 +1144,8 @@ REXCVAR_DEFINE_BOOL(gow2_upscale_resize_recreate, false, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_upscale_resize_reset, false, "Gears2",
                     "Diagnostic (GitHub #323): throw the upscaler's history away on a frame whose scene size differs from "
                     "the last one (as the old re-creation did). Off: the history is kept, motion re-expressed for the "
-                    "last frame's size (DLSS / XeSS; FSR resets on such a frame either way)");
+                    "last frame's size (DLSS / XeSS / FSR; FSR without the padding shader resets on such a frame either "
+                    "way)");
 REXCVAR_DEFINE_INT32(gow2_upscale_jitter_scope, 0, "Gears2",
                      "Diagnostic (Gears 3 job 059): which perspective draws into the scene depth get the upscalers' jitter "
                      "besides the camera draws (same c0-c3 as the frame's first depth-writing scene draw): 0 = none, 1 = also "
@@ -5469,6 +5470,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // GitHub #323: the Gears games' full scene (720p, guest pixels) - the size an SDK upscaler grows to when a frame
   // exceeds the one it was made for (upscale::FitCreationSize).
   static constexpr uint32_t kSceneFullWidth = 1280, kSceneFullHeight = 720;
+  // r83 L2: frames in a row that must fit a smaller size before the upscaler is re-created for it
+  // (upscale::UpdateCreationSize; doubles each time a shrink is undone).
+  static constexpr uint32_t kCreationShrinkFrames = 600;
   std::unique_ptr<rr::upscale::Upscaler> upscaler_;
   // Patch 0145: the camera tracking and the depth / motion passes run when an upscaler is selected or with
   // --gow2_fg_inputs; inputs only = no upscaler, no jitter, the resolve reads the scene as it is.
@@ -5651,16 +5655,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint64_t up_dc_frames_ = 0;
   gpu::TextureHandle up_depth_ = 0, up_motion_ = 0, up_output_ = 0;
   uint32_t up_w_ = 0, up_h_ = 0;
-  // GitHub #323: the SDK upscaler is created for a guest size the frames fit in (upscale::FitCreationSize) at these
-  // render / output scales; up_output_ has that size. kPadded (DLSS, XeSS): the frame's inputs padded to it
-  // (kUpscalePadCs), when the frame or the last one is smaller. up_prev_rw_ / rh_: the last frame handed over.
-  uint32_t up_fix_gw_ = 0, up_fix_gh_ = 0, up_fix_rs_ = 0, up_fix_os_ = 0, up_prev_rw_ = 0, up_prev_rh_ = 0;
+  // GitHub #323: the SDK upscaler is created for a guest size the frames fit in (upscale::UpdateCreationSize) at these
+  // render / output scales; up_output_ has that size. kPadded (DLSS, XeSS, FSR): the frame's inputs padded to it
+  // (kUpscalePadCs), when the frame or the last one is smaller. up_prev_rw_ / rh_: the last frame the upscaler
+  // evaluated (r83 L6: set after its Evaluate); up_scene_rw_ / rh_: the last scene seen (the size-change count).
+  rr::upscale::CreationSize up_fix_;
+  uint32_t up_fix_rs_ = 0, up_fix_os_ = 0, up_prev_rw_ = 0, up_prev_rh_ = 0, up_scene_rw_ = 0, up_scene_rh_ = 0;
+  uint32_t up_frame_ow_ = 0, up_frame_oh_ = 0;  // the last frame's output size (up_ow_ / up_oh_: the creation's)
   gpu::PipelineHandle up_pad_pipe_ = 0;
   gpu::TextureHandle up_pad_colour_ = 0, up_pad_depth_ = 0, up_pad_motion_ = 0;
   uint32_t up_pad_w_ = 0, up_pad_h_ = 0;
   gpu::Format up_pad_format_ = gpu::Format::kUnknown;
-  uint32_t up_cfg_[5] = {};  // the last Configure's render / output size and flags (hdr | depth inverted << 1)
-  uint64_t up_size_changes_ = 0, up_recreates_ = 0, up_padded_ = 0;  // log window
+  bool up_pad_failed_ = false;  // r83 L4: its textures could not be made - the fallback mode for the session
+  // The last Configure's render / output size and flags (hdr | depth inverted << 1 | no far plane << 2).
+  uint32_t up_cfg_[5] = {};
+  uint64_t up_size_changes_ = 0, up_recreates_ = 0, up_padded_ = 0, up_shrinks_ = 0;  // log window
   // Patch 0141 (upscaling modes): scene scale (0 = native), output size, whether this frame's output is upscaled, the
   // phase flip pending after the scene resolve packet, frames whose scene ran below the output, frames that never flipped.
   uint32_t up_scale_in_ = 0, up_ow_ = 0, up_oh_ = 0;
@@ -5772,14 +5781,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const gpu::ShaderHandle m = cache_->GetBuiltin("upscale_motion_cs", rr::builtin::kMotionVectorsCs, gpu::ShaderStage::kCompute);
       up_depth_pipe_ = d ? backend_->CreateComputePipeline(d) : 0;
       up_motion_pipe_ = m ? backend_->CreateComputePipeline(m) : 0;
-      // GitHub #323: DLSS / XeSS (D3D12 only) keep one output size; a narrower scene is padded to it (RunUpscaler).
+      // GitHub #323: DLSS / XeSS / FSR keep one size; a narrower scene is padded to it (RunUpscaler). D3D12 and Vulkan
+      // (r83 M1: FSR runs on both; the shader cache compiles the HLSL to SPIR-V like the other built-ins, its storage
+      // image formatless - the view's format, as up_output_ and the depth / motion passes already need).
       if (upscaler_ && upscaler_->Resize() == rr::upscale::ResizeMode::kPadded &&
-          backend_->GetShaderIL() == gpu::ShaderIL::kDxil && !REXCVAR_GET(gow2_upscale_resize_recreate)) {
+          !REXCVAR_GET(gow2_upscale_resize_recreate)) {
         const gpu::ShaderHandle p = cache_->GetBuiltin("upscale_pad_cs", rr::builtin::kUpscalePadCs, gpu::ShaderStage::kCompute);
         up_pad_pipe_ = p ? backend_->CreateComputePipeline(p) : 0;
         if (!up_pad_pipe_)
-          REXLOG_WARN("gow2_upscaler: the padding shader failed to compile; {} is re-created for every scene size (#323)",
-                      rr::upscale::KindName(upscaler_->kind()));
+          REXLOG_WARN("gow2_upscaler: the padding shader failed to compile; {} {} (#323)",
+                      rr::upscale::KindName(upscaler_->kind()),
+                      upscaler_->ResizeFallback() == rr::upscale::ResizeMode::kPerFrame
+                          ? "gets each scene size per dispatch, its history reset when the size changes"
+                          : "is re-created for every scene size");
       }
       if (REXCVAR_GET(gow2_fg_motion_depth_check)) {  // 0.4.9: FG character ghosting
         const gpu::ShaderHandle dc = cache_->GetBuiltin("upscale_motion_dc_cs", rr::builtin::kMotionVectorsDepthCheckCs,
@@ -7037,8 +7051,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   // GitHub #323 (upscale::ResizeMode::kPadded): the frame's colour, depth and motion (rw x rh) copied into textures of
   // the creation size (cw x ch), the edge repeated beyond the frame (kUpscalePadCs), and `in` pointed at them. The
-  // motion is re-expressed for the last frame's size (prev_rw x prev_rh) when the history is kept: DLSS / XeSS read it
-  // in their render pixels, and last frame's image lies in the same grid at its own, other, size. False: no textures.
+  // motion is re-expressed for the last frame's size (prev_rw x prev_rh) when the history is kept: DLSS / XeSS / FSR
+  // read it in their render pixels, and last frame's image lies in the same grid at its own, other, size. False: no
+  // textures (r83 L4: logged once, the SDK's fallback mode from then on).
   bool PadUpscaleInputs(rr::upscale::FrameInputs& in, gpu::Format colour_format, uint32_t rw, uint32_t rh, uint32_t cw,
                         uint32_t ch, uint32_t prev_rw, uint32_t prev_rh) {
     if (up_pad_w_ != cw || up_pad_h_ != ch || up_pad_format_ != colour_format) {
@@ -7054,13 +7069,25 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       td.format = gpu::Format::kR32Float;
       td.debug_name = "upscaler padded depth";
       up_pad_depth_ = backend_->CreateTexture(td);
+      // r83 L1: R32G32 would keep the re-expressed motion (offset up to ~1000 px at 4x) exact to < 0.01 px; R16G16
+      // rounds it to 0.125-0.5 px on size-change frames only. Kept at R16G16, the format every SDK already gets from
+      // up_motion_: none of the DLSS / XeSS / FFX headers or guides in this repo states that R32G32_FLOAT motion is
+      // accepted (XeSS's and FFX's headers are not in it at all) - switch once that is verified.
       td.format = gpu::Format::kR16G16Float;
       td.debug_name = "upscaler padded motion";
       up_pad_motion_ = backend_->CreateTexture(td);
       up_pad_w_ = cw, up_pad_h_ = ch, up_pad_format_ = colour_format;
     }
-    if (!up_pad_colour_ || !up_pad_depth_ || !up_pad_motion_) {
-      up_pad_w_ = up_pad_h_ = 0;  // tried again next frame
+    if (!up_pad_colour_ || !up_pad_depth_ || !up_pad_motion_) {  // r83 L4: once, then the fallback for the session
+      for (gpu::TextureHandle* t : {&up_pad_colour_, &up_pad_depth_, &up_pad_motion_})
+        if (*t) backend_->DestroyTexture(*t), *t = 0;
+      up_pad_w_ = up_pad_h_ = 0;
+      up_pad_failed_ = true;
+      REXLOG_WARN("gow2_upscaler: the padded inputs ({}x{}, colour format {}) could not be made; {} {} from now on "
+                  "(#323)", cw, ch, int(colour_format), rr::upscale::KindName(upscaler_->kind()),
+                  upscaler_->ResizeFallback() == rr::upscale::ResizeMode::kPerFrame
+                      ? "gets each scene size per dispatch"
+                      : "is re-created for every scene size");
       return false;
     }
     auto pad = [&](gpu::TextureHandle src, gpu::TextureHandle dst, float kx, float ky) {
@@ -7110,21 +7137,30 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t ow = w * os, oh = h * os;
     // GitHub #323: Gears 2 narrows its scene by itself in heavy views (1024..1280 guest pixels, many times a second);
     // re-creating DLSS for each size cost ~20 ms. The SDK upscalers are now created for a size the frames fit in
-    // (upscale::FitCreationSize) and each frame is handed over within it (upscale::ResizeMode); ours (SMAA T2x) and
-    // --gow2_upscale_resize_recreate keep the frame's own size as before.
+    // (upscale::UpdateCreationSize) and each frame is handed over within it (upscale::ResizeMode); ours (SMAA T2x) and
+    // --gow2_upscale_resize_recreate keep the frame's own size as before. Without the padding shader or its textures
+    // (r83 L4), an SDK's fallback: FSR per dispatch, DLSS / XeSS re-created.
     using RM = rr::upscale::ResizeMode;
     const RM mode = !upscaler_ || REXCVAR_GET(gow2_upscale_resize_recreate) ? RM::kRecreate
-                    : upscaler_->Resize() == RM::kPadded && !up_pad_pipe_   ? RM::kRecreate
-                                                                            : upscaler_->Resize();
-    if (mode == RM::kRecreate || up_fix_rs_ != rt.scale || up_fix_os_ != os) up_fix_gw_ = up_fix_gh_ = 0;  // this frame's
-    rr::upscale::FitCreationSize(w, h, kSceneFullWidth, kSceneFullHeight, up_fix_gw_, up_fix_gh_);
+                    : upscaler_->Resize() != RM::kPadded                   ? upscaler_->Resize()
+                    : !up_pad_pipe_ || up_pad_failed_                       ? upscaler_->ResizeFallback()
+                                                                            : RM::kPadded;
+    if (mode == RM::kRecreate || up_fix_rs_ != rt.scale || up_fix_os_ != os) up_fix_ = {};  // this frame's size
+    const rr::upscale::CreationChange fix_change = rr::upscale::UpdateCreationSize(
+        up_fix_, w, h, kSceneFullWidth, kSceneFullHeight, mode == RM::kRecreate ? 0u : kCreationShrinkFrames);
     up_fix_rs_ = rt.scale, up_fix_os_ = os;
-    const uint32_t cw = up_fix_gw_ * rt.scale, ch = up_fix_gh_ * rt.scale;  // the creation's render size
-    const uint32_t cow = up_fix_gw_ * os, coh = up_fix_gh_ * os;            // and output size
-    const uint32_t prev_rw = up_prev_rw_, prev_rh = up_prev_rh_;            // the last frame handed over
+    const uint32_t cw = up_fix_.w * rt.scale, ch = up_fix_.h * rt.scale;  // the creation's render size
+    const uint32_t cow = up_fix_.w * os, coh = up_fix_.h * os;            // and output size
+    if (fix_change == rr::upscale::CreationChange::kShrink) {  // r83 L2: rare (600 frames, doubling when undone)
+      ++up_shrinks_;
+      REXLOG_INFO("gow2_upscaler: #323: {} frames in a row fit {}x{} (render); the upscaler is made for that size now",
+                  up_fix_.wait ? up_fix_.wait : kCreationShrinkFrames, cw, ch);
+    }
+    if (up_scene_rw_ && (rw != up_scene_rw_ || rh != up_scene_rh_)) ++up_size_changes_;
+    up_scene_rw_ = rw, up_scene_rh_ = rh;
+    const uint32_t prev_rw = up_prev_rw_, prev_rh = up_prev_rh_;  // the last frame the upscaler evaluated
     const bool resized = prev_rw && (rw != prev_rw || rh != prev_rh);
-    if (resized) ++up_size_changes_;
-    up_prev_rw_ = rw, up_prev_rh_ = rh;
+    up_frame_ow_ = ow, up_frame_oh_ = oh;
     // The depth / motion inputs keep the frame's size: their passes (and frame generation, SSIL) size themselves from
     // these textures. Re-making them is cheap (patch 0017: placed in a shared heap); it was the SDK's feature that cost.
     if (up_w_ != rw || up_h_ != rh) {
@@ -7174,8 +7210,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const bool hdr = rt.format == gpu::Format::kR16G16B16A16Float;
     // Notes/80 s.6: the depth handed over is the guest's - reversed-Z in Gears 2 (the viewport maps z/w to 1 - z/w).
     const bool depth_inverted = up_depth_map_.scale < 0.0f;
-    {  // #323 log window: what makes an upscaler re-create (sizes, HDR, depth direction; FSR also the far plane)
-      const uint32_t cfg[5] = {cw, ch, cow, coh, uint32_t(hdr) | uint32_t(depth_inverted) << 1};
+    {  // #323 log window: what makes an upscaler re-create (sizes, HDR, depth direction; FSR also the far plane, r83 L3)
+      const uint32_t cfg[5] = {cw, ch, cow, coh,
+                               uint32_t(hdr) | uint32_t(depth_inverted) << 1 | uint32_t(persp && infinite) << 2};
       if (upscaler_ && !std::equal(cfg, cfg + 5, up_cfg_)) ++up_recreates_, std::copy(cfg, cfg + 5, up_cfg_);
     }
     if (upscaler_ && !upscaler_->Configure(*backend_, cw, ch, cow, coh, hdr, persp && infinite, depth_inverted)) {
@@ -7370,14 +7407,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     // GitHub #323: a frame of another size than the creation's, or than the last frame's.
     if (mode == RM::kPerFrame && resized && !in.reset) {
-      // FSR: renderSize / upscaleSize are this frame's (in.render_* / output_* above). Its history is in output pixels
-      // of the last frame's size, which it is not told about - start it again (as the old re-creation did).
+      // FSR without the padding shader: renderSize / upscaleSize are this frame's (in.render_* / output_* above). Its
+      // history is in output pixels of the last frame's size, which it is not told about - start it again (as the old
+      // re-creation did).
       in.reset = true;
       ++up_resets_;
     } else if (mode == RM::kPadded) {
       if (resized && !in.reset && REXCVAR_GET(gow2_upscale_resize_reset)) in.reset = true, ++up_resets_;
-      // DLSS / XeSS fill their whole output from the render size they are given: always the creation's, with the frame
-      // padded into it when it is smaller - or when the last one was, for the motion's re-expression.
+      // DLSS / XeSS / FSR are always given the creation's render and output size, with the frame padded into it when
+      // it is smaller - or when the last one was, for the motion's re-expression.
       if ((rw != cw || rh != ch || resized) && !PadUpscaleInputs(in, rt.format, rw, rh, cw, ch, prev_rw, prev_rh)) {
         ++up_fail_;
         return 0;
@@ -7400,6 +7438,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     up_fail_streak_ = 0;
     ++up_ok_;
     up_frame_ok_ = true;
+    up_prev_rw_ = rw, up_prev_rh_ = rh;  // #323 (r83 L6): the size the upscaler's history now holds
     up_output_upscaled_ = ow != rw;  // patch 0141: the resolve reads it at the output scale
     if (up_cap_left_ > 0) {  // job 724
       REXLOG_INFO("gow2_upscaler: capture set {} frame {}: jitter told {:.3f} {:.3f}, image shift {:.3f} {:.3f}, reset {}, "
@@ -8966,22 +9005,24 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                         : std::string()) +
                       std::format(", camera draws after the upscale {:.1f}/frame ({})", double(up_late_draws_) / log_every_,
                                   up_jitter_late_ ? "jittered" : "not jittered") +
-                      (up_scale_in_ ? std::format(" | patch 0141 mode: scene at {}x on {} frames, output {}x {}x{}, "
-                                                  "frames without a scene resolve {}, targets ~{} MB",
-                                                  up_scale_in_, up_scene_phase_frames_, res_scale_, up_ow_, up_oh_,
-                                                  up_no_flip_, rts_->HostBytes() >> 20)
+                      (up_scale_in_ ? std::format(" | patch 0141 mode: scene at {}x on {} frames, output {}x {}x{} "
+                                                  "(upscaler made for {}x{}), frames without a scene resolve {}, "
+                                                  "targets ~{} MB",
+                                                  up_scale_in_, up_scene_phase_frames_, res_scale_, up_frame_ow_,
+                                                  up_frame_oh_, up_ow_, up_oh_, up_no_flip_, rts_->HostBytes() >> 20)
                                     : std::string()));
       {
         rr::RenderTarget* dt = rts_->Find(up_depth_key_);
         REXLOG_INFO("gow2_upscaler: job 722: history resets {} of {} frames | centre motion {:.2f} px/frame mean, {:.1f} max | "
                     "camera depth target {}x{}, changed {} times | camera matrix c{} | jittered before the camera {:.0f}/frame"
-                    " | #323: scene size changes {}, upscaler re-creations {}, padded frames {} (made for {}x{})",
+                    " | #323: scene size changes {}, upscaler re-creations {} (shrinks {}), padded frames {} (made for "
+                    "{}x{}, last frame {}x{}){}",
                     up_resets_, log_every_, up_mv_n_ ? up_mv_sum_ / double(up_mv_n_) : 0.0, up_mv_max_,
                     dt ? dt->guest_width : 0, dt ? dt->guest_height : 0, up_depth_changes_, up_vp_base_,
-                    double(up_jittered_early_) / log_every_, up_size_changes_, up_recreates_, up_padded_, up_cfg_[0],
-                    up_cfg_[1]);
+                    double(up_jittered_early_) / log_every_, up_size_changes_, up_recreates_, up_shrinks_, up_padded_,
+                    up_cfg_[0], up_cfg_[1], up_scene_rw_, up_scene_rh_, up_pad_failed_ ? ", padding failed" : "");
         up_resets_ = up_mv_n_ = up_depth_changes_ = up_jittered_early_ = 0;
-        up_size_changes_ = up_recreates_ = up_padded_ = 0;
+        up_size_changes_ = up_recreates_ = up_padded_ = up_shrinks_ = 0;
         up_mv_sum_ = up_mv_max_ = 0.0;
       }
       up_scene_phase_frames_ = 0;
