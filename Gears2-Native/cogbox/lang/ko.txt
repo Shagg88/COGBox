@@ -1333,8 +1333,8 @@ start it once from COGBox to add its pictures. = COGBox에서 한 번 실행하�
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = 조준 감도 (%)
 Zoom sensitivity (%) = 줌 감도 (%)
-Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 조준 중 마우스 속도(일반 속도 대비 %). 100 = 변경 없음. 네이티브 마우스 시점 전용.
-Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 스코프 줌 중 마우스 속도(롱샷, 해머 오브 던)(일반 속도 대비 %). 100 = 변경 없음. 네이티브 마우스 시점 전용.
+Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 조준 중 마우스 속도(일반 속도 대비 %). 100: 변경 없음. 네이티브 마우스 시점 전용.
+Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 스코프 줌 중 마우스 속도(롱샷, 해머 오브 던)(일반 속도 대비 %). 100: 변경 없음. 네이티브 마우스 시점 전용.
 # 0.6.0: delete a profile (machine-made translation, please check)
 DELETE THIS PROFILE = 이 프로필 삭제
 DELETE = 삭제

@@ -1333,8 +1333,8 @@ start it once from COGBox to add its pictures. = COGBoxから一度起動する�
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = エイム感度 (%)
 Zoom sensitivity (%) = ズーム感度 (%)
-Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = エイム中のマウス速度（通常速度に対する割合）。100 = 変更なし。ネイティブのマウス視点のみ。
-Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = スコープでズーム中のマウス速度（ロングショット、ハンマー・オブ・ドーン）（通常速度に対する割合）。100 = 変更なし。ネイティブのマウス視点のみ。
+Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = エイム中のマウス速度（通常速度に対する割合）。100: 変更なし。ネイティブのマウス視点のみ。
+Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = スコープでズーム中のマウス速度（ロングショット、ハンマー・オブ・ドーン）（通常速度に対する割合）。100: 変更なし。ネイティブのマウス視点のみ。
 # 0.6.0: delete a profile (machine-made translation, please check)
 DELETE THIS PROFILE = このプロファイルを削除
 DELETE = 削除

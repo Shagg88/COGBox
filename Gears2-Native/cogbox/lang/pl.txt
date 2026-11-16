@@ -1333,8 +1333,8 @@ start it once from COGBox to add its pictures. = uruchom ją raz z COGBox, aby d
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = Czułość celowania (%)
 Zoom sensitivity (%) = Czułość przybliżenia (%)
-Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Prędkość myszy podczas celowania, w procentach normalnej prędkości. 100 = bez zmian. Tylko natywne sterowanie myszą.
-Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Prędkość myszy przy przybliżeniu przez lunetę (Longshot, Młot Świtu), w procentach normalnej prędkości. 100 = bez zmian. Tylko natywne sterowanie myszą.
+Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Prędkość myszy podczas celowania, w procentach normalnej prędkości. 100: bez zmian. Tylko natywne sterowanie myszą.
+Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Prędkość myszy przy przybliżeniu przez lunetę (Longshot, Młot Świtu), w procentach normalnej prędkości. 100: bez zmian. Tylko natywne sterowanie myszą.
 # 0.6.0: delete a profile (machine-made translation, please check)
 DELETE THIS PROFILE = USUŃ TEN PROFIL
 DELETE = USUŃ

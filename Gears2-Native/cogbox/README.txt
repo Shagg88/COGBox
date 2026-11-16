@@ -2,7 +2,7 @@ COGBox - Gears of War native PC ports
 =====================================
 
 COGBox starts the native PC ports of Gears of War, Gears of War 2, Gears of War 3 and Gears of War:
-Judgment. This README is for COGBox 0.6.2.
+Judgment. This README is for COGBox 0.6.3.
 These are fan-made ports, rebuilt from the Xbox 360 games' own code by static recompilation. This
 is an unofficial fan project. COGBox isn't affiliated with Microsoft, Epic Games or The
 Coalition.
@@ -34,7 +34,7 @@ What you need
 
 Getting started
 ---------------
-1. Right-click COGBox-0.6.2.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
+1. Right-click COGBox-0.6.3.7z > Extract All... (Windows 11; on Windows 10 use 7-Zip, free from
    7-zip.org) to a folder of its own that you can write to, for example C:\Games\COGBox. Don't start
    COGBox from inside the archive, and don't use Program Files (Windows protects it) - COGBox tells
    you on start-up if it's in such a place.
@@ -65,6 +65,18 @@ Restart to apply and Quit game. Most settings take effect when the game restarts
 apply does that for you.
 Alt+Enter in the game window switches between windowed and borderless full screen (all four games; another key:
 --bind_cogbox_fullscreen=<key> in extra-args.txt, None = off).
+
+
+New in 0.6.3
+------------
+- Texture packs (by KiltedKernel): replacement textures as DDS files, installed like any mod (all four games).
+- Custom controller layout editor on the Controls tab; Alt+Enter switches windowed / borderless (#316).
+- Cheats are off in Versus; Horde bots no longer break online play, and Back shows the scoreboard again.
+- Gears 3 keeps its campaign progress when your online account changes (#329); its Stats & Awards pages draw
+  correctly with Ultrawide (#330). Your ping is shown after a matchmaking join (by Flippage). Launcher music plays
+  again. Cancel a friend request you sent (#332).
+- Trigger rumble for Xbox One / Series controllers (Controls tab, experimental, off by default, #245).
+- Full list: CHANGES.md on GitHub (https://github.com/Shagg88/COGBox).
 
 
 New in 0.6.2

@@ -1333,8 +1333,8 @@ start it once from COGBox to add its pictures. = запустите её оди�
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = Чувствительность при прицеливании (%)
 Zoom sensitivity (%) = Чувствительность при зуме (%)
-Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при прицеливании, в процентах от обычной. 100 = без изменений. Только с нативным обзором мышью.
-Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при зуме через прицел (Longshot, Молот Зари), в процентах от обычной. 100 = без изменений. Только с нативным обзором мышью.
+Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при прицеливании, в процентах от обычной. 100: без изменений. Только с нативным обзором мышью.
+Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при зуме через прицел (Longshot, Молот Зари), в процентах от обычной. 100: без изменений. Только с нативным обзором мышью.
 # 0.6.0: delete a profile (machine-made translation, please check)
 DELETE THIS PROFILE = УДАЛИТЬ ЭТОТ ПРОФИЛЬ
 DELETE = УДАЛИТЬ

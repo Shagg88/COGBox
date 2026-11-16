@@ -41,7 +41,7 @@
   with a bigger one - keep those at 1x. See docs/modding.md.
 
 ### Fixes
-- **Show ping after a matchmaking join** (by Flippage): joining a match through playlist matchmaking showed
+- **Show ping after a matchmaking join** (by Flippage, PR #328 - thank you): joining a match through playlist matchmaking showed
   "Ping -- (hosting)" instead of your ping to the host. It now shows the host's ping, as joins from an invite, Join
   friend or the open matches list already did. SDK patch 107.
 - **Gears 3 no longer throws away its campaign progress and options when your online account changes** (GitHub #329):
@@ -58,7 +58,8 @@
   files `63E83FFF`, `63E83FFE` and `63E83FFD` must go back together, from one backup that holds all three (your own, or
   a folder in `user\_cogbox-save-backups`); a `.pre-online` copy of `63E83FFF` alone won't load. Judgment's saves can't
   be moved to a new account the same way: with a new online account Judgment's online progress still starts fresh, but
-  its old files are in that backup folder (and its offline progress comes back whenever online play is off).
+  its old files are in that backup folder (and its offline progress comes back whenever online play is off). Tested on
+  PC: an account change, saves from an unknown account and a restore were each handled without a reset.
 - **Crash reports are no longer empty** (all four games, GitHub #286): a game that froze before crashing could leave an
   empty `crash-*.txt` and a cut-off `.dmp`. The crash report is now written without touching anything the frozen game
   might be holding, lists where every thread was stuck, and the crash dump is written by COGBox from outside the game
@@ -84,7 +85,7 @@
   with Ultrawide since this change, `--gow3_aspect_targets_720=true` in `extra-args.txt` brings back the old buffers -
   please tell us. Tested on PC (Gears 3, D3D12 and Vulkan) at 21:9, 3440x1440, 8:3, 32:9 and 48:9: the pages draw
   correctly, and the campaign, Horde and the lobby run without crashing.
-- **Gears 3: Horde bots are no longer always Dom and Carmine.** The Horde-bots button (Back) asked the game for those two characters by number every time; it now lets the game pick each bot's character at random, the way the game picks bots for its own matches. (Gears 2's bots were already random; its two unused numbers are dropped.) GitHub #270; not tested on PC yet.
+- **Gears 3: Horde bots are no longer always Dom and Carmine.** The Horde-bots button (Back) asked the game for those two characters by number every time; it now lets the game pick each bot's character at random, the way the game picks bots for its own matches. (Gears 2's bots were already random; its two unused numbers are dropped.) GitHub #270; tested on PC in Gears 3 (bots such as Marcus, Anya, Classic Marcus and Hoffman).
 - **Launcher: the library music plays again** (silent in 0.6.2: that launcher was built against the wrong FFmpeg version and could not find the music decoder shipped beside it). The build and the packager now check that the launcher and the decoder DLLs match, so it cannot ship silent again.
 - **Judgment: the loading screen after Monroe Commons no longer hangs above 30 fps** (GitHub #318, also #54 / #38 /
   #77 - not confirmed yet): COGBox now asks the game itself whether its loading screen is still up, and keeps the
@@ -98,8 +99,8 @@
   view made it larger (in an ultrawide session, say), it is set up for the smaller size again after about 600 frames
   that fit it. The log's upscaler line counts the size changes and set-ups. All four games use the same code. Not
   tested on PC yet.
-- **Judgment: blue / purple blocks on surfaces (#315)**, mostly seen on AMD graphics cards at high frame rates and building up over a session: a texture the game had just moved in video memory could be loaded from the old copy and keep it. It now waits for the moved copy first, also when the game moves the same texture again. (Not yet confirmed by the reporter.)
-  Also (Judgment and Gears 3): compressed textures the game streams into memory our graphics card wrote last now take
+- **Judgment: blue / purple blocks on surfaces (#315)**, mostly seen on AMD graphics cards at high frame rates and building up over a session: a texture the game had just moved in video memory could be loaded from the old copy and keep it. It now waits for the moved copy first, also when the game moves the same texture again. With DirectX 12, two writes the GPU makes to game memory one after the other can no longer overlap (AMD cards could run them out of order). (Not yet confirmed by the reporter.)
+  Also (Judgment and Gears 3): compressed textures the game streams into memory the graphics card wrote last now take
   the game's own bytes (after any pending move has landed) - what the test line `--gow2_renderer_bc_cpu_over_gpu=true`
   did in 0.6.2, which made the reporter's campaign run clean. Which writes it catches there is not known yet (the
   0.6.2 logs ruled out one candidate, read-only memory; `--gow2_renderer_bc_gpu_page_log=200` now names the others). It
@@ -110,6 +111,9 @@
   error log - not confirmed yet): the graphics library the launcher draws with let go of Direct3D 11 while something
   else (most likely an overlay or capture tool such as Steam, Discord, RivaTuner, Xbox Game Bar or OBS) could still be
   using it. COGBox now keeps it loaded until it has fully closed. Nothing changes while COGBox is open.
+- **Translations:** all new text is in all 11 languages (machine-made; corrections welcome). Hungarian updated and
+  corrected by Hevesi J. (PR #324 - thank you!). In several languages the Brightness and mouse-speed texts showed in
+  English; they are translated again.
 
 ## 0.6.2
 

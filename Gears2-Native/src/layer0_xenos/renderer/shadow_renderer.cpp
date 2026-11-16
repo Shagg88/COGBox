@@ -771,7 +771,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_export_settle, false, "Gears2",   // parked (S
                     "later loaded there takes guest memory - which also has any CPU / file write the page watch could not "
                     "see (read-only pages are never watched). false = they stay GPU-current until a seen write, as before");
 // GitHub #315 (Judgment, AMD RX 7900 XT at 165 fps: blue / purple blocks that build up chapter after chapter): hole H2 of
-// the green-vine review (agent062-out/green-vine.md section 4). Judgment / Gears 3 move a streamed texture's small mips
+// the green-vine review. Judgment / Gears 3 move a streamed texture's small mips
 // with memexport copies; the export is read back into guest memory at the end of the frame. An exact-range callback
 // (a file read next to it, protect-to-writable, decommit, release) can end the pages' GPU-current state BEFORE that
 // read-back lands; a texture loaded then takes guest memory - the pre-move bytes - and the read-back, landing later
