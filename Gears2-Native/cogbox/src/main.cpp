@@ -29,6 +29,7 @@ extern int g_lastKeyScancode;   // page.cpp
 #include <mutex>
 #include <thread>
 #include <functional>
+#include <initializer_list>
 
 void set_message(App &a, const std::string &m, bool bad)
 {
@@ -719,6 +720,23 @@ static int x360test(int argc, wchar_t **argv)
 }
 
 static bool g_popupLastFrame = false;   // 0.4.6 review: a popup was open at the end of the last frame
+
+// GitHub #331: "CogBox.exe ... Faulting module name: d3d11.dll_unloaded, 0xc0000005" now and then on closing COGBox.
+// SDL's Direct3D 11 renderer loads d3d11.dll / dxgi.dll itself and FreeLibrary's them at the end of
+// SDL_DestroyRenderer (SDL_render_d3d11.c D3D11_ReleaseAll, 3.4.20). Its own objects are released first, but anything
+// else still holding the device or the swap chain then (an overlay or capture tool hooked into Present - Steam, Discord,
+// RTSS / Afterburner, Xbox Game Bar, OBS -, or a driver / runtime thread finishing late) calls into d3d11.dll's code
+// after it has left the process, when it lets go during ExitProcess. Pinned, the renderer's DLLs stay mapped until the
+// process is gone (one mapping; Windows unloads them at exit anyway), so such a late call lands in real code. Only what
+// the renderer actually loaded is pinned (GetModuleHandleEx does not load anything).
+static void pin_render_dlls()
+{
+    for (const wchar_t *dll : { L"d3d11.dll", L"dxgi.dll", L"d3d12.dll" }) {
+        HMODULE h = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, dll, &h);   // fails (harmlessly) when it isn't loaded
+    }
+}
+
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
     {
@@ -774,6 +792,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     SDL_Window *win = SDL_CreateWindow(COGBOX_NAME, ww, wh, SDL_WINDOW_RESIZABLE);
     SDL_Renderer *ren = win ? SDL_CreateRenderer(win, nullptr) : nullptr;
     if (!ren) { MessageBoxA(nullptr, SDL_GetError(), COGBOX_NAME, MB_ICONERROR); return 1; }
+    pin_render_dlls();   // GitHub #331: before anything can hold on to the renderer's device
     SDL_SetRenderVSync(ren, 1);
     SDL_SetWindowMinimumSize(win, (int)(1100 * g_ui), (int)(700 * g_ui));
     g_ui0 = g_ui; g_w0 = std::max(1, ww); g_h0 = std::max(1, wh);   // job 523: the zoom's starting point
