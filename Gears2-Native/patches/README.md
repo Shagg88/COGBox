@@ -2,7 +2,7 @@
 
 COGBox's runtime (`rexruntime.dll`) is the rexglue SDK at tag
 `nightly-20261002-bd833a2a` with these patches.
-0.6.3's runtime (rexruntime 063b) is 0.6.2's plus patches 104, 106 and 107. 0.6.4's (064a) adds 108; 064b adds 110; 064c is 064b with patch 110's start-up self-check fixed (job 1934).
+0.6.3's runtime (rexruntime 063b) is 0.6.2's plus patches 104, 106 and 107. 0.6.4's (064a) adds 108; 064b adds 110; 064c is 064b with patch 110's start-up self-check fixed (jobs 1934 / 1935).
 
 ## Quick way
 
@@ -97,8 +97,8 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
   `template_dir`, jobs 1927 / 1927b) calls `rex::memory::detail::SetE0ViewMapped(true)` from a static initializer;
   exes generated before keep the old layout on this runtime. A module of the other layout arriving later aborts with a
   clear error; start-up self-check (marker written at physical 0x1000, read back through 0xE0000000) catches a host that
-  maps it wrong (older Wine); `-DREX_E0_VIEW_MAPPED=0` in the generated code keeps the old layout. Review r106. Its
-  game-side half is the two templates, not this diff (the test template `test/ppc_config_h.inja` stays on the old layout).
+  maps it wrong (older Wine); `-DREX_E0_VIEW_MAPPED=0` in the generated code keeps the old layout. Review r106. The diff also
+  changes the SDK's embedded codegen templates; the copies in `Gears2-Native/codegen-templates` (with patch 111's macros) are for a code generator built without it (the test template `test/ppc_config_h.inja` stays on the old layout).
   064c (job 1935): the self-check's marker write and read are volatile - clang -O2 dropped the plain memcpy store (it
   looked dead before the page's memset) and the check failed on a correctly mapped host (jobs 1930b / 1934).
 - `sdk-patch111-vector-stores.diff` (0.6.4, after 110; the code generator `rexglue.exe`, not the runtime; job 1932):
