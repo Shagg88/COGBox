@@ -191,6 +191,7 @@ struct ModItem {
     // and what in its mod.ini the game does not understand
     std::string problem, campaign;
     std::vector<std::string> notes;
+    int64_t fab_mod = 0;   // installed from the Fabricator: its mod id (fabricator.json), else 0
 };
 std::string mods_dir(int game);
 std::vector<ModItem> mods_list(App &a, int game);         // in load order
@@ -198,6 +199,13 @@ void mods_set_enabled(App &a, int game, const std::string &folder, bool on);
 void mods_move(App &a, int game, const std::string &folder, int dir);   // -1 up (earlier), +1 down (later, wins)
 std::vector<std::string> mods_enabled_paths(App &a, int game);
 bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err);
+// Unpacks a mod zip into folder (made if missing): the zip's paths as Windows reads them, never outside folder, programs
+// left out, the real inflated bytes counted against the limits (8 GiB, 50 000 files); stripTop takes off a single top
+// folder that isn't one of the game's own. false + err (no file paths in it) on a problem; files already written stay.
+bool mods_unpack_zip(App &a, int game, const std::string &zipPath, const std::string &folder, bool stripTop, std::string &err);
+void mods_store(App &a, int game, const std::vector<ModItem> &v);   // the order and on/off state, as listed
+void mods_turn_on_last(App &a, int game, const std::string &folder);   // a new mod: on, last in the order
+void mods_remove_tree(const std::wstring &dir);   // only a folder COGBox made itself (a .partial unpacking, a backup)
 void install_poll(App &a);
 void install_draw(App &a, ImVec2 size);
 // play.cpp
