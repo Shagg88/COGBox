@@ -1373,9 +1373,10 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_resolves_to_guest, false, "Gears2",
 // CPU touches later see the resolve's bytes (Gears 3 job 087 Z1 [V]: the ch22 black squad needs resolves in CPU memory;
 // our 301 O vs 307 R [V]: the ch10 flash only happens when textures read our resolves).
 REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_readback_first_wait, false, "Gears2",
-                    "Fast resolve read-back (Judgment): the first copy of a destination waits for the GPU, as Canary's "
-                    "cache miss does. Off (default): it lands one frame later at a swap, like every later copy - moving "
-                    "between areas of a map (Blood Drive) made many first copies, each a full GPU wait");
+                    "Fast resolve read-back (Judgment): the first copy of every destination waits for the GPU, as "
+                    "Canary's cache miss does. Off (default): only small ones (4 KB or less, such as the exposure value) "
+                    "wait; a larger one lands a frame or two later at a swap, like every later copy - moving between "
+                    "areas of a map (Blood Drive) made many first copies, each a full GPU wait");
 REXCVAR_DEFINE_STRING(gow2_renderer_resolve_readback, "auto", "Gears2",
                       "Patch 0020 (Canary readback_resolve, T2 only): auto (default: fast in a game that reads its "
                       "exposure back - Judgment - and none in the others), none, fast (Canary's default: "
@@ -5075,7 +5076,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Canary IssueCopy_ReadbackResolvePath: the written extent is copied from the mirror into a readback buffer and then
   // into guest memory through the physical mapping (no watch callback, so the pages stay GPU-current; both copies hold
   // the same bytes). full: wait for the GPU now. fast: land the PREVIOUS copy of the same destination (base, length)
-  // now - one frame old, no stall; the first copy of a destination waits, as Canary's cache miss does.
+  // now - one frame old, no stall. The first copy of a destination: a small one (a page or less - Judgment's exposure
+  // value) waits, as Canary's cache miss does, so a new area never reads old bytes for its exposure; a larger one lands
+  // at a later swap (Blood Drive: moving between areas made many, each a full GPU wait) unless
+  // --gow2_renderer_resolve_readback_first_wait.
   void LandResolveReadback(gpu::ReadbackHandle h, uint32_t start, uint32_t length) {
     uint32_t pitch = 0;
     const uint8_t* data = backend_->ReadbackData(h, pitch);
@@ -5109,15 +5113,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint64_t key = (uint64_t(start) << 32) | length;
     auto it = resolve_readback_prev_.find(key);
     if (it == resolve_readback_prev_.end()) {
-      if (resolve_first_wait_) {
+      if (resolve_first_wait_ || length <= kResolveFirstWaitBytes) {
         ++rb_stats_.waits;  // first copy of this destination: wait, as Canary does when the previous buffer is missing
         backend_->WaitForFence(backend_->Submit());
         LandResolveReadback(h, start, length);
         resolve_readback_prev_.emplace(key, ResolveReadbackPrev{h, frame_, ++resolve_readback_seq_, resolve_readback_seq_});
         return;
       }
-      // First copy, no wait (--gow2_renderer_resolve_readback_first_wait): landed at a swap once done, as a copy whose
-      // predecessor was still in flight. The destination holds no buffer of its own until its next copy.
+      // A larger first copy does not wait (the default; --gow2_renderer_resolve_readback_first_wait=true makes it
+      // wait): it lands at a swap once the GPU is done - one or two frames later - as a copy whose predecessor was
+      // still in flight. The destination holds no buffer of its own until its next copy.
       ++rb_stats_.first_deferred;
       const uint64_t seq = ++resolve_readback_seq_;
       resolve_readback_prev_.emplace(key, ResolveReadbackPrev{0, frame_, seq, 0});
@@ -5352,6 +5357,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // ---- patch 0020: Canary readback_resolve + RequestRange for our T2 resolves ----
   uint32_t resolve_readback_ = 0;  // 0 none, 1 fast, 2 full
   bool resolve_first_wait_ = false;  // --gow2_renderer_resolve_readback_first_wait
+  static constexpr uint32_t kResolveFirstWaitBytes = 4096;   // a first copy this small always waits (the exposure value)
   bool prepare_mirror_ = false, rb_prepare_every_ = false;
   uint32_t resolve_readback_max_bytes_ = 0;  // 0.6.1: 0 = no limit
   std::vector<uint32_t> mirror_versions_;  // per 4 KB page: the watch version the mirror last got CPU bytes at (~0 never)

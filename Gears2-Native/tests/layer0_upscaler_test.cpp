@@ -435,6 +435,48 @@ TEST_CASE("upscale: the last scene copy keeps its format (Judgment Blood Drive: 
   CHECK(frame(first, {kR10}) == kR10);
 }
 
+TEST_CASE("upscale: a scene copy format learned from a menu frame is learned again in play", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  const auto frame = [](up::SceneCopyPicker& p, std::initializer_list<uint32_t> formats) {
+    uint32_t taken = 0;
+    for (uint32_t f : formats)
+      if (p.Take(f) && !taken) taken = f;
+    p.EndFrame();
+    return taken;
+  };
+  constexpr uint32_t kF16 = 1, kR10 = 2;
+  up::SceneCopyPicker p;
+  p.last_only = true;
+  // the first frames have only the mid-frame copy (a menu, a transition): its format is learned
+  frame(p, {kF16});
+  frame(p, {kF16});
+  // play: every frame still has a copy of that format, then the finished scene. For a while the old choice holds
+  // (no rebuild on a one-off frame) ...
+  for (int i = 0; i < 59; ++i) CHECK(frame(p, {kF16, kR10}) == kF16);
+  // ... then, kFormatPatience frames in a row ending in the other format, it learns again: the finished scene from now on
+  frame(p, {kF16, kR10});
+  frame(p, {kF16, kR10});
+  for (int i = 0; i < 100; ++i) CHECK(frame(p, {kF16, kR10}) == kR10);
+  // and the alternating Blood Drive frames still keep the finished scene
+  for (int i = 0; i < 100; ++i) CHECK(frame(p, i % 2 ? std::initializer_list<uint32_t>{kR10} : std::initializer_list<uint32_t>{kF16, kR10}) == kR10);
+  // a frame with no scene copies at all changes nothing
+  frame(p, {});
+  CHECK(frame(p, {kF16, kR10}) == kR10);
+}
+
+TEST_CASE("upscale: the last scene copy is found in a frame with more than 16 copies", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  up::SceneCopyPicker p;
+  p.last_only = true;
+  for (int f = 0; f < 3; ++f) {
+    int taken = -1;
+    for (int i = 0; i < 20; ++i)
+      if (p.Take(2) && taken < 0) taken = i;
+    p.EndFrame();
+    if (f > 0) CHECK(taken == 19);   // the first frame learns (it takes the first, as before)
+  }
+}
+
 TEST_CASE("upscale: one creation size for a scene that changes width (GitHub #323)", "[upscale]") {
   namespace up = xenos::renderer::upscale;
   uint32_t cw = 0, ch = 0;
