@@ -245,10 +245,15 @@ static void answered(App &a)
     else if (m.tag == "protonrec" || m.tag == "protonfound") linux_answer(a, m);   // proton049
     else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
     else if (m.tag == "tumismatch") a.joinLobby[m.game].clear();   // 0.6.0: Cancel drops a pending Join
-    else if (m.tag == "foundsaves") {   // 0.6.4: hand-copied saves; either answer then starts the game
+    else if (m.tag == "foundsaves") {   // 0.6.4: hand-copied saves; Not now, or a done import, then starts the game
         bool start = true;
-        if (m.answer == 0) start = import_misplaced_saves(a, m.game);   // review r1946: not done -> no start, its message stays
-        else { a.ini.set("Saves", found_not_now_key(m.game), m.data); a.ini.save(); }   // (closing the question = Not now)
+        bool notNow = m.answer != 0;   // (closing the question = Not now)
+        if (m.answer == 0) {
+            const bool refused = backup_running();   // a backup still being made: asked again next time
+            start = import_misplaced_saves(a, m.game);   // review r1946: not done -> no start, its message stays
+            notNow = !start && !refused;   // review r1947: what can't be brought in is not asked about again (no loop)
+        }
+        if (notNow) { a.ini.set("Saves", found_not_now_key(m.game), m.data); a.ini.save(); }
         if (start) play_start(a, m.game);
         else a.joinLobby[m.game].clear();
         a.misplacedAsked[m.game] = false;
