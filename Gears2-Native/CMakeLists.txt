@@ -196,14 +196,19 @@ endif()
 rexglue_setup_target(gow2 GPU_PLUGINS xenos)
 # CPU work (notes/60). GN_RECOMP_NO_PERF_COUNTERS: the SDK's RelWithDebInfo build defines REXGLUE_ENABLE_PROFILING, so
 # every indirect call in the recompiled code bumps one shared atomic counter nothing of ours reads. GN_CPU_ARCH: the CPU
-# level our code and the recompiled code are built for (empty = the compiler's x86-64 baseline); multiply-adds are
+# level our code and the recompiled code are built for (x86-64-v3 by default since 0.6.4); multiply-adds are
 # never fused (-ffp-contract=off), as the PowerPC code keeps them separate.
 option(GN_RECOMP_NO_PERF_COUNTERS "Recompiled code: no SDK perf counter on every indirect call" ON)
-set(GN_CPU_ARCH "" CACHE STRING "CPU level for our code and the recompiled code, e.g. x86-64-v3 (empty = baseline)")
-if(DEFINED ENV{GN_CPU_ARCH})  # a queue job's choice (job 218 checks the CPU for AVX2 first)
+# 0.6.4 (Shagg: "I want to move to the AVX2 only"): x86-64-v3 (AVX2 / FMA / BMI2) is the default for all four games;
+# an empty value (an older build folder's cache) means the default too. x86-64 = the old baseline build.
+set(GN_CPU_ARCH "x86-64-v3" CACHE STRING "CPU level for our code and the recompiled code: x86-64-v3 (default, AVX2) or x86-64 (baseline)")
+if(DEFINED ENV{GN_CPU_ARCH})  # a queue job's choice
     set(GN_CPU_ARCH "$ENV{GN_CPU_ARCH}")
 endif()
-message(STATUS "Gears2-Native: CPU level '${GN_CPU_ARCH}' (empty = x86-64 baseline), perf counters off: ${GN_RECOMP_NO_PERF_COUNTERS}")
+if(GN_CPU_ARCH STREQUAL "")
+    set(GN_CPU_ARCH "x86-64-v3")
+endif()
+message(STATUS "Gears2-Native: CPU level '${GN_CPU_ARCH}', perf counters off: ${GN_RECOMP_NO_PERF_COUNTERS}")
 if(TARGET gow2_recomp AND GN_RECOMP_NO_PERF_COUNTERS)
     target_compile_options(gow2_recomp PRIVATE -UREXGLUE_ENABLE_PROFILING)
 endif()

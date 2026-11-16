@@ -203,8 +203,8 @@ if(GN_WITH_XESS AND GN_XESS_FOUND)
 endif()
 # Low-latency modes (Gears 2 patches 0135/0136, job 447b 780257d), the same blocks as Gears 2's CMakeLists pointing at
 # its third_party (read-only): NVIDIA Reflex through NVAPI, AMD Anti-Lag 2 (header-only). latency_reflex.cpp comes in
-# with the layer 0 glob and needs SDK patch 35 (rex/frame_hooks.h). cpu_check.cpp also comes in; it stays inactive here
-# (no GN_CPU_LEVEL, as Gears 2 describes).
+# with the layer 0 glob and needs SDK patch 35 (rex/frame_hooks.h). cpu_check.cpp also comes in; the CPU level
+# block below (0.6.4) tells it the level.
 set(GN_NVAPI_DIR ${GN_THIRD_PARTY}/nvapi)
 set(GN_NVAPI_FOUND OFF)
 if(WIN32 AND EXISTS ${GN_NVAPI_DIR}/nvapi.h AND EXISTS ${GN_NVAPI_DIR}/amd64/nvapi64.lib)
@@ -267,6 +267,26 @@ if(NOT DEFINED ENV{GN_PGO} AND (GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto"))
     endif()
 endif()
 # gow1_recomp is the recompiled game code (rexglue_setup_target); there is no layer 1 target in Gears 1.
+# 0.6.4 (Shagg: "I want to move to the AVX2 only"): the CPU level, the same as Gears 2's GN_CPU_ARCH block.
+# x86-64-v3 (AVX2 / FMA / BMI2) is the default; empty means the default; x86-64 = the old baseline build. Multiply-adds
+# are never fused (-ffp-contract=off), as the PowerPC code keeps them separate. cpu_check.cpp (patch 0134, from the
+# shared layer 0) is built for the plain baseline so it can show its message on an older CPU, and is told the level;
+# the launcher reads the same 'gn_cpu_level=' text from the exe.
+set(GN_CPU_ARCH "x86-64-v3" CACHE STRING "CPU level for our code and the recompiled code: x86-64-v3 (default, AVX2) or x86-64 (baseline)")
+if(DEFINED ENV{GN_CPU_ARCH})  # a queue job's choice
+    set(GN_CPU_ARCH "$ENV{GN_CPU_ARCH}")
+endif()
+if(GN_CPU_ARCH STREQUAL "")
+    set(GN_CPU_ARCH "x86-64-v3")
+endif()
+message(STATUS "Gears1-Native: CPU level '${GN_CPU_ARCH}'")
+foreach(gn_t gow1_recomp gow1 gn_layer0_xenos gn_layer2_ue3)
+    if(TARGET ${gn_t})
+        target_compile_options(${gn_t} PRIVATE -march=${GN_CPU_ARCH} -ffp-contract=off)
+    endif()
+endforeach()
+set_source_files_properties(${GN_LAYER0_DIR}/cpu_check.cpp PROPERTIES
+    COMPILE_OPTIONS "-march=x86-64" COMPILE_DEFINITIONS "GN_CPU_LEVEL=\"${GN_CPU_ARCH}\"")
 set(gn_pgo_targets gow1_recomp gow1 gn_layer0_xenos gn_layer2_ue3)
 set(gn_pgo_gen_flag -fprofile-instr-generate)
 set(gn_pgo_use_flag -fprofile-instr-use)
