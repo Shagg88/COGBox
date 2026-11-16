@@ -93,11 +93,22 @@ export function initFabricatorSchema(db: DatabaseInstance): void {
       meta TEXT NOT NULL,
       size INTEGER NOT NULL,
       sha256 TEXT NOT NULL,
+      chunk_bytes INTEGER NOT NULL,
       chunks_done INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_fab_uploads_account ON fab_uploads(account);
+
+    -- screenshots sent during an upload session; they become fab_screens when it is published
+    CREATE TABLE IF NOT EXISTS fab_upload_screens (
+      upload_id TEXT NOT NULL REFERENCES fab_uploads(id) ON DELETE CASCADE,
+      pos INTEGER NOT NULL,
+      image_key TEXT NOT NULL,
+      width INTEGER NOT NULL,
+      height INTEGER NOT NULL,
+      PRIMARY KEY (upload_id, pos)
+    );
 
     CREATE TABLE IF NOT EXISTS fab_admin_log (
       id INTEGER PRIMARY KEY,

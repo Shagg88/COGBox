@@ -15,6 +15,11 @@ import { Registry } from './social/registry.js';
 import { notifyPresence } from './social/presence.js';
 import { ErrorRing } from './admin/error_ring.js';
 import { buildPrivateApi } from './admin/private_api.js';
+import { fabricatorRoutes } from './fabricator/routes.js';
+import { FabStore } from './fabricator/store.js';
+import { loadFabSettings, type FabSettings } from './fabricator/settings.js';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 // The private admin listener stays on loopback unless ADMIN_HOST says otherwise.
@@ -30,6 +35,8 @@ export interface ServerOptions {
   // The games' lobby search needs a signed-in player. Off by default: 0.6.0 runtimes search without signing in, so it
   // is turned on as a release decision once most players are past 0.6.0 (LOBBY_SEARCH_REQUIRES_SIGN_IN=true).
   lobbySearchRequiresSignIn?: boolean;
+  fabricatorDir?: string;                 // the Fabricator's files (default <dataDir>/fabricator; a temp folder for ':memory:')
+  fabricator?: Partial<FabSettings>;      // over fabricator.json and FAB_* (tests)
 }
 
 export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInstance> {
@@ -118,16 +125,28 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   await server.register(matchRoutes, { prefix: '/api/v1/matches', db, registry });
   await server.register(inviteRoutes, { prefix: '/api/v1/invites', db, registry, now: opts.now ?? Date.now, stats });
 
+  // The Fabricator (mod store). An in-memory database gets a throwaway folder, removed on close.
+  const dbFile = opts.dbPath ?? process.env.DB_PATH ?? 'master.db';
+  const dataDir = dbFile === ':memory:' ? null : path.dirname(path.resolve(dbFile));
+  const tempFab = !opts.fabricatorDir && !dataDir ? fs.mkdtempSync(path.join(os.tmpdir(), 'cogbox-fab-')) : null;
+  const fabDir = opts.fabricatorDir ?? tempFab ?? path.join(dataDir as string, 'fabricator');
+  const fabSettings: FabSettings = { ...loadFabSettings(dataDir ?? fabDir), ...(opts.fabricator ?? {}) };
+  const fabStore = new FabStore(fabDir);
+  await server.register(fabricatorRoutes, {
+    prefix: '/api/v1/fabricator', db, store: fabStore, settings: fabSettings, now: opts.now ?? Date.now
+  });
+
   // What the private admin listener needs (see the standalone block below)
   server.decorate('adminDeps', {
     db, registry, hostChanged, errors, startedAt: Date.now(),
     pendingInvites: () => stats.pendingInvites(),
-    dataDir: path.dirname(path.resolve(opts.dbPath ?? process.env.DB_PATH ?? 'master.db'))
+    dataDir: path.dirname(path.resolve(dbFile))
   });
 
   // Clean shutdown hook
   server.addHook('onClose', async () => {
     db.close();
+    if (tempFab) fs.rmSync(tempFab, { recursive: true, force: true });
   });
 
   return server;
