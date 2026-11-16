@@ -1559,3 +1559,4 @@ Bring them in now? They are put in place as Import saves does; what you copied i
 Not now = Agora não
 No saves to bring in were found in the saves folder. = Nenhum save para trazer foi encontrado na pasta de saves.
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = Não foi possível mover os saves (o jogo ou outro programa está usando-os?). Nada foi alterado.
+A backup of the saves is still being made - try again when it's done. = Um backup dos saves ainda está sendo feito - tente de novo quando terminar.

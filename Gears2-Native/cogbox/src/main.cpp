@@ -125,6 +125,7 @@ static bool zip_folder(const std::string &dir, const std::string &zipPath, std::
 }
 // The backup's thread and its result, read by backup_poll() on the UI thread.
 static std::atomic<int> g_backupState{0};   // 0 idle, 1 running, 2 done
+bool backup_running() { return g_backupState.load() == 1; }   // 0.6.4 (review r1945): no save import while a backup zips
 static std::mutex g_backupMutex;
 static std::string g_backupZip, g_backupErr, g_backupDir;
 static int g_backupGame = -1, g_backupFiles = 0;
@@ -246,9 +247,8 @@ static void answered(App &a)
     else if (m.tag == "tumismatch") a.joinLobby[m.game].clear();   // 0.6.0: Cancel drops a pending Join
     else if (m.tag == "foundsaves") {   // 0.6.4: hand-copied saves; either answer then starts the game
         if (m.answer == 0) import_misplaced_saves(a, m.game);
-        else { a.ini.set("Saves", std::string("FoundNotNow-") + game_def(m.game).dir, m.data); a.ini.save(); }
-        if (m.answer == 0 || m.answer == 1) play_start(a, m.game);
-        else a.joinLobby[m.game].clear();   // closed without an answer: no start
+        else { a.ini.set("Saves", found_not_now_key(m.game), m.data); a.ini.save(); }   // (closing the question = Not now)
+        play_start(a, m.game);
         a.misplacedAsked[m.game] = false;
     }
     else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4

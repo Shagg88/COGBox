@@ -1939,9 +1939,12 @@ static void import_message(App &a, int g, bool ok, const save_import::Result &r)
     set_message(a, m, !ok);
 }
 
+std::string found_not_now_key(int g) { return std::string("FoundNotNow-") + game_def(g).dir + (current_profile() <= 1 ? "" : "-p" + std::to_string(current_profile())); }
+
 void import_misplaced_saves(App &a, int g)
 {
     const GameDef &d = game_def(g);
+    if (backup_running()) { set_message(a, "A backup of the saves is still being made - try again when it's done.", true); return; }
     save_import::Result r;
     const bool ok = save_import::import_misplaced(std::filesystem::u8path(game_user_dir(g)), d.titleId, now_stamp(), r,
                                                   own_user_dirs(g), region_title_ids(g));
@@ -1952,6 +1955,7 @@ void import_misplaced_saves(App &a, int g)
 void import_saves_from(App &a, int g, const std::string &from)
 {
     const GameDef &d = game_def(g);
+    if (backup_running()) { set_message(a, "A backup of the saves is still being made - try again when it's done.", true); return; }
     save_import::Result r;
     make_dirs(game_user_dir(g));
     const bool ok = save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r,

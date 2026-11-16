@@ -13,6 +13,9 @@
 #include <cstring>
 #include <fstream>
 #include <system_error>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace save_import {
 namespace fs = std::filesystem;
@@ -234,10 +237,20 @@ void scan(Work &w, const fs::path &p, int depth, bool chosen) {
 }
 
 struct Moved { fs::path from, to; };  // done moves, to undo
+// a junction / symbolic link (review r1945: libstdc++ does not report a Windows junction as a symlink)
+bool is_reparse(const fs::path &p) {
+#ifdef _WIN32
+    const DWORD a = GetFileAttributesW(p.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT);
+#else
+    std::error_code ec;
+    return fs::is_symlink(p, ec);
+#endif
+}
 // removes `dir` and the folders under it when they hold no file at all (bottom-up); never removes a file
 bool remove_empty_dirs(const fs::path &dir) {
     std::error_code ec;
-    if (!is_folder(dir) || fs::is_symlink(dir, ec)) return false;
+    if (!is_folder(dir) || is_reparse(dir)) return false;
     bool empty = true;
     std::vector<fs::path> kids;
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) kids.push_back(it->path());
@@ -273,16 +286,27 @@ std::vector<fs::path> find_misplaced(const fs::path &user_dir, const std::vector
         const std::string n = upper(name_of(p));
         return n.size() == 12 && n.compare(8, 4, ".GPD") == 0 && is_title(n.substr(0, 8)) && is_plain_file(p);
     };
-    auto any_save = [&](const fs::path &d) {   // a save folder with files, or a package file
+    // review r1945: a package counts only when it is one Import can use - a saved game of this game (or a regional
+    // copy) or a profile; a DLC or title-update package dropped in is not flagged (it would be flagged for ever)
+    auto save_package = [&](const fs::path &p) {
+        if (!is_plain_file(p) || !package_magic(p)) return false;
+        x360fs::PackageInfo info;
+        std::string err;
+        if (!x360fs::read_package_info(p, info, err) || info.is_svod()) return false;
+        return info.content_type == 0x00010000u ||
+               (info.content_type == x360fs::kContentSavedGame && std::find(title_ids.begin(), title_ids.end(), info.title_id) != title_ids.end());
+    };
+    auto any_save = [&](const fs::path &d) {   // a save folder with files, or a save package
         bool any = false;
-        each_entry(d, [&](const fs::directory_entry &e) { if (!any) any = (is_folder(e.path()) && has_files(e.path())) || (is_plain_file(e.path()) && package_magic(e.path())); });
+        each_entry(d, [&](const fs::directory_entry &e) { if (!any && !is_reparse(e.path())) any = (is_folder(e.path()) && has_files(e.path())) || save_package(e.path()); });
         return any;
     };
     each_entry(user_dir, [&](const fs::directory_entry &e) {
         const fs::path p = e.path();
         const std::string n = name_of(p), un = upper(n);
+        if (is_reparse(p)) return;   // a link the player made (e.g. to a Xenia folder): never moved out of its place
         if (is_plain_file(p)) {
-            if (gpd(p) || package_magic(p)) out.push_back(p);
+            if (gpd(p) || save_package(p)) out.push_back(p);
             return;
         }
         if (!is_folder(p) || n.rfind("_", 0) == 0) return;   // _saves-before-import-..., _import-...
@@ -290,11 +314,13 @@ std::vector<fs::path> find_misplaced(const fs::path &user_dir, const std::vector
             if (un == kProfileXuid) {   // COGBox's own: only packages dropped into its 00000001 folders
                 each_entry(p, [&](const fs::directory_entry &t) {
                     if (!is_folder(t.path()) || !is_title(name_of(t.path()))) return;
-                    each_entry(t.path() / "00000001", [&](const fs::directory_entry &f) { if (is_plain_file(f.path()) && package_magic(f.path())) out.push_back(f.path()); });
+                    each_entry(t.path() / "00000001", [&](const fs::directory_entry &f) { if (save_package(f.path())) out.push_back(f.path()); });
                 });
                 return;
             }
             if (un == "0000000000000000") return;   // DLC (content), not saves
+            // review r1945: split-screen players 2-4 (the profile's XUID + 1..3, xam_user.cpp) - the runtime's own
+            if (un == "B13EBABEBABEBABF" || un == "B13EBABEBABEBAC0" || un == "B13EBABEBABEBAC1") return;
             each_entry(p, [&](const fs::directory_entry &t) {
                 if (is_folder(t.path()) && is_title(name_of(t.path())) && (any_save(t.path() / "00000001") || is_folder(t.path() / "profile"))) out.push_back(t.path());
                 else if (gpd(t.path())) out.push_back(t.path());
@@ -326,6 +352,7 @@ bool import_misplaced(const fs::path &user_dir, uint32_t title_id, const std::st
         if (rel.empty() || *rel.begin() == "..") continue;
         if (!move(f, hold / rel, done)) {
             undo(done);
+            remove_empty_dirs(hold);  // review r1945: the folders the moves made
             r.error = "The saves could not be moved (is the game or another program using them?). Nothing was changed.";
             return false;
         }

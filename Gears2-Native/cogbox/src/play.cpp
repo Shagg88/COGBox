@@ -293,13 +293,14 @@ void play_start(App &a, int g, bool prepare)
     }
     // 0.6.4 (Shagg 16 Nov): saves the player copied into the saves folder by hand, which the game would not see - asked
     // once per set of them (a "Not now" is kept in CogBox.ini until what is there changes)
-    {
+    if (!prepare) {   // review r1945: never before a "Prepare all shaders" run (an answer would start the real game)
         const std::vector<std::filesystem::path> found = misplaced_saves(a, g);
         if (!found.empty()) {
             std::string sig;
-            for (const auto &f : found) sig += f.filename().string() + "|";
+            const std::filesystem::path ud = std::filesystem::u8path(game_user_dir(g));
+            for (const auto &f : found) sig += f.lexically_relative(ud).generic_string() + "|";
             sig = std::to_string(found.size()) + ":" + std::to_string(std::hash<std::string>{}(sig));
-            if (a.ini.get("Saves", std::string("FoundNotNow-") + d.dir) != sig && !a.misplacedAsked[g]) {
+            if (a.ini.get("Saves", found_not_now_key(g)) != sig && !a.misplacedAsked[g]) {
                 a.misplacedAsked[g] = true;
                 ask(a, "foundsaves", g, tr("Saves COGBox can't use yet"),
                     std::string(tr("Saves were copied into the saves folder by hand, and the game can't use them as they are "

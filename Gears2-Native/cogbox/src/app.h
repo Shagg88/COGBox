@@ -192,6 +192,9 @@ void import_saves_from(App &a, int game, const std::string &from);   // 0.6.1: p
 // them in (a message says how it went).
 std::vector<std::filesystem::path> misplaced_saves(App &a, int game);
 void import_misplaced_saves(App &a, int game);
+// the CogBox.ini [Saves] key that remembers "Not now" for this game and launcher profile
+std::string found_not_now_key(int game);
+bool backup_running();   // main.cpp: "Back up saves" is zipping
 void install_confirmed(App &a);      // the "replace" question answered yes
 bool drop_is_game_or_update(const std::string &folder);          // 0.2.0: a dropped folder COGBox adds as a copy / update
 std::vector<std::string> dlc_packages_in(const std::string &folder);   // 0.2.0: DLC packages in a dropped folder (3 levels)

@@ -142,18 +142,25 @@ int main() {
         // nothing there: a clear "nothing found", nothing changed
         ok = save_import::import_misplaced(u, title, "m2", r);
         assert(!ok && !r.error.empty() && !fs::exists(t / "game/_saves-found-user-m2"));
-        // something that is not a readable save (a package-looking file that is not one): the import fails and the
-        // file is put back where it was
+        // review r1945: a file that only looks like a package (CON magic, no readable header - or a DLC / title update
+        // package) is not flagged, wherever it is; split-screen players 2-4's XUID folders are the runtime's own
         put(u / "B13EBABEBABEBABE/4D5308AB/00000001/broken.bin", "CON not really a package");
+        put(u / "dropped-dlc.bin", "LIVE not a save");
+        put(u / "B13EBABEBABEBABF/4D5308AB/00000001/P2/p.sav", "player 2");
+        assert(save_import::find_misplaced(u, { title }).empty());
+        // something found that cannot be imported (another user's progress too big to be a setting): the import fails
+        // and everything is put back where it was, the hold folder gone
+        put(u / "4D5308AB/profile/Big/63E83FFF", std::string(5000, 'x'));
         assert(save_import::find_misplaced(u, { title }).size() == 1);
         ok = save_import::import_misplaced(u, title, "m3", r);
         assert(!ok);
-        assert(get(u / "B13EBABEBABEBABE/4D5308AB/00000001/broken.bin") == "CON not really a package");
+        assert(get(u / "4D5308AB/profile/Big/63E83FFF") == std::string(5000, 'x'));
         assert(!fs::exists(t / "game/_saves-found-user-m3"));
+        fs::rename(u / "4D5308AB/profile/Big", t / "big-moved-away");
         // a regional copy's title ID counts too
         put(u / "E0300000ABCDEF02/4D5308C8/00000001/Japan/j.sav", "jp");
-        assert(save_import::find_misplaced(u, { title }).size() == 1);              // (broken.bin only)
-        assert(save_import::find_misplaced(u, { title, 0x4D5308C8u }).size() == 2);
+        assert(save_import::find_misplaced(u, { title }).empty());
+        assert(save_import::find_misplaced(u, { title, 0x4D5308C8u }).size() == 1);
     }
     // 4. a GPD that is not one
     std::vector<std::pair<uint32_t, std::string>> out;

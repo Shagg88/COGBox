@@ -1562,3 +1562,4 @@ Bring them in now? They are put in place as Import saves does; what you copied i
 Not now = 나중에
 No saves to bring in were found in the saves folder. = 세이브 폴더에서 가져올 세이브를 찾지 못했습니다.
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = 세이브를 옮기지 못했습니다(게임이나 다른 프로그램이 사용 중인가요?). 아무것도 바뀌지 않았습니다.
+A backup of the saves is still being made - try again when it's done. = 세이브 백업을 아직 만드는 중입니다. 끝난 뒤 다시 시도하세요.
