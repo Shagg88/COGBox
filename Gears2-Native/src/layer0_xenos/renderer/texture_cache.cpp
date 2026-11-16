@@ -84,9 +84,11 @@ void RunRows(uint32_t rows, uint32_t cols, Fn&& fn) {
 // GPU-current page. WHICH such pages Judgment's campaign hit is not proven (review r80): "destination pages mapped
 // read-only" (green-vine H1) was 0 in all three #315 logs (144722 with the switch, 081000 / 102209 without), so H1 is
 // not it - export_settle is no replacement for this switch. Candidates left: resolve pages reused for texture data
-// through a write the watch missed (#202's reading), export draws the backend refused (MarkExports still marks their
-// pages, so the mirror and the read-back hold the pre-export bytes), and the parts of an exported page the export did
-// not write (unlikely: every logged range was whole pages). --gow2_renderer_bc_gpu_page_log=N tells them apart. The
+// through a write the watch missed (#202's reading), and the parts of an exported page the export did not write
+// (unlikely: every logged range was whole pages). Export draws the backend refused are NOT something this switch fixes
+// (review r84): MarkExports still marks their pages, but the read-back copies the same stale mirror bytes into guest
+// memory, so the load gets them either way - a separate bug; the page log counts them ("refused") so a 0.6.3 log shows
+// whether it happens. --gow2_renderer_bc_gpu_page_log=N tells the cases apart. The
 // 0.6.2 #315 run with the switch on: Judgment's campaign clean (34 min), 37 loads waited for a read-back in 324k
 // frames. Gears 1 / 2 (no memexport) keep the mirror's bytes, as before. A read-back over the load that failed keeps
 // the mirror for that load (r80 L6).

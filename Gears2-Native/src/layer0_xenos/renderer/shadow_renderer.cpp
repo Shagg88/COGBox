@@ -11902,9 +11902,25 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     return !failed;
   }
   // r80 L6: a read-back that failed (not issued, or not landed), kept while a page of it is GPU-current (bounded).
+  // r84 L2: an identical range is kept once, so a range that fails every frame cannot push other entries out.
   void NoteReadbackFailed(uint32_t base, uint32_t size) {
+    for (const auto& f : export_readback_failed_)
+      if (f.first == base && f.second == size) return;
     if (export_readback_failed_.size() >= 64) export_readback_failed_.erase(export_readback_failed_.begin());
     export_readback_failed_.emplace_back(base, size);
+  }
+  // r84 L2: a landed read-back put the mirror's current bytes into guest memory over [base, base + size), so a failure
+  // recorded earlier inside that range no longer applies (without this, one transient failure left the switch off over
+  // re-exported pages - which stay GPU-current - for the rest of the session).
+  void ClearReadbackFailedCoveredBy(uint32_t base, uint32_t size) {
+    const uint64_t a = base, e = uint64_t(base) + size;
+    for (size_t i = 0; i < export_readback_failed_.size();) {
+      const auto& f = export_readback_failed_[i];
+      if (f.first >= a && uint64_t(f.first) + f.second <= e)
+        export_readback_failed_.erase(export_readback_failed_.begin() + ptrdiff_t(i));
+      else
+        ++i;
+    }
   }
 
   // Patch 0042: an exported range [base, base + size) for the end-of-frame readback, merged with any gathered range it
@@ -11969,6 +11985,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ExportReadback done = std::move(export_readbacks_.front());
       export_readbacks_.pop_front();
       if (!landed) NoteReadbackFailed(done.base, done.size);
+      else ClearReadbackFailedCoveredBy(done.base, done.size);
       if (landed && !done.versions.empty()) SettleExportPages(done);
     }
   }
