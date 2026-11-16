@@ -1404,7 +1404,11 @@ void TextureCache::EndFrame(uint64_t frame) {
                 frame, pack_reads_, pack_reuses_, pack_shared_.size(), kept, kept_bytes >> 20, pack_freed_,
                 stats_.host_bytes >> 20, cap_bytes_ >> 20);
   }
-  if (!cap_bytes_ || stats_.host_bytes <= cap_bytes_) return;
+  if (!cap_bytes_) {  // review r1938: no cap - pack textures nothing shows are freed at once (as before sharing)
+    FreeUnusedPacks(0);
+    return;
+  }
+  if (stats_.host_bytes <= cap_bytes_) return;
   const uint64_t target = cap_bytes_ / 10 * 9;
   FreeUnusedPacks(target);  // 0.6.4 (#341): pack textures nothing shows go first
   if (stats_.host_bytes <= target) return;
@@ -1441,6 +1445,7 @@ void TextureCache::EndFrame(uint64_t frame) {
         ++freed_total_;
       }
       e.overlay_variants.clear();
+      if (e.pack_shared) ReleasePack(e);  // review r1938 (cannot happen now: LoadFromPack clears variants) - kept safe
       e.texture = 0;
     } else if (e.pack_shared) {  // 0.6.4 (#341): its shared pack texture is freed below once no entry uses it
       ReleasePack(e);
@@ -2315,6 +2320,20 @@ bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesys
     return true;
   }
   if (g_swap.pack_bad.count(hash)) return false;  // r95 M1: refused before, for good
+  // Review r1938: prompt-style variants left from earlier content here (Load returns before its own variant clean-up when
+  // a pack file is used) go now, as they would for any other content change - a pack entry never has variants.
+  if (!e.overlay_variants.empty()) {
+    for (const auto& [_, var] : e.overlay_variants) {
+      if (var.texture && var.texture != e.texture) {
+        backend_.DestroyTexture(var.texture);
+        stats_.host_bytes -= std::min(stats_.host_bytes, var.host_bytes);
+        if (stats_.textures) --stats_.textures;
+        ++freed_total_;
+      }
+    }
+    e.overlay_variants.clear();
+    for (SlotCache& sc : slot_cache_) sc.valid = false;
+  }
   // 0.6.4 (#341): another entry (another guest address) already holds this file's texture, complete - share it: no file
   // read, no upload. Signed fetches were refused above; the shared texture's shape is the file's, as a fresh load's.
   if (auto sh = pack_shared_.find(hash); sh != pack_shared_.end()) {

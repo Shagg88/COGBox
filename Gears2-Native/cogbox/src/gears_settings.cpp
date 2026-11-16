@@ -1891,7 +1891,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         int mb = k_cacheMb[std::max(0, std::min(4, s.i("TexCache")))];
         // review r1937: 2 GB only on cards with 6 GB or more (or unknown size: 1 GB) - Vulkan stops on a failed texture
         // allocation, D3D12 slows down
-        if (!mb) mb = !env.texture_pack_mods.empty() && cap_exe(env, "gow2_texture_pack_dirs") ? (env.vram_mb >= 6000 ? 2048 : 1024) : 512;
+        if (!mb) mb = !env.texture_pack_mods.empty() && cap_exe(env, "gow2_texture_pack_dirs") ? (env.vram_mb >= 5800 ? 2048 : 1024) : 512;
         if (mb != 512) a.push_back("--gow2_renderer_texture_cache_mb=" + std::to_string(mb));
     }
     // PS1 866-867: Gears 3 / Judgment trilinear and fast mip fade (on by default there, so always sent)
