@@ -325,6 +325,7 @@ void run_get(const std::shared_ptr<FabTransfer> &t)
         make_dirs(dir);
         const std::string dest = join(dir, id + "-" + std::to_string(t->item.version_id) + ".zip");
         DeleteFileW(widen(dest).c_str());   // a finished one left by a crash: fetched again (its hash is only checked on download)
+        if (t->progress.cancel) { t->phase = FabTransfer::Cancelled; return; }   // cancelled (or Online turned off) meanwhile
         t->phase = FabTransfer::Downloading;
         const std::string e = fab_download(fab_full_url(c.server_url, url), dest, sha, size, t->progress);
         if (e.empty()) {
