@@ -155,6 +155,41 @@ extern PPCFuncMapping PPCFuncMappings[];
 #define REX_STORE_U32(x, y) (*(volatile u32*)(base + (u32)(x) + REX_PHYS_HOST_OFFSET(x)) = __builtin_bswap32(y))
 #define REX_STORE_U64(x, y) (*(volatile u64*)(base + (u32)(x) + REX_PHYS_HOST_OFFSET(x)) = __builtin_bswap64(y))
 
+// COGBox patch 111 (rexglue 55dd9b0 ported, stores part): stvlx / stvrx write the same bytes to the same addresses as the
+// old loop of single-byte stores, in at most two overlapping host stores. All bytes of one stvlx / stvrx lie in one
+// 16-byte quadword, so one REX_PHYS_HOST_OFFSET covers them.
+static inline void RexStoreGuestBytes(u8* host, const u8* bytes, u32 count) {
+  if (count == 16) {
+    std::memcpy(host, bytes, 16);
+  } else if (count >= 8) {
+    std::memcpy(host, bytes, 8);
+    std::memcpy(host + count - 8, bytes + count - 8, 8);
+  } else if (count >= 4) {
+    std::memcpy(host, bytes, 4);
+    std::memcpy(host + count - 4, bytes + count - 4, 4);
+  } else if (count >= 2) {
+    std::memcpy(host, bytes, 2);
+    std::memcpy(host + count - 2, bytes + count - 2, 2);
+  } else if (count == 1) {
+    host[0] = bytes[0];
+  }
+}
+#define REX_STVLX(x, v)                                                                       \
+  do {                                                                                        \
+    const u32 _rex_ea = (u32)(x);                                                             \
+    u8 _rex_b[16];                                                                            \
+    for (int _rex_i = 0; _rex_i < 16; _rex_i++) _rex_b[_rex_i] = (v)[15 - _rex_i];            \
+    RexStoreGuestBytes(base + _rex_ea + REX_PHYS_HOST_OFFSET(_rex_ea), _rex_b, 16 - (_rex_ea & 0xF)); \
+  } while (0)
+#define REX_STVRX(x, v)                                                                       \
+  do {                                                                                        \
+    const u32 _rex_ea = (u32)(x);                                                             \
+    const u32 _rex_n = _rex_ea & 0xF, _rex_q = _rex_ea & ~0xFu;                               \
+    u8 _rex_b[16];                                                                            \
+    for (int _rex_i = 0; _rex_i < 16; _rex_i++) _rex_b[_rex_i] = (v)[15 - _rex_i];            \
+    RexStoreGuestBytes(base + _rex_q + REX_PHYS_HOST_OFFSET(_rex_q), _rex_b + 16 - _rex_n, _rex_n); \
+  } while (0)
+
 // Gears2-Native SDK patch 28: accesses based on the stack pointer (r1) - stack frames, register saves - never reach
 // the 0xE0000000+ physical views, so they skip the REX_PHYS_HOST_OFFSET compare (about a third of all loads/stores).
 #define REX_SLOAD_U8(x) (*(volatile u8*)(base + (u32)(x)))
