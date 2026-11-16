@@ -1563,3 +1563,5 @@ Not now = 今はしない
 No saves to bring in were found in the saves folder. = セーブフォルダーに取り込むセーブは見つかりませんでした。
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = セーブを移動できませんでした（ゲームや別のプログラムが使用中ではありませんか？）。何も変更されていません。
 A backup of the saves is still being made - try again when it's done. = セーブのバックアップを作成中です。完了してからもう一度お試しください。
+Switch weapon = 武器の切り替え
+Not used in Judgment = Judgment では未使用

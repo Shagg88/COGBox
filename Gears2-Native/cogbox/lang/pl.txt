@@ -1560,3 +1560,5 @@ Not now = Nie teraz
 No saves to bring in were found in the saves folder. = W folderze zapisów nie znaleziono zapisów do przeniesienia.
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = Nie udało się przenieść zapisów (czy gra lub inny program ich używa?). Nic nie zostało zmienione.
 A backup of the saves is still being made - try again when it's done. = Kopia zapasowa zapisów jest jeszcze tworzona – spróbuj ponownie, gdy się skończy.
+Switch weapon = Zmiana broni
+Not used in Judgment = Nieużywane w Judgment

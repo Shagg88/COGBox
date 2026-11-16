@@ -1558,3 +1558,5 @@ Not now = Nicht jetzt
 No saves to bring in were found in the saves folder. = Im Spielstand-Ordner wurden keine zu übernehmenden Spielstände gefunden.
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = Die Spielstände konnten nicht verschoben werden (benutzt das Spiel oder ein anderes Programm sie?). Nichts wurde geändert.
 A backup of the saves is still being made - try again when it's done. = Eine Sicherung der Spielstände wird noch erstellt – versuche es danach noch einmal.
+Switch weapon = Waffe wechseln
+Not used in Judgment = In Judgment nicht belegt

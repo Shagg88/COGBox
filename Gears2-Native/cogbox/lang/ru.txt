@@ -1567,3 +1567,5 @@ Not now = Не сейчас
 No saves to bring in were found in the saves folder. = В папке сохранений не найдено сохранений для переноса.
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = Не удалось переместить сохранения (их использует игра или другая программа?). Ничего не изменено.
 A backup of the saves is still being made - try again when it's done. = Резервная копия сохранений ещё создаётся — попробуйте снова, когда она будет готова.
+Switch weapon = Смена оружия
+Not used in Judgment = Не используется в Judgment

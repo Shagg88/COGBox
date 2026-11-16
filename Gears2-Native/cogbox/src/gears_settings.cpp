@@ -961,12 +961,18 @@ const std::vector<KeyAction> &key_actions(Game g)
         { "keybind_walk", "-", "Walk", "None" },   // SDK patch 60: no key until chosen
     };
     // GitHub #208: Judgment's LB is the grenade and D-pad down the tactical display - the same keys (Tab, 4) keep
-    // their meaning, so the two rows swap names and default keys
+    // their meaning, so the two rows swap names and default keys.
+    // GitHub #350: Judgment carries two weapons - Y switches between them (no D-pad weapon slots) and D-pad up is the
+    // point of interest. Same rule: Q stays the point of interest, the weapon keys 1 / 2 switch weapons; D-pad left /
+    // right do nothing in Judgment's own controls, so no key by default.
     static const std::vector<KeyAction> judgment = [] {
         std::vector<KeyAction> j = v;
         for (KeyAction &k : j) {
             if (!strcmp(k.cvar, "keybind_left_shoulder")) { k.what = "Grenades"; k.def = "4"; }
             else if (!strcmp(k.cvar, "keybind_dpad_down")) { k.what = "Tactical display"; k.def = "Tab"; }
+            else if (!strcmp(k.cvar, "keybind_y")) { k.what = "Switch weapon"; k.def = "1,2"; }
+            else if (!strcmp(k.cvar, "keybind_dpad_up")) { k.what = "Look at / point of interest"; k.def = "Q"; }
+            else if (!strcmp(k.cvar, "keybind_dpad_left") || !strcmp(k.cvar, "keybind_dpad_right")) { k.what = "Not used in Judgment"; k.def = "None"; }
         }
         return j;
     }();

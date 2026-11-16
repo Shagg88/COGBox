@@ -1562,3 +1562,5 @@ Not now = Ahora no
 No saves to bring in were found in the saves folder. = No se encontraron partidas para incorporar en la carpeta de partidas.
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = No se pudieron mover las partidas (¿las está usando el juego u otro programa?). No se cambió nada.
 A backup of the saves is still being made - try again when it's done. = Todavía se está haciendo una copia de seguridad de las partidas; inténtalo de nuevo cuando termine.
+Switch weapon = Cambiar de arma
+Not used in Judgment = Sin uso en Judgment
