@@ -13,7 +13,7 @@ export function createMasterClient(baseUrl: string, secret: string): MasterClien
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(ms)
     });
-    if (!res.ok) throw new Error(`master ${method} ${path}: ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(`master ${method} ${path}: ${res.status}`), { status: res.status });
     return (await res.json()) as T;
   };
 
@@ -44,9 +44,14 @@ export function createMasterClient(baseUrl: string, secret: string): MasterClien
     fabStats(): Promise<FabStats> {
       return call('GET', '/fabricator/stats');
     },
-    async fabAction(id: number, action: FabAction, who: string): Promise<boolean> {
-      // deleting files of a big mod touches the disk: give it the backup's time
-      return (await call<{ ok: boolean }>('POST', `/fabricator/mods/${encodeURIComponent(String(id))}/${action}`, BACKUP_MS, { who })).ok;
+    async fabAction(id: number, action: FabAction, who: string): Promise<boolean | 'no files'> {
+      try {
+        // deleting files of a big mod touches the disk: give it the backup's time
+        return (await call<{ ok: boolean }>('POST', `/fabricator/mods/${encodeURIComponent(String(id))}/${action}`, BACKUP_MS, { who })).ok;
+      } catch (e) {
+        if ((e as { status?: number }).status === 409) return 'no files';   // restore of a mod whose files were deleted
+        throw e;
+      }
     },
     async fabPublishing(tag: string, allowed: boolean, who: string): Promise<boolean> {
       return (await call<{ ok: boolean }>('POST', `/fabricator/creators/${encodeURIComponent(tag)}/publishing`, CALL_MS, { allowed, who })).ok;

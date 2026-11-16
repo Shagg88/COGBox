@@ -117,7 +117,7 @@ export async function buildPrivateApi(deps: PrivateApiDeps): Promise<FastifyInst
     const w = (b as { who?: unknown } | null)?.who;
     return typeof w === 'string' && w.length > 0 && w.length <= 64 ? w : null;
   };
-  const MOD_ACTIONS: Record<string, (id: number, who: string) => boolean> = {
+  const MOD_ACTIONS: Record<string, (id: number, who: string) => boolean | 'no files'> = {
     takedown: (id, who) => takeDown(db, id, who, now()),
     restore: (id, who) => restore(db, id, who, now()),
     'delete-files': (id, who) => deleteFiles(db, deps.store, id, who, now()),
@@ -132,7 +132,9 @@ export async function buildPrivateApi(deps: PrivateApiDeps): Promise<FastifyInst
     const who = whoOf(req.body);
     if (!who) return reply.status(400).send({ error: 'who is required' });
     const id = Number(req.params.id);
-    return { ok: Number.isSafeInteger(id) && id > 0 ? act(id, who) : false };
+    const r = Number.isSafeInteger(id) && id > 0 ? act(id, who) : false;
+    if (r === 'no files') return reply.status(409).send({ error: 'no files' });
+    return { ok: r };
   });
 
   app.post<{ Params: { tag: string } }>('/fabricator/creators/:tag/publishing', async (req, reply) => {

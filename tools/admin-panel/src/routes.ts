@@ -95,8 +95,9 @@ export function registerRoutes(api: FastifyInstance, o: { db: Db; now: () => num
     if (!isFabAction(action) || !Number.isSafeInteger(modId) || modId < 1) return reply.status(400).send({ error: 'Unknown action.' });
     if ((req.body as { confirm?: unknown } | undefined)?.confirm !== true) return reply.status(400).send({ error: 'Confirm the action.' });
     const name = req.session!.name;
-    let ok: boolean;
+    let ok: boolean | 'no files';
     try { ok = await master.fabAction(modId, action, name); } catch (e) { return masterDown(reply, e); }
+    if (ok === 'no files') return reply.status(409).send({ error: 'No files left: this mod cannot be restored.' });
     if (!ok) return reply.status(404).send({ error: 'No such mod, or it is not in a state for that.' });
     audit(db, name, FAB_AUDIT[action], `mod ${modId}`, now());
     return { ok: true };

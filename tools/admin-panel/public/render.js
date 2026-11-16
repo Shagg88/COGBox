@@ -122,7 +122,8 @@ export function fabReportsHtml(groups, now = Date.now()) {
       `<button type="button"${cls ? ` class="${cls}"` : ''} data-fab-action="${action}" data-mod="${id}" data-name="${esc(mod.name)}">${label}</button>`;
     const buttons = (mod.state === 'taken_down' ? btn('restore', 'Restore') : btn('takedown', 'Take down', 'danger')) +
       btn('delete-files', 'Delete files', 'danger') +
-      `<button type="button" class="danger" data-fab-stop="${esc(mod.author)}">Stop publishing</button>`;
+      // 'unknown' = the author's account is gone: there is no one to stop
+      (mod.author === 'unknown' ? '' : `<button type="button" class="danger" data-fab-stop="${esc(mod.author)}">Stop publishing</button>`);
     return `<div class="card report"><h3>${esc(mod.name)} <span class="dim">${esc(GAMES[mod.game] ?? mod.game)}, by ${esc(mod.author)}, ${esc(STATES[mod.state] ?? mod.state)}</span></h3>` +
       '<table><thead><tr><th>Reason</th><th>Text</th><th>Reporter</th><th>Age</th></tr></thead><tbody>' +
       reports.map((r) => `<tr><td data-l="Reason">${esc(r.reason)}</td><td data-l="Text">${esc(r.text)}</td>` +

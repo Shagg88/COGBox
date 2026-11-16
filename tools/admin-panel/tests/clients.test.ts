@@ -58,6 +58,7 @@ describe('master client', () => {
         res.setHeader('content-type', 'application/json');
         if (req.url === '/fabricator/reports') return res.end('{"reports":[]}');
         if (req.url === '/fabricator/stats') return res.end('{"disk":{"total":1,"free":1},"month_bytes":0,"mods":0,"creators":0,"open_reports":0}');
+        if (req.url === '/fabricator/mods/9/restore') { res.statusCode = 409; return res.end('{"error":"no files"}'); }
         res.end('{"ok":true}');
       });
     });
@@ -66,6 +67,8 @@ describe('master client', () => {
     expect((await c.fabStats()).mods).toBe(0);
     expect(await c.fabAction(7, 'delete-files', 'alice')).toBe(true);
     expect(await c.fabPublishing('Baird#1234', false, 'alice')).toBe(true);
+    expect(await c.fabAction(9, 'restore', 'alice')).toBe('no files');
+    seen.pop();
     expect(seen.map((s) => [s.method, s.url, s.body])).toEqual([
       ['GET', '/fabricator/reports', ''], ['GET', '/fabricator/stats', ''],
       ['POST', '/fabricator/mods/7/delete-files', '{"who":"alice"}'],

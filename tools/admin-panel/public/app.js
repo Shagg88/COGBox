@@ -137,7 +137,7 @@ document.addEventListener('click', async (ev) => {
     const { fabAction: action, mod, name } = fab.dataset;
     const ask = { takedown: `Take down "${name}"? It is hidden from the store and its downloads stop.`,
       restore: `Restore "${name}" to the store?`,
-      'delete-files': `Delete every file of "${name}"? This cannot be undone.` }[action];
+      'delete-files': `Delete every file of "${name}"? It is taken down and can no longer be restored. This cannot be undone.` }[action];
     if (!ask || !confirm(ask)) return;
     try { await api(`/fabricator/mods/${encodeURIComponent(mod)}/${encodeURIComponent(action)}`, { confirm: true }); note(`Done: ${action} "${name}".`); } catch (e) { fail(e); }
     loadFabricator();

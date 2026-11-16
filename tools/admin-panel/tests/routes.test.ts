@@ -28,7 +28,7 @@ const master: MasterClient = {
   backups: async () => [{ name: 'master-20261111000000.db', size: 10, mtime: 1 }],
   fabReports: async () => FAB_REPORTS,
   fabStats: async () => FAB_STATS,
-  fabAction: async (id, action, who) => { fabCalls.push([id, action, who]); return id === 7; },
+  fabAction: async (id, action, who) => { fabCalls.push([id, action, who]); return id === 9 ? 'no files' : id === 7; },
   fabPublishing: async (tag, allowed, who) => { fabCalls.push([tag, allowed, who]); return tag === 'Baird#1234'; },
 };
 const docker: DockerClient = {
@@ -206,6 +206,13 @@ describe('fabricator routes', () => {
     ]);
     expect((await post('/admin/api/fabricator/mods/8/takedown', { confirm: true })).statusCode).toBe(404);
     expect(rows()).toHaveLength(3);
+  });
+
+  it('restoring a mod with no files left is 409 with the reason and not audited', async () => {
+    const r = await post('/admin/api/fabricator/mods/9/restore', { confirm: true });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toMatch(/no files/i);
+    expect(rows()).toEqual([]);
   });
 
   it('publishing takes a tag and is audited', async () => {

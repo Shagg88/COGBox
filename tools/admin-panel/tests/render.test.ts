@@ -68,6 +68,12 @@ describe('render fabricator', () => {
     expect(fabReportsHtml([])).toContain('No open reports');
   });
 
+  it('offers no Stop publishing for an unknown author', () => {
+    const h = fabReportsHtml([{ ...queue[1], mod: { ...queue[1].mod, author: 'unknown' } }]);
+    expect(h).not.toContain('data-fab-stop');
+    expect(h).toContain('data-fab-action="restore"');
+  });
+
   it('draws the stats', () => {
     const h = fabStatsHtml({ disk: { total: 100 * 1073741824, free: 40 * 1073741824 }, month_bytes: 3 * 1073741824, mods: 12, creators: 4, open_reports: 2 });
     expect(h).toContain('60.0 of 100.0 GB used');

@@ -348,6 +348,8 @@ function removeModRows(db: DatabaseInstance, modId: number, account: string): { 
   db.prepare('DELETE FROM fab_screens WHERE mod_id = ?').run(modId);
   db.prepare('DELETE FROM fab_mods_fts WHERE rowid = ?').run(modId);
   db.prepare("UPDATE fab_mods SET state = 'removed' WHERE id = ?").run(modId);
+  // nothing is left to moderate: its open reports are closed
+  db.prepare("UPDATE fab_reports SET handled_by = 'owner', outcome = 'removed' WHERE mod_id = ? AND handled_by IS NULL").run(modId);
   return { files: vs.map((v) => v.file_key), images };
 }
 

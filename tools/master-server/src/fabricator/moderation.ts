@@ -20,7 +20,7 @@ export function reportsQueue(db: DatabaseInstance): QueueEntry[] {
       m.name, m.game, m.state, ${TAG('ou')} AS author
     FROM fab_reports r JOIN fab_mods m ON m.id = r.mod_id
     LEFT JOIN users ru ON ru.uuid = r.reporter LEFT JOIN users ou ON ou.uuid = m.owner
-    WHERE r.handled_by IS NULL ORDER BY r.created_at DESC, r.id DESC`).all() as any[];
+    WHERE r.handled_by IS NULL AND m.state != 'removed' ORDER BY r.created_at DESC, r.id DESC`).all() as any[];
   const byMod = new Map<number, QueueEntry>();
   for (const r of rows) {
     let e = byMod.get(r.mod_id);
@@ -41,29 +41,35 @@ function handleReports(db: DatabaseInstance, modId: number, who: string, outcome
   db.prepare('UPDATE fab_reports SET handled_by = ?, outcome = ? WHERE mod_id = ? AND handled_by IS NULL').run(who, outcome, modId);
 }
 
+const hasLiveVersion = (db: DatabaseInstance, modId: number): boolean =>
+  !!db.prepare("SELECT 1 FROM fab_versions WHERE mod_id = ? AND state = 'live' LIMIT 1").get(modId);
+
 // Moves a mod from one state to another, logged; false when it is not in `from`.
 function flip(db: DatabaseInstance, modId: number, from: string, to: string, action: string, who: string, now: number): boolean {
-  return db.transaction(() => {
-    const r = db.prepare('UPDATE fab_mods SET state = ? WHERE id = ? AND state = ?').run(to, modId, from);
-    if (r.changes === 0) return false;
-    logAction(db, who, action, modId, '', now);
-    handleReports(db, modId, who, to === 'live' ? 'restored' : to);
-    return true;
-  })();
+  const r = db.prepare('UPDATE fab_mods SET state = ? WHERE id = ? AND state = ?').run(to, modId, from);
+  if (r.changes === 0) return false;
+  logAction(db, who, action, modId, '', now);
+  handleReports(db, modId, who, to === 'live' ? 'restored' : to);
+  return true;
 }
 
 export const takeDown = (db: DatabaseInstance, modId: number, who: string, now: number): boolean =>
-  flip(db, modId, 'live', 'taken_down', 'takedown', who, now);
+  db.transaction(() => flip(db, modId, 'live', 'taken_down', 'takedown', who, now))();
 
-export const restore = (db: DatabaseInstance, modId: number, who: string, now: number): boolean =>
-  flip(db, modId, 'taken_down', 'live', 'restore', who, now);
+// 'no files' when the mod has no live version left (its files were deleted): it stays taken down.
+export const restore = (db: DatabaseInstance, modId: number, who: string, now: number): boolean | 'no files' =>
+  db.transaction(() => {
+    if (db.prepare("SELECT 1 FROM fab_mods WHERE id = ? AND state = 'taken_down'").get(modId) && !hasLiveVersion(db, modId)) return 'no files' as const;
+    return flip(db, modId, 'taken_down', 'live', 'restore', who, now);
+  })();
 
 // Gives up every live version's file (quota back to the owner); a file another live version still uses stays.
-// The mod keeps its state. False when there is no such mod or it is removed.
+// A live mod is also taken down (nothing is left to download). False when there is no such mod or it is removed.
 export function deleteFiles(db: DatabaseInstance, store: FabStore, modId: number, who: string, now: number): boolean {
   const keys = db.transaction(() => {
     const m = db.prepare("SELECT owner FROM fab_mods WHERE id = ? AND state != 'removed'").get(modId) as { owner: string } | undefined;
     if (!m) return null;
+    db.prepare("UPDATE fab_mods SET state = 'taken_down' WHERE id = ? AND state = 'live'").run(modId);
     const vs = db.prepare("SELECT id, size, file_key FROM fab_versions WHERE mod_id = ? AND state = 'live'").all(modId) as { id: number; size: number; file_key: string }[];
     for (const v of vs) {
       db.prepare("UPDATE fab_versions SET state = 'files_deleted' WHERE id = ?").run(v.id);
@@ -98,6 +104,7 @@ export async function fabStats(db: DatabaseInstance, store: FabStore, now: numbe
   const disk = await store.disk();
   const month_bytes = (db.prepare('SELECT COALESCE(SUM(size), 0) AS b FROM fab_versions WHERE created_at > ?').get(now - MONTH_MS) as { b: number }).b;
   const live = db.prepare("SELECT COUNT(*) AS mods, COUNT(DISTINCT owner) AS creators FROM fab_mods WHERE state = 'live'").get() as { mods: number; creators: number };
-  const open_reports = (db.prepare('SELECT COUNT(*) AS n FROM fab_reports WHERE handled_by IS NULL').get() as { n: number }).n;
+  const open_reports = (db.prepare(`SELECT COUNT(*) AS n FROM fab_reports r JOIN fab_mods m ON m.id = r.mod_id
+    WHERE r.handled_by IS NULL AND m.state != 'removed'`).get() as { n: number }).n;
   return { disk, month_bytes, mods: live.mods, creators: live.creators, open_reports };
 }

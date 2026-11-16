@@ -7,6 +7,7 @@ import { buildServer } from '../src/server.js';
 import { buildPrivateApi } from '../src/admin/private_api.js';
 import { ErrorRing } from '../src/admin/error_ring.js';
 import { reportsQueue, takeDown, restore, deleteFiles, setPublishing, fabStats } from '../src/fabricator/moderation.js';
+import { forgetFabricatorAccount } from '../src/fabricator/publish.js';
 import { modZip, png, meta, sha256 } from './fabricator_helpers.js';
 
 const DAY = 24 * 3600 * 1000;
@@ -95,18 +96,66 @@ describe('fabricator moderation', () => {
     const file = app.adminDeps.store.pathOf(key);
     expect(fs.existsSync(file)).toBe(true);
 
-    expect(await deleteFiles(app.db, app.adminDeps.store, mod_id, 'alice', clock)).toBe(true);
+    expect(deleteFiles(app.db, app.adminDeps.store, mod_id, 'alice', clock)).toBe(true);
     expect(app.db.prepare('SELECT state FROM fab_versions WHERE mod_id = ?').all(mod_id)).toEqual([{ state: 'files_deleted' }]);
     expect((app.db.prepare('SELECT bytes_used FROM fab_creators WHERE account = ?').get(a.uuid) as any).bytes_used).toBe(0);
     expect(fs.existsSync(file)).toBe(true);   // still Beta's
 
-    expect(await deleteFiles(app.db, app.adminDeps.store, other.mod_id, 'alice', clock)).toBe(true);
+    expect(deleteFiles(app.db, app.adminDeps.store, other.mod_id, 'alice', clock)).toBe(true);
     expect(fs.existsSync(file)).toBe(false);
-    expect(await deleteFiles(app.db, app.adminDeps.store, 9999, 'alice', clock)).toBe(false);
+    expect(deleteFiles(app.db, app.adminDeps.store, 9999, 'alice', clock)).toBe(false);
     expect(log()).toEqual([
       { who: 'alice', action: 'delete-files', mod_id },
       { who: 'alice', action: 'delete-files', mod_id: other.mod_id },
     ]);
+  });
+
+  it('deleting the files of a live mod takes it down and hides it from listings', async () => {
+    const a = await claim('Baird');
+    const { mod_id } = await publish(a, 'Alpha', await modZip('[Mod]\nName=A\n', 900));
+    expect((await app.inject({ method: 'GET', url: `${API}/mods` })).json().mods.map((m: any) => m.id)).toEqual([mod_id]);
+    expect(deleteFiles(app.db, app.adminDeps.store, mod_id, 'alice', clock)).toBe(true);
+    expect(state(mod_id)).toBe('taken_down');
+    expect((await app.inject({ method: 'GET', url: `${API}/mods` })).json().mods).toEqual([]);
+    expect(log()).toEqual([{ who: 'alice', action: 'delete-files', mod_id }]);
+  });
+
+  it('restore refuses a mod with no live version (409 from the private API)', async () => {
+    const a = await claim('Baird');
+    const { mod_id } = await publish(a, 'Alpha', await modZip('[Mod]\nName=A\n', 900));
+    expect(takeDown(app.db, mod_id, 'alice', clock)).toBe(true);
+    expect(deleteFiles(app.db, app.adminDeps.store, mod_id, 'alice', clock)).toBe(true);
+    expect(restore(app.db, mod_id, 'alice', clock)).toBe('no files');
+    const r = await priv.inject({ method: 'POST', url: `/fabricator/mods/${mod_id}/restore`, headers: H, payload: { who: 'alice' } });
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: 'no files' });
+    expect(state(mod_id)).toBe('taken_down');
+    expect(log().map((l: any) => l.action)).toEqual(['takedown', 'delete-files']);
+  });
+
+  it('reports on a mod its owner removes, or whose account is deleted, are closed', async () => {
+    const a = await claim('Baird');
+    const r = await claim('Cole');
+    const one = await publish(a, 'Alpha', await modZip('[Mod]\nName=A\n', 900));
+    const two = await publish(a, 'Bravo', await modZip('[Mod]\nName=B\n', 900));
+    report(one.mod_id, r.uuid, 'broken', '', clock);
+    report(two.mod_id, r.uuid, 'broken', '', clock);
+    expect((await app.inject({ method: 'DELETE', url: `${API}/creator/mods/${one.mod_id}`, headers: auth(a) })).statusCode).toBeLessThan(300);
+    expect(reportsQueue(app.db).map((e) => e.mod.id)).toEqual([two.mod_id]);
+    expect(app.db.prepare('SELECT handled_by, outcome FROM fab_reports WHERE mod_id = ?').get(one.mod_id)).toEqual({ handled_by: 'owner', outcome: 'removed' });
+    forgetFabricatorAccount(app.db, app.adminDeps.store, a.uuid);
+    expect(reportsQueue(app.db)).toEqual([]);
+    expect((await fabStats(app.db, app.adminDeps.store, clock)).open_reports).toBe(0);
+  });
+
+  it('old open reports on removed mods are not in the queue or the stat', async () => {
+    const a = await claim('Baird');
+    const r = await claim('Cole');
+    const { mod_id } = await publish(a, 'Alpha', await modZip('[Mod]\nName=A\n', 900));
+    app.db.prepare("UPDATE fab_mods SET state = 'removed' WHERE id = ?").run(mod_id);
+    report(mod_id, r.uuid, 'broken', '', clock);
+    expect(reportsQueue(app.db)).toEqual([]);
+    expect((await fabStats(app.db, app.adminDeps.store, clock)).open_reports).toBe(0);
   });
 
   it('setPublishing resolves a tag; an unknown tag is false', async () => {

@@ -44,7 +44,8 @@ export interface MasterClient {
   backups(): Promise<Backup[]>;
   fabReports(): Promise<FabReportGroup[]>;
   fabStats(): Promise<FabStats>;
-  fabAction(id: number, action: FabAction, who: string): Promise<boolean>;      // false: no such mod, or not in a state for it
+  // false: no such mod, or not in a state for it; 'no files': a restore of a mod with no live version left
+  fabAction(id: number, action: FabAction, who: string): Promise<boolean | 'no files'>;
   fabPublishing(tag: string, allowed: boolean, who: string): Promise<boolean>;  // false: no account has that tag
 }
 
