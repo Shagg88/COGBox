@@ -1026,6 +1026,14 @@ REXCVAR_DEFINE_STRING(gow2_ao_algo, "xegtao", "Gears2",
 REXCVAR_DEFINE_INT32(gow2_ao_cacao_blur, 3, "Gears2",
                      "CACAO's edge-sensitive blur passes (notes/81; 0-8, as AMD's, whose default is 2; 3 looked best in play; 0 only to measure). F8 changes it live "
                      "while CACAO is shown; XeGTAO keeps its own --gow2_ao_denoise");
+REXCVAR_DEFINE_DOUBLE(gow2_ao_max_screen_radius, 0.325, "Gears2",
+                      "XeGTAO: how far its samples reach on screen, as a fraction of the screen height. Close to the "
+                      "camera the effect radius covers much of the screen and its samples leave it - the shadows near "
+                      "the bottom flickered. 0.325: tuned live in Gears 3 (Flippage, 16 Nov) with --gow2_ao_mip_offset 6.5");
+REXCVAR_DEFINE_DOUBLE(gow2_ao_mip_offset, 6.5, "Gears2",
+                      "XeGTAO: depth MIP sampling offset (XE_GTAO_DEFAULT_DEPTH_MIP_SAMPLING_OFFSET 3.30). Higher = far "
+                      "samples read finer depth levels: steadier under camera jitter, a little slower. 6.5 (tuned live in "
+                      "Gears 3, 16 Nov): coarse levels made shadows near the camera flicker as DLSS jitters the view");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_radius, 60.0, "Gears2",
                       "XeGTAO effect radius in the game's world units (notes/80; UE3: about 2 cm each)");
 REXCVAR_DEFINE_INT32(gow2_ao_denoise, 0, "Gears2",
@@ -3850,6 +3858,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     AoDebugView(w, h);  // notes/80 (--gow2_ao_debug)
     ao_ready_ = false;
+    ao_pending_ = false;
     // "Match my monitor": the image at the window's exact size (the game's shape kept), shown 1:1 by the presenter.
     rex::system::X_VIDEO_MODE mode;
     rex::kernel::xboxkrnl::VdQueryVideoMode(&mode);
@@ -5560,6 +5569,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t ao_denoise_passes_ = 3;
   uint32_t ao_w_ = 0, ao_h_ = 0;
   bool ao_ready_ = false, ao_failed_logged_ = false;
+  // Gears 3 / Judgment copy the scene depth out once or twice a frame, changing from frame to frame (draw traces: with
+  // two, the first after about half the opaque scene). XeGTAO on such a first copy misses everything drawn after it -
+  // the ground, so hidden geometry ghosts through it. So every scene-depth copy rebuilds XeGTAO's depth pyramid (its own
+  // texture: the last copy wins), and the main and denoise passes run once, when the frame's AO is first read
+  // (AoFinish). ao_ready_: this frame's AO is (or will be) there; ao_pending_: its main passes still have to run.
+  bool ao_pending_ = false;
+  gpu::ComputeBindings ao_pending_b_{};
   int32_t ao_debug_ = 0;
   uint64_t ao_runs_ = 0;
   // Notes/80 s.4: the game's AO chain found by shape in this frame's resolves (the ping-pong address and how many
@@ -8033,8 +8049,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   // Notes/80 s.4: XeGTAO on the frame's scene depth, into ao_final_ (scene size, visibility 0..1). Needs the frame's
   // camera (AoConstants) and its depth target complete - called at the scene depth resolve.
-  bool RunGtao() {
+  bool RunGtao(bool defer = false) {
     ao_ready_ = false;
+    ao_pending_ = false;
     if (!ao_prefilter_pipe_ || !ao_main_pipe_ || !ao_denoise_pipe_) return false;
     const rr::ao::GtaoConstants* k = AoConstants();
     if (!k) return false;
@@ -8095,7 +8112,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.constants[10] = std::bit_cast<uint32_t>(float(added && add_p >= 0.0 ? add_p : REXCVAR_GET(gow2_ao_power)));
     b.constants[11] = 0;                                // noise index: no temporal accumulation of ours
     b.constants[12] = std::bit_cast<uint32_t>(1.2f);    // denoise blur beta (XeGTAO: one "sharp" pass)
-    b.constants[13] = std::bit_cast<uint32_t>(3.30f);   // XE_GTAO_DEFAULT_DEPTH_MIP_SAMPLING_OFFSET
+    b.constants[13] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_ao_mip_offset)));   // XeGTAO's own default: 3.30
+    b.constants[15] = std::bit_cast<uint32_t>(float(std::clamp(REXCVAR_GET(gow2_ao_max_screen_radius), 0.02, 4.0)));
     b.constants[14] = std::bit_cast<uint32_t>(2.0f);    // XE_GTAO_DEFAULT_SAMPLE_DISTRIBUTION_POWER
     // 1. The view-depth pyramid, one dispatch per level.
     AoPassTag(7);
@@ -8120,6 +8138,28 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     ao_depth_frame_ = frame_;  // SSIL reads the pyramid later in the frame
+    AoPassTag(0);
+    if (defer) {   // the main passes when the AO is first read (AoFinish): a later scene-depth copy may replace the pyramid
+      ao_pending_b_ = b;
+      ao_pending_ = true;
+      ao_ready_ = true;
+      return true;
+    }
+    AoMainPasses(b);
+    return true;
+  }
+
+  // The frame's deferred XeGTAO main and denoise passes, on the pyramid of its last scene-depth copy. Before any read
+  // of ao_final_.
+  void AoFinish() {
+    if (!ao_pending_) return;
+    ao_pending_ = false;
+    AoMainPasses(ao_pending_b_);
+  }
+
+  void AoMainPasses(gpu::ComputeBindings b) {
+    const uint32_t w = ao_w_, h = ao_h_;
+    const bool timed = AoGpuTimed();
     // 2. The main pass: working AO term + edges.
     AoPassTag(8);
     b.constants[3] = 0;
@@ -8149,7 +8189,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     AoPassTag(0);
     ao_ready_ = true;
     ++ao_runs_;
-    return true;
   }
 
   // --gow2_ssil (prototype): the four passes built at start; the keys' state starts from the switches.
@@ -8611,6 +8650,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ao_chain_known_ = true;
     ao_chain_pp_dest_ = ao_pp_dest_;  // notes/80 s.10: only copies to the chain's own ping-pong address are skipped
     if (ao_show_ == 2 || !ao_ready_ || !rt.texture || !ao_final_ || !ao_pack_pipe_) return;  // 2: the game's own AO
+    AoFinish();
     if (ao_full_w_ != ao_w_ || ao_full_h_ != ao_h_) {
       if (ao_full_) backend_->DestroyTexture(ao_full_), ao_full_ = 0;
       gpu::TextureDesc td;
@@ -8686,6 +8726,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   void AoAddPass(rr::RenderTarget& rt) {
     ao_added_frame_ = true;
+    AoFinish();
     auto it = ao_multiply_pipes_.find(uint32_t(rt.format));
     if (it == ao_multiply_pipes_.end()) {
       gpu::GraphicsPipelineDesc d;
@@ -8805,6 +8846,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Notes/80: --gow2_ao_debug - the final AO over the finished picture (present_out_, w x h packed words).
   void AoDebugView(uint32_t w, uint32_t h) {
     if (!ao_debug_ || !ao_ready_ || !ao_debug_pipe_ || !present_out_ || !ao_final_) return;
+    AoFinish();
     gpu::ComputeBindings b;
     b.constant_count = 8;
     b.constants[0] = w;
@@ -13619,7 +13661,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ResolveDepth(info, rg, depth_rt, copy, first_draw, last_draw, drawn, Bits(dinfo, 0, 3));
       // Notes/80: XeGTAO right after the game copies its scene depth out (the base pass is done; later in the frame the
       // game clears that EDRAM through a 640-pitch alias, before the scene colour resolve). Once per frame.
-      if (ao_mode_ == rr::ao::Mode::kGtao && !ao_ready_ && up_camera_ && depth_rt && IsSceneDepth(*depth_rt)) RunGtao();
+      // Every scene-depth copy until the AO is read: the frame's last one is the complete depth (see ao_pending_).
+      if (ao_mode_ == rr::ao::Mode::kGtao && (!ao_ready_ || ao_pending_) && up_camera_ && depth_rt &&
+          IsSceneDepth(*depth_rt))
+        RunGtao(true);
       if (up_active_ && !up_camera_only_ && up_camera_ && depth_rt && IsSceneDepth(*depth_rt) && up_depth_at_resolve_)
         UpscaleSaveDepth(*depth_rt);
     } else {
