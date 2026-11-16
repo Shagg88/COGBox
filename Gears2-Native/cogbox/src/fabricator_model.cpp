@@ -151,7 +151,12 @@ std::string fab_folder_name(const std::string &store_name, const std::vector<std
 {
     std::string base = mod_folder_chars(store_name);
     if (base.empty()) base = "mod";
-    if (reserved_name(base)) base += " mod";
+    if (reserved_name(base)) {   // " mod" goes after the stem: "CON.txt" is still the device to Windows, "CON mod.txt" is not
+        size_t dot = base.find('.');
+        std::string stem = base.substr(0, dot), rest = dot == std::string::npos ? "" : base.substr(dot);
+        while (!stem.empty() && stem.back() == ' ') stem.pop_back();
+        base = stem + " mod" + rest;
+    }
     for (int i = 0;; i++) {
         std::string cand = i == 0 ? base : i == 1 ? base + " (Fabricator)" : base + " (Fabricator " + std::to_string(i) + ")";
         const std::string *hit = nullptr;
@@ -246,10 +251,11 @@ std::vector<std::string> fab_check_zip(const std::string &zip_path, const std::s
         mz_zip_archive_file_stat st;
         if (!mz_zip_reader_file_stat(&z, i, &st)) { note("the zip is damaged: not a valid zip file"); return problems; }
         const std::string name = st.m_filename;
+        if (mz_zip_reader_get_filename(&z, i, nullptr, 0) != name.size() + 1) note("unsafe path in the zip (outside the mod folder)");   // an embedded NUL
         if (st.m_is_encrypted) note("encrypted entry: " + name);
         if (bad_path(name)) note("unsafe path in the zip (outside the mod folder)");
         if ((st.m_version_made_by >> 8) == 3 && ((st.m_external_attr >> 16) & 0xf000) == 0xa000) note("the zip contains a link (symlink), which is not allowed");
-        if (st.m_is_directory || (!name.empty() && name.back() == '/')) continue;
+        if (!name.empty() && name.back() == '/') continue;   // a directory, as the server decides it
         std::string norm = name;
         for (char &c : norm) if (c == '\\') c = '/';
         std::string base = norm.substr(norm.find_last_of('/') == std::string::npos ? 0 : norm.find_last_of('/') + 1);
