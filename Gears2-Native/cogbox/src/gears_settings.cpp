@@ -365,6 +365,15 @@ std::vector<Option> make_options(Game g) {
                { "Game's own (smallest)", "Standard (196 MB / Gears 3 200 MB)", "Large (256 MB)", "Larger (320 MB, not long-tested)" }, 1,
                "The texture streaming pool. Bigger = fewer blurry textures waiting to sharpen. The larger sizes leave less memory "
                "for the rest of the game.", 360), "pool", "", true);
+    // 0.6.4 (GitHub #341): the renderer's host texture cache (--gow2_renderer_texture_cache_mb, 512 MB by default) - the
+    // video memory the PC keeps textures in, not the game's own pool. A 4x texture pack fills 512 MB quickly; evicted pack
+    // textures are read from disk again when the game draws them, which stutters.
+    add(choice("TexCache", "Texture cache (video memory)", Tab::Graphics, PG,
+               { "Auto", "512 MB", "1 GB", "2 GB", "4 GB" }, 0,
+               "How much video memory the PC side keeps the game's textures in before the least recently used ones are "
+               "freed. Texture packs need more: a freed pack texture is read from disk again when it is next drawn, which "
+               "stutters. Auto: 512 MB, or 2 GB while a texture pack is on. Keep it well under your graphics card's memory.",
+               0), "texcache");
     add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
                "How far away detail and objects are still drawn.", 361), "drawdist", "", true);
     // 0.6.4 (Shagg 16 Nov: boma's "Smart Shadow Cuts" done our own way): the engine's own shadow-size limits
@@ -855,6 +864,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Gears1) return no("Gears 1's engine (2006) has no mip-fade setting - its sharper textures already show at once.");
     } else if (f == "aniso") {
         if (g == Game::Gears1 && !cap_exe(env, "gow1_aniso16")) return no(not_yet(gi, "needs its next build"));
+    } else if (f == "texcache") {   // 0.6.4 (GitHub #341): layer 0's cvar, in every game's exe
+        if (!cap_exe(env, "gow2_renderer_texture_cache_mb")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "pool") {
         if (g == Game::Gears1 && !cap_exe(env, "gow1_texture_pool_mb")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "syslink") {   // 0.3.5: SDK patch 49b (the runtime's net_system_link); Gears 2 first
@@ -1871,6 +1882,14 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
                                                         "--gow1_texture_pool_mb=" };
             a.push_back(sw[gi] + std::to_string(mb));
         }
+    }
+    // 0.6.4 (GitHub #341): the host texture cache; Auto = the renderer's 512 MB, 2 GB with a texture pack on. Sent only
+    // when it is not 512 (the renderer's default)
+    if (avail("TexCache")) {
+        static const int k_cacheMb[5] = { 0, 512, 1024, 2048, 4096 };
+        int mb = k_cacheMb[std::max(0, std::min(4, s.i("TexCache")))];
+        if (!mb) mb = !env.texture_pack_mods.empty() && cap_exe(env, "gow2_texture_pack_dirs") ? 2048 : 512;
+        if (mb != 512) a.push_back("--gow2_renderer_texture_cache_mb=" + std::to_string(mb));
     }
     // PS1 866-867: Gears 3 / Judgment trilinear and fast mip fade (on by default there, so always sent)
     if (isG3) { a.push_back("--gow3_trilinear=" + fmt_bool(s.b("Trilinear"))); a.push_back("--gow3_fast_mip_fade=" + fmt_bool(s.b("MipFade"))); }
