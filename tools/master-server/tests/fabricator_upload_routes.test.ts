@@ -142,6 +142,9 @@ describe('fabricator upload routes', () => {
     const r = await begin(b, zip, { mod_id: pub.json().mod_id });
     expect(r.statusCode).toBe(403);
     expect((await begin(a, zip, { mod_id: pub.json().mod_id })).statusCode).toBe(200);
+    const g = await begin(a, zip, { mod_id: pub.json().mod_id, meta: meta({ game: 'gears1' }) });
+    expect(g.statusCode).toBe(400);
+    expect(g.json().problems.join()).toContain('game');
   });
 
   it('refuses a bad screenshot, bad metadata and a new account', async () => {

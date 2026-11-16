@@ -8,7 +8,12 @@ import { checkModZip, checkScreenshot, checkText, type UploadMeta } from './chec
 // Upload sessions and publishing: the rules, with no HTTP (routes.ts maps them to answers).
 const DAY_MS = 24 * 3600 * 1000;
 const SHA = /^[0-9a-f]{64}$/;
-const SIDES = new Set(['both', 'client', 'server']);
+
+// modcore's Side words (modcore.h): client, host (server is read as host), everything else everyone.
+export const sideWord = (v: string | undefined): 'everyone' | 'host' | 'client' => {
+  const low = (v ?? '').trim().toLowerCase();
+  return low === 'client' ? 'client' : low === 'host' || low === 'server' ? 'host' : 'everyone';
+};
 export const MAX_SCREENS = 6;
 
 export interface UploadRow {
@@ -38,7 +43,10 @@ export function canPublish(db: DatabaseInstance, s: FabSettings, account: string
   const c = creator(db, account);
   if (!c.publishing) return 'publishing stopped';
   if (size > s.maxFileBytes) return 'file too big';
-  if (c.bytes_used + size > s.creatorQuotaBytes) return 'quota';
+  // open sessions count: their files arrive later (chunks, then an assembled copy on the same disk)
+  const openMine = (db.prepare('SELECT COALESCE(SUM(size), 0) AS b FROM fab_uploads WHERE account = ? AND expires_at >= ?')
+    .get(account, now) as { b: number }).b;
+  if (c.bytes_used + openMine + size > s.creatorQuotaBytes) return 'quota';
   const since = now - DAY_MS;
   const mine = (db.prepare(`SELECT COUNT(*) AS n FROM fab_versions v JOIN fab_mods m ON m.id = v.mod_id
     WHERE m.owner = ? AND v.created_at > ?`).get(account, since) as { n: number }).n;
@@ -48,7 +56,8 @@ export function canPublish(db: DatabaseInstance, s: FabSettings, account: string
   const all = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes FROM fab_versions WHERE created_at > ?')
     .get(since) as { n: number; bytes: number };
   if (all.n >= s.globalUploadsPerDay || all.bytes + size > s.globalUploadBytesPerDay) return 'server daily limit';
-  if (disk.total <= 0 || (disk.total - disk.free + size) / disk.total > s.diskFullFraction) return 'server full';
+  const openAll = (db.prepare('SELECT COALESCE(SUM(size), 0) AS b FROM fab_uploads WHERE expires_at >= ?').get(now) as { b: number }).b;
+  if (disk.total <= 0 || (disk.total - disk.free + 2 * (openAll + size)) / disk.total > s.diskFullFraction) return 'server full';
   return null;
 }
 
@@ -85,7 +94,9 @@ export function uploadProblems(db: DatabaseInstance, account: string, meta: Uplo
   const p = checkText(meta);
   if (!Number.isSafeInteger(size) || (size as number) < 1) p.push('size must be a positive whole number of bytes');
   if (typeof sha256 !== 'string' || !SHA.test(sha256)) p.push('sha256 must be 64 lowercase hex characters');
-  const taken = p.length === 0 ? nameProblem(db, account, meta.game, meta.name, modId) : null;
+  const mod = modId !== null ? ownLiveMod(db, account, modId) : undefined;
+  if (mod && meta.game !== mod.game) p.push(`game: a new version must be for the mod's game (${mod.game})`);
+  const taken = p.length === 0 ? nameProblem(db, account, mod?.game ?? meta.game, meta.name, modId) : null;
   if (taken) p.push(taken);
   return p;
 }
@@ -199,15 +210,25 @@ async function finishLocked(db: DatabaseInstance, store: FabStore, s: FabSetting
   const m = normalizeMeta(JSON.parse(row.meta));
   const problems = checkText(m);
   if (!creator(db, row.account).publishing) problems.push('publishing stopped');
-  if (row.mod_id !== null && !ownLiveMod(db, row.account, row.mod_id)) problems.push('not your mod: a new version needs your own live mod');
+  const mod = row.mod_id !== null ? ownLiveMod(db, row.account, row.mod_id) : undefined;
+  if (row.mod_id !== null && !mod) problems.push('not your mod: a new version needs your own live mod');
+  const game = mod?.game ?? m.game;   // a new version stays in its mod's game
+  if (m.game !== game) problems.push(`game: a new version must be for the mod's game (${game})`);
+  const c = creator(db, row.account);
+  const openOther = (db.prepare('SELECT COALESCE(SUM(size), 0) AS b FROM fab_uploads WHERE account = ? AND expires_at >= ? AND id <> ?')
+    .get(row.account, now, row.id) as { b: number }).b;
+  if (c.bytes_used + openOther + row.size > s.creatorQuotaBytes) problems.push('quota: this upload would go over your storage quota');
+  const disk = await store.disk();   // the chunks are already on disk; assembling adds one more copy
+  if (disk.total <= 0 || (disk.total - disk.free + row.size) / disk.total > s.diskFullFraction) problems.push('server full: try again later');
   const shots = db.prepare('SELECT pos, image_key, width, height FROM fab_upload_screens WHERE upload_id = ? ORDER BY pos')
     .all(row.id) as { pos: number; image_key: string; width: number; height: number }[];
   const kept = row.mod_id !== null && shots.length === 0
     ? (db.prepare('SELECT COUNT(*) AS n FROM fab_screens WHERE mod_id = ?').get(row.mod_id) as { n: number }).n : 0;
   if (shots.length === 0 && kept === 0) problems.push('at least one screenshot is needed');
-  const taken = m.name ? nameProblem(db, row.account, m.game, m.name, row.mod_id) : null;
+  const taken = m.name ? nameProblem(db, row.account, game, m.name, row.mod_id) : null;
   if (taken) problems.push(taken);
 
+  if (problems.some((p) => p.startsWith('quota') || p.startsWith('server full'))) return { ok: false, problems };
   let file: string;
   try {
     const a = await store.assemble(row.id, chunks);
@@ -217,7 +238,7 @@ async function finishLocked(db: DatabaseInstance, store: FabStore, s: FabSetting
     problems.push('the uploaded chunks are missing or damaged: start a new upload');
     return { ok: false, problems };
   }
-  const zip = problems.some((p) => p.includes('hash')) ? null : await checkModZip(file, m.game, s);
+  const zip = problems.some((p) => p.includes('hash')) ? null : await checkModZip(file, game, s);
   if (zip) problems.push(...zip.problems);
   if (problems.length > 0 || !zip) {
     await fs.promises.rm(file, { force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
@@ -235,18 +256,17 @@ async function finishLocked(db: DatabaseInstance, store: FabStore, s: FabSetting
       const reqs = new Set<number>();
       for (const name of zip.modIni?.requires ?? []) {
         const r = db.prepare("SELECT id FROM fab_mods WHERE game = ? AND lower(name) = lower(?) AND state = 'live' AND id <> ?")
-          .get(m.game, name, self) as { id: number } | undefined;
+          .get(game, name, self) as { id: number } | undefined;
         if (r) reqs.add(r.id);
       }
       for (const id of m.requires ?? []) {
-        if (id !== self && db.prepare("SELECT 1 FROM fab_mods WHERE id = ? AND game = ? AND state = 'live'").get(id, m.game)) reqs.add(id);
+        if (id !== self && db.prepare("SELECT 1 FROM fab_mods WHERE id = ? AND game = ? AND state = 'live'").get(id, game)) reqs.add(id);
       }
-      const sideIn = m.side ?? zip.modIni?.side ?? 'both';
-      const side = SIDES.has(sideIn) ? sideIn : 'both';
+      const side = sideWord(m.side ?? zip.modIni?.side);
       const fields = [slugify(m.name), m.name, m.type, m.short_desc, m.long_desc, JSON.stringify(m.tags), side, JSON.stringify([...reqs])];
       if (modId === null) {
         modId = Number(db.prepare(`INSERT INTO fab_mods (slug, name, type, short_desc, long_desc, tags, side, requires, owner, game, state, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?)`).run(...fields, row.account, m.game, now, now).lastInsertRowid);
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?)`).run(...fields, row.account, game, now, now).lastInsertRowid);
       } else {
         db.prepare(`UPDATE fab_mods SET slug = ?, name = ?, type = ?, short_desc = ?, long_desc = ?, tags = ?, side = ?, requires = ?, updated_at = ?
           WHERE id = ?`).run(...fields, now, modId);

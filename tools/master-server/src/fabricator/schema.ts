@@ -15,7 +15,7 @@ export function initFabricatorSchema(db: DatabaseInstance): void {
       short_desc TEXT NOT NULL DEFAULT '',
       long_desc TEXT NOT NULL DEFAULT '',
       tags TEXT NOT NULL DEFAULT '[]',
-      side TEXT NOT NULL DEFAULT 'both',
+      side TEXT NOT NULL DEFAULT 'everyone',   -- modcore's Side: everyone | host | client
       requires TEXT NOT NULL DEFAULT '[]',
       state TEXT NOT NULL DEFAULT 'live' CHECK(state IN ('live', 'taken_down', 'removed')),
       created_at INTEGER NOT NULL,

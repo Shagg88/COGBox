@@ -40,7 +40,7 @@ describe('fabricator publishing rules', () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fabpub-'));
     db = initDb(':memory:');
     store = new FabStore(path.join(dir, 'fabricator'));
-    s = { ...FAB_DEFAULTS, chunkBytes: 1024, creatorUploadsPerDay: 100 };
+    s = { ...FAB_DEFAULTS, chunkBytes: 1024, creatorUploadsPerDay: 100, diskFullFraction: 1 };   // finish reads the real disk
     addUser('acc-a', 'Baird', '0001');
     addUser('acc-b', 'Cole', '0002');
   });
@@ -85,7 +85,23 @@ describe('fabricator publishing rules', () => {
       expect(canPublish(db, { ...s, globalUploadBytesPerDay: 2000 }, 'acc-b', 1990, NOW, DISK)).toBe('server daily limit');
       expect(canPublish(db, { ...s, globalUploadsPerDay: 1 }, 'acc-b', 10, NOW + DAY + 1, DISK)).toBeNull();
     });
+    it('counts open sessions against the creator quota', () => {
+      s = { ...s, creatorQuotaBytes: 20_000 };
+      db.prepare('INSERT INTO fab_creators (account, publishing, bytes_used) VALUES (?, 1, ?)').run('acc-a', 19_000);
+      expect(canPublish(db, s, 'acc-a', 600, NOW, DISK)).toBeNull();
+      startUpload(db, 'acc-a', meta() as any, null, 600, 'ab'.repeat(32), NOW, s);
+      expect(canPublish(db, s, 'acc-a', 600, NOW, DISK)).toBe('quota');
+      expect(canPublish(db, s, 'acc-a', 600, NOW + s.sessionTtlMs + 1, DISK)).toBeNull();   // the session expired
+    });
+    it('counts open sessions twice against the disk', () => {
+      s = { ...s, diskFullFraction: 0.85 };
+      const disk = { total: 100_000, free: 30_000 };   // 70% used
+      expect(canPublish(db, s, 'acc-a', 1000, NOW, disk)).toBeNull();
+      startUpload(db, 'acc-b', meta() as any, null, 7000, 'ab'.repeat(32), NOW, s);   // 70% + 2 x (7% + 1%) = 86%
+      expect(canPublish(db, s, 'acc-a', 1000, NOW, disk)).toBe('server full');
+    });
     it('refuses when the disk is over 85% used', () => {
+      s = { ...s, diskFullFraction: 0.85 };
       expect(canPublish(db, s, 'acc-a', 1000, NOW, { total: 100 * GiB, free: 14 * GiB })).toBe('server full');
       expect(canPublish(db, s, 'acc-a', 1000, NOW, { total: 100 * GiB, free: 20 * GiB })).toBeNull();
     });
@@ -177,6 +193,42 @@ describe('fabricator publishing rules', () => {
       expect(used).toBe(zips[1].length + zips[2].length + zips[3].length);
       expect((db.prepare('SELECT rowid FROM fab_mods_fts WHERE fab_mods_fts MATCH ?').all('vaults') as any[]).map((x) => x.rowid)).toEqual([modId]);
       expect(db.prepare('SELECT COUNT(*) AS n FROM fab_screens WHERE mod_id = ?').get(modId)).toEqual({ n: 1 });   // kept
+    });
+
+    it("stores modcore's side words", async () => {
+      const side = async (name: string, ini: string, m: Record<string, unknown>) => {
+        const { r } = await publish('acc-a', await modZip(`[Mod]\nName=${name}\n${ini}`), meta({ name, ...m }));
+        if (!r.ok) throw new Error(r.problems.join());
+        return (db.prepare('SELECT side FROM fab_mods WHERE id = ?').get(r.modId) as any).side;
+      };
+      expect(await side('Side Host', 'Side=host\n', { side: undefined })).toBe('host');
+      expect(await side('Side Server', 'Side=Server\n', { side: undefined })).toBe('host');
+      expect(await side('Side Client', '', { side: 'client' })).toBe('client');
+      expect(await side('Side Both', 'Side=client\n', { side: 'both' })).toBe('everyone');
+      expect(await side('Side None', '', { side: undefined })).toBe('everyone');
+    });
+
+    it("a new version keeps the mod's game", async () => {
+      const first = await publish('acc-a', await modZip('[Mod]\nName=Horde Bank\n'));
+      if (!first.r.ok) throw new Error('setup');
+      const other = await publish('acc-a', await modZip('[Mod]\nName=Horde Bank\nGame=gears1\n'), meta({ game: 'gears1' }), first.r.modId);
+      expect(other.r.ok).toBe(false);
+      if (!other.r.ok) expect(other.r.problems.join(' | ')).toContain('game');
+      const wrongZip = await publish('acc-a', await modZip('[Mod]\nName=Horde Bank\nGame=gears1\n'), meta(), first.r.modId);
+      expect(wrongZip.r.ok).toBe(false);
+      if (!wrongZip.r.ok) expect(wrongZip.r.problems.join(' | ')).toContain('game');
+      expect((db.prepare('SELECT game FROM fab_mods WHERE id = ?').get(first.r.modId) as any).game).toBe('gears3');
+    });
+
+    it('finish checks the quota again', async () => {
+      const zip = await modZip('[Mod]\nName=Horde Bank\n');
+      const up = startUpload(db, 'acc-a', meta() as any, null, zip.length, sha256(zip), NOW, s);
+      expect(await putChunk(db, store, up.id, 0, zip, sha256(zip))).toBe('ok');
+      expect(await putScreen(db, store, up.id, 0, await png())).toBeNull();
+      db.prepare('INSERT INTO fab_creators (account, publishing, bytes_used) VALUES (?, 1, ?)').run('acc-a', s.creatorQuotaBytes - 10);
+      const r = await finishUpload(db, store, s, up.id, 'acc-a', NOW);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.problems.join(' | ')).toContain('quota');
     });
 
     it('a new version must be the caller\'s own live mod', async () => {

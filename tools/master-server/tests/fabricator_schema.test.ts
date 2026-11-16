@@ -22,10 +22,16 @@ describe('fabricator schema and settings', () => {
   it('keeps mod names unique per game, ignoring case', () => {
     const db = initDb(':memory:');
     const ins = db.prepare(`INSERT INTO fab_mods (owner, slug, name, game, type, short_desc, long_desc, tags, side, requires, state, created_at, updated_at)
-      VALUES ('a', ?, ?, ?, 'other', '', '', '[]', 'both', '[]', 'live', 0, 0)`);
+      VALUES ('a', ?, ?, ?, 'other', '', '', '[]', 'everyone', '[]', 'live', 0, 0)`);
     ins.run('x', 'Cool Mod', 'gears3');
     expect(() => ins.run('y', 'cool mod', 'gears3')).toThrow();
     expect(() => ins.run('z', 'cool mod', 'gears2')).not.toThrow();
+  });
+
+  it("a mod's side defaults to modcore's everyone", () => {
+    const db = initDb(':memory:');
+    db.prepare(`INSERT INTO fab_mods (owner, slug, name, game, type, created_at, updated_at) VALUES ('a', 's', 'Side Mod', 'gears3', 'other', 0, 0)`).run();
+    expect(db.prepare('SELECT side FROM fab_mods').get()).toEqual({ side: 'everyone' });
   });
 
   it('search index accepts rows keyed by mod id', () => {

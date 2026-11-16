@@ -25,5 +25,5 @@ export const png = (w = 4, h = 4): Promise<Buffer> =>
 
 export const meta = (over: Record<string, unknown> = {}) => ({
   name: 'Horde Bank', game: 'gears3', type: 'gameplay', version: '1.0', short_desc: 'Bank your horde cash',
-  long_desc: 'Keeps your money between waves.', tags: ['horde', 'economy'], side: 'both', notes: '', ...over,
+  long_desc: 'Keeps your money between waves.', tags: ['horde', 'economy'], side: 'everyone', notes: '', ...over,
 });
