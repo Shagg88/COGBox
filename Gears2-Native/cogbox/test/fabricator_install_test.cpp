@@ -223,6 +223,49 @@ int main()
         CHECK(fab_uninstall(a, g, 80) == "");
         CHECK(mods_list(a, g).size() == 2);
     }
+    // "Foo.old"'s backup is not the temporary name of "Foo"'s: updating Foo leaves it alone
+    {
+        const std::string br = join(mods, ".fabricator-backup");
+        FabLibraryItem fo, f;
+        fo.id = 90; fo.name = "Foo.old"; fo.game = "gears2";
+        f.id = 91; f.name = "Foo"; f.game = "gears2";
+        auto zip_of = [&](const char *tag) { return put_zip("foo.zip", {{"GearGame/a.xxx", tag}, {"readme.txt", "r"}}); };
+        fo.version_id = 1; CHECK(fab_install(a, g, fo, zip_of("fo1")) == "");
+        fo.version_id = 2; CHECK(fab_update(a, g, fo, zip_of("fo2")) == "");
+        f.version_id = 1; CHECK(fab_install(a, g, f, zip_of("f1")) == "");
+        f.version_id = 2; CHECK(fab_update(a, g, f, zip_of("f2")) == "");
+        f.version_id = 3; CHECK(fab_update(a, g, f, zip_of("f3")) == "");
+        CHECK(text_of(join(br, "Foo.old\\GearGame\\a.xxx")) == "fo1");   // intact
+        CHECK(text_of(join(br, "Foo\\GearGame\\a.xxx")) == "f2");
+        CHECK(text_of(join(mods, "Foo.old\\GearGame\\a.xxx")) == "fo2");
+        CHECK(text_of(join(mods, "Foo\\GearGame\\a.xxx")) == "f3");
+        CHECK(!exists(join(br, ".old-Foo")));
+
+        // a crash between putting the older backup aside and the move: .old-Foo and no Foo backup. The next update
+        // puts it back as the backup first (seen here because the move then fails), then supersedes it normally.
+        CHECK(MoveFileExW(widen(join(br, "Foo")).c_str(), widen(join(br, ".old-Foo")).c_str(), 0));
+        HANDLE held = CreateFileW(widen(join(mods, "Foo\\GearGame\\a.xxx")).c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        CHECK(held != INVALID_HANDLE_VALUE);
+        f.version_id = 4; CHECK(fab_update(a, g, f, zip_of("f4")) != "");
+        CloseHandle(held);
+        CHECK(text_of(join(br, "Foo\\GearGame\\a.xxx")) == "f2");   // restored as the backup
+        CHECK(!exists(join(br, ".old-Foo")));
+        CHECK(MoveFileExW(widen(join(br, "Foo")).c_str(), widen(join(br, ".old-Foo")).c_str(), 0));
+        CHECK(fab_update(a, g, f, zip_of("f4")) == "");
+        CHECK(text_of(join(br, "Foo\\GearGame\\a.xxx")) == "f3");
+        CHECK(text_of(join(mods, "Foo\\GearGame\\a.xxx")) == "f4");
+        CHECK(!exists(join(br, ".old-Foo")));
+        CHECK(text_of(join(br, "Foo.old\\GearGame\\a.xxx")) == "fo1");
+        // a crash after the move (both there): .old-Foo is the superseded backup, removed (it has a record)
+        make_dirs(join(br, ".old-Foo"));
+        FabInstallRecord rec; rec.mod = 91; rec.version = 1;
+        fab_write_record(join(br, ".old-Foo"), rec);
+        CHECK(fab_uninstall(a, g, 91) == "");
+        CHECK(text_of(join(br, "Foo\\GearGame\\a.xxx")) == "f4");
+        CHECK(!exists(join(br, ".old-Foo")));
+        CHECK(fab_uninstall(a, g, 90) == "");
+        CHECK(mods_list(a, g).size() == 2);
+    }
 
     // ---- a zip with a program is refused, nothing made ----
     {

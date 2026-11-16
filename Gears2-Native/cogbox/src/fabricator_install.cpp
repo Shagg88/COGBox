@@ -87,18 +87,25 @@ static std::string to_backup(int g, const std::string &folder)
     const DWORD ra = attrs_of(root);
     if (ra != INVALID_FILE_ATTRIBUTES && !plain_dir(ra)) return "The Fabricator's backup folder isn't a plain folder - nothing changed.";
     if (ra == INVALID_FILE_ATTRIBUTES && !make_dirs(root)) return "Couldn't make the Fabricator's backup folder (is the disk full?).";
-    // an older backup (only one COGBox made: it has a record) is put aside as <folder>.old until the move worked, and
-    // put back if it didn't
-    const std::string old = bak + ".old";
+    // an older backup (only one COGBox made: it has a record) is put aside as .old-<folder> until the move worked, and
+    // put back if it didn't. The name starts with '.', which no mod folder can (fab_install's hidden-name guard), so it
+    // is never another mod's backup.
+    const std::string old = join(root, ".old-" + folder);
+    if (present(old)) {
+        if (!plain_dir(attrs_of(old)) || !fab_read_record(old))
+            return "The Fabricator's backup folder has a \".old-" + folder + "\" COGBox didn't make - move it away first.";
+        if (!present(bak)) {   // a crash after putting it aside, before the move: it is still the backup
+            if (!MoveFileExW(widen(old).c_str(), widen(bak).c_str(), 0))
+                return "Couldn't put the backup of \"" + folder + "\" back (is a file in it open?).";
+        } else {               // a crash after the move: the superseded backup
+            mods_remove_tree(widen(old));
+            if (present(old)) return "Couldn't remove an old backup of \"" + folder + "\" (is a file in it open?).";
+        }
+    }
     const bool hadOld = present(bak);
     if (hadOld) {
         if (!plain_dir(attrs_of(bak)) || !fab_read_record(bak))
             return "The Fabricator's backup folder has a \"" + folder + "\" COGBox didn't make - move it away first.";
-        if (present(old)) {   // what an earlier, interrupted try left
-            if (!plain_dir(attrs_of(old)) || !fab_read_record(old))
-                return "The Fabricator's backup folder has a \"" + folder + ".old\" COGBox didn't make - move it away first.";
-            mods_remove_tree(widen(old));
-        }
         if (!MoveFileExW(widen(bak).c_str(), widen(old).c_str(), 0))
             return "Couldn't put the older backup of \"" + folder + "\" aside (is a file in it open?).";
     }
