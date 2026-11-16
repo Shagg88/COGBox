@@ -1267,6 +1267,11 @@ class D3D12Backend final : public Backend {
       error = b;
       return false;
     }
+    D3D12_FEATURE_DATA_D3D12_OPTIONS19 mixed_outputs{};
+    mixed_attachment_sizes_ =
+        SUCCEEDED(device_->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS19, &mixed_outputs,
+                                               sizeof(mixed_outputs))) &&
+        mixed_outputs.MismatchingOutputDimensionsSupported;
     REXLOG_INFO("gow2_renderer: Direct3D 12 runtime: {}; Shader Model {}.{}", runtime, unsigned(sm.HighestShaderModel) >> 4,
                 unsigned(sm.HighestShaderModel) & 15u);
     {
@@ -1469,6 +1474,7 @@ class D3D12Backend final : public Backend {
   std::string Describe() const override { return description_; }
   ShaderIL GetShaderIL() const override { return ShaderIL::kDxil; }
   bool SupportsStencilRefExport() const override { return stencil_ref_export_; }
+  bool SupportsMixedAttachmentSizes() const override { return mixed_attachment_sizes_; }
   // PR #303 review r13: ask the device (typed UAV store for the view format) instead of the base class's 'true' - the
   // same answer on Windows for SSIL's formats, and honest under vkd3d-proton (Proton / CrossOver).
   bool SupportsStorage(Format format) const override {
@@ -3323,7 +3329,7 @@ class D3D12Backend final : public Backend {
   const BackendStats& Stats() const override { return stats_; }
 
  private:
-  bool stencil_ref_export_ = false;
+  bool stencil_ref_export_ = false, mixed_attachment_sizes_ = false;
   uint32_t wait_site_ = 0;  // which call site the current WaitForFence belongs to (0 = called by the renderer)
   struct Shader {
     ShaderStage stage = ShaderStage::kVertex;

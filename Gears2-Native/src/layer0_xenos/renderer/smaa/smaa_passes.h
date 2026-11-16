@@ -205,16 +205,18 @@ void main(uint3 id : SV_DispatchThreadID) {
 // also holds the sub-sample indices (xe_smaa_sub).
 inline std::string Source(const char* body, bool t2x = false) {
   std::string s = kSmaaPrefix;
-  if (t2x) s.replace(s.find("float4 xe_smaa_rt; };"), 21, "float4 xe_smaa_rt; float4 xe_smaa_sub; };");
-  for (const char* part : kSmaaHlslParts) s += part;
+  if (t2x)
+    s.replace(s.find("float4 xe_smaa_rt; };"), 21, "float4 xe_smaa_rt; float4 xe_smaa_sub; };");
+  for (const char* part : kSmaaHlslParts)
+    s += part;
   s += kSmaaCommon;
   s += body;
   return s;
 }
 
 inline std::string NativeHdrBlendSource() {
-  std::string source=Source(kT2xBlendPs);
-  source.insert(std::char_traits<char>::length(kSmaaPrefix),R"(
+  std::string source = Source(kT2xBlendPs);
+  source.insert(std::char_traits<char>::length(kSmaaPrefix), R"(
 float4 XeNativeSmaaColor(Texture2D tex,float2 uv) {
   uint width,height;tex.GetDimensions(width,height);
   float2 logical=xe_smaa_rt.zw;
@@ -222,10 +224,11 @@ float4 XeNativeSmaaColor(Texture2D tex,float2 uv) {
   return tex.SampleLevel(xe_smaa_linear,uv*logical/float2(width,height),0);
 }
 )");
-  const std::string original="SMAASampleLevelZero(colorTex,";
-  size_t position=0;
-  while((position=source.find(original,position))!=std::string::npos) {
-    source.replace(position,original.size(),"XeNativeSmaaColor(colorTex,");position+=26;
+  const std::string original = "SMAASampleLevelZero(colorTex,";
+  size_t position = 0;
+  while ((position = source.find(original, position)) != std::string::npos) {
+    source.replace(position, original.size(), "XeNativeSmaaColor(colorTex,");
+    position += 26;
   }
   return source;
 }

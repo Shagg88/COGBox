@@ -8,7 +8,8 @@
 #include <xenos/renderer/ue3_grade_bridge.h>
 
 namespace xenos::renderer::native_hdr {
-inline std::string Psycho35SceneSource(std::string source, uint32_t low, uint32_t high, bool gears3, bool compressed_lut=true) {
+inline std::string Psycho35SceneSource(std::string source, uint32_t low, uint32_t high, bool gears3,
+                                       bool compressed_lut = true) {
   const auto constant = [=](uint32_t index) {
     if (low != high && index >= high) index = low + index - high;
     return "xe_c[" + std::to_string(index) + "]";
@@ -182,10 +183,13 @@ float3 NativeGears2PeakInput(float3 graded, float peak, float strength = 1.0) {
 }
 )";
   }
-  if(gears3) {
-    const std::string token="$LUT_BRIDGE";
-    const auto at=grade.find(token);if(at==std::string::npos)return {};
-    grade.replace(at,token.size(),compressed_lut?"NativeGears3CompressedLut":"NativeGears3GradientLut");
+  if (gears3) {
+    const std::string token = "$LUT_BRIDGE";
+    const auto at = grade.find(token);
+    if (at == std::string::npos)
+      return {};
+    grade.replace(at, token.size(),
+                  compressed_lut ? "NativeGears3CompressedLut" : "NativeGears3GradientLut");
   }
   for (const auto index : {252u, 253u, 254u, 10u, 3u, 4u, 5u, 6u, 7u, 8u, 9u}) {
     const auto token = "$C" + std::to_string(index);

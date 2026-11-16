@@ -150,7 +150,7 @@ static const float4 xe_c[256] = {
     }
     if(gears3) {
       const auto at=source.find("  if (id.x == 14)");
-      source.insert(at,R"(
+      source.insert(at, R"(
   if(xe_sys2.y==1) {
     output[id.xy]=float4(NativeGears3ExtendedLut(scene.Load(int3(id.xy,0)).rgb),1);return;
   }

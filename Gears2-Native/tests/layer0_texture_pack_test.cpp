@@ -192,10 +192,15 @@ TEST_CASE("texture_pack: non-ASCII folder and file names", "[texture_pack]") {
   const std::string pack = PathToUtf8(root) + "/Jos\xC3\xA9 \xE3\x83\x86\xE3\x82\xAF\xE3\x82\xB9\xE3\x83\x81\xE3\x83\xA3";  // "José テクスチャ"
   const fs::path pack_path = PathFromUtf8(pack);
   REQUIRE(PathToUtf8(pack_path) == pack);  // round trip
-  touch(pack_path / PathFromUtf8("\xD0\xA2\xD0\xB5\xD0\xBA\xD1\x81\xD1\x82\xD1\x83\xD1\x80\xD1\x8B") / "00000000000000EE.dds");  // "Текстуры"
+  touch(pack_path /
+        PathFromUtf8("\xD0\xA2\xD0\xB5\xD0\xBA\xD1\x81\xD1\x82\xD1\x83\xD1\x80\xD1\x8B") /
+        "00000000000000EE.dds");                                                     // "Текстуры"
   touch(pack_path / PathFromUtf8("00000000000000FF_\xE6\xB5\x8B\xE8\xAF\x95.dds"));  // "_测试"
-  touch(pack_path / PathFromUtf8("\xE8\xAF\xB4\xE6\x98\x8E.txt"));       // a readme with a CJK name: skipped
-  touch(pack_path / PathFromUtf8("000000000000\xC3\xA9\xC3\xA9.dds"));  // non-hex characters in the hash: skipped
+  touch(pack_path /
+        PathFromUtf8("\xE8\xAF\xB4\xE6\x98\x8E.txt"));  // a readme with a CJK name: skipped
+  touch(
+      pack_path /
+      PathFromUtf8("000000000000\xC3\xA9\xC3\xA9.dds"));  // non-hex characters in the hash: skipped
   PackIndex index;
   REQUIRE_NOTHROW(index.Build(pack + ";" + PathToUtf8(root) + "/\xE6\x97\xA0"));  // and a missing non-ASCII folder
   REQUIRE(index.errors().empty());
