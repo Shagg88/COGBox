@@ -10,7 +10,10 @@ inline constexpr uint64_t kScene = 0xB6B6DD4E7D91F3D9ull;
 inline constexpr uint64_t kCanvas = 0xA9AC71DCCCEAEBE4ull;
 inline constexpr uint64_t kSceneUi = 0xECE0CF7069CD4A91ull;
 inline constexpr uint64_t kGears3Scene = 0x2F284B68A112ED3Eull;
-inline bool IsScene(uint64_t hash) { return hash == kScene || hash == kGears3Scene; }
+inline constexpr uint64_t kJudgmentScene = 0xFF451AA8CB30AC21ull;
+inline constexpr uint64_t kJudgmentSceneAlt = 0x887C175ADE20613Dull;
+inline bool IsJudgmentScene(uint64_t hash) { return hash==kJudgmentScene || hash==kJudgmentSceneAlt; }
+inline bool IsScene(uint64_t hash) { return hash == kScene || hash == kGears3Scene || IsJudgmentScene(hash); }
 inline bool IsCanvasVertex(uint64_t hash) {
   return hash == 0x868DFF11A6BDEBAAull || hash == 0xE775468CA654846Dull ||
          hash == 0x6F83A894AB66D831ull || hash == 0x2E88B37100D9D0CEull;

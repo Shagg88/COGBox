@@ -9,6 +9,9 @@ inline const SceneEffectProfile* FindSceneEffect(uint64_t hash) {
   static constexpr SceneEffectProfile profiles[] = {
     {0x8356D7C3D65FE328ull,0xBB708F8C299FD402ull,96},
     {0x212F89E82422D29Dull,0x24D849D9DA7DFED0ull,81},
+    // Judgment FXAA. Original alpha luma and edge/UV logic stay intact.
+    {0x8309620DF190ABDFull,0xBD5BB78CFE396879ull,135},
+    {0x16CBC2E3D5BEC0A5ull,0x707DDFD1C3744044ull,345},
   };
   for(const auto& p:profiles)if(p.hash==hash)return &p;
   return nullptr;
@@ -51,6 +54,18 @@ RWTexture2D<float4> dest : register(u0);
   uint w,h;dest.GetDimensions(w,h);if(p.x>=w||p.y>=h)return;
   float4 v=source.Load(int3(p.xy,0));
   dest[p.xy]=float4(pow(max(v.rgb,0.0),1.0/2.2),saturate(v.a));
+}
+)";
+// FXAA uses the original 8-bit luma in alpha. The Judgment scene epilogue
+// quantizes it before FP16 storage; restore that lattice before filtering.
+// RGB stays unbounded. No extra full-resolution texture read is needed.
+inline constexpr const char* kEncodeSceneForFxaa=R"(
+Texture2D<float4> source : register(t0);
+RWTexture2D<float4> dest : register(u0);
+[numthreads(8,8,1)] void main(uint3 p:SV_DispatchThreadID) {
+  uint w,h;dest.GetDimensions(w,h);if(p.x>=w||p.y>=h)return;
+  float4 v=source.Load(int3(p.xy,0));
+  dest[p.xy]=float4(pow(max(v.rgb,0.0),1.0/2.2),round(saturate(v.a)*255.0)/255.0);
 }
 )";
 } // namespace xenos::renderer::native_hdr

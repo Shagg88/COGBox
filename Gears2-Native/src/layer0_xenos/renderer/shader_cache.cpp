@@ -6,6 +6,8 @@
 #include <xenos/dxbc_spirv.h>
 #include <xenos/hlsl.h>
 #include <xenos/renderer/native_hdr.h>
+#include <xenos/renderer/judgment_hdr_bridge.h>
+#include <xenos/renderer/judgment_fxaa_bridge.h>
 #include <xenos/renderer/hdr_scene_effect.h>
 #include <xenos/ucode.h>
 
@@ -1409,6 +1411,17 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
   for (size_t i = 0; i < items.size(); ++i) {
     Item& it = items[i];
     if (it.dwords.empty()) continue;
+    // Prepare Judgment's captured grading program and its matching DXIL vertex
+    // during cache loading, before the first gameplay draw needs them.
+    if(prepare_native_judgment_) {
+      if(!it.is_vertex && native_hdr::IsJudgmentScene(it.hash))
+        GetNativeHdr(it.hash,it.dwords.data(),it.dwords.size());
+      if(!it.is_vertex && (it.hash==0x8309620DF190ABDFull || it.hash==0x16CBC2E3D5BEC0A5ull))
+        GetJudgmentFxaaPair(it.hash,it.dwords.data(),it.dwords.size());
+      if(it.is_vertex && (it.hash==0xBE5D572A02B2CFFDull || it.hash==0xDDE732FE7045AADDull ||
+          it.hash==0x4B3A7954F2660D9Cull || it.hash==0x6319D531241E72D3ull) && backend_.GetShaderIL()==gpu::ShaderIL::kDxil)
+        GetDxilTwin(it.hash,it.dwords.data(),it.dwords.size());
+    }
     if(prepare_native_ui_ && !it.is_vertex && native_hdr::FindUi(it.hash) && it.hash!=native_hdr::kSceneUi)
       GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kUi,true);
     if(prepare_native_effects_ && !it.is_vertex && native_hdr::FindSceneEffect(it.hash)) {
@@ -1532,16 +1545,19 @@ gpu::ShaderHandle ShaderCache::GetNativeHdr(uint64_t hash, const uint32_t* dword
   if (ui && (count != ui->dwords || Fnv1a64(dwords, count * sizeof(uint32_t)) != ui->fingerprint)) return 0;
   if (native_hdr::IsScene(hash)) {
     const bool gears3 = hash == native_hdr::kGears3Scene;
-    if (count != (gears3 ? 150u : 282u) || Fnv1a64(dwords, count * sizeof(uint32_t)) !=
-        (gears3 ? 0x8BA713A2E446A745ull : 0x3C96315B3ED8D56Dull)) return 0;
+    const bool judgment = native_hdr::IsJudgmentScene(hash);
+    const bool alternate = hash == native_hdr::kJudgmentSceneAlt;
+    if (count != (alternate ? 177u : judgment ? 168u : gears3 ? 150u : 282u) || Fnv1a64(dwords, count * sizeof(uint32_t)) !=
+        (alternate ? 0x670D2E213F1E1DD7ull : judgment ? 0xF61C1939FAF8F0BEull : gears3 ? 0x8BA713A2E446A745ull : 0x3C96315B3ED8D56Dull)) return 0;
     options.native_hdr_linear = true;
     const auto translated = hlsl::TranslateToHlsl(program, options);
-    const auto source = native_hdr::Psycho35SceneSource(translated.hlsl,
+    const auto source = judgment ? native_hdr::JudgmentSceneSource(translated.hlsl,
+        translated.float_constants_low, translated.float_constants_high, alternate) : native_hdr::Psycho35SceneSource(translated.hlsl,
         translated.float_constants_low, translated.float_constants_high, gears3);
-    const auto shader = source.empty() ? 0 : GetBuiltin(gears3 ? "native_hdr_gears3_psycho35" :
-        "native_hdr_gears2_psycho35", source, gpu::ShaderStage::kPixel);
+    const auto shader = source.empty() ? 0 : GetBuiltin(alternate ? "native_hdr_judgment_alt_psycho35" : judgment ? "native_hdr_judgment_psycho35" :
+        gears3 ? "native_hdr_gears3_psycho35" : "native_hdr_gears2_psycho35", source, gpu::ShaderStage::kPixel);
     native_hdr_shaders_[hash] = shader;
-    REXLOG_INFO("gow2_native_hdr: Gears {} PsychoV35 scene {:016X}: {}", gears3 ? 3 : 2, hash,
+    REXLOG_INFO("gow2_native_hdr: {} PsychoV35 scene {:016X}: {}", judgment ? "Judgment" : gears3 ? "Gears 3" : "Gears 2", hash,
                 shader ? "ready" : "FAILED (reference-white fallback)");
     return shader;
   }
@@ -1555,6 +1571,22 @@ gpu::ShaderHandle ShaderCache::GetNativeHdr(uint64_t hash, const uint32_t* dword
   native_hdr_shaders_[hash] = shader;
   REXLOG_INFO("gow2_native_hdr: {} shader {:016X}: {}", canvas ? "bounded Canvas" : "extended scene", hash,
               shader ? "ready" : "FAILED (reference-white fallback)");
+  return shader;
+}
+
+gpu::ShaderHandle ShaderCache::GetJudgmentFxaaPair(uint64_t hash,const uint32_t* dwords,size_t count) {
+  if(hash!=0x8309620DF190ABDFull && hash!=0x16CBC2E3D5BEC0A5ull)return 0;
+  if(const auto it=judgment_fxaa_pairs_.find(hash);it!=judgment_fxaa_pairs_.end())return it->second;
+  const auto* profile=native_hdr::FindSceneEffect(hash);
+  if(!dwords || !profile || count!=profile->words || Fnv1a64(dwords,count*4)!=profile->fingerprint)return 0;
+  const auto program=ucode::Decode(dwords,count,false,DecodeOptions());
+  const auto translated=hlsl::TranslateToHlsl(program,TranslateOptions(false,0,dwords,count));
+  const bool high=hash==0x16CBC2E3D5BEC0A5ull;
+  const auto source=native_hdr::JudgmentFxaaPairSource(translated.hlsl,high,
+      translated.float_constants_low,translated.float_constants_high);
+  const auto shader=source.empty()?0:GetBuiltin(high?"judgment_fxaa_pair_high":"judgment_fxaa_pair_low",source,gpu::ShaderStage::kPixel);
+  judgment_fxaa_pairs_[hash]=shader;
+  REXLOG_INFO("gow2_native_hdr: Judgment paired FXAA {:016X}: {}",hash,shader?"ready":"FAILED (replay fallback)");
   return shader;
 }
 

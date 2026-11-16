@@ -7,7 +7,7 @@ static int DirectUiAttachmentCheck(gpu::Backend& backend,xenos::renderer::Shader
     return backend.CreateShader(stage,b.data(),b.size());
   };
   gpu::TextureDesc td;td.width=2;td.height=4;td.format=gpu::Format::kR16G16B16A16Float;
-  td.usage=gpu::kUsageRenderTarget|gpu::kUsageSampled;const auto hdrTarget=backend.CreateTexture(td);
+  td.usage=gpu::kUsageRenderTarget|gpu::kUsageSampled|gpu::kUsageStorage;const auto hdrTarget=backend.CreateTexture(td);
   td.format=gpu::Format::kD24UnormS8;td.usage=gpu::kUsageDepthStencil;const auto depth=backend.CreateTexture(td);
   gpu::GraphicsPipelineDesc original;original.vs=OverlayFixtureVertex(backend,compiler,false);
   original.ps=shader("float4 main():SV_Target0{return 1.0.xxxx;}",gpu::ShaderStage::kPixel);
@@ -26,8 +26,26 @@ static int DirectUiAttachmentCheck(gpu::Backend& backend,xenos::renderer::Shader
   original.stencil_front.pass=original.stencil_back.pass=gpu::StencilOp::kZero;
   const auto replay=backend.GetGraphicsPipeline(hdr::OverlayPipeline(original,hdr::OverlayMode::kUi));if(!replay)return 71;
   const float background[]={8,4,2,1};
+  // A no-FXAA scene arrives in a visible-only FP16 staging image. Publish
+  // exactly that rectangle before stencil UI, leaving the padded rows alone.
+  gpu::TextureDesc stageDesc;stageDesc.width=2;stageDesc.height=1;
+  stageDesc.format=gpu::Format::kR16G16B16A16Float;stageDesc.usage=gpu::kUsageSampled;
+  const auto stage=backend.CreateTexture(stageDesc);
+  const auto copyShader=shader(hdr::kCopyForUiCs,gpu::ShaderStage::kCompute);
+  const auto copy=copyShader?backend.CreateComputePipeline(copyShader):0;
+  if(!stage||!copy)return 77;
+  uint16_t scene[8];for(unsigned i=0;i<8;++i)scene[i]=ToHalf(background[i%4]);
+  backend.UploadTexture(stage,0,0,scene,16,1,1);
+
   for(unsigned pass=0;pass<2;++pass) {
-    backend.ClearColor(hdrTarget,background);backend.SetRenderTargets(1,&hdrTarget,depth);
+    const float padding[]={65000,65000,65000,1};backend.ClearColor(hdrTarget,padding);
+    gpu::ComputeBindings publish;publish.constants[0]=2;publish.constants[1]=1;publish.constant_count=4;
+    publish.srv[0]=stage;publish.uav_texture=hdrTarget;backend.Dispatch(copy,publish,1,1,1);
+    const auto pad=backend.ReadbackTexture(hdrTarget,{0,1,2,2});backend.WaitForFence(backend.Submit());
+    uint32_t padPitch=0;const auto* padData=backend.ReadbackData(pad,padPitch);
+    uint16_t padValue=0;if(padData)std::memcpy(&padValue,padData,2);backend.ReleaseReadback(pad);
+    if(!padData||padValue!=ToHalf(65000))return 78;
+    backend.SetRenderTargets(1,&hdrTarget,depth);
     backend.SetViewport({0,0,2,1,0,1});backend.SetScissor({0,0,2,1});backend.SetStencilRef(1);backend.SetPipeline(replay);backend.Draw(3);
     const auto r=backend.ReadbackTexture(hdrTarget,{0,0,2,1});backend.WaitForFence(backend.Submit());
     uint32_t pitch=0;const auto* data=backend.ReadbackData(r,pitch);uint16_t out[8]{};if(data)std::memcpy(out,data,sizeof(out));backend.ReleaseReadback(r);
@@ -53,7 +71,7 @@ static int DirectUiAttachmentCheck(gpu::Backend& backend,xenos::renderer::Shader
   if(!data)return 74;
   for(unsigned x=0;x<2;++x)for(unsigned c=0;c<3;++c)if(std::abs(Half(out[x*4+c])-background[c])>.01f)return 75;
   if(backend.IsLost(nullptr))return 76;
-  std::puts("PASS direct padded UI: stencil/scissor coverage, retained HDR, read-only depth/stencil, zero preservation dispatches, SMAA rejects poisoned padding");return 0;
+  std::puts("PASS direct padded UI: stencil/scissor coverage, retained HDR, read-only depth/stencil, one visible no-FXAA publish, untouched padding, SMAA rejects poisoned padding");return 0;
 }
 
 static int UiPaddingBench(gpu::Backend& backend,xenos::renderer::ShaderCompiler& compiler) {
