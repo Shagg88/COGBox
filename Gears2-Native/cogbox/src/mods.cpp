@@ -6,6 +6,7 @@
 // place of (or beside) its own, without changing its folder. Programs (.xex, .dll, .exe) are never used from a mod.
 // Order and on/off are in CogBox.ini [Mods] <game>Order / <game>Enabled ("name|name|...").
 #include "app.h"
+#include "fabricator_model.h"
 #include "../third_party/miniz/miniz.h"
 #include "modcore/campaigns.h"
 
@@ -275,8 +276,7 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
     if (oneTop && !a.st[g].dataDir.empty() && dir_exists(join(a.st[g].dataDir, common))) oneTop = false;
     std::string base = narrow(std::filesystem::path(widen(zipPath)).stem().wstring()), name;
     if (oneTop) base = common;
-    for (char c : base) if (isalnum((unsigned char)c) || c == ' ' || c == '_' || c == '-' || c == '.' || c == '(' || c == ')') name += c;
-    while (!name.empty() && (name.back() == ' ' || name.back() == '.')) name.pop_back();
+    name = mod_folder_chars(base);   // the character rule, shared with the Fabricator's folder names
     if (name.empty()) name = "mod";
     std::string dest = join(mods_dir(g), name);
     // 0.6.1: 0.6.0 installed an EMPTY folder for a zip mod (review C1); RemoveDirectoryW only removes an empty one, so
