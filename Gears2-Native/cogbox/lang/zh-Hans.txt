@@ -1415,6 +1415,7 @@ Join their game. = 加入对方的游戏。
 Set up this game in COGBox to join. = 在 COGBox 中设置此游戏后即可加入。
 Invite them to the game you are hosting. = 邀请对方加入你主持的游戏。
 Remove this friend (asks first). = 移除此好友（会先确认）。
+Take back your friend request. = 撤回你发出的好友请求。
 Remove this friend? = 移除此好友？
 Yes, remove = 是，移除
 Close the running game first, then press JOIN again. = 请先关闭正在运行的游戏，然后再按“加入”。

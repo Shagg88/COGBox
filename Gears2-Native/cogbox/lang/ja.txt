@@ -1415,6 +1415,7 @@ Join their game. = 相手のゲームに参加します。
 Set up this game in COGBox to join. = 参加するには COGBox でこのゲームをセットアップしてください。
 Invite them to the game you are hosting. = あなたがホストしているゲームに招待します。
 Remove this friend (asks first). = このフレンドを削除します (先に確認します)。
+Take back your friend request. = 送ったフレンドリクエストを取り消します。
 Remove this friend? = このフレンドを削除しますか?
 Yes, remove = はい、削除します
 Close the running game first, then press JOIN again. = 先に起動中のゲームを閉じてから、もう一度「参加」を押してください。

@@ -24,6 +24,9 @@
   happened twice, and the slower copy crashed the same way both times, so it did not help. Each game now has just the
   one, faster program. When you update, the old copies are moved to the `_old-files` folder like other old program files
   (safe to delete).
+- **Social: take back a friend request** (launcher's SOCIAL tab and the in-game Social page): a request you sent
+  ("Waiting for them to accept") now has a **CANCEL** button, so a request to an account nobody uses any more no
+  longer sits there for ever. Suggested in GitHub #332.
 
 ### Fixes
 - **Gears 3 no longer throws away its campaign progress and options when your online account changes** (GitHub #329):

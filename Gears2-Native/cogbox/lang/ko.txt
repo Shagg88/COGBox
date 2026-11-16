@@ -1415,6 +1415,7 @@ Join their game. = 친구의 게임에 참가합니다.
 Set up this game in COGBox to join. = 참가하려면 COGBox에서 이 게임을 설정하세요.
 Invite them to the game you are hosting. = 내가 호스트하는 게임에 초대합니다.
 Remove this friend (asks first). = 이 친구를 삭제합니다(먼저 묻습니다).
+Take back your friend request. = 보낸 친구 요청을 취소합니다.
 Remove this friend? = 이 친구를 삭제할까요?
 Yes, remove = 예, 삭제
 Close the running game first, then press JOIN again. = 먼저 실행 중인 게임을 닫은 다음 참가를 다시 누르세요.

@@ -1415,6 +1415,7 @@ Join their game. = Присоединиться к его игре.
 Set up this game in COGBox to join. = Настройте эту игру в COGBox, чтобы присоединиться.
 Invite them to the game you are hosting. = Пригласить в игру, которую вы хостите.
 Remove this friend (asks first). = Удалить этого друга (сначала спросит).
+Take back your friend request. = Отозвать ваш запрос в друзья.
 Remove this friend? = Удалить этого друга?
 Yes, remove = Да, удалить
 Close the running game first, then press JOIN again. = Сначала закройте запущенную игру, затем снова нажмите ПРИСОЕДИНИТЬСЯ.
