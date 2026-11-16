@@ -184,7 +184,9 @@ live at once.
 - The server keeps the files of the last [3] versions of a mod; older versions' files are deleted.
 
 **Uploading.** The upload goes in pieces of [16 MiB]. If your connection drops or you close COGBox, publishing the same
-folder or zip again resumes where it stopped. An unfinished upload expires after [24 hours].
+folder or zip again resumes where it stopped (a folder that changed meanwhile is packed and sent again). An unfinished
+upload expires after [24 hours]; **Discard the upload** after a cancel gives it up at once, so it no longer counts
+toward your uploads and space.
 
 **Updates.** To update a mod, publish again on the Creator tab: it is a new version of the same mod, and its game can't
 change. A second mod with the same name and game from the same creator is refused, so publish a change as a new version

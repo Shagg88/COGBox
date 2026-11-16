@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -26,17 +27,29 @@ HttpResult fab_get_file(const ServerUrl& server, const std::string& path, size_t
 struct FabProgress {
     std::atomic<int64_t> done{0}, total{0};
     std::atomic<bool> cancel{false};
+    std::atomic<int> finishing_polls{0};   // an upload: how often the server answered "still checking" (all sent by then)
 };
 
 // Publishes zip_path (a new mod when mod_id is 0, else a new version of that mod) with meta_json (the upload's meta
 // object: name, game, type, version, short_desc, long_desc, tags, notes ...) and 1-6 screenshots (PNG / JPEG).
 // The zip is read a chunk at a time, never whole. An upload that stopped (cancelled, closed, offline) is remembered in
 // <state dir>\uploads.json and the next call for the same file (same path, size and SHA-256) on the same server goes on
-// from the chunks the server already has; an expired session starts again. "" on success (*mod_out = the mod's id),
-// else the problems, one per line ("cancelled" when cancelled).
+// from the chunks the server already has; an expired session starts again. Once every chunk is there, POST finish starts
+// the server's checks and GET /uploads/:id is asked every 2 s until it says done (published) or failed (the problems;
+// the session is then deleted). A lost answer to the finish is followed by that GET before anything else; a remembered
+// session the server is finishing, or has published, is followed and never sent again. A 429 waits for its Retry-After
+// (2 s without one, 60 s at most a time, 30 min in all) and is not counted as a failure. "" on success (*mod_out = the
+// mod's id), else the problems, one per line ("cancelled" when cancelled). Whether the session is kept for a resume
+// afterwards: fab_upload_remembered.
 std::string fab_upload(const ServerUrl& server, const SocialAccount& account, const std::string& meta_json, int64_t mod_id,
                        const std::string& zip_path, const std::vector<std::string>& screenshot_paths, FabProgress& progress,
                        int64_t* mod_out);
+
+// Whether a session of this zip on this server and account is remembered (a publish of it again resumes).
+bool fab_upload_remembered(const ServerUrl& server, const SocialAccount& account, const std::string& zip_path);
+// Gives up the remembered sessions of this zip: each is deleted on the server (it stops counting toward the creator's
+// daily uploads and quota) and forgotten. A session the server is still finishing answers 409 and is kept (false then).
+bool fab_upload_discard(const ServerUrl& server, const SocialAccount& account, const std::string& zip_path);
 
 // Downloads url (a full address: fab_full_url) to dest_path through <dest>.part, going on from an existing part file
 // with a Range request (the part is hashed again first). <dest>.part.json beside it holds the sha256 and size the part
@@ -54,3 +67,6 @@ std::string fab_full_url(const std::string& server_url, const std::string& url);
 // Where uploads.json is kept: <COGBox>\fabricator (the launcher's folder) unless set (tests).
 std::string fab_state_dir();
 void fab_set_state_dir(const std::string& dir);
+// Tests only: for a request drop(method, path) answers true for, the request is sent and its answer thrown away (as if
+// the connection broke before the answer came). Empty: none.
+void fab_set_test_drop_answer(std::function<bool(const std::string& method, const std::string& path)> drop);

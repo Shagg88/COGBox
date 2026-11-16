@@ -52,32 +52,13 @@ static std::string installed_folder(int g, int64_t mod_id)   // the Mods tab fol
     return "";
 }
 
-static std::string check(int g, const FabLibraryItem &item, const std::string &zip)
+static std::string check_zip(const FabInstallPlan &p)
 {
-    const std::string key = game_def(g).key;
-    if (item.id <= 0) return "This isn't a Fabricator mod.";
-    if (!item.game.empty() && item.game != key) return "This mod is for another game.";
-    const std::vector<std::string> p = fab_check_zip(zip, key);
-    if (p.empty()) return "";
-    std::string s = "The mod can't be installed: " + p[0];
-    for (size_t i = 1; i < p.size() && i < 3; i++) s += "; " + p[i];
+    const std::vector<std::string> v = fab_check_zip(p.zip, game_def(p.g).key);
+    if (v.empty()) return "";
+    std::string s = "The mod can't be installed: " + v[0];
+    for (size_t i = 1; i < v.size() && i < 3; i++) s += "; " + v[i];
     return s + ".";
-}
-
-// <dest>.partial: the zip unpacked, with its record; "" = ready to be moved into place
-static std::string unpack_beside(App &a, int g, const FabLibraryItem &item, const std::string &zip, const std::string &dest)
-{
-    const std::string part = dest + ".partial";
-    mods_remove_tree(widen(part));   // what an earlier, failed try left
-    if (present(part)) return "An unfinished install of this mod is still there and couldn't be removed.";
-    std::string err;
-    FabInstallRecord rec;
-    rec.mod = item.id; rec.version = item.version_id; rec.version_text = item.version; rec.sha256 = item.sha256;
-    if (!mods_unpack_zip(a, g, zip, part, true, err) || !fab_write_record(part, rec)) {
-        mods_remove_tree(widen(part));
-        return err.empty() ? "Couldn't write the mod's record (is the disk full?)." : err;
-    }
-    return "";
 }
 
 // <mods>\<folder> (a store mod's, with its record) to the backup folder, replacing an older backup of that folder
@@ -117,50 +98,95 @@ static std::string to_backup(int g, const std::string &folder)
     return "";
 }
 
-std::string fab_install(App &a, int g, const FabLibraryItem &item, const std::string &zip_path)
+std::string fab_install_prepare(App &a, int g, const FabLibraryItem &item, const std::string &zip_path, FabInstallPlan *plan)
 {
     if (a.run.proc) return "Close the game first.";   // the game reads the mods folder while it runs
-    std::string e = check(g, item, zip_path);
-    if (!e.empty()) return e;
-    if (!installed_folder(g, item.id).empty()) return fab_update(a, g, item, zip_path);
-    std::string base = mod_folder_chars(item.name);   // the character rule first, then the hidden-name guard
-    while (!base.empty() && (base[0] == '.' || base[0] == ' ')) base.erase(0, 1);   // a name starting with '.' is hidden
-    if (hidden_name(base) && !base.empty()) base += " mod";                       // ... and so is "<name>.partial"
-    const std::string folder = fab_folder_name(base, mods_entries(g), item.id, [&](const std::string &f) { return record_in(g, f); });
-    const std::string dest = join(mods_dir(g), folder);
-    if (present(dest) || hidden_name(folder)) return "A mod folder named \"" + folder + "\" is already there.";
-    if (!make_dirs(mods_dir(g))) return "Couldn't make the mods folder (is the disk full?).";
-    e = unpack_beside(a, g, item, zip_path, dest);
-    if (!e.empty()) return e;
-    if (!MoveFileExW(widen(dest + ".partial").c_str(), widen(dest).c_str(), 0)) {
-        mods_remove_tree(widen(dest + ".partial"));
-        return "The unpacked mod couldn't be moved into place.";
+    if (item.id <= 0) return "This isn't a Fabricator mod.";
+    if (!item.game.empty() && item.game != game_def(g).key) return "This mod is for another game.";
+    FabInstallPlan p;
+    p.g = g;
+    p.item = item;
+    p.zip = zip_path;
+    p.data_dir = a.st[g].dataDir;
+    p.folder = installed_folder(g, item.id);
+    p.update = !p.folder.empty();
+    if (!p.update) {
+        std::string base = mod_folder_chars(item.name);   // the character rule first, then the hidden-name guard
+        while (!base.empty() && (base[0] == '.' || base[0] == ' ')) base.erase(0, 1);   // a name starting with '.' is hidden
+        if (hidden_name(base) && !base.empty()) base += " mod";                       // ... and so is "<name>.partial"
+        p.folder = fab_folder_name(base, mods_entries(g), item.id, [&](const std::string &f) { return record_in(g, f); });
+        if (present(join(mods_dir(g), p.folder)) || hidden_name(p.folder)) return "A mod folder named \"" + p.folder + "\" is already there.";
+        if (!make_dirs(mods_dir(g))) return "Couldn't make the mods folder (is the disk full?).";
     }
-    mods_turn_on_last(a, g, folder);
+    *plan = p;
     return "";
 }
 
-std::string fab_update(App &a, int g, const FabLibraryItem &item, const std::string &zip_path)
+// <folder>.partial: the zip checked and unpacked, with its record; "" = ready to be moved into place
+std::string fab_install_unpack(const FabInstallPlan &p)
 {
-    if (a.run.proc) return "Close the game first.";
-    std::string e = check(g, item, zip_path);
+    if (p.g < 0 || p.folder.empty() || hidden_name(p.folder)) return "The install wasn't prepared.";
+    std::string e = check_zip(p);
     if (!e.empty()) return e;
-    const std::string folder = installed_folder(g, item.id);
-    if (folder.empty()) return fab_install(a, g, item, zip_path);   // not there (any more): a new install
-    const std::string dest = join(mods_dir(g), folder), part = dest + ".partial";
-    e = unpack_beside(a, g, item, zip_path, dest);
-    if (!e.empty()) return e;
-    e = to_backup(g, folder);
-    if (!e.empty()) { mods_remove_tree(widen(part)); return e; }
+    const std::string part = join(mods_dir(p.g), p.folder) + ".partial";
+    mods_remove_tree(widen(part));   // what an earlier, failed try left
+    if (present(part)) return "An unfinished install of this mod is still there and couldn't be removed.";
+    std::string err;
+    FabInstallRecord rec;
+    rec.mod = p.item.id; rec.version = p.item.version_id; rec.version_text = p.item.version; rec.sha256 = p.item.sha256;
+    if (!mods_unpack_zip_in(p.data_dir, p.zip, part, true, err) || !fab_write_record(part, rec)) {
+        mods_remove_tree(widen(part));
+        return err.empty() ? "Couldn't write the mod's record (is the disk full?)." : err;
+    }
+    return "";
+}
+
+void fab_install_abandon(const FabInstallPlan &p)
+{
+    if (p.g >= 0 && !p.folder.empty()) mods_remove_tree(widen(join(mods_dir(p.g), p.folder) + ".partial"));
+}
+
+std::string fab_install_commit(App &a, const FabInstallPlan &p)
+{
+    if (a.run.proc) return "Close the game first.";   // the .partial waits for the game to close
+    const int g = p.g;
+    const std::string dest = join(mods_dir(g), p.folder), part = dest + ".partial";
+    auto drop = [&](const std::string &e) { mods_remove_tree(widen(part)); return e; };
+    {   // the unpacked folder is this plan's (its record), and the mods folder is still as the plan saw it
+        auto r = plain_dir(attrs_of(part)) ? fab_read_record(part) : std::nullopt;
+        if (!r || r->mod != p.item.id) return drop("The unpacked mod isn't there any more - get it again.");
+    }
+    const std::string now = installed_folder(g, p.item.id);
+    if (now != (p.update ? p.folder : std::string())) return drop("The mods folder changed during the install - get the mod again.");
+    if (!p.update) {
+        if (present(dest)) return drop("A mod folder named \"" + p.folder + "\" is already there.");
+        if (!MoveFileExW(widen(part).c_str(), widen(dest).c_str(), 0)) return drop("The unpacked mod couldn't be moved into place.");
+        mods_turn_on_last(a, g, p.folder);
+        return "";
+    }
+    const std::string e = to_backup(g, p.folder);
+    if (!e.empty()) return drop(e);
     // the same folder name: CogBox.ini keeps its on/off state and its place in the order
     if (!MoveFileExW(widen(part).c_str(), widen(dest).c_str(), 0)) {
-        const bool back = MoveFileExW(widen(join(join(mods_dir(g), kBackup), folder)).c_str(), widen(dest).c_str(), 0) != 0;
+        const bool back = MoveFileExW(widen(join(join(mods_dir(g), kBackup), p.folder)).c_str(), widen(dest).c_str(), 0) != 0;
         mods_remove_tree(widen(part));
         return back ? "The new version couldn't be moved into place - the installed one is kept."
                     : "The new version couldn't be moved into place - the installed one is in mods\\.fabricator-backup.";
     }
     return "";
 }
+
+std::string fab_install(App &a, int g, const FabLibraryItem &item, const std::string &zip_path)
+{
+    FabInstallPlan p;
+    std::string e = fab_install_prepare(a, g, item, zip_path, &p);
+    if (e.empty()) e = fab_install_unpack(p);
+    if (e.empty()) e = fab_install_commit(a, p);
+    if (e == "Close the game first.") fab_install_abandon(p);   // (a synchronous install doesn't wait)
+    return e;
+}
+
+std::string fab_update(App &a, int g, const FabLibraryItem &item, const std::string &zip_path) { return fab_install(a, g, item, zip_path); }
 
 std::string fab_uninstall(App &a, int g, int64_t mod_id)
 {

@@ -208,6 +208,9 @@ bool mods_add_zip(App &a, int game, const std::string &zipPath, std::string &err
 // left out, the real inflated bytes counted against the limits (8 GiB, 50 000 files); stripTop takes off a single top
 // folder that isn't one of the game's own. false + err (no file paths in it) on a problem; files already written stay.
 bool mods_unpack_zip(App &a, int game, const std::string &zipPath, const std::string &folder, bool stripTop, std::string &err);
+// The same without App, for a worker thread: dataDir is the game's data folder (App::st[game].dataDir, read on the UI
+// thread), which decides whether a single top folder is the game's own.
+bool mods_unpack_zip_in(const std::string &dataDir, const std::string &zipPath, const std::string &folder, bool stripTop, std::string &err);
 void mods_store(App &a, int game, const std::vector<ModItem> &v);   // the order and on/off state, as listed
 void mods_turn_on_last(App &a, int game, const std::string &folder);   // a new mod: on, last in the order
 void mods_remove_tree(const std::wstring &dir);   // only a folder COGBox made itself (a .partial unpacking, a backup)

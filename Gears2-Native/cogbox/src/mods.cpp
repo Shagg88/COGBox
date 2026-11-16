@@ -300,7 +300,7 @@ static bool device_name(const std::string &comp)   // CON, NUL, COM1 ... (also "
 struct ZipEntry { mz_uint index; std::string rel; };   // rel: under the mod's folder, '\' separated
 struct ZipPlan { std::vector<ZipEntry> files; std::string top; };   // top: the single top folder taken off ("" = none)
 
-static bool zip_plan(App &a, int g, ZipReader &zr, bool stripTop, ZipPlan &plan, std::string &err)
+static bool zip_plan(const std::string &dataDir, ZipReader &zr, bool stripTop, ZipPlan &plan, std::string &err)
 {
     const mz_uint n = mz_zip_reader_get_num_files(&zr.z);
     if (n == 0 || n > kUnpackMaxFiles) { err = "The zip is empty or too large."; return false; }
@@ -325,7 +325,7 @@ static bool zip_plan(App &a, int g, ZipReader &zr, bool stripTop, ZipPlan &plan,
     }
     if (declared > kUnpackMaxBytes) { err = "The zip unpacks to more than 8 GB - not added."; return false; }
     // is the single top folder the mod's own, or one of the game's (GearGame...)? The game's own: keep it.
-    if (common.empty() || (!a.st[g].dataDir.empty() && dir_exists(join(a.st[g].dataDir, common)))) oneTop = false;
+    if (common.empty() || (!dataDir.empty() && dir_exists(join(dataDir, common)))) oneTop = false;
     plan.top = stripTop && oneTop ? common : "";
     static const std::set<std::string> programs = {".exe", ".dll", ".xex", ".xexp", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".msi", ".scr", ".com", ".lnk"};
     for (mz_uint i = 0; i < n; i++) {
@@ -358,10 +358,15 @@ static size_t unpack_cb(void *ud, mz_uint64, const void *buf, size_t len)
 
 bool mods_unpack_zip(App &a, int g, const std::string &zipPath, const std::string &folder, bool stripTop, std::string &err)
 {
+    return mods_unpack_zip_in(a.st[g].dataDir, zipPath, folder, stripTop, err);
+}
+
+bool mods_unpack_zip_in(const std::string &dataDir, const std::string &zipPath, const std::string &folder, bool stripTop, std::string &err)
+{
     ZipReader zr(zipPath);
     if (!zr.ok) { err = "This file isn't a zip COGBox can read."; return false; }
     ZipPlan plan;
-    if (!zip_plan(a, g, zr, stripTop, plan, err)) return false;
+    if (!zip_plan(dataDir, zr, stripTop, plan, err)) return false;
     if (!dir_exists(folder) && !make_dirs(folder)) { err = "Couldn't make the mod's folder (is the disk full?)."; return false; }
     uint64_t total = 0;
     for (const ZipEntry &e : plan.files) {
@@ -394,7 +399,7 @@ bool mods_add_zip(App &a, int g, const std::string &zipPath, std::string &err)
         ZipReader zr(zipPath);
         if (!zr.ok) { err = "This file isn't a zip COGBox can read."; return false; }
         ZipPlan plan;
-        if (!zip_plan(a, g, zr, true, plan, err)) return false;
+        if (!zip_plan(a.st[g].dataDir, zr, true, plan, err)) return false;
         top = plan.top;
     }
     std::string name = mod_folder_chars(top.empty() ? narrow(std::filesystem::path(widen(zipPath)).stem().wstring()) : top);   // the character rule, shared with the Fabricator's folder names

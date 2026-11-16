@@ -317,6 +317,7 @@ std::string transfer_text(App &a, const FabTransfer &t)
     case FabTransfer::Downloading: return "Downloading " + std::to_string(pct) + "%  (" + human_bytes((uint64_t)done) + " of " + human_bytes((uint64_t)total) + ")";
     case FabTransfer::Downloaded: return a.run.proc ? "Downloaded - installs when the game closes" : "Installing...";
     case FabTransfer::Installing: return "Installing...";
+    case FabTransfer::Unpacked: return a.run.proc ? "Unpacked - installs when the game closes" : "Installing...";
     default: return "";
     }
 }
@@ -974,6 +975,20 @@ std::shared_ptr<FabTransfer> latest_upload(const FabView &v)
     return nullptr;
 }
 
+// A stopped publish whose server session (and packed zip) is kept for a resume: "Discard the upload" gives it up for
+// good, so it stops counting toward the day's uploads and the quota, and the packed zip's space comes back.
+void discard_button(const std::shared_ptr<FabTransfer> &t)
+{
+    if (!t->resumable) return;
+    ImGui::SameLine();
+    const bool made = t->zip_made;
+    if (btn("Discard the upload")) { fab_discard(t); fab_dismiss(t); }
+    tip(made ? "OK keeps what was sent: publishing the same folder again goes on from there. Discard deletes it from the server "
+               "(it stops counting toward today's uploads and your space) and deletes the zip COGBox packed."
+             : "OK keeps what was sent: publishing the same .zip again goes on from there. Discard deletes it from the server "
+               "(it stops counting toward today's uploads and your space).");
+}
+
 void upload_progress(App &a, const std::shared_ptr<FabTransfer> &t)
 {
     if (!t) return;
@@ -1016,7 +1031,7 @@ void upload_progress(App &a, const std::shared_ptr<FabTransfer> &t)
     step("Server checks", ph == FabTransfer::Uploading ? (sent ? 1 : 0) : ph == FabTransfer::Done ? 2 : (up == 3 && total > 0 && done >= total) ? 3 : 0);
     if (running(t)) {
         if (btn("Cancel##up")) fab_cancel(t);
-        tip("What is already sent is kept: publishing the same .zip again goes on from there.");
+        tip("What is already sent is kept: publishing the same folder or .zip again goes on from there.");
     } else if (ph == FabTransfer::Done) {
         note(t->name + " " + tr("is live in the store."), col::good);
         if (btn("Open its page")) open_page(a, t->mod_id);
@@ -1025,10 +1040,12 @@ void upload_progress(App &a, const std::shared_ptr<FabTransfer> &t)
     } else if (ph == FabTransfer::Cancelled) {
         note("Cancelled.", col::dim);
         if (btn("OK##upcancel")) fab_dismiss(t);
+        discard_button(t);
     } else {
         note("Not published:", col::bad);
         for (const std::string &e : fab_transfer_problems(*t)) note("  \xE2\x80\xA2 " + e, col::bad);
         if (btn("OK##upfail")) fab_dismiss(t);
+        discard_button(t);
     }
 }
 

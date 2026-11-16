@@ -16,6 +16,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 using json = nlohmann::json;
 
@@ -25,7 +26,11 @@ constexpr size_t kPiece = 64 * 1024;           // sent and received this much at
 constexpr size_t kMaxAnswer = 1u << 20;        // an answer read into memory (JSON): at most this much
 constexpr size_t kMaxScreen = 5u << 20;        // the server takes up to 4 MB
 constexpr int64_t kMaxChunk = 256ll << 20;   // a chunk is held in memory: the server's setting is 16 MiB
-constexpr int kMaxRetries = 10;                // busy / rate limited / out-of-step answers in one upload
+constexpr int kMaxRetries = 10;                // busy / out-of-step / damaged answers in one upload (not 429s)
+constexpr int kMaxRateWaitS = 60;              // one 429's wait at most (its Retry-After)
+constexpr int64_t kMaxRateWaitMs = 30ll * 60 * 1000;   // 429 waits in one upload, all told
+constexpr int kPollMs = 2000;                  // how often the server is asked how its finish goes
+constexpr int kMaxLostPolls = 5;               // unanswered asks in a row before giving up (the session is kept)
 
 // ---- SHA-256 with Windows' BCrypt (update.cpp's Hash) ----
 struct Sha256 {
@@ -70,7 +75,16 @@ struct Response {
     bool stopped = false;      // the sink stopped the read
     bool complete = false;     // the whole answer was read
     bool too_big = false;      // a text answer over kMaxAnswer: not read further, not to be trusted
+    int retry_after = -1;      // a 429's Retry-After in seconds (-1: none)
 };
+
+// fab_set_test_drop_answer: tests lose answers on purpose
+std::mutex g_hook_mutex;
+std::function<bool(const std::string&, const std::string&)> g_drop_answer;
+bool drop_answer(const std::string& method, const std::string& path) {
+    std::lock_guard<std::mutex> lock(g_hook_mutex);
+    return g_drop_answer && g_drop_answer(method, path);
+}
 
 Response send_request(const ServerUrl& server, const Request& q) {
     Response res;
@@ -100,6 +114,14 @@ Response send_request(const ServerUrl& server, const Request& q) {
             WinHttpQueryHeaders(r, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
                                 &status, &size, WINHTTP_NO_HEADER_INDEX);
             res.status = (int)status;
+            if (status == 429) {
+                // seconds (an HTTP date is not used by the server: taken as none)
+                wchar_t ra[64] = L"";
+                DWORD n = sizeof ra;
+                if (WinHttpQueryHeaders(r, WINHTTP_QUERY_CUSTOM, L"Retry-After", ra, &n, WINHTTP_NO_HEADER_INDEX) && ra[0] >= L'0' &&
+                    ra[0] <= L'9')
+                    res.retry_after = (int)std::min(wcstoul(ra, nullptr, 10), 3600ul);
+            }
             bool to_sink = false;
             if (q.sink && (status == 200 || status == 206)) {
                 wchar_t range[128] = L"";
@@ -128,7 +150,14 @@ Response send_request(const ServerUrl& server, const Request& q) {
     }
     if (c) WinHttpCloseHandle(c);
     WinHttpCloseHandle(s);
+    if (res.status != 0 && drop_answer(q.method, q.path)) return Response();   // (tests: sent, but no answer)
     return res;
+}
+
+// The server's "error" text ("" when there is none).
+std::string error_of(const Response& r) {
+    json j = json::parse(r.body, nullptr, false);
+    return j.is_object() && j.contains("error") && j["error"].is_string() ? j["error"].get<std::string>() : "";
 }
 
 // What an answer that is not a success means, for the creator: the server's problems / error, else its status.
@@ -190,8 +219,9 @@ struct UploadKey {
     }
 };
 
-// The remembered session for this upload (id empty when none). Sessions of the same file that no longer match it (the
-// file or its details changed) are returned in stale, and forgotten.
+// The remembered session for this upload (id empty when none). This server's and account's sessions that will not be
+// resumed - of the same file that no longer matches (the file or its details changed), or of a file that is gone - are
+// returned in stale (to be deleted on the server), and forgotten.
 Session find_upload(const UploadKey& k, std::vector<std::string>* stale) {
     std::lock_guard<std::mutex> lock(g_state_mutex);
     json j = load_uploads();
@@ -203,7 +233,8 @@ Session find_upload(const UploadKey& k, std::vector<std::string>* stale) {
             s.chunk_bytes = e.value("chunk_bytes", (int64_t)0);
             kept.push_back(e);
         } else if (e.is_object() && e.value("server", "") == k.server && e.value("account", "") == k.account &&
-                   e.value("path", "") == k.path) {
+                   (e.value("path", "") == k.path || !file_exists(e.value("path", "")))) {
+            // the same file changed, or a file that is gone (it can never be resumed): deleted on the server
             stale->push_back(e.value("id", ""));
         } else {
             kept.push_back(e);
@@ -312,6 +343,10 @@ void fab_set_state_dir(const std::string& dir) {
     std::lock_guard<std::mutex> lock(g_dir_mutex);
     g_state_dir = dir;
 }
+void fab_set_test_drop_answer(std::function<bool(const std::string& method, const std::string& path)> drop) {
+    std::lock_guard<std::mutex> lock(g_hook_mutex);
+    g_drop_answer = std::move(drop);
+}
 
 HttpResult fab_call(const ServerUrl& server, const std::string& method, const std::string& path, const std::string& json_body,
                     const SocialAccount* account) {
@@ -354,6 +389,7 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
                        int64_t* mod_out) {
     if (mod_out) *mod_out = 0;
     progress.done = 0;
+    progress.finishing_polls = 0;
     const json meta = json::parse(meta_json, nullptr, false);
     if (!meta.is_object()) return "the mod's details are not valid JSON";
     FileCloser zip{ open_read(zip_path) };
@@ -388,42 +424,88 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
         if (!body.empty()) q.headers = L"Content-Type: application/json\r\n";
         return send_request(server, q);
     };
+    // I3: a 429 waits as long as the server says (Retry-After, else 2 s; at most 60 s a time) and does not count as a
+    // failure; kMaxRateWaitMs in all stops an upload the server keeps refusing. false: cancelled or waited too long
+    // (*problem says which).
+    int64_t rate_waited = 0;
+    auto wait_rate = [&](const Response& r, std::string* problem) {
+        const int ms = r.retry_after >= 0 ? std::max(1, std::min(r.retry_after, kMaxRateWaitS)) * 1000 : 2000;
+        if (rate_waited + ms > kMaxRateWaitMs) {
+            *problem = "the server keeps refusing requests (too many at once): try again later";
+            return false;
+        }
+        rate_waited += ms;
+        if (!wait_unless_cancelled(progress.cancel, ms)) { *problem = "cancelled"; return false; }
+        return true;
+    };
+    // a JSON call that waits out 429s; nullopt (and *problem) when cancelled or refused for too long
+    auto call_rl = [&](const char* method, const std::string& path, const std::string& body,
+                       std::string* problem) -> std::optional<Response> {
+        for (;;) {
+            Response r = call(method, path, body);
+            if (r.status != 429) return r;
+            if (!wait_rate(r, problem)) return std::nullopt;
+        }
+    };
+    // the server says it is published: forgotten here, and the session deleted (best effort: it expires anyway)
+    auto published = [&](const std::string& id, const json& j) {
+        forget_upload(id);
+        call("DELETE", base + "/" + id, "");
+        if (mod_out) *mod_out = j.value("mod_id", (int64_t)0);
+        progress.done = size;
+        return std::string();
+    };
 
     std::string buf;   // one chunk
-    int retries = 0;
-    for (int attempt = 0; attempt < 2; attempt++) {
+    int retries = 0;   // real failures (busy, damaged on the way, out of step) in this upload; 429s do not count
+    for (int attempt = 0; attempt < 3; attempt++) {
         // the session: the remembered one when the server still has it, else a new one
         std::vector<std::string> stale;
         Session s = find_upload(key, &stale);
         for (const std::string& id : stale)
             if (safe_id(id)) call("DELETE", base + "/" + id, "");   // best effort: it expires anyway
         if (!s.id.empty() && (!safe_id(s.id) || s.chunk_bytes <= 0 || s.chunk_bytes > kMaxChunk)) { forget_upload(s.id); s = Session(); }
+        bool finishing = false;   // the server is already checking this session: only ask how it ends
         if (!s.id.empty()) {
-            Response st = call("GET", base + "/" + s.id, "");
-            json j = json::parse(st.body, nullptr, false);
+            std::string problem;
+            auto st = call_rl("GET", base + "/" + s.id, "", &problem);
+            if (!st) return problem;
+            json j = json::parse(st->body, nullptr, false);
             const int64_t want = chunks_for(size, s.chunk_bytes);
-            if (st.status == 200 && j.is_object() && j.value("chunks", (int64_t)0) == want && want > 0 &&
+            const std::string state = st->status == 200 && j.is_object() && j.contains("state") && j["state"].is_string()
+                                          ? j["state"].get<std::string>() : "open";
+            if (st->status == 200 && state == "done") return published(s.id, j);   // an earlier try's lost answer
+            if (st->status == 200 && j.is_object() && j.value("chunks", (int64_t)0) == want && want > 0 &&
                 j.value("chunks_done", (int64_t)-1) >= 0 && j.value("chunks_done", (int64_t)-1) <= want) {
+                // open, finishing, or failed (kept as an open one: its chunks stay, a finish again may work - a server
+                // restart during the finish ends there)
                 s.chunks = want;
                 s.chunks_done = j.value("chunks_done", (int64_t)0);
-            } else if (st.status == 200) {
+                finishing = state == "finishing";
+            } else if (st->status == 200 && state == "finishing") {
+                s.chunks = want;   // never re-uploaded while the server checks it
+                s.chunks_done = want;
+                finishing = true;
+            } else if (st->status == 200) {
                 // a session that does not fit this file (another chunk size, a count that does not add up): a new one
                 call("DELETE", base + "/" + s.id, "");
                 forget_upload(s.id);
                 s = Session();
-            } else if (st.status == 404 || st.status == 410) {
+            } else if (st->status == 404 || st->status == 410) {
                 forget_upload(s.id);
                 s = Session();
             } else {
-                return problem_of(st);
+                return problem_of(*st);
             }
         }
         if (s.id.empty()) {
             json body = { { "meta", meta }, { "size", size }, { "sha256", key.sha256 } };
             body["mod_id"] = mod_id > 0 ? json(mod_id) : json(nullptr);
-            Response st = call("POST", base, body.dump());
-            json j = json::parse(st.body, nullptr, false);
-            if (st.status != 200 || !j.is_object()) return problem_of(st);
+            std::string problem;
+            auto st = call_rl("POST", base, body.dump(), &problem);
+            if (!st) return problem;
+            json j = json::parse(st->body, nullptr, false);
+            if (st->status != 200 || !j.is_object()) return problem_of(*st);
             s.id = j.value("id", "");
             s.chunk_bytes = j.value("chunk_bytes", (int64_t)0);
             s.chunks = j.value("chunks", (int64_t)0);
@@ -433,10 +515,10 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
         }
         const std::string at = base + "/" + s.id;
 
-        // the screenshots (sent again on a resume: the server keeps the newest one at each place)
         Step step = Step::Ok;
         std::string problem;
-        for (size_t i = 0; i < screenshot_paths.size() && step == Step::Ok; i++) {
+        // the screenshots (sent again on a resume: the server keeps the newest one at each place)
+        for (size_t i = 0; !finishing && i < screenshot_paths.size() && step == Step::Ok; i++) {
             if (progress.cancel) return "cancelled";
             std::string img;
             if (!read_file(screenshot_paths[i], img, kMaxScreen)) return "screenshot " + std::to_string(i + 1) + " cannot be read (or is over 4 MB)";
@@ -449,12 +531,25 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
             q.body_len = img.size();
             Response r = send_request(server, q);
             if (r.status == 204) continue;
-            if (r.status == 404 || r.status == 410) step = Step::Gone;
-            else { step = Step::Fail; problem = "screenshot " + std::to_string(i + 1) + ": " + problem_of(r); }
+            if (r.status == 404 || r.status == 410) { step = Step::Gone; break; }
+            if (r.status == 429) {
+                if (!wait_rate(r, &problem)) return problem;
+                i--;
+                continue;
+            }
+            const std::string err = error_of(r);
+            if (r.status == 409 && (err == "finishing" || err == "upload already published")) { finishing = true; break; }
+            if (r.status == 409 && retries++ < kMaxRetries) {   // busy: the same screenshot again
+                if (!wait_unless_cancelled(progress.cancel, 500)) return "cancelled";
+                i--;
+                continue;
+            }
+            step = Step::Fail;
+            problem = "screenshot " + std::to_string(i + 1) + ": " + problem_of(r);
         }
 
         // the chunks, in order, from the first one the server does not have
-        int64_t n = s.chunks_done;
+        int64_t n = finishing ? s.chunks : s.chunks_done;
         progress.done = std::min(size, n * s.chunk_bytes);
         if (step == Step::Ok && n < s.chunks) buf.resize((size_t)s.chunk_bytes);
         while (step == Step::Ok && n < s.chunks) {
@@ -486,11 +581,17 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
             progress.done = from;
             json j = json::parse(r.body, nullptr, false);
             if (r.status == 404 || r.status == 410) { step = Step::Gone; break; }
-            if ((r.status == 409 || r.status == 429) && retries++ < kMaxRetries) {
+            if (r.status == 429) {
+                if (!wait_rate(r, &problem)) return problem;
+                continue;
+            }
+            const std::string err = error_of(r);
+            if (r.status == 409 && (err == "finishing" || err == "upload already published")) { finishing = true; break; }
+            if (r.status == 409 && retries++ < kMaxRetries) {
                 if (j.is_object() && j.contains("chunks_done") && j["chunks_done"].is_number_integer()) {
                     n = std::max<int64_t>(0, std::min(s.chunks, j["chunks_done"].get<int64_t>()));   // out of step: the server says where
                     progress.done = std::min(size, n * s.chunk_bytes);
-                } else if (!wait_unless_cancelled(progress.cancel, r.status == 429 ? 2000 : 500)) {   // busy, or damaged on the way
+                } else if (!wait_unless_cancelled(progress.cancel, 500)) {   // busy, or damaged on the way
                     return "cancelled";
                 }
                 continue;
@@ -500,26 +601,107 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
         }
         if (step == Step::Gone) { forget_upload(s.id); continue; }
         if (step == Step::Fail) return problem;   // the session is kept: the next try goes on from here
+        if (finishing) progress.done = size;
 
-        // publish
-        if (progress.cancel) return "cancelled";
-        Response fin = call("POST", at + "/finish", "");
-        json fj = json::parse(fin.body, nullptr, false);
-        if (fin.status == 200 && fj.is_object()) {
-            forget_upload(s.id);
-            if (mod_out) *mod_out = fj.value("mod_id", (int64_t)0);
-            progress.done = size;
-            return "";
+        // C1: publish. POST finish starts the server's checks (202) and GET says how they end; nothing here waits on one
+        // long request. Every request is short, so the 30 s timeouts stay.
+        bool post = !finishing;   // false: only ask (GET) how the server's finish ends
+        bool ask_now = false;     // the next GET without waiting first (a lost answer: asked before anything else)
+        int lost = 0, refinish = 0;
+        bool resend = false;      // the server is missing chunks: back to sending them
+        for (;;) {
+            if (post) {
+                if (progress.cancel) return "cancelled";
+                Response fin = call("POST", at + "/finish", "");
+                json fj = json::parse(fin.body, nullptr, false);
+                const std::string err = error_of(fin);
+                if (fin.status == 429) {
+                    if (!wait_rate(fin, &problem)) return problem;
+                    continue;
+                }
+                if (fin.status == 200 && fj.is_object() && fj.value("state", "") == "done") return published(s.id, fj);
+                if (fin.status == 202 || (fin.status == 409 && err == "finishing")) { post = false; continue; }
+                if (fin.status == 0) { post = false; ask_now = true; continue; }   // the answer was lost: ask first
+                if (fin.status == 409 && retries++ < kMaxRetries) {   // a chunk or screenshot request still running
+                    if (!wait_unless_cancelled(progress.cancel, 500)) return "cancelled";
+                    continue;
+                }
+                if (fin.status == 404 || fin.status == 410) { step = Step::Gone; break; }
+                if (fin.status == 422 && attempt + 1 < 3) { resend = true; break; }   // chunks missing: the session stays open
+                return problem_of(fin);   // (a 500: the session is kept, publishing again finishes it)
+            }
+            if (!ask_now && !wait_unless_cancelled(progress.cancel, kPollMs)) return "cancelled";
+            ask_now = false;
+            Response st = call("GET", at, "");
+            if (st.status == 429) {
+                if (!wait_rate(st, &problem)) return problem;
+                ask_now = true;
+                continue;
+            }
+            json j = json::parse(st.body, nullptr, false);
+            if (st.status == 404 || st.status == 410) {
+                forget_upload(s.id);
+                return "the upload is no longer on the server (it expired or was removed): publish it again";
+            }
+            if (st.status != 200 || !j.is_object() || !j.contains("state") || !j["state"].is_string()) {
+                // no answer (or not one to read): a few in a row are waited out, the session is kept after that
+                if (++lost >= kMaxLostPolls)
+                    return "no answer from the server while it checks the mod: publish it again to see how it ended";
+                continue;
+            }
+            lost = 0;
+            const std::string state = j["state"].get<std::string>();
+            if (state == "done") return published(s.id, j);
+            if (state == "finishing") {
+                progress.finishing_polls++;
+                continue;   // no overall time limit while the server says it is checking
+            }
+            if (state == "failed") {
+                // refused (or the server restarted meanwhile): the problems are the answer, the session goes
+                call("DELETE", at, "");
+                forget_upload(s.id);
+                std::string out = problem_of(st);
+                return out.rfind("the server answered", 0) == 0 ? "the server could not publish the mod: try again" : out;
+            }
+            // open: the finish never reached the server (a lost request) - asked again, a few times
+            if (refinish++ >= 3) return "the server did not start checking the mod: try again";
+            post = true;
         }
-        if (fin.status == 404 || fin.status == 410) { forget_upload(s.id); continue; }
-        if (fin.status == 422) {
-            // refused: the session's chunks would stay on the server until it expires
-            call("DELETE", at, "");
-            forget_upload(s.id);
-        }
-        return problem_of(fin);
+        if (step == Step::Gone) { forget_upload(s.id); continue; }
+        if (resend) continue;   // the remembered session is found again and its missing chunks sent
     }
     return "the upload expired on the server: try again";
+}
+
+bool fab_upload_remembered(const ServerUrl& server, const SocialAccount& account, const std::string& zip_path) {
+    std::lock_guard<std::mutex> lock(g_state_mutex);
+    const json j = load_uploads();
+    for (const auto& e : j["uploads"])
+        if (e.is_object() && e.value("server", "") == server_key(server) && e.value("account", "") == account.uuid &&
+            e.value("path", "") == zip_path)
+            return true;
+    return false;
+}
+
+bool fab_upload_discard(const ServerUrl& server, const SocialAccount& account, const std::string& zip_path) {
+    std::vector<std::string> ids;
+    {
+        std::lock_guard<std::mutex> lock(g_state_mutex);
+        const json j = load_uploads();
+        for (const auto& e : j["uploads"])
+            if (e.is_object() && e.value("server", "") == server_key(server) && e.value("account", "") == account.uuid &&
+                e.value("path", "") == zip_path)
+                ids.push_back(e.value("id", ""));
+    }
+    bool all = true;
+    for (const std::string& id : ids) {
+        // deleted on the server first; forgotten only when the server no longer has it (a finish still running answers
+        // 409: kept, so the next publish follows it)
+        const int status = safe_id(id) ? fab_call(server, "DELETE", "/api/v1/fabricator/uploads/" + id, "", &account).status : 404;
+        if (status == 204 || status == 200 || status == 404 || status == 410) forget_upload(id);
+        else all = false;
+    }
+    return all;
 }
 
 std::string fab_full_url(const std::string& server_url, const std::string& url) {

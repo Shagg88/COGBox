@@ -2,6 +2,7 @@
 // the pictures. The server's side: tools/master-server/src/fabricator/routes.ts.
 #include "fabricator_state.h"
 #include "fabricator_install.h"
+#include "fabricator_pack.h"
 #include "app.h"
 
 #include "../third_party/miniz/miniz.h"
@@ -77,6 +78,7 @@ Worker &calls() { static Worker *w = new Worker; return *w; }
 Worker &pictures() { static Worker *w = new Worker; return *w; }
 Worker &downloads() { static Worker *w = new Worker; return *w; }
 Worker &uploads() { static Worker *w = new Worker; return *w; }
+Worker &installs() { static Worker *w = new Worker; return *w; }   // a Get's check and unpack (fab_install_unpack)
 
 struct Img {
     int state = 0;   // 0 asked, 1 pixels ready, 2 texture, 3 can't be read
@@ -208,94 +210,6 @@ void save_rating(const std::string &server, int64_t id, int stars)
     write_file(ratings_file(), j.dump(1));
 }
 
-// ---- a folder zipped for publishing (miniz, a file at a time, cancel and progress in between) ----
-struct ReadCtx {
-    FILE *f = nullptr;
-    FabProgress *p = nullptr;
-};
-size_t read_piece(void *opaque, mz_uint64 ofs, void *buf, size_t n)
-{
-    ReadCtx *c = (ReadCtx *)opaque;
-    if (c->p->cancel) return 0;
-    if (_fseeki64(c->f, (__int64)ofs, SEEK_SET) != 0) return 0;
-    const size_t got = fread(buf, 1, n, c->f);
-    c->p->done += (int64_t)got;
-    return got;
-}
-// What goes into the zip: every file under the folder except what COGBox itself keeps beside a mod (fabricator.json,
-// '.'-named entries such as .fabricator-backup, unfinished .partial unpackings). Links (junctions / symlinks) are
-// listed in links: they aren't followed or packed, and the publish says so.
-bool skipped_name(const std::string &n)
-{
-    std::string low = n;
-    for (char &c : low) c = (char)tolower((unsigned char)c);
-    return n.empty() || n[0] == '.' || low == "fabricator.json" || (low.size() >= 8 && low.compare(low.size() - 8, 8, ".partial") == 0);
-}
-void list_files(const std::string &root, const std::string &rel, std::vector<std::pair<std::string, uint64_t>> &out,
-                std::vector<std::string> &links, size_t maxFiles)
-{
-    WIN32_FIND_DATAW fd;
-    HANDLE f = FindFirstFileW(widen(join(rel.empty() ? root : join(root, rel), "*")).c_str(), &fd);
-    if (f == INVALID_HANDLE_VALUE) return;
-    do {
-        const std::string n = narrow(fd.cFileName);
-        if (n == "." || n == ".." || skipped_name(n)) continue;
-        const std::string r = rel.empty() ? n : rel + "\\" + n;
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) { links.push_back(r); continue; }
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) list_files(root, r, out, links, maxFiles);
-        else out.push_back({ r, ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow });
-    } while (out.size() <= maxFiles && FindNextFileW(f, &fd));
-    FindClose(f);
-}
-// "" when written; "cancelled"; else what went wrong (no paths, only names inside the mod). The store's limits
-// (fab_check_zip / checks.ts: 50 000 files, 8 GiB unpacked, 4 GiB packed) stop it early.
-std::string zip_folder(const std::string &dir, const std::string &zip, FabProgress &p)
-{
-    const size_t kMaxFiles = 50000;
-    const uint64_t kMaxUnpacked = 8ull << 30, kMaxPacked = 4ull << 30;
-    std::vector<std::pair<std::string, uint64_t>> files;
-    std::vector<std::string> links;
-    list_files(dir, "", files, links, kMaxFiles);
-    if (!links.empty()) {
-        std::string s = "The folder has links (junctions or symlinks), which aren't packed - copy the files in instead: " + links[0];
-        for (size_t i = 1; i < links.size() && i < 3; i++) s += ", " + links[i];
-        return s + (links.size() > 3 ? ", ..." : "");
-    }
-    if (files.empty()) return "The folder is empty.";
-    if (files.size() > kMaxFiles) return "The folder has over 50000 files - the store's limit.";
-    uint64_t total = 0;
-    for (auto &f : files) total += f.second;
-    if (total > kMaxUnpacked) return "The folder is over 8 GB - the store's limit for a mod unpacked.";
-    p.done = 0;
-    p.total = (int64_t)total;
-    FILE *out = _wfopen(widen(zip).c_str(), L"wb");
-    if (!out) return "The zip for the upload couldn't be made (is the disk full?).";
-    mz_zip_archive z;
-    memset(&z, 0, sizeof z);
-    bool ok = mz_zip_writer_init_cfile(&z, out, 0) != 0;
-    std::string err;
-    for (size_t i = 0; ok && i < files.size(); i++) {
-        if (p.cancel) { err = "cancelled"; ok = false; break; }
-        if (z.m_archive_size > kMaxPacked) { err = "The zip is over 4 GB - the store's limit."; ok = false; break; }
-        std::string name = files[i].first;
-        for (char &c : name) if (c == '\\') c = '/';
-        FILE *in = _wfopen(widen(join(dir, files[i].first)).c_str(), L"rb");
-        if (!in) { err = "A file in the folder couldn't be read: " + name; ok = false; break; }
-        ReadCtx rc{ in, &p };
-        ok = mz_zip_writer_add_read_buf_callback(&z, name.c_str(), read_piece, &rc, files[i].second, nullptr, nullptr, 0, MZ_BEST_SPEED,
-                                                 nullptr, 0, nullptr, 0) != 0;
-        fclose(in);
-        if (!ok) err = p.cancel ? "cancelled" : "The zip for the upload couldn't be written (is the disk full?).";
-    }
-    if (ok) ok = mz_zip_writer_finalize_archive(&z) != 0;
-    if (ok && z.m_archive_size > kMaxPacked) { err = "The zip is over 4 GB - the store's limit."; ok = false; }
-    if (!ok && err.empty()) err = "The zip for the upload couldn't be written (is the disk full?).";
-    mz_zip_writer_end(&z);
-    fclose(out);
-    if (!ok) DeleteFileW(widen(zip).c_str());
-    return ok ? "" : err;
-}
-
 // ---- the jobs ----
 void run_get(const std::shared_ptr<FabTransfer> &t)
 {
@@ -348,28 +262,35 @@ void run_publish(const std::shared_ptr<FabTransfer> &t, const FabPublish &p)
     std::string zip = p.source;
     if (p.folder) {
         t->phase = FabTransfer::Packing;
-        const std::string dir = join(fab_state_dir(), "uploads");
-        make_dirs(dir);
-        std::string base = mod_folder_chars(p.name);
-        if (base.empty()) base = "mod";
-        zip = join(dir, base + "-" + now_stamp() + ".zip");
-        const std::string e = zip_folder(p.source, zip, t->progress);
+        fab_pack_sweep(2 * 24 * 3600, fab_pack_path(p.source));   // packs no session can resume any more (a day on the server)
+        bool reused = false;
+        // a changed folder is packed again: the session of its old zip will never be resumed, so it is deleted
+        const std::string e = fab_pack_folder(p.source, t->progress, &zip, &reused,
+                                              [&] { fab_upload_discard(*c.server, *c.acct, fab_pack_path(p.source)); });
         if (e == "cancelled") { t->phase = FabTransfer::Cancelled; return; }
         if (!e.empty()) { fail(t, { e }); return; }
         t->zip_made = true;
     }
     t->zip = zip;
-    auto drop_zip = [&] { if (t->zip_made) DeleteFileW(widen(zip).c_str()); };
+    // given up for good (refused here or by the server, or published): the session and the packed zip go
+    auto drop = [&] {
+        fab_upload_discard(*c.server, *c.acct, zip);
+        if (t->zip_made) fab_pack_drop(zip);
+    };
     t->phase = FabTransfer::Checking;
     const std::vector<std::string> local = fab_check_zip(zip, p.game_key);
-    if (!local.empty()) { drop_zip(); fail(t, local); return; }
-    if (t->progress.cancel) { drop_zip(); t->phase = FabTransfer::Cancelled; return; }
+    if (!local.empty()) { drop(); fail(t, local); return; }
+    if (t->progress.cancel) { t->resumable = true; t->phase = FabTransfer::Cancelled; return; }
     t->progress.done = 0;
     t->progress.total = 0;
     t->phase = FabTransfer::Uploading;
     int64_t mod = 0;
     const std::string e = fab_upload(*c.server, *c.acct, p.meta_json, p.mod_id, zip, p.screens, t->progress, &mod);
-    drop_zip();   // a zip COGBox packed is made again for another try
+    // kept for the next publish of the same folder or zip while the server keeps its session (cancelled, no answer)
+    const bool kept = !e.empty() && (fab_upload_remembered(*c.server, *c.acct, zip) || e == "cancelled" ||
+                                     e.rfind("no answer", 0) == 0 || e.rfind("the server keeps refusing", 0) == 0);
+    if (kept) t->resumable = true;
+    else if (t->zip_made) fab_pack_drop(zip);
     if (e.empty()) {
         t->mod_id = mod;
         t->phase = FabTransfer::Done;
@@ -386,6 +307,20 @@ void run_publish(const std::shared_ptr<FabTransfer> &t, const FabPublish &p)
         at = n + 1;
     }
     fail(t, lines);
+    fab_load_creator();   // (a refusal after a lost answer, or a publish that did go through: the Creator tab says)
+}
+
+// A Get's install, the long part (the install worker): the zip checked and unpacked into <folder>.partial
+void run_unpack(const std::shared_ptr<FabTransfer> &t)
+{
+    const std::string e = fab_install_unpack(t->plan);
+    if (!e.empty()) {
+        DeleteFileW(widen(t->zip).c_str());
+        fail(t, { e });
+        return;
+    }
+    int ph = FabTransfer::Installing;
+    if (!t->phase.compare_exchange_strong(ph, FabTransfer::Unpacked)) fab_install_abandon(t->plan);   // cancelled meanwhile
 }
 
 // key: the cache's key; source: a store image path (local = false) or a file the player chose (local = true).
@@ -777,7 +712,21 @@ void fab_cancel(const std::shared_ptr<FabTransfer> &t)
     int q = FabTransfer::Queued;
     if (t->phase.compare_exchange_strong(q, FabTransfer::Cancelled)) return;
     int d = FabTransfer::Downloaded;
-    if (t->phase.compare_exchange_strong(d, FabTransfer::Cancelled)) DeleteFileW(widen(t->zip).c_str());
+    if (t->phase.compare_exchange_strong(d, FabTransfer::Cancelled)) { DeleteFileW(widen(t->zip).c_str()); return; }
+    int u = FabTransfer::Unpacked;   // unpacked, waiting for the game to close: the .partial goes (on the install worker)
+    if (t->phase.compare_exchange_strong(u, FabTransfer::Cancelled))
+        installs().post([t] { fab_install_abandon(t->plan); DeleteFileW(widen(t->zip).c_str()); });
+}
+
+void fab_discard(const std::shared_ptr<FabTransfer> &t)
+{
+    if (!t || t->kind != FabTransfer::Upload || active(t->phase) || !t->resumable) return;
+    t->resumable = false;
+    uploads().post([t] {
+        Ctx c = ctx();
+        if (c.server && c.acct && !t->zip.empty()) fab_upload_discard(*c.server, *c.acct, t->zip);
+        if (t->zip_made) fab_pack_drop(t->zip);
+    });
 }
 
 void fab_dismiss(const std::shared_ptr<FabTransfer> &t)
@@ -794,7 +743,7 @@ int fab_transfer_percent()
     for (auto &t : sh().v.transfers) {
         const int ph = t->phase;
         if (!active(ph)) continue;
-        if (ph == FabTransfer::Downloaded || ph == FabTransfer::Installing) return 100;
+        if (ph == FabTransfer::Downloaded || ph == FabTransfer::Installing || ph == FabTransfer::Unpacked) return 100;
         const int64_t total = t->progress.total, done = t->progress.done;
         if ((ph == FabTransfer::Downloading || ph == FabTransfer::Uploading || ph == FabTransfer::Packing) && total > 0)
             return (int)std::min<int64_t>(100, done * 100 / total);
@@ -890,6 +839,11 @@ void fab_state_poll(App &a)
         std::lock_guard<std::mutex> l(sh().mu);
         sh().frame++;
     }
+    // Gets: the folder chosen here, the check and unpack on the install worker, the moves here. One install at a time
+    // (two Gets of mods with the same name would otherwise choose the same folder).
+    bool installing = false;
+    for (auto &t : ts)
+        if (t->kind == FabTransfer::Download && (t->phase == FabTransfer::Installing || t->phase == FabTransfer::Unpacked)) installing = true;
     for (auto &t : ts) {
         if (t->kind != FabTransfer::Download) continue;
         const int ph = t->phase;
@@ -898,21 +852,38 @@ void fab_state_poll(App &a)
                 if (!t->told_close) { t->told_close = true; set_message(a, "Close the game first.", true); }
                 continue;
             }
-            t->phase = FabTransfer::Installing;   // the next frame installs: this one shows "Installing..."
-        } else if (ph == FabTransfer::Installing) {
+            if (installing) continue;
             const int g = game_of_key(t->item.game);
             std::string e = g < 0 ? "This mod is for a game COGBox doesn't know." : g != t->game && t->game >= 0 ? "This mod is for another game." : "";
-            if (e.empty()) e = t->update ? fab_update(a, g, t->item, t->zip) : fab_install(a, g, t->item, t->zip);
-            if (e == "Close the game first.") { t->phase = FabTransfer::Downloaded; continue; }   // a game started meanwhile
+            FabInstallPlan plan;
+            if (e.empty()) e = fab_install_prepare(a, g, t->item, t->zip, &plan);
+            if (e == "Close the game first.") continue;
+            if (!e.empty()) {
+                DeleteFileW(widen(t->zip).c_str());
+                fail(t, { e });
+                continue;
+            }
+            t->plan = plan;   // (read by the worker after the post)
+            int d = FabTransfer::Downloaded;
+            if (!t->phase.compare_exchange_strong(d, FabTransfer::Installing)) continue;   // cancelled this frame
+            installing = true;
+            installs().post([t] { run_unpack(t); });
+        } else if (ph == FabTransfer::Unpacked) {
+            if (a.run.proc) {   // a game started during the unpack: the move waits for it to close
+                if (!t->told_close) { t->told_close = true; set_message(a, "Close the game first.", true); }
+                continue;
+            }
+            const std::string e = fab_install_commit(a, t->plan);
+            if (e == "Close the game first.") continue;
             DeleteFileW(widen(t->zip).c_str());
             {
                 std::lock_guard<std::mutex> l(sh().mu);
                 sh().local_changes++;
             }
             if (e.empty()) {
-                if (g >= 0) env_refresh(a, g);
+                env_refresh(a, t->plan.g);
                 t->phase = FabTransfer::Done;
-                set_message(a, t->name + (t->update ? " is updated." : " is installed and on."), false);
+                set_message(a, t->name + (t->plan.update ? " is updated." : " is installed and on."), false);
             } else fail(t, { e });   // (it says why)
         }
     }
@@ -937,7 +908,7 @@ void fab_state_shutdown()
     pictures().clear();
     const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
     while (std::chrono::steady_clock::now() < until &&
-           !(calls().idle() && pictures().idle() && downloads().idle() && uploads().idle()))
+           !(calls().idle() && pictures().idle() && downloads().idle() && uploads().idle() && installs().idle()))
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     fab_images_free();
 }
