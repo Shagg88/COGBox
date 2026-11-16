@@ -77,6 +77,10 @@
   is now the default there; you can remove that line from `extra-args.txt` (`--gow2_renderer_bc_cpu_over_gpu=false` or
   `--no-gow2_renderer_bc_cpu_over_gpu` gives the 0.6.2 behaviour; an unknown value is logged and treated as the
   default). Gears 1 and 2 are not changed.
+- **Launcher: no more crash now and then when you close COGBox** (GitHub #331, `d3d11.dll_unloaded` in Windows'
+  error log - not confirmed yet): the graphics library the launcher draws with let go of Direct3D 11 while something
+  else (most likely an overlay or capture tool such as Steam, Discord, RivaTuner, Xbox Game Bar or OBS) could still be
+  using it. COGBox now keeps it loaded until it has fully closed. Nothing changes while COGBox is open.
 
 ## 0.6.2
 
