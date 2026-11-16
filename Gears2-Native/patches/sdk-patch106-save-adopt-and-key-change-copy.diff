@@ -1,22 +1,22 @@
-From 701a60a39f62ce8580640eac43756f61188ec8b9 Mon Sep 17 00:00:00 2001
+From a2b9a282df58b318d6d7650c8b73747409ba1013 Mon Sep 17 00:00:00 2001
 From: Shagg <shagg.dev88@gmail.com>
 Date: Sun, 15 Nov 2026 17:02:01 -0800
-Subject: [PATCH] patch106 (GitHub #329, reviews r78 / r79): Gears 3 saves -
- recent runs' keys and --cogbox_save_adopt_key converted with a check; a
- whole, plausible save signed for an unknown key re-signed (copy kept,
+Subject: [PATCH] patch106 (GitHub #329, reviews r78 / r79 / r82): Gears 3
+ saves - recent runs' keys and --cogbox_save_adopt_key converted with a check;
+ a whole, plausible save signed for an unknown key re-signed (copy kept,
  loop-guarded) instead of reset; failed reads never taken for empty files;
  Gears 3 / Judgment saves copied before a run with another signing key, only
  COGBox's own redundant copies ever pruned
 
 ---
- include/rex/system/cogbox_save_sign.h |  45 +-
+ include/rex/system/cogbox_save_sign.h |  49 +-
  src/kernel/xam/net/online_startup.cpp |  37 +-
- src/system/cogbox_save_sign.cpp       | 736 +++++++++++++++++++++++++-
- tests/unit/net/save_resign_test.cpp   | 544 +++++++++++++++++++
- 4 files changed, 1335 insertions(+), 27 deletions(-)
+ src/system/cogbox_save_sign.cpp       | 782 +++++++++++++++++++++++++-
+ tests/unit/net/save_resign_test.cpp   | 662 ++++++++++++++++++++++
+ 4 files changed, 1503 insertions(+), 27 deletions(-)
 
 diff --git a/include/rex/system/cogbox_save_sign.h b/include/rex/system/cogbox_save_sign.h
-index 95b76da..913a5df 100644
+index 95b76da..0b6cf4e 100644
 --- a/include/rex/system/cogbox_save_sign.h
 +++ b/include/rex/system/cogbox_save_sign.h
 @@ -7,11 +7,13 @@
@@ -34,7 +34,7 @@ index 95b76da..913a5df 100644
  
  std::array<uint8_t, 20> CogSaveSignature(uint64_t key, const uint8_t* body, size_t len);
  
-@@ -31,6 +33,47 @@ void CogConvertGears3SaveSigning(const std::filesystem::path& user_data_root, ui
+@@ -31,6 +33,51 @@ void CogConvertGears3SaveSigning(const std::filesystem::path& user_data_root, ui
  void CogReportGears3SaveSigning(const std::filesystem::path& user_data_root, uint64_t profile_xuid, uint64_t run_key,
                                  uint64_t other_key);
  
@@ -44,9 +44,10 @@ index 95b76da..913a5df 100644
 +//
 +// CogAdoptSaveFiles re-signs one set for to_key without knowing its old key (the data is never changed, only the
 +// 20-byte signature), but only a whole, plausible save: PlayerStorage.dat alone (4 KB - 64 KB, not all zero), or the
-+// full profile set 63E83FFF + 63E83FFE + 63E83FFD (each at most 1000 bytes; 63E83FFF holding data, FFE / FFD empty or
-+// not all zero - Gears 3 writes FFD empty; the three written within an hour of each other, as the game writes them
-+// together); every file readable (Refused / ReadFailed otherwise, nothing written). files[0] is first copied to
++// full profile set 63E83FFF + 63E83FFE + 63E83FFD (63E83FFF exactly 1000 bytes, as Gears 3 writes it, and not all
++// zero; FFE / FFD at most 1000 bytes, empty or not all zero - Gears 3 writes FFD empty; 63E83FFF not more than an hour
++// older than FFE / FFD, and FFE / FFD written within an hour of each other - FFF may be newer, as COGBox's own re-signs
++// rewrite only FFF); every file readable (Refused / ReadFailed otherwise, nothing written). files[0] is first copied to
 +// <file>.cogbox-adopted-<stamp> (a new name each time, never replacing anything), then written through
 +// <file>.cogbox-tmp and renamed over the original. AlreadyDone when the set is signed for to_key already.
 +ResignResult CogAdoptSaveFiles(const std::vector<std::filesystem::path>& files, uint64_t to_key);
@@ -64,11 +65,14 @@ index 95b76da..913a5df 100644
 +// When run_key differs from the last run's (none noted counts as a change), every Gears 3 / Judgment save file in place
 +// (PlayerStorage.dat, Judgment's header, the profile settings 63E83FFF/E/D and players 2-4's .p2 - .p4) is copied to
 +// <user_data_root>/_cogbox-save-backups/<nnnnnn>-<stamp>-<old key|first|unknown>-to-<new key>/ under the same relative
-+// path (nnnnnn a sequence number; built in a .cogbox-tmp folder and renamed when whole). Afterwards, while more than 20
-+// copies are there, a copy whose saves are all also in a newer copy (same data; a signature may differ) is removed,
-+// oldest first - never the oldest copy, a "first" one, the one just made, or any folder not named as above. The key is
-+// NOT noted here (CogNoteSaveKey, once the start-up passes are done). A file that can't be read fails the copy (no
-+// folder left). NotApplicable for a user folder of another game (no Gears 3 / Judgment folder). Never throws.
++// path (nnnnnn a sequence number; built in a .cogbox-tmp folder and renamed when whole) - unless the newest copy there
++// already holds every one of those files byte for byte (NotNeeded, no new folder). Afterwards, .cogbox-tmp folders
++// last written more than 10 minutes ago are removed (a younger one may be another instance's copy in progress), and
++// while more than 20 copies are there, a copy whose saves are all also in a newer copy (same data; a signature may
++// differ) is removed, oldest first - never the oldest copy, a "first" one, the one just made, or any folder not named
++// as above. The key is NOT noted here (CogNoteSaveKey, once the start-up passes are done). A file that can't be read
++// fails the copy (no folder left). NotApplicable for a user folder of another game (no Gears 3 / Judgment folder).
++// Never throws.
 +enum class SnapshotResult { NotApplicable, NotNeeded, Copied, Failed };
 +SnapshotResult CogSnapshotSavesOnKeyChange(const std::filesystem::path& user_data_root, uint64_t profile_xuid,
 +                                           uint64_t run_key);
@@ -154,7 +158,7 @@ index ca9a640..c9faeb7 100644
    }
  }
 diff --git a/src/system/cogbox_save_sign.cpp b/src/system/cogbox_save_sign.cpp
-index cff07be..d253352 100644
+index cff07be..b9e9436 100644
 --- a/src/system/cogbox_save_sign.cpp
 +++ b/src/system/cogbox_save_sign.cpp
 @@ -1,9 +1,14 @@
@@ -311,7 +315,7 @@ index cff07be..d253352 100644
    // 0.6.0 review: the backup must hold exactly this file. <file><suffix> is the first copy and is never changed; if it
    // holds something else (an older save, or this save signed the other way after a switch), this file goes to
    // <file><suffix>.last instead, replaced on each switch. At most two backups, so switching never runs out of names.
-@@ -185,6 +258,118 @@ ResignResult CogResignSaveFiles(const std::vector<std::filesystem::path>& files,
+@@ -185,6 +258,121 @@ ResignResult CogResignSaveFiles(const std::vector<std::filesystem::path>& files,
    return ResignResult::Resigned;
  }
  
@@ -322,10 +326,14 @@ index cff07be..d253352 100644
 +// signature sits in FFF and covers the other two), each at most 1000 bytes (the XDK's limit for a title setting).
 +// Review r79 R6: Gears 3 TU6 writes 63E83FFF at 1000 bytes, 63E83FFE at 0-210 bytes and 63E83FFD at 0 bytes (COGBox
 +// and player logs, "save: written 4D5308AB\profile\User\63E83FFx"), so only 63E83FFF must hold data: FFE / FFD may be
-+// empty, but not a non-empty all-zero file. The game writes the three together, within milliseconds of each other, so
-+// a set whose files were written more than an hour apart is not one save (63E83FFF put back from one backup, FFE / FFD
-+// from another) and is refused: Gears 3 would read FFF's options with another save's FFE. A time that can't be read
-+// doesn't refuse the set.
++// empty, but not a non-empty all-zero file. Review r82 L4: every 63E83FFF write with data in those logs (181) is exactly
++// 1000 bytes, so on this unchecked path FFF must be exactly 1000 bytes (a torn or foreign file is refused; the checked
++// conversions take any size). The game writes the three together, within milliseconds of each other. Review r82 M1:
++// COGBox's own re-signs (patches 58 / 79 / 106, and adoption) rewrite 63E83FFF only, and the game doesn't write the
++// profile every session, so FFF newer than FFE / FFD is normal. FFF more than an hour OLDER than FFE or FFD (FFF put
++// back from an older backup over the game's newer reset files), or FFE and FFD more than an hour apart (only the game
++// writes those, together), is a set put together from two times and is refused: Gears 3 would read FFF's options with
++// another save's FFE. A time that can't be read doesn't refuse the set.
 +constexpr size_t kPlayerStorageMin = 4 * 1024, kPlayerStorageMax = 64 * 1024, kSettingMax = 1000;
 +constexpr auto kSetWrittenApart = std::chrono::hours(1);
 +bool AllZero(const uint8_t* p, size_t n) {
@@ -345,8 +353,8 @@ index cff07be..d253352 100644
 +      files[2].filename() != "63E83FFD") {
 +    return "not a whole profile set (63E83FFF, 63E83FFE and 63E83FFD)";
 +  }
-+  if (sizes[0] <= 20 || sizes[0] > kSettingMax || AllZero(all.data() + 20, sizes[0] - 20)) {
-+    return "63E83FFF empty, all zero or over 1000 bytes";
++  if (sizes[0] != kSettingMax || AllZero(all.data() + 20, sizes[0] - 20)) {
++    return "63E83FFF not 1000 bytes (the size Gears 3 writes) or all zero";
 +  }
 +  size_t at = sizes[0];
 +  for (size_t k = 1; k < 3; ++k) {
@@ -354,17 +362,16 @@ index cff07be..d253352 100644
 +    if (sizes[k] && AllZero(all.data() + at, sizes[k])) return "63E83FFE or 63E83FFD all zero";
 +    at += sizes[k];
 +  }
-+  std::error_code ec;
++  std::error_code ec, ec1, ec2;
 +  const auto t0 = std::filesystem::last_write_time(files[0], ec);
-+  if (!ec) {
-+    for (size_t k = 1; k < 3; ++k) {
-+      std::error_code tec;
-+      const auto t = std::filesystem::last_write_time(files[k], tec);
-+      if (!tec && (t - t0 > kSetWrittenApart || t0 - t > kSetWrittenApart)) {
-+        return "63E83FFF, 63E83FFE and 63E83FFD were written more than an hour apart, so they aren't one save (put the "
-+               "three back together, from one backup)";
-+      }
-+    }
++  const auto t1 = std::filesystem::last_write_time(files[1], ec1);
++  const auto t2 = std::filesystem::last_write_time(files[2], ec2);
++  // FFF newer than FFE / FFD is normal (COGBox's re-sign rewrites FFF only); FFF older than them, or FFE and FFD
++  // apart (only the game writes those, together), is a set put together from two times.
++  if ((!ec && !ec1 && t1 - t0 > kSetWrittenApart) || (!ec && !ec2 && t2 - t0 > kSetWrittenApart) ||
++      (!ec1 && !ec2 && (t1 - t2 > kSetWrittenApart || t2 - t1 > kSetWrittenApart))) {
++    return "63E83FFF is more than an hour older than 63E83FFE / 63E83FFD, or those two were written more than an hour "
++           "apart, so they aren't one save (put the three back together, from one backup)";
 +  }
 +  return nullptr;
 +}
@@ -430,7 +437,7 @@ index cff07be..d253352 100644
  namespace {
  // Patch 101: the Gears 3 save sets under root (PlayerStorage.dat, then each profile-settings set), in signing order.
  std::vector<std::vector<std::filesystem::path>> Gears3SaveSets(const std::filesystem::path& root, uint64_t profile_xuid,
-@@ -276,6 +461,151 @@ void CogConvertGears3SaveSigning(const std::filesystem::path& root, uint64_t pro
+@@ -276,6 +464,151 @@ void CogConvertGears3SaveSigning(const std::filesystem::path& root, uint64_t pro
    }
  }
  
@@ -582,7 +589,7 @@ index cff07be..d253352 100644
  namespace {
  std::string CogReadMode(const std::filesystem::path& marker) {
    const auto v = CogReadAll(marker);
-@@ -287,6 +617,25 @@ std::filesystem::path WithSuffix(std::filesystem::path p, const std::string& suf
+@@ -287,6 +620,25 @@ std::filesystem::path WithSuffix(std::filesystem::path p, const std::string& suf
    p += suffix;
    return p;
  }
@@ -608,7 +615,7 @@ index cff07be..d253352 100644
  }  // namespace
  
  ModeSwapResult CogSwapModeFiles(const std::vector<std::filesystem::path>& files, const std::filesystem::path& marker,
-@@ -334,18 +683,7 @@ void CogSwapJudgmentSettings(const std::filesystem::path& root, uint64_t profile
+@@ -334,18 +686,7 @@ void CogSwapJudgmentSettings(const std::filesystem::path& root, uint64_t profile
      if (!std::filesystem::is_directory(title, ec)) {
        return;   // Judgment not played with this user folder (or not this game's folder at all)
      }
@@ -628,7 +635,7 @@ index cff07be..d253352 100644
      const char* mode = online ? "online" : "offline";
      const ModeSwapResult r = CogSwapModeFiles(files, title / "cogbox-settings-mode", mode);
      if (r == ModeSwapResult::Swapped) {
-@@ -358,4 +696,360 @@ void CogSwapJudgmentSettings(const std::filesystem::path& root, uint64_t profile
+@@ -358,4 +699,403 @@ void CogSwapJudgmentSettings(const std::filesystem::path& root, uint64_t profile
    }
  }
  
@@ -642,6 +649,9 @@ index cff07be..d253352 100644
 +constexpr size_t kSnapshotsKept = 20;
 +constexpr uint32_t kSnapshotSeqMax = 999999;
 +constexpr uintmax_t kSnapshotFileMax = 1 << 20, kSnapshotFilesMax = 4096;
++// Review r82 L1: a half-made ".cogbox-tmp" folder is only taken as left over from a crash once it is this old - a
++// younger one may be another instance's copy in progress (Gears 3 and Judgment on one user folder), whatever its number.
++constexpr auto kTmpLeftOverAge = std::chrono::minutes(10);
 +const char* const kSnapshotDir = "_cogbox-save-backups";
 +const char* const kTmpSuffix = ".cogbox-tmp";
 +struct SnapshotName {
@@ -761,17 +771,21 @@ index cff07be..d253352 100644
 +  return true;
 +}
 +// Called after just_made was renamed into place. Removes:
-+// - half-made ".cogbox-tmp" snapshots older than just_made (a newer one may be another instance's, in progress);
++// - half-made ".cogbox-tmp" snapshots last written more than kTmpLeftOverAge ago (left by a crash). A younger one, of
++//   any sequence number, may be another instance's copy in progress and is left alone; one dated in the future (the
++//   clock was put back) waits until the clock passes it;
 +// - while more than kSnapshotsKept snapshots are there, oldest first, a snapshot whose every file is also, with the
 +//   same data, in one newer snapshot - so a copy is only ever removed when another holds the same save. Never the
 +//   oldest snapshot, a "-first-" one or just_made. Snapshots that each hold a different save are all kept.
 +void PruneSnapshots(const std::filesystem::path& dir, const std::filesystem::path& just_made) {
 +  try {
-+    const uint32_t just_seq = ParseSnapshotName(just_made.filename().native()).seq;
++    const auto now = std::filesystem::file_time_type::clock::now();
 +    std::vector<Snapshot> done;
 +    for (auto& s : ListSnapshots(dir)) {
 +      if (s.name.tmp) {
-+        if (s.name.seq < just_seq) {
++        std::error_code tec;
++        const auto t = std::filesystem::last_write_time(s.path, tec);
++        if (!tec && now - t > kTmpLeftOverAge) {
 +          std::error_code rec;
 +          std::filesystem::remove_all(s.path, rec);
 +        }
@@ -808,10 +822,40 @@ index cff07be..d253352 100644
 +    // pruning is housekeeping only: whatever stopped it, the snapshot just made stands
 +  }
 +}
++// One above the highest sequence number there. Review r82 L3: if that would pass 999999 (only a folder put there with
++// that number can do it), the highest free number below instead, so a copy can still be made; 0 if none is free.
 +uint32_t NextSnapshotSeq(const std::filesystem::path& dir) {
-+  uint32_t top = 0;
-+  for (const auto& s : ListSnapshots(dir)) top = std::max(top, s.name.seq);
-+  return top + 1;
++  std::vector<uint32_t> used;
++  for (const auto& s : ListSnapshots(dir)) used.push_back(s.name.seq);
++  const uint32_t top = used.empty() ? 0 : *std::max_element(used.begin(), used.end());
++  if (top < kSnapshotSeqMax) return top + 1;
++  std::sort(used.begin(), used.end());
++  for (uint32_t seq = kSnapshotSeqMax; seq >= 1; --seq) {
++    if (!std::binary_search(used.begin(), used.end(), seq)) return seq;
++  }
++  return 0;
++}
++// Review r82 L2: whether the newest finished snapshot already holds every one of files, byte for byte, at the same
++// relative path - then another copy would only repeat it (a start that failed to note its key, or the key file kept
++// read-only, otherwise makes a copy every start). False when anything can't be read.
++bool NewestSnapshotHolds(const std::filesystem::path& dir, const std::filesystem::path& root,
++                         const std::vector<std::filesystem::path>& files) {
++  const Snapshot* newest = nullptr;
++  const auto all = ListSnapshots(dir);
++  for (const auto& s : all) {
++    if (!s.name.tmp && (!newest || s.name.seq > newest->name.seq)) newest = &s;
++  }
++  if (!newest) return false;
++  for (const auto& f : files) {
++    const auto rel = f.lexically_relative(root);
++    if (rel.empty() || *rel.begin() == "..") continue;   // never copied either
++    const auto kept = newest->path / rel;
++    std::error_code sec;
++    if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(kept, sec)) || sec) return false;
++    std::vector<uint8_t> a, b;
++    if (!CogReadFile(f, &a) || !CogReadFile(kept, &b) || a != b) return false;
++  }
++  return true;
 +}
 +// Review r79 R5: a folder just written can be held for a moment by an antivirus scan (Windows Defender), which fails the
 +// rename; tried four times over about a second.
@@ -911,8 +955,14 @@ index cff07be..d253352 100644
 +      return SnapshotResult::NotNeeded;
 +    }
 +    const auto backups = root / kSnapshotDir;
++    if (NewestSnapshotHolds(backups, root, files)) {
++      REXLOG_INFO("cogbox_save_convert: save signing key {} -> {}: the newest copy in {} already holds these saves; no "
++                  "new copy", from, now, rex::path_to_utf8(backups));
++      return SnapshotResult::NotNeeded;
++    }
 +    std::filesystem::path dir, tmp_dir;
-+    for (uint32_t seq = NextSnapshotSeq(backups), tries = 0; seq <= kSnapshotSeqMax && tries < 100; ++seq, ++tries) {
++    for (uint32_t seq = NextSnapshotSeq(backups), tries = 0; seq >= 1 && seq <= kSnapshotSeqMax && tries < 100;
++         ++seq, ++tries) {
 +      const auto c = backups / fmt::format("{:06}-{}-{}-to-{}", seq, CogStamp(), from, now);
 +      auto t = c;
 +      t += kTmpSuffix;
@@ -990,7 +1040,7 @@ index cff07be..d253352 100644
 +
  }  // namespace rex::system
 diff --git a/tests/unit/net/save_resign_test.cpp b/tests/unit/net/save_resign_test.cpp
-index 1e2c3e4..414c503 100644
+index 1e2c3e4..1bfe26d 100644
 --- a/tests/unit/net/save_resign_test.cpp
 +++ b/tests/unit/net/save_resign_test.cpp
 @@ -2,10 +2,15 @@
@@ -1009,7 +1059,16 @@ index 1e2c3e4..414c503 100644
  #include <vector>
  
  #include <rex/system/cogbox_save_sign.h>
-@@ -117,6 +122,12 @@ TEST_CASE("Save sign: a read-only save stops the run and stays as it was", "[net
+@@ -113,10 +118,21 @@ TEST_CASE("Save sign: switching on and off many times keeps working with at most
+ }
+ 
+ TEST_CASE("Save sign: a read-only save stops the run and stays as it was", "[net][save]") {
++#if !defined(_WIN32)
++  // Review r82 L5: POSIX rename() replaces a read-only file whenever its folder is writable, so this only holds on
++  // Windows (MoveFileEx refuses to replace a read-only file) - the platform the game runs on.
++  SKIP("POSIX rename replaces read-only files; Windows only");
++#endif
+   const auto original = MakeSave(0);
    auto f = FreshFile("resign_readonly", original);
    fs::permissions(f, fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write,
                    fs::perm_options::remove);
@@ -1022,7 +1081,7 @@ index 1e2c3e4..414c503 100644
    CHECK(CogResignSaveFiles({f}, 0, kXuid, ".pre-online") == ResignResult::WriteFailed);
    fs::permissions(f, fs::perms::owner_write, fs::perm_options::add);
    CHECK(ReadFile(f) == original);
-@@ -180,3 +191,536 @@ TEST_CASE("Judgment settings: a copy already set aside is kept, never overwritte
+@@ -180,3 +196,649 @@ TEST_CASE("Judgment settings: a copy already set aside is kept, never overwritte
    CHECK(ReadFile(fs::path(f) += ".cogbox-offline") == Bytes("now"));
    CHECK(ReadFile(fs::path(f) += ".cogbox-offline.old-1") == Bytes("older offline"));
  }
@@ -1058,7 +1117,7 @@ index 1e2c3e4..414c503 100644
 +  return file;
 +}
 +// A profile set FFF + FFE + FFD signed together with key (FFF carries the signature over all three).
-+void WriteProfileSet(const fs::path& dir, uint64_t key, size_t fff = 300, size_t ffe = 200, size_t ffd = 100,
++void WriteProfileSet(const fs::path& dir, uint64_t key, size_t fff = 1000, size_t ffe = 200, size_t ffd = 100,
 +                     uint8_t fill = 0) {
 +  fs::create_directories(dir);
 +  std::vector<uint8_t> a(fff), b(ffe, uint8_t(fill ? fill : 0x22)), c(ffd, uint8_t(fill ? fill : 0x33));
@@ -1188,6 +1247,18 @@ index 1e2c3e4..414c503 100644
 +  const fs::path d1 = SwapDir("adopt_set_big");
 +  WriteProfileSet(d1, 0x2222, 1001);
 +  CHECK(CogAdoptSaveFiles({d1 / "63E83FFF", d1 / "63E83FFE", d1 / "63E83FFD"}, kXuid) == ResignResult::Refused);
++  // review r82 L4: 63E83FFF is always exactly 1000 bytes as Gears 3 writes it; any other size isn't adopted unchecked
++  for (size_t size : {size_t(999), size_t(300), size_t(21)}) {
++    const fs::path d = SwapDir("adopt_set_fff_size");
++    WriteProfileSet(d, 0x2222, size);
++    const auto fff = ReadFile(d / "63E83FFF");
++    CHECK(CogAdoptSaveFiles({d / "63E83FFF", d / "63E83FFE", d / "63E83FFD"}, kXuid) == ResignResult::Refused);
++    CHECK(ReadFile(d / "63E83FFF") == fff);
++    // ...while a checked conversion (known key) takes any size, as before
++    CHECK(CogResignSaveFiles({d / "63E83FFF", d / "63E83FFE", d / "63E83FFD"}, 0x2222, kXuid, ".pre-online") ==
++          ResignResult::Resigned);
++    CHECK(SetSignedFor(d, kXuid));
++  }
 +  const fs::path d2 = SwapDir("adopt_set_zero");
 +  WriteProfileSet(d2, 0x2222);
 +  WriteFile(d2 / "63E83FFE", std::vector<uint8_t>(200, 0));
@@ -1270,6 +1341,7 @@ index 1e2c3e4..414c503 100644
 +  REQUIRE(CogNoteSaveKey(g.root, 0));
 +  CHECK(CogSnapshotSavesOnKeyChange(g.root, kProfile, 0) == SnapshotResult::NotNeeded);   // same key: nothing new
 +  CHECK(WithPrefix(backups, "").size() == 1);
++  WriteFile(g.ps, MakeSave(0));   // the game saved in between (else the newest copy holds these bytes: r82 L2)
 +  CHECK(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid) == SnapshotResult::Copied);
 +  CHECK(WithPrefix(backups, "000002-").size() == 1);
 +  CHECK(WithPrefix(backups, "").size() == 2);
@@ -1339,9 +1411,12 @@ index 1e2c3e4..414c503 100644
 +  const auto save = Signed(0, 6238);
 +  WriteFile(g.ps, save);
 +  const fs::path backups = g.root / "_cogbox-save-backups";
-+  fs::create_directories(backups / (SnapName(3, "20250101") + ".cogbox-tmp"));   // a half-made one from a crash
-+  // 25 copies of the same save, signed for one key or the other (an online / offline toggle each)
-+  for (int k = 1; k <= 25; ++k) MakeSnapshot(g, SnapName(k, "20250101"), Resigned(save, k % 2 ? 0 : kXuid));
++  const fs::path stale = backups / (SnapName(3, "20250101") + ".cogbox-tmp");   // a half-made one from a crash...
++  fs::create_directories(stale);
++  fs::last_write_time(stale, fs::file_time_type::clock::now() - std::chrono::hours(1));   // ...an hour ago (r82 L1)
++  // 25 copies of the same save, signed for one key or the other (an online / offline toggle each); the newest is
++  // signed for the other key, so it doesn't hold today's bytes (r82 L2)
++  for (int k = 1; k <= 25; ++k) MakeSnapshot(g, SnapName(k, "20250101"), Resigned(save, k % 2 ? kXuid : 0));
 +  REQUIRE(CogSnapshotSavesOnKeyChange(g.root, kProfile, 0x1234) == SnapshotResult::Copied);
 +  CHECK(WithPrefix(backups, "").size() == 20);
 +  CHECK(fs::exists(backups / SnapName(1, "20250101")));       // the oldest is always kept
@@ -1349,7 +1424,7 @@ index 1e2c3e4..414c503 100644
 +  CHECK_FALSE(fs::exists(backups / SnapName(7, "20250101")));
 +  CHECK(fs::exists(backups / SnapName(8, "20250101")));
 +  CHECK(WithPrefix(backups, "000026-").size() == 1);           // the one just made
-+  CHECK_FALSE(fs::exists(backups / (SnapName(3, "20250101") + ".cogbox-tmp")));
++  CHECK_FALSE(fs::exists(stale));
 +}
 +
 +TEST_CASE("Save copy: copies holding different saves are never pruned (r79 R2)", "[net][save]") {
@@ -1368,7 +1443,7 @@ index 1e2c3e4..414c503 100644
 +  const fs::path backups = g.root / "_cogbox-save-backups";
 +  // 20 copies dated in the future (a clock that was set wrong, then put right); the oldest holds another save
 +  MakeSnapshot(g, SnapName(1, "20991231", "first"), Signed(0, 6238, 77));
-+  for (int k = 2; k <= 20; ++k) MakeSnapshot(g, SnapName(k, "20991231"), save);
++  for (int k = 2; k <= 20; ++k) MakeSnapshot(g, SnapName(k, "20991231"), Resigned(save, kXuid));   // same save
 +  REQUIRE(CogSnapshotSavesOnKeyChange(g.root, kProfile, 0x1234) == SnapshotResult::Copied);
 +  const auto made = WithPrefix(backups, "000021-");
 +  REQUIRE(made.size() == 1);
@@ -1383,7 +1458,7 @@ index 1e2c3e4..414c503 100644
 +  const auto save = Signed(0, 6238);
 +  WriteFile(g.ps, save);
 +  const fs::path backups = g.root / "_cogbox-save-backups";
-+  for (int k = 1; k <= 25; ++k) MakeSnapshot(g, SnapName(k, "20250101"), save);
++  for (int k = 1; k <= 25; ++k) MakeSnapshot(g, SnapName(k, "20250101"), Resigned(save, kXuid));
 +  const std::vector<fs::path> players = {
 +      backups / "0 my good save before 0.6.3", backups / "1-RAAM done", backups / "My manual backup",
 +      backups / "keep.cogbox-tmp", backups / (SnapName(2, "20250101") + " copy"),
@@ -1508,19 +1583,56 @@ index 1e2c3e4..414c503 100644
 +  CHECK(SetSignedFor(e.prof, kXuid));
 +}
 +
-+TEST_CASE("Save adopt: a profile set put together from different times is refused (r79 R6)", "[net][save]") {
++namespace {
++void SetTimes(const fs::path& prof, fs::file_time_type fff, fs::file_time_type ffe, fs::file_time_type ffd) {
++  fs::last_write_time(prof / "63E83FFF", fff);
++  fs::last_write_time(prof / "63E83FFE", ffe);
++  fs::last_write_time(prof / "63E83FFD", ffd);
++}
++}  // namespace
++
++TEST_CASE("Save adopt: a profile set put together from different times is refused (r79 R6, r82 M1)", "[net][save]") {
 +  G3Root g("adopt_mixed_set");
 +  WriteProfileSet(g.prof, kOldAccount, 1000, 210, 0);
 +  const auto fff = ReadFile(g.prof / "63E83FFF");
-+  fs::last_write_time(g.prof / "63E83FFE", fs::last_write_time(g.prof / "63E83FFF") - std::chrono::hours(48));
-+  CHECK(CogAdoptSaveFiles({g.prof / "63E83FFF", g.prof / "63E83FFE", g.prof / "63E83FFD"}, kXuid) ==
-+        ResignResult::Refused);
++  const std::vector<fs::path> set = {g.prof / "63E83FFF", g.prof / "63E83FFE", g.prof / "63E83FFD"};
++  const auto base = fs::last_write_time(g.prof / "63E83FFE");
++  // 63E83FFF put back from an older backup (its time kept, as Windows copies keep it) over the game's newer reset
++  // FFE / FFD
++  SetTimes(g.prof, base - std::chrono::hours(48), base, base);
++  CHECK(CogAdoptSaveFiles(set, kXuid) == ResignResult::Refused);
 +  CogAdoptGears3Saves(g.root, kProfile, kXuid);
 +  CHECK(ReadFile(g.prof / "63E83FFF") == fff);
-+  // a few minutes apart is still one save
-+  fs::last_write_time(g.prof / "63E83FFE", fs::last_write_time(g.prof / "63E83FFF") - std::chrono::minutes(5));
-+  CHECK(CogAdoptSaveFiles({g.prof / "63E83FFF", g.prof / "63E83FFE", g.prof / "63E83FFD"}, kXuid) ==
-+        ResignResult::Resigned);
++  CHECK(WithPrefix(g.prof, "63E83FFF.cogbox-adopted-").empty());
++  // FFE and FFD from two times (only the game writes those, together)
++  SetTimes(g.prof, base, base, base - std::chrono::hours(48));
++  CHECK(CogAdoptSaveFiles(set, kXuid) == ResignResult::Refused);
++  SetTimes(g.prof, base, base - std::chrono::hours(48), base);
++  CHECK(CogAdoptSaveFiles(set, kXuid) == ResignResult::Refused);
++  CHECK(ReadFile(g.prof / "63E83FFF") == fff);
++  // FFF a few minutes older is still one save
++  SetTimes(g.prof, base - std::chrono::minutes(5), base, base);
++  CHECK(CogAdoptSaveFiles(set, kXuid) == ResignResult::Resigned);
++}
++
++TEST_CASE("Save adopt: 63E83FFF newer than FFE / FFD (COGBox's own re-sign) is still one save (r82 M1 repro)",
++          "[net][save]") {
++  // r82 harness G: the set was written two days ago with key 0; online play switched on (a checked conversion 0 -> an
++  // account, which rewrites FFF only, so FFF is now two days newer); then the user folder went to another PC / an old
++  // backup was put back, and the run's key is one COGBox can't name.
++  G3Root g("adopt_resigned_set");
++  WriteProfileSet(g.prof, 0, 1000, 210, 0);
++  const auto old = fs::file_time_type::clock::now() - std::chrono::hours(48);
++  SetTimes(g.prof, old, old, old);
++  REQUIRE(CogResignSaveFiles({g.prof / "63E83FFF", g.prof / "63E83FFE", g.prof / "63E83FFD"}, 0, kOldAccount,
++                             ".pre-online") == ResignResult::Resigned);
++  REQUIRE(fs::last_write_time(g.prof / "63E83FFF") - fs::last_write_time(g.prof / "63E83FFE") > std::chrono::hours(47));
++  CogAdoptGears3Saves(g.root, kProfile, kXuid);
++  CHECK(SetSignedFor(g.prof, kXuid));
++  // harness G2: after that adoption (FFF rewritten again), yet another unknown key adopts it too
++  CogAdoptGears3Saves(g.root, kProfile, 0x0009000000000DDDull);
++  CHECK(SetSignedFor(g.prof, 0x0009000000000DDDull));
++  CHECK(WithPrefix(g.prof, "63E83FFF.cogbox-adopted-").size() == 2);
 +}
 +
 +TEST_CASE("Save adopt: an adopted save put back by the player is adopted again (r79 R3)", "[net][save]") {
@@ -1549,6 +1661,66 @@ index 1e2c3e4..414c503 100644
 +  // another key (another account, online play switched): adopted again
 +  CogAdoptGears3Saves(g.root, kProfile, 0x0009000000000DDDull);
 +  CHECK(FileSignedFor(g.ps, 0x0009000000000DDDull));
++}
++
++TEST_CASE("Save copy: a copy that would repeat the newest one byte for byte isn't made (r82 L2)", "[net][save]") {
++  G3Root g("snapshot_repeat");
++  WriteFile(g.ps, Signed(0, 6238));
++  WriteProfileSet(g.prof, 0, 1000, 210, 0);
++  const fs::path backups = g.root / "_cogbox-save-backups";
++  // the key is never noted (the key file kept read-only, say): every start sees a key change
++  for (int start = 0; start < 5; ++start) {
++    CHECK(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid) ==
++          (start == 0 ? SnapshotResult::Copied : SnapshotResult::NotNeeded));
++  }
++  CHECK(WithPrefix(backups, "").size() == 1);
++  // one byte different, a file more, or the same save signed for another key (an online toggle): a new copy
++  auto v = Signed(0, 6238);
++  v[100] ^= 1;
++  WriteFile(g.ps, v);
++  CHECK(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid) == SnapshotResult::Copied);
++  WriteFile(g.prof / "63E83FFF.p2", Bytes("player 2 options"));
++  CHECK(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid) == SnapshotResult::Copied);
++  WriteFile(g.ps, Resigned(v, kXuid));
++  CHECK(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid) == SnapshotResult::Copied);
++  CHECK(WithPrefix(backups, "").size() == 4);
++  // only the newest copy counts: back to the first save, which only an older copy holds
++  WriteFile(g.ps, Signed(0, 6238));
++  fs::remove(g.prof / "63E83FFF.p2");
++  CHECK(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid) == SnapshotResult::Copied);
++  CHECK(WithPrefix(backups, "").size() == 5);
++}
++
++TEST_CASE("Save copy: a .cogbox-tmp folder younger than 10 minutes is left alone (r82 L1)", "[net][save]") {
++  G3Root g("snapshot_tmp_age");
++  WriteFile(g.ps, Signed(0, 6238));
++  const fs::path backups = g.root / "_cogbox-save-backups";
++  // another instance (Judgment on the same user folder) building its copy right now, with a lower number
++  const fs::path other = backups / (SnapName(1, "20250101", "first") + ".cogbox-tmp");
++  fs::create_directories(other / "4D530A26");
++  WriteFile(other / "4D530A26" / "half", Bytes("in progress"));
++  REQUIRE(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid) == SnapshotResult::Copied);
++  CHECK(WithPrefix(backups, "000002-").size() == 1);
++  CHECK(ReadFile(other / "4D530A26" / "half") == Bytes("in progress"));
++  // left over from a crash an hour ago: removed with the next copy
++  fs::last_write_time(other, fs::file_time_type::clock::now() - std::chrono::hours(1));
++  WriteFile(g.ps, Signed(0, 6238, 9));
++  REQUIRE(CogSnapshotSavesOnKeyChange(g.root, kProfile, 0x1234) == SnapshotResult::Copied);
++  CHECK_FALSE(fs::exists(other));
++  CHECK(WithPrefix(backups, "000003-").size() == 1);
++}
++
++TEST_CASE("Save copy: a folder numbered 999999 doesn't stop later copies (r82 L3)", "[net][save]") {
++  G3Root g("snapshot_seq_top");
++  WriteFile(g.ps, Signed(0, 6238));
++  const fs::path backups = g.root / "_cogbox-save-backups";
++  MakeSnapshot(g, SnapName(999999, "20250101"), Signed(0, 6238, 42));
++  REQUIRE(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid) == SnapshotResult::Copied);
++  CHECK(WithPrefix(backups, "999998-").size() == 1);
++  WriteFile(g.ps, Signed(0, 6238, 43));
++  REQUIRE(CogSnapshotSavesOnKeyChange(g.root, kProfile, 0x1234) == SnapshotResult::Copied);
++  CHECK(WithPrefix(backups, "999997-").size() == 1);
++  CHECK(fs::exists(backups / SnapName(999999, "20250101")));
 +}
 +
 +TEST_CASE("Save copy: another game's user folder is left alone", "[net][save]") {
