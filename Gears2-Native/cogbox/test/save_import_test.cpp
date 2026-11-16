@@ -106,6 +106,55 @@ int main() {
     put(t / "again2/content/4D5308AB/00000001/S/s.sav", "s3");
     ok = save_import::import(t / "again2", title, t / "user4", "s9", r);
     assert(ok && r.backup_dir == t / "user4/_saves-before-import-s9-2" && get(r.backup_dir / "00000001/S/s.sav") == "s2");
+    // 0.6.4: saves copied into the user folder by hand (find_misplaced / import_misplaced)
+    {
+        const fs::path u = t / "game/user";
+        // what COGBox itself keeps there - never "misplaced"
+        put(u / "B13EBABEBABEBABE/4D5308AB/00000001/Good/g.sav", "good");
+        put(u / "B13EBABEBABEBABE/4D5308AB/Headers/00000001/Good.header", "h");
+        put(u / "4D5308AB/profile/User/63E83FFF", std::string(1000, 'u'));
+        put(u / "0000000000000000/4D5308AB/00000002/SomeDlc/x.bin", "CON dlc");   // DLC packages: not saves
+        put(u / "_saves-before-import-old/00000001/Old/o.sav", "old");
+        put(u / "cogbox-save-key", "k");
+        put(u / "4D5308AA/00000001/Other/o.sav", "other game");                   // another title: left alone
+        assert(save_import::find_misplaced(u, { title }).empty());
+        // hand-copied: another profile's folder (Xenia Canary), older Xenia's layout, another user's progress
+        put(u / "E0300000ABCDEF01/4D5308AB/00000001/Canary/c.sav", "canary");
+        put(u / "4D5308AB/00000001/OldXenia/x.sav", "oldxenia");
+        put(u / "4D5308AB/profile/Bob/63E83FFE", std::string(1000, 'b'));
+        const auto found = save_import::find_misplaced(u, { title });
+        assert(found.size() == 3);
+        r = save_import::Result{};
+        ok = save_import::import_misplaced(u, title, "m1", r);
+        assert(ok && r.saves == 2 && r.settings == 1);
+        assert(get(u / "B13EBABEBABEBABE/4D5308AB/00000001/Canary/c.sav") == "canary");
+        assert(get(u / "B13EBABEBABEBABE/4D5308AB/00000001/OldXenia/x.sav") == "oldxenia");
+        assert(get(u / "B13EBABEBABEBABE/4D5308AB/00000001/Good/g.sav") == "good");    // untouched
+        assert(get(u / "4D5308AB/profile/User/63E83FFE") == std::string(1000, 'b'));
+        assert(get(u / "4D5308AB/profile/User/63E83FFF") == std::string(1000, 'u'));   // untouched
+        // the originals are kept, moved out of the user folder; the user folder is clean now
+        assert(get(t / "game/_saves-found-user-m1/E0300000ABCDEF01/4D5308AB/00000001/Canary/c.sav") == "canary");
+        assert(get(t / "game/_saves-found-user-m1/4D5308AB/00000001/OldXenia/x.sav") == "oldxenia");
+        assert(!fs::exists(u / "E0300000ABCDEF01/4D5308AB/00000001/Canary"));
+        assert(save_import::find_misplaced(u, { title }).empty());
+        assert(get(u / "0000000000000000/4D5308AB/00000002/SomeDlc/x.bin") == "CON dlc");   // DLC untouched
+        assert(get(u / "4D5308AA/00000001/Other/o.sav") == "other game");
+        // nothing there: a clear "nothing found", nothing changed
+        ok = save_import::import_misplaced(u, title, "m2", r);
+        assert(!ok && !r.error.empty() && !fs::exists(t / "game/_saves-found-user-m2"));
+        // something that is not a readable save (a package-looking file that is not one): the import fails and the
+        // file is put back where it was
+        put(u / "B13EBABEBABEBABE/4D5308AB/00000001/broken.bin", "CON not really a package");
+        assert(save_import::find_misplaced(u, { title }).size() == 1);
+        ok = save_import::import_misplaced(u, title, "m3", r);
+        assert(!ok);
+        assert(get(u / "B13EBABEBABEBABE/4D5308AB/00000001/broken.bin") == "CON not really a package");
+        assert(!fs::exists(t / "game/_saves-found-user-m3"));
+        // a regional copy's title ID counts too
+        put(u / "E0300000ABCDEF02/4D5308C8/00000001/Japan/j.sav", "jp");
+        assert(save_import::find_misplaced(u, { title }).size() == 1);              // (broken.bin only)
+        assert(save_import::find_misplaced(u, { title, 0x4D5308C8u }).size() == 2);
+    }
     // 4. a GPD that is not one
     std::vector<std::pair<uint32_t, std::string>> out;
     assert(!save_import::gpd_title_settings(reinterpret_cast<const uint8_t *>("nope"), 4, out));

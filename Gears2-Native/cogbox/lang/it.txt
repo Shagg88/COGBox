@@ -1546,3 +1546,15 @@ Select Chapter: Act {1} {2}, chapters {3} = Seleziona capitolo: Atto {1} {2}, ca
 (one player) = (un giocatore)
 (co-op up to {1}) = (co-op fino a {1})
 its chapters' place in Select Chapter shows once the game's files are in = il posto dei suoi capitoli in Seleziona capitolo si vedrà quando ci saranno i file del gioco
+# 0.6.4: saves on the Gameplay tab, hand-copied saves
+SAVES = SALVATAGGI
+Open saves folder = Apri la cartella dei salvataggi
+Saves copied into the saves folder by hand that the game can't use as they are: {1}. = Salvataggi copiati a mano nella cartella dei salvataggi che il gioco non può usare così come sono: {1}.
+Bring them in = Importali
+Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken from a profile). What you copied is kept as it was, in a folder beside the saves folder. = Li mette al loro posto come fa Importa salvataggi (pacchetti Xbox 360 estratti, progressi del gioco presi da un profilo). Ciò che hai copiato resta com'era, in una cartella accanto a quella dei salvataggi.
+Saves COGBox can't use yet = Salvataggi che COGBox non può ancora usare
+Saves were copied into the saves folder by hand, and the game can't use them as they are (another profile's folder, Xbox 360 packages that aren't unpacked, or another layout). = Sono stati copiati a mano dei salvataggi nella cartella dei salvataggi e il gioco non può usarli così come sono (cartella di un altro profilo, pacchetti Xbox 360 non estratti o un'altra struttura).
+Bring them in now? They are put in place as Import saves does; what you copied is kept as it was, in a folder beside the saves folder. = Importarli ora? Vengono messi al loro posto come con Importa salvataggi; ciò che hai copiato resta com'era, in una cartella accanto a quella dei salvataggi.
+Not now = Non ora
+No saves to bring in were found in the saves folder. = Nella cartella dei salvataggi non sono stati trovati salvataggi da importare.
+The saves could not be moved (is the game or another program using them?). Nothing was changed. = Non è stato possibile spostare i salvataggi (li sta usando il gioco o un altro programma?). Non è stato cambiato nulla.

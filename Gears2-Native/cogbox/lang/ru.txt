@@ -1553,3 +1553,15 @@ Select Chapter: Act {1} {2}, chapters {3} = Выбор главы: Акт {1} {2
 (one player) = (один игрок)
 (co-op up to {1}) = (кооператив до {1})
 its chapters' place in Select Chapter shows once the game's files are in = место его глав в «Выборе главы» появится, когда будут файлы игры
+# 0.6.4: saves on the Gameplay tab, hand-copied saves
+SAVES = СОХРАНЕНИЯ
+Open saves folder = Открыть папку сохранений
+Saves copied into the saves folder by hand that the game can't use as they are: {1}. = Сохранения, вручную скопированные в папку сохранений, которые игра не может использовать в таком виде: {1}.
+Bring them in = Перенести их
+Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken from a profile). What you copied is kept as it was, in a folder beside the saves folder. = Размещает их так же, как «Импорт сохранений» (пакеты Xbox 360 распаковываются, прогресс игры берётся из профиля). Скопированное вами остаётся как было — в папке рядом с папкой сохранений.
+Saves COGBox can't use yet = Сохранения, которые COGBox пока не может использовать
+Saves were copied into the saves folder by hand, and the game can't use them as they are (another profile's folder, Xbox 360 packages that aren't unpacked, or another layout). = Сохранения были вручную скопированы в папку сохранений, и игра не может использовать их в таком виде (папка другого профиля, нераспакованные пакеты Xbox 360 или другая структура).
+Bring them in now? They are put in place as Import saves does; what you copied is kept as it was, in a folder beside the saves folder. = Перенести их сейчас? Они будут размещены так же, как при «Импорте сохранений»; скопированное вами останется как было — в папке рядом с папкой сохранений.
+Not now = Не сейчас
+No saves to bring in were found in the saves folder. = В папке сохранений не найдено сохранений для переноса.
+The saves could not be moved (is the game or another program using them?). Nothing was changed. = Не удалось переместить сохранения (их использует игра или другая программа?). Ничего не изменено.

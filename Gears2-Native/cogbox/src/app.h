@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 #include <windows.h>
 #include <atomic>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -105,6 +106,7 @@ struct App {
     bool padConnected = false;
     bool lastPad = true;              // 0.2.0: the last input came from a controller (hints follow it), else keyboard / mouse
     std::string joinLobby[G_COUNT];   // social step 3: the next start of this game joins that room code (Join friend)
+    bool misplacedAsked[G_COUNT] = {};  // 0.6.4: the hand-copied saves question was asked for this Play (play.cpp)
     bool tuMismatchOk[G_COUNT] = {};  // TU preflight: "Play anyway" chosen for this game (until the launcher closes)
     bool padPs = false;               // job 523: the controller is a PlayStation one (button names: Cross, Circle...)
     // 0.6.3: the Custom controller layout's "press a button" (page.cpp pad_layout_section). padPress = the last controller
@@ -185,6 +187,11 @@ std::vector<std::string> monitor_choices();   // page.cpp: "Default (main screen
 // install.cpp
 void install_start(App &a, const std::string &path, int forGame);
 void import_saves_from(App &a, int game, const std::string &from);   // 0.6.1: page.cpp (Import saves, or a dropped save package)
+// 0.6.4 (Shagg 16 Nov): saves copied into the game's saves folder by hand that the game can't use as they are
+// (save_import::find_misplaced). misplaced_saves: what is there now (cached a few seconds); import_misplaced_saves: brings
+// them in (a message says how it went).
+std::vector<std::filesystem::path> misplaced_saves(App &a, int game);
+void import_misplaced_saves(App &a, int game);
 void install_confirmed(App &a);      // the "replace" question answered yes
 bool drop_is_game_or_update(const std::string &folder);          // 0.2.0: a dropped folder COGBox adds as a copy / update
 std::vector<std::string> dlc_packages_in(const std::string &folder);   // 0.2.0: DLC packages in a dropped folder (3 levels)

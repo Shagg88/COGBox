@@ -244,6 +244,13 @@ static void answered(App &a)
     else if (m.tag == "protonrec" || m.tag == "protonfound") linux_answer(a, m);   // proton049
     else if (m.tag == "tumismatch" && m.answer == 0) { a.tuMismatchOk[m.game] = true; play_start(a, m.game); }
     else if (m.tag == "tumismatch") a.joinLobby[m.game].clear();   // 0.6.0: Cancel drops a pending Join
+    else if (m.tag == "foundsaves") {   // 0.6.4: hand-copied saves; either answer then starts the game
+        if (m.answer == 0) import_misplaced_saves(a, m.game);
+        else { a.ini.set("Saves", std::string("FoundNotNow-") + game_def(m.game).dir, m.data); a.ini.save(); }
+        if (m.answer == 0 || m.answer == 1) play_start(a, m.game);
+        else a.joinLobby[m.game].clear();   // closed without an answer: no start
+        a.misplacedAsked[m.game] = false;
+    }
     else if (m.tag == "achreveal") achievements_reveal_answer(a, m.answer);   // achievements part 4
     else if (m.tag == "socialremove") social_remove_answer(m.answer);   // social step 3
     else if (m.tag == "socialdelete") social_delete_answer(a, m.answer);   // 0.6.0 review: delete the online account

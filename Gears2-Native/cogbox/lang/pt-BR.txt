@@ -1546,3 +1546,15 @@ Select Chapter: Act {1} {2}, chapters {3} = Selecionar capítulo: Ato {1} {2}, c
 (one player) = (um jogador)
 (co-op up to {1}) = (cooperativo até {1})
 its chapters' place in Select Chapter shows once the game's files are in = o lugar dos capítulos em Selecionar capítulo aparece quando os arquivos do jogo estiverem presentes
+# 0.6.4: saves on the Gameplay tab, hand-copied saves
+SAVES = SAVES
+Open saves folder = Abrir pasta de saves
+Saves copied into the saves folder by hand that the game can't use as they are: {1}. = Saves copiados à mão na pasta de saves que o jogo não consegue usar como estão: {1}.
+Bring them in = Trazer para o lugar
+Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken from a profile). What you copied is kept as it was, in a folder beside the saves folder. = Coloca-os no lugar como Importar saves faz (pacotes do Xbox 360 desempacotados, o progresso do jogo tirado de um perfil). O que você copiou fica como estava, em uma pasta ao lado da pasta de saves.
+Saves COGBox can't use yet = Saves que o COGBox ainda não consegue usar
+Saves were copied into the saves folder by hand, and the game can't use them as they are (another profile's folder, Xbox 360 packages that aren't unpacked, or another layout). = Saves foram copiados à mão na pasta de saves, e o jogo não consegue usá-los como estão (pasta de outro perfil, pacotes do Xbox 360 não desempacotados ou outra organização).
+Bring them in now? They are put in place as Import saves does; what you copied is kept as it was, in a folder beside the saves folder. = Trazê-los agora? Eles são colocados no lugar como em Importar saves; o que você copiou fica como estava, em uma pasta ao lado da pasta de saves.
+Not now = Agora não
+No saves to bring in were found in the saves folder. = Nenhum save para trazer foi encontrado na pasta de saves.
+The saves could not be moved (is the game or another program using them?). Nothing was changed. = Não foi possível mover os saves (o jogo ou outro programa está usando-os?). Nada foi alterado.

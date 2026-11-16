@@ -1549,3 +1549,15 @@ Select Chapter: Act {1} {2}, chapters {3} = 챕터 선택: {1}막 {2}, 챕터 {3
 (one player) = (1인용)
 (co-op up to {1}) = (최대 {1}인 협동)
 its chapters' place in Select Chapter shows once the game's files are in = 챕터 선택에서의 위치는 게임 파일이 준비되면 표시됩니다
+# 0.6.4: saves on the Gameplay tab, hand-copied saves
+SAVES = 세이브
+Open saves folder = 세이브 폴더 열기
+Saves copied into the saves folder by hand that the game can't use as they are: {1}. = 세이브 폴더에 직접 복사되어 게임이 그대로는 사용할 수 없는 세이브: {1}개
+Bring them in = 가져오기
+Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken from a profile). What you copied is kept as it was, in a folder beside the saves folder. = 세이브 가져오기와 같은 방식으로 제자리에 넣습니다(Xbox 360 패키지는 풀고, 게임 진행 상황은 프로필에서 가져옴). 복사한 파일은 세이브 폴더 옆 폴더에 그대로 보관됩니다.
+Saves COGBox can't use yet = COGBox가 아직 사용할 수 없는 세이브
+Saves were copied into the saves folder by hand, and the game can't use them as they are (another profile's folder, Xbox 360 packages that aren't unpacked, or another layout). = 세이브가 세이브 폴더에 직접 복사되었지만 게임이 그대로는 사용할 수 없습니다(다른 프로필의 폴더, 풀지 않은 Xbox 360 패키지 또는 다른 구조).
+Bring them in now? They are put in place as Import saves does; what you copied is kept as it was, in a folder beside the saves folder. = 지금 가져올까요? 세이브 가져오기와 같은 방식으로 제자리에 넣으며, 복사한 파일은 세이브 폴더 옆 폴더에 그대로 보관됩니다.
+Not now = 나중에
+No saves to bring in were found in the saves folder. = 세이브 폴더에서 가져올 세이브를 찾지 못했습니다.
+The saves could not be moved (is the game or another program using them?). Nothing was changed. = 세이브를 옮기지 못했습니다(게임이나 다른 프로그램이 사용 중인가요?). 아무것도 바뀌지 않았습니다.

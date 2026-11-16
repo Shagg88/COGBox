@@ -1548,3 +1548,15 @@ Select Chapter: Act {1} {2}, chapters {3} = Seleccionar capítulo: Acto {1} {2},
 (one player) = (un jugador)
 (co-op up to {1}) = (cooperativo hasta {1})
 its chapters' place in Select Chapter shows once the game's files are in = el lugar de sus capítulos en Seleccionar capítulo se verá cuando estén los archivos del juego
+# 0.6.4: saves on the Gameplay tab, hand-copied saves
+SAVES = PARTIDAS GUARDADAS
+Open saves folder = Abrir carpeta de partidas
+Saves copied into the saves folder by hand that the game can't use as they are: {1}. = Partidas copiadas a mano en la carpeta de partidas que el juego no puede usar tal cual: {1}.
+Bring them in = Incorporarlas
+Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken from a profile). What you copied is kept as it was, in a folder beside the saves folder. = Las coloca en su sitio como lo hace Importar partidas (paquetes de Xbox 360 desempaquetados, el progreso del juego tomado de un perfil). Lo que copiaste se conserva tal cual, en una carpeta junto a la carpeta de partidas.
+Saves COGBox can't use yet = Partidas que COGBox aún no puede usar
+Saves were copied into the saves folder by hand, and the game can't use them as they are (another profile's folder, Xbox 360 packages that aren't unpacked, or another layout). = Se copiaron partidas a mano en la carpeta de partidas y el juego no puede usarlas tal cual (carpeta de otro perfil, paquetes de Xbox 360 sin desempaquetar u otra estructura).
+Bring them in now? They are put in place as Import saves does; what you copied is kept as it was, in a folder beside the saves folder. = ¿Incorporarlas ahora? Se colocan en su sitio como con Importar partidas; lo que copiaste se conserva tal cual, en una carpeta junto a la carpeta de partidas.
+Not now = Ahora no
+No saves to bring in were found in the saves folder. = No se encontraron partidas para incorporar en la carpeta de partidas.
+The saves could not be moved (is the game or another program using them?). Nothing was changed. = No se pudieron mover las partidas (¿las está usando el juego u otro programa?). No se cambió nada.

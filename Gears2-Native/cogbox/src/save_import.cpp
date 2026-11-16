@@ -234,6 +234,17 @@ void scan(Work &w, const fs::path &p, int depth, bool chosen) {
 }
 
 struct Moved { fs::path from, to; };  // done moves, to undo
+// removes `dir` and the folders under it when they hold no file at all (bottom-up); never removes a file
+bool remove_empty_dirs(const fs::path &dir) {
+    std::error_code ec;
+    if (!is_folder(dir) || fs::is_symlink(dir, ec)) return false;
+    bool empty = true;
+    std::vector<fs::path> kids;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) kids.push_back(it->path());
+    if (ec) return false;
+    for (const fs::path &k : kids) if (!(is_folder(k) && remove_empty_dirs(k))) empty = false;
+    return empty && fs::remove(dir, ec) && !ec;
+}
 bool move(const fs::path &from, const fs::path &to, std::vector<Moved> &done) {
     std::error_code ec;
     fs::create_directories(to.parent_path(), ec);
@@ -251,6 +262,84 @@ void undo(std::vector<Moved> &done) {
 }
 
 }  // namespace
+
+std::vector<fs::path> find_misplaced(const fs::path &user_dir, const std::vector<uint32_t> &title_ids) {
+    std::vector<fs::path> out;
+    if (!is_folder(user_dir)) return out;
+    std::vector<std::string> hex;
+    for (uint32_t t : title_ids) { char h[16]; std::snprintf(h, sizeof(h), "%08X", t); hex.push_back(h); }
+    auto is_title = [&](const std::string &n) { return std::find(hex.begin(), hex.end(), upper(n)) != hex.end(); };
+    auto gpd = [&](const fs::path &p) {
+        const std::string n = upper(name_of(p));
+        return n.size() == 12 && n.compare(8, 4, ".GPD") == 0 && is_title(n.substr(0, 8)) && is_plain_file(p);
+    };
+    auto any_save = [&](const fs::path &d) {   // a save folder with files, or a package file
+        bool any = false;
+        each_entry(d, [&](const fs::directory_entry &e) { if (!any) any = (is_folder(e.path()) && has_files(e.path())) || (is_plain_file(e.path()) && package_magic(e.path())); });
+        return any;
+    };
+    each_entry(user_dir, [&](const fs::directory_entry &e) {
+        const fs::path p = e.path();
+        const std::string n = name_of(p), un = upper(n);
+        if (is_plain_file(p)) {
+            if (gpd(p) || package_magic(p)) out.push_back(p);
+            return;
+        }
+        if (!is_folder(p) || n.rfind("_", 0) == 0) return;   // _saves-before-import-..., _import-...
+        if (is_hex(n, 16)) {   // a profile (XUID) folder
+            if (un == kProfileXuid) {   // COGBox's own: only packages dropped into its 00000001 folders
+                each_entry(p, [&](const fs::directory_entry &t) {
+                    if (!is_folder(t.path()) || !is_title(name_of(t.path()))) return;
+                    each_entry(t.path() / "00000001", [&](const fs::directory_entry &f) { if (is_plain_file(f.path()) && package_magic(f.path())) out.push_back(f.path()); });
+                });
+                return;
+            }
+            if (un == "0000000000000000") return;   // DLC (content), not saves
+            each_entry(p, [&](const fs::directory_entry &t) {
+                if (is_folder(t.path()) && is_title(name_of(t.path())) && (any_save(t.path() / "00000001") || is_folder(t.path() / "profile"))) out.push_back(t.path());
+                else if (gpd(t.path())) out.push_back(t.path());
+            });
+            return;
+        }
+        if (is_title(n)) {   // <TITLE>: COGBox keeps the game's progress in profile\User; older Xenia kept saves in 00000001
+            if (any_save(p / "00000001")) out.push_back(p / "00000001");
+            each_entry(p / "profile", [&](const fs::directory_entry &u) { if (is_folder(u.path()) && name_of(u.path()) != "User" && has_files(u.path())) out.push_back(u.path()); });
+            return;
+        }
+        each_entry(p, [&](const fs::directory_entry &f) { if (gpd(f.path())) out.push_back(f.path()); });   // a folder with a .gpd in it
+    });
+    return out;
+}
+
+bool import_misplaced(const fs::path &user_dir, uint32_t title_id, const std::string &stamp, Result &r,
+                      const std::vector<fs::path> &own_dirs, const std::vector<uint32_t> &region_titles) {
+    r = Result{};
+    std::vector<uint32_t> ids{title_id};
+    for (uint32_t t : region_titles) if (t != title_id) ids.push_back(t);
+    const std::vector<fs::path> found = find_misplaced(user_dir, ids);
+    if (found.empty()) { r.error = "No saves to bring in were found in the saves folder."; return false; }
+    fs::path hold = user_dir.parent_path() / ("_saves-found-" + name_of(user_dir) + "-" + stamp);
+    for (int n = 2; there(hold); ++n) hold = user_dir.parent_path() / ("_saves-found-" + name_of(user_dir) + "-" + stamp + "-" + std::to_string(n));
+    std::vector<Moved> done;
+    for (const fs::path &f : found) {
+        const fs::path rel = f.lexically_relative(user_dir);
+        if (rel.empty() || *rel.begin() == "..") continue;
+        if (!move(f, hold / rel, done)) {
+            undo(done);
+            r.error = "The saves could not be moved (is the game or another program using them?). Nothing was changed.";
+            return false;
+        }
+    }
+    if (!import(hold, title_id, user_dir, stamp, r, own_dirs, region_titles)) {
+        const std::string why = r.error;
+        undo(done);   // everything back where it was
+        remove_empty_dirs(hold);  // the folders the moves made (empty again); a file left in it keeps it
+        r.error = why;
+        return false;
+    }
+    r.notes.push_back("The files as you put them are kept in " + name_of(hold) + ", beside the saves folder.");
+    return true;
+}
 
 bool gpd_title_settings(const uint8_t *d, size_t n, std::vector<std::pair<uint32_t, std::string>> &out) {
     // XDBF: "XDBF", version, entry table length, entry count, free table length, free count (all big-endian u32);

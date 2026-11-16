@@ -1549,3 +1549,15 @@ Select Chapter: Act {1} {2}, chapters {3} = チャプター選択: 第{1}幕 {2}
 (one player) = （1人用）
 (co-op up to {1}) = （最大{1}人の協力プレイ）
 its chapters' place in Select Chapter shows once the game's files are in = チャプター選択での位置は、ゲームのファイルがそろうと表示されます
+# 0.6.4: saves on the Gameplay tab, hand-copied saves
+SAVES = セーブ
+Open saves folder = セーブフォルダーを開く
+Saves copied into the saves folder by hand that the game can't use as they are: {1}. = 手動でセーブフォルダーにコピーされた、このままではゲームが使えないセーブ: {1}
+Bring them in = 取り込む
+Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken from a profile). What you copied is kept as it was, in a folder beside the saves folder. = 「セーブを取り込む」と同じ方法で配置します（Xbox 360 のパッケージは展開、ゲームの進行状況はプロフィールから取得）。コピーしたものは、セーブフォルダーの隣のフォルダーにそのまま残ります。
+Saves COGBox can't use yet = COGBox がまだ使えないセーブ
+Saves were copied into the saves folder by hand, and the game can't use them as they are (another profile's folder, Xbox 360 packages that aren't unpacked, or another layout). = セーブが手動でセーブフォルダーにコピーされていますが、このままではゲームが使えません（別のプロフィールのフォルダー、展開されていない Xbox 360 パッケージ、または別の構成）。
+Bring them in now? They are put in place as Import saves does; what you copied is kept as it was, in a folder beside the saves folder. = 今すぐ取り込みますか？「セーブを取り込む」と同じ方法で配置され、コピーしたものはセーブフォルダーの隣のフォルダーにそのまま残ります。
+Not now = 今はしない
+No saves to bring in were found in the saves folder. = セーブフォルダーに取り込むセーブは見つかりませんでした。
+The saves could not be moved (is the game or another program using them?). Nothing was changed. = セーブを移動できませんでした（ゲームや別のプログラムが使用中ではありませんか？）。何も変更されていません。

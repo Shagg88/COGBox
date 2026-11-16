@@ -291,6 +291,27 @@ void play_start(App &a, int g, bool prepare)
             return;
         }
     }
+    // 0.6.4 (Shagg 16 Nov): saves the player copied into the saves folder by hand, which the game would not see - asked
+    // once per set of them (a "Not now" is kept in CogBox.ini until what is there changes)
+    {
+        const std::vector<std::filesystem::path> found = misplaced_saves(a, g);
+        if (!found.empty()) {
+            std::string sig;
+            for (const auto &f : found) sig += f.filename().string() + "|";
+            sig = std::to_string(found.size()) + ":" + std::to_string(std::hash<std::string>{}(sig));
+            if (a.ini.get("Saves", std::string("FoundNotNow-") + d.dir) != sig && !a.misplacedAsked[g]) {
+                a.misplacedAsked[g] = true;
+                ask(a, "foundsaves", g, tr("Saves COGBox can't use yet"),
+                    std::string(tr("Saves were copied into the saves folder by hand, and the game can't use them as they are "
+                                   "(another profile's folder, Xbox 360 packages that aren't unpacked, or another layout).")) +
+                        "\n\n" + tr("Bring them in now? They are put in place as Import saves does; what you copied is kept as it was, "
+                                      "in a folder beside the saves folder."),
+                    { tr("Bring them in"), tr("Not now") }, sig);
+                a.joinLobby[g] = joinCode;   // the answer starts the game again (main.cpp)
+                return;
+            }
+        }
+    }
     // this play's own folder: the log, the arguments, any crash report
     std::string logDir = join(game_logs_dir(g), now_stamp());
     make_dirs(logDir);

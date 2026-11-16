@@ -1388,6 +1388,43 @@ static void mods_tab(App &a, int g)
     }
 }
 
+// 0.6.4 (Shagg 16 Nov: "the saves button should be under the gameplay tab"): import, back up and open the saves, and a
+// line when saves copied in by hand are waiting (save_import::find_misplaced) with a button that brings them in.
+static void saves_section(App &a, int g)
+{
+    const GameDef &d = game_def(g);
+    const bool busy = a.job.state.load() == 1, running = a.run.proc != nullptr;
+    ui_section("SAVES");
+    // 0.6.1 (Shagg 13 Nov): the player's own saves from Xenia or an Xbox 360 (save_import.cpp)
+    if (small_button("Import saves...")) {
+        if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
+        else {
+            const std::string from = pick_folder(L"Choose your Xenia content folder, or the Content folder copied from your Xbox 360 (not a whole drive)");
+            if (!from.empty()) import_saves_from(a, g, from);
+        }
+    }
+    ui_tip("Brings your own saves of this game in from Xenia (its content folder) or from an Xbox 360 (the Content folder "
+           "copied from the console's USB stick or hard disk). Saves it replaces are kept in a folder beside them.");
+    ImGui::SameLine();
+    if (small_button("Back up saves")) {
+        if (running) set_message(a, std::string(d.name) + " is running - close it first, so the save is complete.", true);
+        else if (!any_files(game_user_dir(g))) set_message(a, std::string(d.name) + " has no saves here yet.", false);
+        else ask(a, "backup", g, "Back up saves", std::string("Put a copy of ") + d.name + (a.wine ? "'s saves in a zip in COGBox's backups folder?" : "'s saves in a zip on your desktop?"), { "Back up", "Cancel" });
+    }
+    ImGui::SameLine();
+    if (small_button("Open saves folder")) { make_dirs(game_user_dir(g)); open_folder(a, game_user_dir(g)); }
+    const std::vector<std::filesystem::path> found = misplaced_saves(a, g);
+    if (!found.empty()) {
+        lamp_line(2, trf("Saves copied into the saves folder by hand that the game can't use as they are: {1}.", { std::to_string(found.size()) }));
+        if (small_button("Bring them in")) {
+            if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
+            else import_misplaced_saves(a, g);
+        }
+        ui_tip("Moves them into place the way Import saves does (Xbox 360 packages unpacked, the game's progress taken "
+               "from a profile). What you copied is kept as it was, in a folder beside the saves folder.");
+    }
+}
+
 static void about_tab(App &a, int g)
 {
     const GameDef &d = game_def(g);
@@ -1509,23 +1546,7 @@ static void about_tab(App &a, int g)
     if (small_button("Saves")) { make_dirs(game_user_dir(g)); open_folder(a, game_user_dir(g)); }
     ImGui::SameLine();
     if (small_button("Logs")) { make_dirs(game_logs_dir(g)); open_folder(a, game_logs_dir(g)); }
-    ImGui::SameLine();
-    if (small_button("Back up saves")) {
-        if (running) set_message(a, std::string(d.name) + " is running - close it first, so the save is complete.", true);
-        else if (!any_files(game_user_dir(g))) set_message(a, std::string(d.name) + " has no saves here yet.", false);
-        else ask(a, "backup", g, "Back up saves", std::string("Put a copy of ") + d.name + (a.wine ? "'s saves in a zip in COGBox's backups folder?" : "'s saves in a zip on your desktop?"), { "Back up", "Cancel" });
-    }
-    ImGui::SameLine();
-    // 0.6.1 (Shagg 13 Nov): the player's own saves from Xenia or an Xbox 360 (save_import.cpp).
-    if (small_button("Import saves...")) {
-        if (running || busy) set_message(a, running ? std::string(d.name) + " is running - close it first." : std::string("COGBox is busy - try again when it's done."), true);
-        else {
-            const std::string from = pick_folder(L"Choose your Xenia content folder, or the Content folder copied from your Xbox 360 (not a whole drive)");
-            if (!from.empty()) import_saves_from(a, g, from);
-        }
-    }
-    ui_tip("Brings your own saves of this game in from Xenia (its content folder) or from an Xbox 360 (the Content folder "
-           "copied from the console's USB stick or hard disk). Saves it replaces are kept in a folder beside them.");
+    // (0.6.4, Shagg 16 Nov: Back up saves and Import saves are on the Gameplay tab now - saves_section)
     ImGui::SameLine();
     if (small_button("Clear shaders...")) {
         if (!dir_exists(game_shader_dir(g))) set_message(a, std::string(d.name) + " has no saved shaders to clear.", false);
@@ -1813,6 +1834,7 @@ void page_draw(App &a, ImVec2 size)
                 if (o->id == "PadLayout") pad_layout_section(a, g);   // 0.6.3: the Custom layout's buttons
             }
         }
+        if (want == gs::Tab::Gameplay) saves_section(a, g);   // 0.6.4 (Shagg 16 Nov): saves on the Gameplay tab
         if (want == gs::Tab::Controls) keys_section(a, g);   // 0.2.0; GitHub #154: per game
         if (want == gs::Tab::Controls) window_key_section(a, g);   // 0.6.3, GitHub #316
         if (want == gs::Tab::Graphics) dlss_file_section(a, g);   // 0.4.9
@@ -1865,30 +1887,75 @@ void page_draw(App &a, ImVec2 size)
 
 // 0.6.1: the Import saves button, and a save package dropped onto COGBox (a player drags an Xbox 360 or Xenia save onto
 // the window instead of using the button - save_import takes one save package file as well as a folder).
-void import_saves_from(App &a, int g, const std::string &from)
+// 0.6.4: what find_misplaced finds in the current saves folder, looked at again at most every 3 s (the Gameplay tab draws
+// every frame) and whenever the folder changes game or launcher profile.
+static std::string s_misDir;
+static double s_misAt = -100.0;
+static std::vector<std::filesystem::path> s_misFound;
+static void misplaced_forget() { s_misDir.clear(); }   // after an import: look again at once
+
+std::vector<std::filesystem::path> misplaced_saves(App &a, int g)
+{
+    (void)a;
+    std::string &s_dir = s_misDir;
+    double &s_at = s_misAt;
+    std::vector<std::filesystem::path> &s_found = s_misFound;
+    const std::string dir = game_user_dir(g);
+    const double now = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0.0;
+    if (dir != s_dir || now - s_at > 3.0 || now < s_at) {
+        std::vector<uint32_t> ids{ game_def(g).titleId };
+        for (uint32_t t : region_title_ids(g)) ids.push_back(t);
+        s_found = save_import::find_misplaced(std::filesystem::u8path(dir), ids);
+        s_dir = dir;
+        s_at = now;
+    }
+    return s_found;
+}
+
+static std::vector<std::filesystem::path> own_user_dirs(int g)   // every launcher profile's saves folder of this game
+{
+    std::vector<std::filesystem::path> own;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(std::filesystem::u8path(game_root(g)), ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
+        if (it->is_directory(ec) && it->path().filename().string().rfind("user", 0) == 0) own.push_back(it->path());
+    return own;
+}
+
+static void import_message(App &a, int g, bool ok, const save_import::Result &r)
 {
     const GameDef &d = game_def(g);
-    save_import::Result r;
-    make_dirs(game_user_dir(g));
-    std::vector<std::filesystem::path> own;   // every launcher profile's saves folder of this game (user, user-pN)
-    {
-        std::error_code ec;
-        for (std::filesystem::directory_iterator it(std::filesystem::u8path(game_root(g)), ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
-            if (it->is_directory(ec) && it->path().filename().string().rfind("user", 0) == 0) own.push_back(it->path());
-    }
-    if (save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r, own,
-                            region_title_ids(g))) {
-        std::string m = std::string(d.name) + ": imported ";
+    std::string m;
+    if (ok) {
+        m = std::string(d.name) + ": imported ";
         if (r.saves) m += std::to_string(r.saves) + (r.saves == 1 ? " save" : " saves");
         if (r.saves && r.settings) m += " and ";
         if (r.settings) m += "the profile's game progress";
         m += ".";
         if (!r.backup_dir.empty()) m += " What they replaced is kept in the saves folder, in " + r.backup_dir.filename().string() + ".";
-        for (const std::string &n : r.notes) m += " " + n;
-        set_message(a, m, false);
     } else {
-        std::string m = r.error;
-        for (const std::string &n : r.notes) m += " " + n;
-        set_message(a, m, true);
+        m = r.error;
     }
+    for (const std::string &n : r.notes) m += " " + n;
+    set_message(a, m, !ok);
+}
+
+void import_misplaced_saves(App &a, int g)
+{
+    const GameDef &d = game_def(g);
+    save_import::Result r;
+    const bool ok = save_import::import_misplaced(std::filesystem::u8path(game_user_dir(g)), d.titleId, now_stamp(), r,
+                                                  own_user_dirs(g), region_title_ids(g));
+    import_message(a, g, ok, r);
+    misplaced_forget();
+}
+
+void import_saves_from(App &a, int g, const std::string &from)
+{
+    const GameDef &d = game_def(g);
+    save_import::Result r;
+    make_dirs(game_user_dir(g));
+    const bool ok = save_import::import(std::filesystem::u8path(from), d.titleId, std::filesystem::u8path(game_user_dir(g)), now_stamp(), r,
+                                        own_user_dirs(g), region_title_ids(g));
+    import_message(a, g, ok, r);
+    misplaced_forget();
 }
