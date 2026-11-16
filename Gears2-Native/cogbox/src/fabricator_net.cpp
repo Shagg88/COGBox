@@ -330,6 +330,25 @@ HttpResult fab_call(const ServerUrl& server, const std::string& method, const st
     return out;
 }
 
+HttpResult fab_get_file(const ServerUrl& server, const std::string& path, size_t max_bytes) {
+    Request q;
+    q.method = "GET";
+    q.path = path;
+    std::string got;
+    bool over = false;
+    q.sink = [&](const char* p, size_t n) {
+        if (got.size() + n > max_bytes) { over = true; return false; }
+        got.append(p, n);
+        return true;
+    };
+    Response r = send_request(server, q);
+    HttpResult out;
+    if (over || r.too_big || (r.status == 200 && !r.complete)) return out;
+    out.status = r.status;
+    out.body = r.status == 200 ? std::move(got) : std::move(r.body);
+    return out;
+}
+
 std::string fab_upload(const ServerUrl& server, const SocialAccount& account, const std::string& meta_json, int64_t mod_id,
                        const std::string& zip_path, const std::vector<std::string>& screenshot_paths, FabProgress& progress,
                        int64_t* mod_out) {

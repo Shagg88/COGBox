@@ -12,6 +12,7 @@
 #include "update.h"
 #include "report.h"
 #include "legal.h"   // legal050
+#include "fabricator_state.h"   // Task 12: the FABRICATOR screen's workers
 #include "imgui_impl_sdl3.h"
 extern int g_lastKeyScancode;   // page.cpp
 #include "imgui_impl_sdlrenderer3.h"
@@ -549,6 +550,7 @@ static void draw_ui(App &a, ImVec2 size)
     // old picture then cross-fades into the new one. (Before 0.3.8: a 0.5 s dip through black - the whole window,
     // window buttons and background included, went black half way, and the switch waited for it.)
     if (a.screen == SCR_FRONT) front_draw(a, size);
+    else if (a.screen == SCR_FABRICATOR) fabricator_draw(a, size);   // Task 12
     else page_draw(a, size);
 
     // the message line
@@ -597,7 +599,8 @@ static void refresh_pads(App &a)
 }
 
 // Test switches (all off for players): COGBOX_SHOT=<file.bmp> saves the window after COGBOX_SHOT_FRAMES frames (90)
-// and exits (COGBOX_SHOT_NOTICES=1 keeps the startup questions); COGBOX_PAGE=<game>[:<tab>] opens on a page; COGBOX_FRONT=<game> turns the carousel there.
+// and exits (COGBOX_SHOT_NOTICES=1 keeps the startup questions); COGBOX_PAGE=<game>[:<tab>] opens on a page; COGBOX_FRONT=<game> turns the carousel there;
+// COGBOX_FABRICATOR=<tab>[:<mod id>] opens the FABRICATOR screen (0 Library, 1 Store, 2 Creator; a mod id: its store page).
 static void test_shot(App &a)
 {
     const char *shot = getenv("COGBOX_SHOT");
@@ -795,6 +798,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         a.tab = c ? std::max(0, std::min(7, atoi(c + 1))) : 0;   // 0-4 gs::Tab, 5 SOCIAL, 6 MODS, 7 ABOUT
         a.screen = a.zoomTo = SCR_PAGE;
     }
+    if (const char *t = getenv("COGBOX_FABRICATOR")) {   // test switch (Task 12)
+        a.fabTab = std::max(0, std::min(2, atoi(t)));   // (fabricator_ui.cpp opens the mod's page on its first frame)
+        a.screen = a.zoomTo = SCR_FABRICATOR;
+    }
     covers_load(a);
     // 0.2.0 (GitHub #3 / #7): some unzip tools (KDE's Ark) flatten the release's folders; the ports are then "missing"
     {
@@ -848,12 +855,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         case 3: set_message(a, "The box art couldn't be downloaded - check the internet connection.", true); break;
         }
         install_poll(a);
+        fab_state_poll(a);   // Task 12: a finished Get is installed here, on the UI thread
         linux_poll(a);   // proton049
         backup_poll(a);   // GitHub #120: the save backup runs on its own thread
         social_delete_poll(a);   // DELETE ONLINE ACCOUNT runs on its own thread too
         // 0.2.0 (Shagg 13:18): everything dropped is handled, one after another - several DLC packages, or a folder of
         // them (a console's ...\<title ID>\00000002, or the title folder), are each added in turn. A folder that isn't a
         // game copy or a title update is searched for DLC packages.
+        if (!a.dropped.empty() && a.screen == SCR_FABRICATOR && !a.modal.open) {   // Task 12: a mod (or its screenshot) to publish
+            const std::vector<std::string> d = a.dropped;
+            a.dropped.clear();
+            for (const std::string &p : d) fabricator_drop(a, p);
+        }
         if (!a.dropped.empty() && !a.modal.open && a.job.state.load() != 1 && !dlc_dupes_running()) {   // r25: after a duplicate check
             std::string p = a.dropped.front();
             a.dropped.erase(a.dropped.begin());
@@ -932,6 +945,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     if (a.job.state.load() == 1) { a.job.cancel = true; }
     if (a.job.th.joinable()) a.job.th.join();
     music_stop();
+    fab_state_shutdown();   // Task 12: transfers stopped (they go on from there next time), textures freed
     for (auto &c : a.cover) if (c.tex) SDL_DestroyTexture(c.tex);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();

@@ -1,0 +1,157 @@
+// COGBox - the FABRICATOR screen's state (Task 12): what the store, the player's library and the creator's pages last
+// answered, the Gets and publishes running, and the store's pictures as textures. Every network call and transfer runs
+// on a worker thread (one for calls, one for pictures, one for downloads, one for uploads), so the UI thread never
+// waits on the network; it reads a copy (fab_view) each frame. Installs, updates and uninstalls touch CogBox.ini and
+// the mods folders, which the UI thread also uses, so they run on the UI thread (fab_state_poll) once the download
+// worker has handed back the zip - no lock. Nothing here shows or logs a uuid, a token or a download address.
+#pragma once
+#include "fabricator_model.h"
+#include "fabricator_net.h"
+
+#include <SDL3/SDL.h>
+
+#include <atomic>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+struct App;
+
+// GET /creator/mods: one of the creator's mods, every version with its state
+struct FabCreatorVersion {
+    int64_t id = 0, created_at = 0, size = 0;
+    std::string version, state;
+};
+struct FabCreatorMod {
+    int64_t id = 0;
+    std::string name, game, state;
+    std::vector<FabCreatorVersion> versions;
+    int downloads = 0, ratings = 0, reports_open = 0;
+    double rating = 0;
+};
+// GET /creator/limits
+struct FabLimits {
+    bool known = false;
+    std::string can_publish;   // "" may publish, else the server's reason ("account too new", "daily limit" ...)
+    int64_t bytes_used = 0, quota = 0, max_file_bytes = 0;
+    int uploads_today = 0, max_uploads_per_day = 0;
+};
+
+// The store listing asked for (GET /mods): search text, game / type ("" all), sort, page (from 1)
+struct FabQuery {
+    std::string search, game, type, sort = "popular";
+    int page = 1;
+    bool operator==(const FabQuery &o) const { return search == o.search && game == o.game && type == o.type && sort == o.sort && page == o.page; }
+    bool operator!=(const FabQuery &o) const { return !(*this == o); }
+};
+constexpr int kFabPerPage = 12;
+
+// One Get (a download, then the install on the UI thread) or one publish. phase is read by the UI each frame.
+struct FabTransfer {
+    enum Kind { Download, Upload };
+    enum Phase {
+        Queued, Address, Downloading, Downloaded, Installing,   // a Get
+        Packing, Checking, Uploading,                           // a publish (Uploading: the server checks once all is sent)
+        Done, Failed, Cancelled
+    };
+    Kind kind = Download;
+    std::atomic<int> phase{Queued};
+    FabProgress progress;
+    int64_t mod_id = 0;        // a Get: the mod; a publish: the mod a new version is for (0 a new mod), then the one published
+    std::string name;          // the mod's name, for the lines on screen
+    int game = -1;             // GameId
+    bool update = false;       // a Get of a newer version over the installed one
+    bool told_close = false;   // "Close the game first." said for this install (UI thread)
+    FabLibraryItem item;       // a Get: what fab_install gets (version, version_id, sha256 from the download answer)
+    std::string zip;           // a Get: the downloaded zip; a publish: the zip sent
+    bool zip_made = false;     // a publish: COGBox packed the zip from a folder (deleted afterwards)
+    std::atomic<int> failed_phase{Queued};   // the phase it failed in (a publish: Packing, Checking = local checks, Uploading)
+    std::vector<std::string> problems_;   // why it failed: written under the state's lock, read with fab_transfer_problems
+};
+
+struct FabView {
+    bool configured = false;      // a server address is set
+    bool signed_in = false;       // the profile's online account is there (Online play on, identity.json)
+    bool account_checked = false;
+    std::string tag;              // Name#1234
+    // the store
+    FabQuery query;
+    bool store_asked = false, store_loading = false;
+    std::vector<FabCard> cards;
+    int total = 0;
+    std::string store_error;
+    // a mod's page
+    int64_t page_id = 0;
+    bool page_loading = false;
+    std::optional<FabPage> page;
+    std::string page_error;
+    // the player's library (GET /library)
+    bool library_loaded = false, library_loading = false;
+    std::vector<FabLibraryItem> library;
+    std::string library_error;
+    // the creator's mods and limits
+    bool creator_loaded = false, creator_loading = false;
+    std::vector<FabCreatorMod> creator;
+    FabLimits limits;
+    std::string creator_error;
+    // Gets and publishes (newest last); finished ones stay until fab_dismiss
+    std::vector<std::shared_ptr<FabTransfer>> transfers;
+    std::map<int64_t, int> my_ratings;   // stars this player gave (remembered in <state dir>\ratings.json)
+};
+
+// The server (CogBox.ini [Online] Server) and the profile folder whose identity.json is the account ("" when online
+// play is off: signed out). Called by the screen each frame; a change asks the account again.
+void fab_configure(const std::string &server_url, const std::string &identity_dir);
+FabView fab_view();
+void fab_refresh_account();
+void fab_store_query(const FabQuery &q);
+void fab_open_page(int64_t id);   // 0 closes the page
+void fab_load_library();
+void fab_load_creator();
+void fab_rate(int64_t id, int stars);
+void fab_report(int64_t id, const std::string &reason, const std::string &text);
+void fab_remove_own(int64_t id);
+// Get: a download address (which also puts the mod in the library), the download to <state dir>\downloads, then
+// fab_install / fab_update on the UI thread (waiting while a game runs), the zip deleted after.
+void fab_get(const FabLibraryItem &item, int game, bool update);
+// Publish: a folder is zipped first (<state dir>\uploads), the zip checked here (fab_check_zip), then fab_upload.
+struct FabPublish {
+    std::string source;        // a folder or a .zip
+    bool folder = false;
+    std::string game_key;      // gears1 .. judgment
+    std::string name;
+    std::string meta_json;
+    int64_t mod_id = 0;        // 0: a new mod
+    std::vector<std::string> screens;
+};
+void fab_publish(const FabPublish &p);
+void fab_cancel(const std::shared_ptr<FabTransfer> &t);
+void fab_dismiss(const std::shared_ptr<FabTransfer> &t);   // a finished one leaves the list
+std::vector<std::string> fab_transfer_problems(const FabTransfer &t);
+// The first running Get or publish's percent (0-100), -1 when none runs (the front screen's FABRICATOR button).
+int fab_transfer_percent();
+
+// Goes up each time a Get installed something (or the screen changed a mod): the screen reads the mods folders again.
+uint64_t fab_local_changes();
+void fab_mark_local_change();
+
+// A picture as a texture: a store path ("/api/v1/fabricator/images/<key>") or a local file ("file:<path>"). nullptr
+// while it loads (asked on the picture worker) or when it can't be read. Cached by key, at most 120, least used first out.
+SDL_Texture *fab_image(App &a, const std::string &key, int *w = nullptr, int *h = nullptr);
+void fab_images_free();
+
+// Once a frame on the UI thread (main.cpp): finished downloads installed, messages shown, pictures freed when the
+// screen is not open.
+void fab_state_poll(App &a);
+// At exit: transfers cancelled, the workers given a moment to stop, the textures freed.
+void fab_state_shutdown();
+
+// mod.ini of a folder or a zip (the upload form's prefill): Name, Game, Version, Description, Side, Type.
+struct FabModIni {
+    bool found = false;
+    std::string name, game, version, description, side, type;
+};
+FabModIni fab_read_mod_ini(const std::string &source, bool folder);

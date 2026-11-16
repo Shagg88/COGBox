@@ -15,6 +15,10 @@
 HttpResult fab_call(const ServerUrl& server, const std::string& method, const std::string& path, const std::string& json_body,
                     const SocialAccount* account);
 
+// GET path (a store picture, /api/v1/fabricator/images/<key>) read whole into body, whatever its type, at most max_bytes:
+// a longer answer, or none, is status 0. No account.
+HttpResult fab_get_file(const ServerUrl& server, const std::string& path, size_t max_bytes);
+
 // Bytes done of total (upload: the zip's bytes the server holds; download: the bytes in the file). cancel: the transfer
 // stops at its next step and answers "cancelled" (what was done is kept for the next try). An upload first reads the
 // whole zip once for its SHA-256 (the server wants it before the first chunk): done stays at 0 meanwhile, because done
