@@ -82,7 +82,8 @@
   first test build crashed shortly after start without this). The picture's height is now a multiple of 8 rows, so
   its shape can differ from your monitor's by a few pixels (a thin border). If the game crashes or draws wrongly
   with Ultrawide since this change, `--gow3_aspect_targets_720=true` in `extra-args.txt` brings back the old buffers -
-  please tell us. Not tested on PC yet.
+  please tell us. Tested on PC (Gears 3, D3D12 and Vulkan) at 21:9, 3440x1440, 8:3, 32:9 and 48:9: the pages draw
+  correctly, and the campaign, Horde and the lobby run without crashing.
 - **Gears 3: Horde bots are no longer always Dom and Carmine.** The Horde-bots button (Back) asked the game for those two characters by number every time; it now lets the game pick each bot's character at random, the way the game picks bots for its own matches. (Gears 2's bots were already random; its two unused numbers are dropped.) GitHub #270; not tested on PC yet.
 - **Launcher: the library music plays again** (silent in 0.6.2: that launcher was built against the wrong FFmpeg version and could not find the music decoder shipped beside it). The build and the packager now check that the launcher and the decoder DLLs match, so it cannot ship silent again.
 - **Judgment: the loading screen after Monroe Commons no longer hangs above 30 fps** (GitHub #318, also #54 / #38 /
