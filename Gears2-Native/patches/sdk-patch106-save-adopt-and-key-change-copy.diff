@@ -1,105 +1,234 @@
-From 7f8edc05b9689a3163624c412906cad8191a7d13 Mon Sep 17 00:00:00 2001
+From c136041a6b74f1031d4b1c2fd70b910c596df78d Mon Sep 17 00:00:00 2001
 From: Shagg <shagg.dev88@gmail.com>
-Date: Sun, 15 Nov 2026 16:14:30 -0800
-Subject: [PATCH] patch106 (GitHub #329): Gears 3 saves signed for an unknown
- key are re-signed (copy kept), never reset; every Gears 3 / Judgment save
- copied before a run with another signing key
+Date: Sun, 15 Nov 2026 16:32:43 -0800
+Subject: [PATCH] patch106 (GitHub #329, review r78): Gears 3 saves - the last
+ run's key and --cogbox_save_adopt_key converted with a check; a whole,
+ plausible save signed for an unknown key re-signed once (copy kept) instead
+ of reset; failed reads never taken for empty files; Gears 3 / Judgment saves
+ copied (newest 20 kept) before a run with another signing key
 
 ---
- include/rex/system/cogbox_save_sign.h |  18 +++
- src/kernel/xam/net/online_startup.cpp |  15 ++
- src/system/cogbox_save_sign.cpp       | 198 ++++++++++++++++++++++++--
- tests/unit/net/save_resign_test.cpp   |  93 ++++++++++++
- 4 files changed, 312 insertions(+), 12 deletions(-)
+ include/rex/system/cogbox_save_sign.h |  34 ++-
+ src/kernel/xam/net/online_startup.cpp |  37 ++-
+ src/system/cogbox_save_sign.cpp       | 422 ++++++++++++++++++++++++--
+ tests/unit/net/save_resign_test.cpp   | 298 ++++++++++++++++++
+ 4 files changed, 764 insertions(+), 27 deletions(-)
 
 diff --git a/include/rex/system/cogbox_save_sign.h b/include/rex/system/cogbox_save_sign.h
-index 95b76da..02c0880 100644
+index 95b76da..e8c67ca 100644
 --- a/include/rex/system/cogbox_save_sign.h
 +++ b/include/rex/system/cogbox_save_sign.h
-@@ -31,6 +31,24 @@ void CogConvertGears3SaveSigning(const std::filesystem::path& user_data_root, ui
+@@ -7,11 +7,13 @@
+ #include <cstddef>
+ #include <cstdint>
+ #include <filesystem>
++#include <optional>
+ #include <vector>
+ 
+ namespace rex::system {
+ 
+-enum class ResignResult { Resigned, AlreadyDone, NotRecognised, TooSmall, NoBackup, WriteFailed };
++// ReadFailed / Refused: COGBox SDK patch 106 (a file of the set couldn't be read; not a whole, plausible save).
++enum class ResignResult { Resigned, AlreadyDone, NotRecognised, TooSmall, NoBackup, WriteFailed, ReadFailed, Refused };
+ 
+ std::array<uint8_t, 20> CogSaveSignature(uint64_t key, const uint8_t* body, size_t len);
+ 
+@@ -31,6 +33,36 @@ void CogConvertGears3SaveSigning(const std::filesystem::path& user_data_root, ui
  void CogReportGears3SaveSigning(const std::filesystem::path& user_data_root, uint64_t profile_xuid, uint64_t run_key,
                                  uint64_t other_key);
  
 +// COGBox SDK patch 106 (GitHub #329): a Gears 3 save set signed with a key COGBox can't name (an earlier online account
 +// after a new one was made, a save from another PC or console, an old backup put back) used to be left alone, and Gears 3
-+// then reset it and wrote fresh files over it - the progress was gone. Instead it is re-signed for this run (the data is
-+// never changed, only the 20-byte signature): files[0] is first copied to <file>.cogbox-adopted-<stamp> (a new name
-+// each time, never replacing anything), then written through <file>.cogbox-tmp and renamed over the original.
-+// AlreadyDone when the set is signed for to_key already.
++// then reset it and wrote fresh files over it - the progress was gone.
++//
++// CogAdoptSaveFiles re-signs one set for to_key without knowing its old key (the data is never changed, only the
++// 20-byte signature), but only a whole, plausible save: PlayerStorage.dat alone (4 KB - 64 KB), or the full profile set
++// 63E83FFF + 63E83FFE + 63E83FFD (each at most 1000 bytes); nothing all zero; every file readable (Refused /
++// ReadFailed otherwise, nothing written). files[0] is first copied to <file>.cogbox-adopted-<stamp> (a new name each
++// time, never replacing anything), then written through <file>.cogbox-tmp and renamed over the original. AlreadyDone
++// when the set is signed for to_key already.
 +ResignResult CogAdoptSaveFiles(const std::vector<std::filesystem::path>& files, uint64_t to_key);
-+// Every Gears 3 save set under user_data_root not signed for run_key is adopted as above. Run after the verified
-+// conversions (CogConvertGears3SaveSigning), so a save signed with a key COGBox knows is converted from that key first.
-+// Never throws.
++// Every Gears 3 save set under user_data_root not signed for run_key is adopted as above, once: the body of each adopted
++// set is noted in <user_data_root>/cogbox-save-adopted, and a noted body found signed with another key again is left
++// alone (the game signs with a key COGBox doesn't predict - no loop). Never throws.
 +void CogAdoptGears3Saves(const std::filesystem::path& user_data_root, uint64_t profile_xuid, uint64_t run_key);
-+// Patch 106: when the key this run signs with (0 offline, the online XUID under LIVE emulation) differs from the last
-+// run's (kept in <user_data_root>/cogbox-save-key; none yet counts as a change), every Gears 3 / Judgment save file in
-+// place (PlayerStorage.dat, its header, the profile settings 63E83FFF/E/D) is copied first to
-+// <user_data_root>/_cogbox-save-backups/<stamp>-<old key>-to-<new key>/ under the same relative path. Nothing is ever
-+// deleted there. A user folder of another game (no Gears 3 / Judgment folder) is left alone. Never throws.
-+void CogSnapshotSavesOnKeyChange(const std::filesystem::path& user_data_root, uint64_t profile_xuid, uint64_t run_key);
++// The key the last run signed its saves with (<user_data_root>/cogbox-save-key), if noted.
++std::optional<uint64_t> CogLastSaveKey(const std::filesystem::path& user_data_root);
++// When run_key differs from the last run's (none noted counts as a change), every Gears 3 / Judgment save file in place
++// (PlayerStorage.dat, Judgment's header, the profile settings 63E83FFF/E/D) is copied to
++// <user_data_root>/_cogbox-save-backups/<stamp>-<old key>-to-<new key>/ under the same relative path (built in a
++// .cogbox-tmp folder and renamed when whole; the newest 20 kept), then run_key is noted (atomically). A file that can't
++// be read fails the copy: no folder is left and the key is not noted, so it is tried again next start. A user folder of
++// another game (no Gears 3 / Judgment folder) is left alone. True when a copy was made and the key noted. Never throws.
++bool CogSnapshotSavesOnKeyChange(const std::filesystem::path& user_data_root, uint64_t profile_xuid, uint64_t run_key);
++// Everything done to the Gears 3 saves at start-up, in order: the copy above; the verified conversions from other_key,
++// from the last run's key and from extra_key (--cogbox_save_adopt_key) to run_key; only then, if adopt_foreign, the
++// unverified adoption; and the per-set verdict (CogReportGears3SaveSigning). other_key == run_key: no conversion from it.
++void CogPrepareGears3Saves(const std::filesystem::path& user_data_root, uint64_t profile_xuid, uint64_t run_key,
++                           uint64_t other_key, bool adopt_foreign, std::optional<uint64_t> extra_key);
 +
  // Judgment ties PlayerStorage.dat and its profile settings to the sign-in (LIVE or local) in a way we can't re-sign, so
  // switching online play on or off made the game start them fresh. Instead each mode keeps its own copy: on a switch,
  // the files of the mode being left are moved aside as <file>.cogbox-<mode>, and the other mode's copies come back.
 diff --git a/src/kernel/xam/net/online_startup.cpp b/src/kernel/xam/net/online_startup.cpp
-index ca9a640..67b71d9 100644
+index ca9a640..c9faeb7 100644
 --- a/src/kernel/xam/net/online_startup.cpp
 +++ b/src/kernel/xam/net/online_startup.cpp
-@@ -27,6 +27,12 @@
+@@ -2,6 +2,7 @@
+ #include <algorithm>
+ #include <atomic>
+ #include <cstdlib>
++#include <optional>
+ #include <vector>
+ #include <rex/kernel/xam/net/host_ban.h>
+ #include <rex/kernel/xam/net/online_startup.h>
+@@ -27,6 +28,17 @@
  #include <rex/system/cogbox_save_sign.h>
  
  REXCVAR_DECLARE(bool, net_live_emulation);
 +// COGBox SDK patch 106 (GitHub #329): Gears 3 resets a save whose signature isn't for this run's key and writes fresh
 +// files over it (a new online account, a deleted one, a save from another PC or an old backup put back lost the
-+// campaign progress and options). On by default; a copy of each file is kept before it is re-signed.
++// campaign progress and options). Saves signed with a key COGBox knows (0, the online XUID, the last run's key,
++// --cogbox_save_adopt_key) are converted with a check; only what is left is re-signed without one, and only a whole,
++// plausible save, a copy kept first.
 +REXCVAR_DEFINE_BOOL(cogbox_save_adopt_foreign, true, "Filesystem",
-+                    "Gears 3: a save signed for another online account, PC or profile is re-signed for this run "
++                    "Gears 3: a whole save signed for another online account, PC or profile is re-signed for this run "
 +                    "(a copy kept first) instead of being reset by the game.");
++REXCVAR_DEFINE_STRING(cogbox_save_adopt_key, "", "Filesystem",
++                      "Gears 3: an earlier online XUID (16 hex digits, from a 'LIVE emulation with online XUID' log "
++                      "line) whose saves are converted to this run's key with a check.");
  REXCVAR_DEFINE_STRING(net_join_lobby, "", "Network",
                        "COGBox online play: join this lobby (room code COG-XXXX) once the game is at its menus - "
                        "the game is told it accepted an invite to it.");
-@@ -237,19 +243,28 @@ void OnlineStartup(const std::filesystem::path& user_data_root, uint64_t profile
+@@ -237,20 +249,35 @@ void OnlineStartup(const std::filesystem::path& user_data_root, uint64_t profile
    MasterClient::Get().SetTitleIdSource(RunningTitle);
    MasterClient::Get().SetRegion(std::string(REXCVAR_GET(net_region)));
    StartOnlineServices(dir);
 +  // Patch 106: every save is copied before a run that signs with another key than the last one (a new or deleted online
-+  // account, online play switched), and a Gears 3 save no verified pass could convert is re-signed, never reset.
++  // account, online play switched), saves signed with a known key are converted with a check, and only then a whole
++  // Gears 3 save no check could convert is re-signed rather than reset.
 +  const bool adopt = REXCVAR_GET(cogbox_save_adopt_foreign);
++  std::optional<uint64_t> adopt_key;
++  {
++    const std::string k = std::string(REXCVAR_GET(cogbox_save_adopt_key));
++    if (!k.empty()) {
++      char* end = nullptr;
++      const uint64_t v = std::strtoull(k.c_str(), &end, 16);
++      if (end && *end == '\0' && k.size() <= 16) {
++        adopt_key = v;
++      } else {
++        REXKRNL_WARN("cogbox_save_convert: --cogbox_save_adopt_key={} is not a 16-digit hex XUID; ignored", k);
++      }
++    }
++  }
    if (!xuid) {
-+    rex::system::CogSnapshotSavesOnKeyChange(user_data_root, profile_xuid, 0);   // patch 106
-+    if (adopt) rex::system::CogAdoptGears3Saves(user_data_root, profile_xuid, 0);   // patch 106
-     rex::system::CogReportGears3SaveSigning(user_data_root, profile_xuid, 0, 0);   // COGBox SDK patch 101
+-    rex::system::CogReportGears3SaveSigning(user_data_root, profile_xuid, 0, 0);   // COGBox SDK patch 101
++    rex::system::CogPrepareGears3Saves(user_data_root, profile_xuid, 0, 0, adopt, adopt_key);   // patches 101 / 106
      return;
    }
    if (NetOnline() && REXCVAR_GET(net_live_emulation)) {
      SetEmulationXuid(xuid);
      REXKRNL_INFO("cogbox_online: LIVE emulation with online XUID {:016X}", xuid);
-+    rex::system::CogSnapshotSavesOnKeyChange(user_data_root, profile_xuid, xuid);   // patch 106
-     rex::system::CogConvertGears3SaveSigning(user_data_root, profile_xuid, 0, xuid, ".pre-online");
-+    if (adopt) rex::system::CogAdoptGears3Saves(user_data_root, profile_xuid, xuid);   // patch 106
-     rex::system::CogReportGears3SaveSigning(user_data_root, profile_xuid, xuid, 0);   // patch 101
+-    rex::system::CogConvertGears3SaveSigning(user_data_root, profile_xuid, 0, xuid, ".pre-online");
+-    rex::system::CogReportGears3SaveSigning(user_data_root, profile_xuid, xuid, 0);   // patch 101
++    rex::system::CogPrepareGears3Saves(user_data_root, profile_xuid, xuid, 0, adopt, adopt_key);   // 79 / 101 / 106
      rex::system::CogSwapJudgmentSettings(user_data_root, profile_xuid, true);
    } else {
      SetEmulationXuid(0);
-+    rex::system::CogSnapshotSavesOnKeyChange(user_data_root, profile_xuid, 0);   // patch 106
-     rex::system::CogConvertGears3SaveSigning(user_data_root, profile_xuid, xuid, 0, ".pre-online");
-+    if (adopt) rex::system::CogAdoptGears3Saves(user_data_root, profile_xuid, 0);   // patch 106
-     rex::system::CogReportGears3SaveSigning(user_data_root, profile_xuid, 0, xuid);   // patch 101
+-    rex::system::CogConvertGears3SaveSigning(user_data_root, profile_xuid, xuid, 0, ".pre-online");
+-    rex::system::CogReportGears3SaveSigning(user_data_root, profile_xuid, 0, xuid);   // patch 101
++    rex::system::CogPrepareGears3Saves(user_data_root, profile_xuid, 0, xuid, adopt, adopt_key);   // 79 / 101 / 106
      rex::system::CogSwapJudgmentSettings(user_data_root, profile_xuid, false);
    }
+ }
 diff --git a/src/system/cogbox_save_sign.cpp b/src/system/cogbox_save_sign.cpp
-index cff07be..c59cd75 100644
+index cff07be..f73b008 100644
 --- a/src/system/cogbox_save_sign.cpp
 +++ b/src/system/cogbox_save_sign.cpp
-@@ -3,6 +3,7 @@
+@@ -1,8 +1,10 @@
+ // COGBox: Gears 3 save signatures (patch 58's converter, moved here and generalised by COGBox SDK patch 79).
+ #include <rex/system/cogbox_save_sign.h>
  
++#include <algorithm>
  #include <cstdio>
  #include <cstring>
 +#include <ctime>
  #include <string>
  #if defined(_WIN32)
  #include <io.h>  // _commit
-@@ -86,6 +87,31 @@ std::array<uint8_t, 20> CogSign(uint64_t key, const uint8_t* body, size_t len) {
+@@ -48,21 +50,44 @@ struct CogSha1 {
+     return out;
+   }
+ };
+-std::vector<uint8_t> CogReadAll(const std::filesystem::path& p) {
+-  std::vector<uint8_t> v;
++// COGBox SDK patch 106 (review r78 F2): false when the file can't be opened or a read fails, so a file held by an
++// antivirus scan or a sync tool is never taken for an empty one (an empty file reads as true with nothing in *out).
++bool CogReadFile(const std::filesystem::path& p, std::vector<uint8_t>* out) {
++  out->clear();
+   FILE* f = nullptr;
+ #if REX_PLATFORM_WIN32
+   _wfopen_s(&f, p.c_str(), L"rb");
+ #else
+   f = fopen(p.c_str(), "rb");
+ #endif
+-  if (!f) return v;
++  if (!f) return false;
+   uint8_t buf[65536];
+   size_t n;
+-  while ((n = fread(buf, 1, sizeof(buf), f)) > 0) v.insert(v.end(), buf, buf + n);
++  while ((n = fread(buf, 1, sizeof(buf), f)) > 0) out->insert(out->end(), buf, buf + n);
++  const bool ok = !ferror(f);
+   fclose(f);
++  if (!ok) out->clear();
++  return ok;
++}
++std::vector<uint8_t> CogReadAll(const std::filesystem::path& p) {
++  std::vector<uint8_t> v;
++  CogReadFile(p, &v);
+   return v;
+ }
++// Patch 106: every file of a set, concatenated; false if any of them can't be read.
++bool CogReadSet(const std::vector<std::filesystem::path>& files, std::vector<uint8_t>* all, std::vector<size_t>* sizes) {
++  all->clear();
++  sizes->clear();
++  for (const auto& f : files) {
++    std::vector<uint8_t> v;
++    if (!CogReadFile(f, &v)) return false;
++    sizes->push_back(v.size());
++    all->insert(all->end(), v.begin(), v.end());
++  }
++  return true;
++}
++// Patch 106: a file written whole through <p>.cogbox-tmp and renamed over p.
++bool CogWriteAtomic(const std::filesystem::path& p, const std::vector<uint8_t>& v);
+ bool CogWriteAll(const std::filesystem::path& p, const std::vector<uint8_t>& v) {
+   FILE* f = nullptr;
+ #if REX_PLATFORM_WIN32
+@@ -79,6 +104,22 @@ bool CogWriteAll(const std::filesystem::path& p, const std::vector<uint8_t>& v)
+   ok = fclose(f) == 0 && ok;
+   return ok;
+ }
++bool CogWriteAtomic(const std::filesystem::path& p, const std::vector<uint8_t>& v) {
++  auto tmp = p;
++  tmp += ".cogbox-tmp";
++  std::error_code ec;
++  if (!CogWriteAll(tmp, v)) {
++    std::filesystem::remove(tmp, ec);
++    return false;
++  }
++  std::filesystem::rename(tmp, p, ec);
++  if (ec) {
++    std::filesystem::remove(tmp, ec);
++    return false;
++  }
++  return true;
++}
++
+ std::array<uint8_t, 20> CogSign(uint64_t key, const uint8_t* body, size_t len) {
+   std::vector<uint8_t> m(8 + len);
+   for (int i = 0; i < 8; ++i) m[i] = uint8_t(key >> (56 - 8 * i));
+@@ -86,6 +127,31 @@ std::array<uint8_t, 20> CogSign(uint64_t key, const uint8_t* body, size_t len) {
    return CogSha1().digest(m);
  }
  
@@ -131,20 +260,88 @@ index cff07be..c59cd75 100644
  const char* ResultText(ResignResult r) {
    switch (r) {
      case ResignResult::Resigned: return "done";
-@@ -185,6 +211,63 @@ ResignResult CogResignSaveFiles(const std::vector<std::filesystem::path>& files,
+@@ -93,6 +159,8 @@ const char* ResultText(ResignResult r) {
+     case ResignResult::NotRecognised: return "signature not recognised, left alone";
+     case ResignResult::TooSmall: return "too small to hold a signature, left alone";
+     case ResignResult::NoBackup: return "no backup could be made, left alone";
++    case ResignResult::ReadFailed: return "a file of the set couldn't be read, left alone";
++    case ResignResult::Refused: return "not a whole, plausible save, left alone";
+     default: return "WRITE FAILED (original untouched)";
+   }
+ }
+@@ -125,10 +193,8 @@ ResignResult CogResignSaveFiles(const std::vector<std::filesystem::path>& files,
+                                 const char* backup_suffix) {
+   std::vector<uint8_t> all;
+   std::vector<size_t> sizes;
+-  for (auto& f : files) {
+-    auto v = CogReadAll(f);
+-    sizes.push_back(v.size());
+-    all.insert(all.end(), v.begin(), v.end());
++  if (!CogReadSet(files, &all, &sizes)) {
++    return ResignResult::ReadFailed;  // patch 106 (r78 F2)
+   }
+   if (all.size() < 21 || sizes.empty() || sizes[0] < 20) {
+     return ResignResult::TooSmall;
+@@ -141,7 +207,11 @@ ResignResult CogResignSaveFiles(const std::vector<std::filesystem::path>& files,
+   if (std::memcmp(from_sig.data(), all.data(), 20) != 0) {
+     return ResignResult::NotRecognised;
+   }
+-  auto first = CogReadAll(files[0]);
++  std::vector<uint8_t> first;
++  if (!CogReadFile(files[0], &first) || first.size() != sizes[0] ||
++      !std::equal(first.begin(), first.end(), all.begin())) {
++    return ResignResult::ReadFailed;  // patch 106: changed or unreadable since it was checked
++  }
+   // 0.6.0 review: the backup must hold exactly this file. <file><suffix> is the first copy and is never changed; if it
+   // holds something else (an older save, or this save signed the other way after a switch), this file goes to
+   // <file><suffix>.last instead, replaced on each switch. At most two backups, so switching never runs out of names.
+@@ -185,6 +255,92 @@ ResignResult CogResignSaveFiles(const std::vector<std::filesystem::path>& files,
    return ResignResult::Resigned;
  }
  
++namespace {
++// Patch 106 (review r78 F1 / F3): only a whole save of the shapes Gears 3 writes is ever re-signed without a known key.
++// PlayerStorage.dat alone: COGBox / player logs show Gears 3 TU6 writing 6232-6520 bytes; 4 KB - 64 KB leaves room for
++// more progress and refuses a cut-off or empty file. A profile set: 63E83FFF + 63E83FFE + 63E83FFD, all three (the
++// signature sits in FFF and covers the other two), each at most 1000 bytes (the XDK's limit for a title setting).
++// Nothing may be all zero.
++constexpr size_t kPlayerStorageMin = 4 * 1024, kPlayerStorageMax = 64 * 1024, kSettingMax = 1000;
++bool AllZero(const uint8_t* p, size_t n) {
++  for (size_t i = 0; i < n; ++i) {
++    if (p[i]) return false;
++  }
++  return true;
++}
++const char* AdoptRefusal(const std::vector<std::filesystem::path>& files, const std::vector<uint8_t>& all,
++                         const std::vector<size_t>& sizes) {
++  if (files.size() == 1 && files[0].filename() == "PlayerStorage.dat") {
++    if (sizes[0] < kPlayerStorageMin || sizes[0] > kPlayerStorageMax) return "PlayerStorage.dat size out of range";
++    if (AllZero(all.data() + 20, all.size() - 20)) return "all zero";
++    return nullptr;
++  }
++  if (files.size() != 3 || files[0].filename() != "63E83FFF" || files[1].filename() != "63E83FFE" ||
++      files[2].filename() != "63E83FFD") {
++    return "not a whole profile set (63E83FFF, 63E83FFE and 63E83FFD)";
++  }
++  size_t at = 0;
++  for (size_t k = 0; k < 3; ++k) {
++    if (sizes[k] > kSettingMax) return "a profile setting over 1000 bytes";
++    const size_t skip = k == 0 ? 20 : 0;
++    if (sizes[k] <= skip || AllZero(all.data() + at + skip, sizes[k] - skip)) return "a profile setting empty or all zero";
++    at += sizes[k];
++  }
++  return nullptr;
++}
++}  // namespace
++
 +ResignResult CogAdoptSaveFiles(const std::vector<std::filesystem::path>& files, uint64_t to_key) {
 +  if (files.empty()) {
-+    return ResignResult::TooSmall;
++    return ResignResult::Refused;
 +  }
 +  std::vector<uint8_t> all;
 +  std::vector<size_t> sizes;
-+  for (auto& f : files) {
-+    auto v = CogReadAll(f);
-+    sizes.push_back(v.size());
-+    all.insert(all.end(), v.begin(), v.end());
++  if (!CogReadSet(files, &all, &sizes)) {
++    return ResignResult::ReadFailed;
 +  }
 +  if (all.size() < 21 || sizes[0] < 20) {
 +    return ResignResult::TooSmall;
@@ -153,31 +350,27 @@ index cff07be..c59cd75 100644
 +  if (std::memcmp(to_sig.data(), all.data(), 20) == 0) {
 +    return ResignResult::AlreadyDone;
 +  }
-+  auto first = CogReadAll(files[0]);
-+  if (first.size() != sizes[0]) {
-+    return ResignResult::NoBackup;  // changed while we looked: left alone
++  if (AdoptRefusal(files, all, sizes)) {
++    return ResignResult::Refused;
 +  }
++  // Every file read again just before writing: a set that changed or became unreadable meanwhile is left alone.
++  std::vector<uint8_t> again;
++  std::vector<size_t> again_sizes;
++  if (!CogReadSet(files, &again, &again_sizes) || again != all) {
++    return ResignResult::ReadFailed;
++  }
++  std::vector<uint8_t> first(all.begin(), all.begin() + std::ptrdiff_t(sizes[0]));
 +  // The file as it was, under a name of its own that nothing ever replaces (every adoption keeps its copy).
-+  std::error_code ec;
 +  const auto backup = CogFreshName(files[0], ".cogbox-adopted-" + CogStamp());
-+  if (backup.empty()) {
++  if (backup.empty() || !CogWriteAtomic(backup, first)) {
 +    return ResignResult::NoBackup;
 +  }
-+  auto btmp = backup;
-+  btmp += ".cogbox-tmp";
-+  if (!CogWriteAll(btmp, first)) {
-+    std::filesystem::remove(btmp, ec);
-+    return ResignResult::NoBackup;
-+  }
-+  std::filesystem::rename(btmp, backup, ec);
-+  if (ec) {
-+    std::filesystem::remove(btmp, ec);
-+    return ResignResult::NoBackup;
-+  }
-+  if (CogReadAll(backup) != first) {
++  std::vector<uint8_t> check;
++  if (!CogReadFile(backup, &check) || check != first) {
 +    return ResignResult::NoBackup;
 +  }
 +  std::memcpy(first.data(), to_sig.data(), 20);
++  std::error_code ec;
 +  auto tmp = files[0];
 +  tmp += ".cogbox-tmp";
 +  bool ok = CogWriteAll(tmp, first) && std::filesystem::file_size(tmp, ec) == first.size() && !ec;
@@ -195,26 +388,80 @@ index cff07be..c59cd75 100644
  namespace {
  // Patch 101: the Gears 3 save sets under root (PlayerStorage.dat, then each profile-settings set), in signing order.
  std::vector<std::vector<std::filesystem::path>> Gears3SaveSets(const std::filesystem::path& root, uint64_t profile_xuid,
-@@ -276,6 +359,31 @@ void CogConvertGears3SaveSigning(const std::filesystem::path& root, uint64_t pro
+@@ -276,6 +432,85 @@ void CogConvertGears3SaveSigning(const std::filesystem::path& root, uint64_t pro
    }
  }
  
++namespace {
++// Patch 106 (review r78 F4): the bodies (everything after the signature) of the sets adopted so far, one hex digest a
++// line in <root>/cogbox-save-adopted, newest last, at most 64. A body adopted once and found again with a key that isn't
++// this run's means the game signed it with a key COGBox doesn't predict: it is not adopted again (no loop of copies).
++constexpr size_t kAdoptNotesMax = 64;
++std::string BodyDigest(const std::vector<uint8_t>& all) {
++  const auto d = CogSign(0, all.data() + 20, all.size() - 20);
++  std::string h;
++  for (uint8_t b : d) h += fmt::format("{:02x}", b);
++  return h;
++}
++std::vector<std::string> ReadLines(const std::filesystem::path& p) {
++  std::vector<std::string> out;
++  std::string cur;
++  for (uint8_t c : CogReadAll(p)) {
++    if (c == '\n' || c == '\r') {
++      if (!cur.empty()) out.push_back(cur);
++      cur.clear();
++    } else {
++      cur += char(c);
++    }
++  }
++  if (!cur.empty()) out.push_back(cur);
++  return out;
++}
++bool WriteLines(const std::filesystem::path& p, const std::vector<std::string>& lines) {
++  std::string t;
++  for (const auto& l : lines) t += l + "\n";
++  return CogWriteAtomic(p, std::vector<uint8_t>(t.begin(), t.end()));
++}
++}  // namespace
++
 +void CogAdoptGears3Saves(const std::filesystem::path& root, uint64_t profile_xuid, uint64_t run_key) {
 +  if (root.empty() || !profile_xuid) {
 +    return;
 +  }
 +  try {
++    const auto notes_path = root / "cogbox-save-adopted";
++    auto notes = ReadLines(notes_path);
 +    for (const auto& files : Gears3SaveSets(root, profile_xuid, false)) {
++      const auto name = rex::path_to_utf8(files[0]);
++      std::vector<uint8_t> all;
++      std::vector<size_t> sizes;
++      if (!CogReadSet(files, &all, &sizes)) {
++        REXLOG_WARN("cogbox_save_convert: {} - a file of this save couldn't be read now; not re-signed (tried again "
++                    "next start)", name);
++        continue;
++      }
++      if (all.size() < 21 || sizes[0] < 20) continue;
++      const auto sig = CogSign(run_key, all.data() + 20, all.size() - 20);
++      if (std::memcmp(sig.data(), all.data(), 20) == 0) continue;   // signed for this run
++      const std::string digest = BodyDigest(all);
++      if (std::find(notes.begin(), notes.end(), digest) != notes.end()) {
++        REXLOG_WARN("cogbox_save_convert: {} - re-signed for this run before, and since signed with another key "
++                    "again: not re-signed a second time (Gears 3 may reset it)", name);
++        continue;
++      }
 +      const ResignResult r = CogAdoptSaveFiles(files, run_key);
 +      if (r == ResignResult::Resigned) {
 +        REXLOG_WARN("cogbox_save_convert: {} - signed with a key COGBox doesn't know (an earlier online account, "
 +                    "another PC or console, an old backup): re-signed for this run ({:016X}) so Gears 3 keeps it; "
-+                    "the file as it was is kept beside it as .cogbox-adopted-<date>",
-+                    rex::path_to_utf8(files[0]), run_key);
++                    "the file as it was is kept beside it as .cogbox-adopted-<date>", name, run_key);
++        notes.push_back(digest);
++        if (notes.size() > kAdoptNotesMax) notes.erase(notes.begin(), notes.end() - kAdoptNotesMax);
++        if (!WriteLines(notes_path, notes)) {
++          REXLOG_WARN("cogbox_save_convert: couldn't note the re-signed save in {}", rex::path_to_utf8(notes_path));
++        }
 +      } else if (r != ResignResult::AlreadyDone) {
-+        REXLOG_WARN("cogbox_save_convert: {} - could not be re-signed for this run ({}): Gears 3 may reset it (the file "
-+                    "is left as it was)",
-+                    rex::path_to_utf8(files[0]), ResultText(r));
++        REXLOG_WARN("cogbox_save_convert: {} - not re-signed for this run: {} (Gears 3 may reset it)", name,
++                    ResultText(r));
 +      }
 +    }
 +  } catch (const std::exception& e) {
@@ -227,7 +474,7 @@ index cff07be..c59cd75 100644
  namespace {
  std::string CogReadMode(const std::filesystem::path& marker) {
    const auto v = CogReadAll(marker);
-@@ -287,6 +395,25 @@ std::filesystem::path WithSuffix(std::filesystem::path p, const std::string& suf
+@@ -287,6 +522,25 @@ std::filesystem::path WithSuffix(std::filesystem::path p, const std::string& suf
    p += suffix;
    return p;
  }
@@ -253,7 +500,7 @@ index cff07be..c59cd75 100644
  }  // namespace
  
  ModeSwapResult CogSwapModeFiles(const std::vector<std::filesystem::path>& files, const std::filesystem::path& marker,
-@@ -334,18 +461,7 @@ void CogSwapJudgmentSettings(const std::filesystem::path& root, uint64_t profile
+@@ -334,18 +588,7 @@ void CogSwapJudgmentSettings(const std::filesystem::path& root, uint64_t profile
      if (!std::filesystem::is_directory(title, ec)) {
        return;   // Judgment not played with this user folder (or not this game's folder at all)
      }
@@ -273,25 +520,66 @@ index cff07be..c59cd75 100644
      const char* mode = online ? "online" : "offline";
      const ModeSwapResult r = CogSwapModeFiles(files, title / "cogbox-settings-mode", mode);
      if (r == ModeSwapResult::Swapped) {
-@@ -358,4 +474,62 @@ void CogSwapJudgmentSettings(const std::filesystem::path& root, uint64_t profile
+@@ -358,4 +601,141 @@ void CogSwapJudgmentSettings(const std::filesystem::path& root, uint64_t profile
    }
  }
  
-+void CogSnapshotSavesOnKeyChange(const std::filesystem::path& root, uint64_t profile_xuid, uint64_t run_key) {
++namespace {
++constexpr size_t kSnapshotsKept = 20;
++const char* const kSnapshotDir = "_cogbox-save-backups";
++// Patch 106 (review r78 F5): the newest kSnapshotsKept snapshot folders are kept (their names start with the date, so
++// name order is age order); older ones and any half-made ".cogbox-tmp" folder are removed.
++void PruneSnapshots(const std::filesystem::path& dir) {
++  std::error_code ec;
++  std::vector<std::filesystem::path> done;
++  for (auto it = std::filesystem::directory_iterator(dir, ec); !ec && it != std::filesystem::directory_iterator();
++       it.increment(ec)) {
++    std::error_code dec;
++    if (!it->is_directory(dec) || dec) continue;
++    const std::string n = it->path().filename().string();
++    if (n.size() > 11 && n.compare(n.size() - 11, 11, ".cogbox-tmp") == 0) {
++      std::error_code rec;
++      std::filesystem::remove_all(it->path(), rec);
++    } else {
++      done.push_back(it->path());
++    }
++  }
++  if (done.size() <= kSnapshotsKept) return;
++  std::sort(done.begin(), done.end());
++  for (size_t k = 0; k + kSnapshotsKept < done.size(); ++k) {
++    std::error_code rec;
++    std::filesystem::remove_all(done[k], rec);
++  }
++}
++}  // namespace
++
++std::optional<uint64_t> CogLastSaveKey(const std::filesystem::path& root) {
++  const std::string t = CogReadMode(root / "cogbox-save-key");
++  if (t.size() != 16) return std::nullopt;
++  uint64_t v = 0;
++  for (char c : t) {
++    int d = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
++    if (d < 0) return std::nullopt;
++    v = (v << 4) | uint64_t(d);
++  }
++  return v;
++}
++
++bool CogSnapshotSavesOnKeyChange(const std::filesystem::path& root, uint64_t profile_xuid, uint64_t run_key) {
 +  if (root.empty() || !profile_xuid) {
-+    return;
++    return false;
 +  }
 +  try {
 +    std::error_code ec;
 +    const bool gears3 = std::filesystem::is_directory(root / "4D5308AB", ec);
 +    const bool judgment = std::filesystem::is_directory(root / "4D530A26", ec);
 +    if (!gears3 && !judgment) {
-+      return;  // another game's user folder
++      return false;  // another game's user folder
 +    }
 +    const auto marker = root / "cogbox-save-key";
 +    const std::string was = CogReadMode(marker), now = fmt::format("{:016X}", run_key);
 +    if (was == now) {
-+      return;
++      return false;
 +    }
 +    std::vector<std::filesystem::path> files;
 +    if (gears3) {
@@ -300,147 +588,394 @@ index cff07be..c59cd75 100644
 +    if (judgment) {
 +      for (const auto& f : JudgmentSaveFiles(root, profile_xuid)) {
 +        std::error_code fec;
-+        if (std::filesystem::is_regular_file(f, fec) && !fec) files.push_back(f);
++        if (std::filesystem::exists(f, fec) && !fec) files.push_back(f);
 +      }
 +    }
-+    bool ok = true;
++    const std::string from = was.empty() ? std::string("(none noted)") : was;
 +    if (!files.empty()) {
-+      const auto dir = CogFreshName(root / "_cogbox-save-backups" / CogStamp(),
-+                                    "-" + (was.empty() ? std::string("first") : was) + "-to-" + now);
-+      ok = !dir.empty();
++      // Written into <name>.cogbox-tmp and renamed once whole: a failed copy leaves no half folder behind.
++      const auto backups = root / kSnapshotDir;
++      const auto dir = CogFreshName(backups / CogStamp(), "-" + (was.empty() ? std::string("first") : was) + "-to-" + now);
++      bool ok = !dir.empty();
++      auto tmp_dir = dir;
++      tmp_dir += ".cogbox-tmp";
 +      for (const auto& f : files) {
 +        if (!ok) break;
 +        const auto rel = f.lexically_relative(root);
 +        if (rel.empty() || *rel.begin() == "..") continue;
-+        const auto dest = dir / rel;
++        const auto dest = tmp_dir / rel;
 +        std::error_code cec;
 +        std::filesystem::create_directories(dest.parent_path(), cec);
-+        const auto bytes = CogReadAll(f);
-+        ok = !cec && CogWriteAll(dest, bytes) && CogReadAll(dest) == bytes;
++        std::vector<uint8_t> bytes, check;
++        ok = !cec && CogReadFile(f, &bytes) && CogWriteAll(dest, bytes) && CogReadFile(dest, &check) && check == bytes;
 +      }
 +      if (ok) {
-+        REXLOG_INFO("cogbox_save_convert: save signing key {} -> {}: {} save file(s) copied to {} first",
-+                    was.empty() ? "(none noted)" : was, now, files.size(), rex::path_to_utf8(dir));
-+      } else {
-+        REXLOG_WARN("cogbox_save_convert: save signing key {} -> {}: copying the saves to {} failed; tried again next "
-+                    "start", was.empty() ? "(none noted)" : was, now, rex::path_to_utf8(dir));
++        std::error_code rec;
++        std::filesystem::rename(tmp_dir, dir, rec);
++        ok = !rec;
 +      }
++      if (!ok) {
++        std::error_code rec;
++        if (!dir.empty()) std::filesystem::remove_all(tmp_dir, rec);
++        // A failed copy changes nothing else: every re-sign still keeps its own copy (.pre-* / .cogbox-adopted-*).
++        REXLOG_WARN("cogbox_save_convert: save signing key {} -> {}: copying the saves to {} failed; tried again next "
++                    "start", from, now, rex::path_to_utf8(backups));
++        return false;
++      }
++      REXLOG_INFO("cogbox_save_convert: save signing key {} -> {}: {} save file(s) copied to {} first", from, now,
++                  files.size(), rex::path_to_utf8(dir));
++      PruneSnapshots(backups);
 +    }
-+    if (ok) {
-+      const std::vector<uint8_t> m(now.begin(), now.end());
-+      CogWriteAll(marker, m);
++    const std::vector<uint8_t> m(now.begin(), now.end());
++    if (!CogWriteAtomic(marker, m)) {
++      REXLOG_WARN("cogbox_save_convert: couldn't note the save signing key in {}", rex::path_to_utf8(marker));
++      return false;
 +    }
++    return true;
 +  } catch (...) {
 +    REXLOG_INFO("cogbox_save_convert: save copy before a key change stopped; saves left as they were");
++    return false;
 +  }
++}
++
++void CogPrepareGears3Saves(const std::filesystem::path& root, uint64_t profile_xuid, uint64_t run_key,
++                           uint64_t other_key, bool adopt_foreign, std::optional<uint64_t> extra_key) {
++  if (root.empty() || !profile_xuid) {
++    return;
++  }
++  // The key the last run signed with, read before the copy below notes this run's.
++  const std::optional<uint64_t> last = CogLastSaveKey(root);
++  CogSnapshotSavesOnKeyChange(root, profile_xuid, run_key);
++  // Verified passes first: a save signed with a key COGBox can name is converted from it (its first copy kept).
++  CogConvertGears3SaveSigning(root, profile_xuid, other_key, run_key, ".pre-online", false);
++  if (last && *last != run_key && *last != other_key) {
++    CogConvertGears3SaveSigning(root, profile_xuid, *last, run_key, ".pre-lastkey", false);
++  }
++  if (extra_key && *extra_key != run_key) {
++    CogConvertGears3SaveSigning(root, profile_xuid, *extra_key, run_key, ".pre-adoptkey", false);
++  }
++  // Then, only for what is left, the unverified re-sign of whole, plausible saves.
++  if (adopt_foreign) {
++    CogAdoptGears3Saves(root, profile_xuid, run_key);
++  }
++  CogReportGears3SaveSigning(root, profile_xuid, run_key, other_key);
 +}
 +
  }  // namespace rex::system
 diff --git a/tests/unit/net/save_resign_test.cpp b/tests/unit/net/save_resign_test.cpp
-index 1e2c3e4..a3b1c99 100644
+index 1e2c3e4..a08bd70 100644
 --- a/tests/unit/net/save_resign_test.cpp
 +++ b/tests/unit/net/save_resign_test.cpp
-@@ -2,6 +2,7 @@
+@@ -2,10 +2,13 @@
  // re-signed between XUID 0 and the online XUID. Files live in COGBOX_NET_TEST_DIR (build tree, never AppData).
  #include <catch2/catch_test_macros.hpp>
  
 +#include <algorithm>
++#include <cstdio>
  #include <cstring>
  #include <filesystem>
  #include <fstream>
-@@ -180,3 +181,95 @@ TEST_CASE("Judgment settings: a copy already set aside is kept, never overwritte
+ #include <iterator>
++#include <optional>
+ #include <vector>
+ 
+ #include <rex/system/cogbox_save_sign.h>
+@@ -180,3 +183,298 @@ TEST_CASE("Judgment settings: a copy already set aside is kept, never overwritte
    CHECK(ReadFile(fs::path(f) += ".cogbox-offline") == Bytes("now"));
    CHECK(ReadFile(fs::path(f) += ".cogbox-offline.old-1") == Bytes("older offline"));
  }
 +
-+// COGBox SDK patch 106 (GitHub #329): a save signed with a key COGBox can't name is re-signed (a copy kept), never left
-+// for Gears 3 to reset; and every save is copied before a run that signs with another key.
++// COGBox SDK patch 106 (GitHub #329, review r78): a whole, plausible Gears 3 save signed with a key COGBox can't name is
++// re-signed (a copy kept) instead of being reset by the game; known keys (the last run's, --cogbox_save_adopt_key) are
++// converted with a check first; every save is copied before a run that signs with another key.
 +namespace {
++constexpr uint64_t kProfile = 0xB13EBABEBABEBABEull;
++constexpr uint64_t kOldAccount = 0x0009000000000ABCull;   // the online account before a new one was made
++
 +std::vector<fs::path> WithPrefix(const fs::path& dir, const std::string& prefix) {
 +  std::vector<fs::path> out;
-+  for (auto& e : fs::directory_iterator(dir)) {
-+    if (e.path().filename().string().rfind(prefix, 0) == 0) out.push_back(e.path());
++  std::error_code ec;
++  for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
++    if (it->path().filename().string().rfind(prefix, 0) == 0) out.push_back(it->path());
 +  }
 +  return out;
 +}
++// A signed file of the given size whose body isn't all zero.
++std::vector<uint8_t> Signed(uint64_t key, size_t size, uint8_t seed = 5) {
++  std::vector<uint8_t> body(size - 20);
++  for (size_t i = 0; i < body.size(); ++i) body[i] = uint8_t(i * 13 + seed);
++  const auto sig = CogSaveSignature(key, body.data(), body.size());
++  std::vector<uint8_t> file(sig.begin(), sig.end());
++  file.insert(file.end(), body.begin(), body.end());
++  return file;
++}
++// A profile set FFF + FFE + FFD signed together with key (FFF carries the signature over all three).
++void WriteProfileSet(const fs::path& dir, uint64_t key, size_t fff = 300, size_t ffe = 200, size_t ffd = 100,
++                     uint8_t fill = 0) {
++  fs::create_directories(dir);
++  std::vector<uint8_t> a(fff), b(ffe, uint8_t(fill ? fill : 0x22)), c(ffd, uint8_t(fill ? fill : 0x33));
++  for (size_t i = 20; i < a.size(); ++i) a[i] = fill ? fill : uint8_t(i * 3 + 1);
++  std::vector<uint8_t> body(a.begin() + 20, a.end());
++  body.insert(body.end(), b.begin(), b.end());
++  body.insert(body.end(), c.begin(), c.end());
++  const auto sig = CogSaveSignature(key, body.data(), body.size());
++  std::copy(sig.begin(), sig.end(), a.begin());
++  WriteFile(dir / "63E83FFF", a);
++  WriteFile(dir / "63E83FFE", b);
++  WriteFile(dir / "63E83FFD", c);
++}
++bool SetSignedFor(const fs::path& dir, uint64_t key) {
++  std::vector<uint8_t> all = ReadFile(dir / "63E83FFF");
++  for (const char* n : {"63E83FFE", "63E83FFD"}) {
++    const auto v = ReadFile(dir / n);
++    all.insert(all.end(), v.begin(), v.end());
++  }
++  const auto sig = CogSaveSignature(key, all.data() + 20, all.size() - 20);
++  return std::equal(sig.begin(), sig.end(), all.begin());
++}
++bool FileSignedFor(const fs::path& f, uint64_t key) {
++  const auto v = ReadFile(f);
++  const auto sig = CogSaveSignature(key, v.data() + 20, v.size() - 20);
++  return v.size() > 20 && std::equal(sig.begin(), sig.end(), v.begin());
++}
++// A Gears 3 user folder: <root>/B13E.../4D5308AB/.../PlayerStorage.dat and <root>/4D5308AB/profile/User/63E83FF*.
++struct G3Root {
++  fs::path root, ps, prof;
++  explicit G3Root(const char* name) {
++    root = SwapDir(name);
++    ps = root / "B13EBABEBABEBABE" / "4D5308AB" / "00000001" / "PlayerStorage.dat" / "PlayerStorage.dat";
++    prof = root / "4D5308AB" / "profile" / "User";
++    fs::create_directories(ps.parent_path());
++    fs::create_directories(prof);
++  }
++};
++// A path that exists but can't be read as a file (a folder of that name): fopen or fread fails on every platform.
++void MakeUnreadable(const fs::path& p) {
++  std::error_code ec;
++  fs::remove(p, ec);
++  fs::create_directories(p / "x");
++}
 +}  // namespace
 +
-+TEST_CASE("Save adopt: a save signed for an earlier online account is re-signed and its old file kept", "[net][save]") {
-+  const auto foreign = MakeSave(0x0009000000000ABCull);   // the account before a new one was made
++TEST_CASE("Save adopt: a PlayerStorage.dat signed for an earlier online account is re-signed, its old file kept", "[net][save]") {
++  const auto foreign = Signed(kOldAccount, 6238);
 +  auto f = FreshFile("adopt_foreign", foreign);
 +  CHECK(CogAdoptSaveFiles({f}, kXuid) == ResignResult::Resigned);
 +  const auto now = ReadFile(f);
-+  CHECK(now == MakeSave(kXuid));
++  CHECK(FileSignedFor(f, kXuid));
 +  CHECK(std::equal(now.begin() + 20, now.end(), foreign.begin() + 20));   // the data itself never changes
 +  const auto kept = WithPrefix(f.parent_path(), "PlayerStorage.dat.cogbox-adopted-");
 +  REQUIRE(kept.size() == 1);
 +  CHECK(ReadFile(kept[0]) == foreign);
 +  CHECK_FALSE(fs::exists(fs::path(f) += ".cogbox-tmp"));
-+  // signed for this run now: nothing more is done or kept
 +  CHECK(CogAdoptSaveFiles({f}, kXuid) == ResignResult::AlreadyDone);
 +  CHECK(WithPrefix(f.parent_path(), "PlayerStorage.dat.cogbox-adopted-").size() == 1);
 +}
 +
 +TEST_CASE("Save adopt: each adoption keeps its own copy, none replaced", "[net][save]") {
-+  auto f = FreshFile("adopt_twice", MakeSave(0x1111));
++  auto f = FreshFile("adopt_twice", Signed(0x1111, 6238));
 +  REQUIRE(CogAdoptSaveFiles({f}, kXuid) == ResignResult::Resigned);
-+  REQUIRE(CogAdoptSaveFiles({f}, 0) == ResignResult::Resigned);   // same second: "-2" name
-+  CHECK(ReadFile(f) == MakeSave(0));
++  REQUIRE(CogAdoptSaveFiles({f}, 0) == ResignResult::Resigned);   // same second: a "-2" name
++  CHECK(FileSignedFor(f, 0));
 +  CHECK(WithPrefix(f.parent_path(), "PlayerStorage.dat.cogbox-adopted-").size() == 2);
 +}
 +
-+TEST_CASE("Save adopt: a profile set is signed over all its files and only the first one changes", "[net][save]") {
-+  const fs::path d = fs::path(COGBOX_NET_TEST_DIR) / "adopt_set";
-+  std::error_code ec;
-+  fs::remove_all(d, ec);
-+  fs::create_directories(d);
-+  std::vector<uint8_t> a(120, 0x11), b(64, 0x22);
-+  std::vector<uint8_t> body(a.begin() + 20, a.end());
-+  body.insert(body.end(), b.begin(), b.end());
-+  const auto sig = CogSaveSignature(0x2222, body.data(), body.size());
-+  std::copy(sig.begin(), sig.end(), a.begin());
-+  WriteFile(d / "63E83FFF", a);
-+  WriteFile(d / "63E83FFE", b);
-+  REQUIRE(CogAdoptSaveFiles({d / "63E83FFF", d / "63E83FFE"}, kXuid) == ResignResult::Resigned);
-+  const auto now = ReadFile(d / "63E83FFF");
-+  const auto want = CogSaveSignature(kXuid, body.data(), body.size());
-+  CHECK(std::equal(want.begin(), want.end(), now.begin()));
-+  CHECK(ReadFile(d / "63E83FFE") == b);
++TEST_CASE("Save adopt: a whole profile set is signed over its three files and only 63E83FFF changes", "[net][save]") {
++  const fs::path d = SwapDir("adopt_set");
++  WriteProfileSet(d, 0x2222);
++  const auto ffe = ReadFile(d / "63E83FFE"), ffd = ReadFile(d / "63E83FFD");
++  REQUIRE(CogAdoptSaveFiles({d / "63E83FFF", d / "63E83FFE", d / "63E83FFD"}, kXuid) == ResignResult::Resigned);
++  CHECK(SetSignedFor(d, kXuid));
++  CHECK(ReadFile(d / "63E83FFE") == ffe);
++  CHECK(ReadFile(d / "63E83FFD") == ffd);
 +}
 +
-+TEST_CASE("Save adopt: a file too small to hold a signature is left alone", "[net][save]") {
-+  auto f = FreshFile("adopt_small", std::vector<uint8_t>(10, 0));
-+  CHECK(CogAdoptSaveFiles({f}, kXuid) == ResignResult::TooSmall);
-+  CHECK(WithPrefix(f.parent_path(), "PlayerStorage.dat.cogbox-adopted-").empty());
++TEST_CASE("Save adopt: a profile set without 63E83FFF is never touched (r78 F1)", "[net][save]") {
++  G3Root g("adopt_no_fff");
++  WriteProfileSet(g.prof, 0x2222);
++  fs::remove(g.prof / "63E83FFF");
++  const auto ffe = ReadFile(g.prof / "63E83FFE");
++  CHECK(CogAdoptSaveFiles({g.prof / "63E83FFE", g.prof / "63E83FFD"}, kXuid) == ResignResult::Refused);
++  CogAdoptGears3Saves(g.root, kProfile, kXuid);
++  CHECK(ReadFile(g.prof / "63E83FFE") == ffe);
++  CHECK(WithPrefix(g.prof, "63E83FFE.cogbox-adopted-").empty());
++}
++
++TEST_CASE("Save adopt: a profile set with only 63E83FFF and 63E83FFE is left alone", "[net][save]") {
++  G3Root g("adopt_two_of_three");
++  WriteProfileSet(g.prof, 0x2222);
++  fs::remove(g.prof / "63E83FFD");
++  const auto fff = ReadFile(g.prof / "63E83FFF");
++  CogAdoptGears3Saves(g.root, kProfile, kXuid);
++  CHECK(ReadFile(g.prof / "63E83FFF") == fff);
++}
++
++TEST_CASE("Save adopt: a file of the set that can't be read skips the set (r78 F2)", "[net][save]") {
++  G3Root g("adopt_unreadable");
++  WriteProfileSet(g.prof, kXuid);              // correctly signed for this run
++  const auto fff = ReadFile(g.prof / "63E83FFF");
++  MakeUnreadable(g.prof / "63E83FFE");         // held by another program right now
++  CHECK(CogAdoptSaveFiles({g.prof / "63E83FFF", g.prof / "63E83FFE", g.prof / "63E83FFD"}, kXuid) ==
++        ResignResult::ReadFailed);
++  CogAdoptGears3Saves(g.root, kProfile, kXuid);
++  CHECK(ReadFile(g.prof / "63E83FFF") == fff);  // not "re-signed" over the wrong body
++  CHECK(WithPrefix(g.prof, "63E83FFF.cogbox-adopted-").empty());
++  // the verified pass doesn't take it for an empty file either
++  CHECK(CogResignSaveFiles({g.prof / "63E83FFF", g.prof / "63E83FFE", g.prof / "63E83FFD"}, 0, kXuid, ".pre-online") ==
++        ResignResult::ReadFailed);
++}
++
++TEST_CASE("Save adopt: payload checks refuse cut-off, oversized and all-zero saves (r78 F3)", "[net][save]") {
++  // PlayerStorage.dat: Gears 3 TU6 writes about 6.2-6.5 KB; 4 KB - 64 KB is taken
++  auto small = FreshFile("adopt_ps_small", Signed(kOldAccount, 1000));
++  CHECK(CogAdoptSaveFiles({small}, kXuid) == ResignResult::Refused);
++  auto big = FreshFile("adopt_ps_big", Signed(kOldAccount, 70000));
++  CHECK(CogAdoptSaveFiles({big}, kXuid) == ResignResult::Refused);
++  std::vector<uint8_t> zero(6238, 0);
++  auto zf = FreshFile("adopt_ps_zero", zero);
++  CHECK(CogAdoptSaveFiles({zf}, kXuid) == ResignResult::Refused);
++  CHECK(ReadFile(zf) == zero);
++  CHECK(WithPrefix(zf.parent_path(), "PlayerStorage.dat.cogbox-adopted-").empty());
++  // profile settings: each at most 1000 bytes, none all zero
++  const fs::path d1 = SwapDir("adopt_set_big");
++  WriteProfileSet(d1, 0x2222, 1001);
++  CHECK(CogAdoptSaveFiles({d1 / "63E83FFF", d1 / "63E83FFE", d1 / "63E83FFD"}, kXuid) == ResignResult::Refused);
++  const fs::path d2 = SwapDir("adopt_set_zero");
++  WriteProfileSet(d2, 0x2222);
++  WriteFile(d2 / "63E83FFE", std::vector<uint8_t>(200, 0));
++  CHECK(CogAdoptSaveFiles({d2 / "63E83FFF", d2 / "63E83FFE", d2 / "63E83FFD"}, kXuid) == ResignResult::Refused);
++  // and a name that isn't a Gears 3 save
++  auto other = fs::path(COGBOX_NET_TEST_DIR) / "adopt_other_name";
++  fs::create_directories(other);
++  WriteFile(other / "Something.dat", Signed(kOldAccount, 6238));
++  CHECK(CogAdoptSaveFiles({other / "Something.dat"}, kXuid) == ResignResult::Refused);
++}
++
++TEST_CASE("Save adopt: a save is adopted once; signed with another key again, it is left alone (r78 F4)", "[net][save]") {
++  G3Root g("adopt_loop");
++  const auto foreign = Signed(kOldAccount, 6238);
++  WriteFile(g.ps, foreign);
++  CogAdoptGears3Saves(g.root, kProfile, kXuid);
++  REQUIRE(FileSignedFor(g.ps, kXuid));
++  REQUIRE(WithPrefix(g.ps.parent_path(), "PlayerStorage.dat.cogbox-adopted-").size() == 1);
++  // the game signs the same data with a key COGBox didn't predict
++  auto again = foreign;
++  const auto sig = CogSaveSignature(0x7777, again.data() + 20, again.size() - 20);
++  std::copy(sig.begin(), sig.end(), again.begin());
++  WriteFile(g.ps, again);
++  CogAdoptGears3Saves(g.root, kProfile, kXuid);
++  CogAdoptGears3Saves(g.root, kProfile, kXuid);
++  CHECK(ReadFile(g.ps) == again);
++  CHECK(WithPrefix(g.ps.parent_path(), "PlayerStorage.dat.cogbox-adopted-").size() == 1);
++}
++
++TEST_CASE("Save prepare: the last run's key is converted with a check (r78 F3)", "[net][save]") {
++  G3Root g("prepare_last_key");
++  // the saves of the last run, signed for the old account, and that run's key noted
++  WriteFile(g.ps, Signed(kOldAccount, 6238));
++  WriteProfileSet(g.prof, kOldAccount);
++  WriteFile(g.root / "cogbox-save-key", Bytes("0009000000000ABC"));
++  REQUIRE(CogLastSaveKey(g.root) == kOldAccount);
++  // a new online account: verified, so even with the unverified re-sign off it converts
++  CogPrepareGears3Saves(g.root, kProfile, kXuid, 0, false, std::nullopt);
++  CHECK(FileSignedFor(g.ps, kXuid));
++  CHECK(SetSignedFor(g.prof, kXuid));
++  CHECK(fs::exists(fs::path(g.ps) += ".pre-lastkey"));
++  CHECK(WithPrefix(g.ps.parent_path(), "PlayerStorage.dat.cogbox-adopted-").empty());
++  CHECK(CogLastSaveKey(g.root) == kXuid);
++}
++
++TEST_CASE("Save prepare: --cogbox_save_adopt_key converts that key with a check", "[net][save]") {
++  G3Root g("prepare_adopt_key");
++  WriteFile(g.ps, Signed(kOldAccount, 1000));   // too small for the unverified path, fine for a checked one
++  CogPrepareGears3Saves(g.root, kProfile, kXuid, 0, false, kOldAccount);
++  CHECK(FileSignedFor(g.ps, kXuid));
++  CHECK(fs::exists(fs::path(g.ps) += ".pre-adoptkey"));
++}
++
++TEST_CASE("Save prepare: with the re-sign switched off, an unknown key is only reported", "[net][save]") {
++  G3Root g("prepare_cvar_off");
++  const auto foreign = Signed(0x5555, 6238);
++  WriteFile(g.ps, foreign);
++  CogPrepareGears3Saves(g.root, kProfile, kXuid, 0, false, std::nullopt);
++  CHECK(ReadFile(g.ps) == foreign);
++  CHECK(WithPrefix(g.ps.parent_path(), "PlayerStorage.dat.cogbox-adopted-").empty());
++  // and on: adopted
++  CogPrepareGears3Saves(g.root, kProfile, kXuid, 0, true, std::nullopt);
++  CHECK(FileSignedFor(g.ps, kXuid));
 +}
 +
 +TEST_CASE("Save copy: every save is copied once before a run with another key", "[net][save]") {
-+  const fs::path root = SwapDir("snapshot_root");
-+  constexpr uint64_t kProfile = 0xB13EBABEBABEBABEull;
-+  const fs::path ps = root / "B13EBABEBABEBABE" / "4D5308AB" / "00000001" / "PlayerStorage.dat" / "PlayerStorage.dat";
-+  const fs::path prof = root / "4D5308AB" / "profile" / "User" / "63E83FFF";
-+  fs::create_directories(ps.parent_path());
-+  fs::create_directories(prof.parent_path());
-+  WriteFile(ps, MakeSave(0x1234));
-+  WriteFile(prof, MakeSave(0x1234));
-+  const fs::path backups = root / "_cogbox-save-backups";
-+  CogSnapshotSavesOnKeyChange(root, kProfile, 0);          // no key noted yet: a first copy
-+  REQUIRE(fs::is_directory(backups));
++  G3Root g("snapshot_root");
++  WriteFile(g.ps, MakeSave(0x1234));
++  WriteFile(g.prof / "63E83FFF", MakeSave(0x1234));
++  const fs::path backups = g.root / "_cogbox-save-backups";
++  CHECK(CogSnapshotSavesOnKeyChange(g.root, kProfile, 0));   // no key noted yet: a first copy
 +  auto dirs = WithPrefix(backups, "");
 +  REQUIRE(dirs.size() == 1);
-+  CHECK(ReadFile(dirs[0] / ps.lexically_relative(root)) == MakeSave(0x1234));
-+  CHECK(ReadFile(dirs[0] / prof.lexically_relative(root)) == MakeSave(0x1234));
-+  CogSnapshotSavesOnKeyChange(root, kProfile, 0);          // same key: nothing new
++  CHECK(ReadFile(dirs[0] / g.ps.lexically_relative(g.root)) == MakeSave(0x1234));
++  CHECK(ReadFile(dirs[0] / (g.prof / "63E83FFF").lexically_relative(g.root)) == MakeSave(0x1234));
++  CHECK_FALSE(CogSnapshotSavesOnKeyChange(g.root, kProfile, 0));   // same key: nothing new
 +  CHECK(WithPrefix(backups, "").size() == 1);
-+  CogSnapshotSavesOnKeyChange(root, kProfile, kXuid);      // online with an account: a second copy
++  CHECK(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid));
 +  CHECK(WithPrefix(backups, "").size() == 2);
-+  CHECK(ReadFile(root / "cogbox-save-key") == Bytes("0009000012345678"));
++  CHECK(ReadFile(g.root / "cogbox-save-key") == Bytes("0009000012345678"));
++}
++
++TEST_CASE("Save copy: Judgment's saves are in the copy too", "[net][save]") {
++  const fs::path root = SwapDir("snapshot_judgment");
++  const fs::path ps = root / "B13EBABEBABEBABE" / "4D530A26" / "00000001" / "PlayerStorage.dat" / "PlayerStorage.dat";
++  const fs::path hdr = root / "B13EBABEBABEBABE" / "4D530A26" / "Headers" / "00000001" / "PlayerStorage.dat.header";
++  const fs::path fff = root / "4D530A26" / "profile" / "User" / "63E83FFF";
++  for (const auto& p : {ps, hdr, fff}) fs::create_directories(p.parent_path());
++  WriteFile(ps, Bytes("judgment storage"));
++  WriteFile(hdr, Bytes("judgment header"));
++  WriteFile(fff, Bytes("judgment profile"));
++  REQUIRE(CogSnapshotSavesOnKeyChange(root, kProfile, kXuid));
++  const auto dirs = WithPrefix(root / "_cogbox-save-backups", "");
++  REQUIRE(dirs.size() == 1);
++  CHECK(ReadFile(dirs[0] / ps.lexically_relative(root)) == Bytes("judgment storage"));
++  CHECK(ReadFile(dirs[0] / hdr.lexically_relative(root)) == Bytes("judgment header"));
++  CHECK(ReadFile(dirs[0] / fff.lexically_relative(root)) == Bytes("judgment profile"));
++  CHECK(ReadFile(ps) == Bytes("judgment storage"));   // only read
++}
++
++TEST_CASE("Save copy: a save that can't be read fails the copy, leaves no folder and no key (r78 F2 / F5)", "[net][save]") {
++  G3Root g("snapshot_unreadable");
++  WriteProfileSet(g.prof, 0);
++  MakeUnreadable(g.ps);
++  CHECK_FALSE(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid));
++  CHECK_FALSE(fs::exists(g.root / "cogbox-save-key"));
++  CHECK(WithPrefix(g.root / "_cogbox-save-backups", "").empty());   // nothing half made
++  // readable again: the next start makes the copy and notes the key
++  std::error_code ec;
++  fs::remove_all(g.ps, ec);
++  WriteFile(g.ps, MakeSave(0));
++  CHECK(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid));
++  CHECK(CogLastSaveKey(g.root) == kXuid);
++}
++
++TEST_CASE("Save copy: only the newest 20 copies are kept", "[net][save]") {
++  G3Root g("snapshot_prune");
++  WriteFile(g.ps, MakeSave(0));
++  const fs::path backups = g.root / "_cogbox-save-backups";
++  fs::create_directories(backups / "19990101-000000-old.cogbox-tmp");   // a half-made one from a crash
++  for (int k = 0; k < 25; ++k) {
++    char n[64];
++    std::snprintf(n, sizeof(n), "2000%04d-000000-x-to-y", k);
++    fs::create_directories(backups / n);
++  }
++  REQUIRE(CogSnapshotSavesOnKeyChange(g.root, kProfile, kXuid));
++  const auto left = WithPrefix(backups, "");
++  CHECK(left.size() == 20);
++  CHECK_FALSE(fs::exists(backups / "20000000-000000-x-to-y"));       // the oldest went
++  CHECK_FALSE(fs::exists(backups / "19990101-000000-old.cogbox-tmp"));
 +}
 +
 +TEST_CASE("Save copy: another game's user folder is left alone", "[net][save]") {
 +  const fs::path root = SwapDir("snapshot_other_game");
 +  fs::create_directories(root / "4D53082D" / "profile" / "User");
-+  CogSnapshotSavesOnKeyChange(root, 0xB13EBABEBABEBABEull, 0);
++  CHECK_FALSE(CogSnapshotSavesOnKeyChange(root, kProfile, 0));
 +  CHECK_FALSE(fs::exists(root / "_cogbox-save-backups"));
 +  CHECK_FALSE(fs::exists(root / "cogbox-save-key"));
 +}
