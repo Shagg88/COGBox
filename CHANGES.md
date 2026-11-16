@@ -2,6 +2,10 @@
 
 ## 0.6.4 (in progress)
 
+- **Less stutter with texture packs** (all four games; GitHub #341): a pack texture is read from disk once and shared
+  wherever the game uses it, and kept in video memory when the game moves or drops it, instead of being read again each
+  time. New **Texture cache** setting (Graphics tab): Auto (512 MB, or 2 GB with a texture pack on cards with 6 GB or
+  more), 512 MB, 1 GB, 2 GB or 4 GB.
 - **Game sound decoder brought up to Xenia Edge's** (all four games): looping sounds, one-shot sounds, seeks, stereo
   streams and sounds split across buffers decode the way the Xbox 360 does them (Edge's 24 XMA fixes and the matching
   FFmpeg ones). Not tested on PC yet.
