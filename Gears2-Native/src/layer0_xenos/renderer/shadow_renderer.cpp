@@ -924,7 +924,7 @@ REXCVAR_DEFINE_STRING(gow2_upscaler, "off", "Gears2",
 REXCVAR_DEFINE_DOUBLE(gow2_upscale_sharpness, 0.0, "Gears2", "FSR's own sharpening, 0..1 (DLSS ignores it)");
 REXCVAR_DEFINE_STRING(gow2_upscale_mip_bias, "auto", "Gears2",
                       "Notes/82: while an upscaling mode draws the scene below the output, sharper mips for it: off, auto (log2 of "
-                      "scene / output: Quality -0.58, Ultra Performance -1.58) or a number. F2 toggles it with --gow2_ao_debug_keys");
+                      "scene / output, and 1 lower with DLSS as NVIDIA's guide says: DLSS Quality -1.58, Ultra Performance -2.58) or a number. F2 toggles it with --gow2_ao_debug_keys");
 REXCVAR_DEFINE_STRING(gow2_upscale_mode, "native", "Gears2",
                       "Patch 0141 (frame-rate item 5): with --gow2_upscaler, draw the 3D scene below the output size and "
                       "let DLSS / FSR / XeSS fill in the detail. native = the scene at the render scale (anti-aliasing "
@@ -8996,7 +8996,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     (void)logged;
     float bias = 0.0f;
     if (XenosAoDebugMipBias() && up_scale_in_ && up_scale_in_ < res_scale_ && rts_->PhaseScale() == up_scale_in_)
-      bias = !is_auto ? fixed : std::log2(float(up_scale_in_) / float(res_scale_));
+      // #345 (deep dive R4): NVIDIA's DLSS Programming Guide s.3.5 - log2(render / display) - 1; the -1 is DLSS's
+      // (its output resolves the extra detail); FSR / XeSS keep the plain log2
+      bias = !is_auto ? fixed
+                      : std::log2(float(up_scale_in_) / float(res_scale_)) -
+                            (upscaler_ && upscaler_->kind() == rr::upscale::Kind::kDlss ? 1.0f : 0.0f);
     if (bias == mip_bias_) return;
     mip_bias_ = bias;
     static bool told = false;

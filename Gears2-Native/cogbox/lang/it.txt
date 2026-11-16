@@ -1560,3 +1560,4 @@ Not now = Non ora
 No saves to bring in were found in the saves folder. = Nella cartella dei salvataggi non sono stati trovati salvataggi da importare.
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = Non è stato possibile spostare i salvataggi (li sta usando il gioco o un altro programma?). Non è stato cambiato nulla.
 A backup of the saves is still being made - try again when it's done. = È ancora in corso un backup dei salvataggi: riprova quando è finito.
+anti-aliasing only at this render resolution = solo anti-aliasing a questa risoluzione di rendering

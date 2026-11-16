@@ -976,6 +976,13 @@ static void option_row(App &a, int g, const gs::Option &o)
         for (std::string &it : items) it = tr(it);   // 0.2.0
         // notes/83: AMD FSR frame generation runs on Vulkan too, experimental there
         if (o.id == "FrameGen" && items.size() > 1 && gs::runs_vulkan(a.cur[g], a.env[g])) items[1] += std::string(" ") + tr("(experimental on Vulkan)");
+        // #345 / GitHub #98: a Scene resolution with no whole-number scene size at the render resolution (Match my monitor
+        // included: 4K picks 3x) only anti-aliases - said in the list and the closed box
+        if (o.id == "SceneMode" && items.size() == 4) {
+            const int out = gs::expected_render_scale(a.cur[g], a.env[g]);
+            for (int i = 1; i < 4; ++i)
+                if (!gs::scene_mode_fits(i, out)) items[i] += std::string(" - ") + tr("anti-aliasing only at this render resolution");
+        }
         // 0.6.2 Proton review (R11): settings from Windows say DirectX 12, but "Graphics API on Proton / Wine" = Automatic
         // runs Vulkan - the closed box says what the game will actually run
         std::string preview = items.empty() ? std::string() : items[idx];   // (the closed box; the list keeps the plain names)

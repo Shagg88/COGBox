@@ -174,7 +174,13 @@ bool runs_vulkan(const Settings& s, const Environment& env);
 extern const char* const k_fgVkNvidiaWarning;
 bool fg_vk_nvidia_warning(const Settings& s, const Environment& env);
 bool fsr_vulkan(const Environment& env);   // fsr049: FSR upscaling available on Vulkan
-bool fsr_vulkan_on(const Settings& s, const Environment& env);   // ...and "FSR on Vulkan (experimental)" is on
+bool fsr_vulkan_on(const Settings& s, const Environment& env);
+// #345: the render scale the game will use (1-4): the chosen one, 1 for 720p / 1080p, and for "Match my monitor" what the
+// game picks - the smallest scale covering the monitor (by width with Ultrawide on); 2 when the monitor size is unknown
+int expected_render_scale(const Settings& s, const Environment& env);
+// #345 / GitHub #98: Scene resolution mode m (1 Quality, 2 Performance, 3 Ultra performance) has a whole-number scene size
+// at render scale `out` - otherwise the upscaler only anti-aliases (DLAA / native AA)
+inline bool scene_mode_fits(int m, int out) { return (m == 2 && (out == 2 || out == 4)) || ((m == 1 || m == 3) && out == 3); }   // ...and "FSR on Vulkan (experimental)" is on
 // proton049: under Proton / Wine, a single choice that can't work there, with its one-line reason (always ok on
 // Windows): exclusive fullscreen, NVIDIA DLSS without an NVIDIA RTX card, DLSS / XeSS frame generation.
 Availability wine_choice_available(const Option& o, int index, const Environment& env);

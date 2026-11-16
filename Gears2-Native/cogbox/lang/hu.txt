@@ -1570,3 +1570,4 @@ Not now = Most nem
 No saves to bring in were found in the saves folder. = A mentések mappában nem található beemelendő mentés.
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = A mentéseket nem sikerült áthelyezni (a játék vagy egy másik program használja őket?). Semmi sem változott.
 A backup of the saves is still being made - try again when it's done. = A mentések biztonsági mentése még folyamatban van – próbáld újra, ha elkészült.
+anti-aliasing only at this render resolution = ennél a renderfelbontásnál csak élsimítás
