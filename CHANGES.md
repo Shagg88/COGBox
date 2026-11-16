@@ -1,5 +1,10 @@
 # COGBox changes
 
+## 0.6.4 (in progress)
+
+- **French achievement wording now matches the French Xbox 360** (by IamBugReporter, GitHub #339): "déverrouillé" instead of
+  "débloqué", "Succès caché" for secret achievements and "Gamerscore" instead of "Score".
+
 ## 0.6.3
 
 - **Flickering ground patches fixed** (Real occlusion, by Flippage): some flat ground pieces - in Gears 3 on Mercy's
