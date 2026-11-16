@@ -1289,6 +1289,11 @@ REXCVAR_DEFINE_STRING(gow2_renderer_queries, "off", "Gears2",
                       "--gow2_pm4_split; the launcher's \"Real occlusion (experimental)\", D3D12) | "
                       "answer (also write our answers into the game's query reports: the last real count for that "
                       "report, 1 if none; corrected when our count lands)");
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_occlusion_slope_bias, 1.0, "Gears2",
+                      "Occlusion boxes (query draws that write nothing) get this slope-scaled depth bias toward passing. "
+                      "Gears 3 tests them against a half-size depth that keeps the nearest of each 2x2: a flat object's box, "
+                      "lying on that object at a shallow angle, lost to its own surface by under a pixel row's depth, was "
+                      "hidden, then shown again - every other frame (ground patches flickering). 0 = off");
 REXCVAR_DEFINE_INT32(gow2_renderer_queries_min, 0, "Gears2",
                      "Smallest immediate occlusion answer (0 keeps real zeros; 1 = nothing is culled until our count for "
                      "that query has landed, as Canary's fast mode)");
@@ -1938,6 +1943,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     fill_ownership_ = REXCVAR_GET(gow2_renderer_fill_ownership);
     fill_rect_lists_ = REXCVAR_GET(gow2_renderer_fill_rect_lists);
     overlay_nudge_ = std::clamp(REXCVAR_GET(gow2_renderer_overlay_depth_nudge), 0, 64);  // job 712
+    occ_slope_bias_ = float(std::clamp(REXCVAR_GET(gow2_renderer_occlusion_slope_bias), 0.0, 16.0));
     {   // job 713: the minimum as a D3D10 integer bias on a float24 target (as D3D10IntegerPolygonOffset: ceil(x * 2^21) << 3)
       const double m = std::clamp(double(REXCVAR_GET(gow2_renderer_decal_min_bias)), 0.0, 0.1);
       decal_min_bias_ = m > 0.0 ? int32_t(std::ceil(m * double(1u << 21))) << 3 : 0;
@@ -10492,6 +10498,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         default: break;
       }
     }
+    // Occlusion boxes: slope-scaled bias toward passing (--gow2_renderer_occlusion_slope_bias, see there).
+    if (occ_slope_bias_ > 0.0f && occ_open_.open && occ_open_.handle && !depth_writes && !draw_colour && ds.depth_enable) {
+      switch (ds.depth_func) {
+        case rr::CompareFunc::GreaterEqual: case rr::CompareFunc::Greater: d.depth_bias_slope += occ_slope_bias_; ++occ_stats_.slope_biased; break;
+        case rr::CompareFunc::LessEqual: case rr::CompareFunc::Less: d.depth_bias_slope -= occ_slope_bias_; ++occ_stats_.slope_biased; break;
+        default: break;
+      }
+    }
     d.depth_clip = ps.raster.depth_clip;
     d.depth_enable = ds.depth_enable;
     d.depth_write = ds.depth_write;
@@ -14671,7 +14685,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "0 -> {} ({:.1f}%), mean "
                   "{:.1f}, after {:.2f} frames; corrected {}, too late {}, estimate visibility wrong {}, dropped {} | "
                   "SDK answers: fake {}, host {} | draws {:.1f}/frame | backend: segments {} refused {} | reports known {} | "
-                  "answered hidden {}, WRONGLY hidden {} (visible objects skipped), zeros not yet trusted {}",
+                  "answered hidden {}, WRONGLY hidden {} (visible objects skipped), zeros not yet trusted {} | box draws slope-biased {}",
                   queries_mode_ == QueriesMode::kStrict ? "strict" : queries_mode_ == QueriesMode::kAnswer ? "answer" : "shadow",
                   frame_ - uint64_t(log_every_) + 1, frame_,
                   o.ends, double(o.ends) / log_every_, o.ours, o.incomplete, o.refused, o.unended, o.proxies, o.answered,
@@ -14680,7 +14694,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   o.results ? double(o.latency_frames) / double(o.results) : 0.0, o.corrected, o.too_late,
                   o.visibility_changed, o.dropped, o.sdk_fake, o.sdk_host, double(stats_.draws) / log_every_,
                   b.occlusion_segments - occ_backend_segments_base_, b.occlusion_refused - occ_backend_refused_base_,
-                  occ_answers_.size(), o.answered_hidden, o.wrong_hidden, o.zero_not_trusted);
+                  occ_answers_.size(), o.answered_hidden, o.wrong_hidden, o.zero_not_trusted, o.slope_biased);
       occ_backend_segments_base_ = b.occlusion_segments;
       occ_backend_refused_base_ = b.occlusion_refused;
       occ_stats_ = OcclusionStats{};
@@ -15213,6 +15227,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t fill_rects_logged_ = 0;
   bool fill_trim_ = false;
   std::vector<uint64_t> fill_vs_extra_;   // job 709
+  float occ_slope_bias_ = 1.0f;            // --gow2_renderer_occlusion_slope_bias
   int32_t overlay_nudge_ = 0;              // job 712 (off: did not stop the blood flicker, 13:57 at 64 steps)
   int32_t decal_min_bias_ = 0;             // job 713: 0 = off
   int fill_vs_logged_ = 0;
@@ -15299,7 +15314,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint64_t ends = 0, ours = 0, incomplete = 0, refused = 0, unended = 0, answered = 0, from_cache = 0, fallback = 0,
              results = 0, zero = 0, samples = 0, latency_frames = 0, corrected = 0, too_late = 0,
              visibility_changed = 0, dropped = 0, sdk_fake = 0, sdk_host = 0, proxies = 0, zero_not_trusted = 0,
-             answered_hidden = 0, wrong_hidden = 0;
+             answered_hidden = 0, wrong_hidden = 0, slope_biased = 0;
   };
   OcclusionStats occ_stats_;
   uint64_t occ_backend_segments_base_ = 0, occ_backend_refused_base_ = 0;

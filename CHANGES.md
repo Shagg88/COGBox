@@ -2,6 +2,12 @@
 
 ## 0.6.3
 
+- **Flickering ground patches fixed** (Real occlusion, by Flippage): some flat ground pieces - in Gears 3 on Mercy's
+  countdown screen, in matches and in the campaign - switched between textured and grey every frame. Their occlusion
+  box, lying almost exactly on the patch, lost against the patch's own surface in the game's half-size depth (which
+  keeps the nearest of each 2x2 pixels), so the game hid the patch, then showed it again the next frame. Occlusion
+  boxes now get a small slope-scaled depth bias toward "visible" (`--gow2_renderer_occlusion_slope_bias`, default 1;
+  0 = off). Occlusion still culls as much as before; only these false hides are gone.
 - **Windowed / borderless full screen key, all four games:** **Alt+Enter** in the game window switches between a window
   and borderless full screen on the monitor the game is on, and back to the window's size and place. It is not F11
   (F11 is the cheat keys' "all weapons"); change it with a `--bind_cogbox_fullscreen=<key>` line in `extra-args.txt`
