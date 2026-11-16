@@ -1566,3 +1566,7 @@ Pistol = Pistolet
 anti-aliasing only at this render resolution = anticrénelage seul à cette résolution de rendu
 This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = Cette mise à jour du titre a été faite pour une autre copie du default.xex du jeu (un autre pressage ou une autre édition du jeu), et le jeu planterait très probablement au démarrage.
 Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = Utilisez les fichiers du jeu tels qu'ils sortent du disque (ou votre copie Games on Demand), avec une mise à jour du titre faite pour eux.
+Gears 3: go to Versus > Social > {1} now. Its matchmaking finds that match, and the host's game picks your team. = Gears 3 : va maintenant dans Versus > Social > {1}. Sa recherche de partie trouve ce match, et le jeu de l'hôte choisit ton équipe.
+the match's playlist = la playlist du match
+Gears 3: to pick COG or Locust, host Versus > Private and have players join by room code or Join friend. In the lobby, press Y to switch team. = Gears 3 : pour choisir COG ou Locust, héberge Versus > Private et fais rejoindre les autres par code de salon ou Rejoindre un ami. Dans le salon, appuie sur Y pour changer d'équipe.
+Join through Gears 3's own matchmaking: the host's game picks your team. = Rejoindre via la recherche de partie de Gears 3 : le jeu de l'hôte choisit ton équipe.

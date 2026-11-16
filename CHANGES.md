@@ -25,6 +25,13 @@
   (Haswell, 2013) and AMD Ryzen / Excavator CPUs and newer (the README already listed an AVX2 CPU as needed). A separate
   multiply and add stay separate, as in the Xbox 360 code. On a CPU without AVX2 COGBox says so in plain words instead of
   crashing.
+- **Gears 3 Open matches: the host's game picks your team** (Discord report: every joiner landed on the host's team).
+  JOIN in the Social tab's Open matches now has Gears 3 find the match with its own matchmaking: go to Versus > Social
+  and the match's playlist (the launcher says which), and the host's game seats you as on Xbox Live. A match already in
+  progress still joins the old way for now.
+  Friends' joins and invites still put you with your friend. To pick COG or Locust yourself, host Versus > Private and
+  have players join by room code or Join friend, then press Y in the lobby to switch team. Needs the updated online
+  server; until then JOIN works as before.
 - **French achievement wording now matches the French Xbox 360** (by IamBugReporter, GitHub #339): "déverrouillé" instead of
   "débloqué", "Succès caché" for secret achievements and "Gamerscore" instead of "Score".
 

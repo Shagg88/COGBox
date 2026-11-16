@@ -9,6 +9,11 @@ import { tellGameToJoin } from './invites.js';
 // with stats as public). The answer names nobody: no host name, uuid, xuid, room code or address.
 export const OPEN_MATCH_TITLES = new Set(['4D53082D', '4D5308AB', '4D530A26']);   // Gears 2, Gears 3, Judgment
 const PLAYLIST_PROPERTY = 0x1000000b;   // the game's playlist id (Gears 2 / 3 / Judgment: GearPlaylist.ini)
+// Gears 3: Join through the game's own matchmaking when the launcher asks (?via=matchmaking): the game is told to find
+// this match with its Versus > Social search, so the host's game seats the joiner as its own party and picks the team,
+// as strangers met on Xbox Live (an invite would make them a member of the host's party, on the host's team).
+// Runtime: COGBox SDK patch 112 ({type:'prefer'}). Friends' joins and invites keep the invite.
+export const MATCHMAKING_JOIN_TITLES = new Set(['4D5308AB']);   // Gears 3
 
 function playlistOf(json: string | null): number | null {
   try {
@@ -53,17 +58,26 @@ export const matchRoutes: FastifyPluginAsync<{ db: DatabaseInstance; registry: R
   });
 
   // Join from the list: the caller's game is told the room code (409 with it when that game is not running here: the
-  // launcher then starts the game with --net_join_lobby), as Join friend does.
-  fastify.post<{ Params: { lobby_id: string } }>('/:lobby_id/join', async (req, reply) => {
+  // launcher then starts the game with --net_join_lobby), as Join friend does. With ?via=matchmaking (Gears 3) the game
+  // is instead told to find the match through matchmaking: 200 {status:'search', playlist}, or 409 with via and the
+  // playlist so the launcher starts it with --net_prefer_lobby.
+  fastify.post<{ Params: { lobby_id: string }; Querystring: { via?: string } }>('/:lobby_id/join', async (req, reply) => {
     const u = me(req, reply);
     if (!u) return reply;
-    const row = db.prepare(`SELECT host_uuid, title_id, room_code, is_public, max_players, current_players FROM lobbies
+    const row = db.prepare(`SELECT host_uuid, title_id, room_code, is_public, max_players, current_players, properties_json FROM lobbies
                             WHERE lobby_id = @id AND NOT ${BLOCKED}`).get({ id: req.params.lobby_id, me: u.uuid }) as any;
     if (!row || !row.is_public || !OPEN_MATCH_TITLES.has(row.title_id) || !hostPlaying(row) || row.host_uuid === u.uuid) {
       return reply.status(404).send({ error: 'that match is no longer open' });
     }
     if (row.current_players >= row.max_players) return reply.status(403).send({ error: 'that match is full' });
     const lobby = { title_id: row.title_id as string, room_code: row.room_code as string };
+    if (req.query?.via === 'matchmaking' && MATCHMAKING_JOIN_TITLES.has(row.title_id)) {
+      const answer = { ...lobby, via: 'matchmaking', playlist: playlistOf(row.properties_json) };
+      const game = registry.game(u.uuid);
+      if (!game || game.titleId !== row.title_id) return reply.status(409).send({ error: 'start the game first', ...answer });
+      game.socket.send(JSON.stringify({ type: 'prefer', room_code: row.room_code, playlist: answer.playlist }));
+      return { status: 'search', ...answer };
+    }
     const hostXuid = (db.prepare('SELECT xuid FROM users WHERE uuid = ?').get(row.host_uuid) as { xuid: string }).xuid;
     if (!tellGameToJoin(registry, u.uuid, lobby, hostXuid, false)) {
       return reply.status(409).send({ error: 'start the game first', ...lobby });

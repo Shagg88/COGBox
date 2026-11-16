@@ -108,6 +108,16 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
   Same bytes as the loop in 256,000 checked cases (and a reviewer's 61,440). Gears 3 TU6, job 1936: patch 110 0.7 %
   and 110 + 111 1.4 % less frame time than 0.6.4 without them (PGO off, three runs each, every 110 + 111 run faster).
   Needs a code generator built with it (`work\t1932\tool-T1` on the build PC) in each game's SDK prefix.
+- `sdk-patch112-open-matches-matchmaking.diff` (0.6.4, the runtime, on 064c): Gears 3 Open matches join through the
+  game's own matchmaking instead of an invite. The server's new `{type:'prefer', room_code}` message (sent for
+  `POST /api/v1/matches/<id>/join?via=matchmaking`), or `--net_prefer_lobby=COG-XXXX` when the launcher starts the game,
+  makes `OnlineSessions::Search` answer only that lobby for 3 minutes (a game started for it: up to 15 minutes, 3 from its
+  first search), looked up by room code each search, so another region's match is found; a search of another playlist,
+  or a lobby that closed, gets the normal results; connecting to that host's join beacon ends it. The launcher uses it
+  only for a Gears 3 match not yet in progress (untested whether a host seats matchmaking mid-match). The game then
+  asks the host's join beacon (TCP 8700) for a place as its own party, and the host's game picks the team - as strangers
+  met on Xbox Live. Before, every Open matches joiner came in as a member of the host's party, on the host's team
+  (Discord, 16 Nov). Join friend, invites and room codes keep the invite. Unit tests: 6 search cases, 1 message parse.
 - `sdk-patch109-codegen-fixes.diff` (0.6.4, after 111; the code generator `rexglue.exe`, not the runtime; jobs 1941 /
   1942): three of rexglue's code generator fixes brought over. fctid / fctidz: a value of 2^63 or more saturates to the
   largest integer (c9f1938); srad / sraw: a shift of 64 / 32 or more sets CA from the sign (02a002f); vcmpbfp: a NaN sets
