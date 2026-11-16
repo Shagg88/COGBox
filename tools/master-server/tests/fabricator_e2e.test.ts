@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server.js';
 import { buildPrivateApi } from '../src/admin/private_api.js';
-import { modZip, png, meta, sha256 } from './fabricator_helpers.js';
+import { modZip, png, meta, sha256, awaitFinish } from './fabricator_helpers.js';
 
 // The Fabricator end to end over real sockets: two accounts claimed through the auth routes, a chunked upload with a
 // screenshot, the store's listing/search/page, the library, a download resumed with Range, a rating, a report, an
@@ -84,7 +84,7 @@ describe('fabricator end to end', () => {
       expect(r.status).toBe(204);
       if (n === 1) {
         // what a resuming client asks first
-        expect(await (await api(`/uploads/${up.id}`, { headers: auth(baird) })).json()).toEqual({ chunks_done: 2, chunks: up.chunks });
+        expect(await (await api(`/uploads/${up.id}`, { headers: auth(baird) })).json()).toEqual({ state: 'open', chunks_done: 2, chunks: up.chunks });
         // skipping ahead is refused with where to go on from
         const skip = zip.subarray(3 * CHUNK, 4 * CHUNK);
         const bad = await api(`/uploads/${up.id}/chunks/3`, { method: 'PUT', body: skip,
@@ -93,9 +93,14 @@ describe('fabricator end to end', () => {
         expect(((await bad.json()) as { chunks_done: number }).chunks_done).toBe(2);
       }
     }
+    // finishing is asynchronous: 202 at once, then the session's state is asked until it is done
     const fin = await post(`/uploads/${up.id}/finish`, baird);
-    expect(fin.status).toBe(200);
-    const { mod_id: modId } = await fin.json() as { mod_id: number; version_id: number };
+    expect(fin.status).toBe(202);
+    expect(await fin.json()).toEqual({ state: 'finishing' });
+    const done = await awaitFinish(async () => (await api(`/uploads/${up.id}`, { headers: auth(baird) })).json());
+    expect(done).toMatchObject({ state: 'done', chunks: up.chunks, chunks_done: up.chunks, mod_id: expect.any(Number), version_id: expect.any(Number) });
+    const modId = done.mod_id as number;
+    expect((await api(`/uploads/${up.id}`, { method: 'DELETE', headers: auth(baird) })).status).toBe(204);   // the client forgets it
     expect(fs.readdirSync(path.join(fabDir, 'chunks'))).toEqual([]);   // the session's chunks are gone
     expect(fs.readdirSync(path.join(fabDir, 'staging'))).toEqual([]);
 
@@ -174,6 +179,11 @@ describe('fabricator end to end', () => {
     expect(again.status).toBe(200);
     const againUrl = (await again.json() as { url: string }).url;
     expect(sha256(Buffer.from(await (await fetch(base + againUrl)).arrayBuffer()))).toBe(sha256(zip));
+    // what the downloads really sent: two halves, a whole file, and the whole file again (the 410s sent nothing)
+    await vi.waitFor(async () => {
+      const st = await (await fetch(`${admin}/fabricator/stats`, { headers: { 'x-admin-secret': SECRET } })).json() as { month_bytes_out: number };
+      expect(st.month_bytes_out).toBe(3 * zip.length);
+    });
     expect(storedFiles()).toHaveLength(1);
     expect(storedImages()).toHaveLength(1);
 

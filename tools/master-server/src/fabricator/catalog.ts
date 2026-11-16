@@ -48,13 +48,14 @@ interface CardRow {
   image_key: string | null; ratings: number; stars: number; downloads: number; recent: number; version: string; size: number; latest: number;
 }
 
-const bayes = (r: { ratings: number; stars: number }): number => (PRIOR_WEIGHT * PRIOR_MEAN + r.stars) / (PRIOR_WEIGHT + r.ratings);
+// The Bayesian score (PRIOR_WEIGHT, PRIOR_MEAN) only sorts (PAGE_IDS.rating); cards and pages show the plain mean.
+const mean = (r: { ratings: number; stars: number }): number => (r.ratings > 0 ? Math.round((r.stars / r.ratings) * 10) / 10 : 0);
 
 function card(r: CardRow): ModCard {
   return {
     id: r.id, name: r.name, author: r.author, game: r.game, type: r.type, short_desc: r.short_desc,
     screen: r.image_key ? IMAGE_PATH + r.image_key : '',
-    rating: Math.round(bayes(r) * 100) / 100, ratings: r.ratings, downloads: r.downloads,
+    rating: mean(r), ratings: r.ratings, downloads: r.downloads,
     updated_at: r.updated_at, version: r.version, size: r.size,
   };
 }

@@ -6,18 +6,21 @@ import { dropFileIfUnused } from './publish.js';
 // account uuid; players show as `display_name#discriminator` tags.
 // A take-down keeps the mod's search row: listings, pages and downloads already require state 'live', so restore
 // only has to flip the state back.
-const MONTH_MS = 30 * 24 * 3600 * 1000;
+const DAY_MS = 24 * 3600 * 1000;
+const MONTH_MS = 30 * DAY_MS;
 const TAG = (alias: string) => `COALESCE(${alias}.display_name || '#' || ${alias}.discriminator, 'unknown')`;
+// Whether the mod's owner may publish (no fab_creators row: yes).
+const PUBLISHING = (owner: string) => `COALESCE((SELECT publishing FROM fab_creators WHERE account = ${owner}), 1)`;
 
 export interface QueueEntry {
-  mod: { id: number; name: string; game: string; author: string; state: string };
+  mod: { id: number; name: string; game: string; author: string; state: string; publishing: boolean };
   reports: { id: number; reason: string; text: string; reporter: string; created_at: number }[];
 }
 
 // Open reports grouped by mod, the mod with the newest report first and each mod's reports newest first.
 export function reportsQueue(db: DatabaseInstance): QueueEntry[] {
   const rows = db.prepare(`SELECT r.id, r.mod_id, r.reason, r.text, r.created_at, ${TAG('ru')} AS reporter,
-      m.name, m.game, m.state, ${TAG('ou')} AS author
+      m.name, m.game, m.state, ${TAG('ou')} AS author, ${PUBLISHING('m.owner')} AS publishing
     FROM fab_reports r JOIN fab_mods m ON m.id = r.mod_id
     LEFT JOIN users ru ON ru.uuid = r.reporter LEFT JOIN users ou ON ou.uuid = m.owner
     WHERE r.handled_by IS NULL AND m.state != 'removed' ORDER BY r.created_at DESC, r.id DESC`).all() as any[];
@@ -25,7 +28,7 @@ export function reportsQueue(db: DatabaseInstance): QueueEntry[] {
   for (const r of rows) {
     let e = byMod.get(r.mod_id);
     if (!e) {
-      e = { mod: { id: r.mod_id, name: r.name, game: r.game, author: r.author, state: r.state }, reports: [] };
+      e = { mod: { id: r.mod_id, name: r.name, game: r.game, author: r.author, state: r.state, publishing: r.publishing === 1 }, reports: [] };
       byMod.set(r.mod_id, e);
     }
     e.reports.push({ id: r.id, reason: r.reason, text: r.text, reporter: r.reporter, created_at: r.created_at });
@@ -98,13 +101,80 @@ export function setPublishing(db: DatabaseInstance, tag: string, allowed: boolea
   return true;
 }
 
+// The UTC day (YYYY-MM-DD) of a time.
+const dayOf = (t: number): string => new Date(t).toISOString().slice(0, 10);
+
+// Adds bytes a download address really sent to its UTC day (the server's egress, for the panel).
+export function addTraffic(db: DatabaseInstance, now: number, bytes: number): void {
+  if (!(bytes > 0)) return;
+  db.prepare('INSERT INTO fab_traffic (day, bytes) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET bytes = bytes + excluded.bytes')
+    .run(dayOf(now), Math.floor(bytes));
+}
+
 export async function fabStats(db: DatabaseInstance, store: FabStore, now: number): Promise<{
-  disk: { total: number; free: number }; month_bytes: number; mods: number; creators: number; open_reports: number;
+  disk: { total: number; free: number }; month_bytes: number; month_bytes_out: number; mods: number; creators: number; open_reports: number;
 }> {
   const disk = await store.disk();
+  // uploads: the versions published in the last 30 days; downloads: what the download addresses sent (today and the 29 days before)
   const month_bytes = (db.prepare('SELECT COALESCE(SUM(size), 0) AS b FROM fab_versions WHERE created_at > ?').get(now - MONTH_MS) as { b: number }).b;
+  const month_bytes_out = (db.prepare('SELECT COALESCE(SUM(bytes), 0) AS b FROM fab_traffic WHERE day >= ?').get(dayOf(now - 29 * DAY_MS)) as { b: number }).b;
   const live = db.prepare("SELECT COUNT(*) AS mods, COUNT(DISTINCT owner) AS creators FROM fab_mods WHERE state = 'live'").get() as { mods: number; creators: number };
   const open_reports = (db.prepare(`SELECT COUNT(*) AS n FROM fab_reports r JOIN fab_mods m ON m.id = r.mod_id
     WHERE r.handled_by IS NULL AND m.state != 'removed'`).get() as { n: number }).n;
-  return { disk, month_bytes, mods: live.mods, creators: live.creators, open_reports };
+  return { disk, month_bytes, month_bytes_out, mods: live.mods, creators: live.creators, open_reports };
+}
+
+// ---- The panel's mods view ----
+
+export const MOD_STATES = ['live', 'taken_down', 'removed'] as const;
+export interface AdminModRow {
+  id: number; name: string; game: string; author: string; state: string; versions: number; open_reports: number;
+  publishing: boolean; created_at: number;
+}
+export interface AdminModDetail {
+  id: number; name: string; game: string; type: string; author: string; state: string; publishing: boolean;
+  created_at: number; updated_at: number; screens: number;
+  versions: { id: number; version: string; size: number; sha256: string; state: string; created_at: number }[];
+  reports: { id: number; reason: string; text: string; reporter: string; created_at: number; handled_by: string | null; outcome: string | null }[];
+}
+const ADMIN_LIST_MAX = 200;
+
+// Mods in any state, newest first: filtered by state and by a piece of the name (or the id), at most 200.
+export function adminMods(db: DatabaseInstance, f: { state?: string; q?: string }): AdminModRow[] {
+  const where: string[] = [];
+  const args: Record<string, string | number> = {};
+  if (f.state) { where.push('m.state = :state'); args.state = f.state; }
+  const q = (f.q ?? '').trim().slice(0, 100);
+  if (q) {
+    // LIKE wildcards in the text are plain characters
+    args.q = '%' + q.toLowerCase().replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+    if (/^\d{1,9}$/.test(q)) { where.push("(lower(m.name) LIKE :q ESCAPE '\\' OR m.id = :id)"); args.id = Number(q); }
+    else where.push("lower(m.name) LIKE :q ESCAPE '\\'");
+  }
+  const rows = db.prepare(`SELECT m.id, m.name, m.game, m.state, m.created_at, ${TAG('u')} AS author, ${PUBLISHING('m.owner')} AS publishing,
+      (SELECT COUNT(*) FROM fab_versions WHERE mod_id = m.id) AS versions,
+      (SELECT COUNT(*) FROM fab_reports WHERE mod_id = m.id AND handled_by IS NULL) AS open_reports
+    FROM fab_mods m LEFT JOIN users u ON u.uuid = m.owner
+    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+    ORDER BY m.created_at DESC, m.id DESC LIMIT ${ADMIN_LIST_MAX}`).all(args) as any[];
+  return rows.map((r) => ({
+    id: r.id, name: r.name, game: r.game, author: r.author, state: r.state, versions: r.versions, open_reports: r.open_reports,
+    publishing: r.publishing === 1, created_at: r.created_at,
+  }));
+}
+
+// One mod for the panel: its versions and their files, how many screenshots, every report (handled ones too).
+export function adminModDetail(db: DatabaseInstance, id: number): AdminModDetail | null {
+  const m = db.prepare(`SELECT m.id, m.name, m.game, m.type, m.state, m.created_at, m.updated_at, ${TAG('u')} AS author,
+      ${PUBLISHING('m.owner')} AS publishing, (SELECT COUNT(*) FROM fab_screens WHERE mod_id = m.id) AS screens
+    FROM fab_mods m LEFT JOIN users u ON u.uuid = m.owner WHERE m.id = ?`).get(id) as any;
+  if (!m) return null;
+  const versions = db.prepare('SELECT id, version, size, sha256, state, created_at FROM fab_versions WHERE mod_id = ? ORDER BY created_at DESC, id DESC')
+    .all(id) as AdminModDetail['versions'];
+  const reports = db.prepare(`SELECT r.id, r.reason, r.text, ${TAG('ru')} AS reporter, r.created_at, r.handled_by, r.outcome
+    FROM fab_reports r LEFT JOIN users ru ON ru.uuid = r.reporter WHERE r.mod_id = ? ORDER BY r.created_at DESC, r.id DESC`).all(id) as AdminModDetail['reports'];
+  return {
+    id: m.id, name: m.name, game: m.game, type: m.type, author: m.author, state: m.state, publishing: m.publishing === 1,
+    created_at: m.created_at, updated_at: m.updated_at, screens: m.screens, versions, reports,
+  };
 }

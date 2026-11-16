@@ -21,7 +21,6 @@ export function initFabricatorSchema(db: DatabaseInstance): void {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_fab_mods_game_name ON fab_mods(game, lower(name));
     CREATE INDEX IF NOT EXISTS idx_fab_mods_owner ON fab_mods(owner);
 
     CREATE TABLE IF NOT EXISTS fab_versions (
@@ -100,7 +99,10 @@ export function initFabricatorSchema(db: DatabaseInstance): void {
       chunk_bytes INTEGER NOT NULL,
       chunks_done INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
-      expires_at INTEGER NOT NULL
+      expires_at INTEGER NOT NULL,
+      state TEXT NOT NULL DEFAULT 'open',   -- open | finishing | done | failed (see routes.ts, the finish protocol)
+      problems TEXT,                        -- a failed finish's problems (JSON array)
+      version_id INTEGER                    -- a done finish's new version (mod_id then holds its mod)
     );
     CREATE INDEX IF NOT EXISTS idx_fab_uploads_account ON fab_uploads(account);
 
@@ -124,5 +126,23 @@ export function initFabricatorSchema(db: DatabaseInstance): void {
     );
 
     CREATE VIRTUAL TABLE IF NOT EXISTS fab_mods_fts USING fts5(name, short_desc, long_desc, tags, author);
+
+    -- bytes the download addresses actually sent, per UTC day (YYYY-MM-DD): the server's egress
+    CREATE TABLE IF NOT EXISTS fab_traffic (
+      day TEXT PRIMARY KEY,
+      bytes INTEGER NOT NULL DEFAULT 0
+    );
   `);
+
+  // Upload sessions made before the asynchronous finish lack its columns.
+  const upCols = (db.prepare('PRAGMA table_info(fab_uploads)').all() as { name: string }[]).map((c) => c.name);
+  if (!upCols.includes('state')) db.exec("ALTER TABLE fab_uploads ADD COLUMN state TEXT NOT NULL DEFAULT 'open'");
+  if (!upCols.includes('problems')) db.exec('ALTER TABLE fab_uploads ADD COLUMN problems TEXT');
+  if (!upCols.includes('version_id')) db.exec('ALTER TABLE fab_uploads ADD COLUMN version_id INTEGER');
+
+  // A name is unique per game, ignoring case, among mods that are not removed: a removed mod frees its name
+  // (a taken-down one keeps it). An index from before this rule covers every state: replace it.
+  const idx = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_fab_mods_game_name'").get() as { sql: string | null } | undefined;
+  if (idx && !/\bWHERE\b/i.test(idx.sql ?? '')) db.exec('DROP INDEX IF EXISTS idx_fab_mods_game_name');
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_fab_mods_game_name ON fab_mods(game, lower(name)) WHERE state != 'removed'");
 }

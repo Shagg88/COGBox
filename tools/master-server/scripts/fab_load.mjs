@@ -210,9 +210,18 @@ async function main() {
     } finally { await fd.close(); }
     const f0 = Date.now();
     mark('upload', u0, f0);
-    const fin = await call(api(`/uploads/${s.id}/finish`), { method: 'POST', headers: auth(creator) });
+    // the finish is asynchronous: 202, then the session's state is asked until it is done or failed
+    await call(api(`/uploads/${s.id}/finish`), { method: 'POST', headers: auth(creator) }, [202]);
+    let fin;
+    for (;;) {
+      fin = await call(api(`/uploads/${s.id}`), { headers: auth(creator) });
+      if (fin.state !== 'finishing') break;
+      await sleep(500);
+    }
     mark('finish', f0, Date.now());
+    if (fin.state !== 'done') throw new Error(`finish ${fin.state}: ${(fin.problems ?? []).join('; ')}`);
     modId = fin.mod_id;
+    await call(api(`/uploads/${s.id}`), { method: 'DELETE', headers: auth(creator) }, [204]);
     const page = await call(api(`/mods/${modId}`));
     const stored = page.versions?.[0]?.sha256;
     result.upload = stored === mod.sha256 ? 'ok' : `sha256 mismatch: server has ${stored}`;

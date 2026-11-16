@@ -18,6 +18,7 @@ import { buildPrivateApi } from './admin/private_api.js';
 import { fabricatorRoutes } from './fabricator/routes.js';
 import { FabStore } from './fabricator/store.js';
 import { loadFabSettings, type FabSettings } from './fabricator/settings.js';
+import { finishesSettled } from './fabricator/publish.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -146,6 +147,8 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
 
   // Clean shutdown hook
   server.addHook('onClose', async () => {
+    // a finish running in the background records its outcome first (a restart marks one cut short failed anyway)
+    await Promise.race([finishesSettled(), new Promise((r) => setTimeout(r, 30_000).unref())]);
     db.close();
     if (tempFab) fs.rmSync(tempFab, { recursive: true, force: true });
   });

@@ -6,9 +6,9 @@ import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server.js';
 import { buildPrivateApi } from '../src/admin/private_api.js';
 import { ErrorRing } from '../src/admin/error_ring.js';
-import { reportsQueue, takeDown, restore, deleteFiles, setPublishing, fabStats } from '../src/fabricator/moderation.js';
+import { reportsQueue, takeDown, restore, deleteFiles, setPublishing, fabStats, adminMods, adminModDetail, addTraffic } from '../src/fabricator/moderation.js';
 import { forgetFabricatorAccount } from '../src/fabricator/publish.js';
-import { modZip, png, meta, sha256 } from './fabricator_helpers.js';
+import { modZip, png, meta, sha256, awaitFinish } from './fabricator_helpers.js';
 
 const DAY = 24 * 3600 * 1000;
 const API = '/api/v1/fabricator';
@@ -40,8 +40,10 @@ describe('fabricator moderation', () => {
     }
     await app.inject({ method: 'PUT', url: `${API}/uploads/${id}/screens/0`, payload: await png(), headers: { ...auth(c), 'content-type': 'application/octet-stream' } });
     const f = await app.inject({ method: 'POST', url: `${API}/uploads/${id}/finish`, headers: auth(c) });
-    expect(f.statusCode).toBe(200);
-    return f.json();
+    expect(f.statusCode).toBe(202);
+    const st = await awaitFinish(async () => (await app.inject({ method: 'GET', url: `${API}/uploads/${id}`, headers: auth(c) })).json());
+    expect(st.state).toBe('done');
+    return { mod_id: st.mod_id, version_id: st.version_id };
   }
   const report = (modId: number, reporter: string, reason: string, text: string, at: number) =>
     app.db.prepare('INSERT INTO fab_reports (mod_id, reporter, reason, text, created_at) VALUES (?, ?, ?, ?, ?)').run(modId, reporter, reason, text, at);
@@ -64,7 +66,7 @@ describe('fabricator moderation', () => {
     report(mod_id, r.uuid, 'broken', 'crashes', clock);
     const q = reportsQueue(app.db);
     expect(q).toHaveLength(1);
-    expect(q[0].mod).toEqual({ id: mod_id, name: 'Alpha', game: 'gears3', author: `Baird#${a.discriminator}`, state: 'live' });
+    expect(q[0].mod).toEqual({ id: mod_id, name: 'Alpha', game: 'gears3', author: `Baird#${a.discriminator}`, state: 'live', publishing: true });
     expect(q[0].reports[0]).toMatchObject({ reason: 'broken', text: 'crashes', reporter: `Cole#${r.discriminator}` });
 
     expect(takeDown(app.db, mod_id, 'alice', clock)).toBe(true);
@@ -181,6 +183,61 @@ describe('fabricator moderation', () => {
     expect(s.disk.total).toBeGreaterThan(0);
     expect(s).toMatchObject({ month_bytes: zip.length, mods: 1, creators: 1, open_reports: 1 });
     expect((await fabStats(app.db, app.adminDeps.store, clock + 31 * DAY)).month_bytes).toBe(0);
+  });
+
+  it('fabStats counts the bytes downloads sent in the last 30 days', async () => {
+    addTraffic(app.db, clock, 1000);
+    addTraffic(app.db, clock, 24);
+    addTraffic(app.db, clock - 29 * DAY, 500);
+    addTraffic(app.db, clock - 31 * DAY, 7);
+    expect((await fabStats(app.db, app.adminDeps.store, clock)).month_bytes_out).toBe(1524);
+  });
+
+  it('lists mods by state and name, newest first, with their versions, screens and reports', async () => {
+    const a = await claim('Baird');
+    const r = await claim('Cole');
+    const zip = await modZip('[Mod]\nName=A\n', 900);
+    const one = await publish(a, 'Alpha', zip);
+    clock += 1000;
+    const two = await publish(a, 'Alpha Two', await modZip('[Mod]\nName=A2\n', 900));
+    clock += 1000;
+    const three = await publish(r, 'Bravo_100%', await modZip('[Mod]\nName=B\n', 900));
+    report(one.mod_id, r.uuid, 'broken', '<i>x</i>', clock);
+    takeDown(app.db, two.mod_id, 'alice', clock);
+    setPublishing(app.db, `Baird#${a.discriminator}`, false, 'alice', clock);
+
+    expect(adminMods(app.db, {}).map((m) => m.id)).toEqual([three.mod_id, two.mod_id, one.mod_id]);
+    expect(adminMods(app.db, { state: 'taken_down' }).map((m) => m.id)).toEqual([two.mod_id]);
+    expect(adminMods(app.db, { q: 'ALPHA' }).map((m) => m.id)).toEqual([two.mod_id, one.mod_id]);
+    expect(adminMods(app.db, { q: '100%' }).map((m) => m.id)).toEqual([three.mod_id]);
+    expect(adminMods(app.db, { q: '%' }).map((m) => m.id)).toEqual([three.mod_id]);   // wildcards are plain text
+    expect(adminMods(app.db, { q: 'r_v' })).toEqual([]);
+    expect(adminMods(app.db, { q: String(one.mod_id), state: 'live' }).map((m) => m.id)).toContain(one.mod_id);
+    expect(adminMods(app.db, { q: 'alpha' })[1]).toEqual({ id: one.mod_id, name: 'Alpha', game: 'gears3', author: `Baird#${a.discriminator}`,
+      state: 'live', versions: 1, open_reports: 1, publishing: false, created_at: expect.any(Number) });
+
+    const d = adminModDetail(app.db, one.mod_id);
+    expect(d).toMatchObject({ id: one.mod_id, name: 'Alpha', game: 'gears3', type: 'gameplay', author: `Baird#${a.discriminator}`, state: 'live',
+      publishing: false, screens: 1 });
+    expect(d?.versions).toEqual([{ id: one.version_id, version: '1.0', size: zip.length, sha256: sha256(zip), state: 'live', created_at: expect.any(Number) }]);
+    expect(d?.reports).toEqual([{ id: expect.any(Number), reason: 'broken', text: '<i>x</i>', reporter: `Cole#${r.discriminator}`,
+      created_at: clock, handled_by: null, outcome: null }]);
+    expect(adminModDetail(app.db, 9999)).toBeNull();
+
+    const list = await priv.inject({ url: '/fabricator/mods?state=taken_down', headers: H });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().mods.map((m: any) => m.id)).toEqual([two.mod_id]);
+    expect((await priv.inject({ url: '/fabricator/mods?q=bravo', headers: H })).json().mods.map((m: any) => m.id)).toEqual([three.mod_id]);
+    expect((await priv.inject({ url: '/fabricator/mods?state=gone', headers: H })).statusCode).toBe(400);
+    const det = await priv.inject({ url: `/fabricator/mods/${one.mod_id}`, headers: H });
+    expect(det.statusCode).toBe(200);
+    expect(det.json().versions).toHaveLength(1);
+    expect((await priv.inject({ url: '/fabricator/mods/9999', headers: H })).statusCode).toBe(404);
+    expect((await priv.inject({ url: '/fabricator/mods/abc', headers: H })).statusCode).toBe(404);
+    for (const body of [list.body, det.body]) for (const x of [a.uuid, a.token, r.uuid, r.token]) expect(body).not.toContain(x);
+    for (const url of ['/fabricator/mods', `/fabricator/mods/${one.mod_id}`]) {
+      expect((await priv.inject({ url, headers: { 'x-admin-secret': 'wrong' } })).statusCode).toBe(401);
+    }
   });
 
   it('private API refuses a wrong secret', async () => {

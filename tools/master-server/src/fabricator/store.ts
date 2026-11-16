@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pipeline } from 'node:stream/promises';
 
 // Fabricator file store: upload chunks, assembled mod zips and screenshots on disk.
 // Layout under root: chunks/<uploadId>/<n>, staging/<uploadId>.zip, files/<xx>/<sha256>.zip, images/<sha256>.png.
@@ -45,13 +44,25 @@ export class FabStore {
     const hash = createHash('sha256');
     let size = 0;
     const out = fs.createWriteStream(file);
+    // One error listener for the whole file (a pipeline per chunk would add listeners to `out` for every chunk).
+    let failed: Error | null = null;
+    out.on('error', (e) => { failed = e; });
+    const drained = () => new Promise<void>((res, rej) => {
+      const done = () => { out.off('drain', done); out.off('close', done); failed ? rej(failed) : res(); };
+      out.on('drain', done);
+      out.on('close', done);
+    });
     try {
       for (let i = 0; i < chunks; i++) {
-        const src = fs.createReadStream(this.chunkPath(uploadId, i));
-        src.on('data', (b) => { hash.update(b); size += (b as Buffer).length; });
-        await pipeline(src, out, { end: false });
+        for await (const b of fs.createReadStream(this.chunkPath(uploadId, i))) {
+          if (failed) throw failed;
+          hash.update(b as Buffer);
+          size += (b as Buffer).length;
+          if (!out.write(b)) await drained();
+        }
       }
-      await new Promise<void>((res, rej) => { out.once('error', rej); out.end(res); });
+      if (failed) throw failed;
+      await new Promise<void>((res, rej) => { out.end(() => (failed ? rej(failed) : res())); });
     } catch (e) {
       // Wait for the handle to close (Windows cannot delete an open file); a cleanup failure must not mask e.
       if (!out.closed) await new Promise<void>((res) => { out.once('close', () => res()); out.destroy(); });

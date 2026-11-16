@@ -99,4 +99,11 @@ describe('fabricator player actions', () => {
     ]);
     expect(library(db, 'acct-b')).toEqual([]);
   });
+
+  it("a creator cannot rate their own mod, even from their library", () => {
+    const id = mod('Alpha');
+    addToLibrary(db, 'owner', id, NOW);
+    expect(rate(db, 'owner', id, 5)).toBe('own_mod');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM fab_ratings').get()).toEqual({ n: 0 });
+  });
 });

@@ -6,7 +6,8 @@ import { initDb, type DatabaseInstance } from '../src/db.js';
 import { FAB_DEFAULTS, type FabSettings } from '../src/fabricator/settings.js';
 import { FabStore } from '../src/fabricator/store.js';
 import {
-  canPublish, startUpload, putChunk, putScreen, finishUpload, expireUploads,
+  canPublish, startUpload, putChunk, putScreen, finishUpload, expireUploads, startFinish, getUpload, recoverInterruptedFinishes,
+  removeOwnMod, forgetFabricatorAccount, creatorLimits, UPLOAD_BUSY,
 } from '../src/fabricator/publish.js';
 import { modZip, png, meta, sha256 } from './fabricator_helpers.js';
 
@@ -131,8 +132,10 @@ describe('fabricator publishing rules', () => {
       expect(hits('economy')).toEqual([r.modId]);
       expect(hits('"Baird#0001"')).toEqual([r.modId]);
       expect((db.prepare('SELECT bytes_used FROM fab_creators WHERE account = ?').get('acc-a') as any).bytes_used).toBe(zip.length);
-      expect(db.prepare('SELECT 1 FROM fab_uploads WHERE id = ?').get(up.id)).toBeUndefined();
+      // the session stays as 'done' (its outcome readable until it expires); its chunks are gone
+      expect(getUpload(db, up.id)).toMatchObject({ state: 'done', mod_id: r.modId, version_id: r.versionId });
       expect(fs.existsSync(path.join(dir, 'fabricator', 'chunks', up.id))).toBe(false);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM fab_upload_screens WHERE upload_id = ?').get(up.id)).toEqual({ n: 0 });
     });
 
     it('refuses a name another creator uses for the same game, not for another game', async () => {
@@ -235,6 +238,90 @@ describe('fabricator publishing rules', () => {
       const first = await publish('acc-a', await modZip('[Mod]\nName=Horde Bank\n'));
       if (!first.r.ok) throw new Error('setup');
       expect(() => startUpload(db, 'acc-b', meta() as any, first.r.modId, 100, 'ab'.repeat(32), NOW, s)).toThrow('not your mod');
+    });
+  });
+
+  describe('the asynchronous finish', () => {
+    async function readySession(name = 'Horde Bank', shot = true) {
+      const zip = await modZip(`[Mod]\nName=${name}\n`);
+      const up = startUpload(db, 'acc-a', meta({ name }) as any, null, zip.length, sha256(zip), NOW, s);
+      expect(await putChunk(db, store, up.id, 0, zip, sha256(zip))).toBe('ok');
+      if (shot) expect(await putScreen(db, store, up.id, 0, await png())).toBeNull();
+      return up;
+    }
+
+    it('runs in the background and records done; while it runs a second start and a screenshot are refused', async () => {
+      const up = await readySession();
+      const a = startFinish(db, store, s, up.id, 'acc-a', NOW);
+      if (!('started' in a)) throw new Error('not started');
+      expect(getUpload(db, up.id)?.state).toBe('finishing');
+      expect(startFinish(db, store, s, up.id, 'acc-a', NOW)).toEqual({ refused: 'finishing' });
+      expect(await putScreen(db, store, up.id, 1, await png())).toBe(UPLOAD_BUSY);
+      const r = await a.started;
+      if (!r.ok) throw new Error(r.problems.join());
+      expect(getUpload(db, up.id)).toMatchObject({ state: 'done', mod_id: r.modId, version_id: r.versionId });
+      expect(startFinish(db, store, s, up.id, 'acc-a', NOW)).toEqual({ done: { state: 'done', chunks: 1, chunks_done: 1, mod_id: r.modId, version_id: r.versionId } });
+      expect(startFinish(db, store, s, up.id, 'acc-b', NOW)).toEqual({ refused: 'not_found' });
+      // a done session is no open upload: one upload today, its bytes counted once
+      expect(creatorLimits(db, s, 'acc-a', NOW, DISK)).toMatchObject({ uploads_today: 1 });
+      expect(canPublish(db, { ...s, creatorUploadsPerDay: 2 }, 'acc-a', 1, NOW, DISK)).toBeNull();
+    });
+
+    it('a failed finish keeps the session, its chunks and its problems; it can be finished again', async () => {
+      const up = await readySession('Horde Bank', false);
+      const a = startFinish(db, store, s, up.id, 'acc-a', NOW);
+      if (!('started' in a)) throw new Error('not started');
+      expect((await a.started).ok).toBe(false);
+      const row = getUpload(db, up.id);
+      expect(row?.state).toBe('failed');
+      expect(JSON.parse(row?.problems ?? '[]').join()).toContain('screenshot');
+      expect(fs.existsSync(path.join(dir, 'fabricator', 'chunks', up.id))).toBe(true);
+      expect(await putScreen(db, store, up.id, 0, await png())).toBeNull();
+      expect((await finishUpload(db, store, s, up.id, 'acc-a', NOW)).ok).toBe(true);
+    });
+
+    it('missing chunks are refused at once, without starting', async () => {
+      const up = startUpload(db, 'acc-a', meta() as any, null, 3000, 'ab'.repeat(32), NOW, s);
+      expect(startFinish(db, store, s, up.id, 'acc-a', NOW)).toEqual({ problems: ['only 0 of 3 chunks are uploaded'] });
+      expect(getUpload(db, up.id)?.state).toBe('open');
+    });
+
+    it('a finish interrupted by a restart is marked failed', async () => {
+      const up = await readySession();
+      db.prepare("UPDATE fab_uploads SET state = 'finishing' WHERE id = ?").run(up.id);
+      expect(recoverInterruptedFinishes(db)).toBe(1);
+      const row = getUpload(db, up.id);
+      expect(row?.state).toBe('failed');
+      expect(JSON.parse(row?.problems ?? '[]').join()).toContain('server restarted');
+    });
+  });
+
+  describe('removed mods and deleted accounts', () => {
+    it('a removed mod frees its name: for its owner, and for anyone once the account is deleted', async () => {
+      const first = await publish('acc-a', await modZip('[Mod]\nName=Horde Bank\n'));
+      if (!first.r.ok) throw new Error('setup');
+      expect(removeOwnMod(db, store, 'acc-a', first.r.modId)).toBe(true);
+      const again = await publish('acc-a', await modZip('[Mod]\nName=Horde Bank\n'));
+      expect(again.r.ok).toBe(true);
+      const blocked = await publish('acc-b', await modZip('[Mod]\nName=horde bank\n'), meta({ name: 'horde bank' }));
+      expect(blocked.r.ok).toBe(false);
+      forgetFabricatorAccount(db, store, 'acc-a');
+      const other = await publish('acc-b', await modZip('[Mod]\nName=horde bank\n'), meta({ name: 'horde bank' }));
+      expect(other.r.ok).toBe(true);
+    });
+
+    it('a deleted account keeps only the id, name, game and state of its mods', async () => {
+      const live = await publish('acc-a', await modZip('[Mod]\nName=Horde Bank\n'), meta({ notes: 'first cut', requires: [] }));
+      const gone = await publish('acc-a', await modZip('[Mod]\nName=Old Thing\n'), meta({ name: 'Old Thing' }));
+      if (!live.r.ok || !gone.r.ok) throw new Error('setup');
+      removeOwnMod(db, store, 'acc-a', gone.r.modId);   // removed earlier by its owner: cleared too
+      forgetFabricatorAccount(db, store, 'acc-a');
+      for (const [id, name] of [[live.r.modId, 'Horde Bank'], [gone.r.modId, 'Old Thing']] as const) {
+        expect(db.prepare('SELECT id, owner, name, game, state, short_desc, long_desc, tags, requires FROM fab_mods WHERE id = ?').get(id)).toEqual({
+          id, owner: '', name, game: 'gears3', state: 'removed', short_desc: '', long_desc: '', tags: '[]', requires: '[]' });
+        expect(db.prepare("SELECT COUNT(*) AS n FROM fab_versions WHERE mod_id = ? AND notes != ''").get(id)).toEqual({ n: 0 });
+        expect(db.prepare('SELECT COUNT(*) AS n FROM fab_screens WHERE mod_id = ?').get(id)).toEqual({ n: 0 });
+      }
     });
   });
 

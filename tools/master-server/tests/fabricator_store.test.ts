@@ -105,4 +105,19 @@ describe('fabricator store', () => {
     expect(d.free).toBeGreaterThan(0);
     expect(d.free).toBeLessThanOrEqual(d.total);
   });
+
+  it('assembles many chunks without piling listeners on the output stream', async () => {
+    const warnings: Error[] = [];
+    const on = (w: Error) => warnings.push(w);
+    process.on('warning', on);
+    try {
+      const parts = Array.from({ length: 40 }, (_, i) => Buffer.alloc(100 + i, i));
+      for (let i = 0; i < parts.length; i++) await store.writeChunk('upload-0040', i, parts[i]);
+      const r = await store.assemble('upload-0040', parts.length);
+      expect(r.sha256).toBe(sha(Buffer.concat(parts)));
+      expect(r.size).toBe(Buffer.concat(parts).length);
+      await new Promise((res) => setTimeout(res, 20));
+    } finally { process.off('warning', on); }
+    expect(warnings.filter((w) => w.name === 'MaxListenersExceededWarning')).toEqual([]);
+  });
 });

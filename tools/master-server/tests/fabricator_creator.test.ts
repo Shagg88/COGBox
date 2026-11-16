@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,7 +9,7 @@ import { initDb } from '../src/db.js';
 import { FAB_DEFAULTS, type FabSettings } from '../src/fabricator/settings.js';
 import { FabStore } from '../src/fabricator/store.js';
 import { startUpload, putChunk, putScreen, finishUpload, forgetFabricatorAccount } from '../src/fabricator/publish.js';
-import { modZip, png, meta, sha256 } from './fabricator_helpers.js';
+import { modZip, png, meta, sha256, awaitFinish } from './fabricator_helpers.js';
 
 const DAY = 24 * 3600 * 1000;
 const API = '/api/v1/fabricator';
@@ -37,8 +37,10 @@ describe('fabricator creator pages and deleted accounts', () => {
     }
     await app.inject({ method: 'PUT', url: `${API}/uploads/${id}/screens/0`, payload: await png(), headers: { ...auth(c), 'content-type': 'application/octet-stream' } });
     const f = await app.inject({ method: 'POST', url: `${API}/uploads/${id}/finish`, headers: auth(c) });
-    expect(f.statusCode).toBe(200);
-    return f.json();
+    expect(f.statusCode).toBe(202);
+    const st = await awaitFinish(async () => (await app.inject({ method: 'GET', url: `${API}/uploads/${id}`, headers: auth(c) })).json());
+    expect(st.state).toBe('done');
+    return { mod_id: st.mod_id, version_id: st.version_id };
   }
   const rows = (q: string, ...a: unknown[]): any[] => { const d = new Database(dbPath); try { return d.prepare(q).all(...a); } finally { d.close(); } };
   const filesOnDisk = (): string[] => {
@@ -196,6 +198,24 @@ describe('fabricator creator pages and deleted accounts', () => {
     expect(fs.existsSync(chunkDir)).toBe(true);
     await app.inject({ method: 'DELETE', url: '/api/v1/auth/account', headers: auth(a) });
     expect(fs.existsSync(chunkDir)).toBe(false);
+  });
+
+  it('a file that cannot be deleted after an account deletion logs no path', async () => {
+    await app.close();
+    app = await buildServer({ dbPath, logger: true, rateLimitMax: 10000, now: () => clock, fabricator: { chunkBytes: 1024, diskFullFraction: 1 } });
+    const a = await claim('Baird');
+    await publish(a, 'Alpha', await modZip('[Mod]\nName=A\n', 900));
+    const where = path.join(dir, 'fabricator', 'files', 'ab', 'x.zip');
+    vi.spyOn(FabStore.prototype, 'remove').mockImplementation(() => {
+      throw Object.assign(new Error(`EPERM: operation not permitted, unlink '${where}'`), { code: 'EPERM' });
+    });
+    try {
+      expect((await app.inject({ method: 'DELETE', url: '/api/v1/auth/account', headers: auth(a) })).statusCode).toBe(200);
+    } finally { vi.restoreAllMocks(); }
+    const msgs = (app as any).adminDeps.errors.last(20).map((e: { msg: string }) => e.msg).join(' | ');
+    expect(msgs).toContain('fabricator');
+    expect(msgs).not.toContain(where);
+    expect(msgs).not.toContain('x.zip');
   });
 });
 

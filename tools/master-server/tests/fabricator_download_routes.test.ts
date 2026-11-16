@@ -5,7 +5,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server.js';
-import { modZip, png, meta, sha256 } from './fabricator_helpers.js';
+import { modZip, png, meta, sha256, awaitFinish } from './fabricator_helpers.js';
 
 const DAY = 24 * 3600 * 1000;
 const MIN = 60_000;
@@ -44,8 +44,10 @@ describe('fabricator library and download routes', () => {
     const sc = await app.inject({ method: 'PUT', url: `${API}/uploads/${id}/screens/0`, payload: await png(), headers: { ...auth(c), 'content-type': 'application/octet-stream' } });
     expect(sc.statusCode).toBe(204);
     const f = await app.inject({ method: 'POST', url: `${API}/uploads/${id}/finish`, headers: auth(c) });
-    expect(f.statusCode).toBe(200);
-    return f.json();
+    expect(f.statusCode).toBe(202);
+    const st = await awaitFinish(async () => (await app.inject({ method: 'GET', url: `${API}/uploads/${id}`, headers: auth(c) })).json());
+    expect(st.state).toBe('done');
+    return { mod_id: st.mod_id, version_id: st.version_id };
   }
   const download = (c: Claimed, id: number | string = modId) => app.inject({ method: 'POST', url: `${API}/mods/${id}/download`, headers: auth(c) });
   const getFile = (url: string, range?: string) => app.inject({ method: 'GET', url, headers: range ? { range } : {} });

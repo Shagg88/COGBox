@@ -86,7 +86,10 @@ export const authRoutes: FastifyPluginAsync<{ db: DatabaseInstance; store: FabSt
       db.prepare('DELETE FROM users WHERE uuid = ?').run(me.uuid);
       return after;
     })();
-    try { dropFabFiles(store); } catch (e) { fastify.log.error({ err: e }, 'fabricator: deleting a deleted account files failed'); }
+    // the error's code only: an fs error's message holds the file's path
+    try { dropFabFiles(store); } catch (e) {
+      fastify.log.error({ code: String((e as { code?: unknown })?.code ?? (e as Error)?.name ?? 'error') }, 'fabricator: deleting a deleted account files failed');
+    }
     forgetAuth(db, me.uuid);
     return reply.send({ deleted: true });
   });

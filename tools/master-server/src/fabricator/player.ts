@@ -108,9 +108,11 @@ export function issueDownload(db: DatabaseInstance, s: FabSettings, account: str
   return { url: FILES_PATH + token, sha256: v.sha256, size: v.size, version_id: v.id };
 }
 
-// Stars 1-5 (a whole number) on a mod in the player's library; a new rating replaces the old one.
-export function rate(db: DatabaseInstance, account: string, modId: number, stars: unknown, now: number = Date.now()): 'ok' | 'not_in_library' | 'bad_stars' {
+// Stars 1-5 (a whole number) on a mod in the player's library; a new rating replaces the old one. A creator does not
+// rate their own mod.
+export function rate(db: DatabaseInstance, account: string, modId: number, stars: unknown, now: number = Date.now()): 'ok' | 'not_in_library' | 'bad_stars' | 'own_mod' {
   if (typeof stars !== 'number' || !Number.isInteger(stars) || stars < 1 || stars > 5) return 'bad_stars';
+  if (db.prepare('SELECT 1 FROM fab_mods WHERE id = ? AND owner = ?').get(modId, account)) return 'own_mod';
   if (!db.prepare('SELECT 1 FROM fab_library WHERE account = ? AND mod_id = ?').get(account, modId)) return 'not_in_library';
   db.prepare(`INSERT INTO fab_ratings (account, mod_id, stars, updated_at) VALUES (?, ?, ?, ?)
     ON CONFLICT(account, mod_id) DO UPDATE SET stars = excluded.stars, updated_at = excluded.updated_at`).run(account, modId, stars, now);

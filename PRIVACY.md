@@ -72,10 +72,13 @@ what is on your PC.
 - your library: the list of mods you downloaded through the Fabricator;
 - how often each mod was downloaded, counted once for each account and mod;
 - an upload you started, until it finishes or expires (by default after 24 hours), and then the pieces already sent
-  are deleted.
+  are deleted (after a successful finish, only the note of which mod and version it became, until that expiry).
+- how many bytes the store's downloads sent each day, in total (not per player), so the server's costs can be watched.
 
-**Deleting your account** (Social tab, as above) also removes the mods you published and their files, your ratings,
-your library, and the reports you filed. Copies other players already installed stay on their PCs. You can also remove
+**Deleting your account** (Social tab, as above) also removes the mods you published and their files, screenshots,
+descriptions, tags and version notes, your ratings, your library, and the reports you filed. Of each of your mods the
+server keeps only its number, name, game and that it was removed, without any link to you, so players who had it see
+it as removed in their library. Copies other players already installed stay on their PCs. You can also remove
 one of your own mods on the Creator tab ("Remove from the store").
 
 **On your PC,** the launcher keeps a `fabricator` folder next to it: `ratings.json` (the stars you gave, so the Store

@@ -17,13 +17,22 @@ export const sideWord = (v: string | undefined): 'everyone' | 'host' | 'client' 
 export const MAX_SCREENS = 6;
 const GONE = 'fabricator: upload or account gone';
 
+export type UploadState = 'open' | 'finishing' | 'done' | 'failed';
 export interface UploadRow {
   id: string; account: string; mod_id: number | null; meta: string; size: number; sha256: string;
   chunk_bytes: number; chunks_done: number; created_at: number; expires_at: number;
+  state: UploadState; problems: string | null; version_id: number | null;
 }
 
 // One request at a time works on a session (chunk, screenshot, finish, cancel): the server is a single process.
+// A finish holds its session's place here until it has recorded its outcome.
 const busy = new Set<string>();
+export const UPLOAD_BUSY = 'upload busy: try again';
+export const UPLOAD_FINISHED = 'upload already published';
+// The finishes running now (server.ts waits for them before it closes the database).
+const running = new Set<Promise<unknown>>();
+// A done session's outcome is kept at least this long, so a client that lost the answer can still learn it.
+const DONE_KEEP_MS = 3600 * 1000;
 
 export const chunkCount = (row: { size: number; chunk_bytes: number }): number => Math.ceil(row.size / row.chunk_bytes);
 
@@ -45,19 +54,20 @@ export function canPublish(db: DatabaseInstance, s: FabSettings, account: string
   if (!c.publishing) return 'publishing stopped';
   if (size > s.maxFileBytes) return 'file too big';
   // open sessions count: their files arrive later (chunks, then an assembled copy on the same disk)
-  const openMine = (db.prepare('SELECT COALESCE(SUM(size), 0) AS b FROM fab_uploads WHERE account = ? AND expires_at >= ?')
+  // a done session is a published version now (counted there), not an open upload
+  const openMine = (db.prepare("SELECT COALESCE(SUM(size), 0) AS b FROM fab_uploads WHERE account = ? AND expires_at >= ? AND state != 'done'")
     .get(account, now) as { b: number }).b;
   if (c.bytes_used + openMine + size > s.creatorQuotaBytes) return 'quota';
   const since = now - DAY_MS;
   const mine = (db.prepare(`SELECT COUNT(*) AS n FROM fab_versions v JOIN fab_mods m ON m.id = v.mod_id
     WHERE m.owner = ? AND v.created_at > ?`).get(account, since) as { n: number }).n;
-  const open = (db.prepare('SELECT COUNT(*) AS n FROM fab_uploads WHERE account = ? AND expires_at >= ?')
+  const open = (db.prepare("SELECT COUNT(*) AS n FROM fab_uploads WHERE account = ? AND expires_at >= ? AND state != 'done'")
     .get(account, now) as { n: number }).n;
   if (mine + open >= s.creatorUploadsPerDay) return 'daily limit';
   const all = db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes FROM fab_versions WHERE created_at > ?')
     .get(since) as { n: number; bytes: number };
   if (all.n >= s.globalUploadsPerDay || all.bytes + size > s.globalUploadBytesPerDay) return 'server daily limit';
-  const openAll = (db.prepare('SELECT COALESCE(SUM(size), 0) AS b FROM fab_uploads WHERE expires_at >= ?').get(now) as { b: number }).b;
+  const openAll = (db.prepare("SELECT COALESCE(SUM(size), 0) AS b FROM fab_uploads WHERE expires_at >= ? AND state != 'done'").get(now) as { b: number }).b;
   if (disk.total <= 0 || (disk.total - disk.free + 2 * (openAll + size)) / disk.total > s.diskFullFraction) return 'server full';
   return null;
 }
@@ -67,9 +77,10 @@ export function ownLiveMod(db: DatabaseInstance, account: string, modId: number)
   return db.prepare("SELECT id, game FROM fab_mods WHERE id = ? AND owner = ? AND state = 'live'").get(modId, account) as any;
 }
 
-// Names are unique per game ignoring case (every state holds its name); the mod being updated keeps its own.
+// Names are unique per game ignoring case among mods not removed (a removed mod frees its name, a taken-down one
+// keeps it); the mod being updated keeps its own.
 function nameProblem(db: DatabaseInstance, account: string, game: string, name: string, exceptMod: number | null): string | null {
-  const row = db.prepare('SELECT id, owner FROM fab_mods WHERE game = ? AND lower(name) = lower(?) AND id <> ?')
+  const row = db.prepare("SELECT id, owner FROM fab_mods WHERE game = ? AND lower(name) = lower(?) AND id <> ? AND state != 'removed'")
     .get(game, name, exceptMod ?? -1) as { id: number; owner: string } | undefined;
   if (!row) return null;
   return row.owner === account
@@ -113,7 +124,7 @@ export function startUpload(db: DatabaseInstance, account: string, meta: UploadM
   return { id, chunkBytes, chunks: Math.ceil(size / chunkBytes) };
 }
 
-export type ChunkResult = 'ok' | 'repeat' | 'order' | 'hash' | 'size' | 'busy' | 'gone';
+export type ChunkResult = 'ok' | 'repeat' | 'order' | 'hash' | 'size' | 'busy' | 'gone' | 'finished';
 
 // Chunks go in order: only n === chunks_done is taken; the last one sent again with the same hash is ignored.
 export async function putChunk(db: DatabaseInstance, store: FabStore, id: string, n: number, data: Buffer,
@@ -123,6 +134,7 @@ export async function putChunk(db: DatabaseInstance, store: FabStore, id: string
   try {
     const row = getUpload(db, id);
     if (!row) return 'gone';
+    if (row.state === 'done') return 'finished';
     const hash = crypto.createHash('sha256').update(data).digest('hex');
     if (hash !== sha256) return 'hash';
     if (n === row.chunks_done - 1) {
@@ -151,19 +163,28 @@ export function dropFileIfUnused(db: DatabaseInstance, store: FabStore, key: str
   if (!db.prepare("SELECT 1 FROM fab_versions WHERE file_key = ? AND state = 'live' LIMIT 1").get(key)) store.remove(key);
 }
 
-// Null when the screenshot is kept at `pos` (0-5), else the problem.
+// Null when the screenshot is kept at `pos` (0-5), else the problem: UPLOAD_BUSY while another request (a finish)
+// works on the session, UPLOAD_FINISHED once it is published.
 export async function putScreen(db: DatabaseInstance, store: FabStore, id: string, pos: number, bytes: Buffer): Promise<string | null> {
   if (!Number.isInteger(pos) || pos < 0 || pos >= MAX_SCREENS) return `screenshot position must be 0 to ${MAX_SCREENS - 1}`;
-  const shot = await checkScreenshot(bytes);
-  if (!shot.ok) return shot.problem;
-  if (!getUpload(db, id)) return 'upload not found';
-  const key = store.saveImage(shot.png);
-  const old = db.prepare('SELECT image_key FROM fab_upload_screens WHERE upload_id = ? AND pos = ?').get(id, pos) as { image_key: string } | undefined;
-  db.prepare(`INSERT INTO fab_upload_screens (upload_id, pos, image_key, width, height) VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(upload_id, pos) DO UPDATE SET image_key = excluded.image_key, width = excluded.width, height = excluded.height`)
-    .run(id, pos, key, shot.width, shot.height);
-  if (old && old.image_key !== key) dropImageIfUnused(db, store, old.image_key);
-  return null;
+  if (busy.has(id)) return UPLOAD_BUSY;
+  busy.add(id);
+  try {
+    const shot = await checkScreenshot(bytes);
+    if (!shot.ok) return shot.problem;
+    const row = getUpload(db, id);
+    if (!row) return 'upload not found';
+    if (row.state === 'done') return UPLOAD_FINISHED;
+    const key = store.saveImage(shot.png);
+    const old = db.prepare('SELECT image_key FROM fab_upload_screens WHERE upload_id = ? AND pos = ?').get(id, pos) as { image_key: string } | undefined;
+    db.prepare(`INSERT INTO fab_upload_screens (upload_id, pos, image_key, width, height) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(upload_id, pos) DO UPDATE SET image_key = excluded.image_key, width = excluded.width, height = excluded.height`)
+      .run(id, pos, key, shot.width, shot.height);
+    if (old && old.image_key !== key) dropImageIfUnused(db, store, old.image_key);
+    return null;
+  } finally {
+    busy.delete(id);
+  }
 }
 
 // Ends a session: its row, its chunks, its staged file and screenshots nothing else uses. False while it is busy.
@@ -189,25 +210,88 @@ export function expireUploads(db: DatabaseInstance, store: FabStore, now: number
 const slugify = (name: string): string =>
   name.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'mod';
 
-type FinishResult = { ok: true; modId: number; versionId: number } | { ok: false; problems: string[] };
+export type FinishResult = { ok: true; modId: number; versionId: number } | { ok: false; problems: string[] };
 
+// What GET /uploads/:id answers (the finish protocol in routes.ts).
+export interface UploadStatus {
+  state: UploadState; chunks: number; chunks_done: number; mod_id?: number; version_id?: number; problems?: string[];
+}
+export function uploadStatus(row: UploadRow): UploadStatus {
+  const st: UploadStatus = { state: row.state, chunks: chunkCount(row), chunks_done: row.chunks_done };
+  if (row.state === 'done') { st.mod_id = row.mod_id as number; st.version_id = row.version_id as number; }
+  if (row.state === 'failed') {
+    try { st.problems = JSON.parse(row.problems ?? '[]'); } catch { st.problems = []; }
+  }
+  return st;
+}
+
+export type FinishStart =
+  | { started: Promise<FinishResult> }               // now finishing in the background
+  | { done: UploadStatus }                           // already published: its outcome
+  | { problems: string[] }                           // refused at once (chunks missing)
+  | { refused: 'not_found' | 'expired' | 'finishing' | 'busy' };
+
+// Starts a finish: the quick checks now, the slow part (assemble, hash, unpack check, publish) in the background.
+// The session's state goes to 'finishing', then 'done' (mod_id, version_id) or 'failed' (problems); the returned
+// promise never rejects.
+export function startFinish(db: DatabaseInstance, store: FabStore, s: FabSettings, uploadId: string,
+  account: string, now: number): FinishStart {
+  const row = getUpload(db, uploadId);
+  if (!row || row.account !== account) return { refused: 'not_found' };
+  if (row.state === 'done') return { done: uploadStatus(row) };
+  if (row.expires_at < now) return { refused: 'expired' };
+  if (row.state === 'finishing' && busy.has(uploadId)) return { refused: 'finishing' };
+  if (busy.has(uploadId)) return { refused: 'busy' };
+  const chunks = chunkCount(row);
+  if (row.chunks_done < chunks) return { problems: [`only ${row.chunks_done} of ${chunks} chunks are uploaded`] };
+  busy.add(uploadId);
+  db.prepare("UPDATE fab_uploads SET state = 'finishing', problems = NULL WHERE id = ?").run(uploadId);
+  const failed = (problems: string[]) => {
+    try {
+      db.prepare("UPDATE fab_uploads SET state = 'failed', problems = ? WHERE id = ? AND state = 'finishing'").run(JSON.stringify(problems), uploadId);
+    } catch { /* the database is closing or the session is gone: nothing to record */ }
+  };
+  const p: Promise<FinishResult> = finishLocked(db, store, s, row, now)
+    .then((r) => { if (!r.ok) failed(r.problems); return r; })
+    .catch((): FinishResult => {
+      const r = { ok: false as const, problems: ['publishing failed on the server: try again'] };
+      failed(r.problems);
+      return r;
+    })
+    .finally(() => { busy.delete(uploadId); running.delete(p); });
+  running.add(p);
+  return { started: p };
+}
+
+// The whole finish, awaited (tests and scripts; the route answers 202 and leaves it running).
 export async function finishUpload(db: DatabaseInstance, store: FabStore, s: FabSettings, uploadId: string,
   account: string, now: number): Promise<FinishResult> {
-  const row = getUpload(db, uploadId);
-  if (!row || row.account !== account) return { ok: false, problems: ['upload not found'] };
-  if (row.expires_at < now) return { ok: false, problems: ['upload expired'] };
-  if (busy.has(uploadId)) return { ok: false, problems: ['upload busy: try again'] };
-  busy.add(uploadId);
-  try {
-    return await finishLocked(db, store, s, row, now);
-  } finally {
-    busy.delete(uploadId);
-  }
+  const st = startFinish(db, store, s, uploadId, account, now);
+  if ('started' in st) return st.started;
+  if ('done' in st) return { ok: true, modId: st.done.mod_id as number, versionId: st.done.version_id as number };
+  if ('problems' in st) return { ok: false, problems: st.problems };
+  const why = { not_found: 'upload not found', expired: 'upload expired', finishing: UPLOAD_BUSY, busy: UPLOAD_BUSY }[st.refused];
+  return { ok: false, problems: [why] };
+}
+
+// Settles once every finish running now has recorded its outcome.
+export async function finishesSettled(): Promise<void> {
+  while (running.size > 0) await Promise.allSettled([...running]);
+}
+
+// At startup: a session left 'finishing' by a stopped server has no finish running any more. It becomes 'failed', so
+// the client finishes it again or DELETEs it. Sessions this process is finishing (an in-process restart) are left.
+export function recoverInterruptedFinishes(db: DatabaseInstance): number {
+  const ids = (db.prepare("SELECT id FROM fab_uploads WHERE state = 'finishing'").all() as { id: string }[])
+    .map((r) => r.id).filter((id) => !busy.has(id));
+  const mark = db.prepare("UPDATE fab_uploads SET state = 'failed', problems = ? WHERE id = ? AND state = 'finishing'");
+  const problems = JSON.stringify(['the server restarted while it was checking this upload: finish it again']);
+  for (const id of ids) mark.run(problems, id);
+  return ids.length;
 }
 
 async function finishLocked(db: DatabaseInstance, store: FabStore, s: FabSettings, row: UploadRow, now: number): Promise<FinishResult> {
   const chunks = chunkCount(row);
-  if (row.chunks_done < chunks) return { ok: false, problems: [`only ${row.chunks_done} of ${chunks} chunks are uploaded`] };
   const m = normalizeMeta(JSON.parse(row.meta));
   const problems = checkText(m);
   if (!creator(db, row.account).publishing) problems.push('publishing stopped');
@@ -216,7 +300,7 @@ async function finishLocked(db: DatabaseInstance, store: FabStore, s: FabSetting
   const game = mod?.game ?? m.game;   // a new version stays in its mod's game
   if (m.game !== game) problems.push(`game: a new version must be for the mod's game (${game})`);
   const c = creator(db, row.account);
-  const openOther = (db.prepare('SELECT COALESCE(SUM(size), 0) AS b FROM fab_uploads WHERE account = ? AND expires_at >= ? AND id <> ?')
+  const openOther = (db.prepare("SELECT COALESCE(SUM(size), 0) AS b FROM fab_uploads WHERE account = ? AND expires_at >= ? AND id <> ? AND state != 'done'")
     .get(row.account, now, row.id) as { b: number }).b;
   if (c.bytes_used + openOther + row.size > s.creatorQuotaBytes) problems.push('quota: this upload would go over your storage quota');
   const disk = await store.disk();   // the chunks are already on disk; assembling adds one more copy
@@ -295,8 +379,10 @@ async function finishLocked(db: DatabaseInstance, store: FabStore, s: FabSetting
         db.prepare('UPDATE fab_creators SET bytes_used = MAX(0, bytes_used - ?) WHERE account = ?').run(old.size, row.account);
         dropFiles.push(old.file_key);
       }
+      // the session stays, 'done', so its outcome can be read until it expires (at least DONE_KEEP_MS from now)
       db.prepare('DELETE FROM fab_upload_screens WHERE upload_id = ?').run(row.id);
-      db.prepare('DELETE FROM fab_uploads WHERE id = ?').run(row.id);
+      db.prepare("UPDATE fab_uploads SET state = 'done', problems = NULL, mod_id = ?, version_id = ?, expires_at = MAX(expires_at, ?) WHERE id = ?")
+        .run(modId, versionId, now + DONE_KEEP_MS, row.id);
     })();
   } catch (e) {
     dropFileIfUnused(db, store, key);
@@ -386,6 +472,15 @@ export function forgetFabricatorRows(db: DatabaseInstance, account: string): (st
     db.prepare('DELETE FROM fab_uploads WHERE id = ?').run(u.id);
     dropIds.push(u.id);
   }
+  // Every mod of the account (removed earlier by its owner too) keeps only id, name, game and state, so other players'
+  // libraries can still show it as removed: its texts, tags, requires, version notes and owner go.
+  const mine = (db.prepare('SELECT id FROM fab_mods WHERE owner = ?').all(account) as { id: number }[]).map((r) => r.id);
+  for (const id of mine) {
+    images.push(...(db.prepare('SELECT image_key FROM fab_screens WHERE mod_id = ?').all(id) as { image_key: string }[]).map((r) => r.image_key));
+    db.prepare('DELETE FROM fab_screens WHERE mod_id = ?').run(id);
+    db.prepare("UPDATE fab_versions SET notes = '' WHERE mod_id = ?").run(id);
+  }
+  db.prepare(`UPDATE fab_mods SET owner = '', short_desc = '', long_desc = '', tags = '[]', requires = '[]' WHERE owner = ?`).run(account);
   db.prepare('DELETE FROM fab_ratings WHERE account = ?').run(account);
   db.prepare('DELETE FROM fab_reports WHERE reporter = ?').run(account);
   db.prepare('DELETE FROM fab_library WHERE account = ?').run(account);
@@ -406,7 +501,7 @@ export function creatorLimits(db: DatabaseInstance, s: FabSettings, account: str
   const since = now - DAY_MS;
   const done = (db.prepare(`SELECT COUNT(*) AS n FROM fab_versions v JOIN fab_mods m ON m.id = v.mod_id
     WHERE m.owner = ? AND v.created_at > ?`).get(account, since) as { n: number }).n;
-  const open = (db.prepare('SELECT COUNT(*) AS n FROM fab_uploads WHERE account = ? AND expires_at >= ?').get(account, now) as { n: number }).n;
+  const open = (db.prepare("SELECT COUNT(*) AS n FROM fab_uploads WHERE account = ? AND expires_at >= ? AND state != 'done'").get(account, now) as { n: number }).n;
   return {
     can_publish: canPublish(db, s, account, 1, now, disk),
     bytes_used: creator(db, account).bytes_used,

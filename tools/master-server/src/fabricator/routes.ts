@@ -4,12 +4,15 @@ import { checkAuthHeader, type AuthedUser } from '../auth.js';
 import type { FabSettings } from './settings.js';
 import type { FabStore } from './store.js';
 import fs from 'node:fs';
+import { Transform, pipeline } from 'node:stream';
 import { listMods, modPage, type SortKey } from './catalog.js';
 import {
-  canPublish, cancelUpload, chunkCount, creatorLimits, creatorMods, removeOwnMod, expireUploads, finishUpload, getUpload, normalizeMeta, ownLiveMod,
-  putChunk, putScreen, startUpload, uploadProblems, MAX_SCREENS, type UploadRow,
+  canPublish, cancelUpload, creatorLimits, creatorMods, removeOwnMod, expireUploads, getUpload, normalizeMeta, ownLiveMod,
+  putChunk, putScreen, recoverInterruptedFinishes, startFinish, startUpload, uploadProblems, uploadStatus, MAX_SCREENS,
+  UPLOAD_BUSY, UPLOAD_FINISHED, type UploadRow,
 } from './publish.js';
 import { addToLibrary, DownloadTokens, issueDownload, library, modIsLive, rate, removeFromLibrary, report, REPORT_TEXT_MAX } from './player.js';
+import { addTraffic } from './moderation.js';
 
 export interface FabRouteOptions { db: DatabaseInstance; store: FabStore; settings: FabSettings; now: () => number }
 
@@ -44,6 +47,9 @@ export function parseRange(header: string | undefined, size: number): { start: n
 export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fastify, opts) => {
   const { db, store, settings: s, now } = opts;
   const tokens = new DownloadTokens();
+  // A finish the last run of the server left 'finishing' never ends now: it is marked failed (see the finish protocol).
+  if (recoverInterruptedFinishes(db) > 0) fastify.log.warn('fabricator: upload finishes cut short by a restart were marked failed');
+  const perMinute = (max: number) => ({ rateLimit: { max: Math.max(1, Math.floor(max)), timeWindow: '1 minute' } });
 
   let timer: NodeJS.Timeout | null = null;
   fastify.addHook('onReady', async () => {
@@ -75,7 +81,8 @@ export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fast
     return page;
   });
 
-  fastify.get<{ Params: { key: string } }>('/images/:key', async (req, reply) => {
+  // Pictures are content-hashed and cheap: a generous per-address limit of their own (a store page shows many).
+  fastify.get<{ Params: { key: string } }>('/images/:key', { config: perMinute(s.imageRequestsPerMinute) }, async (req, reply) => {
     const key = req.params.key;
     if (!IMAGE_KEY.test(key)) return reply.status(404).send({ error: 'image not found' });
     const file = store.pathOf(key);
@@ -97,12 +104,25 @@ export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fast
     const range = parseRange(req.headers.range, size);
     if (range === 'bad') return reply.status(416).header('Content-Range', `bytes */${size}`).send({ error: 'bad range' });
     reply.type('application/zip').header('Content-Disposition', 'attachment; filename="mod.zip"');
+    // The bytes passed on to the response are added to the day's traffic once the response is over (finished or cut).
+    let sent = 0;
+    let counted = false;
+    const count = () => {
+      if (counted) return;
+      counted = true;
+      try { addTraffic(db, now(), sent); } catch { fastify.log.error('fabricator: counting download bytes failed'); }
+    };
+    reply.raw.once('finish', count);
+    reply.raw.once('close', count);
+    const counter = new Transform({ transform(b: Buffer, _enc, done) { sent += b.length; done(null, b); } });
+    const src = range === null ? fs.createReadStream(file) : fs.createReadStream(file, { start: range.start, end: range.end });
+    pipeline(src, counter, () => { /* errors end the response; fastify logs nothing with the path */ });
     if (range === null) {
       reply.header('Content-Length', size);
-      return reply.send(fs.createReadStream(file));
+      return reply.send(counter);
     }
     reply.status(206).header('Content-Range', `bytes ${range.start}-${range.end}/${size}`).header('Content-Length', range.end - range.start + 1);
-    return reply.send(fs.createReadStream(file, { start: range.start, end: range.end }));
+    return reply.send(counter);
   });
 
   // The library, download addresses, ratings and reports: a signed-in account.
@@ -145,6 +165,7 @@ export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fast
       const r = id === null ? 'not_in_library' : rate(db, me(req), id, req.body?.stars, now());
       if (r === 'bad_stars') return reply.status(400).send({ error: 'stars must be a whole number from 1 to 5' });
       if (r === 'not_in_library') return reply.status(403).send({ error: 'not_in_library' });
+      if (r === 'own_mod') return reply.status(403).send({ error: 'own mod' });
       return reply.status(204).send();
     });
 
@@ -220,13 +241,35 @@ export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fast
       return { id: r.id, chunk_bytes: r.chunkBytes, chunks: r.chunks };
     });
 
+    // ---- The finish protocol (the launcher's side is fabricator_net.cpp) ----
+    // POST /uploads/:id/finish
+    //   202 {state:'finishing'}   the checks and publishing now run in the background
+    //   200 {state:'done', ...}   it was already published: the same body as GET (a repeat after a lost answer)
+    //   409 {error:'finishing'}   a finish of this session is running: ask GET until it ends
+    //   409 {error:'upload busy: try again'}   a chunk or screenshot request is running on it
+    //   422 {problems:[...]}      refused at once: not every chunk is uploaded (the session stays open)
+    //   404 not the caller's / unknown, 410 expired, 500 the server could not start it
+    // GET /uploads/:id -> {state, chunks, chunks_done, mod_id?, version_id?, problems?}
+    //   'open'       chunks and screenshots may be sent, then a finish
+    //   'finishing'  checking and publishing: ask again in a few seconds
+    //   'done'       published as mod_id / version_id. The session stays readable until it expires (at least an hour
+    //                after the finish) so a client that lost the answer learns it; chunk and screenshot PUTs are 409.
+    //                A DELETE forgets it (the mod stays published).
+    //   'failed'     problems says why; the session and its chunks are kept (as an open one): the client puts it right
+    //                and finishes again, or DELETEs it. A server restart during a finish ends there too
+    //                ('the server restarted ...'), never stuck in 'finishing'.
     up.get<{ Params: { id: string } }>('/uploads/:id', async (req, reply) => {
       const row = session(req, reply);
       if (!row) return reply;
-      return { chunks_done: row.chunks_done, chunks: chunkCount(row) };
+      return uploadStatus(row);
     });
 
-    up.put<{ Params: { id: string; n: string } }>('/uploads/:id/chunks/:n', { bodyLimit: s.chunkBytes + 1024 }, async (req, reply) => {
+    // Chunks and screenshots have their own per-account limit: a fast uplink sends far more than the shared 120 a minute,
+    // and each session already allows one request at a time.
+    const uploadLimit = perMinute(s.uploadRequestsPerMinute);
+    const busyError = (id: string) => (getUpload(db, id)?.state === 'finishing' ? 'finishing' : UPLOAD_BUSY);
+
+    up.put<{ Params: { id: string; n: string } }>('/uploads/:id/chunks/:n', { bodyLimit: s.chunkBytes + 1024, config: uploadLimit }, async (req, reply) => {
       const row = session(req, reply);
       if (!row) return reply;
       const hash = req.headers['x-chunk-sha256'];
@@ -238,19 +281,22 @@ export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fast
         case 'ok': case 'repeat': return reply.status(204).send();
         case 'hash': return reply.status(409).send({ error: 'chunk SHA-256 does not match' });
         case 'order': return reply.status(409).send({ error: 'chunks go in order', chunks_done: getUpload(db, row.id)?.chunks_done ?? 0 });
-        case 'busy': return reply.status(409).send({ error: 'upload busy: try again' });
+        case 'busy': return reply.status(409).send({ error: busyError(row.id) });
+        case 'finished': return reply.status(409).send({ error: UPLOAD_FINISHED });
         case 'size': return reply.status(400).send({ error: 'chunk has the wrong size' });
         default: return reply.status(404).send({ error: 'upload not found' });
       }
     });
 
-    up.put<{ Params: { id: string; pos: string } }>('/uploads/:id/screens/:pos', { bodyLimit: SCREEN_LIMIT }, async (req, reply) => {
+    up.put<{ Params: { id: string; pos: string } }>('/uploads/:id/screens/:pos', { bodyLimit: SCREEN_LIMIT, config: uploadLimit }, async (req, reply) => {
       const row = session(req, reply);
       if (!row) return reply;
       const pos = /^\d$/.test(req.params.pos) ? Number(req.params.pos) : -1;
       if (pos < 0 || pos >= MAX_SCREENS) return reply.status(400).send({ problem: `screenshot position must be 0 to ${MAX_SCREENS - 1}` });
       if (!Buffer.isBuffer(req.body)) return reply.status(415).send({ problem: 'send the image as application/octet-stream' });
       const problem = await putScreen(db, store, row.id, pos, req.body);
+      if (problem === UPLOAD_BUSY) return reply.status(409).send({ error: busyError(row.id) });
+      if (problem === UPLOAD_FINISHED) return reply.status(409).send({ error: UPLOAD_FINISHED });
       if (problem) return reply.status(400).send({ problem });
       return reply.status(204).send();
     });
@@ -259,11 +305,19 @@ export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fast
       const row = session(req, reply);
       if (!row) return reply;
       try {
-        const r = await finishUpload(db, store, s, row.id, row.account, now());
-        if (!r.ok) return reply.status(422).send({ problems: r.problems });
-        return { mod_id: r.modId, version_id: r.versionId };
+        const r = startFinish(db, store, s, row.id, row.account, now());
+        if ('started' in r) {
+          r.started.then((x) => { if (!x.ok && x.problems.some((p) => p.startsWith('publishing failed on the server'))) fastify.log.error('fabricator: publishing an upload failed'); });
+          return reply.status(202).send({ state: 'finishing' });
+        }
+        if ('done' in r) return r.done;
+        if ('problems' in r) return reply.status(422).send({ problems: r.problems });
+        if (r.refused === 'finishing') return reply.status(409).send({ error: 'finishing' });
+        if (r.refused === 'busy') return reply.status(409).send({ error: UPLOAD_BUSY });
+        if (r.refused === 'expired') return reply.status(410).send({ error: 'upload expired' });
+        return reply.status(404).send({ error: 'upload not found' });
       } catch {
-        fastify.log.error('fabricator: publishing an upload failed');
+        fastify.log.error('fabricator: starting an upload finish failed');
         return reply.status(500).send({ error: 'publishing failed on the server' });
       }
     });

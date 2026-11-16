@@ -20,7 +20,17 @@ export function modZip(ini: string, bulk = 64, extra: Record<string, string | Bu
   });
 }
 
-export const png = (w = 4, h = 4): Promise<Buffer> =>
+// Finishing is asynchronous (POST /finish answers 202): ask the session's state until it is no longer 'finishing'.
+export async function awaitFinish(get: () => Promise<any>, tries = 1000): Promise<any> {
+  for (let i = 0; i < tries; i++) {
+    const s = await get();
+    if (s?.state !== 'finishing') return s;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error('the finish never ended');
+}
+
+export const png =(w = 4, h = 4): Promise<Buffer> =>
   sharp({ create: { width: w, height: h, channels: 3, background: '#336699' } }).png().toBuffer();
 
 export const meta = (over: Record<string, unknown> = {}) => ({

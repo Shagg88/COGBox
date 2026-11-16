@@ -172,3 +172,26 @@ describe('checkModZip hardening', () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe('checkModZip: Windows device names and names that differ only in case', () => {
+  for (const p of ['aux.txt', 'GearGame/CON', 'dir/com1.ini', 'Lpt9', 'nul.tar.gz', 'COM¹.dat', 'x/lpt³', 'prn .txt', 'AUX/readme.txt', 'con.'])
+    it(`rejects device name "${p}"`, () => bad({ [p]: 'x' }, 'device name'));
+  for (const p of ['console.txt', 'auxiliary.ini', 'com10.txt', 'com0.txt', 'lptx.bin', 'nulls/a.bin', 'my.con'])
+    it(`accepts "${p}"`, async () => {
+      const r = await checkModZip(await makeZip({ [p]: 'x' }), 'gears3', S);
+      expect(r.problems).toEqual([]);
+    });
+  it('rejects two files whose paths differ only in case', () => bad({ 'Textures/Rock.dds': 'a', 'textures/ROCK.DDS': 'b' }, 'differ only in case'));
+  it('rejects a file and a folder with the same name in another case', () => bad({ 'Data': 'a', 'data/x.bin': 'b' }, 'differ only in case'));
+  it('accepts a folder entry next to its files', async () => {
+    const file = path.join(dir, `z${n++}.zip`);
+    const z = new yazl.ZipFile();
+    z.addEmptyDirectory('Data');
+    z.addBuffer(Buffer.from('b'), 'Data/x.bin');
+    z.addBuffer(Buffer.from('c'), 'data/y.bin');   // the same folder in another case is fine
+    z.end();
+    await new Promise<void>((res, rej) => z.outputStream.pipe(fs.createWriteStream(file)).on('close', res).on('error', rej));
+    const r = await checkModZip(file, 'gears3', S);
+    expect(r.problems).toEqual([]);
+  });
+});

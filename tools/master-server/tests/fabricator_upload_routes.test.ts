@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server.js';
-import { modZip, png, meta, sha256 } from './fabricator_helpers.js';
+import { modZip, png, meta, sha256, awaitFinish } from './fabricator_helpers.js';
 
 const DAY = 24 * 3600 * 1000;
 const API = '/api/v1/fabricator';
@@ -39,6 +39,14 @@ describe('fabricator upload routes', () => {
     payload: { meta: meta(), size: zip.length, sha256: sha256(zip), ...extra },
   });
   const finish = (c: Claimed, id: string) => app.inject({ method: 'POST', url: `${API}/uploads/${id}/finish`, headers: auth(c) });
+  const status = (c: Claimed, id: string) => app.inject({ method: 'GET', url: `${API}/uploads/${id}`, headers: auth(c) });
+  // POST /finish answers 202 at once; the outcome is read from GET /uploads/:id
+  async function finishDone(c: Claimed, id: string) {
+    const f = await finish(c, id);
+    expect(f.statusCode).toBe(202);
+    expect(f.json()).toEqual({ state: 'finishing' });
+    return awaitFinish(async () => (await status(c, id)).json());
+  }
   const threeChunkZip = async () => {
     const zip = await modZip('[Mod]\nName=Horde Bank\n', 2300);
     expect(Math.ceil(zip.length / 1024)).toBe(3);
@@ -63,7 +71,7 @@ describe('fabricator upload routes', () => {
     expect(chunk_bytes).toBe(1024);
     for (let n = 0; n < chunks; n++) expect((await putChunk(c, id, n, chunkOf(zip, n))).statusCode).toBe(204);
     expect((await putScreen(c, id)).statusCode).toBe(204);
-    return finish(c, id);
+    return finishDone(c, id);
   }
 
   it('uploads a 3-chunk zip with a screenshot and publishes it', async () => {
@@ -74,12 +82,19 @@ describe('fabricator upload routes', () => {
     expect(s.json()).toMatchObject({ chunk_bytes: 1024, chunks: 3 });
     const id = s.json().id;
     for (let n = 0; n < 3; n++) expect((await putChunk(me, id, n, chunkOf(zip, n))).statusCode).toBe(204);
-    expect((await app.inject({ method: 'GET', url: `${API}/uploads/${id}`, headers: auth(me) })).json()).toEqual({ chunks_done: 3, chunks: 3 });
+    expect((await status(me, id)).json()).toEqual({ state: 'open', chunks_done: 3, chunks: 3 });
     expect((await putScreen(me, id)).statusCode).toBe(204);
-    const f = await finish(me, id);
-    expect(f.statusCode).toBe(200);
-    expect(f.json()).toEqual({ mod_id: expect.any(Number), version_id: expect.any(Number) });
-    expect((await app.inject({ method: 'GET', url: `${API}/uploads/${id}`, headers: auth(me) })).statusCode).toBe(404);
+    const done = await finishDone(me, id);
+    expect(done).toEqual({ state: 'done', chunks_done: 3, chunks: 3, mod_id: expect.any(Number), version_id: expect.any(Number) });
+    // the outcome stays readable (a client that lost the answer learns it); a finish again only repeats it
+    expect((await status(me, id)).json()).toEqual(done);
+    const again = await finish(me, id);
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toEqual(done);
+    expect((await putChunk(me, id, 2, chunkOf(zip, 2))).statusCode).toBe(409);
+    expect((await putScreen(me, id)).statusCode).toBe(409);
+    expect((await app.inject({ method: 'DELETE', url: `${API}/uploads/${id}`, headers: auth(me) })).statusCode).toBe(204);
+    expect((await status(me, id)).statusCode).toBe(404);
   });
 
   it('needs Authorization', async () => {
@@ -117,20 +132,34 @@ describe('fabricator upload routes', () => {
     app = await start();
     const g = await app.inject({ method: 'GET', url: `${API}/uploads/${id}`, headers: auth(me) });
     expect(g.statusCode).toBe(200);
-    expect(g.json()).toEqual({ chunks_done: 1, chunks: 3 });
+    expect(g.json()).toEqual({ state: 'open', chunks_done: 1, chunks: 3 });
     for (let n = 1; n < 3; n++) expect((await putChunk(me, id, n, chunkOf(zip, n))).statusCode).toBe(204);
     expect((await putScreen(me, id)).statusCode).toBe(204);
-    expect((await finish(me, id)).statusCode).toBe(200);
+    expect((await finishDone(me, id)).state).toBe('done');
   });
 
-  it('finish without a screenshot is 422 with screenshot', async () => {
+  it('a finish without a screenshot fails with the problem and keeps the session', async () => {
     const me = await claim('Baird');
     const zip = await threeChunkZip();
     const id = (await begin(me, zip)).json().id;
     for (let n = 0; n < 3; n++) await putChunk(me, id, n, chunkOf(zip, n));
+    const f = await finishDone(me, id);
+    expect(f).toMatchObject({ state: 'failed', chunks_done: 3, chunks: 3 });
+    expect(f.problems.join(' | ')).toContain('screenshot');
+    // the session is kept: the problem can be put right and the finish asked again
+    expect((await putScreen(me, id)).statusCode).toBe(204);
+    expect((await finishDone(me, id)).state).toBe('done');
+  });
+
+  it('a finish before every chunk is there is 422 at once', async () => {
+    const me = await claim('Baird');
+    const zip = await threeChunkZip();
+    const id = (await begin(me, zip)).json().id;
+    await putChunk(me, id, 0, chunkOf(zip, 0));
     const f = await finish(me, id);
     expect(f.statusCode).toBe(422);
-    expect(f.json().problems.join(' | ')).toContain('screenshot');
+    expect(f.json().problems.join()).toContain('1 of 3 chunks');
+    expect((await status(me, id)).json().state).toBe('open');
   });
 
   it('refuses a new version of another account\'s mod', async () => {
@@ -138,11 +167,11 @@ describe('fabricator upload routes', () => {
     const b = await claim('Cole');
     const zip = await threeChunkZip();
     const pub = await fullUpload(a, zip);
-    expect(pub.statusCode).toBe(200);
-    const r = await begin(b, zip, { mod_id: pub.json().mod_id });
+    expect(pub.state).toBe('done');
+    const r = await begin(b, zip, { mod_id: pub.mod_id });
     expect(r.statusCode).toBe(403);
-    expect((await begin(a, zip, { mod_id: pub.json().mod_id })).statusCode).toBe(200);
-    const g = await begin(a, zip, { mod_id: pub.json().mod_id, meta: meta({ game: 'gears1' }) });
+    expect((await begin(a, zip, { mod_id: pub.mod_id })).statusCode).toBe(200);
+    const g = await begin(a, zip, { mod_id: pub.mod_id, meta: meta({ game: 'gears1' }) });
     expect(g.statusCode).toBe(400);
     expect(g.json().problems.join()).toContain('game');
   });
@@ -190,7 +219,7 @@ describe('fabricator upload routes', () => {
     const me = await claim('Baird');
     const zip = await threeChunkZip();
     const r = await fullUpload(me, zip);
-    expect(r.statusCode).toBe(200);
+    expect(r.state).toBe('done');
     const list = await app.inject({ method: 'GET', url: `${API}/mods?search=horde&sort=bogus` });
     expect(list.statusCode).toBe(200);
     expect(list.headers['cache-control']).toBe('public, max-age=60');

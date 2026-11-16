@@ -7,7 +7,7 @@ import { Registry } from '../social/registry.js';
 import { ErrorRing } from './error_ring.js';
 import type { FabStore } from '../fabricator/store.js';
 import type { FabSettings } from '../fabricator/settings.js';
-import { reportsQueue, takeDown, restore, deleteFiles, setPublishing, fabStats } from '../fabricator/moderation.js';
+import { reportsQueue, takeDown, restore, deleteFiles, setPublishing, fabStats, adminMods, adminModDetail, MOD_STATES } from '../fabricator/moderation.js';
 
 export interface PrivateApiDeps {
   db: DatabaseInstance;
@@ -125,6 +125,19 @@ export async function buildPrivateApi(deps: PrivateApiDeps): Promise<FastifyInst
 
   app.get('/fabricator/reports', async () => ({ reports: reportsQueue(db) }));
   app.get('/fabricator/stats', async () => fabStats(db, deps.store, now()));
+
+  // The mods view: any state, a piece of the name (or the id); then one mod's versions, files and reports.
+  app.get<{ Querystring: { state?: unknown; q?: unknown } }>('/fabricator/mods', async (req, reply) => {
+    const st = req.query?.state;
+    if (st !== undefined && st !== '' && !(MOD_STATES as readonly unknown[]).includes(st)) return reply.status(400).send({ error: 'state must be live, taken_down or removed' });
+    const q = typeof req.query?.q === 'string' ? req.query.q : '';
+    return { mods: adminMods(db, { state: typeof st === 'string' && st !== '' ? st : undefined, q }) };
+  });
+  app.get<{ Params: { id: string } }>('/fabricator/mods/:id', async (req, reply) => {
+    const m = /^\d{1,9}$/.test(req.params.id) ? adminModDetail(db, Number(req.params.id)) : null;
+    if (!m) return reply.status(404).send({ error: 'not_found' });
+    return m;
+  });
 
   app.post<{ Params: { id: string; action: string } }>('/fabricator/mods/:id/:action', async (req, reply) => {
     const act = Object.hasOwn(MOD_ACTIONS, req.params.action) ? MOD_ACTIONS[req.params.action] : undefined;

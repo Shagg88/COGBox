@@ -54,11 +54,28 @@ function badPath(name: string): boolean {
   return p.split('/').some((seg) => seg !== '' && seg !== '.' && seg.replace(/[. ]+$/, '') === '');
 }
 
+// Windows device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9 and the superscript ¹²³ forms), with any extension:
+// a file or folder with one of these names cannot be made on a player's PC.
+const DEVICE = /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])$/i;
+export function deviceName(name: string): string | null {
+  for (const seg of name.replace(/\\/g, '/').split('/')) {
+    const stem = seg.replace(/[. ]+$/, '').split('.')[0].replace(/ +$/, '');
+    if (DEVICE.test(stem)) return seg;
+  }
+  return null;
+}
+
+// How Windows sees a path: one separator, no trailing dots or spaces on a segment, case folded.
+const windowsKey = (name: string): string =>
+  name.replace(/\\/g, '/').split('/').filter((seg) => seg !== '' && seg !== '.').map((seg) => seg.replace(/[. ]+$/, '')).join('/').toLowerCase();
+
 export function checkModZip(file: string, game: string, s: FabSettings): Promise<ZipCheck> {
   return new Promise((resolve) => {
     const problems: string[] = [];
     let unpacked = 0, files = 0, iniEntry: yauzl.Entry | null = null, iniDepth = 99;
-    let refusedShown = 0;
+    let refusedShown = 0, devicesShown = 0;
+    const fileKeys = new Set<string>(), dirKeys = new Set<string>();
+    let sameName = false;
     const toInflate: yauzl.Entry[] = [];
     const note = (p: string) => { if (!problems.includes(p)) problems.push(p); };
     const finish = (modIni: ModIniInfo | null) => {
@@ -83,6 +100,16 @@ export function checkModZip(file: string, game: string, s: FabSettings): Promise
         const unixMode = (e.externalFileAttributes >>> 16) & 0xf000;
         if (unixMode === 0xa000) note('the zip contains a link (symlink), which is not allowed');
         const isDir = name.endsWith('/');
+        const dev = deviceName(name);
+        if (dev !== null && devicesShown++ < 5) note(`Windows device name not allowed as a file or folder name (CON, PRN, AUX, NUL, COM1-9, LPT1-9): ${dev}`);
+        const key = windowsKey(name);
+        if (key) {
+          const parts = key.split('/');
+          for (let i = 1; i < parts.length; i++) dirKeys.add(parts.slice(0, i).join('/'));
+          if (isDir) dirKeys.add(key);
+          else if (fileKeys.has(key)) sameName = true;
+          else fileKeys.add(key);
+        }
         if (!isDir) {
           const base = (name.replace(/\\/g, '/').split('/').pop() ?? '').replace(/[. ]+$/, '');
           const dot = base.lastIndexOf('.');
@@ -100,6 +127,8 @@ export function checkModZip(file: string, game: string, s: FabSettings): Promise
       zip.on('end', () => {
         if (stopped) return;
         stopped = true;
+        for (const k of fileKeys) if (dirKeys.has(k)) sameName = true;
+        if (sameName) note('two entries in the zip have the same path or paths that differ only in case: Windows cannot keep both');
         const e = iniEntry as yauzl.Entry | null;
         const readIni = () => {
         if (!e) { zip.close(); return finish(null); }

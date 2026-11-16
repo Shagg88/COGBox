@@ -28,6 +28,43 @@ describe('fabricator schema and settings', () => {
     expect(() => ins.run('z', 'cool mod', 'gears2')).not.toThrow();
   });
 
+  it('a removed mod frees its name; a taken-down one keeps it', () => {
+    const db = initDb(':memory:');
+    const ins = db.prepare(`INSERT INTO fab_mods (owner, slug, name, game, type, state, created_at, updated_at)
+      VALUES ('a', 's', ?, 'gears3', 'other', ?, 0, 0)`);
+    ins.run('Cool Mod', 'removed');
+    expect(() => ins.run('cool mod', 'live')).not.toThrow();
+    expect(() => ins.run('COOL MOD', 'removed')).not.toThrow();
+    db.prepare("UPDATE fab_mods SET state = 'taken_down' WHERE name = 'cool mod'").run();
+    expect(() => ins.run('Cool mod', 'live')).toThrow();
+  });
+
+  it('replaces a name index from before the removed rule, and adds the finish columns to old upload sessions', () => {
+    const file = path.join(dir, 'old.db');
+    let db = initDb(file);
+    // the schema as an earlier build created it
+    db.exec(`DROP INDEX idx_fab_mods_game_name;
+      CREATE UNIQUE INDEX idx_fab_mods_game_name ON fab_mods(game, lower(name));
+      DROP TABLE fab_upload_screens; DROP TABLE fab_uploads;
+      CREATE TABLE fab_uploads (id TEXT PRIMARY KEY, account TEXT NOT NULL, mod_id INTEGER, meta TEXT NOT NULL, size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL, chunk_bytes INTEGER NOT NULL, chunks_done INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);`);
+    db.prepare(`INSERT INTO fab_mods (owner, slug, name, game, type, state, created_at, updated_at) VALUES ('a', 's', 'Cool Mod', 'gears3', 'other', 'removed', 0, 0)`).run();
+    db.prepare(`INSERT INTO fab_uploads (id, account, meta, size, sha256, chunk_bytes, created_at, expires_at) VALUES ('up-000001', 'a', '{}', 1, 'x', 1, 0, 1)`).run();
+    expect(() => db.prepare(`INSERT INTO fab_mods (owner, slug, name, game, type, created_at, updated_at) VALUES ('b', 's', 'cool mod', 'gears3', 'other', 0, 0)`).run()).toThrow();
+    db.close();
+
+    db = initDb(file);
+    const sql = (db.prepare("SELECT sql FROM sqlite_master WHERE name = 'idx_fab_mods_game_name'").get() as { sql: string }).sql;
+    expect(sql).toMatch(/WHERE state != 'removed'/);
+    expect(() => db.prepare(`INSERT INTO fab_mods (owner, slug, name, game, type, created_at, updated_at) VALUES ('b', 's', 'cool mod', 'gears3', 'other', 0, 0)`).run()).not.toThrow();
+    expect(db.prepare("SELECT state, problems, version_id FROM fab_uploads WHERE id = 'up-000001'").get()).toEqual({ state: 'open', problems: null, version_id: null });
+    db.close();
+    db = initDb(file);   // a third start changes nothing
+    expect((db.prepare("SELECT sql FROM sqlite_master WHERE name = 'idx_fab_mods_game_name'").get() as { sql: string }).sql).toBe(sql);
+    expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'fab_traffic'").get()).toBeTruthy();
+    db.close();
+  });
+
   it("a mod's side defaults to modcore's everyone", () => {
     const db = initDb(':memory:');
     db.prepare(`INSERT INTO fab_mods (owner, slug, name, game, type, created_at, updated_at) VALUES ('a', 's', 'Side Mod', 'gears3', 'other', 0, 0)`).run();

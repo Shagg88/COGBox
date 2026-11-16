@@ -19,6 +19,8 @@ export interface FabSettings {
   sessionTtlMs: number;            // upload session lifetime
   downloadsPerHour: number;        // download addresses per account
   downloadTtlMs: number;           // download address lifetime
+  uploadRequestsPerMinute: number; // chunk and screenshot PUTs per account (their own limit, not the shared one)
+  imageRequestsPerMinute: number;  // store picture GETs per address
 }
 
 export const FAB_DEFAULTS: FabSettings = {
@@ -36,6 +38,8 @@ export const FAB_DEFAULTS: FabSettings = {
   sessionTtlMs: 24 * 3600 * 1000,
   downloadsPerHour: 30,
   downloadTtlMs: 15 * 60 * 1000,
+  uploadRequestsPerMinute: 1200,
+  imageRequestsPerMinute: 1200,
 };
 
 const envName = (key: string): string => 'FAB_' + key.replace(/[A-Z]/g, (c) => '_' + c).toUpperCase();

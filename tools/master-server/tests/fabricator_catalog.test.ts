@@ -82,9 +82,14 @@ describe('fabricator catalog', () => {
     rate(one, 5, 1); rate(many, 5, 16); rate(many, 3, 4); // sum 92 over 20 = 4.6
     const r = listMods(db, q({ sort: 'rating' }), NOW).mods;
     expect(r.map((m) => m.name)).toEqual(['Many', 'One']);
-    expect(r[0].rating).toBe(4.38); // (5*3.5 + 92) / 25
+    // sorted Bayesian, shown as the plain mean (one decimal)
+    expect(r[0].rating).toBe(4.6);
     expect(r[0].ratings).toBe(20);
-    expect(r[1].rating).toBe(3.75); // (17.5 + 5) / 6
+    expect(r[1].rating).toBe(5);
+    expect(modPage(db, one, NOW)).toMatchObject({ rating: 5, ratings: 1 });
+    const third = mod(a, 'Third');
+    rate(third, 5, 1, 't'); rate(third, 4, 2, 't');   // 13 / 3 = 4.333...
+    expect(listMods(db, q({ search: 'third' }), NOW).mods[0].rating).toBe(4.3);
   });
 
   it('never lists taken-down or removed mods', () => {
