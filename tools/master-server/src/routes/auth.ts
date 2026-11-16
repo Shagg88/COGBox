@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 import { DatabaseInstance } from '../db.js';
 import { checkAuthHeader, checkToken, forgetAuth, hashToken, newToken } from '../auth.js';
 import { NAME_RULE, normalizeName } from '../names.js';
+import type { FabStore } from '../fabricator/store.js';
+import { forgetFabricatorRows } from '../fabricator/publish.js';
 
 interface ClaimBody {
   uuid?: string;
@@ -27,8 +29,8 @@ function pickDiscriminator(db: DatabaseInstance, name: string, exceptUuid = ''):
   return '';
 }
 
-export const authRoutes: FastifyPluginAsync<{ db: DatabaseInstance }> = async (fastify, opts) => {
-  const { db } = opts;
+export const authRoutes: FastifyPluginAsync<{ db: DatabaseInstance; store: FabStore }> = async (fastify, opts) => {
+  const { db, store } = opts;
 
   // Rename keeps the account (uuid, XUID, token); the discriminator stays unless another account already has the new
   // name with it.
@@ -76,11 +78,15 @@ export const authRoutes: FastifyPluginAsync<{ db: DatabaseInstance }> = async (f
     if (!me) {
       return reply.status(401).send({ error: 'Authorization: COGBox <uuid>:<token> required' });
     }
-    db.transaction(() => {
+    // The Fabricator: mods removed and its rows gone in the same transaction; its files are deleted after the commit.
+    const dropFabFiles = db.transaction(() => {
+      const after = forgetFabricatorRows(db, me.uuid);
       db.prepare('DELETE FROM lobbies WHERE host_uuid = ?').run(me.uuid);
       db.prepare('DELETE FROM friends WHERE user_uuid = ? OR friend_uuid = ?').run(me.uuid, me.uuid);
       db.prepare('DELETE FROM users WHERE uuid = ?').run(me.uuid);
+      return after;
     })();
+    try { dropFabFiles(store); } catch { fastify.log.error('fabricator: deleting a deleted account files failed'); }
     forgetAuth(db, me.uuid);
     return reply.send({ deleted: true });
   });

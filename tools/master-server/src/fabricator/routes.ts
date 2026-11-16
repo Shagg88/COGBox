@@ -6,7 +6,7 @@ import type { FabStore } from './store.js';
 import fs from 'node:fs';
 import { listMods, modPage, type SortKey } from './catalog.js';
 import {
-  canPublish, cancelUpload, chunkCount, expireUploads, finishUpload, getUpload, normalizeMeta, ownLiveMod,
+  canPublish, cancelUpload, chunkCount, creatorLimits, creatorMods, removeOwnMod, expireUploads, finishUpload, getUpload, normalizeMeta, ownLiveMod,
   putChunk, putScreen, startUpload, uploadProblems, MAX_SCREENS, type UploadRow,
 } from './publish.js';
 import { addToLibrary, DownloadTokens, issueDownload, library, modIsLive, rate, removeFromLibrary, report, REPORT_TEXT_MAX } from './player.js';
@@ -161,6 +161,27 @@ export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fast
   });
 
   // Upload sessions: every route needs a signed-in account, checked before any body is read.
+  // The creator's own pages: their mods, removing one, and what they may still publish.
+  await fastify.register(async (cr) => {
+    const users = new WeakMap<FastifyRequest, AuthedUser>();
+    cr.addHook('onRequest', async (req, reply) => {
+      const me = checkAuthHeader(db, req.headers.authorization);
+      if (!me) return reply.status(401).send(AUTH_ERROR);
+      users.set(req, me);
+    });
+    const me = (req: FastifyRequest) => (users.get(req) as AuthedUser).uuid;
+
+    cr.get('/creator/mods', async (req) => ({ mods: creatorMods(db, me(req)) }));
+
+    cr.delete<{ Params: { id: string } }>('/creator/mods/:id', async (req, reply) => {
+      const id = MOD_ID.test(req.params.id) ? Number(req.params.id) : null;
+      if (id === null || !removeOwnMod(db, store, me(req), id)) return reply.status(404).send({ error: 'mod not found' });
+      return reply.status(204).send();
+    });
+
+    cr.get('/creator/limits', async (req) => creatorLimits(db, s, me(req), now(), await store.disk()));
+  });
+
   await fastify.register(async (up) => {
     const users = new WeakMap<FastifyRequest, AuthedUser>();
     up.addHook('onRequest', async (req, reply) => {

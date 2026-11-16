@@ -98,8 +98,16 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
     };
   });
 
+  // The Fabricator's store (also needed by account deletion). An in-memory database gets a throwaway folder, removed on close.
+  const dbFile = opts.dbPath ?? process.env.DB_PATH ?? 'master.db';
+  const dataDir = dbFile === ':memory:' ? null : path.dirname(path.resolve(dbFile));
+  const tempFab = !opts.fabricatorDir && !dataDir ? fs.mkdtempSync(path.join(os.tmpdir(), 'cogbox-fab-')) : null;
+  const fabDir = opts.fabricatorDir ?? tempFab ?? path.join(dataDir as string, 'fabricator');
+  const fabSettings: FabSettings = { ...loadFabSettings(dataDir ?? fabDir), ...(opts.fabricator ?? {}) };
+  const fabStore = new FabStore(fabDir);
+
   // Register API routes
-  await server.register(authRoutes, { prefix: '/api/v1/auth', db });
+  await server.register(authRoutes, { prefix: '/api/v1/auth', db, store: fabStore });
   // Who is connected (launcher and game per account): signaling, presence and the friends API share it.
   const registry = new Registry(opts.now ?? Date.now);
   // Every signed-in request marks its account as seen (the launcher's 5 s poll keeps it "Online - In Launcher").
@@ -125,13 +133,6 @@ export async function buildServer(opts: ServerOptions = {}): Promise<FastifyInst
   await server.register(matchRoutes, { prefix: '/api/v1/matches', db, registry });
   await server.register(inviteRoutes, { prefix: '/api/v1/invites', db, registry, now: opts.now ?? Date.now, stats });
 
-  // The Fabricator (mod store). An in-memory database gets a throwaway folder, removed on close.
-  const dbFile = opts.dbPath ?? process.env.DB_PATH ?? 'master.db';
-  const dataDir = dbFile === ':memory:' ? null : path.dirname(path.resolve(dbFile));
-  const tempFab = !opts.fabricatorDir && !dataDir ? fs.mkdtempSync(path.join(os.tmpdir(), 'cogbox-fab-')) : null;
-  const fabDir = opts.fabricatorDir ?? tempFab ?? path.join(dataDir as string, 'fabricator');
-  const fabSettings: FabSettings = { ...loadFabSettings(dataDir ?? fabDir), ...(opts.fabricator ?? {}) };
-  const fabStore = new FabStore(fabDir);
   await server.register(fabricatorRoutes, {
     prefix: '/api/v1/fabricator', db, store: fabStore, settings: fabSettings, now: opts.now ?? Date.now
   });

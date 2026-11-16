@@ -305,3 +305,109 @@ async function finishLocked(db: DatabaseInstance, store: FabStore, s: FabSetting
   for (const k of new Set(dropImages)) dropImageIfUnused(db, store, k);
   return { ok: true, modId: modId as number, versionId };
 }
+
+// ---- Creator pages, owner removal, deleted accounts ----
+
+export interface CreatorMod {
+  id: number; name: string; game: string; state: string;
+  versions: { id: number; version: string; created_at: number; size: number; state: string }[];
+  downloads: number; rating: number; ratings: number; reports_open: number;
+}
+
+// The account's mods in every state (taken-down and removed ones too, so the creator sees what happened), newest first.
+export function creatorMods(db: DatabaseInstance, account: string): CreatorMod[] {
+  const mods = db.prepare(`SELECT m.id, m.name, m.game, m.state,
+      (SELECT COUNT(*) FROM fab_downloads WHERE mod_id = m.id) AS downloads,
+      (SELECT COUNT(*) FROM fab_ratings WHERE mod_id = m.id) AS ratings,
+      (SELECT COALESCE(SUM(stars), 0) FROM fab_ratings WHERE mod_id = m.id) AS stars,
+      (SELECT COUNT(*) FROM fab_reports WHERE mod_id = m.id AND handled_by IS NULL) AS reports_open
+    FROM fab_mods m WHERE m.owner = ? ORDER BY m.created_at DESC, m.id DESC`).all(account) as any[];
+  const versions = db.prepare('SELECT id, version, created_at, size, state FROM fab_versions WHERE mod_id = ? ORDER BY created_at DESC, id DESC');
+  return mods.map((m) => ({
+    id: m.id, name: m.name, game: m.game, state: m.state,
+    versions: versions.all(m.id) as CreatorMod['versions'],
+    downloads: m.downloads, ratings: m.ratings,
+    rating: m.ratings > 0 ? Math.round((m.stars / m.ratings) * 100) / 100 : 0,
+    reports_open: m.reports_open,
+  }));
+}
+
+// Marks the mod removed in the database (versions' files given up, quota given back, screenshots and search entry
+// dropped) and returns the file and image keys to delete once the transaction is over.
+function removeModRows(db: DatabaseInstance, modId: number, account: string): { files: string[]; images: string[] } {
+  const vs = db.prepare("SELECT id, size, file_key FROM fab_versions WHERE mod_id = ? AND state = 'live'").all(modId) as { id: number; size: number; file_key: string }[];
+  for (const v of vs) {
+    db.prepare("UPDATE fab_versions SET state = 'files_deleted' WHERE id = ?").run(v.id);
+    db.prepare('UPDATE fab_creators SET bytes_used = MAX(0, bytes_used - ?) WHERE account = ?').run(v.size, account);
+  }
+  const images = (db.prepare('SELECT image_key FROM fab_screens WHERE mod_id = ?').all(modId) as { image_key: string }[]).map((r) => r.image_key);
+  db.prepare('DELETE FROM fab_screens WHERE mod_id = ?').run(modId);
+  db.prepare('DELETE FROM fab_mods_fts WHERE rowid = ?').run(modId);
+  db.prepare("UPDATE fab_mods SET state = 'removed' WHERE id = ?").run(modId);
+  return { files: vs.map((v) => v.file_key), images };
+}
+
+function dropKeys(db: DatabaseInstance, store: FabStore, files: Iterable<string>, images: Iterable<string>): void {
+  for (const k of new Set(files)) dropFileIfUnused(db, store, k);
+  for (const k of new Set(images)) dropImageIfUnused(db, store, k);
+}
+
+// The owner removes their own mod (live or taken down): false when it is not theirs or already removed.
+export function removeOwnMod(db: DatabaseInstance, store: FabStore, account: string, modId: number): boolean {
+  const gone = db.transaction(() => {
+    if (!db.prepare("SELECT 1 FROM fab_mods WHERE id = ? AND owner = ? AND state != 'removed'").get(modId, account)) return null;
+    return removeModRows(db, modId, account);
+  })();
+  if (!gone) return false;
+  dropKeys(db, store, gone.files, gone.images);
+  return true;
+}
+
+// The database part of deleting an account, for the account deletion's own transaction. Returns what to do once that
+// transaction has committed (files are not transactional).
+export function forgetFabricatorRows(db: DatabaseInstance, account: string): (store: FabStore) => void {
+  const files: string[] = [];
+  const images: string[] = [];
+  const dropIds: string[] = [];
+  for (const m of db.prepare("SELECT id FROM fab_mods WHERE owner = ? AND state != 'removed'").all(account) as { id: number }[]) {
+    const g = removeModRows(db, m.id, account);
+    files.push(...g.files);
+    images.push(...g.images);
+  }
+  for (const u of db.prepare('SELECT id FROM fab_uploads WHERE account = ?').all(account) as { id: string }[]) {
+    images.push(...(db.prepare('SELECT image_key FROM fab_upload_screens WHERE upload_id = ?').all(u.id) as { image_key: string }[]).map((r) => r.image_key));
+    db.prepare('DELETE FROM fab_upload_screens WHERE upload_id = ?').run(u.id);
+    db.prepare('DELETE FROM fab_uploads WHERE id = ?').run(u.id);
+    dropIds.push(u.id);
+  }
+  db.prepare('DELETE FROM fab_ratings WHERE account = ?').run(account);
+  db.prepare('DELETE FROM fab_reports WHERE reporter = ?').run(account);
+  db.prepare('DELETE FROM fab_library WHERE account = ?').run(account);
+  db.prepare('DELETE FROM fab_downloads WHERE account = ?').run(account);
+  db.prepare('DELETE FROM fab_creators WHERE account = ?').run(account);
+  return (store) => {
+    for (const id of dropIds) store.dropUpload(id);
+    dropKeys(db, store, files, images);
+  };
+}
+
+// Everything the Fabricator holds for an account, on its own (the account route uses forgetFabricatorRows inside its transaction).
+export function forgetFabricatorAccount(db: DatabaseInstance, store: FabStore, account: string): void {
+  db.transaction(() => forgetFabricatorRows(db, account))()(store);
+}
+
+export function creatorLimits(db: DatabaseInstance, s: FabSettings, account: string, now: number, disk: { total: number; free: number }) {
+  const since = now - DAY_MS;
+  const done = (db.prepare(`SELECT COUNT(*) AS n FROM fab_versions v JOIN fab_mods m ON m.id = v.mod_id
+    WHERE m.owner = ? AND v.created_at > ?`).get(account, since) as { n: number }).n;
+  const open = (db.prepare('SELECT COUNT(*) AS n FROM fab_uploads WHERE account = ? AND expires_at >= ?').get(account, now) as { n: number }).n;
+  return {
+    can_publish: canPublish(db, s, account, 1, now, disk),
+    bytes_used: creator(db, account).bytes_used,
+    quota: s.creatorQuotaBytes,
+    uploads_today: done + open,
+    max_uploads_per_day: s.creatorUploadsPerDay,
+    max_file_bytes: s.maxFileBytes,
+    chunk_bytes: Math.max(1, Math.floor(s.chunkBytes)),
+  };
+}
