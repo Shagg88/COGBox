@@ -109,6 +109,8 @@ void Gow3NoDynamicShadows(PPCRegister& r11) {  // after `lwz r11,0x414(r21)` at 
 //   0x82960C78 `li r11,720` (the scene buffer height, stored to 0x8339242C) -> after it, r11 = H;
 //   0x827C583C `lwz r30,0x242c(r9)` (that height read back by the scene render targets' sizing, TU6 sub_827D7AA8) ->
 //     left at H since 0.6.3 (GitHub #330; the Canary patch and 0.6.2 forced 720 here, see Gow3UltrawideSizeCheck);
+//   0x827C6CCC `addi r3,r1,260` (scene shared memory block 2 created next) -> its size kept at the 16:9 size, so the
+//     shadow depth texture placed in it still fits (0.6.3, Gow3UltrawideSharedMemory; not in the Canary patch);
 //   0x82BC9D84 `stw r4,0x88(r3)` -> skipped (pillarboxed pre-rendered videos);
 //   the .rdata float at 0x820CDE2C (16:9 = 1.77778) -> the new aspect, written at load.
 // The front buffer becomes 1280 x H (x the resolution scale), shown at its own shape (--gow2_present_frame_aspect):
@@ -242,6 +244,22 @@ void Gow3UltrawideSizeCheck(PPCRegister& r30) {
       REXLOG_INFO("gow3_aspect: scene render targets sized from screen height {} (picture 1280x{}; 720 before 0.6.3, "
                   "GitHub #330){}", r30.u32, WideHeight(), r30.u32 == WideHeight() ? "" : " - NOT the picture height");
   }
+}
+// After `addi r3,r1,260` at 0x827C6CCC (TU6 0x827D8F5C), just before the `bl` to RHICreateSharedMemory (disc
+// sub_82966ED0 / TU6 sub_82977F18) for the scene's shared memory block 2 (GSceneRenderTargets+268) in InitDynamicRHI
+// (disc sub_827C6A20 / TU6 sub_827D8CB0): r5 = its size, max(BufferSize fmt 2, BufferSize fmt 19) = 1280 x
+// align32(BufferSizeY) x 4. The game also creates the 1120x688 whole-scene shadow depth texture (0x302000 bytes) in
+// that block (TU6 call 17), and RHICreateSharedTexture2D (TU6 sub_82977F90) checks that it fits - DbgBreakPoint
+// otherwise. At 16:9 the block is 1280x736x4 = 0x398000; with the targets following a picture under ~616 rows
+// (every shape wider than ~2.08:1) it is smaller, and job 1907 trapped at the first scene render (~25 s in). Keep the
+// 16:9 capacity (the size 0.6.2 allocated) so the targets can follow H (GitHub #330). Block 1 has its own shadow term.
+void Gow3UltrawideSharedMemory(PPCRegister& r5) {
+  if (!Wide() || REXCVAR_GET(gow3_aspect_targets_720)) return;
+  constexpr uint32_t kStock720 = 1280u * 736u * 4u;  // 0x398000
+  if (r5.u32 >= kStock720) return;
+  GOW3_LOG_ONCE("gow3_aspect: scene shared memory block 2 0x{:X} -> 0x{:X} (the 1120x688 shadow depth texture lives "
+                "there; GitHub #330)", r5.u32, kStock720);
+  r5.u64 = kStock720;
 }
 bool Gow3UltrawideVideo(PPCRegister& r4) {  // jump_address_on_true: past `stw r4,0x88(r3)` at 0x82BC9D84
   if (!Wide()) return false;

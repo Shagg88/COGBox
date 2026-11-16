@@ -45,9 +45,11 @@
   Achievements, Ribbons and Medals pages showed stacked teal bands instead of their panel. The game's screen-sized
   work buffers kept the 16:9 height (as in the Canary ultrawide patch COGBox's follows); these pages copy the screen
   into them and draw it back, so each copy came back squeezed. The buffers now match the picture, as they do at 16:9.
-  The picture's height is now a multiple of 8 rows, so its shape can differ from your monitor's by a few pixels (a
-  thin border). If the game crashes or draws wrongly with Ultrawide since this change, `--gow3_aspect_targets_720=true`
-  in `extra-args.txt` brings back the old buffers - please tell us. Not tested on PC yet.
+  The block of memory those buffers share with the shadow map keeps its 16:9 size, so the shadow map still fits (a
+  first test build crashed shortly after start without this). The picture's height is now a multiple of 8 rows, so
+  its shape can differ from your monitor's by a few pixels (a thin border). If the game crashes or draws wrongly
+  with Ultrawide since this change, `--gow3_aspect_targets_720=true` in `extra-args.txt` brings back the old buffers -
+  please tell us. Not tested on PC yet.
 - **Gears 3: Horde bots are no longer always Dom and Carmine.** The Horde-bots button (Back) asked the game for those two characters by number every time; it now lets the game pick each bot's character at random, the way the game picks bots for its own matches. (Gears 2's bots were already random; its two unused numbers are dropped.) GitHub #270; not tested on PC yet.
 - **Launcher: the library music plays again** (silent in 0.6.2: that launcher was built against the wrong FFmpeg version and could not find the music decoder shipped beside it). The build and the packager now check that the launcher and the decoder DLLs match, so it cannot ship silent again.
 - **Judgment: the loading screen after Monroe Commons no longer hangs above 30 fps** (GitHub #318, also #54 / #38 /
