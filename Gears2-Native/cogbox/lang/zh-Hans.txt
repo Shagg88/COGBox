@@ -1016,8 +1016,7 @@ Controller layout = 手柄布局
 Southpaw (sticks swapped) = 左撇子（摇杆互换）
 A and B swapped = A 和 B 互换
 Bumpers and triggers swapped = 肩键和扳机互换
-Custom (CogBox.ini [Pad] Remap=) = 自定义（CogBox.ini [Pad] Remap=）
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = 在游戏读取之前调换手柄的按键和摇杆，因此游戏自带的按键提示仍显示原来的按键。自定义：在 CogBox.ini 的 [Pad] 下的 Remap= 中写入 src=dst 对（a b x y lb rb lt rt ls rs back start up down left right，或 sticks=swap）。
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = 在游戏读取之前调换手柄的按键和摇杆，因此游戏自带的按键提示仍显示原来的按键。自定义：在下方列表中为游戏的每个按键选择手柄按键（四款游戏共用一个布局，保存在 CogBox.ini 的 [Pad] 下的 Remap= 中）。
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = 现在必须安装标题更新：每款游戏都使用 Epic 的最后一个补丁运行（Gears 2 和 3：TU6，Judgment：TU4，Gears 1：TU5）。不再支持仅光盘版本。
 Two-player split = 双人分屏
 Top and bottom (game's) = 上下（游戏自带）
@@ -1143,7 +1142,7 @@ D-pad choose   A pick   B close = 方向键 选择   A 确定   B 关闭
 ICON = 头像
 BACK = 返回
 Horde bots = 部落模式机器人
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = 本地部落模式：部落计分板第一次出现时按“返回 / 视图”键添加两个机器人（再按一次再加两个）。它们每一波都会重生。 战役和对战时请关闭：“返回”键也会打开游戏的作弊标记。
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = 返回 / 视图键照常显示计分板；在你主持的部落模式游戏中，还会用机器人把你的队伍补满到五人（每一波都会复活）。在对战、大厅或别人的游戏中没有任何作用。对战中要使用机器人，请使用大厅自带的机器人设置。
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = 开
@@ -1334,8 +1333,8 @@ start it once from COGBox to add its pictures. = 从 COGBox 启动一次即可�
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = 瞄准灵敏度 (%)
 Zoom sensitivity (%) = 缩放灵敏度 (%)
-Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 瞄准时的鼠标速度，为正常速度的百分比。100 = 不变。仅限原生鼠标视角。
-Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 通过瞄准镜缩放时的鼠标速度（长枪、黎明之锤），为正常速度的百分比。100 = 不变。仅限原生鼠标视角。
+Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 瞄准时的鼠标速度，为正常速度的百分比。100: 不变。仅限原生鼠标视角。
+Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = 通过瞄准镜缩放时的鼠标速度（长枪、黎明之锤），为正常速度的百分比。100: 不变。仅限原生鼠标视角。
 # 0.6.0: delete a profile (machine-made translation, please check)
 DELETE THIS PROFILE = 删除此配置文件
 DELETE = 删除
@@ -1348,7 +1347,7 @@ Paste a path = 粘贴路径
 Import saves... = 导入存档...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = 为获得最流畅的体验，这些游戏需要下列 Title Update。详情请参阅 README。
 # 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
-The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = 开发者的作弊键，游戏中按 F5-F11（无敌模式、慢动作、自由视角 - 在 Gears 1 中可穿墙飞行 - 隐藏 HUD、全部武器）。Gears 2：仅限本机上的游戏 - 绝不在 System Link 或在线游戏中。Gears 3 和 Judgment：在你主持的 System Link 或在线游戏中也有效，慢动作等会影响每位玩家 - 请只在你自己的游戏中使用。Gears 1：尚未在 System Link 游戏中检查。成就和存档由你自己负责。
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. They do not work in Versus matches - only in the campaign and the wave modes (Horde, Beast, Survival). = 开发者的作弊键，游戏中按 F5-F11（无敌模式、慢动作、自由视角 - 在 Gears 1 中可穿墙飞行 - 隐藏 HUD、全部武器）。Gears 2：仅限本机上的游戏 - 绝不在 System Link 或在线游戏中。Gears 3 和 Judgment：在你主持的 System Link 或在线游戏中也有效，慢动作等会影响每位玩家 - 请只在你自己的游戏中使用。Gears 1：尚未在 System Link 游戏中检查。成就和存档由你自己负责。在对战（Versus）比赛中无效，仅在战役和波次模式（Horde、Beast、Survival）中有效。
 Not on a Mac (CrossOver). = 不支持 Mac (CrossOver)。
 Vulkan only on Proton / Wine. = 在 Proton / Wine 下仅支持 Vulkan。
 On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = 在 Mac (CrossOver) 上，游戏通过 D3DMetal (Apple Silicon) 以 DirectX 12 运行。Vulkan 在那里无法启动。
@@ -1416,6 +1415,7 @@ Join their game. = 加入对方的游戏。
 Set up this game in COGBox to join. = 在 COGBox 中设置此游戏后即可加入。
 Invite them to the game you are hosting. = 邀请对方加入你主持的游戏。
 Remove this friend (asks first). = 移除此好友（会先确认）。
+Take back your friend request. = 撤回你发出的好友请求。
 Remove this friend? = 移除此好友？
 Yes, remove = 是，移除
 Close the running game first, then press JOIN again. = 请先关闭正在运行的游戏，然后再按“加入”。
@@ -1504,3 +1504,30 @@ Graphics card = 显卡
 Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = 在有多块显卡的电脑上（笔记本的内置显卡和独立显卡，或两块显卡），选择游戏使用哪一块。“自动”会选择自带显存最多的显卡；显存相近时，选择连接着显示器的那一块——DirectX 12 和 Vulkan 使用同一块显卡。选择某块显卡则改用该显卡。如果所选显卡已不在这台电脑中，则使用“自动”。
 (not found - Automatic is used) = （未找到 - 使用“自动”）
 The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = 你选择的显卡目前不在这台电脑中——游戏将自行选择显卡（自动）。
+# 0.6.3 (GitHub #316): the window key
+GAME WINDOW = 游戏窗口
+Windowed / full screen key = 窗口 / 全屏切换键
+Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = 在游戏窗口所在的显示器上，在窗口和全屏（无边框，若你选择了独占则为独占）之间切换，切回时恢复原来的窗口大小和位置。在四款游戏的游戏窗口中均可使用，无论键盘和鼠标是否开启。若要使用其他按键，请在 extra-args.txt 中添加类似 --bind_cogbox_fullscreen=F12 的一行（按键名称，可在前面加上 Alt+、Ctrl+ 或 Shift+；None 表示关闭该按键）。
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = 自定义（在下方选择）
+Customise... = 自定义...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = 以上方选择的布局为起点，自己为游戏的每个按键选择手柄按键。
+Left: the game's buttons. Right: the controller button that does each one. = 左：游戏的按键。右：触发该按键的手柄按键。
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = 选择游戏的一个按键，然后按下要用来触发它的手柄按键（Esc 取消）。一个手柄按键只做一件事：如果它原本已有其他作用，两者会互换。
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = 未连接手柄 - 请从列表中选择手柄按键。一个手柄按键只做一件事：如果它原本已有其他作用，两者会互换。
+Press a button... = 请按一个按键...
+Nothing = 无
+Swap sticks = 互换摇杆
+The left stick moves the camera and the right stick moves you (southpaw). = 左摇杆控制视角，右摇杆控制移动（左撇子）。
+Reset to the game's own = 恢复为游戏自带
+{1} now does the game's {2}. = {1} 现在触发游戏的 {2}。
+{1} does the game's {2} instead. = 改由 {1} 触发游戏的 {2}。
+No button does the game's {1} now. = 现在没有按键触发游戏的 {1}。
+Your earlier custom layout was replaced. = 之前的自定义布局已被替换。
+Undo Customise = 撤销自定义
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = 在 CogBox.ini 中但游戏无法识别（已保留，去掉了空格和符号）：
+Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = 撤销自“自定义”以来的所有更改：恢复为之前选择的布局（及其 CogBox.ini 中的行）。
+Or choose it from the list. = 或从列表中选择。
+# 0.6.3 GitHub #245 Xbox trigger rumble (machine-made translation, please check)
+Trigger rumble (Xbox controllers) = 扳机震动（Xbox 手柄）
+Xbox One and Series controllers over USB or the Xbox Wireless Adapter (Bluetooth may give none), with Steam Input off for the controller: the motors in the triggers kick with each shot (harder for shotguns and heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while Controller vibration is off, here or in the game's options. While this is on, every Xbox-style controller (Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press the triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in another order, and rarely Windows stops sending controller input until the PC restarts - untick this if a controller misbehaves. PlayStation controllers are not affected. = 通过 USB 或 Xbox 无线适配器连接的 Xbox One 和 Series 手柄（蓝牙可能无效），且该手柄未开启 Steam Input：每次射击时扳机内的马达会短促震动一下（霰弹枪和重武器更强），链锯转动或转管机枪、火焰喷射器开火时持续震动。手柄震动关闭时（在这里或游戏选项中）不会有任何效果。开启期间，所有 Xbox 类手柄（包括 Xbox 360 和处于 XInput 模式的手柄）都会通过 Windows 原始输入（Raw Input）读取：在第一次按键之前，扳机、导航键和震动可能不正常，分屏时玩家分到的手柄顺序可能不同，极少数情况下 Windows 会在电脑重启前停止发送手柄输入——如果手柄表现异常，请取消勾选此项。PlayStation 手柄不受影响。

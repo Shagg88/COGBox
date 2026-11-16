@@ -10,6 +10,7 @@
 // Device creation follows tools/gn_shader_oracle_d3d12.cpp (works on the RTX 3080 Ti, Shader Model 6.6, job 088).
 // Our code (MIT).
 #include <xenos/renderer/gpu.h>
+#include <xenos/dev_tools.h>  // 0.6.3: XenosUsableProcessors
 
 #include <xenos/renderer/queries.h>
 #include <cstring>
@@ -160,6 +161,7 @@ DXGI_FORMAT ResourceFormat(Format f) {
     case Format::kBC3: return DXGI_FORMAT_BC3_UNORM;
     case Format::kBC4: return DXGI_FORMAT_BC4_UNORM;
     case Format::kBC5: return DXGI_FORMAT_BC5_UNORM;
+    case Format::kBC7: return DXGI_FORMAT_BC7_UNORM;
     case Format::kD32FloatS8X24: return DXGI_FORMAT_R32G8X24_TYPELESS;
     case Format::kD24UnormS8: return DXGI_FORMAT_R24G8_TYPELESS;
     default: return DXGI_FORMAT_UNKNOWN;
@@ -328,6 +330,10 @@ struct Pipeline {
   // Patch 0062: the start-up backlog class this pipeline's job was queued in (0xFF = not a waiting backlog job). A draw
   // that needs it moves the job to the front (PromoteBacklogJob) instead of waiting behind the whole recorded set.
   std::atomic<uint8_t> backlog_class{0xFF};
+  // 0.6.3 (review r61 #3): the worker thread building this pipeline as a start-up backlog job at the lower backlog
+  // priority (a real thread handle; null otherwise). Set under job_mutex_ when the job is taken; a draw that starts
+  // waiting on it raises that thread to the workers' own priority (PromoteBacklogJob).
+  std::atomic<HANDLE> backlog_builder{nullptr};
 };
 // One asynchronous pipeline creation (upl-n108): the description with its own copies of the bytecode.
 struct PipelineJob {
@@ -2581,6 +2587,16 @@ class D3D12Backend final : public Backend {
         device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(scratch_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
       }
     } else if (b.guest_u0 && guest_uav_ >= 0) {
+      // GitHub #315 (Judgment, AMD: blue / purple blocks): a dispatch that writes guest memory (a resolve to guest) right
+      // after another write to it - a memory-export draw or the previous resolve - got no barrier when the buffer was
+      // already in UAV state, so the two could overlap or finish out of order (NVIDIA serialises them anyway; AMD does
+      // not). A UAV barrier orders them, as the memexport draw path already does.
+      if (guest_state_ == D3D12_RESOURCE_STATE_UNORDERED_ACCESS) {
+        D3D12_RESOURCE_BARRIER ub{};
+        ub.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        ub.UAV.pResource = guest_;
+        list_->ResourceBarrier(1, &ub);
+      }
       TransitionGuest(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
       device_->CopyDescriptorsSimple(1, udst, view_heap_.Handle(guest_uav_), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     } else if (uav_slot >= 0) {
@@ -4693,29 +4709,84 @@ class D3D12Backend final : public Backend {
   bool StartPipelineWorkers() {
     if (!workers_.empty()) return true;
     // Patch 0056: Canary's count (75% of the logical processors) unless set; the old count was min(4, a quarter).
-    const uint32_t hw = std::max(1u, std::thread::hardware_concurrency());
+    // 0.6.3: the processors this process may use (its affinity mask), so a limited process does not over-subscribe.
+    const uint32_t hw = XenosUsableProcessors();
     const int want = options_.pipeline_threads;
     const uint32_t n = want < 0    ? std::max(1u, hw * 3 / 4)
                        : want == 0 ? std::max(1u, std::min(4u, hw / 4))
                                    : std::clamp(uint32_t(want), 1u, hw);
     // Patch 0162: below normal priority by default, so a burst of builds can't starve the game's own threads or the audio.
     const int prio = std::clamp(options_.pipeline_thread_priority, -2, 0);
+    // 0.6.3 (player report: i5-10300H, 4 cores / 8 threads, Gears 3 stuttering for minutes while 6 workers at normal
+    // priority built the 2,036 recorded pipelines and the recipe pack beside the game's own threads): on 8 logical
+    // processors or fewer, start-up backlog jobs (nothing draws with them yet) run below normal, and while the game is
+    // being played at most half the workers take them. A job a draw asks for is moved to the live queue before it is
+    // taken (PromoteBacklogJob) and is never limited. Bigger CPUs: unchanged unless the cvars say otherwise.
+    const bool small_cpu = hw <= 8;
+    worker_prio_ = prio;
+    backlog_prio_ = options_.backlog_thread_priority <= -3 ? (small_cpu ? std::min(prio, -1) : prio)
+                                                           : std::min(prio, std::clamp(options_.backlog_thread_priority, -2, 0));
+    const int bw = options_.backlog_play_workers;
+    backlog_play_limit_ = bw < 0 ? (small_cpu && n > 1 ? std::max(1u, n / 2) : 0u) : std::min(uint32_t(bw), n);
+    if (backlog_play_limit_ >= n) backlog_play_limit_ = 0;  // no limit at all
     for (uint32_t i = 0; i < n; ++i)
       workers_.emplace_back([this, prio] {
         if (prio != 0) SetThreadPriority(GetCurrentThread(), prio == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST);
         PipelineWorker();
       });
-    REXLOG_INFO("gow2_renderer: pipeline workers: {} thread(s) ({} logical processors), priority {}", n, hw,
-                prio == 0 ? "normal" : prio == -1 ? "below normal" : "lowest");  // patch 0056 / 0162
+    auto prio_name = [](int p) { return p == 0 ? "normal" : p == -1 ? "below normal" : "lowest"; };
+    REXLOG_INFO("gow2_renderer: pipeline workers: {} thread(s) ({} logical processors), priority {}; start-up backlog "
+                "jobs at {} priority, at most {} of them at once during play (0.6.3; gow2_renderer_backlog_priority / "
+                "gow2_renderer_backlog_play_workers)",
+                n, hw, prio_name(prio), prio_name(backlog_prio_),
+                backlog_play_limit_ ? std::to_string(backlog_play_limit_) : std::string("all"));  // patch 0056 / 0162
     return !workers_.empty();
   }
+  // 0.6.3: Windows priority for one job, back to the worker's own afterwards (-2 lowest, -1 below normal, 0 normal).
+  struct PrioScope {
+    int from, to;
+    static int Win(int p) { return p == 0 ? THREAD_PRIORITY_NORMAL : p == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST; }
+    PrioScope(int f, int t) : from(f), to(t) { if (to != from) SetThreadPriority(GetCurrentThread(), Win(to)); }
+    ~PrioScope() { if (to != from) SetThreadPriority(GetCurrentThread(), Win(from)); }
+  };
+  static int64_t SteadyNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  }
+  // 0.6.3 (under job_mutex_): start-up backlog jobs are held back now - the game is being played and enough workers
+  // are on backlog jobs already.
+  bool BacklogCapped() const {
+    return backlog_play_limit_ && backlog_busy_ >= backlog_play_limit_ &&
+           SteadyNowMs() < play_until_ms_.load(std::memory_order_relaxed);
+  }
+  bool BacklogQueued() const {  // under job_mutex_
+    for (uint32_t p = 0; p < kPipelineClasses; ++p)
+      if (!jobs_[p].empty()) return true;
+    return false;
+  }
+  void NotePlayFrame() override {  // 0.6.3 (recording thread)
+    if (backlog_play_limit_) play_until_ms_.store(SteadyNowMs() + 500, std::memory_order_relaxed);
+  }
   void PipelineWorker() {
+    // 0.6.3 (r61 #3): a real handle to this thread, so a draw waiting on its backlog build can raise it.
+    HANDLE self = backlog_prio_ != worker_prio_ ? OpenThread(THREAD_SET_INFORMATION | THREAD_QUERY_INFORMATION, FALSE,
+                                                             GetCurrentThreadId())
+                                                : nullptr;
+    struct CloseSelf {
+      HANDLE h;
+      ~CloseSelf() { if (h) CloseHandle(h); }
+    } close_self{self};
     for (;;) {
       std::unique_ptr<PipelineJob> job;
       {
         std::unique_lock<std::mutex> lock(job_mutex_);
-        job_cv_.wait(lock, [this] { return stop_workers_ || JobsQueued(); });
+        // 0.6.3: while backlog jobs are held back only by the play limit, look again every 100 ms (the limit ends half
+        // a second after the last frame of play, with no notification).
+        while (!stop_workers_ && !JobsQueued()) {
+          if (BacklogQueued()) job_cv_.wait_for(lock, std::chrono::milliseconds(100));
+          else job_cv_.wait(lock);
+        }
         if (stop_workers_ && !JobsQueued()) return;
+        const bool backlog_capped = BacklogCapped();  // 0.6.3
         for (uint32_t p = kPipelinePriorities; p-- > 0;) {  // patch 0057: highest priority first, FIFO within one
           // Patch 0068: warm-only jobs after every live request, before the start-up backlog.
           // Patch 0069: and only while fewer than warm_workers_ workers are on warm jobs.
@@ -4725,33 +4796,39 @@ class D3D12Backend final : public Backend {
             break;
           }
           if (jobs_[p].empty()) continue;
+          if (p < kPipelineClasses && backlog_capped) continue;  // 0.6.3: start-up backlog held back during play
           job = std::move(jobs_[p].front());
           jobs_[p].pop_front();
           break;
         }
+        // 0.6.3: nothing could be taken after all (the play limit began between the wait and the look) - wait again.
+        if (!job) continue;
         // Patch 0061: under job_mutex_, so PipelineJobsLeft never sees a job in neither place (0068: warm jobs apart).
         ++(job->target ? jobs_busy_ : warm_busy_);
+        if (job->target && job->priority < kPipelineClasses) {  // 0.6.3
+          ++backlog_busy_;
+          if (self) job->target->backlog_builder.store(self);  // (r61 #3, under job_mutex_ as PromoteBacklogJob looks)
+        }
       }
+      const bool backlog_job = job->target && job->priority < kPipelineClasses;  // 0.6.3
       struct BusyDone {  // patch 0061: whatever path the job leaves by
         D3D12Backend* b;
         uint64_t* counter;
+        bool backlog;
         ~BusyDone() {
           {
             std::lock_guard<std::mutex> l(b->job_mutex_);
             --*counter;
+            if (backlog) --b->backlog_busy_;  // 0.6.3
           }
-          if (counter == &b->warm_busy_) b->job_cv_.notify_one();  // patch 0069: a warm slot is free again
+          // patch 0069: a warm slot is free again; 0.6.3: a backlog slot
+          if (counter == &b->warm_busy_ || (backlog && b->backlog_play_limit_)) b->job_cv_.notify_one();
         }
-      } busy_done{this, job->target ? &jobs_busy_ : &warm_busy_};
+      } busy_done{this, job->target ? &jobs_busy_ : &warm_busy_, backlog_job};
       if (!job->target) {  // patch 0068: warm-only - put the pixel shader through the driver, keep nothing
         // PR #43 (legoliamneeson): at the warm-only priority for this build only (StartPipelineWorkers set the
         // worker's own), restored whichever way the job ends.
-        struct PrioScope {
-          int from, to;
-          static int Win(int p) { return p == 0 ? THREAD_PRIORITY_NORMAL : p == -1 ? THREAD_PRIORITY_BELOW_NORMAL : THREAD_PRIORITY_LOWEST; }
-          PrioScope(int f, int t) : from(f), to(t) { if (to != from) SetThreadPriority(GetCurrentThread(), Win(to)); }
-          ~PrioScope() { if (to != from) SetThreadPriority(GetCurrentThread(), Win(from)); }
-        } prio_scope{std::clamp(options_.pipeline_thread_priority, -2, 0), std::clamp(options_.warm_thread_priority, -2, 0)};
+        PrioScope prio_scope{std::clamp(options_.pipeline_thread_priority, -2, 0), std::clamp(options_.warm_thread_priority, -2, 0)};
         const auto w0 = std::chrono::steady_clock::now();
         ID3D12PipelineState* warm = nullptr;
         const HRESULT whr = device_->CreateGraphicsPipelineState(&job->desc, IID_PPV_ARGS(&warm));
@@ -4765,6 +4842,18 @@ class D3D12Backend final : public Backend {
         }
         continue;
       }
+      // 0.6.3: a start-up backlog job at the backlog priority (gow2_renderer_backlog_priority), restored afterwards
+      // (also when a draw raised it meanwhile, PromoteBacklogJob); the builder mark is cleared first.
+      struct ClearBuilder {
+        Pipeline* p;
+        ~ClearBuilder() { if (p) p->backlog_builder.store(nullptr); }
+      } clear_builder{backlog_job ? job->target : nullptr};
+      PrioScope backlog_prio{worker_prio_, backlog_job ? backlog_prio_ : worker_prio_};
+      // r63 A / r67 1: lowered after the unlock (a holder of job_mutex_ that lowers itself can be preempted and stall
+      // the render thread), so a draw may have promoted this job just before. PromoteBacklogJob sets backlog_class to
+      // 0xFF before it raises: seen here, raise again ourselves; else its raise comes after this lowering and sticks.
+      if (backlog_job && backlog_prio_ != worker_prio_ && job->target->backlog_class.load() == 0xFF)
+        SetThreadPriority(GetCurrentThread(), PrioScope::Win(worker_prio_));
       ID3D12PipelineState* pso = nullptr;
       Pipeline& p = *job->target;
       // Patch 0010: a pipeline already saved loads from the library here, off the recording thread. Each pipeline has
@@ -4932,6 +5021,11 @@ class D3D12Backend final : public Backend {
   bool pipeline_backlog_ = false;
   uint64_t PipelineMisses() const override { return pipeline_misses_; }
   uint64_t jobs_busy_ = 0;  // patch 0061: jobs taken by a worker and not finished (under job_mutex_)
+  // 0.6.3 (StartPipelineWorkers; the play limit and priorities are fixed before the workers start).
+  uint64_t backlog_busy_ = 0;          // start-up backlog jobs being built (under job_mutex_)
+  uint32_t backlog_play_limit_ = 0;    // 0 = no limit
+  int worker_prio_ = 0, backlog_prio_ = 0;
+  std::atomic<int64_t> play_until_ms_{0};
   uint64_t PipelineJobsLeft() override {  // patch 0061
     std::lock_guard<std::mutex> lock(job_mutex_);
     uint64_t q = jobs_busy_;
@@ -5001,18 +5095,27 @@ class D3D12Backend final : public Backend {
   void PromoteBacklogJob(PipelineHandle handle, Pipeline& p) {
     const uint8_t c = p.backlog_class.exchange(0xFF);
     if (c >= kPipelineClasses) return;  // not a waiting backlog job (or already moved)
-    std::lock_guard<std::mutex> lock(job_mutex_);
-    auto& from = jobs_[c];
-    for (auto it = from.begin(); it != from.end(); ++it) {
-      if ((*it)->handle != handle) continue;
-      std::unique_ptr<PipelineJob> job = std::move(*it);
-      from.erase(it);
-      job->priority = uint8_t(c + kPipelineClasses);
-      jobs_[job->priority].push_back(std::move(job));
-      ++stats_.pipelines_promoted;
-      return;
+    bool moved = false;
+    {
+      std::lock_guard<std::mutex> lock(job_mutex_);
+      auto& from = jobs_[c];
+      for (auto it = from.begin(); it != from.end(); ++it) {
+        if ((*it)->handle != handle) continue;
+        std::unique_ptr<PipelineJob> job = std::move(*it);
+        from.erase(it);
+        job->priority = uint8_t(c + kPipelineClasses);
+        jobs_[job->priority].push_back(std::move(job));
+        ++stats_.pipelines_promoted;
+        moved = true;
+        break;
+      }
+      // Not found: a worker already took it (it is being built now). 0.6.3 (r61 #3): if it builds it at the lower
+      // backlog priority, raise it to the workers' own for the rest of this build (its PrioScope restores it after).
+      if (!moved)
+        if (HANDLE h = p.backlog_builder.load()) SetThreadPriority(h, PrioScope::Win(worker_prio_));
     }
-    // Not found: a worker already took it (it is being built now).
+    // 0.6.3 (r61 #1): a worker may be waiting only because the backlog is held back during play - wake one for it.
+    if (moved) job_cv_.notify_one();
   }
   uint64_t loaded_async_counted_ = 0;
   uint64_t graphics_root_hash_ = 0;
@@ -5020,8 +5123,9 @@ class D3D12Backend final : public Backend {
   std::vector<std::thread> workers_;
   std::deque<std::unique_ptr<PipelineJob>> jobs_[kPipelinePriorities];  // patch 0057: by PipelinePriority
   bool JobsQueued() const {  // under job_mutex_
-    for (const auto& q : jobs_)
-      if (!q.empty()) return true;
+    for (uint32_t p = kPipelineClasses; p < kPipelinePriorities; ++p)  // the live queues
+      if (!jobs_[p].empty()) return true;
+    if (BacklogQueued() && !BacklogCapped()) return true;  // 0.6.3: the start-up backlog, unless held back during play
     return !warm_jobs_.empty() && warm_busy_ < warm_workers_;  // patch 0068 (0069: only while a warm slot is free)
   }
   // Patch 0068 (gpu.h SetWarmTemplate / WarmPixelShader): warm-only pipelines.

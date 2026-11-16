@@ -83,6 +83,7 @@ enum class Format : uint32_t {
   kD32FloatS8X24,  // float depth + 8-bit stencil: D24FS8 targets (D29), and D24S8 with the exact-math option
   kD24UnormS8,     // D24S8 targets by default: the same host format as the reference (Canary/SDK RTV path), so
                    // depth quantisation and depth bias units match it bit for bit (job 097: +-1 otherwise)
+  kBC7,            // texture packs only (KiltedKernel): no Xenos format is BC7; a pack's upscaled textures often are
 };
 constexpr bool IsDepthFormat(Format f) { return f == Format::kD32FloatS8X24 || f == Format::kD24UnormS8; }
 
@@ -315,6 +316,15 @@ struct BackendOptions {
   // normal, 0 normal), back to pipeline_thread_priority after - speculative builds take only CPU time the game, the
   // renderer, the audio and the draws' own pipelines leave free.
   int warm_thread_priority = -2;
+  // 0.6.3 (player report, 4-core / 8-thread laptop stuttering through the start-up backlog): a worker's Windows priority
+  // while it builds a START-UP BACKLOG pipeline (recorded pipelines, the recipe pack - nothing draws with it yet; a job
+  // a draw asks for is moved to the live queue first): -3 = auto (below normal on 8 logical processors or fewer, else
+  // the workers' own), -2 lowest, -1 below normal, 0 the workers' own (pipeline_thread_priority).
+  int backlog_thread_priority = -3;
+  // 0.6.3: the most workers on start-up backlog jobs at once while the game is being played (NotePlayFrame within the
+  // last 500 ms); loading screens, menus and videos keep every worker. -1 = auto (half the workers on 8 logical
+  // processors or fewer, else no limit), 0 = no limit, N = N.
+  int backlog_play_workers = -1;
   // Patch 0056: seconds between periodic library saves while it grows (was 60; a quit lost minutes of pipelines).
   int pipeline_save_seconds = 15;
   // Patch 0017 (stutter): sampled-only textures (no render-target / depth use, no MSAA) up to 16 MB are placed in
@@ -520,6 +530,9 @@ class Backend {
   // Patch 0058: while on, asynchronous requests are start-up backlog (the recorded pipelines of earlier sessions): the
   // workers take them after every pipeline a live draw is waiting for.
   virtual void SetPipelineBacklog(bool on) { (void)on; }
+  // 0.6.3 (low-core CPUs): a frame of play has just ended (the recording thread). For the next half second the backend
+  // may keep some pipeline workers off the start-up backlog (BackendOptions::backlog_play_workers); no-op elsewhere.
+  virtual void NotePlayFrame() {}
   // 0.6.2 (Vulkan, BackendOptions::vk_pipeline_libraries): counts and driver times of the libraries and links so far.
   virtual std::string PipelineLibraryReport() { return {}; }
   // Patch 0061 ("Preparing shaders"): asynchronous pipeline jobs not finished yet (queued + being built), and a save of

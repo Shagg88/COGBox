@@ -280,6 +280,19 @@ void upgrade_cleanup_startup(App &a, const std::string &prevVersionIn)
         }
     }
 
+    // 4. 0.6.3 (Shagg 11-15): no -normal exes and no crash fallback any more. CogBox.ini [FastCode] (0.5.0 - 0.6.2: the
+    //    faster build's crash count and the fallback version per game) is read by nothing now; dropped, its lines logged.
+    //    The old <stem>-normal.exe files themselves are stale_files.cpp's (moved to _old-files\from-<prev>\).
+    {
+        const auto fc = a.ini.section("FastCode");
+        if (!fc.empty()) {
+            log += "CogBox.ini: [FastCode] dropped (the crash fallback to the -normal exes is gone):";
+            for (const auto &kv : fc) log += " " + kv.first + "=" + kv.second;
+            log += "\r\n";
+        }
+        a.ini.remove_section("FastCode");
+    }
+
     {
         const std::string ld = join(root, "logs");
         make_dirs(ld);

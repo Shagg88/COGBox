@@ -25,6 +25,11 @@ extern "C" {
 #include <libavutil/channel_layout.h>
 #include <libavutil/frame.h>
 #include <libavutil/mem.h>
+// 0.6.3: the FFmpeg DLLs this build loads, kept whole in the exe for tools/package_cogbox.ps1 (see ff_load below)
+#define COGBOX_FF_STR2(x) #x
+#define COGBOX_FF_STR(x) COGBOX_FF_STR2(x)
+extern "C" __attribute__((used)) const char cogbox_ffmpeg_dlls[] =
+    "cogbox-ffmpeg-dlls: avcodec-" COGBOX_FF_STR(LIBAVCODEC_VERSION_MAJOR) ".dll avutil-" COGBOX_FF_STR(LIBAVUTIL_VERSION_MAJOR) ".dll";
 }
 #endif
 
@@ -287,6 +292,12 @@ template <class T> bool sym(Lib m, const char *name, T &f)
     return f != nullptr;
 }
 
+// 0.6.3 (0.6.2 shipped silent: its CogBox.exe was built against FFmpeg 7's headers and so asked for avcodec-61.dll /
+// avutil-59.dll, while the package held FFmpeg 9.0.2's avcodec-63.dll / avutil-61.dll): the exact DLL names this build
+// loads are kept as text in the exe, so the packager (tools/package_cogbox.ps1) can check them against the DLLs it ships.
+// (The text is a kept global object - 'used', external linkage - so the compiler stores it whole even where it folds its
+// one use into code; see cogbox_ffmpeg_dlls at the top of this file.)
+
 bool ff_load()
 {
     std::lock_guard<std::mutex> l(g_ffLock);
@@ -294,7 +305,7 @@ bool ff_load()
     g_ff.tried = true;
     Lib u = open_lib("avutil", LIBAVUTIL_VERSION_MAJOR);
     Lib c = u ? open_lib("avcodec", LIBAVCODEC_VERSION_MAJOR) : nullptr;
-    if (!c) { g_ff.why = "avcodec-" + std::to_string(LIBAVCODEC_VERSION_MAJOR) + ".dll / avutil-" + std::to_string(LIBAVUTIL_VERSION_MAJOR) + ".dll are not beside CogBox.exe"; return false; }
+    if (!c) { g_ff.why = std::string(cogbox_ffmpeg_dlls + 20) + " (one or both) not beside CogBox.exe"; return false; }
     Ff &f = g_ff;
     bool all = sym(c, "avcodec_version", f.avcodec_version) && sym(c, "avcodec_find_decoder", f.avcodec_find_decoder) &&
                sym(c, "avcodec_alloc_context3", f.avcodec_alloc_context3) && sym(c, "avcodec_open2", f.avcodec_open2) &&

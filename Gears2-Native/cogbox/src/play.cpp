@@ -6,6 +6,7 @@
 #include "theme.h"
 #include "i18n.h"
 #include "x360fs.h"
+#include "crash_dump.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -243,15 +244,12 @@ static bool apply_menu_changes(App &a, int g, const std::string &logDir)
         }
         if (n) {
             a.dirty[g] = true;
-            settings_save(a);
+            settings_save(a, g);   // r50: this game's in-game changes win over another page's unsaved ones
             append_line(join(logDir, "args.txt"), "launcher: the in-game menu changed " + std::to_string(n) + " setting(s)");
         }
     }
     return file_exists(join(logDir, "menu-restart.flag"));
 }
-
-// Shagg 10 Nov: the -normal build only after the faster one crashed twice in a row in this COGBox version
-bool use_normal_code(const App &a, int g) { return a.ini.get("FastCode", std::string(game_def(g).key) + "Fallback", "") == COGBOX_VERSION; }
 
 void play_start(App &a, int g, bool prepare)
 {
@@ -269,14 +267,6 @@ void play_start(App &a, int g, bool prepare)
     gs::Version ver = gs::effective_version(G, a.cur[g], a.env[g]);
     std::string exe = gs::exe_for_update(G, ver, a.env[g]) ? st.portExeTu : st.portExeDisc;
     if (exe.empty()) exe = st.portExeDisc.empty() ? st.portExeTu : st.portExeDisc;
-    // cg050: the faster build unless it crashed twice in a row in this COGBox version - then, silently, the same folder's
-    // build without the faster recompiler options (args.txt names the exe)
-    a.run.fastCode = true;
-    bool normalMissing = false;   // review: the fallback is due but this folder has no normal build
-    if (!exe.empty() && use_normal_code(a, g)) {
-        if (file_exists(gs::normal_code_exe(exe))) { exe = gs::normal_code_exe(exe); a.run.fastCode = false; }
-        else normalMissing = true;
-    }
     if (exe.empty() || !file_exists(exe)) { set_message(a, "The port program is missing - unzip the COGBox release again.", true); return; }
     std::string why;
     if (gs::blocked_by_cpu(G, a.env[g], &why)) {
@@ -307,8 +297,10 @@ void play_start(App &a, int g, bool prepare)
     write_file(join(logDir, "args.txt"), "launcher: preparing the start (COGBox " COGBOX_VERSION ")\r\n");
     const Uint64 prep0 = SDL_GetTicks();   // 0.5.0: how long the start took to prepare (the Gears 2 / 3 / J key-cap hang)   // 0.5.0 review: shows how far a stuck start got
     // P0-2: a real fail-fast (__fastfail, 0xC0000409) ends the game before any handler of its own runs. Windows Error
-    // Reporting's LocalDumps writes a minidump for it - asked for this exe, into this play's folder. HKCU (no admin);
-    // Windows documents the HKLM key, recent versions read the per-user one too - if not, nothing changes.
+    // Reporting's LocalDumps writes a minidump for it - asked for this exe, into this play's folder. HKCU (no admin).
+    // Review r75: Microsoft documents LocalDumps as HKLM only ("not supported in the HKEY_CURRENT_USER hive"), so this
+    // probably does nothing; kept because it costs nothing. The game's own crashes get their dump from
+    // crash_dump_watch below (GitHub #286), not from this.
     {
         const std::wstring key = L"Software\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\" +
                                  widen(exe.substr(exe.find_last_of("\\/") + 1));
@@ -371,7 +363,6 @@ void play_start(App &a, int g, bool prepare)
     std::string argText;
     for (auto &s : args) argText += s + "\r\n";
     argText += "launcher: COGBox " COGBOX_VERSION ", game " + std::string(d.name) + ", exe " + exe + "\r\n";
-    if (normalMissing) argText += "launcher: the faster build crashed twice, but this folder has no normal build (" + gs::normal_code_exe(exe) + ") - the faster one runs\r\n";
     argText += "launcher: graphics card(s): ";
     for (size_t i = 0; i < a.gpus.size(); i++) argText += (i ? " / " : "") + a.gpus[i];
     argText += "\r\n";
@@ -432,6 +423,10 @@ void play_start(App &a, int g, bool prepare)
         return;
     }
     CloseHandle(pi.hThread);
+    // GitHub #286: a crash's minidump written from out here (only into this play's folder)
+    a.run.crashDump = crash_dump_watch(pi.hProcess, pi.dwProcessId, logDir);
+    if (!a.run.crashDump)
+        append_line(join(logDir, "args.txt"), "launcher: the crash minidump watcher couldn't be started (the game writes its own)");
     a.run.proc = pi.hProcess;
     a.run.game = g;
     a.run.started = unix_now();
@@ -538,28 +533,13 @@ void play_poll(App &a)
     std::vector<std::string> crash = crash_files(a.run.logDir);
     append_line(join(a.run.logDir, "args.txt"), "launcher: the game ended after " + std::to_string(secs) + " s, exit code " +
                                                     (known ? hex32(code) : std::string("unknown")) + ", crash reports " + std::to_string(crash.size()));
+    if (a.run.crashDump && a.run.crashDump->state != CrashDumpStatus::kWatching)   // r76 L4: the watcher's outcome
+        append_line(join(a.run.logDir, "args.txt"), a.run.crashDump->state == CrashDumpStatus::kWritten
+                                                        ? std::string("launcher: crash minidump written by COGBox")
+                                                        : "launcher: COGBox couldn't write the crash minidump, error " +
+                                                              hex32(a.run.crashDump->error) + " (the game writes its own)");
+    a.run.crashDump.reset();
     bool restart = apply_menu_changes(a, g, a.run.logDir);
-    // Shagg 10 Nov: silent fallback - two crashes in a row of the faster build -> the normal build for this game until
-    // the next COGBox version. A clean exit resets the count. Only real crashes count (a crash report, or a Windows
-    // exception code); not a forced close (Task Manager: exit 1 / 0xFFFFFFFF), not the FSR driver crash or a missing DLL
-    // (the normal build would hit those too). The count carries the COGBox version, so an old count never adds up.
-    {
-        const std::string ck = std::string(d.key) + "Crashes", fk = std::string(d.key) + "Fallback";
-        const bool realCrash = !crash.empty() || (known && code >= 0xC0000000u && code != 0xC0000135u && code != 0xC000013Au &&
-                                                  code != 0xE0C0B00Au && code != 0xFFFFFFFFu);
-        std::string prev = a.ini.get("FastCode", ck);   // "<COGBox version>:<count>"
-        const size_t colon = prev.find(':');
-        int n = (colon != std::string::npos && prev.substr(0, colon) == COGBOX_VERSION) ? atoi(prev.c_str() + colon + 1) : 0;
-        if (known && code == 0 && crash.empty()) n = 0;
-        else if (a.run.fastCode && realCrash) {
-            if (++n >= 2) {
-                a.ini.set("FastCode", fk, COGBOX_VERSION);
-                append_line(join(a.run.logDir, "args.txt"), "launcher: the faster game code crashed twice in a row - the normal game code from now on (this COGBox version)");
-            }
-        }
-        a.ini.set("FastCode", ck, std::string(COGBOX_VERSION) + ":" + std::to_string(n));
-        a.ini.save();
-    }
     if (known && code == 0 && crash.empty()) {
         if (restart) { append_line(join(a.run.logDir, "args.txt"), "launcher: restarting the game (in-game menu)"); play_start(a, g); }
         return;
@@ -568,7 +548,7 @@ void play_poll(App &a)
     if (known && code == 0xE0C0B00Au) {
         a.cur[g].set("AAMode", 1);
         a.dirty[g] = true;
-        settings_save(a);
+        settings_save(a, g);
         ask(a, "info", g, "FSR turned off",
             std::string(d.name) + " closed because AMD FSR crashed inside the graphics driver. COGBox has switched its "
             "anti-aliasing to SMAA. A newer graphics driver may fix FSR - you can turn it back on in the Graphics tab.", { "OK" });

@@ -27,6 +27,9 @@ inline constexpr uint32_t kLoadPackageAsync = 0x822C7870u; // disc 0x822B7328 UO
 // six sibling exec functions map one to one with the same slots). The native table entry isn't known for TU6.
 inline constexpr uint32_t kExecGetProfileSettingValueInt = 0x8252ABC8u;
 inline constexpr uint32_t kExecNativeTableEntry = 0;
+// 0.6.3 host frame-rate halving: return address of UWorld::ServerTickClients' `GEngine->GetMaxTickRate(DeltaSeconds)`
+// (vtable +304, `bctrl` in sub_8258F358; disc sub_8257E1A8). The engine loop's calls return to 0x829B083C / 0x82507378.
+inline constexpr uint32_t kServerTickClientsTickRateRet = 0x8258F700u;  // disc 0x8257E550
 #else
 inline constexpr uint32_t kShowFpsFlag = 0x834290D8u;
 inline constexpr uint32_t kShowFrameTimeFlag = 0x834290ECu;
@@ -42,6 +45,7 @@ inline constexpr uint32_t kFNameCtor = 0x82302F28u;
 inline constexpr uint32_t kLoadPackageAsync = 0x822B7328u;
 inline constexpr uint32_t kExecGetProfileSettingValueInt = 0x8251A2B0u;  // Flippage's gears-of-war-3-recomp 26d6448
 inline constexpr uint32_t kExecNativeTableEntry = 0x83396738u;
+inline constexpr uint32_t kServerTickClientsTickRateRet = 0x8257E550u;  // engine loop: 0x8299F204 / 0x824F6D48
 #endif
 inline constexpr float kWidescreenAspectValue = 16.0f / 9.0f;  // what the game has there (3FE38E4C)
 }  // namespace gow3::addr

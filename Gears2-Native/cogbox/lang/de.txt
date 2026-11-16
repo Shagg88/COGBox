@@ -1016,8 +1016,7 @@ Controller layout = Controller-Belegung
 Southpaw (sticks swapped) = Southpaw (Sticks getauscht)
 A and B swapped = A und B getauscht
 Bumpers and triggers swapped = Bumper und Trigger getauscht
-Custom (CogBox.ini [Pad] Remap=) = Benutzerdefiniert (CogBox.ini [Pad] Remap=)
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = Verlegt die Tasten und Sticks des Controllers, bevor das Spiel sie sieht, sodass die Tastensymbole des Spiels weiter die ursprünglichen Tasten zeigen. Benutzerdefiniert: Schreibe src=dst-Paare (a b x y lb rb lt rt ls rs back start up down left right, oder sticks=swap) in CogBox.ini unter [Pad] Remap=.
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = Verlegt die Tasten und Sticks des Controllers, bevor das Spiel sie sieht, sodass die Tastensymbole des Spiels weiter die ursprünglichen Tasten zeigen. Benutzerdefiniert: Wähle in der Liste darunter für jede Taste des Spiels die Controller-Taste (eine Belegung für alle vier Spiele, gespeichert in CogBox.ini unter [Pad] Remap=).
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = Title Updates sind jetzt erforderlich: Jedes Spiel läuft mit seinem letzten Patch von Epic (Gears 2 und 3: TU6, Judgment: TU4, Gears 1: TU5). Reine Disc-Versionen werden nicht mehr unterstützt.
 Two-player split = Teilung für zwei Spieler
 Top and bottom (game's) = Oben und unten (des Spiels)
@@ -1143,7 +1142,7 @@ D-pad choose   A pick   B close = Steuerkreuz wählen   A übernehmen   B schlie
 ICON = SYMBOL
 BACK = ZURÜCK
 Horde bots = Horde-Bots
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Lokale Horde: Drücke Zurück / Ansicht, wenn die Horde-Punktetafel zum ersten Mal erscheint, um zwei Bots hinzuzufügen (erneut drücken für zwei weitere). Sie kehren jede Welle zurück. Für Kampagne und Versus ausschalten: Zurück schaltet auch das Cheat-Flag des Spiels ein.
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = Zurück / Ansicht zeigt wie gewohnt die Punktetafel und füllt in einem Horde-Spiel, das du hostest, dein Team zusätzlich mit Bots auf fünf auf (sie kehren jede Welle zurück). In Versus, in den Lobbys oder im Spiel eines anderen bewirkt es nichts. Für Bots in Versus nutze die Bot-Einstellung der Lobby.
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = An
@@ -1334,8 +1333,8 @@ start it once from COGBox to add its pictures. = starte es einmal aus COGBox, um
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = Ziel-Empfindlichkeit (%)
 Zoom sensitivity (%) = Zoom-Empfindlichkeit (%)
-Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Mausgeschwindigkeit beim Zielen, in Prozent der normalen Geschwindigkeit. 100 = unverändert. Nur mit nativer Maussteuerung.
-Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Mausgeschwindigkeit beim Zoomen durch ein Zielfernrohr (Longshot, Hammer of Dawn), in Prozent der normalen Geschwindigkeit. 100 = unverändert. Nur mit nativer Maussteuerung.
+Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Mausgeschwindigkeit beim Zielen, in Prozent der normalen Geschwindigkeit. 100: unverändert. Nur mit nativer Maussteuerung.
+Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Mausgeschwindigkeit beim Zoomen durch ein Zielfernrohr (Longshot, Hammer of Dawn), in Prozent der normalen Geschwindigkeit. 100: unverändert. Nur mit nativer Maussteuerung.
 # 0.6.0: delete a profile (machine-made translation, please check)
 DELETE THIS PROFILE = PROFIL LÖSCHEN
 DELETE = LÖSCHEN
@@ -1348,7 +1347,7 @@ Paste a path = Pfad einfügen
 Import saves... = Spielstände importieren...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = Für das flüssigste Spielerlebnis brauchen diese Spiele die aufgeführten Title Updates. Details stehen in der README.
 # 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
-The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = Die Cheat-Tasten der Entwickler, F5-F11 im Spiel (Gottmodus, Zeitlupe, freie Kamera - in Gears 1 durch Wände fliegen - HUD ausblenden, alle Waffen). Gears 2: nur in Spielen auf diesem PC - nie in System-Link- oder Online-Spielen. Gears 3 und Judgment: auch in einem System-Link- oder Online-Spiel, das du hostest, wo Zeitlupe und der Rest jeden Spieler betreffen - bitte nutze sie nur in deinen eigenen Spielen. Gears 1: in System-Link-Spielen noch nicht geprüft. Erfolge und Spielstände sind deine Sache.
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. They do not work in Versus matches - only in the campaign and the wave modes (Horde, Beast, Survival). = Die Cheat-Tasten der Entwickler, F5-F11 im Spiel (Gottmodus, Zeitlupe, freie Kamera - in Gears 1 durch Wände fliegen - HUD ausblenden, alle Waffen). Gears 2: nur in Spielen auf diesem PC - nie in System-Link- oder Online-Spielen. Gears 3 und Judgment: auch in einem System-Link- oder Online-Spiel, das du hostest, wo Zeitlupe und der Rest jeden Spieler betreffen - bitte nutze sie nur in deinen eigenen Spielen. Gears 1: in System-Link-Spielen noch nicht geprüft. Erfolge und Spielstände sind deine Sache. Sie funktionieren nicht in Versus-Matches - nur in der Kampagne und den Wellenmodi (Horde, Beast, Survival).
 Not on a Mac (CrossOver). = Nicht auf einem Mac (CrossOver).
 Vulkan only on Proton / Wine. = Unter Proton / Wine nur mit Vulkan.
 On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = Auf einem Mac (CrossOver) laufen die Spiele mit DirectX 12 über D3DMetal (Apple Silicon). Vulkan startet dort nicht.
@@ -1413,6 +1412,7 @@ Join their game. = Seinem Spiel beitreten.
 Set up this game in COGBox to join. = Richte dieses Spiel in COGBox ein, um beizutreten.
 Invite them to the game you are hosting. = In das Spiel einladen, das du hostest.
 Remove this friend (asks first). = Diesen Freund entfernen (fragt vorher).
+Take back your friend request. = Deine Freundschaftsanfrage zurückziehen.
 Remove this friend? = Diesen Freund entfernen?
 Yes, remove = Ja, entfernen
 Close the running game first, then press JOIN again. = Schließe zuerst das laufende Spiel und drücke dann erneut BEITRETEN.
@@ -1499,3 +1499,30 @@ Graphics card = Grafikkarte
 Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = Welche Grafikkarte das Spiel auf einem PC mit mehreren nutzt (die eingebaute Grafik eines Laptops und seine eigene Karte, oder zwei Karten). Automatisch wählt die Karte mit dem meisten eigenen Videospeicher und, bei etwa gleich viel, die Karte, an der dein Monitor hängt - für DirectX 12 und Vulkan dieselbe Karte. Wähle eine Karte, um stattdessen diese zu verwenden. Ist die gewählte Karte nicht mehr im PC, wird Automatisch verwendet.
 (not found - Automatic is used) = (nicht gefunden - Automatisch wird verwendet)
 The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = Die gewählte Grafikkarte ist derzeit nicht in diesem PC - das Spiel wählt seine Karte selbst (Automatisch).
+# 0.6.3 (GitHub #316): the window key
+GAME WINDOW = SPIELFENSTER
+Windowed / full screen key = Taste für Fenster / Vollbild
+Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = Schaltet das Spielfenster auf dem Monitor, auf dem es sich befindet, zwischen Fenster und Vollbild um (rahmenlos, oder exklusiv, falls du das gewählt hast) und wieder zurück auf Fenstergröße und -position. Funktioniert im Spielfenster in allen vier Spielen, mit oder ohne Tastatur und Maus. Für eine andere Taste füge in extra-args.txt eine Zeile wie --bind_cogbox_fullscreen=F12 hinzu (ein Tastenname, auf Wunsch mit Alt+, Ctrl+ oder Shift+ davor; None schaltet die Taste aus).
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = Benutzerdefiniert (unten wählen)
+Customise... = Anpassen...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = Wähle selbst die Controller-Taste für jede Taste des Spiels, ausgehend von der oben gewählten Belegung.
+Left: the game's buttons. Right: the controller button that does each one. = Links: die Tasten des Spiels. Rechts: die Controller-Taste, die sie jeweils auslöst.
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = Wähle eine Taste des Spiels und drücke dann die Controller-Taste, die sie auslösen soll (Esc bricht ab). Eine Controller-Taste hat nur eine Aufgabe: Hatte sie schon eine andere, tauschen die beiden.
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = Kein Controller verbunden - wähle die Controller-Taste aus der Liste. Eine Controller-Taste hat nur eine Aufgabe: Hatte sie schon eine andere, tauschen die beiden.
+Press a button... = Drücke eine Taste...
+Nothing = Keine
+Swap sticks = Sticks tauschen
+The left stick moves the camera and the right stick moves you (southpaw). = Der linke Stick bewegt die Kamera, der rechte bewegt dich (Southpaw).
+Reset to the game's own = Auf die Belegung des Spiels zurücksetzen
+{1} now does the game's {2}. = {1} löst jetzt {2} des Spiels aus.
+{1} does the game's {2} instead. = {1} löst stattdessen {2} des Spiels aus.
+No button does the game's {1} now. = Keine Taste löst jetzt {1} des Spiels aus.
+Your earlier custom layout was replaced. = Deine bisherige benutzerdefinierte Belegung wurde ersetzt.
+Undo Customise = „Anpassen“ rückgängig
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = In CogBox.ini, aber vom Spiel nicht verstanden (behalten, Leerzeichen und Symbole entfernt):
+Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = Macht alle Änderungen seit „Anpassen“ rückgängig: zurück zur vorher gewählten Belegung (und ihrer Zeile in CogBox.ini).
+Or choose it from the list. = Oder wähle sie aus der Liste.
+# 0.6.3 GitHub #245 Xbox trigger rumble (machine-made translation, please check)
+Trigger rumble (Xbox controllers) = Trigger-Vibration (Xbox-Controller)
+Xbox One and Series controllers over USB or the Xbox Wireless Adapter (Bluetooth may give none), with Steam Input off for the controller: the motors in the triggers kick with each shot (harder for shotguns and heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while Controller vibration is off, here or in the game's options. While this is on, every Xbox-style controller (Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press the triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in another order, and rarely Windows stops sending controller input until the PC restarts - untick this if a controller misbehaves. PlayStation controllers are not affected. = Xbox One- und Series-Controller über USB oder den Xbox Wireless Adapter (über Bluetooth eventuell nicht), mit ausgeschaltetem Steam Input für den Controller: Die Motoren in den Triggern geben bei jedem Schuss einen kurzen Stoß (stärker bei Schrotflinten und schweren Waffen) und brummen, während die Kettensäge läuft oder ein Minigun oder Flammenwerfer feuert. Nichts, solange Controller-Vibration aus ist, hier oder in den Optionen des Spiels. Solange dies an ist, wird jeder Controller im Xbox-Stil (auch Xbox 360 und Controller im XInput-Modus) über Windows-Raw-Input gelesen: Bis zum ersten Tastendruck funktionieren Trigger, Guide-Taste und Vibration eventuell nicht richtig, Spieler im geteilten Bildschirm bekommen ihre Controller eventuell in anderer Reihenfolge, und selten liefert Windows bis zu einem Neustart des PCs keine Controller-Eingaben mehr – deaktiviere dies, wenn sich ein Controller seltsam verhält. PlayStation-Controller sind nicht betroffen.

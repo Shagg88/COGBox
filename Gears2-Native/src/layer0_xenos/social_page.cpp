@@ -261,8 +261,9 @@ PageResult DrawPage(float scale, bool pad, bool ps_names) {
       if (b == 1) social_do(SocialAction::Decline, r.uuid);
       if (b == 2) social_do(SocialAction::Block, r.uuid);
     }
-    for (const SocialRequest& r : v.lists.outgoing)
-      Row(("out" + r.uuid).c_str(), r.tag, XenosTr("Waiting for them to accept"), kDim, kDim, {}, s, r.icon);
+    for (const SocialRequest& r : v.lists.outgoing)   // GitHub #332: CANCEL takes the request back (the server's remove)
+      if (Row(("out" + r.uuid).c_str(), r.tag, XenosTr("Waiting for them to accept"), kDim, kDim, {{"CANCEL"}}, s, r.icon) == 0)
+        social_do(SocialAction::Remove, r.uuid);
     if (v.lists.friends.empty()) Line(XenosTr("No friends yet - add one by their tag."), kDim, s);
     // online friends first, then offline; each group as the server sorts it
     std::vector<const SocialFriend*> order;

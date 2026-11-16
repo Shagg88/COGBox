@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -64,6 +65,14 @@ struct TextureCacheStats {
   // Takeover T2: pages our resolves wrote on the GPU - kept (not re-uploaded from CPU bytes), counted as changed - and
   // CPU-path loads that read such pages (their CPU bytes are not ours: shown as a count, should stay 0).
   uint64_t gpu_pages_kept = 0, gpu_pages_changed = 0, cpu_loads_of_gpu_pages = 0;
+  // GitHub #315 (review r44): texture uploads over pages our GPU once wrote but no longer GPU-current, for which pending
+  // memexport read-backs were landed first (--gow2_renderer_texture_land_exports); this window.
+  uint64_t land_export_calls = 0;
+  // GitHub #315 (0.6.3, --gow2_renderer_bc_cpu_over_gpu auto): GPU-current pages of BC textures that took guest memory
+  // over the mirror (pending memexport read-backs landed first), and the loads with at least one such page (r80 L3:
+  // both count the same pages - changed since the entry's last copy); this window. bc_guest_failed_loads: BC loads that
+  // kept the mirror instead because a memexport read-back over them failed (r80 L6).
+  uint64_t bc_guest_loads = 0, bc_guest_pages = 0, bc_guest_failed_loads = 0;
   // Stage 7: textures loaded at the resolution scale from our scaled resolves (live entries, loads, bound slots).
   uint64_t scaled_textures = 0, scaled_loads = 0, scaled_bound = 0, scaled_bytes = 0;
   std::map<std::string, uint64_t> scaled_misses;  // job 189: resolve-written textures not taken at the scale, by reason
@@ -140,9 +149,16 @@ class TextureCache {
   // r26 R1: also flush before loads over pages our GPU wrote at some time (not only GPU-current ones) - with
   // --gow2_renderer_export_settle (the green-vine change); off = as before
   void SetFlushEverGpuWritten(bool on) { flush_ever_gpu_ = on; }
-  void SetBeforeCpuLoadOfGpuPages(std::function<void(uint32_t start, uint32_t length)> hook) {
+  // GitHub #315 (#202): BC textures take guest memory for pages our GPU wrote last, after landing pending memexport
+  // read-backs over them (--gow2_renderer_bc_cpu_over_gpu, resolved by the renderer); off = the mirror's bytes
+  void SetBcGuestOverMirror(bool on) { bc_guest_over_mirror_ = on; }
+  // The hook returns false when a memexport read-back over the range failed (guest memory lacks the export there).
+  void SetBeforeCpuLoadOfGpuPages(std::function<bool(uint32_t start, uint32_t length)> hook) {
     before_cpu_load_ = std::move(hook);
   }
+  // #315 diagnostic (--gow2_renderer_bc_gpu_page_log): who wrote a GPU-current page last, kGpuPage* bits (0 = unknown).
+  static constexpr uint8_t kGpuPageResolve = 1, kGpuPageExport = 2, kGpuPageExportPartial = 4, kGpuPageExportRefused = 8;
+  void SetGpuPageOrigin(std::function<uint8_t(uint32_t page)> origin) { gpu_page_origin_ = std::move(origin); }
   void SetStaleReloadReport(uint32_t frames, std::function<void(const StaleReload&)> report) {
     stale_after_ = frames;
     on_stale_ = std::move(report);
@@ -288,6 +304,10 @@ class TextureCache {
     bool through_ok = false, through_indexed = false;
     uint32_t through_base = 0, through_pitch = 0, through_bpb_log2 = 0, through_code = 0, through_endian = 0;
     uint32_t width = 0, height = 0;
+    // Texture packs (KiltedKernel, --gow2_texture_pack_dirs): the content hash whose pack file this host texture holds
+    // (its size, format and mips are the file's), 0 = the guest texture's own
+    uint64_t pack_hash = 0;
+    bool pack_complete = false;  // r95 M1: that file is in it whole (uploaded with no drop) - a reload need not read it
   };
   // Stage 7: the scaled entry for a 2D fetch constant if its texture is held by a current scaled resolve, else null.
   Entry* LookupScaled(const uint32_t* tf);
@@ -297,6 +317,12 @@ class TextureCache {
   Entry& Lookup(const uint32_t* tf, uint32_t host_kind, uint64_t frame);
   void Load(Entry& e, const uint32_t* tf, uint32_t host_kind);
   void FailLoad(Entry& e, gpu::TextureHandle tex, bool created, const char* why);  // 0.6.2 (#311)
+  // Destroys e's host texture (and the bookkeeping that points at it) so the next load creates one of a new shape.
+  void DestroyHost(Entry& e);
+  // Texture packs: loads e from a pack's DDS file instead of guest memory; false (nothing changed) when the file cannot
+  // stand in for this texture (unreadable, wrong size or mips, a signed fetch) - the guest texture loads as usual.
+  bool LoadFromPack(Entry& e, const uint32_t* tf, const std::filesystem::path& file, uint64_t hash, uint32_t w, uint32_t h,
+                    uint32_t mips, uint32_t base_start, uint32_t base_length, uint32_t mip_start, uint32_t mip_length);
   void StandIn(const std::string& why);
 
   gpu::Backend& backend_;
@@ -361,8 +387,10 @@ class TextureCache {
   bool packed_tail_at_base_ = true;  // patch 0087
   uint32_t stale_after_ = 0;
   std::function<void(const StaleReload&)> on_stale_;
-  std::function<void(uint32_t start, uint32_t length)> before_cpu_load_;
+  std::function<bool(uint32_t start, uint32_t length)> before_cpu_load_;
+  std::function<uint8_t(uint32_t page)> gpu_page_origin_;  // SetGpuPageOrigin (#315 diagnostic)
   bool flush_ever_gpu_ = false;  // SetFlushEverGpuWritten (r26 R1)
+  bool bc_guest_over_mirror_ = false;  // SetBcGuestOverMirror (#315)
   uint64_t load_log_frame_ = 0;
   void LogLoad(const Entry& e, const uint32_t* tf, uint64_t frame, const char* reason);
   std::vector<uint32_t> probe_bases_;

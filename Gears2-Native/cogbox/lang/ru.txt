@@ -1016,8 +1016,7 @@ Controller layout = Раскладка контроллера
 Southpaw (sticks swapped) = Для левшей (стики поменяны)
 A and B swapped = A и B поменяны
 Bumpers and triggers swapped = Бамперы и курки поменяны
-Custom (CogBox.ini [Pad] Remap=) = Своя (CogBox.ini [Pad] Remap=)
-Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: write src=dst pairs (a b x y lb rb lt rt ls rs back start up down left right, or sticks=swap) in CogBox.ini under [Pad] Remap=. = Переназначает кнопки и стики контроллера до того, как их увидит игра, поэтому подсказки кнопок в игре по-прежнему показывают исходные кнопки. Своя: впишите пары src=dst (a b x y lb rb lt rt ls rs back start up down left right или sticks=swap) в CogBox.ini, в строку Remap= раздела [Pad].
+Moves the controller's buttons and sticks before the game sees them, so the game's own button prompts keep showing the original buttons. Custom: choose the button for each of the game's buttons in the list below (one layout for all four games, kept in CogBox.ini under [Pad] Remap=). = Переназначает кнопки и стики контроллера до того, как их увидит игра, поэтому подсказки кнопок в игре по-прежнему показывают исходные кнопки. Своя: в списке ниже выберите кнопку контроллера для каждой кнопки игры (одна раскладка для всех четырёх игр, хранится в CogBox.ini, в строке Remap= раздела [Pad]).
 Title updates are now required: every game runs with its last patch from Epic (Gears 2 and 3: TU6, Judgment: TU4, Gears 1: TU5). Disc-only versions are no longer supported. = Обновления теперь обязательны: каждая игра запускается с последним патчем от Epic (Gears 2 и 3: TU6, Judgment: TU4, Gears 1: TU5). Версии только с диска больше не поддерживаются.
 Two-player split = Разделение на двоих
 Top and bottom (game's) = Сверху и снизу (как в игре)
@@ -1143,7 +1142,7 @@ D-pad choose   A pick   B close = Крестовина выбор   A выбра
 ICON = ЗНАЧОК
 BACK = НАЗАД
 Horde bots = Боты в Орде
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Локальная Орда: нажмите «Назад» / «Просмотр», когда впервые появится таблица счёта Орды, чтобы добавить двух ботов (нажмите ещё раз — ещё двух). Они возрождаются каждую волну. Выключайте для кампании и версуса: «Назад» также включает флаг читов игры.
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = Back / View, как обычно, показывает таблицу счёта, а в игре «Орда», которую вы проводите сами, ещё и добирает вашу команду ботами до пяти (они возрождаются каждую волну). В режиме Versus, в лобби и в чужой игре ничего не делает. Для ботов в Versus используйте настройку ботов в самом лобби.
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = Вкл.
@@ -1334,8 +1333,8 @@ start it once from COGBox to add its pictures. = запустите её оди�
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = Чувствительность при прицеливании (%)
 Zoom sensitivity (%) = Чувствительность при зуме (%)
-Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при прицеливании, в процентах от обычной. 100 = без изменений. Только с нативным обзором мышью.
-Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при зуме через прицел (Longshot, Молот Зари), в процентах от обычной. 100 = без изменений. Только с нативным обзором мышью.
+Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при прицеливании, в процентах от обычной. 100: без изменений. Только с нативным обзором мышью.
+Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Скорость мыши при зуме через прицел (Longshot, Молот Зари), в процентах от обычной. 100: без изменений. Только с нативным обзором мышью.
 # 0.6.0: delete a profile (machine-made translation, please check)
 DELETE THIS PROFILE = УДАЛИТЬ ЭТОТ ПРОФИЛЬ
 DELETE = УДАЛИТЬ
@@ -1348,7 +1347,7 @@ Paste a path = Вставить путь
 Import saves... = Импортировать сохранения...
 For the smoothest experience, these games require the listed Title Updates. See the README for details. = Для максимально плавной игры этим играм нужны указанные Title Update. Подробности в README.
 # 0.6.2: Mac (CrossOver), cheats on all four games, folder paths under Wine (machine-made translation, please check)
-The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. = Читерские клавиши разработчиков, F5-F11 в игре (режим бога, замедление, свободная камера - в Gears 1 полёт сквозь стены - скрытие HUD, всё оружие). Gears 2: только в играх на этом ПК - никогда в играх по System Link или онлайн. Gears 3 и Judgment: также в игре по System Link или онлайн, которую вы хостите, где замедление и остальное действуют на всех игроков - пожалуйста, используйте их только в своих играх. Gears 1: в играх по System Link пока не проверено. Достижения и сохранения - на ваше усмотрение.
+The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - hide the HUD, all weapons). Gears 2: in games on this PC only - never in System Link or online games. Gears 3 and Judgment: also in a System Link or online game you host, where slow motion and the rest affect every player - please keep them to your own games. Gears 1: not checked in System Link games yet. Achievements and saves are your own business. They do not work in Versus matches - only in the campaign and the wave modes (Horde, Beast, Survival). = Читерские клавиши разработчиков, F5-F11 в игре (режим бога, замедление, свободная камера - в Gears 1 полёт сквозь стены - скрытие HUD, всё оружие). Gears 2: только в играх на этом ПК - никогда в играх по System Link или онлайн. Gears 3 и Judgment: также в игре по System Link или онлайн, которую вы хостите, где замедление и остальное действуют на всех игроков - пожалуйста, используйте их только в своих играх. Gears 1: в играх по System Link пока не проверено. Достижения и сохранения - на ваше усмотрение. В матчах Versus они не работают - только в кампании и в режимах волн (Horde, Beast, Survival).
 Not on a Mac (CrossOver). = Не на Mac (CrossOver).
 Vulkan only on Proton / Wine. = В Proton / Wine только Vulkan.
 On a Mac (CrossOver) the games run DirectX 12 through D3DMetal (Apple Silicon). Vulkan does not start there. = На Mac (CrossOver) игры работают на DirectX 12 через D3DMetal (Apple Silicon). Vulkan там не запускается.
@@ -1416,6 +1415,7 @@ Join their game. = Присоединиться к его игре.
 Set up this game in COGBox to join. = Настройте эту игру в COGBox, чтобы присоединиться.
 Invite them to the game you are hosting. = Пригласить в игру, которую вы хостите.
 Remove this friend (asks first). = Удалить этого друга (сначала спросит).
+Take back your friend request. = Отозвать ваш запрос в друзья.
 Remove this friend? = Удалить этого друга?
 Yes, remove = Да, удалить
 Close the running game first, then press JOIN again. = Сначала закройте запущенную игру, затем снова нажмите ПРИСОЕДИНИТЬСЯ.
@@ -1504,3 +1504,30 @@ Graphics card = Видеокарта
 Which graphics card the game uses on a PC with more than one (a laptop's built-in graphics and its own card, or two cards). Automatic picks the card with the most video memory of its own, and between cards with about as much, the one your monitor is plugged into - the same card for DirectX 12 and Vulkan. Choose a card to use that one instead. If the card you chose is not in this PC any more, Automatic is used. = Какую видеокарту использует игра на ПК, где их несколько (встроенная графика ноутбука и его собственная карта или две карты). «Автоматически» выбирает карту с наибольшим объёмом собственной видеопамяти, а среди карт с примерно равным объёмом - ту, к которой подключён монитор; для DirectX 12 и Vulkan выбирается одна и та же карта. Выберите карту, чтобы использовать её вместо этого. Если выбранной карты больше нет в этом ПК, используется «Автоматически».
 (not found - Automatic is used) = (не найдена - используется «Автоматически»)
 The graphics card you chose is not in this PC at the moment - the game picks its card itself (Automatic). = Выбранной видеокарты сейчас нет в этом ПК - игра выбирает карту сама («Автоматически»).
+# 0.6.3 (GitHub #316): the window key
+GAME WINDOW = ОКНО ИГРЫ
+Windowed / full screen key = Клавиша окно / полный экран
+Switches the game window between a window and full screen (borderless, or exclusive if you chose that) on the monitor it is on, and back to its window size and place. Works in the game window in all four games, with or without Keyboard and mouse. To use another key, add a line such as --bind_cogbox_fullscreen=F12 to extra-args.txt (a key name, with Alt+, Ctrl+ or Shift+ in front if you like; None turns the key off). = Переключает окно игры между оконным режимом и полным экраном (без рамки или эксклюзивным, если вы его выбрали) на том мониторе, где оно находится, и возвращает его к прежнему размеру и положению окна. Работает в окне игры во всех четырёх играх, с включённой или выключенной Клавиатурой и мышью. Чтобы использовать другую клавишу, добавьте в extra-args.txt строку вроде --bind_cogbox_fullscreen=F12 (название клавиши, при желании с Alt+, Ctrl+ или Shift+ перед ним; None отключает клавишу).
+# 0.6.3: the Custom controller layout, edited on the Controls tab (machine-made translation, please check)
+Custom (choose below) = Своя (выбор ниже)
+Customise... = Настроить...
+Choose the controller button for each of the game's buttons yourself, starting from the layout chosen above. = Выберите сами кнопку контроллера для каждой кнопки игры, начиная с раскладки, выбранной выше.
+Left: the game's buttons. Right: the controller button that does each one. = Слева: кнопки игры. Справа: кнопка контроллера, которая их нажимает.
+Choose one of the game's buttons, then press the controller button that should do it (Esc cancels). A controller button does one thing: if it already did another, the two swap. = Выберите кнопку игры, затем нажмите кнопку контроллера, которая будет её нажимать (Esc отменяет). У кнопки контроллера одна задача: если у неё уже была другая, они меняются местами.
+No controller connected - choose the controller button from the list. A controller button does one thing: if it already did another, the two swap. = Контроллер не подключён - выберите кнопку контроллера из списка. У кнопки контроллера одна задача: если у неё уже была другая, они меняются местами.
+Press a button... = Нажмите кнопку...
+Nothing = Нет
+Swap sticks = Поменять стики местами
+The left stick moves the camera and the right stick moves you (southpaw). = Левый стик управляет камерой, а правый - движением (для левшей).
+Reset to the game's own = Сбросить на раскладку игры
+{1} now does the game's {2}. = {1} теперь нажимает {2} игры.
+{1} does the game's {2} instead. = {1} вместо этого нажимает {2} игры.
+No button does the game's {1} now. = Теперь ни одна кнопка не нажимает {1} игры.
+Your earlier custom layout was replaced. = Ваша прежняя своя раскладка заменена.
+Undo Customise = Отменить «Настроить»
+In CogBox.ini but not understood by the game (kept, spaces and symbols removed): = Есть в CogBox.ini, но игра это не понимает (оставлено, без пробелов и символов):
+Undoes every change since Customise: back to the layout chosen before it (and its CogBox.ini line). = Отменяет все изменения после «Настроить»: возврат к раскладке, выбранной до этого (и её строке в CogBox.ini).
+Or choose it from the list. = Или выберите из списка.
+# 0.6.3 GitHub #245 Xbox trigger rumble (machine-made translation, please check)
+Trigger rumble (Xbox controllers) = Вибрация триггеров (контроллеры Xbox)
+Xbox One and Series controllers over USB or the Xbox Wireless Adapter (Bluetooth may give none), with Steam Input off for the controller: the motors in the triggers kick with each shot (harder for shotguns and heavy weapons) and buzz while the chainsaw revs or a minigun or flamethrower fires. Nothing while Controller vibration is off, here or in the game's options. While this is on, every Xbox-style controller (Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press the triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in another order, and rarely Windows stops sending controller input until the PC restarts - untick this if a controller misbehaves. PlayStation controllers are not affected. = Контроллеры Xbox One и Series по USB или через беспроводной адаптер Xbox (по Bluetooth может не работать), с выключенным для контроллера Steam Input: моторы в триггерах дают короткий толчок при каждом выстреле (сильнее у дробовиков и тяжёлого оружия) и вибрируют, пока работает бензопила или стреляет миниган или огнемёт. Ничего, пока Вибрация контроллера выключена — здесь или в настройках игры. Пока это включено, все контроллеры в стиле Xbox (также Xbox 360 и контроллеры в режиме XInput) читаются через Raw Input Windows: до первого нажатия кнопки триггеры, кнопка Guide и вибрация могут работать неправильно, игроки на разделённом экране могут получить контроллеры в другом порядке, и изредка Windows перестаёт передавать ввод с контроллеров до перезагрузки ПК — снимите флажок, если контроллер ведёт себя странно. Контроллеры PlayStation не затрагиваются.

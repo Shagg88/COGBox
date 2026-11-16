@@ -1,5 +1,135 @@
 # COGBox changes
 
+## 0.6.3
+
+- **Flickering ground patches fixed** (Real occlusion, by Flippage): some flat ground pieces - in Gears 3 on Mercy's
+  countdown screen, in matches and in the campaign - switched between textured and grey every frame. Their occlusion
+  box, lying almost exactly on the patch, lost against the patch's own surface in the game's half-size depth (which
+  keeps the nearest of each 2x2 pixels), so the game hid the patch, then showed it again the next frame. Occlusion
+  boxes now get a small slope-scaled depth bias toward "visible". Occlusion still culls as much as before; only these
+  false hides are gone.
+- **XeGTAO ambient occlusion: no more ghosting through floors and walls, and steadier shadows near the camera**
+  (Gears 3 and Judgment, by Flippage): Gears 3 and Judgment copy their scene depth out once or twice a frame, and with
+  two copies the first holds only about half the scene. XeGTAO used the first copy, so geometry drawn after it - the
+  ground, most visibly - was missing from its depth, and hidden objects (stairs, buildings, players behind a wall)
+  showed through as faint shading. XeGTAO now reads every scene-depth copy and runs its passes on the last one, once a
+  frame. Its samples close to the camera also no longer leave the screen or read coarse depth levels (new settings
+  `--gow2_ao_max_screen_radius`, default 0.325, and `--gow2_ao_mip_offset`, default 6.5), which removes the shadow
+  flicker at the bottom of the screen, on your character and while aiming.
+- **Windowed / borderless full screen key, all four games:** **Alt+Enter** in the game window switches between a window
+  and borderless full screen on the monitor the game is on, and back to the window's size and place. It is not F11
+  (F11 is the cheat keys' "all weapons"); change it with a `--bind_cogbox_fullscreen=<key>` line in `extra-args.txt`
+  (`None` turns it off). The key is shown on the Controls tab. Suggested in GitHub #316.
+- **Custom controller layout in the launcher:** Controls tab > Controller layout > **Customise...** (or **Custom**) lists the game's buttons; click one and press the controller button you want for it (without a controller, pick it from a list), with **Swap sticks** and **Reset to the game's own**. A button already in use swaps with the old one. One layout for all four games, still saved as `[Pad] Remap=` in `CogBox.ini` - no more editing it by hand (a hand-written line is read and kept).
+- **Cheats are off in Versus** (all four games): the cheat keys (F5-F11, `--gowX_cheats`) no longer work in any Versus match - online, System Link, private matches and local split screen, with or without bots. They still work in the campaign (solo and co-op) and in Horde, Beast and Survival. Any game type not on that list is treated as Versus. Other console commands from `--ue3_hotkeys` / `--ue3_exec` are refused in Versus too (the launcher's own display settings still apply). Cheats are also off in the menus and lobbies. (The Horde-bots button no longer touches the cheat flag - see the next entry.)
+- **Horde bots no longer break online play or hide the scoreboard** (Gears 2 and 3): with the Horde bots option on, Back switched the game to offline mode, turned the cheat flag on and added two bots in every mode, Versus too - when the host of an online or System Link game pressed it, matchmaking and the game's session broke - and Back no longer opened the scoreboard. Now Back shows the scoreboard as before and, in a Horde game you host, one press fills your team to five with bots (spawned at once if a wave is under way). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. Tested on PC in Gears 3 (games hosted as network games): in Horde, Back opens and closes the scoreboard and fills the team to five, and the game stays online; in Versus, Back shows only the scoreboard. Gears 2 is not tested on PC yet.
+- **Trigger rumble for Xbox One / Series controllers** (Controls tab, all four games, **experimental**, off by default):
+  the small motors in the triggers give a short kick with each shot - harder for the Gnasher, Boomshot and heavy
+  weapons - and buzz while the chainsaw revs or a Mulcher, Troika or Scorcher fires. Nothing in menus, cutscenes, while
+  paused or dead, with the game window in the background, or while vibration is off (COGBox's Controller vibration or
+  the game's own option). For USB or the Xbox Wireless Adapter (Bluetooth may give none) with Steam Input off for the
+  controller. Only Xbox One / Series controllers get trigger pulses, but while the option is on every Xbox-style
+  controller (Xbox 360 and pads in XInput mode too) is read through Windows raw input: until its first button press
+  the triggers, the Guide button and rumble may not work right, split-screen players may get their controllers in
+  another order, and in rare cases Windows stops sending controller input until the PC restarts - turn the option off
+  if a controller misbehaves. PlayStation controllers are not affected; DualSense adaptive triggers work as before.
+  **Not tried with an Xbox controller yet.** GitHub #245.
+- **Smaller download:** COGBox no longer ships a second, slower copy of each game (`gow2-normal.exe` and
+  so on) that it switched to by itself after a game crashed twice in a row. In the crash reports since 0.5.0 that
+  happened twice, and the slower copy crashed the same way both times, so it did not help. Each game now has just the
+  one, faster program. When you update, the old copies are moved to the `_old-files` folder like other old program files
+  (safe to delete).
+- **Social: take back a friend request** (launcher's SOCIAL tab and the in-game Social page): a request you sent
+  ("Waiting for them to accept") now has a **CANCEL** button, so a request to an account nobody uses any more no
+  longer sits there for ever. Suggested in GitHub #332.
+- **Texture packs** (by KiltedKernel, GitHub #319 / PR #325 - thank you), all four games: a mod can now carry
+  replacement textures, usually bigger and sharper ones, as DDS files named after the hash of the game texture each
+  replaces (`<hash>_....dds`, in any folder of the mod). Install a pack like any mod: a folder in `<Game>\mods\` or a
+  `.zip` added in the Mods tab, which shows how many textures each mod's pack has. Where two packs replace the same
+  texture, the mod lower in the list wins. Packs made for the Gears of War 2 PC port work unchanged (put the pack's
+  folder, with its `4D53082D\replace` inside, in `Gears2\mods\`). To make a pack, add
+  `--gow2_texture_pack_dump_dir=<folder>` to `extra-args.txt`: every texture the game draws is written there once,
+  already named for a pack. Replacements may be the original size or 2x-8x, in BC1-5, BC7 or plain RGBA, with their mip
+  levels and at most 64 MB per level; the game's log names any file it cannot use and why. Known limit: the few
+  textures the game reads by texel position (look-up tables, some fonts and UI) show the wrong part when replaced
+  with a bigger one - keep those at 1x. See docs/modding.md.
+
+### Fixes
+- **Show ping after a matchmaking join** (by Flippage, PR #328 - thank you): joining a match through playlist matchmaking showed
+  "Ping -- (hosting)" instead of your ping to the host. It now shows the host's ping, as joins from an invite, Join
+  friend or the open matches list already did. SDK patch 107.
+- **Gears 3 no longer throws away its campaign progress and options when your online account changes** (GitHub #329):
+  Gears 3 ties its progress and options to the online account they were saved with. After a new online account (a new
+  #number, a deleted account, online play turned off without one) or with saves from another PC or an old backup, COGBox
+  left them as they were and Gears 3 started over with the brightness screen, writing fresh files over the old ones
+  (checkpoints were kept). COGBox now remembers the account your saves were last used with and moves them to the new
+  one with a check. Saves from an account it can't check (another PC, an old backup) are moved too, as long as they
+  are complete and look like real Gears 3 saves; a copy of each file COGBox changes is kept as it was
+  (`.cogbox-adopted-<date>`). Before any start whose account differs from the last one, COGBox also copies the Gears 3
+  and Judgment saves to `user\_cogbox-save-backups` (a copy is only removed when a newer one holds the same saves, and
+  folders you put there yourself are never touched). Saves that Gears 3 already reset can be put back and will now load.
+  Close the game first. `PlayerStorage.dat` can come from a backup or from its `.pre-online` copy. The three profile
+  files `63E83FFF`, `63E83FFE` and `63E83FFD` must go back together, from one backup that holds all three (your own, or
+  a folder in `user\_cogbox-save-backups`); a `.pre-online` copy of `63E83FFF` alone won't load. Judgment's saves can't
+  be moved to a new account the same way: with a new online account Judgment's online progress still starts fresh, but
+  its old files are in that backup folder (and its offline progress comes back whenever online play is off). Tested on
+  PC: an account change, saves from an unknown account and a restore were each handled without a reset.
+- **Crash reports are no longer empty** (all four games, GitHub #286): a game that froze before crashing could leave an
+  empty `crash-*.txt` and a cut-off `.dmp`. The crash report is now written without touching anything the frozen game
+  might be holding, lists where every thread was stuck, and the crash dump is written by COGBox from outside the game
+  (the game writes it itself when started without COGBox).
+- **Hosting no longer halves your frame-rate limit** (Gears 2, Gears 3 and Judgment): while friends were in a match you
+  hosted, a limit of 60 gave 30 (144 gave 72) until they left. The game asks for the limit a second time each frame
+  when it sends updates to other players, and COGBox waited a whole frame both times; it now waits once per frame.
+  Unlimited was not affected, and neither was Gears 1. (Tested on PC with two copies of the game: a 60 limit stayed at 60.)
+- **Frame-rate limit in split screen (GitHub #313, Gears 2 and 3): not fixed yet, more detail in the log.** In both
+  games' code the limit is applied once per frame however many players are in, so the cause is not known yet. While
+  two or more players are in, the log now shows every 10 seconds how many frames the game makes, how many reach the
+  screen and how often the limit had to hold a frame back - a report zip from a split-screen session tells us which
+  part goes wrong.
+- **Less stutter while COGBox prepares shaders, all four games:** at every start COGBox read all of the game's files again (about 4 GB for Gears 3) to find the shaders it prepares in the background, beside the game. Now it remembers each file it has read to the end (in the game's shader cache folder: `prebuild-done.bin`, a few MB) and only reads new or changed files at the next start - on every PC, after the first full start nothing is read again (a COGBox update starts the list once more). On PCs where the game may use 8 logical processors or fewer (for example 4 cores / 8 threads, or a game limited to 8 with an affinity setting), that reading also uses one thread instead of two and slows right down while you play (full speed again on loading screens, menus and videos), and the background shader building (Direct3D 12) keeps half of its threads for what the game needs right now during play, at a lower priority. Faster PCs keep their old thread counts and speeds. The first start still has the reading to do, and an area you reach before its shaders were prepared can still hitch briefly the first time. Not tested on PC yet.
+- **Gears 3: Stats & Awards pages drawn correctly with Ultrawide / Match my monitor** (GitHub #330): with a picture
+  wider than 16:9 (Ultrawide ticked, or Render resolution "Match my monitor" / "1080p" on a wide monitor), the
+  Achievements, Ribbons and Medals pages showed stacked teal bands instead of their panel. The game's screen-sized
+  work buffers kept the 16:9 height (as in the Canary ultrawide patch COGBox's follows); these pages copy the screen
+  into them and draw it back, so each copy came back squeezed. The buffers now match the picture, as they do at 16:9.
+  The block of memory those buffers share with the shadow map keeps its 16:9 size, so the shadow map still fits (a
+  first test build crashed shortly after start without this). The picture's height is now a multiple of 8 rows, so
+  its shape can differ from your monitor's by a few pixels (a thin border). If the game crashes or draws wrongly
+  with Ultrawide since this change, `--gow3_aspect_targets_720=true` in `extra-args.txt` brings back the old buffers -
+  please tell us. Tested on PC (Gears 3, D3D12 and Vulkan) at 21:9, 3440x1440, 8:3, 32:9 and 48:9: the pages draw
+  correctly, and the campaign, Horde and the lobby run without crashing.
+- **Gears 3: Horde bots are no longer always Dom and Carmine.** The Horde-bots button (Back) asked the game for those two characters by number every time; it now lets the game pick each bot's character at random, the way the game picks bots for its own matches. (Gears 2's bots were already random; its two unused numbers are dropped.) GitHub #270; tested on PC in Gears 3 (bots such as Marcus, Anya, Classic Marcus and Hoffman).
+- **Launcher: the library music plays again** (silent in 0.6.2: that launcher was built against the wrong FFmpeg version and could not find the music decoder shipped beside it). The build and the packager now check that the launcher and the decoder DLLs match, so it cannot ship silent again.
+- **Judgment: the loading screen after Monroe Commons no longer hangs above 30 fps** (GitHub #318, also #54 / #38 /
+  #77 - not confirmed yet): COGBox now asks the game itself whether its loading screen is still up, and keeps the
+  frame rate at 30 for exactly that long (before, it guessed from the files being read and could let go after
+  5 seconds). Your own frame-rate limit comes back as soon as the loading screen ends.
+- **The mouse cursor now hides when you play with a controller** (all four games, GitHub #320): the GitHub #143 fix most likely never hid it. While the cursor is over the game window, it now hides as soon as you use the controller (otherwise after 3 seconds without mouse movement), and COGBox checks that Windows really hid it and tries again if not. Tiny mouse movements of 1-2 pixels no longer bring it back - a real movement or a click does. It is left alone while the in-game menu is open or mouse look has the mouse. (Not yet confirmed by the reporter.)
+- **No more stutter with DLSS, FSR or XeSS when Gears 2 changes how wide it draws** (GitHub #323): in heavy views (for
+  example in Nexus right after the "Reinforced" cutscene) the game narrows its picture by itself, many times a second,
+  and COGBox set the upscaler up again from scratch each time (about 20 ms, so 30-40 ms frames). It is now set up once
+  for the full width and keeps its history when the width changes (DLSS, XeSS and FSR, also with Vulkan). If one
+  view made it larger (in an ultrawide session, say), it is set up for the smaller size again after about 600 frames
+  that fit it. The log's upscaler line counts the size changes and set-ups. All four games use the same code. Not
+  tested on PC yet.
+- **Judgment: blue / purple blocks on surfaces (#315)**, mostly seen on AMD graphics cards at high frame rates and building up over a session: a texture the game had just moved in video memory could be loaded from the old copy and keep it. It now waits for the moved copy first, also when the game moves the same texture again. With DirectX 12, two writes the GPU makes to game memory one after the other can no longer overlap (AMD cards could run them out of order). (Not yet confirmed by the reporter.)
+  Also (Judgment and Gears 3): compressed textures the game streams into memory the graphics card wrote last now take
+  the game's own bytes (after any pending move has landed) - what the test line `--gow2_renderer_bc_cpu_over_gpu=true`
+  did in 0.6.2, which made the reporter's campaign run clean. Which writes it catches there is not known yet (the
+  0.6.2 logs ruled out one candidate, read-only memory; `--gow2_renderer_bc_gpu_page_log=200` now names the others). It
+  is now the default there; you can remove that line from `extra-args.txt` (`--gow2_renderer_bc_cpu_over_gpu=false` or
+  `--no-gow2_renderer_bc_cpu_over_gpu` gives the 0.6.2 behaviour; an unknown value is logged and treated as the
+  default). Gears 1 and 2 are not changed.
+- **Launcher: no more crash now and then when you close COGBox** (GitHub #331, `d3d11.dll_unloaded` in Windows'
+  error log - not confirmed yet): the graphics library the launcher draws with let go of Direct3D 11 while something
+  else (most likely an overlay or capture tool such as Steam, Discord, RivaTuner, Xbox Game Bar or OBS) could still be
+  using it. COGBox now keeps it loaded until it has fully closed. Nothing changes while COGBox is open.
+- **Translations:** all new text is in all 11 languages (machine-made; corrections welcome). Hungarian updated and
+  corrected by Hevesi J. (PR #324 - thank you!). In several languages the Brightness and mouse-speed texts showed in
+  English; they are translated again.
+- **Thank you** to everyone who reported issues on GitHub and tested in the Discord - this release is built on your reports.
+
 ## 0.6.2
 
 **Quick start:** download `COGBox-0.6.2.7z`, right-click it > **Extract All...** (Windows 11; on Windows 10 use 7-Zip) to a folder of its own (for example

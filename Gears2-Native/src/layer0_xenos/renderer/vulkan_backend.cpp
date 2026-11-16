@@ -183,6 +183,7 @@ FormatInfo Info(Format f) {
     case Format::kBC3: return {VK_FORMAT_BC3_UNORM_BLOCK, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, 16, true};
     case Format::kBC4: return {VK_FORMAT_BC4_UNORM_BLOCK, VK_FORMAT_BC4_SNORM_BLOCK, VK_FORMAT_UNDEFINED, 8, true};
     case Format::kBC5: return {VK_FORMAT_BC5_UNORM_BLOCK, VK_FORMAT_BC5_SNORM_BLOCK, VK_FORMAT_UNDEFINED, 16, true};
+    case Format::kBC7: return {VK_FORMAT_BC7_UNORM_BLOCK, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, 16, true};
     case Format::kD32FloatS8X24: return {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, 8, false, true};
     case Format::kD24UnormS8: return {VK_FORMAT_D24_UNORM_S8_UINT, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, 4, false, true};
     default: return {};

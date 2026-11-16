@@ -1104,6 +1104,29 @@ void main(uint3 id : SV_DispatchThreadID) {
 }
 )";
 
+// GitHub #323 (upscale::ResizeMode::kPadded): an upscaler input padded to the size the DLSS / XeSS / FSR feature was
+// made for (D3D12 and Vulkan: u0 is a formatless storage image in SPIR-V, the view's format). c0.xy = the frame's
+// size in t0: texel p of u0 reads t0 at min(p, c0.xy - 1) (the edge repeats - no stale pixels beyond it). c0.zw =
+// asfloat k per axis, the last frame's size / this frame's: .xy becomes .xy * k + (q + 0.5) * (k - 1) at the texel q
+// read (upscale::ResizedMotion - keep the two identical), the motion re-expressed for a history drawn at the last
+// frame's size. Colour and depth pass k = 1: an exact copy. u0 may have fewer channels (R32 / R16G16).
+constexpr const char* kUpscalePadCs = R"(
+Texture2D<float4> xe_src : register(t0);
+RWTexture2D<float4> xe_out : register(u0);
+cbuffer XeUpscalePad : register(b0) { uint4 xe_c0; };
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+  uint w, h;
+  xe_out.GetDimensions(w, h);
+  if (id.x >= w || id.y >= h) return;
+  const uint2 q = min(id.xy, xe_c0.xy - 1);
+  const float2 k = asfloat(xe_c0.zw);
+  float4 v = xe_src.Load(int3(q, 0));
+  v.xy = v.xy * k + (float2(q) + 0.5) * (k - 1.0);
+  xe_out[id.xy] = v;
+}
+)";
+
 // Notes/80 s.6: motion of the characters, after kMotionVectorsCs. The game's velocity pass draws every character
 // (skinned mesh) into a half-res target cleared to 0; where it drew (t1 != 0), the pixel is moved with the nearest
 // character's own transform instead of the camera's: Gears' camera follows the player, so camera-only motion is wrong

@@ -9,7 +9,7 @@ param(
   [string]$Version = '',
   [string]$Out = '',
   [switch]$WhatIf,
-  [switch]$NoNormalCode   # cg050: pack without the "-normal" exes (the launcher then always runs the faster build, with no fallback)
+  [switch]$NoNormalCode   # ignored since 0.6.3 (no "-normal" exes ship any more); still accepted so older job scripts run
 )
 $ErrorActionPreference = 'Stop'
 $docs = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath)))   # ...\COGBox-Project (the project folder)
@@ -59,23 +59,11 @@ foreach ($p in $ports) {
   foreach ($f in $needDlls) { if ($p.noShared -and $f -eq 'dxcompiler.dll') { continue }; if (-not (Test-Path (Join-Path $p.from $f))) { $problems += "missing next to $($p.to): $($p.from)\$f" } }
   if (-not @(Get-ChildItem -LiteralPath $p.from -Filter 'rexruntime*.dll' -File -ErrorAction SilentlyContinue).Count) { $problems += "no rexruntime*.dll in $($p.from)" }
 }
-# cg050 (faster game code, always on; the launcher falls back to the normal build after repeated crashes): each port also ships <stem>-normal.exe - the same commit built
-# without the faster recompiler option, made by tools\build_normal_code.ps1 into <build folder>-normal\ with
-# normal-code.txt. It must be from this checkout's commit (a stale one would not match the runtime and DLLs shipped).
-$head = (git -C $cogbox rev-parse HEAD 2>$null | Select-Object -First 1)
-foreach ($p in $ports) {
-  $p.normal = ''
-  if ($NoNormalCode) { continue }
-  $nd = "$($p.from)-normal"; $ne = Join-Path $nd $p.exe; $stampFile = Join-Path $nd 'normal-code.txt'
-  if (-not (Test-Path -LiteralPath $ne) -or -not (Test-Path -LiteralPath $stampFile)) { $problems += "no normal-code exe $ne (run tools\build_normal_code.ps1, or pack with -NoNormalCode)"; continue }
-  $st = @(Get-Content -LiteralPath $stampFile)
-  $sc = ($st | Where-Object { $_ -like 'commit=*' } | Select-Object -First 1) -replace '^commit=', ''
-  $ss = ($st | Where-Object { $_ -like 'sha256=*' } | Select-Object -First 1) -replace '^sha256=', ''
-  if (-not $head -or $sc -ne $head.Trim()) { $problems += "$ne was built from commit '$sc', this checkout is '$head' - run tools\build_normal_code.ps1 again" }
-  elseif ($ss -ne (Get-FileHash -Algorithm SHA256 -LiteralPath $ne).Hash.ToLower()) { $problems += "$ne is not the exe normal-code.txt describes" }
-  elseif ((Get-FileHash -Algorithm SHA256 -LiteralPath $ne).Hash -eq (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $p.from $p.exe)).Hash) { $problems += "$ne is the same file as the faster $($p.exe)" }
-  else { $p.normal = $ne }
-}
+# 0.6.3 (Shagg 11-15): no "-normal" exes. 0.5.0 - 0.6.2 shipped a second build of each game without the faster
+# recompiler option (<stem>-normal.exe, from tools\build_normal_code.ps1, now removed), which the launcher fell back to
+# after two crashes in a row; it engaged twice and crashed the same way both times. Only <exe> ships; an old
+# <stem>-normal.exe in a player's folder is moved to _old-files by the launcher (stale_files.cpp: not in SHA256SUMS.txt).
+if ($NoNormalCode) { Write-Host '  note: -NoNormalCode is ignored (0.6.3: no -normal exes are packed at all)' }
 foreach ($p in $ports) {
   foreach ($k in $pinned.Keys) {
     $f = Join-Path $p.from $k
@@ -90,6 +78,18 @@ if (($sdlv -replace '[ ,]+', '.') -notlike "$launcherSdl*") { $problems += "laun
 # FFmpeg: the DLL names (library majors) must be the ones licenses\FFmpeg-NOTICE.txt names (LGPL: the source we name)
 $ffNotice = Get-Content -Raw (Join-Path $cogbox 'licenses\FFmpeg-NOTICE.txt')
 foreach ($f in @(Get-ChildItem $launcher -Filter 'av*-*.dll' -ErrorAction SilentlyContinue)) { if (-not $ffNotice.Contains($f.Name)) { $problems += "launcher $($f.Name) is not the FFmpeg build licenses\FFmpeg-NOTICE.txt describes" } }
+# 0.6.3: 0.6.2 shipped silent - its CogBox.exe asked for avcodec-61.dll / avutil-59.dll (built against FFmpeg 7's headers)
+# beside FFmpeg 9.0.2's avcodec-63.dll / avutil-61.dll. The exe names the DLLs it loads ('cogbox-ffmpeg-dlls: ...'); they must
+# be exactly the av*.dll files beside it, which are packaged. Checked here, before anything is written (review r47).
+$exeBytes = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes((Join-Path $launcher 'CogBox.exe')))
+$haveFf = @(Get-ChildItem $launcher -Filter 'av*-*.dll' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+$m = [regex]::Match($exeBytes, 'cogbox-ffmpeg-dlls: (avcodec-\d+\.dll) (avutil-\d+\.dll)')
+if (-not $m.Success) { $problems += 'launcher CogBox.exe does not name the FFmpeg DLLs it loads (built without FFmpeg, or from a source before 0.6.3) - the library music cannot be checked' }
+else {
+  $wantFf = @($m.Groups[1].Value, $m.Groups[2].Value)
+  foreach ($n in $wantFf) { if ($haveFf -notcontains $n) { $problems += "launcher CogBox.exe loads $n, but beside it are $($haveFf -join ', ') - the library music would be silent (rebuild CogBox.exe with FFMPEG_DIR set to the FFmpeg those DLLs come from)" } }
+  foreach ($n in $haveFf) { if ($wantFf -notcontains $n) { $problems += "launcher $n is beside CogBox.exe, which does not load it (it loads $($wantFf -join ', '))" } }
+  if (-not ($problems -match 'FFmpeg|av[a-z]+-\d+\.dll')) { Write-Host "  library music: CogBox.exe loads $($wantFf -join ' + '), both beside it" } }
 # 0.2.2 (Shagg: developer tools never ship): no profiler, debug runtime, symbols or test program in any port folder, and
 # no shipped program may load Tracy (TracyClient*.dll opens a network port; antivirus flags it, GitHub #24).
 $deny = '^(TracyClient.*\.dll|rexruntimerd\.dll|rexgpu-.*rd\.dll|.*\.pdb|.*\.ilk|.*\.exp|.*\.lib|gn_tests\.exe|.*\.pre.*|.*\.old-.*|.*\.bak)$'
@@ -98,7 +98,7 @@ foreach ($p in $ports) {
   foreach ($f in @(Get-ChildItem -LiteralPath $p.from -File -Filter *.dll -ErrorAction SilentlyContinue)) {
     if ($f.Name -match $deny) { $problems += "developer file would ship: $($p.from)\$($f.Name)" }
   }
-  foreach ($f in @(Get-ChildItem -LiteralPath $p.from -File -Filter *.dll -ErrorAction SilentlyContinue) + @(Get-Item -LiteralPath (Join-Path $p.from $p.exe) -ErrorAction SilentlyContinue) + @(if ($p.normal) { Get-Item -LiteralPath $p.normal })) {   # cg050: the -normal exe too
+  foreach ($f in @(Get-ChildItem -LiteralPath $p.from -File -Filter *.dll -ErrorAction SilentlyContinue) + @(Get-Item -LiteralPath (Join-Path $p.from $p.exe) -ErrorAction SilentlyContinue)) {
     if ($f -and [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($f.FullName)).Contains('TracyClient')) { $problems += "loads Tracy: $($f.FullName)" }
   }
 }
@@ -206,10 +206,10 @@ New-Item -ItemType Directory -Force $Out | Out-Null
 
 # ---- Copy -----------------------------------------------------------------------------------------------------------
 Copy-Item (Join-Path $launcher 'CogBox.exe'), (Join-Path $launcher 'SDL3.dll') $stage
-# The library music's XMA decoder (FFmpeg, LGPL 2.1, separate DLLs; licenses\FFmpeg-*.txt): optional - without them the
-# library is silent, so a build without them still packages (with a warning).
+# The library music's XMA decoder (FFmpeg, LGPL 2.1, separate DLLs; licenses\FFmpeg-*.txt): checked above (0.6.3) - the
+# DLLs CogBox.exe loads must be beside it, so they are always packaged.
 $ff = @(Get-ChildItem $launcher -Filter 'av*-*.dll' -ErrorAction SilentlyContinue)
-if ($ff.Count -ge 2) { $ff | Copy-Item -Destination $stage } else { Write-Warning 'no avcodec / avutil DLLs in cogbox\build: the library music will be silent' }
+if ($ff.Count -ge 2) { $ff | Copy-Item -Destination $stage } else { throw 'no avcodec / avutil DLLs in cogbox\build: the library music would be silent' }
 # GitHub #151: 0.4.1 - 0.4.3 shipped a CogBox.exe built without FFmpeg (no headers in that clone), so the library was
 # silent although the DLLs were there. A launcher built that way is no longer packaged.
 $exeText = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes((Join-Path $launcher 'CogBox.exe')))
@@ -288,7 +288,6 @@ if (@($ports | Where-Object { $_.dlssg }).Count) { foreach ($f in $slFiles) { Co
 foreach ($p in $ports) {
   $dst = Join-Path $stage $p.to; New-Item -ItemType Directory -Force $dst | Out-Null
   Copy-Item (Join-Path $p.from $p.exe) $dst
-  if ($p.normal) { Copy-Item -LiteralPath $p.normal (Join-Path $dst ($p.exe -replace '\.exe$', '-normal.exe')) }   # cg050
   Get-ChildItem -LiteralPath $p.from -Filter *.dll -File | Where-Object { ($sharedNames + $sharedOptional + $slFiles) -notcontains $_.Name } | ForEach-Object { Copy-Item $_.FullName $dst }
   # 0.2.0 (#9): the Agility SDK's D3D12Core.dll in D3D12\ beside each game (the exe's D3D12SDKPath points there)
   $ag = Join-Path $p.from 'D3D12\D3D12Core.dll'
@@ -318,7 +317,7 @@ foreach ($lh in $licHomes) {
 # The check: each licences folder exists, and every shipped .exe / .dll has its licence texts in the licenses\ of its own
 # top folder (game folder, shared\, or the release root). A DLL with no rule here fails the package: add its licence.
 $licRules = [ordered]@{
-  '^(cogbox|gow1|gow2|gow3|gowj)(-normal)?\.exe$' = @('COGBox-LICENSE.txt')   # cg050: -normal
+  '^(cogbox|gow1|gow2|gow3|gowj)\.exe$'           = @('COGBox-LICENSE.txt')
   '^(rexruntime|rexgpu-xenos)\.dll$'             = @('rexglue-sdk\LICENSE', 'Xenia-LICENSE.txt', 'FFmpeg-NOTICE.txt', 'FFmpeg-LGPL-2.1.txt')
   '^(avcodec|avutil)-\d+\.dll$'                  = @('FFmpeg-NOTICE.txt', 'FFmpeg-LGPL-2.1.txt')
   '^sdl3\.dll$'                                  = @('SDL3-LICENSE.txt')

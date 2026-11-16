@@ -45,6 +45,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/renderer/render_target_cache.cpp
     src/layer0_xenos/renderer/guest_watch.cpp
     src/layer0_xenos/renderer/texture_cache.cpp
+    src/layer0_xenos/renderer/texture_pack.cpp
     src/layer0_xenos/renderer/prompt_atlas_catalog.cpp
     src/layer0_xenos/renderer/prompt_overlay_compositor.cpp
     src/layer0_xenos/input/prompt_device_monitor.cpp
@@ -75,6 +76,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/fps_bar.cpp
     src/layer0_xenos/ao_debug.cpp
     src/layer0_xenos/ingame_menu.cpp
+    src/layer0_xenos/window_hotkey.cpp   # GitHub #316
     src/layer0_xenos/menu_look.cpp
     src/layer0_xenos/social_ingame.cpp
     src/layer0_xenos/social_page.cpp
@@ -436,7 +438,9 @@ if(GN_BUILD_TESTS)
         tests/layer0_hlsl_compact_test.cpp
         tests/layer0_upscaler_test.cpp
         tests/layer0_texture_cache_test.cpp
+        tests/layer0_texture_pack_test.cpp
         src/layer0_xenos/renderer/texture_cache.cpp
+        src/layer0_xenos/renderer/texture_pack.cpp
         tests/layer0_render_target_cache_test.cpp
         src/layer0_xenos/renderer/render_target_cache.cpp
         src/layer0_xenos/renderer/guest_watch.cpp
@@ -446,6 +450,7 @@ if(GN_BUILD_TESTS)
         tests/layer0_prompt_compositor_test.cpp
         src/layer0_xenos/renderer/prompt_overlay_compositor.cpp
         tests/layer0_device_monitor_test.cpp
+        tests/layer0_window_hotkey_test.cpp   # GitHub #316 (header only)
         src/layer0_xenos/input/prompt_device_monitor.cpp
         tests/layer0_ao_test.cpp
         tests/layer2_config_bundle_test.cpp
