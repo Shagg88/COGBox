@@ -119,14 +119,48 @@ bool CameraMoveFromObjects(std::vector<ObjectSample> prev, std::vector<ObjectSam
 struct SceneCopyPicker {
   bool last_only = false;
   uint32_t count = 0, last_count = 0;
-  bool Take() {
+  // With last_only, the scene's format - the format of a frame's last copy: copies of another format are not counted,
+  // so a frame that adds or drops a mid-frame copy of another format (Judgment, Blood Drive: a 16-bit float copy before
+  // the 10:10:10:2 scene, every other frame) still takes the same copy. Taking the other one flipped the upscaler's
+  // HDR flag and re-created it (~33 ms a time). After kFormatPatience frames with only other formats, it follows them.
+  static constexpr uint32_t kFormatPatience = 60;
+  uint32_t format = 0, other_frames = 0;
+  bool Take(uint32_t copy_format = 0) {
+    if (last_only && format && copy_format && copy_format != format) {
+      other_seen_ = true;
+      return false;
+    }
     const uint32_t index = count++;
+    if (last_only && !format && copy_format) {   // learning: the frame's copies by format, the last one decides
+      last_format_ = copy_format;
+      if (n_formats_ < 16) formats_[n_formats_++] = copy_format;
+    }
     return !last_only || last_count == 0 || index + 1 >= last_count;
   }
   void EndFrame() {
-    if (count) last_count = count;
+    if (count) {
+      last_count = count;
+      other_frames = 0;
+      if (last_only && !format && last_format_) {   // learnt: count only that format's copies from now on
+        format = last_format_;
+        last_count = 0;
+        for (uint32_t i = 0; i < n_formats_; ++i) last_count += formats_[i] == format ? 1u : 0u;
+      }
+    } else if (other_seen_ && ++other_frames >= kFormatPatience) {   // the scene now has another format
+      format = 0;
+      last_count = 0;
+      other_frames = 0;
+    }
     count = 0;
+    other_seen_ = false;
+    last_format_ = 0;
+    n_formats_ = 0;
   }
+
+ private:
+  bool other_seen_ = false;
+  uint32_t last_format_ = 0, n_formats_ = 0;
+  uint32_t formats_[16] = {};
 };
 
 // Notes/80 s.6 (Gears 2): one character of the game's velocity pass. UE3 gives its VS this frame's object-to-world

@@ -2,6 +2,13 @@
 
 ## 0.6.4 (in progress)
 
+- **Judgment: no more stutter when moving between areas of a map** (Blood Drive most of all, by Flippage): with an
+  upscaler on (seen with DLSS), the scene copy it used switched every other frame between a mid-frame HDR copy and
+  the final scene, so the upscaler was rebuilt each time (about 33 ms, 50+ times in one Blood Drive match). It now
+  keeps to the scene copy's format and is built once. The first copy of each new resolve destination also no longer
+  waits for the GPU (patch 0020 read-back); it lands one frame later like every other copy
+  (`--gow2_renderer_resolve_readback_first_wait=true` brings the old wait back).
+
 - **French achievement wording now matches the French Xbox 360** (by IamBugReporter, GitHub #339): "déverrouillé" instead of
   "débloqué", "Succès caché" for secret achievements and "Gamerscore" instead of "Score".
 
