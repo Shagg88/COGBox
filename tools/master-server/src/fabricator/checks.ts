@@ -24,7 +24,7 @@ export interface ZipCheck { ok: boolean; problems: string[]; modIni: ModIniInfo 
 
 /** mod.ini with modcore's rules: keys case-insensitive, `;` / `#` comment lines, `Requires` comma separated. */
 export function parseModIni(text: string): ModIniInfo {
-  const info: ModIniInfo = { requires: [] };
+  const info: ModIniInfo = { requires: [], game: 'gears3' };   // modcore: no Game key means gears3
   let section = '';
   text = text.replace(/^﻿/, '');
   for (let line of text.split(/\r?\n/)) {
@@ -47,9 +47,11 @@ export function parseModIni(text: string): ModIniInfo {
 
 function badPath(name: string): boolean {
   if (name.includes('\0')) return true;
+  if (name.includes(':')) return true;   // drive letters and NTFS alternate data streams
   const p = name.replace(/\\/g, '/');
-  if (p.startsWith('/') || /^[a-zA-Z]:/.test(p)) return true;
-  return p.split('/').some((seg) => seg === '..');
+  if (p.startsWith('/')) return true;
+  // Windows drops trailing dots and spaces from a name, so ".. " and "..." are really ".."
+  return p.split('/').some((seg) => seg !== '' && seg !== '.' && seg.replace(/[. ]+$/, '') === '');
 }
 
 export function checkModZip(file: string, game: string, s: FabSettings): Promise<ZipCheck> {
@@ -57,6 +59,7 @@ export function checkModZip(file: string, game: string, s: FabSettings): Promise
     const problems: string[] = [];
     let unpacked = 0, files = 0, iniEntry: yauzl.Entry | null = null, iniDepth = 99;
     let refusedShown = 0;
+    const toInflate: yauzl.Entry[] = [];
     const note = (p: string) => { if (!problems.includes(p)) problems.push(p); };
     const finish = (modIni: ModIniInfo | null) => {
       if (modIni) {
@@ -81,7 +84,7 @@ export function checkModZip(file: string, game: string, s: FabSettings): Promise
         if (unixMode === 0xa000) note('the zip contains a link (symlink), which is not allowed');
         const isDir = name.endsWith('/');
         if (!isDir) {
-          const base = name.replace(/\\/g, '/').split('/').pop() ?? '';
+          const base = (name.replace(/\\/g, '/').split('/').pop() ?? '').replace(/[. ]+$/, '');
           const dot = base.lastIndexOf('.');
           const ext = dot >= 0 ? base.slice(dot).toLowerCase() : '';
           if (REFUSED_EXT.has(ext) && refusedShown++ < 5) note(`program file not allowed (${ext}): ${base}`);
@@ -90,6 +93,7 @@ export function checkModZip(file: string, game: string, s: FabSettings): Promise
           if (depth < iniDepth) { iniDepth = depth; iniEntry = e; }
         }
         unpacked += e.uncompressedSize;
+        if (!isDir && !e.isEncrypted()) toInflate.push(e);
         if (unpacked > s.maxUnpackedBytes) { note(`unpacked size is over the limit of ${s.maxUnpackedBytes} bytes`); return stop(); }
         zip.readEntry();
       });
@@ -97,6 +101,7 @@ export function checkModZip(file: string, game: string, s: FabSettings): Promise
         if (stopped) return;
         stopped = true;
         const e = iniEntry as yauzl.Entry | null;
+        const readIni = () => {
         if (!e) { zip.close(); return finish(null); }
         if (e.uncompressedSize > MAX_INI_BYTES) { zip.close(); note('mod.ini is too large'); return finish(null); }
         zip.openReadStream(e, (rerr, stream) => {
@@ -106,6 +111,31 @@ export function checkModZip(file: string, game: string, s: FabSettings): Promise
           stream.on('error', () => { note('mod.ini cannot be read'); zip.close(); finish(null); });
           stream.on('end', () => { zip.close(); finish(parseModIni(Buffer.concat(chunks).toString('utf8'))); });
         });
+        };
+        // second pass: really inflate every entry and count the true bytes (declared sizes can lie)
+        if (problems.length > 0) return readIni();
+        let real = 0, idx = 0;
+        const next = (): void => {
+          if (idx >= toInflate.length) return readIni();
+          const entry = toInflate[idx++];
+          zip.openReadStream(entry, (ierr, st) => {
+            if (ierr || !st) { note('an entry cannot be unpacked: size or data is invalid'); zip.close(); return finish(null); }
+            let over = false;
+            st.on('data', (c: Buffer) => {
+              real += c.length;
+              if (!over && real > s.maxUnpackedBytes) {
+                over = true; st.destroy();
+                note(`unpacked size is over the limit of ${s.maxUnpackedBytes} bytes`); zip.close(); finish(null);
+              }
+            });
+            st.on('error', () => {
+              if (over) return;
+              note('an entry unpacks to a different size than declared (size mismatch) or is damaged'); zip.close(); finish(null);
+            });
+            st.on('end', () => { if (!over) next(); });
+          });
+        };
+        next();
       });
       zip.readEntry();
     });

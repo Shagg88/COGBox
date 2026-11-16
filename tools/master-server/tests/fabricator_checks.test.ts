@@ -136,3 +136,39 @@ describe('checkText', () => {
     expect(checkText({ ...ok, notes: 'x'.repeat(2001) }).length).toBe(1);
   });
 });
+
+describe('checkModZip hardening', () => {
+  for (const p of ['evil.dll.', 'evil.dll ', 'evil.dll:stream', 'x/evil.exe. .'])
+    it(`rejects windows-normalised name "${p}"`, async () => {
+      const r = await checkModZip(await makeZip({ [p]: 'x' }), 'gears3', S);
+      expect(r.ok).toBe(false);
+      expect(r.problems.join()).toMatch(/program|path/);
+    });
+  for (const p of ['.. /x', '.../x', 'a/. ./x'])
+    it(`rejects segment "${p}"`, () => bad({ [p]: 'x' }, 'path'));
+  it('refuses an entry that inflates beyond its declared size', async () => {
+    const f = await makeZip({ 'a.xxx': Buffer.alloc(100000, 0x41) });
+    const b = fs.readFileSync(f);
+    for (let i = 0; i < b.length - 4; i++) {
+      if (b.readUInt32LE(i) === 0x04034b50) b.writeUInt32LE(10, i + 22);
+      if (b.readUInt32LE(i) === 0x02014b50) b.writeUInt32LE(10, i + 24);
+    }
+    fs.writeFileSync(f, b);
+    const r = await checkModZip(f, 'gears3', S);
+    expect(r.ok).toBe(false);
+    expect(r.problems.join()).toContain('size');
+  });
+  it('counts real inflated bytes against the limit', () =>
+    bad({ 'a.xxx': Buffer.alloc(5000, 1), 'b.xxx': Buffer.alloc(5000, 2) }, 'size', { ...S, maxUnpackedBytes: 6000 }));
+  it('mod.ini without Game counts as gears3', async () => {
+    const z = await makeZip({ 'mod.ini': '[Mod]\nName=Nogame\n' });
+    const r2 = await checkModZip(z, 'gears2', S);
+    expect(r2.ok).toBe(false); expect(r2.problems.join()).toContain('game');
+    const r3 = await checkModZip(z, 'gears3', S);
+    expect(r3.ok).toBe(true); expect(r3.modIni?.game).toBe('gears3');
+  });
+  it('no mod.ini passes for any game', async () => {
+    const r = await checkModZip(await makeZip({ 'a.xxx': 'a' }), 'gears2', S);
+    expect(r.ok).toBe(true);
+  });
+});
