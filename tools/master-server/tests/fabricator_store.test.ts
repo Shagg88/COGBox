@@ -30,7 +30,8 @@ describe('fabricator store', () => {
 
   it('fails to assemble when a chunk is missing', async () => {
     await store.writeChunk('upload-0002', 0, Buffer.from('x'));
-    await expect(store.assemble('upload-0002', 2)).rejects.toThrow();
+    await expect(store.assemble('upload-0002', 2)).rejects.toThrow(/ENOENT/);
+    expect(fs.existsSync(path.join(root, 'staging', 'upload-0002.zip'))).toBe(false);
   });
 
   it('commit moves the file and pathOf finds it', async () => {

@@ -53,8 +53,9 @@ export class FabStore {
       }
       await new Promise<void>((res, rej) => { out.once('error', rej); out.end(res); });
     } catch (e) {
-      out.destroy();
-      await fs.promises.rm(file, { force: true });
+      // Wait for the handle to close (Windows cannot delete an open file); a cleanup failure must not mask e.
+      if (!out.closed) await new Promise<void>((res) => { out.once('close', () => res()); out.destroy(); });
+      await fs.promises.rm(file, { force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
       throw e;
     }
     return { file, size, sha256: hash.digest('hex') };
