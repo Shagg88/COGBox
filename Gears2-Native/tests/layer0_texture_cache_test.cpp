@@ -327,6 +327,10 @@ TEST_CASE("texture_cache: a pack texture is read once and shared across guest ad
   std::error_code ec;
   fs::remove_all(tmp, ec);
   const fs::path dump = tmp / "dump", pack = tmp / "pack";
+  auto utf8 = [](const fs::path& p) {  // (the hook takes UTF-8, as the cvars do; %TEMP% may hold non-ASCII names)
+    const auto u = p.u8string();
+    return std::string(reinterpret_cast<const char*>(u.data()), u.size());
+  };
   fs::create_directories(pack, ec);
 
   constexpr uint32_t kW = 256, kH = 256, kBytes = (kW / 4) * (kH / 4) * 16;  // 65536
@@ -343,7 +347,7 @@ TEST_CASE("texture_cache: a pack texture is read once and shared across guest ad
   gpu::SamplerDesc samplers[32] = {};
 
   // 1. The pack's name for this content: the renderer's own pack dump (as a pack maker gets it).
-  SetTexturePacksForTests("", dump.string());
+  SetTexturePacksForTests("", utf8(dump));
   {
     MockBackend backend;
     GuestWatch watch(nullptr);
@@ -360,7 +364,7 @@ TEST_CASE("texture_cache: a pack texture is read once and shared across guest ad
   const std::vector<uint8_t> dds = texpack::WriteDds(gpu::Format::kBC3, 1024, 1024, big.data(), big.size());
   REQUIRE(!dds.empty());
   { std::ofstream out(pack / (name.substr(0, 16) + "_4x.dds"), std::ios::binary); out.write(reinterpret_cast<const char*>(dds.data()), std::streamsize(dds.size())); }
-  SetTexturePacksForTests(pack.string(), "");
+  SetTexturePacksForTests(utf8(pack), "");
 
   MockBackend backend;
   GuestWatch watch(nullptr);
