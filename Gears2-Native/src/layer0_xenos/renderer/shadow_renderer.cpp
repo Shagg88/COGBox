@@ -1300,6 +1300,11 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_resolves_to_guest, false, "Gears2",
 // our T2 resolves is also copied from the GPU mirror back into guest CPU memory, so CPU-path texture loads and pages the
 // CPU touches later see the resolve's bytes (Gears 3 job 087 Z1 [V]: the ch22 black squad needs resolves in CPU memory;
 // our 301 O vs 307 R [V]: the ch10 flash only happens when textures read our resolves).
+REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_readback_first_wait, false, "Gears2",
+                    "Fast resolve read-back (Judgment): the first copy of every destination waits for the GPU, as "
+                    "Canary's cache miss does. Off (default): only small ones (4 KB or less, such as the exposure value) "
+                    "wait; a larger one lands a frame or two later at a swap, like every later copy - moving between "
+                    "areas of a map (Blood Drive) made many first copies, each a full GPU wait");
 REXCVAR_DEFINE_STRING(gow2_renderer_resolve_readback, "auto", "Gears2",
                       "Patch 0020 (Canary readback_resolve, T2 only): auto (default: fast in a game that reads its "
                       "exposure back - Judgment - and none in the others), none, fast (Canary's default: "
@@ -1998,6 +2003,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
         if (!by_game && m != "none" && !resolve_readback_)
           REXLOG_WARN("gow2_renderer: unknown --gow2_renderer_resolve_readback '{}' (auto | none | fast | full); none", m);
         prepare_mirror_ = REXCVAR_GET(gow2_renderer_resolve_prepare_mirror) || resolve_readback_ != 0;
+        resolve_first_wait_ = REXCVAR_GET(gow2_renderer_resolve_readback_first_wait);
         {  // 0.6.1: size limit (the limit also applies to the mirror preparation that the read-back alone turned on)
           const int32_t kb = REXCVAR_GET(gow2_renderer_resolve_readback_max_kb);
           const bool for_exposure = by_game && hints_.exposure_readback && resolve_readback_ == 1;
@@ -2938,10 +2944,11 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         }
         if (prepare_mirror_ || resolve_readback_) {  // patch 0020
           REXLOG_INFO("gow2_renderer: patch 0020 frames {}-{}: mirror prepared {} runs ({:.1f} MB) | readbacks {}, "
-                      "landed {} ({:.1f} MB), waits {}, previous copy not ready {}, failed {}",
+                      "landed {} ({:.1f} MB), waits {}, first copies deferred {}, previous copy not ready {}, failed {}",
                       frame_ + 1 - uint64_t(log_every_), frame_, rb_stats_.prepared_runs,
                       double(rb_stats_.prepared_bytes) / 1048576.0, rb_stats_.readbacks, rb_stats_.landed,
-                      double(rb_stats_.landed_bytes) / 1048576.0, rb_stats_.waits, rb_stats_.not_ready, rb_stats_.failed);
+                      double(rb_stats_.landed_bytes) / 1048576.0, rb_stats_.waits, rb_stats_.first_deferred,
+                      rb_stats_.not_ready, rb_stats_.failed);
           rb_stats_ = {};
         }
         {  // patch 0008
@@ -4853,7 +4860,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Canary IssueCopy_ReadbackResolvePath: the written extent is copied from the mirror into a readback buffer and then
   // into guest memory through the physical mapping (no watch callback, so the pages stay GPU-current; both copies hold
   // the same bytes). full: wait for the GPU now. fast: land the PREVIOUS copy of the same destination (base, length)
-  // now - one frame old, no stall; the first copy of a destination waits, as Canary's cache miss does.
+  // now - one frame old, no stall. The first copy of a destination: a small one (a page or less - Judgment's exposure
+  // value) waits, as Canary's cache miss does, so a new area never reads old bytes for its exposure; a larger one lands
+  // at a later swap (Blood Drive: moving between areas made many, each a full GPU wait) unless
+  // --gow2_renderer_resolve_readback_first_wait.
   void LandResolveReadback(gpu::ReadbackHandle h, uint32_t start, uint32_t length) {
     uint32_t pitch = 0;
     const uint8_t* data = backend_->ReadbackData(h, pitch);
@@ -4887,14 +4897,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint64_t key = (uint64_t(start) << 32) | length;
     auto it = resolve_readback_prev_.find(key);
     if (it == resolve_readback_prev_.end()) {
-      ++rb_stats_.waits;  // first copy of this destination: wait, as Canary does when the previous buffer is missing
-      backend_->WaitForFence(backend_->Submit());
-      LandResolveReadback(h, start, length);
-      resolve_readback_prev_.emplace(key, ResolveReadbackPrev{h, frame_, ++resolve_readback_seq_, resolve_readback_seq_});
+      if (resolve_first_wait_ || length <= kResolveFirstWaitBytes) {
+        ++rb_stats_.waits;  // first copy of this destination: wait, as Canary does when the previous buffer is missing
+        backend_->WaitForFence(backend_->Submit());
+        LandResolveReadback(h, start, length);
+        resolve_readback_prev_.emplace(key, ResolveReadbackPrev{h, frame_, ++resolve_readback_seq_, resolve_readback_seq_});
+        return;
+      }
+      // A larger first copy does not wait (the default; --gow2_renderer_resolve_readback_first_wait=true makes it
+      // wait): it lands at a swap once the GPU is done - one or two frames later - as a copy whose predecessor was
+      // still in flight. The destination holds no buffer of its own until its next copy.
+      ++rb_stats_.first_deferred;
+      const uint64_t seq = ++resolve_readback_seq_;
+      resolve_readback_prev_.emplace(key, ResolveReadbackPrev{0, frame_, seq, 0});
+      resolve_readback_retire_.push_back(ResolveReadbackRetired{h, key, seq});
       return;
     }
     ResolveReadbackPrev& prev = it->second;
-    if (backend_->IsReadbackReady(prev.handle)) {
+    if (!prev.handle) {
+      // its last copy is in the retire list (a deferred first copy): nothing held here to land
+    } else if (backend_->IsReadbackReady(prev.handle)) {
       LandResolveReadback(prev.handle, start, length);
       prev.landed_seq = prev.seq;
       backend_->ReleaseReadback(prev.handle);
@@ -4916,7 +4938,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if ((frame_ & 511u) == 0) {
       for (auto it = resolve_readback_prev_.begin(); it != resolve_readback_prev_.end();) {
         if (it->second.last_frame + 3600 < frame_) {
-          resolve_readback_retire_.push_back(ResolveReadbackRetired{it->second.handle, 0, 0});  // released when done, never landed
+          if (it->second.handle)   // a deferred first copy holds none (its buffer is in the retire list)
+            resolve_readback_retire_.push_back(ResolveReadbackRetired{it->second.handle, 0, 0});  // released when done, never landed
           it = resolve_readback_prev_.erase(it);
         } else {
           ++it;
@@ -5112,6 +5135,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   bool alpha_test_rt0_ = false;        // patch 0027
   // ---- patch 0020: Canary readback_resolve + RequestRange for our T2 resolves ----
   uint32_t resolve_readback_ = 0;  // 0 none, 1 fast, 2 full
+  bool resolve_first_wait_ = false;  // --gow2_renderer_resolve_readback_first_wait
+  static constexpr uint32_t kResolveFirstWaitBytes = 4096;   // a first copy this small always waits (the exposure value)
   bool prepare_mirror_ = false, rb_prepare_every_ = false;
   uint32_t resolve_readback_max_bytes_ = 0;  // 0.6.1: 0 = no limit
   std::vector<uint32_t> mirror_versions_;  // per 4 KB page: the watch version the mirror last got CPU bytes at (~0 never)
@@ -5129,6 +5154,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint64_t resolve_readback_seq_ = 0;
   struct ReadbackStats {
     uint64_t prepared_bytes = 0, prepared_runs = 0, readbacks = 0, landed = 0, landed_bytes = 0, waits = 0, failed = 0,
+             first_deferred = 0,
              not_ready = 0;
   };
   ReadbackStats rb_stats_;
@@ -13675,7 +13701,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint32_t source_scale = rt->scale;  // patch 0141: the upscaler's output is at the output scale
     // Every scene copy is counted, also after the one that was taken (notes/80 s.11).
     bool scene_taken = false;  // --gow2_ssil: this is the frame's scene copy
-    if (up_active_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt) && up_scene_copy_.Take() && !up_scene_done_) {
+    if (up_active_ && up_camera_ && !ms_src && IsSceneColourResolve(info, *rt) && up_scene_copy_.Take(uint32_t(rt->format) + 1u) && !up_scene_done_) {
       up_scene_done_ = true;
       scene_taken = true;
       up_output_upscaled_ = false;

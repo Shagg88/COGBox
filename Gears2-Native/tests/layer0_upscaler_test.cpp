@@ -1,5 +1,6 @@
 // Unit tests for the SDK-independent upscaler pieces (upscaler.h, notes/64): the jitter sequence and the camera motion
 // the motion-vector pass computes. Game-free. Our code (MIT).
+#include <initializer_list>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
@@ -402,6 +403,78 @@ TEST_CASE("upscale: the frame's last scene copy is learned (notes/80 s.11)", "[u
   CHECK(frame(last, 2) == 1);
   CHECK(frame(last, 1) == -1);
   CHECK(frame(last, 1) == 0);
+}
+
+TEST_CASE("upscale: the last scene copy keeps its format (Judgment Blood Drive: DLSS re-created every other frame)", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  // A frame's scene copies by format; returns the format of the copy taken first (0 = none), as the renderer asks.
+  const auto frame = [](up::SceneCopyPicker& p, std::initializer_list<uint32_t> formats) {
+    uint32_t taken = 0;
+    for (uint32_t f : formats)
+      if (p.Take(f) && !taken) taken = f;
+    p.EndFrame();
+    return taken;
+  };
+  constexpr uint32_t kF16 = 1, kR10 = 2;   // a mid-frame 16-bit float copy, the finished 10:10:10:2 scene
+  up::SceneCopyPicker p;
+  p.last_only = true;
+  CHECK(frame(p, {kF16, kR10}) == kF16);   // nothing learned: the first, as before
+  CHECK(frame(p, {kF16, kR10}) == kR10);   // the last: its format is the scene's from now on
+  // Blood Drive: frames with and without the mid-frame copy alternate. Counting every copy took the first (F16) after a
+  // one-copy frame, so the format - DLSS's HDR flag - flipped and DLSS was re-created (~33 ms) every other frame.
+  for (int i = 0; i < 6; ++i) {
+    CHECK(frame(p, {kR10}) == kR10);
+    CHECK(frame(p, {kF16, kR10}) == kR10);
+  }
+  // A real change of the scene's format (only the other one, for a while) is followed.
+  for (int i = 0; i < 60; ++i) frame(p, {kF16});
+  CHECK(frame(p, {kF16}) == kF16);
+  // Off (Gears 2 / 3): format plays no part.
+  up::SceneCopyPicker first;
+  CHECK(frame(first, {kF16, kR10}) == kF16);
+  CHECK(frame(first, {kR10}) == kR10);
+}
+
+TEST_CASE("upscale: a scene copy format learned from a menu frame is learned again in play", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  const auto frame = [](up::SceneCopyPicker& p, std::initializer_list<uint32_t> formats) {
+    uint32_t taken = 0;
+    for (uint32_t f : formats)
+      if (p.Take(f) && !taken) taken = f;
+    p.EndFrame();
+    return taken;
+  };
+  constexpr uint32_t kF16 = 1, kR10 = 2;
+  up::SceneCopyPicker p;
+  p.last_only = true;
+  // the first frames have only the mid-frame copy (a menu, a transition): its format is learned
+  frame(p, {kF16});
+  frame(p, {kF16});
+  // play: every frame still has a copy of that format, then the finished scene. For a while the old choice holds
+  // (no rebuild on a one-off frame) ...
+  for (int i = 0; i < 59; ++i) CHECK(frame(p, {kF16, kR10}) == kF16);
+  // ... then, kFormatPatience frames in a row ending in the other format, it learns again: the finished scene from now on
+  frame(p, {kF16, kR10});
+  frame(p, {kF16, kR10});
+  for (int i = 0; i < 100; ++i) CHECK(frame(p, {kF16, kR10}) == kR10);
+  // and the alternating Blood Drive frames still keep the finished scene
+  for (int i = 0; i < 100; ++i) CHECK(frame(p, i % 2 ? std::initializer_list<uint32_t>{kR10} : std::initializer_list<uint32_t>{kF16, kR10}) == kR10);
+  // a frame with no scene copies at all changes nothing
+  frame(p, {});
+  CHECK(frame(p, {kF16, kR10}) == kR10);
+}
+
+TEST_CASE("upscale: the last scene copy is found in a frame with more than 16 copies", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  up::SceneCopyPicker p;
+  p.last_only = true;
+  for (int f = 0; f < 3; ++f) {
+    int taken = -1;
+    for (int i = 0; i < 20; ++i)
+      if (p.Take(2) && taken < 0) taken = i;
+    p.EndFrame();
+    if (f > 0) CHECK(taken == 19);   // the first frame learns (it takes the first, as before)
+  }
 }
 
 TEST_CASE("upscale: one creation size for a scene that changes width (GitHub #323)", "[upscale]") {

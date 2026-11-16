@@ -119,14 +119,55 @@ bool CameraMoveFromObjects(std::vector<ObjectSample> prev, std::vector<ObjectSam
 struct SceneCopyPicker {
   bool last_only = false;
   uint32_t count = 0, last_count = 0;
-  bool Take() {
+  // With last_only, the scene's format - the format of a frame's last copy: copies of another format are not counted,
+  // so a frame that adds or drops a mid-frame copy of another format (Judgment, Blood Drive: a 16-bit float copy before
+  // the 10:10:10:2 scene, every other frame) still takes the same copy. Taking the other one flipped the upscaler's
+  // HDR flag and re-created it (~33 ms a time). After kFormatPatience frames in a row whose last copy (taken or
+  // skipped) has another format, it learns again: also when every frame still has a copy of the learned format, as
+  // when it learned on a frame that only had the mid-frame copy (a menu, a transition, match start).
+  static constexpr uint32_t kFormatPatience = 60;
+  uint32_t format = 0, other_frames = 0;
+  bool Take(uint32_t copy_format = 0) {
+    if (last_only && copy_format) frame_last_ = copy_format;   // the frame's last copy of any format
+    if (last_only && format && copy_format && copy_format != format) return false;
     const uint32_t index = count++;
+    if (last_only && !format && copy_format) {   // learning: the frame's copies counted by format, the last one decides
+      uint32_t i = 0;
+      while (i < n_formats_ && formats_[i] != copy_format) ++i;
+      if (i == n_formats_ && n_formats_ < kMaxFormats) formats_[n_formats_++] = copy_format;
+      if (i < n_formats_) ++format_counts_[i];
+    }
     return !last_only || last_count == 0 || index + 1 >= last_count;
   }
   void EndFrame() {
-    if (count) last_count = count;
+    bool relearn = false;
+    if (last_only && format && frame_last_) {   // a frame with no copies at all says nothing
+      if (frame_last_ != format) relearn = ++other_frames >= kFormatPatience;
+      else other_frames = 0;
+    }
+    if (relearn) {   // the scene now has another format: learn it from the next frame
+      format = 0;
+      last_count = 0;
+      other_frames = 0;
+    } else if (count) {
+      last_count = count;
+      if (last_only && !format && frame_last_) {   // learnt: count only that format's copies from now on
+        format = frame_last_;
+        last_count = 0;
+        for (uint32_t i = 0; i < n_formats_; ++i)
+          if (formats_[i] == format) last_count = format_counts_[i];
+      }
+    }
     count = 0;
+    frame_last_ = 0;
+    n_formats_ = 0;
+    for (uint32_t& c : format_counts_) c = 0;
   }
+
+ private:
+  static constexpr uint32_t kMaxFormats = 16;   // distinct formats in one frame (a frame has two in practice)
+  uint32_t frame_last_ = 0, n_formats_ = 0;
+  uint32_t formats_[kMaxFormats] = {}, format_counts_[kMaxFormats] = {};
 };
 
 // Notes/80 s.6 (Gears 2): one character of the game's velocity pass. UE3 gives its VS this frame's object-to-world
