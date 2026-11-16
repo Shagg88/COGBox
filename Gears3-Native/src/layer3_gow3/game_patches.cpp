@@ -102,19 +102,20 @@ void Gow3NoDynamicShadows(PPCRegister& r11) {  // after `lwz r11,0x414(r21)` at 
 }
 
 // ---- Picture shape: 21:9, any wider shape, "auto" -------------------------------------------------------------------
-// The game draws a 1280 x H scene with H = 1280 / aspect (even, 320-720), changed at the same sites as the Canary
-// "21:9 Aspect Ratio Ultrawide Patch" (boma) for this XEX, with the view widened exactly (Hor+):
+// The game draws a 1280 x H scene with H = 1280 / aspect (a multiple of 8, 240-720), changed at the same sites as the
+// Canary "21:9 Aspect Ratio Ultrawide Patch" (boma) for this XEX, with the view widened exactly (Hor+):
 //   0x8261BEF0 `lfs f0,0x630(r27)` (the field-of-view factor) -> after it, f0 = the widened factor;
 //   0x8261BE60 `beq cr6,+0x90` -> always taken (ConstrainAspectRatio off);
 //   0x82960C78 `li r11,720` (the scene buffer height, stored to 0x8339242C) -> after it, r11 = H;
-//   0x827C583C `lwz r30,0x242c(r9)` (that height read back for a size check) -> after it, r30 = 720 (as before);
+//   0x827C583C `lwz r30,0x242c(r9)` (that height read back by the scene render targets' sizing, TU6 sub_827D7AA8) ->
+//     left at H since 0.6.3 (GitHub #330; the Canary patch and 0.6.2 forced 720 here, see Gow3UltrawideSizeCheck);
 //   0x82BC9D84 `stw r4,0x88(r3)` -> skipped (pillarboxed pre-rendered videos);
 //   the .rdata float at 0x820CDE2C (16:9 = 1.77778) -> the new aspect, written at load.
 // The front buffer becomes 1280 x H (x the resolution scale), shown at its own shape (--gow2_present_frame_aspect):
 // it fills a window of that shape, letterboxed in others. Shapes narrower than 16:9 (16:10, 4:3) stay 16:9: a taller
 // scene buffer may not fit EDRAM [unchecked].
 REXCVAR_DEFINE_BOOL(gow3_ultrawide, false, "Gears3",
-                    "21:9 ultrawide (Canary patch by boma): a 1280x550 picture (x the resolution scale) with a wider "
+                    "21:9 ultrawide (Canary patch by boma): a 1280x552 picture (x the resolution scale) with a wider "
                     "view; fills a 21:9 window or monitor, letterboxed in others. Same as --gow3_aspect=21:9");
 REXCVAR_DEFINE_STRING(gow3_aspect, "", "Gears3",
                       "Picture shape wider than 16:9: '' = the game's 16:9 (or 21:9 with --gow3_ultrawide), 'auto' = "
@@ -126,8 +127,19 @@ REXCVAR_DEFINE_BOOL(gow3_ultrawide_fov_exact, true, "Gears3",
                     "With --gow3_ultrawide: the wider view computed exactly from each camera's field of view (default), "
                     "or Canary's fixed factor 0.0109750 (false; 21:9 only)");
 
+// GitHub #330: before 0.6.3 the scene render targets stayed 1280x720 under a 1280xH picture; the Stats & Awards pages
+// (Scaleform, whose blend effects copy the screen into those targets and draw it back as if they were the screen's
+// size) then drew stacked blue bands. True (the old way) only to compare, or if a very wide shape fails at start-up.
+REXCVAR_DEFINE_BOOL(gow3_aspect_targets_720, false, "Gears3",
+                    "With --gow3_aspect / --gow3_ultrawide: keep the scene render targets at the 16:9 size 1280x720 as "
+                    "the Canary patch does (before 0.6.3). Off = sized for the picture, as the game sizes them at 16:9 "
+                    "(GitHub #330: on, the Stats & Awards pages draw stacked blue bands)");
+
 namespace {
-constexpr uint32_t kCanaryUltrawideHeight = 550;  // Canary's 21:9 scene height
+// Canary's 21:9 scene height is 550; the game rounds its scene render targets up to 8 rows (sub_827D7AA8), so every
+// height here is a multiple of 8 and the targets match the picture exactly (GitHub #330): 550 -> 552.
+constexpr uint32_t kCanaryUltrawideHeight = 552;
+uint32_t SceneRows(double rows) { return std::clamp(uint32_t(std::lround(rows / 8.0)) * 8u, 240u, 720u); }
 
 double ParseAspect(const std::string& v) {  // "21:9", "3440:1440" or "2.4"; 0 when unreadable
   char* end = nullptr;
@@ -158,8 +170,9 @@ uint32_t WideHeight() {
       REXLOG_INFO("gow3_aspect: '{}' = {:.4f}, not wider than 16:9 - the game's 16:9 picture is kept", v, aspect);
       return 0u;
     }
-    // GitHub #293 (0.6.2): down to 240 rows = 48:9 (three 16:9 screens side by side); 320 (4:1) before
-    const uint32_t h = std::clamp(uint32_t(std::lround(1280.0 / aspect / 2.0)) * 2u, 240u, 720u);
+    // GitHub #293 (0.6.2): down to 240 rows = 48:9 (three 16:9 screens side by side); 320 (4:1) before.
+    // GitHub #330 (0.6.3): a multiple of 8 rows (was: even), as the game's scene render targets are.
+    const uint32_t h = SceneRows(1280.0 / aspect);
     REXLOG_INFO("gow3_aspect: '{}' = {:.4f} -> scene 1280x{} ({:.4f})", v, aspect, h, 1280.0 / h);
     return h;
   }();
@@ -201,8 +214,27 @@ void Gow3UltrawideSceneHeight(PPCRegister& r11) {  // after `li r11,720` at 0x82
   GOW3_LOG_ONCE("gow3_aspect: scene buffer height {} -> {}", r11.u32, WideHeight());
   r11.u64 = WideHeight();
 }
-void Gow3UltrawideSizeCheck(PPCRegister& r30) {  // after `lwz r30,0x242c(r9)` at 0x827C583C
-  if (Wide()) r30.u64 = 720;
+// After `lwz r30,0x242c(r9)` at 0x827C583C (TU6 `lwz r30,0x2bd8(r9)` at 0x827D7ACC), in the scene render targets'
+// sizing (TU6 sub_827D7AA8, UE3 FSceneRenderTargets::Allocate on Xbox): r29 / r30 = the screen width / height globals,
+// grown into BufferSizeX/Y (+204 / +208, rounded up to 8) when larger, then the targets are made again. At 16:9 the
+// targets are exactly the screen's size, and the game's code relies on that: the Stats & Awards pages (a Scaleform
+// movie) copy the screen into a scene target ~40 times a frame (resolve to a 1280 x BufferSizeY texture) and draw it
+// back with tri-strip quads as if the texture were the screen's size [E: from the band ratios 720/540 and 720/480; the
+// quads' coordinates are not logged]. The Canary patch kept r30 = 720 here, so under a 1280x540 picture each copy
+// came back squeezed to 540/720 of its height: the stacked teal bands of GitHub #330 (job 1905: R1
+// 64:27 / D3D12, R3 1x, R4 Vulkan 8:3 with bands 720/480 apart; R2 16:9 clean). The game's own value (H, a multiple
+// of 8 - WideHeight) keeps targets and picture the same size, as at 16:9. Its post-processing scales by BufferSize
+// itself, so the 3D picture is unchanged.
+void Gow3UltrawideSizeCheck(PPCRegister& r30) {
+  if (!Wide()) return;
+  if (REXCVAR_GET(gow3_aspect_targets_720)) {
+    GOW3_LOG_ONCE("gow3_aspect: scene render targets kept at 1280x720 under the 1280x{} picture "
+                  "(--gow3_aspect_targets_720; GitHub #330)", WideHeight());
+    r30.u64 = 720;
+    return;
+  }
+  GOW3_LOG_ONCE("gow3_aspect: scene render targets sized for the picture: 1280x{} (game value {}; 720 before 0.6.3, "
+                "GitHub #330)", WideHeight(), r30.u32);
 }
 bool Gow3UltrawideVideo(PPCRegister& r4) {  // jump_address_on_true: past `stw r4,0x88(r3)` at 0x82BC9D84
   if (!Wide()) return false;
@@ -1043,7 +1075,7 @@ void Gow3ApplyDataPatchesIfRequested(rex::Runtime* runtime) {
     REXLOG_INFO("gow3_patch_show_fps: FPS and frame-time display flags set");
   }
   if (Wide()) {
-    const float aspect = WideHeight() == kCanaryUltrawideHeight ? 2.3272f : float(1280.0 / double(WideHeight()));
+    const float aspect = float(1280.0 / double(WideHeight()));  // 0.6.3: the exact shape (Canary's 2.3272 = 1280 / 550)
     WriteGuestFloat(runtime, gow3::addr::kWidescreenAspect, gow3::addr::kWidescreenAspectValue, aspect,
                     "gow3_aspect: widescreen aspect");
     Gow3UltrawideCameraViewportType(runtime, aspect);

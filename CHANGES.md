@@ -40,6 +40,15 @@
   screen and how often the limit had to hold a frame back - a report zip from a split-screen session tells us which
   part goes wrong.
 - **Less stutter while COGBox prepares shaders, all four games:** at every start COGBox read all of the game's files again (about 4 GB for Gears 3) to find the shaders it prepares in the background, beside the game. Now it remembers each file it has read to the end (in the game's shader cache folder: `prebuild-done.bin`, a few MB) and only reads new or changed files at the next start - on every PC, after the first full start nothing is read again (a COGBox update starts the list once more). On PCs where the game may use 8 logical processors or fewer (for example 4 cores / 8 threads, or a game limited to 8 with an affinity setting), that reading also uses one thread instead of two and slows right down while you play (full speed again on loading screens, menus and videos), and the background shader building (Direct3D 12) keeps half of its threads for what the game needs right now during play, at a lower priority. Faster PCs keep their old thread counts and speeds. The first start still has the reading to do, and an area you reach before its shaders were prepared can still hitch briefly the first time. Not tested on PC yet.
+- **Gears 3: Stats & Awards pages no longer drawn with blue bands with Ultrawide / Match my monitor** (GitHub #330):
+  with a picture wider than 16:9 (Ultrawide ticked, or Render resolution "Match my monitor" / "1080p" on a wide
+  monitor) the Achievements, Ribbons and Medals pages showed stacked teal bands with dark gaps instead of their panel.
+  The game's screen-sized work buffers stayed at the 16:9 height (as in the Canary ultrawide patch COGBox's is based
+  on), and these pages copy the screen into them and draw it back, so each copy came back squeezed. The buffers now
+  match the picture, as the game has them at 16:9. The picture's height is now a multiple of 8 rows, so on some
+  monitors it is a few pixels narrower than before (at most a thin border, under 1% of the width). If a very wide shape
+  (32:9 and wider) no longer starts, `--gow3_aspect_targets_720=true` in `extra-args.txt` brings back the old way - please
+  tell us.
 - **Gears 3: Horde bots are no longer always Dom and Carmine.** The Horde-bots button (Back) asked the game for those two characters by number every time; it now lets the game pick each bot's character at random, the way the game picks bots for its own matches. (Gears 2's bots were already random; its two unused numbers are dropped.) GitHub #270; not tested on PC yet.
 - **Launcher: the library music plays again** (silent in 0.6.2: that launcher was built against the wrong FFmpeg version and could not find the music decoder shipped beside it). The build and the packager now check that the launcher and the decoder DLLs match, so it cannot ship silent again.
 - **Judgment: the loading screen after Monroe Commons no longer hangs above 30 fps** (GitHub #318, also #54 / #38 /
