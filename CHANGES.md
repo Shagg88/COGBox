@@ -11,9 +11,10 @@
 - **Steadier speed with the game window covered or minimised on Windows 11** (all four games): Windows 11 could drop
   the fine timer the games ask for back to its 15.6 ms tick while the window was hidden; COGBox now opts out of that
   (as Xenia Canary does).
-- **Built for AVX2 CPUs** (all four games): the game code now uses the AVX2 / FMA / BMI2 instructions every CPU from about
-  2013 on has (the README already listed an AVX2 CPU as needed), instead of the 2003-era baseline. Multiply-adds are still
-  kept separate, as on the Xbox 360. On an older CPU COGBox says so in plain words instead of crashing.
+- **Built for AVX2 CPUs** (all four games): the game code now uses the AVX2 / FMA / BMI2 instructions of Intel Core
+  (Haswell, 2013) and AMD Ryzen / Excavator CPUs and newer (the README already listed an AVX2 CPU as needed). A separate
+  multiply and add stay separate, as in the Xbox 360 code. On a CPU without AVX2 COGBox says so in plain words instead of
+  crashing.
 - **French achievement wording now matches the French Xbox 360** (by IamBugReporter, GitHub #339): "déverrouillé" instead of
   "débloqué", "Succès caché" for secret achievements and "Gamerscore" instead of "Score".
 
