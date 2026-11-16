@@ -59,17 +59,32 @@ function card(r: CardRow): ModCard {
   };
 }
 
-const ORDER: Record<SortKey, string> = {
-  popular: 'recent DESC, downloads DESC, name COLLATE NOCASE, id',
-  rating: `((${PRIOR_WEIGHT} * ${PRIOR_MEAN} + stars) * 1.0 / (${PRIOR_WEIGHT} + ratings)) DESC, ratings DESC, name COLLATE NOCASE, id`,
-  new: 'created_at DESC, id DESC',
-  updated: 'latest DESC, id DESC',
-  name: 'name COLLATE NOCASE, id',
+// Phase one of a listing: the page's mod ids in order. Sorts that need counts get them from one GROUP BY
+// pass over the (covering) index; name/new/updated never touch the download or rating tables.
+const DL_AGG = `LEFT JOIN (SELECT mod_id, COUNT(*) AS downloads, COALESCE(SUM(at > :since), 0) AS recent
+  FROM fab_downloads GROUP BY mod_id) a ON a.mod_id = m.id`;
+const RATE_AGG = `LEFT JOIN (SELECT mod_id, COUNT(*) AS ratings, SUM(stars) AS stars FROM fab_ratings GROUP BY mod_id) a ON a.mod_id = m.id`;
+const LATEST_AGG = `LEFT JOIN (SELECT mod_id, MAX(created_at) AS latest FROM fab_versions WHERE state = 'live' GROUP BY mod_id) a ON a.mod_id = m.id`;
+const NAME = 'm.name COLLATE NOCASE, m.id';
+const PAGE_IDS: Record<SortKey, { join: string; order: string }> = {
+  popular: { join: DL_AGG, order: `COALESCE(a.recent, 0) DESC, COALESCE(a.downloads, 0) DESC, ${NAME}` },
+  rating: {
+    join: RATE_AGG,
+    order: `((${PRIOR_WEIGHT} * ${PRIOR_MEAN} + COALESCE(a.stars, 0)) * 1.0 / (${PRIOR_WEIGHT} + COALESCE(a.ratings, 0))) DESC, COALESCE(a.ratings, 0) DESC, ${NAME}`,
+  },
+  new: { join: '', order: 'm.created_at DESC, m.id DESC' },
+  updated: { join: LATEST_AGG, order: 'COALESCE(a.latest, m.updated_at) DESC, m.id DESC' },
+  name: { join: '', order: NAME },
 };
+
+export function pageIdsSql(sort: SortKey, where: string): string {
+  const p = PAGE_IDS[sort] ?? PAGE_IDS.popular;
+  return `SELECT m.id FROM fab_mods m ${p.join} WHERE ${where} ORDER BY ${p.order} LIMIT :limit OFFSET :offset`;
+}
 
 export function listMods(db: DatabaseInstance, q: ListQuery, now: number): { mods: ModCard[]; total: number } {
   const where = ["m.state = 'live'"];
-  const args: Record<string, string | number> = { since: now - 30 * DAY_MS };
+  const args: Record<string, string | number> = {};
   const match = q.search ? ftsQuery(q.search) : null;
   if (match) { where.push('m.id IN (SELECT rowid FROM fab_mods_fts WHERE fab_mods_fts MATCH :match)'); args.match = match; }
   if (q.game) { where.push('m.game = :game'); args.game = q.game; }
@@ -77,12 +92,14 @@ export function listMods(db: DatabaseInstance, q: ListQuery, now: number): { mod
   const w = where.join(' AND ');
   const perPage = Math.min(MAX_PER_PAGE, Math.max(1, Math.floor(q.perPage) || 24));
   const page = Math.max(1, Math.floor(q.page) || 1);
-  const order = ORDER[q.sort] ?? ORDER.popular;
-  const total = (db.prepare(`SELECT COUNT(*) AS n FROM fab_mods m WHERE ${w}`).get(
-    Object.fromEntries(Object.entries(args).filter(([k]) => k !== 'since'))) as { n: number }).n;
-  const rows = db.prepare(`SELECT * FROM (${SELECT} WHERE ${w}) ORDER BY ${order} LIMIT :limit OFFSET :offset`)
-    .all({ ...args, limit: perPage, offset: (page - 1) * perPage }) as CardRow[];
-  return { mods: rows.map(card), total };
+  const total = (db.prepare(`SELECT COUNT(*) AS n FROM fab_mods m WHERE ${w}`).get(args) as { n: number }).n;
+  const ids = (db.prepare(pageIdsSql(q.sort, w)).all({ ...args, since: now - 30 * DAY_MS, limit: perPage, offset: (page - 1) * perPage }) as { id: number }[])
+    .map((r) => r.id);
+  if (ids.length === 0) return { mods: [], total };
+  // Phase two: card fields for just those ids (integers from the query above), put back in order.
+  const rows = db.prepare(`${SELECT} WHERE m.id IN (${ids.join(',')})`).all({ since: now - 30 * DAY_MS }) as CardRow[];
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return { mods: ids.map((id) => card(byId.get(id) as CardRow)), total };
 }
 
 const parseList = (s: string): unknown[] => { try { const v = JSON.parse(s); return Array.isArray(v) ? v : []; } catch { return []; } };

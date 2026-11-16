@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { initDb, DatabaseInstance } from '../src/db.js';
-import { listMods, modPage } from '../src/fabricator/catalog.js';
+import { listMods, modPage, pageIdsSql } from '../src/fabricator/catalog.js';
 
 const DAY = 86_400_000;
 const NOW = 100 * DAY;
@@ -153,11 +153,19 @@ describe('fabricator catalog', () => {
     expect(listMods(db, q({ sort: 'updated' }), NOW).mods[0]).toMatchObject({ version: '1.0', size: 100 });
   });
 
-  it('listing aggregates use the mod_id indexes', () => {
-    const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT (SELECT COUNT(*) FROM fab_downloads WHERE mod_id = m.id AND at > 5),
-      (SELECT SUM(stars) FROM fab_ratings WHERE mod_id = m.id) FROM fab_mods m`).all().map((r: any) => r.detail).join(' | ');
-    expect(plan).not.toMatch(/SCAN (fab_downloads|fab_ratings)/);
-    expect(plan).toContain('idx_fab_downloads_mod');
-    expect(plan).toContain('idx_fab_ratings_mod');
+  it('listing query paths do no per-mod work before paging', () => {
+    const plan = (sort: any) => db.prepare('EXPLAIN QUERY PLAN ' + pageIdsSql(sort, "m.state = 'live'"))
+      .all({ since: 0, limit: 10, offset: 0 }).map((r: any) => r.detail).join(' | ');
+    for (const sort of ['name', 'new']) {
+      const p = plan(sort);
+      expect(p).not.toMatch(/CORRELATED|fab_downloads|fab_ratings|fab_versions/);
+    }
+    expect(plan('updated')).not.toMatch(/CORRELATED|fab_downloads|fab_ratings/);
+    const pop = plan('popular');
+    expect(pop).not.toMatch(/CORRELATED|SCAN fab_downloads(?! USING)/);
+    expect(pop).toContain('idx_fab_downloads_mod');
+    const rat = plan('rating');
+    expect(rat).not.toMatch(/CORRELATED|SCAN fab_ratings(?! USING)/);
+    expect(rat).toContain('idx_fab_ratings_mod');
   });
 });
