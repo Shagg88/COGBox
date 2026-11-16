@@ -1563,5 +1563,5 @@ Not now = 暂不
 No saves to bring in were found in the saves folder. = 存档文件夹中没有找到需要导入的存档。
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = 无法移动存档（游戏或其他程序正在使用它们吗？）。未做任何更改。
 A backup of the saves is still being made - try again when it's done. = 存档备份仍在进行中，请完成后再试。
-This title update was made for another copy of the game's default.xex (another print of the disc, or a default.xex changed by a tool), and the game would most likely crash at start. = 此游戏更新是为该游戏的另一个 default.xex 制作的（光盘的另一个版本，或被工具修改过的 default.xex），游戏很可能会在启动时崩溃。
+This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = 此游戏更新是为该游戏的另一个 default.xex 制作的（该游戏的另一个压制版或发行版），游戏很可能会在启动时崩溃。
 Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = 请使用从光盘中原样取出的游戏文件（或你的 Games on Demand 版本），并配上为其制作的游戏更新。

@@ -1563,5 +1563,5 @@ Not now = 나중에
 No saves to bring in were found in the saves folder. = 세이브 폴더에서 가져올 세이브를 찾지 못했습니다.
 The saves could not be moved (is the game or another program using them?). Nothing was changed. = 세이브를 옮기지 못했습니다(게임이나 다른 프로그램이 사용 중인가요?). 아무것도 바뀌지 않았습니다.
 A backup of the saves is still being made - try again when it's done. = 세이브 백업을 아직 만드는 중입니다. 끝난 뒤 다시 시도하세요.
-This title update was made for another copy of the game's default.xex (another print of the disc, or a default.xex changed by a tool), and the game would most likely crash at start. = 이 타이틀 업데이트는 게임의 다른 default.xex(디스크의 다른 판, 또는 도구로 변경된 default.xex)용으로 만들어져, 게임이 시작할 때 충돌할 가능성이 큽니다.
+This title update was made for another copy of the game's default.xex (another print or release of the game), and the game would most likely crash at start. = 이 타이틀 업데이트는 게임의 다른 default.xex(게임의 다른 판 또는 다른 출시본)용으로 만들어져, 게임이 시작할 때 충돌할 가능성이 큽니다.
 Use your game files as they came off the disc (or your Games on Demand copy), with a title update made for them. = 디스크에서 꺼낸 그대로의 게임 파일(또는 Games on Demand 사본)과 그에 맞는 타이틀 업데이트를 사용하세요.
