@@ -94,6 +94,7 @@ void XenosRendererFatal(const std::string& why, bool vulkan);   // d3d12_backend
 #include <array>
 #include <bit>
 #include <bitset>
+#include <cctype>
 #include <cstdio>
 #include <atomic>
 #include <chrono>
@@ -159,6 +160,17 @@ REXCVAR_DEFINE_INT32(gow2_renderer_pipeline_thread_priority, 0, "Gears2",  // jo
                      "its renderer and the audio keep their CPU time during a burst of first-visit builds - Shagg's "
                      "Gears 2 audio crackled while 12 normal-priority workers filled 16 logical processors), 0 = normal, "
                      "-2 = lowest");
+REXCVAR_DEFINE_INT32(gow2_renderer_backlog_priority, -3, "Gears2",
+                     "0.6.3 (4-core laptop stuttering while the start-up backlog built): Windows priority of a pipeline "
+                     "worker while it builds a start-up backlog pipeline (recorded pipelines, the recipe pack; a pipeline "
+                     "a draw asks for is moved to the live queue first and keeps the workers' own priority): -3 = auto "
+                     "(below normal on 8 logical processors or fewer, else the workers' own), -2 = lowest, -1 = below "
+                     "normal, 0 = the workers' own (gow2_renderer_pipeline_thread_priority). D3D12");
+REXCVAR_DEFINE_INT32(gow2_renderer_backlog_play_workers, -1, "Gears2",
+                     "0.6.3: the most pipeline workers on start-up backlog pipelines at once while the game is being "
+                     "played (frames of 64+ draws); loading screens, menus and videos keep every worker, and pipelines a "
+                     "draw asks for are never limited. -1 = auto (half the workers on 8 logical processors or fewer, "
+                     "else no limit), 0 = no limit, N = N. D3D12");
 REXCVAR_DEFINE_INT32(gow2_renderer_pipeline_save_seconds, 15, "Gears2",
                      "Patch 0056: seconds between saves of the pipeline library while it grows (was 60; a quit or a "
                      "hard exit lost everything since the last save). Minimum 5");
@@ -748,17 +760,34 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_memexport, false, "Gears2",
                     "mirror (u0), export-only draws (no rasterization) run as point lists with no targets, the written "
                     "ranges become GPU-current and later vertex fetches read them from the mirror. false: such draws "
                     "are skipped, as before");
-REXCVAR_DEFINE_BOOL(gow2_renderer_export_pending_mirror, false, "Gears2",
+REXCVAR_DEFINE_BOOL(gow2_renderer_export_pending_mirror, true, "Gears2",   // #315 (review r44 R1): on by default
                     "Patch 0007 (Gears 3 2026-10-23, NPC vertex explosions; race found by both chats): while an "
                     "exported range's readback has not landed in guest memory yet, its pages keep feeding vertex "
                     "fetches from the mirror (the export's bytes) even when a CPU write elsewhere in the same 4 MB block "
-                    "ended their GPU-current state - instead of re-uploading the pre-export guest bytes over them. "
-                    "false = as before");
+                    "ended their GPU-current state - instead of re-uploading the pre-export guest bytes over them. On by "
+                    "default since 0.6.3 (GitHub #315: a texture moved twice copies its source through this path). "
+                    "false = as 0.6.2");
 REXCVAR_DEFINE_BOOL(gow2_renderer_export_settle, false, "Gears2",   // parked (Shagg 11-14 15:32): off until proven
                     "Green-vine review (job 1844): when a memexport read-back has landed in guest memory, its pages that "
                     "nothing wrote since stop being GPU-current (guest memory now holds the same bytes), so a texture "
                     "later loaded there takes guest memory - which also has any CPU / file write the page watch could not "
                     "see (read-only pages are never watched). false = they stay GPU-current until a seen write, as before");
+// GitHub #315 (Judgment, AMD RX 7900 XT at 165 fps: blue / purple blocks that build up chapter after chapter): hole H2 of
+// the green-vine review. Judgment / Gears 3 move a streamed texture's small mips
+// with memexport copies; the export is read back into guest memory at the end of the frame. An exact-range callback
+// (a file read next to it, protect-to-writable, decommit, release) can end the pages' GPU-current state BEFORE that
+// read-back lands; a texture loaded then takes guest memory - the pre-move bytes - and the read-back, landing later
+// through the physical mapping, bumps nothing, so the texture keeps the wrong small mips for good. With this on, a texture
+// load over pages our GPU ever wrote first lands any pending read-back over them (FlushExportReadbacksFor: no-op and no
+// wait when none overlaps). It was tied to --gow2_renderer_export_settle (review r26 R1, for a clean A/B), which stays
+// parked off; r26 / r44: correct, waits only when a load overlaps an export still in flight (to be measured on a streaming run; inert in
+// Gears 1 / 2, which move no textures with memexport). The #315 log (0.6.2): 1922 GPU-current pages ended by exact-range
+// callbacks in one 28-minute session (how many of them before their read-back landed is not logged).
+REXCVAR_DEFINE_BOOL(gow2_renderer_texture_land_exports, true, "Gears2",
+                    "GitHub #315 (blue / purple blocks, Judgment): before a texture loads from guest memory pages our GPU "
+                    "once wrote, land any memexport read-back still pending over them (else the texture can keep the "
+                    "bytes from before the game moved it). false = only while the pages are still GPU-current (0.6.2), unless "
+                    "--gow2_renderer_export_settle is on");
 REXCVAR_DEFINE_BOOL(gow2_renderer_memexport_readback, true, "Gears2",
                     "With --gow2_renderer_memexport: copy every exported range back into guest memory once the GPU has "
                     "written it (job 041: Gears 3 moves DXT textures with memexport copies, and DXT textures load from "
@@ -934,6 +963,8 @@ REXCVAR_DEFINE_STRING(gow2_ao_skip_ps, "", "Gears2",
                       "Notes/81: pixel shader hashes, comma-separated, of a game's own AO passes that the chain detection does not "
                       "find (Judgment). Skipped while our AO or no AO is shown, drawn again for the game's own, so F5 and F9 work live");
 REXCVAR_DECLARE(std::string, gow2_pcss);  // shader_cache.cpp (notes/80 s.16)
+REXCVAR_DECLARE(std::string, gow2_renderer_bc_cpu_over_gpu);  // texture_cache.cpp (#202 / #315)
+REXCVAR_DECLARE(int32_t, gow2_renderer_bc_gpu_page_log);       // texture_cache.cpp (#202 / #315)
 REXCVAR_DEFINE_STRING(gow2_pcss_trace_frames, "", "Gears2",
                       "Notes/80 s.16 (developer): frames whose draws that sample a depth-format texture (k_24_8 / k_24_8_FLOAT: shadow "
                       "maps, the scene depth) are logged with their targets, state, textures and first pixel constants");
@@ -997,6 +1028,14 @@ REXCVAR_DEFINE_STRING(gow2_ao_algo, "xegtao", "Gears2",
 REXCVAR_DEFINE_INT32(gow2_ao_cacao_blur, 3, "Gears2",
                      "CACAO's edge-sensitive blur passes (notes/81; 0-8, as AMD's, whose default is 2; 3 looked best in play; 0 only to measure). F8 changes it live "
                      "while CACAO is shown; XeGTAO keeps its own --gow2_ao_denoise");
+REXCVAR_DEFINE_DOUBLE(gow2_ao_max_screen_radius, 0.325, "Gears2",
+                      "XeGTAO: how far its samples reach on screen, as a fraction of the screen height. Close to the "
+                      "camera the effect radius covers much of the screen and its samples leave it - the shadows near "
+                      "the bottom flickered. 0.325: tuned live in Gears 3 (Flippage, 16 Nov) with --gow2_ao_mip_offset 6.5");
+REXCVAR_DEFINE_DOUBLE(gow2_ao_mip_offset, 6.5, "Gears2",
+                      "XeGTAO: depth MIP sampling offset (XE_GTAO_DEFAULT_DEPTH_MIP_SAMPLING_OFFSET 3.30). Higher = far "
+                      "samples read finer depth levels: steadier under camera jitter, a little slower. 6.5 (tuned live in "
+                      "Gears 3, 16 Nov): coarse levels made shadows near the camera flicker as DLSS jitters the view");
 REXCVAR_DEFINE_DOUBLE(gow2_ao_radius, 60.0, "Gears2",
                       "XeGTAO effect radius in the game's world units (notes/80; UE3: about 2 cm each)");
 REXCVAR_DEFINE_INT32(gow2_ao_denoise, 0, "Gears2",
@@ -1111,6 +1150,15 @@ REXCVAR_DEFINE_BOOL(gow2_upscale_passthrough, false, "Gears2",
                     "Diagnostic (Gears 3 job 062): everything as with the upscaler (jitter, motion vectors, depth), but its "
                     "Evaluate is skipped and the jittered scene goes on unchanged - shows whether an artefact is already in "
                     "the scene the game draws under jitter, or comes from the upscaler's reconstruction");
+REXCVAR_DEFINE_BOOL(gow2_upscale_resize_recreate, false, "Gears2",
+                    "Diagnostic (GitHub #323): the old way - DLSS / FSR / XeSS re-created for every scene size (Gears 2 "
+                    "narrows its scene in heavy views, many times a second; ~20 ms each). Off: created once for the "
+                    "largest size, the frame handed over within it, history kept");
+REXCVAR_DEFINE_BOOL(gow2_upscale_resize_reset, false, "Gears2",
+                    "Diagnostic (GitHub #323): throw the upscaler's history away on a frame whose scene size differs from "
+                    "the last one (as the old re-creation did). Off: the history is kept, motion re-expressed for the "
+                    "last frame's size (DLSS / XeSS / FSR; FSR without the padding shader resets on such a frame either "
+                    "way)");
 REXCVAR_DEFINE_INT32(gow2_upscale_jitter_scope, 0, "Gears2",
                      "Diagnostic (Gears 3 job 059): which perspective draws into the scene depth get the upscalers' jitter "
                      "besides the camera draws (same c0-c3 as the frame's first depth-writing scene draw): 0 = none, 1 = also "
@@ -1251,6 +1299,11 @@ REXCVAR_DEFINE_STRING(gow2_renderer_queries, "off", "Gears2",
                       "--gow2_pm4_split; the launcher's \"Real occlusion (experimental)\", D3D12) | "
                       "answer (also write our answers into the game's query reports: the last real count for that "
                       "report, 1 if none; corrected when our count lands)");
+REXCVAR_DEFINE_DOUBLE(gow2_renderer_occlusion_slope_bias, 1.0, "Gears2",
+                      "Occlusion boxes (query draws that write nothing) get this slope-scaled depth bias toward passing. "
+                      "Gears 3 tests them against a half-size depth that keeps the nearest of each 2x2: a flat object's box, "
+                      "lying on that object at a shallow angle, lost to its own surface by under a pixel row's depth, was "
+                      "hidden, then shown again - every other frame (ground patches flickering). 0 = off");
 REXCVAR_DEFINE_INT32(gow2_renderer_queries_min, 0, "Gears2",
                      "Smallest immediate occlusion answer (0 keeps real zeros; 1 = nothing is culled until our count for "
                      "that query has landed, as Canary's fast mode)");
@@ -1373,6 +1426,12 @@ constexpr uint32_t kRegFetchConst = 0x4800;    // SHADER_CONSTANT_FETCH_00_0
 constexpr uint32_t kRegBoolConst = 0x4900;     // SHADER_CONSTANT_BOOL_000_031, then 32 loop constants at 0x4908
 // --gow2_after_load_log_s: steady_clock ticks of the last XenosNoteLoadEnded (a game's loading screen ended); 0 = none.
 std::atomic<int64_t> g_load_ended_ticks{0};
+// 0.6.3 (XenosRendererInPlay): steady-clock ms of the end of the last frame with 64+ draws (play, not a loading screen,
+// a video or a 2D menu); 0 = none yet.
+int64_t PlayClockMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+std::atomic<int64_t> g_play_frame_ms{0};
 
 constexpr uint32_t Bits(uint32_t v, uint32_t shift, uint32_t width) { return (v >> shift) & ((1u << width) - 1u); }
 constexpr int32_t SignExtend(uint32_t v, uint32_t width) {
@@ -1567,6 +1626,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     }
     options.warm_workers = uint32_t(std::max(1, REXCVAR_GET(gow2_renderer_shader_prebuild_workers)));  // patch 0069
     options.warm_thread_priority = std::clamp(REXCVAR_GET(gow2_renderer_shader_prebuild_priority), -2, 0);  // PR #43
+    options.backlog_thread_priority = std::clamp(REXCVAR_GET(gow2_renderer_backlog_priority), -3, 0);  // 0.6.3
+    options.backlog_play_workers = REXCVAR_GET(gow2_renderer_backlog_play_workers);                // 0.6.3
     options.debug_layer = REXCVAR_GET(gow2_renderer_debug);
     options.placed_textures = REXCVAR_GET(gow2_renderer_placed_textures);  // patch 0017
     options.batch_texture_loads = REXCVAR_GET(gow2_renderer_texture_batch) && !vulkan;  // 2026-10-29
@@ -1900,6 +1961,7 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     fill_ownership_ = REXCVAR_GET(gow2_renderer_fill_ownership);
     fill_rect_lists_ = REXCVAR_GET(gow2_renderer_fill_rect_lists);
     overlay_nudge_ = std::clamp(REXCVAR_GET(gow2_renderer_overlay_depth_nudge), 0, 64);  // job 712
+    occ_slope_bias_ = float(std::clamp(REXCVAR_GET(gow2_renderer_occlusion_slope_bias), 0.0, 16.0));
     {   // job 713: the minimum as a D3D10 integer bias on a float24 target (as D3D10IntegerPolygonOffset: ceil(x * 2^21) << 3)
       const double m = std::clamp(double(REXCVAR_GET(gow2_renderer_decal_min_bias)), 0.0, 0.1);
       decal_min_bias_ = m > 0.0 ? int32_t(std::ceil(m * double(1u << 21))) << 3 : 0;
@@ -1959,8 +2021,54 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       textures_->SetProbe(std::move(bases), first, last, REXCVAR_GET(gow2_renderer_texture_probe_dir));
     }
     if (memexport_readback_)  // job 042: moved textures load their new bytes, not the old ones for a frame
-      textures_->SetBeforeCpuLoadOfGpuPages([this](uint32_t start, uint32_t length) { FlushExportReadbacksFor(start, length); });
-      textures_->SetFlushEverGpuWritten(export_settle_);  // r26 R1: the green-vine flushes go with the settle switch
+      textures_->SetBeforeCpuLoadOfGpuPages([this](uint32_t start, uint32_t length) { return FlushExportReadbacksFor(start, length); });
+    // GitHub #315: the H2 flush has its own switch (on by default); --gow2_renderer_export_settle keeps it on too.
+    textures_->SetFlushEverGpuWritten(memexport_readback_ &&
+                                      (REXCVAR_GET(gow2_renderer_texture_land_exports) || export_settle_));
+    {  // GitHub #315 (0.6.3): BC textures take guest memory over the mirror for GPU-current pages - auto = where pending
+       // memexport read-backs can be landed first (texture_cache.cpp, the cvar's comment)
+      std::string mode = REXCVAR_GET(gow2_renderer_bc_cpu_over_gpu);
+      while (!mode.empty() && std::isspace(static_cast<unsigned char>(mode.back()))) mode.pop_back();
+      for (char& c : mode) c = char(std::tolower(static_cast<unsigned char>(c)));
+#ifdef _WIN32
+      // r80 L4: as a bool the cvar took --no-gow2_renderer_bc_cpu_over_gpu (CLI11 "!--no-"); a string cvar's --no- form
+      // only reaches the SDK's pending store (never applied - the cvar is registered before the command line is read).
+      if (rex::cvar::GetFlagSource("gow2_renderer_bc_cpu_over_gpu") == rex::cvar::Source::kDefault) {
+        const std::wstring_view cl = GetCommandLineW();
+        constexpr std::wstring_view kNo = L"--no-gow2_renderer_bc_cpu_over_gpu";
+        for (size_t at = cl.find(kNo); at != std::wstring_view::npos; at = cl.find(kNo, at + 1)) {
+          const size_t end = at + kNo.size();
+          if ((at == 0 || cl[at - 1] == L' ' || cl[at - 1] == L'"' || cl[at - 1] == L'\t') &&
+              (end == cl.size() || cl[end] == L' ' || cl[end] == L'"' || cl[end] == L'\t'))
+            mode = "false";
+        }
+      }
+#endif
+      const bool is_auto = mode == "auto" || mode.empty();
+      const bool is_on = mode == "true" || mode == "1" || mode == "on" || mode == "yes";
+      const bool is_off = mode == "false" || mode == "0" || mode == "off" || mode == "no";
+      if (!is_auto && !is_on && !is_off)  // r80 L1: a typo must not silently turn it off where auto would be on
+        REXLOG_WARN("gow2_renderer: unknown --gow2_renderer_bc_cpu_over_gpu '{}' (auto | true | false); auto", mode);
+      const bool on = is_on || (!is_off && memexport_readback_);
+      textures_->SetBcGuestOverMirror(on);
+      if (on && memexport_ && !memexport_readback_)  // r80 L2: nothing lands first - exported bytes can be replaced
+        REXLOG_WARN("gow2_renderer: BC textures over pages our GPU wrote last: guest memory, but memexport read-backs are "
+                    "off (--gow2_renderer_memexport_readback=false), so pending exports do NOT land first - the mirror's "
+                    "exported bytes can be replaced by older guest bytes (--gow2_renderer_bc_cpu_over_gpu={}, #315)", mode);
+      else if (on || memexport_)
+        REXLOG_INFO("gow2_renderer: BC textures over pages our GPU wrote last: {} (--gow2_renderer_bc_cpu_over_gpu={}, #315)",
+                    !on ? "the mirror's bytes"
+                    : memexport_readback_ ? "guest memory, pending memexport read-backs landed first"
+                                          : "guest memory (no memexport here)",
+                    mode);
+      if (REXCVAR_GET(gow2_renderer_bc_gpu_page_log) > 0) {
+        // #315 diagnostic: the page log names who wrote each GPU-current page last (TagGpuPages)
+        gpu_page_origin_ = std::make_unique<uint8_t[]>(rr::GuestWatch::kPages);
+        textures_->SetGpuPageOrigin([this](uint32_t page) {
+          return page < rr::GuestWatch::kPages ? gpu_page_origin_[page] : uint8_t(0);
+        });
+      }
+    }
     if (const int stale = REXCVAR_GET(gow2_renderer_texture_stale_log); stale > 0) {
       textures_->SetStaleReloadReport(uint32_t(stale), [this](const rr::TextureCache::StaleReload& s) { ReportStale(s); });
       REXLOG_INFO("gow2_renderer: texture stale-reload log on: textures unchanged for {} frames that get new bytes",
@@ -2809,6 +2917,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     const double fl_pipe_wait_ms = pipeline_wait_ms_frame_;  // frame log: this frame's, before the reset below
     const uint32_t fl_draws = uint32_t(draw_index_), fl_skipped = uint32_t(pending_this_frame_);
+    // 0.6.3 (low-core CPUs): a frame of play (64+ draws, the line DecideChapterHold and the recipe pack draw between
+    // play and a loading screen / video / 2D menu). Layer 2's package reader paces itself by it (XenosRendererInPlay),
+    // and the pipeline workers keep part of themselves free of the start-up backlog for the next half second.
+    if (fl_draws >= 64 && !prepare_all_) {
+      g_play_frame_ms.store(PlayClockMs(), std::memory_order_relaxed);
+      backend_->NotePlayFrame();
+    }
     draw_index_ = 0;
     copy_index_ = 0;
     resolve_sig_valid_ = false;  // GitHub #257: repeats are only looked for within a frame
@@ -2935,12 +3050,16 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         const rr::TextureCacheStats& ts = textures_->Stats();
         REXLOG_INFO("gow2_renderer: resolves to guest (T2) frames {}-{}: our resolves written {} ({:.1f} MB), skipped "
                     "{} (format {}, endian {}) | resolves seen {} (colour {}, depth {}) | texture pages from our resolves kept {} / "
-                    "counted changed {} (this range) | CPU-path loads that read our pages {} (this range, should be 0)",
+                    "counted changed {} (this range) | CPU-path loads that read our pages {} (this range, should be 0) | "
+                    "#315 texture loads that landed export read-backs first {} (this range; the waits are in the memexport line) | "
+                    "#315 BC pages taken from guest memory over the mirror {} in {} loads, BC loads that kept the mirror "
+                    "after a failed read-back {} (this range)",
                     frame_ + 1 - uint64_t(log_every_), frame_, t2_stats_.written, double(t2_stats_.bytes) / 1048576.0,
                     t2_stats_.skipped, t2_stats_.skipped_format, t2_stats_.skipped_endian,
                     t2_stats_.seen_colour + t2_stats_.seen_depth, t2_stats_.seen_colour,
                     t2_stats_.seen_depth, ts.gpu_pages_kept, ts.gpu_pages_changed,
-                    ts.cpu_loads_of_gpu_pages);
+                    ts.cpu_loads_of_gpu_pages, ts.land_export_calls, ts.bc_guest_pages, ts.bc_guest_loads,
+                    ts.bc_guest_failed_loads);
         if (t2_measure_skip_)
           REXLOG_INFO("gow2_renderer: T2 measure-skip frames {}-{}: through-only {}, skipped {} (mirror not written)",
                       frame_ + 1 - uint64_t(log_every_), frame_, t2_stats_.measure_through_only,
@@ -3305,6 +3424,15 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // XDK patches vertex shaders at bind, so their microcode in the files never matches a draw's (job 367).
  public:
   bool PrebuildWanted() const { return prebuild_on_; }
+  // 0.6.3 (layer 2's done-list): the pixel shaders this renderer takes from the packages (the sets are read-only after
+  // Init, which runs before layer 2's reader starts), and an identity of that list (0 = every pixel shader).
+  bool PrebuildPixelWanted(uint64_t h) const {
+    if (!prebuild_on_) return false;
+    if (rcp_on_) return rcp_ps_.count(h) != 0;
+    if (!recipe_ps_.empty()) return recipe_ps_.count(h) != 0;
+    return true;
+  }
+  uint64_t PrebuildSelectiveKey() const { return prebuild_on_ ? prebuild_selective_key_ : 0; }
   void OnPrebuildPixelShader(const void* be_ucode, uint32_t size, uint32_t variant) {  // any thread (layer 2's reader)
     if (rcp_on_) {  // notes/78 C3: the recipe pack decides (the 0068 warm-only path is not used with it)
       OfferRecipePixel(be_ucode, size);
@@ -3339,6 +3467,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!prebuild_on_) {
       if (!recipe_ps_.empty()) REXLOG_INFO("gow2_renderer: chapter recipes not used - our renderer is not on the DXBC path");
       return;
+    }
+    // 0.6.3: what layer 2's done-list is valid for - the recipe pack file, or the sorted chapter-recipe fingerprints.
+    if (rcp_on_) {
+      prebuild_selective_key_ = rcp_pack_hash_ ? rcp_pack_hash_ : 1;
+    } else if (!recipe_ps_.empty()) {
+      std::vector<uint64_t> keys(recipe_ps_.begin(), recipe_ps_.end());
+      std::sort(keys.begin(), keys.end());
+      prebuild_selective_key_ = XXH3_64bits(keys.data(), keys.size() * sizeof(uint64_t)) | 1;
+    }
+    // (review r61 #6) ... and this build of the matching (OfferRecipePixel / MatchVertex are compiled into this file):
+    // a new build starts the list again, one full read per release.
+    if (prebuild_selective_key_) {
+      static constexpr char kBuild[] = __DATE__ " " __TIME__;
+      prebuild_selective_key_ = (XXH3_64bits(kBuild, sizeof(kBuild) - 1) ^ (prebuild_selective_key_ * 0x9E3779B97F4A7C15ull)) | 1;
     }
     LoadVariantCounts();  // patch 0069
     prebuild_thread_ = std::thread([this] { PrebuildThread(); });  // lives as long as the renderer (never destroyed)
@@ -3421,6 +3563,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
   bool prebuild_on_ = false;
+  uint64_t prebuild_selective_key_ = 0;  // 0.6.3 (PrebuildSelectiveKey; set in Init)
+  uint64_t rcp_pack_hash_ = 0;           // 0.6.3: XXH3 of the recipe pack file (LoadRecipePack)
   // notes/78: chapter recipes - the pixel-shader fingerprints to build (written once in Init, then only read).
   std::unordered_set<uint64_t> recipe_ps_;
   std::atomic<uint64_t> prebuild_not_recipe_{0};
@@ -3725,6 +3869,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     AoDebugView(w, h);  // notes/80 (--gow2_ao_debug)
     ao_ready_ = false;
+    ao_pending_ = false;
     // "Match my monitor": the image at the window's exact size (the game's shape kept), shown 1:1 by the presenter.
     rex::system::X_VIDEO_MODE mode;
     rex::kernel::xboxkrnl::VdQueryVideoMode(&mode);
@@ -5294,6 +5439,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (REXCVAR_GET(gow2_renderer_watch_resolves) || prepare_mirror_)  // patch 0014 / 0020: arm before marking
       watch_->Watch(info.dest_extent_start, info.dest_extent_length);
+    TagGpuPages(info.dest_extent_start, info.dest_extent_length, 0);  // #315 diagnostic (bc_gpu_page_log)
     watch_->MarkGpuWritten(info.dest_extent_start, info.dest_extent_length, scaled);
     if (rb_this) ReadbackResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
     if (through_on) {
@@ -5587,6 +5733,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Guest pixels. 512 high, not 576: ultrawide (--gow2_ultrawide) renders 1280x550 at 1x, and DLSS / FSR never started
   // there with 576 (job 261).
   static constexpr uint32_t kSceneMinWidth = 1024, kSceneMinHeight = 512;
+  // GitHub #323: the Gears games' full scene (720p, guest pixels) - the size an SDK upscaler grows to when a frame
+  // exceeds the one it was made for (upscale::FitCreationSize).
+  static constexpr uint32_t kSceneFullWidth = 1280, kSceneFullHeight = 720;
+  // r83 L2: frames in a row that must fit a smaller size before the upscaler is re-created for it
+  // (upscale::UpdateCreationSize; doubles each time a shrink is undone).
+  static constexpr uint32_t kCreationShrinkFrames = 600;
   std::unique_ptr<rr::upscale::Upscaler> upscaler_;
   // Patch 0145: the camera tracking and the depth / motion passes run when an upscaler is selected or with
   // --gow2_fg_inputs; inputs only = no upscaler, no jitter, the resolve reads the scene as it is.
@@ -5617,6 +5769,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t ao_denoise_passes_ = 3;
   uint32_t ao_w_ = 0, ao_h_ = 0;
   bool ao_ready_ = false, ao_failed_logged_ = false;
+  // Gears 3 / Judgment copy the scene depth out once or twice a frame, changing from frame to frame (draw traces: with
+  // two, the first after about half the opaque scene). XeGTAO on such a first copy misses everything drawn after it -
+  // the ground, so hidden geometry ghosts through it. So every scene-depth copy rebuilds XeGTAO's depth pyramid (its own
+  // texture: the last copy wins), and the main and denoise passes run once, when the frame's AO is first read
+  // (AoFinish). ao_ready_: this frame's AO is (or will be) there; ao_pending_: its main passes still have to run.
+  bool ao_pending_ = false;
+  gpu::ComputeBindings ao_pending_b_{};
   int32_t ao_debug_ = 0;
   uint64_t ao_runs_ = 0;
   // Notes/80 s.4: the game's AO chain found by shape in this frame's resolves (the ping-pong address and how many
@@ -5769,6 +5928,21 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint64_t up_dc_frames_ = 0;
   gpu::TextureHandle up_depth_ = 0, up_motion_ = 0, up_output_ = 0;
   uint32_t up_w_ = 0, up_h_ = 0;
+  // GitHub #323: the SDK upscaler is created for a guest size the frames fit in (upscale::UpdateCreationSize) at these
+  // render / output scales; up_output_ has that size. kPadded (DLSS, XeSS, FSR): the frame's inputs padded to it
+  // (kUpscalePadCs), when the frame or the last one is smaller. up_prev_rw_ / rh_: the last frame the upscaler
+  // evaluated (r83 L6: set after its Evaluate); up_scene_rw_ / rh_: the last scene seen (the size-change count).
+  rr::upscale::CreationSize up_fix_;
+  uint32_t up_fix_rs_ = 0, up_fix_os_ = 0, up_prev_rw_ = 0, up_prev_rh_ = 0, up_scene_rw_ = 0, up_scene_rh_ = 0;
+  uint32_t up_frame_ow_ = 0, up_frame_oh_ = 0;  // the last frame's output size (up_ow_ / up_oh_: the creation's)
+  gpu::PipelineHandle up_pad_pipe_ = 0;
+  gpu::TextureHandle up_pad_colour_ = 0, up_pad_depth_ = 0, up_pad_motion_ = 0;
+  uint32_t up_pad_w_ = 0, up_pad_h_ = 0;
+  gpu::Format up_pad_format_ = gpu::Format::kUnknown;
+  bool up_pad_failed_ = false;  // r83 L4: its textures could not be made - the fallback mode for the session
+  // The last Configure's render / output size and flags (hdr | depth inverted << 1 | no far plane << 2).
+  uint32_t up_cfg_[5] = {};
+  uint64_t up_size_changes_ = 0, up_recreates_ = 0, up_padded_ = 0, up_shrinks_ = 0;  // log window
   // Patch 0141 (upscaling modes): scene scale (0 = native), output size, whether this frame's output is upscaled, the
   // phase flip pending after the scene resolve packet, frames whose scene ran below the output, frames that never flipped.
   uint32_t up_scale_in_ = 0, up_ow_ = 0, up_oh_ = 0;
@@ -5880,6 +6054,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       const gpu::ShaderHandle m = cache_->GetBuiltin("upscale_motion_cs", rr::builtin::kMotionVectorsCs, gpu::ShaderStage::kCompute);
       up_depth_pipe_ = d ? backend_->CreateComputePipeline(d) : 0;
       up_motion_pipe_ = m ? backend_->CreateComputePipeline(m) : 0;
+      // GitHub #323: DLSS / XeSS / FSR keep one size; a narrower scene is padded to it (RunUpscaler). D3D12 and Vulkan
+      // (r83 M1: FSR runs on both; the shader cache compiles the HLSL to SPIR-V like the other built-ins, its storage
+      // image formatless - the view's format, as up_output_ and the depth / motion passes already need).
+      if (upscaler_ && upscaler_->Resize() == rr::upscale::ResizeMode::kPadded &&
+          !REXCVAR_GET(gow2_upscale_resize_recreate)) {
+        const gpu::ShaderHandle p = cache_->GetBuiltin("upscale_pad_cs", rr::builtin::kUpscalePadCs, gpu::ShaderStage::kCompute);
+        up_pad_pipe_ = p ? backend_->CreateComputePipeline(p) : 0;
+        if (!up_pad_pipe_)
+          REXLOG_WARN("gow2_upscaler: the padding shader failed to compile; {} {} (#323)",
+                      rr::upscale::KindName(upscaler_->kind()),
+                      upscaler_->ResizeFallback() == rr::upscale::ResizeMode::kPerFrame
+                          ? "gets each scene size per dispatch, its history reset when the size changes"
+                          : "is re-created for every scene size");
+      }
       if (REXCVAR_GET(gow2_fg_motion_depth_check)) {  // 0.4.9: FG character ghosting
         const gpu::ShaderHandle dc = cache_->GetBuiltin("upscale_motion_dc_cs", rr::builtin::kMotionVectorsDepthCheckCs,
                                                         gpu::ShaderStage::kCompute);
@@ -6006,7 +6194,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         out[(size_t(y) * w + x) * 2] = v[0];
         out[(size_t(y) * w + x) * 2 + 1] = v[1];
       }
-    if (FILE* fp = std::fopen(path.c_str(), "wb")) {
+    // r75: the folder is a UTF-8 cvar - opened by its wide name (a narrow fopen reads the ANSI code page)
+#ifdef _WIN32
+    FILE* fp = _wfopen(std::filesystem::u8path(path).c_str(), L"wb");
+#else
+    FILE* fp = std::fopen(path.c_str(), "wb");
+#endif
+    if (fp) {
       const int32_t hd[3] = {int32_t(w), int32_t(h), int32_t(f)};
       std::fwrite(hd, sizeof(hd), 1, fp);
       std::fwrite(out.data(), sizeof(float), out.size(), fp);
@@ -7128,6 +7322,69 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         it = frame_ + 1 - it->second > 600 ? om_moving_.erase(it) : std::next(it);
   }
 
+  // GitHub #323 (upscale::ResizeMode::kPadded): the frame's colour, depth and motion (rw x rh) copied into textures of
+  // the creation size (cw x ch), the edge repeated beyond the frame (kUpscalePadCs), and `in` pointed at them. The
+  // motion is re-expressed for the last frame's size (prev_rw x prev_rh) when the history is kept: DLSS / XeSS / FSR
+  // read it in their render pixels, and last frame's image lies in the same grid at its own, other, size. False: no
+  // textures (r83 L4: logged once, the SDK's fallback mode from then on).
+  bool PadUpscaleInputs(rr::upscale::FrameInputs& in, gpu::Format colour_format, uint32_t rw, uint32_t rh, uint32_t cw,
+                        uint32_t ch, uint32_t prev_rw, uint32_t prev_rh) {
+    if (up_pad_w_ != cw || up_pad_h_ != ch || up_pad_format_ != colour_format) {
+      for (gpu::TextureHandle* t : {&up_pad_colour_, &up_pad_depth_, &up_pad_motion_})
+        if (*t) backend_->DestroyTexture(*t), *t = 0;
+      gpu::TextureDesc td;
+      td.width = cw;
+      td.height = ch;
+      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
+      td.format = colour_format;
+      td.debug_name = "upscaler padded colour";
+      up_pad_colour_ = backend_->CreateTexture(td);
+      td.format = gpu::Format::kR32Float;
+      td.debug_name = "upscaler padded depth";
+      up_pad_depth_ = backend_->CreateTexture(td);
+      // r83 L1: R32G32 would keep the re-expressed motion (offset up to ~1000 px at 4x) exact to < 0.01 px; R16G16
+      // rounds it to 0.125-0.5 px on size-change frames only. Kept at R16G16, the format every SDK already gets from
+      // up_motion_: none of the DLSS / XeSS / FFX headers or guides in this repo states that R32G32_FLOAT motion is
+      // accepted (XeSS's and FFX's headers are not in it at all) - switch once that is verified.
+      td.format = gpu::Format::kR16G16Float;
+      td.debug_name = "upscaler padded motion";
+      up_pad_motion_ = backend_->CreateTexture(td);
+      up_pad_w_ = cw, up_pad_h_ = ch, up_pad_format_ = colour_format;
+    }
+    if (!up_pad_colour_ || !up_pad_depth_ || !up_pad_motion_) {  // r83 L4: once, then the fallback for the session
+      for (gpu::TextureHandle* t : {&up_pad_colour_, &up_pad_depth_, &up_pad_motion_})
+        if (*t) backend_->DestroyTexture(*t), *t = 0;
+      up_pad_w_ = up_pad_h_ = 0;
+      up_pad_failed_ = true;
+      REXLOG_WARN("gow2_upscaler: the padded inputs ({}x{}, colour format {}) could not be made; {} {} from now on "
+                  "(#323)", cw, ch, int(colour_format), rr::upscale::KindName(upscaler_->kind()),
+                  upscaler_->ResizeFallback() == rr::upscale::ResizeMode::kPerFrame
+                      ? "gets each scene size per dispatch"
+                      : "is re-created for every scene size");
+      return false;
+    }
+    auto pad = [&](gpu::TextureHandle src, gpu::TextureHandle dst, float kx, float ky) {
+      gpu::ComputeBindings b;
+      b.constants[0] = rw;
+      b.constants[1] = rh;
+      b.constants[2] = std::bit_cast<uint32_t>(kx);
+      b.constants[3] = std::bit_cast<uint32_t>(ky);
+      b.constant_count = 4;
+      b.srv[0] = src;
+      b.uav_texture = dst;
+      backend_->Dispatch(up_pad_pipe_, b, (cw + 7) / 8, (ch + 7) / 8, 1);
+    };
+    const bool remap = !in.reset && prev_rw && prev_rh;
+    pad(in.color, up_pad_colour_, 1.0f, 1.0f);
+    pad(in.depth, up_pad_depth_, 1.0f, 1.0f);
+    pad(in.motion, up_pad_motion_, remap ? float(prev_rw) / float(rw) : 1.0f, remap ? float(prev_rh) / float(rh) : 1.0f);
+    in.color = up_pad_colour_;
+    in.depth = up_pad_depth_;
+    in.motion = up_pad_motion_;
+    ++up_padded_;
+    return true;
+  }
+
   uint32_t up_diag_lines_ = 0;  // Gears 3 job 054
   // Runs the upscaler for the scene colour target; returns the texture the resolve should read (0: keep the target).
   gpu::TextureHandle RunUpscaler(const rr::RenderTarget& rt, uint32_t w, uint32_t h) {
@@ -7149,12 +7406,38 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     const uint32_t rw = w * rt.scale, rh = h * rt.scale;
     // Patch 0141: the output is at the output scale (larger than the render size in an upscaling mode).
-    const uint32_t ow = up_scale_in_ && rt.scale == up_scale_in_ ? w * res_scale_ : rw;
-    const uint32_t oh = up_scale_in_ && rt.scale == up_scale_in_ ? h * res_scale_ : rh;
-    // The output has the scene colour's format (Gears 2 job 271: XeSS requires it; DLSS / FSR accept it). Gears 3's
-    // scene is 10:10:10:2, so this output used to be 16-bit float while the input was not.
-    if (up_w_ != rw || up_h_ != rh || up_ow_ != ow || up_oh_ != oh || up_out_format_ != rt.format) {
-      for (gpu::TextureHandle* t : {&up_depth_, &up_motion_, &up_output_, &up_prev_depth_})
+    const uint32_t os = up_scale_in_ && rt.scale == up_scale_in_ ? res_scale_ : rt.scale;
+    const uint32_t ow = w * os, oh = h * os;
+    // GitHub #323: Gears 2 narrows its scene by itself in heavy views (1024..1280 guest pixels, many times a second);
+    // re-creating DLSS for each size cost ~20 ms. The SDK upscalers are now created for a size the frames fit in
+    // (upscale::UpdateCreationSize) and each frame is handed over within it (upscale::ResizeMode); ours (SMAA T2x) and
+    // --gow2_upscale_resize_recreate keep the frame's own size as before. Without the padding shader or its textures
+    // (r83 L4), an SDK's fallback: FSR per dispatch, DLSS / XeSS re-created.
+    using RM = rr::upscale::ResizeMode;
+    const RM mode = !upscaler_ || REXCVAR_GET(gow2_upscale_resize_recreate) ? RM::kRecreate
+                    : upscaler_->Resize() != RM::kPadded                   ? upscaler_->Resize()
+                    : !up_pad_pipe_ || up_pad_failed_                       ? upscaler_->ResizeFallback()
+                                                                            : RM::kPadded;
+    if (mode == RM::kRecreate || up_fix_rs_ != rt.scale || up_fix_os_ != os) up_fix_ = {};  // this frame's size
+    const rr::upscale::CreationChange fix_change = rr::upscale::UpdateCreationSize(
+        up_fix_, w, h, kSceneFullWidth, kSceneFullHeight, mode == RM::kRecreate ? 0u : kCreationShrinkFrames);
+    up_fix_rs_ = rt.scale, up_fix_os_ = os;
+    const uint32_t cw = up_fix_.w * rt.scale, ch = up_fix_.h * rt.scale;  // the creation's render size
+    const uint32_t cow = up_fix_.w * os, coh = up_fix_.h * os;            // and output size
+    if (fix_change == rr::upscale::CreationChange::kShrink) {  // r83 L2: rare (600 frames, doubling when undone)
+      ++up_shrinks_;
+      REXLOG_INFO("gow2_upscaler: #323: {} frames in a row fit {}x{} (render); the upscaler is made for that size now",
+                  up_fix_.wait ? up_fix_.wait : kCreationShrinkFrames, cw, ch);
+    }
+    if (up_scene_rw_ && (rw != up_scene_rw_ || rh != up_scene_rh_)) ++up_size_changes_;
+    up_scene_rw_ = rw, up_scene_rh_ = rh;
+    const uint32_t prev_rw = up_prev_rw_, prev_rh = up_prev_rh_;  // the last frame the upscaler evaluated
+    const bool resized = prev_rw && (rw != prev_rw || rh != prev_rh);
+    up_frame_ow_ = ow, up_frame_oh_ = oh;
+    // The depth / motion inputs keep the frame's size: their passes (and frame generation, SSIL) size themselves from
+    // these textures. Re-making them is cheap (patch 0017: placed in a shared heap); it was the SDK's feature that cost.
+    if (up_w_ != rw || up_h_ != rh) {
+      for (gpu::TextureHandle* t : {&up_depth_, &up_motion_, &up_prev_depth_})
         if (*t) backend_->DestroyTexture(*t), *t = 0;
       up_prev_depth_ok_ = false;  // --gow2_fg_motion_depth_check: no last frame at this size
       up_depth_saved_ = false;  // notes/80 s.6: an early copy went into the old texture
@@ -7170,12 +7453,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         td.format = gpu::Format::kR32Float;
         up_prev_depth_ = backend_->CreateTexture(td);
       }
+      up_w_ = rw, up_h_ = rh;
+      if (!up_depth_ || !up_motion_) {
+        up_w_ = up_h_ = 0;  // tried again next frame
+        return 0;
+      }
+    }
+    // The output, at the creation's output size (#323; patch 0141: the output scale); the resolve reads the frame's
+    // part of it, top left, as it read the frame-sized output before.
+    // The output has the scene colour's format (Gears 2 job 271: XeSS requires it; DLSS / FSR accept it). Gears 3's
+    // scene is 10:10:10:2, so this output used to be 16-bit float while the input was not.
+    if (upscaler_ && (!up_output_ || up_ow_ != cow || up_oh_ != coh || up_out_format_ != rt.format)) {  // patch 0145:
+      if (up_output_) backend_->DestroyTexture(up_output_), up_output_ = 0;                            // none for inputs only
+      gpu::TextureDesc td;
+      td.width = cow;
+      td.height = coh;
+      td.usage = gpu::kUsageSampled | gpu::kUsageStorage;
       td.format = rt.format;
-      td.width = ow;  // patch 0141
-      td.height = oh;
-      if (upscaler_) up_output_ = backend_->CreateTexture(td);  // patch 0145: none for inputs only
-      up_w_ = rw, up_h_ = rh, up_ow_ = ow, up_oh_ = oh, up_out_format_ = rt.format;
-      if (!up_depth_ || !up_motion_ || (upscaler_ && !up_output_)) return 0;
+      up_output_ = backend_->CreateTexture(td);
+      up_ow_ = cow, up_oh_ = coh, up_out_format_ = rt.format;
+      if (!up_output_) return 0;
     }
     // UE3 computes clip = x*c0 + y*c1 + z*c2 + c3 (job 252): the constants hold the transpose of our row-major matrix.
     const rr::upscale::Mat4 cur = rr::upscale::FromConstantsTransposed(up_vp_, 0);
@@ -7186,7 +7483,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const bool hdr = rt.format == gpu::Format::kR16G16B16A16Float;
     // Notes/80 s.6: the depth handed over is the guest's - reversed-Z in Gears 2 (the viewport maps z/w to 1 - z/w).
     const bool depth_inverted = up_depth_map_.scale < 0.0f;
-    if (upscaler_ && !upscaler_->Configure(*backend_, rw, rh, ow, oh, hdr, persp && infinite, depth_inverted)) {
+    {  // #323 log window: what makes an upscaler re-create (sizes, HDR, depth direction; FSR also the far plane, r83 L3)
+      const uint32_t cfg[5] = {cw, ch, cow, coh,
+                               uint32_t(hdr) | uint32_t(depth_inverted) << 1 | uint32_t(persp && infinite) << 2};
+      if (upscaler_ && !std::equal(cfg, cfg + 5, up_cfg_)) ++up_recreates_, std::copy(cfg, cfg + 5, up_cfg_);
+    }
+    if (upscaler_ && !upscaler_->Configure(*backend_, cw, ch, cow, coh, hdr, persp && infinite, depth_inverted)) {
       REXLOG_WARN("gow2_upscaler: {}; off", upscaler_->Status());
       upscaler_.reset();
       if (ao_mode_ == rr::ao::Mode::kGtao)  // notes/80 s.4: nothing accumulates now (a pass count that was set stays)
@@ -7376,6 +7678,26 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       up_frame_ok_ = true;  // keeps the jitter going
       return 0;             // 0 = the resolve reads the scene target as it is
     }
+    // GitHub #323: a frame of another size than the creation's, or than the last frame's.
+    if (mode == RM::kPerFrame && resized && !in.reset) {
+      // FSR without the padding shader: renderSize / upscaleSize are this frame's (in.render_* / output_* above). Its
+      // history is in output pixels of the last frame's size, which it is not told about - start it again (as the old
+      // re-creation did).
+      in.reset = true;
+      ++up_resets_;
+    } else if (mode == RM::kPadded) {
+      if (resized && !in.reset && REXCVAR_GET(gow2_upscale_resize_reset)) in.reset = true, ++up_resets_;
+      // DLSS / XeSS / FSR are always given the creation's render and output size, with the frame padded into it when
+      // it is smaller - or when the last one was, for the motion's re-expression.
+      if ((rw != cw || rh != ch || resized) && !PadUpscaleInputs(in, rt.format, rw, rh, cw, ch, prev_rw, prev_rh)) {
+        ++up_fail_;
+        return 0;
+      }
+      in.render_width = cw;
+      in.render_height = ch;
+      in.output_width = cow;
+      in.output_height = coh;
+    }
     if (!upscaler_->Evaluate(*backend_, in)) {
       ++up_fail_;
       if (up_scale_in_ && ++up_fail_streak_ >= 30) {  // patch 0141 review: keeps failing below the output -> native
@@ -7389,6 +7711,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     up_fail_streak_ = 0;
     ++up_ok_;
     up_frame_ok_ = true;
+    up_prev_rw_ = rw, up_prev_rh_ = rh;  // #323 (r83 L6): the size the upscaler's history now holds
     up_output_upscaled_ = ow != rw;  // patch 0141: the resolve reads it at the output scale
     if (up_cap_left_ > 0) {  // job 724
       REXLOG_INFO("gow2_upscaler: capture set {} frame {}: jitter told {:.3f} {:.3f}, image shift {:.3f} {:.3f}, reset {}, "
@@ -7926,8 +8249,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   // Notes/80 s.4: XeGTAO on the frame's scene depth, into ao_final_ (scene size, visibility 0..1). Needs the frame's
   // camera (AoConstants) and its depth target complete - called at the scene depth resolve.
-  bool RunGtao() {
+  bool RunGtao(bool defer = false) {
     ao_ready_ = false;
+    ao_pending_ = false;
     if (!ao_prefilter_pipe_ || !ao_main_pipe_ || !ao_denoise_pipe_) return false;
     const rr::ao::GtaoConstants* k = AoConstants();
     if (!k) return false;
@@ -7988,7 +8312,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     b.constants[10] = std::bit_cast<uint32_t>(float(added && add_p >= 0.0 ? add_p : REXCVAR_GET(gow2_ao_power)));
     b.constants[11] = 0;                                // noise index: no temporal accumulation of ours
     b.constants[12] = std::bit_cast<uint32_t>(1.2f);    // denoise blur beta (XeGTAO: one "sharp" pass)
-    b.constants[13] = std::bit_cast<uint32_t>(3.30f);   // XE_GTAO_DEFAULT_DEPTH_MIP_SAMPLING_OFFSET
+    b.constants[13] = std::bit_cast<uint32_t>(float(REXCVAR_GET(gow2_ao_mip_offset)));   // XeGTAO's own default: 3.30
+    b.constants[15] = std::bit_cast<uint32_t>(float(std::clamp(REXCVAR_GET(gow2_ao_max_screen_radius), 0.02, 4.0)));
     b.constants[14] = std::bit_cast<uint32_t>(2.0f);    // XE_GTAO_DEFAULT_SAMPLE_DISTRIBUTION_POWER
     // 1. The view-depth pyramid, one dispatch per level.
     AoPassTag(7);
@@ -8013,6 +8338,28 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       }
     }
     ao_depth_frame_ = frame_;  // SSIL reads the pyramid later in the frame
+    AoPassTag(0);
+    if (defer) {   // the main passes when the AO is first read (AoFinish): a later scene-depth copy may replace the pyramid
+      ao_pending_b_ = b;
+      ao_pending_ = true;
+      ao_ready_ = true;
+      return true;
+    }
+    AoMainPasses(b);
+    return true;
+  }
+
+  // The frame's deferred XeGTAO main and denoise passes, on the pyramid of its last scene-depth copy. Before any read
+  // of ao_final_.
+  void AoFinish() {
+    if (!ao_pending_) return;
+    ao_pending_ = false;
+    AoMainPasses(ao_pending_b_);
+  }
+
+  void AoMainPasses(gpu::ComputeBindings b) {
+    const uint32_t w = ao_w_, h = ao_h_;
+    const bool timed = AoGpuTimed();
     // 2. The main pass: working AO term + edges.
     AoPassTag(8);
     b.constants[3] = 0;
@@ -8042,7 +8389,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     AoPassTag(0);
     ao_ready_ = true;
     ++ao_runs_;
-    return true;
   }
 
   // --gow2_ssil (prototype): the four passes built at start; the keys' state starts from the switches.
@@ -8504,6 +8850,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ao_chain_known_ = true;
     ao_chain_pp_dest_ = ao_pp_dest_;  // notes/80 s.10: only copies to the chain's own ping-pong address are skipped
     if (ao_show_ == 2 || !ao_ready_ || !rt.texture || !ao_final_ || !ao_pack_pipe_) return;  // 2: the game's own AO
+    AoFinish();
     if (ao_full_w_ != ao_w_ || ao_full_h_ != ao_h_) {
       if (ao_full_) backend_->DestroyTexture(ao_full_), ao_full_ = 0;
       gpu::TextureDesc td;
@@ -8579,6 +8926,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   void AoAddPass(rr::RenderTarget& rt) {
     ao_added_frame_ = true;
+    AoFinish();
     auto it = ao_multiply_pipes_.find(uint32_t(rt.format));
     if (it == ao_multiply_pipes_.end()) {
       gpu::GraphicsPipelineDesc d;
@@ -8698,6 +9046,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Notes/80: --gow2_ao_debug - the final AO over the finished picture (present_out_, w x h packed words).
   void AoDebugView(uint32_t w, uint32_t h) {
     if (!ao_debug_ || !ao_ready_ || !ao_debug_pipe_ || !present_out_ || !ao_final_) return;
+    AoFinish();
     gpu::ComputeBindings b;
     b.constant_count = 8;
     b.constants[0] = w;
@@ -8955,19 +9304,24 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                         : std::string()) +
                       std::format(", camera draws after the upscale {:.1f}/frame ({})", double(up_late_draws_) / log_every_,
                                   up_jitter_late_ ? "jittered" : "not jittered") +
-                      (up_scale_in_ ? std::format(" | patch 0141 mode: scene at {}x on {} frames, output {}x {}x{}, "
-                                                  "frames without a scene resolve {}, targets ~{} MB",
-                                                  up_scale_in_, up_scene_phase_frames_, res_scale_, up_ow_, up_oh_,
-                                                  up_no_flip_, rts_->HostBytes() >> 20)
+                      (up_scale_in_ ? std::format(" | patch 0141 mode: scene at {}x on {} frames, output {}x {}x{} "
+                                                  "(upscaler made for {}x{}), frames without a scene resolve {}, "
+                                                  "targets ~{} MB",
+                                                  up_scale_in_, up_scene_phase_frames_, res_scale_, up_frame_ow_,
+                                                  up_frame_oh_, up_ow_, up_oh_, up_no_flip_, rts_->HostBytes() >> 20)
                                     : std::string()));
       {
         rr::RenderTarget* dt = rts_->Find(up_depth_key_);
         REXLOG_INFO("gow2_upscaler: job 722: history resets {} of {} frames | centre motion {:.2f} px/frame mean, {:.1f} max | "
-                    "camera depth target {}x{}, changed {} times | camera matrix c{} | jittered before the camera {:.0f}/frame",
+                    "camera depth target {}x{}, changed {} times | camera matrix c{} | jittered before the camera {:.0f}/frame"
+                    " | #323: scene size changes {}, upscaler re-creations {} (shrinks {}), padded frames {} (made for "
+                    "{}x{}, last frame {}x{}){}",
                     up_resets_, log_every_, up_mv_n_ ? up_mv_sum_ / double(up_mv_n_) : 0.0, up_mv_max_,
                     dt ? dt->guest_width : 0, dt ? dt->guest_height : 0, up_depth_changes_, up_vp_base_,
-                    double(up_jittered_early_) / log_every_);
+                    double(up_jittered_early_) / log_every_, up_size_changes_, up_recreates_, up_shrinks_, up_padded_,
+                    up_cfg_[0], up_cfg_[1], up_scene_rw_, up_scene_rh_, up_pad_failed_ ? ", padding failed" : "");
         up_resets_ = up_mv_n_ = up_depth_changes_ = up_jittered_early_ = 0;
+        up_size_changes_ = up_recreates_ = up_padded_ = up_shrinks_ = 0;
         up_mv_sum_ = up_mv_max_ = 0.0;
       }
       up_scene_phase_frames_ = 0;
@@ -10393,6 +10747,14 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         default: break;
       }
     }
+    // Occlusion boxes: slope-scaled bias toward passing (--gow2_renderer_occlusion_slope_bias, see there).
+    if (occ_slope_bias_ > 0.0f && occ_open_.open && occ_open_.handle && !depth_writes && !draw_colour && ds.depth_enable) {
+      switch (ds.depth_func) {
+        case rr::CompareFunc::GreaterEqual: case rr::CompareFunc::Greater: d.depth_bias_slope += occ_slope_bias_; ++occ_stats_.slope_biased; break;
+        case rr::CompareFunc::LessEqual: case rr::CompareFunc::Less: d.depth_bias_slope -= occ_slope_bias_; ++occ_stats_.slope_biased; break;
+        default: break;
+      }
+    }
     d.depth_clip = ps.raster.depth_clip;
     d.depth_enable = ds.depth_enable;
     d.depth_write = ds.depth_write;
@@ -10834,7 +11196,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         colour_rt[0]->key==native_hdr_key_ && colour_rt[0]->write_gen==native_hdr_write_gen_;
     const bool hdr_effect=psg && !export_shader && NativeHdrEffectDraw(d,pipeline,vsg,*psg,colour_rt[0],ps,sc,&r[kRegFetchConst],issue);
     const bool hdr_ui=!hdr_effect && psg && !export_shader && NativeHdrUiDraw(d,pipeline,vsg,*psg,colour_rt[0],target,sc,issue);
+    const uint64_t draws_before = backend_->Stats().draws;  // #315: original draw only
     issue(target, 0);
+    const bool export_refused = backend_->Stats().draws == draws_before;
     if (!hdr_ui && !hdr_effect && psg && !export_shader) NativeHdrDraw(d, pipeline, vsg, *psg, colour_rt[0], ps, sc, issue);
     if(REXCVAR_GET(gow2_hdr_scene_effects) && colour_rt[0] && colour_rt[0]->key==native_hdr_key_) {
       const auto& colour=*colour_rt[0];
@@ -10847,7 +11211,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (exports) {
       ++stats_.memexport_draws;
       if (skin_scan_last_) SkinScan(r, vsg, vs_hash, needs_ps ? ps_hash : 0, 0, index_count, "memexport");
-      MarkExports(r, vsg);
+      MarkExports(r, vsg, false, export_refused);
       if (needs_ps && psg->memexport) ++stats_.memexport_ps_draws;
     }
     if (om_on_ && up_active_ && !up_camera_only_ && !up_scene_done_ && !export_shader) {  // #147 / #150
@@ -11920,11 +12284,12 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     backend_->SetScissor({0, 0, 1, 1});
     if (REXCVAR_GET(gow2_renderer_export_prepare_mirror)) MarkExports(r, vsg, true);  // patch 0024
     backend_->SetGuestWritable(true);
+    const uint64_t draws_before = backend_->Stats().draws;  // #315 diagnostic: did the backend record the export draw?
     if (indexed) backend_->DrawIndexed(index_ptr_->data(), uint32_t(index_ptr_->size()));
     else backend_->Draw(index_count);
     backend_->SetGuestWritable(false);
     ++stats_.memexport_only_draws;
-    MarkExports(r, vsg);
+    MarkExports(r, vsg, false, backend_->Stats().draws == draws_before);
     // Patch 0012: besides the first 8, the first export draw of every vertex shader (up to 96 shaders) is logged, so a
     // gameplay log shows what the title exports (formats, counts) and not only the load-time texture moves.
     const bool new_vs = memexport_vs_seen_.size() < 96 && memexport_vs_seen_.insert(vs_.hash).second;
@@ -11956,7 +12321,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Job 042 (ground flicker): a CPU-path texture load is about to read [start, start + length). If an export readback
   // over it is still pending, finish the GPU work and write the results into guest memory first - otherwise the load
   // takes the pre-move bytes for the frame or two until the readback lands.
-  void FlushExportReadbacksFor(uint32_t start, uint32_t length) {
+  // Returns false if a read-back over the range failed (now or before, its pages still GPU-current): guest memory lacks
+  // the export there (r80 L6 - the bc_cpu_over_gpu load keeps the mirror then).
+  bool FlushExportReadbacksFor(uint32_t start, uint32_t length) {
     for (const auto& [a, e] : export_ranges_)  // patch 0042: gathered, not issued yet
       if (start < e && a < start + uint64_t(length)) {
         IssueExportReadbacks();
@@ -11965,10 +12332,52 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     bool overlap = false;
     for (const ExportReadback& e : export_readbacks_)
       overlap |= start < e.base + e.size && e.base < start + length;
-    if (!overlap) return;
-    ++stats_.memexport_readback_waits;
-    backend_->WaitForFence(backend_->Submit());
-    PollExportReadbacks();
+    if (overlap) {
+      ++stats_.memexport_readback_waits;
+      backend_->WaitForFence(backend_->Submit());
+      PollExportReadbacks();
+    }
+    bool failed = false;
+    for (size_t i = 0; i < export_readback_failed_.size();) {
+      const uint32_t b = export_readback_failed_[i].base, size = export_readback_failed_[i].size;
+      constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
+      bool live = false;  // a page of it still GPU-current: guest memory may still lack that export
+      for (uint32_t p = (b & 0x1FFFFFFFu) >> kShift; p <= ((b & 0x1FFFFFFFu) + size - 1) >> kShift && !live; ++p)
+        live = watch_->GpuCurrent(p);
+      if (!live) {
+        export_readback_failed_.erase(export_readback_failed_.begin() + ptrdiff_t(i));
+        continue;
+      }
+      failed |= start < b + uint64_t(size) && b < start + uint64_t(length);
+      ++i;
+    }
+    return !failed;
+  }
+  // r80 L6: a read-back that failed (not issued, or not landed), kept while a page of it is GPU-current (bounded).
+  // r84 L2: an identical range is kept once, so a range that fails every frame cannot push other entries out.
+  // r85: seq = the newest read-back sequence number this failure is not covered by (only a read-back issued after it,
+  // seq > this, holds the exports the failed copy missed).
+  void NoteReadbackFailed(uint32_t base, uint32_t size, uint64_t seq) {
+    for (auto& f : export_readback_failed_)
+      if (f.base == base && f.size == size) {
+        f.seq = std::max(f.seq, seq);
+        return;
+      }
+    if (export_readback_failed_.size() >= 64) export_readback_failed_.erase(export_readback_failed_.begin());
+    export_readback_failed_.push_back({base, size, seq});
+  }
+  // r84 L2: a landed read-back put the mirror's current bytes into guest memory over [base, base + size), so a failure
+  // recorded earlier inside that range no longer applies (without this, one transient failure left the switch off over
+  // re-exported pages - which stay GPU-current - for the rest of the session).
+  void ClearReadbackFailedCoveredBy(uint32_t base, uint32_t size, uint64_t seq) {
+    const uint64_t a = base, e = uint64_t(base) + size;
+    for (size_t i = 0; i < export_readback_failed_.size();) {
+      const auto& f = export_readback_failed_[i];
+      if (f.seq < seq && f.base >= a && uint64_t(f.base) + f.size <= e)
+        export_readback_failed_.erase(export_readback_failed_.begin() + ptrdiff_t(i));
+      else
+        ++i;
+    }
   }
 
   // Patch 0042: an exported range [base, base + size) for the end-of-frame readback, merged with any gathered range it
@@ -11997,7 +12406,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     for (const auto& [a, e] : export_ranges_) {  // in address order
       const uint32_t base = uint32_t(a), size = uint32_t(e - a);
       if (const gpu::ReadbackHandle h = backend_->ReadbackGuest(base, size)) {
-        ExportReadback rb{h, base, size, {}};
+        ExportReadback rb{h, base, size, {}, ++export_readback_seq_};
         if (export_settle_) {  // green-vine review: the versions this copy holds (recorded after every export so far)
           constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
           const uint32_t first = (base & 0x1FFFFFFFu) >> kShift, last = ((base & 0x1FFFFFFFu) + size - 1) >> kShift;
@@ -12009,6 +12418,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         ++stats_.memexport_readbacks_issued;
       } else {
         ++stats_.memexport_readback_failures;
+        NoteReadbackFailed(base, size, export_readback_seq_);  // read-backs issued so far predate this export
       }
     }
     export_ranges_.clear();
@@ -12031,6 +12441,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->ReleaseReadback(e.handle);
       ExportReadback done = std::move(export_readbacks_.front());
       export_readbacks_.pop_front();
+      if (!landed) NoteReadbackFailed(done.base, done.size, done.seq);
+      else ClearReadbackFailedCoveredBy(done.base, done.size, done.seq);
       if (landed && !done.versions.empty()) SettleExportPages(done);
     }
   }
@@ -12063,10 +12475,30 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
   }
 
+  // #315 diagnostic (--gow2_renderer_bc_gpu_page_log only): who writes the pages of [address, address + length) - call
+  // before MarkGpuWritten. how: 0 = a resolve, 1 = an export draw, 2 = an export draw the backend refused. A page an
+  // export covers only in part keeps its earlier bits while it is GPU-current (its other bytes are that writer's).
+  void TagGpuPages(uint32_t address, uint32_t length, int how) {
+    if (!gpu_page_origin_ || !length) return;
+    constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
+    const uint64_t a = address & 0x1FFFFFFFu, b = a + length;
+    for (uint64_t p = a >> kShift; p <= (b - 1) >> kShift && p < rr::GuestWatch::kPages; ++p) {
+      uint8_t& o = gpu_page_origin_[p];
+      if (!how) {
+        o = rr::TextureCache::kGpuPageResolve;
+        continue;
+      }
+      const uint8_t refused = how == 2 ? rr::TextureCache::kGpuPageExportRefused : 0;
+      if ((p << kShift) >= a && ((p + 1) << kShift) <= b) o = uint8_t(rr::TextureCache::kGpuPageExport | refused);
+      else o = uint8_t((watch_->GpuCurrent(uint32_t(p)) ? o : 0) | rr::TextureCache::kGpuPageExportPartial | refused);
+    }
+  }
+
   // The guest memory a memexporting draw writes, from its stream constant(s) (the SDK's draw_util::AddMemExportRanges):
   // marked GPU-current (the mirror holds the newer bytes) and watched, so a later CPU write ends that.
   // prepare_only (patch 0024): before the draw, only make the export ranges' pages current in the mirror.
-  void MarkExports(const uint32_t* r, const rr::GuestShader& s, bool prepare_only = false) {
+  // refused (#315 diagnostic): the backend recorded no draw for it (the pages are still marked - see TagGpuPages).
+  void MarkExports(const uint32_t* r, const rr::GuestShader& s, bool prepare_only = false, bool refused = false) {
     for (uint32_t c : s.memexport_stream_constants) {
       if (c >= 256) continue;
       const uint32_t* w = &r[kRegFloatConstVs + 4 * c];
@@ -12095,6 +12527,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         continue;
       }
       watch_->Watch(base, uint32_t(size));
+      TagGpuPages(base, uint32_t(size), refused ? 2 : 1);  // #315 diagnostic (bc_gpu_page_log)
       watch_->MarkGpuWritten(base, uint32_t(size));
       exports_marked_ = true;
       // Green-vine review (diagnostic): destination pages no guest view maps writable get no write watch (the memory
@@ -12332,6 +12765,30 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // used only when they hash to the recipe's fingerprint. Each shader goes into the shader cache as a draw's would
   // (ShaderCache::Get), and each recorded pipeline is queued once both its shaders are ready.
  public:
+  // 0.6.3 (review r61 #2): a batch from layer 2's reader - hashing, filtering and the byte swap outside rcp_mutex_,
+  // which is then taken once (the recording thread takes it every frame; the reader runs at low priority).
+  void OnPrebuildPixelShaders(const XenosPrebuildShaderRef* items, size_t count) {  // any thread
+    if (!rcp_on_) {
+      for (size_t i = 0; i < count; ++i) OnPrebuildPixelShader(items[i].be_ucode, items[i].size_bytes, items[i].variant);
+      return;
+    }
+    std::vector<RcpShader> found;
+    for (size_t i = 0; i < count; ++i) {
+      const uint32_t size = items[i].size_bytes;
+      if (!items[i].be_ucode || !size || size > 256u * 1024u || (size & 3)) continue;
+      const uint64_t h = XXH3_64bits(items[i].be_ucode, size);
+      if (!rcp_ps_.count(h)) continue;  // read-only after Init
+      RcpShader sh;
+      sh.hash = h;
+      sh.vertex = false;
+      RcpToHost(static_cast<const uint8_t*>(items[i].be_ucode), size, sh.dwords);
+      found.push_back(std::move(sh));
+    }
+    if (found.empty()) return;
+    std::lock_guard<std::mutex> lock(rcp_mutex_);
+    for (RcpShader& sh : found)
+      if (rcp_ps_found_.insert(sh.hash).second) rcp_in_.push_back(std::move(sh));
+  }
   void OfferRecipePixel(const void* be_ucode, uint32_t size) {  // any thread (layer 2's reader)
     if (!be_ucode || !size || size > 256u * 1024u || (size & 3)) return;
     const uint64_t h = XXH3_64bits(be_ucode, size);  // the draws' key
@@ -12344,14 +12801,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (!rcp_ps_found_.insert(h).second) return;
     rcp_in_.push_back(std::move(s));
   }
-  void OnPrebuildVertexShader(const void* be_ucode, uint32_t size) {  // any thread (layer 2's reader)
-    if (!rcp_on_ || !be_ucode || !size || size > 256u * 1024u || (size & 3)) return;
+  // 0.6.3: report = true -> returns whether this region rebuilds one of the pack's vertex shaders (found now or earlier)
+  // - layer 2's done-list keeps those regions; so a vertex shader already found is not skipped then (a few dwords of
+  // probe per candidate). report = false: as before (found ones skipped), returns whether one was found now.
+  bool OnPrebuildVertexShader(const void* be_ucode, uint32_t size, bool report) {  // any thread (layer 2's reader)
+    if (!rcp_on_ || !be_ucode || !size || size > 256u * 1024u || (size & 3)) return false;
     rcp_vs_offered_.fetch_add(1, std::memory_order_relaxed);
     thread_local std::vector<uint8_t> scratch;
+    bool matched = false;
     rcp_.MatchVertex(
         static_cast<const uint8_t*>(be_ucode), size / 4, scratch,
-        [this](uint32_t id) { return rcp_vs_found_[id].load(std::memory_order_relaxed) != 0; },
-        [this](const xenos::recipes::VertexFix& v, const std::vector<uint8_t>& bytes) {
+        [this, report](uint32_t id) { return !report && rcp_vs_found_[id].load(std::memory_order_relaxed) != 0; },
+        [this, &matched](const xenos::recipes::VertexFix& v, const std::vector<uint8_t>& bytes) {
+          matched = true;
           if (rcp_vs_found_[v.id].exchange(1)) return;
           RcpShader s;
           s.hash = v.hash;
@@ -12360,6 +12822,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           std::lock_guard<std::mutex> lock(rcp_mutex_);
           rcp_in_.push_back(std::move(s));
         });
+    return matched;
   }
 
  private:
@@ -12392,6 +12855,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       rcp_ = {};
       return;
     }
+    rcp_pack_hash_ = XXH3_64bits(b.data(), b.size());  // 0.6.3
     rcp_records_.resize(rcp_.records.size());
     for (size_t i = 0; i < rcp_records_.size(); ++i)
       std::memcpy(&rcp_records_[i], rcp_.records[i].data(), sizeof(PipelineRecord));
@@ -13415,7 +13879,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ResolveDepth(info, rg, depth_rt, copy, first_draw, last_draw, drawn, Bits(dinfo, 0, 3));
       // Notes/80: XeGTAO right after the game copies its scene depth out (the base pass is done; later in the frame the
       // game clears that EDRAM through a 640-pitch alias, before the scene colour resolve). Once per frame.
-      if (ao_mode_ == rr::ao::Mode::kGtao && !ao_ready_ && up_camera_ && depth_rt && IsSceneDepth(*depth_rt)) RunGtao();
+      // Every scene-depth copy until the AO is read: the frame's last one is the complete depth (see ao_pending_).
+      if (ao_mode_ == rr::ao::Mode::kGtao && (!ao_ready_ || ao_pending_) && up_camera_ && depth_rt &&
+          IsSceneDepth(*depth_rt))
+        RunGtao(true);
       if (up_active_ && !up_camera_only_ && up_camera_ && depth_rt && IsSceneDepth(*depth_rt) && up_depth_at_resolve_)
         UpscaleSaveDepth(*depth_rt);
     } else {
@@ -14482,7 +14949,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   "0 -> {} ({:.1f}%), mean "
                   "{:.1f}, after {:.2f} frames; corrected {}, too late {}, estimate visibility wrong {}, dropped {} | "
                   "SDK answers: fake {}, host {} | draws {:.1f}/frame | backend: segments {} refused {} | reports known {} | "
-                  "answered hidden {}, WRONGLY hidden {} (visible objects skipped), zeros not yet trusted {}",
+                  "answered hidden {}, WRONGLY hidden {} (visible objects skipped), zeros not yet trusted {} | box draws slope-biased {}",
                   queries_mode_ == QueriesMode::kStrict ? "strict" : queries_mode_ == QueriesMode::kAnswer ? "answer" : "shadow",
                   frame_ - uint64_t(log_every_) + 1, frame_,
                   o.ends, double(o.ends) / log_every_, o.ours, o.incomplete, o.refused, o.unended, o.proxies, o.answered,
@@ -14491,7 +14958,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   o.results ? double(o.latency_frames) / double(o.results) : 0.0, o.corrected, o.too_late,
                   o.visibility_changed, o.dropped, o.sdk_fake, o.sdk_host, double(stats_.draws) / log_every_,
                   b.occlusion_segments - occ_backend_segments_base_, b.occlusion_refused - occ_backend_refused_base_,
-                  occ_answers_.size(), o.answered_hidden, o.wrong_hidden, o.zero_not_trusted);
+                  occ_answers_.size(), o.answered_hidden, o.wrong_hidden, o.zero_not_trusted, o.slope_biased);
       occ_backend_segments_base_ = b.occlusion_segments;
       occ_backend_refused_base_ = b.occlusion_refused;
       occ_stats_ = OcclusionStats{};
@@ -14878,12 +15345,20 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     gpu::ReadbackHandle handle = 0;
     uint32_t base = 0, size = 0;
     std::vector<uint32_t> versions;  // green-vine review: per page from base's page, the GPU-current version copied (~0u: none)
+    uint64_t seq = 0;                // r85: issue order (export_readback_seq_)
   };
   bool export_settle_ = false;  // --gow2_renderer_export_settle (green-vine review)
   uint32_t export_unwatchable_logged_ = 0;
   uint64_t watch_exact_logged_ = 0;  // GuestWatch::GpuPagesBumpedExact at the last summary
   std::deque<ExportReadback> export_readbacks_;
   std::map<uint64_t, uint64_t> export_ranges_;  // patch 0042: start -> end, gathered this frame, merged
+  struct FailedReadback {
+    uint32_t base, size;
+    uint64_t seq;  // r85: only a landed read-back with a larger seq clears it
+  };
+  std::vector<FailedReadback> export_readback_failed_;  // r80 L6: NoteReadbackFailed
+  uint64_t export_readback_seq_ = 0;                    // r85: ExportReadback::seq of the last issued read-back
+  std::unique_ptr<uint8_t[]> gpu_page_origin_;  // #315 diagnostic: per page, TextureCache::kGpuPage* (TagGpuPages)
   uint32_t memexport_logged_ = 0;
   std::unordered_set<uint64_t> memexport_vs_seen_;   // patch 0012: export vertex shaders logged once each
   std::unordered_set<uint64_t> export_reader_seen_;  // patch 0012: (vs hash, slot) pairs reading export ranges
@@ -15016,6 +15491,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t fill_rects_logged_ = 0;
   bool fill_trim_ = false;
   std::vector<uint64_t> fill_vs_extra_;   // job 709
+  float occ_slope_bias_ = 1.0f;            // --gow2_renderer_occlusion_slope_bias
   int32_t overlay_nudge_ = 0;              // job 712 (off: did not stop the blood flicker, 13:57 at 64 steps)
   int32_t decal_min_bias_ = 0;             // job 713: 0 = off
   int fill_vs_logged_ = 0;
@@ -15102,7 +15578,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint64_t ends = 0, ours = 0, incomplete = 0, refused = 0, unended = 0, answered = 0, from_cache = 0, fallback = 0,
              results = 0, zero = 0, samples = 0, latency_frames = 0, corrected = 0, too_late = 0,
              visibility_changed = 0, dropped = 0, sdk_fake = 0, sdk_host = 0, proxies = 0, zero_not_trusted = 0,
-             answered_hidden = 0, wrong_hidden = 0;
+             answered_hidden = 0, wrong_hidden = 0, slope_biased = 0;
   };
   OcclusionStats occ_stats_;
   uint64_t occ_backend_segments_base_ = 0, occ_backend_refused_base_ = 0;
@@ -15120,8 +15596,43 @@ bool XenosPrebuildWanted() { return g_release_target && g_release_target->Prebui
 void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant) {     // patch 0068
   if (g_release_target) g_release_target->OnPrebuildPixelShader(be_ucode, size_bytes, variant);
 }
-void XenosPrebuildVertexShader(const void* be_ucode, uint32_t size_bytes) {  // notes/78 C3
-  if (g_release_target) g_release_target->OnPrebuildVertexShader(be_ucode, size_bytes);
+void XenosPrebuildPixelShaders(const XenosPrebuildShaderRef* items, size_t count) {  // 0.6.3 (r61 #2)
+  if (g_release_target && items && count) g_release_target->OnPrebuildPixelShaders(items, count);
+}
+bool XenosPrebuildVertexShader(const void* be_ucode, uint32_t size_bytes, bool report_match) {  // notes/78 C3
+  return g_release_target && g_release_target->OnPrebuildVertexShader(be_ucode, size_bytes, report_match);
+}
+bool XenosPrebuildPixelWanted(uint64_t key) {  // 0.6.3
+  return g_release_target && g_release_target->PrebuildPixelWanted(key);
+}
+uint64_t XenosPrebuildSelectiveKey() { return g_release_target ? g_release_target->PrebuildSelectiveKey() : 0; }  // 0.6.3
+uint32_t XenosUsableProcessors() {  // 0.6.3
+  static const uint32_t n = [] {
+    const uint32_t hw = std::max(1u, std::thread::hardware_concurrency());
+    uint32_t count = 0;
+    const char* source = "hardware_concurrency";
+#ifdef _WIN32
+    DWORD_PTR process_mask = 0, system_mask = 0;
+    if (GetProcessAffinityMask(GetCurrentProcess(), &process_mask, &system_mask) && process_mask) {
+      count = uint32_t(std::popcount(uint64_t(process_mask)));
+      source = "process affinity mask";
+    }
+#endif
+    // A mask covers one processor group (64 at most): a bigger PC whose mask shows its whole group is not "small".
+    if (!count || (count >= 64 && hw > count)) {
+      count = hw;
+      source = "hardware_concurrency";
+    }
+    REXLOG_INFO("pc: {} logical processor(s) usable by this process (from the {}; {} in the PC) - small-CPU defaults "
+                "(8 or fewer) for the shader prebuild and pipeline workers {}",
+                count, source, hw, count <= 8 ? "ON" : "off");
+    return count;
+  }();
+  return n;
+}
+bool XenosRendererInPlay() {  // 0.6.3
+  const int64_t last = g_play_frame_ms.load(std::memory_order_relaxed);
+  return last && PlayClockMs() - last < 500;
 }
 void XenosPrebuildAtStartDone(uint64_t files) {  // job 641
   if (g_release_target) {
