@@ -157,30 +157,45 @@ Gears 3 and Judgment use the same runtime.
   GUIDs, a combined trigger axis, no Guide and no rumble until the pad's first input (a failed rumble is sent again with
   that input), and pads added in raw input's order (split screen may differ from the ring lights). Over Bluetooth
   Windows may drive no trigger motors even where SDL reports them. Apply it in the SDK root (`git apply`).
-- `sdk-patch106-save-adopt-and-key-change-copy.diff` (0.6.3, GitHub #329 "Saves deleted", review r78; after 103,
-  independent of 104 / 105; NOT BUILT yet - needs a runtime build and the r78 PC test): Gears 3 signs PlayerStorage.dat
-  and its profile settings with SHA-1(online XUID + data), and patches 58 / 79 only re-signed between the offline XUID,
-  0 and this run's online XUID. A save signed for any other key - the online account before a new one (DELETE ONLINE
-  ACCOUNT, a new #number), a deleted `identity.json` with online play off, another PC / console, an old backup put back
-  or imported - was left alone; Gears 3 reset it (brightness screen, campaign progress gone, checkpoints kept) and wrote
-  fresh files over it, with no copy kept. `CogPrepareGears3Saves` (called from `OnlineStartup`) now does, in order:
+- `sdk-patch106-save-adopt-and-key-change-copy.diff` (0.6.3, GitHub #329 "Saves deleted", reviews r78 / r79; after
+  103, independent of 104 / 105; runtime NOT BUILT yet - needs a runtime build and the r78 / r79 PC test): Gears 3 signs
+  PlayerStorage.dat and its profile settings with SHA-1(online XUID + data), and patches 58 / 79 only re-signed between
+  the offline XUID, 0 and this run's online XUID. A save signed for any other key - the online account before a new one
+  (DELETE ONLINE ACCOUNT, a new #number), a deleted `identity.json` with online play off, another PC / console, an old
+  backup put back or imported - was left alone; Gears 3 reset it (brightness screen, campaign progress gone, checkpoints
+  kept) and wrote fresh files over it, with no copy kept. `CogPrepareGears3Saves` (called from `OnlineStartup`) now
+  does, in order:
   1. **Copy:** when this run's signing key differs from the last run's (`<user dir>\cogbox-save-key`; none yet counts
-     as a change), every Gears 3 / Judgment save file in place is copied to
-     `<user dir>\_cogbox-save-backups\<stamp>-<old key>-to-<new key>\` (built in a `.cogbox-tmp` folder, renamed when
-     whole; newest 20 kept; the key noted atomically). A file that can't be read fails the copy: no folder, no key noted,
-     tried again next start. Before the Judgment swap, so it holds the outgoing mode's files.
-  2. **Verified conversions** to this run's key from 0 / the online XUID (as before), from the last run's key
-     (`.pre-lastkey` backup) - so a new online account from now on is a checked conversion - and from
+     as a change), every Gears 3 / Judgment save file in place (players 2-4's `.p2`-`.p4` settings included) is copied
+     to `<user dir>\_cogbox-save-backups\<nnnnnn>-<stamp>-<old key|first|unknown>-to-<new key>\` (`nnnnnn` a sequence
+     number, so order never depends on the clock; the old key is always formatted from a parsed key, never the key
+     file's text; built in a `.cogbox-tmp` folder and renamed when whole, the rename retried for up to ~1 s for an
+     antivirus scan). A file that can't be read fails the copy: no folder, tried again next start. Before the Judgment
+     swap, so it holds the outgoing mode's files. Pruning (while more than 20 copies) only removes a copy whose every
+     file is, with the same data (a signature may differ), in one newer copy - oldest first, never the oldest copy, a
+     `first` one or the one just made - and only ever folders named exactly as above (plus that name + `.cogbox-tmp`,
+     when older than the copy just made). Links / junctions and folders players put there are never touched; names are
+     matched on the native path text (no conversion that can throw).
+  2. **Verified conversions** to this run's key from 0 / the online XUID (as before), from each of the last 8 runs'
+     keys (`.pre-lastkey` backup) - so a new online account from now on is a checked conversion - and from
      `--cogbox_save_adopt_key=<16 hex digits>` (an old XUID from a `LIVE emulation with online XUID` log line;
      `.pre-adoptkey` backup).
   3. **Unverified re-sign** (`--cogbox_save_adopt_foreign`, on by default) of what is still not signed for this run, only
      for a whole, plausible save: PlayerStorage.dat alone at 4 KB - 64 KB (TU6 writes 6232-6520 bytes in our and
-     players' logs), or the full set 63E83FFF + FFE + FFD, each at most 1000 bytes; nothing all zero. The data is never
-     changed, only the 20-byte signature; the file as it was is kept as `<file>.cogbox-adopted-<stamp>` (never replaced).
-     Each adopted body is noted in `<user dir>\cogbox-save-adopted`; found again with another key, it is not adopted a
-     second time (no loop if the game signs with a key we don't predict). Anything refused is only logged.
+     players' logs), not all zero; or the full set 63E83FFF + FFE + FFD, each at most 1000 bytes, FFF holding data, FFE /
+     FFD empty or not all zero (TU6 writes FFF at 1000 bytes, FFE at 0-210 and FFD at 0, all three within milliseconds),
+     and the three written within an hour of each other (a set put together from two backups is refused). The data is
+     never changed, only the 20-byte signature; the file as it was is kept as `<file>.cogbox-adopted-<stamp>` (never
+     replaced). Each adoption is noted in `<user dir>\cogbox-save-adopted` (body digest, key, signature before, save
+     id). For the same key, a noted body found signed with yet another key is not adopted again, unless it carries its
+     pre-adoption signature (the player put that file back); and a save adopted 3 times for this key is not adopted
+     again until the key changes (logged each start) - no endless copies if the game signs with a key we don't
+     predict. Anything refused is logged with the reason.
   4. The patch-101 verdict per set.
+  5. This run's key is noted (newest first, 8 kept) only now, and only if the copy was made or not needed, so a failed
+     copy or a crash before here keeps the old key for the next start's copy and checked conversion.
   A read failure is no longer an empty file (`CogReadFile`): a set with a file that can't be read is skipped by every
   pass. Judgment's signing can't be redone: with a new online account Judgment's online copy still starts fresh, but its
-  old files are in the copy of step 1. Tests in `tests/unit/net/save_resign_test.cpp` (syntax-checked only). Apply it in
-  the SDK root (`git apply`).
+  old files are in the copy of step 1. Tests in `tests/unit/net/save_resign_test.cpp`: built and run on Linux (g++ 13.3,
+  `-Wall -Wextra`, with and without `-fno-char8_t`, Catch2 3.4): 38 pass, the read-only case is skipped as root. Apply it
+  in the SDK root (`git apply`).

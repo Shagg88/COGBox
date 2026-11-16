@@ -34,9 +34,12 @@
   one with a check. Saves from an account it can't check (another PC, an old backup) are moved too, as long as they
   are complete and look like real Gears 3 saves; a copy of each file is kept as it was (`.cogbox-adopted-<date>`).
   Before any start whose account differs from the last one, COGBox also copies the Gears 3 and Judgment saves to
-  `user\_cogbox-save-backups` (the newest 20 copies are kept). Judgment's saves can't be moved to a new account the same
-  way: with a new online account Judgment's online progress still starts fresh, but its old files are in that backup
-  folder (and its offline progress comes back whenever online play is off).
+  `user\_cogbox-save-backups` (a copy is only removed when a newer one holds the same saves, and folders you put there
+  yourself are never touched). Saves that Gears 3 already reset can be put back from a backup or from the `.pre-online`
+  copies and will now load: close the game first, and put the three profile files `63E83FFF`, `63E83FFE` and
+  `63E83FFD` back together, from the same backup. Judgment's saves can't be moved to a new account the same way: with a
+  new online account Judgment's online progress still starts fresh, but its old files are in that backup folder (and
+  its offline progress comes back whenever online play is off).
 - **Crash reports are no longer empty** (all four games, GitHub #286): a game that froze before crashing could leave an
   empty `crash-*.txt` and a cut-off `.dmp`. The crash report is now written without touching anything the frozen game
   might be holding, lists where every thread was stuck, and the crash dump is written by COGBox from outside the game
