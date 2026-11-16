@@ -227,7 +227,7 @@ endif()
 # --gow2_pgo_dump_frame to LLVM_PROFILE_FILE); GN_PGO=use builds with the merged profile GN_PGO_PROFILE (.profdata).
 # Empty or off = as before. A queue job's environment sets both, like GN_CPU_ARCH (not written to the cache, so a build
 # without them is a normal build); the profile is made from runs of the game, so it stays in out\ and is never committed.
-set(GN_PGO "" CACHE STRING "Profile-guided optimisation: empty/off, gen or use")
+set(GN_PGO "" CACHE STRING "Profile-guided optimisation: empty/auto/off, gen, use, irgen or iruse")
 set(GN_PGO_PROFILE "" CACHE FILEPATH "Merged .profdata for GN_PGO=use")
 if(DEFINED ENV{GN_PGO})
     set(GN_PGO "$ENV{GN_PGO}")
@@ -238,7 +238,7 @@ endif()
 # Patch 0160 made the stored profile the default; 0.6.4 turns that off again (below).
 # 0.6.4 (Shagg 16 Nov: "We can just do PGO off" - the stored profiles are from 25 Oct, before AVX2 and patch 110, and job
 # 1936's PGO-off Gears 3 ran faster than job 1925's with the profile): no GN_PGO given = a normal build. The next profiles
-# are to be trained after the move to the latest rexglue. GN_PGO=use with no GN_PGO_PROFILE still takes the stored one.
+# are to be trained after the move to the latest rexglue. GN_PGO=use with no GN_PGO_PROFILE takes the stored one (new in 0.6.4).
 if(GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto")
     set(GN_PGO "off")
     message(STATUS "Gears2-Native: PGO off (the default; GN_PGO=use for a profile-guided build)")
@@ -272,7 +272,7 @@ if(GN_PGO STREQUAL "gen" OR GN_PGO STREQUAL "irgen")
     message(STATUS "Gears2-Native: PGO training build (execution counters, ${gn_pgo_gen_flag})")
 elseif(GN_PGO STREQUAL "use" OR GN_PGO STREQUAL "iruse")
     if(NOT EXISTS "${GN_PGO_PROFILE}")
-        message(FATAL_ERROR "GN_PGO=${GN_PGO}: profile '${GN_PGO_PROFILE}' not found")
+        message(FATAL_ERROR "GN_PGO=${GN_PGO}: profile '${GN_PGO_PROFILE}' not found (with no GN_PGO_PROFILE, the stored out/pgo profile is used when it exists)")
     endif()
     # Patch 0160: the profile's hash on the command line, so the compiler cache (sccache) never reuses an object built
     # with an older profile at the same path.

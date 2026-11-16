@@ -246,8 +246,8 @@ endif()
 #     and layer 0 writes them to LLVM_PROFILE_FILE once, at swap --gow2_pgo_dump_frame (layer 0 patch 0159, GN_PGO_GEN).
 #   GN_PGO=use / iruse: optimised build with the merged profile GN_PGO_PROFILE (.profdata).
 #   GN_PGO=off: normal build.
-#   Not set: uses the stored profile out\pgo\gow1.profdata when it exists (a training job puts it there), else a normal
-#     build. The profile comes from game runs, so it stays in out\ and is never committed.
+#   Not set: a normal build (0.6.4; below). GN_PGO=use with no GN_PGO_PROFILE uses out\pgo\gow1.profdata (a training
+#     job puts it there). The profile comes from game runs, so it stays in out\ and is never committed.
 # GN_PGO / GN_PGO_PROFILE come from the environment, like Gears 2, so they never stick in the CMake cache.
 set(GN_PGO "" CACHE STRING "Profile-guided optimisation: empty/auto, off, gen, use, irgen or iruse")
 set(GN_PGO_PROFILE "" CACHE FILEPATH "Merged .profdata for GN_PGO=use / iruse")
@@ -259,7 +259,7 @@ if(DEFINED ENV{GN_PGO_PROFILE})
 endif()
 # 0.6.4 (Shagg 16 Nov: "We can just do PGO off" - the stored profiles are from 25 Oct, before AVX2 and patch 110, and job
 # 1936's PGO-off Gears 3 ran faster than job 1925's with the profile): no GN_PGO given = a normal build. The next profiles
-# are to be trained after the move to the latest rexglue. GN_PGO=use with no GN_PGO_PROFILE still takes the stored one.
+# are to be trained after the move to the latest rexglue. GN_PGO=use with no GN_PGO_PROFILE takes the stored one (new in 0.6.4).
 if(GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto")
     set(GN_PGO "off")
     message(STATUS "Gears1-Native: PGO off (the default; GN_PGO=use for a profile-guided build)")
@@ -312,7 +312,7 @@ if(GN_PGO STREQUAL "gen" OR GN_PGO STREQUAL "irgen")
     message(STATUS "Gears1-Native: PGO training build (execution counters, ${gn_pgo_gen_flag})")
 elseif(GN_PGO STREQUAL "use" OR GN_PGO STREQUAL "iruse")
     if(NOT EXISTS "${GN_PGO_PROFILE}")
-        message(FATAL_ERROR "GN_PGO=${GN_PGO}: profile '${GN_PGO_PROFILE}' not found")
+        message(FATAL_ERROR "GN_PGO=${GN_PGO}: profile '${GN_PGO_PROFILE}' not found (with no GN_PGO_PROFILE, the stored out/pgo profile is used when it exists)")
     endif()
     # The profile's hash on the command line, so sccache never reuses an object built with an older profile at the
     # same path, and a new profile rebuilds everything it touches.
