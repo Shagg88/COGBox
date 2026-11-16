@@ -1,6 +1,6 @@
 # COGBox changes
 
-## 0.6.4 (in progress)
+## 0.6.4
 
 - **Less stutter with texture packs** (all four games; GitHub #341): a pack texture is read from disk once and shared
   wherever the game uses it, and kept in video memory when the game moves or drops it, instead of being read again each
