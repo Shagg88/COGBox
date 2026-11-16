@@ -2,7 +2,7 @@
 
 COGBox's runtime (`rexruntime.dll`) is the rexglue SDK at tag
 `nightly-20261002-bd833a2a` with these patches.
-0.6.3's runtime (rexruntime 063b) is 0.6.2's plus patches 104, 106 and 107. 0.6.4's (064a) adds 108.
+0.6.3's runtime (rexruntime 063b) is 0.6.2's plus patches 104, 106 and 107. 0.6.4's (064a) adds 108; 064b adds 110.
 
 ## Quick way
 
@@ -90,6 +90,15 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
 - `sdk-patch92-matchmaking-fixes.diff` (0.6.1, after 90; Flippage's patch 91, renumbered - 90 is our media-verify patch; 93 is the ping bar): **matchmaking only finds its own playlist** - a game's search returned every public lobby of that game, and the games join whatever a search returns (Xbox Live filtered by the query), so a Social Guardian search put players into a Horde lobby. The search's playlist property (`0x1000000B`) now filters the results (a lobby that names no playlist is kept). **Gears 2's host-ban watch works**: Gears 2's older UE3 keeps an object's own index at +4 (+32 in Gears 3 / Judgment), so its object table was never found and the watch never ran (no popup, no 30-minute lift: a Gears 2 player with a quit could never host versus). The settings reader also tries UE3's real 24-byte entry (id at +4) first, as Gears 2 has a lookalike table at stride 16 that read as no penalty. One `host ban watch: profile found / IsOkayToHost found / penalty` line per run shows what the watch found. Tests in `online_sessions_test.cpp` and `host_ban_test.cpp`. Apply it in the SDK root (`git apply`).
 - `sdk-patch93-ping.diff` (0.6.1, after 92; Flippage's patch 90, renumbered): the ping for the FPS bar (`--cogbox_show_ping`). Every 2 s a connected peer gets a punch on a proven route, timed by its sequence number; every COGBox (0.6.0 too) answers a punch with an ack carrying that number, so the time to the ack is the round trip, smoothed (70 % old, 30 % new). `CurrentPing()` (online_startup.h) gives the bar the ping to the host of the newest session we joined (its XUID from the session's XNADDR online marker); in a party / co-op join, which makes no session here, the host whose lobby the game looked up (invite, Join friend, open match) while its game packets arrive (a failed join stops them, so the bar drops it at once); while we host, the worst ping among the players the game put in our sessions (not every connected peer). Tests in `tests/unit/net/peer_manager_test.cpp` and `online_sessions_test.cpp`. Apply it in the SDK root (`git apply`).
 - `sdk-patch107-ping-join-beacon.diff` (0.6.3, after 106; in the 0.6.3 runtime; Flippage's patch 104, renumbered - 104 is the impulse-trigger patch): the FPS bar's ping after a matchmaking join. Matchmaking puts the game in a lobby picked from search results: no session is created here and no lobby is looked up, so 0.6.2 knew no host and showed `Ping -- (hosting)` (our own party). The game's connect to a peer's join beacon (TCP 8700, Gears 3 Ranked 8675) now makes that peer the join target (`OnlineSessions::OnBeaconConnect`, the peer's XUID from its virtual IP by `VirtualPeerManager::XuidOfVip`), handled as patch 93's looked-up host: shown while its game packets arrive, forgotten 30 s after they stop. Two unit tests. Apply it in the SDK root (`git apply`).
+- `sdk-patch110-e0-view-placeholders.diff` (0.6.4, after 108; runtime 064b, job 1928): rexglue 34f9923 + 10acc0d ported.
+  On Windows the guest 0xE0000000 view can now start at physical 0x1000 itself (VirtualAlloc2 / MapViewOfFile3
+  placeholders take a 4 KiB file offset), so generated code no longer adds 0x1000 to every access from 0xE0000000. The
+  layout is OPT-IN per exe: code generated with the templates in `Gears2-Native/codegen-templates` (each game's manifest
+  `template_dir`, jobs 1927 / 1927b) calls `rex::memory::detail::SetE0ViewMapped(true)` from a static initializer;
+  exes generated before keep the old layout on this runtime. A module of the other layout arriving later aborts with a
+  clear error; start-up self-check (marker written at physical 0x1000, read back through 0xE0000000) catches a host that
+  maps it wrong (older Wine); `-DREX_E0_VIEW_MAPPED=0` in the generated code keeps the old layout. Review r106. Its
+  game-side half is the two templates, not this diff (the test template `test/ppc_config_h.inja` stays on the old layout).
 - `sdk-patch108-xma-edge-decoder.diff` + `sdk-patch108-ffmpeg-xmaframes.diff` (0.6.4, after 107; the two go together):
   the XMA audio decoder follows Xenia Edge's (has207, edge b9a46a3, commits 37bf631..0ce969b: multi-stream buffer
   switches, loop end frames cut at their end subframe, seeks to a subframe (DWORD1 bits 24-26 = decode_subframe, which

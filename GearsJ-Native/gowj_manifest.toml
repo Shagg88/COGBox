@@ -10,6 +10,8 @@ game_root = "game/tu4/patched"   # default.xex + default.xexp (job 001; Gears 2'
 [entrypoint]
 file_path = "game/tu4/patched/default.xex"
 out_directory_path = "generated/default"
+# SDK patch 110 (game side): the codegen templates in ../Gears2-Native/codegen-templates (see its README).
+template_dir = "../Gears2-Native/codegen-templates"
 includes = []
 # Gears 2's measured codegen option (its notes/60, job 223: cr_as_local -10% frame time). non_volatile_as_local stays
 # off for the first boots (unwinding and setjmp read those registers from the context); try it once Judgment plays.
