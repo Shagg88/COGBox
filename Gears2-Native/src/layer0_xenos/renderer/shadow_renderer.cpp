@@ -1302,8 +1302,8 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_resolves_to_guest, false, "Gears2",
 // our 301 O vs 307 R [V]: the ch10 flash only happens when textures read our resolves).
 REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_readback_first_wait, false, "Gears2",
                     "Fast resolve read-back (Judgment): the first copy of every destination waits for the GPU, as "
-                    "Canary's cache miss does. Off (default): only small ones (4 KB or less, such as the exposure value) "
-                    "wait; a larger one lands a frame or two later at a swap, like every later copy - moving between "
+                    "Canary's cache miss does. Off (default): only one-tile ones (32 x 32 pixels or less, such as a value "
+                    "the game reads back), at most two a frame, wait; a larger one lands a frame or two later at a swap, like every later copy - moving between "
                     "areas of a map (Blood Drive) made many first copies, each a full GPU wait");
 REXCVAR_DEFINE_STRING(gow2_renderer_resolve_readback, "auto", "Gears2",
                       "Patch 0020 (Canary readback_resolve, T2 only): auto (default: fast in a game that reads its "
@@ -4860,10 +4860,10 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // Canary IssueCopy_ReadbackResolvePath: the written extent is copied from the mirror into a readback buffer and then
   // into guest memory through the physical mapping (no watch callback, so the pages stay GPU-current; both copies hold
   // the same bytes). full: wait for the GPU now. fast: land the PREVIOUS copy of the same destination (base, length)
-  // now - one frame old, no stall. The first copy of a destination: a small one (a page or less - Judgment's exposure
-  // value) waits, as Canary's cache miss does, so a new area never reads old bytes for its exposure; a larger one lands
-  // at a later swap (Blood Drive: moving between areas made many, each a full GPU wait) unless
-  // --gow2_renderer_resolve_readback_first_wait.
+  // now - one frame old, no stall. The first copy of a destination: a one-tile one (32 x 32 pixels or less, as a value
+  // the game reads back such as its exposure) waits, as Canary's cache miss does, so a new area never reads old bytes
+  // for it - at most kResolveFirstWaitsPerFrame a frame; a larger one (or one over that count) lands at a later swap
+  // (Blood Drive: moving between areas made many, each a full GPU wait) unless --gow2_renderer_resolve_readback_first_wait.
   void LandResolveReadback(gpu::ReadbackHandle h, uint32_t start, uint32_t length) {
     uint32_t pitch = 0;
     const uint8_t* data = backend_->ReadbackData(h, pitch);
@@ -4877,7 +4877,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     ++rb_stats_.landed;
     rb_stats_.landed_bytes += length;
   }
-  void ReadbackResolve(uint32_t start, uint32_t length) {
+  void ReadbackResolve(uint32_t start, uint32_t length, uint32_t bpp_log2) {
     start &= 0x1FFFFFFFu;
     if (!length || !memory_) return;
     if (uint64_t(start) + length > (512ull << 20)) length = uint32_t((512ull << 20) - start);
@@ -4897,7 +4897,13 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint64_t key = (uint64_t(start) << 32) | length;
     auto it = resolve_readback_prev_.find(key);
     if (it == resolve_readback_prev_.end()) {
-      if (resolve_first_wait_ || length <= kResolveFirstWaitBytes) {
+      if (resolve_first_waits_frame_ != frame_) {
+        resolve_first_waits_frame_ = frame_;
+        resolve_first_waits_ = 0;
+      }
+      const bool one_tile = length <= (1024u << std::min(bpp_log2, 4u));   // 32 x 32 pixels of this format
+      if (resolve_first_wait_ || (one_tile && resolve_first_waits_ < kResolveFirstWaitsPerFrame)) {
+        ++resolve_first_waits_;
         ++rb_stats_.waits;  // first copy of this destination: wait, as Canary does when the previous buffer is missing
         backend_->WaitForFence(backend_->Submit());
         LandResolveReadback(h, start, length);
@@ -5043,7 +5049,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       watch_->Watch(info.dest_extent_start, info.dest_extent_length);
     TagGpuPages(info.dest_extent_start, info.dest_extent_length, 0);  // #315 diagnostic (bc_gpu_page_log)
     watch_->MarkGpuWritten(info.dest_extent_start, info.dest_extent_length, scaled);
-    if (rb_this) ReadbackResolve(info.dest_extent_start, info.dest_extent_length);  // patch 0020
+    if (rb_this) ReadbackResolve(info.dest_extent_start, info.dest_extent_length, info.dest_bpp_log2);  // patch 0020
     if (through_on) {
       textures_->ResolveThroughWritten(through, info.dest_extent_start, info.dest_extent_length);
       if (through_check_frame_ && frame_ + 1 == through_check_frame_ && through_checks_started_ < 12) {
@@ -5136,7 +5142,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // ---- patch 0020: Canary readback_resolve + RequestRange for our T2 resolves ----
   uint32_t resolve_readback_ = 0;  // 0 none, 1 fast, 2 full
   bool resolve_first_wait_ = false;  // --gow2_renderer_resolve_readback_first_wait
-  static constexpr uint32_t kResolveFirstWaitBytes = 4096;   // a first copy this small always waits (the exposure value)
+  static constexpr uint32_t kResolveFirstWaitsPerFrame = 2;   // one-tile first copies that wait, at most, a frame
+  uint64_t resolve_first_waits_frame_ = ~0ull;
+  uint32_t resolve_first_waits_ = 0;
   bool prepare_mirror_ = false, rb_prepare_every_ = false;
   uint32_t resolve_readback_max_bytes_ = 0;  // 0.6.1: 0 = no limit
   std::vector<uint32_t> mirror_versions_;  // per 4 KB page: the watch version the mirror last got CPU bytes at (~0 never)
