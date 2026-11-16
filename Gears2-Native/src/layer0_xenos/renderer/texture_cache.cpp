@@ -889,6 +889,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   // longer overlaps dword 5 bit 9 (the dimension).
   const uint64_t b = (uint64_t(tf[2]) << 32) | (tf[5] & 0xFFFFFE00u) | ((tf[4] & 0x3C0u) >> 4) | host_kind;
   const Key key{a, b};
+  frame_now_ = frame;  // 0.6.4 (#341): ReleasePack's LRU stamp
   // Job 284 diagnostic: hash a probed texture's bytes at every load (any frame), log lookups inside the frame window.
   const bool probe_base = !probe_bases_.empty() && Probed(tf, ~0ull);
   const bool probe = probe_base && Probed(tf, frame);
@@ -1391,17 +1392,39 @@ void TextureCache::EndFrame(uint64_t frame) {
       scaled_evicted_total_ += dropped;
     }
   }
+  // 0.6.4 (#341): texture pack counters, when they move (at most every 30 s)
+  if ((frame % 1800u) == 0 && (pack_reads_ != pack_logged_reads_ || pack_reuses_ != pack_logged_reuses_) &&
+      (pack_reads_ || pack_reuses_)) {
+    pack_logged_reads_ = pack_reads_;
+    pack_logged_reuses_ = pack_reuses_;
+    uint64_t kept = 0, kept_bytes = 0;
+    for (const auto& [_, sh] : pack_shared_) if (!sh.refs) { ++kept; kept_bytes += sh.bytes; }
+    REXLOG_INFO("gow2_texture_pack: frame {}: {} file(s) read, {} reuse(s) without a read, {} shared texture(s) ({} "
+                "unused, {} MB), {} freed | cache {} of {} MB",
+                frame, pack_reads_, pack_reuses_, pack_shared_.size(), kept, kept_bytes >> 20, pack_freed_,
+                stats_.host_bytes >> 20, cap_bytes_ >> 20);
+  }
   if (!cap_bytes_ || stats_.host_bytes <= cap_bytes_) return;
+  const uint64_t target = cap_bytes_ / 10 * 9;
+  FreeUnusedPacks(target);  // 0.6.4 (#341): pack textures nothing shows go first
+  if (stats_.host_bytes <= target) return;
   std::vector<std::pair<uint64_t, const Key*>> old;
   for (const auto& [key, e] : entries_)
     if (e->texture && e->last_used + 1 < frame) old.push_back({e->last_used, &key});
   std::sort(old.begin(), old.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
-  const uint64_t target = cap_bytes_ / 10 * 9;
   std::vector<Key> evict;
   uint64_t bytes = stats_.host_bytes;
+  std::unordered_map<uint64_t, uint32_t> refs_left;  // a shared pack texture is freed with its last entry
   for (const auto& [used, key] : old) {
     if (bytes <= target) break;
-    bytes -= entries_.at(*key)->TotalHostBytes();
+    const Entry& oe = *entries_.at(*key);
+    if (oe.pack_shared) {
+      auto sh = pack_shared_.find(oe.pack_hash);
+      auto r = refs_left.try_emplace(oe.pack_hash, sh != pack_shared_.end() ? sh->second.refs : 0u).first;
+      if (r->second && --r->second == 0 && sh != pack_shared_.end()) bytes -= std::min(bytes, sh->second.bytes);
+    } else {
+      bytes -= std::min(bytes, oe.TotalHostBytes());
+    }
     evict.push_back(*key);
   }
   if (evict.empty()) return;
@@ -1419,6 +1442,9 @@ void TextureCache::EndFrame(uint64_t frame) {
       }
       e.overlay_variants.clear();
       e.texture = 0;
+    } else if (e.pack_shared) {  // 0.6.4 (#341): its shared pack texture is freed below once no entry uses it
+      ReleasePack(e);
+      if (stats_.textures) --stats_.textures;
     } else {
       backend_.DestroyTexture(e.texture);  // deferred by the backend until our GPU is past it
       stats_.host_bytes -= std::min(stats_.host_bytes, e.host_bytes);
@@ -1437,7 +1463,38 @@ void TextureCache::EndFrame(uint64_t frame) {
     }
     entries_.erase(it);
   }
+  FreeUnusedPacks(target);  // 0.6.4 (#341): the shared pack textures those entries were the last users of
   for (SlotCache& sc : slot_cache_) sc.valid = false;  // they may point at evicted entries
+}
+
+void TextureCache::ReleasePack(Entry& e) {
+  auto sh = pack_shared_.find(e.pack_hash);
+  if (sh != pack_shared_.end() && sh->second.texture == e.texture) {
+    if (sh->second.refs) --sh->second.refs;
+    sh->second.last_used = frame_now_;
+  } else if (e.texture) {
+    backend_.DestroyTexture(e.texture);  // (not the shared one: cannot happen - kept safe)
+  }
+  e.texture = 0;
+  e.pack_shared = false;
+  e.pack_complete = false;
+}
+
+void TextureCache::FreeUnusedPacks(uint64_t target) {
+  std::vector<std::pair<uint64_t, uint64_t>> unused;  // (last used, hash)
+  for (const auto& [hash, sh] : pack_shared_) if (!sh.refs) unused.push_back({sh.last_used, hash});
+  if (unused.empty()) return;
+  std::sort(unused.begin(), unused.end());
+  for (const auto& [used, hash] : unused) {
+    if (target && stats_.host_bytes <= target) break;
+    auto sh = pack_shared_.find(hash);
+    backend_.DestroyTexture(sh->second.texture);  // deferred by the backend until our GPU is past it
+    stats_.host_bytes -= std::min(stats_.host_bytes, sh->second.bytes);
+    stats_.evicted_bytes += sh->second.bytes;
+    ++freed_total_;  // patch 0149
+    ++pack_freed_;
+    pack_shared_.erase(sh);
+  }
 }
 
 // 0.6.2 (GitHub #311): a load that did not complete - the backend dropped a dispatch, copy or upload (D3D12: no command
@@ -2200,7 +2257,8 @@ void TextureCache::DestroyHost(Entry& e) {
   for (auto v = e.overlay_variants.begin(); v != e.overlay_variants.end();) {  // PR117 fix: no double destroy
     if (v->second.texture == e.texture) v = e.overlay_variants.erase(v); else ++v;
   }
-  backend_.DestroyTexture(e.texture);
+  if (e.pack_shared) ReleasePack(e);  // 0.6.4 (#341): the shared pack texture stays for other entries / a later return
+  else backend_.DestroyTexture(e.texture);
   e.texture = 0;
   stats_.host_bytes -= std::min(stats_.host_bytes, e.host_bytes);
   e.host_bytes = 0;
@@ -2257,11 +2315,32 @@ bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesys
     return true;
   }
   if (g_swap.pack_bad.count(hash)) return false;  // r95 M1: refused before, for good
+  // 0.6.4 (#341): another entry (another guest address) already holds this file's texture, complete - share it: no file
+  // read, no upload. Signed fetches were refused above; the shared texture's shape is the file's, as a fresh load's.
+  if (auto sh = pack_shared_.find(hash); sh != pack_shared_.end()) {
+    const bool had_texture = e.texture != 0;
+    if (had_texture) DestroyHost(e);  // (takes it off the counts; a shared one is released, not destroyed)
+    e.texture = sh->second.texture;
+    ++sh->second.refs;
+    sh->second.last_used = frame_now_;
+    e.pack_shared = true;
+    e.format = sh->second.format;
+    e.gpu_storage = false;
+    e.ov_scale = 1;
+    e.host_bytes = 0;  // counted once, with the shared texture
+    if (had_texture) ++stats_.textures;  // (a new entry is counted by Lookup)
+    e.pack_hash = hash;
+    e.pack_complete = true;
+    arm();
+    ++pack_reuses_;
+    return true;
+  }
   texpack::DdsImage img;
   std::string why;
   if (!texpack::ReadDds(file, img, why) || !texpack::FitsGuest(w, h, mips, img, why) || !texpack::FitsUpload(img, why))
     return refuse(why, true);  // r95 M3: FitsUpload - a level the upload ring refuses would fail and retry 16 times
   bool created = false;
+  bool counted = true;  // 0.6.4 (#341): e.host_bytes is in stats_ already (false: a new entry, which Lookup counts after Load)
   if (!e.texture || e.pack_hash != hash) {
     // r95 L4: the new texture is made before the old one goes, so a failed creation changes nothing (stats included)
     gpu::TextureDesc td;
@@ -2286,6 +2365,7 @@ bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesys
       ++stats_.textures;
       stats_.host_bytes += e.host_bytes;
     }
+    counted = replacing_existing;
   }
   e.pack_hash = hash;
   e.pack_complete = false;
@@ -2299,8 +2379,24 @@ bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesys
   if (++g_swap.pack_loaded <= 20)
     REXLOG_INFO("gow2_texture_pack: {:016X} ({}x{}) replaced: {}x{}, {} level(s), format {}", hash, w, h, img.width,
                 img.height, img.mips, uint32_t(img.format));
-  if (backend_.TextureLoadDrops() != drops_at_start) FailLoad(e, e.texture, created, "backend dropped part of it");
-  else e.pack_complete = true;
+  ++pack_reads_;
+  if (backend_.TextureLoadDrops() != drops_at_start) {
+    FailLoad(e, e.texture, created, "backend dropped part of it");
+    return true;
+  }
+  e.pack_complete = true;
+  // 0.6.4 (#341): complete - from now on the texture belongs to pack_shared_ (this entry its first user). Its bytes move
+  // from the entry to the shared texture: already in the counts unless this is a new entry, which Lookup counts after
+  // Load (with host_bytes, now 0) - those are added here.
+  PackShared& sh = pack_shared_[hash];
+  sh.texture = e.texture;
+  sh.format = e.format;
+  sh.bytes = e.host_bytes;
+  sh.refs = 1;
+  sh.last_used = frame_now_;
+  if (!counted) stats_.host_bytes += e.host_bytes;
+  e.host_bytes = 0;
+  e.pack_shared = true;
   return true;
 }
 

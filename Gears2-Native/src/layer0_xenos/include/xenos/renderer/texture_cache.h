@@ -302,6 +302,9 @@ class TextureCache {
     // (its size, format and mips are the file's), 0 = the guest texture's own
     uint64_t pack_hash = 0;
     bool pack_complete = false;  // r95 M1: that file is in it whole (uploaded with no drop) - a reload need not read it
+    // 0.6.4 (GitHub #341): `texture` is the shared host texture of pack_hash (pack_shared_), not this entry's own: never
+    // destroyed through this entry (ReleasePack); host_bytes is 0 (the shared texture's bytes are counted once).
+    bool pack_shared = false;
   };
   // Stage 7: the scaled entry for a 2D fetch constant if its texture is held by a current scaled resolve, else null.
   Entry* LookupScaled(const uint32_t* tf);
@@ -318,6 +321,25 @@ class TextureCache {
   bool LoadFromPack(Entry& e, const uint32_t* tf, const std::filesystem::path& file, uint64_t hash, uint32_t w, uint32_t h,
                     uint32_t mips, uint32_t base_start, uint32_t base_length, uint32_t mip_start, uint32_t mip_length);
   void StandIn(const std::string& why);
+  // 0.6.4 (GitHub #341): texture packs - one host texture per pack file content (pack hash), shared by every entry that
+  // shows it. Entries are keyed by guest address, and the game's streaming pool moves its textures around all the time:
+  // before, each new address read the (large) DDS file from disk again and uploaded it, on the render thread - a hitch
+  // each time with 4x packs. A shared texture no entry uses any more is kept (counted in HostBytes) until the cap needs
+  // the memory, so a texture the game streams back in shows at once.
+  struct PackShared {
+    gpu::TextureHandle texture = 0;
+    gpu::Format format = gpu::Format::kUnknown;
+    uint64_t bytes = 0;
+    uint32_t refs = 0;
+    uint64_t last_used = 0;  // frame it was last released (refs 0) or taken
+  };
+  std::unordered_map<uint64_t, PackShared> pack_shared_;
+  uint64_t frame_now_ = 0;  // Lookup's frame (ReleasePack stamps it)
+  uint64_t pack_reads_ = 0, pack_reuses_ = 0, pack_freed_ = 0, pack_logged_reads_ = ~0ull, pack_logged_reuses_ = ~0ull;
+  // Drops e's reference to its shared pack texture (the texture stays in pack_shared_); e.texture = 0.
+  void ReleasePack(Entry& e);
+  // Destroys shared pack textures no entry uses, least recently used first, until HostBytes <= target (0: all of them).
+  void FreeUnusedPacks(uint64_t target);
 
   gpu::Backend& backend_;
   const uint8_t* guest_;

@@ -187,6 +187,8 @@ static std::string key_get(App &a, int g, const char *cvar)
 static bool lang_on_copy(const std::string &root, int g, int idx);
 static bool voice_on_copy(const std::string &root, int g, int idx);
 
+static void main_gpu_memory(std::string &name, unsigned &mb);   // (below, with auto_plan)
+
 void env_refresh(App &a, int g)
 {
     GameState &st = a.st[g];
@@ -202,6 +204,11 @@ void env_refresh(App &a, int g)
     e.online_stun = stun_address(e.online_server);
     e.online_region = e.online_server.empty() ? std::string() : region_or_default(a.ini.get("Online", "Region"), local_utc_minutes());
     e.shader_cache_dir = game_shader_dir(g);
+    {   // 0.6.4 (GitHub #341): the texture cache's Auto size depends on the card's video memory (read once)
+        static unsigned s_vram = ~0u;
+        if (s_vram == ~0u) { std::string n; main_gpu_memory(n, s_vram); }
+        e.vram_mb = s_vram;
+    }
     e.mods.clear();                              // (env_refresh runs again on the same Environment)
     e.texture_pack_mods.clear();
     for (const ModItem &m : mods_list(a, g)) {   // 0.2.0 (mods_enabled_paths, plus the texture packs among them)

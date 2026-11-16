@@ -91,6 +91,7 @@ struct Environment {
     // texture packs (KiltedKernel; r95 L1): those of `mods` that hold texture-pack files, in load order
     // (--gow2_texture_pack_dirs - only these, so the command line stays short and the renderer walks no other mod)
     std::vector<std::string> texture_pack_mods;
+    unsigned vram_mb = 0;                      // 0.6.4 (GitHub #341): the main graphics card's video memory, 0 = unknown
     std::map<std::string, std::string> keys;   // 0.2.0: the player's own keyboard keys, cvar -> key (CogBox.ini [Keys])
     std::string recipe_pack;                   // job 630: <COGBox>\recipes\recipes-<exe>.rcp, "" = none
     std::string prompt_dir;                    // job 629: <COGBox>\prompts\keyboard (key-cap overlays), "" = none

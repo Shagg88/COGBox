@@ -354,8 +354,9 @@ int summary() {
     for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
         for (int cap = 0; cap <= 1; ++cap)
             for (int packs = 0; packs <= 1; ++packs)
-                for (int pick = 0; pick <= 4; ++pick) {
-                    Environment e; e.update_ready = true;
+                for (int pick = 0; pick <= 4; ++pick)
+                for (unsigned vram : { 0u, 4096u, 8192u }) {
+                    Environment e; e.update_ready = true; e.vram_mb = vram;
                     e.cap.exe_has = [cap](const std::string& n) { return cap || n != "gow2_renderer_texture_cache_mb"; };
                     e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
                     if (packs) { e.mods = { "C:/G/mods/A" }; e.texture_pack_mods = { "C:/G/mods/A" }; }
@@ -365,10 +366,10 @@ int summary() {
                     std::string got;
                     for (const std::string& x : a) if (x.rfind("--gow2_renderer_texture_cache_mb=", 0) == 0) got = x;
                     static const int k_mb[5] = { 0, 512, 1024, 2048, 4096 };
-                    const int mb = pick ? k_mb[pick] : packs ? 2048 : 512;
+                    const int mb = pick ? k_mb[pick] : packs ? (vram >= 6000 ? 2048 : 1024) : 512;
                     const std::string want = cap && mb != 512 ? "--gow2_renderer_texture_cache_mb=" + std::to_string(mb) : "";
                     if (got != want) { std::cout << "FAIL texture cache (game " << int(g) << ", cap " << cap << ", packs " << packs
-                                                 << ", pick " << pick << "): '" << got << "'\n"; ++fails; }
+                                                 << ", pick " << pick << ", vram " << vram << "): '" << got << "'\n"; ++fails; }
                 }
     // social step 3: with the multiplayer server enabled the games start online; without, none of it
     for (int on = 0; on <= 1; ++on) {

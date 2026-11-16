@@ -372,7 +372,8 @@ std::vector<Option> make_options(Game g) {
                { "Auto", "512 MB", "1 GB", "2 GB", "4 GB" }, 0,
                "How much video memory the PC side keeps the game's textures in before the least recently used ones are "
                "freed. Texture packs need more: a freed pack texture is read from disk again when it is next drawn, which "
-               "stutters. Auto: 512 MB, or 2 GB while a texture pack is on. Keep it well under your graphics card's memory.",
+               "stutters. Auto: 512 MB; with a texture pack on, 2 GB (1 GB on cards with less than 6 GB). Keep it well "
+               "under your graphics card's memory.",
                0), "texcache");
     add(choice("DrawDist", "Draw distance", Tab::Graphics, PG, { "Original", "Far (1.5x)", "Farthest (2x)" }, 0,
                "How far away detail and objects are still drawn.", 361), "drawdist", "", true);
@@ -1888,7 +1889,9 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
     if (avail("TexCache")) {
         static const int k_cacheMb[5] = { 0, 512, 1024, 2048, 4096 };
         int mb = k_cacheMb[std::max(0, std::min(4, s.i("TexCache")))];
-        if (!mb) mb = !env.texture_pack_mods.empty() && cap_exe(env, "gow2_texture_pack_dirs") ? 2048 : 512;
+        // review r1937: 2 GB only on cards with 6 GB or more (or unknown size: 1 GB) - Vulkan stops on a failed texture
+        // allocation, D3D12 slows down
+        if (!mb) mb = !env.texture_pack_mods.empty() && cap_exe(env, "gow2_texture_pack_dirs") ? (env.vram_mb >= 6000 ? 2048 : 1024) : 512;
         if (mb != 512) a.push_back("--gow2_renderer_texture_cache_mb=" + std::to_string(mb));
     }
     // PS1 866-867: Gears 3 / Judgment trilinear and fast mip fade (on by default there, so always sent)
