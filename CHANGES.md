@@ -21,10 +21,21 @@
   Gears 3. Needs Windows 10 version 1803 or newer.
 - **Exact results for a few rare CPU instructions** (all four games): converting a very large number to a whole number,
   some signed shifts and one vector compare now give exactly what the Xbox 360 gives (rexglue's fixes, brought over).
-- **Built for AVX2 CPUs** (all four games): the game code now uses the AVX2 / FMA / BMI2 instructions of Intel Core
-  (Haswell, 2013) and AMD Ryzen / Excavator CPUs and newer (the README already listed an AVX2 CPU as needed). A separate
-  multiply and add stay separate, as in the Xbox 360 code. On a CPU without AVX2 COGBox says so in plain words instead of
-  crashing.
+- **Built for AVX2 CPUs only** (all four games): the game code now uses the AVX2 / FMA / BMI2 instructions of Intel Core
+  (Haswell, 2013) and AMD Ryzen / Excavator (2015) CPUs and newer, instead of the 2003-era baseline every PC has.
+  Why only AVX2:
+  - **It is faster, on every game:** the recompiled Xbox 360 code is full of 128-bit vector maths, bit masks and
+    rotates, and these instructions do that work in fewer steps. Measured on the same PC, frame time against 0.6.3:
+    Gears 3 6.1% less (159 -> 170 fps), Judgment 4.7% less (175 -> 184 fps), Gears 1 3.4% less (123 -> 128 fps),
+    Gears 2 1.4% less (297 -> 301 fps); every AVX2 run beat every 0.6.3 run.
+  - **One build to test and support:** a second, slower build for older CPUs would double every build and test run.
+    The README already listed an AVX2 CPU (roughly 2013 or newer) as needed.
+  - **The results don't change:** a multiply and an add stay separate, as in the Xbox 360 code (no fused multiply-add
+    that would round differently), so the games behave the same as before.
+
+  Who is affected: CPUs older than Intel Haswell (2013) or AMD Excavator (2015), and some budget Pentium / Celeron chips
+  of later years that leave AVX2 out. On such a CPU COGBox says so in plain words instead of crashing; 0.6.3 still works
+  there.
 - **Gears 3 Open matches: the host's game picks your team** (Discord report: every joiner landed on the host's team).
   JOIN in the Social tab's Open matches now has Gears 3 find the match with its own matchmaking: go to Versus > Social
   and the match's playlist (the launcher says which), and the host's game seats you as on Xbox Live. A match already in
@@ -39,6 +50,25 @@
   first copy of each new resolve destination also no longer waits for the GPU (patch 0020 read-back) unless it is
   small (one 32 x 32 tile, such as a value the game reads back, at most two a frame); it lands a frame or two later like every other copy
   (`--gow2_renderer_resolve_readback_first_wait=true` brings the old wait back for all).
+- **Gears 3 DLSS really works now** (GitHub #345): with DLSS Quality or Ultra Quality, Gears 3 never upscaled - the
+  scene copy it uses went through a different-size target, so the upscaler gave up every frame (no DLSS, FSR, XeSS or
+  frame generation). Tested: every frame upscaled at 4K. Textures with DLSS and FSR are also one step sharper (the mip
+  bias NVIDIA's and AMD's guides ask for). The launcher marks Scene resolution choices that can't upscale at your
+  resolution as "anti-aliasing only at this render resolution" (for example Performance at 4K runs as DLAA). DLSS is
+  still marked experimental.
+- **Gears 1 crash 2 seconds in** (GitHub #346): the title update had been made for another print of the game. COGBox
+  now checks that the title update matches your game files before starting (as the console does) and asks first,
+  instead of the game crashing.
+- **Default keys follow each game's own controls** (GitHub #350): in Gears 2 and 3, 4 = grenades and 3 = pistol (they
+  were swapped). Judgment gets its own layout: 4 = grenade, 3 = switch weapon, 1 / 2 = the two weapons, Q = point of
+  interest, Tab = tactical display. Keys you set yourself are kept, and a new default never lands on a key you already use.
+- **Gears 2: Horde bots no longer greyed out** (Discord report): the launcher didn't recognise that 0.6.3's Gears 2 had
+  the option.
+- **Saves** (Gameplay tab): a SAVES section with Import saves, Back up saves and Open saves folder. Saves copied in by
+  hand - from another profile, an older Xenia, or console save packages dropped in - are found; COGBox offers to bring
+  them in (moving the originals aside first, never deleting them) and asks only once per set.
+- **Mods tab translated**: its lines (left-out content, texture pack counts, chapter names, co-op notes) now show in all
+  11 languages.
 - **French achievement wording now matches the French Xbox 360** (by IamBugReporter, GitHub #339): "déverrouillé" instead of
   "débloqué", "Succès caché" for secret achievements and "Gamerscore" instead of "Score".
 
