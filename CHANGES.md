@@ -2,6 +2,14 @@
 
 ## 0.6.3 (not released)
 
+- **XeGTAO ambient occlusion: no more ghosting through floors and walls, and steadier shadows near the camera**
+  (Gears 3 and Judgment, by Flippage): Gears 3 and Judgment copy their scene depth out once or twice a frame, and with
+  two copies the first holds only about half the scene. XeGTAO used the first copy, so geometry drawn after it - the
+  ground, most visibly - was missing from its depth, and hidden objects (stairs, buildings, players behind a wall)
+  showed through as faint shading. XeGTAO now reads every scene-depth copy and runs its passes on the last one, once a
+  frame. Its samples close to the camera also no longer leave the screen or read coarse depth levels (new settings
+  `--gow2_ao_max_screen_radius`, default 0.325, and `--gow2_ao_mip_offset`, default 6.5), which removes the shadow
+  flicker at the bottom of the screen, on your character and while aiming.
 - **Windowed / borderless full screen key, all four games:** **Alt+Enter** in the game window switches between a window
   and borderless full screen on the monitor the game is on, and back to the window's size and place. It is not F11
   (F11 is the cheat keys' "all weapons"); change it with a `--bind_cogbox_fullscreen=<key>` line in `extra-args.txt`
