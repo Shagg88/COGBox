@@ -9,6 +9,7 @@
 #include <xenos/formats.h>
 #include <xenos/input/prompt_device_monitor.h>
 #include <xenos/renderer/prompt_overlay_compositor.h>
+#include <xenos/renderer/texture_pack.h>
 #include <xenos/texture_layout.h>
 
 #include <rex/cvar.h>
@@ -151,6 +152,18 @@ REXCVAR_DEFINE_STRING(gow2_texture_dump_dir, "", "Gears2",
 REXCVAR_DEFINE_STRING(gow2_texture_dump_sizes, "128x128,256x256,512x512,1024x1024,512x256,256x512,1024x512,512x1024",
                       "Gears2", "Sizes --gow2_texture_dump_dir writes (WxH, comma-separated; 'all' = every size from 32x32 up)");
 
+// Texture packs (KiltedKernel; xenos/renderer/texture_pack.h): folders of DDS files named by the content hash of the
+// guest texture each replaces - the ReXGlue hash (ComputeRexTextureHash), so the Gears of War 2 PC port's packs load
+// unchanged. The launcher passes the enabled mods' texture folders here, the mod loaded last first.
+REXCVAR_DEFINE_STRING(gow2_texture_pack_dirs, "", "Gears2",
+                      "Texture packs: folders separated by ';' (the first that has a texture wins), searched for "
+                      "<hash16>[_...].dds files (a pack's <TITLEID>\\replace folder works as is). A replacement is the "
+                      "original's size or a whole multiple of it (up to 8x) with its mip levels, in BC1-5, BC7, R8, R8G8 "
+                      "or R8G8B8A8 / B8G8R8A8. 2D textures only. Empty = off");
+REXCVAR_DEFINE_STRING(gow2_texture_pack_dump_dir, "", "Gears2",
+                      "Texture-pack makers: write each new 2D texture the game draws once, as <dir>/<hash16>_<format>_"
+                      "<W>x<H>.dds (its top level, named by the hash packs use; render targets left out). Empty = off");
+
 namespace {
 std::atomic<uint64_t> g_overlay_gen{1};
 
@@ -170,6 +183,10 @@ struct TexSwap {
   bool dump_all = false;                    // job 628: --gow2_texture_dump_sizes=all
   std::unordered_set<uint64_t> dumped;
   uint32_t dump_count = 0, replaced = 0;
+  ::xenos::renderer::texpack::PackIndex packs;  // texture packs: hash -> DDS file
+  std::string pack_dump_dir;
+  std::unordered_set<uint64_t> pack_dumped, pack_refused;
+  uint32_t pack_dump_count = 0, pack_loaded = 0;
   void Init() {
     std::lock_guard<std::mutex> lock(mutex);
     if (init) return;
@@ -221,11 +238,26 @@ struct TexSwap {
       }
       REXLOG_INFO("gow2_texture_dump: textures of {} to {}", dump_all ? std::string("every size") : std::to_string(dump_sizes.size()) + " size(s)", dump_dir);
     }
-    static_on.store(!replace.empty() || !overlay.empty() || !dump_sizes.empty() || dump_all, std::memory_order_release);
+    packs.Build(REXCVAR_GET(gow2_texture_pack_dirs));
+    for (const auto& [folder, n] : packs.folders())  // (the launcher passes every enabled mod: those with a pack)
+      if (n) REXLOG_INFO("gow2_texture_pack: {} texture(s) from {}", n, folder);
+    if (!packs.empty()) REXLOG_INFO("gow2_texture_pack: {} texture(s) in all", packs.size());
+    pack_dump_dir = REXCVAR_GET(gow2_texture_pack_dump_dir);
+    if (!pack_dump_dir.empty()) {
+      std::filesystem::create_directories(std::filesystem::path(pack_dump_dir), ec);
+      REXLOG_INFO("gow2_texture_pack: dumping to {}", pack_dump_dir);
+    }
+    static_on.store(!replace.empty() || !overlay.empty() || !dump_sizes.empty() || dump_all || !packs.empty() ||
+                        !pack_dump_dir.empty(),
+                    std::memory_order_release);
   }
   bool Dumps(uint32_t w, uint32_t h) const { return dump_all ? (w >= 32 && h >= 32) : dump_sizes.count((w << 16) | h) != 0; }
   // PR117 fix: no lock on the hot path. Entries already carrying an overlay stay candidates through their own flags.
   bool On() const { return static_on.load(std::memory_order_acquire) || dyn_on.load(std::memory_order_acquire); }
+  const std::filesystem::path* FindPack(uint64_t h) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return packs.Find(h);
+  }
   bool HasReplace(uint64_t h) const {
     std::lock_guard<std::mutex> lock(mutex);
     return replace.count(h) != 0;
@@ -1500,7 +1532,8 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   g_swap.Init();
   const uint64_t current_ov_gen = OverlayGeneration();
   uint64_t swap_hash = 0, rex_hash = 0, matched_hash = 0;
-  bool swap_replace = false, swap_dump = false;
+  bool swap_replace = false, swap_dump = false, pack_dump = false;
+  const std::filesystem::path* pack_file = nullptr;  // texture packs
   std::shared_ptr<const std::vector<uint8_t>> swap_overlay_holder;
   const std::vector<uint8_t>* swap_overlay = nullptr;  // job 629
   if ((g_swap.On() || e.has_overlay || e.ov_scale > 1 || !e.overlay_variants.empty()) &&
@@ -1537,6 +1570,17 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     }
     swap_dump = !g_swap.dump_dir.empty() && g_swap.Dumps(w, h) && g_swap.dump_count < 4000 &&
                 g_swap.dumped.insert(swap_hash).second;
+    // Texture packs: a file for this content (not over a prompt overlay or a job-620 replacement), and dumps for pack
+    // makers (not render targets: pages our GPU wrote hold resolves, which change)
+    if (!swap_replace && !swap_overlay) pack_file = g_swap.FindPack(rex_hash);
+    if (!g_swap.pack_dump_dir.empty() && !pack_file && g_swap.pack_dump_count < 50000 &&
+        !g_swap.pack_dumped.count(rex_hash) && w >= 4 && h >= 4) {
+      bool resolved = false;
+      const uint32_t len = std::max(layout.base.level_data_extent_bytes, 1u);
+      for (uint32_t p = base >> GuestWatch::kPageShift; p <= (base + len - 1) >> GuestWatch::kPageShift && !resolved; ++p)
+        resolved = !watch_.NeverResolved(p);
+      if (!resolved) pack_dump = g_swap.pack_dumped.insert(rex_hash).second;
+    }
   }
   if (swap_hash) {  // PR117 fix: remember what this content is, so a generation bump needs no rehash to skip it
     e.swap_checked = true;
@@ -1545,12 +1589,19 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
     e.swap_checked = false;
     e.prompt_known = false;
   }
+  if (pack_file) {  // texture packs: the pack's file in place of the guest texture, when it fits
+    const uint32_t mip_start = layout.packed_level == 0 && (mip_base || tail_at_base) ? base : mip_base;
+    const uint32_t mip_length = mips > 1 ? std::max(layout.mips_total_extent_bytes, 1u) : 0;
+    if (LoadFromPack(e, tf, *pack_file, rex_hash, w, h, mips, base,
+                     std::max(layout.base.level_data_extent_bytes, 1u), mip_start, mip_length))
+      return;
+  }
   const uint32_t ov_scale = swap_overlay ? OverlayScale(*swap_overlay, w, h) : 1u;  // job 661
   const bool is_prompt_or_overlay =
       swap_overlay != nullptr || !e.overlay_variants.empty() ||
       (swap_hash != 0 && (prompt::IsPromptAtlasOrAlias(swap_hash) || prompt::IsPromptAtlasOrAlias(rex_hash)));
   // job 661: a host texture made bigger for an overlay always reloads on the CPU path (the GPU loads write guest size)
-  const bool swap_cpu = swap_replace || swap_dump || swap_overlay || ov_scale > 1 || is_prompt_or_overlay;
+  const bool swap_cpu = swap_replace || swap_dump || pack_dump || swap_overlay || ov_scale > 1 || is_prompt_or_overlay;
   const bool replacing_existing = e.texture != 0;
   const bool cache_overlay_variants =
       !swap_replace && format == 20 && gd == tx::Dimension::k2DOrStacked && layers == 1 && host_kind == 0 &&
@@ -1620,28 +1671,8 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         layers == 6 && hf.host_bytes == 4));
   // Recreate the host texture when an existing slot changes overlay scale (e.g. 1x <-> 4x prompt atlas) or needs UAV
   // storage it was not created with.
-  if (e.texture && (e.ov_scale != ov_scale || (gpu && !e.gpu_storage))) {
-    for (auto v = e.overlay_variants.begin(); v != e.overlay_variants.end();) {  // PR117 fix: no double destroy
-      if (v->second.texture == e.texture) v = e.overlay_variants.erase(v); else ++v;
-    }
-    backend_.DestroyTexture(e.texture);
-    e.texture = 0;
-    stats_.host_bytes -= std::min(stats_.host_bytes, e.host_bytes);
-    e.host_bytes = 0;
-    if (stats_.textures) --stats_.textures;
-    if (e.through_indexed) {
-      auto [a, b] = through_.equal_range(e.through_base);
-      for (auto t = a; t != b; ++t) {
-        if (t->second == &e) {
-          through_.erase(t);
-          break;
-        }
-      }
-      e.through_indexed = false;
-      e.through_ok = false;
-    }
-    for (SlotCache& sc : slot_cache_) sc.valid = false;
-  }
+  // (texture packs: a host texture made from a pack's file has the file's shape - made again for the guest's own)
+  if (e.texture && (e.ov_scale != ov_scale || (gpu && !e.gpu_storage) || e.pack_hash)) DestroyHost(e);
   // Host texture (created once; re-loads write into it).
   bool created_texture = false;  // 0.6.2 (#311): made by this Load (nothing valid in it yet)
   if (!e.texture) {
@@ -2094,6 +2125,16 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         f.write(reinterpret_cast<const char*>(scratch_.data()), std::streamsize(scratch_.size()));
         ++g_swap.dump_count;
       }
+      if (pack_dump && level == 0 && u == 0) {  // texture packs: the base level as DDS, named by the pack hash
+        const std::vector<uint8_t> dds = texpack::WriteDds(hf.format, w, h, scratch_.data(), scratch_.size());
+        if (!dds.empty()) {
+          char leaf[64];
+          std::snprintf(leaf, sizeof(leaf), "%016llX_%u_%ux%u.dds", static_cast<unsigned long long>(rex_hash), format, w, h);
+          std::ofstream f{std::filesystem::path(g_swap.pack_dump_dir) / leaf, std::ios::binary};
+          f.write(reinterpret_cast<const char*>(dds.data()), std::streamsize(dds.size()));
+          ++g_swap.pack_dump_count;
+        }
+      }
       uint32_t up_row_bytes = row_bytes, up_rows = host_h;  // job 661: a bigger host texture gets bigger levels
       const uint64_t active_hash = matched_hash ? matched_hash : swap_hash;
       if (e.ov_scale > 1 && hf.block_compressed && bpb == 16 && !host_3d && u == 0) {
@@ -2134,6 +2175,96 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
   ++stats_.uploads;
   if (backend_.TextureLoadDrops() != drops_at_start)  // 0.6.2 (#311)
     FailLoad(e, e.texture, created_texture, "backend dropped part of it");
+}
+
+void TextureCache::DestroyHost(Entry& e) {
+  for (auto v = e.overlay_variants.begin(); v != e.overlay_variants.end();) {  // PR117 fix: no double destroy
+    if (v->second.texture == e.texture) v = e.overlay_variants.erase(v); else ++v;
+  }
+  backend_.DestroyTexture(e.texture);
+  e.texture = 0;
+  stats_.host_bytes -= std::min(stats_.host_bytes, e.host_bytes);
+  e.host_bytes = 0;
+  if (stats_.textures) --stats_.textures;
+  if (e.through_indexed) {
+    auto [a, b] = through_.equal_range(e.through_base);
+    for (auto t = a; t != b; ++t) {
+      if (t->second == &e) {
+        through_.erase(t);
+        break;
+      }
+    }
+    e.through_indexed = false;
+    e.through_ok = false;
+  }
+  e.pack_hash = 0;
+  for (SlotCache& sc : slot_cache_) sc.valid = false;
+}
+
+bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesystem::path& file, uint64_t hash, uint32_t w,
+                                uint32_t h, uint32_t mips, uint32_t base_start, uint32_t base_length, uint32_t mip_start,
+                                uint32_t mip_length) {
+  auto refuse = [&](const std::string& why) {
+    if (g_swap.pack_refused.insert(hash).second && g_swap.pack_refused.size() <= 200)
+      REXLOG_WARN("gow2_texture_pack: {:016X} ({}x{}) not replaced by {}: {}", hash, w, h, file.filename().string(), why);
+    return false;
+  };
+  // A signed fetch needs a signed view of the host format: only the guest's own format has one here.
+  for (uint32_t c = 0; c < 4; ++c)
+    if (Bits(tf[0], 2 + 2 * c, 2) == 1) return refuse("the game reads it as signed");
+  texpack::DdsImage img;
+  std::string why;
+  if (!texpack::ReadDds(file, img, why) || !texpack::FitsGuest(w, h, mips, img, why))
+    return refuse(why);
+  const bool replacing_existing = e.texture != 0;
+  if (e.texture && e.pack_hash != hash) DestroyHost(e);
+  bool created = false;
+  if (!e.texture) {
+    gpu::TextureDesc td;
+    td.dimension = gpu::TextureDimension::k2D;
+    td.width = img.width;
+    td.height = img.height;
+    td.mips = img.mips;
+    td.format = img.format;
+    td.usage = gpu::kUsageSampled;
+    td.debug_name = "texture pack";
+    e.texture = backend_.CreateTexture(td);
+    if (!e.texture) return refuse("host texture creation failed");
+    created = true;
+    e.format = img.format;
+    e.gpu_storage = false;
+    e.ov_scale = 1;
+    e.host_bytes = img.data.size();
+    if (replacing_existing) {
+      ++stats_.textures;
+      stats_.host_bytes += e.host_bytes;
+    }
+  }
+  e.pack_hash = hash;
+  e.overlay_gen = OverlayGeneration();
+  e.has_overlay = true;
+  e.through_ok = false;
+  // Watch the guest ranges as for a guest load: when the game puts other content there, the hash changes and the
+  // texture loads again (the guest's own, or another file).
+  e.base_start = base_start;
+  e.base_length = base_length;
+  e.mip_start = mip_start;
+  e.mip_length = mip_length;
+  e.version = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length);
+  watch_.Watch(e.base_start, e.base_length);
+  if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
+  (void)PagesChanged(e, false);
+  const uint64_t drops_at_start = backend_.TextureLoadDrops();
+  for (uint32_t level = 0; level < img.mips; ++level)
+    backend_.UploadTexture(e.texture, level, 0, img.data.data() + img.offsets[level], img.RowBytes(level),
+                           img.Rows(level), 1);
+  stats_.upload_bytes += img.data.size();
+  ++stats_.uploads;
+  if (++g_swap.pack_loaded <= 20)
+    REXLOG_INFO("gow2_texture_pack: {:016X} ({}x{}) replaced: {}x{}, {} level(s), format {}", hash, w, h, img.width,
+                img.height, img.mips, uint32_t(img.format));
+  if (backend_.TextureLoadDrops() != drops_at_start) FailLoad(e, e.texture, created, "backend dropped part of it");
+  return true;
 }
 
 uint32_t TextureCache::DropScaledEntries() {

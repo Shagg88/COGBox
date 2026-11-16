@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -297,6 +298,9 @@ class TextureCache {
     bool through_ok = false, through_indexed = false;
     uint32_t through_base = 0, through_pitch = 0, through_bpb_log2 = 0, through_code = 0, through_endian = 0;
     uint32_t width = 0, height = 0;
+    // Texture packs (KiltedKernel, --gow2_texture_pack_dirs): the content hash whose pack file this host texture holds
+    // (its size, format and mips are the file's), 0 = the guest texture's own
+    uint64_t pack_hash = 0;
   };
   // Stage 7: the scaled entry for a 2D fetch constant if its texture is held by a current scaled resolve, else null.
   Entry* LookupScaled(const uint32_t* tf);
@@ -306,6 +310,12 @@ class TextureCache {
   Entry& Lookup(const uint32_t* tf, uint32_t host_kind, uint64_t frame);
   void Load(Entry& e, const uint32_t* tf, uint32_t host_kind);
   void FailLoad(Entry& e, gpu::TextureHandle tex, bool created, const char* why);  // 0.6.2 (#311)
+  // Destroys e's host texture (and the bookkeeping that points at it) so the next load creates one of a new shape.
+  void DestroyHost(Entry& e);
+  // Texture packs: loads e from a pack's DDS file instead of guest memory; false (nothing changed) when the file cannot
+  // stand in for this texture (unreadable, wrong size or mips, a signed fetch) - the guest texture loads as usual.
+  bool LoadFromPack(Entry& e, const uint32_t* tf, const std::filesystem::path& file, uint64_t hash, uint32_t w, uint32_t h,
+                    uint32_t mips, uint32_t base_start, uint32_t base_length, uint32_t mip_start, uint32_t mip_length);
   void StandIn(const std::string& why);
 
   gpu::Backend& backend_;

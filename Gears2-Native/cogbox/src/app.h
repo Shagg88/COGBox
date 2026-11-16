@@ -208,6 +208,7 @@ struct ModItem {
     // and what in its mod.ini the game does not understand
     std::string problem, campaign;
     std::vector<std::string> notes;
+    uint32_t textures = 0;   // KiltedKernel: texture pack - the DDS files named by texture hash in its folder
 };
 std::string mods_dir(int game);
 std::vector<ModItem> mods_list(App &a, int game);         // in load order

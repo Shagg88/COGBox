@@ -333,6 +333,20 @@ int summary() {
         for (Game g : { Game::Gears1, Game::Gears2, Game::Gears3, Game::Judgment })
             if (find_option(g, "FastCode")) { std::cout << "FAIL FastCode should not be a user option\n"; ++fails; }
     }
+    // KiltedKernel: texture packs - the enabled mods' folders again, the one loaded last first, and only for a game exe
+    // that has the option
+    for (int cap = 0; cap <= 1; ++cap) {
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [cap](const std::string& n) { return cap || n != "gow2_texture_pack_dirs"; };
+        e.cap.runtime_has = e.cap.exe_has; e.cap.file_next_to_exe = e.cap.exe_has;
+        e.mods = { "C:/G/mods/A", "C:/G/mods/B" };
+        Store st; Settings s = st.view(Game::Gears3, e);
+        const std::vector<std::string> a = build_args(Game::Gears3, Version::TitleUpdate, s, e, nullptr);
+        std::string got;
+        for (const std::string& x : a) if (x.rfind("--gow2_texture_pack_dirs=", 0) == 0) got = x;
+        const std::string want = "--gow2_texture_pack_dirs=\"C:/G/mods/B;C:/G/mods/A\"";
+        if (cap ? got != want : !got.empty()) { std::cout << "FAIL texture pack folders (" << got << ")\n"; ++fails; }
+    }
     // social step 3: with the multiplayer server enabled the games start online; without, none of it
     for (int on = 0; on <= 1; ++on) {
         Environment e; e.update_ready = true;

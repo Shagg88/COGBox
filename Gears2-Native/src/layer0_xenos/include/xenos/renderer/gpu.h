@@ -83,6 +83,7 @@ enum class Format : uint32_t {
   kD32FloatS8X24,  // float depth + 8-bit stencil: D24FS8 targets (D29), and D24S8 with the exact-math option
   kD24UnormS8,     // D24S8 targets by default: the same host format as the reference (Canary/SDK RTV path), so
                    // depth quantisation and depth bias units match it bit for bit (job 097: +-1 otherwise)
+  kBC7,            // texture packs only (KiltedKernel): no Xenos format is BC7; a pack's upscaled textures often are
 };
 constexpr bool IsDepthFormat(Format f) { return f == Format::kD32FloatS8X24 || f == Format::kD24UnormS8; }
 

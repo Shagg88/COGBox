@@ -45,6 +45,7 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/renderer/render_target_cache.cpp
     src/layer0_xenos/renderer/guest_watch.cpp
     src/layer0_xenos/renderer/texture_cache.cpp
+    src/layer0_xenos/renderer/texture_pack.cpp
     src/layer0_xenos/renderer/prompt_atlas_catalog.cpp
     src/layer0_xenos/renderer/prompt_overlay_compositor.cpp
     src/layer0_xenos/input/prompt_device_monitor.cpp
@@ -437,7 +438,9 @@ if(GN_BUILD_TESTS)
         tests/layer0_hlsl_compact_test.cpp
         tests/layer0_upscaler_test.cpp
         tests/layer0_texture_cache_test.cpp
+        tests/layer0_texture_pack_test.cpp
         src/layer0_xenos/renderer/texture_cache.cpp
+        src/layer0_xenos/renderer/texture_pack.cpp
         tests/layer0_render_target_cache_test.cpp
         src/layer0_xenos/renderer/render_target_cache.cpp
         src/layer0_xenos/renderer/guest_watch.cpp
