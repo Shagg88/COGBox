@@ -152,6 +152,31 @@ bool ObjectReprojectionMatrix(const Mat4& view_proj, const Mat4& prev_view_proj,
 bool CameraMotion(const Mat4& reprojection, float u, float v, float depth, uint32_t width, uint32_t height,
                   float& motion_x, float& motion_y);
 
+// ---- GitHub #323: a scene whose size changes from frame to frame ----
+// Gears 2 narrows its scene by itself in heavy views (1024..1280 x 720 guest pixels, 64-pixel steps, many times a
+// second). Re-creating an SDK feature for every size cost ~21 ms each (DLSS), so the feature is created once for a
+// size the frames fit in, and each frame is handed over within it (ResizeMode).
+// The guest size to create for: keeps cw x ch (0 x 0: none yet - then the frame's own size, so a game whose scene is
+// always smaller than nominal is never padded) while w x h fits in it; an axis the frame exceeds grows to at least the
+// frame and at least the nominal (the game's full scene, 1280 x 720), so a game that started narrower re-creates once
+// more, not at every step. Never shrinks (a smaller frame costs at most what the full size already did). True when it
+// changed, i.e. the feature must be re-created.
+bool FitCreationSize(uint32_t w, uint32_t h, uint32_t nominal_w, uint32_t nominal_h, uint32_t& cw, uint32_t& ch);
+// The motion (render pixels, previous - current, one axis) of the pixel whose centre is at `pos` in a frame `size`
+// pixels across, for an upscaler whose history is the last frame drawn `prev_size` across in the same pixel grid
+// (left / top aligned: the game draws the same view narrower, it does not crop it): the previous position
+// u_prev * size becomes u_prev * prev_size, i.e. motion * k + pos * (k - 1) with k = prev_size / size.
+// kUpscalePadCs (builtin_shaders.h) does the same on the GPU - keep the two identical.
+float ResizedMotion(float motion, float pos, uint32_t size, uint32_t prev_size);
+
+enum class ResizeMode : uint32_t {
+  kRecreate,  // Configure with every frame's size (ours: SMAA T2x - its textures are cheap to remake)
+  kPerFrame,  // FSR: created for the largest size; renderSize / upscaleSize per dispatch below it
+  kPadded,    // DLSS, XeSS: the output size is fixed at creation (NGX takes a render subrect, but its output always
+              // fills the target), so the renderer pads the frame's colour / depth / motion to the creation size
+              // (edges repeated) and reads its own part of the output - the same pixels at the same place as before
+};
+
 // ---- The upscaler ----
 struct FrameInputs {
   gpu::TextureHandle color = 0;   // scene colour (render size), sampled
@@ -184,6 +209,8 @@ class Upscaler {
   virtual bool Evaluate(gpu::Backend& backend, const FrameInputs& inputs) = 0;
   // A line for the log: SDK / runtime version, feature state, or the reason it is off.
   virtual std::string Status() const = 0;
+  // GitHub #323: how a frame smaller than the Configure size is handed over (ResizeMode above).
+  virtual ResizeMode Resize() const { return ResizeMode::kRecreate; }
 };
 
 // Null when that SDK was not built in (or kind == kNone).

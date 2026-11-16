@@ -402,3 +402,42 @@ TEST_CASE("upscale: the frame's last scene copy is learned (notes/80 s.11)", "[u
   CHECK(frame(last, 1) == -1);
   CHECK(frame(last, 1) == 0);
 }
+
+TEST_CASE("upscale: one creation size for a scene that changes width (GitHub #323)", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  uint32_t cw = 0, ch = 0;
+  CHECK(up::FitCreationSize(1280, 720, 1280, 720, cw, ch));  // first frame: its own size
+  CHECK((cw == 1280 && ch == 720));
+  // Gears 2 at Nexus: 1024..1280 in 64-pixel steps, many times a second - no re-creation.
+  for (uint32_t w : {1024u, 1088u, 1216u, 1280u, 1152u, 1024u}) {
+    CHECK_FALSE(up::FitCreationSize(w, 720, 1280, 720, cw, ch));
+    CHECK((cw == 1280 && ch == 720));
+  }
+  // A first frame narrower than the full scene, then wider: once more, straight to the full width.
+  cw = ch = 0;
+  CHECK(up::FitCreationSize(1024, 720, 1280, 720, cw, ch));
+  CHECK(cw == 1024);
+  CHECK(up::FitCreationSize(1088, 720, 1280, 720, cw, ch));
+  CHECK((cw == 1280 && ch == 720));
+  CHECK_FALSE(up::FitCreationSize(1216, 720, 1280, 720, cw, ch));
+  // A game always below the nominal size keeps its own (never padded); past the nominal: the frame's size.
+  cw = ch = 0;
+  CHECK(up::FitCreationSize(1280, 704, 1280, 720, cw, ch));
+  CHECK_FALSE(up::FitCreationSize(1280, 704, 1280, 720, cw, ch));
+  CHECK(ch == 704);
+  CHECK(up::FitCreationSize(1920, 704, 1280, 720, cw, ch));
+  CHECK((cw == 1920 && ch == 704));
+}
+
+TEST_CASE("upscale: motion re-expressed for the last frame's width (GitHub #323)", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  CHECK(up::ResizedMotion(3.5f, 100.5f, 2560, 2560) == 3.5f);  // same size: unchanged
+  CHECK(up::ResizedMotion(3.5f, 100.5f, 2560, 0) == 3.5f);     // no last frame
+  // A still camera: the scene's centre (u = 0.5) was drawn at 1280 of 2560 last frame and is at 1024 of 2048 now.
+  CHECK(up::ResizedMotion(0.0f, 1024.0f, 2048, 2560) == Approx(256.0f));
+  CHECK(up::ResizedMotion(0.0f, 1280.0f, 2560, 2048) == Approx(-256.0f));
+  // A moving camera: previous position u_prev * prev_size, whatever the motion within the frame.
+  const float w = 2048.0f, prev = 2560.0f, pos = 300.5f, m = -12.25f;
+  const float u_prev = (pos + m) / w;
+  CHECK(pos + up::ResizedMotion(m, pos, 2048, 2560) == Approx(u_prev * prev));
+}

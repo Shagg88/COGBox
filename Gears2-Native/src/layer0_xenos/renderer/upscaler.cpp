@@ -68,6 +68,24 @@ Jitter JitterOffset(uint64_t frame, uint32_t phase_count) {
   return {Halton(i, 2) - 0.5f, Halton(i, 3) - 0.5f};
 }
 
+bool FitCreationSize(uint32_t w, uint32_t h, uint32_t nominal_w, uint32_t nominal_h, uint32_t& cw, uint32_t& ch) {
+  if (!cw || !ch) {  // none yet: the frame's own size
+    const bool changed = cw != w || ch != h;
+    cw = w, ch = h;
+    return changed;
+  }
+  bool changed = false;
+  if (w > cw) cw = std::max(w, nominal_w), changed = true;
+  if (h > ch) ch = std::max(h, nominal_h), changed = true;
+  return changed;
+}
+
+float ResizedMotion(float motion, float pos, uint32_t size, uint32_t prev_size) {
+  if (!size || !prev_size) return motion;
+  const float k = float(prev_size) / float(size);
+  return motion * k + pos * (k - 1.0f);
+}
+
 float DejitterDepth(const float taps[4], float fx, float fy, float depth_a, float edge, int* nearest_tap) {
   float lin_min = 0.0f, lin_max = 0.0f;
   for (int i = 0; i < 4; ++i) {

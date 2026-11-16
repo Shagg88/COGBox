@@ -88,6 +88,9 @@ class DlssUpscaler final : public Upscaler {
   ~DlssUpscaler() override { Release(); }
   Kind kind() const override { return Kind::kDlss; }
   std::string Status() const override { return status_; }
+  // GitHub #323: the output always fills the creation target (InRenderSubrectDimensions maps the render subrect onto
+  // all of it; there is no output size per evaluate), so a narrower scene is padded to the creation size by the renderer.
+  ResizeMode Resize() const override { return ResizeMode::kPadded; }
 
   bool Configure(gpu::Backend& backend, uint32_t render_width, uint32_t render_height, uint32_t output_width,
                  uint32_t output_height, bool hdr, bool depth_infinite, bool depth_inverted) override {
