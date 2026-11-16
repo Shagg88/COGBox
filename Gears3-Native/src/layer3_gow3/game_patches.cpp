@@ -233,8 +233,15 @@ void Gow3UltrawideSizeCheck(PPCRegister& r30) {
     r30.u64 = 720;
     return;
   }
-  GOW3_LOG_ONCE("gow3_aspect: scene render targets sized for the picture: 1280x{} (game value {}; 720 before 0.6.3, "
-                "GitHub #330)", WideHeight(), r30.u32);
+  // Review r88 L1: log the game's own value each time it changes (a later change re-creates the targets), and say so
+  // when it is not the picture's height. Cheap: the size check runs about once a frame.
+  static std::atomic<uint32_t> last{0};
+  if (last.exchange(r30.u32) != r30.u32) {
+    static std::atomic<int> n{0};
+    if (n.fetch_add(1) < 8)
+      REXLOG_INFO("gow3_aspect: scene render targets sized from screen height {} (picture 1280x{}; 720 before 0.6.3, "
+                  "GitHub #330){}", r30.u32, WideHeight(), r30.u32 == WideHeight() ? "" : " - NOT the picture height");
+  }
 }
 bool Gow3UltrawideVideo(PPCRegister& r4) {  // jump_address_on_true: past `stw r4,0x88(r3)` at 0x82BC9D84
   if (!Wide()) return false;
