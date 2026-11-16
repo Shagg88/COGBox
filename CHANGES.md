@@ -26,6 +26,10 @@
   (safe to delete).
 
 ### Fixes
+- **Crash reports are no longer empty** (all four games, GitHub #286): a game that froze before crashing could leave an
+  empty `crash-*.txt` and a cut-off `.dmp`. The crash report is now written without touching anything the frozen game
+  might be holding, lists where every thread was stuck, and the crash dump is written by COGBox from outside the game
+  (the game writes it itself when started without COGBox).
 - **Hosting no longer halves your frame-rate limit** (Gears 2, Gears 3 and Judgment): while friends were in a match you
   hosted, a limit of 60 gave 30 (144 gave 72) until they left. The game asks for the limit a second time each frame
   when it sends updates to other players, and COGBox waited a whole frame both times; it now waits once per frame.
