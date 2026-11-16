@@ -15,6 +15,7 @@ export const sideWord = (v: string | undefined): 'everyone' | 'host' | 'client' 
   return low === 'client' ? 'client' : low === 'host' || low === 'server' ? 'host' : 'everyone';
 };
 export const MAX_SCREENS = 6;
+const GONE = 'fabricator: upload or account gone';
 
 export interface UploadRow {
   id: string; account: string; mod_id: number | null; meta: string; size: number; sha256: string;
@@ -252,6 +253,8 @@ async function finishLocked(db: DatabaseInstance, store: FabStore, s: FabSetting
   let versionId = 0;
   try {
     db.transaction(() => {
+      // The account may have been deleted while the file was assembled and checked: write nothing then.
+      if (!getUpload(db, row.id) || !db.prepare('SELECT 1 FROM users WHERE uuid = ?').get(row.account)) throw new Error(GONE);
       const self = modId ?? -1;
       const reqs = new Set<number>();
       for (const name of zip.modIni?.requires ?? []) {
@@ -297,6 +300,7 @@ async function finishLocked(db: DatabaseInstance, store: FabStore, s: FabSetting
     })();
   } catch (e) {
     dropFileIfUnused(db, store, key);
+    if ((e as Error)?.message === GONE) return { ok: false, problems: ['upload not found'] };
     if ((e as any)?.code === 'SQLITE_CONSTRAINT_UNIQUE') return { ok: false, problems: ['name taken: another mod for this game has this name'] };
     throw e;
   }

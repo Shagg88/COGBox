@@ -5,6 +5,10 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server.js';
+import { initDb } from '../src/db.js';
+import { FAB_DEFAULTS, type FabSettings } from '../src/fabricator/settings.js';
+import { FabStore } from '../src/fabricator/store.js';
+import { startUpload, putChunk, putScreen, finishUpload, forgetFabricatorAccount } from '../src/fabricator/publish.js';
 import { modZip, png, meta, sha256 } from './fabricator_helpers.js';
 
 const DAY = 24 * 3600 * 1000;
@@ -135,5 +139,101 @@ describe('fabricator creator pages and deleted accounts', () => {
     const lib = (await app.inject({ method: 'GET', url: `${API}/library`, headers: auth(b) })).json();
     expect(lib.mods.find((m: any) => m.id === mod_id)).toMatchObject({ state: 'removed' });
     expect(rows('SELECT 1 FROM fab_ratings WHERE mod_id = ?', other.mod_id)).toHaveLength(0);
+  });
+
+  it('the same file from two accounts survives one account being deleted', async () => {
+    const a = await claim('Baird');
+    const b = await claim('Cole');
+    const zip = await modZip('[Mod]\nName=A\n', 2300);
+    await publish(a, 'Alpha', zip);
+    const two = await publish(b, 'Beta', zip);
+    expect(filesOnDisk()).toHaveLength(1);
+    expect((await app.inject({ method: 'DELETE', url: '/api/v1/auth/account', headers: auth(a) })).statusCode).toBe(200);
+    expect(filesOnDisk()).toHaveLength(1);
+    const d = await app.inject({ method: 'POST', url: `${API}/mods/${two.mod_id}/download`, headers: auth(b) });
+    expect(d.statusCode).toBe(200);
+  });
+
+  it('account deletion rolls back entirely when something fails', async () => {
+    const a = await claim('Baird');
+    const { mod_id } = await publish(a, 'Alpha', await modZip('[Mod]\nName=A\n', 2300));
+    await app.inject({ method: 'POST', url: `${API}/library/${mod_id}`, headers: auth(a) });
+    const d = new Database(dbPath);
+    d.exec("CREATE TRIGGER boom BEFORE DELETE ON users BEGIN SELECT RAISE(ABORT, 'boom'); END");
+    d.close();
+    const r = await app.inject({ method: 'DELETE', url: '/api/v1/auth/account', headers: auth(a) });
+    expect(r.statusCode).toBe(500);
+    expect(rows('SELECT 1 FROM users WHERE uuid = ?', a.uuid)).toHaveLength(1);
+    expect(rows('SELECT state FROM fab_mods WHERE id = ?', mod_id)[0].state).toBe('live');
+    expect(rows('SELECT 1 FROM fab_library WHERE account = ?', a.uuid)).toHaveLength(1);
+    expect(rows('SELECT 1 FROM fab_creators WHERE account = ?', a.uuid)).toHaveLength(1);
+    expect(rows('SELECT 1 FROM fab_mods_fts WHERE rowid = ?', mod_id)).toHaveLength(1);
+    expect(filesOnDisk()).toHaveLength(1);
+  });
+
+  it('an owner can remove their taken-down mod', async () => {
+    const a = await claim('Baird');
+    const { mod_id } = await publish(a, 'Alpha', await modZip('[Mod]\nName=A\n', 300));
+    const d = new Database(dbPath);
+    d.prepare("UPDATE fab_mods SET state = 'taken_down' WHERE id = ?").run(mod_id);
+    d.close();
+    const list = (await app.inject({ method: 'GET', url: `${API}/creator/mods`, headers: auth(a) })).json();
+    expect(list.mods[0].state).toBe('taken_down');
+    expect((await app.inject({ method: 'DELETE', url: `${API}/creator/mods/${mod_id}`, headers: auth(a) })).statusCode).toBe(204);
+    expect(rows('SELECT state FROM fab_mods WHERE id = ?', mod_id)[0].state).toBe('removed');
+    expect(filesOnDisk()).toHaveLength(0);
+  });
+
+  it('an open upload session loses its chunk files when the account is deleted', async () => {
+    const a = await claim('Baird');
+    const file = await modZip('[Mod]\nName=A\n', 2300);
+    const s = (await app.inject({ method: 'POST', url: `${API}/uploads`, headers: auth(a), payload: { meta: meta({ name: 'Open' }), size: file.length, sha256: sha256(file) } })).json();
+    const body = file.subarray(0, 1024);
+    const r = await app.inject({ method: 'PUT', url: `${API}/uploads/${s.id}/chunks/0`, payload: body,
+      headers: { ...auth(a), 'content-type': 'application/octet-stream', 'x-chunk-sha256': sha256(body) } });
+    expect(r.statusCode).toBe(204);
+    const chunkDir = path.join(dir, 'fabricator', 'chunks', s.id);
+    expect(fs.existsSync(chunkDir)).toBe(true);
+    await app.inject({ method: 'DELETE', url: '/api/v1/auth/account', headers: auth(a) });
+    expect(fs.existsSync(chunkDir)).toBe(false);
+  });
+});
+
+describe('finishing an upload while its account is deleted', () => {
+  it('writes nothing and leaves no file', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fabrace-'));
+    const db = initDb(':memory:');
+    const store = new FabStore(path.join(dir, 'fabricator'));
+    const s: FabSettings = { ...FAB_DEFAULTS, chunkBytes: 1024, diskFullFraction: 1 };
+    const NOW = Date.now();
+    db.prepare(`INSERT INTO users (uuid, display_name, discriminator, xuid, token_hash, created_at, last_seen)
+      VALUES ('acc-a', 'Baird', '0001', 'x1', ?, ?, ?)`).run('00'.repeat(32), NOW - 10 * DAY, NOW);
+    try {
+      const zip = await modZip('[Mod]\nName=A\n', 2300);
+      const up = startUpload(db, 'acc-a', meta() as any, null, zip.length, sha256(zip), NOW, s);
+      for (let n = 0; n < up.chunks; n++) {
+        const part = zip.subarray(n * up.chunkBytes, (n + 1) * up.chunkBytes);
+        expect(await putChunk(db, store, up.id, n, part, sha256(part))).toBe('ok');
+      }
+      expect(await putScreen(db, store, up.id, 0, await png())).toBeNull();
+      // the account is deleted after the file is checked, just as it is committed
+      const commit = store.commit.bind(store);
+      store.commit = (f: string, h: string) => {
+        const key = commit(f, h);
+        forgetFabricatorAccount(db, store, 'acc-a');
+        db.prepare('DELETE FROM users WHERE uuid = ?').run('acc-a');
+        return key;
+      };
+      const r = await finishUpload(db, store, s, up.id, 'acc-a', NOW);
+      expect(r.ok).toBe(false);
+      for (const t of ['fab_versions', 'fab_creators', 'fab_screens', 'fab_mods_fts']) {
+        expect((db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n, t).toBe(0);
+      }
+      expect((db.prepare("SELECT COUNT(*) AS n FROM fab_mods WHERE state != 'removed'").get() as { n: number }).n).toBe(0);
+      expect(fs.readdirSync(path.join(dir, 'fabricator', 'files'), { recursive: true, withFileTypes: true }).filter((e) => e.isFile())).toEqual([]);
+    } finally {
+      db.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
