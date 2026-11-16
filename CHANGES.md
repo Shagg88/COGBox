@@ -2,6 +2,9 @@
 
 ## 0.6.4 (in progress)
 
+- **Steadier speed with the game window covered or minimised on Windows 11** (all four games): Windows 11 could drop
+  the fine timer the games ask for back to its 15.6 ms tick while the window was hidden; COGBox now opts out of that
+  (as Xenia Canary does).
 - **French achievement wording now matches the French Xbox 360** (by IamBugReporter, GitHub #339): "déverrouillé" instead of
   "débloqué", "Succès caché" for secret achievements and "Gamerscore" instead of "Score".
 

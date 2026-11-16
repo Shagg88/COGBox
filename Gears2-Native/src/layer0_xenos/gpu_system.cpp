@@ -401,6 +401,23 @@ class OurGpuSystem final : public rex::system::IGraphicsSystem {
 #if defined(_WIN32)
     if (timer_tried_ || !REXCVAR_GET(gow2_high_resolution_timer)) return;
     timer_tried_ = true;
+    // Windows 11 may ignore a process's timer resolution request while its window is covered or minimised and fall
+    // back to the 15.625 ms tick, which slows guest timers paced at 16 ms. Opt this process out of that throttling
+    // first (PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION, as Xenia Canary c5798e9). Windows 10 and older have no
+    // such throttling: the call then fails, which is harmless. The struct and class number are spelled out here so the
+    // build does not depend on how new the Windows SDK headers are.
+    if (HMODULE k32 = GetModuleHandleW(L"kernel32.dll")) {
+      struct ThrottlingState { ULONG Version, ControlMask, StateMask; };  // PROCESS_POWER_THROTTLING_STATE
+      constexpr int kProcessPowerThrottling = 4;                         // PROCESS_INFORMATION_CLASS value
+      constexpr ULONG kIgnoreTimerResolution = 0x4;
+      using SetInfoFn = BOOL(WINAPI*)(HANDLE, int, LPVOID, DWORD);
+      if (auto set_info = reinterpret_cast<SetInfoFn>(GetProcAddress(k32, "SetProcessInformation"))) {
+        ThrottlingState state = {1, kIgnoreTimerResolution, 0};  // version 1; control this bit and keep it clear
+        const BOOL ok = set_info(GetCurrentProcess(), kProcessPowerThrottling, &state, sizeof(state));
+        REXLOG_INFO("gow2_gpu: timer resolution kept while the window is hidden: {} (error {})", ok ? "yes" : "no",
+                    ok ? 0ul : static_cast<unsigned long>(GetLastError()));
+      }
+    }
     HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
     if (!ntdll) return;
     using QueryFn = LONG(NTAPI*)(PULONG, PULONG, PULONG);
