@@ -77,6 +77,14 @@
       <div id="fab-stats"></div>
       <h2>Reports</h2>
       <div id="fab-reports"></div>
+      <h2>Mods</h2>
+      <form id="fab-find" class="row">
+        <select id="fab-state"><option value="">Every state</option><option value="live">Live</option><option value="taken_down">Taken down</option><option value="removed">Removed</option></select>
+        <input id="fab-q" type="search" placeholder="Name or number" maxlength="100">
+        <button type="submit">Find</button>
+      </form>
+      <div id="fab-mod"></div>
+      <div id="fab-mods"></div>
     </section>
 
     <section data-page="audit" hidden><div id="audit"></div></section>

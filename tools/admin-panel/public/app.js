@@ -1,10 +1,11 @@
-import { auditHtml, backupsHtml, fabReportsHtml, fabStatsHtml, lobbiesHtml, logsHtml, overviewHtml } from './render.js';
+import { auditHtml, backupsHtml, fabModHtml, fabModsHtml, fabReportsHtml, fabStatsHtml, lobbiesHtml, logsHtml, overviewHtml } from './render.js';
 
 const $ = (s) => document.querySelector(s);
 const API = '/admin/api';
 let csrf = '';
 let timer = 0;
 let logLines = [];
+let fabOpen = 0;   // the mod whose details are shown (0: none)
 
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 
@@ -56,6 +57,18 @@ async function loadFabricator() {
     $('#fab-stats').innerHTML = fabStatsHtml(stats);
     $('#fab-reports').innerHTML = fabReportsHtml(reports, Date.now());
   } catch (e) { fail(e); }
+  await loadMods();
+  if (fabOpen) await loadMod(fabOpen);
+}
+async function loadMods() {
+  const qs = new URLSearchParams();
+  if ($('#fab-state').value) qs.set('state', $('#fab-state').value);
+  if ($('#fab-q').value.trim()) qs.set('q', $('#fab-q').value.trim());
+  try { $('#fab-mods').innerHTML = fabModsHtml(await api('/fabricator/mods' + (qs.toString() ? '?' + qs : ''))); } catch (e) { fail(e); }
+}
+async function loadMod(id) {
+  fabOpen = id;
+  try { $('#fab-mod').innerHTML = fabModHtml(await api(`/fabricator/mods/${encodeURIComponent(id)}`)); } catch (e) { fabOpen = 0; $('#fab-mod').innerHTML = ''; fail(e); }
 }
 async function loadLogs() {
   try {
@@ -108,6 +121,8 @@ $('#logout').addEventListener('click', async () => {
 $('#tabs').addEventListener('click', (ev) => { const t = ev.target.closest('button[data-tab]'); if (t) tab(t.dataset.tab); });
 $('#lobbies-refresh').addEventListener('click', loadLobbies);
 $('#fab-refresh').addEventListener('click', loadFabricator);
+$('#fab-find').addEventListener('submit', (ev) => { ev.preventDefault(); loadMods(); });
+$('#fab-state').addEventListener('change', loadMods);
 $('#logs-refresh').addEventListener('click', loadLogs);
 $('#log-service').addEventListener('change', loadLogs);
 $('#log-filter').addEventListener('input', drawLogs);
@@ -140,6 +155,16 @@ document.addEventListener('click', async (ev) => {
       'delete-files': `Delete every file of "${name}"? It is taken down and can no longer be restored. This cannot be undone.` }[action];
     if (!ask || !confirm(ask)) return;
     try { await api(`/fabricator/mods/${encodeURIComponent(mod)}/${encodeURIComponent(action)}`, { confirm: true }); note(`Done: ${action} "${name}".`); } catch (e) { fail(e); }
+    loadFabricator();
+    return;
+  }
+  const detail = ev.target.closest('button[data-fab-detail]');
+  if (detail) { loadMod(Number(detail.dataset.fabDetail)); return; }
+  const allow = ev.target.closest('button[data-fab-allow]');
+  if (allow) {
+    const tag = allow.dataset.fabAllow;
+    if (!confirm(`Allow ${tag} to publish again?`)) return;
+    try { await api(`/fabricator/creators/${encodeURIComponent(tag)}/publishing`, { allowed: true, confirm: true }); note(`${tag} can publish again.`); } catch (e) { fail(e); }
     loadFabricator();
     return;
   }

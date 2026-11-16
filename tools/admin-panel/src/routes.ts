@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from './db.js';
-import type { DockerClient, FabAction, MasterClient } from './types.js';
+import { FAB_STATES, type DockerClient, type FabAction, type MasterClient } from './types.js';
 import { audit } from './audit.js';
 import { logSafeText } from './scrub.js';
 
@@ -87,6 +87,24 @@ export function registerRoutes(api: FastifyInstance, o: { db: Db; now: () => num
 
   api.get('/fabricator/stats', async (_req, reply) => {
     try { return await master.fabStats(); } catch (e) { return masterDown(reply, e); }
+  });
+
+  // The mods view: a state filter and a piece of the name (or the id), then one mod's details.
+  api.get('/fabricator/mods', async (req, reply) => {
+    const { state, q } = req.query as { state?: unknown; q?: unknown };
+    if (state !== undefined && state !== '' && !(FAB_STATES as readonly unknown[]).includes(state)) return reply.status(400).send({ error: 'Unknown state.' });
+    try {
+      return await master.fabMods({ state: typeof state === 'string' && state !== '' ? state : undefined, q: typeof q === 'string' ? q.slice(0, 100) : '' });
+    } catch (e) { return masterDown(reply, e); }
+  });
+
+  api.get('/fabricator/mods/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!/^\d{1,9}$/.test(id)) return reply.status(404).send({ error: 'No such mod.' });
+    let m;
+    try { m = await master.fabMod(Number(id)); } catch (e) { return masterDown(reply, e); }
+    if (!m) return reply.status(404).send({ error: 'No such mod.' });
+    return m;
   });
 
   api.post('/fabricator/mods/:id/:action', async (req, reply) => {

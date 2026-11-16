@@ -1,4 +1,4 @@
-import type { Backup, FabAction, FabReportGroup, FabStats, Lobby, MasterClient, Status } from './types.js';
+import type { Backup, FabAction, FabModDetail, FabModRow, FabReportGroup, FabStats, Lobby, MasterClient, Status } from './types.js';
 
 const STATUS_MS = 2000;   // the overview must not hang on a dead master
 const CALL_MS = 10000;
@@ -43,6 +43,21 @@ export function createMasterClient(baseUrl: string, secret: string): MasterClien
     },
     fabStats(): Promise<FabStats> {
       return call('GET', '/fabricator/stats');
+    },
+    async fabMods(f: { state?: string; q: string }): Promise<FabModRow[]> {
+      const qs = new URLSearchParams();
+      if (f.state) qs.set('state', f.state);
+      if (f.q) qs.set('q', f.q);
+      const query = qs.toString();
+      return (await call<{ mods: FabModRow[] }>('GET', '/fabricator/mods' + (query ? `?${query}` : ''))).mods;
+    },
+    async fabMod(id: number): Promise<FabModDetail | null> {
+      try {
+        return await call<FabModDetail>('GET', `/fabricator/mods/${encodeURIComponent(String(id))}`);
+      } catch (e) {
+        if ((e as { status?: number }).status === 404) return null;
+        throw e;
+      }
     },
     async fabAction(id: number, action: FabAction, who: string): Promise<boolean | 'no files'> {
       try {

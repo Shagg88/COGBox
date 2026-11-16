@@ -4,7 +4,7 @@ import { buildApp } from '../src/app.js';
 import { openDb, type Db } from '../src/db.js';
 import { addUser } from '../src/users.js';
 import { totpCode } from '../src/crypto.js';
-import type { DockerClient, FabReportGroup, FabStats, Lobby, MasterClient, ServiceHealth, Status } from '../src/types.js';
+import type { DockerClient, FabModDetail, FabModRow, FabReportGroup, FabStats, Lobby, MasterClient, ServiceHealth, Status } from '../src/types.js';
 
 const up: ServiceHealth = { up: true, started_at: 'x', restarts: 0 };
 const STATUS: Status = { uptime_s: 5, version: '1', players: { total: 0, by_title: {}, by_region: {} }, lobbies: 1, pending_invites: 0, errors: [] };
@@ -15,8 +15,11 @@ let statusImpl: () => Promise<Status | null>;
 let restartImpl: (s: string) => Promise<void>;
 let restarts: string[], closed: string[], logCalls: [string, number][];
 let fabCalls: unknown[][];
-const FAB_STATS: FabStats = { disk: { total: 100, free: 40 }, month_bytes: 5, mods: 2, creators: 1, open_reports: 1 };
-const FAB_REPORTS: FabReportGroup[] = [{ mod: { id: 7, name: 'Alpha', game: 'gears3', author: 'Baird#1234', state: 'live' },
+const FAB_STATS: FabStats = { disk: { total: 100, free: 40 }, month_bytes: 5, month_bytes_out: 9, mods: 2, creators: 1, open_reports: 1 };
+const FAB_MODS: FabModRow[] = [{ id: 7, name: 'Alpha', game: 'gears3', author: 'Baird#1234', state: 'live', versions: 1, open_reports: 1, publishing: true, created_at: 1 }];
+const FAB_MOD: FabModDetail = { id: 7, name: 'Alpha', game: 'gears3', type: 'other', author: 'Baird#1234', state: 'live', publishing: true,
+  created_at: 1, updated_at: 1, screens: 1, versions: [], reports: [] };
+const FAB_REPORTS: FabReportGroup[] = [{ mod: { id: 7, name: 'Alpha', game: 'gears3', author: 'Baird#1234', state: 'live', publishing: true },
   reports: [{ id: 1, reason: 'broken', text: 'crashes', reporter: 'Cole#0001', created_at: 1 }] }];
 
 let logLines = ['line'];
@@ -28,6 +31,8 @@ const master: MasterClient = {
   backups: async () => [{ name: 'master-20261111000000.db', size: 10, mtime: 1 }],
   fabReports: async () => FAB_REPORTS,
   fabStats: async () => FAB_STATS,
+  fabMods: async (f) => { fabCalls.push(['mods', f]); return FAB_MODS; },
+  fabMod: async (id) => (id === 7 ? FAB_MOD : null),
   fabAction: async (id, action, who) => { fabCalls.push([id, action, who]); return id === 9 ? 'no files' : id === 7; },
   fabPublishing: async (tag, allowed, who) => { fabCalls.push([tag, allowed, who]); return tag === 'Baird#1234'; },
 };
@@ -178,6 +183,7 @@ describe('routes', () => {
       ['GET', '/admin/api/logs?service=coturn'], ['POST', '/admin/api/restart'], ['POST', '/admin/api/backup'],
       ['GET', '/admin/api/backups'], ['GET', '/admin/api/audit'],
       ['GET', '/admin/api/fabricator/reports'], ['GET', '/admin/api/fabricator/stats'],
+      ['GET', '/admin/api/fabricator/mods'], ['GET', '/admin/api/fabricator/mods/7'],
       ['POST', '/admin/api/fabricator/mods/7/takedown'], ['POST', '/admin/api/fabricator/creators/Baird%231234/publishing'],
     ];
     for (const [method, url] of cases) {
@@ -191,6 +197,16 @@ describe('fabricator routes', () => {
   it('reports and stats come from the master', async () => {
     expect((await get('/admin/api/fabricator/reports')).json()).toEqual(FAB_REPORTS);
     expect((await get('/admin/api/fabricator/stats')).json()).toEqual(FAB_STATS);
+  });
+
+  it('lists mods by state and name, and shows one mod', async () => {
+    expect((await get('/admin/api/fabricator/mods?state=taken_down&q=alp')).json()).toEqual(FAB_MODS);
+    expect((await get('/admin/api/fabricator/mods')).json()).toEqual(FAB_MODS);
+    expect((await get('/admin/api/fabricator/mods?state=bogus')).statusCode).toBe(400);
+    expect(fabCalls).toEqual([['mods', { state: 'taken_down', q: 'alp' }], ['mods', { state: undefined, q: '' }]]);
+    expect((await get('/admin/api/fabricator/mods/7')).json()).toEqual(FAB_MOD);
+    expect((await get('/admin/api/fabricator/mods/8')).statusCode).toBe(404);
+    expect((await get('/admin/api/fabricator/mods/abc')).statusCode).toBe(404);
   });
 
   it('mod actions need confirm, pass the signed-in admin as who and are audited', async () => {

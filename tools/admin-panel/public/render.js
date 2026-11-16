@@ -102,13 +102,33 @@ export function auditHtml(rows) {
 const GB = 1073741824;
 const GAMES = { gears1: 'Gears of War', gears2: 'Gears of War 2', gears3: 'Gears of War 3', judgment: 'Gears of War: Judgment' };
 const STATES = { live: 'Live', taken_down: 'Taken down', removed: 'Removed' };
+const VERSION_STATES = { live: 'Live', files_deleted: 'Files deleted' };
+const MB = 1048576;
+
+// The creator's publishing switch ('unknown' = the account is gone: nothing to switch).
+function publishingButton(author, publishing) {
+  if (author === 'unknown') return '';
+  return publishing === false
+    ? `<button type="button" data-fab-allow="${esc(author)}">Allow publishing</button>`
+    : `<button type="button" class="danger" data-fab-stop="${esc(author)}">Stop publishing</button>`;
+}
+
+// Take down / restore and delete files for a mod that is not removed.
+function modButtons(mod) {
+  if (mod.state === 'removed') return '';
+  const id = esc(mod.id);
+  const btn = (action, label, cls = '') =>
+    `<button type="button"${cls ? ` class="${cls}"` : ''} data-fab-action="${action}" data-mod="${id}" data-name="${esc(mod.name)}">${label}</button>`;
+  return (mod.state === 'taken_down' ? btn('restore', 'Restore') : btn('takedown', 'Take down', 'danger')) + btn('delete-files', 'Delete files', 'danger');
+}
 
 export function fabStatsHtml(s) {
   const used = (s.disk.total - s.disk.free) / GB;
   const pct = s.disk.total > 0 ? Math.round(((s.disk.total - s.disk.free) / s.disk.total) * 100) : 0;
   return '<section class="cards">' +
     `<div class="card"><h3>Disk</h3><p class="big">${esc(pct)}%</p><p class="dim">${esc(used.toFixed(1))} of ${esc((s.disk.total / GB).toFixed(1))} GB used</p></div>` +
-    `<div class="card"><h3>Uploaded, last 30 days</h3><p class="big">${esc((s.month_bytes / GB).toFixed(2))} GB</p></div>` +
+    `<div class="card"><h3>Uploads (30 days)</h3><p class="big">${esc((s.month_bytes / GB).toFixed(2))} GB</p></div>` +
+    `<div class="card"><h3>Downloads (30 days)</h3><p class="big">${esc(((s.month_bytes_out ?? 0) / GB).toFixed(2))} GB</p></div>` +
     `<div class="card"><h3>Live mods</h3><p class="big">${esc(s.mods)}</p></div>` +
     `<div class="card"><h3>Creators</h3><p class="big">${esc(s.creators)}</p></div>` +
     `<div class="card"><h3>Open reports</h3><p class="big">${esc(s.open_reports)}</p></div></section>`;
@@ -117,17 +137,45 @@ export function fabStatsHtml(s) {
 export function fabReportsHtml(groups, now = Date.now()) {
   if (!groups.length) return '<p class="dim">No open reports.</p>';
   return groups.map(({ mod, reports }) => {
-    const id = esc(mod.id);
-    const btn = (action, label, cls = '') =>
-      `<button type="button"${cls ? ` class="${cls}"` : ''} data-fab-action="${action}" data-mod="${id}" data-name="${esc(mod.name)}">${label}</button>`;
-    const buttons = (mod.state === 'taken_down' ? btn('restore', 'Restore') : btn('takedown', 'Take down', 'danger')) +
-      btn('delete-files', 'Delete files', 'danger') +
-      // 'unknown' = the author's account is gone: there is no one to stop
-      (mod.author === 'unknown' ? '' : `<button type="button" class="danger" data-fab-stop="${esc(mod.author)}">Stop publishing</button>`);
+    const buttons = modButtons(mod) + publishingButton(mod.author, mod.publishing);
     return `<div class="card report"><h3>${esc(mod.name)} <span class="dim">${esc(GAMES[mod.game] ?? mod.game)}, by ${esc(mod.author)}, ${esc(STATES[mod.state] ?? mod.state)}</span></h3>` +
       '<table><thead><tr><th>Reason</th><th>Text</th><th>Reporter</th><th>Age</th></tr></thead><tbody>' +
       reports.map((r) => `<tr><td data-l="Reason">${esc(r.reason)}</td><td data-l="Text">${esc(r.text)}</td>` +
         `<td data-l="Reporter">${esc(r.reporter)}</td><td data-l="Age">${esc(duration(now - r.created_at))}</td></tr>`).join('') +
       `</tbody></table><div class="row">${buttons}</div></div>`;
   }).join('');
+}
+
+// The mods view: every state, newest first.
+export function fabModsHtml(list) {
+  if (!list.length) return '<p class="dim">No mods match.</p>';
+  return '<table><thead><tr><th>Name</th><th>Game</th><th>Creator</th><th>State</th><th>Versions</th><th>Open reports</th><th>Added</th><th></th></tr></thead><tbody>' +
+    list.map((m) => `<tr><td data-l="Name">${esc(m.name)} <span class="dim">#${esc(m.id)}</span></td>` +
+      `<td data-l="Game">${esc(GAMES[m.game] ?? m.game)}</td><td data-l="Creator">${esc(m.author)}</td>` +
+      `<td data-l="State">${esc(STATES[m.state] ?? m.state)}</td><td data-l="Versions">${esc(m.versions)}</td>` +
+      `<td data-l="Open reports">${esc(m.open_reports)}</td><td data-l="Added">${esc(when(m.created_at))}</td>` +
+      `<td><div class="row"><button type="button" data-fab-detail="${esc(m.id)}">Details</button>${modButtons(m)}</div></td></tr>`).join('') +
+    '</tbody></table>';
+}
+
+// One mod: who made it (and whether they may publish), its versions and files, screenshots, every report.
+export function fabModHtml(d) {
+  const versions = d.versions.length
+    ? '<table><thead><tr><th>Version</th><th>Size</th><th>SHA-256</th><th>File</th><th>Published</th></tr></thead><tbody>' +
+      d.versions.map((v) => `<tr><td data-l="Version">${esc(v.version)}</td><td data-l="Size">${esc((v.size / MB).toFixed(2))} MB</td>` +
+        `<td data-l="SHA-256"><code>${esc(v.sha256)}</code></td><td data-l="File">${esc(VERSION_STATES[v.state] ?? v.state)}</td>` +
+        `<td data-l="Published">${esc(when(v.created_at))}</td></tr>`).join('') + '</tbody></table>'
+    : '<p class="dim">No versions.</p>';
+  const reports = d.reports.length
+    ? '<table><thead><tr><th>Reason</th><th>Text</th><th>Reporter</th><th>Date</th><th>Handled</th></tr></thead><tbody>' +
+      d.reports.map((r) => `<tr><td data-l="Reason">${esc(r.reason)}</td><td data-l="Text">${esc(r.text)}</td>` +
+        `<td data-l="Reporter">${esc(r.reporter)}</td><td data-l="Date">${esc(when(r.created_at))}</td>` +
+        `<td data-l="Handled">${r.handled_by ? `${esc(r.outcome)} <span class="dim">by ${esc(r.handled_by)}</span>` : 'Open'}</td></tr>`).join('') + '</tbody></table>'
+    : '<p class="dim">No reports.</p>';
+  return `<div class="card report"><h3>${esc(d.name)} <span class="dim">#${esc(d.id)}, ${esc(GAMES[d.game] ?? d.game)}, ${esc(d.type)}, ` +
+    `${esc(STATES[d.state] ?? d.state)}</span></h3>` +
+    `<p>By ${esc(d.author)}${d.author === 'unknown' ? '' : d.publishing === false ? ' <span class="dim">(publishing stopped)</span>' : ''}` +
+    ` <span class="dim">added ${esc(when(d.created_at))}, updated ${esc(when(d.updated_at))}, ${esc(d.screens)} screenshots</span></p>` +
+    `<div class="row">${modButtons(d)}${publishingButton(d.author, d.publishing)}</div>` +
+    `<h4>Versions</h4>${versions}<h4>Reports</h4>${reports}</div>`;
 }

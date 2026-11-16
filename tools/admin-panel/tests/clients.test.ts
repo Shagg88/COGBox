@@ -59,6 +59,9 @@ describe('master client', () => {
         if (req.url === '/fabricator/reports') return res.end('{"reports":[]}');
         if (req.url === '/fabricator/stats') return res.end('{"disk":{"total":1,"free":1},"month_bytes":0,"mods":0,"creators":0,"open_reports":0}');
         if (req.url === '/fabricator/mods/9/restore') { res.statusCode = 409; return res.end('{"error":"no files"}'); }
+        if (req.url?.startsWith('/fabricator/mods?')) return res.end('{"mods":[{"id":7}]}');
+        if (req.url === '/fabricator/mods/7') return res.end('{"id":7,"versions":[]}');
+        if (req.url === '/fabricator/mods/8') { res.statusCode = 404; return res.end('{"error":"not_found"}'); }
         res.end('{"ok":true}');
       });
     });
@@ -69,6 +72,12 @@ describe('master client', () => {
     expect(await c.fabPublishing('Baird#1234', false, 'alice')).toBe(true);
     expect(await c.fabAction(9, 'restore', 'alice')).toBe('no files');
     seen.pop();
+    expect(await c.fabMods({ state: 'live', q: 'a&b' })).toEqual([{ id: 7 }]);
+    expect(await c.fabMod(7)).toEqual({ id: 7, versions: [] });
+    expect(await c.fabMod(8)).toBeNull();
+    expect(seen.splice(4).map((s) => [s.method, s.url])).toEqual([
+      ['GET', '/fabricator/mods?state=live&q=a%26b'], ['GET', '/fabricator/mods/7'], ['GET', '/fabricator/mods/8'],
+    ]);
     expect(seen.map((s) => [s.method, s.url, s.body])).toEqual([
       ['GET', '/fabricator/reports', ''], ['GET', '/fabricator/stats', ''],
       ['POST', '/fabricator/mods/7/delete-files', '{"who":"alice"}'],

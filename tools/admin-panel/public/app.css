@@ -20,6 +20,8 @@ h1 { margin: 0; font-size: 20px; color: var(--bright); letter-spacing: .04em; }
 h1 span { color: var(--accent); }
 h2 { font-size: 16px; color: var(--bright); margin: 20px 0 8px; }
 h3 { font-size: 13px; margin: 0 0 4px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); }
+h4 { font-size: 13px; margin: 12px 0 4px; color: var(--dim); }
+code { font-size: 12px; word-break: break-all; }
 main { max-width: 1100px; margin: 0 auto; padding: 16px; }
 p { margin: 4px 0; }
 .dim { color: var(--dim); }
