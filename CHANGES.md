@@ -6,8 +6,8 @@
   countdown screen, in matches and in the campaign - switched between textured and grey every frame. Their occlusion
   box, lying almost exactly on the patch, lost against the patch's own surface in the game's half-size depth (which
   keeps the nearest of each 2x2 pixels), so the game hid the patch, then showed it again the next frame. Occlusion
-  boxes now get a small slope-scaled depth bias toward "visible" (`--gow2_renderer_occlusion_slope_bias`, default 1;
-  0 = off). Occlusion still culls as much as before; only these false hides are gone.
+  boxes now get a small slope-scaled depth bias toward "visible". Occlusion still culls as much as before; only these
+  false hides are gone.
 - **XeGTAO ambient occlusion: no more ghosting through floors and walls, and steadier shadows near the camera**
   (Gears 3 and Judgment, by Flippage): Gears 3 and Judgment copy their scene depth out once or twice a frame, and with
   two copies the first holds only about half the scene. XeGTAO used the first copy, so geometry drawn after it - the
