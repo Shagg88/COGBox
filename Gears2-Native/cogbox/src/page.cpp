@@ -267,6 +267,34 @@ void env_refresh(App &a, int g)
         a.ini.set("Notices", "JudgmentKeys064", "1");
         a.ini.save();
     }
+    // Review r1952: 0.6.4's new defaults (Gears 1-3: 4 = grenade, 3 = pistol; Judgment: Y = 3, D-pad up = Q) must never land
+    // on a key the player already gave another action (a row the key was taken from is saved as "None"). Once per game: a
+    // row with no saved key whose default key is one of the player's saved keys gets "None" saved (as the Controls page
+    // does when a key moves).
+    {
+        const std::string flag = std::string("KeyDefaults064_") + game_def(g).key;
+        if (a.ini.get("Notices", flag) != "1") {
+            const auto &acts = gs::key_actions((gs::Game)g);
+            auto split = [](const std::string &v) { std::vector<std::string> out; size_t at = 0;
+                while (at <= v.size()) { size_t c = v.find(',', at); std::string k = v.substr(at, c == std::string::npos ? std::string::npos : c - at);
+                    while (!k.empty() && k.front() == ' ') k.erase(0, 1); while (!k.empty() && k.back() == ' ') k.pop_back();
+                    if (!k.empty()) out.push_back(k); if (c == std::string::npos) break; at = c + 1; } return out; };
+            std::vector<std::string> used;   // keys the player saved, any row
+            for (const gs::KeyAction &k : acts) { const std::string v = key_get(a, g, k.cvar); if (!v.empty()) for (const std::string &x : split(v)) used.push_back(x); }
+            for (const gs::KeyAction &k : acts) {
+                if (!key_get(a, g, k.cvar).empty()) continue;
+                std::string keep; bool dropped = false;   // (a two-key default keeps the key that is still free)
+                for (const std::string &x : split(k.def)) {
+                    bool clash = false;
+                    for (const std::string &u : used) if (x != "None" && SDL_strcasecmp(u.c_str(), x.c_str()) == 0) clash = true;
+                    if (clash) dropped = true; else keep += (keep.empty() ? "" : ",") + x;
+                }
+                if (dropped) a.ini.set(keys_section_name(g), k.cvar, keep.empty() ? std::string("None") : keep);
+            }
+            a.ini.set("Notices", flag, "1");
+            a.ini.save();
+        }
+    }
     e.keys.clear();    // 0.2.0: the player's own keyboard keys (Controls tab); GitHub #154: this game's own
     for (const gs::KeyAction &k : gs::key_actions((gs::Game)g)) {
         std::string v = key_get(a, g, k.cvar);
