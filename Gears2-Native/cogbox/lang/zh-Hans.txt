@@ -200,6 +200,7 @@ Aftermath 3 - outro = 余波 3 - 结尾
 Aftermath 4 = 余波 4
 Aftermath 5 = 余波 5
 DLSS (NVIDIA RTX) = DLSS (NVIDIA RTX)
+DLSS (NVIDIA RTX, experimental) = DLSS(NVIDIA RTX,实验性)
 Not yet in  = 暂不支持:
 Fullscreen = 全屏
 Fullscreen (borderless) = 全屏(无边框)

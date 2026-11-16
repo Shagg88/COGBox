@@ -197,6 +197,7 @@ Aftermath 3 - outro = Aftermath 3 - zárójelenet
 Aftermath 4 = Aftermath 4
 Aftermath 5 = Aftermath 5
 DLSS (NVIDIA RTX) = DLSS (NVIDIA RTX)
+DLSS (NVIDIA RTX, experimental) = DLSS (NVIDIA RTX, kísérleti)
 Not yet in  = Még nincs benne:
 Fullscreen = Teljes képernyő
 Fullscreen (borderless) = Teljes képernyő (keret nélkül)

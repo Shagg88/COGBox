@@ -200,6 +200,7 @@ Aftermath 3 - outro = Dopo la battaglia 3 - finale
 Aftermath 4 = Dopo la battaglia 4
 Aftermath 5 = Dopo la battaglia 5
 DLSS (NVIDIA RTX) = DLSS (NVIDIA RTX)
+DLSS (NVIDIA RTX, experimental) = DLSS (NVIDIA RTX, sperimentale)
 Not yet in  = Non ancora in 
 Fullscreen = Schermo intero
 Fullscreen (borderless) = Schermo intero (senza bordi)

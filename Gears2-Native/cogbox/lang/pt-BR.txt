@@ -200,6 +200,7 @@ Aftermath 3 - outro = Rescaldo 3 - desfecho
 Aftermath 4 = Rescaldo 4
 Aftermath 5 = Rescaldo 5
 DLSS (NVIDIA RTX) = DLSS (NVIDIA RTX)
+DLSS (NVIDIA RTX, experimental) = DLSS (NVIDIA RTX, experimental)
 Not yet in  = Ainda não em 
 Fullscreen = Tela cheia
 Fullscreen (borderless) = Tela cheia (sem bordas)

@@ -200,6 +200,7 @@ Aftermath 3 - outro = アフターマス 3 - エンディング
 Aftermath 4 = アフターマス 4
 Aftermath 5 = アフターマス 5
 DLSS (NVIDIA RTX) = DLSS (NVIDIA RTX)
+DLSS (NVIDIA RTX, experimental) = DLSS（NVIDIA RTX、実験的）
 Not yet in  = 未対応: 
 Fullscreen = フルスクリーン
 Fullscreen (borderless) = フルスクリーン（ボーダーレス）

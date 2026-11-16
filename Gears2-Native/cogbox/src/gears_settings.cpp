@@ -302,7 +302,7 @@ std::vector<Option> make_options(Game g) {
     add(choice("Sharpen", "Upscale sharpening (1080p)", Tab::Graphics, PG, { "Automatic", "On", "Off" }, 0,
                "With the 1080p render resolution: sharpen the upscaled picture. Automatic = on, except on Steam Deck / "
                "Linux (Wine / Proton), where it can make text and some textures look wrong.", 0));
-    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (FSR 4 on RX 6000 or newer, FSR 3.1 otherwise)", "DLSS (NVIDIA RTX)", "XeSS (highly experimental)",   /* fsr049 */   /* 0.4.7: DLSS tested clean in G2/G3/GJ */
+    add(choice("AAMode", "Anti-aliasing", Tab::Graphics, PG, { "Off", "SMAA (recommended)", "FSR (FSR 4 on RX 6000 or newer, FSR 3.1 otherwise)", "DLSS (NVIDIA RTX, experimental)", "XeSS (highly experimental)",   /* fsr049 */   /* 0.4.7: DLSS tested clean in G2/G3/GJ; 0.6.4 (Shagg 16 Nov, GitHub #345): experimental again - scene scaling in Gears 3 / Judgment */
                  "SMAA T2x (temporal)" }, 1,   /* Shagg 11-06: SMAA by default */
                "SMAA: light, sharp, any GPU. FSR: AMD's temporal anti-aliasing / upscaler for the 3D scene - FSR 4 on RX 6000 or "
                "newer, FSR 3.1 otherwise (any graphics card), DirectX 12 or Vulkan. DLSS: the same on "

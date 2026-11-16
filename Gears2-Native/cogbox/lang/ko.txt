@@ -200,6 +200,7 @@ Aftermath 3 - outro = 여파 3 - 아웃트로
 Aftermath 4 = 여파 4
 Aftermath 5 = 여파 5
 DLSS (NVIDIA RTX) = DLSS (NVIDIA RTX)
+DLSS (NVIDIA RTX, experimental) = DLSS (NVIDIA RTX, 실험적)
 Not yet in  = 아직 지원하지 않음: 
 Fullscreen = 전체 화면
 Fullscreen (borderless) = 전체 화면 (테두리 없음)

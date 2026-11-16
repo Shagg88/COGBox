@@ -200,6 +200,7 @@ Aftermath 3 - outro = Następstwa 3 - zakończenie
 Aftermath 4 = Następstwa 4
 Aftermath 5 = Następstwa 5
 DLSS (NVIDIA RTX) = DLSS (NVIDIA RTX)
+DLSS (NVIDIA RTX, experimental) = DLSS (NVIDIA RTX, eksperymentalne)
 Not yet in  = Jeszcze nie w 
 Fullscreen = Pełny ekran
 Fullscreen (borderless) = Pełny ekran (bez ramki)
