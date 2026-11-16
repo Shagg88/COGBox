@@ -211,7 +211,7 @@ HDR paper white (nits) = HDR papírfehér (nit)
 Peak = Csúcs
 HDR peak (nits) = HDR csúcsfényerő (nit)
 Your screen's peak brightness (see its specs or Windows HDR calibration). = A képernyőd csúcsfényereje (lásd a műszaki adatait vagy a Windows HDR-kalibrálást).
-Brightness (100 = original) = Fényerő (100 = eredeti)
+Brightness (100 = original) = Fényerő (100: eredeti)
 Vsync = Vsync
 Vsync (no tearing) = Vsync (képtörés nélkül)
 Frame rate limit = Képkockasebesség-korlát
@@ -807,7 +807,7 @@ The Xbox style popup's colour. = Az Xbox stílusú értesítés színe.
 Where the popup shows. Default: bottom centre (Xbox 360, Xbox), top right (PlayStation). = Hol jelenjen meg az értesítés. Alapértelmezett: lent középen (Xbox 360, Xbox), fent jobbra (PlayStation).
 Plays a sound with each popup. = Minden értesítésnél hangot játszik le.
 No popup and no sound when an achievement unlocks. Achievements still unlock and are saved. = Se értesítés, se hang teljesítmény feloldásakor. A teljesítmények így is feloldódnak és mentődnek.
-Draws none of the port's notes over the game: no shader-building note and no shader-loading indicator. The FPS counter above and achievement popups are separate. = A port semmilyen jelzést nem ír ki a játék fölé: se shader készítési jelzést, se shader betöltés-jelzőt. A fenti FPS számláló és a teljesítmény- értesítések külön állíthatók.
+Draws none of the port's notes over the game: no shader-building note and no shader-loading indicator. The FPS counter above and achievement popups are separate. = A port semmilyen jelzést nem ír ki a játék fölé: se shader készítési jelzést, se shader betöltés-jelzőt. A fenti FPS számláló és a teljesítmény-értesítések külön állíthatók.
 Dark = Sötét
 Red = Piros
 Green = Zöld
@@ -1248,8 +1248,8 @@ start it once from COGBox to add its pictures. = indítsd el egyszer a COGBoxbó
 # 0.5.0 aim / zoom sensitivity (machine-made translation, please check)
 Aim sensitivity (%) = Célzási érzékenység (%)
 Zoom sensitivity (%) = Zoom érzékenység (%)
-Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Az egér sebessége célzáskor, a normál sebesség százalékában. 100 = változatlan. Csak natív egérnézettel.
-Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Az egér sebessége távcsöves zoomnál (Longshot, Hammer of Dawn), a normál sebesség százalékában. 100 = változatlan. Csak natív egérnézettel.
+Mouse speed while aiming, as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Az egér sebessége célzáskor, a normál sebesség százalékában. 100: változatlan. Csak natív egérnézettel.
+Mouse speed while zoomed through a scope (Longshot, Hammer of Dawn targeting), as a percentage of the normal speed. 100 = unchanged. Native mouse look only. = Az egér sebessége távcsöves zoomnál (Longshot, Hammer of Dawn), a normál sebesség százalékában. 100: változatlan. Csak natív egérnézettel.
 # 0.6.0: delete a profile (machine-made translation, please check)
 DELETE THIS PROFILE = PROFIL TÖRLÉSE
 DELETE = TÖRLÉS
