@@ -157,3 +157,18 @@ Gears 3 and Judgment use the same runtime.
   GUIDs, a combined trigger axis, no Guide and no rumble until the pad's first input (a failed rumble is sent again with
   that input), and pads added in raw input's order (split screen may differ from the ring lights). Over Bluetooth
   Windows may drive no trigger motors even where SDL reports them. Apply it in the SDK root (`git apply`).
+- `sdk-patch106-save-adopt-and-key-change-copy.diff` (0.6.3, GitHub #329 "Saves deleted"; after 103, independent of
+  104 / 105; NOT BUILT yet - needs a runtime build): Gears 3 signs PlayerStorage.dat and its profile settings with
+  SHA-1(online XUID + data), and patches 58 / 79 only re-sign between keys COGBox knows (the offline XUID, 0, this run's
+  online XUID). A save signed for any other key - the online account before a new one was made (DELETE ONLINE ACCOUNT,
+  a new #number), a deleted `identity.json` with online play off, a save from another PC / console, an old backup put
+  back or imported - was left alone, Gears 3 reset it (brightness screen, campaign progress gone, checkpoints kept) and
+  wrote fresh files over it; COGBox kept no copy (patch 101 only logged "signed with a key COGBox doesn't know ...: Gears
+  3 will reset it"). Now, after the verified passes, every Gears 3 save set not signed for this run is re-signed for it
+  (`CogAdoptGears3Saves`; the data never changes, only the 20-byte signature), the file as it was first copied to
+  `<file>.cogbox-adopted-<yyyymmdd-hhmmss>` (a new name every time). `--cogbox_save_adopt_foreign=false` turns that off.
+  And before any run whose signing key differs from the last run's (`<user dir>\cogbox-save-key`; none yet counts as a
+  change), every Gears 3 / Judgment save file in place (PlayerStorage.dat, Judgment's header, 63E83FFF/E/D) is copied to
+  `<user dir>\_cogbox-save-backups\<stamp>-<old key>-to-<new key>\` (`CogSnapshotSavesOnKeyChange`) - Judgment's own
+  signing can't be redone, so a new online account still makes Judgment start its online copy fresh, but the old files
+  are kept. Tests in `tests/unit/net/save_resign_test.cpp` (syntax-checked only). Apply it in the SDK root (`git apply`).

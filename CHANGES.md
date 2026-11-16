@@ -26,6 +26,16 @@
   (safe to delete).
 
 ### Fixes
+- **Gears 3 no longer throws away its campaign progress and options when your online account changes** (GitHub #329):
+  Gears 3 ties its progress and options to the online account they were saved with. After a new online account (a new
+  #number, a deleted account, online play turned off without one) or with saves from another PC or an old backup, COGBox
+  left them as they were and Gears 3 started over with the brightness screen, writing fresh files over the old ones
+  (checkpoints were kept). COGBox now signs such saves for the account you play with, keeping a copy of each file as it
+  was (`.cogbox-adopted-<date>`), and copies the Gears 3 and Judgment saves to `user\_cogbox-save-backups` before any
+  start whose account differs from the last one. Saves that Gears 3 already reset can be put back from a backup or from
+  the `.pre-online` copies and will now load. Judgment's saves can't be moved to a new account the same way: with a new
+  online account Judgment's online progress still starts fresh, but its old files are kept in that backup folder (and
+  its offline progress comes back whenever online play is off).
 - **Crash reports are no longer empty** (all four games, GitHub #286): a game that froze before crashing could leave an
   empty `crash-*.txt` and a cut-off `.dmp`. The crash report is now written without touching anything the frozen game
   might be holding, lists where every thread was stuck, and the crash dump is written by COGBox from outside the game
