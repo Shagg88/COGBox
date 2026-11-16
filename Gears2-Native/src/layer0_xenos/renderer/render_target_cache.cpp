@@ -47,6 +47,17 @@ RenderTarget* RenderTargetCache::FindAny(const RenderTargetKey& key) {
   return best;
 }
 
+RenderTarget* RenderTargetCache::FindForResolve(const RenderTargetKey& key) {
+  RenderTarget* t = FindAny(key);
+  if (t && t->texture && t->draws == 0 && t->scale != ScaleFor(key)) {
+    // Only resolve-only views: a key the other phase drew keeps FindAny's answer (its tiles are that twin's work).
+    for (auto& o : targets_)
+      if (o->key == key && o->draws) return t;
+    if (RenderTarget* p = Get(key); p && p->texture) return p;
+  }
+  return t;
+}
+
 RenderTarget* RenderTargetCache::Get(const RenderTargetKey& key, bool create_storage) {
   if (RenderTarget* t = Find(key)) {
     if (create_storage && !t->texture && !CreateStorage(*t)) return nullptr;

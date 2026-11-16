@@ -14022,7 +14022,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++resolve_early_[why];  // patch 0030: per-window count of resolves that end here (Gears 3's squad lead)
     };
     const rr::RenderTargetKey ck{rg.color_base, cls, rg.surface_pitch, rg.msaa};
-    rr::RenderTarget* rt = rts_->FindAny(ck);  // patch 0141 review: either phase's twin
+    rr::RenderTarget* rt = rts_->FindForResolve(ck);  // patch 0141 review: either phase's twin; #345: a view at the phase scale
     // Gears 3 (job 025): MSAA colour sources are resolved with colour_resolve_ms_ (without it: skipped, "build B").
     const bool ms_src = rt_msaa_(rg.msaa);
     if (ms_src && !colour_resolve_ms_) return log_not_compared("MSAA colour resolves are build B");

@@ -188,6 +188,10 @@ class RenderTargetCache {
   // Patch 0141 review: the twin at the phase scale if it exists, else the other-scale twin that our GPU wrote last
   // (resolves, clears and fast clears of a key the other phase drew). Mode off: same as Find.
   RenderTarget* FindAny(const RenderTargetKey& key);
+  // #345: the target a colour resolve reads. As FindAny, but a key no draw ever used (a resolve-only view: Gears 3's
+  // k_2_10_10_10 view of its 7e3 scene, job 019) gets its twin at the phase scale - FindAny kept returning the twin
+  // made at the first frame's scale, so the upscaler saw a scene copy at the wrong scale on every frame.
+  RenderTarget* FindForResolve(const RenderTargetKey& key);
   // The target is about to be written (or, with take_ownership = false, read) in the tiles that `pixels` touches.
   // Updates tile ownership in `book` and reports, per previous owner, how many of those tiles another target wrote
   // last (`aliases`, optional). `sources` (optional) receives every such tile. `clear_known`/`clear_bits`: this write
