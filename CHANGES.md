@@ -114,6 +114,10 @@
 - **Translations:** all new text is in all 11 languages (machine-made; corrections welcome). Hungarian updated and
   corrected by Hevesi J. (PR #324 - thank you!). In several languages the Brightness and mouse-speed texts showed in
   English; they are translated again.
+- **Thank you for the reports and suggestions:** fizzlepicklepop (#316), mihaisg (#329, #331), marianajm888-cloud
+  (#330), IamBugReporter (#332), AAAAAAWWWWW (#320, #323), soldiermxdeath (#315, #318), eliasrailson-wq (#286),
+  Hanhedonia (#313), HubertFer and SixelAlexiS90 (#245), ders117 (#270), KwasimodoZA (#319), StiflerX101XX (#257 / #296)
+  and everyone testing in the Discord.
 
 ## 0.6.2
 
