@@ -632,6 +632,9 @@ bool cap_exe(const Environment& e, const std::string& n) {
     // 0.3.0 (job 733): --gow2_aspect / --gowj_aspect are short enough to be split the same way (job 730's gow2.exe: no
     // "gow2_aspect" text) - their description, a long literal, is searched instead
     if ((n == "gow2_aspect" || n == "gowj_aspect") && e.cap.exe_has && e.cap.exe_has("the shape. Empty = 21:9")) return true;
+    // Discord 16 Nov (Horde bots greyed in Gears 2 on 0.6.3): 0.6.3's gow2.exe has no "gow2_horde_bots" text either - the
+    // start of its description is searched (the 0.6.3 exe has it)
+    if (n == "gow2_horde_bots" && e.cap.exe_has && e.cap.exe_has("GitHub #237 (francoissubke-blip's tip")) return true;
     return e.cap.exe_has && e.cap.exe_has(n);
 }
 bool cap_rt(const Environment& e, const std::string& n) { return e.cap.runtime_has && e.cap.runtime_has(n); }
