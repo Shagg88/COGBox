@@ -2,7 +2,7 @@
 
 COGBox's runtime (`rexruntime.dll`) is the rexglue SDK at tag
 `nightly-20261002-bd833a2a` with these patches.
-0.6.3's runtime (rexruntime 063b) is 0.6.2's plus patches 104, 106 and 107.
+0.6.3's runtime (rexruntime 063b) is 0.6.2's plus patches 104, 106 and 107. 0.6.4's (064a) adds 108.
 
 ## Quick way
 
@@ -90,6 +90,19 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
 - `sdk-patch92-matchmaking-fixes.diff` (0.6.1, after 90; Flippage's patch 91, renumbered - 90 is our media-verify patch; 93 is the ping bar): **matchmaking only finds its own playlist** - a game's search returned every public lobby of that game, and the games join whatever a search returns (Xbox Live filtered by the query), so a Social Guardian search put players into a Horde lobby. The search's playlist property (`0x1000000B`) now filters the results (a lobby that names no playlist is kept). **Gears 2's host-ban watch works**: Gears 2's older UE3 keeps an object's own index at +4 (+32 in Gears 3 / Judgment), so its object table was never found and the watch never ran (no popup, no 30-minute lift: a Gears 2 player with a quit could never host versus). The settings reader also tries UE3's real 24-byte entry (id at +4) first, as Gears 2 has a lookalike table at stride 16 that read as no penalty. One `host ban watch: profile found / IsOkayToHost found / penalty` line per run shows what the watch found. Tests in `online_sessions_test.cpp` and `host_ban_test.cpp`. Apply it in the SDK root (`git apply`).
 - `sdk-patch93-ping.diff` (0.6.1, after 92; Flippage's patch 90, renumbered): the ping for the FPS bar (`--cogbox_show_ping`). Every 2 s a connected peer gets a punch on a proven route, timed by its sequence number; every COGBox (0.6.0 too) answers a punch with an ack carrying that number, so the time to the ack is the round trip, smoothed (70 % old, 30 % new). `CurrentPing()` (online_startup.h) gives the bar the ping to the host of the newest session we joined (its XUID from the session's XNADDR online marker); in a party / co-op join, which makes no session here, the host whose lobby the game looked up (invite, Join friend, open match) while its game packets arrive (a failed join stops them, so the bar drops it at once); while we host, the worst ping among the players the game put in our sessions (not every connected peer). Tests in `tests/unit/net/peer_manager_test.cpp` and `online_sessions_test.cpp`. Apply it in the SDK root (`git apply`).
 - `sdk-patch107-ping-join-beacon.diff` (0.6.3, after 106; in the 0.6.3 runtime; Flippage's patch 104, renumbered - 104 is the impulse-trigger patch): the FPS bar's ping after a matchmaking join. Matchmaking puts the game in a lobby picked from search results: no session is created here and no lobby is looked up, so 0.6.2 knew no host and showed `Ping -- (hosting)` (our own party). The game's connect to a peer's join beacon (TCP 8700, Gears 3 Ranked 8675) now makes that peer the join target (`OnlineSessions::OnBeaconConnect`, the peer's XUID from its virtual IP by `VirtualPeerManager::XuidOfVip`), handled as patch 93's looked-up host: shown while its game packets arrive, forgotten 30 s after they stop. Two unit tests. Apply it in the SDK root (`git apply`).
+- `sdk-patch108-xma-edge-decoder.diff` + `sdk-patch108-ffmpeg-xmaframes.diff` (0.6.4, after 107; the two go together):
+  the XMA audio decoder follows Xenia Edge's (has207, edge b9a46a3, commits 37bf631..0ce969b: multi-stream buffer
+  switches, loop end frames cut at their end subframe, seeks to a subframe (DWORD1 bits 24-26 = decode_subframe, which
+  rexglue read as "output padding"), the position held until a frame is out, whole stereo subframes, error / parser
+  status, split frames waiting for a late buffer, passes for subframe_decode_count above 4, one-shot sounds with no
+  loop, frames after a packet-boundary frame) and XMASetLoopData reads an XMA_LOOP_DATA. Review r104 fixes: Work()
+  re-checks enable/allocate under the lock, Release() clears enable, Setup() logs an error once if FFmpeg lacks the
+  second diff. The second diff patches the FFmpeg submodule's xmaframes decoder (from has207/FFmpeg c4f4407, 3913ff9,
+  9307052, dfc5a39): output starts 192 samples in (the realignment rexglue did in its context), a cut loop-end frame
+  (header bit 0) keeps the overlap of the frame before it, frames whose data ends early play, decode errors are
+  reported, and a flush callback. Apply the first in the SDK root (`git apply`), the second inside the submodule
+  (`git -C thirdparty/FFmpeg apply`; that file is CRLF in the Windows checkout) - and again after every submodule or
+  SDK update. Needs patch 80.
 - `sdk-patch59-sdl-pump-without-controllers.diff` (GitHub #108, Steam Deck; after 58, NOT BUILT yet - needs a runtime build): the SDL driver pumped SDL events only from calls on a controller it already knew, so with none known it never pumped, and under Wine / Proton SDL finds pads (XInput / DirectInput) only while pumping - the 0.3.5 Deck logs show `SDL input driver initialized` and never `SDL JoystickAdded`. `EnumerateDevices` now queues a pump at most every 0.5 s while no controller is known. Apply it in the SDK root (`git apply`).
 - `sdk-patch58-g3-online-xuid-save-convert.diff` (GitHub #68, jobs 1066 / 1067; COGBox 0.4.0's runtime, after 57): the
   Gears 3 friendly-fire / "killed out of nowhere" fix, ported from Xenia Canary. `NetDll_XNetRandom` fills the buffer

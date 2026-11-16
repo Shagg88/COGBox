@@ -195,10 +195,10 @@ index 84267987..8ef95fbb 100644
  
  }  // namespace rex::audio
 diff --git a/src/audio/xma_context.cpp b/src/audio/xma_context.cpp
-index 11b83bea..ef9d310f 100644
+index 11b83bea..3548569d 100644
 --- a/src/audio/xma_context.cpp
 +++ b/src/audio/xma_context.cpp
-@@ -7,6 +7,8 @@
+@@ -7,10 +7,13 @@
  ******************************************************************************
  *
  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
@@ -207,7 +207,26 @@ index 11b83bea..ef9d310f 100644
  */
  
  #include <algorithm>
-@@ -92,6 +94,31 @@ int XmaContext::Setup(uint32_t id, memory::Memory* memory, uint32_t guest_ptr) {
+ #include <cstring>
++#include <utility>
+ 
+ #include <rex/audio/xma/context.h>
+ #include <rex/audio/xma/decoder.h>
+@@ -72,6 +75,13 @@ int XmaContext::Setup(uint32_t id, memory::Memory* memory, uint32_t guest_ptr) {
+     return 1;
+   }
+ 
++  // Patch 108's decoder needs the xmaframes FFmpeg changes (sdk-patch108-ffmpeg-xmaframes.diff): without them output is
++  // 192 samples off and FlushDecoder() flushes nothing. Their flush callback is the one sign of them.
++  static bool reported = false;  // Setup runs for every context, once, on the decoder's setup thread.
++  if (!av_codec_->flush && !std::exchange(reported, true)) {
++    REXAPU_ERROR("XmaContext {}: FFmpeg's xmaframes decoder lacks COGBox patch 108 - XMA audio will be wrong", id);
++  }
++
+   av_context_ = avcodec_alloc_context3(av_codec_);
+   if (!av_context_) {
+     REXAPU_ERROR("XmaContext {}: Couldn't allocate context", id);
+@@ -92,69 +102,170 @@ int XmaContext::Setup(uint32_t id, memory::Memory* memory, uint32_t guest_ptr) {
    return 0;
  }
  
@@ -239,7 +258,18 @@ index 11b83bea..ef9d310f 100644
  bool XmaContext::Work() {
    if (!is_allocated() || !is_enabled()) {
      return false;
-@@ -105,56 +132,128 @@ bool XmaContext::Work() {
+   }
+ 
+   std::lock_guard<std::mutex> lock(lock_);
+-  set_is_enabled(false);
++  // Disable() / Release() may have run while this thread waited for the lock (Disable's Block() can take the lock
++  // before this thread does, and returns at once).
++  if (!is_allocated() || !is_enabled_.exchange(false, std::memory_order_acq_rel)) {
++    return false;
++  }
+ 
+   auto context_ptr = memory()->TranslateVirtual(guest_ptr());
+   XMA_CONTEXT_DATA data(context_ptr);
    const XMA_CONTEXT_DATA initial_data = data;
  
    if (!data.output_buffer_valid) {
@@ -325,16 +355,16 @@ index 11b83bea..ef9d310f 100644
 +    } else {
 +      pass_frames = 0;
 +    }
- 
--    if (!data.IsAnyInputBufferValid() || data.error_status == 4) {
++
 +    // Don't abandon a partially consumed frame. Consume() hands over at most subframe_decode_count subframes per pass,
 +    // so the pass that exhausts the input typically leaves the rest of the frame undelivered. Work() has already
 +    // cleared is_enabled_ and only XMAEnableContext sets it again: keep draining until the frame is out.
 +    if ((!data.IsAnyInputBufferValid() || decode_stop_ != kDecodeStop::kNone) &&
 +        current_frame_remaining_subframes_ == 0) {
-       break;
-     }
-+
++      break;
++    }
+ 
+-    if (!data.IsAnyInputBufferValid() || data.error_status == 4) {
 +    // Nothing written and the position where it was means decoding can't go on. A loop jump back to the frame it came
 +    // from writes and moves the position's subframe, so it isn't a stall.
 +    if (remaining_subframe_blocks_in_output_buffer_ == pre_free_blocks &&
@@ -342,10 +372,10 @@ index 11b83bea..ef9d310f 100644
 +        data.current_buffer == pre_buffer) {
 +      REXAPU_NOISY_DEBUG("XmaContext {}: Decode stalled at offset {}, waiting for the next buffer", id(),
 +                         pre_decode_offset);
-+      break;
-+    }
-+  }
-+
+       break;
+     }
+   }
+ 
 +  // The status says why decoding stopped.
 +  const bool frame_done = !current_frame_remaining_subframes_;
 +  if (frame_done && decode_stop_ == kDecodeStop::kWaitForBuffer) {
@@ -359,8 +389,8 @@ index 11b83bea..ef9d310f 100644
 +    SetError(&data, kErrorNoInput);
 +  } else if (remaining_subframe_blocks_in_output_buffer_ < static_cast<int32_t>(GetPassBlocks(&data))) {
 +    SetError(&data, kErrorOutputSpace);
-   }
- 
++  }
++
    data.output_buffer_write_offset = output_rb.write_offset() / kOutputBytesPerBlock;
  
 -  if (output_rb.empty()) {
@@ -383,7 +413,7 @@ index 11b83bea..ef9d310f 100644
  
  bool XmaContext::Block(bool poll) {
    if (!lock_.try_lock()) {
-@@ -186,47 +285,40 @@ void XmaContext::ClearLocked(XMA_CONTEXT_DATA* data) {
+@@ -186,47 +297,41 @@ void XmaContext::ClearLocked(XMA_CONTEXT_DATA* data) {
    data->output_buffer_read_offset = 0;
    data->output_buffer_write_offset = 0;
  
@@ -436,6 +466,7 @@ index 11b83bea..ef9d310f 100644
 -  ResetDecoderState();
 -  auto context_ptr = memory()->TranslateVirtual(guest_ptr());
 -  std::memset(context_ptr, 0, sizeof(XMA_CONTEXT_DATA));
++  set_is_enabled(false);
 +  // Patch 108 (Edge 3fdb7d5): a released context keeps its last state; AllocateContext zeroes it for the next user.
 +  current_frame_remaining_subframes_ = 0;
 +  advance_ = {};
@@ -451,7 +482,7 @@ index 11b83bea..ef9d310f 100644
    if (data->current_buffer == 0) {
      data->input_buffer_0_valid = 0;
    } else {
-@@ -236,28 +328,324 @@ void XmaContext::SwapInputBuffer(XMA_CONTEXT_DATA* data) {
+@@ -236,28 +341,324 @@ void XmaContext::SwapInputBuffer(XMA_CONTEXT_DATA* data) {
    data->input_buffer_read_offset = kBitsPerPacketHeader;
  }
  
@@ -785,7 +816,7 @@ index 11b83bea..ef9d310f 100644
  }
  
  int16_t XmaContext::GetPacketNumber(size_t size, size_t bit_offset) {
-@@ -286,79 +674,129 @@ uint32_t XmaContext::GetAmountOfBitsToRead(uint32_t remaining_stream_bits, uint3
+@@ -286,79 +687,129 @@ uint32_t XmaContext::GetAmountOfBitsToRead(uint32_t remaining_stream_bits, uint3
    return std::min(remaining_stream_bits, frame_size);
  }
  
@@ -961,7 +992,7 @@ index 11b83bea..ef9d310f 100644
        break;
      }
  
-@@ -367,19 +805,18 @@ kPacketInfo XmaContext::GetPacketInfo(uint8_t* packet, uint32_t frame_offset) {
+@@ -367,19 +818,18 @@ kPacketInfo XmaContext::GetPacketInfo(uint8_t* packet, uint32_t frame_offset) {
        break;
      }
  
@@ -984,7 +1015,7 @@ index 11b83bea..ef9d310f 100644
      if (stream.Read(1) == 0) {
        break;
      }
-@@ -388,6 +825,8 @@ kPacketInfo XmaContext::GetPacketInfo(uint8_t* packet, uint32_t frame_offset) {
+@@ -388,6 +838,8 @@ kPacketInfo XmaContext::GetPacketInfo(uint8_t* packet, uint32_t frame_offset) {
    if (xma::IsPacketXma2Type(packet)) {
      const uint8_t xma2_frame_count = xma::GetPacketFrameCount(packet);
      if (xma2_frame_count > packet_info.frame_count_) {
@@ -993,7 +1024,7 @@ index 11b83bea..ef9d310f 100644
        if (packet_info.current_frame_size_ == 0) {
          packet_info.current_frame_ = packet_info.frame_count_;
        }
-@@ -397,85 +836,15 @@ kPacketInfo XmaContext::GetPacketInfo(uint8_t* packet, uint32_t frame_offset) {
+@@ -397,85 +849,15 @@ kPacketInfo XmaContext::GetPacketInfo(uint8_t* packet, uint32_t frame_offset) {
    return packet_info;
  }
  
@@ -1082,7 +1113,7 @@ index 11b83bea..ef9d310f 100644
      avcodec_free_context(&av_context_);
      av_context_ = avcodec_alloc_context3(av_codec_);
  
-@@ -492,252 +861,91 @@ int XmaContext::PrepareDecoder(int sample_rate, bool is_two_channel) {
+@@ -492,252 +874,91 @@ int XmaContext::PrepareDecoder(int sample_rate, bool is_two_channel) {
    return 0;
  }
  
@@ -1396,3 +1427,16 @@ index a0a178df..1909253d 100644
    return context.guest_ptr();
  }
  
+--- a/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp
++++ b/src/kernel/xboxkrnl/xboxkrnl_audio_xma.cpp
+@@ -193,7 +193,9 @@
+   return 0;
+ }
+ 
+-u32 XMASetLoopData_entry(mapped_void context_ptr, ppc_ptr_t<XMA_CONTEXT_DATA> loop_data) {
++// COGBox patch 108 (as Xenia Edge): the loop data is an XMA_LOOP_DATA, not a context (the fields were read from the
++// wrong offsets).
++u32 XMASetLoopData_entry(mapped_void context_ptr, ppc_ptr_t<XMA_LOOP_DATA> loop_data) {
+   XMA_CONTEXT_DATA context(context_ptr);
+ 
+   context.loop_start = loop_data->loop_start;

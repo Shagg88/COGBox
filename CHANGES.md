@@ -2,6 +2,9 @@
 
 ## 0.6.4 (in progress)
 
+- **Game sound decoder brought up to Xenia Edge's** (all four games): looping sounds, one-shot sounds, seeks, stereo
+  streams and sounds split across buffers decode the way the Xbox 360 does them (Edge's 24 XMA fixes and the matching
+  FFmpeg ones). Not tested on PC yet.
 - **Shadow detail** (Graphics tab; Gears 2, 3 and Judgment; off by default): Balanced or Performance draws fewer small and
   distant shadows for a higher frame rate in busy fights, through the game's own shadow-size settings - close and large
   shadows, characters and cutscenes keep theirs. Inspired by boma's "Smart Shadow Cuts" patch, done a different way.
