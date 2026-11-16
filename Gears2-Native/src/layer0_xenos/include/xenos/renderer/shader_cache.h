@@ -163,7 +163,6 @@ class ShaderCache {
   // draws (job 1750b: at the lowest priority they still cost Judgment 24 ms a frame against 17), all of them on a
   // loading screen or in a hold. A job a draw waits for is never limited.
   void SetSpirvBacklogThreads(uint32_t n);
-  size_t SpirvJobsQueued();
   // Shader pop-in (see the header comment).
   void SetUcodeRecord(bool on) { record_ucode_ = on && dir_ok_; }
   // Patch 0015 (stutter): keep compiled shaders in one file, <dir>\shaders.pack, opened once and kept open. Each loose

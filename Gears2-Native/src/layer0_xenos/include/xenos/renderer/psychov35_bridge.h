@@ -217,7 +217,4 @@ XePsOut main(XePsIn xe_in) {
 inline std::string Gears3SceneSource(std::string source, uint32_t low, uint32_t high) {
   return Psycho35SceneSource(std::move(source), low, high, true);
 }
-inline std::string Gears2SceneSource(std::string source, uint32_t low, uint32_t high) {
-  return Psycho35SceneSource(std::move(source), low, high, false);
-}
 }  // namespace xenos::renderer::native_hdr

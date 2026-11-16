@@ -166,13 +166,6 @@ const RenderTarget* RenderTargetCache::FindById(uint32_t id) const {
   return nullptr;
 }
 
-void RenderTargetCache::ResyncAlternate() {
-  std::copy(std::begin(owner_[0]), std::end(owner_[0]), std::begin(owner_[1]));
-  std::copy(std::begin(clear_known_[0]), std::end(clear_known_[0]), std::begin(clear_known_[1]));
-  std::copy(std::begin(clear_bits_[0]), std::end(clear_bits_[0]), std::begin(clear_bits_[1]));
-  ++book_epoch_[1];
-}
-
 gpu::Format ColorHostFormat(uint32_t storage_class) {
   switch (edram::ColorFormat(storage_class)) {
     case edram::ColorFormat::k_8_8_8_8: return gpu::Format::kR8G8B8A8Unorm;

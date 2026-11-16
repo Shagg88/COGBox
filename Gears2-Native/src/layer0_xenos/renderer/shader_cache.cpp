@@ -1203,10 +1203,6 @@ void ShaderCache::Promote(const GuestShader& s) {
     }
   }
 }
-size_t ShaderCache::SpirvJobsQueued() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return spv_queue_.size() + spv_warm_queue_.size();
-}
 
 const GuestShader& ShaderCache::AdoptDxbc(uint64_t key, std::unique_ptr<GuestShader> s,
                                           const std::vector<uint8_t>& bytecode, const hlsl::Translation& meta,

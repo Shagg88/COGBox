@@ -182,8 +182,7 @@ void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t si
 // after its literal-constant block); XenosPrebuildVariantHits(v) = new draw pipelines so far whose pixel shader was a
 // prebuilt one of that variant, so layer 2 can stop offering a variant a game never draws.
 bool XenosPrebuildWanted();
-void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant);
-// 0.6.3 (review r61 #2): the same for several at once - the renderer takes its lock once for the batch, so a reader at
+// 0.6.3 (review r61 #2): handed over several at once - the renderer takes its lock once for the batch, so a reader at
 // low priority holds it only briefly. Any thread; copies the bytes.
 struct XenosPrebuildShaderRef {
   const void* be_ucode;
@@ -216,7 +215,7 @@ uint64_t XenosPrebuildVariantHits(uint32_t variant);
 // (`files` read in all). --gow2_renderer_prepare_all waits for it before it can finish.
 void XenosPrebuildAtStartDone(uint64_t files);
 // 0.6.2 (--gow2_renderer_chapter_hold): layer 2's reader has read a package - the keys (XXH3 of the microcode, as
-// XenosPrebuildPixelShader's) of every pixel shader in it, new or not; sent once per file read, also with none.
+// XenosPrebuildPixelShaders') of every pixel shader in it, new or not; sent once per file read, also with none.
 void XenosPrebuildFileShaders(uint64_t file_key, const uint64_t* pixel_keys, size_t count);
 // ... and the GAME has opened a package (the same key: XXH3 of its lower-case file name). level: a map's package.
 void XenosPrebuildGameOpened(uint64_t file_key, bool level, const char* name);

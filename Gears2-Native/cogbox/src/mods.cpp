@@ -245,13 +245,6 @@ void mods_move(App &a, int g, const std::string &folder, int dir)
     store(a, g, v);
 }
 
-std::vector<std::string> mods_enabled_paths(App &a, int g)
-{
-    std::vector<std::string> p;
-    for (const ModItem &m : mods_list(a, g)) if (m.enabled) p.push_back(m.path);
-    return p;
-}
-
 // A mod in a .zip: unpacked into mods\<zip name>\ (a single top folder in the zip that isn't one of the game's own
 // folders is taken as the mod's folder). Only plain relative paths are accepted; programs are left out.
 // a folder COGBox made itself (the unpacking of a mod), removed with everything in it

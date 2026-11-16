@@ -45,10 +45,6 @@ class AsyncFileAppender {
     }
     cv_.notify_one();
   }
-  void WaitIdle() {  // until everything appended so far is written
-    std::unique_lock<std::mutex> lock(mutex_);
-    idle_.wait(lock, [this] { return queue_.empty() && !busy_; });
-  }
   uint64_t Errors() const { return errors_.load(std::memory_order_relaxed); }
 
  private:

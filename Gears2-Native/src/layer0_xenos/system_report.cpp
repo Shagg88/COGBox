@@ -47,7 +47,10 @@ const char* VendorName(uint32_t v) {
   }
 }
 
-// One line naming the vendor id every GPU-specific choice uses (XenosGpuVendorId) and where it came from.
+// One line naming the vendor id for GPU-specific choices and where it came from: the rendering device's - the Vulkan
+// device when on Vulkan (under Wine: the host's real driver), else the D3D12 backend's adapter - and DXGI's first
+// hardware adapter only before a backend has started. Vulkan's id wins when both are known and disagree (GitHub #59:
+// DXGI said 1002, Vulkan 10DE).
 void LogVendorChoice() {
   const uint32_t v = g_vk_vendor ? g_vk_vendor : g_d3d_vendor ? g_d3d_vendor : g_dxgi_vendor;
   const char* from = g_vk_vendor ? "the Vulkan device" : g_d3d_vendor ? "the D3D12 adapter" : "DXGI's first hardware adapter";
@@ -229,11 +232,6 @@ void XenosReportD3D12Device(uint32_t vendor, uint32_t device, const char* name) 
   }
   LogVendorChoice();
 }
-
-// The vendor id any GPU-specific choice should use: the rendering device's - the Vulkan device when on Vulkan (under
-// Wine: the host's real driver), else the D3D12 backend's adapter - and DXGI's first hardware adapter only before a
-// backend has started. Vulkan's id wins when both are known and disagree (GitHub #59: DXGI said 1002, Vulkan 10DE).
-uint32_t XenosGpuVendorId() { return g_vk_vendor ? g_vk_vendor : g_d3d_vendor ? g_d3d_vendor : g_dxgi_vendor; }
 
 void XenosLogSystemReport(const char* game) {
 #if defined(_M_ARM64)

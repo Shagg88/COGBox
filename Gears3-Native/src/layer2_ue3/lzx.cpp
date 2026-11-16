@@ -58,7 +58,6 @@ class BitReader {
     p_ += k;
     return k;
   }
-  bool overrun() const { return p_ > end_; }
 
  private:
   const uint8_t* p_;

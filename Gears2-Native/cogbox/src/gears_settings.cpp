@@ -88,11 +88,6 @@ std::vector<std::string> start_names(Game g) {
     }
     return v;
 }
-// PS1 135-137
-const char* const k_mapsGJ[18] = { "SP_00_Museum_P", "SP_01_University_P", "SP_02_Mansion_P", "SP_02_Mansion_3_P", "SP_03_Island_P",
-    "SP_03_to_04_P", "SP_04_Rooftops_P", "SP_04_Rooftops2_P", "SP_05_Courthouse_P", "SP_05_CourthouseTrans_P",
-    "SP_05_CourthouseBoss_P", "SPE_E1_P", "SPE_E2_P", "SPE_E2oilrig_P", "SPE_E3_P", "SPE_E3_Outro_P", "SPE_E4_P", "SPE_E5_P" };
-
 const char* const k_aaNames[6] = { "Off", "SMAA", "FSR", "DLSS (NVIDIA RTX)", "XeSS", "SMAA T2x" };   // PS1 150; 5: notes/80 s.7
 // Job 638: saved as "FrameCap", in order; the old "Fps" (30 / 60 / 120 / Unlimited) is read once and moved over
 // (Store::load_ini). Shagg: 30, 40, 45, 60, 90, 120, 144, 165, 180, Unlimited (list 2; 40 / 45 for the Steam Deck; list 1 had no 40 / 180 -
@@ -1414,15 +1409,6 @@ std::string main_gpu(const std::vector<std::string>& gpus) {     // PS1 152
     for (const std::string& n : gpus) if (icase_search(n, "NVIDIA|GeForce|Quadro|AMD|Radeon|Intel.*Arc")) return n;
     for (const std::string& n : gpus) if (!n.empty()) return n;
     return "";
-}
-std::string launch_url(Game g, int chapter) {                    // PS1 141-144
-    if (g == Game::Judgment) return std::string(k_mapsGJ[std::max(0, std::min(17, chapter))]) + " -nostartupmovies";
-    if (g == Game::Gears1) {   // the chapter's level file and its start point (the game's chapter select passes it the same way)
-        const int n = int(sizeof(k_gears1Chapters) / sizeof(k_gears1Chapters[0]));
-        const Gears1Chapter& c = k_gears1Chapters[std::max(0, std::min(n - 1, chapter))];
-        return std::string(c.map) + "?LoadChapter=" + std::to_string(c.point);
-    }
-    return "GearGame_P?loadcheckpoint=0?chapter=" + std::to_string(chapter) + " -nostartupmovies";
 }
 
 // ---- Store (PS1 103-123, 418-464, 759-774) --------------------------------------------------------------------------

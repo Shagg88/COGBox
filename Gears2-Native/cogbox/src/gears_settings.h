@@ -218,8 +218,6 @@ std::string monitor_label(int index1, int width, int height, bool primary);
 bool graphics_card_present(const Environment& env, const std::string& name);
 // PS1 152: the main graphics card of a list.
 std::string main_gpu(const std::vector<std::string>& gpus);
-// PS1 141: the start URL for a chapter (0-based).
-std::string launch_url(Game g, int chapter);
 
 // The remembered settings of all the games (PS1 $s + PerGame).
 class Store {

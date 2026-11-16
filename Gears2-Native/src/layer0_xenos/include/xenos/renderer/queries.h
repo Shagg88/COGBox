@@ -154,17 +154,6 @@ enum class Verdict : uint8_t {
   kNoOurs,             // our renderer had no answer (query not run / not ready)
   kNoEmulator,         // the emulator left the report unanswered
 };
-inline const char* VerdictName(Verdict v) {
-  switch (v) {
-    case Verdict::kSame: return "same";
-    case Verdict::kClose: return "close";
-    case Verdict::kCountDiffers: return "count-differs";
-    case Verdict::kVisibilityDiffers: return "VISIBILITY-DIFFERS";
-    case Verdict::kNoOurs: return "no-ours";
-    case Verdict::kNoEmulator: return "no-emulator";
-  }
-  return "?";
-}
 
 // One query in one frame.
 struct QueryRecord {
@@ -295,7 +284,6 @@ class QueryTracker {
     }
     if (sample_count_addr != last_addr_) {
       last_addr_ = sample_count_addr;
-      ++address_changes_;
       if (sample_count_addr != 0) {
         if (open_ && layout_.known() && sample_count_addr == uint32_t(int64_t(open_begin_) + layout_.end_minus_begin)) {
           // The open query's end report is programmed and a draw follows it (not inside any query).
@@ -339,7 +327,6 @@ class QueryTracker {
   uint64_t unmatched_ends() const { return unmatched_ends_; }
   uint32_t OpenBegin() const { return open_ ? open_begin_ : 0; }
   uint64_t frame() const { return frame_; }
-  uint64_t address_changes() const { return address_changes_; }
   const std::vector<QueryRecord>& records() const { return records_; }
 
  private:
@@ -374,7 +361,7 @@ class QueryTracker {
   bool open_ = false, exact_ = false;
   uint32_t open_begin_ = 0, last_addr_ = 0;
   uint64_t zpd_begins_ = 0, zpd_ends_ = 0, unmatched_ends_ = 0;  // cumulative
-  uint64_t frame_ = 0, address_changes_ = 0;
+  uint64_t frame_ = 0;
   QueryRecord cur_;
   std::vector<QueryRecord> records_;
 };

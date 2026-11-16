@@ -211,7 +211,7 @@ void env_refresh(App &a, int g)
     }
     e.mods.clear();                              // (env_refresh runs again on the same Environment)
     e.texture_pack_mods.clear();
-    for (const ModItem &m : mods_list(a, g)) {   // 0.2.0 (mods_enabled_paths, plus the texture packs among them)
+    for (const ModItem &m : mods_list(a, g)) {   // 0.2.0 (the enabled mods, plus the texture packs among them)
         if (!m.enabled) continue;
         e.mods.push_back(m.path);
         if (m.textures) e.texture_pack_mods.push_back(m.path);   // r95 L1: only mods with pack textures
@@ -1256,17 +1256,6 @@ static bool any_files(const std::string &dir)
 // Shagg 29 Oct: "This version works" - the player says an untested game version or title update runs fine. Remembered
 // by its fingerprint (no more warning for that exact file), and a pre-filled GitHub issue opens in the browser so the
 // player can tell the developer by submitting it. Nothing is sent by COGBox itself.
-[[maybe_unused]] static std::string url_encode(const std::string &s)   // (unused since legal2-050: tickets take no pre-filled link)
-{
-    static const char *hex = "0123456789ABCDEF";
-    std::string o;
-    for (unsigned char c : s) {
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o += char(c);
-        else { o += '%'; o += hex[c >> 4]; o += hex[c & 15]; }
-    }
-    return o;
-}
-
 static void confirm_works(App &a, int g, bool update)
 {
     const GameDef &d = game_def(g);

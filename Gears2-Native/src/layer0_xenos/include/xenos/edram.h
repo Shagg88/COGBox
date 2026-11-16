@@ -46,9 +46,6 @@ enum class ColorFormat : uint32_t {
 };
 enum class DepthFormat : uint32_t { kD24S8 = 0, kD24FS8 = 1 };
 
-constexpr bool IsValidColorFormat(uint32_t f) {
-  return f <= 7 || f == 10 || f == 12 || f == 14 || f == 15;
-}
 constexpr bool Is64bpp(ColorFormat f) {
   return f == ColorFormat::k_16_16_16_16 || f == ColorFormat::k_16_16_16_16_FLOAT || f == ColorFormat::k_32_32_FLOAT;
 }

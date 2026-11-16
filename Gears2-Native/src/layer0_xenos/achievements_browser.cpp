@@ -353,13 +353,11 @@ void AchievementsBrowser::DrawReveal(float s) {
     ImGui::OpenPopup("##reveal");
     want_reveal_ = false;
   }
-  reveal_open_ = false;
   ImGui::SetNextWindowSize(ImVec2(460.f * s, 0));
   if (!ImGui::BeginPopupModal("##reveal", nullptr,
                               ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                                   ImGuiWindowFlags_AlwaysAutoResize))
     return;
-  reveal_open_ = true;
   ImGui::TextUnformatted(XenosTr("Reveal this secret achievement?"));
   ImGui::PushTextWrapPos(0.0f);
   ImGui::TextDisabled("%s", XenosTr("Its name, description and icon will be shown in every game and in the launcher."));

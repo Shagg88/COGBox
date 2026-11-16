@@ -676,8 +676,6 @@ void SetTexturePacksForTests(const std::string& pack_dirs, const std::string& pa
                          std::memory_order_release);
 }
 
-uint64_t BumpOverlayGeneration() { return g_overlay_gen.fetch_add(1, std::memory_order_acq_rel) + 1; }
-
 uint64_t OverlayGeneration() { return g_overlay_gen.load(std::memory_order_acquire); }
 
 void TextureCache::ResetCounters() {

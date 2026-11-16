@@ -104,7 +104,6 @@ class PromptDeviceMonitor {
   // Decides the style at `now_ms` (cvar override, else auto with the debounce) and applies it to
   // GlobalPromptCompositor() on the calling thread. Tests and tools; the game's monitor thread does this itself.
   DeviceStyle EvaluateActiveStyle(uint64_t now_ms = 0);
-  DeviceStyle GetActiveStyle(uint64_t now_ms = 0) { return EvaluateActiveStyle(now_ms); }
   // Re-reads the cvars, then EvaluateActiveStyle (rebuilding the key caps if the keybind cvars changed).
   DeviceStyle Poll(uint64_t now_ms = 0, bool force = false);
 

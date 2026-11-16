@@ -92,8 +92,8 @@ bool EnableDeviceLossDiagnostics() { return false; }
 #include <unordered_map>
 #include <vector>
 
-// system_report.cpp (GitHub #59 follow-up): the rendering adapter's ids, so XenosGpuVendorId() uses this adapter's
-// vendor and not just DXGI's first one; the Vulkan backend reports its device the same way (XenosReportVulkanDevice).
+// system_report.cpp (GitHub #59 follow-up): the rendering adapter's ids, so the logged GPU vendor is this adapter's
+// and not just DXGI's first one; the Vulkan backend reports its device the same way (XenosReportVulkanDevice).
 void XenosReportD3D12Device(uint32_t vendor, uint32_t device, const char* name);
 
 namespace xenos::renderer::gpu {
@@ -582,7 +582,6 @@ class CommandListProxy {
     cv_.notify_all();
     worker_.join();
   }
-  bool Threaded() const { return threaded_; }
   ID3D12GraphicsCommandList* Real() const { return real_; }
   // First failure the recording thread saw (Close / Reset), S_OK if none.
   HRESULT Error() const { return error_.load(); }

@@ -79,7 +79,7 @@ std::unique_ptr<Backend> CreateVulkanBackend() { return nullptr; }
 
 #include "vk_present_spirv.h"
 
-// system_report.cpp (GitHub #59): logs the Vulkan ids against DXGI's; XenosGpuVendorId() prefers these.
+// system_report.cpp (GitHub #59): logs the Vulkan ids against DXGI's; the logged GPU vendor prefers these.
 // (Move to <xenos/dev_tools.h> next to XenosLogSystemReport.)
 #ifdef _WIN32
 void XenosReportVulkanDevice(uint32_t vendor, uint32_t device, const char* name);

@@ -3406,7 +3406,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
 
   // ---- patch 0068: shaders built while the game loads an area (Shagg: "build behind the actual loading screen") ----
   // Layer 2 (UE3, both games) reads each package as the game opens it and hands over its pixel shaders' microcode
-  // (XenosPrebuildPixelShader, any thread). Per frame the recording thread drops the ones already known (drawn, or from
+  // (XenosPrebuildPixelShaders, any thread). Per frame the recording thread drops those already known (drawn, or from
   // the start-up warm-up / backlog) and passes the rest to one prebuild thread: it translates each exactly as a draw
   // would (ShaderCache::TranslateDxbcOnly - same bytes, so the driver's stage cache hits later) and queues a warm-only
   // pipeline (gpu.h WarmPixelShader), at most gow2_renderer_shader_prebuild_queue at a time. Pixel shaders only: the
@@ -11098,46 +11098,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
 
 
-  // What was not drawn since the previous copy, from the difference of two stats snapshots.
-  static std::string NotDrawn(const FrameStats& now, const FrameStats& base) {
-    std::string out;
-    auto add = [&](const char* what, uint64_t a, uint64_t b) {
-      if (a > b) out += (out.empty() ? "" : ", ") + std::string(what) + " " + std::to_string(a - b);
-    };
-    add("colour-only", now.colour_only, base.colour_only);
-    add("dummy points", now.dummy_points, base.dummy_points);
-    add("patches", now.patches, base.patches);
-    add("pending shaders", now.pending_shaders, base.pending_shaders);
-    add("shader errors", now.shader_errors, base.shader_errors);
-    add("pipeline errors", now.pipeline_failures, base.pipeline_failures);
-    add("other", now.other_failures, base.other_failures);
-    add("empty scissor", now.empty, base.empty);
-    for (const auto& [why, n] : now.skipped) {
-      auto it = base.skipped.find(why);
-      add(why.c_str(), n, it == base.skipped.end() ? 0 : it->second);
-    }
-    if (out.empty()) out = "nothing";
-    char cost[200];
-    std::snprintf(cost, sizeof(cost), " | this pass: uploads vertex %.2f MB (%.2f MB unchanged, skipped) index %.2f MB "
-                  "textures %.2f MB, our CPU %.2f ms",
-                  double(now.vertex_bytes - base.vertex_bytes) / 1048576.0,
-                  double(now.vertex_skipped_bytes - base.vertex_skipped_bytes) / 1048576.0,
-                  double(now.index_bytes - base.index_bytes) / 1048576.0,
-                  double(now.texture_bytes - base.texture_bytes) / 1048576.0, now.cpu_ms - base.cpu_ms);
-    char tiles[320];
-    std::snprintf(tiles, sizeof(tiles),
-                  " | alias tiles: %llu transferred (%llu carrying colour-derived content, %llu transfer runs), %llu "
-                  "from colour clears, %llu unknown source (%llu of them colour), %llu where the ownership rules disagree",
-                  static_cast<unsigned long long>(now.transferred_tiles - base.transferred_tiles),
-                  static_cast<unsigned long long>(now.tainted_tiles - base.tainted_tiles),
-                  static_cast<unsigned long long>(now.transfer_passes - base.transfer_passes),
-                  static_cast<unsigned long long>(now.cleared_tiles - base.cleared_tiles),
-                  static_cast<unsigned long long>(now.unknown_tiles - base.unknown_tiles),
-                  static_cast<unsigned long long>(now.unknown_colour_tiles - base.unknown_colour_tiles),
-                  static_cast<unsigned long long>(now.disagree_tiles - base.disagree_tiles));
-    return out + cost + tiles;
-  }
-
   // EDRAM bits of a constant colour in a 32bpp colour format (for colour clears seen later through a depth target).
   static bool ColorClearBits(uint32_t format, const float c[4], uint32_t& bits) {
     auto unorm = [](float v, uint32_t max) { return uint32_t(std::lround(std::clamp(v, 0.0f, 1.0f) * float(max))); };
@@ -15378,9 +15338,6 @@ ShadowRenderer* g_release_target = nullptr;  // job 171: set once at install, li
 }  // namespace
 
 bool XenosPrebuildWanted() { return g_release_target && g_release_target->PrebuildWanted(); }  // patch 0068
-void XenosPrebuildPixelShader(const void* be_ucode, uint32_t size_bytes, uint32_t variant) {     // patch 0068
-  if (g_release_target) g_release_target->OnPrebuildPixelShader(be_ucode, size_bytes, variant);
-}
 void XenosPrebuildPixelShaders(const XenosPrebuildShaderRef* items, size_t count) {  // 0.6.3 (r61 #2)
   if (g_release_target && items && count) g_release_target->OnPrebuildPixelShaders(items, count);
 }

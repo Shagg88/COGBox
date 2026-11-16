@@ -101,8 +101,6 @@ static Node F(const std::string &n, Bytes data) { Node x; x.name = n; x.data = s
 
 static std::string upper(std::string s) { for (auto &c : s) c = char(std::toupper(uint8_t(c))); return s; }
 
-struct DirLayout { std::vector<uint32_t> order_offsets; };
-
 // table bytes for a directory: a balanced tree sorted by upper-case name, entries never cross a sector
 static Bytes dir_table(const std::vector<Node> &kids)
 {
