@@ -88,6 +88,9 @@ struct Environment {
     int low_port_start = -1;        // 0.6.2 (R4): Linux's first port for normal programs (-1 unknown / not Linux)
     bool deck_lcd = false;
     std::vector<std::string> mods;              // 0.2.0: the enabled mod folders, in load order (--ue3_mods)
+    // texture packs (KiltedKernel; r95 L1): those of `mods` that hold texture-pack files, in load order
+    // (--gow2_texture_pack_dirs - only these, so the command line stays short and the renderer walks no other mod)
+    std::vector<std::string> texture_pack_mods;
     std::map<std::string, std::string> keys;   // 0.2.0: the player's own keyboard keys, cvar -> key (CogBox.ini [Keys])
     std::string recipe_pack;                   // job 630: <COGBox>\recipes\recipes-<exe>.rcp, "" = none
     std::string prompt_dir;                    // job 629: <COGBox>\prompts\keyboard (key-cap overlays), "" = none

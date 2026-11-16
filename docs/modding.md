@@ -144,13 +144,14 @@ mod like any other (a folder in `<Game>\mods\`, or a `.zip` added in the Mods ta
 Judgment: the renderer they share does the replacing. The Mods tab shows how many textures a mod's pack has.
 
 ```
-mods\MyTextures  0031EB540D50E47E_18_256x256.dds     a replacement: the 16-digit hash of the texture it replaces, then anything
+mods\MyTextures\
+  0031EB540D50E47E_18_256x256.dds     a replacement: the 16-digit hash of the texture it replaces, then anything
   textures\...\*.dds                 any folders inside the mod are searched
 ```
 
 - **The name** starts with the hash of the game texture it replaces (16 hex digits), then `_` or `.dds`. The hash is
   the one the ReXGlue-based ports use, so packs made for the Gears of War 2 PC port load unchanged: put the pack's
-  folder (with its `4D53082Deplace` inside) in `Gears2\mods\`.
+  folder (with its `4D53082D\replace` inside) in `Gears2\mods\`.
 - **Size:** the original's, or the same whole multiple of it across and down (2x and 4x are usual; up to 8x).
 - **Mip levels:** a texture the game draws with mip levels needs them in the file too, down to at least the game's
   smallest (save with every level: `texconv -m 0`).
@@ -158,6 +159,11 @@ mods\MyTextures  0031EB540D50E47E_18_256x256.dds     a replacement: the 16-digit
   header or the classic one). sRGB files are read as plain ones (the game does its own gamma).
 - **Which textures:** 2D textures. Cube maps, volume textures, render targets (screens the game draws into) and
   textures the game reads as signed (some normal maps) keep the game's own.
+- **Largest size:** each mip level must be 64 MB or less (for example R8G8B8A8 up to 4096x4096, BC7 or BC3 up to
+  8192x8192). A bigger file is left out and the log says why: save it as BC7 / BC3 or at a smaller scale.
+- **Known limit - textures the game reads by texel:** a few textures are read by texel position rather than stretched
+  over a surface (look-up tables, some fonts and UI pieces). A bigger replacement of one of those is read at the
+  wrong place, so it shows only part of the image. Keep such textures at the original size (1x).
 - **Order:** where two packs replace the same texture, the mod lower in the list wins, as with files.
 - **Folders left out:** `dump`, `.build` and `replace_<name>` folders inside a mod are not read.
 - Bigger textures take more video memory: a 4x pack has 16 times the pixels.

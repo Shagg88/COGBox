@@ -59,9 +59,23 @@ bool HashFromName(std::string_view leaf, uint64_t& hash);
 // (1-8x) across and down, and (when the guest has mip levels) enough levels to reach its last one.
 bool FitsGuest(uint32_t w, uint32_t h, uint32_t mips, const DdsImage& img, std::string& why);
 
+// r95 M3: the biggest mip level a replacement may have. The backends' upload rings refuse a level above half their
+// size (D3D12 --upload_ring_mb 256 by default; Vulkan the same), so a bigger level would fail to upload and be read
+// again on every retry. 64 MB leaves room with a smaller ring: e.g. RGBA8 4096x4096, BC7 / BC3 8192x8192.
+constexpr size_t kMaxLevelBytes = size_t(64) << 20;
+// Whether every level of img is small enough to upload (kMaxLevelBytes); why says how big and what to do otherwise.
+bool FitsUpload(const DdsImage& img, std::string& why);
+
+// r95 H1: paths as UTF-8 (the launcher passes UTF-8; std::filesystem::path(std::string) would take the ANSI code page
+// on Windows and throw for a name it cannot represent). Neither throws: a name that cannot be converted gives "?".
+std::filesystem::path PathFromUtf8(std::string_view utf8);
+std::string PathToUtf8(const std::filesystem::path& p) noexcept;
+
 // The DDS files of a list of pack folders, by hash. Folders are searched recursively (a pack root, its
 // `<TITLEID>\replace` folder or the replace folder itself all work); folders named `dump`, `.build` or `replace_<variant>`
-// are skipped. The first folder of the list that has a hash wins.
+// are skipped. The first folder of the list that has a hash wins. Folder names are UTF-8; any file or folder name works
+// (r95 H1: names outside the ANSI code page no longer throw). A folder that cannot be read to the end keeps what was
+// found and adds a line to errors() - Build itself does not throw.
 class PackIndex {
  public:
   void Build(const std::string& folders_separated_by_semicolons);
@@ -73,10 +87,14 @@ class PackIndex {
   bool empty() const { return files_.empty(); }
   // per folder: (folder, textures it adds), for the log
   const std::vector<std::pair<std::string, size_t>>& folders() const { return folders_; }
+  // what went wrong while walking the folders (UTF-8, one line each), for the log
+  const std::vector<std::string>& errors() const { return errors_; }
 
  private:
+  void Walk(const std::string& folder, size_t& added);
   std::unordered_map<uint64_t, std::filesystem::path> files_;
   std::vector<std::pair<std::string, size_t>> folders_;
+  std::vector<std::string> errors_;
 };
 
 }  // namespace xenos::renderer::texpack

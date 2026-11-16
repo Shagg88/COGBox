@@ -202,7 +202,13 @@ void env_refresh(App &a, int g)
     e.online_stun = stun_address(e.online_server);
     e.online_region = e.online_server.empty() ? std::string() : region_or_default(a.ini.get("Online", "Region"), local_utc_minutes());
     e.shader_cache_dir = game_shader_dir(g);
-    e.mods = mods_enabled_paths(a, g);   // 0.2.0
+    e.mods.clear();                              // (env_refresh runs again on the same Environment)
+    e.texture_pack_mods.clear();
+    for (const ModItem &m : mods_list(a, g)) {   // 0.2.0 (mods_enabled_paths, plus the texture packs among them)
+        if (!m.enabled) continue;
+        e.mods.push_back(m.path);
+        if (m.textures) e.texture_pack_mods.push_back(m.path);   // r95 L1: only mods with pack textures
+    }
     {   // job 620 (#45), GitHub #159: the Lang / VoiceLang choices not on this copy (greyed, and not passed at launch)
         const gs::Option *lo = gs::find_option((gs::Game)g, "Lang"), *vo = gs::find_option((gs::Game)g, "VoiceLang");
         e.lang_missing.assign(lo ? lo->choices.size() : 0, false);

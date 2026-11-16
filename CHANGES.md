@@ -28,6 +28,17 @@
 - **Social: take back a friend request** (launcher's SOCIAL tab and the in-game Social page): a request you sent
   ("Waiting for them to accept") now has a **CANCEL** button, so a request to an account nobody uses any more no
   longer sits there for ever. Suggested in GitHub #332.
+- **Texture packs** (by KiltedKernel, GitHub #319 / PR #325 - thank you), all four games: a mod can now carry
+  replacement textures, usually bigger and sharper ones, as DDS files named after the hash of the game texture each
+  replaces (`<hash>_....dds`, in any folder of the mod). Install a pack like any mod: a folder in `<Game>\mods\` or a
+  `.zip` added in the Mods tab, which shows how many textures each mod's pack has. Where two packs replace the same
+  texture, the mod lower in the list wins. Packs made for the Gears of War 2 PC port work unchanged (put the pack's
+  folder, with its `4D53082D\replace` inside, in `Gears2\mods\`). To make a pack, add
+  `--gow2_texture_pack_dump_dir=<folder>` to `extra-args.txt`: every texture the game draws is written there once,
+  already named for a pack. Replacements may be the original size or 2x-8x, in BC1-5, BC7 or plain RGBA, with their mip
+  levels and at most 64 MB per level; the game's log names any file it cannot use and why. Known limit: the few
+  textures the game reads by texel position (look-up tables, some fonts and UI) show the wrong part when replaced
+  with a bigger one - keep those at 1x. See docs/modding.md.
 
 ### Fixes
 - **Show ping after a matchmaking join** (by Flippage): joining a match through playlist matchmaking showed

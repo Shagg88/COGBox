@@ -185,7 +185,10 @@ struct TexSwap {
   uint32_t dump_count = 0, replaced = 0;
   ::xenos::renderer::texpack::PackIndex packs;  // texture packs: hash -> DDS file
   std::string pack_dump_dir;
-  std::unordered_set<uint64_t> pack_dumped, pack_refused;
+  std::filesystem::path pack_dump_path;  // r95 H1: pack_dump_dir read as UTF-8
+  // pack_refused: hashes whose refusal was logged; pack_bad (r95 M1): hashes whose file cannot be used for a reason that
+  // does not change (unreadable, wrong size / mips, too big) - not read again
+  std::unordered_set<uint64_t> pack_dumped, pack_refused, pack_bad;
   uint32_t pack_dump_count = 0, pack_loaded = 0;
   void Init() {
     std::lock_guard<std::mutex> lock(mutex);
@@ -238,13 +241,19 @@ struct TexSwap {
       }
       REXLOG_INFO("gow2_texture_dump: textures of {} to {}", dump_all ? std::string("every size") : std::to_string(dump_sizes.size()) + " size(s)", dump_dir);
     }
-    packs.Build(REXCVAR_GET(gow2_texture_pack_dirs));
-    for (const auto& [folder, n] : packs.folders())  // (the launcher passes every enabled mod: those with a pack)
+    try {  // r95 H1: Build does not throw; this is the last line of defence - a bad folder never takes the game down
+      packs.Build(REXCVAR_GET(gow2_texture_pack_dirs));
+    } catch (const std::exception& ex) {
+      REXLOG_ERROR("gow2_texture_pack: reading the pack folders failed ({}) - {} texture(s) kept", ex.what(), packs.size());
+    }
+    for (const std::string& err : packs.errors()) REXLOG_WARN("gow2_texture_pack: {}", err);
+    for (const auto& [folder, n] : packs.folders())  // (the launcher passes the enabled mods that have a pack)
       if (n) REXLOG_INFO("gow2_texture_pack: {} texture(s) from {}", n, folder);
     if (!packs.empty()) REXLOG_INFO("gow2_texture_pack: {} texture(s) in all", packs.size());
     pack_dump_dir = REXCVAR_GET(gow2_texture_pack_dump_dir);
     if (!pack_dump_dir.empty()) {
-      std::filesystem::create_directories(std::filesystem::path(pack_dump_dir), ec);
+      pack_dump_path = ::xenos::renderer::texpack::PathFromUtf8(pack_dump_dir);
+      std::filesystem::create_directories(pack_dump_path, ec);
       REXLOG_INFO("gow2_texture_pack: dumping to {}", pack_dump_dir);
     }
     static_on.store(!replace.empty() || !overlay.empty() || !dump_sizes.empty() || dump_all || !packs.empty() ||
@@ -1437,6 +1446,7 @@ void TextureCache::EndFrame(uint64_t frame) {
 // D3D12 the previous tenant of a not-zeroed heap range.
 void TextureCache::FailLoad(Entry& e, gpu::TextureHandle tex, bool created, const char* why) {
   e.load_failed = true;
+  e.pack_complete = false;  // texture packs (r95 M1): the next load uploads the file again
   ++stats_.load_failures;
   // Pages already copied to the guest-memory mirror by this load may have been dropped with it: copy them all again.
   e.copied_pages[0].clear();
@@ -1572,7 +1582,16 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
                 g_swap.dumped.insert(swap_hash).second;
     // Texture packs: a file for this content (not over a prompt overlay or a job-620 replacement), and dumps for pack
     // makers (not render targets: pages our GPU wrote hold resolves, which change)
-    if (!swap_replace && !swap_overlay) pack_file = g_swap.FindPack(rex_hash);
+    if (!swap_replace && !swap_overlay) {
+      // r95 M2: not where our GPU wrote the current content (a resolve or memexport, as #315's GpuCurrent tells it):
+      // the CPU bytes hashed above are then stale and may still be those of a texture a pack replaces (pool reuse).
+      // GpuCurrent, not NeverResolved: pages reused later for CPU-loaded textures still get their pack files.
+      bool gpu_now = false;
+      const uint32_t len = std::max(layout.base.level_data_extent_bytes, 1u);
+      for (uint32_t p = base >> GuestWatch::kPageShift; p <= (base + len - 1) >> GuestWatch::kPageShift && !gpu_now; ++p)
+        gpu_now = watch_.GpuCurrent(p);
+      if (!gpu_now) pack_file = g_swap.FindPack(rex_hash);
+    }
     if (!g_swap.pack_dump_dir.empty() && !pack_file && g_swap.pack_dump_count < 50000 &&
         !g_swap.pack_dumped.count(rex_hash) && w >= 4 && h >= 4) {
       bool resolved = false;
@@ -2130,7 +2149,7 @@ void TextureCache::Load(Entry& e, const uint32_t* tf, uint32_t host_kind) {
         if (!dds.empty()) {
           char leaf[64];
           std::snprintf(leaf, sizeof(leaf), "%016llX_%u_%ux%u.dds", static_cast<unsigned long long>(rex_hash), format, w, h);
-          std::ofstream f{std::filesystem::path(g_swap.pack_dump_dir) / leaf, std::ios::binary};
+          std::ofstream f{g_swap.pack_dump_path / leaf, std::ios::binary};
           f.write(reinterpret_cast<const char*>(dds.data()), std::streamsize(dds.size()));
           ++g_swap.pack_dump_count;
         }
@@ -2198,28 +2217,53 @@ void TextureCache::DestroyHost(Entry& e) {
     e.through_ok = false;
   }
   e.pack_hash = 0;
+  e.pack_complete = false;
   for (SlotCache& sc : slot_cache_) sc.valid = false;
 }
 
 bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesystem::path& file, uint64_t hash, uint32_t w,
                                 uint32_t h, uint32_t mips, uint32_t base_start, uint32_t base_length, uint32_t mip_start,
                                 uint32_t mip_length) {
-  auto refuse = [&](const std::string& why) {
+  // bad: the reason does not change while the game runs (the hash encodes the guest's size and mips), so the file is not
+  // read again (r95 M1); logged once per hash either way
+  auto refuse = [&](const std::string& why, bool bad) {
+    if (bad) g_swap.pack_bad.insert(hash);
     if (g_swap.pack_refused.insert(hash).second && g_swap.pack_refused.size() <= 200)
-      REXLOG_WARN("gow2_texture_pack: {:016X} ({}x{}) not replaced by {}: {}", hash, w, h, file.filename().string(), why);
+      REXLOG_WARN("gow2_texture_pack: {:016X} ({}x{}) not replaced by {}: {}", hash, w, h,
+                  texpack::PathToUtf8(file.filename()), why);  // r95 H1: UTF-8, never the ANSI code page
     return false;
   };
-  // A signed fetch needs a signed view of the host format: only the guest's own format has one here.
+  // A signed fetch needs a signed view of the host format: only the guest's own format has one here (per fetch).
   for (uint32_t c = 0; c < 4; ++c)
-    if (Bits(tf[0], 2 + 2 * c, 2) == 1) return refuse("the game reads it as signed");
+    if (Bits(tf[0], 2 + 2 * c, 2) == 1) return refuse("the game reads it as signed", false);
+  auto arm = [&] {  // watch the guest ranges as for a guest load: other content there changes the hash and reloads
+    e.base_start = base_start;
+    e.base_length = base_length;
+    e.mip_start = mip_start;
+    e.mip_length = mip_length;
+    e.version = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length);
+    watch_.Watch(e.base_start, e.base_length);
+    if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
+    (void)PagesChanged(e, false);
+    e.overlay_gen = OverlayGeneration();
+    // r95 M1: not an overlay - a generation bump (prompt style switch) must not read the file again. The swap block in
+    // Load still runs (g_swap.On() while packs exist) and e.pack_hash makes a later guest load replace the texture.
+    e.has_overlay = false;
+    e.through_ok = false;
+  };
+  // r95 M1: the host texture already holds this file, completely: re-arm only (no file read, no upload)
+  if (e.texture && e.pack_hash == hash && e.pack_complete) {
+    arm();
+    return true;
+  }
+  if (g_swap.pack_bad.count(hash)) return false;  // r95 M1: refused before, for good
   texpack::DdsImage img;
   std::string why;
-  if (!texpack::ReadDds(file, img, why) || !texpack::FitsGuest(w, h, mips, img, why))
-    return refuse(why);
-  const bool replacing_existing = e.texture != 0;
-  if (e.texture && e.pack_hash != hash) DestroyHost(e);
+  if (!texpack::ReadDds(file, img, why) || !texpack::FitsGuest(w, h, mips, img, why) || !texpack::FitsUpload(img, why))
+    return refuse(why, true);  // r95 M3: FitsUpload - a level the upload ring refuses would fail and retry 16 times
   bool created = false;
-  if (!e.texture) {
+  if (!e.texture || e.pack_hash != hash) {
+    // r95 L4: the new texture is made before the old one goes, so a failed creation changes nothing (stats included)
     gpu::TextureDesc td;
     td.dimension = gpu::TextureDimension::k2D;
     td.width = img.width;
@@ -2228,32 +2272,24 @@ bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesys
     td.format = img.format;
     td.usage = gpu::kUsageSampled;
     td.debug_name = "texture pack";
-    e.texture = backend_.CreateTexture(td);
-    if (!e.texture) return refuse("host texture creation failed");
+    const gpu::TextureHandle tex = backend_.CreateTexture(td);
+    if (!tex) return refuse("host texture creation failed", false);
+    const bool replacing_existing = e.texture != 0;
+    if (replacing_existing) DestroyHost(e);
+    e.texture = tex;
     created = true;
     e.format = img.format;
     e.gpu_storage = false;
     e.ov_scale = 1;
     e.host_bytes = img.data.size();
-    if (replacing_existing) {
+    if (replacing_existing) {  // (Lookup counts a new entry; DestroyHost took the old texture off)
       ++stats_.textures;
       stats_.host_bytes += e.host_bytes;
     }
   }
   e.pack_hash = hash;
-  e.overlay_gen = OverlayGeneration();
-  e.has_overlay = true;
-  e.through_ok = false;
-  // Watch the guest ranges as for a guest load: when the game puts other content there, the hash changes and the
-  // texture loads again (the guest's own, or another file).
-  e.base_start = base_start;
-  e.base_length = base_length;
-  e.mip_start = mip_start;
-  e.mip_length = mip_length;
-  e.version = watch_.Version(e.base_start, e.base_length) + watch_.Version(e.mip_start, e.mip_length);
-  watch_.Watch(e.base_start, e.base_length);
-  if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
-  (void)PagesChanged(e, false);
+  e.pack_complete = false;
+  arm();
   const uint64_t drops_at_start = backend_.TextureLoadDrops();
   for (uint32_t level = 0; level < img.mips; ++level)
     backend_.UploadTexture(e.texture, level, 0, img.data.data() + img.offsets[level], img.RowBytes(level),
@@ -2264,6 +2300,7 @@ bool TextureCache::LoadFromPack(Entry& e, const uint32_t* tf, const std::filesys
     REXLOG_INFO("gow2_texture_pack: {:016X} ({}x{}) replaced: {}x{}, {} level(s), format {}", hash, w, h, img.width,
                 img.height, img.mips, uint32_t(img.format));
   if (backend_.TextureLoadDrops() != drops_at_start) FailLoad(e, e.texture, created, "backend dropped part of it");
+  else e.pack_complete = true;
   return true;
 }
 

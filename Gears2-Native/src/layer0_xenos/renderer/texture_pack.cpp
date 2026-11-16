@@ -9,6 +9,7 @@
 #include <cstring>
 #include <fstream>
 #include <system_error>
+#include <type_traits>
 
 namespace xenos::renderer::texpack {
 namespace {
@@ -66,6 +67,20 @@ std::string Lower(std::string s) {
   for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
   return s;
 }
+
+// r95 H1: a path's characters as ASCII, every other one '?' - straight from the native string (UTF-16 on Windows), so no
+// code-page conversion and nothing that throws for a name the ANSI code page cannot hold. Enough for the hash at the
+// start of a pack file's name, its extension and the folder names Build skips.
+std::string AsciiName(const std::filesystem::path& p) {
+  using Unit = std::make_unsigned_t<std::filesystem::path::value_type>;
+  const std::filesystem::path::string_type& n = p.native();
+  std::string out;
+  out.reserve(n.size());
+  for (const auto c : n) out.push_back(static_cast<Unit>(c) < 0x80 ? char(c) : '?');
+  return out;
+}
+
+bool EndsWithDds(const std::string& ascii) { return ascii.size() >= 4 && Lower(ascii.substr(ascii.size() - 4)) == ".dds"; }
 
 }  // namespace
 
@@ -247,9 +262,75 @@ bool FitsGuest(uint32_t w, uint32_t h, uint32_t mips, const DdsImage& img, std::
   return true;
 }
 
+bool FitsUpload(const DdsImage& img, std::string& why) {
+  for (uint32_t level = 0; level < img.mips; ++level) {
+    const size_t bytes = img.LevelBytes(level);
+    if (bytes > kMaxLevelBytes) {
+      why = "too big to upload (" + std::to_string((bytes + (size_t(1) << 20) - 1) >> 20) + " MB level " +
+            std::to_string(level) + ", the most is " + std::to_string(kMaxLevelBytes >> 20) +
+            " MB; use BC7 / BC3 or a smaller scale)";
+      return false;
+    }
+  }
+  return true;
+}
+
+std::filesystem::path PathFromUtf8(std::string_view utf8) {
+  try {
+#if defined(__cpp_char8_t)  // (u8path is deprecated in C++20)
+    return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(utf8.data()), utf8.size()));
+#else
+    return std::filesystem::u8path(utf8.begin(), utf8.end());
+#endif
+  } catch (...) {  // not valid UTF-8: as the bytes come (never reached for the launcher's paths)
+    try {
+      return std::filesystem::path(std::string(utf8));
+    } catch (...) {
+      return {};
+    }
+  }
+}
+
+std::string PathToUtf8(const std::filesystem::path& p) noexcept {
+  try {
+    const auto u = p.u8string();  // std::u8string (C++20) or std::string
+    return std::string(u.begin(), u.end());
+  } catch (...) {  // e.g. a lone UTF-16 surrogate
+    try {
+      return AsciiName(p);
+    } catch (...) {
+      return "?";
+    }
+  }
+}
+
+void PackIndex::Walk(const std::string& folder, size_t& added) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path root = PathFromUtf8(folder);
+  if (root.empty() || !fs::is_directory(root, ec)) return;
+  fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end_it;
+  for (; !ec && it != end_it; it.increment(ec)) {
+    const fs::directory_entry& de = *it;
+    const std::string leaf = AsciiName(de.path().filename());
+    std::error_code entry_ec;  // r95 L3: an entry that cannot be looked at is skipped, not the end of the walk
+    if (de.is_directory(entry_ec)) {
+      const std::string l = Lower(leaf);
+      if (l == "dump" || l == ".build" || l.rfind("replace_", 0) == 0 || it.depth() >= 6) it.disable_recursion_pending();
+      continue;
+    }
+    if (entry_ec || !EndsWithDds(leaf)) continue;
+    uint64_t hash = 0;
+    if (!HashFromName(leaf, hash)) continue;
+    if (files_.emplace(hash, de.path()).second) ++added;
+  }
+  if (ec) errors_.push_back(folder + ": stopped reading it (" + ec.message() + ")");
+}
+
 void PackIndex::Build(const std::string& list) {
   files_.clear();
   folders_.clear();
+  errors_.clear();
   size_t at = 0;
   while (at <= list.size()) {
     size_t end = list.find(';', at);
@@ -260,25 +341,12 @@ void PackIndex::Build(const std::string& list) {
     while (!folder.empty() && (folder.front() == ' ' || folder.front() == '"')) folder.erase(folder.begin());
     if (folder.empty()) continue;
     size_t added = 0;
-    std::error_code ec;
-    const std::filesystem::path root = std::filesystem::path(folder);
-    if (!std::filesystem::is_directory(root, ec)) {
-      folders_.emplace_back(folder, 0);
-      continue;
-    }
-    std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, ec), end_it;
-    for (; !ec && it != end_it; it.increment(ec)) {
-      const std::filesystem::directory_entry& de = *it;
-      const std::string leaf = de.path().filename().string();
-      if (de.is_directory(ec)) {
-        const std::string l = Lower(leaf);
-        if (l == "dump" || l == ".build" || l.rfind("replace_", 0) == 0 || it.depth() >= 6) it.disable_recursion_pending();
-        continue;
-      }
-      if (Lower(de.path().extension().string()) != ".dds") continue;
-      uint64_t hash = 0;
-      if (!HashFromName(leaf, hash)) continue;
-      if (files_.emplace(hash, de.path()).second) ++added;
+    try {  // r95 H1: nothing in a mod's folder may take the game down - log it and go on
+      Walk(folder, added);
+    } catch (const std::exception& ex) {
+      errors_.push_back(folder + ": " + ex.what());
+    } catch (...) {
+      errors_.push_back(folder + ": could not be read");
     }
     folders_.emplace_back(folder, added);
   }

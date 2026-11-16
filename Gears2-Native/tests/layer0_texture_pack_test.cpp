@@ -177,3 +177,60 @@ TEST_CASE("texture_pack: pack folders - first folder wins, dump and variant fold
   REQUIRE(index.folders()[2].second == 0);
   fs::remove_all(root, ec);
 }
+
+// r95 H1: names outside the ANSI code page (CJK / Cyrillic / accented mod, folder and file names) are walked and found,
+// and never throw; the folder list is UTF-8 as the launcher passes it.
+TEST_CASE("texture_pack: non-ASCII folder and file names", "[texture_pack]") {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / "cogbox_texture_pack_test_utf8";
+  std::error_code ec;
+  fs::remove_all(root, ec);
+  auto touch = [](const fs::path& p) {
+    fs::create_directories(p.parent_path());
+    std::ofstream(p, std::ios::binary) << "x";
+  };
+  const std::string pack = PathToUtf8(root) + "/Jos\xC3\xA9 \xE3\x83\x86\xE3\x82\xAF\xE3\x82\xB9\xE3\x83\x81\xE3\x83\xA3";  // "José テクスチャ"
+  const fs::path pack_path = PathFromUtf8(pack);
+  REQUIRE(PathToUtf8(pack_path) == pack);  // round trip
+  touch(pack_path / "\xD0\xA2\xD0\xB5\xD0\xBA\xD1\x81\xD1\x82\xD1\x83\xD1\x80\xD1\x8B" / "00000000000000EE.dds");  // "Текстуры"
+  touch(pack_path / "00000000000000FF_\xE6\xB5\x8B\xE8\xAF\x95.dds");  // "_测试"
+  touch(pack_path / "\xE8\xAF\xB4\xE6\x98\x8E.txt");                    // a readme with a CJK name: skipped
+  touch(pack_path / "000000000000\xC3\xA9\xC3\xA9.dds");               // non-hex characters in the hash: skipped
+  PackIndex index;
+  REQUIRE_NOTHROW(index.Build(pack + ";" + PathToUtf8(root) + "/\xE6\x97\xA0"));  // and a missing non-ASCII folder
+  REQUIRE(index.errors().empty());
+  REQUIRE(index.size() == 2);
+  REQUIRE(index.Find(0xEE) != nullptr);
+  REQUIRE(index.Find(0xFF) != nullptr);
+  REQUIRE(PathToUtf8(index.Find(0xFF)->filename()) == "00000000000000FF_\xE6\xB5\x8B\xE8\xAF\x95.dds");
+  REQUIRE(index.folders().size() == 2);
+  REQUIRE(index.folders()[0].first == pack);
+  REQUIRE(index.folders()[0].second == 2);
+  REQUIRE(index.folders()[1].second == 0);
+  // a pack file under a non-ASCII path reads as any other
+  const std::vector<uint8_t> dds = WriteDds(gpu::Format::kBC1, 4, 4, std::vector<uint8_t>(8, 0x11).data(), 8);
+  std::ofstream(*index.Find(0xEE), std::ios::binary).write(reinterpret_cast<const char*>(dds.data()), std::streamsize(dds.size()));
+  DdsImage img;
+  std::string why;
+  REQUIRE(ReadDds(*index.Find(0xEE), img, why));
+  REQUIRE(img.width == 4);
+  fs::remove_all(root, ec);
+}
+
+// r95 M3: a level the backends' upload rings would refuse is refused up front, with the reason.
+TEST_CASE("texture_pack: replacements too big to upload", "[texture_pack]") {
+  DdsImage img;
+  std::string why;
+  REQUIRE(FormatUnit(gpu::Format::kR8G8B8A8Unorm, img.block, img.unit_bytes));
+  img.format = gpu::Format::kR8G8B8A8Unorm;
+  img.width = img.height = 4096, img.mips = 13;  // 64 MB top level: the most
+  REQUIRE(FitsUpload(img, why));
+  img.width = img.height = 8192, img.mips = 14;  // 256 MB (4x of a 2048 RGBA8 texture)
+  REQUIRE_FALSE(FitsUpload(img, why));
+  REQUIRE(why.find("too big to upload (256 MB level 0") != std::string::npos);
+  REQUIRE(FormatUnit(gpu::Format::kBC7, img.block, img.unit_bytes));
+  img.format = gpu::Format::kBC7;  // BC7 8192x8192: 64 MB
+  REQUIRE(FitsUpload(img, why));
+  img.width = img.height = 16384, img.mips = 15;  // BC7 8x of 2048: 256 MB
+  REQUIRE_FALSE(FitsUpload(img, why));
+}

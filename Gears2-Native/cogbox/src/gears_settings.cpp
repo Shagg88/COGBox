@@ -2340,11 +2340,12 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
         for (const std::string &m : env.mods) j += (j.empty() ? "" : ";") + m;
         a.push_back("--ue3_mods=" + q(j));
     }
-    // KiltedKernel: texture packs - the enabled mods' folders again, the one loaded last first (it wins, as its files do);
-    // the renderer takes the DDS files named by texture hash in them (layer0_xenos/renderer/texture_pack.cpp)
-    if (!env.mods.empty() && cap_exe(env, "gow2_texture_pack_dirs")) {
+    // KiltedKernel: texture packs - the enabled mods that hold pack textures, the one loaded last first (it wins, as its
+    // files do); the renderer takes the DDS files named by texture hash in them (layer0_xenos/renderer/texture_pack.cpp).
+    // r95 L1: only those mods, not every enabled one (a long mod list would make the command line too long).
+    if (!env.texture_pack_mods.empty() && cap_exe(env, "gow2_texture_pack_dirs")) {
         std::string j;
-        for (auto m = env.mods.rbegin(); m != env.mods.rend(); ++m) j += (j.empty() ? "" : ";") + *m;
+        for (auto m = env.texture_pack_mods.rbegin(); m != env.texture_pack_mods.rend(); ++m) j += (j.empty() ? "" : ";") + *m;
         a.push_back("--gow2_texture_pack_dirs=" + q(j));
     }
     // PS1 940-958 (launcher patches 0155 / 0158): frame rate. 0.4.6 (Shagg 5 Nov: "FPS cap needs to be 60"): the cap the

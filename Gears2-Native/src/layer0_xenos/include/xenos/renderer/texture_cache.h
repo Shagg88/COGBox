@@ -301,6 +301,7 @@ class TextureCache {
     // Texture packs (KiltedKernel, --gow2_texture_pack_dirs): the content hash whose pack file this host texture holds
     // (its size, format and mips are the file's), 0 = the guest texture's own
     uint64_t pack_hash = 0;
+    bool pack_complete = false;  // r95 M1: that file is in it whole (uploaded with no drop) - a reload need not read it
   };
   // Stage 7: the scaled entry for a 2D fetch constant if its texture is held by a current scaled resolve, else null.
   Entry* LookupScaled(const uint32_t* tf);
