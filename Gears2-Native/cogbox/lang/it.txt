@@ -1142,7 +1142,7 @@ D-pad choose   A pick   B close = Croce scegli   A seleziona   B chiudi
 ICON = ICONA
 BACK = INDIETRO
 Horde bots = Bot in Orda
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Orda locale: premi Indietro / Visualizza quando compare per la prima volta il tabellone dell'Orda per aggiungere due bot (premi ancora per altri due). Ricompaiono a ogni ondata. Disattivalo per campagna e versus: Indietro attiva anche il flag dei trucchi del gioco.
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = Indietro / Visualizza mostra il tabellone come sempre e, in una partita Orda che ospiti, riempie anche la tua squadra fino a cinque con dei bot (ricompaiono a ogni ondata). Non fa nulla in Versus, nelle lobby o nella partita di qualcun altro. Per i bot in Versus usa l'impostazione bot della lobby.
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = Sì

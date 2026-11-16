@@ -53,8 +53,9 @@ REXCVAR_DEFINE_STRING(ue3_ini_edits, "", "Gears3",
                       "Engine config edits, 'file|section|key=value' or 'file|section|key*=factor', ';'-separated, e.g. "
                       "'Xe-GearEngine.ini|SystemSettings|MotionBlur=False' (ue3/config_bundle.h)");
 REXCVAR_DEFINE_BOOL(gow3_horde_bots, false, "Gears3",
-                    "GitHub #89 (from francoissubke-blip's tip): Back / View on the Horde scoreboard adds two bots (local "
-                    "Horde); they respawn every wave");
+                    "GitHub #89 (from francoissubke-blip's tip): Back / View shows the scoreboard and, in a Horde game this "
+                    "PC hosts, fills the team to five with bots (the game's Friends exec); they respawn every wave. "
+                    "Nothing in Versus, the lobbies or on a client");
 REXCVAR_DEFINE_STRING(ue3_mods, "", "Gears3",
                       "Mods (0.2.0): host folders, ';'-separated in load order (a later one wins), each laid out like the game "
                       "data folder; their files replace or add to the game's, read-only, through a folder overlay");
@@ -805,8 +806,14 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
       changed += ue3::ApplyConfigEdits(bundle, edits, &log);
     }
     if (REXCVAR_GET(gow3_horde_bots)) {  // GitHub #89: one more Back binding in the input settings
+      // 0.6.3 fix: the game's own Back command (GBA_Scoreboard) first, so Back keeps the scoreboard, then the game's
+      // unused developer exec GearGameHorde_Base.Friends (export 31947: AddBot until NumPlayers + NumBots = 5, spawned
+      // at once mid-match). Only the Horde GameInfo has it, so in Versus, the lobbies and on a client it does nothing.
+      // No NetMode change and no EnableCheats any more: "Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot 0 |
+      // AddBot 0" took a hosted (listen-server) game offline and broke matchmaking; PC job 1906 showed AddBot and
+      // Friends add bots in a listen-server Horde without either.
       static const char kBind[] =
-          "(Name=\"XboxTypeS_Back\",Command=\"Set WorldInfo NetMode NM_Standalone | EnableCheats | AddBot 0 | AddBot 0\")";
+          "(Name=\"XboxTypeS_Back\",Command=\"GBA_Scoreboard | Friends\")";
       ue3::ConfigFile* target = nullptr;
       for (ue3::ConfigFile& f : bundle.files) {
         const std::string fn = ue3::AsciiLower(f.name.Utf8());
@@ -846,7 +853,7 @@ void Ue3InstallConfigEditsIfRequested(rex::Runtime* runtime) {
         sec->keys.push_back({ue3::ConfigString::FromUtf8("Bindings", wide), ue3::ConfigString::FromUtf8(kBind, wide)});
         ++changed;
         if (AsciiLower(n) == "coalesced_int.bin" || written == 0)
-          REXLOG_INFO("gow3_horde_bots: {}: Back adds two bots on the Horde scoreboard ({})", n, target->name.Utf8());
+          REXLOG_INFO("gow3_horde_bots: {}: Back shows the scoreboard and fills a hosted Horde team with bots ({})", n, target->name.Utf8());
       } else if (AsciiLower(n) == "coalesced_int.bin") {
         REXLOG_WARN("gow3_horde_bots: {}: no GearInput.ini in the bundle - not added ({} files)", n, bundle.files.size());
         for (const ue3::ConfigFile& f : bundle.files)  // candidates, for the next fix

@@ -1142,7 +1142,7 @@ D-pad choose   A pick   B close = Steuerkreuz wählen   A übernehmen   B schlie
 ICON = SYMBOL
 BACK = ZURÜCK
 Horde bots = Horde-Bots
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Lokale Horde: Drücke Zurück / Ansicht, wenn die Horde-Punktetafel zum ersten Mal erscheint, um zwei Bots hinzuzufügen (erneut drücken für zwei weitere). Sie kehren jede Welle zurück. Für Kampagne und Versus ausschalten: Zurück schaltet auch das Cheat-Flag des Spiels ein.
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = Zurück / Ansicht zeigt wie gewohnt die Punktetafel und füllt in einem Horde-Spiel, das du hostest, dein Team zusätzlich mit Bots auf fünf auf (sie kehren jede Welle zurück). In Versus, in den Lobbys oder im Spiel eines anderen bewirkt es nichts. Für Bots in Versus nutze die Bot-Einstellung der Lobby.
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = An

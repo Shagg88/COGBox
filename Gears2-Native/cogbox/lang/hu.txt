@@ -1148,7 +1148,7 @@ D-pad choose   A pick   B close = D-pad választás   A kiválaszt   B bezárás
 ICON = IKON
 BACK = VISSZA
 Horde bots = Horda botok
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = Helyi Horda: nyomd meg a Vissza / Nézet gombot, amikor először megjelenik a Horda eredménytábla, két bot hozzáadásához (újra megnyomva még kettő). Minden hullámban újraélednek. Kampányhoz és versushoz kapcsold ki: a Vissza a játék csalás jelzőjét is bekapcsolja.
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = A Vissza / Nézet gomb a szokásos módon megmutatja az eredménytáblát, és egy általad hosztolt Horda-játékban ötre tölti fel a csapatodat botokkal (minden hullámban újraéledenek). Versusban, a lobbikban és más játékában nem csinál semmit. Versusban a botokhoz használd a lobbi saját botbeállítását.
 
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)

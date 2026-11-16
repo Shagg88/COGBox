@@ -1142,7 +1142,7 @@ D-pad choose   A pick   B close = 방향 버튼 선택   A 고르기   B 닫기
 ICON = 아이콘
 BACK = 뒤로
 Horde bots = 호드 봇
-Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag. = 로컬 호드: 호드 점수판이 처음 나타날 때 뒤로 / 보기 버튼을 누르면 봇 두 명이 추가됩니다(다시 누르면 두 명 더). 봇은 매 웨이브 다시 나타납니다. 캠페인과 대전에서는 꺼 두세요: 뒤로 버튼이 게임의 치트 플래그도 켭니다.
+Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots (they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus use the lobby's own bot setting. = 뒤로 / 보기 버튼은 평소처럼 점수판을 보여 주고, 직접 호스트하는 호드 게임에서는 팀을 봇으로 5명까지 채웁니다(봇은 웨이브마다 부활합니다). 대전, 로비, 다른 사람의 게임에서는 아무 일도 일어나지 않습니다. 대전에서 봇을 쓰려면 로비의 봇 설정을 사용하세요.
 # 0.4.9 (machine-made translation, please check)
 # 0.4.9: In-game menu (XenosTr: exact keys)
 On = 켬

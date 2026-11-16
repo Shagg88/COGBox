@@ -541,10 +541,12 @@ std::vector<Option> make_options(Game g) {
              "On: Insane difficulty unlocks only after you finish the campaign, as in the original game. Off: Insane can be "
              "chosen from the start. Achievements work as usual.", 0),
         "originalunlocks");
-    // GitHub #89 (francoissubke-blip's tip): bots in local Horde
+    // GitHub #89 (francoissubke-blip's tip): bots in Horde. 0.6.3 fix: Back is "GBA_Scoreboard | Friends" (no NetMode
+    // change, no cheat flag), so it is safe to leave on in every mode
     add(make("HordeBots", "Horde bots", Tab::Gameplay, Kind::Bool, OWN, 0,
-             "Local Horde: press Back / View when the Horde scoreboard first shows to add two bots (press again for two more). "
-             "They respawn every wave. Turn it off for campaign and versus: Back also turns on the game's cheat flag.", 0),
+             "Back / View shows the scoreboard as usual and, in a Horde game you host, also fills your team to five with bots "
+             "(they respawn every wave). It does nothing in Versus, in the lobbies or in someone else's game. For bots in Versus "
+             "use the lobby's own bot setting.", 0),
         "hordebots");
     add(make("Cheats", "Cheats (hotkeys F5-F11)", Tab::Gameplay, Kind::Bool, SH, 0,
              "The developers' cheat keys, F5-F11 in game (god mode, slow motion, free camera - in Gears 1 fly through walls - "
