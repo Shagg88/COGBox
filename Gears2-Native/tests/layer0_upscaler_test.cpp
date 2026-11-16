@@ -7,6 +7,7 @@
 #include <cmath>
 #include <vector>
 #include <cstdint>
+#include <utility>
 
 #include "xenos/renderer/upscaler.h"
 
@@ -401,4 +402,107 @@ TEST_CASE("upscale: the frame's last scene copy is learned (notes/80 s.11)", "[u
   CHECK(frame(last, 2) == 1);
   CHECK(frame(last, 1) == -1);
   CHECK(frame(last, 1) == 0);
+}
+
+TEST_CASE("upscale: one creation size for a scene that changes width (GitHub #323)", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  uint32_t cw = 0, ch = 0;
+  CHECK(up::FitCreationSize(1280, 720, 1280, 720, cw, ch));  // first frame: its own size
+  CHECK((cw == 1280 && ch == 720));
+  // Gears 2 at Nexus: 1024..1280 in 64-pixel steps, many times a second - no re-creation.
+  for (uint32_t w : {1024u, 1088u, 1216u, 1280u, 1152u, 1024u}) {
+    CHECK_FALSE(up::FitCreationSize(w, 720, 1280, 720, cw, ch));
+    CHECK((cw == 1280 && ch == 720));
+  }
+  // A first frame narrower than the full scene, then wider: once more, straight to the full width.
+  cw = ch = 0;
+  CHECK(up::FitCreationSize(1024, 720, 1280, 720, cw, ch));
+  CHECK(cw == 1024);
+  CHECK(up::FitCreationSize(1088, 720, 1280, 720, cw, ch));
+  CHECK((cw == 1280 && ch == 720));
+  CHECK_FALSE(up::FitCreationSize(1216, 720, 1280, 720, cw, ch));
+  // A game always below the nominal size keeps its own (never padded); past the nominal: the frame's size.
+  cw = ch = 0;
+  CHECK(up::FitCreationSize(1280, 704, 1280, 720, cw, ch));
+  CHECK_FALSE(up::FitCreationSize(1280, 704, 1280, 720, cw, ch));
+  CHECK(ch == 704);
+  CHECK(up::FitCreationSize(1920, 704, 1280, 720, cw, ch));
+  CHECK((cw == 1920 && ch == 704));
+}
+
+TEST_CASE("upscale: motion re-expressed for the last frame's width (GitHub #323)", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  CHECK(up::ResizedMotion(3.5f, 100.5f, 2560, 2560) == 3.5f);  // same size: unchanged
+  CHECK(up::ResizedMotion(3.5f, 100.5f, 2560, 0) == 3.5f);     // no last frame
+  // A still camera: the scene's centre (u = 0.5) was drawn at 1280 of 2560 last frame and is at 1024 of 2048 now.
+  CHECK(up::ResizedMotion(0.0f, 1024.0f, 2048, 2560) == Approx(256.0f));
+  CHECK(up::ResizedMotion(0.0f, 1280.0f, 2560, 2048) == Approx(-256.0f));
+  // A moving camera: previous position u_prev * prev_size, whatever the motion within the frame.
+  const float w = 2048.0f, prev = 2560.0f, pos = 300.5f, m = -12.25f;
+  const float u_prev = (pos + m) / w;
+  CHECK(pos + up::ResizedMotion(m, pos, 2048, 2560) == Approx(u_prev * prev));
+}
+
+TEST_CASE("upscale: the creation size shrinks slowly, without oscillating (GitHub #323, r83 L2)", "[upscale]") {
+  namespace up = xenos::renderer::upscale;
+  using C = up::CreationChange;
+  constexpr uint32_t kAfter = 600;
+  auto feed = [](up::CreationSize& s, uint32_t w, uint32_t h, uint32_t n) {  // n frames; the changes seen
+    uint32_t grows = 0, shrinks = 0;
+    for (uint32_t i = 0; i < n; ++i) {
+      const C c = up::UpdateCreationSize(s, w, h, 1280, 720, kAfter);
+      grows += c == C::kGrow, shrinks += c == C::kShrink;
+    }
+    return std::pair{grows, shrinks};
+  };
+  // Ultrawide 1280 x 550 after one 720-high frame: the shrink comes on the 600th fitting frame, once.
+  up::CreationSize s;
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, kAfter) == C::kGrow);
+  CHECK(feed(s, 1280, 550, kAfter - 1) == std::pair{0u, 0u});
+  CHECK((s.w == 1280 && s.h == 720));
+  CHECK(up::UpdateCreationSize(s, 1280, 550, 1280, 720, kAfter) == C::kShrink);
+  CHECK((s.w == 1280 && s.h == 550));
+  CHECK(feed(s, 1280, 550, 10 * kAfter) == std::pair{0u, 0u});  // at the creation size: nothing more
+  // Undone by a 720-high frame: the next shrink needs twice the frames, the one after four times.
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, kAfter) == C::kGrow);
+  CHECK(feed(s, 1280, 550, 2 * kAfter - 1) == std::pair{0u, 0u});
+  CHECK(up::UpdateCreationSize(s, 1280, 550, 1280, 720, kAfter) == C::kShrink);
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, kAfter) == C::kGrow);
+  CHECK(feed(s, 1280, 550, 4 * kAfter - 1) == std::pair{0u, 0u});
+  CHECK(feed(s, 1280, 550, 1) == std::pair{0u, 1u});
+  // Staying at the shrunk size changes nothing; the wait stays doubled twice.
+  CHECK(feed(s, 1280, 550, 8 * kAfter) == std::pair{0u, 0u});
+  CHECK(s.wait == 4 * kAfter);
+
+  // Gears 2 at Nexus: 1024..1280 wide, a full-width frame now and then - never shrinks.
+  s = {};
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, kAfter) == C::kGrow);
+  uint32_t changes = 0;
+  for (uint32_t i = 0; i < 20 * kAfter; ++i) {
+    const uint32_t w = i % 100 == 99 ? 1280u : 1024u + 64u * (i % 4);
+    changes += up::UpdateCreationSize(s, w, 720, 1280, 720, kAfter) != C::kNone;
+  }
+  CHECK(changes == 0);
+  // 1216 wide (5% less area) for a long time: too small a saving to re-create for.
+  CHECK(feed(s, 1216, 720, 10 * kAfter) == std::pair{0u, 0u});
+  // One full-width frame starts the count again.
+  CHECK(feed(s, 1024, 720, kAfter - 1) == std::pair{0u, 0u});
+  CHECK(feed(s, 1280, 720, 1) == std::pair{0u, 0u});
+  CHECK(feed(s, 1024, 720, kAfter - 1) == std::pair{0u, 0u});
+  // A run that widens but stays 1/8 smaller keeps counting, and shrinks to the widest of its frames.
+  CHECK(feed(s, 1088, 720, 1) == std::pair{0u, 1u});
+  CHECK((s.w == 1088 && s.h == 720));
+  // A run that becomes too wide restarts with the frame that still fits a smaller box.
+  s = {};
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, kAfter) == C::kGrow);
+  CHECK(feed(s, 1024, 720, kAfter - 1) == std::pair{0u, 0u});
+  CHECK(feed(s, 1216, 720, 1) == std::pair{0u, 0u});  // 1216 x 720 is not 1/8 smaller: the run ends
+  CHECK(s.run == 0);
+  CHECK(feed(s, 1024, 720, kAfter) == std::pair{0u, 1u});
+  // shrink_after = 0: FitCreationSize alone.
+  s = {};
+  CHECK(up::UpdateCreationSize(s, 1280, 720, 1280, 720, 0) == C::kGrow);
+  uint32_t none = 0;
+  for (int i = 0; i < 5000; ++i) none += up::UpdateCreationSize(s, 1024, 550, 1280, 720, 0) == C::kNone;
+  CHECK(none == 5000);
 }

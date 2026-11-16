@@ -102,6 +102,9 @@ class XessUpscaler final : public Upscaler {
   }
   Kind kind() const override { return Kind::kXess; }
   std::string Status() const override { return status_; }
+  // GitHub #323: the output size is fixed at xessD3D12Init (inputWidth / inputHeight per execute map onto all of it),
+  // so a narrower scene is padded to the creation size by the renderer.
+  ResizeMode Resize() const override { return ResizeMode::kPadded; }
 
   bool Configure(gpu::Backend& backend, uint32_t render_width, uint32_t render_height, uint32_t output_width,
                  uint32_t output_height, bool hdr, bool depth_infinite, bool depth_inverted) override {

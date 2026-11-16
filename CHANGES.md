@@ -62,6 +62,13 @@
   frame rate at 30 for exactly that long (before, it guessed from the files being read and could let go after
   5 seconds). Your own frame-rate limit comes back as soon as the loading screen ends.
 - **The mouse cursor now hides when you play with a controller** (all four games, GitHub #320): the GitHub #143 fix most likely never hid it. While the cursor is over the game window, it now hides as soon as you use the controller (otherwise after 3 seconds without mouse movement), and COGBox checks that Windows really hid it and tries again if not. Tiny mouse movements of 1-2 pixels no longer bring it back - a real movement or a click does. It is left alone while the in-game menu is open or mouse look has the mouse. (Not yet confirmed by the reporter.)
+- **No more stutter with DLSS, FSR or XeSS when Gears 2 changes how wide it draws** (GitHub #323): in heavy views (for
+  example in Nexus right after the "Reinforced" cutscene) the game narrows its picture by itself, many times a second,
+  and COGBox set the upscaler up again from scratch each time (about 20 ms, so 30-40 ms frames). It is now set up once
+  for the full width and keeps its history when the width changes (DLSS, XeSS and FSR, also with Vulkan). If one
+  view made it larger (in an ultrawide session, say), it is set up for the smaller size again after about 600 frames
+  that fit it. The log's upscaler line counts the size changes and set-ups. All four games use the same code. Not
+  tested on PC yet.
 - **Judgment: blue / purple blocks on surfaces (#315)**, mostly seen on AMD graphics cards at high frame rates and building up over a session: a texture the game had just moved in video memory could be loaded from the old copy and keep it. It now waits for the moved copy first, also when the game moves the same texture again. (Not yet confirmed by the reporter.)
   Also (Judgment and Gears 3): compressed textures the game streams into memory our graphics card wrote last now take
   the game's own bytes (after any pending move has landed) - what the test line `--gow2_renderer_bc_cpu_over_gpu=true`
