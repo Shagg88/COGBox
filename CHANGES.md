@@ -30,6 +30,9 @@
   longer sits there for ever. Suggested in GitHub #332.
 
 ### Fixes
+- **Show ping after a matchmaking join** (by Flippage): joining a match through playlist matchmaking showed
+  "Ping -- (hosting)" instead of your ping to the host. It now shows the host's ping, as joins from an invite, Join
+  friend or the open matches list already did. SDK patch 107.
 - **Gears 3 no longer throws away its campaign progress and options when your online account changes** (GitHub #329):
   Gears 3 ties its progress and options to the online account they were saved with. After a new online account (a new
   #number, a deleted account, online play turned off without one) or with saves from another PC or an old backup, COGBox
