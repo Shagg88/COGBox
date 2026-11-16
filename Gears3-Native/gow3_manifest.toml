@@ -292,6 +292,15 @@ name = "Gow3UltrawideSizeCheck"
 registers = ["r30"]
 after_instruction = true
 
+# GitHub #330 (job 1907): after `addi r3,r1,260` at 0x827C6CCC, just before `bl` RHICreateSharedMemory (0x827C6CD0) for
+# scene shared memory block 2 in sub_827C6A20 (InitDynamicRHI): r5 = its size, raised to the 1280x720 size
+# (game_patches.cpp).
+[[entrypoint.midasm_hook]]
+address = 0x827C6CCC
+name = "Gow3UltrawideSharedMemory"
+registers = ["r5"]
+after_instruction = true
+
 [[entrypoint.midasm_hook]]
 address = 0x82BC9D84
 name = "Gow3UltrawideVideo"
