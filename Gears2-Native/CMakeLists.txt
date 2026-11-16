@@ -37,7 +37,6 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/renderer/dlss_framegen.cpp
     src/layer0_xenos/renderer/xess_framegen.cpp
     src/layer0_xenos/draw_stats.cpp
-    src/layer0_xenos/prim_detail.cpp
     src/layer0_xenos/renderer/d3d12_backend.cpp
     src/layer0_xenos/renderer/vulkan_backend.cpp
     src/layer0_xenos/renderer/dxc_compiler.cpp
@@ -54,16 +53,12 @@ add_library(gn_layer0_xenos STATIC
     src/layer0_xenos/renderer/ao.cpp
     src/layer0_xenos/hold_guest.cpp
     src/layer0_xenos/draw_log.cpp
-    src/layer0_xenos/shader_watch.cpp
     src/layer0_xenos/ucode.cpp
     src/layer0_xenos/hlsl.cpp
     src/layer0_xenos/dxbc_gen.cpp
     src/layer0_xenos/dxbc_spirv.cpp
     src/layer0_xenos/shader_dump.cpp
-    src/layer0_xenos/buffer_dump.cpp
     src/layer0_xenos/resolve_log.cpp
-    src/layer0_xenos/query_log.cpp
-    src/layer0_xenos/state_coverage.cpp
     src/layer0_xenos/pm4.cpp
     src/layer0_xenos/pm4_shadow.cpp
     src/layer0_xenos/display_gamma.cpp

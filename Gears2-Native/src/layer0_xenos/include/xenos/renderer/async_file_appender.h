@@ -56,7 +56,6 @@ class AsyncFileAppender {
         cv_.wait(lock, [this] { return stop_ || !queue_.empty(); });
         if (stop_ && queue_.empty()) return;
         batch.swap(queue_);
-        busy_ = true;
       }
       uint64_t failed = 0;
       for (const auto& bytes : batch) {
@@ -72,18 +71,13 @@ class AsyncFileAppender {
         file_.clear();
       }
       if (failed) errors_.fetch_add(failed, std::memory_order_relaxed);
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        busy_ = false;
-      }
-      idle_.notify_all();
     }
   }
   std::ofstream file_;
   std::mutex mutex_;
-  std::condition_variable cv_, idle_;
+  std::condition_variable cv_;
   std::deque<std::vector<uint8_t>> queue_;
-  bool stop_ = false, busy_ = false;
+  bool stop_ = false;
   std::atomic<uint64_t> errors_{0};
   std::thread worker_;  // last: started after every other member exists
 };

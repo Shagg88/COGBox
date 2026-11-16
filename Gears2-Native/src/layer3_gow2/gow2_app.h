@@ -64,16 +64,12 @@ class Gow2App : public rex::ReXApp {
     Gow2AddTestIniEdits();  // before the bundle is edited
     Ue3InstallConfigEditsIfRequested(runtime());  // --ue3_ini_edits (notes/64): before the game reads its config
     XenosInstallDrawStatsIfRequested();
-    XenosInstallPrimDetailIfRequested();
     XenosInstallFrameCaptureIfRequested();
     XenosInstallFrameTimesIfRequested();
     XenosInstallProfilerIfRequested();
     XenosInstallDrawLogIfRequested();
     XenosInstallResolveLogIfRequested();
-    XenosInstallSmallResolveLogIfRequested(runtime());  // GitHub #185
-    XenosInstallBufferDumpIfRequested(runtime());
     XenosInstallShaderDumpIfRequested();
-    XenosInstallShaderWatchIfRequested();
     // Notes/80 s.6 / s.11: Gears 2's settings for the shared renderer, each set only while it still has its compiled-in
     // default (a command line, config file or environment variable always wins), as Gow3App does:
     //  - the upscalers' depth copied at the scene depth resolve (Gears 2 clears it before the scene colour resolve);
@@ -91,8 +87,6 @@ class Gow2App : public rex::ReXApp {
     Gow2InstallCheats();   // GitHub #264
     Gow2InstallFirstPerson();  // --gow2_first_person (the camera itself is set from the engine tick)
     Ue3InstallShaderPrebuildIfRequested();  // patch 0068: after the renderer (it asks whether the renderer wants them)
-    XenosInstallQueryLogIfRequested(runtime(), {-32});
-    XenosInstallStateCoverageIfRequested();
     XenosInstallPm4ShadowIfRequested(runtime());
     Gow2InstallResourceCheckIfRequested(runtime());
   }

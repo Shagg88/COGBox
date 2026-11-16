@@ -206,7 +206,6 @@ class ShaderCache {
   void SetMemexportF16NanZero(bool on) { f16_nan_zero_ = on; }    // patch 0087
   void SetSpirvPrecise(bool on) { spirv_precise_ = on; }          // patch 0088 (measurement)
   void SetPsRefactoring(bool on) { ps_refactoring_ = on; }        // patch 0095
-  static void SetSpirvFiles(const std::string& dump_dir, const std::string& override_dir);  // patch 0099
   // 0.6.1 (Vulkan first-run cost): SPIRV-Tools' performance passes over each converted module before the driver
   // sees it. False when this build has no optimiser (GN_SPIRV_OPT not defined) - then nothing changes.
   static bool SetSpirvOptimise(bool on);

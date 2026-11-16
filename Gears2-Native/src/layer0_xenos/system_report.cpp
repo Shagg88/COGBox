@@ -47,10 +47,10 @@ const char* VendorName(uint32_t v) {
   }
 }
 
-// One line naming the vendor id for GPU-specific choices and where it came from: the rendering device's - the Vulkan
-// device when on Vulkan (under Wine: the host's real driver), else the D3D12 backend's adapter - and DXGI's first
-// hardware adapter only before a backend has started. Vulkan's id wins when both are known and disagree (GitHub #59:
-// DXGI said 1002, Vulkan 10DE).
+// One line logging which GPU vendor id was seen and where it came from (nothing makes a choice from it): the rendering
+// device's - the Vulkan device when on Vulkan (under Wine: the host's real driver), else the D3D12 backend's adapter -
+// and DXGI's first hardware adapter only before a backend has started. Vulkan's id wins when both are known and
+// disagree (GitHub #59: DXGI said 1002, Vulkan 10DE).
 void LogVendorChoice() {
   const uint32_t v = g_vk_vendor ? g_vk_vendor : g_d3d_vendor ? g_d3d_vendor : g_dxgi_vendor;
   const char* from = g_vk_vendor ? "the Vulkan device" : g_d3d_vendor ? "the D3D12 adapter" : "DXGI's first hardware adapter";

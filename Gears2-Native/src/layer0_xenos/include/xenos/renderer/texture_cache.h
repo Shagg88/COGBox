@@ -77,7 +77,6 @@ struct TextureCacheStats {
   uint64_t bc_guest_loads = 0, bc_guest_pages = 0, bc_guest_failed_loads = 0;
   // Stage 7: textures loaded at the resolution scale from our scaled resolves (live entries, loads, bound slots).
   uint64_t scaled_textures = 0, scaled_loads = 0, scaled_bound = 0, scaled_bytes = 0;
-  std::map<std::string, uint64_t> scaled_misses;  // job 189: resolve-written textures not taken at the scale, by reason
   std::map<std::string, uint64_t> stand_in_reasons;  // why a slot got the white stand-in
   // Job 047 resolve-through: resolves that wrote a cached texture directly (its reload skipped); resolves that matched
   // a texture whose content was already out of date (normal reload); writes whose version moved meanwhile.
@@ -136,8 +135,6 @@ class TextureCache {
   // Job 042 (Gears 3 ground flicker): called before a CPU-path load reads guest memory that our GPU wrote last (any
   // GPU-current page in [start, start + length)), so the owner can bring pending GPU results (memexport readbacks)
   // into guest memory first.
-  // Job 045 diagnostic: log every texture load (new or reloaded) during this frame (0 = off).
-  void SetLoadLogFrame(uint64_t frame) { load_log_frame_ = frame; }
   // Job 284 diagnostic (Gears 2 ch10 rainbow flash: a colour-grading volume texture): for textures whose guest base
   // is in `bases`, during frames [first, last], log every lookup once per frame and texture - what the cache did (hit
   // with no write since, checked unchanged, reloaded, new), the frame of its last load, and the XXH3 of its guest bytes
@@ -165,16 +162,12 @@ class TextureCache {
     stale_after_ = frames;
     on_stale_ = std::move(report);
   }
-  // Job 144 (slow-sharpening check): reload on every page-version change, skipping the unchanged-bytes shortcut.
-  void SetAlwaysReload(bool on) { always_reload_ = on; }
   // A fetch whose dimension doesn't match the texture (cube fetch of a 2D texture, or the reverse) reads zero, as
   // Canary's null view does (default), instead of the white stand-in.
   void SetMismatchZero(bool on) { mismatch_zero_ = on; }
   // Added to the LOD bias of textures with mips: an upscaler's scene is below the output, so the game's own mip choice
   // is too blurry for it (notes/82). Rendered targets have no mips and are left alone.
   void SetMipBias(float bias) { mip_bias_ = bias; }
-  // Job 189 diagnostic (scaled_misses); off by default since job 227 - it cost 45% of the renderer thread at 2x.
-  void SetScaledMissLog(bool on) { scaled_miss_log_ = on; }
   // Patch 0087 (Canary texture_util.cc, 344fca7): a texture whose level 0 is already the packed mip tail keeps its whole
   // tail at the base address - also when D3D left the mip address at 0 (then we used to load level 0 only).
   void SetPackedTailAtBase(bool on) { packed_tail_at_base_ = on; }
@@ -188,10 +181,8 @@ class TextureCache {
     gpu::TextureHandle words = 0;  // the R32_UINT chunk texture holding the scaled copy of [chunk_base, + chunk_bytes)
     uint32_t chunk_base = 0, chunk_width = 0, chunk_bytes = 0;
     uint64_t gen = 0;  // changes whenever the extent's memory is written
-    uint32_t reason = 0;  // on failure: 1 extent crosses a chunk / no chunk, 4 pages not scaled-current
-    // Job 192 diagnostic (reason 4): pages scaled-current / written last by an unscaled GPU resolve / otherwise
-    // (CPU or never), and the first page that is not scaled-current (offset from the base, bytes).
-    uint32_t pages_scaled = 0, pages_gpu = 0, pages_other = 0, first_bad = 0;
+    // Job 193: when the extent is not wholly scaled-current, its pages that are / are not.
+    uint32_t pages_scaled = 0, pages_other = 0;
   };
   using ScaledLookup = std::function<bool(uint32_t base, uint32_t extent_bytes, ScaledSource& out)>;
   void SetScaled(uint32_t scale, gpu::PipelineHandle load, ScaledLookup lookup) {
@@ -394,10 +385,8 @@ class TextureCache {
   void RunGpuJobs();
   gpu::PipelineHandle untile_volume_ = 0;  // patch 0026
   uint64_t cap_bytes_ = 0;
-  bool always_reload_ = false;
   bool mismatch_zero_ = true;
   float mip_bias_ = 0.0f, last_bind_mip_bias_ = 0.0f;
-  bool scaled_miss_log_ = false;
   bool packed_tail_at_base_ = true;  // patch 0087
   uint32_t stale_after_ = 0;
   std::function<void(const StaleReload&)> on_stale_;
@@ -405,8 +394,6 @@ class TextureCache {
   std::function<uint8_t(uint32_t page)> gpu_page_origin_;  // SetGpuPageOrigin (#315 diagnostic)
   bool flush_ever_gpu_ = false;  // SetFlushEverGpuWritten (r26 R1)
   bool bc_guest_over_mirror_ = false;  // SetBcGuestOverMirror (#315)
-  uint64_t load_log_frame_ = 0;
-  void LogLoad(const Entry& e, const uint32_t* tf, uint64_t frame, const char* reason);
   std::vector<uint32_t> probe_bases_;
   uint64_t probe_first_ = 0, probe_last_ = 0;
   std::string probe_dir_;

@@ -126,14 +126,6 @@ REXCVAR_DEFINE_INT32(gow2_renderer_texture_verify_frames, 0, "Gears2",
                      "guest bytes when it is used at least N frames after its last check, and reload it if they changed "
                      "unseen. 0 = off (default). Costs CPU time; try 30");
 
-// GitHub #131 diagnostic (Judgment corruption on Vulkan / Proton, AMD): each distinct binding - guest base, guest
-// format, dimension, size, tiling, fetch swizzle and signs, and the host format, view components, signed view, load
-// path and host bytes it was given - logged once, up to N lines, so the same asset can be compared between D3D12 on
-// Windows and Vulkan under Proton. 0 = off (the default); capped at 4000 lines. Logging only: nothing is changed.
-REXCVAR_DEFINE_INT32(gow2_renderer_texture_view_log, 0, "Gears2",
-                     "Diagnostic (GitHub #131): log each distinct texture binding once (guest base / format / size / "
-                     "swizzle -> host format / view components / load path), up to N lines (max 4000). 0 = off");
-
 // Job 620 (GitHub #41 - keyboard button prompts): replace a guest texture by the XXH3 of its base-level guest bytes.
 REXCVAR_DEFINE_STRING(gow2_texture_replace_dir, "", "Gears2",
                       "Folder of replacement textures (job 620): <hash16>_<level>.bin = that level's host-format data "
@@ -853,28 +845,6 @@ uint32_t TextureCache::Bind(const uint32_t* fetch, uint32_t slots_2d, uint32_t s
       for (uint32_t i = 0; i < 4; ++i) v.components[i] = comp[i];
       v.signed_view = any_signed;
       ++stats_.bound;
-      if (const int32_t view_log = REXCVAR_GET(gow2_renderer_texture_view_log); view_log > 0) {  // GitHub #131
-        static std::mutex m;
-        static std::unordered_set<uint64_t> seen;
-        static uint32_t lines = 0;
-        const uint32_t cap = uint32_t(std::min(view_log, 4000));
-        const uint64_t sig = (uint64_t(tf[1] & 0xFFFFF03Fu) << 32) ^ (uint64_t(tf[2]) << 7) ^ (uint64_t(swz) << 1) ^
-                             (uint64_t(kind) << 60) ^ (uint64_t(Bits(tf[0], 2, 8)) << 50) ^ uint64_t(tf[0] >> 31);
-        std::lock_guard<std::mutex> lock(m);
-        if (lines < cap && seen.insert(sig).second) {
-          ++lines;
-          const uint32_t w = Bits(tf[2], 0, 13) + 1, h = Bits(tf[2], 13, 13) + 1;
-          REXLOG_INFO("gow2_texture_view: frame {} kind {} base {:08X} (+{:X}) mips {:08X} | guest fmt {} endian {} {}x{} "
-                      "dim {} tiled {} swizzle {:03X} signs {:02X} | host fmt {} view {}{}{}{}{} | {} {} bytes, "
-                      "loaded frame {}{}",
-                      frame, kind, e.base_start, e.base_length, e.mip_start, Bits(tf[1], 0, 6), Bits(tf[1], 6, 2), w, h,
-                      Bits(tf[5], 9, 2), Bits(tf[0], 31, 1), swz, Bits(tf[0], 2, 8),
-                      uint32_t(e.format), uint32_t(comp[0]), uint32_t(comp[1]), uint32_t(comp[2]), uint32_t(comp[3]),
-                      any_signed ? " signed" : "", e.gpu_storage ? "GPU untile" : "CPU", e.host_bytes,
-                      e.loaded_frame == ~0ull ? -1ll : (long long)e.loaded_frame,
-                      lines == cap ? " (gow2_renderer_texture_view_log: limit reached)" : "");
-        }
-      }
     }
     // Remember the result; a re-upload inside Lookup bumps nothing in the watch, so the epoch read before is valid.
     sc.valid = true;
@@ -935,7 +905,6 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
     e->loaded_frame = frame;
     e->freed_at_load = freed_total_;  // patch 0149
     if (probe_base) e->probe_load_hash = GuestHash(*e);
-    if (load_log_frame_ && frame == load_log_frame_) LogLoad(*e, tf, frame, "new");
     if (e->texture) {
       ++stats_.textures;
       stats_.host_bytes += e->host_bytes;
@@ -984,7 +953,6 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
       e.checked_frame = frame;
       e.callbacks_at_check = epoch_before;
       if (probe_base) e.probe_load_hash = GuestHash(e);
-      if (load_log_frame_ && frame == load_log_frame_) LogLoad(e, tf, frame, "reload: overlay generation changed");
       return done(e, "reload: overlay generation changed");
     }
     e.overlay_gen = ov_gen;
@@ -1047,7 +1015,7 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   watch_.Watch(e.base_start, e.base_length);
   if (e.mip_length) watch_.Watch(e.mip_start, e.mip_length);
   const uint64_t gpu_pages0 = stats_.gpu_pages_changed, volatile0 = stats_.volatile_reloads;
-  if (!always_reload_ && !PagesChanged(e)) {
+  if (!PagesChanged(e)) {
     e.version = rearmed;
     ++stats_.content_unchanged;
     return done(e, "hit: pages written, bytes hashed unchanged");
@@ -1079,7 +1047,6 @@ TextureCache::Entry& TextureCache::Lookup(const uint32_t* tf, uint32_t host_kind
   else if (stats_.volatile_reloads != volatile0) ++stats_.reload_volatile;
   else ++stats_.reload_cpu;
   stats_.reload_bytes += uint64_t(e.base_length) + e.mip_length;
-  if (load_log_frame_ && frame == load_log_frame_) LogLoad(e, tf, frame, why);
   return done(e, why);
 }
 
@@ -1115,14 +1082,6 @@ void TextureCache::Probe(const Entry& e, const uint32_t* tf, uint64_t frame, con
   }
 }
 
-void TextureCache::LogLoad(const Entry& e, const uint32_t* tf, uint64_t frame, const char* reason) {
-  const uint32_t w = (tf[2] & 0x1FFFu) + 1, h = ((tf[2] >> 13) & 0x1FFFu) + 1;
-  REXLOG_INFO("gow2_renderer: texture load frame {}: {} | base {:08X} (+{:X}) mips {:08X} (+{:X}) format {} {}x{} dim {} "
-              "tiled {} | host {} bytes{}",
-              frame, reason, e.base_start, e.base_length, e.mip_start, e.mip_length, tf[1] & 0x3Fu, w, h,
-              (tf[5] >> 9) & 3u, tf[0] >> 31, e.host_bytes, e.gpu_storage ? " | GPU untile" : " | CPU");
-}
-
 TextureCache::Entry* TextureCache::LookupScaled(const uint32_t* tf) {
   const uint32_t format = Bits(tf[1], 0, 6), endian = Bits(tf[1], 6, 2);
   const uint32_t dim = Bits(tf[5], 9, 2);
@@ -1130,48 +1089,23 @@ TextureCache::Entry* TextureCache::LookupScaled(const uint32_t* tf) {
   const uint32_t base = Bits(tf[1], 12, 20) << 12, mip_base = Bits(tf[5], 12, 20) << 12;
   const uint32_t w = Bits(tf[2], 0, 13) + 1, h = Bits(tf[2], 13, 13) + 1;
   const uint32_t pitch_div_32 = Bits(tf[0], 22, 9);
-  // Job 189 diagnostic: why a texture our resolves wrote (any page GPU-current) is not taken at the scale.
-  auto miss = [&](const char* why) -> Entry* {
-    if (!scaled_miss_log_ || !base) return nullptr;  // job 227: the page walk below is the cost; off by default
-    const uint32_t len = std::max<uint32_t>(pitch_div_32 * 32u, w) * h * 4u;
-    bool ours = false;
-    for (uint32_t p = base >> GuestWatch::kPageShift; p <= (base + std::max(len, 1u) - 1) >> GuestWatch::kPageShift && !ours; ++p)
-      ours = watch_.GpuCurrent(p);
-    if (ours) {
-      char b[300];
-      std::snprintf(b, sizeof(b), "%s: base %08X fmt %u %ux%u pitch %u dim %u tiled %u mips %u", why, base, format, w, h,
-                    pitch_div_32 * 32u, dim, tiled ? 1u : 0u, mip_base ? Bits(tf[4], 6, 4) : 0u);
-      ++stats_.scaled_misses[b];
-    }
-    return nullptr;
-  };
-  if (dim != 1 || stacked || !base) return miss("not a single 2D");
-  if (mip_base && Bits(tf[4], 6, 4) != 0) return miss("mip chain");  // not a single resolved level
+  if (dim != 1 || stacked || !base) return nullptr;  // not a single 2D
+  if (mip_base && Bits(tf[4], 6, 4) != 0) return nullptr;  // a mip chain, not a single resolved level
   const HostFormat hf = Host(format);
   const bool depth_convert = hf.convert == Convert::kDepthUnorm || hf.convert == Convert::kDepthFloat;
-  if (!(hf.convert == Convert::kCopy || depth_convert) || hf.block_compressed) return miss("format conversion");
+  if (!(hf.convert == Convert::kCopy || depth_convert) || hf.block_compressed) return nullptr;  // format conversion
   const uint32_t code = hf.convert == Convert::kDepthUnorm ? 14u : hf.convert == Convert::kDepthFloat ? 15u
                                                                                                      : UntileCode(hf.format);
-  if (!code || code == 12u) return miss("no GPU load code");
+  if (!code || code == 12u) return nullptr;  // no GPU load code
   const tx::FormatBlock& fb = tx::GetFormatBlock(format);
   const uint32_t bpb = fb.bytes_per_block();
-  if ((bpb != 4 && bpb != 8) || fb.block_width != 1 || fb.block_height != 1) return miss("not 32/64 bpp");
+  if ((bpb != 4 && bpb != 8) || fb.block_width != 1 || fb.block_height != 1) return nullptr;  // not 32/64 bpp
   const tx::GuestLayout layout =
       tx::GetGuestLayout(tx::Dimension::k2DOrStacked, pitch_div_32, w, h, 1, tiled, format, packed, true, 0);
   const uint32_t bpb_log2 = tx::Log2Floor(bpb);
   const uint32_t pitch = layout.base.row_pitch_bytes / bpb;
   ScaledSource src;
-  if (!scaled_lookup_(base, std::max(layout.base.level_data_extent_bytes, 1u), src) || !src.words) {
-    static const char* kWhy[] = {"no scaled source", "no scaled-memory window holds the extent", "?", "?",
-                                 "pages not scaled-current"};
-    if (src.reason == 4) {
-      char why[128];
-      std::snprintf(why, sizeof(why), "pages not scaled-current (scaled %u, unscaled GPU %u, other %u, first at +%X)",
-                    src.pages_scaled, src.pages_gpu, src.pages_other, src.first_bad);
-      return miss(why);
-    }
-    return miss(kWhy[src.reason < 5 ? src.reason : 0]);
-  }
+  if (!scaled_lookup_(base, std::max(layout.base.level_data_extent_bytes, 1u), src) || !src.words) return nullptr;
   const Key key{(uint64_t(tf[0] & 0xFFC00000u) << 32) | (tf[1] & 0xFFFFF4FFu),
                 (uint64_t(tf[2]) << 32) | (tf[5] & 0xFFFFFE00u) | 8u};
   auto it = scaled_entries_.find(key);

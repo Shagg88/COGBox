@@ -366,9 +366,6 @@ REXCVAR_DEFINE_INT32(gow2_renderer_log_every, 300, "Gears2", "Our renderer's sum
 REXCVAR_DEFINE_BOOL(gow2_renderer_d24s8_exact, false, "Gears2",
                     "Store D24S8 targets as D32_FLOAT and round at resolves (exact maths) instead of D24_UNORM like the "
                     "reference");
-REXCVAR_DEFINE_INT32(gow2_renderer_log_depth_bias_base, -1, "Gears2",
-                     "Diagnostic (Gears 3 job 025): on comparison frames, log cull / polygon-offset registers of up to 400 "
-                     "depth draws into the depth target at this EDRAM base (tiles); -1 = off");
 REXCVAR_DEFINE_BOOL(gow2_renderer_msaa_transfers, true, "Gears2",
                     "Gears 3: a 4x MSAA colour target whose EDRAM tiles a 1x target of the same format wrote last takes "
                     "that data (each 2x2 block of 1x pixels -> the 4 samples of one 4x pixel, as EDRAM stores them)");
@@ -525,12 +522,6 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_store, false, "Gears2",
                     "0.6.1 (Vulkan): converted shaders are kept in <shader cache dir>\\spirv-store.bin, so each shader is "
                     "converted to SPIR-V (and optimised) once and not at every start (Gears 3: half a minute before the "
                     "first frame). false = convert at every start, as 0.6.0");
-REXCVAR_DEFINE_STRING(gow2_renderer_vulkan_spirv_dump_dir, "", "Gears2",
-                      "Patch 0099 (Vulkan, a measurement): write each shader's SPIR-V from our converter to this folder "
-                      "as <hash of its words>.spv");
-REXCVAR_DEFINE_STRING(gow2_renderer_vulkan_spirv_override_dir, "", "Gears2",
-                      "Patch 0099 (Vulkan, a measurement): where this folder has <hash>.opt.spv for a shader, use it in "
-                      "place of our converter's SPIR-V (an offline-optimised copy, to time whether optimising helps)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_ps_refactoring, false, "Gears2",
                     "Patch 0095 (DXBC back end, D3D12 and Vulkan): pixel shaders that don't write depth let the driver "
                     "fuse multiply-adds and reorder maths (DXBC refactoring allowed; no NoContraction on Vulkan). Vertex "
@@ -737,11 +728,6 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_gpu_texture_load, true, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_async_pipelines, true, "Gears2",
                     "Shadow renderer: create game-draw pipeline states on worker threads; a draw whose pipeline "
                     "is not ready yet is skipped and counted as pending (the resolve then says INCOMPLETE) (upl-n108)");
-REXCVAR_DEFINE_STRING(gow2_renderer_vertex_log_frames, "", "Gears2",
-                      "Rainbow-flash diagnostic (job 304): frames first-last; every small draw (rectangle list or at most "
-                      "6 vertices) logs its vertex fetch ranges as our renderer reads them (first floats + a hash), and "
-                      "at that frame's swap the ranges are hashed again - 'CHANGED after the draw' = the CPU rewrote the "
-                      "bytes after we read them (empty = off)");
 REXCVAR_DEFINE_DOUBLE(gow2_renderer_pipeline_wait_ms, 0.0, "Gears2",
                       "Patch 0132: 0 by default (never wait on the driver; the draw pops in when its pipeline is built). Gears 3 job 037: with async pipelines, each frame may wait up to this many ms in total for new "
                       "pipeline states instead of skipping their draws (a skipped draw leaves the previous content - "
@@ -809,11 +795,6 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_transfer_selftest, true, "Gears2",
 REXCVAR_DEFINE_BOOL(gow2_renderer_tessellation, true, "Gears2",
                     "Draw Xenos quad-patch tessellated draws (the chapter 18 water) as grids through the game's vertex "
                     "shader, as the tessellator feeds it (false: skipped and counted, as before job 148)");
-REXCVAR_DEFINE_INT32(gow2_debug_cycle_scale_s, 0, "Gears2",
-                     "0.4.9 task 7 test switch: every N seconds the render targets above the scale threshold switch "
-                     "between 1x and the resolution scale (1x, Nx, 1x, ...) and the targets of the other scale are "
-                     "freed (log: 'render targets freed'). Needs --gow2_renderer_resolution_scale 2+ and no upscaling "
-                     "mode; the image is soft in the 1x periods. 0 = off");
 REXCVAR_DEFINE_INT32(gow2_renderer_resolution_scale, 1, "Gears2",
                      "Stage 7: render at N x the console's resolution on each axis (1-4; 2 = 2560x1440 from 1280x720, "
                      "3 = 3840x2160). Render targets, viewports, scissors and EDRAM transfers are scaled (notes/53). "
@@ -849,11 +830,6 @@ REXCVAR_DEFINE_INT32(gow2_renderer_camera_log, 0, "Gears2",
                      "Diagnostic (GitHub #132): every N frames, the scene camera taken from the view-projection in c0-c3 "
                      "of the frame's first scene-depth draw - world position, yaw / pitch, vertical and horizontal field "
                      "of view, viewport - so a 16:9 and an ultrawide run can be compared. 0 = off; at most 2000 lines");
-REXCVAR_DEFINE_INT32(gow2_after_load_log_s, 0, "Gears2",
-                     "Diagnostic (Judgment: low frame rate after a load): for N seconds after a loading screen ends (the "
-                     "game says when - Judgment's loading cap release), one line per second: frames, slowest frame, our "
-                     "renderer's CPU ms, waits for shaders / pipelines / stand-ins, new draw pipelines, texture upload "
-                     "MB, and the time outside our renderer (the game, its frame limit). 0 = off; at most 120 s");
 REXCVAR_DEFINE_BOOL(gow2_screenshot_presented, false, "Gears2",
                     "Shagg's to-do 8: the screenshot key (\\) saves the image as shown in the window (its full size, after "
                     "resizing and sharpening); false (default) = the game's output size, as 0.4.5. Frame shots keep the game's size");
@@ -870,9 +846,6 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_scaled_textures, true, "Gears2",
                     "1x resolves, 720p output)");
 REXCVAR_DEFINE_INT32(gow2_renderer_tess_scale, 1, "Gears2",
                      "Tessellation detail multiplier (1 = the console's level; 2 = twice as fine, an option)");
-REXCVAR_DEFINE_STRING(gow2_renderer_watch_report, "", "Gears2",
-                      "Job 151 diagnostic: physical ranges \"start:length;...\" (hex) - every memory-system write callback "
-                      "overlapping one is logged (range or page, swap, guest thread)");
 REXCVAR_DEFINE_INT32(gow2_renderer_texture_stale_log, 0, "Gears2",
                      "Job 150 diagnostic: log textures that stayed unchanged for N frames and then got new bytes, with "
                      "our recent resolves that overlap them (0 = off; first 400 events)");
@@ -978,16 +951,6 @@ REXCVAR_DEFINE_INT32(gow2_upscale_capture_raw_class, -1, "Gears2",
                      "float dumps (.raw: int32 w, h, format, then 2 floats a texel) of the motion vectors and of every "
                      "colour resolve whose source has this storage class (e.g. 4 = k_16_16, Gears 2's velocity buffer); "
                      "-1 = off. Large: ~20 MB a resolve");
-REXCVAR_DEFINE_STRING(gow2_velocity_scan_frames, "", "Gears2",
-                      "Diagnostic (#147 / #150): frames 'first-last' in which draws into k_16_16 / k_16_16_FLOAT or half-size "
-                      "targets are logged once per shader pair with the VS constants they read - finds a game's velocity "
-                      "pass for the upscalers' character motion. Empty = off");
-REXCVAR_DEFINE_STRING(gow2_skin_scan_frames, "", "Gears2",
-                      "Diagnostic (Gears 1 character motion): frames 'first-last' in which each distinct scene draw "
-                      "(VS, PS, index count) into the upscalers' depth is logged once with the VS constant ranges it "
-                      "reads (a bone palette shows as a long range), its vertex / index addresses and stride, and again "
-                      "when a later frame draws it from another vertex address (CPU / memexport-skinned data). Also "
-                      "logs memexport draws in those frames. Needs an upscaler or frame generation. Empty = off");
 REXCVAR_DEFINE_BOOL(gow2_upscale_depth_at_resolve, false, "Gears2",
                     "Notes/80 s.6: the upscalers' depth is copied at the game's scene depth resolve (Gears 2 clears that "
                     "depth before the scene colour resolve - on there by gow2_app.h); false: read at the scene colour "
@@ -1233,48 +1196,19 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_resolve_draws, false, "Gears2",
                     "compute dispatch (jobs 427 / 428: on Vulkan a dispatch that reads the target just drawn costs "
                     "~16-23 us more than the same step as a draw). 64 / 8 / 16 / 128 bpp, MSAA sources, fused scaled "
                     "resolves and the copy into guest memory stay dispatches");
-REXCVAR_DEFINE_INT32(gow2_renderer_target_stats_frame, 0, "Gears2",
-                     "Patch 0121 (a diagnostic, both APIs): non-zero = in this frame, every time the draws move to other "
-                     "colour targets, read the targets just drawn back (the frame waits for it) and log per channel "
-                     "mean / min / max / NaN count with the target id and the draw count so far. The same frame on "
-                     "D3D12 and Vulkan then shows the first target whose contents differ (Gears 3's Vulkan black blocks)");
-REXCVAR_DEFINE_INT32(gow2_renderer_target_stats_each_draw, 0, "Gears2",
-                     "Patch 0122 (with --gow2_renderer_target_stats_frame): N > 0 = also read the current colour targets "
-                     "back after each of the frame's first N draws (not only when the targets change), so the first "
-                     "draw whose output differs between D3D12 and Vulkan shows (Gears 3 job 129: the HDR scene target is "
-                     "already ~20% darker on Vulkan after its first 105 opaque draws)");
-REXCVAR_DEFINE_INT32(gow2_renderer_target_stats_each_from, 0, "Gears2",
-                     "Patch 0123 (with --gow2_renderer_target_stats_each_draw=N): start the each-draw readouts after this "
-                     "many draws of the stats frame instead of from the first draw (readouts after draw from+step, "
-                     "from+2*step, ... from+N*step)");
-REXCVAR_DEFINE_INT32(gow2_renderer_target_stats_each_step, 1, "Gears2",
-                     "Patch 0123 (with --gow2_renderer_target_stats_each_draw=N): draws between each-draw readouts "
-                     "(1 = every draw; 100 = every 100th draw, so N=11 from 1100 covers draws 1200..2200)");
-REXCVAR_DEFINE_BOOL(gow2_renderer_target_stats_textures, false, "Gears2",
-                    "Patch 0124 (with --gow2_renderer_target_stats_frame): at each target-stats readout also read back "
-                    "the 2D textures the previous draw sampled (decodable colour formats, e.g. an R32F depth copy) and "
-                    "log the same per-channel mean / min / max / NaN line with the slot, so a draw whose output differs "
-                    "between D3D12 and Vulkan shows whether its inputs already differ (Gears 3 job 130 draw 303)");
 REXCVAR_DEFINE_BOOL(gow2_renderer_gpu_by_target, false, "Gears2",
                     "Job 234 diagnostic: GPU draw time per render target, logged with the CPU split (one more GPU "
                     "timestamp whenever the draws move to another target)");
-REXCVAR_DEFINE_BOOL(gow2_renderer_scaled_miss_log, false, "Gears2",
-                    "Job 189 diagnostic: count why a texture our resolves wrote was not taken at the resolution scale. "
-                    "It walks every page of each missed texture - 45% of the renderer thread at 2x (job 225) - so off");
 REXCVAR_DEFINE_BOOL(gow2_renderer_packed_tail_at_base, true, "Gears2",
                     "Patch 0087 (Canary 344fca7): a small texture whose level 0 is already the packed mip tail (short side "
                     "16 or less) has its whole tail at the base address - also when the fetch constant's mip address is 0 "
                     "(we used to load level 0 only, so distant mips read level 0). false = the old way");
-REXCVAR_DEFINE_INT32(gow2_renderer_texture_load_log, 0, "Gears2",
-                     "Job 045 diagnostic: log every texture load (new or reloaded, with the reason) in this frame (0 = off)");
 REXCVAR_DEFINE_STRING(gow2_renderer_texture_probe, "", "Gears2",
                       "Job 284 diagnostic: comma list of guest texture base addresses (hex). Each lookup of those textures "
                       "in --gow2_renderer_texture_probe_frames is logged once per frame (what the cache did, last load, "
                       "hash of the guest bytes now and at that load) and the bytes saved to --gow2_renderer_texture_probe_dir");
 REXCVAR_DEFINE_STRING(gow2_renderer_texture_probe_frames, "", "Gears2", "Job 284: frame window first-last for the probe");
 REXCVAR_DEFINE_STRING(gow2_renderer_texture_probe_dir, "", "Gears2", "Job 284: folder for the probe's byte dumps (empty = none)");
-REXCVAR_DEFINE_BOOL(gow2_renderer_texture_always_reload, false, "Gears2",
-                    "Job 144 check: re-upload a texture on every write to its pages (no unchanged-bytes shortcut)");
 REXCVAR_DEFINE_INT32(gow2_renderer_texture_cache_mb, 512, "Gears2",
                      "Shadow renderer: host-memory cap for guest textures in MB; past it, textures unused for two "
                      "frames are evicted least recently used first (0 = no cap) (upl-n108)");
@@ -1316,8 +1250,6 @@ REXCVAR_DEFINE_INT32(gow2_renderer_queries_idle_submits, 0, "Gears2",
                      "resets the per-list reuse of vertex, index, constant and table data (0.6.1 review P1). "
                      "Diagnostic: once the limit is reached a waiting query is only answered at the frame's own "
                      "submit, or 'visible' after 2 s");
-REXCVAR_DEFINE_INT32(gow2_renderer_queries_log, 0, "Gears2",
-                     "Per-query lines (estimate vs our count) for the first N queries of each summary frame (0 = none)");
 // Takeover step 1 (notes/50): show OUR image. At each swap, our resolve of the front buffer (the colour copy whose
 // destination is the swap's front buffer) is written into guest memory in the guest's layout and the SDK is told the
 // range changed, so the emulator presents our pixels. The emulator still draws (its result is overwritten).
@@ -1357,10 +1289,6 @@ REXCVAR_DEFINE_STRING(gow2_present, "off", "Gears2",
                       "ours and the front buffer is no longer written to guest memory (both need "
                       "--gow2_renderer_display=ours and --gow2_pm4_execute for the gamma ramps; ours needs SDK patch "
                       "23)");
-REXCVAR_DEFINE_INT32(gow2_present_check_every, 0, "Gears2",
-                     "With --gow2_present=ours: every N frames read back what the presenter holds (the image the window "
-                     "paints, Presenter::CaptureGuestOutput) and compare it with our image of that frame (stalls that "
-                     "frame; 0 = never)");
 // Takeover T2 (notes/50): our resolves feed the game's later texture reads. Each colour/depth resolve we do is also
 // written, tiled and endian-swapped, into our GPU's guest-memory mirror, and those pages are marked as ours: our texture
 // loads read them instead of the emulator's bytes until the CPU writes there again. Resolves we can't do yet (MSAA
@@ -1420,8 +1348,6 @@ constexpr uint32_t kRegFloatConstVs = 0x4000;  // SHADER_CONSTANT_000_X
 constexpr uint32_t kRegFloatConstPs = 0x4400;  // SHADER_CONSTANT_256_X
 constexpr uint32_t kRegFetchConst = 0x4800;    // SHADER_CONSTANT_FETCH_00_0
 constexpr uint32_t kRegBoolConst = 0x4900;     // SHADER_CONSTANT_BOOL_000_031, then 32 loop constants at 0x4908
-// --gow2_after_load_log_s: steady_clock ticks of the last XenosNoteLoadEnded (a game's loading screen ended); 0 = none.
-std::atomic<int64_t> g_load_ended_ticks{0};
 // 0.6.3 (XenosRendererInPlay): steady-clock ms of the end of the last frame with 64+ draws (play, not a loading screen,
 // a video or a 2D menu); 0 = none yet.
 int64_t PlayClockMs() {
@@ -1737,8 +1663,6 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     cache_->SetMemexportF16NanZero(REXCVAR_GET(gow2_renderer_memexport_f16_nan_zero));  // patch 0087
     cache_->SetSpirvPrecise(REXCVAR_GET(gow2_renderer_vulkan_precise));                 // patch 0088
     cache_->SetPsRefactoring(REXCVAR_GET(gow2_renderer_ps_refactoring));                // patch 0095
-    xenos::renderer::ShaderCache::SetSpirvFiles(REXCVAR_GET(gow2_renderer_vulkan_spirv_dump_dir),
-                               REXCVAR_GET(gow2_renderer_vulkan_spirv_override_dir));  // patch 0099
     {
       const bool want = REXCVAR_GET(gow2_renderer_vulkan_spirv_optimise);
       const bool have = xenos::renderer::ShaderCache::SetSpirvOptimise(want);
@@ -1890,24 +1814,6 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     watch_->SetNarrowWidening(REXCVAR_GET(gow2_renderer_watch_narrow));
     if (REXCVAR_GET(gow2_renderer_watch_narrow))
       REXLOG_INFO("gow2_renderer: page watch: narrow widening on (patch 0008: 256 KB, stops at GPU-written pages)");
-    if (const std::string spec = REXCVAR_GET(gow2_renderer_watch_report); !spec.empty()) {
-      std::vector<std::pair<uint32_t, uint32_t>> ranges;
-      size_t pos = 0;
-      while (pos < spec.size()) {
-        const size_t end = std::min(spec.find(';', pos), spec.size());
-        const std::string item = spec.substr(pos, end - pos);
-        const size_t colon = item.find(':');
-        if (colon != std::string::npos) {
-          try {
-            ranges.push_back({uint32_t(std::stoul(item.substr(0, colon), nullptr, 16)) & 0x1FFFFFFFu,
-                              uint32_t(std::stoul(item.substr(colon + 1), nullptr, 16))});
-          } catch (...) {}
-        }
-        pos = end + 1;
-      }
-      REXLOG_INFO("gow2_renderer: watch report on {} range(s)", ranges.size());
-      watch_->SetReportRanges(std::move(ranges));
-    }
     use_textures_ = REXCVAR_GET(gow2_renderer_textures);
     upload_watch_ = REXCVAR_GET(gow2_renderer_upload_watch);
     vertex_direct_ = REXCVAR_GET(gow2_renderer_vertex_direct);
@@ -1938,11 +1844,6 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     if (t2_measure_skip_)
       REXLOG_WARN("gow2_renderer: T2 measure-skip ON (measurement only, pictures may be wrong): resolves are not written "
                   "into the guest-memory mirror");
-    stats_frame_ = REXCVAR_GET(gow2_renderer_target_stats_frame);                   // patch 0121
-    stats_each_ = REXCVAR_GET(gow2_renderer_target_stats_each_draw);                // patch 0122
-    stats_from_ = std::max(REXCVAR_GET(gow2_renderer_target_stats_each_from), 0);   // patch 0123
-    stats_step_ = std::max(REXCVAR_GET(gow2_renderer_target_stats_each_step), 1);   // patch 0123
-    stats_textures_ = REXCVAR_GET(gow2_renderer_target_stats_textures);             // patch 0124
     vertex_any_type_ = REXCVAR_GET(gow2_renderer_vertex_any_type);  // patch 0049
     index_reuse_ = REXCVAR_GET(gow2_renderer_index_reuse);
     texture_memo_ = REXCVAR_GET(gow2_renderer_texture_memo);
@@ -1972,29 +1873,13 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     }
     const_gen_skip_ = REXCVAR_GET(gow2_renderer_const_gen_skip);
     upscale_probe_ = uint32_t(std::max(0, REXCVAR_GET(gow2_upscale_probe)));
-    {  // #147 / #150: --gow2_velocity_scan_frames
-      unsigned long long a = 0, z = 0;
-      if (std::sscanf(REXCVAR_GET(gow2_velocity_scan_frames).c_str(), "%llu-%llu", &a, &z) == 2 && a >= 1 && a <= z) {
-        vel_scan_first_ = a;
-        vel_scan_last_ = z;
-        REXLOG_INFO("gow2_velocity_scan: frames {}-{}", a, z);
-      }
-      if (std::sscanf(REXCVAR_GET(gow2_skin_scan_frames).c_str(), "%llu-%llu", &a, &z) == 2 && a >= 1 && a <= z) {
-        skin_scan_first_ = a;
-        skin_scan_last_ = z;
-        REXLOG_INFO("gow2_skin_scan: frames {}-{}", a, z);
-      }
-    }
     stencil_transfer_bits_ = REXCVAR_GET(gow2_renderer_stencil_transfer_bits) != 0;
     static_index_buffers_ = REXCVAR_GET(gow2_renderer_static_index_buffers);
     textures_ = std::make_unique<rr::TextureCache>(*backend_, memory_->TranslatePhysical<const uint8_t*>(0), *watch_);
     textures_->SetHostMemoryCap(uint64_t(std::max(0, REXCVAR_GET(gow2_renderer_texture_cache_mb))) << 20);
-    textures_->SetAlwaysReload(REXCVAR_GET(gow2_renderer_texture_always_reload));
     textures_->SetMismatchZero(REXCVAR_GET(gow2_renderer_texture_mismatch_zero));
-    textures_->SetScaledMissLog(REXCVAR_GET(gow2_renderer_scaled_miss_log));
     textures_->SetPackedTailAtBase(REXCVAR_GET(gow2_renderer_packed_tail_at_base));  // patch 0087
     textures_->SetBatchLoads(REXCVAR_GET(gow2_renderer_texture_batch) && REXCVAR_GET(gow2_renderer_api) != "vulkan");  // 2026-10-29 (D3D12)
-    textures_->SetLoadLogFrame(uint64_t(std::max(REXCVAR_GET(gow2_renderer_texture_load_log), 0)));
     if (const std::string list = REXCVAR_GET(gow2_renderer_texture_probe); !list.empty()) {  // job 284
       std::vector<uint32_t> bases;
       size_t at = 0;
@@ -2066,9 +1951,8 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     }
     tessellation_ = REXCVAR_GET(gow2_renderer_tessellation);
     tess_scale_ = REXCVAR_GET(gow2_renderer_tess_scale);
-    if (REXCVAR_GET(gow2_renderer_texture_always_reload) || REXCVAR_GET(gow2_renderer_texture_cache_mb) != 512)
-      REXLOG_INFO("gow2_renderer: textures: always reload {}, cache cap {} MB (job 144 sharpening check)",
-                  REXCVAR_GET(gow2_renderer_texture_always_reload), REXCVAR_GET(gow2_renderer_texture_cache_mb));
+    if (REXCVAR_GET(gow2_renderer_texture_cache_mb) != 512)
+      REXLOG_INFO("gow2_renderer: textures: cache cap {} MB", REXCVAR_GET(gow2_renderer_texture_cache_mb));
     log_every_ = std::max(1, REXCVAR_GET(gow2_renderer_log_every));
     {  // occlusion queries (upl-s4c)
       const std::string q = REXCVAR_GET(gow2_renderer_queries);
@@ -2085,7 +1969,6 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
       queries_min_ = uint64_t(std::max(0, REXCVAR_GET(gow2_renderer_queries_min)));
       queries_correct_ = REXCVAR_GET(gow2_renderer_queries_correct);
       occ_answers_.SetHiddenAfter(uint32_t(std::max(1, REXCVAR_GET(gow2_renderer_queries_hidden_after))));
-      queries_log_ = std::max(0, REXCVAR_GET(gow2_renderer_queries_log));
       if (queries_mode_ == QueriesMode::kStrict)
         REXLOG_INFO("gow2_renderer: occlusion queries STRICT (PR #43: each query's own GPU result; batched "
                     "submission, idle polling; an incomplete query answers visible)");
@@ -2662,10 +2545,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       ++(from_cache ? occ_stats_.from_cache : occ_stats_.fallback);
     }
     if (q.handle) {
-      const bool log = queries_log_ > 0 && (frame_ + 1) % uint64_t(log_every_) == 0 && occ_lines_ < uint32_t(queries_log_);
-      if (log) ++occ_lines_;
       occ_pending_.push_back(PendingOcclusion{zpd.report_address, q.handle, frame_, sequence, estimate, complete,
-                                              uint32_t(attempted), log, from_cache, q.scale ? q.scale : res_scale_});  // 0149: q, not the reset occ_open_
+                                              uint32_t(attempted), q.scale ? q.scale : res_scale_});  // 0149: q, not the reset occ_open_
     }
     cpu_ms_ += double(__rdtsc() - t0) * MsPerTick();
   }
@@ -2726,7 +2607,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (!n) ++occ_stats_.zero;
       occ_stats_.samples += n;
       occ_stats_.latency_frames += frame_ - p.frame;
-      bool corrected = false;
       if (p.complete) {
         const uint64_t key = rr::queries::AnswerCache::Key(p.end_address, p.draws);
         occ_answers_.Learn(key, n);
@@ -2737,7 +2617,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
             rr::queries::SampleCounts::WriteAnswer(report, n, false);
             occ_answers_.NoteWritten(p.end_address, n);
             ++occ_stats_.corrected;
-            corrected = true;
           } else {
             ++occ_stats_.too_late;
           }
@@ -2745,12 +2624,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         if ((p.estimate == 0) != (n == 0)) ++occ_stats_.visibility_changed;
         if (p.estimate == 0 && n != 0) ++occ_stats_.wrong_hidden;  // answered hidden, was visible: a vanished object
       }
-      if (p.log)
-        REXLOG_INFO("gow2_renderer: query frame {} end {:08X} draws {}{} | answered {} ({}) | our count {} (after {} "
-                    "frames){}",
-                    p.frame + 1, p.end_address, p.draws, p.complete ? "" : " INCOMPLETE (a draw was not drawn)",
-                    p.estimate, p.from_cache ? "last count" : "no count yet", n, frame_ - p.frame,
-                    corrected ? " -> corrected" : "");
       backend_->ReleaseOcclusionQuery(p.handle);
       occ_pending_.pop_front();
     }
@@ -2806,7 +2679,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
   void OnSwap(const RegisterFile& regs, uint32_t frontbuffer_ptr, uint32_t fb_width, uint32_t fb_height) override {
     if (!backend_) return;
-    AfterLoadSample();  // off by default (gow2_after_load_log_s)
     if (!thread_cpu_base_) thread_cpu_base_ = ThreadCpuTicks();
 #if defined(GN_PGO_GEN)
     {  // patch 0159: the training run is ended from outside (no normal exit), so the counters are written here
@@ -2826,7 +2698,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     PartScope frame_scope(*this, kPartFrame);
     // Stall attribution (PR #43, legoliamneeson): these ran before the frame timer started, so a slow readback map or
     // retirement showed as time between frames that no counter owned. Inside it, and named as slow steps.
-    if (!vertex_log_.empty()) FrameStep("vertex recheck", [&] { RecheckDrawVertices(); });  // job 304
     FrameStep("export readback results", [&] { PollExportReadbacks(); });  // job 041
     if (!through_checks_.empty()) FrameStep("through checks", [&] { PollThroughChecks(); });  // job 047
     if (!fused_checks_.empty()) FrameStep("fused checks", [&] { PollFusedChecks(); });  // fuse049
@@ -2835,12 +2706,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     {
       PartScope ps(*this, kPartPoll);
       cache_->Poll();
-    }
-    if (stats_frame_ && frame_ == uint64_t(stats_frame_)) {  // patch 0121: the last targets of the frame
-      TargetStats(stats_prev_);
-      stats_prev_.clear();
-      REXLOG_INFO("gow2_renderer: target stats (patch 0121) frame {} done: {} draws ({} with no colour target, patch 0123)",
-                  frame_, stats_draws_, stats_no_colour_);
     }
     ++frame_;
     if (XenosPcssTakeTrace()) pcss_trace_frame_ = frame_ + 1;  // notes/80 s.16: Ctrl+Shift+F12 traces the next frame
@@ -2916,7 +2781,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     draw_index_ = 0;
     copy_index_ = 0;
     resolve_sig_valid_ = false;  // GitHub #257: repeats are only looked for within a frame
-    occ_lines_ = 0;
     pending_this_frame_ = shader_errors_this_frame_ = pipeline_failures_this_frame_ = 0;
     pipeline_wait_ms_frame_ = 0.0;
     frames_in_flight_ = size_t(std::clamp(REXCVAR_GET(gow2_renderer_frames_in_flight), 1, 3));  // patch 0133
@@ -3105,15 +2969,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         scaled_partial_hits_ = 0;
         scaled_window_writes_ = 0;
         scaled_fused_ = 0;
-        if (scaled_resolves_) {  // job 189: resolve-written textures not taken at the scale (top 10 this range)
-          std::vector<std::pair<uint64_t, std::string>> top;
-          for (const auto& [why, n] : ts.scaled_misses) top.push_back({n, why});
-          std::sort(top.rbegin(), top.rend());
-          for (size_t i = 0; i < std::min<size_t>(top.size(), 10); ++i)
-            REXLOG_INFO("gow2_renderer: scaled miss #{} frames {}-{}: {}x {}", i + 1, frame_ + 1 - uint64_t(log_every_),
-                        frame_, top[i].first, top[i].second);
-
-        }
         scaled_resolve_count_ = 0;
         scaled_mem_skipped_ = 0;
         t2_stats_ = {};
@@ -4013,8 +3868,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           return true;
         });
     if (refreshed && wrote) ++ours_stats_.presented; else ++ours_stats_.refresh_failed;
-    const int check_every = REXCVAR_GET(gow2_present_check_every);
-    if (refreshed && wrote && check_every > 0 && frame_ % uint64_t(check_every) == 0) ScreenCheck(out_tex, ow, oh);
     // Shagg's to-do 8 (--gow2_screenshot_presented): the screenshot key's image as presented - resized to the window and
     // sharpened - read back on its own, for the screenshot alone (frame shots keep the game's size). HDR10 output is
     // PQ-encoded by now, so there the SDR image before that, at the game's size.
@@ -4030,44 +3883,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       img.height = h;
       if (img.readback) ours_images_.push_back(img);
     }
-  }
-  // What the window paints is the presenter's guest output: read it back (CaptureGuestOutput, RGBX8) and compare it
-  // with our packed image of the same frame (10-bit channels -> 8-bit by rounding; the presenter's own conversion is
-  // not known exactly, so within 1 level counts as the same).
-  void ScreenCheck(gpu::TextureHandle tex, uint32_t w, uint32_t h) {
-    const gpu::ReadbackHandle rb = backend_->ReadbackTexture(tex, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
-    backend_->WaitForFence(backend_->Submit());
-    rex::ui::RawImage img;
-    const bool got = presenter_->CaptureGuestOutput(img);
-    uint32_t pitch = 0;
-    const uint8_t* ours = rb ? backend_->ReadbackData(rb, pitch) : nullptr;
-    if (!got || !ours || img.width != w || img.height != h) {
-      REXLOG_INFO("gow2_present: screen check frame {}: NOT COMPARED (captured {} {}x{}, ours {} {}x{})", frame_, got,
-                  img.width, img.height, ours != nullptr, w, h);
-      if (rb) backend_->ReleaseReadback(rb);
-      return;
-    }
-    uint64_t exact = 0, within1 = 0, maxd = 0;
-    for (uint32_t y = 0; y < h; ++y) {
-      const auto* o = reinterpret_cast<const uint32_t*>(ours + size_t(y) * pitch);
-      const uint8_t* c = img.data.data() + size_t(y) * img.stride;
-      for (uint32_t x = 0; x < w; ++x) {
-        uint64_t d = 0;
-        for (uint32_t k = 0; k < 3; ++k) {
-          const uint32_t ten = (o[x] >> (10 * k)) & 0x3FF;
-          const int32_t ours8 = int32_t((ten * 255 + 511) / 1023), cap8 = c[x * 4 + k];
-          d = std::max<uint64_t>(d, uint64_t(ours8 > cap8 ? ours8 - cap8 : cap8 - ours8));
-        }
-        if (d == 0) ++exact;
-        if (d <= 1) ++within1;
-        maxd = std::max(maxd, d);
-      }
-    }
-    const double n = double(w) * h;
-    REXLOG_INFO("gow2_present: screen check frame {}: presenter image vs ours: {:.4f}% of pixels within 1 level "
-                "({:.4f}% exact), max difference {} (of 255)",
-                frame_, 100.0 * double(within1) / n, 100.0 * double(exact) / n, maxd);
-    backend_->ReleaseReadback(rb);
   }
   // To-do 8: one pending screenshot readback (shot_.readback 0 = none); a second request while one is in flight waits.
   PresentImage shot_{};
@@ -4593,42 +4408,17 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   int32_t tess_scale_ = 1;
   // 0.4.9 task 7: render targets are made per scale and were never freed, so every resolution-scale or upscaling-mode
   // change kept a full set. At the end of a frame (no draw holds a RenderTarget*, AliasEvent or TileSource then), when
-  // the set of scales in use changed, the targets of the other scales are freed. --gow2_debug_cycle_scale_s forces a
-  // change every N seconds to test it until the scale can change live.
+  // the set of scales in use changed, the targets of the other scales are freed.
   uint64_t rt_scale_sig_ = 0;
-  uint32_t dbg_cycle_phase_ = 0;  // 0 = the test switch is not forcing a scale
-  std::chrono::steady_clock::time_point dbg_cycle_t0_{};
-  bool dbg_cycle_warned_ = false;
   void FreeStaleScaleTargets() {
     if (!rts_) return;
-    const int cycle_s = REXCVAR_GET(gow2_debug_cycle_scale_s);
-    if (cycle_s > 0) {
-      if (res_scale_ < 2 || up_scale_in_) {
-        if (!dbg_cycle_warned_)
-          REXLOG_WARN("gow2_renderer: --gow2_debug_cycle_scale_s needs resolution scale 2+ and no upscaling mode (scale "
-                      "{}, scene {}); off", res_scale_, up_scale_in_);
-        dbg_cycle_warned_ = true;
-      } else {
-        const auto now = std::chrono::steady_clock::now();
-        if (!dbg_cycle_phase_) dbg_cycle_phase_ = res_scale_, dbg_cycle_t0_ = now;
-        if (now - dbg_cycle_t0_ >= std::chrono::seconds(cycle_s)) {
-          dbg_cycle_phase_ = dbg_cycle_phase_ == 1 ? res_scale_ : 1u;
-          dbg_cycle_t0_ = now;
-          REXLOG_INFO("gow2_renderer: debug scale cycle: render targets now at {}x (frame {})", dbg_cycle_phase_, frame_);
-        }
-        rts_->SetPhaseScale(dbg_cycle_phase_);
-      }
-    }
-    // The phase scales this run can draw at: the output's and an upscaling mode's scene scale, or the forced one.
-    std::vector<uint32_t> phases;
-    if (dbg_cycle_phase_ && cycle_s > 0) phases = {dbg_cycle_phase_};
-    else phases = {res_scale_, up_scale_in_ ? up_scale_in_ : res_scale_};
+    // The phase scales this run can draw at: the output's and an upscaling mode's scene scale.
+    const std::vector<uint32_t> phases = {res_scale_, up_scale_in_ ? up_scale_in_ : res_scale_};
     const uint64_t sig = (uint64_t(phases.front()) << 32) | phases.back();
     if (sig == rt_scale_sig_) return;
     const bool first = rt_scale_sig_ == 0;
     rt_scale_sig_ = sig;
     if (first) return;
-    stats_prev_.clear();  // patch 0121 stats: may name freed targets
     const uint64_t before = rts_->HostBytes();
     const rr::RenderTargetCache::FreeResult r = rts_->FreeUnusedScales(phases);
     REXLOG_INFO("gow2_renderer: render targets freed {} ({} MB) on a scale change (scales {}x/{}x): {} targets, ~{} MB "
@@ -4916,23 +4706,17 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const ScaledChunkInfo* chunk = nullptr;
     for (const ScaledChunkInfo& c : scaled_chunks_)
       if (!chunk && base >= c.base && uint64_t(base) + extent <= uint64_t(c.base) + kChunkBytes) chunk = &c;
-    if (!chunk) {
-      out.reason = 1;
-      return false;
-    }
+    if (!chunk) return false;
     if (!watch_->ScaledCurrent(base, extent)) {
-      out.reason = 4;
-      bool first = true, partial_ok = scaled_partial_;
+      bool partial_ok = scaled_partial_;
       const uint32_t p0 = base >> rr::GuestWatch::kPageShift, p1 = (base + extent - 1) >> rr::GuestWatch::kPageShift;
       for (uint32_t p = p0; p <= p1; ++p) {
         if (watch_->ScaledCurrent(p)) {
           ++out.pages_scaled;
           continue;
         }
-        if (watch_->GpuCurrent(p)) ++out.pages_gpu; else ++out.pages_other;
+        ++out.pages_other;
         if (!watch_->NeverResolved(p) || p == p0) partial_ok = false;
-        if (first) out.first_bad = (p << rr::GuestWatch::kPageShift) - (base & ~0xFFFu);
-        first = false;
       }
       // Job 193: a view reaching past what our resolves wrote (ch10's 1280x720 8888 at 0FE00000 over 640x360 resolves)
       // - the rest of its pages were never resolved into, so neither path has the game's data there; take it at the
@@ -5168,11 +4952,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // ---- takeover T2: our resolves into the GPU guest-memory mirror ----
   void WriteResolveToGuest(gpu::TextureHandle dest, const ::xenos::resolve::Info& info, uint32_t endian, uint32_t words,
                            uint32_t dx, uint32_t dy, uint32_t w, uint32_t h, bool scaled = false) {
-    if (scaled_resolves_ && frame_ + 1 == 901 && REXCVAR_GET(gow2_renderer_scaled_miss_log))  // job 192 (0029: diag only): every resolve of one frame, to place the scaled-memory misses
-      REXLOG_INFO("gow2_renderer: frame 901 resolve: dest {:08X} fmt {} pitch {} extent {:08X}+{:X} rect {},{} {}x{} "
-                  "words {} endian {} bpp_log2 {} scaled {}", info.dest_base, info.dest_format,
-                  info.dest_pitch_aligned_div_32 * 32, info.dest_extent_start, info.dest_extent_length, dx, dy, w, h,
-                  words, endian, info.dest_bpp_log2, scaled ? 1 : 0);
     if (!resolves_to_guest_ || !words_to_guest_ || !dest || !info.dest_extent_length) return;
     // Patch 0030: any bpp the resolve shader wrote words for (1 word per pixel for 8 / 16 / 32 bpp, 2 for 64, 4 for 128);
     // 8in64 for 64 / 128 bpp and 8in128 for 128 bpp handled by kWordsToGuestCs.
@@ -5368,54 +5147,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::vector<ProbeGroup> probe_groups_;
   std::vector<std::string> probe_resolves_;
   std::vector<std::string> probe_draws_;  // the first depth-writing camera draws: vertex data address + c4-c15
-  // Judgment "low frame rate after loading" (--gow2_after_load_log_s): per-second sums from the frame stats, which other
-  // logs reset (a counter lower than last time is taken as counted from 0).
-  struct AfterLoad {
-    int64_t armed = 0;     // the XenosNoteLoadEnded ticks this window belongs to
-    std::chrono::steady_clock::time_point end{}, sec_start{}, last_swap{};
-    uint32_t frames = 0, lines = 0;
-    double max_frame_ms = 0, cpu = 0, shader_wait = 0, pipe_wait = 0, standin_wait = 0;
-    uint64_t pipelines = 0, tex_bytes = 0;
-    double p_cpu = 0, p_shader = 0, p_pipe = 0, p_standin = 0;
-    uint64_t p_pipelines = 0, p_tex = 0;
-  } al_;
-  void AfterLoadSample() {
-    const int32_t secs = REXCVAR_GET(gow2_after_load_log_s);
-    if (secs <= 0) return;
-    using clk = std::chrono::steady_clock;
-    const clk::time_point now = clk::now();
-    const int64_t ended = g_load_ended_ticks.load(std::memory_order_relaxed);
-    auto dd = [](double cur, double& prev) { const double d = cur >= prev ? cur - prev : cur; prev = cur; return d; };
-    auto du = [](uint64_t cur, uint64_t& prev) { const uint64_t d = cur >= prev ? cur - prev : cur; prev = cur; return d; };
-    const double d_cpu = dd(stats_.cpu_ms, al_.p_cpu), d_shader = dd(stats_.shader_wait_ms, al_.p_shader),
-                 d_pipe = dd(stats_.pipeline_wait_ms, al_.p_pipe), d_standin = dd(stats_.standin_wait_ms, al_.p_standin);
-    const uint64_t d_pipelines = du(stats_.new_draw_pipelines, al_.p_pipelines), d_tex = du(stats_.texture_bytes, al_.p_tex);
-    if (ended && ended != al_.armed) {  // a load just ended: a new window
-      al_ = AfterLoad{ended, now + std::chrono::seconds(std::min(secs, 120)), now, now, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                      al_.p_cpu, al_.p_shader, al_.p_pipe, al_.p_standin, al_.p_pipelines, al_.p_tex};
-      REXLOG_INFO("gow2_after_load: a loading screen ended - logging the next {} s", std::min(secs, 120));
-      return;
-    }
-    if (!al_.armed || now > al_.end) return;
-    const double frame_ms = std::chrono::duration<double, std::milli>(now - al_.last_swap).count();
-    al_.last_swap = now;
-    ++al_.frames;
-    al_.max_frame_ms = std::max(al_.max_frame_ms, frame_ms);
-    al_.cpu += d_cpu, al_.shader_wait += d_shader, al_.pipe_wait += d_pipe, al_.standin_wait += d_standin;
-    al_.pipelines += d_pipelines, al_.tex_bytes += d_tex;
-    const double span = std::chrono::duration<double, std::milli>(now - al_.sec_start).count();
-    if (span < 1000.0) return;
-    ++al_.lines;
-    REXLOG_INFO("gow2_after_load: +{} s: {} frames ({:.1f} fps), slowest {:.1f} ms | our renderer CPU {:.0f} ms (waits: "
-                "shaders {:.0f}, pipelines {:.0f}, stand-ins {:.0f}) | new draw pipelines {} | texture uploads {:.1f} MB | "
-                "outside our renderer {:.0f} ms",
-                al_.lines, al_.frames, al_.frames * 1000.0 / span, al_.max_frame_ms, al_.cpu, al_.shader_wait, al_.pipe_wait,
-                al_.standin_wait, al_.pipelines, double(al_.tex_bytes) / 1048576.0, std::max(0.0, span - al_.cpu));
-    al_.sec_start = now;
-    al_.frames = 0;
-    al_.max_frame_ms = al_.cpu = al_.shader_wait = al_.pipe_wait = al_.standin_wait = 0;
-    al_.pipelines = al_.tex_bytes = 0;
-  }
   bool ProbeFrame() const { return upscale_probe_ && (frame_ + 1) % upscale_probe_ == 0; }
   // GitHub #132 (--gow2_renderer_camera_log): see the cvar. The camera matrix's rows (FromConstantsTransposed: clip x, y,
   // z, w) give the camera position as the point where clip x, y and w are all 0, and the forward direction as the w row.
@@ -6507,87 +6238,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint32_t vel_mask_w_ = 0, vel_mask_h_ = 0;
   uint64_t vel_frames_ = 0, vel_no_camera_ = 0, vel_objects_sum_ = 0;  // log window
   static constexpr uint32_t kMaxMovingObjects = 32;
-  // #147 / #150 (--gow2_velocity_scan_frames "first-last"): one Windows run per game finds its velocity pass. In those
-  // frames, each distinct (VS, PS, target class, pitch) drawing into a k_16_16 / k_16_16_FLOAT target, or into any
-  // target at most 720 pixels wide (half resolution), is logged once: shaders, target, index count, the VS float
-  // constants it reads (as ranges), and whether the 8 constants after the camera (c5-c12, Gears 2's velocity layout)
-  // hold two affine matrices. Logging only; at most 600 lines.
-  uint64_t vel_scan_first_ = 0, vel_scan_last_ = 0;
-  uint32_t vel_scan_lines_ = 0;
-  std::unordered_set<uint64_t> vel_scan_seen_;
-  void VelocityScan(const uint32_t* r, const rr::GuestShader& vsg, const rr::RenderTargetKey& k0, uint32_t colour_count,
-                    uint64_t vs_hash, uint64_t ps_hash, uint32_t index_count) {
-    const uint64_t f = frame_ + 1;
-    if (f < vel_scan_first_ || f > vel_scan_last_ || vel_scan_lines_ >= 600) return;
-    const uint32_t c16 = rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16));
-    const uint32_t c16f = rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16_FLOAT));
-    if (k0.storage_class != c16 && k0.storage_class != c16f && k0.pitch_pixels > 720) return;
-    const uint64_t key = vs_hash * 0x9E3779B97F4A7C15ull ^ ps_hash ^ (uint64_t(k0.storage_class) << 56) ^
-                         (uint64_t(k0.pitch_pixels) << 40);
-    if (!vel_scan_seen_.insert(key).second) return;
-    ++vel_scan_lines_;
-    std::string reads;
-    for (uint32_t c = 0; c < 256;) {
-      if (!vsg.Reads(c)) { ++c; continue; }
-      uint32_t e = c;
-      while (e + 1 < 256 && vsg.Reads(e + 1)) ++e;
-      reads += (reads.empty() ? "c" : ",c") + std::to_string(c) + (e > c ? "-" + std::to_string(e) : std::string());
-      c = e + 1;
-    }
-    float m[32];
-    std::memcpy(m, &r[kRegFloatConstVs + 5 * 4], sizeof(m));
-    const bool affine2 = m[15] == 1.0f && m[31] == 1.0f && m[3] == 0.0f && m[19] == 0.0f;
-    REXLOG_INFO("gow2_velocity_scan: frame {} vs {:016X} ps {:016X} -> {} pitch {} msaa {} ({} target(s)) indices {} | VS "
-                "reads {} | c5-c12 two affine matrices: {}{}",
-                f, vs_hash, ps_hash, rr::StorageClassName(k0.storage_class), k0.pitch_pixels, 1u << k0.msaa, colour_count,
-                index_count, reads.empty() ? std::string("none") : reads, affine2 ? "yes" : "no",
-                vel_scan_lines_ == 600 ? " - last line (gow2_velocity_scan_frames)" : "");
-  }
-  // Gears 1 character motion research (--gow2_skin_scan_frames): see the cvar.
-  uint64_t skin_scan_first_ = 0, skin_scan_last_ = 0;
-  uint32_t skin_scan_lines_ = 0;
-  std::unordered_map<uint64_t, uint32_t> skin_scan_vb_;  // draw (VS, PS, count) -> its vertex address when first logged
-  std::unordered_set<uint64_t> skin_scan_moved_;
-  static std::string ConstRanges(const rr::GuestShader& vsg, uint32_t* longest) {
-    std::string reads;
-    *longest = 0;
-    for (uint32_t c = 0; c < 256;) {
-      if (!vsg.Reads(c)) { ++c; continue; }
-      uint32_t e = c;
-      while (e + 1 < 256 && vsg.Reads(e + 1)) ++e;
-      *longest = std::max(*longest, e - c + 1);
-      reads += (reads.empty() ? "c" : ",c") + std::to_string(c) + (e > c ? "-" + std::to_string(e) : std::string());
-      c = e + 1;
-    }
-    return reads.empty() ? std::string("none") : reads;
-  }
-  void SkinScan(const uint32_t* r, const rr::GuestShader& vsg, uint64_t vs_hash, uint64_t ps_hash, uint32_t ib_addr,
-                uint32_t index_count, const char* what) {
-    const uint64_t f = frame_ + 1;
-    if (f < skin_scan_first_ || f > skin_scan_last_ || skin_scan_lines_ >= 800) return;
-    uint32_t vb = 0, vb_dw = 0, fetches = 0;
-    for (uint32_t i = 0; i < 96; ++i)
-      if ((vsg.vfetch_constants[i >> 5] >> (i & 31)) & 1) {
-        ++fetches;
-        if (!vb) vb = r[kRegFetchConst + 2 * i] & 0x1FFFFFFCu, vb_dw = (r[kRegFetchConst + 2 * i + 1] >> 2) & 0xFFFFFFu;
-      }
-    const uint64_t key = (vs_hash * 0x9E3779B97F4A7C15ull ^ ps_hash) + index_count;
-    const auto it = skin_scan_vb_.find(key);
-    if (it == skin_scan_vb_.end()) {
-      skin_scan_vb_.emplace(key, vb);
-      uint32_t longest = 0;
-      const std::string reads = ConstRanges(vsg, &longest);
-      ++skin_scan_lines_;
-      REXLOG_INFO("gow2_skin_scan: frame {} {} vs {:016X} ps {:016X} indices {} vb {:08X} ({} dwords, {} fetch "
-                  "constant(s)) ib {:08X} | VS reads {} (longest run {}){}",
-                  f, what, vs_hash, ps_hash, index_count, vb, vb_dw, fetches, ib_addr, reads, longest,
-                  longest >= 12 ? " - palette-sized" : "");
-    } else if (it->second != vb && skin_scan_moved_.insert(key).second) {
-      ++skin_scan_lines_;
-      REXLOG_INFO("gow2_skin_scan: frame {} vs {:016X} ps {:016X} indices {}: vertex address {:08X} -> {:08X} (data "
-                  "rewritten each frame: CPU / memexport skinning)", f, vs_hash, ps_hash, index_count, it->second, vb);
-    }
-  }
   void VelocityDraw(const uint32_t* r, const rr::GuestShader& vsg, const rr::RenderTargetKey& k0, uint32_t index_count) {
     if (!vel_motion_pipe_ || !up_camera_ || k0.storage_class != rr::ColorStorageClass(uint32_t(::xenos::edram::ColorFormat::k_16_16))) return;
     for (uint32_t k = 0; k < 13; ++k)  // the camera (c0-c3) and both object-to-world matrices (c5-c12)
@@ -6815,7 +6465,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                      uint64_t vs_hash, uint64_t ps_hash, DrawAgain&& draw_again) {
     if (!target || !target->texture || target->key.msaa != 0 || !(target->key == up_depth_key_)) return;
     if (!d.depth_enable || !d.depth_write || d.samples != 1 || v.xy_divided_by_w || v.clip_disabled) return;
-    if (skin_scan_last_) SkinScan(r, vsg, vs_hash, ps_hash, ib ? (ib->guest_base & 0x1FFFFFFFu) : 0u, index_count, "scene");
     if ((needs_ps && psg && psg->writes_depth) || vsg.memexport || occ_open_.open || up_vp_base_ < 0) return;
     const uint32_t cb = uint32_t(up_vp_base_);
     if (!(vsg.Reads(cb) && vsg.Reads(cb + 1) && vsg.Reads(cb + 2) && vsg.Reads(cb + 3))) return;
@@ -10026,24 +9675,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     const uint32_t depth_format = Bits(depth_info, 16, 1);
     const rr::RenderTargetKey key{Bits(depth_info, 0, 12) & 2047u, rr::DepthStorageClass(depth_format),
                                   is_clear ? pitch * 2 : pitch, is_clear ? 0u : msaa};
-    // Gears 3 job 025 (asked by the Gears 2 chat): the shadow-map-like D24S8 target at this EDRAM base differs from the
-    // reference. On comparison frames, log each depth draw into it: cull / polygon-offset enables and the four offset
-    // registers (D3D12 allows one bias per draw: with culling off pipeline_state.h takes front if set, else back).
-    if (depth_bound && int32_t(key.base_tiles) == REXCVAR_GET(gow2_renderer_log_depth_bias_base) &&
-        depth_bias_logged_ < 400) {
-      ++depth_bias_logged_;
-      const uint32_t m = r[rr::reg::PA_SU_SC_MODE_CNTL];
-      auto fl = [&](uint32_t reg) { return std::bit_cast<float>(r[reg]); };
-      REXLOG_INFO("gow2_renderer: depth-bias frame {} draw {} (prim {} vs {:016X} ps {:016X}) target D{} base {} pitch {} msaa {}x: "
-                  "PA_SU_SC_MODE_CNTL {:08X} cull front {} back {} | offset enable front {} back {} para {} | front "
-                  "scale {} offset {} | back scale {} offset {} | depth func {} write {}",
-                  frame_ + 1, draw_index_, prim, vs_hash, ps_hash, depth_format ? "24FS8" : "24S8", key.base_tiles,
-                  key.pitch_pixels, 1u << key.msaa, m, Bits(m, 0, 1), Bits(m, 1, 1), Bits(m, 11, 1), Bits(m, 12, 1), Bits(m, 13, 1),
-                  fl(rr::reg::PA_SU_POLY_OFFSET_FRONT_SCALE), fl(rr::reg::PA_SU_POLY_OFFSET_FRONT_OFFSET),
-                  fl(rr::reg::PA_SU_POLY_OFFSET_BACK_SCALE), fl(rr::reg::PA_SU_POLY_OFFSET_BACK_OFFSET),
-                  uint32_t(ds.depth_func), ds.depth_write ? 1 : 0);
-    }
-
     // Job 185: the rect-list fill/clear shader's exact rectangle (job 184: 7-float vertices, x y z first, in pixels).
     // Job 188: its bounds also limit the draw's ownership rectangle (the tiles it really writes), when switched on.
     fill_.valid = false;
@@ -10153,7 +9784,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     if (depth_bound) bound_bases[bound_count++] = key.base_tiles;
     if (colour_count == 1 && up_active_ && !up_camera_only_) VelocityDraw(r, vsg, colour_keys[0], index_count);  // notes/80 s.6
-    if (colour_count >= 1 && vel_scan_last_) VelocityScan(r, vsg, colour_keys[0], colour_count, vs_hash, ps_hash, index_count);
     PcssTraceDraw(r, ps, colour_keys[0], colour_count, depth_bound, key, vs_hash, ps_hash, prim, index_count,
                   psg ? psg->texture_slots : 0u);  // notes/80 s.16
     if (ao_trace_ && colour_count && (prim == 0x08 || index_count <= 6 || int32_t(colour_keys[0].storage_class) == ao_trace_class_)) AoTraceDraw(r, ps, colour_keys[0], colour_count,
@@ -10296,7 +9926,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                   ps.scissor.x, ps.scissor.y, ps.scissor.width, ps.scissor.height, own.drawn.x0, own.drawn.y0,
                   own.drawn.x1, own.drawn.y1, vsg.vfetch_formats, fetches);
     }
-    if (VertexLogFrame() && (prim == 0x08 || index_count <= 6)) LogDrawVertices(r, vsg, prim, index_count, vs_hash, ps_hash, ps);
     if (ps.viewport.clip_disabled && depth_writes) ++stats_.unclipped_depth_draws;  // ownership from the scissor alone
     rr::RenderTarget* target = nullptr;  // depth/stencil target, if the draw tests or writes depth/stencil
     if (depth_bound) {
@@ -10460,7 +10089,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         std::copy_n(samplers, sampler_count, native_hdr_ui_samplers_);
       }
       set_textures_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - st_t0).count();
-      if (report_on_ || StatsTexturesNow()) RepNoteTextures(views, samplers, count, sampler_count);  // 0101, 0124
+      if (report_on_) RepNoteTextures(views, samplers, count, sampler_count);  // patch 0101
       if (texture_memo_) {
         tex_memo_valid_ = true;
         tex_memo_frame_ = frame_;
@@ -10480,7 +10109,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       tex_memo_valid_ = false;
       backend_->SetTextures(nullptr, nullptr);
       if (scene_ui_bind) native_hdr_ui_view_count_ = 0;
-      if (report_on_ || StatsTexturesNow()) RepNoteTextures(nullptr, nullptr, 0, 0);  // patch 0101, 0124
+      if (report_on_) RepNoteTextures(nullptr, nullptr, 0, 0);  // patch 0101
       if (t2d | tcube | t3d) stand_ins = uint32_t(std::popcount(t2d | tcube | t3d));  // texture cache switched off
     }
     if (stand_ins) ++stats_.texture_dependent;  // some slot read the white stand-in
@@ -10918,28 +10547,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       for (uint32_t i = 0; i < 4; ++i) rts[i] = colour_rt[i] ? colour_rt[i]->texture : 0;
       if (hdr_target) rts[0] = hdr_target;
       if (hdr_second) rts[1] = hdr_second;
-      if (stats_frame_ && frame_ == uint64_t(stats_frame_)) {  // patch 0121
-        std::vector<const rr::RenderTarget*> now;
-        for (uint32_t i = 0; i < 4; ++i) if (colour_rt[i]) now.push_back(colour_rt[i]);
-        // Patch 0122: after each of the first N draws too (the previous draw's targets, before this one is issued).
-        // Patch 0123: the readouts can start later (each_from) and be spaced out (each_step): after draw
-        // from + k*step for k = 1..N. Draws with no colour target are counted too (0123 logs how many).
-        const uint32_t d = stats_draws_, from = uint32_t(stats_from_), step = uint32_t(stats_step_);
-        const bool each = stats_each_ > 0 && d > from && (d - from) % step == 0 && (d - from) / step <= uint32_t(stats_each_);
-        if (now != stats_prev_ || each) {
-          TargetStats(stats_prev_);
-          if (stats_textures_) SampledStats();  // patch 0124: the previous draw's sampled textures
-        }
-        stats_prev_ = now;
-        if (stats_textures_) {  // patch 0124: this draw's textures, read at the next readout
-          // Patch 0125: only the 2D slots (t0-31). 0124 copied all of rep_view_count_ (up to 96, with the cube and 3D
-          // slots) into this 32-entry array and wrote past its end (Gears 2 job 434: crash in the stats frame).
-          stats_view_count_ = std::min<uint32_t>(rep_view_count_, 32);
-          for (uint32_t i = 0; i < stats_view_count_; ++i) stats_views_[i] = rep_views_[i];
-        }
-        if (now.empty()) ++stats_no_colour_;
-        ++stats_draws_;
-      }
       backend_->SetRenderTargets(hdr_second ? 2 : d.color_count, rts, depth ? depth->texture : 0);
       if (gpu_by_target_) NoteDrawTarget(colour_rt[0] ? colour_rt[0] : depth);
       if (report_on_)  // patch 0101: this draw's own GPU timestamp and its description
@@ -10996,7 +10603,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (export_shader) backend_->SetGuestWritable(false);
     if (exports) {
       ++stats_.memexport_draws;
-      if (skin_scan_last_) SkinScan(r, vsg, vs_hash, needs_ps ? ps_hash : 0, 0, index_count, "memexport");
       MarkExports(r, vsg, false, export_refused);
       if (needs_ps && psg->memexport) ++stats_.memexport_ps_draws;
     }
@@ -11096,7 +10702,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       });
     }
   }
-
 
   // EDRAM bits of a constant colour in a 32bpp colour format (for colour clears seen later through a depth target).
   static bool ColorClearBits(uint32_t format, const float c[4], uint32_t& bits) {
@@ -13607,10 +13212,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
                                             "exp {}", copy, draw_index_, info.is_depth ? "depth" : "colour",
                                             info.width_div_8 * 8, info.height_div_8 * 8, rg.color_format, rg.color_base,
                                             info.dest_base, info.dest_format, SignExtend(Bits(r[kRegCopyDestInfo], 16, 6), 6)));
-    if (scaled_resolves_ && frame_ + 1 == 901 && REXCVAR_GET(gow2_renderer_scaled_miss_log))  // job 192 (0029: diag only)
-      REXLOG_INFO("gow2_renderer: frame 901 copy {}: dest {:08X} fmt {} extent {:08X}+{:X} depth {} msaa {} colour fmt {}",
-                  copy, info.dest_base, info.dest_format, info.dest_extent_start, info.dest_extent_length,
-                  info.is_depth ? 1 : 0, rg.msaa, rg.color_format);
     if (!info.width_div_8 || !info.height_div_8) {
       Skip("resolve: empty rectangle");
       ++resolve_early_["resolve: empty rectangle"];
@@ -14736,7 +14337,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   std::map<std::pair<uint64_t, uint64_t>, uint32_t> clear_pair_votes_;
   gpu::ShaderHandle msaa_up_transfer_ps_ = 0;  // Gears 3: 1x -> 4x MSAA colour transfer
   std::unordered_map<uint64_t, gpu::PipelineHandle> msaa_up_pipelines_;
-  uint32_t depth_bias_logged_ = 0;  // gow2_renderer_log_depth_bias_base lines so far
   bool dxil_twin_on_ = false;  // --gow2_dxil_vs_twin (set with the shader back end)
   std::unordered_set<uint64_t> msaa_twin_logged_;  // gow2_renderer_clear_msaa_twins: logged once per target
   bool msaa_up_logged_ = false;
@@ -14889,14 +14489,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   // the dispatch; textures and targets are set again by the next guest draw (tex_memo_valid_ cleared, as transfers do).
   bool resolve_draws_ = false;
   gpu::PipelineHandle colour_resolve_draw_ = 0;
-  // Patch 0121: per-target contents statistics in one frame (--gow2_renderer_target_stats_frame).
-  int32_t stats_frame_ = 0, stats_each_ = 0, stats_from_ = 0, stats_step_ = 1;
-  bool stats_textures_ = false;              // patch 0124
-  uint32_t stats_view_count_ = 0;
-  gpu::TextureView stats_views_[32];         // the 2D slots of the last draw of the stats frame
-  bool StatsTexturesNow() const { return stats_textures_ && stats_frame_ && frame_ == uint64_t(stats_frame_); }
-  uint32_t stats_draws_ = 0, stats_no_colour_ = 0;
-  std::vector<const rr::RenderTarget*> stats_prev_;
   static float StatsHalf(uint16_t h) {
     const uint32_t s = uint32_t(h >> 15) << 31, e = (h >> 10) & 31, m = h & 1023;
     uint32_t f;
@@ -14909,7 +14501,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     std::memcpy(&out, &f, 4);
     return out;
   }
-  // Up to 4 channels of texel x as floats; false for formats the statistics don't decode.
+  // Up to 4 channels of texel x as floats; false for formats it doesn't decode.
   static bool StatsTexel(gpu::Format f, const uint8_t* p, float* c, uint32_t& n) {
     auto sn16 = [](int16_t v) { return std::max(-1.0f, float(v) / 32767.0f); };
     switch (f) {
@@ -14934,74 +14526,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         std::memcpy(c, p, 4 * n);
         return true;
       default: return false;
-    }
-  }
-  // Patch 0124: the 2D textures the previous draw sampled (slots 0-31), whole mip 0, same line format as the targets.
-  void SampledStats() {
-    const uint32_t n = std::min<uint32_t>(stats_view_count_, 32);
-    for (uint32_t i = 0; i < n; ++i) {
-      const gpu::TextureView& v = stats_views_[i];
-      if (!v.texture) continue;
-      gpu::TextureDesc td;
-      if (!backend_->TextureInfo(v.texture, td) || td.samples > 1) continue;
-      bool seen = false;  // the same texture in two slots: once
-      for (uint32_t j = 0; j < i; ++j) seen = seen || stats_views_[j].texture == v.texture;
-      if (seen) continue;
-      StatsTexture(v.texture, td.format, td.width, td.height, "t" + std::to_string(i));
-    }
-  }
-  void TargetStats(const std::vector<const rr::RenderTarget*>& targets) {
-    for (const rr::RenderTarget* t : targets) {
-      if (!t || !t->texture) continue;
-      const uint32_t s = std::max(t->scale, 1u);
-      StatsTexture(t->texture, t->format, std::min(t->width, t->guest_width * s), std::min(t->height, t->guest_height * s),
-                   "id " + std::to_string(t->id) + " fmt " + std::to_string(uint32_t(t->format)));
-    }
-  }
-  // One texture's per-channel statistics (patch 0121; split out in 0124 for sampled textures). `what` names it.
-  void StatsTexture(gpu::TextureHandle tex, gpu::Format fmt, uint32_t w, uint32_t h, const std::string& what) {
-    {
-      uint32_t bpp = 0;
-      switch (fmt) {
-        case gpu::Format::kR8G8B8A8Unorm: case gpu::Format::kR10G10B10A2Unorm: case gpu::Format::kR16G16Float:
-        case gpu::Format::kR16G16Snorm: case gpu::Format::kR32Float: bpp = 4; break;
-        case gpu::Format::kR16G16B16A16Float: case gpu::Format::kR16G16B16A16Snorm: case gpu::Format::kR32G32Float: bpp = 8; break;
-        default: break;
-      }
-      if (!w || !h || !bpp) {
-        REXLOG_INFO("gow2_renderer: target stats f{} after {} draws: {} {}x{} - not decoded", frame_, stats_draws_,
-                    what, w, h);
-        return;
-      }
-      const gpu::ReadbackHandle rb = backend_->ReadbackTexture(tex, gpu::Rect{0, 0, int32_t(w), int32_t(h)});
-      if (!rb) return;
-      backend_->WaitForFence(backend_->Submit());
-      uint32_t pitch = 0;
-      const uint8_t* data = backend_->ReadbackData(rb, pitch);
-      if (!data) { backend_->ReleaseReadback(rb); return; }
-      double sum[4] = {}, mn[4], mx[4];
-      uint64_t nan = 0, black = 0;
-      for (int i = 0; i < 4; ++i) { mn[i] = 1e30; mx[i] = -1e30; }
-      uint32_t n = 0;
-      for (uint32_t y = 0; y < h; ++y)
-        for (uint32_t x = 0; x < w; ++x) {
-          float c[4] = {};
-          if (!StatsTexel(fmt, data + size_t(y) * pitch + size_t(x) * bpp, c, n)) break;
-          bool all0 = true;
-          for (uint32_t i = 0; i < n; ++i) {
-            if (std::isnan(c[i])) { ++nan; continue; }
-            sum[i] += c[i]; mn[i] = std::min(mn[i], double(c[i])); mx[i] = std::max(mx[i], double(c[i]));
-            if (i < 3 && c[i] != 0.0f) all0 = false;
-          }
-          if (all0) ++black;
-        }
-      const double px = double(w) * h;
-      std::string ch;
-      for (uint32_t i = 0; i < n; ++i)
-        ch += std::format(" c{} {:.4f} [{:.3g},{:.3g}]", i, sum[i] / px, mn[i], mx[i]);
-      REXLOG_INFO("gow2_renderer: target stats f{} after {} draws: {} {}x{} |{} | NaN {} | rgb all 0: {:.2f}%", frame_,
-                  stats_draws_, what, w, h, ch, nan, 100.0 * double(black) / px);
-      backend_->ReleaseReadback(rb);
     }
   }
   void ResolveDraw(const gpu::ComputeBindings& b, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1) {
@@ -15153,82 +14677,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   uint8_t stencil_ones_draws_ = 0, stencil_ones_clears_ = 0, stencil_reads_ = 0;  // job 179
   uint64_t rt_write_gen_ = 0;  // job 182
   uint32_t fill_logged_ = 0;   // job 184
-  // Job 304 (rainbow diagnostic): --gow2_renderer_vertex_log_frames.
-  struct VertexLogEntry {
-    uint64_t frame;
-    uint32_t draw, slot, addr, size;
-    uint64_t hash;
-  };
-  std::vector<VertexLogEntry> vertex_log_;
-  bool vertex_log_parsed_ = false;
-  uint64_t vertex_log_first_ = 0, vertex_log_last_ = 0;
-  bool VertexLogFrame() {
-    if (!vertex_log_parsed_) {
-      vertex_log_parsed_ = true;
-      const std::string spec = REXCVAR_GET(gow2_renderer_vertex_log_frames);
-      const size_t dash = spec.find('-');
-      if (!spec.empty()) {
-        vertex_log_first_ = std::strtoull(spec.c_str(), nullptr, 10);
-        vertex_log_last_ = dash == std::string::npos ? vertex_log_first_ : std::strtoull(spec.c_str() + dash + 1, nullptr, 10);
-      }
-    }
-    const uint64_t f = frame_ + 1;
-    return vertex_log_first_ && f >= vertex_log_first_ && f <= vertex_log_last_;
-  }
-  static uint64_t HashRange(const uint8_t* p, uint32_t n) {
-    uint64_t h = 1469598103934665603ull;
-    for (uint32_t i = 0; i < n; ++i) {
-      h ^= p[i];
-      h *= 1099511628211ull;
-    }
-    return h;
-  }
-  void LogDrawVertices(const uint32_t* r, const rr::GuestShader& vsg, uint32_t prim, uint32_t index_count,
-                       uint64_t vs_hash, uint64_t ps_hash, const rr::PipelineState& ps) {
-    const uint8_t* mem = memory_->TranslatePhysical<const uint8_t*>(0);
-    std::string text;
-    for (uint32_t i = 0; i < 96; ++i) {
-      if (!((vsg.vfetch_constants[i >> 5] >> (i & 31)) & 1)) continue;
-      const uint32_t dw0 = r[kRegFetchConst + 2 * i], dw1 = r[kRegFetchConst + 2 * i + 1];
-      if ((dw0 & 3) != 3) continue;
-      const uint32_t addr = dw0 & 0x1FFFFFFCu, size = std::min<uint32_t>(((dw1 >> 2) & 0xFFFFFFu) * 4, 4096u);
-      if (!size || uint64_t(addr) + size > (512ull << 20)) continue;
-      const uint64_t h = HashRange(mem + addr, size);
-      vertex_log_.push_back({frame_ + 1, draw_index_, i, addr, size, h});
-      char b[96];
-      std::snprintf(b, sizeof(b), " | vf%u %08X size %u endian %u hash %016llX:", i, addr, size, dw1 & 3u,
-                    static_cast<unsigned long long>(h));
-      text += b;
-      for (uint32_t k = 0; k < std::min<uint32_t>(size / 4, 16); ++k) {
-        uint32_t w;
-        std::memcpy(&w, mem + addr + 4 * k, 4);
-        w = std::byteswap(w);
-        std::snprintf(b, sizeof(b), " %g", std::bit_cast<float>(w));
-        text += b;
-      }
-    }
-    REXLOG_INFO("gow2_vertex_log: frame {} draw {} prim {} count {} vs {:016X} ps {:016X} | viewport {} {} {} {} scale {} {} "
-                "offset {} {} xy_div_w {} | scissor {},{} {}x{}{}",
-                frame_ + 1, draw_index_, prim, index_count, vs_hash, ps_hash, ps.viewport.x, ps.viewport.y,
-                ps.viewport.width, ps.viewport.height, ps.viewport.ndc_scale[0], ps.viewport.ndc_scale[1],
-                ps.viewport.ndc_offset[0], ps.viewport.ndc_offset[1], ps.viewport.xy_divided_by_w ? 1 : 0, ps.scissor.x,
-                ps.scissor.y, ps.scissor.width, ps.scissor.height, text);
-  }
-  void RecheckDrawVertices() {
-    const uint8_t* mem = memory_->TranslatePhysical<const uint8_t*>(0);
-    uint32_t changed = 0;
-    for (const VertexLogEntry& e : vertex_log_) {
-      const uint64_t h = HashRange(mem + e.addr, e.size);
-      if (h == e.hash) continue;
-      ++changed;
-      if (changed <= 64)
-        REXLOG_INFO("gow2_vertex_log: frame {} draw {} vf{} {:08X} size {} CHANGED after the draw (by the swap): hash {:016X} "
-                    "-> {:016X}", e.frame, e.draw, e.slot, e.addr, e.size, e.hash, h);
-    }
-    REXLOG_INFO("gow2_vertex_log: frame {} swap: {} logged ranges, {} changed after their draw", frame_ + 1,
-                vertex_log_.size(), changed);
-    vertex_log_.clear();
-  }
   struct FillRect {
     bool valid = false, depth = false, stencil = false;
     gpu::Rect rect{};
@@ -15277,7 +14725,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   QueriesMode queries_mode_ = QueriesMode::kOff;
   uint64_t queries_min_ = 0;
   bool queries_correct_ = true;
-  int queries_log_ = 0;
   struct OpenOcclusion {
     uint32_t begin_address = 0;
     gpu::OcclusionHandle handle = 0;
@@ -15292,7 +14739,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     uint64_t frame = 0, sequence = 0, estimate = 0;
     bool complete = false;
     uint32_t draws = 0;
-    bool log = false, from_cache = false;
     uint32_t scale = 1;  // patch 0141: host pixels per guest pixel of the draws it counted
     std::chrono::steady_clock::time_point queued_at{};  // PR #43 strict: when its end was recorded
   };
@@ -15327,7 +14773,6 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   };
   OcclusionStats occ_stats_;
   uint64_t occ_backend_segments_base_ = 0, occ_backend_refused_base_ = 0;
-  uint32_t occ_lines_ = 0;
 };
 
 }  // namespace
@@ -15406,10 +14851,6 @@ bool XenosRendererRecipeIdle() { return g_release_target && g_release_target->Re
 void* XenosRendererIdleEvent() { return g_release_target ? g_release_target->IdleGpuEvent() : nullptr; }
 void XenosRendererRelease() {
   if (g_release_target) g_release_target->ReleaseToGuest();
-}
-
-void XenosNoteLoadEnded() {
-  g_load_ended_ticks.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
 }
 
 void XenosInstallRendererIfRequested(rex::Runtime* runtime, const XenosRendererHints& hints) {

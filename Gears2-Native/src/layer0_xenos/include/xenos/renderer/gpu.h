@@ -584,7 +584,7 @@ class Backend {
   virtual void SetGpuTagSamples(bool on) { (void)on; }
   // Patch 0101: one line about a texture as the API holds it (size, format, native flags), for the draw report.
   virtual std::string DescribeTexture(TextureHandle texture) const { (void)texture; return {}; }
-  // Patch 0124: the description a texture was created with (false: no such texture), for the target-stats tool.
+  // Patch 0124: the description a texture was created with (false: no such texture).
   virtual bool TextureInfo(TextureHandle texture, TextureDesc& out) const { (void)texture; (void)out; return false; }
   // Patch 0104: the driver's statistics of a graphics pipeline, one "stage: name value, ..." line per executable
   // (empty when not captured - BackendOptions::vk_pipeline_stats).

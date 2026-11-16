@@ -174,16 +174,16 @@ void XenosSetLoadHold(bool active, uint32_t pipelines_total, uint32_t pipelines_
 // address and size in bytes - so the renderer can translate it and have the driver build it before the first draw.
 // Any thread; no-op unless our renderer runs (--gow2_renderer_shader_precreate, default on).
 void XenosGuestShaderCreated(bool is_vertex, uint32_t guest_address, uint32_t size_bytes);
-// Patch 0068: a pixel shader found in a package the game just opened (layer 2 reads the file) - its microcode as stored
-// (big-endian dwords) - to translate like a draw's and put through the driver before its first draw. Any thread;
-// copies the bytes. XenosPrebuildWanted: false unless our renderer runs the DXBC path with
-// --gow2_renderer_shader_prebuild (default on), so layer 2 reads nothing otherwise.
+// Patch 0068: false unless our renderer runs the DXBC path with --gow2_renderer_shader_prebuild (default on), so
+// layer 2 reads nothing otherwise.
+bool XenosPrebuildWanted();
+// Pixel shaders found in a package the game just opened (layer 2 reads the file), microcode as stored (big-endian
+// dwords), to translate like a draw's and put through the driver before their first draw. 0.6.3 (review r61 #2):
+// handed over several at once - the renderer takes its lock once for the batch, so a reader at low priority holds it
+// only briefly. Any thread; copies the bytes.
 // `variant` says which part of the game's shader record this is (layer 2: 0 = the whole microcode region, 1 = the code
 // after its literal-constant block); XenosPrebuildVariantHits(v) = new draw pipelines so far whose pixel shader was a
 // prebuilt one of that variant, so layer 2 can stop offering a variant a game never draws.
-bool XenosPrebuildWanted();
-// 0.6.3 (review r61 #2): handed over several at once - the renderer takes its lock once for the batch, so a reader at
-// low priority holds it only briefly. Any thread; copies the bytes.
 struct XenosPrebuildShaderRef {
   const void* be_ucode;
   uint32_t size_bytes;
@@ -227,18 +227,10 @@ void XenosInstallProfilerIfRequested();
 void XenosInstallDrawLogIfRequested();
 // --gow2_resolve_log_frames="1500,2400": log every EDRAM copy/clear of those frames (source, destination, formats).
 void XenosInstallResolveLogIfRequested();
-// GitHub #185: --gow2_resolve_log_small=N logs colour copies up to N x N pixels with the first texel they wrote.
-void XenosInstallSmallResolveLogIfRequested(rex::Runtime* runtime);
-// --gow2_buffer_dump_frame=N (+ --readback_resolve=full): save every resolve of frame N as EXR/PNG.
-void XenosInstallBufferDumpIfRequested(rex::Runtime* runtime);
 // --gow2_shader_dump_dir: write every distinct shader (microcode + the SDK disassembly) once (Stage 3 corpus).
 void XenosInstallShaderDumpIfRequested();
-// --gow2_watch_shaders="ps-<hash>,...": log the loop constants seen by draws using those shaders.
-void XenosInstallShaderWatchIfRequested();
 // --gow2_hold_guest: keep the game's main thread suspended (for the SDK's --trace_gpu_replay).
 void XenosHoldGuestIfRequested(rex::system::XThread* main_thread);
-// --gow2_prim_detail=N: tessellation / 0x10+ primitive detail, point-run lengths, quad-list shaders (job 094).
-void XenosInstallPrimDetailIfRequested();
 // --gow2_renderer=takeover (set by --gow2_gpu=ours, the default): our own D3D12 renderer draws, resolves and presents
 // (notes/44, 50). Also --gow2_shader_cache_dir, --gow2_dxc_dir, --gow2_renderer_debug, --gow2_renderer_log_every,
 // --gow2_renderer_log_aliases, --gow2_shader_threads.
@@ -258,19 +250,6 @@ struct XenosRendererHints {
   bool exposure_readback = false;
 };
 void XenosInstallRendererIfRequested(rex::Runtime* runtime, const XenosRendererHints& hints = {});
-// A game's loading screen has ended (Judgment: its loading cap release) - starts --gow2_after_load_log_s.
-void XenosNoteLoadEnded();
-// --gow2_query_log=N: log every occlusion query of every Nth frame (report addresses, the draws each covers, the
-// emulator's answer read back from guest memory) plus per-frame and per-N-frame counts (Stage 4 reference, notes/46).
-// The hint is D3D library knowledge (layer 1): the end report's offset from the begin report, in bytes (XDK 7645:
-// -32). 0 = not known (addresses only, no answers). Also --gow2_query_log_max_lines, --gow2_query_log_fake.
-struct XenosQueryLogHints {
-  int32_t end_minus_begin = 0;
-};
-void XenosInstallQueryLogIfRequested(rex::Runtime* runtime, const XenosQueryLogHints& hints = {});
-// --gow2_state_coverage=N (Stage 5, notes/49): every N frames, the GPU registers 0x2000-0x3FFF the game writes that our
-// renderer does not read - changing ones with change counts and sample values, then ones set once.
-void XenosInstallStateCoverageIfRequested();
 // --gow2_pm4_shadow=N (Stage 5B, notes/49): our own PM4 processor runs on every ring range (SDK patch 20) and the GPU
 // state it reaches is compared with the SDK's at every draw; summary every N frames.
 void XenosInstallPm4ShadowIfRequested(rex::Runtime* runtime);
