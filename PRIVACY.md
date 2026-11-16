@@ -54,6 +54,35 @@ profile. Saves and achievements stay on your PC. You can also ask for deletion t
 **All connections to the server are encrypted (HTTPS / WSS).** COGBox refuses an unencrypted server address unless the
 server runs on your own PC.
 
+## The Fabricator (the mod store)
+
+The Fabricator is part of online play and uses the same COGBox multiplayer server as above. With **Online play off, the
+Fabricator makes no network calls at all**: the Store and Creator tabs ask you to turn it on, and the Library shows only
+what is on your PC.
+
+**What the server keeps:**
+
+- on each mod you publish: your display name and tag (`Name#1234`), shown to everyone as the creator. Your account ID is
+  never shown;
+- the mod itself: its files, its screenshots (re-encoded by the server, so their metadata is gone), its text, and the
+  versions it keeps;
+- the star ratings you give;
+- the reports you file (a reason, and a note if you wrote one). Only moderators see them, and they see your tag with
+  each one;
+- your library: the list of mods you downloaded through the Fabricator;
+- how often each mod was downloaded, counted once for each account and mod;
+- an upload you started, until it finishes or expires (by default after 24 hours), and then the pieces already sent
+  are deleted.
+
+**Deleting your account** (Social tab, as above) also removes the mods you published and their files, your ratings,
+your library, and the reports you filed. Copies other players already installed stay on their PCs. You can also remove
+one of your own mods on the Creator tab ("Remove from the store").
+
+**On your PC,** the launcher keeps a `fabricator` folder next to it: `ratings.json` (the stars you gave, so the Store
+can show them), `uploads.json` (an upload in progress, so it can be resumed), `downloads` (zips being downloaded or
+waiting to install) and `uploads` (a zip packed from a folder for an upload). Nothing in it is sent anywhere except the
+mod you choose to upload or download. You can delete the folder whenever you like.
+
 ## What COGBox reads and writes on your PC
 
 - **Pictures for the player icon:** when you start a game from COGBox, the game saves its own gamer pictures, title

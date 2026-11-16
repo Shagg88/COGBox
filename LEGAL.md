@@ -83,7 +83,30 @@ the community x360db archive (raw.githubusercontent.com) and the LaunchBox Games
 (images.launchbox-app.com) onto your own PC for your own use. The images belong to their
 owners. See `PRIVACY.md` for everything COGBox sends or downloads.
 
-## 11. Concerns and takedown requests
+## 11. Mods in the Fabricator
+
+The Fabricator is COGBox's mod store: it gives players access to mods made by the community. The mods are the
+creators' work, not COGBox's.
+
+- **No game files, and none from Microsoft.** COGBox's GitHub and GitLab never carry Microsoft's or the games' files, and
+  the Fabricator is not a place to share them. Sections 3 and 5 apply to mods too: no game files, no pirated copies, no
+  copy-protection bypasses.
+- **Uploaders are responsible.** Whoever uploads a mod is responsible for what it contains and for having the right
+  to share it. Don't upload work that isn't yours unless its owner allows it.
+- **Players are responsible.** What you do with a mod you download is up to you (see section 6). Mods are made by
+  other people and come "as is" (section 7); COGBox doesn't promise that a mod works or is safe.
+- **What COGBox checks.** A mod goes live in the store once it passes automatic checks (a valid zip, the allowed
+  sizes and file count, no program files such as `.exe` or `.dll`, no paths that leave the mod folder, a readable
+  `mod.ini` for the right game). A person doesn't look at it first, and COGBox doesn't check what a mod contains
+  beyond that. Players can report a mod (malware, stolen, broken, offensive, other), and moderators look at the reports
+  afterwards.
+- **What a takedown does.** A moderator can take a mod down: it is hidden from the store and its downloads stop.
+  Players who already installed it keep their copy, and their Library shows it as "Taken down". A moderator can also
+  restore a mod, delete its files for good, or stop a creator from publishing.
+- **Concerns about a mod.** Use the contact in section 12 (right now: open a ticket on the project's GitHub page), and
+  say which mod and why. If you hold the rights to something in a mod, include what section 12 asks for.
+
+## 12. Concerns and takedown requests
 
 If you believe something in the COGBox project infringes your rights, or you have any other legal concern, please
 contact us first. We'd much rather fix things quickly and in good faith.

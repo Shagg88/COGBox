@@ -149,6 +149,53 @@ are kept free for them.
 | Two mods give a campaign the same chapter number | The later mod's chapter is left out, and shown |
 | `Api` higher than this COGBox knows | Loaded, with a note to update COGBox |
 
+## Publishing in the Fabricator
+
+The Fabricator is COGBox's mod store. You need Online play on and a signed-in account (Social tab). Open the
+**Fabricator** screen, then its **Creator** tab. The limits below are the server's settings, so the server you publish on
+may use other values; the defaults are in brackets.
+
+**The form.** Pick the mod's folder (COGBox packs it) or a zip you already have, then fill in:
+
+- **Name** (3-60 characters), **game** and **type** (texture pack, campaign, gameplay, visuals, audio, other). Name and
+  version start from your `mod.ini`'s `Name` and `Version` when there is one. The version is up to 24 characters.
+- **Short description** (up to 120 characters) and **description** (up to 8 000).
+- **Screenshots:** 1 to 6, PNG or JPEG, up to 4 MB and 3840x2160 each. The server re-encodes them, which removes their
+  metadata.
+- **Tags:** up to 8, up to 24 characters each.
+- **Side:** everyone, host or client, as in `mod.ini` (the Side table above).
+- **Required mods:** the other mods yours needs.
+- **What's new** (up to 2 000 characters), for a new version.
+
+**Checks.** COGBox checks the mod on your PC before it uploads, and the server checks it again when the upload
+finishes. A mod is refused for: a damaged or encrypted zip; links in the zip, or paths that leave the mod folder; these
+file types: `.exe .dll .xex .xexp .bat .cmd .ps1 .vbs .js .msi .scr .com .lnk`; more than 50 000 files (the server's
+setting); more than 4 GiB packed or 8 GiB unpacked (the server's setting); a `mod.ini` for another game than the one you
+picked, or an `Api` newer than the server knows. The form lists every problem found. When the checks pass, the mod is
+live at once.
+
+**Limits** (the server's settings, defaults in brackets):
+
+- Your account must be at least [3] days old to publish.
+- Each creator has [20 GiB] of space and [3] uploads a day. The whole server takes [50] uploads and [100 GiB] a day.
+- The server stops taking uploads when its disk is more than [85%] full.
+- The server keeps the files of the last [3] versions of a mod; older versions' files are deleted.
+
+**Uploading.** The upload goes in pieces of [16 MiB]. If your connection drops or you close COGBox, publishing the same
+folder or zip again resumes where it stopped. An unfinished upload expires after [24 hours].
+
+**Updates.** To update a mod, publish again on the Creator tab: it is a new version of the same mod, and its game can't
+change. A second mod with the same name and game from the same creator is refused, so publish a change as a new version
+and not as a new mod. Players with an older version see "Update available".
+
+**Installing.** A mod from the store goes in `<Game>\mods\<folder>`, named after the mod, with a `fabricator.json`
+beside its files that records which mod and version it is (it is left out of anything you publish). An update moves
+the old folder to `<Game>\mods\.fabricator-backup\<folder>` first (one backup for each mod), then unpacks the new one.
+Installing, updating and removing are refused while the game is running.
+
+**The Mods tab.** Its "add a zip" button leaves out the same file types as the Fabricator's checks, so a hand-added mod
+can't carry a program.
+
 ## Testing a mod (developer switches)
 
 These are command-line switches for the game (add them in the launcher's extra arguments). They change nothing unless
