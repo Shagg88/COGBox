@@ -1,0 +1,79 @@
+diff --git a/resources/templates/codegen/pch_h.inja b/resources/templates/codegen/pch_h.inja
+index ab71526e..ccb7ef0e 100644
+--- a/resources/templates/codegen/pch_h.inja
++++ b/resources/templates/codegen/pch_h.inja
+@@ -155,6 +155,41 @@ extern PPCFuncMapping PPCFuncMappings[];
+ #define REX_STORE_U32(x, y) (*(volatile u32*)(base + (u32)(x) + REX_PHYS_HOST_OFFSET(x)) = __builtin_bswap32(y))
+ #define REX_STORE_U64(x, y) (*(volatile u64*)(base + (u32)(x) + REX_PHYS_HOST_OFFSET(x)) = __builtin_bswap64(y))
+ 
++// COGBox patch 111 (rexglue 55dd9b0 ported, stores part): stvlx / stvrx write the same bytes to the same addresses as the
++// old loop of single-byte stores, in at most two overlapping host stores. All bytes of one stvlx / stvrx lie in one
++// 16-byte quadword, so one REX_PHYS_HOST_OFFSET covers them.
++static inline void RexStoreGuestBytes(u8* host, const u8* bytes, u32 count) {
++  if (count == 16) {
++    std::memcpy(host, bytes, 16);
++  } else if (count >= 8) {
++    std::memcpy(host, bytes, 8);
++    std::memcpy(host + count - 8, bytes + count - 8, 8);
++  } else if (count >= 4) {
++    std::memcpy(host, bytes, 4);
++    std::memcpy(host + count - 4, bytes + count - 4, 4);
++  } else if (count >= 2) {
++    std::memcpy(host, bytes, 2);
++    std::memcpy(host + count - 2, bytes + count - 2, 2);
++  } else if (count == 1) {
++    host[0] = bytes[0];
++  }
++}
++#define REX_STVLX(x, v)                                                                       \
++  do {                                                                                        \
++    const u32 _rex_ea = (u32)(x);                                                             \
++    u8 _rex_b[16];                                                                            \
++    for (int _rex_i = 0; _rex_i < 16; _rex_i++) _rex_b[_rex_i] = (v)[15 - _rex_i];            \
++    RexStoreGuestBytes(base + _rex_ea + REX_PHYS_HOST_OFFSET(_rex_ea), _rex_b, 16 - (_rex_ea & 0xF)); \
++  } while (0)
++#define REX_STVRX(x, v)                                                                       \
++  do {                                                                                        \
++    const u32 _rex_ea = (u32)(x);                                                             \
++    const u32 _rex_n = _rex_ea & 0xF, _rex_q = _rex_ea & ~0xFu;                               \
++    u8 _rex_b[16];                                                                            \
++    for (int _rex_i = 0; _rex_i < 16; _rex_i++) _rex_b[_rex_i] = (v)[15 - _rex_i];            \
++    RexStoreGuestBytes(base + _rex_q + REX_PHYS_HOST_OFFSET(_rex_q), _rex_b + 16 - _rex_n, _rex_n); \
++  } while (0)
++
+ // Gears2-Native SDK patch 28: accesses based on the stack pointer (r1) - stack frames, register saves - never reach
+ // the 0xE0000000+ physical views, so they skip the REX_PHYS_HOST_OFFSET compare (about a third of all loads/stores).
+ #define REX_SLOAD_U8(x) (*(volatile u8*)(base + (u32)(x)))
+diff --git a/src/codegen/builders/memory.cpp b/src/codegen/builders/memory.cpp
+index e81b9e55..1098e6b5 100644
+--- a/src/codegen/builders/memory.cpp
++++ b/src/codegen/builders/memory.cpp
+@@ -627,23 +627,20 @@ bool build_stvewx(BuilderContext& ctx) {
+   return true;
+ }
+ 
++// COGBox patch 111 (rexglue 55dd9b0 ported, the stores part): stvlx / stvrx were a loop of up to 16 volatile single-byte
++// guest stores; now at most two overlapping host stores (REX_STVLX / REX_STVRX in the generated <project>_pch.h, same
++// bytes, same addresses - REX_STORE_U8 is a plain store, so a raw host store of the same bytes is equivalent).
+ bool build_stvlx(BuilderContext& ctx) {
+-  // TODO(tomc): vectorize
+   // NOTE: accounting for the full vector reversal here
+   emitVectorEA(ctx);
+-
+-  ctx.println("\tfor (size_t i = 0; i < (16 - ({} & 0xF)); i++)", ctx.ea());
+-  ctx.println("\t\tREX_STORE_U8({} + i, {}.u8[15 - i]);", ctx.ea(), ctx.v(ctx.insn.operands[0]));
++  ctx.println("\tREX_STVLX({}, {}.u8);", ctx.ea(), ctx.v(ctx.insn.operands[0]));
+   return true;
+ }
+ 
+ bool build_stvrx(BuilderContext& ctx) {
+-  // TODO(tomc): vectorize
+   // NOTE: accounting for the full vector reversal here
+   emitVectorEA(ctx);
+-
+-  ctx.println("\tfor (size_t i = 0; i < ({} & 0xF); i++)", ctx.ea());
+-  ctx.println("\t\tREX_STORE_U8({} - i - 1, {}.u8[i]);", ctx.ea(), ctx.v(ctx.insn.operands[0]));
++  ctx.println("\tREX_STVRX({}, {}.u8);", ctx.ea(), ctx.v(ctx.insn.operands[0]));
+   return true;
+ }
+ 

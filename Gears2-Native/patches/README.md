@@ -2,7 +2,7 @@
 
 COGBox's runtime (`rexruntime.dll`) is the rexglue SDK at tag
 `nightly-20261002-bd833a2a` with these patches.
-0.6.3's runtime (rexruntime 063b) is 0.6.2's plus patches 104, 106 and 107. 0.6.4's (064a) adds 108; 064b adds 110.
+0.6.3's runtime (rexruntime 063b) is 0.6.2's plus patches 104, 106 and 107. 0.6.4's (064a) adds 108; 064b adds 110; 064c is 064b with patch 110's start-up self-check fixed (job 1934).
 
 ## Quick way
 
@@ -99,6 +99,15 @@ order (the notes below say where a patch needs a different folder or `patch -p` 
   clear error; start-up self-check (marker written at physical 0x1000, read back through 0xE0000000) catches a host that
   maps it wrong (older Wine); `-DREX_E0_VIEW_MAPPED=0` in the generated code keeps the old layout. Review r106. Its
   game-side half is the two templates, not this diff (the test template `test/ppc_config_h.inja` stays on the old layout).
+  064c (job 1935): the self-check's marker write and read are volatile - clang -O2 dropped the plain memcpy store (it
+  looked dead before the page's memset) and the check failed on a correctly mapped host (jobs 1930b / 1934).
+- `sdk-patch111-vector-stores.diff` (0.6.4, after 110; the code generator `rexglue.exe`, not the runtime; job 1932):
+  rexglue 55dd9b0 (its stores part) ported. stvlx / stvrx are emitted as `REX_STVLX(ea, v.u8)` / `REX_STVRX(ea, v.u8)`
+  instead of a byte-by-byte loop: the 16 bytes are reversed once and written with at most two overlapping memcpys.
+  The macros live in the pch template (`Gears2-Native/codegen-templates/codegen/pch_h.inja`, with patch 110's half).
+  Same bytes as the loop in 256,000 checked cases (and a reviewer's 61,440). Gears 3 TU6, job 1936: patch 110 0.7 %
+  and 110 + 111 1.4 % less frame time than 0.6.4 without them (PGO off, three runs each, every 110 + 111 run faster).
+  Needs a code generator built with it (`work\t1932\tool-T1` on the build PC) in each game's SDK prefix.
 - `sdk-patch108-xma-edge-decoder.diff` + `sdk-patch108-ffmpeg-xmaframes.diff` (0.6.4, after 107; the two go together):
   the XMA audio decoder follows Xenia Edge's (has207, edge b9a46a3, commits 37bf631..0ce969b: multi-stream buffer
   switches, loop end frames cut at their end subframe, seeks to a subframe (DWORD1 bits 24-26 = decode_subframe, which

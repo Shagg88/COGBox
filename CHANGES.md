@@ -12,8 +12,9 @@
   the fine timer the games ask for back to its 15.6 ms tick while the window was hidden; COGBox now opts out of that
   (as Xenia Canary does).
 - **Faster game memory access** (all four games): addresses in the top part of the Xbox 360's memory no longer need an
-  extra step on every access - the PC maps that memory the way the console does (rexglue's change, brought over).
-  Needs Windows 10 version 1803 or newer.
+  extra step on every access - the PC maps that memory the way the console does (rexglue's change, brought over),
+  and the game code writes 16-byte vector values in one or two steps instead of byte by byte. About 1.5% faster in
+  Gears 3. Needs Windows 10 version 1803 or newer.
 - **Built for AVX2 CPUs** (all four games): the game code now uses the AVX2 / FMA / BMI2 instructions of Intel Core
   (Haswell, 2013) and AMD Ryzen / Excavator CPUs and newer (the README already listed an AVX2 CPU as needed). A separate
   multiply and add stay separate, as in the Xbox 360 code. On a CPU without AVX2 COGBox says so in plain words instead of
