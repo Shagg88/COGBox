@@ -11887,7 +11887,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     }
     bool failed = false;
     for (size_t i = 0; i < export_readback_failed_.size();) {
-      const auto [b, size] = export_readback_failed_[i];
+      const uint32_t b = export_readback_failed_[i].base, size = export_readback_failed_[i].size;
       constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
       bool live = false;  // a page of it still GPU-current: guest memory may still lack that export
       for (uint32_t p = (b & 0x1FFFFFFFu) >> kShift; p <= ((b & 0x1FFFFFFFu) + size - 1) >> kShift && !live; ++p)
@@ -11903,20 +11903,25 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
   }
   // r80 L6: a read-back that failed (not issued, or not landed), kept while a page of it is GPU-current (bounded).
   // r84 L2: an identical range is kept once, so a range that fails every frame cannot push other entries out.
-  void NoteReadbackFailed(uint32_t base, uint32_t size) {
-    for (const auto& f : export_readback_failed_)
-      if (f.first == base && f.second == size) return;
+  // r85: seq = the newest read-back sequence number this failure is not covered by (only a read-back issued after it,
+  // seq > this, holds the exports the failed copy missed).
+  void NoteReadbackFailed(uint32_t base, uint32_t size, uint64_t seq) {
+    for (auto& f : export_readback_failed_)
+      if (f.base == base && f.size == size) {
+        f.seq = std::max(f.seq, seq);
+        return;
+      }
     if (export_readback_failed_.size() >= 64) export_readback_failed_.erase(export_readback_failed_.begin());
-    export_readback_failed_.emplace_back(base, size);
+    export_readback_failed_.push_back({base, size, seq});
   }
   // r84 L2: a landed read-back put the mirror's current bytes into guest memory over [base, base + size), so a failure
   // recorded earlier inside that range no longer applies (without this, one transient failure left the switch off over
   // re-exported pages - which stay GPU-current - for the rest of the session).
-  void ClearReadbackFailedCoveredBy(uint32_t base, uint32_t size) {
+  void ClearReadbackFailedCoveredBy(uint32_t base, uint32_t size, uint64_t seq) {
     const uint64_t a = base, e = uint64_t(base) + size;
     for (size_t i = 0; i < export_readback_failed_.size();) {
       const auto& f = export_readback_failed_[i];
-      if (f.first >= a && uint64_t(f.first) + f.second <= e)
+      if (f.seq < seq && f.base >= a && uint64_t(f.base) + f.size <= e)
         export_readback_failed_.erase(export_readback_failed_.begin() + ptrdiff_t(i));
       else
         ++i;
@@ -11949,7 +11954,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     for (const auto& [a, e] : export_ranges_) {  // in address order
       const uint32_t base = uint32_t(a), size = uint32_t(e - a);
       if (const gpu::ReadbackHandle h = backend_->ReadbackGuest(base, size)) {
-        ExportReadback rb{h, base, size, {}};
+        ExportReadback rb{h, base, size, {}, ++export_readback_seq_};
         if (export_settle_) {  // green-vine review: the versions this copy holds (recorded after every export so far)
           constexpr uint32_t kShift = rr::GuestWatch::kPageShift;
           const uint32_t first = (base & 0x1FFFFFFFu) >> kShift, last = ((base & 0x1FFFFFFFu) + size - 1) >> kShift;
@@ -11961,7 +11966,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         ++stats_.memexport_readbacks_issued;
       } else {
         ++stats_.memexport_readback_failures;
-        NoteReadbackFailed(base, size);
+        NoteReadbackFailed(base, size, export_readback_seq_);  // read-backs issued so far predate this export
       }
     }
     export_ranges_.clear();
@@ -11984,8 +11989,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       backend_->ReleaseReadback(e.handle);
       ExportReadback done = std::move(export_readbacks_.front());
       export_readbacks_.pop_front();
-      if (!landed) NoteReadbackFailed(done.base, done.size);
-      else ClearReadbackFailedCoveredBy(done.base, done.size);
+      if (!landed) NoteReadbackFailed(done.base, done.size, done.seq);
+      else ClearReadbackFailedCoveredBy(done.base, done.size, done.seq);
       if (landed && !done.versions.empty()) SettleExportPages(done);
     }
   }
@@ -14884,13 +14889,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     gpu::ReadbackHandle handle = 0;
     uint32_t base = 0, size = 0;
     std::vector<uint32_t> versions;  // green-vine review: per page from base's page, the GPU-current version copied (~0u: none)
+    uint64_t seq = 0;                // r85: issue order (export_readback_seq_)
   };
   bool export_settle_ = false;  // --gow2_renderer_export_settle (green-vine review)
   uint32_t export_unwatchable_logged_ = 0;
   uint64_t watch_exact_logged_ = 0;  // GuestWatch::GpuPagesBumpedExact at the last summary
   std::deque<ExportReadback> export_readbacks_;
   std::map<uint64_t, uint64_t> export_ranges_;  // patch 0042: start -> end, gathered this frame, merged
-  std::vector<std::pair<uint32_t, uint32_t>> export_readback_failed_;  // r80 L6: NoteReadbackFailed (base, size)
+  struct FailedReadback {
+    uint32_t base, size;
+    uint64_t seq;  // r85: only a landed read-back with a larger seq clears it
+  };
+  std::vector<FailedReadback> export_readback_failed_;  // r80 L6: NoteReadbackFailed
+  uint64_t export_readback_seq_ = 0;                    // r85: ExportReadback::seq of the last issued read-back
   std::unique_ptr<uint8_t[]> gpu_page_origin_;  // #315 diagnostic: per page, TextureCache::kGpuPage* (TagGpuPages)
   uint32_t memexport_logged_ = 0;
   std::unordered_set<uint64_t> memexport_vs_seen_;   // patch 0012: export vertex shaders logged once each
