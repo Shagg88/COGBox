@@ -186,4 +186,28 @@ describe('fabricator upload routes', () => {
     const big = Buffer.alloc(1024 + 2048, 1);
     expect((await putChunk(me, id, 0, big)).statusCode).toBe(413);
   });
+  it('serves the public store without sign-in: listing, page, image', async () => {
+    const me = await claim('Baird');
+    const zip = await threeChunkZip();
+    const r = await fullUpload(me, zip);
+    expect(r.statusCode).toBe(200);
+    const list = await app.inject({ method: 'GET', url: `${API}/mods?search=horde&sort=bogus` });
+    expect(list.statusCode).toBe(200);
+    expect(list.headers['cache-control']).toBe('public, max-age=60');
+    const { mods, total } = list.json();
+    expect(total).toBe(1);
+    expect(mods[0].author).toMatch(/^Baird#\d+$/);
+    expect(JSON.stringify(list.json())).not.toContain(me.uuid);
+    const page = await app.inject({ method: 'GET', url: `${API}/mods/${mods[0].id}` });
+    expect(page.statusCode).toBe(200);
+    expect(page.json().versions.length).toBe(1);
+    expect((await app.inject({ method: 'GET', url: `${API}/mods/99999` })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: `${API}/mods/abc` })).statusCode).toBe(404);
+    const img = await app.inject({ method: 'GET', url: mods[0].screen });
+    expect(img.statusCode).toBe(200);
+    expect(img.headers['content-type']).toBe('image/png');
+    expect(img.headers['cache-control']).toBe('public, max-age=86400');
+    expect((await app.inject({ method: 'GET', url: `${API}/images/..%2F..%2Fmaster.db` })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: `${API}/images/${'0'.repeat(64)}.png` })).statusCode).toBe(404);
+  });
 });

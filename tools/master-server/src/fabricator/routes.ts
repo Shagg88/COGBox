@@ -3,6 +3,8 @@ import type { DatabaseInstance } from '../db.js';
 import { checkAuthHeader, type AuthedUser } from '../auth.js';
 import type { FabSettings } from './settings.js';
 import type { FabStore } from './store.js';
+import fs from 'node:fs';
+import { listMods, modPage, type SortKey } from './catalog.js';
 import {
   canPublish, cancelUpload, chunkCount, expireUploads, finishUpload, getUpload, normalizeMeta, ownLiveMod,
   putChunk, putScreen, startUpload, uploadProblems, MAX_SCREENS, type UploadRow,
@@ -14,6 +16,8 @@ const UPLOAD_ID = /^[A-Za-z0-9_-]{8,64}$/;
 const SHA = /^[0-9a-f]{64}$/;
 const SCREEN_LIMIT = 4 * 1024 * 1024 + 1024;
 const EXPIRE_EVERY_MS = 10 * 60 * 1000;
+const SORTS = new Set<string>(['popular', 'rating', 'new', 'updated', 'name']);
+const IMAGE_KEY = /^[0-9a-f]{64}\.png$/;
 const AUTH_ERROR = { error: 'Authorization: COGBox <uuid>:<token> required' };
 
 // The Fabricator API (mounted at /api/v1/fabricator). Log lines never carry tokens, uuids, addresses or paths.
@@ -28,6 +32,36 @@ export const fabricatorRoutes: FastifyPluginAsync<FabRouteOptions> = async (fast
     timer.unref();
   });
   fastify.addHook('onClose', async () => { if (timer) clearInterval(timer); timer = null; });
+
+  // The public store: no sign-in, cached for a minute (images for a day: their names are content hashes).
+  const text = (v: unknown, max = 200): string | undefined => (typeof v === 'string' && v.length > 0 ? v.slice(0, max) : undefined);
+  fastify.get<{ Querystring: Record<string, unknown> }>('/mods', async (req, reply) => {
+    const q = req.query ?? {};
+    const sort = typeof q.sort === 'string' && SORTS.has(q.sort) ? (q.sort as SortKey) : 'popular';
+    const page = Number(q.page);
+    const perPage = Number(q.per_page);
+    reply.header('Cache-Control', 'public, max-age=60');
+    return listMods(db, {
+      search: text(q.search), game: text(q.game, 24), type: text(q.type, 24), sort,
+      page: Number.isFinite(page) ? page : 1, perPage: Number.isFinite(perPage) && perPage > 0 ? perPage : 24,
+    }, now());
+  });
+
+  fastify.get<{ Params: { id: string } }>('/mods/:id', async (req, reply) => {
+    const page = /^\d{1,9}$/.test(req.params.id) ? modPage(db, Number(req.params.id), now()) : null;
+    if (!page) return reply.status(404).send({ error: 'mod not found' });
+    reply.header('Cache-Control', 'public, max-age=60');
+    return page;
+  });
+
+  fastify.get<{ Params: { key: string } }>('/images/:key', async (req, reply) => {
+    const key = req.params.key;
+    if (!IMAGE_KEY.test(key)) return reply.status(404).send({ error: 'image not found' });
+    const file = store.pathOf(key);
+    if (!fs.existsSync(file)) return reply.status(404).send({ error: 'image not found' });
+    reply.header('Cache-Control', 'public, max-age=86400');
+    return reply.type('image/png').send(fs.createReadStream(file));
+  });
 
   // Upload sessions: every route needs a signed-in account, checked before any body is read.
   await fastify.register(async (up) => {
