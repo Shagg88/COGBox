@@ -1537,3 +1537,13 @@ Full (original) = Complet (original)
 Balanced = Équilibré
 Performance = Performances
 Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows. = Moins d'ombres petites et lointaines pour une fréquence d'images plus élevée là où les ombres ralentissent le jeu (combats chargés). Les ombres proches et grandes, les personnages et les cinématiques gardent les leurs ; les autres disparaissent avec le fondu du jeu. Équilibré : deux fois la taille minimale d'ombre du jeu. Performances : trois fois, avec des ombres un peu plus douces.
+# 0.6.4: the Mods tab's lines ({1}, {2}, {3} are filled in: names and numbers)
+Left out by the game: {1} = Écarté par le jeu : {1}
+Texture pack: 1 texture = Pack de textures : 1 texture
+Texture pack: {1} textures = Pack de textures : {1} textures
+made for a newer COGBox (mod API {1}; this one has {2}) = fait pour un COGBox plus récent (API de mods {1} ; celui-ci a {2})
+Select Chapter: Act {1} {2}, chapter {3} = Sélection du chapitre : Acte {1} {2}, chapitre {3}
+Select Chapter: Act {1} {2}, chapters {3} = Sélection du chapitre : Acte {1} {2}, chapitres {3}
+(one player) = (un joueur)
+(co-op up to {1}) = (coop jusqu'à {1})
+its chapters' place in Select Chapter shows once the game's files are in = la place de ses chapitres dans Sélection du chapitre s'affiche une fois les fichiers du jeu présents

@@ -1539,3 +1539,13 @@ Full (original) = 전체(원본)
 Balanced = 균형
 Performance = 성능
 Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows. = 그림자 때문에 게임이 느려지는 곳(치열한 전투)에서 프레임 속도를 높이기 위해 작고 먼 그림자를 줄입니다. 가깝고 큰 그림자, 캐릭터와 컷신의 그림자는 그대로 유지되고, 나머지는 게임 자체의 페이드로 사라집니다. 균형: 게임 최소 그림자 크기의 2배. 성능: 3배, 그리고 그림자가 약간 더 부드러워집니다.
+# 0.6.4: the Mods tab's lines ({1}, {2}, {3} are filled in: names and numbers)
+Left out by the game: {1} = 게임에서 제외됨: {1}
+Texture pack: 1 texture = 텍스처 팩: 텍스처 1개
+Texture pack: {1} textures = 텍스처 팩: 텍스처 {1}개
+made for a newer COGBox (mod API {1}; this one has {2}) = 더 새로운 COGBox용 (모드 API {1}, 이 버전은 {2})
+Select Chapter: Act {1} {2}, chapter {3} = 챕터 선택: {1}막 {2}, 챕터 {3}
+Select Chapter: Act {1} {2}, chapters {3} = 챕터 선택: {1}막 {2}, 챕터 {3}
+(one player) = (1인용)
+(co-op up to {1}) = (최대 {1}인 협동)
+its chapters' place in Select Chapter shows once the game's files are in = 챕터 선택에서의 위치는 게임 파일이 준비되면 표시됩니다

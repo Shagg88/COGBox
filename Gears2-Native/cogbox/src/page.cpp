@@ -1360,10 +1360,11 @@ static void mods_tab(App &a, int g)
             }
             if (running) ImGui::EndDisabled();
             // Gears 3: what the game will make of it (mods.cpp apply_mod_rules)
-            if (m.enabled && !m.problem.empty()) lamp_line(3, "Left out by the game: " + m.problem);
+            // 0.6.4: built from translated texts with gaps (trf); lamp_line's own tr() then finds no key and leaves them
+            if (m.enabled && !m.problem.empty()) lamp_line(3, trf("Left out by the game: {1}", { m.problem }));
             else if (m.enabled && !m.campaign.empty()) lamp_line(1, m.campaign);
-            if (m.textures) lamp_line(m.enabled ? 1 : 0, "Texture pack: " + std::to_string(m.textures) + " texture" +
-                                                             (m.textures == 1 ? "" : "s"));
+            if (m.textures) lamp_line(m.enabled ? 1 : 0, m.textures == 1 ? tr(std::string("Texture pack: 1 texture"))
+                                                                         : trf("Texture pack: {1} textures", { std::to_string(m.textures) }));
             for (const std::string &n : m.notes) ui_note("mod.ini: " + n, col::amber);
             ImGui::PopID();
         }

@@ -1539,3 +1539,13 @@ Full (original) = 完整（原版）
 Balanced = 平衡
 Performance = 性能
 Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows. = 在阴影拖慢游戏的场景（激烈战斗）中减少小型和远处的阴影以提高帧率。近处和大型阴影、角色和过场动画的阴影保持不变；其余阴影以游戏自身的淡出效果消失。平衡：游戏最小阴影尺寸的两倍。性能：三倍，并且阴影稍微柔和一些。
+# 0.6.4: the Mods tab's lines ({1}, {2}, {3} are filled in: names and numbers)
+Left out by the game: {1} = 被游戏排除：{1}
+Texture pack: 1 texture = 纹理包：1 个纹理
+Texture pack: {1} textures = 纹理包：{1} 个纹理
+made for a newer COGBox (mod API {1}; this one has {2}) = 为更新版 COGBox 制作（模组 API {1}；当前为 {2}）
+Select Chapter: Act {1} {2}, chapter {3} = 选择章节：第 {1} 幕 {2}，第 {3} 章
+Select Chapter: Act {1} {2}, chapters {3} = 选择章节：第 {1} 幕 {2}，第 {3} 章
+(one player) = （单人）
+(co-op up to {1}) = （最多 {1} 人合作）
+its chapters' place in Select Chapter shows once the game's files are in = 其章节在选择章节中的位置会在游戏文件就绪后显示

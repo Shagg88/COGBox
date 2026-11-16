@@ -1547,3 +1547,12 @@ Full (original) = Teljes (eredeti)
 Balanced = Kiegyensúlyozott
 Performance = Teljesítmény
 Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows. = Kevesebb kis és távoli árnyék a magasabb képkockasebességért ott, ahol az árnyékok lassítják a játékot (zsúfolt harcok). A közeli és nagy árnyékok, a szereplők és az átvezetők megtartják a sajátjukat; a többi a játék saját áttűnésével halványul el. Kiegyensúlyozott: a játék legkisebb árnyékméretének kétszerese. Teljesítmény: háromszorosa, és kissé lágyabb árnyékok.
+# 0.6.4: the Mods tab's lines ({1}, {2}, {3} are filled in: names and numbers)
+Left out by the game: {1} = A játék kihagyta: {1}
+Texture pack: 1 texture = Textúracsomag: 1 textúra
+Texture pack: {1} textures = Textúracsomag: {1} textúra
+made for a newer COGBox (mod API {1}; this one has {2}) = újabb COGBoxhoz készült (mod API {1}; ennek {2})
+Select Chapter: Act {1} {2}, chapter {3} = Fejezet választás: Felvonás {1} {2}, fejezet {3}
+Select Chapter: Act {1} {2}, chapters {3} = Fejezet választás: Felvonás {1} {2}, fejezetek {3}
+(one player) = (egy játékos)
+(co-op up to {1}) = (kooperatív legfeljebb {1} főig)

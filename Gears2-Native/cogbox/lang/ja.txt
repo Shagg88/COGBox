@@ -1539,3 +1539,13 @@ Full (original) = フル（オリジナル）
 Balanced = バランス
 Performance = パフォーマンス
 Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows. = 影が重くなる場面（激しい戦闘）でフレームレートを上げるため、小さい影や遠くの影を減らします。近くの影や大きな影、キャラクターやカットシーンの影はそのままで、それ以外はゲーム本来のフェードで消えます。バランス：ゲームの最小影サイズの2倍。パフォーマンス：3倍、さらに影が少し柔らかくなります。
+# 0.6.4: the Mods tab's lines ({1}, {2}, {3} are filled in: names and numbers)
+Left out by the game: {1} = ゲームが除外: {1}
+Texture pack: 1 texture = テクスチャパック: 1 テクスチャ
+Texture pack: {1} textures = テクスチャパック: {1} テクスチャ
+made for a newer COGBox (mod API {1}; this one has {2}) = 新しい COGBox 向け（MOD API {1}、この COGBox は {2}）
+Select Chapter: Act {1} {2}, chapter {3} = チャプター選択: 第{1}幕 {2}、チャプター {3}
+Select Chapter: Act {1} {2}, chapters {3} = チャプター選択: 第{1}幕 {2}、チャプター {3}
+(one player) = （1人用）
+(co-op up to {1}) = （最大{1}人の協力プレイ）
+its chapters' place in Select Chapter shows once the game's files are in = チャプター選択での位置は、ゲームのファイルがそろうと表示されます

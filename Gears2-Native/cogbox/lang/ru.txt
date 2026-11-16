@@ -1543,3 +1543,13 @@ Full (original) = Полная (оригинал)
 Balanced = Сбалансированная
 Performance = Производительность
 Fewer small and distant shadows for a higher frame rate where shadows slow the game down (busy fights). Close and large shadows, characters and cutscenes keep theirs; the rest fade out with the game's own fade. Balanced: twice the game's minimum shadow size. Performance: three times, and slightly softer shadows. = Меньше мелких и дальних теней ради более высокой частоты кадров там, где тени замедляют игру (напряжённые бои). Близкие и крупные тени, персонажи и ролики сохраняют свои; остальные исчезают с собственным затуханием игры. Сбалансированная: вдвое больше минимального размера тени игры. Производительность: втрое, и чуть более мягкие тени.
+# 0.6.4: the Mods tab's lines ({1}, {2}, {3} are filled in: names and numbers)
+Left out by the game: {1} = Пропущено игрой: {1}
+Texture pack: 1 texture = Пакет текстур: 1 текстура
+Texture pack: {1} textures = Пакет текстур: текстур: {1}
+made for a newer COGBox (mod API {1}; this one has {2}) = сделан для более новой COGBox (API модов {1}; у этой {2})
+Select Chapter: Act {1} {2}, chapter {3} = Выбор главы: Акт {1} {2}, глава {3}
+Select Chapter: Act {1} {2}, chapters {3} = Выбор главы: Акт {1} {2}, главы {3}
+(one player) = (один игрок)
+(co-op up to {1}) = (кооператив до {1})
+its chapters' place in Select Chapter shows once the game's files are in = место его глав в «Выборе главы» появится, когда будут файлы игры
