@@ -235,16 +235,18 @@ endif()
 if(DEFINED ENV{GN_PGO_PROFILE})
     set(GN_PGO_PROFILE "$ENV{GN_PGO_PROFILE}")
 endif()
-# Patch 0160 (Shagg 12:58 "PGO should be the default"): with no GN_PGO given, a build uses the game version's stored
-# profile out\pgo\gow2-<base|tu6>.profdata when it is there (a training job puts it there) and is a normal build when it
-# is not. GN_PGO=off / gen / use given by a job still win.
-if(NOT DEFINED ENV{GN_PGO} AND (GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto"))
+# Patch 0160 made the stored profile the default; 0.6.4 turns that off again (below).
+# 0.6.4 (Shagg 16 Nov: "We can just do PGO off" - the stored profiles are from 25 Oct, before AVX2 and patch 110, and job
+# 1936's PGO-off Gears 3 ran faster than job 1925's with the profile): no GN_PGO given = a normal build. The next profiles
+# are to be trained after the move to the latest rexglue. GN_PGO=use with no GN_PGO_PROFILE still takes the stored one.
+if(GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto")
+    set(GN_PGO "off")
+    message(STATUS "Gears2-Native: PGO off (the default; GN_PGO=use for a profile-guided build)")
+endif()
+if((GN_PGO STREQUAL "use" OR GN_PGO STREQUAL "iruse") AND GN_PGO_PROFILE STREQUAL "")
     set(gn_pgo_stored "${CMAKE_SOURCE_DIR}/out/pgo/gow2-${GN_GAME_VERSION}.profdata")
     if(EXISTS "${gn_pgo_stored}")
-        set(GN_PGO "use")
         set(GN_PGO_PROFILE "${gn_pgo_stored}")
-    else()
-        message(STATUS "Gears2-Native: no stored profile ${gn_pgo_stored} - normal build (no PGO)")
     endif()
 endif()
 set(gn_pgo_targets gow2_recomp gow2 gn_layer0_xenos gn_layer1_xdk7645 gn_layer2_ue3)

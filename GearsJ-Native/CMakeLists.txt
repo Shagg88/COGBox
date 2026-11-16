@@ -269,13 +269,17 @@ endif()
 if(DEFINED ENV{GN_PGO_PROFILE})
     set(GN_PGO_PROFILE "$ENV{GN_PGO_PROFILE}")
 endif()
-if(NOT DEFINED ENV{GN_PGO} AND (GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto"))
+# 0.6.4 (Shagg 16 Nov: "We can just do PGO off" - the stored profiles are from 25 Oct, before AVX2 and patch 110, and job
+# 1936's PGO-off Gears 3 ran faster than job 1925's with the profile): no GN_PGO given = a normal build. The next profiles
+# are to be trained after the move to the latest rexglue. GN_PGO=use with no GN_PGO_PROFILE still takes the stored one.
+if(GN_PGO STREQUAL "" OR GN_PGO STREQUAL "auto")
+    set(GN_PGO "off")
+    message(STATUS "GearsJ-Native: PGO off (the default; GN_PGO=use for a profile-guided build)")
+endif()
+if((GN_PGO STREQUAL "use" OR GN_PGO STREQUAL "iruse") AND GN_PGO_PROFILE STREQUAL "")
     set(gn_pgo_stored "${CMAKE_SOURCE_DIR}/out/pgo/gowj.profdata")
     if(EXISTS "${gn_pgo_stored}")
-        set(GN_PGO "use")
         set(GN_PGO_PROFILE "${gn_pgo_stored}")
-    else()
-        message(STATUS "GearsJ-Native: no stored profile ${gn_pgo_stored} - normal build (no PGO)")
     endif()
 endif()
 # gowj_recomp is the recompiled game code (rexglue_setup_target); there is no layer 1 target in Judgment.
