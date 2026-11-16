@@ -185,7 +185,7 @@ std::optional<FabInstallRecord> fab_read_record(const std::string &folder)
 bool fab_write_record(const std::string &folder, const FabInstallRecord &r)
 {
     json j = {{"mod", r.mod}, {"version", r.version}, {"version_text", r.version_text}, {"sha256", r.sha256}};
-    return write_file(join(folder, "fabricator.json"), j.dump(2) + "\n");   // write_file: temporary file, then replaced
+    return write_file(join(folder, "fabricator.json"), j.dump(2, ' ', false, json::error_handler_t::replace) + "\n");   // write_file: temporary file, then replaced
 }
 
 // ---- zip check (mirrors tools/master-server/src/fabricator/checks.ts) ----
