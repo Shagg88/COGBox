@@ -66,7 +66,7 @@ static void apply_mod_rules(int g, std::vector<ModItem> &out)
     if (std::string(game_def(g).key) != "gears3") return;
     namespace fs = std::filesystem;
     std::error_code ec;
-    std::string sig;
+    std::string sig = i18n_current() + ";";   // review r1940: its lines are translated here, so a language switch rebuilds them
     for (const ModItem &m : out) {
         sig += m.folder + (m.enabled ? "+" : "-");
         const fs::path dir = fs::path(widen(m.path));
