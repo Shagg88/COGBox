@@ -69,6 +69,7 @@ struct Response {
     bool cancelled = false;    // progress->cancel stopped the send
     bool stopped = false;      // the sink stopped the read
     bool complete = false;     // the whole answer was read
+    bool too_big = false;      // a text answer over kMaxAnswer: not read further, not to be trusted
 };
 
 Response send_request(const ServerUrl& server, const Request& q) {
@@ -107,9 +108,10 @@ Response send_request(const ServerUrl& server, const Request& q) {
                                          WINHTTP_NO_HEADER_INDEX))
                     range[0] = 0;
                 to_sink = !q.begin || q.begin((int)status, narrow(range));
+                if (!to_sink) res.stopped = true;   // refused: the body is not read at all
             }
             std::string piece(kPiece, '\0');
-            for (;;) {
+            while (!res.stopped) {
                 DWORD avail = 0, got = 0;
                 if (!WinHttpQueryDataAvailable(r, &avail)) break;
                 if (avail == 0) { res.complete = true; break; }
@@ -118,7 +120,7 @@ Response send_request(const ServerUrl& server, const Request& q) {
                     if (!q.sink(piece.data(), got)) { res.stopped = true; break; }
                 } else {
                     res.body.append(piece.data(), got);
-                    if (res.body.size() > kMaxAnswer) break;
+                    if (res.body.size() > kMaxAnswer) { res.too_big = true; break; }
                 }
             }
         }
@@ -132,6 +134,7 @@ Response send_request(const ServerUrl& server, const Request& q) {
 // What an answer that is not a success means, for the creator: the server's problems / error, else its status.
 std::string problem_of(const Response& r) {
     if (r.status == 0) return "no answer from the server: check the connection and try again";
+    if (r.too_big) return "the server's answer is too large (" + std::to_string(r.status) + ")";
     json j = json::parse(r.body, nullptr, false);
     if (j.is_object()) {
         if (j.contains("problems") && j["problems"].is_array()) {
@@ -159,9 +162,12 @@ json load_uploads() {
     if (!j.is_object() || !j.contains("uploads") || !j["uploads"].is_array()) j = json{ { "uploads", json::array() } };
     return j;
 }
-void save_uploads(const json& j) {
+// util's write_file (a temporary file, then replaced). Its temporary name is fixed (<file>.tmp-cogbox), not per
+// process: two launchers sharing one folder could collide, which only costs a resume (left as it is). False when
+// uploads.json could not be written: the upload still goes on, it just cannot be resumed after a stop.
+bool save_uploads(const json& j) {
     make_dirs(fab_state_dir());
-    write_file(uploads_file(), j.dump(2));
+    return write_file(uploads_file(), j.dump(2));
 }
 
 std::string server_key(const ServerUrl& s) {
@@ -209,23 +215,40 @@ Session find_upload(const UploadKey& k, std::vector<std::string>* stale) {
     }
     return s;
 }
-void remember_upload(const UploadKey& k, const Session& s) {
+// False when uploads.json could not be written: the upload goes on, but cannot be resumed after a stop.
+bool remember_upload(const UploadKey& k, const Session& s) {
     std::lock_guard<std::mutex> lock(g_state_mutex);
     json j = load_uploads();
     json e = { { "id", s.id }, { "server", k.server }, { "account", k.account }, { "path", k.path }, { "size", k.size },
                { "sha256", k.sha256 }, { "meta_sha256", k.meta_sha256 }, { "mod_id", k.mod_id }, { "chunk_bytes", s.chunk_bytes },
                { "started", unix_now() } };
     j["uploads"].push_back(e);
-    save_uploads(j);
+    return save_uploads(j);
 }
-void forget_upload(const std::string& id) {
+// False when uploads.json could not be written: the entry stays, and the next upload of that file finds the server no
+// longer has the session (404) and forgets it then.
+bool forget_upload(const std::string& id) {
     std::lock_guard<std::mutex> lock(g_state_mutex);
     json j = load_uploads();
     json kept = json::array();
     for (const auto& e : j["uploads"])
         if (!e.is_object() || e.value("id", "") != id) kept.push_back(e);
     j["uploads"] = kept;
-    save_uploads(j);
+    return save_uploads(j);
+}
+
+// The number of chunks a file of size bytes has (0 for a chunk size outside 1 .. kMaxChunk).
+int64_t chunks_for(int64_t size, int64_t chunk_bytes) {
+    return chunk_bytes > 0 && chunk_bytes <= kMaxChunk ? (size + chunk_bytes - 1) / chunk_bytes : 0;
+}
+
+// Waits ms milliseconds in short steps; false when cancel was set meanwhile.
+bool wait_unless_cancelled(const std::atomic<bool>& cancel, int ms) {
+    for (int t = 0; t < ms; t += 50) {
+        if (cancel) return false;
+        Sleep(50);
+    }
+    return !cancel;
 }
 
 // An upload id goes into a path: only the server's characters (A-Z a-z 0-9 _ -).
@@ -301,6 +324,7 @@ HttpResult fab_call(const ServerUrl& server, const std::string& method, const st
     if (!json_body.empty()) q.headers = L"Content-Type: application/json\r\n";
     Response r = send_request(server, q);
     HttpResult out;
+    if (r.too_big) return out;   // status 0: no usable answer (a cut JSON text is never handed on)
     out.status = r.status;
     out.body = std::move(r.body);
     return out;
@@ -358,9 +382,16 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
         if (!s.id.empty()) {
             Response st = call("GET", base + "/" + s.id, "");
             json j = json::parse(st.body, nullptr, false);
-            if (st.status == 200 && j.is_object() && j.value("chunks", (int64_t)0) > 0) {
-                s.chunks = j.value("chunks", (int64_t)0);
-                s.chunks_done = std::max<int64_t>(0, j.value("chunks_done", (int64_t)0));
+            const int64_t want = chunks_for(size, s.chunk_bytes);
+            if (st.status == 200 && j.is_object() && j.value("chunks", (int64_t)0) == want && want > 0 &&
+                j.value("chunks_done", (int64_t)-1) >= 0 && j.value("chunks_done", (int64_t)-1) <= want) {
+                s.chunks = want;
+                s.chunks_done = j.value("chunks_done", (int64_t)0);
+            } else if (st.status == 200) {
+                // a session that does not fit this file (another chunk size, a count that does not add up): a new one
+                call("DELETE", base + "/" + s.id, "");
+                forget_upload(s.id);
+                s = Session();
             } else if (st.status == 404 || st.status == 410) {
                 forget_upload(s.id);
                 s = Session();
@@ -377,9 +408,9 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
             s.id = j.value("id", "");
             s.chunk_bytes = j.value("chunk_bytes", (int64_t)0);
             s.chunks = j.value("chunks", (int64_t)0);
-            if (!safe_id(s.id) || s.chunk_bytes <= 0 || s.chunk_bytes > kMaxChunk || s.chunks != (size + s.chunk_bytes - 1) / s.chunk_bytes)
+            if (!safe_id(s.id) || s.chunks <= 0 || s.chunks != chunks_for(size, s.chunk_bytes))
                 return "the server's answer to a new upload is not understood";
-            remember_upload(key, s);
+            remember_upload(key, s);   // when this fails the upload still goes on: it just cannot be resumed
         }
         const std::string at = base + "/" + s.id;
 
@@ -410,7 +441,8 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
         while (step == Step::Ok && n < s.chunks) {
             if (progress.cancel) return "cancelled";
             const int64_t from = n * s.chunk_bytes;
-            const size_t len = (size_t)std::min(s.chunk_bytes, size - from);
+            if (n < 0 || from >= size) return "the upload got out of step with the server: try again";
+            const size_t len = (size_t)std::min(s.chunk_bytes, size - from);   // 1 .. chunk_bytes
             if (!read_at(zip.h, from, &buf[0], len)) return "the mod's zip cannot be read";
             Sha256 h;
             h.add(buf.data(), len);
@@ -439,8 +471,8 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
                 if (j.is_object() && j.contains("chunks_done") && j["chunks_done"].is_number_integer()) {
                     n = std::max<int64_t>(0, std::min(s.chunks, j["chunks_done"].get<int64_t>()));   // out of step: the server says where
                     progress.done = std::min(size, n * s.chunk_bytes);
-                } else {
-                    Sleep(r.status == 429 ? 2000 : 500);   // busy, or a chunk damaged on the way: again
+                } else if (!wait_unless_cancelled(progress.cancel, r.status == 429 ? 2000 : 500)) {   // busy, or damaged on the way
+                    return "cancelled";
                 }
                 continue;
             }
@@ -482,6 +514,32 @@ std::string fab_full_url(const std::string& server_url, const std::string& url) 
     return base + url;
 }
 
+namespace {
+// <dest>.part.json says which file <dest>.part is the start of: {"sha256", "size"}. A part file without it, or with
+// another file's, is not gone on from (an older version's bytes would only end in a hash mismatch).
+bool part_is_for(const std::string& note, const std::string& sha256, int64_t size) {
+    std::string text;
+    if (!read_file(note, text, 4096)) return false;
+    json j = json::parse(text, nullptr, false);
+    return j.is_object() && j.value("sha256", "") == sha256 && j.value("size", (int64_t)-1) == size;
+}
+void drop_part(const std::string& part, const std::string& note) {
+    DeleteFileW(widen(part).c_str());
+    DeleteFileW(widen(note).c_str());
+}
+// "bytes <start>-<end>/<total>" read into start and total; false when it is not that.
+bool parse_content_range(const std::string& range, int64_t* start, int64_t* total) {
+    if (range.rfind("bytes ", 0) != 0) return false;
+    char* end = nullptr;
+    *start = _strtoi64(range.c_str() + 6, &end, 10);
+    if (end == range.c_str() + 6 || *end != '-') return false;
+    const size_t slash = range.find('/');
+    if (slash == std::string::npos || slash + 1 >= range.size()) return false;
+    *total = _strtoi64(range.c_str() + slash + 1, &end, 10);
+    return end != range.c_str() + slash + 1 && *end == 0;
+}
+}  // namespace
+
 std::string fab_download(const std::string& url, const std::string& dest_path, const std::string& sha256, int64_t size,
                          FabProgress& progress) {
     progress.done = 0;
@@ -492,93 +550,100 @@ std::string fab_download(const std::string& url, const std::string& dest_path, c
     const size_t slash = url.find('/', url.find("://") + 3);
     if (!server || slash == std::string::npos) return "the download address is not a full address";
     const std::string path = url.substr(slash);
-    const std::string part = dest_path + ".part";
+    const std::string want = lower(sha256);
+    const std::string part = dest_path + ".part", note = dest_path + ".part.json";
     const std::wstring wpart = widen(part);
 
-    // what an earlier try left: hashed again, then only the rest is asked for
-    auto sha = std::make_unique<Sha256>();
-    int64_t have = 0;
-    if (file_exists(part)) {
-        bool ok = false, cancelled = false;
-        {
-            FileCloser f{ open_read(part) };
-            LARGE_INTEGER sz{};
-            if (f.h != INVALID_HANDLE_VALUE && GetFileSizeEx(f.h, &sz) && sz.QuadPart <= size) {
-                ok = hash_into(f.h, sz.QuadPart, *sha, progress.cancel, &cancelled);
-                if (ok) have = sz.QuadPart;
+    // A second round only after the server could not go on from the part file: then from the start.
+    for (int attempt = 0; attempt < 2; attempt++) {
+        // what an earlier try left for this same file: hashed again, then only the rest is asked for
+        auto sha = std::make_unique<Sha256>();
+        int64_t have = 0;
+        if (file_exists(part) && !part_is_for(note, want, size)) drop_part(part, note);
+        if (file_exists(part)) {
+            bool ok = false, cancelled = false;
+            {
+                FileCloser f{ open_read(part) };
+                LARGE_INTEGER sz{};
+                if (f.h != INVALID_HANDLE_VALUE && GetFileSizeEx(f.h, &sz) && sz.QuadPart <= size) {
+                    ok = hash_into(f.h, sz.QuadPart, *sha, progress.cancel, &cancelled);
+                    if (ok) have = sz.QuadPart;
+                }
             }
-        }
-        if (cancelled) return "cancelled";
-        if (!ok) {   // unreadable, or longer than the file: from the start
-            DeleteFileW(wpart.c_str());
-            sha = std::make_unique<Sha256>();
-        }
-    }
-    progress.done = have;
-
-    if (have < size) {
-        HANDLE out = INVALID_HANDLE_VALUE;
-        bool write_failed = false, wrong_part = false;
-        int64_t got = have;
-        Request q;
-        q.method = "GET";
-        q.path = path;
-        if (have > 0) q.headers = L"Range: bytes=" + std::to_wstring(have) + L"-\r\n";
-        q.begin = [&](int status, const std::string& range) {
-            int64_t start = 0;
-            if (status == 206) {
-                // "bytes <start>-<end>/<size>": only the part asked for is taken
-                if (range.rfind("bytes ", 0) != 0) { wrong_part = true; return false; }
-                start = _strtoi64(range.c_str() + 6, nullptr, 10);
-                if (start != have) { wrong_part = true; return false; }
-            }
-            if (start == 0) {   // the whole file (a 200, or a part file that was empty): from the start
-                got = 0;
+            if (cancelled) return "cancelled";
+            if (!ok) {   // unreadable, or longer than the file: from the start
+                drop_part(part, note);
                 sha = std::make_unique<Sha256>();
-                progress.done = 0;
+                have = 0;
             }
-            out = CreateFileW(wpart.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, start == 0 ? CREATE_ALWAYS : OPEN_EXISTING,
-                              FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (out == INVALID_HANDLE_VALUE) { write_failed = true; return false; }
-            LARGE_INTEGER end;
-            end.QuadPart = start;
-            if (!SetFilePointerEx(out, end, nullptr, FILE_BEGIN) || !SetEndOfFile(out)) { write_failed = true; return false; }
-            return true;
-        };
-        q.sink = [&](const char* p, size_t n) {
-            if (progress.cancel) return false;
-            if (got + (int64_t)n > size) { got += (int64_t)n; return false; }   // more than announced: not this file
-            DWORD put = 0;
-            if (!WriteFile(out, p, (DWORD)n, &put, nullptr) || put != n) { write_failed = true; return false; }
-            sha->add(p, n);
-            got += (int64_t)n;
-            progress.done = got;
-            return true;
-        };
-        Response r = send_request(*server, q);
-        if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
-        if (write_failed) return "the download cannot be written (is the disk full?)";
-        if (r.status == 410) return "address expired: " + problem_of(r) + " - ask for a new download address";
-        if (r.status == 416 || wrong_part) {
-            DeleteFileW(wpart.c_str());   // the server cannot go on from the part file: next time from the start
-            return "the server could not go on from the partly downloaded file: try again";
         }
-        if (r.status != 200 && r.status != 206) return r.status == 0 ? problem_of(r) : "download: " + problem_of(r);
-        if (got > size) {
-            DeleteFileW(wpart.c_str());
+        progress.done = have;
+
+        if (have < size) {
+            HANDLE out = INVALID_HANDLE_VALUE;
+            bool write_failed = false, wrong_part = false;
+            int64_t got = have;
+            Request q;
+            q.method = "GET";
+            q.path = path;
+            if (have > 0) q.headers = L"Range: bytes=" + std::to_wstring(have) + L"-\r\n";
+            q.begin = [&](int status, const std::string& range) {
+                int64_t start = 0, total = 0;
+                // a 206 must go on exactly where the part file ends, and be of the file announced
+                if (status == 206 && (!parse_content_range(range, &start, &total) || start != have || total != size)) {
+                    wrong_part = true;
+                    return false;
+                }
+                if (start == 0) {   // the whole file (a 200, or a part file that was empty): from the start
+                    got = 0;
+                    sha = std::make_unique<Sha256>();
+                    progress.done = 0;
+                    if (!write_file(note, json{ { "sha256", want }, { "size", size } }.dump())) { write_failed = true; return false; }
+                }
+                out = CreateFileW(wpart.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, start == 0 ? CREATE_ALWAYS : OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (out == INVALID_HANDLE_VALUE) { write_failed = true; return false; }
+                LARGE_INTEGER end;
+                end.QuadPart = start;
+                if (!SetFilePointerEx(out, end, nullptr, FILE_BEGIN) || !SetEndOfFile(out)) { write_failed = true; return false; }
+                return true;
+            };
+            q.sink = [&](const char* p, size_t n) {
+                if (progress.cancel) return false;
+                if (got + (int64_t)n > size) { got += (int64_t)n; return false; }   // more than announced: not this file
+                DWORD put = 0;
+                if (!WriteFile(out, p, (DWORD)n, &put, nullptr) || put != n) { write_failed = true; return false; }
+                sha->add(p, n);
+                got += (int64_t)n;
+                progress.done = got;
+                return true;
+            };
+            Response r = send_request(*server, q);
+            if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
+            if (write_failed) return "the download cannot be written (is the disk full?)";
+            if (r.status == 410) return "address expired: " + problem_of(r) + " - ask for a new download address";
+            if (r.status == 416 || wrong_part) {
+                drop_part(part, note);   // the server cannot go on from the part file: from the start
+                continue;
+            }
+            if (r.status != 200 && r.status != 206) return r.status == 0 ? problem_of(r) : "download: " + problem_of(r);
+            if (got > size) {
+                drop_part(part, note);
+                return "hash mismatch";
+            }
+            if (progress.cancel && got < size) return "cancelled";
+            if (got < size) return "the download stopped early: try again (it goes on from where it stopped)";
+        }
+
+        if (sha->hex() != want) {
+            drop_part(part, note);
             return "hash mismatch";
         }
-        if (progress.cancel && got < size) return "cancelled";
-        if (got < size) return "the download stopped early: try again (it goes on from where it stopped)";
-        have = got;
+        if (!MoveFileExW(wpart.c_str(), widen(dest_path).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+            return "the downloaded file cannot be put in place";
+        DeleteFileW(widen(note).c_str());
+        progress.done = size;
+        return "";
     }
-
-    if (sha->hex() != lower(sha256)) {
-        DeleteFileW(wpart.c_str());
-        return "hash mismatch";
-    }
-    if (!MoveFileExW(wpart.c_str(), widen(dest_path).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-        return "the downloaded file cannot be put in place";
-    progress.done = size;
-    return "";
+    return "the server could not go on from the partly downloaded file: try again";
 }

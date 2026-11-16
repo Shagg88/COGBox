@@ -16,7 +16,9 @@ HttpResult fab_call(const ServerUrl& server, const std::string& method, const st
                     const SocialAccount* account);
 
 // Bytes done of total (upload: the zip's bytes the server holds; download: the bytes in the file). cancel: the transfer
-// stops at its next step and answers "cancelled" (what was done is kept for the next try).
+// stops at its next step and answers "cancelled" (what was done is kept for the next try). An upload first reads the
+// whole zip once for its SHA-256 (the server wants it before the first chunk): done stays at 0 meanwhile, because done
+// is what the server holds and a bar that filled for the hash would have to jump back.
 struct FabProgress {
     std::atomic<int64_t> done{0}, total{0};
     std::atomic<bool> cancel{false};
@@ -33,7 +35,9 @@ std::string fab_upload(const ServerUrl& server, const SocialAccount& account, co
                        int64_t* mod_out);
 
 // Downloads url (a full address: fab_full_url) to dest_path through <dest>.part, going on from an existing part file
-// with a Range request (the part is hashed again first). The file is renamed to dest only when its size and SHA-256
+// with a Range request (the part is hashed again first). <dest>.part.json beside it holds the sha256 and size the part
+// belongs to: a part of any other file (or without one) is deleted and the download starts at 0, and so is one the
+// server's 206 does not continue exactly (start or total size differ). The file is renamed to dest only when its size and SHA-256
 // match; on a mismatch the part file is deleted and "hash mismatch" returned. An expired address or a mod taken down
 // answers a problem starting "address expired" (ask POST /mods/:id/download for a new one). "" on success.
 std::string fab_download(const std::string& url, const std::string& dest_path, const std::string& sha256, int64_t size,
