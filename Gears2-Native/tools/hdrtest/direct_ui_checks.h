@@ -92,7 +92,7 @@ static int UiPaddingBench(gpu::Backend& backend,xenos::renderer::ShaderCompiler&
   std::sort(before.begin(),before.end());std::sort(after.begin(),after.end());
   std::printf("PASS 4K UI target-shape benchmark: 35 overlays, identical pixels, zero preservation copies in both paths; median GPU visible %.3f ms, padded %.3f ms. Additional UI coverage and gameplay FPS are not measured by this test.\n",before[3],after[3]);return 0;
 }
-static int AsyncUiCacheCheck(gpu::Backend& backend,xenos::renderer::ShaderCompiler& compiler,const char* path) {
+static int AsyncUiCacheCheck(gpu::Backend& backend,xenos::renderer::ShaderCompiler& compiler,const char* path,bool sceneFilter=false) {
   std::ifstream file(path,std::ios::binary|std::ios::ate);if(!file)return 85;
   const size_t bytes=size_t(file.tellg());if(!bytes||bytes%4)return 85;
   std::vector<uint32_t> code(bytes/4);file.seekg(0);file.read(reinterpret_cast<char*>(code.data()),bytes);if(!file)return 85;
@@ -105,11 +105,14 @@ static int AsyncUiCacheCheck(gpu::Backend& backend,xenos::renderer::ShaderCompil
   std::atomic<unsigned> hlslCalls=0;
   xenos::renderer::ShaderCache cache(backend,[&]{return std::make_unique<NoHlslCompiler>(hlslCalls);},{},2);
   cache.SetDxbc(true);using Mode=hdr::OverlayMode;
-  const auto& ui=cache.GetNativeOverlay(0x1234,code.data(),code.size(),Mode::kUi);
+  const uint64_t hash=sceneFilter?(code.size()==96?0x8356D7C3D65FE328ull:0x212F89E82422D29Dull):0x1234;
+  const auto mode=sceneFilter?Mode::kFilterLinear:Mode::kUi;
+  const auto& ui=cache.GetNativeOverlay(hash,code.data(),code.size(),mode);
   if(ui.state!=xenos::renderer::ShaderState::kPending||cache.PendingCount()!=1)return 86;
-  const auto& repeated=cache.GetNativeOverlay(0x1234,code.data(),code.size(),Mode::kUi);
+  const auto& repeated=cache.GetNativeOverlay(hash,code.data(),code.size(),mode);
   if(&ui!=&repeated||cache.PendingCount()!=1)return 86;
-  const auto& premult=cache.GetNativeOverlay(0x1234,code.data(),code.size(),Mode::kPremultiplied);
+  const auto& premult=cache.GetNativeOverlay(sceneFilter?hash:0x1234,code.data(),code.size(),
+      sceneFilter?Mode::kFilterPremultiplied:Mode::kPremultiplied);
   if(&premult==&ui||cache.PendingCount()!=2)return 86;
   const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
   while((!ui.ready()||!premult.ready()) && std::chrono::steady_clock::now()<deadline) {
@@ -120,6 +123,15 @@ static int AsyncUiCacheCheck(gpu::Backend& backend,xenos::renderer::ShaderCompil
   d.color_formats[0]=gpu::Format::kR16G16B16A16Float;d.color_write_masks[0]=15;d.depth_clip=false;
   d.ps=ui.handle;if(!backend.GetGraphicsPipeline(d))return 88;
   d.ps=premult.handle;if(!backend.GetGraphicsPipeline(d))return 88;
-  if(cache.PendingCount()||!cache.GetNativeOverlay(0x1234,code.data(),code.size(),Mode::kUi).ready())return 89;
+  if(sceneFilter) {
+    std::vector<uint8_t> geometry;std::string error;
+    if(backend.GetShaderIL()==gpu::ShaderIL::kDxil)geometry=xenos::dxbc_gen::RectListGeometryShader();
+    else if(!compiler.Compile(xenos::renderer::builtin::kRectListGs,gpu::ShaderStage::kGeometry,backend.GetShaderIL(),geometry,error))return 88;
+    d.gs=backend.CreateShader(gpu::ShaderStage::kGeometry,geometry.data(),geometry.size());
+    if(!d.gs || !backend.GetGraphicsPipeline(d))return 88;
+    d.ps=ui.handle;if(!backend.GetGraphicsPipeline(d))return 88;
+  }
+  if(cache.PendingCount()||!cache.GetNativeOverlay(hash,code.data(),code.size(),mode).ready())return 89;
+  if(sceneFilter && cache.GetNativeOverlay(hash^1,code.data(),code.size(),mode).state!=xenos::renderer::ShaderState::kFailed)return 89;
   std::puts("PASS asynchronous UI variants: caller returns pending, duplicate requests cached, modes independent, worker translation without DXC, real pipelines ready");return 0;
 }

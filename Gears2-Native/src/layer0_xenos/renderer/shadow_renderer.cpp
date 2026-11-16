@@ -30,6 +30,7 @@
 #include <xenos/renderer/shader_cache.h>
 #include <xenos/renderer/native_hdr.h>
 #include <xenos/renderer/hdr_overlay.h>
+#include <xenos/renderer/hdr_scene_effect.h>
 #include <xenos/renderer/texture_cache.h>
 #include <xenos/renderer/queries.h>
 #include <xenos/renderer/recipe_pack.h>
@@ -1282,6 +1283,7 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_display_mark, false, "Gears2",
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_paper_white, 203.0, "Gears2",
                       "Stage 7.3 (--present_hdr): nits of the game's full white (BT.2408 reference white 203)");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_ui_white, 203.0, "Gears2", "Native HDR: independent HUD and reload white in nits");
+REXCVAR_DEFINE_BOOL(gow2_hdr_scene_effects, false, "Gears2", "Experimental selective HDR blur: one lazy versioned input, 128 MiB cap; requires gameplay validation");
 REXCVAR_DEFINE_BOOL(gow2_hdr_ui_automatic, true, "Gears2", "Additional bounded screen-space UI in native HDR; direct cached targets, asynchronous variants; false selects upstream behavior");
 REXCVAR_DEFINE_BOOL(gow2_hdr_native, true, "Gears2", "Use the captured Gears 2 / Gears 3 TU6 float scene/HUD profiles in HDR10");
 REXCVAR_DEFINE_DOUBLE(gow2_hdr_peak, 1000.0, "Gears2", "Native HDR: display peak in nits for highlight roll-off");
@@ -1671,6 +1673,11 @@ class ShadowRenderer final : public DrawObserver, public XenosUcodeSink {
     if (dir.empty()) dir = std::filesystem::current_path() / "out" / "shader-cache";
     cache_ = std::make_unique<rr::ShaderCache>(*backend_, factory, dir, uint32_t(std::max(0, REXCVAR_GET(gow2_shader_threads))));
     cache_->SetCompactFloatConstants(REXCVAR_GET(gow2_renderer_compact_constants));
+    cache_->SetPrepareNativeEffects(hints_.native_hdr && REXCVAR_GET(present_hdr) && REXCVAR_GET(gow2_hdr_scene_effects));
+    if(hints_.native_hdr && REXCVAR_GET(present_hdr) && REXCVAR_GET(gow2_hdr_scene_effects)) {
+      const auto shader=cache_->GetBuiltin("native_hdr_scene_effect_encode",rr::native_hdr::kEncodeSceneForEffects,gpu::ShaderStage::kCompute);
+      if(shader)hdr_effect_encode_=backend_->CreateComputePipeline(shader);
+    }
     cache_->SetPrepareNativeUi(hints_.native_hdr && REXCVAR_GET(present_hdr) && REXCVAR_GET(gow2_hdr_ui_automatic));
     cache_->SetTexSignBySwizzle(REXCVAR_GET(gow2_renderer_tex_sign_swizzle));  // patch 0024
     cache_->SetCanaryR21(REXCVAR_GET(gow2_renderer_canary_r21));  // patch 0041
@@ -2766,6 +2773,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     DecideLoadHold();  // patch 0063
     if (display_ours_) FrameStep("present image", [&] { RequestDisplay(regs, frontbuffer_ptr & 0x1FFFFFFFu, fb_width, fb_height); });
     native_hdr_valid_ = false; // never reuse another frame's scene during menus/loading
+    hdr_effect_resolves_.clear();
     if (!export_ranges_.empty())  // patch 0042: this frame's merged export readbacks
       FrameStep("export readback copies", [&] { IssueExportReadbacks(); });
     FrameStep("submit", [&] { frame_fences_.push_back(backend_->Submit()); });
@@ -4076,6 +4084,9 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       REXLOG_INFO("gow2_native_hdr: automatic UI: {} direct replays, {} preparation misses, {} input rejections; visible {}x{}, allocation {}x{}",
           native_hdr_ui_direct_,native_hdr_ui_pending_,native_hdr_ui_input_rejected_,native_hdr_w_,native_hdr_h_,
           native_hdr_allocated_w_,native_hdr_allocated_h_);
+    if(REXCVAR_GET(gow2_hdr_scene_effects) && (native_hdr_frames_+native_hdr_reference_frames_)%300==0)
+      REXLOG_INFO("gow2_native_hdr: scene effects: {} replays, {} rejected/pending, {} lazy encodes, {} MiB allocated",
+          hdr_effect_draws_,hdr_effect_misses_,hdr_effect_encodes_,hdr_effect_bytes_>>20);
     gpu::ComputeBindings b;
     b.constants[0] = width; b.constants[1] = height;
     b.constants[2] = native ? native_hdr_w_ : width;
@@ -4092,6 +4103,127 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
         ? hdr_encode_matching_size_ : hdr_encode_;
     backend_->Dispatch(pipeline, b, (width + 7) / 8, (height + 7) / 8, 1);
   }
+  struct HdrEffectResolve {
+    rr::native_hdr::SceneLease lease;
+    rr::RenderTargetKey key;
+    gpu::TextureHandle texture=0;
+    uint32_t w=0,h=0,start=0,length=0,endian=0,pitch=0;
+    bool swap=false;
+  };
+  std::unordered_map<uint32_t,HdrEffectResolve> hdr_effect_resolves_;
+  gpu::TextureHandle hdr_effect_proxy_=0;
+  gpu::PipelineHandle hdr_effect_encode_=0;
+  uint32_t hdr_effect_proxy_w_=0,hdr_effect_proxy_h_=0;
+  rr::native_hdr::SceneLease hdr_effect_proxy_lease_;
+  uint32_t hdr_effect_proxy_base_=0;
+  uint64_t hdr_effect_bytes_=0,native_hdr_write_gen_=0;
+  uint64_t hdr_effect_draws_=0,hdr_effect_misses_=0,hdr_effect_encodes_=0;
+  std::unordered_set<uint64_t> hdr_effect_reported_;
+  gpu::TextureHandle EffectAllocation(gpu::TextureHandle old,uint32_t oldw,uint32_t oldh,uint32_t w,uint32_t h) {
+    if(old && oldw==w && oldh==h)return old;
+    const uint64_t previous=old?uint64_t(oldw)*oldh*8:0;
+    if(!rr::native_hdr::SceneEffectAllocationFits(hdr_effect_bytes_,previous,w,h))return 0;
+    gpu::TextureDesc desc;desc.width=w;desc.height=h;desc.format=gpu::Format::kR16G16B16A16Float;
+    desc.usage=gpu::kUsageSampled|gpu::kUsageStorage|gpu::kUsageRenderTarget;
+    desc.debug_name="Selective HDR scene effect";
+    const auto made=backend_->CreateTexture(desc);if(!made)return 0;
+    if(old)backend_->DestroyTexture(old);
+    hdr_effect_bytes_=hdr_effect_bytes_-previous+uint64_t(w)*h*8;return made;
+  }
+  // Resolve leases do not copy pixels. Unknown writes, clears, alias transfers,
+  // changed memory or another frame revoke them rather than guess at provenance.
+  void RecordHdrEffectResolve(const ::xenos::resolve::Info& info,const rr::RenderTarget& rt,
+      gpu::TextureHandle source,uint32_t scale,int32_t exponent,bool swap,uint32_t endian) {
+    if(!REXCVAR_GET(gow2_hdr_scene_effects))return;
+    hdr_effect_resolves_.erase(info.dest_base);
+    const uint32_t w=info.width_div_8*8,h=info.height_div_8*8;
+    if(source!=rt.texture || rt.key.msaa ||
+       !rr::native_hdr::DirectSceneResolve(info.dest_format,exponent,swap,endian,info.x0,info.y0,
+         info.dest_offset_x_div_8*8,info.dest_offset_y_div_8*8,w,h,info.dest_pitch_aligned_div_32*32))return;
+    HdrEffectResolve resolved;resolved.key=rt.key;resolved.w=w*scale;resolved.h=h*scale;
+    resolved.pitch=info.dest_pitch_aligned_div_32*32;
+    if(native_hdr_valid_ && rt.key==native_hdr_key_ && rt.write_gen==native_hdr_write_gen_ &&
+        resolved.w==native_hdr_w_ && resolved.h==native_hdr_h_) {
+      resolved.texture=native_hdr_color_;resolved.swap=swap;
+    }
+    if(!resolved.texture || hdr_effect_resolves_.size()>=32)return;
+    resolved.start=info.dest_extent_start;resolved.length=info.dest_extent_length;resolved.endian=endian;
+    resolved.lease={frame_,rt.write_gen,watch_->Version(resolved.start,resolved.length),rt.id};
+    hdr_effect_resolves_[info.dest_base]=resolved;
+  }
+  template<class Issue>
+  bool NativeHdrEffectDraw(const gpu::GraphicsPipelineDesc& original,gpu::PipelineHandle original_pipeline,
+      const rr::GuestShader& vertex,const rr::GuestShader& shader,rr::RenderTarget* colour,
+      const rr::PipelineState& state,const SystemConstants& constants,const uint32_t* fetch,Issue&& issue) {
+    if(!REXCVAR_GET(gow2_hdr_scene_effects) || !hdr_ || !hdr_encode_ || !REXCVAR_GET(gow2_hdr_native) ||
+       !rr::native_hdr::FindSceneEffect(shader.ucode_hash) || !colour)return false;
+    const auto miss=[&](unsigned reason) {
+      ++hdr_effect_misses_;
+      static constexpr const char* names[]={"target/state","bound input","no HDR resolve","stale/incompatible resolve","shader pending/failed","pipeline pending/failed","allocation/encoder"};
+      if(hdr_effect_reported_.insert(shader.ucode_hash^((uint64_t(reason)+1)*0x9E3779B97F4A7C15ull)).second)
+        REXLOG_INFO("gow2_native_hdr: scene effect {:016X}: {}; target base {} pitch {}, viewport {}x{}, input {:08X}",
+            shader.ucode_hash,names[reason],colour->key.base_tiles,colour->key.pitch_pixels,
+            state.viewport.width,state.viewport.height,(fetch[1]>>12)<<12);
+      return false;
+    };
+    const uint32_t w=native_hdr_w_,h=native_hdr_h_;
+    using F=gpu::BlendFactor;
+    const auto& blend=original.color_blend[0];
+    const bool premult=blend.enable && blend.op==gpu::BlendOp::kAdd && blend.src==F::kOne && blend.dst==F::kInvSrcAlpha;
+    const bool straight=blend.enable && blend.op==gpu::BlendOp::kAdd && blend.src==F::kSrcAlpha && blend.dst==F::kInvSrcAlpha;
+    // First slice: verified blur into the owned HDR scene. Reuse its pixels
+    // outside the original geometry/scissor; no destination preservation copy.
+    const bool geometry_ok=!original.gs || original.gs==rect_gs_ || original.gs==rect_gs_dxbc_;
+    if(original.color_count!=1 || original.samples!=1 || !geometry_ok || original.depth_enable || original.stencil_enable || occ_open_.open ||
+       !native_hdr_valid_ || !(colour->key==native_hdr_key_) || colour->write_gen!=native_hdr_write_gen_ ||
+       (blend.enable && !premult && !straight) || (original.color_write_masks[0]&7)!=7 || constants.color_exp_scale[0]!=1.0f ||
+       colour->format!=gpu::Format::kR8G8B8A8Unorm || shader.texture_slots_2d!=1 || shader.texture_slots!=1 ||
+       shader.memexport || shader.writes_depth || vertex.memexport || vertex.texture_slots ||
+       shader.color_targets_written!=1 || !native_hdr_ui_sources_ready_ || native_hdr_ui_view_count_<1 ||
+       !w || !h || state.viewport.x || state.viewport.y ||
+       state.viewport.width!=float(w) || state.viewport.height!=float(h))return miss(0);
+    rr::TextureCache::SceneInput input;
+    if(!textures_->BoundSceneInput(0,fetch,input))return miss(1);
+    const auto found=hdr_effect_resolves_.find(input.base);if(found==hdr_effect_resolves_.end())return miss(2);
+    const auto& src=found->second;
+    const uint64_t memory_version=watch_->Version(src.start,src.length);
+    const auto& cached=hdr_effect_proxy_lease_;
+    const bool prepared=hdr_effect_proxy_ && hdr_effect_proxy_base_==input.base &&
+        cached.Current(frame_,src.lease.owner_id,src.lease.write_generation,memory_version) &&
+        cached.memory_version==src.lease.memory_version;
+    const auto* owner=rts_->FindAny(src.key);
+    if(src.lease.frame!=frame_ || src.lease.memory_version!=memory_version ||
+       (!prepared && (!owner || !src.lease.Current(frame_,owner->id,owner->write_gen,memory_version))) ||
+       input.width!=src.w || input.height!=src.h || !rr::native_hdr::SceneFetchCompatible(fetch,src.endian,src.pitch))return miss(3);
+    const auto& bound=native_hdr_ui_views_[0];
+    if(bound.texture!=input.texture || bound.zero || bound.signed_view || bound.bits_view)return miss(1);
+    const auto& variant=cache_->GetNativeOverlay(shader.ucode_hash,ps_.dwords,ps_.count,
+        premult?rr::native_hdr::OverlayMode::kFilterPremultiplied:rr::native_hdr::OverlayMode::kFilterLinear);
+    if(!variant.ready())return miss(4);
+    auto desc=original;desc.ps=variant.handle;desc.depth_format=gpu::Format::kUnknown;
+    desc.color_formats[0]=gpu::Format::kR16G16B16A16Float;
+    bool pending=false;const auto pipeline=backend_->GetGraphicsPipeline(desc,true,&pending);if(!pipeline)return miss(5);
+    auto view=bound;
+    if(!prepared) {
+      if(!hdr_effect_encode_)return miss(6);
+      const auto proxy=EffectAllocation(hdr_effect_proxy_,hdr_effect_proxy_w_,hdr_effect_proxy_h_,src.w,src.h);
+      if(!proxy)return miss(6);
+      hdr_effect_proxy_=proxy;hdr_effect_proxy_w_=src.w;hdr_effect_proxy_h_=src.h;
+      gpu::ComputeBindings b;b.srv[0]=src.texture;b.uav_texture=proxy;
+      backend_->Dispatch(hdr_effect_encode_,b,(src.w+7)/8,(src.h+7)/8,1);++hdr_effect_encodes_;
+      hdr_effect_proxy_lease_=src.lease;hdr_effect_proxy_base_=input.base;
+    }
+    view.texture=hdr_effect_proxy_;
+    for(unsigned c=0;c<4;++c)view.components[c]=rr::native_hdr::SceneComponent((fetch[3]>>(1+c*3))&7,src.swap);
+    // Alpha must stay the original alpha; selecting RGB as alpha is unproved.
+    if(view.components[3]!=3)return miss(3);
+    backend_->SetTextures(&view,native_hdr_ui_samplers_,1,1);
+    backend_->SetPipeline(pipeline);issue(nullptr,0,native_hdr_color_);
+    backend_->SetTextures(native_hdr_ui_views_,native_hdr_ui_samplers_,native_hdr_ui_view_count_,native_hdr_ui_sampler_count_);
+    backend_->SetPipeline(original_pipeline);tex_memo_valid_=false;
+    ++hdr_effect_draws_;return true;
+  }
+
   template<class Issue>
   bool NativeHdrUiDraw(const gpu::GraphicsPipelineDesc& original,gpu::PipelineHandle original_pipeline,
       const rr::GuestShader& vertex,const rr::GuestShader& shader,const rr::RenderTarget* colour,
@@ -10127,7 +10259,8 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     PartScope textures_part(*this, kPartTextures);
     // Job 181: the same texture fetch constants as the draw before, in the same frame and release epoch, with no resolve
     // or other texture binding since: the backend still holds exactly these views - skip the lookups and the bind.
-    const bool scene_ui_bind = hdr_ && needs_ps && psg->ucode_hash == rr::native_hdr::kSceneUi;
+    const bool effect_bind=hdr_ && needs_ps && REXCVAR_GET(gow2_hdr_scene_effects) && rr::native_hdr::FindSceneEffect(psg->ucode_hash);
+    const bool scene_ui_bind = hdr_ && needs_ps && (psg->ucode_hash == rr::native_hdr::kSceneUi || effect_bind);
     const bool native_ui_bind=hdr_ && needs_ps && REXCVAR_GET(gow2_hdr_ui_automatic) && native_hdr_valid_ &&
         colour_rt[0] && colour_rt[0]->key==native_hdr_key_;
 
@@ -10199,7 +10332,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
       if (t2d | tcube | t3d) stand_ins = uint32_t(std::popcount(t2d | tcube | t3d));  // texture cache switched off
     }
     if (stand_ins) ++stats_.texture_dependent;  // some slot read the white stand-in
-    if(native_ui_bind) native_hdr_ui_sources_ready_=use_textures_ && !stand_ins;
+    if(native_ui_bind || effect_bind) native_hdr_ui_sources_ready_=use_textures_ && !stand_ins;
     textures_part.Switch(kPartState);  // the pipeline description
 
     // Pipeline.
@@ -10697,9 +10830,19 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
     if (exports && REXCVAR_GET(gow2_renderer_export_prepare_mirror)) MarkExports(r, vsg, true);  // patch 0024
     if (export_shader) backend_->SetGuestWritable(true);
     if (hl_format_ && up_scene_done_ && !export_shader) HudlessDraw(colour_rt, ps, prim, index_count, depth_writes);
-    const bool hdr_ui=psg && !export_shader && NativeHdrUiDraw(d,pipeline,vsg,*psg,colour_rt[0],target,sc,issue);
+    const bool hdr_lineage_before=REXCVAR_GET(gow2_hdr_scene_effects) && native_hdr_valid_ && colour_rt[0] &&
+        colour_rt[0]->key==native_hdr_key_ && colour_rt[0]->write_gen==native_hdr_write_gen_;
+    const bool hdr_effect=psg && !export_shader && NativeHdrEffectDraw(d,pipeline,vsg,*psg,colour_rt[0],ps,sc,&r[kRegFetchConst],issue);
+    const bool hdr_ui=!hdr_effect && psg && !export_shader && NativeHdrUiDraw(d,pipeline,vsg,*psg,colour_rt[0],target,sc,issue);
     issue(target, 0);
-    if (!hdr_ui && psg && !export_shader) NativeHdrDraw(d, pipeline, vsg, *psg, colour_rt[0], ps, sc, issue);
+    if (!hdr_ui && !hdr_effect && psg && !export_shader) NativeHdrDraw(d, pipeline, vsg, *psg, colour_rt[0], ps, sc, issue);
+    if(REXCVAR_GET(gow2_hdr_scene_effects) && colour_rt[0] && colour_rt[0]->key==native_hdr_key_) {
+      const auto& colour=*colour_rt[0];
+      // A UI replay cannot repair a previous clear, alias or unknown writer.
+      // Only a new scene starts lineage; paired later draws may continue it.
+      native_hdr_write_gen_=native_hdr_valid_ && !export_shader && psg &&
+          (rr::native_hdr::IsScene(psg->ucode_hash) || hdr_lineage_before)?colour.write_gen:0;
+    }
     if (export_shader) backend_->SetGuestWritable(false);
     if (exports) {
       ++stats_.memexport_draws;
@@ -13864,6 +14007,7 @@ float4 main(float4 pos : SV_Position, uint s : SV_SampleIndex) : SV_Target0 {
           !ms_src && !dx && !dy && w * source_scale == native_hdr_w_ && h * source_scale == native_hdr_h_)
         d.native_hdr_generation = native_hdr_generation_;
     }
+    if(!rg.copy_dest_array)RecordHdrEffectResolve(info,*rt,resolve_source,source_scale,exp_bias,swap,endian);
   }
   static bool rt_msaa_(uint32_t msaa) { return msaa != 0; }
 

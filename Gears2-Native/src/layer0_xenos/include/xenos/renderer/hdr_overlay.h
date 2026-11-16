@@ -6,7 +6,7 @@
 #include <xenos/renderer/gpu.h>
 
 namespace xenos::renderer::native_hdr {
-enum class OverlayMode : uint8_t { kNone, kUi, kPremultiplied, kModulation, kModulation2x };
+enum class OverlayMode : uint8_t { kNone, kUi, kPremultiplied, kModulation, kModulation2x, kFilterLinear, kFilterPremultiplied };
 enum class FallbackReason : uint8_t { kNoScene, kGeneration, kTarget, kDepth, kMaterial,
   kSceneSetup, kShader, kResource, kVertex, kCount };
 inline constexpr const char* kFallbackNames[] = {

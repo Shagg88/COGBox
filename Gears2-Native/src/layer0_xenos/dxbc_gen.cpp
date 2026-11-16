@@ -1031,7 +1031,10 @@ struct Gen {
         a.OpMov(R(vr), LF(0.0f));
         break;
     }
-    if (al.vector_result.clamp) Sat(vr, S(vr), kXYZW);
+    if (al.vector_result.clamp) {
+      if(opt.native_hdr_filter && al.vector_result.write_mask==7) a.OpMax(R(vr), S(vr), LF(0.0f));
+      else Sat(vr, S(vr), kXYZW);
+    }
     if (al.vector_opcode >= AluVectorOpcode::kKillEq && al.vector_opcode <= AluVectorOpcode::kKillNe) {
       // if (vr.x != 0.0) discard;
       a.OpNE(R(t, kX), S1(vr, 0), LF(0.0f));
@@ -2779,7 +2782,7 @@ struct Gen {
       a.OpDiscard(true, S1(r, 0));
       for (uint32_t i = 0; i < 4; ++i)
         a.OpMul(Dest::O(i), S(Oc(i)), Sys(3).Select(i), opt.clamp_ui_output);
-      if (opt.native_hdr_linear) {
+      if (opt.native_hdr_linear && !opt.native_hdr_filter) {
         // Same operations as the readable HLSL epilogue: bounded, linear UI;
         // original scene grading extended above white, with a hue-preserving
         // shoulder before the UI blend. No expansion of finished SDR pixels.
@@ -2827,6 +2830,24 @@ struct Gen {
           a.OpDiv(R(shoulder, kX), S1(shoulder, 0), S1(m, 0));
           a.OpMul(R(t, kXYZ), S(t), S1(shoulder, 0));
         }
+        a.OpMov(Dest::O(0), S(t));
+      }
+      if(opt.native_hdr_filter && opt.native_hdr_linear) {
+        const uint32_t alpha=Push(),condition=Push();
+        a.OpMax(R(t, kW), S(Oc(0)), LF(0.0f));
+        a.OpMin(R(t, kW), S(t), LF(1.0f));
+        a.OpMax(R(t, kXYZ), S(Oc(0)), LF(0.0f));
+        if(opt.native_hdr_premultiplied) {
+          a.OpLT(R(condition,kX),LF(1e-6f),S1(t,3));
+          a.OpMovC(R(alpha,kX),S1(condition,0),S1(t,3),LF(1.0f));
+          a.OpDiv(R(t,kXYZ),S(t),S1(alpha,0));
+        }
+        a.OpLog(R(t, kXYZ), S(t));
+        a.OpMul(R(t, kXYZ), S(t), LF(2.2f));
+        a.OpExp(R(t, kXYZ), S(t));
+        if(opt.native_hdr_premultiplied)a.OpMul(R(t,kXYZ),S(t),S1(alpha,0));
+        a.OpMin(R(t, kXYZ), S(t), LF(65504.0f));
+        a.OpMul(R(t, kXYZ), S(t), Sys(3).Select(0));
         a.OpMov(Dest::O(0), S(t));
       }
       if (writes_depth_final) {

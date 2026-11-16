@@ -6,6 +6,7 @@
 #include <xenos/dxbc_spirv.h>
 #include <xenos/hlsl.h>
 #include <xenos/renderer/native_hdr.h>
+#include <xenos/renderer/hdr_scene_effect.h>
 #include <xenos/ucode.h>
 
 #include <rex/cvar.h>
@@ -1410,6 +1411,10 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     if (it.dwords.empty()) continue;
     if(prepare_native_ui_ && !it.is_vertex && native_hdr::FindUi(it.hash) && it.hash!=native_hdr::kSceneUi)
       GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kUi,true);
+    if(prepare_native_effects_ && !it.is_vertex && native_hdr::FindSceneEffect(it.hash)) {
+      GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kFilterLinear,true);
+      GetNativeOverlay(it.hash,it.dwords.data(),it.dwords.size(),native_hdr::OverlayMode::kFilterPremultiplied,true);
+    }
     if (dxbc_path && made[i].s && made[i].dt.ok && !shaders_[it.is_vertex ? 1 : 0].count(it.hash)) {
       ++stats_.lookups;
       ++stats_.translated;
@@ -1576,6 +1581,13 @@ const GuestShader& ShaderCache::GetNativeOverlay(uint64_t hash,const uint32_t* d
   if(!dxbc_ || !dwords || !count || mode==native_hdr::OverlayMode::kNone) {
     result.state=ShaderState::kFailed;result.error="ineligible HDR UI variant";return result;
   }
+  const bool filter=mode==native_hdr::OverlayMode::kFilterLinear || mode==native_hdr::OverlayMode::kFilterPremultiplied;
+  if(filter) {
+    const auto* profile=native_hdr::FindSceneEffect(hash);
+    if(!profile || count!=profile->words || Fnv1a64(dwords,count*sizeof(uint32_t))!=profile->fingerprint) {
+      result.state=ShaderState::kFailed;result.error="unverified scene filter";return result;
+    }
+  }
   auto job=std::make_unique<Job>();job->shader=&result;job->overlay_job=true;job->overlay_warm=warm;
   job->name="native-ui-"+std::to_string(hash)+"-"+std::to_string(key);
   job->stage=gpu::ShaderStage::kPixel;job->overlay_decode=DecodeOptions();
@@ -1584,8 +1596,12 @@ const GuestShader& ShaderCache::GetNativeOverlay(uint64_t hash,const uint32_t* d
   options.clamp_ui_output=options.native_hdr_linear=true;
   options.native_hdr_modulation=mode==native_hdr::OverlayMode::kModulation || mode==native_hdr::OverlayMode::kModulation2x;
   options.native_hdr_ui=!options.native_hdr_modulation;
-  options.native_hdr_premultiplied=mode==native_hdr::OverlayMode::kPremultiplied;
+  options.native_hdr_premultiplied=mode==native_hdr::OverlayMode::kPremultiplied || mode==native_hdr::OverlayMode::kFilterPremultiplied;
   options.native_hdr_modulation_x2=mode==native_hdr::OverlayMode::kModulation2x;
+  if(filter) {
+    options.native_hdr_filter=true;options.clamp_ui_output=false;options.native_hdr_ui=false;
+    options.native_hdr_linear=true;
+  }
   result.state=ShaderState::kPending;
   {std::lock_guard<std::mutex> lock(mutex_);(warm?warm_queue_:queue_).push_back(std::move(job));}
   ++in_flight_;++stats_.queued;wake_.notify_one();return result;

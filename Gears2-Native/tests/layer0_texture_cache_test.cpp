@@ -15,6 +15,7 @@
 #include <xenos/renderer/guest_watch.h>
 #include <xenos/renderer/texture_cache.h>
 #include <xenos/renderer/hdr_overlay.h>
+#include <xenos/renderer/hdr_scene_effect.h>
 
 // Stub for guest_watch.cpp's diagnostic log when observer_hub.cpp is not linked into gn_tests.
 uint64_t XenosSwapCount() { return 0; }
@@ -368,4 +369,48 @@ TEST_CASE("HDR UI: geometry and state bound eligibility; replay preserves origin
   input.scene_texture=true;CHECK(hdr::ClassifyOverlay(input,original.color_blend[0])==M::kNone);
   input.scene_texture=false;input.shader_side_effects=true;CHECK(hdr::ClassifyOverlay(input,original.color_blend[0])==M::kNone);
   input.shader_side_effects=false;input.screen_vertex=false;CHECK(hdr::ClassifyOverlay(input,original.color_blend[0])==M::kNone);
+}
+
+TEST_CASE("HDR scene effects: leases reject stale frames, owners, writes and guest memory", "[hdr]") {
+  using xenos::renderer::native_hdr::SceneLease;
+  SceneLease lease{10,17,25,3};
+  CHECK(lease.Current(10,3,17,25));
+  CHECK_FALSE(lease.Current(11,3,17,25));
+  CHECK_FALSE(lease.Current(10,4,17,25));
+  CHECK_FALSE(lease.Current(10,3,18,25));
+  CHECK_FALSE(lease.Current(10,3,17,26));
+  SceneLease empty;CHECK_FALSE(empty.Current(0,0,0,0));
+}
+TEST_CASE("HDR scene effects: only complete canonical RGBA8 resolves and fetches qualify", "[hdr]") {
+  namespace h=xenos::renderer::native_hdr;
+  CHECK(h::DirectSceneResolve(6,0,false,2,0,0,0,0,1280,720,1280));
+  CHECK_FALSE(h::DirectSceneResolve(6,1,false,2,0,0,0,0,1280,720,1280));
+  CHECK(h::DirectSceneResolve(6,0,true,2,0,0,0,0,1280,720,1280));
+  CHECK(h::SceneComponent(0,true)==2);CHECK(h::SceneComponent(2,true)==0);
+  CHECK(h::SceneComponent(1,true)==1);CHECK(h::SceneComponent(3,true)==3);
+  CHECK(h::SceneComponent(0,false)==0);CHECK(h::SceneComponent(7,false)==5);
+  CHECK_FALSE(h::DirectSceneResolve(6,0,false,2,8,0,0,0,1280,720,1280));
+  CHECK_FALSE(h::DirectSceneResolve(6,0,false,2,0,0,8,0,1280,720,1280));
+  CHECK_FALSE(h::DirectSceneResolve(6,0,false,2,0,0,0,0,1200,720,1280));
+  CHECK_FALSE(h::DirectSceneResolve(7,0,false,2,0,0,0,0,1280,720,1280));
+  uint32_t f[6]{};f[0]=(1u<<31)|(40u<<22);f[1]=6|(2<<6);f[3]=3<<10;f[5]=1<<9;
+  CHECK(h::SceneFetchCompatible(f,2,1280));
+  f[3]|=1;CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));f[3]&=~1u;
+  CHECK_FALSE(h::SceneFetchCompatible(f,0,1280));f[0]|=1<<2;CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));
+  f[0]&=~(1u<<2);f[3]=(3<<10)|(1<<13);CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));
+  f[3]=3<<10;f[4]=1<<6;CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));f[4]=0;
+  CHECK_FALSE(h::SceneFetchCompatible(f,2,1344));
+  f[0]&=~(1u<<31);CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));f[0]|=1u<<31;
+  f[5]=0;CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));f[5]=1<<9;
+  f[1]|=1<<10;CHECK_FALSE(h::SceneFetchCompatible(f,2,1280));
+  CHECK_FALSE(h::SceneFetchCompatible(nullptr,2,1280));
+}
+TEST_CASE("HDR scene effects: allocation arithmetic enforces the fixed budget", "[hdr]") {
+  namespace h=xenos::renderer::native_hdr;
+  CHECK(h::SceneEffectAllocationFits(0,0,3840,2160));
+  CHECK(h::SceneEffectAllocationFits(3840ull*2160*8,3840ull*2160*8,5120,2160));
+  CHECK_FALSE(h::SceneEffectAllocationFits(0,0,7680,4320));
+  CHECK_FALSE(h::SceneEffectAllocationFits(0,1,1,1));
+  CHECK_FALSE(h::SceneEffectAllocationFits(0,0,0,2160));
+  CHECK_FALSE(h::SceneEffectAllocationFits(h::kSceneEffectBudget,0,1,1));
 }

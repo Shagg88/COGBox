@@ -122,6 +122,7 @@ static int UiCompositeCheck(gpu::Backend& backend,xenos::renderer::ShaderCompile
 #include "modulation_checks.h"
 #include "automatic_overlay_checks.h"
 #include "direct_ui_checks.h"
+#include "scene_effect_checks.h"
 int main(int argc,char** argv) {
   const bool vulkan=argc>1&&std::string(argv[1])=="vulkan";
   const std::string mode=argc>2?argv[2]:"off";
@@ -134,7 +135,10 @@ int main(int argc,char** argv) {
   auto compiler=xenos::renderer::CreateDxcCompiler({},error);
   if(!compiler) { std::printf("FAIL compiler: %s\n",error.c_str());return 3; }
   if(mode=="ui_cache" && argc==4)return AsyncUiCacheCheck(*backend,*compiler,argv[3]);
+  if(mode=="scene_filter_cache" && argc==4)return AsyncUiCacheCheck(*backend,*compiler,argv[3],true);
   if(mode=="ui_direct")return DirectUiAttachmentCheck(*backend,*compiler);
+  if(mode=="scene_effects")return SceneEffectCheck(*backend,*compiler);
+  if(mode=="scene_encode_bench")return SceneEncodeBench(*backend,*compiler);
   if(mode=="ui_padding_bench")return UiPaddingBench(*backend,*compiler);
   if(mode=="ui_automatic")return AutomaticOverlayCheck(*backend,*compiler);
   if(mode=="ui")return UiCompositeCheck(*backend,*compiler);

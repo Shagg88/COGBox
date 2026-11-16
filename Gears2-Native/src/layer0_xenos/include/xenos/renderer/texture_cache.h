@@ -188,6 +188,8 @@ class TextureCache {
   uint32_t LastScaledMask() const { return last_scaled_mask_; }
   // Only queried for additional post-scene screen-space UI; never replaces scene lineage.
   uint32_t IndependentUiMask(uint32_t slots);
+  struct SceneInput { uint32_t base=0,length=0,width=0,height=0; gpu::TextureHandle texture=0; };
+  bool BoundSceneInput(uint32_t slot,const uint32_t* fetch,SceneInput& out) const;
 
   // Job 047 (resolve-through): a resolve into tiled guest memory at `base` (pitch in texels, 4 or 8 bytes per texel)
   // can write the cached texture that the GPU untile would load from those bytes, if one exists (single level, same

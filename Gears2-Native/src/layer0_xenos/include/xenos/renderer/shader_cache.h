@@ -194,6 +194,7 @@ class ShaderCache {
   const GuestShader& GetNativeOverlay(uint64_t hash, const uint32_t* dwords, size_t count,
                                       native_hdr::OverlayMode mode, bool warm = false);
   void SetPrepareNativeUi(bool on) { prepare_native_ui_ = on; }
+  void SetPrepareNativeEffects(bool on) { prepare_native_effects_ = on; }
   gpu::ShaderHandle GetNativeSceneUi(const uint32_t* dwords, size_t count);
   // True when `s` is no longer pending (ready or failed) on return; waits at most budget_ms.
   bool WaitReady(const GuestShader& s, double budget_ms);
@@ -300,6 +301,7 @@ class ShaderCache {
   std::unordered_map<uint64_t, gpu::ShaderHandle> native_hdr_shaders_;
   std::unordered_map<uint64_t, std::unordered_map<uint8_t, std::unique_ptr<GuestShader>>> native_hdr_overlays_;
   bool prepare_native_ui_ = false;
+  bool prepare_native_effects_ = false;
   ShaderCacheStats stats_;
   bool compact_float_constants_ = false;
   bool tex_sign_by_swizzle_ = false;  // patch 0024
