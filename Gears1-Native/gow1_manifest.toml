@@ -4516,6 +4516,13 @@ name = "Gow1NoGaussianBlurB"
 registers = ["f1"]
 after_instruction = true
 
+# 16:10 (--gow1_no_aspect_lock; game_patches.cpp has the why): the camera's aspect-constrain flag reads 0.
+[[entrypoint.midasm_hook]]
+address = 0x82392528
+name = "Gow1NoAspectLock"
+registers = ["r11"]
+after_instruction = true
+
 # Skip the intro logos (--gow1_skip_logos). The start-up film player (sub around 0x8222E268) plays a table of four
 # films at 0x82F9CE6C - [0] the rating screen (REPLACEME.bik -> ESRB_<lang>), [1] EpicLogo, [2] MGSLogo, [3] Startup -
 # stepping its index at r31+0x44 (`addi r11,r11,1` at 0x8222E280, and 0x8222E2A8 when it passes a film switched off).

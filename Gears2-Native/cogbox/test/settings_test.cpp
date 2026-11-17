@@ -423,8 +423,18 @@ int summary() {
             if (on ? !all : any) { std::cout << "FAIL net rates for game " << static_cast<int>(g) << " (" << (on ? "on" : "off") << ")\n"; ++fails; }
         }
     }
+    {   // 0.6.5: a gow1.exe without --gow1_no_aspect_lock keeps the option off (it would letterbox)
+        Environment e; e.update_ready = true;
+        e.cap.exe_has = [](const std::string& k) { return k != "gow1_no_aspect_lock"; };
+        e.cap.runtime_has = [](const std::string&) { return true; }; e.cap.file_next_to_exe = e.cap.runtime_has;
+        e.monitor_w = 1280; e.monitor_h = 800;
+        Store st; Settings s = st.view(Game::Gears1, e);
+        s.set("AspectRatio", 3);
+        const std::vector<std::string> a = build_args(Game::Gears1, Version::TitleUpdate, s, e, nullptr);
+        if (std::find(a.begin(), a.end(), "--video_mode_width=1152") != a.end()) { std::cout << "FAIL 16:10 old gow1.exe\n"; ++fails; }
+    }
     // 0.6.5 16:10: Aspect ratio 16:10 (index 3, added last) sends a 1152x720 non-widescreen mode; Auto does on a 16:10
-    // screen (1280x800 / 1920x1200) and not on 16:9 (1920x1080) or 21:9 (3440x1440); 16:9 sends no mode; Gears 1 none
+    // screen (1280x800 / 1920x1200) and not on 16:9 (1920x1080) or 21:9 (3440x1440); 16:9 sends no mode; Gears 1 also gets --gow1_no_aspect_lock
     for (Game g : { Game::Gears2, Game::Gears3, Game::Judgment, Game::Gears1 }) {
         struct Case { int ar, w, h; bool want; } cases[] = {
             { 3, 1920, 1080, true }, { 0, 1280, 800, true }, { 0, 1920, 1200, true }, { 0, 1920, 1080, false },
@@ -438,9 +448,13 @@ int summary() {
             s.set("AspectRatio", k.ar);
             const std::vector<std::string> a = build_args(g, Version::TitleUpdate, s, e, nullptr);
             auto has = [&](const std::string& v) { return std::find(a.begin(), a.end(), v) != a.end(); };
-            const bool want = k.want && g != Game::Gears1;   // Gears 1: the option is not offered yet
+            const bool want = k.want;
             const bool sent = has("--video_mode_width=1152") && has("--video_mode_height=720") && has("--video_mode_widescreen=false");
             const bool any = has("--video_mode_width=1152") || has("--video_mode_widescreen=false");
+            if (g == Game::Gears1 && has("--gow1_no_aspect_lock=true") != want) {
+                std::cout << "FAIL 16:10 Gears 1 lock: choice " << k.ar << " screen " << k.w << "x" << k.h << "\n"; ++fails;
+            }
+            if (g != Game::Gears1 && has("--gow1_no_aspect_lock=true")) { std::cout << "FAIL 16:10 lock sent to game " << static_cast<int>(g) << "\n"; ++fails; }
             if (want ? !sent : any) {
                 std::cout << "FAIL 16:10 args: game " << static_cast<int>(g) << " choice " << k.ar << " screen " << k.w << "x" << k.h << "\n";
                 ++fails;

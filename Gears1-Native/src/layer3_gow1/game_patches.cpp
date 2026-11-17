@@ -97,8 +97,15 @@ REXCVAR_DEFINE_BOOL(gow1_no_motion_blur, false, "Gears 1",
                     "No motion blur (Canary's TU5 patch by illusion and boma, as the render's own early exit)");
 REXCVAR_DEFINE_BOOL(gow1_no_gaussian_blur, false, "Gears 1",
                     "No depth of field: the gaussian blur radius 0 (Canary's TU5 patch by boma; the bloom is softer too)");
+// 0.6.5 (Shagg 16 Nov: 16:10): with a 1152x720 video mode Gears 2 / 3 / Judgment fill a 16:10 screen, but Gears 1 kept
+// 16:9 with bars (job 1969's gameplay shots): its view code (sub_82392008, TU5) letterboxes to the camera's aspect when
+// the camera's constrain flag (bit 1 of the word at +432) is set. Canary's TU5 16:10 patch by boma makes the branch at
+// 0x82392530 always skip that; here the flag test reads 0 instead (after the rlwinm at 0x82392528). Checked at start-up.
+REXCVAR_DEFINE_BOOL(gow1_no_aspect_lock, false, "Gears 1",
+                    "The view fills the picture's own shape (16:10) instead of a letterboxed 16:9 (Canary's TU5 patch by boma)");
 namespace {
 std::atomic<bool> g_no_gaussian{false};
+std::atomic<bool> g_no_aspect_lock{false};
 uint32_t GuestWord(const uint8_t* m, uint32_t a) {
   const uint8_t* p = m + a;
   return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
@@ -126,6 +133,17 @@ void Gow1InstallPostFxSwitches(rex::Runtime* runtime) {
       REXLOG_INFO("gow1_no_gaussian_blur: on (depth of field off, softer bloom)");
     }
   }
+  if (REXCVAR_GET(gow1_no_aspect_lock)) {
+    if (GuestWord(m, 0x82392528) != 0x556B0042u || GuestWord(m, 0x82392530) != 0x419A009Cu) {   // rlwinm r11,r11,0,1,1; beq cr6,+0x9C
+      REXLOG_WARN("gow1_no_aspect_lock: the code at 0x82392528 is not TU5's - left alone");
+    } else {
+      g_no_aspect_lock.store(true);
+      REXLOG_INFO("gow1_no_aspect_lock: on (the view fills the picture's shape)");
+    }
+  }
+}
+void Gow1NoAspectLock(PPCRegister& r11) {   // after `rlwinm r11,r11,0,1,1` at 0x82392528: the constrain flag
+  if (g_no_aspect_lock.load(std::memory_order_relaxed)) r11.u64 = 0;
 }
 void Gow1NoGaussianBlurA(PPCRegister& f1) {   // after `lfs f1,12(r26)` at 0x82539568
   if (g_no_gaussian.load(std::memory_order_relaxed)) f1.f64 = 0.0;

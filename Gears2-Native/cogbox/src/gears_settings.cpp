@@ -842,7 +842,8 @@ Availability can(Game g, const std::string& f, Version ver, const Environment& e
         if (g == Game::Judgment && !cap_exe(env, "gowj_ultrawide")) return no(not_yet(2));
         if (g == Game::Gears1 && !cap_exe(env, "gow1_ultrawide")) return no(not_yet(gi, "needs its next build"));
     } else if (f == "aspect43") {   // 0.4.9: SDK patch 70; Gears 1's video-mode code is not checked yet
-        if (g == Game::Gears1) return no(not_yet(gi, "not checked yet"));
+        // 0.6.5: Gears 1 letterboxed a 16:10 mode to 16:9 (job 1969) until --gow1_no_aspect_lock (its view's constrain flag)
+        if (g == Game::Gears1 && !cap_exe(env, "gow1_no_aspect_lock")) return no(not_yet(gi, "needs its next build"));
         if (!cap_rt(env, "video_mode_widescreen")) return no(not_yet(gi, "needs the next runtime (SDK patch 70)"));
     } else if (f == "cheatauto" || f == "cheatweapons") {   // GitHub #342: console.cpp's --ue3_cheat_* (a long literal: cap_exe)
         if (!cap_exe(env, "GitHub #342: the HUD hidden whenever a player exists")) return no(not_yet(gi, "needs its next build"));
@@ -2157,6 +2158,7 @@ std::vector<std::string> build_args(Game g, Version ver, const Settings& s, cons
             a.push_back("--video_mode_widescreen=false");
             if (ar == 0) notes.push_back("launcher: Aspect ratio Auto: " + std::to_string(env.monitor_w) + "x" + std::to_string(env.monitor_h) + " screen -> 16:10");
         }
+        if (isG1 && (ar == 2 || ar == 3 || (ar == 0 && (screen43 || screen1610)))) a.push_back("--gow1_no_aspect_lock=true");
     }
     // PS1 900: HDR
     if (s.b("HDR")) {
