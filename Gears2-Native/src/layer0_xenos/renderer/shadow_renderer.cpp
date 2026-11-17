@@ -520,7 +520,10 @@ REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_optimise, false, "Gears2",
                     "the driver builds it - about a third of the size and a third less driver time per new pipeline "
                     "(303 -> 193 ms on an RTX 3080 Ti; D3D12 158 ms). Same values (NoContraction and the float controls "
                     "are kept). false = the modules as converted, as 0.6.0");
-REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_store, false, "Gears2",
+// 0.6.5 (Shagg 16 Nov, "5"): on by default. Jobs 1957b / 1958: Gears 3 on Vulkan converted every recorded shader again at
+// EVERY start (18 s for 5,698, 48 s for 8,978) - the store had been switched off together with the optimiser after the
+// 0.6.1 candidate's slow first start (the optimiser's cost; the optimiser stays off).
+REXCVAR_DEFINE_BOOL(gow2_renderer_vulkan_spirv_store, true, "Gears2",
                     "0.6.1 (Vulkan): converted shaders are kept in <shader cache dir>\\spirv-store.bin, so each shader is "
                     "converted to SPIR-V (and optimised) once and not at every start (Gears 3: half a minute before the "
                     "first frame). false = convert at every start, as 0.6.0");

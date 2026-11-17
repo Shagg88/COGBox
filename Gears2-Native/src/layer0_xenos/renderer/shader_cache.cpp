@@ -901,6 +901,11 @@ struct SpvStore {
   std::unordered_map<uint64_t, std::pair<uint64_t, uint32_t>> index;  // key -> (offset of the words, count)
   uint64_t end = 0;
   std::atomic<uint64_t> hits{0}, misses{0}, stored{0};
+  // 0.6.5 (Gears 3 Vulkan start, on by default now): one append stream for the run (each record was an open + write +
+  // flush + close under the lock, thousands of them on a first start) and a read stream per thread (each hit opened the
+  // file again). The bumped `generation` makes the readers reopen after SetSpirvStore.
+  std::ofstream out;
+  std::atomic<uint32_t> generation{0};
 };
 SpvStore g_spv_store;
 constexpr char kSpvMagic[8] = {'G', 'N', 'S', 'P', 'V', 'S', 'T', '1'};
@@ -934,12 +939,24 @@ bool SpvStoreGet(uint64_t key, std::vector<uint32_t>& words) {
     }
     at = it->second;
   }
-  std::ifstream f(path, std::ios::binary);
+  // a read stream per thread, reopened when the store changes (SetSpirvStore) or after a failed read
+  thread_local struct Reader { std::ifstream f; fs::path path; uint32_t generation = ~0u; } reader;
+  const uint32_t gen = g_spv_store.generation.load(std::memory_order_acquire);
+  if (!reader.f.is_open() || reader.generation != gen || reader.path != path) {
+    reader.f.close();
+    reader.f.clear();
+    reader.f.open(path, std::ios::binary);
+    reader.path = path;
+    reader.generation = gen;
+  }
+  std::ifstream& f = reader.f;
+  f.clear();  // an earlier read past the end (a record written after this stream's view) must not stick
   std::vector<uint32_t> w(at.second);
   uint32_t sum = 0;
   if (!f || !f.seekg(std::streamoff(at.first - 4)) || !f.read(reinterpret_cast<char*>(&sum), 4) ||
       !f.read(reinterpret_cast<char*>(w.data()), std::streamsize(w.size()) * 4) || SpvSum(w) != sum) {
     // review: a damaged record leaves the index, so the module converted now is stored again (a new record)
+    reader.f.close();  // reopened next time (a stream in a failed state, or one opened before the record was flushed)
     std::lock_guard<std::mutex> lock(g_spv_store.mutex);
     auto it = g_spv_store.index.find(key);
     if (it != g_spv_store.index.end() && it->second == at) g_spv_store.index.erase(it);
@@ -953,12 +970,13 @@ bool SpvStoreGet(uint64_t key, std::vector<uint32_t>& words) {
 void SpvStorePut(uint64_t key, const std::vector<uint32_t>& words) {
   std::lock_guard<std::mutex> lock(g_spv_store.mutex);
   if (g_spv_store.path.empty() || words.empty() || g_spv_store.index.count(key)) return;
-  std::ofstream f(g_spv_store.path, std::ios::binary | std::ios::app);
+  std::ofstream& f = g_spv_store.out;
   const uint32_t n = uint32_t(words.size()), sum = SpvSum(words);
-  if (!f || !f.write(reinterpret_cast<const char*>(&key), 8) || !f.write(reinterpret_cast<const char*>(&n), 4) ||
+  if (!f.is_open() || !f.write(reinterpret_cast<const char*>(&key), 8) || !f.write(reinterpret_cast<const char*>(&n), 4) ||
       !f.write(reinterpret_cast<const char*>(&sum), 4) ||
       !f.write(reinterpret_cast<const char*>(words.data()), std::streamsize(n) * 4) || !f.flush()) {
     g_spv_store.path.clear();  // disk full or not writable: no store for the rest of this run
+    f.close();
     return;
   }
   g_spv_store.index[key] = {g_spv_store.end + 16, n};
@@ -970,6 +988,9 @@ void ShaderCache::SetSpirvStore(const std::filesystem::path& dir, uint32_t switc
   std::lock_guard<std::mutex> lock(g_spv_store.mutex);
   g_spv_store.index.clear();
   g_spv_store.path.clear();
+  g_spv_store.out.close();
+  g_spv_store.out.clear();
+  g_spv_store.generation.fetch_add(1, std::memory_order_release);
   g_spv_store.switches = switches;
   if (dir.empty()) return;
   const fs::path p = dir / "spirv-store.bin";
@@ -1004,6 +1025,8 @@ void ShaderCache::SetSpirvStore(const std::filesystem::path& dir, uint32_t switc
     fs::resize_file(p, good, ec);  // a torn last record
     if (ec) return;
   }
+  g_spv_store.out.open(p, std::ios::binary | std::ios::app);   // stays open for the run (SpvStorePut)
+  if (!g_spv_store.out.is_open()) return;
   g_spv_store.end = good;
   g_spv_store.path = p;
   REXLOG_INFO("gow2_renderer: SPIR-V store {}: {} modules, {:.1f} MB", p.string(), g_spv_store.index.size(), double(good) / 1048576.0);
