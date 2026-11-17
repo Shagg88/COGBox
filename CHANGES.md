@@ -17,12 +17,12 @@
   - **Cheat keys** (Cheat keys option): F9 free camera (Gears 1: fly through walls), F10 freeze the world, F11 hide / show
     the HUD. God mode, slow motion and all weapons are no longer keys.
   - **A small popup** shows what a cheat key did (God mode ON / OFF, Freeze the world ON, ...) or why it can't run.
-  - **Gears 2:** cheats should now also work when the campaign is started from the menus ("not recognised" in 0.6.3).
+  - **Gears 2:** cheats now also work when the campaign is started from the menus ("not recognised" in 0.6.3).
   - **Gears 3 with Title Update 6:** God mode, Game speed and Hide the HUD work; All weapons and ammo and the cheat keys
     don't yet.
 - **Gears 3 Horde bots get their own characters** (Discord): bots added with the Horde-bots button were all Marcus,
-  whatever their name. The game now loads each bot's character, so it should come back as that character from the next
-  wave (its first life is still Marcus).
+  whatever their name. The game now loads each bot's character, and it comes back as that character from its next
+  respawn (its first life is still Marcus).
 - **Open matches: DLC light** - a dot next to each match: green when you have the host's map (base game or your
   installed DLC), red when you don't, grey while the host hasn't picked one. Gears 3 and Judgment; needs the updated
   online server.
