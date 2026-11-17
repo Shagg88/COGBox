@@ -70,6 +70,7 @@ constexpr uint8_t kNmStandalone = 0, kNmListenServer = 2;
 
 struct PlayerState {
   uint32_t god_pc = 0, hud = 0;                 // the controller god mode was set on / the HUD hidden once
+  uint32_t god_said = 0, hud_said = 0;           // job 1962: the controller / HUD the log line was written for
   uint32_t made_mgr_pc = 0, made_mgr_world = 0;  // the controller whose cheat manager this code made (Gears 2 flip), its world
   bool was_cinematic = false;                    // PlayerController.bCinematicMode at the last check
   uint32_t pawn_done = 0, pawn_seen = 0;        // weapons given to / first seen
@@ -366,20 +367,35 @@ inline void Tick(PPCContext& ctx, uint8_t* base) {
     const uint32_t pawn = obj::Read32(pc + uint32_t(s.off_pawn));
     if (!pawn) { p.pawn_seen = p.pawn_done = 0; continue; }   // the front end, a dead player waiting to respawn, a load
     any_pawn = true;
-    if (REXCVAR_GET(ue3_cheat_god) && s.off_god >= 0 && !BitOn(pc, s.off_god, s.mask_god)) {
-      SetBit(pc, s.off_god, s.mask_god, true);
-      if (p.god_pc != pc) REXLOG_INFO("auto cheats ({}): god mode on (player {})", s.spec.game, i + 1);
-      p.god_pc = pc;
+    if (REXCVAR_GET(ue3_cheat_god) && s.off_god >= 0) {
+      // job 1962: the line once per controller, also when the game had the flag on already (Gears 1's opening ride
+      // printed nothing). god_pc stays "set by this code" only: UndoForRemote clears only what it set.
+      const bool was_on = BitOn(pc, s.off_god, s.mask_god);
+      if (!was_on) {
+        SetBit(pc, s.off_god, s.mask_god, true);
+        p.god_pc = pc;
+      }
+      if (p.god_said != pc) {
+        p.god_said = pc;
+        REXLOG_INFO("auto cheats ({}): god mode on (player {}{})", s.spec.game, i + 1, was_on ? ", the game had it on already" : "");
+      }
     }
     if (REXCVAR_GET(ue3_cheat_hide_hud) && s.off_hud >= 0 && s.off_show >= 0) {
       const uint32_t hud = obj::Read32(pc + uint32_t(s.off_hud));
       const bool cine = s.off_cine >= 0 && BitOn(pc, s.off_cine, s.mask_cine);
       const bool cutscene_ended = p.was_cinematic && !cine;
       p.was_cinematic = cine;
-      // kept hidden; with the cheat keys only for a new HUD and after a cutscene (F11 can show it in between)
-      if (hud && !cine && (!s.keys || hud != p.hud || cutscene_ended) && BitOn(hud, s.off_show, s.mask_show)) {
+      // kept hidden; with the cheat keys only for a HUD not hidden yet and after a cutscene (F11 can show it in between).
+      // Job 1962 review: "not hidden yet" (hud_said), not "not seen yet" - a HUD first seen in a cutscene or while the game
+      // itself had it off was recorded unhidden and, with the keys on, never hidden afterwards.
+      if (hud && !cine && (!s.keys || hud != p.hud_said || cutscene_ended) && BitOn(hud, s.off_show, s.mask_show)) {
         SetBit(hud, s.off_show, s.mask_show, false);
-        if (hud != p.hud) REXLOG_INFO("auto cheats ({}): HUD hidden (player {})", s.spec.game, i + 1);
+        // job 1962: once per HUD when it is first hidden (a level that starts in a cutscene recorded the HUD before
+        // hiding it, so the old hud != p.hud test never printed - Gears 3 / Judgment)
+        if (p.hud_said != hud) {
+          p.hud_said = hud;
+          REXLOG_INFO("auto cheats ({}): HUD hidden (player {})", s.spec.game, i + 1);
+        }
       }
       if (hud) p.hud = hud;
     }
