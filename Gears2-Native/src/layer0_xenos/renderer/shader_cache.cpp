@@ -1508,6 +1508,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     }
     for (auto& t : threads) t.join();
     t_warm_split = false;
+    REXLOG_INFO("gow2_renderer: shader warm-up: adopted while translating, {:.0f} ms", stream_make_ms);
     {
       const double wall_ms = MsSince(wall0);
       const double proc_ms = double(ProcessCpu100ns() - proc0) / 1e4;
@@ -1579,7 +1580,7 @@ ShaderCache::WarmResult ShaderCache::WarmFromDisk() {
     }
     std::vector<uint32_t>().swap(it.dwords);
   }
-  r.make_ms = MsSince(t3) + stream_make_ms;
+  r.make_ms = MsSince(t3);  // (the streaming adoption is inside translate_ms; its own time is logged above)
   r.ms = MsSince(t0);
   return r;
 }
