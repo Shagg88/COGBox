@@ -10,7 +10,7 @@
 //    whose script package we leave unpatched) - and it is only ever turned on, never toggled.
 //  - hide HUD:  the player controller's HUD.bShowHUD, the flag "ToggleHUD" flips. Written directly and kept off (a cutscene
 //    shows the HUD again when it ends - PlayerController.SetCinematicMode). With the cheat keys on (F11 = ToggleHUD) it is
-//    hidden only for a new HUD and when a cutscene ends, so F11 can still show it in between.
+//    hidden only for a HUD not hidden yet and when a cutscene ends, so F11 can still show it in between.
 //  - speed:     WorldInfo.TimeDilation (and GameInfo.GameSpeed), as "Slomo" sets them, whenever the game runs at its normal
 //    speed (1.0) - the game's own slow-motion moments are left alone and the choice comes back after them.
 //  - weapons:   the engine's "AllWeapons" and "AllAmmo" commands (they give items, which only the game's script can do), once
@@ -69,7 +69,7 @@ constexpr int kMaxPlayers = 4;
 constexpr uint8_t kNmStandalone = 0, kNmListenServer = 2;
 
 struct PlayerState {
-  uint32_t god_pc = 0, hud = 0;                 // the controller god mode was set on / the HUD hidden once
+  uint32_t god_pc = 0;                          // the controller this code set god mode on
   uint32_t god_said = 0, hud_said = 0;           // job 1962: the controller / HUD the log line was written for
   uint32_t made_mgr_pc = 0, made_mgr_world = 0;  // the controller whose cheat manager this code made (Gears 2 flip), its world
   bool was_cinematic = false;                    // PlayerController.bCinematicMode at the last check
@@ -248,6 +248,7 @@ inline void UndoForRemote(uint32_t world, uint32_t game, int local) {
     const uint32_t pc = ControllerOf(i);
     if (pc && p.god_pc == pc && s.off_god >= 0 && BitOn(pc, s.off_god, s.mask_god)) SetBit(pc, s.off_god, s.mask_god, false), any = true;
     p.god_pc = 0;
+    p.god_said = 0;   // review r1962: "god mode on" is printed again when the cheats come back
     // the controller the manager was made for - not ControllerOf(i), which is the debug camera's while F9's free camera is
     // on; only while still in that world (a level change frees the old controller) and still a player controller
     const uint32_t m = p.made_mgr_pc;
@@ -397,7 +398,6 @@ inline void Tick(PPCContext& ctx, uint8_t* base) {
           REXLOG_INFO("auto cheats ({}): HUD hidden (player {})", s.spec.game, i + 1);
         }
       }
-      if (hud) p.hud = hud;
     }
     // weapons: on-foot pawns only (a turret or vehicle the player sits in is a pawn too)
     const bool infantry = !s.infantry || obj::IsA(pawn, s.infantry);
