@@ -1274,6 +1274,7 @@ void ShaderCache::Promote(const GuestShader& s) {
       std::unique_ptr<Job> job = std::move(*it);
       q->erase(it);
       spv_queue_.push_front(std::move(job));
+      StartSpvWorkersLocked();   // review r1991: a promoted job never waits for the warm-up's hold
       spv_wake_.notify_one();
       return;
     }
