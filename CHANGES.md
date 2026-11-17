@@ -1,5 +1,13 @@
 # COGBox changes
 
+## Unreleased
+
+- **COGBox tags on every player's name** (all four games; GitHub #353): in online lobbies, party lists and the
+  scoreboard each player's name shows their COGBox tag after it in grey, for example Flapper#5531, so you can add
+  someone you just played with as a friend by their tag. The game asks the COGBox server once for each new player (up to
+  32 at a time) and keeps the answer; it never asks again for a player it already knows. Off with
+  --cogbox_name_tags=false.
+
 ## 0.6.4
 
 - **Built for AVX2 CPUs only** (all four games): the game code now uses the AVX2 / FMA / BMI2 instructions of Intel Core

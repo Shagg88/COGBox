@@ -95,6 +95,9 @@ set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/shader_prebuild.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/prebuild_lzx.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/package_exports.cpp
     ${GN_LAYER0_HOME}/src/layer2_ue3/main_menu_exit.cpp ${GN_LAYER0_HOME}/src/layer2_ue3/console.cpp PROPERTIES
     INCLUDE_DIRECTORIES ${GN_LAYER0_HOME}/src/layer2_ue3/include)
+# GitHub #353: the shared name tags, with this game's own ue3/ headers (its objects.h: Gears 3's ue3::obj).
+target_sources(gn_layer2_ue3 PRIVATE ${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp)
+set_source_files_properties(${GN_LAYER0_HOME}/src/layer2_ue3/name_tags.cpp PROPERTIES COMPILE_DEFINITIONS GN_UE3_OBJECTS_GOW3=1)
 
 # Layer 3: Gears of War 3 (the executable).
 set(GOW3_SOURCES
