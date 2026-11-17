@@ -82,8 +82,9 @@ struct State {
   // offsets (-1: this game has no such property) and bool masks
   int off_actor = -1, off_world = -1, off_pawn = -1, off_god = -1, off_hud = -1, off_cheat = -1, off_show = -1;
   int off_game = -1, off_td = -1, off_netmode = -1, off_numplayers = -1, off_travelling = -1, off_speed = -1, off_inv = -1;
-  int off_inf = -1, off_cine = -1, off_players_only = -1;
-  uint32_t mask_god = 0, mask_show = 0, mask_inf = 0, mask_cine = 0, mask_players_only = 0, infantry = 0, pc_class = 0;
+  int off_inf = -1, off_cine = -1, off_players_only = -1, off_po_pending = -1;
+  uint32_t mask_god = 0, mask_show = 0, mask_inf = 0, mask_cine = 0, mask_players_only = 0, mask_po_pending = 0, infantry = 0,
+           pc_class = 0;
   // game thread only
   PlayerState player[kMaxPlayers];
   uint32_t speed_world = 0, remote_world = 0, nomgr_logged = 0;
@@ -158,6 +159,8 @@ inline void Resolve() {
     s.off_td = obj::PropertyOffset(world, "TimeDilation");
     s.off_netmode = obj::PropertyOffset(world, "NetMode");
     s.off_players_only = obj::PropertyOffset(world, "bPlayersOnly"), s.mask_players_only = obj::BoolMask(world, "bPlayersOnly");
+    // (later engines: the command sets bPlayersOnlyPending and the world's tick copies it)
+    s.off_po_pending = obj::PropertyOffset(world, "bPlayersOnlyPending"), s.mask_po_pending = obj::BoolMask(world, "bPlayersOnlyPending");
     s.off_numplayers = obj::PropertyOffset(game, "NumPlayers");
     s.off_travelling = obj::PropertyOffset(game, "NumTravellingPlayers");
     s.off_speed = obj::PropertyOffset(game, "GameSpeed");
@@ -170,6 +173,7 @@ inline void Resolve() {
     if (!s.mask_inf) s.off_inf = -1;
     if (!s.mask_cine) s.off_cine = -1;
     if (!s.mask_players_only) s.off_players_only = -1;
+    if (!s.mask_po_pending) s.off_po_pending = -1;
     REXLOG_INFO("auto cheats ({}): ready (Controller.bGodMode +{} mask {:X}, PlayerController.myHUD +{} .CheatManager +{}, "
                 "HUD.bShowHUD +{}, WorldInfo.TimeDilation +{} .NetMode +{}, GameInfo.NumPlayers +{} .NumTravellingPlayers +{} "
                 ".GameSpeed +{}, Pawn.InvManager +{}, InventoryManager.bInfiniteAmmo +{}, infantry {} {})",
@@ -263,9 +267,11 @@ inline void UndoForRemote(uint32_t world, uint32_t game, int local) {
   // F10's freeze (PlayersOnly) is not for a game with another PC's player in it either
   if (s.off_players_only >= 0 && BitOn(world, s.off_players_only, s.mask_players_only))
     SetBit(world, s.off_players_only, s.mask_players_only, false), any = true;
+  if (s.off_po_pending >= 0 && BitOn(world, s.off_po_pending, s.mask_po_pending))
+    SetBit(world, s.off_po_pending, s.mask_po_pending, false), any = true;
   if (s.remote_world != world)
     REXLOG_INFO("auto cheats ({}): another PC's player is in this game - the launcher's cheats are off here{}", s.spec.game,
-                any ? " (god mode, speed and the cheat manager put back)" : "");
+                any ? " (god mode, speed, the world freeze and the cheat manager put back)" : "");
   s.remote_world = world;
 }
 }  // namespace detail
@@ -276,6 +282,25 @@ inline void SetKeysOn(bool on) { detail::S().keys = on; }
 // Gears 2 with the cheat keys: start the lookup now, so the keys' EnableCheats can use it (no launcher cheat on: Tick
 // would never start it).
 inline void Prepare() { detail::StartResolve(); }
+
+// The console target's gate for Gears 1 and 2 (their cheats are for this PC's games only): the match guard's answer, and
+// also "refuse" while another PC's player is in the game this PC runs - F10's freeze (PlayersOnly, an engine command
+// that needs no cheat manager) included. Display settings never come here (console.cpp lets them through).
+inline int GateLocalOnly() {
+  using namespace detail;
+  const int verdict = ue3::match::Check();
+  if (verdict != 0) return verdict;
+  State& s = S();
+  StartResolve();
+  if (!s.ready.load(std::memory_order_acquire)) return s.failed.load(std::memory_order_relaxed) ? 2 : 1;
+  const int local = LocalCount();
+  const uint32_t pc = local ? ControllerOf(0) : 0;
+  const uint32_t world = pc ? obj::Read32(pc + uint32_t(s.off_world)) : 0;
+  const uint32_t game = world ? obj::Read32(world + uint32_t(s.off_game)) : 0;
+  if (!world) return 1;
+  if (!game) return 2;   // a client in someone else's game (the engine refuses cheats there too)
+  return OnlyLocalPlayers(game, local) ? 0 : 2;
+}
 
 // The console target's enable_cheats (Gears 2's cheat keys): EnableCheats for player 1 as above. false = no player yet.
 inline bool EnableForConsole(PPCContext& ctx, uint8_t* base) {

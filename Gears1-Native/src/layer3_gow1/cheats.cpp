@@ -67,7 +67,7 @@ void Gow1InstallCheats() {
   if (cheats) target.before_each = "EnableCheats";
   ue3::match::Configure({"Gears 1", kAllowed, kDenied, target.engine_global, target.players_data_offset,
                          target.players_num_offset, &OpenObjects});
-  target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
+  target.gate = &ue3::cheats::GateLocalOnly;   // 0.6.3: not in a Versus match; #342: and only this PC's players
   Ue3ConsoleSetTarget(target);
   // GitHub #342: the launcher's cheats - only while every player is on this PC (Gears 1's AllowCheats: standalone games)
   ue3::cheats::Configure({"Gears 1", false, false, true, target.engine_global, target.players_data_offset,

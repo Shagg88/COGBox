@@ -75,7 +75,7 @@ void Gow2InstallCheats() {
   if (cheats) target.enable_cheats = &ue3::cheats::EnableForConsole;
   ue3::match::Configure({"Gears 2", kAllowed, kDenied, target.engine_global, target.players_data_offset,
                          target.players_num_offset, &OpenObjects});
-  target.gate = &ue3::match::Check;   // 0.6.3: not in a Versus match
+  target.gate = &ue3::cheats::GateLocalOnly;   // 0.6.3: not in a Versus match; #342: and only this PC's players
   Ue3ConsoleSetTarget(target);
   // GitHub #342: the launcher's cheats - only while every player in the game is on this PC (Gears 2's own rule), and
   // EnableCheats on the menus' solo listen server
