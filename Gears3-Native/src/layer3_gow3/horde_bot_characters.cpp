@@ -133,11 +133,12 @@ std::string FString(uint32_t a) {   // TArray<TCHAR> {data, count incl. the term
   return s;
 }
 
-// Job 1982 lesson: GearPRI has no PawnClass in Gears 3 (the body is the pawn's own class), and an offset read before the
-// class was fully linked came back -1 - so the offsets are looked up again until every one is found, and the body is read
-// from each live GearPawn (its class) and the pawn's PlayerReplicationInfo (its name and character number).
+// Job 1982 lesson: offsets looked up while a class was still loading came back -1 (GearPRI.PawnClass in one run,
+// PreferredCOGIndex in the other), so they are looked up again until found. The body is read from each live GearPawn
+// (its own class) with its PlayerReplicationInfo (name, character number); GearPRI.PawnClass (the class the game
+// meant for that player, set by SetPawnClass) is logged too once it resolves.
 void LogWorker() {
-  int off_name = -1, off_cog = -1, cog_size = 0, off_pawn_pri = -1, off_loaded = -1, off_pending = -1;
+  int off_name = -1, off_cog = -1, cog_size = 0, off_pawn_pri = -1, off_loaded = -1, off_pending = -1, off_meant = -1;
   uint32_t pri_cls = 0, pawn_cls = 0, store_cls = 0;
   std::map<uint32_t, std::string> last;
   std::string last_store;
@@ -156,14 +157,17 @@ void LogWorker() {
       REXLOG_INFO("gow3_log_bot_classes: GearPRI PlayerName +{} PreferredCOGIndex +{} ({} bytes), Pawn.PlayerReplicationInfo +{}", off_name,
                   off_cog, cog_size, off_pawn_pri);
     }
-    if (!store_cls && (store_cls = obj::FindClass("GearMPCharacterStore")) != 0) {
+    if (off_meant < 0) off_meant = obj::PropertyOffset(pri_cls, "PawnClass");
+    if (off_loaded < 0 && (store_cls = obj::FindClass("GearMPCharacterStore")) != 0) {
       off_loaded = obj::PropertyOffset(store_cls, "LoadedClasses");
       off_pending = obj::PropertyOffset(store_cls, "PendingClasses");
     }
     auto who = [&](uint32_t pri) {
       if (!pri || !obj::IsLive(pri)) return std::string("no player");
       const int cog = cog_size == 1 ? Byte(pri + uint32_t(off_cog)) : int32_t(obj::Read32(pri + uint32_t(off_cog)));
-      return "'" + FString(pri + uint32_t(off_name)) + "' character " + std::to_string(cog);
+      const uint32_t meant = off_meant >= 0 ? obj::Read32(pri + uint32_t(off_meant)) : 0;
+      return "'" + FString(pri + uint32_t(off_name)) + "' character " + std::to_string(cog) + " (meant " +
+             (off_meant < 0 ? std::string("?") : meant ? obj::ObjectName(meant) : std::string("none")) + ")";
     };
     std::map<uint32_t, std::string> now;
     for (uint32_t p : obj::FindInstancesOf(pri_cls))
@@ -171,7 +175,7 @@ void LogWorker() {
     for (uint32_t pawn : obj::FindInstancesOf(pawn_cls)) {   // the bodies (Locust too: their names show it)
       if (!obj::IsLive(pawn)) continue;
       const uint32_t pri = obj::Read32(pawn + uint32_t(off_pawn_pri));
-      if (!pri) continue;   // enemies without a player entry
+      if (!pri) continue;   // pawns without a player entry (Horde AI may have one: then logged too)
       now[pawn] = "body " + obj::ObjectName(obj::ClassOf(pawn)) + " for " + who(pri);
     }
     if (now != last) {
